@@ -11,8 +11,10 @@ popup, unless it falls under an auto-approve policy you set and the user accepte
 > for mainnet chains at all ([section 12](#12-test-and-live-keys)). This guide follows the code; the original
 > specification is `docs/batch-b-spec.md`.
 
-Last verified against code: 2026-11-02 (branch `feat/email-login-8a`: email login, "Email login" in section 4, the
-new error codes and the `email_code` progress stage).
+Last verified against code: 2026-11-03 (branch `feat/email-login-8b`: one wallet per person, "Sign-in methods and
+links" in section 4 (`hana.account()`, `linkChanged`, `hana.linkAccount()`, what users see in each case), key export
+for email wallets, `link_refused`, `link_pending`'s `effectiveAtMs`, the `linking` progress stage). Email login itself:
+2026-11-02 (branch `feat/email-login-8a`).
 
 ## How it works
 
@@ -162,10 +164,11 @@ hana.on('statusChanged', (status) => {});
 hana.on('accountsChanged', (addresses) => {}); // { stellar, evm } or null
 hana.on('sessionExpired', () => {});            // the session reached its limit: log in again
 hana.on('disconnect', ({ code }) => {});        // 4900: the vault connection is gone
-hana.on('loginProgress', ({ stage }) => {});    // 'popup_connected' | 'google' | 'email_code' | 'token' | 'chain' | 'key_pending' | 'done'
+hana.on('loginProgress', ({ stage }) => {});    // 'popup_connected' | 'google' | 'email_code' | 'token' | 'linking' | 'chain' | 'key_pending' | 'done'
 hana.on('launcher', ({ visible, label }) => {}); // Hana's button is shown or hidden ("Review in Hana", …)
 hana.on('autoApproved', ({ kind, chain, contract, function: fn }) => {});
 hana.on('persistenceChanged', (persistence) => {}); // 'none': this login won't survive a reload (see "Sessions")
+hana.on('linkChanged', ({ provider, status, effectiveAtMs }) => {}); // a sign-in method added, activated or removed (section 4)
 ```
 
 `loginProgress: key_pending` means Google has just started signing with a new key that Hana ID hasn't activated yet
@@ -216,20 +219,45 @@ button.addEventListener('click', async () => {
   await hana.login({ method: 'email', emailHint: 'ada@example.com' }); // or { method: 'google' }; still in the click
   ```
 
-  An email wallet is a separate wallet from the same person's Google wallet (linking them comes later). A method your
-  app doesn't offer rejects with `login_method_unavailable`; bad options reject with `-32602` before any popup opens.
-  `loginProgress` adds `email_code` (the code was sent); with email on, `google` fires only when the user goes to
-  Google. In this release email is enabled only on Hana's demo and test apps: an email wallet can't be joined to the
-  same person's Google wallet later. The popup handles wrong and expired codes, "Resend code" and
-  "Use a different email" itself; if the user then cancels, `login()` rejects with `code_invalid`,
-  `challenge_expired`, `rate_limited` or `login_cancelled`. Key export (`exportKey`) is not available yet for an email
-  wallet (`4200`, `data.reason: 'email_export'`). Your page never sees the address unless you passed it.
+  One person, one wallet: Google and email with the same verified address open the **same** wallet (automatic
+  linking, build plan batch 8b; [Sign-in methods](#sign-in-methods-and-links) below). A method your app doesn't
+  offer rejects with `login_method_unavailable`; bad options reject with `-32602` before any popup opens.
+  `loginProgress` adds `email_code` (the code was sent) and `linking` (this login joins two sign-in methods); with
+  email on, `google` fires only when the user goes to Google. The popup handles wrong and expired codes, "Resend code"
+  and "Use a different email" itself; if the user then cancels, `login()` rejects with `code_invalid`,
+  `challenge_expired`, `rate_limited` or `login_cancelled`. Your page never sees the address unless you passed it.
+- <a id="sign-in-methods-and-links"></a>**Sign-in methods and links** (an app with email). What the user sees, by
+  case (Hana decides every case; your page only sees the result):
+
+  | The user… | They see | Result |
+  |---|---|---|
+  | signs in with Google, and an email wallet exists for that Gmail address (or a Workspace address Google hosts) | nothing extra; the popup may show "Your Google sign-in now opens this wallet too" | the email wallet's addresses; Google is linked at once |
+  | signs in with Google, and an email wallet exists for an address Google doesn't host | "This email already has a wallet": **Link and continue** (a code to `a…@domain`) or **Sign in with email** | the email wallet either way; linked only after the code |
+  | signs in with email, and a Google wallet exists for that address | "This email belongs to a wallet you created by signing in with Google": **Link and continue** or **Sign in with Google**, then Google | the Google wallet's addresses; the email joins it at once (Google-hosted) or after 24 h (other addresses: a pending banner with **Cancel this link**) |
+  | has neither wallet | the usual sign-in | a new wallet for that method |
+
+  Nobody ever gets a second wallet for the same verified address. While a link is pending, signing in with the
+  pending method fails with `link_pending` (`data.effectiveAtMs`: when it opens the wallet). The user can cancel it
+  from the Hana popup's banner at their next sign-in.
+  - `await hana.account()` → `{methods: [{provider: 'google' | 'email', status: 'active' | 'pending', effectiveAtMs,
+    root}]}`: the wallet's own method (`root: true`) and the ones linked to it. No identifiers, no addresses. **Show
+    pending methods to the user** ("An email will be able to open this wallet from …") and tell them to sign in to
+    cancel it if it isn't theirs: the mailbox of a pending email may be an attacker's.
+  - `hana.on('linkChanged', ({provider, status, effectiveAtMs}) => …)`: a method was added (`pending` or `active`),
+    became active, or was `removed`. It fires after a login that linked, at the first `account()` call of a session
+    for each pending method, and whenever `account()` sees a change.
+  - `await hana.linkAccount({ method: 'google' | 'email' })`, in a click like `login()`: adds a sign-in method with
+    another address (a second Google account, a work email). The Hana popup signs in the new method, then the
+    wallet's own; the link opens the wallet after 24 h (`{provider, status: 'pending', effectiveAtMs}`). It rejects
+    with `link_refused` (`data.reason`: `provider_taken`, `account_full`, `already_linked`, `has_wallet` when that
+    method already opened a wallet of its own, `links_unavailable`) before any transaction.
 - `await hana.logout()` signs this app out on this device, in every tab. It sends no transaction.
 - `await hana.revokeOtherDevices()` signs the user out of your app everywhere else. It works only within 5 min of a
   fresh login, so offer it right after one.
 - `await hana.exportKey('stellar' | 'evm')` lets the user take their key elsewhere. Hana shows a button; the key
-  appears only in a top-level Hana window, after a fresh Google sign-in and a typed confirmation, and never reaches
-  your page. That window keeps the key for 5 minutes at most, and erases it as soon as the user's session in your
+  appears only in a top-level Hana window, after a fresh sign-in (Google, or, in an app with email, a new code to the
+  user's email) and a typed confirmation, and never reaches your page. A wallet with linked methods exports its one
+  shared key, whichever method the user signs in with; a pending method exports nothing. That window keeps the key for 5 minutes at most, and erases it as soon as the user's session in your
   app ends (`logout()`, revoke, expiry); exporting again starts over with a new sign-in. Stellar keys export as `S…`, EVM keys as `0x…` hex. There is no recovery phrase. Each export is a NEAR
   transaction Hana pays for, so one account can export at most 3 times an hour per app (`rate_limited` after that).
 
@@ -689,7 +717,7 @@ account **different addresses** (D51). Wallets made with test keys are disposabl
 |---|---|---|
 | `4001` | The user rejected, closed the popup, or let it time out | nothing; let them retry |
 | `4100` | Not logged in, wrong address, or not allowed for this app (raw signing off, no policy, a mainnet for a test app: `data.reason`) | log in, or check the call |
-| `4200` | Unsupported method (`eth_sign`, …; `exportKey` for an email wallet, `data.reason: 'email_export'`) | use a supported method |
+| `4200` | Unsupported method (`eth_sign`, …) | use a supported method |
 | `4900` | The vault is gone (logged out, session ended, frame replaced) | create the client again, or log in |
 | `4902` | EVM chain not in `evm.chains` | add it to `createHana` |
 | `vault_unavailable` | The vault didn't load in 5 s | check `frame-src`, your origins, the network |
@@ -699,12 +727,13 @@ account **different addresses** (D51). Wallets made with test keys are disposabl
 | `login_cancelled` | `cancelLogin()`, or a newer `login()`, or the user cancelled the email step | nothing |
 | `login_method_unavailable` | `login({method})` named a method your app doesn't offer (email not turned on) | offer the other method |
 | `code_invalid`, `challenge_expired` | Email login: the user cancelled after a wrong or expired code | let them retry |
-| `link_pending` | This sign-in method is waiting to join an account (account linking, a later release) | sign in with the account's other method |
+| `link_pending` | This sign-in method is waiting to join a wallet (`data.effectiveAtMs`: when it can open it) | show when; sign in with the wallet's other method meanwhile |
+| `link_refused` | The sign-in methods can't be linked (`data.reason`); `login()` with the wallet's own method still works | offer the other method |
 | `google_error` | Google returned an error (`data.error`) | retry; `access_denied` means the user declined |
 | `no_google_client` | Your scope has no usable Google client | ask Hana |
 | `token_invalid`, `token_has_pii` | The Google token failed Hana's checks | retry; report it if it persists |
 | `config_mismatch` | Hana's pages disagree about the signer, scope or client, or the scope doesn't match the on-chain registry (`data.reason: 'scope_mismatch'`) | report it to Hana; never retry around it |
-| `ckd_failed`, `derive_failed`, `pairing_failed`, `address_mismatch` | The key couldn't be produced | the user logs in again |
+| `ckd_failed`, `derive_failed`, `pairing_failed`, `address_mismatch` | The key couldn't be produced (`derive_failed` with `data.reason: 'link_restart'`: a linking login was interrupted and its session revoked) | the user logs in again |
 | `session_consumed` | Someone replayed the login transaction first | the vault offers "Continue signing in" |
 | `rate_limited`, `app_suspended`, `origin_not_allowed`, `api_unavailable` | From Hana's API (`rate_limited` also after 3 key exports of one account in an hour), or NEAR's RPC couldn't be read | back off, or contact Hana |
 | `busy` | An export is already running | wait |

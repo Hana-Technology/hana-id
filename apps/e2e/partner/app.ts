@@ -69,7 +69,7 @@ hana.ready.then(
     readyError = e instanceof HanaError ? e.code : String(e);
   },
 );
-for (const name of ['statusChanged', 'accountsChanged', 'sessionExpired', 'disconnect', 'launcher', 'loginProgress', 'autoApproved', 'identityTokenChanged'] as const) {
+for (const name of ['statusChanged', 'accountsChanged', 'sessionExpired', 'disconnect', 'launcher', 'loginProgress', 'autoApproved', 'identityTokenChanged', 'linkChanged'] as const) {
   hana.on(name, (...args: unknown[]) => events.push({ name, data: args[0] ?? null }));
 }
 
@@ -164,6 +164,9 @@ const actions: Record<string, (...args: never[]) => Promise<unknown>> = {
   logout: () => hana.logout(),
   cancelLogin: async () => hana.cancelLogin(),
   exportKey: (chainName: 'stellar' | 'evm') => hana.exportKey(chainName),
+  // The wallet's sign-in methods (batches 7 and 8b).
+  account: () => hana.account(),
+  linkAccount: (method: 'google' | 'email') => hana.linkAccount({ method }),
   revokeOtherDevices: () => hana.revokeOtherDevices(),
   identityToken: (maxAgeMs?: number) => hana.getIdentityToken(maxAgeMs === undefined ? {} : { maxAgeMs }),
   requestAutoApprove: () => hana.requestAutoApprove(),

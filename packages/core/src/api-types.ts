@@ -87,6 +87,28 @@ export interface LoginBody extends CreateSessionBody {
   signature: number[];
   pk1: string;
   pk2: string;
+  /**
+   * An automatic link (D133, build plan batch 8b): the `auto_link` email token, and its mode. `signature` is then over
+   * the linked CKD payload (core links.ts `linkedCkdPayload`).
+   */
+  linkJwt?: string;
+  linkImmediate?: boolean;
+}
+
+/** `POST /v1/link` (link_identity). */
+export interface LinkBody {
+  accountJwt: string;
+  newJwt: string;
+  epoch: number;
+  salt: number[];
+}
+
+/** `POST /v1/link/cancel`, `/v1/link/unlink` (cancel_link, unlink_identity). `memberKey`: hex identity key. */
+export interface LinkChangeBody {
+  jwt: string;
+  memberKey: string;
+  epoch: number;
+  salt: number[];
 }
 
 /** `POST /v1/login` 200. `session` is informational only: the vault re-syncs from NEAR, never from this. */

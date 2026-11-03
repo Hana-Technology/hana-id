@@ -23,7 +23,10 @@
 // - One session per app per device: a login replaces the record and revokes the shares it replaces, a logout ends
 //   every tab's session, and a `revoked` broadcast ends only the tabs holding that share.
 import {
+  type AccountMethod,
+  type AccountResult,
   type AppConfig,
+  type LoginMethod,
   ErrorCode,
   type Jwk,
   isTestPublishableKey,
@@ -63,7 +66,8 @@ import { autoApproveStatus, consentActive, consentEnd, newConsent, withUsage } f
 import { type Persistence, type PolicyInForce, type RawSign, type VaultConfig, parentAllowed, policyInForce } from './config.ts';
 import { VaultError, apiErrorToVault, disconnected, notLoggedIn, toProtocolError, userRejected } from './errors.ts';
 import { Launcher, type LauncherHandle, type LauncherView } from './launcher.ts';
-import { type LoginMode, type LoginRequest, type LoginStage, type LoginSuccess, PendingLogin, isOwnLoginPath, serverDetail } from './login.ts';
+import { type LoginContext, type LoginMode, type LoginRequest, type LoginStage, type LoginSuccess, PendingLink, PendingLogin, isOwnLoginPath, pathOwner, serverDetail } from './login.ts';
+import { type IssuerApi, issuerApi } from './issuer.ts';
 import { NearView } from './near.ts';
 import {
   type ConsentV1,
@@ -241,6 +245,8 @@ interface Dormant {
   expiresAtMs: number;
   sessionPk: Uint8Array;
   shareId: Uint8Array;
+  /** The derivation path (`hana.account()` reads its account while dormant). */
+  path: string;
   /** The consent this tab last read or wrote (not secret: policy id, end time, counters), for hana_autoApproveStatus. */
   consent: ConsentV1 | null;
   /**
@@ -339,6 +345,14 @@ export class Vault {
   private dormant: Dormant | null = null;
   private waking: Promise<void> | null = null;
   private pending: PendingLogin | null = null;
+  /** `hana.linkAccount` in its popup (build plan batch 8b); one at a time, never beside a login. */
+  private pendingLink: PendingLink | null = null;
+  /** The email issuer's google-match (an env with an email issuer). */
+  private issuer: IssuerApi | null = null;
+  /** The sign-in methods last reported for the session's wallet (`linkChanged` reports the differences). */
+  private methodsSeen: { path: string; methods: AccountMethod[] } | null = null;
+  /** The provider the last login linked (already reported), skipped by the first snapshot. */
+  private freshLink: LoginMethod | null = null;
   private continueIntent: LauncherHandle | null = null;
   private exportJob: ExportJob | null = null;
   private appConfigPromise: Promise<AppConfig> | null = null;
@@ -388,7 +402,8 @@ export class Vault {
     if (e.source === this.host.parent) return;
     const t = isObj(e.data) ? e.data.t : undefined;
     if (t === 'hana:auth-hello') {
-      if (this.pending && parseWindowMessage(e.data, ['hana:auth-hello'])) this.pending.acceptHello(e);
+      const task = this.pending ?? this.pendingLink;
+      if (task && parseWindowMessage(e.data, ['hana:auth-hello'])) task.acceptHello(e);
       return;
     }
     if (t === 'hana:auth-progress') {
@@ -426,6 +441,7 @@ export class Vault {
       onServerTime: (t) => this.clock.refresh(t),
     });
     this.near = new NearView({ rpc: this.env.rpc, rpcFallback: this.env.rpcFallback }, this.env.signer, this.env.relayer, fetchFn);
+    this.issuer = this.env.emailIssuerUrl ? issuerApi(this.env.emailIssuerUrl, fetchFn) : null;
     this.approvals = new Approvals({
       authOrigin: this.env.authOrigin,
       parentWindow: this.host.parent,
@@ -719,6 +735,11 @@ export class Vault {
         // Silent tier, as hana_status: the session key but never PRK, no approval, and not activity (no wake, no idle
         // restart), so a background tab refreshing its token can't keep the session or the key alive (D55, D112).
         return this.identityToken(r.params?.maxAgeMs);
+      case 'hana_account':
+        // Silent tier too: one chain view, no key.
+        return this.account();
+      case 'hana_linkAccount':
+        return this.linkAccount(r.params.method, r.params.popupBlocked === true);
       default:
         throw new VaultError(ErrorCode.unsupportedMethod, 'Unsupported method');
     }
@@ -730,31 +751,136 @@ export class Vault {
     this.pending?.abort(new VaultError('login_cancelled', 'A newer sign-in replaced this one'));
     this.continueIntent?.remove();
     this.continueIntent = null;
+    this.pendingLink?.abort(new VaultError('login_cancelled', 'A sign-in replaced this one'));
     const pending = new PendingLogin(
-      {
-        env: this.env,
-        config: this.config,
-        parentOrigin: this.parentOrigin!,
-        persistence: this.persistence,
-        api: this.api!,
-        near: this.near!,
-        clock: this.clock,
-        timers: this.timers,
-        jwks: (kid) => this.jwks(kid),
-        appConfig: () => this.appConfig(),
-        parentWindow: this.host.parent,
-        progress: (stage: LoginStage) => {
-          if (this.pending === pending) this.emit('loginProgress', { stage });
-        },
-        flow: this.o.loginFlow ?? 'combined',
-        perfNow: this.perfNow,
-      },
+      this.loginContext((stage: LoginStage) => {
+        if (this.pending === pending) this.emit('loginProgress', { stage });
+      }),
       mode,
       popupBlocked,
       request,
     );
     this.pending = pending;
     return pending;
+  }
+
+  private loginContext(progress: (stage: LoginStage) => void): LoginContext {
+    return {
+      env: this.env,
+      config: this.config,
+      parentOrigin: this.parentOrigin!,
+      persistence: this.persistence,
+      api: this.api!,
+      near: this.near!,
+      issuer: this.issuer,
+      clock: this.clock,
+      timers: this.timers,
+      jwks: (kid) => this.jwks(kid),
+      appConfig: () => this.appConfig(),
+      parentWindow: this.host.parent,
+      progress,
+      // A banner's Cancel or Remove in the login popup (spec "Notices"): the partner hears it, and the snapshot follows.
+      linkRemoved: (provider) => {
+        if (provider !== 'google' && provider !== 'email') return;
+        this.emit('linkChanged', { provider, status: 'removed', effectiveAtMs: null });
+        void this.account().catch(() => undefined);
+      },
+      flow: this.o.loginFlow ?? 'combined',
+      perfNow: this.perfNow,
+    };
+  }
+
+  // ---- the wallet's sign-in methods (build plan batches 7 and 8b) ----
+
+  /** The path of the session, live or dormant, or null. */
+  private sessionPath(): string | null {
+    return this.live()?.path ?? this.liveDormant()?.path ?? null;
+  }
+
+  /**
+   * hana_account: the wallet's sign-in methods from `get_account` on the vault's own RPC (its root, from the session's
+   * path, and its members; no sub, no address). Reports what changed since the last read as `linkChanged`.
+   */
+  private async account(): Promise<AccountResult> {
+    const path = this.sessionPath();
+    if (!path) throw notLoggedIn();
+    const root = pathOwner(path);
+    if (!root || !this.near) throw new VaultError('api_unavailable', 'This wallet’s sign-in methods can’t be read');
+    let view;
+    try {
+      view = await this.near.account(this.config.scopeId, root.provider, root.sub);
+    } catch {
+      throw new VaultError('api_unavailable', 'Could not read the wallet’s sign-in methods on NEAR', { reason: 'identity_unchecked' });
+    }
+    // The session may have ended meanwhile.
+    if (this.sessionPath() !== path) throw notLoggedIn();
+    const methods: AccountMethod[] = [{ provider: root.provider as LoginMethod, status: 'active', effectiveAtMs: null, root: true }];
+    const now = this.clock.now();
+    if (view && view.root.provider === root.provider && view.root.sub === root.sub) {
+      for (const m of view.members) {
+        if (m.provider !== 'google' && m.provider !== 'email') continue;
+        // A pending member past its time is active on its next login (lazy activation): report it as active.
+        const active = m.active || m.effectiveAtMs <= now;
+        methods.push({ provider: m.provider, status: active ? 'active' : 'pending', effectiveAtMs: m.effectiveAtMs, root: false });
+      }
+    }
+    this.noteMethods(path, methods);
+    return { methods };
+  }
+
+  /** Emits `linkChanged` for every method added, activated or removed since the last snapshot of this wallet. */
+  private noteMethods(path: string, methods: AccountMethod[]): void {
+    const before = this.methodsSeen?.path === path ? this.methodsSeen.methods : null;
+    this.methodsSeen = { path, methods };
+    const members = methods.filter((m) => !m.root);
+    if (!before) {
+      // First read in this session: partners must show pending methods (spec "Notices"); the login's own new link was
+      // reported with its result.
+      const fresh = this.freshLink;
+      this.freshLink = null;
+      for (const m of members) if (m.status === 'pending' && m.provider !== fresh) this.emit('linkChanged', { provider: m.provider, status: 'pending', effectiveAtMs: m.effectiveAtMs });
+      return;
+    }
+    const old = before.filter((m) => !m.root);
+    for (const m of members) {
+      const was = old.find((o) => o.provider === m.provider);
+      if (!was || was.status !== m.status) this.emit('linkChanged', { provider: m.provider, status: m.status, effectiveAtMs: m.effectiveAtMs });
+    }
+    for (const o of old) if (!members.some((m) => m.provider === o.provider)) this.emit('linkChanged', { provider: o.provider, status: 'removed', effectiveAtMs: null });
+  }
+
+  /**
+   * hana_linkAccount (spec "Explicit linking"): the login popup, opened by the SDK in the click (or by the vault's
+   * launcher), signs in the new method and then the wallet's own; the vault relays `link_identity`. The link is pending
+   * for `change_delay_ms`.
+   */
+  private async linkAccount(method: LoginMethod, popupBlocked: boolean): Promise<PortResultMap['hana_linkAccount']> {
+    const s = this.live() ?? null;
+    const path = s?.path ?? this.liveDormant()?.path ?? null;
+    if (!path) throw notLoggedIn();
+    if (this.pending || this.pendingLink) throw new VaultError('busy', 'A sign-in is already running');
+    const task = new PendingLink(this.loginContext(() => undefined), popupBlocked ? 'vault' : 'partner', popupBlocked, { method, path });
+    this.pendingLink = task;
+    let intent: LauncherHandle | null = null;
+    if (popupBlocked) {
+      intent = this.launcher.push('Add a sign-in method in Hana', () => {
+        if (task.aborted) return;
+        const popup = this.host.open(`${this.env.authOrigin}/login?from=vault`, `hana-login-${randomHex128()}`, LOGIN_FEATURES);
+        if (!popup) return;
+        task.popup = popup;
+        intent?.remove();
+        intent = null;
+      });
+    }
+    try {
+      const made = await task.done;
+      this.emit('linkChanged', { provider: made.provider, status: made.status, effectiveAtMs: made.effectiveAtMs });
+      void this.account().catch(() => undefined);
+      return { provider: made.provider, status: made.status, effectiveAtMs: made.effectiveAtMs };
+    } finally {
+      intent?.remove();
+      if (this.pendingLink === task) this.pendingLink = null;
+    }
   }
 
   /** Opens `/login?from=vault` inside a launcher click and hands the window to the pending login. */
@@ -857,6 +983,11 @@ export class Vault {
     if (persistence === 'session') s.persist = this.startPersist(s, success, revoked);
     if (this.pending === pending) this.emit('loginProgress', { stage: 'done' });
     this.emit('accountsChanged', { addresses: { ...s.addresses } });
+    // The link this login made (spec "Notices"); the first read of the wallet's methods then reports pending ones.
+    if (success.linked) this.emit('linkChanged', { provider: success.linked.provider, status: success.linked.status, effectiveAtMs: success.linked.effectiveAtMs });
+    this.methodsSeen = null;
+    this.freshLink = success.linked?.provider ?? null;
+    void this.account().catch(() => undefined);
     const result: LoginResult = { addresses: { ...s.addresses }, expiresAtMs: s.expiresAtMs, persistence };
     if (warning) result.warning = warning;
     if (this.testApp) {
@@ -1138,6 +1269,7 @@ export class Vault {
       expiresAtMs: s.expiresAtMs,
       sessionPk: s.sessionPk,
       shareId: Uint8Array.from(s.share.shareId),
+      path: s.path,
       consent: s.consent ? { ...s.consent, valueWeiByChain: { ...s.consent.valueWeiByChain } } : null,
       keyPair: s.keyPair,
       walletProofs: s.walletProofs,
@@ -1471,6 +1603,8 @@ export class Vault {
     // it (D79): logout doesn't wait for it.
     if (s?.persist) s.persist.cancelled = true;
     this.pending?.abort(new VaultError('login_cancelled', 'Logged out'));
+    this.pendingLink?.abort(new VaultError('login_cancelled', 'Logged out'));
+    this.methodsSeen = null;
     const store = this.store;
     const own = s?.share ? { keyPair: s.keyPair, sessionPk: s.sessionPk, share: s.share } : null;
     if (store || own) {
@@ -1877,11 +2011,9 @@ export class Vault {
   private startExport(chain: 'stellar' | 'evm'): Promise<null> {
     const s = this.live();
     if (!s) return Promise.reject(notLoggedIn());
-    // The export window signs in again with Google (export mode); an email wallet's export needs the email step there,
-    // which comes later (D246). Refused before any window opens.
-    if (!s.path.startsWith(`${this.config.scopeId}#google#`)) {
-      return Promise.reject(new VaultError(ErrorCode.unsupportedMethod, 'Key export is not available yet for wallets opened with email', { reason: 'email_export' }));
-    }
+    // The export window signs in again on its own, with Google or (an app with email, batch 8b: D246 lifted) an email
+    // code, and resolves the path through `get_identity` itself; it shows the key only if it is this session's address.
+    if (!isOwnLoginPath(s.path, this.config.scopeId)) return Promise.reject(new VaultError(ErrorCode.unsupportedMethod, 'Key export is not available for this wallet'));
     if (this.exportJob) return Promise.reject(new VaultError('busy', 'An export is already running'));
     return new Promise<null>((resolve, reject) => {
       const job: ExportJob = {

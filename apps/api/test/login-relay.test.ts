@@ -139,9 +139,14 @@ describe('login relay', () => {
     expect(await stored(c.id)).toMatchObject({ state: 'expired' });
   });
 
-  it('only authOrigin writes; only vaultOrigin and authOrigin read', async () => {
+  it('authOrigin and vaultOrigin write (the vault answers the popup in follow-up slots, batch 8b); only they read', async () => {
+    // The vault writes a follow-up slot; the popup (authOrigin) reads it; each slot still takes one write.
+    const f = await newRelay();
+    expect((await write(f.id, value(), VAULT)).status).toBe(204);
+    expect((await write(f.id, value(), VAULT)).status).toBe(409);
+    expect((await read(f.id, f.readKey, { origin: AUTH })).status).toBe(200);
     const r = await newRelay();
-    for (const origin of [VAULT, ORIGIN, null]) {
+    for (const origin of [ORIGIN, null]) {
       const res = await write(r.id, value(), origin);
       expect([res.status, (await body(res)).code], String(origin)).toEqual([403, 'origin_not_allowed']);
       expect(res.headers.get('access-control-allow-origin')).toBeNull();

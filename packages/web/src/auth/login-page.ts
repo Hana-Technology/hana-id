@@ -21,8 +21,8 @@ import { type LoginMethod, type WindowMessage, isTestPublishableKey, parseWindow
 import type { HanaEnv } from '../hana-env.ts';
 import { type Dom, dom, errorView } from './dom.ts';
 import { PageError } from './errors.ts';
-import { storeEmailContext } from './email-storage.ts';
-import { googleAuthUrl } from './google.ts';
+import { type EmailContext, storeEmailContext } from './email-storage.ts';
+import { GOOGLE_EMAIL_FLOW, googleAuthUrl } from './google.ts';
 import { storeLoginEntry } from './login-storage.ts';
 import { type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed } from './page-window.ts';
 
@@ -149,41 +149,35 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
         salt: msg.salt,
       });
       if (nonce !== msg.nonce) throw new PageError('config_mismatch', 'The sign-in request’s nonce does not commit to its session.');
+      // A link task (`hana.linkAccount`, batch 8b) signs in the new method with the vault's proof nonce instead.
+      const task = mode !== 'export' && msg.task && msg.followKey ? msg.task : null;
+      const follow = mode !== 'export' && msg.followKey ? msg.followKey : null;
       try {
         // pk_test_ apps: this page's part of the vault's hello → token (its checks, the nonce, the entry), forwarded
         // by the callback inside the encrypted relay slot. A duration on this page's clock, nothing else.
         const timings = isTestPublishableKey(msg.pk) ? { authCheck: Math.max(0, perfNow() - checkStarted) } : undefined;
-        storeLoginEntry(win.sessionStorage, msg.relayId, msg.relayKey, now(), timings);
+        storeLoginEntry(win.sessionStorage, msg.relayId, msg.relayKey, now(), timings, follow ? { followKey: follow, clientId: msg.clientId, ...(task ? { task: true } : {}) } : {});
       } catch {
         throw new PageError('storage_unavailable', 'This browser blocked the storage the sign-in needs.');
       } finally {
         msg.relayKey.fill(0);
+        msg.followKey?.fill(0);
       }
-      const url = googleAuthUrl({ clientId: msg.clientId, authOrigin: env.authOrigin, nonce: msg.nonce, state: msg.relayId, forceReauth: mode === 'export' });
-      const intro = () => d.h('p', {}, 'Signing in to ', d.h('strong', {}, msg.appName), ' at ', d.h('span', { class: 'origin' }, msg.parentOrigin));
-      const toGoogle = (tell: boolean) => {
-        // In a login that offered email, the vault reports `google` only when the popup says so (hana:auth-progress).
-        if (tell) {
-          try {
-            const target = mode === 'partner' ? childFrame(opener as Window, parsed?.vaultFrame as string) : opener;
-            (target as Window | null)?.postMessage({ v: 1, t: 'hana:auth-progress', stage: 'google' }, env.vaultOrigin);
-          } catch {
-            // The vault is gone: the login fails there anyway.
-          }
-        }
-        d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, mode === 'export' ? 'Confirm it’s you' : 'Signing in'), intro(), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
-        state = { stage: 'redirecting', mode, url };
-        finish(state);
-        win.location.assign(url);
-      };
-      // Email is offered only by the vault (never in export mode), only for an env with an email issuer.
-      const methods: readonly LoginMethod[] = mode !== 'export' && msg.methods && env.emailIssuerUrl ? msg.methods : ['google'];
-      if (!methods.includes('email') || msg.method === 'google') {
-        // A preselected Google (`method: 'google'`): the vault reported `google` itself.
-        toGoogle(false);
-        return;
-      }
-      const toEmail = () => {
+      const googleNonce = task?.prove.method === 'google' ? task.prove.nonce : msg.nonce;
+      const url = googleAuthUrl({
+        clientId: msg.clientId,
+        authOrigin: env.authOrigin,
+        nonce: googleNonce,
+        state: msg.relayId,
+        forceReauth: mode === 'export',
+        // One-request mode (auth/google.ts GOOGLE_EMAIL_FLOW): the login's own request asks for the email scope too.
+        withEmailScope: !!follow && !task && GOOGLE_EMAIL_FLOW === 'one_request',
+      });
+      const intro = () => d.h('p', {}, task ? 'Adding a sign-in method in ' : 'Signing in to ', d.h('strong', {}, msg.appName), ' at ', d.h('span', { class: 'origin' }, msg.parentOrigin));
+      // Email is offered only by the vault or the export window, only for an env with an email issuer.
+      const methods: readonly LoginMethod[] = msg.methods && env.emailIssuerUrl ? msg.methods : ['google'];
+      /** The email context: the email step's facts, and (batch 8b) the follow-up mode's, which a Google login needs too. */
+      const storeContext = (proof: EmailContext['proof'] = null): boolean => {
         try {
           storeEmailContext(
             win.sessionStorage,
@@ -205,18 +199,51 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
               opener: mode === 'vault' ? 'vault' : 'partner',
               vaultFrame: parsed?.vaultFrame ?? null,
               challengeId: null,
+              proof,
+              exportMode: mode === 'export',
             },
             now(),
           );
+          return true;
         } catch {
           fail('storage_unavailable', 'Sign-in stopped', 'This browser blocked the storage the sign-in needs.');
-          return;
+          return false;
         }
+      };
+      const toGoogle = (tell: boolean) => {
+        if (follow && !storeContext()) return;
+        // In a login that offered email, the vault reports `google` only when the popup says so (hana:auth-progress).
+        if (tell) {
+          try {
+            const target = mode === 'partner' ? childFrame(opener as Window, parsed?.vaultFrame as string) : opener;
+            (target as Window | null)?.postMessage({ v: 1, t: 'hana:auth-progress', stage: 'google' }, env.vaultOrigin);
+          } catch {
+            // The vault is gone: the login fails there anyway.
+          }
+        }
+        d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, mode === 'export' ? 'Confirm it’s you' : 'Signing in'), intro(), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
+        state = { stage: 'redirecting', mode, url };
+        finish(state);
+        win.location.assign(url);
+      };
+      const toEmail = (proof: EmailContext['proof'] = null) => {
+        if (!storeContext(proof)) return;
         const target = `${EMAIL_PATH}#${msg.relayId}`;
         state = { stage: 'redirecting', mode, url: target };
         finish(state);
         win.location.assign(target);
       };
+      if (task) {
+        // `hana.linkAccount`: the new method's own sign-in, straight away (the SDK named it).
+        if (task.prove.method === 'email') toEmail({ purpose: 'link_new', commitment: task.prove.commitment });
+        else toGoogle(false);
+        return;
+      }
+      if (!methods.includes('email') || msg.method === 'google') {
+        // A preselected Google (`method: 'google'`): the vault reported `google` itself.
+        toGoogle(false);
+        return;
+      }
       if (msg.method === 'email' || !methods.includes('google')) {
         toEmail();
         return;

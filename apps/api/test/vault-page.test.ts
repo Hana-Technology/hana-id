@@ -77,6 +77,22 @@ describe('GET {vaultOrigin}/vault', () => {
     }
   });
 
+  it('adds the email issuer to connect-src when the env has one (the vault calls google-match, batch 8b)', async () => {
+    const app = await seedApp();
+    const saved = env.EMAIL_ISSUER_URL;
+    try {
+      env.EMAIL_ISSUER_URL = 'https://issuer.test';
+      expect(csp(await vaultPage(app.key))).toBe(`${BASE}; frame-ancestors ${ORIGIN}; connect-src https://api.test https://rpc.test.invalid https://www.googleapis.com https://issuer.test`);
+      // Routed under apiUrl (production's zone route): nothing to add.
+      env.EMAIL_ISSUER_URL = 'https://api.test';
+      expect(csp(await vaultPage(app.key))).toBe(`${BASE}; frame-ancestors ${ORIGIN}; connect-src https://api.test https://rpc.test.invalid https://www.googleapis.com`);
+      env.EMAIL_ISSUER_URL = 'not a url';
+      expect((await vaultPage(app.key)).status).toBe(503);
+    } finally {
+      env.EMAIL_ISSUER_URL = saved;
+    }
+  });
+
   it('sends the full CSP and the other headers', async () => {
     const app = await seedApp();
     const res = await vaultPage(app.key);

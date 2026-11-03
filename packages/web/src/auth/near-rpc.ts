@@ -12,6 +12,11 @@ export interface NearReader {
   getSession(signer: string, sessionPublicKey: Uint8Array): Promise<SessionView | null>;
   /** The CKD result of a relayed transaction, a failure, or pending (unknown yet, or not executed). */
   txOutcome(txHash: string, sender: string): Promise<TxOutcome>;
+  /**
+   * Any view of the signer at optimistic finality, as parsed JSON (the export window's `get_identity`, batch 7, and the
+   * email keys of an email re-authentication). Throws when no endpoint answers.
+   */
+  view(signer: string, method: string, args: unknown): Promise<unknown>;
 }
 
 interface RpcBody {
@@ -62,6 +67,20 @@ export function nearReader(endpoints: NearEndpoints | string, fetchFn: typeof fe
       if (v === null) return null;
       if (!isSessionView(v)) throw new Error('NEAR RPC: malformed session');
       return v;
+    },
+
+    async view(signer, method, args) {
+      const body = await call('query', {
+        request_type: 'call_function',
+        finality: 'optimistic',
+        account_id: signer,
+        method_name: method,
+        args_base64: base64Encode(utf8(JSON.stringify(args))),
+      }, (b) => b.error === undefined && isObj(b.result) && Array.isArray(b.result.result));
+      if (body.error) throw new Error(`NEAR RPC: ${method} failed`);
+      const raw = isObj(body.result) ? body.result.result : undefined;
+      if (!Array.isArray(raw)) throw new Error(`NEAR RPC: ${method} returned no result`);
+      return JSON.parse(fromUtf8(Uint8Array.from(raw as number[]))) as unknown;
     },
 
     async txOutcome(txHash, sender) {

@@ -7,7 +7,7 @@
 // LIVE_UPSTREAMS). The partner test app (partner/app.ts) is driven through `window.e2e`: gesture
 // actions are armed and then started by a real click on its #act button, so window.open runs with user activation.
 import { type APIResponse, type BrowserContext, type Frame, type FrameLocator, type Page, type Route, test as base, expect } from '@playwright/test';
-import { GOOGLE_AUTH_URL, GOOGLE_CERTS_URL, GoogleStub } from '../src/google-stub.ts';
+import { GOOGLE_AUTH_URL, GOOGLE_CERTS_URL, GoogleStub, stackGoogleKey } from '../src/google-stub.ts';
 import type { AppSpec as ServerAppSpec } from '../src/server/api.ts';
 import {
   API_URL,
@@ -121,7 +121,7 @@ const HANA_ORIGINS: readonly string[] = [VAULT_ORIGIN, AUTH_ORIGIN, new URL(API_
 export const test = base.extend<{ google: GoogleStub; requests: RequestLog; noCookies: void }>({
   google: [
     async ({ context }, use) => {
-      const google = new GoogleStub();
+      const google = new GoogleStub({ key: stackGoogleKey(API_URL) });
       await routeStubs(context, google);
       await use(google);
     },

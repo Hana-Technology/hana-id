@@ -626,3 +626,53 @@ merged, nothing deployed. The minimal slice of batch 8 for an internal demo: pla
   `createHana({loginMethods})`, email-only apps.
 - **Decisions (to confirm)**: D245–D249. The sandbox-dev demo steps: `docs/operations.md` "Email login demo on
   sandbox-dev (batch 8a)" (SendGrid needed for real mail).
+
+## Batch 8b result (with batch 7)
+
+Branch `feat/email-login-8b` (from `develop` @ 91a7afb), not merged, nothing deployed, no testnet transaction. Batch 7
+(the path through `get_identity`) and the rest of batch 8 (linking), plus key export for email wallets (the user's
+addition, D246 lifted). No contract change; no path, nonce layout or derivation input changed.
+
+- **Batch 7, the path** (`packages/core/src/links.ts` `pathIdentity`, `vault/login.ts` `ownPath`, `auth/export-page.ts`
+  `pathFor`): the vault and the export window read `get_identity` on their own RPC, check the view's key against the
+  identity key they compute, and derive the identity's own path, its account root's (an active member), or nothing
+  (pending: `link_pending` with `effectiveAtMs`). D249's "path from the token" is gone; a pairing failure re-reads the
+  session and the identity once (a link that activated meanwhile); a resynced own-path session of a since-linked
+  identity ends `session_consumed` (D136). Golden tests: an unlinked Google identity gives `s1#google#<sub>#0` byte for
+  byte, read through `get_identity` (`packages/web/test/vault/linking.test.ts`, `email-login.test.ts`); a member gets
+  its root's key; the export window exports the root's key for a member.
+- **Google's verified email** (D254): the second, silent request (`GOOGLE_EMAIL_FLOW = 'second_request'`), one
+  interactive retry when Google needs consent; the access token rides in follow-up slot 1 to the vault and only to
+  google-match. The spike page `apps/smoke/spike-email.html` (batch 0) is built, not run.
+- **The four cases** (`vault/login.ts` `matchGoogle`, `judgeLink`; `auth/email-page.ts`; `auth/callback-page.ts`):
+  google-match before any chain call; Google-hosted case A silent; case A not hosted ("Link and continue" with
+  google-match's prepared code, or "Sign in with email"); case A that can't link ("Sign in with email" only); case B
+  only after this popup's email step (`caseB {linkTicket, emailSub}`, D139), immediate when hosted, else pending with
+  the banner and **Cancel this link**; case C and the rest a plain login. No match answer: a Google identity without a
+  wallet is refused (D255).
+- **D133 in the vault**: fresh `get_config` / `get_identity` / `get_account` reads, `judgeAutoLink` (the contract's
+  order), the join and the `auto_link` nonce checked, the link token verified on chain with exactly that nonce, then
+  the linked CKD payload signed (`signDeriveLinked`). **D137**: a linked session is never derived plainly; it is
+  revoked and the login ends `derive_failed` (`link_restart`, D257).
+- **The follow-up channel** (D256): `followKey` in auth-params, slots derived by HMAC, the vault's notices and the
+  popup's answers through the login relay (the API accepts the vault's writes), the popup waiting for the vault's last
+  word.
+- **Banners, SDK** (D259): link banners in the login popup (pending with Cancel, the link this login made, recent ones
+  with Remove for the root), `hana.account()`, `linkChanged`, `hana.linkAccount({method})`, `link_refused`,
+  `loginProgress: linking`.
+- **Email export** (D258): the export window offers both methods in an app with email; an email code over its own
+  session (`session` purpose, no new issuer purpose), checked on chain; the path through `get_identity`.
+- **Outside the web**: the issuer's case-B `verify` answers `sub` with the `linkTicket` (D256); the API's login relay
+  takes writes from `vaultOrigin`, and the vault page's `connect-src` adds `EMAIL_ISSUER_URL` (`gen` writes it).
+- **Tests**: core (the layouts against `email_fixture.json`, the views, `pathIdentity`, `judgeAutoLink`, the follow-up
+  slots, the new protocol shapes), web (the vault's path, the four cases, D133/D137/D139, google-match unavailable,
+  pending, `hana.account()`, `linkChanged`, a banner's Cancel, `linkAccount`, the callback's legs, the email page's
+  case B and follow-up mode, `/login`'s follow-up key and link tasks, email export), the API (relay writers, the vault
+  page's CSP, `gen`), the issuer (`verify`'s `sub`), the spike page; Playwright in Chromium, Firefox and WebKit on the
+  local stack with the `outbox` stub (`apps/e2e/tests/linking.spec.ts`, 9 per browser: case C, case A Google-hosted silent, case A not hosted with the code and with "Sign in with email", case B hosted, case B not hosted pending with the banner's Cancel, a pending email login refused, email-wallet key export, a Google-only app unchanged; 222 in all, the 195 earlier ones green; the stack's mock chain keeps accounts and links, a server-side Google backend answers tokeninfo, userinfo and revoke).
+- **Sandbox-dev steps**: `docs/operations.md` "Turning linking on (batch 8b)" (what users see in each case; no switch
+  of its own beyond `login_methods`; D248's "demo scopes only" lifted where Google logins have written hints).
+- **Left for later**: `createHana({loginMethods})`; the `/email/unlock`, `/email/confirm` and `/link/cancel` pages;
+  banners in the approval and export popups and Hana Home; email-only apps; running the spike; measuring latency and
+  gas on testnet (batch 8's "Deploy").
+- **Decisions (to confirm)**: D254–D259.

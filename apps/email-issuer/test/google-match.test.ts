@@ -235,13 +235,15 @@ describe('the four cases', () => {
     expect(login.idToken).toBeUndefined();
     expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM email_issuance').first('n')).toBe(0);
     expect(login.linkTicket).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    // The address's pseudonym goes with the ticket, for the vault's D139 check (D256); never the address.
+    const eSub = await sub(h, email);
+    expect((login as { sub?: string }).sub).toBe(eSub);
     // Without the ticket (a plain Google login), nothing is minted: never silently at a Google login.
     const plain = await match(h, app, acc);
     expect(plain.body.decision).toBe('case_b');
     expect(plain.body.emailToken).toBeUndefined();
     const { body, commitment } = await match(h, app, acc, { linkTicket: login.linkTicket! });
     expect(body.linkImmediate).toBe(true);
-    const eSub = await sub(h, email);
     const t = await decodeToken(body.emailToken!);
     expect(t.claims.sub).toBe(eSub);
     const gIk = identityKey(app.scope, 'google', acc.sub);

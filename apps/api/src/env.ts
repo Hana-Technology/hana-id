@@ -102,6 +102,11 @@ export interface Env {
    */
   EMAIL_ISS?: string;
   EMAIL_PUBLIC_KEYS?: string;
+  /**
+   * The email issuer's URL (manifest `emailIssuer.url`, else `apiUrl`; D230): the vault page's CSP `connect-src` adds
+   * its origin, since the vault calls the issuer's google-match (build plan batch 8b). Absent without an issuer.
+   */
+  EMAIL_ISSUER_URL?: string;
   /** Optional per-method gas overrides in Tgas (see gas.ts), e.g. GAS_DERIVE_KEY_TGAS. */
   [gasOverride: `GAS_${string}_TGAS`]: string | undefined;
   DB: D1Database;

@@ -306,7 +306,11 @@ describe('the Hana API: apps/api’s Worker, /v1/login and /v1/derive mocked', (
     const value = await encryptRelayPayload(relayKey, relayId, { idToken: 'a.b.c' });
     const read = (key: Uint8Array, query = '?wait=1') => call(api, `/v1/login-relay/${relayId}${query}`, { origin: VAULT_ORIGIN, headers: { 'x-hana-relay-key': base64UrlEncode(key) } });
 
-    expect((await call(api, `/v1/login-relay/${relayId}`, { method: 'POST', origin: VAULT_ORIGIN, body: value })).status).toBe(403);
+    expect((await call(api, `/v1/login-relay/${relayId}`, { method: 'POST', origin: PARTNER_ORIGIN, body: value })).status).toBe(403);
+    // The vault writes follow-up slots (batch 8b): another slot, one write.
+    const followId = relayIdFor(randomBytes(32));
+    const followValue = await encryptRelayPayload(relayKey, followId, { idToken: 'a.b.c' });
+    expect((await call(api, `/v1/login-relay/${followId}`, { method: 'POST', origin: VAULT_ORIGIN, body: followValue })).status).toBe(204);
     // No `wait`: an empty slot answers at once.
     const started = Date.now();
     expect((await read(readKey, '')).status).toBe(204);

@@ -547,7 +547,9 @@ export async function handleVerify(request: Request, ctx: Ctx): Promise<Response
         const t: TicketRecord = { appId: app.id, scopeId: rec.scopeId, sub, googleSubs: caseB, expiresAtMs: now + LINK_TICKET_TTL_MS };
         if (!(await challengeStub(deps, ticketName(linkTicket)).putTicket(t))) linkTicket = undefined;
       }
-      return ok(ctx, 200, { googleWallet: true, deviceTicket: owner, ...(linkTicket ? { linkTicket } : {}) }, { appId: app.id, purpose: rec.purpose, decision: 'case_b' });
+      // With the ticket goes this address's `sub` (a pseudonym, never the address): the vault signs the case-B link
+      // only for a link token of this `sub`, so it needs this popup's own email step (D139, D256).
+      return ok(ctx, 200, { googleWallet: true, deviceTicket: owner, ...(linkTicket ? { linkTicket, sub } : {}) }, { appId: app.id, purpose: rec.purpose, decision: 'case_b' });
     }
     const { token: idToken } = await mint(ctx, app, rec.scopeId, sub, rec.nonce!, 'session');
     return ok(ctx, 200, { idToken, googleWallet: false, deviceTicket: owner }, { appId: app.id, purpose: rec.purpose });

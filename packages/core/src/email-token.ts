@@ -155,3 +155,19 @@ export async function verifyEmailIdToken(token: string, expect: EmailTokenExpect
   if (signers.size < Math.max(1, policy.required)) return invalid('Not enough signatures');
   return { ok: true, token: { iss, aud, sub, nonce, iat, exp, kids } };
 }
+
+/**
+ * The `sub` claim of an email token, read without any check (null when it doesn't parse). Only for choosing which
+ * identity's chain state to read before `verifyEmailIdToken`, whose nonce depends on it (a link token's `auto_link`
+ * nonce commits to the joining identity); the verified token's `sub` must then be this one.
+ */
+export function peekEmailTokenSub(token: string): string | null {
+  try {
+    const body: unknown = JSON.parse(token);
+    if (typeof body !== 'object' || body === null || typeof (body as { payload?: unknown }).payload !== 'string') return null;
+    const sub = jsonSegment((body as { payload: string }).payload)?.sub;
+    return typeof sub === 'string' && sub.length > 0 && sub.length <= 255 && !sub.includes('#') ? sub : null;
+  } catch {
+    return null;
+  }
+}

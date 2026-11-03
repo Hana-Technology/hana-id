@@ -12,7 +12,8 @@ day) on 2026-11-02. D230–D234, D250–D252 (branch `feat/email-login-6`, to co
 D154, D155, D199 and D206. Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
 provider note, two "Superseded or amended" rows, the user-mail line under "Proposed", and the headings from D125 on, checked against `develop` @ 1c6a124 and what sandbox-dev runs (`docs/operations.md`) on
 2026-11-02 (branch `docs/consistency-pass`); no decision changed. D220–D224 (branch `feat/batch-c-4`, to confirm) on
-2026-11-02. D245–D249 (branch `feat/email-login-8a`, to confirm) on 2026-11-02.
+2026-11-02. D245–D249 (branch `feat/email-login-8a`, to confirm) on 2026-11-02. D254–D259 (branch `feat/email-login-8b`, to
+confirm) on 2026-11-03, with batch 8b notes on D246 (lifted), D248 ("demo scopes only" lifted) and D249 (superseded).
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -3525,6 +3526,9 @@ Spec ambiguities met while building the minimal slice of batch 8 (no linking). A
   re-authentication there (the code step in export mode, an email-token check in `export-page.ts`) comes with a later
   batch. Refusing is safe: the export window would otherwise sign in with Google and stop at its address check.
 - Rejected: building export's email step now (not needed for a plain email login).
+- **Lifted by batch 8b (2026-11-03, `feat/email-login-8b`; the user's request):** an email wallet exports like a
+  Google one, after a fresh email code in the export window over its own session (D258); `data.reason:
+  'email_export'` no longer exists.
 
 ### D247. The SDK surface: `login_method_unavailable`, `emailHint` rules, Google plus email only
 - Date 2026-11-02 · Status: to confirm; built (core `protocol.ts`, `api-types.ts`; `client/login.ts`) · Source: spec
@@ -3555,6 +3559,11 @@ Spec ambiguities met while building the minimal slice of batch 8 (no linking). A
   mocked chain and MPC), said as such.
 - Rejected: allowing the outbox on sandbox-dev (codes in a store operators can read on a shared env); a temporary
   sender (more code that would ship to a real env).
+- **"Demo scopes only" lifted by batch 8b (2026-11-03, to confirm):** every Google login of an app with email now runs
+  google-match, which writes the hint, so an email login of a Google-wallet address reaches case B instead of a second
+  wallet. The residual (a Google wallet opened before its app turned email on has no hint until its owner's next
+  Google login there) is accepted per scope or waited out (`docs/operations.md` "Turning linking on (batch 8b)",
+  `docs/mainnet-readiness.md` row 7.1g). Turning email on stays by hand until batch 9.
 
 ### D249. Batch 8a's paths come from the token, not `get_identity`; the popup's storage
 - Date 2026-11-02 · Status: to confirm · Source: build plan batch 7 ("compute the path from `get_identity`"), batch 8;
@@ -3580,6 +3589,118 @@ Spec ambiguities met while building the minimal slice of batch 8 (no linking). A
     8a doesn't call, so nothing writes `email_hints` (see D248: email identities opened in 8a stay separate wallets).
     The screen is built and unit-tested for 8b.
 - Rejected: building `get_identity` resolution now (not needed while no links exist, and batch 6 is still in review).
+- **Superseded by batch 7/8b (2026-11-03, `feat/email-login-8b`):** the vault and the export window resolve the path
+  through `get_identity` (`packages/core/src/links.ts` `pathIdentity`); the "path from the token" shortcut is gone.
+  The popup's storage rules stand, with the follow-up key added beside the relay key (D256).
+
+## Email login build, batch 8b (linking in the popup and the vault, with batch 7), 2026-11-03
+
+Spec ambiguities met while building batch 7 (path resolution) and batch 8b (google-match, the four cases, D133/D137/
+D139 in the vault, banners, `linkAccount`, email export). Each takes the safer reading. All to confirm.
+
+### D254. Google's verified email: a second, silent request by default; one interactive retry; the switch waits for the spike
+- Date 2026-11-03 · Status: to confirm; built (`packages/web/src/auth/google.ts` `GOOGLE_EMAIL_FLOW`, `callback-page.ts`) ·
+  Source: spec "How the popup gets Google's verified email" (the spike decides; the fallback), build plan batch 0
+- Decision: `GOOGLE_EMAIL_FLOW = 'second_request'`, a code constant (changed only by a reviewed change). In a login of
+  an app with email the login's own request stays `response_type=id_token`, `scope=openid`; the callback relays the
+  token with `access: 'follow'`, then requests `response_type=token`, `scope=email`, `prompt=none`,
+  `login_hint=<the token's sub>` and relays the access token in follow-up slot 1. When Google answers that silent
+  request with `consent_required`, `interaction_required`, `login_required` or `account_selection_required` (the first
+  time an app's client asks for `email`), the callback asks once more without `prompt=none` (Google shows its email
+  consent); a second failure is relayed as the error. `'one_request'` (`id_token token`, `openid email`) is built but
+  off, for after the spike (`apps/smoke/spike-email.html`). A link task's and a proof's Google requests never ask for
+  `email`. Either way the vault and the API keep refusing an ID token with `email` (`token_has_pii`).
+- Why: the fallback is correct whatever the spike finds; the spec's `prompt=none` alone would fail the first login
+  of every user (no consent yet), and turning that into "no match" would refuse their login (D255).
+- Rejected: `prompt=consent` on the retry (asks every time); one request now (unknown whether the ID token carries
+  `email`).
+
+### D255. When google-match can't answer, a Google identity without a wallet or an account is refused
+- Date 2026-11-03 · Status: to confirm; built (`vault/login.ts` `matchGoogle`) · Source: spec "The four cases" ("The
+  vault runs google-match before any chain call"), D122
+- Decision: in a login of an app with email, if the issuer is unreachable, answers an error, or no access token came
+  (the user declined Google's email consent), the vault reads `get_identity` / `get_account` of the Google identity:
+  own, never opened and not the root of an account with members → refused (`api_unavailable`, `data.reason:
+  'email_match_unavailable'`, "try again"); otherwise (it has a wallet, or is in an account) a plain login.
+- Why: such an identity may be case A (an email wallet exists for its address); a plain login would derive its own
+  path, a second wallet that can never merge (D122). An identity that already has a wallet can't be case A.
+- Cost: while the issuer is down, nobody can open a *new* Google wallet in an app with email; existing users are
+  unaffected. A user who refuses Google's email consent can't open a new Google wallet there.
+- Rejected: proceeding without the match (a second wallet); refusing every Google login (existing users locked out).
+
+### D256. The follow-up channel: the popup waits for the vault's word through relay slots; the vault may write them; `verify` answers the case-B `sub`
+- Date 2026-11-03 · Status: to confirm; built (`packages/core/src/links.ts` `followSlot`, `relay.ts` `FollowNotice`,
+  `vault/login.ts` `FollowChannel`, `auth/email-page.ts` follow-up mode, `apps/api/src/login-relay.ts` WRITERS,
+  `apps/email-issuer/src/handlers.ts` `verify`) · Source: spec "Popup flow" (case A's "Link and continue" after the
+  vault's google-match; banners in "every Hana popup"), D139 ("the `sub` of the address verified there (the issuer's
+  `verify` answer)")
+- Decision:
+  - Google's pages sever `window.opener` (COOP), so the vault can't post to the popup after Google, yet case A's
+    screen needs google-match's answer, which only the vault may ask for (D199's CORS, and the task's "from the vault
+    only"). So a login of an app with email carries `followKey` (32 random bytes) in auth-params; slot `n` (1..12) has
+    read key `HMAC-SHA256(followKey, "hana-id/relay-follow/v1" ‖ u8 n)` and id `b64url(sha256(read key))`; values are
+    AES-GCM under `relayKey` with the slot's AAD. The vault writes notices in even slots, the popup answers notice `n`
+    in `n + 1`, slot 1 is the access token. The API's login relay takes writes from `vaultOrigin` too (one write per
+    slot as before). The popup stays open until the vault's last word (`done`, with banners or none; `stop`).
+  - The email step needs the address's `sub` for D139, and the popup can't compute it (`K_sub`): the issuer's
+    case-B `verify` answers `sub` beside `linkTicket` (a pseudonym already public once linked; only after a correct
+    code; never the address).
+- Why: one mechanism serves case A's screens, the banners, the proofs of `linkAccount` and the access token, with the
+  relay's existing guarantees (end-to-end encryption, single use, nothing logged).
+- Rejected: google-match from the popup (breaks D199's vault-only CORS and the "vault only" rule); a separate
+  Durable Object kind (more surface for the same property); deriving the slot keys from `relayKey` (one key, two
+  algorithms).
+
+### D257. D137's recovery ends the login after revoking; D136's stale session asks the user to sign in again
+- Date 2026-11-03 · Status: to confirm; built (`vault/login.ts` `LoginChain.onLinkedError`, `derive`) · Source: D137
+  ("revokes that session and restarts with a fresh session key, a fresh Google token and a fresh link token"), D136
+- Decision: a linked login resends only the API's "not executed" answers, and uses a known transaction's CKD answer
+  when it has one. On `session_exists`, `session_key_in_use`, `ckd_failed`, a timeout, a NEAR error or an unknown
+  outcome it reads the session and, if live, revokes it (`POST /v1/sessions/revoke`, counter `used + 1`), then ends
+  the login with `derive_failed` (`data.reason: 'link_restart'`). The restart is the user's next sign-in (a fresh
+  session key, Google token and link token; Google-hosted case A links silently again). A refusal the API makes
+  before relaying (`link_refused`, `link_pending`, `links_unavailable`) ends it with that code. `identity_linked` from
+  `/v1/derive` (a resynced session on an identity's own path that has since joined an account, D136) ends
+  `session_consumed` with `data.reason: 'identity_linked'` (the vault's "Continue signing in" launcher).
+- Why: a fresh Google token needs the user (a new nonce for a new session key); an automatic retry inside the popup
+  would need a second Google round trip the user didn't ask for, and every failure path stays one rule.
+- Rejected: an automatic restart through the follow-up channel (more states for a rare path).
+
+### D258. Email-wallet key export (D246 lifted): the `session` purpose over the export window's own session
+- Date 2026-11-03 · Status: to confirm; built (`auth/export-page.ts`, `auth/login-page.ts` in export mode,
+  `auth/email-page.ts` export mode, `vault/vault.ts` `startExport`) · Source: the user (2026-11-03, "key export for
+  email wallets"), D27, D41, D111, D246
+- Decision: no new issuer purpose. The export window already opens its own short-lived session (`max_uses = 1`, its
+  own nonce and relay); in an app with email its child popup offers both methods, and the email step's code is a
+  `session` code over that session's commitment, so the token is bound to the export session exactly as Google's is.
+  The export window checks the token against the chain's email keys and policy and the scope's email client, as the
+  vault does, resolves the path through `get_identity` (a linked identity exports the account root's key, the shared
+  wallet; a pending one is refused, `link_pending`), and shows the key only if it is the vault session's address.
+  The export limit (3 an hour per path, D59) and the 5-minute erase (D111) are unchanged. Case B in export mode (the
+  address belongs to a Google wallet and has none of its own) offers only "Sign in with Google".
+- Why: a new purpose would be a new nonce layout in the issuer and the contract's fixture for the same binding.
+- Rejected: an `export` purpose.
+
+### D259. Banners, Cancel and Remove in the login popup; `hana.account()` and `linkChanged`; `linkAccount` proves the root
+- Date 2026-11-03 · Status: to confirm; built (`vault/login.ts` `Afterword`, `PendingLink`; `vault/vault.ts`
+  `account`, `noteMethods`, `linkAccount`; `client/client.ts`) · Source: spec "Notices", "Explicit linking", "SDK"
+- Decision:
+  - **Banners** show in the login popup after a login (its last word): every pending member (with **Cancel**), the
+    member this login added (named "your … sign-in now opens this wallet too"), and active members that became active
+    in the last 7 days (with **Remove** when the signed-in identity is the root). A login without them closes the
+    popup at once. Cancel or Remove is a fresh sign-in of the login's own method over a `link_change` nonce the vault
+    computed (fresh salt, the account's current epoch), relayed as `cancel_link` / `unlink_identity`. Other Hana
+    popups (approvals, export) show no banners yet; Hana Home will.
+  - **`hana.account()`**: from `get_account` of the session path's owner on the vault's own RPC: the root (`root:
+    true`) and each member as `active` (or past its `effectiveAtMs`: lazy activation) or `pending`; no `sub`, no key.
+  - **`linkChanged`**: after a login that linked (its result), at a session's first `hana.account()` for each pending
+    member, and for every change a later `hana.account()` sees (added, activated, `removed`); after a banner's action.
+  - **`hana.linkAccount({method})`**: the account proof is the root's (whose path is the session's), so it works
+    after a reload whatever method the user signed in with; Google roots sign in with `login_hint` set to the root.
+  - Not built: `createHana({loginMethods})`, the unlock and confirm pages (`/email/unlock`, `/email/confirm`), and
+    `/link/cancel` (the notice mail's link: an email-side cancel needs the address's identity key, which only the
+    issuer can compute, so cancel goes through a sign-in of an active method for now).
+- Why: the popup is the one Hana surface every login passes through; the partner page gets the facts to show.
 
 ## Superseded or amended
 
@@ -3623,6 +3744,8 @@ Spec ambiguities met while building the minimal slice of batch 8 (no linking). A
 | `create_session` opens a session for anyone holding the token; after a front-run `create_session` the key holder derives with counter `used + 1` | A bare `create_session` needs the session key's proof of possession bound to its parameters; a session meant to carry a link is revoked and restarted, never derived plainly (D137) | `docs/contract-interface.md` "Sessions and CKD" |
 | Email spec: the testnet signing keys (primary and standby) both Worker secrets | The standby is published and posted on chain but kept off the Worker (D196) | `docs/operations.md` "Email issuer" |
 | Email spec: case A's code started with `start` (purpose `auto_link`) and google-match called again with `link: true` | google-match prepares the `auto_link` challenge with Google's verified address; the popup sends its first code with `resend` (D195) | `docs/api.md` "Email issuer" |
+| Batch 8a: the vault fixes the path from the token (D249); no key export for email wallets (D246); email for demo scopes only (D248) | The path from `get_identity` (batch 7); email export over the export window's own session (D258); D248's limit lifted where Google logins write hints | `docs/architecture.md` "Automatic linking", "Key export" |
+| Email spec: the vault sends google-match with the popup's `{idToken, accessToken}` from one Google request | A second, silent `email` request by default (D254), relayed in a follow-up slot (D256) | `packages/web/src/auth/google.ts` |
 
 ## Proposed, not yet confirmed
 
@@ -3662,6 +3785,11 @@ methods, with a global cap).
 To confirm from email login batch 8a (`feat/email-login-8a`): D245 (the email step's cancel codes and progress), D246
 (no key export for email wallets yet), D247 (the SDK surface: `login_method_unavailable`, hints, no email-only apps),
 D248 (turning email on for the demo by hand) and D249 (paths without `get_identity`, the popup's storage).
+To confirm from email login batch 8b (`feat/email-login-8b`): D254 (Google's email by a second, silent request, one
+interactive retry), D255 (a Google identity without a wallet is refused when google-match can't answer), D256 (the
+follow-up channel; `verify` answers the case-B `sub`), D257 (D137's recovery ends the login after revoking), D258
+(email export over the export window's own `session` code) and D259 (banners in the login popup, `hana.account()`,
+`linkChanged`, `linkAccount`; what isn't built).
 To confirm from the identity token's step 7 (the KMS signer's code): D215 (the manifest shape and credentials), D216
 (`DIGEST`), D217 (strict DER, the self-check), D218 (one `Sign`, no retry, limits) and D219 (the standby's region, the
 IAM policy on the active key only).

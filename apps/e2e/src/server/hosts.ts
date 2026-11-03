@@ -52,7 +52,8 @@ export interface PagesEnv {
 const E2E_PAGES: PagesEnv = { envName: ENV_NAME, vaultOrigin: VAULT_ORIGIN, authOrigin: AUTH_ORIGIN, apiUrl: API_URL, nearRpc: NEAR_RPC, emailIssuerUrl: ISSUER_URL };
 
 export function vaultHost(api: ApiModules, d1: D1Shim, pages: PagesEnv = E2E_PAGES): Handler {
-  const apiEnv = { DB: d1, ENV_NAME: pages.envName, API_URL: pages.apiUrl, NEAR_RPC: pages.nearRpc, VAULT_ORIGIN: pages.vaultOrigin };
+  // EMAIL_ISSUER_URL: the vault page's connect-src names the issuer (the vault calls google-match, batch 8b).
+  const apiEnv = { DB: d1, ENV_NAME: pages.envName, API_URL: pages.apiUrl, NEAR_RPC: pages.nearRpc, VAULT_ORIGIN: pages.vaultOrigin, ...(pages.emailIssuerUrl ? { EMAIL_ISSUER_URL: pages.emailIssuerUrl } : {}) };
   let n = 0;
   const env = {
     VAULT_ORIGIN: pages.vaultOrigin,

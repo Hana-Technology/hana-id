@@ -4,7 +4,22 @@
 // `sender_account_id` the pinned RELAYER. It never takes session state from the API. A lying RPC can fail or delay a
 // login, never forge one: every CKD result still passes the pairing check against the pinned key. Each read goes to
 // the manifest `rpc`, and to `rpcFallback` only when the primary fails (../near-call.ts), one endpoint per answer.
-import { type CkdResult, type EmailChainKey, type EmailSignerPolicy, type SessionView, base64Decode, base64Encode, fromUtf8, isCkdResult, isSessionView, utf8 } from '@hana-id/core';
+import {
+  type AccountView,
+  type CkdResult,
+  type EmailChainKey,
+  type EmailSignerPolicy,
+  type IdentityView,
+  type SessionView,
+  base64Decode,
+  base64Encode,
+  fromUtf8,
+  isCkdResult,
+  isSessionView,
+  parseAccountView,
+  parseIdentityView,
+  utf8,
+} from '@hana-id/core';
 import { type NearEndpoints, isPendingTxError, nearCall } from '../near-call.ts';
 
 type Fetch = typeof fetch;
@@ -109,6 +124,29 @@ export class NearView {
       throw new Error('NEAR RPC: malformed get_self_issued');
     }
     return { required: value.required as number, signers: signers.map((s) => ({ id: s.id as string, kids: [...(s.kids as string[])] })) };
+  }
+
+  /**
+   * `get_identity(scope_id, provider, sub)` (contract v3): where the identity stands, for the path it derives (batch 7)
+   * and the link judgements. Throws when no endpoint answers or the answer isn't the v3 shape (a v2 contract has no
+   * such view).
+   */
+  async identity(scopeId: string, provider: string, sub: string): Promise<IdentityView> {
+    return parseIdentityView(await this.view('get_identity', { scope_id: scopeId, provider, sub }));
+  }
+
+  /** `get_account(scope_id, provider, sub)`: the account the identity is in (as root or member), or null. */
+  async account(scopeId: string, provider: string, sub: string): Promise<AccountView | null> {
+    return parseAccountView(await this.view('get_account', { scope_id: scopeId, provider, sub }));
+  }
+
+  /**
+   * Whether links are open on chain: `get_config().unrecorded_wallets` is exactly `false` (D135; a pre-v3 contract has
+   * no field, so links stay closed there, as at the API, D232).
+   */
+  async linksOpen(): Promise<boolean> {
+    const value = await this.view('get_config', {});
+    return isObj(value) && value.unrecorded_wallets === false;
   }
 
   /** The outcome of a relayed transaction (sender: the pinned RELAYER). Network errors throw. */

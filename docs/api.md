@@ -1,6 +1,6 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's)
 
-Last verified against code: 2026-11-02 (branch `feat/email-login-8a`: the auth page Worker's `/login/email` and its
+Last verified against code: 2026-11-03 (branch `feat/email-login-8b`: the login relay's writes from `VAULT_ORIGIN` and the follow-up slots, the vault page's `connect-src` with `EMAIL_ISSUER_URL`, the issuer's case-B `verify` answering `sub` with its `linkTicket`, the web as the caller of google-match, `/v1/sessions/revoke` and `/v1/link*`; D254–D259); 2026-11-02 (branch `feat/email-login-8a`: the auth page Worker's `/login/email` and its
 `EMAIL_ISSUER_URL`, the web as the caller of `start` / `resend` / `verify` and of `GET /v1/app`'s `loginMethods`;
 D245–D249); 2026-11-02 (branch `feat/email-login-6`: email tokens on `/v1/sessions` and `/v1/login`, the
 create_session proof of possession, `/v1/login`'s `linkJwt` precheck, the link relays `/v1/link*`, the email-login
@@ -100,7 +100,7 @@ its `active_from` on, with nothing run at that moment); loopback origins (and th
 
 | Caller (`Origin`) | `/v1/app` | `/v1/login` | `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke` | `/v1/link*` (L) | Vault endpoints | Login relay |
 |---|---|---|---|---|---|---|
-| `VAULT_ORIGIN` | yes | yes | yes | yes | yes | read |
+| `VAULT_ORIGIN` | yes | yes | yes | yes | yes | read, write (follow-up notices, batch 8b) |
 | `AUTH_ORIGIN` | yes | yes | no | yes | no | write, read |
 | a partner origin of the app | yes, any key, any env | no | only test-scope apps in dev envs (`apps/smoke`) | no, never | no | no |
 
@@ -522,13 +522,19 @@ methods: `405`. Per-IP limits as above (`429 rate_limited`, `503 rate_limiter_un
 
 | Request | Origin | Body / headers | Responses |
 |---|---|---|---|
-| `POST` | `AUTH_ORIGIN` | `{iv, ct}` only, base64url; iv 12 bytes, ct ≥ 16 bytes, body ≤ 8 KiB | `204`; `409 relay_used` if ever written; `503 relay_unavailable` |
+| `POST` | `AUTH_ORIGIN`, `VAULT_ORIGIN` (batch 8b) | `{iv, ct}` only, base64url; iv 12 bytes, ct ≥ 16 bytes, body ≤ 8 KiB | `204`; `409 relay_used` if ever written; `503 relay_unavailable` |
 | `GET ?wait=<1..25>` (absent = answer at once) | `VAULT_ORIGIN`, `AUTH_ORIGIN` | `x-hana-relay-key: <b64url of 32 bytes>` | `200 {iv, ct, serverTimeMs, heldMs}` (consumed; `heldMs`: how long the value sat in the slot before this read, on the object's clock: a duration, never the write's time); `204` still empty after `wait` s; `410 relay_gone` read or expired; `403 relay_forbidden` missing/wrong key (slot untouched); `400 bad_request` bad `wait`; `503 relay_unavailable` |
 
 The value lives 120 s after the write, then a tombstone answers 410 for 120 s more, then the object is empty. Only
 ciphertext is stored; bodies, keys and relay ids are never logged. For a `pk_test_` app the encrypted payload also
 carries the login popup's stage durations (`timings` beside `idToken` or `error`, at most 8 numbers, `@hana-id/core`
 `relay.ts`); the API can't read them any more than the token.
+
+A login of an app with email (batch 8b, D256) also uses **follow-up slots**: ordinary slots whose ids derive from a
+`followKey` only the vault and its popup hold (`@hana-id/core` `links.ts` `followSlot`), the vault writing its notices
+(google-match's screens, link banners, its last word) and the popup its answers (Google's access token, a link token, a
+proof), each slot written once and read once by the other side, each value AES-GCM under the login's `relayKey`. The
+API sees only ciphertext and slot ids; a writer can't forge a value without `relayKey`.
 
 ### `GET {VAULT_ORIGIN}/vault?pk=<publishable key>` · B
 
@@ -550,7 +556,7 @@ lowercase http(s) origins, loopback ones only for `pk_test_` in dev envs, sorted
 
 Headers: `content-security-policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:;
 font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors <origins | 'none'>; connect-src <API_URL origin>
-<NEAR_RPC origin> [<NEAR_RPC_FALLBACK origin>] https://www.googleapis.com`, `cross-origin-resource-policy: cross-origin`, `cache-control: no-store`,
+<NEAR_RPC origin> [<NEAR_RPC_FALLBACK origin>] https://www.googleapis.com [<EMAIL_ISSUER_URL origin>]` (the issuer only when it isn't the API's own origin: the vault calls google-match, batch 8b; a malformed `EMAIL_ISSUER_URL` is a `503 misconfigured` page), `cross-origin-resource-policy: cross-origin`, `cache-control: no-store`,
 `referrer-policy: no-referrer`, `x-content-type-options: nosniff`.
 
 Errors are an empty HTML page with `frame-ancestors 'none'` and no config: `403` (`unknown_app`, `app_suspended`,
@@ -1137,6 +1143,7 @@ Vars are generated from `envs/<env>.json` by `apps/api/scripts/gen-wrangler.ts` 
 | `MPC_ACCOUNT` | var | `mpc` | `/v1/login` failure mapping |
 | `VAULT_ORIGIN`, `AUTH_ORIGIN` | var | `vaultOrigin`, `authOrigin` | `gen` refuses an env without both |
 | `API_URL` | var | `apiUrl` | vault page `connect-src` |
+| `EMAIL_ISSUER_URL` | var, optional | `emailIssuer.url`, else `apiUrl` (only with an `emailIssuer` block) | the vault page's `connect-src` (google-match, batch 8b) |
 | `DO_LOCATION_HINT` | var | `cloudflare.durableObjectLocation` | only written when set |
 | `BLS_PRECHECK`, `REJECT_PII_ON_SESSIONS` | var | `gen` writes `"0"` | `"1"` turns each on |
 | `APP_CHANGE_DELAY_MS` | var | `appChangeDelayMs` | the guarded-change delay (`guarded/config.ts`): missing, not an integer, outside 60 s..7 d, or under 24 h on `mainnet` makes every guarded change refuse with `internal` (`AdminRpc.addOrigins`, `proposeChange`, `createApp`, `ackNotice`) |
@@ -1340,7 +1347,7 @@ decrypts its address (D197); only the client holds both.
 ### `POST /v1/email/verify` · E
 
 `{challengeId, code}` (6 digits) → `200 {idToken, googleWallet: false, deviceTicket}`, or in case B `200 {googleWallet:
-true, linkTicket?, deviceTicket}` with no token. Each check is reserved in the mailbox's limiter before the code is
+true, linkTicket?, sub?, deviceTicket}` with no token (`sub`, this address's `e1.` pseudonym, only with `linkTicket`: the vault signs a case-B link only for a link token of that `sub`, D139, D256). Each check is reserved in the mailbox's limiter before the code is
 compared (one atomic call, refunded when the code is right), and the challenge counts its attempts atomically, so
 parallel guesses can't outrun either (D198). Errors: `400 code_invalid {attemptsLeft}` (5 wrong codes kill the
 challenge; 10 wrong from one requester lock it out of that mailbox for an hour; past 18 failed checks a day per mailbox

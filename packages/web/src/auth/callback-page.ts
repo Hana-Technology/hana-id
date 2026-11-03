@@ -3,18 +3,31 @@
 // Google's answer under it and writes it to the relay, then closes. The vault (or the export window) reads the slot
 // with its read key; the API stores only ciphertext.
 //
-// SECURITY: the fragment holds a Google ID token. It is cleared from the URL before anything else, never logged,
-// stored or shown, and dropped once encrypted; relayKey is zeroed after use.
-import { ApiError, type RelayPayload, encryptRelayPayload } from '@hana-id/core';
+// Linking (build plan batch 8b), in a login of an app with email (the entry carries the follow-up key):
+// - two-request mode (auth/google.ts): after relaying the login's token (`access: 'follow'`), it makes the second,
+//   silent Google request for the `email` scope, and that answer (`#access_token`) comes back here to follow-up
+//   slot 1 (asked once more without `prompt=none` when Google needs the user);
+// - one-request mode: the access token rides beside the token;
+// - case B's "Link and continue" (the email step stored it): the token carries `caseB {linkTicket, emailSub}` (D139);
+// - a proof the vault asked for (a link method's, `leg: 'proof'`) goes to its own follow-up slot;
+// then, instead of closing, the window goes to /login/email's follow-up mode, which reads the vault's next notice
+// (google-match's screens, link banners, the vault's last word).
+//
+// SECURITY: the fragment holds a Google ID token (and maybe an access token). It is cleared from the URL before
+// anything else, never logged, stored or shown, and dropped once encrypted; relayKey and followKey are zeroed after
+// use, or stored again (sessionStorage, 10 min) only for the next leg.
+import { ApiError, type RelayPayload, encryptRelayPayload, followSlot } from '@hana-id/core';
 import type { AuthApi } from './api.ts';
 import { dom, errorView } from './dom.ts';
-import { parseCallbackFragment } from './google.ts';
-import { takeLogin } from './login-storage.ts';
+import { type CallbackFragment, GOOGLE_EMAIL_FLOW, SILENT_ERRORS, googleAccessUrl, parseCallbackFragment, unverifiedSub } from './google.ts';
+import { type TakenLogin, storeLoginEntry, takeLogin, zeroTaken } from './login-storage.ts';
 import { type PageWindow, isFramed } from './page-window.ts';
 
 export interface CallbackPageDeps {
   win: PageWindow;
   api: AuthApi;
+  /** This page's origin (env.authOrigin): the redirect URI of a second Google request. */
+  authOrigin?: string;
   now?: () => number;
   /** Monotonic ms on this page's clock (performance.now), for a pk_test_ app's timings. */
   perfNow?: () => number;
@@ -57,10 +70,15 @@ export type CallbackOutcome =
   /** The relay refused the write (409 `relay_used`, …) or the network failed; the window stays open. */
   | 'relay_failed';
 
+/** Where a login of an app with email goes once a leg is relayed (batch 8b): the email step's follow-up mode. */
+export const FOLLOW_PATH = '/login/email';
+
 export async function runCallbackPage(deps: CallbackPageDeps): Promise<CallbackOutcome> {
   const { win, api } = deps;
   const now = deps.now ?? (() => Date.now());
   const perfNow = deps.perfNow ?? (() => performance.now());
+  /** Google's redirect URI for a second request: this page's own origin (the env's authOrigin). */
+  const authOrigin = deps.authOrigin ?? (typeof location === 'undefined' ? '' : location.origin);
   const scriptStart = perfNow();
   const d = dom(win.document);
   // First: read the fragment and drop it from the URL and history entry.
@@ -87,8 +105,28 @@ export async function runCallbackPage(deps: CallbackPageDeps): Promise<CallbackO
 
   const { relayKey } = taken;
   d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Signing in'), d.h('p', { class: 'muted' }, 'Finishing sign-in…')));
-  let payload: RelayPayload | null =
-    fragment.kind === 'token' ? { idToken: fragment.idToken } : fragment.kind === 'error' ? { error: fragment.error } : { error: 'invalid_response' };
+  // Batch 8b: a login of an app with email (its entry has the follow-up key) has more legs than one.
+  const followKey = taken.followKey ?? null;
+  const home = taken.home ?? fragment.state;
+  // The second request's silent attempt needed the user: ask once more, interactively (auth/google.ts).
+  if (followKey && taken.leg === 'access' && fragment.kind === 'error' && SILENT_ERRORS.has(fragment.error) && !taken.interactive && taken.clientId && taken.loginHint) {
+    let stored = false;
+    try {
+      storeLoginEntry(win.sessionStorage, fragment.state, relayKey, now(), undefined, { followKey, home, next: taken.next ?? 2, leg: 'access', clientId: taken.clientId, loginHint: taken.loginHint, interactive: true });
+      stored = true;
+    } catch {
+      // No storage: relay Google's error instead (the vault decides without the address).
+    }
+    if (stored) {
+      zeroTaken(taken);
+      win.location.assign(googleAccessUrl({ clientId: taken.clientId, authOrigin: authOrigin, state: fragment.state, loginHint: taken.loginHint, silent: false }));
+      return 'relayed';
+    }
+  }
+  let payload: RelayPayload | null = payloadFor(fragment, taken);
+  // Two-request mode: the login's own token says an access token follows, in slot 1 (never with a link task's proof).
+  const accessLeg = !!followKey && !taken.leg && !taken.task && fragment.kind === 'token' && GOOGLE_EMAIL_FLOW === 'second_request' && taken.clientId ? unverifiedSub(fragment.idToken) : null;
+  if (accessLeg && payload && 'idToken' in payload) payload = { ...payload, access: 'follow' };
   // A pk_test_ app's login (/login stored its timings): this page's stages ride in the encrypted slot to the vault.
   // `callbackPrep` ends just before the POST; encrypting takes well under a millisecond.
   const timings = (): Record<string, number> | undefined =>
@@ -114,12 +152,44 @@ export async function runCallbackPage(deps: CallbackPageDeps): Promise<CallbackO
         err instanceof ApiError ? err.code : 'api_unavailable',
       ),
     );
+    zeroTaken(taken);
     return 'relay_failed';
   } finally {
     payload = null;
-    relayKey.fill(0);
   }
+  if (followKey) {
+    try {
+      if (accessLeg) {
+        // The second, silent request for the email scope: its answer goes to follow-up slot 1.
+        const slot = followSlot(followKey, 1).id;
+        storeLoginEntry(win.sessionStorage, slot, relayKey, now(), undefined, { followKey, home, next: 2, leg: 'access', clientId: taken.clientId as string, loginHint: accessLeg });
+        win.location.assign(googleAccessUrl({ clientId: taken.clientId as string, authOrigin: authOrigin, state: slot, loginHint: accessLeg, silent: true }));
+        return 'relayed';
+      }
+      // The vault's next notice, read by the email step's follow-up mode (it shows google-match's screens and banners).
+      storeLoginEntry(win.sessionStorage, home, relayKey, now(), undefined, { followKey, home, next: taken.next ?? 2 });
+    } catch {
+      d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Signed in'), d.h('p', { class: 'muted' }, 'You can close this window.')));
+      return 'relayed';
+    } finally {
+      zeroTaken(taken);
+    }
+    win.location.assign(`${FOLLOW_PATH}#${home}`);
+    return 'relayed';
+  }
+  relayKey.fill(0);
   d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Signed in'), d.h('p', { class: 'muted' }, 'You can close this window.')));
   win.close();
   return 'relayed';
+}
+
+/** What this leg relays: the token (with case B's proof), the access token, a proof, or Google's error. */
+function payloadFor(fragment: CallbackFragment, taken: TakenLogin): RelayPayload {
+  if (fragment.kind === 'error') return { error: fragment.error };
+  if (fragment.kind === 'access') return taken.leg === 'access' ? { accessToken: fragment.accessToken } : { error: 'invalid_response' };
+  if (fragment.kind !== 'token' || taken.leg === 'access') return { error: 'invalid_response' };
+  if (taken.leg === 'proof') return { idToken: fragment.idToken, as: 'proof' };
+  // An access token beside the ID token only counts in one-request mode (the login's own request asked for it).
+  const access = taken.followKey && !taken.task && fragment.accessToken && GOOGLE_EMAIL_FLOW === 'one_request' ? { accessToken: fragment.accessToken } : {};
+  return { idToken: fragment.idToken, ...access, ...(taken.caseB ? { caseB: taken.caseB } : {}) };
 }

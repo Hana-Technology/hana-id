@@ -23,6 +23,7 @@ import { buildAll } from '../build.ts';
 import { stackFingerprint } from '../fingerprint.ts';
 import { EMAIL_ISS, LIVE_API_URL, LIVE_AUTH_ORIGIN, LIVE_ENV_NAME, LIVE_NEAR_RPC, LIVE_VAULT_ORIGIN, PORTS } from '../stack.ts';
 import { MockApi } from './api.ts';
+import { GoogleBackend } from './google-backend.ts';
 import { LocalIssuer, newIssuerKey } from './issuer.ts';
 import { loadApiModules } from './api-modules.ts';
 import { Chain } from './chain.ts';
@@ -39,7 +40,10 @@ export async function startStack(fingerprint: string): Promise<void> {
   // Email login (batch 8a): the issuer's throwaway key, active on the mocked chain and known to the API.
   const issuerKey = newIssuerKey();
   chain.emailKey = { kid: issuerKey.publicJwk.kid, n: issuerKey.publicJwk.n, e: issuerKey.publicJwk.e };
-  const api = new MockApi(d1, chain, modules, { fingerprint, email: { iss: EMAIL_ISS, publicKeys: [issuerKey.publicJwk] } });
+  // Google's server-side endpoints for the Workers in this process (google-match's tokeninfo, userinfo, JWKS, revoke).
+  const google = await GoogleBackend.create();
+  google.install();
+  const api = new MockApi(d1, chain, modules, { fingerprint, email: { iss: EMAIL_ISS, publicKeys: [issuerKey.publicJwk] }, googleKey: () => google.privateJwk() });
   const issuer = await LocalIssuer.start(d1, issuerKey);
   const evm = new MockEvm();
   const loopback = ['127.0.0.1'];

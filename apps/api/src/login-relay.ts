@@ -5,7 +5,11 @@
 // its nonce, and can't put a token of its own in the slot. Reading needs `relayReadKey` (relayId = b64url(sha256 of
 // it)), which never leaves the vault, so whoever learns relayId (it is also the OAuth `state`) can't consume the slot.
 //
-//   POST /v1/login-relay/<relayId>            {iv, ct} (base64url)       authOrigin only     204 | 409 relay_used
+// A login that offers email (build plan batch 8b) also uses follow-up slots (core links.ts `followSlot`): the vault
+// writes its notices (google-match's screens, link banners) and the popup its answers, each slot write-once and
+// read-once like the first, each value under the same relayKey with the slot's own AAD.
+//
+//   POST /v1/login-relay/<relayId>            {iv, ct} (base64url)       authOrigin, vaultOrigin 204 | 409 relay_used
 //   GET  /v1/login-relay/<relayId>?wait=1..25  x-hana-relay-key: <b64url> vaultOrigin, authOrigin
 //        200 {iv, ct, serverTimeMs, heldMs} (consumed) | 204 (still empty after `wait` s) | 410 relay_gone | 403 relay_forbidden
 //
@@ -136,8 +140,12 @@ export class LoginRelay extends DurableObject<Env> {
 
 const RELAY_ALLOW_HEADERS = `content-type, ${RELAY_KEY_HEADER}`;
 const RELAY_METHODS = 'GET, POST, OPTIONS';
-/** Only the callback page (authOrigin) writes; the vault, or the export window on authOrigin, reads. */
-const WRITERS: readonly HanaPage[] = ['auth'];
+/**
+ * The callback page and the email step (authOrigin) write, and so does the vault, whose follow-up notices the popup
+ * reads (batch 8b); the vault, or the export window and the popup on authOrigin, read. A writer can't forge a value:
+ * each is AES-GCM under the login's relayKey, which only the vault and its popup hold.
+ */
+const WRITERS: readonly HanaPage[] = ['auth', 'vault'];
 const READERS: readonly HanaPage[] = ['vault', 'auth'];
 
 const isB64url = (v: unknown, min: number, max: number): v is string => {

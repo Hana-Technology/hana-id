@@ -251,6 +251,26 @@ The summary also has `audProject` (the Cloud project number the client ID starts
 different projects and getting the same `subFingerprint` shows that a partner can move from Hana's shared client to a
 Hana-held branded client without any address change (the path is `scope#provider#sub#key_index`, with no client ID).
 
+## Google email scope spike (`spike-email.html`)
+
+`http://localhost:5173/spike-email.html` is email login's batch 0 spike (`docs/email-login-build-plan.md`; not run yet):
+it decides whether the login popup can ask Google for the `email` scope in its one request, or needs the fallback the
+popup uses today (`GOOGLE_EMAIL_FLOW = 'second_request'` in `packages/web/src/auth/google.ts`). Same callback and
+redirect-URI rule as `spike.html`; no Hana API, no chain.
+
+- **A** asks once: `response_type=id_token token`, `scope=openid email`. The summary's `oneRequestUsable` is true only
+  when the ID token carried no personal claim (`emailInIdToken: false`) and an access token came with it.
+- **B** is the fallback: `scope=openid` first, then `response_type=token`, `scope=email`, `prompt=none`,
+  `login_hint=<sub>`; when Google answers that silent request with `consent_required` (or another "needs the user"
+  error) it asks once more without `prompt=none`, as the popup does.
+
+Both then call Google's `tokeninfo` (aud and sub match), `userinfo` (an address, `email_verified`, `hd` present and
+equal to the address's domain, a Gmail address) and `revoke`, from the page. The summary holds booleans and claim
+names only (never the address, `sub` or a token). Run it with a personal Gmail account, a Workspace account whose `hd`
+is its own domain, and a Google account registered with an outside address; write down what the consent screen lists,
+and record the results in `docs/context.md`. If A is usable for all three, `GOOGLE_EMAIL_FLOW` may become
+`'one_request'` (a reviewed change; the vault and the API keep refusing an ID token with `email` either way).
+
 ## Test checklist
 
 ### Vault page

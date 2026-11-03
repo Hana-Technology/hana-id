@@ -14,7 +14,8 @@ notes on D42, D254 and D255; D263's operations and pin-read notes and D264's scr
 on 2026-11-03 (branch `fix/8b-rereview`). Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
 provider note, two "Superseded or amended" rows, the user-mail line under "Proposed", and the headings from D125 on, checked against `develop` @ 1c6a124 and what sandbox-dev runs (`docs/operations.md`) on
 2026-11-02 (branch `docs/consistency-pass`); no decision changed. D220–D224 (branch `feat/batch-c-4`, to confirm) on
-2026-11-02. D245–D249 (branch `feat/email-login-8a`, to confirm) on 2026-11-02. D254–D259 (branch `feat/email-login-8b`, to
+2026-11-02. D245–D249 (branch `feat/email-login-8a`, to confirm) on 2026-11-02. D253 (branch
+`feat/scope-email-client-tool`, to confirm) on 2026-11-03. D254–D259 (branch `feat/email-login-8b`, to
 confirm) on 2026-11-03, with batch 8b notes on D246 (lifted), D248 ("demo scopes only" lifted) and D249 (superseded).
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
@@ -3567,6 +3568,8 @@ Spec ambiguities met while building the minimal slice of batch 8 (no linking). A
   wallet. The residual (a Google wallet opened before its app turned email on has no hint until its owner's next
   Google login there) is accepted per scope or waited out (`docs/operations.md` "Turning linking on (batch 8b)",
   `docs/mainnet-readiness.md` row 7.1g). Turning email on stays by hand until batch 9.
+- 2026-11-03: the scope's email client now has a command, `admin sandbox-dev scope:add-email-client --scope s2`
+  (D253); the demo's scope is `s2`, owned by `hana-id-admin-dev1.testnet`.
 
 ### D249. Batch 8a's paths come from the token, not `get_identity`; the popup's storage
 - Date 2026-11-02 · Status: to confirm · Source: build plan batch 7 ("compute the path from `get_identity`"), batch 8;
@@ -3893,6 +3896,35 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   encrypted.
 - Rejected: per-login relay budgets (the relay doesn't know which slots belong to one login, by design).
 
+## Operator tooling for the email demo, 2026-11-03
+
+### D253. Dev envs mint a scope's email client proof locally; production keeps the issuer's Access route
+- Date 2026-11-03 · Status: to confirm · Source: conversation (the internal email-login demo on sandbox-dev); D234,
+  D248 (its open "the owner's `propose_change` command"); `docs/operations.md` "Email login demo on sandbox-dev (batch
+  8a)" step 3
+- Decision: `admin <env> scope:add-email-client --scope <id> [--yes]` adds `("email", "email:<id>")` to a scope in one
+  command, without the issuer's `POST /v1/email/admin/client-proof` (behind Cloudflare Access, not configured on
+  sandbox-dev and possibly unusable on a `workers.dev` host). It mints the client proof on the operator's machine
+  with the issuer's own code (`apps/email-issuer/src/client-proof.ts`, which the staff route also uses: the same
+  claims, nonce layout and JWS JSON) and the manifest's active key from `.secrets/<env>/email-issuer-signing-key.json`,
+  checks it against a replica of the contract's checks with the manifest's key and with `get_issuer_keys("email")`,
+  then signs `propose_change` (0.01 NEAR, 150 Tgas) and, once due (waited up to 10 min), `execute_change` with the
+  scope's `Owner::Near` key from the keychain. A contract unit test (`tests/email/issuer_tokens.rs`) runs a proof
+  from that code through the real `propose_change` and `execute_change`; the CLI's test checks it mints that same
+  proof byte for byte.
+- **`local*` and `sandbox*` only, never mainnet** (nor staging or any production network): the command refuses every
+  other env name and any network or RPC that isn't testnet. In production the proof comes from the staff route
+  (Access, the staff allowlist, the audit row, the "active app with email on" check), and the scope's owner sends the
+  calls.
+- Why it's acceptable on testnet: the operator already holds the same Worker-secret signing key (the only copy is in
+  `.secrets/<env>/`, uploaded by `email-issuer put`), so the route adds no key control there; a proof binds one scope,
+  one `action_nonce` and one client, lives 10 minutes, and goes through the scope's owner and the timelock like any
+  other. What the local mint skips, the operator does by hand: the route's audit row (none is written) and its check
+  that an active app of the scope has email on (step 2 of the checklist comes first). Mainnet's issuer key lives in
+  AWS KMS with no exportable copy (D121), so the command could not mint there anyway.
+- Rejected: configuring Access on sandbox-dev for one demo (Access on `workers.dev` is uncertain); an unauthenticated
+  dev-only route on the issuer (a mint path that would ship to every env's code).
+
 ## Superseded or amended
 
 | Was | Now | Source |
@@ -3991,6 +4023,8 @@ google-match's per-IP limits, the relay body cap).
 To confirm from the demo polish (`fix/demo-polish`): D260 (an email login's own timing stages), D261 (`GET /v1/app`'s
 side-by-side reads, view timeouts, the login's retry and its timings) and D262 (the vault's `connected`, the SDK's one
 frame retry, `vault_unavailable`'s reasons).
+To confirm from `feat/scope-email-client-tool`: D253 (dev envs mint the email client proof locally; production keeps
+the issuer's Access route).
 To confirm from the identity token's step 7 (the KMS signer's code): D215 (the manifest shape and credentials), D216
 (`DIGEST`), D217 (strict DER, the self-check), D218 (one `Sign`, no retry, limits) and D219 (the standby's region, the
 IAM policy on the active key only).

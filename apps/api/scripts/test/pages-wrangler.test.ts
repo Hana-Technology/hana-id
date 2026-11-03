@@ -11,7 +11,8 @@ import { PAGES_CONFIG_FILES, pagesAssetsDir, pagesPlacement, pagesWranglerConfig
 const apiDir = resolve(fileURLToPath(import.meta.url), '..', '..', '..');
 // sandbox-dev without its identity token block: these tests move apiUrl and list exact vars; the identity vars
 // have their own tests.
-const { identityToken: _identity, ...manifest } = loadEnv('sandbox-dev');
+// Also without its emailIssuer block (the live manifest may or may not carry one); the email test adds a fixture block.
+const { identityToken: _identity, emailIssuer: _emailIssuer, ...manifest } = loadEnv('sandbox-dev');
 
 const dirs: string[] = [];
 const tmp = (): string => {

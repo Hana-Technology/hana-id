@@ -63,7 +63,8 @@ describe('manifestSchema: Durable Object location', () => {
 
 describe('manifestSchema: rpcFallback', () => {
   it('is optional, https only, and not rpc itself', () => {
-    const { rpcFallback: _, ...base } = raw();
+    // Without an email issuer: with one, rpcFallback is required outside local* envs (D263, tested below).
+    const { rpcFallback: _, emailIssuer: _issuer, ...base } = raw();
     expect(manifestSchema.safeParse(base).success).toBe(true);
     expect(manifestSchema.parse({ ...base, rpcFallback: 'https://rpc.testnet.example' }).rpcFallback).toBe('https://rpc.testnet.example');
     const http = manifestSchema.safeParse({ ...base, rpcFallback: 'http://rpc.testnet.example' });

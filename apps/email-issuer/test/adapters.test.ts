@@ -8,6 +8,7 @@ import { base64Encode, base64UrlEncode, fromUtf8, utf8 } from '../src/bytes.ts';
 import { NearChain } from '../src/chain.ts';
 import { senderFor } from '../src/deps.ts';
 import { readDeviceTicket, suppressionKey } from '../src/keys.ts';
+import { clientProofClaims } from '../src/client-proof.ts';
 import { clientProofPreimage, nonceOf } from '../src/layouts.ts';
 import { codeMail, displayAppName, linkNoticeMail } from '../src/mail.ts';
 import { OutboxSender } from '../src/outbox.ts';
@@ -131,6 +132,9 @@ describe('staff routes (admin/*) behind Cloudflare Access', () => {
     const t = await decodeToken(proof);
     expect(t.verified).toBe(true);
     expect(t.claims).toMatchObject({ aud: `email:${app.scope}`, sub: 'hana-client-proof', nonce: nonceOf(clientProofPreimage(env.SIGNER_ACCOUNT, app.scope, 3)) });
+    // Exactly the claims of client-proof.ts, which the dev-env CLI's local mint uses too (D253).
+    const c = t.claims as { iat: number; jti: string };
+    expect(t.claims).toEqual(clientProofClaims({ iss: env.EMAIL_ISS, signerAccount: env.SIGNER_ACCOUNT, scopeId: app.scope, actionNonce: 3, iat: c.iat, jti: c.jti }));
     const rows = await env.DB.prepare("SELECT staff, ticket, scope_id, action_nonce, jti FROM email_admin_audit WHERE action = 'client_proof'").all();
     expect(rows.results).toEqual([{ staff: 'staff@example.com', ticket: 'SUP-1234', scope_id: app.scope, action_nonce: 3, jti: t.claims.jti }]);
     expect(await env.DB.prepare('SELECT purpose, app_id FROM email_issuance WHERE jti = ?1').bind(t.claims.jti).first()).toEqual({ purpose: 'client_proof', app_id: null });

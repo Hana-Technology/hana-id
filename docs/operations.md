@@ -1,6 +1,8 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-02 (branch `feat/email-login-8a`: "Email login demo on sandbox-dev (batch 8a)",
+Last verified against code: 2026-11-03 (branch `feat/scope-email-client-tool`: `admin scope:add-email-client` in
+"Email login demo on sandbox-dev (batch 8a)" steps 1 and 3, the admin command list and "Email issuer" step 6; D253);
+2026-11-02 (branch `feat/email-login-8a`: "Email login demo on sandbox-dev (batch 8a)",
 the auth page Worker's `EMAIL_ISSUER_URL`, the local demo on the e2e stack's outbox; D245–D249); 2026-11-02 (branch `feat/email-login-6`, after both batch 6 reviews: "Email login on
 sandbox-dev" against the merged develop (0006/0009/0010, `hotDb` 9, C3's step-6 checks, C4's optional capture and its
 required marker copy, the pages before the API, the zero-downtime pool switch, the upgrade's `createProof` gate, the
@@ -807,6 +809,7 @@ admin <env> app:settings <app id | publishable key> [--persistence session|none]
              [--raw-sign off|approval] [--google-web-client <client id>|default] [--auto-approve <policy.json>|off] [--remote]
 admin <env> scope:register [--client <google client id> …] [--allow-shared] (--owner-near <account> | --owner-google <sub>) […]
              [--member <council member>] [--approve-with <council member>] [--yes]
+admin <env> scope:add-email-client --scope <scope id> [--yes]      # dev envs only (local*, sandbox*), D253
 admin <env> issuer-keys:lead-times [--remote]
 admin <env> owner:call <method> [--args '<json>'] [--gas <Tgas>] [--member <m>] [--approve-with <m>] [--yes]
 admin <env> owner:vote <proposal id> --member <m> [--reject] [--yes]
@@ -823,6 +826,9 @@ Run as `corepack pnpm --filter @hana-id/scripts run admin <env> <command> …`. 
 - `scope:register`: `admin_register_scope` through the owner (`owner`'s keychain key, or a council proposal with
   `--member` / `--approve-with`); prints the call and stops without `--yes`. 1..5 owners, ≤ 10 clients; `--client` required unless `--allow-shared`; a shared client ID is refused as
   `--client`. Prints the contract-assigned id (`s1`, `s2`, …).
+- `scope:add-email-client --scope <id>` (dev envs only, D253): adds the scope's email client `("email",
+  "email:<id>")` with a locally minted client proof, signed by the scope's NEAR owner; prints the plan without
+  `--yes`. Steps and checks: "Email login demo on sandbox-dev (batch 8a)" step 3.
 
   ```sh
   corepack pnpm --filter @hana-id/scripts run admin <env> scope:register --client <id>.apps.googleusercontent.com --allow-shared --owner-near <account> --yes
@@ -1893,7 +1899,9 @@ origin. The API never forwards these requests.
    `governance_delay_ms`, then anyone executes it). The scopes' email clients come later (batch 8, D234): `AddClient
    ("email", "email:" + scope)` with a staff client proof (`POST {url}/v1/email/admin/client-proof {scopeId,
    actionNonce, ticket}` with the scope's current `action_nonce`, "Staff calls" below; configure `emailIssuer.access`),
-   which the issuer mints only once an active app of the scope lists `email` in `login_methods`.
+   which the issuer mints only once an active app of the scope lists `email` in `login_methods`. In dev envs
+   (`local*`, `sandbox*`) `admin <env> scope:add-email-client --scope <id>` mints it locally instead and sends the
+   owner's calls (D253; "Email login demo on sandbox-dev (batch 8a)" step 3).
 7. **Deploy**: `corepack pnpm --filter @hana-id/email-issuer run deploy` (before step 6's keys go on chain, so the
    watchdog's JWKS check finds it). On a zone env, add the route `<api host>/v1/email/*` → `hana-id-email-issuer-<env>`
    (Workers Routes on the API's zone; the more specific route wins over the API's); on `workers.dev` nothing more.
@@ -2230,9 +2238,10 @@ sign in with email there (the issuer logs `code_mail` `misconfigured`). Set Send
 
 Checklist, in order (each check before the next):
 
-1. **The issuer's staff route for client proofs**: `emailIssuer.access` in `envs/sandbox-dev.json` (the Cloudflare
-   Access application in front of `{url}/v1/email/admin/*` and the staff allowlist, D88), `email-issuer gen`, issuer
-   deploy. Check: `POST {url}/v1/email/admin/client-proof` without Access is refused.
+1. **The issuer's staff route for client proofs: not needed on sandbox-dev** (step 3 mints the proof locally, D253).
+   Outside dev envs, and for the other staff calls: `emailIssuer.access` in the manifest (the Cloudflare Access
+   application in front of `{url}/v1/email/admin/*` and the staff allowlist, D88), `email-issuer gen`, issuer deploy.
+   Check: `POST {url}/v1/email/admin/client-proof` without Access is refused.
 2. **`login_methods` for the demo app** (D1; no CLI command yet). Find its id with `admin sandbox-dev app:list
    --remote`, then
 
@@ -2242,13 +2251,33 @@ Checklist, in order (each check before the next):
 
    Nothing changes for users yet: `GET /v1/app` lists email only once the scope holds its email client (step 3).
    Check: `SELECT id, login_methods FROM apps WHERE login_methods <> 'google'` is the demo app alone.
-3. **The scope's email client** `AddClient ("email", "email:<demo scope>")` (D234): read the scope's `action_nonce`
-   (`get_scope`), ask the issuer for the client proof (`POST {url}/v1/email/admin/client-proof {scopeId, actionNonce,
-   ticket}` through Access, "Staff calls" in "Email issuer"), then the scope's owner sends `propose_change(scope,
-   auth, {"AddClient":{"provider":"email","aud":"email:<scope>"}}, client_proof)` (`docs/contract-interface.md`;
-   0.01 NEAR attached), waits the scope's `change_delay_ms`, and anyone calls `execute_change`. Which account owns
-   the demo's scope, and the exact command, are to confirm (D248: there is no CLI command for an owner's
-   `propose_change` yet). Check: `get_scope` lists `["email","email:<scope>"]`; `GET /v1/app` for the demo's key has
+3. **The scope's email client** `AddClient ("email", "email:<demo scope>")` (D234), in one command (dev envs only,
+   D253). The demo's scope is `s2`, owned by `hana-id-admin-dev1.testnet` (its full-access key in
+   `~/.near-credentials/testnet/`); the issuer's active signing key must be in
+   `.secrets/sandbox-dev/email-issuer-signing-key.json` (0600, from `email-issuer sandbox-dev init`):
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run admin sandbox-dev scope:add-email-client --scope s2         # the plan
+   corepack pnpm --filter @hana-id/scripts run admin sandbox-dev scope:add-email-client --scope s2 --yes   # send
+   ```
+
+   It reads the scope fresh (`get_scope`: `action_nonce`, owners, clients, pending changes), refuses when the client
+   is already there, when the contract is paused, when the email issuer, its self-issued policy or the manifest's
+   active key isn't on chain (`get_issuer`, `get_self_issued`, `get_issuer_keys("email")`, n and e compared), or
+   when no `Owner::Near` of the scope has a full-access key in the keychain and on chain. It mints the client proof
+   with the issuer's own code (`apps/email-issuer/src/client-proof.ts`: the claims of the staff route, `sub`
+   `hana-client-proof`, `aud` `email:<scope>`, 10 min `exp`, a random `jti`) and checks it against the contract's
+   rules with the manifest's public key and with the chain's key before printing the plan (the proof is printed; the
+   key never is). With `--yes` the owner sends `propose_change(scope, "Near", {"AddClient":{"provider":"email",
+   "aud":"email:<scope>"}}, client_proof)` with 0.01 NEAR and 150 Tgas (one RS256 check, like `cancel_link`, D155),
+   waits out the change's `unlock_at_ms` when it is ≤ 10 min away (sandbox-dev's `change_delay_ms` is 60 s), sends
+   `execute_change` (50 Tgas, signed by the owner) and checks `get_scope`. A change that unlocks later stays pending:
+   re-run with `--yes` once it is due (a pending AddClient is executed, never proposed twice). Unlike the staff
+   route, the local mint doesn't check that an active app of the scope has email on: do step 2 first.
+   **In production the proof comes from the issuer's staff route behind Cloudflare Access** (`POST
+   {url}/v1/email/admin/client-proof {scopeId, actionNonce, ticket}`, "Staff calls" in "Email issuer"), audited, and
+   the scope's owner (the partner, or the council) sends `propose_change` itself; the command refuses every env but
+   `local*` and `sandbox*`. Check: `get_scope` lists `["email","email:<scope>"]`; `GET /v1/app` for the demo's key has
    `"loginMethods":["google","email"]` and `"email":{"aud":"email:<scope>"}`.
 4. **The pages, then the API, with batch 8a** (the same order as batch 6's step 4): `corepack pnpm --filter
    @hana-id/api run gen sandbox-dev` (the auth page Worker gets `EMAIL_ISSUER_URL`, `/login/email`'s connect-src),

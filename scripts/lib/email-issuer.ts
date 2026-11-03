@@ -118,7 +118,8 @@ export function newKey32(randomBytes: (n: number) => Uint8Array): string {
   return v;
 }
 
-function readKeyFile(file: string): RsaPrivateJwk {
+/** An RSA private JWK key file of .secrets/<env>/ (0600 checked; its contents never printed). */
+export function readKeyFile(file: string): RsaPrivateJwk {
   assertPrivate(file);
   const v = parseSecretJson<unknown>(readFileSync(file, 'utf8'), file);
   if (!isRsaPrivateJwk(v)) throw new Error(`${file} is not an RSA private JWK`);

@@ -21,7 +21,8 @@ import { corsHeaders, error, isObj, json, onlyKeys, readJson } from './http.ts';
 import { ipAggregates, ipSubject, isClientIp } from './ip.ts';
 import { type EmailClaims, TOKEN_LIFETIME_S, mintJws } from './jws.ts';
 import { CODE_RE, KeysUnavailable, codeMac, domainKey, issueDeviceTicket, mailboxKey, newCode, randomId, readDeviceTicket, requesterKey, suppressionKey } from './keys.ts';
-import { autoLinkPreimage, clientProofPreimage, EMAIL_PROVIDER, identityKey, nonceOf, sessionPreimage, type SessionCommitment } from './layouts.ts';
+import { CLIENT_PROOF_SUB, clientProofNonce, emailClient } from './client-proof.ts';
+import { autoLinkPreimage, EMAIL_PROVIDER, identityKey, nonceOf, sessionPreimage, type SessionCommitment } from './layouts.ts';
 import {
   CHALLENGE_TTL_MS,
   CONFIRM_TTL_MS,
@@ -48,8 +49,8 @@ import { SignerUnavailable } from './signer.ts';
 import { readWebhookBody, SIGNATURE_HEADER, suppressionsOf, TIMESTAMP_HEADER, verifyWebhook, webhookHeadersOk } from './webhook.ts';
 
 export const MAX_BODY = 8 * 1024;
-/** The `sub` of a staff client proof: not an `e1.` sub, so it can never be an email user's identity. */
-export const CLIENT_PROOF_SUB = 'hana-client-proof';
+/** The `sub` of a staff client proof (client-proof.ts): not an `e1.` sub, so it can never be an email user's identity. */
+export { CLIENT_PROOF_SUB } from './client-proof.ts';
 /** Hints read per verify (one address can be reported by a few Google accounts). */
 const MAX_HINTS = 4;
 /** A bounce suppresses for 30 days; a complaint until a staff unsuppress (M3). */
@@ -759,8 +760,8 @@ export async function handleClientProof(request: Request, ctx: Ctx): Promise<Res
   if (!(await scopeHasEmailApp(deps.env.APP_DB, scopeId))) return fail(ctx, 409, 'email_not_enabled', 'No active app of this scope has email on');
   const jti = randomId(16);
   await audit(deps, { staff: gate.staff, action: 'client_proof', ticket, scopeId, actionNonce: actionNonce as number, jti });
-  const { token } = await mint(ctx, null, scopeId, CLIENT_PROOF_SUB, nonceOf(clientProofPreimage(deps.env.SIGNER_ACCOUNT, scopeId, actionNonce as number)), 'client_proof', jti);
-  return ok(ctx, 200, { token, client: [EMAIL_PROVIDER, `email:${scopeId}`] }, { scopeId, purpose: 'client_proof', jti });
+  const { token } = await mint(ctx, null, scopeId, CLIENT_PROOF_SUB, clientProofNonce(deps.env.SIGNER_ACCOUNT, scopeId, actionNonce as number), 'client_proof', jti);
+  return ok(ctx, 200, { token, client: emailClient(scopeId) }, { scopeId, purpose: 'client_proof', jti });
 }
 
 /**

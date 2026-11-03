@@ -10,7 +10,8 @@
 // ~/.near-credentials/testnet/<owner>.json, or a council DAO proposal). owner:* and governance:status drive and read
 // the governance contract (lib/admin-owner.ts); council:replace-member proposes a council member change
 // (lib/council-members.ts). issuer-keys:lead-times reads the issuer key observations
-// (lib/admin-lead-times.ts) for D33's issuer-key delay.
+// (lib/admin-lead-times.ts) for D33's issuer-key delay. scope:add-email-client (dev envs only, D253) adds a scope's
+// email client with a locally minted client proof through the scope's NEAR owner (lib/admin-email-client.ts).
 import { loadEnv, type Manifest } from '@hana-id/env';
 import { assertCommandPositionals } from './lib/admin-args.ts';
 import {
@@ -32,6 +33,7 @@ import { LEAD_TIMES_SQL, type ObservationRow, leadTimesReport } from './lib/admi
 import { appSettings, defaultAppSettingsDeps, settingsAppArg } from './lib/admin-settings.ts';
 import { CliError, parseCli, run } from './lib/cli.ts';
 import { scopeRegister } from './lib/admin-scope.ts';
+import { scopeAddEmailClient } from './lib/admin-email-client.ts';
 import { governanceStatusCmd, ownerCallCmd, ownerProposalsCmd, ownerVoteCmd } from './lib/admin-owner.ts';
 import { councilReplaceMemberCmd } from './lib/council-members.ts';
 import { tryView } from './lib/contract.ts';
@@ -57,6 +59,12 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
                [--auto-approve <policy.json>|off]   (no setting flags: show the settings)
   scope:register [--client <google client id> …] [--allow-shared] (--owner-near <account> | --owner-google <sub>) […]
                  [--member <council member>] [--approve-with <council member>] [--yes]
+  scope:add-email-client --scope <scope id> [--yes]
+               dev envs (local*, sandbox*) only, D253: adds the scope's email client ("email", "email:<scope>"): mints
+               the client proof locally with .secrets/<env>/email-issuer-signing-key.json (checked against the manifest's
+               and the chain's email keys), the scope's NEAR owner sends propose_change (0.01 NEAR), then once due
+               (waited here up to 10 min) execute_change, and get_scope is checked. Elsewhere the proof comes from the
+               issuer's staff route behind Cloudflare Access
   issuer-keys:lead-times   per Google kid: first seen in the JWKS, first token, lead time, lifetime in the JWKS
   owner:call <method> [--args '<json>'] [--gas <Tgas, default 100>] [--member <m>] [--approve-with <m>] [--yes]
                an owner call on the contract through the manifest's owner: signed by the owner account, or a
@@ -74,7 +82,7 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
 
   --remote   act on the deployed D1 database (default: local, apps/api/.wrangler/state)
   --d1-name <name>  act on a rehearsal database (name containing "rehearsal") instead of the env's
-  --yes      scope:register, owner:call, owner:vote, council:replace-member: send the transaction (without it, only
+  --yes      scope:register, scope:add-email-client, owner:call, owner:vote, council:replace-member: send the transaction (without it, only
              print it); app:origins:park, app:origins:unpark: write (without it, only list)
   --allow-shared  scope:register only: the app may log in through Hana's shared Google client; with it, --client is
                   optional (an app with no Google client of its own)
@@ -100,6 +108,7 @@ const COMMANDS = [
   'app:origins:unpark',
   'app:settings',
   'scope:register',
+  'scope:add-email-client',
   'issuer-keys:lead-times',
   'owner:call',
   'owner:vote',
@@ -182,6 +191,9 @@ async function main(): Promise<void> {
     }
     case 'scope:register':
       await scopeRegister(m, args);
+      return;
+    case 'scope:add-email-client':
+      await scopeAddEmailClient(m, args, ownerDeps(m));
       return;
     case 'issuer-keys:lead-times':
       for (const line of leadTimesReport(d1Execute<ObservationRow>(m, LEAD_TIMES_SQL, { remote }), Date.now(), where)) console.log(line);

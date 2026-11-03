@@ -129,6 +129,24 @@ export function storeLoginEntry(storage: Storage, relayId: string, relayKey: Uin
 }
 
 /**
+ * Adds stage durations to the entry's timings (/login's `choose`, after the user picked a method). Only an entry that
+ * already has timings (a pk_test_ app's) gets them; the relay key is left as it is. Best effort: never throws.
+ */
+export function addLoginTimings(storage: Storage, relayId: string, timings: Record<string, number>): void {
+  if (!RELAY_ID_PATTERN.test(relayId)) return;
+  const key = LOGIN_ENTRY_PREFIX + relayId;
+  try {
+    const e = readEntry(storage, key);
+    if (!e?.t) return;
+    const t = { ...e.t, ...timings };
+    if (!isTimings(t)) return;
+    storage.setItem(key, JSON.stringify({ ...e, t }));
+  } catch {
+    // The timings only lose this stage.
+  }
+}
+
+/**
  * Takes the relayKey stored for `state` and deletes the entry (single use), or null when there is none, it is older
  * than 10 min, or it is malformed. A storage error counts as no entry.
  */

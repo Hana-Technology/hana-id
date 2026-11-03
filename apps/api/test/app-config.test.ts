@@ -1,7 +1,9 @@
 // GET /v1/app, batch B additions: name, serverTimeMs, google_web_client_id, calls from the Hana pages.
 import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ORIGIN, appHeaders, call, chain, seedApp, uid } from './helpers.ts';
+import { Rpc } from '../src/near/rpc.ts';
+import { CONFIG_READ_STALE_MS, VIEW_TIMEOUT_MS, clearViewCaches, getConfig } from '../src/views.ts';
+import { ORIGIN, appHeaders, call, chain, newKey, seedApp, uid } from './helpers.ts';
 import { AUTH, VAULT, hanaHeaders } from './login-helpers.ts';
 import { autoApprovePolicy } from './vault-helpers.ts';
 
@@ -21,9 +23,89 @@ describe('GET /v1/app (batch B)', () => {
     const res = await get(appHeaders(app));
     const b = await body(res);
     expect(res.status).toBe(200);
-    expect(b).toEqual({ name: `Test ${app.id}`, scopeId: app.scope, signer: env.SIGNER_ACCOUNT, google: { clientId: aud, mode: 'own' }, loginMethods: ['google'], serverTimeMs: expect.any(Number), autoApprovePolicy: null, rawSign: 'off', requestId: expect.any(String) });
+    expect(b).toEqual({
+      name: `Test ${app.id}`,
+      scopeId: app.scope,
+      signer: env.SIGNER_ACCOUNT,
+      google: { clientId: aud, mode: 'own' },
+      loginMethods: ['google'],
+      serverTimeMs: expect.any(Number),
+      autoApprovePolicy: null,
+      rawSign: 'off',
+      // A pk_test_ app's response carries the API's own time and phases (docs/api.md "Timings").
+      timings: { totalMs: expect.any(Number), phases: { app: expect.any(Number), limits: expect.any(Number), settings: expect.any(Number), chain: expect.any(Number) } },
+      requestId: expect.any(String),
+    });
     expect(b.serverTimeMs as number).toBeGreaterThanOrEqual(before);
     expect(b.serverTimeMs as number).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('a pk_live_ app gets no timings', async () => {
+    const app = await seedApp({ key: newKey('pk_live_') });
+    chain({ [newAud()]: app.scope });
+    const res = await get(appHeaders(app));
+    expect(res.status).toBe(200);
+    expect(await body(res)).not.toHaveProperty('timings');
+  });
+
+  it('reads get_config only when the scope needs a shared client, after get_scope', async () => {
+    clearViewCaches();
+    const app = await seedApp();
+    const own = newAud();
+    const near = chain({ [own]: app.scope });
+    near.views.get_scope = (a) => ({ id: a.scope_id, owners: [], clients: [['google', own]], pending: [], action_nonce: 0, allow_shared: true });
+    expect(await body(await get(appHeaders(app)))).toMatchObject({ google: { clientId: own, mode: 'own' } });
+    expect(near.viewCalls.map((c) => c.method)).toEqual(['get_scope']);
+    clearViewCaches();
+    const shared = newAud();
+    const other = chain({}, { shared: [shared], allowShared: [app.scope] });
+    expect(await body(await get(appHeaders(app)))).toMatchObject({ google: { clientId: shared, mode: 'shared' } });
+    expect(other.viewCalls.map((c) => c.method)).toEqual(['get_scope', 'get_config']);
+  });
+
+  it('a get_config that fails is 502 when the shared client is needed; an email-only app never uses it', async () => {
+    clearViewCaches();
+    const app = await seedApp();
+    const near = chain({}, { allowShared: [app.scope] });
+    near.views.get_scope = (a) => ({ id: a.scope_id, owners: [], clients: [['email', `email:${a.scope_id}`]], pending: [], action_nonce: 0, allow_shared: true });
+    near.views.get_config = () => {
+      throw new Error('config view down');
+    };
+    const res = await get(appHeaders(app));
+    expect([res.status, (await body(res)).code]).toEqual([502, 'near_unavailable']);
+    clearViewCaches();
+    await env.DB.prepare("UPDATE apps SET login_methods = 'email' WHERE id = ?1").bind(app.id).run();
+    const email = await get(appHeaders(app));
+    expect(email.status).toBe(200);
+    expect(await body(email)).toMatchObject({ google: null, loginMethods: ['email'], email: { aud: `email:${app.scope}` } });
+  });
+
+  it('a shared get_config read that never settles is dropped after CONFIG_READ_STALE_MS: the next read still answers', async () => {
+    clearViewCaches();
+    const near = chain({}, { shared: ['aud-1'] });
+    let hang = true;
+    near.onView = (method) => (method === 'get_config' && hang ? new Promise<void>(() => {}) : undefined);
+    void getConfig(env); // its request "cancelled": neither the answer nor the timeout ever comes
+    await new Promise((r) => setTimeout(r, 10));
+    hang = false;
+    const realNow = Date.now.bind(Date);
+    vi.spyOn(Date, 'now').mockImplementation(() => realNow() + CONFIG_READ_STALE_MS + 1);
+    const config = await getConfig(env);
+    expect(config.shared_clients).toEqual([['google', 'aud-1']]);
+    expect(near.viewCalls.filter((c) => c.method === 'get_config')).toHaveLength(2);
+  });
+
+  it('every contract view gives up after VIEW_TIMEOUT_MS (an abort signal); transactions wait for the node', async () => {
+    const seen: (AbortSignal | null | undefined)[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+      seen.push(init?.signal);
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    });
+    await expect(new Rpc(env.NEAR_RPC).view('signer.test', 'get_scope', {})).rejects.toThrow(/NEAR RPC unreachable/u);
+    await expect(new Rpc(env.NEAR_RPC).txStatus('h', 'relayer.test')).rejects.toThrow(/NEAR RPC unreachable/u);
+    expect(seen[0]).toBeInstanceOf(AbortSignal);
+    expect(seen[1]).toBeUndefined();
+    expect(VIEW_TIMEOUT_MS).toBe(8_000);
   });
 
   it('uses google_web_client_id when set, the scope’s first Google client when unset', async () => {

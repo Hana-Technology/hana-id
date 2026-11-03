@@ -180,6 +180,37 @@ describe('login (vault side)', () => {
     }
   });
 
+  it('a GET /v1/app that fails with a 5xx or the network is asked once more for the login; a second failure ends it', async () => {
+    for (const fail of [() => apiError(502, 'near_unavailable'), () => Promise.reject(new TypeError('Failed to fetch'))]) {
+      const browser = new Browser();
+      let failures = 1;
+      browser.backend.overrides.set('/v1/app', () => (failures-- > 0 ? fail() : undefined));
+      const t = await tab(browser);
+      await sleepReal(20);
+      // The background read after ready failed (and was dropped); the login reads again, fails once more, then retries.
+      failures = 1;
+      const { reply } = await login(t, g);
+      expect(reply.error).toBeUndefined();
+      expect(browser.backend.count('/v1/app')).toBe(3);
+    }
+    const browser = new Browser();
+    browser.backend.overrides.set('/v1/app', () => apiError(503, 'config_unavailable'));
+    const t = await tab(browser);
+    const before = browser.backend.count('/v1/app');
+    expect((await t.request('hana_login')).error?.code).toBe('api_unavailable');
+    expect(browser.backend.count('/v1/app') - before).toBe(2);
+  });
+
+  it('a 4xx from GET /v1/app is not asked again', async () => {
+    const browser = new Browser();
+    browser.backend.overrides.set('/v1/app', () => apiError(409, 'no_google_client'));
+    const t = await tab(browser);
+    await sleepReal(20);
+    const before = browser.backend.count('/v1/app');
+    expect((await t.request('hana_login')).error?.code).toBe('no_google_client');
+    expect(browser.backend.count('/v1/app') - before).toBe(1);
+  });
+
   it('409 no_google_client gives no_google_client', async () => {
     const browser = new Browser();
     browser.backend.overrides.set('/v1/app', () => apiError(409, 'no_google_client'));

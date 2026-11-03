@@ -7,7 +7,7 @@ import { type Headers_, corsHeaders, json, readJson } from './http.ts';
 import { ipSubject } from './ip.ts';
 import { log } from './log.ts';
 import { placedStub } from './placement.ts';
-import { type Caller, PARENT_ORIGIN_HEADER, RELAY_KEY_HEADER, checkCaller, preflightAllows } from './origins.ts';
+import { type Caller, PARENT_ORIGIN_HEADER, RELAY_KEY_HEADER, checkCaller, isTestApp, preflightAllows } from './origins.ts';
 import { precheckOwnerAction, sha256Hex } from './owner-actions.ts';
 import type { Limit, RateLimiter } from './rate-limiter.ts';
 import type { RelayInstance, RelayResult } from './relayer-key.ts';
@@ -310,31 +310,50 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
   const gate = await appGate(request, env, ctx, 'config');
   if (!gate.ok) return gate.response;
   const { app } = gate;
-  let autoApprovePolicy: AppSettings['autoApprovePolicy'];
-  let rawSign: AppSettings['rawSign'];
-  let methods: LoginMethod[];
-  try {
-    const row = await getSettingsRow(env.DB, app.id);
-    const settings = row ? await effectiveSettings(row, app.id, Date.now()) : null;
-    autoApprovePolicy = settings?.autoApprovePolicy ?? null;
-    rawSign = settings?.rawSign ?? 'off';
-    methods = await appLoginMethods(env.DB, app.id);
-  } catch {
-    return reject(ctx, 503, 'config_unavailable', 'App config is unavailable, try again');
-  }
+  ctx.exposeTimings = isTestApp(app);
+  // The D1 rows and the registry views don't depend on each other, so they run side by side (phases `settings` and
+  // `chain`, each from the gate's end to its own answer). `get_config` is read only when the scope says a shared
+  // client is needed (no web client of the app's own, no Google client in the scope, shared login allowed), right
+  // after `get_scope`. Both reads are awaited before any answer, on every path: an unawaited read could be cancelled
+  // with the request and leave getConfig's shared in-flight promise unsettled for the isolate's later requests.
+  const from = Date.now();
+  const timed = <T>(phase: string, p: Promise<T>): Promise<Settled<T>> =>
+    settle(p).then((r) => {
+      if (ctx.phases) ctx.phases[phase] = Math.max(ctx.phases[phase] ?? 0, Date.now() - from);
+      return r;
+    });
+  const settingsRead = timed(
+    'settings',
+    Promise.all([getSettingsRow(env.DB, app.id).then((row) => (row ? effectiveSettings(row, app.id, Date.now()) : null)), appLoginMethods(env.DB, app.id)]),
+  );
+  const web = app.google_web_client_id;
+  const chainRead = timed(
+    'chain',
+    getScope(env, app.scope_id).then(async (scope) => {
+      const needsShared = scope !== null && web === null && scope.allow_shared && !scope.clients.some(([p]) => p === 'google');
+      // Settled here: its failure counts only where the shared client is used (an email-only app never uses it).
+      return { scope, config: needsShared ? await settle(getConfig(env)) : null };
+    }),
+  );
+  const [settingsDone, chainDone] = await Promise.all([settingsRead, chainRead]);
+  if (!settingsDone.ok) return reject(ctx, 503, 'config_unavailable', 'App config is unavailable, try again');
+  const [settings, methods] = settingsDone.value;
+  const autoApprovePolicy: AppSettings['autoApprovePolicy'] = settings?.autoApprovePolicy ?? null;
+  const rawSign: AppSettings['rawSign'] = settings?.rawSign ?? 'off';
   // A Google-only app keeps batch B's answers and errors exactly.
   const googleOnly = methods.length === 1 && methods[0] === 'google';
   try {
-    const scope = await getScope(env, app.scope_id);
+    if (!chainDone.ok) throw chainDone.error;
+    const { scope, config } = chainDone.value;
     if (!scope) return reject(ctx, 409, 'scope_not_registered', 'The app’s scope is not registered on chain');
     let google: { clientId: string; mode: 'own' | 'shared' } | null = null;
     if (methods.includes('google')) {
-      const web = app.google_web_client_id;
       const own = scope.clients.find(([p, aud]) => p === 'google' && (web === null || aud === web));
       if (web !== null && !own && googleOnly) return reject(ctx, 409, 'no_google_client', 'The app’s Google web client is no longer one of its scope’s clients');
       if (own) google = { clientId: own[1], mode: 'own' };
       else if (web === null && scope.allow_shared) {
-        const shared = effectiveSharedClients(await getConfig(env)).find(([p]) => p === 'google');
+        if (config && !config.ok) throw config.error;
+        const shared = config ? effectiveSharedClients(config.value).find(([p]) => p === 'google') : undefined;
         if (shared) google = { clientId: shared[1], mode: 'shared' };
       }
       if (!google && googleOnly) return reject(ctx, 409, 'no_google_client', 'The app has no Google client and shared login is not available');

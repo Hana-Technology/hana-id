@@ -430,7 +430,7 @@ export class FakeBackend {
 
   private async route(call: ApiCall, url: URL, signal?: AbortSignal): Promise<Response> {
     const b = call.body as Record<string, unknown>;
-    if (call.path === '/v1/app') return json(200, { autoApprovePolicy: this.autoApprovePolicy, rawSign: this.rawSign, ...this.app, serverTimeMs: this.serverNow(), requestId: 'rq' });
+    if (call.path === '/v1/app') return json(200, { autoApprovePolicy: this.autoApprovePolicy, rawSign: this.rawSign, ...this.app, serverTimeMs: this.serverNow(), ...this.timingsField(), requestId: 'rq' });
     if (call.path === '/v1/login') {
       const r = this.createSession(b, true);
       const nearTx = this.nextTx();

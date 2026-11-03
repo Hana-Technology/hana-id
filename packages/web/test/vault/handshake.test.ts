@@ -26,6 +26,14 @@ describe('handshake', () => {
     expect(await t.ready()).toEqual({ status: 'logged_out', persistence: 'session', timings: expect.any(Object) });
   });
 
+  it('says connected on the port as soon as it takes the hello, before ready', async () => {
+    const t = tab();
+    t.hello();
+    await t.ready();
+    expect(t.events.map((e) => e.event).slice(0, 2)).toEqual(['connected', 'ready']);
+    expect(t.events[0]!.data).toBeNull();
+  });
+
   it.each([
     ['another source', { source: new FakeWindow() }],
     ['an unlisted origin', { origin: 'https://evil.test' }],

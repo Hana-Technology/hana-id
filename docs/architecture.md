@@ -3,7 +3,9 @@
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
 Last verified against code: 2026-11-03 (branch `feat/email-login-8b`: automatic linking and the path through
 `get_identity` in Status, the login flows ("Email login in the popup", "Automatic linking"), key export and key
-derivation, D254–D259); 2026-11-02 (branch `feat/email-login-8a`: email login in the popup and the vault in
+derivation, D254–D259); 2026-11-03 (branch `fix/demo-polish`: the vault's `connected` event and the SDK's one
+frame retry in Components, D262; `GET /v1/app` asked once more by the login, read side by side by the API, D261; the
+email login's own timing stages, D260); 2026-11-02 (branch `feat/email-login-8a`: email login in the popup and the vault in
 Status, Components and the login flow (the chooser, `/login/email`, the vault's on-chain email-token check, the
 `#email#` path, the record check), D245–D249); 2026-11-02 (branch `feat/email-login-6`: the API's email login part in Status, the login
 flows (email tokens, `linkJwt`, the create_session proof of possession, the D155 gas), the link relays, the issuer's
@@ -139,7 +141,7 @@ Who talks to whom:
 
 | From → to | Channel | What |
 |---|---|---|
-| Partner client → vault | `postMessage` hello, then a `MessageChannel` port (`packages/web/src/client/vault-connection.ts`) | Port methods (`hana_login`, `eth_signTransaction`, …) and events. Never key material |
+| Partner client → vault | `postMessage` hello, then a `MessageChannel` port (`packages/web/src/client/vault-connection.ts`) | Port methods (`hana_login`, `eth_signTransaction`, …) and events. Never key material. The vault says `connected` on the port once it has taken the hello (before storage and the unlock call), then `ready`; the SDK gives each frame 5 s to answer (5 s more while it is still loading; a loaded frame that doesn't answer is replaced once), then gives `ready` 20 s after `connected`, and on a failure removes the frame and reports `vault_unavailable` with `data.reason` (D262) |
 | Vault ↔ auth popups | `postMessage`, checked by `event.origin` and `event.source` (a popup the partner page opened reaches the vault as `opener.frames[v]`) | `hana:auth-params` (incl. `relayKey`, and `followKey` in a login that offers email), approval requests/results and `hana:approve-close`, export context |
 | Partner client → approval popup | `window.open` only (it holds the WindowProxy; the popup takes no message from it) | — |
 | Auth popup → Google | top-level navigation | Implicit flow, `response_type=id_token`, `scope=openid`, `prompt=select_account`; in a login that offers email, then a second silent request `response_type=token`, `scope=email`, `prompt=none`, `login_hint=<sub>` (D254) |
@@ -173,8 +175,9 @@ Browser steps: `packages/web/src/vault/login.ts`, `packages/web/src/auth/login-p
    24 h − 10 min)` on the server-corrected clock, `keyIndex = 0`, `maxUses` (1 in `'session'` mode, 2 in `'none'`),
    `nonce = sessionNonce(SIGNER, scopeId, …)` (`packages/core/src/layouts.ts:71`), `relayKey`, `relayReadKey` and
    `relayId = b64url(sha256(relayReadKey))` (`relayIdFor`, `layouts.ts:166`). `SIGNER` is a build constant; `scopeId`
-   comes from the vault page's inlined D1 config. It needs `GET /v1/app` first (`apps/api/src/handlers.ts:212`) for
-   the Google client and refuses a `signer` or `scopeId` that differs. As soon as `GET /v1/app` answers it also starts
+   comes from the vault page's inlined D1 config. It needs `GET /v1/app` first (`apps/api/src/handlers.ts`
+   `handleAppConfig`; normally answered already, the vault asks it right after `ready`; asked once more after a 5xx or
+   a network failure, D261) for the Google client and refuses a `signer` or `scopeId` that differs. As soon as `GET /v1/app` answers it also starts
    the registry check (D56, `packages/web/src/vault/login.ts` `checkScope`), which runs while the user is at Google:
    own client `scope_for_client('google', clientId)` must be `scopeId`; shared client `get_scope(scopeId)` must exist
    with `allow_shared`, and `get_config().shared_clients` must list the client (both views in parallel, D117). Its

@@ -1,7 +1,7 @@
 // `createHana`, the partner client (docs/batch-b-spec.md "Partner client"):
 //
 //   const hana = createHana({ publishableKey: 'pk_test_…', environment: 'sandbox-dev', evm?, stellar?, container? });
-//   await hana.ready;            // handshake done, status known (an unlock has run); rejects vault_unavailable after 5 s
+//   await hana.ready;            // handshake done, status known (an unlock has run); rejects vault_unavailable (vault-connection.ts)
 //   hana.status;                 // 'logged_out' | 'unlocking' | 'logging_in' | 'logged_in' | 'error'
 //   hana.on('statusChanged' | 'accountsChanged' | 'sessionExpired' | 'disconnect', cb);
 //   hana.login();                // call synchronously in a click handler
@@ -455,8 +455,9 @@ export class HanaClient extends Emitter<HanaEvents> {
 
   /**
    * A pk_test_ app's `ready` timings with this page's stages added (timings.ts): `mount` (createHana → the iframe in the
-   * document), `frameStart` (its load as seen here, minus the vault's own load stages) and `port` (iframe load → `ready`
-   * minus the vault's own time after the hello).
+   * document), `retry` (only after a retry: the first iframe → the one that answered), `frameStart` (its load as seen
+   * here, minus the vault's own load stages) and `port` (iframe load → `ready` minus the vault's own time after the
+   * hello).
    */
   #handshakeTimings(s: ReadyStatus): Record<string, number> | null {
     const marks = this.#conn.handshakeMarks;
@@ -465,7 +466,8 @@ export class HanaClient extends Emitter<HanaEvents> {
     const roundTrip = marks.readyAt - marks.loadAt;
     return {
       ...s.timings,
-      mount: Math.max(0, marks.appendedAt - this.#createdAt),
+      mount: Math.max(0, marks.firstAppendedAt - this.#createdAt),
+      ...(marks.appendedAt > marks.firstAppendedAt ? { retry: marks.appendedAt - marks.firstAppendedAt } : {}),
       frameStart: Math.max(0, marks.loadAt - marks.appendedAt - vaultLoad),
       port: Math.max(0, roundTrip - (s.timings.vault ?? roundTrip)),
     };
@@ -495,6 +497,7 @@ export class HanaClient extends Emitter<HanaEvents> {
 
   #onEvent(e: PortEvent): void {
     switch (e.event) {
+      case 'connected':
       case 'ready':
         return; // handled through conn.ready
       case 'accountsChanged':

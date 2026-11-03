@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-03 (branch `fix/8b-rereview`: "Turning linking on (batch 8b)"'s slow second
+Last verified against code: 2026-11-03 (branch `docs/sandbox-dev-state`: what sandbox-dev runs, per the operator on 2026-11-03: a state note under the hot DB gate, the watchdog's email pins and the email issuer sections); 2026-11-03 (branch `fix/8b-rereview`: "Turning linking on (batch 8b)"'s slow second
 provider and watching `path_unconfirmed`, D263); 2026-11-03 (branch `feat/email-login-8b` review fixes: "Turning linking on (batch 8b)"'s
 second RPC, the consent screens, the API's and the issuer's redeploys for the new limits, the spike's legs C and D as
 a gate, D263–D267; "Logs and latency"'s `google_account_mismatch`); 2026-11-03 (branch `feat/email-login-8b`: "Turning linking on (batch 8b)": what users see
@@ -656,6 +656,11 @@ deploy. Logins are unaffected either way; events in between are not recorded.
 | `first_session_write_failed` (`what` `scope` or `marker`) | One of the waiver's two hot-DB signs wasn't written | The other one stands; the next session attempt retries the scope's |
 
 ## Hot DB migration 0006 and the new gate (batch C3, milestone M1)
+
+State on sandbox-dev (2026-11-03): done. Migrations 0006, 0009 and 0010 are applied to the API's D1, after a rehearsal on a scratch
+D1; a Time Travel bookmark from before 0006 and an export backup are in `.secrets`. The API (`develop` c3c33ec, version
+b215b589) has the hot DB on and `createProof` true; usage capture is off (no `USAGE_DB` binding). The steps below are
+the procedure for another env.
 
 Migration `0006_dashboard_expand.sql` adds batch C's hot-DB tables and columns (`docs/api.md` "D1 schema") without
 rebuilding a table, and backfills them: one `scopes` row per scope (in `org_legacy`, with the environment its keys
@@ -1755,7 +1760,7 @@ come only from the watchdog's own manifest, never from the chain or Hana's JWKS.
   (no new D1 migration), and check `/status` `email.pinned`; only then does the council run `set_issuer("email", …)`,
   `mark_self_issued("email")` and `set_issuer_key(…, signer: "hana")` (build plan batch 6). Between `set_issuer` and
   `mark_self_issued` a `signer_policy_transition` warning and the `governance_change` alerts are expected.
-  A v2 contract (sandbox-dev today) reads as "no email issuer": nothing is alerted, pins or not.
+  A v2 contract reads as "no email issuer": nothing is alerted, pins or not. sandbox-dev's contract is v3 since 2026-11-03 and its manifest has the pins (the issuer's active and standby kids); manifest pins set; watchdog redeploy with them unverified.
 - **Rotating an email key**: pin the new thumbprint first (redeploy), then the council posts it; it waits
   `governance_delay_ms` and is never confirmed early (info `self_issued_key_change`); anyone executes it after.
 - **A signer-policy upgrade** (Level 1 co-signer, or replacing a signer): pin the new signer's keys before the upgrade
@@ -1863,8 +1868,8 @@ waits `governance_delay_ms`: after adding the first watchdog, rotations go slow 
 ## Email issuer (`apps/email-issuer`)
 
 The email login's issuer (`docs/api.md` "Email issuer", `apps/email-issuer/README.md`, D195–D199): its own Worker,
-separate from the API, holding the email signing key, K_sub, K_code, K_rl and the SendGrid key. **Not deployed on any
-env yet.** Order matters: on sandbox-dev follow "Email login on sandbox-dev (build plan batch 6)" below (the watchdog's
+separate from the API, holding the email signing key, K_sub, K_code, K_rl and the SendGrid key. **Deployed on sandbox-dev
+(2026-11-03, with batch 8b, version d3dc7965, 5 secrets, SendGrid from team@hanawallet.io); no other env yet.** Order matters: on sandbox-dev follow "Email login on sandbox-dev (build plan batch 6)" below (the watchdog's
 email pins are live before the owner posts any email key, and no app enables email, `apps.login_methods`, before
 batch 8). It is reached at `{emailIssuer.url}/v1/email/*` (D230): on a `workers.dev` env its own `workers.dev` URL,
 written by `init`; on a zone, the API's URL with a route `<api host>/v1/email/*` to this Worker. Below, `{url}` is that

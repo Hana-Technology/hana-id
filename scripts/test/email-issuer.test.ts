@@ -188,7 +188,7 @@ describe('email-issuer put and show', () => {
     expect(wranglerSecretArgv(manifest(), 'EMAIL_SUB_KEY')).toEqual(['exec', 'wrangler', 'secret', 'put', 'EMAIL_SUB_KEY', '--name', `hana-id-email-issuer-${name}`]);
   });
 
-  it('the committed manifests carry no emailIssuer yet (nothing is deployed, D196)', () => {
-    expect(loadEnv('sandbox-dev').emailIssuer).toBeUndefined();
+  it('a committed manifest\'s emailIssuer holds public keys only (D196)', () => {
+    for (const k of loadEnv('sandbox-dev').emailIssuer?.publicKeys ?? []) expect(Object.keys(k).sort()).toEqual(['alg', 'e', 'kid', 'kty', 'n', 'use']);
   });
 });

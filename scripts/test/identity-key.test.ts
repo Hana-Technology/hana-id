@@ -354,7 +354,9 @@ describe('watchdog pins (D211): every published key pinned, pin before publish, 
     expect(after).toHaveLength(before.length);
     const changed = after.flatMap((l, i) => (l === before[i] ? [] : [i]));
     expect(changed).toHaveLength(1);
-    expect(after[changed[0]!]).toBe(`    "pinnedIdentityKeys": [${[...loadEnv('sandbox-dev').watchdog!.pinnedIdentityKeys!, extra].map((t) => JSON.stringify(t)).join(', ')}]`);
+    // In place: a comma stays when another member follows (sandbox-dev's pinnedIssuerKeys).
+    const comma = before[changed[0]!]!.endsWith(',') ? ',' : '';
+    expect(after[changed[0]!]).toBe(`    "pinnedIdentityKeys": [${[...loadEnv('sandbox-dev').watchdog!.pinnedIdentityKeys!, extra].map((t) => JSON.stringify(t)).join(', ')}]${comma}`);
     expect(withIdentityPins(added, [], [extra])).toBe(committed);
   });
 
@@ -365,7 +367,13 @@ describe('watchdog pins (D211): every published key pinned, pin before publish, 
     const lines0 = t0.split('\n');
     const lines1 = t1.split('\n');
     expect(lines1).toHaveLength(lines0.length + 1);
-    expect(lines1.filter((l) => !lines0.includes(l))).toEqual([expect.stringMatching(/,$/u), `    "pinnedIdentityKeys": ["${a}"]`]);
+    // One new line, and a comma after the member before it (its line may equal another of the file's, e.g. "    },").
+    const at = lines1.indexOf(`    "pinnedIdentityKeys": ["${a}"]`);
+    expect(at).toBeGreaterThan(0);
+    expect(lines1[at - 1]).toBe(`${lines0[at - 1]},`);
+    expect([...lines1.slice(0, at - 1), ...lines1.slice(at + 1)]).toEqual([...lines0.slice(0, at - 1), ...lines0.slice(at)]);
+    const w = (JSON.parse(t1) as { watchdog: Record<string, unknown> }).watchdog;
+    expect(Object.keys(w).at(-1)).toBe('pinnedIdentityKeys');
     expect(withIdentityPins(t1, [], [a])).toBe(t0);
   });
 

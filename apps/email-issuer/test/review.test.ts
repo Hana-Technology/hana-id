@@ -377,14 +377,18 @@ describe('the owner’s recovery never depends on a pool an attacker can fill (a
     const keys = await h.deps.keys();
     expect(await readDeviceTicket(keys, ticket, await suppressionKey(keys, tagged), h.clock.now)).not.toBeNull();
     expect(await readDeviceTicket(keys, ticket, await suppressionKey(keys, plain), h.clock.now)).toBeNull();
-    // Many tickets of one address share its 3 code mails a day (scan: re-verifying can't multiply them).
+    // Many tickets of one address share its 3 owner code mails a day (scan: re-verifying can't multiply them). Past
+    // them a ticketed start counts as a plain one (D345): it may still get a code within the code limits, never as owner.
     const box = await mailboxObject(h, plain);
     const addrKey = await suppressionKey(keys, plain);
     const claim = (id: string) => ({ kind: 'ticket' as const, id, addrKey, issuedAtMs: morning });
     for (const id of ['one', 'two', 'three']) await box.registerTicket(addrKey, id, morning, morning);
     const sends = async (id: string) => {
       let n = 0;
-      for (let i = 0; i < 5; i++) if ((await box.admit(`r${id}${i}`, morning + 600_000, true, morning, claim(id))).ok) n++;
+      for (let i = 0; i < 5; i++) {
+        const a = await box.admit(`r${id}${i}`, morning + 600_000, true, morning, claim(id));
+        if (a.ok && a.owner !== null) n++;
+      }
       return n;
     };
     expect((await sends('one')) + (await sends('two')) + (await sends('three'))).toBe(3);

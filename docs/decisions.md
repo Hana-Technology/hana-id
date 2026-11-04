@@ -4966,6 +4966,19 @@ decided while building, to confirm.
   is left for C17 on sandbox-dev or staging, against real Google; the component tests (happy-dom) and the build check
   cover the SPA meanwhile.
 
+### D345. A device ticket's used-up code allowance falls back to the ordinary code limits
+- Date 2026-11-04 · Status: confirmed by the user (2026-11-04: 'yes, make that fix', to "once the device's 3 are used,
+  fall back to the normal limits, so a returning device always gets at least what a new one gets") · Built on
+  `fix/ticket-fallback` (`apps/email-issuer/src/rate-limiter.ts` `admit`, `ticketSendSlots`) · Amends the abuse
+  re-check's owner allowance (D198 family) and D340's note
+- Decision: a start carrying a valid device ticket whose own code allowance is used up (3 a day per address, 9 per
+  mailbox in production) no longer gets `codes`; the proof counts as nothing for that start, so it meets the ordinary
+  code limits (per mailbox and requester, per mailbox, the reserve), the lock, the live and daily caps and the domain cap
+  like any requester without a ticket. The owner allowance itself is unchanged and still can't be multiplied.
+- Why: a returning device got less than a new one (refused on its 4th to 10th start of a day while a stranger's device
+  could still get codes, then the ordinary limits again from the 11th, when the per-address owner-challenge cap drops
+  the proof). A fairness bug, not a security one: the flood protection the ticket gives is unchanged.
+
 ## Superseded or amended
 
 | Was | Now | Source |

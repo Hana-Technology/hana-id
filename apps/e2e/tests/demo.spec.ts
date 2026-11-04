@@ -4,7 +4,7 @@
 // key (DEMO_PK) that every test and browser shares; each test still runs in its own browser context.
 import { type Page } from '@playwright/test';
 import { DEMO_ORIGIN, DEMO_PK, VAULT_ORIGIN } from '../src/stack.ts';
-import { LOGIN_ENDPOINT, VAULT_FRAME, approve, chooseAccount, clickLauncher, expect, newApp, test } from './fixtures.ts';
+import { LOGIN_ENDPOINT, LOGIN_PENDING_MS, VAULT_FRAME, approve, chooseAccount, clickLauncher, expect, newApp, responsive, test, vaultFrame } from './fixtures.ts';
 
 /** Records every CSP violation on the demo's own document (the page CSP must allow everything the page does). */
 async function recordCspViolations(page: Page): Promise<void> {
@@ -120,4 +120,24 @@ test('the demo shows plain messages for a cancelled sign-in and a declined Googl
   await popup.click('#deny');
   await expect(page.getByRole('alert')).toHaveText('You declined the Google sign-in.');
   await expect(page.locator('#status')).toHaveText('Logged out.');
+});
+
+test('an unfinished sign-in: “Signing in…” with Cancel until the vault’s 5 minutes, then a plain message; the page never freezes', async ({ page }) => {
+  await page.clock.install();
+  await openDemo(page);
+  const opened = page.waitForEvent('popup');
+  await page.getByRole('button', { name: 'Log in with Google' }).click();
+  const popup = await opened;
+  await popup.waitForURL(/accounts\.google\.com/u);
+  // Closed on Google's page without finishing: the SDK can't tell (after it connected, Google's COOP may make the handle
+  // report closed), so the page keeps showing the sign-in with its Cancel until the vault's limit.
+  await popup.close();
+  await expect(page.locator('#status')).toHaveText('Signing in…');
+  await expect(page.getByRole('button', { name: 'Cancel sign-in' })).toBeVisible();
+  await page.clock.fastForward(LOGIN_PENDING_MS + 1_000);
+  await expect(page.getByRole('alert')).toHaveText('The sign-in wasn’t finished within 5 minutes, so it stopped. Log in again when you’re ready.');
+  await expect(page.locator('#status')).toHaveText('Logged out.');
+  await expect(page.getByRole('button', { name: 'Log in with Google' })).toBeEnabled();
+  expect(await responsive(page.mainFrame()), 'the demo page runs').toBe(true);
+  expect(await responsive(vaultFrame(page)), 'the vault frame runs').toBe(true);
 });

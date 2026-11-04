@@ -5,9 +5,10 @@
 // wallet: every case opens the wallet that already exists (D119, D122). Each test has its own Google account and
 // address (links are per scope, and the stack's apps share scope `e2e`).
 import type { Page, TestInfo } from '@playwright/test';
+import type { GoogleStub } from '../src/google-stub.ts';
 import { ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK } from '../src/stack.ts';
 import { addressOfExport, base64Decode, fromUtf8 } from '@hana-id/core';
-import { type App, chooseAccount, clickAction, clickLauncher, errorOf, expect, newApp, okValue, openPartner, runAction, test, waitPersisted } from './fixtures.ts';
+import { AFTERWORD_MS, type App, LOGIN_PENDING_MS, chooseAccount, clickAction, clickLauncher, errorOf, expect, newApp, okValue, openPartner, peek, responsive, runAction, status, test, vaultFrame, waitPersisted } from './fixtures.ts';
 
 const MATCH = `${ISSUER_URL}/v1/email/google-match`;
 const RECORD = `${ISSUER_URL}/v1/email/google-record`;
@@ -362,4 +363,78 @@ test('a Google login on a Google-only app never runs google-match: token_first r
   expect(requests.count(MATCH)).toBe(0);
   await expect.poll(() => requests.count(RECORD)).toBe(1);
   expect(google.kinds).toEqual(['token_first', 'id']);
+});
+
+// The popup left open on a follow-up screen (build plan batch 8b): the vault waits on the popup's answer in the
+// follow-up channel, and whatever ends that wait (the partner's cancelLogin, the login's 5-minute limit, the banners'
+// own limit) must end the channel's relay poll too. It didn't: that poll checked only whether the channel was closed,
+// and an aborted fetch rejects at once, so it spun on microtasks and froze the vault frame for good (on sandbox-dev,
+// where the demo and the vault are one site, the demo tab with it), and the partner's login() never settled.
+
+/** Case A, not hosted, up to the popup's "Link and continue" / "Sign in with email" screen. */
+async function onLinkCode(page: Page, info: TestInfo, google: GoogleStub, tag: string): Promise<Page> {
+  const to = outside(info, tag);
+  google.accounts = [{ sub: newSub(), label: tag.toUpperCase(), email: to, emailVerified: true }];
+  await emailApp(page);
+  await emailLogin(page, to, 'email');
+  await logout(page, 'out');
+  const popup = await googleStart(page, 'google');
+  await expect(popup.locator('#link-continue')).toBeVisible();
+  return popup;
+}
+
+test('abandoned on the link code screen, the partner cancels: login_cancelled, the vault and the partner page stay responsive', async ({ page, google }, info) => {
+  const popup = await onLinkCode(page, info, google, 'ac');
+  await runAction(page, 'cancel', 'cancelLogin');
+  // Both must still run: without the fix the vault's loop froze the partner page too, in all three browsers.
+  expect(await responsive(vaultFrame(page)), 'the vault frame runs').toBe(true);
+  expect(await responsive(page.mainFrame()), 'the partner page runs').toBe(true);
+  expect((await errorOf(page, 'google', 10_000)).code).toBe('login_cancelled');
+  // The vault still answers on its port (logged out: 4100).
+  await runAction(page, 'acct', 'account');
+  expect((await errorOf(page, 'acct', 5_000)).code).toBe(4100);
+  // The popup waits on the user here, not on a notice: it hears the vault's `stop` after its next answer.
+  await expect(popup.locator('#link-continue')).toBeVisible();
+  expect(await status(page)).toBe('logged_out');
+});
+
+test('abandoned on the link code screen past the 5-minute limit: login_timeout, the vault stays responsive', async ({ page, google }, info) => {
+  await page.clock.install();
+  await onLinkCode(page, info, google, 'at');
+  await page.clock.fastForward(LOGIN_PENDING_MS + 1_000);
+  expect(await responsive(vaultFrame(page)), 'the vault frame runs').toBe(true);
+  expect(await responsive(page.mainFrame()), 'the partner page runs').toBe(true);
+  expect(await errorOf(page, 'google', 10_000)).toEqual({ code: 'login_timeout', reason: null });
+  await runAction(page, 'acct', 'account');
+  expect((await errorOf(page, 'acct', 5_000)).code).toBe(4100);
+  expect(await status(page)).toBe('logged_out');
+});
+
+test('a banner with “Cancel this link” left open past its limit: the vault stays responsive and logged in', async ({ page, google }, info) => {
+  await page.clock.install();
+  const to = outside(info, 'bl');
+  google.accounts = [{ sub: newSub(), label: 'BL', email: to, emailVerified: true }];
+  await emailApp(page);
+  const first = await googleStart(page, 'google');
+  await first.waitForEvent('close', { timeout: 20_000 });
+  const wallet = await okValue<{ stellar: string; evm: string }>(page, 'google');
+  await waitPersisted(page, wallet.evm);
+  await logout(page, 'out');
+  const popupP = page.waitForEvent('popup');
+  await clickAction(page, 'email', 'loginWith', { method: 'email' });
+  const popup = await popupP;
+  await emailCode(popup, to);
+  await popup.click('#email-link-google');
+  await popup.waitForURL(/accounts\.google\.com/u);
+  await popup.click('#account-0');
+  expect(await okValue(page, 'email')).toEqual(wallet);
+  // The vault now waits on the popup's answer to the banner (its Cancel), for AFTERWORD_MS.
+  await expect(popup.locator('#banner-cancel-0')).toBeVisible();
+  await page.clock.fastForward(AFTERWORD_MS + 1_000);
+  expect(await responsive(vaultFrame(page)), 'the vault frame runs').toBe(true);
+  expect(await responsive(page.mainFrame()), 'the partner page runs').toBe(true);
+  await runAction(page, 'acct', 'account');
+  expect(((await okValue(page, 'acct', 5_000)) as { methods: unknown[] }).methods).toHaveLength(2);
+  expect(await status(page)).toBe('logged_in');
+  expect(await peek(page, 'acct')).toMatchObject({ state: 'ok' });
 });

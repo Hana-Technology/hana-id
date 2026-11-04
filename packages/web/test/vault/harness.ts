@@ -86,6 +86,9 @@ export function makeConfig(over: Partial<Omit<VaultConfig, 'settings'>> & { sett
   };
 }
 
+/** FakeBackend.abortedRelayReads: how many reads with an aborted signal it takes before it breaks such a loop. */
+export const ABORTED_READS_CAP = 100;
+
 // ---- timers ----
 
 /** Delays up to this run on the next real tick (polls, backoffs); longer ones only when the test advances the clock. */
@@ -293,6 +296,13 @@ export class FakeBackend {
   private txSeq = 0;
   private mintSeq = 0;
   private readonly relayWaiters = new Set<() => void>();
+  /**
+   * Relay reads sent with a signal that was already aborted. A browser's fetch rejects those at once, without a
+   * request, so a poll loop that doesn't check its signal spins on microtasks and freezes the page; here the read
+   * rejects at once too, and after ABORTED_READS_CAP of them it answers 410 instead, so such a loop ends (as
+   * `token_invalid`) rather than hanging the test run.
+   */
+  abortedRelayReads = 0;
 
   count(path: string): number {
     return this.calls.filter((c) => c.path === path).length;
@@ -530,6 +540,11 @@ export class FakeBackend {
     if (call.path.startsWith('/v1/login-relay/')) {
       const relayId = call.path.slice('/v1/login-relay/'.length);
       const key = call.headers['x-hana-relay-key'];
+      if (signal?.aborted) {
+        this.abortedRelayReads += 1;
+        if (this.abortedRelayReads > ABORTED_READS_CAP) return apiError(410, 'relay_gone');
+        throw new DOMException('aborted', 'AbortError');
+      }
       if (!key || base64UrlEncode(new Uint8Array(await crypto.subtle.digest('SHA-256', base64UrlDecode(key)))) !== relayId) return apiError(403, 'relay_forbidden');
       for (let i = 0; i < 2 && !this.relay.has(relayId); i++) {
         await new Promise<void>((resolve) => {

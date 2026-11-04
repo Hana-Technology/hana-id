@@ -22,6 +22,9 @@ describe('plainMessage', () => {
     expect(plainMessage(new HanaError('login_method_unavailable', 'x'), 'login')).toMatch(/Email login isn’t turned on/u);
     expect(plainMessage(new HanaError('code_invalid', 'x'), 'login')).toMatch(/wrong code/u);
     expect(plainMessage(new HanaError('challenge_expired', 'x'), 'login')).toMatch(/expired/u);
+    // login_timeout: the window never connected, or the sign-in was left unfinished past the vault's 5 minutes.
+    expect(plainMessage(new HanaError('login_timeout', 'x', { stage: 'connect' }), 'login')).toBe('The Hana sign-in window did not respond in time. Try again.');
+    expect(plainMessage(new HanaError('login_timeout', 'x', { stage: 'pending' }), 'login')).toMatch(/wasn’t finished within 5 minutes/u);
     expect(plainMessage(new HanaError(4001, 'x'), 'login')).toMatch(/did not complete/u);
     expect(plainMessage(new HanaError('google_error', 'x', { error: 'access_denied' }), 'login')).toBe('You declined the Google sign-in.');
     expect(plainMessage(new HanaError('vault_unavailable', 'x'), 'load')).toMatch(/Could not load the Hana vault/u);

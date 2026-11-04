@@ -1,7 +1,7 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-04 for the claim allow-list's `at_hash` and a freeze pausing pending memberships (branch `feat/batch-c-10`, D342, D343); 2026-11-04 for partner sign-in (branch `feat/batch-c-9`, merged with
+known open issues. Last verified against code: 2026-11-04 for the claim allow-list's `at_hash`, a freeze pausing pending memberships and the partner console's fresh sign-in and write paths (branch `feat/batch-c-10`, D342, D343, D350–D358); 2026-11-04 for partner sign-in (branch `feat/batch-c-9`, merged with
 `develop` @ a243d6b: "Console Worker"'s route, sign-in, sessions and partner views, the flow cookies, handoff codes,
 sign-in tokens and `CONSOLE_GOOGLE_CLIENT_SECRET` in the inventory, D290–D297); 2026-11-04 for the files Worker and logos (branch `feat/batch-c-11`: the
 logo upload's checks and the CSRF exception in "Console Worker", "Files Worker (logos)", the auth pages' `img-src`;
@@ -606,6 +606,30 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   address required; in both an `at_hash` must equal the hash of the access token from the same exchange. The membership rules run at completion, after the pre-flow cookie; invite
   acceptance is one D1 batch. `/api/auth/*` and the auth origin are limited to 10 a minute per IP. The handoff row's
   identity and the flow's PKCE verifier are overwritten once used.
+- **Fresh sign-in** (C10, D354): every write the spec marks "fresh sign-in" is a Google code flow (`scope=openid`, held
+  to exactly the claim allow-list) whose nonce commits to one stored action: the origin-change or settings-change layout
+  (the API recomputes it and verifies the token itself), the contract's owner-action layout at the scope's
+  `action_nonce` (the API's precheck and the contract check it), or the generic step-up layout, which includes
+  sha256 of the session cookie, so a token for one action, session or purpose serves no other (login nonces are random
+  and server-held). The callback requires the token's `sub` to be the session user's, the action unused and unexpired
+  (5 min), the session that created it live and the member still an owner of an active org; the action is consumed
+  once whatever the outcome, and console-only kinds consume, change and audit in one guarded batch (a lost race writes
+  nothing). The token is never stored, logged or returned. What a fresh sign-in proves is unchanged ("What a fresh
+  sign-in doesn't cover", spec): a live Google session confirms in one click.
+- **Partner write routes** (C10, D356): a viewer (a pending owner included) is `403` on every owner route; a frozen org
+  keeps only cancels and kill switches; member changes by an owner reach existing members only (adding is by invite);
+  `required_hd` can only be set to the acting owner's own Workspace domain (D355). Every write is the CSRF rules plus a
+  `SameSite=Strict` session.
+- **Client proofs pasted into the console** (D350, D351): checked before the owner signs anything (signature, `aud` =
+  the client being added, the client-proof nonce at the scope's `action_nonce`, the claim allow-list), and accepted
+  only after the warning that the proof becomes public on chain with the signing account's `sub` for that client. The
+  helper is a download (`Content-Disposition: attachment`), never a page the console serves for display, and uses
+  Google's implicit flow with `scope=openid` (GIS tokens always carry `email`).
+- **What partners see of on-chain owners and end users** (D353, D357): on-chain owners as members (address) or "a Google
+  account that isn't a member", never a `sub`; a SetOwners is built server-side from the org's owners, so no `sub` is
+  ever sent to or typed in the SPA. The Users screen's answers are rebuilt field by field from an allowlist (User ID,
+  Support ID, times, account kinds, wallet addresses), so no email, `sub` or identity key can reach a partner even if
+  the API sent one.
 - **What it keeps about people**: members' and staff emails (display), Google subs (owner match), invitees' addresses
   on the invite row only (deleted 90 days after the invite ends; never in `audit_log`, whose details are allowlisted per
   action; a refused sign-in of someone with no account is audited by the sha256 of the address Google verified only),

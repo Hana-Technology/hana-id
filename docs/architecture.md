@@ -1,7 +1,7 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342); 2026-11-04 (branch `feat/batch-c-9`, merged with `develop` @ a243d6b: partner sign-in in
+Last verified against code: 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342; the partner console's fresh sign-in and write paths, D343, D350–D358); 2026-11-04 (branch `feat/batch-c-9`, merged with `develop` @ a243d6b: partner sign-in in
 Status, Components (the console Worker's C9 files, the SPA, console-auth), Data stores and the new flow "Partner sign-in
 to the console"; D290–D297); 2026-11-04 (branch `feat/batch-c-11`: the files Worker and logos in Status, Components and
 Data stores: `apps/files`, the console's logo upload backend, `logoUrl` from `GET /v1/app` to the auth pages, the R2
@@ -645,13 +645,41 @@ XSS on the console could run on ever receives a Google redirect (D75; `docs/api.
    matches); a session (`__Host-hana_cs`, 2 h idle, 12 h absolute) and an audit row are written, and the browser goes
    to `/`; a refusal goes to `/signin#error=<code>` (D291–D293).
 
-Every later request reads the session and the member's role from `CONSOLE_DB`; the read-only screens (apps, an app's
-origins, guarded changes, keys and settings, members and invites, the audit merged with the API's `app_changes`) come
-from `ConsoleRpc` and `CONSOLE_DB`, shown without staff identities, Google `sub`s or network data (D296). Nothing in
-the console reads the email issuer's user directory (D269). Step-ups (fresh sign-in for one action, `scope=openid`,
-held to exactly the API's allow-list) are batch C10; open question 1 (does Google's code flow keep that token free of
-`email`?) is tested by `scripts/console-code-flow-spike.ts` (D295); the code flow's `at_hash` is in the allow-list
-(D342).
+Every later request reads the session and the member's role from `CONSOLE_DB`; the screens (apps, an app's origins,
+guarded changes, keys and settings, members and invites, the audit merged with the API's `app_changes`) come from
+`ConsoleRpc` and `CONSOLE_DB`, shown without staff identities, Google `sub`s or network data (D296). Nothing in the
+console reads the email issuer's user directory (D269). Open question 1 (does Google's code flow keep the `openid`
+token free of `email`?) is tested by `scripts/console-code-flow-spike.ts` (D295); the code flow's `at_hash` is in the
+allow-list (D342).
+
+**Writes (batch C10; `apps/console/src/writes.ts`, `actions.ts`).** An owner's immediate writes (removing an origin,
+turning the policy or raw signing off, cancelling a guarded change, suspending, renaming, keys, the logo, revoking an
+invite, cancelling an owner grant, executing a matured on-chain change) are `ConsoleRpc` calls with the member actor,
+each with an outcome audit row; a viewer gets `403`, and a frozen org keeps only the cancels and kill switches (D356).
+Everything the spec marks "fresh sign-in" is a **step-up**:
+
+1. `POST /api/orgs/:org/actions {kind, params}`: the console builds the canonical action and its Google nonce (the
+   origin-change or settings-change layout, which the API recomputes; the contract's owner-action layout at the scope's
+   `action_nonce`, read uncached from NEAR; the generic step-up layout bound to the session otherwise), stores a
+   5-minute `pending_actions` row and answers the decoded view, which `/actions/:id` shows (for a policy, the consent
+   screen as users see it, packages/web's `renderConsent`, D352).
+2. `POST /api/actions/:id/google`: an `auth_flows` row with `purpose = 'step_up'`, `scope = 'openid'`, the action's
+   nonce and the session's `sub` as `login_hint`; the same `/start` → Google → `/callback` path as sign-in.
+3. The callback verifies the token (`openid`: exactly the claim allow-list), then runs the action with it: the token's
+   `sub` must be the session's, the action unused, its session live, the member still an owner. Guarded changes and
+   owner actions go to the API with the JWT, which verifies it again (`changes/step-up.ts`, the owner-action precheck)
+   and, for an owner action, relays it through the owner pool; member changes and `org.policy` consume the action,
+   apply the change and audit it in one D1 batch. The browser lands on `/actions/:id#`, which reads the outcome. The
+   token is never stored; the action is used once whatever the outcome (D354).
+
+An AddClient needs a client proof: the console offers a downloadable helper page (Google's implicit flow, `scope=openid`,
+the scope's client-proof nonce; D351) that the partner opens on one of the client's own origins; the pasted token is
+checked (signature, `aud`, nonce, the claim allow-list, D350) after a warning that it becomes public on chain. The scope
+page also shows owner drift (the org's owners against the scope's on-chain `Oidc` owners) and offers a SetOwners built
+from the org's owners (D353). The emailed cancel links land on `/cancel/:changeId#t=` and `/cancel-owner/:grantId#t=`,
+SPA pages that POST only after a click. The partner Users screen (D310, D346: the User ID is the identity token's `sub`,
+the Support ID its short form; account kinds and wallet addresses, never an email or a Google account id) is built
+behind `USERS_SCREEN`, off until the wallet directory's reads land (D357).
 
 ### Key export
 

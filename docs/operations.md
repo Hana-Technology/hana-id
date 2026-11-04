@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342); 2026-11-04 (branch `feat/batch-c-9`, merged with `develop` @ bd0c9ea: "Partner console
+Last verified against code: 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342; the console's C10 vars `NETWORK`, `REFUSED_ORIGINS` and the `USERS_SCREEN` switch, no new secret or setup step); 2026-11-04 (branch `feat/batch-c-9`, merged with `develop` @ bd0c9ea: "Partner console
 Worker … and console-auth": setup step 11 (the console's Google client, its JSON in `.secrets/<env>/`, the secret
 through a pipe), the route on by config, the SPA build in `deploy`, console-auth's `gen` and deploy order, the checks,
 taking sign-in down; "Console code-flow spike (open question 1)"; D290–D297); 2026-11-04 (branch `fix/dev-email-limits`:
@@ -836,7 +836,7 @@ of its initial allowance (0.5 NEAR, deploy-contract's default; set the Worker va
 keys were added with another `--owner-relayer-allowance`) writes an `owner_allowance_low` security event, once a day.
 Top it up by re-adding the key with a fresh allowance ("Relayer keys (either pool)").
 
-## Partner console Worker (`apps/console`, batches C7 and C9) and console-auth (`apps/console-auth`, C9)
+## Partner console Worker (`apps/console`, batches C7, C9 and C10) and console-auth (`apps/console-auth`, C9)
 
 The console Worker (`hana-id-console-<env>`, manifest `console.workerName`) holds `CONSOLE_DB` (orgs, members, invites,
 owner grants, console sessions, the console's audit log), binds the API's `ConsoleRpc` (`API`) and serves the partner
@@ -853,6 +853,16 @@ Both need the dashboard blocks in the manifest (`console`, `files`, `admin`, `us
 first). Partners can sign in once both are deployed with the secret set (milestone M4); invites need the admin
 Worker's notices (C8), so without C8 no new partner can be invited (staff's `issueInvite` link only works after the
 admin Worker's ack).
+
+**C10 (partner management, branch `feat/batch-c-10`).** No new secret, binding or setup step: `gen` now also writes
+`NETWORK` and `REFUSED_ORIGINS` (the API's origin rules, from the manifest), so redeploy the console after `gen`. The
+step-ups use the same Google client and redirect URI as sign-in (`scope=openid`; `at_hash` is in the claim allow-list,
+D342). Owner actions are relayed by the API's owner pool (its keys and allowance, "Owner actions"); `execute_change`
+from the console needs nothing else. The partner **Users screen** is off until the wallet directory's
+`ConsoleRpc.listUsers` / `getUser` are deployed in the API (D357): then set the console var `USERS_SCREEN = "1"` (in
+`wrangler.jsonc` `vars` after `gen`, or a `--var` on deploy; `gen` doesn't write it) and redeploy the console; unset it
+to hide the screen again. The client-proof helper (AddClient) asks the partner to register the helper page's address as
+a redirect URI of their own client while they use it (D351); Hana's console client is unchanged.
 
 ### Setup step 11: the console's Google OAuth client (for the user, once per env)
 
@@ -969,6 +979,9 @@ answer in `docs/batch-c-spec.md` open question 1, as the email spike's was.
 - **`StaffRpc`** (the admin Worker's binding, C8): orgs, members (`setMember`), users (`disableUser`), freeze, invites
   (issue, revoke, the notice list and ack), owner grants (cancel), the audit feed and queries. Until C8 deploys nothing
   calls it; there is no CLI for it.
+- **Pending actions** (C10): one row per fresh sign-in started, 5 minutes, used once; purged 24 h after expiry. They
+  hold the canonical action and its decoded view, never a token. A step-up that ran writes its audit row
+  (`step_up_id` = the action), a refused one `step_up.failed`.
 - **Logs** carry ids and codes only: never an email (invitee, member or staff), a Google `sub`, a token or a hash.
 
 ### Restoring `CONSOLE_DB`

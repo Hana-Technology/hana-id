@@ -5034,10 +5034,147 @@ decided while building, to confirm.
   invites and grants for a freeze that turns out to be precautionary); leaving announced invites usable after an
   unfreeze (nobody is told again that they are live).
 
+### D350. A client proof pasted into the console is held to the claim allow-list; the PII warning names what stays public
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10`
+  (`apps/console/src/auth-token.ts` `verifyClientProof`, `actions.ts` `buildOwnerAction`, `web/src/pages/Scope.tsx`) ·
+  Source: spec "On-chain owner actions" step 3; D274, D277
+- Decision: before an AddClient is built the console verifies the pasted proof (Google's JWKS, `iss`, `exp`, `aud` and
+  `azp` the client being added, the client-proof nonce at the scope's `action_nonce`) and refuses any claim outside the
+  claim allow-list (`invalid_client_proof`, the claim named), as the API's precheck will (D274). The spec's warning
+  ("it carries the staffer's email and name and becomes public on chain") can no longer be true: a proof with an email
+  or a name is refused. The warning says instead that the proof becomes public on NEAR with the Google account id
+  (`sub`) of whoever signed in for that client, and suggests a team account; the owner must tick it
+  (`piiWarningAccepted: true` is required by the server, not only the page).
+- Why: checking first stops a doomed sign-in and a doomed owner action; the warning has to describe what actually
+  becomes public.
+- Rejected: keeping the spec's wording (it would describe a proof Hana refuses); no warning (the `sub` is still public).
+
+### D351. The client-proof helper uses Google's implicit flow with `scope=openid`, not Google Identity Services
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10` (`apps/console/src/scopes.ts`
+  `helperHtml`, `helperRoute`) · Source: spec "On-chain owner actions" step 3 ("it loads GIS with that nonce")
+- Decision: the downloaded helper (a self-contained page, `Content-Disposition: attachment`, the client id, scope and
+  client-proof nonce at the scope's current `action_nonce` inside it) sends the browser to Google's authorization
+  endpoint with `response_type=id_token`, `scope=openid`, the nonce and `prompt=select_account`, the page's own address
+  as `redirect_uri`, and shows the returned token (after checking its `aud`, nonce and claim names) to copy. The partner
+  registers the page's address as a redirect URI of their client while they use it.
+- Why: GIS ID tokens always carry `email`, `email_verified` and a name, which D274 refuses on chain; the implicit flow
+  with `scope=openid` is the only browser-only way to an openid-only token (the vault does the same). The proof is good
+  only until the scope's next owner action (the nonce moves), which the page says.
+- Rejected: GIS (every proof refused); the console serving the page (the spec: the proof must come from the client's
+  own origin, and the console never serves it).
+
+### D352. The policy editor's consent preview is packages/web's own renderer, fed by a console check route
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10`
+  (`apps/console/web/src/pages/Consent.tsx`, `src/policy.ts` `policyCheckRoute`, `writes.ts`) · Source: spec "Policy and
+  raw-signing input rules" ("the editor shows the consent screen as users will see it (`render-consent.ts`, …)")
+- Decision: the SPA imports `packages/web/src/auth/render-consent.ts` and `dom.ts` by relative path (no new package
+  export; the SDK's tarballs are unchanged) and mounts the DOM it builds (text nodes only) in a container. The policy it
+  shows is the one the console validated: `POST /api/orgs/:org/apps/:app/policy/check {policy}` (owner, writes nothing,
+  not in the spec's route table) runs `@hana-id/core/policy`'s validator at the app's session TTL and answers the
+  canonical policy, its `policyId` and label, or `policy_invalid` with the problems. `policy.set` validates again
+  before the sign-in and the API a third time.
+- Why: a copy of the consent screen would drift from what users see; the validator stays out of the SPA's bundle.
+- Rejected: a React copy of the consent screen; validating only in the browser (the vault's validator would ship in the
+  console bundle and the server would still have to check).
+
+### D353. Owner drift's SetOwners is built by the server from the org's owners and keeps the scope's NEAR owners
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10` (`apps/console/src/scopes.ts`
+  `scopeAnswer`, `actions.ts` `buildOwnerAction`) · Source: spec "Apps, scopes and client mode" → "Owner drift"; D296
+- Decision: the scope page compares the org's usable owners (role or matured grant, not disabled) with the scope's
+  on-chain `Oidc` owners and lists who is missing on chain, who is on chain but not an owner in the console, and how many
+  on-chain owners aren't members (no `sub` is ever answered). `SetOwners` takes no owner list from the browser: the
+  server sets the scope's `Near` owners plus `Oidc{google, sub}` of each org owner (at most 5, the contract's limit).
+  Every other owner action and the pending changes are decoded the same way (members by address, "a Google account
+  that isn't a member" otherwise).
+- Why: partners never see or type `sub`s (D296), and a list typed in the browser could add a stranger; keeping `Near`
+  owners avoids a drift fix silently removing an operator account.
+- Rejected: a free-form owner list; dropping `Near` owners.
+
+### D354. A fresh sign-in's action is used once whatever the outcome; where each refusal lands
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10` (`apps/console/src/actions.ts`,
+  `auth-flow.ts` `callback`, `web/src/pages/Action.tsx`) · Source: spec "Fresh sign-in", "On-chain owner actions" step 5
+- Decision:
+  - Every step-up action has a page, `/actions/:id`, that shows the decoded action (what will be applied), the "Confirm
+    with Google" button while it is pending, and its outcome (`GET /api/actions/:id`, the action's user only; any of
+    their sessions may read it, only the creating session may start it).
+  - A token the callback refuses (signature, nonce, `iat`, a claim outside the allow-list, a wrong `at_hash`) gets the
+    static 400 page, like a sign-in, and the action stays pending until it expires. After the token verified, every
+    refusal consumes the action and is stored as its outcome and audited (`step_up.failed`): `sub_mismatch`,
+    `step_up_expired`, `session_ended` (revoked or expired between creation and callback), `forbidden` (no longer an
+    owner of an active org).
+  - API kinds consume the action before the RPC (so the token goes out once) and store the RPC's answer, success or
+    refusal (`version_conflict`, `not_owner`, `token_used`, …). Console-only kinds consume it in the change's own batch;
+    a change already in force (a no-op) consumes it with `noChange`.
+  - Owner actions: the callback re-reads `get_scope`; a moved `action_nonce` fails the action (`nonce_moved`) without
+    calling the API. The spec's "staff relay runbook" (showing the owner the signed body to send Hana when a safety call
+    is `rate_limited`) is not built: the token is used in the callback and never stored, so the console has no signed
+    body to show afterwards; the page tells the owner to contact Hana security, who can act through a staff proposal or
+    `owner:relay` with a new token (to confirm).
+- Why: one use per action and per token, whatever happens, is the simplest invariant to keep right; a refused token says
+  nothing about the action, so it doesn't spend it.
+- Rejected: letting a failed action be retried with a new sign-in (a second token for the same digest); storing the
+  token for a later relay.
+
+### D355. An owner sets `required_hd` only to their own session's Workspace domain
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10` (`apps/console/src/members.ts`
+  `setOrgPolicy`) · Source: spec "Roles and permissions" (Org `required_hd`: owner, fresh sign-in)
+- Decision: `org.policy` refuses a domain other than the acting session's `hd` (`conflict`, before the sign-in and again
+  in the batch); null (no requirement) is always allowed. The change, the action's consumption and the `org.policy`
+  audit row (`requiredHd`, the org's own domain) are one batch, which also revokes the sessions of members whose
+  session domain doesn't match when this was their only active org.
+- Why: setting another domain would lock the owner (and possibly every owner) out at their next request, leaving the
+  org to Hana staff.
+- Rejected: allowing any domain with a warning.
+
+### D356. The role matrix as built: frozen orgs keep exactly the cancels and the kill switches
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10` (`apps/console/src/writes.ts`
+  `ROUTES`, `runOrgRoute`; `test/writes.test.ts` "the role matrix") · Source: spec "Roles and permissions", "Console BFF
+  routes"
+- Decision: every signed-in write route declares its role (`owner`) and whether a frozen org allows it. Open while
+  frozen: removing an origin, turning the policy or raw signing off, suspending, revoking a key, cancelling a guarded
+  change, revoking an invite and cancelling an owner grant; refused (`403 org_frozen`): every step-up, rotating or
+  creating a key, renaming, the logo, the policy check and `execute_change` (applying a change, not stopping one). A
+  viewer, a pending owner included, is `403 forbidden` on every owner route; a member of another org, or a session whose
+  domain doesn't match `required_hd`, is `404`. `member.role` and `member.remove` act only on existing members (an owner
+  adds people by invite; staff's `setMember` still adds). Every ConsoleRpc write writes an outcome audit row after the
+  RPC returns, like the logo (C11).
+- Why: a freeze stops changes but must never stop an owner turning something off; a test lists every route so a new one
+  has to choose.
+- Rejected: allowing `execute_change` in a frozen org (it makes a pending change take effect).
+
+### D357. The partner Users screen ships behind `USERS_SCREEN` (off) against a typed stub of the wallet directory's reads
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10` (`apps/console/src/users.ts`,
+  `web/src/pages/Users.tsx`, `/api/me` `features.users`) · Source: D310, D346; the build brief ("if the wallet directory
+  hasn't landed, build it against a typed client stub, behind a feature flag that's off")
+- Decision: `GET /api/orgs/:org/users` and `/users/:userId` (viewer) call `ConsoleRpc.listUsers` / `getUser` as
+  `feat/wallet-directory` defines them, with D346's fields from `feat/user-id-identity-sub` (`userId` = the identity
+  token's `sub`, `u1_…`; `supportId` its short form; the internal `hu_…` id never shown). Neither branch was on
+  `develop` when C10 was built, so the routes are `404` and the tab hidden unless the console var `USERS_SCREEN = "1"`
+  and the API binding has both methods. Every row is rebuilt field by field (User ID, Support ID, scope, times, account
+  kinds, wallet addresses of each chain's form), and a malformed row is dropped and logged, so no email, `sub`, identity
+  or directory key can reach a partner whatever the API sends (tested by data shape).
+- To do when the reads land: merge, check the answer's field names against `users.ts`, turn the flag on per env.
+- Rejected: shipping the screen on with a mock answer; waiting for the wallet directory before building it.
+
+### D358. Routes and checks the spec doesn't list
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10`
+- Decision:
+  - `POST /api/orgs/:org/apps/:app/logo/remove {expectedVersion}` (C11's `logoRemoveRoute`), `POST …/policy/check`
+    (D352), and the SPA pages `/actions/:id`, `/orgs/:org/scopes/:scope`, `/orgs/:org/users`.
+  - The console gets the API's origin rules (`NETWORK`, `REFUSED_ORIGINS`, written by `gen` from the manifest) and
+    checks an origin add before the sign-in; the API checks it again.
+  - `/api/me` answers `features: {users}`.
+  - Tests: the test API Worker's outbound fetches go to a fake upstream (`test/fake-upstream.js`: hana-signer's views and
+    Google's JWKS from a test D1), so the API verifies step-up and owner tokens for real; the relay itself isn't
+    exercised (the test API has no owner-pool key: C17's smoke covers it).
+- Why: each closes a gap the spec leaves (a removal control, a preview, a page to confirm on).
+
 ## Superseded or amended
 
 | Was | Now | Source |
 |---|---|---|
+| The client-proof helper loads Google Identity Services; the console warns the proof carries the staffer's email and name (spec "On-chain owner actions" step 3) | Google's implicit flow with `scope=openid`; a proof with an email or a name is refused, and the warning names the account id that stays public (D350, D351) | `apps/console/src/scopes.ts`, `auth-token.ts` |
+| The claim allow-list is the ten names of the 2026-10-28 spike (D271) | The same plus `at_hash` (D342) | `packages/core/src/id-token.ts`, `apps/api/src/claims.ts`, `apps/console/src/auth-token.ts` |
 | The console's hourly purge deletes a replaced logo's R2 object, then its row (D244) | Its row first (only while still marked), then the object; the rows come back if the delete fails (D301) | `apps/console/src/cron.ts` `purgeLogos` |
 | Local git only, branch `develop`, no remotes (batch A) | Remote `Hana-Technology/hana-id`; feature branches, PRs into `develop`, `main` for releases | `docs/batch-a-spec.md`; CLAUDE.md |
 | One relayer key pool, 300 Tgas for everything (batch A) | Two pools, per-method gas (D19) | `docs/batch-a2-shared-client.md` |

@@ -4,9 +4,9 @@ Status (2026-11-04, branch `feat/batch-c-9`, on `develop` @ a243d6b): C1–C5 me
 sandbox-dev API as far as `develop` includes them (migrations 0006, 0009 and 0010 applied, usage capture off;
 `docs/operations.md`); C6 (the claim allow-list on its tokens, D277), C7 (the console Worker backend; D240–D244), C8
 (the admin Worker; D278–D285) and C11 (the files Worker and logos; D300–D308) merged into `develop`, not deployed (M3
-not run; their setup is steps 4, 5 and 7–10 below, at M4 and M5); C9 (partner sign-in, D290–D297) built on
-`feat/batch-c-9`, tests green, not merged, not deployed (its setup is steps 11 and 12, at M4); C10 and C12–C17 not
-built. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
+not run; their setup is steps 4, 5 and 7–10 below, at M4 and M5); C9 (partner sign-in, D290–D297) merged; C10 (partner management, D342, D343,
+D350–D358) built on `feat/batch-c-10`, not merged, not deployed; C12–C17 not built (some in progress on their own
+branches). Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
 batches that each merge into `develop` on their own: tests green, the docs they change updated, and nothing a partner,
 a user or staff can reach that is half-wired. Ordered by dependency; the spec's "Build order" steps are noted per
 batch. This is a plan, not a spec: where it and the spec disagree, the spec wins or gets amended first.
@@ -299,6 +299,14 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
   the cancel and cancel-owner pages (POST confirm), `GET /api/governance/pending-upgrades` stays for C14.
 - **Tests**: spec "Fresh sign-in"; "Settings, keys"; the role matrix; owner-action rows that need the console.
 - **Visible**: the console's write paths; the spec's "Done when" bullets 2–4 on the smoke scope.
+- **Status** (2026-11-04): built on `feat/batch-c-10`, not merged, not deployed (D342, D343, D350–D358). Fresh sign-in
+  for every kind (`apps/console/src/actions.ts`), the write routes and the role matrix (`writes.ts`), the on-chain view,
+  owner drift and the client-proof helper (`scopes.ts`, `near.ts`), C11's logo routes behind the session, the cancel
+  pages, the SPA's write screens with the consent preview. The Users screen (D310, D346) is built against a typed stub
+  of the wallet directory's `ConsoleRpc.listUsers` / `getUser`, behind `USERS_SCREEN` (off, D357), until
+  `feat/wallet-directory` and `feat/user-id-identity-sub` land. `GET /api/governance/pending-upgrades` stays for C14.
+  Setup: none new (the console's two new vars come from the manifest through `gen`). The owner-action relay itself
+  isn't exercised in the tests (no owner-pool key in the test API); C17's smoke covers it on sandbox-dev.
 
 ## C11. Files Worker and logos
 

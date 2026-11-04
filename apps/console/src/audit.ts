@@ -28,6 +28,9 @@ export const AUDIT_DETAIL_KEYS = {
   'org.frozen': [],
   'org.unfrozen': [],
   'change.link_cancel': ['code'],
+  // Batch C11: the outcome of the setLogo RPC after an upload or a removal (app_changes has the change itself).
+  'app.logo_set': ['logoKey', 'code'],
+  'app.logo_removed': ['code'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type AuditAction = keyof typeof AUDIT_DETAIL_KEYS;

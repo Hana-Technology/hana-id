@@ -11,6 +11,7 @@ import { wranglerConfig as apiConfig } from '../../../api/scripts/gen-wrangler.t
 import { pagesWranglerConfig } from '../../../api/scripts/pages-wrangler.ts';
 import { wranglerConfig as issuerConfig, TEST_MANIFEST as ISSUER_MANIFEST } from '../../../email-issuer/scripts/gen-wrangler.ts';
 import { wranglerConfig as watchdogConfig, TEST_MANIFEST as WATCHDOG_MANIFEST } from '../../../watchdog/scripts/gen-wrangler.ts';
+import { wranglerConfig as filesConfig } from '../../../files/scripts/gen-wrangler.ts';
 import { MAX_OWNER_GRANT_DELAY_MS, MIN_OWNER_GRANT_DELAY_MS } from '../../src/config.ts';
 import { CONSOLE_RATE_LIMITS } from '../../src/limits.ts';
 import { CRON, LOCAL_D1_ID, TEST_MANIFEST, existingD1Id, main, testWranglerConfig, wranglerConfig } from '../gen-wrangler.ts';
@@ -54,6 +55,8 @@ describe('the console config', () => {
         { binding: 'LOGOS', bucket_name: 'hana-id-logos-test' },
         { binding: 'STATEMENTS', bucket_name: 'hana-id-statements-test' },
       ],
+      // Batch C11: logos are decoded and re-encoded through the Images binding.
+      images: { binding: 'IMAGES' },
       ratelimits: [{ name: 'CONSOLE_IP_LIMIT', namespace_id: '95101', simple: { limit: 10, period: 60 } }],
       assets: { directory: './public', binding: 'ASSETS', not_found_handling: 'single-page-application', run_worker_first: true },
       triggers: { crons: ['0 * * * *'] },
@@ -108,6 +111,7 @@ describe('across Workers (config snapshots)', () => {
     // The issuer's outbox sender (its test manifest's) is for local* envs only.
     ['email issuer', issuerConfig({ ...m, name: 'local-test' }, LOCAL_D1_ID, LOCAL_D1_ID) as Config],
     ['console', wranglerConfig(m, LOCAL_D1_ID) as Config],
+    ['files', filesConfig(m) as Config],
   ];
 
   it('only the console binds ConsoleRpc', () => {
@@ -125,6 +129,19 @@ describe('across Workers (config snapshots)', () => {
       .filter(([, c]) => (c.services ?? []).some((s) => s.service === m.console!.workerName || s.entrypoint === 'StaffRpc' || s.entrypoint === 'AuthHandler'))
       .map(([n]) => n);
     expect(binders).toEqual([]);
+  });
+
+  it('batch C11: only the console and the files Worker bind the logo bucket; the files Worker binds nothing else', () => {
+    const buckets = (c: Config) => ((c.r2_buckets as { binding: string; bucket_name: string }[] | undefined) ?? []);
+    const binders = configs.filter(([, c]) => buckets(c).some((b) => b.bucket_name === m.files!.logosBucket)).map(([n]) => n);
+    expect(binders).toEqual(['console', 'files']);
+    const files = configs.find(([n]) => n === 'files')![1];
+    expect(buckets(files)).toEqual([{ binding: 'LOGOS', bucket_name: m.files!.logosBucket }]);
+    expect(files.d1_databases ?? []).toEqual([]);
+    expect(files.services ?? []).toEqual([]);
+    expect(JSON.stringify(files)).not.toMatch(/hyperdrive|images/iu);
+    // Only the console re-encodes (the Images binding).
+    expect(configs.filter(([, c]) => c.images !== undefined).map(([n]) => n)).toEqual(['console']);
   });
 
   it('the console binds no other Worker’s database', () => {

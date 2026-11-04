@@ -28,7 +28,11 @@ function requestInfo(request: Request): RequestInfo {
   return { requestId, clientIp: ip && ip.length <= 64 ? ip : 'unknown', country: typeof cf?.country === 'string' ? cf.country : null };
 }
 
-/** The session-less `/api/*` routes (method → handler). Sign-in and the session routes come with C9 and C10. */
+/**
+ * The session-less `/api/*` routes (method → handler). Sign-in and the session routes come with C9 and C10; among them
+ * C10 routes `POST /api/orgs/:org/apps/:app/logo` to `logoUploadRoute` (logo.ts, batch C11) once it has checked the
+ * session, the membership and the owner role (CSRF already takes that path's raw body, csrf.ts).
+ */
 const API_ROUTES: Record<string, Partial<Record<string, (r: Request, env: Env, info: RequestInfo) => Promise<Response>>>> = {
   '/api/cancel': { POST: cancelChangeLink },
   '/api/owner-grants/cancel': { POST: cancelOwnerGrantLink },

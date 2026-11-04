@@ -1,7 +1,7 @@
 // The console Worker's bindings (docs/batch-c-spec.md "Bindings"; written by scripts/gen-wrangler.ts from the manifest's
 // `console` and `files` blocks). Vars are public; the one secret (CONSOLE_GOOGLE_CLIENT_SECRET) comes with sign-in in
 // batch C9.
-import type { CancelChangeByLinkInput, GuardedChange, ListAppsInput, AppSummary, RpcFail, RpcOk } from '@hana-id/console-core';
+import type { AppDetail, AppSummary, CancelChangeByLinkInput, GetAppInput, GuardedChange, ListAppsInput, RpcFail, RpcOk, SetLogoInput } from '@hana-id/console-core';
 
 type Answer<T extends object> = Promise<RpcOk<T> | RpcFail>;
 
@@ -13,6 +13,9 @@ type Answer<T extends object> = Promise<RpcOk<T> | RpcFail>;
 export interface ConsoleRpcClient {
   listApps(c: ListAppsInput): Answer<{ apps: AppSummary[] }>;
   cancelChangeByLink(c: CancelChangeByLinkInput): Answer<{ change: GuardedChange }>;
+  /** The logo upload (batch C11, logo.ts): the app's settings version and current logo, then the pointer. */
+  getApp(c: GetAppInput): Answer<{ app: AppDetail }>;
+  setLogo(c: SetLogoInput): Answer<{ version: number }>;
 }
 
 export interface Env {
@@ -39,6 +42,11 @@ export interface Env {
    * Optional so a test or a config without R2 still runs; the cron then skips the logo purge.
    */
   LOGOS?: R2Bucket;
+  /**
+   * The Cloudflare Images binding (batch C11, D93): every uploaded logo is decoded and re-encoded through it to a
+   * 256 × 256 PNG (logo.ts). Optional so a config without it still runs; uploads then answer `internal`.
+   */
+  IMAGES?: ImagesBinding;
   /** Monthly statements: read only by code (`get`/`head`; a source check forbids `put` and `delete`, D74). */
   STATEMENTS?: R2Bucket;
   /** Workers rate-limiting binding: per-IP flood limits of the session-less routes (limits.ts). */

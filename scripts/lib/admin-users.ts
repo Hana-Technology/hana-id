@@ -1,11 +1,17 @@
 // admin.ts user:list and user:find: the user directory (D269), for Hana staff. Read only, from the email issuer's own
 // D1 (`emailIssuer.cloudflare.d1Name`, migration apps/email-issuer/migrations/0002_user_emails.sql) with `wrangler d1
-// execute` (lib/d1.ts issuerD1Execute: wrangler's log file, metrics and error reports off). Partners never reach
+// execute --file` locally and D1's REST API remotely (lib/d1.ts issuerD1Execute: never the statement in a process
+// argument; wrangler's log file, metrics and error reports off). Partners never reach
 // this: no API route, SDK call or partner console reads the issuer's D1.
 //
 // Addresses are printed to the operator's terminal on purpose, and nowhere else: never written to a file or a log.
 // An address or sub to look up can come on stdin (`user:find` with no flag, `--search -`), so it stays out of the
-// shell history.
+// shell history, and the statement holding it never goes in a process argument (lib/d1.ts).
+//
+// A Google row with `email_verified = 0` is only a claim: anyone can put any address on a Google account without
+// proving they own it, so such a row can be another person's claim to someone's address. It is never shown as the
+// address's owner: `user:find --email` lists it apart under an UNVERIFIED warning, `user:list` marks it, and --json
+// carries `unverifiedClaim: true`. Email rows are always verified (a sign-in code).
 //
 // Each user's path per app is its own on-chain path, `{scope}#{provider}#{sub}#0` (docs/architecture.md "Key
 // derivation"; key_index 0 in the MVP). A linked member's wallet is its account root's path instead (`get_identity`
@@ -25,7 +31,7 @@ const APP_ID_RE = /^[A-Za-z0-9_.-]{1,64}$/u;
 
 export interface UserCmdDeps {
   /** Runs one read statement on the issuer's D1 and returns its rows. */
-  d1: (statement: string) => Record<string, unknown>[];
+  d1: (statement: string) => Promise<Record<string, unknown>[]>;
   log: (line: string) => void;
   /** One line from stdin (an address or sub kept out of the shell history). */
   readLine: (prompt: string) => Promise<string>;
@@ -47,11 +53,20 @@ export interface DirectoryUser {
   emailVerified: boolean;
   /** Google: whether the address is Google-hosted (D158); null for email. */
   hosted: boolean | null;
+  /**
+   * A Google row whose address Google hasn't verified (`email_verified = 0`): the account only claims the address,
+   * which can be someone else's. Never treat it as the owner.
+   */
+  unverifiedClaim: boolean;
   firstSeenMs: number;
   lastSeenMs: number;
   /** Newest first. */
   apps: UserApp[];
 }
+
+/** The warning above an unverified Google row (user:find) and on its address line (both commands). */
+export const UNVERIFIED_WARNING = 'UNVERIFIED: this Google account claims the address but Google hasn’t verified it; don’t treat it as the owner';
+const UNVERIFIED_TAG = '[UNVERIFIED: claimed, not verified by Google]';
 
 export interface UserListFilter {
   app?: string;
@@ -111,12 +126,14 @@ export function parseUserRow(r: Record<string, unknown>): DirectoryUser {
   const apps = rawApps
     .map((a) => ({ appId: str(a.app_id), scopeId: str(a.scope_id), path: ownPath(str(a.scope_id), provider, sub), firstSeenMs: num(a.first_seen_ms), lastSeenMs: num(a.last_seen_ms) }))
     .sort((x, y) => y.lastSeenMs - x.lastSeenMs || x.appId.localeCompare(y.appId));
+  const emailVerified = num(r.email_verified) === 1;
   return {
     email: str(r.email),
     provider: provider as UserProvider,
     sub,
-    emailVerified: num(r.email_verified) === 1,
+    emailVerified,
     hosted: r.hosted === null || r.hosted === undefined ? null : num(r.hosted) === 1,
+    unverifiedClaim: provider === 'google' && !emailVerified,
     firstSeenMs: num(r.first_seen_ms),
     lastSeenMs: num(r.last_seen_ms),
     apps,
@@ -125,8 +142,9 @@ export function parseUserRow(r: Record<string, unknown>): DirectoryUser {
 
 /** One user, for the terminal. */
 export function formatUser(u: DirectoryUser): string[] {
-  const verified = u.provider === 'email' ? 'yes (a sign-in code)' : `${u.emailVerified ? 'yes' : 'no'} (Google)${u.hosted === null ? '' : u.hosted ? ', Google-hosted' : ', not Google-hosted'}`;
-  const lines = [u.email, `  provider  ${u.provider}`, `  sub       ${u.sub}`, `  verified  ${verified}`, `  seen      ${formatTime(u.firstSeenMs)} first, ${formatTime(u.lastSeenMs)} last`];
+  const hosted = u.hosted === null ? '' : u.hosted ? ', Google-hosted' : ', not Google-hosted';
+  const verified = u.provider === 'email' ? 'yes (a sign-in code)' : u.unverifiedClaim ? `NO: Google hasn’t verified this address; the account only claims it${hosted}` : `yes (Google)${hosted}`;
+  const lines = [u.unverifiedClaim ? `${u.email}  ${UNVERIFIED_TAG}` : u.email, `  provider  ${u.provider}`, `  sub       ${u.sub}`, `  verified  ${verified}`, `  seen      ${formatTime(u.firstSeenMs)} first, ${formatTime(u.lastSeenMs)} last`];
   if (u.apps.length === 0) lines.push('  apps      none');
   for (const [i, a] of u.apps.entries()) {
     lines.push(`  ${i === 0 ? 'apps' : '    '}      ${a.appId} (scope ${a.scopeId})  path ${a.path}  seen ${formatTime(a.firstSeenMs)} first, ${formatTime(a.lastSeenMs)} last`);
@@ -143,14 +161,40 @@ function provider(args: Args): UserProvider | undefined {
   return p as UserProvider;
 }
 
-function output(users: DirectoryUser[], header: string, args: Args, deps: UserCmdDeps): void {
-  if (args.flag('json')) return void deps.log(JSON.stringify(users, null, 2));
-  deps.log(header);
-  if (users.length) deps.log(PATH_NOTE);
+function printUsers(users: DirectoryUser[], deps: UserCmdDeps): void {
   for (const u of users) {
     deps.log('');
     for (const l of formatUser(u)) deps.log(l);
   }
+}
+
+/** user:list: every user in order, unverified Google rows marked on their address line. */
+function output(users: DirectoryUser[], header: string, args: Args, deps: UserCmdDeps): void {
+  if (args.flag('json')) return void deps.log(JSON.stringify(users, null, 2));
+  const claims = users.filter((u) => u.unverifiedClaim).length;
+  deps.log(header);
+  if (claims) deps.log(`${claims} of them ${claims === 1 ? 'is a Google account' : 'are Google accounts'} whose address Google hasn’t verified, marked ${UNVERIFIED_TAG}: a claim, never the address’s owner.`);
+  if (users.length) deps.log(PATH_NOTE);
+  printUsers(users, deps);
+}
+
+/**
+ * user:find: the verified users first; unverified Google rows apart, after the warning, never counted as the owner
+ * (--json: the verified first, each row's `unverifiedClaim`).
+ */
+function findOutput(users: DirectoryUser[], what: 'address' | 'sub', where: string, args: Args, deps: UserCmdDeps): void {
+  const owners = users.filter((u) => !u.unverifiedClaim);
+  const claims = users.filter((u) => u.unverifiedClaim);
+  if (args.flag('json')) return void deps.log(JSON.stringify([...owners, ...claims], null, 2));
+  const n = (k: number, noun: string): string => `${k} ${noun}${k === 1 ? '' : 's'}`;
+  if (owners.length) deps.log(`${n(owners.length, 'user')} (${where})`);
+  else deps.log(claims.length ? `No verified user with that ${what} (${where})` : `No user with that ${what} (${where})`);
+  if (users.length) deps.log(PATH_NOTE);
+  printUsers(owners, deps);
+  if (!claims.length) return;
+  deps.log('');
+  deps.log(`${UNVERIFIED_WARNING}${claims.length > 1 ? ` (${claims.length} Google accounts)` : ''}.`);
+  printUsers(claims, deps);
 }
 
 /** The address candidates of an exact lookup: as typed (trimmed, lowercased: Google rows) and normalized (email rows). */
@@ -182,7 +226,7 @@ export async function userList(args: Args, where: string, deps: UserCmdDeps): Pr
   if (p) filter.provider = p;
   if (app) filter.app = app;
   if (search) filter.search = search;
-  const users = deps.d1(userListSql(filter)).map(parseUserRow);
+  const users = (await deps.d1(userListSql(filter))).map(parseUserRow);
   const filters = [p && `provider ${p}`, app && `app ${app}`, search !== undefined && 'an address search'].filter(Boolean).join(', ');
   output(users, `${users.length} user${users.length === 1 ? '' : 's'} (${where}${filters ? `; ${filters}` : ''}), newest first by last seen${users.length === filter.limit ? ` (the first ${filter.limit}: --limit for more)` : ''}`, args, deps);
   return users;
@@ -202,7 +246,7 @@ export async function userFind(args: Args, where: string, deps: UserCmdDeps): Pr
     q = line.includes('@') ? { kind: 'email', candidates: addressCandidates(line) } : { kind: 'sub', sub: checkSub(line) };
   }
   if (p) q.provider = p;
-  const users = deps.d1(userFindSql(q)).map(parseUserRow);
-  output(users, users.length ? `${users.length} user${users.length === 1 ? '' : 's'} (${where})` : `No user with that ${q.kind === 'email' ? 'address' : 'sub'} (${where})`, args, deps);
-  return users;
+  const users = (await deps.d1(userFindSql(q))).map(parseUserRow);
+  findOutput(users, q.kind === 'email' ? 'address' : 'sub', where, args, deps);
+  return [...users.filter((u) => !u.unverifiedClaim), ...users.filter((u) => u.unverifiedClaim)];
 }

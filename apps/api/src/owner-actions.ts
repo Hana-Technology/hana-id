@@ -6,9 +6,13 @@
 // that exists (and, for execute_change, is unlocked), and a client proof for that client whose nonce is the scope's
 // client-proof nonce. The scope is read uncached, so a nonce that moved since the console built the action is caught
 // here, for free, rather than on chain. The contract still checks everything.
+// Both tokens are relayed to the chain, where they are public, so both are held to the claim allow-list (claims.ts,
+// `token_has_pii`) as login tokens are (D271, D274), on both paths (the endpoint and ConsoleRpc.ownerAction): an
+// owner's email or Workspace domain is never relayed.
 import { AUTHENTICATED_OWNER_METHODS, clientProofNonce, ownerActionNonce } from '@hana-id/console-core';
 import { verifyIdToken } from '@hana-id/oidc';
 import { hex } from './bytes.ts';
+import { disallowedClaim } from './claims.ts';
 import type { Env } from './env.ts';
 import { logStaleJwks } from './log.ts';
 import type { ContractCall } from './near/tx.ts';
@@ -22,22 +26,23 @@ export type OwnerPrecheck =
       /** The OIDC owner the token proves (null for execute_change, which takes no auth): the per-owner caps' subject. */
       owner: { provider: string; sub: string } | null;
     }
-  | { ok: false; status: number; code: string; error: string };
+  | { ok: false; status: number; code: string; error: string; data?: Record<string, unknown> };
 
 const no = (status: number, code: string, error: string): OwnerPrecheck => ({ ok: false, status, code, error });
 
 export interface PrecheckOptions {
   /**
-   * ConsoleRpc.ownerAction: the owner token's optional claims are checked strictly (D201) and it must carry no
-   * personal data (`email`, `email_verified`, `hd`): the console asks for `scope=openid`, and the token is public once
-   * relayed (docs/batch-c-spec.md "On-chain owner actions" step 4). A client proof may carry them (it is the partner's
-   * own token, shown with a warning before it is pasted).
+   * ConsoleRpc.ownerAction: the owner token's optional claims are also checked strictly (D201). The claim allow-list
+   * applies on every path, this one included (D274).
    */
   console?: boolean;
 }
 
-/** The claims that make a token personal data (D25, D96): never logged or stored, refused where a token goes public. */
-export const hasPersonalClaims = (t: { email?: unknown; email_verified?: unknown; hd?: unknown }): boolean => t.email !== undefined || t.email_verified !== undefined || t.hd !== undefined;
+/** `token_has_pii` for a verified token with a claim outside the allow-list, else null (D274). */
+function piiRefusal(jwt: string, which: string): OwnerPrecheck | null {
+  const claim = disallowedClaim(jwt);
+  return claim === null ? null : { ok: false, status: 400, code: 'token_has_pii', error: `${which} carries a claim outside the allow-list`, data: { claim } };
+}
 
 const isOidcOwner = (owner: unknown, provider: string, sub: string): boolean => {
   const o = (owner as { Oidc?: { provider?: unknown; sub?: unknown } } | null)?.Oidc;
@@ -65,7 +70,8 @@ export async function precheckOwnerAction(env: Env, call: ContractCall, now: num
     const jwt = (args.auth as { Oidc: { jwt: string } }).Oidc.jwt;
     const v = await verifyIdToken(jwt, now, { onStaleKeys: logStaleJwks, identityIssuer: env.IDENTITY_ISS, ...(opts.console ? { optionalClaims: 'strict' as const } : {}) });
     if (!v.ok) return no(v.code === 'unsupported_issuer' || v.code === 'bad_token' ? 400 : 401, v.code, v.error);
-    if (opts.console && hasPersonalClaims(v.token)) return no(403, 'token_has_pii', 'An owner token must carry no email or hd (scope=openid): it becomes public on chain');
+    const pii = piiRefusal(jwt, 'The owner token');
+    if (pii) return pii;
     const config = await getConfig(env);
     if (!config.console_audiences.some(([p, a]) => p === v.token.provider && a === v.token.aud)) return no(403, 'not_console_token', 'Token is not for the Hana console');
     owner = { provider: v.token.provider, sub: v.token.sub };
@@ -115,6 +121,8 @@ export async function precheckOwnerAction(env: Env, call: ContractCall, now: num
       if (add) {
         const proof = await verifyIdToken(args.client_proof as string, now, { onStaleKeys: logStaleJwks, identityIssuer: env.IDENTITY_ISS });
         if (!proof.ok) return no(400, proof.code === 'bad_token' ? 'bad_token' : 'invalid_client_proof', `Client proof: ${proof.error}`);
+        const proofPii = piiRefusal(args.client_proof as string, 'The client proof');
+        if (proofPii) return proofPii;
         if (proof.token.provider !== add.provider || proof.token.aud !== add.aud) return no(400, 'invalid_client_proof', 'Client proof is for another client');
         if (proof.token.nonce !== (await clientProofNonce({ signer: env.SIGNER_ACCOUNT, scopeId, actionNonce }))) {
           return no(400, 'invalid_client_proof', `Client proof nonce is not this scope's client-proof nonce at action_nonce ${actionNonce}`);

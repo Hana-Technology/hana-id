@@ -25,7 +25,7 @@ const input = (patch: Partial<DiagnosticsInput> = {}): DiagnosticsInput => ({
   expiresAtMs: Date.UTC(2026, 9, 29, 23),
   addresses: ADDRESSES,
   unlockMs: 212.6,
-  logins: [{ at: '2026-10-29T11:00:00.000Z', totalMs: 7012.4, stages: { app: 120, popup: 900, google: 4000, verify: 15, chain: 6200, decrypt: 40 } }],
+  logins: [{ at: '2026-10-29T11:00:00.000Z', method: 'google', totalMs: 7012.4, stages: { app: 120, popup: 900, google: 4000, verify: 15, chain: 6200, decrypt: 40 } }],
   errors: [],
   userAgent: 'Mozilla/5.0 (Macintosh) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15',
   ...patch,
@@ -49,7 +49,7 @@ describe('diagnostics', () => {
       sessionExpiresAt: '2026-10-29T23:00:00.000Z',
       addresses: ADDRESSES,
       unlockMs: 213,
-      logins: [{ at: '2026-10-29T11:00:00.000Z', totalMs: 7012, stages: { app: 120, popup: 900, google: 4000, verify: 15, chain: 6200, decrypt: 40 } }],
+      logins: [{ at: '2026-10-29T11:00:00.000Z', method: 'google', totalMs: 7012, stages: { app: 120, popup: 900, google: 4000, verify: 15, chain: 6200, decrypt: 40 } }],
       errors: [],
       userAgent: 'Mozilla/5.0 (Macintosh) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15',
     });
@@ -73,7 +73,7 @@ describe('diagnostics', () => {
   });
 
   it('keeps addresses in their own field and only the latest entries, with stage names and numbers re-typed', () => {
-    const logins = Array.from({ length: MAX_ENTRIES + 5 }, (_, i) => ({ at: String(i), totalMs: i, stages: { chain: i, 'bad key!': 1, nan: Number.NaN } as Record<string, number> }));
+    const logins = Array.from({ length: MAX_ENTRIES + 5 }, (_, i) => ({ at: String(i), method: 'email' as const, totalMs: i, stages: { chain: i, 'bad key!': 1, nan: Number.NaN } as Record<string, number> }));
     const d = diagnostics(input({ logins, addresses: null, expiresAtMs: null, unlockMs: null }), 0) as { logins: { at: string; stages: unknown }[]; addresses: unknown; sessionExpiresAt: unknown };
     expect(d.logins).toHaveLength(MAX_ENTRIES);
     expect(d.logins[0]!.at).toBe('5');

@@ -3,7 +3,11 @@
 Everything that must be true before Hana ID runs on mainnet with real funds. This is a current-state doc for the
 two founders to track. Update a row in the same branch as the change that moves it (rule in `CLAUDE.md`).
 
-Last verified: 2026-11-02 for row 7.10 (branch `feat/batch-c-6`, the console sink scope, D238); 2026-11-02 for rows 1.5, 1.16, 4.18 and 7.14 (branch `feat/batch-c-4`, usage capture, D220–D224);
+Last verified: 2026-11-04 for row 7.10 (branch `feat/batch-c-6-merge`: batch C6, the console sink scope, D238, on current `develop`); 2026-11-04 for row 7.1h (branch `feat/token-first-on`: the spike passed, `'token_first'` switched on, D270); 2026-11-04 for row 6.8 (branch `fix/sessions-allow-list`: the claim allow-list always on, D271, D274); 2026-11-04 for row 7.1h (branch `feat/spike-leg-e`: the spike's leg E, D270); 2026-11-04 for the "Not tracked as blockers" note (branch `docs/native-apps-spec`: the native apps spec on `develop`); 2026-11-03 for row 4.19 (branch `fix/8b-rereview`, the second NEAR provider, D263); 2026-11-03 for rows 7.1h and 7.1i (branch `feat/email-login-8b` review fixes, D263–D267); 2026-11-03 for
+rows 7.1f and 7.1g (branch `feat/email-login-8b`, automatic linking, D254–D259); 2026-11-02
+before that (branch `feat/email-login-8a`, plain email login in the web, D245–D249);
+2026-11-02 for rows 7.1–7.1e (branch `feat/email-login-6`, the API's email login part and its reviews, D230–D234, D250–D252);
+2026-11-02 for rows 1.5, 1.16, 4.18 and 7.14 (branch `feat/batch-c-4`, usage capture, D220–D224);
 2026-11-02 for row 2.6 (branch `feat/identity-token-7`, the KMS signer code); 2026-11-02, against `develop` @ 3c4e920 (batch C3 merged) and the docs on it; the inconsistencies, rows
 1.14–1.16, 6.7 and 7.5 on 2026-11-02 against `develop` @ 1c6a124 (branch `docs/consistency-pass`). Today only
 sandbox-dev (testnet) runs.
@@ -71,7 +75,7 @@ These have the longest lead time, or other rows wait on them.
 | 1.3 | User-mail provider: SendGrid, final once the colleague agrees | Delivery of login codes is a trust root | decision needed | colleague, founder | D194 (replaces D87 for user mail) |
 | 1.4 | Provider for the watchdog's alert email and the admin Worker's notices (Resend today, or SendGrid too) | Two providers means two accounts to secure | decision needed ("decided separately") | founder | D87, D194 |
 | 1.5 | Batch C2/C3/C4 readings to confirm: D201–D203, D205–D209, D220–D224 | Built code rests on them | decision needed | founder | decisions.md D201–D203, D205–D209, D220–D224 |
-| 1.6 | Email issuer readings D195–D199 (batch 4, on `feat/email-login-4`, not on `develop`) | Rate limits and issuer behaviour | decision needed ("to confirm") | founder | `docs/email-login-build-plan.md` on `feat/email-login-4` |
+| 1.6 | Email issuer readings D195–D199 (batch 4, merged into `develop`) | Rate limits and issuer behaviour | decision needed ("to confirm") | founder | decisions.md D195–D199; `docs/email-login-build-plan.md` "Batch 4 result" |
 | 1.7 | Batch C Q1: does the console's Google code flow give an `openid`-only token? | If Google always adds `email`, step-ups and owner actions stop | decision needed (to test in C9) | founder, Claude build | batch-c-spec Q1; D93 |
 | 1.8 | Batch C Q5: Neon setup (restore window, compute, owner role, Hyperdrive on the plan) | The ledger is billing data, kept for years | decision needed | founder | batch-c-spec Q5; batch-c-build-plan P3; D93 |
 | 1.9 | Batch B open questions Q2, Q4, Q6, Q10, Q11, Q13, Q17, Q24, Q25, Q26, Q29 | Login UX, mobile, MPC timeout, bundle budget | decision needed | founder | decisions.md "Proposed, not yet confirmed"; batch-b-spec |
@@ -136,6 +140,7 @@ These have the longest lead time, or other rows wait on them.
 | 4.16 | D1 backup beyond 30 days and outside Cloudflare (export of the apps tables) | Time Travel stops at 30 days | not built | Claude build | D152; playbooks `d1-data-loss` |
 | 4.17 | SDK published: `NPM_TOKEN`, drop `"private": true`, claim the `@hana-id` npm scope | Partners install outside the monorepo | unclear: check (scope claim status not recorded) | founder | D1, D72; operations.md "SDK publishing" |
 | 4.18 | Usage ledger Hyperdrive configs created through Cloudflare's REST API with the role password in the HTTPS body, not `wrangler hyperdrive create --connection-string` (the password is in the local process list while it runs; acceptable on sandbox-dev only) | The writer's credential could insert made-up usage | not built | Claude build, founder | D224; operations.md "Usage capture" step 3 |
+| 4.19 | Keyed, operator-independent NEAR RPC providers for `rpc` and `rpcFallback` (each its own account and API key, run by different operators), and consider requiring 2 out of 3 for D263's path confirmations (e.g. adding `near-testnet.drpc.org`'s mainnet counterpart as a third) | Every login of a linked identity is refused (`path_unconfirmed`) while either provider is down or rate-limits it; sandbox-dev's second provider is the public `rpc.testnet.near.org`, slow and rate-limited, accepted for the testnet demo | not built (2-of-3 not built; testnet accepted) | founder, Claude build | D263; operations.md "Turning linking on (batch 8b)" |
 
 ## 5. Monitoring and paging
 
@@ -162,14 +167,22 @@ These have the longest lead time, or other rows wait on them.
 | 6.5 | Deferred sweep findings (APIW-2/5/6/7/8/9, APIV-1/2/4/6/8/9, CORE-2/6, PART-2/4, the `owner_action_nonce` recompute) | Whether each must close before mainnet isn't stated | unclear: check | founder, Claude build | security.md sweep sections |
 | 6.6 | Open issues (g) cross-isolate replays and (h) wide relayer allowlists | Gas cost; a leaked key's reach | not built ((h) folded into the allowlist step) | Claude build | security.md (g), (h) |
 | 6.7 | GitHub "Require review from Code Owners" on `develop` and `main`; second owner | Derivation, contract and keys code needs a second reviewer | not built for the setting; the second owner is done (`@mj-hana` in `.github/CODEOWNERS` since 2026-10-30) | founder | D58, D100; security.md OPER-3; context.md "Next steps" 2 |
-| 6.8 | `REJECT_PII_ON_SESSIONS = "1"` on `/v1/sessions` | Keeps PII off chain on the split path | unclear: check (off today; whether mainnet needs it isn't stated) | founder | context.md; security.md "Verify before relay" |
+| 6.8 | The claim allow-list on `/v1/sessions` (was `REJECT_PII_ON_SESSIONS = "1"`) | Keeps PII off chain on the split path | done (always on, the flag removed; also on `/v1/owner-actions`; D271, D274) | — | security.md "Claim allow-list" |
 | 6.9 | Forged-key and pause drills | The watchdog acts as specified | done (sandbox-dev, 2026-10-30) | — | operations.md "Watchdog service" |
 
 ## 7. Builds not done
 
 | # | Item | Why it matters | Status | Owner | Source |
 |---|---|---|---|---|---|
-| 7.1 | Email login batches 4 (issuer, on `feat/email-login-4`), 6 (API), 7–8 (web), 9 (consoles), 10 (KMS, staging) | Email login is a pre-mainnet login method (D4) | not built (1–3 and 5 merged) | Claude build | D4, D119–D123; email-login-build-plan |
+| 7.1 | Email login batches 6 (API, on `feat/email-login-6`), 7–8 (web), 9 (consoles), 10 (KMS, staging) | Email login is a pre-mainnet login method (D4) | not built (1–5 merged; 6 on a branch) | Claude build | D4, D119–D123; email-login-build-plan |
+| 7.1b | Production route `<api host>/v1/email/*` to the email issuer Worker on Hana's zone (the issuer's `iss` under the API's URL), or `emailIssuer.url` for its own host | Addresses and codes must never pass through the API Worker (D230) | not built (needs the production zone, 4.1) | founder | D230; operations.md "Email issuer" step 7 |
+| 7.1c | Email login batch 6 readings D230–D234, D250–D252 | Routing, the API's email checks, link limits, the deploy order, the issuer's APP_DB, the pool links use | decision needed ("to confirm") | founder | decisions.md D230–D234, D250–D252 |
+| 7.1d | The email issuer reads the API's D1 through a read-only RPC on the API instead of the read-write `APP_DB` binding | A compromised issuer Worker could write the API's tables (origins, keys, settings) | not built (a source check holds the code to reads, D251) | Claude build | D251; security.md "Email issuer" |
+| 7.1e | A third relayer pool for the link methods, or keep them on the session pool with the global cap | A link flood shares the allowance logins use | decision needed (D252) | founder | D252 |
+| 7.1f | Email login batch 8a readings D245–D249 and batch 8b readings D254–D259 (Google's email by a second request, the refusal when google-match can't answer, the follow-up channel, the linked-login recovery, email export, banners and `linkAccount`) | The popup's cancel codes, the SDK surface, the demo setup by hand; how linking behaves in the popup and the vault | decision needed ("to confirm"); 8b built on `feat/email-login-8b`, not merged | founder | decisions.md D245–D249, D254–D259 |
+| 7.1g | Before email is enabled for any scope with real Google users: google-match's hint writes (batch 8b), or a merge path for email wallets opened meanwhile | An email identity with a wallet can never join a Google account later ("Sign-in method already has a wallet"). Batch 8b: every Google login of an app with email runs google-match, which writes the hint, so an email login of that address reaches case B (no second wallet). Residual: a Google wallet opened before its app turned email on has no hint until its owner's next Google login there | built on `feat/email-login-8b` (hints at every Google login); D248 lifted for scopes whose Google users have signed in since email was turned on (`docs/operations.md` "Turning linking on (batch 8b)"); the residual window is accepted per scope, or waited out | founder, Claude build | D248, D249, D255 |
+| 7.1h | The Google email-scope spike's legs C and D on real Google (`apps/smoke/spike-email.html`), by the user, for a Gmail, a Workspace and an outside-address account; legs C and E (and E2) before `GOOGLE_EMAIL_FLOW` becomes `'token_first'` | C: an openid-only ID token after the email grant must carry no `email` claims (else every later Google login of that user is `token_has_pii`); D: the silent email request must succeed again (the grant is no longer revoked, D265); E: `token_first`'s silent openid ID token must be clean, for the same account, with tokeninfo reachable from the browser (`tokenFirstUsable`) | **done** 2026-11-04: every leg passed for all three accounts with sandbox-dev's shared client (`docs/context.md` "Google email scope spike"); `GOOGLE_EMAIL_FLOW = 'token_first'` on `feat/token-first-on`. Re-run if the Google requests change or for a new Google project | founder | D254, D265, D270 |
+| 7.1i | Batch 8b review readings D263–D267: member paths on two independent RPC providers and root pins, the email permission's screens, no revocation, the issuer's word on the match (accepted risk), the relay and google-match limits | Wallet safety against a lying RPC; the issuer's trust boundary | decision needed ("to confirm") | founder | D263–D267 |
 | 7.2 | Contract v3 (email login, link counter) deployed | Every email and linking feature needs it | built, not deployed (sandbox-dev still runs v2) | founder, council | D200; contract-interface.md |
 | 7.3 | Batch C C4–C17: ledger capture, console, admin console, notices, statements, Support ID | Replaces `admin app:*`; monitoring, notices, billing | not built (C1–C3 merged) | Claude build | D28–D34, D73–D75, D87–D93; batch-c-build-plan |
 | 7.4 | Hana Home: export for every shared-login app, cross-device consent revocation, Support ID | Users aren't stranded when an app shuts down; required before mainnet | not built | Claude build | D40, D45, D98; hana-home-spec |
@@ -185,7 +198,7 @@ These have the longest lead time, or other rows wait on them.
 | 7.14 | Settlement (C12) checks each relayed event against its transaction: `near_tx` unique in the ledger, and the transaction's signer key and nonce equal the event's `relayer_pk` and `relayer_nonce`; anything else is not billed and is alerted | A leaked writer credential could otherwise bill a partner for a real transaction that isn't theirs | not built | Claude build | D222; batch-c-build-plan C12; security.md "What a compromise gives" |
 
 Not tracked as blockers: Sign in with Apple (paused, D160) and the native apps spec (`docs/native-apps-spec.md`, a
-draft on `docs/native-apps-spec`, not on `develop`).
+draft with 19 open questions, on `develop` since 2026-11-04).
 
 ## 8. Address freeze
 

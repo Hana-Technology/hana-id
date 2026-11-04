@@ -188,9 +188,10 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
 
   /**
    * An on-chain owner action, relayed through the owner pool exactly as /v1/owner-actions relays it (the same per-IP
-   * limiter, fed `clientIp`; the same precheck, token reservation, caps and usage event), with three console rules: the
-   * scope must be one of the org's (`not_found`), the owner token's optional claims are checked strictly and it must be
-   * `openid` only (`forbidden`), and a refusal before the relay is an RpcCode. Once relayed, the answer is the relay's
+   * limiter, fed `clientIp`; the same precheck, with the claim allow-list on the owner token and the client proof
+   * (D274), token reservation, caps and usage event), with three console rules: the scope must be one of the org's
+   * (`not_found`), the owner token's optional claims are checked strictly (`forbidden`), and a refusal before the relay
+   * is an RpcCode (`token_has_pii` → `forbidden`, the claim's name in the message). Once relayed, the answer is the relay's
    * `{status, result?, nearTx?, code?, error?}`. The safety methods (cancel, remove a client, disable shared login) may
    * use the budget's kill-switch reserve.
    */
@@ -207,10 +208,14 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
         throw err;
       }
       const status = out.response.status;
-      const body = (await out.response.json()) as { result?: unknown; nearTx?: unknown; code?: unknown; error?: unknown };
+      const body = (await out.response.json()) as { result?: unknown; nearTx?: unknown; code?: unknown; error?: unknown; data?: { claim?: unknown } };
       const code = typeof body.code === 'string' ? body.code : undefined;
       const error = typeof body.error === 'string' ? body.error : undefined;
-      if (!out.relayed) return refuse(OWNER_ACTION_CODES[code ?? ''] ?? 'internal', `${code ?? 'internal'}: ${error ?? 'refused'}`);
+      if (!out.relayed) {
+        // A claim name (token_has_pii) tells the member which Google setting to change; it is never a claim's value.
+        const claim = typeof body.data?.claim === 'string' ? ` (claim: ${body.data.claim.slice(0, 64)})` : '';
+        return refuse(OWNER_ACTION_CODES[code ?? ''] ?? 'internal', `${code ?? 'internal'}: ${error ?? 'refused'}${claim}`);
+      }
       // Relayed: something may have changed on chain (the breaker and the reserve keep what it took).
       w.wrote = true;
       return {

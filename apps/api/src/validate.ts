@@ -22,6 +22,11 @@ const isCount = (v: unknown): v is number => Number.isSafeInteger(v) && (v as nu
 const isKeyIndex = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= KEY_INDEX_LIMIT;
 const isU64 = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
 const isJwt = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= MAX_JWT && /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(v);
+/**
+ * A session or link token: a compact JWT (Google), or an email token in the JWS JSON form (`{…}`, printable ASCII, as
+ * the issuer writes it; email-token.ts parses it). At most MAX_JWT characters, as the contract's MAX_JWT_BYTES.
+ */
+export const isToken = (v: unknown): v is string => isJwt(v) || (typeof v === 'string' && v.length <= MAX_JWT && /^\{[\x20-\x7e]+\}$/u.test(v));
 const isPoint = (v: unknown, prefix: string): v is string => typeof v === 'string' && v.startsWith(prefix) && v.length < 300;
 /** Provider names and `sub` must not contain `#` (it separates path parts). */
 const utf8Len = (s: string): number => new TextEncoder().encode(s).length;
@@ -41,6 +46,9 @@ function onlyKeys(o: Obj, required: string[], optional: string[] = []): boolean 
 
 // ---- App endpoints (camelCase request bodies, as the legacy client sent) ----
 
+/** The fields of a POST /v1/sessions body. */
+const SESSION_FIELDS: ReadonlySet<string> = new Set(['jwt', 'sessionPublicKey', 'expiresAtMs', 'salt', 'keyIndex', 'maxUses', 'signature']);
+
 export interface CreateSessionRequest {
   jwt: string;
   sessionPublicKey: number[];
@@ -52,24 +60,37 @@ export interface CreateSessionRequest {
 
 /**
  * `create_session` for the app's `scopeId` (from D1). The client never chooses the scope: a body with `scopeId` (or
- * `scope_id`) is rejected rather than silently ignored.
+ * `scope_id`) is rejected rather than silently ignored. With `proof` (POST /v1/sessions), the body also carries
+ * `signature`, the session key's proof of possession (D137), relayed as create_session's `signature` argument: contract
+ * v3 requires it, v2 ignores it, so the API sends it either way.
  */
-export function toCreateSession(body: unknown, scopeId: string, now = Date.now()): Checked<ContractCall & { request: CreateSessionRequest }> {
+export function toCreateSession(
+  body: unknown,
+  scopeId: string,
+  now = Date.now(),
+  opts: { proof?: boolean } = {},
+): Checked<ContractCall & { request: CreateSessionRequest & { signature?: number[] } }> {
   if (!isObj(body)) return { error: 'Body must be a JSON object' };
   if ('scopeId' in body || 'scope_id' in body) return { error: 'scopeId is not accepted: the app’s scope is used' };
   const { jwt, sessionPublicKey, expiresAtMs, salt, keyIndex, maxUses } = body;
-  if (!isJwt(jwt)) return { error: 'jwt must be a Google ID token' };
+  if (!isToken(jwt)) return { error: 'jwt must be an ID token' };
   if (!isBytes(sessionPublicKey, 32, 32)) return { error: 'sessionPublicKey must be 32 bytes' };
   if (!isBytes(salt, 16, 64)) return { error: 'salt must be 16 to 64 bytes' };
   if (!isCount(expiresAtMs)) return { error: 'expiresAtMs must be a timestamp in ms' };
   if (expiresAtMs <= now || expiresAtMs > now + MAX_SESSION_MS + SKEW_MS) return { error: 'expiresAtMs must be in the next 24 hours' };
   if (!isKeyIndex(keyIndex)) return { error: 'keyIndex must be 0 to 2^31 - 1 (2^31 and above are reserved)' };
   if (!isCount(maxUses) || maxUses > MAX_USES) return { error: `maxUses must be 1 to ${MAX_USES}` };
-  return {
-    request: { jwt, sessionPublicKey, expiresAtMs, salt, keyIndex, maxUses },
-    method: 'create_session',
-    args: { jwt, scope_id: scopeId, session_public_key: sessionPublicKey, expires_at_ms: expiresAtMs, salt, key_index: keyIndex, max_uses: maxUses },
-  };
+  const args = { jwt, scope_id: scopeId, session_public_key: sessionPublicKey, expires_at_ms: expiresAtMs, salt, key_index: keyIndex, max_uses: maxUses };
+  if (opts.proof) {
+    // POST /v1/sessions takes exactly these fields (batch 6 review L3): a `linkJwt` or anything else is refused, never
+    // silently dropped.
+    const extra = Object.keys(body).find((k) => !SESSION_FIELDS.has(k));
+    if (extra !== undefined) return { error: `Unexpected field ${extra.slice(0, 64)}` };
+    const { signature } = body;
+    if (!isBytes(signature, 64, 64)) return { error: 'signature must be the session key’s 64-byte proof of possession' };
+    return { request: { jwt, sessionPublicKey, expiresAtMs, salt, keyIndex, maxUses, signature }, method: 'create_session', args: { ...args, signature } };
+  }
+  return { request: { jwt, sessionPublicKey, expiresAtMs, salt, keyIndex, maxUses }, method: 'create_session', args };
 }
 
 export interface SessionSigned {

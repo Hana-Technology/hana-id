@@ -37,8 +37,10 @@ test.describe('embedding', () => {
     const app = await newApp({ origins: [SITE_B_ORIGIN] });
     expect(await openPartner(page, app)).toBe('error');
     expect(await page.evaluate(() => (window as any).e2e.readyError)).toBe('vault_unavailable');
-    // The vault document was refused, so its script never ran.
-    expect(requests.count(`${VAULT_ORIGIN}/vault?`)).toBe(1);
+    // The vault document was refused, so its script never ran; the SDK tried a second frame once (no answer), then
+    // reported it.
+    expect(requests.count(`${VAULT_ORIGIN}/vault?`)).toBe(2);
+    expect(await page.evaluate(() => (window as any).e2e.readyErrorReason)).toBe('no_answer');
     expect(requests.count(`${VAULT_ORIGIN}/vault.js`)).toBe(0);
   });
 

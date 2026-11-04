@@ -79,13 +79,19 @@ describe('migrations-usage on an empty database', () => {
           [role],
         )
       ).map((r) => r.f);
-    expect(await fns('usage_writer')).toEqual(['usage.ensure_partitions', 'usage.record_event', 'usage.record_identity_tokens']);
+    expect(await fns('usage_writer')).toEqual(['usage.ensure_partitions', 'usage.record_email_counts', 'usage.record_event', 'usage.record_identity_tokens']);
     expect(await fns('usage_admin')).toEqual(['usage.ensure_partitions']);
     expect(await fns('usage_test_nobody')).toEqual([]);
   });
 });
 
 describe('the writer role', () => {
+  it('records the link relays’ events (migrations-usage 0005): link, link_cancel, link_unlink, without a uid', async () => {
+    for (const endpoint of ['link', 'link_cancel', 'link_unlink']) {
+      expect(await asWriter(() => record(event({ endpoint, uid: undefined, request_id: `link-${endpoint}` }))), endpoint).toBe(true);
+    }
+  });
+
   it('records events through record_event', async () => {
     expect(await asWriter(() => record(event()))).toBe(true);
   });
@@ -227,6 +233,7 @@ describe('record_event', () => {
     ['owner actions', { endpoint: 'owner_action', uid: undefined }],
     ['carry a uid', { outcome: 'rejected', code: 'contract_rejected' }],
     ['carry a uid', { endpoint: 'unlock' }],
+    ['carry a uid', { endpoint: 'link' }],
     ['code is null', { code: 'x' }],
     ['code is null', { outcome: 'error', code: null, uid: undefined }],
   ];

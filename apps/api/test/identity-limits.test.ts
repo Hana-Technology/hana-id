@@ -183,9 +183,12 @@ describe('L2: single-use markers only for live sessions, swept by an alarm', () 
 
   it('the object’s alarm deletes expired markers', async () => {
     const stub = limiter(env, `identity-proof:test${uid()}`);
-    expect(await stub.reserve('a', Date.now() + 50)).toBe(true);
-    expect(await runInDurableObject(stub, (_i, state) => state.storage.getAlarm())).not.toBeNull();
-    await new Promise((r) => setTimeout(r, 80));
+    const until = Date.now() + 250;
+    expect(await stub.reserve('a', until)).toBe(true);
+    // An alarm is set for the marker, unless it already fired and took the marker (a loaded machine can be that slow).
+    const [alarm, marks] = await runInDurableObject(stub, async (_i, state) => [await state.storage.getAlarm(), [...state.storage.kv.list({ prefix: 'mark:' })].length] as const);
+    expect(alarm !== null || marks === 0).toBe(true);
+    await new Promise((r) => setTimeout(r, Math.max(0, until - Date.now()) + 30));
     // The alarm may already have fired by itself; run it if it hasn't.
     await runDurableObjectAlarm(stub);
     expect(await runInDurableObject(stub, (_i, state) => [...state.storage.kv.list({ prefix: 'mark:' })].length)).toBe(0);

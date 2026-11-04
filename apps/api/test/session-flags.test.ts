@@ -1,9 +1,9 @@
-// Batch B changes to the batch A session endpoints: the claim allow-list on /v1/sessions behind
-// REJECT_PII_ON_SESSIONS, the BLS precheck on /v1/derive behind BLS_PRECHECK, and the key_index reservation.
+// Batch B changes to the batch A session endpoints: the claim allow-list on /v1/sessions (always on since D271, which
+// retired REJECT_PII_ON_SESSIONS), the BLS precheck on /v1/derive behind BLS_PRECHECK, and the key_index reservation.
 import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ALLOWED_CLAIMS, disallowedClaim } from '../src/claims.ts';
-import { appHeaders, call, chain, deriveBody, seedApp, sessionBody, uid } from './helpers.ts';
+import { NAMED_PII_CLAIMS, appHeaders, call, chain, deriveBody, seedApp, sessionBody, uid } from './helpers.ts';
 import { appKey, hanaHeaders, loginBody, mismatchedAppKey } from './login-helpers.ts';
 
 afterEach(() => vi.restoreAllMocks());
@@ -11,34 +11,57 @@ afterEach(() => vi.restoreAllMocks());
 const body = async (res: Response): Promise<Record<string, unknown>> => (await res.json()) as Record<string, unknown>;
 const newAud = (): string => `${uid()}.apps.googleusercontent.com`;
 
-describe('/v1/sessions claim allow-list (REJECT_PII_ON_SESSIONS)', () => {
-  const REFUSED = ['email', 'email_verified', 'name', 'picture', 'given_name', 'family_name', 'hd', 'locale', 'profile', 'unknown_claim'];
+describe('/v1/sessions claim allow-list (always on, D271)', () => {
+  const REFUSED = [...NAMED_PII_CLAIMS, 'unknown_claim'];
 
-  it('"0" (default): tokens with extra claims are relayed, as smoke’s Google Identity Services tokens need', async () => {
+  it('each named PII claim (and any unknown one) gives 400 token_has_pii with its name, and nothing reaches the chain', async () => {
     const app = await seedApp();
     const aud = newAud();
     const near = chain({ [aud]: app.scope });
-    const res = await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud, {}, { email: 'a@example.com', email_verified: true, hd: 'example.com' }) });
-    expect(res.status).toBe(200);
-    expect(near.sent).toHaveLength(1);
-  });
-
-  it('"1": each refused claim gives token_has_pii with its name; allowed claims pass', async () => {
-    const app = await seedApp();
-    const aud = newAud();
-    const near = chain({ [aud]: app.scope });
-    const on = { REJECT_PII_ON_SESSIONS: '1' };
     for (const claim of REFUSED) {
-      const res = await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud, {}, { [claim]: 'x' }), env: on });
+      const res = await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud, {}, { [claim]: claim === 'email' ? 'a@example.com' : 'x' }) });
       expect([res.status, await body(res)], claim).toEqual([400, expect.objectContaining({ code: 'token_has_pii', data: { claim } })]);
     }
+    // Refused before any chain read or relay: no transaction, no RPC call at all, no session.
     expect(near.sent).toHaveLength(0);
-    const now = Math.floor(Date.now() / 1000);
-    const ok = await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud, {}, { azp: aud, iat: now, nbf: now, jti: 'j', auth_time: now }), env: on });
-    expect(ok.status).toBe(200);
+    expect(near.rpcMethods).toEqual([]);
+    expect(near.viewCalls).toEqual([]);
+    expect(near.sessions.size).toBe(0);
   });
 
-  it('the claims verifyIdToken now parses (email, hd, …) never reach a log line, a response or D1 (D25, D96)', async () => {
+  it('a Google Identity Services style token (email, email_verified, name, picture, hd) is refused, not relayed', async () => {
+    const app = await seedApp();
+    const aud = newAud();
+    const near = chain({ [aud]: app.scope });
+    const gis = { email: 'a@example.com', email_verified: true, name: 'A', picture: 'https://x.example/a', given_name: 'A', family_name: 'B', hd: 'example.com', azp: aud };
+    const res = await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud, {}, gis) });
+    expect(res.status).toBe(400);
+    expect((await body(res)).code).toBe('token_has_pii');
+    expect(near.sent).toHaveLength(0);
+    expect(near.rpcMethods).not.toContain('send_tx');
+  });
+
+  it('a REJECT_PII_ON_SESSIONS var left in a deployed config has no effect: "0" still refuses', async () => {
+    const app = await seedApp();
+    const aud = newAud();
+    const near = chain({ [aud]: app.scope });
+    const legacy = { REJECT_PII_ON_SESSIONS: '0' } as unknown as Partial<typeof env>;
+    const res = await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud, {}, { email: 'a@example.com' }), env: legacy });
+    expect([res.status, (await body(res)).code]).toEqual([400, 'token_has_pii']);
+    expect(near.sent).toHaveLength(0);
+  });
+
+  it('a token with only allow-listed claims (every one of them) is relayed', async () => {
+    const app = await seedApp();
+    const aud = newAud();
+    const near = chain({ [aud]: app.scope });
+    const now = Math.floor(Date.now() / 1000);
+    const ok = await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud, {}, { azp: aud, iat: now, nbf: now, jti: 'j', auth_time: now }) });
+    expect(ok.status).toBe(200);
+    expect(near.sent.map((t) => t.method)).toEqual(['create_session']);
+  });
+
+  it('the claims verifyIdToken parses (email, hd, …) never reach a log line, a response or D1 (D25, D96)', async () => {
     const lines: string[] = [];
     for (const level of ['log', 'info', 'warn', 'error'] as const) vi.spyOn(console, level).mockImplementation((...args: unknown[]) => void lines.push(args.map(String).join(' ')));
     const app = await seedApp();
@@ -49,18 +72,16 @@ describe('/v1/sessions claim allow-list (REJECT_PII_ON_SESSIONS)', () => {
     const now = Math.floor(Date.now() / 1000);
     const pii = { email, email_verified: true, hd, amr: ['pwd'], auth_time: now, iat: now, azp: aud };
     const responses: string[] = [];
-    // Accepted (REJECT_PII_ON_SESSIONS off) and refused (on: token_has_pii; /v1/login always refuses them).
-    for (const [path, b, flags] of [
-      ['/v1/sessions', await sessionBody(app.scope, aud, {}, pii), {}],
-      ['/v1/sessions', await sessionBody(app.scope, aud, {}, pii), { REJECT_PII_ON_SESSIONS: '1' }],
-      ['/v1/login', await loginBody(app.scope, aud, {}, pii), {}],
+    // Refused on both session routes (token_has_pii).
+    for (const [path, b] of [
+      ['/v1/sessions', await sessionBody(app.scope, aud, {}, pii)],
+      ['/v1/login', await loginBody(app.scope, aud, {}, pii)],
     ] as const) {
-      const res = await call(path, { headers: path === '/v1/login' ? hanaHeaders(app) : appHeaders(app), body: b, env: flags });
+      const res = await call(path, { headers: path === '/v1/login' ? hanaHeaders(app) : appHeaders(app), body: b });
       responses.push(`${res.status} ${await res.text()}`);
     }
-    expect(responses[0]).toMatch(/^200 /u);
-    expect(responses.slice(1).map((r) => r.slice(0, 3))).toEqual(['400', '400']);
-    expect(near.sent).toHaveLength(1);
+    expect(responses.map((r) => r.slice(0, 3))).toEqual(['400', '400']);
+    expect(near.sent).toHaveLength(0);
     const tables = await env.DB.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'").all<{ name: string }>();
     const rows: string[] = [];
     for (const { name } of tables.results) rows.push(JSON.stringify((await env.DB.prepare(`SELECT * FROM "${name}"`).all()).results));
@@ -70,16 +91,17 @@ describe('/v1/sessions claim allow-list (REJECT_PII_ON_SESSIONS)', () => {
     }
   });
 
-  it('optional claims of the wrong type are ignored, not refused (verifyIdToken optionalClaims "ignore", D201)', async () => {
+  it('allow-listed claims of the wrong type are ignored, not refused (verifyIdToken optionalClaims "ignore", D201)', async () => {
     const app = await seedApp();
     const aud = newAud();
     const near = chain({ [aud]: app.scope });
-    // Off: any claim names; on: only allow-listed names, still wrongly typed.
-    const off = await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud, {}, { email: 7, email_verified: 'yes', hd: [], amr: [1], iat: 'soon' }) });
-    expect(off.status).toBe(200);
-    const on = await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud, {}, { iat: 'soon', auth_time: 'x', azp: 5 }), env: { REJECT_PII_ON_SESSIONS: '1' } });
-    expect(on.status).toBe(200);
-    expect(near.sent).toHaveLength(2);
+    const res = await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud, {}, { iat: 'soon', auth_time: 'x', azp: 5 }) });
+    expect(res.status).toBe(200);
+    expect(near.sent).toHaveLength(1);
+  });
+
+  it('no named PII claim is allow-listed (the list is compared with @hana-id/core in scripts/test/relayed-tokens.test.ts)', () => {
+    for (const claim of NAMED_PII_CLAIMS) expect(ALLOWED_CLAIMS.has(claim), claim).toBe(false);
   });
 
   it('disallowedClaim reads the payload of any token, and leaves unreadable ones to the signature check', () => {

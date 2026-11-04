@@ -32,7 +32,7 @@ beforeEach(() => resetDom());
 describe('callback fragment', () => {
   const s = 'a'.repeat(43);
   it('reads a token, an error, or neither', () => {
-    expect(parseCallbackFragment(`#id_token=${TOKEN}&state=${s}`)).toEqual({ kind: 'token', state: s, idToken: TOKEN });
+    expect(parseCallbackFragment(`#id_token=${TOKEN}&state=${s}`)).toEqual({ kind: 'token', state: s, idToken: TOKEN, accessToken: null });
     expect(parseCallbackFragment(`#error=access_denied&state=${s}`)).toEqual({ kind: 'error', state: s, error: 'access_denied' });
     expect(parseCallbackFragment(`#error=Bad%20Thing&state=${s}`)).toEqual({ kind: 'error', state: s, error: 'unknown_error' });
     expect(parseCallbackFragment(`#state=${s}`)).toEqual({ kind: 'malformed', state: s });

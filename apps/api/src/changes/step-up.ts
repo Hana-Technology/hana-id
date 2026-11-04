@@ -11,13 +11,16 @@
 //      is down);
 //   6. sha256(jwt) is reserved in the `owner-actions:tokens` limiter until `exp` (`token_used`).
 // Besides the spec (D235): the token's `sub` must be the member actor's (the console's callback already requires it),
-// and a token carrying `email`, `email_verified` or `hd` is refused (the step-up asks for `scope=openid`). The token, its
-// email and its hd are never logged, returned or stored; only the verified `sub` is (`proposer_sub`, `actor_sub`).
+// and a token with a claim outside the claim allow-list (claims.ts: `email`, `email_verified`, `hd`, a name, …) is
+// refused, the rule every other Google token the API verifies is held to (D271, D274; the step-up asks for
+// `scope=openid`, so a well-formed one has none). The token is never logged, returned or stored; only the verified
+// `sub` is (`proposer_sub`, `actor_sub`).
 import { type Actor } from '@hana-id/console-core';
 import { JwksUnavailableError, verifyIdToken } from '@hana-id/oidc';
 import type { Env } from '../env.ts';
 import { log, logStaleJwks } from '../log.ts';
-import { hasPersonalClaims, sha256Hex } from '../owner-actions.ts';
+import { disallowedClaim } from '../claims.ts';
+import { sha256Hex } from '../owner-actions.ts';
 import { placedStub } from '../placement.ts';
 import { getConfig } from '../views.ts';
 import { refuse } from './cas.ts';
@@ -63,7 +66,8 @@ export async function verifyStepUpToken(env: Env, jwt: string, actor: Actor, now
   if (iatMs < now - STEP_UP_MAX_AGE_MS) return refuse('forbidden', 'The step-up token is older than 300 s: sign in again');
   if (iatMs > now + STEP_UP_IAT_SKEW_MS) return refuse('forbidden', 'The step-up token is issued in the future');
   if (t.sub !== actor.sub) return refuse('forbidden', "The step-up token is not the signed-in member's");
-  if (hasPersonalClaims(t)) return refuse('forbidden', 'A step-up token must carry no email or hd (scope=openid)');
+  const claim = disallowedClaim(jwt);
+  if (claim !== null) return refuse('forbidden', `The step-up token carries a claim outside the allow-list (${claim}): sign in with scope=openid`);
   return { provider: t.provider, sub: t.sub, nonce: t.nonce, hash: await sha256Hex(jwt), expMs: t.exp * 1000 };
 }
 

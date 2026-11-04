@@ -4,7 +4,7 @@ Carried over from the design conversation in wend-widget-demo (Oct 2026). Plan d
 https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi · Login journey diagrams: https://claude.ai/artifact/73xpB7AZknWd9s38xw4Fjo ·
 SDK security page: https://claude.ai/artifact/AwzpW8xZ7pAuMoTYgBfcvo
 
-Last verified: 2026-11-02 against `develop` @ 1c6a124 and `docs/operations.md` (branch `docs/consistency-pass`: "Next
+Last verified: 2026-11-04 for "Google email scope spike" (branch `feat/token-first-on`: the user's spike results, the D270 gate met); 2026-11-04 for the claim allow-list notes (branch `fix/sessions-allow-list`: always on, `REJECT_PII_ON_SESSIONS` retired, D271); 2026-11-02 against `develop` @ 1c6a124 and `docs/operations.md` (branch `docs/consistency-pass`: "Next
 steps" and "Before mainnet", the user-mail provider, the batch B status note). The dated sections below are records
 of their day; "Next steps" is the current list.
 
@@ -179,6 +179,30 @@ origins, partner-origin `/v1/sessions`/`/v1/derive`/`/v1/sessions/revoke`) tied 
   match). The path has no client ID, so moving a scope from the shared client to a Hana-held branded client keeps its
   users' addresses (D42).
 
+### Google email scope spike (2026-11-04, `apps/smoke/spike-email.html`)
+
+Run by the user with sandbox-dev's shared login client (Google project `875896…`), for three account kinds: a personal
+Gmail, a Workspace account on its own domain, and a Google account registered with a non-Google (iCloud) address.
+Only the page's booleans and claim names are recorded here, no personal values.
+
+- Every leg passed for all three accounts.
+- **B**: the ID token was openid-only; the silent access token was issued.
+- **C** (a plain `openid` login once the email grant exists): no lockout claims (`tokenHasPiiLockout: false`), the
+  same account.
+- **D** (B's silent request again): silent, no prompt.
+- **E** (D270's `'token_first'`, as the popup runs it): `tokeninfoReachable: true` (status 200: tokeninfo answered the
+  browser's cross-origin POST), `tokeninfoHasSub`, `tokeninfoAudIsClient`, the silent ID token issued,
+  `emailInIdToken: false`, `idTokenPersonalClaims: []`, `nonceMatches`, `sameAccount`, `tokenFirstUsable: true`.
+- **E2** (the silent request alone, a returning user): `returningTokenClean: true`.
+- Every ID token's claims were exactly `{aud, azp, exp, iat, iss, jti, nbf, nonce, sub}`, as in the 2026-10-28 spike.
+  The Workspace account's `hd` appeared only in userinfo, never in an ID token.
+- Consent: for the account with no grant yet (E run first), one Google screen, "Sign in to Hana ID Dev / Google will
+  allow Hana ID Dev to access this info about you: [the address] Email address", Cancel / Continue. For accounts that
+  already had the grant, E showed no consent screen, only the account chooser.
+
+D270's gate (legs C and E for all three accounts) is met: `GOOGLE_EMAIL_FLOW` became `'token_first'` on
+`feat/token-first-on` (2026-11-04).
+
 ### Batch B status (2026-10-28)
 
 *Record of 2026-10-28. Since then batch B was merged into `develop` and deployed on sandbox-dev (2026-10-29), and the
@@ -218,7 +242,8 @@ receipts and the latency median, D26), unlock latency from SIN with the page ren
 (`timings.scopeCheck`/`scopeWait`, D56), the BLS precheck's Worker CPU time (D64, before `BLS_PRECHECK` is on
 anywhere), one forced MPC-side failure (Q11), and Safari/WebKit retention of partitioned IndexedDB (Q4). The
 cross-project `sub` test passed (spike above, D42). After the smoke run on the vault (the spec's step 7):
-`REJECT_PII_ON_SESSIONS = "1"` and session-key rotation to allowlist state 2 (gate passes) or 3 (gate fails).
+session-key rotation to allowlist state 2 (gate passes) or 3 (gate fails). (The spec's `REJECT_PII_ON_SESSIONS`
+switch is gone: the claim allow-list is always on, D271.)
 
 ## Batch C decisions (2026-10-27; spec `docs/batch-c-spec.md`, draft)
 
@@ -361,9 +386,9 @@ hard-coded · NEAR Auth/FastAuth and per-tx signing code no longer needed.
   in memory, and on disk only under the API's share (`'session'` mode).
 - CKD network key read over RPC → pinned per env build (`ckdNetworkKey`), checked by the build (`ckdKeyProblem`).
 - Full Google token (with email) public on chain → the openid-only implicit flow plus the claim allow-list on
-  `/v1/login`. `/v1/sessions` gets the allow-list when the user sets `REJECT_PII_ON_SESSIONS = "1"` after the spec's
-  step 7 (only `apps/smoke`'s `direct.html` still uses Google Identity Services). A direct contract caller is not
-  bound by it.
+  every route that relays a Google token (`/v1/login`, `/v1/sessions`, the link routes, `/v1/owner-actions`), always
+  on (D271, D274); `apps/smoke`'s `direct.html` moved to openid-only tokens. A direct contract caller is not bound
+  by it.
 - HKDF salt `hana-embed-ckd-v1` → derivation v1 (`hana-id/chain-keys/v1/extract`), confirmed by the user.
 
 ## Next steps
@@ -427,6 +452,8 @@ linking (`docs/email-login-spec.md`, approved 2026-10-30: D4, D119, D121–D123;
 testnet, AWS KMS before mainnet), and the partner identity token with opt-in verified email per app (D120; `docs/identity-token-spec.md` approved
 2026-10-30, D127). Sign in with Apple (D124; `docs/apple-login-spec.md`) is paused: not in the initial build, built
 when partners ask for it (D160, 2026-11-02).
+Native partner apps (iOS, Android, React Native / Expo; batch B Q24): `docs/native-apps-spec.md`
+(draft 2026-10-30, 19 open questions; recommends Hana's vault in the system browser sheet, no contract change).
 
 **Before mainnet:**
 

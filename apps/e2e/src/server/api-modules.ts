@@ -61,13 +61,15 @@ export interface ApiModules {
   /** A JSON answer with the request's CORS and request id, logged as the Worker logs it. */
   done(ctx: ApiCtx, status: number, body: Record<string, unknown>): Response;
   getAppByKey(db: D1Like, publishableKey: string): Promise<ApiApp | null>;
+  /** apps/api/src/claims.ts: the ID token's first claim outside the allow-list (`token_has_pii`), or null. */
+  disallowedClaim(jwt: string): string | null;
   /** apps/api/src/origins.ts: the hosts the origin rule treats as loopback (pk_test_ keys in dev envs only). */
   isLoopbackOrigin(origin: string): boolean;
   /** apps/api/src/vault/page.ts: GET {vaultOrigin}/vault?pk=… */
   handleVaultPage(request: Request, env: ApiEnv, requestId: string): Promise<Response>;
   /** apps/api/src/pages/host.ts: the vault and auth origins' Workers. */
   handleVaultHost(request: Request, env: { VAULT_ORIGIN: string; ASSETS: Fetcher; API: Fetcher }): Promise<Response>;
-  handleAuthHost(request: Request, env: { AUTH_ORIGIN: string; API_URL: string; NEAR_RPC: string; ASSETS: Fetcher }): Promise<Response>;
+  handleAuthHost(request: Request, env: { AUTH_ORIGIN: string; API_URL: string; NEAR_RPC: string; EMAIL_ISSUER_URL?: string; ASSETS: Fetcher }): Promise<Response>;
 }
 
 const API_SRC = new URL('../../../api/src/', import.meta.url);
@@ -77,13 +79,14 @@ const load = async <T>(path: string): Promise<T> => (await import(new URL(path, 
 export async function loadApiModules(): Promise<ApiModules> {
   // The Worker's Durable Object classes extend `cloudflare:workers`' DurableObject.
   registerCloudflareModule();
-  const [index, handlers, apps, origins, page, host] = await Promise.all([
+  const [index, handlers, apps, origins, page, host, claims] = await Promise.all([
     load<{ default: ApiModules['worker']; LoginRelay: ApiModules['LoginRelay'] }>('index.ts'),
     load<Pick<ApiModules, 'appGate' | 'newCtx' | 'done'>>('handlers.ts'),
     load<Pick<ApiModules, 'getAppByKey'>>('apps.ts'),
     load<Pick<ApiModules, 'isLoopbackOrigin'>>('origins.ts'),
     load<Pick<ApiModules, 'handleVaultPage'>>('vault/page.ts'),
     load<Pick<ApiModules, 'handleVaultHost' | 'handleAuthHost'>>('pages/host.ts'),
+    load<Pick<ApiModules, 'disallowedClaim'>>('claims.ts'),
   ]);
   return {
     worker: index.default,
@@ -93,6 +96,7 @@ export async function loadApiModules(): Promise<ApiModules> {
     done: handlers.done,
     getAppByKey: apps.getAppByKey,
     isLoopbackOrigin: origins.isLoopbackOrigin,
+    disallowedClaim: claims.disallowedClaim,
     handleVaultPage: page.handleVaultPage,
     handleVaultHost: host.handleVaultHost,
     handleAuthHost: host.handleAuthHost,

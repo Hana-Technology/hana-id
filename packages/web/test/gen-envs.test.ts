@@ -50,12 +50,15 @@ describe('hanaEnv', () => {
       rpcFallback: sandbox.rpcFallback,
       ckdNetworkKey: sandbox.ckdNetworkKey,
       devEnv: true,
+      // Present exactly when the manifest has an emailIssuer block.
+      ...(sandbox.emailIssuer ? { emailIssuerUrl: sandbox.emailIssuer.url, emailIss: sandbox.emailIssuer.iss } : {}),
     });
   });
 
   it('passes rpcFallback through when the manifest sets it, and leaves it out otherwise', async () => {
     expect(sandbox.rpcFallback).toBe('https://rpc.testnet.near.org');
-    expect(hanaEnv(manifest({ name: 'sandbox-nofb', rpcFallback: undefined }))).not.toHaveProperty('rpcFallback');
+    // With an emailIssuer block rpcFallback is required (D263), so the no-fallback case drops the block too.
+    expect(hanaEnv(manifest({ name: 'sandbox-nofb', rpcFallback: undefined, emailIssuer: undefined }))).not.toHaveProperty('rpcFallback');
     const withFallback = manifest({ name: 'sandbox-fb', rpcFallback: 'https://rpc.fallback.example' });
     expect(hanaEnv(withFallback)?.rpcFallback).toBe('https://rpc.fallback.example');
     expect((await generated([withFallback]))['sandbox-fb']?.rpcFallback).toBe('https://rpc.fallback.example');

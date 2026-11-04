@@ -98,8 +98,11 @@ export async function handleVaultPage(request: Request, env: Env, requestId: str
   const rpcOrigin = originOf(env.NEAR_RPC);
   // The vault falls back to rpcFallback when the primary fails (Q9): a set but unusable value is a misconfiguration.
   const fallbackOrigin = env.NEAR_RPC_FALLBACK ? originOf(env.NEAR_RPC_FALLBACK) : null;
-  if (!apiOrigin || !rpcOrigin || (env.NEAR_RPC_FALLBACK && !fallbackOrigin)) return errorPage(503, requestId, undefined, 'misconfigured', head);
+  // Email login (build plan batch 8b): the vault calls the issuer's google-match (D199: CORS for vaultOrigin only).
+  const issuerOrigin = env.EMAIL_ISSUER_URL ? originOf(env.EMAIL_ISSUER_URL) : null;
+  if (!apiOrigin || !rpcOrigin || (env.NEAR_RPC_FALLBACK && !fallbackOrigin) || (env.EMAIL_ISSUER_URL && !issuerOrigin)) return errorPage(503, requestId, undefined, 'misconfigured', head);
   const rpcOrigins = fallbackOrigin && fallbackOrigin !== rpcOrigin ? `${rpcOrigin} ${fallbackOrigin}` : rpcOrigin;
+  const extraOrigins = issuerOrigin && issuerOrigin !== apiOrigin ? ` ${issuerOrigin}` : '';
 
   let app: App | null;
   let settings: AppSettings;
@@ -135,7 +138,7 @@ export async function handleVaultPage(request: Request, env: Env, requestId: str
   log({ event: 'vault_page', requestId, appId: app.id, outcome: 'ok', status: 200, latencyMs: Date.now() - started });
   return new Response(head ? null : renderVaultHtml(config), {
     status: 200,
-    headers: pageHeaders([`frame-ancestors ${frameAncestors}`, `connect-src ${apiOrigin} ${rpcOrigins} ${GOOGLE_CERTS_ORIGIN}`], {
+    headers: pageHeaders([`frame-ancestors ${frameAncestors}`, `connect-src ${apiOrigin} ${rpcOrigins} ${GOOGLE_CERTS_ORIGIN}${extraOrigins}`], {
       'cross-origin-resource-policy': 'cross-origin',
       'x-request-id': requestId,
     }),

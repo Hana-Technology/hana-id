@@ -24,8 +24,6 @@ export interface Env {
   AUTH_ORIGIN?: string;
   /** "1": BLS pairing precheck of the app key on /v1/login and /v1/derive (Workers Paid plan only). Default off. */
   BLS_PRECHECK?: string;
-  /** "1": /v1/sessions also refuses tokens with claims outside the allow-list. Default off until smoke moves. */
-  REJECT_PII_ON_SESSIONS?: string;
   /** Optional Durable Object location hint for the shared objects (manifest cloudflare.durableObjectLocation). */
   DO_LOCATION_HINT?: string;
   /** Secret: session pool. JSON array of `ed25519:...` secret keys (create_session, create_session_and_derive, derive_key, revoke_session, prune_sessions). */
@@ -91,7 +89,7 @@ export interface Env {
   FILES_ORIGIN?: string;
   /**
    * Batch C4 (docs/batch-c-spec.md "Usage capture"): the usage ledger's writer, a Hyperdrive config (role
-   * `usage_writer`, which may only call `usage.record_event`, `usage.record_identity_tokens` and `usage.ensure_partitions`) bound by
+   * `usage_writer`, which may only call `usage.record_event`, `usage.record_identity_tokens`, `usage.record_email_counts` and `usage.ensure_partitions`) bound by
    * `gen --usage-hyperdrive-id`. Optional: without it capture is off and every endpoint answers as before.
    */
   USAGE_DB?: Hyperdrive;
@@ -100,6 +98,18 @@ export interface Env {
    * it events carry no uid (MAU and new users go uncounted). Never logged, never rotated within a contract term.
    */
   USER_ID_KEY?: string;
+  /**
+   * Email login (manifest `emailIssuer`, scripts/gen-wrangler.ts): the email tokens' `iss` and the issuer's public keys
+   * (a JSON array of public RSA JWKs, the JWKS the issuer serves, D196). Without them every email token is refused
+   * (`unsupported_issuer`); Google logins are unaffected.
+   */
+  EMAIL_ISS?: string;
+  EMAIL_PUBLIC_KEYS?: string;
+  /**
+   * The email issuer's URL (manifest `emailIssuer.url`, else `apiUrl`; D230): the vault page's CSP `connect-src` adds
+   * its origin, since the vault calls the issuer's google-match (build plan batch 8b). Absent without an issuer.
+   */
+  EMAIL_ISSUER_URL?: string;
   /** Optional per-method gas overrides in Tgas (see gas.ts), e.g. GAS_DERIVE_KEY_TGAS. */
   [gasOverride: `GAS_${string}_TGAS`]: string | undefined;
   DB: D1Database;

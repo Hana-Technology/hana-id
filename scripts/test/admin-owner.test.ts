@@ -1,9 +1,10 @@
 // admin owner:call / owner:vote / owner:proposals / governance:status against the simulated chain.
 import { beforeEach, describe, expect, it } from 'vitest';
-import { loadEnv, type Manifest } from '@hana-id/env';
+import { generateKeyPairSync } from 'node:crypto';
+import { loadEnv, type Manifest, rsaJwkThumbprint } from '@hana-id/env';
 import { KeyPair } from '@near-js/crypto';
 import { assertCommandPositionals } from '../lib/admin-args.ts';
-import { governanceStatus, governanceStatusCmd, OWNER_DRY_RUN_LINE, ownerCallCmd, ownerProposalsCmd, ownerVoteCmd } from '../lib/admin-owner.ts';
+import { emailKeyProblem, governanceStatus, governanceStatusCmd, OWNER_DRY_RUN_LINE, ownerCallCmd, ownerProposalsCmd, ownerVoteCmd } from '../lib/admin-owner.ts';
 import { parseCli } from '../lib/cli.ts';
 import { writeCouncilKey } from '../lib/council.ts';
 import { councilPolicy, readPin } from '../lib/sputnik.ts';
@@ -182,5 +183,36 @@ describe('admin governance:status (the batch C portal source)', () => {
     expect(s.contract.stateVersion).toBe(1);
     expect(s.findings.join()).toContain('v1 (pre-governance)');
     expect(s.findings.join()).toContain(`The council DAO ${dao} does not exist yet`);
+  });
+});
+
+describe('owner:call set_issuer_key for email: only a pinned, published, thumbprint-named key (batch 6 review M3)', () => {
+  const key = () => {
+    const jwk = generateKeyPairSync('rsa', { modulusLength: 2048, publicExponent: 65537 }).publicKey.export({ format: 'jwk' }) as { n: string; e: string };
+    return { kty: 'RSA' as const, n: jwk.n, e: jwk.e, kid: rsaJwkThumbprint(jwk), use: 'sig' as const, alg: 'RS256' as const };
+  };
+  const pub = key();
+  const other = key();
+  const base = loadEnv('sandbox-dev');
+  const m = {
+    ...base,
+    emailIssuer: { publicKeys: [pub] },
+    watchdog: { ...base.watchdog, pinnedIssuerKeys: { email: { required: 1, signers: { hana: [pub.kid] } } } },
+  } as unknown as Manifest;
+  const args = (k: { kid: string; n: string; e: string }, signer = 'hana'): Record<string, unknown> => ({ provider: 'email', kid: k.kid, n: k.n, e: k.e, signer });
+
+  it('accepts the pinned published key; refuses unpinned, unpublished, misnamed or unsigned ones; ignores other calls', () => {
+    expect(emailKeyProblem(m, 'set_issuer_key', args(pub))).toBeNull();
+    expect(emailKeyProblem(m, 'set_issuer_key', args(pub, 'cosign'))).toContain('not pinned for signer cosign');
+    expect(emailKeyProblem(m, 'set_issuer_key', args(other))).toContain('not pinned');
+    const pinnedOther = { ...m, watchdog: { ...m.watchdog, pinnedIssuerKeys: { email: { required: 1, signers: { hana: [pub.kid, other.kid] } } } } } as unknown as Manifest;
+    expect(emailKeyProblem(pinnedOther, 'set_issuer_key', args(other))).toContain('not in emailIssuer.publicKeys');
+    expect(emailKeyProblem(pinnedOther, 'set_issuer_key', { ...args(other), kid: pub.kid })).toContain('thumbprint');
+    const { signer: _s, ...unsigned } = args(pub);
+    expect(emailKeyProblem(m, 'set_issuer_key', unsigned)).toContain('signer');
+    const { pinnedIssuerKeys: _pins, ...unpinned } = base.watchdog!;
+    expect(emailKeyProblem({ ...m, watchdog: unpinned } as Manifest, 'set_issuer_key', args(pub))).toContain('no watchdog.pinnedIssuerKeys.email');
+    expect(emailKeyProblem(m, 'set_issuer_key', { ...args(other), provider: 'google' })).toBeNull();
+    expect(emailKeyProblem(m, 'mark_self_issued', { provider: 'email' })).toBeNull();
   });
 });

@@ -1,7 +1,7 @@
 // `createHana`, the partner client (docs/batch-b-spec.md "Partner client"):
 //
 //   const hana = createHana({ publishableKey: 'pk_test_…', environment: 'sandbox-dev', evm?, stellar?, container? });
-//   await hana.ready;            // handshake done, status known (an unlock has run); rejects vault_unavailable after 5 s
+//   await hana.ready;            // handshake done, status known (an unlock has run); rejects vault_unavailable (vault-connection.ts)
 //   hana.status;                 // 'logged_out' | 'unlocking' | 'logging_in' | 'logged_in' | 'error'
 //   hana.on('statusChanged' | 'accountsChanged' | 'sessionExpired' | 'disconnect', cb);
 //   hana.login();                // call synchronously in a click handler
@@ -21,7 +21,10 @@ import {
   IDENTITY_MIN_MAX_AGE_MS,
   UNLOCK_TIMING_STAGES,
   isApprovalPopupMethod,
+  type AccountResult,
   type AutoApproveStatus,
+  type LinkChange,
+  type LoginMethod,
   type LoginResult,
   type Persistence,
   type PortEvent,
@@ -35,9 +38,9 @@ import {
 import { VERSION } from '../version.ts';
 import { type ApprovalTicket, ApprovalWindows } from './approval-window.ts';
 import { Emitter } from './emitter.ts';
-import { type HanaError, RpcCode, asHanaError, hanaError } from './errors.ts';
+import { HanaError, RpcCode, asHanaError, hanaError } from './errors.ts';
 import { type EvmConfig, HanaEthereumProvider, announceEip6963, rdnsFor, validateEvmConfig } from './ethereum.ts';
-import { LoginAttempt, openLoginPopup } from './login.ts';
+import { LoginAttempt, type LoginOptions, loginRequest, openLoginPopup } from './login.ts';
 import { type FetchLike } from './rpc.ts';
 import { partnerPageIssues } from './requirements.ts';
 import { HanaStellarSigner, type StellarConfig, validateStellarConfig } from './stellar.ts';
@@ -79,6 +82,12 @@ export interface HanaEvents {
    * session ended (logout, expiry, revocation, a newer login).
    */
   identityTokenChanged: [string | null];
+  /**
+   * A sign-in method of the wallet was added (`pending` until `effectiveAtMs`, or `active`), became active, or was
+   * removed (docs/integration.md "Sign-in methods"). Show pending ones to the user with a way to cancel: the mailbox of
+   * a pending email may not be theirs.
+   */
+  linkChanged: [LinkChange];
 }
 
 export interface IdentityTokenOptions {
@@ -255,9 +264,14 @@ export class HanaClient extends Emitter<HanaEvents> {
    * anything else, so the browser's user activation still holds. Already logged in: resolves at once, no popup. A
    * blocked popup falls back to the vault's "Sign in with Hana" launcher, and the call resolves after that login.
    * A second call while one is pending supersedes it (the first rejects with `login_cancelled`).
+   *
+   * `options.method` ('google' | 'email') opens that method directly; without it, an app with email on shows the
+   * popup's chooser ("Continue with Google", "Continue with email"). `options.emailHint` prefills the email field.
    */
-  login(): Promise<HanaAddresses> {
+  login(options?: LoginOptions): Promise<HanaAddresses> {
     if (this.#destroyed) return Promise.reject(hanaError(ErrorCode.disconnected));
+    const request = loginRequest(options);
+    if (request instanceof HanaError) return Promise.reject(request);
     if (this.#vaultDown && this.#error) return Promise.reject(this.#error);
     if (this.#status === 'logged_in' && this.#addresses) return Promise.resolve({ ...this.#addresses });
     const calledAt = this.#now();
@@ -269,6 +283,7 @@ export class HanaClient extends Emitter<HanaEvents> {
       popup,
       () => this.#status === 'logged_in' || (this.#status === 'logging_in' && this.#addresses !== null),
       this.#now,
+      request,
     );
     this.#attempt = attempt;
     this.#setStatus('logging_in');
@@ -315,6 +330,36 @@ export class HanaClient extends Emitter<HanaEvents> {
     this.#setAddresses(null);
     this.#expiresAtMs = null;
     if (this.#status !== 'logging_in') this.#setStatus('logged_out');
+  }
+
+  /**
+   * The wallet's sign-in methods (build plan batch 7): its own (`root: true`) and the ones linked to it, each
+   * `active` or `pending` until `effectiveAtMs`. No identifiers or addresses. Rejects 4100 when logged out.
+   */
+  account(): Promise<AccountResult> {
+    return this.#request('hana_account');
+  }
+
+  /**
+   * Adds a sign-in method to the wallet (`'google'` or `'email'`; build plan batch 8b). Call it synchronously in a
+   * click handler, like login(): the Hana popup signs in the new method, then the wallet's own, and the link waits
+   * `change_delay_ms` (24 h on mainnet) before it opens the wallet; it resolves with `{provider, status: 'pending',
+   * effectiveAtMs}`. Rejects with `link_refused` (`data.reason`) when the methods can't be linked.
+   */
+  linkAccount(options: { method: LoginMethod }): Promise<LinkChange> {
+    if (this.#destroyed) return Promise.reject(hanaError(ErrorCode.disconnected));
+    const method = typeof options === 'object' && options !== null ? (options as { method?: unknown }).method : undefined;
+    if (method !== 'google' && method !== 'email') return Promise.reject(hanaError(RpcCode.invalidParams, "method must be 'google' or 'email'"));
+    if (this.#status !== 'logged_in') return Promise.reject(hanaError(ErrorCode.unauthorized));
+    const popup = openLoginPopup(this.#win, this.authOrigin, this.#conn.frameName);
+    return this.#request('hana_linkAccount', { method, ...(popup ? {} : { popupBlocked: true }) }).catch((e: unknown) => {
+      try {
+        popup?.close();
+      } catch {
+        // A COOP-severed handle: nothing to do.
+      }
+      throw e;
+    });
   }
 
   /** Starts a key export: the vault shows its launcher, and the key is shown only in a Hana window. */
@@ -410,8 +455,9 @@ export class HanaClient extends Emitter<HanaEvents> {
 
   /**
    * A pk_test_ app's `ready` timings with this page's stages added (timings.ts): `mount` (createHana → the iframe in the
-   * document), `frameStart` (its load as seen here, minus the vault's own load stages) and `port` (iframe load → `ready`
-   * minus the vault's own time after the hello).
+   * document), `retry` (only after a retry: the first iframe → the one that answered), `frameStart` (its load as seen
+   * here, minus the vault's own load stages) and `port` (iframe load → `ready` minus the vault's own time after the
+   * hello).
    */
   #handshakeTimings(s: ReadyStatus): Record<string, number> | null {
     const marks = this.#conn.handshakeMarks;
@@ -420,7 +466,8 @@ export class HanaClient extends Emitter<HanaEvents> {
     const roundTrip = marks.readyAt - marks.loadAt;
     return {
       ...s.timings,
-      mount: Math.max(0, marks.appendedAt - this.#createdAt),
+      mount: Math.max(0, marks.firstAppendedAt - this.#createdAt),
+      ...(marks.appendedAt > marks.firstAppendedAt ? { retry: marks.appendedAt - marks.firstAppendedAt } : {}),
       frameStart: Math.max(0, marks.loadAt - marks.appendedAt - vaultLoad),
       port: Math.max(0, roundTrip - (s.timings.vault ?? roundTrip)),
     };
@@ -450,6 +497,7 @@ export class HanaClient extends Emitter<HanaEvents> {
 
   #onEvent(e: PortEvent): void {
     switch (e.event) {
+      case 'connected':
       case 'ready':
         return; // handled through conn.ready
       case 'accountsChanged':
@@ -485,6 +533,9 @@ export class HanaClient extends Emitter<HanaEvents> {
         return;
       case 'identityTokenChanged':
         this.#setIdentity(e.data.identityToken === null || e.data.expiresAtMs === null ? null : { token: e.data.identityToken, expiresAtMs: e.data.expiresAtMs });
+        return;
+      case 'linkChanged':
+        this.emit('linkChanged', e.data);
         return;
     }
   }

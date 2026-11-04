@@ -1,5 +1,5 @@
 // Usage capture (docs/batch-c-spec.md "Usage capture and reporting"): one UsageEvent v1 for every request that passed
-// the gate of /v1/login, /v1/sessions, /v1/derive, /v1/sessions/revoke and /v1/vault/unlock, and for /v1/owner-actions
+// the gate of /v1/login, /v1/sessions, /v1/derive, /v1/sessions/revoke, /v1/vault/unlock and /v1/link* (batch 6), and for /v1/owner-actions
 // after the owner check. A handler opens a draft once its gate passed (`beginUsage`), the relay fills in what it sent
 // (`noteRelay`), and the response (`handlers.ts` `done`) closes it (`finishUsage`): the event goes to the ledger after
 // the response (`waitUntil`, usage/record.ts) and never decides or delays the answer. Gate rejections and GET /v1/app
@@ -24,6 +24,9 @@ export const USAGE_ENDPOINT: Readonly<Record<string, UsageEndpoint>> = {
   '/v1/owner-actions': 'owner_action',
   /** The same owner actions relayed for the console (rpc/console.ts ownerAction). */
   'ConsoleRpc.ownerAction': 'owner_action',
+  '/v1/link': 'link',
+  '/v1/link/cancel': 'link_cancel',
+  '/v1/link/unlink': 'link_unlink',
 };
 
 /** What a relay sent, as the ledger records it. */

@@ -1,7 +1,9 @@
 # Batch C build plan
 
-Status (2026-11-02): C1, C2 and C3 merged into `develop`, not deployed (milestone M1: migration 0006 isn't applied on
-sandbox-dev); C4–C17 not started. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
+Status (2026-11-04): C1–C5 merged into `develop` and in the sandbox-dev API (migrations 0006, 0009 and 0010 applied,
+usage capture off; `docs/README.md`). C6 built on `feat/batch-c-6` and brought onto current `develop` on
+`feat/batch-c-6-merge` (the claim allow-list on its tokens, D277), tests green, not merged, not deployed (M3 not run).
+C7 built, not merged; C8–C17 not started. Earlier status (2026-11-02): C1, C2 and C3 merged, not deployed. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
 batches that each merge into `develop` on their own: tests green, the docs they change updated, and nothing a partner,
 a user or staff can reach that is half-wired. Ordered by dependency; the spec's "Build order" steps are noted per
 batch. This is a plan, not a spec: where it and the spec disagree, the spec wins or gets amended first.
@@ -209,6 +211,10 @@ Setup for the user: `docs/operations.md` "Usage capture (batch C4, milestone M2)
 - **Visible**: nothing until a Worker binds the entrypoints.
 
 ## C6. Owner-verified changes, owner actions, sink scope
+
+Status (2026-11-04): built (`feat/batch-c-6`, D235–D239), merged with current `develop` on `feat/batch-c-6-merge`:
+the owner tokens, client proofs and step-up tokens it verifies are held to the claim allow-list on every path (D274,
+D277). Not merged into `develop`; M3 not run (the API not deployed with it, no sink-scope plan run on sandbox-dev).
 
 - **Scope**: `ConsoleRpc.changeOrigins`/`proposeChange` with the API's six-step verification (`packages/oidc`,
   on-chain `console_audiences`, `iat` ≤ 300 s, the recomputed layout nonce and version, uncached `get_scope` owner

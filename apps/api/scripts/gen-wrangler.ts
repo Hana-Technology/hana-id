@@ -27,7 +27,7 @@ import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { IDENTITY_SECRET_FILES, type Manifest, hanaOwnOrigins, loadEnv, p256Thumbprint, repoRoot } from '@hana-id/env';
+import { IDENTITY_SECRET_FILES, type Manifest, emailIssuerUrl, hanaOwnOrigins, loadEnv, p256Thumbprint, repoRoot } from '@hana-id/env';
 import { IDENTITY_RATE_LIMITS } from '../src/identity/limits.ts';
 import { VAULT_RATE_LIMITS } from '../src/vault/limits.ts';
 import { writePagesWranglerConfigs } from './pages-wrangler.ts';
@@ -37,11 +37,11 @@ export const LOCAL_D1_ID = '00000000-0000-4000-8000-000000000000';
 export const COMPATIBILITY_DATE = '2026-10-01';
 
 /**
- * Batch B's runtime flags, off in every env until their step (docs/batch-b-spec.md, "Order of work"):
- * REJECT_PII_ON_SESSIONS once apps/smoke is on the vault, BLS_PRECHECK only after its CPU time is measured on the
- * Workers Paid plan.
+ * Batch B's runtime flags, off in every env until their step (docs/batch-b-spec.md, "Order of work"): BLS_PRECHECK
+ * only after its CPU time is measured on the Workers Paid plan. (REJECT_PII_ON_SESSIONS is gone: the claim allow-list
+ * is always on, D271.)
  */
-export const FLAG_DEFAULTS = { BLS_PRECHECK: '0', REJECT_PII_ON_SESSIONS: '0' } as const;
+export const FLAG_DEFAULTS = { BLS_PRECHECK: '0' } as const;
 
 /**
  * The identity token's vars (docs/identity-token-spec.md): its `iss`, the JWKS (public keys only), the signer kind and
@@ -57,6 +57,18 @@ export function identityVars(m: Manifest): Record<string, string> {
   if (t.signer.kind === 'aws-kms') return { ...common, IDENTITY_ACTIVE_KID: t.signer.keys.active.kid, IDENTITY_KMS_KEY_ARN: t.signer.keys.active.arn };
   if (m.network !== 'testnet') throw new Error(`envs/${m.name}.json: a Worker-secret identity signing key is testnet only (D127)`);
   return { ...common, IDENTITY_ACTIVE_KID: t.signer.activeKid };
+}
+
+/**
+ * Email login's vars (docs/email-login-spec.md "API changes"; manifest `emailIssuer`): the email tokens' `iss` and the
+ * issuer's public keys (the keys its JWKS serves, D196), which the API checks email tokens against before relaying them.
+ * Empty without the block: every email token is then refused, Google logins are unaffected.
+ */
+export function emailVars(m: Manifest): Record<string, string> {
+  const t = m.emailIssuer;
+  if (!t) return {};
+  // EMAIL_ISSUER_URL: the vault page's connect-src (the vault calls google-match, build plan batch 8b).
+  return { EMAIL_ISS: t.iss, EMAIL_PUBLIC_KEYS: JSON.stringify(t.publicKeys), EMAIL_ISSUER_URL: emailIssuerUrl(m) };
 }
 
 /**
@@ -115,6 +127,8 @@ export function wranglerConfig(m: Manifest, d1Id: string, opts: { usageHyperdriv
       ...(m.files ? { FILES_ORIGIN: m.files.origin } : {}),
       // The partner identity token (its secrets come from scripts/identity-key.ts).
       ...identityVars(m),
+      // Email login: the email issuer's iss and public keys (no secret).
+      ...emailVars(m),
     },
     d1_databases: [{ binding: 'DB', database_name: m.cloudflare.d1Name, database_id: d1Id, migrations_dir: 'migrations' }],
     // The usage ledger's writer (role usage_writer, caching disabled on the config), batch C4; optional. `wrangler dev`

@@ -1,9 +1,23 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's)
 
-Last verified against code: 2026-11-02 (branch `feat/batch-c-6`: `ConsoleRpc.changeOrigins` / `proposeChange` with the
-API's own step-up verification, `ConsoleRpc.ownerAction`, the owner-action precheck's nonce recompute on an uncached
-scope (`owner_nonce_mismatch`, the client-proof nonce), the safety budget, the 20-a-day per-scope cap and per-owner caps of a fifth of it, `owner_cap`
-and `owner_allowance_low` events, `OWNER_POOL_ALLOWANCE_YOCTO`, fresh `get_config` reads; D235–D239); 2026-11-02 (branch `feat/batch-c-4`: "Usage capture" (one ledger event per post-gate
+Last verified against code: 2026-11-04 (branch `feat/batch-c-6-merge`: batch C6 on current `develop`:
+`ConsoleRpc.changeOrigins` / `proposeChange` with the API's own step-up verification (the claim allow-list on the
+step-up token), `ConsoleRpc.ownerAction` with `token_has_pii` on both of its tokens (D274 on every path), the
+owner-action precheck's nonce recompute on an uncached scope (`owner_nonce_mismatch`, the client-proof nonce), the
+safety budget, the 20-a-day per-scope cap and per-owner caps of a fifth of it, `owner_cap` and `owner_allowance_low`
+events, `OWNER_POOL_ALLOWANCE_YOCTO`, fresh `get_config` reads; D235–D239, D277); 2026-11-04 (branch `feat/token-first-on`: `google-record` in force under `'token_first'`,
+D270); 2026-11-04 (branch `fix/user-emails-review`: the user directory's order-safe upserts in
+"Email issuer" D1); 2026-11-04 (branch `feat/google-token-first`: the issuer's `POST /v1/email/google-record`
+and its per-IP limit, google-match's user-directory write (D269, D270), the auth page Worker's callback CSP with Google's
+tokeninfo in an env with an email issuer); 2026-11-04 (branch `fix/sessions-allow-list`: `/v1/sessions`'s claim allow-list always on, `/v1/owner-actions`'s `token_has_pii` for owner tokens and client proofs, the `REJECT_PII_ON_SESSIONS` binding gone; D271, D274); 2026-11-04 (branch `feat/user-emails`: the issuer's `verify` writes the user directory, its D1's migration 0002 and the `directory_write_failed` log; D269); 2026-11-03 (branch `fix/8b-rereview`, onto `feat/email-login-8b`: the issuer's CORS exposes `retry-after`); 2026-11-03 (branch `feat/email-login-8b` review fixes: the login relay's 40 writes a minute per IP and 12 KiB body, google-match's `google_account_mismatch`, no revocation and 120 per 10 min per IP, D264, D265, D267); 2026-11-03 (branch `feat/email-login-8b`: the login relay's writes from `VAULT_ORIGIN` and the follow-up slots, the vault page's `connect-src` with `EMAIL_ISSUER_URL`, the issuer's case-B `verify` answering `sub` with its `linkTicket`, the web as the caller of google-match, `/v1/sessions/revoke` and `/v1/link*`; D254–D259); 2026-11-03 (branch `fix/demo-polish`: `GET /v1/app` reads its D1 rows and the registry
+and the registry side by side, `get_config` only when a shared client is needed, its `settings` and `chain` phases and
+its `timings` for `pk_test_` apps, the 8 s timeout on every contract view, the self-healing shared `get_config` read;
+D261); 2026-11-02 (branch `feat/email-login-8a`: the auth page Worker's `/login/email` and its
+`EMAIL_ISSUER_URL`, the web as the caller of `start` / `resend` / `verify` and of `GET /v1/app`'s `loginMethods`;
+D245–D249); 2026-11-02 (branch `feat/email-login-6`: email tokens on `/v1/sessions` and `/v1/login`, the
+create_session proof of possession, `/v1/login`'s `linkJwt` precheck, the link relays `/v1/link*`, the email-login
+panics as errors, `GET /v1/app`'s `loginMethods`, the gas values, migration 0010, the issuer's URL and app lookup,
+D230–D234); 2026-11-02 (branch `feat/batch-c-4`: "Usage capture" (one ledger event per post-gate
 request, written after the response through `USAGE_DB`), the D1 `usage` counters no longer written, migration 0009
 `session_markers` and the waiver on it, the relay result's key, nonce and gas, the identity-count copy in the cron,
 `USAGE_DB` / `USER_ID_KEY`, the usage log events; D220–D224); 2026-11-02 (branch `fix/c5-budgets`: "RPC entrypoints" breaker and budget: the
@@ -33,7 +47,9 @@ Contract methods and byte layouts: `docs/contract-interface.md`. How to run it: 
 **B** marks what batch B added or changed (the vault, the auth pages, `POST /v1/login`, the login relay, the vault
 endpoints and the page Workers). **G** marks the governance batch (`docs/governance-spec.md`): the JWKS cron now
 proposes and executes delayed key changes, logins refuse a kid not yet active on chain and a paused contract, and
-`GET /v1/governance` reports the governance state.
+`GET /v1/governance` reports the governance state. **L** marks email login's API part (build plan batch 6,
+`docs/email-login-spec.md` "API changes", D230–D234): email tokens, the `create_session` proof of possession (D137), the
+link precheck and the link relays.
 
 The API Worker renders `GET /vault` for requests whose URL origin is `VAULT_ORIGIN`: the vault origin's own thin
 Worker forwards them unchanged through a service binding. `/vault.js` and the auth pages (`/login`,
@@ -55,7 +71,8 @@ page origins never reach the API routes: a request whose URL origin is `VAULT_OR
 | `/v1/governance` | GET, HEAD, OPTIONS | `governance-status.ts` | none (public data, read-only) | G |
 | `/v1/app` | GET, OPTIONS | `handlers.ts` | publishable key + caller rule | changed in B |
 | `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke` | POST, OPTIONS | `handlers.ts` | publishable key + caller rule (+ session signature for derive/revoke) | caller rule changed in B |
-| `/v1/login` | POST, OPTIONS | `login.ts` | publishable key + caller rule + session signature | B |
+| `/v1/login` | POST, OPTIONS | `login.ts` | publishable key + caller rule + session signature | B; link L |
+| `/v1/link`, `/v1/link/cancel`, `/v1/link/unlink` | POST, OPTIONS | `links.ts` | publishable key + Hana page caller + the identities' tokens | L |
 | `/v1/login-relay/<relayId>` | GET, POST, OPTIONS | `login-relay.ts` | Hana origin only; read key for GET | B |
 | `/v1/vault/shares`, `/unlock`, `/touch`, `/revoke`, `/revoke-all` | POST, OPTIONS | `vault/endpoints.ts` | publishable key + vault origin + session signature (vault message) | B |
 | `/v1/identity/token` | POST, OPTIONS | `identity/token.ts` | publishable key + vault origin + session signature (identity message) | I |
@@ -65,7 +82,9 @@ page origins never reach the API routes: a request whose URL origin is `VAULT_OR
 | `ConsoleRpc`, `AdminRpc` (named exports) | RPC only | `rpc/console.ts`, `rpc/admin.ts` | no route: reachable only through a service binding (console, admin Worker); `fetch` answers 404 for every other path | C |
 
 There is no secret-key (`sk_…`) auth anywhere: publishable keys are public and origins gate them. "I" marks the
-partner identity token (`docs/identity-token-spec.md`, build steps 1–4).
+partner identity token (`docs/identity-token-spec.md`, build steps 1–4). Nothing under `/v1/email/` is the API's: the
+email issuer is its own Worker, reached at its own URL (`emailIssuer.url`) or by a zone route that never runs this
+Worker (D230); here such a path is `404 not_found`.
 
 ## Conventions
 
@@ -77,7 +96,7 @@ partner identity token (`docs/identity-token-spec.md`, build steps 1–4).
   `[A-Za-z0-9-]{1,64}`, else a random UUID.
 - `content-type: application/json; charset=utf-8`, `cache-control: no-store`.
 - Body caps (streamed, `413` with code `bad_request` past them): app endpoints and owner actions 16 KiB, vault
-  endpoints and `/v1/identity/token` 4 KiB, login relay 8 KiB. Non-JSON: `400 bad_request`. JWT ≤ 7168 characters.
+  endpoints and `/v1/identity/token` 4 KiB, login relay 12 KiB. Non-JSON: `400 bad_request`. JWT ≤ 7168 characters.
 - Usage: one ledger event per request past the gate (below, "Usage capture"), sent after the response (`waitUntil`);
   no endpoint's answer or latency depends on it. The D1 `usage` counters are no longer written (batch C4).
 
@@ -91,11 +110,11 @@ row whose `active_from` is NULL, a guarded change not yet announced, never match
 its `active_from` on, with nothing run at that moment); loopback origins (and the wildcard) count only for apps on a
 `test` scope (`scopes.environment`, the scope of every `pk_test_` key) in dev envs.
 
-| Caller (`Origin`) | `/v1/app` | `/v1/login` | `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke` | Vault endpoints | Login relay |
-|---|---|---|---|---|---|
-| `VAULT_ORIGIN` | yes | yes | yes | yes | read |
-| `AUTH_ORIGIN` | yes | yes | no | no | write, read |
-| a partner origin of the app | yes, any key, any env | no | only test-scope apps in dev envs (`apps/smoke`) | no | no |
+| Caller (`Origin`) | `/v1/app` | `/v1/login` | `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke` | `/v1/link*` (L) | Vault endpoints | Login relay |
+|---|---|---|---|---|---|---|
+| `VAULT_ORIGIN` | yes | yes | yes | yes | yes | read, write (follow-up notices, batch 8b) |
+| `AUTH_ORIGIN` | yes | yes | no | yes | no | write, read |
+| a partner origin of the app | yes, any key, any env | no | only test-scope apps in dev envs (`apps/smoke`) | no, never | no | no |
 
 - From a Hana origin the request acts for `x-hana-parent-origin`, which must pass `originAllowed` for the app. CORS
   echoes the Hana origin even when the parent is refused, so the page can read the error.
@@ -103,7 +122,7 @@ its `active_from` on, with nothing run at that moment); loopback origins (and th
 
 | Preflight | Allowed when | `allow-headers` | `allow-methods` |
 |---|---|---|---|
-| `/v1/app`, `/v1/sessions*`, `/v1/derive`, `/v1/login` | `Origin` is a Hana origin, or it is in force (`active_from <= now`) for an app that is active (`status = 'active'`, `suspended_by = 0`) and not deleted (loopback: only a test-scope app in a dev env) | `content-type, x-hana-key, x-hana-parent-origin, x-hana-relay-key` | `GET, POST, OPTIONS` |
+| `/v1/app`, `/v1/sessions*`, `/v1/derive`, `/v1/login`, `/v1/link*` | `Origin` is a Hana origin, or it is in force (`active_from <= now`) for an app that is active (`status = 'active'`, `suspended_by = 0`) and not deleted (loopback: only a test-scope app in a dev env) | `content-type, x-hana-key, x-hana-parent-origin, x-hana-relay-key` | `GET, POST, OPTIONS` |
 | `/v1/vault/*` | `Origin === VAULT_ORIGIN` | `content-type, x-hana-key, x-hana-parent-origin` | `POST, OPTIONS` |
 | `/v1/login-relay/*` | a Hana origin | `content-type, x-hana-relay-key` | `GET, POST, OPTIONS` |
 | `/v1/health`, `/v1/owner-actions` | always (`*`) | `content-type` | `POST, OPTIONS` |
@@ -113,7 +132,7 @@ Allowed preflight: `204`, `access-control-max-age: 600`, `access-control-expose-
 
 ## The app gate (`appGate`, `handlers.ts`)
 
-Every app endpoint (`/v1/app`, `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke`, `/v1/login`) runs, in order:
+Every app endpoint (`/v1/app`, `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke`, `/v1/login`, `/v1/link*`) runs, in order:
 
 1. `x-hana-key` present (`401 missing_key`) and shaped `pk_(test|live)_<base58 16..64>`, an unrevoked key of an
    undeleted app (`401 unknown_app`; D1 failure `503 config_unavailable`). Two D1 queries, as before 0006: the app
@@ -163,11 +182,12 @@ The per-IP subject is the IPv4 address or the IPv6 /64 (`src/ip.ts`).
 | Endpoint | Per IP | Per app | Other |
 |---|---|---|---|
 | relay kind: `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke`, `/v1/login` (one shared window) | plan `per_ip_minute` (window `<appId>:minute`), before any check | plan `per_minute` and `per_day`, counted only for a request that passed every off-chain check, right before the relay (D100) | a refused or failed request never spends the app's quota |
+| link relays (L): `/v1/link` (adds) and `/v1/link/cancel`, `/v1/link/unlink` (removals), each kind its own windows (D232; provisional) | adds 5/min (window `<appId>:link:minute`), removals 10/min (`<appId>:link-change:minute`), before any check | adds 30/min, 1000/day (`app:<appId>:link-adds`), removals 60/min, 2000/day (`app:<appId>:link-changes`), counted only for a request that passed every check | a flood of adds never uses up a cancel's windows; never the relay quota |
 | key exports: `/v1/login` from `AUTH_ORIGIN` | — | — | 3 per hour per user path per app (subject `export:<appId>:<hex sha256(path)>`, window `export:hour`), counted once the token and nonce are verified, before anything is relayed (D59) |
 | `GET /v1/app` | plan `per_ip_minute` (own window `<appId>:config:minute`) | — | never touches the relay quota |
 | vault endpoints | 60/min, *per location* (binding `VAULT_IP_LIMIT`, key `<env>:vault-ip:<appId>:<ipSubject>`) | 10 × plan `per_minute` (`vault:minute`), global | share actions: 10/min per share, *per location* (binding `VAULT_SHARE_LIMIT`, key `<env>:vault-share:<appId>:<hex>`); asked in turn: IP, then app only once the IP accepted, then (after the body check) the share (D95) |
 | `/v1/identity/token` (I, D176) | the vault endpoints' 60/min binding, before the body | its own windows on `app:<id>`, never `vault:minute`: `identity:minute` 10 × plan `per_minute`, `identity:hour` plan `per_day` (at most 100 000), sliding, counted after every other check | per session key 10/min, *per location* (`IDENTITY_SESSION_LIMIT`, key `<env>:identity-session:<appId>:<hex sessionPk>`), after the signature; per account root 30/min, *per location* (`IDENTITY_ROOT_LIMIT`, key `<env>:identity-root:<scopeId>:<hex sub bytes>`); per scope `identity:hour` 2 × the app's (`identity:scope:<scopeId>`, sliding); then global on `identity:global`, sliding: a hard breaker of 1 000 000/h (`503 identity_busy`; `IDENTITY_GLOBAL_HOURLY_MAX` overrides; ≥ 10 × any app's ceiling) and a soft line at 100 000/h that only logs `identity_volume_alert`. A refusal by a later window takes the hit back from the earlier ones |
-| login relay | writes 10/min, reads 120/min | — | not per app |
+| login relay | writes 40/min, reads 120/min (about 5 writes per linking login, D267) | — | not per app |
 | `/v1/owner-actions`, `ConsoleRpc.ownerAction` (one limiter: the RPC's `clientIp`) | 10/min | per scope 10/min, 20 a UTC day (`owner-actions:scope:<scopeId>`), `propose_change` only | `propose_change`: per owner identity 2/min, 4/day (`owner-actions:owner:<hex sha256(provider#sub)>`: the scope's windows divided by the contract's `MAX_OWNERS`, so no owner can use up its co-owners' proposals, D236), then per scope, then global 20/min, 200/day (`owner-actions:global`). `execute_change` (no auth): its own 10/min, 50/day per scope (`owner-actions:execute:<scopeId>`), then global. The safety budget, `cancel_change`, `remove_client` and `disable_shared_login`: none of those; 5/min, 20/day per owner identity (windows `safety:minute`, `safety:day`), then 25/min, 100/day per target scope (`owner-actions:safety:<scopeId>`: the contract's `MAX_OWNERS` = 5 owners at their own cap), then a spend-bound ceiling of 100/min, 1000/day (`owner-actions:safety-global`). Counted only after every off-chain check passes, the owner proof against the target scope's on-chain owners included; a request a later window refuses is taken back from the earlier ones (D100, D236). A refusal writes an `owner_cap` security event, once per window |
 | `/v1/health`, `GET /vault` | — | — | — |
 
@@ -177,11 +197,13 @@ Seeded plan `free`: `per_minute` 60, `per_day` 5000, `per_ip_minute` 20.
 
 ### `GET /v1/health`
 
-No auth, no limits, `access-control-allow-origin: *`. → `200 {"ok": true, "env": ENV_NAME, "signer": SIGNER_ACCOUNT, "hotDb": 9, "requestId"}`.
+No auth, no limits, `access-control-allow-origin: *`. → `200 {"ok": true, "env": ENV_NAME, "signer": SIGNER_ACCOUNT, "hotDb": 9, "capabilities": {"createProof": true}, "requestId"}`.
 `hotDb` is the hot-DB migration the build needs (`apps.ts` `HOT_DB_SCHEMA`; 6 from batch C3, 9 from batch C4 (the
 session markers it writes), absent before): the admin CLI refuses guarded proposals on `--remote` until the deployed
 API reports ≥ 6, and announcements until it reports ≥ 9.
 
+`capabilities` (L, D250): what this build does that deploy tooling checks; `createProof: true` (`/v1/sessions` requires
+and relays create_session's proof of possession, D137). `deploy-contract --upgrade` refuses without it.
 ### `GET /v1/governance` · G
 
 No auth, no limits, `access-control-allow-origin: *`, `cache-control: public, max-age=10`. Read-only: it reads
@@ -261,9 +283,29 @@ Headers: `x-hana-key`; from a Hana page also `x-hana-parent-origin`. Gate kind `
 
 ```json
 { "name": "string", "scopeId": "string", "signer": "string",
-  "google": { "clientId": "string", "mode": "own" | "shared" },
-  "serverTimeMs": 0, "autoApprovePolicy": {} | null, "rawSign": "off" | "approval", "requestId": "string" }
+  "google": { "clientId": "string", "mode": "own" | "shared" } | null,
+  "loginMethods": ["google", "email"], "email": { "aud": "email:<scopeId>" },
+  "serverTimeMs": 0, "autoApprovePolicy": {} | null, "rawSign": "off" | "approval",
+  "timings": { "totalMs": 0, "phases": {} }, "requestId": "string" }
 ```
+
+After the gate, the settings and `login_methods` rows (D1) and the registry read run side by side (D261), and both are
+awaited before any answer, on every path. The registry read is `get_scope`, then `get_config` only when the scope
+needs a shared client (the app has no `google_web_client_id`, the scope has no Google client and allows shared
+login; cached 60 s, one read in flight per isolate). A failed `get_config` counts only where the shared client is
+used. Like every contract view the API makes, each gives up after 8 s ([Timings](#timings) below), so a stalled node
+answers `502 near_unavailable` instead of holding the request; the vault asks once more (`packages/web`
+vault/login.ts).
+`timings`: `pk_test_` apps only ([Timings](#timings)).
+
+`loginMethods` (L, D231) is what the app's D1 `login_methods` enables (migration 0010; `'google'` by default, read
+here, never in the gate; a database before 0010 reads as Google-only) and the scope can serve on chain, in the order
+google, email: Google as below; email only with the scope's client `("email", "email:<scopeId>")`, then `email:
+{aud}` is present. A Google-only app (every app until build plan batch 8) answers exactly as before with
+`loginMethods: ["google"]` added, and keeps its `409 no_google_client`. An app with email on gets `google: null` when
+only email is available and `409 no_login_method` when neither is. The vault (batch 8a) offers email in the popup
+only for `["google","email"]` with `email.aud = "email:<scopeId>"` in an env whose bundle pins an email issuer; it
+refuses an answer with `google: null` for now (D247).
 
 `name`, `serverTimeMs`, `autoApprovePolicy` and `rawSign` are new in B. `autoApprovePolicy` is the policy in force now
 (read from D1 on every request, validated and normalized as the vault page inlines it), or null; an open vault
@@ -278,33 +320,44 @@ when the scope has `allow_shared`.
 | Status | Code | When |
 |---|---|---|
 | 409 | `scope_not_registered` | `get_scope` is null |
-| 409 | `no_google_client` | `google_web_client_id` no longer in the scope, or no own client and no usable shared client |
+| 409 | `no_google_client` | a Google-only app: `google_web_client_id` no longer in the scope, or no own client and no usable shared client |
+| 409 | `no_login_method` (L) | an app with email on: neither Google nor the scope's email client is available |
 | 502 | `near_unavailable` | registry read failed |
-| 503 | `config_unavailable` | the app's settings row could not be read |
+| 503 | `config_unavailable` | the app's settings row or `login_methods` could not be read |
 
 ### `POST /v1/sessions` — relays `create_session` (session pool)
 
-Body (extra keys ignored, except `scopeId` / `scope_id`, which are refused):
+Body: exactly the fields below (anything else, `scopeId` and `linkJwt` included, is `400 bad_request`, D250):
 
 | Field | Type | Rule |
 |---|---|---|
-| `jwt` | string | Google ID token, three base64url segments, ≤ 7168 chars |
+| `jwt` | string | a Google ID token (three base64url segments) or an email token (JWS JSON, `{…}`, printable ASCII; L), ≤ 7168 chars |
 | `sessionPublicKey` | number[32] | Ed25519 public key |
 | `expiresAtMs` | integer | in `(now, now + 24 h + 5 min]` |
 | `salt` | number[16..64] | |
 | `keyIndex` | integer | `0 ..= 2^31 − 1` |
 | `maxUses` | integer | `1 ..= 500` |
+| `signature` | number[64] | **required** (L, D137): the session key's proof of possession, Ed25519 over `"hana-id-session-v1:" ‖ u64le(0) ‖ sha256("hana-id-create-v1:" ‖ sha256(session nonce preimage))`; relayed as `create_session`'s `signature` (contract v3 requires it, v2 ignores it) |
 
 The scope is always the app's (D1). Checks after the gate and shape (`400 bad_request`):
 
-1. RS256 against Google's JWKS, `iss` → provider, `exp` + 60 s skew: `401 invalid_token`, `400 unsupported_issuer`,
+1. An email token (L): "Email tokens" below (`401 invalid_token`, `400 unsupported_issuer`, `400 token_expired`,
+   `503 issuer_key_pending` + `retry-after: 30`, `401 token_stale`, `502 near_unavailable`, `403 login_method_disabled` for an app whose
+   `login_methods` doesn't list `email`, `503 config_unavailable`). A Google token: RS256 against Google's JWKS, `iss` → provider, `exp` + 60 s skew: `401 invalid_token`, `400 unsupported_issuer`,
    `400 token_expired`, `503 issuer_keys_unavailable` (`verifyIdToken`, `packages/oidc`); an `exp` that isn't a
    finite number is `401 invalid_token`. `email`, `email_verified`, `iat`, `hd`, `azp`, `amr` and `auth_time` are
    not read, and one of the wrong JSON type is ignored, not refused (D201). A valid signature's `kid` is recorded once per isolate after the
    response (`issuer_key_observations.first_token_ms`, here and on `/v1/login`; the kid only, never the token).
-2. Only with `REJECT_PII_ON_SESSIONS = "1"`: claim allow-list (`iss azp aud sub iat exp nonce nbf jti auth_time`),
-   else `400 token_has_pii` with `data: {claim}`.
+2. Claim allow-list, always (D271; a Google token only, an email token is held to its own claims):
+   `iss azp aud sub iat exp nonce nbf jti auth_time`, else `400 token_has_pii` with `data: {claim}`, before any chain
+   read; nothing is relayed.
 3. `nonce` equals the session nonce recomputed with `SIGNER_ACCOUNT` and the app's scope (`400 nonce_mismatch`).
+3b. (L) `signature` verifies as the proof of possession for exactly these parameters (`401 invalid_signature`): only
+   the session key's holder can open a session, and a proof seen once can't open the key with other parameters.
+3c. (L, D250) The same request already refused by the chain for `link_pending` or `identity_linked` in this isolate in
+   the last 60 s is answered the same way, without a relay. Beside step 4's reads, once links can exist
+   (`get_config().links_open`): the session identity's `get_identity`; a pending member is `409 link_pending` (fails
+   open when it can't be read).
 4. Side by side: client → scope (`403 scope_mismatch` / `unregistered_client` / `unknown_scope` /
    `shared_login_disabled`), `session_key_in_use` (`409 session_exists`), and the governance gate (G, below); read
    failure `502 near_unavailable`. Reported in that order.
@@ -312,6 +365,8 @@ The scope is always the app's (D1). Checks after the gate and shape (`400 bad_re
 
 → `200 {"result": {"path", "scope_id", "expires_at_ms", "max_uses", "used"}, "nearTx", "requestId"}`. Usage event:
 `session` (uid from the new session's `path`).
+With an email token also `email_usage.email_sessions` (L, copied hourly to the ledger, D233). A failed relay's
+email-login panics are answered as in "Relay errors" (`409 link_pending` for a pending member).
 
 **Governance gate (G, `handlers.ts` `chainGate`; also on `/v1/login`, and the pause part on `/v1/derive`).** The
 contract would refuse these, so nothing is relayed:
@@ -367,8 +422,12 @@ derive, except no `session_exhausted`, and the last usable counter is `max_uses 
 
 One transaction per login. Called by the vault and the export window (`AUTH_ORIGIN`), never by partner pages.
 
-Body: exactly the `/v1/sessions` fields plus `signature: number[64]` (session signature over counter 1 of the CKD
-payload), `pk1`, `pk2`. Any other field: `400 bad_request`.
+Body: exactly the `/v1/sessions` fields (without the proof of possession) plus `signature: number[64]` (session
+signature over counter 1 of the CKD payload), `pk1`, `pk2`, and for email login's automatic link (L, D133)
+`linkJwt` (an email token) and `linkImmediate` (a boolean, only with `linkJwt`). Any other field: `400 bad_request`.
+Without `linkJwt` the relayed arguments are batch B's exactly; with it, `link_jwt` and `link_immediate` are added, the
+signature must be over the **linked CKD payload** `"hana-id-ckd-link-v1:" ‖ sha256(linkJwt) ‖ u8(linkImmediate) ‖
+pk1 ‖ ":" ‖ pk2`, and the gas is 250 Tgas. `jwt` is a Google or an email token ("Email tokens" below).
 
 Checks, in order: gate (relay kind) → shape → token (as `/v1/sessions`) → claim allow-list, **always on**
 (`400 token_has_pii` + `data: {claim}`) → nonce → in-isolate hold on (key, counter 1) → scope and
@@ -376,7 +435,14 @@ Checks, in order: gate (relay kind) → shape → token (as `/v1/sessions`) → 
 non-identity point of 48 / 96 bytes (`400 invalid_app_key`) → pairing only with `BLS_PRECHECK = "1"` → the app's relay
 quota (`429 rate_limited`, counted only for a request that got this far). The governance
 gate (G: `503 paused`, `503 issuer_key_pending`, with `retry-after`; see `/v1/sessions`) runs beside the scope and
-`session_key_in_use` reads and answers after them. From
+`session_key_in_use` reads and answers after them. With `linkJwt` (L, D232), after the signature: the link token
+verified (an email token of the app's scope, `403 login_method_disabled` / scope codes as for `jwt`), then the link
+precheck from fresh chain reads (`get_config`, `get_identity` and `get_account` of both identities), in the contract's
+order (`links.rs` `auto_link`): `409 links_unavailable` (the contract is before v3, or the owner hasn't accepted the
+pre-v3 wallets, D135), `409 link_pending` (either identity is a pending member), `422 link_refused` with `reason`
+`same_identity`, `already_linked`, `both_wallets`, `link_mismatch` (the token's `auto_link` nonce doesn't commit to
+this login, its join, the target account's epoch or the mode), `unlinked`, `account_full` or `provider_taken`;
+`502 near_unavailable` when a read fails. An export (`AUTH_ORIGIN`) never carries a link (`400 bad_request`). From
 `AUTH_ORIGIN` (a key export) the export limit comes right after the nonce check: `429 rate_limited` with
 `retry-after` once 3 exports of that user path in that app were counted this hour, `503 rate_limiter_unavailable` if
 the limiter can't be reached; nothing is relayed in either case.
@@ -395,11 +461,81 @@ failing receipt's executor:
 | Status | Code | Meaning |
 |---|---|---|
 | 422 | `contract_rejected` (+ `reason: "session_key_in_use"` for that panic) | signer receipt failed; nothing was created |
+| 409 / 422 | the email-login panics (L): `links_unavailable`, `identity_linked`, `link_pending`, or `contract_rejected` + a link `reason` ("Relay errors") | signer receipt failed; nothing was created |
 | 422 | `ckd_failed` + `session: {used: 1}` | MPC receipt failed; the session **is** committed with its one use spent |
 | 502 | `near_error` | another receipt, or none identified |
 
 Usage event: `login` (uid from the login's path on success; `ckd_failed` is a rejected, relayed event: its gas was
 burnt).
+With an email token also `email_usage.email_sessions`, with a link `email_usage.links` (L, on success; copied
+hourly to the ledger's `usage.email_counts`, D233).
+
+### Email tokens · L
+
+The email issuer's tokens (`apps/email-issuer`, JWS General JSON Serialization), on `/v1/sessions`, `/v1/login` (`jwt`
+and `linkJwt`) and the link relays, checked as the contract will check them (`src/email-token.ts`, D231), before
+anything is relayed:
+
+1. `EMAIL_ISS` set (`400 unsupported_issuer` otherwise: no email issuer in this env) and the token exactly in the
+   issuer's form, `{"payload":…,"signatures":[{"protected":…,"signature":…}]}` as `JSON.stringify` writes it (no
+   whitespace, no unknown or duplicate member, no flattened form, no unprotected header), ≤ 7168 bytes, 1–3 signatures
+   with distinct kids, each protected header `{alg: RS256, kid}` without `crit` (`401 invalid_token`).
+2. Claims: `iss` equal to `EMAIL_ISS` (`400 unsupported_issuer`), exactly the issuer's set `iss aud sub iat exp nonce
+   jti` (no address claim), `sub` 1–255 bytes without `#`, `aud` 1–256 bytes, `exp` + 60 s skew (`400 token_expired`).
+3. Each signature RS256-valid with its kid's key in `EMAIL_PUBLIC_KEYS` (the manifest's `emailIssuer.publicKeys`, the
+   keys the issuer's JWKS serves; never fetched) (`401 invalid_token`).
+4. The signer policy on chain, `get_self_issued("email")` (cached 60 s; an unlisted kid re-reads it at most every
+   10 s per isolate): every kid listed under one of its signers, else `503 issuer_key_pending` (`retryAfterS: 30`)
+   when a pending change adds it (`get_key_changes`, cached 10 s: the key is still in its delay) and `401 token_stale`
+   otherwise (removed, a dropped signer's, or a token only an overlap's previous policy accepts, D250); at least
+   `required` distinct signers (`401 invalid_token`, "Not enough signatures"); no policy (`null`) is `400
+   unsupported_issuer`, a contract without the view (v2) `502 near_unavailable`.
+5. The app's `login_methods` lists `email` (`403 login_method_disabled`; D1 failure `503 config_unavailable`), except on
+   `/v1/link/cancel` and `/unlink`, which take an email token whatever it says (D250).
+
+Then the caller checks `aud` against the scope (`scope_for_client("email", aud)`: the scope's client
+`email:<scope_id>`; an email client is never shared) and the nonce, as for a Google token. The governance gate's kid
+check is the policy check above; its pause check runs as for Google.
+
+### Link relays (`/v1/link`, `/v1/link/cancel`, `/v1/link/unlink`) · L
+
+Explicit linking and its undo (`docs/email-login-spec.md` "Explicit linking", "Unlink and cancel"; `src/links.ts`,
+D232). From the vault or the auth origin's pages only (`x-hana-parent-origin` an origin of the app), never a partner
+page; gate kinds `link` and `link-change` (their own per-IP windows, "Rate limits"); session pool. Bodies, exactly
+these fields (`400 bad_request` otherwise):
+
+| Endpoint | Body | Relays | Gas |
+|---|---|---|---|
+| `POST /v1/link` | `{accountJwt, newJwt, epoch: u64, salt: number[16..64]}` | `link_identity(scope_id, account_jwt, new_jwt, epoch, salt)` | 250 |
+| `POST /v1/link/cancel` | `{jwt, memberKey: 64 lowercase hex, epoch, salt}` | `cancel_link(scope_id, jwt, member_key, epoch, salt)` | 150 |
+| `POST /v1/link/unlink` | `{jwt, memberKey, epoch, salt}` | `unlink_identity(scope_id, jwt, member_key, epoch, salt)` | 150 |
+
+Checks, in order: every token verified (Google or email, as for `/v1/login`; a nonce required) and a client of the
+app's scope; the governance gate (paused, a Google kid active); then the contract's rules from fresh chain reads
+(`get_identity` and `get_account` of the token identities), each refusal answered and nothing relayed:
+
+- `/v1/link`: `409 links_unavailable` (pre-v3, or `unrecorded_wallets`); the `link_new` nonce of `newJwt` and the
+  `link_account` nonce of `accountJwt` over the account's root, the new identity, `epoch` and `salt`
+  (`422 link_refused` `link_mismatch`); then `same_identity`, `409 link_pending` (the account token's identity is a
+  pending member), `has_wallet` (the new identity derived its own path once), `already_linked`, `account_full`,
+  `provider_taken`, `stale_epoch`.
+- `/v1/link/cancel`: the member must be a pending member of the acting identity's account (`no_such_member`), the
+  `link_change` "cancel" nonce (`link_mismatch`); by the member itself or an active identity of the account (`409
+  link_pending` for a pending one); `stale_epoch`. Not gated on `unrecorded_wallets` (nor is the contract).
+- `/v1/link/unlink`: an active member of the acting identity's account (`no_such_member`, `cannot_unlink_root` for the
+  root), the `link_change` "unlink" nonce, by the root or the member itself (`not_allowed`), `stale_epoch`.
+
+Then the claim and the limits (D250, D252): one relay per set of tokens (sha256 of them reserved in the `link-tokens`
+object for 10 minutes, released when the relay certainly didn't execute; a duplicate is `409 link_in_flight`); per
+account root (`link-root:<scope>:<root ik>`) 3 adds a minute and 20 a day, 10 removals a minute and 100 a day; per app
+30 adds a minute and 1000 a day; across apps 5000 adds a day (`link-global`); all `429 rate_limited` above. The app's
+removal windows (60 a minute, 2000 a day) only log `link_changes_high`, never refuse. Then the relay (gas per "Relayer
+pools and gas"), and on success the account's vault shares are revoked in every app of the scope (a convenience that
+signs other devices out, not a security boundary: security.md) (those of the account root's path at `key_index` 0..63, D233; logged `link_shares_revoked` with a
+count, a failure `link_shares_revoke_failed`, never failing the answer). → `200 {"result": {"effectiveAtMs"}, "nearTx",
+"requestId"}` for `/v1/link` (when the link becomes active), `{"result": null, …}` for the other two. Usage: a link
+(`email_usage.links`) for `/v1/link` only; every request past the gate is one usage event (endpoints `link`,
+`link_cancel`, `link_unlink`, with its relay facts; migrations-usage 0005). Failed relays as in "Relay errors".
 
 ### `/v1/login-relay/<relayId>` — Durable Object `LoginRelay` · B
 
@@ -409,13 +545,19 @@ methods: `405`. Per-IP limits as above (`429 rate_limited`, `503 rate_limiter_un
 
 | Request | Origin | Body / headers | Responses |
 |---|---|---|---|
-| `POST` | `AUTH_ORIGIN` | `{iv, ct}` only, base64url; iv 12 bytes, ct ≥ 16 bytes, body ≤ 8 KiB | `204`; `409 relay_used` if ever written; `503 relay_unavailable` |
+| `POST` | `AUTH_ORIGIN`, `VAULT_ORIGIN` (batch 8b) | `{iv, ct}` only, base64url; iv 12 bytes, ct ≥ 16 bytes, body ≤ 12 KiB (the clients encrypt at most 9000 bytes) | `204`; `409 relay_used` if ever written; `503 relay_unavailable` |
 | `GET ?wait=<1..25>` (absent = answer at once) | `VAULT_ORIGIN`, `AUTH_ORIGIN` | `x-hana-relay-key: <b64url of 32 bytes>` | `200 {iv, ct, serverTimeMs, heldMs}` (consumed; `heldMs`: how long the value sat in the slot before this read, on the object's clock: a duration, never the write's time); `204` still empty after `wait` s; `410 relay_gone` read or expired; `403 relay_forbidden` missing/wrong key (slot untouched); `400 bad_request` bad `wait`; `503 relay_unavailable` |
 
 The value lives 120 s after the write, then a tombstone answers 410 for 120 s more, then the object is empty. Only
 ciphertext is stored; bodies, keys and relay ids are never logged. For a `pk_test_` app the encrypted payload also
 carries the login popup's stage durations (`timings` beside `idToken` or `error`, at most 8 numbers, `@hana-id/core`
 `relay.ts`); the API can't read them any more than the token.
+
+A login of an app with email (batch 8b, D256) also uses **follow-up slots**: ordinary slots whose ids derive from a
+`followKey` only the vault and its popup hold (`@hana-id/core` `links.ts` `followSlot`), the vault writing its notices
+(google-match's screens, link banners, its last word) and the popup its answers (Google's access token, a link token, a
+proof), each slot written once and read once by the other side, each value AES-GCM under the login's `relayKey`. The
+API sees only ciphertext and slot ids; a writer can't forge a value without `relayKey`.
 
 ### `GET {VAULT_ORIGIN}/vault?pk=<publishable key>` · B
 
@@ -437,7 +579,7 @@ lowercase http(s) origins, loopback ones only for `pk_test_` in dev envs, sorted
 
 Headers: `content-security-policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:;
 font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors <origins | 'none'>; connect-src <API_URL origin>
-<NEAR_RPC origin> [<NEAR_RPC_FALLBACK origin>] https://www.googleapis.com`, `cross-origin-resource-policy: cross-origin`, `cache-control: no-store`,
+<NEAR_RPC origin> [<NEAR_RPC_FALLBACK origin>] https://www.googleapis.com [<EMAIL_ISSUER_URL origin>]` (the issuer only when it isn't the API's own origin: the vault calls google-match, batch 8b; a malformed `EMAIL_ISSUER_URL` is a `503 misconfigured` page), `cross-origin-resource-policy: cross-origin`, `cache-control: no-store`,
 `referrer-policy: no-referrer`, `x-content-type-options: nosniff`.
 
 Errors are an empty HTML page with `frame-ancestors 'none'` and no config: `403` (`unknown_app`, `app_suspended`,
@@ -454,8 +596,9 @@ One thin Worker per Hana origin in every env (D66; `workers.dev` in dev envs, a 
 | Origin | Path | Response |
 |---|---|---|
 | vault | `/vault` | forwarded to the API Worker (service binding `API`), unchanged but for a `Set-Cookie` header, which is dropped; `503` page with no config if it is unreachable |
-| auth | `/login/callback` | `login/callback.html` with `frame-ancestors 'none'; connect-src <API_URL>` |
+| auth | `/login/callback` | `login/callback.html` with `frame-ancestors 'none'; connect-src <API_URL> [https://oauth2.googleapis.com]` (Google's tokeninfo only when `EMAIL_ISSUER_URL` is set and valid: under `'token_first'` the callback reads the access token's `sub` there, D270; the built page's `<meta>` policy lists the same, `packages/web/src/auth/pages.ts`) |
 | auth | `/login`, `/approve` | `<path>.html` with `frame-ancestors 'none'` (neither fetches anything; the login popup makes no API call, D77) |
+| auth | `/login/email` | `login/email.html` with `frame-ancestors 'none'; connect-src [<EMAIL_ISSUER_URL origin>] <API_URL>` (the email step, batch 8a: the issuer's `start`, `resend`, `verify` and the relay write; the auth Worker's `EMAIL_ISSUER_URL` is set by `gen` from `emailIssuer`, and a malformed one is a `503` page) |
 | auth | `/export` | `export.html` with `frame-ancestors 'none'; connect-src <API_URL> <NEAR_RPC> [<NEAR_RPC_FALLBACK>] https://www.googleapis.com` |
 | both | any other path | a static asset, never HTML (`*.html` and `text/html` → `404`) |
 
@@ -631,6 +774,7 @@ No app key. `{"method", "args"}` only, `args` exactly as the contract takes them
 | 409 | `shared_login_disabled` / `last_client` | `disable_shared_login` |
 | 400 / 409 | `invalid_client_proof` / `client_registered`, `shared_client` | `AddClient`: the proof's signature, its `(provider, aud)`, and its nonce = `client_proof_nonce(signer, scope_id, action_nonce)` |
 | 409 | `shared_login_enabled` | `SetAllowShared` already on |
+| 400 | `token_has_pii` | the `auth` token or the `client_proof` has a claim outside the allow-list (`data: {claim}`, D274) |
 | 409 | `token_used` | this exact token was reserved before |
 | 503 / 502 | `issuer_keys_unavailable` / `near_unavailable` | JWKS / chain read failed |
 
@@ -639,10 +783,14 @@ action built before another one landed is refused here, for free, instead of bur
 comes after the owner check and before the method's own checks; nothing is reserved or counted before every check
 passed. The arguments are encoded by `@hana-id/console-core` `ownerActionArgsBorsh` (tested against the contract's
 `test_fixture.json`). The `auth` token and the `client_proof` are checked like a login token (RS256, issuer, `exp`
-without skew, a finite `exp`), the proof for its `(provider, aud)`. Their other claims are not read: an `email`, `email_verified` or `hd`
-(a console token should be `openid` only, but nothing refuses one that isn't) is ignored, as is any of the
-optional claims with the wrong JSON type (D201), and none is logged, returned or stored; only the token's sha256
-is kept. The token itself is relayed to the contract unchanged.
+without skew, a finite `exp`), the proof for its `(provider, aud)`. Both are relayed to the chain, where they are
+public, so both are held to the login tokens' claim allow-list (D274), on this endpoint and on
+`ConsoleRpc.ownerAction` alike (D277): a claim outside it (`email`, `email_verified`, `hd`, …) is `400 token_has_pii`
+with `data: {claim}`, right after that token's signature check (the owner token's before any chain read), so before
+the reservation and the relay. An
+allow-listed claim of the wrong JSON type is ignored here (D201; `ConsoleRpc.ownerAction` checks them strictly). No
+claim is logged, returned or stored; only the token's sha256 is kept. The token itself is relayed to the contract
+unchanged.
 
 The token's sha256 is reserved atomically (`RateLimiter` object `owner-actions:tokens`, until the token's `exp`)
 before relaying. Then the caps (table above) are asked from the most specific in, at one instant; when one refuses,
@@ -688,6 +836,17 @@ cap refuses the request or the relay certainly never executed
 
 Any other broadcast failure (dropped connection, non-JSON 5xx) is treated as "may have executed" and the hash is
 polled.
+
+**Email-login panics (L, `src/panics.ts`, D232).** A `contract_rejected` failure in the signer's own receipt whose
+panic is one of email login's is answered as its own error (on `/v1/sessions`, `/v1/login`, `/v1/derive` and the link
+relays); the panic text stays in `error`, as for every refusal, and is never logged:
+
+| Panic | Status | Code |
+|---|---|---|
+| `Links wait until the owner accepts the wallets opened before v3` | 409 | `links_unavailable` |
+| `Sign-in method is linked to an account` (the session's own path identity joined an account, D136) | 409 | `identity_linked` |
+| `Sign-in method link is pending` | 409 | `link_pending` |
+| a link refusal (`Link token nonce doesn't match`, `Link nonce doesn't match`, `This link must be immediate`, `Both sign-in methods already have a wallet`, `This sign-in method was unlinked`, `Account is full`, `Account already has a sign-in method of this kind`, `Sign-in method is already linked`, `Sign-in method already has a wallet`, `Identities must differ`, `Wrong epoch`, `No such member`, `Sign-in method is not in this account`, `Only the root or the member itself can unlink`, `Cannot unlink the root`) | 422 | `contract_rejected` + `reason` (`link_mismatch`, `both_wallets`, `unlinked`, `account_full`, `provider_taken`, `already_linked`, `has_wallet`, `same_identity`, `stale_epoch`, `no_such_member`, `not_in_account`, `not_allowed`, `cannot_unlink_root`) |
 
 ## Idempotency and replay
 
@@ -771,14 +930,14 @@ method: an unexpected error is logged (`event: "rpc"`, method, request id, `code
 | `createKey`, `rotateKey`, `revokeKey` | A new `pk_<environment>_` key (at most 5 with `revoked_at` NULL, `key_limit`); rotate: a new key and the old one `revoked_at = now + 24 h`; revoke: `revoked_at = now` (also in the grace), the last valid key included (`warning: 'last_key'`) |
 | `changeOrigins` (C6) | A member's origin adds with any removes sent with them, and `stepUpJwt`, which the API verifies itself (below). The adds are pending `origin_add`s like a staff proposal's, recorded `proposed_by_kind = 'member'` with the verified `proposer_sub`; the removes apply at once in the same batch (their origin_adds end or are cancelled, their rows go); one `origins_version` bump; one `origin.proposed` row (`changes`, and `removed` with `wasInForce`) with `actor_sub`. `bad_request` for an origin both added and removed or a remove that isn't the app's; the add rules are `addOrigins`'s (duplicates, 20 origins counting the removes, `origin_refused`), except the scope-assignment wait, which is staff-only. Not counted by the breaker |
 | `proposeChange` (C6) | A member's `policy_set` or `raw_sign_on` with `stepUpJwt` (verified as for `changeOrigins`, the settings-change layout): the staff proposal's rules without the assignment wait; `proposer_sub` and `actor_sub` set |
-| `ownerAction` (C6) | `{orgId, body}`: an on-chain owner action relayed through the owner pool exactly as `POST /v1/owner-actions` relays it (the same per-IP limiter fed `clientIp`, precheck, token reservation, caps, usage event, endpoint `ConsoleRpc.ownerAction` in the request log). Console rules on top (D237): the scope must be in `scopes` with the org (`not_found`, before any chain read); the owner token's optional claims are checked strictly and it must carry no `email`, `email_verified` or `hd` (`forbidden`: it is public once relayed). A refusal before the relay is an RpcCode (the precheck's code first in `error`: `unknown_change: …`): `owner_nonce_mismatch`, `invalid_client_proof`, `token_used`, `not_owner`, `rate_limited`, `not_found` (scope, change, client), `conflict` (locked, last client, shared login state, a registered or shared client), `forbidden` (token), `near_unavailable` (NEAR or Google's keys), `bad_request`. Once relayed: `{ok: true, status, result?, nearTx?, code?, error?}`, the relay's own answer, a contract panic included (`status: 422`, `code: contract_rejected`). The safety methods may spend the kill-switch reserve |
+| `ownerAction` (C6) | `{orgId, body}`: an on-chain owner action relayed through the owner pool exactly as `POST /v1/owner-actions` relays it (the same per-IP limiter fed `clientIp`, precheck, token reservation, caps, usage event, endpoint `ConsoleRpc.ownerAction` in the request log). Console rules on top (D237): the scope must be in `scopes` with the org (`not_found`, before any chain read); the owner token's optional claims are checked strictly (`forbidden`). The claim allow-list holds here as on the endpoint, for the owner token and an `AddClient` proof alike (D274, D277: `token_has_pii`, an RpcCode `forbidden` whose message names the claim; both are public once relayed). A refusal before the relay is an RpcCode (the precheck's code first in `error`: `unknown_change: …`): `owner_nonce_mismatch`, `invalid_client_proof`, `token_used`, `not_owner`, `rate_limited`, `not_found` (scope, change, client), `conflict` (locked, last client, shared login state, a registered or shared client), `forbidden` (token), `near_unavailable` (NEAR or Google's keys), `bad_request`. Once relayed: `{ok: true, status, result?, nearTx?, code?, error?}`, the relay's own answer, a contract panic included (`status: 422`, `code: contract_rejected`). The safety methods may spend the kill-switch reserve |
 
 Not built yet: `usage`, `statements`, `ledger` (C12); calling them is an RPC error (no such method).
 
 **The API's step-up verification (`changes/step-up.ts`, spec "API verification", D235).** In order, failing closed, before
 anything is written or reserved: (1) RS256 signature, issuer and expiry (`@hana-id/oidc`, optional claims strict); (2)
 `(provider, aud)` in the on-chain `console_audiences` in force, `get_config` read fresh; (3) `iat` at most 300 s old
-and at most 60 s ahead; the token's `sub` equal to the member actor's; no `email`, `email_verified` or `hd`; (4) after
+and at most 60 s ahead; the token's `sub` equal to the member actor's; only claims of the login tokens' allow-list (no `email`, `email_verified`, `hd`, name, …; D277); (4) after
 the plan read (a replayed `requestId` is `already_applied` here, a moved version `version_conflict`, then every input
 and state check), the nonce equal to `b64url` of the origin-change layout (signer, app id, sorted normalised adds and
 removes, the stored `origins_version`) or the settings-change layout (signer, app id, kind, the 32 `policyId` bytes or
@@ -858,17 +1017,21 @@ accept a revoked, rotating or deleted app's key.
 
 | Pool | Secret | Durable Object names | Methods | Used by |
 |---|---|---|---|---|
-| session | `RELAYER_KEYS` | `relayer-key-<i>` | `create_session`, `create_session_and_derive`, `derive_key`, `revoke_session`, `prune_sessions` | `/v1/sessions`, `/v1/login`, `/v1/derive`, `/v1/sessions/revoke` |
+| session | `RELAYER_KEYS` | `relayer-key-<i>` | `create_session`, `create_session_and_derive`, `derive_key`, `revoke_session`, `prune_sessions`, `link_identity`, `cancel_link`, `unlink_identity` (L) | `/v1/sessions`, `/v1/login`, `/v1/derive`, `/v1/sessions/revoke`, `/v1/link*` |
 | owner | `OWNER_RELAYER_KEYS` | `owner-relayer-key-<i>` | `propose_change`, `cancel_change`, `remove_client`, `disable_shared_login`, `execute_change`, `register_scope`, `apply_pending_config` | `/v1/owner-actions` |
 
 Keys are function-call keys on `RELAYER_ACCOUNT`, receiver `SIGNER_ACCOUNT`, no deposit. A key of the pool is picked
 round-robin (random start per isolate). The allowlist is enforced in `relay()` and again in the object (`400
 method_not_allowed` otherwise). The session list is allowlist state 1 of `docs/batch-b-spec.md` ("Relayer
-allowlists").
+allowlists") plus the three link methods (email login batch 6; on chain the keys are deleted and re-added,
+`docs/operations.md` "Email login on sandbox-dev").
 
 Gas attached (Tgas; `GAS_<METHOD>_TGAS` var overrides with an integer 1..300, invalid values logged and ignored):
-`create_session` 50, `create_session_and_derive` 100, `derive_key` 60, `revoke_session` 20, `prune_sessions` 50, owner
-methods 50, `register_scope` 30 + 25 per proof (max 300). The cron's calls use 30 Tgas with `KEYS_UPDATER_KEY` (on
+`create_session` 100, `create_session_and_derive` 150 (250 with a `link_jwt`, override
+`GAS_CREATE_SESSION_AND_DERIVE_LINKED_TGAS`), `derive_key` 60, `revoke_session` 20, `prune_sessions` 50,
+`link_identity` 250, `cancel_link` and `unlink_identity` 150 (the session and link values cover 4096-bit issuer keys,
+D155), plus 70 per token signature beyond what the default covers (a 2-of-2 email token: one per token at the
+default; D250), owner methods 50, `register_scope` 30 + 25 per proof (max 300); every value capped at 300. The cron's calls use 30 Tgas with `KEYS_UPDATER_KEY` (on
 `SIGNER_ACCOUNT`, not a pool).
 
 **Updater key (G).** `KEYS_UPDATER_KEY` signs only `UPDATER_METHODS` = `set_issuer_key`,
@@ -919,6 +1082,8 @@ this key's public key, start at R with no chain read (skips up to 99 nonces) and
 | `get_scope` | 10 s; dropped after an owner action. Read uncached by the owner-action precheck (its `action_nonce`) and by the RPC's owner and client checks |
 | `get_config` | 60 s; 10 s while it says `paused` (G); concurrent misses share one read. Read fresh (and the cache refreshed) by the guarded-change step-up check (its `console_audiences`) |
 | `get_issuer` (G) | 60 s per provider; a kid not in the set re-reads it at most every 10 s; concurrent misses share one read |
+| `get_self_issued` (L, `src/link-views.ts`) | 60 s per provider; a token kid it doesn't list re-reads it at most every 10 s; concurrent misses share one read |
+| `get_identity`, `get_account` (L) | never cached (each link precheck reads them fresh) |
 | `GET /v1/governance` snapshot (G) | 10 s, `governance-status.ts` |
 | Google JWKS | `max-age` clamped to 5 min..6 h; unknown kid refetches at most once a minute; 10 s back-off after a failure; a stale set serves its kids up to 6 h past expiry. Each successful fetch is recorded in `issuer_key_observations` after the response |
 
@@ -947,6 +1112,8 @@ this key's public key, start at R with no chain read (skips up to 99 nonces) and
 | `security_events` (C) | `id` PK, `detected_at`, `kind` `drift`/`breaker`/`owner_cap`/`owner_allowance_low`, org/app/scope, `detail_json`, `notified_at` | 0006 |
 | `org_security_contacts` (C) | (`org_id`, `email` lowercased) PK, `added_by`, `added_at` | 0006 |
 | `session_markers` (C) | `app_id` PK → apps, `first_at` ms: written once, when the relay of a session-pool request on a scope with no `first_session_at` settled; the `no_session` waiver's sign besides `first_session_at` (D220). No user data | 0009 |
+| `apps` (added, L) | `login_methods` `'google'` (default) / `'email'` / `'google,email'` (CHECK): the sign-in methods the app offers (read only by `GET /v1/app` and for email tokens, never in the gate; the email issuer reads it too) | 0010 |
+| `email_usage` (L) | (`app_id` → apps, `day` `YYYY-MM-DD` UTC) PK, `email_sessions`, `links`: email logins and new links per app and day, as `identity_usage`; copied hourly to the ledger's `usage.email_counts` (D233) | 0010 |
 | `vault_shares` | `share_id` BLOB(16) PK, `app_id`, `session_pk` BLOB(32) UNIQUE, `path_hash` = sha256(path), `partner_origin`, `share_enc` = iv ‖ AES-GCM(KEK, K_s, aad = share_id ‖ app_id ‖ session_pk), `kek_id`, `counter`, `created_at`, `idle_until`, `abs_expires_at`, `revoked_at`; indexes (`app_id`, `path_hash`), `abs_expires_at`, `kek_id` | 0003 |
 
 ## Cron (`*/15 * * * *`)
@@ -991,6 +1158,9 @@ jobs (one failing doesn't skip the others):
   the last 7 UTC days of `identity_usage` (with each app's org and scope) to `usage.identity_tokens` through
   `usage.record_identity_tokens` (500 rows a call), which keeps the larger count per app and day; a failure is logged
   (`identity_usage_sync_failed`) and repaired by the next run. It never fails the cron run (D223).
+- **Email counts to the usage ledger, the same hourly run** (`usage/email-sync.ts`, L): the same for `email_usage`
+  (email sessions and new links per app and day) into `usage.email_counts` through `usage.record_email_counts`
+  (migrations-usage 0004; the larger count of each column kept); `email_usage_sync` / `email_usage_sync_failed` (D233).
 - **Guarded changes, the same hourly run** (`guarded/cron.ts`, C): nothing waits for it (an origin is in force by
   `active_from <= now`, a policy or raw signing by batch B's `*_effective_at`), so it changes no answer the gate gives.
   For each announced pending change whose `active_from` has passed (≤ 100 a run): records it once (`status = 'active'`,
@@ -1034,13 +1204,16 @@ Vars are generated from `envs/<env>.json` by `apps/api/scripts/gen-wrangler.ts` 
 | `MPC_ACCOUNT` | var | `mpc` | `/v1/login` failure mapping |
 | `VAULT_ORIGIN`, `AUTH_ORIGIN` | var | `vaultOrigin`, `authOrigin` | `gen` refuses an env without both |
 | `API_URL` | var | `apiUrl` | vault page `connect-src` |
+| `EMAIL_ISSUER_URL` | var, optional | `emailIssuer.url`, else `apiUrl` (only with an `emailIssuer` block) | the vault page's `connect-src` (google-match, batch 8b) |
 | `DO_LOCATION_HINT` | var | `cloudflare.durableObjectLocation` | only written when set |
-| `BLS_PRECHECK`, `REJECT_PII_ON_SESSIONS` | var | `gen` writes `"0"` | `"1"` turns each on |
+| `BLS_PRECHECK` | var | `gen` writes `"0"` | `"1"` turns it on (`REJECT_PII_ON_SESSIONS` is retired: the claim allow-list is always on, and a leftover var is ignored, D271) |
 | `APP_CHANGE_DELAY_MS` | var | `appChangeDelayMs` | the guarded-change delay (`guarded/config.ts`): missing, not an integer, outside 60 s..7 d, or under 24 h on `mainnet` makes every guarded change refuse with `internal` (`AdminRpc.addOrigins`, `proposeChange`, `createApp`, `ackNotice`) |
 | `NETWORK` | var | `network` | the production origin rules on `mainnet` (`guarded/config.ts`) |
 | `REFUSED_ORIGINS` | var | every Hana origin (`@hana-id/env` `hanaOwnOrigins`), JSON array | refused as app origins (`guarded/config.ts`; the CLI applies the same list from the manifest) |
 | `FILES_ORIGIN` | var, optional | `files.origin` | only with the dashboard blocks; `logoUrl` (batch C11) |
-| `GAS_<METHOD>_TGAS` | var, optional | not generated | per-method gas |
+| `GAS_<METHOD>_TGAS` | var, optional | not generated | per-method gas; `GAS_CREATE_SESSION_AND_DERIVE_LINKED_TGAS` for a linked login |
+| `EMAIL_ISS` (L) | var, optional | `emailIssuer.iss` (`{emailIssuer.url}/v1/email`) | absent → every email token `400 unsupported_issuer` |
+| `EMAIL_PUBLIC_KEYS` (L) | var, optional | `emailIssuer.publicKeys`, JSON | the issuer's public keys (its JWKS); public members only |
 | `RELAYER_KEYS` | secret | `.secrets/<env>/relayer-keys.json` | JSON array of `ed25519:` secret keys |
 | `OWNER_RELAYER_KEYS` | secret | `.secrets/<env>/owner-relayer-keys.json` | same format; absent → owner actions 503 |
 | `OWNER_POOL_ALLOWANCE_YOCTO` (C6) | var, optional | not generated | the allowance (decimal yocto) the owner-pool keys were added with, when deploy-contract ran with another `--owner-relayer-allowance` than 0.5 NEAR: the base of the hourly `owner_allowance_low` check |
@@ -1075,16 +1248,25 @@ relay's `relayId`; security sweep APIV-3, D100), the cron.
 
 ## Timings
 
-A `pk_test_` app's successful `POST /v1/login`, `POST /v1/vault/shares` and `POST /v1/vault/unlock` answer with the
-request's own timings, so a test page can set the API's time against its own round trip (apps/smoke, README
+A `pk_test_` app's successful `GET /v1/app`, `POST /v1/login`, `POST /v1/vault/shares` and `POST /v1/vault/unlock`
+answer with the request's own timings, so a test page can set the API's time against its own round trip (apps/smoke, README
 "Timings"). The vault reports the login's and the unlock's; share creation's arrive after the login reply (D79), so
 the vault drops them (the request log keeps them). Unlock's phases are `app` (the cached app row), `limits` (the IP
 and share limits, local bindings, and the app quota object; D95), `share` (the KEK, the share and settings rows) and
-`advance` (the counter update); there is no `shareLimit` phase any more (D78):
+`advance` (the counter update); there is no `shareLimit` phase any more (D78). `GET /v1/app`'s are `app`, `limits`
+(the gate), `settings` and `chain` (from the gate's end to each read's answer; they overlap, D261), which the vault
+reports inside the login's `app` stage (`appServer*`):
 
 ```json
 "timings": { "totalMs": 0, "phases": { "app": 0, "limits": 0, "…": 0 } }
 ```
+
+**RPC view timeout.** Every contract view the API makes (`Rpc.view`, `call_function`: the scope, config, session,
+issuer and link views on every endpoint, `/v1/login`'s and `/v1/sessions`' checks included) gives up after 8 s
+(`VIEW_TIMEOUT_MS`, `src/near/rpc.ts`, D261) and fails as an unreachable node does (`502 near_unavailable` on the
+endpoints). Transactions (`send_tx`, `tx`) and the relayer's access-key and block reads wait as long as the node does.
+A shared `get_config` read in flight that hasn't settled within 10 s is no longer shared, so a read cancelled with its
+request can't hold up the isolate's later requests.
 
 `totalMs` runs from the request reaching the Worker to the answer; `phases` are the request log's (below). Durations
 only, under phase names: no request field, key, token or transaction. Like the log, they move only on I/O (the Workers
@@ -1113,7 +1295,8 @@ signatures, bodies, keys, CKD responses, relay bodies or panic text.
 | `app` | D1 app lookup (vault endpoints: ~0 when the per-isolate cache has the app, D78) |
 | `limits` | rate-limiter round trips (vault endpoints: the IP and share limits are local bindings with no round trip, then the app quota object; the body read is in it too, D95) |
 | `checks` | body, token, nonce, chain reads, signature, pre-checks (everything before the relay) |
-| `settings` | share creation: the app's settings row (D1) |
+| `settings` | share creation: the app's settings row (D1); `GET /v1/app`: the settings and `login_methods` rows, from the gate's end (overlaps `chain`) |
+| `chain` | `GET /v1/app`: `get_scope` (and `get_config` when read), from the gate's end (overlaps `settings`) |
 | `session` | share creation: signature check, then the session read and its retries (every 300 ms for up to 2 s while the node lags) |
 | `insert` | share creation: wrapping K_s and the D1 insert |
 | `share` | share actions: the KEK, the share row and (unlock, touch) the settings row (D1) |
@@ -1162,23 +1345,28 @@ Workers `vault_host` and `auth_page` (`code`).
 
 **E** marks the email login's issuer (`docs/email-login-spec.md` "Email issuer (Hana-run)", build plan batch 4,
 D195–D199). It is a separate Worker from the API (Q1): it alone holds the email signing key, K_sub, K_code, K_rl and
-the SendGrid key; the API holds none of them. It serves `{apiUrl}/v1/email/*` (the iss is `{apiUrl}/v1/email`); how
-that path reaches it (a service binding from the API on `workers.dev`, a zone route in production) is batch 6's (D199).
-**Not deployed**; no app's `login_methods` includes email yet, so nothing calls it. It reads the chain (views only) and
+the SendGrid key; the API holds none of them. It serves `{url}/v1/email/*`, `url` being `emailIssuer.url` (on a
+`workers.dev` env the issuer's own `workers.dev` URL) or, absent, the API's URL with a zone route that sends those paths
+to this Worker; its iss is `{url}/v1/email`. Requests never pass through the API Worker (D230). Below, `/v1/email/…`
+is under that `url`. Its browser caller is the login popup's `/login/email` (`packages/web/src/auth/email-api.ts`,
+batch 8a: `start` with purpose `session`, the session commitment and this device's ticket for the address, then
+`resend` and `verify`; it never calls `google-match` yet). **Not deployed**; no app's `login_methods` includes email yet, so nothing calls it. It reads the chain (views only) and
 the API's D1 (read only); it writes nothing on chain.
 
 ### Conventions
 
 - Browser routes are `POST` JSON (`Content-Type: application/json`, else 415) from exactly one origin each (D199):
-  `start`, `resend`, `verify` from `AUTH_ORIGIN`, `google-match` from `VAULT_ORIGIN`; any other or missing `Origin` is
-  `403 origin_not_allowed` with no CORS headers. No cookies, no credentials (D70). Bodies ≤ 8 KB, exactly the listed
+  `start`, `resend`, `verify` from `AUTH_ORIGIN`, `google-match` and `google-record` from `VAULT_ORIGIN`; any other or missing `Origin` is
+  `403 origin_not_allowed` with no CORS headers; an allowed origin's responses (preflight `204` too) carry
+  `access-control-expose-headers: retry-after`, so the vault and the auth page can read it. No cookies, no credentials (D70). Bodies ≤ 8 KB, exactly the listed
   fields (else `400 bad_request`); only `start` carries an address. Every response `Cache-Control: no-store`.
 - Errors are `{error, code, data?}`. Thrown failures: `503 signer_unavailable` (no, a malformed or a non-active
   ISSUER_SIGNING_KEY, a self-check failure), `503 issuer_unavailable` (a missing HMAC key), `502 near_unavailable`,
   `502 google_unavailable`, `500 internal`. `429` carries `retry-after`.
-- **The app gate** (`start`, `google-match`): `pk` → the API's D1 app (`401 invalid_key`), `status = 'active'`
-  (`403 app_suspended`), `login_methods` lists `email` (`403 email_not_enabled`; the column is the API's batch 6
-  migration, absent = email off), and the scope holds the client `("email", "email:" + scope_id)` on chain (cached 60
+- **The app gate** (`start`, `google-match`): `pk` → the API's D1 app by the gate's model (D233): an `app_keys` row
+  not revoked or still in its rotation grace, of an app not deleted (`401 invalid_key`); active only with
+  `suspended_by = 0` and `status = 'active'` (`403 app_suspended`); `login_methods` lists `email`
+  (`403 email_not_enabled`; the API's migration 0010, absent = email off); `apps.publishable_key` is never read; and the scope holds the client `("email", "email:" + scope_id)` on chain (cached 60
   s; `409 no_email_client`). The commitment's `scopeId` must be the app's (`400 scope_mismatch`).
 - **Tokens** are JWS General JSON (`{"payload", "signatures": [{"protected", "signature"}]}`, protected header exactly
   `{"alg":"RS256","kid":<thumbprint>}`), claims exactly `iss aud sub iat exp nonce jti` (`aud` = `email:<scope_id>`,
@@ -1234,13 +1422,16 @@ decrypts its address (D197); only the client holds both.
 ### `POST /v1/email/verify` · E
 
 `{challengeId, code}` (6 digits) → `200 {idToken, googleWallet: false, deviceTicket}`, or in case B `200 {googleWallet:
-true, linkTicket?, deviceTicket}` with no token. Each check is reserved in the mailbox's limiter before the code is
+true, linkTicket?, sub?, deviceTicket}` with no token (`sub`, this address's `e1.` pseudonym, only with `linkTicket`: the vault signs a case-B link only for a link token of that `sub`, D139, D256). Each check is reserved in the mailbox's limiter before the code is
 compared (one atomic call, refunded when the code is right), and the challenge counts its attempts atomically, so
 parallel guesses can't outrun either (D198). Errors: `400 code_invalid {attemptsLeft}` (5 wrong codes kill the
 challenge; 10 wrong from one requester lock it out of that mailbox for an hour; past 18 failed checks a day per mailbox
 only the owner slot (4) and the ticket slot (3) are open, and past 25 nothing until the UTC day ends), `410
 challenge_expired`, `429 rate_limited` (IP, or a lock), `403 email_not_enabled` (the app was suspended or turned email
 off meanwhile: nothing is minted). A correct code is single use: the challenge is deleted before the token is minted.
+Every `200` (each purpose, case B included: the code proved the address) also records the email identity in the user
+directory (`user_emails`, `user_email_apps`: its `e1.` sub, the normalized address, the app and scope; D269), after the
+answer and never changing it; errors and `409`s record nothing.
 
 - `deviceTicket`: `dt2.` + 75 characters, an owner device ticket for this exact address (30 days, its own nonce;
   registered in the mailbox object, at most 5 live per address, a newer one revoking the oldest); batch 8's popup keeps it on `authOrigin` and sends it with the next `start`. A verified challenge also
@@ -1264,8 +1455,11 @@ off meanwhile: nothing is minted). A correct code is single use: the challenge i
    clients (its scope's own, only its web client when it set one; shared clients in an `allow_shared` scope), unexpired
    (`400 google_token_invalid`), and its nonce is the commitment's session nonce (`400 nonce_mismatch`).
 2. `tokeninfo` (POST): the access token's `aud` (and `azp`) is the ID token's, its `sub` the ID token's; `userinfo`:
-   `email`, `email_verified`, `hd` (`400 google_token_invalid`). The access token is revoked at Google's revoke
-   endpoint afterwards, whatever the outcome. Tokens never appear in a URL or a log.
+   `email`, `email_verified`, `hd` (`400 google_token_invalid`). An access token of another Google account (tokeninfo's
+   or userinfo's `sub` isn't the ID token's: the user picked another account on Google's permission screen) is `400
+   google_account_mismatch` (D264). The access token is never revoked (D265: revocation ends the user's whole grant to
+   the client) or stored; it expires within the hour. Tokens never appear in a URL or a log. Per IP: 120 per 10 min
+   (`429 rate_limited` with `retry-after`; the vault retries a 429 or 503 within the login, D267).
 3. `email_verified` not true (or an address that doesn't normalize): `{decision: "none", googleHosted: false,
    linkable: false}`, no hint. Otherwise the address's `sub` (the Gmail `+tag` kept, dots dropped, D159) and the
    Google-hosted rule (`@hana-id/email` `isGoogleHosted`, D158); the hint `(scope, sub, Google sub)` is upserted for every
@@ -1279,6 +1473,29 @@ off meanwhile: nothing is minted). A correct code is single use: the challenge i
    is spent. A link notice goes to the address. `case_a` not Google-hosted (linkable): `challenge: {challengeId,
    expiresAtMs, to: "a…@domain"}`, a prepared `auto_link` challenge whose first code `resend` sends (D195); none for a
    suppressed mailbox or one the mailbox limits refuse.
+
+6. Once steps 1–2 pass, whatever the decision, the Google identity goes to the user directory (D269, `src/directory.ts`
+   `recordUserEmailLater`, after the answer, best effort): `user_emails` (`google`, the Google `sub`, userinfo's
+   address lowercased, `email_verified`, `hosted`: Google-hosted by D158, false when unverified) and `user_email_apps`
+   (this app and scope). A failed write logs `directory_write_failed` (app and scope only) and never changes the answer.
+
+### `POST /v1/email/google-record` · E
+
+`{pk, accessToken, googleIdToken, commitment}` → `200 {accepted: true}` (D270). Under `GOOGLE_EMAIL_FLOW =
+'token_first'` (`packages/web/src/auth/google.ts`; in force since 2026-11-04) a Google login of an app without email login
+asks Google for the email too, and the vault sends the access token here, in the background, only for the user
+directory (D269).
+
+- Its own app gate: `pk` → an app as above (`401 invalid_key`, `403 app_suspended`), **email login need not be on** and
+  the scope needs no email client.
+- google-match's steps 1 and 2 exactly (the same code, `checkGoogleSignIn`): the ID token, its nonce over the
+  commitment, the commitment's scope, `tokeninfo`, `userinfo`, `google_account_mismatch`, the access token never
+  revoked or stored. Per IP: 120 per 10 min in a window of its own (`ip:record:10m`; a login calls google-match or
+  google-record, never both), `429` with `retry-after`.
+- The answer carries no match data (no decision, no hosted flag, no hint, no token, no challenge); nothing is matched,
+  minted, mailed or hinted. After it, google-match's step 6 (the directory row), best effort.
+- The vault calls it once per login, gives up after 30 s and never retries; any failure is dropped and never reaches
+  the login (`packages/web/src/vault/login.ts` `recordGoogle`).
 
 ### Staff routes (`/v1/email/admin/*`) · E
 
@@ -1353,7 +1570,7 @@ subject. Every mailbox decision is one atomic call (D198). Every mailbox-level r
 | Challenge | 10 min from creation; 5 wrong codes; ≤ 2 resends ≥ 30 s apart | 410 / 429 |
 | IP (IPv4 address, IPv6 /64): `start` | 10 per 10 min, 50 per day | 429 |
 | IP prefix (IPv4 /24, IPv6 /56, IPv6 /48): `start` | 1000 per day each; skipped with a valid ticket or grant | 429 |
-| IP: `verify` / `resend` (and `confirm`) / `google-match` (its prepared challenges too) / webhook | 30 / 10 / 30 / 120 per 10 min | 429 |
+| IP: `verify` / `resend` (and `confirm`) / `google-match` (its prepared challenges too) / `google-record` / webhook | 30 / 10 / 120 / 120 / 120 per 10 min | 429 |
 | No usable `cf-connecting-ip` (IP-limited routes) | refused | `400 missing_client_ip`, logged |
 | Recipient domain (registrable, Public Suffix List): code mails | 100 + 2 × its distinct verified mailboxes a day over the trailing 7 days (only challenges that took a domain place), at most 2,000, per day; a verified challenge's places given back; except the listed consumer providers (`src/domain.ts`); each requester prefix (IPv4 /24, IPv6 /56, /48) ≤ 20% of the day's cap; ticketed and unlock-grant challenges not counted | 429; `email_domain_cap` logged when a day fills |
 | App: `start` | plan `per_minute` per minute; plan `per_day` per day; owner starts not counted | 429 |
@@ -1371,13 +1588,21 @@ The guess bound: ≤ 25 failed checks a day per mailbox plus ≤ 2 per unlock (�
 | `RateLimiter`, one per subject (`mbx:<mailbox key>`, `dom:<domain key>`, `ip:<subject or prefix>`, `app:<id>`, `global`, `staff:<sha256 hex>`) | fixed-window counts; in a mailbox's object also the live challenges' expiry times, the requesters' locks, the unlock grant (sha256 of its token, 24 h), per-ticket send counts, ticket revocations (per address key, 30 days) and 30 days of staff actions; in a domain's, the per-prefix shares (hashed prefixes) and 8 days of verified-login counts; in `global`, the owner pool and per-app use; in `global` the per-app budget use; an alarm drops what ended |
 | `Outbox` (binding `OUTBOX`, `local*` envs only) | the outbox stub's last 200 messages, read by tests through the binding; no route |
 
-Issuer D1 (`apps/email-issuer/migrations/0001_init.sql`): `email_issuance(jti, app_id, purpose, kid, iat)` (24 months,
+Issuer D1 (`apps/email-issuer/migrations/0001_init.sql`, `0002_user_emails.sql`): `email_issuance(jti, app_id, purpose, kid, iat)` (24 months,
 D90; the pruning job is a batch C13 follow-up), `email_hints(scope_id, email_sub, google_sub, hosted, updated_at_ms)`
 (a hosted one kept while the scope exists, D122; a non-hosted one honoured and kept 180 days after its last login,
 D199), `email_suppressions(email_key = HMAC(K_sup, exact normalized address), reason
 bounce|complaint, at_ms)` (K_sup derived from K_sub), `email_admin_audit(at_ms, staff, action
-client_proof|unlock|unsuppress|revoke_tickets, ticket, scope_id?, action_nonce?, jti?, subject?)`. The issuer
-stores no address readably (logs, D1, Durable Objects). SendGrid does: its suppression lists keep an address until it
+client_proof|unlock|unsuppress|revoke_tickets, ticket, scope_id?, action_nonce?, jti?, subject?)`; the user directory
+(0002, D269): `user_emails(provider email|google, sub, email, email_verified, hosted?, first_seen_ms, last_seen_ms)`,
+key (provider, sub), indexes on `email` and `last_seen_ms`, and `user_email_apps(provider, sub, app_id, scope_id,
+first_seen_ms, last_seen_ms)`, key (provider, sub, app_id), index (app_id, last_seen_ms); written by `src/directory.ts`
+after the answer (`waitUntil`): email rows by `verify`, Google rows by google-match and google-record (D270); upserts
+in which the write with the newest `last_seen_ms` sets `email`, `email_verified`, `hosted` (and an app row's
+`scope_id`), `first_seen_ms` is the MIN and `last_seen_ms` the MAX, so a late write never restores older values; read
+by Hana staff with `admin user:list` / `user:find` only (no route serves it). The
+verified address is stored readably there and only there: no log line, other table or Durable Object holds it
+(a live challenge's copy is encrypted, D197). SendGrid also keeps addresses: its suppression lists keep an address until it
 is removed there, whatever the activity retention below. `APP_DB` is the API's D1, read only (`apps`, `plans`).
 
 Vars (from `emailIssuer`, `scripts/gen-wrangler.ts`): `ENV_NAME`, `NEAR_RPC`, `NEAR_RPC_FALLBACK`, `SIGNER_ACCOUNT`,
@@ -1403,6 +1628,7 @@ the add-on.
 the domain key, the mail that filled the domain's day), `staff_mail` (`code` `unlock` / `confirm`, or the provider's
 reason), `device_tickets_revoked` (warn, staff), `missing_client_ip` (warn), `mailbox_unlocked` (warn,
 staff), `suppression_removed` (warn, staff), `mailbox_guess_limit` (error: `code` `backstop` or `ceiling`, `subject` =
-12 characters of the mailbox key; staff see targeted mailboxes), `google_revoke` (warn). Never an address, a code, a
+12 characters of the mailbox key; staff see targeted mailboxes), `google_revoke` (warn), `directory_write_failed`
+(warn: `appId`, `scopeId`; a user directory write failed, the login went on, D269). Never an address, a code, a
 `sub`, a token, a device or link ticket, an unlock or confirmation token, an access token, a key or a body: `test/privacy.test.ts` greps every line of
 every flow for them.

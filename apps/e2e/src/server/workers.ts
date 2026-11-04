@@ -35,13 +35,26 @@ export class MemoryStorage {
       this.data.set(key, structuredClone(value));
     },
     delete: (key: string): boolean => this.data.delete(key),
+    /** Entries in key order, optionally under a prefix (the email issuer's objects list theirs). */
+    list: <T>(options: { prefix?: string } = {}): Iterable<[string, T]> =>
+      [...this.data.keys()]
+        .filter((k) => options.prefix === undefined || k.startsWith(options.prefix))
+        .sort()
+        .map((k): [string, T] => [k, structuredClone(this.data.get(k)) as T]),
   };
+  private alarmAt: number | null = null;
+
+  async getAlarm(): Promise<number | null> {
+    return this.alarmAt;
+  }
 
   async setAlarm(at: number | Date): Promise<void> {
     this.clearAlarm();
+    this.alarmAt = Number(at);
     const ms = Math.max(0, Number(at) - Date.now());
     this.alarmTimer = setTimeout(() => {
       this.alarmTimer = null;
+      this.alarmAt = null;
       this.onAlarm().catch((e: unknown) => console.error('[e2e] Durable Object alarm failed:', e instanceof Error ? e.message : e));
     }, ms);
     // A pending alarm never keeps the process alive.
@@ -56,6 +69,7 @@ export class MemoryStorage {
   private clearAlarm(): void {
     if (this.alarmTimer) clearTimeout(this.alarmTimer);
     this.alarmTimer = null;
+    this.alarmAt = null;
   }
 }
 

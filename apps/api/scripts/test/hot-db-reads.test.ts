@@ -30,13 +30,11 @@ const READS = [/\b(?:a|l|apps)\.publishable_key\b/u, /\bpublishable_key\s*(?:=|L
 const ALLOWED = ['k.key AS publishable_key', 'UPDATE apps SET publishable_key = COALESCE(', 'publishable_key = ${legacyKeyTombstone('];
 
 /**
- * Packages still allowed to read the legacy column, each with the batch that must remove it.
- * - `apps/email-issuer` (branch `feat/email-login-4`): finds apps by `apps.publishable_key` and checks only `status`.
- *   It must move to `app_keys` (unrevoked key), `deleted_at IS NULL` and `suspended_by = 0` (D206). Until then batch C5
- *   keeps the column on a valid key or a tombstone and deleted apps suspended, so it never serves a revoked, rotating
- *   or deleted app's key, though it gives a rotated key no grace (D225).
+ * Packages still allowed to read the legacy column, each with the batch that must remove it. None: `apps/email-issuer`
+ * moved to the gate's model (`app_keys` revoked or in its grace, `deleted_at IS NULL`, `suspended_by = 0`) in email
+ * login batch 6 (D206, D225), so it is scanned like every other package.
  */
-const ALLOWLIST = new Set(['apps/email-issuer']);
+const ALLOWLIST = new Set<string>();
 
 describe('no code reads apps.publishable_key (it stays only for the legacy column)', () => {
   it('every apps/*/src and scripts', () => {
@@ -65,6 +63,8 @@ describe('no code reads apps.publishable_key (it stays only for the legacy colum
     }
     expect(scanned).toBeGreaterThan(50);
     expect(offenders).toEqual([]);
+    // The email issuer is scanned too (it reads the API's D1).
+    expect(roots.some((r) => r.endsWith(join('apps', 'email-issuer', 'src')))).toBe(true);
   });
 
   it('the check catches the batch B reads it replaced', () => {

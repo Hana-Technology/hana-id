@@ -539,6 +539,73 @@ async fn login_gas_of_v3_against_v2() -> Result<()> {
     Ok(())
 }
 
+/// D137 before the v3 upgrade (build plan batch 6): the API, the vault's split path and the smoke page send
+/// create_session's `signature` (the session key's proof of possession) while sandbox-dev still runs v2. The v2 wasm
+/// (`V2_COMMIT`) takes the extra argument and ignores it: with the proof, without it, and with a wrong one, each opens
+/// the session it would open without the field. After the upgrade to v3 (the same deployment) the proof is required
+/// and checked: missing or wrong is refused, the right one opens the session.
+#[tokio::test]
+async fn v2_ignores_the_create_session_proof_that_v3_requires() -> Result<()> {
+    let (_, mpc_wasm) = wasms()?;
+    let v3 = deploy_wasm()?;
+    let v2 = v2_wasm()?;
+    let worker = near_workspaces::sandbox().await?;
+    let root = worker.root_account()?;
+    let admin = subaccount(&root, "admin", 20).await?;
+    let relayer = subaccount(&root, "relayer", 20).await?;
+    let watchdog = subaccount(&root, "watchdog", 20).await?;
+    let mpc = subaccount(&root, "mpc", 20).await?.deploy(&mpc_wasm).await?.into_result()?;
+    mpc.call("new").transact().await?.into_result()?;
+    let issuer = TestIssuer::generate()?;
+    let signer = deploy_signer_code(&root, "signer", &v2, &admin, &watchdog, mpc.id(), &issuer, relayer.id()).await?;
+    assert_eq!(signer.view("get_governance").await?.json::<Value>()?["state_version"], json!(2));
+    let scope: String = admin
+        .call(signer.id(), "admin_register_scope")
+        .args_json(json!({"owners": [near_owner(admin.id())], "clients": [[PROVIDER, APP_A]], "scope_id": null, "allow_shared": false}))
+        .gas(GAS)
+        .transact()
+        .await?
+        .into_result()?
+        .json()?;
+    let create = |args: Value| relayer.call(signer.id(), "create_session").args_json(args).gas(api_gas("create_session")).transact();
+
+    // v2: the proof, no proof, and a wrong proof all open the session (the field is ignored).
+    let now = now_ms(&worker).await?;
+    for (i, variant) in ["proof", "none", "wrong"].into_iter().enumerate() {
+        let s = TestSession::new(&scope, now + 600_000, i as u32, 2);
+        let jwt = issuer.jwt(APP_A, USER_SUB, Some(&s.nonce(signer.id())), now);
+        let args = match variant {
+            "proof" => s.create_args(signer.id(), &jwt),
+            "none" => s.base_args(&jwt),
+            _ => {
+                let mut a = s.base_args(&jwt);
+                a["signature"] = json!(vec![0u8; 64]);
+                a
+            }
+        };
+        let session: Value = create(args).await?.into_result().with_context(|| format!("v2 create_session ({variant})"))?.json()?;
+        assert_eq!(session["path"], json!(format!("{scope}#{PROVIDER}#{USER_SUB}#{i}")), "v2 ({variant})");
+        assert_eq!(session["used"], json!(0), "v2 ({variant})");
+    }
+
+    // v3 on the same deployment: the proof is required and checked.
+    let due = propose_upgrade(&admin, signer.id(), &v3).await?;
+    advance_to(&worker, due).await?;
+    execute_upgrade(&admin, signer.id(), &v3).await?.into_result()?;
+    assert_eq!(signer.view("get_governance").await?.json::<Value>()?["state_version"], json!(3));
+    let now = now_ms(&worker).await?;
+    let s = TestSession::new(&scope, now + 600_000, 7, 2);
+    let jwt = issuer.jwt(APP_A, USER_SUB, Some(&s.nonce(signer.id())), now);
+    // A missing argument is a deserialization panic (near-sdk names the field in it).
+    expect_failure(create(s.base_args(&jwt)).await.map_err(Into::into), "deserialize");
+    let mut wrong = s.base_args(&jwt);
+    wrong["signature"] = json!(vec![0u8; 64]);
+    expect_failure(create(wrong).await.map_err(Into::into), "Invalid session signature");
+    let session: Value = create(s.create_args(signer.id(), &jwt)).await?.into_result()?.json()?;
+    assert_eq!(session["path"], json!(format!("{scope}#{PROVIDER}#{USER_SUB}#7")));
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Timelocked upgrades
 

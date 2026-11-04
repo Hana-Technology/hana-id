@@ -2,27 +2,29 @@
 // /export (docs/batch-b-spec.md "Key export", "Tests → Web unit → Export"): refused when framed, without a gesture,
 // with a vault reply from the wrong source, with a stale auth_time or on an address mismatch; the child login popup's
 // name is random; a fresh login of its own (its own session key, nonce, relay and path); typed confirmation and
-// hold-to-reveal; no message in either direction carries key material.
+// the Show/Hide key toggle and Copy key (D268); no message in either direction carries key material.
 import {
   ApiError,
   type AppConfig,
   type LoginBody,
+  type RelayPayload,
   type RelayReadResponse,
   addressOfExport,
   chainAddress,
   ckdAppId,
   encryptRelayPayload,
   extractPrk,
+  identityKeyHex,
   newAppKey,
   parseWindowMessage,
   sessionNonce,
 } from '@hana-id/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthApi } from '../../src/auth/api.ts';
-import { EXPORT_CHECK_MS, EXPORT_CONFIRMATION, EXPORT_END_TEXT, EXPORT_KEY_LIFETIME_MS, startExportPage } from '../../src/auth/export-page.ts';
+import { EXPORT_CHECK_MS, EXPORT_CLIPBOARD_CLEAR_MS, EXPORT_CONFIRMATION, EXPORT_COPY_UNAVAILABLE, EXPORT_END_TEXT, EXPORT_KEY_LIFETIME_MS, startExportPage } from '../../src/auth/export-page.ts';
 import type { NearReader } from '../../src/auth/near-rpc.ts';
 import { simulateMpc } from '../../../core/test/helpers.ts';
-import { CLIENT_ID, ENV, EVIL, FakeWindow, NET, PARTNER, PK, type RemoteWindow, type TokenSigner, asWindow, flush, pageText, remoteWindow, resetDom, tokenSigner } from './helpers.ts';
+import { CLIENT_ID, ENV, EVIL, FakeWindow, NET, PARTNER, PK, type RemoteWindow, type TokenSigner, asWindow, emailIssuerSigner, flush, pageText, remoteWindow, resetDom, tokenSigner } from './helpers.ts';
 
 const SCOPE = 's1';
 const SUB = '110248495921238986420';
@@ -55,10 +57,36 @@ interface Run {
   page: ReturnType<typeof startExportPage>;
   /** Resolves the pending relay read with this payload, encrypted as the callback would. */
   deliver(claims?: Record<string, unknown> | { error: string }): Promise<void>;
+  /** Resolves the relay read with any payload (an email token: batch 8b). */
+  deliverPayload(make: (params: Record<string, unknown>) => Promise<RelayPayload>): Promise<void>;
   loginBodies: LoginBody[];
+  /** What the injected Clipboard API was asked to write, in order (it is never read). */
+  clipboardWrites: string[];
+  /** Whether events count as user gestures from now on. */
+  setGesture(v: boolean): void;
+  /** Whether the window has focus from now on. */
+  setFocus(v: boolean): void;
 }
 
-function run(o: { chain?: 'stellar' | 'evm'; address?: string; config?: AppConfig; loginPath?: string; gesture?: boolean; sessionExpiresAtMs?: number } = {}): Run {
+function run(
+  o: {
+    chain?: 'stellar' | 'evm';
+    address?: string;
+    config?: AppConfig;
+    loginPath?: string;
+    gesture?: boolean;
+    sessionExpiresAtMs?: number;
+    env?: typeof ENV;
+    identity?: (provider: string, sub: string) => Record<string, unknown> | undefined;
+    /** The second provider's get_identity (D263), when it differs from the first's; `null`: no second provider. */
+    secondIdentity?: ((provider: string, sub: string) => Record<string, unknown> | undefined) | null;
+    emailKeys?: { kid: string; n: string; e: string }[];
+    /** Raw `get_issuer_keys` / `get_self_issued` answers (W-L2), instead of the ones made from `emailKeys`. */
+    rawEmailViews?: { keys?: unknown; policy?: unknown };
+    /** The Clipboard API (default: one that records each write); null: the browser has none. */
+    clipboard?: { writeText(text: string): Promise<void> } | null;
+  } = {},
+): Run {
   const chain = o.chain ?? 'stellar';
   const win = new FakeWindow('/export');
   const vault = remoteWindow();
@@ -82,8 +110,43 @@ function run(o: { chain?: 'stellar' | 'evm'; address?: string; config?: AppConfi
       return { result: response, session: { scope_id: SCOPE, expires_at_ms: body.expiresAtMs, max_uses: 1, used: 1 as const }, nearTx: 'tx', requestId: 'r' };
     }),
   };
-  const near: NearReader = { getSession: vi.fn(), txOutcome: vi.fn() };
-  const page = startExportPage({ win, env: ENV, api, near, jwks: async (kid) => (kid === signer.jwk.kid ? signer.jwk : null), sleep: async () => {}, isGesture: () => o.gesture ?? true });
+  // get_identity (batch 7): own unless the test links the identity; the email views for an email re-authentication.
+  const views =
+    (identity: ((provider: string, sub: string) => Record<string, unknown> | undefined) | undefined) =>
+    async (method: string, args: unknown): Promise<unknown> => {
+      const a = args as { provider: string; sub: string; scope_id: string; aud: string };
+      if (method === 'get_identity') return identity?.(a.provider, a.sub) ?? { key: identityKeyHex(a.scope_id, a.provider, a.sub), status: 'own', opened: true, account_epoch: 0 };
+      if (method === 'scope_for_client') return SCOPE;
+      if (method === 'get_issuer_keys') return o.rawEmailViews && 'keys' in o.rawEmailViews ? o.rawEmailViews.keys : (o.emailKeys ?? null);
+      if (method === 'get_self_issued') {
+        if (o.rawEmailViews && 'policy' in o.rawEmailViews) return o.rawEmailViews.policy;
+        return o.emailKeys ? { signers: [{ id: 'hana', kids: o.emailKeys.map((k) => k.kid) }], required: 1 } : null;
+      }
+      return null;
+    };
+  const first = views(o.identity);
+  const second = o.secondIdentity === null ? null : views(o.secondIdentity ?? o.identity);
+  const near: NearReader = {
+    getSession: vi.fn(),
+    txOutcome: vi.fn(),
+    view: vi.fn(async (_signer: string, method: string, args: unknown) => first(method, args)),
+    independent: vi.fn(() => (second ? { primary: first, second } : null)),
+  };
+  let gesture = o.gesture ?? true;
+  let focus = true;
+  const clipboardWrites: string[] = [];
+  const clipboard = o.clipboard === undefined ? { writeText: vi.fn(async (t: string) => void clipboardWrites.push(t)) } : o.clipboard;
+  const page = startExportPage({
+    win,
+    env: o.env ?? ENV,
+    api,
+    near,
+    jwks: async (kid) => (kid === signer.jwk.kid ? signer.jwk : null),
+    sleep: async () => {},
+    isGesture: () => gesture,
+    clipboard,
+    hasFocus: () => focus,
+  });
   const context = {
     v: 1,
     t: 'hana:export-context',
@@ -105,6 +168,19 @@ function run(o: { chain?: 'stellar' | 'evm'; address?: string; config?: AppConfi
     api: api as never,
     page,
     loginBodies,
+    clipboardWrites,
+    setGesture(v) {
+      gesture = v;
+    },
+    setFocus(v) {
+      focus = v;
+    },
+    async deliverPayload(make) {
+      const params = parseWindowMessage(child.received[0], ['hana:auth-params']);
+      if (!params) throw new Error('no auth-params sent');
+      const value = await encryptRelayPayload(params.relayKey, params.relayId, await make(params as unknown as Record<string, unknown>));
+      resolveRead({ ...value, serverTimeMs: Date.now() });
+    },
     async deliver(claims) {
       const params = parseWindowMessage(child.received[0], ['hana:auth-params']);
       if (!params) throw new Error('no auth-params sent');
@@ -121,6 +197,25 @@ function run(o: { chain?: 'stellar' | 'evm'; address?: string; config?: AppConfi
 
 const button = (label: RegExp) => [...document.querySelectorAll('button')].find((b) => label.test(b.textContent ?? '')) ?? null;
 const click = (b: Element | null) => b?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+/** The reveal step's controls (D268). */
+function revealControls(): { toggle: HTMLButtonElement; copy: HTMLButtonElement; secret: HTMLElement; status: HTMLElement } {
+  return {
+    toggle: button(/^(Show|Hide) key$/u) as HTMLButtonElement,
+    copy: button(/^(Copy key|Copied)$/u) as HTMLButtonElement,
+    secret: document.querySelector('.secret') as HTMLElement,
+    status: document.querySelector('.copy-status') as HTMLElement,
+  };
+}
+
+/** Confirm screen → typed confirmation → Continue: the reveal step. */
+function continueToReveal(): ReturnType<typeof revealControls> {
+  const input = document.querySelector('input') as HTMLInputElement;
+  input.value = EXPORT_CONFIRMATION;
+  input.dispatchEvent(new Event('input'));
+  click(button(/Continue/u));
+  return revealControls();
+}
 
 /** Context accepted → click → child hello → auth-params sent. */
 async function signIn(r: Run): Promise<void> {
@@ -140,6 +235,103 @@ beforeEach(async () => {
   signer ??= await tokenSigner();
 });
 
+describe('/export resolves the path through get_identity (batch 7) and takes an email code (batch 8b, D246 lifted)', () => {
+  const E_SUB = `e1.${'Q'.repeat(43)}`;
+  const E_PATH = `${SCOPE}#email#${E_SUB}#0`;
+  const EMAIL_ENV = { ...ENV, emailIssuerUrl: 'https://issuer.hana.test', emailIss: 'https://issuer.hana.test/v1/email' };
+  const emailApp = () => appConfig({ loginMethods: ['google', 'email'], email: { aud: `email:${SCOPE}` } } as Partial<AppConfig>);
+
+  async function signInAgain(r: Run): Promise<void> {
+    await vi.waitFor(() => expect(r.page.state).toBe('ready'));
+    click(button(/Sign in again/u));
+    await vi.waitFor(() => {
+      r.win.message({ v: 1, t: 'hana:auth-hello' }, ENV.authOrigin, r.child);
+      expect(r.child.received).toHaveLength(1);
+    });
+  }
+
+  it('a Google member of an email wallet exports the account root’s key (the shared wallet)', async () => {
+    const r = run({
+      address: addressFor('stellar', E_PATH),
+      loginPath: E_PATH,
+      identity: (p, s) => (p === 'google' ? { key: identityKeyHex(SCOPE, p, s), status: 'member', opened: false, root: { provider: 'email', sub: E_SUB }, effective_at_ms: 1, account_epoch: 1 } : undefined),
+    });
+    await signIn(r);
+    await r.deliver();
+    expect(await r.page.settled).toBe('confirm');
+  });
+
+  it('D263: a member view only one provider gives (a lying RPC) exports nothing, before any login', async () => {
+    const member = (p: string, s: string) => (p === 'google' ? { key: identityKeyHex(SCOPE, p, s), status: 'member', opened: false, root: { provider: 'email', sub: E_SUB }, effective_at_ms: 1, account_epoch: 1 } : undefined);
+    // The second provider says own (it disagrees), or the env has none (unconfirmed): never the root's path.
+    const honestOwn = () => undefined;
+    for (const secondIdentity of [honestOwn, null]) {
+      const r = run({ address: addressFor('stellar', E_PATH), loginPath: E_PATH, identity: member, secondIdentity });
+      await signIn(r);
+      await r.deliver();
+      expect(await r.page.settled).toBe('error');
+      expect(r.page.errorCode).toBe('api_unavailable');
+      expect(r.api.login).not.toHaveBeenCalled();
+    }
+  });
+
+  it('a pending member exports nothing (link_pending), before any login', async () => {
+    const r = run({ identity: (p, s) => ({ key: identityKeyHex(SCOPE, p, s), status: 'pending', opened: false, root: { provider: 'email', sub: E_SUB }, effective_at_ms: 9, account_epoch: 1 }) });
+    await signIn(r);
+    await r.deliver();
+    expect(await r.page.settled).toBe('error');
+    expect(r.page.errorCode).toBe('link_pending');
+    expect(r.api.login).not.toHaveBeenCalled();
+  });
+
+  it('W-L2: the email keys and signer policy are parsed strictly: one malformed entry refuses, never a policy of the rest', async () => {
+    const issuer = await emailIssuerSigner();
+    const bad = [
+      { policy: { signers: [{ id: 'hana', kids: [issuer.chainKey.kid] }, { id: 5, kids: [] }], required: 1 } },
+      { policy: { signers: [{ id: 'hana', kids: [issuer.chainKey.kid] }], required: '1' } },
+      { keys: [issuer.chainKey, { kid: 'x' }] },
+    ];
+    for (const rawEmailViews of bad) {
+      const r = run({ env: EMAIL_ENV, config: emailApp(), address: addressFor('stellar', E_PATH), loginPath: E_PATH, emailKeys: [issuer.chainKey], rawEmailViews });
+      await signInAgain(r);
+      await r.deliverPayload(async (p) => {
+        const now = Math.floor(Date.now() / 1000);
+        return { idToken: await issuer.token({ iss: EMAIL_ENV.emailIss, aud: `email:${SCOPE}`, sub: E_SUB, iat: now, exp: now + 600, nonce: p.nonce, jti: 'j' }) };
+      });
+      expect(await r.page.settled, JSON.stringify(rawEmailViews)).toBe('error');
+      expect(r.page.errorCode).toBe('api_unavailable');
+      expect(r.api.login).not.toHaveBeenCalled();
+    }
+  });
+
+  it('an app with email: the child offers both methods; an email code over this window’s own session exports the email wallet', async () => {
+    const issuer = await emailIssuerSigner();
+    const r = run({ env: EMAIL_ENV, config: emailApp(), address: addressFor('stellar', E_PATH), loginPath: E_PATH, emailKeys: [issuer.chainKey] });
+    await signInAgain(r);
+    const params = parseWindowMessage(r.child.received[0], ['hana:auth-params']);
+    expect(params?.methods).toEqual(['google', 'email']);
+    await r.deliverPayload(async (p) => {
+      const now = Math.floor(Date.now() / 1000);
+      return { idToken: await issuer.token({ iss: EMAIL_ENV.emailIss, aud: `email:${SCOPE}`, sub: E_SUB, iat: now, exp: now + 600, nonce: p.nonce, jti: 'j' }) };
+    });
+    expect(await r.page.settled).toBe('confirm');
+    expect(r.loginBodies[0]?.jwt.startsWith('{"payload":')).toBe(true);
+  });
+
+  it('an email token for another session (or without the chain’s key) is refused', async () => {
+    const issuer = await emailIssuerSigner();
+    const r = run({ env: EMAIL_ENV, config: emailApp(), loginPath: E_PATH, emailKeys: [issuer.chainKey] });
+    await signInAgain(r);
+    await r.deliverPayload(async () => {
+      const now = Math.floor(Date.now() / 1000);
+      return { idToken: await issuer.token({ iss: EMAIL_ENV.emailIss, aud: `email:${SCOPE}`, sub: E_SUB, iat: now, exp: now + 600, nonce: 'n'.repeat(43), jti: 'j' }) };
+    });
+    expect(await r.page.settled).toBe('error');
+    expect(r.page.errorCode).toBe('token_invalid');
+    expect(r.api.login).not.toHaveBeenCalled();
+  });
+});
+
 describe('/export', () => {
   it('says hello to the vault and checks its context against GET /v1/app', async () => {
     const r = run();
@@ -150,7 +342,7 @@ describe('/export', () => {
     expect(pageText()).toContain('Partner App');
   });
 
-  it('exports the key after a fresh login of its own, a typed confirmation and only while the button is held', async () => {
+  it('exports the key after a fresh login of its own and a typed confirmation, shown only while Show key is on', async () => {
     const address = addressFor('stellar');
     const r = run({ address });
     await signIn(r);
@@ -187,19 +379,26 @@ describe('/export', () => {
     click(cont);
     expect(r.page.state).toBe('reveal');
 
-    // Hold to reveal.
-    const hold = button(/Hold to show/u) as HTMLButtonElement;
-    const secret = document.querySelector('.secret') as HTMLElement;
+    // Show key / Hide key (D268): a click shows it, selectable, and a second click hides it.
+    const { toggle, secret } = revealControls();
     expect(secret.textContent).toBe('••••••••');
-    hold.dispatchEvent(new Event('pointerdown'));
+    expect(secret.hasAttribute('data-shown')).toBe(false);
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    click(toggle);
     const shown = secret.textContent as string;
     expect(shown).toMatch(/^S[A-Z2-7]{55}$/u);
     expect(addressOfExport('stellar', shown)).toBe(address);
-    hold.dispatchEvent(new Event('pointerup'));
+    expect(secret.hasAttribute('data-shown')).toBe(true);
+    expect(toggle.textContent).toBe('Hide key');
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+    // Releasing or leaving the button no longer hides it: the user can select and copy it.
+    for (const t of ['pointerup', 'pointerleave', 'pointercancel', 'blur', 'keyup']) toggle.dispatchEvent(new Event(t));
+    expect(secret.textContent).toBe(shown);
+    click(toggle);
     expect(secret.textContent).toBe('••••••••');
-    hold.dispatchEvent(new Event('pointerdown'));
-    hold.dispatchEvent(new Event('pointerleave'));
-    expect(secret.textContent).toBe('••••••••');
+    expect(secret.hasAttribute('data-shown')).toBe(false);
+    expect(toggle.textContent).toBe('Show key');
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
 
     // No message to the vault or the child carries the key, and only auth-params carries a secret (relayKey).
     const all = JSON.stringify([...r.vault.received, ...r.child.received], (_, v) => (v instanceof Uint8Array ? Array.from(v) : v));
@@ -207,9 +406,12 @@ describe('/export', () => {
     expect(r.vault.received).toEqual([{ v: 1, t: 'hana:export-hello' }]);
     expect(r.child.received).toHaveLength(1);
 
-    // Closing the window zeroes the key: holding the button shows nothing any more.
+    // Closing the window zeroes the key and takes it off the screen: the toggle shows nothing any more.
+    click(toggle);
+    expect(secret.textContent).toBe(shown);
     r.win.dispatch('pagehide');
-    hold.dispatchEvent(new Event('pointerdown'));
+    expect(secret.textContent).toBe('••••••••');
+    click(toggle);
     expect(secret.textContent).toBe('••••••••');
   });
 
@@ -223,7 +425,7 @@ describe('/export', () => {
     input.value = EXPORT_CONFIRMATION;
     input.dispatchEvent(new Event('input'));
     click(button(/Continue/u));
-    (button(/Hold to show/u) as HTMLButtonElement).dispatchEvent(new Event('pointerdown'));
+    click(revealControls().toggle);
     const shown = document.querySelector('.secret')?.textContent as string;
     expect(shown).toMatch(/^0x[0-9a-f]{64}$/u);
     expect(addressOfExport('evm', shown)).toBe(address);
@@ -406,32 +608,25 @@ describe('/export', () => {
       expect(await r.page.settled).toBe('confirm');
       return r;
     }
-    function toReveal(): { hold: HTMLButtonElement; secret: HTMLElement } {
-      const input = document.querySelector('input') as HTMLInputElement;
-      input.value = EXPORT_CONFIRMATION;
-      input.dispatchEvent(new Event('input'));
-      click(button(/Continue/u));
-      return { hold: button(/Hold to show/u) as HTMLButtonElement, secret: document.querySelector('.secret') as HTMLElement };
-    }
     const ended = (r: Run, reason: string) => {
       expect(r.page.state).toBe('ended');
       expect(r.page.endReason).toBe(reason);
       expect(pageText()).toContain('Export ended');
       expect(document.querySelector('.secret')).toBeNull();
-      expect(button(/Hold to show|Continue|Try again|Sign in/u)).toBeNull();
+      expect(button(/Show key|Hide key|Copy key|Copied|Continue|Try again|Sign in/u)).toBeNull();
     };
 
     it('still reveals just before 5 min; at 5 min the key and the screen are erased, with no way back', async () => {
       const r = await toConfirm();
-      const { hold, secret } = toReveal();
+      const { toggle, secret } = continueToReveal();
       vi.advanceTimersByTime(EXPORT_KEY_LIFETIME_MS - 2_000);
-      hold.dispatchEvent(new Event('pointerdown'));
+      click(toggle);
       expect(secret.textContent).toMatch(/^S[A-Z2-7]{55}$/u);
       vi.advanceTimersByTime(2_000);
       ended(r, 'expired');
       expect(pageText()).toContain(EXPORT_END_TEXT.expired);
       // The old button can't bring it back.
-      hold.dispatchEvent(new Event('pointerdown'));
+      click(toggle);
       expect(secret.textContent).toBe('••••••••');
       expect(pageText()).not.toMatch(/S[A-Z2-7]{55}/u);
     });
@@ -451,7 +646,7 @@ describe('/export', () => {
 
     it('hana:export-end from the vault erases it at once; the same message from anyone else is ignored', async () => {
       const r = await toConfirm();
-      const { hold, secret } = toReveal();
+      const { toggle, secret } = continueToReveal();
       const evil = remoteWindow();
       r.win.message({ v: 1, t: 'hana:export-end' }, EVIL, r.vault);
       r.win.message({ v: 1, t: 'hana:export-end' }, ENV.vaultOrigin, evil);
@@ -459,7 +654,7 @@ describe('/export', () => {
       expect(r.page.state).toBe('reveal');
       r.win.message({ v: 1, t: 'hana:export-end' }, ENV.vaultOrigin, r.vault);
       ended(r, 'session_ended');
-      hold.dispatchEvent(new Event('pointerdown'));
+      click(toggle);
       expect(secret.textContent).toBe('••••••••');
     });
 
@@ -497,6 +692,282 @@ describe('/export', () => {
     });
   });
 
+  describe('Show key, Copy key and the clipboard (D268)', () => {
+    const STELLAR_KEY = /^S[A-Z2-7]{55}$/u;
+    beforeEach(() => {
+      vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+      delete (document as unknown as Record<string, unknown>).visibilityState;
+    });
+
+    async function toReveal(o: Parameters<typeof run>[0] = {}): Promise<{ r: Run } & ReturnType<typeof revealControls>> {
+      const r = run(o);
+      await signIn(r);
+      await r.deliver();
+      expect(await r.page.settled).toBe('confirm');
+      return { r, ...continueToReveal() };
+    }
+    const setVisibility = (v: 'hidden' | 'visible') => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => v });
+      document.dispatchEvent(new Event('visibilitychange'));
+    };
+
+    it('says the copy is the user’s to look after, and keeps the erase sentence', async () => {
+      await toReveal();
+      expect(pageText()).toContain('A copied key stays in your clipboard until you copy something else');
+      expect(pageText()).toContain('the copy is yours to look after');
+      expect(pageText()).toContain('The key is erased when it closes, 5 minutes after you signed in, or when your session in the app ends.');
+    });
+
+    it('window blur, a hidden tab and pagehide hide a shown key; the tab coming back doesn’t show it again', async () => {
+      const { r, toggle, secret } = await toReveal();
+      click(toggle);
+      expect(secret.textContent).toMatch(STELLAR_KEY);
+      r.win.dispatch('blur');
+      expect(secret.textContent).toBe('••••••••');
+      expect(secret.hasAttribute('data-shown')).toBe(false);
+      expect(toggle.textContent).toBe('Show key');
+
+      click(toggle);
+      expect(secret.textContent).toMatch(STELLAR_KEY);
+      setVisibility('hidden');
+      expect(secret.textContent).toBe('••••••••');
+      setVisibility('visible');
+      expect(secret.textContent).toBe('••••••••');
+      expect(r.page.state).toBe('reveal');
+
+      // One click shows it again (the toggle went back to "Show key").
+      click(toggle);
+      expect(secret.textContent).toMatch(STELLAR_KEY);
+      r.win.dispatch('pagehide');
+      expect(secret.textContent).toBe('••••••••');
+      expect(r.page.state).toBe('closed');
+    });
+
+    it('synthetic (non-gesture) clicks neither show the key nor copy it', async () => {
+      const { r, toggle, copy, secret } = await toReveal();
+      r.setGesture(false);
+      click(toggle);
+      expect(secret.textContent).toBe('••••••••');
+      click(copy);
+      await flush();
+      expect(r.clipboardWrites).toEqual([]);
+      // A shown key can't be hidden or copied by a script's click either: the user's own click still works.
+      r.setGesture(true);
+      click(toggle);
+      r.setGesture(false);
+      click(toggle);
+      expect(secret.textContent).toMatch(STELLAR_KEY);
+      click(copy);
+      await flush();
+      expect(r.clipboardWrites).toEqual([]);
+    });
+
+    it('Copy key writes the export string whether or not it is shown, never puts it on the page, and says Copied for 2 s', async () => {
+      const address = addressFor('stellar');
+      const readText = vi.fn();
+      const writes: string[] = [];
+      const clipboard = { writeText: vi.fn(async (t: string) => void writes.push(t)), readText };
+      const { copy, secret, status, toggle } = await toReveal({ address, clipboard });
+      click(copy);
+      expect(clipboard.writeText).toHaveBeenCalledTimes(1); // inside the click, before any await
+      await flush();
+      expect(writes).toHaveLength(1);
+      expect(writes[0]).toMatch(STELLAR_KEY);
+      expect(addressOfExport('stellar', writes[0] as string)).toBe(address);
+      // Hidden: the key went to the clipboard only, not into the page.
+      expect(secret.textContent).toBe('••••••••');
+      expect(pageText()).not.toContain(writes[0]);
+      expect(copy.textContent).toBe('Copied');
+      expect(status.textContent).toBe('');
+      vi.advanceTimersByTime(1_999);
+      expect(copy.textContent).toBe('Copied');
+      vi.advanceTimersByTime(1);
+      expect(copy.textContent).toBe('Copy key');
+
+      // Shown: the same string.
+      click(toggle);
+      click(copy);
+      await flush();
+      expect(writes[1]).toBe(writes[0]);
+      expect(secret.textContent).toBe(writes[0]);
+      // It never reads the clipboard (that would need a permission prompt).
+      expect(readText).not.toHaveBeenCalled();
+    });
+
+    it('copies an EVM key as 0x + 64 lowercase hex', async () => {
+      const address = addressFor('evm');
+      const { r, copy } = await toReveal({ chain: 'evm', address });
+      click(copy);
+      await flush();
+      expect(r.clipboardWrites[0]).toMatch(/^0x[0-9a-f]{64}$/u);
+      expect(addressOfExport('evm', r.clipboardWrites[0] as string)).toBe(address);
+    });
+
+    it('says how to copy by hand when the Clipboard API is missing, refuses or throws; no execCommand fallback', async () => {
+      const execCommand = vi.fn(() => true);
+      (document as unknown as { execCommand: unknown }).execCommand = execCommand;
+      const cases: (null | { writeText(t: string): Promise<void> })[] = [
+        null,
+        { writeText: async () => Promise.reject(new DOMException('denied', 'NotAllowedError')) },
+        {
+          writeText: () => {
+            throw new TypeError('no');
+          },
+        },
+      ];
+      for (const clipboard of cases) {
+        resetDom();
+        const { r, copy, status, toggle, secret } = await toReveal({ clipboard });
+        click(copy);
+        await flush();
+        expect(status.textContent).toBe(EXPORT_COPY_UNAVAILABLE);
+        expect(copy.textContent).toBe('Copy key');
+        // Copy by hand still works: the key can be shown and selected.
+        click(toggle);
+        expect(secret.textContent).toMatch(STELLAR_KEY);
+        expect(secret.hasAttribute('data-shown')).toBe(true);
+        expect(status.textContent).not.toContain(secret.textContent as string);
+        // Nothing was copied, so there is nothing to blank.
+        vi.advanceTimersByTime(EXPORT_CLIPBOARD_CLEAR_MS);
+        r.win.dispatch('pagehide');
+      }
+      expect(execCommand).not.toHaveBeenCalled();
+      delete (document as unknown as Record<string, unknown>).execCommand;
+    });
+
+    it('a copy that succeeds after a failure clears the message', async () => {
+      let refuse = true;
+      const writes: string[] = [];
+      const { copy, status } = await toReveal({ clipboard: { writeText: async (t) => (refuse ? Promise.reject(new Error('no')) : void writes.push(t)) } });
+      click(copy);
+      await flush();
+      expect(status.textContent).toBe(EXPORT_COPY_UNAVAILABLE);
+      refuse = false;
+      click(copy);
+      await flush();
+      expect(status.textContent).toBe('');
+      expect(copy.textContent).toBe('Copied');
+      expect(writes).toHaveLength(1);
+    });
+
+    it('blanks the clipboard 60 s after the last copy while the window has focus', async () => {
+      const { r, copy } = await toReveal();
+      click(copy);
+      await flush();
+      vi.advanceTimersByTime(30_000);
+      // A second copy restarts the 60 s.
+      click(copy);
+      await flush();
+      vi.advanceTimersByTime(EXPORT_CLIPBOARD_CLEAR_MS - 1);
+      expect(r.clipboardWrites.filter((w) => w === '')).toHaveLength(0);
+      vi.advanceTimersByTime(1);
+      await flush();
+      expect(r.clipboardWrites.at(-1)).toBe('');
+      expect(r.clipboardWrites).toHaveLength(3);
+      // Blanked once: the erase doesn't write over the clipboard again.
+      r.win.message({ v: 1, t: 'hana:export-end' }, ENV.vaultOrigin, r.vault);
+      await flush();
+      expect(r.clipboardWrites).toHaveLength(3);
+    });
+
+    it('without focus at 60 s it doesn’t try (the browser would refuse); the erase blanks it if the window has focus then', async () => {
+      const { r, copy } = await toReveal();
+      click(copy);
+      await flush();
+      r.setFocus(false);
+      vi.advanceTimersByTime(EXPORT_CLIPBOARD_CLEAR_MS);
+      await flush();
+      expect(r.clipboardWrites).toHaveLength(1);
+      // Not on the next focus either: by then the clipboard may hold something else the user copied.
+      r.setFocus(true);
+      r.win.dispatch('focus');
+      await flush();
+      expect(r.clipboardWrites).toHaveLength(1);
+      vi.advanceTimersByTime(EXPORT_KEY_LIFETIME_MS);
+      await flush();
+      expect(r.page.endReason).toBe('expired');
+      expect(r.clipboardWrites).toEqual([expect.stringMatching(STELLAR_KEY), '']);
+    });
+
+    it('the erase (session end) blanks the clipboard at once, and the old buttons show and copy nothing after it', async () => {
+      const { r, copy, toggle, secret } = await toReveal();
+      click(copy);
+      await flush();
+      r.win.message({ v: 1, t: 'hana:export-end' }, ENV.vaultOrigin, r.vault);
+      await flush();
+      expect(r.page.state).toBe('ended');
+      expect(r.clipboardWrites).toEqual([expect.stringMatching(STELLAR_KEY), '']);
+      click(toggle);
+      click(copy);
+      await flush();
+      expect(secret.textContent).toBe('••••••••');
+      expect(r.clipboardWrites).toHaveLength(2);
+      // The 60 s timer was cancelled with the erase.
+      vi.advanceTimersByTime(EXPORT_CLIPBOARD_CLEAR_MS);
+      await flush();
+      expect(r.clipboardWrites).toHaveLength(2);
+    });
+
+    it('the erase without focus leaves the clipboard alone; an erase with nothing copied writes nothing', async () => {
+      const first = await toReveal();
+      click(first.copy);
+      await flush();
+      first.r.setFocus(false);
+      first.r.win.message({ v: 1, t: 'hana:export-end' }, ENV.vaultOrigin, first.r.vault);
+      await flush();
+      expect(first.r.clipboardWrites).toHaveLength(1);
+
+      resetDom();
+      const second = await toReveal();
+      second.r.win.message({ v: 1, t: 'hana:export-end' }, ENV.vaultOrigin, second.r.vault);
+      await flush();
+      expect(second.r.page.state).toBe('ended');
+      expect(second.r.clipboardWrites).toEqual([]);
+    });
+
+    it('pagehide blanks the clipboard (while focused) and zeroes the key', async () => {
+      const { r, copy } = await toReveal();
+      click(copy);
+      await flush();
+      r.win.dispatch('pagehide');
+      await flush();
+      expect(r.clipboardWrites).toEqual([expect.stringMatching(STELLAR_KEY), '']);
+      expect(r.page.state).toBe('closed');
+      click(copy);
+      await flush();
+      expect(r.clipboardWrites).toHaveLength(2);
+    });
+
+    it('a copy that lands after the erase is blanked straight away', async () => {
+      let land: () => void = () => {};
+      const writes: string[] = [];
+      const { r, copy } = await toReveal({
+        clipboard: {
+          writeText: (t) =>
+            t === ''
+              ? (writes.push(t), Promise.resolve())
+              : new Promise<void>((res) => {
+                  land = () => {
+                    writes.push(t);
+                    res();
+                  };
+                }),
+        },
+      });
+      click(copy);
+      r.win.message({ v: 1, t: 'hana:export-end' }, ENV.vaultOrigin, r.vault);
+      expect(writes).toEqual([]);
+      land();
+      await flush();
+      expect(writes).toEqual([expect.stringMatching(STELLAR_KEY), '']);
+      expect(pageText()).not.toMatch(/S[A-Z2-7]{55}/u);
+      expect(pageText()).not.toContain('Copied');
+    });
+  });
+
   it('the revealed key is not in a live region and is marked translate="no" (AUTH-6, AUTH-4)', async () => {
     const r = run();
     await signIn(r);
@@ -509,6 +980,8 @@ describe('/export', () => {
     const secret = document.querySelector('.secret') as HTMLElement;
     expect(secret.hasAttribute('aria-live')).toBe(false);
     expect(secret.closest('[aria-live]')).toBeNull();
+    // The copy status is a live region of its own, beside the key, never around it.
+    expect(secret.closest('[role="status"], [role="alert"], [role="log"]')).toBeNull();
     expect(secret.getAttribute('translate')).toBe('no');
   });
 

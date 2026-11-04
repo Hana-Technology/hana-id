@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NearChain, NearWriter, Rpc, RpcError, WATCHDOG_GAS, watchdogPublicKey } from '../src/near.ts';
 
 const PRIMARY = 'https://rpc.test.invalid';
-const FALLBACK = 'https://rpc-fallback.test.invalid';
+const FALLBACK = 'https://rpc.fallback-provider.invalid';
 const SIGNER = 'signer.test.near';
 const WATCHDOG = 'watchdog.test.near';
 const BLOCK = baseEncode(new Uint8Array(32).fill(3));

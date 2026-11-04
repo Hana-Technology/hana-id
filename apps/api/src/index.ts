@@ -13,6 +13,8 @@ import { log } from './log.ts';
 import { checkOwnerPoolAllowance } from './owner-pool.ts';
 import { LOGIN_ENDPOINT, handleLogin } from './login.ts';
 import { LOGIN_RELAY_PREFIX, handleLoginRelay, loggedEndpoint } from './login-relay.ts';
+import { LINK_ENDPOINTS, type LinkEndpoint, handleLinkEndpoint } from './links.ts';
+import { syncEmailUsage } from './usage/email-sync.ts';
 import { syncIdentityUsage } from './usage/identity-sync.ts';
 import { ensureUsagePartitions } from './usage/partitions.ts';
 import { vaultMaintenance } from './vault/cron.ts';
@@ -113,6 +115,11 @@ export default {
         if (request.method === 'POST') return await handleLogin(request, env, requestId, ctx);
         return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
       }
+      if (LINK_ENDPOINTS.includes(pathname)) {
+        if (request.method === 'OPTIONS') return await appPreflight(request, env);
+        if (request.method === 'POST') return await handleLinkEndpoint(request, env, pathname as LinkEndpoint, requestId, ctx);
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
+      }
       if (pathname.startsWith(LOGIN_RELAY_PREFIX)) return await handleLoginRelay(request, env, requestId);
       if (isVaultEndpoint(pathname)) {
         if (request.method === 'OPTIONS') return vaultPreflight(request, env);
@@ -149,7 +156,7 @@ export default {
       jobs.push(vaultMaintenance(env), identityMaintenance(env), guardedChangesMaintenance(env), detectDrift(env));
       // Usage fails open: these log their own failures and never fail the run (the next hour tries again). Partitions
       // first, so the copy and the hour's events have their months. Pushed last: the destructuring below is positional.
-      jobs.push(ensureUsagePartitions(env).then(() => syncIdentityUsage(env)));
+      jobs.push(ensureUsagePartitions(env).then(() => Promise.all([syncIdentityUsage(env), syncEmailUsage(env)])));
       // Logs its own failures too; also positional-last.
       jobs.push(checkOwnerPoolAllowance(env));
     }

@@ -46,6 +46,9 @@ Steps 0, 3 and 5 can run beside 1–2. About 12k lines in all, as the spec estim
   `response_type=token` request so the on-chain token stays openid-only).
 - **Files.** `apps/smoke/spike.html`, results in `docs/context.md` (testnet measurements).
 - **Tests.** None beyond the manual run; the API's `token_has_pii` refusal already guards the chain either way.
+  Since batch 8b's review the page (`apps/smoke/spike-email.html`) also has legs C (a plain openid login after the
+  email grant: no `email` claims may appear) and D (the silent email request again: it must succeed), a gate before
+  batch 8b reaches real users (D265).
 - **User-visible.** Nothing.
 
 ### Batch 1: contract v3 (this branch)
@@ -542,3 +545,148 @@ Branch `feat/email-login-5`, not deployed (no transactions sent).
   `get_link_stats` shape must match `feat/link-cap` when it merges (a mismatch marks only the link check). The
   `set_link_thresholds` owner call isn't in `scripts/lib/contract.ts` `OWNER_METHODS` yet (the link-cap branch adds it).
   The admin portal's rendering of the new checks and kinds is batch C/9 (the registry and `/status` carry them).
+
+## Batch 6 result
+
+Branch `feat/email-login-6`, not merged, nothing deployed, no secret uploaded, no testnet transaction. The user's
+sandbox-dev steps are `docs/operations.md` "Email login on sandbox-dev (build plan batch 6)" (D234 corrects this
+plan's order: the D1 migration before the issuer, the issuer's Worker before its keys go on chain, the email clients
+in batch 8; and its `upgrade-contract propose|execute` is `deploy-contract <env> --upgrade`, then `--upgrade
+--skip-build`).
+
+- **API** (`apps/api`): email tokens on `/v1/sessions` and `/v1/login` (`src/email-token.ts`, `login-token.ts`:
+  the issuer's exact JWS JSON form, the manifest's keys `EMAIL_ISS` / `EMAIL_PUBLIC_KEYS`, the on-chain policy
+  `get_self_issued("email")`, the app's `login_methods`, D231); the `create_session` proof of possession required and
+  relayed on `/v1/sessions` (D137); `/v1/login`'s `linkJwt` / `linkImmediate` with the linked CKD payload and the
+  `auto_link` precheck from fresh `get_identity` / `get_account` reads (`link-precheck.ts`, D133, D232); the
+  email-login panics as errors (`panics.ts`: `links_unavailable`, `identity_linked`, `link_pending`, link `reason`s);
+  `GET /v1/app` `loginMethods` and `email: {aud}`, `409 no_login_method`; the relays `/v1/link`, `/v1/link/cancel`,
+  `/v1/link/unlink` (`links.ts`: Hana pages only, adds and removals in their own limits, the share revocation of D233);
+  the session pool's three link methods (`relayer-config.ts`, `scripts/lib/contract.ts`, the sandbox allowlist states);
+  D155's gas (100, 150, a linked login 250, `link_identity` 250, `cancel_link` / `unlink_identity` 150); migration
+  `0010_login_methods.sql` (`apps.login_methods` default `'google'`, `email_usage`); `migrate_v1` off the never-relay
+  list (D154).
+- **Proof of possession, before v3** (D137): `@hana-id/core` `createProofPayload` / `signCreate` (checked against the
+  contract's `session_message_create` vector), the vault's `split()` and `apps/smoke/src/direct.ts` send `signature`.
+  Proven safe on v2 by the sandbox test `v2_ignores_the_create_session_proof_that_v3_requires`
+  (`contracts/integration-tests/tests/governance.rs`): the v2 wasm sandbox-dev runs (`V2_COMMIT`) opens the session
+  with the proof, without it and with a wrong one; after the upgrade to v3 on the same deployment, only the right proof
+  does.
+- **Issuer** (`apps/email-issuer/src/apps.ts`): apps found by the gate's model (`app_keys` revoked or in its grace,
+  `deleted_at IS NULL`, `suspended_by = 0` and `status`); the source check's allowlist entry is gone (D233).
+- **Routing** (D230): manifest `emailIssuer.url` (required on a `workers.dev` API: the issuer's own `workers.dev` URL,
+  written by `init`; absent: a zone route under `apiUrl`), `iss` = `{url}/v1/email`; the watchdog's default `jwksUrl`
+  follows it. The API serves nothing under `/v1/email/`.
+- **Tests.** API: 637 Worker tests (`email-layouts.test.ts` against `email_fixture.json`'s layouts and tokens,
+  `email-login.test.ts` for the endpoints, `login-methods.test.ts`), 52 script tests (`gas-literal`, `gen-wrangler`,
+  `hot-db-reads` with no allowlist) and 48 usage tests; the issuer 118 + 7; `packages/core` 1127, `packages/web` 819,
+  `apps/smoke` 85, `packages/env` 107, `scripts` 371, the watchdog 233 + 27; `pnpm -r typecheck` and
+  `pnpm -r test` green; `cargo test` in `contracts/hana-signer` green; sandbox: the new v2/v3 test, `email` (the link
+  methods now relayed by the session-pool key) and `access_keys_are_limited`.
+- **Decisions (to confirm).** D230 (routing), D231 (email tokens and login methods), D232 (link precheck, relays,
+  panics, limits), D233 (share revocation, `email_usage`, the issuer's lookup), D234 (the corrected deploy order).
+- **Review fixes** (both batch 6 reviews, D250–D252): pending members refused before relaying and link-state panics
+  remembered per isolate; one relay per link request (`link_in_flight`); per-account link limits, app-wide removal
+  caps as an alarm, a global daily cap on adds; gas per extra token signature; `token_stale` for an email kid no
+  pending change adds; `/v1/sessions` refuses unknown fields; exports keyed on the derived path; removals take email
+  tokens whatever `login_methods` say; the link relays as usage events (migrations-usage 0005); `/v1/health`
+  `capabilities.createProof` and `deploy-contract --upgrade` refusing without it; `owner:call set_issuer_key` for email
+  only for a pinned, published key; the issuer's lookup joins `scopes`, its `workers_dev` only with a `workers.dev`
+  `url`, a source check that it never writes `APP_DB` (D251); the runbook redone against the merged develop.
+- **Left for later.** Batch 8: `login_methods` for the test apps, the staff client proofs and `AddClient ("email",
+  "email:<scope>")`, the web's use of `loginMethods`, `linkJwt`, the link relays and the new error codes, the popup's
+  CSP for the issuer origin, and the share revocation's caller pages. Merged with develop after batch C4: the email
+  counts stay in D1 `email_usage` and are copied hourly to the ledger (`usage.email_counts`, migrations-usage 0004,
+  D233), as the identity counts are; the link relays aren't usage events yet (C12).
+  The link limits (D232) are provisional until sandbox-dev traffic.
+
+## Batch 8a result
+
+Branch `feat/email-login-8a` (from batch 6's branch, with `develop` merged in after batch 6 merged at b404fb3), not
+merged, nothing deployed. The minimal slice of batch 8 for an internal demo: plain email login, no linking.
+
+- **Popup** (`packages/web/src/auth`): `/login` shows "Continue with Google" / "Continue with email" when the vault
+  offers email (still fetch-free, D77); `/login/email` (`email-page.ts`, its own CSP: `connect-src` the issuer and the
+  API) runs address → `start` → code → `verify` → the token into the relay slot, with resend, "Use a different email",
+  inline wrong and expired codes, one generic limit message, case B as a plain "Continue with Google", the device
+  ticket in `localStorage` (hashed key), and cancel codes (D245).
+- **Vault** (`vault/login.ts`): the offer only for `["google","email"]` with this scope's `email.aud` in an env with an
+  email issuer; the email token checked against the chain's email keys and policy and the scope's email client
+  (`core/email-token.ts`); `loginPath` (`#email#`; Google byte for byte, golden test); the record check takes
+  `#email#`; export refused for email wallets (D246); never a `linkJwt`.
+- **SDK**: `hana.login({method, emailHint})`, `login_method_unavailable`, `code_invalid`, `challenge_expired`,
+  `loginProgress: email_code` (D247).
+- **API** (the one change outside the web): the auth page Worker serves `/login/email` with `connect-src
+  {EMAIL_ISSUER_URL} {API_URL}` (`src/pages/host.ts`), `gen` sets `EMAIL_ISSUER_URL` from `emailIssuer`
+  (`scripts/pages-wrangler.ts`).
+- **Demo**: "Log in with email" beside "Log in with Google" (each names its method).
+- **Tests**: core (the email-token check, the protocol), web (the chooser and every email-page state, the vault's
+  offer, check, path, progress, record and export), the API's page host and pages config, the demo; Playwright in
+  Chromium, Firefox and WebKit on the local stack with apps/email-issuer's own Worker and its `outbox` stub (email
+  login, a returning login with its device ticket, a wrong code, Google through the chooser unchanged).
+- **Left for batch 8b**: google-match and the four cases, the Google `email` scope (batch 0's spike), link banners,
+  `hana.linkAccount`, the unlock and confirm pages, `get_identity` path resolution (D249), email export,
+  `createHana({loginMethods})`, email-only apps.
+- **Decisions (to confirm)**: D245–D249. The sandbox-dev demo steps: `docs/operations.md` "Email login demo on
+  sandbox-dev (batch 8a)" (SendGrid needed for real mail).
+
+## Batch 8b result (with batch 7)
+
+Branch `feat/email-login-8b` (from `develop` @ 91a7afb), not merged, nothing deployed, no testnet transaction. Batch 7
+(the path through `get_identity`) and the rest of batch 8 (linking), plus key export for email wallets (the user's
+addition, D246 lifted). No contract change; no path, nonce layout or derivation input changed.
+
+- **Batch 7, the path** (`packages/core/src/links.ts` `pathIdentity`, `vault/login.ts` `ownPath`, `auth/export-page.ts`
+  `pathFor`): the vault and the export window read `get_identity` on their own RPC, check the view's key against the
+  identity key they compute, and derive the identity's own path, its account root's (an active member), or nothing
+  (pending: `link_pending` with `effectiveAtMs`). D249's "path from the token" is gone; a pairing failure re-reads the
+  session and the identity once (a link that activated meanwhile); a resynced own-path session of a since-linked
+  identity ends `session_consumed` (D136). Golden tests: an unlinked Google identity gives `s1#google#<sub>#0` byte for
+  byte, read through `get_identity` (`packages/web/test/vault/linking.test.ts`, `email-login.test.ts`); a member gets
+  its root's key; the export window exports the root's key for a member.
+- **Google's verified email** (D254): the second, silent request (`GOOGLE_EMAIL_FLOW = 'second_request'`), one
+  interactive retry when Google needs consent; the access token rides in follow-up slot 1 to the vault and only to
+  google-match. The spike page `apps/smoke/spike-email.html` (batch 0) is built, not run.
+- **The four cases** (`vault/login.ts` `matchGoogle`, `judgeLink`; `auth/email-page.ts`; `auth/callback-page.ts`):
+  google-match before any chain call; Google-hosted case A silent; case A not hosted ("Link and continue" with
+  google-match's prepared code, or "Sign in with email"); case A that can't link ("Sign in with email" only); case B
+  only after this popup's email step (`caseB {linkTicket, emailSub}`, D139), immediate when hosted, else pending with
+  the banner and **Cancel this link**; case C and the rest a plain login. No match answer: a Google identity without a
+  wallet is refused (D255).
+- **D133 in the vault**: fresh `get_config` / `get_identity` / `get_account` reads, `judgeAutoLink` (the contract's
+  order), the join and the `auto_link` nonce checked, the link token verified on chain with exactly that nonce, then
+  the linked CKD payload signed (`signDeriveLinked`). **D137**: a linked session is never derived plainly; it is
+  revoked and the login ends `derive_failed` (`link_restart`, D257).
+- **The follow-up channel** (D256): `followKey` in auth-params, slots derived by HMAC, the vault's notices and the
+  popup's answers through the login relay (the API accepts the vault's writes), the popup waiting for the vault's last
+  word.
+- **Banners, SDK** (D259): link banners in the login popup (pending with Cancel, the link this login made, recent ones
+  with Remove for the root), `hana.account()`, `linkChanged`, `hana.linkAccount({method})`, `link_refused`,
+  `loginProgress: linking`.
+- **Email export** (D258): the export window offers both methods in an app with email; an email code over its own
+  session (`session` purpose, no new issuer purpose), checked on chain; the path through `get_identity`.
+- **Outside the web**: the issuer's case-B `verify` answers `sub` with the `linkTicket` (D256); the API's login relay
+  takes writes from `vaultOrigin`, and the vault page's `connect-src` adds `EMAIL_ISSUER_URL` (`gen` writes it).
+- **Tests**: core (the layouts against `email_fixture.json`, the views, `pathIdentity`, `judgeAutoLink`, the follow-up
+  slots, the new protocol shapes), web (the vault's path, the four cases, D133/D137/D139, google-match unavailable,
+  pending, `hana.account()`, `linkChanged`, a banner's Cancel, `linkAccount`, the callback's legs, the email page's
+  case B and follow-up mode, `/login`'s follow-up key and link tasks, email export), the API (relay writers, the vault
+  page's CSP, `gen`), the issuer (`verify`'s `sub`), the spike page; Playwright in Chromium, Firefox and WebKit on the
+  local stack with the `outbox` stub (`apps/e2e/tests/linking.spec.ts`, 9 per browser: case C, case A Google-hosted silent, case A not hosted with the code and with "Sign in with email", case B hosted, case B not hosted pending with the banner's Cancel, a pending email login refused, email-wallet key export, a Google-only app unchanged; 222 in all, the 195 earlier ones green; the stack's mock chain keeps accounts and links, a server-side Google backend answers tokeninfo, userinfo and revoke).
+- **Sandbox-dev steps**: `docs/operations.md` "Turning linking on (batch 8b)" (what users see in each case; no switch
+  of its own beyond `login_methods`; D248's "demo scopes only" lifted where Google logins have written hints).
+- **Left for later**: `createHana({loginMethods})`; the `/email/unlock`, `/email/confirm` and `/link/cancel` pages;
+  banners in the approval and export popups and Hana Home; email-only apps; running the spike; measuring latency and
+  gas on testnet (batch 8's "Deploy").
+- **Decisions (to confirm)**: D254–D259.
+- **Review fixes** (same branch): a path that isn't the signed-in identity's own (a member's root, a link's target
+  root, a moved path, the export window's) is confirmed on `rpc` and `rpcFallback` read separately, with root pins
+  per identity (D263; the e2e stack gained a second RPC endpoint on the same chain); strict parsing of the chain's
+  email keys and policy in the export window, and of a root's provider; the email permission explained before
+  Google's prompt, and a consent screen for a declined permission or another Google account (D264); the access token
+  no longer revoked, google-match retried after 429 or 503 within the login, a 30 s timeout (D265); the issuer's word
+  on the match recorded as an accepted risk (D266); the relay's 40 writes a minute per IP, 12 KiB bodies, google-match
+  120 per 10 min (D267); `hana.account()` cached 5 s; tests for every D137 branch; the spike gained legs C and D.
+- **Gate before real users**: the user runs `apps/smoke/spike-email.html` legs C and D on real Google (C: no
+  `email` or `email_verified` in a later openid-only ID token, else a `token_has_pii` lockout; D: the silent request
+  succeeds again without a prompt). `docs/operations.md` "Turning linking on (batch 8b)".

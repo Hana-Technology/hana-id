@@ -97,9 +97,28 @@ export interface DeployDeps {
   sleep?: (ms: number) => Promise<void>;
   /** The pinned Sputnik DAO code hash (default: contracts/sputnik/pin.json). */
   sputnikCodeHash?: string;
+  /**
+   * Reads `GET {apiUrl}/v1/health` (the JSON body, or null when it can't be read). Asked only by an `--upgrade` run;
+   * absent (tests that don't care), the API's capabilities aren't checked.
+   */
+  apiHealth?: (url: string) => Promise<unknown>;
 }
 
-export const defaultDeployDeps = (): DeployDeps => ({ rpc: (url) => new NearRpc(url), log: (line) => console.log(line) });
+/** The health answer, or null (10 s timeout; any failure is null, which `--upgrade` treats as no capability). */
+export async function readApiHealth(url: string): Promise<unknown> {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+export const defaultDeployDeps = (): DeployDeps => ({ rpc: (url) => new NearRpc(url), log: (line) => console.log(line), apiHealth: readApiHealth });
+
+/** `capabilities.createProof === true` in a health answer. */
+export const reportsCreateProof = (health: unknown): boolean =>
+  typeof health === 'object' && health !== null && (health as { capabilities?: { createProof?: unknown } }).capabilities?.createProof === true;
 
 function writeManifestFields(name: string, fields: Record<string, string>): void {
   const file = manifestPath(name);
@@ -460,6 +479,7 @@ export async function deployMain(argv: readonly string[], deps: DeployDeps = def
   log(`Environment ${m.name} (${m.network}, RPC ${m.rpc})`);
   log(`  signer ${m.signer} · relayer ${m.relayer} · owner ${m.owner} (${m.ownerKind === 'sputnik' ? 'council DAO' : 'account'}) · mpc ${m.mpc} (CKD domain ${m.ckdDomainId})\n`);
   const { observed, creds } = await observe(c, wasmArg ?? existingWasm());
+  if (options.upgrade && deps.apiHealth) observed.apiCreateProof = reportsCreateProof(await deps.apiHealth(new URL('/v1/health', m.apiUrl).toString()));
   const plan = buildDeployPlan(m, observed, options);
 
   for (const role of ROLES) {

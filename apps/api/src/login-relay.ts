@@ -5,7 +5,11 @@
 // its nonce, and can't put a token of its own in the slot. Reading needs `relayReadKey` (relayId = b64url(sha256 of
 // it)), which never leaves the vault, so whoever learns relayId (it is also the OAuth `state`) can't consume the slot.
 //
-//   POST /v1/login-relay/<relayId>            {iv, ct} (base64url)       authOrigin only     204 | 409 relay_used
+// A login that offers email (build plan batch 8b) also uses follow-up slots (core links.ts `followSlot`): the vault
+// writes its notices (google-match's screens, link banners) and the popup its answers, each slot write-once and
+// read-once like the first, each value under the same relayKey with the slot's own AAD.
+//
+//   POST /v1/login-relay/<relayId>            {iv, ct} (base64url)       authOrigin, vaultOrigin 204 | 409 relay_used
 //   GET  /v1/login-relay/<relayId>?wait=1..25  x-hana-relay-key: <b64url> vaultOrigin, authOrigin
 //        200 {iv, ct, serverTimeMs, heldMs} (consumed) | 204 (still empty after `wait` s) | 410 relay_gone | 403 relay_forbidden
 //
@@ -30,9 +34,15 @@ export function loggedEndpoint(pathname: string): string {
 /** A written value lives this long, then a tombstone answers 410 for as long again, then the object is empty. */
 export const RELAY_TTL_MS = 120_000;
 export const RELAY_TOMBSTONE_MS = 120_000;
-export const RELAY_MAX_BODY = 8 * 1024;
+/** 12 KiB: one-request mode's largest valid payload, encrypted, fits (core relay.ts RELAY_MAX_PLAINTEXT_BYTES, G-L7). */
+export const RELAY_MAX_BODY = 12 * 1024;
 export const RELAY_MAX_WAIT_S = 25;
-export const RELAY_WRITES_PER_IP_MINUTE = 10;
+/**
+ * A login of an app with email writes up to 5 slots (the token, Google's access token, a notice, an answer, the last
+ * word; a consent or proof round adds two more), and users behind one NAT sign in side by side: 40 a minute is about
+ * eight such logins a minute from one IP (G-M3, D267). Reads stay at 120 (each write is long-polled about once).
+ */
+export const RELAY_WRITES_PER_IP_MINUTE = 40;
 export const RELAY_READS_PER_IP_MINUTE = 120;
 /** b64url(sha256(relayReadKey)): 43 characters. */
 export const RELAY_ID_RE = /^[A-Za-z0-9_-]{43}$/u;
@@ -136,8 +146,12 @@ export class LoginRelay extends DurableObject<Env> {
 
 const RELAY_ALLOW_HEADERS = `content-type, ${RELAY_KEY_HEADER}`;
 const RELAY_METHODS = 'GET, POST, OPTIONS';
-/** Only the callback page (authOrigin) writes; the vault, or the export window on authOrigin, reads. */
-const WRITERS: readonly HanaPage[] = ['auth'];
+/**
+ * The callback page and the email step (authOrigin) write, and so does the vault, whose follow-up notices the popup
+ * reads (batch 8b); the vault, or the export window and the popup on authOrigin, read. A writer can't forge a value:
+ * each is AES-GCM under the login's relayKey, which only the vault and its popup hold.
+ */
+const WRITERS: readonly HanaPage[] = ['auth', 'vault'];
 const READERS: readonly HanaPage[] = ['vault', 'auth'];
 
 const isB64url = (v: unknown, min: number, max: number): v is string => {

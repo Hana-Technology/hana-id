@@ -1,17 +1,16 @@
 // Google, for google-match (spec "How the popup gets Google's verified email"): the ID token (RS256 against Google's
 // JWKS, iss, aud, exp; the nonce is the caller's to check), the access token's tokeninfo (its aud/azp must be the ID
-// token's client and its sub the ID token's), userinfo (`email`, `email_verified`, `hd`), then the access token's
-// revocation. Tokens travel in POST bodies and the Authorization header, never in a URL. Every answer is size-capped;
-// nothing here logs a token, an address or a body.
+// token's client and its sub the ID token's), userinfo (`email`, `email_verified`, `hd`). The access token is not
+// revoked (D265: revoking ends the user's whole grant to the client). Tokens travel in POST bodies and the
+// Authorization header, never in a URL. Every answer is size-capped; nothing here logs a token, an address or a body.
 import { base64UrlDecode } from './bytes.ts';
 import { GOOGLE_JWKS_URL, type Jwk, usableJwks } from '@hana-id/jwks';
-import { responseJson } from './http.ts';
+import { responseJson, globalFetch } from './http.ts';
 import { verifyRs256 } from './signer.ts';
 
 export const GOOGLE_ISSUERS = ['https://accounts.google.com', 'accounts.google.com'];
 export const GOOGLE_TOKENINFO_URL = 'https://oauth2.googleapis.com/tokeninfo';
 export const GOOGLE_USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo';
-export const GOOGLE_REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 export const GOOGLE_TIMEOUT_MS = 8000;
 export const GOOGLE_MAX_RESPONSE_BYTES = 64 * 1024;
 const JWKS_TTL_MS = 60 * 60_000;
@@ -49,7 +48,7 @@ export class Google {
   private lastFetch = -Infinity;
 
   constructor(
-    private readonly fetcher: typeof fetch = fetch,
+    private readonly fetcher: typeof fetch = globalFetch,
     private readonly now: () => number = Date.now,
   ) {}
 
@@ -121,22 +120,9 @@ export class Google {
     const { status, body } = await this.get(GOOGLE_USERINFO_URL, { headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json' } });
     if (status >= 500) throw new GoogleUnavailable('userinfo unavailable');
     const o = (body ?? {}) as Record<string, unknown>;
+    if (status === 200 && typeof o.sub === 'string' && o.sub !== sub) return { ok: false, reason: 'userinfo_sub' };
     if (status !== 200 || o.sub !== sub || typeof o.email !== 'string') return { ok: false, reason: 'userinfo' };
     const hd = typeof o.hd === 'string' ? o.hd : null;
     return { ok: true, value: { email: o.email, emailVerified: o.email_verified === true, hd } };
-  }
-
-  /** Revokes the access token (best effort: a failure is logged by the caller, never retried with the token kept). */
-  async revoke(accessToken: string): Promise<boolean> {
-    try {
-      const { status } = await this.get(GOOGLE_REVOKE_URL, {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ token: accessToken }).toString(),
-      });
-      return status === 200;
-    } catch {
-      return false;
-    }
   }
 }

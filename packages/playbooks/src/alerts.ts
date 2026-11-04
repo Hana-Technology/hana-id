@@ -883,7 +883,7 @@ const emailJwksMismatch: Playbook = {
   severity: 'warning',
   status: 'live',
   summary:
-    "Hana's published email JWKS (`{apiUrl}/v1/email/jwks.json`) lists a key that isn't pinned, or lacks an active email key, or can't be fetched while email keys are active. Informational: the contract never reads it and the watchdog doesn't trust it.",
+    "Hana's published email JWKS (`{emailIssuer.url}/v1/email/jwks.json`, the watchdog's `jwksUrl`) lists a key that isn't pinned, or lacks an active email key, or can't be fetched while email keys are active. Informational: the contract never reads it and the watchdog doesn't trust it.",
   signals: ['Warning `email_jwks_mismatch` (Slack, email): `details.problems` lists each key; `email_jwks_mismatch:fetch` after 3 failed fetches.'],
   impact: [
     "No direct risk: logins check the keys on chain. A published key that isn't pinned means the issuer Worker holds (or advertises) a key the watchdog would cancel or pause on if the council posted it; a missing active key means the issuer and the chain disagree about which keys sign.",

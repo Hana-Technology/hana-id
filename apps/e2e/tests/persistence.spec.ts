@@ -15,6 +15,7 @@ import {
   shares,
   status,
   test,
+  vaultPinKeys,
   vaultRecordKeys,
   waitReady,
 } from './fixtures.ts';
@@ -120,6 +121,10 @@ test("logout wipes every tab of that app, and the record and share", async ({ co
   await expect.poll(() => status(b)).toBe('logged_out');
   expect(await b.evaluate(() => (window as any).e2e.events.some((e: { name: string }) => e.name === 'disconnect'))).toBe(true);
   expect(await vaultRecordKeys(a)).toEqual([]);
+  // The login's root pin stays (D263): keyed by the identity key, a hash, never the Google sub.
+  const pins = await vaultPinKeys(a);
+  expect(pins).toHaveLength(1);
+  expect(pins[0]).toMatch(/^pin\|[^|]+\|[^|]+\|[^|]+\|[0-9a-f]{64}$/u);
   expect((await shares(app)).every((s) => s.revoked)).toBe(true);
 
   await b.reload();

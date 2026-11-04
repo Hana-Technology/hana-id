@@ -1,6 +1,7 @@
 // The log-capture test (spec "Tests" → "Issuer": "nothing logged (a log-capture test greps for the address, code, sub
 // and token)"): every line of every flow, errors included, is grepped for the address (raw and normalized), the code,
-// the sub, every token, the Google access token and every secret binding.
+// the sub, every token, the Google access token and every secret binding. Since D269 a verified address is stored on
+// purpose, in the user directory (`user_emails`, for Hana staff): the tests check it is there, and in no other table.
 import { describe, expect, it } from 'vitest';
 import { emailSub } from '@hana-id/email';
 import { SECRET_NAMES } from '../src/env.ts';
@@ -14,6 +15,15 @@ const jwt = async (key: CryptoKey, claims: Record<string, unknown>): Promise<str
   const c = base64UrlEncode(utf8(JSON.stringify(claims)));
   return `${h}.${c}.${base64UrlEncode(new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, utf8(`${h}.${c}`))))}`;
 };
+/** Every row of the issuer's D1 tables other than the directory, as one string (the address must be in none of them). */
+const otherTables = async (): Promise<string> => {
+  const out: unknown[] = [];
+  for (const t of ['email_issuance', 'email_hints', 'email_suppressions', 'email_admin_audit']) out.push((await env.DB.prepare(`SELECT * FROM ${t}`).all()).results);
+  return JSON.stringify(out).toLowerCase();
+};
+const directoryEmail = async (provider: string, sub: string): Promise<string | null> =>
+  (await env.DB.prepare('SELECT email FROM user_emails WHERE provider = ?1 AND sub = ?2').bind(provider, sub).first<{ email: string }>())?.email ?? null;
+
 const derOf = (p1363: Uint8Array): Uint8Array => {
   const int = (b: Uint8Array) => {
     let i = 0;
@@ -84,6 +94,53 @@ describe('nothing personal or secret is ever logged', () => {
     }
     // And the lines are the structured ones only.
     for (const l of lines) expect(l.startsWith('{"level"')).toBe(true);
+    // The verified login's address is in the directory (D269), normalized, under its sub; no other table holds it.
+    expect(await directoryEmail('email', await emailSub((await h.deps.keys()).sub, normalized))).toBe(normalized);
+    expect(await otherTables()).not.toContain(local.toLowerCase());
+  });
+
+  it('google-record (D270) and google-match’s directory write: accepted, refused, Google down, the directory down', async () => {
+    const h = await harness();
+    const app = await seedApp(h, { methods: 'google' });
+    const emailApp = await seedApp(h);
+    const local = `Rec.Priv${uid().replace(/[^a-z0-9]/gu, '')}`;
+    const address = `${local}@GMAIL.com`;
+    const acc = { sub: `1${Math.floor(Math.random() * 1e15)}`, email: address };
+    const secrets: string[] = [acc.sub];
+    const { lines } = await captureLogs(async () => {
+      const send = async (path: string, a: typeof acc, pk: string, scope: string, extra: Record<string, unknown> = {}, over: Partial<typeof acc> & { tokenAud?: string; tokenSub?: string } = {}) => {
+        const c = sessionCommitment(scope, h.clock.now);
+        const accessToken = h.google.accessToken({ ...a, ...over }, GOOGLE_CLIENT);
+        const googleIdToken = await h.google.idToken(a, GOOGLE_CLIENT, nonceFor(c));
+        secrets.push(accessToken, googleIdToken);
+        return h.call(path, { pk, accessToken, googleIdToken, commitment: c.json, ...extra });
+      };
+      expect((await send('/v1/email/google-record', acc, app.pk, app.scope)).status).toBe(200);
+      expect((await send('/v1/email/google-match', acc, emailApp.pk, emailApp.scope, { link: true })).status).toBe(200);
+      // Refusals: another client's token, another account's token.
+      expect((await send('/v1/email/google-record', acc, app.pk, app.scope, {}, { tokenAud: 'x' })).status).toBe(400);
+      expect((await send('/v1/email/google-record', acc, app.pk, app.scope, {}, { tokenSub: '1888' })).status).toBe(400);
+      // Google down.
+      h.google.userinfoStatus = 503;
+      expect((await send('/v1/email/google-record', acc, app.pk, app.scope)).status).toBe(502);
+      h.google.userinfoStatus = 200;
+    });
+    // The directory down: its failure line names the app and scope only.
+    const broken = { batch: () => Promise.reject(new Error(`d1 down ${address}`)), prepare: env.DB.prepare.bind(env.DB) } as unknown as D1Database;
+    const hb = await harness({ env: { ...h.deps.env, DB: broken } });
+    const appB = await seedApp(hb, { methods: 'google' });
+    const down = await captureLogs(async () => {
+      const c = sessionCommitment(appB.scope, hb.clock.now);
+      const accessToken = hb.google.accessToken(acc, GOOGLE_CLIENT);
+      const googleIdToken = await hb.google.idToken(acc, GOOGLE_CLIENT, nonceFor(c));
+      secrets.push(accessToken, googleIdToken);
+      expect((await hb.call('/v1/email/google-record', { pk: appB.pk, accessToken, googleIdToken, commitment: c.json })).status).toBe(200);
+    });
+    const all = [...lines, ...down.lines].join('\n');
+    expect(all).toContain('"directory_write_failed"');
+    expect(all).toContain('/v1/email/google-record');
+    for (const needle of [address, address.toLowerCase(), local, local.toLowerCase(), ...secrets]) expect(all).not.toContain(needle);
+    for (const l of [...lines, ...down.lines]) expect(l.startsWith('{"level"')).toBe(true);
   });
 
   it('the staff routes, the webhook, the suppressed path, a guessing trip, case A with a code and its link notice (L7)', async () => {
@@ -167,5 +224,13 @@ describe('nothing personal or secret is ever logged', () => {
     expect(h0.sender.to(corp).some((x) => x.kind === 'link_notice')).toBe(true);
     for (const needle of [victim, vAddr, victim.toLowerCase(), supp, corp, ...secrets]) expect(all).not.toContain(needle);
     for (const l of lines) expect(l.startsWith('{"level"')).toBe(true);
+    // Case A's verified code put its address in the directory (D269); the guessed-at and the suppressed addresses never
+    // passed a code, so they are in no table (suppressions and the audit hold HMAC prefixes only).
+    const eSub = await emailSub((await h.deps.keys()).sub, corp);
+    expect(await directoryEmail('email', eSub)).toBe(corp);
+    const stored = JSON.stringify((await env.DB.prepare('SELECT * FROM user_emails').all()).results).toLowerCase();
+    for (const addr of [vAddr, supp]) expect(stored).not.toContain(addr);
+    const others = await otherTables();
+    for (const addr of [vAddr, supp, corp]) expect(others).not.toContain(addr);
   });
 });

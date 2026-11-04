@@ -13,7 +13,11 @@ static assets. It is not a Hana page and holds nothing secret.
 
 One page: a testnet banner and a short explainer, then
 
-- **Log in with Google** (`hana.login()` in the click handler), with the login's progress, *Cancel sign-in*, *Log
+- **Log in with email** (`hana.login({ method: 'email' })`, batch 8a): the Hana popup's email step (address, mailed
+  code). It works once the demo app's `login_methods` include email and its scope holds its email client
+  (`docs/operations.md` "Email login demo on sandbox-dev (batch 8a)"); until then it says email isn't turned on.
+- **Log in with Google** (`hana.login({ method: 'google' })` in the click handler, so the popup skips its chooser once
+  email is on), with the login's progress, *Cancel sign-in*, *Log
   out* and *Log out other devices* (`revokeOtherDevices`, which works within 5 minutes of a fresh login);
 - a **status line**: logged in or out, when the session ends and the app's persistence (`session`: survives reloads
   and new tabs; `none`, or the browser's storage fallback);
@@ -26,12 +30,13 @@ One page: a testnet banner and a short explainer, then
 - **Identity token**: *Get identity token* (`hana.getIdentityToken()`, no popup) shows the token's decoded header and
   claims (display only: the page never trusts them) and a "verify it yourself" `jose` snippet with the token's own
   `iss` and `aud` (`docs/integration.md` section 15);
-- **Login timings** (collapsible): the vault's per-stage times (`app`, `popup`, `google`, `verify`, `chain`,
-  `decrypt`, which `pk_test_` apps get) and the total from the click, plus the unlock time when a page load restored
-  the session;
+- **Login timings** (collapsible): per login, its method and the vault's per-stage times (`app`, `popup`, sign-in,
+  `verify`, `chain`, `decrypt`, which `pk_test_` apps get) and the total from the click; sign-in is `google` for a
+  Google login and, for email, the email step's address, code request, code wait and verify (each listed under the
+  row, D260); other stages are listed after; plus the unlock time when a page load restored the session;
 - **Copy diagnostics**: a JSON report for bug reports, also shown on the page. It holds the env, the app key's
   first 12 characters, the page and vault origins, the SDK version, status, persistence, expiry, addresses, timings,
-  the user agent and the errors seen (code, `data.reason`, and the message with anything shaped like a token, key,
+  the user agent and the errors seen (code, `data.reason`, e.g. a `vault_unavailable`'s `no_answer` or `frame_timeout`, and the message with anything shaped like a token, key,
   signature or relay id removed). It never holds tokens, keys, signatures or relay ids: the page never sees the
   first, and `src/diagnostics.ts` builds the report field by field and scrubs the free text.
 

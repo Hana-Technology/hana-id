@@ -1,13 +1,15 @@
 // google-match (spec "How the popup gets Google's verified email", "The four cases"; D119, D122, D132, D133, D195):
 // tokeninfo and userinfo checks, the Google-hosted rule, every case's decision and link mode, no token without `link`,
-// the access token revoked, link tickets, and the auto_link nonce's join read from the chain at minting.
+// the access token never revoked (D265), link tickets, and the auto_link nonce's join read from the chain at minting.
 import { describe, expect, it } from 'vitest';
 import { emailSub, normalizeEmail } from '@hana-id/email';
 import { sha256 } from '../src/bytes.ts';
 import { autoLinkPreimage, identityKey, nonceOf, sessionPreimage } from '../src/layouts.ts';
+import { IP_MATCH_LIMITS } from '../src/limits.ts';
 import {
   GOOGLE_CLIENT,
   SHARED_CLIENT,
+  VAULT,
   type GoogleAccount,
   type Harness,
   type TestApp,
@@ -40,15 +42,36 @@ const sub = async (h: Harness, email: string) => {
 const gAccount = (email: string, over: Partial<GoogleAccount> = {}): GoogleAccount => ({ sub: `1${Math.floor(Math.random() * 1e15)}`, email, ...over });
 
 describe('Google checks', () => {
-  it('a tokeninfo aud mismatch is refused, and the access token is revoked anyway', async () => {
+  it('a tokeninfo aud mismatch is refused; the access token is never revoked (D265), and never in a URL', async () => {
     const h = await harness();
     const app = await seedApp(h);
     const { res, body, accessToken } = await match(h, app, gAccount(`a${uid()}@gmail.com`), { tokenAud: 'other.apps.googleusercontent.com' });
     expect(res.status).toBe(400);
     expect(body.code).toBe('google_token_invalid');
-    expect(h.google.revoked).toContain(accessToken);
+    expect(h.google.revoked).toEqual([]);
     // Tokens travel in bodies and headers, never in a URL.
     for (const r of h.google.requests) expect(r.url).not.toContain(accessToken);
+  });
+
+  it('D265: a successful match revokes nothing, so the same token can be sent again (the vault’s retry after a 429)', async () => {
+    const h = await harness();
+    const app = await seedApp(h);
+    const account = gAccount(`r${uid()}@gmail.com`);
+    const first = await match(h, app, account);
+    expect(first.res.status).toBe(200);
+    expect(h.google.revoked).toEqual([]);
+    expect(h.google.requests.some((r) => r.url.includes('/revoke'))).toBe(false);
+    const commitment = sessionCommitment(app.scope, h.clock.now);
+    const googleIdToken = await h.google.idToken(account, GOOGLE_CLIENT, nonceFor(commitment));
+    const again = await h.call('/v1/email/google-match', { pk: app.pk, accessToken: first.accessToken, googleIdToken, commitment: commitment.json, link: true });
+    expect(again.status).toBe(200);
+  });
+
+  it('D264: an access token of another Google account (picked on Google’s screen) is google_account_mismatch', async () => {
+    const h = await harness();
+    const app = await seedApp(h);
+    const { res, body } = await match(h, app, gAccount(`m${uid()}@gmail.com`, { tokenSub: '1999' }));
+    expect([res.status, body.code]).toEqual([400, 'google_account_mismatch']);
   });
 
   it('an ID token for another client, with the wrong nonce, or for another scope is refused', async () => {
@@ -235,13 +258,15 @@ describe('the four cases', () => {
     expect(login.idToken).toBeUndefined();
     expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM email_issuance').first('n')).toBe(0);
     expect(login.linkTicket).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    // The address's pseudonym goes with the ticket, for the vault's D139 check (D256); never the address.
+    const eSub = await sub(h, email);
+    expect((login as { sub?: string }).sub).toBe(eSub);
     // Without the ticket (a plain Google login), nothing is minted: never silently at a Google login.
     const plain = await match(h, app, acc);
     expect(plain.body.decision).toBe('case_b');
     expect(plain.body.emailToken).toBeUndefined();
     const { body, commitment } = await match(h, app, acc, { linkTicket: login.linkTicket! });
     expect(body.linkImmediate).toBe(true);
-    const eSub = await sub(h, email);
     const t = await decodeToken(body.emailToken!);
     expect(t.claims.sub).toBe(eSub);
     const gIk = identityKey(app.scope, 'google', acc.sub);
@@ -401,5 +426,21 @@ describe('the four cases', () => {
     h.chain.open(app.scope, 'email', await sub(h, tagged));
     expect((await match(h, app, gAccount(`${base.slice(0, 2)}.${base.slice(2)}+1@gmail.com`))).body.decision).toBe('case_a');
     expect((await match(h, app, gAccount(`${base}@gmail.com`))).body.decision).toBe('none');
+  });
+});
+
+describe('CORS on google-match', () => {
+  it('a 429 exposes its retry-after to the vault’s origin (browsers hide it otherwise, D265)', async () => {
+    const h = await harness();
+    const app = await seedApp(h);
+    const ip = '192.0.2.77';
+    const body = { pk: app.pk, accessToken: 'ya29.x', googleIdToken: 'h.p.s', commitment: sessionCommitment(app.scope, h.clock.now).json, link: true };
+    for (let i = 0; i < IP_MATCH_LIMITS[0]!.max; i++) expect((await h.call('/v1/email/google-match', body, { ip })).status).not.toBe(429);
+    const limited = await h.call('/v1/email/google-match', body, { ip });
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers.get('retry-after'))).toBeGreaterThan(0);
+    expect(limited.headers.get('access-control-allow-origin')).toBe(VAULT);
+    const exposed = (limited.headers.get('access-control-expose-headers') ?? '').split(',').map((s) => s.trim().toLowerCase());
+    expect(exposed).toContain('retry-after');
   });
 });

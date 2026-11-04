@@ -5,7 +5,7 @@
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
 import { PAGES_DIR } from '../build.ts';
-import { API_URL, AUTH_ORIGIN, ENV_NAME, NEAR_RPC, VAULT_ORIGIN } from '../stack.ts';
+import { API_URL, AUTH_ORIGIN, ENV_NAME, ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK, VAULT_ORIGIN } from '../stack.ts';
 import type { ApiModules, Fetcher } from './api-modules.ts';
 import type { D1Shim } from './d1.ts';
 import type { Handler } from './http.ts';
@@ -45,12 +45,25 @@ export interface PagesEnv {
   authOrigin: string;
   apiUrl: string;
   nearRpc: string;
+  /** The env's `rpcFallback` (both pages' connect-src), when it has one. */
+  nearRpcFallback?: string;
+  /** The email issuer's origin (/login/email's connect-src), when the env has one. */
+  emailIssuerUrl?: string;
 }
 
-const E2E_PAGES: PagesEnv = { envName: ENV_NAME, vaultOrigin: VAULT_ORIGIN, authOrigin: AUTH_ORIGIN, apiUrl: API_URL, nearRpc: NEAR_RPC };
+const E2E_PAGES: PagesEnv = { envName: ENV_NAME, vaultOrigin: VAULT_ORIGIN, authOrigin: AUTH_ORIGIN, apiUrl: API_URL, nearRpc: NEAR_RPC, nearRpcFallback: NEAR_RPC_FALLBACK, emailIssuerUrl: ISSUER_URL };
 
 export function vaultHost(api: ApiModules, d1: D1Shim, pages: PagesEnv = E2E_PAGES): Handler {
-  const apiEnv = { DB: d1, ENV_NAME: pages.envName, API_URL: pages.apiUrl, NEAR_RPC: pages.nearRpc, VAULT_ORIGIN: pages.vaultOrigin };
+  // EMAIL_ISSUER_URL: the vault page's connect-src names the issuer (the vault calls google-match, batch 8b).
+  const apiEnv = {
+    DB: d1,
+    ENV_NAME: pages.envName,
+    API_URL: pages.apiUrl,
+    NEAR_RPC: pages.nearRpc,
+    ...(pages.nearRpcFallback ? { NEAR_RPC_FALLBACK: pages.nearRpcFallback } : {}),
+    VAULT_ORIGIN: pages.vaultOrigin,
+    ...(pages.emailIssuerUrl ? { EMAIL_ISSUER_URL: pages.emailIssuerUrl } : {}),
+  };
   let n = 0;
   const env = {
     VAULT_ORIGIN: pages.vaultOrigin,
@@ -61,6 +74,13 @@ export function vaultHost(api: ApiModules, d1: D1Shim, pages: PagesEnv = E2E_PAG
 }
 
 export function authHost(api: ApiModules, pages: PagesEnv = E2E_PAGES): Handler {
-  const env = { AUTH_ORIGIN: pages.authOrigin, API_URL: pages.apiUrl, NEAR_RPC: pages.nearRpc, ASSETS: assetsFetcher(join(PAGES_DIR, pages.envName, 'auth')) };
+  const env = {
+    AUTH_ORIGIN: pages.authOrigin,
+    API_URL: pages.apiUrl,
+    NEAR_RPC: pages.nearRpc,
+    ...(pages.nearRpcFallback ? { NEAR_RPC_FALLBACK: pages.nearRpcFallback } : {}),
+    ...(pages.emailIssuerUrl ? { EMAIL_ISSUER_URL: pages.emailIssuerUrl } : {}),
+    ASSETS: assetsFetcher(join(PAGES_DIR, pages.envName, 'auth')),
+  };
   return (request) => api.handleAuthHost(request, env);
 }

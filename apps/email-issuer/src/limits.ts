@@ -109,8 +109,18 @@ export const IP_AGGREGATE_START_LIMITS: Limit[] = [{ name: 'agg:start:1d', windo
 export const IP_VERIFY_LIMITS: Limit[] = [{ name: 'ip:verify:10m', windowMs: 10 * MIN, max: 30 }];
 /** `resend` per IP (not in the spec's table; the same bound as start, D198). */
 export const IP_RESEND_LIMITS: Limit[] = [{ name: 'ip:resend:10m', windowMs: 10 * MIN, max: 10 }];
-/** `google-match` per IP (not in the spec's table: it calls Google three times and the chain up to five, D198). */
-export const IP_MATCH_LIMITS: Limit[] = [{ name: 'ip:match:10m', windowMs: 10 * MIN, max: 30 }];
+/**
+ * `google-match` per IP (not in the spec's table: it calls Google twice and the chain up to five, D198). 120 per 10 min
+ * (G-M3, D267; was 30): every Google login of an app with email calls it once, the vault retries a 429 or 503 within
+ * the login, and a NAT or a campus puts many users on one IP. Each call needs a genuine Google ID token whose nonce
+ * commits to a session, and a live access token of that account, so junk costs the caller a Google sign-in each.
+ */
+export const IP_MATCH_LIMITS: Limit[] = [{ name: 'ip:match:10m', windowMs: 10 * MIN, max: 120 }];
+/**
+ * `google-record` per IP (D270): google-match's bound and reasoning (D267), in a window of its own. A token_first login
+ * calls one of the two, never both: an app with email login google-match, one without google-record.
+ */
+export const IP_RECORD_LIMITS: Limit[] = [{ name: 'ip:record:10m', windowMs: 10 * MIN, max: 120 }];
 /** The SendGrid webhook per IP (it posts batches; L5). */
 export const IP_WEBHOOK_LIMITS: Limit[] = [{ name: 'ip:webhook:10m', windowMs: 10 * MIN, max: 120 }];
 /** Staff actions (client proofs, unlocks, unsuppressions, revocations together) per staff member. */

@@ -46,7 +46,7 @@ A user opens `{authOrigin}/home`, signs in with Google, and from one Hana page:
 - sees the partner apps whose wallets Hana can still open for them, and for each one their addresses (Stellar `G…`,
   EVM `0x…`, account 0, `key_index` 0);
 - exports a chain's private key with the same safeguards as today's export window (fresh Google sign-in, typed
-  confirmation, hold to reveal), so a partner app shutting down doesn't strand them;
+  confirmation, Show key or Copy key, D268), so a partner app shutting down doesn't strand them;
 - sees every device (browser session) signed in to each app and its active auto-approve consent, and stops a consent
   from any device.
 
@@ -63,7 +63,7 @@ tuple or a key rule.
 
 | Fact | Where |
 |---|---|
-| Export runs only in a top-level `{authOrigin}/export` window the vault's launcher opens; it takes its context (app, scope, chain, address) from the vault, runs its own login (`/login?mode=export`, Google `max_age=0`, `max_uses = 1`, 15 min session), aborts if the address differs from the vault's, shows the key after typing `EXPORT` while a button is held | `packages/web/src/auth/export-page.ts` (`EXPORT_SESSION_TTL_MS`, `EXPORT_CONFIRMATION`), `google.ts` `forceReauth` |
+| Export runs only in a top-level `{authOrigin}/export` window the vault's launcher opens; it takes its context (app, scope, chain, address) from the vault, runs its own login (`/login?mode=export`, Google `max_age=0`, `max_uses = 1`, 15 min session), aborts if the address differs from the vault's, shows the key after typing `EXPORT` on a Show key / Hide key toggle and copies it on Copy key (D268) | `packages/web/src/auth/export-page.ts` (`EXPORT_SESSION_TTL_MS`, `EXPORT_CONFIRMATION`), `google.ts` `forceReauth` |
 | `/v1/login` needs an **active** app (`x-hana-key`), and from `authOrigin` an `x-hana-parent-origin` the app allows; exports are limited to 3 per hour per `(app, sha256(path))` | `apps/api/src/handlers.ts` `appGate`, `origins.ts` `checkCaller`, `login.ts` `EXPORTS_PER_PATH_HOUR` |
 | So a suspended or deleted app, or one with no allowed origin left, can't export today | same |
 | `GET /v1/app` picks the scope's own Google client first and the shared client only when the scope has none | `handlers.ts` `handleAppConfig` |
@@ -179,7 +179,7 @@ From an app's page in Home:
    `max_age=0` and `login_hint`; relay read; token check; `POST /v1/home/login`; `S = decryptCkd(…,
    ckdAppId(SIGNER, path), pinned key)` with the pairing check; `PRK = extractPrk(S)`; both addresses shown.
 2. **Export** (collapsed "Move this wallet to another wallet app" section, D41): pick a chain → the warning text of
-   today's export window → type `EXPORT` → the key (SEP-23 `S…` or `0x` hex) is shown while the button is held, next to
+   today's export window → type `EXPORT` → the key (SEP-23 `S…` or `0x` hex) is shown on Show key (or copied on Copy key, D268), next to
    its address. Nothing is copied automatically.
 3. Home keeps PRK in memory for at most 5 min after step 1 (or until the user leaves the app page or closes Home),
    deriving a chain key only on its export and zeroing it after; then PRK is zeroed and the next export needs step 1
@@ -288,7 +288,7 @@ dormant or closed tab at its next use. Counters (per-day count and value) stay o
 | F1 | Sign in | `/home` → "Sign in with Google" → popup, account chooser → front page | none | Google + ~1 s |
 | F2 | Your apps | directory grouped by wallet (scope): name, logo (batch C), origins, status ("active", "no longer active"), coverage badge, "signed in on N devices"; search | none | D1 + cached views |
 | F3 | Open a wallet | app page → "Show my wallets" → Google re-auth (`max_age=0`, account preselected) → addresses with copy and explorer links | 1 tx | ~8–12 s + Google |
-| F4 | Export | F3 → expand "Move this wallet…" → chain → warning → type `EXPORT` → hold to reveal | none within 5 min of F3 | — |
+| F4 | Export | F3 → expand "Move this wallet…" → chain → warning → type `EXPORT` → Show key or Copy key (D268) | none within 5 min of F3 | — |
 | F5 | Devices and auto-approve | list per app; each device: origin, signed in, ends; its consent: label, granted, ends → "Stop auto-approving" | none | one API call |
 | F6 | Not covered | the app page explains why (shared login off, partner-held client gone), with "use the app itself" where it still runs | none | — |
 | F7 | Wrong account | a per-app sign-in with another Google account → "Sign in as the same account you used in Home" | none | — |
@@ -407,7 +407,7 @@ other layout (`hana-id/session/v1`, `hana-id-session-v1:`, `hana-id-vault-v1:`);
   user's `consentId` gives 404 with no change.
 - Logs never contain `x-hana-home`, tokens, `sub` or path hashes.
 
-**Web unit:** Home page state machine (sign in, directory, open wallet, export with typed confirmation and hold, PRK
+**Web unit:** Home page state machine (sign in, directory, open wallet, export with typed confirmation, Show key and Copy key, PRK
 zeroed at 5 min and on leave); `/login?mode=home` opener checks; the vault registers before storing a consent and
 grants nothing when registration fails; auto-sign needs a fresh `'active'`; `'revoked'`/`'unknown'` clears the local
 consent; revoke paths call the endpoint after clearing locally.

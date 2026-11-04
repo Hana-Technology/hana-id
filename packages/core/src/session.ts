@@ -1,7 +1,8 @@
 // Session key: a non-extractable WebCrypto Ed25519 key pair. The private half can sign but never be read out, so it
 // can sit in IndexedDB as is (docs/batch-b-spec.md "Record"). Ported from apps/smoke/src/session.ts.
 import { type Bytes, toBytes } from './bytes.ts';
-import { type VaultMessageInput, ckdPayload, revokePayload, sessionMessage, vaultMessage } from './layouts.ts';
+import { type SessionNonceInput, type VaultMessageInput, ckdPayload, createProofPayload, revokePayload, sessionMessage, vaultMessage } from './layouts.ts';
+import { linkedCkdPayload } from './links.ts';
 
 export const SALT_BYTES = 32;
 
@@ -31,6 +32,16 @@ export const signSessionMessage = (privateKey: CryptoKey, counter: number, paylo
 
 /** The derive_key signature over the CKD payload. */
 export const signDerive = (privateKey: CryptoKey, counter: number, pk1: string, pk2: string): Promise<Bytes> => signSessionMessage(privateKey, counter, ckdPayload(pk1, pk2));
+
+/**
+ * A linked login's counter-1 signature (D133): over the linked CKD payload, which binds the link token and its mode,
+ * so nobody but the session key holder can add, swap, change or strip the link.
+ */
+export const signDeriveLinked = (privateKey: CryptoKey, pk1: string, pk2: string, linkJwt: string, immediate: boolean): Promise<Bytes> =>
+  signSessionMessage(privateKey, 1, linkedCkdPayload(pk1, pk2, linkJwt, immediate));
+
+/** create_session's `signature` (D137): the proof of possession over createProofPayload, counter 0. */
+export const signCreate = (privateKey: CryptoKey, session: SessionNonceInput): Promise<Bytes> => signSessionMessage(privateKey, 0, createProofPayload(session));
 
 /** The revoke_session signature. */
 export const signRevoke = (privateKey: CryptoKey, counter: number): Promise<Bytes> => signSessionMessage(privateKey, counter, revokePayload());

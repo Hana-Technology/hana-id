@@ -2,7 +2,7 @@
 // "Apps, scopes, owner actions": ConsoleRpc.ownerAction, its precheck and the per-IP limiter fed by clientIp): through
 // the ConsoleRpc and AdminRpc entrypoints, with real RS256 tokens from a test key the mocked Google JWKS serves and a
 // mocked NEAR whose scope lists the member as an `Owner::Oidc`.
-import { nonceOf, originChangeDigest, ownerActionNonce, settingsChangeDigest } from '@hana-id/console-core';
+import { clientProofNonce, nonceOf, originChangeDigest, ownerActionNonce, settingsChangeDigest } from '@hana-id/console-core';
 import { clearJwksCache } from '@hana-id/oidc';
 import { runInDurableObject } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
@@ -12,7 +12,7 @@ import { detectDrift } from '../src/changes/drift.ts';
 import { validatePolicy } from '../src/changes/policy.ts';
 import { forgetCapEvents, OWNER_ACTIONS_PER_IP_MINUTE } from '../src/handlers.ts';
 import { clearViewCaches } from '../src/views.ts';
-import { GOOGLE_ISS, ORIGIN, call, google, uid } from './helpers.ts';
+import { GOOGLE_ISS, NAMED_PII_CLAIMS, ORIGIN, call, google, uid } from './helpers.ts';
 import {
   CONSOLE_AUD as CONSOLE,
   DELAY,
@@ -60,6 +60,9 @@ async function ok<T>(p: Promise<T>): Promise<Extract<T, { ok: true }>> {
   if (!(r as { ok: boolean }).ok) throw new Error(`expected ok, got ${JSON.stringify(r)}`);
   return r as Extract<T, { ok: true }>;
 }
+
+/** A well-typed value for a claim (strict optional claims would refuse a mistyped one before the allow-list does). */
+const claimValue = (claim: string): unknown => (claim === 'email_verified' ? true : 'x');
 
 const ack = async (changeId: string) => adminRpc().ackNotice({ ...system(), changeId, cancelTokenHash: await linkToken().hash });
 
@@ -122,6 +125,20 @@ describe('ConsoleRpc.changeOrigins: the API verifies the member’s step-up itse
     expect(await call_(jwt3, { add: ['https://three.example.com'], expectedVersion: 2 })).toMatchObject({ ok: false, code: 'near_unavailable' });
     n.views.get_scope = scope;
     await ok(call_(jwt3, { add: ['https://three.example.com'], expectedVersion: 2 }));
+  });
+
+  it('the step-up token is held to the login tokens’ claim allow-list (D277): a name, picture or any other claim outside it is forbidden, and the token stays unused', async () => {
+    near();
+    const app = await orgApp();
+    const nonce = await originNonce(app, [NEW], [], 0);
+    const before = await ledgerCount();
+    for (const claim of [...NAMED_PII_CLAIMS, 'unknown_claim']) {
+      const r = await consoleRpc(clock).changeOrigins({ ...member(), orgId: app.org, appId: app.id, add: [NEW], remove: [], expectedVersion: 0, stepUpJwt: await stepUp(nonce, { [claim]: claimValue(claim) }) });
+      expect(r, claim).toMatchObject({ ok: false, code: 'forbidden', error: expect.stringContaining(`allow-list (${claim})`) });
+    }
+    expect(await ledgerCount()).toBe(before);
+    // The same change with a clean token applies.
+    await ok(consoleRpc(clock).changeOrigins({ ...member(), orgId: app.org, appId: app.id, add: [NEW], remove: [], expectedVersion: 0, stepUpJwt: await stepUp(nonce) }));
   });
 
   it('a reused token is token_used, even for the same change on a version that came back to it', async () => {
@@ -287,6 +304,29 @@ describe('ConsoleRpc.ownerAction', () => {
     expect(await consoleRpc(clock).ownerAction({ ...ctx(), orgId: app.org, body })).toMatchObject({ ok: false, code: 'token_used' });
     // Only a member actor; never org_legacy.
     expect(await consoleRpc(clock).ownerAction({ ...hana(), orgId: app.org, body })).toMatchObject({ ok: false, code: 'forbidden' });
+  });
+
+  it('the claim allow-list holds on this path as on /v1/owner-actions (D274, D277): the owner token and an AddClient proof, nothing relayed', async () => {
+    const { n, app } = await setup();
+    // Any claim outside the allow-list on the owner token, not only email and hd: forbidden, the claim named.
+    for (const claim of [...NAMED_PII_CLAIMS, 'unknown_claim']) {
+      const r = await consoleRpc(clock).ownerAction({ ...ctx(), orgId: app.org, body: await signed('cancel_change', { scope_id: app.scope, change_id: 2 }, 4, { [claim]: claimValue(claim) }) });
+      expect(r, claim).toMatchObject({ ok: false, code: 'forbidden', error: expect.stringMatching(new RegExp(`^token_has_pii: .*\\(claim: ${claim}\\)$`, 'u')) });
+    }
+    // An AddClient proof for the right client at the right nonce, but carrying the partner user's email: refused too
+    // (the console's earlier rule let a proof carry it; it is public once relayed).
+    const aud = 'new.apps.googleusercontent.com';
+    const proofNonce = await clientProofNonce({ signer: SIGNER, scopeId: app.scope, actionNonce: 4 });
+    const proof = (claims: Record<string, unknown> = {}) => google.sign({ iss: GOOGLE_ISS, aud, sub: 'partner-user', nonce: proofNonce, exp: Math.floor(Date.now() / 1000) + 600, ...claims });
+    const add = async (claims: Record<string, unknown>) => signed('propose_change', { scope_id: app.scope, change: { AddClient: { provider: 'google', aud } }, client_proof: await proof(claims) }, 4);
+    for (const claims of [{ email: 'user@partner.example' }, { hd: 'partner.example' }, { picture: 'https://x.example/p.png' }]) {
+      const claim = Object.keys(claims)[0]!;
+      expect(await consoleRpc(clock).ownerAction({ ...ctx(), orgId: app.org, body: await add(claims) }), claim).toMatchObject({ ok: false, code: 'forbidden', error: expect.stringContaining(`The client proof carries a claim outside the allow-list (claim: ${claim})`) });
+    }
+    expect(n.sent).toHaveLength(0);
+    // The same action with a clean proof is relayed.
+    expect(await ok(consoleRpc(clock).ownerAction({ ...ctx(), orgId: app.org, body: await add({}) }))).toMatchObject({ status: 200 });
+    expect(n.sent.map((t) => t.method)).toEqual(['propose_change']);
   });
 
   it('clientIp feeds the same per-IP limiter as /v1/owner-actions', async () => {

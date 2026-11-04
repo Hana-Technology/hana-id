@@ -80,10 +80,35 @@ export const recordKey = (signer: string, appId: string, scopeId: string, keyInd
 
 // ---- storage ----
 
+// ---- root pins (D263) ----
+//
+// Beside the record, one small entry per identity this app's vault signed in on this device: the identity key of the
+// account root whose path it last derived (after the pairing check passed). A later login whose root changed other
+// than by a link activating (own → member) is confirmed on both NEAR providers first (vault/login.ts `checkPin`). It
+// outlives a logout on purpose, and holds only identity keys (scope-bound hashes, public in the chain's views), never
+// a `sub` or a path.
+
+/** A root pin as stored. */
+export interface RootPinRecord {
+  v: 1;
+  t: 'root-pin';
+  /** The root's identity key, 64 hex. */
+  root: string;
+}
+
+export const rootPinKey = (signer: string, appId: string, scopeId: string, identityKeyHex: string): string => `pin|${signer}|${appId}|${scopeId}|${identityKeyHex}`;
+
+/** The stored pin's root identity key, or null (none, or a value of another shape: ignored, then overwritten). */
+export function parseRootPin(v: unknown): string | null {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return null;
+  const r = v as Record<string, unknown>;
+  return r.v === 1 && r.t === 'root-pin' && typeof r.root === 'string' && /^[0-9a-f]{64}$/u.test(r.root) ? r.root : null;
+}
+
 /** The object store, as the vault uses it. Every method may throw (storage blocked, quota, private mode). */
 export interface RecordStore {
   get(key: string): Promise<unknown>;
-  put(key: string, record: RecordV1): Promise<void>;
+  put(key: string, record: RecordV1 | RootPinRecord): Promise<void>;
   delete(key: string): Promise<void>;
 }
 

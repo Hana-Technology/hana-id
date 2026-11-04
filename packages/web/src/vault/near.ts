@@ -1,11 +1,34 @@
 // The vault's own NEAR reads (docs/batch-b-spec.md "Failure handling"): it re-syncs a session from the chain with
 // `get_session` (optimistic, as apps/smoke's syncCounter), checks the app's scope in the on-chain registry at login
 // (`scope_for_client`, `get_scope`; Q7), and polls a login transaction with `EXPERIMENTAL_tx_status`,
-// `sender_account_id` the pinned RELAYER. It never takes session state from the API. A lying RPC can fail or delay a
-// login, never forge one: every CKD result still passes the pairing check against the pinned key. Each read goes to
-// the manifest `rpc`, and to `rpcFallback` only when the primary fails (../near-call.ts), one endpoint per answer.
-import { type CkdResult, type SessionView, base64Decode, base64Encode, fromUtf8, isCkdResult, isSessionView, utf8 } from '@hana-id/core';
-import { type NearEndpoints, isPendingTxError, nearCall } from '../near-call.ts';
+// `sender_account_id` the pinned RELAYER. It never takes session state from the API. Each read goes to the manifest
+// `rpc`, and to `rpcFallback` only when the primary fails (../near-call.ts), one endpoint per answer.
+//
+// What a lying RPC can do: fail or delay a login, refuse one with a wrong registry answer, and forge a CKD answer for a
+// path whose secret S the liar knows. The pairing check against the pinned key catches a forgery for the identity's
+// own path (only the MPC can answer that one), but not for a path a `get_identity` view of the liar's chose (a
+// "member" of the liar's own account): so a path that is not the signed-in identity's own is confirmed on both
+// providers separately (`independent()`, ../path-check.ts, D263) before the vault derives it.
+import {
+  type AccountView,
+  type CkdResult,
+  type EmailChainKey,
+  type EmailSignerPolicy,
+  type IdentityView,
+  type SessionView,
+  base64Decode,
+  base64Encode,
+  fromUtf8,
+  isCkdResult,
+  isSessionView,
+  parseAccountView,
+  parseIdentityView,
+  parseIssuerKeysView,
+  parseSelfIssuedView,
+  utf8,
+} from '@hana-id/core';
+import { type NearEndpoints, independentEndpoints, isPendingTxError, nearCall, nearCallAt } from '../near-call.ts';
+import type { IndependentViews, ViewRead } from '../path-check.ts';
 
 type Fetch = typeof fetch;
 
@@ -41,15 +64,31 @@ export class NearView {
     return nearCall(this.endpoints, this.fetchFn, method, params, { id: 'hana-vault', ...(usable ? { usable } : {}), ...(this.timeoutMs ? { timeoutMs: this.timeoutMs } : {}) });
   }
 
+  private viewParams(methodName: string, args: unknown): Record<string, unknown> {
+    return { request_type: 'call_function', finality: 'optimistic', account_id: this.signer, method_name: methodName, args_base64: base64Encode(utf8(JSON.stringify(args))) };
+  }
+
   /** A view of the pinned signer contract at optimistic finality, as parsed JSON. Throws when no endpoint answers. */
   async view(methodName: string, args: unknown): Promise<unknown> {
-    const body = await this.call(
-      'query',
-      { request_type: 'call_function', finality: 'optimistic', account_id: this.signer, method_name: methodName, args_base64: base64Encode(utf8(JSON.stringify(args))) },
-      viewAnswered,
-    );
+    const body = await this.call('query', this.viewParams(methodName, args), viewAnswered);
     const raw = (body.result as { result: number[] }).result;
     return JSON.parse(fromUtf8(Uint8Array.from(raw))) as unknown;
+  }
+
+  /**
+   * The env's two providers, each read alone (no fallback from one to the other), for confirming a path that isn't
+   * the signed-in identity's own (D263); null without a second provider. `signal` (the login's) ends the reads early.
+   */
+  independent(signal?: AbortSignal): IndependentViews | null {
+    const ends = independentEndpoints(this.endpoints);
+    if (!ends) return null;
+    const at =
+      (url: string): ViewRead =>
+      async (method, args) => {
+        const body = await nearCallAt(url, this.fetchFn, 'query', this.viewParams(method, args), { id: 'hana-vault', usable: viewAnswered, ...(this.timeoutMs ? { timeoutMs: this.timeoutMs } : {}), ...(signal ? { signal } : {}) });
+        return JSON.parse(fromUtf8(Uint8Array.from((body.result as { result: number[] }).result))) as unknown;
+      };
+    return { primary: at(ends[0]), second: at(ends[1]) };
   }
 
   /** The session of a session key, or null (optimistic finality, so a just-executed login shows up). */
@@ -83,6 +122,39 @@ export class NearView {
       throw new Error('NEAR RPC: malformed config');
     }
     return list as [string, string][];
+  }
+
+  /** `get_issuer_keys(provider)`: the provider's active keys with their material (`{kid, n, e}`), or null for none. */
+  async issuerKeys(provider: string): Promise<EmailChainKey[] | null> {
+    return parseIssuerKeysView(await this.view('get_issuer_keys', { provider }));
+  }
+
+  /** `get_self_issued(provider)`: the signer policy, or null (not a self-issued provider; a contract before v3 throws). */
+  async selfIssued(provider: string): Promise<EmailSignerPolicy | null> {
+    return parseSelfIssuedView(await this.view('get_self_issued', { provider }));
+  }
+
+  /**
+   * `get_identity(scope_id, provider, sub)` (contract v3): where the identity stands, for the path it derives (batch 7)
+   * and the link judgements. Throws when no endpoint answers or the answer isn't the v3 shape (a v2 contract has no
+   * such view).
+   */
+  async identity(scopeId: string, provider: string, sub: string): Promise<IdentityView> {
+    return parseIdentityView(await this.view('get_identity', { scope_id: scopeId, provider, sub }));
+  }
+
+  /** `get_account(scope_id, provider, sub)`: the account the identity is in (as root or member), or null. */
+  async account(scopeId: string, provider: string, sub: string): Promise<AccountView | null> {
+    return parseAccountView(await this.view('get_account', { scope_id: scopeId, provider, sub }));
+  }
+
+  /**
+   * Whether links are open on chain: `get_config().unrecorded_wallets` is exactly `false` (D135; a pre-v3 contract has
+   * no field, so links stay closed there, as at the API, D232).
+   */
+  async linksOpen(): Promise<boolean> {
+    const value = await this.view('get_config', {});
+    return isObj(value) && value.unrecorded_wallets === false;
   }
 
   /** The outcome of a relayed transaction (sender: the pinned RELAYER). Network errors throw. */

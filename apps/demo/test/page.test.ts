@@ -70,7 +70,11 @@ class FakeClient {
     this.resolveReady();
   }
 
-  login(): Promise<HanaAddresses> {
+  /** Every login's options (each demo button names its method). */
+  readonly loginOptions: unknown[] = [];
+
+  login(options?: unknown): Promise<HanaAddresses> {
+    this.loginOptions.push(options);
     this.status = 'logging_in';
     this.emit('statusChanged', 'logging_in');
     return new Promise((resolve, reject) => {
@@ -146,6 +150,22 @@ async function loginFlow(): Promise<void> {
 }
 
 describe('demo page', () => {
+  it('“Log in with Google” and “Log in with email” each open their own method (batch 8a)', async () => {
+    boot();
+    fake.readyWith(null);
+    await flush();
+    expect($('login-email').hidden).toBe(false);
+    expect(($('login-email') as HTMLButtonElement).disabled).toBe(false);
+    click('login');
+    expect(fake.loginOptions).toEqual([{ method: 'google' }]);
+    // While a login is pending, both buttons are disabled.
+    expect(($('login-email') as HTMLButtonElement).disabled).toBe(true);
+    fake.finishLogin!(Object.assign(new Error('x'), { code: 'login_cancelled' }));
+    await flush();
+    click('login-email');
+    expect(fake.loginOptions).toEqual([{ method: 'google' }, { method: 'email' }]);
+  });
+
   it('creates the client exactly as a partner does, from the baked configuration', () => {
     boot();
     expect(fake.config).toEqual({
@@ -173,7 +193,28 @@ describe('demo page', () => {
     expect($('logout').hidden).toBe(false);
     expect($('status').textContent).toMatch(/^Logged in · session ends by .* \(in 11 h 0 min\), or sooner if idle · persistence: session/u);
     const cells = [...$('timings').querySelectorAll('td')].map((td) => td.textContent);
-    expect(cells.slice(1)).toEqual(['120', '900', '4000', '15', '6200', '40', '7000']);
+    expect(cells.slice(1)).toEqual(['google', '120', '900', '4000', '15', '6200', '40', '7000']);
+  });
+
+  it('an email login shows its method, the email step as sign-in and its parts, and no google stage', async () => {
+    boot();
+    fake.readyWith(null);
+    await flush();
+    t = 1000;
+    click('login-email');
+    t = 40_000;
+    const stages = { app: 9954, popup: 300, emailLoad: 150, emailEntry: 4000, emailStart: 420, emailCode: 25_000, emailVerify: 310, emailRelay: 600, verify: 20, chain: 6200, decrypt: 40 };
+    fake.finishLogin!({ addresses: ADDRESSES, expiresAtMs: Date.UTC(2026, 9, 29, 23), persistence: 'session', timings: stages });
+    await flush();
+    const rows = [...$('timings').querySelectorAll('tr')];
+    expect([...rows[0]!.querySelectorAll('td')].map((td) => td.textContent).slice(1)).toEqual(['email', '9954', '300', '29730', '20', '6200', '40', '39000']);
+    expect(rows[1]!.textContent).toBe('Email sign-in: address 4000, code request 420, code wait 25000, verify 310');
+    expect(rows[2]!.textContent).toBe('Other stages: emailLoad 150, emailRelay 600');
+    expect($('timings').textContent).not.toContain('google');
+    click('copy-diagnostics');
+    await flush();
+    const d = JSON.parse(copied.at(-1)!) as { logins: unknown[] };
+    expect(d.logins).toEqual([{ at: '2026-10-29T12:00:00.000Z', method: 'email', totalMs: 39000, stages }]);
   });
 
   it('copies addresses', async () => {
@@ -319,7 +360,7 @@ describe('demo page', () => {
     expect($('diagnostics').textContent).toBe(text);
     const d = JSON.parse(text) as Record<string, unknown>;
     expect(d).toMatchObject({ environment: 'sandbox-dev', appKey: 'pk_test_85gd…', status: 'logged_in', addresses: ADDRESSES, pageOrigin: 'https://hana-id-demo-sandbox-dev.tingtc.workers.dev' });
-    expect(d.logins).toEqual([{ at: '2026-10-29T12:00:00.000Z', totalMs: 7000, stages: TIMINGS }]);
+    expect(d.logins).toEqual([{ at: '2026-10-29T12:00:00.000Z', method: 'google', totalMs: 7000, stages: TIMINGS }]);
     expect(d.errors).toEqual([{ at: '2026-10-29T12:00:00.000Z', action: 'sign', code: -32603, reason: null, message: 'relay [redacted] failed' }]);
     expect(text).not.toContain(CONFIG.publishableKey);
     expect(text).not.toContain('ab'.repeat(65));

@@ -1,8 +1,9 @@
 // @vitest-environment happy-dom
 // @vitest-environment-options {"url":"http://localhost:5173/direct.html"}
-// Boots the real direct page (direct.html + src/direct.ts) against a mocked API, RPC, Google Identity Services and MPC:
-// wiring, the UNSET-key guard, the client choice, a whole run (sign-in → create_session → derive → revoke → replays),
-// and the message once REJECT_PII_ON_SESSIONS refuses GIS tokens.
+// Boots the real direct page (direct.html + src/direct.ts) against a mocked API, RPC, Google (the implicit flow's popup
+// and callback) and MPC: wiring, the UNSET-key guard, the client choice, a whole run (openid-only sign-in →
+// create_session → derive → revoke → replays), and that a token with a claim outside the allow-list is never sent
+// (D271).
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { bls12_381 as bls } from '@noble/curves/bls12-381';
@@ -69,7 +70,7 @@ function mockBackend(opts: { signer?: string; rejectPii?: boolean } = {}) {
       case 'https://api.example/v1/app':
         return Response.json({ scopeId: 's1', signer: opts.signer ?? baseEnv.signer, google: { clientId: OWN, mode: 'own' }, requestId: 'r1' });
       case 'https://api.example/v1/sessions': {
-        // As the API answers once REJECT_PII_ON_SESSIONS = "1" (GIS tokens carry `email`).
+        // As the API answers a token with a claim outside its allow-list (always on, D271).
         if (opts.rejectPii) return Response.json({ error: 'The ID token carries a claim outside the allow-list', code: 'token_has_pii', data: { claim: 'email' }, requestId: 'rq' }, { status: 400 });
         const b = reqBody as { jwt: string; sessionPublicKey: number[]; keyIndex: number; maxUses: number; expiresAtMs: number; salt: number[] };
         const key = toHex(Uint8Array.from(b.sessionPublicKey));
@@ -114,22 +115,39 @@ function mockBackend(opts: { signer?: string; rejectPii?: boolean } = {}) {
   return { calls, sessions };
 }
 
-/** Google Identity Services stand-in: captures the nonce and lets the test "sign in". */
-function mockGoogle() {
-  const state: { clientId: string | null; nonce: string | null; callback: ((r: { credential: string }) => void) | null } = { clientId: null, nonce: null, callback: null };
-  vi.stubGlobal('google', {
-    accounts: {
-      id: {
-        initialize: (c: { client_id: string; nonce: string; callback: (r: { credential: string }) => void }) => Object.assign(state, { clientId: c.client_id, nonce: c.nonce, callback: c.callback }),
-        renderButton: () => undefined,
-      },
-    },
-  });
-  const signIn = (sub = SUB) => {
-    const part = (o: Json) => base64UrlEncode(utf8(JSON.stringify(o)));
-    state.callback!({ credential: `${part({ alg: 'RS256', kid: 'k' })}.${part({ aud: state.clientId, sub, nonce: state.nonce })}.c2ln` });
+const CALLBACK = 'hana-smoke-direct-callback';
+const realOpen = window.open;
+
+/**
+ * Google's implicit flow stand-in: records the popup URLs the page opens (`blocked`: window.open returns null) and
+ * hands a callback fragment back as direct-callback.html does (postMessage from this origin).
+ */
+function mockGoogle(opts: { blocked?: boolean } = {}) {
+  const opened: URL[] = [];
+  window.open = ((u: string) => {
+    opened.push(new URL(u));
+    return opts.blocked ? null : ({ closed: false } as Window);
+  }) as typeof window.open;
+  const last = () => opened.at(-1)!;
+  const deliver = (hash: string, origin = location.origin) => window.dispatchEvent(new MessageEvent('message', { data: { t: CALLBACK, hash }, origin }));
+  const part = (o: Json) => base64UrlEncode(utf8(JSON.stringify(o)));
+  const token = (claims: Json) => `${part({ alg: 'RS256', kid: 'k' })}.${part(claims)}.c2ln`;
+  /** Google's answer for the last popup: an openid-only token (the spike's claims) plus `extra` claims. */
+  const answer = (extra: Json = {}, sub = SUB) => {
+    const u = last();
+    const now = Math.floor(Date.now() / 1000);
+    const claims = { iss: 'https://accounts.google.com', azp: u.searchParams.get('client_id'), aud: u.searchParams.get('client_id'), sub, nonce: u.searchParams.get('nonce'), iat: now, nbf: now, exp: now + 3600, jti: 'j', ...extra };
+    return `id_token=${token(claims)}&state=${u.searchParams.get('state')}`;
   };
-  return { state, signIn };
+  const signIn = (extra: Json = {}, sub = SUB) => deliver(answer(extra, sub));
+  return { opened, last, deliver, answer, signIn };
+}
+
+/** Clicks the page's Google button (rendered once the session is ready), which opens the popup. */
+async function clickSignIn(): Promise<void> {
+  await vi.waitFor(() => expect(document.getElementById('google-sign-in')).not.toBeNull());
+  await idle();
+  button('google-sign-in').click();
 }
 
 async function boot(env: Partial<PageEnv> = {}): Promise<void> {
@@ -153,7 +171,10 @@ async function idle(): Promise<void> {
 }
 
 beforeEach(() => localStorage.clear());
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  window.open = realOpen;
+});
 
 describe('smoke page', () => {
   it('shows the environment and refuses to start while ckdNetworkKey is UNSET', async () => {
@@ -200,9 +221,22 @@ describe('smoke page', () => {
     (document.querySelectorAll<HTMLInputElement>('input[name="client"]')[1]!).checked = true;
     (document.getElementById('key-index') as HTMLInputElement).value = '1';
     button('start').click();
-    await vi.waitFor(() => expect(google.state.nonce).not.toBeNull());
-    expect(google.state.clientId).toBe(SHARED);
-    expect(text('pending')).toContain(google.state.nonce!);
+    await clickSignIn();
+    // Google's implicit flow, openid only (never Google Identity Services, whose tokens carry `email`).
+    const auth = google.last();
+    expect(`${auth.origin}${auth.pathname}`).toBe('https://accounts.google.com/o/oauth2/v2/auth');
+    expect(Object.fromEntries(auth.searchParams)).toEqual({
+      client_id: SHARED,
+      redirect_uri: 'http://localhost:5173/direct-callback.html',
+      response_type: 'id_token',
+      response_mode: 'fragment',
+      scope: 'openid',
+      nonce: expect.any(String),
+      state: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u),
+      prompt: 'select_account',
+    });
+    expect(text('pending')).toContain(auth.searchParams.get('nonce')!);
+    expect(document.querySelector('script[src*="accounts.google.com/gsi"]')).toBeNull();
 
     google.signIn();
     await vi.waitFor(() => expect(document.querySelectorAll('#runs tr')).toHaveLength(1));
@@ -212,6 +246,8 @@ describe('smoke page', () => {
     const create = backend.calls.find((c) => c.url.endsWith('/v1/sessions'))!;
     expect(create.body).toMatchObject({ keyIndex: 1, maxUses: 5 });
     expect(create.body).not.toHaveProperty('scopeId');
+    // The session key's proof of possession (D137), 64 bytes.
+    expect(create.body!.signature).toHaveLength(64);
     const result = text('result');
     expect(result).toMatch(/G[A-Z2-7]{55}/u);
     expect(result).toMatch(/0x[0-9a-fA-F]{40}/u);
@@ -259,18 +295,83 @@ describe('smoke page', () => {
     expect(text('result')).toBe('');
   });
 
-  it('explains a token_has_pii refusal: the env refuses GIS tokens on /v1/sessions', async () => {
+  it.each(['email', 'email_verified', 'name', 'picture', 'hd', 'unknown_claim'])('never sends a token carrying %s: refused in the page, no /v1/sessions call', async (claim) => {
+    const backend = mockBackend();
+    const google = mockGoogle();
+    await boot({ ckdNetworkKey: validKey });
+    await loadApp();
+    button('start').click();
+    await clickSignIn();
+    google.signIn({ [claim]: claim === 'email' ? 'ada@example.com' : 'x' });
+    await vi.waitFor(() => expect(text('log')).toContain(`the claim "${claim}", outside the allow-list (openid only): not sent`));
+    await idle();
+    expect(backend.calls.some((c) => c.url.endsWith('/v1/sessions') || c.url.endsWith('/v1/derive'))).toBe(false);
+    expect(document.body.innerHTML).not.toContain('ada@example.com');
+    expect(document.querySelectorAll('#runs tr')).toHaveLength(0);
+  });
+
+  it('explains an API token_has_pii refusal (the page’s and the API’s allow-lists would differ)', async () => {
     const backend = mockBackend({ rejectPii: true });
     const google = mockGoogle();
     await boot({ ckdNetworkKey: validKey });
     await loadApp();
     button('start').click();
-    await vi.waitFor(() => expect(google.state.nonce).not.toBeNull());
+    await clickSignIn();
     google.signIn();
-    await vi.waitFor(() => expect(text('log')).toMatch(/400 token_has_pii.*REJECT_PII_ON_SESSIONS = "1".*use the vault page/u));
+    await vi.waitFor(() => expect(text('log')).toMatch(/400 token_has_pii.*outside its allow-list.*report it/u));
     await idle();
     expect(backend.calls.some((c) => c.url.endsWith('/v1/derive'))).toBe(false);
     expect(document.querySelectorAll('#runs tr')).toHaveLength(0);
+  });
+
+  it('takes only its own sign-in’s fragment: another state, another origin and a repeated state are ignored', async () => {
+    const backend = mockBackend();
+    const google = mockGoogle();
+    await boot({ ckdNetworkKey: validKey });
+    await loadApp();
+    button('start').click();
+    await clickSignIn();
+    const good = google.answer();
+    const state = google.last().searchParams.get('state')!;
+    google.deliver(good.replace(state, 'A'.repeat(43)));
+    google.deliver(good, 'https://evil.example');
+    google.deliver(`${good}&state=${state}`);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(backend.calls.some((c) => c.url.endsWith('/v1/sessions'))).toBe(false);
+    // The right one still works afterwards.
+    google.deliver(good);
+    await vi.waitFor(() => expect(document.querySelectorAll('#runs tr')).toHaveLength(1));
+  });
+
+  it('accepts the fragment over the BroadcastChannel (when Google severed the opener), and reports a Google error', async () => {
+    mockBackend();
+    const google = mockGoogle();
+    await boot({ ckdNetworkKey: validKey });
+    await loadApp();
+    button('start').click();
+    await clickSignIn();
+    const denied = `error=access_denied&state=${google.last().searchParams.get('state')}`;
+    const channel = new BroadcastChannel(CALLBACK);
+    channel.postMessage({ t: CALLBACK, hash: denied });
+    channel.close();
+    await vi.waitFor(() => expect(text('log')).toContain('Google sign-in failed: access_denied'));
+    // A new click opens a new popup with a new state; its answer comes over the channel too.
+    button('google-sign-in').click();
+    expect(google.opened).toHaveLength(2);
+    const again = new BroadcastChannel(CALLBACK);
+    again.postMessage({ t: CALLBACK, hash: google.answer() });
+    again.close();
+    await vi.waitFor(() => expect(document.querySelectorAll('#runs tr')).toHaveLength(1));
+  });
+
+  it('says so when the browser blocks the popup', async () => {
+    mockBackend();
+    mockGoogle({ blocked: true });
+    await boot({ ckdNetworkKey: validKey });
+    await loadApp();
+    button('start').click();
+    await clickSignIn();
+    await vi.waitFor(() => expect(text('log')).toContain('blocked the Google sign-in popup'));
   });
 
   it('restores the results log from storage and exports it as JSON', async () => {

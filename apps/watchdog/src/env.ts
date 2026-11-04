@@ -35,7 +35,7 @@ export interface Env {
    * nothing pinned (every email key is unpinned; an email issuer on chain is a critical difference).
    */
   EMAIL_PINS?: string;
-  /** Hana's published email JWKS (set with the pins; default `{apiUrl}/v1/email/jwks.json`). */
+  /** Hana's published email JWKS (set with the pins; default `{emailIssuer.url}/v1/email/jwks.json`, or under `apiUrl`, D230). */
   EMAIL_JWKS_URL?: string;
   /**
    * The partner identity token's issuer (the manifest's `identityToken.iss`): the watchdog reads `{iss}/jwks.json` and

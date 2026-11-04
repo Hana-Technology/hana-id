@@ -11,7 +11,7 @@
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type Manifest, loadEnv, repoRoot } from '@hana-id/env';
+import { type Manifest, emailJwksUrl, loadEnv, repoRoot } from '@hana-id/env';
 import { readWatchdogSecrets, SECRET_FILE } from './secrets.ts';
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -22,12 +22,13 @@ export const CRON = '*/5 * * * *';
 
 /**
  * The email pins (`watchdog.pinnedIssuerKeys.email`) as `EMAIL_PINS` (JSON `{required, signers}`) and Hana's email
- * JWKS URL (`jwksUrl`, else `{apiUrl}/v1/email/jwks.json`). No pins: neither var, and the Worker pins nothing.
+ * JWKS URL (`jwksUrl`, else `{issuer URL}/v1/email/jwks.json`: `emailIssuer.url` when the issuer has its own, D230, else
+ * the API's URL). No pins: neither var, and the Worker pins nothing.
  */
 export function emailVars(m: Manifest): Record<string, string> {
   const pins = m.watchdog?.pinnedIssuerKeys?.email;
   if (!pins) return {};
-  const jwksUrl = pins.jwksUrl ?? (m.apiUrl ? `${m.apiUrl.replace(/\/+$/u, '')}/v1/email/jwks.json` : undefined);
+  const jwksUrl = pins.jwksUrl ?? (m.apiUrl ? emailJwksUrl(m) : undefined);
   return { EMAIL_PINS: JSON.stringify({ required: pins.required, signers: pins.signers }), ...(jwksUrl ? { EMAIL_JWKS_URL: jwksUrl } : {}) };
 }
 
@@ -92,7 +93,7 @@ export const TEST_MANIFEST: Manifest = {
   ckdDomainId: 2,
   ckdNetworkKey: 'UNSET',
   rpc: 'https://rpc.test.invalid',
-  rpcFallback: 'https://rpc-fallback.test.invalid',
+  rpcFallback: 'https://rpc.fallback-provider.invalid',
   apiUrl: 'https://api.test',
   changeDelayMs: 60_000,
   appChangeDelayMs: 60_000,

@@ -1,18 +1,21 @@
-// The wallet directory (D310, D312–D315): POST /v1/wallets/record (the vault's signed report), the identities kept
-// current after /v1/login and the link relays, and the AdminRpc / ConsoleRpc reads. Migration 0011's tables.
-import { uid as uidOf, userIdOf, supportIdOf } from '@hana-id/console-core';
+// The wallet directory (D310, D312–D315, D346): POST /v1/wallets/record (the vault's signed report, with the session
+// signature over the whole request), the identities kept current after /v1/login and the link relays, and the
+// AdminRpc / ConsoleRpc reads with their three ids. Migration 0011's tables.
+import { internalIdOf, uid as uidOf, supportIdOf } from '@hana-id/console-core';
 import { deriveAddresses, withChainKey } from '@hana-id/core/derivation';
-import { type WalletRecordChain, signWalletRecord, walletRecordStatement } from '@hana-id/core/wallet-record';
+import { identitySub } from '@hana-id/core/identity';
+import { type WalletRecordChain, signWalletRecord, walletRecordSessionMessage, walletRecordStatement } from '@hana-id/core/wallet-record';
 import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fromHex } from '../src/bytes.ts';
 import { syncAccount, syncAfterLogin } from '../src/directory/sync.ts';
 import { linkChangeNonce, linkAccountNonce, linkNewNonce } from '../src/session-crypto.ts';
 import { emailAud, emailEnv, emailToken, ikSync, setLoginMethods, withEmail } from './email-helpers.ts';
-import { bytes, call, chain, google, newSessionKey, seedApp, uid } from './helpers.ts';
+import { bytes, call, chain, google, newSessionKey, seedApp, sessionKeyPair, uid } from './helpers.ts';
 import { hanaHeaders, loginBody, withCombinedCall } from './login-helpers.ts';
 import { adminRpc, consoleRpc, member, newOrg, orgApp, rid } from './rpc-helpers.ts';
-import { HOUR, VAULT, pathFor, spentSession, vaultHeaders } from './vault-helpers.ts';
+import { mint, verifyToken } from './identity-helpers.ts';
+import { HOUR, VAULT, createShare, pathFor, spentSession, vaultHeaders, vaultSetup } from './vault-helpers.ts';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -31,22 +34,33 @@ interface RecordOpts {
   issuedAtMs?: number;
   /** Swap one chain's address for another wallet's, keeping the signature. */
   otherAddress?: WalletRecordChain;
+  /**
+   * Who makes the session signature: the body's own session key (default), another test session key, or nobody
+   * (`null`: the field left out). Signed over what the records were signed for.
+   */
+  sessionSigner?: number[] | null;
+  /** Applied after every signature is made (a tampered body). */
   mutate?: (b: Record<string, unknown>) => void;
 }
 
-/** A POST /v1/wallets/record body as the vault makes it: each address signed by its own key. */
+/** A POST /v1/wallets/record body as the vault makes it: each address signed by its own key, the whole by the session key. */
 function recordBody(app: { id: string; scope: string }, spk: number[], o: RecordOpts = {}): Record<string, unknown> {
   const prk = o.prk ?? randomPrk();
   const addresses = deriveAddresses(prk);
   const path = o.path ?? pathFor(app.scope);
   const issuedAtMs = o.issuedAtMs ?? Date.now();
   const ctx = { env: o.signEnv ?? env.ENV_NAME, signer: env.SIGNER_ACCOUNT, appId: o.signApp ?? app.id, scopeId: app.scope, path: o.signPath ?? path, sessionPublicKey: Uint8Array.from(o.signSpk ?? spk), issuedAtMs };
-  const wallets: Record<string, { address: string; signature: number[] }> = {};
+  const wallets: Record<WalletRecordChain, { address: string; signature: number[] }> = {} as never;
   for (const c of ['stellar', 'evm'] as const) {
     wallets[c] = { address: addresses[c], signature: [...withChainKey(prk, c, 0, (k) => signWalletRecord(c, k, walletRecordStatement(ctx, c, addresses[c])))] };
   }
-  if (o.otherAddress) wallets[o.otherAddress]!.address = deriveAddresses(randomPrk())[o.otherAddress];
+  if (o.otherAddress) wallets[o.otherAddress].address = deriveAddresses(randomPrk())[o.otherAddress];
   const b: Record<string, unknown> = { sessionPublicKey: spk, issuedAtMs, path, wallets };
+  const signer = o.sessionSigner === undefined ? spk : o.sessionSigner;
+  if (signer !== null) {
+    const proofs = { stellar: { address: wallets.stellar.address, signature: Uint8Array.from(wallets.stellar.signature) }, evm: { address: wallets.evm.address, signature: Uint8Array.from(wallets.evm.signature) } };
+    b.sessionSignature = [...sessionKeyPair(signer).sign(walletRecordSessionMessage(ctx, proofs)).signature];
+  }
   o.mutate?.(b);
   return b;
 }
@@ -54,9 +68,15 @@ function recordBody(app: { id: string; scope: string }, spk: number[], o: Record
 const record = (app: { id: string; key: string; scope: string }, spk: number[], o: RecordOpts & { headers?: Record<string, string>; env?: Partial<typeof env> } = {}) =>
   call('/v1/wallets/record', { headers: o.headers ?? vaultHeaders(app), body: recordBody(app, spk, o), env: o.env });
 
-async function expectedUserId(scope: string, provider: string, sub: string): Promise<string> {
-  return userIdOf(await uidOf(Uint8Array.from(atob(env.USER_ID_KEY!), (c) => c.charCodeAt(0)), { scopeId: scope, provider, sub }));
+const b64Key = (v: string | undefined): Uint8Array => Uint8Array.from(atob(v!), (c) => c.charCodeAt(0));
+
+/** The internal id (`hu_…`, end_users.user_id and the other tables' join column) of an account root. */
+async function expectedInternalId(scope: string, provider: string, sub: string): Promise<string> {
+  return internalIdOf(await uidOf(b64Key(env.USER_ID_KEY), { scopeId: scope, provider, sub }));
 }
+
+/** The User ID (`u1_…`): exactly the identity token's `sub` for that root (core identitySub, IDENTITY_SUB_KEY). */
+const expectedUserId = (scope: string, provider: string, sub: string): string => identitySub(b64Key(env.IDENTITY_SUB_KEY), scope, { provider, sub });
 
 const users = (scope: string) => env.DB.prepare('SELECT * FROM end_users WHERE scope_id = ?1').bind(scope).all<Record<string, unknown>>().then((r) => r.results);
 const wallets = (userId: string) => env.DB.prepare('SELECT chain, address, key_index, first_seen_at, last_used_at FROM end_user_wallets WHERE user_id = ?1 ORDER BY chain DESC').bind(userId).all<Record<string, unknown>>().then((r) => r.results);
@@ -71,7 +91,7 @@ async function recorded(o: { sub?: string } = {}) {
 }
 
 describe('POST /v1/wallets/record', () => {
-  it('stores the user (its uid), both wallets and the root identity, for the vault only', async () => {
+  it('stores the user (its three ids), both wallets and the root identity, for the vault only', async () => {
     const { app, spk } = await recorded();
     const prk = randomPrk();
     const res = await record(app, spk, { prk });
@@ -79,9 +99,12 @@ describe('POST /v1/wallets/record', () => {
     expect(res.headers.get('access-control-allow-origin')).toBe(VAULT);
     const b = await body(res);
     expect(Object.keys(b).sort()).toEqual(['recorded', 'requestId']);
-    const userId = await expectedUserId(app.scope, 'google', G_SUB);
+    const userId = await expectedInternalId(app.scope, 'google', G_SUB);
+    const tokenSub = expectedUserId(app.scope, 'google', G_SUB);
     const [u] = await users(app.scope);
-    expect(u).toMatchObject({ user_id: userId, support_code: supportIdOf(userId).replace(/HANA-|-/gu, '') });
+    // The internal id is the ledger's uid; the User ID is the identity token's `sub`; the Support ID is its short form.
+    expect(u).toMatchObject({ user_id: userId, token_sub: tokenSub, support_code: supportIdOf(tokenSub).replace(/HANA-|-/gu, '') });
+    expect(tokenSub).toMatch(/^u1_[A-Za-z0-9_-]{22}$/u);
     const a = deriveAddresses(prk);
     expect((await wallets(userId)).map((w) => [w.chain, w.address, w.key_index])).toEqual([
       ['stellar', a.stellar, 0],
@@ -98,7 +121,7 @@ describe('POST /v1/wallets/record', () => {
     expect((await record(app, spk, { prk, issuedAtMs: now })).status).toBe(200);
     expect((await record(app, spk, { prk, issuedAtMs: now - 60_000 })).status).toBe(200);
     expect((await record(app, spk, { prk, issuedAtMs: now - 30_000 })).status).toBe(200);
-    const userId = await expectedUserId(app.scope, 'google', G_SUB);
+    const userId = await expectedInternalId(app.scope, 'google', G_SUB);
     const rows = await wallets(userId);
     expect(rows).toHaveLength(2);
     for (const w of rows) expect([w.first_seen_at, w.last_used_at]).toEqual([now - 60_000, now]);
@@ -122,6 +145,54 @@ describe('POST /v1/wallets/record', () => {
       expect([res.status, (await body(res)).code], what).toEqual([400, 'bad_wallet_record']);
     }
     expect(await users(app.scope)).toEqual([]);
+  });
+
+  it('refuses a record without the session’s own signature over it: someone else’s wallet can’t be listed as the user’s', async () => {
+    const { app, spk } = await recorded();
+    // The attack (security review): a genuine record by the attacker's own wallet key, naming the victim's live
+    // session key (public on chain) and path, with no session signature, or with one by another session key.
+    const attackerPrk = randomPrk();
+    const attacker = newSessionKey();
+    const forged: [string, RecordOpts, number, string][] = [
+      ['no session signature', { prk: attackerPrk, sessionSigner: null }, 400, 'bad_request'],
+      ['another key’s session signature', { prk: attackerPrk, sessionSigner: attacker }, 401, 'invalid_signature'],
+      ['a zero signature', { prk: attackerPrk, mutate: (b) => (b.sessionSignature = new Array(64).fill(0)) }, 401, 'invalid_signature'],
+      ['a short signature', { prk: attackerPrk, mutate: (b) => (b.sessionSignature = new Array(63).fill(1)) }, 400, 'bad_request'],
+    ];
+    for (const [what, o, status, code] of forged) {
+      const res = await record(app, spk, o);
+      expect([res.status, (await body(res)).code], what).toEqual([status, code]);
+    }
+    // A genuine vault body, changed after signing: refused by whichever signature covers the change first.
+    const tampered: [string, (b: Record<string, unknown>) => void, number, string][] = [
+      ['issuedAtMs', (b) => (b.issuedAtMs = (b.issuedAtMs as number) - 1), 400, 'bad_wallet_record'],
+      ['path', (b) => (b.path = `${app.scope}#google#999#0`), 400, 'bad_wallet_record'],
+      ['the session signature', (b) => ((b.sessionSignature as number[])[7]! ^= 1), 401, 'invalid_signature'],
+    ];
+    for (const [what, mutate, status, code] of tampered) {
+      const res = await record(app, spk, { mutate });
+      expect([res.status, (await body(res)).code], what).toEqual([status, code]);
+    }
+    // A swapped address (with its own valid record) under the vault's session signature: the session signature fails.
+    const issuedAtMs = Date.now();
+    const swapped = recordBody(app, spk, { issuedAtMs });
+    const genuine = recordBody(app, spk, { issuedAtMs });
+    (genuine.wallets as Record<string, unknown>).evm = (swapped.wallets as Record<string, unknown>).evm;
+    const swap = await call('/v1/wallets/record', { headers: vaultHeaders(app), body: genuine });
+    expect([swap.status, (await body(swap)).code]).toEqual([401, 'invalid_signature']);
+    expect(await users(app.scope)).toEqual([]);
+    // The vault's own record (both signatures genuine) is taken.
+    expect((await record(app, spk)).status).toBe(200);
+  });
+
+  it('refuses a replay of a genuine record outside the ±5 min window', async () => {
+    const { app, spk } = await recorded();
+    const issuedAtMs = Date.now();
+    const genuine = recordBody(app, spk, { issuedAtMs });
+    expect((await call('/v1/wallets/record', { headers: vaultHeaders(app), body: genuine })).status).toBe(200);
+    vi.spyOn(Date, 'now').mockReturnValue(issuedAtMs + 5 * 60_000 + 1);
+    const replay = await call('/v1/wallets/record', { headers: vaultHeaders(app), body: genuine });
+    expect([replay.status, (await body(replay)).code]).toEqual([400, 'stale_record']);
   });
 
   it('refuses another session’s path, a dead session and a session of another scope', async () => {
@@ -166,10 +237,12 @@ describe('POST /v1/wallets/record', () => {
     expect(await users(app.scope)).toEqual([]);
   });
 
-  it('without USER_ID_KEY answers 503 directory_unavailable and writes nothing', async () => {
+  it('without USER_ID_KEY or IDENTITY_SUB_KEY answers 503 directory_unavailable and writes nothing', async () => {
     const { app, spk } = await recorded();
-    const res = await record(app, spk, { env: { USER_ID_KEY: undefined } });
-    expect([res.status, (await body(res)).code]).toEqual([503, 'directory_unavailable']);
+    for (const missing of [{ USER_ID_KEY: undefined }, { IDENTITY_SUB_KEY: undefined }, { IDENTITY_SUB_KEY: 'not-a-key' }]) {
+      const res = await record(app, spk, { env: missing });
+      expect([res.status, (await body(res)).code], JSON.stringify(missing)).toEqual([503, 'directory_unavailable']);
+    }
     expect(await users(app.scope)).toEqual([]);
   });
 
@@ -177,7 +250,7 @@ describe('POST /v1/wallets/record', () => {
     const { app, spk } = await recorded({ sub: 'root-sub' });
     expect((await record(app, spk, { path: pathFor(app.scope, 'root-sub') })).status).toBe(200);
     const [u] = await users(app.scope);
-    expect(u!.user_id).toBe(await expectedUserId(app.scope, 'google', 'root-sub'));
+    expect(u!.user_id).toBe(await expectedInternalId(app.scope, 'google', 'root-sub'));
   });
 });
 
@@ -199,9 +272,16 @@ describe('identities after /v1/login and the link relays', () => {
     const { app, aud } = await linkSetup();
     const res = await call('/v1/login', { headers: hanaHeaders(app), body: await loginBody(app.scope, aud) });
     expect(res.status, JSON.stringify(await res.clone().json())).toBe(200);
-    const userId = await expectedUserId(app.scope, 'google', G_SUB);
+    const userId = await expectedInternalId(app.scope, 'google', G_SUB);
     expect((await users(app.scope)).map((u) => u.user_id)).toEqual([userId]);
     expect(await identities(app.scope)).toEqual([expect.objectContaining({ user_id: userId, sub: G_SUB, role: 'root', status: 'active' })]);
+  });
+
+  it('a login without IDENTITY_SUB_KEY still succeeds and writes nothing (no user without the id partners see)', async () => {
+    const { app, aud } = await linkSetup();
+    const res = await call('/v1/login', { headers: hanaHeaders(app), body: await loginBody(app.scope, aud), env: { IDENTITY_SUB_KEY: undefined } });
+    expect(res.status, JSON.stringify(await res.clone().json())).toBe(200);
+    expect(await users(app.scope)).toEqual([]);
   });
 
   it('a member’s login writes the member under its root’s user', async () => {
@@ -210,7 +290,7 @@ describe('identities after /v1/login and the link relays', () => {
     near.accounts.set('email#e1.root', { root: { provider: 'email', sub: 'e1.root' }, members: [{ provider: 'google', sub: G_SUB, active: true }], epoch: 1 });
     // The mock opens the token's own path; the API only reads where the identity stands.
     expect((await call('/v1/login', { headers: hanaHeaders(app), body: await loginBody(app.scope, aud) })).status).toBe(200);
-    const userId = await expectedUserId(app.scope, 'email', 'e1.root');
+    const userId = await expectedInternalId(app.scope, 'email', 'e1.root');
     expect(await identities(app.scope)).toEqual([
       expect.objectContaining({ user_id: userId, provider: 'email', sub: 'e1.root', role: 'root' }),
       expect.objectContaining({ user_id: userId, provider: 'google', sub: G_SUB, role: 'member', status: 'active' }),
@@ -240,7 +320,7 @@ describe('identities after /v1/login and the link relays', () => {
     };
     const res = await linkCall('/v1/link', app, { accountJwt, newJwt, epoch: 0, salt });
     expect(res.status, JSON.stringify(await res.clone().json())).toBe(200);
-    const userId = await expectedUserId(app.scope, 'google', G_SUB);
+    const userId = await expectedInternalId(app.scope, 'google', G_SUB);
     expect(await identities(app.scope)).toEqual([
       expect.objectContaining({ user_id: userId, provider: 'google', role: 'root' }),
       expect.objectContaining({ user_id: userId, provider: 'email', sub: nSub, role: 'member', status: 'pending', effective_at: effective }),
@@ -284,9 +364,9 @@ describe('identities after /v1/login and the link relays', () => {
     near.accounts.set('google#other-root', { root: { provider: 'google', sub: 'other-root' }, members: [{ ...m, active: true }], epoch: 1 });
     near.identities.set('email#e1.mover', { status: 'member', opened: false, root: { provider: 'google', sub: 'other-root' } });
     await syncAccount(env, app.scope, { provider: 'google', sub: G_SUB }, [], at);
-    expect((await identities(app.scope)).find((r) => r.sub === 'e1.mover')).toMatchObject({ status: 'unlinked', user_id: await expectedUserId(app.scope, 'google', G_SUB) });
+    expect((await identities(app.scope)).find((r) => r.sub === 'e1.mover')).toMatchObject({ status: 'unlinked', user_id: await expectedInternalId(app.scope, 'google', G_SUB) });
     await syncAccount(env, app.scope, { provider: 'google', sub: 'other-root' }, [m], at);
-    const userB = await expectedUserId(app.scope, 'google', 'other-root');
+    const userB = await expectedInternalId(app.scope, 'google', 'other-root');
     expect((await identities(app.scope)).filter((r) => r.sub === 'e1.mover')).toEqual([expect.objectContaining({ user_id: userB, role: 'member', status: 'active' })]);
     // A late write from before the move (an older chain read) changes nothing.
     vi.spyOn(Date, 'now').mockReturnValue(Date.now() - 10 * 60_000);
@@ -312,24 +392,30 @@ async function populated(org: string) {
   const spk = spentSession(near, app.scope, { sub });
   const prk = randomPrk();
   expect((await record(app, spk, { prk, path: pathFor(app.scope, sub) })).status).toBe(200);
-  const userId = await expectedUserId(app.scope, 'google', sub);
-  return { app, sub, prk, userId, addresses: deriveAddresses(prk), near };
+  const internalId = await expectedInternalId(app.scope, 'google', sub);
+  const userId = expectedUserId(app.scope, 'google', sub);
+  return { app, sub, prk, userId, internalId, addresses: deriveAddresses(prk), near };
 }
 
 describe('AdminRpc: users for staff', () => {
-  it('lists, gets and finds users by wallet address, user id, Support ID and sub, with subs and wallets', async () => {
+  it('lists, gets and finds users by wallet address, User ID, internal id, Support ID and sub, with all three ids', async () => {
     const org = newOrg();
     const a = await populated(org);
     const staff = { actor: { kind: 'hana' as const, id: 'staff-1', email: 'staff@hana.example' }, requestId: rid(), clientIp: '203.0.113.1' };
     const got = (await adminRpc().getUser({ ...staff, userId: a.userId })) as unknown as { ok: true; user: Record<string, unknown> };
     expect(got.ok).toBe(true);
-    expect(got.user).toMatchObject({ userId: a.userId, supportId: supportIdOf(a.userId), scopeId: a.app.scope, orgId: org });
+    expect(got.user).toMatchObject({ userId: a.userId, supportId: supportIdOf(a.userId), internalId: a.internalId, scopeId: a.app.scope, orgId: org });
+    expect(a.userId).toMatch(/^u1_/u);
+    expect(a.internalId).toMatch(/^hu_/u);
+    const byInternal = (await adminRpc().getUser({ ...staff, internalId: a.internalId })) as unknown as { ok: true; user: Record<string, unknown> };
+    expect(byInternal.user).toEqual(got.user);
+    expect(((await adminRpc().getUser({ ...staff })) as unknown as { code: string }).code).toBe('bad_request');
     expect(got.user.identities).toEqual([expect.objectContaining({ provider: 'google', sub: a.sub, role: 'root', status: 'active', directoryKey: { provider: 'google', sub: a.sub } })]);
     expect(got.user.wallets).toEqual([
       expect.objectContaining({ chain: 'stellar', address: a.addresses.stellar, keyIndex: 0, sharedWith: 0 }),
       expect.objectContaining({ chain: 'evm', address: a.addresses.evm, keyIndex: 0, sharedWith: 0 }),
     ]);
-    for (const query of [a.addresses.stellar, a.addresses.evm, a.addresses.evm.toLowerCase(), a.userId, supportIdOf(a.userId), supportIdOf(a.userId).toLowerCase(), a.sub]) {
+    for (const query of [a.addresses.stellar, a.addresses.evm, a.addresses.evm.toLowerCase(), a.userId, a.internalId, a.internalId.toUpperCase().replace('HU_', 'hu_'), supportIdOf(a.userId), supportIdOf(a.userId).toLowerCase(), a.sub]) {
       const found = (await adminRpc().findUsers({ ...staff, query })) as unknown as { ok: true; users: { userId: string }[] };
       expect(found.users.map((u) => u.userId), query).toEqual([a.userId]);
     }
@@ -337,8 +423,22 @@ describe('AdminRpc: users for staff', () => {
     expect(bySub.users).toEqual([]);
     const listed = (await adminRpc().listUsers({ ...staff, orgId: org })) as unknown as { ok: true; users: { userId: string }[]; nextCursor: string | null };
     expect([listed.users.map((u) => u.userId), listed.nextCursor]).toEqual([[a.userId], null]);
-    expect(((await adminRpc().getUser({ ...staff, userId: `hu_${'0'.repeat(26)}` })) as unknown as { code: string }).code).toBe('not_found');
+    expect(((await adminRpc().getUser({ ...staff, internalId: `hu_${'0'.repeat(26)}` })) as unknown as { code: string }).code).toBe('not_found');
+    expect(((await adminRpc().getUser({ ...staff, userId: `u1_${'A'.repeat(22)}` })) as unknown as { code: string }).code).toBe('not_found');
     expect(((await consoleRpc().listUsers({ ...staff, orgId: org })) as unknown as { code: string }).code).toBe('forbidden');
+  });
+
+  it('the User ID is the `sub` of the identity token the same session mints', async () => {
+    // The partner's backend stores the token's `sub`; the directory's User ID is that same string (D346).
+    const { app, near } = await vaultSetup();
+    const sub = `tok-${uid()}`;
+    const share = await createShare(app, near, { sub });
+    expect((await record(app, share.spk, { path: pathFor(app.scope, sub) })).status).toBe(200);
+    const minted = (await (await mint(app, share.spk)).json()) as { identityToken: string };
+    const { claims } = await verifyToken(minted.identityToken);
+    const staff = { actor: { kind: 'hana' as const, id: 'staff-1', email: 'staff@hana.example' }, requestId: rid(), clientIp: '203.0.113.1' };
+    const found = (await adminRpc().findUsers({ ...staff, query: claims.sub as string })) as unknown as { users: { userId: string; supportId: string }[] };
+    expect(found.users).toEqual([expect.objectContaining({ userId: claims.sub, supportId: supportIdOf(claims.sub as string) })]);
   });
 
   it('pages newest first with a cursor', async () => {
@@ -372,7 +472,13 @@ describe('ConsoleRpc: users for partners', () => {
     expect(Object.keys(u!).sort()).toEqual(['accounts', 'createdAt', 'lastSeenAt', 'scopeId', 'supportId', 'userId', 'wallets']);
     expect(u!.accounts).toEqual([{ kind: 'google', status: 'active' }]);
     expect((u!.wallets as { address: string }[]).map((w) => w.address)).toEqual([a.addresses.stellar, a.addresses.evm]);
+    expect(u!.userId).toBe(a.userId);
+    expect(u!.userId).toMatch(/^u1_/u);
+    expect(u!.supportId).toBe(supportIdOf(a.userId));
     const text = JSON.stringify(list);
+    // Never the internal id (D346), a sub, an identity key or an email.
+    expect(text).not.toContain(a.internalId);
+    expect(text).not.toContain('hu_');
     expect(text).not.toContain(a.sub);
     expect(text).not.toContain(ikSync(a.app.scope, 'google', a.sub));
     expect(text).not.toContain('@');
@@ -387,14 +493,46 @@ describe('ConsoleRpc: users for partners', () => {
       expect(((await consoleRpc().listUsers({ ...asA, search })) as unknown as { users: { userId: string }[] }).users.map((x) => x.userId), search).toEqual([a.userId]);
     }
     const got = (await consoleRpc().getUser({ ...asA, userId: a.userId })) as unknown as { ok: true; user: Record<string, unknown> };
+    expect(got.user).toMatchObject({ userId: a.userId, supportId: supportIdOf(a.userId) });
     expect(JSON.stringify(got)).not.toContain(a.sub);
+    expect(JSON.stringify(got)).not.toContain(a.internalId);
   });
 
-  it('refuses a search by sub (partners never test whether a Google account is a user)', async () => {
+  it('pages with a cursor that names the User ID, never the internal id', async () => {
+    const org = newOrg();
+    const ids: string[] = [];
+    const internal: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const p = await populated(org);
+      ids.push(p.userId);
+      internal.push(p.internalId);
+    }
+    const asA = { ...member(), requestId: rid(), clientIp: '203.0.113.2', orgId: org };
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 3; page++) {
+      const r = (await consoleRpc().listUsers({ ...asA, requestId: rid(), limit: 2, ...(cursor ? { cursor } : {}) })) as unknown as { users: { userId: string }[]; nextCursor: string | null };
+      seen.push(...r.users.map((u) => u.userId));
+      if (!r.nextCursor) break;
+      expect(r.nextCursor).toMatch(/^\d+:u1_/u);
+      for (const h of internal) expect(r.nextCursor).not.toContain(h);
+      cursor = r.nextCursor;
+    }
+    expect(seen.sort()).toEqual([...ids].sort());
+  });
+
+  it('refuses a search by sub or by internal id, and a get by internal id (partners never see or use `hu_…`)', async () => {
     const orgA = newOrg();
     const a = await populated(orgA);
-    const r = (await consoleRpc().listUsers({ ...member(), requestId: rid(), clientIp: '203.0.113.2', orgId: orgA, search: a.sub })) as unknown as { ok: false; code: string };
-    expect([r.ok, r.code]).toEqual([false, 'bad_request']);
+    const asA = { ...member(), requestId: rid(), clientIp: '203.0.113.2', orgId: orgA };
+    for (const search of [a.sub, a.internalId, a.internalId.toUpperCase()]) {
+      const r = (await consoleRpc().listUsers({ ...asA, requestId: rid(), search })) as unknown as { ok: false; code: string };
+      expect([r.ok, r.code], search).toEqual([false, 'bad_request']);
+    }
+    const byInternal = (await consoleRpc().getUser({ ...asA, requestId: rid(), userId: a.internalId })) as unknown as { ok: false; code: string };
+    expect([byInternal.ok, byInternal.code]).toEqual([false, 'bad_request']);
+    const internalField = (await consoleRpc().getUser({ ...asA, requestId: rid(), internalId: a.internalId } as never)) as unknown as { ok: false; code: string };
+    expect([internalField.ok, internalField.code]).toEqual([false, 'bad_request']);
   });
 
   it('shows a pending member as pending, and active once its activation time passes', async () => {

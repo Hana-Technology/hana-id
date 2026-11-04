@@ -306,6 +306,9 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
 - **Visible**: the console's write paths; the spec's "Done when" bullets 2–4 on the smoke scope.
 - **Users screen** (D310 point 5): over `ConsoleRpc.listUsers` / `getUser` (built on `feat/wallet-directory`, D315):
   user id, Support ID, created and last seen, account kinds and wallets, the org's own scopes only, no email or sub.
+  Since D346 (`feat/user-id-identity-sub`): `userId` is the identity token's `sub` (`u1_…`, label it "User ID"),
+  `supportId` its short form; `getUser({userId})` takes `u1_…`; the cursor is `lastSeenAt:u1_…`; the internal id
+  `hu_…` never reaches the console.
 
 ## C11. Files Worker and logos
 
@@ -404,6 +407,10 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
 - **Open (D276)**: whether `user:erase` lands here or with C13.
 - **Since D312**: the Support code is `end_users.support_code` in the hot DB (indexed); `AdminRpc.findUsers` already
   resolves a code to its users, so `IssuerRpc.uid` and `user_email_apps.uid` may not be needed (revisit D276 here).
+- **Since D346**: the code is the short form of the identity token's `sub` (`console-core` `supportIdOf`, built, with
+  vectors), not of the uid; code → user is the wallet directory (`findUsers`), then its internal id `hu_…` for the
+  ledger. `IssuerRpc.uid`, `user_email_apps.uid` and `DirectoryRpc.byUid` are dropped, and there is no ledger-only
+  fallback.
 
 ## C16. CLI completion
 

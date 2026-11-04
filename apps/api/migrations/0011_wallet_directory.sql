@@ -1,8 +1,9 @@
--- The wallet directory (D310, D312–D315; docs/architecture.md "Data stores"): each end user per scope, the wallet
--- addresses their logins reported, and the identities (sign-in methods) of their account. Written only by the API:
--- apps/api/src/directory/ (the vault's signed wallet record, POST /v1/wallets/record; the API's own chain reads after
--- /v1/login and the link relays). Read by AdminRpc (staff: everything here), ConsoleRpc (a partner's own scopes:
--- user ids, times, account kinds and addresses, never a sub or an identity key) and `admin user:*`.
+-- The wallet directory (D310, D312–D315, D346; docs/architecture.md "Data stores"): each end user per scope, the
+-- wallet addresses their logins reported, and the identities (sign-in methods) of their account. Written only by the
+-- API: apps/api/src/directory/ (the vault's signed wallet record, POST /v1/wallets/record; the API's own chain reads
+-- after /v1/login and the link relays). Read by AdminRpc (staff: everything here), ConsoleRpc (a partner's own scopes:
+-- User IDs, Support IDs, times, account kinds and addresses, never `user_id`, a sub or an identity key) and
+-- `admin user:*`.
 --
 -- Numbered 0011, the next free number: 0007 stays batch C4b's (the legacy `usage` drop). This file only creates its
 -- own tables and reads no other, so it applies the same before or after 0007. No foreign key into `apps` or `scopes`:
@@ -12,20 +13,28 @@
 -- per identity, and the public wallets of the account, so a reader of this database can map Google accounts to
 -- on-chain balances. Never a key, a token, a signature, an email address or a session key.
 
--- One row per user: the account root of a scope. `user_id` is "hu_" + Crockford base32 of the uid (HMAC of
--- USER_ID_KEY over the scope and the root's provider and sub, D96, D312), the ledger's pseudonym: the same login
--- always lands on the same row. `support_code` is its first 8 characters, uppercase (the Support ID HANA-XXXX-XXXX,
--- D276). Times are unix ms; `created_at` is the MIN and `last_seen_at` the MAX of every write's time.
+-- One row per user: the account root of a scope. Three ids, all deterministic from the scope and the root's provider
+-- and sub, so the same login always lands on the same row:
+--   - `user_id`: the internal id, "hu_" + Crockford base32 of the uid (HMAC of USER_ID_KEY, D96, D312), the usage
+--     ledger's pseudonym. The key the other tables join on; staff only, never in a partner answer (D346).
+--   - `token_sub`: the User ID partners see, the identity token's `sub` ("u1_" + base64url of the HMAC of
+--     IDENTITY_SUB_KEY, docs/identity-token-spec.md), the same value a partner's backend stores (D346).
+--   - `support_code`: the Support ID HANA-XXXX-XXXX without its prefix and dash: Crockford base32 of the first 5 bytes
+--     of `token_sub`'s 16 (D276 as amended by D346). 40 bits, so two users can share one: every match is listed.
+-- Times are unix ms; `created_at` is the MIN and `last_seen_at` the MAX of every write's time. Pages run newest first
+-- by last seen, ties by `token_sub` (the cursor a partner holds names no internal id).
 CREATE TABLE end_users (
   user_id      TEXT PRIMARY KEY CHECK (user_id GLOB 'hu_*' AND length(user_id) = 29),
+  token_sub    TEXT NOT NULL CHECK (token_sub GLOB 'u1_*' AND length(token_sub) = 25),
   support_code TEXT NOT NULL CHECK (length(support_code) = 8),
   scope_id     TEXT NOT NULL,
   created_at   INTEGER NOT NULL CHECK (created_at >= 0),
   last_seen_at INTEGER NOT NULL CHECK (last_seen_at >= created_at)
 );
-CREATE INDEX end_users_scope ON end_users (scope_id, last_seen_at DESC, user_id);
-CREATE INDEX end_users_recent ON end_users (last_seen_at DESC, user_id);
+CREATE UNIQUE INDEX end_users_token_sub ON end_users (token_sub);
 CREATE INDEX end_users_support ON end_users (support_code);
+CREATE INDEX end_users_scope ON end_users (scope_id, last_seen_at DESC, token_sub);
+CREATE INDEX end_users_recent ON end_users (last_seen_at DESC, token_sub);
 
 -- The wallets a user's logins reported, each proven by the address's own key for a live session of the user's path
 -- (core wallet-record.ts). Stellar addresses as StrKey, EVM in EIP-55. `last_used_at` is the last login that

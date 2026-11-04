@@ -58,6 +58,7 @@ import {
   signVaultMessage,
   unsupportedMethodId,
   vaultPayload,
+  walletRecordEvmDigest,
 } from '@hana-id/core';
 import { deriveAddresses } from '@hana-id/core/derivation';
 import { type AutoApproveResult, matchAutoApprovePolicy, recordAutoApproveUse } from '@hana-id/core/policy';
@@ -1756,29 +1757,30 @@ export class Vault {
   // ---- wallet directory (D310, D317) ----
 
   /**
-   * Right after the login's result is on its way (a timer, so the two signatures never delay it), while the session is
-   * still this one and PRK is in memory, signs its two wallet records and sends them without waiting
-   * (wallet-record.ts): one call, a 15 s limit, every failure dropped. The login's result never depends on it.
+   * Right after the login's result is on its way (a timer, so the signatures never delay it), while the session is
+   * still this one and PRK is in memory, signs its two wallet records and the session signature over the request and
+   * sends them without waiting (wallet-record.ts): one call, a 15 s limit, every failure dropped. The login's result
+   * never depends on it.
    */
   private recordWallets(s: Session): void {
-    this.timers.setTimeout(() => this.sendWalletRecords(s), 0);
+    this.timers.setTimeout(() => void this.sendWalletRecords(s), 0);
   }
 
-  private sendWalletRecords(s: Session): void {
+  private async sendWalletRecords(s: Session): Promise<void> {
     const api = this.api;
     // A session that already ended (or went dormant: PRK zeroed) records nothing; the next login does.
     if (!api || this.session !== s || s.prk.every((b) => b === 0)) return;
+    const ctx = { env: this.env.name, signer: this.env.signer, appId: this.config.appId, scopeId: this.config.scopeId, path: s.path, sessionPublicKey: s.sessionPk, issuedAtMs: this.clock.now() };
     let signed;
     try {
-      signed = signWalletRecords(
-        s.prk,
-        { env: this.env.name, signer: this.env.signer, appId: this.config.appId, scopeId: this.config.scopeId, path: s.path, sessionPublicKey: s.sessionPk, issuedAtMs: this.clock.now() },
-        s.addresses,
-      );
+      // The digest is refused as a raw EVM request from now on, before the first await (D179, D317).
+      s.recordDigest = walletRecordEvmDigest(ctx, s.addresses.evm);
+      // The chain keys sign synchronously inside (PRK checked live just above); then the session key, asynchronously.
+      signed = await signWalletRecords(s.prk, s.keyPair.privateKey, ctx, s.addresses);
     } catch {
       return;
     }
-    s.recordDigest = signed.evmDigest;
+    if (this.session !== s) return;
     void reportWallets((body, signal) => api.recordWallets(body, signal), signed.body, this.timers);
   }
 

@@ -3,7 +3,7 @@
 
 import { PAGER_PROVIDERS, type PagerProvider, SECRET_NAMES } from './names.ts';
 
-export { PAGER_PROVIDERS, type PagerProvider, SECRET_NAMES } from './names.ts';
+export { isDevEnvName, PAGER_PROVIDERS, type PagerProvider, SECRET_NAMES } from './names.ts';
 
 export interface Env {
   DB: D1Database;
@@ -30,6 +30,20 @@ export interface Env {
   ALERT_FROM: string;
   /** Hour (UTC) after which the daily digest is sent. */
   DIGEST_HOUR_UTC?: string;
+  /**
+   * JSON `{required, signers: {<id>: [thumbprint, …]}}` of the manifest's `watchdog.pinnedIssuerKeys.email`. Absent:
+   * nothing pinned (every email key is unpinned; an email issuer on chain is a critical difference).
+   */
+  EMAIL_PINS?: string;
+  /** Hana's published email JWKS (set with the pins; default `{emailIssuer.url}/v1/email/jwks.json`, or under `apiUrl`, D230). */
+  EMAIL_JWKS_URL?: string;
+  /**
+   * The partner identity token's issuer (the manifest's `identityToken.iss`): the watchdog reads `{iss}/jwks.json` and
+   * `{iss}/.well-known/openid-configuration` (D210). Absent: the env has no identity token, the check is skipped.
+   */
+  IDENTITY_ISS?: string;
+  /** JSON array of the manifest's `watchdog.pinnedIdentityKeys` (RFC 7638 thumbprints). Absent: nothing pinned. */
+  IDENTITY_PINS?: string;
 
   // ---- secrets ----
   /** `ed25519:<base58>` function-call key on WATCHDOG_ACCOUNT (receiver SIGNER_ACCOUNT, the four watchdog methods). */

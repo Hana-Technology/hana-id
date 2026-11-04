@@ -4,7 +4,7 @@
 // back only for a signed, in-order, unexpired and unrevoked request. No endpoint here makes a chain transaction, and
 // only share creation reads the chain.
 import { getAppByKeyCached } from '../app-cache.ts';
-import { type App, PUBLISHABLE_KEY_RE } from '../apps.ts';
+import { type App, PUBLISHABLE_KEY_RE, appSuspended } from '../apps.ts';
 import { hex, sha256 } from '../bytes.ts';
 import type { Env } from '../env.ts';
 import { type Ctx, done, lap, limiter, newCtx, reject } from '../handlers.ts';
@@ -17,10 +17,11 @@ import { type SessionView, isSessionView } from '../views.ts';
 import { type Keks, SHARE_KEY_BYTES, kekFor, loadKeks, unwrapShareKey, wrapShareKey } from './kek.ts';
 import { SHARE_PER_MINUTE, VAULT_LIMIT_PERIOD_S, VAULT_PER_IP_MINUTE, vaultIpKey, vaultShareKey } from './limits.ts';
 import { NO_SHARE_ID, SHARE_ID_BYTES, type ShareAction, actionPayload, createSharePayload, verifyVaultSignature } from './message.ts';
-import { isTestKey } from '../origins.ts';
+import { isTestApp } from '../origins.ts';
+import { beginUsage, finishUsageOnThrow } from '../usage/event.ts';
 import { parentOriginAllowed } from './origins.ts';
 import { effectiveSettings, getSettingsRow } from './settings.ts';
-import { type ShareRow, type ShareUpdate, advanceShare, capExpiry, getShare, incrementUnlocks, insertShare, markRevoked, revokeAllFrom } from './shares.ts';
+import { type ShareRow, type ShareUpdate, advanceShare, capExpiry, getShare, insertShare, markRevoked, revokeAllFrom } from './shares.ts';
 
 export const VAULT_ENDPOINTS = ['/v1/vault/shares', '/v1/vault/unlock', '/v1/vault/touch', '/v1/vault/revoke', '/v1/vault/revoke-all'] as const;
 export type VaultEndpoint = (typeof VAULT_ENDPOINTS)[number];
@@ -63,16 +64,16 @@ export function vaultPreflight(request: Request, env: Env): Response {
 
 // ---- Gate ----
 
-type Gate = { ok: true; app: App; parentOrigin: string } | { ok: false; response: Response };
+export type VaultGate = { ok: true; app: App; parentOrigin: string } | { ok: false; response: Response };
 
 /**
  * Checks 1 and 2 of the `'vault'` kind of the app gate: the app exists and is active, the caller is the vault origin,
  * the parent it serves is allowed for the app (dev-env loopback rule included). The app comes from this isolate's
  * cache when it was read from D1 in the last APP_CACHE_TTL_MS (app-cache.ts, D78), so a warm request makes no D1 read
- * here.
+ * here. Also the gate of POST /v1/identity/token (identity/token.ts).
  */
-async function vaultApp(request: Request, env: Env, ctx: Ctx): Promise<Gate> {
-  const fail = (status: number, code: string, error: string, extra: Headers_ = {}): Gate => ({ ok: false, response: reject(ctx, status, code, error, extra) });
+export async function vaultApp(request: Request, env: Env, ctx: Ctx): Promise<VaultGate> {
+  const fail = (status: number, code: string, error: string, extra: Headers_ = {}): VaultGate => ({ ok: false, response: reject(ctx, status, code, error, extra) });
   const origin = request.headers.get('origin');
   const fromVault = !!env.VAULT_ORIGIN && origin === env.VAULT_ORIGIN;
   // The vault can read every answer, including the ones before the app lookup.
@@ -90,11 +91,11 @@ async function vaultApp(request: Request, env: Env, ctx: Ctx): Promise<Gate> {
   lap(ctx, 'app');
   if (!app) return fail(401, 'unknown_app', 'Unknown publishable key');
   ctx.appId = app.id;
-  if (app.status !== 'active') return fail(403, 'app_suspended', 'This app is suspended');
+  if (appSuspended(app)) return fail(403, 'app_suspended', 'This app is suspended');
   if (!fromVault) return fail(403, 'origin_not_allowed', 'Origin not allowed for this endpoint');
   const parentOrigin = request.headers.get('x-hana-parent-origin');
   if (!parentOrigin || !parentOriginAllowed(env.ENV_NAME, app, parentOrigin)) return fail(403, 'origin_not_allowed', 'Parent origin not allowed for this app');
-  if (app.scope_conflict) return fail(403, 'scope_conflict', 'This test app shares its scope with a live app');
+  if (app.scope_conflict) return fail(403, 'scope_conflict', 'This key’s environment is not its scope’s');
   return { ok: true, app, parentOrigin };
 }
 
@@ -103,12 +104,25 @@ const bindingRefusal = (ctx: Ctx, which: string): Response =>
   reject(ctx, 429, 'rate_limited', `Rate limit exceeded (${which} per minute)`, { 'retry-after': String(VAULT_LIMIT_PERIOD_S) });
 
 /**
+ * The vault gate's per-IP flood limit alone (`VAULT_IP_LIMIT`, D95), for POST /v1/identity/token, which counts its app
+ * quota in windows of its own (identity/limits.ts, D176). Null when it accepts; a limiter that fails refuses (503).
+ */
+export async function vaultIpLimit(request: Request, env: Env, ctx: Ctx, app: App): Promise<Response | null> {
+  try {
+    const ip = await env.VAULT_IP_LIMIT.limit({ key: vaultIpKey(env.ENV_NAME, app.id, ipSubject(request.headers.get('cf-connecting-ip'))) });
+    return ip.success ? null : bindingRefusal(ctx, 'per IP');
+  } catch {
+    return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
+  }
+}
+
+/**
  * Check 3, the IP and app limits, asked in turn: the per-IP flood limit (`VAULT_IP_LIMIT` binding, counted in this
  * location with no network hop, D95), then the app's vault quota (RateLimiter object `app:<id>`, exact and global)
  * only once the IP accepted, so a request the IP limit refuses never uses up the app's shared quota (one client could
  * otherwise lock out every user). Null when both accept. A limiter that fails refuses (503), never lets through.
  */
-async function vaultLimits(request: Request, env: Env, ctx: Ctx, app: App): Promise<Response | null> {
+export async function vaultLimits(request: Request, env: Env, ctx: Ctx, app: App): Promise<Response | null> {
   try {
     const ip = await env.VAULT_IP_LIMIT.limit({ key: vaultIpKey(env.ENV_NAME, app.id, ipSubject(request.headers.get('cf-connecting-ip'))) });
     if (!ip.success) return bindingRefusal(ctx, 'per IP');
@@ -169,8 +183,19 @@ export async function handleVaultEndpoint(request: Request, env: Env, endpoint: 
   // Limits before the body: a malformed body still counts against the IP and app limits.
   const limited = await vaultLimits(request, env, ctx, gate.app);
   if (limited) return limited;
+  // An unlock past the vault gate (app, origins, limits) is one usage event, whatever its outcome (usage/event.ts).
+  if (endpoint === '/v1/vault/unlock') beginUsage(ctx, { orgId: gate.app.org_id, appId: gate.app.id, scopeId: gate.app.scope_id, exec });
+  try {
+    return await vaultRequest(request, env, endpoint, ctx, gate);
+  } catch (err) {
+    finishUsageOnThrow(ctx);
+    throw err;
+  }
+}
+
+async function vaultRequest(request: Request, env: Env, endpoint: VaultEndpoint, ctx: Ctx, gate: Extract<VaultGate, { ok: true }>): Promise<Response> {
   // pk_test_ apps: share creation and unlock answer with the request's own timings (apps/smoke's breakdowns).
-  ctx.exposeTimings = (endpoint === '/v1/vault/shares' || endpoint === '/v1/vault/unlock') && isTestKey(gate.app.publishable_key);
+  ctx.exposeTimings = (endpoint === '/v1/vault/shares' || endpoint === '/v1/vault/unlock') && isTestApp(gate.app);
   const parsed = await readJson(request, MAX_VAULT_BODY);
   if (!parsed.ok) return reject(ctx, parsed.status, 'bad_request', parsed.error);
   if (endpoint === '/v1/vault/shares') {
@@ -182,7 +207,7 @@ export async function handleVaultEndpoint(request: Request, env: Env, endpoint: 
   const shareLimited = await shareLimit(env, ctx, gate.app, shareReq.shareId);
   if (shareLimited) return shareLimited;
   lap(ctx, 'limits');
-  return shareAction(env, ctx, gate.app, ACTIONS[endpoint], shareReq, exec);
+  return shareAction(env, ctx, gate.app, ACTIONS[endpoint], shareReq);
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -325,7 +350,7 @@ async function refusal(env: Env, ctx: Ctx, app: App, shareId: Uint8Array, now: n
  * POST /v1/vault/unlock, /touch, /revoke, /revoke-all: one signed, in-order use of a share (its body and the share's
  * rate limit already checked, in handleVaultEndpoint).
  */
-async function shareAction(env: Env, ctx: Ctx, app: App, action: ShareAction, req: { shareId: Uint8Array; counter: number; signature: Uint8Array }, exec?: ExecutionContext): Promise<Response> {
+async function shareAction(env: Env, ctx: Ctx, app: App, action: ShareAction, req: { shareId: Uint8Array; counter: number; signature: Uint8Array }): Promise<Response> {
   const keks = action === 'unlock' ? await loadKeks(env) : null;
   if (action === 'unlock' && !keks) return vaultKeyUnavailable(ctx);
 
@@ -354,7 +379,7 @@ async function shareAction(env: Env, ctx: Ctx, app: App, action: ShareAction, re
     });
     if (!signed) return reject(ctx, 401, 'invalid_signature', 'Invalid session signature');
 
-    if (action === 'unlock') return await unlock(env, ctx, app, row, req.counter, now, keks!, exec);
+    if (action === 'unlock') return await unlock(env, ctx, app, row, req.counter, now, keks!);
     if (action === 'revoke-all') {
       if (now - row.created_at >= REVOKE_ALL_FRESH_MS) {
         return reject(ctx, 403, 'share_not_fresh', 'Revoking other devices needs a share from a login in the last 5 minutes');
@@ -375,9 +400,9 @@ async function shareAction(env: Env, ctx: Ctx, app: App, action: ShareAction, re
 
 /**
  * Unwraps K_s before the counter moves (a share this API can't read never burns a counter), re-wrapping it under the
- * current KEK in the same statement when the row is still under the previous one. Counts one unlock.
+ * current KEK in the same statement when the row is still under the previous one. Its usage event is the request's.
  */
-async function unlock(env: Env, ctx: Ctx, app: App, row: ShareRow, counter: number, now: number, keks: Keks, exec?: ExecutionContext): Promise<Response> {
+async function unlock(env: Env, ctx: Ctx, app: App, row: ShareRow, counter: number, now: number, keks: Keks): Promise<Response> {
   const kek = kekFor(keks, row.kek_id);
   if (!kek) return vaultKeyUnavailable(ctx);
   const binding = { shareId: row.share_id, appId: app.id, sessionPk: row.session_pk };
@@ -391,11 +416,6 @@ async function unlock(env: Env, ctx: Ctx, app: App, row: ShareRow, counter: numb
     const advanced = await advanceShare(env.DB, app.id, row.share_id, counter, now, { kind: 'slide', rewrap });
     lap(ctx, 'advance');
     if (!advanced) return await refusal(env, ctx, app, row.share_id, now, true);
-    const write = incrementUnlocks(env.DB, app.id, now).catch(() => {
-      log({ event: 'usage_increment_failed', requestId: ctx.requestId, appId: app.id, endpoint: ctx.endpoint }, 'error');
-    });
-    if (exec) exec.waitUntil(write);
-    else await write;
     return done(ctx, 200, { ks: arr(ks), counter: advanced.counter, idleUntilMs: advanced.idleUntil, absExpiresAtMs: advanced.absExpiresAt });
   } finally {
     ks.fill(0);

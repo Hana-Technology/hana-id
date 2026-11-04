@@ -1,6 +1,40 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-10-30 (branch `feat/playbook-gaps`: relayer funds monitoring in the watchdog,
+Last verified against code: 2026-11-03 (branch `docs/sandbox-dev-state`: what sandbox-dev runs, per the operator on 2026-11-03: a state note under the hot DB gate, the watchdog's email pins and the email issuer sections); 2026-11-03 (branch `fix/8b-rereview`: "Turning linking on (batch 8b)"'s slow second
+provider and watching `path_unconfirmed`, D263); 2026-11-03 (branch `feat/email-login-8b` review fixes: "Turning linking on (batch 8b)"'s
+second RPC, the consent screens, the API's and the issuer's redeploys for the new limits, the spike's legs C and D as
+a gate, D263–D267; "Logs and latency"'s `google_account_mismatch`); 2026-11-03 (branch `feat/email-login-8b`: "Turning linking on (batch 8b)": what users see
+in each case, the sandbox-dev checklist, lifting D248, the email-scope spike; D254–D259); 2026-11-03 (branch `fix/demo-polish`: "Hosted demo"'s vault errors and timings, "Logs
+and latency"'s `GET /v1/app` phases, "Common failures"' `vault_unavailable` reasons and the slow `app` stage;
+Last verified against code: 2026-11-03 (branch `feat/scope-email-client-tool`: `admin scope:add-email-client` in
+"Email login demo on sandbox-dev (batch 8a)" steps 1 and 3, the admin command list and "Email issuer" step 6; D253);
+2026-11-02 (branch `feat/email-login-8a`: "Email login demo on sandbox-dev (batch 8a)",
+the auth page Worker's `EMAIL_ISSUER_URL`, the local demo on the e2e stack's outbox; D245–D249); 2026-11-02 (branch `feat/email-login-6`, after both batch 6 reviews: "Email login on
+sandbox-dev" against the merged develop (0006/0009/0010, `hotDb` 9, C3's step-6 checks, C4's optional capture and its
+required marker copy, the pages before the API, the zero-downtime pool switch, the upgrade's `createProof` gate, the
+pinned-key check, the 120 s key wait, the expected alerts), the leak runbook's published-key step, the SCRAM gate's
+failure step; earlier: "Email login on sandbox-dev (build plan batch 6)", the user's deploy order with the corrections of D234, the issuer on its own URL (D230), migration 0010 beside 0006,
+the session pool's link methods, the email clients left for batch 8; branch `feat/batch-c-4`: "Usage capture (batch C4, milestone M2)" (the
+setup steps for the user: `usage-setup`, Hyperdrive, `USER_ID_KEY`, migration 0009, `gen --usage-hyperdrive-id`), the
+ledger and uid secrets, the waiver's session marker; D220–D224); 2026-11-02 (branch `feat/batch-c-5`: `app:suspend` / `app:resume` refuse a deleted
+app; the API's RPC entrypoints need no setup step of their own, D225; branch `feat/identity-token-8`: "Identity token
+keys" gains the watchdog pin steps and their deploy order (the `kms-*` commands too); "Identity token: pins and the
+JWKS check" with the outside probe; the identity alerts in "Watchdog alerts (runbook)"; D210–D214; branch `feat/email-login-4`: "Email issuer" setup and runbook, the issuer's secrets rows, after the
+reviews (Access SameSite=Strict, staff calls, unsuppress, the exact key-leak steps with `put --standby`, the budget
+and complaint logs) and the abuse re-check (`init --budget`, mailed unlock and unsuppress, revoke-tickets, the owner
+pool, the 503 window of a standby switch, SendGrid's suppression lists); branch `feat/identity-token-7`: "Identity token keys on AWS KMS", the KMS
+signer's setup steps, IAM and key policies, alarms, rotations and the planned reconciliation, the `identity-key kms-*`
+commands, the AWS access key row in "Secrets: where they live", D215–D219); 2026-11-02 (branch `docs/consistency-pass`: "Watchdog service" channels, "Owner
+council" verified on testnet, the `create_session_and_derive` gas pointer); 2026-11-02 (branch `feat/batch-c-3`: "Hot DB migration 0006 and the new gate" (milestone
+M1, for the user to run), the admin CLI's `app:*` commands on the 0006 schema with `app:changes:announce`, the demo's
+origin add, the D1 restore steps; D205–D209); 2026-11-02 (branch `feat/link-cap`: "Link volume thresholds", D200, and `set_link_thresholds`
+through `owner:call`; branch `feat/email-login-5`: the watchdog's email rules, the link alarms and
+`unrecorded_wallets` alerts in "Watchdog alerts (runbook)" and "Watchdog service", D190–D193, D200; branch
+`feat/email-login-2`: `deploy-contract` refuses a v1 contract, D154; the v2 → v3 upgrade path sandbox-tested,
+"Upgrading the governance contract"); 2026-10-30 (branch `fix/watchdog-retired-key-race`: the `retired_key_change` alert, D153;
+branch `feat/identity-token-2`: "Identity token keys" rewritten for the
+offline standby and `identity-key next / switch / retire` (D177), the identity secrets rows, `gen --dev-vars`;
+`feat/identity-token-1`: the identity token secrets, migration 0008; `feat/playbook-gaps`: relayer funds monitoring in the watchdog,
 `owner:vote --reject`, `council:replace-member`, the D1 Time Travel restore runbook; `feat/batch-c-1`: "Usage ledger
 (Neon, batch C)", the batch C manifest fields; `feat/recovery-playbooks`: the watchdog alerts runbook now points at
 `docs/playbooks.md`, `owner:call` takes `set_sessions_valid_from_ms`; `docs/watchdog-hosting`: watchdog hosting, D125;
@@ -25,10 +59,18 @@ Never print, log, paste or commit any of these. The scripts never print them eit
 | Keys-updater key (`KEYS_UPDATER_KEY`) | `.secrets/<env>/keys-updater.json` (`private_key`) | `deploy-contract` (generated, then installed on `signer` by the contract's `add_updater_key`) |
 | Council member keys (dev envs only, D81) | `.secrets/<env>/council/<member>.json` (`{account_id, public_key, private_key}`), full-access keys of throwaway testnet accounts | `council-setup`; other envs' members hold their own keys (mainnet: Ledgers, never on disk) |
 | `VAULT_KEK` (and, during a rotation, `VAULT_KEK_PREVIOUS`) | `.secrets/<env>/vault-kek` (and `vault-kek.previous`); the only copy, since Cloudflare can't give a secret back | `vault-kek` (below) |
-| Neon Postgres connection strings (batch C ledger, D73): pooled `DATABASE_URL` and `DATABASE_URL_DIRECT` of the env's Neon branch | `.secrets/<env>/neon.json` (`{project_id, branch, DATABASE_URL, DATABASE_URL_DIRECT, …}`); role `neondb_owner` until batch C creates least-privilege roles | `neon connection-string <branch> --project-id <id> [--pooled]` (Neon CLI, `neon login`) |
+| Identity token signing keys (Worker slots `IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY`; testnet and `local*` only) | `.secrets/<env>/identity-signing-key.json` (active), `identity-signing-key-standby.json` (published, **never uploaded**: keep it offline), and during a rotation `identity-signing-key-next.json` / `-previous.json` (P-256 private JWKs); `identity-slots.json` says which slot holds which kid; the only copies | `identity-key <env> init`, `next`, `switch`, `retire` ("Identity token keys" below); `put --yes` uploads the active key again |
+| Identity token KMS signer's AWS access key (`IDENTITY_AWS_ACCESS_KEY_ID`, `IDENTITY_AWS_SECRET_ACCESS_KEY`; `aws-kms` envs only, none yet) | `.secrets/<env>/identity-aws-access-key.json` (`aws iam create-access-key`'s JSON for the signer's IAM user), only until it is uploaded and checked: then delete it (a lost key is replaced, never recovered) | the operator, with the AWS CLI as the break-glass role; `identity-key <env> kms-put-aws-key --yes` uploads it ("Identity token keys on AWS KMS" below) |
+| Identity token sub key (`IDENTITY_SUB_KEY`) | `.secrets/<env>/identity-sub-key` (base64 of 32 bytes); never rotated, also backed up offline with the council backup (D81) | `identity-key <env> init`; upload again with `identity-key <env> put --yes` |
+| Email issuer signing key (`ISSUER_SIGNING_KEY`; testnet and `local*` only) | `.secrets/<env>/email-issuer-signing-key.json` (active), `email-issuer-signing-key-standby.json` (published and on chain, **never uploaded**: keep it offline); RSA-2048 private JWKs, the only copies | `email-issuer <env> init`; upload with `email-issuer <env> put --yes` ("Email issuer" below) |
+| Email issuer HMAC keys (`EMAIL_SUB_KEY` = K_sub, `EMAIL_CODE_KEY`, `EMAIL_RL_KEY`) | `.secrets/<env>/email-sub-key`, `email-code-key`, `email-rl-key` (base64 of 32 bytes); K_sub is never rotated and is backed up offline twice (D81) | `email-issuer <env> init`; `put --yes` |
+| SendGrid key for user mail (`SENDGRID_API_KEY`, Mail Send only, D194) | `.secrets/<env>/email-issuer-sendgrid-key` | pasted by hand; `email-issuer <env> put --yes` |
+| Neon Postgres connection strings (batch C ledger, D73): pooled `DATABASE_URL` and `DATABASE_URL_DIRECT` of the env's Neon branch | `.secrets/<env>/neon.json` (`{project_id, branch, DATABASE_URL, DATABASE_URL_DIRECT, …}`); role `neondb_owner`, used only by `usage-migrate` and `usage-setup` | `neon connection-string <branch> --project-id <id> [--pooled]` (Neon CLI, `neon login`) |
+| Ledger role URLs (`usage_writer`, `usage_admin`, batch C4): each role's password; their copies live in the two Hyperdrive configs | `.secrets/<env>/neon-usage-writer.url`, `neon-usage-admin.url` | `usage-setup <env> roles` ("Usage capture" below) |
+| `USER_ID_KEY` (the uid key, base64 of 32 bytes; API only); never rotated within a contract term, backed up offline | `.secrets/<env>/user-id-key` | `usage-setup <env> user-id-key` (generates it once, sets the Worker secret) |
 | Watchdog secrets (`WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, its Resend key, Slack webhook, paging-app credentials, `HEARTBEAT_URL`) | `.secrets/<env>/watchdog-secrets.json` (flat `{NAME: value}`) | `watchdog secrets <env> init` (the key and token); the rest by hand ("Watchdog service" below) |
 | Worker copies of the above | Cloudflare Worker secrets (the watchdog's on its own Cloudflare account) | `wrangler secret put` (watchdog: `wrangler secret bulk`) |
-| Local dev copies | `apps/api/.dev.vars`, `apps/watchdog/.dev.vars` (0600) | `gen --dev-vars` |
+| Local dev copies | `apps/api/.dev.vars`, `apps/watchdog/.dev.vars`, `apps/email-issuer/.dev.vars` (0600) | `gen --dev-vars` |
 
 `.secrets/` is gitignored, directories 0700, files 0600 (`scripts/lib/secrets.ts` refuses to read a file that group
 or others can read). Google ID tokens, CKD outputs and derived keys are never stored anywhere.
@@ -67,7 +109,7 @@ Every name comes from `envs/<env>.json` (schema: `packages/env/src/schema.ts`; n
 | `ownerKind` | `account` (the owner's keychain key signs) or `sputnik` (`owner` is `council.dao`; owner calls are DAO proposals) | default `account`; `deploy-contract --transfer-owner` switches it after the DAO accepts |
 | `council` (optional) | `{factory, dao, members}`: the owner council, a Sputnik DAO v2 `<name>.<factory>` with exactly three members, 2 of 3 for every proposal kind (D81) | sandbox-dev: `sputnikv2.testnet`, members funded by `council-setup` (2 NEAR each), DAO 6 NEAR |
 | `watchdogs` | watchdog accounts (≤ 3) the contract lets cancel, confirm and pause | default none; `add_watchdog` is skipped until the account exists |
-| `issuerKeyDelayMs`, `governanceDelayMs` | `new` / `migrate_v1` delays (D80) | sandbox-dev: 120 000 and 60 000; mainnet 2 h (provisional) and 72 h. Outside dev envs `deploy-contract` (and `--creation-plan`) refuses an issuer-key delay below the security bound 3·(W + T) = 18 min and a governance delay below 24 h (mainnet: 72 h); `@hana-id/env` `governanceDelayProblems`. sandbox-dev's 2 min deliberately violates the bound for fast drills (D80): its plans carry a warning, never copy its delays to another env |
+| `issuerKeyDelayMs`, `governanceDelayMs` | `new` delays (D80; also the delays the done v1 → v2 migration started with) | sandbox-dev: 120 000 and 60 000; mainnet 2 h (provisional) and 72 h. Outside dev envs `deploy-contract` (and `--creation-plan`) refuses an issuer-key delay below the security bound 3·(W + T) = 18 min and a governance delay below 24 h (mainnet: 72 h); `@hana-id/env` `governanceDelayProblems`. sandbox-dev's 2 min deliberately violates the bound for fast drills (D80): its plans carry a warning, never copy its delays to another env |
 | `allowSignerFullAccessKey` | the signer may keep a full-access key (D86) | only `local*` / `sandbox*` testnet envs; sandbox-dev only among committed manifests |
 | `mpc` | the NEAR MPC contract (exists already; not ours) | — |
 | `ckdDomainId`, `ckdNetworkKey` | CKD domain and the pinned MPC public key | pin with `fetch-ckd-key` |
@@ -210,6 +252,10 @@ the signer is part of every address. Dev-only privileges (loopback origins, part
    overwrite an existing file. If the secret step fails, `vault-kek <env> put --yes` sets it again from the file. Keep
    the file: a rotation needs the current value.
 
+   The identity token's keys (optional; without them `/v1/identity/*` answers 503 `identity_unavailable`):
+   `identity-key <env> init --yes`, commit the manifest's new `identityToken` block, re-run `gen` ("Identity token
+   keys" under "Key rotation").
+
 8. **Deploy the API**, then put the Worker URL in `apiUrl` and re-run `gen` + deploy if it changed (the vault page's
    CSP and the page bundles use it):
 
@@ -256,7 +302,7 @@ issuer keys and code changes behind public delays and makes the owner a 2-of-3 S
 | Vote / list council proposals | `admin <env> owner:vote <id> --member <m> [--reject] [--yes]` · `admin <env> owner:proposals [--json]` |
 | Replace a council member | `admin <env> council:replace-member --remove <old> --add <new> [--member <m>] [--approve-with <m>] [--yes]` |
 | Governance state and findings | `admin <env> governance:status [--json]` |
-| Migrate v1 → v2, upgrade, hand the contract to the DAO | `deploy-contract <env> --upgrade` · `--transfer-owner [--approve-with <m>]` |
+| Upgrade (propose, then execute once due), hand the contract to the DAO | `deploy-contract <env> --upgrade` · `--transfer-owner [--approve-with <m>]` |
 | Print the mainnet-style signer creation batch | `deploy-contract <env> --creation-plan [--wasm <reproducible build>]` |
 
 All are `corepack pnpm --filter @hana-id/scripts run …`. Each prints its plan and sends nothing without `--yes`
@@ -282,10 +328,12 @@ executes on the vote that reaches the threshold; `to_weight` is min(⌊a·n/b⌋
 testnet: `sputnikv2.testnet` exists, `get_default_code_hash` = the pinned `code_hash`, `get_default_version` = [3, 31].
 From near-cli-rs's `create-account fund-myself` source: a top-level `<name>.testnet` account is created by the
 `testnet` registrar's `create_account({new_account_id, new_public_key})` with the initial balance attached, 30 Tgas.
-**Not verified on testnet yet** (that needs real transactions, which agents don't send): that a DAO created this way
-and a proposal round trip behave as in the sandbox, and the gas `create` really burns (council-setup attaches
-300 Tgas). The first `council-setup sandbox-dev --yes` and `owner:call … --approve-with` runs are that check;
-`owner:proposals` and `governance:status` show the result.
+**Verified on testnet 2026-10-30** (sandbox-dev): `council-setup sandbox-dev --yes` created the
+DAO `hana-id-council-dev1.sputnikv2.testnet` with the pinned policy, and proposal round trips behaved as in the
+sandbox: the owner handover (`accept_owner`, proposal #0), the upgrade drill (contract 0.1.1), and the drills'
+updater-key install, `remove_issuer_key` and unpause (#2–#4) ([Governance migration (sandbox-dev)](#governance-migration-sandbox-dev),
+[Watchdog service](#watchdog-service-appswatchdog)); `governance:status` shows no findings. Not recorded: the gas
+`create` really burns (council-setup attaches 300 Tgas).
 
 **sandbox-dev** (dev envs only: `local*` / `sandbox*` on testnet):
 
@@ -375,7 +423,9 @@ On a dev env the new member's key belongs in `.secrets/<env>/council/<new member
 ### Governance migration (sandbox-dev)
 
 `docs/governance-spec.md` "Migration plan → sandbox-dev", as commands. Same signer account, migrated in place: no
-address changes (the signer id, the path and the CKD request are untouched).
+address changes (the signer id, the path and the CKD request are untouched). **Done on sandbox-dev 2026-10-30; kept as
+the record.** It can't be repeated with current code: contract v3 has no `migrate_v1`, and `deploy-contract` refuses
+a v1 contract (D154; a v1 contract would first need the v2 code, develop 26fb70a).
 
 1. Merge the contract, API (sync with the new updater methods) and script changes; tests pass.
 2. `council-setup sandbox-dev --yes` (above). Create the watchdog account (`watchdogs[0]`) with near CLI when the
@@ -418,6 +468,34 @@ address changes (the signer id, the path and the CKD request are untouched).
 Re-run with `--skip-build` (or the same `--wasm`) to execute, so the hash is the proposed one. For a mainnet manifest
 the build must be reproducible (`cargo near build reproducible-wasm`) and its hash, commit and command published
 before the proposal (D86); the scripts refuse every non-testnet manifest today.
+
+**v2 → v3 (email login, sandbox-dev in build-plan batch 6).** Before proposing it, both must be live:
+
+1. The API, `packages/web` (the vault's split path) and `apps/smoke/src/direct.ts` sending the `create_session`
+   proof of possession (`signature` over session_message(0, "hana-id-create-v1:" ‖ sha256(session nonce
+   preimage)), D137), deployed. v2 ignores the extra field; v3 requires it, so without it every split-path session
+   (`/v1/sessions`) fails from the moment the upgrade executes (the one-transaction `/v1/login` is unaffected).
+2. The watchdog with the email pins (build-plan batch 5) deployed, so the email keys posted after the upgrade aren't
+   read as an attack (`forged_key_change`, D190). Item 1 is proven safe on v2 by the sandbox test
+   `v2_ignores_the_create_session_proof_that_v3_requires` (`contracts/integration-tests/tests/governance.rs`).
+
+`deploy-contract --upgrade` refuses to propose or execute while the env's API doesn't report
+`capabilities.createProof` on `GET /v1/health` (batch 6 review M2). **After v3 executes, never roll the API or the
+page Workers back below batch 6**: an older build sends no proof and every split-path session fails.
+
+The full order, as the user's commands, is "Email login on sandbox-dev (build plan batch 6)" below (issuer keys →
+watchdog pins → D1 → API and vault with the proof → session-pool keys → upgrade → `accept_unrecorded_wallets` →
+issuer Worker → email issuer on chain; the email clients wait for batch 8, D234). The upgrade itself
+is the same path as any other; the sandbox suite runs it end to end
+from the v2 code sandbox-dev runs (`contracts/integration-tests/tests/governance.rs`
+`v2_to_v3_upgrade_through_the_dao_keeps_every_view_and_path`): the DAO's `propose_upgrade`, `execute_upgrade` once
+due (`state_migrated {2, 3}`, ≈ 100 Tgas of the 300 attached), every view and path unchanged, then the DAO's
+`accept_unrecorded_wallets` before any link works (D135). Check `get_governance().state_version == 3` and
+`get_config().unrecorded_wallets` (`true` until that call). The v2 code can't come back by upgrade (its `migrate`
+refuses v3 state; the deploy reverts). sandbox-dev's v2 code (`3TSDwkMqPUhZtzFCvvaJ39nQWXUQK4LExPhsaS9tScoz`) is
+`contracts/hana-signer` at develop 26fb70a built with `cargo near build non-reproducible-wasm --no-abi` (what
+`deploy-contract` runs) on the machine that deployed it; another machine embeds other cargo registry paths and
+gets another hash.
 
 ### Creating a signer with governance in place (mainnet-style)
 
@@ -472,9 +550,9 @@ read these sources, all read-only:
 
 ## Usage ledger (Neon, batch C)
 
-The ledger's schema is `apps/api/migrations-usage/` (Postgres; D73), applied by `scripts/usage-migrate.ts`. Nothing
-writes to it yet: capture starts in batch C4 (`docs/batch-c-build-plan.md`). Neon Auth and Neon's other services
-aren't used, only Postgres.
+The ledger's schema is `apps/api/migrations-usage/` (Postgres; D73), applied by `scripts/usage-migrate.ts`. The API
+writes to it from batch C4 once its `USAGE_DB` binding is set up ("Usage capture" below). Neon Auth and Neon's other
+services aren't used, only Postgres.
 
 ```sh
 corepack pnpm --filter @hana-id/scripts usage-migrate sandbox-dev         # lists the pending files, changes nothing
@@ -487,15 +565,218 @@ corepack pnpm --filter @hana-id/scripts usage-migrate sandbox-dev --yes   # appl
 - Each file runs in its own transaction with its sha256 recorded in `hana_migrations.applied`, under an advisory lock.
   A file changed after it was applied, or an applied file the repo doesn't have, stops the run: add a new file instead.
 - The schema creates the roles `usage_writer` (the API) and `usage_admin` (the admin Worker) `NOLOGIN`, with no
-  password; giving them `LOGIN` and passwords, and the Hyperdrive configs, is batch C4's `usage-setup`
-  (`docs/batch-c-build-plan.md` "Setup steps").
-- The first migration creates the monthly partitions of `usage.events` for the current month and the next three;
-  `usage.ensure_partitions(3)` adds the rest (the admin Worker's daily cron, from C12; until then by hand as the owner
-  if the ledger is in use).
+  password; `usage-setup <env> roles` gives them `LOGIN` and passwords ("Usage capture" below).
+- Files (also `0005_link_events.sql`: the link relays' events, `link` / `link_cancel` / `link_unlink`, email login
+  batch 6): `0001_ledger.sql` (events, users, settlements, rates, statements, `ops`, `record_event`, roles and grants),
+  `0002_identity_tokens.sql` (identity tokens per app and day, `record_identity_tokens`, batch C4),
+  `0003_writer_partitions.sql` (the writer may run `ensure_partitions`; 12 months ahead created, batch C4),
+  `0004_email_counts.sql` (email logins and new links per app and day, `record_email_counts`, email login batch 6, D233).
+- Monthly partitions of `usage.events`: 0001 creates the current month and the next 3, 0003 the next 12, and the
+  API's hourly cron keeps 12 months ahead (`usage.ensure_partitions(12)` as the writer, `usage_partitions_failed` on
+  a failure). An event outside every partition is lost (`usage_write_failed` `pg_23514`).
 - Tests run on PGlite in process (`apps/api/test-usage`, D140); set `USAGE_TEST_DATABASE_URL` to a superuser URL of a
   local Postgres 18 (a container, never Neon) to run the same suite there.
 
+## Usage capture (batch C4, milestone M2)
+
+From batch C4 the API sends one usage event per request past the gate of `/v1/login`, `/v1/sessions`,
+`/v1/derive`, `/v1/sessions/revoke` and `/v1/vault/unlock`, and per `/v1/owner-actions` request past the owner check,
+to the Neon ledger through the Hyperdrive binding `USAGE_DB` (role `usage_writer`), after the response (`docs/api.md`
+"Usage capture"). It no longer writes the D1 `usage` counters. **Logins never depend on it**: without the binding
+capture is off; with Neon or Hyperdrive down every endpoint answers exactly as before and the lost event is logged.
+The hourly cron also copies the last 7 days of identity token counts (`identity_usage`) to `usage.identity_tokens`,
+and of email login counts (`email_usage`, from migration 0010) to `usage.email_counts` (D233).
+
+### Setting it up on sandbox-dev (for the user; run from the main checkout)
+
+Nothing here is run by an agent. Every command prints its plan and changes nothing without `--yes`; none prints a
+password, a URL or the key. Prerequisites: `.secrets/sandbox-dev/neon.json` with `DATABASE_URL_DIRECT` (the owner,
+direct endpoint), wrangler logged in to the Hana Cloudflare account, and Hyperdrive available on its plan (build plan
+open question 3).
+
+1. **Ledger schema** (applies `0002_identity_tokens.sql`, `0003_writer_partitions.sql`, and from email login batch 6
+   `0004_email_counts.sql` and `0005_link_events.sql`; `0001` if it isn't yet):
+   `corepack pnpm --filter @hana-id/scripts usage-migrate sandbox-dev`, then the same with `--yes`.
+2. **Role passwords**: `corepack pnpm --filter @hana-id/scripts usage-setup sandbox-dev roles` (plan), then `--yes`.
+   It generates a password per role, writes `.secrets/sandbox-dev/neon-usage-writer.url` and `neon-usage-admin.url`
+   (0600: the owner's direct endpoint and database, the role, `sslmode=require`) and, as the owner, runs
+   `ALTER ROLE usage_writer|usage_admin WITH LOGIN PASSWORD '<SCRAM verifier>'` in one transaction: Neon gets a
+   verifier, never the password. Running it again reuses the passwords in the files (to resume a run that stopped).
+3. **Hyperdrive configs**: `usage-setup sandbox-dev hyperdrive` (plan), then `--yes`: `wrangler hyperdrive create
+   hana-id-usage-writer-sandbox-dev` and `hana-id-usage-admin-sandbox-dev` (the manifest's `usage` block names once it
+   has one) with `--caching-disabled`, from the role files. It prints each config's id (not secret). The admin config
+   is for the admin Worker (batch C8); create both now. Note: wrangler takes the role URL as an argument, so it is
+   briefly visible in the local process list. **Before production** the configs are created through Cloudflare's
+   REST API with the password in the HTTPS body instead (`docs/mainnet-readiness.md` row 4.18).
+4. **`USER_ID_KEY`**: `usage-setup sandbox-dev user-id-key` (plan), then `--yes`: generates 32 random bytes (base64)
+   into `.secrets/sandbox-dev/user-id-key` (0600, never replaced) and sets the API Worker's `USER_ID_KEY` through
+   wrangler's stdin. **Make an offline backup of the file** (with the council backup, as `identity-sub-key`): the key
+   is never rotated within a contract term, and losing it makes every user a new user in MAU and new-user counts
+   (D96). Running it again sets the existing key again.
+5. **Hot DB migration 0009** (`session_markers`, the `no_session` waiver's sign; D220):
+   `corepack pnpm --dir apps/api exec wrangler d1 migrations apply hana-id-sandbox-dev --remote` (it lists
+   `0009_session_markers.sql`; confirm).
+6. **Bind and deploy**: `corepack pnpm --filter @hana-id/api gen sandbox-dev --usage-hyperdrive-id <writer id>` (it
+   prints `usage capture: on`; later runs of `gen` keep the id for the same Worker and database), then
+   `corepack pnpm --filter @hana-id/api run deploy`; `curl -s <apiUrl>/v1/health` shows `"hotDb":9`. The admin CLI's
+   `app:changes:announce --remote` is refused until then (it needs `hotDb` ≥ 9: from C4 its waiver reads
+   `session_markers`, which only the C4 API writes).
+7. **Carry the legacy counters into markers, after the deploy** (the API before it still wrote `usage` rows and no
+   markers, so a run before the deploy could miss the last ones). Once, idempotent, and again before C4b's 0007:
+
+   ```sh
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev --remote --command "INSERT INTO session_markers (app_id, first_at) SELECT app_id, unixepoch('now') * 1000 FROM usage GROUP BY app_id ON CONFLICT (app_id) DO NOTHING"
+   ```
+
+8. **Gate: the writer logs in and the event lands.** Do not go on (no admin Worker, no partner relying on usage
+   numbers, no C4b) until this passes. Log in on sandbox-dev (the demo or `apps/smoke`), then as the owner
+   `SELECT endpoint, outcome, code, relayed, uid IS NOT NULL AS has_uid FROM usage.events ORDER BY received_at DESC
+   LIMIT 5;` must show the login (`ok`, relayed, a uid), and the Worker logs no `usage_write_failed`. This is the
+   first time Neon checks a password `usage-setup` set as a SCRAM verifier (D224; PGlite only proved Postgres stores
+   it): `usage_write_failed` `pg_28P01` means Neon didn't accept it. Then stop: turn capture off ("Turning capture off"
+   below; logins are unaffected) and report the SQLSTATE before going further; never set a plain-text password by hand
+   instead. Optional, for the gas test's fixture: compare the event's `relay_gas_burnt` with the transaction's own sum
+   (`tx` at FINAL: `transaction_outcome` plus every receipt) and keep that `tx` JSON (`apps/api/test/usage.test.ts` uses
+   a hand-shaped one).
+
+**Turning capture off** (e.g. a Neon incident that floods the logs): `gen sandbox-dev --usage-hyperdrive-id off` and
+deploy. Logins are unaffected either way; events in between are not recorded.
+
+### What to watch (Worker logs)
+
+| Event | Meaning | Action |
+|---|---|---|
+| `usage_write_failed` (`code` `connection`, `attempt` 2) | Neon/Hyperdrive unreachable or slow for both tries: the event is lost (under-bills Hana, never a partner) | Check Neon and Hyperdrive status; the daily nonce cross-check (C12) shows lost relayed rows |
+| `usage_write_failed` (`code` `pg_23514`) | No partition for the event's month | Look for `usage_partitions_failed`; as the owner, `SELECT usage.ensure_partitions(12);` |
+| `usage_partitions_failed` (`code`) | The hourly `ensure_partitions(12)` failed (12 months are ahead, so there's time) | Check the writer's grant (`usage-migrate`: 0003) and Neon; the next hour retries |
+| `usage_write_failed` (other `pg_*`) | The server refused it (e.g. `pg_42501`: the role lost its grant; `pg_28P01`: wrong password in the Hyperdrive config) | Re-run `usage-migrate` / `usage-setup … roles`, or fix the Hyperdrive config |
+| `usage_write_rejected` | The event failed UsageEvent v1 (`invalid_event`, never sent) or the function refused it (`pg_22023`) | A bug: the event's `problems` name the fields |
+| `usage_uid_unavailable` | `missing_key` / `bad_key`: `USER_ID_KEY` unset or malformed (events recorded without uid); `bad_path`: a session path that doesn't parse for its scope | Set the key (step 4); `bad_path` should never happen |
+| `identity_usage_sync_failed` | The hourly identity-count copy failed | Nothing: the next hour copies the last 7 days again |
+| `first_session_write_failed` (`what` `scope` or `marker`) | One of the waiver's two hot-DB signs wasn't written | The other one stands; the next session attempt retries the scope's |
+
+## Hot DB migration 0006 and the new gate (batch C3, milestone M1)
+
+State on sandbox-dev (2026-11-03): done. Migrations 0006, 0009 and 0010 are applied to the API's D1, after a rehearsal on a scratch
+D1; a Time Travel bookmark from before 0006 and an export backup are in `.secrets`. The API (`develop` c3c33ec, version
+b215b589) has the hot DB on and `createProof` true; usage capture is off (no `USAGE_DB` binding). The steps below are
+the procedure for another env.
+
+Migration `0006_dashboard_expand.sql` adds batch C's hot-DB tables and columns (`docs/api.md` "D1 schema") without
+rebuilding a table, and backfills them: one `scopes` row per scope (in `org_legacy`, with the environment its keys
+name), one `app_keys` row per app (its key), every origin in force from 0, Hana's suspension bit for suspended apps and
+one `migration.baseline` row per app. The API built on it reads keys from `app_keys`, origins only once in force,
+the suspension bits, and `scopes.environment` for the loopback rules. Existing apps answer exactly as before (tested on
+a sandbox-dev-shaped database: `apps/api/test/migration-0006.test.ts`). On sandbox-dev it is the only unapplied file
+(0008 is applied); wrangler applies unapplied files in name order. Run from the main checkout, logged in to the API's
+Cloudflare account, with `corepack pnpm --filter @hana-id/api run gen sandbox-dev` done. Nothing here touches the chain.
+
+1. **Check the data first** (reads only). Every scope must have one key prefix and every key one of the two, and no
+   column the baseline copies into JSON may hold a BLOB (`json_object` refuses one); the migration aborts otherwise
+   (as a whole on Miniflare; the rehearsal in step 3 shows what remote D1 does):
+
+   ```sh
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev --remote --command "SELECT name FROM d1_migrations ORDER BY id"
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev --remote --command "SELECT scope_id, COUNT(*) AS apps, COUNT(DISTINCT substr(publishable_key, 1, 8)) AS prefixes FROM apps GROUP BY scope_id"
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev --remote --command "SELECT id FROM apps WHERE substr(publishable_key, 1, 8) NOT IN ('pk_test_', 'pk_live_')"
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev --remote --command "SELECT id FROM apps WHERE 'blob' IN (typeof(auto_approve_policy), typeof(auto_approve_pending), typeof(auto_approve_effective_at), typeof(raw_sign), typeof(raw_sign_pending), typeof(raw_sign_effective_at), typeof(publishable_key)) UNION ALL SELECT app_id FROM app_origins WHERE typeof(origin) = 'blob'"
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev --remote --command "SELECT (SELECT COUNT(*) FROM apps) AS apps, (SELECT COUNT(*) FROM app_origins) AS origins, (SELECT COUNT(*) FROM usage) AS usage, (SELECT COUNT(*) FROM vault_shares) AS shares, (SELECT COUNT(*) FROM identity_usage) AS identity"
+   ```
+
+   Expected: the migrations end with `0008_identity_token.sql` and have no `0006`; `prefixes` is 1 on every row; the
+   third and fourth queries return nothing. Note the counts.
+
+2. **Back up** (the export holds `vault_shares`, so it goes under `.secrets/`, 0600):
+
+   ```sh
+   corepack pnpm --dir apps/api exec wrangler d1 time-travel info hana-id-sandbox-dev        # note the bookmark: it undoes the migration
+   corepack pnpm --dir apps/api exec wrangler d1 export hana-id-sandbox-dev --remote --output=../../.secrets/sandbox-dev/d1-before-0006-<yyyymmdd>.sql
+   chmod 600 .secrets/sandbox-dev/d1-before-0006-<yyyymmdd>.sql
+   ```
+
+3. **Rehearse on a scratch remote D1** restored from that export, through the same path as the real apply (`wrangler
+   d1 migrations apply` on the generated config's D1 binding) and the CLI. Note sandbox-dev's own `database_id` first
+   (in `apps/api/wrangler.jsonc`, or `wrangler d1 info hana-id-sandbox-dev`): step d puts it back.
+
+   ```sh
+   # a. a scratch database holding the export (it prints the scratch id)
+   corepack pnpm --dir apps/api exec wrangler d1 create hana-id-sandbox-dev-rehearsal-0006
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev-rehearsal-0006 --remote --file=../../.secrets/sandbox-dev/d1-before-0006-<yyyymmdd>.sql
+   # b. the config's D1 binding on the scratch database, then the real command (it lists 0006, then 0010 from email login batch 6)
+   corepack pnpm --filter @hana-id/api run gen sandbox-dev --d1-name hana-id-sandbox-dev-rehearsal-0006 --d1-id <scratch id>
+   corepack pnpm --dir apps/api exec wrangler d1 migrations apply hana-id-sandbox-dev-rehearsal-0006 --remote
+   # c. D1's implicit transaction per query (D207): the second statement fails, so the first must not be there (expect 0)
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev-rehearsal-0006 --remote --command "INSERT INTO plans (id, per_minute, per_day) VALUES ('rehearsal', 1, 1); INSERT INTO plans (id, per_minute, per_day) VALUES ('rehearsal', 1, 1)"
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev-rehearsal-0006 --remote --command "SELECT COUNT(*) AS n FROM plans WHERE id = 'rehearsal'"
+   #    and one CLI compare-and-swap write each way, read back by the CLI (any app id from app:list)
+   corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:list --remote --d1-name hana-id-sandbox-dev-rehearsal-0006
+   corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:suspend --app <app id> --remote --d1-name hana-id-sandbox-dev-rehearsal-0006
+   corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:resume --app <app id> --remote --d1-name hana-id-sandbox-dev-rehearsal-0006
+   # d. the config back on sandbox-dev's own database (before anything else, above all a deploy), then drop the scratch one
+   corepack pnpm --filter @hana-id/api run gen sandbox-dev --d1-id <sandbox-dev database id>
+   corepack pnpm --dir apps/api exec wrangler d1 delete hana-id-sandbox-dev-rehearsal-0006
+   ```
+
+   Between b and d, run step 1's counts and step 5's checks against `hana-id-sandbox-dev-rehearsal-0006`: the counts
+   equal, the step 5 numbers as expected, the count in c is 0, and each CLI write prints its new state (a stale or
+   lost write would say "nothing was written"). If the migration fails, stop: nothing touched sandbox-dev; read the
+   error (step 1's checks name the usual causes) and note whether the scratch database kept any new table. If the count
+   in c is 1, D1 didn't run that query as one transaction: stop and report it (D207). Delete the scratch database either
+   way (it holds the export's vault shares), after step d.
+
+4. **Apply 0006**: `corepack pnpm --dir apps/api exec wrangler d1 migrations apply hana-id-sandbox-dev --remote`
+   (it lists `0006_dashboard_expand.sql`, then any later file not applied yet: batch C4's `0009_session_markers.sql`
+   and email login batch 6's `0010_login_methods.sql`, which only add a table and a defaulted column; confirm).
+
+5. **Verify**: the counts of step 1 are unchanged, and
+
+   ```sh
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev --remote --command "SELECT (SELECT COUNT(*) FROM scopes) AS scopes, (SELECT COUNT(*) FROM app_keys) AS keys, (SELECT COUNT(*) FROM app_changes WHERE kind = 'migration.baseline') AS baselines, (SELECT COUNT(*) FROM app_origins WHERE active_from IS NOT 0) AS not_in_force"
+   ```
+
+   gives one scope per distinct `scope_id`, `keys` = `baselines` = the apps count, and `not_in_force` 0.
+
+6. **Deploy the API** (`corepack pnpm --filter @hana-id/api run deploy`), then check that it reports the new reads
+   (`curl -s https://hana-id-api-sandbox-dev.tingtc.workers.dev/v1/health` shows `"hotDb":6`), a login on sandbox-dev
+   (the demo, or `apps/smoke`) and `admin sandbox-dev app:list --remote` (every app `active` or `suspended(hana)` as
+   before, its key, its origins).
+
+7. **From now on use only this CLI** (below). It refuses proposals and announcements with `--remote` until
+   `/v1/health` reports `hotDb` ≥ 6, so a proposal can't be made between steps 4 and 6. A checkout from before batch C3
+   must not run `app:*` against sandbox-dev: its `app:origins:add` writes rows with `active_from` NULL, which never
+   match, and its `app:create` is refused by the new triggers.
+
+### Rolling the API back below batch C3 (rollback floor)
+
+**The rollback floor is batch C3**: on a database with 0006 applied, run an API from before batch C3 only after
+parking the pending origins. Such an API reads every `app_origins` row, so an origin that is only proposed (not yet
+announced, or announced and still in its delay) would be in force for it. Its other reads work unchanged on the 0006
+schema (new apps carry their key in `apps.publishable_key` too). Mandatory, in this order:
+
+```sh
+corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:origins:park --remote          # lists the rows not in force
+corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:origins:park --remote --yes    # deletes them (origin.parked rows in app_changes)
+corepack pnpm --dir apps/api exec wrangler rollback                                               # or deploy the older build
+```
+
+Park again right before the rollback if anyone proposed since. While the older API runs, make no proposals (the CLI
+refuses them: `/v1/health` reports no `hotDb`). When batch C3 or later is deployed again,
+`admin sandbox-dev app:origins:unpark --remote --yes` restores exactly the rows the park listed (`origin.parked` in
+`app_changes`), each with its change's `active_from`, and only while that change is still open: an origin removed
+while parked (`app:origins:remove` closes its change even with no row) or cancelled stays gone, and a row deleted any
+other way is never brought back. Proposals not announced within 7 days are cancelled by the cron as usual, parked or not.
+
+**Undo of the migration**: it only adds; a restore to the bookmark of step 2 (`time-travel restore`, "Restoring a D1
+database" below) returns the database to before it, and the API from before batch C3 then works as it did. Writes
+made after step 4 are lost with it.
+
 ## Local API (`wrangler dev`)
+
+With a `USAGE_DB` binding (`gen --usage-hyperdrive-id`), `gen` also writes the binding's `localConnectionString`, an
+unroutable placeholder (`usage-ledger.local.invalid`): `wrangler dev` starts, local requests answer as always, and
+each local usage write fails at connect and is logged (`usage_write_failed` `connection`). Nothing local ever reaches
+the env's ledger. To test capture locally, run a Postgres 18 container with `apps/api/migrations-usage` applied and set
+`CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_USAGE_DB` to its URL for that shell (never a Neon URL).
 
 ```sh
 corepack pnpm --filter @hana-id/api run gen <env> --dev-vars     # wrangler.jsonc + apps/api/.dev.vars (0600)
@@ -504,8 +785,9 @@ corepack pnpm --filter @hana-id/api dev                          # http://localh
 ```
 
 `gen` writes the gitignored `apps/api/wrangler.jsonc` for that env (needed by `dev` and `admin app:*`). `--dev-vars`
-writes `RELAYER_KEYS`, `OWNER_RELAYER_KEYS` (single-quoted) and `KEYS_UPDATER_KEY` from `.secrets/<env>/`, skipping
-missing files, and prints only a count. It rewrites the whole file and has no `VAULT_KEK`; for local vault endpoints
+writes `RELAYER_KEYS`, `OWNER_RELAYER_KEYS` (single-quoted), `KEYS_UPDATER_KEY` and the identity token's
+`IDENTITY_SIGNING_KEY` (the active key only; the standby stays offline) and `IDENTITY_SUB_KEY` (refused when the signing key isn't the
+manifest's active key) from `.secrets/<env>/`, skipping missing files, and prints only a count. It rewrites the whole file and has no `VAULT_KEK`; for local vault endpoints
 append a throwaway one (never a deployed env's) after each `gen --dev-vars`:
 
 ```sh
@@ -524,16 +806,21 @@ origin).
 ## Admin CLI (`scripts/admin.ts`)
 
 ```text
-admin <env> app:create --name <name> --scope <scope_id> --origin <origin> [--origin …] [--plan free] [--remote]
+admin <env> app:create --org org_legacy --name <name> --scope <scope_id> [--environment test|live] --origin <origin> [--origin …] [--plan free] [--remote]
 admin <env> app:origins:add    --app <app id | publishable key> --origin <origin> [--origin …] [--remote]
 admin <env> app:origins:remove --app <app id | publishable key> --origin <origin> [--origin …] [--remote]
 admin <env> app:suspend        --app <app id | publishable key> [--remote]
 admin <env> app:resume         --app <app id | publishable key> [--remote]
 admin <env> app:list [--remote]
+admin <env> app:changes:announce <change id> [--remote]
+admin <env> app:origins:park [--yes] [--remote]      # before running an API from before batch C3 (rollback floor)
+admin <env> app:origins:unpark [--yes] [--remote]    # after redeploying batch C3 or later
+admin <env> <app:* command> … --d1-name <name containing "rehearsal">   # on a rehearsal database (M1 step 3)
 admin <env> app:settings <app id | publishable key> [--persistence session|none] [--session-ttl 12h] [--idle-ttl 2h]
              [--raw-sign off|approval] [--google-web-client <client id>|default] [--auto-approve <policy.json>|off] [--remote]
 admin <env> scope:register [--client <google client id> …] [--allow-shared] (--owner-near <account> | --owner-google <sub>) […]
              [--member <council member>] [--approve-with <council member>] [--yes]
+admin <env> scope:add-email-client --scope <scope id> [--yes]      # dev envs only (local*, sandbox*), D253
 admin <env> issuer-keys:lead-times [--remote]
 admin <env> owner:call <method> [--args '<json>'] [--gas <Tgas>] [--member <m>] [--approve-with <m>] [--yes]
 admin <env> owner:vote <proposal id> --member <m> [--reject] [--yes]
@@ -550,37 +837,79 @@ Run as `corepack pnpm --filter @hana-id/scripts run admin <env> <command> …`. 
 - `scope:register`: `admin_register_scope` through the owner (`owner`'s keychain key, or a council proposal with
   `--member` / `--approve-with`); prints the call and stops without `--yes`. 1..5 owners, ≤ 10 clients; `--client` required unless `--allow-shared`; a shared client ID is refused as
   `--client`. Prints the contract-assigned id (`s1`, `s2`, …).
+- `scope:add-email-client --scope <id>` (dev envs only, D253): adds the scope's email client `("email",
+  "email:<id>")` with a locally minted client proof, signed by the scope's NEAR owner; prints the plan without
+  `--yes`. Steps and checks: "Email login demo on sandbox-dev (batch 8a)" step 3.
 
   ```sh
   corepack pnpm --filter @hana-id/scripts run admin <env> scope:register --client <id>.apps.googleusercontent.com --allow-shared --owner-near <account> --yes
   corepack pnpm --filter @hana-id/scripts run admin <env> scope:register --allow-shared --owner-near <account> --yes   # shared only
   ```
 
-- `app:create`: the scope must exist on chain and the plan in D1; refuses a scope already used by an app with the
-  other key type. Generates `app_<base58>` and a **`pk_test_`** key (there is no command for `pk_live_` keys) and
-  prints it (public). Origins are normalised to `scheme://host[:port]`, then refused if the API would drop or misuse
-  them (`app:create` and `app:origins:add`; never `app:origins:remove`, so a bad entry can always be removed; D100,
-  security sweep OPER-6): Hana's own origins (`vaultOrigin`, `authOrigin`, `apiUrl`), wildcards and odd characters,
-  IP addresses, public suffixes and single labels; loopback origins (`http://localhost:<port>`, `127.0.0.1`,
-  `[::1]`) and the literal `http://localhost:*` only for a `pk_test_` app in a dev env (`local*`, `sandbox*`).
-  App names are NFC-normalised and may not contain control, bidi, zero-width, separator or unassigned characters;
-  `app:list` prints stored values with such characters escaped (OPER-11).
+The `app:*` commands work on the hot DB after migration 0006 (`docs/api.md` "D1 schema"; batch C3). Every write is a
+Hana staff action recorded in `app_changes` (actor `cli:<your login>`) and a compare-and-swap on the version the
+command read: if someone changed the app in between, nothing is written and the command says so; run it again.
+**Origin adds, auto-approve policies and raw signing on are staff proposals**: each gets a `gc_…` id and goes live only
+once announced plus the manifest's `appChangeDelayMs` (sandbox-dev: 60 s). In an env with an admin Worker (batch C8)
+its notice announces them; in an env without one (sandbox-dev today) `app:changes:announce <gc id>` does, and nobody
+is emailed. A proposal not announced within 7 days is cancelled by the API's hourly cron. Removals, turn-offs and
+suspensions are immediate. With `--remote`, proposals and announcements are refused until the deployed API reports the
+batch C3 reads (`GET /v1/health` `hotDb` ≥ 6), and announcements also until it reports the batch C4 hot DB (≥ 9: the
+waiver reads the session markers only that API writes); `app:origins:park` / `unpark`: "Rolling the API back below batch C3"
+above.
+
+- `app:create`: `--org` is required and must be `org_legacy` until the console database exists (batch C7). The scope
+  must exist on chain and the plan in D1. A scope with no app yet needs `--environment test|live`, fixed for the scope
+  from then on (its `scopes` row); an existing scope keeps its own (another environment or org is refused, D51).
+  Generates `app_<base58>`, `key_<base58>` and a `pk_test_` or `pk_live_` key by the environment and prints the key
+  (public). The origins are staff proposals; when this call created the scope row they skip the delay at their
+  announcement if the scope then still shows no sign of a user (the `no_session` waiver, decided inside the
+  announcement's SQL: no `first_session_at`, no other origin of the scope ever in force, no vault share, session marker
+  or identity row; batch C4 replaced the legacy usage row with the session marker, D220). On an existing scope it is refused
+  within `appChangeDelayMs` of the scope's org assignment. Origins are normalised by `@hana-id/console-core`
+  `normaliseOrigin` (the form the API and the console share: lowercase ASCII/punycode host, default port and trailing
+  dot dropped) and checked by its `originProblem` (`app:create` and `app:origins:add`; never `app:origins:remove`, so
+  a bad entry can always be removed; D100, security sweep OPER-6): Hana's own origins (`REFUSED_ORIGINS`: the vault,
+  auth and API origins and the dashboard's), wildcards, plain `http` other than loopback, IP addresses, public
+  suffixes and single labels, a mixed-script label on a live scope; loopback origins (`http://localhost:<port>`,
+  `127.0.0.1`, `[::1]`) and the literal `http://localhost:*` only on a test scope in a dev env (`local*`, `sandbox*`,
+  D142). At most 20 active-or-pending origins per app. App names are NFC-normalised and may not contain control, bidi,
+  zero-width, separator or unassigned characters; `app:list` prints stored values with such characters escaped
+  (OPER-11).
 
   ```sh
-  corepack pnpm --filter @hana-id/scripts run admin <env> app:create --name smoke-a --scope s1 --origin http://localhost:5173 --remote
+  corepack pnpm --filter @hana-id/scripts run admin <env> app:create --org org_legacy --name smoke-a --scope s1 --origin http://localhost:5173 --remote
   ```
 
-- Suspension is D1-only (the contract has no suspension; D11). Removing an origin also kills that origin's vault
-  shares on their next use. Logins, relays, `GET /v1/app` and new vault page loads see a suspension or an origin
-  removal at once; the vault endpoints (unlock, touch, revoke, share creation) cache the app per Worker isolate, so
-  there it takes up to 30 s (D78).
+- `app:origins:add`: a staff proposal per new origin (one already listed or pending is reported and skipped); prints
+  each `gc_…` id. `app:origins:remove`: immediate; an origin in force ends its change, a pending one is cancelled.
+- `app:changes:announce <gc id>`: only in an env with no `admin` block, never on a production network. Sets the
+  change's `notified_at` and `active_from` (now + `appChangeDelayMs`, or now under the `no_session` waiver), on its
+  origin row too, or writes the policy or raw-signing value as pending until `active_from`; records
+  `{channel: "cli", emailed: "none"}`. Once per change.
+
+  ```sh
+  corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:origins:add --app <app> --origin https://new.example.com --remote   # prints gc_…
+  corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:changes:announce <gc id> --remote                                # in force 60 s later
+  ```
+
+- `app:suspend` / `app:resume` set and clear Hana's suspension bit (1) only; the org (2) and partner (4) bits belong to
+  the admin and partner consoles (batch C), and an app stays suspended while any bit is set. Both refuse a deleted app
+  (`AdminRpc.deleteApp`): it keeps bit 1 for good (D225). Suspension is D1-only (the
+  contract has no suspension; D11). Removing an origin also kills that origin's vault shares on their next use.
+  Logins, relays, `GET /v1/app` and new vault page loads see a suspension or an origin removal at once; the vault
+  endpoints (unlock, touch, revoke, share creation) cache the app per Worker isolate, so there it takes up to 30 s
+  (D78).
+- `app:list`: each app's org, environment, suspension bits, keys (revoked ones marked), origins in force and pending
+  changes.
 - `app:*` need `apps/api/wrangler.jsonc` for the env (`gen <env>` first) and run `wrangler d1 execute` from `apps/api`.
-- `app:settings` (app positionally or with `--app`, not both; no setting flags: show them): ranges as the migration's
-  CHECKs; `--raw-sign approval` and a new `--auto-approve` policy are pending for 24 h (`changeDelayMs` in dev envs),
-  `off` is immediate. A relative `--auto-approve` path is resolved against the directory you ran `pnpm` from
-  (`INIT_CWD`), and the change log names the resolved file. The UPDATE only applies if every settings column is still
-  as the command read it: if someone else changed the app in between, nothing is written and the command fails with
-  "The app's settings changed since they were read"; run it again. `--persistence none` revokes existing vault
+- `app:settings` (app positionally or with `--app`, not both; no setting flags: show them, with any proposals): ranges
+  as the migration's CHECKs; `--raw-sign approval` (refused for a test app: test apps never sign raw, D39 as amended 2026-10-28) and a new
+  `--auto-approve` policy are staff proposals (above; at most one pending policy per app); `off` and the other
+  settings are immediate. A relative `--auto-approve` path is resolved against the directory you ran `pnpm` from
+  (`INIT_CWD`), and the change log names the resolved file. The write only applies if `settings_version` and every
+  settings column are still as the command read them: if someone else changed the app in between, nothing is written
+  and the command fails with "The app's settings changed since they were read"; run it again. `--persistence none` revokes existing vault
   shares on their next unlock or touch; a lower `--session-ttl` also shortens live shares (to their creation + the new
   TTL). Plans other than `free` need a manual D1 insert.
 
@@ -762,8 +1091,9 @@ Order for an env moving to the governance contract (`docs/governance-spec.md` "M
    (`key_changes_unavailable`, sync by hand meanwhile), and `/v1/governance` answers `502 near_unavailable`.
    Deployed before the migration, the cron logs `proposals_unavailable` / `proposal_record_failed` /
    `run_record_failed` (it still proposes, without the cancel hold) and `/v1/governance` has `updater: null`.
-2. Upgrade the contract (`migrate_v1`). From then on the v1 updater key can still call `set_issuer_key` (it now
-   queues) but not the new methods: executions fail (`jwks_tx` `send_failed`) until step 3.
+2. Upgrade the contract (`migrate_v1`, done on sandbox-dev; current code has no v1 migration, D154). From then on the
+   v1 updater key can still call `set_issuer_key` (it now queues) but not the new methods: executions fail (`jwks_tx`
+   `send_failed`) until step 3.
 3. `add_updater_key(<new key>)`, upload it as `KEYS_UPDATER_KEY`, delete the v1 key ("Keys-updater key" above).
 4. Check: `curl -s <apiUrl>/v1/governance | jq '{stateVersion, updaterKeys, signerAccessKeys, updater}'`.
 
@@ -776,6 +1106,21 @@ actions and `execute_change` fail on chain while paused (`422 contract_rejected`
 pause state with `get_config`, cached 60 s (10 s while paused), so logins resume within 10 s of `unpause()`. Who
 pauses and unpauses, and what each watchdog alert means, is the watchdog runbook (`docs/governance-spec.md`
 "Alerts"); the API raises no alert.
+
+### Link volume thresholds (D200)
+
+The contract counts new links (a combined login with a `link_jwt`, or `link_identity`) per UTC hour, per scope and in
+total, and records when a count reaches its alarm threshold (defaults 50 per scope and 500 in total). It never refuses
+a link: the thresholds only decide when the watchdog alerts. A burst of links usually means a stolen email key
+(`docs/security.md`); a large partner launch can look the same.
+
+- **Check:** `near contract call-function as-read-only <signer> get_link_stats json-args '{}' network-config testnet
+  now`: `thresholds`, `pending_thresholds`, and for the current and previous hour `total`, `total_threshold_reached`,
+  `flagged_scopes`. On an alert, compare the flagged scope with the partner's plans and the email issuer's issuance for
+  that app; if it isn't a launch, pause (the watchdog runbook).
+- **Change:** `admin <env> owner:call set_link_thresholds --args '{"per_scope_per_hour":<n>,"total_per_hour":<m>}'
+  [--approve-with <member>] --yes` (a council proposal; each value 1–100000). A lower value applies at once; a raise
+  waits `governance_delay_ms` (`pending_thresholds` shows it) and the watchdog alerts on it.
 
 ### Issuer key lead times (D33)
 
@@ -850,6 +1195,375 @@ Every user with a persisted login signs in with Google again on their next visit
 be unlocked). D1 backups and Time Travel still hold the old rows under the old KEK for their retention: treat them as
 exposed for that long.
 
+### Identity token keys
+
+The partner identity token (`docs/identity-token-spec.md`, D127; `docs/api.md` "Identity token") needs a manifest block
+and API Worker secrets, all made by `scripts/identity-key.ts` (D177). Files in `.secrets/<env>/` are 0600 and never
+overwritten (Cloudflare can't give a secret back); values go to the Worker through wrangler's stdin; no command prints
+a private value. Testnet and `local*` only: staging and mainnet sign with AWS KMS ("Identity token keys on AWS KMS"
+below; `gen` and the schema refuse a Worker-secret key off testnet).
+
+| File | Role | On the Worker |
+|---|---|---|
+| `identity-signing-key.json` | P-256 private JWK that signs now (`identityToken.signer.activeKid`) | yes, in the slot `identity-slots.json` names (`IDENTITY_SIGNING_KEY` or `IDENTITY_SIGNING_KEY_STANDBY`) |
+| `identity-signing-key-standby.json` | published in the JWKS, the emergency switch | **no**: never uploaded until `switch --to standby`, so a leak of the Worker's secrets or the Cloudflare account doesn't reach it. Move the file offline (with the council backup, D81) and bring it back only to switch |
+| `identity-signing-key-next.json` | a rotation's incoming key (`next`), published | no, until `switch --to next` |
+| `identity-signing-key-previous.json` | the key a switch replaced, still published so its tokens keep verifying | yes, until `retire --key previous` deletes its slot |
+| `identity-slots.json` | which Worker slot holds which kid (public data) | — |
+| `identity-sub-key` | `IDENTITY_SUB_KEY`, base64 of 32 bytes. **Never rotated** (a new key changes every user's `sub` at every partner); back it up offline with the council backup (D81) | yes |
+
+Every command below prints its plan without `--yes`. After `init`, `next`, `switch` and `retire`, put the changed
+`envs/<env>.json` in the repo, run `gen` and deploy the API: the JWKS and the active kid come from the manifest.
+
+**Watchdog pins first** (D210, D211). The watchdog pages critical (`identity_key_unpinned`) for any key in the JWKS
+whose thumbprint isn't in `watchdog.pinnedIdentityKeys`, and the schema refuses a manifest that publishes an unpinned
+key. On an env with a `watchdog` block, `identity-key` writes the pins with the keys: `init` and `next` pin the new
+keys, `retire` unpins the key it unpublishes, `switch` changes no pin. The deploy order follows:
+
+- after `init` or `next` (a key added): **deploy the watchdog first**, then the API. Between the two the watchdog
+  warns `identity_key_missing` (pinned, not yet published): expected.
+- after `retire` (a key removed): **deploy the API first**, then the watchdog. The other order pages
+  `identity_key_unpinned` until the API deploy.
+
+The watchdog deploy runs on the watchdog's own Cloudflare account ("Watchdog service" below; logged in
+there, not to the API's account; sandbox-dev's watchdog shares the API's account, D125):
+
+```sh
+corepack pnpm --filter @hana-id/watchdog gen <env>              # IDENTITY_PINS, IDENTITY_ISS (and the rest)
+corepack pnpm --dir apps/watchdog exec wrangler deploy
+```
+
+Check `/status` `identity.pinned` after the watchdog deploy and `identity.jwks` (`unpinned: 0`, `missing: []`) after
+the next run.
+
+```sh
+S="corepack pnpm --filter @hana-id/scripts run identity-key <env>"
+$S show                                   # the published kids, their roles and Worker slots (public values only)
+```
+
+**First setup (once per env):**
+
+```sh
+$S init --yes        # active + standby + sub key files; identityToken in envs/<env>.json (both keys pinned for the watchdog); uploads the active key and IDENTITY_SUB_KEY
+# the watchdog first (its own account): watchdog gen <env>, wrangler deploy (above)
+corepack pnpm --filter @hana-id/api run gen <env> --d1-id <id>   # IDENTITY_ISS, IDENTITY_PUBLIC_KEYS, IDENTITY_ACTIVE_KID, the bindings
+corepack pnpm --dir apps/api exec wrangler d1 migrations apply <cloudflare.d1Name> --remote   # 0008_identity_token.sql
+corepack pnpm --filter @hana-id/api run deploy
+curl -s <apiUrl>/v1/identity/jwks.json             # {"keys":[{…active…},{…standby…}]}, no "d"
+curl -s <apiUrl>/v1/identity/.well-known/openid-configuration   # issuer = identityToken.iss, jwks_uri = {iss}/jwks.json
+```
+
+Then move `identity-signing-key-standby.json` offline. `init` refuses when any identity file exists or the manifest
+already has `identityToken`. `init --local --yes` uploads nothing (a `local*` env, or to upload later with `put --yes`,
+which sets the active key in its slot and the sub key again). `gen --dev-vars` writes the active key and the sub key
+into `apps/api/.dev.vars`, never the standby, and refuses a key that isn't the manifest's active one.
+
+**Scheduled rotation** (every 12 months; 14 days' notice to partners that pin thumbprints, 24 h on testnet):
+
+```sh
+$S next --yes                 # a new key, published and pinned (manifest), uploaded nowhere → watchdog gen + deploy, THEN API gen + deploy
+# … wait the notice period …
+$S switch --to next --yes     # uploads it into the free slot, makes it the active kid; the old key becomes "previous" → API gen, deploy (no pin change)
+# … ≥ 2 h later (tokens signed by the old key expire within 1 h) …
+$S retire --key previous --yes   # unpublishes and unpins the old key, deletes its Worker secret, sets its file aside → API gen + deploy, THEN watchdog gen + deploy
+```
+
+`switch` leaves both keys on the Worker until `retire`, so whichever manifest is deployed, a key with its active kid
+is there. Run `retire` only after the switch's deploy. Retired key files are kept as
+`identity-signing-key-retired-<kid prefix>.json` for a post-mortem; never commit them.
+
+**Suspected compromise** (playbook `identity-signing-key-compromised` in `docs/playbooks.md`):
+
+1. Decide what is exposed. A leak of the API Worker's secrets or the Cloudflare account exposes the active key only
+   (the standby was never uploaded). A leak of `.secrets/<env>/` or the operator's machine exposes every key whose
+   file was there, the standby too unless it was offline. **Unless the incident provably touches only the active key,
+   treat both as exposed.**
+2. Only the active key exposed: `$S switch --to standby --yes`, API gen, deploy, then at once `$S retire --key previous
+   --yes`, API gen, deploy, then watchdog gen, deploy (no 2 h wait). Make a new standby with `$S next --yes`
+   (watchdog gen and deploy first, then the API) and move its file offline.
+3. Both exposed: `$S retire --key standby --yes` and `$S next --yes` (one unpins, one pins): deploy the watchdog, then
+   the API, and acknowledge the `identity_key_unpinned` page for the standby while the old API is still live (or
+   deploy the API between the two commands to avoid it); then `$S switch --to next --yes`, API gen, deploy; then
+   `$S retire --key previous --yes`, API gen, deploy, watchdog gen, deploy. Partners using the JWKS URL pick up the
+   new kid at once and reject the removed ones within 10 minutes; tokens with up to 1 h left die then too.
+4. Tell partners (security contacts): the `kid`, the window in which forged tokens may have been accepted, what to
+   re-check. Pinning partners update their pins.
+
+A key in the JWKS nobody on the team published is the watchdog's critical `identity_key_unpinned` (or
+`identity_private_key_published`, `identity_discovery_mismatch`): playbook `identity-jwks-forged`, which treats the API
+Worker or the Cloudflare account as compromised and rotates as above.
+
+**Sub key leak.** Privacy, not funds: the holder can map partners' `sub`s to on-chain paths. Not rotatable without a
+`u2_` scheme and a 90-day `legacy_sub` window (spec "`sub`").
+
+### Identity token keys on AWS KMS
+
+**Status: code only (build step 7, branch `feat/identity-token-7`), no env uses it.** The API's KMS signer
+(`apps/api/src/identity/kms.ts`), the manifest's `aws-kms` signer, `gen`'s vars and the `identity-key kms-*` commands
+are built and tested against a fake KMS. The AWS side below is the operator's setup, in D121's dedicated AWS account,
+before staging's rehearsal and mainnet. sandbox-dev stays on the Worker-secret key. Moving an existing Worker-secret
+env to KMS isn't scripted (it must keep `IDENTITY_SUB_KEY` and needs a rotation window), so KMS envs start with
+`kms-init`.
+
+How it signs (`docs/api.md` "Identity token"): the Worker hashes the token's signing input and sends one
+`TrentService.Sign` (`MessageType: DIGEST`, `ECDSA_SHA_256`, SigV4) for the active key's ARN to
+`kms.<that key's region>.amazonaws.com`, with no retry, a 3 s deadline and a 4 KiB answer cap. The DER answer is
+converted to JOSE and verified with the published key before any token is answered (D216–D218). Every failure is
+`503 identity_signer_unavailable`, logged `identity_sign_failed` with a `kms_*` code.
+
+| What | Where | Notes |
+|---|---|---|
+| Identity keys: `active` and `standby`, during a rotation `next` and `previous` | AWS KMS, D121's account | `ECC_NIST_P256`, `SIGN_VERIFY`, origin `AWS_KMS` (generated in KMS, non-exportable), single-region (no `mrk-` keys: a replica shares its key material). The standby in another region than the active key (D219, the schema checks it). The same key policy on every key (below) |
+| IAM user `hana-identity-signer` (one per env: the manifest's `credentials.iamUser`) | IAM, same account | No console password. Its only permission: `kms:Sign` on the **active** key's ARN, `ECDSA_SHA_256` and `DIGEST` only (D219). One access key in use (two during a rotation) |
+| `IDENTITY_AWS_ACCESS_KEY_ID`, `IDENTITY_AWS_SECRET_ACCESS_KEY` | API Worker secrets | Set together by `kms-put-aws-key` (one `wrangler secret bulk`); rotated every 90 days and on suspicion |
+| `identityToken.signer` | `envs/<env>.json` | `{kind: "aws-kms", credentials: {kind: "worker-secret", iamUser}, keys: {active: {kid, arn}, standby?: {kid, arn}, next?, previous?}}`; every published key has a role, all keys in one account (D215). `gen` writes `IDENTITY_SIGNER=aws-kms`, `IDENTITY_ACTIVE_KID` and `IDENTITY_KMS_KEY_ARN` (the active key's ARN only) |
+| `IDENTITY_SUB_KEY` | Worker secret, `.secrets/<env>/identity-sub-key` | As on testnet: never rotated, backed up offline (D81). `kms-init` makes it |
+
+Every `kms-*` command prints its plan without `--yes`, never calls AWS and never prints a credential.
+`<key.json>` is the public data `aws kms get-public-key --key-id <arn> --output json` prints. After each manifest
+change: commit `envs/<env>.json`, `gen`, deploy.
+
+```sh
+S="corepack pnpm --filter @hana-id/scripts run identity-key <env>"
+$S show            # roles, kids and ARNs (public values only); warns when there is no standby
+```
+
+**Key policy** (every identity key; `<signer>` is `arn:aws:iam::<account>:user/<iamUser>`, `<admin>` the break-glass
+role's ARN). It delegates `kms:Sign` to the signer user's IAM policy only, so the key the Worker can sign with is set
+in one place, the IAM policy (D219). It denies signing to every other principal, grants to everyone, and key changes
+to everyone but the break-glass role:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Id": "hana-id-identity-key",
+  "Statement": [
+    {
+      "Sid": "BreakGlassAdministers",
+      "Effect": "Allow",
+      "Principal": { "AWS": "<admin>" },
+      "Action": ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetPublicKey", "kms:ListResourceTags", "kms:PutKeyPolicy",
+                 "kms:EnableKey", "kms:DisableKey", "kms:ScheduleKeyDeletion", "kms:CancelKeyDeletion",
+                 "kms:TagResource", "kms:UntagResource", "kms:UpdateKeyDescription"],
+      "Resource": "*",
+      "Condition": { "Bool": { "aws:MultiFactorAuthPresent": "true" } }
+    },
+    {
+      "Sid": "SignerSignsThroughItsIamPolicy",
+      "Effect": "Allow",
+      "Principal": { "AWS": "arn:aws:iam::<account>:root" },
+      "Action": "kms:Sign",
+      "Resource": "*",
+      "Condition": {
+        "ArnEquals": { "aws:PrincipalArn": "<signer>" },
+        "StringEquals": { "kms:SigningAlgorithm": "ECDSA_SHA_256", "kms:MessageType": "DIGEST" },
+        "Null": { "aws:TokenIssueTime": "true" }
+      }
+    },
+    {
+      "Sid": "NoOtherSigner",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "kms:Sign",
+      "Resource": "*",
+      "Condition": { "ArnNotEquals": { "aws:PrincipalArn": "<signer>" } }
+    },
+    {
+      "Sid": "NoSessionCredentials",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "kms:Sign",
+      "Resource": "*",
+      "Condition": { "Null": { "aws:TokenIssueTime": "false" } }
+    },
+    { "Sid": "NoGrants", "Effect": "Deny", "Principal": "*", "Action": "kms:CreateGrant", "Resource": "*" },
+    {
+      "Sid": "OnlyBreakGlassChangesTheKey",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": ["kms:PutKeyPolicy", "kms:ScheduleKeyDeletion", "kms:CancelKeyDeletion", "kms:DisableKey",
+                 "kms:EnableKey", "kms:UpdateKeyDescription", "kms:TagResource", "kms:UntagResource"],
+      "Resource": "*",
+      "Condition": { "ArnNotEquals": { "aws:PrincipalArn": "<admin>" } }
+    }
+  ]
+}
+```
+
+Never drop the `BreakGlassAdministers` statement: a key policy nobody can change can only be repaired by AWS Support.
+
+**Only the long-term access key signs (D219).** Anyone holding the signer's access key can call
+`sts:GetSessionToken`, which needs no permission and can't be denied by any policy, and get session credentials that
+carry the user's permissions as they are at each call, including after a switch has put the standby in the IAM policy.
+Deactivating or deleting the access key isn't proven to end such sessions (up to 36 h). So `Sign` is allowed only to
+requests without `aws:TokenIssueTime` (long-term `AKIA…` credentials, which is what the Worker uses), and
+`NoSessionCredentials` denies `Sign` to every request made with temporary credentials, the signer's sessions included.
+**Confirm on staging** (a drill): a `GetSessionToken` session of the signer user is refused `Sign` (`AccessDenied`), and
+the Worker's own `AKIA…` key still signs.
+
+**The break-glass role.** `<admin>` is an IAM role in this account that operators reach with `sts:AssumeRole` and MFA
+(its trust policy requires `aws:MultiFactorAuthPresent`; `aws configure` a profile with `role_arn` and `mfa_serial`).
+Not an IAM Identity Center (SSO) permission set: those sessions don't carry `aws:MultiFactorAuthPresent`, so the
+`Bool` condition fails and nobody can administer the key. Never delete or rename the role: a key policy names the role
+by its unique id, so a recreated role of the same name isn't the same principal, and the keys lose their administrator
+(repair: AWS Support). To bound a stale MFA session as well, add `"NumericLessThan": { "aws:MultiFactorAuthAge":
+"3600" }` next to the `Bool` condition.
+
+**The signer user's IAM policy** (inline, the user's only policy). The `Resource` lists the active key alone, and
+during a switch the active and the incoming key; `NoOtherKey` lists the same ARNs, so even a policy attached to the user
+by mistake can't let it sign with another key:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "SignWithTheActiveIdentityKey",
+      "Effect": "Allow",
+      "Action": "kms:Sign",
+      "Resource": ["arn:aws:kms:<region>:<account>:key/<active key id>"],
+      "Condition": {
+        "StringEquals": { "kms:SigningAlgorithm": "ECDSA_SHA_256", "kms:MessageType": "DIGEST" },
+        "Bool": { "aws:SecureTransport": "true" },
+        "Null": { "aws:TokenIssueTime": "true" }
+      }
+    },
+    { "Sid": "NoOtherKey", "Effect": "Deny", "Action": "kms:Sign", "NotResource": ["arn:aws:kms:<region>:<account>:key/<active key id>"] },
+    { "Sid": "NothingElse", "Effect": "Deny", "NotAction": "kms:Sign", "Resource": "*" }
+  ]
+}
+```
+
+There is no source-IP condition: Workers have no fixed egress addresses. The user can't manage its own access keys
+(`NothingElse`); the break-glass role does.
+
+**One-time setup (the operator, per env, as the break-glass role with MFA):**
+
+1. **CloudTrail.** A multi-region trail in the account (or the organization trail) delivering to the log-archive
+   account (D121), with management events **Read and Write** (`Sign` is a read event) and KMS events **not**
+   excluded. Check that a `Sign` shows up (step 7).
+2. **Keys.** One in the active region (for example `ap-east-1`) and one in a second region (for example
+   `ap-southeast-1`), with the key policy above in `key-policy.json`:
+   `aws kms create-key --region <region> --key-spec ECC_NIST_P256 --key-usage SIGN_VERIFY --origin AWS_KMS --policy file://key-policy.json --description "hana-id identity <env> <role>" --tags TagKey=env,TagValue=<env>`.
+   Then for each: `aws kms get-public-key --region <region> --key-id <arn> --output json > <role>.json` (public data).
+3. **IAM user.** `aws iam create-user --user-name <iamUser>`, then `aws iam put-user-policy --user-name <iamUser>
+   --policy-name identity-sign --policy-document file://signer-policy.json` (the active key's ARN).
+4. **Manifest and sub key.** `$S kms-init --active active.json --standby standby.json --iam-user <iamUser> --yes`
+   writes `identityToken` (refused unless the two keys are in two regions of one account), creates
+   `.secrets/<env>/identity-sub-key` and sets `IDENTITY_SUB_KEY`; with a `watchdog` block it also pins both keys in
+   `watchdog.pinnedIdentityKeys` (D211). Commit the manifest; deploy the watchdog (gen, deploy) before the API.
+5. **Access key.** `(umask 077; aws iam create-access-key --user-name <iamUser> > .secrets/<env>/identity-aws-access-key.json)`,
+   then `$S kms-put-aws-key --yes`. It checks that the file is 0600, that the key belongs to the manifest's user, and
+   that it is an active `AKIA…` key.
+6. **Deploy.** `gen <env> --d1-id <id>` (writes `IDENTITY_SIGNER=aws-kms`, `IDENTITY_ACTIVE_KID`,
+   `IDENTITY_KMS_KEY_ARN`), apply the migrations, deploy. The Worker must have no `IDENTITY_SIGNING_KEY*` secrets
+   (`wrangler secret list`; delete leftovers).
+7. **Check.** Mint a token from a test app: it verifies against the JWKS with the active kid, and the request's `sign`
+   timing phase fits the 100 ms p95 budget (measure on staging). CloudTrail shows one `Sign` by the signer user on the
+   active key. Then delete `.secrets/<env>/identity-aws-access-key.json`.
+8. **Alarms** (EventBridge rules on CloudTrail events, to the paging app). Where and how:
+   - Rule state **`ENABLED_WITH_ALL_CLOUDTRAIL_MANAGEMENT_EVENTS`**: a rule in the default `ENABLED` state doesn't
+     receive read-only management events, and `Sign` and `GetSessionToken` are read-only.
+   - The same KMS and STS rules in **both key regions** (KMS events are regional; a `GetSessionToken` on a regional
+     STS endpoint is logged in that region), and the IAM and STS rules in **`us-east-1`** (IAM and the global STS
+     endpoint log there).
+   - The events: `PutKeyPolicy`, `DisableKey`, `ScheduleKeyDeletion` or `CreateGrant` on an identity key; any IAM
+     change that could widen or reuse the signer user: `PutUserPolicy`, `DeleteUserPolicy`, `AttachUserPolicy`,
+     `DetachUserPolicy`, `AddUserToGroup`, `PutUserPermissionsBoundary`, `DeleteUserPermissionsBoundary`,
+     `CreateAccessKey`, `UpdateAccessKey`, `DeleteAccessKey`, `CreateLoginProfile`, and `PutGroupPolicy` /
+     `AttachGroupPolicy` on any group the signer user is in (it should be in none); **`GetSessionToken` by the signer
+     user** (`userIdentity.arn` = `<signer>`; the Worker never calls it, so any is a leaked key in use); any `Sign` on
+     an identity key by another principal or with session credentials (the key policy refuses it, but the attempt
+     matters).
+   - **`Sign` volume per key:** KMS publishes no per-key request metric, so send the trail to a CloudWatch Logs log
+     group (in each key region) and add a metric filter per key, e.g.
+     `{ ($.eventSource = "kms.amazonaws.com") && ($.eventName = "Sign") && ($.resources[0].ARN = "<key arn>") }`, with an
+     alarm on its hourly sum (a few times the API's `identity_issuance_hourly` peak). Plus an AWS Budgets alarm on
+     KMS spend.
+   Every planned change below fires one of them: acknowledge it.
+
+`wrangler dev` doesn't run a KMS env: no AWS credentials go into `.dev.vars` (`gen --dev-vars` writes the sub key only
+and refuses a leftover private signing key file). Local development uses a `local*` env with a Worker-secret key.
+
+**Scheduled key rotation** (every 12 months; 14 days' notice to partners that pin thumbprints):
+
+1. Create the new key in the **active key's region** (the standby keeps the other one), with the same key policy;
+   `get-public-key` → `next.json`; `$S kms-add --role next --key next.json --yes` (it also pins the key in
+   `watchdog.pinnedIdentityKeys`, D211) → **watchdog gen and deploy first**, then API gen and deploy (the JWKS lists it,
+   nothing signs with it).
+2. Wait the notice period.
+3. IAM: list both ARNs (active and next) in the signer user's policy, in `SignWithTheActiveIdentityKey` and
+   `NoOtherKey`.
+4. **Pre-switch check** (below) on the next key.
+5. `$S kms-switch --to next --yes` → gen, deploy. The old key is now `previous`, still published.
+6. After ≥ 2 h: `$S kms-retire --key previous --yes` (it also unpins the key) → API gen and deploy, **then** watchdog gen
+   and deploy. IAM: the new active ARN alone. KMS: `aws kms disable-key` and `aws kms schedule-key-deletion
+   --pending-window-in-days 30` on the old key.
+
+**Pre-switch check** (before any `kms-switch`, once the IAM policy lists the target key): prove that the signer user
+can sign with the target and that its signature verifies against the public key the manifest publishes for it. Only
+the signer user may sign (`NoOtherSigner`), so this needs its access key: run it while
+`.secrets/<env>/identity-aws-access-key.json` exists (right after creating an access key; a scheduled switch is a good
+time to rotate it too). The credentials go into the AWS CLI's environment for one command and are never printed:
+
+```sh
+F=.secrets/<env>/identity-aws-access-key.json
+printf 'hana-id pre-switch check %s' "$(date -u +%FT%TZ)" | openssl dgst -sha256 -binary > /tmp/check.digest
+AWS_ACCESS_KEY_ID="$(jq -r .AccessKey.AccessKeyId "$F")" AWS_SECRET_ACCESS_KEY="$(jq -r .AccessKey.SecretAccessKey "$F")" \
+  aws kms sign --region <target region> --key-id <target arn> --message fileb:///tmp/check.digest --message-type DIGEST \
+  --signing-algorithm ECDSA_SHA_256 --output text --query Signature | base64 -d > /tmp/check.sig
+jq -r .PublicKey <target>.json | base64 -d | openssl pkey -pubin -inform DER -out /tmp/target.pem
+openssl pkeyutl -verify -pubin -inkey /tmp/target.pem -in /tmp/check.digest -sigfile /tmp/check.sig   # "Signature Verified Successfully"
+```
+
+`<target>.json` is the `get-public-key` file `kms-add` published (its kid is in the manifest). This `Sign` is in
+CloudTrail with no token behind it: note its time for the reconciliation.
+
+**Access key rotation** (every 90 days, and at once on suspicion):
+
+1. `(umask 077; aws iam create-access-key --user-name <iamUser> > .secrets/<env>/identity-aws-access-key.json)`. IAM
+   allows two keys per user: delete an old inactive one first if there are two.
+2. `$S kms-put-aws-key --yes`: one request sets both secrets, so the Worker never pairs the new id with the old secret.
+3. Mint a token; CloudTrail shows a `Sign` with the new access key id.
+4. `aws iam update-access-key --user-name <iamUser> --access-key-id <old id> --status Inactive`; after a day with no
+   use (`aws iam get-access-key-last-used`), `aws iam delete-access-key`. Delete the `.secrets` file.
+
+**Suspected compromise** (a leaked access key or Worker secrets, an API Worker or Cloudflare account incident, an
+unexplained `Sign` in CloudTrail, a forged token reported by a partner; planned playbook
+`identity-kms-signer-compromised`):
+
+1. **Stop the signatures:** `aws iam update-access-key … --status Inactive` for every access key of the signer user.
+   Mints answer 503 from then on, and partners fall back to no token. Deactivating a key alone isn't proven to end
+   session credentials made from it with `GetSessionToken`: what stops those signing is the key policy's
+   `NoSessionCredentials` deny (confirm it is in every identity key's policy, `aws kms get-key-policy`), not the
+   deactivation.
+2. **Measure:** the CloudTrail events whose `userIdentity.arn` is the signer user (every credential it has, sessions
+   included; not by access key id, which misses session keys): `GetSessionToken` calls, refused `Sign` attempts, and
+   successful `Sign`s by key, window and count. With D219 the standby can't have been used (the IAM policy never
+   listed it, sessions can't sign); confirm it has no successful `Sign` events.
+3. **Switch:** the IAM policy → the standby's ARN (both statements); a new access key → the pre-switch check →
+   `$S kms-put-aws-key --yes`; `$S kms-switch --to standby --yes` → gen, deploy.
+4. **Unpublish:** `$S kms-retire --key previous --yes` (unpublishes and unpins) → API gen and deploy, then watchdog gen
+   and deploy (no 2 h wait); disable the old key and schedule its deletion.
+5. **New standby:** a new key in another region than the new active key; `$S kms-add --role standby --key <file>
+   --yes` (publishes and pins) → watchdog gen and deploy first, then API gen and deploy.
+6. **Tell partners:** the `kid`, the window and count from CloudTrail, what to re-check. Post-mortem (D83).
+
+A KMS outage in the active region (`kms_unreachable`, `kms_internal` or `kms_timeout` in the logs, mints at 503) isn't
+a compromise. Either wait it out (partners fall back to no token), or switch to the standby as in step 3 without
+revoking anything. To make the old key the standby again later: `kms-retire --key previous`, then `kms-add --role
+standby` with its `get-public-key` file.
+
+**Reconciliation (planned, not built; before mainnet).** An hourly job counts the CloudTrail `Sign` events per identity
+key and UTC hour (`userIdentity.arn` = the signer user, no `errorCode`) and compares them with `identity_issuance_hourly` (the tokens the
+API answered, per kid and hour). Each answered token is one `Sign`, so CloudTrail's count is at least the API's. The
+difference must be explained by `Sign` calls that succeeded at KMS but produced no token (a timeout after KMS signed,
+a garbled or unverifiable answer), which today are only in the logs (`identity_sign_failed` with `kms_timeout`,
+`kms_bad_answer`, `kms_bad_signature` or `self_verify_failed`). A gap beyond that, any `Sign` by another principal or with session credentials, or any
+`GetSessionToken` by the signer user, is a critical alert: a signature Hana's API didn't make. To make the check exact, the job's build adds a per-hour,
+per-kid count of the `Sign` requests the API sent (D218). Where it runs (the watchdog's account, D125, with a
+read-only principal on the log-archive bucket or `cloudtrail:LookupEvents`) is decided with it.
+
 ### A user's leaked key (`key_index`)
 
 The path is `{scope_id}#{provider}#{sub}#{key_index}`, so a new `key_index` is a new key and new addresses. Rotation
@@ -919,9 +1633,11 @@ ids). Details: `apps/demo/README.md`.
 | Env | `HANA_DEMO_ENV` (default `sandbox-dev`); only testnet `sandbox*`/`local*` envs whose API is on workers.dev |
 
 ```sh
-# once per app: the vault loads only on the app's origins (needs apps/api/wrangler.jsonc: `gen sandbox-dev`)
+# once per app: the vault loads only on the app's origins (needs apps/api/wrangler.jsonc: `gen sandbox-dev`); a staff
+# proposal: announce the gc_… id it prints, and the origin is in force 60 s later (appChangeDelayMs)
 corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:origins:add \
   --app pk_test_85gdPtFF4kYzqgPisccZbsT9fQP1tq7ie --origin https://hana-id-demo-sandbox-dev.tingtc.workers.dev --remote
+corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:changes:announce <gc id> --remote
 
 corepack pnpm --filter @hana-id/demo run deploy      # gen:envs, vite build, gen (apps/demo/wrangler.jsonc), wrangler deploy
 corepack pnpm --filter @hana-id/demo run build && corepack pnpm --filter @hana-id/demo run gen \
@@ -932,8 +1648,16 @@ corepack pnpm --filter @hana-id/demo run build && corepack pnpm --filter @hana-i
   code, `frame-ancestors 'none'`, Trusted Types) and `nosniff`, `no-referrer`, `X-Frame-Options: DENY`, COOP
   `same-origin-allow-popups` on every response; preview URLs are off and it answers only on its own origin.
 - Redeploy after changing `envs/<env>.json` (the vault origin is in the CSP and the bundle) or `@hana-id/web`.
-- "Could not load the Hana vault" on the demo: the origin isn't on the app (`app:origins:add` above), or the build is
-  for another env. `admin <env> app:list --remote` shows the app's origins.
+- "Could not load the Hana vault" on the demo: *Copy diagnostics* shows the error's `reason` (the SDK tries a second
+  frame once before it gives up, D262). `no_answer`: the vault page refused the frame, so the origin isn't in force on
+  the app (`app:origins:add` and `app:changes:announce` above, then 60 s), the key is unknown or suspended, or the build
+  is for another env; `admin <env> app:list --remote` shows the app's origins in force and its pending changes.
+  `frame_timeout` (the frame never loaded) and `ready_timeout` (the vault answered but its unlock call didn't come
+  back in 20 s): the network or cold Workers, typically for a minute or two after a deploy; reload.
+- *Login timings*: one row per login with its method; "sign-in" is `google` for Google, and for email the sum of
+  `emailEntry`, `emailStart`, `emailCode` and `emailVerify` (listed under the row), D260. A large `app` with a large
+  `appServerChain` (in *Copy diagnostics*) is the API's registry read; a large `appRtt` with a small `appServer` is the
+  network or the Worker's routing.
 - Removing the origin (`app:origins:remove`) signs out everyone who used the demo, on their next use.
 
 ## Watchdog service (`apps/watchdog`)
@@ -942,12 +1666,17 @@ The independent watchdog of the governance batch (`docs/governance-spec.md` "Wat
 5 min it compares the contract's pending and active issuer keys with Google's JWKS, cancels a pending key Google
 doesn't publish (and deletes the updater keys if the updater proposed it), pauses only when such a key is **active**,
 confirms keys that match, alerts on every governance change, and serves a read-only status for the admin portal.
-What it checks and its status API: `apps/watchdog/README.md`. **Deployed on sandbox-dev (2026-10-30)**:
+What it checks and its status API: `apps/watchdog/README.md`. **Deployed on sandbox-dev (2026-10-30; redeployed 2026-11-02
+with batch 5's email rules and link alarms, version b156e1b5, then with identity token step 8's identity JWKS
+checks, version 67fe97cb (first run: 2 keys published, all pinned, discovery ok), no new migration: on the v2 contract it reads "no email
+issuer" and skips the link check)**:
 `https://hana-id-watchdog-sandbox-dev.tingtc.workers.dev`, cron `*/5 * * * *`, on the API's Cloudflare account
-(D125), D1 `hana-id-watchdog-sandbox-dev`. Alert channels and the heartbeat aren't set yet (the manifest's alert
-addresses are `example.com` placeholders), so every run reports them as `channel_not_configured`. First run
+(D125), D1 `hana-id-watchdog-sandbox-dev`. First deployed with no channel and no heartbeat; first run
 2026-10-30 04:50 UTC, every check ok; the cron trigger started ~10 min after the first deploy (two slots skipped).
-Pager: a random ntfy.sh topic plus a healthchecks.io heartbeat (secrets only). **ntfy.sh's public server rate-limits
+Since the drills the same day, the pager is a random ntfy.sh topic and the heartbeat a healthchecks.io check (both
+secrets only). Slack and email are still not set up (no Slack webhook; the manifest's alert addresses are
+`example.com` placeholders), so every run reports those channels as `channel_not_configured` (`/status` `channels`
+shows which are configured). **ntfy.sh's public server rate-limits
 publishers per IP, and Workers send from shared IPs**: in the forged-key drill (2026-10-30) the critical page got
 HTTP 429 at 05:06 and 05:40 and went through at 05:10 and 05:25, so it is not a production pager (the choice is
 open: `docs/context.md` "Next steps" 8). Forged-key drill: change #0 posted 05:01:17, cancelled and the updater
@@ -959,7 +1688,7 @@ the trigger removal hadn't propagated, so a run at 05:55:05 found it and paused 
 reported the check down at 06:10:15 (period 5 min + grace 10 min) by email. **Cron trigger changes take minutes to
 apply** (start ~10 min after the first deploy; one run after removal): stop a watchdog by deleting the Worker's
 trigger and checking `/status` `last_run`, not by assuming. Other envs: not
-deployed; each needs the governance contract (`migrate_v1`) first.
+deployed; each is created with `new` on current code.
 
 ### Setting it up (once per env)
 
@@ -1003,6 +1732,11 @@ below logged in to the watchdog's account (`wrangler login` there, or `CLOUDFLAR
    page to both founders (the forced-rotation drill of the migration plan does this for real).
 7. The admin Worker (batch C) gets the same `WATCHDOG_STATUS_TOKEN` and the watchdog's URL.
 
+**Cloudflare Access** (before any staff call): one Access application for `{url}/v1/email/admin/*` (`{url}` the issuer's, D230), policy = the
+staff on `emailIssuer.access.staffEmails`, its AUD tag in `emailIssuer.access.aud`. In the application's settings set
+the session cookie's **SameSite attribute to Strict** (and HttpOnly on), so no other site's request carries a staff
+session; the issuer also refuses any request with an `Origin` header and any body that isn't JSON (D199).
+
 Local: `gen <env> --dev-vars` writes `apps/watchdog/.dev.vars` (0600) from the secrets file; `corepack pnpm --filter
 @hana-id/watchdog dev` runs `wrangler dev --test-scheduled` (`curl localhost:8787/__scheduled` runs one cron). Use a
 test Slack channel and ntfy topic: local runs send real alerts and, with a real `WATCHDOG_KEY`, real testnet
@@ -1011,6 +1745,70 @@ transactions.
 Rotating its secrets: `WATCHDOG_KEY`: add a new function-call key (as in step 3), put it in the file, `wrangler secret
 put WATCHDOG_KEY`, then delete the old key on chain. `WATCHDOG_STATUS_TOKEN`: change it on both Workers. The others:
 replace in the file and `wrangler secret put`.
+
+### Email login: pins, link alarms, unrecorded wallets
+
+The watchdog also checks Hana's email issuer (`docs/email-login-spec.md` "Watchdog", D190–D193), against the
+manifest's `watchdog.pinnedIssuerKeys.email` (`envs/README.md`). The pins are public thumbprints, not secrets; they
+come only from the watchdog's own manifest, never from the chain or Hana's JWKS.
+
+- **Pins before keys.** With no pins, every email key is unpinned: the watchdog cancels a pending one and pauses on an
+  active one. So the order on an env is: write the thumbprints of the issuer's keys (primary, standby: batch 4's
+  `scripts/email-issuer.ts init` prints them; `corepack pnpm --filter @hana-id/watchdog pin <public key file>` prints
+  the pin of any public JWK, JWKS or PEM with the Worker's own function, and says whether a JWKS kid matches) under `pinnedIssuerKeys.email.signers.hana` with `required: 1`, then
+  `corepack pnpm --filter @hana-id/watchdog gen <env>` and `corepack pnpm --dir apps/watchdog exec wrangler deploy`
+  (no new D1 migration), and check `/status` `email.pinned`; only then does the council run `set_issuer("email", …)`,
+  `mark_self_issued("email")` and `set_issuer_key(…, signer: "hana")` (build plan batch 6). Between `set_issuer` and
+  `mark_self_issued` a `signer_policy_transition` warning and the `governance_change` alerts are expected.
+  A v2 contract reads as "no email issuer": nothing is alerted, pins or not. sandbox-dev's contract is v3 since 2026-11-03 and its manifest has the pins (the issuer's active and standby kids); the watchdog was redeployed with them on 2026-11-03 (version fd6d8b27).
+- **Rotating an email key**: pin the new thumbprint first (redeploy), then the council posts it; it waits
+  `governance_delay_ms` and is never confirmed early (info `self_issued_key_change`); anyone executes it after.
+- **A signer-policy upgrade** (Level 1 co-signer, or replacing a signer): pin the new signer's keys before the upgrade
+  executes with the current `required`; raise the pinned `required` (or drop the old signer) after it executed (D191).
+  The reverse order reads as a weaker policy and pauses. The upgrade's 10-minute overlap shows as a
+  `signer_policy_transition` warning; a longer one pauses (D191).
+- **Link alarms** (D200): the contract counts new links per scope and in all per UTC hour and flags a scope (or the
+  total) whose links reach its alarm threshold (default 50 per scope, 500 in all; `set_link_thresholds` by the council:
+  lowering applies at once, raising waits `governance_delay_ms`). Nothing is refused. The watchdog reads
+  `get_link_stats()` each run: a threshold reached pages `link_threshold_reached`, half the total threshold warns
+  `link_volume_high`, a raise is a critical `governance_change`. A partner launch needs no action; change a threshold
+  only if the alarm level is wrong for real traffic. `/status`
+  `link_stats` shows both windows. A contract without the view warns `link_stats_unavailable` once an email issuer is on
+  chain, so the D200 contract must be deployed before email goes live.
+- **`unrecorded_wallets`** (D135, D139): sandbox-dev accepts after its v3 upgrade (`admin <env> owner:call
+  accept_unrecorded_wallets`); on any env that isn't `local*` or `sandbox*` the watchdog pages while it is true.
+
+### Identity token: pins and the JWKS check
+
+The watchdog checks the partner identity token's published keys (`docs/identity-token-spec.md` "JWKS and discovery",
+D210–D214) against `watchdog.pinnedIdentityKeys` (`envs/README.md`): public thumbprints (the kids), set only in the
+watchdog's own manifest block and deployed on its own account, never taken from Hana's JWKS. `watchdog gen` passes
+them as `IDENTITY_PINS` and `identityToken.iss` as `IDENTITY_ISS`; an env without `identityToken` skips the check.
+
+- Every run, after the protective work (D86), it reads `{iss}/jwks.json` and `{iss}/.well-known/openid-configuration`
+  (no cache, no redirect followed, 64 KB cap). An unpinned key (or one with members beyond the public ones), private
+  key material, a wrong `issuer` / `jwks_uri`, or an answer that can't be judged (a redirect, padding, not JSON,
+  duplicate members, the wrong shape) pages critical at once; 3 failed fetches in a row page critical too; a pinned key
+  not published (or under another kid) warns. **It never pauses for these**: partners verify identity tokens, the
+  contract never does.
+- **What that catches, and what it doesn't** (D210): an attacker who publishes the same JWKS to everyone. Someone who
+  controls Hana's Cloudflare account can recognise the watchdog's fetches (they come from Cloudflare's network) and
+  serve them a clean JWKS while partners get another, or publish a key for less than a run. The **outside probe**
+  narrows the first: the GitHub Actions workflow `identity-probe` (`.github/workflows/identity-probe.yml`, every
+  15 min, no secrets) fetches each non-`local*` env's JWKS and discovery document from GitHub's network with a `jose`
+  User-Agent and the same rules (`@hana-id/jwks/identity`), against `watchdog.pinnedIdentityKeys` in the repo's
+  manifests, and fails on any finding (every value from Hana's answers is printed JSON-quoted, escaped to printable
+  ASCII with `%` too, and cut, and no line can start with `::`, so a hostile JWKS can't inject a workflow command);
+  GitHub emails the failure to whoever last changed the workflow's schedule, so
+  that must be a founder (and scheduled workflows run only on the default branch). Run it by hand:
+  `corepack pnpm --filter @hana-id/scripts run identity-probe <env>`. Neither closes the gap: an attacker can still
+  single out partners' traffic. Partners that pin thumbprints (`docs/integration.md` section 15, the recommended
+  default for anything of value) are the only ones safe from it.
+- It also alerts critical (`identity_key_on_chain`) if an issuer key on chain has an identity key's thumbprint as its
+  kid (D212); the Google and email rules act on such a key as on any other forged one.
+- Pin changes follow "Identity token keys" above: `identity-key` writes them; the watchdog deploys first after a pin,
+  last after an unpin. sandbox-dev pins its active and standby keys; its watchdog needs a `watchdog gen` and
+  redeploy to start the check (not done on this branch).
 
 ### Watchdog alerts (runbook)
 
@@ -1027,22 +1825,31 @@ This table only says what each kind means:
 
 | Kind | What it means | Playbook |
 |---|---|---|
-| `forged_key_change` | A pending issuer key Google doesn't publish (or with other material), or any change the updater (the signer account) proposed for a provider other than Google (`reason: updater_other_provider`: the updater only serves Google). The watchdog cancelled it and, if the updater proposed it, deleted every updater key. The title and `details.outcome` say what happened: `cancelled`; `gone` (someone else cancelled it first); `executed` (it took effect before the cancel: also a `protective_action_failed`, and the run pauses on the now-active key); `unknown` (gone, and the re-read failed); `failed`; `not_sent` (the watchdog couldn't act) | [`forged-key-change`](playbooks.md#forged-key-change) |
-| `forged_active_key` | A key Google doesn't publish is **active**: the contract is paused (logins and derivation stop) and every updater key deleted (D126). While it was active, anyone holding its private key could open sessions for any user's path and post OIDC-owner tokens and client proofs. Recovery runs in a fixed order: remove the key, raise the session floor past the pause (`set_sessions_valid_from_ms`), a fresh updater key, unpause; the watchdog pauses again (and deletes any new updater key) while the key stays active | [`forged-active-key`](playbooks.md#forged-active-key) |
+| `forged_key_change` | A pending issuer key Google doesn't publish (or with other material; not one Google published with the same material in the last 24 h, which is a `retired_key_change`), a pending email key whose RFC 7638 thumbprint isn't pinned for its signer in `watchdog.pinnedIssuerKeys.email` (`reason`: `not_pinned`, `other_signer`, `kid_not_thumbprint`, `no_signer`; with no pins at all every email key is unpinned, D190), or any change the updater (the signer account) proposed for a provider other than Google (`reason: updater_other_provider`: the updater only serves Google). The watchdog cancelled it and, if the updater proposed it, deleted every updater key. The title and `details.outcome` say what happened: `cancelled`; `gone` (someone else cancelled it first); `executed` (it took effect before the cancel: also a `protective_action_failed`, and the run pauses on the now-active key); `unknown` (gone, and the re-read failed); `failed`; `not_sent` (the watchdog couldn't act) | [`forged-key-change`](playbooks.md#forged-key-change) |
+| `retired_key_change` | Warning, not a page (D153): the updater proposed a kid Google no longer publishes but published with the same `n`/`e` within 24 h (`details.last_seen_jwks_at`): the API cron's fetch raced Google's retirement of the kid. Cancelled, the updater keys kept | [`retired-key-change`](playbooks.md#retired-key-change) |
+| `forged_active_key` | A key Google doesn't publish, or an email key that isn't pinned (`details.provider: email`; also at the first run: pins are configuration, D190), is **active**: the contract is paused (logins and derivation stop) and every updater key deleted (D126). While it was active, anyone holding its private key could open sessions for any user's path and post OIDC-owner tokens and client proofs. Recovery runs in a fixed order: remove the key, raise the session floor past the pause (`set_sessions_valid_from_ms`), a fresh updater key, unpause; the watchdog pauses again (and deletes any new updater key) while the key stays active | [`forged-active-key`](playbooks.md#forged-active-key) |
 | `published_key_removal` | A pending removal of a kid Google still publishes (logins with it would break). Alert only: the owner decides and cancels | [`published-key-removal`](playbooks.md#published-key-removal) |
 | `unknown_active_key_first_run` | First run only: an active kid not in Google's JWKS today (often an old kid Google dropped), or with other material (then the next run pauses) | [`unknown-active-key-first-run`](playbooks.md#unknown-active-key-first-run) |
-| `unverifiable_key_change` | A pending change the owner proposed for an issuer other than Google (the watchdog has no JWKS for it; one the updater proposed is a `forged_key_change`) | [`unverifiable-key-change`](playbooks.md#unverifiable-key-change) |
-| `governance_change` | An upgrade proposal or execution, owner transfer, withdrawal, watchdog, updater-key, delay or console-audience change, pause or unpause (`unpaused_at_ms` shows one that fell between two runs), a raised session floor (`sessions_valid_from_ms`), a change of the owner DAO's code or policy (`owner_code_hash`, `owner_policy`: a `ChangePolicy`, `AddMember` or `RemoveMember`), `mpc`, `ckd_domain_id` or `state_version`, or the owner's immediate issuer actions, which leave no pending state: `issuer` (`set_issuer` changed Google's iss values) and `issuer_keys` (an active kid disappeared without a pending removal leaving the queue: `remove_issuer_key`; also a removal proposed and confirmed by another watchdog between two runs). Alert only. Nobody but the owner can cancel an upgrade (D84) | [`governance-change`](playbooks.md#governance-change) |
+| `unverifiable_key_change` | A pending change the owner proposed for an issuer other than Google and email (the watchdog has neither a JWKS nor pins for it; one the updater proposed is a `forged_key_change`) | [`unverifiable-key-change`](playbooks.md#unverifiable-key-change) |
+| `signer_policy_mismatch`; warning `signer_policy_transition` | The email issuer on chain (`get_issuer("email")`, `get_self_issued("email")`) differs from the pins. Critical and **paused** when the chain's policy is weaker (a lower `required`, a signer the pins don't list, active email keys with no signer policy, an overlap with the previous policy longer than the contract's 10 min + 5 min, D191); critical, no pause, for an email issuer nobody pinned or a pre-v3 one. Warning, no pause, for what a planned change passes through: a pinned signer not in the policy yet, the `set_issuer("email")` → `mark_self_issued("email")` gap, a higher `required` on chain, a normal overlap | [`signer-policy-mismatch`](playbooks.md#signer-policy-mismatch) |
+| `unrecorded_wallets` | `get_config().unrecorded_wallets` is true on an env that isn't a dev env (D139): links are refused until the owner calls `accept_unrecorded_wallets`; it must never show on mainnet. Alert only | [`unrecorded-wallets`](playbooks.md#unrecorded-wallets) |
+| `governance_change` | An upgrade proposal or execution, owner transfer, withdrawal, watchdog, updater-key, delay or console-audience change, pause or unpause (`unpaused_at_ms` shows one that fell between two runs), a raised session floor (`sessions_valid_from_ms`), a change of the owner DAO's code or policy (`owner_code_hash`, `owner_policy`: a `ChangePolicy`, `AddMember` or `RemoveMember`), `mpc`, `ckd_domain_id` or `state_version`, `unrecorded_wallets`, or the owner's immediate issuer actions, which leave no pending state: `issuer` (`set_issuer` changed Google's iss values) and `issuer_keys` (an active kid disappeared without a pending removal leaving the queue: `remove_issuer_key`; also a removal proposed and confirmed by another watchdog between two runs), and the same for the email issuer (`email_issuer`, `email_issuer_keys`) and its signer policy (`email_signer_policy`: `mark_self_issued`, or an upgrade's `migrate`). Alert only. Nobody but the owner can cancel an upgrade (D84) | [`governance-change`](playbooks.md#governance-change) |
 | `automatic_action` | The watchdog acted again for an incident it already alerted (e.g. paused again after an unpause, or deleted an updater key added while a forged key is still active) | [`watchdog-acted-again`](playbooks.md#watchdog-acted-again) |
 | `protective_action_failed` | A cancel, pause or updater-key deletion the watchdog sent failed, or a forged change it tried to cancel was executed first (or it couldn't tell) | [`protective-action-failed`](playbooks.md#protective-action-failed) |
-| `not_a_watchdog`, `watchdog_key_missing`, `wrong_network` | The watchdog can't act: its account isn't a contract watchdog, its key is missing or bad, or its RPC is on another chain; until fixed nothing cancels forged keys | [`watchdog-cannot-act`](playbooks.md#watchdog-cannot-act) |
+| `not_a_watchdog`, `watchdog_key_missing`, `wrong_network`, `pins_invalid` | The watchdog can't act: its account isn't a contract watchdog, its key is missing or bad, or its RPC is on another chain; until fixed nothing cancels forged keys. `pins_invalid`: `EMAIL_PINS` is unreadable, so every email key counts as unpinned (cancelled, paused on; their alerts say `pins_unreadable`); `pins_invalid:identity`: `IDENTITY_PINS` is unreadable, so every published identity key pages as unpinned; `pins_invalid:identity_no_iss`: `IDENTITY_PINS` without `IDENTITY_ISS`, so the identity check can't run (it then resolves nothing) | [`watchdog-cannot-act`](playbooks.md#watchdog-cannot-act) |
 | warning `rpc_failing`, `jwks_failing`, `heartbeat_failing`, `channel_not_configured` | The watchdog is partly blind or mute (a dead watchdog is caught by the dead-man's switch: [`watchdog-down`](playbooks.md#watchdog-down)) | [`watchdog-degraded`](playbooks.md#watchdog-degraded) |
 | warning `unexecuted_key_change`, `stale_active_key` | A matured key change nobody executed (> 1 h), or an active kid Google dropped > 3 h ago | [`key-sync-stalled`](playbooks.md#key-sync-stalled) |
 | warning `active_key_material_unavailable` | The contract has no `get_issuer_keys` (older code): active keys are checked by kid only | [`active-key-material-unavailable`](playbooks.md#active-key-material-unavailable) |
 | warning `config_change` | Shared clients, sponsors or public registration changed | [`config-change`](playbooks.md#config-change) |
 | `relayer_balance_critical`, `relayer_allowance_critical`, `relayer_pool_empty`; warning `relayer_balance_low`, `relayer_allowance_low` | The relayer account's available balance, or a pool key's remaining allowance, is below its threshold (defaults: balance 5 / 1 NEAR; session key 0.5 / 0.1; owner key 0.1 / 0.02; manifest `watchdog.relayerFunds`), or a pool has no key: relays from it fail once it runs out. Read-only: the watchdog never tops up | [`relayer-out-of-funds`](playbooks.md#relayer-out-of-funds) |
 | warning `confirm_failed` | A confirmation of a key that matches Google's JWKS failed: it goes live only after the full delay | [`confirm-failed`](playbooks.md#confirm-failed) |
+| warning `email_jwks_mismatch` | Hana's published email JWKS lists a key that isn't pinned (or whose kid isn't its thumbprint), lacks an active email key, or failed 3 fetches while email keys are active. Informational: the contract never reads it | [`email-jwks-mismatch`](playbooks.md#email-jwks-mismatch) |
+| `identity_key_unpinned`, `identity_private_key_published`, `identity_discovery_mismatch`, `identity_jwks_unreadable` | Hana's partner identity JWKS (`{iss}/jwks.json`) publishes a key whose RFC 7638 thumbprint isn't in `watchdog.pinnedIdentityKeys` (or that isn't P-256, or has members beyond `kty crv x y kid use alg`; with nothing pinned every key is unpinned), or private key material, or its discovery document names another `issuer` or `jwks_uri` (D210, D213); or an answer can't be judged: a redirect, a 200 over 64 KB, not JSON, duplicate members, the wrong shape (at once), or 3 failed fetches in a row (`:sustained`). Partners trusting the JWKS URL would accept tokens for any user. Alert only, **no pause** (the chain isn't involved). A rotation deployed in the wrong order (API before the watchdog after `next`, the watchdog before the API after `retire`) also raises it | [`identity-jwks-forged`](playbooks.md#identity-jwks-forged) |
+| warning `identity_key_missing` | A pinned identity key isn't in the JWKS under its thumbprint as kid with public members only (a rotation half deployed, a kid changed, or extra members: then also `identity_key_unpinned`) | [`identity-jwks-degraded`](playbooks.md#identity-jwks-degraded) |
+| `identity_key_on_chain` | An active Google or email issuer key, or a pending key addition, has an identity token key's thumbprint as its kid (D212). Alert only: the same run's issuer-key rules cancel or pause on it | [`identity-key-on-chain`](playbooks.md#identity-key-on-chain) |
+| `link_threshold_reached`; warning `link_volume_high`, `link_stats_unavailable` | `get_link_stats()` (D200): links reached an alarm threshold in the current or previous UTC hour, in one scope or in all; they went through (the contract refuses nothing): a partner launch, or a stolen email key taking over Google wallets by linking (alert only; the council decides whether to pause); the current hour at half the total threshold; or the view is missing with an email issuer on chain, malformed or failing (`link_stats_unavailable:missing` / `:malformed` / `:read_failed`; only the link check is affected, every protective step still runs) | [`link-volume`](playbooks.md#link-volume) |
 | info `key_change_confirmed`, `key_change_executed`, `key_change_cancelled` | Routine key-change events | [`key-change-lifecycle`](playbooks.md#key-change-lifecycle) |
+| info `self_issued_key_change` | A pending email key pinned for its signer, or a pending email key removal: never confirmed (self-issued keys wait `governance_delay_ms`) | [`self-issued-key-change`](playbooks.md#self-issued-key-change) |
 | info `config_matured` | A scheduled delay decrease or console-audience addition came into force | [`config-matured`](playbooks.md#config-matured) |
 | info `first_run` | The first run recorded Google's current JWKS as known | [`watchdog-first-run`](playbooks.md#watchdog-first-run) |
 
@@ -1057,6 +1864,540 @@ pending change's `unlock_at_ms`), since OIDC owners couldn't cancel while paused
 immediate but slows every key change to `governance_delay_ms` unless another watchdog confirms (D86). Likewise a key
 change proposed while no watchdog may confirm yet (none, or only ones added less than `governance_delay_ms` ago)
 waits `governance_delay_ms`: after adding the first watchdog, rotations go slow until its `confirm_from_ms`.
+
+## Email issuer (`apps/email-issuer`)
+
+The email login's issuer (`docs/api.md` "Email issuer", `apps/email-issuer/README.md`, D195–D199): its own Worker,
+separate from the API, holding the email signing key, K_sub, K_code, K_rl and the SendGrid key. **Deployed on sandbox-dev
+(2026-11-03, with batch 8b, version d3dc7965, 5 secrets, SendGrid from team@hanawallet.io); no other env yet.** Order matters: on sandbox-dev follow "Email login on sandbox-dev (build plan batch 6)" below (the watchdog's
+email pins are live before the owner posts any email key, and no app enables email, `apps.login_methods`, before
+batch 8). It is reached at `{emailIssuer.url}/v1/email/*` (D230): on a `workers.dev` env its own `workers.dev` URL,
+written by `init`; on a zone, the API's URL with a route `<api host>/v1/email/*` to this Worker. Below, `{url}` is that
+origin. The API never forwards these requests.
+
+### Setting it up (once per env; testnet and `local*` only)
+
+1. **Keys and manifest block** (uploads nothing, prints no secret):
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts email-issuer <env> init --from "Hana <login@<user-mail subdomain>>" --budget 1000   # plan
+   corepack pnpm --filter @hana-id/scripts email-issuer <env> init --from "Hana <login@<user-mail subdomain>>" --budget 1000 --yes
+   ```
+
+   Writes `.secrets/<env>/email-issuer-signing-key.json` (RSA-2048 primary, the Worker secret),
+   `email-issuer-signing-key-standby.json` (published and posted on chain, **never uploaded**: move it offline),
+   `email-sub-key`, `email-code-key`, `email-rl-key` (base64 of 32 bytes each), all 0600 and never overwritten, and the
+   `emailIssuer` block in `envs/<env>.json` (`url` the issuer's own `workers.dev` URL when the API is on `workers.dev`,
+   iss `{url}/v1/email`, Worker and D1 `hana-id-email-issuer-<env>`, both
+   public keys with kid = RFC 7638 thumbprint, the primary active, sender `sendgrid`; `--outbox` for the test stub in
+   `local*` envs only). It prints the watchdog pin block. **Back up `email-sub-key` offline twice** (with the council
+   backup, D81) before the first email login: losing K_sub locks every email user out, and a new one moves every email
+   address. Commit the manifest.
+2. **Watchdog pins** (batch 5, D190): add the printed block as `watchdog.pinnedIssuerKeys.email` and redeploy the
+   watchdog (its own account) **before** step 6. `email-issuer <env> show` prints it again, with the `set_issuer_key`
+   arguments.
+3. **SendGrid** (D194): domain authentication (SPF, DKIM, DMARC `p=quarantine`) for the dedicated user-mail sending
+   subdomain; **a subuser for the issuer's mail alone** (required, D194: the webhook trusts only the issuer's categories
+   and the suppression list must be the issuer's); an API key of that subuser with **Mail Send only**, used by this
+   Worker alone, pasted into `.secrets/<env>/email-issuer-sendgrid-key` (0600; never in chat or a shell history). Don't
+   buy the Email Activity History add-on: SendGrid keeps each message's recipient and events in its Email Activity for
+   its plan's period (3 days without the add-on when written; check at setup) and Hana can't shorten it. Its
+   suppression lists (bounces, blocks, spam reports) keep an address **until it is removed** there. The signed
+   Event Webhook (bounce, spam report) of that subuser to `{url}/v1/email/webhooks/sendgrid`, its verification key
+   in `emailIssuer.sendgridWebhookPublicKey` (public); events of other categories are ignored.
+4. **D1 and config**: `wrangler d1 create hana-id-email-issuer-<env>`, then
+   `corepack pnpm --filter @hana-id/email-issuer gen <env> --d1-id <issuer uuid> --app-d1-id <the API's D1 uuid>` and
+   `wrangler d1 migrations apply hana-id-email-issuer-<env> --remote` from `apps/email-issuer`. `gen` refuses a
+   Worker-secret signer off testnet, the `aws-kms` signer (until batch 10) and the outbox outside `local*`.
+5. **Secrets** (the user runs this): `corepack pnpm --filter @hana-id/scripts email-issuer <env> put` (plan), then
+   `--yes`: sets `ISSUER_SIGNING_KEY`, `EMAIL_SUB_KEY`, `EMAIL_CODE_KEY`, `EMAIL_RL_KEY` and, when its file exists,
+   `SENDGRID_API_KEY` on the issuer Worker through wrangler's stdin. The standby is never uploaded.
+6. **Chain** (owner DAO; on sandbox-dev step 9 of "Email login on sandbox-dev"): `set_issuer("email", [iss])`,
+   `mark_self_issued("email")`, one `set_issuer_key("email", key, signer: "hana")` per published key (each waits
+   `governance_delay_ms`, then anyone executes it). The scopes' email clients come later (batch 8, D234): `AddClient
+   ("email", "email:" + scope)` with a staff client proof (`POST {url}/v1/email/admin/client-proof {scopeId,
+   actionNonce, ticket}` with the scope's current `action_nonce`, "Staff calls" below; configure `emailIssuer.access`),
+   which the issuer mints only once an active app of the scope lists `email` in `login_methods`. In dev envs
+   (`local*`, `sandbox*`) `admin <env> scope:add-email-client --scope <id>` mints it locally instead and sends the
+   owner's calls (D253; "Email login demo on sandbox-dev (batch 8a)" step 3).
+7. **Deploy**: `corepack pnpm --filter @hana-id/email-issuer run deploy` (before step 6's keys go on chain, so the
+   watchdog's JWKS check finds it). On a zone env, add the route `<api host>/v1/email/*` → `hana-id-email-issuer-<env>`
+   (Workers Routes on the API's zone; the more specific route wins over the API's); on `workers.dev` nothing more.
+   `gen` turns `workers_dev` on only when `emailIssuer.url` is a `workers.dev` URL; a zone-routed issuer has no
+   `workers.dev` URL (a second way in, around the zone's rules and Access). **Open for batch 8**: the staff routes'
+   Cloudflare Access application on a `workers.dev` hostname (sandbox-dev) — whether Access can protect it there, or the
+   staff routes wait for a custom domain.
+
+Local: `gen <env> --dev-vars` writes `apps/email-issuer/.dev.vars` (0600) from the files (the active key only), then
+`corepack pnpm --filter @hana-id/email-issuer dev`.
+
+### Runbook
+
+| Symptom | Meaning | Action |
+|---|---|---|
+| `503 signer_unavailable` | ISSUER_SIGNING_KEY missing, malformed, not the manifest's `activeKid`, or a signature failed its self-check | `email-issuer <env> show`; `put --yes` again; never edit the kid by hand |
+| `503 issuer_unavailable` | an HMAC key is missing or two are equal | `put --yes`; never generate a new K_sub for an env that has email users |
+| `email_budget` (warn log, `code` `global_50` / `global_80` / `owner_50` / `owner_80` / `app_50` / `app_80`, `appId`) | the day's user mail passed half or 80% of the general pool (what the staff pool leaves of `dailySendBudget`) or of one app's share (2% of its plan's `per_day`) (D198) |
+| `email_owner_pool` (warn log, `code` `owner_50` / `owner_80`) | ticket and unlock mail passed half or 80% of the owner pool (30% of `dailySendBudget`, beside it); past half only tickets ≥ 7 days old and grants draw on it, fresh tickets ≤ 20% of it per app; refused owner mail falls back to the app's general share (D198) | ticket mail is normally small: a high owner pool means many tickets in use at once, possibly an attacker's stock of sock-puppet tickets at one catch-all domain; `admin/revoke-tickets` for addresses found, and look at `limit` lines by app | an `app_*` line names the app: check its traffic (a partner bug or a scripted abuse of its key); a `global_*` line with no app near its share means broad traffic |
+| `send_budget_exhausted` (error log, `code` `global`, `app`, `reserve`, `owner` or `unconfigured`) | `global`: the general pool is spent, `start` and `resend` answer 429 for everyone without a device ticket or unlock grant; `app`: that app used its share; `reserve`: the last 20% is held for apps under half their share; `owner`: the owner pool is spent for the day (aged ticket holders and grants wait too: look at once, see `email_owner_pool`); `staff`: the staff pool (1%, ≥ 5) for unlock and unsuppress mails is spent; `unconfigured`: the Worker has no `DAILY_SEND_BUDGET` outside `local*`, so it sends nothing | look for abuse (per-app `limit` logs, `appId`); raise `dailySendBudget` in the manifest only if the traffic is real, then `gen` and deploy. An app's share follows its plan's `per_day`. `unconfigured`: set `emailIssuer.dailySendBudget`, `gen`, deploy |
+| `email_complaint_rate` (error log, `count`) | more than 5 spam complaints in 24 h on the issuer's mail | check which app's flows run (`code_mail` by `appId`) and SendGrid's stats for the subuser; a sustained rate risks the sending domain's reputation: lower `dailySendBudget` or suspend the app |
+| `email_domain_cap` (warn log, `subject` = domain key prefix) | a non-exempt recipient domain used its 100 code mails today (each requester prefix at most 20); its users without a device ticket get 429 until midnight UTC (D198) | a real company rollout, or someone mailing many addresses at one domain: check `limit` logs and apps; repeats of the same `subject` on several days are worth a look |
+| `missing_client_ip` (warn log) | a request reached the Worker without a usable `cf-connecting-ip` (not through Cloudflare's edge): refused with 400 | check the route: the issuer is reached directly at `{url}` (D230), never through another Worker |
+| `code_mail` errors with `misconfigured` / provider 401/403 | the SendGrid key is wrong, revoked or lacks Mail Send | new key into the file, `put --yes` |
+| `code_mail` errors with `unavailable` | SendGrid 429 or 5xx (the counts were taken back) | SendGrid status; users can resend after 30 s |
+| `google_account_mismatch` answers from google-match | A user picked another Google account on Google's email permission screen; the popup asks them to try again (D264) | none, unless a burst |
+| `mailbox_guess_limit` (error log, `code` `backstop` or `ceiling`, `subject` = mailbox key prefix) | someone is guessing codes for one mailbox: past the backstop (18) only owner-slot requesters and ticketed challenges can check, past the ceiling (25) nobody until midnight UTC (D198) | watch for repeats of the same `subject`. A user with a device ticket (an earlier sign-in on that browser) still gets 3 codes a day and the ticket slot. When a user without one contacts support: `admin/unlock` ("Staff calls" below). It mails a one-time link to the address itself (only the mailbox's holder can use it, so it is safe whoever asked), clears nothing, and adds at most 2 checks to the day; at most once a day and 3 times in 30 days per mailbox |
+| A user says the codes never arrive | the address may be suppressed (a bounce in the last 30 days, or a spam complaint), or the mailbox limits refuse | once the cause is fixed (mailbox full, a complaint by mistake): **first** remove the address from the issuer subuser's suppression lists in SendGrid (Suppressions: Bounces, Spam Reports, Blocks; search the address, delete it), or SendGrid drops the confirmation too; **then** `admin/unsuppress` ("Staff calls"): it mails the address a confirmation link, and the suppression goes when the user opens it (24 h) |
+| A user lost a device, or a device ticket may have leaked | anyone holding the ticket gets that address's owner allowances (3 codes a day, the ticket slot), never a token | `admin/revoke-tickets` ("Staff calls"): every ticket of that exact address issued until now stops counting; the next sign-in issues a fresh one |
+| `limit` lines `ip:webhook:10m` (sandbox-dev first) | SendGrid's event posts from one IP passed 120 in 10 min (a guess, D199 L4); refused posts are retried by SendGrid | if it is SendGrid's real traffic, raise `IP_WEBHOOK_LIMITS` in `apps/email-issuer/src/limits.ts` |
+| A suspected key leak | anyone with the Worker's secrets can mint email tokens (1-of-1, D121): sessions for any email user's path | "Suspected issuer key leak" below |
+
+### Staff calls
+
+Every staff route needs an Access session, `Content-Type: application/json`, no `Origin` header (so not from a
+browser page), and a support reference `ticket` (the support case id, kept in the audit row; 1–64 of `A–Z a–z 0–9 .
+_ # : -`). Use `cloudflared access curl`, with the body on stdin so the address stays out of the shell history:
+
+```sh
+cloudflared access login {url}/v1/email/admin/unlock
+cloudflared access curl {url}/v1/email/admin/unlock -X POST -H 'Content-Type: application/json' --data-binary @-
+{"email": "<their address>", "ticket": "<support case id>"}
+# then Ctrl-D
+```
+
+`admin/unlock` answers `{mailed}`: the one-time link went to the address itself; staff never see a token, so there is
+nothing to pass on (`{mailed: false, reason: "suppressed"}`: unsuppress first). `admin/unsuppress` and
+`admin/revoke-tickets` take the same body (unsuppress answers `{mailed}` too: the user confirms from the mail);
+`admin/client-proof` takes `{"scopeId", "actionNonce", "ticket"}`. The audit row (`email_admin_audit`: staff, action,
+ticket, mailbox or address key prefix, or scope) is written before the action. 20 staff actions an hour per staff
+member, all routes together; unlock, unsuppress and revoke-tickets at most once a day and 3 times in 30 days per
+mailbox each (`429 staff_cap`). Access's certs: a failed fetch or an unknown kid is cached for 30 s (L3), so a key
+rotation at Cloudflare reaches the issuer at most 30 s late.
+
+### Suspected issuer key leak
+
+`$I` = `corepack pnpm --filter @hana-id/scripts email-issuer <env>`, `$A` = `corepack pnpm --filter @hana-id/scripts
+admin <env>` (owner calls take the council's approvals as usual, `--approve-with`).
+
+1. **Decide what is exposed.** The Worker's secrets or the Cloudflare account: the active signing key, K_sub, K_code,
+   K_rl and the SendGrid key (the standby was never uploaded). `.secrets/<env>/` or the operator's machine: every file
+   there, the standby too unless it was offline. **Unless the incident provably touches only the Worker, treat the
+   standby as exposed.**
+2. **Pause**: `$A owner:call pause --yes`. Logins and derivation stop; no session opens while paused.
+3. **Remove the leaked key** (immediate): `$A owner:call remove_issuer_key --args '{"provider":"email","kid":"<active
+   kid>"}' --yes` (`$I show` prints the kids). Both exposed: the standby's kid too.
+4. **Only the active key exposed: switch to the standby.** `$I put --standby` (plan), then `$I put --standby --yes`:
+   switches `emailIssuer.signer.activeKid` in `envs/<env>.json` to the standby's kid and uploads the standby as
+   `ISSUER_SIGNING_KEY` (with the three HMAC keys). Then `corepack pnpm --filter @hana-id/email-issuer gen <env> --d1-id
+   … --app-d1-id …` and `corepack pnpm --filter @hana-id/email-issuer run deploy`; commit the manifest. Check `$I show`
+   names the standby active and `GET {url}/v1/email/jwks.json` still lists it. **Expect `503 signer_unavailable`
+   between `put --standby --yes` and the deploy:** the running Worker's `EMAIL_ACTIVE_KID` still names the removed key
+   while its secret is already the standby, and its self-check refuses the mismatch (logins wait; nothing wrong is
+   signed). Run `gen` and `deploy` at once. The env has no standby until a new
+   one is made (no command yet: batch 10 replaces the Worker key with KMS; to confirm). **Both exposed:** email logins
+   stay off until a new key passes `set_issuer_key` (72 h, `governance_delay_ms`) and the watchdog pins.
+5. **Watchdog pins**: delete the removed kid(s) from `watchdog.pinnedIssuerKeys.email` and redeploy the watchdog, so a
+   re-post of the leaked key is `forged_active_key`.
+5b. **The published keys**: delete the removed kid(s) from `emailIssuer.publicKeys` in `envs/<env>.json` (after step 4
+   the active kid is the standby's, which stays), commit, then `corepack pnpm --filter @hana-id/api run gen <env>` and
+   `run deploy` (the API checks email tokens against `EMAIL_PUBLIC_KEYS`, so it stops accepting the leaked key's
+   tokens even before the chain refuses them) and the issuer's `gen` and `run deploy` (its JWKS stops listing it).
+6. **Session floor**: `$A owner:call set_sessions_valid_from_ms --args '{"sessions_valid_from_ms": <a time after the
+   pause began>}' --yes`, before unpausing, so sessions the leaked key opened can't derive.
+7. **The other Worker secrets**, when the Worker's secrets were exposed. Of the HMAC keys, **K_sub can't be rotated**
+   (privacy only: it would move every email address); **K_code and K_rl can be**. Revoke the SendGrid key in SendGrid and paste a
+   new one into its file; replace K_code and K_rl (`(umask 077; openssl rand -base64 32 > .secrets/<env>/email-code-key)`,
+   the same for `email-rl-key`; it prints nothing): live challenges, device tickets and today's counters reset, nothing
+   else. Then `$I put --yes`. **Never K_sub** (it would move every email address); a K_sub leak is privacy only (the
+   holder can map addresses to `sub`s and paths), and suppressions stay keyed by it.
+8. **Unpause**: `$A owner:call unpause --yes`.
+9. Tell partners (security contacts): the kid, the window in which forged tokens may have been accepted.
+
+Limits are in `docs/api.md` "Email issuer" (D198): per (mailbox, requester), per mailbox with a reserve for new
+requesters and the device ticket's allowance, live challenges, the wrong-code locks, the ceiling (18 + 4 + 3), the IP
+prefixes, the recipient domain and the budget's shares.
+
+## Email login on sandbox-dev (build plan batch 6)
+
+The steps that take sandbox-dev from contract v2 to v3 with Hana's email issuer set up on chain, **for the user to run,
+in this order**, against `develop` with batches C3, C4 and C5 merged (D234 corrects the plan's order and command names).
+Nothing here turns email on for any app: every app's `login_methods` stays `'google'` and no scope gets an email client
+(batch 8, D234), so users see nothing. Testnet only. Each step says how to check it before the next.
+
+Before you start:
+
+- An up-to-date `develop` checkout with batch 6 merged, `corepack pnpm install` done, logged in to Cloudflare (the API's
+  account; the watchdog shares it on sandbox-dev, D125).
+- The council members' signing keys: on sandbox-dev (a dev env) the scripts read them from
+  `.secrets/sandbox-dev/council/<member>.json` (0600, made by `council-setup`), not from the near CLI keychain. The
+  council is 2 of 3: `--approve-with <second member>` passes a proposal in the same command.
+- The relayer, signer and owner full-access keys in `~/.near-credentials/testnet/` as `deploy-contract` reads them.
+- On a fresh checkout `apps/api/wrangler.jsonc` doesn't exist yet: the first `gen` needs `--d1-id <the API's D1
+  uuid>` (`corepack pnpm --dir apps/api exec wrangler d1 info hana-id-sandbox-dev` prints it). Without it `gen` writes
+  the placeholder id `00000000-0000-4000-8000-000000000000`, and a deploy with it binds no real database. Later runs
+  keep the id. The same holds for the issuer's `gen` (`--d1-id`, `--app-d1-id`).
+
+```sh
+ENV=sandbox-dev
+MEMBER=hana-id-council-b-dev1.testnet            # the second approval for the council's proposals
+SIGNER=hana-id-signer-dev1.testnet
+API=https://hana-id-api-sandbox-dev.tingtc.workers.dev
+ISSUER=https://hana-id-email-issuer-sandbox-dev.tingtc.workers.dev
+AUTH=https://hana-id-auth-sandbox-dev.tingtc.workers.dev
+```
+
+**Alerts to expect and acknowledge** (the watchdog pages them; each is the step's own change, not an attack): at step 6
+`governance_change` for the upgrade proposal, then for its execution (`pending_upgrade`, `state_version` 2 → 3,
+`unrecorded_wallets` appearing); at step 7 `governance_change` for `unrecorded_wallets` clearing; at step 9
+`governance_change` for `email_issuer` (`set_issuer`) and `email_signer_policy` (`mark_self_issued`), a
+`signer_policy_transition` warning between the two, and the info `self_issued_key_change` while each key waits. Any
+`forged_key_change`, `forged_active_key` or `signer_policy_mismatch` is **not** expected: stop and follow its playbook.
+(`unrecorded_wallets` itself never pages on a `sandbox*` env, D193.)
+
+1. **The issuer's keys and manifest block** ("Email issuer" step 1 above; uploads nothing, prints no secret):
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts email-issuer $ENV init --from "Hana <login@<user-mail subdomain>>" --budget 1000
+   corepack pnpm --filter @hana-id/scripts email-issuer $ENV init --from "Hana <login@<user-mail subdomain>>" --budget 1000 --yes
+   ```
+
+   Writes the five 0600 files in `.secrets/sandbox-dev/` and the `emailIssuer` block, with `url` `$ISSUER` and `iss`
+   `$ISSUER/v1/email` (the API is on `workers.dev`, so the issuer has its own URL, D230). It prints the watchdog pin
+   block. Back up `.secrets/sandbox-dev/email-sub-key` offline twice and move the standby key file offline. Commit
+   `envs/sandbox-dev.json` (a PR into `develop`). Check: `email-issuer $ENV show` lists both kids, the first active.
+
+2. **Watchdog pins** (D190): paste the printed block as `watchdog.pinnedIssuerKeys.email` in `envs/sandbox-dev.json`
+   (commit it), then
+
+   ```sh
+   corepack pnpm --filter @hana-id/watchdog gen $ENV
+   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   ```
+
+   Check: the watchdog's `/status` shows `email.pinned` with both kids under `hana` and `required` 1, `email.jwks_url`
+   `$ISSUER/v1/email/jwks.json`, and no new alert (v2 reads as "no email issuer").
+
+3. **The API's D1** (migrations only add; the API deployed there now keeps working on them). List what is applied:
+
+   ```sh
+   corepack pnpm --filter @hana-id/api run gen $ENV          # add --d1-id <uuid> on a fresh checkout (above)
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev --remote --command "SELECT name FROM d1_migrations ORDER BY id"
+   ```
+
+   - **Without `0006_dashboard_expand.sql`**: run "Hot DB migration 0006 and the new gate" steps 1–5 (the data checks,
+     the backup, the rehearsal, the apply, the checks). Its apply lists `0006_dashboard_expand.sql`,
+     `0009_session_markers.sql` and `0010_login_methods.sql`, in that order; confirm.
+   - **With 0006**: `corepack pnpm --dir apps/api exec wrangler d1 migrations apply hana-id-sandbox-dev --remote`
+     lists whichever of `0009_session_markers.sql` and `0010_login_methods.sql` isn't applied yet; confirm.
+
+   Check: `d1_migrations` ends with `0006…`, `0008…`, `0009…`, `0010…` (0008 sits before 0006 by date: wrangler
+   applied it first); `SELECT login_methods, COUNT(*) FROM apps GROUP BY login_methods` gives `google` for every app;
+   `SELECT COUNT(*) FROM email_usage` is 0.
+
+   **Usage capture (batch C4): optional for the demo.** The API records usage in the Neon ledger only with the
+   `USAGE_DB` binding; without it capture is off and every endpoint answers as before (fail open, D222). To capture,
+   run "Usage capture" steps 1–4 and 6 now (`usage-migrate` applies `0002`–`0005` here: identity tokens, writer
+   partitions, email counts, the link relays' events; the role passwords as SCRAM verifiers; the two Hyperdrive configs;
+   `USER_ID_KEY`; `gen $ENV --usage-hyperdrive-id <writer id>`), and its step 8 gate after step 4 below. Skip all of it
+   for the demo if you like: nothing below depends on it. **Not optional**: "Usage capture" step 7 (the legacy counters
+   into `session_markers`), right after step 4's deploy.
+
+4. **The pages, then the API, with the create_session proof (D137)**, before the upgrade. The pages first: the vault's
+   split path sends the proof, which the API deployed now ignores (it drops unknown fields); the new API then requires
+   it. v2 ignores the argument and v3 requires it (`contracts/integration-tests/tests/governance.rs`
+   `v2_ignores_the_create_session_proof_that_v3_requires`).
+
+   ```sh
+   corepack pnpm --filter @hana-id/api run gen $ENV
+   corepack pnpm --filter @hana-id/web build
+   corepack pnpm --filter @hana-id/api run deploy:pages
+   corepack pnpm --filter @hana-id/api run deploy
+   curl -s $API/v1/health
+   ```
+
+   Check, as batch C3's step 6: `/v1/health` shows `"hotDb":9` and `"capabilities":{"createProof":true}`; a login on the
+   demo (`/v1/login`) and one on `apps/smoke`'s direct page (`/v1/sessions` with the proof, then `/v1/derive`) work;
+   `corepack pnpm --filter @hana-id/scripts run admin $ENV app:list --remote` shows every app `active` or
+   `suspended(hana)` as before, with its key and origins; `curl -s -H "x-hana-key: <a test app's pk>" -H "Origin: <its
+   origin>" $API/v1/app` has `"loginMethods":["google"]` and no `email`. Then "Usage capture" step 7 (the marker copy).
+   **From now on use only this checkout's admin CLI** (batch C3's rule: an older one writes origins that never match),
+   and **never roll the API or the pages back below batch 6 once step 6 has executed**: an older API or vault sends no
+   proof, and every split-path session then fails on v3 (a rollback before step 6 is safe).
+
+5. **The session pool's new allowlist, without downtime** (the three link methods; an access key's methods can't be
+   edited). New keys first, the switch, then the old keys go:
+
+   ```sh
+   mv .secrets/sandbox-dev/relayer-keys.json .secrets/sandbox-dev/relayer-keys.before-batch6.json      # keeps 0600
+   corepack pnpm --filter @hana-id/scripts run deploy-contract $ENV          # plan: generate 3 session keys with the new list
+   corepack pnpm --filter @hana-id/scripts run deploy-contract $ENV --yes    # writes the new file, adds the keys
+   node -e 'process.stdout.write(JSON.stringify(require("./.secrets/sandbox-dev/relayer-keys.json")))' \
+     | corepack pnpm --dir apps/api exec wrangler secret put RELAYER_KEYS
+   ```
+
+   The plan warns about the old keys ("in neither pool file (left untouched)"), each with its `near account
+   delete-keys hana-id-relayer-dev1.testnet public-keys <key> …` command: they keep working until the secret switches,
+   so logins never stop. After the secret is set, check a demo login works (expect one `relay_retry` `invalid_nonce`
+   per key on its first relay: each new key starts at its own on-chain nonce), then run the printed delete commands,
+   and `rm .secrets/sandbox-dev/relayer-keys.before-batch6.json`. Check: `deploy-contract $ENV` shows no blocker and no
+   warning about relayer keys.
+
+6. **Contract v3 through the council** ("Upgrading the governance contract"; the plan's `upgrade-contract propose |
+   execute` is this command). `deploy-contract --upgrade` refuses while `$API/v1/health` doesn't report
+   `capabilities.createProof` (step 4).
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run deploy-contract $ENV --upgrade                                  # plan: build, propose_upgrade(<hash>)
+   corepack pnpm --filter @hana-id/scripts run deploy-contract $ENV --upgrade --approve-with $MEMBER --yes     # the DAO's propose_upgrade, approved
+   # … wait governance_delay_ms (60 s on sandbox-dev) …
+   corepack pnpm --filter @hana-id/scripts run deploy-contract $ENV --upgrade --skip-build --yes              # execute_upgrade: deploy + migrate, one receipt
+   ```
+
+   Check: `state_version` 3, `unrecorded_wallets` `true`, `view_account.code_hash` the proposed hash; a demo login and a
+   direct-page (`/v1/sessions`) login work; the watchdog shows only the expected alerts above.
+
+   ```sh
+   near contract call-function as-read-only $SIGNER get_governance json-args '{}' network-config testnet now
+   near contract call-function as-read-only $SIGNER get_config json-args '{}' network-config testnet now
+   ```
+
+7. **Accept the pre-v3 wallets** (D135; sandbox-dev's are test data, discarded at the address freeze; never on
+   mainnet):
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run admin $ENV owner:call accept_unrecorded_wallets --approve-with $MEMBER --yes
+   ```
+
+   Check: `get_config().unrecorded_wallets` is `false`.
+
+8. **The issuer Worker** ("Email issuer" steps 3–5, 7 above), before its keys go on chain, so the watchdog can read its
+   JWKS from the first active key: SendGrid subuser, Mail-Send key in `.secrets/sandbox-dev/email-issuer-sendgrid-key`
+   (0600), the webhook to `$ISSUER/v1/email/webhooks/sendgrid`, then
+
+   ```sh
+   corepack pnpm --dir apps/email-issuer exec wrangler d1 create hana-id-email-issuer-sandbox-dev          # prints its uuid
+   corepack pnpm --filter @hana-id/email-issuer gen $ENV --d1-id <issuer uuid> --app-d1-id <the API's D1 uuid>
+   corepack pnpm --dir apps/email-issuer exec wrangler d1 migrations apply hana-id-email-issuer-sandbox-dev --remote
+   corepack pnpm --filter @hana-id/scripts email-issuer $ENV put                                            # plan
+   corepack pnpm --filter @hana-id/scripts email-issuer $ENV put --yes
+   corepack pnpm --filter @hana-id/email-issuer run deploy
+   curl -s $ISSUER/v1/email/jwks.json
+   curl -s -X POST $ISSUER/v1/email/start -H "Origin: $AUTH" -H 'Content-Type: application/json' \
+     --data '{"pk":"<a test app pk_test_…>","email":"demo@example.com","purpose":"session","commitment":{}}'
+   ```
+
+   Check: the JWKS lists exactly the manifest's two keys (`jq '[.keys[].kid]'`); the `start` call answers `403
+   email_not_enabled` (the app gate runs before the commitment is read; no mail is sent, no app has email on). The
+   watchdog's `email_jwks_mismatch` stays clear.
+
+9. **The email issuer on chain, through the council.** Pre-check first: the watchdog's `/status` `email.pinned` lists
+   both kids under `hana` (step 2); `owner:call set_issuer_key` for `email` refuses a kid that isn't pinned for its
+   signer in `watchdog.pinnedIssuerKeys.email`, isn't its thumbprint, or isn't in `emailIssuer.publicKeys` with those
+   `n` and `e` (it checks the manifest; the deployed pins are `/status`'s). Values from `email-issuer $ENV show`:
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run admin $ENV owner:call set_issuer --args "{\"provider\":\"email\",\"iss_values\":[\"$ISSUER/v1/email\"]}" --approve-with $MEMBER --yes
+   corepack pnpm --filter @hana-id/scripts run admin $ENV owner:call mark_self_issued --args '{"provider":"email"}' --approve-with $MEMBER --yes
+   # once per published key (primary, then standby), with its kid, n and e from `show`:
+   corepack pnpm --filter @hana-id/scripts run admin $ENV owner:call set_issuer_key --args '{"provider":"email","kid":"<kid>","n":"<n>","e":"AQAB","signer":"hana"}' --approve-with $MEMBER --yes
+   ```
+
+   Each key change waits **120 s** here: a self-issued key waits the larger of `issuer_key_delay_ms` (120 000 on
+   sandbox-dev) and `governance_delay_ms` (60 000), and is never confirmed early. Then execute both (anyone may):
+
+   ```sh
+   near contract call-function as-read-only $SIGNER get_key_changes json-args '{}' network-config testnet now      # the two ids
+   near contract call-function as-transaction $SIGNER execute_issuer_key_change json-args '{"id":<id>}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as <any funded testnet account> network-config testnet sign-with-legacy-keychain send
+   ```
+
+   A key posted by mistake and still pending: `admin $ENV owner:call cancel_issuer_key_change --args '{"id":<id>}'
+   --approve-with $MEMBER --yes` (no wait); an active one: `remove_issuer_key` (immediate, DoS only).
+   Check, the issuer and its policy exactly as the manifest says:
+
+   ```sh
+   near contract call-function as-read-only $SIGNER get_issuer json-args '{"provider":"email"}' network-config testnet now   # iss_values
+   jq -r '.emailIssuer.iss' envs/sandbox-dev.json                                                                          # must be the one value above
+   near contract call-function as-read-only $SIGNER get_self_issued json-args '{"provider":"email"}' network-config testnet now
+   ```
+
+   `get_issuer("email").iss_values` is exactly `[<the manifest's emailIssuer.iss>]`; `get_self_issued` lists signer
+   `hana` with both kids and `required` 1; the watchdog has no `forged_*`, `signer_policy_mismatch` or
+   `email_jwks_mismatch` alert and `/status` shows both keys pinned and active.
+
+10. **Not in batch 6**: the email clients `AddClient ("email", "email:<scope>")` and any `login_methods` change wait for
+    batch 8 (D234): the issuer mints a staff client proof only for a scope with an active app that has email on. Check
+    that nothing changed for users: `GET /v1/app` still answers `loginMethods: ["google"]` for every test app, and
+    `SELECT DISTINCT login_methods FROM apps` is `google` alone.
+
+**If a step fails.** Steps 1–3 and 8 touch nothing on chain. Step 4 is an ordinary deploy (`wrangler rollback`, pages
+and API; below batch C3 see "Rolling the API back below batch C3"); after step 6, never below batch 6 (above). Step 5:
+until the old keys are deleted, putting the old file back and re-uploading `RELAYER_KEYS` undoes it. Step 6's `migrate`
+failure leaves v2 in place (re-propose a fixed build); a v3 that misbehaves can't go back to v2 (its `migrate` refuses
+v3 state): fix forward. Steps 7 and 9 are owner calls; a pending email key is cancelled with
+`cancel_issuer_key_change`, an active one removed at once (`remove_issuer_key`), and the watchdog cancels or pauses on
+any unpinned one.
+
+## Email login demo on sandbox-dev (batch 8a)
+
+**Only demo and test scopes get email in 8a (D248).** Every email identity opened in 8a is a wallet of its own, and it can never join a Google account later (the contract refuses a link to an identity that already has a wallet: "Sign-in method already has a wallet"). Nothing writes `email_hints` before google-match (batch 8b), so case B never happens in 8a: a Google user who picks email with their Gmail address gets that second wallet. So turn it on only for the demo's scope
+(Hana's own testers), never for a scope with real Google users, until google-match's hint writes or a merge path ship
+(`docs/mainnet-readiness.md` row 7.1g).
+
+What turns plain email login on for **the demo app only**, on top of "Email login on sandbox-dev (build plan batch 6)"
+above (steps 1–9 done: v3, the issuer Worker and its keys on chain). Testnet only; for the user to run. Every other
+app stays Google-only. Nothing here is automated yet (the partner console toggle is batch 9).
+
+**SendGrid is required for real mail.** The issuer sends code mails only through SendGrid (`emailIssuer.sender:
+"sendgrid"`, D194); the `outbox` stub is `local*`-only by design (the manifest schema and `gen` refuse it on
+sandbox-dev, so codes never land in a store an operator can read on a shared env) and stays that way. Without
+`SENDGRID_API_KEY` on the issuer, `start` still answers `202` (enumeration-safe) but no mail goes out, so nobody can
+sign in with email there (the issuer logs `code_mail` `misconfigured`). Set SendGrid up first (batch 6 step 8: subuser, Mail-Send key in
+`.secrets/sandbox-dev/email-issuer-sendgrid-key`, `email-issuer sandbox-dev put --yes`, the signed webhook).
+
+Checklist, in order (each check before the next):
+
+1. **The issuer's staff route for client proofs: not needed on sandbox-dev** (step 3 mints the proof locally, D253).
+   Outside dev envs, and for the other staff calls: `emailIssuer.access` in the manifest (the Cloudflare Access
+   application in front of `{url}/v1/email/admin/*` and the staff allowlist, D88), `email-issuer gen`, issuer deploy.
+   Check: `POST {url}/v1/email/admin/client-proof` without Access is refused.
+2. **`login_methods` for the demo app** (D1; no CLI command yet). Find its id with `admin sandbox-dev app:list
+   --remote`, then
+
+   ```sh
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev --remote --command "UPDATE apps SET login_methods = 'google,email' WHERE id = '<demo app id>'"
+   ```
+
+   Nothing changes for users yet: `GET /v1/app` lists email only once the scope holds its email client (step 3).
+   Check: `SELECT id, login_methods FROM apps WHERE login_methods <> 'google'` is the demo app alone.
+3. **The scope's email client** `AddClient ("email", "email:<demo scope>")` (D234), in one command (dev envs only,
+   D253). The demo's scope is `s2`, owned by `hana-id-admin-dev1.testnet` (its full-access key in
+   `~/.near-credentials/testnet/`); the issuer's active signing key must be in
+   `.secrets/sandbox-dev/email-issuer-signing-key.json` (0600, from `email-issuer sandbox-dev init`):
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run admin sandbox-dev scope:add-email-client --scope s2         # the plan
+   corepack pnpm --filter @hana-id/scripts run admin sandbox-dev scope:add-email-client --scope s2 --yes   # send
+   ```
+
+   It reads the scope fresh (`get_scope`: `action_nonce`, owners, clients, pending changes), refuses when the client
+   is already there, when the contract is paused, when the email issuer, its self-issued policy or the manifest's
+   active key isn't on chain (`get_issuer`, `get_self_issued`, `get_issuer_keys("email")`, n and e compared), or
+   when no `Owner::Near` of the scope has a full-access key in the keychain and on chain. It mints the client proof
+   with the issuer's own code (`apps/email-issuer/src/client-proof.ts`: the claims of the staff route, `sub`
+   `hana-client-proof`, `aud` `email:<scope>`, 10 min `exp`, a random `jti`) and checks it against the contract's
+   rules with the manifest's public key and with the chain's key before printing the plan (the proof is printed; the
+   key never is). With `--yes` the owner sends `propose_change(scope, "Near", {"AddClient":{"provider":"email",
+   "aud":"email:<scope>"}}, client_proof)` with 0.01 NEAR and 150 Tgas (one RS256 check, like `cancel_link`, D155),
+   waits out the change's `unlock_at_ms` when it is ≤ 10 min away (sandbox-dev's `change_delay_ms` is 60 s), sends
+   `execute_change` (50 Tgas, signed by the owner) and checks `get_scope`. A change that unlocks later stays pending:
+   re-run with `--yes` once it is due (a pending AddClient is executed, never proposed twice). Unlike the staff
+   route, the local mint doesn't check that an active app of the scope has email on: do step 2 first.
+   **In production the proof comes from the issuer's staff route behind Cloudflare Access** (`POST
+   {url}/v1/email/admin/client-proof {scopeId, actionNonce, ticket}`, "Staff calls" in "Email issuer"), audited, and
+   the scope's owner (the partner, or the council) sends `propose_change` itself; the command refuses every env but
+   `local*` and `sandbox*`. Check: `get_scope` lists `["email","email:<scope>"]`; `GET /v1/app` for the demo's key has
+   `"loginMethods":["google","email"]` and `"email":{"aud":"email:<scope>"}`.
+4. **The pages, then the API, with batch 8a** (the same order as batch 6's step 4): `corepack pnpm --filter
+   @hana-id/api run gen sandbox-dev` (the auth page Worker gets `EMAIL_ISSUER_URL`, `/login/email`'s connect-src),
+   `corepack pnpm --filter @hana-id/web build` (the bundles pin `emailIssuer.url` and `iss` from the manifest), `run
+   deploy:pages`, `run deploy`, then the demo (`apps/demo`, its own deploy). Check: `curl -sI {authOrigin}/login/email` shows `connect-src
+   https://hana-id-email-issuer-sandbox-dev.tingtc.workers.dev https://hana-id-api-sandbox-dev.tingtc.workers.dev`;
+   on the demo, "Log in with email" → address → the mailed code → the wallet; "Log in with Google" is unchanged.
+5. **Undo**: `UPDATE apps SET login_methods = 'google' …` turns email off at once (`GET /v1/app`, the issuer's
+   `start` and the API all read it; an email token is then `403 login_method_disabled`). The scope's email client
+   can stay (it serves nothing without `login_methods`) or go through `remove_client`.
+
+**Before SendGrid: an internal demo on the local stack.** The Playwright stack (`apps/e2e`) runs the real popup,
+vault, SDK, API Worker and email issuer Worker on loopback, with the `outbox` stub, a mocked NEAR chain and a test MPC
+(not testnet: the keys are throwaway, and Google login there only works under Playwright's stub). For showing the email
+UX:
+
+```sh
+HANA_E2E_PORT_BASE=4410 corepack pnpm --filter @hana-id/e2e serve
+curl -s -X POST http://127.0.0.1:4440/__e2e/apps -H 'content-type: application/json' \
+  -d '{"name":"Hana ID demo","origins":["http://localhost:4412"],"publishableKey":"pk_test_DemoE2eDemoE2eDemoE2e","loginMethods":"google,email"}'
+# open http://localhost:4412 → "Log in with email"; the code is in:
+curl -s 'http://127.0.0.1:4442/__e2e/outbox?to=<address, lowercased>'
+```
+
+Create the app before anything else on a fresh stack (a second create with the same key returns the first app
+unchanged). This is a demo of the screens and the flow, not of sandbox-dev; say so when showing it.
+
+## Turning linking on (batch 8b)
+
+Batch 8b ships automatic linking (one person, one wallet: Google and email with the same verified address open the
+same wallet), `hana.account()`, `hana.linkAccount()` and email-wallet key export. It has **no switch of its own**: it
+is on for every app whose `login_methods` lists email, once its code is deployed. Testnet only; for the user to run.
+Nothing below changes the contract, an address or a key.
+
+What users see, by case (`docs/integration.md` "Sign-in methods and links" has the partner's view):
+
+| Case | The user | The popup shows | Result |
+|---|---|---|---|
+| A, Google-hosted | had an email wallet (`…@gmail.com`, or a Workspace address whose `hd` is its domain), signs in with Google | Google's account chooser, then (first time for this client only) Hana's "One more step with Google" screen (**Continue**), Google's consent for "See your primary Google Account email address"; then "Signed in", or "Your Google sign-in now opens this wallet too" | the email wallet; Google joins it at once |
+| A, not hosted | had an email wallet on another domain, signs in with Google | "This email already has a wallet": **Link and continue** (a code to `a…@domain`, typed in the popup) or **Sign in with email** | the email wallet either way; linked only after the code |
+| B, Google-hosted | had a Google wallet, chooses "Continue with email" with its Gmail address and types the code | "This email belongs to a wallet you created by signing in with Google": **Link and continue** or **Sign in with Google**, then Google | the Google wallet; the email joins at once (a notice mail goes to the address) |
+| B, not hosted | the same with an address Google doesn't host | the same, then "An email will be able to open this wallet from {date}" with **Cancel this link** | the Google wallet; the email joins after `change_delay_ms` (sandbox-dev: the contract's value; 24 h on mainnet); an email login meanwhile is `link_pending` with the date |
+| C | has neither wallet | the usual sign-in | a new wallet for that method; a Google login records the hint for later |
+| Declined | a Google user without a wallet declines Google's email permission (or picks another Google account on Google's screen) | "Your Google email address is needed" (or "Another Google account was chosen"): **Sign in with email instead**, **Try Google again**, Cancel (D264) | an email login, or Google again; Cancel ends `login_cancelled` (`email_consent_declined` / `google_account_mismatch`). A user with a wallet sees nothing of it |
+
+Checklist, in order (each check before the next):
+
+1. **Prerequisites**: batch 6's chain setup and batch 8a's demo steps above (v3, `accept_unrecorded_wallets` done:
+   `get_config().unrecorded_wallets` is `false`, else every link is refused `links_unavailable`; the issuer Worker and
+   its keys on chain; SendGrid). Check: `GET /v1/app` for the demo's key lists `email`.
+   **Two NEAR providers**: the manifest's `rpc` and `rpcFallback` on different providers (sandbox-dev: fastnear and
+   `rpc.testnet.near.org`; `packages/env` refuses an env with `emailIssuer` and no `rpcFallback`, or both on one
+   registrable domain). Every login of a linked identity reads its path on both separately and is refused while either
+   is down (D263). Check: `curl -s -X POST <each rpc> -H 'content-type: application/json' -d
+   '{"jsonrpc":"2.0","id":1,"method":"status","params":[]}'` answers on both. sandbox-dev's second provider,
+   `rpc.testnet.near.org`, is slow and rate-limited (accepted for the testnet demo; mainnet-readiness 4.19). **Watch
+   `path_unconfirmed` rates**: the vault decides it in the browser and no Worker logs it, so watch the demo's
+   *Copy diagnostics* and users' reports for `api_unavailable` with `data.reason: 'path_unconfirmed'`; a rise means
+   the second provider is failing (run the check above).
+2. **Google clients**: nothing to register. The second request uses the same client and the same
+   `{authOrigin}/login/callback` redirect URI. The OAuth consent screen of each Google client used by an app with
+   email must allow the `email` scope (a non-sensitive scope: no verification needed). Check (once, by hand): a
+   Google login of the demo shows Google's consent for the email address the first time, and none after.
+3. **The API with batch 8b**: `corepack pnpm --filter @hana-id/api run gen sandbox-dev` (the API gets
+   `EMAIL_ISSUER_URL` for the vault page's `connect-src`, and `NEAR_RPC_FALLBACK`), `corepack pnpm --filter
+   @hana-id/web build`, `run deploy:pages`, `run deploy`. The login relay now takes writes from `vaultOrigin` (the
+   vault's follow-up notices), 40 a minute per IP (was 10), and bodies up to 12 KiB (was 8; D267). Check: `curl -sI
+   '{vaultOrigin}/vault?pk=<demo key>'` shows the issuer's origin and both RPCs in `connect-src`.
+4. **The issuer with batch 8b** (its case-B `verify` answers the address's `sub` beside the `linkTicket`; google-match
+   no longer revokes Google's access token, answers `google_account_mismatch`, and takes 120 a minute per 10 min per
+   IP; D264, D265, D267): `email-issuer gen`, deploy. Check: an email login of an address with a Google wallet shows
+   "Link and continue"; a second Google login of the demo shows no Google consent screen.
+5. **Try each case on the demo** (two browsers or two profiles help): C, then A hosted (email login first with a Gmail
+   address, then Google with that account: same addresses), B hosted (a fresh Google login, then "Continue with
+   email" with its Gmail address: "Link and continue": same addresses; an email login afterwards opens them too),
+   and B not hosted with the pending banner and its **Cancel this link**.
+6. **Watch**: the watchdog's link alarms (`link_threshold_reached`, `link_volume_high`, D200) count these links; a
+   demo's handful is far under the thresholds. The issuer's request log for `google-match` carries the decision only (never an
+   address).
+7. **Undo**: `UPDATE apps SET login_methods = 'google' …` stops email and every new link for the app at once. Links
+   already made stay (they are chain state); a pending one can be cancelled from the popup's banner at its owner's
+   next sign-in. A wrong link is removed by the root's **Remove** banner (unlink), or by `POST /v1/link/unlink`.
+
+**Lifting D248 ("demo scopes only").** Since every Google login of an app with email now calls google-match, which
+writes the `email_hints` row for that Google account's verified address, a later email login with that address reaches
+case B instead of a second wallet. The remaining gap: a Google wallet opened **before** its app turned email on has no
+hint until its owner signs in with Google there again. So for a scope that already has Google users, either turn email
+on and accept that window (an email login by such a user in it opens a separate email wallet, which can never merge,
+D122), or wait until those users have signed in with Google once since. Hana's own testers on the demo scope are fine
+either way. The readiness item is `docs/mainnet-readiness.md` row 7.1g.
+
+**Google's verified email: the spike** (`apps/smoke/spike-email.html`, build plan batch 0; not run yet). The popup
+asks Google twice today (`GOOGLE_EMAIL_FLOW = 'second_request'`): the openid-only login request, then a silent
+`response_type=token`, `scope=email` request. The spike measures whether one request (`id_token token`, `openid
+email`) keeps `email` out of the ID token; run it with a Gmail, a Workspace and an outside-address Google account
+(`apps/smoke/README.md`) and record the results in `docs/context.md` before changing the switch.
+
+**Gate before real users (D265):** the user runs the spike's legs **C** and **D** on real Google, for each of the three
+accounts, after B: C (a plain `openid` login once the email grant exists) must show `tokenHasPiiLockout: false` (no
+`email` or `email_verified` in the ID token, else every later Google login of that user would be refused
+`token_has_pii`), and D (B's silent request again) must answer an access token with no `silentError` (the grant
+persists, now that google-match no longer revokes it). Until both pass, batch 8b stays on Hana's own testers.
 
 ## Restoring a D1 database (Time Travel)
 
@@ -1090,7 +2431,7 @@ mind (`VAULT_KEK` above). Skip it only when the database is gone altogether.
 
 **What is lost**: every write after the restore point. Apps created then (their publishable keys stop working), origin
 and settings changes (a pending `raw_sign` / `auto_approve` change scheduled then is gone: the partner asks again),
-**suspensions and revocations made then are undone**, usage counters, `vault_shares` created then (those users sign
+**suspensions and revocations made then are undone**, session markers, `vault_shares` created then (those users sign
 in with Google again; their addresses are on chain and unchanged), and the issuer-key cron's state
 (`issuer_key_observations`, `issuer_key_missing`, `issuer_key_proposals`, `issuer_key_sync_runs`). The cron rebuilds
 the last from chain: a pending change by the signer account it has no row for is adopted, a missing kid's 55-min
@@ -1101,7 +2442,8 @@ timer starts again (its removal proposal comes up to 55 min later), and D33's le
 1. `corepack pnpm --dir apps/api exec wrangler d1 migrations apply <cloudflare.d1Name> --remote`: a point before a
    later migration has the older schema (its `d1_migrations` table comes back with it, so only the missing ones run).
 2. Security writes made after the point: `admin <env> app:suspend` for every app suspended since, `app:origins:remove`
-   for every origin removed since, and, if every share was revoked since (a KEK compromise), the revoke-all command in
+   for every origin removed since (and for every origin, policy or raw-signing value still pending in the restored
+   rows that was cancelled since: `app:list` shows the pending changes), and, if every share was revoked since (a KEK compromise), the revoke-all command in
    "`VAULT_KEK`" above **before** anything else touches the database. Never leave a restored database un-revoking
    what a security response revoked.
 3. A KEK rotated after the point: the restored rows are under the old key id. While `VAULT_KEK_PREVIOUS` still holds
@@ -1109,7 +2451,8 @@ timer starts again (its removal proposal comes up to 55 min later), and D33's le
    `unknownKek` (the users sign in again) unless the old key file is still there: `vault-kek <env> put --yes` sets
    both secrets from the files.
 4. Other app changes since the point (new apps with `app:create`, which issues new publishable keys the partners
-   must use; origins; settings), from what partners and the audit trail say.
+   must use; origins and settings, which are proposals again and wait for their announcement and delay), from what
+   partners and the audit trail say (the `app_changes` rows in the export of step 1 list every app write).
 5. Check: `admin <env> app:list --remote` against the known apps, `GET /v1/governance` `.updater` (the cron's next
    run), a smoke login and a reload unlock.
 
@@ -1183,6 +2526,8 @@ Worker's metrics. Check once after a deploy that no relay URL appears in the Wor
 | `session` large on `/v1/vault/shares` | the RPC node behind `/v1/login`'s optimistic answer: `get_session` re-read every 300 ms (up to 2 s) |
 | `settings`, `insert`, `share`, `advance` large | D1 round trips (each is one or two queries) |
 | `vault_page` `latencyMs` | the vault page's D1 reads (app, origins, settings) that every page load waits for |
+| `GET /v1/app` `settings`, `chain` large | the D1 rows, or `get_scope` (then `get_config` for a shared client); the D1 rows and the registry run side by side since D261 |
+| `502 near_unavailable` after about 8 s, on any endpoint (logins included) | a contract view hit the 8 s RPC timeout (every view the API makes, D261): the node stalled. `GET /v1/app` is asked once more by the vault; a login fails and the user retries |
 
 **Stage timings (`pk_test_` apps).** The smoke page's *Timings* table (`apps/smoke/README.md` "Timings") splits a
 login and a reload unlock into consecutive stages that add up to the page's total (with `other`), measured where they
@@ -1204,7 +2549,9 @@ Measured on sandbox-dev (2026-10-27, real MPC, `docs/context.md` "Testnet measur
 | rejected derive on chain | 2.21 Tgas | 0.0002 NEAR | |
 
 Warm stage split: create = checks 0.2 s + relay 2.2 s (chain ~0.6 s); derive = relay ~6.0 s (MPC ~4.5 s).
-`create_session_and_derive` (`/v1/login`) is not measured yet (estimate ~38 Tgas, 100 Tgas attached).
+`create_session_and_derive` (`/v1/login`): its latency on testnet is D76 (the ship gate); its gas is measured in the
+sandbox with the mock MPC, not yet on testnet: ≈ 20.5 Tgas in the signer's receipt and 22–23 Tgas in all with a
+Google token (`docs/contract-interface.md` "Gas of the email login calls" and "Upgrades"; 100 Tgas attached).
 
 ## Common failures
 
@@ -1213,6 +2560,9 @@ Warm stage split: create = checks 0.2 s + relay 2.2 s (chain ~0.6 s); derive = r
 | Google `Error 400: redirect_uri_mismatch` in the login popup | `{authOrigin}/login/callback` isn't an Authorized redirect URI of the client in use (shared, or the partner's own) | add it exactly in Google Cloud; wait a few minutes |
 | Smoke's Google button: origin not allowed for the client | `http://localhost:5173` missing from Authorized JavaScript origins | add it on every client smoke uses |
 | `409 counter_used` (with `nextCounter`) | a replayed or reused session counter; refused before the chain, no gas | send `nextCounter`; for a replay it is the expected answer |
+| `400 bad_request` "signature must be the session key's 64-byte proof of possession" on `/v1/sessions` | a caller from before email login batch 6 (an old vault bundle, an old smoke page) sends no proof (D137) | rebuild and redeploy the page Workers (`web build`, `deploy:pages`); restart `apps/smoke` |
+| `403 login_method_disabled` | an email token for an app whose `login_methods` doesn't list `email` (every app until batch 8) | expected; batch 8 turns email on per app |
+| `409 links_unavailable` | a link on a contract before v3, or before the owner's `accept_unrecorded_wallets` (D135) | on sandbox-dev, "Email login on sandbox-dev" step 7; never on mainnet |
 | `409 session_exhausted` / `counter_out_of_range` | `max_uses` reached / counter past it | open a new session |
 | `409 session_exists` | session key already holds a session (replay, or a retry that landed) | new session key |
 | First relay after a quiet spell is slower; `relayInstance.cold: true` | the key's object was evicted (~10 s idle) | expected; costs no chain read while a reservation is stored. A repeated `coldChainRead: true` means the key has no stored reservation (new key, or a `RELAYER_KEYS` reorder) |
@@ -1239,6 +2589,8 @@ Warm stage split: create = checks 0.2 s + relay 2.2 s (chain ~0.6 s); derive = r
 | 4100 `raw_not_allowed_for_test_apps` / `mainnet_not_allowed` from the vault | a `pk_test_` app asked for a raw signature (whatever `raw_sign` says), or for a mainnet Stellar passphrase or an EVM chain outside the testnet allowlist (D39) | expected for test apps; use a test network |
 | `429 rate_limited` "(per IP per minute)" or "(share per minute)" on `/v1/vault/*` with `retry-after: 60` | the vault's per-location flood limits (60/min per IP per app, 10/min per share; D95), counted per Cloudflare location and approximate | wait; not visible in the dashboard, so count the 429s in the request logs |
 | `429 rate_limited` "Too many key exports" on `/v1/login` from the export window | more than 3 exports in an hour for one user path in one app (D59) | wait for `retry-after` |
+| `vault_unavailable` on a partner page (`data.reason`) | `csp_frame_src`: the page's CSP; `no_answer` (after one retry): the vault page refused the frame (origin not in force, key unknown or suspended, wrong env build) or its script didn't run; `frame_timeout` / `ready_timeout`: network or cold Workers, often right after a deploy (D262) | fix the origin or CSP; for timeouts, reload, and check the `vault_page` and `/v1/vault/unlock` latencies in the request log |
+| A login's `app` stage takes seconds (`pk_test_` timings) | the `GET /v1/app` the vault asked after `ready` was still out: `appServer*` say whether the API (D1, the registry views) or the network took the time (D261) | look at the `/v1/app` request log line's `phases` and `colo`; a stalled RPC view now fails after 8 s (every view, logins included) and `/v1/app` is asked once more |
 | `409 no_google_client` on `/v1/app` | scope has no Google client and no usable shared client (or shared client still in its timelock) | add a client, or `--allow-shared` + wait `changeDelayMs` |
 | `admin`: "No wrangler config in apps/api" | `wrangler.jsonc` missing | `corepack pnpm --filter @hana-id/api run gen <env>` |
 | `deploy-contract` "Cannot deploy until these are fixed" | a key with the wrong receiver, methods, empty method list or too-large/unlimited allowance | run the printed `near account delete-keys …`, re-run |

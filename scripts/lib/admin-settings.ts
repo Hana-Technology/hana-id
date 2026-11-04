@@ -1,15 +1,29 @@
-// admin.ts app:settings: the per-app vault settings (docs/batch-b-spec.md "App settings"), in the `apps` columns of
-// migration 0003, until the batch C dashboard takes over. Every range is checked here and again by the migration's
-// CHECKs; `--google-web-client` must be one of the scope's on-chain Google clients; an auto-approve policy must pass
+// admin.ts app:settings: the per-app vault settings (docs/batch-b-spec.md "App settings", docs/batch-c-spec.md §CLI), in
+// the `apps` columns of migration 0003. Every range is checked here and again by the migration's CHECKs;
+// `--google-web-client` must be one of the scope's on-chain Google clients; an auto-approve policy must pass
 // @hana-id/core's validateAutoApprovePolicy (the same validator the API and the vault run).
 //
-// Loosening is delayed, tightening is immediate: `--raw-sign approval` and a new or changed `--auto-approve` policy are
-// written as pending values that apply from `effective_at` (24 h; the manifest's changeDelayMs in local*/sandbox*
-// envs); `--raw-sign off` and `--auto-approve off` take effect at once and drop any pending value.
+// Loosening is a guarded change, tightening is immediate (batch C, migration 0006): `--raw-sign approval` and a new or
+// changed `--auto-approve` policy become staff proposals (`guarded_changes`; nothing in `apps` yet). They take effect
+// `appChangeDelayMs` after their announcement: the admin Worker's notice, or, in an env without one,
+// `app:changes:announce <id>`, which writes the pending column and its `*_effective_at`. `--raw-sign off` and
+// `--auto-approve off` take effect at once, drop any pending value and end or cancel the guarded changes. Every write
+// bumps `settings_version` and records an `app_changes` row.
 import { readFileSync, statSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { canonicalJson, parseAutoApprovePolicy, policyId } from '@hana-id/core/policy';
-import { isDevEnv, type Manifest } from '@hana-id/env';
+import type { Manifest } from '@hana-id/env';
+import {
+  type ChangeRow,
+  type CliActor,
+  type HotWrite,
+  closeChangesSql,
+  openChangesSql,
+  proposalSql,
+  committed,
+  settingsWrite,
+  writeCommand,
+} from './admin-sql.ts';
 import { type Args, CliError } from './cli.ts';
 import { GOOGLE_PROVIDER, tryView } from './contract.ts';
 import { d1Execute } from './d1.ts';
@@ -23,8 +37,6 @@ const HOUR = 60 * MINUTE;
 export const SESSION_TTL_MIN_MS = HOUR;
 export const SESSION_TTL_MAX_MS = 23 * HOUR + 50 * MINUTE;
 export const IDLE_TTL_MIN_MS = 15 * MINUTE;
-/** Delay before `raw_sign = 'approval'` or a new auto-approve policy applies, outside `local*` and `sandbox*` envs. */
-export const RAW_SIGN_DELAY_MS = 24 * HOUR;
 /** Largest policy file read (the validator caps the canonical JSON at 16 KiB). */
 export const POLICY_FILE_MAX_BYTES = 64 * 1024;
 /** `--google-web-client default`: no pinned client, GET /v1/app uses the scope's first Google client. */
@@ -40,6 +52,11 @@ export interface SettingsRow {
   id: string;
   name: string;
   scope_id: string;
+  org_id: string;
+  /** The scope's environment: raw signing is refused for test apps (D39, as amended 2026-10-28). */
+  environment: 'test' | 'live';
+  settings_version: number;
+  deleted_at: number | null;
   persistence: string;
   session_ttl_ms: number;
   idle_ttl_ms: number;
@@ -71,9 +88,9 @@ export interface SettingsChange {
   autoApprove?: { text: string; file: string } | 'off';
 }
 
-/** The UPDATE to run (null when nothing changes) and what to print. */
+/** The write to run (null when nothing changes) and what to print. */
 export interface SettingsPlan {
-  sql: string | null;
+  write: HotWrite | null;
   lines: string[];
   warnings: string[];
 }
@@ -81,14 +98,10 @@ export interface SettingsPlan {
 const SETTINGS_COLUMNS =
   'persistence, session_ttl_ms, idle_ttl_ms, raw_sign, raw_sign_pending, raw_sign_effective_at, auto_approve_policy, auto_approve_pending, auto_approve_effective_at, google_web_client_id';
 
-/** The app (by id or publishable key) with its settings columns. */
+/** The app (by id or any of its publishable keys) with its settings columns, version and scope environment. */
 export function settingsSql(idOrKey: string): string {
-  return `SELECT id, name, scope_id, ${SETTINGS_COLUMNS} FROM apps WHERE ${sql`id = ${idOrKey} OR publishable_key = ${idOrKey}`}`;
-}
-
-/** The change delay for this env: 24 h, or the manifest's changeDelayMs in `local*` and `sandbox*` envs. */
-export function changeDelayMsFor(m: Pick<Manifest, 'name' | 'changeDelayMs'>): number {
-  return isDevEnv(m.name) ? m.changeDelayMs : RAW_SIGN_DELAY_MS;
+  const columns = SETTINGS_COLUMNS.split(', ').map((c) => `a.${c}`).join(', ');
+  return `SELECT a.id, a.name, a.scope_id, a.org_id, a.settings_version, a.deleted_at, s.environment, ${columns} FROM apps a JOIN scopes s ON s.scope_id = a.scope_id WHERE ${sql`a.id = ${idOrKey} OR a.id IN (SELECT app_id FROM app_keys WHERE key = ${idOrKey})`}`;
 }
 
 /** Parses a duration such as `12h`, `23h50m`, `15m`, `90s` or `3600000ms`. A bare number is refused (ms or s?). */
@@ -204,26 +217,51 @@ export function policyInForce(row: SettingsRow, now: number): string | null {
 
 export interface PlanContext {
   now: number;
-  delayMs: number;
   /** The scope's Google client ids on chain; read only when `--google-web-client` names a client. */
   scopeGoogleClients?: readonly string[];
+  /** The app's pending and active guarded changes (admin-sql.ts openChangesSql). */
+  openChanges?: readonly ChangeRow[];
+  actor?: CliActor;
+  /** The write's request id (its `app_changes` commit row). */
+  requestId?: string;
+  /** A new guarded change id (`gc_…`). */
+  newChangeId?: () => string;
+  /** How a proposal is announced in this env, printed under it. */
+  announceHint?: (changeId: string) => string;
 }
 
+const DEFAULT_ACTOR: CliActor = { id: 'cli' };
+
 /**
- * Checks a change against the row and builds the one UPDATE that applies it. Throws CliError for any value out of
- * range, and changes nothing then. Values already in force are reported and not rewritten, so re-running a command
- * never restarts a pending delay.
+ * Checks a change against the row and builds the one write that applies it. Throws CliError for any value out of
+ * range, and changes nothing then. Values already in force or already proposed are reported and not rewritten, so
+ * re-running a command never restarts a pending delay.
  */
 export function planSettings(row: SettingsRow, change: SettingsChange, ctx: PlanContext): SettingsPlan {
-  const { now, delayMs } = ctx;
+  const { now } = ctx;
+  const open = ctx.openChanges ?? [];
+  const actor = ctx.actor ?? DEFAULT_ACTOR;
+  const requestId = ctx.requestId ?? `cli_${now}`;
+  const newChangeId = ctx.newChangeId ?? (() => `gc_${now}`);
+  const to = row.settings_version + 1;
+  const when = committed(requestId);
   const set: string[] = [];
+  const after: string[] = [];
   const lines: string[] = [];
   const warnings: string[] = [];
+  const changed: Record<string, unknown> = {};
+  const ledgerRows: { kind: string; detail: Record<string, unknown> }[] = [];
+  // Pending and not yet in force (a change whose clock has passed is in force by predicate until the cron records it).
+  const pendingOf = (kind: ChangeRow['kind']) => open.filter((c) => c.kind === kind && c.status === 'pending' && (c.active_from === null || c.active_from > now));
+  const hint = (id: string) => {
+    if (ctx.announceHint) lines.push(`  ${ctx.announceHint(id)}`);
+  };
 
   if (change.persistence !== undefined) {
     if (change.persistence === row.persistence) lines.push(`persistence: already ${row.persistence}`);
     else {
       set.push(sql`persistence = ${change.persistence}`);
+      changed.persistence = change.persistence;
       lines.push(`persistence: ${row.persistence} → ${change.persistence} (immediate)`);
       if (change.persistence === 'none') lines.push('  New logins store no share, so a reload needs a new login. Existing shares are revoked on their next unlock or touch.');
     }
@@ -241,34 +279,44 @@ export function planSettings(row: SettingsRow, change: SettingsChange, ctx: Plan
         : `The idle TTL ${formatDuration(idleTtl)} would exceed --session-ttl ${formatDuration(sessionTtl)}: pass --idle-ttl too`,
     );
   }
-  for (const [column, before, after] of [
+  for (const [column, before, value] of [
     ['session_ttl_ms', row.session_ttl_ms, change.sessionTtlMs],
     ['idle_ttl_ms', row.idle_ttl_ms, change.idleTtlMs],
   ] as const) {
-    if (after === undefined) continue;
+    if (value === undefined) continue;
     const name = column === 'session_ttl_ms' ? 'session TTL' : 'idle TTL';
-    if (after === before) lines.push(`${name}: already ${formatDuration(before)}`);
+    if (value === before) lines.push(`${name}: already ${formatDuration(before)}`);
     else {
-      set.push(column === 'session_ttl_ms' ? sql`session_ttl_ms = ${after}` : sql`idle_ttl_ms = ${after}`);
-      lines.push(`${name}: ${formatDuration(before)} → ${formatDuration(after)} (immediate; ${column === 'session_ttl_ms' ? after < before ? 'live shares also end at their creation + the new TTL' : 'live shares keep their expiry; new logins get the new TTL' : 'applies from each share’s next unlock or touch'})`);
+      set.push(column === 'session_ttl_ms' ? sql`session_ttl_ms = ${value}` : sql`idle_ttl_ms = ${value}`);
+      changed[column === 'session_ttl_ms' ? 'sessionTtlMs' : 'idleTtlMs'] = value;
+      lines.push(`${name}: ${formatDuration(before)} → ${formatDuration(value)} (immediate; ${column === 'session_ttl_ms' ? value < before ? 'live shares also end at their creation + the new TTL' : 'live shares keep their expiry; new logins get the new TTL' : 'applies from each share’s next unlock or touch'})`);
     }
   }
 
+  const rawPending = pendingOf('raw_sign_on');
   if (change.rawSign === 'off') {
-    if (row.raw_sign === 'off' && row.raw_sign_pending === null) lines.push('raw signing: already off');
+    if (row.raw_sign === 'off' && row.raw_sign_pending === null && !open.some((c) => c.kind === 'raw_sign_on')) lines.push('raw signing: already off');
     else {
       set.push(sql`raw_sign = ${'off'}`, 'raw_sign_pending = NULL', 'raw_sign_effective_at = NULL');
-      lines.push(`raw signing: ${rawSignInForce(row, now)}${row.raw_sign_pending !== null && !matured(row.raw_sign_pending, row.raw_sign_effective_at, now) ? ' (approval pending)' : ''} → off (immediate)`);
+      after.push(closeChangesSql(row.id, 'raw_sign_on', 'all', { now, actor }, when));
+      ledgerRows.push({ kind: 'raw_sign.off', detail: { cancelled: rawPending.map((c) => c.id) } });
+      const waiting = (row.raw_sign_pending !== null && !matured(row.raw_sign_pending, row.raw_sign_effective_at, now)) || rawPending.length > 0;
+      lines.push(`raw signing: ${rawSignInForce(row, now)}${waiting ? ' (approval pending)' : ''} → off (immediate)`);
     }
   } else if (change.rawSign === 'approval') {
+    if (row.environment === 'test') throw new CliError('--raw-sign approval is refused for a test app: test apps never sign raw (D39, as amended 2026-10-28)');
     warnings.push(RAW_SIGN_WARNING);
     if (rawSignInForce(row, now) === 'approval') lines.push('raw signing: already approval');
     else if (row.raw_sign_pending === 'approval' && row.raw_sign_effective_at !== null) {
       lines.push(`raw signing: approval already pending, in force from ${at(row.raw_sign_effective_at)} (delay not restarted)`);
+    } else if (rawPending.length) {
+      lines.push(`raw signing: approval already proposed as ${rawPending[0]!.id}, waiting for its announcement (delay not restarted)`);
     } else {
-      const effectiveAt = now + delayMs;
-      set.push(sql`raw_sign_pending = ${'approval'}`, sql`raw_sign_effective_at = ${effectiveAt}`);
-      lines.push(`raw signing: off → approval, pending until ${at(effectiveAt)} (${formatDuration(delayMs)} delay)`);
+      const changeId = newChangeId();
+      after.push(proposalSql({ changeId, appId: row.id, kind: 'raw_sign_on', policyJson: null, policyId: null }, { now, actor, requestId }, when));
+      ledgerRows.push({ kind: 'raw_sign.proposed', detail: { changeId } });
+      lines.push(`raw signing: off → approval proposed as ${changeId} (a staff proposal: in force appChangeDelayMs after it is announced)`);
+      hint(changeId);
     }
   }
 
@@ -281,16 +329,20 @@ export function planSettings(row: SettingsRow, change: SettingsChange, ctx: Plan
         throw new CliError(`${client} is not one of scope ${row.scope_id}'s Google clients on chain (${known})`);
       }
       set.push(sql`google_web_client_id = ${client}`);
+      changed.googleWebClientId = client;
       lines.push(`Google web client: ${row.google_web_client_id ?? 'the scope’s first'} → ${client ?? 'the scope’s first Google client'} (immediate)`);
     }
   }
 
   // A new policy is validated against the session TTL in force after this change (maxConsentMs ≤ session_ttl_ms).
   const inForce = policyInForce(row, now);
+  const policyPending = pendingOf('policy_set');
   if (change.autoApprove === 'off') {
-    if (row.auto_approve_policy === null && row.auto_approve_pending === null) lines.push('auto-approve: already off');
+    if (row.auto_approve_policy === null && row.auto_approve_pending === null && !open.some((c) => c.kind === 'policy_set')) lines.push('auto-approve: already off');
     else {
       set.push('auto_approve_policy = NULL', 'auto_approve_pending = NULL', 'auto_approve_effective_at = NULL');
+      after.push(closeChangesSql(row.id, 'policy_set', 'all', { now, actor }, when));
+      ledgerRows.push({ kind: 'policy.removed', detail: { cancelled: policyPending.map((c) => c.id) } });
       lines.push('auto-approve: policy removed (immediate); every request gets the approval popup, and users’ consents lapse');
     }
   } else if (change.autoApprove !== undefined) {
@@ -298,46 +350,68 @@ export function planSettings(row: SettingsRow, change: SettingsChange, ctx: Plan
     if (!result.ok) throw new CliError(`--auto-approve ${change.autoApprove.file} is not a valid AutoApprovePolicyV1:\n  ${result.problems.join('\n  ')}`);
     const policy = result.policy;
     const pendingOpen = row.auto_approve_pending !== null && !matured(row.auto_approve_pending, row.auto_approve_effective_at, now);
+    const proposedSame = policyPending.find((c) => c.policy_id === policy.id);
     if (storedPolicyId(inForce) === policy.id) {
       lines.push(`auto-approve: policy ${policy.id} ("${policy.label}") already in force`);
-      if (pendingOpen) {
-        // Re-setting the policy in force cancels a pending change to another one. Only the pending columns are
-        // written: the policy in force is left as D1 holds it (never rewritten from this read).
-        set.push('auto_approve_pending = NULL', 'auto_approve_effective_at = NULL');
+      if (pendingOpen || policyPending.length) {
+        // Re-setting the policy in force cancels a pending change to another one. The policy in force may be a
+        // matured pending one the cron hasn't promoted yet: it becomes the stored one before the pending columns are
+        // cleared (in the statement itself, from the row as D1 holds it; SET expressions all read the old row), so
+        // clearing them never brings an older stored policy back with no delay.
+        set.push(
+          sql`auto_approve_policy = CASE WHEN auto_approve_pending IS NOT NULL AND auto_approve_effective_at <= ${now} THEN auto_approve_pending ELSE auto_approve_policy END`,
+          'auto_approve_pending = NULL',
+          'auto_approve_effective_at = NULL',
+        );
+        after.push(closeChangesSql(row.id, 'policy_set', 'not_in_force', { now, actor }, when));
+        ledgerRows.push({ kind: 'policy.pending_dropped', detail: { cancelled: policyPending.map((c) => c.id) } });
         lines.push('  The pending policy is dropped.');
       }
+    } else if (proposedSame) {
+      lines.push(
+        proposedSame.active_from !== null
+          ? `auto-approve: policy ${policy.id} ("${policy.label}") already pending as ${proposedSame.id}, in force from ${at(proposedSame.active_from)} (delay not restarted)`
+          : `auto-approve: policy ${policy.id} ("${policy.label}") already proposed as ${proposedSame.id}, waiting for its announcement (delay not restarted)`,
+      );
+    } else if (policyPending.length) {
+      throw new CliError(
+        `Another policy is pending (${policyPending.map((c) => c.id).join(', ')}): at most one per app. Cancel it first (--auto-approve off, or set the policy in force again).`,
+      );
     } else if (pendingOpen && storedPolicyId(row.auto_approve_pending) === policy.id && row.auto_approve_effective_at !== null) {
       lines.push(`auto-approve: policy ${policy.id} ("${policy.label}") already pending, in force from ${at(row.auto_approve_effective_at)} (delay not restarted)`);
     } else {
-      const effectiveAt = now + delayMs;
-      // A pending policy that has matured is in force: it becomes the stored policy before the new one is pending
-      // (in the statement itself, so the decision uses the row as D1 holds it).
-      set.push(
-        sql`auto_approve_policy = CASE WHEN auto_approve_pending IS NOT NULL AND auto_approve_effective_at <= ${now} THEN auto_approve_pending ELSE auto_approve_policy END`,
-        sql`auto_approve_pending = ${policy.json}`,
-        sql`auto_approve_effective_at = ${effectiveAt}`,
-      );
-      lines.push(`auto-approve: policy ${policy.id} ("${policy.label}") from ${change.autoApprove.file}, pending until ${at(effectiveAt)} (${formatDuration(delayMs)} delay)`);
+      const changeId = newChangeId();
+      after.push(proposalSql({ changeId, appId: row.id, kind: 'policy_set', policyJson: policy.json, policyId: policy.id }, { now, actor, requestId }, when));
+      ledgerRows.push({ kind: 'policy.proposed', detail: { changeId, policyId: policy.id } });
+      lines.push(`auto-approve: policy ${policy.id} ("${policy.label}") from ${change.autoApprove.file}, proposed as ${changeId} (a staff proposal: in force appChangeDelayMs after it is announced)`);
       lines.push(inForce === null ? '  Until then no policy is in force.' : `  Until then the policy in force (${storedPolicyId(inForce) ?? 'unreadable'}) stays.`);
       lines.push('  Each user accepts the new policy in a Hana popup before it auto-approves anything.');
+      hint(changeId);
     }
   }
 
-  // Policies that stay stored must fit a lowered session TTL too, or the API would stop serving them.
+  // Policies that stay stored or proposed must fit a lowered session TTL too, or the API would stop serving them.
   if (change.sessionTtlMs !== undefined && change.autoApprove !== 'off') {
-    const kept = [change.autoApprove === undefined ? row.auto_approve_pending : null, inForce].filter((t): t is string => t !== null);
+    const kept = [inForce, ...(change.autoApprove === undefined ? [row.auto_approve_pending, ...policyPending.map((c) => c.policy_json)] : [])].filter((t): t is string => t !== null);
     for (const text of kept) {
       if (validatePolicy(text, SESSION_TTL_MAX_MS).ok && !validatePolicy(text, sessionTtl).ok) {
-        throw new CliError(`A stored auto-approve policy has maxConsentMs over the new session TTL ${formatDuration(sessionTtl)}: set a new policy (--auto-approve) or remove it (--auto-approve off) first`);
+        throw new CliError(`A stored or proposed auto-approve policy has maxConsentMs over the new session TTL ${formatDuration(sessionTtl)}: set a new policy (--auto-approve) or remove it (--auto-approve off) first`);
       }
     }
   }
 
-  return { sql: set.length ? `UPDATE apps SET ${set.join(', ')} WHERE ${unchangedSince(row)} RETURNING id` : null, lines, warnings };
+  if (Object.keys(changed).length) ledgerRows.unshift({ kind: 'settings.changed', detail: changed });
+  if (!set.length && !after.length) return { write: null, lines, warnings };
+  // The guard: this app, its version and every settings column still as read. The write's one app_changes row is
+  // inserted only while it holds; then the UPDATE (the version bump and the immediate values) and the rest run only if
+  // that row exists (admin-sql.ts "writes").
+  const guard = { where: `${unchangedSince(row)} AND ${sql`settings_version = ${row.settings_version}`} AND deleted_at IS NULL`, set: [sql`settings_version = ${to}`, ...set] };
+  const commitRow = ledgerRows.length === 1 ? ledgerRows[0]! : { kind: 'settings.changed', detail: { parts: ledgerRows } };
+  return { write: settingsWrite(row, guard, commitRow, after, { now, actor, requestId }), lines, warnings };
 }
 
 /**
- * The UPDATE's condition: this app, with every settings column still as it was read. The read and the write are
+ * The guard's condition: this app, with every settings column still as it was read. The read and the write are
  * separate `wrangler d1 execute` calls, so another operator's change in between (say `--auto-approve off`) would
  * otherwise be overwritten with values planned from the old row, putting a removed policy back in force with no
  * delay. With the guard such a write changes nothing, and appSettings reports it.
@@ -351,7 +425,7 @@ export function unchangedSince(row: SettingsRow): string {
 export const SETTINGS_CHANGED = "The app's settings changed since they were read (another admin:settings or a D1 edit): nothing was written. Run the command again to see and change the current settings.";
 
 /** The settings as stored and in force, for `app:settings <app>` with no setting flags. */
-export function describeSettings(row: SettingsRow, now: number): string[] {
+export function describeSettings(row: SettingsRow, now: number, openChanges: readonly ChangeRow[] = []): string[] {
   const out = [
     `persistence: ${row.persistence}`,
     `session TTL: ${formatDuration(row.session_ttl_ms)}`,
@@ -368,6 +442,11 @@ export function describeSettings(row: SettingsRow, now: number): string[] {
   if (row.auto_approve_pending !== null && row.auto_approve_effective_at !== null && !matured(row.auto_approve_pending, row.auto_approve_effective_at, now)) {
     out.push(`  pending until ${at(row.auto_approve_effective_at)}: ${policyText(row.auto_approve_pending)}`);
   }
+  for (const c of openChanges) {
+    if (c.status !== 'pending' || c.kind === 'origin_add') continue;
+    const what = c.kind === 'policy_set' ? `policy ${c.policy_id}` : 'raw signing approval';
+    out.push(`proposed: ${c.id} ${what}, ${c.active_from === null ? 'not announced yet' : `in force from ${at(c.active_from)}`}`);
+  }
   return out;
 }
 
@@ -381,6 +460,12 @@ export interface AppSettingsDeps {
   baseDir?: string;
   now: () => number;
   log: (line: string) => void;
+  /** Who writes (`cli:<login>`), a new request id and a new guarded change id (admin-apps.ts cliIds). */
+  actor?: CliActor;
+  newRequestId?: () => string;
+  newChangeId?: () => string;
+  /** Throws unless the deployed API reads the batch C3 schema; asked only before a write that proposes (admin-apps.ts). */
+  requireC3Api?: () => Promise<void>;
 }
 
 /**
@@ -431,11 +516,13 @@ export async function appSettings(m: Manifest, idOrKey: string, args: Args, wher
   const change = parseSettingsArgs(args, deps.readFile, deps.baseDir ?? invocationDir());
   const now = deps.now();
   const header = `${row.id} "${row.name}" (scope ${row.scope_id}, ${where})`;
+  const openChanges = deps.d1(openChangesSql(row.id)) as unknown as ChangeRow[];
   if (!Object.keys(change).length) {
     deps.log(header);
-    for (const line of describeSettings(row, now)) deps.log(`  ${line}`);
+    for (const line of describeSettings(row, now, openChanges)) deps.log(`  ${line}`);
     return;
   }
+  if (row.deleted_at !== null) throw new Error(`App ${row.id} is deleted`);
 
   let scopeGoogleClients: string[] | undefined;
   if (typeof change.googleWebClient === 'string' && change.googleWebClient !== row.google_web_client_id) {
@@ -443,10 +530,30 @@ export async function appSettings(m: Manifest, idOrKey: string, args: Args, wher
     if (clients === null) throw new Error(`Scope ${row.scope_id} is not registered on ${m.signer}`);
     scopeGoogleClients = googleClientIds(clients);
   }
-  const plan = planSettings(row, change, { now, delayMs: changeDelayMsFor(m), scopeGoogleClients });
+  const plan = planSettings(row, change, {
+    now,
+    scopeGoogleClients,
+    openChanges,
+    actor: deps.actor,
+    requestId: deps.newRequestId?.(),
+    newChangeId: deps.newChangeId,
+    announceHint: (id) => announceHint(m, id),
+  });
   for (const w of plan.warnings) deps.log(w);
-  if (plan.sql && deps.d1(plan.sql).length !== 1) throw new Error(SETTINGS_CHANGED);
+  if (plan.write) {
+    // A proposal needs the deployed API at batch C3 or later (admin-apps.ts requireC3ApiFor).
+    if (plan.write.statements.some((st) => st.startsWith('INSERT INTO guarded_changes'))) await deps.requireC3Api?.();
+    const result = deps.d1(writeCommand(plan.write));
+    if (Number(result[result.length - 1]?.committed ?? 0) !== 1) throw new Error(SETTINGS_CHANGED);
+  }
   // The change log: when, which app, where, and every line (no policy body, only its id and label).
-  deps.log(`${at(now)} app:settings ${header}${plan.sql ? '' : ': no change'}`);
+  deps.log(`${at(now)} app:settings ${header}${plan.write ? '' : ': no change'}`);
   for (const line of plan.lines) deps.log(`  ${line}`);
+}
+
+/** How a staff proposal is announced in this env (printed with it). */
+export function announceHint(m: Pick<Manifest, 'name' | 'admin'>, changeId: string): string {
+  return m.admin
+    ? 'The admin Worker emails the notice; the appChangeDelayMs clock starts once it is accepted.'
+    : `No admin Worker in ${m.name}: announce it with admin.ts ${m.name} app:changes:announce ${changeId} (nobody is emailed).`;
 }

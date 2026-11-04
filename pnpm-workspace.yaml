@@ -4,6 +4,8 @@ packages:
   # @hana-id/react's suite again on React 18 (its peer range is 18 or 19).
   - packages/react/react18
   - scripts
+  # Partner examples whose code the docs quote (each tested, so the published guide always runs).
+  - examples/*
 
 # Block packages published less than 7 days ago (in minutes): supply-chain protection, as in other Hana repos.
 minimumReleaseAge: 10080

@@ -12,7 +12,7 @@ import { type Env, SECRET_NAMES } from '../src/env.ts';
 import worker from '../src/index.ts';
 import { RESEND_URL } from '../src/channels.ts';
 import { Store } from '../src/store.ts';
-import { baseConfig, baseGovernance, councilPolicy, jwk } from './helpers.ts';
+import { baseConfig, baseGovernance, councilPolicy, IDENTITY_ISS, identityKey, jwk } from './helpers.ts';
 
 const rand = (n: number) => baseEncode(crypto.getRandomValues(new Uint8Array(n)));
 const SECRETS = {
@@ -34,6 +34,10 @@ class Net {
   changes: Record<string, unknown>[] = [];
   active = new Map<string, { n: string; e: string }>([['k1', { n: jwk('k1', 1).n, e: 'AQAB' }]]);
   jwks = [jwk('k1', 1)];
+  /** Hana's identity JWKS and discovery document (null: not served). */
+  identityJwks: unknown = null;
+  discovery: unknown = null;
+  identityFetches: string[] = [];
   txs: { signerId: string; receiverId: string; method: string; args: Record<string, unknown> }[] = [];
   posts: { url: string; body: string; headers: Headers }[] = [];
   pings = 0;
@@ -42,6 +46,11 @@ class Net {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === GOOGLE_JWKS_URL) return Response.json({ keys: this.jwks });
+      if (url.startsWith(`${IDENTITY_ISS}/`)) {
+        this.identityFetches.push(url);
+        const body = url === `${IDENTITY_ISS}/jwks.json` ? this.identityJwks : url === `${IDENTITY_ISS}/.well-known/openid-configuration` ? this.discovery : null;
+        return body === null ? new Response('not found', { status: 404 }) : Response.json(body);
+      }
       if (url === SECRETS.HEARTBEAT_URL) {
         this.pings++;
         return new Response('OK');
@@ -52,7 +61,9 @@ class Net {
     });
   }
 
-  private view(name: string): unknown {
+  private view(name: string, provider: string | undefined): unknown {
+    // No email issuer (the contract's get_issuer and get_issuer_keys are per provider; get_self_issued answers null).
+    if (provider === 'email') return null;
     const kids = [...this.active.keys()].sort();
     switch (name) {
       case 'get_key_changes':
@@ -74,7 +85,8 @@ class Net {
   private rpc({ method, params }: { method: string; params: Record<string, unknown> }): object {
     if (method === 'status') return { result: { chain_id: 'testnet' } };
     if (method === 'query' && params.request_type === 'call_function') {
-      return { result: { result: [...new TextEncoder().encode(JSON.stringify(this.view(params.method_name as string)))] } };
+      const args = JSON.parse(atob(params.args_base64 as string)) as { provider?: string };
+      return { result: { result: [...new TextEncoder().encode(JSON.stringify(this.view(params.method_name as string, args.provider)))] } };
     }
     if (method === 'query' && params.request_type === 'view_access_key') return { result: { nonce: 1, block_hash: BLOCK } };
     if (method === 'query' && params.request_type === 'view_account') return { result: { amount: '1', code_hash: 'DAOcode1111111111111111111111111111111111111' } };
@@ -145,6 +157,28 @@ describe('the cron handler, end to end', () => {
     }
     // ...nor in what was sent to the alert services (beyond each one's own credential in its own request).
     for (const p of net.posts) expect(p.body).not.toContain(privatePart);
+  });
+
+  it("reads Hana's identity JWKS with the real wiring: an unpinned key pages, nothing goes to the chain (D210)", async () => {
+    const net = new Net();
+    net.install();
+    const [active, standby, evil] = [await identityKey(), await identityKey(), await identityKey()];
+    net.identityJwks = { keys: [active, standby] };
+    net.discovery = { issuer: IDENTITY_ISS, jwks_uri: `${IDENTITY_ISS}/jwks.json` };
+    const e = { ...testEnv(), IDENTITY_ISS, IDENTITY_PINS: JSON.stringify([active.kid, standby.kid]) };
+    await cron(e);
+    expect(net.identityFetches).toEqual([`${IDENTITY_ISS}/jwks.json`, `${IDENTITY_ISS}/.well-known/openid-configuration`]);
+    const store = new Store(env.DB);
+    expect((await store.listAlerts(null, 50)).filter((a) => a.kind.startsWith('identity_'))).toEqual([]);
+
+    net.identityJwks = { keys: [active, standby, evil] };
+    net.posts = [];
+    await cron(e);
+    expect(net.txs).toEqual([]);
+    const [a] = (await store.listAlerts(null, 50)).filter((x) => x.kind === 'identity_key_unpinned');
+    expect(a?.severity).toBe('critical');
+    expect(net.posts.map((p) => new URL(p.url).host).sort()).toEqual(['api.resend.com', 'hooks.slack.com', 'ntfy.example.com']);
+    expect(net.posts.find((p) => p.url === SECRETS.NTFY_TOPIC_URL)?.headers.get('title')).toContain('CRITICAL');
   });
 
   it('alerts without acting when WATCHDOG_KEY is missing', async () => {

@@ -13,7 +13,11 @@ static assets. It is not a Hana page and holds nothing secret.
 
 One page: a testnet banner and a short explainer, then
 
-- **Log in with Google** (`hana.login()` in the click handler), with the login's progress, *Cancel sign-in*, *Log
+- **Log in with email** (`hana.login({ method: 'email' })`, batch 8a): the Hana popup's email step (address, mailed
+  code). It works once the demo app's `login_methods` include email and its scope holds its email client
+  (`docs/operations.md` "Email login demo on sandbox-dev (batch 8a)"); until then it says email isn't turned on.
+- **Log in with Google** (`hana.login({ method: 'google' })` in the click handler, so the popup skips its chooser once
+  email is on), with the login's progress, *Cancel sign-in*, *Log
   out* and *Log out other devices* (`revokeOtherDevices`, which works within 5 minutes of a fresh login);
 - a **status line**: logged in or out, when the session ends and the app's persistence (`session`: survives reloads
   and new tabs; `none`, or the browser's storage fallback);
@@ -23,12 +27,16 @@ One page: a testnet banner and a short explainer, then
   transfer to yourself, fully filled, `eth_signTransaction`). Each needs the user's Approve in the Hana popup, and
   nothing is ever broadcast, so no funds are needed;
 - **Export key** (Stellar or EVM) through Hana's export window: the key is shown only there;
-- **Login timings** (collapsible): the vault's per-stage times (`app`, `popup`, `google`, `verify`, `chain`,
-  `decrypt`, which `pk_test_` apps get) and the total from the click, plus the unlock time when a page load restored
-  the session;
+- **Identity token**: *Get identity token* (`hana.getIdentityToken()`, no popup) shows the token's decoded header and
+  claims (display only: the page never trusts them) and a "verify it yourself" `jose` snippet with the token's own
+  `iss` and `aud` (`docs/integration.md` section 15);
+- **Login timings** (collapsible): per login, its method and the vault's per-stage times (`app`, `popup`, sign-in,
+  `verify`, `chain`, `decrypt`, which `pk_test_` apps get) and the total from the click; sign-in is `google` for a
+  Google login and, for email, the email step's address, code request, code wait and verify (each listed under the
+  row, D260); other stages are listed after; plus the unlock time when a page load restored the session;
 - **Copy diagnostics**: a JSON report for bug reports, also shown on the page. It holds the env, the app key's
   first 12 characters, the page and vault origins, the SDK version, status, persistence, expiry, addresses, timings,
-  the user agent and the errors seen (code, `data.reason`, and the message with anything shaped like a token, key,
+  the user agent and the errors seen (code, `data.reason`, e.g. a `vault_unavailable`'s `no_answer` or `frame_timeout`, and the message with anything shaped like a token, key,
   signature or relay id removed). It never holds tokens, keys, signatures or relay ids: the page never sees the
   first, and `src/diagnostics.ts` builds the report field by field and scrubs the free text.
 
@@ -84,7 +92,10 @@ so for sandbox-dev `https://hana-id-demo-sandbox-dev.tingtc.workers.dev`.
    corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:origins:add \
      --app pk_test_85gdPtFF4kYzqgPisccZbsT9fQP1tq7ie \
      --origin https://hana-id-demo-sandbox-dev.tingtc.workers.dev --remote
+   corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:changes:announce <gc id> --remote   # the id printed above
    ```
+
+   The origin is a staff proposal: it is in force 60 s after the announcement (sandbox-dev's `appChangeDelayMs`).
 
    The shared Google client needs nothing: the demo's origin never talks to Google (Hana's login popup does, on
    `authOrigin`).
@@ -111,8 +122,8 @@ corepack pnpm --filter @hana-id/demo dev       # http://localhost:5174 (no CSP: 
 corepack pnpm --filter @hana-id/demo build && corepack pnpm --filter @hana-id/demo preview   # the built page with its headers
 ```
 
-Both need `http://localhost:5174` on the app's origins (`app:origins:add … --origin http://localhost:5174`; loopback
-works for `pk_test_` keys in `sandbox*` envs only).
+Both need `http://localhost:5174` on the app's origins (`app:origins:add … --origin http://localhost:5174`, then
+`app:changes:announce`; loopback works for test apps in `sandbox*` envs only).
 
 ## Tests
 

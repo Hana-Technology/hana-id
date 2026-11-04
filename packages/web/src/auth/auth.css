@@ -258,10 +258,37 @@ input {
   padding: 12px;
   border-radius: 8px;
   background: var(--bg);
-  user-select: all;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
-button.hold {
-  touch-action: none;
-  user-select: none;
+/* Selectable only while "Show key" is on (D268), so the user can copy it by hand. */
+.secret[data-shown] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.actions.reveal {
+  justify-content: flex-start;
+  margin-top: 0;
+}
+
+p.copy-status {
+  margin-top: 10px;
+}
+
+/* Kept rendered while empty (zero height), so screen readers announce the live region when it fills. */
+p.copy-status:empty {
+  margin: 0;
+}
+
+/* The login popup's method chooser and email step (batch 8a). */
+.actions.choose {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+p.links {
+  margin-top: 14px;
+  text-align: center;
 }

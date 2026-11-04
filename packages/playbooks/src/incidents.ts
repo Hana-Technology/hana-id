@@ -151,6 +151,7 @@ const apiCompromised: Playbook = {
     "Deploys nobody made (Cloudflare's deployment history), unknown API tokens or logins, changed Worker secrets or D1 rows (origins, settings).",
     'A `forged_key_change` from the signer account (the updater key is a Worker secret).',
     "The watchdog keeps alerting: it runs on its own Cloudflare account and can't be silenced from this one (except on sandbox-dev, D125).",
+    "A critical `identity_key_unpinned`: the API publishes an identity token key the watchdog doesn't pin (identity-jwks-forged).",
   ],
   impact: [
     'Every key of every user who loads the vault while it is compromised (the API renders the vault page; the same account deploys the vault and auth bundles). Pausing the contract stops new derivations, not a malicious vault page reading a persisted share: those users\' keys are exposed and must be moved (can\'t be undone).',
@@ -178,7 +179,7 @@ const apiCompromised: Playbook = {
     {
       title: 'Rotate every API secret',
       who: 'a founder',
-      detail: 'The updater key (updater-key-stolen), both relayer pools (relayer-key-stolen), and `VAULT_KEK` with every share revoked (vault-kek-leaked). The admin Worker\'s copy of `WATCHDOG_STATUS_TOKEN` too, once batch C exists.',
+      detail: 'The updater key (updater-key-stolen), both relayer pools (relayer-key-stolen), `VAULT_KEK` with every share revoked (vault-kek-leaked), and the identity token signing key (identity-signing-key-compromised). The admin Worker\'s copy of `WATCHDOG_STATUS_TOKEN` too, once batch C exists.',
     },
     {
       title: 'Check D1 for tampering',
@@ -524,7 +525,8 @@ const nearRpcOutage: Playbook = {
   summary: "The manifest's `rpc` provider is down or wrong. The API reads only `rpc`; the vault, the export window and the watchdog fall back to `rpcFallback`.",
   signals: ['`502 near_unavailable` on API endpoints; `rpc_failing` from the watchdog (both its RPCs failed 3 runs).'],
   impact: [
-    "Logins, derives and owner actions through the API fail while `rpc` is down. Users with an unlocked or persisted vault keep signing (no chain call needed for the key). A lying RPC can fail derives or refuse logins but can't forge a CKD result (pinned key, pairing check).",
+    "Logins, derives and owner actions through the API fail while `rpc` is down. Users with an unlocked or persisted vault keep signing (no chain call needed for the key). Logins of a linked identity (a member's path, through its account root) also need `rpcFallback` to answer: the vault confirms that path on both providers and refuses when either is down (D263).",
+    "A lying RPC can fail derives or refuse logins. It can't forge a CKD result for a user's own path (pinned key, pairing check), but it could forge one for a path whose secret it knows if the vault took its word that the user is a member of that account: the vault and the export window therefore confirm every member path on `rpc` and `rpcFallback` separately (D263). Keep the two on independent providers (the manifest schema refuses one registrable domain for both).",
   ],
   steps: [
     { title: 'Confirm it is the provider', who: 'a founder', detail: 'Check the provider\'s status and another provider.', commands: [c.apiHealth, c.apiTailErrors] },
@@ -703,7 +705,7 @@ const emailIssuerKey: Playbook = {
   status: 'planned',
   summary: "Email login isn't built (`docs/email-login-spec.md`). When it is: whoever can make Hana's email issuer key sign can mint email tokens for any `sub` and derive the wallet of any email user (and of accounts linked to one).",
   signals: [
-    "Planned: the hourly CloudTrail reconciliation finds a `Sign` the issuer didn't log (critical); link-volume alerts; an IAM or KMS policy change alert. On testnet (Worker-secret key) there is no signing log: you notice only a leak of the Worker's secrets.",
+    "The contract's hourly link counter and the watchdog's `link_threshold_reached` page (link-volume, D200; links that take over Google wallets; email-rooted wallets and Google wallets that already have an email member are entered without a link, so only custody protects them, D121) and its pins (a swapped key is cancelled, forged-key-change; an active one pauses, forged-active-key). Planned: the hourly CloudTrail reconciliation finds a `Sign` the issuer didn't log (critical); an IAM or KMS policy change alert. On testnet (Worker-secret key) there is no signing log: you notice only a leak of the Worker's secrets or a link burst.",
   ],
   impact: [
     'At 1-of-1 the use of the real key isn\'t bounded on chain: it is detected and stopped. A key swap is bounded by governance (owner-posted only, `governance_delay_ms`, the watchdog\'s pinned thumbprints).',
@@ -724,7 +726,126 @@ const emailIssuerKey: Playbook = {
   verify: ['Planned: the reconciliation shows no unlogged `Sign` after the cut-off.'],
   followUps: ['Turn this playbook live with the email issuer\'s own commands when it ships.'],
   refs: ['docs/email-login-spec.md#signing-key-staged', 'docs/email-login-spec.md#trust-statement', 'D121'],
-  related: ['forged-active-key'],
+  related: ['forged-active-key', 'link-volume', 'signer-policy-mismatch'],
+};
+
+const identitySigningKey: Playbook = {
+  id: 'identity-signing-key-compromised',
+  title: 'Identity token signing key compromised (testnet Worker-secret key)',
+  kind: 'incident',
+  severity: 'critical',
+  status: 'live',
+  summary:
+    "Whoever holds an identity signing key can forge any user's identity token for any app, until the key is out of the JWKS. Switch to a key the incident didn't touch, unpublish the exposed ones, tell partners.",
+  signals: [
+    "The API Worker's secrets, `.secrets/<env>/identity-signing-key*.json` or the operator's machine were exposed; a partner reports a token they didn't expect (a valid signature for a session that never existed).",
+    "No watchdog alert: a stolen key signs under its own, pinned kid, so the JWKS doesn't change and the watchdog's pin check (D210) sees nothing. It pages only when a key of the attacker's own, or private key material, is published (identity-jwks-forged). Not built yet (planned with step 7's KMS signer): the `Sign` reconciliation against `identity_issuance_hourly`, which would show signatures Hana didn't count.",
+  ],
+  impact: [
+    'Forged tokens pass at every partner that trusts the JWKS URL, as any user of any app (identity at partners: credits, referrals, their own accounts), until the key is removed and their JWKS caches refresh (≤ 10 min). No wallet, key or Hana API is reachable with a token.',
+    "Tokens already accepted can't be recalled: partners must re-check what they granted in the window.",
+  ],
+  steps: [
+    {
+      title: 'Decide which keys are exposed',
+      who: 'a founder',
+      detail:
+        "The standby is published but never uploaded (D177): a leak of the Worker's secrets or the Cloudflare account exposes only the active key (and a `next` key already switched in). A leak of `.secrets/<env>/` or the operator's machine exposes every key whose file was there, the standby included unless it was moved offline. Unless the incident provably touches only the active key, treat BOTH as exposed.",
+      commands: [c.identityKeyShow],
+    },
+    {
+      title: 'Only the active key exposed: switch to the standby',
+      who: 'a founder',
+      detail: "Uploads the standby into the free Worker slot and makes it the manifest's active kid (no pin changes: the published set is the same). Put the manifest change in the repo, API `gen`, deploy: new tokens are signed by the standby, which partners already trust.",
+      commands: [c.identityKeySwitchStandby, c.apiGen, c.apiDeploy],
+    },
+    {
+      title: 'Both keys exposed: retire the standby and rotate to a fresh key',
+      who: 'a founder',
+      detail:
+        "`retire --key standby` unpublishes and unpins the standby, `next` publishes and pins a fresh key: deploy the watchdog (it now pins the fresh key, not the standby), then the API. Between the two deploys the watchdog pages `identity_key_unpinned` for the standby the old API still publishes: expected, acknowledge it once the API is deployed (or deploy the API between the two commands to avoid it). Then `switch --to next` and an API deploy. Partners using the JWKS URL pick up the new kid at once (jose refetches on an unknown kid); partners that pin thumbprints need the new one from you.",
+      commands: [c.identityKeyRetireStandby, c.identityKeyNext, c.watchdogGen, c.watchdogDeploy, c.apiGen, c.apiDeploy, c.identityKeySwitchNext, c.apiGen, c.apiDeploy],
+    },
+    {
+      title: 'Unpublish the exposed active key',
+      who: 'a founder',
+      detail: "Removes it from the JWKS and the watchdog's pins and deletes its Worker secret, after the deploy of the switch; its file is set aside for the post-mortem (never put it in the repo). Deploy the API first (partners reject its tokens within 10 minutes), then the watchdog: the other order pages `identity_key_unpinned` until the API deploy. Don't wait the 2 h of a scheduled rotation.",
+      commands: [c.identityKeyRetirePrevious, c.apiGen, c.apiDeploy, c.watchdogGen, c.watchdogDeploy],
+    },
+    {
+      title: 'Tell partners',
+      who: 'a founder',
+      detail: 'Their security contacts: the `kid`, the window in which forged tokens may have been accepted, and what to re-check (emails recorded, credits granted, sessions opened). Pinning partners update their pins.',
+    },
+    {
+      title: 'A new standby',
+      who: 'a founder',
+      detail: 'After a switch to the standby there is none: `next` publishes and pins a new key (not uploaded): deploy the watchdog first, then the API; move its file offline and keep it as the next standby.',
+      commands: [c.identityKeyNext, c.watchdogGen, c.watchdogDeploy, c.apiGen, c.apiDeploy],
+    },
+  ],
+  verify: [
+    "The API's JWKS lists no exposed kid, and a fresh mint's header `kid` is the new active key.",
+    '`identity-key <env> show`: the active kid is in a Worker slot, no exposed kid is published.',
+  ],
+  followUps: ['If the Worker or the Cloudflare account was the way in: api-or-cloudflare-compromised. Before mainnet the key moves to AWS KMS (build step 7; identity-kms-signer-compromised).'],
+  refs: ['docs/operations.md#identity-token-keys', 'docs/security.md#what-a-compromise-gives', 'D177'],
+  related: ['api-or-cloudflare-compromised', 'identity-kms-signer-compromised', 'identity-jwks-forged'],
+};
+
+const identityKmsSigner: Playbook = {
+  id: 'identity-kms-signer-compromised',
+  title: 'Identity token KMS signer misused (planned: staging and mainnet)',
+  kind: 'incident',
+  severity: 'critical',
+  status: 'planned',
+  summary:
+    "No env signs with AWS KMS yet (the adapter is built, the AWS account isn't: docs/operations.md \"Identity token keys on AWS KMS\"). When one does: the KMS key can't be stolen, but whoever holds the signer's AWS access key (or controls the API Worker) can have KMS sign forged identity tokens until the access key is revoked. Revoke it, switch to the standby, unpublish the suspect key, tell partners.",
+  signals: [
+    "Planned: the hourly reconciliation of CloudTrail `Sign` events per key against `identity_issuance_hourly` finds more signatures than the API counted (critical); an EventBridge alert on `GetSessionToken` by the signer user, on `Sign` by another principal or with session credentials, or on an IAM or key-policy change. A leak of the API Worker's secrets or the Cloudflare account; a partner reports a token they didn't expect.",
+  ],
+  impact: [
+    'Forged tokens pass at every partner that trusts the JWKS URL, as any user of any app, until the access key is revoked and the key is out of partners\' JWKS caches (≤ 10 min after the deploy). Every forged signature is in CloudTrail, so the window and the count are known. No wallet, key or Hana API is reachable with a token.',
+  ],
+  steps: [
+    {
+      title: 'Revoke the access key',
+      who: 'a founder',
+      detail:
+        "In the AWS account (break-glass role with MFA): deactivate every access key of the env's signer IAM user (`<iamUser>`, the manifest's `identityToken.signer.credentials.iamUser`). Mints answer 503 `identity_signer_unavailable` and partners fall back to no token. Deactivation alone isn't proven to end session credentials the holder made with `GetSessionToken` (no policy can deny that call): what stops them signing is the key policy's `NoSessionCredentials` deny, so check with `aws kms get-key-policy` that every identity key has it.",
+    },
+    {
+      title: 'Switch to the standby',
+      who: 'a founder',
+      detail:
+        "The IAM policy allows `kms:Sign` on the active key only and session credentials can't sign at all (D219), so the standby signed nothing during the leak: check CloudTrail by `userIdentity.arn` = the signer user (sessions included), not by access key id. Put the standby's ARN in the signer user's IAM policy, create a new access key into `.secrets/<env>/identity-aws-access-key.json`, run the pre-switch check (docs/operations.md), set the key on the Worker, switch, `gen`, deploy.",
+      commands: [c.identityKmsPutAwsKey, c.identityKmsSwitchStandby, c.apiGen, c.apiDeploy],
+    },
+    {
+      title: 'Unpublish the suspect key',
+      who: 'a founder',
+      detail: "After the switch's deploy: remove it from the JWKS and the watchdog's pins (partners reject its tokens within 10 minutes), remove its ARN from the IAM policy, disable it in KMS and schedule its deletion. Deploy the API first, then the watchdog: the other order pages `identity_key_unpinned` until the API deploy. Don't wait the 2 h of a scheduled rotation.",
+      commands: [c.identityKmsRetirePrevious, c.apiGen, c.apiDeploy, c.watchdogGen, c.watchdogDeploy],
+    },
+    {
+      title: 'Tell partners',
+      who: 'a founder',
+      detail: 'Their security contacts: the `kid`, the window and the count of forged signatures from CloudTrail (by `userIdentity.arn`), and what to re-check. Pinning partners update their pins.',
+    },
+    {
+      title: 'A new standby',
+      who: 'a founder',
+      detail: 'Create a new ECC_NIST_P256 key in another region than the new active key (with the same key policy), publish and pin it (`kms-add` writes both), deploy the watchdog first, then the API.',
+      commands: [c.identityKmsAddStandby, c.watchdogGen, c.watchdogDeploy, c.apiGen, c.apiDeploy],
+    },
+  ],
+  verify: [
+    "CloudTrail shows no successful `Sign` by the signer user (`userIdentity.arn`, any credential) after the cut-off except the Worker's new key, and the API's JWKS lists no suspect kid.",
+    '`identity-key <env> show`: the standby is active and a new standby is published.',
+  ],
+  followUps: ['Build the CloudTrail reconciliation and alarms before mainnet (docs/operations.md "Identity token keys on AWS KMS").'],
+  refs: ['docs/operations.md#identity-token-keys-on-aws-kms', 'D215', 'D219'],
+  related: ['identity-signing-key-compromised', 'api-or-cloudflare-compromised'],
 };
 
 export const INCIDENT_PLAYBOOKS: readonly Playbook[] = [
@@ -746,4 +867,6 @@ export const INCIDENT_PLAYBOOKS: readonly Playbook[] = [
   sharedClientCompromised,
   userKeyLeaked,
   emailIssuerKey,
+  identitySigningKey,
+  identityKmsSigner,
 ];

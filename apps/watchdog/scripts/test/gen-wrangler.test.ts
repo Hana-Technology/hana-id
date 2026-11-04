@@ -2,12 +2,15 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { KeyPair } from '@near-js/crypto';
-import { type Manifest, PAGER_PROVIDERS, manifestSchema, WATCHDOG_INTERVAL_MS } from '@hana-id/env';
+import { isDevEnv, loadEnv, type Manifest, PAGER_PROVIDERS, manifestSchema, WATCHDOG_INTERVAL_MS } from '@hana-id/env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RUN_INTERVAL_MS } from '../../src/checks.ts';
-import { PAGER_PROVIDERS as WORKER_PAGERS, SECRET_NAMES } from '../../src/names.ts';
+
+import { identityDiscoveryUrl, parseIdentityPins } from '../../src/identity.ts';
+import { parsePins } from '../../src/pins.ts';
+import { isDevEnvName, PAGER_PROVIDERS as WORKER_PAGERS, SECRET_NAMES } from '../../src/names.ts';
 import { relayerThresholds } from '../../src/relayer.ts';
-import { CRON, LOCAL_D1_ID, TEST_MANIFEST, devVarsContent, existingD1Id, main, testWranglerConfig, wranglerConfig, writeWranglerConfig } from '../gen-wrangler.ts';
+import { CRON, LOCAL_D1_ID, TEST_MANIFEST, devVarsContent, existingD1Id, identityVars, main, testWranglerConfig, wranglerConfig, writeWranglerConfig } from '../gen-wrangler.ts';
 import { SECRET_RULES } from '../secrets.ts';
 
 const dirs: string[] = [];
@@ -38,7 +41,7 @@ describe('wranglerConfig', () => {
         ENV_NAME: 'sandbox-test',
         NEAR_NETWORK: 'testnet',
         NEAR_RPC: 'https://rpc.test.invalid',
-        NEAR_RPC_FALLBACK: 'https://rpc-fallback.test.invalid',
+        NEAR_RPC_FALLBACK: 'https://rpc.fallback-provider.invalid',
         SIGNER_ACCOUNT: 'signer.test.near',
         WATCHDOG_ACCOUNT: 'watchdog.test.near',
         RELAYER_ACCOUNT: 'relayer.test.near',
@@ -77,6 +80,44 @@ describe('wranglerConfig', () => {
     expect(thresholds.balance).toEqual({ warn: 10n * 10n ** 24n, critical: 2n * 10n ** 24n });
     expect(thresholds.owner).toEqual({ warn: 2n * 10n ** 23n, critical: 5n * 10n ** 22n });
     expect(thresholds.session).toEqual(relayerThresholds(undefined).thresholds.session);
+  });
+
+  it('passes no email pins when the manifest has none (the Worker then pins nothing), and no indexer var (D200)', () => {
+    const vars = wranglerConfig(TEST_MANIFEST, D1).vars as Record<string, string>;
+    for (const k of ['EMAIL_PINS', 'EMAIL_JWKS_URL', 'LINK_INDEXER_URL', 'LINK_VOLUME']) expect(vars[k], k).toBeUndefined();
+    expect(parsePins(vars.EMAIL_PINS)).toEqual({ pins: null, problems: [] });
+  });
+
+  it('passes the email pins and the JWKS URL (default under apiUrl) in a form the Worker reads', () => {
+    const tp = (c: string) => c.repeat(43);
+    const email = { required: 1, signers: { hana: [tp('a'), tp('b')] } };
+    const m = { ...TEST_MANIFEST, watchdog: { ...TEST_MANIFEST.watchdog!, pinnedIssuerKeys: { email } } };
+    expect(manifestSchema.safeParse(m).success).toBe(true);
+    const vars = wranglerConfig(m, D1).vars as Record<string, string>;
+    expect(parsePins(vars.EMAIL_PINS)).toEqual({ pins: email, problems: [] });
+    expect(vars.EMAIL_JWKS_URL).toBe('https://api.test/v1/email/jwks.json');
+    const own = { ...m, watchdog: { ...m.watchdog, pinnedIssuerKeys: { email: { ...email, jwksUrl: 'https://issuer.example.com/jwks.json' } } } };
+    expect((wranglerConfig(own, D1).vars as Record<string, string>).EMAIL_JWKS_URL).toBe('https://issuer.example.com/jwks.json');
+    expect(JSON.parse((wranglerConfig(own, D1).vars as Record<string, string>).EMAIL_PINS!)).not.toHaveProperty('jwksUrl');
+    // An issuer on its own URL (emailIssuer.url, D230): the default follows it.
+    const issuerUrl = { ...m, emailIssuer: { url: 'https://hana-id-email-issuer-x.sub.workers.dev' } } as unknown as typeof m;
+    expect((wranglerConfig(issuerUrl, D1).vars as Record<string, string>).EMAIL_JWKS_URL).toBe('https://hana-id-email-issuer-x.sub.workers.dev/v1/email/jwks.json');
+  });
+
+  it('passes the identity issuer and pins in a form the Worker reads; none without them (D210)', () => {
+    const none = wranglerConfig(TEST_MANIFEST, D1).vars as Record<string, string>;
+    expect(none.IDENTITY_ISS).toBeUndefined();
+    expect(none.IDENTITY_PINS).toBeUndefined();
+    expect(parseIdentityPins(none.IDENTITY_PINS)).toEqual({ pins: null, problems: [] });
+    const sandbox = loadEnv('sandbox-dev');
+    const vars = identityVars(sandbox);
+    expect(vars.IDENTITY_ISS).toBe(sandbox.identityToken!.iss);
+    expect(parseIdentityPins(vars.IDENTITY_PINS)).toEqual({ pins: sandbox.identityToken!.publicKeys.map((k) => k.kid), problems: [] });
+    expect(identityDiscoveryUrl(vars.IDENTITY_ISS!)).toBe(`${sandbox.apiUrl}/v1/identity/.well-known/openid-configuration`);
+  });
+
+  it("decides a dev env as @hana-id/env does (D139's unrecorded_wallets alert is for other envs)", () => {
+    for (const name of ['sandbox-dev', 'sandbox-test', 'local', 'local-2', 'staging', 'prod', 'mainnet', 'x-sandbox']) expect(isDevEnvName(name), name).toBe(isDevEnv(name));
   });
 
   it('omits the fallback RPC when the manifest has none', () => {

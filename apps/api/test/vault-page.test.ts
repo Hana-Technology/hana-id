@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import worker from '../src/index.ts';
 import { MAX_APP_ORIGINS } from '../src/vault/origins.ts';
 import { jsonForHtml } from '../src/vault/page.ts';
-import { ORIGIN, call, chain, newKey, seedApp, uid } from './helpers.ts';
+import { ORIGIN, call, chain, forgeKeyEnvironment, newKey, seedApp, uid } from './helpers.ts';
 import { HOUR, VAULT, autoApprovePolicy, setSettings } from './vault-helpers.ts';
 
 afterEach(() => vi.restoreAllMocks());
@@ -77,6 +77,22 @@ describe('GET {vaultOrigin}/vault', () => {
     }
   });
 
+  it('adds the email issuer to connect-src when the env has one (the vault calls google-match, batch 8b)', async () => {
+    const app = await seedApp();
+    const saved = env.EMAIL_ISSUER_URL;
+    try {
+      env.EMAIL_ISSUER_URL = 'https://issuer.test';
+      expect(csp(await vaultPage(app.key))).toBe(`${BASE}; frame-ancestors ${ORIGIN}; connect-src https://api.test https://rpc.test.invalid https://www.googleapis.com https://issuer.test`);
+      // Routed under apiUrl (production's zone route): nothing to add.
+      env.EMAIL_ISSUER_URL = 'https://api.test';
+      expect(csp(await vaultPage(app.key))).toBe(`${BASE}; frame-ancestors ${ORIGIN}; connect-src https://api.test https://rpc.test.invalid https://www.googleapis.com`);
+      env.EMAIL_ISSUER_URL = 'not a url';
+      expect((await vaultPage(app.key)).status).toBe(503);
+    } finally {
+      env.EMAIL_ISSUER_URL = saved;
+    }
+  });
+
   it('sends the full CSP and the other headers', async () => {
     const app = await seedApp();
     const res = await vaultPage(app.key);
@@ -139,9 +155,7 @@ describe('GET {vaultOrigin}/vault', () => {
 
   it('403 without a config script for an unknown, malformed, suspended or scope-conflicting app', async () => {
     const suspended = await seedApp({ status: 'suspended' });
-    const scope = `s${uid()}`;
-    const conflicted = await seedApp({ scope });
-    await seedApp({ scope, key: newKey('pk_live_') });
+    const conflicted = await forgeKeyEnvironment(await seedApp());
     for (const res of [await vaultPage(newKey()), await vaultPage('pk_test_x'), await page(''), await vaultPage(suspended.key), await vaultPage(conflicted.key)]) {
       expect(res.status).toBe(403);
       expect(csp(res)).toBe(`${BASE}; frame-ancestors 'none'`);

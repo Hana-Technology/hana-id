@@ -1,10 +1,39 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-10-30 (branch `feat/playbook-gaps`: the watchdog's relayer funds reads and D1
-meta; before it `feat/recovery-playbooks`: the playbooks package in Components;
-before it `perf/login-latency-impl`, 2026-10-29: the login flow, key persistence and the vault gate; the rest as of
-2026-10-28, commit 58edee9).
+Last verified against code: 2026-11-04 (branch `feat/export-copy`: "Key export", the Show key / Hide key toggle and Copy key, D268); 2026-11-03 (branch `docs/sandbox-dev-state`: what sandbox-dev runs, per the operator on 2026-11-03: contract v3, migrations 0006/0009/0010, the API at `develop` c3c33ec, the page Workers, the email issuer Worker, the demo with email; the Status table and Components); 2026-11-03 (branch `fix/8b-rereview`: the issuer's CORS exposing `retry-after`, 3 consent
+screens, the pin read's 1 s timeout (fail closed), the login's signal on google-match and the confirming reads; D263–D265); 2026-11-03 (branch `feat/email-login-8b` review fixes: member paths confirmed on both
+RPCs and root pins, D263; the email permission's explainer and consent screen, D264; the access token never revoked and
+google-match retried, D265; relay limits, D267); 2026-11-03 (branch `feat/email-login-8b`: automatic linking and the path through
+`get_identity` in Status, the login flows ("Email login in the popup", "Automatic linking"), key export and key
+derivation, D254–D259); 2026-11-03 (branch `fix/demo-polish`: the vault's `connected` event and the SDK's one
+frame retry in Components, D262; `GET /v1/app` asked once more by the login, read side by side by the API, D261; the
+Last verified against code: 2026-11-03 (branch `feat/scope-email-client-tool`: "Owner and registry changes" gains
+`admin scope:add-email-client`, D253); 2026-11-02 (branch `feat/email-login-8a`: email login in the popup and the vault in
+Status, Components and the login flow (the chooser, `/login/email`, the vault's on-chain email-token check, the
+`#email#` path, the record check), D245–D249); 2026-11-02 (branch `feat/email-login-6`: the API's email login part in Status, the login
+flows (email tokens, `linkJwt`, the create_session proof of possession, the D155 gas), the link relays, the issuer's
+URL and app lookup, D230–D234); 2026-11-02 (branch `feat/batch-c-4`: usage capture to the Neon ledger (Components, Data
+stores, the login flow's step 8), the D1 `usage` counters no longer written, `session_markers` in the waiver);
+2026-11-02 (branch `feat/batch-c-5`: the `ConsoleRpc` / `AdminRpc` entrypoints in
+Status, Components and "Owner and registry changes", drift detection in the cron; branch `feat/identity-token-8`: the
+watchdog's identity JWKS and discovery check, the outside probe and the identity-kid check in Status, Components and
+the watchdog's reads, D210–D214; branch `feat/email-login-4`: the email issuer in Status and Components, with the review fixes and the
+abuse re-check; branch `feat/identity-token-7`: the identity token's AWS KMS signer in Status
+and Components, D215–D219); 2026-11-02 (branch `docs/consistency-pass`: "Status of each part" against `develop` @ 1c6a124,
+git and `docs/operations.md`: what is merged and what sandbox-dev runs); 2026-11-02 (branch `feat/batch-c-3`: the hot DB after migration 0006 in Data stores, the
+gate on `app_keys` and `scopes`, staff-proposed origins and settings in "Owner and registry changes", the
+guarded-change cron); 2026-11-02 (branch `feat/batch-c-2`: `packages/oidc` in Components and the login
+flow's RS256 reference, duplicate watchdog and `packages/jwks` rows removed; branch `docs/identity-token-deployed`: the identity token deployed on
+sandbox-dev; branch `feat/email-login-5`: the watchdog's email issuer, link-alarm and
+`unrecorded_wallets` checks in Status, Components and the watchdog's reads; branch `feat/email-login-2`: the email
+login contract row in Status: sandbox tests, the v2 → v3 upgrade path, `migrate_v1` removed; branch
+`feat/email-login-3`: `packages/email` in Status and Components); 2026-10-30 (branch `feat/identity-token-2`: the identity mint's checks and limits, share
+tombstones, the offline standby key, D176–D179; branch `feat/identity-token-1`: the partner identity token in Status,
+Components, the "Partner identity token" flow, Data stores and the Glossary; `feat/email-login-1-r2`: contract v3
+email login status and path identity; `feat/playbook-gaps`: the watchdog's relayer funds reads and D1 meta;
+`feat/recovery-playbooks`: the playbooks package in Components; before it `perf/login-latency-impl`, 2026-10-29:
+the login flow, key persistence and the vault gate; the rest as of 2026-10-28, commit 58edee9).
 
 Byte layouts and contract methods are in `docs/contract-interface.md`; this file links to it rather than repeating
 them. The security model is `docs/security.md`, the decision log `docs/decisions.md`. Where a spec and the code
@@ -12,27 +41,45 @@ disagree, this file describes the code.
 
 ## Status of each part
 
-Batch B is merged on the integration branch `feat/batch-b` (not yet on `develop`) and **not deployed**.
+Every part below is on `develop` unless the Where column names only a branch. sandbox-dev (testnet) is the only
+deployed env; how each part was deployed is in `docs/operations.md`. In short (as of 2026-11-03): batch B and
+governance (owned by the council DAO since 2026-10-30) run there, now as **contract v3** (state_version 3, upgraded
+through the DAO with a delayed execute), with the API at `develop` c3c33ec (batch 8b, version b215b589), the page
+Workers, the email issuer Worker, the demo with email login and linking, and the identity token; D1 migrations 0006,
+0009 and 0010 are applied. Batch C1–C5 are merged and run in the API as far as `develop` includes them; C6 and C7 are
+built but not merged. The watchdog runs with the email pins (redeployed 2026-11-03, version fd6d8b27).
 
 | Part | Where | State |
 |---|---|---|
-| `contracts/hana-signer` (batch A, A.2) | `develop` | Deployed on sandbox-dev (`envs/sandbox-dev.json` `signer`) |
-| `create_session_and_derive`, `key_index < 2^31` (batch B) | `feat/batch-b` | Code done; the upgrade is a user step; ship gate not measured yet |
+| `contracts/hana-signer` (batch A, A.2) | `develop` | Deployed on sandbox-dev (`envs/sandbox-dev.json` `signer`); runs as contract v2 since the governance migration (below) |
+| `create_session_and_derive`, `key_index < 2^31` (batch B) | `develop` (merged 2026-10-29) | Deployed on sandbox-dev (contract upgraded 2026-10-29); ship gate passed (D76); gas measured in the sandbox with the mock MPC (`docs/contract-interface.md` "Gas of the email login calls"), not yet on testnet |
 | `apps/api` batch A/A.2 endpoints, relayer, limits, cron | `develop` | Deployed on sandbox-dev (`apiUrl`) |
-| `apps/api` `/v1/login` (incl. the export limit), login relay, origin rules, vault page, vault endpoints, migration 0003, vault cron, API-side policy validation (batch B) | `feat/batch-b` | Code done |
-| Page Workers serving `vaultOrigin`/`authOrigin` (`apps/api/src/pages/`, `scripts/pages-wrangler.ts`) | `feat/batch-b` | Code done; deploying them is a user step |
-| `@hana-id/core` (layouts, CKD, derivation v1, signers, decoders, policies, verified contracts) | `feat/batch-b` | Code done |
-| `packages/env` `vaultOrigin`/`authOrigin`, `rpcFallback` | `feat/batch-b` | Code done |
-| `@hana-id/web`: vault, auth pages `/login`, `/login/callback`, `/approve`, `/export`, partner client `createHana` (EIP-1193, Stellar, SWK module) | `feat/batch-b`; packaging `feat/sdk-packaging` | Code done; built as installable tarballs (`pnpm run pack:check`, D71), not published (registry and licence open, D72) |
-| `@hana-id/react` (`HanaProvider`, `useHana`, `useWallet`), `@hana-id/sodax` (Stellar and EVM wallet-provider adapters) | `feat/batch-b`; packaging `feat/sdk-packaging` | Code done; tarballs as `@hana-id/web`, not published |
-| `admin app:settings` | `feat/batch-b` | Code done |
-| `apps/smoke` | `feat/batch-b` | `/` logs in through `@hana-id/web` (the vault); `/direct.html` keeps Google Identity Services and the split path for the ship gate |
-| `apps/e2e` (Playwright: Chromium, WebKit, Firefox; local builds against the real API Worker; CI job) | `feat/batch-b` | Code done |
-| Developer dashboard, admin console, billing-grade usage (batch C) | `docs/batch-c-spec.md` | Spec draft; MVP cut in `docs/decisions.md` D34 |
-| Governance contract (delayed issuer keys, watchdogs, pause, timelocked upgrades, DAO owner) | `gov/contract`, integrated on `feat/governance` | Code done; not deployed (`docs/governance-spec.md` "Migration plan") |
-| `apps/watchdog` (independent watchdog Worker, alerts, status endpoint for the admin portal) | `gov/watchdog`, integrated on `feat/governance` | Code done; not deployed (`docs/operations.md` "Watchdog service") |
-| Governance API (delayed JWKS sync, `issuer_key_pending` / `paused` gate, `GET /v1/governance`) | `gov/api`, integrated on `feat/governance` | Code done; not deployed (`docs/operations.md` "Deploying the governance API") |
-| Governance scripts (owner council, DAO-routed owner calls, timelocked upgrades, migration, `admin governance:status`) | `gov/scripts`, integrated on `feat/governance` | Code done (`docs/operations.md` "Governance") |
+| `apps/api` `/v1/login` (incl. the export limit), login relay, origin rules, vault page, vault endpoints, migration 0003, vault cron, API-side policy validation (batch B) | `develop` | Deployed on sandbox-dev 2026-10-29 (migrations 0003 and 0004 applied, `VAULT_KEK` set) |
+| Page Workers serving `vaultOrigin`/`authOrigin` (`apps/api/src/pages/`, `scripts/pages-wrangler.ts`) | `develop` | Deployed on sandbox-dev 2026-10-29 (both origins in `envs/sandbox-dev.json`) |
+| `@hana-id/core` (layouts, CKD, derivation v1, signers, decoders, policies, verified contracts) | `develop` | In the deployed API and page Workers |
+| `packages/env` `vaultOrigin`/`authOrigin`, `rpcFallback` | `develop` | In use (sandbox-dev's manifest sets all three) |
+| `@hana-id/web`: vault, auth pages `/login`, `/login/callback`, `/approve`, `/export`, partner client `createHana` (EIP-1193, Stellar, SWK module) | `develop` (packaging from `feat/sdk-packaging`) | Deployed in sandbox-dev's page Workers; built as installable tarballs (`pnpm run pack:check`, D71), not published (registry and licence open, D72) |
+| `@hana-id/react` (`HanaProvider`, `useHana`, `useWallet`), `@hana-id/sodax` (Stellar and EVM wallet-provider adapters) | `develop` (packaging from `feat/sdk-packaging`) | Code done; tarballs as `@hana-id/web`, not published |
+| `admin app:settings` | `develop` | Code done |
+| `apps/smoke` | `develop` | `/` logs in through `@hana-id/web` (the vault); `/direct.html` keeps Google Identity Services and the split path for the ship gate |
+| `apps/e2e` (Playwright: Chromium, WebKit, Firefox; local builds against the real API Worker; CI job) | `develop` | Code done |
+| Developer dashboard, admin console, billing-grade usage (batch C; `docs/batch-c-spec.md`, `docs/batch-c-build-plan.md`) | `develop`: C1–C5 | C1 (manifest fields, the Neon ledger schema, `console-core`), C2 (`packages/oidc`), C3 (migration 0006, the gate on `app_keys` and `scopes`, the CLI on it), C4 (usage capture, `session_markers`) and C5 (below) merged. **Running on sandbox-dev** (2026-11-03): migrations 0006, 0009 and 0010 applied (after a rehearsal on a scratch D1; a Time Travel bookmark from before 0006 and an export backup are kept in `.secrets`), the API has the hot DB on; usage capture is **off** (no `USAGE_DB` binding). C6 and C7 are built but not merged; C8–C17 (admin console, statements) not built (milestone M1, `docs/operations.md` "Hot DB migration 0006 and the new gate") |
+| Batch C5: the API's `ConsoleRpc` and `AdminRpc` entrypoints (CAS writes on `app_changes`, keys, settings, staff proposals, notice ack, cancel, expedite, the breaker and hot-DB budget) and drift detection | `develop` (from `feat/batch-c-5`) | Merged and in the sandbox-dev API; inert until the console (C7) and admin (C8) Workers bind them. Member proposals and owner actions (C6) and the console (C7) are built but not merged; the Neon reports (C12) not built |
+| Governance contract (delayed issuer keys, watchdogs, pause, timelocked upgrades, DAO owner) | `develop` (from `feat/governance`) | Deployed on sandbox-dev 2026-10-30: migrated in place to v2 (same signer, same addresses), owned by the council DAO since 2026-10-30, one upgrade through the DAO (contract 0.1.1) (`docs/operations.md` "Governance migration (sandbox-dev)") |
+| `apps/watchdog` (independent watchdog Worker, alerts, status endpoint for the admin portal) | `develop` (from `feat/governance`) | Deployed on sandbox-dev 2026-10-30 (forged-key and pause drills), redeployed 2026-11-02 with batch 5 (below); its pager (ntfy.sh) and heartbeat are set, Slack and email aren't (`docs/operations.md` "Watchdog service") |
+| Governance API (delayed JWKS sync, `issuer_key_pending` / `paused` gate, `GET /v1/governance`) | `develop` (from `feat/governance`) | Deployed on sandbox-dev with the migration, 2026-10-30 (D1 migration 0005; `docs/operations.md` "Deploying the governance API") |
+| Governance scripts (owner council, DAO-routed owner calls, timelocked upgrades, migration, `admin governance:status`) | `develop` (from `feat/governance`) | In use on sandbox-dev (`docs/operations.md` "Governance") |
+| Partner identity token, build steps 1–4 (`docs/identity-token-spec.md`, D127): core layouts and ids, `POST /v1/identity/token`, JWKS and discovery, Worker-secret ES256 signer, migration 0008, `hana.getIdentityToken()`, `useIdentityToken()`, `scripts/identity-key.ts`, `examples/identity-verify` | `develop` (from `feat/identity-token-1`, `feat/identity-token-2`) | Deployed on sandbox-dev 2026-11-02 (active kid `17xAVaTf…`, standby offline; migration 0008; `docs/operations.md` "Identity token keys"). No `email` claim yet (steps 5–6); the watchdog pin check (step 8) is merged and deployed (below) |
+| Identity token step 7, code only: the AWS KMS signer (`apps/api/src/identity/kms.ts`, selected by `IDENTITY_SIGNER`), the manifest's `aws-kms` signer, `identity-key kms-*` (D215–D219) | `develop` (from `feat/identity-token-7`) | Merged; tested against a fake KMS; no env uses it. The AWS account, keys, IAM, CloudTrail reconciliation and alarms are still to set up (`docs/operations.md` "Identity token keys on AWS KMS") |
+| Partner identity token, build step 8: the watchdog's identity JWKS and discovery check against `watchdog.pinnedIdentityKeys` and `identityToken.iss` (critical, no pause), an outside probe from GitHub Actions with the same rules (`@hana-id/jwks/identity`), an identity key's thumbprint as an issuer kid on chain (critical), `identity-key` writing the pins, thumbprint pinning in the example verifier (D210–D214) | `develop` (from `feat/identity-token-8`) | Merged; the watchdog's identity checks deployed on sandbox-dev 2026-11-02 (version 67fe97cb; sandbox-dev's manifest pins its two keys); the probe runs once the workflow is on the default branch. Detection against an attacker who serves everyone the same JWKS, not prevention |
+| Email login, contract v3 (self-issued email issuer with a signer policy, JWS JSON tokens, accounts and links, the hourly link counter (D200), `migrate` v2 → v3; `migrate_v1` removed) | `develop` (from `feat/email-login-1`, `feat/email-login-2`, `feat/link-cap`) | Code done, unit- and sandbox-tested (email login, links, the v2 → v3 upgrade through the DAO from sandbox-dev's v2 code, gas in `docs/contract-interface.md`); **deployed on sandbox-dev** (2026-11-03): `hana-id-signer-dev1.testnet` runs contract v3 (state_version 3), upgraded through the council DAO with a delayed execute; `get_config().unrecorded_wallets` is false (`accept_unrecorded_wallets`). The off-chain parts that call it (issuer, API, web) are the rows below |
+| `@hana-id/email` (email normalization v1, the `e1.` `sub`, the Google-hosted rule, the pinned disposable-domain list; build-plan batch 3) | `develop` (from `feat/email-login-3`) | Code done, frozen vectors; imported by the email issuer |
+| `apps/email-issuer` (build-plan batch 4: `start`/`resend`/`verify`/`google-match`, JWKS and discovery, staff client proofs, unlock and unsuppress, owner device tickets, the `Challenge` and `RateLimiter` objects, its D1, SendGrid and outbox senders, the Worker-secret signer and an unwired KMS adapter), manifest `emailIssuer`, `scripts/email-issuer.ts` | `develop` (from `feat/email-login-4`) | Code done and tested (miniflare, fake KMS, fake Google and chain); deployed on sandbox-dev 2026-11-03 (the next row). Batch 6: reached at its own URL (`emailIssuer.url`, D230), finds apps by `app_keys` (D233) |
+| Email login, watchdog (batch 5): email pins and signer policy, the link alarms from `get_link_stats()` (D200), `unrecorded_wallets` (D190–D193) | `develop` (from `feat/email-login-5`) | Deployed on sandbox-dev 2026-11-02 (version b156e1b5, no new migration), while the contract was still v2. The manifest now has the email pins (`watchdog.pinnedIssuerKeys.email`: the issuer's active and standby kids): redeployed with the manifest's email pins 2026-11-03 (version fd6d8b27) |
+| Email login, the email issuer (batch 4: `apps/email-issuer`, login codes by mail through SendGrid, D194) | `develop` (from `feat/email-login-4`) | Deployed on sandbox-dev 2026-11-03 with batch 8b (`hana-id-email-issuer-sandbox-dev.tingtc.workers.dev`, version d3dc7965): its 5 secrets set, SendGrid sending from team@hanawallet.io for testnet. Its keys are on chain: active kid `v_H0YgrYDKczje-jsOa1eEdEWy9BECqRRCSp98pztsw`, standby `ziQVLEH8…` |
+| Email login in the web, plain (batch 8a): the popup's method chooser and `/login/email` (address, code, resend, a different email, case B continues with Google, the device ticket on `authOrigin`), the vault's email-token check against the chain (`get_issuer_keys` / `get_self_issued("email")`, `scope_for_client("email", …)`), the `{scope}#email#{sub}#0` path and record check, `hana.login({method, emailHint})`, `loginProgress: email_code`, the new error codes; no linking | `develop` (from `feat/email-login-8a`) | Merged; live on sandbox-dev for the demo app (`hana-id-demo-sandbox-dev.tingtc.workers.dev`, the Smoke B app in scope `s2`, `login_methods` google,email; scope `s2`'s email client added with `admin scope:add-email-client`, D253) |
+| Email login in the web, linking (batches 7 and 8b): the path through `get_identity` (vault, export window), google-match before any chain call with Google's access token (the second, silent `email` request, D254), the four cases' screens in the popup (the follow-up channel, D256), the vault's D133 checks before the linked CKD payload and D137's revoke-and-restart, case B only after the popup's email step (D139), link banners with Cancel and Remove, `hana.account()`, `linkChanged`, `hana.linkAccount()`, key export for email wallets (D246 lifted, D258); the issuer's case-B `verify` answers the address's `sub`; the API accepts the vault's relay writes and puts the issuer in the vault page's CSP | `develop` (from `feat/email-login-8b`) | Merged and live on sandbox-dev since 2026-11-03 (API version b215b589; page Workers deployed, auth version 548ec940, the vault's CSP listing both RPCs, fastnear and rpc.testnet.near.org, and the issuer; the demo). Tested in unit and Playwright (three browsers, `outbox` stub); steps: `docs/operations.md` "Turning linking on (batch 8b)" |
+| Email login, API (batch 6): email tokens on `/v1/sessions` and `/v1/login` (`apps/api/src/email-token.ts`), the `create_session` proof of possession (D137) in the API, the vault's split path and the smoke page, `/v1/login`'s `linkJwt` precheck (D133), the link relays `/v1/link*` with share revocation, the email-login panics as errors, `GET /v1/app` `loginMethods`, D155's gas, migration 0010 (`apps.login_methods`, `email_usage`), the issuer on its own URL (D230) and its `app_keys` lookup (D233) | `develop` (from `feat/email-login-6`) | Merged; deployed on sandbox-dev 2026-11-03 with batch 8b (API version b215b589, hot DB on, `createProof` true, relayer keys rotated; migration 0010 applied; steps: `docs/operations.md` "Email login on sandbox-dev"). Apps stay Google-only (`login_methods` `'google'`) except the demo's Smoke B app in scope `s2` (google,email) |
 
 ## Components
 
@@ -40,23 +87,30 @@ Batch B is merged on the integration branch `feat/batch-b` (not yet on `develop`
 |---|---|---|---|
 | Partner page | partner's own | partner origin | Embeds the SDK; never sees keys or tokens |
 | `@hana-id/web` client | `packages/web/src/client` | partner origin | Mounts the vault iframe, opens the login popup and (in the click, D99) the approval popup, exposes EIP-1193, Stellar signer, raw signer, SWK module |
-| `@hana-id/react`, `@hana-id/sodax` | `packages/react`, `packages/sodax` | partner origin | `HanaProvider`/`useHana`/`useWallet`; Sodax `IStellarWalletProvider`/`IEvmWalletProvider` adapters |
+| `@hana-id/react`, `@hana-id/sodax` | `packages/react`, `packages/sodax` | partner origin | `HanaProvider`/`useHana`/`useWallet`/`useIdentityToken`; Sodax `IStellarWalletProvider`/`IEvmWalletProvider` adapters |
+| Partner backend | partner's own (guide: `examples/identity-verify`) | partner servers | Verifies identity tokens against the API's JWKS with any JOSE library; never calls Hana |
 | Vault | `packages/web/src/vault`; page HTML `apps/api/src/vault/page.ts` | hidden iframe on `vaultOrigin` | Holds the session key and PRK, computes nonces and paths, signs |
-| Auth pages | `packages/web/src/auth` | popups / top-level windows on `authOrigin` | Google login, approval, consent, key export |
+| Auth pages | `packages/web/src/auth` | popups / top-level windows on `authOrigin` | Login (the method chooser, Google, `/login/email`'s code step against the email issuer), approval, consent, key export |
 | `@hana-id/core` | `packages/core` | everywhere (no DOM) | Layouts, CKD, derivation v1, signers, approval decoders, policy validator/matcher, ID-token check, message schemas |
-| API Worker | `apps/api/src/index.ts` | Cloudflare Workers (`apiUrl`) | Gate (key, origin, limits), verify-before-relay, relayer, vault shares, login relay, vault page HTML, crons |
+| API Worker | `apps/api/src/index.ts` | Cloudflare Workers (`apiUrl`) | Gate (key, origin, limits), verify-before-relay, relayer, vault shares, login relay, vault page HTML, crons; the identity token issuer (`src/identity/`: mint, JWKS, discovery; the signer behind `IdentitySigner`: a Worker-secret P-256 key on testnet, AWS KMS `Sign` on staging and mainnet, picked by `IDENTITY_SIGNER`); the `ConsoleRpc` and `AdminRpc` entrypoints (`src/rpc/`, `src/changes/`: the only writers of app config besides the CLI, no route) |
 | Page Workers | `apps/api/src/pages/` (`vault-worker.ts`, `auth-worker.ts`, `host.ts`) | one Cloudflare Worker per Hana origin (D66) | `vaultOrigin`: forwards `GET /vault` to the API Worker (service binding `API`), serves the vault bundle; `authOrigin`: the four auth pages with their CSP, and their assets. Nothing else; never a cookie (D70) |
 | `RelayerKey` DO | `apps/api/src/relayer-key.ts` | one object per relayer access key | Serialises that key's nonces, signs and broadcasts |
-| `RateLimiter` DO | `apps/api/src/rate-limiter.ts` | one object per subject (`ip:…`, `app:…`, `export:…`, `owner-actions:…`) | Fixed-window counters, global and exact; owner-token single-use markers |
-| Rate Limiting bindings | `apps/api/src/vault/limits.ts` (`VAULT_IP_LIMIT`, `VAULT_SHARE_LIMIT`) | each Cloudflare location, no network hop | The vault's per-IP and per-share flood limits, approximate (D95) |
+| `RateLimiter` DO | `apps/api/src/rate-limiter.ts` | one object per subject (`ip:…`, `app:…`, `export:…`, `owner-actions:…`, `identity:global`, `identity-proof:<sessionPk>`) | Fixed-window counters, global and exact; owner-token and identity-proof single-use markers |
+| Rate Limiting bindings | `apps/api/src/vault/limits.ts` (`VAULT_IP_LIMIT`, `VAULT_SHARE_LIMIT`), `apps/api/src/identity/limits.ts` (`IDENTITY_SESSION_LIMIT`) | each Cloudflare location, no network hop | The vault's per-IP and per-share and the identity token's per-session flood limits, approximate (D95) |
+| Email issuer Worker | `apps/email-issuer/src/index.ts` (`handlers.ts`) | Cloudflare Workers, its own Worker on Hana's main account, at `{emailIssuer.url}/v1/email/*`: its own `workers.dev` URL on sandbox-dev, the API's URL by a zone route in production, never through the API Worker (D230; deployed on sandbox-dev 2026-11-03, version d3dc7965) | Email codes (`start`, `resend`, `verify`), email tokens (JWS General JSON, RS256, nonces computed per purpose), `google-match` (automatic linking's four cases), JWKS and discovery, staff routes behind Access (client proofs, unlock and unsuppress, which mail the address, ticket revocation) and the mailed confirmation (`confirm`). Alone holds ISSUER_SIGNING_KEY, K_sub, K_code, K_rl and the SendGrid key; reads the chain and the API's D1, writes neither |
+| `Challenge` DO (`EMAIL_CHALLENGE`) | `apps/email-issuer/src/challenge.ts` | one object per challenge or link ticket | The code's HMAC, attempts, purpose and nonce, the address encrypted under the challengeId's client-held half (≤ 10 min, for resends); named by a hash of the id's public half; single use |
+| Issuer `RateLimiter` DO | `apps/email-issuer/src/rate-limiter.ts` | one object per mailbox, recipient domain, IP subject or prefix, app, `global`, staff member | Exact limits; per mailbox: code mails per requester and overall, the device ticket's allowance, live challenges, wrong-code locks and the 18 + 4 + 3 ceiling, unlock grants and staff caps, each decision one atomic call; in `global` the budget's per-app shares (D198) |
 | `LoginRelay` DO | `apps/api/src/login-relay.ts` | one object per `relayId` | Write-once, read-once slot for the encrypted Google token, 120 s |
-| D1 `DB` | `apps/api/migrations/` | Cloudflare D1 | Apps, origins, plans, settings, usage, vault shares |
+| D1 `DB` | `apps/api/migrations/` | Cloudflare D1 | Scopes (one org and environment each), apps, publishable keys, origins (in force from `active_from`), plans, settings, guarded changes and the `app_changes` ledger, session markers, vault shares, identity token counts; the legacy `usage` counters (no longer written, batch C4) |
+| Usage ledger | `apps/api/migrations-usage/`, `apps/api/src/usage/` | Neon Postgres (`aws-ap-southeast-2`, D73) through the optional Hyperdrive binding `USAGE_DB` (role `usage_writer`, which may only call `usage.record_event`, `usage.record_identity_tokens`, `usage.record_email_counts` and `usage.ensure_partitions`) | One UsageEvent v1 per request past the gate, written after the response with one retry, fail open (a lost event is logged, never blocks or slows a request); the hourly copy of identity token counts per app and day (D220–D224) and of email login counts (`email_usage`, D233) |
 | `hana-signer` | `contracts/hana-signer` | NEAR testnet, manifest `signer` | Issuers (Google RSA keys), scope registry, sessions, calls the MPC |
 | NEAR MPC | external, manifest `mpc` | NEAR testnet MPC network | CKD (`request_app_private_key`, domain `ckdDomainId` = 2) |
 | Google OIDC | external | `accounts.google.com`, `www.googleapis.com` | Issues ID tokens whose `nonce` commits to the session |
-| Watchdog Worker | `apps/watchdog/src/index.ts` | Cloudflare Workers on **its own account** (manifest `watchdog.cloudflare`, D86) | Every 5 min: Google's JWKS against the contract's pending and active issuer keys; cancels forged pending keys, deletes the updater keys that proposed one, pauses on a forged active key, confirms matches (D82); alerts on governance changes and on the relayer's balance and pool-key allowances (read-only, D150); pages, Slack, email (D85); dead-man's switch; read-only `GET /status`, `/alerts`, `/actions` and `POST /alerts/:id/ack` for the admin portal (D83) |
+| `packages/email` | `packages/email/src/` | email issuer (batch 4); Workers and browsers (Web Crypto, no Node API) | Email normalization v1 (UTS #46 via pinned `tr46`, characters newer than Unicode 15.0 refused, Gmail canonical form), `sub = "e1." ‖ b64url(HMAC-SHA256(K_sub, …))` with `K_sub` as an input, the Google-hosted rule, the pinned disposable-domain list; frozen at the address freeze by `vectors/email-v1.json`, tested in Node and workerd (D156–D159) |
+| Watchdog Worker | `apps/watchdog/src/index.ts` | Cloudflare Workers on **its own account** (manifest `watchdog.cloudflare`, D86) | Every 5 min: Google's JWKS against the contract's pending and active issuer keys; cancels forged pending keys, deletes the updater keys that proposed one, pauses on a forged active key, confirms matches (D82); the email issuer's pending and active keys and signer policy against the manifest's pins (`watchdog.pinnedIssuerKeys.email`: cancels unpinned pending keys, pauses on an unpinned active key or a weaker policy, never confirms one, D190, D191), the contract's hourly link counts from `get_link_stats()` (an alarm threshold reached critical, half the total threshold a warning, a raise a critical governance change; alarms only, nothing is refused; D200); Hana's email JWKS against the pins (warning) and the partner identity token's JWKS and discovery document against `watchdog.pinnedIdentityKeys` and `identityToken.iss` (critical, never a pause, D210), read after the run is recorded and its lock released, guarded and size-capped; an identity key's thumbprint as an issuer kid on chain (critical, D212); `unrecorded_wallets` outside dev envs (critical, D193); alerts on governance changes and on the relayer's balance and pool-key allowances (read-only, D150); pages, Slack, email (D85); dead-man's switch; read-only `GET /status`, `/alerts`, `/actions` and `POST /alerts/:id/ack` for the admin portal (D83) |
 | Watchdog D1 | `apps/watchdog/migrations/` | Cloudflare D1 on the watchdog's account | Seen kids, absences, runs and their checks, actions log, alerts, deliveries, acks |
-| `packages/jwks` | `packages/jwks/src/index.ts` | API and watchdog | JWKS parsing (`usableJwks`), RSA key comparison |
+| `packages/jwks` | `packages/jwks/src/index.ts` | API, watchdog, `packages/oidc` | JWKS parsing (`usableJwks`), RSA key comparison, RFC 7638 RSA thumbprints (`rsaThumbprint`, the watchdog's email pins) |
+| `packages/oidc` | `packages/oidc/src/` | API (console and admin Workers in batch C); Workers (Web Crypto, no Node API) | Google ID-token checks moved out of the API: `verifyIdToken` (RS256, known `iss`, known `kid`, a finite `exp`, single-string `aud`; the identity-token refusal; the optional `email`, `email_verified`, `iat`, `hd`, `azp`, `amr`, `auth_time` returned when well typed, a wrong type dropped by default or refused with `optionalClaims: 'strict'`, the console's mode; the API ignores them), the isolate's Google JWKS cache (max-age 5 min..6 h, unknown-kid refetch ≤ 1/min, 10 s failure backoff, ≤ 6 h stale on fetch failure, 8 s timeout, 64 KiB cap) and `publishedKeys`; `AccessJwtVerifier` for the admin Worker's Cloudflare Access JWT (`type`, `iss`, `aud`, `exp`/`nbf`, non-empty `sub` and `email`; certs ≤ 10 min old, never stale; one per isolate); tested in Node and workerd (D201–D203) |
 | `packages/playbooks` | `packages/playbooks/src/` | watchdog (playbook ids), admin portal (batch C), `docs/playbooks.md` | Recovery playbooks for every watchdog alert kind and incident (D126); the watchdog serves each alert kind's playbook id in `GET /status` and names it in every alert text |
 | Scripts | `scripts/`, `apps/api/scripts/gen-wrangler.ts`, `apps/watchdog/scripts/` | operator's machine | Deploy contract and keys, JWKS one-off sync, CKD key fetch, `VAULT_KEK` init/rotate, admin CLI, watchdog config and secrets |
 
@@ -79,7 +133,8 @@ Batch B is merged on the integration branch `feat/batch-b` (not yet on `develop`
  │  /v1/app /v1/login /v1/login-relay/:id /v1/vault/* /v1/sessions /v1/derive  │
  │  /v1/sessions/revoke /v1/owner-actions /v1/health        cron: 15 min       │
  │  DOs: RelayerKey (per key) · RateLimiter (per subject) · LoginRelay (per id)│
- │  D1: apps, app_origins, plans, usage, vault_shares, issuer_key_missing      │
+ │  D1: apps, app_origins, plans, vault_shares, issuer_key_missing, …          │
+ │  USAGE_DB (Hyperdrive → Neon): usage events, after the response (optional)  │
  └──────────────┬──────────────────────────────────────────────────────────────┘
                 │ signed function calls (relayer account keys) + views (NEAR RPC)
                 ▼
@@ -93,20 +148,24 @@ Who talks to whom:
 
 | From → to | Channel | What |
 |---|---|---|
-| Partner client → vault | `postMessage` hello, then a `MessageChannel` port (`packages/web/src/client/vault-connection.ts`) | Port methods (`hana_login`, `eth_signTransaction`, …) and events. Never key material |
-| Vault ↔ auth popups | `postMessage`, checked by `event.origin` and `event.source` (a popup the partner page opened reaches the vault as `opener.frames[v]`) | `hana:auth-params` (incl. `relayKey`), approval requests/results and `hana:approve-close`, export context |
+| Partner client → vault | `postMessage` hello, then a `MessageChannel` port (`packages/web/src/client/vault-connection.ts`) | Port methods (`hana_login`, `eth_signTransaction`, …) and events. Never key material. The vault says `connected` on the port once it has taken the hello (before storage and the unlock call), then `ready`; the SDK gives each frame 5 s to answer (5 s more while it is still loading; a loaded frame that doesn't answer is replaced once), then gives `ready` 20 s after `connected`, and on a failure removes the frame and reports `vault_unavailable` with `data.reason` (D262) |
+| Vault ↔ auth popups | `postMessage`, checked by `event.origin` and `event.source` (a popup the partner page opened reaches the vault as `opener.frames[v]`) | `hana:auth-params` (incl. `relayKey`, and `followKey` in a login that offers email), approval requests/results and `hana:approve-close`, export context |
 | Partner client → approval popup | `window.open` only (it holds the WindowProxy; the popup takes no message from it) | — |
-| Auth popup → Google | top-level navigation | Implicit flow, `response_type=id_token`, `scope=openid`, `prompt=select_account` |
-| `/login/callback` → API | `POST /v1/login-relay/:relayId` (`Origin: authOrigin`) | AES-GCM ciphertext of the token |
-| Vault → API | `fetch`, `Origin: vaultOrigin`, `x-hana-key`, `x-hana-parent-origin` | `/v1/app`, relay read, `/v1/login`, `/v1/vault/*` |
-| Vault → NEAR RPC | JSON-RPC (manifest `rpc`; `rpcFallback` only when `rpc` errors or times out, one endpoint per answer: `packages/web/src/near-call.ts`) | `get_session` re-sync, the login's registry check (`scope_for_client`, or `get_scope` and `get_config`), `EXPERIMENTAL_tx_status` polling; the export window the same |
+| Auth popup → Google | top-level navigation | Implicit flow, `response_type=id_token`, `scope=openid`, `prompt=select_account`; in a login that offers email, then a second silent request `response_type=token`, `scope=email`, `prompt=none`, `login_hint=<sub>` (D254) |
+| `/login/callback`, `/login/email` → API | `POST /v1/login-relay/:relayId` (`Origin: authOrigin`) | AES-GCM ciphertext of the token; in a login that offers email also the access token and the answers to the vault's follow-up notices (follow-up slots) |
+| Vault → API | `fetch`, `Origin: vaultOrigin`, `x-hana-key`, `x-hana-parent-origin` | `/v1/app`, relay read and (follow-up notices, batch 8b) relay write, `/v1/login`, `/v1/sessions/revoke`, `/v1/link*`, `/v1/vault/*` |
+| Vault → email issuer | `fetch`, `Origin: vaultOrigin`, no cookies | `POST /v1/email/google-match` (Google's ID and access tokens, the session commitment; batch 8b) |
+| Vault → NEAR RPC | JSON-RPC (manifest `rpc`; `rpcFallback` only when `rpc` errors or times out, one endpoint per answer: `packages/web/src/near-call.ts`; and both read separately to confirm any path that isn't the signed-in identity's own: `packages/web/src/path-check.ts`, D263) | `get_session` re-sync, the login's registry check (`scope_for_client`, or `get_scope` and `get_config`), `get_identity` (the path, batch 7), `get_account` and `get_config().unrecorded_wallets` (links), the email keys and policy, `EXPERIMENTAL_tx_status` polling; the export window the same |
 | Vault, export window → Google | `https://www.googleapis.com/oauth2/v3/certs` | JWKS for the defence-in-depth RS256 check |
-| Partner page → API | `fetch` from the partner origin | `GET /v1/app` (any key); `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke` only for `pk_test_` in dev envs (`apps/smoke`) |
+| Partner page → API | `fetch` from the partner origin | `GET /v1/app` (any key); `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke` only for test-scope apps in dev envs (`apps/smoke`) |
 | API → NEAR | NEAR RPC | Views (`get_config`, `get_scope`, `scope_for_client`, `get_session`, `session_key_in_use`, `get_issuer`; for the cron and `GET /v1/governance` also `get_key_changes`, `get_governance`, `view_access_key_list`), `send_tx`, `tx` |
 | `hana-signer` → MPC | cross-contract call, 20 Tgas, 1 yocto | `request_app_private_key {derivation_path, app_public_key, domain_id}` |
 | API cron → Google, `hana-signer` | HTTPS, then `set_issuer_key` / `propose_issuer_key_removal` / `execute_issuer_key_change` signed with `KEYS_UPDATER_KEY` (delayed key changes, governance batch) | JWKS sync (`apps/api/src/issuer-keys.ts` `syncIssuerKeys`) |
 | Watchdog → Google | `https://www.googleapis.com/oauth2/v3/certs`, `cache: no-store`, every 5 min (and once more 60 s later when a pending kid is missing) | Its own JWKS copy, never the API's |
-| Watchdog → NEAR | its own RPC (manifest `rpc`, then `rpcFallback`): `status`, views `get_key_changes`, `get_issuer`, `get_issuer_keys`, `get_config`, `get_governance`, the owner's `view_account` and (a DAO) `get_policy`, the relayer's `view_account` and `view_access_key_list` (final; alert only, D150); `send_tx` from `WATCHDOG_KEY` on `watchdog.account` | `cancel_issuer_key_change`, `confirm_issuer_key_change`, `pause`, `delete_updater_key` only |
+| Watchdog → NEAR | its own RPC (manifest `rpc`, then `rpcFallback`): `status`, views `get_key_changes`, `get_issuer` and `get_issuer_keys` (`google`, `email`), `get_self_issued("email")` and `get_link_stats()` (absent on v2: read as no email issuer), `get_config`, `get_governance`, the owner's `view_account` and (a DAO) `get_policy`, the relayer's `view_account` and `view_access_key_list` (final; alert only, D150); `send_tx` from `WATCHDOG_KEY` on `watchdog.account` | `cancel_issuer_key_change`, `confirm_issuer_key_change`, `pause`, `delete_updater_key` only |
+| Watchdog → Hana's email JWKS | `watchdog.pinnedIssuerKeys.email.jwksUrl` (default `{emailIssuer.url}/v1/email/jwks.json`, else under `apiUrl`), only with pins | Compared with the pins and the active email keys; warning only, never trusted |
+| Watchdog → Hana's identity JWKS and discovery document | `{identityToken.iss}/jwks.json` and `/.well-known/openid-configuration`, `cache: no-store`, `redirect: manual`, 64 KB cap, every 5 min, only with `identityToken` in the manifest | Each key's RFC 7638 thumbprint against `watchdog.pinnedIdentityKeys`, public members only, private members, duplicate members, the shape, `issuer` and `jwks_uri`; critical alerts, never an action (D210, D213, D214) |
+| Outside probe (GitHub Actions) → Hana's identity JWKS and discovery document | `.github/workflows/identity-probe.yml` every 15 min, `scripts/identity-probe.ts`: jose's User-Agent, no redirect followed, 64 KB cap, every non-`local*` env with `identityToken` | The watchdog's rules (`@hana-id/jwks/identity`) from outside Cloudflare; a finding fails the run (GitHub's email). No secrets (D210) |
 | Watchdog → paging app, Slack, Resend, heartbeat | HTTPS with its own credentials (`apps/watchdog/src/channels.ts`) | Critical: page + Slack + email, re-sent every 15 min until acknowledged; warning: Slack + email; daily digest; dead-man's switch ping |
 | Admin portal (batch C) → watchdog | `GET /status`, `/alerts`, `/actions`, `POST /alerts/:id/ack`, bearer `WATCHDOG_STATUS_TOKEN` | The "Security & monitoring" view; acks stop re-sends only |
 | Operator → `hana-signer`, D1, Worker | `scripts/`, `wrangler` | Deploy, register scopes, apps, origins, secrets |
@@ -123,8 +182,9 @@ Browser steps: `packages/web/src/vault/login.ts`, `packages/web/src/auth/login-p
    24 h − 10 min)` on the server-corrected clock, `keyIndex = 0`, `maxUses` (1 in `'session'` mode, 2 in `'none'`),
    `nonce = sessionNonce(SIGNER, scopeId, …)` (`packages/core/src/layouts.ts:71`), `relayKey`, `relayReadKey` and
    `relayId = b64url(sha256(relayReadKey))` (`relayIdFor`, `layouts.ts:166`). `SIGNER` is a build constant; `scopeId`
-   comes from the vault page's inlined D1 config. It needs `GET /v1/app` first (`apps/api/src/handlers.ts:212`) for
-   the Google client and refuses a `signer` or `scopeId` that differs. As soon as `GET /v1/app` answers it also starts
+   comes from the vault page's inlined D1 config. It needs `GET /v1/app` first (`apps/api/src/handlers.ts`
+   `handleAppConfig`; normally answered already, the vault asks it right after `ready`; asked once more after a 5xx or
+   a network failure, D261) for the Google client and refuses a `signer` or `scopeId` that differs. As soon as `GET /v1/app` answers it also starts
    the registry check (D56, `packages/web/src/vault/login.ts` `checkScope`), which runs while the user is at Google:
    own client `scope_for_client('google', clientId)` must be `scopeId`; shared client `get_scope(scopeId)` must exist
    with `allow_shared`, and `get_config().shared_clients` must list the client (both views in parallel, D117). Its
@@ -147,19 +207,26 @@ Browser steps: `packages/web/src/vault/login.ts`, `packages/web/src/auth/login-p
 6. The vault makes the BLS app key (`newAppKey`, `packages/core/src/ckd.ts:84`), signs `sessionMessage(1,
    ckdPayload(pk1, pk2))` and sends `POST /v1/login` (`handleLogin`, `apps/api/src/login.ts:85`). The API, in order:
    `appGate` kind `relay` (`handlers.ts:157`; key, active, `scope_conflict`, caller rule, limits); body shape incl.
-   `keyIndex ≤ 2^31 − 1` (`toLogin`, `login.ts:49`); RS256 + claims (`apps/api/src/jwks.ts:129`); claim allow-list
+   `keyIndex ≤ 2^31 − 1` (`toLogin`, `login.ts:49`); RS256 + claims (`verifyIdToken`, `packages/oidc/src/id-token.ts`); claim allow-list
    (`apps/api/src/claims.ts`); nonce recomputed with `SIGNER_ACCOUNT` and the app's D1 `scope_id`; from `authOrigin`
    (an export) the export limit, 3 per hour per `(app, sha256(path))` (D59); per-isolate hold on counter 1
    (`apps/api/src/session-use.ts:76`); in parallel `checkClientScope` (`handlers.ts:384`) and `session_key_in_use`
    (409 `session_exists`); the session signature; BLS key shape (`apps/api/src/bls.ts:28`); pairing precheck only when
    `BLS_PRECHECK = "1"`.
-7. The API relays `create_session_and_derive` (100 Tgas) through the session pool. The contract runs `create_session`
+   An email login (build plan batch 6, not yet in the web) sends an email token as `jwt` (JWS JSON, checked against
+   the manifest's email keys and the on-chain signer policy `get_self_issued("email")`, for an app whose
+   `login_methods` lists `email`; `apps/api/src/email-token.ts`, D231). A login carrying an automatic link adds
+   `linkJwt` and `linkImmediate`; the session key then signs the linked CKD payload, and the API recomputes the
+   link's `auto_link` nonce from fresh `get_identity` / `get_account` reads before relaying (`link-precheck.ts`, D133,
+   D232), so a link the user didn't sign, or one the chain state no longer matches, costs no gas.
+7. The API relays `create_session_and_derive` (150 Tgas; 250 with a link, D155) through the session pool. The contract runs `create_session`
    then `derive_key(…, counter 1, …)` in one receipt (`contracts/hana-signer/src/sessions.rs:208`), stores the session
    with `path = scope#provider#sub#key_index` (`sessions.rs:175`) and calls the MPC.
 8. Failure mapping by the failing receipt's executor (`loginFailure`, `login.ts:72`): signer → 422 `contract_rejected`
    (with `reason: 'session_key_in_use'` for that panic); MPC → 422 `ckd_failed` (session committed, `used = 1`); else
-   502 `near_error`. Timeouts → 504 with `nearTx`. Usage counts a session, plus a derive on success (`countLogin`,
-   `login.ts:177`).
+   502 `near_error`. Timeouts → 504 with `nearTx`. Whatever the outcome, one usage event goes to the ledger after the
+   response (`login`, relayed when the transaction can have executed, with the signing key, its nonce, the
+   provisional gas and, on success, the uid; `src/usage/event.ts`).
 9. The vault decrypts: `S = decryptCkd(result, a, ckdAppId(SIGNER, expectedPath), pinnedKey)` with the pairing check
    (`ckd.ts:97`), `PRK = extractPrk(S)` (`packages/core/src/derivation.ts:46`, zeroes S), addresses from PRK. It never
    uses a path, session or counter from the API; recovery re-syncs `get_session` from NEAR RPC directly.
@@ -170,6 +237,117 @@ Browser steps: `packages/web/src/vault/login.ts`, `packages/web/src/auth/login-p
     is a full login); a session that ends first (logout, a newer login, expiry) cancels it and no record or share
     survives it. Revoke-other-devices, touch and consent reads and writes wait for it.
 
+### Email login in the popup (build plan batches 8a and 8b)
+
+Browser steps: `packages/web/src/auth/login-page.ts`, `email-page.ts`, `email-api.ts`, `email-storage.ts`,
+`packages/web/src/vault/login.ts`, `packages/core/src/email-token.ts`. Differences from the Google login above:
+
+1. Only when `GET /v1/app` answers `loginMethods` with `email` and `email.aud = "email:<scopeId>"`, and the env's
+   bundle pins an email issuer (manifest `emailIssuer`: `emailIssuerUrl`, `emailIss`), does the vault add `methods:
+   ["google", "email"]` (and `method`, `emailHint` from `hana.login(options)`) to `hana:auth-params`. A Google-only
+   app's message is batch B's, key for key. `method: 'email'` for an app without email ends the login with
+   `login_method_unavailable`. In the background it reads `scope_for_client("email", "email:<scopeId>")`,
+   `get_issuer_keys("email")` and `get_self_issued("email")` from its own RPC.
+2. `/login` (still fetch-free, D77) shows "Continue with Google" / "Continue with email" (or skips to the preselected
+   method). Email: it stores the email context (public facts: app, parent origin, the session commitment, the Google
+   client for case B; `hana.email.<relayId>` in `sessionStorage`, beside the relay key entry) and navigates the same
+   window to `/login/email#<relayId>`.
+3. `/login/email` (CSP `connect-src` = the issuer's origin and the API only): address → `POST {issuer}/v1/email/start`
+   `{pk, email, purpose: "session", commitment, deviceTicket?}` (the issuer computes the nonce from the commitment) →
+   it posts `hana:auth-progress` to the vault (`loginProgress: email_code`) → the 6-digit code →
+   `POST /v1/email/verify` → the email token, encrypted under `relayKey` into the same relay slot as Google's answer;
+   the device ticket goes to `localStorage` under a hash of the address. "Resend code", "Use a different email",
+   inline wrong and expired codes, one generic "Too many attempts. Try again later." for every limit. Case B
+   (`googleWallet: true`, no token: a Google identity that reported this address has the wallet) offers "Link and
+   continue" when `verify` also answered a `linkTicket` and the address's `sub` (batch 8b), else "Continue with
+   Google"; both go to Google on the same slot, "Link and continue" with `caseB {linkTicket, emailSub}` stored in the
+   relay key entry for the callback. Cancel relays `{error: "email_…"}`, which the vault maps (D245); a step that
+   can't go on relays `email_unavailable`, and the page stops at the vault's deadline. `/login` and case B post
+   `hana:auth-progress` `google` when the user goes to Google.
+4. The vault takes a JWS-JSON token only in a login that offered email, checks it with `verifyEmailIdToken` (exact
+   form, pinned `iss`, `aud`, nonce, time, claim set, RS256 with the chain's active email keys, the signer policy; a
+   kid the chain doesn't list is "try again later"), and requires the scope's email client on chain to be this scope.
+   The path comes from `get_identity` (step 5 of the next section). From step 6 on it is the Google login's: the same
+   `POST /v1/login` body with the email token as `jwt`, the same recovery, CKD decrypt and persistence.
+
+### Automatic linking (build plan batch 8b)
+
+Browser steps: `packages/web/src/vault/login.ts` (`PendingLogin.matchGoogle`, `judgeLink`, `ownPath`, `Afterword`,
+`PendingLink`, `FollowChannel`), `vault/issuer.ts`, `auth/callback-page.ts`, `auth/email-page.ts` (follow-up mode),
+`auth/google.ts`, `packages/core/src/links.ts`, `relay.ts`. Only in a login that offers email; a Google-only app's
+login is batch B's, message for message (no follow-up key, no google-match, no email scope).
+
+1. **The follow-up channel** (D256). The vault adds `followKey` (32 random bytes) to `hana:auth-params`. Slot `n`
+   (1..12) of the login's channel is a relay slot whose read key is `HMAC-SHA256(followKey, "hana-id/relay-follow/v1"
+   ‖ u8 n)` and whose id is `b64url(sha256(read key))`; every value is AES-GCM under the login's `relayKey` with that
+   slot's AAD. The vault writes its notices in slots 2, 4, 6, … (`POST /v1/login-relay/<id>` from `vaultOrigin`, which
+   the API now accepts) and reads the popup's answer to notice `n` in slot `n + 1`; slot 1 is the second Google
+   request's access token. After its token is relayed the popup doesn't close: `/login/callback` hands over to
+   `/login/email`'s follow-up mode (or the email step goes on in place), which long-polls the vault's next notice and
+   shows it (`FollowNotice`: `link_code`, `use_email`, `prove`, `done`, `stop`).
+2. **Google's verified email** (D254). `GOOGLE_EMAIL_FLOW = 'second_request'`: the login's Google request stays
+   `response_type=id_token`, `scope=openid`; the callback relays the token with `access: 'follow'`, then makes a
+   second, silent request (`response_type=token`, `scope=email`, `prompt=none`, `login_hint=<sub>`) whose access token
+   it relays to slot 1. When Google needs the user (`consent_required`, `interaction_required`, `login_required`,
+   `account_selection_required`: the first time, since the token is never revoked, D265), it shows Hana's own screen
+   (what Google will ask and why: only the email service sees the address, to find a wallet, and doesn't keep it;
+   Continue or Not now, D264), then asks once more without `prompt=none`. The switch's other value,
+   `'one_request'` (`id_token token`, `openid email`), waits for the batch 0 spike (`apps/smoke/spike-email.html`).
+   The full address never reaches the vault or the partner page (the vault relays only case A's masked hint,
+   `a…@domain`, to the popup, end to end); the on-chain token stays openid-only (D25, the vault's and the API's
+   `token_has_pii`). The issuer never revokes the access token (D265).
+3. **google-match before any chain call.** The vault sends `POST {issuer}/v1/email/google-match {pk, accessToken,
+   googleIdToken, commitment, link: true, linkTicket?}` (CORS for `vaultOrigin`, D199; the vault page's CSP
+   `connect-src` names the issuer, `EMAIL_ISSUER_URL`). A `429` or `503` is retried within the login (its
+   `retry-after` up to 20 s, which the issuer's CORS exposes, else a backoff; 45 s of waits at most; 30 s per call). No answer: a Google identity with
+   no wallet and no account is refused (`api_unavailable`, `email_match_unavailable`: it might be case A, and a plain
+   login would open a second wallet, D255); one with a wallet or an account logs in as usual. Declined consent
+   (`access_denied`) or another Google account picked on Google's screen (`google_account_mismatch`), for such an
+   identity: notice `email_consent {reason, loginHint}`, the popup explains and offers "Sign in with email instead" or
+   "Try Google again" (at most 3 such screens per login, `EMAIL_CONSENT_ROUNDS`), else `login_cancelled` with `email_consent_declined` /
+   `google_account_mismatch` (D264). A popup that can't store its next leg writes `storage_unavailable` to the slot
+   the vault waits on (the login ends `storage_unavailable`).
+4. **The four cases**, from google-match's `decision`:
+   - `case_a` with `emailToken` (only when `googleHosted` and immediate; anything else is refused as the issuer's
+     error): a linked login, silent.
+   - `case_a` with `challenge` (not hosted): notice `link_code {challengeId, expiresAtMs, to: "a…@domain"}`; the popup
+     shows "Link and continue" (`resend` sends google-match's prepared code, `verify` answers the `auto_link` token,
+     relayed `as: 'link'`) or "Sign in with email" (an email login of that address, `as: 'session'`; Google's token is
+     dropped unused). `case_a` that can't link: notice `use_email` (only "Sign in with email").
+   - `case_b` with `emailToken`: only when the first slot carried `caseB` and the token's `sub` is `caseB.emailSub`
+     (D139); mode as the issuer said (immediate when Google hosts the mailbox, else after `change_delay_ms`).
+   - anything else (`none`, `linked`, `pending`, `unlinked`, `both_wallets`, `case_b` without a token): a plain login.
+5. **The path** (batch 7): without a link, `get_identity` of the signed-in identity (the view's key checked against
+   the computed one): own → its own path, active member → its account root's, pending → `link_pending` (with
+   `effectiveAtMs`, also told to the popup). Any path that isn't the identity's own (a member's root, a link's target
+   root, a path a pairing failure moved to) is confirmed on `rpc` and `rpcFallback`, each read alone: the same view
+   on both, and the root `own` on both; else `api_unavailable` with `path_unconfirmed` or `path_disputed`, never the
+   own path instead (D263). The vault pins the root it derived per identity (memory, and IndexedDB beside the record
+   when the app keeps the wallet; identity keys only); a root that changed other than own → member is confirmed on
+   both again, as is any path but the identity's own when the pin read fails or doesn't answer within 1 s. The confirming reads and google-match
+   also end when the login does (its abort signal). With a link (D133): fresh `get_config` (links open only when
+   `unrecorded_wallets` is `false`), `get_identity` and `get_account` of both identities; `judgeAutoLink` (the
+   contract's `auto_link` order) gives the join, the account root's path and the `auto_link` nonce; the join must be the
+   case's, and the link token must verify against the chain's email keys with exactly that nonce. Then the session key
+   signs the linked CKD payload (`signDeriveLinked`) and the body carries `linkJwt` and `linkImmediate`.
+6. **Recovery** (D137, D257). A linked login is resent only for "not executed" answers, and a known transaction that
+   returned the key is used; `session_exists`, `session_key_in_use`, `ckd_failed`, a timeout or an unknown outcome
+   revoke the session (`POST /v1/sessions/revoke` at `used + 1`) and end with `derive_failed` (`link_restart`): the
+   user signs in again with a fresh session, Google token and link token. A pairing failure in a plain login re-reads
+   the session and the identity once (a link that activated meanwhile). A resynced own-path session whose identity has
+   since joined an account answers `identity_linked` at `/v1/derive`: `session_consumed` (sign in again, D136).
+7. **The last word** (`Afterword`): `done` with the account's banners from `get_account` (a pending method with
+   Cancel, the method this login linked, active methods added in the last 7 days with Remove for the root), or `stop`
+   with the error. A banner's action is a fresh sign-in of this login's method over a `link_change` nonce (Google: the
+   vault's nonce and `login_hint`; email: a code over the commitment), relayed as `cancel_link` / `unlink_identity`.
+8. **The partner's view**: `linkChanged` after a login that linked, at the session's first `hana_account` for each
+   pending method, and on any change `hana_account` sees; `hana.account()` lists the root and members (no `sub`).
+9. **`hana.linkAccount({method})`** (`PendingLink`): the vault checks the account has room (≤ 3 members, no member of
+   that provider, links open), sends `task {kind: 'link', provider, prove}` in auth-params (the new method's proof
+   over `link_new`: a Google nonce, or a `link_new` commitment for the email step), checks the new identity has no
+   wallet and no account, asks (`prove`) for the account root's proof over `link_account`, and relays
+   `POST /v1/link`. The link is pending for `change_delay_ms`.
+
 ### Login, two transactions (split path)
 
 `POST /v1/sessions` then `POST /v1/derive` with counter 1. Used today by `apps/smoke` (Google Identity Services,
@@ -179,8 +357,19 @@ gate decides.
 
 `/v1/sessions` (`handleAppEndpoint`, `handlers.ts:251`): gate → shape (`scopeId` from the client is refused; the app's
 D1 scope is used) → RS256 + claims → claim allow-list only when `REJECT_PII_ON_SESSIONS = "1"` (off everywhere:
-smoke's GIS tokens carry `email`) → nonce recompute → `checkClientScope` and `session_key_in_use` in parallel → relay
-`create_session` (50 Tgas) → cache the session view 10 s.
+smoke's GIS tokens carry `email`) → nonce recompute → the session key's proof of possession (D137: `signature` over
+`sessionMessage(0, "hana-id-create-v1:" ‖ sha256(session nonce preimage))`, signed by the vault's `split()` and the
+smoke page, relayed as `create_session`'s `signature`; contract v3 requires it, v2 ignores it) → `checkClientScope`
+and `session_key_in_use` in parallel → relay `create_session` (100 Tgas) → cache the session view 10 s.
+
+### Explicit links (`POST /v1/link`, `/v1/link/cancel`, `/v1/link/unlink`)
+
+`apps/api/src/links.ts` (batch 6; the web calls them from batch 8): from the vault or the auth origin only, gate kinds
+`link` / `link-change` (adds and removals in separate windows) → the tokens verified and in the app's scope → the
+contract's nonce and state rules from fresh chain reads (`link_new` / `link_account` / `link_change` over the account
+root, the epoch, has-wallet, room, who may cancel or unlink) → relay `link_identity` (250 Tgas), `cancel_link` or
+`unlink_identity` (150) through the session pool → revoke the account's vault shares in every app of the scope (the
+root path at `key_index` 0..63, D233), so its other devices sign in again.
 
 ### Derive (`POST /v1/derive`)
 
@@ -232,7 +421,8 @@ never a derive.
 
 `/v1/vault/touch` follows the same settings rules and slides `idle_until` without returning `K_s` (the vault sends it
 at most every 10 min after an approved signature, `TOUCH_EVERY_MS`). The hourly cron deletes shares past
-`abs_expires_at` or revoked and re-wraps up to 2000 rows from `VAULT_KEK_PREVIOUS` (`apps/api/src/vault/cron.ts:63`).
+`abs_expires_at` or revoked once they are older than 24 h (dead shares are the identity token's tombstones, D178) and
+re-wraps up to 2000 rows from `VAULT_KEK_PREVIOUS` (`apps/api/src/vault/cron.ts:63`).
 
 In-memory idle limit (D55, `packages/web/src/vault/vault.ts` `goIdle`/`wake`): every request that uses the key
 (signing, export, revoke-other-devices, an auto-approve consent request) restarts a timer of the app's `idle_ttl_ms`;
@@ -308,13 +498,50 @@ and a "View on {explorer}" link when the chain's explorer is known. The list and
 | Origin removed | the next unlock of each share made for that origin marks it revoked (410) | none |
 | App switched to `persistence = 'none'` | the next unlock or touch of each of its shares marks it revoked (410) | none |
 
+### Partner identity token
+
+`docs/identity-token-spec.md` (D120, D127); endpoints and order of checks: `docs/api.md` "Identity token".
+
+1. **At login** (and at the unlock of a record written before this, which has no proofs), while PRK is in memory, the
+   vault makes one **wallet proof** per address: the Stellar and the EVM key (each derived for one signature inside
+   `withChainKey` and zeroed) sign `"hana-id/identity-wallet/v1" ‖ 0x00 ‖ signer ‖ appId ‖ sessionPk ‖ chain ‖
+   address`. They are kept in the session and in the IndexedDB record (format 2, `vault/record.ts`), and copied to a
+   dormant session, so no later step needs PRK.
+2. **The partner page calls `hana.getIdentityToken({maxAgeMs?})`** → port `hana_identityToken`, a silent method like
+   `hana_status`: no popup, no PRK, never activity (it doesn't wake a dormant session or restart the idle timer).
+   Logged out: `{identityToken: null}`.
+3. The vault returns its cached token while more than 5 min remain (or half the token's life when the session's end
+   made it short) and it is within `maxAgeMs`. Otherwise, under the Web Lock `hana-identity:<appId>` (so the app's
+   tabs mint one at a time; a tab that waited finds the other's token), it signs the **session proof**
+   (`"hana-id-identity-v1:" ‖ signer ‖ appId ‖ sessionPk ‖ issuedAtMs ‖ nonce ‖ sha256("identity-token" ‖ parentOrigin ‖
+   walletProofsHash ‖ sha256(""))`, with its server-corrected clock) and calls `POST /v1/identity/token`. In an app
+   that keeps logins it first waits for the login's background persist (D79): the API needs the share.
+4. **The API** checks the proof (±60 s, signature), that the contract isn't paused, the share (never another app's;
+   in a `session` app: live, read-only, nothing moves), the on-chain session (live, in the app's scope), both wallet
+   proofs, then single use and its limits (per session, per account, per app and per scope before a global breaker,
+   D176); computes `sub` (HMAC of the path's root identity with `IDENTITY_SUB_KEY`, per scope, `key_index`
+   dropped) and `sid` (HMAC of app and session key); sets `exp = min(iat + 1 h, session end)`; signs ES256 with the
+   active key and checks the signature with the published key before answering.
+5. The vault caches the token, announces it on `hana-vault:<appId>` (`{t: 'identity', sessionPk, token, iatMs,
+   expiresAtMs}`: the session's other tabs cache it too) and emits `identityTokenChanged` to its partner page. A `410
+   session_ended` ends the session in the vault as a revoked share does (`sessionExpired`).
+6. **The partner backend** verifies the token against `{iss}/jwks.json` (cached 10 min): `alg` ES256, `typ`
+   `hana-identity+jwt`, `iss`, `aud` = its app id, `exp`. The token is never accepted by any Hana API or the contract.
+
+The cache is dropped (and `identityTokenChanged(null)` sent) at logout, expiry, revocation, a newer login, and when a
+dormant session ends; it survives a session going dormant. The React hook `useIdentityToken` refreshes at `exp` − 5
+min while the page is visible.
+
 ### Owner and registry changes
 
 | Change | Who / how | Code |
 |---|---|---|
 | Register a scope (pilot) | Hana: `admin scope:register` → `admin_register_scope` with the owner account's full-access key | `scripts/admin.ts`, `scripts/lib/admin-scope.ts` |
-| Register an app, origins, suspend/resume | Hana: `admin app:create`, `app:origins:add/remove`, `app:suspend/resume` (D1 via `wrangler d1 execute`); refuses a `pk_test_`/`pk_live_` scope conflict | `scripts/admin.ts`, `scripts/lib/admin-sql.ts` |
-| Vault settings (`persistence`, TTLs, `raw_sign`, policy, web client) | Hana: `admin app:settings` (D1; `--raw-sign approval` and a new or changed policy are pending for 24 h, `changeDelayMs` in dev envs, D52; turning either off is immediate; the UPDATE applies only over the row it read) | `scripts/lib/admin-settings.ts`, migration 0003 |
+| A scope's email client (dev envs only) | Hana: `admin scope:add-email-client` mints the client proof locally with the issuer's code and key file, checks it against the contract's rules, then the scope's NEAR owner sends `propose_change(AddClient)` and `execute_change` (D253). Elsewhere: the issuer's staff route behind Access, then the scope's owner | `scripts/lib/admin-email-client.ts`, `apps/email-issuer/src/client-proof.ts` |
+| Register an app, origins, suspend/resume | Hana: `admin app:create --org` (writes the `scopes` row with the scope's environment, `pk_test_`/`pk_live_` by it, the first `app_keys` row), `app:origins:add` (a staff proposal: `guarded_changes` + an `app_origins` row with `active_from` NULL), `app:origins:remove` and `app:suspend/resume` (immediate; Hana's suspension bit 1), each with its `app_changes` row (D1 via `wrangler d1 execute`, compare-and-swap on the app's version) | `scripts/admin.ts`, `scripts/lib/admin-apps.ts`, `scripts/lib/admin-sql.ts`, migration 0006 |
+| RPC writes (batch C5, unbound until C7/C8) | The console's members through `ConsoleRpc` (removals, turn-offs, settings, logo pointer, keys, the partner suspension bit, cancels, the emailed-link cancel) and Hana staff through `AdminRpc` (the same for any org, plus `createApp`, `assignScopeOrg`, `deleteApp`, every suspension bit, security contacts, staff proposals, `ackNotice` after the admin Worker's notice, expedite, the feeds). One D1 batch per write with its `app_changes` row first (compare-and-swap); kill switches through `ConsoleRpc` capped by the breaker (5 per org, 20 overall per hour) and every call by a hot-DB budget | `apps/api/src/rpc/`, `apps/api/src/changes/` |
+| Guarded changes (origin adds, auto-approve policies, raw signing on) | Proposed by Hana staff (the CLI, or `AdminRpc.addOrigins` / `proposeChange`; the console's owners from batch C6/C10); in force only once announced and `appChangeDelayMs` later (24 h in production; 60 s on sandbox-dev). The admin Worker announces after its notice is accepted (batch C8); until then, in an env without an admin Worker, `admin app:changes:announce <id>` does it with no email. `AdminRpc.ackNotice` starts the clock the same way (and stores the cancel link's token hash). A change not announced within 7 days is cancelled by the API's hourly cron, which also records activations, promotes policies and raw signing, and flags origins, policies and raw signing no announced change or the 0006 baseline explains (drift, `apps/api/src/changes/drift.ts`). The initial origins of an app whose scope `app:create` created skip the delay while the scope shows no sign of a user (`no_session` waiver: no `first_session_at`, which every session-pool relay attempt writes, no other origin ever in force, no share, session marker (written once the first session-pool relay settled; batch C4) or identity row; decided in the announcement's SQL) | `scripts/lib/admin-apps.ts`, `apps/api/src/guarded/cron.ts`, migrations 0006 and 0009 |
+| Vault settings (`persistence`, TTLs, `raw_sign`, policy, web client) | Hana: `admin app:settings` (D1; `--raw-sign approval`, live apps only, and a new or changed policy are guarded changes, above; turning either off and the other settings are immediate; every write bumps `settings_version`, applies only over the row it read and records an `app_changes` row) | `scripts/lib/admin-settings.ts`, migrations 0003 and 0006 |
 | Propose / cancel / remove client / disable shared login (OIDC owner) | `POST /v1/owner-actions` with a console-client token; off-chain precheck, single-use token marker, owner pool | `handleOwnerAction` `handlers.ts:396`, `apps/api/src/owner-actions.ts:31` |
 | Execute a matured change | anyone; `POST /v1/owner-actions` relays `execute_change` | same |
 | NEAR-account owners | call the contract directly (the API relays OIDC auth only, `apps/api/src/validate.ts`) | `contracts/hana-signer/src/registry.rs` |
@@ -326,9 +553,17 @@ Timelocks, quarantine and shared-client rules: `docs/contract-interface.md` "Reg
 ### Key export
 
 `packages/web/src/auth/export-page.ts`: `hana_export {chain}` → launcher → top-level `{authOrigin}/export` window,
-which runs its own fresh login (`/login?mode=export`, `max_age=0`, `max_uses = 1`) through `/v1/login`, decrypts
-against its own path, aborts if the address differs from the vault's, and shows the key (SEP-23 `S…` or `0x` hex)
-while a button is held after a typed confirmation. The key is erased 5 min after it is derived, or earlier when the
+which runs its own fresh login (`/login?mode=export`, `max_age=0`, `max_uses = 1`) through `/v1/login`: Google, or in
+an app with email (batch 8b, D246 lifted, D258) the child popup's chooser and `/login/email`'s code step over the export
+window's own session (purpose `session`; the token checked against the chain's email keys as the vault does). It
+resolves the path through `get_identity` on its own RPC (a linked identity exports its account root's key; a pending
+one is refused, `link_pending`), decrypts against that path, aborts if the address differs from the vault's, and after a
+typed confirmation shows the key (SEP-23 `S…` or `0x` hex) on a "Show key" / "Hide key" toggle, selectable while shown and
+hidden again on window blur, a hidden tab and pagehide; "Copy key" writes it with `navigator.clipboard.writeText` in the
+click, shown or not, and says how to copy by hand when the Clipboard API is missing or refuses (no `execCommand`
+fallback). Both act only on real gestures. The window tries to blank the clipboard (an empty `writeText`, never a read)
+60 s after the last copy, at the erase and at pagehide, only while it has focus: Chromium allows that, Firefox and Safari
+likely refuse it without a gesture (D268). The key is erased 5 min after it is derived, or earlier when the
 vault session ends: the context carries `sessionExpiresAtMs`, and the vault's `cancelExport` posts
 `hana:export-end` on logout, revoke, expiry, a newer login or its 15 min job limit; the window also ends if its vault
 frame goes away (D111). The vault's PRK is never used for export. The `auth_time` freshness
@@ -371,6 +606,16 @@ What decides an address, and when it freezes:
 | New chain tuples, new `account` values | no (additive) | open |
 | `vaultOrigin`, `authOrigin`, `create_session_and_derive`, persistence, own vs shared client | no | `authOrigin` still breaks own-client redirect registrations if changed |
 
+Contract v3 (email login, merged on `develop`, live on sandbox-dev since 2026-11-03) adds no input to this table for existing identities:
+the path's `(provider, sub)` is the session's path identity, which is the token's own unless the identity is a member
+of an account, when it is the account root's (an existing path, so linking never creates or moves an address). Email
+identities use provider `email` and a `sub` derived off chain (`docs/email-login-spec.md` "Address impact"; frozen
+at the address freeze). The web (batch 7) resolves the path as the contract does, from `get_identity` on its own RPC
+(`packages/core/src/links.ts` `pathIdentity`): an identity that is "own" derives `scope#provider#sub#0` (Google byte
+for byte as before, golden tests in `packages/web/test/vault/linking.test.ts` and `email-login.test.ts`), an active
+member its account root's path, a pending member nothing. Linking moves no address: a member opens a path that
+already exists. No path layout or derivation input changed in batches 7 and 8b.
+
 Before the freeze, anything that changes an address must be called out (CLAUDE.md); after it, never. A scheme change
 would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
 
@@ -380,19 +625,21 @@ would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
 |---|---|---|
 | `hana-signer` state (public) | Config (owner, mpc, domain, sponsors, console audiences, shared clients, change delay), issuers and Google RSA public keys, scopes (owners, clients, pending changes, `action_nonce`), client index, quarantine / retired-client records, sessions (`path`, `scope_id`, `expires_at_ms`, `max_uses`, `used`), revoke tombstones, expiry FIFO | Keys, S, PRK |
 | NEAR transaction args (public forever) | Google ID tokens used in `create_session*`, register proofs, owner tokens; session signatures; BLS `pk1`/`pk2`; MPC responses (encrypted to `a`) | Anything usable without the session key or `a` |
-| D1 `DB` | `plans`, `apps` (+ 0003 settings: `persistence`, `session_ttl_ms`, `idle_ttl_ms`, `raw_sign*`, `auto_approve_*`, `google_web_client_id`), `app_origins`, `usage` (`sessions`, `derives`, `unlocks` per app per UTC day), `issuer_key_missing`, `vault_shares` (`share_enc` under `VAULT_KEK`, `session_pk`, `path_hash`, `partner_origin`, counter, times) | Plaintext `K_s`, tokens, user ids (only `sha256(path)`) |
+| D1 `DB` | `plans`, `scopes` (org, environment, `first_session_at`), `apps` (+ 0003 settings: `persistence`, `session_ttl_ms`, `idle_ttl_ms`, `raw_sign*`, `auto_approve_*`, `google_web_client_id`; + 0006: `org_id`, `suspended_by`, the two versions, `logo_key`, `deleted_at`), `app_keys` (publishable keys, public), `app_origins` (+ `active_from`, `change_id`), `guarded_changes`, `app_changes` (append-only ledger of every app write, actors as staff ids or `cli:<login>`), `security_events`, `org_security_contacts` (staff-set emails; none yet), `session_markers` (the first session-pool relay per app, the waiver's sign), the legacy `usage` (`sessions`, `derives`, `unlocks` per app per UTC day; not written since batch C4), `issuer_key_missing`, `vault_shares` (`share_enc` under `VAULT_KEK`, `session_pk`, `path_hash`, `partner_origin`, counter, times), `identity_issuance_hourly` (tokens per signing key and hour), `identity_usage` (tokens per app and day) | Plaintext `K_s`, tokens, user ids (only `sha256(path)`), identity tokens, `sub`, `sid`, addresses |
+| Usage ledger (Neon, `usage` and `ops` schemas) | Per request past the gate: request id, time, org, app, scope, endpoint, outcome, code, status, latency, relayed, transaction, relayer key and nonce, provisional gas, and on ok login/session/derive the uid (`HMAC(USER_ID_KEY, scope ‖ provider ‖ sub)[0..16]`, a pseudonym, D96); `app_users` (first and last day per uid); identity tokens per app and day | A sub, JWT, email, IP, session key, share id or path |
 | `RelayerKey` DO storage | Per key: `publicKey`, nonce reservation, last block hash and time | Secret keys (they are Worker secrets) |
-| `RateLimiter` DO storage | `<window>@<start>` counters; `mark:<sha256(owner token)>` single-use markers until the token's `exp` | Tokens |
+| `RateLimiter` DO storage | `<window>@<start>` counters; `mark:<sha256(owner token)>` single-use markers until the token's `exp`; `mark:<sha256(identity proof signature)>` until the proof's `issuedAtMs` + 120 s | Tokens |
 | `LoginRelay` DO storage | One slot: `{iv, ct}` for ≤ 120 s, then a tombstone for 120 s | Plaintext tokens (the API has no `relayKey`) |
 | Per-isolate memory (API) | JWKS (≤ max-age, stale ≤ 6 h on fetch failure), config / scope / client views (≤ 60 s; "no scope" ≤ 10 s), sessions (≤ 10 s), parsed KEKs, counter holds | — |
-| Browser, `vaultOrigin` | IndexedDB `hana-vault` records (partitioned by top-level site); memory: session key, PRK, consent and counters | S, `a` (memory only, dropped), plaintext PRK on disk |
+| Browser, `vaultOrigin` | IndexedDB `hana-vault` records (partitioned by top-level site; format 2 adds the identity wallet proofs); memory: session key, PRK, consent and counters, the current identity token | S, `a` (memory only, dropped), plaintext PRK on disk, an identity token on disk |
 | Browser, `authOrigin` | `sessionStorage` `hana.login.<relayId>` = `{v, createdAt, relayKey}` (≤ 10 min, single use) | Tokens |
-| `.secrets/<env>/` (operator machine, gitignored, 0700/0600) | `relayer-keys.json`, `owner-relayer-keys.json`, `keys-updater.json` (`scripts/lib/secrets.ts:66`), `vault-kek` (+ `vault-kek.previous` during a rotation; `scripts/lib/vault-kek.ts`) | — |
+| `.secrets/<env>/` (operator machine, gitignored, 0700/0600) | `relayer-keys.json`, `owner-relayer-keys.json`, `keys-updater.json` (`scripts/lib/secrets.ts:66`), `vault-kek` (+ `vault-kek.previous` during a rotation; `scripts/lib/vault-kek.ts`), `identity-signing-key.json` (active), `identity-signing-key-standby.json` (published, never uploaded; keep it offline), `-next.json` / `-previous.json` during a rotation, `identity-slots.json`, `identity-sub-key` (`scripts/lib/identity-key.ts`, D177), `neon.json` (the ledger owner's URLs), `neon-usage-writer.url`, `neon-usage-admin.url`, `user-id-key` (`scripts/lib/usage-setup.ts`, D224) | — |
 | `~/.near-credentials/testnet/` (operator machine) | Full-access keys of the owner, signer and relayer accounts (`scripts/lib/keys.ts`) | — |
-| Worker secrets | `RELAYER_KEYS`, `OWNER_RELAYER_KEYS`, `KEYS_UPDATER_KEY`, `VAULT_KEK`, `VAULT_KEK_PREVIOUS` | — |
-| Watchdog D1 (its own Cloudflare account) | `meta` (last chain snapshot, failure counters, heartbeat, digest, run lock, the last relayer funds reading), `seen_kids` (kid, `n`, `e`, first/last seen; `baseline` kids from the first run), `absences`, `runs` (30 days), `actions` (method, args, tx hash), `alerts` (severity, details, acks), `deliveries` | Secrets, tokens |
+| Worker secrets | `RELAYER_KEYS`, `OWNER_RELAYER_KEYS`, `KEYS_UPDATER_KEY`, `VAULT_KEK`, `VAULT_KEK_PREVIOUS`, `IDENTITY_SIGNING_KEY` / `IDENTITY_SIGNING_KEY_STANDBY` (two slots: the active identity key, and during a switch the incoming one), `IDENTITY_SUB_KEY` | — |
+| Watchdog D1 (its own Cloudflare account) | `meta` (last chain snapshot with the email issuer and policy, failure counters, heartbeat, digest, run lock, the last relayer funds reading, the email policy verdict, the last link stats), `seen_kids` (kid, `n`, `e`, first/last seen; `baseline` kids from the first run), `absences`, `runs` (30 days), `actions` (method, args, tx hash), `alerts` (severity, details, acks), `deliveries` | Secrets, tokens |
 | Watchdog Worker secrets | `WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, `RESEND_API_KEY`, `SLACK_WEBHOOK_URL`, the paging app's credentials, `HEARTBEAT_URL` (from `.secrets/<env>/watchdog-secrets.json`) | — |
-| `apps/api/.dev.vars` (local, gitignored, 0600) | Relayer and updater keys for `wrangler dev` (`gen-wrangler --dev-vars`) | — |
+| `apps/api/.dev.vars` (local, gitignored, 0600) | Relayer and updater keys and the identity token's secrets for `wrangler dev` (`gen-wrangler --dev-vars`) | — |
+| Partner backends | Identity tokens they received (≤ 1 h each), and whatever they keep from them (`sub`, `sid`, addresses) | Anything that reaches a key |
 
 ## Environments and manifests
 
@@ -400,8 +647,9 @@ would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
   Only `sandbox-dev` exists. `network` accepts only `testnet`. Every account name the code uses comes from here
   (`signer`, `relayer`, `owner`, `mpc`); code reads it via generated config, never by hard-coding names.
 - Other fields: `ckdDomainId`, `ckdNetworkKey` (pinned with `scripts/fetch-ckd-key.ts`), `rpc`, optional
-  `rpcFallback` (https, not `rpc`; the vault's and the export window's second NEAR RPC, in their CSP, and the
-  Workers' `NEAR_RPC_FALLBACK`), `apiUrl`,
+  `rpcFallback` (https, not `rpc`, another registrable domain outside `local*`, required with `emailIssuer` outside
+  `local*`; the vault's and the export window's second NEAR RPC, in their CSP, and the Workers'
+  `NEAR_RPC_FALLBACK`; a member's path is confirmed on both, D263), `apiUrl`,
   `vaultOrigin`/`authOrigin` (both or neither; bare origins; `https`; loopback only in `local*` envs; otherwise a real
   DNS name, never an IP, a bare public suffix, a single label or a trailing dot; different origins, neither
   `apiUrl`'s origin; different sites from each other and from `apiUrl` outside `local*`/`sandbox*`,
@@ -488,3 +736,7 @@ would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
 | publishable key | `pk_test_…` / `pk_live_…`, public, identifies an app in D1; a test key never shares a scope with a live key |
 | sponsor | Account the contract pays storage for (the relayer) |
 | ship gate | If `create_session_and_derive` saves < 1.5 s median over 10 testnet runs, it is removed before the audit |
+| identity token | An ES256 JWT (≤ 1 h, `typ: hana-identity+jwt`) for a partner's backend: `sub`, `sid`, proven `wallets`, `login_methods`; minted by the API for the vault's live session |
+| `sub` (identity token) | `u1_` + HMAC-SHA256(`IDENTITY_SUB_KEY`, scope ‖ root provider ‖ root sub)[0..16]: per scope and account, never the Google `sub` |
+| `sid` | `s1_` + HMAC-SHA256(`IDENTITY_SUB_KEY`, app id ‖ session key)[0..16]: one per session, new at each interactive login |
+| wallet proof | A signature by an address's own key over the identity wallet message, bound to the session key and app |

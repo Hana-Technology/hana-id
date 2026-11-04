@@ -19,8 +19,22 @@ describe('auth page policies', () => {
     expect(authPageCsp(sandbox, 'login')).toBe(`${BASE}; frame-ancestors 'none'`);
     expect(authPageCsp(sandbox, 'callback')).toBe(`${BASE}; connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev; frame-ancestors 'none'`);
     expect(authPageCsp(sandbox, 'approve')).toBe(`${BASE}; frame-ancestors 'none'`);
-    expect(authPageCsp(sandbox, 'export')).toBe(
+    const { rpcFallback: _fallback, ...oneRpc } = sandbox;
+    expect(authPageCsp(oneRpc, 'export')).toBe(
       `${BASE}; connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev https://test.rpc.fastnear.com https://www.googleapis.com; frame-ancestors 'none'`,
+    );
+  });
+
+  it('the export window may reach both NEAR providers (D263): its meta policy lists rpcFallback, as the header does', () => {
+    // A browser enforces the meta and the header policy together: a fallback missing from the meta one blocks every
+    // read of it, and a linked identity's export is refused path_unconfirmed (sandbox-dev, 2026-11-04).
+    const two = { ...sandbox, rpc: 'https://test.rpc.fastnear.com', rpcFallback: 'https://rpc.testnet.near.org/' };
+    expect(authPageMetaCsp(two, 'export')).toContain(
+      'connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev https://test.rpc.fastnear.com https://rpc.testnet.near.org https://www.googleapis.com',
+    );
+    // The same origin twice is listed once.
+    expect(authPageMetaCsp({ ...two, rpcFallback: 'https://test.rpc.fastnear.com/other' }, 'export')).toContain(
+      'connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev https://test.rpc.fastnear.com https://www.googleapis.com',
     );
   });
 
@@ -31,9 +45,22 @@ describe('auth page policies', () => {
     }
   });
 
-  it('serves the four pages at the spec’s paths', () => {
+  it('the email step’s connect-src is the issuer and the API only (batch 8a), the API only without an issuer', () => {
+    // The live manifest may or may not carry an emailIssuer block: strip it for the "without" half.
+    const { emailIssuerUrl: _url, emailIss: _iss, ...noIssuer } = sandbox;
+    expect(authPageCsp(noIssuer, 'email')).toBe(`${BASE}; connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev; frame-ancestors 'none'`);
+    const withIssuer = { ...noIssuer, emailIssuerUrl: 'https://hana-id-email-sandbox-dev.tingtc.workers.dev', emailIss: 'https://hana-id-email-sandbox-dev.tingtc.workers.dev/v1/email' };
+    expect(authPageCsp(withIssuer, 'email')).toBe(
+      `${BASE}; connect-src https://hana-id-email-sandbox-dev.tingtc.workers.dev https://hana-id-api-sandbox-dev.tingtc.workers.dev; frame-ancestors 'none'`,
+    );
+    // The chooser stays fetch-free with email on (D77).
+    expect(authPageCsp(withIssuer, 'login')).toBe(`${BASE}; frame-ancestors 'none'`);
+  });
+
+  it('serves the five pages at the spec’s paths', () => {
     expect(AUTH_PAGES.map((p) => [p.path, p.file])).toEqual([
       ['/login', 'login.html'],
+      ['/login/email', 'login/email.html'],
       ['/login/callback', 'login/callback.html'],
       ['/approve', 'approve.html'],
       ['/export', 'export.html'],
@@ -131,7 +158,7 @@ describe('per-env build', () => {
     // Nothing is written next to the origin roots, so the vault root (<env>/vault) holds only the vault's files.
     expect(readdirSync(join(out, 'sandbox-dev'))).toEqual(['auth']);
     expect(readdirSync(built.dir).sort()).toEqual([ASSET_DIR, 'approve.html', 'export.html', 'login', 'login.html'].sort());
-    expect(readdirSync(join(built.dir, 'login'))).toEqual(['callback.html']);
+    expect(readdirSync(join(built.dir, 'login')).sort()).toEqual(['callback.html', 'email.html']);
   });
 
   it('replaces only its own root on a rebuild: stale auth files go, the vault’s root stays', async () => {

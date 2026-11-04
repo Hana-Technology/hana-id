@@ -38,9 +38,8 @@ export const DEPLOY_USAGE = `Usage: deploy-contract.ts <env> [--yes] [--relayer-
   --relayer-allowance         gas allowance per session-pool key, in NEAR (default 2)
   --owner-relayer-keys N      owner-pool keys on the relayer (OWNER_RELAYER_KEYS: /v1/owner-actions) (default 1)
   --owner-relayer-allowance   gas allowance per owner-pool key, in NEAR (default 0.5)
-  --upgrade                   change the code of an initialised contract: a v1 contract is migrated in place
-                              (DeployContract + migrate_v1, signer full-access key); a v2 contract gets
-                              propose_upgrade(hash) by the owner, and execute_upgrade once governance_delay_ms passed
+  --upgrade                   change the code of an initialised contract: propose_upgrade(hash) by the owner, and
+                              execute_upgrade once governance_delay_ms passed (a v1 contract is refused)
   --wasm <file>               deploy this wasm instead of building
   --skip-build                use the last built wasm (its hash is then known when planning)
   --transfer-owner            hand the contract to the council DAO: propose_owner(DAO), then the DAO's accept_owner
@@ -74,9 +73,28 @@ export interface DeployDeps {
   now?: () => number;
   /** The pinned Sputnik DAO code hash (default: contracts/sputnik/pin.json). */
   sputnikCodeHash?: string;
+  /**
+   * Reads `GET {apiUrl}/v1/health` (the JSON body, or null when it can't be read). Asked only by an `--upgrade` run;
+   * absent (tests that don't care), the API's capabilities aren't checked.
+   */
+  apiHealth?: (url: string) => Promise<unknown>;
 }
 
-export const defaultDeployDeps = (): DeployDeps => ({ rpc: (url) => new NearRpc(url), log: (line) => console.log(line) });
+/** The health answer, or null (10 s timeout; any failure is null, which `--upgrade` treats as no capability). */
+export async function readApiHealth(url: string): Promise<unknown> {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+export const defaultDeployDeps = (): DeployDeps => ({ rpc: (url) => new NearRpc(url), log: (line) => console.log(line), apiHealth: readApiHealth });
+
+/** `capabilities.createProof === true` in a health answer. */
+export const reportsCreateProof = (health: unknown): boolean =>
+  typeof health === 'object' && health !== null && (health as { capabilities?: { createProof?: unknown } }).capabilities?.createProof === true;
 
 function writeManifestFields(name: string, fields: Record<string, string>): void {
   const file = manifestPath(name);
@@ -235,16 +253,6 @@ async function execute(c: Ctx, step: DeployStep, creds: Partial<Record<Role, Loa
       await send(m.signer, [actionCreators.deployContract(new Uint8Array(code)), actionCreators.functionCall('new', step.init, GAS_INIT, 0n)]);
       return 'done';
     }
-    case 'migrate-v1': {
-      const code = wasm();
-      await storageCheck(code);
-      // One transaction: if migrate_v1 panics the deploy is rolled back with it and the v1 code stays.
-      await send(m.signer, [
-        actionCreators.deployContract(new Uint8Array(code)),
-        actionCreators.functionCall('migrate_v1', { issuer_key_delay_ms: step.issuer_key_delay_ms, governance_delay_ms: step.governance_delay_ms }, GAS_INIT, 0n),
-      ]);
-      return 'done';
-    }
     case 'relayer-keys': {
       const existing = readPoolKeys(m.name, step.pool, c.secretsRoot);
       const fresh: KeyPair[] = Array.from({ length: step.generate }, () => generateKey());
@@ -392,6 +400,7 @@ export async function deployMain(argv: readonly string[], deps: DeployDeps = def
   log(`Environment ${m.name} (${m.network}, RPC ${m.rpc})`);
   log(`  signer ${m.signer} · relayer ${m.relayer} · owner ${m.owner} (${m.ownerKind === 'sputnik' ? 'council DAO' : 'account'}) · mpc ${m.mpc} (CKD domain ${m.ckdDomainId})\n`);
   const { observed, creds } = await observe(c, wasmArg ?? existingWasm());
+  if (options.upgrade && deps.apiHealth) observed.apiCreateProof = reportsCreateProof(await deps.apiHealth(new URL('/v1/health', m.apiUrl).toString()));
   const plan = buildDeployPlan(m, observed, options);
 
   for (const role of ROLES) {

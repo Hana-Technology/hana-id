@@ -6,7 +6,7 @@ import type { Env } from '../src/env.ts';
 import worker from '../src/index.ts';
 import { handleRequest, SILENT_AFTER_MS } from '../src/status.ts';
 import { Store } from '../src/store.ts';
-import { alertsOf, initialized, jwk, MIN, RecordingNotifier } from './helpers.ts';
+import { alertsOf, emailJwk, IDENTITY_ISS, identityKey, initialized, jwk, linkStats, linkWindow, MIN, pinsOf, RecordingNotifier } from './helpers.ts';
 
 const TOKEN = 'status-token-for-tests-only-0123456789abcdef';
 const testEnv = (over: Partial<Env> = {}): Env => ({ ...(env as unknown as Env), WATCHDOG_STATUS_TOKEN: TOKEN, ...over });
@@ -44,6 +44,29 @@ describe('auth', () => {
   });
 });
 
+describe('GET /status: the identity token (D210)', () => {
+  it('serves the issuer, the pins in force and the last JWKS and discovery reads', async () => {
+    const [a, b] = [await identityKey(), await identityKey()];
+    const w = await initialized({ identity: { published: [a, b] } });
+    const e = testEnv({ IDENTITY_ISS: IDENTITY_ISS, IDENTITY_PINS: JSON.stringify([a.kid, b.kid]) });
+    const { body } = await call('/status', {}, w.clock.t, e);
+    const id = body.identity as { iss: string; jwks_url: string; discovery_url: string; pinned: string[]; jwks: { count: number; unpinned: number; keys: { kid: string; pinned: boolean }[] }; discovery: { issuer: string; problems: unknown[] } };
+    expect(id).toMatchObject({ iss: IDENTITY_ISS, jwks_url: `${IDENTITY_ISS}/jwks.json`, discovery_url: `${IDENTITY_ISS}/.well-known/openid-configuration`, pinned: [a.kid, b.kid] });
+    expect(id.jwks).toMatchObject({ count: 2, unpinned: 0, private: 0, missing: [] });
+    expect(id.jwks.keys.map((k) => [k.kid, k.pinned])).toEqual([[a.kid, true], [b.kid, true]]);
+    expect(id.discovery).toMatchObject({ issuer: IDENTITY_ISS, problems: [] });
+    const kinds = body.alert_kinds as Record<string, { severity: string; playbook: string }>;
+    for (const k of ['identity_key_unpinned', 'identity_private_key_published', 'identity_discovery_mismatch', 'identity_jwks_unreadable']) expect(kinds[k]).toMatchObject({ severity: 'critical', playbook: 'identity-jwks-forged' });
+    expect(kinds.identity_key_missing).toMatchObject({ severity: 'warning', playbook: 'identity-jwks-degraded' });
+    expect(kinds.identity_key_on_chain).toMatchObject({ severity: 'critical', playbook: 'identity-key-on-chain' });
+  });
+
+  it('an env without an identity token: nulls, nothing pinned', async () => {
+    const { body } = await call('/status');
+    expect(body.identity).toMatchObject({ iss: null, jwks_url: null, discovery_url: null, pinned: null });
+  });
+});
+
 describe('GET /status', () => {
   it('returns the last run, heartbeat, seen kids, actions, open alerts and the check registry', async () => {
     const w = await initialized();
@@ -77,6 +100,29 @@ describe('GET /status', () => {
     const kinds = body.alert_kinds as Record<string, { severity: string; playbook: string }>;
     for (const k of ['relayer_balance_critical', 'relayer_allowance_critical', 'relayer_pool_empty']) expect(kinds[k]).toMatchObject({ severity: 'critical', playbook: 'relayer-out-of-funds' });
     for (const k of ['relayer_balance_low', 'relayer_allowance_low']) expect(kinds[k]).toMatchObject({ severity: 'warning', playbook: 'relayer-out-of-funds' });
+  });
+
+  it('serves the email pins, the chain email issuer at the last run, and the last link stats', async () => {
+    const hana = await emailJwk(201);
+    const pins = pinsOf({ hana: [hana] });
+    const w = await initialized({ pins, before: (x) => void x.chain.emailIssuer([hana]) });
+    w.chain.linkStats = linkStats({ current: linkWindow(w.clock.t, 7), links_total: 12 });
+    await w.run();
+    const e = testEnv({ EMAIL_PINS: JSON.stringify(pins), EMAIL_JWKS_URL: 'https://api.test/v1/email/jwks.json' });
+    const { body } = await call('/status', {}, w.clock.t, e);
+    expect(body.email).toMatchObject({
+      pinned: pins,
+      jwks_url: 'https://api.test/v1/email/jwks.json',
+      last: { pinned: pins, chain: { issuer: true, pre_v3: false, self_issued: { signers: [{ id: 'hana', kids: [hana.kid] }], required: 1 }, active_kids: [hana.kid] }, differences: [], weaker: [] },
+    });
+    expect(body.link_stats).toMatchObject({ thresholds: { per_scope_per_hour: 50, total_per_hour: 500 }, links_total: 12, current: { total: 7 } });
+    const kinds = body.alert_kinds as Record<string, { severity: string; playbook: string }>;
+    expect(kinds.signer_policy_mismatch).toMatchObject({ severity: 'critical', check: 'signer_policy', playbook: 'signer-policy-mismatch' });
+    expect(kinds.link_threshold_reached).toMatchObject({ severity: 'critical', check: 'links', playbook: 'link-volume' });
+    expect(kinds.link_volume_high).toMatchObject({ severity: 'warning', check: 'links', playbook: 'link-volume' });
+    // Without pins: nothing pinned.
+    const bare = (await call('/status', {}, w.clock.t)).body;
+    expect(bare.email).toMatchObject({ pinned: null, jwks_url: null });
   });
 
   it('says silent when the last run is older than two intervals', async () => {

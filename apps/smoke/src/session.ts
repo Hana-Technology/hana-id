@@ -1,6 +1,6 @@
 // Session key for the page: a non-extractable WebCrypto Ed25519 key pair (@hana-id/core session.ts), kept in memory
 // only; a reload starts over. The nonce layout and the signatures come from @hana-id/core.
-import { type Bytes, type SessionNonceInput, checkSessionParams, newSessionKey, randomBytes, sessionNonce } from '@hana-id/core';
+import { type Bytes, type SessionNonceInput, checkSessionParams, newSessionKey, randomBytes, sessionNonce, signCreate } from '@hana-id/core';
 
 export { signDerive, signRevoke } from '@hana-id/core';
 
@@ -17,6 +17,14 @@ export interface PendingSession extends SessionParams {
   salt: Bytes;
   expiresAtMs: number;
   nonce: string;
+}
+
+/**
+ * create_session's proof of possession (D137): the session key's signature over session_message(0,
+ * "hana-id-create-v1:" ‖ sha256(the session nonce preimage)). Contract v3 requires it; v2 ignores the extra field.
+ */
+export async function signCreateProof(p: PendingSession): Promise<Bytes> {
+  return signCreate(p.privateKey, { signer: p.signer, scopeId: p.scopeId, sessionPublicKey: p.publicKey, expiresAtMs: p.expiresAtMs, keyIndex: p.keyIndex, maxUses: p.maxUses, salt: p.salt });
 }
 
 /** Makes the session key, a random 32-byte salt and expiry (now + 1 h), and the Google nonce committing to them. */

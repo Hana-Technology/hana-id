@@ -16,7 +16,7 @@ describe('routing', () => {
   it('GET /v1/health', async () => {
     const res = await call('/v1/health');
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ ok: true, env: 'sandbox-test', signer: 'signer.test.near' });
+    expect(await res.json()).toMatchObject({ ok: true, env: 'sandbox-test', signer: 'signer.test.near', hotDb: 9 });
   });
 
   it('404s unknown paths and 405s wrong methods', async () => {

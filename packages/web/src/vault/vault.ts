@@ -5,6 +5,8 @@
 // - It accepts exactly one hana:hello: from window.parent, from an origin the app allows (and equal to
 //   location.ancestorOrigins[0] where the browser has it), with one MessagePort. It pins that origin and port and drops
 //   every later hello and every other window message from the parent.
+// - It says `connected` on the port as soon as it takes the hello, before anything that waits on storage or the
+//   network, so the SDK can tell a vault that never answered from one that is slow to unlock.
 // - After the handshake it unlocks a persisted record (one API call, no chain call), replies `ready`, then fetches
 //   GET /v1/app in the background (never on the unlock path).
 // - Requests arrive on the port only. Signatures need a guarded Approve in a Hana popup, or a match against an
@@ -23,7 +25,10 @@
 // - One session per app per device: a login replaces the record and revokes the shares it replaces, a logout ends
 //   every tab's session, and a `revoked` broadcast ends only the tabs holding that share.
 import {
+  type AccountMethod,
+  type AccountResult,
   type AppConfig,
+  type LoginMethod,
   ErrorCode,
   type Jwk,
   isTestPublishableKey,
@@ -34,7 +39,11 @@ import {
   type PortRequest,
   type PortResultMap,
   type StatusResult,
+  type VaultBroadcast,
+  type WalletProofs,
   ApiError,
+  sha256,
+  walletProofMessage,
   type Bytes,
   badCounterExpected,
   bytesEqual,
@@ -53,22 +62,27 @@ import { deriveAddresses } from '@hana-id/core/derivation';
 import { type AutoApproveResult, matchAutoApprovePolicy, recordAutoApproveUse } from '@hana-id/core/policy';
 import type { HanaEnv } from '../hana-env.ts';
 import { VaultApi } from './api.ts';
+import { type CachedIdentity, cacheUsable, copyProofs, makeWalletProofs, mintBody, tokenIatMs } from './identity.ts';
 import { type ApprovalOutcome, Approvals } from './approvals.ts';
 import { autoApproveStatus, consentActive, consentEnd, newConsent, withUsage } from './auto-approve.ts';
 import { type Persistence, type PolicyInForce, type RawSign, type VaultConfig, parentAllowed, policyInForce } from './config.ts';
 import { VaultError, apiErrorToVault, disconnected, notLoggedIn, toProtocolError, userRejected } from './errors.ts';
 import { Launcher, type LauncherHandle, type LauncherView } from './launcher.ts';
-import { type LoginMode, type LoginStage, type LoginSuccess, PendingLogin, serverDetail } from './login.ts';
+import { type LoginContext, type LoginMode, type LoginRequest, type LoginStage, type LoginSuccess, PendingLink, PendingLogin, type RootPins, isOwnLoginPath, pathOwner, serverDetail } from './login.ts';
+import { type IssuerApi, issuerApi } from './issuer.ts';
 import { NearView } from './near.ts';
 import {
   type ConsentV1,
   DERIVATION_VERSION,
+  RECORD_VERSION,
   type RecordStore,
   type RecordV1,
   openConsent,
   openPrk,
   parseRecord,
+  parseRootPin,
   recordKey,
+  rootPinKey,
   sameSession,
   sealConsent,
   sealPrk,
@@ -196,6 +210,11 @@ interface Session {
    * this tab read or wrote, kept so hana_autoApproveStatus can answer while the session is dormant.
    */
   consent: ConsentV1 | null;
+  /**
+   * The identity token's proofs of `addresses` for this session key and app (vault/identity.ts), made at login or at
+   * the unlock of a format-1 record; null only if making them failed (the session then gets no identity token).
+   */
+  walletProofs: WalletProofs | null;
   lastTouchAt: number;
   /** Server-corrected time of the partner page's last request for this session (the in-memory idle limit). */
   lastActivityAt: number;
@@ -223,6 +242,8 @@ class PersistFailure extends Error {
 
 /** A failed POST /v1/vault/shares is tried once more after this long (D79). */
 export const PERSIST_RETRY_MS = 1_000;
+/** A partner's `hana_account` calls within this long of a read share it (W-L4). */
+export const ACCOUNT_CACHE_MS = 5_000;
 
 /** A 'session'-mode session whose PRK was zeroed for idleness: the record can unlock it again (same share only). */
 interface Dormant {
@@ -230,10 +251,28 @@ interface Dormant {
   expiresAtMs: number;
   sessionPk: Uint8Array;
   shareId: Uint8Array;
+  /** The derivation path (`hana.account()` reads its account while dormant). */
+  path: string;
   /** The consent this tab last read or wrote (not secret: policy id, end time, counters), for hana_autoApproveStatus. */
   consent: ConsentV1 | null;
+  /**
+   * The session key (non-extractable, as in the record) and the wallet proofs: an identity token needs the session key
+   * but no PRK, so it can be refreshed while the session is dormant.
+   */
+  keyPair: CryptoKeyPair;
+  walletProofs: WalletProofs | null;
   /** Ends it at expiresAtMs, as a live session's expiry timer would. */
   expiryTimer: unknown;
+}
+
+/** The session an identity token is minted for (vault.identityTarget). */
+interface IdentityTarget {
+  sessionPk: Uint8Array;
+  keyPair: CryptoKeyPair;
+  proofs: WalletProofs | null;
+  live: Session | null;
+  dormant: Dormant | null;
+  hasShare: boolean;
 }
 
 interface ExportJob {
@@ -312,12 +351,30 @@ export class Vault {
   private dormant: Dormant | null = null;
   private waking: Promise<void> | null = null;
   private pending: PendingLogin | null = null;
+  /** `hana.linkAccount` in its popup (build plan batch 8b); one at a time, never beside a login. */
+  private pendingLink: PendingLink | null = null;
+  /** The email issuer's google-match (an env with an email issuer). */
+  private issuer: IssuerApi | null = null;
+  /** The sign-in methods last reported for the session's wallet (`linkChanged` reports the differences). */
+  private methodsSeen: { path: string; methods: AccountMethod[] } | null = null;
+  /** The provider the last login linked (already reported), skipped by the first snapshot. */
+  private freshLink: LoginMethod | null = null;
+  /** `hana_account`'s last answer for a path, reused for ACCOUNT_CACHE_MS (W-L4), and the read in flight. */
+  private accountCache: { path: string; atMs: number; result: AccountResult } | null = null;
+  private accountRead: { path: string; read: Promise<AccountResult> } | null = null;
+  /** Root pins (D263) of this frame's logins, in front of the stored ones (the only ones when nothing is stored). */
+  private readonly memoryPins = new Map<string, string>();
   private continueIntent: LauncherHandle | null = null;
   private exportJob: ExportJob | null = null;
   private appConfigPromise: Promise<AppConfig> | null = null;
+  /** Each GET /v1/app answer's round trip on this clock (pk_test_ login timings: `appRtt`). */
+  private readonly appRtts = new WeakMap<AppConfig, number>();
   private declinedPolicyId: string | null = null;
   private readonly seenIds = new Set<string>();
   private jwksCache: { keys: Jwk[]; at: number } | null = null;
+  /** The session's current identity token (this tab's mint or another tab's, over the channel), or null. */
+  private identity: CachedIdentity | null = null;
+  private readonly identityLockName: string;
 
   constructor(private readonly o: VaultOptions) {
     this.env = o.env;
@@ -334,6 +391,8 @@ export class Vault {
     this.testApp = isTestPublishableKey(o.config.publishableKey);
     this.launcher = new Launcher(o.launcherView, (ui) => this.emit('ui', ui), this.timers);
     this.lockName = `hana-vault-unlock:${o.config.appId}`;
+    // Tabs of the app mint one at a time: the second finds the first's token (shared over the channel).
+    this.identityLockName = `hana-identity:${o.config.appId}`;
     this.recordId = recordKey(o.env.signer, o.config.appId, o.config.scopeId, 0);
     this.bundleCkdKeyHash = ckdKeyHash(o.env.ckdNetworkKey);
     o.host.onMessage((e) => this.onWindowMessage(e));
@@ -356,7 +415,13 @@ export class Vault {
     if (e.source === this.host.parent) return;
     const t = isObj(e.data) ? e.data.t : undefined;
     if (t === 'hana:auth-hello') {
-      if (this.pending && parseWindowMessage(e.data, ['hana:auth-hello'])) this.pending.acceptHello(e);
+      const task = this.pending ?? this.pendingLink;
+      if (task && parseWindowMessage(e.data, ['hana:auth-hello'])) task.acceptHello(e);
+      return;
+    }
+    if (t === 'hana:auth-progress') {
+      const m = this.pending ? parseWindowMessage(e.data, ['hana:auth-progress']) : null;
+      if (m) this.pending?.acceptProgress(e, m.stage);
       return;
     }
     if (t === 'hana:export-hello') {
@@ -389,6 +454,7 @@ export class Vault {
       onServerTime: (t) => this.clock.refresh(t),
     });
     this.near = new NearView({ rpc: this.env.rpc, rpcFallback: this.env.rpcFallback }, this.env.signer, this.env.relayer, fetchFn);
+    this.issuer = this.env.emailIssuerUrl ? issuerApi(this.env.emailIssuerUrl, fetchFn) : null;
     this.approvals = new Approvals({
       authOrigin: this.env.authOrigin,
       parentWindow: this.host.parent,
@@ -403,6 +469,8 @@ export class Vault {
       onWindow: (open) => this.emit('approvalWindow', { open }),
     });
     port.onmessage = (m) => void this.onPortMessage(m.data);
+    // Before storage and the unlock: the SDK's answer deadline only covers the frame's load and this hello.
+    this.emit('connected', null);
     this.started = this.start();
   }
 
@@ -478,7 +546,9 @@ export class Vault {
   private appConfig(): Promise<AppConfig> {
     if (!this.appConfigPromise) {
       const at = this.clock.now();
+      const sent = this.perfNow();
       const p = this.api!.app().then((app) => {
+        this.appRtts.set(app, this.perfNow() - sent);
         this.applyServedPolicy(app, at);
         this.applyServedRawSign(app, at);
         return app;
@@ -648,7 +718,10 @@ export class Vault {
       case 'hana_status':
         return this.statusResult();
       case 'hana_login':
-        return this.login(r.params?.popupBlocked === true);
+        return this.login(r.params?.popupBlocked === true, {
+          ...(r.params?.method ? { method: r.params.method } : {}),
+          ...(r.params?.emailHint ? { emailHint: r.params.emailHint } : {}),
+        });
       case 'hana_cancelLogin':
         this.pending?.abort(this.pending.popupBlocked ? new VaultError('popup_blocked', 'The sign-in window was blocked') : new VaultError('login_cancelled', 'The sign-in was cancelled'));
         return null;
@@ -675,6 +748,15 @@ export class Vault {
       case 'hana_revokeAutoApprove':
         await this.revokeAutoApprove();
         return null;
+      case 'hana_identityToken':
+        // Silent tier, as hana_status: the session key but never PRK, no approval, and not activity (no wake, no idle
+        // restart), so a background tab refreshing its token can't keep the session or the key alive (D55, D112).
+        return this.identityToken(r.params?.maxAgeMs);
+      case 'hana_account':
+        // Silent tier too: one chain view, no key.
+        return this.account();
+      case 'hana_linkAccount':
+        return this.linkAccount(r.params.method, r.params.popupBlocked === true);
       default:
         throw new VaultError(ErrorCode.unsupportedMethod, 'Unsupported method');
     }
@@ -682,34 +764,183 @@ export class Vault {
 
   // ---- login ----
 
-  private newPending(mode: LoginMode, popupBlocked: boolean): PendingLogin {
+  private newPending(mode: LoginMode, popupBlocked: boolean, request: LoginRequest = {}): PendingLogin {
     this.pending?.abort(new VaultError('login_cancelled', 'A newer sign-in replaced this one'));
     this.continueIntent?.remove();
     this.continueIntent = null;
+    this.pendingLink?.abort(new VaultError('login_cancelled', 'A sign-in replaced this one'));
     const pending = new PendingLogin(
-      {
-        env: this.env,
-        config: this.config,
-        parentOrigin: this.parentOrigin!,
-        persistence: this.persistence,
-        api: this.api!,
-        near: this.near!,
-        clock: this.clock,
-        timers: this.timers,
-        jwks: (kid) => this.jwks(kid),
-        appConfig: () => this.appConfig(),
-        parentWindow: this.host.parent,
-        progress: (stage: LoginStage) => {
-          if (this.pending === pending) this.emit('loginProgress', { stage });
-        },
-        flow: this.o.loginFlow ?? 'combined',
-        perfNow: this.perfNow,
-      },
+      this.loginContext((stage: LoginStage) => {
+        if (this.pending === pending) this.emit('loginProgress', { stage });
+      }),
       mode,
       popupBlocked,
+      request,
     );
     this.pending = pending;
     return pending;
+  }
+
+  private loginContext(progress: (stage: LoginStage) => void): LoginContext {
+    return {
+      env: this.env,
+      config: this.config,
+      parentOrigin: this.parentOrigin!,
+      persistence: this.persistence,
+      api: this.api!,
+      near: this.near!,
+      issuer: this.issuer,
+      clock: this.clock,
+      timers: this.timers,
+      jwks: (kid) => this.jwks(kid),
+      appConfig: () => this.appConfig(),
+      appRtt: (app) => this.appRtts.get(app),
+      parentWindow: this.host.parent,
+      progress,
+      // A banner's Cancel or Remove in the login popup (spec "Notices"): the partner hears it, and the snapshot follows.
+      linkRemoved: (provider) => {
+        if (provider !== 'google' && provider !== 'email') return;
+        this.emit('linkChanged', { provider, status: 'removed', effectiveAtMs: null });
+        void this.account(true).catch(() => undefined);
+      },
+      flow: this.o.loginFlow ?? 'combined',
+      perfNow: this.perfNow,
+      pins: this.rootPins(),
+    };
+  }
+
+  /**
+   * D263: the account root each identity last opened on this device, in this app's record store (an app that keeps the
+   * wallet across reloads) and this frame's memory (every app). Pins outlive logouts: they exist to notice a root that
+   * changes between sessions.
+   */
+  private rootPins(): RootPins {
+    const key = (ik: string) => rootPinKey(this.env.signer, this.config.appId, this.config.scopeId, ik);
+    return {
+      get: async (ik) => {
+        const mem = this.memoryPins.get(ik);
+        if (mem) return mem;
+        const store = this.store;
+        return store ? parseRootPin(await store.get(key(ik))) : null;
+      },
+      set: async (ik, root) => {
+        this.memoryPins.set(ik, root);
+        await this.store?.put(key(ik), { v: 1, t: 'root-pin', root });
+      },
+    };
+  }
+
+  // ---- the wallet's sign-in methods (build plan batches 7 and 8b) ----
+
+  /** The path of the session, live or dormant, or null. */
+  private sessionPath(): string | null {
+    return this.live()?.path ?? this.liveDormant()?.path ?? null;
+  }
+
+  /**
+   * hana_account: the wallet's sign-in methods from `get_account` on the vault's own RPC (its root, from the session's
+   * path, and its members; no sub, no address). Reports what changed since the last read as `linkChanged`. A partner's
+   * calls share one read for ACCOUNT_CACHE_MS (W-L4: a page that polls it can't turn each poll into an RPC call);
+   * the vault's own reads after a login, a link or a banner's action are `fresh`.
+   */
+  private async account(fresh = false): Promise<AccountResult> {
+    const path = this.sessionPath();
+    if (!path) throw notLoggedIn();
+    const copy = (r: AccountResult): AccountResult => ({ methods: r.methods.map((m) => ({ ...m })) });
+    const cached = this.accountCache;
+    const now = this.deviceNow();
+    if (!fresh && cached && cached.path === path && now - cached.atMs >= 0 && now - cached.atMs < ACCOUNT_CACHE_MS) return copy(cached.result);
+    const inFlight = this.accountRead;
+    if (!fresh && inFlight && inFlight.path === path) return copy(await inFlight.read);
+    const read = this.readAccount(path);
+    this.accountRead = { path, read };
+    try {
+      const result = await read;
+      this.accountCache = { path, atMs: this.deviceNow(), result: copy(result) };
+      return copy(result);
+    } finally {
+      if (this.accountRead?.read === read) this.accountRead = null;
+    }
+  }
+
+  private async readAccount(path: string): Promise<AccountResult> {
+    const root = pathOwner(path);
+    if (!root || !this.near) throw new VaultError('api_unavailable', 'This wallet’s sign-in methods can’t be read');
+    let view;
+    try {
+      view = await this.near.account(this.config.scopeId, root.provider, root.sub);
+    } catch {
+      throw new VaultError('api_unavailable', 'Could not read the wallet’s sign-in methods on NEAR', { reason: 'identity_unchecked' });
+    }
+    // The session may have ended meanwhile.
+    if (this.sessionPath() !== path) throw notLoggedIn();
+    const methods: AccountMethod[] = [{ provider: root.provider as LoginMethod, status: 'active', effectiveAtMs: null, root: true }];
+    const now = this.clock.now();
+    if (view && view.root.provider === root.provider && view.root.sub === root.sub) {
+      for (const m of view.members) {
+        if (m.provider !== 'google' && m.provider !== 'email') continue;
+        // A pending member past its time is active on its next login (lazy activation): report it as active.
+        const active = m.active || m.effectiveAtMs <= now;
+        methods.push({ provider: m.provider, status: active ? 'active' : 'pending', effectiveAtMs: m.effectiveAtMs, root: false });
+      }
+    }
+    this.noteMethods(path, methods);
+    return { methods };
+  }
+
+  /** Emits `linkChanged` for every method added, activated or removed since the last snapshot of this wallet. */
+  private noteMethods(path: string, methods: AccountMethod[]): void {
+    const before = this.methodsSeen?.path === path ? this.methodsSeen.methods : null;
+    this.methodsSeen = { path, methods };
+    const members = methods.filter((m) => !m.root);
+    if (!before) {
+      // First read in this session: partners must show pending methods (spec "Notices"); the login's own new link was
+      // reported with its result.
+      const fresh = this.freshLink;
+      this.freshLink = null;
+      for (const m of members) if (m.status === 'pending' && m.provider !== fresh) this.emit('linkChanged', { provider: m.provider, status: 'pending', effectiveAtMs: m.effectiveAtMs });
+      return;
+    }
+    const old = before.filter((m) => !m.root);
+    for (const m of members) {
+      const was = old.find((o) => o.provider === m.provider);
+      if (!was || was.status !== m.status) this.emit('linkChanged', { provider: m.provider, status: m.status, effectiveAtMs: m.effectiveAtMs });
+    }
+    for (const o of old) if (!members.some((m) => m.provider === o.provider)) this.emit('linkChanged', { provider: o.provider, status: 'removed', effectiveAtMs: null });
+  }
+
+  /**
+   * hana_linkAccount (spec "Explicit linking"): the login popup, opened by the SDK in the click (or by the vault's
+   * launcher), signs in the new method and then the wallet's own; the vault relays `link_identity`. The link is pending
+   * for `change_delay_ms`.
+   */
+  private async linkAccount(method: LoginMethod, popupBlocked: boolean): Promise<PortResultMap['hana_linkAccount']> {
+    const s = this.live() ?? null;
+    const path = s?.path ?? this.liveDormant()?.path ?? null;
+    if (!path) throw notLoggedIn();
+    if (this.pending || this.pendingLink) throw new VaultError('busy', 'A sign-in is already running');
+    const task = new PendingLink(this.loginContext(() => undefined), popupBlocked ? 'vault' : 'partner', popupBlocked, { method, path });
+    this.pendingLink = task;
+    let intent: LauncherHandle | null = null;
+    if (popupBlocked) {
+      intent = this.launcher.push('Add a sign-in method in Hana', () => {
+        if (task.aborted) return;
+        const popup = this.host.open(`${this.env.authOrigin}/login?from=vault`, `hana-login-${randomHex128()}`, LOGIN_FEATURES);
+        if (!popup) return;
+        task.popup = popup;
+        intent?.remove();
+        intent = null;
+      });
+    }
+    try {
+      const made = await task.done;
+      this.emit('linkChanged', { provider: made.provider, status: made.status, effectiveAtMs: made.effectiveAtMs });
+      void this.account(true).catch(() => undefined);
+      return { provider: made.provider, status: made.status, effectiveAtMs: made.effectiveAtMs };
+    } finally {
+      intent?.remove();
+      if (this.pendingLink === task) this.pendingLink = null;
+    }
   }
 
   /** Opens `/login?from=vault` inside a launcher click and hands the window to the pending login. */
@@ -721,8 +952,8 @@ export class Vault {
     return true;
   }
 
-  private async login(popupBlocked: boolean): Promise<LoginResult> {
-    const pending = this.newPending(popupBlocked ? 'vault' : 'partner', popupBlocked);
+  private async login(popupBlocked: boolean, request: LoginRequest = {}): Promise<LoginResult> {
+    const pending = this.newPending(popupBlocked ? 'vault' : 'partner', popupBlocked, request);
     let intent: LauncherHandle | null = null;
     if (popupBlocked) {
       intent = this.launcher.push('Sign in with Hana', () => {
@@ -802,6 +1033,7 @@ export class Vault {
       share: null,
       persist: null,
       consent: null,
+      walletProofs: this.walletProofsFor(success.prk, success.sessionKey.publicKey, success.addresses),
       lastTouchAt: this.clock.now(),
       lastActivityAt: this.clock.now(),
       expiryTimer: null,
@@ -811,6 +1043,12 @@ export class Vault {
     if (persistence === 'session') s.persist = this.startPersist(s, success, revoked);
     if (this.pending === pending) this.emit('loginProgress', { stage: 'done' });
     this.emit('accountsChanged', { addresses: { ...s.addresses } });
+    // The link this login made (spec "Notices"); the first read of the wallet's methods then reports pending ones.
+    if (success.linked) this.emit('linkChanged', { provider: success.linked.provider, status: success.linked.status, effectiveAtMs: success.linked.effectiveAtMs });
+    this.methodsSeen = null;
+    this.freshLink = success.linked?.provider ?? null;
+    this.accountCache = null;
+    void this.account(true).catch(() => undefined);
     const result: LoginResult = { addresses: { ...s.addresses }, expiresAtMs: s.expiresAtMs, persistence };
     if (warning) result.warning = warning;
     if (this.testApp) {
@@ -898,7 +1136,8 @@ export class Vault {
         ks.fill(0);
       }
       const record: RecordV1 = {
-        v: 1,
+        v: s.walletProofs ? RECORD_VERSION : 1,
+        ...(s.walletProofs ? { walletProofs: copyProofs(s.walletProofs) } : {}),
         ...binding,
         scopeId: this.config.scopeId,
         keyIndex: 0,
@@ -1016,6 +1255,7 @@ export class Vault {
   private expireDormant(d: Dormant): void {
     if (this.dormant !== d) return;
     this.clearDormant();
+    this.dropIdentity();
     void this.deleteRecordIf({ sessionPk: d.sessionPk, share: { shareId: d.shareId, counter: 0, createdAt: null } }).catch(() => undefined);
     this.emit('sessionExpired', null);
     this.emit('accountsChanged', { addresses: null });
@@ -1037,7 +1277,7 @@ export class Vault {
     const addresses = this.addresses();
     if (!addresses) return;
     if (isSignMethod(r.method)) {
-      approvalSubject(r as SignRequest, addresses, { rawSign: 'approval', testApp: this.testApp });
+      approvalSubject(r as SignRequest, addresses, { rawSign: 'approval', testApp: this.testApp, reservedEvmDigests: this.reservedEvmDigests(addresses.evm) });
       return;
     }
     if (r.method === 'hana_export' && this.exportJob) throw new VaultError('busy', 'An export is already running');
@@ -1090,10 +1330,14 @@ export class Vault {
       expiresAtMs: s.expiresAtMs,
       sessionPk: s.sessionPk,
       shareId: Uint8Array.from(s.share.shareId),
+      path: s.path,
       consent: s.consent ? { ...s.consent, valueWeiByChain: { ...s.consent.valueWeiByChain } } : null,
+      keyPair: s.keyPair,
+      walletProofs: s.walletProofs,
       expiryTimer: null,
     };
-    this.endSession(false);
+    // The same session goes on, dormant: its identity token stays valid.
+    this.endSession(false, ErrorCode.disconnected, true);
     this.dormant = dormant;
     const delay = Math.max(0, s.expiresAtMs - this.clock.now());
     dormant.expiryTimer = this.timers.setTimeout(() => this.expireDormant(dormant), Math.min(delay, 0x7fffffff));
@@ -1115,6 +1359,7 @@ export class Vault {
       }
       if (this.dormant === d) {
         this.clearDormant();
+        this.dropIdentity();
         this.emit('sessionExpired', null);
         this.emit('accountsChanged', { addresses: null });
       }
@@ -1128,6 +1373,7 @@ export class Vault {
   private dropDormant(announce: boolean): void {
     if (!this.dormant) return;
     this.clearDormant();
+    this.dropIdentity();
     if (announce) {
       this.emit('disconnect', { code: ErrorCode.disconnected });
       this.emit('accountsChanged', { addresses: null });
@@ -1147,11 +1393,15 @@ export class Vault {
     this.scheduleIdle(s);
   }
 
-  /** Zeroes PRK and drops the session; pending approvals and an export end. */
-  private endSession(announce: boolean, code: number = ErrorCode.disconnected): void {
+  /**
+   * Zeroes PRK and drops the session; pending approvals and an export end, and so does its identity token unless the
+   * session only goes dormant (`keepIdentity`).
+   */
+  private endSession(announce: boolean, code: number = ErrorCode.disconnected, keepIdentity = false): void {
     const s = this.session;
     if (!s) return;
     this.session = null;
+    if (!keepIdentity) this.dropIdentity();
     // A share or record still being made for this session must not outlive it (persistLogin checks this).
     if (s.persist) s.persist.cancelled = true;
     this.timers.clearTimeout(s.expiryTimer);
@@ -1205,7 +1455,7 @@ export class Vault {
       r.keyIndex === 0 &&
       r.derivationVersion === DERIVATION_VERSION &&
       bytesEqual(r.ckdKeyHash, this.bundleCkdKeyHash) &&
-      r.path.startsWith(`${this.config.scopeId}#google#`) &&
+      isOwnLoginPath(r.path, this.config.scopeId) &&
       this.clock.now() < r.expiresAtMs
     );
   }
@@ -1296,6 +1546,9 @@ export class Vault {
       await this.deleteRecord().catch(() => undefined);
       return;
     }
+    // A format-1 record gets its identity proofs now (PRK is here), written back if the record is still this session's.
+    const walletProofs = record.walletProofs ? copyProofs(record.walletProofs) : this.walletProofsFor(prk, record.sessionPk, record.addresses);
+    if (!record.walletProofs && walletProofs) void this.upgradeRecord(record, walletProofs).catch(() => undefined);
     this.adopt({
       prk,
       addresses: { ...record.addresses },
@@ -1307,6 +1560,7 @@ export class Vault {
       share: { shareId: record.shareId, counter: record.counter, createdAt: null },
       persist: null,
       consent: null,
+      walletProofs,
       lastTouchAt: this.clock.now(),
       lastActivityAt: this.clock.now(),
       expiryTimer: null,
@@ -1375,6 +1629,10 @@ export class Vault {
   private onBroadcast(data: unknown): void {
     const m = parseVaultBroadcast(data);
     if (!m) return;
+    if (m.t === 'identity') {
+      this.adoptBroadcastIdentity(m);
+      return;
+    }
     const s = this.session;
     if (m.t === 'counter') {
       if (s?.share && bytesEqual(s.share.shareId, m.shareId)) s.share.counter = Math.max(s.share.counter, m.counter);
@@ -1406,6 +1664,8 @@ export class Vault {
     // it (D79): logout doesn't wait for it.
     if (s?.persist) s.persist.cancelled = true;
     this.pending?.abort(new VaultError('login_cancelled', 'Logged out'));
+    this.pendingLink?.abort(new VaultError('login_cancelled', 'Logged out'));
+    this.methodsSeen = null;
     const store = this.store;
     const own = s?.share ? { keyPair: s.keyPair, sessionPk: s.sessionPk, share: s.share } : null;
     if (store || own) {
@@ -1471,6 +1731,165 @@ export class Vault {
     });
   }
 
+  // ---- partner identity token (docs/identity-token-spec.md) ----
+
+  /** The digest the session's EVM wallet proof signs: a raw EVM request for it is refused (signing.ts, D179). */
+  private reservedEvmDigests(evm: string): Uint8Array[] {
+    const pk = (this.session ?? this.dormant)?.sessionPk;
+    return pk ? [sha256(walletProofMessage({ signer: this.env.signer, appId: this.config.appId, sessionPublicKey: pk }, 'evm', evm))] : [];
+  }
+
+  /** The wallet proofs for a session, or null if they can't be made (no identity token then; logged as a code). */
+  private walletProofsFor(prk: Uint8Array, sessionPk: Uint8Array, addresses: { stellar: string; evm: string }): WalletProofs | null {
+    try {
+      return makeWalletProofs(prk, { signer: this.env.signer, appId: this.config.appId, sessionPublicKey: sessionPk }, addresses);
+    } catch {
+      console.warn('[Hana ID vault] Could not make the identity wallet proofs (wallet_proofs); identity tokens are unavailable for this session.');
+      return null;
+    }
+  }
+
+  /** Writes the proofs into a format-1 record (making it format 2), under the lock, if it is still this session's. */
+  private async upgradeRecord(of: RecordV1, walletProofs: WalletProofs): Promise<void> {
+    const store = this.store;
+    if (!store) return;
+    await this.o.locks.request(this.lockName, async () => {
+      const r = await this.readRecord();
+      if (r === null || r === 'invalid' || !sameSession(r, of) || r.walletProofs) return;
+      await store.put(this.recordId, { ...r, v: RECORD_VERSION, walletProofs: copyProofs(walletProofs) });
+    });
+  }
+
+  /** The session an identity token is for: the live one, or the dormant one (no PRK needed), with its key and proofs. */
+  private identityTarget(): IdentityTarget | null {
+    const s = this.live();
+    if (s) return { sessionPk: s.sessionPk, keyPair: s.keyPair, proofs: s.walletProofs, live: s, dormant: null, hasShare: s.share !== null };
+    const d = this.liveDormant();
+    if (d) return { sessionPk: d.sessionPk, keyPair: d.keyPair, proofs: d.walletProofs, live: null, dormant: d, hasShare: true };
+    return null;
+  }
+
+  private cachedIdentity(sessionPk: Uint8Array, maxAgeMs?: number): PortResultMap['hana_identityToken'] | null {
+    const c = this.identity;
+    if (!c || !bytesEqual(c.sessionPk, sessionPk) || !cacheUsable(c, this.clock.now(), maxAgeMs)) return null;
+    return { identityToken: c.token, expiresAtMs: c.expiresAtMs };
+  }
+
+  /** Drops the identity token (the session ended or was replaced) and tells the partner page. */
+  private dropIdentity(): void {
+    if (!this.identity) return;
+    this.identity = null;
+    this.emit('identityTokenChanged', { identityToken: null, expiresAtMs: null });
+  }
+
+  /** Another tab's token for this tab's session (live or dormant): cached and reported, if it is newer. */
+  private adoptBroadcastIdentity(m: Extract<VaultBroadcast, { t: 'identity' }>): void {
+    const s = this.session ?? this.dormant;
+    if (!s || !bytesEqual(s.sessionPk, m.sessionPk)) return;
+    const c = this.identity;
+    if (c && bytesEqual(c.sessionPk, m.sessionPk) && c.iatMs >= m.iatMs) return;
+    this.identity = { sessionPk: Uint8Array.from(m.sessionPk), token: m.identityToken, iatMs: m.iatMs, expiresAtMs: m.expiresAtMs };
+    this.emit('identityTokenChanged', { identityToken: m.identityToken, expiresAtMs: m.expiresAtMs });
+  }
+
+  /**
+   * hana_identityToken: the cached token while it is fresh enough (cacheUsable), else a mint under the per-app Web
+   * Lock (a tab that waited finds the token another tab just minted). Logged out: nulls, never an error.
+   */
+  private async identityToken(maxAgeMs?: number): Promise<PortResultMap['hana_identityToken']> {
+    const none = { identityToken: null, expiresAtMs: null };
+    const first = this.identityTarget();
+    if (!first) return none;
+    const hit = this.cachedIdentity(first.sessionPk, maxAgeMs);
+    if (hit) return hit;
+    // Right after a login the share may still be in the making (D79): the API needs it in 'session' mode.
+    if (first.live) await this.persisted(first.live);
+    return this.o.locks.request(this.identityLockName, async () => {
+      const t = this.identityTarget();
+      if (!t) return none;
+      const cached = this.cachedIdentity(t.sessionPk, maxAgeMs);
+      if (cached) return cached;
+      return this.mintIdentity(t);
+    });
+  }
+
+  private async mintIdentity(t: IdentityTarget): Promise<PortResultMap['hana_identityToken']> {
+    // An app that keeps logins checks the session's share: a session this browser couldn't persist has none (D79).
+    if (this.config.settings.persistence === 'session' && !t.hasShare) {
+      throw new VaultError('identity_unavailable', 'This browser could not keep the Hana session, so it has no identity token', { reason: 'no_share' });
+    }
+    const proofs = t.proofs;
+    if (!proofs) throw new VaultError('identity_unavailable', 'Identity tokens are unavailable for this session', { reason: 'no_wallet_proofs' });
+    const sessionPk = Uint8Array.from(t.sessionPk);
+    for (let attempt = 0; ; attempt++) {
+      const body = await mintBody(t.keyPair.privateKey, {
+        signer: this.env.signer,
+        appId: this.config.appId,
+        sessionPublicKey: sessionPk,
+        parentOrigin: this.parentOrigin!,
+        issuedAtMs: this.clock.now(),
+        proofs,
+      });
+      let res;
+      try {
+        res = await this.api!.identityToken(body);
+      } catch (e) {
+        if (!(e instanceof ApiError)) throw new VaultError('identity_unavailable', 'Identity tokens are unavailable, try again later');
+        // A clock that drifted: the API's time comes with the refusal. A replay can only be a nonce collision. Once each.
+        if (attempt === 0 && e.code === 'stale_proof') {
+          this.clock.refresh(e.details.serverTimeMs);
+          continue;
+        }
+        if (attempt === 0 && e.code === 'proof_replayed') continue;
+        throw this.identityError(e, t);
+      }
+      const now = this.identityTarget();
+      // The session ended or changed while the request was in flight: its token is no longer anyone's.
+      if (!now || !bytesEqual(now.sessionPk, sessionPk)) return { identityToken: null, expiresAtMs: null };
+      const iatMs = tokenIatMs(res.identityToken) ?? this.clock.now();
+      this.identity = { sessionPk, token: res.identityToken, iatMs, expiresAtMs: res.expiresAtMs };
+      this.channel?.postMessage({ v: 1, t: 'identity', sessionPk: Uint8Array.from(sessionPk), identityToken: res.identityToken, iatMs, expiresAtMs: res.expiresAtMs });
+      const state = { identityToken: res.identityToken, expiresAtMs: res.expiresAtMs };
+      this.emit('identityTokenChanged', state);
+      return state;
+    }
+  }
+
+  /**
+   * A refused mint as a port error. `410 session_ended`: the share or the on-chain session is gone, so the session ends
+   * here too (record deleted, other tabs told, `sessionExpired`). `410 session_ending`: less than 30 s left; the session
+   * ends on its own timers.
+   */
+  private identityError(e: ApiError, t: IdentityTarget): VaultError {
+    if (e.code === 'session_ended') {
+      this.endIdentitySession(t);
+      return new VaultError('session_ended', 'The Hana session has ended');
+    }
+    if (e.code === 'session_ending') return new VaultError('session_ended', 'The Hana session ends in less than 30 seconds', { reason: 'session_ending' });
+    if (e.status === 429) return new VaultError('rate_limited', 'Too many identity token requests, try again later');
+    if (e.code === 'app_suspended' || e.code === 'origin_not_allowed' || e.code === 'scope_conflict') return apiErrorToVault(e);
+    return new VaultError('identity_unavailable', 'Identity tokens are unavailable, try again later', { api: `${e.status} ${e.code}`.slice(0, 80) });
+  }
+
+  private endIdentitySession(t: IdentityTarget): void {
+    const s = t.live;
+    if (s && this.session === s) {
+      const share = s.share;
+      if (share) {
+        void this.deleteRecordIf(s).catch(() => undefined);
+        this.broadcastRevoked(share.shareId);
+      }
+      this.endSession(false);
+    } else if (t.dormant && this.dormant === t.dormant) {
+      const d = t.dormant;
+      void this.deleteRecordIf({ sessionPk: d.sessionPk, share: { shareId: d.shareId, counter: 0, createdAt: null } }).catch(() => undefined);
+      this.broadcastRevoked(d.shareId);
+      this.dropDormant(false);
+    } else return;
+    this.emit('sessionExpired', null);
+    this.emit('accountsChanged', { addresses: null });
+  }
+
   // ---- signing ----
 
   private async sign(request: SignRequest): Promise<unknown> {
@@ -1480,7 +1899,7 @@ export class Vault {
     // A test app's raw request is refused outright (approvalSubject), with no API read.
     const rawSign: RawSign = request.method === 'hana_signRaw' && !this.testApp ? await this.freshRawSign() : 'off';
     if (this.live() !== s) throw disconnected();
-    const subject = approvalSubject(request, s.addresses, { rawSign, testApp: this.testApp });
+    const subject = approvalSubject(request, s.addresses, { rawSign, testApp: this.testApp, reservedEvmDigests: this.reservedEvmDigests(s.addresses.evm) });
     const policy = NEVER_AUTO_APPROVED_KINDS.has(subject.kind) ? null : await this.freshPolicy();
     if (this.live() !== s) throw disconnected();
     let note: { label: string; active: boolean; reason?: string } | undefined;
@@ -1653,6 +2072,9 @@ export class Vault {
   private startExport(chain: 'stellar' | 'evm'): Promise<null> {
     const s = this.live();
     if (!s) return Promise.reject(notLoggedIn());
+    // The export window signs in again on its own, with Google or (an app with email, batch 8b: D246 lifted) an email
+    // code, and resolves the path through `get_identity` itself; it shows the key only if it is this session's address.
+    if (!isOwnLoginPath(s.path, this.config.scopeId)) return Promise.reject(new VaultError(ErrorCode.unsupportedMethod, 'Key export is not available for this wallet'));
     if (this.exportJob) return Promise.reject(new VaultError('busy', 'An export is already running'));
     return new Promise<null>((resolve, reject) => {
       const job: ExportJob = {

@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomBytes } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { KeyPair } from '@near-js/crypto';
 import { cloudflareTest, readD1Migrations } from '@cloudflare/vitest-plugin';
@@ -10,6 +10,17 @@ const relayerKeys = [KeyPair.fromRandom('ed25519').toString(), KeyPair.fromRando
 const ownerRelayerKeys = [KeyPair.fromRandom('ed25519').toString(), KeyPair.fromRandom('ed25519').toString()];
 const keysUpdaterKey = KeyPair.fromRandom('ed25519').toString();
 const vaultKek = `1:${randomBytes(32).toString('base64')}`;
+// The identity token's keys (docs/identity-token-spec.md): two throwaway P-256 keys (active, standby) and a sub key.
+function identityKey(): { private: string; public: Record<string, string> } {
+  const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const jwk = privateKey.export({ format: 'jwk' }) as { kty: string; crv: string; x: string; y: string; d: string };
+  const kid = createHash('sha256').update(JSON.stringify({ crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y })).digest('base64url');
+  return { private: JSON.stringify({ kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, d: jwk.d }), public: { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y, kid, use: 'sig', alg: 'ES256' } };
+}
+/** The uid key (docs/batch-c-spec.md "uid"); test/usage.test.ts reads it back from the binding for its vectors. */
+const userIdKey = randomBytes(32).toString('base64');
+const identityActive = identityKey();
+const identityStandby = identityKey();
 
 // The per-env wrangler.jsonc is generated and gitignored, so the tests use their own, generated here from a fixed
 // test manifest by the same generator (bindings, Durable Object classes and migrations as every env gets them).
@@ -44,10 +55,23 @@ export default defineConfig(async () => {
             AUTH_ORIGIN: 'https://auth.test',
             API_URL: 'https://api.test',
             VAULT_KEK: vaultKek,
+            IDENTITY_ISS: 'https://api.test/v1/identity',
+            IDENTITY_PUBLIC_KEYS: JSON.stringify([identityActive.public, identityStandby.public]),
+            IDENTITY_SIGNER: 'worker-secret',
+            IDENTITY_ACTIVE_KID: identityActive.public.kid!,
+            IDENTITY_SIGNING_KEY: identityActive.private,
+            IDENTITY_SIGNING_KEY_STANDBY: identityStandby.private,
+            IDENTITY_SUB_KEY: randomBytes(32).toString('base64'),
+            // Usage capture on in every test (batch C4): a stand-in for the Hyperdrive binding, never dialled (the
+            // tests replace the writer's transport with an in-memory ledger, test/usage-ledger.ts), and a uid key.
+            USAGE_DB: { connectionString: 'postgresql://usage_writer:unused@usage-db.test.invalid:5432/usage' },
+            USER_ID_KEY: userIdKey,
             TEST_MIGRATIONS: migrations,
           },
-          // A second, empty database: migration tests apply 0001–0002, seed rows, then 0003.
-          d1Databases: { DB: 'hana-id-test', MIGRATION_DB: 'migration-db' },
+          // Empty databases for the migration tests: 0003's (apply 0001–0002, seed rows, then 0003), and 0006's (a fresh
+          // database in order; a sandbox-dev-shaped one at 0001–0005 + 0008, then 0006; one whose scope mixes test and
+          // live keys, which 0006 must refuse).
+          d1Databases: { DB: 'hana-id-test', MIGRATION_DB: 'migration-db', FRESH_DB: 'fresh-db', SNAPSHOT_DB: 'snapshot-db', MIX_DB: 'mix-db', PRE_0010_DB: 'pre-0010-db' },
         },
       }),
     ],
@@ -57,6 +81,11 @@ export default defineConfig(async () => {
     test: {
       include: ['test/**/*.test.ts'],
       setupFiles: ['./test/apply-migrations.ts'],
+      // `pnpm -r test` runs this suite beside every other package's: under that CPU load the heavier tests (RSA and BLS
+      // work, many requests through the Worker) outrun vitest's 5 s / 10 s defaults. A minute-window wait
+      // (test/helpers.ts minuteHeadroom) can take up to 15 s on its own.
+      testTimeout: 30_000,
+      hookTimeout: 60_000,
       // The worker's structured JSON logs are noise in test output (set LOG=1 to see them).
       onConsoleLog: (log: string) => (process.env.LOG || !log.startsWith('{"level"') ? undefined : false),
     },

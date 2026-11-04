@@ -2,7 +2,7 @@
 // HanaError (a numeric or string code), the EIP-1193 provider with a ProviderRpcError whose numeric code hides the
 // Hana code in `data.code`; a network failure inside the SDK can surface as a TypeError.
 
-export type DemoAction = 'load' | 'login' | 'logout' | 'revoke' | 'sign' | 'export' | 'copy';
+export type DemoAction = 'load' | 'login' | 'logout' | 'revoke' | 'sign' | 'export' | 'copy' | 'identity';
 
 export interface ErrorInfo {
   /** The most specific code: the Hana string code when there is one, else the numeric code, else null. */
@@ -36,6 +36,12 @@ export function plainMessage(e: unknown, action: DemoAction): string {
       return 'Your browser blocked the Hana sign-in window. Allow pop-ups for this site and click “Log in with Google” again.';
     case 'login_cancelled':
       return 'Sign-in cancelled.';
+    case 'login_method_unavailable':
+      return 'Email login isn’t turned on for the demo app yet. Use “Log in with Google”, or ask the Hana team to turn email on.';
+    case 'code_invalid':
+      return 'Sign-in stopped after a wrong code. Click “Log in with email” to get a new one.';
+    case 'challenge_expired':
+      return 'The sign-in code expired. Click “Log in with email” to get a new one.';
     case 'coop_blocks_popup':
       return 'The Hana sign-in window closed before it finished loading. Try again and keep the window open.';
     case 'login_timeout':
@@ -43,7 +49,12 @@ export function plainMessage(e: unknown, action: DemoAction): string {
     case 'google_error':
       return isObj(e) && isObj(e.data) && e.data.error === 'access_denied' ? 'You declined the Google sign-in.' : `Google returned an error. Try again. ${REPORT}`;
     case 'vault_unavailable':
-      return 'Could not load the Hana vault. Check your connection and any content blocker, then reload the page.';
+      // data.reason (the SDK's vault-connection.ts): which part of the vault's load failed, after its one retry.
+      if (reason === 'csp_frame_src') return `This page’s security policy blocks the Hana vault frame. ${REPORT}`;
+      if (reason === 'no_answer') return `The Hana vault loaded but didn’t answer (is this site on the demo app’s allowed origins?). Reload the page. ${REPORT}`;
+      if (reason === 'ready_timeout') return 'Hana’s service was too slow to restore your session. Check your connection, then reload the page.';
+      if (reason === 'frame_replaced') return 'Something replaced the Hana vault frame (an extension?). Reload the page.';
+      return 'Could not load the Hana vault in time. Check your connection and any content blocker, then reload the page.';
     case 'api_unavailable':
       return 'Could not reach Hana’s service. Check your connection and try again.';
     case 'rate_limited':
@@ -56,6 +67,10 @@ export function plainMessage(e: unknown, action: DemoAction): string {
       return 'The demo app has no Google sign-in configured. Tell the Hana team.';
     case 'busy':
       return 'A key export is already open. Finish or close it first.';
+    case 'identity_unavailable':
+      return 'Hana could not issue an identity token right now. Try again in a minute.';
+    case 'session_ended':
+      return 'Your Hana session has ended. Log in again.';
     case 'session_consumed':
       return 'Click “Continue signing in” on the Hana button at the bottom right to finish signing in.';
     case 'token_invalid':

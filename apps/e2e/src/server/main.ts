@@ -8,7 +8,9 @@
 //   http://127.0.0.1:4430                  authOrigin (apps/api's auth host)
 //   http://127.0.0.1:4440                  the Hana API: apps/api's Worker, /v1/login and /v1/derive mocked (and the
 //                                          tests' /__e2e control endpoints)
+//   http://127.0.0.1:4442                  the email issuer (apps/email-issuer's Worker, the outbox stub; /__e2e/outbox)
 //   http://127.0.0.1:4450                  the mocked NEAR RPC
+//   http://127.0.0.1:4451                  the same chain, as the env's rpcFallback (D263)
 //   http://127.0.0.1:4460                  the mocked EVM chain RPC
 //   http://127.0.0.1:4421, :4431, :4441    live mode's vault, auth and API hosts (LIVE_ENV, src/stack.ts): the same
 //                                          apps/api code on the same D1 and chain, serving the https origins the
@@ -20,8 +22,10 @@
 // browser context (src/google-stub.ts), so the bundles keep their hard-coded Google endpoints.
 import { buildAll } from '../build.ts';
 import { stackFingerprint } from '../fingerprint.ts';
-import { LIVE_API_URL, LIVE_AUTH_ORIGIN, LIVE_ENV_NAME, LIVE_NEAR_RPC, LIVE_VAULT_ORIGIN, PORTS } from '../stack.ts';
+import { EMAIL_ISS, LIVE_API_URL, LIVE_AUTH_ORIGIN, LIVE_ENV_NAME, LIVE_NEAR_RPC, LIVE_VAULT_ORIGIN, PORTS } from '../stack.ts';
 import { MockApi } from './api.ts';
+import { GoogleBackend } from './google-backend.ts';
+import { LocalIssuer, newIssuerKey } from './issuer.ts';
 import { loadApiModules } from './api-modules.ts';
 import { Chain } from './chain.ts';
 import { D1Shim } from './d1.ts';
@@ -34,7 +38,14 @@ export async function startStack(fingerprint: string): Promise<void> {
   const modules = await loadApiModules();
   const d1 = new D1Shim();
   const chain = new Chain();
-  const api = new MockApi(d1, chain, modules, { fingerprint });
+  // Email login (batch 8a): the issuer's throwaway key, active on the mocked chain and known to the API.
+  const issuerKey = newIssuerKey();
+  chain.emailKey = { kid: issuerKey.publicJwk.kid, n: issuerKey.publicJwk.n, e: issuerKey.publicJwk.e };
+  // Google's server-side endpoints for the Workers in this process (google-match's tokeninfo, userinfo, JWKS, revoke).
+  const google = await GoogleBackend.create();
+  google.install();
+  const api = new MockApi(d1, chain, modules, { fingerprint, email: { iss: EMAIL_ISS, publicKeys: [issuerKey.publicJwk] }, googleKey: () => google.privateJwk() });
+  const issuer = await LocalIssuer.start(d1, issuerKey);
   const evm = new MockEvm();
   const loopback = ['127.0.0.1'];
 
@@ -46,6 +57,7 @@ export async function startStack(fingerprint: string): Promise<void> {
   await serve(PORTS.vault, loopback, vaultHost(modules, d1));
   await serve(PORTS.auth, loopback, authHost(modules));
   await serve(PORTS.api, loopback, (req) => api.handle(req));
+  await serve(PORTS.issuer, loopback, issuer.handler());
   // Live mode (LIVE_ENV): a second Worker and pair of page hosts for the https origins, on the same D1 and chain.
   const live: PagesEnv = { envName: LIVE_ENV_NAME, vaultOrigin: LIVE_VAULT_ORIGIN, authOrigin: LIVE_AUTH_ORIGIN, apiUrl: LIVE_API_URL, nearRpc: LIVE_NEAR_RPC };
   const liveApi = new MockApi(d1, chain, modules, { serves: live });
@@ -53,6 +65,8 @@ export async function startStack(fingerprint: string): Promise<void> {
   await serve(PORTS.liveAuth, loopback, servedAt(LIVE_AUTH_ORIGIN, authHost(modules, live)));
   await serve(PORTS.liveApi, loopback, servedAt(LIVE_API_URL, (req) => liveApi.handle(req)));
   await serve(PORTS.near, loopback, chain.handler());
+  // The env's rpcFallback: another endpoint on the same chain (a member's path is confirmed on both, D263).
+  await serve(PORTS.nearFallback, loopback, chain.handler());
   await serve(PORTS.evm, loopback, evm.handler());
 }
 

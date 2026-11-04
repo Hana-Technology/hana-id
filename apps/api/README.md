@@ -8,7 +8,7 @@ Durable Object per relayer key. Spec: `docs/batch-a-spec.md` (API section) as am
 ## Commands
 
 ```sh
-pnpm --filter @hana-id/api gen sandbox-dev [--d1-id <uuid>] [--dev-vars]  # wrangler.jsonc, wrangler.{vault,auth}.jsonc (+ .dev.vars) from envs/<env>.json
+pnpm --filter @hana-id/api gen sandbox-dev [--d1-id <uuid>] [--usage-hyperdrive-id <id>|off] [--dev-vars]  # wrangler.jsonc, wrangler.{vault,auth}.jsonc (+ .dev.vars) from envs/<env>.json
 pnpm --filter @hana-id/api test        # vitest in workerd (@cloudflare/vitest-plugin), NEAR RPC mocked; then scripts/ tests in Node
 pnpm --filter @hana-id/api typecheck
 pnpm --filter @hana-id/api dev         # wrangler dev (local D1: `wrangler d1 migrations apply DB --local` first)
@@ -20,7 +20,8 @@ are generated per env and gitignored (they can hold a real D1 id): run `gen <env
 The tests don't read them: `vitest.config.ts` writes `wrangler.vitest.jsonc` (gitignored) with the same generator from a
 fixed test manifest (`TEST_MANIFEST`), so CI needs no `gen` step and no env's values reach the tests. Without `--d1-id`
 the id already in the file is kept only if that file was generated for the same D1 database (`database_name`), else a
-local-only placeholder is written. `--dev-vars` writes `RELAYER_KEYS` (from `.secrets/<env>/relayer-keys.json`) and
+local-only placeholder is written. `--usage-hyperdrive-id` binds the usage ledger's writer (`USAGE_DB`, batch C4;
+kept on later runs for the same Worker and database, `off` drops it); without it usage capture is off. `--dev-vars` writes `RELAYER_KEYS` (from `.secrets/<env>/relayer-keys.json`) and
 `OWNER_RELAYER_KEYS` (from `.secrets/<env>/owner-relayer-keys.json`) single-quoted (wrangler's dotenv parser takes them
 literally), plus `KEYS_UPDATER_KEY`; files that don't exist are skipped.
 
@@ -47,11 +48,15 @@ keys, e.g. the content of `.secrets/<env>/relayer-keys.json`) → `wrangler secr
 | `API_URL` | vars (manifest) | `apiUrl`: the API's own URL, in the vault page's CSP `connect-src` |
 | `VAULT_KEK` | secret | Vault share wrapping key, `<id>:<base64 of 32 bytes>` (`id` a positive integer). Create it with `pnpm --filter @hana-id/scripts run vault-kek <env> init --yes`: it generates key id 1, keeps it in `.secrets/<env>/vault-kek` (0600, never overwritten; the only copy, since Cloudflare can't give a secret back) and sets the secret through wrangler's stdin, printing no key. `vault-kek <env> put --yes` sets it again from the file. Without it the vault endpoints answer `503 vault_key_unavailable` |
 | `VAULT_KEK_PREVIOUS` | secret, rotation only | The previous `VAULT_KEK`. Rotate with `vault-kek <env> rotate --yes`: the current key goes to `VAULT_KEK_PREVIOUS` (and `.secrets/<env>/vault-kek.previous`), a new key with the next id to `VAULT_KEK` (and `vault-kek`); a run that stops part way resumes when re-run. Unlocks and the cron re-wrap old rows; once `SELECT COUNT(*) FROM vault_shares WHERE kek_id = <old id>` is 0, delete the secret and the `.previous` file (`docs/operations.md`, "Key rotation") |
+| `IDENTITY_ISS`, `IDENTITY_PUBLIC_KEYS`, `IDENTITY_ACTIVE_KID` | optional vars (manifest `identityToken`) | The partner identity token's issuer, JWKS (public keys only) and signing kid. Without them `/v1/identity/*` answers `503 identity_unavailable` (`docs/api.md` "Identity token") |
+| `IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY`, `IDENTITY_SUB_KEY` | secrets, testnet only | Two slots for P-256 private JWKs (whichever has the thumbprint `IDENTITY_ACTIVE_KID` signs; normally only the active key is uploaded, both only during a switch) and the `sub`/`sid` HMAC key. `pnpm --filter @hana-id/scripts run identity-key <env> init --yes` generates the active key, an offline standby (published, never uploaded) and the sub key into `.secrets/<env>/identity-*` (0600), writes the public keys to the manifest and sets the active key and the sub key through wrangler's stdin; `next`, `switch`, `retire` rotate (`docs/operations.md` "Identity token keys", D177) |
+| `IDENTITY_SIGNER`, `IDENTITY_KMS_KEY_ARN`; `IDENTITY_AWS_ACCESS_KEY_ID`, `IDENTITY_AWS_SECRET_ACCESS_KEY` | vars; secrets (`aws-kms` only) | The signer kind (`worker-secret`, the default, or `aws-kms`) and, for AWS KMS, the active key's ARN and the signer IAM user's access key (`identity-key <env> kms-put-aws-key`). No env uses KMS yet (`docs/operations.md` "Identity token keys on AWS KMS", D215) |
+| `IDENTITY_SESSION_LIMIT`, `IDENTITY_ROOT_LIMIT` | Rate Limiting (`ratelimits`) | `/v1/identity/token` per session key (10 per 60 s) and per account root (30 per 60 s), per location (`src/identity/limits.ts`); namespaces `95003`, `95004` |
 | `DB` | D1 | `migrations/` |
 | `RELAYER_KEY`, `RATE_LIMITER`, `LOGIN_RELAY` | Durable Objects | SQLite-backed classes `RelayerKey`, `RateLimiter` (migration `v1`), `LoginRelay` (`v2`) |
 | `VAULT_IP_LIMIT`, `VAULT_SHARE_LIMIT` | Rate Limiting (`ratelimits`) | The vault's per-IP (60) and per-share (10) limits per 60 s, counted per Cloudflare location (`src/vault/limits.ts`, D95); namespaces `95001`, `95002` are account-wide |
 | cron `*/15 * * * *` | trigger | One trigger. Every run syncs Google's JWKS with hana-signer (`src/issuer-keys.ts`): proposes new kids (`set_issuer_key`, which queues them for `issuer_key_delay_ms`), proposes the removal of kids missing from the JWKS for ≥ 55 min (`propose_issuer_key_removal`, tracked in D1 `issuer_key_missing`, never the issuer's last key), executes matured changes that agree with the JWKS (`execute_issuer_key_change`), never calls `remove_issuer_key`; remembers its proposals in `issuer_key_proposals` (a cancelled one is held 1 h) and its last run in `issuer_key_sync_runs`. Every run records Google's JWKS kids in D1 `issuer_key_observations` (D33 key lead time: `admin <env> issuer-keys:lead-times`, `docs/operations.md`) |
-| cron, run at :00 | trigger | Also vault maintenance (`src/vault/cron.ts`, `isHourlyRun`): deletes `vault_shares` rows past `abs_expires_at` or revoked, re-wraps up to 2000 rows per run from `VAULT_KEK_PREVIOUS` to `VAULT_KEK`, logs rows under an unknown KEK id |
+| cron, run at :00 | trigger | Also vault maintenance (`src/vault/cron.ts`, `isHourlyRun`): deletes `vault_shares` rows past `abs_expires_at` or revoked once older than 24 h (tombstones for the identity token, D178), re-wraps up to 2000 rows per run from `VAULT_KEK_PREVIOUS` to `VAULT_KEK`, logs rows under an unknown KEK id; and deletes identity token counts older than 24 months (`src/identity/maintenance.ts`) |
 
 ## Endpoints
 
@@ -63,9 +68,10 @@ All JSON. Success: `{"result": …, "nearTx": "<base58 tx hash>", "requestId": "
 
 | Endpoint | Body (camelCase, byte arrays as JSON number arrays) | Contract call → `result` |
 |---|---|---|
-| `GET /v1/app` | — | none → `{name, scopeId, signer, google: {clientId, mode: "own" \| "shared"}, serverTimeMs, autoApprovePolicy, rawSign, requestId}` (top level, no `result`; `autoApprovePolicy` is the policy in force, validated and normalized, or `null`; `rawSign` is `"off"` or `"approval"` in force now; an open vault re-reads both within 10 s, D62, D68) |
-| `POST /v1/login` | a `/v1/sessions` body plus `{signature[64], pk1, pk2}` (the session key's signature over counter 1 of the CKD payload); nothing else | `create_session_and_derive` (100 Tgas) → `{big_y, big_c}`, plus `session: {scope_id, expires_at_ms, max_uses, used: 1}` (informational) |
-| `POST /v1/sessions` | `{jwt, sessionPublicKey[32], expiresAtMs, salt[16..64], keyIndex (0..2^31 − 1; higher is reserved), maxUses (1..500)}`; `scopeId` is rejected | `create_session` with the app's `scope_id` (D1) → Session `{path, scope_id, expires_at_ms, max_uses, used}` |
+| `GET /v1/app` | — | none → `{name, scopeId, signer, google: {clientId, mode: "own" \| "shared"} \| null, loginMethods, email?: {aud}, serverTimeMs, autoApprovePolicy, rawSign, requestId}` (top level, no `result`; `loginMethods` is the app's D1 `login_methods` ∩ what the scope serves on chain, `["google"]` for every app today, D231; `autoApprovePolicy` is the policy in force, validated and normalized, or `null`; `rawSign` is `"off"` or `"approval"` in force now; an open vault re-reads both within 10 s, D62, D68) |
+| `POST /v1/login` | a `/v1/sessions` body (without its proof) plus `{signature[64], pk1, pk2}` (the session key's signature over counter 1 of the CKD payload), and optionally `linkJwt` (an email token) with `linkImmediate` (then the signature is over the linked CKD payload, D133); nothing else | `create_session_and_derive` (150 Tgas; 250 with a link) → `{big_y, big_c}`, plus `session: {scope_id, expires_at_ms, max_uses, used: 1}` (informational) |
+| `POST /v1/sessions` | `{jwt, sessionPublicKey[32], expiresAtMs, salt[16..64], keyIndex (0..2^31 − 1; higher is reserved), maxUses (1..500), signature[64]}` (`signature`: the session key's proof of possession, D137); `scopeId` is rejected | `create_session` with the app's `scope_id` (D1) and the proof → Session `{path, scope_id, expires_at_ms, max_uses, used}` |
+| `POST /v1/link`, `/v1/link/cancel`, `/v1/link/unlink` | `{accountJwt, newJwt, epoch, salt}`; `{jwt, memberKey, epoch, salt}` (Hana pages only) | `link_identity` (250 Tgas) → `{effectiveAtMs}`; `cancel_link`, `unlink_identity` (150) → `null`; then the account's vault shares are revoked (`docs/api.md` "Link relays") |
 | `POST /v1/derive` | `{sessionPublicKey[32], counter, signature[64], pk1 "bls12381g1:…", pk2 "bls12381g2:…"}` | `derive_key` → `{big_y, big_c}` |
 | `POST /v1/sessions/revoke` | `{sessionPublicKey[32], counter, signature[64]}` | `revoke_session` → `null` |
 
@@ -117,7 +123,9 @@ Checks, in order (rejected before anything is relayed):
    then is judged on its outcome.
 
 `GET /v1/app` runs checks 1–2 and a per-IP limit of its own (the plan's `per_ip_minute`, separate window), never the
-app's relay quota. `google` is `own` with the scope's first Google client (or the app's `google_web_client_id`, set
+app's relay quota. An email token (JWS JSON) on `/v1/sessions` or `/v1/login` is checked against the manifest's
+email keys (`EMAIL_ISS`, `EMAIL_PUBLIC_KEYS`) and the on-chain signer policy, and only for an app whose
+`login_methods` lists `email` (`403 login_method_disabled`; `docs/api.md` "Email tokens"). `google` is `own` with the scope's first Google client (or the app's `google_web_client_id`, set
 with `admin app:settings --google-web-client`; `409 no_google_client` if it is no longer one of the scope's
 clients), else `shared` with the first shared client
 in force when the scope has `allow_shared`, else `409 no_google_client` (`409 scope_not_registered` when the scope is
@@ -127,8 +135,9 @@ Relay errors: `422 contract_rejected` (contract panic text in `error`), `502 nea
 as invalid: it never executed) / `near_error` / `near_unavailable` / `bad_contract_result` (it executed, but the
 result isn't the shape the endpoint returns), `503 relayer_busy` / `relayer_unavailable` / `relayer_unconfigured` (the
 pool's secret is missing or empty: nothing sent), `504 timeout`. Any other broadcast failure (dropped connection, non-JSON 5xx from a proxy) may still execute, so the
-tx hash is polled; transient errors while polling don't end the wait. Usage (`usage.sessions` /
-`usage.derives`, per app per UTC day) counts successful calls only.
+tx hash is polled; transient errors while polling don't end the wait. Usage: one event per request past the gate to
+the Neon ledger, after the response (`src/usage/`, `docs/api.md` "Usage capture"); the D1 `usage` counters are no
+longer written.
 
 CORS: responses echo `Origin` (with `Vary: Origin`) only when it is allowed for the request's app. Preflight carries no
 key, so `OPTIONS` succeeds when any active app allows the origin; the real request is then checked against its own app.
@@ -139,16 +148,18 @@ key, so `OPTIONS` succeeds when any active app allows the origin; the real reque
   `/v1/login` both; `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke` the vault only. The request acts for
   `x-hana-parent-origin`, which must be one of the app's origins. CORS echoes the Hana origin (also when the parent is
   refused, so the page can read why).
-- **Partner pages.** `Origin` exactly equals one of the app's `app_origins`: `GET /v1/app` for both key types in every
-  env; `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke` only with `pk_test_` keys in dev envs (`apps/smoke`);
+- **Partner pages.** `Origin` exactly equals one of the app's origins in force (`app_origins.active_from <= now`; a
+  pending origin, `active_from` NULL or in the future, never matches): `GET /v1/app` for both key types in every env;
+  `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke` only for apps on a test scope in dev envs (`apps/smoke`);
   nothing else.
 - **Loopback** origins (`localhost`, `*.localhost`, `127.0.0.0/8`, `[::1]`), and `http://localhost:<port>` through the
-  entry `http://localhost:*`, count only for `pk_test_` keys in dev envs (`ENV_NAME` starting with `local` or
-  `sandbox`), for partner origins and parent origins alike.
-- Preflight carries no key: it allows the two Hana origins, and any origin an active app allows (loopback only through
-  a `pk_test_` app in a dev env). Allowed headers: `content-type`, `x-hana-key`, `x-hana-parent-origin`,
-  `x-hana-relay-key`.
-- `admin app:create` refuses a scope already used by an app with the other key type.
+  entry `http://localhost:*`, count only for apps on a test scope (`scopes.environment`, the scope of every `pk_test_`
+  key) in dev envs (`ENV_NAME` starting with `local` or `sandbox`), for partner origins and parent origins alike.
+- Preflight carries no key: it allows the two Hana origins, and any origin in force for an active, undeleted app
+  (loopback only through a test-scope app in a dev env). Allowed headers: `content-type`, `x-hana-key`,
+  `x-hana-parent-origin`, `x-hana-relay-key`.
+- The key comes from `app_keys` (revoked: `401 unknown_app`), the suspension from `suspended_by` and `status`, and test
+  and live apps never share a scope (migration 0006's `scopes` and triggers; `docs/api.md` "The app gate").
 
 ### `POST /v1/login` (`src/login.ts`)
 
@@ -160,8 +171,8 @@ compressed, non-identity point (`400 invalid_app_key`); with `BLS_PRECHECK = "1"
 `e(pk1, −g2) · e(g1, pk2) = 1` (`400 invalid_app_key`; the same var gates it on `/v1/derive`). Failures map by the
 failing receipt's executor: the signer → `422 contract_rejected` (with `reason: "session_key_in_use"` for that panic;
 the session was not created), `MPC_ACCOUNT` → `422 ckd_failed` with `session: {used: 1}` (the session is committed),
-else `502 near_error`; `504 timeout` and relayer errors keep their codes and `nearTx`. Usage: `sessions` and `derives`
-on success, `sessions` only on `ckd_failed`. `/v1/sessions` applies the claim allow-list too once
+else `502 near_error`; `504 timeout` and relayer errors keep their codes and `nearTx`. Usage: one `login` event
+(relayed when the transaction can have executed; a uid on success). `/v1/sessions` applies the claim allow-list too once
 `REJECT_PII_ON_SESSIONS = "1"`. From `AUTH_ORIGIN` (the export window, a key export) the call is also limited to 3 per
 hour per `(app, sha256(path))`, counted right after the nonce check and before anything is relayed (`429 rate_limited`
 + `retry-after`, `503 rate_limiter_unavailable`; D59).
@@ -268,7 +279,7 @@ raised one never lengthens them). Then `401 invalid_signature`, then one atomic 
 settings in the same statement: `409 bad_counter {expected}`, `410 share_expired`. `revoke-all` revokes the other
 shares and moves its counter in one D1 batch (one transaction), the revoke conditional on the counter move, so a
 failure changes neither and a replay revokes nothing. `503 vault_key_unavailable` when `VAULT_KEK` (or, for an older row,
-`VAULT_KEK_PREVIOUS`) is missing; unlock unwraps K_s before the counter moves. Usage counts `usage.unlocks`. D1 holds
+`VAULT_KEK_PREVIOUS`) is missing; unlock unwraps K_s before the counter moves. Each unlock past the vault gate is one `unlock` usage event. D1 holds
 only `share_enc = iv ‖ AES-GCM(VAULT_KEK, iv, K_s, aad = share_id ‖ app_id ‖ session_pk)` (`src/vault/kek.ts`).
 
 ### `POST /v1/owner-actions` (no app auth; 10 per IP per minute, 20 per minute and 200 per day globally)
@@ -340,7 +351,8 @@ reuses the stored block hash while it is under 5 min old; only a key with no sto
 secret at that index) reads the access-key nonce and a final block from chain. On `InvalidNonce` the object re-reads
 the access key (`max(local, chain, ak_nonce from the error)`) and retries once; an expired block hash is refreshed and
 retried once; a tx superseded twice 2 s apart while unknown is treated as dropped and resent once with a fresh nonce. The object only relays its pool's methods, always to `SIGNER_ACCOUNT`, no deposit, with
-per-method gas from `src/gas.ts` (never the caller's): `create_session` 50 Tgas, `create_session_and_derive` 100,
+per-method gas from `src/gas.ts` (never the caller's): `create_session` 100 Tgas, `create_session_and_derive` 150 (250
+with a `link_jwt`), `link_identity` 250, `cancel_link` and `unlink_identity` 150 (D155: 4096-bit issuer keys),
 `derive_key` 60, `revoke_session` 20, `prune_sessions` 50, owner-pool methods 50 except `register_scope`, which
 verifies one RS256 client proof per client: 30 + 25 per proof, capped at 300 (280 for the contract's 10). **To
 measure on testnet**; override with `GAS_<METHOD>_TGAS`.

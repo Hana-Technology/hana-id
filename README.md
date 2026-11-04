@@ -102,6 +102,7 @@ cd contracts/hana-signer && cargo test
 | Admin (apps, scopes, app settings) | `pnpm --filter @hana-id/scripts run admin <env> <command> …` |
 | API Worker config | `pnpm --filter @hana-id/api run gen <env> [--d1-id <uuid>] [--dev-vars]` |
 | `VAULT_KEK` | `pnpm --filter @hana-id/scripts run vault-kek <env> init\|put\|rotate [--yes]` |
+| Identity token keys (`IDENTITY_SIGNING_KEY`, `…_STANDBY`, `IDENTITY_SUB_KEY`) | `pnpm --filter @hana-id/scripts run identity-key <env> init [--local]\|put\|show [--yes]` (`docs/operations.md` "Identity token keys") |
 | Hana pages (vault, auth) | `pnpm --filter @hana-id/web build` · `pnpm --filter @hana-id/api run deploy:pages` |
 | Recovery playbooks doc | `pnpm --filter @hana-id/playbooks gen-docs` (writes `docs/playbooks.md`; edit `packages/playbooks`) |
 | SDK tarballs: build, check, install outside the repo | `pnpm run pack:check` · version: `pnpm --filter @hana-id/scripts run sdk-version <x.y.z>` (`docs/operations.md` "Releasing the SDK packages") |
@@ -130,10 +131,10 @@ same run). Steps:
 2. Deploy to `signer` and call `new(owner, mpc, ckd_domain_id, change_delay_ms, issuer_key_delay_ms,
    governance_delay_ms, watchdogs, updater_keys)` in the same transaction (only where `allowSignerFullAccessKey`
    allows the signer a full-access key; other envs are created with the `--creation-plan` batch). On an initialised
-   contract `--upgrade` changes the code in place, same account, so no address changes: a v1 contract gets
-   `DeployContract` + `migrate_v1` in one transaction; a v2 contract gets `propose_upgrade(<code_hash>)` by the owner
-   and, on a re-run once `governance_delay_ms` has passed, `execute_upgrade` with the raw wasm (never a raw
-   `DeployContract`). Details and the sandbox-dev migration: `docs/operations.md` "Governance".
+   contract `--upgrade` changes the code in place, same account, so no address changes: `propose_upgrade(<code_hash>)`
+   by the owner and, on a re-run once `governance_delay_ms` has passed, `execute_upgrade` with the raw wasm (never a
+   raw `DeployContract`). A v1 (pre-governance) contract is refused: current code has no v1 migration (D154).
+   Details and the sandbox-dev migration: `docs/operations.md` "Governance".
 3. Add two pools of function-call keys on `relayer`, both with receiver = `signer`, one transaction per pool:
    - **Session pool** (the API's `RELAYER_KEYS`, logins): `--relayer-keys` keys (default 3), limited to
      `create_session`, `create_session_and_derive`, `derive_key`, `revoke_session`, `prune_sessions`, allowance
@@ -148,8 +149,9 @@ same run). Steps:
 4. The keys-updater key (the API's `KEYS_UPDATER_KEY`, so the cron can propose Google keys without the owner): generated
    into `.secrets/<env>/keys-updater.json` and installed on `signer` by the owner's `add_updater_key`. The contract
    gives it exactly `set_issuer_key`, `propose_issuer_key_removal`, `execute_issuer_key_change`, receiver `signer`,
-   1 NEAR; nobody adds keys to the signer by hand any more. On the v1 → v2 migration the old updater key (with
-   `remove_issuer_key`) is deleted after the new one is in. Then `add_watchdog` for each `watchdogs` account that exists,
+   1 NEAR; nobody adds keys to the signer by hand any more. A pre-governance updater key (with `remove_issuer_key`)
+   still on the signer is deleted once the contract's own is in (the v1 → v2 migration did this on sandbox-dev
+   on 2026-10-30). Then `add_watchdog` for each `watchdogs` account that exists,
    and `set_issuer_key_delay_ms` / `set_governance_delay_ms` if the contract's delays differ from the manifest.
    `--transfer-owner` adds `propose_owner(<council DAO>)` and, once due, the DAO's `accept_owner` (then the script sets
    `owner` / `ownerKind` in the manifest).

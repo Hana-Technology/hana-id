@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { HANA_CALLERS, checkCaller, isDevEnv, isLoopbackOrigin, originAllowed } from '../src/origins.ts';
-import { ORIGIN, appHeaders, call, chain, newKey, seedApp, uid } from './helpers.ts';
+import { ORIGIN, appHeaders, call, chain, forgeKeyEnvironment, newKey, seedApp, uid } from './helpers.ts';
 import { AUTH, VAULT, hanaHeaders } from './login-helpers.ts';
 
 afterEach(() => vi.restoreAllMocks());
@@ -16,8 +16,8 @@ describe('isDevEnv', () => {
 });
 
 describe('originAllowed', () => {
-  const test = { publishable_key: newKey('pk_test_'), origins: [ORIGIN, 'http://localhost:*', 'http://127.0.0.1:8080', 'https://app.localhost'] };
-  const live = { ...test, publishable_key: newKey('pk_live_') };
+  const test = { environment: 'test' as const, origins: [ORIGIN, 'http://localhost:*', 'http://127.0.0.1:8080', 'https://app.localhost'] };
+  const live = { ...test, environment: 'live' as const };
 
   it('matches listed origins exactly', () => {
     for (const devEnv of [true, false]) {
@@ -34,7 +34,7 @@ describe('originAllowed', () => {
     }
   });
 
-  it('allows loopback origins, and http://localhost:* by wildcard, only for pk_test_ keys in dev envs', () => {
+  it('allows loopback origins, and http://localhost:* by wildcard, only for test-scope apps in dev envs', () => {
     for (const o of ['http://localhost:5173', 'http://127.0.0.1:8080', 'https://app.localhost']) {
       expect(originAllowed(test, o, true), o).toBe(true);
       expect(originAllowed(test, o, false), o).toBe(false);
@@ -53,7 +53,7 @@ describe('originAllowed', () => {
 
 describe('checkCaller', () => {
   const env = { ENV_NAME: 'sandbox-x', VAULT_ORIGIN: VAULT, AUTH_ORIGIN: AUTH };
-  const app = { publishable_key: newKey('pk_test_'), origins: [ORIGIN] };
+  const app = { environment: 'test' as const, origins: [ORIGIN] };
   const headers = (h: Record<string, string>): Headers => new Headers(h);
 
   it('a Hana page acts for its parent; CORS echoes the page even when the parent is refused', () => {
@@ -112,6 +112,9 @@ describe('Origin × x-hana-parent-origin matrix (appGate)', () => {
       '/v1/sessions': ['vault'],
       '/v1/derive': ['vault'],
       '/v1/sessions/revoke': ['vault'],
+      '/v1/link': ['vault', 'auth'],
+      '/v1/link/cancel': ['vault', 'auth'],
+      '/v1/link/unlink': ['vault', 'auth'],
     });
   });
 
@@ -147,19 +150,27 @@ describe('Origin × x-hana-parent-origin matrix (appGate)', () => {
     }
   });
 
-  it('scope_conflict: a pk_test_ app on a scope a pk_live_ app uses is refused everywhere', async () => {
-    chain({});
+  it('a test and a live app never share a scope: the 0006 triggers refuse the second', async () => {
     const scope = `s${uid()}`;
-    const testApp = await seedApp({ scope });
+    await seedApp({ scope });
+    await expect(seedApp({ scope, key: newKey('pk_live_') })).rejects.toThrow(/key prefix does not match the scope environment/u);
+    const live = `s${uid()}`;
+    await seedApp({ scope: live, key: newKey('pk_live_') });
+    await expect(seedApp({ scope: live })).rejects.toThrow(/key prefix does not match the scope environment/u);
+  });
+
+  it('scope_conflict: a key whose prefix names the other environment (a direct D1 write) is refused everywhere', async () => {
+    chain({});
+    const testApp = await seedApp();
     const before = await send('/v1/sessions', 'POST', appHeaders(testApp));
     expect([before.status, (await body(before)).code]).toEqual([400, 'bad_request']);
-    const liveApp = await seedApp({ scope, key: newKey('pk_live_') });
+    // app_keys has no update trigger: a manual edit can give a test scope's app a pk_live_ key.
+    const forged = await forgeKeyEnvironment(testApp);
     for (const { path, method } of ENDPOINTS) {
-      const res = await send(path, method, path === '/v1/app' ? appHeaders(testApp) : hanaHeaders(testApp));
+      const res = await send(path, method, path === '/v1/app' ? appHeaders(forged) : hanaHeaders(forged));
       expect([res.status, (await body(res)).code], path).toEqual([403, 'scope_conflict']);
     }
-    // The live app itself is unaffected, and so is a test app on another scope.
-    expect(await body(await send('/v1/login', 'POST', hanaHeaders(liveApp)))).toMatchObject({ code: 'bad_request' });
+    // A test app on another scope is unaffected.
     const other = await seedApp();
     expect(await body(await send('/v1/login', 'POST', hanaHeaders(other)))).toMatchObject({ code: 'bad_request' });
   });

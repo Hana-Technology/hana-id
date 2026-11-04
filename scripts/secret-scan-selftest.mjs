@@ -43,6 +43,13 @@ const secretKey = () => `ed25519:${base58(randomBytes(64))}`;
 const publicKey = () => `ed25519:${base58(randomBytes(32))}`;
 /** A fake VAULT_KEK as scripts/lib/vault-kek.ts writes it. */
 const kek = (id) => `${id}:${randomBytes(32).toString('base64')}`;
+/** A fake P-256 private JWK as scripts/lib/identity-key.ts writes it (random coordinates: only the shape matters). */
+const privateJwk = () => JSON.stringify({ kty: 'EC', crv: 'P-256', x: randomBytes(32).toString('base64url'), y: randomBytes(32).toString('base64url'), d: randomBytes(32).toString('base64url') });
+/** A fake RSA-2048 private JWK as scripts/lib/email-issuer.ts writes it (random members: only the shape matters). */
+const rsaPrivateJwk = () =>
+  JSON.stringify({ kty: 'RSA', n: randomBytes(256).toString('base64url'), e: 'AQAB', d: randomBytes(256).toString('base64url'), p: randomBytes(128).toString('base64url'), q: randomBytes(128).toString('base64url'), dp: randomBytes(128).toString('base64url'), dq: randomBytes(128).toString('base64url'), qi: randomBytes(128).toString('base64url') });
+/** A fake public JWKS entry (no `d`): public, must not be flagged. */
+const publicJwk = () => JSON.stringify({ kty: 'EC', crv: 'P-256', x: randomBytes(32).toString('base64url'), y: randomBytes(32).toString('base64url'), kid: randomBytes(32).toString('base64url'), use: 'sig', alg: 'ES256' });
 const keyFile = (account) => `${JSON.stringify({ account_id: account, public_key: publicKey(), private_key: secretKey() }, null, 2)}\n`;
 
 /** Each case: files to write, and the rule ids gitleaks must report for them (at least these). */
@@ -64,8 +71,46 @@ const CASES = [
   { name: 'KEK value in an innocent file', files: { 'kek-backup.txt': `${kek(3)}\n` }, expect: ['hana-vault-kek'] },
   { name: 'council key file (force-added .secrets)', files: { '.secrets/sandbox-dev/council/hana-id-council-a-dev1.testnet.json': keyFile('hana-id-council-a-dev1.testnet') }, expect: ['hana-secret-file', 'near-ed25519-secret-key'] },
   { name: 'council key file copied elsewhere', files: { 'council-member.json': keyFile('hana-id-council-b-dev1.testnet') }, expect: ['near-ed25519-secret-key'] },
+  { name: 'identity signing key file copied out of .secrets', files: { 'backup/identity-signing-key.json': `${privateJwk()}\n`, 'backup/identity-signing-key-standby.json': `${privateJwk()}\n` }, expect: ['hana-secret-file', 'hana-private-jwk'] },
+  { name: 'identity sub key file', files: { 'copy/identity-sub-key': `${randomBytes(32).toString('base64')}\n` }, expect: ['hana-secret-file'] },
+  { name: 'private JWK pasted into an innocent file', files: { 'src/key.ts': `export const KEY = ${privateJwk()};\n` }, expect: ['hana-private-jwk'] },
+  {
+    name: 'identity secrets as gen-wrangler --dev-vars writes them, pasted into a doc',
+    files: { 'docs/dev.md': `IDENTITY_SIGNING_KEY='${privateJwk()}'\nIDENTITY_SUB_KEY='${randomBytes(32).toString('base64')}'\n` },
+    expect: ['hana-worker-secret-assignment', 'hana-private-jwk'],
+  },
+  { name: 'uid key file copied out of .secrets', files: { 'copy/user-id-key': `${randomBytes(32).toString('base64')}\n` }, expect: ['hana-secret-file'] },
+  { name: 'USER_ID_KEY line pasted into a doc', files: { 'docs/usage.md': `USER_ID_KEY=${randomBytes(32).toString('base64')}\n` }, expect: ['hana-worker-secret-assignment'] },
+  {
+    name: 'ledger role URL file copied out of .secrets',
+    files: { 'backup/neon-usage-writer.url': `postgresql://usage_writer:${randomBytes(32).toString('base64url')}@ep-x-${randomBytes(4).toString('hex')}.ap-southeast-2.aws.neon.tech/neondb?sslmode=require\n` },
+    expect: ['hana-secret-file', 'hana-postgres-url'],
+  },
+  // 10 distinct characters (random order): log2(10) ≈ 3.3 bits each, over the rule's 3.0 floor.
+  { name: 'Postgres URL with a short (10-character) password', files: { 'notes/short.txt': 'postgres://app:' + shortPassword(10) + '@db.example.net/app\n' }, expect: ['hana-postgres-url'] },
+  { name: 'Postgres URL with a password in an innocent file', files: { 'notes/db.txt': `psql "postgresql://neondb_owner:${randomBytes(18).toString('base64url')}@ep-y.ap-southeast-2.aws.neon.tech/neondb"\n` }, expect: ['hana-postgres-url'] },
+  { name: 'email issuer signing key file copied out of .secrets', files: { 'backup/email-issuer-signing-key.json': `${rsaPrivateJwk()}\n`, 'backup/email-issuer-signing-key-standby.json': `${rsaPrivateJwk()}\n` }, expect: ['hana-secret-file', 'hana-private-jwk'] },
+  { name: 'email issuer HMAC key files', files: { 'copy/email-sub-key': `${randomBytes(32).toString('base64')}\n`, 'copy/email-code-key': `${randomBytes(32).toString('base64')}\n`, 'copy/email-rl-key': `${randomBytes(32).toString('base64')}\n` }, expect: ['hana-secret-file'] },
+  {
+    name: 'email issuer secrets as gen-wrangler --dev-vars writes them, pasted into a doc',
+    files: { 'docs/email-dev.md': `ISSUER_SIGNING_KEY='${rsaPrivateJwk()}'\nEMAIL_SUB_KEY='${randomBytes(32).toString('base64')}'\nEMAIL_RL_KEY='${randomBytes(32).toString('base64')}'\n` },
+    expect: ['hana-worker-secret-assignment', 'hana-private-jwk'],
+  },
+  { name: 'RSA private JWK pasted into an innocent file', files: { 'src/rsa.ts': `export const KEY = ${rsaPrivateJwk()};\n` }, expect: ['hana-private-jwk'] },
+  { name: 'EC private JWK as a JS object literal (unquoted d)', files: { 'src/ec.ts': `export const KEY = { kty: 'EC', crv: 'P-256', d: '${randomBytes(32).toString('base64url')}' };\n` }, expect: ['hana-private-jwk'] },
+  { name: 'RSA private JWK as a JS object literal (unquoted d, backticks)', files: { 'src/rsa2.ts': `export const KEY = { kty: 'RSA', d: \`${randomBytes(256).toString('base64url')}\` };\n` }, expect: ['hana-private-jwk'] },
   { name: 'watchdog secrets file', files: { '.secrets/sandbox-dev/watchdog-secrets.json': `{"WATCHDOG_STATUS_TOKEN":"${randomBytes(32).toString('base64url')}"}\n` }, expect: ['hana-secret-file'] },
 ];
+
+/** `n` distinct letters and digits in a random order (a short password whose entropy is log2(n) bits a character). */
+function shortPassword(n) {
+  const pool = [...'ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = randomBytes(1)[0] % (i + 1);
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool.slice(0, n).join('');
+}
 
 /** Public look-alikes the repo legitimately contains: none may be flagged by any rule. */
 const NEGATIVE = {
@@ -73,7 +118,9 @@ const NEGATIVE = {
   'docs/ops.md': "VAULT_KEK=1:<base64 of 32 bytes>\nRELAYER_KEYS='[\"ed25519:…\"]'\nKEYS_UPDATER_KEY=$(jq -r .private_key .secrets/<env>/keys-updater.json)\n",
   'test/fixture.ts': `const placeholder = "1:${'A'.repeat(43)}=";\n`,
   'scripts/vault-kek.ts': '// vault-kek.ts <env> <init | put | rotate>\n',
-  'envs/x.json': `{ "watchdogs": ["${publicKey()}"] }\n`,
+  'envs/x.json': `{ "watchdogs": ["${publicKey()}"], "identityToken": { "publicKeys": [${publicJwk()}] } }\n`,
+  'docs/jwks.md': `IDENTITY_SIGNING_KEY=<a P-256 private JWK>\nIDENTITY_SUB_KEY=<base64 of 32 bytes>\n`,
+  'docs/usage.md': 'postgresql://usage_writer:<password>@<host>/neondb?sslmode=require\nUSER_ID_KEY=<base64 of 32 bytes>\npostgresql://usage_writer:unused@usage-db.test.invalid:5432/usage\n',
 };
 
 function scan(dir) {

@@ -21,7 +21,7 @@ Governance fields (`docs/governance-spec.md`, `docs/operations.md` "Governance")
   `council-setup` (member keys in `.secrets/sandbox-dev/council/`); it exists before it becomes the owner.
 - `watchdogs` (default none, ≤ 3): accounts the contract lets cancel, confirm and pause (`add_watchdog`); none may be
   an env or council account.
-- `issuerKeyDelayMs` (≤ 7 days), `governanceDelayMs` (≤ 30 days): the delays `new` and `migrate_v1` start with (D80;
+- `issuerKeyDelayMs` (≤ 7 days), `governanceDelayMs` (≤ 30 days): the delays `new` starts with (D80;
   sandbox-dev 120 000 and 60 000). `deploy-contract` sets them on chain if they differ (decreases wait, per contract).
 - `allowSignerFullAccessKey`: the signer may keep a full-access key (D86). Only for `local*` / `sandbox*` envs on
   testnet: the schema refuses it outside testnet, `deploy-contract` refuses it in any other env, and a test checks that
@@ -86,6 +86,36 @@ D1 database). Per-IP limiters always stay near their client. Changing it creates
   optional, `critical` below `warn`: `balance` (the `relayer` account's available balance; default 5 / 1),
   `sessionAllowance` (each session-pool key; 0.5 / 0.1), `ownerAllowance` (each owner-pool key; 0.1 / 0.02). Raise the
   allowance pairs when `deploy-contract` runs with larger allowances. A change needs `watchdog gen` and a redeploy.
+- `pinnedIssuerKeys.email` (optional; email login, `docs/email-login-spec.md` "Watchdog", D190, D191): the signer
+  policy the watchdog expects of Hana's email issuer, `{"required": 1, "signers": {"hana": ["<thumbprint>", …]}}`,
+  each key by its RFC 7638 JWK thumbprint (43 base64url characters, the email issuer's `kid` for it), 1–3 signers,
+  ≤ 8 keys in all, each key pinned once; optional `jwksUrl` (https; default `{emailIssuer.url}/v1/email/jwks.json`, or under `apiUrl` without `emailIssuer.url`). Absent
+  means **nothing is pinned**: every email key is then unpinned (a pending one is cancelled, an active one pauses the
+  contract) and an email issuer on chain is a critical alert. So pin before the owner posts the first email key
+  (build plan batch 6). sandbox-dev has none until batch 4 creates the key. Order around a signer-policy upgrade
+  (D191): pin a new signer's keys before the upgrade executes, raise `required` after it. A change needs
+  `watchdog gen` and a redeploy (on the watchdog's own account: a pin change is the operator's, outside Hana's main
+  account).
+- `pinnedIdentityKeys` (optional; the partner identity token, `docs/identity-token-spec.md` "JWKS and discovery",
+  D210, D211): the RFC 7638 thumbprints (43 base64url characters; the kids) of the identity token's P-256 keys the
+  watchdog accepts in Hana's identity JWKS, 1–8, each once. With `identityToken` in the manifest, **every one of its
+  `publicKeys` must be pinned** (the schema refuses the manifest otherwise; extra pins are allowed and warn
+  `identity_key_missing` until published). `scripts/identity-key.ts` writes them with the keys: `init` and `next` pin
+  (deploy the watchdog first, then the API), `retire` unpins (deploy the API first, then the watchdog). Absent means
+  nothing is pinned: every published identity key pages as unpinned. sandbox-dev pins its active and standby keys.
+
+`emailIssuer` (optional; no env has it yet): the email login's issuer Worker (`apps/email-issuer/README.md`,
+`docs/operations.md` "Email issuer", D196). Written by `scripts/email-issuer.ts <env> init`, never by hand for the keys:
+`url` (the origin the issuer is reached at, D230: required when `apiUrl` is on `workers.dev`, and then the issuer's own
+`https://<emailIssuer.cloudflare.workerName>.<the API's subdomain>.workers.dev`; absent, the API's URL, with a zone
+route sending `/v1/email/*` to the issuer), `iss` (`{url}/v1/email`, `url` defaulting to `apiUrl`), `cloudflare` (its
+own Worker and D1, never the API's or the watchdog's), `signer`
+(`{kind: "worker-secret", activeKid}` on testnet; `aws-kms` is refused by `gen` until batch 10 and by the schema off
+testnet for `worker-secret`), `publicKeys` (the JWKS: 2048–4096-bit RSA, e = 65537, kid = RFC 7638 thumbprint, the
+standby included), `from` (user mail's `From`, on the user-mail sending subdomain), `sender` (`sendgrid`; `outbox` only
+in `local*` envs), and optionally `dailySendBudget` (default 1000), `access` (`{teamDomain, aud, staffEmails}` for staff
+client proofs) and `sendgridWebhookPublicKey`. A change needs `email-issuer gen` and a redeploy; a key change is also an
+owner proposal on chain and a watchdog pin change.
 
 `rpcFallback` (optional): a second NEAR JSON-RPC endpoint, `https` only and not `rpc` itself, ideally from another
 provider. The vault and the export window read from it (session re-syncs, the login's registry check, transaction

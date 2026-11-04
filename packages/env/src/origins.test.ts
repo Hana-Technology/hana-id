@@ -2,7 +2,11 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { hanaOriginProblem, isDevEnv, isLocalEnv, isLoopbackHost, loadEnv, manifestPath, manifestSchema, siteOf } from './index.ts';
 
-const raw = () => JSON.parse(readFileSync(manifestPath('sandbox-dev'), 'utf8')) as Record<string, unknown>;
+// Without identityToken: these tests move apiUrl, and the identity issuer must follow it (tested in identity.test.ts).
+const raw = (): Record<string, unknown> => {
+  const { identityToken: _i, ...m } = JSON.parse(readFileSync(manifestPath('sandbox-dev'), 'utf8')) as Record<string, unknown>;
+  return m;
+};
 
 /** sandbox-dev with the given name and origins (undefined drops the field). */
 function manifest(name: string, vaultOrigin: string | undefined, authOrigin: string | undefined): Record<string, unknown> {

@@ -63,7 +63,8 @@ describe('manifestSchema: Durable Object location', () => {
 
 describe('manifestSchema: rpcFallback', () => {
   it('is optional, https only, and not rpc itself', () => {
-    const { rpcFallback: _, ...base } = raw();
+    // Without an email issuer: with one, rpcFallback is required outside local* envs (D263, tested below).
+    const { rpcFallback: _, emailIssuer: _issuer, ...base } = raw();
     expect(manifestSchema.safeParse(base).success).toBe(true);
     expect(manifestSchema.parse({ ...base, rpcFallback: 'https://rpc.testnet.example' }).rpcFallback).toBe('https://rpc.testnet.example');
     const http = manifestSchema.safeParse({ ...base, rpcFallback: 'http://rpc.testnet.example' });
@@ -74,7 +75,19 @@ describe('manifestSchema: rpcFallback', () => {
     expect(same.success).toBe(false);
     expect(same.error?.issues[0]?.message).toContain('different endpoint');
   });
+
+  it('is another provider than rpc (registrable domain) outside local* envs: a member path is confirmed on both (D263)', () => {
+    const { rpcFallback: _, ...base } = raw();
+    const host = new URL(base.rpc as string).hostname.split('.').slice(-2).join('.');
+    const sameProvider = manifestSchema.safeParse({ ...base, rpcFallback: `https://other-node.${host}` });
+    expect(sameProvider.success).toBe(false);
+    expect(sameProvider.error?.issues.map((i) => i.message).join()).toContain('another provider');
+    expect(manifestSchema.safeParse({ ...base, rpcFallback: 'https://rpc.testnet.near.org' }).success).toBe(true);
+  });
 });
+
+/** The kids sandbox-dev's identity JWKS publishes. */
+const identityKids = (): string[] => (raw().identityToken as { publicKeys: { kid: string }[] }).publicKeys.map((k) => k.kid);
 
 describe('manifestSchema: watchdog', () => {
   const watchdog = (over: Record<string, unknown> = {}) => ({
@@ -83,6 +96,8 @@ describe('manifestSchema: watchdog', () => {
     alertEmails: ['a@example.com', 'b@example.com'],
     alertFrom: 'alerts@notify.example.com',
     pager: 'ntfy',
+    // sandbox-dev publishes identity keys, so the watchdog pins them (D211).
+    pinnedIdentityKeys: identityKids(),
     ...over,
   });
   // The service's account is also one of the contract's `watchdogs` (deploy-contract's add_watchdog).
@@ -141,4 +156,71 @@ describe('manifestSchema: watchdog', () => {
     expect(issues(watchdog({ cloudflare: { ...watchdog().cloudflare, workerName: api } }))[0]).toContain("differ from the API's Worker name");
     expect(issues(watchdog({ alertEmails: ['a@example.com', 'a@example.com'] }))).toEqual(['Duplicate alert email']);
   });
+
+  describe('pinnedIssuerKeys.email (the email signer policy)', () => {
+    const tp = (c: string) => c.repeat(43);
+    const pins = (email: unknown) => watchdog({ pinnedIssuerKeys: { email } });
+
+    it('is optional (absent: nothing pinned) and takes 1-of-1 and 2-of-2 policies', () => {
+      expect(issues(watchdog({ pinnedIssuerKeys: {} }))).toEqual([]);
+      expect(issues(pins({ required: 1, signers: { hana: [tp('a'), tp('b')] } }))).toEqual([]);
+      expect(issues(pins({ required: 2, signers: { hana: [tp('a')], cosign: [tp('c')] }, jwksUrl: 'https://api.example.com/v1/email/jwks.json' }))).toEqual([]);
+      const m = manifestSchema.parse({ ...withWatchdog(pins({ required: 1, signers: { hana: [tp('a')] } })) });
+      expect(m.watchdog?.pinnedIssuerKeys?.email?.signers.hana).toEqual([tp('a')]);
+    });
+
+    it('pins keys by RFC 7638 thumbprint and signer ids as the contract accepts them', () => {
+      expect(issues(pins({ required: 1, signers: { hana: ['short'] } }))[0]).toContain('RFC 7638 JWK thumbprint');
+      expect(issues(pins({ required: 1, signers: { hana: [`${tp('a').slice(1)}+`] } }))[0]).toContain('RFC 7638 JWK thumbprint');
+      expect(issues(pins({ required: 1, signers: { Hana: [tp('a')] } }))[0]).toContain('signer id');
+      expect(issues(pins({ required: 1, signers: { hana: [] } })).length).toBeGreaterThan(0);
+    });
+
+    it('refuses a policy the contract could never hold', () => {
+      expect(issues(pins({ required: 1, signers: {} }))).toContain('1 to 3 signers');
+      expect(issues(pins({ required: 2, signers: { hana: [tp('a')] } }))).toEqual(['required must not exceed the number of signers']);
+      expect(issues(pins({ required: 0, signers: { hana: [tp('a')] } })).length).toBeGreaterThan(0);
+      expect(issues(pins({ required: 1, signers: { a: [tp('a')], b: [tp('b')], c: [tp('c')], d: [tp('d')] } }))).toContain('1 to 3 signers');
+      const nine = 'abcdefghi'.split('').map(tp);
+      expect(issues(pins({ required: 1, signers: { hana: nine.slice(0, 5), cosign: nine.slice(5) } }))).toEqual(['at most 8 pinned keys in all']);
+      expect(issues(pins({ required: 1, signers: { hana: [tp('a')], cosign: [tp('a')] } }))).toEqual(['A key is pinned once, for one signer']);
+      expect(issues(pins({ required: 1, signers: { hana: [tp('a'), tp('a')] } }))).toEqual(['A key is pinned once, for one signer']);
+      expect(issues(pins({ required: 1, signers: { hana: [tp('a')] }, extra: true })).length).toBeGreaterThan(0);
+    });
+
+    it('needs an https JWKS URL', () => {
+      expect(issues(pins({ required: 1, signers: { hana: [tp('a')] }, jwksUrl: 'http://api.example.com/jwks.json' }))[0]).toContain('watchdog.pinnedIssuerKeys.email.jwksUrl must be an https URL');
+    });
+  });
+
+  describe('pinnedIdentityKeys (the identity token keys, D210, D211)', () => {
+    const tp = (c: string) => c.repeat(43);
+
+    it("sandbox-dev pins exactly the keys its JWKS publishes", () => {
+      const m = manifestSchema.parse(raw());
+      expect(m.watchdog?.pinnedIdentityKeys).toEqual(m.identityToken?.publicKeys.map((k) => k.kid));
+    });
+
+    it('every published identity key must be pinned; extra pins (pinned ahead) are fine', () => {
+      const [active, standby] = identityKids();
+      const missing = (kid: string) => `identityToken key ${kid} is not in watchdog.pinnedIdentityKeys: pin every published identity key (docs/operations.md "Identity token keys")`;
+      expect(issues(watchdog({ pinnedIdentityKeys: [active] }))).toEqual([missing(standby!)]);
+      const { pinnedIdentityKeys: _, ...unpinned } = watchdog();
+      expect(issues(unpinned)).toEqual([missing(active!), missing(standby!)]);
+      expect(issues(watchdog({ pinnedIdentityKeys: [...identityKids(), tp('n')] }))).toEqual([]);
+    });
+
+    it('optional without an identity token; thumbprints only, each once, at most 8', () => {
+      const { identityToken: _, ...noIdentity } = raw();
+      const { pinnedIdentityKeys: _p, ...noPins } = watchdog();
+      expect(manifestSchema.safeParse({ ...noIdentity, watchdogs: [noPins.account], watchdog: noPins }).success).toBe(true);
+      expect(manifestSchema.safeParse({ ...noIdentity, watchdogs: [noPins.account], watchdog: { ...noPins, pinnedIdentityKeys: [tp('a')] } }).success).toBe(true);
+      const bad = (pinnedIdentityKeys: unknown) => manifestSchema.safeParse({ ...noIdentity, watchdogs: [noPins.account], watchdog: { ...noPins, pinnedIdentityKeys } }).error?.issues.map((i) => i.message) ?? [];
+      expect(bad(['short'])[0]).toContain('RFC 7638 JWK thumbprint');
+      expect(bad([])).toHaveLength(1);
+      expect(bad([tp('a'), tp('a')])).toEqual(['An identity key is pinned once']);
+      expect(bad('abcdefghi'.split('').map(tp))).toHaveLength(1);
+    });
+  });
+
 });

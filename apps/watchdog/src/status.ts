@@ -1,6 +1,7 @@
 // Read-only status for batch C's admin portal (D83), plus acknowledgements:
-//   GET  /status               last run and its checks, heartbeat, silence, seen kids, relayer funds, recent actions,
-//                              open alerts
+//   GET  /status               last run and its checks, heartbeat, silence, seen kids, relayer funds, the email pins
+//                              and the chain's email issuer, the link stats (D200), the identity token's pins and
+//                              Hana's identity JWKS and discovery document (D210), recent actions, open alerts
 //   GET  /alerts?cursor&limit&severity   alert history, newest first, with deliveries
 //   GET  /actions?cursor&limit actions log, newest first (transaction hashes)
 //   POST /alerts/:id/ack {by}  records who acknowledged (via "portal"); stops only the 15-minute re-sends
@@ -8,9 +9,12 @@
 // here can change a check, stop a first delivery or call the chain.
 import { ALERT_KINDS_WITH_PLAYBOOKS, CHANNELS, CHECKS, RESEND_MS, RUN_INTERVAL_MS, type Severity } from './checks.ts';
 import type { Notifier } from './channels.ts';
+import type { LinkStatsView } from './chain.ts';
 import type { Env } from './env.ts';
 import { log } from './log.ts';
-import { type HeartbeatState, META, type RelayerFundsStatus } from './run.ts';
+import { identityDiscoveryUrl, identityJwksUrl, parseIdentityPins } from './identity.ts';
+import { parsePins } from './pins.ts';
+import { type EmailPolicyStatus, type HeartbeatState, type IdentityDiscoveryStatus, type IdentityJwksStatus, META, type RelayerFundsStatus } from './run.ts';
 import type { AlertRow, Store } from './store.ts';
 
 /** The portal warns when the last run is older than two intervals (spec "Monitoring in the admin portal"). */
@@ -125,6 +129,18 @@ export async function handleRequest(request: Request, d: StatusDeps): Promise<Re
   return json(200, { alert: acked && alertView(acked) });
 }
 
+async function identityStatus(d: StatusDeps) {
+  const iss = d.env.IDENTITY_ISS?.trim() || null;
+  return {
+    iss,
+    jwks_url: iss && identityJwksUrl(iss),
+    discovery_url: iss && identityDiscoveryUrl(iss),
+    pinned: parseIdentityPins(d.env.IDENTITY_PINS).pins,
+    jwks: await d.store.getMeta<IdentityJwksStatus>(META.identityJwks),
+    discovery: await d.store.getMeta<IdentityDiscoveryStatus>(META.identityDiscovery),
+  };
+}
+
 async function status(d: StatusDeps) {
   const now = d.now();
   const last = await d.store.lastRun();
@@ -153,6 +169,15 @@ async function status(d: StatusDeps) {
     seen_kids: await d.store.allSeenKids(),
     // The last relayer reading (balance, pool keys' allowances, thresholds; yocto strings), or null before one.
     relayer_funds: await d.store.getMeta<RelayerFundsStatus>(META.relayerFunds),
+    // The email pins in force (thumbprints: public), Hana's JWKS URL, and the chain's email issuer and signer policy
+    // with every difference at the last run (null before one).
+    email: { pinned: parsePins(d.env.EMAIL_PINS).pins, jwks_url: d.env.EMAIL_JWKS_URL ?? null, last: await d.store.getMeta<EmailPolicyStatus>(META.emailPolicy) },
+    // The last get_link_stats() (D200): thresholds, pending raise, the current and previous hour (null before one, or
+    // on a contract without the view).
+    link_stats: await d.store.getMeta<LinkStatsView & { at: number }>(META.linkStats),
+    // The partner identity token (D210): the issuer and pins in force (thumbprints: public) and the last good read of
+    // Hana's identity JWKS (each key judged; public members only) and discovery document (null before one).
+    identity: await identityStatus(d),
     actions,
     open_alerts: open.map(alertView),
     checks: CHECKS,

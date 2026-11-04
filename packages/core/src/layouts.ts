@@ -86,6 +86,22 @@ export const ckdPayload = (pk1: string, pk2: string): Bytes => utf8(`${CKD_PAYLO
 /** revoke_session payload. */
 export const revokePayload = (): Bytes => utf8(REVOKE_PAYLOAD);
 
+export const CREATE_PROOF_PREFIX = 'hana-id-create-v1:';
+
+/**
+ * A bare create_session's proof-of-possession payload (D137), signed with counter 0: "hana-id-create-v1:" ‖
+ * sha256(session nonce preimage). It binds the proof to the session's every parameter (signer, scope, key, expiry,
+ * key_index, max_uses, salt). Contract v3 requires it; v2 ignores the extra `signature` argument.
+ */
+export function createProofPayload(i: SessionNonceInput): Bytes {
+  const preimage = sessionNoncePreimage(i);
+  try {
+    return concatBytes(utf8(CREATE_PROOF_PREFIX), sha256(preimage));
+  } finally {
+    preimage.fill(0);
+  }
+}
+
 // ---- vault message (off-chain only; docs/batch-b-spec.md "Vault message layout") ----
 
 export interface VaultMessageInput {

@@ -15,6 +15,8 @@ export interface ApiApp {
   scope_id: string;
   publishable_key: string;
   status: string;
+  suspended_by: number;
+  environment: 'test' | 'live';
   google_web_client_id: string | null;
   scope_conflict: boolean;
   origins: string[];
@@ -65,7 +67,7 @@ export interface ApiModules {
   handleVaultPage(request: Request, env: ApiEnv, requestId: string): Promise<Response>;
   /** apps/api/src/pages/host.ts: the vault and auth origins' Workers. */
   handleVaultHost(request: Request, env: { VAULT_ORIGIN: string; ASSETS: Fetcher; API: Fetcher }): Promise<Response>;
-  handleAuthHost(request: Request, env: { AUTH_ORIGIN: string; API_URL: string; NEAR_RPC: string; ASSETS: Fetcher }): Promise<Response>;
+  handleAuthHost(request: Request, env: { AUTH_ORIGIN: string; API_URL: string; NEAR_RPC: string; EMAIL_ISSUER_URL?: string; ASSETS: Fetcher }): Promise<Response>;
 }
 
 const API_SRC = new URL('../../../api/src/', import.meta.url);

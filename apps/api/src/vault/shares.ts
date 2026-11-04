@@ -1,7 +1,6 @@
 // D1 access to `vault_shares` (migration 0003). Every read and write is scoped to the gate app's id, so one app's
 // request can never see or move another app's share. The counter rule (counter = n + 1 only while the share is live)
 // is one atomic UPDATE, so of concurrent requests with the same counter exactly one wins.
-import { usageDay } from '../apps.ts';
 
 export interface ShareRow {
   share_id: Uint8Array;
@@ -72,6 +71,15 @@ export async function insertShare(db: D1Database, s: NewShare): Promise<boolean>
 export async function getShare(db: D1Database, appId: string, shareId: Uint8Array): Promise<ShareRow | null> {
   const row = await db.prepare(`SELECT ${SHARE_COLUMNS} FROM vault_shares WHERE share_id = ?1 AND app_id = ?2`).bind(shareId, appId).first<Record<string, unknown>>();
   return row ? toShareRow(row) : null;
+}
+
+/**
+ * The share of a session key in any app, with its app id, or null (POST /v1/identity/token judges a session's share
+ * without moving it, and refuses a key whose share is another app's). `session_pk` is UNIQUE, so there is at most one.
+ */
+export async function getShareBySessionPk(db: D1Database, sessionPk: Uint8Array): Promise<(ShareRow & { app_id: string }) | null> {
+  const row = await db.prepare(`SELECT app_id, ${SHARE_COLUMNS} FROM vault_shares WHERE session_pk = ?1`).bind(sessionPk).first<Record<string, unknown>>();
+  return row ? { ...toShareRow(row), app_id: row.app_id as string } : null;
 }
 
 /** Marks a share revoked (no-op if it already is). */
@@ -165,15 +173,4 @@ export async function revokeAllFrom(
   ]);
   const row = advance?.results[0];
   return row ? { counter: row.counter, revoked: revoke?.meta.changes ?? 0 } : null;
-}
-
-/** Counts one successful unlock for the app's usage day. */
-export async function incrementUnlocks(db: D1Database, appId: string, now = Date.now()): Promise<void> {
-  await db
-    .prepare(
-      `INSERT INTO usage (app_id, day, unlocks) VALUES (?1, ?2, 1)
-       ON CONFLICT (app_id, day) DO UPDATE SET unlocks = unlocks + 1`,
-    )
-    .bind(appId, usageDay(now))
-    .run();
 }

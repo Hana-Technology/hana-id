@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { keyComponentBytes, sameRsaKey, usableJwks } from '../src/index.ts';
+import { keyComponentBytes, rsaThumbprint, sameRsaKey, usableJwks } from '../src/index.ts';
 
 const key = (over: Record<string, unknown> = {}) => ({ kid: 'k1', kty: 'RSA', alg: 'RS256', use: 'sig', n: 'qrs', e: 'AQAB', ...over });
 
@@ -50,5 +50,28 @@ describe('keyComponentBytes / sameRsaKey', () => {
     expect(sameRsaKey({ n: 'AQAB', e: 'AQAB' }, { n: 'AQAC', e: 'AQAB' })).toBe(false);
     expect(sameRsaKey({ n: 'AQAB', e: 'AQAB' }, { n: 'AQAB', e: 'Aw' })).toBe(false);
     expect(sameRsaKey({ n: 'a*', e: 'AQAB' }, { n: 'a*', e: 'AQAB' })).toBe(false);
+  });
+});
+
+describe('rsaThumbprint (RFC 7638)', () => {
+  // RFC 7638 section 3.1.
+  const n =
+    '0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lqt7_RN5w6Cf0h4QyQ5v-65YGjQR0_FDW2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n91CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINHaQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw';
+  const RFC_THUMBPRINT = 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs';
+
+  it('matches the RFC example', async () => {
+    expect(await rsaThumbprint({ n, e: 'AQAB' })).toBe(RFC_THUMBPRINT);
+  });
+
+  it('canonicalizes: a leading zero byte, plain base64 and padding give the same thumbprint', async () => {
+    const padded = Buffer.concat([Buffer.from([0]), Buffer.from(n, 'base64url')]).toString('base64');
+    expect(await rsaThumbprint({ n: padded, e: 'AAEAAQ==' })).toBe(RFC_THUMBPRINT);
+  });
+
+  it('is null for undecodable or empty components, and differs for another exponent', async () => {
+    expect(await rsaThumbprint({ n: 'a*', e: 'AQAB' })).toBeNull();
+    expect(await rsaThumbprint({ n: '', e: 'AQAB' })).toBeNull();
+    expect(await rsaThumbprint({ n: 'AA', e: 'AQAB' })).toBeNull();
+    expect(await rsaThumbprint({ n, e: 'Aw' })).not.toBe(RFC_THUMBPRINT);
   });
 });

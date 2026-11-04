@@ -22,12 +22,13 @@ import {
   ownerLimiterKey,
   scopeLimiterKey,
 } from '../src/handlers.ts';
-import { clearJwksCache } from '../src/jwks.ts';
+import { clearJwksCache } from '@hana-id/oidc';
 import { KeyPair, type KeyPairString } from '@near-js/crypto';
 import { GOVERNANCE_METHODS, UPDATER_METHODS, parseRelayerKeys } from '../src/relayer-config.ts';
 import { clearViewCaches, parsePendingShared } from '../src/views.ts';
-import { call } from './helpers.ts';
+import { call, minuteHeadroom, startOfMinuteClock } from './helpers.ts';
 import { NearMock, type RsaSigner, makeJwt, panic, rsaSigner } from './near-mock.ts';
+import { eventFor, ledger } from './usage-ledger.ts';
 
 const GOOGLE = 'https://accounts.google.com';
 const CONSOLE = 'console.apps.googleusercontent.com';
@@ -155,6 +156,27 @@ describe('POST /v1/owner-actions', () => {
     expect((await json(failed)).error).toContain('No such change');
   });
 
+  it('records one usage event per action past the owner check (the scope’s org, no app, the owner pool’s key); none before it', async () => {
+    const n = near();
+    const ownerPool = parseRelayerKeys(env.OWNER_RELAYER_KEYS, 'OWNER_RELAYER_KEYS').map((k) => KeyPair.fromString(k as KeyPairString).getPublicKey().toString());
+    // s2 is in the hot DB under an org; s1 isn't (a scope with no app yet): org_legacy.
+    await env.DB.prepare("INSERT OR IGNORE INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) VALUES ('s2', 'org_owner_test', 'test', NULL, 0, 0)").run();
+    const ok = await post({ method: 'execute_change', args: { scope_id: 's1', change_id: 3 } });
+    const other = await post({ method: 'execute_change', args: { scope_id: 's2', change_id: 3 } });
+    n.contract.execute_change = () => panic('No such change');
+    const rejected = await post({ method: 'execute_change', args: { scope_id: 's1', change_id: 0 } });
+    // Refused before the owner check passed (an unknown pending change, a malformed body): no event.
+    const unchecked = [await post({ method: 'execute_change', args: { scope_id: 's1', change_id: 5 } }), await post({ method: 'execute_change' })];
+    expect([ok.status, other.status, rejected.status, ...unchecked.map((r) => r.status)]).toEqual([200, 200, 422, 409, 400]);
+    const ev = async (r: Response) => eventFor(((await r.clone().json()) as { requestId: string }).requestId);
+    expect(await ev(ok)).toMatchObject({ endpoint: 'owner_action', app_id: null, scope_id: 's1', org_id: 'org_legacy', outcome: 'ok', relayed: true, near_tx: n.sent[0]!.hash, relayer_nonce: n.sent[0]!.nonce.toString() });
+    expect(ownerPool).toContain((await ev(ok))!.relayer_pk);
+    expect(await ev(other)).toMatchObject({ scope_id: 's2', org_id: 'org_owner_test', outcome: 'ok' });
+    expect(await ev(rejected)).toMatchObject({ outcome: 'rejected', code: 'contract_rejected', relayed: true });
+    for (const r of unchecked) expect(await ev(r)).toBeUndefined();
+    expect(ledger.events.every((e) => !('uid' in e))).toBe(true);
+  });
+
   it('rejects methods outside the allowlist', async () => {
     const n = near();
     for (const method of ['apply_pending_config', 'create_session', 'derive_key', 'register_scope', 'set_owner', 'prune_sessions', '__proto__', ...GOVERNANCE_METHODS, ...UPDATER_METHODS]) {
@@ -202,6 +224,7 @@ describe('POST /v1/owner-actions', () => {
   });
 
   it(`limits each IP to ${OWNER_ACTIONS_PER_IP_MINUTE} per minute`, async () => {
+    await startOfMinuteClock();
     near();
     const from = '198.18.0.9';
     const statuses: number[] = [];
@@ -219,6 +242,50 @@ describe('POST /v1/owner-actions', () => {
     expect(statuses.at(-1)).toBe(429);
     // Another /64 has its own budget.
     expect((await post({ method: 'nope' }, '2001:db8:aa:bc::1')).status).toBe(400);
+  });
+
+  it('an email-carrying console token and client proof: relayed, and their email and hd reach no log, response or D1 row', async () => {
+    const lines: string[] = [];
+    for (const level of ['log', 'info', 'warn', 'error'] as const) vi.spyOn(console, level).mockImplementation((...a: unknown[]) => void lines.push(a.map(String).join(' ')));
+    const n = near();
+    const email = `owner-${seq++}@example.com`;
+    const hd = `hd-${seq++}.example`;
+    const pii = { email, email_verified: true, hd };
+    const responses: string[] = [];
+    for (const body of [
+      { method: 'propose_change', args: { scope_id: 's1', auth: await oidc(pii), change: { AddClient: { provider: 'google', aud: NEW_CLIENT } }, client_proof: await clientProof(pii) } },
+      { method: 'cancel_change', args: { scope_id: 's1', auth: await oidc(pii), change_id: 0 } },
+      // Refused ones log too: not an owner, and an unknown scope.
+      { method: 'cancel_change', args: { scope_id: 's1', auth: await oidc({ ...pii, sub: '999' }), change_id: 0 } },
+      { method: 'cancel_change', args: { scope_id: 'nope', auth: await oidc(pii), change_id: 0 } },
+    ]) {
+      const res = await post(body);
+      responses.push(`${res.status} ${await res.text()}`);
+    }
+    expect(responses.map((r) => r.slice(0, 3))).toEqual(['200', '200', '403', '404']);
+    expect(n.sent.map((t) => t.method)).toEqual(['propose_change', 'cancel_change']);
+    const tables = await env.DB.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'").all<{ name: string }>();
+    const rows: string[] = [];
+    for (const { name } of tables.results) rows.push(JSON.stringify((await env.DB.prepare(`SELECT * FROM "${name}"`).all()).results));
+    for (const haystack of [...lines, ...responses, ...rows]) {
+      expect(haystack).not.toContain(email);
+      expect(haystack).not.toContain(hd);
+    }
+  });
+
+  it('optional claims of the wrong type are ignored, not refused (verifyIdToken optionalClaims "ignore", D201)', async () => {
+    const n = near();
+    const wrong = { email_verified: 'yes', iat: 'soon', amr: [1], auth_time: 'x', azp: 5, email: 7, hd: [] };
+    const res = await post({ method: 'propose_change', args: { scope_id: 's1', auth: await oidc(wrong), change: { AddClient: { provider: 'google', aud: NEW_CLIENT } }, client_proof: await clientProof(wrong) } });
+    expect(res.status).toBe(200);
+    expect(n.sent.map((t) => t.method)).toEqual(['propose_change']);
+    // A non-finite exp is still refused.
+    const forever = (await ownerJwt()).split('.');
+    const payload = JSON.parse(atob(forever[1]!.replace(/-/gu, '+').replace(/_/gu, '/'))) as Record<string, unknown>;
+    const b64 = (s: string): string => btoa(s).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '');
+    const infinite = `${forever[0]}.${b64(JSON.stringify(payload).replace(/"exp":\d+/u, '"exp":1e400'))}.${forever[2]}`;
+    const refused = await post({ method: 'cancel_change', args: { scope_id: 's1', auth: { Oidc: { jwt: infinite } }, change_id: 0 } });
+    expect([refused.status, (await json(refused)).code]).toEqual([401, 'invalid_token']);
   });
 });
 
@@ -364,6 +431,9 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
     });
 
   it('frees the token when a cap turns the request away', async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom; no clock shift: the changes'
+    // delays are on the real clock).
+    await minuteHeadroom(15_000);
     const n = near();
     await exhaust(scopeLimiterKey('s1'), OWNER_ACTIONS_PER_SCOPE_MINUTE);
     const body = await setOwners();
@@ -375,6 +445,9 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
   });
 
   it(`unauthenticated execute_change has its own per-scope window (${EXECUTES_PER_SCOPE_MINUTE}/min), never the owners'`, async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom; no clock shift: the changes'
+    // delays are on the real clock).
+    await minuteHeadroom(15_000);
     const n = near();
     const statuses: number[] = [];
     for (let i = 0; i < EXECUTES_PER_SCOPE_MINUTE + 1; i++) statuses.push((await execute('s1', i)).status);
@@ -388,6 +461,9 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
   });
 
   it(`caps owner actions per scope (${OWNER_ACTIONS_PER_SCOPE_MINUTE} per minute), across owners`, async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom; no clock shift: the changes'
+    // delays are on the real clock).
+    await minuteHeadroom(15_000);
     const n = near();
     const owners = (n.scopes.s1 as { owners: unknown[] }).owners;
     const subs = Array.from({ length: 3 }, (_, i) => `7${i}`);
@@ -399,6 +475,9 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
   });
 
   it(`caps owner actions per owner identity (${OWNER_ACTIONS_PER_OWNER_MINUTE} per minute), whatever the IP`, async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom; no clock shift: the changes'
+    // delays are on the real clock).
+    await minuteHeadroom(15_000);
     const n = near();
     (n.scopes.s1 as { owners: unknown[] }).owners.push({ Oidc: { provider: 'google', sub: OTHER_OWNER_SUB } });
     const statuses: number[] = [];
@@ -409,6 +488,9 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
   });
 
   it(`caps relayed owner actions globally (${OWNER_ACTIONS_GLOBAL_MINUTE} per minute) across scopes`, async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom; no clock shift: the changes'
+    // delays are on the real clock).
+    await minuteHeadroom(15_000);
     const n = near();
     await fill('s1', EXECUTES_PER_SCOPE_MINUTE);
     await fill('s2', OWNER_ACTIONS_GLOBAL_MINUTE - EXECUTES_PER_SCOPE_MINUTE, 50);
@@ -418,6 +500,9 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
   });
 
   it('a request a later window refuses is taken back from the earlier ones (a refusal costs no window)', async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom; no clock shift: the changes'
+    // delays are on the real clock).
+    await minuteHeadroom(15_000);
     near();
     await exhaust('owner-actions:global', OWNER_ACTIONS_GLOBAL_MINUTE);
     // Twice the owner's own allowance, all refused by the global ceiling...
@@ -432,6 +517,9 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
   });
 
   it('cancel_change is never starved: its own per-owner allowance and ceiling, outside every other cap (APIW-3)', async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom; no clock shift: the changes'
+    // delays are on the real clock).
+    await minuteHeadroom(15_000);
     const n = near();
     (n.scopes.s1 as { owners: unknown[] }).owners.push({ Oidc: { provider: 'google', sub: OTHER_OWNER_SUB } });
     // Someone fills the global ceiling, the victim scope's owner window and its execute window.
@@ -451,6 +539,9 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
   });
 
   it(`cancels have a high global ceiling of their own (${CANCELS_GLOBAL_MINUTE}/min); a refused cancel keeps the owner's and scope's allowance`, async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom; no clock shift: the changes'
+    // delays are on the real clock).
+    await minuteHeadroom(15_000);
     near();
     await exhaust(CANCEL_GLOBAL_LIMITER, CANCELS_GLOBAL_MINUTE);
     const refused = await cancel();
@@ -472,6 +563,9 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
   });
 
   it(`a scope's cancel window (${CANCELS_PER_SCOPE_MINUTE}/min) is filled only by that scope's owners, and never by fewer than all of them`, async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom; no clock shift: the changes'
+    // delays are on the real clock).
+    await minuteHeadroom(15_000);
     const n = near();
     const coOwners = ['81', '82', '83', '84']; // with OWNER_SUB: the contract's MAX_OWNERS
     await clearLimiters([...(await Promise.all([...coOwners, 'mallory'].map((sub) => ownerLimiterKey({ provider: 'google', sub }))))]);

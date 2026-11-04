@@ -43,6 +43,70 @@ export interface Env {
   VAULT_KEK?: string;
   /** Secret, during a KEK rotation only: the previous VAULT_KEK, read to unwrap and re-wrap older shares. */
   VAULT_KEK_PREVIOUS?: string;
+  /**
+   * The partner identity token (docs/identity-token-spec.md; manifest `identityToken`, scripts/gen-wrangler.ts): the
+   * `iss`, the JWKS (a JSON array of public P-256 JWKs) and the kid of the key that signs. Without them every
+   * /v1/identity/* endpoint answers 503 identity_unavailable.
+   */
+  IDENTITY_ISS?: string;
+  IDENTITY_PUBLIC_KEYS?: string;
+  IDENTITY_ACTIVE_KID?: string;
+  /**
+   * Secrets (scripts/identity-key.ts), testnet and local* only: P-256 private JWKs. Whichever has the thumbprint
+   * IDENTITY_ACTIVE_KID signs; the other is the standby, already in every partner's JWKS cache.
+   */
+  IDENTITY_SIGNING_KEY?: string;
+  IDENTITY_SIGNING_KEY_STANDBY?: string;
+  /**
+   * Var: the signer kind (manifest `identityToken.signer.kind`, identity/signers.ts): `worker-secret` (the secrets
+   * above) or `aws-kms` (D215). Absent (a config generated before build step 7) means `worker-secret`.
+   */
+  IDENTITY_SIGNER?: string;
+  /** Var, `aws-kms` only: the active key's ARN (`identityToken.signer.keys.active.arn`); its region picks the endpoint. */
+  IDENTITY_KMS_KEY_ARN?: string;
+  /**
+   * Secrets, `aws-kms` only (scripts/identity-key.ts kms-put-aws-key): the access key of the dedicated IAM user whose
+   * only permission is kms:Sign on the active key (D215, D219). Never logged.
+   */
+  IDENTITY_AWS_ACCESS_KEY_ID?: string;
+  IDENTITY_AWS_SECRET_ACCESS_KEY?: string;
+  /** Secret: the `sub`/`sid` HMAC key, base64 of 32 bytes. Never rotated (a new key changes every user's `sub`). */
+  IDENTITY_SUB_KEY?: string;
+  /** Optional var: the global hourly mint ceiling (identity/limits.ts IDENTITY_GLOBAL_PER_HOUR by default). */
+  IDENTITY_GLOBAL_HOURLY_MAX?: string;
+  /**
+   * Batch C (manifest `appChangeDelayMs`, `network`, the Hana origins; scripts/gen-wrangler.ts): the guarded-change
+   * delay in ms, the NEAR network, and every Hana origin as a JSON array, which no app may list as its own. A missing or
+   * out-of-range delay makes every guarded change refuse with `internal` (guarded/config.ts).
+   */
+  APP_CHANGE_DELAY_MS?: string;
+  NETWORK?: string;
+  REFUSED_ORIGINS?: string;
+  /** The logo origin (manifest `files.origin`), from batch C11; unset without the dashboard blocks. */
+  FILES_ORIGIN?: string;
+  /**
+   * Batch C4 (docs/batch-c-spec.md "Usage capture"): the usage ledger's writer, a Hyperdrive config (role
+   * `usage_writer`, which may only call `usage.record_event`, `usage.record_identity_tokens`, `usage.record_email_counts` and `usage.ensure_partitions`) bound by
+   * `gen --usage-hyperdrive-id`. Optional: without it capture is off and every endpoint answers as before.
+   */
+  USAGE_DB?: Hyperdrive;
+  /**
+   * Secret (`usage-setup <env> user-id-key`): the uid key, base64 of 32 bytes (docs/batch-c-spec.md "uid"). Without
+   * it events carry no uid (MAU and new users go uncounted). Never logged, never rotated within a contract term.
+   */
+  USER_ID_KEY?: string;
+  /**
+   * Email login (manifest `emailIssuer`, scripts/gen-wrangler.ts): the email tokens' `iss` and the issuer's public keys
+   * (a JSON array of public RSA JWKs, the JWKS the issuer serves, D196). Without them every email token is refused
+   * (`unsupported_issuer`); Google logins are unaffected.
+   */
+  EMAIL_ISS?: string;
+  EMAIL_PUBLIC_KEYS?: string;
+  /**
+   * The email issuer's URL (manifest `emailIssuer.url`, else `apiUrl`; D230): the vault page's CSP `connect-src` adds
+   * its origin, since the vault calls the issuer's google-match (build plan batch 8b). Absent without an issuer.
+   */
+  EMAIL_ISSUER_URL?: string;
   /** Optional per-method gas overrides in Tgas (see gas.ts), e.g. GAS_DERIVE_KEY_TGAS. */
   [gasOverride: `GAS_${string}_TGAS`]: string | undefined;
   DB: D1Database;
@@ -52,4 +116,8 @@ export interface Env {
   /** Rate Limiting bindings (vault/limits.ts, D95): the vault's per-IP and per-share flood limits, counted per location. */
   VAULT_IP_LIMIT: RateLimit;
   VAULT_SHARE_LIMIT: RateLimit;
+  /** POST /v1/identity/token's per-session-key flood limit (identity/limits.ts). */
+  IDENTITY_SESSION_LIMIT: RateLimit;
+  /** POST /v1/identity/token's per-account-root flood limit (identity/limits.ts, D176). */
+  IDENTITY_ROOT_LIMIT: RateLimit;
 }

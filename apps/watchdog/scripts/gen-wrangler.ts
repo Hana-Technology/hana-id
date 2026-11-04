@@ -11,7 +11,7 @@
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type Manifest, loadEnv, repoRoot } from '@hana-id/env';
+import { type Manifest, emailJwksUrl, loadEnv, repoRoot } from '@hana-id/env';
 import { readWatchdogSecrets, SECRET_FILE } from './secrets.ts';
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -19,6 +19,29 @@ export const LOCAL_D1_ID = '00000000-0000-4000-8000-000000000000';
 export const COMPATIBILITY_DATE = '2026-10-01';
 /** Every 5 min (W in the spec's delay formula). */
 export const CRON = '*/5 * * * *';
+
+/**
+ * The email pins (`watchdog.pinnedIssuerKeys.email`) as `EMAIL_PINS` (JSON `{required, signers}`) and Hana's email
+ * JWKS URL (`jwksUrl`, else `{issuer URL}/v1/email/jwks.json`: `emailIssuer.url` when the issuer has its own, D230, else
+ * the API's URL). No pins: neither var, and the Worker pins nothing.
+ */
+export function emailVars(m: Manifest): Record<string, string> {
+  const pins = m.watchdog?.pinnedIssuerKeys?.email;
+  if (!pins) return {};
+  const jwksUrl = pins.jwksUrl ?? (m.apiUrl ? emailJwksUrl(m) : undefined);
+  return { EMAIL_PINS: JSON.stringify({ required: pins.required, signers: pins.signers }), ...(jwksUrl ? { EMAIL_JWKS_URL: jwksUrl } : {}) };
+}
+
+/**
+ * The partner identity token's watchdog check (D210): `IDENTITY_ISS` (the manifest's `identityToken.iss`; the JWKS is
+ * `{iss}/jwks.json`, the discovery document `{iss}/.well-known/openid-configuration`) and `IDENTITY_PINS` (JSON array
+ * of `watchdog.pinnedIdentityKeys`). No `identityToken`: no `IDENTITY_ISS`, and the JWKS check is skipped; no pins: no
+ * `IDENTITY_PINS`, and every published identity key is unpinned.
+ */
+export function identityVars(m: Manifest): Record<string, string> {
+  const pins = m.watchdog?.pinnedIdentityKeys;
+  return { ...(m.identityToken ? { IDENTITY_ISS: m.identityToken.iss } : {}), ...(pins ? { IDENTITY_PINS: JSON.stringify(pins) } : {}) };
+}
 
 export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknown> {
   const w = m.watchdog;
@@ -51,6 +74,8 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
       ALERT_EMAILS: w.alertEmails.join(','),
       ALERT_FROM: w.alertFrom,
       DIGEST_HOUR_UTC: String(w.digestHourUtc ?? 0),
+      ...emailVars(m),
+      ...identityVars(m),
     },
     d1_databases: [{ binding: 'DB', database_name: w.cloudflare.d1Name, database_id: d1Id, migrations_dir: 'migrations' }],
     triggers: { crons: [CRON] },
@@ -68,7 +93,7 @@ export const TEST_MANIFEST: Manifest = {
   ckdDomainId: 2,
   ckdNetworkKey: 'UNSET',
   rpc: 'https://rpc.test.invalid',
-  rpcFallback: 'https://rpc-fallback.test.invalid',
+  rpcFallback: 'https://rpc.fallback-provider.invalid',
   apiUrl: 'https://api.test',
   changeDelayMs: 60_000,
   appChangeDelayMs: 60_000,

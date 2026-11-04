@@ -102,7 +102,8 @@ describe('the record', () => {
   it('is written after login under <signer>|<appId>|<scopeId>|<keyIndex>, holding PRK only under K_s', async () => {
     const { browser, first, addresses } = await loggedIn();
     const r = (await stored(browser))!;
-    expect(r).toMatchObject({ v: 1, signer: ENV.signer, appId: APP_ID, scopeId: SCOPE, keyIndex: 0, derivationVersion: 1, parentOrigin: PARTNER, counter: 0, addresses, expiresAtMs: START_MS + 12 * HOUR });
+    // Format 2: with the identity token's wallet proofs of the same addresses (not secret).
+    expect(r).toMatchObject({ v: 2, walletProofs: { stellar: { address: addresses.stellar }, evm: { address: addresses.evm } }, signer: ENV.signer, appId: APP_ID, scopeId: SCOPE, keyIndex: 0, derivationVersion: 1, parentOrigin: PARTNER, counter: 0, addresses, expiresAtMs: START_MS + 12 * HOUR });
     expect(r.path).toMatch(new RegExp(`^${SCOPE}#google#\\d+#0$`, 'u'));
     expect((r.ct as Uint8Array).length).toBe(32 + 16);
     expect((r.sessionKeyPair as CryptoKeyPair).privateKey.extractable).toBe(false);
@@ -405,6 +406,8 @@ describe('the share and record after the login is reported (D79)', () => {
       return {
         ...store,
         put: async (key, record) => {
+          // The record's writes only (a login also stores its root pin, D263, under its own key).
+          if (key.startsWith('pin|')) return store.put(key, record);
           writes += 1;
           if (writes === 1) await held;
           await store.put(key, record);

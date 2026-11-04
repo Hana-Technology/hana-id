@@ -2,7 +2,7 @@
 //! clippy allow.
 #![allow(clippy::too_many_arguments)]
 
-use near_sdk::store::LookupMap;
+use near_sdk::store::{LookupMap, LookupSet};
 use near_sdk::{near, AccountId, PublicKey};
 
 use crate::governance::{self, Watchdog, MAX_UPDATER_KEYS, MAX_WATCHDOGS, STATE_VERSION};
@@ -77,6 +77,12 @@ impl HanaSigner {
             changes_unlock_floor_ms: 0,
             sessions_valid_from_ms: 0,
             pending_updater_keys: vec![],
+            self_issued: vec![],
+            links: LookupMap::new(StorageKey::Links),
+            accounts: LookupMap::new(StorageKey::Accounts),
+            opened: LookupSet::new(StorageKey::Opened),
+            unrecorded_wallets: false,
+            link_counter: crate::link_counter::LinkCounter::new(),
         };
         for public_key in updater_keys {
             this.install_updater_key(public_key).detach();

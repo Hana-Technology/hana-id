@@ -34,7 +34,7 @@ export function clientsFromArgs(clients: string[], { allowShared = false, shared
 }
 
 /** Commands that take exactly one positional after `<env> <command>`, and what it is. */
-const ONE_POSITIONAL: Record<string, string> = { 'owner:call': '<method>', 'owner:vote': '<proposal id>' };
+const ONE_POSITIONAL: Record<string, string> = { 'owner:call': '<method>', 'owner:vote': '<proposal id>', 'app:changes:announce': '<change id>' };
 
 /**
  * Positionals after `<env> <command>`: app:settings takes its app (checked by settingsAppArg in admin-settings.ts),

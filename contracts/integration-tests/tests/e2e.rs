@@ -166,6 +166,7 @@ async fn access_keys_are_limited() -> Result<()> {
         ("cancel_owner_proposal", json!({})),
         ("propose_withdrawal", json!({"receiver": env.relayer.id(), "amount": "1"})),
         ("cancel_withdrawal", json!({})),
+        ("set_link_thresholds", json!({"per_scope_per_hour": 100_000, "total_per_hour": 100_000})),
     ];
     for key in [&env.relayer_fc, &env.relayer_owner_fc] {
         for (method, args) in &admin_calls {
@@ -326,10 +327,17 @@ fn session_allowlist_is_in_a_planned_state_everywhere() -> Result<()> {
         v
     };
     let owned = |m: &[&str]| sorted(m.iter().map(|s| s.to_string()).collect());
-    // The three states, as the spec lists them: each keeps derive_key, revoke_session and prune_sessions; state 2
-    // drops create_session, state 3 drops create_session_and_derive.
+    // The three states, as the spec lists them: each keeps derive_key, revoke_session and prune_sessions (and, since
+    // email login batch 6, the link methods); state 2 drops create_session, state 3 drops create_session_and_derive.
     let [s1, s2, s3] = SESSION_ALLOWLIST_STATES;
-    assert_eq!(owned(s1), owned(&["create_session", "create_session_and_derive", "derive_key", "revoke_session", "prune_sessions"]));
+    let mut first = vec!["create_session", "create_session_and_derive", "derive_key", "revoke_session", "prune_sessions"];
+    first.extend_from_slice(LINK_RELAYER_METHODS);
+    assert_eq!(owned(s1), owned(&first));
+    for state in SESSION_ALLOWLIST_STATES {
+        for m in LINK_RELAYER_METHODS {
+            assert!(state.contains(m), "{m} missing from a session-pool state");
+        }
+    }
     assert_eq!(owned(s2), owned(&s1.iter().copied().filter(|m| *m != "create_session").collect::<Vec<_>>()));
     assert_eq!(owned(s3), owned(&s1.iter().copied().filter(|m| *m != "create_session_and_derive").collect::<Vec<_>>()));
     for state in SESSION_ALLOWLIST_STATES {
@@ -859,12 +867,12 @@ async fn cross_deployment_replay_rejected() -> Result<()> {
 
     // Session nonce: a token for the main deployment fails on the other, then works on main.
     let (s, jwt) = env.new_session(APP_A, USER_SUB, &env.scope_a, 0, 600_000).await?;
-    expect_failure(tx(env.alice.call(&oid, "create_session").args_json(s.create_args(&jwt)).gas(GAS).transact().await), "Token nonce doesn't commit to this session");
+    expect_failure(tx(env.alice.call(&oid, "create_session").args_json(s.create_args(&oid, &jwt)).gas(GAS).transact().await), "Token nonce doesn't commit to this session");
     env.create_session(&env.relayer_fc, &s, &jwt).await?.into_result()?;
     // Control: a token made for the other deployment works there.
     let (s2, _) = env.new_session(APP_A, USER_SUB, &env.scope_a, 0, 600_000).await?;
     let jwt2 = env.jwt(APP_A, USER_SUB, Some(&s2.nonce(&oid))).await?;
-    let v: SessionView = env.alice.call(&oid, "create_session").args_json(s2.create_args(&jwt2)).gas(GAS).transact().await?.into_result()?.json()?;
+    let v: SessionView = env.alice.call(&oid, "create_session").args_json(s2.create_args(&oid, &jwt2)).gas(GAS).transact().await?.into_result()?.json()?;
     assert_eq!(v.path, format!("{}#google#{USER_SUB}#0", env.scope_a));
 
     // Client proof (alice adds APP_E to scope A): the proof for main fails on the other.
@@ -1010,7 +1018,7 @@ async fn combined_login_front_running() -> Result<()> {
     for max_uses in [1u32, 2] {
         // Front-run create_session (by another account, with its own key).
         let (mut s, jwt) = env.new_session_with_uses(APP_A, USER_SUB, &env.scope_a, 0, max_uses, 600_000).await?;
-        env.alice.call(signer, "create_session").args_json(s.create_args(&jwt)).gas(GAS).transact().await?.into_result()?;
+        env.alice.call(signer, "create_session").args_json(s.create_args(signer, &jwt)).gas(GAS).transact().await?.into_result()?;
         expect_failure(env.login(&env.relayer_fc, &s.login_args(&jwt, PK1, PK2)).await, "Session key already in use");
         let synced = env.get_session(&s).await?.unwrap();
         assert_eq!((synced.path.as_str(), synced.used, synced.max_uses), (path.as_str(), 0, max_uses));

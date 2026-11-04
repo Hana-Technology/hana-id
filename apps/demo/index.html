@@ -32,6 +32,7 @@
         <h2 id="h-account">Account</h2>
         <div class="row">
           <button id="login" type="button" class="primary">Log in with Google</button>
+          <button id="login-email" type="button">Log in with email</button>
           <button id="cancel-login" type="button" hidden>Cancel sign-in</button>
           <button id="logout" type="button" hidden>Log out</button>
           <button id="revoke" type="button" hidden>Log out other devices</button>
@@ -81,16 +82,32 @@
         </div>
       </section>
 
+      <section id="identity" aria-labelledby="h-identity" hidden>
+        <h2 id="h-identity">Identity token</h2>
+        <p class="muted small">A short-lived JWT your backend can verify against Hana’s published keys (no call to Hana): who the user is in this app, their wallets and their session. No popup.</p>
+        <div class="row">
+          <button id="identity-token" type="button">Get identity token</button>
+        </div>
+        <div id="identity-result" hidden>
+          <p class="muted small" id="identity-expiry"></p>
+          <pre id="identity-claims"></pre>
+          <details>
+            <summary>Verify it yourself (Node, jose)</summary>
+            <pre id="identity-snippet"></pre>
+          </details>
+        </div>
+      </section>
+
       <section aria-labelledby="h-report">
         <h2 id="h-report">Report</h2>
         <details id="timings-panel">
           <summary>Login timings</summary>
-          <p class="muted small">Per-stage times from the vault (test apps only), in milliseconds. “google” includes your own clicks.</p>
+          <p class="muted small">Per-stage times from the vault (test apps only), in milliseconds. “sign-in” is the time in Google’s pages or in the email step, your own typing and the code mail included.</p>
           <table>
             <thead>
-              <tr><th>When</th><th>app</th><th>popup</th><th>google</th><th>verify</th><th>chain</th><th>decrypt</th><th>total</th></tr>
+              <tr><th>When</th><th>method</th><th>app</th><th>popup</th><th>sign-in</th><th>verify</th><th>chain</th><th>decrypt</th><th>total</th></tr>
             </thead>
-            <tbody id="timings"><tr><td colspan="8" class="muted">No login yet on this page.</td></tr></tbody>
+            <tbody id="timings"><tr><td colspan="9" class="muted">No login yet on this page.</td></tr></tbody>
           </table>
           <p id="unlock" class="muted small"></p>
         </details>

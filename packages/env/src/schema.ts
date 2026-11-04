@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { adminSchema, consoleSchema, dashboardRules, delayMs, emailSchema, filesSchema, usageSchema } from './dashboard.ts';
+import { emailIssuerRules, emailIssuerSchema } from './email-issuer.ts';
+import { identityTokenRules, identityTokenSchema } from './identity.ts';
 import { hanaOriginProblem, isDevEnv, isLocalEnv, isLoopbackHost, siteOf } from './origins.ts';
 
 /** Independent RPC providers the pinned CKD network key must be read from, all agreeing (OPER-1, D100). */
@@ -22,6 +24,40 @@ const nearThresholds = z
   .refine((t) => t.critical < t.warn, { message: 'critical must be below warn' });
 
 const workerName = z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u, 'A Worker name is 1-63 lowercase letters, digits and inner hyphens');
+
+/** Signers in a self-issued issuer's policy, at most, and its keys (all signers together): the contract's limits. */
+export const MAX_PINNED_SIGNERS = 3;
+export const MAX_PINNED_KEYS = 8;
+/** Identity keys the watchdog pins, at most: the JWKS holds up to 4 (active, standby, next, previous), plus room to pin ahead. */
+export const MAX_PINNED_IDENTITY_KEYS = 8;
+
+/** An RSA key's RFC 7638 JWK thumbprint (unpadded base64url SHA-256): the email issuer's `kid` for that key. */
+const keyThumbprint = z.string().regex(/^[A-Za-z0-9_-]{43}$/u, 'A pinned key is its RFC 7638 JWK thumbprint (43 base64url characters)');
+/** A signer id as the contract accepts it (`valid_provider`). */
+const signerId = z.string().regex(/^[a-z0-9_-]{1,32}$/u, 'A signer id is 1-32 lowercase letters, digits, _ or -');
+
+/**
+ * The signer policy the watchdog expects of a self-issued issuer (`docs/email-login-spec.md` "Watchdog"): every
+ * signer's keys by thumbprint, and the number of distinct signers a token needs. 1-of-1 (`hana`) at launch; Level 1
+ * adds `cosign` before its upgrade executes.
+ */
+const signerPolicyPins = z
+  .object({
+    required: z.number().int().min(1).max(MAX_PINNED_SIGNERS),
+    signers: z.record(signerId, z.array(keyThumbprint).min(1).max(MAX_PINNED_KEYS)),
+    /** Where Hana publishes the issuer's JWKS (compared with the pins, warning only). Default `{emailIssuer.url}/v1/email/jwks.json` (under `apiUrl` without one, D230). */
+    jwksUrl: z.string().optional(),
+  })
+  .strict()
+  .superRefine((p, ctx) => {
+    const ids = Object.keys(p.signers);
+    if (ids.length < 1 || ids.length > MAX_PINNED_SIGNERS) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['signers'], message: `1 to ${MAX_PINNED_SIGNERS} signers` });
+    if (p.required > ids.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['required'], message: 'required must not exceed the number of signers' });
+    const all = Object.values(p.signers).flat();
+    if (all.length > MAX_PINNED_KEYS) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['signers'], message: `at most ${MAX_PINNED_KEYS} pinned keys in all` });
+    // One key is one signer: the contract refuses a modulus registered twice, so a thumbprint pinned twice is a typo.
+    if (new Set(all).size !== all.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['signers'], message: 'A key is pinned once, for one signer' });
+  });
 
 const watchdogSchema = z.object({
   /**
@@ -54,6 +90,23 @@ const watchdogSchema = z.object({
     .object({ balance: nearThresholds.optional(), sessionAllowance: nearThresholds.optional(), ownerAllowance: nearThresholds.optional() })
     .strict()
     .optional(),
+  /**
+   * Pinned keys of self-issued issuers (`docs/email-login-spec.md` "Watchdog"): `email: {required, signers: {hana:
+   * [thumbprint, …]}}`. Set on the watchdog's own account: a pin change is a watchdog redeploy by the operator, outside
+   * Hana's main account. Absent `email` = nothing pinned: the watchdog then treats every email key as unpinned
+   * (cancels pending ones, pauses on an active one) and alerts on any email issuer on chain. Pin before the owner
+   * posts the first email key (`docs/email-login-build-plan.md` batch 6).
+   */
+  pinnedIssuerKeys: z.object({ email: signerPolicyPins.optional() }).strict().optional(),
+  /**
+   * The partner identity token's public keys the watchdog accepts in the API's JWKS (`docs/identity-token-spec.md`
+   * "JWKS and discovery", D210): RFC 7638 thumbprints of the P-256 keys, which are also their kids. Set on the
+   * watchdog's own account, so a pin change is a watchdog redeploy by the operator. Absent = nothing pinned: every
+   * published identity key is unpinned (critical, no pause). With `identityToken` in the manifest every one of its
+   * `publicKeys` must be pinned here (`scripts/identity-key.ts` writes both); extra pins are allowed (a key pinned
+   * before the API publishes it warns `identity_key_missing` until it does).
+   */
+  pinnedIdentityKeys: z.array(keyThumbprint).min(1).max(MAX_PINNED_IDENTITY_KEYS).optional(),
 });
 
 /**
@@ -62,7 +115,16 @@ const watchdogSchema = z.object({
  * whose account the contract doesn't know can't cancel or pause anything.
  */
 function watchdogRules(
-  m: { signer: string; relayer: string; owner: string; mpc: string; watchdogs?: string[] | undefined; cloudflare: { workerName: string } },
+  m: {
+    name: string;
+    signer: string;
+    relayer: string;
+    owner: string;
+    mpc: string;
+    watchdogs?: string[] | undefined;
+    cloudflare: { workerName: string };
+    identityToken?: { publicKeys: { kid: string }[] } | undefined;
+  },
   w: z.infer<typeof watchdogSchema>,
   ctx: z.RefinementCtx,
 ): void {
@@ -76,6 +138,21 @@ function watchdogRules(
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'cloudflare', 'workerName'], message: "watchdog.cloudflare.workerName must differ from the API's Worker name" });
   }
   if (new Set(w.alertEmails).size !== w.alertEmails.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'alertEmails'], message: 'Duplicate alert email' });
+  const jwksUrl = w.pinnedIssuerKeys?.email?.jwksUrl;
+  const problem = jwksUrl === undefined ? null : endpointUrlProblem(jwksUrl, m.name);
+  if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'pinnedIssuerKeys', 'email', 'jwksUrl'], message: `watchdog.pinnedIssuerKeys.email.jwksUrl ${problem}` });
+  const identityPins = w.pinnedIdentityKeys ?? [];
+  if (new Set(identityPins).size !== identityPins.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'pinnedIdentityKeys'], message: 'An identity key is pinned once' });
+  // Pin before publish (D211): a key the API publishes that the watchdog doesn't pin pages as a forgery.
+  for (const k of m.identityToken?.publicKeys ?? []) {
+    if (!identityPins.includes(k.kid)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['watchdog', 'pinnedIdentityKeys'],
+        message: `identityToken key ${k.kid} is not in watchdog.pinnedIdentityKeys: pin every published identity key (docs/operations.md "Identity token keys")`,
+      });
+    }
+  }
 }
 
 /** One environment's accounts and endpoints. Every account name the code uses comes from here. */
@@ -113,9 +190,11 @@ export const manifestSchema = z
     /** NEAR RPC: https outside `local*` envs (there, http only for a loopback host). */
     rpc: z.string().url(),
     /**
-     * Optional second NEAR RPC (https, not `rpc` itself), from an independent provider. The vault and the export
-     * window read from it only when `rpc` errors or times out (get_session re-syncs, registry views, tx polling), and
-     * each read's answer comes from one endpoint. It joins `rpc` in those pages' CSP `connect-src`.
+     * Second NEAR RPC (https, not `rpc` itself), from an independent provider (another registrable domain outside
+     * `local*` envs). The vault and the export window read from it when `rpc` errors or times out (get_session
+     * re-syncs, registry views, tx polling), each read's answer from one endpoint; and they confirm on both, read
+     * separately, any path that isn't the signed-in identity's own (an account member's, D263). Required with
+     * `emailIssuer` outside `local*` envs (linking makes members). It joins `rpc` in those pages' CSP `connect-src`.
      */
     rpcFallback: z.string().url().optional(),
     /** The API's base URL: https outside `local*` envs (there, http only for a loopback host). */
@@ -181,12 +260,12 @@ export const manifestSchema = z
     /** Watchdog accounts (≤ 3) the contract lets cancel, confirm and pause (docs/governance-spec.md "Watchdogs"). */
     watchdogs: z.array(nearAccount).max(3).optional(),
     /**
-     * `issuer_key_delay_ms` for `new` / `migrate_v1` (contract allows 0..7 days; D80). deploy-contract refuses less
+     * `issuer_key_delay_ms` for `new` (contract allows 0..7 days; D80). deploy-contract refuses less
      * than the security bound 3·(W + T) = 18 min outside dev envs (`delays.ts` `governanceDelayProblems`).
      */
     issuerKeyDelayMs: z.number().int().min(0).max(7 * 24 * 60 * 60 * 1000).optional(),
     /**
-     * `governance_delay_ms` for `new` / `migrate_v1` (contract allows 0..30 days; D80). deploy-contract refuses less
+     * `governance_delay_ms` for `new` (contract allows 0..30 days; D80). deploy-contract refuses less
      * than 24 h outside dev envs (72 h on mainnet).
      */
     governanceDelayMs: z.number().int().min(0).max(30 * 24 * 60 * 60 * 1000).optional(),
@@ -212,6 +291,18 @@ export const manifestSchema = z
      * has no watchdog Worker (`gen` for apps/watchdog refuses it). It runs on its own Cloudflare account (D86).
      */
     watchdog: watchdogSchema.optional(),
+    /**
+     * The partner identity token (docs/identity-token-spec.md, D127): issuer, signer and the public keys of the JWKS.
+     * Optional: without it the API answers `/v1/identity/*` with 503 identity_unavailable.
+     * `scripts/identity-key.ts <env> init` writes it.
+     */
+    identityToken: identityTokenSchema.optional(),
+    /**
+     * The email issuer (apps/email-issuer, docs/email-login-spec.md "Issuer configuration"): iss, Worker and D1, signer,
+     * the JWKS's public keys, the user-mail sender. Optional: without it there is no issuer Worker (its `gen` refuses).
+     * `scripts/email-issuer.ts <env> init` writes it.
+     */
+    emailIssuer: emailIssuerSchema.optional(),
   })
   .superRefine((m, ctx) => {
     for (const field of ['rpc', 'rpcFallback', 'apiUrl'] as const) {
@@ -222,10 +313,17 @@ export const manifestSchema = z
     if (m.ckdNetworkKeySource) ckdSourceRules(m.ckdNetworkKeySource, ctx);
     hanaOrigins(m, ctx);
     if (m.watchdog) watchdogRules(m, m.watchdog, ctx);
+    if (m.identityToken) identityTokenRules(m, m.identityToken, ctx);
+    if (m.emailIssuer) emailIssuerRules(m, m.emailIssuer, ctx);
     governance(m, ctx);
     dashboardRules(m, ctx);
     if (m.rpcFallback !== undefined && m.rpcFallback === m.rpc) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['rpcFallback'], message: 'rpcFallback must be a different endpoint from rpc' });
+    } else if (m.rpcFallback !== undefined && !isLocalEnv(m.name) && safeSite(m.rpcFallback) !== null && safeSite(m.rpcFallback) === safeSite(m.rpc)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['rpcFallback'], message: `rpcFallback must be another provider (registrable domain) than rpc outside local* envs (both are ${safeSite(m.rpc)})` });
+    }
+    if (m.emailIssuer && m.rpcFallback === undefined && !isLocalEnv(m.name)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['rpcFallback'], message: 'an env with emailIssuer needs rpcFallback outside local* envs: a linked identity’s path is confirmed on two providers (D263)' });
     }
     const dup = (list: string[]) => list.find((v, i) => list.indexOf(v) !== i);
     for (const field of ['googleClientIds', 'sharedGoogleClientIds'] as const) {
@@ -257,6 +355,15 @@ export function endpointUrlProblem(value: string, envName: string): string | nul
   if (url.protocol === 'https:') return null;
   if (url.protocol === 'http:' && isLocalEnv(envName) && isLoopbackHost(url.hostname)) return null;
   return 'must be an https URL (http only for a loopback host in local* envs)';
+}
+
+/** The registrable domain of a URL, or null when it doesn't parse (endpointUrlProblem reports that). */
+function safeSite(url: string): string | null {
+  try {
+    return siteOf(new URL(url).origin);
+  } catch {
+    return null;
+  }
 }
 
 /**

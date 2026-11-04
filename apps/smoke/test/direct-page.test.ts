@@ -212,6 +212,8 @@ describe('smoke page', () => {
     const create = backend.calls.find((c) => c.url.endsWith('/v1/sessions'))!;
     expect(create.body).toMatchObject({ keyIndex: 1, maxUses: 5 });
     expect(create.body).not.toHaveProperty('scopeId');
+    // The session key's proof of possession (D137), 64 bytes.
+    expect(create.body!.signature).toHaveLength(64);
     const result = text('result');
     expect(result).toMatch(/G[A-Z2-7]{55}/u);
     expect(result).toMatch(/0x[0-9a-fA-F]{40}/u);

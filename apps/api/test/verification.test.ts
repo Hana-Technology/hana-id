@@ -150,11 +150,14 @@ describe('POST /v1/sessions: ID token verification', () => {
     at(t0);
     expect((await post(await sessionBody(app.scope, aud))).status).toBe(200);
     expect(near.jwksFetches).toBe(1);
-    // The set expired and Google's endpoint fails: the cached kid still verifies (the contract has it on chain too).
+    // The set expired and Google's endpoint fails: the cached kid still verifies (the contract has it on chain too),
+    // and the stale serve is logged.
     near.jwksStatus = 500;
     at(t0 + 700_000);
+    const warn = vi.spyOn(console, 'warn');
     expect((await post(await sessionBody(app.scope, aud))).status).toBe(200);
     expect(near.jwksFetches).toBe(2);
+    expect(warn.mock.calls.filter(([line]) => String(line).includes('"event":"jwks_stale"'))).toHaveLength(1);
     // Forged tokens with unknown kids can't make every request fetch again: the failed attempt counts.
     const stranger = await rsaSigner('stranger-kid');
     for (let i = 0; i < 3; i++) await expectRejected(await post(await sessionBody(app.scope, aud, {}, {}, stranger)), 401, 'invalid_token');

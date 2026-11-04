@@ -26,6 +26,7 @@ export type DemoClient = Pick<
   | 'logout'
   | 'exportKey'
   | 'revokeOtherDevices'
+  | 'getIdentityToken'
   | 'on'
   | 'stellar'
   | 'ethereum'
@@ -43,8 +44,25 @@ export interface DemoDeps {
   copy?: (text: string) => Promise<void>;
 }
 
-/** The vault's login stages, in order (docs: apps/smoke/README.md). Others it may add are shown after them. */
-export const STAGES = ['app', 'popup', 'google', 'verify', 'chain', 'decrypt'] as const;
+/**
+ * The Login timings table's columns: the vault's login stages, in order (@hana-id/core timings.ts), with the sign-in
+ * step as one column (`signIn`). Others the vault adds are listed after them.
+ */
+export const STAGES = ['app', 'popup', 'signIn', 'verify', 'chain', 'decrypt'] as const;
+/** An email login's own stages (timings.ts): the user's and the issuer's part, summed in the sign-in column. */
+export const EMAIL_SIGN_IN_STAGES = ['emailEntry', 'emailStart', 'emailCode', 'emailVerify'] as const;
+const EMAIL_LABELS: Record<(typeof EMAIL_SIGN_IN_STAGES)[number], string> = { emailEntry: 'address', emailStart: 'code request', emailCode: 'code wait', emailVerify: 'verify' };
+
+/** Which method a login's stages came from: an email login has the email step's stages, a Google one `google`. */
+export function loginMethodOf(stages: Readonly<Record<string, number>>): 'google' | 'email' {
+  return EMAIL_SIGN_IN_STAGES.some((k) => k in stages) || 'emailRelay' in stages ? 'email' : 'google';
+}
+
+/** The sign-in column: Google's pages (`google`), or the email step's address, code request, code wait and verify. */
+export function signInMs(stages: Readonly<Record<string, number>>): number | undefined {
+  if (loginMethodOf(stages) === 'google') return stages.google;
+  return EMAIL_SIGN_IN_STAGES.reduce((sum, k) => sum + (stages[k] ?? 0), 0);
+}
 
 const PROGRESS: Record<string, string> = {
   popup_connected: 'The Hana sign-in window is open.',
@@ -75,6 +93,33 @@ const show = (id: string, visible: boolean): void => {
 const disable = (id: string, disabled: boolean): void => {
   el<HTMLButtonElement>(id).disabled = disabled;
 };
+
+/** A JWT's header and claims, decoded for display only (the page never trusts them: the partner backend verifies). */
+export function decodeToken(token: string): { header: Record<string, unknown>; claims: Record<string, unknown> } | null {
+  const part = (s: string): Record<string, unknown> => JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(s.replace(/-/gu, '+').replace(/_/gu, '/') + '='.repeat((4 - (s.length % 4)) % 4)), (ch) => ch.charCodeAt(0)))) as Record<string, unknown>;
+  const [h, c] = token.split('.');
+  try {
+    return h && c ? { header: part(h), claims: part(c) } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The verify-it-yourself snippet for a token's issuer and audience (docs/integration.md "Identity token"). */
+export function verifySnippet(iss: string, aud: string): string {
+  return [
+    "import { createRemoteJWKSet, jwtVerify } from 'jose';",
+    '',
+    `const keys = createRemoteJWKSet(new URL('${iss}/jwks.json'));`,
+    'const { payload } = await jwtVerify(token, keys, {',
+    `  issuer: '${iss}',`,
+    `  audience: '${aud}',`,
+    "  algorithms: ['ES256'],",
+    "  typ: 'hana-identity+jwt',",
+    '});',
+    '// payload.sub: the user in this app; payload.sid: this session; payload.wallets: their addresses.',
+  ].join('\n');
+}
 
 /** "in 11 h 58 min" / "in 4 min" / "now". */
 export function untilText(ms: number): string {
@@ -174,6 +219,8 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     el('status').textContent = statusText(c, clock());
     show('login', !loggedIn);
     disable('login', c === null || status === 'unlocking' || status === 'logging_in' || status === 'error');
+    show('login-email', !loggedIn);
+    disable('login-email', c === null || status === 'unlocking' || status === 'logging_in' || status === 'error');
     show('cancel-login', status === 'logging_in');
     show('logout', loggedIn);
     show('revoke', loggedIn);
@@ -182,26 +229,52 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     p.textContent = status === 'logging_in' ? progress : '';
     p.hidden = !p.textContent;
     renderAddresses(loggedIn ? c.addresses : null);
-    for (const id of ['logout', 'revoke', 'sign-personal', 'sign-stellar', 'sign-evm-tx', 'export-stellar', 'export-evm']) disable(id, pending || !loggedIn);
+    show('identity', loggedIn);
+    if (!loggedIn) renderIdentity(null);
+    for (const id of ['logout', 'revoke', 'sign-personal', 'sign-stellar', 'sign-evm-tx', 'export-stellar', 'export-evm', 'identity-token']) disable(id, pending || !loggedIn);
+  }
+
+  /** The decoded token (display only) and the verify snippet, or nothing. */
+  function renderIdentity(token: string | null): void {
+    const decoded = token === null ? null : decodeToken(token);
+    show('identity-result', decoded !== null);
+    if (!decoded) {
+      el('identity-claims').textContent = '';
+      el('identity-snippet').textContent = '';
+      el('identity-expiry').textContent = '';
+      return;
+    }
+    el('identity-claims').textContent = JSON.stringify(decoded, null, 2);
+    const exp = typeof decoded.claims.exp === 'number' ? decoded.claims.exp * 1000 : null;
+    el('identity-expiry').textContent = exp === null ? '' : `Expires ${untilText(exp - clock())}. Send it to your backend as Authorization: Bearer <token>.`;
+    el('identity-snippet').textContent = verifySnippet(String(decoded.claims.iss ?? ''), String(decoded.claims.aud ?? ''));
   }
 
   function renderTimings(): void {
     const body = el('timings');
     if (logins.length === 0) return;
-    const extra = [...new Set(logins.flatMap((l) => Object.keys(l.stages ?? {})))].filter((k) => !(STAGES as readonly string[]).includes(k));
+    const shown: readonly string[] = [...STAGES, 'google', ...EMAIL_SIGN_IN_STAGES];
+    const extra = [...new Set(logins.flatMap((l) => Object.keys(l.stages ?? {})))].filter((k) => !shown.includes(k));
+    const cell = (ms: number | undefined) => h('td', {}, ms === undefined ? '—' : String(Math.round(ms)));
     body.replaceChildren(
       ...logins.map((l) =>
         h(
           'tr',
           {},
           h('td', {}, new Date(l.at).toLocaleTimeString()),
-          ...STAGES.map((s) => h('td', {}, l.stages?.[s] === undefined ? '—' : String(Math.round(l.stages[s]!)))),
+          h('td', {}, l.method),
+          ...STAGES.map((s) => cell(!l.stages ? undefined : s === 'signIn' ? signInMs(l.stages) : l.stages[s])),
           h('td', {}, String(Math.round(l.totalMs))),
         ),
       ),
     );
-    if (extra.length) body.append(h('tr', {}, h('td', { colspan: '8', class: 'muted' }, `Other stages: ${logins.map((l) => extra.map((k) => `${k} ${l.stages?.[k] ?? '—'}`).join(', ')).join(' | ')}`)));
-    if (logins.some((l) => l.stages === null)) body.append(h('tr', {}, h('td', { colspan: '8', class: 'muted' }, 'No per-stage times: the vault returns them for test apps (pk_test_) only.')));
+    const email = logins.filter((l) => l.stages && loginMethodOf(l.stages) === 'email');
+    if (email.length) {
+      const parts = email.map((l) => EMAIL_SIGN_IN_STAGES.map((k) => `${EMAIL_LABELS[k]} ${Math.round(l.stages?.[k] ?? 0)}`).join(', '));
+      body.append(h('tr', {}, h('td', { colspan: '9', class: 'muted' }, `Email sign-in: ${parts.join(' | ')}`)));
+    }
+    if (extra.length) body.append(h('tr', {}, h('td', { colspan: '9', class: 'muted' }, `Other stages: ${logins.map((l) => extra.map((k) => `${k} ${l.stages?.[k] ?? '—'}`).join(', ')).join(' | ')}`)));
+    if (logins.some((l) => l.stages === null)) body.append(h('tr', {}, h('td', { colspan: '9', class: 'muted' }, 'No per-stage times: the vault returns them for test apps (pk_test_) only.')));
   }
 
   function renderUnlock(): void {
@@ -281,11 +354,15 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
 
   // ---- actions ----
 
-  /** Synchronous up to client.login(), so the click's user activation still opens the popup. */
-  function login(): void {
+  /**
+   * Synchronous up to client.login(), so the click's user activation still opens the popup. Each button names its
+   * method, so the popup skips its chooser: "Log in with email" works once the demo app's `login_methods` include
+   * email (docs/operations.md "Email login demo on sandbox-dev"); until then it fails with login_method_unavailable.
+   */
+  function login(method: 'google' | 'email'): void {
     const before = c.lastLogin;
     const start = now();
-    const p = c.login();
+    const p = c.login({ method });
     clearError();
     notice(null);
     render();
@@ -293,7 +370,7 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
       () => {
         const result = c.lastLogin;
         if (result && result !== before) {
-          logins.push({ at: new Date(clock()).toISOString(), totalMs: now() - start, stages: result.timings ? { ...result.timings } : null });
+          logins.push({ at: new Date(clock()).toISOString(), method, totalMs: now() - start, stages: result.timings ? { ...result.timings } : null });
           renderTimings();
         }
         notice(null);
@@ -342,7 +419,8 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     });
   }
 
-  el('login').addEventListener('click', login);
+  el('login').addEventListener('click', () => login('google'));
+  el('login-email').addEventListener('click', () => login('email'));
   el('cancel-login').addEventListener('click', () => c.cancelLogin());
   el('logout').addEventListener('click', () =>
     run('logout', async () => {
@@ -355,6 +433,11 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     run('revoke', async () => {
       const { revoked } = await c.revokeOtherDevices();
       notice(revoked === 0 ? 'No other device was signed in.' : `Signed out ${revoked} other device${revoked === 1 ? '' : 's'}.`);
+    }),
+  );
+  el('identity-token').addEventListener('click', () =>
+    run('identity', async () => {
+      renderIdentity(await c.getIdentityToken());
     }),
   );
   el('sign-personal').addEventListener('click', () =>

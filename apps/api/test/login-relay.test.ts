@@ -2,9 +2,9 @@ import { createExecutionContext, runDurableObjectAlarm, runInDurableObject, wait
 import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { base64UrlEncode, sha256 } from '../src/bytes.ts';
-import { RELAY_READS_PER_IP_MINUTE, RELAY_TOMBSTONE_MS, RELAY_TTL_MS, RELAY_WRITES_PER_IP_MINUTE } from '../src/login-relay.ts';
+import { RELAY_MAX_BODY, RELAY_READS_PER_IP_MINUTE, RELAY_TOMBSTONE_MS, RELAY_TTL_MS, RELAY_WRITES_PER_IP_MINUTE } from '../src/login-relay.ts';
 import worker from '../src/index.ts';
-import { ORIGIN, call } from './helpers.ts';
+import { ORIGIN, call, startOfMinuteClock } from './helpers.ts';
 import { AUTH, VAULT } from './login-helpers.ts';
 
 afterEach(() => vi.restoreAllMocks());
@@ -139,9 +139,14 @@ describe('login relay', () => {
     expect(await stored(c.id)).toMatchObject({ state: 'expired' });
   });
 
-  it('only authOrigin writes; only vaultOrigin and authOrigin read', async () => {
+  it('authOrigin and vaultOrigin write (the vault answers the popup in follow-up slots, batch 8b); only they read', async () => {
+    // The vault writes a follow-up slot; the popup (authOrigin) reads it; each slot still takes one write.
+    const f = await newRelay();
+    expect((await write(f.id, value(), VAULT)).status).toBe(204);
+    expect((await write(f.id, value(), VAULT)).status).toBe(409);
+    expect((await read(f.id, f.readKey, { origin: AUTH })).status).toBe(200);
     const r = await newRelay();
-    for (const origin of [VAULT, ORIGIN, null]) {
+    for (const origin of [ORIGIN, null]) {
       const res = await write(r.id, value(), origin);
       expect([res.status, (await body(res)).code], String(origin)).toEqual([403, 'origin_not_allowed']);
       expect(res.headers.get('access-control-allow-origin')).toBeNull();
@@ -176,9 +181,12 @@ describe('login relay', () => {
       const res = await write(r.id, payload);
       expect([res.status, (await body(res)).code], JSON.stringify(payload)).toEqual([400, 'bad_request']);
     }
-    const tooBig = await write(r.id, value(8 * 1024));
+    const tooBig = await write(r.id, value(RELAY_MAX_BODY));
     expect([tooBig.status, (await body(tooBig)).code]).toEqual([413, 'bad_request']);
     expect(await stored(r.id)).toBeUndefined();
+    // The largest value a popup or the vault ever encrypts (core RELAY_MAX_PLAINTEXT_BYTES, 9000, plus the tag) fits.
+    const largest = await newRelay();
+    expect((await write(largest.id, value(9000 + 16))).status).toBe(204);
     for (const wait of ['0', '26', '1.5', 'x', '-1', '']) {
       expect((await read(r.id, r.readKey, { wait })).status, wait).toBe(400);
     }
@@ -186,7 +194,9 @@ describe('login relay', () => {
     expect((await read(r.id, r.readKey, { wait: '25' })).status).toBe(200);
   });
 
-  it('rate limits per IP: writes 10 per minute, reads 120 per minute', async () => {
+  it(`rate limits per IP: writes ${RELAY_WRITES_PER_IP_MINUTE} per minute, reads ${RELAY_READS_PER_IP_MINUTE} per minute`, async () => {
+    // The windows are fixed minutes: start the run a second into one (helpers.ts startOfMinuteClock).
+    await startOfMinuteClock();
     const ip = `198.51.100.${Math.floor(Math.random() * 250)}`;
     const statuses: number[] = [];
     for (let i = 0; i <= RELAY_WRITES_PER_IP_MINUTE; i++) statuses.push((await write((await newRelay()).id, value(), AUTH, ip)).status);

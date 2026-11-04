@@ -12,7 +12,7 @@
 import { writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type Manifest, isDevEnv, isLoopbackHost } from '@hana-id/env';
+import { type Manifest, emailIssuerUrl, isDevEnv, isLoopbackHost } from '@hana-id/env';
 
 const apiDir = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -82,7 +82,14 @@ export function pagesWranglerConfig(m: Manifest, origin: PageOrigin, compatibili
     vars:
       origin === 'vault'
         ? { VAULT_ORIGIN: m.vaultOrigin }
-        : { AUTH_ORIGIN: m.authOrigin, API_URL: m.apiUrl, NEAR_RPC: m.rpc, ...(m.rpcFallback ? { NEAR_RPC_FALLBACK: m.rpcFallback } : {}) },
+        : {
+            AUTH_ORIGIN: m.authOrigin,
+            API_URL: m.apiUrl,
+            NEAR_RPC: m.rpc,
+            ...(m.rpcFallback ? { NEAR_RPC_FALLBACK: m.rpcFallback } : {}),
+            // Email login (D230): /login/email's connect-src names the issuer's own origin.
+            ...(m.emailIssuer ? { EMAIL_ISSUER_URL: emailIssuerUrl(m) } : {}),
+          },
     // The Worker runs first on every request: it alone decides which paths exist and sets the pages' headers.
     assets: { directory: pagesAssetsDir(m.name, origin), binding: 'ASSETS', run_worker_first: true, html_handling: 'none', not_found_handling: 'none' },
     // The vault page is rendered by the API Worker (D1 config inlined), reached through this binding.

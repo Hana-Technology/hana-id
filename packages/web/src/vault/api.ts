@@ -14,13 +14,20 @@ import {
   type DeriveBody,
   type LoginBody,
   type LoginResponse,
+  type LinkBody,
+  type LinkChangeBody,
+  type RelayCiphertext,
+  type RevokeBody,
   type RelayReadResponse,
   type RevokeAllResponse,
   type SessionView,
   type ShareActionBody,
   type TouchResponse,
   type UnlockResponse,
+  type IdentityTokenBody,
+  type IdentityTokenResponse,
   base64UrlEncode,
+  isIdentityTokenResponse,
   isAppConfig,
   isCkdResult,
   isCreateShareResponse,
@@ -128,6 +135,41 @@ export class VaultApi {
     return { kind: 'value', value: body };
   }
 
+  /**
+   * POST /v1/login-relay/<relayId>: the vault's follow-up notice to its login popup (build plan batch 8b), ciphertext
+   * under the login's relayKey. Not app-gated. Throws ApiError (409 relay_used, …) or a network error.
+   */
+  async relayWrite(relayId: string, value: RelayCiphertext): Promise<void> {
+    const res = await this.fetchFn(`${this.base}/v1/login-relay/${relayId}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ iv: value.iv, ct: value.ct }),
+      credentials: 'omit',
+      cache: 'no-store',
+      referrerPolicy: 'no-referrer',
+    });
+    if (res.status === 204) return;
+    await parseApiResponse(res);
+    throw new ApiError(res.status, 'bad_response', 'Unexpected relay write response', null, null);
+  }
+
+  /** POST /v1/sessions/revoke (revoke_session; D137's recovery of a session meant to carry a link). */
+  async revokeSession(payload: RevokeBody): Promise<void> {
+    await this.request('/v1/sessions/revoke', { method: 'POST', headers: this.headers(true), body: JSON.stringify(payload) });
+  }
+
+  /** POST /v1/link (link_identity): `effectiveAtMs` of the pending link. */
+  async link(payload: LinkBody): Promise<Relayed<{ effectiveAtMs: number }>> {
+    const isResult = (v: unknown): v is { effectiveAtMs: number } => typeof v === 'object' && v !== null && Number.isSafeInteger((v as { effectiveAtMs?: unknown }).effectiveAtMs);
+    const { value, nearTx } = await this.post('/v1/link', payload, isResult, (b) => b.result);
+    return { result: value, nearTx };
+  }
+
+  /** POST /v1/link/cancel or /v1/link/unlink (cancel_link, unlink_identity). */
+  async linkChange(action: 'cancel' | 'unlink', payload: LinkChangeBody): Promise<void> {
+    await this.request(`/v1/link/${action}`, { method: 'POST', headers: this.headers(true), body: JSON.stringify(payload) });
+  }
+
   async createShare(sessionPublicKey: Uint8Array, signature: Uint8Array): Promise<CreateShareResponse> {
     const { value } = await this.post('/v1/vault/shares', { sessionPublicKey: Array.from(sessionPublicKey), signature: Array.from(signature) }, isCreateShareResponse);
     return value;
@@ -147,5 +189,10 @@ export class VaultApi {
 
   async revokeAll(body: ShareActionBody): Promise<RevokeAllResponse> {
     return (await this.post('/v1/vault/revoke-all', body, isRevokeAllResponse)).value;
+  }
+
+  /** POST /v1/identity/token: a partner identity token for the session that signed `body` (identity.ts). */
+  async identityToken(body: IdentityTokenBody): Promise<IdentityTokenResponse> {
+    return (await this.post('/v1/identity/token', body, isIdentityTokenResponse)).value;
   }
 }

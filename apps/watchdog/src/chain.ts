@@ -13,6 +13,8 @@ export interface KeyChange {
   /** JWK base64url, leading zeros stripped; null for a Remove. */
   n: string | null;
   e: string | null;
+  /** The signer of a self-issued issuer's key addition (contract v3); absent for every other change. */
+  signer?: string;
   by: string;
   proposed_at_ms: number;
   executable_at_ms: number;
@@ -67,6 +69,63 @@ export interface ConfigView {
   changes_unlock_floor_ms: number;
   /** Sessions opened before this can't derive (the owner raises it after a forged key was active). */
   sessions_valid_from_ms: number;
+  /**
+   * Contract v3: links are refused until the owner accepts the wallets opened before v3 (D135). Absent on v2. Must
+   * never be true outside a dev env (D139).
+   */
+  unrecorded_wallets?: boolean;
+}
+
+/** `get_self_issued(provider)` (contract v3): the signer policy of a self-issued issuer. */
+export interface SelfIssuedView {
+  provider: string;
+  /** Each signer with its active kids. */
+  signers: { id: string; kids: string[] }[];
+  /** Distinct signers a token needs. */
+  required: number;
+  /** While a policy change's overlap lasts: until when tokens valid under the previous policy still pass. */
+  overlap_until_ms?: number | null;
+}
+
+/** Link alarm thresholds per window (D200): alarm levels only, the contract refuses nothing. */
+export interface LinkThresholds {
+  per_scope_per_hour: number;
+  total_per_hour: number;
+}
+
+/** One fixed UTC-hour window of `get_link_stats()`. */
+export interface LinkWindow {
+  window_start_ms: number;
+  /** New links (immediate or pending) in the window, all scopes. */
+  total: number;
+  total_threshold_reached: boolean;
+  /** Scopes whose links reached the per-scope threshold in the window (recorded by the call that reached it). */
+  flagged_scopes: string[];
+  /** More scopes reached the threshold than the view lists. */
+  flagged_scopes_truncated?: boolean;
+}
+
+/** `get_link_stats()` (contract with D200's link counter and alarm thresholds). */
+export interface LinkStatsView {
+  window_ms: number;
+  thresholds: LinkThresholds;
+  /** A raise waiting `governance_delay_ms` (lowering is immediate). */
+  pending_thresholds: (LinkThresholds & { effective_at_ms: number }) | null;
+  links_total: number;
+  current: LinkWindow;
+  previous: LinkWindow | null;
+}
+
+/** The email issuer as the chain shows it. A v2 contract reads as no email issuer (no `get_self_issued`). */
+export interface EmailSnapshot {
+  /** `get_issuer("email")` (null: no email issuer). */
+  issuer: IssuerView | null;
+  /** `get_issuer_keys("email")` (null: no issuer, or a contract without the view). */
+  issuerKeys: IssuerKey[] | null;
+  /** `get_self_issued("email")` (null: not self-issued, or a pre-v3 contract without the view). */
+  selfIssued: SelfIssuedView | null;
+  /** False on a pre-v3 contract (no `get_self_issued`). */
+  hasSelfIssuedView: boolean;
 }
 
 export interface WatchdogEntry {
@@ -106,10 +165,19 @@ export interface OwnerAccount {
 /** Everything one run reads from the chain. */
 export interface ChainSnapshot {
   keyChanges: KeyChange[];
-  /** Active kids per watched provider (null: the issuer isn't configured). */
+  /** Google's issuer: active kids (null: the issuer isn't configured). */
   issuer: IssuerView | null;
-  /** Active keys with material, or null when the contract has no `get_issuer_keys` (older code) or no issuer. */
+  /** Google's active keys with material, or null when the contract has no `get_issuer_keys` (older code) or no issuer. */
   issuerKeys: IssuerKey[] | null;
+  /** The email issuer (self-issued, D121). */
+  email: EmailSnapshot;
+  /** `get_link_stats()` (D200), or null on a contract without the view (v2, or v3 before the link counter). */
+  linkStats: LinkStatsView | null;
+  /**
+   * Why `linkStats` is null although the contract may have the view: `malformed` (an answer of another shape) or
+   * `read_failed` (the view errored). Null when it was read, or the contract has no view. Never fails the snapshot.
+   */
+  linkStatsProblem: 'malformed' | 'read_failed' | null;
   config: ConfigView;
   governance: GovernanceView;
   /** The owner account (null when `get_config` names none). */
@@ -119,7 +187,8 @@ export interface ChainSnapshot {
 export interface ChainReader {
   /** The RPC's `chain_id` (`testnet`). */
   chainId(): Promise<string>;
-  snapshot(provider: string): Promise<ChainSnapshot>;
+  /** Every view one run judges: the key queue, Google's and the email issuer's keys, config, governance, the owner. */
+  snapshot(): Promise<ChainSnapshot>;
   /**
    * The relayer account's balance and its pool keys' allowances (`view_account`, `view_access_key_list`; read-only).
    * An account that doesn't exist reads as `exists: false` with no balance and no keys; other failures throw.

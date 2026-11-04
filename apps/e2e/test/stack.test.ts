@@ -86,7 +86,7 @@ describe('the e2e env', () => {
     expect(portBase(undefined)).toBe(DEFAULT_PORT_BASE);
     expect(portBase('')).toBe(DEFAULT_PORT_BASE);
     expect(portBase('4510')).toBe(4510);
-    expect(portsFrom(4510)).toEqual({ partner: 4510, siteB: 4511, demo: 4512, vault: 4520, liveVault: 4521, auth: 4530, liveAuth: 4531, api: 4540, liveApi: 4541, near: 4550, evm: 4560 });
+    expect(portsFrom(4510)).toEqual({ partner: 4510, siteB: 4511, demo: 4512, vault: 4520, liveVault: 4521, auth: 4530, liveAuth: 4531, api: 4540, liveApi: 4541, issuer: 4542, near: 4550, nearFallback: 4551, evm: 4560 });
     for (const bad of ['80', '65500', '45.5', '4510x', '-1', ' 0x1000']) expect(() => portBase(bad)).toThrow(/HANA_E2E_PORT_BASE/u);
     // A base that puts a port on one browsers refuse (5010 + 50 = 5060, SIP) fails at once, not in the tests.
     expect(() => portBase('5010')).toThrow(/port 5060, which browsers refuse/u);
@@ -96,7 +96,7 @@ describe('the e2e env', () => {
     const base = portBase();
     expect([PARTNER_ORIGIN, SITE_B_ORIGIN, VAULT_ORIGIN, AUTH_ORIGIN, API_URL].map((o) => Number(new URL(o).port))).toEqual([base, base + 1, base + 10, base + 20, base + 30]);
     expect(Number(new URL(DEMO_ORIGIN).port)).toBe(base + 2);
-    expect(new Set(Object.values(PORTS)).size).toBe(11);
+    expect(new Set(Object.values(PORTS)).size).toBe(13);
   });
 
   it('gives live mode an env of its own whose every origin is https, not loopback, and routed to the stack', () => {
@@ -119,7 +119,9 @@ describe('the e2e env', () => {
     expect(LIVE_UPSTREAMS[LIVE_EVM_RPC]).toBe(EVM_RPC);
     for (const o of [LIVE_VAULT_ORIGIN, LIVE_AUTH_ORIGIN, LIVE_API_URL]) expect(LIVE_UPSTREAMS[o]).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/u);
     // The same chain, accounts and test MPC as the e2e env; its own name and origins.
-    expect(LIVE_ENV).toEqual({ ...E2E_ENV, name: LIVE_ENV_NAME, apiUrl: LIVE_API_URL, vaultOrigin: LIVE_VAULT_ORIGIN, authOrigin: LIVE_AUTH_ORIGIN, rpc: LIVE_NEAR_RPC });
+    const { emailIssuerUrl: _u, emailIss: _i, rpcFallback: _f, ...noEmail } = E2E_ENV;
+    // Live mode runs no email issuer (so no link) and no second RPC.
+    expect(LIVE_ENV).toEqual({ ...noEmail, name: LIVE_ENV_NAME, apiUrl: LIVE_API_URL, vaultOrigin: LIVE_VAULT_ORIGIN, authOrigin: LIVE_AUTH_ORIGIN, rpc: LIVE_NEAR_RPC });
     expect(ckdKeyProblem(LIVE_ENV)).toBeNull();
     expect(isScopeId(LIVE_SCOPE_ID)).toBe(true);
     expect(LIVE_SCOPE_ID).not.toBe('e2e');
@@ -304,7 +306,11 @@ describe('the Hana API: apps/api’s Worker, /v1/login and /v1/derive mocked', (
     const value = await encryptRelayPayload(relayKey, relayId, { idToken: 'a.b.c' });
     const read = (key: Uint8Array, query = '?wait=1') => call(api, `/v1/login-relay/${relayId}${query}`, { origin: VAULT_ORIGIN, headers: { 'x-hana-relay-key': base64UrlEncode(key) } });
 
-    expect((await call(api, `/v1/login-relay/${relayId}`, { method: 'POST', origin: VAULT_ORIGIN, body: value })).status).toBe(403);
+    expect((await call(api, `/v1/login-relay/${relayId}`, { method: 'POST', origin: PARTNER_ORIGIN, body: value })).status).toBe(403);
+    // The vault writes follow-up slots (batch 8b): another slot, one write.
+    const followId = relayIdFor(randomBytes(32));
+    const followValue = await encryptRelayPayload(relayKey, followId, { idToken: 'a.b.c' });
+    expect((await call(api, `/v1/login-relay/${followId}`, { method: 'POST', origin: VAULT_ORIGIN, body: followValue })).status).toBe(204);
     // No `wait`: an empty slot answers at once.
     const started = Date.now();
     expect((await read(readKey, '')).status).toBe(204);
@@ -408,9 +414,9 @@ describe('the Hana API: apps/api’s Worker, /v1/login and /v1/derive mocked', (
     expect(await modules.getAppByKey(d1, live.pk)).toMatchObject({ scope_id: LIVE_SCOPE_ID, scope_conflict: false });
     const test = api.createApp({ origins: [PARTNER_ORIGIN] });
     expect(await modules.getAppByKey(d1, test.pk)).toMatchObject({ scope_id: 'e2e', scope_conflict: false });
-    // On a live app's scope, a test app is refused (D51): why live apps get a scope of their own.
-    const onLive = api.createApp({ origins: [PARTNER_ORIGIN], scopeId: LIVE_SCOPE_ID });
-    expect(await modules.getAppByKey(d1, onLive.pk)).toMatchObject({ scope_conflict: true });
+    // On a live app's scope, a test app is refused (D51): the hot DB's triggers (migration 0006) refuse the row, which
+    // is why live apps get a scope of their own.
+    expect(() => api.createApp({ origins: [PARTNER_ORIGIN], scopeId: LIVE_SCOPE_ID })).toThrow(/key prefix does not match the scope environment/u);
     expect(() => api.createApp({ origins: [LIVE_PARTNER_ORIGIN], live: true, publishableKey: 'pk_test_DemoE2eDemoE2eDemoE2e' })).toThrow(/fresh key/u);
     // The control endpoints take live keys too.
     expect(await (await call(api, `/__e2e/apps/${live.pk}/shares`)).json()).toEqual([]);

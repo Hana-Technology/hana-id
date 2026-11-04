@@ -17,13 +17,19 @@ import {
   ckdAppId,
   consentDigest,
   encryptRelayPayload,
+  type RelayPayload,
   fromUtf8,
+  identityKeyHex,
+  identityMessage,
+  identityTokenPayload,
   relayIdFor,
   toHex,
   utf8,
   vaultMessage,
   vaultPayload,
   verifyEd25519,
+  verifyWalletProof,
+  walletProofsHash,
 } from '@hana-id/core';
 import type { HanaEnv } from '../../src/hana-env.ts';
 import type { VaultConfig } from '../../src/vault/config.ts';
@@ -203,6 +209,22 @@ type Handler = (call: ApiCall) => Response | Promise<Response | undefined> | und
 const json = (status: number, body: unknown): Response => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 export const apiError = (status: number, code: string, extra: Record<string, unknown> = {}): Response => json(status, { error: code, code, requestId: 'rq', ...extra });
 
+/** The response headers every cross-origin page may read (Fetch's CORS-safelisted response-header names). */
+const CORS_SAFELISTED = new Set(['cache-control', 'content-language', 'content-length', 'content-type', 'expires', 'last-modified', 'pragma']);
+
+/**
+ * A cross-origin response as the page's fetch sees it: a header that isn't safelisted is hidden unless the response
+ * names it in `access-control-expose-headers` (as a browser does), so a test catches a server that forgets to expose one.
+ */
+export function corsView(res: Response): Response {
+  const exposed = new Set((res.headers.get('access-control-expose-headers') ?? '').split(',').map((h) => h.trim().toLowerCase()));
+  const headers = new Headers();
+  res.headers.forEach((v, k) => {
+    if (CORS_SAFELISTED.has(k) || exposed.has(k)) headers.set(k, v);
+  });
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
 export class FakeBackend {
   readonly sessions = new Map<string, ChainSession>();
   readonly shares = new Map<string, FakeShare>();
@@ -218,6 +240,11 @@ export class FakeBackend {
   sharedClients: [string, string][] = [['google', CLIENT_ID]];
   /** RPC endpoints (origins) that fail every call with a network error. */
   readonly rpcDown = new Set<string>();
+  /**
+   * A lying (or stale) provider: per endpoint (origin), a view answer that differs from the chain's; `undefined` from
+   * the function gives the honest answer.
+   */
+  readonly viewLies = new Map<string, (method: string, args: Record<string, unknown>) => unknown>();
   /** What GET /v1/app answers. */
   app: Record<string, unknown> = { scopeId: SCOPE, signer: ENV.signer, google: { clientId: CLIENT_ID, mode: 'shared' }, name: 'Partner' };
   /** The auto-approve policy in force that GET /v1/app answers: each new tab's page sets it (the page is current). */
@@ -231,15 +258,132 @@ export class FakeBackend {
   relayHeldMs: number | null = null;
   /** What the callback adds to the relay slot for a pk_test_ login (its own and /login's stage durations), or none. */
   popupTimings: Record<string, number> | null = null;
+  /** The on-chain email keys (`get_issuer_keys("email")`) and signer policy (`get_self_issued("email")`), or none. */
+  emailKeys: { kid: string; n: string; e: string }[] | null = null;
+  emailPolicy: { provider: string; signers: { id: string; kids: string[] }[]; required: number; overlap_until_ms: null } | null = null;
+  /** The identity tokens' lifetime this fake API mints with (seconds); the real one caps it at the session's end. */
+  identityTtlS = 3600;
+  /**
+   * Accounts and links, as contract v3 keeps them (batches 7 and 8b): identities whose own path was derived (`opened`),
+   * and accounts by root identity key, each with its members.
+   */
+  readonly opened = new Set<string>();
+  readonly accounts = new Map<string, { root: { provider: string; sub: string }; members: { key: string; provider: string; sub: string; effective_at_ms: number; active: boolean; auto: boolean }[]; epoch: number; unlinked: string[] }>();
+  /** `get_config().unrecorded_wallets` (links open only when it is false, D135). */
+  unrecordedWallets = false;
+  /** `change_delay_ms`: a pending link's wait. */
+  changeDelayMs = 24 * HOUR;
+  /** The email issuer's google-match: the test's answer for each call (the request is recorded), or a 503. */
+  googleMatch: ((body: Record<string, unknown>) => Record<string, unknown> | Response) | null = null;
+  readonly matchCalls: Record<string, unknown>[] = [];
+  /** POSTs to the login relay (the vault's follow-up notices, the popup's answers in tests). */
+  readonly relayWrites: string[] = [];
   private txSeq = 0;
+  private mintSeq = 0;
   private readonly relayWaiters = new Set<() => void>();
 
   count(path: string): number {
     return this.calls.filter((c) => c.path === path).length;
   }
 
+  /** The account an identity key is in (as root or member), with its root key. */
+  accountOf(key: string): { rootKey: string; account: NonNullable<ReturnType<FakeBackend['accounts']['get']>> } | null {
+    for (const [rootKey, account] of this.accounts) if (rootKey === key || account.members.some((m) => m.key === key)) return { rootKey, account };
+    return null;
+  }
+
+  /** Makes `member` a member of `root`'s account (pending until `effectiveAtMs` when not `active`). */
+  link(root: { provider: string; sub: string }, member: { provider: string; sub: string }, o: { active?: boolean; effectiveAtMs?: number; auto?: boolean } = {}): void {
+    const rootKey = identityKeyHex(SCOPE, root.provider, root.sub);
+    const a = this.accounts.get(rootKey) ?? { root, members: [], epoch: 0, unlinked: [] };
+    a.members.push({ key: identityKeyHex(SCOPE, member.provider, member.sub), provider: member.provider, sub: member.sub, effective_at_ms: o.effectiveAtMs ?? this.serverNow(), active: o.active ?? true, auto: o.auto ?? true });
+    a.epoch += 1;
+    this.accounts.set(rootKey, a);
+  }
+
+  /** `get_identity` as the contract answers it. */
+  identityView(provider: string, sub: string): Record<string, unknown> {
+    const key = identityKeyHex(SCOPE, provider, sub);
+    const found = this.accountOf(key);
+    const m = found?.account.members.find((x) => x.key === key);
+    if (found && m) {
+      return { key, status: m.active ? 'member' : 'pending', opened: this.opened.has(key), root: found.account.root, effective_at_ms: m.effective_at_ms, account_epoch: found.account.epoch };
+    }
+    return { key, status: 'own', opened: this.opened.has(key), account_epoch: found?.account.epoch ?? 0 };
+  }
+
+  accountView(provider: string, sub: string): Record<string, unknown> | null {
+    const found = this.accountOf(identityKeyHex(SCOPE, provider, sub));
+    if (!found) return null;
+    const a = found.account;
+    return { root: a.root, members: a.members.map(({ sub: _s, ...m }) => (void _s, m)), epoch: a.epoch, unlinked: a.unlinked };
+  }
+
+  /** The identity a token names (Google compact or email JWS JSON). */
+  static tokenIdentity(jwt: string): { provider: 'google' | 'email'; sub: string } {
+    const email = jwt.startsWith('{');
+    const claims = JSON.parse(fromUtf8(base64UrlDecode(email ? (JSON.parse(jwt) as { payload: string }).payload : jwt.split('.')[1]!))) as { sub: string };
+    return { provider: email ? 'email' : 'google', sub: claims.sub };
+  }
+
+  /** The contract's path identity for a session of `who` (an active member opens its root's path). */
+  pathIdentityOf(who: { provider: string; sub: string }): { provider: string; sub: string } | 'pending' {
+    const v = this.identityView(who.provider, who.sub);
+    if (v.status === 'pending') return 'pending';
+    return v.status === 'member' ? (v.root as { provider: string; sub: string }) : who;
+  }
+
+  /**
+   * The contract's `auto_link` (the four cases, simplified): case A (the link identity has a wallet) joins the session
+   * identity to its account at once; otherwise the link identity joins the session identity's account, at once or
+   * pending. Returns an error reason, or null when linked.
+   */
+  autoLink(x: { provider: string; sub: string }, linkJwt: string, immediate: boolean): string | null {
+    if (this.unrecordedWallets) return 'links_unavailable';
+    const e = FakeBackend.tokenIdentity(linkJwt);
+    const xKey = identityKeyHex(SCOPE, x.provider, x.sub);
+    const eKey = identityKeyHex(SCOPE, e.provider, e.sub);
+    const eFound = this.accountOf(eKey);
+    const eHas = (eFound !== null && eFound.rootKey !== eKey) || this.opened.has(eKey);
+    const xFound = this.accountOf(xKey);
+    const xHas = (xFound !== null && xFound.rootKey !== xKey) || this.opened.has(xKey);
+    if (xHas && eHas) return 'both_wallets';
+    if (eHas) {
+      if (!immediate) return 'link_mismatch';
+      const root = eFound ? eFound.account.root : e;
+      this.link(root, x, { active: true });
+      return null;
+    }
+    const root = xFound ? xFound.account.root : x;
+    this.link(root, e, immediate ? { active: true } : { active: false, effectiveAtMs: this.serverNow() + this.changeDelayMs });
+    return null;
+  }
+
+  /** The vault's (or a test's) POST to a relay slot. */
+  writeRelayValue(relayId: string, value: { iv: string; ct: string }): boolean {
+    if (this.relay.has(relayId)) return false;
+    this.relay.set(relayId, value);
+    this.relayWrites.push(relayId);
+    for (const w of [...this.relayWaiters]) w();
+    return true;
+  }
+
+  /** Reads (and consumes) a slot a test plays the popup for, waiting up to 4 s. */
+  async takeRelay(relayId: string): Promise<{ iv: string; ct: string }> {
+    const deadline = Date.now() + 4000;
+    for (;;) {
+      const v = this.relay.get(relayId);
+      if (v && v !== 'consumed') {
+        this.relay.set(relayId, 'consumed');
+        return v;
+      }
+      if (Date.now() > deadline) throw new Error(`Nothing in relay slot ${relayId.slice(0, 8)}…`);
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  }
+
   /** Writes the relay slot as the callback page would (encrypted under relayKey). */
-  async writeRelay(relayId: string, relayKey: Uint8Array, payload: { idToken: string } | { error: string }): Promise<void> {
+  async writeRelay(relayId: string, relayKey: Uint8Array, payload: RelayPayload): Promise<void> {
     const withTimings = this.popupTimings ? { ...payload, timings: { ...this.popupTimings } } : payload;
     this.relay.set(relayId, await encryptRelayPayload(relayKey, relayId, withTimings));
     for (const w of [...this.relayWaiters]) w();
@@ -259,9 +403,20 @@ export class FakeBackend {
   createSession(body: Record<string, unknown>, derive: boolean): { ok: true; result?: unknown; session: ChainSession } | { ok: false; reason: string } {
     const pkHex = toHex(Uint8Array.from(body.sessionPublicKey as number[]));
     if (this.sessions.has(pkHex)) return { ok: false, reason: 'session_key_in_use' };
-    const claims = JSON.parse(fromUtf8(base64UrlDecode((body.jwt as string).split('.')[1]!))) as { sub: string };
-    const session: ChainSession = { path: `${SCOPE}#google#${claims.sub}#${body.keyIndex as number}`, scope_id: SCOPE, expires_at_ms: body.expiresAtMs as number, max_uses: body.maxUses as number, used: derive ? 1 : 0 };
+    // The path identity, as contract v3 resolves it: the identity's own path, or its account root's (batch 7).
+    const who = FakeBackend.tokenIdentity(body.jwt as string);
+    const pi = this.pathIdentityOf(who);
+    if (pi === 'pending') return { ok: false, reason: 'link_pending' };
+    let path = `${SCOPE}#${pi.provider}#${pi.sub}#${body.keyIndex as number}`;
+    if (typeof body.linkJwt === 'string') {
+      const refused = this.autoLink(who, body.linkJwt, body.linkImmediate === true);
+      if (refused) return { ok: false, reason: refused };
+      const after = this.pathIdentityOf(who);
+      if (after !== 'pending') path = `${SCOPE}#${after.provider}#${after.sub}#${body.keyIndex as number}`;
+    }
+    const session: ChainSession = { path, scope_id: SCOPE, expires_at_ms: body.expiresAtMs as number, max_uses: body.maxUses as number, used: derive ? 1 : 0 };
     this.sessions.set(pkHex, session);
+    if (derive) this.opened.add(identityKeyHex(SCOPE, path.split('#')[1]!, path.split('#')[2]!));
     return { ok: true, session, ...(derive ? { result: mpcAnswer(body.pk1 as string, session.path) } : {}) };
   }
 
@@ -277,6 +432,14 @@ export class FakeBackend {
       return this.rpc(body as { method: string; params: Record<string, unknown> }, url.origin);
     }
     if (url.href === 'https://www.googleapis.com/oauth2/v3/certs') return json(200, { keys: [] });
+    if (url.origin === 'https://issuer.test' && url.pathname === '/v1/email/google-match') {
+      const b = body as Record<string, unknown>;
+      this.matchCalls.push(b);
+      if (!this.googleMatch) return corsView(apiError(503, 'unavailable'));
+      const r = this.googleMatch(b);
+      // The issuer is another origin: the vault reads only what its CORS exposes.
+      return corsView(r instanceof Response ? r : json(200, r));
+    }
     const call: ApiCall = { method: init?.method ?? 'GET', path: url.pathname, headers, body };
     this.calls.push(call);
     const override = this.overrides.get(url.pathname);
@@ -289,11 +452,14 @@ export class FakeBackend {
 
   private async route(call: ApiCall, url: URL, signal?: AbortSignal): Promise<Response> {
     const b = call.body as Record<string, unknown>;
-    if (call.path === '/v1/app') return json(200, { autoApprovePolicy: this.autoApprovePolicy, rawSign: this.rawSign, ...this.app, serverTimeMs: this.serverNow(), requestId: 'rq' });
+    if (call.path === '/v1/app') return json(200, { autoApprovePolicy: this.autoApprovePolicy, rawSign: this.rawSign, ...this.app, serverTimeMs: this.serverNow(), ...this.timingsField(), requestId: 'rq' });
     if (call.path === '/v1/login') {
       const r = this.createSession(b, true);
       const nearTx = this.nextTx();
-      if (!r.ok) return apiError(409, 'session_exists', { nearTx: null });
+      if (!r.ok && r.reason === 'session_key_in_use') return apiError(409, 'session_exists', { nearTx: null });
+      if (!r.ok && r.reason === 'link_pending') return apiError(409, 'link_pending');
+      if (!r.ok && r.reason === 'links_unavailable') return apiError(409, 'links_unavailable');
+      if (!r.ok) return apiError(422, 'link_refused', { reason: r.reason });
       this.txs.set(nearTx, r.result);
       return json(200, { result: r.result, session: { scope_id: SCOPE, expires_at_ms: b.expiresAtMs, max_uses: b.maxUses, used: 1 }, nearTx, ...this.timingsField(), requestId: 'rq' });
     }
@@ -311,6 +477,37 @@ export class FakeBackend {
       const result = mpcAnswer(b.pk1 as string, s.path);
       this.txs.set(nearTx, result);
       return json(200, { result, nearTx, requestId: 'rq' });
+    }
+    if (call.path === '/v1/sessions/revoke') {
+      const s = this.sessions.get(toHex(Uint8Array.from(b.sessionPublicKey as number[])));
+      if (!s) return apiError(409, 'no_session');
+      if (b.counter !== s.used + 1) return apiError(409, 'bad_counter');
+      (s as ChainSession & { revoked?: boolean }).revoked = true;
+      this.sessions.delete(toHex(Uint8Array.from(b.sessionPublicKey as number[])));
+      return json(200, { result: null, nearTx: this.nextTx(), requestId: 'rq' });
+    }
+    if (call.path === '/v1/link') {
+      const n = FakeBackend.tokenIdentity(b.newJwt as string);
+      const a = FakeBackend.tokenIdentity(b.accountJwt as string);
+      const effectiveAtMs = this.serverNow() + this.changeDelayMs;
+      this.link(a, n, { active: false, effectiveAtMs, auto: false });
+      return json(200, { result: { effectiveAtMs }, nearTx: this.nextTx(), requestId: 'rq' });
+    }
+    if (call.path === '/v1/link/cancel' || call.path === '/v1/link/unlink') {
+      for (const a of this.accounts.values()) {
+        const i = a.members.findIndex((m) => m.key === b.memberKey);
+        if (i >= 0) {
+          a.members.splice(i, 1);
+          a.epoch += 1;
+          if (call.path === '/v1/link/unlink') a.unlinked.push(b.memberKey as string);
+          return json(200, { result: null, nearTx: this.nextTx(), requestId: 'rq' });
+        }
+      }
+      return apiError(422, 'contract_rejected', { reason: 'no_such_member' });
+    }
+    if (call.path.startsWith('/v1/login-relay/') && call.method === 'POST') {
+      const relayId = call.path.slice('/v1/login-relay/'.length);
+      return this.writeRelayValue(relayId, b as { iv: string; ct: string }) ? new Response(null, { status: 204 }) : apiError(409, 'relay_used');
     }
     if (call.path.startsWith('/v1/login-relay/')) {
       const relayId = call.path.slice('/v1/login-relay/'.length);
@@ -336,6 +533,7 @@ export class FakeBackend {
       this.relay.set(relayId, 'consumed');
       return json(200, { ...v, serverTimeMs: this.serverNow(), ...(this.relayHeldMs === null ? {} : { heldMs: this.relayHeldMs }) });
     }
+    if (call.path === '/v1/identity/token') return this.identityToken(call);
     if (call.path === '/v1/vault/shares') return this.createShare(call);
     if (call.path.startsWith('/v1/vault/')) return this.shareAction(call, call.path.slice('/v1/vault/'.length));
     void url;
@@ -344,6 +542,36 @@ export class FakeBackend {
 
   private timingsField(): { timings?: unknown } {
     return this.serverTimings ? { timings: structuredClone(this.serverTimings) } : {};
+  }
+
+  /**
+   * POST /v1/identity/token as the API judges it, in short: the session proof (signature, ±60 s), a live chain session,
+   * an unrevoked share in 'session' mode, both wallet proofs. The token is a fake ES256 JWS: its payload has `iat`, `exp`
+   * and a mint number `n`; the vault only reads `iat`.
+   */
+  private async identityToken(call: ApiCall): Promise<Response> {
+    const b = call.body as { sessionPublicKey: number[]; issuedAtMs: number; nonce: number[]; signature: number[]; walletProofs: Record<'stellar' | 'evm', { address: string; signature: number[] }> };
+    const pk = Uint8Array.from(b.sessionPublicKey);
+    const proofs = {
+      stellar: { address: b.walletProofs.stellar.address, signature: Uint8Array.from(b.walletProofs.stellar.signature) },
+      evm: { address: b.walletProofs.evm.address, signature: Uint8Array.from(b.walletProofs.evm.signature) },
+    };
+    if (Math.abs(this.serverNow() - b.issuedAtMs) > 60_000) return apiError(400, 'stale_proof', { serverTimeMs: this.serverNow() });
+    const payload = identityTokenPayload({ parentOrigin: call.headers['x-hana-parent-origin'] ?? '', walletProofsHash: walletProofsHash(proofs) });
+    const msg = identityMessage({ signer: ENV.signer, appId: APP_ID, sessionPublicKey: pk, issuedAtMs: b.issuedAtMs, nonce: Uint8Array.from(b.nonce), payload });
+    if (!(await verifyEd25519(pk, Uint8Array.from(b.signature), msg))) return apiError(401, 'invalid_signature');
+    const share = [...this.shares.values()].find((s) => toHex(s.sessionPk) === toHex(pk));
+    if (share?.revoked) return apiError(410, 'session_ended', { reason: 'share_revoked' });
+    if (!this.sessions.has(toHex(pk))) return apiError(410, 'session_ended', { reason: 'no_session' });
+    for (const chain of ['stellar', 'evm'] as const) {
+      if (verifyWalletProof({ signer: ENV.signer, appId: APP_ID, sessionPublicKey: pk }, chain, proofs[chain]) === null) return apiError(400, 'bad_wallet_proof', { chain });
+    }
+    const iat = Math.floor(this.serverNow() / 1000);
+    const exp = iat + this.identityTtlS;
+    this.mintSeq += 1;
+    const part = (o: unknown) => base64UrlEncode(utf8(JSON.stringify(o)));
+    const identityToken = `${part({ alg: 'ES256', kid: 'k'.repeat(43), typ: 'hana-identity+jwt' })}.${part({ iat, exp, n: this.mintSeq, wallets: [proofs.stellar.address, proofs.evm.address] })}.${'A'.repeat(86)}`;
+    return json(200, { identityToken, expiresAtMs: exp * 1000, emailStatus: 'off', requestId: 'rq' });
   }
 
   private async createShare(call: ApiCall): Promise<Response> {
@@ -394,9 +622,15 @@ export class FakeBackend {
     if (body.method === 'query') {
       const args = JSON.parse(fromUtf8(base64Decode(body.params.args_base64 as string))) as Record<string, unknown>;
       const answer = (v: unknown) => json(200, { jsonrpc: '2.0', id: 'x', result: { result: Array.from(utf8(JSON.stringify(v))) } });
+      const lie = this.viewLies.get(endpoint)?.(body.params.method_name as string, args);
+      if (lie !== undefined) return answer(lie);
       if (body.params.method_name === 'get_scope') return answer(this.scopes.get(args.scope_id as string) ?? null);
       if (body.params.method_name === 'scope_for_client') return answer(this.clientScopes.get(`${args.provider as string}|${args.aud as string}`) ?? null);
-      if (body.params.method_name === 'get_config') return answer({ shared_clients: this.sharedClients, pending_shared_clients: [] });
+      if (body.params.method_name === 'get_config') return answer({ shared_clients: this.sharedClients, pending_shared_clients: [], unrecorded_wallets: this.unrecordedWallets });
+      if (body.params.method_name === 'get_identity') return answer(this.identityView(args.provider as string, args.sub as string));
+      if (body.params.method_name === 'get_account') return answer(this.accountView(args.provider as string, args.sub as string));
+      if (body.params.method_name === 'get_issuer_keys') return answer(args.provider === 'email' ? this.emailKeys : null);
+      if (body.params.method_name === 'get_self_issued') return answer(args.provider === 'email' ? this.emailPolicy : null);
       return answer(this.sessions.get(toHex(Uint8Array.from(args.session_public_key as number[]))) ?? null);
     }
     if (body.method === 'EXPERIMENTAL_tx_status') {
@@ -690,6 +924,64 @@ export function tokenClaims(params: Record<string, unknown>, over: Record<string
 /** The callback: Google's answer, encrypted under the popup's relayKey, into the relay slot. */
 export async function deliverToken(tab: Tab, g: Google, run: LoginRun, over: Record<string, unknown> = {}, nowMs?: number): Promise<string> {
   const token = await g.token(tokenClaims(run.params, over, nowMs ?? tab.browser.timers.now));
+  // A login of an app with email (batch 8b): the popup's one-request answer carries Google's access token beside it.
+  const extra = run.params.followKey ? { accessToken: ACCESS_TOKEN } : {};
+  await tab.browser.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: token, ...extra });
+  return token;
+}
+
+/** The Google access token the tests' popup relays for google-match (never a real one). */
+export const ACCESS_TOKEN = 'ya29.test-access-token';
+
+// ---- email login (build plan batch 8a) ----
+
+export const EMAIL_ISSUER = 'https://issuer.test';
+export const EMAIL_ISS = `${EMAIL_ISSUER}/v1/email`;
+export const EMAIL_SUB = `e1.${'Q'.repeat(43)}`;
+/** The env with an email issuer pinned. */
+export const EMAIL_ENV: HanaEnv = Object.freeze({ ...ENV, emailIssuerUrl: EMAIL_ISSUER, emailIss: EMAIL_ISS });
+
+export interface EmailIssuer {
+  kid: string;
+  chainKey: { kid: string; n: string; e: string };
+  /** A token as Hana's issuer writes it: JWS General JSON, one RS256 signature. */
+  token(claims: Record<string, unknown>): Promise<string>;
+}
+
+export async function emailIssuer(kid = 'email-kid-1'): Promise<EmailIssuer> {
+  const pair = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
+  const pub = await crypto.subtle.exportKey('jwk', pair.publicKey);
+  const b64 = (v: unknown) => base64UrlEncode(utf8(JSON.stringify(v)));
+  return {
+    kid,
+    chainKey: { kid, n: pub.n as string, e: pub.e as string },
+    async token(claims) {
+      const payload = b64(claims);
+      const protectedHeader = b64({ alg: 'RS256', kid });
+      const sig = new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', pair.privateKey, utf8(`${protectedHeader}.${payload}`)));
+      return JSON.stringify({ payload, signatures: [{ protected: protectedHeader, signature: base64UrlEncode(sig) }] });
+    },
+  };
+}
+
+/** Turns email on for the backend: GET /v1/app offers it, the scope holds `email:<scope>`, the chain lists the key. */
+export function enableEmail(backend: FakeBackend, issuer: EmailIssuer): void {
+  backend.app = { ...backend.app, loginMethods: ['google', 'email'], email: { aud: `email:${SCOPE}` } };
+  backend.clientScopes.set(`email|email:${SCOPE}`, SCOPE);
+  backend.emailKeys = [issuer.chainKey];
+  backend.emailPolicy = { provider: 'email', signers: [{ id: 'hana', kids: [issuer.kid] }], required: 1, overlap_until_ms: null };
+  // google-match: no email identity matches (case C) unless a test says otherwise.
+  backend.googleMatch = () => ({ decision: 'none', googleHosted: true, linkable: true });
+}
+
+export function emailClaims(params: Record<string, unknown>, over: Record<string, unknown> = {}, nowMs = START_MS): Record<string, unknown> {
+  const now = Math.floor(nowMs / 1000);
+  return { iss: EMAIL_ISS, aud: `email:${SCOPE}`, sub: EMAIL_SUB, iat: now, exp: now + 600, nonce: params.nonce, jti: 'jti-email-1', ...over };
+}
+
+/** /login/email: the issuer's token, encrypted under the popup's relayKey, into the relay slot. */
+export async function deliverEmailToken(tab: Tab, issuer: EmailIssuer, run: LoginRun, over: Record<string, unknown> = {}): Promise<string> {
+  const token = await issuer.token(emailClaims(run.params, over, tab.browser.timers.now));
   await tab.browser.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: token });
   return token;
 }

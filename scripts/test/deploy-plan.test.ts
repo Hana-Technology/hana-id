@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { loadEnv } from '@hana-id/env';
+import { reportsCreateProof } from '../lib/deploy-run.ts';
 import { OWNER_RELAYER_METHODS, SESSION_RELAYER_METHODS, sharedClientsOf } from '../lib/contract.ts';
 import { type GovernanceView, UPDATER_METHODS } from '../lib/contract.ts';
 import { buildDeployPlan, checkFunctionKey, creationPlan, type DeployObserved, type DeployOptions, type DeployStep, describeStep, CLOCK_MARGIN_MS, signerFullAccessAllowed } from '../lib/deploy-plan.ts';
@@ -23,7 +24,7 @@ const NEAR = 10n ** 24n;
 const PROD_DELAYS = { issuerKeyDelayMs: 7_200_000, governanceDelayMs: 259_200_000 };
 
 /** Batch B allowlist state 1 (docs/batch-b-spec.md, "Relayer allowlists"). */
-const SESSION = ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'prune_sessions'];
+const SESSION = ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'prune_sessions', 'link_identity', 'cancel_link', 'unlink_identity'];
 const OWNER = ['propose_change', 'cancel_change', 'remove_client', 'disable_shared_login', 'execute_change', 'register_scope', 'apply_pending_config'];
 /** The governance contract's updater key methods (its UPDATER_METHODS) and the v1 key's. */
 const UPDATER = ['set_issuer_key', 'propose_issuer_key_removal', 'execute_issuer_key_change'];
@@ -256,6 +257,18 @@ describe('buildDeployPlan', () => {
       expect(p.done.join()).not.toContain('owner-pool relayer key(s) in place');
     });
 
+    it('email login batch 6: session keys with the batch B list (no link methods) are a blocker: delete, then re-run to re-add them', () => {
+      const batchB = SESSION.filter((x) => !['link_identity', 'cancel_link', 'unlink_identity'].includes(x));
+      const p = buildDeployPlan(m, deployed({ relayerAccessKeys: [fc('ed25519:s1', m.signer, batchB), fc('ed25519:s2', m.signer, batchB)], poolKeysInFile: { session: ['ed25519:s1', 'ed25519:s2'], owner: [] } }), opts);
+      const text = p.blockers.join('\n');
+      expect(text).toContain('with the wrong permission for the session pool');
+      expect(text).toContain(`has methods ${batchB.join(', ')}; expected ${SESSION.join(', ')}`);
+      expect(text).toContain(`near account delete-keys ${m.relayer} public-keys ed25519:s1`);
+      // Deleted, they are re-added from the file with the new list.
+      const after = buildDeployPlan(m, deployed({ relayerAccessKeys: [], poolKeysInFile: { session: ['ed25519:s1', 'ed25519:s2'], owner: [] } }), opts);
+      expect(pool(after.steps, 'session')).toMatchObject({ reuse: ['ed25519:s1', 'ed25519:s2'], methods: SESSION });
+    });
+
     it('blocks a key listed in both pool files', () => {
       const p = buildDeployPlan(m, deployed({ poolKeysInFile: { session: ['ed25519:s1', 'ed25519:s2', 'ed25519:s3'], owner: ['ed25519:o1', 'ed25519:s1'] } }), opts);
       expect(p.blockers.join()).toContain('ed25519:s1 is in both');
@@ -403,13 +416,13 @@ describe('buildDeployPlan', () => {
       expect(p.blockers.join()).toContain(`Shared client ${SHARED} is registered as a client of scope "s4"`);
     });
 
-    it('blocks on a contract without shared clients, also with --upgrade (migrate_v1 reads only the batch B layout)', () => {
+    it('blocks on a contract without shared clients, also with --upgrade (no code migrates it)', () => {
       const { shared_clients: _s, pending_shared_clients: _p, ...old } = configV1;
       const p = buildDeployPlan(m, deployedV1({ config: old }), opts);
       expect(p.blockers.join()).toContain('predates batch A.2');
       expect(p.steps.find((s) => s.kind === 'set-shared-clients')).toMatchObject({ added: [['google', SHARED]] });
       const up = buildDeployPlan(m, deployedV1({ config: old }), { ...opts, upgrade: true, skipBuild: true });
-      expect(up.blockers.join()).toContain('migrate_v1 reads only the batch B layout');
+      expect(up.blockers.join()).toContain('No code migrates it: deploy to a fresh signer account');
     });
 
     it('reads the plausible get_config shapes for pending additions', () => {
@@ -425,34 +438,13 @@ describe('buildDeployPlan', () => {
     });
   });
 
-  describe('v1 → v2 migration (sandbox-dev, docs/governance-spec.md "Migration plan")', () => {
-    it('a v1 contract needs --upgrade', () => {
-      const p = buildDeployPlan(m, deployedV1(), opts);
-      expect(p.blockers.join()).toContain('runs the v1 (pre-governance) contract. Migrate it in place with --upgrade');
-    });
-
-    it('--upgrade migrates in place, installs a new updater key, then deletes the v1 one, then adds the watchdog', () => {
-      const p = buildDeployPlan(m, deployedV1(), { ...opts, upgrade: true, skipBuild: true });
-      expect(p.blockers).toEqual([]);
-      expect(p.steps).toEqual([
-        { kind: 'migrate-v1', issuer_key_delay_ms: 120_000, governance_delay_ms: 60_000 },
-        { kind: 'add-updater-key', reuse: null },
-        { kind: 'delete-signer-key', publicKey: 'ed25519:U', why: 'the v1 keys-updater key (set_issuer_key, remove_issuer_key)', via: 'signer' },
-        { kind: 'add-watchdog', accountId: WATCHDOG },
-      ]);
-      expect(describeStep(m, p.steps[0]!)).toBe(
-        `Migrate ${m.signer} in place: DeployContract + migrate_v1({"issuer_key_delay_ms":120000,"governance_delay_ms":60000}) in one transaction (same account, so every address stays) [signed by ${m.signer}].`,
-      );
-      expect(describeStep(m, p.steps[2]!)).toContain(`[signed by ${m.signer}]`);
-      expect(describeStep(m, p.steps[3]!)).toBe(`add_watchdog({"account_id":"${WATCHDOG}"}) [signed by ${m.owner}].`);
-    });
-
-    it('builds first unless --skip-build, and refuses without the manifest delays or the signer full-access key', () => {
-      expect(buildDeployPlan(m, deployedV1(), { ...opts, upgrade: true }).steps.slice(0, 2).map((s) => s.kind)).toEqual(['build', 'migrate-v1']);
-      const { issuerKeyDelayMs: _i, ...noDelays } = m;
-      expect(buildDeployPlan({ ...noDelays, issuerKeyDelayMs: undefined }, deployedV1(), { ...opts, upgrade: true }).blockers.join()).toContain('needs issuerKeyDelayMs and governanceDelayMs for migrate_v1');
-      const noFull = buildDeployPlan(m, deployedV1({ signerAccessKeys: [fc('ed25519:U', m.signer, V1_UPDATER)] }), { ...opts, upgrade: true });
-      expect(noFull.blockers.join()).toContain("migrate_v1 is sent with");
+  describe('v1 contracts (pre-governance)', () => {
+    it('a v1 contract is refused, with or without --upgrade: contract v3 has no migrate_v1 (D154)', () => {
+      for (const o of [opts, { ...opts, upgrade: true }, { ...opts, upgrade: true, skipBuild: true }]) {
+        const p = buildDeployPlan(m, deployedV1(), o);
+        expect(p.blockers.join()).toContain("runs the v1 (pre-governance) contract, which this code can't migrate: contract v3 has no migrate_v1 (D154)");
+        expect(p.steps.some((s) => s.kind === 'build' || s.kind === 'deploy' || s.kind === 'propose-upgrade' || s.kind === 'execute-upgrade')).toBe(false);
+      }
     });
 
     it('after the migration, a re-run sees only what is left (the old key deleted by the owner if there is no full-access key)', () => {
@@ -471,11 +463,23 @@ describe('buildDeployPlan', () => {
     const up = { ...opts, upgrade: true };
     const pending = (code_hash: string, executable_at_ms: number) => deployed({ wasmCodeHash: 'H', governance: { ...govOk, pending_upgrade: { code_hash, proposed_at_ms: NOW - 60_000, executable_at_ms } } });
 
+    it('refuses to propose or execute while the env’s API lacks the create_session proof (capabilities.createProof, D137)', () => {
+      for (const o of [deployed({ apiCreateProof: false }), pending('H', NOW - CLOCK_MARGIN_MS)]) {
+        const p = buildDeployPlan(m, { ...o, apiCreateProof: false }, { ...up, skipBuild: true });
+        expect(p.blockers.join()).toContain('capabilities.createProof');
+        expect(p.steps.some((x) => x.kind === 'propose-upgrade' || x.kind === 'execute-upgrade')).toBe(false);
+      }
+      expect(buildDeployPlan(m, deployed({ apiCreateProof: true }), up).blockers.join()).not.toContain('createProof');
+      // What deploy-contract reads from GET /v1/health.
+      expect(reportsCreateProof({ ok: true, capabilities: { createProof: true } })).toBe(true);
+      for (const h of [null, { ok: true }, { capabilities: { createProof: 'yes' } }, 'x']) expect(reportsCreateProof(h)).toBe(false);
+    });
+
     it('never plans a raw DeployContract: build, then propose the built hash', () => {
       const p = buildDeployPlan(m, deployed(), up);
       expect(p.steps).toEqual([{ kind: 'build' }, { kind: 'propose-upgrade', codeHash: null, replaces: null, current: 'abc' }]);
       expect(describeStep(m, p.steps[1]!)).toContain(`propose_upgrade({"code_hash":"<hash of the built wasm>"}) [signed by ${m.owner}]`);
-      expect(p.steps.some((s) => s.kind === 'deploy' || s.kind === 'migrate-v1')).toBe(false);
+      expect(p.steps.some((s) => s.kind === 'deploy')).toBe(false);
     });
 
     it('with a known wasm: propose it; wait while delayed; execute once due', () => {

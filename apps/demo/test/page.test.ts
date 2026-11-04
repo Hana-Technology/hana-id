@@ -15,6 +15,9 @@ import { ADDRESSES, CONFIG } from './fixtures.ts';
 const html = readFileSync(join(import.meta.dirname, '..', 'index.html'), 'utf8');
 const body = /<body>([\s\S]*)<\/body>/u.exec(html)![1]!;
 const TIMINGS = { app: 120, popup: 900, google: 4000, verify: 15, chain: 6200, decrypt: 40 };
+const b64url = (o: unknown) => btoa(JSON.stringify(o)).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '');
+const IDENTITY_CLAIMS = { iss: 'https://hana-id-api-sandbox-dev.tingtc.workers.dev/v1/identity', aud: 'app_demo1', sub: 'u1_8pQm3yR0tZ1vW5xA7cB2dE', sid: 's1_Jf2kL9mN0pQ3rS6tU8vW1x', iat: 1_800_000_000, exp: 1_800_003_600 };
+const IDENTITY_TOKEN = `${b64url({ alg: 'ES256', kid: 'k', typ: 'hana-identity+jwt' })}.${b64url(IDENTITY_CLAIMS)}.${'A'.repeat(86)}`;
 
 type Listener = (...args: unknown[]) => void;
 
@@ -39,6 +42,7 @@ class FakeClient {
   });
   readonly exportKey = vi.fn(async (_chain: 'stellar' | 'evm') => null);
   readonly revokeOtherDevices = vi.fn(async () => ({ revoked: 2 }));
+  readonly getIdentityToken = vi.fn(async (): Promise<string | null> => IDENTITY_TOKEN);
   readonly stellar = { signMessage: vi.fn(async (_m: string, _o: unknown) => ({ signedMessage: 'c2lnbmVk', signerAddress: ADDRESSES.stellar })) };
   readonly ethereum = { request: vi.fn(async (_a: { method: string; params?: unknown }): Promise<unknown> => `0x${'ab'.repeat(65)}`) };
 
@@ -66,7 +70,11 @@ class FakeClient {
     this.resolveReady();
   }
 
-  login(): Promise<HanaAddresses> {
+  /** Every login's options (each demo button names its method). */
+  readonly loginOptions: unknown[] = [];
+
+  login(options?: unknown): Promise<HanaAddresses> {
+    this.loginOptions.push(options);
     this.status = 'logging_in';
     this.emit('statusChanged', 'logging_in');
     return new Promise((resolve, reject) => {
@@ -142,6 +150,22 @@ async function loginFlow(): Promise<void> {
 }
 
 describe('demo page', () => {
+  it('“Log in with Google” and “Log in with email” each open their own method (batch 8a)', async () => {
+    boot();
+    fake.readyWith(null);
+    await flush();
+    expect($('login-email').hidden).toBe(false);
+    expect(($('login-email') as HTMLButtonElement).disabled).toBe(false);
+    click('login');
+    expect(fake.loginOptions).toEqual([{ method: 'google' }]);
+    // While a login is pending, both buttons are disabled.
+    expect(($('login-email') as HTMLButtonElement).disabled).toBe(true);
+    fake.finishLogin!(Object.assign(new Error('x'), { code: 'login_cancelled' }));
+    await flush();
+    click('login-email');
+    expect(fake.loginOptions).toEqual([{ method: 'google' }, { method: 'email' }]);
+  });
+
   it('creates the client exactly as a partner does, from the baked configuration', () => {
     boot();
     expect(fake.config).toEqual({
@@ -169,7 +193,28 @@ describe('demo page', () => {
     expect($('logout').hidden).toBe(false);
     expect($('status').textContent).toMatch(/^Logged in · session ends by .* \(in 11 h 0 min\), or sooner if idle · persistence: session/u);
     const cells = [...$('timings').querySelectorAll('td')].map((td) => td.textContent);
-    expect(cells.slice(1)).toEqual(['120', '900', '4000', '15', '6200', '40', '7000']);
+    expect(cells.slice(1)).toEqual(['google', '120', '900', '4000', '15', '6200', '40', '7000']);
+  });
+
+  it('an email login shows its method, the email step as sign-in and its parts, and no google stage', async () => {
+    boot();
+    fake.readyWith(null);
+    await flush();
+    t = 1000;
+    click('login-email');
+    t = 40_000;
+    const stages = { app: 9954, popup: 300, emailLoad: 150, emailEntry: 4000, emailStart: 420, emailCode: 25_000, emailVerify: 310, emailRelay: 600, verify: 20, chain: 6200, decrypt: 40 };
+    fake.finishLogin!({ addresses: ADDRESSES, expiresAtMs: Date.UTC(2026, 9, 29, 23), persistence: 'session', timings: stages });
+    await flush();
+    const rows = [...$('timings').querySelectorAll('tr')];
+    expect([...rows[0]!.querySelectorAll('td')].map((td) => td.textContent).slice(1)).toEqual(['email', '9954', '300', '29730', '20', '6200', '40', '39000']);
+    expect(rows[1]!.textContent).toBe('Email sign-in: address 4000, code request 420, code wait 25000, verify 310');
+    expect(rows[2]!.textContent).toBe('Other stages: emailLoad 150, emailRelay 600');
+    expect($('timings').textContent).not.toContain('google');
+    click('copy-diagnostics');
+    await flush();
+    const d = JSON.parse(copied.at(-1)!) as { logins: unknown[] };
+    expect(d.logins).toEqual([{ at: '2026-10-29T12:00:00.000Z', method: 'email', totalMs: 39000, stages }]);
   });
 
   it('copies addresses', async () => {
@@ -267,6 +312,32 @@ describe('demo page', () => {
     expect($('status').textContent).toBe('Logged out.');
   });
 
+  it('gets an identity token without a popup, shows its decoded claims and a verify snippet for its iss and aud', async () => {
+    boot();
+    expect($('identity').hidden).toBe(true);
+    await loginFlow();
+    expect($('identity').hidden).toBe(false);
+    expect($('identity-result').hidden).toBe(true);
+    click('identity-token');
+    await flush();
+    expect(fake.getIdentityToken).toHaveBeenCalledTimes(1);
+    expect($('identity-result').hidden).toBe(false);
+    expect(JSON.parse($('identity-claims').textContent!)).toEqual({ header: { alg: 'ES256', kid: 'k', typ: 'hana-identity+jwt' }, claims: IDENTITY_CLAIMS });
+    const snippet = $('identity-snippet').textContent!;
+    expect(snippet).toContain(`new URL('${IDENTITY_CLAIMS.iss}/jwks.json')`);
+    expect(snippet).toContain(`audience: '${IDENTITY_CLAIMS.aud}'`);
+    expect(snippet).toContain("algorithms: ['ES256']");
+    // A failure is shown in plain words; a logout hides the token.
+    fake.getIdentityToken.mockRejectedValueOnce(hanaError('identity_unavailable'));
+    click('identity-token');
+    await flush();
+    expect($('error').textContent).toMatch(/could not issue an identity token/u);
+    click('logout');
+    await flush();
+    expect($('identity').hidden).toBe(true);
+    expect($('identity-claims').textContent).toBe('');
+  });
+
   it('records an unlock on a logged-in page load', async () => {
     boot();
     t = 180;
@@ -289,7 +360,7 @@ describe('demo page', () => {
     expect($('diagnostics').textContent).toBe(text);
     const d = JSON.parse(text) as Record<string, unknown>;
     expect(d).toMatchObject({ environment: 'sandbox-dev', appKey: 'pk_test_85gd…', status: 'logged_in', addresses: ADDRESSES, pageOrigin: 'https://hana-id-demo-sandbox-dev.tingtc.workers.dev' });
-    expect(d.logins).toEqual([{ at: '2026-10-29T12:00:00.000Z', totalMs: 7000, stages: TIMINGS }]);
+    expect(d.logins).toEqual([{ at: '2026-10-29T12:00:00.000Z', method: 'google', totalMs: 7000, stages: TIMINGS }]);
     expect(d.errors).toEqual([{ at: '2026-10-29T12:00:00.000Z', action: 'sign', code: -32603, reason: null, message: 'relay [redacted] failed' }]);
     expect(text).not.toContain(CONFIG.publishableKey);
     expect(text).not.toContain('ab'.repeat(65));

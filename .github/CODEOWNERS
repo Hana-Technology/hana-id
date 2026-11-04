@@ -16,6 +16,8 @@
 /packages/web/src/              @tzechuen @mj-hana
 /packages/core/src/             @tzechuen @mj-hana
 /scripts/                       @tzechuen @mj-hana
+# The ID-token and Access-JWT checks (moved out of /apps/api/src/ in batch C step C2).
+/packages/oidc/src/             @tzechuen @mj-hana
 
 # Dependencies: a changed lockfile can swap any crypto library.
 /pnpm-lock.yaml                 @tzechuen @mj-hana

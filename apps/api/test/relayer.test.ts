@@ -3,7 +3,7 @@ import { baseEncode } from '@near-js/utils';
 import { env } from 'cloudflare:workers';
 import { runInDurableObject } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_GAS_TGAS, MAX_CLIENT_PROOFS, MAX_TGAS, TGAS, gasEnvVar, gasFor, registerScopeTgas } from '../src/gas.ts';
+import { DEFAULT_GAS_TGAS, LINKED_LOGIN_TGAS, MAX_CLIENT_PROOFS, MAX_TGAS, TGAS, gasEnvVar, gasFor, registerScopeTgas } from '../src/gas.ts';
 import { GOVERNANCE_METHODS, POOL_METHODS, type Pool, UPDATER_METHODS } from '../src/relayer-config.ts';
 import { NONCE_RESERVATION, type RelayerKey, type RelayResult, parseRelayerKeys } from '../src/relayer-key.ts';
 import { pickKeyIndex, relay, relayerKeyCount, relayerKeyName } from '../src/relayer-pool.ts';
@@ -387,7 +387,7 @@ describe('RelayerKey Durable Object', () => {
     const near = new NearMock();
     near.install();
     expect(POOL_METHODS).toEqual({
-      session: ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'prune_sessions'],
+      session: ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'prune_sessions', 'link_identity', 'cancel_link', 'unlink_identity'],
       owner: ['propose_change', 'cancel_change', 'remove_client', 'disable_shared_login', 'execute_change', 'register_scope', 'apply_pending_config'],
     });
     // Every governance and updater method of the governance batch too (docs/governance-spec.md "The API's keys").
@@ -435,7 +435,7 @@ describe('RelayerKey Durable Object', () => {
     expect(near.sent.map((t) => [t.method, t.gas / TGAS])).toEqual([
       ['revoke_session', 20n],
       ['derive_key', 60n],
-      ['create_session', 50n],
+      ['create_session', 100n],
       // GAS_PRUNE_SESSIONS_TGAS=70 in vitest.config.ts.
       ['prune_sessions', 70n],
       ['disable_shared_login', 50n],
@@ -543,7 +543,21 @@ describe('RelayerKey Durable Object', () => {
 
 describe('gas', () => {
   it('defaults (to measure on testnet) and overrides', () => {
-    expect(DEFAULT_GAS_TGAS).toMatchObject({ create_session: 50, create_session_and_derive: 100, derive_key: 60, revoke_session: 20, prune_sessions: 50 });
+    // D155: the session and link values cover issuer keys of 4096 bits.
+    expect(DEFAULT_GAS_TGAS).toMatchObject({ create_session: 100, create_session_and_derive: 150, derive_key: 60, revoke_session: 20, prune_sessions: 50, link_identity: 250, cancel_link: 150, unlink_identity: 150 });
+    // A linked login (create_session_and_derive with link_jwt) gets its own value and override.
+    expect(gasFor('create_session_and_derive', {}, { link_jwt: '{}' })).toBe(BigInt(LINKED_LOGIN_TGAS) * TGAS);
+    expect(LINKED_LOGIN_TGAS).toBe(250);
+    expect(gasFor('create_session_and_derive', { GAS_CREATE_SESSION_AND_DERIVE_LINKED_TGAS: '280' }, { link_jwt: '{}' })).toBe(280n * TGAS);
+    expect(gasFor('create_session_and_derive', { GAS_CREATE_SESSION_AND_DERIVE_LINKED_TGAS: '280' }, {})).toBe(150n * TGAS);
+    expect(gasFor('create_session_and_derive', { GAS_CREATE_SESSION_AND_DERIVE_TGAS: '120' }, { link_jwt: '{}' })).toBe(BigInt(LINKED_LOGIN_TGAS) * TGAS);
+    // Each token signature beyond the default's (a 2-of-2 email token): +70, capped at 300 (review L1).
+    const two = JSON.stringify({ payload: 'p', signatures: [{}, {}] });
+    expect(gasFor('cancel_link', {}, { jwt: two })).toBe(220n * TGAS);
+    expect(gasFor('create_session', {}, { jwt: two })).toBe(170n * TGAS);
+    expect(gasFor('create_session', {}, { jwt: 'a.b.c' })).toBe(100n * TGAS);
+    expect(gasFor('create_session_and_derive', {}, { jwt: 'a.b.c', link_jwt: two })).toBe(300n * TGAS);
+    expect(gasFor('link_identity', { GAS_LINK_IDENTITY_TGAS: '200' }, { account_jwt: two, new_jwt: two })).toBe(200n * TGAS);
     for (const m of POOL_METHODS.owner) expect(DEFAULT_GAS_TGAS[m], m).toBe(m === 'register_scope' ? registerScopeTgas(MAX_CLIENT_PROOFS) : 50);
     expect(gasEnvVar('derive_key')).toBe('GAS_DERIVE_KEY_TGAS');
     expect(gasFor('derive_key', {})).toBe(60n * TGAS);

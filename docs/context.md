@@ -4,6 +4,10 @@ Carried over from the design conversation in wend-widget-demo (Oct 2026). Plan d
 https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi · Login journey diagrams: https://claude.ai/artifact/73xpB7AZknWd9s38xw4Fjo ·
 SDK security page: https://claude.ai/artifact/AwzpW8xZ7pAuMoTYgBfcvo
 
+Last verified: 2026-11-02 against `develop` @ 1c6a124 and `docs/operations.md` (branch `docs/consistency-pass`: "Next
+steps" and "Before mainnet", the user-mail provider, the batch B status note). The dated sections below are records
+of their day; "Next steps" is the current list.
+
 ## How a login works (from the wend-widget-demo PoC, see `legacy/`)
 
 1. The browser makes a non-extractable WebCrypto Ed25519 **session key**.
@@ -176,6 +180,9 @@ origins, partner-origin `/v1/sessions`/`/v1/derive`/`/v1/sessions/revoke`) tied 
   users' addresses (D42).
 
 ### Batch B status (2026-10-28)
+
+*Record of 2026-10-28. Since then batch B was merged into `develop` and deployed on sandbox-dev (2026-10-29), and the
+ship gate passed (D76): [Next steps](#next-steps).* As of that day:
 
 Merged on the integration branch `feat/batch-b` (not yet on `develop`), all tests passing, and **not deployed**:
 
@@ -359,16 +366,18 @@ hard-coded · NEAR Auth/FastAuth and per-tx signing code no longer needed.
   bound by it.
 - HKDF salt `hana-embed-ckd-v1` → derivation v1 (`hana-id/chain-keys/v1/extract`), confirmed by the user.
 
-## Next steps (2026-10-29)
+## Next steps
+
+Updated 2026-11-02.
 
 Done: batches A and A.2 plus the smoke page are merged on `develop`, CI green. **sandbox-dev is deployed on testnet and
 passed the full smoke checklist (2026-10-27)**: signer `hana-id-signer-dev1.testnet`, API
 `https://hana-id-api-sandbox-dev.tingtc.workers.dev` (personal Cloudflare account: production needs a Hana-owned one),
-apps `s1` (partner client + shared) and `s2` (shared only). Batch B is code-complete on `feat/batch-b`
-([Batch B status](#batch-b-status-2026-10-28)). Setup and deploy commands: `docs/operations.md`. The plan doc's
+apps `s1` (partner client + shared) and `s2` (shared only). Batch B is merged on `develop` and deployed on
+sandbox-dev (2026-10-29; [Batch B status](#batch-b-status-2026-10-28) is the record from before). Setup and deploy commands: `docs/operations.md`. The plan doc's
 Status section is the summary for humans: https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi
 
-**The user's to-dos** (agents never ask for or handle private keys; updated 2026-10-29):
+**The user's to-dos** (agents never ask for or handle private keys; updated 2026-11-02):
 
 Done 2026-10-29: callback registered, testnet contract upgraded, migrations 0003/0004 applied, `VAULT_KEK` set,
 API and both page Workers deployed, ship gate measured (D76), latency fixes measured (D77–D79, D94–D97).
@@ -384,6 +393,13 @@ AWS Lambda kept as the alternative). The watchdog was deployed and drilled the s
 upgrade and the drills): Google login on the demo gives the same Stellar and EVM addresses as on 2026-10-29, and an
 EVM `personal_sign` was approved and returned.
 
+Done 2026-11-02: the **partner identity token** (build steps 1–4) deployed on sandbox-dev (`docs/operations.md`
+"Identity token keys"), and the **watchdog redeployed with email-login batch 5** (email rules and link alarms; on the
+v2 contract it reads "no email issuer"). Merged on `develop` but **not deployed**: contract v3 (email login batches
+1–2 and the link counter, D200) and batch C C1–C3 (migration 0006 not applied, milestone M1). Not merged: the email
+issuer (batch 4, `feat/email-login-4`). Where every part stands: `docs/architecture.md` "Status of each part"; what
+is left before mainnet: `docs/mainnet-readiness.md`.
+
 1. **Deferred: one-month Pro plan test on `ting.rocks`** to see whether a paid zone keeps Malaysian traffic in SIN
    (free plan and workers.dev enter in FRA/CDG/LHR; Enterprise sites enter in SIN). The user is discussing it with
    their colleague. **Remind the user if it hasn't been decided.**
@@ -395,8 +411,10 @@ EVM `personal_sign` was approved and returned.
 6. ~~Create the Neon project~~ Done 2026-10-30: project `hana-id` (`aged-cell-90359381`, org
    `org-red-heart-13914393`), AWS Sydney `aws-ap-southeast-2`, Postgres 18; branches `production` (default) and
    `sandbox-dev`; mainnet's ledger gets its own Neon project (D143). Neon Auth and Neon's other services are not used (D75, D74). Batch C is unblocked.
-7. **Confirm the email provider with the colleague** before creating any account: Resend is recorded (D87) but
-   another provider may be used instead. The email code sits behind one small interface, so a switch is cheap.
+7. **Confirm the user-mail provider with the colleague** before creating any account: SendGrid (D194, which Hana
+   already uses for Hana Wallet and Wend) replaces Resend (D87) for login codes, final once the colleague agrees. The
+   watchdog's alert email stays on Resend (D87); whether it and the admin Worker's notices move too is decided
+   separately. The email code sits behind one small interface, so a switch is cheap.
 8. **Choose the watchdog's paging app with the colleague** (paused 2026-10-30). Candidates: Pushover (30-day trial,
    then $4.99 one-time per platform per user; adapter reads its acks), PagerDuty free (≤ 5 users; adapter exists, acks
    stay in PagerDuty), incident.io (free Basic on-call for one team; needs a new adapter, built around Slack/Teams).
@@ -407,8 +425,10 @@ EVM `personal_sign` was approved and returned.
 **Roadmap after governance (decided 2026-10-29):** email login with a Hana-run issuer and automatic, Privy-style account
 linking (`docs/email-login-spec.md`, approved 2026-10-30: D4, D119, D121–D123; signing key a Worker secret on
 testnet, AWS KMS before mainnet), and the partner identity token with opt-in verified email per app (D120; `docs/identity-token-spec.md` approved
-2026-10-30, D127). Then Sign in with Apple (D124). Native partner apps (iOS, Android, React Native / Expo; batch B Q24): `docs/native-apps-spec.md`
-(draft 2026-10-30, 18 open questions; recommends Hana's vault in the system browser sheet, no contract change).
+2026-10-30, D127). Sign in with Apple (D124; `docs/apple-login-spec.md`) is paused: not in the initial build, built
+when partners ask for it (D160, 2026-11-02).
+Native partner apps (iOS, Android, React Native / Expo; batch B Q24): `docs/native-apps-spec.md`
+(draft 2026-10-30, 19 open questions; recommends Hana's vault in the system browser sheet, no contract change).
 
 **Before mainnet:**
 
@@ -417,8 +437,9 @@ testnet, AWS KMS before mainnet), and the partner identity token with opt-in ver
   the measured mainnet issuer-key delay, where the backup council key is held, the paging app, governance open
   question 17.
 - Hana Home: key export for every shared-login app and cross-device consent revocation (D40, D45).
-- A Hana Cloudflare account and the two registrable domains for `vaultOrigin`/`authOrigin` (D38, D18). Email
-  provider: Resend (D87), set up on a sending subdomain once the domain exists.
+- A Hana Cloudflare account and the two registrable domains for `vaultOrigin`/`authOrigin` (D38, D18). User mail:
+  SendGrid (D194, final once the colleague agrees), set up on a sending subdomain once the domain exists; the
+  watchdog's alert email: Resend (D87).
 - External audit.
 - Address freeze: final accounts deployed (D2, D5); after it, nothing may change a path or key derivation.
 - Mainnet launch date: not set (D39).
@@ -428,6 +449,7 @@ testnet, AWS KMS before mainnet), and the partner identity token with opt-in ver
 - `docs/batch-c-spec.md` (D34 cut, D73–D75 and the 2026-10-29 decisions D87–D93 folded in) needs implementation
   review. Still open there: Q1 (console code flow `openid`-only check, to test), Q3 (Hana Cloudflare account, zone,
   domains), Q4's Access fallback emails, Q5 (Neon setup). Retention periods (D90) need the company's accountant.
+  The build is under way: C1–C3 merged (`docs/batch-c-build-plan.md`).
 - Open questions still to answer: `docs/decisions.md` "Proposed, not yet confirmed".
 
 Working rules: feature branch → PR into `develop` (an org ruleset requires one approving review from a teammate;

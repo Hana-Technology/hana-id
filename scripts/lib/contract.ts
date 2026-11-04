@@ -3,11 +3,13 @@ import type { NearRpc } from './near.ts';
 
 /**
  * Methods the relayer's session-pool keys (the API's RELAYER_KEYS) may call on the signer (docs/batch-a2-shared-client.md).
- * Logins only: abuse of the owner endpoint can never use up these keys. Batch B allowlist state 1 (docs/batch-b-spec.md,
- * "Relayer allowlists"): the contract upgrade adds create_session_and_derive; a later state drops create_session or
- * create_session_and_derive, after the ship gate.
+ * Logins and the email-login link methods only: abuse of the owner endpoint can never use up these keys. Batch B
+ * allowlist state 1 (docs/batch-b-spec.md, "Relayer allowlists"): the contract upgrade adds create_session_and_derive; a
+ * later state drops create_session or create_session_and_derive, after the ship gate. Email login batch 6 adds the three
+ * link methods (contract v3; a key may name them before the upgrade, nothing can call them then): existing keys are
+ * deleted and re-added (`deploy-contract` lists them as a blocker with the commands, docs/operations.md).
  */
-export const SESSION_RELAYER_METHODS = ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'prune_sessions'] as const;
+export const SESSION_RELAYER_METHODS = ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'prune_sessions', 'link_identity', 'cancel_link', 'unlink_identity'] as const;
 
 /** Methods the relayer's owner-pool keys (the API's OWNER_RELAYER_KEYS, /v1/owner-actions) may call on the signer. */
 export const OWNER_RELAYER_METHODS = [
@@ -48,6 +50,9 @@ export const OWNER_METHODS = [
   'set_governance_delay_ms',
   'enable_public_registration',
   'set_issuer',
+  'mark_self_issued',
+  'accept_unrecorded_wallets',
+  'set_link_thresholds',
   'admin_register_scope',
   'set_issuer_key',
   'propose_issuer_key_removal',

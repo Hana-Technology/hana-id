@@ -2,8 +2,8 @@
 // Re-running after a partial deploy plans only what is still missing.
 //
 // Governance (docs/governance-spec.md): the contract is upgraded in place (same signer account, so no address
-// changes). A v1 contract is migrated once with DeployContract + migrate_v1 (signer full-access key, sandbox-dev only);
-// a v2 contract only through propose_upgrade (owner) → wait governance_delay_ms → execute_upgrade (anyone). Owner
+// changes), only through propose_upgrade (owner) → wait governance_delay_ms → execute_upgrade (anyone). A v1
+// (pre-governance) contract is refused: its one-off migration (migrate_v1) left the contract with v3 (D154). Owner
 // steps go through owner-tx (the owner account, or a council DAO proposal). The signer's keys are checked against
 // get_governance().updater_keys: outside allowSignerFullAccessKey envs a full-access key on the signer, and anywhere
 // a function-call key the contract didn't install, stops the plan. Before any owner transfer to the council, and on
@@ -84,6 +84,12 @@ export interface DeployObserved {
   councilDao: { exists: boolean; codeHash: string; policy: SputnikPolicy | null } | null;
   /** Council members whose signing key the scripts can read (dev: .secrets/<env>/council/; else ~/.near-credentials). */
   councilKeys: Record<string, boolean>;
+  /**
+   * Whether the env's API (`GET {apiUrl}/v1/health` `capabilities.createProof`) sends create_session's proof of
+   * possession (D137): `--upgrade` is refused without it (batch 6 review M2). Null: not checked (only an `--upgrade` run
+   * reads it; tests without a health reader).
+   */
+  apiCreateProof?: boolean | null;
 }
 
 export interface PoolOptions {
@@ -97,8 +103,8 @@ export interface DeployOptions {
   /** session = RELAYER_KEYS (logins), owner = OWNER_RELAYER_KEYS (/v1/owner-actions). */
   pools: Record<KeyPool, PoolOptions>;
   /**
-   * Change the code of an initialised contract: v1 → DeployContract + migrate_v1 in one transaction; v2 →
-   * propose_upgrade(hash), and execute_upgrade once due.
+   * Change the code of an initialised contract: propose_upgrade(hash), and execute_upgrade once due (a v1 contract
+   * is refused, D154).
    */
   upgrade: boolean;
   /** Skip the wasm build and use the existing file (its hash is then known when planning). */
@@ -127,7 +133,6 @@ export interface NewArgs {
 export type DeployStep =
   | { kind: 'build' }
   | { kind: 'deploy'; init: NewArgs }
-  | { kind: 'migrate-v1'; issuer_key_delay_ms: number; governance_delay_ms: number }
   | { kind: 'relayer-keys'; pool: KeyPool; reuse: string[]; generate: number; methods: string[]; allowanceYocto: bigint }
   /** add_updater_key: the key in keys-updater.json (`reuse`), or a new one generated into it. */
   | { kind: 'add-updater-key'; reuse: string | null }
@@ -161,7 +166,6 @@ export function stepSigner(step: DeployStep): Role | null {
     case 'build':
       return null;
     case 'deploy':
-    case 'migrate-v1':
       return 'signer';
     case 'delete-signer-key':
       return step.via === 'signer' ? 'signer' : 'owner';
@@ -317,7 +321,7 @@ export function buildDeployPlan(m: Manifest, o: DeployObserved, opts: DeployOpti
   const initialised = o.config !== null;
   const v1 = initialised && o.governance === null;
   const delays = m.issuerKeyDelayMs !== undefined && m.governanceDelayMs !== undefined ? { issuer_key_delay_ms: m.issuerKeyDelayMs, governance_delay_ms: m.governanceDelayMs } : null;
-  // The delays the env runs with once the plan ran: the manifest's (set by new / migrate_v1 / set-delay), else the
+  // The delays the env runs with once the plan ran: the manifest's (set by new / set-delay), else the
   // contract's own (the plan sets none then).
   const onChainDelay = (field: 'issuer_key_delay_ms' | 'governance_delay_ms'): number | undefined => {
     const v = o.config?.[field];
@@ -381,7 +385,7 @@ export function buildDeployPlan(m: Manifest, o: DeployObserved, opts: DeployOpti
       if (sharedClientsOf(c) === null) {
         blockers.push(
           `${m.signer} runs a hana-signer without shared clients (get_config has no shared_clients; it predates batch A.2). ` +
-            `migrate_v1 reads only the batch B layout: deploy to a fresh signer account (this changes every address in ${m.name}).`,
+            `No code migrates it: deploy to a fresh signer account (this changes every address in ${m.name}).`,
         );
       }
     } catch (err) {
@@ -390,18 +394,20 @@ export function buildDeployPlan(m: Manifest, o: DeployObserved, opts: DeployOpti
     if (c.change_delay_ms !== undefined && c.change_delay_ms !== m.changeDelayMs) warnings.push(`Contract change_delay_ms is ${c.change_delay_ms}, manifest says ${m.changeDelayMs} (not changed by this script; use set_change_delay_ms).`);
 
     if (v1) {
-      if (!opts.upgrade) {
-        blockers.push(`${m.signer} runs the v1 (pre-governance) contract. Migrate it in place with --upgrade (DeployContract + migrate_v1 in one transaction; same account, same addresses).`);
-      } else {
-        if (!delays) blockers.push(`envs/${m.name}.json needs issuerKeyDelayMs and governanceDelayMs for migrate_v1 (D80).`);
-        if (!signerFullKeys.length) blockers.push(`migrate_v1 is sent with ${m.signer}'s full-access key, and it has none.`);
-        if (!opts.skipBuild) steps.push({ kind: 'build' });
-        steps.push({ kind: 'migrate-v1', issuer_key_delay_ms: delays?.issuer_key_delay_ms ?? 0, governance_delay_ms: delays?.governance_delay_ms ?? 0 });
-        gov = emptyGov([]);
-      }
+      blockers.push(
+        `${m.signer} runs the v1 (pre-governance) contract, which this code can't migrate: contract v3 has no migrate_v1 (D154). ` +
+          `Upgrade it with the v2 code first (contracts/hana-signer at 26fb70a, deploy-contract --upgrade from that checkout), or deploy to a fresh signer account (this changes every address in ${m.name}).`,
+      );
     } else if (gov) {
       const pending = gov.pending_upgrade;
-      if (opts.upgrade) {
+      if (opts.upgrade && o.apiCreateProof === false) {
+        // Contract v3 requires create_session's proof of possession (D137): an API that doesn't send it would fail every
+        // split-path session the moment the upgrade executes. The pages (the vault's split path) ship with the same deploy.
+        blockers.push(
+          `The API at ${m.apiUrl} doesn't report capabilities.createProof (GET /v1/health): deploy the email login batch 6 API and pages ` +
+            `(docs/operations.md "Email login on sandbox-dev" step 4) before proposing or executing an upgrade.`,
+        );
+      } else if (opts.upgrade) {
         const known = opts.skipBuild ? o.wasmCodeHash : null;
         if (!opts.skipBuild) steps.push({ kind: 'build' });
         if (pending && known === pending.code_hash) {
@@ -691,11 +697,6 @@ export function describeStep(m: Manifest, s: DeployStep, ownerTx: OwnerTxOptions
       return 'Build contracts/hana-signer wasm (cargo near build non-reproducible-wasm).';
     case 'deploy':
       return `Deploy wasm to ${m.signer} and call new(${JSON.stringify(s.init)}) [signed by ${m.signer}].`;
-    case 'migrate-v1':
-      return (
-        `Migrate ${m.signer} in place: DeployContract + migrate_v1(${JSON.stringify({ issuer_key_delay_ms: s.issuer_key_delay_ms, governance_delay_ms: s.governance_delay_ms })}) ` +
-        `in one transaction (same account, so every address stays) [signed by ${m.signer}].`
-      );
     case 'relayer-keys':
       return (
         `Add ${s.reuse.length + s.generate} ${s.pool}-pool function-call key(s) to ${m.relayer} (receiver ${m.signer}, allowance ${near(s.allowanceYocto)} each, methods ${s.methods.join(', ')})` +

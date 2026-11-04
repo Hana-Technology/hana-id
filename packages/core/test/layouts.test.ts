@@ -9,6 +9,7 @@ import {
   KEY_INDEX_LIMIT,
   checkSessionParams,
   ckdPayload,
+  createProofPayload,
   createShareId,
   recordAad,
   relayAad,
@@ -20,7 +21,7 @@ import {
   vaultMessage,
   vaultPayload,
 } from '../src/layouts.ts';
-import { newSessionKey, signDerive, signRevoke, signVaultMessage, verifyEd25519 } from '../src/session.ts';
+import { newSessionKey, signCreate, signDerive, signRevoke, signVaultMessage, verifyEd25519 } from '../src/session.ts';
 import { type Example, contractFixture, ed25519KeyFromSeed, readJson } from './helpers.ts';
 
 const fixture = contractFixture();
@@ -139,6 +140,19 @@ describe('session key', () => {
     const key = await ed25519KeyFromSeed(new Uint8Array(32).fill(7));
     const sig = await signDerive(key, 1, L.ckd_payload!.pk1!, L.ckd_payload!.pk2!);
     expect(await verifyEd25519(PK7, sig, fromHex(L.session_message_ckd!.preimage_hex))).toBe(true);
+  });
+
+  it("signs create_session's proof of possession as the contract checks it (email_fixture session_message_create, D137)", async () => {
+    const email = readJson<{ layouts: Record<string, Example> }>('../../../contracts/hana-signer/src/email_fixture.json').layouts;
+    const key = await ed25519KeyFromSeed(new Uint8Array(32).fill(7));
+    const message = fromHex(email.session_message_create!.preimage_hex);
+    // The payload's hash in the message is sha256("hana-id-create-v1:" ‖ sha256(the session nonce example's preimage)).
+    expect(toHex(sessionMessage(0, createProofPayload(base)))).toBe(email.session_message_create!.preimage_hex);
+    const sig = await signCreate(key, base);
+    expect(await verifyEd25519(PK7, sig, message)).toBe(true);
+    // Bound to every parameter: another key_index (or counter) is another message.
+    expect(await verifyEd25519(PK7, sig, sessionMessage(0, createProofPayload({ ...base, keyIndex: 1 })))).toBe(false);
+    expect(await verifyEd25519(PK7, sig, sessionMessage(1, createProofPayload(base)))).toBe(false);
   });
 
   it('verifyEd25519 refuses malformed keys and signatures', async () => {

@@ -1,6 +1,10 @@
 # Partner identity token spec (pre-mainnet)
 
-**Status: APPROVED (2026-10-30), not built.** Specifies `docs/decisions.md` D120 (a short-lived JWT a partner's
+**Status: APPROVED (2026-10-30); build steps 1–4 (no email claim) merged (D170–D179) and deployed on sandbox-dev
+2026-11-02; step 8 built on `feat/identity-token-8` (D210–D214): the watchdog's JWKS pin check plus an outside probe,
+which detect a key served to everyone but not one cloaked from them (partner-side pinning prevents; D210); step 7's
+code (the KMS signer) merged (D215–D219), its AWS setup not done; steps 5–6 not built.** The current state is in the reference docs (`api.md` "Identity token", `integration.md`
+section 15, `architecture.md`, `security.md`, `operations.md` "Identity token keys"). Specifies `docs/decisions.md` D120 (a short-lived JWT a partner's
 backend can verify, with an opt-in verified email per app). The user answered all 16
 [open questions](#open-questions-for-the-user) on 2026-10-30, each with the recommended option A; recorded as D127.
 
@@ -460,7 +464,7 @@ never trust it).
 
 Scheduled (every 12 months, and when the KMS key policy or region changes):
 
-1. Create the new key (KMS, or `scripts/identity-key.ts init --next` on testnet); add it to the manifest as `next`;
+1. Create the new key (KMS, or `scripts/identity-key.ts <env> next` on testnet, D177); add it to the manifest as `next`;
    add its thumbprint to the watchdog pins (operator redeploy); deploy: the JWKS now lists it, nothing signs with it.
 2. Notify partners that pin thumbprints; wait ≥ 14 days (≥ 24 h on testnet).
 3. Switch the signer to the new key (manifest `active`), deploy. Tokens signed by the old key stay valid until their
@@ -472,8 +476,11 @@ reported by a partner):
 
 1. **Stop new signatures by the suspect credential**: revoke the IAM access key (mainnet) or delete the Worker secret
    (testnet). If the API Worker itself is suspect, follow the Cloudflare-account incident runbook first.
-2. **Switch to the standby key** (already in every partner's JWKS cache): manifest `active = standby`, deploy. Logins
-   and refreshes continue.
+2. **Switch to a key the incident didn't touch** (amended 2026-10-30, D177): the standby (already in every partner's
+   JWKS cache) only if it provably wasn't exposed. On testnet it is never on the Worker, so a Worker or Cloudflare
+   leak doesn't reach it (`identity-key switch --to standby`); a leak of the operator's `.secrets/` does, and then both
+   keys are removed and a fresh key replaces them (`retire --key standby`, `next`, `switch --to next`). Unless the
+   incident provably touches only one key, treat both as exposed. Deploy: logins and refreshes continue.
 3. **Remove the suspect key from the JWKS** and the pins. Partners using the JWKS URL reject its tokens within 10
    minutes; forged tokens with up to 1 h left die then too. The SDK's next refresh replaces every user's token
    (partners answer 401 to an old one; the page refreshes).

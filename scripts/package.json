@@ -10,15 +10,21 @@
     "admin": "tsx admin.ts",
     "council-setup": "tsx council-setup.ts",
     "vault-kek": "tsx vault-kek.ts",
+    "identity-key": "tsx identity-key.ts",
+    "email-issuer": "tsx email-issuer.ts",
     "pack:check": "tsx pack-check.ts",
     "sdk-version": "tsx sdk-version.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "usage-migrate": "tsx usage-migrate.ts"
+    "usage-migrate": "tsx usage-migrate.ts",
+    "identity-probe": "tsx identity-probe.ts",
+    "usage-setup": "tsx usage-setup.ts"
   },
   "dependencies": {
+    "@hana-id/console-core": "workspace:*",
     "@hana-id/core": "workspace:*",
     "@hana-id/env": "workspace:*",
+    "@hana-id/jwks": "workspace:*",
     "@near-js/crypto": "2.5.1",
     "@near-js/transactions": "2.5.1",
     "@near-js/utils": "2.5.1",

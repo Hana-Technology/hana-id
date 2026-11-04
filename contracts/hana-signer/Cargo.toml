@@ -27,3 +27,8 @@ lto = true
 debug = false
 panic = "abort"
 overflow-checks = true
+
+# The unit tests generate RSA test keys (src/test_rsa.rs) and verify many RS256 signatures: big-integer arithmetic
+# unoptimised is slow. Test builds only; the wasm uses the release profile above.
+[profile.dev.package.num-bigint]
+opt-level = 3

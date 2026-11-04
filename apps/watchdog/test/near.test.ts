@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NearChain, NearWriter, Rpc, RpcError, WATCHDOG_GAS, watchdogPublicKey } from '../src/near.ts';
 
 const PRIMARY = 'https://rpc.test.invalid';
-const FALLBACK = 'https://rpc-fallback.test.invalid';
+const FALLBACK = 'https://rpc.fallback-provider.invalid';
 const SIGNER = 'signer.test.near';
 const WATCHDOG = 'watchdog.test.near';
 const BLOCK = baseEncode(new Uint8Array(32).fill(3));
@@ -59,24 +59,94 @@ describe('Rpc', () => {
 });
 
 describe('NearChain', () => {
+  const NOT_FOUND = { result: { error: 'wasm execution failed with error: MethodResolveError(MethodNotFound)' } };
   const views: Record<string, unknown> = {
     get_key_changes: [{ id: 1, provider: 'google', kid: 'k2', op: 'Add', n: 'nn', e: 'AQAB', by: SIGNER, proposed_at_ms: 1, executable_at_ms: 2 }],
-    get_issuer: { provider: 'google', iss_values: [], kids: ['k1'] },
-    get_issuer_keys: [{ kid: 'k1', n: 'n1', e: 'AQAB' }],
     get_config: { paused: false },
     get_governance: { watchdogs: [] },
   };
+  const GOOGLE_ISSUER = { provider: 'google', iss_values: [], kids: ['k1'] };
+  const EMAIL_ISSUER = { provider: 'email', iss_values: ['https://api.test/v1/email'], kids: ['tp1'] };
+  const POLICY = { provider: 'email', signers: [{ id: 'hana', kids: ['tp1'] }], required: 1, overlap_until_ms: null };
+  const WINDOW = { window_start_ms: 3_600_000, total: 3, total_threshold_reached: false, flagged_scopes: [] };
+  const STATS = { window_ms: 3_600_000, thresholds: { per_scope_per_hour: 50, total_per_hour: 500 }, pending_thresholds: null, links_total: 9, current: WINDOW, previous: null };
+  /**
+   * hana-signer's views by provider. `v3: false` is today's sandbox-dev contract: no get_self_issued, and
+   * get_issuer("email") answers null (no such issuer), as v2's provider-generic view does.
+   */
+  const contract = (o: { v3?: boolean; email?: boolean; over?: Record<string, unknown> } = {}): Handler => (_u, method, p) => {
+    if (method === 'status') return { result: { chain_id: 'testnet' } };
+    const name = p.method_name as string;
+    const provider = (viewArgs(p) as { provider?: string }).provider;
+    if (o.over && name in o.over) return o.over[name] instanceof Error ? o.over[name] : viewResult(o.over[name]);
+    if (name === 'get_issuer') return viewResult(provider === 'google' ? GOOGLE_ISSUER : o.email ? EMAIL_ISSUER : null);
+    if (name === 'get_issuer_keys') return viewResult(provider === 'google' ? [{ kid: 'k1', n: 'n1', e: 'AQAB' }] : o.email ? [{ kid: 'tp1', n: 'n2', e: 'AQAB' }] : null);
+    if (name === 'get_self_issued') return o.v3 === false ? NOT_FOUND : viewResult(o.email ? POLICY : null);
+    if (name === 'get_link_stats') return o.v3 === false ? NOT_FOUND : viewResult(STATS);
+    return viewResult(views[name]);
+  };
 
-  it('reads every view the run needs, for the watched provider', async () => {
-    const calls = stubRpc((_u, method, p) => (method === 'status' ? { result: { chain_id: 'testnet' } } : viewResult(views[p.method_name as string])));
+  it('reads every view the run needs: Google, the email issuer and its signer policy', async () => {
+    const calls = stubRpc(contract({ email: true }));
     const chain = new NearChain(new Rpc([PRIMARY]), SIGNER);
     expect(await chain.chainId()).toBe('testnet');
-    const s = await chain.snapshot('google');
+    const s = await chain.snapshot();
+    expect(s.issuer).toEqual(GOOGLE_ISSUER);
     expect(s.issuerKeys).toEqual([{ kid: 'k1', n: 'n1', e: 'AQAB' }]);
     expect(s.keyChanges[0]?.kid).toBe('k2');
-    const issuerCalls = calls.filter((c) => ['get_issuer', 'get_issuer_keys'].includes(c.params.method_name as string));
-    expect(issuerCalls.map((c) => viewArgs(c.params))).toEqual([{ provider: 'google' }, { provider: 'google' }]);
+    expect(s.email).toEqual({ issuer: EMAIL_ISSUER, issuerKeys: [{ kid: 'tp1', n: 'n2', e: 'AQAB' }], selfIssued: POLICY, hasSelfIssuedView: true });
+    const issuerCalls = calls.filter((c) => ['get_issuer', 'get_issuer_keys', 'get_self_issued'].includes(c.params.method_name as string));
+    expect(issuerCalls.map((c) => [c.params.method_name, viewArgs(c.params), c.params.finality])).toEqual([
+      ['get_issuer', { provider: 'google' }, 'final'],
+      ['get_issuer', { provider: 'email' }, 'final'],
+      ['get_issuer_keys', { provider: 'google' }, 'final'],
+      ['get_self_issued', { provider: 'email' }, 'final'],
+      ['get_issuer_keys', { provider: 'email' }, 'final'],
+    ]);
     expect(s.owner).toBeNull(); // this get_config names no owner
+    expect(s.linkStats).toEqual(STATS);
+    expect(calls.find((c) => c.params.method_name === 'get_link_stats')?.params).toMatchObject({ finality: 'final' });
+  });
+
+  it('isolates a get_link_stats of another shape, or one that fails: the rest of the snapshot is read (D200)', async () => {
+    for (const bad of [{ ...STATS, thresholds: { per_scope_per_hour: -1, total_per_hour: 500 } }, { ...STATS, current: { ...WINDOW, flagged_scopes: 's1' } }, { ...STATS, previous: 'x' }, { ...STATS, pending_thresholds: { per_scope_per_hour: 1, total_per_hour: 2 } }, 'nope']) {
+      vi.restoreAllMocks();
+      stubRpc(contract({ email: true, over: { get_link_stats: bad } }));
+      const s = await new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot();
+      expect(s, JSON.stringify(bad)).toMatchObject({ linkStats: null, linkStatsProblem: 'malformed', issuer: GOOGLE_ISSUER, email: { issuer: EMAIL_ISSUER } });
+    }
+    vi.restoreAllMocks();
+    stubRpc(contract({ email: true, over: { get_link_stats: new TypeError('down') } }));
+    expect(await new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot()).toMatchObject({ linkStats: null, linkStatsProblem: 'read_failed', keyChanges: [{ kid: 'k2' }] });
+    vi.restoreAllMocks();
+    stubRpc(contract({ v3: false }));
+    expect(await new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot()).toMatchObject({ linkStats: null, linkStatsProblem: null });
+  });
+
+  it('reads a v2 contract (no get_self_issued, no email issuer) as no email issuer, not as an error', async () => {
+    const calls = stubRpc(contract({ v3: false }));
+    const s = await new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot();
+    expect(s.email).toEqual({ issuer: null, issuerKeys: null, selfIssued: null, hasSelfIssuedView: false });
+    expect(s.linkStats).toBeNull();
+    expect(s.config.unrecorded_wallets).toBeUndefined();
+    // No email issuer: get_issuer_keys("email") isn't read.
+    expect(calls.filter((c) => c.params.method_name === 'get_issuer_keys').map((c) => viewArgs(c.params))).toEqual([{ provider: 'google' }]);
+  });
+
+  it('reads a v3 contract before the email issuer is set up as no email issuer', async () => {
+    stubRpc(contract({ v3: true }));
+    expect((await new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot()).email).toEqual({ issuer: null, issuerKeys: null, selfIssued: null, hasSelfIssuedView: true });
+  });
+
+  it('fails the read when an issuer view answers something unexpected', async () => {
+    for (const over of [{ get_self_issued: { provider: 'email', signers: 'hana', required: 1 } }, { get_self_issued: { provider: 'email', signers: [], required: '1' } }, { get_issuer: { provider: 'email' } }, { get_issuer_keys: [{ kid: 1 }] }]) {
+      vi.restoreAllMocks();
+      stubRpc(contract({ email: true, over }));
+      await expect(new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot(), JSON.stringify(over)).rejects.toBeInstanceOf(RpcError);
+    }
+    vi.restoreAllMocks();
+    stubRpc(contract({ email: true, over: { get_self_issued: { error: 'x' } } }));
+    await expect(new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot()).rejects.toBeInstanceOf(RpcError);
   });
 
   it("reads the owner account's code hash and, for a DAO, its get_policy", async () => {
@@ -85,21 +155,21 @@ describe('NearChain', () => {
     const handler = (codeHash: string, daoPolicy: unknown): Handler => (_u, method, p) => {
       if (p.request_type === 'view_account') return { result: { amount: '1', code_hash: codeHash } };
       if (p.method_name === 'get_policy') return daoPolicy === undefined ? { result: { error: 'wasm execution failed with error: MethodResolveError(MethodNotFound)' } } : viewResult(daoPolicy);
-      return viewResult({ ...views, get_config: { paused: false, owner: DAO } }[p.method_name as string]);
+      return contract({ over: { get_config: { paused: false, owner: DAO } } })(_u, method, p);
     };
     const calls = stubRpc(handler('DAOcode1111111111111111111111111111111111111', policy));
-    const s = await new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot('google');
+    const s = await new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot();
     expect(s.owner).toEqual({ account_id: DAO, code_hash: 'DAOcode1111111111111111111111111111111111111', policy });
     expect(calls.find((c) => c.params.request_type === 'view_account')?.params).toMatchObject({ account_id: DAO, finality: 'final' });
     expect(calls.find((c) => c.params.method_name === 'get_policy')?.params).toMatchObject({ account_id: DAO, finality: 'final' });
     // A plain account (no contract): no get_policy call. A contract without get_policy: policy null.
     vi.restoreAllMocks();
     const plain = stubRpc(handler('11111111111111111111111111111111', policy));
-    expect((await new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot('google')).owner).toEqual({ account_id: DAO, code_hash: '11111111111111111111111111111111', policy: null });
+    expect((await new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot()).owner).toEqual({ account_id: DAO, code_hash: '11111111111111111111111111111111', policy: null });
     expect(plain.some((c) => c.params.method_name === 'get_policy')).toBe(false);
     vi.restoreAllMocks();
     stubRpc(handler('Other11111111111111111111111111111111111111', undefined));
-    expect((await new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot('google')).owner?.policy).toBeNull();
+    expect((await new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot()).owner?.policy).toBeNull();
   });
 
   it("reads the relayer's balance and access keys at final finality, read-only", async () => {
@@ -131,13 +201,13 @@ describe('NearChain', () => {
   });
 
   it('treats a contract without get_issuer_keys as no key material', async () => {
-    stubRpc((_u, _m, p) => (p.method_name === 'get_issuer_keys' ? { result: { error: 'MethodResolveError(MethodNotFound)' } } : viewResult(views[p.method_name as string])));
-    expect((await new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot('google')).issuerKeys).toBeNull();
+    stubRpc((u, m, p) => (p.method_name === 'get_issuer_keys' ? { result: { error: 'MethodResolveError(MethodNotFound)' } } : contract({ v3: false })(u, m, p)));
+    expect((await new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot()).issuerKeys).toBeNull();
   });
 
   it('fails the read on any other error', async () => {
-    stubRpc((_u, _m, p) => (p.method_name === 'get_governance' ? { error: { name: 'HANDLER_ERROR' } } : viewResult(views[p.method_name as string])));
-    await expect(new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot('google')).rejects.toBeInstanceOf(RpcError);
+    stubRpc((u, m, p) => (p.method_name === 'get_governance' ? { error: { name: 'HANDLER_ERROR' } } : contract()(u, m, p)));
+    await expect(new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot()).rejects.toBeInstanceOf(RpcError);
   });
 });
 

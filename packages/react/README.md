@@ -16,7 +16,7 @@ declarations.
 ## Use
 
 ```tsx
-import { HanaProvider, useHana, useWallet } from '@hana-id/react';
+import { HanaProvider, useHana, useIdentityToken, useWallet } from '@hana-id/react';
 
 const config = {
   publishableKey: 'pk_test_…', // from Hana
@@ -40,6 +40,7 @@ function SignIn() {
 
 const { address, signer } = useWallet('stellar'); // signer is hana.stellar
 const { address, provider } = useWallet('evm');   // provider is hana.ethereum (EIP-1193)
+const { identityToken, refresh, error } = useIdentityToken(); // a JWT for your backend, kept fresh while visible
 ```
 
 - `HanaProvider` creates one client, also under strict mode, and destroys it on unmount. It reads `config` once; to

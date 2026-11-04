@@ -24,6 +24,7 @@
     "@types/node": "22.20.5",
     "@wagmi/core": "3.6.5",
     "esbuild": "0.28.2",
+    "jose": "6.2.13",
     "swk1": "npm:@creit.tech/stellar-wallets-kit@1.9.5",
     "swk2": "npm:@creit.tech/stellar-wallets-kit@2.7.1",
     "tsx": "4.23.15",

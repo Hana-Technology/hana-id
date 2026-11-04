@@ -22,12 +22,13 @@ import { fileURLToPath } from 'node:url';
 import { type Manifest, isDevEnv, isLoopbackHost, loadEnv } from '@hana-id/env';
 import { workersDevHost } from '../../api/scripts/pages-wrangler.ts';
 import { TEST_MANIFEST as CONSOLE_TEST_MANIFEST } from '../../console/scripts/gen-wrangler.ts';
+import { CRONS, FIVE_MINUTES } from '../src/crons.ts';
 import { TEST_MANIFEST as WATCHDOG_TEST_MANIFEST } from '../../watchdog/scripts/gen-wrangler.ts';
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const COMPATIBILITY_DATE = '2026-10-01';
 /** Every 5 minutes: blocking notices, the feed, the watcher (src/cron.ts). */
-export const CRON = '*/5 * * * *';
+export const CRON = FIVE_MINUTES;
 export const ASSETS_DIR = './public';
 export const HYPERDRIVE_ID_RE = /^[0-9a-f]{32}$/u;
 /**
@@ -85,6 +86,8 @@ export function wranglerConfig(m: Manifest, opts: { adminHyperdriveId?: string |
       FILES_ORIGIN: f.origin,
       NEAR_RPC: m.rpc,
       SIGNER_ACCOUNT: m.signer,
+      // C12: settlement checks each transaction's signer against the relayer account; the nonce check reads its keys.
+      RELAYER_ACCOUNT: m.relayer,
       ACCESS_TEAM_DOMAIN: a.accessTeamDomain,
       ACCESS_AUD: a.accessAud,
       STAFF_EMAILS: JSON.stringify(a.staffEmails),
@@ -102,9 +105,14 @@ export function wranglerConfig(m: Manifest, opts: { adminHyperdriveId?: string |
     ],
     // The ledger's admin role (usage_admin): its own Hyperdrive config, never the API's writer one (D73).
     ...(id ? { hyperdrive: [{ binding: 'USAGE_DB', id, localConnectionString: LOCAL_ADMIN_CONNECTION_STRING }] } : {}),
+    // C12: statements (written once under new keys; the bucket lock keeps them, D308) and the ledger exports.
+    r2_buckets: [
+      { binding: 'STATEMENTS', bucket_name: f.statementsBucket },
+      { binding: 'EXPORTS', bucket_name: f.exportsBucket },
+    ],
     // The Worker runs first on every request (host dispatch, the Access check, headers on assets too).
     assets: { directory: ASSETS_DIR, binding: 'ASSETS', not_found_handling: 'single-page-application', run_worker_first: true },
-    triggers: { crons: [CRON] },
+    triggers: { crons: [...CRONS] },
   };
 }
 

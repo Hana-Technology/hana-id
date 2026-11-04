@@ -1,6 +1,9 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-04 (branch `feat/batch-c-14`: "Admin Worker" → "Security & monitoring (batch C14)"
+Last verified against code: 2026-11-04 (branch `feat/batch-c-12`: "Reports and statements (batch C12, milestone M6)": the
+Neon migration 0006, the admin config's buckets and vars, the optional CoinGecko key, the 15-minute cron with the 00:30
+UTC daily work, issuing a statement, the rate override, exports, what to watch; "Usage ledger" lists 0006; the admin's
+cron triggers; D320–D329); 2026-11-04 (branch `feat/batch-c-14`: "Admin Worker" → "Security & monitoring (batch C14)"
 (its setup: `watchdog.url`, the `WATCHDOG_STATUS_TOKEN` admin secret, the deploy order, the check, acknowledging
 sandbox-dev's alert #11, the failure codes, rotating the token) and "Pending upgrades page" (the release registry);
 the watchdog's step 7 and token rotation; the governance hand-off sections; D330–D338; the feed's first run starting at the current position, D344); 2026-11-04 (branch `feat/wallet-directory`: "Wallet directory (hot-DB migration 0011)":
@@ -601,7 +604,9 @@ corepack pnpm --filter @hana-id/scripts usage-migrate sandbox-dev --yes   # appl
   batch 6): `0001_ledger.sql` (events, users, settlements, rates, statements, `ops`, `record_event`, roles and grants),
   `0002_identity_tokens.sql` (identity tokens per app and day, `record_identity_tokens`, batch C4),
   `0003_writer_partitions.sql` (the writer may run `ensure_partitions`; 12 months ahead created, batch C4),
-  `0004_email_counts.sql` (email logins and new links per app and day, `record_email_counts`, email login batch 6, D233).
+  `0004_email_counts.sql` (email logins and new links per app and day, `record_email_counts`, email login batch 6, D233),
+  `0006_reports.sql` (the report, ledger and statement functions, the settlement checks' columns and tables, the
+  audited rate override; batch C12, D320). C13's retention functions will be `0007`.
 - Monthly partitions of `usage.events`: 0001 creates the current month and the next 3, 0003 the next 12, and the
   API's hourly cron keeps 12 months ahead (`usage.ensure_partitions(12)` as the writer, `usage_partitions_failed` on
   a failure). An event outside every partition is lost (`usage_write_failed` `pg_23514`).
@@ -1115,9 +1120,10 @@ the repo root of the main checkout, logged in to the API's Cloudflare account. N
   position, read silently (a `feed` line with `code: cursor_initialised`; a long history continues next run with
   `cursor_initialising`); only rows after it are emailed. Unnotified security events are still emailed. The watcher
   stores each scope's state as its baseline without an email.
-- **Cron triggers**: one more per env (`*/5 * * * *`); the free plan allows 5 per account (API, watchdog, console and
-  admin have one each per env). Each run makes at most 40 outbound calls (emails and NEAR views, D280); a backlog
-  drains over the next runs.
+- **Cron triggers**: two per env (`*/5 * * * *`, and C12's `*/15 * * * *`, whose 00:30 UTC run also does the daily
+  ledger work, D329); the free plan allows 5 per account (the API, the watchdog and the console have one each per env),
+  so two envs on one free account don't fit: the plan question (build plan open question 3). Each run makes at most 40
+  outbound calls (emails and NEAR reads, D280); a backlog drains over the next runs.
 - **Rollback**: `wrangler rollback` in `apps/admin`. While the Worker is down or can't email, guarded changes, invites
   and owner grants stay unannounced (fail closed): nothing goes live without its notice, and the API cancels a change
   left unannounced for 7 days. `app:changes:announce` is the no-email fallback and needs Hana security's sign-off.
@@ -1341,6 +1347,80 @@ wrangler.vault.jsonc` and `wrangler dev -c wrangler.auth.jsonc` in other termina
 wrangler's dev registry). A single `wrangler dev -c a -c b` serves only its first config over HTTP, so the vault page
 couldn't reach the API; with a sandbox env's configs every page answers 404 (the local URL isn't the configured
 origin).
+
+## Reports and statements (batch C12, milestone M6)
+
+The admin Worker settles the gas of every relayed event at FINAL, checks the relayer nonces and the rejection rate
+daily, fetches the NEAR/USD rate, and issues the frozen monthly statements (CSV, PDF and on-screen, D92) with ledger CSV
+exports; partners will read their reports and statements in the console once C10 routes them (`docs/api.md` "Admin
+Worker", "Usage ledger functions"; D320–D329). Not deployed anywhere yet: it goes live at milestone M6.
+
+### Setting it up (once per env, for the user to run)
+
+Prerequisites: the admin Worker set up ("Admin Worker" above, with its Hyperdrive id), the R2 buckets of "Files Worker
+and logos" step 1 (`STATEMENTS` with its lock, `EXPORTS` with its lifecycle rule), and capture running ("Usage
+capture"). From the repo root of the main checkout.
+
+1. **The ledger migration**: `corepack pnpm --filter @hana-id/scripts usage-migrate <env>` (dry run: it lists
+   `0006_reports.sql`), then the same with `--yes`. It adds functions, columns and tables, rewrites no row, and takes
+   the admin role's direct `UPDATE` on `usage.near_usd_rates` away (overrides go through `usage.override_rate`).
+2. **Optional: a CoinGecko demo key** (the free public API works without one, with lower limits). Save it to
+   `.secrets/<env>/coingecko-api-key` (0600) and set it through stdin:
+   `corepack pnpm --dir apps/admin exec wrangler secret put COINGECKO_API_KEY < .secrets/<env>/coingecko-api-key`.
+3. **Config and deploy**: `corepack pnpm --filter @hana-id/admin gen <env>` (keeps the Hyperdrive id) now binds
+   `STATEMENTS` and `EXPORTS`, sets `RELAYER_ACCOUNT` (the manifest's `relayer`; a statement names `NEAR_NETWORK`, C14's var), and adds the
+   `*/15 * * * *` trigger. Deploy the API first (`ConsoleRpc.usage` / `statements` / `ledger`), then the console
+   (`StaffRpc.recordStaffAction`), then the admin Worker:
+
+   ```sh
+   corepack pnpm --dir apps/api exec wrangler deploy
+   corepack pnpm --dir apps/console exec wrangler deploy
+   corepack pnpm --dir apps/admin exec wrangler deploy
+   ```
+
+4. **Check it**: `corepack pnpm --dir apps/admin exec wrangler tail <admin.workerName>` across a quarter hour:
+   `ledger_cron` lines `alerts`, `statement_notices`, `settlement` with `outcome: ok`; at 00:30 UTC also `nonce_check`,
+   `rejection_rate`, `partitions`, `rates`. The admin console's Rates screen shows the fetched days; the Feed and
+   notices screen's ledger part shows each relayer key's nonce check, the settlement backlog and the partitions ahead.
+5. **Rates for the past**: the daily run fills only the last 10 days. Before issuing a statement for an earlier month,
+   set the missing days by hand (Rates → override, a reason naming the source), or the issue is refused.
+
+### Issuing a monthly statement
+
+From the 3rd of the next month (00:00 UTC), in the admin console: Statements → the org and month. It shows what still
+blocks the issue: relayed events not settled yet (settlement reads them every 15 minutes; one not final after 24 h is
+recorded unsettled and counted, never billed) and days without a rate. "Issue statement" freezes it: the CSV and PDF go
+to `STATEMENTS` under new keys, the hashes and totals to `usage.statements`, a `statement.issued` audit row to the
+console; within 15 minutes the org's security contacts, its billing email and the security alias get the statement hash.
+A second issue for the month is refused; nothing is ever recomputed.
+
+- **Late events** (received after the statement's `as_of`) stay in the ledger and show in the report as "after
+  statement"; Hana handles them under the service contract.
+- **Reconciling**: "Export ledger CSV" on an issued statement exports at its `as_of`; the sum of the `final` rows' gas
+  and tokens equals the statement's `tgas` and `near` (owner actions included), and every `near_tx` can be checked at
+  FINAL. Exports live 30 days under `exports/` (D308).
+- **Tax invoices** come from the accounting software and quote the org, the month and the statement hash.
+
+### Overriding a rate (audited)
+
+Rates → override: the day, the USD price as a decimal (at most 6 places) and a reason of at least 10 characters. It
+replaces the day's rate (`source: manual`, your email as `entered_by`) and appends a row to `usage.rate_overrides` with
+the previous rate, in one transaction, plus a `rate.overridden` audit row. Refused for a future day and for any day of a
+month that has a statement (the rates of a statement are frozen).
+
+### What to watch (Worker logs and emails)
+
+| Signal | Meaning | Action |
+|---|---|---|
+| Email "Relayer nonce unexplained" (`nonce_unexplained`) | A relayer key's last landed nonce has no ledger row: a usage write was lost (`usage_write_failed` in the API's logs), or something other than the API signed with the key | Treat it as a possible key leak until explained: check the API's logs for that hour; if no lost write explains it, follow `docs/playbooks.md` "A relayer key stolen" |
+| Email "Settlement refused … events" (`settlement_mismatch`) | Relayed events not billed: a duplicate `near_tx`, a key outside the pools, or a transaction at FINAL signed by another key or nonce (D321) | Check the transaction on chain at FINAL and the API's logs for the request ids; if the API didn't write the event, rotate the usage writer's password (`usage-setup <env> roles`, then the writer's Hyperdrive config) |
+| Email "Rejection rate over 5%" (`rejection_rate`) | An org had ≥ 100 relayed attempts in a day and more than 5 % were rejected after the relay (gas paid, not billed by default, D91) | Tell the partner; look for a client bug or third-party replays |
+| `ledger_cron` `usage_db_missing` / `ledger_unavailable` (error) | No `USAGE_DB`, or Neon/Hyperdrive down: nothing settles, no checks, no notices | `gen --admin-hyperdrive-id <id>`; Neon status |
+| `ledger_cron` `relayer_account_missing` / `relayer_keys_unavailable` (error) | No `RELAYER_ACCOUNT` var, or `AdminRpc.relayerKeys` failed: settlement and the nonce check don't run | Re-run `gen`; check the API |
+| Security screen: settlement backlog growing | More relayed events than a run can read (about 35 a run, D322), or the RPC can't find them | NEAR RPC status; the plan's subrequest limit |
+| Security screen: partitions ahead < 2 | Neither the API's hourly keeper nor the admin's daily one has run | Check both crons; `usage-migrate` re-runs nothing |
+| `bff` `statement_hash_mismatch` (error) | A statement file no longer matches the hash frozen in Neon | Tell Hana security: the bucket lock should make this impossible |
+| `bff`/`statement`/`export` `audit_failed` (error) | The act happened but its `audit_log` row wasn't written (the console was down) | Note it in the incident log; the statement row or the override row is the act's own record |
 
 ## Admin CLI (`scripts/admin.ts`)
 

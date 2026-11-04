@@ -5,9 +5,8 @@
 // precheck); the `orgId` filter is a backstop against console bugs, not against a compromise, which the breaker and the
 // hot-DB budget bound instead. The console never acts for `org_legacy` (forbidden).
 //
-// Built in batches C5 and C6, plus C14's read-only `pendingUpgrades`: everything but `usage` / `statements` /
-// `ledger` (Neon, C12). Those methods don't exist
-// yet, so a console calling them gets an RPC error rather than a half-built answer.
+// Built in batches C5 and C6, plus C14's read-only `pendingUpgrades` and C12's `usage` / `statements` / `ledger`
+// (Neon only, over the writer's USAGE_DB binding, no hot-DB statement; usage/reports.ts).
 import {
   type RpcCode,
   cancelChangeByLinkInput,
@@ -19,6 +18,7 @@ import {
   consoleSetSuspendedInput,
   createKeyInput,
   getAppInput,
+  ledgerInput,
   listAppsInput,
   listChangesInput,
   ownerActionInput,
@@ -28,8 +28,10 @@ import {
   revokeKeyInput,
   rotateKeyInput,
   setLogoInput,
+  statementsInput,
   turnOffInput,
   updateSettingsInput,
+  usageInput,
 } from '@hana-id/console-core';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { Env } from '../env.ts';
@@ -43,6 +45,7 @@ import { setSuspensionBit } from '../changes/suspension.ts';
 import { governanceSnapshot } from '../governance-status.ts';
 import { SAFETY_METHODS, newCtx, runOwnerAction } from '../handlers.ts';
 import { finishUsageOnThrow } from '../usage/event.ts';
+import { orgLedger, orgStatements, orgUsage } from '../usage/reports.ts';
 import { consoleGetUser, consoleListUsers } from '../directory/read.ts';
 import { runRpc } from './common.ts';
 
@@ -161,6 +164,24 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
 
   setLogo(c: unknown) {
     return runRpc(this.env, 'setLogo', setLogoInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.setLogo }, ({ input, db, w }) => setLogo(db, w, input));
+  }
+
+  /**
+   * The org's usage report (docs/batch-c-spec.md "Reports"): ≤ 400 days, ≤ 100 apps (the input schema and the Neon
+   * function both refuse more), limited per member. Neon only: no hot-DB statement, so no `cost`.
+   */
+  usage(c: unknown) {
+    return runRpc(this.env, 'usage', usageInput, c, { actors: MEMBER }, async ({ input }) => ({ rows: await orgUsage(this.env, input) }));
+  }
+
+  /** The org's frozen monthly statements: metadata, hashes and the stored totals (the on-screen statement, D92). */
+  statements(c: unknown) {
+    return runRpc(this.env, 'statements', statementsInput, c, { actors: MEMBER }, async ({ input }) => ({ statements: await orgStatements(this.env, input) }));
+  }
+
+  /** One page of the ledger CSV's rows for a month (`asOf` pins every page of one CSV to the same bound). */
+  ledger(c: unknown) {
+    return runRpc(this.env, 'ledger', ledgerInput, c, { actors: MEMBER }, ({ input }) => orgLedger(this.env, input));
   }
 
   cancelChange(c: unknown) {

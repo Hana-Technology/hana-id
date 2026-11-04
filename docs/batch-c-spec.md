@@ -219,10 +219,11 @@ popups, console ─▶ hana-id-files-<env>  LOGOS (R2, read)
 - **Admin, every 5 min:** blocking notices (`AdminRpc.pendingNotices` → send → `ackNotice`; invites and owner grants:
   `StaffRpc.pendingMemberNotices` → send → `ackMemberNotice`), the security feed
   (`AdminRpc.changesSince`, `StaffRpc.auditSince`, `AdminRpc.securityEvents`), the on-chain watcher.
-- **Admin, every 15 min:** gas settlement.
+- **Admin, every 15 min:** gas settlement (and the ledger's alerts and statement notices first; C12, D322).
 - **Admin, daily 00:30 UTC:** the nonce cross-check, the NEAR/USD rate (one source, e.g. CoinGecko, named in the
   service contract; audited manual override `PUT /api/rates/:day`; D93), `usage.ensure_partitions`, the rejection-rate
-  check (D91).
+  check (D91). As built (C12, D329), this runs in the 15-minute trigger's 00:30 UTC run, so the admin Worker has two
+  cron triggers, and `ensure_partitions(12)` matches the API's hourly keeper (D223).
 - **Admin, monthly (the 1st, 01:00 UTC):** the retention purge job (D90, §Retention); its runs show in the admin
   console.
 
@@ -614,6 +615,11 @@ Functions (owner-defined, `SECURITY DEFINER`, `SET search_path = usage, pg_temp`
 | `usage.purge_app_users(app text)` | Deletes an app's `app_users` rows (app deleted + 30 days) | `usage_admin` |
 | `usage.rejection_rates(day date)` | Per org: relayed attempts and relayed-then-rejected ones for the day (D91) | `usage_admin` |
 | `usage.erase_uid(app_ids text[], uid bytea)` | `uid:erase`: deletes the user's `app_users` rows and NULLs the uid on their events | `usage_admin` (from the script) |
+
+As built in C12 (`0006_reports.sql`, D320): the report, statement and ledger functions above, plus `usage.classified`
+(internal: the one rule for what is billed), `usage.statement_blockers` and `usage.override_rate` (the audited
+override; the admin role's direct `UPDATE` on `near_usd_rates` is removed), all `usage_admin`; the retention functions
+come with C13 as `0007`.
 
 Roles:
 
@@ -1561,6 +1567,13 @@ Relayed events from the last 3 days without a `gas_settlements` row (≤ 500 per
 written with `result = 'final'` and the sums (`INSERT … ON CONFLICT DO NOTHING`). After 24 h without a final result
 it is written as `unsettled` and counted on the statement, never estimated. Non-archival RPC keeps about 2.5 days.
 
+As built (C12; D321, D322): an event is billed only for **its own transaction**: its `near_tx` carried by no other
+relayed event (a duplicate bills neither, also when the report reads it: `usage.classified`), its `relayer_pk` one of
+the env's pool keys, and the transaction at FINAL signed by the relayer account with that key at that nonce, to the
+signer contract; anything else is `unsettled` with a `reason` (`duplicate_tx`, `signer_mismatch`; `not_final` after
+24 h) and an alert to the security alias. The queue is every relayed event without a settlement row, of any age,
+oldest first, within the run's 40-call budget (D280), each not-yet-final transaction read at most once an hour.
+
 ### Rejection-rate check (admin, 00:30 UTC; D91)
 
 For the previous UTC day, `usage.rejection_rates` gives each org's relayed attempts and relayed-then-rejected ones.
@@ -1579,6 +1592,8 @@ relayer_nonce)`, so:
 - A relayed row with `relayer_nonce = N` exists: explained.
 - Otherwise: `nonce_unexplained`, emailed to the security alias at once. Either a usage write was lost, or something
   other than the API signed with a relayer key (a leaked key).
+- As built (C12, D323): a key's first check when the ledger has no relayed row of that key is its baseline
+  (explained, as the watcher's first sight, D282).
 
 The check also records the ledger's relayed rows since the last check against `N − N_prev` (shown, not alerted: nonce
 reservations skip up to 99 nonces per cold start, D21). It proves the newest transaction of each key is billed and
@@ -1639,7 +1654,10 @@ count(*) FILTER (WHERE e.relayed AND (g.request_id IS NULL OR g.result = 'unsett
   scope per day for owner actions (`app_id` empty), then one total per app and per scope (`day = total`, MAU on app
   totals). Columns:
 
-  `month,org_id,org_name,scope_id,app_id,app_name,environment,day,logins,derives,revokes,unlocks,owner_actions,mau,new_users,failures_by_code,tgas,relayed_rejected_tgas,error_tgas,near,relayed_rejected_near,near_usd_rate,rate_source,usd,relayed_rejected_usd,login_p50_ms,login_p95_ms,derive_p50_ms,derive_p95_ms,unsettled,as_of`
+  `month,org_id,org_name,scope_id,app_id,app_name,environment,day,logins,derives,revokes,unlocks,owner_actions,link_actions,identity_tokens,mau,new_users,failures_by_code,tgas,relayed_rejected_tgas,error_tgas,near,relayed_rejected_near,near_usd_rate,rate_source,usd,relayed_rejected_usd,login_p50_ms,login_p95_ms,derive_p50_ms,derive_p95_ms,unsettled,as_of`
+
+  (`link_actions` and `identity_tokens` added in C12, D324: the email login's link relays and the identity tokens
+  minted, D223.)
 
   `tgas` is all settled gas of the row (ok + rejected + error) as an exact decimal of Tgas; `relayed_rejected_tgas`
   and `error_tgas` are parts of it; `near` is all settled `tokens_burnt` as exact NEAR; `failures_by_code` is

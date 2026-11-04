@@ -36,6 +36,10 @@ export const AUDIT_DETAIL_KEYS = {
   'session.signed_in': ['invite'],
   'session.signed_out': [],
   'signin.refused': ['code', 'emailSha256'],
+  // Batch C12 (StaffRpc.recordStaffAction, D327): the admin Worker's statement, export and rate-override acts.
+  'statement.issued': ['month', 'csvSha256', 'pdfSha256', 'asOf', 'lines'],
+  'ledger.exported': ['month', 'asOf', 'rows', 'sha256'],
+  'rate.overridden': ['day', 'usdMicros', 'overrideId'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type AuditAction = keyof typeof AUDIT_DETAIL_KEYS;

@@ -41,6 +41,12 @@ describe('audit details', () => {
         "invite.revoked": [
           "grantCancelled",
         ],
+        "ledger.exported": [
+          "month",
+          "asOf",
+          "rows",
+          "sha256",
+        ],
         "member.added": [
           "role",
           "grantId",
@@ -68,6 +74,11 @@ describe('audit details', () => {
         "owner_grant.notified": [
           "ownerFrom",
         ],
+        "rate.overridden": [
+          "day",
+          "usdMicros",
+          "overrideId",
+        ],
         "session.signed_in": [
           "invite",
         ],
@@ -75,6 +86,13 @@ describe('audit details', () => {
         "signin.refused": [
           "code",
           "emailSha256",
+        ],
+        "statement.issued": [
+          "month",
+          "csvSha256",
+          "pdfSha256",
+          "asOf",
+          "lines",
         ],
         "user.disabled": [],
         "user.enabled": [],

@@ -39,7 +39,7 @@ describe('the admin config', () => {
     expect(manifestSchema.parse(TEST_MANIFEST)).toBeTruthy();
   });
 
-  it('binds what the spec lists for C8, runs first on every request, every 5 minutes', () => {
+  it('binds what the spec lists for C8 and C12, runs first on every request, on its two crons', () => {
     const c = wranglerConfig(TEST_MANIFEST, { adminHyperdriveId: TEST_ADMIN_HYPERDRIVE_ID }) as Config;
     expect(c).toMatchObject({
       name: 'hana-id-admin-test',
@@ -55,6 +55,7 @@ describe('the admin config', () => {
         FILES_ORIGIN: 'https://files.test',
         NEAR_RPC: 'https://rpc.test.invalid',
         SIGNER_ACCOUNT: 'signer.test.near',
+        RELAYER_ACCOUNT: TEST_MANIFEST.relayer,
         ACCESS_TEAM_DOMAIN: 'hana-test.cloudflareaccess.com',
         ACCESS_AUD: 'ab'.repeat(32),
         STAFF_EMAILS: '["staff@hana.example"]',
@@ -71,16 +72,20 @@ describe('the admin config', () => {
       ],
       hyperdrive: [{ binding: 'USAGE_DB', id: TEST_ADMIN_HYPERDRIVE_ID, localConnectionString: LOCAL_ADMIN_CONNECTION_STRING }],
       assets: { directory: './public', binding: 'ASSETS', not_found_handling: 'single-page-application', run_worker_first: true },
-      triggers: { crons: ['*/5 * * * *'] },
+      r2_buckets: [
+        { binding: 'STATEMENTS', bucket_name: TEST_MANIFEST.files!.statementsBucket },
+        { binding: 'EXPORTS', bucket_name: TEST_MANIFEST.files!.exportsBucket },
+      ],
+      triggers: { crons: ['*/5 * * * *', '*/15 * * * *'] },
       observability: { enabled: true, logs: { invocation_logs: false } },
     });
     expect(CRON).toBe('*/5 * * * *');
-    // No D1, no R2 yet (statements and exports come with C12), no secret in vars, no ConsoleRpc.
+    // No D1, no LOGOS (only the console and the files Worker), no secret in vars, no ConsoleRpc.
     expect(c.d1_databases).toBeUndefined();
-    expect(c.r2_buckets).toBeUndefined();
-    expect(JSON.stringify(c)).not.toMatch(/ConsoleRpc|EMAIL_API_KEY|CANCEL_LINK_KEY|INVITE_LINK_KEY|WATCHDOG_STATUS_TOKEN/u);
+    expect(JSON.stringify(c.r2_buckets)).not.toContain('LOGOS');
+    expect(JSON.stringify(c)).not.toMatch(/ConsoleRpc|EMAIL_API_KEY|CANCEL_LINK_KEY|INVITE_LINK_KEY|WATCHDOG_STATUS_TOKEN|COINGECKO_API_KEY/u);
     expect(Object.keys(c.vars!).sort()).toEqual(
-      ['ACCESS_AUD', 'ACCESS_TEAM_DOMAIN', 'ADMIN_ORIGIN', 'APP_CHANGE_DELAY_MS', 'CONSOLE_ORIGIN', 'EMAIL_FROM', 'ENV_NAME', 'FILES_ORIGIN', 'NEAR_NETWORK', 'NEAR_RPC', 'OWNER_GRANT_DELAY_MS', 'SECURITY_ALIAS', 'SIGNER_ACCOUNT', 'STAFF_EMAILS', 'WATCHDOG_URL'].sort(),
+      ['ACCESS_AUD', 'ACCESS_TEAM_DOMAIN', 'ADMIN_ORIGIN', 'APP_CHANGE_DELAY_MS', 'CONSOLE_ORIGIN', 'EMAIL_FROM', 'ENV_NAME', 'FILES_ORIGIN', 'NEAR_NETWORK', 'NEAR_RPC', 'OWNER_GRANT_DELAY_MS', 'RELAYER_ACCOUNT', 'SECURITY_ALIAS', 'SIGNER_ACCOUNT', 'STAFF_EMAILS', 'WATCHDOG_URL'].sort(),
     );
     expect(LOCAL_ADMIN_CONNECTION_STRING).toMatch(/\.invalid:/u);
   });
@@ -196,10 +201,21 @@ describe('source checks', () => {
     }
   });
 
-  it('the only SQL it runs is on the ops schema', () => {
+  it('the only SQL it runs is in ops.ts (the ops schema) and ledger.ts (usage and ops; C12)', () => {
     const ops = sources.find(({ f }) => f.endsWith('/ops.ts'))!.text;
     for (const m of ops.matchAll(/(?:FROM|INTO|UPDATE)\s+([a-z_.]+)/gu)) expect(m[1]!.startsWith('ops.'), m[0]).toBe(true);
-    for (const { f, text } of sources) if (!f.endsWith('/ops.ts')) expect(text, f).not.toMatch(/\b(SELECT|INSERT INTO|UPDATE)\s+[a-z_]+\./u);
+    const ledger = sources.find(({ f }) => f.endsWith('/ledger.ts'))!.text;
+    for (const m of ledger.matchAll(/(?:FROM|INTO|UPDATE|JOIN)\s+([a-z_.]+)/gu)) expect(/^(usage|ops|pg_catalog)\./u.test(m[1]!), m[0]).toBe(true);
+    // The admin role never writes events, settlements' existing rows or statements' existing rows: no UPDATE or DELETE of them.
+    expect(ledger).not.toMatch(/(UPDATE|DELETE FROM)\s+usage\./u);
+    for (const { f, text } of sources) if (!f.endsWith('/ops.ts') && !f.endsWith('/ledger.ts')) expect(text, f).not.toMatch(/\b(SELECT|INSERT INTO|UPDATE)\s+[a-z_]+\./u);
+  });
+
+  it('STATEMENTS is written with `put` only (new keys; the bucket lock refuses overwrites) and read with `get`; never deleted', () => {
+    for (const { f, text } of sources) {
+      for (const m of text.matchAll(/(?:STATEMENTS|EXPORTS|bucket)\??\.(\w+)\(/gu)) expect(['get', 'put'], `${f}: ${m[0]}`).toContain(m[1]);
+      expect(text, f).not.toMatch(/(STATEMENTS|EXPORTS|bucket)\??\.delete\(/u);
+    }
   });
 
   it('log lines take allowlisted fields only (no email, sub, token, JWT or body field)', () => {

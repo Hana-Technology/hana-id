@@ -164,8 +164,8 @@ export const HINT_PRUNE_BATCH = 50;
 /**
  * The limits that differ between dev and production envs: the mailbox object's (sent with every call to it, so a
  * changed set applies to the counters already there: they are keyed by window name, never by max) and the per-IP
- * `start`, `resend` and `verify` limits. Everything else (aggregate prefix, recipient domain, ticket and grant
- * allowances, google-match and google-record, webhook, staff, the budget) is the same in every env.
+ * `start`, `resend` and `verify` limits, and a ticketed start's own allowance. Everything else (aggregate prefix,
+ * recipient domain, grant allowances, google-match and google-record, webhook, staff, the budget) is the same in every env.
  */
 export interface MailboxLimits {
   ipCodes: readonly Limit[];
@@ -177,6 +177,9 @@ export interface MailboxLimits {
   wrongBackstop: Limit;
   ownerSlot: Limit;
   ticketSlot: Limit;
+  /** A ticketed start's own code allowance: per exact address, and per mailbox (all its `+tag`s). */
+  ticketSends: Limit;
+  ticketSendsTotal: Limit;
 }
 export interface Limits {
   dev: boolean;
@@ -205,6 +208,8 @@ export const PRODUCTION_LIMITS: Limits = freeze({
     wrongBackstop: { ...MAILBOX_WRONG_BACKSTOP },
     ownerSlot: { ...MAILBOX_OWNER_SLOT },
     ticketSlot: { ...MAILBOX_TICKET_SLOT },
+    ticketSends: { ...MAILBOX_TICKET_SENDS },
+    ticketSendsTotal: { ...MAILBOX_TICKET_SENDS_TOTAL },
   },
   ipStart: IP_START_LIMITS.map((l) => ({ ...l })),
   ipResend: IP_RESEND_LIMITS.map((l) => ({ ...l })),
@@ -235,6 +240,10 @@ export const DEV_LIMITS: Limits = freeze({
     wrongBackstop: { ...MAILBOX_WRONG_BACKSTOP, max: 80 },
     ownerSlot: { ...MAILBOX_OWNER_SLOT, max: 17 },
     ticketSlot: { ...MAILBOX_TICKET_SLOT },
+    // A ticketed start (a device that signed in before) never falls back to the code limits above, so its own
+    // allowance (production 3 a day per address, 9 per mailbox) is what a tester with a device ticket meets first.
+    ticketSends: { ...MAILBOX_TICKET_SENDS, max: 100 },
+    ticketSendsTotal: { ...MAILBOX_TICKET_SENDS_TOTAL, max: 300 },
   },
   ipStart: [
     { name: 'ip:start:10m', windowMs: 10 * MIN, max: 30 },

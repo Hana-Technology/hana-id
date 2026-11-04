@@ -22,6 +22,7 @@ import {
   type Limits,
   type MailboxLimits,
 } from '../src/limits.ts';
+import { ADDRESS_OWNER_CHALLENGES } from '../src/limits.ts';
 import { env, harness, mailboxObject, seedApp, seedPlan, sessionCommitment, uid, type Harness, type TestApp } from './helpers.ts';
 
 const morning = Date.UTC(2027, 2, 10, 8, 0, 0);
@@ -62,6 +63,7 @@ describe('limitsFor: dev or production by env name', () => {
     expect(m.challengesPerDay.max).toBe(35);
     expect(m.ipWrong.max).toBe(10);
     expect([m.wrongCeiling.max, m.wrongBackstop.max, m.ownerSlot.max, m.ticketSlot.max]).toEqual([25, 18, 4, 3]);
+    expect([m.ticketSends.max, m.ticketSendsTotal.max]).toEqual([3, 9]);
     expect([maxOf(PRODUCTION_LIMITS.ipStart, 'ip:start:10m'), maxOf(PRODUCTION_LIMITS.ipStart, 'ip:start:1d')]).toEqual([10, 50]);
     expect(maxOf(PRODUCTION_LIMITS.ipResend, 'ip:resend:10m')).toBe(10);
     expect(maxOf(PRODUCTION_LIMITS.ipVerify, 'ip:verify:10m')).toBe(30);
@@ -88,6 +90,7 @@ describe('limitsFor: dev or production by env name', () => {
     expect(m.challengesPerDay.max).toBe(250);
     expect(m.ipWrong.max).toBe(30);
     expect([m.wrongCeiling.max, m.wrongBackstop.max, m.ownerSlot.max, m.ticketSlot.max]).toEqual([100, 80, 17, 3]);
+    expect([m.ticketSends.max, m.ticketSendsTotal.max]).toEqual([100, 300]);
     expect([maxOf(DEV_LIMITS.ipStart, 'ip:start:10m'), maxOf(DEV_LIMITS.ipStart, 'ip:start:1d')]).toEqual([30, 300]);
     expect(maxOf(DEV_LIMITS.ipResend, 'ip:resend:10m')).toBe(30);
     expect(maxOf(DEV_LIMITS.ipVerify, 'ip:verify:10m')).toBe(90);
@@ -193,6 +196,26 @@ describe('the mailbox object under each set', () => {
         await b.releaseLive(exp, morning);
       }
       expect(await b.admit('r-next', morning + 600_000, false, morning, null, lim)).toMatchObject({ ok: false, reason: 'challenges' });
+    });
+
+    it(`${label}: a device ticket's own code allowance (${lim.ticketSends.max} a day per address) is what a ticketed start meets`, async () => {
+      const b = await box();
+      await b.registerTicket('ak', 'tk', morning, morning);
+      const ticket = { kind: 'ticket' as const, id: 'tk', addrKey: 'ak', issuedAtMs: morning, untagged: true };
+      // Fewer starts than the per-address owner-challenge cap (past it the ticket counts as nothing), so every send
+      // here is a ticketed one.
+      const n = Math.min(lim.ticketSends.max, ADDRESS_OWNER_CHALLENGES.max) ;
+      let sent = 0;
+      for (let i = 0; i < n; i++) {
+        const exp = morning + 600_000 + i;
+        const a = await b.admit(`r${i}`, exp, true, morning, ticket, lim);
+        if (a.ok && a.send) sent++;
+        if (a.ok) await b.releaseLive(exp, morning);
+      }
+      expect(sent).toBe(n);
+      if (lim.ticketSends.max < ADDRESS_OWNER_CHALLENGES.max) {
+        expect(await b.admit('r-next', morning + 700_000, true, morning, ticket, lim)).toMatchObject({ ok: false, reason: 'codes' });
+      }
     });
 
     it(`${label}: a requester's ${lim.ipWrong.max}th wrong code in an hour locks it out; others go on`, async () => {

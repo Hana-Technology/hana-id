@@ -45,8 +45,6 @@ import {
   MAILBOX_IP_WRONG_LIMIT,
   MAILBOX_OWNER_CHALLENGES,
   MAILBOX_RESERVE_LIMIT,
-  MAILBOX_TICKET_SENDS,
-  MAILBOX_TICKET_SENDS_TOTAL,
   MAX_LIVE_TICKETS,
   STAFF_ACTIONS_PER_MAILBOX_30D,
   STAFF_ACTIONS_PER_MAILBOX_DAY,
@@ -354,8 +352,8 @@ export class RateLimiter extends DurableObject<Env> {
     if (kind === 'grant') return { ok: true, reservation: { keys: [] }, owner: 'grant' };
     if (kind === 'ticket' && ref?.kind === 'ticket') {
       // Per exact address (all its tickets together) and per mailbox (all its `+tag`s together).
-      const t = this.slot(MAILBOX_TICKET_SENDS, now, `a:${ref.addrKey}:`);
-      const box = this.slot(MAILBOX_TICKET_SENDS_TOTAL, now);
+      const t = this.slot(lim.ticketSends, now, `a:${ref.addrKey}:`);
+      const box = this.slot(lim.ticketSendsTotal, now);
       // The untagged address is counted in the mailbox total but never blocked by it (other people's `+tag`s on a
       // domain without sub-addressing could fill it).
       const full = this.firstFull(ref.untagged ? [t] : [t, box], now);

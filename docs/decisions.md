@@ -5080,3 +5080,6 @@ over D269's directory) and D276 (the Support ID made consistent with D269), belo
 - Alternatives: (a) a manifest field for the limits: it could be set in a production env by mistake. Not recommended.
   (b) Resetting the counters on sandbox-dev (rotating K_rl): a one-off that also drops device tickets and recurs at the
   next busy day. Not recommended.
+- Amended 2026-11-04 (same day, `fix/dev-ticket-limits`): a ticketed start (a device that signed in before) never
+  falls back to the code limits, so its own allowance (production 3 a day per address, 9 per mailbox) blocked the
+  user's testing first; dev envs raise it to 100 and 300. Production unchanged.

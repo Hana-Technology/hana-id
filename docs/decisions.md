@@ -3975,6 +3975,60 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   the same string, and one more step); a clipboard clear that reads first (permission prompt); clearing on every
   later focus (would wipe what the user copied since).
 
+## User emails for Hana staff, Google's email on one screen, 2026-11-04
+
+### D269. Hana stores each user's verified email address, for Hana staff only; partners don't see it
+- Date 2026-11-04 · Status: confirmed by the user (2026-11-04: 'let's make the change and store the emails, as admin
+  we want to be able to see the emails, no need to worry about privacy obligations … by default, partners cannot see
+  the user's emails unless the user explicity approves … hide the user's emails for now') · Built: the table and its
+  writer on `feat/user-emails-foundation` (`apps/email-issuer/migrations/0002_user_emails.sql`,
+  `apps/email-issuer/src/directory.ts`); the email and Google writes, the admin CLI and the screen text on
+  `feat/user-emails` and `feat/google-token-first` · Amends D119 and D230 ("the address is never kept"), D264's screen
+  text ("it isn't kept"), the spec's "Privacy and what is stored"
+- Decision: the email issuer, the only part that ever sees an address, keeps a user directory in its own D1:
+  `user_emails` (provider, sub as on chain, the verified address, `email_verified`, `hosted`, first and last seen)
+  and `user_email_apps` (which apps and scopes each identity logged in to). Email logins write at a successful verify
+  (the normalized address); Google logins at google-match, and under D270 at every Google login whose app is on an
+  issuer env. Writes are best effort after the answer (`waitUntil`): a failed write logs `directory_write_failed`
+  (app and scope only) and never fails or slows a login. Hana staff read it with the admin CLI now, the admin
+  console's Users page later (batch C). Partners don't: the API, the SDK and the partner console read nothing from
+  the issuer's D1 (the batch C spec already shows partners "no email or Google account"). A user-approved share to a
+  partner is later work (UX not designed). Logs still never carry an address.
+- Why: staff need to find a user's wallet by address (support) and see who uses which app, as Privy's dashboard
+  does; a stored `sub` per address also keeps existing email users' wallets reachable if `K_sub` were lost.
+- Cost, accepted by the user: a table joining each address to a public wallet, so a reader of the issuer's D1 learns
+  each user's on-chain balance and history; the privacy obligations that come with it are out of scope for now.
+- Caveat (as Privy): an app on its own Google client (D42) can read its users' addresses through Google regardless.
+- Rejected: encrypting the column (exact-match search only; staff want Privy-like search); showing partners the
+  address by default.
+
+### D270. Google's email permission on Google's own sign-in screen: an email access token first, then a silent openid sign-in (behind the spike)
+- Date 2026-11-04 · Status: confirmed by the user (2026-11-04: 'can we also do the "one request" thing so there is no
+  additional prompt during google sign ins?'; 'yes ask for email, assuming reverse flow works') · Built on
+  `feat/google-token-first` (`packages/web/src/auth/google.ts` `GOOGLE_EMAIL_FLOW = 'token_first'`), **off** until
+  the user's spike run shows legs C and E pass · Amends D254 (the flow), D264 (no explainer screen under it), D25
+  unchanged
+- Decision: a third flow, `'token_first'`. The login's first request is `response_type=token`, `scope=openid email`
+  with the account chooser: Google's single sign-in screen lists the email. The callback then makes a silent
+  `response_type=id_token`, `scope=openid`, `prompt=none`, `login_hint=<the access token's sub>` request with the
+  login's nonce; only that ID token goes on chain. Under it every Google login asks for the email, also in apps
+  without email login (the address goes to the directory only there, no matching). A literal one request (`id_token
+  token`, `openid email`) stays rejected: Google puts `email` in that ID token, which would put the address on chain.
+- Guarantees that no address reaches the chain: the spike's legs C and E on real Google before the switch; the
+  claim allow-list (`TOKEN_CLAIM_ALLOW_LIST`) refuses any token with another claim, `token_has_pii`, in the popup, the
+  vault and the API before anything is submitted (on every route since D271): a Google change would lock logins out,
+  never leak; tests that the on-chain request is `openid` only and that an email-carrying token is refused with
+  nothing relayed.
+- Rejected: the literal one request (above); keeping the explainer and Google's second screen (the user's ask).
+
+### D271. The API's claim allow-list is on for every route that relays a Google token (REJECT_PII_ON_SESSIONS retired)
+- Date 2026-11-04 · Status: confirmed by the user (2026-11-04: 'how can we be sure that the reversed flow works without
+  mistakenly storing emails on chain?', then 'yes go ahead and build all these') · Built on `fix/sessions-allow-list`
+- Decision: `/v1/sessions` refuses a Google token with a claim outside the allow-list (`token_has_pii`), as `/v1/login`
+  and the link routes already do; the `REJECT_PII_ON_SESSIONS` flag is removed so it can't be turned off. The smoke
+  pages that sent Google Identity Services tokens (which carry `email`) move to openid-only tokens or are retired.
+- Why: D270's guarantee ("no route relays an address") must hold for every route, not only the vault's.
+
 ## Superseded or amended
 
 | Was | Now | Source |

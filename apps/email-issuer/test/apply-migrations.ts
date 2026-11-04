@@ -9,5 +9,5 @@ await applyD1Migrations(env.APP_DB, env.TEST_API_MIGRATIONS);
 await applyD1Migrations(env.APP_DB_OLD, env.TEST_API_MIGRATIONS.filter((m) => m.name < '0010'));
 
 beforeEach(async () => {
-  await env.DB.batch(['email_issuance', 'email_hints', 'email_suppressions', 'email_admin_audit'].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+  await env.DB.batch(['email_issuance', 'email_hints', 'email_suppressions', 'email_admin_audit', 'user_emails', 'user_email_apps'].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
 });

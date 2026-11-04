@@ -31,7 +31,8 @@ function requestInfo(request: Request): RequestInfo {
 /**
  * The session-less `/api/*` routes (method → handler). Sign-in and the session routes come with C9 and C10; among them
  * C10 routes `POST /api/orgs/:org/apps/:app/logo` to `logoUploadRoute` (logo.ts, batch C11) once it has checked the
- * session, the membership and the owner role (CSRF already takes that path's raw body, csrf.ts).
+ * session, the membership and the owner role (CSRF already takes that path's raw body, csrf.ts), and
+ * `GET /api/orgs/:org/governance/pending-upgrades` to `pendingUpgradesRoute` (governance.ts, batch C14) for any member.
  */
 const API_ROUTES: Record<string, Partial<Record<string, (r: Request, env: Env, info: RequestInfo) => Promise<Response>>>> = {
   '/api/cancel': { POST: cancelChangeLink },

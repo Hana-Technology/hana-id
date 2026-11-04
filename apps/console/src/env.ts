@@ -1,7 +1,7 @@
 // The console Worker's bindings (docs/batch-c-spec.md "Bindings"; written by scripts/gen-wrangler.ts from the manifest's
 // `console` and `files` blocks). Vars are public; the one secret (CONSOLE_GOOGLE_CLIENT_SECRET) comes with sign-in in
 // batch C9.
-import type { AppDetail, AppSummary, CancelChangeByLinkInput, GetAppInput, GuardedChange, ListAppsInput, RpcFail, RpcOk, SetLogoInput } from '@hana-id/console-core';
+import type { AppDetail, AppSummary, CancelChangeByLinkInput, GetAppInput, GuardedChange, ListAppsInput, PendingUpgradesInput, PendingUpgradesView, RpcFail, RpcOk, SetLogoInput } from '@hana-id/console-core';
 
 type Answer<T extends object> = Promise<RpcOk<T> | RpcFail>;
 
@@ -16,6 +16,8 @@ export interface ConsoleRpcClient {
   /** The logo upload (batch C11, logo.ts): the app's settings version and current logo, then the pointer. */
   getApp(c: GetAppInput): Answer<{ app: AppDetail }>;
   setLogo(c: SetLogoInput): Answer<{ version: number }>;
+  /** The pending-upgrades page (batch C14, D86; governance.ts): contract-wide, charged to the member's org. */
+  pendingUpgrades(c: PendingUpgradesInput): Answer<{ pendingUpgrades: PendingUpgradesView }>;
 }
 
 export interface Env {

@@ -63,8 +63,8 @@ function stateGuard(orgId: string, userId: string, s: MemberState, now: number, 
  * - `owner` adds or promotes: through a grant (a viewer until its notice is acked and `ownerGrantDelayMs` passes)
  *   when the org has another owner, at once when it has none (the first-owner exception).
  * Refusals: `forbidden` (`org_legacy`), `not_found` (org, user, or removing a non-member), `conflict` (the last
- * owner, a pending grant, a disabled user added, or the membership changed meanwhile). A change to the role already in
- * force writes nothing.
+ * owner, a pending grant, a disabled user added or promoted, or the membership changed meanwhile). A change to the role
+ * already in force writes nothing.
  */
 export async function setMember(db: D1Database, w: Writer, i: { orgId: string; userId: string; role: Role | null; stepUpId?: string | null }): Promise<{ grantId?: string }> {
   if (i.orgId === LEGACY_ORG_ID) return refuse('forbidden', `${LEGACY_ORG_ID} has no members`);
@@ -113,7 +113,9 @@ export async function setMember(db: D1Database, w: Writer, i: { orgId: string; u
   } else {
     if (s.isOwner) return {};
     if (s.role !== null && s.liveGrants > 0) return refuse('conflict', 'An owner grant for this member is already pending');
-    if (s.role === null && s.disabled) return refuse('conflict', 'The user is disabled');
+    // Adding or promoting: a disabled user can't sign in and doesn't count as an owner, so making one an owner would
+    // leave an ownerless org looking owned (and give the first-owner exception to the next invite).
+    if (s.disabled) return refuse('conflict', 'The user is disabled');
     if (s.otherOwner) {
       grantId = newId('ownerGrant');
       if (s.role === null) {

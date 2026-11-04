@@ -3,7 +3,7 @@
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
 Last verified against code: 2026-11-04 (branch `feat/batch-c-7-merge`, C7 merged onto `develop`; written on `feat/batch-c-7` 2026-11-02: the console Worker and `CONSOLE_DB` in Status,
 Components and Data stores: host dispatch, headers, CSRF, `StaffRpc`, invites and owner grants, the hourly cron, no
-public route; D240–D244); 2026-11-04 (branch `docs/sandbox-dev-state-1104`: what sandbox-dev runs); 2026-11-04 (branch `feat/token-first-on`: `'token_first'` in force since the spike
+public route; D240–D244; on the merge branch: the Status rows say C7 is merged, inert, and C6 not merged); 2026-11-04 (branch `docs/sandbox-dev-state-1104`: what sandbox-dev runs); 2026-11-04 (branch `feat/token-first-on`: `'token_first'` in force since the spike
 passed: "Who talks to whom"'s Google and tokeninfo rows, "Automatic linking" steps 1 and 2 (token_first first, second_request
 the fallback), the Status row; D270); 2026-11-04 (branch `fix/user-emails-review`: "Automatic linking" step 2's token_first record-only fallback without tokeninfo and google-record after `/v1/login`, tokeninfo's answer in the popup, and "Data stores"' issuer D1 row: order-safe directory writes, unverified Google rows, forged rows accepted, the CLI's reads off the argv; D269); 2026-11-04 (branch `feat/google-token-first`: "Automatic linking" step 2, Google's email under each
 `GOOGLE_EMAIL_FLOW` (`'token_first'` built, off; `'one_request'` removed; the callback's claim allow-list; the

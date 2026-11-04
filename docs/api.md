@@ -1,7 +1,7 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's and the console's)
 
 Last verified against code: 2026-11-04 (branch `feat/batch-c-7-merge`, C7 merged onto `develop`; written on `feat/batch-c-7` 2026-11-02: "Console Worker": its two link routes, the
-CSRF and header rules, `StaffRpc`, bindings and logs, no route yet, D240–D244); 2026-11-04 (branch `feat/token-first-on`: `google-record` in force under `'token_first'`,
+CSRF and header rules, `StaffRpc`, bindings and logs, no route yet, D240–D244; on the merge branch: `setMember` never promotes a disabled user, the audit reads' safe-integer bounds); 2026-11-04 (branch `feat/token-first-on`: `google-record` in force under `'token_first'`,
 D270); 2026-11-04 (branch `fix/user-emails-review`: the user directory's order-safe upserts in
 "Email issuer" D1); 2026-11-04 (branch `feat/google-token-first`: the issuer's `POST /v1/email/google-record`
 and its per-IP limit, google-match's user-directory write (D269, D270), the auth page Worker's callback CSP with Google's
@@ -1334,9 +1334,9 @@ Inputs are console-core's strict zod schemas (`packages/console-core/src/staff.t
 | `pendingMemberNotices({limit ≤ 100})` | The blocking notices to send, oldest first: open invites and live grants not yet acked, each with the org's current owners (a promotion also with the promoted member) |
 | `ackMemberNotice({inviteId \| grantId, tokenHash})` | After every send was accepted: stores the link token's sha256 (an invite's link works from now; a promotion's wait starts: `owner_from = now + OWNER_GRANT_DELAY_MS`). Same hash again: no-op; another: `conflict` |
 | `cancelOwnerGrant({grantId})` | Until `owner_from` (`not_pending` after) |
-| `setMember({orgId, userId, role \| null})` | Add, remove, demote or promote (through a grant when the org has another owner); the last usable owner stays (`conflict`) |
+| `setMember({orgId, userId, role \| null})` | Add, remove, demote or promote (through a grant when the org has another owner); the last usable owner stays (`conflict`); a disabled user is never added or promoted (`conflict`) |
 | `disableUser({userId, disabled})`, `freezeOrg({orgId, frozen})` | Revoke sessions as the spec's "Sessions" says |
-| `auditSince({seq, limit ≤ 500})`, `queryAudit({filters, cursor?, limit ≤ 500})` | The feed (oldest first) and the staff screen's query (newest first; filters `orgId`, `appId`, `actorKind`, `actorId`, `action`, `from`, `to`) |
+| `auditSince({seq, limit ≤ 500})`, `queryAudit({filters, cursor?, limit ≤ 500})` | The feed (oldest first) and the staff screen's query (newest first; filters `orgId`, `appId`, `actorKind`, `actorId`, `action`, `from`, `to`); `seq`, the cursor and the times are safe integers (`bad_request` past 2^53 − 1) |
 
 `purgeAudit` (the monthly retention job) comes with C13. A replayed request id is `already_applied` (same actor and
 target) or `conflict`; a write whose state moved meanwhile is `conflict`.

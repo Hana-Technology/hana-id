@@ -120,6 +120,13 @@ describe('across Workers (config snapshots)', () => {
     expect(binders).toEqual(['console']);
   });
 
+  it('no Worker binds the console in C7: StaffRpc gets its only caller, the admin Worker, in C8', () => {
+    const binders = configs
+      .filter(([, c]) => (c.services ?? []).some((s) => s.service === m.console!.workerName || s.entrypoint === 'StaffRpc' || s.entrypoint === 'AuthHandler'))
+      .map(([n]) => n);
+    expect(binders).toEqual([]);
+  });
+
   it('the console binds no other Worker’s database', () => {
     const console = configs.find(([n]) => n === 'console')![1];
     expect((console.d1_databases ?? []).map((d) => d.database_name)).toEqual([m.console!.d1Name]);

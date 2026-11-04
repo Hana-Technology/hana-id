@@ -1827,7 +1827,9 @@ detail open or two of its lines pull apart. Each follows the spec's intent; all 
   - **Codes the spec doesn't name.** `forbidden`: `org_legacy` (no members, no invites, can't be frozen). `not_found`:
     unknown org, user, invite or grant, or removing a non-member. `conflict`: a frozen org (no invites), the 11th open
     invite, a second open invite of the same address to an org, the last owner removed or demoted, a second promotion
-    while one is pending, adding a disabled user. `not_pending`: revoking or acking an ended invite, cancelling a
+    while one is pending, adding or promoting a disabled user (promoting added on 2026-11-04, branch
+    `feat/batch-c-7-merge`: a disabled owner doesn't count, so it would leave an ownerless org looking owned).
+    `bad_request` also covers an audit cursor, time or `seq` past 2^53 − 1 (the console writes them as SQL literals). `not_pending`: revoking or acking an ended invite, cancelling a
     grant that is cancelled, applied or past `owner_from`. A repeated ack with the same hash is a no-op; with another,
     `conflict`. A change to the role already in force writes nothing.
   - **Roles.** The last-owner rule and the first-owner exception count only usable owners (not disabled); a pending

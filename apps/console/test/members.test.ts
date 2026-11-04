@@ -97,6 +97,21 @@ describe('setMember', () => {
     expect(await set(org, 'usr_unknown1234', 'viewer')).toMatchObject({ code: 'not_found' });
     expect(await set(org, (await seedUser({ disabled: true })).id, 'viewer')).toMatchObject({ code: 'conflict' });
   });
+
+  it('refuses promoting a disabled member to owner, at once or through a grant, and writes nothing', async () => {
+    const ownerless = await seedOrg();
+    const d1 = await seedMember(ownerless, 'viewer', await seedUser({ disabled: true }));
+    expect(await set(ownerless, d1.id, 'owner')).toMatchObject({ ok: false, code: 'conflict' });
+    expect(await roleOf(ownerless, d1.id)).toBe('viewer');
+    const owned = await seedOrg();
+    await seedMember(owned, 'owner');
+    const d2 = await seedMember(owned, 'viewer', await seedUser({ disabled: true }));
+    expect(await set(owned, d2.id, 'owner')).toMatchObject({ ok: false, code: 'conflict' });
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM owner_grants WHERE user_id = ?').bind(d2.id).first('n')).toBe(0);
+    expect(await auditRows("action IN ('member.role', 'owner_grant.created') AND target IN (?, ?)", d1.id, d2.id)).toEqual([]);
+    // A disabled owner can still be demoted or removed while another usable owner remains.
+    expect(await set(owned, d2.id, null)).toEqual({ ok: true });
+  });
 });
 
 describe('disableUser', () => {
@@ -155,5 +170,8 @@ describe('the audit reads', () => {
     expect(mine[0]).toMatchObject({ actorKind: 'hana', actorId: 'access-sub-staff-1', actorEmail: 'staff@hana.example', action: 'member.added', details: { role: 'viewer' }, outcome: 'ok' });
     expect(Object.keys(mine[0]!)).not.toContain('ipPrefix');
     expect(await staffRpc().queryAudit({ ...hana(), filters: { action: 'DROP TABLE' }, limit: 1 })).toMatchObject({ code: 'bad_request' });
+    // Past 2^53 − 1 a cursor or time can't be a SQL literal: refused as input, never an internal error.
+    expect(await staffRpc().queryAudit({ ...hana(), filters: {}, cursor: '9999999999999999', limit: 1 })).toMatchObject({ code: 'bad_request' });
+    expect(await staffRpc().queryAudit({ ...hana(), filters: { from: 2 ** 60 }, limit: 1 })).toMatchObject({ code: 'bad_request' });
   });
 });

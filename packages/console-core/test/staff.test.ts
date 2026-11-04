@@ -1,7 +1,7 @@
 // StaffRpc's input schemas and the console's link-confirm bodies (src/staff.ts): round trips, the email rule (trimmed and
 // lowercased, never dot- or plus-normalised), exactly-one targets, and refusals of unknown fields and malformed ids.
 import { describe, expect, it } from 'vitest';
-import { ackMemberNoticeInput, auditFilters, cancelByLinkBody, issueInviteInput, memberNotice, ownerGrantCancelBody, queryAuditInput, setMemberInput } from '../src/index.ts';
+import { ackMemberNoticeInput, auditFilters, auditSinceInput, cancelByLinkBody, issueInviteInput, memberNotice, ownerGrantCancelBody, queryAuditInput, setMemberInput } from '../src/index.ts';
 
 const staff = { actor: { kind: 'hana', id: 'access-sub', email: 'staff@hana.example' }, requestId: 'req_12345678', clientIp: '198.51.100.1' } as const;
 
@@ -42,6 +42,15 @@ describe('the other inputs', () => {
     expect(auditFilters.safeParse({ email: 'a@b.example' }).success).toBe(false);
     expect(queryAuditInput.safeParse({ ...staff, filters: {}, cursor: '0', limit: 10 }).success).toBe(false);
     expect(queryAuditInput.safeParse({ ...staff, filters: {}, cursor: '12', limit: 501 }).success).toBe(false);
+  });
+
+  it('cursors, times and seq stay safe integers (the console writes them as SQL literals)', () => {
+    expect(queryAuditInput.safeParse({ ...staff, filters: {}, cursor: '999999999999999', limit: 10 }).success).toBe(true);
+    expect(queryAuditInput.safeParse({ ...staff, filters: {}, cursor: '9999999999999999', limit: 10 }).success).toBe(false);
+    expect(auditFilters.safeParse({ from: Number.MAX_SAFE_INTEGER }).success).toBe(true);
+    expect(auditFilters.safeParse({ from: Number.MAX_SAFE_INTEGER + 1 }).success).toBe(false);
+    expect(auditFilters.safeParse({ to: 1e300 }).success).toBe(false);
+    expect(auditSinceInput.safeParse({ ...staff, seq: 2 ** 60, limit: 10 }).success).toBe(false);
   });
 
   it('the link bodies take an id of their kind and a 32-byte token, nothing else', () => {

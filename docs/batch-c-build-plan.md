@@ -1,8 +1,9 @@
 # Batch C build plan
 
-Status (2026-11-02): C1, C2, C3 and C5 merged into `develop`, not deployed (milestone M1: migration 0006 isn't applied
-on sandbox-dev); C7 (the console Worker backend, no route) built on `feat/batch-c-7`, not merged (D240–D244); the
-others not merged. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
+Status (2026-11-04, branch `feat/batch-c-7-merge`): C1–C5 merged into `develop` and running in the sandbox-dev API as
+far as `develop` includes them (migrations 0006, 0009 and 0010 applied, usage capture off; `docs/operations.md`); C7
+(the console Worker backend, no route; D240–D244) merged, not deployed (its setup is step 5 below, at M4); C6 built on
+`feat/batch-c-6`, not merged; C8–C17 not built. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
 batches that each merge into `develop` on their own: tests green, the docs they change updated, and nothing a partner,
 a user or staff can reach that is half-wired. Ordered by dependency; the spec's "Build order" steps are noted per
 batch. This is a plan, not a spec: where it and the spec disagree, the spec wins or gets amended first.
@@ -238,6 +239,10 @@ Setup for the user: `docs/operations.md` "Usage capture (batch C4, milestone M2)
   and `CONSOLE_DB`); host dispatch; headers; no `put`/`delete` on `STATEMENTS`.
 - **Setup**: create the console D1 (setup step 5), apply `apps/console/migrations`.
 - **Visible**: nothing (no route).
+- **Status** (2026-11-04): merged (`feat/batch-c-7-merge`), not deployed. Independent of C6: the console calls only
+  `ConsoleRpc.listApps` and `cancelChangeByLink` (C5). Whichever of C6 and C7 merges second re-runs `apps/console`'s
+  tests (they run against the real API Worker, so C6's `ConsoleRpc` too) and merges the shared docs and
+  `packages/console-core/src/index.ts`'s export list.
 
 ## C8. Admin Worker
 
@@ -356,8 +361,11 @@ Run from the main checkout; every file in `.secrets/` is 0600 in a 0700 director
    `hana-id-usage-writer-sandbox-dev` and `hana-id-usage-admin-sandbox-dev` with caching disabled and prints their ids
    (not secret); pass them to `gen` (`--usage-hyperdrive-id`, `--admin-hyperdrive-id` from C8). Confirm Hyperdrive is
    available on the account's plan first (open question 5).
-5. **Console D1** (C7): `corepack pnpm --dir apps/api exec wrangler d1 create hana-id-console-sandbox-dev`, then
-   apply `apps/console/migrations` remotely; pass the id to `gen` (`--console-d1-id`).
+5. **Console D1** (C7, at M4): `corepack pnpm --dir apps/console exec wrangler d1 create <console.d1Name> --location
+   apac`, then `corepack pnpm --filter @hana-id/console gen <env> --d1-id <uuid>` and `corepack pnpm --dir apps/console
+   exec wrangler d1 migrations apply <console.d1Name> --remote`; the R2 buckets of step 7 must exist before the
+   console's first deploy (it binds `LOGOS` and `STATEMENTS`). Needs the manifest blocks of step 12 first. The whole
+   sequence is `docs/operations.md` "Partner console Worker".
 6. **`USER_ID_KEY`** (C4): `usage-setup sandbox-dev user-id-key --yes` writes 32 random bytes (base64) to
    `.secrets/sandbox-dev/user-id-key` (never replaced) and sets the API's `USER_ID_KEY` through wrangler's stdin; an
    offline backup is made by hand. Also for C4: hot-DB migration 0009 and its one-off `usage` → `session_markers`

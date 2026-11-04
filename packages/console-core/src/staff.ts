@@ -12,7 +12,11 @@ export const ownerGrantIdInput = z.string().regex(/^og_[A-Za-z0-9]{1,64}$/u);
 /** b64url, no padding, of exactly 32 bytes (a link token or its sha256). */
 const b64url32 = z.string().regex(/^[A-Za-z0-9_-]{43}$/u);
 const limit = (max: number) => z.number().int().min(1).max(max);
-const ms = z.number().int().nonnegative();
+/**
+ * A time in ms or a row number: an integer the console can use as a SQL literal (`lit` refuses anything past 2^53 − 1),
+ * so an out-of-range value is `bad_request`, never an `internal` from the query builder.
+ */
+const ms = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 
 /** At most this many open (unaccepted, unrevoked, unexpired) invites per org (docs/batch-c-spec.md "Invites"). */
 export const MAX_OPEN_INVITES = 10;
@@ -59,7 +63,7 @@ export const listMembersInput = ctx.extend({ orgId: orgIdInput }).strict();
 export const setMemberInput = ctx.extend({ orgId: orgIdInput, userId: userIdInput, role: role.nullable() }).strict();
 export const disableUserInput = ctx.extend({ userId: userIdInput, disabled: z.boolean() }).strict();
 export const freezeOrgInput = ctx.extend({ orgId: orgIdInput, frozen: z.boolean() }).strict();
-export const auditSinceInput = ctx.extend({ seq: z.number().int().nonnegative(), limit: limit(500) }).strict();
+export const auditSinceInput = ctx.extend({ seq: ms, limit: limit(500) }).strict();
 
 /** `queryAudit` filters: all optional, ANDed. `from`/`to` are `at` bounds in ms (from inclusive, to exclusive). */
 export const auditFilters = z
@@ -74,8 +78,8 @@ export const auditFilters = z
   })
   .strict();
 export type AuditFilters = z.infer<typeof auditFilters>;
-/** The cursor is the last row's `seq` (rows come newest first). */
-export const queryAuditInput = ctx.extend({ filters: auditFilters, cursor: z.string().regex(/^[1-9]\d{0,15}$/u).optional(), limit: limit(500) }).strict();
+/** The cursor is the last row's `seq` (rows come newest first): at most 15 digits, so always a safe integer. */
+export const queryAuditInput = ctx.extend({ filters: auditFilters, cursor: z.string().regex(/^[1-9]\d{0,14}$/u).optional(), limit: limit(500) }).strict();
 
 // The console's emailed-link confirms (no session; the token is the proof; CSRF rules apply).
 export const cancelByLinkBody = z.object({ changeId: z.string().regex(/^gc_[A-Za-z0-9]{1,64}$/u), token: b64url32 }).strict();

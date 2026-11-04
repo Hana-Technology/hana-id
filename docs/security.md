@@ -2,7 +2,7 @@
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
 known open issues. Last verified against code: 2026-11-04 for the console Worker (branch `feat/batch-c-7-merge`, C7 merged onto `develop`; written on `feat/batch-c-7` 2026-11-02: its
-invariants, the invite, owner-grant and session token rows, D240–D244); 2026-11-04 for `'token_first'` in force (branch
+invariants, the invite, owner-grant and session token rows, D240–D244; re-checked against `develop`'s D269–D274, which the console's C7 surface doesn't touch: it relays no Google token until C9); 2026-11-04 for `'token_first'` in force (branch
 `feat/token-first-on`: the spike passed, "Google's verified email" now describes token_first first and
 second_request as the fallback, D270); 2026-11-04 for the user directory's review fixes (branch
 `fix/user-emails-review`: order-safe writes, unverified Google rows apart in the CLI, the CLI's statement off the

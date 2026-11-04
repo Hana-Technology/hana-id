@@ -2,7 +2,7 @@
 
 Last verified against code: 2026-11-04 (branch `feat/batch-c-7-merge`, C7 merged onto `develop`; written on `feat/batch-c-7` 2026-11-02: "Partner console Worker": its setup steps for
 milestone M4 (D1, `gen`, migrations, the R2 buckets, deploy order), the hourly cron, StaffRpc, no public route, the
-`CONSOLE_DB` restore notes, D240–D244); 2026-11-04 (branch `docs/sandbox-dev-state-1104`: sandbox-dev redeployed at f53d63e, API 9fe0343a, issuer b0cb9058 after migration 0002); 2026-11-04 (branch `feat/token-first-on`: "Turning linking on (batch 8b)": the spike
+`CONSOLE_DB` restore notes, D240–D244; on the merge branch: the cron-trigger count with the watchdog's, what a missing `OWNER_GRANT_DELAY_MS` refuses); 2026-11-04 (branch `docs/sandbox-dev-state-1104`: sandbox-dev redeployed at f53d63e, API 9fe0343a, issuer b0cb9058 after migration 0002); 2026-11-04 (branch `feat/token-first-on`: "Turning linking on (batch 8b)": the spike
 passed, `'token_first'` in force, deploying the switch (the issuer if needed, both page Workers), the check and the
 undo; the user directory's google-record rows in force; D270); 2026-11-04 (branch `fix/user-emails-review`: "User directory (D269)": the CLI's
 statement off the argv (a 0600 `.secrets/tmp/` file locally, D1's REST API remotely; why not wrangler's
@@ -817,12 +817,14 @@ corepack pnpm --dir apps/console exec wrangler deploy
 - The deploy prints no URL (no route). Check it with `corepack pnpm --dir apps/console exec wrangler deployments list`
   and, after the next full hour, `wrangler tail <console.workerName>`: one `console_cron` line per step (`invites.expired`,
   `grants.applied`, `purge`, `logos`) with a count, never an id of a person.
-- The cron is one more trigger on the account (`0 * * * *`); the free plan allows 5 per account (the API has one).
+- The cron is one more trigger on the account (`0 * * * *`); the free plan allows 5 per account (the API and the
+  watchdog have one each, per env).
 - The console has no secret in C7. `CONSOLE_GOOGLE_CLIENT_SECRET` comes with C9 (setup step 11); `INVITE_LINK_KEY` and
   `CANCEL_LINK_KEY` are the **admin** Worker's (C8, setup step 10), never the console's: the console stores only the
   sha256 of each emailed link token, which the admin Worker sends with its ack (D240).
-- `OWNER_GRANT_DELAY_MS` comes from the manifest's `ownerGrantDelayMs` (D145). If it is missing or out of range, every
-  grant ack and acceptance of an owner invite refuses with `internal` (fail closed); regenerate and redeploy.
+- `OWNER_GRANT_DELAY_MS` comes from the manifest's `ownerGrantDelayMs` (D145). If it is missing or out of range, the
+  ack of a promotion's notice and every invite acceptance (C9's sign-in) refuse with `internal` (fail closed);
+  regenerate and redeploy.
 - Rollback: `wrangler rollback` in `apps/console` (it has no route, so nothing partner-facing changes). A schema problem
   is a new migration, never an edit of an applied one.
 

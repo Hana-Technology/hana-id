@@ -19,8 +19,22 @@ describe('auth page policies', () => {
     expect(authPageCsp(sandbox, 'login')).toBe(`${BASE}; frame-ancestors 'none'`);
     expect(authPageCsp(sandbox, 'callback')).toBe(`${BASE}; connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev; frame-ancestors 'none'`);
     expect(authPageCsp(sandbox, 'approve')).toBe(`${BASE}; frame-ancestors 'none'`);
-    expect(authPageCsp(sandbox, 'export')).toBe(
+    const { rpcFallback: _fallback, ...oneRpc } = sandbox;
+    expect(authPageCsp(oneRpc, 'export')).toBe(
       `${BASE}; connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev https://test.rpc.fastnear.com https://www.googleapis.com; frame-ancestors 'none'`,
+    );
+  });
+
+  it('the export window may reach both NEAR providers (D263): its meta policy lists rpcFallback, as the header does', () => {
+    // A browser enforces the meta and the header policy together: a fallback missing from the meta one blocks every
+    // read of it, and a linked identity's export is refused path_unconfirmed (sandbox-dev, 2026-11-04).
+    const two = { ...sandbox, rpc: 'https://test.rpc.fastnear.com', rpcFallback: 'https://rpc.testnet.near.org/' };
+    expect(authPageMetaCsp(two, 'export')).toContain(
+      'connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev https://test.rpc.fastnear.com https://rpc.testnet.near.org https://www.googleapis.com',
+    );
+    // The same origin twice is listed once.
+    expect(authPageMetaCsp({ ...two, rpcFallback: 'https://test.rpc.fastnear.com/other' }, 'export')).toContain(
+      'connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev https://test.rpc.fastnear.com https://www.googleapis.com',
     );
   });
 

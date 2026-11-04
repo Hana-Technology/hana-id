@@ -39,7 +39,7 @@ export const BASE_CSP: readonly string[] = Object.freeze([
 
 const originOf = (url: string): string => new URL(url).origin;
 
-type CspEnv = Pick<HanaEnv, 'apiUrl' | 'rpc' | 'emailIssuerUrl'>;
+type CspEnv = Pick<HanaEnv, 'apiUrl' | 'rpc' | 'rpcFallback' | 'emailIssuerUrl'>;
 
 /**
  * What the page may fetch: the API (callback, email, export), the email issuer (email), the NEAR RPC and Google's JWKS
@@ -58,7 +58,14 @@ export function connectSources(env: CspEnv, page: AuthPageName): string[] {
     case 'callback':
       return [originOf(env.apiUrl)];
     case 'export':
-      return [originOf(env.apiUrl), originOf(env.rpc), GOOGLE_CERTS_ORIGIN];
+      // Both NEAR providers: the window falls back to rpcFallback, and a linked identity's path is read on both
+      // (D263). The Worker's header policy lists the same; a browser enforces both policies, so the meta one must too.
+      return [
+        originOf(env.apiUrl),
+        originOf(env.rpc),
+        ...(env.rpcFallback && originOf(env.rpcFallback) !== originOf(env.rpc) ? [originOf(env.rpcFallback)] : []),
+        GOOGLE_CERTS_ORIGIN,
+      ];
     case 'approve':
       // The popup decodes and renders what the vault sent; it fetches nothing.
       return [];

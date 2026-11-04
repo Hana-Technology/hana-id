@@ -1,6 +1,7 @@
 // Key export encodings (docs/batch-b-spec.md "Key export", step 5): Stellar SEP-23 `S…` (version 18<<3) and EVM `0x`
 // plus 64 lowercase hex characters. Only the export window calls exportKeyString, from a fresh login's own PRK (never
-// the vault's cached one), and shows the result while a button is held. No message type carries what it returns.
+// the vault's cached one), and shows the result on Show key or copies it on Copy key (D268). No message type carries
+// what it returns.
 //
 // SECURITY: the returned string is the private key. JS strings can't be zeroed; the export window drops every
 // reference when it closes. The intermediate key bytes are zeroed here.

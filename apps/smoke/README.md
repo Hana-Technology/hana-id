@@ -330,7 +330,9 @@ linking on (batch 8b)").
 - [ ] **Revoke other devices**: log in in two browser profiles, then *Revoke other devices* within 5 min of the second
       login: the first profile's reload is logged out. After 5 min it is refused (4100, `share_not_fresh`).
 - [ ] **Export**: *Export Stellar key* and *Export EVM key*: the launcher, the Hana export window, a fresh Google
-      sign-in, the key shown next to the address that matches this page's (never on this page).
+      sign-in, the key shown on *Show key* next to the address that matches this page's (never on this page); *Copy
+      key* says "Copied" and pastes the same key (D268; in Chromium the clipboard is blank again 60 s later while the
+      export window stays in front).
 - [ ] **Approval**: with no auto-approve policy, each request button opens the Hana approval popup; Approve gives
       "signed after approval", Reject or closing it gives "rejected (4001)".
 - [ ] **Auto-approve**: with the demo policy in force: *Accept the policy* → consent; the two "covered" requests give

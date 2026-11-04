@@ -17,6 +17,7 @@ provider note, two "Superseded or amended" rows, the user-mail line under "Propo
 2026-11-02. D245–D249 (branch `feat/email-login-8a`, to confirm) on 2026-11-02. D253 (branch
 `feat/scope-email-client-tool`, to confirm) on 2026-11-03. D254–D259 (branch `feat/email-login-8b`, to
 confirm) on 2026-11-03, with batch 8b notes on D246 (lifted), D248 ("demo scopes only" lifted) and D249 (superseded).
+D268 (branch `feat/export-copy`, confirmed by the user) on 2026-11-04, with the D111 row of "Superseded or amended".
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -3925,6 +3926,55 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 - Rejected: configuring Access on sandbox-dev for one demo (Access on `workers.dev` is uncertain); an unauthenticated
   dev-only route on the issuer (a mint path that would ship to every env's code).
 
+## Key export: copying the key, 2026-11-04
+
+### D268. The export window shows the key on a Show key / Hide key toggle and copies it on Copy key
+- Date 2026-11-04 · Status: confirmed by the user (2026-11-04: 'can you make so that the user can copy the private
+  key as well? there are use cases where the user might want to use the same wallet in a different wallet app') ·
+  In force on branch `feat/export-copy` (`packages/web/src/auth/export-page.ts` `showReveal`, `clearClipboard`,
+  `EXPORT_CLIPBOARD_CLEAR_MS`; `packages/web/src/auth/auth.css` `.secret[data-shown]`) · Amends `docs/batch-b-spec.md`
+  "Key export" step 5 ("shows the key while a button is held … Nothing is copied to the clipboard automatically") and
+  D111's "Superseded or amended" row
+- Why: hold-to-show hid the key on pointerup, pointerleave and blur, so it could never be selected or copied, and a
+  user couldn't move the wallet to another wallet app (D41: export is the user's). MetaMask and Privy both show the
+  key on a click and offer a copy button.
+- **Toggle.** "Hold to show the key" is replaced by one button, "Show key" / "Hide key" (`aria-pressed`): a click, or
+  Enter or Space on the focused button (both give a click), shows the key; a second click hides it. While shown the
+  key text is selectable (`user-select: text`; hidden it is `none`, so the dots can't be copied by mistake). It still
+  hides on window `blur`, on `visibilitychange` to hidden and on `pagehide`, and the erase (D111: 5 min, the
+  session's end, the vault frame going away, the window closing) takes it off the screen for good. Unchanged:
+  `translate="no"`, no `aria-live` around the key (AUTH-4, AUTH-6), the typed `EXPORT` confirmation, the confirm
+  screen's warnings, the framing refusal, the address check and the export limit (D59).
+- **Copy.** "Copy key" calls `navigator.clipboard.writeText(exportString(chain, key))` inside the click, before any
+  await (so the browser counts the gesture), whether or not the key is shown: copying a hidden key never puts it in
+  the page. The button says "Copied" for 2 s. If the Clipboard API is missing (an insecure context, an old browser)
+  or refuses or throws, a status line says "Copy isn't available here: show the key and copy it by hand." No
+  `document.execCommand('copy')` fallback: it needs the key in a hidden, focused and selected text field (one more DOM
+  copy of the key that extensions, input methods and accessibility tools see, and a deprecated API), while the shown
+  key can already be selected and copied by hand.
+- **Both buttons act only on real gestures** (`isGesture`, `event.isTrusted`), like the rest of the page: a script's
+  synthetic click neither shows nor copies the key.
+- **The clipboard risk, accepted.** A copied key leaves the window's control: clipboard history (Windows' Win+V,
+  macOS Universal Clipboard to the user's other devices, clipboard managers), other apps and extensions that read the
+  clipboard, and a later paste into the wrong place can all see it. Accepted because moving the wallet to another
+  wallet app is the export's purpose and copying by hand from a selectable key has the same exposure; the typed
+  confirmation, the fresh sign-in and the 5 min window stay in front of it. The page says so: "A copied key stays in
+  your clipboard until you copy something else, and other apps or your clipboard history may read it there: paste it
+  only into the wallet you are moving to. We try to clear it after 60 seconds if this window is still open, but not
+  every browser allows that, so the copy is yours to look after."
+- **Best-effort clear.** 60 s after the last copy (each copy restarts it), at the erase and at `pagehide`, the window
+  writes an empty string to the clipboard, only while `document.hasFocus()` (browsers refuse a write without focus)
+  and only if it copied the key and hasn't blanked it since. It never reads the clipboard (no `readText`: that needs
+  a permission prompt), so it can't tell whether the user has copied something else since; that's why it doesn't
+  retry on the next focus, when the clipboard is more likely to hold something of the user's. A copy that lands after
+  the erase is blanked at once. Per browser: Chromium (Chrome, Edge, Brave) allows a focused page to write without a
+  gesture, so the clear works there; Firefox and Safari want a user gesture for every write, so the timed, erase and
+  pagehide clears are expected to fail quietly there (Playwright's builds relax that rule, so the e2e can't show it);
+  a closing page may not finish the write in any browser.
+- Rejected: keeping hold-to-show (the user's problem); copying only a shown key (no safer, since the clipboard holds
+  the same string, and one more step); a clipboard clear that reads first (permission prompt); clearing on every
+  later focus (would wipe what the user copied since).
+
 ## Superseded or amended
 
 | Was | Now | Source |
@@ -3950,7 +4000,8 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 | One global owner-action cap (20/min, 200/day); the relay quota counted in the gate, before verification | Caps per owner, per scope and global, `execute_change` and `cancel_change` on windows of their own; the relay quota counted right before the relay (D100) | `docs/api.md` "Rate limits" |
 | `fetch-ckd-key` reads the CKD key from the manifest's `rpc` | From ≥ 3 independent providers at one final block, all agreeing, with the block recorded (D100) | `docs/operations.md` "Create an environment" step 3 |
 | Stellar classic operations other than changeTrust, payment and createAccount shown by type with their raw XDR (batch B "Approval flow" step 4) | Every operation decoded field by field; account-control operations get a red banner and per-operation warning and are never auto-approved (D110) | `packages/core/src/decode/stellar.ts` |
-| The export window shows the key while a button is held until the window closes (batch B "Key export" step 5) | The key is erased 5 min after it is derived or when the session ends, whichever is first; a new export needs a new sign-in (D111) | `packages/web/src/auth/export-page.ts` |
+| The export window shows the key while a button is held until the window closes (batch B "Key export" step 5) | The key is erased 5 min after it is derived or when the session ends, whichever is first; a new export needs a new sign-in (D111). It is shown on a Show key / Hide key toggle, not while a button is held (D268) | `packages/web/src/auth/export-page.ts` |
+| The export window shows the key only while a button is held, and nothing is copied to the clipboard (batch B "Key export" step 5) | A Show key / Hide key toggle with the key selectable while shown, and a Copy key button (`navigator.clipboard.writeText` in the click); the window tries to blank the clipboard 60 s after the last copy, at the erase and at pagehide, while it has focus, and never reads it (D268) | `packages/web/src/auth/export-page.ts` |
 | The vault persists (share, record) before it replies to `hana_login` (batch B "Login" steps 11–12) | It replies first; the share and record follow in the background, and a failure turns `persistence` to `'none'` (`persistenceChanged`, D79) | `packages/web/src/vault/vault.ts` `persistLogin` |
 | Email login deferred (D4) | Confirmed: a Hana-run issuer (D4, D119, D121–D123); contract v3, `packages/email` and the watchdog part merged, the issuer not yet (`docs/email-login-build-plan.md`) | `docs/email-login-spec.md` |
 | Hana requests only `scope=openid` from Google (D25) | The on-chain token stays openid-only; the popup also requests `email`, which the issuer handles transiently off chain at link time, keeping only an HMAC (D25 amended) | `docs/email-login-spec.md` "How the popup gets Google's verified email" |

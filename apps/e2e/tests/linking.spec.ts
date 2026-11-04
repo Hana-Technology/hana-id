@@ -278,12 +278,10 @@ test('an email wallet’s key export: the export window’s child popup takes an
 
   await exportWindow.getByRole('textbox').fill('EXPORT');
   await exportWindow.getByRole('button', { name: 'Continue' }).click();
-  const hold = exportWindow.getByRole('button', { name: 'Hold to show the key' });
   const secret = exportWindow.locator('code.secret');
-  await hold.hover();
-  await exportWindow.mouse.down();
+  await exportWindow.getByRole('button', { name: 'Show key' }).click();
+  await expect(secret).toHaveText(/^0x[0-9a-f]{64}$/u);
   const shown = (await secret.textContent()) ?? '';
-  await exportWindow.mouse.up();
   expect(addressOfExport('evm', shown)).toBe(wallet.evm);
 });
 

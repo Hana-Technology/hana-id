@@ -1,7 +1,8 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-04 for the files Worker and logos (branch `feat/batch-c-11`: the
+known open issues. Last verified against code: 2026-11-04 for Security & monitoring and the feed's first run (branch
+`feat/batch-c-14`: the admin's watchdog bearer, caps and ack, the pending-upgrades view, D330–D338, D344); 2026-11-04 for the files Worker and logos (branch `feat/batch-c-11`: the
 logo upload's checks and the CSRF exception in "Console Worker", "Files Worker (logos)", the auth pages' `img-src`;
 D300–D308); 2026-11-04 for the admin Worker (branch `feat/batch-c-8`: its invariants, the cancel-link, link-key, Resend-key and Access-token rows; D278–D285); 2026-11-04 for owner-verified changes and owner actions on current `develop` (branch `feat/batch-c-6-merge`; built on
 `feat/batch-c-6`: the API's own step-up check in "RPC writers", the owner-action precheck's nonce recompute and the
@@ -136,7 +137,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | Owner-pool keys `OWNER_RELAYER_KEYS` | same, owner methods | Worker secret; `.secrets/<env>/owner-relayer-keys.json` | Hana | Default 1 × 0.5 NEAR; allowance monitored like the session pool (D150) |
 | `KEYS_UPDATER_KEY` | ed25519 function-call key on `signer`. v1 contract: `set_issuer_key`, `remove_issuer_key`. Governance contract: exactly `set_issuer_key`, `propose_issuer_key_removal`, `execute_issuer_key_change`, installed only by the contract (`add_updater_key`); the API signs nothing else (`apps/api/src/relayer-config.ts` `UPDATER_METHODS`) | Worker secret; `.secrets/<env>/keys-updater.json` | Hana | 1 NEAR allowance. On the governance contract it can only propose (delayed, cancellable) and execute matured changes; a watchdog deletes it when it proposes a key Google doesn't publish. See open issue (e) and D33 |
 | `WATCHDOG_KEY` | ed25519 function-call key on the watchdog's account (manifest `watchdog.account`), receiver `signer`, methods `cancel_issuer_key_change`, `confirm_issuer_key_change`, `pause`, `delete_updater_key`, 1 NEAR | Watchdog Worker secret (its own Cloudflare account); `.secrets/<env>/watchdog-secrets.json` | Hana (operator) | Created by `watchdog secrets <env> init`; rotate by adding a new key, then deleting the old (`docs/operations.md` "Watchdog service"). DoS power only (cancel, confirm a proposed change, pause, delete updater keys) |
-| `WATCHDOG_STATUS_TOKEN` | random bearer token (32 bytes, base64url) | Watchdog and admin Worker secrets; same file | Hana | Read and acknowledge only: a holder can stop re-sends of an alert already paged, never a first alert or a check |
+| `WATCHDOG_STATUS_TOKEN` | random bearer token (32 bytes, base64url) | Watchdog and admin Worker secrets (the admin's from C14, uploaded through stdin with `jq -e`); same file | Hana | Read and acknowledge only: a holder can stop re-sends of an alert already paged, never a first alert or a check. In the admin Worker only `src/watchdog.ts` reads it, into the `Authorization` header of its calls to `WATCHDOG_URL` (https origin, redirects refused); never in a response, a log line or the browser (D330) |
 | Watchdog alert credentials (`RESEND_API_KEY`, `SLACK_WEBHOOK_URL`, paging app, `HEARTBEAT_URL`) | API keys / capability URLs | Watchdog Worker secrets; same file | Hana | The watchdog's own, not the admin Worker's (D87). Losing one channel leaves two (D85) |
 | Watchdog's Cloudflare account | account credentials | the operator | the user | Separate login and MFA from the API's account (D86); a compromise gives the watchdog key and its alerting, caught by the dead-man's switch |
 | Owner, signer, relayer account keys | ed25519 full-access (not ml-dsa-65: `docs/decisions.md`) | `~/.near-credentials/testnet/` on the operator's machine | the user (Hana admin) | Manual. Agents never ask for or handle them |
@@ -605,9 +606,19 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   partner text escaped and stripped of control characters, one-line subjects (no header injection).
 - **No NEAR key**, no Google client, no D1. **Logs** carry route patterns, ids, codes and counts only: never an email,
   a `sub`, a JWT, a link token or its hash (log allowlist; a source check and a log test).
+- **The feed's first run emails no history** (D344): a cursor with no row starts at the source's current position,
+  silently; unnotified security events still go out.
+- **Security & monitoring (C14; D330–D338)** is a view: it never alerts and never acts on chain. The watchdog is
+  called server-side only with the bearer (above), its answers capped per route (1 MiB `/status`, 2 MiB `/alerts`,
+  512 KiB `/actions`, 64 KiB an ack) under an 8 s deadline that covers the body, and reduced to bounded plain text
+  (controls and bidi overrides replaced, lengths cut) before the SPA writes it as text. Its one write is the ack,
+  forwarded with the Access identity as `by` (the body can't set it); an ack stops only an alert's re-sends. The
+  governance part is the API's snapshot (`AdminRpc.governance`), not independent of Hana's main account; the watchdog
+  beside it is the independent party. The pending-upgrades view (both consoles) is public chain data only.
 - Residual: a compromised admin Worker can send anything to anyone through Resend, ack notices without sending them,
-  and act as any staff member through the RPCs (trust boundary 3 in the spec's model); the feed's at-least-once
-  delivery can repeat a digest after a partial failure (Resend's idempotency key covers 24 h).
+  ack every watchdog alert (silencing the re-sends, never the first page) and act as any staff member through the RPCs
+  (trust boundary 3 in the spec's model); the feed's at-least-once delivery can repeat a digest after a partial
+  failure (Resend's idempotency key covers 24 h).
 
 ### Email issuer (`apps/email-issuer`, not deployed)
 
@@ -1224,7 +1235,8 @@ plan (D33; built, and deployed on sandbox-dev 2026-10-30), specified in `docs/go
   the JWKS URL can accept a forged key without Hana being alerted. Partner-side thumbprint pinning
   (`docs/integration.md`, the recommended default for anything of value) is the only prevention.
 - Monitoring (D83): every watchdog check, action and alert surfaces in the admin portal's "Security & monitoring"
-  view (a standing rule for future checks); the watchdog sends its own alerts, so a compromised Hana Cloudflare
+  view (a standing rule for future checks; built in C14, not deployed: `apps/admin/test/monitoring.test.ts` fails when
+  a watchdog check id has no portal rendering or an alert kind no playbook link); the watchdog sends its own alerts, so a compromised Hana Cloudflare
   account can't silence them.
 - Alerts (D85): critical (paging app + Slack + email to both founders, re-sent every 15 min until acknowledged),
   warning (Slack + email), info (portal + daily digest). Every upgrade proposal is critical; no independent upgrade

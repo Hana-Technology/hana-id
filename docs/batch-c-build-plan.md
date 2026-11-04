@@ -6,7 +6,9 @@ far as `develop` includes them (migrations 0006, 0009 and 0010 applied, usage ca
 `feat/batch-c-6` and brought onto current `develop` (C7 included) on `feat/batch-c-6-merge` (the claim allow-list on its
 tokens, D277), merged into `develop`, not deployed (M3 not run); C8 (the admin Worker; D278–D285) built on
 `feat/batch-c-8`, tests green, not merged, not deployed (its setup is steps 4 and 8–10 below, at M4); C11 (the files Worker and logos; D300–D308) built on `feat/batch-c-11`, tests green, not merged, not deployed (its
-setup is step 7 below, at M5); C9, C10 and C12–C17 not built. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
+setup is step 7 below, at M5); C14 (Security & monitoring and the pending-upgrades page; D330–D338, D344) built on
+`feat/batch-c-14`, not merged, not deployed (its setup is step 10's `WATCHDOG_STATUS_TOKEN` and `watchdog.url`, at
+M4); C9, C10, C12, C13 and C15–C17 not built. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
 batches that each merge into `develop` on their own: tests green, the docs they change updated, and nothing a partner,
 a user or staff can reach that is half-wired. Ordered by dependency; the spec's "Build order" steps are noted per
 batch. This is a plan, not a spec: where it and the spec disagree, the spec wins or gets amended first.
@@ -335,6 +337,17 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
   `@hana-id/playbooks` package** (being specified separately: spec §Hana admin console and `docs/operations.md`
   "Watchdog alerts" are owned by that work); this batch consumes the package and its completeness test rather than
   writing playbook text. Sources: the watchdog's status endpoint, `GET /v1/governance`, the security screen's events.
+- **Status** (2026-11-04): built on `feat/batch-c-14`, not merged, not deployed (D330–D338; also D344, the feed's
+  silent first run, user-confirmed). Built: the admin's `GET /api/monitoring`, `/api/monitoring/alerts`, `/actions`,
+  `POST /api/monitoring/alerts/:id/ack`, `GET /api/governance/pending-upgrades`, `GET /api/playbooks[/:id]` and the
+  SPA's Security & monitoring, Pending upgrades and Playbooks screens; the watchdog called server-side with the new
+  admin secret `WATCHDOG_STATUS_TOKEN` (size caps, 8 s deadline, plain text); `AdminRpc.governance`,
+  `AdminRpc.pendingUpgrades`, `ConsoleRpc.pendingUpgrades` over the `GET /v1/governance` snapshot; the release registry
+  `CONTRACT_RELEASES` (console-core); manifest `watchdog.url` → `WATCHDOG_URL`; the partner console's
+  `pendingUpgradesRoute` (`apps/console/src/governance.ts`) for C10 to route under `GET
+  /api/orgs/:org/governance/pending-upgrades` (D335). Not in C14 (D334, to confirm): the portal's own chain and council
+  DAO reads. Setup: with the admin Worker at M4, `docs/operations.md` "Admin Worker" → "Security & monitoring" (then
+  acknowledge sandbox-dev's alert #11).
 
 ## C8b. Users screen (proposed, D275; spec §Users and Support ID)
 
@@ -417,7 +430,8 @@ Run from the main checkout; every file in `.secrets/` is 0600 in a 0700 director
 9. **Resend** (C8, D87): the sending subdomain with SPF, DKIM and DMARC; an API key for the admin Worker only.
 10. **Admin secrets** (C8): `EMAIL_API_KEY` (the Resend key of step 9), `CANCEL_LINK_KEY`, `INVITE_LINK_KEY` (32 random
     bytes each, base64, generated into `.secrets/<env>/`, then `wrangler secret put` from stdin; `docs/operations.md`
-    "Admin Worker" step 3).
+    "Admin Worker" step 3). From C14: `WATCHDOG_STATUS_TOKEN` (the watchdog's own, from
+    `.secrets/<env>/watchdog-secrets.json`) and the manifest's `watchdog.url` ("Admin Worker" → "Security & monitoring").
 11. **Console Google client** (C9): a Web client with no JavaScript origins and one redirect URI,
     `<console.authOrigin>/callback`; its id in `consoleAudiences`, `CONSOLE_GOOGLE_CLIENT_SECRET` as a console secret.
 12. **Manifest**: add the `console`, `files`, `admin`, `usage`, `email` blocks and `ownerGrantDelayMs` to

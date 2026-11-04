@@ -4558,12 +4558,13 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
     `raw_sign.proposed`, `change.announced`, `invite.notified`, `owner_grant.notified`, `change.link_cancel`, and the
     sign-in rows (`auth.*`, `session.*`) left to C9's hourly bulk refusal digest. **Everything else is emailed**, so a
     new kind is never silent.
-  - The cursors start at 0: the first run walks the whole history (legacy rows have no contacts, so their digests go
-    to the alias) and catches up within a few runs.
+  - ~~The cursors start at 0: the first run walks the whole history (legacy rows have no contacts, so their digests go
+    to the alias) and catches up within a few runs.~~ **Amended by D344** (2026-11-04, confirmed by the user): a cursor
+    with no row starts at the source's current position, silently.
 - Why: a digest per org keeps the mail volume and the run budget bounded; a skip-list fails loud where an allow-list
   would fail silent.
 - Rejected: seeding the cursors at the current maximum on first run (loses rows written between the deploy and the
-  first run).
+  first run). *(Taken after all by D344: emailing the whole history was the worse failure.)*
 
 ### D282. The watcher: round-robin scopes, a silent baseline, retries until sent
 - Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/watcher.ts`, `near.ts`;
@@ -4822,10 +4823,196 @@ made while building C11, where the spec is silent or loose. Each took the safer 
 - Rejected: one lifecycle rule on every prefix (it would delete the legacy export after 30 days); per-object
   expiry set by the admin Worker (R2 has none; a cron job would be one more thing to fail).
 
+## Batch C14: Security & monitoring and the pending-upgrades page (branch `feat/batch-c-14`), 2026-11-04
+
+Readings of `docs/governance-spec.md` "Monitoring in the admin portal", `docs/batch-c-spec.md` "Hana admin console"
+(the Playbooks requirements) and D83, D86, D126, made while building C14 where they are silent or loose. Each took the
+safer reading.
+
+### D330. The watchdog's bearer stays in the admin Worker; its URL is the manifest's `watchdog.url`
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/watchdog.ts`,
+  `scripts/gen-wrangler.ts`; `packages/env/src/schema.ts` (`watchdog.url`, `watchdogUrlProblem`) · Source:
+  governance-spec "Status endpoint" ("a bearer token that only the admin Worker holds"), build plan C14
+- Decision:
+  - `WATCHDOG_STATUS_TOKEN` is an admin Worker secret, the same value as the watchdog's (from
+    `.secrets/<env>/watchdog-secrets.json`, uploaded through stdin with `jq -e`). Only `src/watchdog.ts` reads it, into
+    the `Authorization` header of its own calls; it is in no response, log line or error (a source test checks the
+    readers and the uses).
+  - The watchdog's origin is a new optional manifest field, `watchdog.url`: an https origin exactly (no credentials,
+    port, path, query or trailing slash), and a workers.dev host must name `watchdog.cloudflare.workerName`. `gen`
+    writes it as the `WATCHDOG_URL` var (with `NEAR_NETWORK` for explorer links); a production manifest's admin `gen`
+    refuses without it. The Worker re-checks the origin at use and calls nothing when either is missing or malformed
+    (`watchdog_unconfigured`).
+  - Redirects are refused (`redirect: 'manual'`, a 3xx is `watchdog_bad_answer`): following one would send the bearer
+    to whatever origin the answer named.
+- Why: the token can read every alert and ack any of them, so it must not reach a browser; the manifest is where
+  every other origin lives, and a typo'd host would otherwise receive the token.
+- Rejected: a `--watchdog-url` flag on `gen` (an origin outside the manifest drifts); proxying the browser's request
+  with the header added (the browser would choose the path).
+
+### D331. Bounds on the watchdog's answers: caps, one deadline, plain text
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/watchdog.ts`
+  (`WATCHDOG_LIMITS`, `watchdogTiming`), `src/plain.ts`, `src/monitoring.ts` · Source: build plan C14 ("size-cap and
+  time out the watchdog responses, and render them as text only")
+- Decision:
+  - Caps per route, by `Content-Length` and while streaming: `/status` 1 MiB, `/alerts` 2 MiB (a critical alert left
+    unacknowledged gathers three deliveries every 15 minutes: alert #11 has hundreds), `/actions` 512 KiB, an ack 64
+    KiB. One 8 s deadline per call covers the headers and the body. The alert history asks for 25 a page, the actions
+    50.
+  - What comes back is reduced to plain data before the SPA sees it: C0/C1 controls and the bidi overrides become
+    U+FFFD (a kid that displays reversed is a lie even as text), strings are cut at 2 000 characters, arrays at 500
+    items, objects at 200 keys, depth at 8; only JSON's own types survive. Each alert keeps its last 20 deliveries and
+    their total. A row without a positive integer id is dropped, never half-shown.
+  - Failures are the admin's codes (`watchdog_unconfigured`, `_unauthorized`, `_timeout`, `_too_large`,
+    `_bad_answer`, `_unavailable`), never the watchdog's text.
+- Why: the watchdog runs on another account and is a party this Worker must survive; the SPA writes text only, and
+  these bounds keep that text honest and the page usable.
+
+### D332. The acknowledge button: who, which alerts, what it does not do
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/monitoring.ts` (`ackRoute`,
+  `ackBy`, `alertView`), `public/app.js` · Source: governance-spec "Monitoring in the admin portal" ("acknowledge
+  (posted to the watchdog's ack endpoint, recorded with the Access identity)"), D85
+- Decision:
+  - `by` is `<Access email> (access:<Access sub>)`, or `access:<sub>` alone when the email has a character the
+    watchdog's `by` rule refuses; the request body can't set it. The watchdog's record (`acked_by`, `acked_via:
+    portal`) is the record: nothing is written to Hana's `audit_log` (the watchdog is the party that must keep it),
+    and the admin logs `watchdog_ack` with the alert id only.
+  - The button shows only on an unacknowledged alert that is re-sent until acknowledged (critical). The route forwards
+    any positive integer id and lets the watchdog answer (`404`, `409 already_acknowledged` keeping the first ack).
+  - The confirmation and every alert row say it plainly: an ack stops only that alert's 15-minute re-sends. It never
+    clears a condition (`open` stays as the watchdog has it, and the "not acknowledged" finding goes but the
+    condition's own finding stays), never stops a first alert, never acts on chain.
+  - Alert #11 on sandbox-dev (the expected `governance_change` of the updater-key rotation) is acknowledged this way
+    once the view is deployed (`docs/operations.md` "Security & monitoring" step 5; `docs/mainnet-readiness.md` 5.9).
+- Why: the identity must be the one Access verified; an ack button on a warning or info alert would stop nothing.
+
+### D333. One pending-upgrades view for both consoles, and a release registry for the commit and build
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `packages/console-core/src/governance.ts`
+  (`pendingUpgradesView`, `CONTRACT_RELEASES`, `releaseProblems`), `apps/api/src/rpc/{admin,console}.ts`
+  (`pendingUpgrades`) · Source: governance-spec "Alerts" (the page shows "code hash, source commit,
+  reproducible-build command, diff to the last release, countdown"), D86 Q11, Q14
+- Decision:
+  - The page shows the pending upgrade, owner transfer, withdrawal, delay decreases and console-audience additions,
+    each with its time and `readAtMs` (countdowns are the reader's clock), and the pause state. Partners and staff
+    get the same view, built in the API from the `GET /v1/governance` snapshot. It carries nothing staff-only (no
+    access keys, watchdogs, key changes or the cron's state) and nothing of any org.
+  - The code hash is on chain; its source commit, build command and diff are not. They come from
+    `CONTRACT_RELEASES` in console-core (oldest first; a test checks each entry: base58 hash, x.y.z version, 40-hex
+    commit, exactly the reproducible build command, `previousCommit` chained). The diff is shown as the command `git
+    diff <previous>..<commit> -- contracts/hana-signer` (the repo is private). A hash not in the registry is shown as
+    **not a published release**, a warning. The registry is empty today: testnet upgrades are non-reproducible
+    builds, so that warning is accurate on sandbox-dev.
+  - Publishing a release = adding its entry and deploying the API **before** the owner proposes (operations.md
+    "Pending upgrades page").
+- Why: D86 Q14 needs the hash, commit and command published before the proposal; a registry in the repo is reviewed
+  like code and served to partners by the API they already trust for the view.
+- Rejected: reading release metadata from a URL at request time (one more party to trust and fail); leaving the
+  commit and command out until mainnet (the page would ship without what the spec says it shows).
+
+### D334. The governance read is `AdminRpc.governance`, the same snapshot as `GET /v1/governance`; the portal's own chain and DAO reads are deferred
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/api/src/governance-status.ts`
+  (`governanceSnapshot`), `apps/api/src/rpc/admin.ts` · Source: build plan C14 ("the governance state from `GET
+  /v1/governance`"), governance-spec "Monitoring in the admin portal" (the admin Worker reads the chain itself)
+- Decision:
+  - The admin reads the snapshot over its `API` binding (`AdminRpc.governance`, staff only), not by fetching the
+    public endpoint (a Worker-to-Worker fetch on one account's workers.dev isn't reliable, and the binding is already
+    there). The isolate's 10 s cache serves the endpoint and the RPCs alike. A failed or unknown-shaped view is
+    `near_unavailable`, nothing partial.
+  - The three sources of `GET /api/monitoring` (the watchdog, the snapshot, the security events) are read in parallel
+    and fail on their own.
+  - Each pending key change shows the API's JWKS verdict beside the watchdog's sighting of the kid (its `seen_kids`),
+    which stands in for the spec's "the admin Worker's own fetch beside the watchdog's verdict".
+  - **Deferred, to confirm:** the spec has the admin Worker read the chain through its own RPC (independent of the
+    API) and the council DAO's policy and open proposals. C14 does neither: the watchdog is the independent party in
+    the same view, and the `governance:status` findings about the owner account, the DAO's policy and the delay
+    floors still come from `admin <env> governance:status`.
+- Why: the build plan names `GET /v1/governance` as the source; one normalised snapshot is less code to get wrong
+  than a second parser of the same views.
+
+### D335. The partner console's route is `GET /api/orgs/:org/governance/pending-upgrades`, checked against the membership twice
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/console/src/governance.ts`
+  (`pendingUpgradesRoute`, not routed until C10), `ConsoleRpc.pendingUpgrades` · Source: spec §Console BFF routes
+  (`GET /api/governance/pending-upgrades`, role "session"), build plan C14
+- Decision: the route sits under the org (any member, any role) rather than at the spec's org-less path: every
+  ConsoleRpc call is charged to an org and refuses `org_legacy`, and every other console read is under `:org`. The
+  handler checks the membership again (a `members` row, the user not disabled) behind C10's session check, so a
+  member of another org, an unknown org or a disabled user gets 404 with no RPC call. The answer is contract-wide (the
+  same for every org). Cost 2 in the org's budget (the snapshot's D1 batch when the 10 s snapshot is stale).
+- Why: the safest reading of "the pending-upgrades page in the partner console" with ConsoleRpc's org rules intact.
+- Rejected: the org-less path with an implicit org (the first membership: arbitrary for a member of several).
+
+### D336. The playbooks are served by the admin Worker from the bundled package; the search runs there
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/playbooks.ts`,
+  `public/app.js` · Source: spec "Security & monitoring: recovery playbooks" ("the admin SPA imports the package at
+  build time"; search "client-side")
+- Decision: the SPA has no build step (D278), so the Worker bundles `@hana-id/playbooks` and serves `GET
+  /api/playbooks?q&kind&severity` and `GET /api/playbooks/:id` (behind Access like every route). The search (every
+  word of `q` in the title, summary, signals or impact, case-insensitive; over every playbook, alerts included) runs in
+  the Worker, where it is tested. Each playbook shows the spec's order (signals, impact, steps with `who` as a badge,
+  detail, commands in copyable blocks, verbatim; verify, follow-ups, refs, related) under the "Before you start"
+  notes. Refs link to the file on GitHub (`develop`; decision ids to `docs/decisions.md`). An alert links to the
+  playbook id the watchdog serves for its kind when it names a package playbook, else `playbookForAlertKind`, else
+  the visible "no playbook" error (also a finding).
+- Why: nothing copied by hand, as the spec wants, without adding a build step to the SPA; a playbook edit ships with
+  the next admin deploy.
+
+### D337. The findings the portal shows, and the check registry
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/monitoring.ts`
+  (`findingsOf`), `src/monitoring-registry.ts` · Source: D83 (the view's list and the standing rule), `api.md` "What
+  the portal derives from it", operations.md "Governance status for the admin portal"
+- Decision:
+  - Findings, critical first, each with its playbook where one answers it: the watchdog unreadable or silent for more
+    than two intervals (`watchdog-down`); a check of the last run with `error` (warning) or `alert` (info); every
+    unacknowledged critical alert by id; an alert kind or check the portal can't render; the heartbeat or a channel
+    not configured or failing; the contract paused (`contract-paused`); a pending upgrade, owner transfer or withdrawal
+    (critical), a delay decrease or console-audience addition (warning; `governance-change`); a pending Add Google's
+    JWKS doesn't publish or has other material (`forged-key-change`), a pending Remove Google still publishes
+    (`published-key-removal`), a due change nobody executed (`key-sync-stalled`); no watchdog on chain; a signer key
+    that isn't an updater key or has the wrong permission (`updater-key-stolen`), a full-access key (info in a dev
+    env, D86 Q9; critical elsewhere), an updater key missing from the account; the API cron's last run not `ok`, a
+    proposal of ours cancelled.
+  - `CHECK_VIEWS` gives every watchdog check id a title and the part of the view that shows it; a test compares it
+    with the watchdog's `CHECK_IDS`, and another walks every `ALERT_KINDS` kind to its playbook. A check or kind the
+    watchdog serves and the portal doesn't know is shown (`known: false`, "no playbook") and is a finding, so a newer
+    watchdog is never silently half-rendered.
+- Why: D83's standing rule, enforced by a test on each side.
+
+### D338. The C14 screens and their routes
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/public/app.js`, `app.css` ·
+  Source: spec "Security & monitoring: recovery playbooks" (`/security/playbooks`, `/security/playbooks/<id>`)
+- Decision: three nav entries: Security & monitoring (`/security/monitoring`), Pending upgrades (`/security/upgrades`)
+  and Playbooks (`/security/playbooks`, one page per id); C8's "Feed and notices" keeps `/security`. The monitoring
+  page shows the findings, the watchdog (with the silence banner), its checks, the open alerts with acknowledge, the
+  governance part (pause, pending key changes, pending upgrades and owner actions, updater keys against the signer's
+  keys, watchdogs, the API cron), the alert history (25 a page, a severity filter, details and deliveries folded), the
+  actions log with explorer links, seen kids, relayer funds, the email and identity pins, link stats, the alert-kind
+  registry and the security events. Everything is text; external links only https. No auto-refresh: the page is read
+  on load (a staff member reloads), so a countdown is as of that moment.
+- Why: one place for staff, as D83 asks; reloads are cheap and keep the Worker's outbound calls per staff member low.
+
+### D344. The feed's first run starts each cursor at the current position, without emailing the history (amends D281)
+- Date 2026-11-04 · Status: **confirmed by the user** ("yes" to starting the feed at the current position rather than
+  emailing the whole history) · Built (branch `feat/batch-c-14`): `apps/admin/src/feed.ts` (`initialise`,
+  `FEED_INIT_PAGE`, `FEED_INIT_PAGES`, `initKey`), `test/feed.test.ts` · Source: coordinator, 2026-11-04
+- Decision: when a feed cursor (`feed.app_changes.seq`, `feed.audit_log.seq`) has no row in `ops.state`, the run reads
+  the source to its end without sending anything (pages of 500, at most 10 a run) and stores the last seq as the
+  cursor (0 for an empty source). From then on only rows after it are emailed, as D281 says. A history longer than one
+  run's walk keeps its place in `<cursor key>.init` and goes on silently next run; the cursor itself is written only
+  once the end is reached, so the feed never starts mid-history. The run logs `feed` with `code:
+  cursor_initialised` / `cursor_initialising`.
+- Reading of "each source", decided while building, to confirm: security events have no cursor in `ops.state` (their
+  per-row `notified_at` is the API's), so unnotified ones are still emailed on the first run. Each is a security signal
+  (drift, a cap, an allowance alert), and marking them notified unsent would hide them.
+- Why: an admin deploy into an env with history would otherwise send every org's contacts (and the alias, for legacy
+  rows) digests of changes made long before, which reads as new activity.
+- Trade-off: a row written between the deploy and the first run (at most 5 minutes) is in the silent walk and isn't
+  emailed; the audit view and CSV still have it.
+
 ## Superseded or amended
 
 | Was | Now | Source |
 |---|---|---|
+| The admin feed's cursors start at 0, so its first runs email the whole history (D281) | A cursor with no row starts at the source's current position, read silently; only later rows are emailed (D344) | `apps/admin/src/feed.ts` |
 | The console's hourly purge deletes a replaced logo's R2 object, then its row (D244) | Its row first (only while still marked), then the object; the rows come back if the delete fails (D301) | `apps/console/src/cron.ts` `purgeLogos` |
 | Local git only, branch `develop`, no remotes (batch A) | Remote `Hana-Technology/hana-id`; feature branches, PRs into `develop`, `main` for releases | `docs/batch-a-spec.md`; CLAUDE.md |
 | One relayer key pool, 300 Tgas for everything (batch A) | Two pools, per-method gas (D19) | `docs/batch-a2-shared-client.md` |

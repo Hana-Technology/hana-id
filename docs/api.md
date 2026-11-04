@@ -1,6 +1,9 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
-Last verified against code: 2026-11-04 (branch `feat/batch-c-11`: `GET /v1/app`'s `logoUrl`, the logo pages' `img-src`
+Last verified against code: 2026-11-04 (branch `feat/batch-c-14`: `AdminRpc.governance`, `AdminRpc.pendingUpgrades`
+and `ConsoleRpc.pendingUpgrades`; the admin Worker's Security & monitoring, alert history, actions, ack, pending
+upgrades and playbook routes, its watchdog client's bearer, caps, timeout and failure codes, the new vars and secret;
+the console's pending-upgrades backend (not routed until C10); D330–D338; the feed's silent first run, D344); 2026-11-04 (branch `feat/batch-c-11`: `GET /v1/app`'s `logoUrl`, the logo pages' `img-src`
 with `FILES_ORIGIN` on the auth Worker, the console's logo upload backend (not routed until C10) and its `IMAGES`
 binding, the purge order, and the new "Files Worker" section; D300–D308); 2026-11-04 (branch `feat/batch-c-8`: "Admin Worker" (its routes, the Access check, the cron's notices, feed and watcher, its bindings), `AdminRpc.listApps`/`getApp` taking `system`, `StaffRpc.getOrg`'s `grants`; D278–D285); 2026-11-04 (branch `feat/batch-c-6-merge`: batch C6 on current `develop`:
 `ConsoleRpc.changeOrigins` / `proposeChange` with the API's own step-up verification (the claim allow-list on the
@@ -216,7 +219,8 @@ cron's D1 tables, and sends no transaction. One snapshot per isolate serves ever
 says when it was taken, so countdowns are the reader's (`executableAtMs − now`).
 
 This is the machine-readable source batch C's admin portal ("Security & monitoring", the pending-upgrades page;
-D83, D86) and operators read for the contract side of governance; the watchdog's heartbeat, verdicts, actions log and
+D83, D86) and operators read for the contract side of governance (the portal reads the same snapshot over the service
+binding: `AdminRpc.governance`, `AdminRpc.pendingUpgrades`, `ConsoleRpc.pendingUpgrades`, C14); the watchdog's heartbeat, verdicts, actions log and
 alerts come from the watchdog service's `GET /status` / `GET /alerts`, never from here. The API runs on Hana's main
 Cloudflare account, so a reader that must not trust it reads the same views through its own RPC
 (`docs/contract-interface.md` "Monitoring hand-off" lists them).
@@ -940,6 +944,7 @@ method: an unexpected error is logged (`event: "rpc"`, method, request id, `code
 | `createKey`, `rotateKey`, `revokeKey` | A new `pk_<environment>_` key (at most 5 with `revoked_at` NULL, `key_limit`); rotate: a new key and the old one `revoked_at = now + 24 h`; revoke: `revoked_at = now` (also in the grace), the last valid key included (`warning: 'last_key'`) |
 | `changeOrigins` (C6) | A member's origin adds with any removes sent with them, and `stepUpJwt`, which the API verifies itself (below). The adds are pending `origin_add`s like a staff proposal's, recorded `proposed_by_kind = 'member'` with the verified `proposer_sub`; the removes apply at once in the same batch (their origin_adds end or are cancelled, their rows go); one `origins_version` bump; one `origin.proposed` row (`changes`, and `removed` with `wasInForce`) with `actor_sub`. `bad_request` for an origin both added and removed or a remove that isn't the app's; the add rules are `addOrigins`'s (duplicates, 20 origins counting the removes, `origin_refused`), except the scope-assignment wait, which is staff-only. Not counted by the breaker |
 | `proposeChange` (C6) | A member's `policy_set` or `raw_sign_on` with `stepUpJwt` (verified as for `changeOrigins`, the settings-change layout): the staff proposal's rules without the assignment wait; `proposer_sub` and `actor_sub` set |
+| `pendingUpgrades` (C14) | `{orgId}` → `{pendingUpgrades}`: the pending-upgrades page's view (D86, D333; `@hana-id/console-core` `pendingUpgradesView`) of the `GET /v1/governance` snapshot (the same isolate cache): `{signer, env, readAtMs, paused, governanceDelayMs, upgrade: {codeHash, proposedAtMs, executableAtMs, due, release: {version, commit, buildCommand, previousCommit, diffCommand} \| null} \| null, ownerTransfer, withdrawal, delayDecreases: [{delay, currentMs, valueMs, effectiveAtMs}], consoleAudienceAdditions, anyPending}`. `release` from the registry `CONTRACT_RELEASES` (null: not a published release). Contract-wide and public on chain, nothing filtered by org and nothing staff-only (no access keys, watchdogs, key changes or cron state); charged to the org's budget (cost 2: the snapshot's D1 batch); `near_unavailable` when a view fails or has an unknown shape |
 | `ownerAction` (C6) | `{orgId, body}`: an on-chain owner action relayed through the owner pool exactly as `POST /v1/owner-actions` relays it (the same per-IP limiter fed `clientIp`, precheck, token reservation, caps, usage event, endpoint `ConsoleRpc.ownerAction` in the request log). Console rules on top (D237): the scope must be in `scopes` with the org (`not_found`, before any chain read); the owner token's optional claims are checked strictly (`forbidden`). The claim allow-list holds here as on the endpoint, for the owner token and an `AddClient` proof alike (D274, D277: `token_has_pii`, an RpcCode `forbidden` whose message names the claim; both are public once relayed). A refusal before the relay is an RpcCode (the precheck's code first in `error`: `unknown_change: …`): `owner_nonce_mismatch`, `invalid_client_proof`, `token_used`, `not_owner`, `rate_limited`, `not_found` (scope, change, client), `conflict` (locked, last client, shared login state, a registered or shared client), `forbidden` (token), `near_unavailable` (NEAR or Google's keys), `bad_request`. Once relayed: `{ok: true, status, result?, nearTx?, code?, error?}`, the relay's own answer, a contract panic included (`status: 422`, `code: contract_rejected`). The safety methods may spend the kill-switch reserve |
 
 Not built yet: `usage`, `statements`, `ledger` (C12); calling them is an RPC error (no such method).
@@ -974,6 +979,8 @@ no budget, plus:
 | `setSecurityContacts`, `getSecurityContacts` | 1–10 lowercased emails replacing the set (CAS on the set as read); `org.security_contacts` lists `old` and `new` |
 | `listScopes`, `changesSince`, `securityEvents`, `markSecurityEventNotified` | The feeds: scopes by `scope_id` cursor, `app_changes` after a `seq`, security events (all or unnotified), marked once |
 | `relayerKeys` | The public keys of both pools; never a secret |
+| `governance` (C14) | `{}` → `{governance}`: the whole `GET /v1/governance` snapshot (above; the same isolate cache, so one read serves the endpoint and the RPCs for 10 s), for the "Security & monitoring" view. `hana` only. `near_unavailable` when a view fails or has an unknown shape (nothing partial) |
+| `pendingUpgrades` (C14) | `{}` → `{pendingUpgrades}`: the same view as `ConsoleRpc.pendingUpgrades`, for the admin's page. `hana` only |
 
 Not built yet: `purgeAudit`, `deletedApps` (C13).
 
@@ -1376,6 +1383,14 @@ Both: `400 bad_request` for any other body shape (strict), `413` over 4 KiB (1 K
 10 requests a minute per IP (IPv6 by /64; the `CONSOLE_IP_LIMIT` rate-limiting binding, namespace `95101`, key
 `<env>:console-link:<ip subject>`), checked before the body is read.
 
+**Pending upgrades (C14, backend only; no route until C10's session routes, D335).** `pendingUpgradesRoute` in
+`src/governance.ts` serves `GET /api/orgs/:org/governance/pending-upgrades` for a signed-in member (any role) once C10
+routes it after the session check. It checks again that the member belongs to the org (a `members` row, the user not
+disabled): another org, an unknown or malformed org id, or a disabled user is `404 not_found`, with no RPC call. Then
+`ConsoleRpc.pendingUpgrades` with the member actor and the org → `200 {pendingUpgrades}` (the view above). RPC
+refusals keep their status with the console's own message (`429 rate_limited`, `403 forbidden` for `org_legacy`,
+`503 near_unavailable`); a binding that throws is `503 near_unavailable`. Logged as `console_rpc` `pendingUpgrades`.
+
 **Logo upload (C11, backend only; no route until C10's session routes, D300, D301).** `logoUploadRoute` in
 `src/logo.ts` serves `POST /api/orgs/:org/apps/:app/logo?expectedVersion=<settingsVersion>` for a caller the session
 route has checked (session, org member, owner role): the image as the raw body (`application/octet-stream`,
@@ -1498,9 +1513,41 @@ binding throws; `405` with `allow`; `413` over 64 KiB (16 KiB without a `Content
 | `GET /api/audit?orgId&appId&actorKind&actorId&action&from&to&cursor&changesBefore` | → `{rows, next?, changes}` (`changes`: the org's `app_changes` when `orgId` is set, else null) | `queryAudit`, `listChanges` |
 | `GET /api/audit.csv?…` (same filters) | CSV (`source, seq, at, org_id, app_id, scope_id, action, actor_kind, actor_id, actor_email, target, outcome, request_id, near_tx, country, detail`), newest first, ≤ 5 000 rows per source (`x-hana-truncated: 1` past it); text cells starting `=`, `+`, `-`, `@`, tab or CR get a `'` | as above |
 | `GET /api/security` | → the notice backlog, unnotified security events, each feed cursor with its lag, the watcher's cursor, the last cron run | `pendingNotices`, `pendingMemberNotices`, `securityEvents`, `changesSince`, `auditSince`, `ops.state` |
+| `GET /api/monitoring` (C14) | → `{now, env, watchdog, governance, events, findings}` (below) | watchdog `GET /status`, `AdminRpc.governance`, `securityEvents({unnotifiedOnly: false, limit: 100})`, in parallel, each failing on its own |
+| `GET /api/monitoring/alerts?cursor&severity` (C14) | → `{alerts: [alert view], nextCursor}` (25 a page, newest first); `cursor` a positive integer, `severity` `critical`/`warning`/`info`, else `400` | watchdog `GET /alerts` |
+| `GET /api/monitoring/actions?cursor` (C14) | → `{actions: [{id, runId, at, method, args, reason, ok, txHash, txUrl, error}], nextCursor}` (50 a page); `txUrl` a nearblocks link for a valid hash on testnet or mainnet | watchdog `GET /actions` |
+| `POST /api/monitoring/alerts/:id/ack` (C14) | `{}` (any body field is ignored) → `{alert}`; `409 already_acknowledged` with the alert (the first ack is kept); `404` for an unknown alert or an id that isn't a positive integer (no call) | watchdog `POST /alerts/:id/ack {by}`, `by` = `<email> (access:<sub>)` (or `access:<sub>` when the email has characters the watchdog refuses) |
+| `GET /api/governance/pending-upgrades` (C14) | → `{pendingUpgrades}` (the view of `ConsoleRpc.pendingUpgrades` above) | `AdminRpc.pendingUpgrades` |
+| `GET /api/playbooks?q&kind&severity` (C14) | → `{notes, actors, lastVerified, playbooks: [{id, title, kind, severity, status, summary, alertKinds}]}`: every playbook of `@hana-id/playbooks` (bundled), filtered by kind and severity, and by `q`: every word in the title, summary, signals or impact (case-insensitive); `400` for another kind or severity or a `q` over 200 characters | — |
+| `GET /api/playbooks/:id` (C14) | → `{notes, playbook: {id, title, kind, severity, status, summary, alertKinds, signals, impact, steps: [{n, title, who, detail, commands}], verify, followUps, refs: [{ref, href}], related: [{id, title}]}}` (commands verbatim, placeholders unfilled; `href` the repo's file on GitHub); `404` | — |
 
-Not yet: reports, statements, rates, exports (C12), retention (C13), Security & monitoring and pending upgrades (C14),
-the Users screen (`/api/users/search`, `/get`: proposed D275, C8b) and the Support ID lookup (C15).
+Not yet: reports, statements, rates, exports (C12), retention (C13), the Users screen (`/api/users/search`, `/get`:
+proposed D275, C8b) and the Support ID lookup (C15).
+
+**Security & monitoring (C14; D83, D126, D330–D338).** The watchdog is called **server-side only**
+(`src/watchdog.ts`): `Authorization: Bearer <WATCHDOG_STATUS_TOKEN>` to `WATCHDOG_URL` (an https origin exactly; else
+nothing is called), `redirect: 'manual'` (a 3xx is refused, never followed), an 8 s deadline that covers the body, and
+a cap per route (`/status` 1 MiB, `/alerts` 2 MiB, `/actions` 512 KiB, an ack 64 KiB) by `Content-Length` and while
+streaming. Its failures are admin codes, never its text: `503 watchdog_unconfigured` (no URL or usable token here, or
+the watchdog's own 503), `502 watchdog_unauthorized` (its 401: the token copies differ), `504 watchdog_timeout`, `502
+watchdog_too_large`, `502 watchdog_bad_answer` (a redirect, not a JSON object), `502 watchdog_unavailable` (network, 5xx).
+The token is in no response, log line or error. Everything the watchdog answered is reduced to bounded plain data
+(`src/plain.ts`: C0/C1 controls and bidi overrides become U+FFFD, strings cut at 2 000 characters, arrays at 500 items,
+objects at 200 keys, depth 8) and picked field by field; the SPA writes it as text. An **alert view** is `{id, kind,
+severity, title, details, createdAt, resolvedAt, ackedAt, ackedBy, ackedVia, lastSentAt, sendCount, channels,
+resendsUntilAck, open, canAck, deliveries (the last 20), deliveriesTotal, playbook: {id, title} | null}`: `open` is
+the condition (an ack never changes it), `canAck` an unacknowledged alert that is re-sent until acknowledged
+(critical), `playbook` the id the watchdog serves for the kind if it names a package playbook, else
+`playbookForAlertKind`, else null (the SPA shows "no playbook"). `GET /api/monitoring`'s `watchdog` is `{ok: false,
+code}` or `{ok: true, env, network, signer, watchdogAccount, now, runIntervalMs, resendMs, initializedAt, lastRun,
+silent (no finished run within two intervals, by the watchdog's or this Worker's clock), sinceLastRunMs, checks: [{id,
+title, shownIn, description, outcome, detail, known}] (every check of `src/monitoring-registry.ts` and every one the
+watchdog serves; `known: false` for one the portal has no rendering for), heartbeat, channels, seenKids, relayerFunds,
+email, linkStats, identity, actions, openAlerts, alertKinds: [{kind, severity, check, description, playbook}]}`;
+`governance` is `{ok: false, code}` or the snapshot plus `keyChanges[].watchdogSeen` (the watchdog's sighting of the
+kid), `pause: {paused, unpausedAtMs, lastWatchdogPause}`, `updaterKeyCheck: [{publicKey, onAccount, permissionOk}]` and
+`otherSignerKeys`; `findings` is `[{severity, source: watchdog | governance | portal, text, playbook?}]`, critical
+first (D337).
 
 **Cron** `*/5 * * * *` (`src/cron.ts`; D280), as the `system` actor, with at most 40 outbound calls (emails and NEAR
 views) a run:
@@ -1514,7 +1561,8 @@ views) a run:
 2. **The feed** (`src/feed.ts`; D281): `securityEvents({unnotifiedOnly})` → the alias and the org's contacts →
    `markSecurityEventNotified`; `changesSince(feed.app_changes.seq)` and `StaffRpc.auditSince(feed.audit_log.seq)` →
    one digest per org to its contacts (the alias when it has none), the cursor in `ops.state` moved only past
-   accepted rows. Skipped: proposals and announcements (the blocking notice covers them), the notices' own audit rows,
+   accepted rows. A cursor with no row yet is first set to the source's latest seq without sending anything (D344;
+   pages of 500, at most 10 a run, the place kept in `<key>.init` until the end is reached). Skipped: proposals and announcements (the blocking notice covers them), the notices' own audit rows,
    the console's link-cancel row.
 3. **The watcher** (`src/watcher.ts`; D282): 15 scopes a run from `listScopes` (round-robin, `watch.scope_cursor`),
    `get_scope` uncached on `NEAR_RPC`; each pending change emailed once (`ops.scope_watch`), each owners/clients/
@@ -1530,11 +1578,14 @@ name the HTTP status only), one message per recipient, plain text plus simple HT
 **Bindings** (`apps/admin/scripts/gen-wrangler.ts`; D284): `API` → `AdminRpc`, `CONSOLE` → `StaffRpc`, `USAGE_DB`
 (Hyperdrive, the admin config, `--admin-hyperdrive-id`), `ASSETS`; vars `ENV_NAME`, `ADMIN_ORIGIN`, `CONSOLE_ORIGIN`,
 `FILES_ORIGIN`, `NEAR_RPC`, `SIGNER_ACCOUNT`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `STAFF_EMAILS` (JSON),
-`EMAIL_FROM`, `SECURITY_ALIAS`, `APP_CHANGE_DELAY_MS`, `OWNER_GRANT_DELAY_MS`; secrets `EMAIL_API_KEY`,
-`CANCEL_LINK_KEY`, `INVITE_LINK_KEY`. `preview_urls: false`; `workers_dev: true` only for a workers.dev `admin.origin`
-in a dev env, else a Custom Domain route. No D1 and no R2 in C8. **Logs**: `access_refused`, `csrf_refused`, `bff`,
-`notice`, `feed`, `watcher`, `cron`, `admin_error`, with route patterns, request ids, org, scope and target ids,
-outcomes, codes and counts only: never an email, a `sub`, a JWT, a link token or its hash.
+`EMAIL_FROM`, `SECURITY_ALIAS`, `APP_CHANGE_DELAY_MS`, `OWNER_GRANT_DELAY_MS`, and from C14 `NEAR_NETWORK` and
+`WATCHDOG_URL` (manifest `watchdog.url`; absent in a dev env without it, required on a production manifest); secrets
+`EMAIL_API_KEY`, `CANCEL_LINK_KEY`, `INVITE_LINK_KEY` and from C14 `WATCHDOG_STATUS_TOKEN` (never in the config).
+`preview_urls: false`; `workers_dev: true` only for a workers.dev `admin.origin` in a dev env, else a Custom Domain
+route. No D1 and no R2 in C8. **Logs**: `access_refused`, `csrf_refused`, `bff`, `notice`, `feed`, `watcher`, `cron`,
+`admin_error`, and from C14 `watchdog_call` (route, outcome, status, code) and `watchdog_ack` (`target: alert:<id>`),
+with route patterns, request ids, org, scope and target ids, outcomes, codes and counts only: never an email, a `sub`,
+a JWT, a link token or its hash, nor the watchdog's token.
 
 ## Email issuer (`apps/email-issuer`, its own Worker) · E
 

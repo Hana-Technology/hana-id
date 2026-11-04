@@ -1,6 +1,9 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-04 (branch `feat/batch-c-11`: "Files Worker and logos (batch C11, milestone M5)": setup
+Last verified against code: 2026-11-04 (branch `feat/batch-c-14`: "Admin Worker" → "Security & monitoring (batch C14)"
+(its setup: `watchdog.url`, the `WATCHDOG_STATUS_TOKEN` admin secret, the deploy order, the check, acknowledging
+sandbox-dev's alert #11, the failure codes, rotating the token) and "Pending upgrades page" (the release registry);
+the watchdog's step 7 and token rotation; the governance hand-off sections; D330–D338; the feed's first run starting at the current position, D344); 2026-11-04 (branch `feat/batch-c-11`: "Files Worker and logos (batch C11, milestone M5)": setup
 step 7's R2 buckets with the `STATEMENTS` lock and the `EXPORTS` lifecycle, the Images binding, the files Worker's
 `gen` and deploy, the pages' `FILES_ORIGIN`, the order, the checks; the console section's bucket step and purge order;
 D300–D308); 2026-11-04 (branch `feat/batch-c-8`: "Admin Worker (`apps/admin`, batch C8)": its M4 setup (Access, Resend, the link and email secrets, the admin Hyperdrive id), its logs, the end of `app:changes:announce` once it runs; D278–D285); 2026-11-04 (branch `feat/batch-c-6-merge`, batch C6 on current `develop`; built on `feat/batch-c-6`: "Console sink scope (batch C6, milestone M3)" with
@@ -85,7 +88,7 @@ Never print, log, paste or commit any of these. The scripts never print them eit
 | Neon Postgres connection strings (batch C ledger, D73): pooled `DATABASE_URL` and `DATABASE_URL_DIRECT` of the env's Neon branch | `.secrets/<env>/neon.json` (`{project_id, branch, DATABASE_URL, DATABASE_URL_DIRECT, …}`); role `neondb_owner`, used only by `usage-migrate` and `usage-setup` | `neon connection-string <branch> --project-id <id> [--pooled]` (Neon CLI, `neon login`) |
 | Ledger role URLs (`usage_writer`, `usage_admin`, batch C4): each role's password; their copies live in the two Hyperdrive configs | `.secrets/<env>/neon-usage-writer.url`, `neon-usage-admin.url` | `usage-setup <env> roles` ("Usage capture" below) |
 | `USER_ID_KEY` (the uid key, base64 of 32 bytes; API only); never rotated within a contract term, backed up offline | `.secrets/<env>/user-id-key` | `usage-setup <env> user-id-key` (generates it once, sets the Worker secret) |
-| Watchdog secrets (`WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, its Resend key, Slack webhook, paging-app credentials, `HEARTBEAT_URL`) | `.secrets/<env>/watchdog-secrets.json` (flat `{NAME: value}`) | `watchdog secrets <env> init` (the key and token); the rest by hand ("Watchdog service" below) |
+| Watchdog secrets (`WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, its Resend key, Slack webhook, paging-app credentials, `HEARTBEAT_URL`); the admin Worker's copy of `WATCHDOG_STATUS_TOKEN` (batch C14) comes from the same file | `.secrets/<env>/watchdog-secrets.json` (flat `{NAME: value}`) | `watchdog secrets <env> init` (the key and token); the rest by hand ("Watchdog service" below) |
 | Worker copies of the above | Cloudflare Worker secrets (the watchdog's on its own Cloudflare account) | `wrangler secret put` (watchdog: `wrangler secret bulk`) |
 | Local dev copies | `apps/api/.dev.vars`, `apps/watchdog/.dev.vars`, `apps/email-issuer/.dev.vars` (0600) | `gen --dev-vars` |
 
@@ -541,8 +544,11 @@ On a governance contract `deploy-contract` compares `view_access_key_list(<signe
 
 ### Governance status for the admin portal (batch C hand-off)
 
-The admin portal (batch C) doesn't exist yet. Its "Security & monitoring" view (D83) and pending-upgrades page (D86)
-read these sources, all read-only:
+The admin portal's "Security & monitoring" view (D83) and pending-upgrades page (D86) are built (batch C14, not
+deployed; "Admin Worker" → [Security & monitoring](#security--monitoring-batch-c14)). They read the **API** and
+**Watchdog** sources below. Not read by the portal yet (D334): the contract through the portal's own RPC, and the
+council DAO (its policy and open proposals). So the `governance:status` findings about the owner account, the DAO's
+policy and the delay floors still come from `admin <env> governance:status`. The sources, all read-only:
 
 - **Contract** (through the portal's own RPC): the views and NEP-297 events in `docs/contract-interface.md`
   "Monitoring hand-off".
@@ -970,8 +976,9 @@ the repo root of the main checkout, logged in to the API's Cloudflare account. N
    `done` line per run, `notice`, `feed` and `watcher` lines with ids, codes and counts only. "Feed and notices" in the
    SPA shows the backlog, each feed cursor's lag and the watcher's cursor.
 
-- **The first runs walk the history**: the feed's cursors start at 0, so the earlier `app_changes` and console audit
-  rows go out as digests (legacy rows, which have no security contacts, to the alias) over a few runs; the watcher
+- **The first run sends no history** (D344): a feed cursor with no row in `ops.state` starts at the source's current
+  position, read silently (a `feed` line with `code: cursor_initialised`; a long history continues next run with
+  `cursor_initialising`); only rows after it are emailed. Unnotified security events are still emailed. The watcher
   stores each scope's state as its baseline without an email.
 - **Cron triggers**: one more per env (`*/5 * * * *`); the free plan allows 5 per account (API, watchdog, console and
   admin have one each per env). Each run makes at most 40 outbound calls (emails and NEAR views, D280); a backlog
@@ -992,6 +999,100 @@ the repo root of the main checkout, logged in to the API's Cloudflare account. N
 | `watcher` `near_unavailable` / `not_on_chain` | `get_scope` failed, or a hot-DB scope isn't on chain | NEAR RPC status; a scope row without a registered scope is a setup error |
 | `access_refused` (warn) with `code` | An `/api/*` request without a valid staff token (`not_staff`: a valid Access identity not on `admin.staffEmails`) | Expected for strangers; for staff, check the manifest list and the Access policy |
 | `access_refused` `access_config_missing` / `certs_unavailable` (error) | `accessAud` still `UNSET`, an unusable staff list, or the team's certs unreachable: every `/api/*` is 503 | Step 1; Cloudflare status |
+| `watchdog_call` with a `code` (C14, below) | The "Security & monitoring" view couldn't read the watchdog | The table in "Security & monitoring" |
+
+### Security & monitoring (batch C14)
+
+The SPA's **Security & monitoring** (`/security/monitoring`), **Pending upgrades** (`/security/upgrades`) and
+**Playbooks** (`/security/playbooks`) screens (D83, D86, D126; `docs/api.md` "Admin Worker", D330–D338). The admin
+Worker reads the watchdog's `GET /status`, `/alerts` and `/actions` **server-side** with the bearer
+`WATCHDOG_STATUS_TOKEN` (the browser never gets it), the API's governance snapshot through `AdminRpc.governance` (the
+same as `GET /v1/governance`) and the recent security events, and lists the findings it derives (a silent watchdog, a
+pause, a pending upgrade, owner transfer or withdrawal, a forged or unexecuted key change, an untracked signer key, an
+unacknowledged critical alert, …), each with its playbook. The portal never alerts and never acts on chain: the
+watchdog still sends every alert itself. Its one write is the **acknowledge** button on an unacknowledged critical
+alert, which forwards `POST /alerts/:id/ack` with your Access identity (`<email> (access:<sub>)`): it **stops only that
+alert's 15-minute re-sends**. It doesn't clear the condition, stop a first alert or change a check; a condition that
+still holds stays in "Open alerts" and in the findings.
+
+Setup (once per env, with or after the admin Worker's own setup above; for the user to run, from the repo root of the
+main checkout; nothing below prints the token):
+
+1. **The watchdog's URL in the manifest.** Add `watchdog.url` to `envs/<env>.json`: the watchdog Worker's https origin
+   on **its own** Cloudflare account, `https://<watchdog.cloudflare.workerName>.<that account's subdomain>.workers.dev`
+   (the URL its `wrangler deploy` printed, without a path; a custom domain is allowed). The schema refuses anything
+   but an https origin, and a workers.dev host must name `watchdog.cloudflare.workerName`. Not a secret. A production
+   manifest's admin `gen` refuses to run without it.
+2. **The bearer as an admin secret.** The admin Worker's copy of `WATCHDOG_STATUS_TOKEN` is the one in
+   `.secrets/<env>/watchdog-secrets.json` (written by `watchdog secrets <env> init`), sent through wrangler's stdin.
+   `jq -e` fails instead of uploading `null` when the file has no token:
+
+   ```sh
+   jq -er .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json | corepack pnpm --dir apps/admin exec wrangler secret put WATCHDOG_STATUS_TOKEN
+   ```
+
+3. **Config and deploy.** The API first (it gains `AdminRpc.governance` and both `pendingUpgrades`), then the admin
+   (`gen` writes the `WATCHDOG_URL` and `NEAR_NETWORK` vars; the token is never in the config):
+
+   ```sh
+   corepack pnpm --filter @hana-id/api run gen <env>
+   corepack pnpm --dir apps/api exec wrangler deploy
+   corepack pnpm --filter @hana-id/admin gen <env>
+   corepack pnpm --dir apps/admin exec wrangler deploy
+   ```
+
+4. **Check it.** Open `<admin.origin>/security/monitoring`: the Watchdog table shows the last run and the heartbeat,
+   "Contract governance" the pause state, the pending key changes and the updater keys against the signer's keys.
+   A `watchdog_unauthorized` means the two copies of the token differ (redo step 2 from the same file);
+   `watchdog_unconfigured` means `WATCHDOG_URL` or the secret is missing here, or the watchdog has no token.
+5. **sandbox-dev: acknowledge alert #11.** The watchdog's critical alert #11 on sandbox-dev is the expected
+   `governance_change` of the updater-key change (the planned rotation, not an attack). It re-pages every 15 minutes
+   until acknowledged. Once the view is up: Security & monitoring → Open alerts → #11 → **Acknowledge** (read the
+   confirmation: it stops the re-sends only). The row then shows `acknowledged … via portal` with your identity, the
+   "not acknowledged" finding goes, and the pages stop at the next 15-minute mark. Check the updater key it reported
+   against "Updater keys against the signer's access keys" first: it must be the key `deploy-contract` installed
+   (`.secrets/sandbox-dev/keys-updater.json`'s public key, `governance:status` lists it as tracked). This is
+   `docs/mainnet-readiness.md` item 5.9, the first real test of the ack flow.
+
+What the view's sources answer when they fail (each fails on its own: a watchdog that doesn't answer leaves the
+governance part standing, and the other way round; Worker log line `watchdog_call` with the code):
+
+| Code | Meaning | Action |
+|---|---|---|
+| `watchdog_unconfigured` | No `WATCHDOG_URL` var or no usable `WATCHDOG_STATUS_TOKEN` here (≥ 32 printable characters), or the watchdog answered 503 (no token of its own) | Steps 1–3; the watchdog's `secrets <env> check` |
+| `watchdog_unauthorized` | The watchdog refused the bearer: the copies differ | Step 2 from the same file |
+| `watchdog_timeout` | No full answer within 8 s (body included) | The watchdog's own account and logs; [watchdog-down](playbooks.md#watchdog-down) if `/status` is down too |
+| `watchdog_too_large` | An answer over its cap (`/status` 1 MiB, `/alerts` 2 MiB, `/actions` 512 KiB, an ack 64 KiB; D331) | A runaway alert's deliveries: check `/alerts` with the curl in the playbooks |
+| `watchdog_bad_answer` | Not a JSON object, or a redirect (never followed: it would carry the bearer elsewhere) | `watchdog.url` must be the Worker's own origin |
+| `watchdog_unavailable` | Network error or a 5xx | Cloudflare status of the watchdog's account |
+| `near_unavailable` (governance) | The API couldn't read the contract's views | NEAR RPC status; [near-rpc-outage](playbooks.md#near-rpc-outage) |
+
+- **Rotating the token**: change it in `.secrets/<env>/watchdog-secrets.json`, upload it to the watchdog (its own
+  account: `wrangler secret put WATCHDOG_STATUS_TOKEN` in `apps/watchdog`) and to the admin (step 2). In between the
+  view answers `watchdog_unauthorized`; the watchdog's alerts are unaffected.
+- **Playbooks** are the `@hana-id/playbooks` package bundled into the admin Worker: an edit there ships with the next
+  admin deploy (and `gen-docs` for `docs/playbooks.md`). Their commands are shown verbatim, placeholders unfilled.
+
+### Pending upgrades page
+
+`/security/upgrades` in the admin, and (from C10) the partner console's page on `GET
+/api/orgs/:org/governance/pending-upgrades`, show what the contract owner has queued: an upgrade (code hash, its
+source commit, reproducible-build command and the diff to the release before it), an owner transfer, a withdrawal,
+delay decreases and console-audience additions, each with its countdown (D86, D333). Both read the same view, built in
+the API from the governance snapshot.
+
+The commit, build command and diff come from the release registry `CONTRACT_RELEASES` in
+`packages/console-core/src/governance.ts`; a code hash that isn't listed there shows as **not a published release**.
+Testnet upgrades are `non-reproducible-wasm` builds, so on sandbox-dev every pending upgrade shows that way, which is
+accurate. Before the owner proposes an upgrade on an env whose builds are reproducible (mainnet, D86 Q14):
+
+1. Build it (`cd contracts/hana-signer && cargo near build reproducible-wasm`) and note the code hash
+   `deploy-contract <env> --upgrade` prints in its plan.
+2. Add the release to `CONTRACT_RELEASES` (oldest first: `codeHash`, `version` from `Cargo.toml`, the full source
+   `commit`, the reproducible `buildCommand`, `previousCommit` = the release before it); its test checks the shape and
+   the chain of commits.
+3. Merge and deploy the API (it serves the view), then propose. Partners then see the release beside the hash for the
+   whole `governance_delay_ms`.
 
 ## Files Worker and logos (`apps/files`, batch C11, milestone M5)
 
@@ -1379,12 +1480,12 @@ curl -s <apiUrl>/v1/governance | jq '.signerAccessKeys[] | select(.updaterPermis
 curl -s <apiUrl>/v1/governance | jq '.updater'                                                # the cron's last run
 ```
 
-**Hand-off to batch C.** The admin portal's "Security & monitoring" view and the admin and partner consoles'
-pending-upgrades page (D83, D86) don't exist yet. Their contract-side items read this endpoint (one request, already
-normalised, with countdown inputs and JWKS verdicts), or the same views through the admin Worker's own RPC
-(`docs/contract-interface.md` "Monitoring hand-off"); the portal should warn when a snapshot is older than
-`readAtMs + 20 s` and must not treat the API as independent (it runs on Hana's main Cloudflare account). The council's
-open proposals and the full list of sources are in [Governance status for the admin portal](#governance-status-for-the-admin-portal-batch-c-hand-off).
+**Read by batch C14.** The admin portal's "Security & monitoring" view and the admin and partner consoles'
+pending-upgrades page (D83, D86) read this snapshot over the service binding (`AdminRpc.governance`,
+`AdminRpc.pendingUpgrades`, `ConsoleRpc.pendingUpgrades`: one read serves the endpoint and the RPCs for 10 s), not
+over HTTP, and show `readAtMs` beside every countdown. The API isn't independent (it runs on Hana's main Cloudflare
+account): the watchdog is the independent party, and its own status sits beside the snapshot in the same view. The
+council's open proposals and the full list of sources are in [Governance status for the admin portal](#governance-status-for-the-admin-portal-batch-c-hand-off).
 The watchdog's heartbeat, verdicts, actions log, alerts and acks come only from the watchdog service's `GET /status`,
 `/alerts`, `/actions` and `POST /alerts/:id/ack` ([Watchdog service](#watchdog-service-appswatchdog)). Nothing here
 alerts: alerts are the watchdog's (D85).
@@ -2039,7 +2140,8 @@ below logged in to the watchdog's account (`wrangler login` there, or `CLOUDFLAR
    first run, `heartbeat.ok`, every channel `configured`. The first run alerts critical on any active kid not in
    Google's JWKS (no pause) and on anything already pending: acknowledge after checking. Then send a test critical
    page to both founders (the forced-rotation drill of the migration plan does this for real).
-7. The admin Worker (batch C) gets the same `WATCHDOG_STATUS_TOKEN` and the watchdog's URL.
+7. The admin Worker gets the same `WATCHDOG_STATUS_TOKEN` (an admin secret) and the watchdog's URL (`watchdog.url`
+   in the manifest): "Admin Worker" → [Security & monitoring](#security--monitoring-batch-c14), steps 1–3.
 
 **Cloudflare Access** (before any staff call): one Access application for `{url}/v1/email/admin/*` (`{url}` the issuer's, D230), policy = the
 staff on `emailIssuer.access.staffEmails`, its AUD tag in `emailIssuer.access.aud`. In the application's settings set
@@ -2052,7 +2154,8 @@ test Slack channel and ntfy topic: local runs send real alerts and, with a real 
 transactions.
 
 Rotating its secrets: `WATCHDOG_KEY`: add a new function-call key (as in step 3), put it in the file, `wrangler secret
-put WATCHDOG_KEY`, then delete the old key on chain. `WATCHDOG_STATUS_TOKEN`: change it on both Workers. The others:
+put WATCHDOG_KEY`, then delete the old key on chain. `WATCHDOG_STATUS_TOKEN`: change it on both Workers (the admin's:
+"Security & monitoring" step 2; until both match the portal shows `watchdog_unauthorized`). The others:
 replace in the file and `wrangler secret put`.
 
 ### Email login: pins, link alarms, unrecorded wallets
@@ -2122,7 +2225,8 @@ them as `IDENTITY_PINS` and `identityToken.iss` as `IDENTITY_ISS`; an env withou
 ### Watchdog alerts (runbook)
 
 Critical alerts page both founders (paging app + Slack + email) and are re-sent every 15 min until someone
-acknowledges them in the admin portal (or in Pushover). Acknowledging stops only the re-sends. Every alert's text
+acknowledges them in the admin portal ("Security & monitoring" → Open alerts → Acknowledge, batch C14) or in
+Pushover. Acknowledging stops only the re-sends. Every alert's text
 names its id, its kind and its playbook (`Playbook: <id>`); the full details are in `GET /alerts`, and `GET /status`
 `alert_kinds` gives each kind's `playbook`.
 

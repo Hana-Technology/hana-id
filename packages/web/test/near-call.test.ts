@@ -1,8 +1,10 @@
 // One NEAR RPC read with the optional rpcFallback (src/near-call.ts; docs/batch-b-spec.md Q9): the fallback only when
 // the primary fails, each answer whole from one endpoint, the next read back at the primary.
+import { identityKeyHex } from '@hana-id/core';
 import { describe, expect, it } from 'vitest';
 import { nearReader } from '../src/auth/near-rpc.ts';
 import { isPendingTxError, nearCall, nearEndpoints } from '../src/near-call.ts';
+import { confirmPath } from '../src/path-check.ts';
 import { NearView } from '../src/vault/near.ts';
 
 const PRIMARY = 'https://rpc.primary.test';
@@ -135,4 +137,44 @@ describe('independent reads (D263): each provider alone, never one through the o
     login.abort();
     expect(await Promise.all(reads)).toEqual(['ended', 'ended']);
   });
+});
+
+describe('D263 confirmation over the real readers: the two providers are read at the same time', () => {
+  const E_SUB = `e1.${'Q'.repeat(43)}`;
+  const G = { provider: 'google', sub: '110248495921238986420' };
+  const viaView = { key: identityKeyHex('s1', G.provider, G.sub), status: 'member' as const, opened: false, root: { provider: 'email', sub: E_SUB }, effectiveAtMs: 1, accountEpoch: 1 };
+
+  /** Providers that answer get_identity truly for a Google member of an email wallet after `delay[url]` ms, logged. */
+  function slowChain(delay: Record<string, number>) {
+    const log: { url: string; start: number; end: number }[] = [];
+    const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const start = performance.now();
+      await new Promise((r) => setTimeout(r, delay[url] ?? 0));
+      const params = (JSON.parse(String(init?.body)) as { params: { args_base64: string } }).params;
+      const a = JSON.parse(atob(params.args_base64)) as { scope_id: string; provider: string; sub: string };
+      const key = identityKeyHex(a.scope_id, a.provider, a.sub);
+      const v = a.provider === 'google' ? { key, status: 'member', opened: false, root: { provider: 'email', sub: E_SUB }, effective_at_ms: 1, account_epoch: 1 } : { key, status: 'own', opened: true, account_epoch: 1 };
+      log.push({ url, start, end: performance.now() });
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: 'x', result: { result: Array.from(new TextEncoder().encode(JSON.stringify(v))) } }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+    return { log, fetchFn };
+  }
+
+  for (const who of ['the export window (auth/near-rpc.ts)', 'the vault (vault/near.ts)'] as const) {
+    it(`${who}: the slow second provider's reads overlap the primary's, in one round`, async () => {
+      const chain = slowChain({ [PRIMARY]: 40, [FALLBACK]: 200 });
+      const views = who.startsWith('the export') ? nearReader(ENDS, chain.fetchFn).independent('signer.testnet') : new NearView(ENDS, 'signer.testnet', 'relayer.testnet', chain.fetchFn).independent();
+      const started = performance.now();
+      await confirmPath({ scopeId: 's1', via: G, viaView, path: { provider: 'email', sub: E_SUB }, views });
+      const elapsed = performance.now() - started;
+      expect(chain.log.filter((l) => l.url === PRIMARY)).toHaveLength(2);
+      expect(chain.log.filter((l) => l.url === FALLBACK)).toHaveLength(2);
+      // Every request started before the first one answered: the primary's and the second provider's overlap.
+      const firstEnd = Math.min(...chain.log.map((l) => l.end));
+      for (const l of chain.log) expect(l.start).toBeLessThan(firstEnd);
+      // One round of the slow provider (200 ms), not two, nor the primary's added on top.
+      expect(elapsed).toBeLessThan(200 + 150);
+    });
+  }
 });

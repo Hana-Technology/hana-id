@@ -412,10 +412,14 @@ export class FollowChannel {
     return slot;
   }
 
-  /** The popup's answer to the notice in `slot` (read from slot + 1), or slot 1's access token for `slot` 0. */
-  async answer(slot: number, signal: AbortSignal): Promise<RelayPayload> {
+  /**
+   * The popup's answer to the notice in `slot` (read from slot + 1), or slot 1's access token for `slot` 0. It ends
+   * when `signal` aborts (the login's deadline, a cancel, a newer login, the banners' limit) with `stopped()`'s error,
+   * the task's own (`login_timeout`, `login_cancelled`), when it has one.
+   */
+  async answer(slot: number, signal: AbortSignal, stopped: () => VaultError | null = () => null): Promise<RelayPayload> {
     const { id, readKey } = followSlot(this.followKey, slot + 1);
-    return readSlot(this.api, this.timers, this.relayKey, id, readKey, signal, () => (this.closed ? fail('login_cancelled', 'The sign-in ended') : null));
+    return readSlot(this.api, this.timers, this.relayKey, id, readKey, signal, () => stopped() ?? (this.closed ? fail('login_cancelled', 'The sign-in ended') : null));
   }
 
   close(): void {
@@ -425,7 +429,12 @@ export class FollowChannel {
   }
 }
 
-/** Long-polls one relay slot until it holds a value; returns the decrypted payload. */
+/**
+ * Long-polls one relay slot until it holds a value; returns the decrypted payload. Stops with `check()`'s error, and
+ * whenever `signal` has aborted (then with `check()`'s error if it has one, else `login_cancelled`): an aborted fetch
+ * rejects at once and `sleep` resolves at once, so a loop that went on after the abort would spin on microtasks and
+ * freeze the vault frame, and every same-site page in its renderer process with it.
+ */
 async function readSlot(
   api: VaultApi,
   timers: Timers,
@@ -435,15 +444,16 @@ async function readSlot(
   signal: AbortSignal,
   check: () => VaultError | null,
 ): Promise<RelayPayload & { _heldMs?: number }> {
+  const stopped = (): VaultError | null => check() ?? (signal.aborted ? fail('login_cancelled', 'The sign-in ended') : null);
   let backoff = 500;
   for (;;) {
-    const stop = check();
+    const stop = stopped();
     if (stop) throw stop;
     let read;
     try {
       read = await api.relayRead(relayId, readKey, RELAY_WAIT_S, signal);
     } catch (e) {
-      const again = check();
+      const again = stopped();
       if (again) throw again;
       if (e instanceof ApiError && (e.status === 403 || e.status === 410)) throw fail('token_invalid', 'The sign-in answer is gone');
       // Rate limit, network or 5xx: try again until the pending limit.
@@ -451,7 +461,7 @@ async function readSlot(
       backoff = Math.min(backoff * 2, 5_000);
       continue;
     }
-    const after = check();
+    const after = stopped();
     if (after) throw after;
     if (read.kind === 'empty') {
       backoff = 500;
@@ -875,7 +885,7 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
     /** Slot 1's (or a consent answer's) Google error instead of an access token. */
     let accessError: string | null = null;
     if (!accessToken && first.access === 'follow') {
-      const a = await follow.answer(0, this.abortCtl.signal);
+      const a = await follow.answer(0, this.abortCtl.signal, () => this.abortError);
       this.check();
       if ('accessToken' in a && !('idToken' in a)) accessToken = a.accessToken;
       else if ('error' in a) accessError = a.error;
@@ -902,7 +912,7 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
       if (round > EMAIL_CONSENT_ROUNDS) throw fail('login_cancelled', 'Google’s email address is needed to open a new wallet with Google here', { reason });
       // D264: the popup explains why the address is needed and offers email instead, or Google's screen again.
       const slot = await follow.notice({ t: 'email_consent', reason: problem, loginHint: google.ref.sub }, true);
-      const a = await follow.answer(slot, this.abortCtl.signal);
+      const a = await follow.answer(slot, this.abortCtl.signal, () => this.abortError);
       this.check();
       if ('accessToken' in a && !('idToken' in a)) {
         accessToken = a.accessToken;
@@ -932,7 +942,7 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
       // Not hosted (a code first), or a case A that can't link: the popup's screen, then its answer.
       const notice: FollowNotice = match.challenge && match.linkable ? { t: 'link_code', ...match.challenge } : { t: 'use_email', reason: match.linkable ? 'unavailable' : 'provider_taken' };
       const slot = await follow.notice(notice, true);
-      const answer = await follow.answer(slot, this.abortCtl.signal);
+      const answer = await follow.answer(slot, this.abortCtl.signal, () => this.abortError);
       this.check();
       if ('error' in answer) throw this.emailAnswerError(answer.error);
       if (!isRelayToken(answer) || !isJsonFormToken(answer.idToken)) throw fail('token_invalid', 'The sign-in answer was refused');
@@ -1462,7 +1472,7 @@ export class PendingLink extends PopupTask<MadeLink> {
             };
       const follow = this.follow as FollowChannel;
       const slot = await follow.notice({ t: 'prove', why: 'link_account', prove: rootProve, provider: root.provider }, true);
-      const answer = await follow.answer(slot, this.abortCtl.signal);
+      const answer = await follow.answer(slot, this.abortCtl.signal, () => this.abortError);
       this.check();
       if ('error' in answer) throw fail('login_cancelled', 'The sign-in was cancelled');
       if (!isRelayToken(answer) || answer.as !== 'proof') throw fail('token_invalid', 'The sign-in answer was refused');

@@ -3,7 +3,9 @@
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
 known open issues. Last verified against code: 2026-11-04 for a cancel on Google's screen (branch
 `fix/google-cancel-back-to-chooser`: the parked entry, fresh OAuth states and the close's `google_cancelled` in the
-linking invariants, D341); 2026-11-04 for partner sign-in (branch `feat/batch-c-9`, merged with
+linking invariants, D341); 2026-11-04 for the wallet directory (branch `feat/wallet-directory`:
+what partners and staff see in Parties, the API's D1 and `USER_ID_KEY` in the compromise table, "Wallet directory" in
+the API's invariants, the wallet record's safety and its raw-signing residual (m); D310–D317); 2026-11-04 for partner sign-in (branch `feat/batch-c-9`, merged with
 `develop` @ a243d6b: "Console Worker"'s route, sign-in, sessions and partner views, the flow cookies, handoff codes,
 sign-in tokens and `CONSOLE_GOOGLE_CLIENT_SECRET` in the inventory, D290–D297); 2026-11-04 for the files Worker and logos (branch `feat/batch-c-11`: the
 logo upload's checks and the CSRF exception in "Console Worker", "Files Worker (logos)", the auth pages' `img-src`;
@@ -85,7 +87,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | Google | Signing ID tokens only for the real account | Mint a token for any `sub`, client and nonce → open a session and derive that user's key in any scope | Nothing beyond what a token gives; it never sees keys |
 | Hana operator (owner, signer, relayer accounts; Cloudflare account) | Running the contract, API and pages honestly | Today, total control: post an issuer key (owner or `KEYS_UPDATER_KEY`) and mint tokens; upgrade the contract (signer full-access key, no lock); serve modified vault/auth bundles. Suspend apps, stop relaying, list or remove shared clients | Move a scope's registered clients or owners, or block derivation for a scope with its own client, **without** those powers above. Read keys in normal operation |
 | API Worker logic and D1 (not the pages, not the secrets) | Gating and relaying; holding shares | Deny service; with `VAULT_KEK` plus a device dump, get PRK; point a vault at another scope of the same user only together with a Google client the registry maps to that scope (the vault's login check, D56, refuses any other combination); set or widen `raw_sign`/policies (the user still approves raw requests and must accept a new `policyId`); make the vault page frameable by another origin (D1 origins) | Substitute the signer, path or CKD key (pinned in the bundles, path computed in the vault); read or swap the relayed token (end-to-end encrypted); sign without the vault |
-| Partner (app owner) | Its own app config and, in own-client mode, its Google client | Own-client mode: obtain tokens with any nonce for its client and derive its own users' keys in its scope (inherent: Hana can't see Google client settings). Set an auto-approve policy (delayed; users must accept it) | Anything in another scope. In shared mode: derive keys (no token with a nonce of its choosing) |
+| Partner (app owner) | Its own app config and, in own-client mode, its Google client | Own-client mode: obtain tokens with any nonce for its client and derive its own users' keys in its scope (inherent: Hana can't see Google client settings). Set an auto-approve policy (delayed; users must accept it). Through its console (C10, `ConsoleRpc.listUsers` / `getUser`, D315): its own scopes' users, their user ids and Support IDs, created and last seen, connected account kinds and wallet addresses | Anything in another scope. In shared mode: derive keys (no token with a nonce of its choosing). Read a user's sub, identity key or email (never selected for it; a search by sub refused), or another org's users (`not_found`, as no user) |
 | Partner page (incl. XSS, malicious dependency) | Nothing | Start a login (visible popup), read addresses, queue signature requests, drive an unlocked vault within its idle/absolute limits, get requests signed that match an accepted auto-approve policy; navigate, close or focus the approval popup it opened (D99, "Approval popup opened by the partner page") | Read keys, tokens, nonces; get any other signature without a guarded Approve in a Hana popup |
 | User's browser and device | Running Hana's pages; keeping the profile private | Malware or an extension in all frames: everything the user can do, including reading an exported key (on screen, or from the clipboard after Copy key, D268). A disk dump with a live share: unlock and get PRK | After logout, idle or absolute expiry or revoke: nothing (an open export window erases its key then too, and at most 5 min after deriving it, D111). A derive (the persisted session is used up) |
 | NEAR RPC (manifest `rpc`, and `rpcFallback` when set) | Liveness, honest views | Fail derives, report wrong counters or a wrong registry answer (a refused login), delay. For most reads the fallback is asked only when the primary fails, so a lying primary is not outvoted there. One provider alone could also name another identity's path (a forged "member of account R" view) and forge a CKD answer for it when it knows R's secret (R's owner), which the pairing check would pass: so every path that isn't the signed-in identity's own is read on `rpc` and `rpcFallback` separately and must agree, or the login (or export) is refused (D263) | Forge a CKD result for the user's own path (pairing check against the pinned key, which was read from ≥ 3 independent providers that all agreed at one final block, D100); steer a login to another identity's path unless both providers lie the same way |
@@ -118,7 +120,8 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | The KMS signer's AWS access key (`IDENTITY_AWS_*`, or the API Worker itself on a KMS env; none yet) | Have KMS sign forged identity tokens for any user of any app while the access key is active. The key itself can't be read or exported | Only `kms:Sign` on the active key with `ECDSA_SHA_256` and `DIGEST` (IAM policy; the key policy refuses `Sign` by any other principal, grants to everyone, key changes to all but the break-glass role). The standby isn't in the IAM policy (which also denies `Sign` on any other key), so it stays clean for the switch (D219). Only long-term credentials sign: the key policy denies `Sign` to session credentials, because the holder can always call `GetSessionToken` (no policy can deny it), its sessions keep the user's live permissions, and deactivating the access key isn't proven to end them (confirm on staging). Every signature is in CloudTrail, matched by `userIdentity.arn` (the planned reconciliation and alarms find unexplained ones; `GetSessionToken` by the signer user is an alarm). Recovery (planned playbook `identity-kms-signer-compromised`): deactivate the access key, check the `NoSessionCredentials` deny is on every key, switch to the standby, unpublish the suspect key, tell partners with CloudTrail's window and count |
 | `IDENTITY_SUB_KEY` | Map partners' `sub`s back to on-chain paths, so to the Google `sub` (privacy) | Funds and keys unaffected. Never rotated: a new key changes every user's `sub` at every partner (a `u2_` scheme with a 90-day `legacy_sub` window if it ever leaks) |
 | The ledger writer's credential (`usage_writer`: the Hyperdrive config, `.secrets/<env>/neon-usage-writer.url`) | Insert made-up usage events (any org, app, uid) and identity counts; call the report functions (C12) for any org | No read or change of any table (functions only, D141); events can't be altered or deleted, so real ones stay. Billed gas comes from settlement, which reads each `near_tx` at FINAL from chain (C12): a made-up hash never settles, and C12 must also refuse a real transaction that isn't the event's own (a `near_tx` already in the ledger, or a transaction whose signer key and nonce differ from the event's `relayer_pk` and `relayer_nonce`; `docs/batch-c-build-plan.md` C12). Rotate with `usage-setup roles` after deleting the role files, then update the Hyperdrive config |
-| `USER_ID_KEY` | Link a known Google `sub` to its ledger uid in a scope (and so its activity); with the ledger, re-identify users | No funds, keys or logins. Never rotated within a contract term (a new key makes every user new in MAU); API only, never logged |
+| `USER_ID_KEY` | Link a known Google `sub` to its ledger uid in a scope (and so its activity); with the ledger, re-identify users; compute any user's wallet-directory user id and Support ID (D312), which partners see | No funds, keys or logins. Never rotated within a contract term (a new key makes every user new in MAU and gives every user a new user id); API only, never logged |
+| The API's D1 read (the wallet directory, migration 0011; a Cloudflare account member or token that can read it) | Every recorded user's subs (Google and email), joined to their wallet addresses and so to their on-chain balances and history, per scope; with the issuer's directory, to their email (D269's cost, D310) | No key, token or signature is stored; a write could only mislead staff and partners' views, never move funds or change a login. Staff read it through `AdminRpc` and the CLI (statements off the argv, D316) |
 | One identity token (a partner's log, transit) | Act as that user at that partner's backend until `exp` (≤ 1 h) | That partner only (`aud`); never at Hana or on chain |
 | A session key (with its vault record) | Also: mint identity tokens while the session is live | The same session's limits, its app only; a logout or revoke stops new tokens in every app of the scope (the share check, D178: a share is kept 24 h after it dies), the 1 h `exp` bounds the old ones |
 
@@ -274,6 +277,25 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   D25, D96, checked by `apps/api/test/session-flags.test.ts` and `owner-actions.test.ts`), scope check (`checkClientScope`, `handlers.ts:384`), `session_key_in_use`,
   session signature, session-use precheck mirroring the contract's counter and `max_uses` rules (`session-use.ts:29`,
   D20), BLS key shape. The scope is always the app's D1 `scope_id`, never the client's.
+- **Wallet directory** (D310–D317, branch `feat/wallet-directory`, `src/directory/`, migration 0011). An address is
+  stored for a user only on a **wallet record**: a signature by that address's own key over `"hana-id/wallet-record/v1"
+  ‖ 0x00 ‖ env ‖ signer ‖ app ‖ scope ‖ path ‖ chain ‖ address ‖ session_pk ‖ time` (core `wallet-record.ts`), plus a
+  live session on chain in the app's scope on **exactly that path** (`get_session`), from the vault origin, within
+  ±5 min. So a caller can't attach an address to a user whose key it doesn't hold, nor attach its own address to
+  another user's path (it holds no session there). A record can never be another signature (D311, each point tested
+  in `packages/core/test/wallet-record.test.ts`): Stellar transactions, Soroban auth entries and SEP-53 sign 32-byte
+  hashes and Ed25519 binds the exact, longer, message; EVM transactions, EIP-191 and EIP-712 sign keccak256 digests,
+  the record a sha256 one; the vault refuses raw Stellar bytes starting `hana-id` (D179) and its own session's record
+  digest as a raw EVM request; the domain is no other Hana message's. Open issue (m) is what an approved raw EVM
+  signature still allows. The vault sends only addresses and signatures, in the background, once, with a 15 s abort
+  (D317); the endpoint and the identity syncs never fail or slow a login (`apps/api/test/wallet-directory.test.ts`,
+  `packages/web/test/vault/wallet-record.test.ts`). Identities come from the API's own chain reads after its relays
+  (D314), never from a request's word. **Who sees what** (D310 point 5, D315): staff (`AdminRpc.listUsers` /
+  `getUser` / `findUsers`, `admin user:*`) see subs, identity keys, roles and wallets, and the email through D275's
+  `DirectoryRpc` (not built); partners (`ConsoleRpc.listUsers` / `getUser`) see only their own org's scopes (`scopes.
+  org_id` in every query), with user ids, Support IDs, times, account kinds and addresses: the query never selects a
+  sub or an identity key, a sub search is refused, and another org's user is `not_found` (tested by grepping the
+  answers for the sub, the key and `@`). Logs carry the app, endpoint and a code only.
 - **Usage capture fails open and carries no PII** (batch C4, `src/usage/`). The ledger event is built at the response
   and written after it (`waitUntil`); a missing binding, a refusing, slow or hanging server, a refused event or a
   missing uid key never changes a status, body or header or delays an answer (`apps/api/test/usage.test.ts`). A lost
@@ -1135,7 +1157,7 @@ findings are tracked with their own fixes.
 
 Status: **fixed** (a), (b), (c), (d), (f); **fixed on sandbox-dev** (e) (the governance contract and watchdog run there
 since 2026-10-30; mainnet ships with them once its delay, council and watchdog account are set up: D80, D81, D86);
-**accepted** (k), and the residual risks named under (b)–(d) and
+**accepted** (k), (m), and the residual risks named under (b)–(d) and
 "Auto-approve policies"; **fixed for the CLI** (i); **open** (g), (h), (j) (sandbox-dev only; production envs
 need D38's two domains), (l) (pre-mainnet: the identity token's KMS signer; the JWKS pin check is built as detection only, D210). The 2026-10-29 security sweep's items in the API, tooling and CI: "Security sweep
 2026-10-29" below.
@@ -1312,6 +1334,16 @@ with the partner page; there, short unlock windows and zeroing PRK are the mitig
 (2026-10-28, `docs/decisions.md` D35): `contextString` is `''` for those kinds (`approval.ts` header,
 `approvalContextString`). Typed data carries its chain in its domain; messages and raw requests name no network, and
 the approve popup now says "This signature isn't tied to one network." on them.
+
+**(m) The wallet record and an approved raw EVM signature. Accepted** (D311, as D179's residual). A raw EVM request is
+any 32-byte digest, so a user who approves a raw EVM signature (the popup's red "can authorize any transaction"
+warning) over a digest an attacker computed from the attacker's own session and path lets the attacker list that
+user's EVM address under the attacker's own user in the wallet directory. It can't be prevented by any ECDSA proof
+(the vault refuses its own session's record digest, the only one it can know); the approval already gives the
+attacker the wallet; raw signing is off by default, a guarded change, never auto-approved and refused for test apps.
+The false row is only under the attacker's own user, never another user's; `sharedWith` and the CLI's warning show an
+address listed under more than one user, and neither staff nor partners may treat a listed address as proof of who
+owns it. A BIP-340 proof with the same key was rejected (unproven joint security of ECDSA and Schnorr on one key).
 
 **(l) Identity token: testnet signing key. Open (pre-mainnet).** Build steps 1–4 sign with
 a Worker-secret P-256 key (`IDENTITY_SIGNING_KEY`): anyone who can read the API Worker's secrets once can forge any

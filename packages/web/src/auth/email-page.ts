@@ -732,6 +732,8 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
    * first request, with the account chooser.
    */
   function restartGoogle(o: { back: 'chooser' | 'case_b'; offer?: { linkTicket: string; emailSub: string } | null; caseB?: { linkTicket: string; emailSub: string } | null }): void {
+    // Past the login's limit the vault has stopped waiting: no new attempt (the page says the sign-in took too long).
+    if (pastDeadline()) return;
     const clientId = ctx.clientId;
     const taken = takeKeys();
     if (!taken || !clientId) {
@@ -813,6 +815,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
 
   /** D341: the chooser's email: the login's entry back under its slot (as /login stores it), then the email step here. */
   function chooseEmail(): void {
+    if (pastDeadline()) return;
     const taken = takeKeys();
     if (!taken) {
       fatal('Sign-in stopped', 'This sign-in has expired or was already used. Start again from the app.', 'login_timeout');

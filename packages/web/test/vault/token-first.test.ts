@@ -7,7 +7,7 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { GoogleEmailFlow } from '../../src/auth/google.ts';
 import type { HanaEnv } from '../../src/hana-env.ts';
 import { RECORD_TIMEOUT_MS } from '../../src/vault/login.ts';
-import { Browser, EMAIL_ENV, ENV, type EmailIssuer, type Google, type LoginRun, SCOPE, SUB, type Tab, apiError, emailIssuer, enableEmail, google, popupHello, readyTab, tokenClaims } from './harness.ts';
+import { Browser, EMAIL_ENV, ENV, type EmailIssuer, FakeWindow, type Google, type LoginRun, SCOPE, SUB, type Tab, apiError, emailIssuer, enableEmail, google, popupHello, readyTab, tokenClaims } from './harness.ts';
 
 let g: Google;
 let issuer: EmailIssuer;
@@ -357,6 +357,46 @@ describe('a cancel on Google’s screen (D341): the vault keeps waiting; a close
         await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { error });
         expect((await pending).error, error).toMatchObject({ code: 'google_error', data: { error } });
       }
+    });
+  }
+
+  for (const [label, setup] of kinds) {
+    it(`${label}: after a cancel, the limit ends the wait cleanly (its relay reads stop), and a late google_cancelled changes nothing`, async () => {
+      const b = new Browser();
+      setup(b);
+      const t = await tab(b);
+      const pending = t.request('hana_login');
+      const run = await popupHello(t);
+      t.browser.timers.advance(5 * 60_000);
+      expect((await pending).error).toMatchObject({ code: 'login_timeout', data: { stage: 'pending' } });
+      // The abort-aware read (fix/abandoned-login-freeze) is over: no more relay polls after the end.
+      const reads = () => b.backend.calls.filter((c) => c.path.startsWith('/v1/login-relay/') && c.method !== 'POST').length;
+      await new Promise((r) => setTimeout(r, 30));
+      const after = reads();
+      // The popup's close write after the login ended lands in a slot nobody reads.
+      await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { error: 'google_cancelled' });
+      await new Promise((r) => setTimeout(r, 60));
+      expect(reads()).toBe(after);
+      expect(b.backend.relay.get(run.params.relayId as string)).not.toBe('consumed');
+    });
+
+    it(`${label}: after a cancel, a newer login ends the first (login_cancelled) and signs in; the old popup's close write is ignored`, async () => {
+      const b = new Browser();
+      setup(b);
+      const t = await tab(b);
+      const first = t.request('hana_login');
+      const run1 = await popupHello(t);
+      const second = t.request('hana_login');
+      expect((await first).error?.code).toBe('login_cancelled');
+      const run2 = await popupHello(t, new FakeWindow('p2', 'p2', '', t.parent));
+      expect(run2.params.relayId).not.toBe(run1.params.relayId);
+      // The first popup, still on its chooser after the cancel, is closed now.
+      await b.backend.writeRelay(run1.params.relayId as string, run1.params.relayKey as Uint8Array, { error: 'google_cancelled' });
+      await new Promise((r) => setTimeout(r, 60));
+      expect(b.backend.relay.get(run1.params.relayId as string)).not.toBe('consumed');
+      await tokenFirstAnswer(t, run2);
+      expect((await second).error).toBeUndefined();
+      expect(b.backend.count('/v1/login')).toBe(1);
     });
   }
 

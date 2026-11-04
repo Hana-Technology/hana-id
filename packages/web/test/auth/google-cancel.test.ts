@@ -10,7 +10,7 @@ import type { AuthApi } from '../../src/auth/api.ts';
 import { type CallbackOutcome, runCallbackPage } from '../../src/auth/callback-page.ts';
 import type { EmailApi } from '../../src/auth/email-api.ts';
 import { GOOGLE_CANCELLED_TEXT, startEmailPage } from '../../src/auth/email-page.ts';
-import { EMAIL_ENTRY_PREFIX, storeEmailContext } from '../../src/auth/email-storage.ts';
+import { EMAIL_ENTRY_PREFIX, EMAIL_STEP_LIMIT_MS, storeEmailContext } from '../../src/auth/email-storage.ts';
 import { type AccessTokenSub, GOOGLE_AUTH_URL, GOOGLE_CANCELLED_RELAY_ERROR } from '../../src/auth/google.ts';
 import { EMAIL_PATH } from '../../src/auth/login-page.ts';
 import { type FollowEntry, LOGIN_ENTRY_PREFIX, storeLoginEntry } from '../../src/auth/login-storage.ts';
@@ -117,7 +117,7 @@ function callback(hash: string, a = api(), ti = tokenInfo()): { win: FakeWindow;
 }
 
 /** /login/email for the login's slot, as the callback navigates to it. */
-function emailPage(l: Login, a = api(), issuer: Partial<Record<keyof EmailApi, unknown>> = {}) {
+function emailPage(l: Login, a = api(), issuer: Partial<Record<keyof EmailApi, unknown>> = {}, now: () => number = () => NOW) {
   const win = new FakeWindow(EMAIL_PATH, '', `#${l.relayId}`);
   const iss = {
     start: vi.fn(async () => ({ challengeId: CID, expiresAtMs: NOW + 600_000, resendAfterMs: NOW + 30_000 })),
@@ -126,7 +126,7 @@ function emailPage(l: Login, a = api(), issuer: Partial<Record<keyof EmailApi, u
     verify: vi.fn(async () => ({ kind: 'token', idToken: EMAIL_TOKEN, deviceTicket: null })),
     ...issuer,
   };
-  const page = startEmailPage({ win, env: EMAIL_ENV, issuer: iss as unknown as EmailApi, api: a, tickets: null, now: () => NOW, setTimeout: (fn, ms) => setTimeout(fn, Math.min(ms, 5)), clearTimeout: () => {} });
+  const page = startEmailPage({ win, env: EMAIL_ENV, issuer: iss as unknown as EmailApi, api: a, tickets: null, now, setTimeout: (fn, ms) => setTimeout(fn, Math.min(ms, 5)), clearTimeout: () => {} });
   return { win, page, a, iss };
 }
 
@@ -369,6 +369,24 @@ describe('/login/email after a cancel: the screen the Google step came from (D34
     // Only once.
     p.win.dispatch('pagehide');
     expect(p.a.writeRelay).toHaveBeenCalledTimes(1);
+  });
+
+  it('past the login’s limit (the vault has stopped waiting), the chooser starts nothing: Google or email says it took too long', async () => {
+    for (const button of ['continue-google', 'continue-email']) {
+      resetDom();
+      const l = login();
+      parked(l);
+      let clock = NOW;
+      const p = emailPage(l, api(), {}, () => clock);
+      await vi.waitFor(() => expect(p.page.stage).toBe('choosing'));
+      clock = NOW + EMAIL_STEP_LIMIT_MS;
+      click(button);
+      await vi.waitFor(() => expect(p.page.stage).toBe('error'));
+      expect(p.page.notice, button).toBe('login_timeout');
+      expect(p.win.location.assigned, button).toEqual([]);
+      expect(entryOf(l.relayId), button).toBeNull();
+      expect(p.a.writeRelay, button).not.toHaveBeenCalled();
+    }
   });
 
   it('a record-only login’s chooser offers Google only', async () => {

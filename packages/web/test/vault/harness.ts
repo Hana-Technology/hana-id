@@ -86,6 +86,9 @@ export function makeConfig(over: Partial<Omit<VaultConfig, 'settings'>> & { sett
   };
 }
 
+/** FakeBackend.abortedRelayReads: how many reads with an aborted signal it takes before it breaks such a loop. */
+export const ABORTED_READS_CAP = 100;
+
 // ---- timers ----
 
 /** Delays up to this run on the next real tick (polls, backoffs); longer ones only when the test advances the clock. */
@@ -283,11 +286,23 @@ export class FakeBackend {
    */
   googleRecord: (body: Record<string, unknown>) => Record<string, unknown> | Response | Promise<never> = () => ({ accepted: true });
   readonly recordCalls: Record<string, unknown>[] = [];
+  /**
+   * POST /v1/wallets/record (the wallet directory, D317): the test's answer (default `{recorded: true}`), a Response,
+   * or a promise that never settles (a hung API). The requests are in `calls`.
+   */
+  walletRecord: (body: Record<string, unknown>, signal?: AbortSignal) => Record<string, unknown> | Response | Promise<never> = () => ({ recorded: true });
   /** POSTs to the login relay (the vault's follow-up notices, the popup's answers in tests). */
   readonly relayWrites: string[] = [];
   private txSeq = 0;
   private mintSeq = 0;
   private readonly relayWaiters = new Set<() => void>();
+  /**
+   * Relay reads sent with a signal that was already aborted. A browser's fetch rejects those at once, without a
+   * request, so a poll loop that doesn't check its signal spins on microtasks and freezes the page; here the read
+   * rejects at once too, and after ABORTED_READS_CAP of them it answers 410 instead, so such a loop ends (as
+   * `token_invalid`) rather than hanging the test run.
+   */
+  abortedRelayReads = 0;
 
   count(path: string): number {
     return this.calls.filter((c) => c.path === path).length;
@@ -525,6 +540,11 @@ export class FakeBackend {
     if (call.path.startsWith('/v1/login-relay/')) {
       const relayId = call.path.slice('/v1/login-relay/'.length);
       const key = call.headers['x-hana-relay-key'];
+      if (signal?.aborted) {
+        this.abortedRelayReads += 1;
+        if (this.abortedRelayReads > ABORTED_READS_CAP) return apiError(410, 'relay_gone');
+        throw new DOMException('aborted', 'AbortError');
+      }
       if (!key || base64UrlEncode(new Uint8Array(await crypto.subtle.digest('SHA-256', base64UrlDecode(key)))) !== relayId) return apiError(403, 'relay_forbidden');
       for (let i = 0; i < 2 && !this.relay.has(relayId); i++) {
         await new Promise<void>((resolve) => {
@@ -547,6 +567,10 @@ export class FakeBackend {
       return json(200, { ...v, serverTimeMs: this.serverNow(), ...(this.relayHeldMs === null ? {} : { heldMs: this.relayHeldMs }) });
     }
     if (call.path === '/v1/identity/token') return this.identityToken(call);
+    if (call.path === '/v1/wallets/record') {
+      const r = await this.walletRecord(b, signal);
+      return r instanceof Response ? r : json(200, { ...r, requestId: 'rq' });
+    }
     if (call.path === '/v1/vault/shares') return this.createShare(call);
     if (call.path.startsWith('/v1/vault/')) return this.shareAction(call, call.path.slice('/v1/vault/'.length));
     void url;

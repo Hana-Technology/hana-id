@@ -344,21 +344,32 @@ export class RateLimiter extends DurableObject<Env> {
   }
 
   /**
-   * One code mail: a ticket's challenge from that ticket's own allowance; a grant's challenge free (its challenge is
-   * one, with at most 2 resends); any other within the code limits, then the reserve for requesters new today.
+   * One code mail: a ticket's challenge from that ticket's own allowance, and once that is used up within the code
+   * limits like any other (D345); a grant's challenge free (its challenge is one, with at most 2 resends); any other
+   * within the code limits, then the reserve for requesters new today.
    */
+  /** A ticket's own code allowance: per exact address (all its tickets) and per mailbox (all its `+tag`s). */
+  private ticketSendSlots(ref: Extract<OwnerRef, { kind: 'ticket' }>, now: number, lim: MailboxLimits): [Slot, Slot, { limit: string; retryAfterMs: number } | null] {
+    const t = this.slot(lim.ticketSends, now, `a:${ref.addrKey}:`);
+    const box = this.slot(lim.ticketSendsTotal, now);
+    // The untagged address is counted in the mailbox total but never blocked by it (other people's `+tag`s on a
+    // domain without sub-addressing could fill it).
+    return [t, box, this.firstFull(ref.untagged ? [t] : [t, box], now)];
+  }
+
+  private ticketSendsFull(ref: Extract<OwnerRef, { kind: 'ticket' }>, now: number, lim: MailboxLimits): boolean {
+    return this.ticketSendSlots(ref, now, lim)[2] !== null;
+  }
+
   private trySend(ip: string, ref: OwnerRef | null, now: number, lim: MailboxLimits): Reserved {
     const kind = this.ownerKind(ref);
     if (kind === 'grant') return { ok: true, reservation: { keys: [] }, owner: 'grant' };
     if (kind === 'ticket' && ref?.kind === 'ticket') {
       // Per exact address (all its tickets together) and per mailbox (all its `+tag`s together).
-      const t = this.slot(lim.ticketSends, now, `a:${ref.addrKey}:`);
-      const box = this.slot(lim.ticketSendsTotal, now);
-      // The untagged address is counted in the mailbox total but never blocked by it (other people's `+tag`s on a
-      // domain without sub-addressing could fill it).
-      const full = this.firstFull(ref.untagged ? [t] : [t, box], now);
-      if (full) return { ok: false, reason: 'codes', retryAfterMs: full.retryAfterMs };
-      return { ok: true, reservation: { keys: this.count([t, box]) }, owner: 'ticket' };
+      const [t, box, full] = this.ticketSendSlots(ref, now, lim);
+      if (!full) return { ok: true, reservation: { keys: this.count([t, box]) }, owner: 'ticket' };
+      // D345: the ticket's own allowance is used up (a resend; a start drops the proof in `admit`): the code limits
+      // below, as for any requester without a ticket.
     }
     const own = lim.ipCodes.map((l) => this.slot(l, now, `ip:${ip}:`));
     const shared = lim.codes.map((l) => this.slot(l, now));
@@ -390,6 +401,10 @@ export class RateLimiter extends DurableObject<Env> {
     // The untagged address and unlock grants count toward the mailbox total but are never blocked by it.
     const boxBlocks = owner?.kind === 'ticket' && !owner.untagged;
     if ((addrDay && addrDay.count >= addrDay.l.max) || (boxBlocks && boxDay && boxDay.count >= boxDay.l.max)) owner = null;
+    // D345: a ticket whose own code allowance is used up counts as nothing for a start that sends a code, so the start
+    // meets the code limits like any requester without a ticket (and no owner exemption from the lock, live, daily or
+    // domain caps): a returning device never gets less than a new one, and never more than its allowance as an owner.
+    if (send && owner?.kind === 'ticket' && this.ticketSendsFull(owner, now, lim)) owner = null;
     const ownerDay = owner ? [addrDay, boxDay].filter((x): x is Slot => x !== null) : [];
     const locked = this.lockedFor(ip, owner?.kind ?? null, now, lim);
     if (locked > 0) return { ok: false, reason: 'locked', retryAfterMs: locked };

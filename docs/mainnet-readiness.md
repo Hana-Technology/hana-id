@@ -3,7 +3,7 @@
 Everything that must be true before Hana ID runs on mainnet with real funds. This is a current-state doc for the
 two founders to track. Update a row in the same branch as the change that moves it (rule in `CLAUDE.md`).
 
-Last verified: 2026-11-04 for row 7.1h (branch `feat/spike-leg-e`: the spike's leg E, D270); 2026-11-04 for the "Not tracked as blockers" note (branch `docs/native-apps-spec`: the native apps spec on `develop`); 2026-11-03 for row 4.19 (branch `fix/8b-rereview`, the second NEAR provider, D263); 2026-11-03 for rows 7.1h and 7.1i (branch `feat/email-login-8b` review fixes, D263–D267); 2026-11-03 for
+Last verified: 2026-11-04 for row 6.8 (branch `fix/sessions-allow-list`: the claim allow-list always on, D271, D274); 2026-11-04 for row 7.1h (branch `feat/spike-leg-e`: the spike's leg E, D270); 2026-11-04 for the "Not tracked as blockers" note (branch `docs/native-apps-spec`: the native apps spec on `develop`); 2026-11-03 for row 4.19 (branch `fix/8b-rereview`, the second NEAR provider, D263); 2026-11-03 for rows 7.1h and 7.1i (branch `feat/email-login-8b` review fixes, D263–D267); 2026-11-03 for
 rows 7.1f and 7.1g (branch `feat/email-login-8b`, automatic linking, D254–D259); 2026-11-02
 before that (branch `feat/email-login-8a`, plain email login in the web, D245–D249);
 2026-11-02 for rows 7.1–7.1e (branch `feat/email-login-6`, the API's email login part and its reviews, D230–D234, D250–D252);
@@ -167,7 +167,7 @@ These have the longest lead time, or other rows wait on them.
 | 6.5 | Deferred sweep findings (APIW-2/5/6/7/8/9, APIV-1/2/4/6/8/9, CORE-2/6, PART-2/4, the `owner_action_nonce` recompute) | Whether each must close before mainnet isn't stated | unclear: check | founder, Claude build | security.md sweep sections |
 | 6.6 | Open issues (g) cross-isolate replays and (h) wide relayer allowlists | Gas cost; a leaked key's reach | not built ((h) folded into the allowlist step) | Claude build | security.md (g), (h) |
 | 6.7 | GitHub "Require review from Code Owners" on `develop` and `main`; second owner | Derivation, contract and keys code needs a second reviewer | not built for the setting; the second owner is done (`@mj-hana` in `.github/CODEOWNERS` since 2026-10-30) | founder | D58, D100; security.md OPER-3; context.md "Next steps" 2 |
-| 6.8 | `REJECT_PII_ON_SESSIONS = "1"` on `/v1/sessions` | Keeps PII off chain on the split path | unclear: check (off today; whether mainnet needs it isn't stated) | founder | context.md; security.md "Verify before relay" |
+| 6.8 | The claim allow-list on `/v1/sessions` (was `REJECT_PII_ON_SESSIONS = "1"`) | Keeps PII off chain on the split path | done (always on, the flag removed; also on `/v1/owner-actions`; D271, D274) | — | security.md "Claim allow-list" |
 | 6.9 | Forged-key and pause drills | The watchdog acts as specified | done (sandbox-dev, 2026-10-30) | — | operations.md "Watchdog service" |
 
 ## 7. Builds not done

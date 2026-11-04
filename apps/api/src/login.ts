@@ -130,7 +130,7 @@ async function login(request: Request, env: Env, ctx: Ctx, exec?: ExecutionConte
   // 4. A genuine, unexpired token, carrying only allow-listed claims, whose nonce commits to this session in this app's
   //    scope on this signer: a Google ID token, or an email token for an app with email on (login-token.ts). A link
   //    token is an email token too, for the same app.
-  const verified = await verifyLoginToken(env, req.jwt, now, { claimAllowList: true, appId: app.id, exec });
+  const verified = await verifyLoginToken(env, req.jwt, now, { appId: app.id, exec });
   if (!verified.ok) return loginTokenRefusal(ctx, verified);
   const token = verified.token;
   if (token.nonce === null) return reject(ctx, 400, 'nonce_mismatch', 'The ID token has no nonce');
@@ -141,7 +141,7 @@ async function login(request: Request, env: Env, ctx: Ctx, exec?: ExecutionConte
   if (req.linkJwt !== null) {
     // An export window never links (it opens an existing path), and a link comes only from the email issuer.
     if (gate.caller.page === 'auth') return reject(ctx, 400, 'bad_request', 'An export does not carry a link');
-    const linked = await verifyLoginToken(env, req.linkJwt, now, { claimAllowList: true, appId: app.id, exec });
+    const linked = await verifyLoginToken(env, req.linkJwt, now, { appId: app.id, exec });
     if (!linked.ok) return loginTokenRefusal(ctx, linked);
     if (!linked.token.email) return reject(ctx, 400, 'bad_request', 'linkJwt must be an email token');
     link = linked.token;

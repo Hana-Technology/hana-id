@@ -6,19 +6,20 @@ testnet** environment. They are test tooling, not the SDK and not an integration
 | Page | Flow | Use it for |
 |---|---|---|
 | `/` (`index.html`, `src/vault-page.ts`) | The real partner client, `@hana-id/web`: vault iframe → Hana login popup → Google (openid only) → `POST /v1/login` (`create_session_and_derive`) → CKD decryption and derivation v1 **inside the vault** | Everything a partner gets: login, timings, persistence and unlock, logout, export, approval and the auto-approve demo |
-| `/direct.html` (`src/direct.ts`) | The in-page flow from before the vault: Google Identity Services → `POST /v1/sessions` → `POST /v1/derive` → CKD decryption in the page | The split-flow baseline for the ship gate, and what the vault can't do: `key_index` ≠ 0, choosing the Google client, derive again, revoke, replays |
+| `/direct.html` (`src/direct.ts`) | The in-page flow from before the vault: Google, `scope=openid` only (a popup through `direct-callback.html`) → `POST /v1/sessions` → `POST /v1/derive` → CKD decryption in the page | The split-flow baseline for the ship gate, and what the vault can't do: `key_index` ≠ 0, choosing the Google client, derive again, revoke, replays |
 
 The vault page sees only what a partner sees: status, addresses, expiry, persistence, events and, for `pk_test_`
 apps, the login's and the unlock's per-stage timings (names and durations only, [Timings](#timings)). The Google token, the session key, the CKD secret and the chain keys stay in the
-Hana pages. The direct page sends the Google token only to `POST /v1/sessions` (kept in memory for the replay button)
-and zeroes the CKD secret and derived keys inside one function call; neither page displays, logs, stores or sends
+Hana pages. The direct page sends the Google token only to `POST /v1/sessions` (kept in memory for the replay button),
+never one with a claim outside the API's allow-list, and zeroes the CKD secret and derived keys inside one function call; neither page displays, logs, stores or sends
 them anywhere else. Partners integrate through `@hana-id/web` like the vault page, never like the direct
 page: see [`docs/integration.md`](../../docs/integration.md).
 
-> **The direct page works only while the env's `REJECT_PII_ON_SESSIONS` is `"0"`** (every env's default until the
-> user turns it on, `docs/batch-b-spec.md` "Order of work" step 7). Google Identity Services tokens carry `email`,
-> which `/v1/sessions` refuses with 400 `token_has_pii` once it is `"1"`; the page then says so. The vault's tokens
-> are openid-only and pass.
+> **Both pages get openid-only Google tokens.** The API refuses any Google token with a claim outside the allow-list
+> (`iss azp aud sub iat exp nonce nbf jti auth_time`) with 400 `token_has_pii` on every route, `/v1/sessions`
+> included, with no flag to turn it off (D271). The direct page used Google Identity Services, whose tokens carry
+> `email`, until D271; it now asks Google's implicit flow for `response_type=id_token`, `scope=openid` (as the Hana
+> login popup does) and checks the claims itself before sending anything.
 
 > **Addresses use derivation v1** (`@hana-id/core/derivation`, HKDF-SHA256 with salt `hana-id/chain-keys/v1/extract`),
 > which replaced the PROVISIONAL legacy derivation (salt `hana-embed-ckd-v1`) in batch B, so addresses logged before
@@ -51,7 +52,8 @@ page: see [`docs/integration.md`](../../docs/integration.md).
    CLI"). `--environment` is needed only for a scope with no app yet.
 3. **Google OAuth clients.** Vault page: every client the app logs in with (its own, or Hana's shared one) lists
    `{authOrigin}/login/callback` under *Authorized redirect URIs*. Direct page: the client also lists
-   `http://localhost:5173` under *Authorized JavaScript origins* (Google also recommends `http://localhost`). Changes
+   `http://localhost:5173/direct-callback.html` under *Authorized redirect URIs* (exact; no JavaScript origin is needed
+   any more). Changes
    there can take a few minutes to apply.
 
 ## Run
@@ -230,8 +232,12 @@ gets the popup; raw signing is always 4100 here: this page's apps are `pk_test_`
 2. **Session**: choose `key_index` (default 0; 0 to 2^31 − 1, higher values are reserved and refused) and `max_uses`
    (default 5, 1 to 500) → *Start session*. The page makes a
    non-extractable Ed25519 session key, a random 32-byte salt and an expiry of now + 1 h, computes the batch A.2 session
-   nonce and renders the Google button for the chosen client.
-3. Sign in. The page checks the token's `nonce` and `aud`, calls `POST /v1/sessions`, then immediately derives
+   nonce and shows *Sign in with Google (openid only)* for the chosen client.
+3. Click it: Google's account chooser opens in a popup (`response_type=id_token`, `scope=openid`,
+   `prompt=select_account`, the session nonce, a random `state`) and returns through `/direct-callback.html` (to the
+   page by `postMessage`, or a same-origin `BroadcastChannel` when Google's pages severed the opener; nothing is
+   stored). The page takes only the fragment with its own `state`, checks the token's `nonce` and `aud` and that every
+   claim is in the allow-list (otherwise it logs the claim and sends nothing), calls `POST /v1/sessions`, then immediately derives
    (counter 1): fresh BLS12-381 key, session signature over
    `"hana-id-session-v1:" ‖ counter u64 LE ‖ sha256("hana-id-ckd-v1:{pk1}:{pk2}")`, `POST /v1/derive`, decryption, pairing
    check against the pinned `ckdNetworkKey`, derivation v1 addresses and `app_id`.
@@ -351,8 +357,8 @@ keep refusing any ID token with a claim outside the allow-list (`token_has_pii`)
 - [ ] **Login through the vault**: one click on *Log in with Hana* → Google's account chooser → addresses. The run
       has every login stage of [Timings](#timings) with a small `other`, and the log shows no `/v1/sessions` or
       `/v1/derive` call from this page (DevTools → Network, this page and the vault frame: one `POST /v1/login`).
-- [ ] **openid-only token**: the login succeeds with `REJECT_PII_ON_SESSIONS` either way (the vault and `/v1/login`
-      always apply the claim allow-list; a refused claim shows as `token_has_pii` with the claim).
+- [ ] **openid-only token**: the login succeeds (the vault and the API always apply the claim allow-list; a refused
+      claim shows as `token_has_pii` with the claim).
 - [ ] **Vault agrees with the in-page derivation**: same Google account and scope, a direct-page run at `key_index` 0
       and a vault login: the vault run notes "same addresses as the in-page derivation".
 - [ ] **Isolation, app A vs B**: same account label, apps in different scopes: "same account, other scope … addresses
@@ -393,17 +399,19 @@ keep refusing any ID token with a claim outside the allow-list (`token_has_pii`)
 - [ ] **Safari/WebKit storage retention**: in Safari, log in, then reload after 10 min, 1 h and a day idle, and after
       quitting and reopening Safari: each reload gives an unlock run, or a logged-out load (no unlock run) if Safari
       dropped the vault's partitioned IndexedDB. Record which in `docs/context.md`.
-- [ ] **Ship gate**: 10 vault logins and 10 direct-page sessions, with no `VITE_HANA_API_URL` override (the direct page
-      needs `REJECT_PII_ON_SESSIONS = "0"`): the panel's verdict. Record it, the gas of a few
+- [ ] **Ship gate**: 10 vault logins and 10 direct-page sessions, with no `VITE_HANA_API_URL` override: the panel's
+      verdict. Record it, the gas of a few
       `create_session_and_derive` transactions (nearblocks) and the unlock total in `docs/context.md`.
 - [ ] **BLS precheck CPU time** (D64, before `BLS_PRECHECK` is turned on in any env): on a scratch deploy only, on the
       Workers Paid plan, set the var `BLS_PRECHECK = "1"`, do a few vault logins and read the `/v1/login` CPU time
       per request from the Workers dashboard (the Worker's metrics or its logs). Record it in `docs/context.md` next to the
       ship gate and the unlock total, then delete the scratch deploy.
-- [ ] **After `REJECT_PII_ON_SESSIONS = "1"`** (the user's switch): the direct page's sign-in fails with "400
-      token_has_pii … the direct flow is retired here", and the vault page keeps logging in.
 
-### Direct page (while `REJECT_PII_ON_SESSIONS = "0"`)
+### Direct page
+
+- [ ] **openid-only sign-in**: DevTools → Network shows the popup's `accounts.google.com/o/oauth2/v2/auth` request with
+      `scope=openid` and `response_type=id_token` (no `gsi/client` script anywhere), and `POST /v1/sessions` succeeds.
+      A token with any other claim would be logged as "… outside the allow-list (openid only): not sent".
 
 - [ ] **Real MPC**: a derive succeeds and the pairing check passes against the pinned `ckdNetworkKey` (a wrong pinned
       key fails with "CKD response failed the pairing check").

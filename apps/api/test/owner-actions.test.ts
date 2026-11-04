@@ -26,7 +26,7 @@ import { clearJwksCache } from '@hana-id/oidc';
 import { KeyPair, type KeyPairString } from '@near-js/crypto';
 import { GOVERNANCE_METHODS, UPDATER_METHODS, parseRelayerKeys } from '../src/relayer-config.ts';
 import { clearViewCaches, parsePendingShared } from '../src/views.ts';
-import { call, minuteHeadroom, startOfMinuteClock } from './helpers.ts';
+import { NAMED_PII_CLAIMS, call, minuteHeadroom, startOfMinuteClock } from './helpers.ts';
 import { NearMock, type RsaSigner, makeJwt, panic, rsaSigner } from './near-mock.ts';
 import { eventFor, ledger } from './usage-ledger.ts';
 
@@ -244,7 +244,30 @@ describe('POST /v1/owner-actions', () => {
     expect((await post({ method: 'nope' }, '2001:db8:aa:bc::1')).status).toBe(400);
   });
 
-  it('an email-carrying console token and client proof: relayed, and their email and hd reach no log, response or D1 row', async () => {
+  it('an email-carrying console token or client proof: 400 token_has_pii, nothing relayed, nothing reserved (D271, D274)', async () => {
+    const n = near();
+    const addClient = { AddClient: { provider: 'google', aud: NEW_CLIENT } };
+    const cases: [string, unknown, string][] = [];
+    for (const claim of [...NAMED_PII_CLAIMS, 'unknown_claim']) {
+      cases.push([`owner token ${claim}`, { method: 'cancel_change', args: { scope_id: 's1', auth: await oidc({ [claim]: 'x' }), change_id: 0 } }, claim]);
+    }
+    cases.push(['client proof email', { method: 'propose_change', args: { scope_id: 's1', auth: await oidc(), change: addClient, client_proof: await clientProof({ email: 'a@example.com' }) } }, 'email']);
+    cases.push(['client proof hd', { method: 'propose_change', args: { scope_id: 's1', auth: await oidc(), change: addClient, client_proof: await clientProof({ hd: 'example.com' }) } }, 'hd']);
+    const authJwts: string[] = [];
+    for (const [label, req, claim] of cases) {
+      authJwts.push((req as { args: { auth: { Oidc: { jwt: string } } } }).args.auth.Oidc.jwt);
+      const res = await post(req);
+      expect([res.status, await json(res)], label).toEqual([400, expect.objectContaining({ code: 'token_has_pii', data: { claim } })]);
+    }
+    expect(n.sent).toHaveLength(0);
+    expect(n.rpcMethods).not.toContain('send_tx');
+    // A refused request reserves no token: the client-proof cases' (clean) owner tokens still relay once.
+    const retry = await post({ method: 'propose_change', args: { scope_id: 's1', auth: { Oidc: { jwt: authJwts.at(-1)! } }, change: addClient, client_proof: await clientProof() } });
+    expect(retry.status).toBe(200);
+    expect(n.sent.map((t) => t.method)).toEqual(['propose_change']);
+  });
+
+  it('refused PII tokens: their email and hd reach no log, response or D1 row', async () => {
     const lines: string[] = [];
     for (const level of ['log', 'info', 'warn', 'error'] as const) vi.spyOn(console, level).mockImplementation((...a: unknown[]) => void lines.push(a.map(String).join(' ')));
     const n = near();
@@ -254,16 +277,16 @@ describe('POST /v1/owner-actions', () => {
     const responses: string[] = [];
     for (const body of [
       { method: 'propose_change', args: { scope_id: 's1', auth: await oidc(pii), change: { AddClient: { provider: 'google', aud: NEW_CLIENT } }, client_proof: await clientProof(pii) } },
+      { method: 'propose_change', args: { scope_id: 's1', auth: await oidc(), change: { AddClient: { provider: 'google', aud: NEW_CLIENT } }, client_proof: await clientProof(pii) } },
       { method: 'cancel_change', args: { scope_id: 's1', auth: await oidc(pii), change_id: 0 } },
-      // Refused ones log too: not an owner, and an unknown scope.
       { method: 'cancel_change', args: { scope_id: 's1', auth: await oidc({ ...pii, sub: '999' }), change_id: 0 } },
       { method: 'cancel_change', args: { scope_id: 'nope', auth: await oidc(pii), change_id: 0 } },
     ]) {
       const res = await post(body);
       responses.push(`${res.status} ${await res.text()}`);
     }
-    expect(responses.map((r) => r.slice(0, 3))).toEqual(['200', '200', '403', '404']);
-    expect(n.sent.map((t) => t.method)).toEqual(['propose_change', 'cancel_change']);
+    expect(responses.map((r) => r.slice(0, 3))).toEqual(['400', '400', '400', '400', '400']);
+    expect(n.sent).toHaveLength(0);
     const tables = await env.DB.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'").all<{ name: string }>();
     const rows: string[] = [];
     for (const { name } of tables.results) rows.push(JSON.stringify((await env.DB.prepare(`SELECT * FROM "${name}"`).all()).results));
@@ -273,9 +296,9 @@ describe('POST /v1/owner-actions', () => {
     }
   });
 
-  it('optional claims of the wrong type are ignored, not refused (verifyIdToken optionalClaims "ignore", D201)', async () => {
+  it('allow-listed claims of the wrong type are ignored, not refused (verifyIdToken optionalClaims "ignore", D201)', async () => {
     const n = near();
-    const wrong = { email_verified: 'yes', iat: 'soon', amr: [1], auth_time: 'x', azp: 5, email: 7, hd: [] };
+    const wrong = { iat: 'soon', auth_time: 'x', azp: 5, nbf: 'later', jti: 7 };
     const res = await post({ method: 'propose_change', args: { scope_id: 's1', auth: await oidc(wrong), change: { AddClient: { provider: 'google', aud: NEW_CLIENT } }, client_proof: await clientProof(wrong) } });
     expect(res.status).toBe(200);
     expect(n.sent.map((t) => t.method)).toEqual(['propose_change']);

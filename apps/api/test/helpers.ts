@@ -9,6 +9,11 @@ import { NearMock, type RsaSigner, rsaSigner } from './near-mock.ts';
 
 export const GOOGLE_ISS = 'https://accounts.google.com';
 export const ORIGIN = 'https://wallet.example.com';
+/**
+ * The claims refused by name (docs/batch-b-spec.md "Claim allow-list"), as @hana-id/core NAMED_PII_CLAIMS; the worker
+ * tests can't import core's root (scripts/test/relayed-tokens.test.ts checks the two lists agree).
+ */
+export const NAMED_PII_CLAIMS: readonly string[] = ['hd', 'email', 'email_verified', 'name', 'picture', 'given_name', 'family_name', 'locale', 'profile'];
 /** "Google": the RSA key behind the mock JWKS that every chain() serves. */
 export const google = await rsaSigner('google-test-kid');
 

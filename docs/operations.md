@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-04 (branch `feat/user-emails`: `admin user:list` / `user:find` in "Admin CLI",
+Last verified against code: 2026-11-04 (branch `fix/sessions-allow-list`: the smoke direct page's openid-only sign-in and its redirect URI, `REJECT_PII_ON_SESSIONS` retired, D271); 2026-11-04 (branch `feat/user-emails`: `admin user:list` / `user:find` in "Admin CLI",
 "User directory (D269)" under "Email issuer" with applying migration 0002 on sandbox-dev, the runbook's
 `directory_write_failed`); 2026-11-04 (branch `feat/spike-leg-e`: "Google's verified email: the spike", leg E and the D270 gate); 2026-11-03 (branch `docs/sandbox-dev-state`: what sandbox-dev runs, per the operator on 2026-11-03: a state note under the hot DB gate, the watchdog's email pins and the email issuer sections); 2026-11-03 (branch `fix/8b-rereview`: "Turning linking on (batch 8b)"'s slow second
 provider and watching `path_unconfirmed`, D263); 2026-11-03 (branch `feat/email-login-8b` review fixes: "Turning linking on (batch 8b)"'s
@@ -155,8 +155,8 @@ Register on each client:
 
 | Entry | Value | On which clients | Why |
 |---|---|---|---|
-| Authorized JavaScript origins | `http://localhost:5173` (Google also suggests `http://localhost`) | every client `apps/smoke` signs in with | smoke uses Google Identity Services in the page |
 | Authorized redirect URIs | `{authOrigin}/login/callback`, exact (scheme, host, no trailing slash) | the shared client, and every partner's own client used through Hana's login page | the login popup (`response_type=id_token`, `redirect_uri={authOrigin}/login/callback`) |
+| Authorized redirect URIs | `http://localhost:5173/direct-callback.html`, exact | every client `apps/smoke`'s direct page signs in with | the direct page's openid-only popup (D271); no JavaScript origin is needed any more (Google Identity Services is gone) |
 
 Changes in Google Cloud can take a few minutes to apply. Changing `authOrigin` later breaks every own-client
 partner's redirect registration (not addresses).
@@ -1584,7 +1584,7 @@ using a session at the old index and logs in with another `keyIndex` (`apps/smok
 Needs a deployed env (contract, Google keys, API with secrets and `VAULT_KEK`, the vault and auth page Workers,
 `apiUrl`, `vaultOrigin`, `authOrigin` and `ckdNetworkKey` set), an app whose origins include `http://localhost:5173`
 with a `pk_test_` key in a `sandbox*` / `local*` env, `{authOrigin}/login/callback` on the clients' redirect URIs and,
-for the direct page, `http://localhost:5173` on their JavaScript origins.
+for the direct page, `http://localhost:5173/direct-callback.html` on their redirect URIs.
 
 ```sh
 corepack pnpm --filter @hana-id/smoke dev                                   # envs/sandbox-dev.json
@@ -1594,8 +1594,9 @@ VITE_HANA_API_URL=http://localhost:8787 corepack pnpm --filter @hana-id/smoke de
 
 Restart it after editing the manifest. Two pages: `/` logs in through the vault (`@hana-id/web`, `POST /v1/login`), as a
 partner would; `/direct.html` is the in-page `/v1/sessions` + `/v1/derive` flow, kept as the ship gate's split-flow
-baseline and for what the vault can't do (`key_index` ≠ 0, replays). The direct page uses Google Identity Services
-tokens (they carry `email`), so it works only while `REJECT_PII_ON_SESSIONS` is `"0"`. The checklist (login, isolation,
+baseline and for what the vault can't do (`key_index` ≠ 0, replays). The direct page signs in with Google's implicit
+flow, `scope=openid` only, so its tokens pass the API's claim allow-list, which is always on (no runtime flag since
+D271; the only one left is `BLS_PRECHECK`). The checklist (login, isolation,
 own vs shared client, persistence and unlock, Safari/WebKit retention, logout, revoke, export, approval and
 auto-approve, the ship gate, the BLS precheck CPU time, replays, gas) is in `apps/smoke/README.md`.
 

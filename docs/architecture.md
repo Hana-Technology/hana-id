@@ -1,7 +1,7 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-04 (branch `feat/user-emails`: the user directory in the email issuer's D1,
+Last verified against code: 2026-11-04 (branch `fix/sessions-allow-list`: the claim allow-list on every route that relays a Google token, `/v1/sessions` and `/v1/owner-actions` included, `REJECT_PII_ON_SESSIONS` retired, the smoke direct page on openid-only tokens, D271, D274); 2026-11-04 (branch `feat/user-emails`: the user directory in the email issuer's D1,
 written at every successful email `verify` and read by `admin user:list` / `user:find`, in "Email login in the popup"
 step 3, the email permission's explainer, "Data stores" and the issuer's row in Components; D269); 2026-11-04 (branch `feat/export-copy`: "Key export", the Show key / Hide key toggle and Copy key, D268); 2026-11-03 (branch `docs/sandbox-dev-state`: what sandbox-dev runs, per the operator on 2026-11-03: contract v3, migrations 0006/0009/0010, the API at `develop` c3c33ec, the page Workers, the email issuer Worker, the demo with email; the Status table and Components); 2026-11-03 (branch `fix/8b-rereview`: the issuer's CORS exposing `retry-after`, 3 consent
 screens, the pin read's 1 s timeout (fail closed), the login's signal on google-match and the confirming reads; D263–D265); 2026-11-03 (branch `feat/email-login-8b` review fixes: member paths confirmed on both
@@ -63,7 +63,7 @@ built but not merged. The watchdog runs with the email pins (redeployed 2026-11-
 | `@hana-id/web`: vault, auth pages `/login`, `/login/callback`, `/approve`, `/export`, partner client `createHana` (EIP-1193, Stellar, SWK module) | `develop` (packaging from `feat/sdk-packaging`) | Deployed in sandbox-dev's page Workers; built as installable tarballs (`pnpm run pack:check`, D71), not published (registry and licence open, D72) |
 | `@hana-id/react` (`HanaProvider`, `useHana`, `useWallet`), `@hana-id/sodax` (Stellar and EVM wallet-provider adapters) | `develop` (packaging from `feat/sdk-packaging`) | Code done; tarballs as `@hana-id/web`, not published |
 | `admin app:settings` | `develop` | Code done |
-| `apps/smoke` | `develop` | `/` logs in through `@hana-id/web` (the vault); `/direct.html` keeps Google Identity Services and the split path for the ship gate |
+| `apps/smoke` | `develop` | `/` logs in through `@hana-id/web` (the vault); `/direct.html` keeps the split path for the ship gate, signing in with Google's implicit flow, `scope=openid` only (D271) |
 | `apps/e2e` (Playwright: Chromium, WebKit, Firefox; local builds against the real API Worker; CI job) | `develop` | Code done |
 | Developer dashboard, admin console, billing-grade usage (batch C; `docs/batch-c-spec.md`, `docs/batch-c-build-plan.md`) | `develop`: C1–C5 | C1 (manifest fields, the Neon ledger schema, `console-core`), C2 (`packages/oidc`), C3 (migration 0006, the gate on `app_keys` and `scopes`, the CLI on it), C4 (usage capture, `session_markers`) and C5 (below) merged. **Running on sandbox-dev** (2026-11-03): migrations 0006, 0009 and 0010 applied (after a rehearsal on a scratch D1; a Time Travel bookmark from before 0006 and an export backup are kept in `.secrets`), the API has the hot DB on; usage capture is **off** (no `USAGE_DB` binding). C6 and C7 are built but not merged; C8–C17 (admin console, statements) not built (milestone M1, `docs/operations.md` "Hot DB migration 0006 and the new gate") |
 | Batch C5: the API's `ConsoleRpc` and `AdminRpc` entrypoints (CAS writes on `app_changes`, keys, settings, staff proposals, notice ack, cancel, expedite, the breaker and hot-DB budget) and drift detection | `develop` (from `feat/batch-c-5`) | Merged and in the sandbox-dev API; inert until the console (C7) and admin (C8) Workers bind them. Member proposals and owner actions (C6) and the console (C7) are built but not merged; the Neon reports (C12) not built |
@@ -353,14 +353,14 @@ login is batch B's, message for message (no follow-up key, no google-match, no e
 
 ### Login, two transactions (split path)
 
-`POST /v1/sessions` then `POST /v1/derive` with counter 1. Used today by `apps/smoke` (Google Identity Services,
-partner origin, `pk_test_`, dev env only: `apps/api/src/origins.ts:68`). The vault keeps it as a `loginFlow: 'split'`
+`POST /v1/sessions` then `POST /v1/derive` with counter 1. Used today by `apps/smoke`'s direct page (Google's implicit
+flow, `scope=openid` only, D271; partner origin, `pk_test_`, dev env only: `apps/api/src/origins.ts:68`). The vault keeps it as a `loginFlow: 'split'`
 constructor option (`packages/web/src/vault/login.ts` `split()`), not wired to any build or env flag, until the ship
 gate decides.
 
 `/v1/sessions` (`handleAppEndpoint`, `handlers.ts:251`): gate → shape (`scopeId` from the client is refused; the app's
-D1 scope is used) → RS256 + claims → claim allow-list only when `REJECT_PII_ON_SESSIONS = "1"` (off everywhere:
-smoke's GIS tokens carry `email`) → nonce recompute → the session key's proof of possession (D137: `signature` over
+D1 scope is used) → RS256 + claims → claim allow-list, always (`400 token_has_pii`, nothing relayed; D271) → nonce
+recompute → the session key's proof of possession (D137: `signature` over
 `sessionMessage(0, "hana-id-create-v1:" ‖ sha256(session nonce preimage))`, signed by the vault's `split()` and the
 smoke page, relayed as `create_session`'s `signature`; contract v3 requires it, v2 ignores it) → `checkClientScope`
 and `session_key_in_use` in parallel → relay `create_session` (100 Tgas) → cache the session view 10 s.
@@ -545,7 +545,7 @@ min while the page is visible.
 | RPC writes (batch C5, unbound until C7/C8) | The console's members through `ConsoleRpc` (removals, turn-offs, settings, logo pointer, keys, the partner suspension bit, cancels, the emailed-link cancel) and Hana staff through `AdminRpc` (the same for any org, plus `createApp`, `assignScopeOrg`, `deleteApp`, every suspension bit, security contacts, staff proposals, `ackNotice` after the admin Worker's notice, expedite, the feeds). One D1 batch per write with its `app_changes` row first (compare-and-swap); kill switches through `ConsoleRpc` capped by the breaker (5 per org, 20 overall per hour) and every call by a hot-DB budget | `apps/api/src/rpc/`, `apps/api/src/changes/` |
 | Guarded changes (origin adds, auto-approve policies, raw signing on) | Proposed by Hana staff (the CLI, or `AdminRpc.addOrigins` / `proposeChange`; the console's owners from batch C6/C10); in force only once announced and `appChangeDelayMs` later (24 h in production; 60 s on sandbox-dev). The admin Worker announces after its notice is accepted (batch C8); until then, in an env without an admin Worker, `admin app:changes:announce <id>` does it with no email. `AdminRpc.ackNotice` starts the clock the same way (and stores the cancel link's token hash). A change not announced within 7 days is cancelled by the API's hourly cron, which also records activations, promotes policies and raw signing, and flags origins, policies and raw signing no announced change or the 0006 baseline explains (drift, `apps/api/src/changes/drift.ts`). The initial origins of an app whose scope `app:create` created skip the delay while the scope shows no sign of a user (`no_session` waiver: no `first_session_at`, which every session-pool relay attempt writes, no other origin ever in force, no share, session marker (written once the first session-pool relay settled; batch C4) or identity row; decided in the announcement's SQL) | `scripts/lib/admin-apps.ts`, `apps/api/src/guarded/cron.ts`, migrations 0006 and 0009 |
 | Vault settings (`persistence`, TTLs, `raw_sign`, policy, web client) | Hana: `admin app:settings` (D1; `--raw-sign approval`, live apps only, and a new or changed policy are guarded changes, above; turning either off and the other settings are immediate; every write bumps `settings_version`, applies only over the row it read and records an `app_changes` row) | `scripts/lib/admin-settings.ts`, migrations 0003 and 0006 |
-| Propose / cancel / remove client / disable shared login (OIDC owner) | `POST /v1/owner-actions` with a console-client token; off-chain precheck, single-use token marker, owner pool | `handleOwnerAction` `handlers.ts:396`, `apps/api/src/owner-actions.ts:31` |
+| Propose / cancel / remove client / disable shared login (OIDC owner) | `POST /v1/owner-actions` with a console-client token (openid only: the owner token and an `AddClient` client proof are held to the claim allow-list, `token_has_pii`, D274); off-chain precheck, single-use token marker, owner pool | `handleOwnerAction` `handlers.ts:396`, `apps/api/src/owner-actions.ts:31` |
 | Execute a matured change | anyone; `POST /v1/owner-actions` relays `execute_change` | same |
 | NEAR-account owners | call the contract directly (the API relays OIDC auth only, `apps/api/src/validate.ts`) | `contracts/hana-signer/src/registry.rs` |
 | Shared clients, sponsors, console audiences, issuers | owner account via `deploy-contract` | `scripts/deploy-contract.ts`, `scripts/lib/deploy-plan.ts` |
@@ -674,8 +674,8 @@ would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
   per-env constants (`signer`, `relayer`, `rpc`, `rpcFallback` when set, `ckdNetworkKey`, origins, `devEnv`) for every
   manifest with both origins; it fails on an unusable CKD key.
 - Runtime flags, `"0"` everywhere for now (`FLAG_DEFAULTS`, `gen-wrangler.ts`): `BLS_PRECHECK` (Workers Paid plan
-  only, D64), `REJECT_PII_ON_SESSIONS` (the user turns it on after the spec's step 7; `apps/smoke/direct.html` still
-  sends Google Identity Services tokens, which carry `email`).
+  only, D64). The claim allow-list has no flag: `REJECT_PII_ON_SESSIONS` is retired and a leftover var is ignored
+  (D271).
 - sandbox-dev runs on `*.tingtc.workers.dev` (personal Cloudflare account, free plan). Production env and a Hana
   domain are deferred (`docs/decisions.md` D18; two registrable domains, D38).
 

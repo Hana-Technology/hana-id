@@ -7,13 +7,14 @@
 // LIVE_UPSTREAMS). The partner test app (partner/app.ts) is driven through `window.e2e`: gesture
 // actions are armed and then started by a real click on its #act button, so window.open runs with user activation.
 import { type APIResponse, type BrowserContext, type Frame, type FrameLocator, type Page, type Route, test as base, expect } from '@playwright/test';
-import { GOOGLE_AUTH_URL, GOOGLE_CERTS_URL, GoogleStub } from '../src/google-stub.ts';
+import { GOOGLE_AUTH_URL, GOOGLE_CERTS_URL, GOOGLE_TOKENINFO_URL, GoogleStub, stackGoogleKey } from '../src/google-stub.ts';
 import type { AppSpec as ServerAppSpec } from '../src/server/api.ts';
 import {
   API_URL,
   AUTH_ORIGIN,
   EVIL_ORIGIN,
   EVM_RPC,
+  ISSUER_URL,
   LIVE_API_URL,
   LIVE_AUTH_ORIGIN,
   LIVE_ENV_NAME,
@@ -34,7 +35,7 @@ export interface App {
   pk: string;
 }
 
-export type Result = { state: 'pending' } | { state: 'ok'; value: unknown } | { state: 'error'; code: unknown; message: string; reason: unknown };
+export type Result = { state: 'pending' } | { state: 'ok'; value: unknown } | { state: 'error'; code: unknown; message: string; reason: unknown; data: unknown };
 
 /** POST /v1/login exactly (not /v1/login-relay/…). */
 export const LOGIN_ENDPOINT = new RegExp(`^${API_URL.replace(/[.]/gu, '\\.')}/v1/login$`, 'u');
@@ -66,14 +67,19 @@ addEventListener('message', (e) => { window.received.push({ origin: e.origin, t:
 </script><h1>evil</h1>`;
 
 /**
- * Routes Google's two endpoints to `google`, the foreign site to its static page, and live mode's https origins to the
- * stack (LIVE_UPSTREAMS), in `context`.
+ * Routes Google's endpoints (authorization, JWKS, tokeninfo) to `google`, the foreign site to its static page, and
+ * live mode's https origins to the stack (LIVE_UPSTREAMS), in `context`.
  */
 export async function routeStubs(context: BrowserContext, google: GoogleStub): Promise<void> {
   await context.route(`${GOOGLE_AUTH_URL}**`, async (route) => route.fulfill(await google.authorize(new URL(route.request().url()))));
   await context.route(GOOGLE_CERTS_URL, async (route) =>
     route.fulfill({ status: 200, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }, body: JSON.stringify(await google.jwks()) }),
   );
+  // token_first's callback asks tokeninfo from the browser (D270): a form POST, with Google's CORS for the page.
+  await context.route(`${GOOGLE_TOKENINFO_URL}**`, async (route) => {
+    const r = route.request();
+    await route.fulfill(google.tokeninfo(r.method(), (await r.headerValue('origin')) ?? null, r.postData()));
+  });
   await context.route(`${EVIL_ORIGIN}/**`, (route) => route.fulfill({ status: 200, headers: { 'content-type': 'text/html' }, body: EVIL_HTML }));
   await context.route((url) => Object.hasOwn(LIVE_UPSTREAMS, url.origin), forwardLive);
 }
@@ -121,7 +127,7 @@ const HANA_ORIGINS: readonly string[] = [VAULT_ORIGIN, AUTH_ORIGIN, new URL(API_
 export const test = base.extend<{ google: GoogleStub; requests: RequestLog; noCookies: void }>({
   google: [
     async ({ context }, use) => {
-      const google = new GoogleStub();
+      const google = new GoogleStub({ key: stackGoogleKey(API_URL) });
       await routeStubs(context, google);
       await use(google);
     },
@@ -171,6 +177,34 @@ export async function revokeShares(app: App): Promise<number> {
 
 export async function shares(app: App): Promise<{ counter: number; revoked: boolean; partnerOrigin: string }[]> {
   return (await (await fetch(`${API_URL}/__e2e/apps/${app.pk}/shares`)).json()) as { counter: number; revoked: boolean; partnerOrigin: string }[];
+}
+
+/** A relayed hana-signer transaction that carried ID tokens (src/server/chain.ts RelayedTx): identities and claim names. */
+export interface RelayedTx {
+  method: string;
+  tokens: { provider: string; sub: string; claims: string[] }[];
+}
+
+/**
+ * What reached the mocked chain through the relayer (GET /__e2e/chain): the transactions that carried a token and the
+ * live sessions, of the Google or email `sub` when given (else of every test so far).
+ */
+export async function chainView(sub?: string): Promise<{ relayed: RelayedTx[]; sessions: number }> {
+  const q = sub === undefined ? '' : `?sub=${encodeURIComponent(sub)}`;
+  return (await (await fetch(`${API_URL}/__e2e/chain${q}`)).json()) as { relayed: RelayedTx[]; sessions: number };
+}
+
+/** One identity's rows in the email issuer's user directory (D269), as `GET {ISSUER}/__e2e/directory` reads them. */
+export interface DirectoryView {
+  identities: { provider: string; sub: string; email: string; email_verified: number; hosted: number | null }[];
+  apps: { provider: string; sub: string; app_id: string; scope_id: string }[];
+}
+
+/** The issuer's directory rows of `sub` (written after the issuer's answer, so poll for them). */
+export async function directoryView(sub: string): Promise<DirectoryView> {
+  const res = await fetch(`${ISSUER_URL}/__e2e/directory?sub=${encodeURIComponent(sub)}`);
+  if (!res.ok) throw new Error(`the issuer's directory: ${res.status}`);
+  return (await res.json()) as DirectoryView;
 }
 
 /** Raw EVM transactions the mocked chain received. */
@@ -273,8 +307,20 @@ export async function clickLauncher(page: Page, label: string | RegExp): Promise
   return popup;
 }
 
-/** The record keys in the vault frame's IndexedDB (as this top-level site's partition sees them). */
+/**
+ * The record keys in the vault frame's IndexedDB (as this top-level site's partition sees them). The root pins
+ * beside them (`pin|…`, D263: they outlive a logout on purpose) are listed by vaultPinKeys.
+ */
 export async function vaultRecordKeys(page: Page): Promise<string[]> {
+  return (await vaultStoreKeys(page)).filter((k) => !k.startsWith('pin|'));
+}
+
+/** The root pins' keys in the vault frame's IndexedDB (D263). */
+export async function vaultPinKeys(page: Page): Promise<string[]> {
+  return (await vaultStoreKeys(page)).filter((k) => k.startsWith('pin|'));
+}
+
+async function vaultStoreKeys(page: Page): Promise<string[]> {
   return vaultFrame(page).evaluate(
     () =>
       new Promise<string[]>((resolve, reject) => {

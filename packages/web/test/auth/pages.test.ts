@@ -7,6 +7,7 @@ import { loadEnv } from '@hana-id/env';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ASSET_DIR, type BuiltEnv, ORIGIN_DIR, buildAuthPages, pageHtml, selectEnvs } from '../../scripts/build-auth-pages.ts';
 import { hanaEnv } from '../../scripts/gen-envs.ts';
+import { GOOGLE_TOKENINFO_ORIGIN, GOOGLE_TOKENINFO_URL } from '../../src/auth/google.ts';
 import { AUTH_PAGES, authPageCsp, authPageMetaCsp } from '../../src/auth/pages.ts';
 import type { HanaEnv } from '../../src/hana-env.ts';
 
@@ -17,10 +18,26 @@ describe('auth page policies', () => {
   it('sets the spec’s CSP per page: base policy, connect-src and frame-ancestors none', () => {
     // The login popup fetches nothing (D77): no connect-src, so default-src 'none' applies.
     expect(authPageCsp(sandbox, 'login')).toBe(`${BASE}; frame-ancestors 'none'`);
-    expect(authPageCsp(sandbox, 'callback')).toBe(`${BASE}; connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev; frame-ancestors 'none'`);
+    // The callback reaches Google's tokeninfo too when the env has an email issuer (token_first, D270; below).
+    const tokeninfo = sandbox.emailIssuerUrl ? ' https://oauth2.googleapis.com' : '';
+    expect(authPageCsp(sandbox, 'callback')).toBe(`${BASE}; connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev${tokeninfo}; frame-ancestors 'none'`);
     expect(authPageCsp(sandbox, 'approve')).toBe(`${BASE}; frame-ancestors 'none'`);
-    expect(authPageCsp(sandbox, 'export')).toBe(
+    const { rpcFallback: _fallback, ...oneRpc } = sandbox;
+    expect(authPageCsp(oneRpc, 'export')).toBe(
       `${BASE}; connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev https://test.rpc.fastnear.com https://www.googleapis.com; frame-ancestors 'none'`,
+    );
+  });
+
+  it('the export window may reach both NEAR providers (D263): its meta policy lists rpcFallback, as the header does', () => {
+    // A browser enforces the meta and the header policy together: a fallback missing from the meta one blocks every
+    // read of it, and a linked identity's export is refused path_unconfirmed (sandbox-dev, 2026-11-04).
+    const two = { ...sandbox, rpc: 'https://test.rpc.fastnear.com', rpcFallback: 'https://rpc.testnet.near.org/' };
+    expect(authPageMetaCsp(two, 'export')).toContain(
+      'connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev https://test.rpc.fastnear.com https://rpc.testnet.near.org https://www.googleapis.com',
+    );
+    // The same origin twice is listed once.
+    expect(authPageMetaCsp({ ...two, rpcFallback: 'https://test.rpc.fastnear.com/other' }, 'export')).toContain(
+      'connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev https://test.rpc.fastnear.com https://www.googleapis.com',
     );
   });
 
@@ -31,9 +48,34 @@ describe('auth page policies', () => {
     }
   });
 
-  it('serves the four pages at the spec’s paths', () => {
+  it('the email step’s connect-src is the issuer and the API only (batch 8a), the API only without an issuer', () => {
+    // The live manifest may or may not carry an emailIssuer block: strip it for the "without" half.
+    const { emailIssuerUrl: _url, emailIss: _iss, ...noIssuer } = sandbox;
+    expect(authPageCsp(noIssuer, 'email')).toBe(`${BASE}; connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev; frame-ancestors 'none'`);
+    const withIssuer = { ...noIssuer, emailIssuerUrl: 'https://hana-id-email-sandbox-dev.tingtc.workers.dev', emailIss: 'https://hana-id-email-sandbox-dev.tingtc.workers.dev/v1/email' };
+    expect(authPageCsp(withIssuer, 'email')).toBe(
+      `${BASE}; connect-src https://hana-id-email-sandbox-dev.tingtc.workers.dev https://hana-id-api-sandbox-dev.tingtc.workers.dev; frame-ancestors 'none'`,
+    );
+    // The chooser stays fetch-free with email on (D77).
+    expect(authPageCsp(withIssuer, 'login')).toBe(`${BASE}; frame-ancestors 'none'`);
+  });
+
+  it('token_first (D270): with an email issuer the callback’s meta policy also lists Google’s tokeninfo, as the header does', () => {
+    const { emailIssuerUrl: _url, emailIss: _iss, ...noIssuer } = sandbox;
+    const withIssuer = { ...noIssuer, emailIssuerUrl: 'https://hana-id-email-sandbox-dev.tingtc.workers.dev', emailIss: 'https://hana-id-email-sandbox-dev.tingtc.workers.dev/v1/email' };
+    // The same string apps/api's pages/host.ts sends (its test pins it): a browser enforces both policies.
+    expect(authPageMetaCsp(withIssuer, 'callback')).toBe(`${BASE}; connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev https://oauth2.googleapis.com`);
+    expect(GOOGLE_TOKENINFO_URL.startsWith(`${GOOGLE_TOKENINFO_ORIGIN}/`)).toBe(true);
+    // Only the callback: no other page may reach it.
+    for (const p of AUTH_PAGES.filter((x) => x.name !== 'callback')) expect(authPageMetaCsp(withIssuer, p.name), p.name).not.toContain('oauth2.googleapis.com');
+    // Without an issuer no login can be token_first.
+    expect(authPageMetaCsp(noIssuer, 'callback')).toBe(`${BASE}; connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev`);
+  });
+
+  it('serves the five pages at the spec’s paths', () => {
     expect(AUTH_PAGES.map((p) => [p.path, p.file])).toEqual([
       ['/login', 'login.html'],
+      ['/login/email', 'login/email.html'],
       ['/login/callback', 'login/callback.html'],
       ['/approve', 'approve.html'],
       ['/export', 'export.html'],
@@ -131,7 +173,7 @@ describe('per-env build', () => {
     // Nothing is written next to the origin roots, so the vault root (<env>/vault) holds only the vault's files.
     expect(readdirSync(join(out, 'sandbox-dev'))).toEqual(['auth']);
     expect(readdirSync(built.dir).sort()).toEqual([ASSET_DIR, 'approve.html', 'export.html', 'login', 'login.html'].sort());
-    expect(readdirSync(join(built.dir, 'login'))).toEqual(['callback.html']);
+    expect(readdirSync(join(built.dir, 'login')).sort()).toEqual(['callback.html', 'email.html']);
   });
 
   it('replaces only its own root on a rebuild: stale auth files go, the vault’s root stays', async () => {

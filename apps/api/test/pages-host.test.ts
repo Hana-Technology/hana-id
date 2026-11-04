@@ -41,6 +41,7 @@ function assets(files: Record<string, { body: string; type: string; headers?: Re
 const PAGE_FILES = {
   '/login.html': { body: '<!doctype html><title>login</title>', type: 'text/html; charset=utf-8' },
   '/login/callback.html': { body: '<!doctype html><title>callback</title>', type: 'text/html; charset=utf-8' },
+  '/login/email.html': { body: '<!doctype html><title>email</title>', type: 'text/html; charset=utf-8' },
   // A build's own header (here COOP) must not reach the page: the auth pages send no COOP.
   '/approve.html': { body: '<!doctype html><title>approve</title>', type: 'text/html; charset=utf-8', headers: { 'cross-origin-opener-policy': 'same-origin' } },
   '/export.html': { body: '<!doctype html><title>export</title>', type: 'text/html; charset=utf-8' },
@@ -101,6 +102,8 @@ describe('auth origin Worker', () => {
     const expected: Record<string, string> = {
       // The login popup fetches nothing (D77).
       '/login': `${BASE}; frame-ancestors 'none'`,
+      // No email issuer in this env: the email step may reach the API only (and stops at once).
+      '/login/email': `${BASE}; frame-ancestors 'none'; connect-src https://api.test`,
       '/login/callback': `${BASE}; frame-ancestors 'none'; connect-src https://api.test`,
       '/approve': `${BASE}; frame-ancestors 'none'`,
       '/export': `${BASE}; frame-ancestors 'none'; connect-src https://api.test https://rpc.test https://www.googleapis.com`,
@@ -119,6 +122,37 @@ describe('auth origin Worker', () => {
       expect(await res.text()).toBe(PAGE_FILES[`${path}.html` as keyof typeof PAGE_FILES].body);
       expect(env.ASSETS.paths).toEqual([`${path}.html`]);
     }
+  });
+
+  it('the email step reaches the issuer’s origin and the API, nothing else (batch 8a)', async () => {
+    const res = await call(authWorker, authEnv({ EMAIL_ISSUER_URL: 'https://issuer.test/' }), `${AUTH}/login/email`);
+    expect(res.status).toBe(200);
+    expect(csp(res)).toBe(`${BASE}; frame-ancestors 'none'; connect-src https://issuer.test https://api.test`);
+    // The other pages are unchanged by it.
+    const login = await call(authWorker, authEnv({ EMAIL_ISSUER_URL: 'https://issuer.test/' }), `${AUTH}/login`);
+    expect(csp(login)).toBe(`${BASE}; frame-ancestors 'none'`);
+    // A malformed issuer URL is a misconfiguration, never a page with a looser policy.
+    const bad = await call(authWorker, authEnv({ EMAIL_ISSUER_URL: 'not a url' }), `${AUTH}/login/email`);
+    expect(bad.status).toBe(503);
+    // …and only that page: the chooser and Google's callback keep working.
+    for (const path of ['/login', '/login/callback', '/approve', '/export']) {
+      expect((await call(authWorker, authEnv({ EMAIL_ISSUER_URL: 'not a url' }), `${AUTH}${path}`)).status, path).toBe(200);
+    }
+  });
+
+  it('token_first (D270): with an email issuer the callback may also reach Google’s tokeninfo, and only the callback', async () => {
+    const withIssuer = authEnv({ EMAIL_ISSUER_URL: 'https://issuer.test/' });
+    const callback = await call(authWorker, withIssuer, `${AUTH}/login/callback`);
+    expect(callback.status).toBe(200);
+    expect(csp(callback)).toBe(`${BASE}; frame-ancestors 'none'; connect-src https://api.test https://oauth2.googleapis.com`);
+    // No other page gets it: the chooser, the email step, the approval popup and the export window.
+    for (const path of ['/login', '/login/email', '/approve', '/export']) {
+      expect(csp(await call(authWorker, authEnv({ EMAIL_ISSUER_URL: 'https://issuer.test/' }), `${AUTH}${path}`)), path).not.toContain('oauth2.googleapis.com');
+    }
+    // Without an issuer no login can be token_first: the callback reaches the API only.
+    expect(csp(await call(authWorker, authEnv(), `${AUTH}/login/callback`))).toBe(`${BASE}; frame-ancestors 'none'; connect-src https://api.test`);
+    // A malformed issuer URL drops it (token_first logins then fail closed at tokeninfo), never a looser policy.
+    expect(csp(await call(authWorker, authEnv({ EMAIL_ISSUER_URL: 'not a url' }), `${AUTH}/login/callback`))).toBe(`${BASE}; frame-ancestors 'none'; connect-src https://api.test`);
   });
 
   it('HEAD gives the page headers and no body', async () => {

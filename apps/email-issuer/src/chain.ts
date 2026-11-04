@@ -3,7 +3,7 @@
 // "Endpoints": "its scope must hold the email client (cached chain read, 60 s)"). Identity and account reads are never
 // cached: the join an auto_link token commits to is read at minting (D133).
 import { base64Encode } from './bytes.ts';
-import { readCapped } from './http.ts';
+import { readCapped, globalFetch } from './http.ts';
 
 export const RPC_TIMEOUT_MS = 8000;
 export const RPC_MAX_RESPONSE_BYTES = 1024 * 1024;
@@ -56,7 +56,7 @@ export class NearChain implements Chain {
   constructor(
     private readonly rpcs: string[],
     private readonly signer: string,
-    private readonly fetcher: typeof fetch = fetch,
+    private readonly fetcher: typeof fetch = globalFetch,
     private readonly now: () => number = Date.now,
   ) {}
 

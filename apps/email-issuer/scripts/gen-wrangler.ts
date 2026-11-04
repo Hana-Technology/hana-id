@@ -40,7 +40,10 @@ export function wranglerConfig(m: Manifest, d1Id: string, appD1Id: string): Reco
     observability: { enabled: true, logs: { invocation_logs: false } },
     // Next to the API, its D1 and (before mainnet) KMS in ap-east-1 (spec "Region and latency").
     placement: { region: 'aws:ap-east-1' },
-    workers_dev: true,
+    // Its own workers.dev URL only when the manifest names one (`emailIssuer.url`, D230); without it the issuer is
+    // reached through a route `<api host>/v1/email/*` on the API's zone (docs/operations.md "Email issuer" step 7),
+    // and a workers.dev URL beside the route would be a second way in, around Access and the zone's rules.
+    workers_dev: t.url !== undefined && /\.workers\.dev$/u.test(new URL(t.url).hostname),
     preview_urls: false,
     vars: {
       ENV_NAME: m.name,
@@ -86,7 +89,7 @@ export const TEST_MANIFEST = {
   ckdDomainId: 2,
   ckdNetworkKey: 'UNSET',
   rpc: 'https://rpc.test.invalid',
-  rpcFallback: 'https://rpc-fallback.test.invalid',
+  rpcFallback: 'https://rpc.fallback-provider.invalid',
   apiUrl: 'https://api.test',
   vaultOrigin: 'https://vault.test',
   authOrigin: 'https://auth.test',

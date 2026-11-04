@@ -103,3 +103,36 @@ describe('nearCall', () => {
     expect(plain.calls).toEqual([PRIMARY]);
   });
 });
+
+describe('independent reads (D263): each provider alone, never one through the other', () => {
+  it('the vault and the export window read the primary and the fallback separately; without a fallback there are none', async () => {
+    const vault = fakeFetch({});
+    const pair = new NearView(ENDS, 'signer.testnet', 'relayer.testnet', vault.fetchFn).independent()!;
+    expect(await pair.primary('get_identity', {})).toEqual({ from: PRIMARY });
+    expect(await pair.second('get_identity', {})).toEqual({ from: FALLBACK });
+    expect(vault.calls).toEqual([PRIMARY, FALLBACK]);
+    const auth = fakeFetch({});
+    const reader = nearReader(ENDS, auth.fetchFn).independent('signer.testnet')!;
+    expect(await reader.second('get_identity', {})).toEqual({ from: FALLBACK });
+    expect(new NearView({ rpc: PRIMARY }, 'signer.testnet', 'relayer.testnet', vault.fetchFn).independent()).toBeNull();
+    expect(nearReader(PRIMARY, auth.fetchFn).independent('signer.testnet')).toBeNull();
+  });
+
+  it('a failing provider fails its own read: the other is never asked in its place', async () => {
+    for (const how of ['down', 'http500', 'rpcError'] as const) {
+      const f = fakeFetch({ [FALLBACK]: how });
+      const pair = new NearView(ENDS, 'signer.testnet', 'relayer.testnet', f.fetchFn).independent()!;
+      await expect(pair.second('get_identity', {})).rejects.toThrow();
+      expect(f.calls).toEqual([FALLBACK]);
+    }
+  });
+
+  it('the login’s signal ends a hanging read at once (no waiting out the timeout after the login ended)', async () => {
+    const f = fakeFetch({ [PRIMARY]: 'hang', [FALLBACK]: 'hang' });
+    const login = new AbortController();
+    const pair = new NearView(ENDS, 'signer.testnet', 'relayer.testnet', f.fetchFn, 60_000).independent(login.signal)!;
+    const reads = [pair.primary('get_identity', {}), pair.second('get_identity', {})].map((p) => p.then(() => 'answered', () => 'ended'));
+    login.abort();
+    expect(await Promise.all(reads)).toEqual(['ended', 'ended']);
+  });
+});

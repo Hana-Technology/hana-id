@@ -6,7 +6,10 @@ import { expect, vi } from 'vitest';
 import { base64UrlDecode, base64UrlEncode, fromUtf8, sha256, toHex, utf8 } from '../src/bytes.ts';
 import type { AccountView, Chain, IdentityView, ScopeView } from '../src/chain.ts';
 import type { Deps } from '../src/deps.ts';
-import { GOOGLE_REVOKE_URL, GOOGLE_TOKENINFO_URL, GOOGLE_USERINFO_URL, Google } from '../src/google.ts';
+import { GOOGLE_TOKENINFO_URL, GOOGLE_USERINFO_URL, Google } from '../src/google.ts';
+
+/** Google's revocation endpoint: the issuer must never call it (D265); the fake records any call. */
+const GOOGLE_REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 import { route } from '../src/handlers.ts';
 import { importKeys, mailboxKey } from '../src/keys.ts';
 import { parseChallengeId } from '../src/challenge-id.ts';
@@ -254,7 +257,7 @@ export async function harness(over: Partial<Deps> = {}): Promise<Harness> {
     const headers = new Headers(opts.headers ?? {});
     if (opts.contentType !== null) headers.set('content-type', opts.contentType ?? 'application/json');
     if (opts.ip !== null) headers.set('cf-connecting-ip', opts.ip ?? randomIp);
-    const origin = opts.origin === undefined ? (path.endsWith('/google-match') ? VAULT : AUTH) : opts.origin;
+    const origin = opts.origin === undefined ? (path.endsWith('/google-match') || path.endsWith('/google-record') ? VAULT : AUTH) : opts.origin;
     if (origin) headers.set('origin', origin);
     const res = await route(new Request(`https://api.test${path}`, { method: opts.method ?? 'POST', headers, body: body === undefined ? undefined : JSON.stringify(body) }), deps);
     while (pending.length) await pending.shift();
@@ -282,6 +285,8 @@ export async function seedApp(h: Harness, opts: { methods?: string; status?: str
   await env.APP_DB.prepare('INSERT INTO apps (id, name, scope_id, publishable_key, status, plan, login_methods) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)')
     .bind(id, name, scope, pk, opts.status ?? 'active', opts.plan ?? 'free', opts.methods ?? 'google,email')
     .run();
+  // The gate's model (0006): the issuer finds the app by its key in app_keys, never by the legacy column.
+  await env.APP_DB.prepare("INSERT INTO app_keys (id, app_id, key, created_by, created_at) VALUES (?1, ?2, ?3, 'test', 0)").bind(`key_${id}`, id, pk).run();
   h.chain.addScope(scope, opts.scope);
   return { id, pk, scope, name };
 }

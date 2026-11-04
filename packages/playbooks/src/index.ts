@@ -10,7 +10,7 @@ export type { Actor, Playbook, Severity, Step } from './types.ts';
 export { ACTORS } from './types.ts';
 
 /** Bumped whenever the playbooks are re-checked against the code and the runbooks. */
-export const LAST_VERIFIED = '2026-11-02 (branch `docs/consistency-pass`: `link-volume` step 3, `set_link_thresholds` through `owner:call`; before it branch `feat/email-login-5`)';
+export const LAST_VERIFIED = '2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`)';
 
 /** Shown above every playbook: how its commands are meant to be run. */
 export const NOTES: readonly string[] = [

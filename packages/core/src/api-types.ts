@@ -23,6 +23,16 @@ export interface AppConfig {
    * the policy), so setting it to 'off' takes effect in open tabs; a vault treats a missing value as 'off'.
    */
   rawSign?: 'off' | 'approval';
+  /**
+   * Email login (D231): the sign-in methods the app offers and its scope can serve, in the order google, email. Older
+   * APIs omit it (Google only). An app with email but no Google (`google: null`) is refused by isAppConfig until the
+   * vault supports it (D247).
+   */
+  loginMethods?: ('google' | 'email')[];
+  /** Present when `loginMethods` has email: the scope's email client, `email:<scopeId>`. */
+  email?: { aud: string };
+  /** pk_test_ apps: the API's own total and phases (docs/api.md "Timings"); checked where used (isServerTimings). */
+  timings?: unknown;
   requestId: string;
 }
 
@@ -54,6 +64,8 @@ export interface CreateSessionBody {
   salt: number[];
   keyIndex: number;
   maxUses: number;
+  /** The session key's proof of possession (D137): `signCreate`, counter 0. Required by the API and by contract v3. */
+  signature: number[];
 }
 
 /** `POST /v1/derive`. */
@@ -77,6 +89,28 @@ export interface LoginBody extends CreateSessionBody {
   signature: number[];
   pk1: string;
   pk2: string;
+  /**
+   * An automatic link (D133, build plan batch 8b): the `auto_link` email token, and its mode. `signature` is then over
+   * the linked CKD payload (core links.ts `linkedCkdPayload`).
+   */
+  linkJwt?: string;
+  linkImmediate?: boolean;
+}
+
+/** `POST /v1/link` (link_identity). */
+export interface LinkBody {
+  accountJwt: string;
+  newJwt: string;
+  epoch: number;
+  salt: number[];
+}
+
+/** `POST /v1/link/cancel`, `/v1/link/unlink` (cancel_link, unlink_identity). `memberKey`: hex identity key. */
+export interface LinkChangeBody {
+  jwt: string;
+  memberKey: string;
+  epoch: number;
+  salt: number[];
 }
 
 /** `POST /v1/login` 200. `session` is informational only: the vault re-syncs from NEAR, never from this. */
@@ -231,9 +265,18 @@ export function isAppConfig(v: unknown): v is AppConfig {
     (v.name === undefined || (typeof v.name === 'string' && isDisplaySafeLine(v.name))) &&
     (v.serverTimeMs === undefined || isMs(v.serverTimeMs)) &&
     (v.autoApprovePolicy === undefined || v.autoApprovePolicy === null || isObj(v.autoApprovePolicy)) &&
-    (v.rawSign === undefined || v.rawSign === 'off' || v.rawSign === 'approval')
+    (v.rawSign === undefined || v.rawSign === 'off' || v.rawSign === 'approval') &&
+    (v.loginMethods === undefined || isLoginMethodList(v.loginMethods)) &&
+    // `email` comes exactly with the email method, and names this scope's client.
+    (Array.isArray(v.loginMethods) && v.loginMethods.includes('email')
+      ? isObj(v.email) && v.email.aud === `email:${v.scopeId}`
+      : v.email === undefined)
   );
 }
+
+/** `loginMethods`: distinct, known, in the order google, email, and Google among them (isAppConfig needs `google`). */
+const isLoginMethodList = (v: unknown): v is ('google' | 'email')[] =>
+  Array.isArray(v) && (JSON.stringify(v) === '["google"]' || JSON.stringify(v) === '["google","email"]');
 
 export function isSessionView(v: unknown): v is SessionView {
   return (

@@ -10,7 +10,11 @@
 // ~/.near-credentials/testnet/<owner>.json, or a council DAO proposal). owner:* and governance:status drive and read
 // the governance contract (lib/admin-owner.ts); council:replace-member proposes a council member change
 // (lib/council-members.ts). issuer-keys:lead-times reads the issuer key observations
-// (lib/admin-lead-times.ts) for D33's issuer-key delay.
+// (lib/admin-lead-times.ts) for D33's issuer-key delay. scope:add-email-client (dev envs only, D253) adds a scope's
+// email client with a locally minted client proof through the scope's NEAR owner (lib/admin-email-client.ts).
+// user:list and user:find read the user directory (D269) from the email issuer's own D1, read only
+// (lib/admin-users.ts): Hana staff only; the addresses go to this terminal and nowhere else.
+import { createInterface } from 'node:readline/promises';
 import { loadEnv, type Manifest } from '@hana-id/env';
 import { assertCommandPositionals } from './lib/admin-args.ts';
 import {
@@ -32,10 +36,12 @@ import { LEAD_TIMES_SQL, type ObservationRow, leadTimesReport } from './lib/admi
 import { appSettings, defaultAppSettingsDeps, settingsAppArg } from './lib/admin-settings.ts';
 import { CliError, parseCli, run } from './lib/cli.ts';
 import { scopeRegister } from './lib/admin-scope.ts';
+import { scopeAddEmailClient } from './lib/admin-email-client.ts';
 import { governanceStatusCmd, ownerCallCmd, ownerProposalsCmd, ownerVoteCmd } from './lib/admin-owner.ts';
 import { councilReplaceMemberCmd } from './lib/council-members.ts';
 import { tryView } from './lib/contract.ts';
-import { d1Execute } from './lib/d1.ts';
+import { d1Execute, issuerD1Execute } from './lib/d1.ts';
+import { type UserCmdDeps, userFind, userList } from './lib/admin-users.ts';
 import { NearRpc } from './lib/near.ts';
 
 const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
@@ -57,7 +63,21 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
                [--auto-approve <policy.json>|off]   (no setting flags: show the settings)
   scope:register [--client <google client id> …] [--allow-shared] (--owner-near <account> | --owner-google <sub>) […]
                  [--member <council member>] [--approve-with <council member>] [--yes]
+  scope:add-email-client --scope <scope id> [--yes]
+               dev envs (local*, sandbox*) only, D253: adds the scope's email client ("email", "email:<scope>"): mints
+               the client proof locally with .secrets/<env>/email-issuer-signing-key.json (checked against the manifest's
+               and the chain's email keys), the scope's NEAR owner sends propose_change (0.01 NEAR), then once due
+               (waited here up to 10 min) execute_change, and get_scope is checked. Elsewhere the proof comes from the
+               issuer's staff route behind Cloudflare Access
   issuer-keys:lead-times   per Google kid: first seen in the JWKS, first token, lead time, lifetime in the JWKS
+  user:list [--app <app id>] [--provider email|google] [--search <part of the address> | -] [--limit 50] [--json]
+               the user directory (D269, the email issuer's D1, read only), newest first by last seen: each user's
+               address, provider, sub, verified, first and last seen, and per app its scope and on-chain path
+               ({scope}#{provider}#{sub}#0). --search -: the text on stdin (kept out of the shell history)
+  user:find [--email <address> | --sub <sub>] [--provider email|google] [--json]
+               one user by exact address (as typed, or normalized as email logins store it) or by sub; with neither
+               flag, the address or sub is read from stdin. Addresses are printed here only: never redirect the
+               output to a file outside .secrets/
   owner:call <method> [--args '<json>'] [--gas <Tgas, default 100>] [--member <m>] [--approve-with <m>] [--yes]
                an owner call on the contract through the manifest's owner: signed by the owner account, or a
                council DAO proposal by --member; --approve-with (dev envs on testnet only) approves it with a
@@ -72,9 +92,10 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
                it prints what each remaining member must sign. Once the DAO has the new council, --yes writes
                council.members in envs/<env>.json (without --yes: prints that edit)
 
-  --remote   act on the deployed D1 database (default: local, apps/api/.wrangler/state)
+  --remote   act on the deployed D1 database (default: local, apps/api/.wrangler/state; user:*: the issuer's,
+             apps/email-issuer/.wrangler/state)
   --d1-name <name>  act on a rehearsal database (name containing "rehearsal") instead of the env's
-  --yes      scope:register, owner:call, owner:vote, council:replace-member: send the transaction (without it, only
+  --yes      scope:register, scope:add-email-client, owner:call, owner:vote, council:replace-member: send the transaction (without it, only
              print it); app:origins:park, app:origins:unpark: write (without it, only list)
   --allow-shared  scope:register only: the app may log in through Hana's shared Google client; with it, --client is
                   optional (an app with no Google client of its own)
@@ -100,12 +121,15 @@ const COMMANDS = [
   'app:origins:unpark',
   'app:settings',
   'scope:register',
+  'scope:add-email-client',
   'issuer-keys:lead-times',
   'owner:call',
   'owner:vote',
   'owner:proposals',
   'governance:status',
   'council:replace-member',
+  'user:list',
+  'user:find',
 ] as const;
 type Command = (typeof COMMANDS)[number];
 
@@ -121,6 +145,22 @@ function appDeps(m: Manifest, remote: boolean): AppCmdDeps {
   };
 }
 
+function userDeps(m: Manifest, remote: boolean): UserCmdDeps {
+  return {
+    d1: (statement) => issuerD1Execute(m, statement, { remote }),
+    log: (line) => console.log(line),
+    readLine: async (prompt) => {
+      // The prompt on stderr, so --json output stays clean.
+      const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: process.stdin.isTTY });
+      try {
+        return await rl.question(prompt);
+      } finally {
+        rl.close();
+      }
+    },
+  };
+}
+
 const ownerDeps = (m: Manifest) => ({ rpc: new NearRpc(m.rpc), log: (line: string) => console.log(line) });
 
 async function scopeExists(m: Manifest, scopeId: string): Promise<boolean> {
@@ -129,7 +169,7 @@ async function scopeExists(m: Manifest, scopeId: string): Promise<boolean> {
 
 async function main(): Promise<void> {
   const args = parseCli(process.argv.slice(2), {
-    strings: ['name', 'scope', 'plan', 'app', 'org', 'environment', 'persistence', 'session-ttl', 'idle-ttl', 'raw-sign', 'google-web-client', 'auto-approve', 'args', 'gas', 'member', 'approve-with', 'limit', 'remove', 'add', 'd1-name'],
+    strings: ['name', 'scope', 'plan', 'app', 'org', 'environment', 'persistence', 'session-ttl', 'idle-ttl', 'raw-sign', 'google-web-client', 'auto-approve', 'args', 'gas', 'member', 'approve-with', 'limit', 'remove', 'add', 'd1-name', 'provider', 'search', 'email', 'sub'],
     multiple: ['origin', 'client', 'owner-near', 'owner-google'],
     booleans: ['remote', 'yes', 'allow-shared', 'json', 'reject', 'help'],
   });
@@ -142,6 +182,13 @@ async function main(): Promise<void> {
   const m = withRehearsalD1(loadEnv(envName), args.str('d1-name'));
   const remote = args.flag('remote');
   const where = remote ? `remote D1 ${m.cloudflare.d1Name}` : `local D1 ${m.cloudflare.d1Name}`;
+  if (command.startsWith('user:')) {
+    if (args.str('d1-name') !== undefined) throw new CliError('--d1-name is for the API database; user:* read the email issuer’s');
+    if (!m.emailIssuer) throw new CliError(`envs/${m.name}.json has no emailIssuer: no user directory`);
+    const issuerWhere = `${remote ? 'remote' : 'local'} D1 ${m.emailIssuer.cloudflare.d1Name}`;
+    await (command === 'user:list' ? userList : userFind)(args, issuerWhere, userDeps(m, remote));
+    return;
+  }
 
   switch (command as Command) {
     case 'app:create':
@@ -183,6 +230,9 @@ async function main(): Promise<void> {
     case 'scope:register':
       await scopeRegister(m, args);
       return;
+    case 'scope:add-email-client':
+      await scopeAddEmailClient(m, args, ownerDeps(m));
+      return;
     case 'issuer-keys:lead-times':
       for (const line of leadTimesReport(d1Execute<ObservationRow>(m, LEAD_TIMES_SQL, { remote }), Date.now(), where)) console.log(line);
       return;
@@ -201,6 +251,9 @@ async function main(): Promise<void> {
     case 'council:replace-member':
       await councilReplaceMemberCmd(m, args, ownerDeps(m));
       return;
+    case 'user:list':
+    case 'user:find':
+      return; // handled above, before the API database's commands
   }
 }
 

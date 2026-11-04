@@ -46,6 +46,8 @@ export interface LogFields {
   activated?: number;
   superseded?: number;
   expired?: number;
+  /** The hourly identity-count copy to the usage ledger (usage/identity-sync.ts): rows sent. */
+  synced?: number;
 }
 
 export function log(fields: LogFields, level: 'info' | 'warn' | 'error' = 'info'): void {

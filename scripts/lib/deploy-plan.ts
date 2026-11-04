@@ -84,6 +84,12 @@ export interface DeployObserved {
   councilDao: { exists: boolean; codeHash: string; policy: SputnikPolicy | null } | null;
   /** Council members whose signing key the scripts can read (dev: .secrets/<env>/council/; else ~/.near-credentials). */
   councilKeys: Record<string, boolean>;
+  /**
+   * Whether the env's API (`GET {apiUrl}/v1/health` `capabilities.createProof`) sends create_session's proof of
+   * possession (D137): `--upgrade` is refused without it (batch 6 review M2). Null: not checked (only an `--upgrade` run
+   * reads it; tests without a health reader).
+   */
+  apiCreateProof?: boolean | null;
 }
 
 export interface PoolOptions {
@@ -394,7 +400,14 @@ export function buildDeployPlan(m: Manifest, o: DeployObserved, opts: DeployOpti
       );
     } else if (gov) {
       const pending = gov.pending_upgrade;
-      if (opts.upgrade) {
+      if (opts.upgrade && o.apiCreateProof === false) {
+        // Contract v3 requires create_session's proof of possession (D137): an API that doesn't send it would fail every
+        // split-path session the moment the upgrade executes. The pages (the vault's split path) ship with the same deploy.
+        blockers.push(
+          `The API at ${m.apiUrl} doesn't report capabilities.createProof (GET /v1/health): deploy the email login batch 6 API and pages ` +
+            `(docs/operations.md "Email login on sandbox-dev" step 4) before proposing or executing an upgrade.`,
+        );
+      } else if (opts.upgrade) {
         const known = opts.skipBuild ? o.wasmCodeHash : null;
         if (!opts.skipBuild) steps.push({ kind: 'build' });
         if (pending && known === pending.code_hash) {

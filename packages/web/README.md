@@ -82,6 +82,17 @@ when Safari blocks the popup after an `await`) the vault shows a "Review in Hana
 `hana.prepareApproval()` opens it early for a handler that must await something first. You build, simulate and submit transactions; Hana only signs (`eth_sendTransaction` fills and
 broadcasts through your `evm.chains` RPC).
 
+### Sign-in methods (apps with email)
+
+Google and email with the same verified address open the same wallet; Hana's popup handles every case. Show pending
+methods to the user, with a way to sign in and cancel:
+
+```ts
+const { methods } = await hana.account(); // [{ provider: 'google' | 'email', status: 'active' | 'pending', effectiveAtMs, root }]
+hana.on('linkChanged', ({ provider, status, effectiveAtMs }) => { /* 'pending' | 'active' | 'removed' */ });
+button.onclick = () => hana.linkAccount({ method: 'email' }); // in a click; pending for 24 h, then it opens the wallet
+```
+
 ### Identity token (for your backend)
 
 ```ts

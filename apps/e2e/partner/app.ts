@@ -53,12 +53,14 @@ const hana = createHana({
   stellar: { networkPassphrase: PASSPHRASE },
 });
 
-type Result = { state: 'pending' } | { state: 'ok'; value: unknown } | { state: 'error'; code: unknown; message: string };
+type Result = { state: 'pending' } | { state: 'ok'; value: unknown } | { state: 'error'; code: unknown; message: string; reason: unknown; data: unknown };
 
 const results: Record<string, Result> = {};
 const events: { name: string; data: unknown }[] = [];
 let ready: 'pending' | 'ok' | 'error' = 'pending';
 let readyError: unknown = null;
+/** `data.reason` of a vault_unavailable (the SDK's vault-connection.ts), or null. */
+let readyErrorReason: unknown = null;
 
 hana.ready.then(
   () => {
@@ -67,9 +69,10 @@ hana.ready.then(
   (e: unknown) => {
     ready = 'error';
     readyError = e instanceof HanaError ? e.code : String(e);
+    readyErrorReason = e instanceof HanaError ? ((e.data as { reason?: unknown } | undefined)?.reason ?? null) : null;
   },
 );
-for (const name of ['statusChanged', 'accountsChanged', 'sessionExpired', 'disconnect', 'launcher', 'loginProgress', 'autoApproved', 'identityTokenChanged'] as const) {
+for (const name of ['statusChanged', 'accountsChanged', 'sessionExpired', 'disconnect', 'launcher', 'loginProgress', 'autoApproved', 'identityTokenChanged', 'linkChanged'] as const) {
   hana.on(name, (...args: unknown[]) => events.push({ name, data: args[0] ?? null }));
 }
 
@@ -77,13 +80,14 @@ for (const name of ['statusChanged', 'accountsChanged', 'sessionExpired', 'disco
  * Errors as plain data (HanaError, ProviderRpcError and SWK's `{code, message}` all carry `code`), with the vault's
  * `data.reason` where there is one (`raw_sign_off`, `raw_not_allowed_for_test_apps`, …).
  */
-function errorOf(e: unknown): { code: unknown; message: string; reason: unknown } {
+/** The error's code, message, `data.reason` and its whole `data` (HanaError's, e.g. token_has_pii's `{claim}`). */
+function errorOf(e: unknown): { code: unknown; message: string; reason: unknown; data: unknown } {
   if (typeof e === 'object' && e !== null) {
     const o = e as { code?: unknown; message?: unknown; data?: unknown };
     const reason = typeof o.data === 'object' && o.data !== null ? ((o.data as { reason?: unknown }).reason ?? null) : null;
-    return { code: o.code ?? null, message: String(o.message ?? e), reason };
+    return { code: o.code ?? null, message: String(o.message ?? e), reason, data: o.data === undefined ? null : plain(o.data) };
   }
-  return { code: null, message: String(e), reason: null };
+  return { code: null, message: String(e), reason: null, data: null };
 }
 
 /** Structured-clone-safe for page.evaluate: bytes become hex, bigints strings. */
@@ -159,9 +163,14 @@ function hanaConnector() {
 
 const actions: Record<string, (...args: never[]) => Promise<unknown>> = {
   login: () => hana.login(),
+  // Email login (batch 8a): the method, and an optional hint, as a partner page passes them.
+  loginWith: (options: Parameters<typeof hana.login>[0]) => hana.login(options),
   logout: () => hana.logout(),
   cancelLogin: async () => hana.cancelLogin(),
   exportKey: (chainName: 'stellar' | 'evm') => hana.exportKey(chainName),
+  // The wallet's sign-in methods (batches 7 and 8b).
+  account: () => hana.account(),
+  linkAccount: (method: 'google' | 'email') => hana.linkAccount({ method }),
   revokeOtherDevices: () => hana.revokeOtherDevices(),
   identityToken: (maxAgeMs?: number) => hana.getIdentityToken(maxAgeMs === undefined ? {} : { maxAgeMs }),
   requestAutoApprove: () => hana.requestAutoApprove(),
@@ -231,6 +240,9 @@ const e2e = {
   },
   get readyError() {
     return readyError;
+  },
+  get readyErrorReason() {
+    return readyErrorReason;
   },
   status: () => hana.status,
   addresses: () => hana.addresses,

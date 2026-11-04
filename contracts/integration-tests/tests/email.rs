@@ -403,13 +403,11 @@ async fn explicit_link_cancel_and_unlink() -> Result<()> {
         let new_jwt = w.email.email_jws(&email_aud(&w.scope), &e, &nonce_of(&link_new_preimage(&signer, &w.scope, &gik, EMAIL, epoch, &salt)), now);
         json!({"scope_id": w.scope, "account_jwt": account_jwt, "new_jwt": new_jwt, "epoch": epoch, "salt": salt})
     };
-    // The session pool can't call it yet (batch 6 adds the link methods to its allowlist).
-    let text = expect_failure(w.call(&env.relayer_fc, "link_identity", link_args(0, env.now_ms().await?), LINK_IDENTITY_GAS).await, "");
-    assert!(text.contains("MethodNameMismatch"), "{text}");
-    // Proofs for another epoch than the account's (0) are refused.
-    expect_failure(w.call(&env.relayer, "link_identity", link_args(1, env.now_ms().await?), LINK_IDENTITY_GAS).await, "Wrong epoch");
+    // The session pool relays it (batch 6 added the link methods to its allowlist, as the API's /v1/link): proofs for
+    // another epoch than the account's (0) reach the contract and are refused there.
+    expect_failure(w.call(&env.relayer_fc, "link_identity", link_args(1, env.now_ms().await?), LINK_IDENTITY_GAS).await, "Wrong epoch");
     let now = env.now_ms().await?;
-    let outcome = w.call(&env.relayer, "link_identity", link_args(0, now), LINK_IDENTITY_GAS).await?;
+    let outcome = w.call(&env.relayer_fc, "link_identity", link_args(0, now), LINK_IDENTITY_GAS).await?;
     report_gas("link_identity", &outcome, LINK_IDENTITY_GAS);
     let events = hana_events(&outcome);
     let effective: u64 = outcome.into_result()?.json()?;
@@ -421,7 +419,7 @@ async fn explicit_link_cancel_and_unlink() -> Result<()> {
 
     // cancel_link by the pending identity itself (epoch 1, after the link).
     let cancel = w.email.email_jws(&email_aud(&w.scope), &e, &nonce_of(&link_change_preimage(&signer, &w.scope, "cancel", &gik, &eik, 1, &salt)), env.now_ms().await?);
-    let outcome = w.call(&env.relayer, "cancel_link", json!({"scope_id": w.scope, "jwt": cancel, "member_key": hex(&eik), "epoch": 1, "salt": salt}), LINK_CHANGE_GAS).await?;
+    let outcome = w.call(&env.relayer_fc, "cancel_link", json!({"scope_id": w.scope, "jwt": cancel, "member_key": hex(&eik), "epoch": 1, "salt": salt}), LINK_CHANGE_GAS).await?;
     report_gas("cancel_link", &outcome, LINK_CHANGE_GAS);
     let events = hana_events(&outcome);
     outcome.into_result()?;
@@ -443,7 +441,7 @@ async fn explicit_link_cancel_and_unlink() -> Result<()> {
 
     // unlink_identity by the root (epoch 3): E opens its own path again from its next login; the pair is remembered.
     let unlink = env.issuer.jwt(APP_E, &g, Some(&nonce_of(&link_change_preimage(&signer, &w.scope, "unlink", &gik, &eik, 3, &salt))), env.now_ms().await?);
-    let outcome = w.call(&env.relayer, "unlink_identity", json!({"scope_id": w.scope, "jwt": unlink, "member_key": hex(&eik), "epoch": 3, "salt": salt}), LINK_CHANGE_GAS).await?;
+    let outcome = w.call(&env.relayer_fc, "unlink_identity", json!({"scope_id": w.scope, "jwt": unlink, "member_key": hex(&eik), "epoch": 3, "salt": salt}), LINK_CHANGE_GAS).await?;
     report_gas("unlink_identity", &outcome, LINK_CHANGE_GAS);
     let events = hana_events(&outcome);
     outcome.into_result()?;
@@ -535,14 +533,14 @@ async fn gas_with_4096_bit_keys() -> Result<()> {
     report_gas("4096: link_identity", &outcome, max);
     outcome.into_result()?;
     let cancel = w.email.email_jws(&email_aud(&w.scope), &e4, &nonce_of(&link_change_preimage(&signer, &w.scope, "cancel", &gik, &eik4, 1, &salt)), env.now_ms().await?);
-    let outcome = w.call(&env.relayer, "cancel_link", json!({"scope_id": w.scope, "jwt": cancel, "member_key": hex(&eik4), "epoch": 1, "salt": salt}), max).await?;
+    let outcome = w.call(&env.relayer_fc, "cancel_link", json!({"scope_id": w.scope, "jwt": cancel, "member_key": hex(&eik4), "epoch": 1, "salt": salt}), max).await?;
     report_gas("4096: cancel_link", &outcome, max);
     outcome.into_result()?;
     // With the attached gas D155 sets.
     let effective: u64 = w.call(&env.relayer, "link_identity", link_args(2, env.now_ms().await?), LINK_IDENTITY_GAS).await?.into_result()?.json()?;
     env.advance_to(effective).await?;
     let unlink = w.google_jwt(&g, &nonce_of(&link_change_preimage(&signer, &w.scope, "unlink", &gik, &eik4, 3, &salt)), env.now_ms().await?);
-    let outcome = w.call(&env.relayer, "unlink_identity", json!({"scope_id": w.scope, "jwt": unlink, "member_key": hex(&eik4), "epoch": 3, "salt": salt}), LINK_CHANGE_GAS).await?;
+    let outcome = w.call(&env.relayer_fc, "unlink_identity", json!({"scope_id": w.scope, "jwt": unlink, "member_key": hex(&eik4), "epoch": 3, "salt": salt}), LINK_CHANGE_GAS).await?;
     report_gas("4096: unlink_identity", &outcome, LINK_CHANGE_GAS);
     outcome.into_result()?;
     Ok(())

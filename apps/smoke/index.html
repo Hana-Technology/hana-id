@@ -43,7 +43,7 @@
       Local test tooling (not a partner integration guide) that logs in through the Hana vault (<code>@hana-id/web</code>):
       the vault iframe, the Hana login popup, Google and <code>POST /v1/login</code>. Keys and Google tokens stay in the
       Hana pages; this page only sees addresses, status and (pk_test_ apps) per-stage timings.
-      The <a href="./direct.html">direct page</a> runs the old in-page flow (GIS → <code>/v1/sessions</code> →
+      The <a href="./direct.html">direct page</a> runs the old in-page flow (Google, openid only → <code>/v1/sessions</code> →
       <code>/v1/derive</code>) for the split-flow baseline and the replay tests.
     </p>
     <dl id="env"></dl>

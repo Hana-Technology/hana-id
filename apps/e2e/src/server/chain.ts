@@ -2,11 +2,13 @@
 // pairing check against the pinned network key runs exactly as on testnet), plus the NEAR JSON-RPC that the vault and
 // the export window (`get_session`, `EXPERIMENTAL_tx_status`, and the vault's registry check at login: `get_scope` or
 // `scope_for_client`) and apps/api's Worker (`get_session` for share creation, `get_scope` and `get_config` for GET
-// /v1/app) read. Every scope allows shared login with the stack's shared Google client; no scope has a client of its
-// own.
+// /v1/app) read. Every scope allows shared login with the stack's shared Google client; no scope has a Google client of
+// its own. Email login (batch 8a): every scope holds its email client `("email", "email:<scope>")` (GET /v1/app offers
+// email only to an app whose D1 `login_methods` include it), and the email issuer's key is the active `email` key of
+// signer `hana` (`get_issuer_keys` / `get_self_issued`), as on testnet after batch 6's setup.
 import { bls12_381 as bls } from '@noble/curves/bls12-381';
 import { base58 } from '@scure/base';
-import { CKD_DST, base64Decode, base64Encode, ckdAppId, fromUtf8, toHex, utf8 } from '@hana-id/core';
+import { CKD_DST, base64Decode, base64Encode, ckdAppId, fromUtf8, identityKeyHex, toHex, utf8 } from '@hana-id/core';
 import { E2E_ENV, GOOGLE_CLIENT_ID, TEST_MPC_MSK } from '../stack.ts';
 import { type Handler, json } from './http.ts';
 
@@ -33,11 +35,144 @@ export interface ChainSession {
   used: number;
 }
 
+/** An identity: its provider and `sub`. */
+export interface IdentityRef {
+  provider: string;
+  sub: string;
+}
+
+/** A relayed transaction that carried ID tokens (Chain.relayed). */
+export interface RelayedTx {
+  method: string;
+  tokens: { provider: string; sub: string; claims: string[] }[];
+}
+
+/** A member of an account (contract v3 `Member`, plus its `sub` for the mock's own use). */
+interface Member {
+  key: string;
+  provider: string;
+  sub: string;
+  effective_at_ms: number;
+  active: boolean;
+  auto: boolean;
+}
+
+interface Account {
+  root: IdentityRef;
+  members: Member[];
+  epoch: number;
+  unlinked: string[];
+}
+
+/** A pending link's wait in the stack (sandbox-dev's `change_delay_ms` is 24 h too). */
+export const CHANGE_DELAY_MS = 24 * 3_600_000;
+
 export class Chain {
+  /** The email issuer's active key (`get_issuer_keys("email")`), or none: no email issuer on chain. */
+  emailKey: { kid: string; n: string; e: string } | null = null;
+  /**
+   * Contract v3's accounts and links (build plan batches 7 and 8b), as packages/web's vault test harness models them:
+   * identity keys whose own path was derived (`opened`, D130) and accounts by root identity key.
+   */
+  readonly opened = new Set<string>();
+  readonly accounts = new Map<string, Account>();
+
+  /** The account an identity key is in (as root or member). */
+  accountOf(key: string): { rootKey: string; account: Account } | null {
+    for (const [rootKey, account] of this.accounts) if (rootKey === key || account.members.some((m) => m.key === key)) return { rootKey, account };
+    return null;
+  }
+
+  /** `get_identity` as the contract answers it (lazy activation of a pending member past its time included). */
+  identityView(scopeId: string, provider: string, sub: string): Record<string, unknown> {
+    const key = identityKeyHex(scopeId, provider, sub);
+    const found = this.accountOf(key);
+    const m = found?.account.members.find((x) => x.key === key);
+    if (found && m) {
+      return { key, status: m.active ? 'member' : 'pending', opened: this.opened.has(key), root: found.account.root, effective_at_ms: m.effective_at_ms, account_epoch: found.account.epoch };
+    }
+    return { key, status: 'own', opened: this.opened.has(key), account_epoch: found?.account.epoch ?? 0 };
+  }
+
+  accountView(scopeId: string, provider: string, sub: string): Record<string, unknown> | null {
+    const found = this.accountOf(identityKeyHex(scopeId, provider, sub));
+    if (!found) return null;
+    const a = found.account;
+    return { root: a.root, members: a.members.map((m) => ({ key: m.key, provider: m.provider, effective_at_ms: m.effective_at_ms, active: m.active, auto: m.auto })), epoch: a.epoch, unlinked: a.unlinked };
+  }
+
+  /** Adds `member` to `root`'s account (creating it), bumping its epoch. */
+  link(scopeId: string, root: IdentityRef, member: IdentityRef, o: { active: boolean; effectiveAtMs: number; auto: boolean }): void {
+    const rootKey = identityKeyHex(scopeId, root.provider, root.sub);
+    const a = this.accounts.get(rootKey) ?? { root, members: [], epoch: 0, unlinked: [] };
+    a.members.push({ key: identityKeyHex(scopeId, member.provider, member.sub), provider: member.provider, sub: member.sub, effective_at_ms: o.effectiveAtMs, active: o.active, auto: o.auto });
+    a.epoch += 1;
+    this.accounts.set(rootKey, a);
+  }
+
+  /** Removes a member (cancel_link, unlink_identity); false when there is none. */
+  unlink(memberKey: string, mark: boolean): boolean {
+    for (const a of this.accounts.values()) {
+      const i = a.members.findIndex((m) => m.key === memberKey);
+      if (i < 0) continue;
+      a.members.splice(i, 1);
+      a.epoch += 1;
+      if (mark) a.unlinked.push(memberKey);
+      return true;
+    }
+    return false;
+  }
+
+  /** Lazy activation (sessions.rs): a pending member past its time becomes active at its next session. */
+  private activate(key: string): void {
+    const m = this.accountOf(key)?.account.members.find((x) => x.key === key);
+    if (m && !m.active && m.effective_at_ms <= Date.now()) m.active = true;
+  }
+
+  /** The path identity of a session of `who` (an active member opens its root's path), or 'pending'. */
+  pathIdentity(scopeId: string, who: IdentityRef): IdentityRef | 'pending' {
+    this.activate(identityKeyHex(scopeId, who.provider, who.sub));
+    const v = this.identityView(scopeId, who.provider, who.sub);
+    if (v.status === 'pending') return 'pending';
+    return v.status === 'member' ? (v.root as IdentityRef) : who;
+  }
+
+  /**
+   * `auto_link` in `create_session_and_derive` (links.rs, the four cases as the contract judges them, simplified): the
+   * link identity has a wallet (case A) → the session identity joins its account at once (immediate only); else the
+   * link identity joins the session identity's account, at once or after CHANGE_DELAY_MS. A reason when refused.
+   */
+  autoLink(scopeId: string, x: IdentityRef, e: IdentityRef, immediate: boolean): string | null {
+    const xKey = identityKeyHex(scopeId, x.provider, x.sub);
+    const eKey = identityKeyHex(scopeId, e.provider, e.sub);
+    if (xKey === eKey) return 'same_identity';
+    const xFound = this.accountOf(xKey);
+    const eFound = this.accountOf(eKey);
+    if (xFound && eFound && xFound.rootKey === eFound.rootKey) return 'already_linked';
+    const reaches = (key: string, found: typeof xFound) => (found !== null && found.rootKey !== key && found.account.members.some((m) => m.key === key && m.active)) || this.opened.has(key);
+    const xHas = reaches(xKey, xFound);
+    const eHas = reaches(eKey, eFound);
+    if (xHas && eHas) return 'both_wallets';
+    if (eHas) {
+      if (!immediate) return 'link_mismatch';
+      if (xFound) return 'already_linked';
+      this.link(scopeId, eFound ? eFound.account.root : e, x, { active: true, effectiveAtMs: Date.now(), auto: true });
+      return null;
+    }
+    if (eFound) return 'already_linked';
+    this.link(scopeId, xFound ? xFound.account.root : x, e, immediate ? { active: true, effectiveAtMs: Date.now(), auto: true } : { active: false, effectiveAtMs: Date.now() + CHANGE_DELAY_MS, auto: true });
+    return null;
+  }
+
   /** By session public key (hex). */
   readonly sessions = new Map<string, ChainSession>();
   /** Relayed transactions by hash: the CKD result of a login or derive. */
   readonly txs = new Map<string, unknown>();
+  /**
+   * Every transaction the relayer sent to hana-signer that carried an ID token, in order: the method and, per token,
+   * its identity and claim names (never the token). What "reached the chain" means for the tests (`GET /__e2e/chain`).
+   */
+  readonly relayed: RelayedTx[] = [];
 
   newTxHash(): string {
     return base58.encode(crypto.getRandomValues(new Uint8Array(32)));
@@ -54,11 +189,25 @@ export class Chain {
       case 'get_session':
         return { value: Array.isArray(args.session_public_key) ? this.session(Uint8Array.from(args.session_public_key as number[])) : null };
       case 'get_scope':
-        return { value: typeof args.scope_id === 'string' ? { id: args.scope_id, owners: [], clients: [], pending: [], action_nonce: 0, allow_shared: true } : null };
+        return {
+          value:
+            typeof args.scope_id === 'string'
+              ? { id: args.scope_id, owners: [], clients: this.emailKey ? [['email', `email:${args.scope_id}`]] : [], pending: [], action_nonce: 0, allow_shared: true }
+              : null,
+        };
       case 'scope_for_client':
-        return { value: null };
+        return { value: this.emailKey && args.provider === 'email' && typeof args.aud === 'string' && args.aud.startsWith('email:') ? args.aud.slice('email:'.length) : null };
+      case 'get_issuer_keys':
+        return { value: args.provider === 'email' ? (this.emailKey ? [this.emailKey] : null) : null };
+      case 'get_self_issued':
+        return { value: args.provider === 'email' && this.emailKey ? { provider: 'email', signers: [{ id: 'hana', kids: [this.emailKey.kid] }], required: 1, overlap_until_ms: null } : null };
       case 'get_config':
-        return { value: { console_audiences: [], shared_clients: [['google', GOOGLE_CLIENT_ID]], pending_shared_clients: [] } };
+        // A v3 contract created with `new` (or after `accept_unrecorded_wallets`): links are open (D135).
+        return { value: { console_audiences: [], shared_clients: [['google', GOOGLE_CLIENT_ID]], pending_shared_clients: [], unrecorded_wallets: false } };
+      case 'get_identity':
+        return typeof args.scope_id === 'string' && typeof args.provider === 'string' && typeof args.sub === 'string' ? { value: this.identityView(args.scope_id, args.provider, args.sub) } : undefined;
+      case 'get_account':
+        return typeof args.scope_id === 'string' && typeof args.provider === 'string' && typeof args.sub === 'string' ? { value: this.accountView(args.scope_id, args.provider, args.sub) } : undefined;
       default:
         return undefined;
     }

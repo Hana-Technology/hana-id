@@ -89,10 +89,21 @@ export interface AccessKeyListEntry {
   };
 }
 
+/**
+ * What one execution step burnt: `gas_burnt` (a JSON number; a u64 that stays far below 2^53 per step, ≤ 300 Tgas)
+ * and `tokens_burnt` (yoctoNEAR, a u128 as a decimal string). Read with care: sums use BigInt (near/tx.ts burntGas).
+ */
+export interface BurntGas {
+  gas_burnt?: number | string;
+  tokens_burnt?: string;
+}
+
 export interface FinalOutcome {
   status: { SuccessValue?: string; Failure?: unknown } | string;
+  /** The transaction's own conversion step (it creates the first receipt). */
+  transaction_outcome?: { outcome: BurntGas };
   /** Every receipt's outcome; `executor_id` is the account that ran it (the contract, or a contract it called). */
-  receipts_outcome?: { outcome: { logs?: string[]; executor_id?: string; status: { Failure?: unknown } | string } }[];
+  receipts_outcome?: { outcome: BurntGas & { logs?: string[]; executor_id?: string; status: { Failure?: unknown } | string } }[];
   transaction?: { hash: string };
   final_execution_status?: string;
 }
@@ -101,16 +112,30 @@ export interface SendTxResult extends Partial<FinalOutcome> {
   final_execution_status?: string;
 }
 
-export class Rpc {
-  constructor(private readonly url: string) {}
+/**
+ * How long every contract view (`view`, call_function) waits for the RPC, on every endpoint and login check: a node
+ * that stalls fails the call (an RpcError: the endpoints answer 502 near_unavailable, and the vault asks
+ * GET /v1/app once more) instead of holding the request open. A healthy view answers in ≈ 0.3 s. The same bound as
+ * the vault's own RPC calls (packages/web near-call.ts). Transactions (`send_tx`, `tx`) wait as long as the node does.
+ */
+export const VIEW_TIMEOUT_MS = 8_000;
 
-  async call<T>(method: string, params: unknown): Promise<T> {
+export class Rpc {
+  /** `viewTimeoutMs`: how long each `view` gives up after (an RpcError, as for an unreachable node). */
+  constructor(
+    private readonly url: string,
+    private readonly viewTimeoutMs: number = VIEW_TIMEOUT_MS,
+  ) {}
+
+  /** `timeoutMs`: this call gives up after this long; none by default (a transaction waits for the node). */
+  async call<T>(method: string, params: unknown, timeoutMs?: number): Promise<T> {
     let res: Response;
     try {
       res = await fetch(this.url, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ jsonrpc: '2.0', id: 'hana-id-api', method, params }),
+        ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
       });
     } catch (err) {
       throw new RpcError(`NEAR RPC unreachable: ${err instanceof Error ? err.message : String(err)}`, null);
@@ -129,13 +154,17 @@ export class Rpc {
 
   /** View call (`call_function`); decodes the JSON the contract returned. */
   async view<T>(accountId: string, methodName: string, args: unknown, finality: 'optimistic' | 'final' = 'optimistic'): Promise<T> {
-    const result = await this.call<{ result: number[] }>('query', {
-      request_type: 'call_function',
-      finality,
-      account_id: accountId,
-      method_name: methodName,
-      args_base64: base64Encode(new TextEncoder().encode(JSON.stringify(args))),
-    });
+    const result = await this.call<{ result: number[] }>(
+      'query',
+      {
+        request_type: 'call_function',
+        finality,
+        account_id: accountId,
+        method_name: methodName,
+        args_base64: base64Encode(new TextEncoder().encode(JSON.stringify(args))),
+      },
+      this.viewTimeoutMs,
+    );
     return JSON.parse(new TextDecoder().decode(new Uint8Array(result.result))) as T;
   }
 

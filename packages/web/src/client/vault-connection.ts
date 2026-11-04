@@ -5,8 +5,15 @@
 //    `allow` attribute.
 // 2. On its first `load`, create a MessageChannel and post `{v:1, t:"hana:hello", sdk}` to the frame with
 //    targetOrigin = vaultOrigin, transferring port2. From then on everything goes over port1.
-// 3. Wait for the `ready` event; without it within 5 s of insertion, fail with `vault_unavailable`. A CSP `frame-src`
-//    violation for vaultOrigin fails at once (partner requirement, detected); a report-only one doesn't block anything.
+// 3. Wait for the vault's answer: `connected` (it took the hello and is starting) or `ready`, within ANSWER_TIMEOUT_MS
+//    of the frame's insertion; then `ready` within READY_AFTER_CONNECT_MS of `connected` (the vault's unlock waits on
+//    the Hana API). At the deadline one task is drained first (an answer already queued still counts). A frame still
+//    loading gets one more ANSWER_TIMEOUT_MS, then fails `frame_timeout`; a frame that loaded but didn't answer is
+//    replaced once (FRAME_ATTEMPTS, same name and src). Then, or when `ready` is late, `vault_unavailable` with
+//    `data.reason` saying which (VAULT_UNAVAILABLE_MESSAGES), and the frame and its port are removed. A CSP
+//    `frame-src` violation for vaultOrigin fails at once, without a retry (partner requirement, detected); a
+//    report-only one doesn't block anything. The vault reports nothing before `connected`: a hello it refuses and its
+//    error page (403/503, framed nowhere) get no answer, by design, so a framing page learns nothing from it.
 // 4. Send requests `{v:1, id, method, params}` and match replies by id. Requests are validated with the vault's own
 //    parser first (parsePortRequest), because the vault drops an invalid one without a reply and the caller would hang.
 //
@@ -29,8 +36,23 @@ import {
 import { HanaError, RpcCode, hanaError } from './errors.ts';
 import { randomHex } from './random.ts';
 
-/** `ready` must arrive this long after the iframe is inserted. */
-export const READY_TIMEOUT_MS = 5000;
+/** A frame's vault must answer (`connected`, or `ready` from a vault that predates it) this long after insertion. */
+export const ANSWER_TIMEOUT_MS = 5000;
+/** After `connected`, `ready` must arrive within this. */
+export const READY_AFTER_CONNECT_MS = 20_000;
+/** Frames tried before `vault_unavailable`: one automatic retry of a frame that didn't answer. */
+export const FRAME_ATTEMPTS = 2;
+
+/** `vault_unavailable`'s `data.reason`, and its message. */
+export const VAULT_UNAVAILABLE_MESSAGES = {
+  csp_frame_src: "This page's Content-Security-Policy blocks the Hana vault frame (frame-src must allow the vault origin)",
+  frame_timeout: "The Hana vault page didn't load in time (check the network)",
+  no_answer:
+    "The Hana vault frame loaded but the vault didn't answer: the page's origin (or a page framing it) may not be one of the app's origins, or the publishable key is unknown or suspended",
+  ready_timeout: "The Hana vault answered but didn't finish starting in time (the Hana API was slow or unreachable)",
+  frame_replaced: 'The Hana vault frame was navigated away before it was ready',
+} as const;
+export type VaultUnavailableReason = keyof typeof VAULT_UNAVAILABLE_MESSAGES;
 export const LAUNCHER_WIDTH_PX = 320;
 export const LAUNCHER_HEIGHT_PX = 72;
 
@@ -54,7 +76,9 @@ export interface VaultConnectionOptions {
 
 /** When the handshake's steps happened, on the partner page's clock (ms, performance.now). */
 export interface HandshakeMarks {
-  /** The iframe was put in the document. */
+  /** The first iframe was put in the document (the same as `appendedAt` without a retry). */
+  firstAppendedAt: number;
+  /** The iframe that answered was put in the document. */
   appendedAt: number;
   /** Its first `load`, when the hello is posted. */
   loadAt: number;
@@ -87,12 +111,19 @@ export class VaultConnection {
   #port: MessagePort | null = null;
   #seq = 0;
   #loads = 0;
+  /** Frames inserted so far (FRAME_ATTEMPTS at most). */
+  #attempts = 0;
+  /** The current frame's vault said `connected`. */
+  #connected = false;
+  /** The current frame's answer deadline was extended once because it was still loading. */
+  #extended = false;
   #readyDone = false;
   /** `ready` arrived in time: requests may be sent. */
   #readyOk = false;
   #disconnected = false;
   #readyTimer: ReturnType<typeof setTimeout> | undefined;
   readonly #now: () => number;
+  #firstAppendedAt = 0;
   #appendedAt = 0;
   #loadAt = 0;
   #readyAt = 0;
@@ -124,7 +155,7 @@ export class VaultConnection {
 
   /** The handshake's marks once `ready` arrived, else null. */
   get handshakeMarks(): HandshakeMarks | null {
-    return this.#readyOk ? { appendedAt: this.#appendedAt, loadAt: this.#loadAt, readyAt: this.#readyAt } : null;
+    return this.#readyOk ? { firstAppendedAt: this.#firstAppendedAt, appendedAt: this.#appendedAt, loadAt: this.#loadAt, readyAt: this.#readyAt } : null;
   }
 
   #mount(): void {
@@ -136,30 +167,91 @@ export class VaultConnection {
     frame.title = 'Hana ID';
     frame.src = `${this.#o.vaultOrigin}/vault?pk=${encodeURIComponent(this.#o.publishableKey)}`;
     this.#hide(frame);
-    frame.addEventListener('load', () => this.#onLoad());
+    frame.addEventListener('load', () => this.#onLoad(frame));
     this.#frame = frame;
-    this.#readyTimer = setTimeout(() => this.#failReady(), READY_TIMEOUT_MS);
+    this.#attempts += 1;
+    this.#extended = false;
+    this.#connected = false;
+    this.#armAnswer();
     container.append(frame);
     this.#appendedAt = this.#now();
+    if (this.#attempts === 1) this.#firstAppendedAt = this.#appendedAt;
   }
 
-  #onLoad(): void {
-    if (this.#disconnected) return;
+  /**
+   * The current frame's answer deadline. At it, one task is drained (setTimeout 0) before deciding, so a `connected`
+   * or `ready` already queued on the port still lands.
+   */
+  #armAnswer(): void {
+    const frame = this.#frame;
+    this.#arm(ANSWER_TIMEOUT_MS, () => {
+      this.#readyTimer = setTimeout(() => {
+        if (frame === this.#frame) this.#noAnswer();
+      }, 0);
+    });
+  }
+
+  #arm(ms: number, then: () => void): void {
+    clearTimeout(this.#readyTimer);
+    this.#readyTimer = setTimeout(then, ms);
+  }
+
+  #onLoad(frame: HTMLIFrameElement): void {
+    // A replaced frame's late load counts for nothing.
+    if (this.#disconnected || frame !== this.#frame) return;
     this.#loads += 1;
     if (this.#loads > 1) {
-      this.#disconnect();
-      return;
-    }
-    const target = this.#frame?.contentWindow;
-    if (!target) {
-      this.#failReady();
+      this.#disconnect('frame_replaced');
       return;
     }
     this.#loadAt = this.#now();
+    const target = frame.contentWindow;
+    // No window to talk to: as good as no answer (the deadline decides, and may retry).
+    if (!target) return;
     const channel = new MessageChannel();
-    this.#port = channel.port1;
-    channel.port1.onmessage = (e) => this.#onPortMessage(e.data);
+    const port = channel.port1;
+    this.#port = port;
+    port.onmessage = (e) => {
+      if (this.#port === port) this.#onPortMessage(e.data);
+    };
     target.postMessage({ v: 1, t: 'hana:hello', sdk: this.#o.sdkVersion }, this.#o.vaultOrigin, [channel.port2]);
+  }
+
+  /**
+   * The current frame didn't answer in time. Still loading: one more deadline, then `frame_timeout` (a slow page isn't
+   * helped by asking for it again). Loaded without an answer: replace it once, else `no_answer`.
+   */
+  #noAnswer(): void {
+    if (this.#readyDone || this.#disconnected || this.#connected) return;
+    if (this.#loads === 0) {
+      if (!this.#extended) {
+        this.#extended = true;
+        this.#armAnswer();
+        return;
+      }
+      this.#failReady('frame_timeout');
+      return;
+    }
+    if (this.#attempts >= FRAME_ATTEMPTS) {
+      this.#failReady('no_answer');
+      return;
+    }
+    // A fresh frame, same name and src. The old one's port is closed and its late events dropped.
+    this.#dropFrame();
+    this.#loads = 0;
+    this.#loadAt = 0;
+    this.#mount();
+  }
+
+  /** Closes the current frame's port (its late events dropped) and removes the frame. */
+  #dropFrame(): void {
+    if (this.#port) {
+      this.#port.onmessage = null;
+      this.#port.close();
+    }
+    this.#port = null;
+    this.#frame?.remove();
+    this.#frame = null;
   }
 
   #cspViolation(e: SecurityPolicyViolationEvent): void {
@@ -170,14 +262,19 @@ export class VaultConnection {
     const blocked = e.blockedURI || '';
     if (!CSP_FRAME_DIRECTIVES.has(directive.split(' ')[0] ?? '')) return;
     if (blocked !== this.#o.vaultOrigin && !blocked.startsWith(`${this.#o.vaultOrigin}/`)) return;
-    this.#failReady({ reason: 'csp_frame_src' });
+    this.#failReady('csp_frame_src');
   }
 
-  #failReady(data?: unknown): void {
+  /** `reason` undefined: destroy() before the handshake finished. */
+  #failReady(reason?: VaultUnavailableReason): void {
     if (this.#readyDone) return;
     this.#readyDone = true;
     clearTimeout(this.#readyTimer);
-    this.#rejectReady(hanaError('vault_unavailable', undefined, data));
+    // A failed handshake leaves nothing behind (as destroy() does): no frame, no port.
+    if (reason) this.#dropFrame();
+    this.#rejectReady(
+      reason ? hanaError('vault_unavailable', VAULT_UNAVAILABLE_MESSAGES[reason], { reason, attempts: this.#attempts }) : hanaError('vault_unavailable'),
+    );
   }
 
   #onPortMessage(data: unknown): void {
@@ -186,6 +283,12 @@ export class VaultConnection {
     if (isPortEventShape(data)) {
       const event = parsePortEvent(data);
       if (!event) return;
+      if (event.event === 'connected') {
+        // The vault is alive and starting: `ready` gets longer, and a late one is a slow start, not a missing vault.
+        if (this.#readyDone || this.#connected) return;
+        this.#connected = true;
+        this.#arm(READY_AFTER_CONNECT_MS, () => this.#failReady('ready_timeout'));
+      }
       if (event.event === 'ready') {
         if (this.#readyDone) return;
         this.#readyAt = this.#now();
@@ -269,7 +372,7 @@ export class VaultConnection {
     return this.#frame !== null && !this.#frame.hidden;
   }
 
-  #disconnect(): void {
+  #disconnect(reason?: VaultUnavailableReason): void {
     if (this.#disconnected) return;
     this.#disconnected = true;
     // A dead port's frame is hidden at once (sweep PART-1): a second load means the frame's document was replaced
@@ -277,7 +380,7 @@ export class VaultConnection {
     const launcherWasVisible = this.launcherVisible;
     if (this.#frame) this.#hide(this.#frame);
     clearTimeout(this.#readyTimer);
-    if (!this.#readyDone) this.#failReady();
+    if (!this.#readyDone) this.#failReady(reason);
     this.#readyDone = true;
     for (const p of this.#pending.values()) p.reject(hanaError(ErrorCode.disconnected));
     this.#pending.clear();

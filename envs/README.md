@@ -89,7 +89,7 @@ D1 database). Per-IP limiters always stay near their client. Changing it creates
 - `pinnedIssuerKeys.email` (optional; email login, `docs/email-login-spec.md` "Watchdog", D190, D191): the signer
   policy the watchdog expects of Hana's email issuer, `{"required": 1, "signers": {"hana": ["<thumbprint>", …]}}`,
   each key by its RFC 7638 JWK thumbprint (43 base64url characters, the email issuer's `kid` for it), 1–3 signers,
-  ≤ 8 keys in all, each key pinned once; optional `jwksUrl` (https; default `{apiUrl}/v1/email/jwks.json`). Absent
+  ≤ 8 keys in all, each key pinned once; optional `jwksUrl` (https; default `{emailIssuer.url}/v1/email/jwks.json`, or under `apiUrl` without `emailIssuer.url`). Absent
   means **nothing is pinned**: every email key is then unpinned (a pending one is cancelled, an active one pauses the
   contract) and an email issuer on chain is a critical alert. So pin before the owner posts the first email key
   (build plan batch 6). sandbox-dev has none until batch 4 creates the key. Order around a signer-policy upgrade
@@ -106,7 +106,10 @@ D1 database). Per-IP limiters always stay near their client. Changing it creates
 
 `emailIssuer` (optional; no env has it yet): the email login's issuer Worker (`apps/email-issuer/README.md`,
 `docs/operations.md` "Email issuer", D196). Written by `scripts/email-issuer.ts <env> init`, never by hand for the keys:
-`iss` (`{apiUrl}/v1/email`), `cloudflare` (its own Worker and D1, never the API's or the watchdog's), `signer`
+`url` (the origin the issuer is reached at, D230: required when `apiUrl` is on `workers.dev`, and then the issuer's own
+`https://<emailIssuer.cloudflare.workerName>.<the API's subdomain>.workers.dev`; absent, the API's URL, with a zone
+route sending `/v1/email/*` to the issuer), `iss` (`{url}/v1/email`, `url` defaulting to `apiUrl`), `cloudflare` (its
+own Worker and D1, never the API's or the watchdog's), `signer`
 (`{kind: "worker-secret", activeKid}` on testnet; `aws-kms` is refused by `gen` until batch 10 and by the schema off
 testnet for `worker-secret`), `publicKeys` (the JWKS: 2048–4096-bit RSA, e = 65537, kid = RFC 7638 thumbprint, the
 standby included), `from` (user mail's `From`, on the user-mail sending subdomain), `sender` (`sendgrid`; `outbox` only

@@ -63,6 +63,10 @@ export const HANA_CALLERS: Readonly<Record<string, readonly HanaPage[]>> = {
   '/v1/sessions': ['vault'],
   '/v1/derive': ['vault'],
   '/v1/sessions/revoke': ['vault'],
+  // Email login's explicit links (links.ts): the vault and the popup pages on the auth origin, never a partner page.
+  '/v1/link': ['vault', 'auth'],
+  '/v1/link/cancel': ['vault', 'auth'],
+  '/v1/link/unlink': ['vault', 'auth'],
 };
 
 /** Endpoints partner pages may call with any key, in any env. */

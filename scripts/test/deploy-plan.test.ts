@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { loadEnv } from '@hana-id/env';
+import { reportsCreateProof } from '../lib/deploy-run.ts';
 import { OWNER_RELAYER_METHODS, SESSION_RELAYER_METHODS, sharedClientsOf } from '../lib/contract.ts';
 import { type GovernanceView, UPDATER_METHODS } from '../lib/contract.ts';
 import { buildDeployPlan, checkFunctionKey, creationPlan, type DeployObserved, type DeployOptions, type DeployStep, describeStep, CLOCK_MARGIN_MS, signerFullAccessAllowed } from '../lib/deploy-plan.ts';
@@ -23,7 +24,7 @@ const NEAR = 10n ** 24n;
 const PROD_DELAYS = { issuerKeyDelayMs: 7_200_000, governanceDelayMs: 259_200_000 };
 
 /** Batch B allowlist state 1 (docs/batch-b-spec.md, "Relayer allowlists"). */
-const SESSION = ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'prune_sessions'];
+const SESSION = ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'prune_sessions', 'link_identity', 'cancel_link', 'unlink_identity'];
 const OWNER = ['propose_change', 'cancel_change', 'remove_client', 'disable_shared_login', 'execute_change', 'register_scope', 'apply_pending_config'];
 /** The governance contract's updater key methods (its UPDATER_METHODS) and the v1 key's. */
 const UPDATER = ['set_issuer_key', 'propose_issuer_key_removal', 'execute_issuer_key_change'];
@@ -256,6 +257,18 @@ describe('buildDeployPlan', () => {
       expect(p.done.join()).not.toContain('owner-pool relayer key(s) in place');
     });
 
+    it('email login batch 6: session keys with the batch B list (no link methods) are a blocker: delete, then re-run to re-add them', () => {
+      const batchB = SESSION.filter((x) => !['link_identity', 'cancel_link', 'unlink_identity'].includes(x));
+      const p = buildDeployPlan(m, deployed({ relayerAccessKeys: [fc('ed25519:s1', m.signer, batchB), fc('ed25519:s2', m.signer, batchB)], poolKeysInFile: { session: ['ed25519:s1', 'ed25519:s2'], owner: [] } }), opts);
+      const text = p.blockers.join('\n');
+      expect(text).toContain('with the wrong permission for the session pool');
+      expect(text).toContain(`has methods ${batchB.join(', ')}; expected ${SESSION.join(', ')}`);
+      expect(text).toContain(`near account delete-keys ${m.relayer} public-keys ed25519:s1`);
+      // Deleted, they are re-added from the file with the new list.
+      const after = buildDeployPlan(m, deployed({ relayerAccessKeys: [], poolKeysInFile: { session: ['ed25519:s1', 'ed25519:s2'], owner: [] } }), opts);
+      expect(pool(after.steps, 'session')).toMatchObject({ reuse: ['ed25519:s1', 'ed25519:s2'], methods: SESSION });
+    });
+
     it('blocks a key listed in both pool files', () => {
       const p = buildDeployPlan(m, deployed({ poolKeysInFile: { session: ['ed25519:s1', 'ed25519:s2', 'ed25519:s3'], owner: ['ed25519:o1', 'ed25519:s1'] } }), opts);
       expect(p.blockers.join()).toContain('ed25519:s1 is in both');
@@ -449,6 +462,18 @@ describe('buildDeployPlan', () => {
   describe('upgrades of the governance contract: propose_upgrade → wait → execute_upgrade', () => {
     const up = { ...opts, upgrade: true };
     const pending = (code_hash: string, executable_at_ms: number) => deployed({ wasmCodeHash: 'H', governance: { ...govOk, pending_upgrade: { code_hash, proposed_at_ms: NOW - 60_000, executable_at_ms } } });
+
+    it('refuses to propose or execute while the env’s API lacks the create_session proof (capabilities.createProof, D137)', () => {
+      for (const o of [deployed({ apiCreateProof: false }), pending('H', NOW - CLOCK_MARGIN_MS)]) {
+        const p = buildDeployPlan(m, { ...o, apiCreateProof: false }, { ...up, skipBuild: true });
+        expect(p.blockers.join()).toContain('capabilities.createProof');
+        expect(p.steps.some((x) => x.kind === 'propose-upgrade' || x.kind === 'execute-upgrade')).toBe(false);
+      }
+      expect(buildDeployPlan(m, deployed({ apiCreateProof: true }), up).blockers.join()).not.toContain('createProof');
+      // What deploy-contract reads from GET /v1/health.
+      expect(reportsCreateProof({ ok: true, capabilities: { createProof: true } })).toBe(true);
+      for (const h of [null, { ok: true }, { capabilities: { createProof: 'yes' } }, 'x']) expect(reportsCreateProof(h)).toBe(false);
+    });
 
     it('never plans a raw DeployContract: build, then propose the built hash', () => {
       const p = buildDeployPlan(m, deployed(), up);

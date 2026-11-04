@@ -4,11 +4,16 @@ import { bls12_381 } from '@noble/curves/bls12-381';
 import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import worker from '../src/index.ts';
-import { ckdPayload, revokePayload, sessionMessage, sessionNonce } from '../src/session-crypto.ts';
+import { ckdPayload, createProofPayload, revokePayload, sessionMessage, sessionNonce } from '../src/session-crypto.ts';
 import { NearMock, type RsaSigner, rsaSigner } from './near-mock.ts';
 
 export const GOOGLE_ISS = 'https://accounts.google.com';
 export const ORIGIN = 'https://wallet.example.com';
+/**
+ * The claims refused by name (docs/batch-b-spec.md "Claim allow-list"), as @hana-id/core NAMED_PII_CLAIMS; the worker
+ * tests can't import core's root (scripts/test/relayed-tokens.test.ts checks the two lists agree).
+ */
+export const NAMED_PII_CLAIMS: readonly string[] = ['hd', 'email', 'email_verified', 'name', 'picture', 'given_name', 'family_name', 'locale', 'profile'];
 /** "Google": the RSA key behind the mock JWKS that every chain() serves. */
 export const google = await rsaSigner('google-test-kid');
 
@@ -153,7 +158,7 @@ export async function sessionBody(
   if ('jwt' in overrides) return body;
   let nonce = 'unused';
   try {
-    nonce = await sessionNonce({
+    const input = {
       signer: env.SIGNER_ACCOUNT,
       scopeId: scope,
       sessionPublicKey: body.sessionPublicKey as number[],
@@ -161,7 +166,10 @@ export async function sessionBody(
       keyIndex: body.keyIndex as number,
       maxUses: body.maxUses as number,
       salt: body.salt as number[],
-    });
+    };
+    nonce = await sessionNonce(input);
+    // The session key's proof of possession (D137), as POST /v1/sessions requires it (/v1/login replaces it).
+    if (!('signature' in overrides)) body.signature = await signSession(input.sessionPublicKey, 0, await createProofPayload(input));
   } catch {
     // Malformed fields (shape tests): any nonce will do, the request is rejected first.
   }

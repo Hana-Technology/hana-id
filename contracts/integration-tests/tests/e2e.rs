@@ -327,10 +327,17 @@ fn session_allowlist_is_in_a_planned_state_everywhere() -> Result<()> {
         v
     };
     let owned = |m: &[&str]| sorted(m.iter().map(|s| s.to_string()).collect());
-    // The three states, as the spec lists them: each keeps derive_key, revoke_session and prune_sessions; state 2
-    // drops create_session, state 3 drops create_session_and_derive.
+    // The three states, as the spec lists them: each keeps derive_key, revoke_session and prune_sessions (and, since
+    // email login batch 6, the link methods); state 2 drops create_session, state 3 drops create_session_and_derive.
     let [s1, s2, s3] = SESSION_ALLOWLIST_STATES;
-    assert_eq!(owned(s1), owned(&["create_session", "create_session_and_derive", "derive_key", "revoke_session", "prune_sessions"]));
+    let mut first = vec!["create_session", "create_session_and_derive", "derive_key", "revoke_session", "prune_sessions"];
+    first.extend_from_slice(LINK_RELAYER_METHODS);
+    assert_eq!(owned(s1), owned(&first));
+    for state in SESSION_ALLOWLIST_STATES {
+        for m in LINK_RELAYER_METHODS {
+            assert!(state.contains(m), "{m} missing from a session-pool state");
+        }
+    }
     assert_eq!(owned(s2), owned(&s1.iter().copied().filter(|m| *m != "create_session").collect::<Vec<_>>()));
     assert_eq!(owned(s3), owned(&s1.iter().copied().filter(|m| *m != "create_session_and_derive").collect::<Vec<_>>()));
     for state in SESSION_ALLOWLIST_STATES {

@@ -78,10 +78,24 @@ export interface RelayInstance {
   ageMs: number;
 }
 
+/**
+ * Which key signed the transaction a result names, and with which nonce (decimal): on every result that carries a
+ * `nearTx` (the last one sent, after a retry). The usage ledger records them beside the transaction, so the admin's
+ * daily nonce cross-check can explain each key's nonce on chain (docs/batch-c-spec.md "Daily nonce cross-check").
+ * `relayGasBurnt` / `relayTokensBurnt` (decimal; BigInt sums over the transaction and every receipt, near/tx.ts
+ * burntGas) when the outcome settled and the RPC reported them: provisional (EXECUTED_OPTIMISTIC), never billed.
+ */
+export interface RelaySigner {
+  relayerPk?: string;
+  relayerNonce?: string;
+  relayGasBurnt?: string;
+  relayTokensBurnt?: string;
+}
+
 /** `executor`: on `contract_rejected`, the account whose receipt failed (null when the RPC did not say). */
 export type RelayResult = (
-  | { ok: true; result: unknown; nearTx: string }
-  | { ok: false; status: number; code: string; error: string; nearTx?: string; executor?: string | null }
+  | ({ ok: true; result: unknown; nearTx: string } & RelaySigner)
+  | ({ ok: false; status: number; code: string; error: string; nearTx?: string; executor?: string | null } & RelaySigner)
 ) & { timing?: RelayTiming; instance?: RelayInstance };
 
 interface Dispatched {
@@ -161,6 +175,7 @@ export class RelayerKey extends DurableObject<Env> {
         }
         mark.dispatched = Date.now();
         log({ event: 'relay_dispatched', requestId, pool, keyIndex, method: call.method, nearTx: sent.hash, nonce: sent.nonce.toString(), attempt });
+        const signer: RelaySigner = { relayerPk: this.publicKey, relayerNonce: sent.nonce.toString() };
 
         let initial: SendTxResult | null = null;
         try {
@@ -173,12 +188,12 @@ export class RelayerKey extends DurableObject<Env> {
             log({ event: 'relay_retry', requestId, pool, keyIndex, method: call.method, code: bad ? 'invalid_nonce' : 'expired', nearTx: sent.hash }, 'warn');
             continue;
           }
-          if (bad) return { ok: false, status: 503, code: 'relayer_busy', error: 'The relayer could not get a valid nonce, try again', nearTx: sent.hash };
+          if (bad) return { ok: false, status: 503, code: 'relayer_busy', error: 'The relayer could not get a valid nonce, try again', nearTx: sent.hash, ...signer };
           // Only a validation error is a definite "not accepted". Anything else (timeout, dropped connection, a
           // non-JSON 5xx from a proxy) may have been forwarded and may still execute: poll its hash.
           if (isDefiniteRejection(err)) {
             log({ event: 'relay_rejected', requestId, pool, keyIndex, method: call.method, code: rejectionName(err), nearTx: sent.hash }, 'error');
-            return { ok: false, status: 502, code: 'near_rejected', error: 'NEAR rejected the transaction', nearTx: sent.hash };
+            return { ok: false, status: 502, code: 'near_rejected', error: 'NEAR rejected the transaction', nearTx: sent.hash, ...signer };
           }
         }
 
@@ -187,7 +202,8 @@ export class RelayerKey extends DurableObject<Env> {
           // A later nonce of this key landed first: this tx can never be included (it was dropped from the pool).
           superseded: async () => BigInt((await rpc.viewAccessKey(this.env.RELAYER_ACCOUNT, this.publicKey)).nonce) >= nonce,
         });
-        if (outcome.ok) return { ok: true, result: outcome.value, nearTx: sent.hash };
+        const burnt: RelaySigner = outcome.gas ? { relayGasBurnt: outcome.gas.gasBurnt.toString(), relayTokensBurnt: outcome.gas.tokensBurnt.toString() } : {};
+        if (outcome.ok) return { ok: true, result: outcome.value, nearTx: sent.hash, ...signer, ...burnt };
         if (outcome.kind === 'dropped') {
           if (attempt === 0) {
             // It never executed: resend once with a fresh nonce (re-read, since other txs moved the key on).
@@ -195,11 +211,11 @@ export class RelayerKey extends DurableObject<Env> {
             log({ event: 'relay_retry', requestId, pool, keyIndex, method: call.method, code: 'dropped', nearTx: sent.hash }, 'warn');
             continue;
           }
-          return { ok: false, status: 503, code: 'relayer_busy', error: 'The transaction was dropped, try again', nearTx: sent.hash };
+          return { ok: false, status: 503, code: 'relayer_busy', error: 'The transaction was dropped, try again', nearTx: sent.hash, ...signer };
         }
-        if (outcome.kind === 'failure') return { ok: false, status: 422, code: 'contract_rejected', error: outcome.error, nearTx: sent.hash, executor: outcome.executor };
-        if (outcome.kind === 'timeout') return { ok: false, status: 504, code: 'timeout', error: outcome.error, nearTx: sent.hash };
-        return { ok: false, status: 502, code: 'near_error', error: outcome.error, nearTx: sent.hash };
+        if (outcome.kind === 'failure') return { ok: false, status: 422, code: 'contract_rejected', error: outcome.error, nearTx: sent.hash, executor: outcome.executor, ...signer, ...burnt };
+        if (outcome.kind === 'timeout') return { ok: false, status: 504, code: 'timeout', error: outcome.error, nearTx: sent.hash, ...signer };
+        return { ok: false, status: 502, code: 'near_error', error: outcome.error, nearTx: sent.hash, ...signer, ...burnt };
       }
     } catch {
       // Key loading or an RPC read failed: the text could name a secret's binding or the RPC URL, so it isn't returned.

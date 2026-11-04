@@ -238,7 +238,8 @@ export function withIdentityPins(text: string, add: readonly string[], remove: r
   const next = [...current.filter((t) => !remove.includes(t)), ...add.filter((t) => !current.includes(t))];
   if (next.length === current.length && next.every((t, i) => t === current[i])) return checked(text, 'watchdog', raw.watchdog);
   const { pinnedIdentityKeys: _old, ...rest } = raw.watchdog;
-  const value = next.length ? { ...rest, pinnedIdentityKeys: next } : rest;
+  // A present member keeps its place among the watchdog's members (the line is edited in place); a new one is last.
+  const value = !next.length ? rest : 'pinnedIdentityKeys' in raw.watchdog ? { ...raw.watchdog, pinnedIdentityKeys: next } : { ...rest, pinnedIdentityKeys: next };
   const member = `"pinnedIdentityKeys": [${next.map((t) => JSON.stringify(t)).join(', ')}]`;
   const lines = [...text.matchAll(new RegExp(PINS_LINE.source, 'gmu'))];
   let out: string | null = null;

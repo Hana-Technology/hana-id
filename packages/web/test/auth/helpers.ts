@@ -160,6 +160,22 @@ export interface TokenSigner {
   sign(claims: Record<string, unknown>): Promise<string>;
 }
 
+/** An email issuer key: tokens in the issuer's JWS General JSON form, and the key as the chain lists it. */
+export async function emailIssuerSigner(kid = 'email-kid-1'): Promise<{ chainKey: { kid: string; n: string; e: string }; token(claims: Record<string, unknown>): Promise<string> }> {
+  const pair = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
+  const pub = await crypto.subtle.exportKey('jwk', pair.publicKey);
+  const b64 = (v: unknown) => base64UrlEncode(utf8(JSON.stringify(v)));
+  return {
+    chainKey: { kid, n: pub.n as string, e: pub.e as string },
+    async token(claims) {
+      const payload = b64(claims);
+      const protectedHeader = b64({ alg: 'RS256', kid });
+      const sig = new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', pair.privateKey, utf8(`${protectedHeader}.${payload}`)));
+      return JSON.stringify({ payload, signatures: [{ protected: protectedHeader, signature: base64UrlEncode(sig) }] });
+    },
+  };
+}
+
 export async function tokenSigner(kid = 'kid-1'): Promise<TokenSigner> {
   const pair = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
   const pub = await crypto.subtle.exportKey('jwk', pair.publicKey);

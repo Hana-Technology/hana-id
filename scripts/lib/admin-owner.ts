@@ -9,7 +9,7 @@
 // governance:status [--json]          get_config / get_governance / get_key_changes / the signer's keys / the council,
 //   with findings. Its --json output is the machine-readable source batch C's "Security & monitoring" view starts
 //   from (docs/operations.md "Governance status for the admin portal").
-import { governanceDelayProblems, type Manifest } from '@hana-id/env';
+import { governanceDelayProblems, type Manifest, rsaJwkThumbprint } from '@hana-id/env';
 import { type Args, CliError } from './cli.ts';
 import { type ContractConfig, GOOGLE_PROVIDER, type GovernanceView, type KeyChangeView, normaliseIssuer, tryView, UPDATER_ALLOWANCE_YOCTO, UPDATER_METHODS } from './contract.ts';
 import { checkFunctionKey, signerFullAccessAllowed } from './deploy-plan.ts';
@@ -49,6 +49,8 @@ export async function ownerCallCmd(m: Manifest, method: string, args: Args, deps
     throw new CliError('--args must be a JSON object');
   }
   if (!callArgs || typeof callArgs !== 'object' || Array.isArray(callArgs)) throw new CliError('--args must be a JSON object');
+  const keyProblem = emailKeyProblem(m, method, callArgs as Record<string, unknown>);
+  if (keyProblem) throw new CliError(keyProblem);
   const gas = BigInt(args.int('gas', 100, { min: 1, max: 250 })) * TGAS;
   const call = { method, args: callArgs, gas };
   const opts = ownerTxOptions(args);
@@ -59,6 +61,33 @@ export async function ownerCallCmd(m: Manifest, method: string, args: Args, deps
   if (r.kind === 'executed') deps.log(`Done: ${JSON.stringify(r.value)}`);
   else if (r.kind === 'approved') deps.log(`Done: proposal #${r.proposalId} approved and executed.`);
   else deps.log(`Proposed #${r.proposalId}: waiting for ${r.needed - r.approvals.length} more approval(s).`);
+}
+
+/**
+ * Why an owner `set_issuer_key` for the email issuer must not be sent, or null (batch 6 review M3). The watchdog cancels
+ * (pending) or pauses on (active) any email key it hasn't pinned, so the key must be pinned for its signer in the
+ * manifest's `watchdog.pinnedIssuerKeys.email` first (deployed: check the watchdog's `/status` `email.pinned`), its kid
+ * must be its RFC 7638 thumbprint (Hana's issuer names keys so, D190), and it must be one of `emailIssuer.publicKeys`,
+ * n and e included (the API checks email tokens against those).
+ */
+export function emailKeyProblem(m: Manifest, method: string, a: Record<string, unknown>): string | null {
+  if (method !== 'set_issuer_key' || a.provider !== 'email') return null;
+  const { kid, n, e, signer } = a;
+  if (typeof kid !== 'string' || typeof n !== 'string' || typeof e !== 'string') return 'set_issuer_key for email needs kid, n and e (strings)';
+  if (typeof signer !== 'string') return 'set_issuer_key for email needs its signer ("hana")';
+  const pins = m.watchdog?.pinnedIssuerKeys?.email;
+  if (!pins) return `envs/${m.name}.json has no watchdog.pinnedIssuerKeys.email: pin the key and redeploy the watchdog first (the watchdog cancels or pauses on an unpinned email key)`;
+  if (!(pins.signers[signer] ?? []).includes(kid)) return `${kid} is not pinned for signer ${signer} in watchdog.pinnedIssuerKeys.email: pin it and redeploy the watchdog first`;
+  let thumb: string;
+  try {
+    thumb = rsaJwkThumbprint({ n, e });
+  } catch {
+    return 'n and e must be base64url';
+  }
+  if (thumb !== kid) return `kid ${kid} is not the key's RFC 7638 thumbprint (${thumb})`;
+  const published = m.emailIssuer?.publicKeys.find((k) => k.kid === kid);
+  if (!published || published.n !== n || published.e !== e) return `${kid} is not in emailIssuer.publicKeys with these n and e (the API checks email tokens against those)`;
+  return null;
 }
 
 export function describeProposal(p: DaoProposal, policy: SputnikPolicy, nowMs: number): string[] {

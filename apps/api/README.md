@@ -8,7 +8,7 @@ Durable Object per relayer key. Spec: `docs/batch-a-spec.md` (API section) as am
 ## Commands
 
 ```sh
-pnpm --filter @hana-id/api gen sandbox-dev [--d1-id <uuid>] [--dev-vars]  # wrangler.jsonc, wrangler.{vault,auth}.jsonc (+ .dev.vars) from envs/<env>.json
+pnpm --filter @hana-id/api gen sandbox-dev [--d1-id <uuid>] [--usage-hyperdrive-id <id>|off] [--dev-vars]  # wrangler.jsonc, wrangler.{vault,auth}.jsonc (+ .dev.vars) from envs/<env>.json
 pnpm --filter @hana-id/api test        # vitest in workerd (@cloudflare/vitest-plugin), NEAR RPC mocked; then scripts/ tests in Node
 pnpm --filter @hana-id/api typecheck
 pnpm --filter @hana-id/api dev         # wrangler dev (local D1: `wrangler d1 migrations apply DB --local` first)
@@ -20,7 +20,8 @@ are generated per env and gitignored (they can hold a real D1 id): run `gen <env
 The tests don't read them: `vitest.config.ts` writes `wrangler.vitest.jsonc` (gitignored) with the same generator from a
 fixed test manifest (`TEST_MANIFEST`), so CI needs no `gen` step and no env's values reach the tests. Without `--d1-id`
 the id already in the file is kept only if that file was generated for the same D1 database (`database_name`), else a
-local-only placeholder is written. `--dev-vars` writes `RELAYER_KEYS` (from `.secrets/<env>/relayer-keys.json`) and
+local-only placeholder is written. `--usage-hyperdrive-id` binds the usage ledger's writer (`USAGE_DB`, batch C4;
+kept on later runs for the same Worker and database, `off` drops it); without it usage capture is off. `--dev-vars` writes `RELAYER_KEYS` (from `.secrets/<env>/relayer-keys.json`) and
 `OWNER_RELAYER_KEYS` (from `.secrets/<env>/owner-relayer-keys.json`) single-quoted (wrangler's dotenv parser takes them
 literally), plus `KEYS_UPDATER_KEY`; files that don't exist are skipped.
 
@@ -39,7 +40,7 @@ keys, e.g. the content of `.secrets/<env>/relayer-keys.json`) → `wrangler secr
 | `NEAR_RPC_FALLBACK` | optional var (manifest) | `rpcFallback`, written only when set: the vault and export pages' `connect-src` (D65); the API itself reads only `NEAR_RPC` |
 | `DO_LOCATION_HINT` | optional var (manifest) | `cloudflare.durableObjectLocation`: region of the shared Durable Objects (`src/placement.ts`) |
 | `VAULT_ORIGIN`, `AUTH_ORIGIN` | vars (manifest) | `vaultOrigin`, `authOrigin`; `gen` refuses an env without them |
-| `BLS_PRECHECK`, `REJECT_PII_ON_SESSIONS` | vars | `"0"` everywhere until their step in `docs/batch-b-spec.md` ("Order of work") |
+| `BLS_PRECHECK` | var | `"0"` everywhere until its step in `docs/batch-b-spec.md` ("Order of work"). (`REJECT_PII_ON_SESSIONS` is retired: the claim allow-list is always on and a leftover var is ignored, D271) |
 | `RELAYER_KEYS` | secret | Session pool: JSON array of function-call keys on `RELAYER_ACCOUNT` (receiver `SIGNER_ACCOUNT`; `create_session`, `create_session_and_derive`, `derive_key`, `revoke_session`, `prune_sessions`) |
 | `OWNER_RELAYER_KEYS` | secret | Owner pool (small allowance), same format: `propose_change`, `cancel_change`, `remove_client`, `disable_shared_login`, `execute_change`, `register_scope`, `apply_pending_config`. Without it `/v1/owner-actions` answers 503 and logins are unaffected |
 | `GAS_<METHOD>_TGAS` | optional vars | Per-method gas override in Tgas (integer 1..300), e.g. `GAS_DERIVE_KEY_TGAS=80`; invalid values are ignored (logged) |
@@ -67,9 +68,10 @@ All JSON. Success: `{"result": …, "nearTx": "<base58 tx hash>", "requestId": "
 
 | Endpoint | Body (camelCase, byte arrays as JSON number arrays) | Contract call → `result` |
 |---|---|---|
-| `GET /v1/app` | — | none → `{name, scopeId, signer, google: {clientId, mode: "own" \| "shared"}, serverTimeMs, autoApprovePolicy, rawSign, requestId}` (top level, no `result`; `autoApprovePolicy` is the policy in force, validated and normalized, or `null`; `rawSign` is `"off"` or `"approval"` in force now; an open vault re-reads both within 10 s, D62, D68) |
-| `POST /v1/login` | a `/v1/sessions` body plus `{signature[64], pk1, pk2}` (the session key's signature over counter 1 of the CKD payload); nothing else | `create_session_and_derive` (100 Tgas) → `{big_y, big_c}`, plus `session: {scope_id, expires_at_ms, max_uses, used: 1}` (informational) |
-| `POST /v1/sessions` | `{jwt, sessionPublicKey[32], expiresAtMs, salt[16..64], keyIndex (0..2^31 − 1; higher is reserved), maxUses (1..500)}`; `scopeId` is rejected | `create_session` with the app's `scope_id` (D1) → Session `{path, scope_id, expires_at_ms, max_uses, used}` |
+| `GET /v1/app` | — | none → `{name, scopeId, signer, google: {clientId, mode: "own" \| "shared"} \| null, loginMethods, email?: {aud}, serverTimeMs, autoApprovePolicy, rawSign, requestId}` (top level, no `result`; `loginMethods` is the app's D1 `login_methods` ∩ what the scope serves on chain, `["google"]` for every app today, D231; `autoApprovePolicy` is the policy in force, validated and normalized, or `null`; `rawSign` is `"off"` or `"approval"` in force now; an open vault re-reads both within 10 s, D62, D68) |
+| `POST /v1/login` | a `/v1/sessions` body (without its proof) plus `{signature[64], pk1, pk2}` (the session key's signature over counter 1 of the CKD payload), and optionally `linkJwt` (an email token) with `linkImmediate` (then the signature is over the linked CKD payload, D133); nothing else | `create_session_and_derive` (150 Tgas; 250 with a link) → `{big_y, big_c}`, plus `session: {scope_id, expires_at_ms, max_uses, used: 1}` (informational) |
+| `POST /v1/sessions` | `{jwt, sessionPublicKey[32], expiresAtMs, salt[16..64], keyIndex (0..2^31 − 1; higher is reserved), maxUses (1..500), signature[64]}` (`signature`: the session key's proof of possession, D137); `scopeId` is rejected | `create_session` with the app's `scope_id` (D1) and the proof → Session `{path, scope_id, expires_at_ms, max_uses, used}` |
+| `POST /v1/link`, `/v1/link/cancel`, `/v1/link/unlink` | `{accountJwt, newJwt, epoch, salt}`; `{jwt, memberKey, epoch, salt}` (Hana pages only) | `link_identity` (250 Tgas) → `{effectiveAtMs}`; `cancel_link`, `unlink_identity` (150) → `null`; then the account's vault shares are revoked (`docs/api.md` "Link relays") |
 | `POST /v1/derive` | `{sessionPublicKey[32], counter, signature[64], pk1 "bls12381g1:…", pk2 "bls12381g2:…"}` | `derive_key` → `{big_y, big_c}` |
 | `POST /v1/sessions/revoke` | `{sessionPublicKey[32], counter, signature[64]}` | `revoke_session` → `null` |
 
@@ -90,6 +92,8 @@ Checks, in order (rejected before anything is relayed):
      fail), `iss` → provider, `exp` with 60 s of clock skew (`401 invalid_token`, `400 unsupported_issuer`,
      `400 token_expired`, `503 issuer_keys_unavailable`). Segments must be canonical base64url (no unused bits set),
      as the contract's decoder requires.
+   - Claim allow-list, always (D271): a Google token with a claim outside `iss azp aud sub iat exp nonce nbf jti
+     auth_time` (`src/claims.ts`) is `400 token_has_pii` with `data: {claim}`, and nothing is relayed.
    - The token must carry a `nonce` equal to the session nonce recomputed from the body, `SIGNER_ACCOUNT` and the app's
      `scope_id` (`400 nonce_mismatch`; layout in `src/session-crypto.ts` and `docs/batch-a2-shared-client.md`).
    - Scope: if `scope_for_client(provider, aud)` (cached 60 s, a miss 10 s; dropped in this isolate after an owner
@@ -121,7 +125,9 @@ Checks, in order (rejected before anything is relayed):
    then is judged on its outcome.
 
 `GET /v1/app` runs checks 1–2 and a per-IP limit of its own (the plan's `per_ip_minute`, separate window), never the
-app's relay quota. `google` is `own` with the scope's first Google client (or the app's `google_web_client_id`, set
+app's relay quota. An email token (JWS JSON) on `/v1/sessions` or `/v1/login` is checked against the manifest's
+email keys (`EMAIL_ISS`, `EMAIL_PUBLIC_KEYS`) and the on-chain signer policy, and only for an app whose
+`login_methods` lists `email` (`403 login_method_disabled`; `docs/api.md` "Email tokens"). `google` is `own` with the scope's first Google client (or the app's `google_web_client_id`, set
 with `admin app:settings --google-web-client`; `409 no_google_client` if it is no longer one of the scope's
 clients), else `shared` with the first shared client
 in force when the scope has `allow_shared`, else `409 no_google_client` (`409 scope_not_registered` when the scope is
@@ -131,8 +137,9 @@ Relay errors: `422 contract_rejected` (contract panic text in `error`), `502 nea
 as invalid: it never executed) / `near_error` / `near_unavailable` / `bad_contract_result` (it executed, but the
 result isn't the shape the endpoint returns), `503 relayer_busy` / `relayer_unavailable` / `relayer_unconfigured` (the
 pool's secret is missing or empty: nothing sent), `504 timeout`. Any other broadcast failure (dropped connection, non-JSON 5xx from a proxy) may still execute, so the
-tx hash is polled; transient errors while polling don't end the wait. Usage (`usage.sessions` /
-`usage.derives`, per app per UTC day) counts successful calls only.
+tx hash is polled; transient errors while polling don't end the wait. Usage: one event per request past the gate to
+the Neon ledger, after the response (`src/usage/`, `docs/api.md` "Usage capture"); the D1 `usage` counters are no
+longer written.
 
 CORS: responses echo `Origin` (with `Vary: Origin`) only when it is allowed for the request's app. Preflight carries no
 key, so `OPTIONS` succeeds when any active app allows the origin; the real request is then checked against its own app.
@@ -159,16 +166,17 @@ key, so `OPTIONS` succeeds when any active app allows the origin; the real reque
 ### `POST /v1/login` (`src/login.ts`)
 
 One transaction per login. Checks, in order: the gate (checks 1–3, `relay` quota); the body (`400 bad_request`); the
-token as for `/v1/sessions`, plus the claim allow-list (`src/claims.ts`: only `iss azp aud sub iat exp nonce nbf jti
-auth_time`; anything else is `400 token_has_pii` with `data: {claim}`) and the nonce; scope and `session_key_in_use`
+token as for `/v1/sessions`, the claim allow-list included (`src/claims.ts`: only `iss azp aud sub iat exp nonce nbf
+jti auth_time`; anything else is `400 token_has_pii` with `data: {claim}`), and the nonce; scope and `session_key_in_use`
 side by side (`403 …`, `409 session_exists`); the signature over counter 1 (`401 invalid_signature`); pk1/pk2 each one
 compressed, non-identity point (`400 invalid_app_key`); with `BLS_PRECHECK = "1"` (off everywhere, D64) the pairing
 `e(pk1, −g2) · e(g1, pk2) = 1` (`400 invalid_app_key`; the same var gates it on `/v1/derive`). Failures map by the
 failing receipt's executor: the signer → `422 contract_rejected` (with `reason: "session_key_in_use"` for that panic;
 the session was not created), `MPC_ACCOUNT` → `422 ckd_failed` with `session: {used: 1}` (the session is committed),
-else `502 near_error`; `504 timeout` and relayer errors keep their codes and `nearTx`. Usage: `sessions` and `derives`
-on success, `sessions` only on `ckd_failed`. `/v1/sessions` applies the claim allow-list too once
-`REJECT_PII_ON_SESSIONS = "1"`. From `AUTH_ORIGIN` (the export window, a key export) the call is also limited to 3 per
+else `502 near_error`; `504 timeout` and relayer errors keep their codes and `nearTx`. Usage: one `login` event
+(relayed when the transaction can have executed; a uid on success). Every route that verifies a Google token
+(`/v1/sessions`, `/v1/login`, the link routes through `src/login-token.ts`, and `/v1/owner-actions`) applies the
+claim allow-list, with no flag or option to skip it (D271, D274). From `AUTH_ORIGIN` (the export window, a key export) the call is also limited to 3 per
 hour per `(app, sha256(path))`, counted right after the nonce check and before anything is relayed (`429 rate_limited`
 + `retry-after`, `503 rate_limiter_unavailable`; D59).
 
@@ -274,7 +282,7 @@ raised one never lengthens them). Then `401 invalid_signature`, then one atomic 
 settings in the same statement: `409 bad_counter {expected}`, `410 share_expired`. `revoke-all` revokes the other
 shares and moves its counter in one D1 batch (one transaction), the revoke conditional on the counter move, so a
 failure changes neither and a replay revokes nothing. `503 vault_key_unavailable` when `VAULT_KEK` (or, for an older row,
-`VAULT_KEK_PREVIOUS`) is missing; unlock unwraps K_s before the counter moves. Usage counts `usage.unlocks`. D1 holds
+`VAULT_KEK_PREVIOUS`) is missing; unlock unwraps K_s before the counter moves. Each unlock past the vault gate is one `unlock` usage event. D1 holds
 only `share_enc = iv ‖ AES-GCM(VAULT_KEK, iv, K_s, aad = share_id ‖ app_id ‖ session_pk)` (`src/vault/kek.ts`).
 
 ### `POST /v1/owner-actions` (no app auth; 10 per IP per minute, 20 per minute and 200 per day globally)
@@ -301,7 +309,8 @@ including the nonces):
 
 - `auth` token: RS256 signature against the issuer's JWKS (Google's, cached per its `max-age`), issuer, expiry
   (`401 invalid_token` / `token_expired`, `400 unsupported_issuer`, `503 issuer_keys_unavailable` when the JWKS can't
-  be fetched); `(provider, aud)` ∈ `get_config().console_audiences` (cached 60 s; `403 not_console_token`); the token
+  be fetched); the claim allow-list, as login tokens (`400 token_has_pii` with `data: {claim}`, D274: the token goes
+  on chain); `(provider, aud)` ∈ `get_config().console_audiences` (cached 60 s; `403 not_console_token`); the token
   has not been relayed before (a token is bound to one action by its nonce; `409 token_used`). The token is reserved
   atomically in a Durable Object before relaying, so concurrent copies can't all pass; the reservation is released
   only when the request is turned away by the global cap or the transaction certainly never executed
@@ -313,7 +322,8 @@ including the nonces):
   (`409 change_locked`). `remove_client`: the client is in the scope (`404 unknown_client`) and not the last one unless the scope
   has `allow_shared` (`409 last_client`). `disable_shared_login`: shared login is on (`409 shared_login_disabled`) and
   the scope has a client of its own (`409 last_client`). `propose_change(AddClient)`: `client_proof` is a genuine token
-  for that `(provider, aud)` (`400 invalid_client_proof`), not already in the scope (`409 client_registered`), not a
+  for that `(provider, aud)` (`400 invalid_client_proof`) with only allow-listed claims (`400 token_has_pii`, D274),
+  not already in the scope (`409 client_registered`), not a
   shared or pending shared client (`409 shared_client`). `propose_change(SetAllowShared)`: not already on
   (`409 shared_login_enabled`).
 - Then the global cap (only requests that passed the checks count).
@@ -346,7 +356,8 @@ reuses the stored block hash while it is under 5 min old; only a key with no sto
 secret at that index) reads the access-key nonce and a final block from chain. On `InvalidNonce` the object re-reads
 the access key (`max(local, chain, ak_nonce from the error)`) and retries once; an expired block hash is refreshed and
 retried once; a tx superseded twice 2 s apart while unknown is treated as dropped and resent once with a fresh nonce. The object only relays its pool's methods, always to `SIGNER_ACCOUNT`, no deposit, with
-per-method gas from `src/gas.ts` (never the caller's): `create_session` 50 Tgas, `create_session_and_derive` 100,
+per-method gas from `src/gas.ts` (never the caller's): `create_session` 100 Tgas, `create_session_and_derive` 150 (250
+with a `link_jwt`), `link_identity` 250, `cancel_link` and `unlink_identity` 150 (D155: 4096-bit issuer keys),
 `derive_key` 60, `revoke_session` 20, `prune_sessions` 50, owner-pool methods 50 except `register_scope`, which
 verifies one RS256 client proof per client: 30 + 25 per proof, capped at 300 (280 for the contract's 10). **To
 measure on testnet**; override with `GAS_<METHOD>_TGAS`.

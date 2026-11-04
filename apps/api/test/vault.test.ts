@@ -7,7 +7,8 @@ import { VAULT_LIMIT_PERIOD_S, vaultIpKey, vaultShareKey } from '../src/vault/li
 import { clearKekCache } from '../src/vault/kek.ts';
 import { advanceShare } from '../src/vault/shares.ts';
 import { NO_SHARE_ID, createSharePayload, vaultMessage } from '../src/vault/message.ts';
-import { ORIGIN, appHeaders, call, chain, deriveBody, forgeKeyEnvironment, newKey, seedApp, seedPlan, sessionKeyPair, uid } from './helpers.ts';
+import { ORIGIN, appHeaders, call, chain, deriveBody, forgeKeyEnvironment, newKey, seedApp, seedPlan, sessionKeyPair, uid, minuteHeadroom } from './helpers.ts';
+import { usageOf } from './usage-ledger.ts';
 import {
   HOUR,
   VAULT,
@@ -284,6 +285,8 @@ describe('vault gate', () => {
   });
 
   it('per-IP and per-app vault windows', async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom).
+    await minuteHeadroom(15_000);
     const { app, near } = await vaultSetup();
     const share = await createShare(app, near);
     const ip = `10.9.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`;
@@ -321,6 +324,8 @@ describe('vault gate', () => {
   });
 
   it('the app window is asked only once the IP window accepted: requests the IP refuses never use the app quota', async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom).
+    await minuteHeadroom(15_000);
     // per_minute 10 → an app vault window of 100, above the 60 per IP.
     const plan = `p${uid()}`;
     await seedPlan(plan, 10, 1000, 1000);
@@ -337,6 +342,8 @@ describe('vault gate', () => {
   });
 
   it('the share limit counts only requests the IP and app limits accepted', async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom).
+    await minuteHeadroom(15_000);
     const plan = `p${uid()}`;
     await seedPlan(plan, 1, 1000, 1000);
     const near = chain();
@@ -364,6 +371,8 @@ describe('vault gate', () => {
   });
 
   it('the per-IP and per-share limits are the Rate Limiting bindings; the RateLimiter object is asked only for the app quota', async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom).
+    await minuteHeadroom(15_000);
     const { app, near } = await vaultSetup();
     const objects = vi.spyOn(env.RATE_LIMITER, 'idFromName');
     const share = await createShare(app, near);
@@ -437,6 +446,8 @@ describe('vault gate', () => {
   });
 
   it(`per share: ${SHARE_PER_MINUTE} requests per minute`, async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom).
+    await minuteHeadroom(15_000);
     const { app, near } = await vaultSetup();
     const share = await createShare(app, near);
     for (let c = 1; c <= SHARE_PER_MINUTE; c++) expect((await act(app, share, 'touch', c)).status).toBe(200);
@@ -448,7 +459,7 @@ describe('vault gate', () => {
 });
 
 describe('POST /v1/vault/unlock', () => {
-  it('returns K_s, moves the counter, slides idle_until and counts an unlock, with no chain call', async () => {
+  it('returns K_s, moves the counter, slides idle_until and records an unlock event, with no chain call', async () => {
     const { app, near } = await vaultSetup();
     const share = await createShare(app, near);
     await setShare(share.shareId, { idle_until: Date.now() + MIN });
@@ -461,10 +472,12 @@ describe('POST /v1/vault/unlock', () => {
     expect((await storedShare(share.shareId))!).toMatchObject({ counter: 1, idle_until: body.idleUntilMs });
     expect(near.viewCalls.length).toBe(views);
     expect(near.rpcMethods.filter((m) => m !== 'query')).toEqual([]);
-    const usage = await env.DB.prepare('SELECT unlocks, sessions, derives FROM usage WHERE app_id = ?1').bind(app.id).first();
-    expect(usage).toEqual({ unlocks: 1, sessions: 0, derives: 0 });
+    const unlocks = () => usageOf(app.id).filter((e) => e.endpoint === 'unlock');
+    // No uid, no transaction: an unlock is never relayed and never names its user.
+    expect(unlocks()).toEqual([expect.objectContaining({ outcome: 'ok', status: 200, relayed: false, request_id: body.requestId })]);
+    expect(unlocks()[0]).not.toHaveProperty('uid');
     expect((await act(app, share, 'unlock', 2)).status).toBe(200);
-    expect(await env.DB.prepare('SELECT unlocks FROM usage WHERE app_id = ?1').bind(app.id).first()).toEqual({ unlocks: 2 });
+    expect(unlocks().map((e) => e.outcome)).toEqual(['ok', 'ok']);
   });
 
   it('idle_until never passes the absolute expiry', async () => {
@@ -496,7 +509,8 @@ describe('POST /v1/vault/unlock', () => {
     const results = await Promise.all([0, 1, 2, 3].map(() => call('/v1/vault/unlock', { headers: vaultHeaders(app), body })));
     expect(results.map((r) => r.status).sort()).toEqual([200, 409, 409, 409]);
     for (const r of results.filter((x) => x.status === 409)) expect(await r.json()).toMatchObject({ expected: 2 });
-    expect(await env.DB.prepare('SELECT unlocks FROM usage WHERE app_id = ?1').bind(app.id).first()).toEqual({ unlocks: 1 });
+    // One event per request: the winner ok, the three losers rejected.
+    expect(usageOf(app.id).filter((e) => e.endpoint === 'unlock').map((e) => e.outcome).sort()).toEqual(['ok', 'rejected', 'rejected', 'rejected']);
   });
 
   it('401 invalid_signature does not consume the counter; another app’s id or another action never verifies', async () => {
@@ -701,7 +715,8 @@ describe('POST /v1/vault/touch', () => {
     expect(Object.keys(body).sort()).toEqual(['counter', 'idleUntilMs', 'requestId']);
     expect(body.counter).toBe(1);
     expect(body.idleUntilMs as number).toBeGreaterThan(Date.now() + 2 * HOUR - 5000);
-    expect(await env.DB.prepare('SELECT unlocks FROM usage WHERE app_id = ?1').bind(app.id).first()).toBeNull();
+    // Only unlocks are captured among the share actions.
+    expect(usageOf(app.id).filter((e) => e.endpoint === 'unlock')).toEqual([]);
     // Touch works without any KEK (it never reads K_s).
     expect((await act(app, share, 'touch', 2, { env: { VAULT_KEK: undefined } })).status).toBe(200);
   });

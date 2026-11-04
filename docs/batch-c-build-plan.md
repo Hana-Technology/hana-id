@@ -22,7 +22,10 @@ Batches merge one at a time. Deploys happen at the milestones at the end; a merg
   files. Another batch that needs a hot-DB migration first takes the next free number and renumbers what is unmerged.
   Taken outside batch C: **0008** (`0008_identity_token.sql`, the partner identity token, `feat/identity-token-1`,
   D172): its own tables only, so 0006 and 0007 keep their numbers and apply before or after it; batch C's usage
-  ledger (C4) should also count `identity_tokens` per app and day (today `identity_usage` in D1).
+  ledger (C4) should also count `identity_tokens` per app and day (today `identity_usage` in D1). Taken by C4:
+  hot-DB **0009** (`0009_session_markers.sql`, D220; 0007 stays C4b's) and Neon **0002**
+  (`0002_identity_tokens.sql`, D223) and **0003** (`0003_writer_partitions.sql`, the writer keeps partitions
+  ahead), so C12's and C13's Neon functions take **0004** and **0005**.
 - Setup and deploy steps are instructions for the user. No batch's agent connects to Neon, creates Hyperdrive or D1
   resources, runs wrangler against an account, deploys or sends a chain transaction.
 - Neon is Postgres only, reached through Hyperdrive. Neon Auth, Better Auth and Neon's other services are not used
@@ -153,6 +156,11 @@ manifest blocks, tables or vars yet.
 
 ## C4. Usage capture
 
+Built on `feat/batch-c-4` (2026-11-02; D220–D224, to confirm). Beyond the scope below: hot-DB migration 0009
+(`session_markers`, the C3 obligation), Neon 0002 (identity tokens per app and day, copied hourly from D1),
+`usage-setup` as subcommands (`roles`, `hyperdrive`, `user-id-key`), gitleaks rules for the new secret files.
+Setup for the user: `docs/operations.md` "Usage capture (batch C4, milestone M2)".
+
 - **Scope**: `apps/api/src/usage/` (UsageEvent v1 from `console-core`, `recordUsage` in `waitUntil` with one retry
   after 250 ms, the uid from the request's path with `USER_ID_KEY`); relay results carry the signing key's public key
   and nonce; `FinalOutcome` gains typed gas fields with BigInt sums; the D1 `usage` counters stop being written
@@ -164,7 +172,8 @@ manifest blocks, tables or vars yet.
   as a sign of a user. Once C4 stops writing those counters, and before C4b's 0007 drops the table, replace that
   check with one that still sees new sessions: e.g. a hot-DB marker the API writes beside the relay (as it already
   does for `scopes.first_session_at`), not a Neon read (the hot path and the waiver must not depend on Neon). Its test
-  rows move with it.
+  rows move with it. **Done** (D220): `session_markers` (migration 0009), written once the first session-pool relay
+  settled; the CLI's waiver and C5's `AdminRpc.ackNotice` (`changes/lifecycle.ts`) both read it.
 - **Tests**: spec "Topology and config" first two rows (logins with no binding; logins identical with a refusing
   server, `usage_write_failed` once after one retry); "Usage ledger" capture rows (one event per post-gate outcome,
   none for gate rejections or `GET /v1/app`, allowlist snapshot, `org_id` from the gate row, `relayer_pk`/
@@ -178,7 +187,9 @@ manifest blocks, tables or vars yet.
 
 - `scripts/usage-legacy-export.ts`: writes the D1 `usage` table once to `EXPORTS` (`legacy/usage-<env>.csv`) with
   row counts verified; then `apps/api/migrations/0007_drop_legacy_usage.sql`. Applied only after the export, after C4
-  is deployed (nothing writes `usage` any more). Needs the `EXPORTS` bucket (setup step 7).
+  is deployed (nothing writes `usage` any more) and after the one-off `usage` → `session_markers` statement of
+  `docs/operations.md` "Usage capture" step 7 (D220), run again right before 0007. Needs the `EXPORTS` bucket (setup step 7). Nothing reads `usage`
+  any more (`apps/api/scripts/test/hot-db-reads.test.ts` checks it).
 
 ## C5. `AdminRpc` and `ConsoleRpc` core
 
@@ -275,10 +286,15 @@ manifest blocks, tables or vars yet.
 
 ## C12. Reports and statements
 
-- **Scope**: Neon `0002_reports.sql` (`org_report`, `org_statements`, `org_ledger`, `rejection_rates`); admin crons
-  (settlement every 15 min, the daily nonce check, rate fetch with the audited override, `ensure_partitions`,
-  rejection-rate alert); `ConsoleRpc.usage`/`statements`/`ledger`; report screens (console and admin); statement issue
+- **Scope**: Neon `0004_reports.sql` (`org_report`, `org_statements`, `org_ledger`, `rejection_rates`; C13's
+  retention functions are `0005`); admin crons (settlement every 15 min, the daily nonce check, rate fetch with the
+  audited override, `ensure_partitions` as a second keeper beside the API's hourly one (C4), rejection-rate alert); `ConsoleRpc.usage`/`statements`/`ledger`; report screens (console and admin); statement issue
   with CSV, PDF (`pdf-lib`, exact-pinned) and on-screen views, the ledger CSV and exports.
+- **Obligation from C4 (review L7, D222):** settlement bills a relayed event only when its transaction is its own:
+  `near_tx` unique among the ledger's relayed events, and the transaction read at FINAL signed by `relayer_pk` (one of
+  the env's relayer pool keys) with nonce `relayer_nonce`. A duplicate or a mismatch is not billed (`unsettled`,
+  listed) and alerts staff: a leaked writer credential could otherwise attach a real transaction to an org it isn't
+  for. Test it with a duplicated `near_tx` and a wrong key and nonce.
 - **Tests**: spec "Usage ledger" report, settlement, nonce-check, statement, golden-CSV, rejection-rate and D92 rows.
 
 ## C13. Retention
@@ -332,18 +348,20 @@ Run from the main checkout; every file in `.secrets/` is 0600 in a 0700 director
 2. **Ledger schema** (C1 onwards): `corepack pnpm --filter @hana-id/scripts usage-migrate sandbox-dev` (dry run: lists
    pending files), then the same with `--yes`. Uses `DATABASE_URL_DIRECT` (the owner role over a direct, non-pooled
    connection).
-3. **Roles' credentials** (C4): `corepack pnpm --filter @hana-id/scripts usage-setup sandbox-dev` (dry run) then
-   `--yes`: generates a password per role, runs `ALTER ROLE usage_writer|usage_admin LOGIN PASSWORD …` as the owner,
-   writes `.secrets/sandbox-dev/neon-usage-writer.url` and `neon-usage-admin.url` (pooled host is not used: Hyperdrive
-   pools).
-4. **Hyperdrive** (C4 writer, C8 admin): `usage-setup … --hyperdrive --yes` creates `hana-id-usage-writer-sandbox-dev`
-   and `hana-id-usage-admin-sandbox-dev` with caching disabled and prints their ids (not secret); pass them to `gen`
-   (`--usage-hyperdrive-id`, `--admin-hyperdrive-id`). Confirm Hyperdrive is available on the account's plan first
-   (open question 5).
+3. **Roles' credentials** (C4): `corepack pnpm --filter @hana-id/scripts usage-setup sandbox-dev roles` (dry run)
+   then `--yes`: generates a password per role, writes `.secrets/sandbox-dev/neon-usage-writer.url` and
+   `neon-usage-admin.url` (pooled host is not used: Hyperdrive pools), then runs `ALTER ROLE usage_writer|usage_admin
+   LOGIN PASSWORD '<SCRAM verifier>'` as the owner (D224).
+4. **Hyperdrive** (C4 writer, C8 admin): `usage-setup sandbox-dev hyperdrive --yes` creates
+   `hana-id-usage-writer-sandbox-dev` and `hana-id-usage-admin-sandbox-dev` with caching disabled and prints their ids
+   (not secret); pass them to `gen` (`--usage-hyperdrive-id`, `--admin-hyperdrive-id` from C8). Confirm Hyperdrive is
+   available on the account's plan first (open question 5).
 5. **Console D1** (C7): `corepack pnpm --dir apps/api exec wrangler d1 create hana-id-console-sandbox-dev`, then
    apply `apps/console/migrations` remotely; pass the id to `gen` (`--console-d1-id`).
-6. **`USER_ID_KEY`** (C4): `usage-setup … --user-id-key` writes 32 random bytes to `.secrets/sandbox-dev/user-id-key`
-   and an offline backup is made by hand; `wrangler secret put USER_ID_KEY` on the API only.
+6. **`USER_ID_KEY`** (C4): `usage-setup sandbox-dev user-id-key --yes` writes 32 random bytes (base64) to
+   `.secrets/sandbox-dev/user-id-key` (never replaced) and sets the API's `USER_ID_KEY` through wrangler's stdin; an
+   offline backup is made by hand. Also for C4: hot-DB migration 0009 and its one-off `usage` → `session_markers`
+   statement after the deploy (`docs/operations.md` "Usage capture" steps 5 and 7).
 7. **R2** (C11, C4b): buckets from the `files` block; `STATEMENTS` with a 7-year bucket lock, `EXPORTS` with a 30-day
    lifecycle rule except `legacy/`.
 8. **Cloudflare Access** (C8): the admin application on `admin.origin` (Custom Domain on production; Worker-level

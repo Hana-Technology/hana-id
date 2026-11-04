@@ -1,7 +1,6 @@
 // D1 access to `vault_shares` (migration 0003). Every read and write is scoped to the gate app's id, so one app's
 // request can never see or move another app's share. The counter rule (counter = n + 1 only while the share is live)
 // is one atomic UPDATE, so of concurrent requests with the same counter exactly one wins.
-import { usageDay } from '../apps.ts';
 
 export interface ShareRow {
   share_id: Uint8Array;
@@ -174,15 +173,4 @@ export async function revokeAllFrom(
   ]);
   const row = advance?.results[0];
   return row ? { counter: row.counter, revoked: revoke?.meta.changes ?? 0 } : null;
-}
-
-/** Counts one successful unlock for the app's usage day. */
-export async function incrementUnlocks(db: D1Database, appId: string, now = Date.now()): Promise<void> {
-  await db
-    .prepare(
-      `INSERT INTO usage (app_id, day, unlocks) VALUES (?1, ?2, 1)
-       ON CONFLICT (app_id, day) DO UPDATE SET unlocks = unlocks + 1`,
-    )
-    .bind(appId, usageDay(now))
-    .run();
 }

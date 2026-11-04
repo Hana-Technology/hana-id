@@ -63,7 +63,8 @@ describe('manifestSchema: Durable Object location', () => {
 
 describe('manifestSchema: rpcFallback', () => {
   it('is optional, https only, and not rpc itself', () => {
-    const { rpcFallback: _, ...base } = raw();
+    // Without an email issuer: with one, rpcFallback is required outside local* envs (D263, tested below).
+    const { rpcFallback: _, emailIssuer: _issuer, ...base } = raw();
     expect(manifestSchema.safeParse(base).success).toBe(true);
     expect(manifestSchema.parse({ ...base, rpcFallback: 'https://rpc.testnet.example' }).rpcFallback).toBe('https://rpc.testnet.example');
     const http = manifestSchema.safeParse({ ...base, rpcFallback: 'http://rpc.testnet.example' });
@@ -73,6 +74,15 @@ describe('manifestSchema: rpcFallback', () => {
     const same = manifestSchema.safeParse({ ...base, rpcFallback: base.rpc });
     expect(same.success).toBe(false);
     expect(same.error?.issues[0]?.message).toContain('different endpoint');
+  });
+
+  it('is another provider than rpc (registrable domain) outside local* envs: a member path is confirmed on both (D263)', () => {
+    const { rpcFallback: _, ...base } = raw();
+    const host = new URL(base.rpc as string).hostname.split('.').slice(-2).join('.');
+    const sameProvider = manifestSchema.safeParse({ ...base, rpcFallback: `https://other-node.${host}` });
+    expect(sameProvider.success).toBe(false);
+    expect(sameProvider.error?.issues.map((i) => i.message).join()).toContain('another provider');
+    expect(manifestSchema.safeParse({ ...base, rpcFallback: 'https://rpc.testnet.near.org' }).success).toBe(true);
   });
 });
 

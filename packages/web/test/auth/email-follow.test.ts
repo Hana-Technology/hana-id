@@ -162,10 +162,12 @@ describe('case B: “Link and continue” (D139)', () => {
     const entry = JSON.parse(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + s.relayId)!);
     expect(entry.b).toEqual({ linkTicket: 'T'.repeat(43), emailSub: E_SUB });
     expect(entry.f).toBe(Buffer.from(s.followKey).toString('base64url'));
+    // The default flow (token_first, D270): the access token's request first, the nonce kept on the entry for the
+    // ID request after it (G-L3 below runs both flows).
+    expect(entry).toMatchObject({ tf: 1, n: s.nonce });
     const url = new URL(s.win.location.assigned[0]!);
-    expect(url.searchParams.get('nonce')).toBe(s.nonce);
     expect(url.searchParams.get('state')).toBe(s.relayId);
-    expect(url.searchParams.get('scope')).toBe('openid');
+    expect([url.searchParams.get('response_type'), url.searchParams.get('scope'), url.searchParams.get('nonce')]).toEqual(['token', 'openid email', null]);
   });
 
   it('G-L3: case B’s Google request is the login’s own, as /login makes it under each flow (google-match needs the access token)', async () => {

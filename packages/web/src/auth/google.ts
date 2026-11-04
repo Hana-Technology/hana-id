@@ -5,12 +5,12 @@
 // Google's verified email (docs/email-login-spec.md "How the popup gets Google's verified email", build plan batch 8b;
 // D254, D264, D270, D273): the email issuer needs an access token for the `email` scope, while the ID token that goes
 // on chain must stay openid-only (D25). How the popup gets it is GOOGLE_EMAIL_FLOW, a code constant:
-//   - 'second_request' (in force): only in a login of an app with email. The login's request stays
+//   - 'second_request' (the fallback, kept tested): only in a login of an app with email. The login's request stays
 //     `response_type=id_token`, `scope=openid`; after it the callback makes a second, silent request
 //     (`response_type=token`, `scope=email`, `prompt=none`, `login_hint=<sub>`) and relays the access token in the
 //     follow-up channel's slot 1. When Google needs the user for it (SILENT_ERRORS: the first time the app asks for
 //     the email scope), Hana's explainer, then once more without `prompt=none` (D264).
-//   - 'token_first' (D270; built, off until the spike's legs C and E pass): every Google login of an env with an email
+//   - 'token_first' (in force since 2026-11-04, after the spike passed, D270): every Google login of an env with an email
 //     issuer (apps without email login too: the issuer's directory only, D269). The login's request is
 //     `response_type=token`, `scope=openid email` with the account chooser, so Google's one sign-in screen lists the
 //     email. The callback reads the access token's client and `sub` from tokeninfo (`accessTokenSub`), relays the
@@ -37,10 +37,11 @@ const GOOGLE_ERROR = /^[a-z_]{1,64}$/u;
 export type GoogleEmailFlow = 'second_request' | 'token_first';
 /**
  * How the popup asks Google for the email scope (above). Changed only by a reviewed one-line change: 'token_first'
- * waits for the user's spike run (apps/smoke/spike-email.html legs C and E, D270). The pages and the vault take the flow
- * as a dependency (`googleEmailFlow`), so the tests run every flow; this constant is only the default.
+ * since the user's spike run passed every leg on 2026-11-04 (apps/smoke/spike-email.html, D270); 'second_request'
+ * stays built and tested as the fallback. The pages and the vault take the flow as a dependency (`googleEmailFlow`),
+ * so the tests run every flow; this constant is only the default.
  */
-export const GOOGLE_EMAIL_FLOW: GoogleEmailFlow = 'second_request';
+export const GOOGLE_EMAIL_FLOW: GoogleEmailFlow = 'token_first';
 /** The silent request's errors that mean "Google needs the user": the callback asks once more, interactively. */
 export const SILENT_ERRORS: ReadonlySet<string> = new Set(['consent_required', 'interaction_required', 'login_required', 'account_selection_required']);
 
@@ -232,10 +233,11 @@ export type AccessTokenSub = { ok: true; sub: string } | { ok: false; reason: 'u
  * (apps/email-issuer src/google.ts `checkAccessToken`). The token goes in a form body, never in a URL; no cookie or
  * referrer is sent. Never throws, and never puts the token or the answer in a result or an error.
  *
- * ASSUMPTION (D270, to confirm in the spike): tokeninfo answers a browser's cross-origin POST with CORS headers the
- * browser accepts. If it doesn't, this returns `unavailable` and every token_first login of an app with email login
- * ends there (`tokeninfo_unavailable`), never a request without the hint; a record-only login (an app without email
- * login) instead drops the access token and makes batch B's openid request with the account chooser (nothing recorded).
+ * tokeninfo answers a browser's cross-origin POST with CORS headers the browser accepts (D270; the spike's leg E saw
+ * it on 2026-11-04). If that ever stops, this returns `unavailable`: every token_first login of an app with email
+ * login ends there (`tokeninfo_unavailable`), never a request without the hint; a record-only login (an app without
+ * email login) instead drops the access token and makes batch B's openid request with the account chooser (nothing
+ * recorded).
  */
 export async function accessTokenSub(accessToken: string, clientId: string, fetchFn: typeof fetch = (...args) => fetch(...args)): Promise<AccessTokenSub> {
   let res: Response;

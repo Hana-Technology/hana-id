@@ -1,6 +1,8 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-04 (branch `fix/user-emails-review`: "User directory (D269)": the CLI's
+Last verified against code: 2026-11-04 (branch `feat/token-first-on`: "Turning linking on (batch 8b)": the spike
+passed, `'token_first'` in force, deploying the switch (the issuer if needed, both page Workers), the check and the
+undo; the user directory's google-record rows in force; D270); 2026-11-04 (branch `fix/user-emails-review`: "User directory (D269)": the CLI's
 statement off the argv (a 0600 `.secrets/tmp/` file locally, D1's REST API remotely; why not wrangler's
 `--remote --file`), unverified Google rows, order-safe writes, google-record after `/v1/login`, what a row proves;
 the `admin user:*` failures); 2026-11-04 (branch `feat/google-token-first`: "Turning linking on (batch 8b)"'s spike
@@ -1993,7 +1995,7 @@ The issuer keeps each identity's verified address for Hana staff (D269): `user_e
 the address, `email_verified`, `hosted`, first and last seen) and `user_email_apps` (which apps and scopes), in its own
 D1 (migration `0002_user_emails.sql`; `docs/api.md` "Durable Objects, D1 and bindings"). An email login writes its row
 at every successful `verify`, after the answer; a Google login writes its row at google-match once its checks pass
-(apps with email login), and under `'token_first'` (D270, built, not in force) at google-record (apps without email
+(apps with email login), and under `'token_first'` (D270, in force since 2026-11-04) at google-record (apps without email
 login), only once `/v1/login` has succeeded: userinfo's address, `email_verified` and `hosted`. A failed write logs
 `directory_write_failed` and never fails a login. Writes can land out of order; a row keeps the newest write's address,
 `email_verified`, `hosted` and scope, and the widest seen window. Nothing partner-facing reads it. There is no
@@ -2427,12 +2429,13 @@ What users see, by case (`docs/integration.md` "Sign-in methods and links" has t
 
 | Case | The user | The popup shows | Result |
 |---|---|---|---|
-| A, Google-hosted | had an email wallet (`…@gmail.com`, or a Workspace address whose `hd` is its domain), signs in with Google | Google's account chooser, then (first time for this client only) Hana's "One more step with Google" screen (**Continue**), Google's consent for "See your primary Google Account email address"; then "Signed in", or "Your Google sign-in now opens this wallet too" | the email wallet; Google joins it at once |
+| A, Google-hosted | had an email wallet (`…@gmail.com`, or a Workspace address whose `hd` is its domain), signs in with Google | Google's account chooser; the first time for this client, Google's one sign-in screen also lists "Email address" (`'token_first'`, D270: no Hana screen, no second Google screen); then "Signed in", or "Your Google sign-in now opens this wallet too" | the email wallet; Google joins it at once |
 | A, not hosted | had an email wallet on another domain, signs in with Google | "This email already has a wallet": **Link and continue** (a code to `a…@domain`, typed in the popup) or **Sign in with email** | the email wallet either way; linked only after the code |
 | B, Google-hosted | had a Google wallet, chooses "Continue with email" with its Gmail address and types the code | "This email belongs to a wallet you created by signing in with Google": **Link and continue** or **Sign in with Google**, then Google | the Google wallet; the email joins at once (a notice mail goes to the address) |
 | B, not hosted | the same with an address Google doesn't host | the same, then "An email will be able to open this wallet from {date}" with **Cancel this link** | the Google wallet; the email joins after `change_delay_ms` (sandbox-dev: the contract's value; 24 h on mainnet); an email login meanwhile is `link_pending` with the date |
 | C | has neither wallet | the usual sign-in | a new wallet for that method; a Google login records the hint for later |
-| Declined | a Google user without a wallet declines Google's email permission (or picks another Google account on Google's screen) | "Your Google email address is needed" (or "Another Google account was chosen"): **Sign in with email instead**, **Try Google again**, Cancel (D264) | an email login, or Google again; Cancel ends `login_cancelled` (`email_consent_declined` / `google_account_mismatch`). A user with a wallet sees nothing of it |
+| Declined | a Google user cancels Google's one sign-in screen | nothing more: the email is asked on that screen, so cancelling it is no Google login at all (`google_error`, `access_denied`) | the user can try again or use email |
+| Another account | google-match finds the access token's account isn't the ID token's (`google_account_mismatch`; a user without a wallet) | "Another Google account was chosen": **Sign in with email instead**, **Try Google again** (Google's email permission for the signed-in account), Cancel (D264, kept under D270) | an email login, or Google again; Cancel ends `login_cancelled` (`google_account_mismatch`; a refusal on the retried screen `email_consent_declined`). A user with a wallet sees nothing of it |
 
 Checklist, in order (each check before the next):
 
@@ -2448,10 +2451,11 @@ Checklist, in order (each check before the next):
    `path_unconfirmed` rates**: the vault decides it in the browser and no Worker logs it, so watch the demo's
    *Copy diagnostics* and users' reports for `api_unavailable` with `data.reason: 'path_unconfirmed'`; a rise means
    the second provider is failing (run the check above).
-2. **Google clients**: nothing to register. The second request uses the same client and the same
-   `{authOrigin}/login/callback` redirect URI. The OAuth consent screen of each Google client used by an app with
-   email must allow the `email` scope (a non-sensitive scope: no verification needed). Check (once, by hand): a
-   Google login of the demo shows Google's consent for the email address the first time, and none after.
+2. **Google clients**: nothing to register. Every request uses the same client and the same
+   `{authOrigin}/login/callback` redirect URI. The OAuth consent screen of each Google client used in an env with an
+   email issuer must allow the `email` scope (a non-sensitive scope: no verification needed). Check (once, by hand): a
+   Google login of the demo shows the email address on Google's sign-in screen the first time, and only the account
+   chooser after.
 3. **The API with batch 8b**: `corepack pnpm --filter @hana-id/api run gen sandbox-dev` (the API gets
    `EMAIL_ISSUER_URL` for the vault page's `connect-src`, and `NEAR_RPC_FALLBACK`), `corepack pnpm --filter
    @hana-id/web build`, `run deploy:pages`, `run deploy`. The login relay now takes writes from `vaultOrigin` (the
@@ -2480,24 +2484,47 @@ on and accept that window (an email login by such a user in it opens a separate 
 D122), or wait until those users have signed in with Google once since. Hana's own testers on the demo scope are fine
 either way. The readiness item is `docs/mainnet-readiness.md` row 7.1g.
 
-**Google's verified email: the spike** (`apps/smoke/spike-email.html`, build plan batch 0; not run yet). The popup
-asks Google twice today (`GOOGLE_EMAIL_FLOW = 'second_request'`): the openid-only login request, then a silent
-`response_type=token`, `scope=email` request. The one-request value (`id_token token`, `openid email`) is gone from
-the popup (D273: Google puts `email` in that ID token, D270); the spike's leg A still records it. Run the spike with a
-Gmail, a Workspace and an outside-address Google account (`apps/smoke/README.md`) and record the results in
-`docs/context.md` before changing the switch. Its leg **E** runs D270's `'token_first'` exactly: a
-`response_type=token`, `scope=openid email` request, the account's `sub` from `tokeninfo` (POST, from the page: it
-also records whether the browser's CORS allows that call), then a silent `response_type=id_token`, `scope=openid`,
-`prompt=none`, `login_hint=<sub>` request; **E2** repeats only the silent request. The popup's `'token_first'` (built
-and tested, not in force) is the same sequence, plus one interactive openid-only retry of the silent request (D273).
-**Before `GOOGLE_EMAIL_FLOW` becomes `'token_first'` (D270)**, legs C and E must pass for all three accounts
-(`tokenHasPiiLockout: false`; `tokenFirstUsable: true`, and E2's `returningTokenClean: true`). If tokeninfo doesn't
-answer the browser's cross-origin POST, every token_first login ends `tokeninfo_unavailable`, by design.
-**Switching to it** is the one-line change of `GOOGLE_EMAIL_FLOW` in `packages/web/src/auth/google.ts`, reviewed. Then
-rebuild and redeploy both page Workers (the vault and the auth pages carry the constant; the callback's CSP already
-lists `https://oauth2.googleapis.com` in an env with an email issuer, in both policies) and the email issuer (its
-`google-record` route). After the switch every Google login of an env with an email issuer asks Google for the email,
-also in apps without email login (their address goes to the issuer's user directory only, D269).
+**Google's verified email: the spike** (`apps/smoke/spike-email.html`, build plan batch 0). **Passed on 2026-11-04**
+(the user, with sandbox-dev's shared login client): every leg, for a personal Gmail, a Workspace account on its own
+domain and a Google account on a non-Google (iCloud) address; the results are in `docs/context.md` ("Google email
+scope spike"). Leg **E** runs D270's `'token_first'` exactly: a `response_type=token`, `scope=openid email` request,
+the account's `sub` from `tokeninfo` (POST, from the page: tokeninfo answered the browser's CORS call, 200), then a
+silent `response_type=id_token`, `scope=openid`, `prompt=none`, `login_hint=<sub>` request (issued, openid-only, the
+nonce matching, the same account); **E2** repeats only the silent request (clean). The popup's `'token_first'` is the
+same sequence, plus one interactive openid-only retry of the silent request (D273). The one-request value
+(`id_token token`, `openid email`) is gone from the popup (D273: Google puts `email` in that ID token, D270); the
+spike's leg A still records it. Re-run the spike (`apps/smoke/README.md`) after any change to the Google requests
+and for a new Google project (`docs/mainnet-readiness.md` row 7.1h).
+
+**The flow in force: `GOOGLE_EMAIL_FLOW = 'token_first'`** (`packages/web/src/auth/google.ts`, switched on
+2026-11-04 once the spike passed, branch `feat/token-first-on`; a code constant, changed only by a reviewed one-line
+change). Every Google login of an env with an email issuer asks Google for the email on its one sign-in screen, also in
+apps without email login (their address goes to the issuer's user directory only, D269); an env without an email
+issuer keeps batch B's openid-only login. **Deploying the switch** to an env:
+
+1. **The email issuer first, if needed.** Its `POST /v1/email/google-record` (an app without email login records its
+   users' Google address) and google-match's directory write come from `feat/google-token-first`; the user directory
+   needs migration 0002 (above, "Applying migration 0002"). If the deployed issuer predates them, apply 0002, then
+   `corepack pnpm --filter @hana-id/email-issuer gen <env>` and `run deploy`. In the other order nothing breaks: a
+   record-only login's google-record call fails in the background (best effort) and the login goes on, recording
+   nothing.
+2. **Both page Workers** (the vault and the auth pages: the bundles carry the constant):
+   `corepack pnpm --filter @hana-id/web build`, then `corepack pnpm --filter @hana-id/api run deploy:pages`. The
+   callback's CSP has listed `https://oauth2.googleapis.com` in both policies in an env with an email issuer since
+   `feat/google-token-first`; no `gen` change. The API Worker itself needs no redeploy for the switch (its claim
+   allow-list is on every route since D271: deploy it if it predates that).
+3. **Google clients**: nothing to register (the same client and `{authOrigin}/login/callback`). Each client's OAuth
+   consent screen must allow the `email` scope (non-sensitive), as for second_request.
+4. **Check**: `curl -sI '{authOrigin}/login/callback'` shows `https://oauth2.googleapis.com` in `connect-src`; a first
+   Google login of the demo with a fresh account shows Google's single "Sign in to … / … access this info about you:
+   Email address" screen with Cancel / Continue and no Hana "One more step with Google" screen; a returning account
+   sees only the account chooser; `admin <env> user:find` (or `user:list --limit 1`) shows the row.
+5. **Undo**: the one-line change back to `'second_request'` and step 2 again. Logins already made are unaffected (the
+   flow changes no path or key).
+
+If tokeninfo ever stops answering the browser's cross-origin POST, every token_first login of an app with email login
+ends `tokeninfo_unavailable` (by design: never a request without the hint), and a Google-only app's login falls back to
+batch B's openid request with the chooser and records nothing: switch back to `'second_request'` (step 5).
 
 **Gate before real users (D265):** the user runs the spike's legs **C** and **D** on real Google, for each of the three
 accounts, after B: C (a plain `openid` login once the email grant exists) must show `tokenHasPiiLockout: false` (no

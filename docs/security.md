@@ -1,7 +1,9 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-04 for the user directory's review fixes (branch
+known open issues. Last verified against code: 2026-11-04 for `'token_first'` in force (branch
+`feat/token-first-on`: the spike passed, "Google's verified email" now describes token_first first and
+second_request as the fallback, D270); 2026-11-04 for the user directory's review fixes (branch
 `fix/user-emails-review`: order-safe writes, unverified Google rows apart in the CLI, the CLI's statement off the
 argv, google-record after `/v1/login`, the record-only login without tokeninfo, the accepted forged rows and
 tokeninfo's answer in the popup, D269); 2026-11-04 for Google's email under `'token_first'` (built, off: the
@@ -720,13 +722,16 @@ providers; a linked member's export on both is e2e-tested, `apps/e2e/tests/linki
   the popup's consent screen instead ("Sign in with email instead", "Try Google again"), then `login_cancelled`
   with `email_consent_declined` / `google_account_mismatch` (D264). A popup that can't store its next leg writes
   `storage_unavailable` to the slot the vault waits on, so the vault stops at once.
-- **Google's verified email stays off chain and off the partner page** (D25, D254): the login's own Google request
-  stays openid-only; the access token for the `email` scope comes from a second request in the popup, rides in an
-  encrypted follow-up slot to the vault, and goes only to the issuer's google-match (CORS `vaultOrigin`), which never
-  stores, logs or revokes it (D265; it expires within the hour). The vault never sees the address; it relays only
-  case A's masked hint (`a…@domain`) to the popup. The vault page's CSP adds only the issuer's origin. Before
+- **Google's verified email stays off chain and off the partner page** (D25, D254, D270): the ID token that goes on
+  chain is always from an openid-only request; the access token for the `email` scope rides in an encrypted
+  follow-up slot to the vault, and goes only to the issuer's google-match (CORS `vaultOrigin`) or google-record,
+  which never log or revoke it (D265; it expires within the hour). The vault never sees the address; it relays only
+  case A's masked hint (`a…@domain`) to the popup. The vault page's CSP adds only the issuer's origin. Under the
+  fallback `'second_request'` the access token comes from a second request after the openid login, and before
   Google's interactive email prompt the popup says what it is for (D264).
-- **Under `'token_first'`** (D270, built, not in force; `packages/web/src/auth/google.ts`): the email is asked on
+- **Under `'token_first'`** (D270, in force since the spike passed on 2026-11-04; `packages/web/src/auth/google.ts`;
+  every leg on real Google for a Gmail, a Workspace and an outside-address account: the ID tokens carried exactly the
+  openid claim set, Workspace's `hd` only in userinfo, `docs/context.md`): the email is asked on
   Google's first screen with `response_type=token` only, so no ID token of that request exists to relay; the ID token
   that goes on chain comes from a second, `scope=openid` request (`googleAuthUrl` builds no other ID token request,
   tested for every flow). The callback reads the access token's `sub` from Google's tokeninfo (a POST body; its CSP

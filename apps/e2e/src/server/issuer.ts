@@ -110,6 +110,14 @@ export class LocalIssuer {
     return this.outbox?.list() ?? [];
   }
 
+  /** The issuer's directory rows of `sub` (every provider): its identity rows and its app rows. */
+  async directory(sub: string): Promise<{ identities: Record<string, unknown>[]; apps: Record<string, unknown>[] }> {
+    const db = this.env.DB as D1Shim;
+    const identities = await db.prepare('SELECT provider, sub, email, email_verified, hosted FROM user_emails WHERE sub = ?1 ORDER BY provider').bind(sub).all();
+    const apps = await db.prepare('SELECT provider, sub, app_id, scope_id FROM user_email_apps WHERE sub = ?1 ORDER BY provider, app_id').bind(sub).all();
+    return { identities: identities.results, apps: apps.results };
+  }
+
   handler(): Handler {
     return async (request) => {
       const url = new URL(request.url);
@@ -118,6 +126,14 @@ export class LocalIssuer {
         if (request.headers.get('origin') !== null) return json(403, { error: 'forbidden' });
         const to = url.searchParams.get('to');
         return json(200, this.messages().filter((m) => to === null || m.to === to));
+      }
+      if (url.pathname === '/__e2e/directory') {
+        // The user directory (D269, migrations/0002) of one identity, as Hana staff would read it: tests only, no CORS,
+        // refused with an Origin (so no page can read an address), and only for a named `sub`.
+        if (request.headers.get('origin') !== null) return json(403, { error: 'forbidden' });
+        const sub = url.searchParams.get('sub');
+        if (!sub) return json(400, { error: 'sub_required' });
+        return json(200, await this.directory(sub));
       }
       const headers = new Headers(request.headers);
       headers.set('cf-connecting-ip', benchmarkIp());

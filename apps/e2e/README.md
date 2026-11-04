@@ -24,7 +24,7 @@ Ports are `HANA_E2E_PORT_BASE` (default 4410) plus the offsets below: the table 
 | `http://127.0.0.1:4420` | `vaultOrigin`: apps/api's vault host, and the vault page rendered by apps/api's `handleVaultPage` from D1 |
 | `http://127.0.0.1:4430` | `authOrigin`: apps/api's auth host over the built auth pages |
 | `http://127.0.0.1:4440` | the Hana API: apps/api's Worker, with `/v1/login`, `/v1/derive`, `/v1/sessions/revoke` and `/v1/link*` mocked; plus `/__e2e/*` control endpoints (`/__e2e/google-key`: the stack's Google signing key; `/__e2e/chain`: what the relayer sent to the mocked chain) |
-| `http://127.0.0.1:4442` | the email issuer: apps/email-issuer's Worker with the `outbox` stub; plus `GET /__e2e/outbox` (the mails, for the tests) |
+| `http://127.0.0.1:4442` | the email issuer: apps/email-issuer's Worker with the `outbox` stub; plus `GET /__e2e/outbox` (the mails, for the tests) and `GET /__e2e/directory?sub=` (one identity's rows in the user directory, D269) |
 | `http://127.0.0.1:4450`, `:4460` | mocked NEAR RPC and EVM chain RPC |
 | `http://127.0.0.1:4451` | the same mocked chain as the env's `rpcFallback`: a member's path is confirmed on both (D263) |
 | `http://127.0.0.1:4421`, `:4431`, `:4441` | live mode's vault, auth and API hosts (below): reached only through the tests' routes |
@@ -86,21 +86,39 @@ confirms the root's path on `rpc` and on `rpcFallback` (`:4451`, the same chain 
 test checks both answered its `get_identity` reads, so an export page CSP without the fallback fails it
 (`path_unconfirmed`).
 
-Google is never contacted. In the browser, each test's context routes `accounts.google.com/o/oauth2/v2/auth` and
-`www.googleapis.com/oauth2/v3/certs` to an OIDC stub (`src/google-stub.ts`) that takes exactly the popup's requests:
-the openid-only login with the account chooser, a proof the vault asks for (`login_hint`, answered at once), and
-the second, silent request for the email scope (`response_type=token`, `scope=email`, `login_hint`, `prompt=none`;
-answered with an access token). It refuses an ID token with the email scope, and signs RS256 tokens with the claims
-Google sends for `scope=openid`; an account with `emailInIdToken` gets `email` and `email_verified` in its ID token
-too (a Google that leaks the address: `tests/login.spec.ts` checks the login popup's callback refuses it before
-relaying it, D273, so only `{error: 'token_has_pii', claim}` crosses the relay, the SDK gets `token_has_pii` with the
-claim, no `/v1/login` call is made and nothing reaches the chain). `google.issued` lists each token's account and claim names. On the server side (`src/server/google-backend.ts`), the stack answers Google's JWKS,
-`tokeninfo`, `userinfo` and revoke (which the issuer must never call, D265) for the Workers in its process (the issuer's google-match), by wrapping that
-process's `fetch` for those three Google hosts. One RSA key per stack signs every ID token: the browser stubs fetch it
-from `GET {API}/__e2e/google-key` (no CORS, refused with an `Origin`), so the issuer's JWKS cache always knows the
-kid. Access tokens are self-describing test values (`ya29.e2e.<b64url JSON>`: the client, sub, email,
-email_verified, hd) that `tokeninfo` and `userinfo` read back; a test sets its accounts' email and `hd` on
-`google.accounts`. Production bundles keep the hard-coded Google endpoints; nothing in them can select the stub.
+Google is never contacted. In the browser, each test's context routes `accounts.google.com/o/oauth2/v2/auth`,
+`www.googleapis.com/oauth2/v3/certs` and `oauth2.googleapis.com/tokeninfo` to an OIDC stub (`src/google-stub.ts`)
+that takes exactly the popup's requests. The bundles are built with the flow in force, `'token_first'` (D270, on since
+the spike passed on 2026-11-04), and the stack's env has an email issuer, so every Google login of the suite runs it:
+the access token request with the account chooser (`response_type=token`, `scope=openid email`, no nonce; each
+chooser link carries an access token), tokeninfo from the callback (a form POST answered with Google's CORS for the
+page's Origin, as the spike's leg E saw; `google.tokeninfoCors = false` answers for another origin instead, since
+Playwright adds a missing `access-control-allow-origin` to a fulfilled route itself), then the silent openid-only ID
+request (`login_hint`, `prompt=none`, the login's nonce; an account's `silentIdError` makes Google answer it with that
+error, and D273's interactive retry, the same request without `prompt`, is answered). It also takes batch B's
+openid-only login with the chooser (the export window's, and a record-only login's fallback when tokeninfo can't
+answer), a proof the vault asks for (`login_hint`, answered at once), and `second_request`'s request for the email
+scope (`response_type=token`, `scope=email`, `login_hint`, `prompt=none` or none; D264's "Try Google again" too).
+`google.kinds` lists each request's kind in order (`token_first`, `id`, `login`, `proof`, `access`) and
+`google.tokeninfoCalls` each tokeninfo call's account. It refuses an ID token with the email scope, and signs RS256
+tokens with the claims Google sends for `scope=openid`; an account with `emailInIdToken` gets `email` and
+`email_verified` in its ID token too (a Google that leaks the address: `tests/login.spec.ts` checks the login popup's
+callback refuses it before relaying it, D273, so only `{error: 'token_has_pii', claim}` crosses the relay, the SDK gets
+`token_has_pii` with the claim, no `/v1/login` call is made and nothing reaches the chain). `google.issued` lists each
+token's account and claim names. `tests/token-first.spec.ts` covers the flow itself: the requests, tokeninfo, D273's
+retry, tokeninfo unreadable (an app with email login ends `tokeninfo_unavailable`; a Google-only app falls back to the
+chooser and records nothing), the address in the issuer's directory (google-record for a Google-only app, google-match
+for one with email login, read through `GET {ISSUER}/__e2e/directory?sub=`: no CORS, refused with an `Origin`) and
+that every token on the mocked chain is openid only. The `second_request` flow is covered by `@hana-id/web`'s unit and
+vault-harness tests only (the bundles have one flow compiled in). On the server side
+(`src/server/google-backend.ts`), the stack answers Google's JWKS, `tokeninfo`, `userinfo` and revoke (which the
+issuer must never call, D265) for the Workers in its process (the issuer's google-match and google-record), by wrapping
+that process's `fetch` for those three Google hosts; the browser's tokeninfo route gives the same answer
+(`tokeninfoAnswer`). One RSA key per stack signs every ID token: the browser stubs fetch it from
+`GET {API}/__e2e/google-key` (no CORS, refused with an `Origin`), so the issuer's JWKS cache always knows the kid.
+Access tokens are self-describing test values (`ya29.e2e.<b64url JSON>`: the client, sub, email, email_verified, hd)
+that `tokeninfo` and `userinfo` read back; a test sets its accounts' email and `hd` on `google.accounts`. Production
+bundles keep the hard-coded Google endpoints; nothing in them can select the stub.
 
 The ports are fixed for a run (the bundles inline the origins) and chosen by `HANA_E2E_PORT_BASE`, so worktrees that
 run the suite at the same time each set their own base (4410, 4510, …; the stack uses base … base + 50). A base

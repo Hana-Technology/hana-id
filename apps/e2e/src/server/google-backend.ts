@@ -42,6 +42,17 @@ export function readAccessToken(token: string): AccessGrant | null {
 
 const json = (status: number, body: unknown): Response => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
+/**
+ * tokeninfo's answer for a stub access token, as Google gives it (the client as `aud` and `azp`, the `sub`, the scope,
+ * `expires_in` as a string): the stack's Workers get it here, the browser through the stub's route (google-stub.ts).
+ * 400 `invalid_token` for an unknown, revoked or expired token.
+ */
+export function tokeninfoAnswer(token: string, revoked: ReadonlySet<string> = new Set()): { status: number; body: Record<string, unknown> } {
+  const g = readAccessToken(token);
+  if (!g || revoked.has(token) || g.expMs <= Date.now()) return { status: 400, body: { error: 'invalid_token' } };
+  return { status: 200, body: { aud: g.aud, azp: g.aud, sub: g.sub, scope: 'https://www.googleapis.com/auth/userinfo.email openid', expires_in: String(Math.floor((g.expMs - Date.now()) / 1000)) } };
+}
+
 export class GoogleBackend {
   readonly kid = `e2e-stack-${base64UrlEncode(crypto.getRandomValues(new Uint8Array(6)))}`;
   readonly revoked = new Set<string>();
@@ -68,9 +79,8 @@ export class GoogleBackend {
     if (bare === GOOGLE_CERTS_URL) return json(200, await this.jwks());
     if (bare === GOOGLE_TOKENINFO_URL) {
       const token = new URLSearchParams(typeof init?.body === 'string' ? init.body : '').get('access_token') ?? new URL(url).searchParams.get('access_token') ?? '';
-      const g = readAccessToken(token);
-      if (!g || this.revoked.has(token) || g.expMs <= Date.now()) return json(400, { error: 'invalid_token' });
-      return json(200, { aud: g.aud, azp: g.aud, sub: g.sub, scope: 'https://www.googleapis.com/auth/userinfo.email openid', expires_in: String(Math.floor((g.expMs - Date.now()) / 1000)) });
+      const a = tokeninfoAnswer(token, this.revoked);
+      return json(a.status, a.body);
     }
     if (bare === GOOGLE_USERINFO_URL) {
       const auth = new Headers(init?.headers).get('authorization') ?? '';

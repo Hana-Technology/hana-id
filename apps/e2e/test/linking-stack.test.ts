@@ -1,4 +1,4 @@
-// The e2e stack's batch 8b pieces (unit): the Google stub's three request kinds (login, proof, the second request for
+// The e2e stack's batch 8b pieces (unit): the Google stub's request kinds (login, proof, second_request's request for
 // the email scope) and its refusals, Google's server-side answers for the Workers (google-backend.ts), and the mocked
 // chain's accounts and links behind the mocked /v1/login (the path through the account root, a linked login over the
 // linked CKD payload, a pending member refused) and the link relays.
@@ -33,7 +33,7 @@ beforeAll(async () => {
 const url = (p: Record<string, string>) => new URL(`${GOOGLE_AUTH_URL}?${new URLSearchParams(p).toString()}`);
 const base = { client_id: 'c', redirect_uri: CALLBACK_URL, response_mode: 'fragment', state: 's' };
 
-describe('Google stub: the popup’s three requests', () => {
+describe('Google stub: batch 8b’s requests (proof, second_request’s access request)', () => {
   it('a proof names its account and shows no chooser; the access request asks for email only, silently or not', () => {
     expect(checkAuthRequest(url({ ...base, response_type: 'id_token', scope: 'openid', nonce: 'n', login_hint: '42' }))).toMatchObject({ ok: true, request: { kind: 'proof', loginHint: '42' } });
     expect(checkAuthRequest(url({ ...base, response_type: 'token', scope: 'email', login_hint: '42', prompt: 'none' }))).toMatchObject({ ok: true, request: { kind: 'access', silent: true } });
@@ -60,6 +60,72 @@ describe('Google stub: the popup’s three requests', () => {
     expect(access.body).toMatch(/#access_token=ya29\.e2e\.[^&]+&token_type=Bearer&expires_in=3599&scope=email&state=s/u);
     const unknown = await g.authorize(url({ ...base, response_type: 'token', scope: 'email', login_hint: '7', prompt: 'none' }));
     expect(unknown.body).toContain('error=login_required');
+  });
+});
+
+describe('Google stub: token_first’s requests (D270, D273) and tokeninfo from the browser', () => {
+  const tokenFirst = { ...base, response_type: 'token', scope: 'openid email', prompt: 'select_account' };
+  const silentId = { ...base, response_type: 'id_token', scope: 'openid', nonce: 'n', login_hint: '42', prompt: 'none' };
+
+  it('accepts the access token request with the chooser and the silent hinted ID request; refuses their near misses', () => {
+    expect(checkAuthRequest(url(tokenFirst))).toMatchObject({ ok: true, request: { kind: 'token_first', scope: 'openid email', nonce: '' } });
+    expect(checkAuthRequest(url(silentId))).toMatchObject({ ok: true, request: { kind: 'id', loginHint: '42', silent: true, nonce: 'n', scope: 'openid' } });
+    // D273's interactive retry is an ID request with the hint and no prompt (a proof's shape).
+    const { prompt: _p, ...retry } = silentId;
+    expect(checkAuthRequest(url(retry))).toMatchObject({ ok: true, request: { kind: 'proof', loginHint: '42' } });
+    for (const bad of [
+      { ...tokenFirst, prompt: 'none' },
+      { ...tokenFirst, login_hint: '42' },
+      { ...tokenFirst, nonce: 'n' },
+      { ...tokenFirst, max_age: '0' },
+      { ...tokenFirst, scope: 'openid email profile' },
+      { ...silentId, max_age: '0' },
+      { ...silentId, scope: 'openid email' },
+      { ...silentId, response_type: 'id_token token' },
+    ]) {
+      expect(checkAuthRequest(url(bad)).ok, JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it('the chooser’s links carry access tokens (no ID token is signed); the silent ID request answers at once, or the account’s silentIdError', async () => {
+    const g = new GoogleStub();
+    g.accounts = [{ sub: '42', label: 'x', email: 'ada@gmail.com', emailVerified: true }];
+    const chooser = await g.authorize(url(tokenFirst));
+    expect(chooser.body).toMatch(/#access_token=ya29\.e2e\.[^&]+&amp;token_type=Bearer&amp;expires_in=3599&amp;scope=openid\+email&amp;state=s/u);
+    expect(chooser.body).not.toContain('id_token=');
+    expect(g.issued).toEqual([]);
+    expect((await g.authorize(url(silentId))).body).toContain(`${CALLBACK_URL}#state=s&id_token=`);
+    expect(g.issued.map((t) => t.sub)).toEqual(['42']);
+    g.accounts = [{ sub: '42', label: 'x', silentIdError: 'interaction_required' }];
+    expect((await g.authorize(url(silentId))).body).toContain('error=interaction_required');
+    const { prompt: _p, ...retry } = silentId;
+    expect((await g.authorize(url(retry))).body).toContain('id_token=');
+    expect((await g.authorize(url({ ...silentId, login_hint: '7' }))).body).toContain('error=login_required');
+    expect(g.kinds).toEqual(['token_first', 'id', 'id', 'proof', 'id']);
+    expect(g.logins).toHaveLength(1);
+  });
+
+  it('tokeninfo answers the page’s CORS POST as the stack’s Google does, and allows another origin when tokeninfoCors is off', () => {
+    const g = new GoogleStub();
+    const token = accessTokenFor({ aud: 'c', sub: '42', email: 'a@gmail.com', emailVerified: true, hd: null, expMs: Date.now() + 60_000 });
+    const ok = g.tokeninfo('POST', 'http://127.0.0.1:4430', new URLSearchParams({ access_token: token }).toString());
+    expect(ok.status).toBe(200);
+    expect(ok.headers['access-control-allow-origin']).toBe('http://127.0.0.1:4430');
+    expect(JSON.parse(ok.body)).toMatchObject({ aud: 'c', azp: 'c', sub: '42' });
+    expect(Number(JSON.parse(ok.body).expires_in)).toBeGreaterThan(0);
+    expect(g.tokeninfo('POST', 'http://127.0.0.1:4430', 'access_token=nope').status).toBe(400);
+    expect(g.tokeninfo('OPTIONS', 'http://127.0.0.1:4430', null).headers['access-control-allow-origin']).toBe('http://127.0.0.1:4430');
+    g.tokeninfoCors = false;
+    const off = g.tokeninfo('POST', 'http://127.0.0.1:4430', new URLSearchParams({ access_token: token }).toString());
+    expect(off.headers['access-control-allow-origin']).not.toBe('http://127.0.0.1:4430');
+    expect(off.headers['access-control-allow-origin']).toBeDefined();
+    // Never the token: the account and the page's origin only.
+    expect(g.tokeninfoCalls).toEqual([
+      { sub: '42', origin: 'http://127.0.0.1:4430' },
+      { sub: null, origin: 'http://127.0.0.1:4430' },
+      { sub: '42', origin: 'http://127.0.0.1:4430' },
+    ]);
+    expect(JSON.stringify(g.tokeninfoCalls)).not.toContain(token);
   });
 });
 

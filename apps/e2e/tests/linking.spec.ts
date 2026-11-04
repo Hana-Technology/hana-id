@@ -10,6 +10,7 @@ import { addressOfExport, base64Decode, fromUtf8 } from '@hana-id/core';
 import { type App, chooseAccount, clickAction, clickLauncher, errorOf, expect, newApp, okValue, openPartner, runAction, test, waitPersisted } from './fixtures.ts';
 
 const MATCH = `${ISSUER_URL}/v1/email/google-match`;
+const RECORD = `${ISSUER_URL}/v1/email/google-record`;
 const rand = (): string => crypto.randomUUID().replace(/-/gu, '').slice(0, 10);
 /** A fresh Google `sub` (21 digits, as Google's). */
 const newSub = (): string => `1${Array.from(crypto.getRandomValues(new Uint8Array(20)), (b) => String(b % 10)).join('')}`;
@@ -92,8 +93,9 @@ test('case C: a Google login of an app with email asks google-match first, then 
   await popup.waitForEvent('close', { timeout: 20_000 });
   expect((await okValue<{ evm: string }>(page, 'login')).evm).toMatch(/^0x/u);
   expect(requests.count(MATCH)).toBe(1);
-  // The login's own request stayed openid-only; the email scope came in a second, silent one (two-request mode).
-  expect(google.requests.map((r) => r.ok && r.request.kind)).toEqual(['login', 'access']);
+  // token_first (D270): the email scope on Google's one sign-in screen (an access token), then the silent
+  // openid-only ID request whose token went on chain.
+  expect(google.kinds).toEqual(['token_first', 'id']);
   expect(await linkEvents(page)).toEqual([]);
 });
 
@@ -350,7 +352,7 @@ test('a linked identity’s key export: Google, a member of an email wallet, exp
   }
 });
 
-test('a Google login on a Google-only app is unchanged: no google-match, no second Google request', async ({ page, google, requests }) => {
+test('a Google login on a Google-only app never runs google-match: token_first records the address with google-record only', async ({ page, google, requests }) => {
   const app = await newApp();
   await openPartner(page, app);
   const popupP = page.waitForEvent('popup');
@@ -358,5 +360,6 @@ test('a Google login on a Google-only app is unchanged: no google-match, no seco
   await chooseAccount(await popupP);
   await okValue(page, 'login');
   expect(requests.count(MATCH)).toBe(0);
-  expect(google.requests).toHaveLength(1);
+  await expect.poll(() => requests.count(RECORD)).toBe(1);
+  expect(google.kinds).toEqual(['token_first', 'id']);
 });

@@ -270,11 +270,13 @@ Hana-held branded client without any address change (the path is `scope#provider
 
 ## Google email scope spike (`spike-email.html`)
 
-`http://localhost:5173/spike-email.html` is email login's batch 0 spike (`docs/email-login-build-plan.md`; not run yet):
-it checks, on real Google, how the login popup can get an access token for the `email` scope while the ID token that
-goes on chain stays openid-only (D25). The popup uses the fallback today (`GOOGLE_EMAIL_FLOW = 'second_request'` in
-`packages/web/src/auth/google.ts`); the flow decided in D270, `'token_first'`, is leg E. Same callback and
-redirect-URI rule as `spike.html`; no Hana API, no chain.
+`http://localhost:5173/spike-email.html` is email login's batch 0 spike (`docs/email-login-build-plan.md`; **passed
+on 2026-11-04**, every leg for a Gmail, a Workspace and an outside-address account: `docs/context.md` "Google email
+scope spike"): it checks, on real Google, how the login popup can get an access token for the `email` scope while the
+ID token that goes on chain stays openid-only (D25). Leg E is the flow decided in D270, `'token_first'`, which the
+popup runs since that run (`GOOGLE_EMAIL_FLOW = 'token_first'` in `packages/web/src/auth/google.ts`;
+`'second_request'` is the fallback). Re-run it after any change to the Google requests and for a new Google project.
+Same callback and redirect-URI rule as `spike.html`; no Hana API, no chain.
 
 ### Running it
 
@@ -338,19 +340,22 @@ A, B, D and E then call Google's `tokeninfo` by POST (aud and sub match; the tok
 never revoke the token (as production, D265). Each leg has its own single-use `state`, and a fragment with more than
 one `state` is ignored, as production's callback. The summary holds booleans and claim names only (never the
 address, `sub` or a token). A's `'one_request'` stays rejected (D270: Google puts `email` in that ID token), and the
-popup no longer has that flow (D273); A is kept to record that. `GOOGLE_EMAIL_FLOW` may become `'token_first'` (built,
-D270: `packages/web/src/auth/google.ts`, the same three steps as E, with one interactive openid-only retry of step 3,
-D273) once the gate below passes: a reviewed one-line change, `docs/operations.md` "Turning linking on (batch 8b)".
+popup no longer has that flow (D273); A is kept to record that. `GOOGLE_EMAIL_FLOW` is `'token_first'` (D270:
+`packages/web/src/auth/google.ts`, the same three steps as E, with one interactive openid-only retry of step 3, D273)
+since the gates below were met: a reviewed one-line change; deploying it is `docs/operations.md` "Turning linking on
+(batch 8b)".
 
-**Gate (D265):** legs C and D on real Google, by the user, before batch 8b reaches real users: C must show no
-lockout and D must succeed silently (`docs/email-login-build-plan.md` batch 8b, `docs/operations.md` "Turning
-linking on (batch 8b)").
+**Gate (D265), met 2026-11-04:** legs C and D on real Google, by the user, before batch 8b reaches real users: C must
+show no lockout and D must succeed silently (`docs/email-login-build-plan.md` batch 8b, `docs/operations.md` "Turning
+linking on (batch 8b)"). All three accounts: `tokenHasPiiLockout: false`; D silent, no prompt.
 
-**Gate (D270):** legs **C and E must pass**, for all three accounts, before `GOOGLE_EMAIL_FLOW` becomes
-`'token_first'`: C with `tokenHasPiiLockout: false`, E with `tokenFirstUsable: true` (and E2 with
-`returningTokenClean: true`). If E shows `tokeninfoReachable: false`, the popup can't take the `sub` from tokeninfo
-in the browser and `'token_first'` needs another source for `login_hint` before the switch. The vault and the API
-keep refusing any ID token with a claim outside the allow-list (`token_has_pii`) either way.
+**Gate (D270), met 2026-11-04:** legs **C and E must pass**, for all three accounts, before `GOOGLE_EMAIL_FLOW`
+becomes `'token_first'`: C with `tokenHasPiiLockout: false`, E with `tokenFirstUsable: true` (and E2 with
+`returningTokenClean: true`). All three passed (E: `tokeninfoReachable: true`, status 200, `emailInIdToken: false`,
+`idTokenPersonalClaims: []`, `nonceMatches`, `sameAccount`), and the switch was made. Should a later run show
+`tokeninfoReachable: false`, the popup can't take the `sub` from tokeninfo in the browser: switch back to
+`'second_request'` (`docs/operations.md`) until `'token_first'` has another source for `login_hint`. The vault and the
+API keep refusing any ID token with a claim outside the allow-list (`token_has_pii`) either way.
 
 ## Test checklist
 

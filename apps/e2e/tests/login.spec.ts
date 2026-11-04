@@ -1,7 +1,7 @@
 // Login through the popup and the relay (docs/batch-b-spec.md "Login"), and the partner-page COOP cases.
 import { TOKEN_CLAIM_ALLOW_LIST } from '@hana-id/core';
 import { GOOGLE_AUTH_URL, GoogleStub, stackGoogleKey } from '../src/google-stub.ts';
-import { API_URL, NEAR_RPC } from '../src/stack.ts';
+import { API_URL, AUTH_ORIGIN, NEAR_RPC } from '../src/stack.ts';
 import {
   LOGIN_ENDPOINT,
   VAULT_FRAME,
@@ -36,9 +36,12 @@ test('one click on the partner button plus the chooser logs in', async ({ page, 
   expect(addresses.stellar).toMatch(/^G[A-Z2-7]{55}$/u);
   expect(addresses.evm).toMatch(/^0x[0-9a-fA-F]{40}$/u);
   expect(await status(page)).toBe('logged_in');
-  // The openid-only implicit request, once; one combined login transaction, no split flow, no derive.
-  expect(google.requests).toHaveLength(1);
-  expect(google.requests[0]?.ok).toBe(true);
+  // token_first (D270; the stack has an email issuer, so a Google-only app's login records the address): the access
+  // token request with the chooser, tokeninfo once, then the silent openid-only ID request for that account; one
+  // combined login transaction, no split flow, no derive.
+  expect(google.kinds).toEqual(['token_first', 'id']);
+  expect(google.requests.map((r) => r.ok && r.request.scope)).toEqual(['openid email', 'openid']);
+  expect(google.tokeninfoCalls).toEqual([{ sub: google.accounts[0]!.sub, origin: AUTH_ORIGIN }]);
   expect(requests.count(`${API_URL}/v1/login-relay/`)).toBeGreaterThanOrEqual(2);
   expect(requests.count(LOGIN_ENDPOINT)).toBe(1);
   expect(requests.count(`${API_URL}/v1/derive`)).toBe(0);
@@ -188,7 +191,9 @@ test('the callback closes itself right after its relay POST, and the token still
   });
   popup.on('close', () => order.push('closed'));
   await chooseAccount(popup);
-  expect(order).toEqual(['relay 204', 'closed']);
+  // token_first's record-only login: the access token to follow-up slot 1, then the ID token to the login's slot,
+  // then the window closes (no follow-up mode in an app without email login).
+  expect(order).toEqual(['relay 204', 'relay 204', 'closed']);
   expect((await okValue<{ evm: string }>(page, 'login')).evm).toMatch(/^0x/u);
 });
 

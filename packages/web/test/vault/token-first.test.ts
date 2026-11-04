@@ -2,7 +2,7 @@
 // login carries the follow-up key; an app without email login gets `emailRecord` and sends the access token (slot 1)
 // to the issuer's google-record in the background, best effort; an app with email login runs google-match as before.
 // The ID token that goes on chain is refused with any claim outside the allow-list, under every flow.
-import { type RelayPayload, encryptRelayPayload, followSlot } from '@hana-id/core';
+import { type FollowNotice, type RelayPayload, decryptRelayValue, encryptRelayPayload, followSlot, isFollowNotice } from '@hana-id/core';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { GoogleEmailFlow } from '../../src/auth/google.ts';
 import type { HanaEnv } from '../../src/hana-env.ts';
@@ -182,7 +182,7 @@ describe('token_first in an app without email login (google-record, D269)', () =
     expect(b.backend.recordCalls).toEqual([]);
   });
 
-  it('second_request (in force): an app without email login gets neither, as before', async () => {
+  it('second_request (the fallback): an app without email login gets neither, as before', async () => {
     const t = await tab(new Browser(), EMAIL_ENV, 'second_request');
     const pending = t.request('hana_login');
     const run = await popupHello(t);
@@ -206,6 +206,35 @@ describe('token_first in an app with email login (google-match, no explainer)', 
     expect((await pending).error).toBeUndefined();
     expect(b.backend.matchCalls).toEqual([expect.objectContaining({ accessToken: ACCESS, googleIdToken: token, link: true })]);
     expect(b.backend.recordCalls).toEqual([]);
+  });
+
+  it('D264’s consent screen only for google-match’s google_account_mismatch; a match goes on with no screen (D270)', async () => {
+    const notice = async (t: Tab, run: LoginRun, n: number): Promise<FollowNotice> => {
+      const { id } = followSlot(run.params.followKey as Uint8Array, n);
+      return decryptRelayValue(run.params.relayKey as Uint8Array, id, await t.browser.backend.takeRelay(id), isFollowNotice);
+    };
+    // A match: the vault's next notice is its last word, never email_consent.
+    const ok = new Browser();
+    enableEmail(ok.backend, issuer);
+    const t = await tab(ok);
+    const pending = t.request('hana_login', { method: 'google' });
+    const run = await popupHello(t);
+    await tokenFirstAnswer(t, run);
+    expect((await pending).error).toBeUndefined();
+    expect((await notice(t, run, 2)).t).toBe('done');
+    // Another account (the access token's sub isn't the ID token's): the screen says so.
+    const bad = new Browser();
+    enableEmail(bad.backend, issuer);
+    bad.backend.googleMatch = () => apiError(400, 'google_account_mismatch');
+    const u = await tab(bad);
+    const p2 = u.request('hana_login', { method: 'google' });
+    const run2 = await popupHello(u);
+    await tokenFirstAnswer(u, run2);
+    expect(await notice(u, run2, 2)).toEqual({ t: 'email_consent', reason: 'account_mismatch', loginHint: SUB });
+    // Cancel on that screen: the login ends with its own reason.
+    const { id } = followSlot(run2.params.followKey as Uint8Array, 3);
+    bad.backend.writeRelayValue(id, await encryptRelayPayload(run2.params.relayKey as Uint8Array, id, { error: 'email_cancelled' }));
+    expect((await p2).error).toMatchObject({ code: 'login_cancelled', data: { reason: 'google_account_mismatch' } });
   });
 
   it('D255 still holds: google-match unavailable refuses a Google identity with no wallet', async () => {

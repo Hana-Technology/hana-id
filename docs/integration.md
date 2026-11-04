@@ -11,7 +11,8 @@ popup, unless it falls under an auto-approve policy you set and the user accepte
 > for mainnet chains at all ([section 12](#12-test-and-live-keys)). This guide follows the code; the original
 > specification is `docs/batch-b-spec.md`.
 
-Last verified against code: 2026-11-03 (branch `feat/email-login-8b` review fixes: the email permission's screens and
+Last verified against code: 2026-11-04 (branch `feat/token-first-on`: "Sign-in methods and links": Google's one
+sign-in screen lists the email, cancelling it, the two-accounts screen; D270); 2026-11-03 (branch `feat/email-login-8b` review fixes: the email permission's screens and
 reasons, `api_unavailable`'s `path_unconfirmed` / `path_disputed`, `storage_unavailable` in a login, `hana.account()`'s
 5 s cache, D263–D265); 2026-11-03 (branch `feat/email-login-8b`: one wallet per person, "Sign-in methods and
 links" in section 4 (`hana.account()`, `linkChanged`, `hana.linkAccount()`, what users see in each case), key export
@@ -255,7 +256,9 @@ button.addEventListener('click', async () => {
   | signs in with Google, and an email wallet exists for an address Google doesn't host | "This email already has a wallet": **Link and continue** (a code to `a…@domain`) or **Sign in with email** | the email wallet either way; linked only after the code |
   | signs in with email, and a Google wallet exists for that address | "This email belongs to a wallet you created by signing in with Google": **Link and continue** or **Sign in with Google**, then Google | the Google wallet's addresses; the email joins it at once (Google-hosted) or after 24 h (other addresses: a pending banner with **Cancel this link**) |
   | has neither wallet | the usual sign-in | a new wallet for that method |
-  | signs in with Google, has no wallet yet, and declines Google's "share your email address" (or picks another Google account there) | Hana explains it first ("Google will now ask to share your email address…"); after a refusal: **Sign in with email instead** or **Try Google again** | an email wallet, or Google again; Cancel rejects with `login_cancelled` (`data.reason: 'email_consent_declined'` or `'google_account_mismatch'`) |
+  | signs in with Google for the first time with this Google client | Google's one sign-in screen, which also lists "Email address" (Hana asks for it there, D270); a returning user sees only Google's account chooser | as above |
+  | cancels that Google screen | nothing more: no Google login | `login()` rejects with `google_error` (`data.error: 'access_denied'`) |
+  | signs in with Google, has no wallet yet, and Google's answers name two different Google accounts | **Sign in with email instead** or **Try Google again** (Google's "share your email address" for the account they signed in with) | an email wallet, or Google again; Cancel rejects with `login_cancelled` (`data.reason: 'google_account_mismatch'`, or `'email_consent_declined'` after declining that screen) |
 
   Nobody ever gets a second wallet for the same verified address. While a link is pending, signing in with the
   pending method fails with `link_pending` (`data.effectiveAtMs`: when it opens the wallet). The user can cancel it

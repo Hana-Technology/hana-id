@@ -10,8 +10,10 @@
 //
 // The daily and monthly work ride the 15-minute trigger rather than triggers of their own, so the admin Worker has two
 // triggers (the free plan allows 5 per account; D329, D360). Each run opens one ledger connection (USAGE_DB, role usage_admin) and
-// has one budget of 40 outbound calls (D280): every email, `tx` and `view_access_key` read and rate fetch takes one; the
-// security work goes first. Each step runs on its own (a failing one is logged, the others still run), and a run without
+// has one budget of 40 outbound calls (D280, D380): the connection, every RPC (`relayerKeys`, the retention RPCs, each
+// statement notice's two reads), every email, `tx` and `view_access_key` read and rate fetch takes one (mail.ts says
+// what counts, from Cloudflare's docs); the security work goes first. Each job's share is in the run's summary and its
+// `budget` log line. Each step runs on its own (a failing one is logged, the others still run), and a run without
 // USAGE_DB, or without RELAYER_ACCOUNT for the steps that need it, is skipped with an error line every time.
 import type { Env } from './env.ts';
 import { runAlerts, runStatementNotices } from './alerts.ts';
@@ -19,7 +21,7 @@ import { outbound } from './email/sender.ts';
 import type { LedgerStore } from './ledger.ts';
 import { ledgerSource } from './ledger.ts';
 import { errorName, log } from './log.ts';
-import { Budget } from './mail.ts';
+import { Budget, RUN_BUDGET, meteredEnv } from './mail.ts';
 import { nearReader } from './near.ts';
 import { runNonceCheck } from './nonce-check.ts';
 import { coingecko, runRates } from './rates.ts';
@@ -31,9 +33,10 @@ import { runSettlement } from './settlement.ts';
 /** Months the daily run keeps ahead (the API's USAGE_PARTITION_MONTHS: the two keepers agree). */
 export const PARTITION_MONTHS = 12;
 
-async function step<T>(name: string, run: () => Promise<T>): Promise<T | null> {
+/** One step, on its own, with the calls it takes counted as its share of the budget. */
+async function step<T>(budget: Budget, name: string, run: () => Promise<T>): Promise<T | null> {
   try {
-    const out = await run();
+    const out = await budget.as(name, run);
     log({ event: 'ledger_cron', step: name, outcome: 'ok' });
     return out;
   } catch (err) {
@@ -42,9 +45,11 @@ async function step<T>(name: string, run: () => Promise<T>): Promise<T | null> {
   }
 }
 
-async function withStore<T>(env: Env, run: string, fn: (store: LedgerStore) => Promise<T>, onMissing?: (code: 'ledger_unavailable' | 'usage_db_missing') => Promise<void>): Promise<T | null> {
+async function withStore<T>(env: Env, budget: Budget, run: string, fn: (store: LedgerStore) => Promise<T>, onMissing?: (code: 'ledger_unavailable' | 'usage_db_missing') => Promise<void>): Promise<T | null> {
   let store: LedgerStore | null;
   try {
+    // The run's one Hyperdrive connection: one call of the budget (mail.ts), its queries none.
+    if (env.USAGE_DB) await budget.as('ledger', async () => budget.take());
     store = await ledgerSource.open(env.USAGE_DB);
   } catch (err) {
     log({ event: 'ledger_cron', step: run, outcome: 'error', code: 'ledger_unavailable', error: errorName(err) }, 'error');
@@ -64,7 +69,7 @@ async function withStore<T>(env: Env, run: string, fn: (store: LedgerStore) => P
 }
 
 /** Both pools' public keys from the API (the one source: the API holds the secrets). Null when unreadable. */
-async function poolKeys(env: Env): Promise<string[] | null> {
+async function poolKeys(env: Pick<Env, 'API'>): Promise<string[] | null> {
   try {
     const r = await env.API.relayerKeys(systemCtx());
     return r.ok ? r.keys.map((k) => k.publicKey) : null;
@@ -94,41 +99,47 @@ export interface FifteenSummary {
   notices: Awaited<ReturnType<typeof runStatementNotices>> | null;
   settlement: Awaited<ReturnType<typeof runSettlement>> | null;
   budgetLeft: number;
+  /** The run's outbound calls per job (D380): `ledger` (the connection), then each step's name. */
+  calls: Record<string, number>;
 }
 
 export async function everyFifteenMinutes(env: Env, now = Date.now()): Promise<FifteenSummary | null> {
   const budget = new Budget();
+  // Every RPC of the run goes through the budget: the jobs get only metered bindings.
+  const menv = meteredEnv(env, budget);
   const sender = outbound.email(env);
   // No ledger at the monthly job's due tick: nothing can be recorded, so say so once (retention.ts).
   const onMissing = async (code: string) => {
     if (!isRetentionTick(now)) return;
-    const sent = await sendRetentionSkipped(env, sender, budget, now, code === 'usage_db_missing' ? 'USAGE_DB is not bound' : 'the usage ledger is unreachable').catch(() => false);
+    const sent = await budget.as('retention_alerts', () => sendRetentionSkipped(env, sender, budget, now, code === 'usage_db_missing' ? 'USAGE_DB is not bound' : 'the usage ledger is unreachable')).catch(() => false);
     log({ event: 'ledger_cron', step: 'retention', outcome: 'skipped', code, sent: sent ? 1 : 0 }, 'error');
   };
-  return withStore(env, 'fifteen', async (store) => {
+  const out = await withStore(env, budget, 'fifteen', async (store) => {
     const relayer = env.RELAYER_ACCOUNT;
     if (!relayer) log({ event: 'ledger_cron', step: 'relayer', outcome: 'skipped', code: 'relayer_account_missing' }, 'error');
-    const keys = relayer ? await poolKeys(env) : null;
+    const keys = relayer ? await budget.as('relayer_keys', () => poolKeys(menv)) : null;
     if (relayer && !keys) log({ event: 'ledger_cron', step: 'relayer', outcome: 'skipped', code: 'relayer_keys_unavailable' }, 'error');
     const near = nearReader(env.NEAR_RPC);
 
     let daily: DailySummary | null = null;
     if (isDailyTick(now)) {
       daily = {
-        nonce: relayer && keys ? await step('nonce_check', () => runNonceCheck({ store, near, keys, relayerAccount: relayer, budget, now })) : null,
-        rejection: await step('rejection_rate', () => runRejectionCheck({ store, now })),
-        partitions: await step('partitions', () => store.ensurePartitions(PARTITION_MONTHS)),
+        nonce: relayer && keys ? await step(budget, 'nonce_check', () => runNonceCheck({ store, near, keys, relayerAccount: relayer, budget, now })) : null,
+        rejection: await step(budget, 'rejection_rate', () => runRejectionCheck({ store, now })),
+        partitions: await step(budget, 'partitions', () => store.ensurePartitions(PARTITION_MONTHS)),
         rates: null,
       };
     }
     // The monthly job when due (each RPC one call of the budget, at most RETENTION_MAX_CALLS; its Neon work none).
-    const retention = await step('retention', () => runRetention({ store: store.retention, api: env.API, console: env.CONSOLE, budget, now }));
+    const retention = await step(budget, 'retention', () => runRetention({ store: store.retention, api: menv.API, console: menv.CONSOLE, budget, now }));
     // The alerts before anything slow: a nonce, rejection or retention alert of this run goes out in this run.
-    const alerts = await step('alerts', () => runAlerts(env, store, sender, budget, now));
-    const retentionAlerts = await step('retention_alerts', () => runRetentionAlerts(env, store.retention, sender, budget, now));
-    const notices = await step('statement_notices', () => runStatementNotices(env, store, sender, budget));
-    if (daily) daily.rates = await step('rates', () => runRates({ store, fetchRate: coingecko(env.COINGECKO_API_KEY), budget, now }));
-    const settlement = relayer && keys ? await step('settlement', () => runSettlement({ store, near, poolKeys: new Set(keys), relayerAccount: relayer, signerAccount: env.SIGNER_ACCOUNT, budget, now })) : null;
-    return { daily, retention, alerts, retentionAlerts, notices, settlement, budgetLeft: budget.remaining };
+    const alerts = await step(budget, 'alerts', () => runAlerts(env, store, sender, budget, now));
+    const retentionAlerts = await step(budget, 'retention_alerts', () => runRetentionAlerts(env, store.retention, sender, budget, now));
+    const notices = await step(budget, 'statement_notices', () => runStatementNotices(menv, store, sender, budget));
+    if (daily) daily.rates = await step(budget, 'rates', () => runRates({ store, fetchRate: coingecko(env.COINGECKO_API_KEY), budget, now }));
+    const settlement = relayer && keys ? await step(budget, 'settlement', () => runSettlement({ store, near, poolKeys: new Set(keys), relayerAccount: relayer, signerAccount: env.SIGNER_ACCOUNT, budget, now })) : null;
+    return { daily, retention, alerts, retentionAlerts, notices, settlement, budgetLeft: budget.remaining, calls: { ...budget.used } };
   }, onMissing);
+  log({ event: 'ledger_cron', step: 'budget', outcome: 'ok', count: RUN_BUDGET - budget.remaining, calls: { ...budget.used } });
+  return out;
 }

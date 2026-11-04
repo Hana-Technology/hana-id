@@ -26,7 +26,7 @@ import { retentionFailed } from './email/ledger-messages.ts';
 import type { MailContext } from './email/messages.ts';
 import type { EmailSender } from './email/sender.ts';
 import { errorName } from './log.ts';
-import { type Budget, recipients, sendToAll } from './mail.ts';
+import { type Budget, metered, recipients, sendToAll } from './mail.ts';
 import type { RetentionRows, RetentionRun, RetentionStore } from './retention-store.ts';
 import { systemCtx } from './rpc.ts';
 
@@ -125,9 +125,12 @@ export async function runRetention(d: RetentionDeps): Promise<RetentionSummary> 
   const errors: string[] = [];
   let incomplete = false;
   let calls = 0;
+  // The bindings metered against the run's budget (mail.ts): each RPC takes one call there, and one of this job's.
+  const api = metered(d.api, d.budget);
+  const consoleRpc = metered(d.console, d.budget);
   /** One outbound call, if the run and the 15-minute budget still have one; null when out of calls. */
   const rpc = async <T extends object>(step: string, call: () => Promise<({ ok: true } & T) | { ok: false; code: string }>): Promise<T | null> => {
-    if (calls >= RETENTION_MAX_CALLS || !d.budget.take()) {
+    if (calls >= RETENTION_MAX_CALLS || !d.budget.fits(1, 1)) {
       incomplete = true;
       return null;
     }
@@ -179,7 +182,7 @@ export async function runRetention(d: RetentionDeps): Promise<RetentionSummary> 
     let after = (await d.store.getState(DELETED_APPS_CURSOR_KEY)) ?? undefined;
     for (;;) {
       const page = await rpc<{ appIds: string[]; next?: string; more: boolean }>('deleted_apps', () =>
-        d.api.deletedApps({ ...systemCtx(), before: deletedAppCutoff(d.now), limit: RETENTION_BATCH, ...(after ? { after } : {}) }),
+        api.deletedApps({ ...systemCtx(), before: deletedAppCutoff(d.now), limit: RETENTION_BATCH, ...(after ? { after } : {}) }),
       );
       if (!page) return;
       for (const app of page.appIds) {
@@ -196,7 +199,7 @@ export async function runRetention(d: RetentionDeps): Promise<RetentionSummary> 
   });
   await step('directory', async () => {
     for (;;) {
-      const r = await rpc<{ scopes: number; users: number; wallets: number; identities: number }>('directory', () => d.api.purgeDirectory({ ...systemCtx(), before: deletedAppCutoff(d.now), limit: RETENTION_BATCH }));
+      const r = await rpc<{ scopes: number; users: number; wallets: number; identities: number }>('directory', () => api.purgeDirectory({ ...systemCtx(), before: deletedAppCutoff(d.now), limit: RETENTION_BATCH }));
       if (!r) return;
       add('directoryScopes', r.scopes);
       add('directoryUsers', r.users);
@@ -207,7 +210,7 @@ export async function runRetention(d: RetentionDeps): Promise<RetentionSummary> 
   });
   await step('api_audit', async () => {
     for (;;) {
-      const r = await rpc<{ appChanges: number; guardedChanges: number }>('api_audit', () => d.api.purgeAudit({ ...systemCtx(), before: auditCutoff(d.now), limit: RETENTION_BATCH }));
+      const r = await rpc<{ appChanges: number; guardedChanges: number }>('api_audit', () => api.purgeAudit({ ...systemCtx(), before: auditCutoff(d.now), limit: RETENTION_BATCH }));
       if (!r) return;
       add('appChangesDeleted', r.appChanges);
       add('guardedChangesDeleted', r.guardedChanges);
@@ -216,7 +219,7 @@ export async function runRetention(d: RetentionDeps): Promise<RetentionSummary> 
   });
   await step('console_audit', async () => {
     for (;;) {
-      const r = await rpc<{ auditLog: number; ownerGrants: number }>('console_audit', () => d.console.purgeAudit({ ...systemCtx(), before: auditCutoff(d.now), limit: RETENTION_BATCH }));
+      const r = await rpc<{ auditLog: number; ownerGrants: number }>('console_audit', () => consoleRpc.purgeAudit({ ...systemCtx(), before: auditCutoff(d.now), limit: RETENTION_BATCH }));
       if (!r) return;
       add('auditLogDeleted', r.auditLog);
       add('ownerGrantsDeleted', r.ownerGrants);

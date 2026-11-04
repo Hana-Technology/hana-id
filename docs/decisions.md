@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D140–D141 and D150–D152 on 2026-10-30 (branches
+Last verified against code: 2026-10-28 (commit 58edee9); D340 (branch `fix/dev-email-limits`) on 2026-11-04; D140–D141 and D150–D152 on 2026-10-30 (branches
 `feat/batch-c-1`, `feat/playbook-gaps`); D130–D139 on 2026-10-30 (branches `feat/email-login-1`, `feat/email-login-1-r2`);
 D154–D155 (branch `feat/email-login-2`) and D156–D159 (branch `feat/email-login-3`) on 2026-11-02; D159's `+tag`
 change (branch `fix/email-plus-tags`) on 2026-11-02; D190–D193 (branch `feat/email-login-5`) and D200 (branches
@@ -5188,3 +5188,42 @@ over D269's directory) and D276 (the Support ID made consistent with D269), belo
 - Amends in text only: D96's "it reveals no email or Google account" now holds for partners; staff reach the
   directory (D269). `docs/email-login-spec.md` ("Support ID lookups show … never a `sub` or address") and
   `docs/hana-home-spec.md` "Support ID" still say otherwise. They are to be aligned once this is confirmed.
+
+## Dev env email limits, 2026-11-04
+
+### D340. Dev envs (`local*`, `sandbox*`) get higher per-mailbox and per-IP email code limits; production keeps D198's
+- Date 2026-11-04 · Status: confirmed by the user (2026-11-04: "yes raise limits for dev environments please, as we
+  will be testing a lot and testnet don't really cost us money anyway") · Built on `fix/dev-email-limits` · Amends D198
+  (its numbers are now production's)
+- Decision: the email issuer picks its limit set from `ENV_NAME` with `isDevEnv` (`@hana-id/env`: `local*`,
+  `sandbox*`), once per request (`limitsFor` in `apps/email-issuer/src/limits.ts`). Every other name gets production's,
+  which are exactly D198's. Dev values (production in brackets):
+  - per (mailbox, requester) code mails: 20 per 15 min (3), 100 a day (10);
+  - per mailbox code mails: 30 per 15 min (10), 200 a day (30);
+  - challenges per mailbox a UTC day: 250 (35); live challenges at once: 20 (5), chosen so one tester's abandoned
+    starts never meet the live cap before the per-requester 15-min code limit;
+  - wrong codes per (mailbox, requester): 30 an hour (10) before the 1 h lock;
+  - failed checks per mailbox a UTC day: ceiling 100 (25), backstop 80 (18), owner slot 17 (4), ticket slot 3 (3). The
+    ceiling stays the sum of its three slots, so the owner slot still works past the backstop, and the requester lock
+    (30) still trips before the backstop (80);
+  - per IP: `start` 30 per 10 min (10) and 300 a day (50); `resend` 30 per 10 min (10); `verify` 90 per 10 min (30).
+- Unchanged in every env: the aggregate prefix limits, the recipient-domain cap (it protects Hana's sending
+  reputation), the ticket and grant allowances (the grant slot too), the google-match and google-record limits, the
+  webhook and staff limits, the budget and its pools, `confirm`'s per-IP bound (production's 10 per 10 min: a staff
+  unsuppress's mailed link, not the login flow), and each challenge's own 5 attempts and 2 resends.
+- How it applies to existing counters: the mailbox object gets the set with every call (none: production's). Its
+  counters are keyed by window name and start, never by max, and both sets use the same names and windows, so a
+  sandbox-dev mailbox over production's numbers but under the dev ones passes at once, with no reset. A requester's
+  wrong-code lock is keyed by the max that set it (production's keeps its `lock:<ip>` key), so a lock set at
+  production's 10 doesn't hold under the dev set.
+- Why: sandbox-dev is testnet, used by Hana's own testers many times a day; D198's numbers were sized against an
+  attacker on a mainnet mailbox and blocked repeat testing. The name rule (not a manifest flag) means no setting can turn
+  them on in a production env, as for the other dev-only privileges.
+- Main trade-off: on a dev env, a 6-digit code can be guessed with 100 failed checks a day instead of 25 (≈ 3.7% a year
+  instead of ≈ 0.9%). Testnet accounts hold no real funds.
+- Alternatives: (a) a manifest field for the limits: it could be set in a production env by mistake. Not recommended.
+  (b) Resetting the counters on sandbox-dev (rotating K_rl): a one-off that also drops device tickets and recurs at the
+  next busy day. Not recommended.
+- Amended 2026-11-04 (same day, `fix/dev-ticket-limits`): a ticketed start (a device that signed in before) never
+  falls back to the code limits, so its own allowance (production 3 a day per address, 9 per mailbox) blocked the
+  user's testing first; dev envs raise it to 100 and 300. Production unchanged.

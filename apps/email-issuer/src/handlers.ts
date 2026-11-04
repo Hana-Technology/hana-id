@@ -34,8 +34,6 @@ import {
   IP_MATCH_LIMITS,
   IP_RECORD_LIMITS,
   IP_RESEND_LIMITS,
-  IP_START_LIMITS,
-  IP_VERIFY_LIMITS,
   IP_WEBHOOK_LIMITS,
   LINK_TICKET_TTL_MS,
   MAILBOX_RETRY_AFTER_S,
@@ -43,6 +41,8 @@ import {
   STAFF_LIMITS,
   appBudgetShare,
   appStartLimits,
+  limitsFor,
+  type Limits,
 } from './limits.ts';
 import { log } from './log.ts';
 import { codeMail, confirmMail, linkNoticeMail, unlockMail } from './mail.ts';
@@ -68,7 +68,8 @@ const CONFIRM_TOKEN_RE = /^uc1\.[A-Za-z0-9_-]{43}$/u;
 const confirmName = (token: string): string => `u:${base64UrlEncode(sha256(utf8(token)))}`;
 const SUPPORT_TICKET_RE = /^[A-Za-z0-9._#:-]{1,64}$/u;
 
-type Ctx = { deps: Deps; requestId: string; endpoint: string; cors: Record<string, string> };
+/** `limits`: the env's limit set (`limitsFor(ENV_NAME)`: dev or production, D340), picked once per request. */
+type Ctx = { deps: Deps; requestId: string; endpoint: string; cors: Record<string, string>; limits: Limits };
 
 const respond = (ctx: Ctx, res: Response): Response => {
   for (const [k, v] of Object.entries(ctx.cors)) res.headers.set(k, v);
@@ -92,7 +93,7 @@ const isId = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9_
 const retryHeader = (ms: number): Record<string, string> => ({ 'retry-after': String(Math.max(1, Math.ceil(ms / 1000))) });
 const tooMany = (ctx: Ctx, ms: number): Response => fail(ctx, 429, 'rate_limited', 'Too many requests, try again later', undefined, retryHeader(ms));
 
-async function ipLimit(ctx: Ctx, request: Request, limits: Limit[]): Promise<Response | null> {
+async function ipLimit(ctx: Ctx, request: Request, limits: readonly Limit[]): Promise<Response | null> {
   const r = await limiter(ctx.deps, `ip:${ipOf(request)}`).hit(limits, ctx.deps.now());
   if (r.ok) return null;
   log({ event: 'limit', requestId: ctx.requestId, endpoint: ctx.endpoint, limit: r.limit });
@@ -269,7 +270,7 @@ export async function handleStart(request: Request, ctx: Ctx): Promise<Response>
   const b = parsed.body;
   if (!isObj(b) || !onlyKeys(b, ['pk', 'email', 'purpose', 'commitment'], ['deviceTicket', 'unlockToken'])) return fail(ctx, 400, 'bad_request', 'Body must be {pk, email, purpose, commitment, deviceTicket?, unlockToken?}');
   // The requester pays first: its IP subject's limits count before anything else.
-  const limited = await ipLimit(ctx, request, IP_START_LIMITS);
+  const limited = await ipLimit(ctx, request, ctx.limits.ipStart);
   if (limited) return limited;
   if (typeof b.email !== 'string' || b.email.length > 1024) return fail(ctx, 400, 'invalid_email', 'Not a valid email address');
   const r = normalizeEmail(b.email);
@@ -309,7 +310,7 @@ export async function handleStart(request: Request, ctx: Ctx): Promise<Response>
 
   // 1. The mailbox (one atomic call): locks, live challenges, the day's challenge cap, the first code's limits (an
   // owner's: its ticket's allowance; a grant is used up here and given back if the start fails later).
-  const adm = await box.admit(ip, expiresAtMs, true, now, claimOk ? claim : null);
+  const adm = await box.admit(ip, expiresAtMs, true, now, claimOk ? claim : null, ctx.limits.mailbox);
   if (!adm.ok) return tryLater(ctx, adm.reason);
   const owner = adm.owner;
   const undoMailbox = async (alsoLive: boolean) => {
@@ -397,7 +398,7 @@ export async function handleResend(request: Request, ctx: Ctx): Promise<Response
   const b = parsed.body;
   const cid = isObj(b) && onlyKeys(b, ['challengeId']) ? parseChallengeId(b.challengeId) : null;
   if (!cid) return fail(ctx, 400, 'bad_request', 'Body must be {challengeId}');
-  const limited = await ipLimit(ctx, request, IP_RESEND_LIMITS);
+  const limited = await ipLimit(ctx, request, ctx.limits.ipResend);
   if (limited) return limited;
   const now = deps.now();
   const stub = challengeStub(deps, cid.name);
@@ -408,7 +409,7 @@ export async function handleResend(request: Request, ctx: Ctx): Promise<Response
   if (st.send.result === 'too_soon') return fail(ctx, 429, 'rate_limited', 'Wait before asking for another code', { resendAfterMs: now + st.send.retryAfterMs }, retryHeader(st.send.retryAfterMs));
   // Reserved before the code changes, in the order start uses; a silent (suppressed) challenge takes the same path.
   const box = mailboxLimiter(deps, st.mailboxKey);
-  const res = await box.reserveSend(requesterKey(ipOf(request)), now, st.owner);
+  const res = await box.reserveSend(requesterKey(ipOf(request)), now, st.owner, ctx.limits.mailbox);
   if (!res.ok) return tryLater(ctx, res.reason);
   const send = res.reservation;
   // What the challenge's owner proof counts as now (a ticket revoked since counts as nothing), for every later step.
@@ -477,7 +478,7 @@ export async function handleVerify(request: Request, ctx: Ctx): Promise<Response
   const b = parsed.body;
   const cid = isObj(b) && onlyKeys(b, ['challengeId', 'code']) ? parseChallengeId(b.challengeId) : null;
   if (!cid || !isObj(b) || typeof b.code !== 'string' || !CODE_RE.test(b.code)) return fail(ctx, 400, 'bad_request', 'Body must be {challengeId, code} with a 6-digit code');
-  const limited = await ipLimit(ctx, request, IP_VERIFY_LIMITS);
+  const limited = await ipLimit(ctx, request, ctx.limits.ipVerify);
   if (limited) return limited;
   const now = deps.now();
   const stub = challengeStub(deps, cid.name);
@@ -489,7 +490,7 @@ export async function handleVerify(request: Request, ctx: Ctx): Promise<Response
   // its own attempts atomically too.
   const ip = requesterKey(ipOf(request));
   const box = mailboxLimiter(deps, live.mailboxKey);
-  const guess = await box.reserveGuess(ip, now, live.owner);
+  const guess = await box.reserveGuess(ip, now, live.owner, ctx.limits.mailbox);
   if (!guess.ok) return tryLater(ctx, guess.reason);
   // A mailbox whose backstop tripped or that reached its ceiling is being guessed at: logged at error level, once per
   // trip, with a pseudonymous prefix of its key (an HMAC under K_rl, never the address) so staff can see targeted
@@ -498,14 +499,14 @@ export async function handleVerify(request: Request, ctx: Ctx): Promise<Response
   const keys = await deps.keys();
   const v = await stub.verify(await codeMac(keys, cid.id, b.code), now);
   if (v.result === 'gone') {
-    await box.refundGuess(ip, guess.reservation, now);
+    await box.refundGuess(ip, guess.reservation, now, ctx.limits.mailbox);
     return gone();
   }
   if (v.result === 'wrong') {
     if (v.attemptsLeft === 0) await box.releaseLive(v.expiresAtMs, now);
     return fail(ctx, 400, 'code_invalid', 'Wrong code', { attemptsLeft: v.attemptsLeft });
   }
-  await box.refundGuess(ip, guess.reservation, now);
+  await box.refundGuess(ip, guess.reservation, now, ctx.limits.mailbox);
   await box.releaseLive(v.record.expiresAtMs, now);
   // The code was right: the challenge is gone (single use). At most one token is minted from it.
   const rec = v.record;
@@ -612,7 +613,7 @@ async function checkGoogleSignIn(
   request: Request,
   b: Record<string, unknown>,
   accessToken: string,
-  limits: Limit[],
+  limits: readonly Limit[],
   gate: (ctx: Ctx, pk: unknown) => Promise<{ ok: true; app: IssuerApp } | { ok: false; response: Response }>,
 ): Promise<{ ok: true; value: GoogleSignIn } | { ok: false; response: Response }> {
   const { deps } = ctx;
@@ -737,7 +738,7 @@ export async function handleGoogleMatch(request: Request, ctx: Ctx): Promise<Res
     // Admitted like any challenge (the live cap, the requester's lock); a suppressed or limited mailbox gets none.
     const mbx = await mailboxKey(keys, r.mailbox);
     const expiresAtMs = now + CHALLENGE_TTL_MS;
-    const adm = (await isSuppressed(deps, await suppressionKey(keys, r.email))) ? null : await mailboxLimiter(deps, mbx).admit(requesterKey(ipOf(request)), expiresAtMs, false, now);
+    const adm = (await isSuppressed(deps, await suppressionKey(keys, r.email))) ? null : await mailboxLimiter(deps, mbx).admit(requesterKey(ipOf(request)), expiresAtMs, false, now, null, ctx.limits.mailbox);
     if (!adm?.ok) return ok(ctx, 200, base, { appId: app.id, decision: j.decision, code: 'challenge_unavailable' });
     const cid = newChallengeId();
     const rec: ChallengeRecord = {
@@ -939,6 +940,7 @@ export async function handleConfirm(request: Request, ctx: Ctx): Promise<Respons
   if (!parsed.ok) return fail(ctx, parsed.status, 'bad_request', parsed.message);
   const b = parsed.body;
   if (!isObj(b) || !onlyKeys(b, ['token']) || typeof b.token !== 'string' || !CONFIRM_TOKEN_RE.test(b.token)) return fail(ctx, 400, 'bad_request', 'Body must be {token}');
+  // A staff unsuppress's mailed link, not the login flow: production's resend bound in every env (D340).
   const limited = await ipLimit(ctx, request, IP_RESEND_LIMITS);
   if (limited) return limited;
   const c = await challengeStub(deps, confirmName(b.token)).takeConfirm(deps.now());
@@ -1043,7 +1045,7 @@ export async function route(request: Request, deps: Deps): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
   const requestId = randomId(12);
-  const base: Ctx = { deps, requestId, endpoint: path, cors: {} };
+  const base: Ctx = { deps, requestId, endpoint: path, cors: {}, limits: limitsFor(deps.env.ENV_NAME) };
   try {
     if (path === ROUTES.jwks || path === ROUTES.openid) {
       const ctx = { ...base, cors: corsHeaders('*') };

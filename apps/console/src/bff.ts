@@ -43,7 +43,7 @@ export const memberActor = (s: Session): Actor => ({ kind: 'member', id: s.userI
 export const partnerActorId = (id: string): string => (/^usr_[A-Za-z0-9]{1,64}$/u.test(id) ? id : 'hana');
 
 /** The member's usable memberships: hd-matching orgs, frozen ones included (read-only), with the role in force now. */
-async function memberships(env: Env, s: Session, now: number, orgId?: string): Promise<Membership[]> {
+export async function memberships(env: Env, s: Session, now: number, orgId?: string): Promise<Membership[]> {
   const { results } = await env.CONSOLE_DB.prepare(
     `SELECT o.id, o.name, o.status, ${ownerNow('m', now)} AS is_owner FROM members m JOIN orgs o ON o.id = m.org_id
       WHERE m.user_id = ? AND (o.required_hd IS NULL OR o.required_hd = ?)${orgId ? ' AND o.id = ?' : ''} ORDER BY o.name, o.id`,

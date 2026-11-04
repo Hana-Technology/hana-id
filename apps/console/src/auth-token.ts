@@ -135,3 +135,30 @@ export async function verifyConsoleToken(jwt: string, c: ConsoleTokenCheck): Pro
   if (t.email_verified !== true) return { ok: false, code: 'email_unverified' };
   return { ok: true, identity: { provider: t.provider, sub: t.sub, email: t.email.toLowerCase(), hd: t.hd ?? null } };
 }
+
+// ---- an AddClient's client proof (docs/batch-c-spec.md "On-chain owner actions" step 3) ----
+
+/** Why a pasted client proof was refused (shown to the owner by code; never with the token). */
+export type ProofRefusal = 'invalid_token' | 'token_expired' | 'unsupported_issuer' | 'bad_token' | 'wrong_audience' | 'wrong_nonce' | 'claim_not_allowed' | 'jwks_unavailable';
+
+/**
+ * Checks a client proof before the console builds an AddClient around it: the signature (Google's JWKS), `iss`, `exp`,
+ * `aud` the client being added, the client-proof nonce at the scope's `action_nonce`, and the claim allow-list (the
+ * proof is relayed on chain, so it is public: D274 refuses one with `email`, `hd` or a name, and so does this, before
+ * the owner signs anything; D350). The API checks all of it again in its precheck.
+ */
+export async function verifyClientProof(jwt: string, c: { provider: string; aud: string; nonce: string; now: number }): Promise<{ ok: true } | { ok: false; code: ProofRefusal; claim?: string }> {
+  let v;
+  try {
+    v = await verifyIdToken(jwt, c.now);
+  } catch (err) {
+    if (err instanceof JwksUnavailableError) return { ok: false, code: 'jwks_unavailable' };
+    throw err;
+  }
+  if (!v.ok) return { ok: false, code: v.code };
+  const claim = disallowedClaim(jwt, 'openid');
+  if (claim !== null) return { ok: false, code: 'claim_not_allowed', claim };
+  if (v.token.provider !== c.provider || v.token.aud !== c.aud || (v.token.azp !== undefined && v.token.azp !== c.aud)) return { ok: false, code: 'wrong_audience' };
+  if (v.token.nonce !== c.nonce) return { ok: false, code: 'wrong_nonce' };
+  return { ok: true };
+}

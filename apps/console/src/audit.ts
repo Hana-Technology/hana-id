@@ -36,6 +36,26 @@ export const AUDIT_DETAIL_KEYS = {
   'session.signed_in': ['invite'],
   'session.signed_out': [],
   'signin.refused': ['code', 'emailSha256'],
+  // Batch C10: an owner's writes. A step-up's row carries its pending action id (`step_up_id`); the ones that go through
+  // ConsoleRpc are outcome rows written after the RPC returns (app_changes, the API's, is authoritative), with the
+  // RpcCode of a refusal. `requiredHd` is the org's own Workspace domain (its setting, not a person's).
+  'step_up.failed': ['kind', 'code'],
+  'origin.proposed': ['code', 'version', 'added', 'removed'],
+  'policy.proposed': ['code', 'version', 'policyId', 'changeId'],
+  'raw_sign.proposed': ['code', 'version', 'changeId'],
+  'app.resumed': ['code', 'suspendedBy'],
+  'app.settings_changed': ['code', 'version', 'fields'],
+  'owner_action.relayed': ['code', 'method', 'status'],
+  'owner_action.executed': ['code', 'status', 'changeId'],
+  'org.policy': ['requiredHd'],
+  'origins.removed': ['code', 'version', 'removed'],
+  'app.turned_off': ['code', 'version', 'what'],
+  'change.cancelled': ['code'],
+  'app.suspended': ['code', 'suspendedBy'],
+  'app.renamed': ['code', 'version'],
+  'key.created': ['code', 'keyId'],
+  'key.rotated': ['code', 'keyId', 'newKeyId'],
+  'key.revoked': ['code', 'keyId'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type AuditAction = keyof typeof AUDIT_DETAIL_KEYS;

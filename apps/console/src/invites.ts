@@ -16,6 +16,7 @@ import { type InviteView, LEGACY_ORG_ID, type MemberNotice, type OwnerGrantView,
 import { type Writer, auditInsert, entry, replayOf } from './audit.ts';
 import { PASSKEYS_SHIPPED } from './config.ts';
 import { refuse } from './errors.ts';
+import { consumeGuard, consumeStmt } from './members.ts';
 import { applied, frag, gate, gated, isReplay, lit, orgHasOwner, ownerNow, runBatch } from './sql.ts';
 import { GRANT_COLUMNS, type GrantRow, INVITE_COLUMNS, type InviteRow, grantView, inviteView } from './views.ts';
 
@@ -42,6 +43,8 @@ export interface IssueInvite {
   /** `hana` (StaffRpc) or `member` (an owner's `member.invite` step-up, batch C10, with its pending action id). */
   createdByKind: 'hana' | 'member';
   stepUpId?: string | null;
+  /** A member's step-up: consumed in the invite's own batch, only while unused and unexpired (members.ts consumeGuard). */
+  consume?: { actionId: string };
 }
 
 /**
@@ -76,6 +79,11 @@ export async function issueInvite(db: D1Database, w: Writer, i: IssueInvite): Pr
     );
     binds.push(i.orgId, i.orgId, i.orgId, i.email);
   }
+  if (i.consume) {
+    const c = consumeGuard(i.consume.actionId, now);
+    guards.push(c.sql);
+    binds.push(...c.binds);
+  }
   if (kind === 'partner' && !PASSKEYS_SHIPPED) {
     guards.push(
       `NOT EXISTS (SELECT 1 FROM orgs WHERE kind = 'partner' AND id <> '${LEGACY_ORG_ID}')`,
@@ -108,6 +116,7 @@ export async function issueInvite(db: D1Database, w: Writer, i: IssueInvite): Pr
       ),
     );
   }
+  if (i.consume) stmts.push(consumeStmt(db, i.consume.actionId, now, g));
   // A replay can't compare the target: each call draws a fresh invite id.
   const results = await runBatch(db, stmts, replayOf(w, action, null));
   if (!applied(results)) await whyNotIssued(db, i, kind, now);
@@ -128,7 +137,7 @@ async function whyNotIssued(db: D1Database, i: IssueInvite, kind: string | null,
     if ((open?.n ?? 0) >= MAX_OPEN_INVITES) refuse('conflict', `The org has ${MAX_OPEN_INVITES} open invites`);
   }
   if (kind === 'partner') refuse('passkeys_required', 'A second partner org needs member passkeys first');
-  return refuse('conflict', 'The invite was not issued; retry');
+  return refuse('conflict', i.consume ? 'The invite was not issued: this confirmation was already used or has expired' : 'The invite was not issued; retry');
 }
 
 /**

@@ -72,15 +72,20 @@ describe('Google tokens the console verifies', () => {
   });
   const tokenFile = consoleFiles.find((f) => f.name === 'console/src/auth-token.ts')!.text;
 
-  it('only console/src/auth-token.ts verifies a Google token (console-auth verifies none)', () => {
+  it('only console/src/auth-token.ts verifies a Google token (console-auth verifies none): its own flows and a pasted client proof', () => {
     expect(consoleFiles.filter((f) => calls(f.text, 'verifyIdToken') > 0).map((f) => f.name)).toEqual(['console/src/auth-token.ts']);
-    expect(calls(tokenFile, 'verifyIdToken')).toBe(1);
+    expect(calls(tokenFile, 'verifyIdToken')).toBe(2);
+  });
+
+  it('holds a pasted AddClient client proof (relayed on chain, so public) to the openid allow-list right after its signature check (C10, D350)', () => {
+    expect(tokenFile).toMatch(/if \(!v\.ok\) return \{ ok: false, code: v\.code \};\n\s*const claim = disallowedClaim\(jwt, 'openid'\);\n\s*if \(claim !== null\) return \{ ok: false, code: 'claim_not_allowed', claim \};/u);
   });
 
   it('applies the allow-list right after the token checks, with no option to skip it', () => {
     expect(tokenFile).toMatch(/const claim = disallowedClaim\(jwt, c\.scope\);\n\s*if \(claim !== null\) return \{ ok: false, code: 'claim_not_allowed', claim \};/u);
     expect(tokenFile).not.toMatch(/claimAllowList|skipAllowList/u);
-    // Every caller passes the flow's own scope, read from its auth_flows row.
+    // Every caller passes the flow's own scope, read from its auth_flows row (step-ups included: C10's callback is the
+    // same verifyConsoleToken call).
     for (const f of consoleFiles.filter((x) => /verifyConsoleToken\(/u.test(x.text) && x.name !== 'console/src/auth-token.ts')) {
       for (const m of f.text.matchAll(/verifyConsoleToken\([^;]*scope: ([^,}]+)/gu)) expect(m[1]!.trim(), f.name).toBe('flow.scope');
     }

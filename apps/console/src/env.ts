@@ -6,14 +6,27 @@ import type {
   AppDetail,
   AppSummary,
   CancelChangeByLinkInput,
+  CancelChangeInput,
+  ChangeOriginsInput,
+  ConsoleProposeChangeInput,
+  ConsoleSetSuspendedInput,
+  CreateKeyInput,
   GetAppInput,
   GuardedChange,
+  KeyView,
   ListAppsInput,
   ListChangesInput,
+  OwnerActionInput,
+  RemoveOriginsInput,
+  RevokeKeyInput,
+  RotateKeyInput,
   RpcFail,
   RpcOk,
   SetLogoInput,
+  TurnOffInput,
+  UpdateSettingsInput,
 } from '@hana-id/console-core';
+import type { ConsoleUsersClient } from './users.ts';
 
 type Answer<T extends object> = Promise<RpcOk<T> | RpcFail>;
 
@@ -30,6 +43,19 @@ export interface ConsoleRpcClient {
   cancelChangeByLink(c: CancelChangeByLinkInput): Answer<{ change: GuardedChange }>;
   /** The logo upload (batch C11, logo.ts): the pointer. */
   setLogo(c: SetLogoInput): Answer<{ version: number }>;
+  // Batch C10: the write paths. Guarded changes carry the member's step-up token, which the API verifies itself.
+  changeOrigins(c: ChangeOriginsInput): Answer<{ version: number; changes: GuardedChange[] }>;
+  proposeChange(c: ConsoleProposeChangeInput): Answer<{ version: number; change: GuardedChange }>;
+  removeOrigins(c: RemoveOriginsInput): Answer<{ version: number }>;
+  turnOff(c: TurnOffInput): Answer<{ version: number }>;
+  updateSettings(c: UpdateSettingsInput): Answer<{ version: number }>;
+  cancelChange(c: CancelChangeInput): Answer<{ change: GuardedChange }>;
+  setSuspended(c: ConsoleSetSuspendedInput): Answer<{ suspendedBy: number }>;
+  createKey(c: CreateKeyInput): Answer<{ key: KeyView }>;
+  rotateKey(c: RotateKeyInput): Answer<{ key: KeyView; oldKeyRevokedAt: number }>;
+  revokeKey(c: RevokeKeyInput): Answer<object>;
+  /** An on-chain owner action, relayed by the API's owner pool (`status` and the relay's answer once relayed). */
+  ownerAction(c: OwnerActionInput): Answer<{ status: number; result?: unknown; nearTx?: string; code?: string; error?: string }>;
 }
 
 export interface Env {
@@ -54,11 +80,23 @@ export interface Env {
   /** Read-only NEAR RPC and the signer account (the on-chain scope views, batch C10). */
   NEAR_RPC: string;
   SIGNER_ACCOUNT: string;
+  /**
+   * The manifest network and Hana's own origins (the API's `NETWORK` and `REFUSED_ORIGINS`): the console checks an
+   * origin add against the same rules before it asks for a fresh sign-in (C10). Missing: the console only normalises,
+   * and the API's own check (always made) answers `origin_refused` after the sign-in.
+   */
+  NETWORK?: string;
+  REFUSED_ORIGINS?: string;
+  /**
+   * `"1"`: the partner Users screen (D310) is on. Off until the wallet directory's ConsoleRpc reads
+   * (`listUsers`, `getUser`, branch `feat/wallet-directory`) are on `develop` and deployed (D357).
+   */
+  USERS_SCREEN?: string;
   /** Manifest `ownerGrantDelayMs` (D145): how long a new owner stays a viewer. Missing or out of range: grants refuse. */
   OWNER_GRANT_DELAY_MS?: string;
   CONSOLE_DB: D1Database;
   /** The API Worker's `ConsoleRpc` entrypoint (service binding; the console is its only caller). */
-  API: Fetcher & ConsoleRpcClient;
+  API: Fetcher & ConsoleRpcClient & Partial<ConsoleUsersClient>;
   /** The SPA's static files (assets with `run_worker_first`: this Worker sees every request first). */
   ASSETS: Fetcher;
   /**

@@ -253,8 +253,9 @@ describe('CSRF on the logo route', () => {
     expect(csrfProblem(r({ 'x-hana-console': '0' }), ORIGIN)).toBe('x-hana-console');
   });
 
-  it('no route serves the upload before the session routes exist (C9/C10): 404 after CSRF passes', async () => {
+  it('the upload route needs a session (C10): 401 after CSRF passes, before the body is read', async () => {
     const res = await request(LOGO, { method: 'POST', headers: { ...CSRF, 'content-type': 'application/octet-stream' }, body: 'x' });
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({ error: { code: 'unauthenticated' } });
   });
 });

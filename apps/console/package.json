@@ -2,7 +2,7 @@
   "name": "@hana-id/console",
   "version": "0.0.0",
   "private": true,
-  "description": "The partner console Worker (docs/batch-c-spec.md): CONSOLE_DB and its migrations, host dispatch, headers and CSRF, StaffRpc, invites and owner grants, the hourly cron, partner sign-in (AuthHandler, sessions) and the read-only partner SPA (web/, React 18, Vite, React Router). Write paths come in C10.",
+  "description": "The partner console Worker (docs/batch-c-spec.md): CONSOLE_DB and its migrations, host dispatch, headers and CSRF, StaffRpc, invites and owner grants, the hourly cron, partner sign-in (AuthHandler, sessions), fresh sign-in (step-ups) and the write paths, and the partner SPA (web/, React 18, Vite, React Router).",
   "type": "module",
   "scripts": {
     "gen": "tsx scripts/gen-wrangler.ts",
@@ -14,10 +14,12 @@
   },
   "dependencies": {
     "@hana-id/console-core": "workspace:*",
+    "@hana-id/core": "workspace:*",
     "@hana-id/oidc": "workspace:*",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "react-router-dom": "6.30.1"
+    "react-router-dom": "6.30.1",
+    "zod": "^3.24.0"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.4.4",

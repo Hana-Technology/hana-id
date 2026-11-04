@@ -23,6 +23,31 @@ describe('audit details', () => {
           "logoKey",
           "code",
         ],
+        "app.renamed": [
+          "code",
+          "version",
+        ],
+        "app.resumed": [
+          "code",
+          "suspendedBy",
+        ],
+        "app.settings_changed": [
+          "code",
+          "version",
+          "fields",
+        ],
+        "app.suspended": [
+          "code",
+          "suspendedBy",
+        ],
+        "app.turned_off": [
+          "code",
+          "version",
+          "what",
+        ],
+        "change.cancelled": [
+          "code",
+        ],
         "change.link_cancel": [
           "code",
         ],
@@ -41,6 +66,19 @@ describe('audit details', () => {
         "invite.revoked": [
           "grantCancelled",
         ],
+        "key.created": [
+          "code",
+          "keyId",
+        ],
+        "key.revoked": [
+          "code",
+          "keyId",
+        ],
+        "key.rotated": [
+          "code",
+          "keyId",
+          "newKeyId",
+        ],
         "member.added": [
           "role",
           "grantId",
@@ -58,7 +96,31 @@ describe('audit details', () => {
           "grantCancelled",
         ],
         "org.frozen": [],
+        "org.policy": [
+          "requiredHd",
+        ],
         "org.unfrozen": [],
+        "origin.proposed": [
+          "code",
+          "version",
+          "added",
+          "removed",
+        ],
+        "origins.removed": [
+          "code",
+          "version",
+          "removed",
+        ],
+        "owner_action.executed": [
+          "code",
+          "status",
+          "changeId",
+        ],
+        "owner_action.relayed": [
+          "code",
+          "method",
+          "status",
+        ],
         "owner_grant.cancelled": [
           "via",
         ],
@@ -68,6 +130,17 @@ describe('audit details', () => {
         "owner_grant.notified": [
           "ownerFrom",
         ],
+        "policy.proposed": [
+          "code",
+          "version",
+          "policyId",
+          "changeId",
+        ],
+        "raw_sign.proposed": [
+          "code",
+          "version",
+          "changeId",
+        ],
         "session.signed_in": [
           "invite",
         ],
@@ -75,6 +148,10 @@ describe('audit details', () => {
         "signin.refused": [
           "code",
           "emailSha256",
+        ],
+        "step_up.failed": [
+          "kind",
+          "code",
         ],
         "user.disabled": [],
         "user.enabled": [],

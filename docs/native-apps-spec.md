@@ -2,7 +2,7 @@
 
 **Status: DRAFT (2026-10-30), for review.** How Hana ID supports partner apps that are not web pages: native iOS
 (Swift), native Android (Kotlin) and React Native (bare and Expo). Answers the native-app half of batch B's open
-question Q24 ("What should in-app webviews show?") and Sign in with Apple spec Q5 (native iOS). 18
+question Q24 ("What should in-app webviews show?") and Sign in with Apple spec Q5 (native iOS). 19
 [open questions](#open-questions-for-the-user) for the user; nothing here is decided until they are answered and
 recorded in `docs/decisions.md`.
 
@@ -409,7 +409,7 @@ but it puts Hana's app in the trusted computing base of every shared scope (an e
 | D2. Passkey-sealed record (WebAuthn PRF) | In the sheet, on Hana's RP ID, a passkey's PRF output wraps the vault record or a server-held blob. The partner app can't use Hana's RP ID (Hana's AASA / assetlinks list no partner app), so the passkey is a factor only Hana's pages have | **Later hybrid** ([Q15](#open-questions-for-the-user)). It would allow ephemeral sheets (no iOS alert, no browser-storage dependence), sessions longer than 24 h, and Face ID as the Approve. Costs: a passkey creation step, PRF support uneven on Android and third-party password managers, a new trust question (a long-lived PRF-sealed PRK) |
 | D3. Android Credential Manager for Google | The native Google bottom sheet | Only with option B (the token goes to the app). Not for A |
 | D4. Delegated on-chain session keys (Stellar account signers, EVM smart accounts / EIP-7702) | The vault, in a sheet, authorizes a limited key the app holds; the chain enforces the limits | **Later**, per chain. It is the only way to silent, limited signing without trusting the app; out of the MVP (chain-specific, changes what an address is on EVM) |
-| D5. Remote signer in a TEE (Privy/Turnkey-style enclave) | The key lives in a Hana enclave; the app authenticates to it | **Rejected for now**: a new trust root next to the MPC; Hana's model is "Hana's servers never hold a key" |
+| D5. Remote signer in a TEE (Privy/Turnkey-style enclave) | The key lives in a Hana enclave; the app authenticates to it | **Rejected for now**: a new trust root next to the MPC; Hana's model is "Hana's servers never hold a key". Whether to offer it later as a separate opt-in tier is [Q19](#open-questions-for-the-user) |
 | D6. App Clip (iOS) | A small Hana-signed binary launched from a link without installing | **Not pursued**: invocation from another app shows an App Clip card, storage and Keychain lifetimes are limited, and it is option C's trust with option A's friction |
 | D7. Hybrid A + B per scope | A for every app; B as an explicit Enterprise opt-in | **Recommended path** ([Q9](#open-questions-for-the-user)) |
 | D8. Hybrid A + C | A by default; if the Hana app is installed, hand off to it instead | Later, if C ever exists ([Q10](#open-questions-for-the-user)) |
@@ -1148,3 +1148,22 @@ Each question stands alone: the options, what each costs, and the recommendation
       failure modes (jailbroken devices, quota exhaustion, outages).
     - C. Optional per app (Coinbase CDP-style), off by default.
     Recommendation: A, with C as a later addition.
+
+19. **A Privy-style remote signer (option D5) as a later, separate tier?** Raised 2026-11-04. A Hana enclave (for
+    example AWS Nitro) would take the vault's place at login: it makes the CKD key `a` and the session key, decrypts
+    the CKD answer and keeps PRK for the session; the app holds a device authorization key (Secure Enclave /
+    Keystore) bound to the session and signs requests that the enclave executes, with no Hana screen. This is the
+    model the [survey](#how-other-embedded-wallet-providers-do-it) records for Privy's native SDKs (key in a TEE, the
+    app authorizes signing). Expected, to be confirmed by a spike: no contract, path or derivation change (the
+    contract doesn't care who made `a` or the session key), so the same addresses. Unlike Privy, nothing would be
+    stored between sessions: a new login derives the key again through the MPC.
+    - A. **Not now; keep option A, and reach Privy-like UX through the passkey hybrid (D2, Q15) and delegated on-chain
+      session keys (D4, Q7 C); revisit D5 as an explicit opt-in tier only if partners ask for silent native signing**
+      (recommended). Under that tier the partner signs in writing that its app can sign anything silently while a
+      session lives, and Hana Home shows it, as for option B (Q9).
+    - B. Build it as an opt-in tier after option A: native UX (instant signing, no sheet or iOS alert, any session
+      length). Costs: Hana's servers hold every live session's key, so a bad enclave build or a TEE flaw exposes them
+      all; a new trust root next to the MPC (attestation, reproducible builds, key-release rules, watchdog, governance
+      and its own audit); the approval becomes the app's UX, not a boundary; the product reads closer to custodial.
+    - C. Never: "Hana's servers never hold a key" stays an invariant on every platform.
+    Recommendation: A.

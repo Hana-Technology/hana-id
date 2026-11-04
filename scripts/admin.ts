@@ -75,12 +75,12 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
   user:list [--app <app id>] [--provider email|google] [--search <part of the address> | -] [--limit 50] [--json]
                the user directory (D269, the email issuer's D1, read only), newest first by last seen: each user's
                address, provider, sub, verified, first and last seen, and per app its scope and on-chain path
-               ({scope}#{provider}#{sub}#0), and per scope its user id, Support ID, role in the account and
-               wallets (the wallet directory, D310, in the API's D1). --search -: the text on stdin (kept out of the
-               shell history)
-  user:find [--email <address> | --sub <sub> | --address <G…|0x…> | --user <hu_…|HANA-XXXX-XXXX>] [--provider email|google] [--json]
+               ({scope}#{provider}#{sub}#0), and per scope its User ID (u1_…, the identity token's sub), Support ID,
+               internal id (hu_…), role in the account and wallets (the wallet directory, D310, D346, in the API's
+               D1). --search -: the text on stdin (kept out of the shell history)
+  user:find [--email <address> | --sub <sub> | --address <G…|0x…> | --user <u1_…|hu_…|HANA-XXXX-XXXX>] [--provider email|google] [--json]
                one user by exact address (as typed, or normalized as email logins store it) or by sub, with its user
-               ids and wallets; --address: every user listing that wallet, --user: a user id or Support ID, each with
+               ids and wallets; --address: every user listing that wallet, --user: a User ID, internal id or Support ID, each with
                its accounts (provider, sub, role, status, address); with no flag, any of these is read from stdin.
                Addresses are printed here only: never redirect the output to a file outside .secrets/
   owner:call <method> [--args '<json>'] [--gas <Tgas, default 100>] [--member <m>] [--approve-with <m>] [--yes]

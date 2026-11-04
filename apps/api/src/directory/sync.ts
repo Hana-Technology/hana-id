@@ -59,8 +59,8 @@ export async function syncAccount(env: Env, scopeId: string, root: IdentityRef, 
   // The account the chain names is the truth (`root` was the caller's reading of it).
   const truth = account?.root ?? root;
   const user = await directoryUser(env, scopeId, truth);
-  if (!user) {
-    noteDirectoryUnavailable(at);
+  if (typeof user === 'string') {
+    noteDirectoryUnavailable(at, user);
     return false;
   }
   const keyed = new Map<string, IdentityRef>();
@@ -69,7 +69,7 @@ export async function syncAccount(env: Env, scopeId: string, root: IdentityRef, 
   const members = account?.members ?? [];
   // Every caller follows a fresh sign-in of the account (a login, or a link change's tokens): the user was seen now.
   const stmts: D1PreparedStatement[] = [upsertUser(env.DB, user, scopeId, readAt)];
-  stmts.push(upsertIdentity(env.DB, { scopeId, identityKey: rootKey, userId: user.userId, provider: truth.provider, sub: truth.sub, role: 'root', status: 'active', effectiveAt: null }, readAt));
+  stmts.push(upsertIdentity(env.DB, { scopeId, identityKey: rootKey, internalId: user.internalId, provider: truth.provider, sub: truth.sub, role: 'root', status: 'active', effectiveAt: null }, readAt));
   for (const m of members) {
     stmts.push(
       upsertIdentity(
@@ -77,7 +77,7 @@ export async function syncAccount(env: Env, scopeId: string, root: IdentityRef, 
         {
           scopeId,
           identityKey: m.key,
-          userId: user.userId,
+          internalId: user.internalId,
           provider: m.provider,
           sub: keyed.get(m.key)?.sub ?? null,
           role: 'member',
@@ -88,7 +88,7 @@ export async function syncAccount(env: Env, scopeId: string, root: IdentityRef, 
       ),
     );
   }
-  stmts.push(markRemovedMembers(env.DB, scopeId, user.userId, members.map((m) => m.key), readAt, opts.hint));
+  stmts.push(markRemovedMembers(env.DB, scopeId, user.internalId, members.map((m) => m.key), readAt, opts.hint));
   return writeDirectory(env, stmts, at);
 }
 
@@ -113,20 +113,20 @@ export async function syncAfterLogin(env: Env, scopeId: string, token: IdentityR
   if (!standing.confirmed || standing.pending) return false;
   const root = standing.member?.root ?? token;
   const user = await directoryUser(env, scopeId, root);
-  if (!user) {
-    noteDirectoryUnavailable(at);
+  if (typeof user === 'string') {
+    noteDirectoryUnavailable(at, user);
     return false;
   }
   const now = Date.now();
   const stmts = [
     upsertUser(env.DB, user, scopeId, now),
-    upsertIdentity(env.DB, { scopeId, identityKey: await identityKeyHex(scopeId, root), userId: user.userId, provider: root.provider, sub: root.sub, role: 'root', status: 'active', effectiveAt: null }, now),
+    upsertIdentity(env.DB, { scopeId, identityKey: await identityKeyHex(scopeId, root), internalId: user.internalId, provider: root.provider, sub: root.sub, role: 'root', status: 'active', effectiveAt: null }, now),
   ];
   if (standing.member) {
     stmts.push(
       upsertIdentity(
         env.DB,
-        { scopeId, identityKey: await identityKeyHex(scopeId, token), userId: user.userId, provider: token.provider, sub: token.sub, role: 'member', status: 'active', effectiveAt: standing.member.effectiveAtMs },
+        { scopeId, identityKey: await identityKeyHex(scopeId, token), internalId: user.internalId, provider: token.provider, sub: token.sub, role: 'member', status: 'active', effectiveAt: standing.member.effectiveAtMs },
         now,
       ),
     );

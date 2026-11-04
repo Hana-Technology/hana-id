@@ -234,7 +234,8 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
     });
   }
 
-  // ---- end users and their wallets (D310, D315): the org's own scopes only; no sub, identity key or email ----
+  // ---- end users and their wallets (D310, D315, D346): the org's own scopes only; `userId` is the identity token's
+  // `sub` (`u1_…`); never the internal id (`hu_…`), a sub, an identity key or an email ----
 
   listUsers(c: unknown) {
     return runRpc(this.env, 'listUsers', consoleListUsersInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.listUsers }, ({ input, db, w }) => consoleListUsers(db, input, w.now));

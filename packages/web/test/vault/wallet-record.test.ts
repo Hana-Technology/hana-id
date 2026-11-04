@@ -1,7 +1,7 @@
 // The vault's wallet record (D310 point 3, D317): after a login, POST /v1/wallets/record with both addresses, each
 // signed by its own key for the session's path; in the background (the login's result never waits for it), once, with a
 // 15 s limit, never a key. The member case (the account root's path) is in linking.test.ts.
-import { WALLET_RECORD_TIMEOUT_MS, verifyWalletRecord } from '@hana-id/core';
+import { WALLET_RECORD_TIMEOUT_MS, verifyWalletRecord, verifyWalletRecordSession } from '@hana-id/core';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { APP_ID, Browser, ENV, type Google, PK, SCOPE, SUB, type Tab, apiError, google, login, readyTab, sleepReal } from './harness.ts';
 
@@ -24,7 +24,7 @@ async function tab(browser = new Browser()): Promise<Tab> {
 }
 
 const records = (t: Tab) => t.browser.backend.calls.filter((c) => c.path === '/v1/wallets/record');
-type Body = { sessionPublicKey: number[]; issuedAtMs: number; path: string; wallets: Record<'stellar' | 'evm', { address: string; signature: number[] }> };
+type Body = { sessionPublicKey: number[]; issuedAtMs: number; path: string; wallets: Record<'stellar' | 'evm', { address: string; signature: number[] }>; sessionSignature: number[] };
 
 describe('the wallet record after a login', () => {
   it('sends both addresses once, each signed by its own key for the session’s path and key, and nothing else', async () => {
@@ -36,7 +36,7 @@ describe('the wallet record after a login', () => {
     expect(call.method).toBe('POST');
     expect([call.headers['x-hana-key'], call.headers['x-hana-parent-origin']]).toEqual([PK, 'https://partner.test']);
     const body = call.body as Body;
-    expect(Object.keys(body).sort()).toEqual(['issuedAtMs', 'path', 'sessionPublicKey', 'wallets']);
+    expect(Object.keys(body).sort()).toEqual(['issuedAtMs', 'path', 'sessionPublicKey', 'sessionSignature', 'wallets']);
     expect(Object.keys(body.wallets).sort()).toEqual(['evm', 'stellar']);
     for (const w of Object.values(body.wallets)) expect(Object.keys(w).sort()).toEqual(['address', 'signature']);
     const session = (t.vault as unknown as { session: { sessionPk: Uint8Array; prk: Uint8Array } }).session;
@@ -49,6 +49,11 @@ describe('the wallet record after a login', () => {
       expect(body.wallets[chain].address).toBe(addresses[chain]);
       expect(verifyWalletRecord(ctx, chain, { address: body.wallets[chain].address, signature: Uint8Array.from(body.wallets[chain].signature) })).toBe(addresses[chain]);
     }
+    // The whole request is signed by this session's key (D311 as amended): the API refuses it otherwise.
+    const proofs = { stellar: { address: body.wallets.stellar.address, signature: Uint8Array.from(body.wallets.stellar.signature) }, evm: { address: body.wallets.evm.address, signature: Uint8Array.from(body.wallets.evm.signature) } };
+    expect(body.sessionSignature).toHaveLength(64);
+    expect(verifyWalletRecordSession(ctx, proofs, Uint8Array.from(body.sessionSignature))).toBe(true);
+    expect(verifyWalletRecordSession({ ...ctx, path: `${SCOPE}#google#other#0` }, proofs, Uint8Array.from(body.sessionSignature))).toBe(false);
     // No key material: the PRK's bytes appear nowhere in the body.
     const prkHex = Buffer.from(session.prk).toString('hex');
     expect(JSON.stringify(body)).not.toContain(prkHex);

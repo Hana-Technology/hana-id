@@ -32,7 +32,9 @@ sign-in: decided while building, to confirm) on 2026-11-04. D320–D329 (branch 
 statements, settlement and the ledger's checks, decided while building, to confirm) on 2026-11-04. D346 (branch `feat/user-id-identity-sub`, confirmed by the
 user) on 2026-11-04, with its amendments to D276, D312, D313, D315 and D316, and the security review's amendments to
 D311, D313 and D317 (the wallet record's session signature). D370–D374 (branch `feat/console-reports-upgrades`: the
-partner console's usage, statement and pending-upgrades screens, decided while building, to confirm) on 2026-11-04.
+partner console's usage, statement and pending-upgrades screens, decided while building, to confirm) on 2026-11-04. D360–D369 (branch
+`feat/batch-c-13`: retention and the erasure path, decided while building, to confirm) on 2026-11-04, with two rows of
+"Superseded or amended".
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -941,7 +943,8 @@ answered question there points here.
 
 ### D90. Retention: statements 7 years, raw usage 24 months, audit 5 years
 - Date 2026-10-29 · Status: confirmed by the user; periods to be confirmed by the company's accountant before launch;
-  not built · Source: `docs/batch-c-spec.md` "Retention", open question 10
+  built on `feat/batch-c-13` (the monthly job, the Neon functions, the audit purges and the erasure path; D360–D369),
+  not deployed · Source: `docs/batch-c-spec.md` "Retention", open question 10
 - Decision: monthly statements and settlement records (statement files, `usage.statements`, `near_usd_rates`,
   `gas_settlements`) 7 years. Raw usage events 24 months; then the uid hash is removed and the de-identified rows are
   kept. Audit logs (`audit_log`, `app_changes`, `guarded_changes`) 5 years. An automatic monthly purge job applies it,
@@ -5796,6 +5799,204 @@ changes a derivation path or an address. Every one is **decided while building, 
   - The admin config binds `STATEMENTS` and `EXPORTS` (`files.statementsBucket`, `files.exportsBucket`) and sets
     `RELAYER_ACCOUNT` (a statement names its network from C14's `NEAR_NETWORK`, and issuing refuses without it); settlement and the nonce check skip, logged every run, without `RELAYER_ACCOUNT`.
 
+## Batch C13: retention (branch `feat/batch-c-13`), 2026-11-04
+
+### D360. The monthly retention job rides the 15-minute trigger until a run of the month completes; at most 12 calls
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/retention.ts`,
+  `retention-store.ts`, `ledger-cron.ts`; `apps/admin/test-ops/retention.test.ts` · Source: spec "Crons" (admin,
+  monthly, the 1st 01:00 UTC), "Retention" ("Monthly purge job"), D90, D280, D329
+- Decision:
+  - **No trigger of its own**: as C12's daily work (D329), the job runs inside the `*/15` trigger, so the admin Worker
+    keeps two triggers and the account stays at five (the free plan's limit). It is **due** from the 1st, 01:00 UTC,
+    **until a run of that month ends `ok`**: a run that runs out of its calls ends `partial` and the next 15-minute run
+    continues it; a `failed` run is retried an hour after it finished; a run still `running` after 30 minutes was killed
+    (a deploy, a limit) and is closed as `failed` (`abandoned`). So a missed tick, a Neon outage or a backlog never skips
+    a month: the job is state-driven (`ops.retention_runs`), not tick-driven.
+  - **One run at a time**: a unique partial index on `ops.retention_runs (true) WHERE status = 'running'`; a second
+    start is refused by the database, not by a check in the Worker (Hyperdrive pools in transaction mode, so a session
+    advisory lock can't be used).
+  - **Order and budget**: after the daily work and before the alerts (its `retention_failed` goes out in the same run).
+    The Neon steps (`strip_uids` up to 20 calls of 10 000 rows, `drop_expired_partitions`, `ops.purge_expired`,
+    `retention_due`) use the run's connection and no outbound call. **Every RPC** (`deletedApps`, `purgeDirectory`, both
+    `purgeAudit`) **takes one call of the run's 40** (D280), at most 12 a run, so the job never starves settlement and the
+    run stays under the free plan's 50 subrequests whatever the RPCs answer. (C12's own RPC reads, `relayerKeys` and the
+    statement notices' two per statement, are not charged to the budget; see the note in the final report.)
+  - Each step runs on its own; a failing one is recorded as the step and a code (an RpcCode, `pg_<SQLSTATE>` or a class
+    name: never a message, which could echo data) and the others still run. The run's `rows` hold counts per table and
+    the calls used.
+  - The retention RPCs (`AdminRpc.purgeAudit` / `deletedApps` / `purgeDirectory`, `StaffRpc.purgeAudit`) take a
+    **`system` actor only**: staff never purge by hand, and the BFF can't call them (it sends a `hana` actor). Each
+    clamps the caller's `before` to its own period in SQL, so even a compromised admin Worker can't purge younger rows
+    than D90 allows.
+- Why: the spec's job, under the trigger limit and the call budget, without a way to lose a month.
+- Rejected: a third cron trigger (six per account, over the limit); running the job in the 5-minute trigger (it has no
+  ledger connection of its own and its budget belongs to the blocking notices); exactly one attempt at 01:00 (a failure
+  or an outage would skip a month).
+
+### D361. The erasure path: one script, `scripts/uid-erase.ts`, per scope, across the ledger and both directories
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `scripts/uid-erase.ts`,
+  `scripts/lib/uid-erase.ts`, console-core `uidOfInternalId`; `scripts/test/uid-erase.test.ts` · Source: spec "CLI"
+  (`uid:erase --scope --provider --sub`, the proposed `user:erase --provider --sub`), D269, D275, D276 (its open
+  "whether `user:erase` lands here or with C13"), D310
+- Decision:
+  - The spec's `uid:erase` and D276's `user:erase` are **one command** (`corepack pnpm --filter @hana-id/scripts
+    uid-erase <env> --scope --provider --sub|- --ticket [--remote] [--no-ledger] [--yes]`), so an erasure request can't
+    clear one store and forget another. It lands in C13 (answers D276's open point).
+  - **The unit is the account in one scope**, read from the chain (the source of truth): `get_identity` of the named
+    identity, its root's `get_identity`, the root's `get_account` (members by key). A failed or malformed read stops it;
+    the root is never guessed.
+  - **The uids**: the root's (the account's internal id `hu_…`, D312, D346) and each known identity's own (a member's events from before
+    it was linked carry its own uid), known = the named identity, the root and the members the wallet directory has a
+    sub for; plus the uid of every wallet-directory user those identity keys point to (`uidOfInternalId`). USER_ID_KEY
+    from `.secrets/<env>/user-id-key`, zeroed after use, never printed.
+  - **The stores**: the ledger through `usage.erase_uid` as `usage_admin` (`.secrets/<env>/neon-usage-admin.url`); the
+    wallet directory (the API's D1) through **a reviewed script, not AdminRpc**, with lib/d1.ts's private executor (D1's
+    REST API as the operator, the statement never in a process argument, D316); the issuer's directory through the same
+    CLI pattern as `user:*`. In the wallet directory: the users with their wallets and identities, and any identity row
+    of the account's keys in the scope. In the issuer: the identities' `user_email_apps` rows of the scope, then each
+    identity's `user_emails` row once it has no app row left in any scope.
+  - **Dry run by default** (the plan with counts per store, the internal ids with the User ID and Support ID of each
+    wallet-directory row, and the other scopes the
+    account's identities are seen in: an erasure is per scope, run again for each). `--yes` erases, **re-counts** (any
+    row left fails the command, nothing recorded; every step is idempotent, so it is simply run again) and records the
+    erasure in `ops.erasures`: ticket, operator (`cli:<login>`), scope and counts, **never a uid, a sub or an address**.
+    The ticket is required and may not hold `@` (it is stored). Testnet only, as every setup script.
+- Why: the directories (D269, D310) postdate the spec's erasure, which covered the ledger only; an operator CLI keeps
+  the destructive path out of the staff BFF and the admin Worker (which has no issuer binding, D365) and reuses the
+  reviewed private D1 path.
+- Rejected: `AdminRpc.eraseUser` for the wallet directory (a destructive staff RPC and a screen for a rare, ticketed
+  act; the issuer would still need the CLI); erasing every scope at once (the uid is per scope, and a person may want
+  one partner's data gone); erasing by the named identity alone (its account's rows sit under the root's uid).
+
+### D362. `usage.erase_uid(uid)` erases by uid alone; the uid indexes move from C15 into 0007
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/api/migrations-usage/0007_retention.sql`;
+  `apps/api/test-usage/retention.test.ts` · Source: spec "Usage ledger" functions (`usage.erase_uid(app_ids text[],
+  uid bytea)`), build plan C15 (`events (uid, at) WHERE uid IS NOT NULL`, `app_users (uid)`)
+- Decision: `erase_uid` takes the uid only and deletes its `app_users` rows and NULLs it on every event, **in any app**.
+  A uid is an HMAC over the scope and one identity (D96), so every row carrying it is that user's: the spec's `app_ids`
+  filter could only miss rows (an app deleted, or moved to another scope, that the script didn't list). The rows stay
+  (billing and counts unchanged). 0007 also adds `events (uid, at) WHERE uid IS NOT NULL` (strip_uids' and erase_uid's
+  reads, and C15's lookup), `app_users (uid)` and `app_users (last_seen)`; C15 needs neither index any more.
+- Why: exact by construction and cheaper; the indexes are needed now.
+- Rejected: the spec's signature (a correctness dependency on the caller's app list for no benefit).
+
+### D363. An app deletion reaches the new stores: the wallet directory of a scope left without apps, the issuer's app rows
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/api/src/changes/retention.ts`
+  `purgeDirectory`, `AdminRpc.purgeDirectory`; `scripts/lib/admin-retention.ts`; `apps/api/test/rpc-retention.test.ts`,
+  `scripts/test/uid-erase.test.ts` · Source: spec "Retention" (`app_users`: app deleted + 30 days), D269, D310
+- Decision:
+  - **Ledger**: as the spec, `usage.purge_app_users` for each app `AdminRpc.deletedApps` lists (deleted 30 days ago or
+    more), with a cursor so each month starts after the last app purged.
+  - **Wallet directory**: users are per scope, not per app (0011), so an app's deletion purges them only when **the
+    scope has no app left**: at least one app deleted 30 days ago or more and none live or deleted since
+    (`AdminRpc.purgeDirectory`, in the monthly job). A scope with no app row at all is never purged (no time to count
+    from). If a new app later uses the scope, its users reappear at their next login (no backfill).
+  - **Issuer directory**: the `user_email_apps` rows of the deleted apps (30 days), by `admin retention:issuer` (D365).
+    The identity's `user_emails` row **stays**: it is per identity across scopes, D269 sets no expiry for it (it is the
+    record of an email user's `sub` should `K_sub` ever be lost), and an erasure request removes it (D361).
+- Why: the safest reading of "an app deletion must also cover them": every per-app row goes with the app, as the
+  ledger's do; per-identity and per-scope rows go only when nothing still uses them.
+- To confirm: whether an identity's `user_emails` row with no app left should also expire (APP 11 argues for it; D269's
+  `K_sub` reason against). Not built: it would change D269.
+- Rejected: purging a scope's directory as soon as one of its apps is deleted (the other apps' users would vanish from
+  the staff and partner views); keeping the directory of a dead scope for good.
+
+### D364. The audit purges keep what drift detection and the gate still read
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/api/src/changes/retention.ts`
+  `purgeAudit` (with `changes/drift.ts` `DRIFT_LEDGER_KINDS`), `apps/console/src/retention.ts`;
+  `apps/api/test/rpc-retention.test.ts`, `apps/console/test/retention.test.ts` · Source: spec "Retention" (`audit_log`,
+  `app_changes`, `guarded_changes`, `owner_grants`: 5 years, the triggers' constant), "Drift detection"
+- Decision:
+  - **`app_changes`** rows older than 60 months go, in batches, **except** for a live app that has a 0006
+    `migration.baseline`: its baseline and every row that ends a baseline value (`origin.removed`, `origin.proposed`,
+    `policy.removed`, `policy.activated`, `policy.pending_dropped`, `raw_sign.off`, or a CLI write whose `parts` name
+    one). Drift detection reads exactly those (D228's rule); deleting the baseline of an origin still in force would
+    raise a false `drift` event, and deleting a row that ended a value would let the baseline explain it again. Rows of
+    a deleted app all go (drift skips deleted apps).
+  - **`guarded_changes`**: only closed ones (`cancelled`, `ended`) closed more than 60 months ago that no origin row
+    names, and every change of an app deleted more than 60 months ago. Open changes of a live app stay (the gate and
+    drift explain what is in force with them).
+  - **`audit_log`**: rows older than 60 months. **`owner_grants`**: grants applied or cancelled more than 60 months ago;
+    an open grant stays.
+  - The cutoff is `min(before, unixepoch('now', '-60 months') * 1000)`, the triggers' own clock, so a purge never trips
+    `app_changes_no_early_delete` / `audit_log_no_early_delete`.
+- Why: retention must not turn into a false security alert or weaken the drift check.
+- Accepted: a legacy app's baseline-related rows (which may carry a partner member's `actor_sub`) outlive 5 years while
+  the app lives.
+
+### D365. The issuer's part of the job is an operator command, `admin <env> retention:issuer`
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `scripts/lib/admin-retention.ts`, `scripts/admin.ts`;
+  `scripts/test/uid-erase.test.ts` · Source: spec "Retention" (issuer `email_admin_audit`: "an issuer purge to add with
+  C13"), D269, D275, D276 ("`DirectoryRpc` stays read-only")
+- Decision: the admin Worker has **no binding to the issuer** (C8b isn't built, and D276 keeps `DirectoryRpc` read
+  only), and the issuer can't get a cron (a sixth trigger). So the issuer's monthly part is the CLI, as the task's
+  `scripts/lib/admin-users.ts` / `d1.ts` pattern: the apps deleted 30 days ago or more from the API's D1 (ids only),
+  their `user_email_apps` rows deleted in the issuer's D1, and the issuer's **`email_admin_audit` rows older than 60
+  months** (5 years, as the other audit logs: the spec's open point). Dry run by default; `--yes` deletes. The admin
+  console's Retention screen names the command, and `docs/operations.md` "Retention" says to run it after each month's
+  job.
+- Why: no new key-holding-Worker code or binding in C13; the CLI path is already reviewed for the issuer's D1.
+- To confirm / revisit with C8b: a narrow issuer entrypoint the admin job could call (`RetentionRpc.purge()`, computing
+  its own cutoffs and reading the deleted apps from its `APP_DB` itself), so this step is automatic and shows on the
+  screen.
+- Rejected: an issuer D1 binding in the admin Worker (D275 (a): read-write on the whole database).
+
+### D366. Nothing erasure or retention does touches what derivation depends on
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `scripts/lib/uid-erase.ts`,
+  `0007_retention.sql`, `apps/api/src/changes/retention.ts` · Source: task brief; `docs/architecture.md` "Key
+  derivation"
+- Decision: the chain stays the source of truth for identities, accounts and paths, and nothing here writes to it; the
+  directories and the ledger are indexes and history. `K_sub`, `USER_ID_KEY`, the CKD inputs and the vault's shares are
+  untouched (an erasure doesn't revoke live sessions: the user can do that, and a share is keyed by `sha256(path)`, not
+  by the uid). An erased user who logs in again through Hana gets the same wallets, and new rows are written; a new
+  request covers those. Not an address-derivation change, so no address-freeze call-out applies.
+- Why: an erasure of Hana's records must never cost a user their funds.
+
+### D367. `retention_failed`: one digest a day for failures, once a month overdue, the due tick for a skipped run
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/retention.ts`
+  `runRetentionAlerts`, `sendRetentionSkipped`, `email/ledger-messages.ts` `retentionFailed` · Source: spec "Email"
+  (direct `retention_failed`), "Retention" ("a failed or skipped run emails `retention_failed` to the security alias and
+  shows as a warning until a run succeeds")
+- Decision:
+  - **Failed**: the failed runs not yet emailed, as one digest to the alias, **at most one a day** (a failing step
+    retried hourly would otherwise send 24); a failure whose month has since completed is marked without an email. Each
+    run's `alerted_at` is set once the provider accepted the send (retried every 15 minutes otherwise).
+  - **Overdue** (a skipped month): no `ok` run a day after the 1st 01:00 UTC, once a month (`ops.state`
+    `retention.overdue_alerted`): runs that keep ending `partial`, or none at all.
+  - **Skipped** (no ledger at the due tick): nothing can be recorded, so the email goes from the due tick only (the 1st,
+    [01:00, 01:15) UTC), with the provider's idempotency key per month.
+  - The screen warns while the last run failed or the month has no complete run an hour after it was due.
+- Why: the spec's "failed or skipped" without an hourly email storm.
+
+### D368. The periods the spec left open
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `0007_retention.sql` (`ops.purge_expired`,
+  `drop_expired_partitions`, `retention_due`, `ops.erasures`) · Source: spec "Retention" (`ops.*`: "current;
+  nonce_checks 400 days")
+- Decision: `ops.rejection_alerts` 400 days (as `nonce_checks`); `ops.scope_watch` rows notified 400 days ago (a
+  pending one never); `ops.retention_runs` and `ops.erasures` 60 months (audit), `ops.erasures` append-only by a trigger
+  that holds for the owner too; `usage.identity_tokens`, `usage.email_counts`, `ops.settlement_alerts` and
+  `ops.settlement_tries` with the 7-year months (usage records of the settled months); `ops.statement_notices` stay
+  with the statements. Statements, rates and rate overrides past 7 years are **counted** (`usage.retention_due`, the
+  screen's "Waiting for a person") and deleted by hand after review (`docs/operations.md` "Retention").
+  `drop_expired_partitions` runs with `lock_timeout = 5s`: a detach waiting behind a long report fails and is retried
+  rather than queue the writer's inserts behind it.
+- Why: every table gets a period; none longer than its purpose.
+
+### D369. The shapes the spec didn't fix: `deletedApps` pages, `strip_uids` batches, a read-only screen
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: console-core `retention.ts`,
+  `apps/admin/src/retention-routes.ts`, `public/app.js` · Source: spec "RPC interfaces" (`deletedApps(c: Ctx & {before})
+  : {appIds}`), "Usage ledger" (`strip_uids()`, "batches of 10 000"), "Admin BFF routes" (`GET /api/retention`)
+- Decision:
+  - `deletedApps({before, after?, limit?})` → `{appIds, next?, more}`: oldest deletion first, a `<deleted_at>:<app id>`
+    cursor, ≤ 1000 a page (additive to the spec's `{appIds}`); the job keeps the cursor in `ops.state`. Each RPC's
+    `limit` is 1–1000 (the job uses 500).
+  - `usage.strip_uids(max_rows)` → `(events, app_users, more)`: the job calls it until `more` is false (≤ 20 calls a
+    run of 10 000).
+  - `GET /api/retention` is read only: the month's state and next run, the warning, the last 24 runs with rows per
+    table and errors, what waits for a person, and the last 20 erasures. No "run now" button: the job is due by state,
+    and a person who needs it sooner fixes the cause of a failure.
+- Why: unbounded lists and single statements over a month of uids don't fit a Worker's limits.
+
 ## The partner console's report, statement and pending-upgrades screens (branch `feat/console-reports-upgrades`), 2026-11-04
 
 The SPA screens over C12's report backend and C14's pending-upgrades route, both routed by C10 (D358) and left for a
@@ -5885,6 +6086,8 @@ follow-up there.
 
 | Was | Now | Source |
 |---|---|---|
+| `usage.erase_uid(app_ids text[], uid bytea)` (spec "Usage ledger" functions) | `usage.erase_uid(uid bytea)`: by uid alone, in any app (D362); the uid indexes C15 planned are in 0007 | `apps/api/migrations-usage/0007_retention.sql` |
+| `uid:erase` (ledger only) and the proposed `user:erase` (issuer only), separately (spec "CLI", D276) | One script, `uid-erase`, per scope across the ledger, the wallet directory and the issuer directory (D361) | `scripts/lib/uid-erase.ts` |
 | The client-proof helper loads Google Identity Services; the console warns the proof carries the staffer's email and name (spec "On-chain owner actions" step 3) | Google's implicit flow with `scope=openid`; a proof with an email or a name is refused, and the warning names the account id that stays public (D350, D351) | `apps/console/src/scopes.ts`, `auth-token.ts` |
 | The claim allow-list is the ten names of the 2026-10-28 spike (D271) | The same plus `at_hash` (D342) | `packages/core/src/id-token.ts`, `apps/api/src/claims.ts`, `apps/console/src/auth-token.ts` |
 | The wallet directory's user id shown to partners is `hu_…` (the ledger's uid) and the Support ID its first 8 characters (D312, D276) | The User ID is the identity token's `sub` (`u1_…`); the Support ID is Crockford base32 of its first 5 bytes; `hu_…` is the internal id, staff only (D346) | `packages/console-core/src/users.ts`; `apps/api/src/directory/` |

@@ -1,6 +1,8 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
-Last verified against code: 2026-11-04 (branch `feat/console-reports-upgrades`: the partner SPA's usage, statement and pending-upgrades screens over the report and pending-upgrades routes; a statement's `issuedBy` answered as `hana`; D370–D374); 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342; `freezeOrg` pauses pending invites and owner grants, D343; the console's fresh sign-in and write routes, D350–D358); 2026-11-04 (branch `feat/user-id-identity-sub`: `POST /v1/wallets/record`'s `sessionSignature` and key checks (Routing, its section), `ConsoleRpc` / `AdminRpc` user reads with the User ID `u1_…`, the Support ID from it and the staff-only internal id, `end_users.token_sub` in "D1 schema", `directory_unavailable`'s codes; D346, D311/D313 amended); 2026-11-04 (branch `feat/batch-c-12`: `ConsoleRpc.usage` / `statements` / `ledger`,
+Last verified against code: 2026-11-04 (branch `feat/batch-c-13`: "Usage ledger retention functions" (0007),
+`AdminRpc.purgeAudit` / `deletedApps` / `purgeDirectory`, `StaffRpc.purgeAudit`, the admin Worker's `GET /api/retention`
+and the monthly retention job in its 15-minute cron with `retention_failed`; D360–D369); 2026-11-04 (branch `feat/console-reports-upgrades`: the partner SPA's usage, statement and pending-upgrades screens over the report and pending-upgrades routes; a statement's `issuedBy` answered as `hana`; D370–D374); 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342; `freezeOrg` pauses pending invites and owner grants, D343; the console's fresh sign-in and write routes, D350–D358); 2026-11-04 (branch `feat/user-id-identity-sub`: `POST /v1/wallets/record`'s `sessionSignature` and key checks (Routing, its section), `ConsoleRpc` / `AdminRpc` user reads with the User ID `u1_…`, the Support ID from it and the staff-only internal id, `end_users.token_sub` in "D1 schema", `directory_unavailable`'s codes; D346, D311/D313 amended); 2026-11-04 (branch `feat/batch-c-12`: `ConsoleRpc.usage` / `statements` / `ledger`,
 `StaffRpc.recordStaffAction`, the console's report backend (not routed until C10), the admin Worker's report,
 statement, rate and export routes, its 15-minute cron with the daily ledger work at 00:30 UTC, its
 `STATEMENTS`/`EXPORTS`/`RELAYER_ACCOUNT` bindings, and the "Usage ledger functions" section; D320–D329); 2026-11-04 (branch `feat/batch-c-14`: `AdminRpc.governance`, `AdminRpc.pendingUpgrades`
@@ -994,6 +996,27 @@ index on relayed events' `near_tx`, `usage.rate_overrides` (append-only), `ops.s
 `ops.settlement_tries` and `ops.statement_notices`, and takes the admin role's direct `UPDATE` on `near_usd_rates`
 away (a fetched rate is an `INSERT … ON CONFLICT DO NOTHING`; a replacement goes through `override_rate`).
 
+### Usage ledger retention functions (`migrations-usage/0007_retention.sql`, batch C13)
+
+D90's periods (D360–D369), as the owner's `SECURITY DEFINER` functions, `EXECUTE` granted to `usage_admin` only (the
+admin Worker's monthly job; `scripts/uid-erase.ts` for `erase_uid`). The admin role still can't update an event,
+delete an `app_users` row, a settlement or a partition itself.
+
+| Function | What |
+|---|---|
+| `usage.strip_uids(max_rows = 10000)` → `(events, app_users, more)` | NULLs `uid` on events of every UTC month that ended more than 24 months ago (`at < usage.uid_cutoff()`, the start of the month 24 months before the current one) and deletes `app_users` rows last seen more than 24 months ago, at most `max_rows` of each (1–100 000); `more`: call again |
+| `usage.drop_expired_partitions()` → `(partitions, settlements, identity_tokens, email_counts, settlement_alerts, settlement_tries)` | Detaches and drops each `usage.events_YYYY_MM` whose month ended at or before `usage.records_cutoff()` (the month start 7 years back), then deletes `gas_settlements`, `identity_tokens`, `email_counts`, `ops.settlement_alerts` and `ops.settlement_tries` rows before it; `lock_timeout` 5 s (a detach fails rather than queue the writer). Never a statement, a rate or an override |
+| `usage.purge_app_users(app)` → count | An app's `app_users` rows (the job passes apps deleted 30 days ago, `AdminRpc.deletedApps`) |
+| `usage.erase_uid(uid bytea)` → `(app_users, events)` | An erasure: the uid's `app_users` rows deleted and the uid NULLed on every event carrying it, in any app (a uid names one identity of one scope, D362); a uid that isn't 16 bytes is `22023` |
+| `usage.retention_due()` → `(statements, rates, rate_overrides, oldest_statement)` | What is past 7 years and waits for a person (statements, rates and their files are deleted by hand after review) |
+| `ops.purge_expired()` → `(nonce_checks, rejection_alerts, scope_watch, retention_runs, erasures)` | `ops.nonce_checks` and `ops.rejection_alerts` after 400 days, notified `ops.scope_watch` rows after 400 days, finished runs and erasure records after 60 months |
+
+0007 also gives `ops.retention_runs` its `month`, `status` (`running`, `ok`, `partial`, `failed`; one `running` row at
+most, a unique partial index) and `alerted_at`, adds `ops.erasures` (`at`, `ticket`, `operator`, `scope_id`, `rows`:
+counts only; `usage_admin` may insert and read; a trigger refuses any change and any delete before 60 months, for the
+owner too) and the indexes `events (uid, at) WHERE uid IS NOT NULL`, `app_users (uid)` and `app_users (last_seen)`.
+Tests: `apps/api/test-usage/retention.test.ts`.
+
 ## RPC entrypoints (`src/rpc/`, `src/changes/`, batches C5 and C6) · C
 
 `ConsoleRpc` and `AdminRpc` are `WorkerEntrypoint` classes exported by the API Worker (`docs/batch-c-spec.md` "RPC
@@ -1007,7 +1030,8 @@ method: an unexpected error is logged (`event: "rpc"`, method, request id, `code
 **Actors.** `ConsoleRpc` takes `member` actors only (`cancelChangeByLink`: `link` only) and never `org_legacy`
 (`forbidden`). `AdminRpc` takes `hana`; the methods its crons call also take `system` (`listApps` and `getApp`, the watcher's reads, C8; `pendingNotices`,
 `getSecurityContacts`, `listScopes`, `changesSince`, `securityEvents`, `markSecurityEventNotified`, `relayerKeys`), and
-`ackNotice` takes `system` only (the notice cron). Any other actor is `forbidden`. The console's member is trusted
+`ackNotice` and the retention methods (`purgeAudit`, `deletedApps`, `purgeDirectory`, C13) take `system` only (the
+crons). Any other actor is `forbidden`. The console's member is trusted
 (spec "Trust in the actor"); every org method still filters `WHERE org_id = ?`, so another org's app or change is
 `not_found`, the same as one that doesn't exist.
 
@@ -1066,7 +1090,9 @@ no budget, plus:
 | `pendingUpgrades` (C14) | `{}` → `{pendingUpgrades}`: the same view as `ConsoleRpc.pendingUpgrades`, for the admin's page. `hana` only |
 | `listUsers`, `getUser`, `findUsers` (W) | The wallet directory for staff (D315): `listUsers({orgId?, scopeId?, cursor?, limit ≤ 200})`, `getUser({userId})` or `getUser({internalId})`, exactly one (`not_found`), `findUsers({query, provider?})` (a Stellar or EVM address: every user listing it; a User ID `u1_…`; an internal id `hu_…`, any case; a Support ID, any case, with or without `HANA-` and dashes: every user it is the short form of; else a sub, which `provider` narrows and forces), at most 50. A `StaffUser` is `{userId, supportId, internalId, scopeId, orgId, createdAt, lastSeenAt, identities: [{provider, sub, identityKey, role, status, effectiveAt, firstSeenAt, observedAt, directoryKey}], wallets: [{chain, address, keyIndex, firstSeenAt, lastUsedAt, sharedWith}]}`. `status` is read at answer time (a pending member past `effectiveAt` is `active`). The email isn't here: `directoryKey` `{provider, sub}` is the key for D275's `DirectoryRpc` (C8b) |
 
-Not built yet: `purgeAudit`, `deletedApps` (C13).
+| `purgeAudit({before, limit ≤ 1000})` (C13) | `system` only. Deletes up to `limit` `app_changes` rows and up to `limit` `guarded_changes` rows older than `min(before, 60 months ago)` (SQLite's `unixepoch('now', '-60 months')`, the trigger's clock) → `{appChanges, guardedChanges}`. Kept whatever their age (D364): a live app's `migration.baseline` and the rows that end its values (`DRIFT_LEDGER_KINDS`, or a `parts` entry of one), while the app has a baseline, so drift detection never reports a value the baseline explains; open (`pending`, `active`) guarded changes of a live app, and closed ones an origin row still names. Every change of an app deleted 60 months ago goes |
+| `deletedApps({before, after?, limit ≤ 1000})` (C13) | `system` only. Apps with `deleted_at ≤ min(before, now − 30 days)`, oldest deletion first, after the cursor `<deleted_at>:<app id>` → `{appIds, next?, more}` (`next`: the cursor after the page's last app; `more`: another page exists). For the ledger's `usage.purge_app_users` |
+| `purgeDirectory({before, limit ≤ 1000})` (C13) | `system` only. The wallet directory (0011) of each scope with at least one app deleted at or before `min(before, now − 30 days)` and no app live or deleted since (D363): up to `limit` users with their wallets and identities, in one batch → `{scopes, users, wallets, identities}`. A scope with no app row at all is never purged |
 
 **Waivers at `ackNotice`.** `loopback`: a member's loopback origin (or `http://localhost:*`) on a test scope in a dev
 env on a non-production network. `no_session`: a candidate is a member proposal with an API-verified step-up
@@ -1619,7 +1645,9 @@ Inputs are console-core's strict zod schemas (`packages/console-core/src/staff.t
 
 | `recordStaffAction({orgId?, action, target?, details})` (C12, D327) | Hana only: the `audit_log` row of an admin act with no RPC write of its own: `statement.issued` (`month`, `csvSha256`, `pdfSha256`, `asOf`, `lines`), `ledger.exported` (`month`, `asOf`, `rows`, `sha256`), `rate.overridden` (`day`, `usdMicros`, `overrideId`); another detail key is `bad_request`; a repeat of (request id, action) is `already_applied` and writes nothing |
 
-`purgeAudit` (the monthly retention job) comes with C13. A replayed request id is `already_applied` (same actor and
+| `purgeAudit({before, limit ≤ 1000})` (C13, D364) | `system` only (the admin Worker's monthly job). Deletes up to `limit` `audit_log` rows older than `min(before, 60 months ago)` (the table's trigger refuses a younger one anyway) and up to `limit` owner grants applied or cancelled that long ago (an open grant stays) → `{auditLog, ownerGrants}` |
+
+A replayed request id is `already_applied` (same actor and
 target) or `conflict`; a write whose state moved meanwhile is `conflict`.
 
 **Report backend** (`src/reports.ts`, batch C12; routed by C10's session routes, `writes.ts`, for a
@@ -1674,7 +1702,8 @@ The Hana staff console's Worker (`hana-id-admin-<env>`) on `admin.origin`, behin
 API's `AdminRpc` (`API`) and the console's `StaffRpc` (`CONSOLE`) and is the only caller of both; nothing binds it.
 Built in C8 (merged, not deployed; milestone M4, `docs/operations.md` "Admin Worker"; D278–D285); the reports,
 statements, rates, exports, settlement and the daily ledger checks in C12 (`feat/batch-c-12`, D320–D329; milestone M6,
-`docs/operations.md` "Reports and statements").
+`docs/operations.md` "Reports and statements"); the monthly retention job and its screen in C13 (`feat/batch-c-13`,
+D360–D369; milestone M6, `docs/operations.md` "Retention").
 
 **Every request.** The Worker runs first (assets with `run_worker_first`). A host other than `ADMIN_ORIGIN`: `404 Not
 found`. **`/api/*`**: first the Access check, then (non-GET) the CSRF checks, then the route:
@@ -1735,10 +1764,12 @@ binding throws; `405` with `allow`; `413` over 64 KiB (16 KiB without a `Content
 | `GET /api/rates?month` (C12) | → `{month, rates, overrides, missing}` | `near_usd_rates`, `rate_overrides` |
 | `PUT /api/rates/:day` (C12) | `{usd: '2.345678', reason}` (≤ 6 decimals as a string; reason 10–500 characters) → `{day, usdMicros, source: 'manual', overrideId}`; a month with a statement is `409`, a future day `400` | `usage.override_rate`, `recordStaffAction` |
 
-The C12 routes open one ledger connection per request (`USAGE_DB`, `usage_admin`); without it they answer `503
+| `GET /api/retention` (C13) | → `{month, dueAt, done, state, nextRunAt, maxCallsPerRun, warning, runs, due, erasures}`: the month's state (`due`, `continuing`, `done`, `not_yet`, `running`, `retry_later`), a `warning` while the last run failed or the month has no complete run an hour after its due time, the last 24 runs (`id`, `month`, `startedAt`, `finishedAt`, `status`, `rows` per table, `error`), the latest `retention_due` counts and the last 20 erasures (ticket, operator, scope, counts) | `ops.retention_runs`, `ops.erasures`, the job's `dueState` |
+
+The C12 and C13 routes open one ledger connection per request (`USAGE_DB`, `usage_admin`); without it they answer `503
 ledger_unavailable`.
 
-Not yet: retention (C13), the Users screen (`/api/users/search`, `/get`: proposed D275, C8b) and the Support ID
+Not yet: the Users screen (`/api/users/search`, `/get`: proposed D275, C8b) and the Support ID
 lookup (C15).
 
 **Security & monitoring (C14; D83, D126, D330–D338).** The watchdog is called **server-side only**
@@ -1810,6 +1841,19 @@ rejected → one `ops.rejection_alerts` row per org and day), `usage.ensure_part
 the API's hourly one), the alerts (as above), then the **NEAR/USD rate** (`src/rates.ts`; D325: CoinGecko's daily
 history for each day of the last 10 without a rate, never replacing one; `COINGECKO_API_KEY` optional).
 
+**Monthly, in the `*/15` cron from the 1st 01:00 UTC** (C13, `src/retention.ts`; D360; after the daily work and
+before the alerts, at most 12 of the run's 40 calls): the **retention job** while the month has no `ok` run. One
+`ops.retention_runs` row per run (a second can't start while one runs; one `running` for more than 30 min is closed as
+`failed`, `abandoned`); each step on its own, its error recorded as the step and a code: `strip_uids` (≤ 20 calls of
+10 000), `drop_expired_partitions`, `ops.purge_expired`, `retention_due` (Neon, no outbound call), then
+`AdminRpc.deletedApps` → `usage.purge_app_users` per app (the cursor in `ops.state` `retention.deleted_apps_after`,
+moved after each page), `AdminRpc.purgeDirectory`, `AdminRpc.purgeAudit` and `StaffRpc.purgeAudit` in batches of 500
+(each call one of the budget). A run out of calls ends `partial` and the next 15-minute run continues; a `failed` one
+is retried an hour after. **`retention_failed`** to the alias: the failed runs not yet emailed, at most one digest a day
+(a failure whose month has since completed is marked without an email); once a month, a month with no complete run a
+day after its due time (overdue); and from the due tick only, a run that couldn't start for want of the ledger
+(skipped). The issuer's directory isn't reached from here: `admin <env> retention:issuer` (D365).
+
 **Email** (`src/email/`): `EmailSender` (one message in, accepted with the provider's id or an error), the Resend
 adapter (`POST https://api.resend.com/emails`, `Idempotency-Key` = sha256(purpose ‖ recipient), 10 s timeout; errors
 name the HTTP status only), one message per recipient, plain text plus simple HTML, no remote image, links only to
@@ -1825,7 +1869,7 @@ name the HTTP status only), one message per recipient, plain text plus simple HT
 route. No D1. From C12 the R2 buckets `STATEMENTS` (`put` of new keys and `get` only: a source check) and
 `EXPORTS`, the var `RELAYER_ACCOUNT`, the optional secret `COINGECKO_API_KEY` and the `*/15 * * * *` cron; a
 statement's network is `NEAR_NETWORK`. **Logs**: `access_refused`, `csrf_refused`, `bff`, `notice`, `feed`, `watcher`, `cron`,
-`admin_error`, from C12 `ledger_cron`, `statement`, `export`, and from C14 `watchdog_call` (route, outcome, status, code) and `watchdog_ack` (`target: alert:<id>`),
+`admin_error`, from C12 `ledger_cron` (C13 adds its steps `retention`, `retention_alerts`), `statement`, `export`, and from C14 `watchdog_call` (route, outcome, status, code) and `watchdog_ack` (`target: alert:<id>`),
 with route patterns, request ids, org, scope and target ids, outcomes, codes and counts only: never an email, a `sub`,
 a JWT, a link token or its hash, nor the watchdog's token.
 

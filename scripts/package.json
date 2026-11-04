@@ -19,7 +19,8 @@
     "usage-migrate": "tsx usage-migrate.ts",
     "identity-probe": "tsx identity-probe.ts",
     "console-code-flow-spike": "tsx console-code-flow-spike.ts",
-    "usage-setup": "tsx usage-setup.ts"
+    "usage-setup": "tsx usage-setup.ts",
+    "uid-erase": "tsx uid-erase.ts"
   },
   "dependencies": {
     "@hana-id/console-core": "workspace:*",

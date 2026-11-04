@@ -1,6 +1,6 @@
 # Batch C build plan
 
-Status (2026-11-04, branches `feat/batch-c-9` and `feat/batch-c-14`, on `develop`; `feat/batch-c-12`): C1–C5 merged into `develop` and running in the
+Status (2026-11-04, branches `feat/batch-c-9`, `feat/batch-c-14` and `feat/batch-c-12`, on `develop`; `feat/batch-c-13`): C1–C5 merged into `develop` and running in the
 sandbox-dev API as far as `develop` includes them (migrations 0006, 0009 and 0010 applied, usage capture off;
 `docs/operations.md`); C6 (the claim allow-list on its tokens, D277), C7 (the console Worker backend; D240–D244), C8
 (the admin Worker; D278–D285) and C11 (the files Worker and logos; D300–D308) merged into `develop`, not deployed (M3
@@ -8,7 +8,8 @@ not run; their setup is steps 4, 5 and 7–10 below, at M4 and M5); C9 (partner 
 `develop`, not deployed (its setup is steps 11 and 12, at M4); C14 (Security & monitoring and the pending-upgrades
 page; D330–D338, D344) and C12 (reports and statements; D320–D329) merged, not deployed; C10 (partner management, D342,
 D343, D350–D358) merged into `develop`, not deployed; the partner screens over C12's and C14's routes (usage,
-statements, pending upgrades; D370–D374) built on `feat/console-reports-upgrades`, not merged; C13 and C15–C17 not built. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
+statements, pending upgrades; D370–D374) built on `feat/console-reports-upgrades`, not merged; C13 (retention; D360–D369) built on `feat/batch-c-13`, tests green, not merged, not deployed (its setup is
+`docs/operations.md` "Retention", at M6); C15–C17 not built. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
 batches that each merge into `develop` on their own: tests green, the docs they change updated, and nothing a partner,
 a user or staff can reach that is half-wired. Ordered by dependency; the spec's "Build order" steps are noted per
 batch. This is a plan, not a spec: where it and the spec disagree, the spec wins or gets amended first.
@@ -368,6 +369,19 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
   `AdminRpc.purgeAudit`/`deletedApps`, `StaffRpc.purgeAudit`, the monthly job with `ops.retention_runs`, its screen
   and the `retention_failed` email, `scripts/uid-erase.ts`.
 - **Tests**: spec "Usage ledger" retention rows (D90).
+- **Status** (2026-11-04): built on `feat/batch-c-13`, tests green, not merged, not deployed (D360–D369). Built: Neon
+  `0007_retention.sql` (the four functions, `usage.erase_uid` by uid alone (D362), `usage.retention_due`,
+  `ops.purge_expired`, the runs' status and one-running index, `ops.erasures`, the uid indexes C15 planned); the monthly
+  job in the 15-minute trigger from the 1st 01:00 UTC until a run of the month completes, at most 12 of the run's 40
+  calls (D360), with `retention_failed` (failed, overdue, skipped; D367) and the read-only Retention screen
+  (`GET /api/retention`); `AdminRpc.purgeAudit` / `deletedApps` and, for the wallet directory of scopes left without
+  apps, `AdminRpc.purgeDirectory` (D363); `StaffRpc.purgeAudit`; the drift check's rows kept (D364). **The new stores**
+  (D269, D310): the erasure is one script, `uid-erase`, per scope across the ledger, the wallet directory and the
+  issuer directory, the account read from the chain (D361; it answers D276's open point: `user:erase` lands here); the
+  issuer's monthly part is `admin <env> retention:issuer` (its app rows of deleted apps, `email_admin_audit` past 60
+  months; D365), since the admin Worker has no issuer binding. The setup is `docs/operations.md` "Retention" (Neon 0007,
+  deploy API and console before the admin Worker), at M6. Not in C13: the console housekeeping purges were C7's (they
+  stay hourly); a narrow issuer entrypoint for the job (revisit with C8b, D365).
 
 ## C14. Security & monitoring and pending upgrades
 
@@ -415,7 +429,8 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
   `app_users (uid)` and `events (uid, at) WHERE uid IS NOT NULL`; the lookup screen (code or address, logins and
   sessions by uid, errors by request ID, the app's changes); `user:erase` in the CLI.
 - **Tests**: the spec's Support ID, lookup, issuer uid write and migration rows.
-- **Open (D276)**: whether `user:erase` lands here or with C13.
+- **Open (D276)**: whether `user:erase` lands here or with C13. **Answered by C13 (D361)**: it is part of
+  `uid-erase`. Since D362, Neon 0007 already has `events (uid, at) WHERE uid IS NOT NULL` and `app_users (uid)`.
 - **Since D312**: the Support code is `end_users.support_code` in the hot DB (indexed); `AdminRpc.findUsers` already
   resolves a code to its users, so `IssuerRpc.uid` and `user_email_apps.uid` may not be needed (revisit D276 here).
 - **Since D346**: the code is the short form of the identity token's `sub` (`console-core` `supportIdOf`, built, with
@@ -441,7 +456,7 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
 | M3 | C6 | RPC entrypoints (unbound), owner-action precheck and caps, the console sink scope |
 | M4 | C7–C9 | Console (sign-in, read-only), admin console, notices by email |
 | M5 | C10–C11 | Console write paths, logos |
-| M6 | C12–C13 | Reports, statements, retention (C12's setup: `docs/operations.md` "Reports and statements": Neon 0006, the admin's buckets and vars, the optional CoinGecko key) |
+| M6 | C12–C13 | Reports, statements, retention (C12's setup: `docs/operations.md` "Reports and statements": Neon 0006, the admin's buckets and vars, the optional CoinGecko key; C13's: "Retention": Neon 0007, the API and console before the admin Worker) |
 
 ## Setup steps (for the user, when each milestone deploys)
 

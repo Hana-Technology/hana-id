@@ -23,6 +23,14 @@ export const DRIFT_BATCH = 100;
 /** Ledger kinds that end what the baseline held (a CLI settings write lists several under `parts`). */
 const POLICY_ENDS = ['policy.removed', 'policy.activated', 'policy.pending_dropped'];
 const RAW_ENDS = ['raw_sign.off'];
+/** Ledger kinds that end a baseline origin (the removes of `origin.proposed` are in its detail's `removed`). */
+const ORIGIN_ENDS = ['origin.removed', 'origin.proposed'];
+/**
+ * Every `app_changes` kind this check reads: the 0006 baseline and what ends its values. The retention purge
+ * (changes/retention.ts) keeps these rows, and any row whose `parts` name one, for a live app that has a baseline, so a
+ * value the baseline explains never turns into a false drift finding when its row turns 60 months old (D364).
+ */
+export const DRIFT_LEDGER_KINDS: readonly string[] = ['migration.baseline', ...ORIGIN_ENDS, ...POLICY_ENDS, ...RAW_ENDS];
 const kindIn = (kinds: readonly string[]) => kinds.map((k) => `'${k}'`).join(', ');
 /** No row after the baseline `b` of app `a` ended it. */
 const NOT_ENDED = (kinds: readonly string[]) =>
@@ -72,7 +80,7 @@ export async function detectDrift(env: Pick<Env, 'DB'>, now = Date.now()): Promi
           AND NOT (o.active_from = 0 AND EXISTS (SELECT 1 FROM app_changes b, json_each(b.detail_json, '$.origins') j
                                                  WHERE b.kind = 'migration.baseline' AND b.app_id = o.app_id AND j.value = o.origin
                                                    AND NOT EXISTS (SELECT 1 FROM app_changes e, json_each(e.detail_json, CASE WHEN e.kind = 'origin.removed' THEN '$.origins' ELSE '$.removed' END) r
-                                                                    WHERE e.app_id = o.app_id AND e.seq > b.seq AND e.kind IN ('origin.removed', 'origin.proposed')
+                                                                    WHERE e.app_id = o.app_id AND e.seq > b.seq AND e.kind IN (${kindIn(ORIGIN_ENDS)})
                                                                       AND json_extract(r.value, '$.origin') = o.origin)))
         ORDER BY o.app_id, o.origin LIMIT ?2`,
     )

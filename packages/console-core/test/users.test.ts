@@ -18,6 +18,7 @@ import {
   supportCodeOf,
   supportIdOf,
   uid,
+  uidOfInternalId,
   userIdBytes,
 } from '../src/index.ts';
 
@@ -82,6 +83,19 @@ describe('User ID and Support ID (D346)', () => {
     expect(internalIdOf(u)).toBe(`hu_${crockford32(u).toLowerCase()}`);
     expect(internalIdOf(u)).toMatch(/^hu_[0-9a-hjkmnp-tv-z]{26}$/u);
     expect(() => internalIdOf(u.subarray(1))).toThrow();
+  });
+
+  it('an internal id decodes back to its uid (the erasure script, D361); anything else is null', async () => {
+    for (let k = 0; k < 20; k++) {
+      const u = await uid(new Uint8Array(32).fill(k), { scopeId: `s${k}`, provider: 'email', sub: `e1.${k}` });
+      expect(uidOfInternalId(internalIdOf(u))).toEqual(u);
+    }
+    expect(uidOfInternalId(internalIdOf(new Uint8Array(16)))).toEqual(new Uint8Array(16));
+    expect(uidOfInternalId(internalIdOf(new Uint8Array(16).fill(0xff)))).toEqual(new Uint8Array(16).fill(0xff));
+    // The last character carries 3 data bits and 2 zero padding bits: a set padding bit is no internal id.
+    const id = internalIdOf(new Uint8Array(16));
+    expect(uidOfInternalId(`${id.slice(0, -1)}1`)).toBeNull();
+    for (const bad of ['', 'hu_', id.slice(0, -1), `${id}0`, id.replace('hu_', 'hx_'), id.toUpperCase(), `${id.slice(0, -1)}u`, `u1_${'A'.repeat(22)}`]) expect(uidOfInternalId(bad), bad).toBeNull();
   });
 
   it('reads a typed Support ID with or without HANA-, dashes, case and look-alikes', () => {

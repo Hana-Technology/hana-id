@@ -62,6 +62,28 @@ export function internalIdOf(uidBytes: Uint8Array): string {
   return INTERNAL_ID_PREFIX + crockford32(uidBytes).toLowerCase();
 }
 
+/**
+ * The 16-byte uid of an internal id (internalIdOf's inverse; the erasure script, D361), or null when it isn't one:
+ * wrong prefix, length or alphabet, or the last character's two padding bits set (no uid encodes to it).
+ */
+export function uidOfInternalId(internalId: string): Uint8Array | null {
+  if (typeof internalId !== 'string' || !INTERNAL_ID_RE.test(internalId)) return null;
+  const out = new Uint8Array(16);
+  let acc = 0;
+  let bits = 0;
+  let n = 0;
+  for (const ch of internalId.slice(INTERNAL_ID_PREFIX.length).toUpperCase()) {
+    acc = (acc << 5) | CROCKFORD.indexOf(ch);
+    bits += 5;
+    if (bits >= 8) {
+      out[n++] = (acc >>> (bits - 8)) & 0xff;
+      bits -= 8;
+    }
+    acc &= (1 << bits) - 1;
+  }
+  return n === 16 && acc === 0 ? out : null;
+}
+
 /** The 16 bytes a User ID encodes (its base64url decoded); a TypeError for anything that isn't a User ID. */
 export function userIdBytes(userId: string): Uint8Array {
   if (typeof userId !== 'string' || !USER_ID_RE.test(userId)) throw new TypeError('Not a user id');

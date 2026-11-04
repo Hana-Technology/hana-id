@@ -1,4 +1,4 @@
-// The Hana admin console SPA (batch C8; reports, statements and rates in C12): plain JavaScript, no build step and no dependency, under the admin CSP
+// The Hana admin console SPA (batch C8; reports, statements and rates in C12; retention in C13): plain JavaScript, no build step and no dependency, under the admin CSP
 // (script-src 'self', style-src 'self'). Every value from the API is put in the page as text (textContent), never as
 // HTML. Writes send the admin's CSRF headers; Cloudflare Access adds the staff identity at the edge.
 'use strict';
@@ -167,8 +167,8 @@ async function orgOptions() {
 // ---- navigation ----
 
 // The screens of the spec's admin layout. Reports, statements and rates are C12's; Security & monitoring, the
-// pending-upgrades page and the playbooks are C14's; the disabled one is retention (C13). The Users screen (proposed
-// D275, C8b) is not listed until it is confirmed and built.
+// pending-upgrades page and the playbooks are C14's; retention is C13's. The Users screen (proposed D275, C8b) is not
+// listed until it is confirmed and built.
 const NAV = [
   { path: '/orgs', label: 'Organisations' },
   { path: '/audit', label: 'Audit' },
@@ -179,7 +179,7 @@ const NAV = [
   { path: '/reports', label: 'Reports' },
   { path: '/statements', label: 'Statements' },
   { path: '/rates', label: 'Rates' },
-  { label: 'Retention (C13)' },
+  { path: '/retention', label: 'Retention' },
 ];
 
 function renderNav() {
@@ -978,6 +978,78 @@ async function ratesPage(main) {
 }
 
 
+// The monthly retention job (C13, D90): its runs with the rows per table, a warning until a run succeeds, the next
+// run, what waits for a person, the manual issuer step and the recent erasures.
+const RETENTION_LABELS = {
+  uidsStripped: 'uids removed (events past 24 months)',
+  appUsersExpired: 'app_users last seen 24 months ago',
+  partitionsDropped: 'monthly partitions dropped (past 7 years)',
+  settlementsDeleted: 'settlements (past 7 years)',
+  identityTokensDeleted: 'identity token days (past 7 years)',
+  emailCountsDeleted: 'email count days (past 7 years)',
+  settlementAlertsDeleted: 'settlement alerts (past 7 years)',
+  settlementTriesDeleted: 'settlement tries (past 7 years)',
+  nonceChecksDeleted: 'nonce checks (400 days)',
+  rejectionAlertsDeleted: 'rejection alerts (400 days)',
+  scopeWatchDeleted: 'watcher rows (400 days)',
+  retentionRunsDeleted: 'retention runs (60 months)',
+  erasuresDeleted: 'erasure records (60 months)',
+  deletedAppsPurged: 'deleted apps purged',
+  appUsersPurged: 'app_users of deleted apps',
+  directoryScopes: 'scopes left without apps',
+  directoryUsers: 'wallet directory users',
+  directoryWallets: 'wallet directory wallets',
+  directoryIdentities: 'wallet directory identities',
+  appChangesDeleted: 'app_changes (60 months)',
+  guardedChangesDeleted: 'guarded_changes (60 months)',
+  auditLogDeleted: 'console audit_log (60 months)',
+  ownerGrantsDeleted: 'owner grants (60 months)',
+};
+
+function retentionRows(rows) {
+  const items = Object.entries(rows || {})
+    .filter(([k, v]) => k !== 'due' && k !== 'calls' && typeof v === 'number' && v > 0)
+    .map(([k, v]) => h('li', {}, `${RETENTION_LABELS[k] || k}: ${v}`));
+  return items.length ? h('ul', {}, items) : h('span', { class: 'muted' }, 'nothing due');
+}
+
+const RETENTION_STATE = {
+  due: 'due now (the next 15-minute run starts it)',
+  continuing: 'continuing (the last run ran out of its calls)',
+  done: 'done for this month',
+  not_yet: 'not due yet',
+  running: 'a run is in progress',
+  retry_later: 'the last run failed; it is retried an hour after the failure',
+};
+
+async function retentionPage(main) {
+  const d = await api('GET', '/api/retention');
+  main.append(
+    h('h1', {}, 'Retention'),
+    h('p', { class: 'muted' }, 'D90: raw usage 24 months (then the uid is removed and the rows kept), settlement records 7 years (whole months), audit logs 5 years, the admin’s own state 400 days. The job runs on the 1st at 01:00 UTC until one run of the month completes.'),
+  );
+  if (d.warning) main.append(h('p', { class: 'warn' }, d.warning));
+  main.append(
+    table(['Month', 'State', 'Due at', 'Next run'], [tr(d.month, RETENTION_STATE[d.state] || d.state, time(d.dueAt), time(d.nextRunAt))]),
+    h('h2', {}, 'Waiting for a person'),
+    d.due && (d.due.statements || d.due.rates || d.due.rateOverrides)
+      ? h('p', { class: 'warn' }, `Past 7 years: ${d.due.statements} statement(s)${d.due.oldestStatement ? ` (oldest ${d.due.oldestStatement})` : ''}, ${d.due.rates} rate(s), ${d.due.rateOverrides} rate override(s). Statements, rates and their files are deleted by hand after review (docs/operations.md "Retention").`)
+      : h('p', {}, 'Nothing past 7 years waits for review.'),
+    h('p', { class: 'muted' }, 'Not done by this job: the email issuer’s user directory (rows of apps deleted 30 days ago) and its staff audit (60 months). This Worker has no binding to the issuer: run `admin <env> retention:issuer --remote` after each month’s run (docs/operations.md "Retention").'),
+    h('h2', {}, 'Runs'),
+    table(
+      ['Run', 'Month', 'Started', 'Finished', 'Status', 'Calls', 'Rows', 'Error'],
+      d.runs.map((r) => tr(String(r.id), r.month, time(r.startedAt), time(r.finishedAt), r.status, String((r.rows && r.rows.calls) || 0), retentionRows(r.rows), r.error || '')),
+    ),
+    h('h2', {}, 'Erasures'),
+    h('p', { class: 'muted' }, 'Each `uid-erase` run: who ran it, under which ticket, in which scope, and how many rows each store lost. Never whom.'),
+    table(
+      ['At', 'Ticket', 'Operator', 'Scope', 'Rows'],
+      d.erasures.map((e) => tr(time(e.at), e.ticket, e.operator, e.scopeId, h('code', {}, JSON.stringify(e.rows)))),
+    ),
+  );
+}
+
 // ---- router ----
 
 let me = null;
@@ -1005,6 +1077,7 @@ async function render() {
     else if (path === '/reports') await reportsPage(main);
     else if (path === '/statements') await statementsPage(main);
     else if (path === '/rates') await ratesPage(main);
+    else if (path === '/retention') await retentionPage(main);
     else main.append(h('h1', {}, 'Not found'), link('/orgs', 'Organisations'));
   } catch (err) {
     main.append(errorBox(err));

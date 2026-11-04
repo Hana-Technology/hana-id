@@ -201,14 +201,19 @@ describe('source checks', () => {
     }
   });
 
-  it('the only SQL it runs is in ops.ts (the ops schema) and ledger.ts (usage and ops; C12)', () => {
+  it('the only SQL it runs is in ops.ts (the ops schema), ledger.ts (usage and ops; C12) and retention-store.ts (C13)', () => {
     const ops = sources.find(({ f }) => f.endsWith('/ops.ts'))!.text;
     for (const m of ops.matchAll(/(?:FROM|INTO|UPDATE)\s+([a-z_.]+)/gu)) expect(m[1]!.startsWith('ops.'), m[0]).toBe(true);
     const ledger = sources.find(({ f }) => f.endsWith('/ledger.ts'))!.text;
     for (const m of ledger.matchAll(/(?:FROM|INTO|UPDATE|JOIN)\s+([a-z_.]+)/gu)) expect(/^(usage|ops|pg_catalog)\./u.test(m[1]!), m[0]).toBe(true);
     // The admin role never writes events, settlements' existing rows or statements' existing rows: no UPDATE or DELETE of them.
     expect(ledger).not.toMatch(/(UPDATE|DELETE FROM)\s+usage\./u);
-    for (const { f, text } of sources) if (!f.endsWith('/ops.ts') && !f.endsWith('/ledger.ts')) expect(text, f).not.toMatch(/\b(SELECT|INSERT INTO|UPDATE)\s+[a-z_]+\./u);
+    // Retention changes the ledger only through the owner's functions (0007): it reads and writes ops rows, and calls them.
+    const retention = sources.find(({ f }) => f.endsWith('/retention-store.ts'))!.text;
+    for (const m of retention.matchAll(/(?:FROM|INTO|UPDATE|JOIN)\s+([a-z_.]+)/gu)) expect(/^(usage\.(strip_uids|drop_expired_partitions|purge_app_users|retention_due)|ops\.)/u.test(m[1]!), m[0]).toBe(true);
+    expect(retention).not.toMatch(/(UPDATE|DELETE FROM|INSERT INTO)\s+usage\./u);
+    const sqlFiles = ['/ops.ts', '/ledger.ts', '/retention-store.ts'];
+    for (const { f, text } of sources) if (!sqlFiles.some((x) => f.endsWith(x))) expect(text, f).not.toMatch(/\b(SELECT|INSERT INTO|UPDATE)\s+[a-z_]+\./u);
   });
 
   it('STATEMENTS is written with `put` only (new keys; the bucket lock refuses overwrites) and read with `get`; never deleted', () => {

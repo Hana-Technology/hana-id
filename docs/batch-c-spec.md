@@ -227,7 +227,9 @@ popups, console ─▶ hana-id-files-<env>  LOGOS (R2, read)
   check (D91). As built (C12, D329), this runs in the 15-minute trigger's 00:30 UTC run, so the admin Worker has two
   cron triggers, and `ensure_partitions(12)` matches the API's hourly keeper (D223).
 - **Admin, monthly (the 1st, 01:00 UTC):** the retention purge job (D90, §Retention); its runs show in the admin
-  console.
+  console. As built (C13, D360), it runs in the 15-minute trigger from the 1st 01:00 UTC until a run of the month
+  completes (a `partial` run continues every 15 minutes, a failed one is retried an hour later), at most 12 of the run's
+  40 calls: still two admin triggers.
 
 ## Data
 
@@ -621,7 +623,11 @@ Functions (owner-defined, `SECURITY DEFINER`, `SET search_path = usage, pg_temp`
 As built in C12 (`0006_reports.sql`, D320): the report, statement and ledger functions above, plus `usage.classified`
 (internal: the one rule for what is billed), `usage.statement_blockers` and `usage.override_rate` (the audited
 override; the admin role's direct `UPDATE` on `near_usd_rates` is removed), all `usage_admin`; the retention functions
-come with C13 as `0007`.
+come with C13 as `0007`. As built in C13 (`0007_retention.sql`, D360–D369): `usage.erase_uid(uid bytea)` by uid alone, in
+any app (D362); `usage.strip_uids(max_rows)` answers `more` (the job calls it again); also `usage.retention_due` (what
+waits for a person past 7 years) and `ops.purge_expired` (the `ops` periods, D368); `ops.retention_runs` gains `month`,
+`status` and `alerted_at`, `ops.erasures` records each erasure (never whom), and the `events (uid, at)` and
+`app_users (uid)` indexes planned for C15 are here.
 
 Roles:
 
@@ -1782,8 +1788,9 @@ and the wallet directory (D269, D275; §Users and Support ID), with all three id
 | `app:list` | Shows pending changes, keys, `suspended_by` |
 | `scope:register` | Gains `--owners-from-org <org>` (reads the owners' subs from `CONSOLE_DB`) |
 | new `owner:relay --body <file>` | The staff relay runbook: dry run, `--yes`, never prints the JWT |
-| new `uid:erase --scope --provider --sub` | Recomputes the uid with `USER_ID_KEY` from `.secrets/`, calls `usage.erase_uid` as `usage_admin`; never prints the key |
-| proposed `user:erase --provider --sub` (D276) | Deletes the identity's `user_emails` and `user_email_apps` rows in the issuer's D1 through D1's REST API as the operator (the `user:*` path); asks for the ticket; prints no address |
+| new `uid:erase --scope --provider --sub` | Recomputes the uid with `USER_ID_KEY` from `.secrets/`, calls `usage.erase_uid` as `usage_admin`; never prints the key. As built (C13, D361): `scripts/uid-erase.ts <env> --scope --provider --sub --ticket`, the account read from the chain, across the ledger, the wallet directory and the issuer directory, dry run by default, recorded in `ops.erasures` |
+| proposed `user:erase --provider --sub` (D276) | Deletes the identity's `user_emails` and `user_email_apps` rows in the issuer's D1 through D1's REST API as the operator (the `user:*` path); asks for the ticket; prints no address. As built: part of `uid-erase` (D361) |
+| new (C13) `retention:issuer [--yes]` | The issuer's part of the monthly retention: deleted apps' `user_email_apps` rows, `email_admin_audit` past 60 months (D365) |
 | new `usage:setup`, `usage:migrate`, `usage:legacy-export` | Neon roles and Hyperdrive configs from `.secrets/`; Neon migrations; the one-off export of D1 `usage` |
 
 The `app:*` commands are removed once the admin console covers them after the pilot; `scope:register`,
@@ -1923,8 +1930,9 @@ longer needed). The service contract names the same periods.
 | `auth_flows`, `handoff_codes`, `pending_actions` | 24 h after expiry | Console hourly |
 | Replaced logos | 30 days | Console hourly |
 | `EXPORTS` | 30 days (`legacy/` kept) | R2 lifecycle |
-| Issuer `user_emails`, `user_email_apps` (D269), with the proposed `uid` column (D276) | No expiry set by D269; deleted on an erasure request | `user:erase` (proposed, D276), by the operator |
-| Issuer `email_admin_audit`, directory reads included (proposed, D275) | 5 years, as the other audit logs (D90; not set for this table until now) | Not specified yet: an issuer purge to add with C13 |
+| Issuer `user_emails`, `user_email_apps` (D269), with the proposed `uid` column (D276) | No expiry set by D269; deleted on an erasure request. As built (C13): an app's `user_email_apps` rows 30 days after its deletion (D363) | `uid-erase` (D361; D276's `user:erase` folded in), by the operator; `admin retention:issuer` monthly for deleted apps (D365) |
+| Issuer `email_admin_audit`, directory reads included (proposed, D275) | 5 years, as the other audit logs (D90; not set for this table until now) | As built (C13): `admin retention:issuer`, by the operator after each month's job (D365) |
+| Wallet directory (`end_users`, `end_user_wallets`, `end_user_identities`, hot-DB 0011, D310) | Added in C13: until every app of the scope has been deleted 30 days; deleted on an erasure request (D361, D363) | Monthly job: `AdminRpc.purgeDirectory`; `uid-erase` |
 | D1 Time Travel / Neon PITR | 30 days / the plan's window | — |
 
 - **Monthly purge job (D90).** The admin Worker's monthly cron runs the Neon functions above and calls

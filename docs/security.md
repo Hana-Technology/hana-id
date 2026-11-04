@@ -1,7 +1,8 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-04 for a statement's issuer shown to partners as `hana` (branch `feat/console-reports-upgrades`, D371); 2026-11-04 for the claim allow-list's `at_hash`, a freeze pausing pending memberships and the partner console's fresh sign-in and write paths (branch `feat/batch-c-10`, D342, D343, D350–D358); 2026-11-04 for the wallet directory's ids and the wallet record's
+known open issues. Last verified against code: 2026-11-04 for retention and erasure (branch `feat/batch-c-13`: the
+admin Worker's retention invariants and residual, D360–D369); 2026-11-04 for a statement's issuer shown to partners as `hana` (branch `feat/console-reports-upgrades`, D371); 2026-11-04 for the claim allow-list's `at_hash`, a freeze pausing pending memberships and the partner console's fresh sign-in and write paths (branch `feat/batch-c-10`, D342, D343, D350–D358); 2026-11-04 for the wallet directory's ids and the wallet record's
 session signature (branch `feat/user-id-identity-sub`: Parties' partner row, `IDENTITY_SUB_KEY` and `USER_ID_KEY` in
 the compromise table, "Wallet directory" in the API's invariants with the review finding and its fix; D346, D311 and
 D313 amended); 2026-11-04 for the popup close watch (branch
@@ -730,11 +731,21 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
 - **Daily nonce cross-check** (D323): each pool key's latest landed nonce must have a relayed ledger row, else
   `nonce_unexplained` to the security alias (a lost write, or a signer other than the API: a leaked relayer key). It
   proves the newest transaction of each key is in the ledger, not that none in the middle of a day is missing.
+- **Retention (C13; D360–D369; tests `apps/api/test-usage/retention.test.ts`, `apps/admin/test-ops/retention.test.ts`,
+  `apps/api/test/rpc-retention.test.ts`, `apps/console/test/retention.test.ts`, `scripts/test/uid-erase.test.ts`)**: the
+  admin role changes the ledger only through the owner's retention functions (it still can't update an event or
+  delete an `app_users` row, a settlement or a partition itself); each function computes its D90 cutoff from the
+  database's clock. The retention RPCs take the cron's `system` actor only and clamp `before` to their period in SQL
+  (60 months by the triggers' own clock; 30 days after an app's deletion), so a caller can't purge a younger row. The
+  audit purges keep what drift detection reads (D364). The erasure record (`ops.erasures`) holds a ticket, an operator
+  and counts, never a uid, a sub or an address, and is append-only for the owner too. An erasure reads the account
+  from the chain (a failed read stops it) and never writes to the chain: wallets and paths are unchanged (D366).
 - Residual: a compromised admin Worker can send anything to anyone through Resend, ack notices without sending them,
   ack every watchdog alert (silencing the re-sends, never the first page) and act as any staff member through the RPCs
   (trust boundary 3 in the spec's model); with the admin role it can also insert settlements (bill a real event's
   gas for a made-up amount before settlement does), issue a statement or override a rate, all of which leave their
-  rows and audit trail; the feed's at-least-once delivery can repeat a digest after a partial
+  rows and audit trail; it can run the retention purges early (never past D90's cutoffs) or stop them (the screen and
+  the overdue email show a month without a complete run); the feed's at-least-once delivery can repeat a digest after a partial
   failure (Resend's idempotency key covers 24 h).
 
 ### Email issuer (`apps/email-issuer`, not deployed)

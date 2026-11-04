@@ -4,8 +4,11 @@
 // each is optional in the type so a missing one fails closed at the step that needs it (no notice is acked, no email
 // leaves, the watchdog shows as not configured) instead of at start-up.
 import type {
+  ApiPurgeAuditResult,
   AppChange,
   AuditRow,
+  ConsolePurgeAuditResult,
+  DeletedAppsResult,
   GuardedChange,
   InviteView,
   MemberNotice,
@@ -13,6 +16,7 @@ import type {
   OrgView,
   OwnerGrantView,
   PendingUpgradesView,
+  PurgeDirectoryResult,
   RpcFail,
   RpcOk,
   ScopeRow,
@@ -74,6 +78,12 @@ export interface AdminRpcClient {
   governance(c: unknown): Answer<{ governance: Record<string, unknown> }>;
   /** The pending-upgrades page's view (D86), the same one partners get from ConsoleRpc. */
   pendingUpgrades(c: unknown): Answer<{ pendingUpgrades: PendingUpgradesView }>;
+  /** Retention (C13, the monthly job, a system actor): app_changes and guarded_changes past 60 months. */
+  purgeAudit(c: unknown): Answer<ApiPurgeAuditResult>;
+  /** Apps deleted 30 days ago or more, for the ledger's app_users purge. */
+  deletedApps(c: unknown): Answer<DeletedAppsResult>;
+  /** The wallet directory of scopes whose every app was deleted 30 days ago or more. */
+  purgeDirectory(c: unknown): Answer<PurgeDirectoryResult>;
 }
 
 /** The console's `StaffRpc` entrypoint (apps/console/src/staff-rpc.ts) over the `CONSOLE` service binding. */
@@ -93,6 +103,8 @@ export interface StaffRpcClient {
   queryAudit(c: unknown): Answer<{ rows: AuditRow[]; next?: string }>;
   /** The audit row of a statement issued, a ledger export or a rate override (C12, D327). */
   recordStaffAction(c: unknown): Answer<Record<string, never>>;
+  /** Retention (C13, the monthly job, a system actor): audit_log rows and closed owner grants past 60 months. */
+  purgeAudit(c: unknown): Answer<ConsolePurgeAuditResult>;
 }
 
 export interface Env {

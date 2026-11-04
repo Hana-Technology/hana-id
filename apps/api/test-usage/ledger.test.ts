@@ -43,7 +43,7 @@ const asWriter = <T>(fn: () => Promise<T>) => db.asRole('usage_writer', fn);
 const asAdmin = <T>(fn: () => Promise<T>) => db.asRole('usage_admin', fn);
 const count = async (sql: string, params: unknown[] = []) => Number((await db.query<{ n: string }>(sql, params))[0]!.n);
 
-const TABLES = ['usage.events', 'usage.app_users', 'usage.gas_settlements', 'usage.near_usd_rates', 'usage.statements', 'usage.identity_tokens', 'usage.email_counts', 'usage.rate_overrides', 'ops.state', 'ops.scope_snapshot', 'ops.scope_watch', 'ops.nonce_checks', 'ops.retention_runs', 'ops.rejection_alerts', 'ops.settlement_alerts', 'ops.settlement_tries', 'ops.statement_notices'];
+const TABLES = ['usage.events', 'usage.app_users', 'usage.gas_settlements', 'usage.near_usd_rates', 'usage.statements', 'usage.identity_tokens', 'usage.email_counts', 'usage.rate_overrides', 'ops.state', 'ops.scope_snapshot', 'ops.scope_watch', 'ops.nonce_checks', 'ops.retention_runs', 'ops.rejection_alerts', 'ops.settlement_alerts', 'ops.settlement_tries', 'ops.statement_notices', 'ops.erasures'];
 
 describe('migrations-usage on an empty database', () => {
   it('creates the schemas, tables and the current month with the next 12 (0001 made 3, 0003 the rest)', async () => {
@@ -80,8 +80,23 @@ describe('migrations-usage on an empty database', () => {
         )
       ).map((r) => r.f);
     // 0006 (batch C12) adds the report functions to both roles and the admin's own; `usage.classified` is nobody's.
+    // 0007 (batch C13) adds the retention functions, the admin's only; the cutoffs and the trigger function are nobody's.
     expect(await fns('usage_writer')).toEqual(['usage.ensure_partitions', 'usage.org_ledger', 'usage.org_report', 'usage.org_statements', 'usage.record_email_counts', 'usage.record_event', 'usage.record_identity_tokens']);
-    expect(await fns('usage_admin')).toEqual(['usage.ensure_partitions', 'usage.org_ledger', 'usage.org_report', 'usage.org_statements', 'usage.override_rate', 'usage.rejection_rates', 'usage.statement_blockers']);
+    expect(await fns('usage_admin')).toEqual([
+      'ops.purge_expired',
+      'usage.drop_expired_partitions',
+      'usage.ensure_partitions',
+      'usage.erase_uid',
+      'usage.org_ledger',
+      'usage.org_report',
+      'usage.org_statements',
+      'usage.override_rate',
+      'usage.purge_app_users',
+      'usage.rejection_rates',
+      'usage.retention_due',
+      'usage.statement_blockers',
+      'usage.strip_uids',
+    ]);
     expect(await fns('usage_test_nobody')).toEqual([]);
   });
 });
@@ -135,7 +150,7 @@ describe('the admin role', () => {
       await db.query("SELECT usage.override_rate('2001-01-01', 2600000, 'staff', 'corrected from the contract source')");
       await db.query("INSERT INTO ops.state (key, value) VALUES ('feed.cursor', '0')");
       await db.query("UPDATE ops.state SET value = '1' WHERE key = 'feed.cursor'");
-      await db.query("INSERT INTO ops.retention_runs (started_at) VALUES (now())");
+      await db.query("INSERT INTO ops.retention_runs (started_at, month) VALUES (now(), date_trunc('month', now())::date)");
       await db.query("DELETE FROM ops.state WHERE key = 'feed.cursor'");
       expect((await db.query<{ n: number }>('SELECT usage.ensure_partitions(3) AS n'))[0]!.n).toBe(0);
     });

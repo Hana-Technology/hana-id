@@ -11,6 +11,7 @@ import { type LedgerStore, ledgerSource } from '../src/ledger.ts';
 import { FIFTEEN_MINUTES } from '../src/crons.ts';
 import { isDailyTick } from '../src/ledger-cron.ts';
 import { adminRequest, envWith, json, stubNetwork, useFakeEmail } from './helpers.ts';
+import { retentionStub } from './retention-stub.ts';
 
 /** A ledger store that answers empty, with `over` replacing methods; every call is recorded. */
 function stubStore(over: Partial<LedgerStore> = {}, calls: string[] = []): LedgerStore {
@@ -47,6 +48,8 @@ function stubStore(over: Partial<LedgerStore> = {}, calls: string[] = []): Ledge
     insertStatement: async () => 'ok',
     unnoticedStatements: async () => [],
     markStatementNoticed: async () => {},
+    // The retention job and screen are tested in retention.test.ts and test-ops/; here the month is done.
+    retention: retentionStub({ done: true }),
     close: async () => {},
     ...over,
   };
@@ -193,7 +196,9 @@ describe('the C12 crons', () => {
     withStore();
     const fifteen = await run(FIFTEEN_MINUTES);
     expect(fifteen.filter((l) => l.event === 'ledger_cron').map((l) => [l.step, l.outcome])).toEqual([
+      ['retention', 'ok'],
       ['alerts', 'ok'],
+      ['retention_alerts', 'ok'],
       ['statement_notices', 'ok'],
       ['settlement', 'ok'],
     ]);
@@ -206,7 +211,9 @@ describe('the C12 crons', () => {
       ['nonce_check', 'ok'],
       ['rejection_rate', 'ok'],
       ['partitions', 'ok'],
+      ['retention', 'ok'],
       ['alerts', 'ok'],
+      ['retention_alerts', 'ok'],
       ['statement_notices', 'ok'],
       ['rates', 'ok'],
       ['settlement', 'ok'],

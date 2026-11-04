@@ -1,6 +1,9 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342; the console's C10 vars `NETWORK`, `REFUSED_ORIGINS` and the `USERS_SCREEN` switch, no new secret or setup step); 2026-11-04 (branch `feat/user-id-identity-sub`: "Wallet directory (hot-DB migration 0011)": both keys, the deploy pairing for the session signature, the three ids in `user:*`, the log codes; "Admin CLI"'s `--user`; D346); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: the "Declined" row of "Turning linking on (batch 8b)", D341); 2026-11-04 (branch `feat/batch-c-12`: "Reports and statements (batch C12, milestone M6)": the
+Last verified against code: 2026-11-04 (branch `feat/batch-c-13`: "Retention (batch C13, milestone M6)": the Neon
+migration 0007, the deploy order, the monthly job in the 15-minute cron, `retention_failed`, `admin retention:issuer`,
+`uid-erase` for an erasure request, statements and rates by hand, what to watch; "Usage ledger" lists 0007; D360–D369);
+2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342; the console's C10 vars `NETWORK`, `REFUSED_ORIGINS` and the `USERS_SCREEN` switch, no new secret or setup step); 2026-11-04 (branch `feat/user-id-identity-sub`: "Wallet directory (hot-DB migration 0011)": both keys, the deploy pairing for the session signature, the three ids in `user:*`, the log codes; "Admin CLI"'s `--user`; D346); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: the "Declined" row of "Turning linking on (batch 8b)", D341); 2026-11-04 (branch `feat/batch-c-12`: "Reports and statements (batch C12, milestone M6)": the
 Neon migration 0006, the admin config's buckets and vars, the optional CoinGecko key, the 15-minute cron with the 00:30
 UTC daily work, issuing a statement, the rate override, exports, what to watch; "Usage ledger" lists 0006; the admin's
 cron triggers; D320–D329); 2026-11-04 (branch `feat/batch-c-14`: "Admin Worker" → "Security & monitoring (batch C14)"
@@ -606,7 +609,8 @@ corepack pnpm --filter @hana-id/scripts usage-migrate sandbox-dev --yes   # appl
   `0003_writer_partitions.sql` (the writer may run `ensure_partitions`; 12 months ahead created, batch C4),
   `0004_email_counts.sql` (email logins and new links per app and day, `record_email_counts`, email login batch 6, D233),
   `0006_reports.sql` (the report, ledger and statement functions, the settlement checks' columns and tables, the
-  audited rate override; batch C12, D320). C13's retention functions will be `0007`.
+  audited rate override; batch C12, D320), `0007_retention.sql` (the retention functions, the runs' status, the
+  erasure log, the uid indexes; batch C13, D360–D369; "Retention" below).
 - Monthly partitions of `usage.events`: 0001 creates the current month and the next 3, 0003 the next 12, and the
   API's hourly cron keeps 12 months ahead (`usage.ensure_partitions(12)` as the writer, `usage_partitions_failed` on
   a failure). An event outside every partition is lost (`usage_write_failed` `pg_23514`).
@@ -1447,6 +1451,111 @@ month that has a statement (the rates of a statement are frozen).
 | `bff` `statement_hash_mismatch` (error) | A statement file no longer matches the hash frozen in Neon | Tell Hana security: the bucket lock should make this impossible |
 | `bff`/`statement`/`export` `audit_failed` (error) | The act happened but its `audit_log` row wasn't written (the console was down) | Note it in the incident log; the statement row or the override row is the act's own record |
 
+## Retention (batch C13, milestone M6)
+
+D90's periods (to be confirmed by the company's accountant before launch, `docs/mainnet-readiness.md` 9.3): raw usage
+24 months, then the uid is removed and the de-identified rows kept; settlement records 7 years, as whole months; audit
+logs 5 years; the admin's own state 400 days. The admin Worker applies them in a monthly job; staff see each run on
+the admin console's Retention screen (`docs/api.md` "Usage ledger retention functions", "Admin Worker"; D360–D369). Not
+deployed anywhere yet: it goes live at milestone M6, after "Reports and statements".
+
+What isn't automatic, by design:
+
+- **Statements, NEAR/USD rates, rate overrides and the statement files** (7 years): the job only counts what is due
+  (the screen's "Waiting for a person"); a person deletes them after review (below).
+- **The email issuer's directory** (D269, D365): the admin Worker has no binding to the issuer's D1, so its part of
+  the purge (the `user_email_apps` rows of apps deleted 30 days ago, `email_admin_audit` past 60 months) is
+  `admin <env> retention:issuer`, run after each month's job. Its `user_emails` rows have no expiry (D269); an erasure
+  request removes them with `uid-erase`.
+- **An end user's erasure request**: `uid-erase` (below), per scope.
+- **D1 Time Travel and Neon point-in-time restore** keep deleted rows for their own windows (30 days and the plan's).
+
+### Setting it up (once per env, for the user to run)
+
+Prerequisites: "Reports and statements" set up (the admin Worker with its Hyperdrive id and the 15-minute trigger) and
+its migration 0006 applied. From the repo root of the main checkout; nothing here was run by the batch.
+
+1. **The ledger migration**: `corepack pnpm --filter @hana-id/scripts usage-migrate <env>` (dry run: it lists
+   `0007_retention.sql`), then the same with `--yes`. It adds functions, an erasure table, three indexes on
+   `usage.events` and `usage.app_users` (on a large ledger the `events (uid, at)` index takes a while: run it off-peak),
+   and the runs' new columns; it deletes nothing.
+2. **Deploy** the API (`AdminRpc.purgeAudit` / `deletedApps` / `purgeDirectory`) and the console
+   (`StaffRpc.purgeAudit`) before the admin Worker; until both run C13, the job's RPC steps fail (`retention_failed`)
+   and its Neon steps still run. No new binding, var, secret or trigger: `gen` is unchanged.
+
+   ```sh
+   corepack pnpm --dir apps/api exec wrangler deploy
+   corepack pnpm --dir apps/console exec wrangler deploy
+   corepack pnpm --dir apps/admin exec wrangler deploy
+   ```
+
+3. **Check it**: the Retention screen shows the month's state and next run. On the 1st, from 01:00 UTC,
+   `wrangler tail <admin.workerName>` shows `ledger_cron` `retention` and `retention_alerts` with `outcome: ok`, and
+   the screen a run `ok` (or `partial`, continued every 15 minutes). Before the 1st the state is "not due yet".
+
+### The monthly job
+
+From the 1st at 01:00 UTC, in each 15-minute run until a run of the month completes (`ok`), after the daily work and
+before the alerts, taking at most 12 of the run's 40 outbound calls (D280): `strip_uids`, `drop_expired_partitions`,
+`ops.purge_expired` and `retention_due` on Neon, then the deleted apps' `app_users` (`AdminRpc.deletedApps`), the
+wallet directory of scopes left without apps (`AdminRpc.purgeDirectory`, D363) and the audit purges of the hot DB and
+the console (`purgeAudit`, D364). A run that runs out of calls ends `partial` and the next run continues; a `failed` run
+is retried an hour later; a run still `running` after 30 minutes was killed and is closed as `failed` (`abandoned`).
+Every step is idempotent, so a repeat never deletes twice or more than D90 allows (each RPC also clamps its cutoff).
+
+### `admin <env> retention:issuer` (monthly, after the job)
+
+```sh
+corepack pnpm --filter @hana-id/scripts admin <env> retention:issuer --remote          # counts, changes nothing
+corepack pnpm --filter @hana-id/scripts admin <env> retention:issuer --remote --yes    # deletes
+```
+
+Reads the apps deleted 30 days ago or more from the API's D1 (ids only) and deletes their `user_email_apps` rows in
+the issuer's D1, and the issuer's `email_admin_audit` rows older than 60 months. The issuer's statements go through
+D1's REST API as the operator, as `user:*` (never in a process argument). Re-running it finds nothing.
+
+### An erasure request (`uid-erase`)
+
+For one scope; the support reference is required, and the ticket must not hold the requester's address (it is
+stored). Find the identity first with `admin <env> user:find` (its provider and sub, the scopes it is in).
+
+```sh
+corepack pnpm --filter @hana-id/scripts uid-erase <env> --scope <scope> --provider <google|email> --sub - --ticket <ref> --remote          # the plan
+corepack pnpm --filter @hana-id/scripts uid-erase <env> --scope <scope> --provider <google|email> --sub - --ticket <ref> --remote --yes    # erases
+```
+
+- It reads the account from the chain (`get_identity`, `get_account`: the root and its members; a failed read stops
+  it), computes the uids with `.secrets/<env>/user-id-key` and connects to the ledger as `usage_admin` with
+  `.secrets/<env>/neon-usage-admin.url` (both 0600, never printed; `--no-ledger` for an env without a ledger). `--sub -`
+  reads the sub from stdin, out of the shell history.
+- The plan counts, per store: the ledger's events losing their uid and `app_users` rows; the wallet directory's users,
+  wallets and identities; the issuer's app rows of the scope and the address rows that would have no app row left.
+  It lists the other scopes the account's identities are seen in: run it again for each.
+- `--yes` erases in that order, counts again (all zero, or it stops with an error: run it again, every step is
+  idempotent), and records the erasure in `ops.erasures` (ticket, operator, scope, counts; never whom). The Retention
+  screen lists the last 20.
+- **Nothing on chain changes** (D366): the identities, the account and the paths stay, so the user's wallets are the
+  same. If they log in through Hana again, new rows are written; a new request covers those.
+- Billing and counts don't change: the events stay, without their uid.
+
+### Deleting statements and rates past 7 years (by hand)
+
+When the screen's "Waiting for a person" lists statements or rates past 7 years, a founder reviews them (no open
+dispute for those months) and then, as the owner over `DATABASE_URL_DIRECT`, in one transaction: export the rows to
+the incident log, `ALTER TABLE … DISABLE TRIGGER` the `statements_frozen` / `rates_frozen` / `rate_overrides_frozen`
+trigger, delete the months' rows, `ENABLE TRIGGER`. The files leave `STATEMENTS` once the bucket lock's 7 years have
+passed (the lock refuses earlier). Not scripted: it happens once a year at most and needs a person's review.
+
+### What to watch
+
+| Signal | Meaning | Action |
+|---|---|---|
+| Email "Retention job failed" (`retention_failed`) | A run failed: the error names the step and a code (`directory: internal`, `strip_uids: pg_57014`, `console_audit: TypeError`) | The other steps did their part. Fix the cause (the API or console not on C13, Neon down, a timeout); the job retries an hour after each failure. At most one digest a day; every failure shows on the screen at once |
+| Email "Retention job overdue for …" | No complete run a day after the 1st 01:00 UTC: runs keep ending `partial` (more rows than a month's calls reach), or none start | The screen's runs show which; a first run on a large ledger drains over the following 15-minute runs |
+| Email "Retention job skipped for …" | At the due tick the ledger was unreachable (`USAGE_DB` missing, or Neon down): nothing could be recorded | `gen --admin-hyperdrive-id <id>`; Neon status. The job starts once the ledger is back |
+| `ledger_cron` `retention` `outcome: error` | The run's bookkeeping on Neon failed before or after its steps | Neon status; the next 15-minute run tries again |
+| Screen: a run `failed` with `abandoned` | The Worker was stopped mid-run (a deploy, a limit) | Nothing: it is retried an hour later |
+
 ## Admin CLI (`scripts/admin.ts`)
 
 ```text
@@ -1473,10 +1582,11 @@ admin <env> governance:status [--json]
 admin <env> council:replace-member --remove <old member> --add <new member> [--member <m>] [--approve-with <m>] [--yes]
 admin <env> user:list [--app <app id>] [--provider email|google] [--search <part of the address> | -] [--limit 50] [--json] [--remote]
 admin <env> user:find [--email <address> | --sub <sub> | --address <G…|0x…> | --user <u1_…|hu_…|HANA-XXXX-XXXX>] [--provider email|google] [--json] [--remote]   # none: read from stdin
+admin <env> retention:issuer [--yes] [--remote]      # the issuer's part of the monthly retention (C13, D365)
 ```
 
 The `user:*` commands read the user directory in the email issuer's own D1, read only: "User directory (D269)" under
-"Email issuer".
+"Email issuer". `retention:issuer` and the erasure script `uid-erase`: "Retention" above.
 
 The `owner:*`, `council:*` and `governance:status` commands: [Governance](#governance-owner-council-upgrades-migration)
 ("Owner actions through the council", "Replacing a council member").

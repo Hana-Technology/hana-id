@@ -10,6 +10,7 @@
 import type { LedgerSqlRow, ReportSqlRow, StatementSqlRow } from '@hana-id/console-core';
 import pg from 'pg';
 import type { Query } from './ops.ts';
+import { type RetentionStore, sqlRetention } from './retention-store.ts';
 
 const ms = (v: unknown): number => (v instanceof Date ? v.getTime() : new Date(String(v)).getTime());
 const msOrNull = (v: unknown): number | null => (v === null || v === undefined ? null : ms(v));
@@ -137,6 +138,8 @@ export interface LedgerStore {
   insertStatement(s: StatementInsert): Promise<'ok' | 'exists'>;
   unnoticedStatements(limit: number): Promise<{ orgId: string; month: string; asOf: number; csvSha256: string; pdfSha256: string | null; issuedBy: string }[]>;
   markStatementNoticed(orgId: string, month: string): Promise<void>;
+  /** The monthly retention job's runs, state and Neon functions (C13), over the same connection. */
+  readonly retention: RetentionStore;
   close(): Promise<void>;
 }
 
@@ -360,6 +363,7 @@ export function sqlLedger(query: Query, close: () => Promise<void> = async () =>
     async markStatementNoticed(orgId, month) {
       await query('INSERT INTO ops.statement_notices (org_id, month) VALUES ($1, $2::date) ON CONFLICT DO NOTHING', [orgId, `${month}-01`]);
     },
+    retention: sqlRetention(query),
     close,
   };
 }

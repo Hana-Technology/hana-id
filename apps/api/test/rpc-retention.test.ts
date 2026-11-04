@@ -145,7 +145,7 @@ describe('AdminRpc.deletedApps (the ledger’s app_users purge, 30 days after de
 describe('AdminRpc.purgeDirectory (the wallet directory of a scope left without apps)', () => {
   const user = async (scope: string, n: number) => {
     const userId = `hu_${String(n).padStart(26, '0')}`;
-    await db().prepare('INSERT INTO end_users (user_id, support_code, scope_id, created_at, last_seen_at) VALUES (?1, ?2, ?3, 1, 2)').bind(userId, userId.slice(3, 11).toUpperCase(), scope).run();
+    await db().prepare('INSERT INTO end_users (user_id, token_sub, support_code, scope_id, created_at, last_seen_at) VALUES (?1, ?2, ?3, ?4, 1, 2)').bind(userId, `u1_${String(n).padStart(21, 'B')}A`, userId.slice(3, 11).toUpperCase(), scope).run();
     await db().prepare("INSERT INTO end_user_wallets (user_id, chain, address, key_index, first_seen_at, last_used_at) VALUES (?1, 'stellar', ?2, 0, 1, 2)").bind(userId, `G${String(n).padStart(55, 'A')}`).run();
     await db().prepare("INSERT INTO end_user_identities (scope_id, identity_key, user_id, provider, sub, role, status, first_seen_at, observed_at) VALUES (?1, ?2, ?3, 'google', ?4, 'root', 'active', 1, 2)").bind(scope, String(n).padStart(64, '0'), userId, `sub-${n}`).run();
     return userId;

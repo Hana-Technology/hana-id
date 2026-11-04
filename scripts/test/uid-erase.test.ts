@@ -8,7 +8,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { PGlite } from '@electric-sql/pglite';
-import { uid, userIdOf } from '@hana-id/console-core';
+import { internalIdOf, uid } from '@hana-id/console-core';
 import { type Manifest, loadEnv, repoRoot } from '@hana-id/env';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { retentionIssuer } from '../lib/admin-retention.ts';
@@ -58,7 +58,7 @@ const asAdmin = (db: PGlite): LedgerConn => ({
 });
 
 const uidHex = async (i: { provider: string; sub: string }) => Buffer.from(await uid(KEY, { scopeId: SCOPE, ...i })).toString('hex');
-const userOf = async (i: { provider: string; sub: string }) => userIdOf(await uid(KEY, { scopeId: SCOPE, ...i }));
+const userOf = async (i: { provider: string; sub: string }) => internalIdOf(await uid(KEY, { scopeId: SCOPE, ...i }));
 
 let api: DatabaseSync;
 let issuer: DatabaseSync;
@@ -98,7 +98,9 @@ async function seed(): Promise<void> {
   const root = await userOf(GOOGLE);
   const emailOwn = await userOf(EMAIL); // the email identity's own account, from before it was linked
   const other = await userOf(OTHER);
-  const u = api.prepare('INSERT INTO end_users (user_id, support_code, scope_id, created_at, last_seen_at) VALUES (?, ?, ?, 1, 2)');
+  let n = 0;
+  // The User ID (`token_sub`, D346) is the identity token's sub: any well-formed one here.
+  const u = { run: (id: string, code: string, scope: string) => api.prepare('INSERT INTO end_users (user_id, token_sub, support_code, scope_id, created_at, last_seen_at) VALUES (?, ?, ?, ?, 1, 2)').run(id, `u1_${String(++n).padStart(21, 'A')}A`, code, scope) };
   const w = api.prepare("INSERT INTO end_user_wallets (user_id, chain, address, key_index, first_seen_at, last_used_at) VALUES (?, 'stellar', ?, 0, 1, 2)");
   const i = api.prepare("INSERT INTO end_user_identities (scope_id, identity_key, user_id, provider, sub, role, status, first_seen_at, observed_at) VALUES (?, ?, ?, ?, ?, ?, 'active', 1, 2)");
   for (const [id, scope] of [[root, SCOPE], [emailOwn, SCOPE], [other, SCOPE], [`hu_${'1'.repeat(26)}`, 's8']] as const) u.run(id, id.slice(3, 11).toUpperCase(), scope);
@@ -122,7 +124,7 @@ async function seed(): Promise<void> {
   a.run(EMAIL.provider, EMAIL.sub, 'app_a', SCOPE);
   a.run(OTHER.provider, OTHER.sub, 'app_a', SCOPE);
 
-  let n = 0;
+  n = 0;
   for (const [who, app] of [[GOOGLE, 'app_a'], [GOOGLE, 'app_a2'], [EMAIL, 'app_a'], [OTHER, 'app_a']] as const) {
     const h = await uidHex(who);
     await ledger.query(
@@ -170,6 +172,8 @@ describe('uid-erase: the plan (dry run)', () => {
     expect(plan.otherScopes).toEqual(['s8']);
     expect(lines.join('\n')).toMatch(/Dry run: nothing changed/u);
     expect(lines.join('\n')).toMatch(/also seen in scope\(s\) s8/u);
+    // The plan names each internal id with the User ID and Support ID partners and support see, when it has a row.
+    expect(lines.join('\n')).toMatch(/hu_[0-9a-z]{26} \(User ID u1_A+1A, HANA-/u);
     // No address and no key in the output.
     expect(lines.join('\n')).not.toMatch(/@|alice@|olivia/u);
     expect(one(api, 'SELECT COUNT(*) AS n FROM end_users')).toBe(4);

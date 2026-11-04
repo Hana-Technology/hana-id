@@ -3,14 +3,15 @@
 //
 //   the usage ledger (Neon)      usage.erase_uid as usage_admin: the user's app_users rows deleted, the uid NULLed on
 //                                every event (the rows stay: billing and counts are unchanged)
-//   the wallet directory         the API's D1 (migration 0011): the user's end_users rows with their wallets and
+//   the wallet directory         the API's D1 (migration 0011): the user's end_users rows (keyed by the internal id
+//                                `hu_…`, the uid's encoding, D346) with their wallets and
 //                                identities, through D1's REST API as the operator (lib/d1.ts apiPrivateD1Execute)
 //   the issuer's user directory  the email issuer's D1 (D269): the identities' user_email_apps rows of the scope, and
 //                                each identity's user_emails row once it has no app row left (D276's `user:erase`)
 //
 // The account is read from the chain, the source of truth (get_identity, get_account): the identity named, its account
 // root and the account's members. Every uid that can carry the user's ledger rows is erased: the root's (the account's
-// user id, D312) and each identity's own (from before it was linked), for every identity whose sub is known (the one
+// internal id, D312, D346) and each identity's own (from before it was linked), for every identity whose sub is known (the one
 // named, the root, and the members the wallet directory has a sub for). The uid is recomputed with USER_ID_KEY from
 // `.secrets/<env>/user-id-key`, never printed.
 //
@@ -21,7 +22,7 @@
 // is per scope: run again for each). `--yes` erases, re-counts (all zero, or it fails) and records the erasure in
 // ops.erasures (ticket, operator, scope, counts; never a uid, a sub or an address). Re-runnable: every step is
 // idempotent. No address is ever printed; the sub is the operator's own input.
-import { scopeIdInput, uid as uidOf, uidOfUserId, userIdOf, supportIdOf } from '@hana-id/console-core';
+import { formatSupportId, internalIdOf, scopeIdInput, uid as uidOf, uidOfInternalId } from '@hana-id/console-core';
 import type { Manifest } from '@hana-id/env';
 import { type Args, CliError, parseCli } from './cli.ts';
 import { sql } from './sql.ts';
@@ -79,7 +80,10 @@ export interface Plan {
   identities: Identity[];
   /** hex uids, the root's first. */
   uids: string[];
-  userIds: string[];
+  /** The wallet directory's keys (`hu_…`) of those uids, in the same order. */
+  internalIds: string[];
+  /** The wallet directory's rows among them: the User ID partners see and its Support ID (for the operator to check). */
+  users: { internalId: string; userId: string; supportId: string }[];
   ledger: { events: number; appUsers: number } | null;
   directory: { users: number; wallets: number; identities: number };
   issuer: { apps: number; emails: number } | null;
@@ -147,12 +151,12 @@ async function directoryIdentities(c: Ctx, keys: readonly string[]): Promise<{ p
   return rows.map((r) => ({ provider: String(r.provider), sub: typeof r.sub === 'string' ? r.sub : null, userId: String(r.user_id) }));
 }
 
-const walletWhere = (c: Ctx, p: Pick<Plan, 'userIds' | 'account'>) => ({
-  users: `user_id IN (${list(p.userIds)})`,
-  identities: `(user_id IN (${list(p.userIds)}) OR (scope_id = ${sql`${c.scopeId}`} AND identity_key IN (${list(p.account.keys)})))`,
+const walletWhere = (c: Ctx, p: Pick<Plan, 'internalIds' | 'account'>) => ({
+  users: `user_id IN (${list(p.internalIds)})`,
+  identities: `(user_id IN (${list(p.internalIds)}) OR (scope_id = ${sql`${c.scopeId}`} AND identity_key IN (${list(p.account.keys)})))`,
 });
 
-async function counts(c: Ctx, p: Pick<Plan, 'uids' | 'userIds' | 'account' | 'identities'>): Promise<Pick<Plan, 'ledger' | 'directory' | 'issuer'>> {
+async function counts(c: Ctx, p: Pick<Plan, 'uids' | 'internalIds' | 'account' | 'identities'>): Promise<Pick<Plan, 'ledger' | 'directory' | 'issuer'>> {
   let ledger: Plan['ledger'] = null;
   if (c.ledger) {
     const [r] = await c.ledger.query<{ events: string; app_users: string }>(
@@ -207,11 +211,16 @@ export async function planErasure(c: Ctx, named: Identity): Promise<Plan> {
   }
   // Users the wallet directory has for these identities (an account the identity was root of before a link moved it).
   for (const d of dir) {
-    const u = uidOfUserId(d.userId);
+    const u = uidOfInternalId(d.userId);
     if (u && !uids.includes(hex(u))) uids.push(hex(u));
   }
-  const userIds = uids.map((h) => userIdOf(Uint8Array.from(Buffer.from(h, 'hex'))));
-  const base = { scopeId: c.scopeId, account, identities, uids, userIds };
+  const internalIds = uids.map((h) => internalIdOf(Uint8Array.from(Buffer.from(h, 'hex'))));
+  const users = (await c.deps.apiD1(c.m, `SELECT user_id, token_sub, support_code FROM end_users WHERE user_id IN (${list(internalIds)}) ORDER BY user_id`, c.remote)).map((r) => ({
+    internalId: String(r.user_id),
+    userId: String(r.token_sub),
+    supportId: formatSupportId(String(r.support_code)),
+  }));
+  const base = { scopeId: c.scopeId, account, identities, uids, internalIds, users };
   return { ...base, ...(await counts(c, base)), otherScopes: await otherScopes(c, identities) };
 }
 
@@ -219,7 +228,12 @@ export function formatPlan(p: Plan, where: string): string[] {
   const lines = [
     `Erasure plan for scope ${p.scopeId} (${where})`,
     `  account   root ${p.account.root.provider} (the named identity is ${p.account.named.status === 'own' ? 'the root' : p.account.named.status === 'pending' ? 'a pending member' : 'a linked member'}); ${p.account.keys.length} identit${p.account.keys.length === 1 ? 'y' : 'ies'} on chain`,
-    `  uids      ${p.uids.length} (the account's user id and each known identity's own); users ${p.userIds.map((u) => `${u} (${supportIdOf(u)})`).join(', ')}`,
+    `  uids      ${p.uids.length} (the account's and each known identity's own): ${p.internalIds
+      .map((id) => {
+        const u = p.users.find((x) => x.internalId === id);
+        return u ? `${id} (User ID ${u.userId}, ${u.supportId})` : `${id} (no wallet-directory row)`;
+      })
+      .join(', ')}`,
     p.ledger ? `  ledger    ${p.ledger.events} event(s) lose their uid, ${p.ledger.appUsers} app_users row(s) deleted` : '  ledger    skipped (--no-ledger)',
     `  wallets   ${p.directory.users} user row(s), ${p.directory.wallets} wallet row(s), ${p.directory.identities} identity row(s) deleted (the API's D1)`,
     p.issuer ? `  issuer    ${p.issuer.apps} app row(s) of the scope deleted, ${p.issuer.emails} address row(s) deleted (no app row left in another scope)` : '  issuer    none (this env has no email issuer)',

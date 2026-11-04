@@ -68,6 +68,7 @@ import {
   isFollowNotice,
 } from '@hana-id/core';
 import type { HanaEnv } from '../hana-env.ts';
+import { appLogo } from './logo.ts';
 import type { AuthApi } from './api.ts';
 import { type Dom, dom, errorView } from './dom.ts';
 import type { EmailApi, LinkPurpose, SessionCommitment, Verified } from './email-api.ts';
@@ -293,7 +294,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
   };
 
   const header = () =>
-    d.h('p', {}, 'Signing in to ', d.h('strong', {}, ctx.appName), ' at ', d.h('span', { class: 'origin' }, ctx.parentOrigin));
+    d.h('p', {}, appLogo(d, env, ctx.logoUrl), 'Signing in to ', d.h('strong', {}, ctx.appName), ' at ', d.h('span', { class: 'origin' }, ctx.parentOrigin));
   /** A notice; `retry` (a transient failure) adds "Try again", which repeats the request that failed. */
   const message = (text: string | null, id: string, retry?: () => void) => {
     if (!text) return null;

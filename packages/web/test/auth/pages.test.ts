@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ASSET_DIR, type BuiltEnv, ORIGIN_DIR, buildAuthPages, pageHtml, selectEnvs } from '../../scripts/build-auth-pages.ts';
 import { hanaEnv } from '../../scripts/gen-envs.ts';
 import { GOOGLE_TOKENINFO_ORIGIN, GOOGLE_TOKENINFO_URL } from '../../src/auth/google.ts';
-import { AUTH_PAGES, authPageCsp, authPageMetaCsp } from '../../src/auth/pages.ts';
+import { AUTH_PAGES, LOGO_PAGES, authPageCsp, authPageMetaCsp, imgSources } from '../../src/auth/pages.ts';
 import type { HanaEnv } from '../../src/hana-env.ts';
 
 const sandbox = hanaEnv(loadEnv('sandbox-dev')) as HanaEnv;
@@ -72,6 +72,26 @@ describe('auth page policies', () => {
     expect(authPageMetaCsp(noIssuer, 'callback')).toBe(`${BASE}; connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev`);
   });
 
+  it('batch C11: the pages that show the app’s name add the files origin to img-src in place; the callback doesn’t', () => {
+    const files = { ...sandbox, filesOrigin: 'https://files.example' };
+    const IMG = "img-src 'self' data: https://files.example";
+    expect(LOGO_PAGES).toEqual(['login', 'email', 'approve', 'export']);
+    for (const p of AUTH_PAGES) {
+      const policy = authPageMetaCsp(files, p.name);
+      // One img-src only: a browser ignores a repeated directive.
+      expect(policy.match(/img-src/gu), p.name).toHaveLength(1);
+      expect(imgSources(files, p.name), p.name).toEqual(p.name === 'callback' ? ["'self'", 'data:'] : ["'self'", 'data:', 'https://files.example']);
+      // Everything else is the policy without a files origin.
+      expect(policy, p.name).toBe(p.name === 'callback' ? authPageMetaCsp(sandbox, p.name) : authPageMetaCsp({ ...sandbox, filesOrigin: undefined }, p.name).replace("img-src 'self' data:", IMG));
+    }
+    expect(authPageCsp(files, 'login')).toBe(`${BASE.replace("img-src 'self' data:", IMG)}; frame-ancestors 'none'`);
+    expect(authPageMetaCsp(files, 'callback')).not.toContain('files.example');
+    // The origin alone, whatever the manifest value carries after it; an env without the dashboard blocks: no change.
+    expect(authPageMetaCsp({ ...sandbox, filesOrigin: 'https://files.example/' }, 'approve')).toContain(`${IMG};`);
+    const { filesOrigin: _f, ...noFiles } = files;
+    for (const p of AUTH_PAGES) expect(authPageMetaCsp(noFiles, p.name), p.name).toContain("img-src 'self' data:;");
+  });
+
   it('serves the five pages at the spec’s paths', () => {
     expect(AUTH_PAGES.map((p) => [p.path, p.file])).toEqual([
       ['/login', 'login.html'],
@@ -109,6 +129,7 @@ describe('per-env build', () => {
     vaultOrigin: 'https://vault.hana-prod.example',
     authOrigin: 'https://auth.hana-login.example',
     devEnv: false,
+    filesOrigin: 'https://files.hana-prod.example',
   };
   let builtProd: BuiltEnv;
 
@@ -143,6 +164,16 @@ describe('per-env build', () => {
       expect(existsSync(join(built.dir, built.pages[page.name].script.slice(1)))).toBe(true);
       expect(existsSync(join(built.dir, built.pages[page.name].stylesheet.slice(1)))).toBe(true);
     }
+  });
+
+  it('batch C11: an env with a files origin builds it into the logo pages’ meta img-src, and not the callback’s', () => {
+    for (const page of AUTH_PAGES) {
+      const html = readFileSync(join(builtProd.dir, page.file), 'utf8');
+      expect(html, page.name).toContain(`<meta http-equiv="Content-Security-Policy" content="${authPageMetaCsp(prod, page.name)}">`);
+      expect(html.includes("img-src 'self' data: https://files.hana-prod.example;"), page.name).toBe(page.name !== 'callback');
+    }
+    // sandbox-dev's manifest has no dashboard blocks yet: its pages keep the base img-src.
+    if (!sandbox.filesOrigin) for (const page of AUTH_PAGES) expect(readFileSync(join(built.dir, page.file), 'utf8')).toContain("img-src 'self' data:;");
   });
 
   it('loads no third-party script: bundles import only their own chunks', () => {

@@ -5,7 +5,8 @@ import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import apiWorker from '../src/index.ts';
 import authWorker from '../src/pages/auth-worker.ts';
-import { ASSET_CSP, AUTH_PAGE_PATHS, type AuthHostEnv, type VaultHostEnv } from '../src/pages/host.ts';
+import { AUTH_PAGES, LOGO_PAGES, authPageMetaCsp } from '../../../packages/web/src/auth/pages.ts';
+import { ASSET_CSP, AUTH_LOGO_PATHS, AUTH_PAGE_PATHS, type AuthHostEnv, type VaultHostEnv } from '../src/pages/host.ts';
 import vaultWorker from '../src/pages/vault-worker.ts';
 import { ORIGIN, chain, seedApp } from './helpers.ts';
 
@@ -153,6 +154,46 @@ describe('auth origin Worker', () => {
     expect(csp(await call(authWorker, authEnv(), `${AUTH}/login/callback`))).toBe(`${BASE}; frame-ancestors 'none'; connect-src https://api.test`);
     // A malformed issuer URL drops it (token_first logins then fail closed at tokeninfo), never a looser policy.
     expect(csp(await call(authWorker, authEnv({ EMAIL_ISSUER_URL: 'not a url' }), `${AUTH}/login/callback`))).toBe(`${BASE}; frame-ancestors 'none'; connect-src https://api.test`);
+  });
+
+  it('batch C11: the logo pages’ img-src adds FILES_ORIGIN in place, and only theirs (the callback shows no app)', async () => {
+    const IMG = "img-src 'self' data: https://files.test";
+    const withFiles = (path: string) => call(authWorker, authEnv({ FILES_ORIGIN: 'https://files.test' }), `${AUTH}${path}`);
+    for (const path of AUTH_LOGO_PATHS) {
+      const policy = csp(await withFiles(path));
+      // The base directive is extended where it stands: a second img-src would be ignored by the browser.
+      expect(policy, path).toBe(csp(await call(authWorker, authEnv(), `${AUTH}${path}`)).replace("img-src 'self' data:", IMG));
+      expect(policy.match(/img-src/gu), path).toHaveLength(1);
+    }
+    expect(csp(await withFiles('/login'))).toBe(`${BASE.replace("img-src 'self' data:", IMG)}; frame-ancestors 'none'`);
+    expect(csp(await withFiles('/login/callback'))).toBe(`${BASE}; frame-ancestors 'none'; connect-src https://api.test`);
+    expect(AUTH_PAGE_PATHS.filter((p) => !AUTH_LOGO_PATHS.includes(p))).toEqual(['/login/callback']);
+    // The origin only, whatever path or trailing slash the var carries.
+    expect(csp(await call(authWorker, authEnv({ FILES_ORIGIN: 'https://files.test/' }), `${AUTH}/approve`))).toContain(`${IMG};`);
+    // A FILES_ORIGIN that is no origin is left out (logged): the page still works, with the stricter policy.
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const bad = await call(authWorker, authEnv({ FILES_ORIGIN: 'not a url' }), `${AUTH}/approve`);
+    expect(bad.status).toBe(200);
+    expect(csp(bad)).toBe(`${BASE}; frame-ancestors 'none'`);
+    expect(errors).toHaveBeenCalledTimes(1);
+  });
+
+  it('batch C11: every page’s header policy is its build’s meta policy plus frame-ancestors (a browser enforces both)', async () => {
+    // packages/web's meta policy for the same env values: the directives must be the same set, frame-ancestors aside
+    // (a <meta> CSP can't carry it). A gap here is how the export window once lost its NEAR fallback.
+    const hanaEnv = { apiUrl: 'https://api.test/', rpc: 'https://rpc.test/path', rpcFallback: 'https://rpc.fallback.test/v1', emailIssuerUrl: 'https://issuer.test', filesOrigin: 'https://files.test' };
+    const vars = { NEAR_RPC_FALLBACK: hanaEnv.rpcFallback, EMAIL_ISSUER_URL: 'https://issuer.test/', FILES_ORIGIN: hanaEnv.filesOrigin };
+    const directives = (policy: string) => policy.split('; ').filter((d) => !d.startsWith('frame-ancestors')).sort();
+    for (const variant of [{}, { filesOrigin: undefined }]) {
+      const e = { ...hanaEnv, ...variant };
+      for (const page of AUTH_PAGES) {
+        const header = csp(await call(authWorker, authEnv({ ...vars, ...(e.filesOrigin ? {} : { FILES_ORIGIN: undefined }) }), `${AUTH}${page.path}`));
+        expect(directives(header), `${page.path} ${JSON.stringify(variant)}`).toEqual(directives(authPageMetaCsp(e, page.name)));
+        expect(header).toContain("frame-ancestors 'none'");
+      }
+    }
+    expect(AUTH_PAGES.map((p) => p.path)).toEqual([...AUTH_PAGE_PATHS]);
+    expect(LOGO_PAGES.map((n) => AUTH_PAGES.find((p) => p.name === n)!.path)).toEqual([...AUTH_LOGO_PATHS]);
   });
 
   it('HEAD gives the page headers and no body', async () => {

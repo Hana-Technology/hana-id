@@ -24,6 +24,7 @@ import { PageError } from './errors.ts';
 import { type EmailContext, storeEmailContext } from './email-storage.ts';
 import { GOOGLE_EMAIL_FLOW, type GoogleEmailFlow, loginGoogleRequest } from './google.ts';
 import { addLoginTimings, storeLoginEntry } from './login-storage.ts';
+import { appLogo } from './logo.ts';
 import { type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed } from './page-window.ts';
 
 export type OpenerMode = 'partner' | 'vault' | 'export';
@@ -198,7 +199,9 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
         msg.followKey?.fill(0);
       }
       const url = googleRequest.url;
-      const intro = () => d.h('p', {}, task ? 'Adding a sign-in method in ' : 'Signing in to ', d.h('strong', {}, msg.appName), ' at ', d.h('span', { class: 'origin' }, msg.parentOrigin));
+      // The app's logo (batch C11), when the preparer sent one on this build's files origin.
+      const intro = () =>
+        d.h('p', {}, appLogo(d, env, msg.logoUrl), task ? 'Adding a sign-in method in ' : 'Signing in to ', d.h('strong', {}, msg.appName), ' at ', d.h('span', { class: 'origin' }, msg.parentOrigin));
       // Email is offered only by the vault or the export window, only for an env with an email issuer.
       const methods: readonly LoginMethod[] = msg.methods && env.emailIssuerUrl ? msg.methods : ['google'];
       /** The email context: the email step's facts, and (batch 8b) the follow-up mode's, which a Google login needs too. */
@@ -210,6 +213,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
             {
               pk: msg.pk,
               appName: msg.appName,
+              ...(msg.logoUrl ? { logoUrl: msg.logoUrl } : {}),
               parentOrigin: msg.parentOrigin,
               scopeId: msg.scopeId,
               sessionPublicKey: Uint8Array.from(msg.sessionPublicKey),

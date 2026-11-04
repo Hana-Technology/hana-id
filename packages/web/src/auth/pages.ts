@@ -3,7 +3,7 @@
 // serves them; the Worker (apps/api src/pages/host.ts) sends the full policy and the other headers itself
 // (frame-ancestors only works as a header).
 import type { HanaEnv } from '../hana-env.ts';
-import { GOOGLE_TOKENINFO_ORIGIN } from './google.ts';
+import { GOOGLE_TOKENINFO_ORIGIN } from './google-origins.ts';
 
 export type AuthPageName = 'login' | 'email' | 'callback' | 'approve' | 'export';
 
@@ -40,7 +40,22 @@ export const BASE_CSP: readonly string[] = Object.freeze([
 
 const originOf = (url: string): string => new URL(url).origin;
 
-type CspEnv = Pick<HanaEnv, 'apiUrl' | 'rpc' | 'rpcFallback' | 'emailIssuerUrl'>;
+type CspEnv = Pick<HanaEnv, 'apiUrl' | 'rpc' | 'rpcFallback' | 'emailIssuerUrl' | 'filesOrigin'>;
+
+/**
+ * The pages that show the app's name, and so its logo beside it (batch C11): the sign-in chooser, the email step, the
+ * approval and consent popup and the export window. The callback shows no app, so it loads no image from elsewhere.
+ * apps/api src/pages/host.ts AUTH_LOGO_PATHS lists the same pages for the header policy.
+ */
+export const LOGO_PAGES: readonly AuthPageName[] = Object.freeze(['login', 'email', 'approve', 'export']);
+
+/**
+ * The page's `img-src`: the base policy's 'self' data:, plus the files origin on a logo page of an env that has one.
+ * It replaces the base directive in place: a browser ignores a repeated directive, so a second `img-src` would be dead.
+ */
+export function imgSources(env: CspEnv, page: AuthPageName): string[] {
+  return ["'self'", 'data:', ...(env.filesOrigin && LOGO_PAGES.includes(page) ? [originOf(env.filesOrigin)] : [])];
+}
 
 /**
  * What the page may fetch: the API (callback, email, export), Google's tokeninfo (callback, with an email issuer), the
@@ -81,7 +96,9 @@ export function connectSources(env: CspEnv, page: AuthPageName): string[] {
 /** The page's CSP directives without frame-ancestors (the part a <meta> CSP can carry). */
 export function authPageMetaCsp(env: CspEnv, page: AuthPageName): string {
   const connect = connectSources(env, page);
-  return [...BASE_CSP, ...(connect.length > 0 ? [`connect-src ${connect.join(' ')}`] : [])].join('; ');
+  const img = `img-src ${imgSources(env, page).join(' ')}`;
+  const base = BASE_CSP.map((d) => (d.startsWith('img-src ') ? img : d));
+  return [...base, ...(connect.length > 0 ? [`connect-src ${connect.join(' ')}`] : [])].join('; ');
 }
 
 /**

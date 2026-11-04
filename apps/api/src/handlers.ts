@@ -6,6 +6,7 @@ import type { Env } from './env.ts';
 import { type Headers_, corsHeaders, json, readJson } from './http.ts';
 import { ipSubject } from './ip.ts';
 import { eventId } from './changes/guard.ts';
+import { logoUrl } from './changes/views.ts';
 import { log } from './log.ts';
 import { placedStub } from './placement.ts';
 import { type Caller, PARENT_ORIGIN_HEADER, RELAY_KEY_HEADER, checkCaller, isTestApp, preflightAllows } from './origins.ts';
@@ -384,6 +385,9 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
       serverTimeMs: Date.now(),
       autoApprovePolicy,
       rawSign,
+      // Batch C11: the app's logo on the files origin (`<FILES_ORIGIN>/<logo_key>`), or null (no logo, or no files
+      // origin in this env). The auth pages show it beside the name; older clients ignore the field.
+      logoUrl: logoUrl(env.FILES_ORIGIN, app.logo_key) ?? null,
     });
   } catch {
     return reject(ctx, 502, 'near_unavailable', 'Could not read the app registry');

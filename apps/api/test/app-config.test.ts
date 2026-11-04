@@ -32,12 +32,29 @@ describe('GET /v1/app (batch B)', () => {
       serverTimeMs: expect.any(Number),
       autoApprovePolicy: null,
       rawSign: 'off',
+      logoUrl: null,
       // A pk_test_ app's response carries the API's own time and phases (docs/api.md "Timings").
       timings: { totalMs: expect.any(Number), phases: { app: expect.any(Number), limits: expect.any(Number), settings: expect.any(Number), chain: expect.any(Number) } },
       requestId: expect.any(String),
     });
     expect(b.serverTimeMs as number).toBeGreaterThanOrEqual(before);
     expect(b.serverTimeMs as number).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('answers logoUrl: <FILES_ORIGIN>/<logo_key> with a logo and a files origin, else null (batch C11)', async () => {
+    const app = await seedApp();
+    chain({ [newAud()]: app.scope });
+    const key = `logos/${app.id}/${'ab'.repeat(32)}.png`;
+    // No logo: null, with or without a files origin.
+    expect((await body(await call('/v1/app', { method: 'GET', headers: appHeaders(app), env: { FILES_ORIGIN: 'https://files.test' } }))).logoUrl).toBeNull();
+    await env.DB.prepare('UPDATE apps SET logo_key = ?1 WHERE id = ?2').bind(key, app.id).run();
+    const res = await call('/v1/app', { method: 'GET', headers: appHeaders(app), env: { FILES_ORIGIN: 'https://files.test' } });
+    expect(res.status).toBe(200);
+    expect((await body(res)).logoUrl).toBe(`https://files.test/${key}`);
+    // The Hana pages read the same answer (the vault and the export window).
+    expect((await body(await call('/v1/app', { method: 'GET', headers: hanaHeaders(app, VAULT), env: { FILES_ORIGIN: 'https://files.test' } }))).logoUrl).toBe(`https://files.test/${key}`);
+    // An env without the dashboard blocks has no files origin: no URL, even with a logo_key.
+    expect((await body(await get(appHeaders(app)))).logoUrl).toBeNull();
   });
 
   it('a pk_live_ app gets no timings', async () => {

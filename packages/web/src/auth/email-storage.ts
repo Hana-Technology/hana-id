@@ -10,7 +10,7 @@
 //   `hana.dt.<b64url(sha256(trimmed lowercased address))>`: the issuer's owner proof of an earlier verified code at that
 //   exact address (`dt2.…`, 30 days, D198), sent with the next `start`. The key is a hash so the store lists no address.
 //   A ticket can't sign anyone in: it only lets its owner's code mail past the shared limits. At most 5 are kept.
-import { RELAY_ID_PATTERN, type LoginMethod, base64UrlDecode, base64UrlEncode, isEmailHint, sha256, utf8 } from '@hana-id/core';
+import { RELAY_ID_PATTERN, type LoginMethod, base64UrlDecode, base64UrlEncode, isEmailHint, isLogoUrl, sha256, utf8 } from '@hana-id/core';
 import { LOGIN_ENTRY_MAX_AGE_MS } from './login-storage.ts';
 
 export const EMAIL_ENTRY_PREFIX = 'hana.email.';
@@ -35,6 +35,8 @@ export type OpenerKind = 'partner' | 'vault';
 export interface EmailContext {
   pk: string;
   appName: string;
+  /** Batch C11: the app's logo URL as auth-params carried it (shown only from the build's files origin, logo.ts). */
+  logoUrl?: string;
   parentOrigin: string;
   scopeId: string;
   sessionPublicKey: Uint8Array;
@@ -83,6 +85,7 @@ function decode(raw: string | null): Stored | null {
     const ok =
       typeof c.pk === 'string' &&
       typeof c.appName === 'string' &&
+      (c.logoUrl === undefined || isLogoUrl(c.logoUrl)) &&
       typeof c.parentOrigin === 'string' &&
       typeof c.scopeId === 'string' &&
       typeof c.sessionPublicKey === 'string' &&

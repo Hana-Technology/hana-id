@@ -28,6 +28,11 @@ export const AUDIT_DETAIL_KEYS = {
   'org.frozen': [],
   'org.unfrozen': [],
   'change.link_cancel': ['code'],
+  // Sign-in (batch C9). A refusal names no person: a known user by id (`target`), anyone else by the sha256 of the
+  // address Google verified (spec "Membership rules at sign-in"), never the address itself.
+  'session.signed_in': ['invite'],
+  'session.signed_out': [],
+  'signin.refused': ['code', 'emailSha256'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type AuditAction = keyof typeof AUDIT_DETAIL_KEYS;

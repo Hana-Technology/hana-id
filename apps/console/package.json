@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p scripts"
   },
   "dependencies": {
-    "@hana-id/console-core": "workspace:*"
+    "@hana-id/console-core": "workspace:*",
+    "@hana-id/oidc": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.4.4",

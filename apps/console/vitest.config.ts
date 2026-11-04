@@ -40,7 +40,8 @@ export default defineConfig(async () => {
       cloudflareTest({
         wrangler: { configPath: TEST_WRANGLER_CONFIG },
         miniflare: {
-          bindings: { TEST_MIGRATIONS: migrations, TEST_API_MIGRATIONS: apiMigrations },
+          // The console client's secret is a throwaway test value: Google's token endpoint is mocked in the tests.
+          bindings: { TEST_MIGRATIONS: migrations, TEST_API_MIGRATIONS: apiMigrations, CONSOLE_GOOGLE_CLIENT_SECRET: 'test-console-client-secret' },
           d1Databases: { HOT_DB: HOT_DB_ID },
           serviceBindings: { API_ADMIN: { name: TEST_MANIFEST.cloudflare.workerName, entrypoint: 'AdminRpc' } },
           workers: [

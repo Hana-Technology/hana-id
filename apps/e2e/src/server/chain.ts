@@ -41,6 +41,12 @@ export interface IdentityRef {
   sub: string;
 }
 
+/** A relayed transaction that carried ID tokens (Chain.relayed). */
+export interface RelayedTx {
+  method: string;
+  tokens: { provider: string; sub: string; claims: string[] }[];
+}
+
 /** A member of an account (contract v3 `Member`, plus its `sub` for the mock's own use). */
 interface Member {
   key: string;
@@ -162,6 +168,11 @@ export class Chain {
   readonly sessions = new Map<string, ChainSession>();
   /** Relayed transactions by hash: the CKD result of a login or derive. */
   readonly txs = new Map<string, unknown>();
+  /**
+   * Every transaction the relayer sent to hana-signer that carried an ID token, in order: the method and, per token,
+   * its identity and claim names (never the token). What "reached the chain" means for the tests (`GET /__e2e/chain`).
+   */
+  readonly relayed: RelayedTx[] = [];
 
   newTxHash(): string {
     return base58.encode(crypto.getRandomValues(new Uint8Array(32)));

@@ -34,7 +34,7 @@ export interface App {
   pk: string;
 }
 
-export type Result = { state: 'pending' } | { state: 'ok'; value: unknown } | { state: 'error'; code: unknown; message: string; reason: unknown };
+export type Result = { state: 'pending' } | { state: 'ok'; value: unknown } | { state: 'error'; code: unknown; message: string; reason: unknown; data: unknown };
 
 /** POST /v1/login exactly (not /v1/login-relay/…). */
 export const LOGIN_ENDPOINT = new RegExp(`^${API_URL.replace(/[.]/gu, '\\.')}/v1/login$`, 'u');
@@ -171,6 +171,21 @@ export async function revokeShares(app: App): Promise<number> {
 
 export async function shares(app: App): Promise<{ counter: number; revoked: boolean; partnerOrigin: string }[]> {
   return (await (await fetch(`${API_URL}/__e2e/apps/${app.pk}/shares`)).json()) as { counter: number; revoked: boolean; partnerOrigin: string }[];
+}
+
+/** A relayed hana-signer transaction that carried ID tokens (src/server/chain.ts RelayedTx): identities and claim names. */
+export interface RelayedTx {
+  method: string;
+  tokens: { provider: string; sub: string; claims: string[] }[];
+}
+
+/**
+ * What reached the mocked chain through the relayer (GET /__e2e/chain): the transactions that carried a token and the
+ * live sessions, of the Google or email `sub` when given (else of every test so far).
+ */
+export async function chainView(sub?: string): Promise<{ relayed: RelayedTx[]; sessions: number }> {
+  const q = sub === undefined ? '' : `?sub=${encodeURIComponent(sub)}`;
+  return (await (await fetch(`${API_URL}/__e2e/chain${q}`)).json()) as { relayed: RelayedTx[]; sessions: number };
 }
 
 /** Raw EVM transactions the mocked chain received. */

@@ -190,6 +190,20 @@ describe('Google stub', () => {
     expect(await verifyGoogleIdToken(token, { clientId: 'other', nonce: 'n', nowMs: Date.now(), jwks: keys as never })).toMatchObject({ ok: false });
   });
 
+  it('puts the email in the ID token only for an emailInIdToken account, which the vault’s verifier refuses', async () => {
+    const g = new GoogleStub();
+    const r = { clientId: 'c', nonce: 'n', state: 's', maxAge: null, redirectUri: CALLBACK_URL };
+    const { keys } = await g.jwks();
+    const clean = await g.idToken(r, { sub: '42', label: 'x', email: 'x@gmail.com', emailVerified: true });
+    expect(await verifyGoogleIdToken(clean, { clientId: 'c', nonce: 'n', nowMs: Date.now(), jwks: keys as never })).toMatchObject({ ok: true });
+    const leaky = await g.idToken(r, { sub: '43', label: 'y', email: 'y@gmail.com', emailVerified: true, emailInIdToken: true });
+    expect(await verifyGoogleIdToken(leaky, { clientId: 'c', nonce: 'n', nowMs: Date.now(), jwks: keys as never })).toMatchObject({ ok: false, code: 'token_has_pii', claim: 'email' });
+    expect(g.issued.map((t) => [t.sub, t.claims.includes('email'), t.claims.includes('email_verified')])).toEqual([
+      ['42', false, false],
+      ['43', true, true],
+    ]);
+  });
+
   it('serves a chooser whose links carry the state and a token, and a 400 for a bad request', async () => {
     const g = new GoogleStub();
     const ok = await g.authorize(authUrl());
@@ -222,6 +236,7 @@ describe('the Hana API: apps/api’s Worker, /v1/login and /v1/derive mocked', (
   const setup = () => {
     const d1 = new D1Shim();
     chain.sessions.clear();
+    chain.relayed.length = 0;
     const api = new MockApi(d1, chain, modules, { nearRpc });
     return { d1, api };
   };
@@ -236,12 +251,12 @@ describe('the Hana API: apps/api’s Worker, /v1/login and /v1/derive mocked', (
   };
 
   /** A spent one-use session via the mocked /v1/login, and the key that signs for it. */
-  const loggedIn = async (api: MockApi, pk: string, parent = PARTNER_ORIGIN) => {
+  const loggedIn = async (api: MockApi, pk: string, parent = PARTNER_ORIGIN, extraClaims: Record<string, unknown> = {}) => {
     const session = await newSessionKey();
     const salt = randomBytes(32);
     const expiresAtMs = Date.now() + 3_600_000;
     const nonce = sessionNonce({ signer: E2E_ENV.signer, scopeId: 'e2e', sessionPublicKey: session.publicKey, expiresAtMs, keyIndex: 0, maxUses: 1, salt });
-    const jwt = `x.${base64UrlEncode(new TextEncoder().encode(JSON.stringify({ sub: '42', nonce })))}.y`;
+    const jwt = `x.${base64UrlEncode(new TextEncoder().encode(JSON.stringify({ sub: '42', nonce, ...extraClaims })))}.y`;
     const key = newAppKey();
     const { pk1, pk2 } = key.publicKey.AppPublicKeyPV;
     const body = { jwt, sessionPublicKey: Array.from(session.publicKey), expiresAtMs, salt: Array.from(salt), keyIndex: 0, maxUses: 1, signature: Array.from(await signDerive(session.keyPair.privateKey, 1, pk1, pk2)), pk1, pk2 };
@@ -383,6 +398,21 @@ describe('the Hana API: apps/api’s Worker, /v1/login and /v1/derive mocked', (
     expect(api.revokeApp(pk)).toBe(0);
     expect(api.shares(pk)).toEqual([{ counter: 1, revoked: true, partnerOrigin: PARTNER_ORIGIN }]);
     expect(await (await unlock(2)).json()).toMatchObject({ code: 'share_revoked' });
+  });
+
+  it('refuses a Google token with a claim outside the allow-list (apps/api’s token_has_pii) before relaying it, and records what it relays', async () => {
+    const { api } = setup();
+    const { pk } = api.createApp({ origins: [PARTNER_ORIGIN] });
+    const before = chain.relayed.length;
+    const leaky = await loggedIn(api, pk, PARTNER_ORIGIN, { email: 'leak@gmail.com', email_verified: true });
+    expect(leaky.res.status).toBe(400);
+    expect(await leaky.res.json()).toMatchObject({ code: 'token_has_pii', data: { claim: 'email' } });
+    expect(chain.relayed.length).toBe(before);
+    expect(api.chainView('42')).toEqual({ relayed: [], sessions: 0 });
+    const clean = await loggedIn(api, pk);
+    expect(clean.res.status).toBe(200);
+    expect(api.chainView('42')).toEqual({ relayed: [{ method: 'create_session_and_derive', tokens: [{ provider: 'google', sub: '42', claims: ['sub', 'nonce'] }] }], sessions: 1 });
+    expect(api.chainView('43')).toEqual({ relayed: [], sessions: 0 });
   });
 
   it('refuses a share for a session that can still derive, and vault preflights from anywhere but vaultOrigin', async () => {

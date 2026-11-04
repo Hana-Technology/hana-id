@@ -29,3 +29,6 @@ apps/console/wrangler.vitest.jsonc
 # Generated per env by apps/email-issuer/scripts/gen-wrangler.ts (real D1 ids), and the issuer tests' config.
 apps/email-issuer/wrangler.jsonc
 apps/email-issuer/wrangler.vitest.jsonc
+# Generated per env by apps/admin/scripts/gen-wrangler.ts (the admin Hyperdrive id), and the admin tests' config.
+apps/admin/wrangler.jsonc
+apps/admin/wrangler.vitest.jsonc

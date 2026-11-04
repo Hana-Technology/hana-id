@@ -37,7 +37,7 @@ import { ackMemberNotice, invitesOf, issueInvite, pendingMemberNotices, revokeIn
 import { ipPrefix } from './ip.ts';
 import { log } from './log.ts';
 import { disableUser, freezeOrg, getOrgRow, listOrgs, setMember } from './members.ts';
-import { membersOf } from './views.ts';
+import { grantsOf, membersOf } from './views.ts';
 
 type Answer<T extends object> = ({ ok: true } & T) | RpcFail;
 
@@ -94,6 +94,8 @@ export class StaffRpc extends WorkerEntrypoint<Env> {
       org: await getOrgRow(this.db, i.orgId),
       members: await membersOf(this.db, i.orgId, w.now),
       invites: await invitesOf(this.db, i.orgId),
+      // Additive (D283): the live owner grants, so staff can cancel one by id from the admin console.
+      grants: await grantsOf(this.db, i.orgId),
     }));
   }
 

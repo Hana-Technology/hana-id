@@ -1,0 +1,263 @@
+// What every email says (docs/batch-c-spec.md "Email", "Notice and cancel", "Invites and owner grants", "On-chain
+// owner actions"). Builders only: who gets each message and when it is sent is notices.ts, feed.ts and watcher.ts.
+// The link tokens are passed in as finished URLs; nothing here sees a key.
+import type { AppChange, AuditRow, InviteView, MemberNotice, SecurityEvent } from '@hana-id/console-core';
+import type { ChangeNotice } from '../env.ts';
+import { type Block, type Rendered, duration, isoTime, oneLine, render } from './render.ts';
+
+export interface MailContext {
+  env: string;
+  consoleOrigin: string;
+}
+
+const KIND_LABEL: Record<string, string> = { origin_add: 'a new allowed origin', policy_set: 'an auto-approve policy', raw_sign_on: 'raw signing (with approval)' };
+
+/** Every path in a policy where `addressArgs` is `'any'` (any address may be passed: the notice calls each out). */
+export function anyAddressPaths(v: unknown, path = 'policy'): string[] {
+  if (Array.isArray(v)) return v.flatMap((x, i) => anyAddressPaths(x, `${path}[${i}]`));
+  if (!v || typeof v !== 'object') return [];
+  const out: string[] = [];
+  for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+    if (k === 'addressArgs' && (x === 'any' || (Array.isArray(x) && x.includes('any')) || (x && typeof x === 'object' && Object.values(x).includes('any')))) out.push(`${path}.${k}`);
+    else out.push(...anyAddressPaths(x, `${path}.${k}`));
+  }
+  return out;
+}
+
+/** `change_pending` (blocking): the change as the API stored it, the delay, and the cancel link. */
+export function changePending(c: MailContext, n: ChangeNotice, o: { cancelUrl: string; delayMs: number }): Rendered {
+  const ch = n.change;
+  const what = KIND_LABEL[ch.kind] ?? ch.kind;
+  const rows: [string, string][] = [
+    ['App', `${n.app.name} (${n.app.id})`],
+    ['Organisation', n.app.orgId],
+    ['Scope', `${n.app.scopeId} (${n.app.environment})`],
+    ['Change', `${ch.kind} (${ch.id})`],
+  ];
+  const blocks: Block[] = [{ kind: 'p', text: `Someone proposed ${what} for ${oneLine(n.app.name, 80)}. It is not in force yet.` }];
+  if (ch.kind === 'origin_add' && ch.origin) {
+    rows.push(['Origin', ch.origin]);
+    if (ch.display && ch.display !== ch.origin) rows.push(['Shown as', ch.display]);
+  }
+  if (ch.kind === 'policy_set' && ch.policyId) rows.push(['Policy id', ch.policyId]);
+  rows.push(['Proposed by', `${ch.proposedByKind === 'hana' ? 'Hana staff' : ch.proposedByKind === 'member' ? 'a console member' : 'the system'} (${ch.proposedBy})`]);
+  rows.push(['Proposed at', isoTime(ch.proposedAt)]);
+  if (ch.requestCountry) rows.push(['Request country', ch.requestCountry]);
+  blocks.push({ kind: 'kv', rows });
+  if (ch.idn) blocks.push({ kind: 'warn', text: `This origin is an internationalised domain name. Its ASCII form is ${ch.origin ?? ''}; check that it is the domain you expect and not a lookalike.` });
+  if (ch.kind === 'policy_set' && n.policy !== undefined) {
+    const p = n.policy as { label?: unknown; maxConsentMs?: unknown; limits?: unknown };
+    const prow: [string, string][] = [];
+    if (typeof p.label === 'string') prow.push(['Label', p.label]);
+    if (typeof p.maxConsentMs === 'number') prow.push(['Consent lasts up to', duration(p.maxConsentMs)]);
+    if (p.limits && typeof p.limits === 'object') prow.push(['Limits', JSON.stringify(p.limits)]);
+    if (prow.length) blocks.push({ kind: 'kv', rows: prow });
+    const any = anyAddressPaths(n.policy);
+    if (any.length) blocks.push({ kind: 'warn', text: `The policy lets any address be passed at: ${any.join(', ')}.` });
+    blocks.push({ kind: 'p', text: 'The full policy (contracts, functions and limits):' }, { kind: 'pre', text: JSON.stringify(n.policy, null, 2).slice(0, 20_000) });
+  }
+  if (ch.kind === 'raw_sign_on') blocks.push({ kind: 'warn', text: 'Raw signing lets the app ask users to sign arbitrary bytes (each with the user’s approval).' });
+  blocks.push(
+    { kind: 'p', text: `It takes effect about ${duration(o.delayMs)} after this notice. It may take effect at once if it qualifies for a waiver: a loopback origin on a test app, or a scope that no user has used yet.` },
+    { kind: 'p', text: 'If you did not expect this change, cancel it now. The page asks you to confirm; opening the link alone changes nothing.' },
+    { kind: 'link', label: 'Cancel this change', url: o.cancelUrl },
+    { kind: 'p', text: 'An owner can also cancel it in the console, and Hana security can cancel it from the admin console.' },
+  );
+  return render(c.env, `Pending change for ${oneLine(n.app.name, 60)}: ${ch.kind}`, blocks, c.consoleOrigin);
+}
+
+const orgLabel = (invite: InviteView, orgName: string | undefined): string => (invite.newOrgName ? `${invite.newOrgName} (new organisation)` : orgName ? `${orgName} (${invite.orgId})` : (invite.orgId ?? 'an organisation'));
+
+const byLabel = (kind: string, id: string): string => (kind === 'hana' ? `Hana staff (${id})` : `an owner (${id})`);
+
+/** `member_invite`, to the invitee: the link (its token in the fragment, so it never reaches a server log). */
+export function inviteLink(c: MailContext, invite: InviteView, o: { orgName?: string; inviteUrl: string }): Rendered {
+  return render(
+    c.env,
+    `You're invited to ${oneLine(invite.newOrgName ?? o.orgName ?? 'an organisation', 60)} on Hana ID`,
+    [
+      { kind: 'p', text: `You have been invited to join ${orgLabel(invite, o.orgName)} in the Hana ID partner console as ${invite.role === 'owner' ? 'an owner' : 'a viewer'}.` },
+      { kind: 'p', text: `Sign in with the Google account of this address. The invitation expires on ${isoTime(invite.expiresAt)}.` },
+      { kind: 'link', label: 'Accept the invitation', url: o.inviteUrl },
+      { kind: 'p', text: 'If you were not expecting this, ignore this email.' },
+    ],
+    c.consoleOrigin,
+  );
+}
+
+/** `member_invite`, the notice to every owner, the security contacts and the alias. */
+export function inviteNotice(c: MailContext, invite: InviteView, o: { orgName?: string }): Rendered {
+  return render(
+    c.env,
+    `New ${invite.role} invited to ${oneLine(invite.newOrgName ?? o.orgName ?? invite.orgId ?? 'an organisation', 60)}`,
+    [
+      { kind: 'p', text: `A ${invite.role} was invited to ${orgLabel(invite, o.orgName)} in the Hana ID partner console.` },
+      {
+        kind: 'kv',
+        rows: [
+          ['Invited', invite.email],
+          ['Role', invite.role],
+          ['Invited by', byLabel(invite.createdByKind, invite.createdBy)],
+          ['Invited at', isoTime(invite.createdAt)],
+          ['Expires', isoTime(invite.expiresAt)],
+          ['Invite', invite.id],
+        ],
+      },
+      { kind: 'p', text: 'If this is unexpected, an owner can revoke the invite in the console (Members), or ask Hana security to revoke it.' },
+    ],
+    c.consoleOrigin,
+  );
+}
+
+/** `owner_grant`: to every owner, the contacts and the alias, with the cancel link. */
+export function ownerGrantNotice(c: MailContext, n: MemberNotice, o: { orgName?: string; cancelUrl: string; delayMs: number }): Rendered {
+  const g = n.grant!;
+  const who = n.invite?.email ?? n.member?.email ?? g.userId ?? 'a member';
+  const when = n.invite ? `${duration(o.delayMs)} after they accept the invitation` : `${duration(o.delayMs)} after this notice`;
+  return render(
+    c.env,
+    `Owner rights requested in ${oneLine(o.orgName ?? g.orgId, 60)}`,
+    [
+      { kind: 'p', text: `${who} is to become an owner of ${o.orgName ? `${o.orgName} (${g.orgId})` : g.orgId}. Until then they are a viewer.` },
+      {
+        kind: 'kv',
+        rows: [
+          ['Becomes owner', when],
+          ['Granted by', byLabel(g.grantedByKind, g.grantedBy)],
+          ['Requested at', isoTime(g.createdAt)],
+          ['Grant', g.id],
+        ],
+      },
+      { kind: 'p', text: 'If this is unexpected, cancel it. The page asks you to confirm; opening the link alone changes nothing. Cancelling leaves the person a viewer.' },
+      { kind: 'link', label: 'Cancel the owner grant', url: o.cancelUrl },
+      { kind: 'p', text: 'Any owner can also cancel it in the console, and Hana security from the admin console.' },
+    ],
+    c.consoleOrigin,
+  );
+}
+
+// ---- the feed (best effort, after the fact) ----
+
+const detailText = (d: Record<string, unknown>): string => {
+  const s = JSON.stringify(d);
+  return s === '{}' ? '' : s.slice(0, 400);
+};
+
+/** One digest per org and source: the rows, oldest first. */
+export function changesDigest(c: MailContext, orgId: string, rows: AppChange[]): Rendered {
+  return render(
+    c.env,
+    `${rows.length} app change${rows.length === 1 ? '' : 's'} in ${orgId}`,
+    [
+      { kind: 'p', text: `These changes were made to the apps of ${orgId}. They are already in force or done; nothing here needs an answer unless you didn't expect it.` },
+      { kind: 'list', items: rows.map((r) => `${isoTime(r.at)} ${r.kind}${r.appId ? ` on ${r.appId}` : ''} by ${r.actorKind} ${r.actorId}${detailText(r.detail) ? ` ${detailText(r.detail)}` : ''}`) },
+      { kind: 'p', text: 'If one is unexpected, an owner can undo it in the console, or ask Hana security.' },
+    ],
+    c.consoleOrigin,
+  );
+}
+
+export function auditDigest(c: MailContext, orgId: string | null, rows: AuditRow[]): Rendered {
+  return render(
+    c.env,
+    `${rows.length} console event${rows.length === 1 ? '' : 's'}${orgId ? ` in ${orgId}` : ''}`,
+    [
+      { kind: 'p', text: `Members, invites and organisation settings changed${orgId ? ` in ${orgId}` : ''}:` },
+      { kind: 'list', items: rows.map((r) => `${isoTime(r.at)} ${r.action}${r.target ? ` ${r.target}` : ''} by ${r.actorKind} ${r.actorId} (${r.outcome})${detailText(r.details) ? ` ${detailText(r.details)}` : ''}`) },
+    ],
+    c.consoleOrigin,
+  );
+}
+
+export function securityDigest(c: MailContext, orgId: string | null, events: SecurityEvent[]): Rendered {
+  return render(
+    c.env,
+    `Security event${events.length === 1 ? '' : 's'}: ${[...new Set(events.map((e) => e.kind))].join(', ')}${orgId ? ` in ${orgId}` : ''}`,
+    [
+      { kind: 'p', text: 'The API recorded these security events:' },
+      { kind: 'list', items: events.map((e) => `${isoTime(e.detectedAt)} ${e.kind} (${e.id})${e.appId ? ` app ${e.appId}` : ''}${e.scopeId ? ` scope ${e.scopeId}` : ''} ${detailText(e.detail)}`) },
+      { kind: 'p', text: 'docs/playbooks.md has the recovery steps for each kind.' },
+    ],
+    c.consoleOrigin,
+  );
+}
+
+// ---- the on-chain watcher ----
+
+export const ownerText = (o: unknown): string => {
+  const v = o as { Near?: { account_id?: unknown }; Oidc?: { provider?: unknown; sub?: unknown } } | null;
+  if (v?.Near && typeof v.Near.account_id === 'string') return `NEAR account ${v.Near.account_id}`;
+  if (v?.Oidc && typeof v.Oidc.provider === 'string' && typeof v.Oidc.sub === 'string') return `${v.Oidc.provider} sign-in ${v.Oidc.sub}`;
+  return JSON.stringify(o).slice(0, 200);
+};
+
+export interface PendingOnChain {
+  scopeId: string;
+  orgId: string;
+  changeId: number;
+  change: unknown;
+  unlockAtMs: number;
+  /** The scope's owners now, to show which owners a SetOwners adds. */
+  currentOwners: unknown[];
+  /** SetAllowShared: the scope's apps' active origins (every one of them could then take shared-client logins). */
+  activeOrigins?: string[];
+}
+
+export function onChainPending(c: MailContext, p: PendingOnChain): Rendered {
+  const ch = p.change as { SetOwners?: { owners?: unknown[] }; AddClient?: { provider?: unknown; aud?: unknown }; SetAllowShared?: { allow?: unknown } } | null;
+  const blocks: Block[] = [];
+  let what = 'a change';
+  if (ch?.SetOwners && Array.isArray(ch.SetOwners.owners)) {
+    what = 'new owners';
+    const now = new Set(p.currentOwners.map((o) => JSON.stringify(o)));
+    const added = ch.SetOwners.owners.filter((o) => !now.has(JSON.stringify(o)));
+    blocks.push({ kind: 'p', text: `A proposal on chain replaces the owners of scope ${p.scopeId} with:` }, { kind: 'list', items: ch.SetOwners.owners.map((o) => `${ownerText(o)}${now.has(JSON.stringify(o)) ? '' : ' (NEW)'}`) });
+    if (added.some((o) => (o as { Oidc?: unknown }).Oidc)) blocks.push({ kind: 'warn', text: `It adds a sign-in owner: ${added.filter((o) => (o as { Oidc?: unknown }).Oidc).map(ownerText).join(', ')}. That identity could then propose changes for this scope.` });
+  } else if (ch?.AddClient) {
+    what = 'a new client';
+    blocks.push({ kind: 'p', text: `A proposal on chain adds a login client to scope ${p.scopeId}:` }, { kind: 'kv', rows: [['Provider', String(ch.AddClient.provider)], ['Client id', String(ch.AddClient.aud)]] });
+  } else if (ch?.SetAllowShared) {
+    what = 'shared login';
+    blocks.push({ kind: 'p', text: `A proposal on chain turns on shared login (Hana's shared Google client) for scope ${p.scopeId}.` });
+    if (p.activeOrigins) blocks.push({ kind: 'p', text: p.activeOrigins.length ? 'These origins are active on the scope’s apps and would accept shared-client logins:' : 'No origin is active on the scope’s apps.' }, ...(p.activeOrigins.length ? [{ kind: 'list' as const, items: p.activeOrigins }] : []));
+  } else {
+    blocks.push({ kind: 'pre', text: JSON.stringify(p.change, null, 2).slice(0, 5000) });
+  }
+  blocks.unshift({ kind: 'kv', rows: [['Scope', `${p.scopeId} (${p.orgId})`], ['Change', String(p.changeId)], ['Can execute from', isoTime(p.unlockAtMs)]] });
+  blocks.push({ kind: 'p', text: `Any owner of the scope can cancel it before then (cancel_change, in the console's scope page), or ask Hana security. If you made this proposal, no action is needed.` });
+  return render(c.env, `On-chain proposal for ${p.scopeId}: ${what}`, blocks, c.consoleOrigin);
+}
+
+export interface ScopeState {
+  owners: unknown[];
+  clients: [string, string][];
+  allowShared: boolean;
+}
+
+export function onChainChanged(c: MailContext, scopeId: string, orgId: string, before: ScopeState, after: ScopeState): Rendered {
+  const set = (l: unknown[]) => new Set(l.map((x) => JSON.stringify(x)));
+  const diff = (a: unknown[], b: unknown[]) => {
+    const sa = set(a);
+    const sb = set(b);
+    return { added: b.filter((x) => !sa.has(JSON.stringify(x))), removed: a.filter((x) => !sb.has(JSON.stringify(x))) };
+  };
+  const o = diff(before.owners, after.owners);
+  const cl = diff(before.clients, after.clients);
+  const items: string[] = [
+    ...o.added.map((x) => `owner added: ${ownerText(x)}`),
+    ...o.removed.map((x) => `owner removed: ${ownerText(x)}`),
+    ...cl.added.map((x) => `client added: ${(x as string[]).join(' ')}`),
+    ...cl.removed.map((x) => `client removed: ${(x as string[]).join(' ')}`),
+  ];
+  if (before.allowShared !== after.allowShared) items.push(`shared login ${after.allowShared ? 'turned on' : 'turned off'}`);
+  return render(
+    c.env,
+    `Scope ${scopeId} changed on chain`,
+    [
+      { kind: 'p', text: `The on-chain state of scope ${scopeId} (${orgId}) changed since the last check:` },
+      { kind: 'list', items },
+      { kind: 'p', text: 'This covers executed proposals and immediate owner actions (remove_client, disable_shared_login), whether or not they were sent through the console. If one is unexpected, contact Hana security.' },
+    ],
+    c.consoleOrigin,
+  );
+}

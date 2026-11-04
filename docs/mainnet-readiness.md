@@ -3,7 +3,8 @@
 Everything that must be true before Hana ID runs on mainnet with real funds. This is a current-state doc for the
 two founders to track. Update a row in the same branch as the change that moves it (rule in `CLAUDE.md`).
 
-Last verified: 2026-11-04 for rows 7.14, 7.15 and 9.4 (branch `feat/batch-c-12`: settlement's checks built, the
+Last verified: 2026-11-04 for rows 9.3 and 9.8 (branch `feat/batch-c-13`: retention built, the issuer's part manual, the
+directory expiry open; D360–D369); 2026-11-04 for rows 7.14, 7.15 and 9.4 (branch `feat/batch-c-12`: settlement's checks built, the
 admin's subrequest and cron budget, the rate source; D320–D329); 2026-11-04 for row 5.9 (branch `feat/batch-c-14`: the portal's ack built, D332); 2026-11-04 for row 1.7 (branch `feat/batch-c-9`: the code-flow spike built, not run, D295); 2026-11-04 for row 7.10 (branch `feat/batch-c-6-merge`: batch C6, the console sink scope, D238, on current `develop`); 2026-11-04 for row 7.11 (branch `docs/batch-c-users-support-id`: the Users screen and Support ID proposed, D275, D276); 2026-11-04 for row 7.1h (branch `feat/token-first-on`: the spike passed, `'token_first'` switched on, D270); 2026-11-04 for row 6.8 (branch `fix/sessions-allow-list`: the claim allow-list always on, D271, D274); 2026-11-04 for row 7.1h (branch `feat/spike-leg-e`: the spike's leg E, D270); 2026-11-04 for the "Not tracked as blockers" note (branch `docs/native-apps-spec`: the native apps spec on `develop`); 2026-11-03 for row 4.19 (branch `fix/8b-rereview`, the second NEAR provider, D263); 2026-11-03 for rows 7.1h and 7.1i (branch `feat/email-login-8b` review fixes, D263–D267); 2026-11-03 for
 rows 7.1f and 7.1g (branch `feat/email-login-8b`, automatic linking, D254–D259); 2026-11-02
 before that (branch `feat/email-login-8a`, plain email login in the web, D245–D249);
@@ -223,11 +224,12 @@ discarded at the freeze (D122).
 |---|---|---|---|---|---|
 | 9.1 | Legal advice on the non-custodial claim | Underpins key export and partner due diligence | not built | founder | D41 |
 | 9.2 | Legal review of Hana Home's privacy notice | Home lists a user's apps | not built | founder | D98; hana-home-spec Q16 |
-| 9.3 | Retention periods confirmed by the company's accountant (statements 7 years, raw usage 24 months, audit 5 years) | ATO record keeping, Privacy Act APP 11 | decision needed | founder | D90 |
+| 9.3 | Retention periods confirmed by the company's accountant (statements 7 years, raw usage 24 months, audit 5 years) | ATO record keeping, Privacy Act APP 11 | decision needed (the job applying them is built on `feat/batch-c-13`, D360) | founder | D90 |
 | 9.4 | Service contract terms: the NEAR/USD rate source (built as CoinGecko's daily history, a day's opening price, D325), retention periods, billing of partner-caused rejections above the threshold | Statements quote them | decision needed (the code names CoinGecko) | founder | D91, D93 Q17, D325; batch-c-spec |
 | 9.5 | Partner terms: delete a shared email on the user's request | The identity token's email claim | not built | founder | identity-token-spec "Storage and revocation" |
 | 9.6 | Enterprise contract: branded Google clients kept ≥ 2 years after exit, right to enable shared login at exit | Users of an exiting Enterprise partner can still export | not built | founder | D98 |
 | 9.7 | Billing: Stripe, plans and invoicing on hold; Sodax billed by service contract | Whether this changes before mainnet isn't stated | unclear: check | founder | D31 |
+| 9.8 | Personal data in the directories: an expiry for an identity's address row with no app left (D269 sets none), and the issuer's monthly purge automated (today `admin retention:issuer` by hand) | APP 11; a manual monthly step gets missed | decision needed (D363, D365) | founder | D269, D363, D365 |
 
 ## Inconsistencies found
 

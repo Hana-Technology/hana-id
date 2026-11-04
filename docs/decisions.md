@@ -4022,6 +4022,39 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 - Cost, accepted by the user: a table joining each address to a public wallet, so a reader of the issuer's D1 learns
   each user's on-chain balance and history; the privacy obligations that come with it are out of scope for now.
 - Caveat (as Privy): an app on its own Google client (D42) can read its users' addresses through Google regardless.
+- Accepted (security review, 2026-11-04): anyone can make google-record, or google-match, write directory rows for
+  their **own** Google account and any active app, including apps that account never logged in to: the endpoints
+  check the Google tokens and the session commitment, not that a session was opened, and `Origin` can be forged
+  server to server. Harmless to matching and linking, which read `email_hints` and never the directory; it affects
+  only the accuracy of the staff view (an app listed for a Google identity is a strong hint, not proof).
+- Accepted: under D270's token_first the popup on Hana's auth origin parses Google's tokeninfo answer, which includes
+  the address, in memory and keeps only `sub` (with `aud`, `azp` and `expires_in` checked). Nothing of it is relayed,
+  stored or logged.
+- Review fixes (branch `fix/user-emails-review`, 2026-11-04; the REST read and the `wrong_client` exception to
+  confirm):
+  - Writes land out of order (`waitUntil`): an upsert updates `email`, `email_verified`, `hosted` (and an app row's
+    `scope_id`) only when its `last_seen_ms` ≥ the row's; `first_seen_ms` is the MIN, `last_seen_ms` the MAX
+    (`directory.ts`).
+  - A Google row with `email_verified = 0` is that account's claim to the address, possibly someone else's address:
+    `user:find --email` lists such rows apart under "UNVERIFIED: this Google account claims the address but Google
+    hasn't verified it; don't treat it as the owner", `user:list` tags them, `--json` has `unverifiedClaim`
+    (`admin-users.ts`).
+  - The CLI's statement (which can hold the searched address) never goes in a process argument (`d1.ts`
+    `issuerD1Execute`): locally a 0600 file in `.secrets/tmp/` (0700) passed as `wrangler d1 execute --file`, deleted
+    in a `finally` (a killed run's file is swept after 15 min); remotely D1's REST query endpoint with the operator's
+    wrangler credentials (`wrangler auth token --json`, read over a pipe), because wrangler 4.151.1's `--remote
+    --file` is D1's import: the file goes to Cloudflare's import bucket, the database is unavailable while it runs,
+    and only counts come back, never rows. Rejected: keeping `--command` for the remote read (the address in `ps`
+    and in endpoint-monitoring logs of the operator's machine); fetching every row and filtering locally (doesn't
+    scale).
+  - google-record is called only after `/v1/login` succeeds and the key passes its check, in the background, never
+    awaited, so a refused or cancelled login isn't recorded as a login to the app (`vault/login.ts`). google-match
+    stays before the login (matching needs it).
+  - A record-only login (token_first, no email login) no longer depends on tokeninfo: when tokeninfo gives no
+    answer or refuses the token, the popup drops the access token, writes nothing to slot 1 and makes batch B's
+    openid request (account chooser, the login's nonce); its ID token is relayed without `access: 'follow'`, so the
+    vault records nothing and the login goes on (`callback-page.ts` `recordOnlyFallback`). Another client's token
+    (`wrong_client`) still ends it: that is tampering, not an outage. Apps with email login stay fail-closed (D255).
 - Rejected: encrypting the column (exact-match search only; staff want Privy-like search); showing partners the
   address by default.
 
@@ -4037,7 +4070,8 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   google-match's directory write (`apps/email-issuer/src/handlers.ts` `checkGoogleSignIn`, `handleGoogleRecord`);
   the silent failure and `'one_request'`'s removal are D273. Tested for both flows (unit and the vault harness); no
   Playwright run of `'token_first'` (D273) · Depends on the spike: tokeninfo must answer the browser's CORS POST (else
-  every token_first login ends `tokeninfo_unavailable`); a command-line check on 2026-11-04 (`feat/spike-leg-e`) saw
+  every token_first login of an app with email login ends `tokeninfo_unavailable`; a record-only login falls back to
+  batch B's openid login and records nothing, D269's review fixes); a command-line check on 2026-11-04 (`feat/spike-leg-e`) saw
   it echo any `Origin` and allow the preflight, leg E confirms it in a real browser · Amends D254 (the flow), D264 (no explainer screen under
   it), D25 unchanged
 - Decision: a third flow, `'token_first'`. The login's first request is `response_type=token`, `scope=openid email`
@@ -4224,6 +4258,8 @@ side-by-side reads, view timeouts, the login's retry and its timings) and D262 (
 frame retry, `vault_unavailable`'s reasons).
 To confirm from `feat/google-token-first`: D273 (token_first's one interactive openid-only retry, `'one_request'`
 removed, the callback's claim allow-list before relaying).
+To confirm from `fix/user-emails-review`: D269's review fixes (the CLI's remote read through D1's REST API instead of
+wrangler; a record-only login that still ends on another client's access token).
 To confirm from `feat/scope-email-client-tool`: D253 (dev envs mint the email client proof locally; production keeps
 the issuer's Access route).
 To confirm from the identity token's step 7 (the KMS signer's code): D215 (the manifest shape and credentials), D216

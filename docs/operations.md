@@ -1,6 +1,9 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-04 (branch `feat/google-token-first`: "Turning linking on (batch 8b)"'s spike
+Last verified against code: 2026-11-04 (branch `fix/user-emails-review`: "User directory (D269)": the CLI's
+statement off the argv (a 0600 `.secrets/tmp/` file locally, D1's REST API remotely; why not wrangler's
+`--remote --file`), unverified Google rows, order-safe writes, google-record after `/v1/login`, what a row proves;
+the `admin user:*` failures); 2026-11-04 (branch `feat/google-token-first`: "Turning linking on (batch 8b)"'s spike
 paragraph, switching to `'token_first'`, the user directory's Google rows, D270, D273); 2026-11-04 (branch `fix/sessions-allow-list`: the smoke direct page's openid-only sign-in and its redirect URI, `REJECT_PII_ON_SESSIONS` retired, D271); 2026-11-04 (branch `feat/user-emails`: `admin user:list` / `user:find` in "Admin CLI",
 "User directory (D269)" under "Email issuer" with applying migration 0002 on sandbox-dev, the runbook's
 `directory_write_failed`); 2026-11-04 (branch `feat/spike-leg-e`: "Google's verified email: the spike", leg E and the D270 gate); 2026-11-03 (branch `docs/sandbox-dev-state`: what sandbox-dev runs, per the operator on 2026-11-03: a state note under the hot DB gate, the watchdog's email pins and the email issuer sections); 2026-11-03 (branch `fix/8b-rereview`: "Turning linking on (batch 8b)"'s slow second
@@ -1991,8 +1994,16 @@ the address, `email_verified`, `hosted`, first and last seen) and `user_email_ap
 D1 (migration `0002_user_emails.sql`; `docs/api.md` "Durable Objects, D1 and bindings"). An email login writes its row
 at every successful `verify`, after the answer; a Google login writes its row at google-match once its checks pass
 (apps with email login), and under `'token_first'` (D270, built, not in force) at google-record (apps without email
-login): userinfo's address, `email_verified` and `hosted`. A failed write logs `directory_write_failed` and never fails a login. Nothing
-partner-facing reads it. There is no backfill: a user appears at their first login after the migration.
+login), only once `/v1/login` has succeeded: userinfo's address, `email_verified` and `hosted`. A failed write logs
+`directory_write_failed` and never fails a login. Writes can land out of order; a row keeps the newest write's address,
+`email_verified`, `hosted` and scope, and the widest seen window. Nothing partner-facing reads it. There is no
+backfill: a user appears at their first login after the migration.
+
+Two limits on what a row means (D269): a Google row with `email_verified = 0` is only that account's **claim** to
+the address (anyone can put any address on a Google account), never proof that it owns it; and anyone can make
+google-record or google-match write rows for their own Google account and any active app, even one it never logged
+in to, so an app listed for a Google identity is a strong hint, not proof. Matching and linking never read the
+directory (they read `email_hints`).
 
 **Applying migration 0002 on sandbox-dev** (the user runs this, from the main checkout; additive, two new tables, so
 no rollback step: an older Worker ignores them). Apply it before deploying an issuer that writes the directory (in the
@@ -2009,8 +2020,8 @@ Check: `migrations list` shows nothing pending; after an email login on the demo
 --limit 1` shows it. Other envs: the same with `hana-id-email-issuer-<env>`.
 
 **Reading it** (Hana staff with Cloudflare access to the issuer's D1; `$A` = `corepack pnpm --filter @hana-id/scripts
-admin <env>`, `--remote` for the deployed D1, without it the local one in `apps/email-issuer/.wrangler/state`; needs
-`apps/email-issuer/wrangler.jsonc` from `gen`):
+admin <env>`, `--remote` for the deployed D1 (wrangler logged in, or `CLOUDFLARE_API_TOKEN`), without it the local
+one in `apps/email-issuer/.wrangler/state`, which needs `apps/email-issuer/wrangler.jsonc` from `gen`):
 
 ```sh
 $A user:list --remote                                   # newest first by last seen, 50 by default
@@ -2024,11 +2035,33 @@ $A user:find --remote --json
 Each user: the address, provider, `sub`, verified, first and last seen, and per app its scope and the identity's own
 on-chain path `{scope}#{provider}#{sub}#0` (a linked member's wallet is its account root's: `get_identity`). An
 exact address matches as typed (lowercased: Google rows) and normalized (`@hana-id/email`: email rows, so
-`Alice.Smith@gmail.com` finds `alicesmith@gmail.com`). The commands only SELECT. **The addresses are for this
-terminal only**: type them on stdin (`-`, or `user:find` with no flag) so they stay out of the shell history, never
-redirect the output to a file outside `.secrets/`, never paste them into a ticket or chat. The CLI runs wrangler with
-`WRANGLER_WRITE_LOGS=false` (wrangler otherwise copies its output, the rows included, to `~/.wrangler/logs`), and no
-metrics or error reports.
+`Alice.Smith@gmail.com` finds `alicesmith@gmail.com`). **Unverified Google rows** (`email_verified = 0`):
+`user:find` lists the verified users first and these apart, after "UNVERIFIED: this Google account claims the address
+but Google hasn't verified it; don't treat it as the owner" ("No verified user with that address" when there are only
+these); `user:list` tags each one's address line `[UNVERIFIED: claimed, not verified by Google]` and counts them under
+the header; `--json` carries `unverifiedClaim: true` on each (the verified first in `user:find`). Never treat such a
+row as the address's owner in support. The commands only SELECT. **The addresses are for this terminal only**: type
+them on stdin (`-`, or `user:find` with no flag) so they stay out of the shell history, never redirect the output to
+a file outside `.secrets/`, never paste them into a ticket or chat.
+
+The statement never goes in a process argument (`ps` and endpoint monitoring would see the searched address;
+`scripts/lib/d1.ts` `issuerD1Execute`):
+
+- **Local** (no `--remote`): the CLI writes it to a random `d1-<hex>.sql` file, mode 0600, in `.secrets/tmp/` (created
+  0700; `.secrets/` is gitignored), runs `wrangler d1 execute <issuer D1> --local --json --file <it>`, and deletes it
+  in a `finally`. A run killed mid-way (Ctrl-C while wrangler runs) can leave its file: the next run removes this
+  helper's files older than 15 minutes, or delete `.secrets/tmp/d1-*.sql` by hand.
+- **`--remote`**: not wrangler's `--remote --file`, which in wrangler 4.151.1 is D1's import (the file uploaded to
+  Cloudflare's import bucket, the database unavailable to queries while it runs) and answers with counts, never rows.
+  The CLI reads the operator's credentials with `wrangler auth token --json` (over a pipe, never printed: an OAuth
+  token from `wrangler login`, refreshed if expired, or `CLOUDFLARE_API_TOKEN`, or `CLOUDFLARE_API_KEY` +
+  `CLOUDFLARE_EMAIL`), finds the account (`CLOUDFLARE_ACCOUNT_ID`, or the credentials' only account) and the database
+  by `emailIssuer.cloudflare.d1Name`, and POSTs the statement to D1's REST query endpoint (HTTPS body, 30 s timeout).
+  `CLOUDFLARE_API_BASE_URL` overrides the public API (needed for FedRAMP or Cloudflare's staging API). Errors name
+  Cloudflare's codes and messages with every quoted span replaced by `'…'`, so they never quote the statement.
+
+wrangler runs with `WRANGLER_WRITE_LOGS=false` (it otherwise copies its output, the rows or the token included, to
+`~/.wrangler/logs`), and no metrics or error reports.
 
 If `K_sub` were ever lost, the `sub` stored per address keeps the existing email users' wallets reachable (their
 paths are `{scope}#email#{sub}#0`; an issuer change would look the `sub` up here instead of computing it); users not in
@@ -2666,7 +2699,12 @@ Google token (`docs/contract-interface.md` "Gas of the email login calls" and "U
 | A login's `app` stage takes seconds (`pk_test_` timings) | the `GET /v1/app` the vault asked after `ready` was still out: `appServer*` say whether the API (D1, the registry views) or the network took the time (D261) | look at the `/v1/app` request log line's `phases` and `colo`; a stalled RPC view now fails after 8 s (every view, logins included) and `/v1/app` is asked once more |
 | `409 no_google_client` on `/v1/app` | scope has no Google client and no usable shared client (or shared client still in its timelock) | add a client, or `--allow-shared` + wait `changeDelayMs` |
 | `admin`: "No wrangler config in apps/api" | `wrangler.jsonc` missing | `corepack pnpm --filter @hana-id/api run gen <env>` |
-| `admin user:*`: "No wrangler config in apps/email-issuer" | the issuer's `wrangler.jsonc` missing | `corepack pnpm --filter @hana-id/email-issuer gen <env> --d1-id <issuer uuid> --app-d1-id <the API's D1 uuid>` |
+| `admin user:*`: "No wrangler config in apps/email-issuer" | the issuer's `wrangler.jsonc` missing (local D1 only) | `corepack pnpm --filter @hana-id/email-issuer gen <env> --d1-id <issuer uuid> --app-d1-id <the API's D1 uuid>` |
+| `admin user:* --remote`: "No Cloudflare credentials" | not logged in to wrangler, and no `CLOUDFLARE_API_TOKEN` | `corepack pnpm --dir apps/email-issuer exec wrangler login` |
+| `admin user:* --remote`: "These Cloudflare credentials reach N accounts" | the login reaches several Cloudflare accounts | `CLOUDFLARE_ACCOUNT_ID=<the issuer's account id>` before the command |
+| `admin user:* --remote`: "Cloudflare … failed (HTTP 401/403)" | the token lacks D1 access on that account | `wrangler whoami`; a token with D1 read on the issuer's account |
+| `admin user:* --remote`: "No D1 database named …" | another account, or the issuer's D1 not created | check `CLOUDFLARE_ACCOUNT_ID` and `wrangler d1 list` |
+| `admin user:*`: "D1 error: no such table: user_emails" | migration 0002 not applied | "Applying migration 0002" in "User directory (D269)" |
 | `deploy-contract` "Cannot deploy until these are fixed" | a key with the wrong receiver, methods, empty method list or too-large/unlimited allowance | run the printed `near account delete-keys …`, re-run |
 | A test fails after someone filled in `envs/sandbox-dev.json` | the test read the real manifest and expected `UNSET` placeholders | tests pin their own fixture manifest (see `scripts/test/deploy-plan.test.ts`, commit fdde123); never depend on live manifest values |
 | smoke refuses to derive: "UNSET placeholder" | `ckdNetworkKey` not pinned | `fetch-ckd-key <env>`, restart the dev server |

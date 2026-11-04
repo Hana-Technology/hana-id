@@ -27,8 +27,10 @@
 //     (D122, D255); one that has a wallet or an account logs in as usual.
 //     Under token_first (auth/google.ts GOOGLE_EMAIL_FLOW, D270) an app without email login, in an env with an email
 //     issuer, gets the follow-up key too (`emailRecord`): the popup's one Google screen asks for the email, and the
-//     vault sends the access token to the issuer's google-record (D269: the user directory only, no match), in the
-//     background and best effort: its failure or slowness never touches the login.
+//     vault sends the access token to the issuer's google-record (D269: the user directory only, no match) once the
+//     login has succeeded (step 10), in the background and best effort: its failure or slowness never touches the
+//     login, and a refused or cancelled login is never recorded. If the popup couldn't check the access token with
+//     tokeninfo, it relays a plain openid login (no `access: 'follow'`) and nothing is recorded.
 //  8. The path (batch 7): `{scope}#{provider}#{sub}#{keyIndex}` of the identity `get_identity` on the vault's own RPC
 //     names: the identity itself when it is "own", its account root when it is an active member; a pending member is
 //     refused (`link_pending`, with when it activates). With a link token (D133) the vault reads both identities and
@@ -744,8 +746,6 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
       const verify = new TokenCheck(ctx, app, emailChain, () => this.check());
       // Step 7: who signed in (never the API's word), then (email on, a Google token) google-match and its case.
       let who = await verify.first(relayed.payload, nonce);
-      // token_first in an app without email login: the access token is in slot 1, for the directory only (D269).
-      if (recordOn && followKey && who.ref.provider === 'google' && relayed.payload.access === 'follow') this.recordGoogle(who, commitment, relayKey, followKey);
       let link: LinkPlan | null = null;
       if (who.ref.provider === 'google' && emailOn && this.follow) {
         const decided = await this.matchGoogle(who, relayed.payload, commitment, verify, nonce);
@@ -830,6 +830,10 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
         const linked = linkedRef ? await this.madeLink(linkedRef, link as LinkPlan) : null;
         // In the background (memory at once, storage after): the login never waits on IndexedDB for it.
         void this.writePin(who.ref, pathOwner(path) as IdentityRef);
+        // token_first in an app without email login: the access token is in slot 1, for the directory only (D269).
+        // Only once /v1/login has opened the session and the key passed its check, so a refused, failed or cancelled
+        // login is never recorded as a login to this app; in the background, never awaited by the login.
+        if (recordOn && followKey && who.ref.provider === 'google' && relayed.payload.access === 'follow') this.recordGoogle(who, commitment, relayKey, followKey);
         this.afterword(who, path, linked);
         return { prk, addresses, path, expiresAtMs, maxUses, sessionKey, timings, markedAt: lap, identity: { provider: who.ref.provider, sub: who.ref.sub }, linked };
       } catch (e) {

@@ -269,7 +269,7 @@ describe('/login/callback, token_first’s access leg', () => {
     ['tokeninfo can’t be reached (or the browser refused its answer)', { ok: false, reason: 'unavailable' }, 'tokeninfo_unavailable'],
     ['the access token is another client’s', { ok: false, reason: 'wrong_client' }, 'tokeninfo_client_mismatch'],
     ['tokeninfo refuses the token', { ok: false, reason: 'invalid' }, 'tokeninfo_invalid'],
-  ])('%s: the login ends with a clear error, never an unhinted request', async (_, info, code) => {
+  ])('an app with email login, %s: the login ends with a clear error, never an unhinted request (D255)', async (_, info, code) => {
     const s = started((st) => `#access_token=${ACCESS}&state=${st}`);
     const a = api();
     expect(await run(s.win, a, tokenInfo(info))).toBe('stopped');
@@ -278,6 +278,88 @@ describe('/login/callback, token_first’s access leg', () => {
     expect(s.win.location.assigned).toEqual([]);
     expect(pageText()).toContain(`Code: ${code}`);
     expect(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + s.state)).toBeNull();
+  });
+
+  it.each<[string, AccessTokenSub]>([
+    ['tokeninfo can’t be reached (network, CORS, a timeout, an outage)', { ok: false, reason: 'unavailable' }],
+    ['tokeninfo refuses the token', { ok: false, reason: 'invalid' }],
+  ])('a record-only login, %s: no slot 1, the access token dropped, batch B’s openid request with the chooser and the login’s nonce', async (_, info) => {
+    const s = started((st) => `#access_token=${ACCESS}&state=${st}`, { record: true });
+    const a = api();
+    expect(await run(s.win, a, tokenInfo(info))).toBe('relayed');
+    // Nothing relayed yet: not slot 1, not the login's slot.
+    expect(a.writeRelay).not.toHaveBeenCalled();
+    expect(query(s.win.location.assigned[0]!)).toEqual({
+      client_id: CLIENT_ID,
+      redirect_uri: `${AUTH}/login/callback`,
+      response_type: 'id_token',
+      response_mode: 'fragment',
+      scope: 'openid',
+      nonce: NONCE,
+      state: s.state,
+      prompt: 'select_account',
+    });
+    // A plain login's entry under the login's slot: no follow-up key, no leg, no hint; the access token isn't in it.
+    const raw = s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + s.state)!;
+    const entry = JSON.parse(raw);
+    expect(Object.keys(entry).sort()).toEqual(['createdAt', 'relayKey', 'v']);
+    expect(raw).not.toContain(ACCESS);
+    expect(s.win.closed).toBe(false);
+    // Google's answer: the ID token is relayed without `access: 'follow'` (the vault reads no slot 1), and the window closes.
+    s.win.location.hash = `#id_token=${GTOKEN}&state=${s.state}`;
+    expect(await run(s.win, a)).toBe('relayed');
+    expect(a.writeRelay.mock.calls.map((c) => c[0])).toEqual([s.state]);
+    expect(await decrypt(s.relayKey, s.state, a)).toEqual({ idToken: GTOKEN });
+    expect(s.win.closed).toBe(true);
+    expect(JSON.stringify(a.writeRelay.mock.calls)).not.toContain(ACCESS);
+  });
+
+  it('a record-only fallback still holds the ID token to the claim allow-list, and relays Google’s refusal', async () => {
+    const s = started((st) => `#access_token=${ACCESS}&state=${st}`, { record: true });
+    const a = api();
+    await run(s.win, a, tokenInfo({ ok: false, reason: 'unavailable' }));
+    s.win.location.hash = `#id_token=${jwt({ sub: SUBJECT, nonce: NONCE, email: 'a@gmail.com' })}&state=${s.state}`;
+    expect(await run(s.win, a)).toBe('stopped');
+    expect(await decrypt(s.relayKey, s.state, a)).toEqual({ error: 'token_has_pii', claim: 'email' });
+    resetDom();
+    const r = started((st) => `#access_token=${ACCESS}&state=${st}`, { record: true });
+    const b = api();
+    await run(r.win, b, tokenInfo({ ok: false, reason: 'invalid' }));
+    r.win.location.hash = `#error=access_denied&state=${r.state}`;
+    expect(await run(r.win, b)).toBe('relayed');
+    expect(await decrypt(r.relayKey, r.state, b)).toEqual({ error: 'access_denied' });
+    expect(r.win.closed).toBe(true);
+  });
+
+  it('a record-only login with another client’s access token still ends (not an outage)', async () => {
+    const s = started((st) => `#access_token=${ACCESS}&state=${st}`, { record: true });
+    const a = api();
+    expect(await run(s.win, a, tokenInfo({ ok: false, reason: 'wrong_client' }))).toBe('stopped');
+    expect(await decrypt(s.relayKey, s.state, a)).toEqual({ error: 'tokeninfo_client_mismatch' });
+    expect(s.win.location.assigned).toEqual([]);
+  });
+
+  it('a record-only fallback that can’t store its entry tells the vault (storage_unavailable)', async () => {
+    const s = started((st) => `#access_token=${ACCESS}&state=${st}`, { record: true });
+    const a = api();
+    const real = s.win.sessionStorage;
+    const blocked: Storage = {
+      get length() {
+        return real.length;
+      },
+      key: (i) => real.key(i),
+      getItem: (k) => real.getItem(k),
+      removeItem: (k) => real.removeItem(k),
+      clear: () => real.clear(),
+      setItem: () => {
+        throw new DOMException('blocked', 'QuotaExceededError');
+      },
+    };
+    Object.defineProperty(s.win, 'sessionStorage', { value: blocked });
+    expect(await run(s.win, a, tokenInfo({ ok: false, reason: 'unavailable' }))).toBe('relay_failed');
+    expect(a.writeRelay.mock.calls.map((c) => c[0])).toEqual([s.state]);
+    expect(await decrypt(s.relayKey, s.state, a)).toEqual({ error: 'storage_unavailable' });
+    expect(s.win.location.assigned).toEqual([]);
   });
 
   it('an ID token answered to the access request is never relayed (it would carry the email)', async () => {

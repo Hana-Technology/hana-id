@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D140–D141 and D150–D152 on 2026-10-30 (branches
+Last verified against code: 2026-10-28 (commit 58edee9); D340 (branch `fix/dev-email-limits`) on 2026-11-04; D140–D141 and D150–D152 on 2026-10-30 (branches
 `feat/batch-c-1`, `feat/playbook-gaps`); D130–D139 on 2026-10-30 (branches `feat/email-login-1`, `feat/email-login-1-r2`);
 D154–D155 (branch `feat/email-login-2`) and D156–D159 (branch `feat/email-login-3`) on 2026-11-02; D159's `+tag`
 change (branch `fix/email-plus-tags`) on 2026-11-02; D190–D193 (branch `feat/email-login-5`) and D200 (branches
@@ -25,7 +25,8 @@ D270's status (the spike passed, switched on) on 2026-11-04 (branch `feat/token-
 (its gate passed) and D273 (token_first in Playwright), the D254 row of "Superseded or amended" and D265's "to
 confirm" line. D275–D276 (branch `docs/batch-c-users-support-id`: proposed, to confirm by the user, spec text only)
 on 2026-11-04. D300–D308 (branch `feat/batch-c-11`: the files Worker and logos, decided while building, to confirm) on
-2026-11-04, with D301 amending the order of C7's replaced-logo purge.
+2026-11-04, with D301 amending the order of C7's replaced-logo purge. D290–D297 (branch `feat/batch-c-9`, partner
+sign-in: decided while building, to confirm) on 2026-11-04.
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -4822,6 +4823,149 @@ made while building C11, where the spec is silent or loose. Each took the safer 
   - No rule on `LOGOS`: the console's cron deletes replaced logos (D301).
 - Rejected: one lifecycle rule on every prefix (it would delete the legacy export after 30 days); per-object
   expiry set by the admin Worker (R2 has none; a cron job would be one more thing to fail).
+## Batch C9: partner sign-in (branch `feat/batch-c-9`), 2026-11-04
+
+Readings of `docs/batch-c-spec.md` "Partner sign-in" taken while building C9, each the safest one found. All: Status
+decided while building, to confirm.
+
+### D290. The console holds every Google token it verifies to the claim allow-list by scope; sign-in may add exactly email, email_verified, hd and at_hash
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-9`
+  (`apps/console/src/auth-token.ts` `verifyConsoleToken`, `allowedClaims`; `apps/api/scripts/test/relayed-tokens.test.ts`
+  "Google tokens the console verifies") · Source: D271, D274, D277, spec "Code flow" ("Email claims by scope")
+- Decision:
+  - `scope=openid` (every step-up and owner action, batch C10, which the API verifies again and relays on chain):
+    exactly the API's `TOKEN_CLAIM_ALLOW_LIST`, nothing else (`claim_not_allowed`, the claim named in the log).
+  - `scope=openid email` (sign-in only): the same list plus exactly `email`, `email_verified`, `hd` and `at_hash`; a
+    `name`, `picture`, `locale` or any other claim is refused; `email` and `email_verified === true` are required;
+    `at_hash` must equal the hash of the access token returned with the ID token (checked, then the access token is
+    dropped). The sign-in token is never relayed, stored, logged or returned: only the verified `sub`, address and `hd`
+    go on, into the 60-second handoff row (D291).
+  - The API's source scan now also lists the console: only `console/src/auth-token.ts` calls `verifyIdToken`, the
+    allow-list follows it with no option to skip, its openid list equals the API's and core's, and every caller passes
+    the flow's own scope; console-auth verifies nothing.
+- Why the sign-in token isn't openid-only: the spec's membership rules need the address (an invite is bound to the
+  address it was sent to, so a forwarded link is useless to anyone else; members see each other's address; owners get
+  notices there) and `hd` (an org's `required_hd`), and Google puts them only in an `openid email` ID token. An
+  openid-only sign-in would make the invite link a bearer token and `required_hd` unenforceable. `CONSOLE_DB`'s own
+  CHECK (0001) already fixes a login flow's scope to `openid email`. The address is a partner member's (staff of the
+  org), never an end user's (D269 untouched).
+- **To confirm with the user:** the build brief said "the console token must be openid-only". Read here as every
+  console token that is relayed or used for a step-up (C10); the sign-in token keeps the spec's `openid email`. If the
+  user wants sign-in openid-only too, the price is the two properties above (or a second Google request for the address,
+  D270-style), and migration 0001's CHECK needs a new migration.
+- Rejected: one list for both scopes (sign-in would fail, or step-ups would accept an address); ignoring `at_hash`
+  (checking it costs nothing and binds the two tokens of one answer).
+
+### D291. The membership rules run at `/api/auth/complete`; the handoff row carries the verified identity, scrubbed when used; the state is derived from the start handle
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-9`
+  (`apps/console/src/auth-flow.ts` `flowState`, `callback`; `sign-in.ts` `completeSignIn`)
+- Decision:
+  - The callback (auth origin) verifies the token and writes the handoff row; the membership rules and invite
+    acceptance run at `/api/auth/complete` (console origin) after the pre-flow cookie matched (spec step 4). So an
+    invite is consumed only by a flow bound to one browser from start to finish: `__Host-hana_pre` (create → complete)
+    and `__Host-hana_af` (start → callback).
+  - The handoff's `result_json` is therefore `{provider, sub, email, hd}` (the spec's comment says "user id, invite
+    outcome"): never a token. It is overwritten with `{}` in the request that uses it; an unused one is purged by the
+    hourly cron 24 h after its 60 s. The PKCE verifier is overwritten in `auth_flows` as soon as the callback consumed
+    the flow.
+  - The state is `b64url(sha256("hana-console/auth-state/v1\0" ‖ f))`, f being the 32-byte start handle: `/start` can
+    send it to Google while `auth_flows` stores only `sha256(state)` and `sha256(f)`, as the schema has it.
+  - The flow, the handoff code and the session are each found and consumed in one `UPDATE … RETURNING` that includes
+    the cookie hash, so a wrong or missing cookie consumes nothing (the right browser can still finish).
+- Why: the spec places the rules at complete; running them in the callback would accept invites for flows a different
+  browser never finishes.
+- Rejected: storing the state in clear (a D1 read would give a live state); keeping the identity until the purge.
+
+### D292. `/api/auth/complete` answers with redirects: `/` on success, `/signin#error=<code>` on any refusal
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-9` (`sign-in.ts`,
+  console-core `SIGN_IN_ERRORS`, the SPA's `/signin`)
+- Decision: complete is the target of a top-level navigation (the callback's 303), so it never answers JSON: a refusal
+  is `303 /signin#error=<code>` with the pre-flow cookie cleared, the code one of `not_invited`, `invite_invalid`,
+  `already_member`, `user_disabled`, `expired` (unknown, used, expired or another browser's handoff), `rate_limited`,
+  `internal`. The spec's statuses (403 `not_invited`, 409 `already_member`, …) stay the codes' meaning; the code goes in
+  the fragment, so no server or log sees it in a URL. The SPA shows one message per code.
+- Rejected: a JSON 403 to a navigation (the browser shows raw JSON); a query parameter (logged with the URL).
+
+### D293. An invite link that names no live invite is refused at the start; invite refusals at completion are logged, not audited
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-9`
+  (`auth-flow.ts` `createLoginFlow`, `sign-in.ts` `membershipRules`)
+- Decision:
+  - `POST /api/auth/start` with an `invite` whose sha256 matches no open, notified invite answers `403
+    invite_invalid` and starts no flow (the spec's "`invite_id` if the hash matches a live invite" read as fail closed:
+    a sign-in that would end `not_invited` isn't started, and the person learns why at once). A valid invite's address
+    is the Google `login_hint`.
+  - At completion, `invite_invalid` and `already_member` are logged only; `not_invited` and `user_disabled` are audited
+    (`signin.refused`, system actor `console-sign-in`; `not_invited` with the address's sha256 only, `user_disabled`
+    with the user id as target), as the spec says. The spec's "a refused acceptance inserts no … audit row" is kept
+    literally. Sign-ins and logouts are audited (`session.signed_in` with `invite: true|false`, `session.signed_out`),
+    with no org (they aren't org events).
+  - The stored address of an existing user is replaced by the one Google verified at each sign-in (display and notices
+    only; identity stays `(provider, sub)`).
+- Rejected: an oracle-free start that silently drops a dead invite (the person signs in for nothing, then reads
+  `not_invited`); auditing invite refusals (the spec's test row says none is written).
+
+### D294. The console's Google client is the manifest's one `google` console audience; the console route is on by config
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-9`
+  (`apps/console/scripts/gen-wrangler.ts` `consoleGoogleClientId`, `placement`; `apps/console-auth/scripts/gen-wrangler.ts`)
+- Decision:
+  - `CONSOLE_GOOGLE_CLIENT_ID` is the single `["google", …]` entry of `consoleAudiences`; `gen` refuses none or several
+    (no field is added to the manifest). The callback requires `aud` (and `azp`) to equal that client, not just any
+    console audience: the token comes from the console's own exchange for that client.
+  - The route: `workers_dev: true` only in a dev env (`local*`/`sandbox*`) and only when the origin is the Worker's own
+    `<workerName>.<subdomain>.workers.dev`; otherwise a Custom Domain route on the origin's host; `preview_urls: false`
+    always. The same for console-auth (`console.authOrigin`, `authWorkerName`). Neither Worker records invocation logs
+    (the URLs carry the handoff code and Google's `code` and `state`).
+  - The Google endpoints are code constants, never vars, so no config can send the code and the secret elsewhere.
+- Rejected: a new `console.googleClientId` manifest field (one more thing to keep equal to `consoleAudiences`).
+
+### D295. Open question 1 is tested by a script on the console client's real redirect URI; `at_hash` is the expected finding
+- Date 2026-11-04 · Status: decided while building, to confirm; **the spike is not run** (the user runs it after setup
+  step 11) · Built on `feat/batch-c-9` (`scripts/console-code-flow-spike.ts`, `scripts/lib/console-code-flow.ts`)
+- Decision: `corepack pnpm --filter @hana-id/scripts console-code-flow-spike <env>` runs the code flow with the console
+  client for `scope=openid` and `scope=openid email`, on its only redirect URI (no extra one is registered): the
+  operator pastes the callback address from the browser (hidden input; the deployed callback, if any, exchanges
+  nothing for a state it doesn't know), the script exchanges the code with the secret from
+  `.secrets/<env>/console-google-client.json` and its own PKCE verifier, verifies the token and prints claim names and
+  verdicts only (`docs/operations.md` "Console code-flow spike (open question 1)").
+- Expected finding, to decide before C10: Google's docs say an ID token issued with an access token in the server flow
+  always carries `at_hash`. Then the `openid` leg reports "NO EMAIL, BUT at_hash": no personal claim, but the API's
+  allow-list refuses `at_hash`, so every step-up and owner-action token from the code flow would be `token_has_pii`.
+  Options then: add `at_hash` to `TOKEN_CLAIM_ALLOW_LIST` everywhere (core, the API, the console: it is a truncated hash
+  of a short-lived access token, not personal data; recommended), or allow it only on the console audiences' paths.
+  Not changed now: D271's list moves only with the user's word and the spike's answer.
+- Rejected: a loopback redirect URI on the console client for the test (the client must keep exactly one redirect
+  URI); a browser page like `spike-email.html` (the code exchange needs the client secret).
+
+### D296. What partners see: staff as `hana`, no `sub`, no network data; the audit merged by time with a two-part cursor; frozen orgs read-only
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-9` (`apps/console/src/bff.ts`,
+  console-core `partner.ts`)
+- Decision:
+  - The partner views (console-core `partner.ts`) carry no staff Access subject or staff address (an actor, inviter or
+    `added_by` that isn't a `usr_…` id is `hana`), no Google `sub` (members' or actors'), no IP prefix and no hash. The
+    audit's console rows keep `country`; `audit_log.ip_prefix` and the session network data stay staff-only (D93).
+  - `GET /api/orgs/:org/audit` merges the org's `audit_log` rows with `ConsoleRpc.listChanges`, newest first by time,
+    each source in its own `seq` order, 50 a page; the cursor is `<audit seq>.<change seq>`, each an exclusive bound,
+    so no row is skipped or repeated. Rows of one request share the `requestId` and sit together.
+  - `GET /api/me` lists every membership whose org's `required_hd` matches the session's `hd`, frozen orgs included
+    (read-only, shown as frozen); signing in needs at least one such membership in an **active** org (so C7's "freezing
+    their only org ends their sessions" also keeps them out).
+  - Any org the member can't use answers `404 not_found`, the same as an unknown org.
+- Rejected: listing `sub` for owners (C10's on-chain owner checks are the API's); a single merged sequence number (the
+  sources are two databases).
+
+### D297. The SPA: React 18.3.1, React Router 6.30.1, Vite 7 with esbuild's JSX; Playwright under the CSP left for C17
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-9` (`apps/console/web/`,
+  `vite.config.ts`, `scripts/test/spa-build.test.ts`)
+- Decision: `apps/console/web` builds to `apps/console/dist` (the Worker's assets; `deploy` builds first; the Worker
+  tests serve a fixed stand-in, `test/assets`). No React Vite plugin (esbuild's automatic JSX), no modulepreload
+  polyfill, no inlined asset: a build test checks one module script and one stylesheet from `/assets`, nothing inline or
+  external, and no server code bundled (the SPA imports only types from console-core). `react-router-dom` 6.30.1 is the
+  one new dependency (React 18.3.1 and the testing libraries were already in the lockfile).
+- Playwright sign-in under the CSP in three browsers (the spec's row) isn't in this batch: the e2e stack runs the API in
+  Node, and hosting the console would need D1, the `ConsoleRpc` and `AuthHandler` service bindings, the rate-limit
+  binding and a stub for Google's token endpoint, which the Worker can't be pointed at (D294): new infrastructure. It
+  is left for C17 on sandbox-dev or staging, against real Google; the component tests (happy-dom) and the build check
+  cover the SPA meanwhile.
 
 ## Batch C14: Security & monitoring and the pending-upgrades page (branch `feat/batch-c-14`), 2026-11-04
 
@@ -5231,3 +5375,42 @@ over D269's directory) and D276 (the Support ID made consistent with D269), belo
 - Amends in text only: D96's "it reveals no email or Google account" now holds for partners; staff reach the
   directory (D269). `docs/email-login-spec.md` ("Support ID lookups show … never a `sub` or address") and
   `docs/hana-home-spec.md` "Support ID" still say otherwise. They are to be aligned once this is confirmed.
+
+## Dev env email limits, 2026-11-04
+
+### D340. Dev envs (`local*`, `sandbox*`) get higher per-mailbox and per-IP email code limits; production keeps D198's
+- Date 2026-11-04 · Status: confirmed by the user (2026-11-04: "yes raise limits for dev environments please, as we
+  will be testing a lot and testnet don't really cost us money anyway") · Built on `fix/dev-email-limits` · Amends D198
+  (its numbers are now production's)
+- Decision: the email issuer picks its limit set from `ENV_NAME` with `isDevEnv` (`@hana-id/env`: `local*`,
+  `sandbox*`), once per request (`limitsFor` in `apps/email-issuer/src/limits.ts`). Every other name gets production's,
+  which are exactly D198's. Dev values (production in brackets):
+  - per (mailbox, requester) code mails: 20 per 15 min (3), 100 a day (10);
+  - per mailbox code mails: 30 per 15 min (10), 200 a day (30);
+  - challenges per mailbox a UTC day: 250 (35); live challenges at once: 20 (5), chosen so one tester's abandoned
+    starts never meet the live cap before the per-requester 15-min code limit;
+  - wrong codes per (mailbox, requester): 30 an hour (10) before the 1 h lock;
+  - failed checks per mailbox a UTC day: ceiling 100 (25), backstop 80 (18), owner slot 17 (4), ticket slot 3 (3). The
+    ceiling stays the sum of its three slots, so the owner slot still works past the backstop, and the requester lock
+    (30) still trips before the backstop (80);
+  - per IP: `start` 30 per 10 min (10) and 300 a day (50); `resend` 30 per 10 min (10); `verify` 90 per 10 min (30).
+- Unchanged in every env: the aggregate prefix limits, the recipient-domain cap (it protects Hana's sending
+  reputation), the ticket and grant allowances (the grant slot too), the google-match and google-record limits, the
+  webhook and staff limits, the budget and its pools, `confirm`'s per-IP bound (production's 10 per 10 min: a staff
+  unsuppress's mailed link, not the login flow), and each challenge's own 5 attempts and 2 resends.
+- How it applies to existing counters: the mailbox object gets the set with every call (none: production's). Its
+  counters are keyed by window name and start, never by max, and both sets use the same names and windows, so a
+  sandbox-dev mailbox over production's numbers but under the dev ones passes at once, with no reset. A requester's
+  wrong-code lock is keyed by the max that set it (production's keeps its `lock:<ip>` key), so a lock set at
+  production's 10 doesn't hold under the dev set.
+- Why: sandbox-dev is testnet, used by Hana's own testers many times a day; D198's numbers were sized against an
+  attacker on a mainnet mailbox and blocked repeat testing. The name rule (not a manifest flag) means no setting can turn
+  them on in a production env, as for the other dev-only privileges.
+- Main trade-off: on a dev env, a 6-digit code can be guessed with 100 failed checks a day instead of 25 (≈ 3.7% a year
+  instead of ≈ 0.9%). Testnet accounts hold no real funds.
+- Alternatives: (a) a manifest field for the limits: it could be set in a production env by mistake. Not recommended.
+  (b) Resetting the counters on sandbox-dev (rotating K_rl): a one-off that also drops device tickets and recurs at the
+  next busy day. Not recommended.
+- Amended 2026-11-04 (same day, `fix/dev-ticket-limits`): a ticketed start (a device that signed in before) never
+  falls back to the code limits, so its own allowance (production 3 a day per address, 9 per mailbox) blocked the
+  user's testing first; dev envs raise it to 100 and 300. Production unchanged.

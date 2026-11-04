@@ -17,9 +17,11 @@ export interface LogFields {
   count?: number;
   /** An error's class name only (never its message, which can echo input). */
   error?: string;
+  /** Sign-in: the name of a refused token claim (never its value). */
+  claim?: string;
 }
 
-const ALLOWED: ReadonlySet<string> = new Set(['event', 'requestId', 'method', 'actorKind', 'orgId', 'outcome', 'status', 'code', 'step', 'count', 'error']);
+const ALLOWED: ReadonlySet<string> = new Set(['event', 'requestId', 'method', 'actorKind', 'orgId', 'outcome', 'status', 'code', 'step', 'count', 'error', 'claim']);
 
 export function log(fields: LogFields, level: 'info' | 'warn' | 'error' = 'info'): void {
   const line: Record<string, unknown> = { level, at: new Date().toISOString() };

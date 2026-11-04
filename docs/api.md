@@ -3,7 +3,11 @@
 Last verified against code: 2026-11-04 (branch `feat/batch-c-14`: `AdminRpc.governance`, `AdminRpc.pendingUpgrades`
 and `ConsoleRpc.pendingUpgrades`; the admin Worker's Security & monitoring, alert history, actions, ack, pending
 upgrades and playbook routes, its watchdog client's bearer, caps, timeout and failure codes, the new vars and secret;
-the console's pending-upgrades backend (not routed until C10); D330–D338; the feed's silent first run, D344); 2026-11-04 (branch `feat/batch-c-11`: `GET /v1/app`'s `logoUrl`, the logo pages' `img-src`
+the console's pending-upgrades backend (not routed until C10); 2026-11-04 (branch `feat/batch-c-9`, merged with `develop` @ bd0c9ea: "Console Worker and
+console-auth": partner sign-in (`/api/auth/start`, the auth origin's `/start` and `/callback` through `AuthHandler`,
+`/api/auth/complete`, logout), the signed-in reads, console-auth, the new bindings and secret, D290–D297); 2026-11-04
+(branch `fix/dev-email-limits`: "Email issuer" "Limits", dev envs' higher code, wrong-code and per-IP limits, D340);
+2026-11-04 (branch `feat/batch-c-11`: `GET /v1/app`'s `logoUrl`, the logo pages' `img-src`
 with `FILES_ORIGIN` on the auth Worker, the console's logo upload backend (not routed until C10) and its `IMAGES`
 binding, the purge order, and the new "Files Worker" section; D300–D308); 2026-11-04 (branch `feat/batch-c-8`: "Admin Worker" (its routes, the Access check, the cron's notices, feed and watcher, its bindings), `AdminRpc.listApps`/`getApp` taking `system`, `StaffRpc.getOrg`'s `grants`; D278–D285); 2026-11-04 (branch `feat/batch-c-6-merge`: batch C6 on current `develop`:
 `ConsoleRpc.changeOrigins` / `proposeChange` with the API's own step-up verification (the claim allow-list on the
@@ -1358,21 +1362,72 @@ or email), `drift_detection` (`added`; error `code: internal`), `console_rpc` (`
 owner action's request line has `endpoint: ConsoleRpc.ownerAction`; and from the page
 Workers `vault_host` and `auth_page` (`code`).
 
-## Console Worker (`apps/console`, its own Worker; no route yet) · C7
+## Console Worker (`apps/console`, its own Worker) and console-auth · C7, C9
 
-The partner console's Worker (`hana-id-console-<env>`). Batch C7 built its backend only; it has **no public route**
-(`workers_dev: false`, no `routes`), so in a deployed env only its bindings and cron reach it. Partner sign-in, the
-session routes and the SPA come with C9 and C10 (`docs/batch-c-spec.md` "Console BFF routes"). D240–D244.
+The partner console's Worker (`hana-id-console-<env>`), on `console.origin`, and the thin console-auth Worker
+(`hana-id-console-auth-<env>`) on `console.authOrigin`. Batch C7 built the backend; C9 (branch `feat/batch-c-9`, not
+merged) adds partner sign-in, the read-only routes, the SPA and the route config: `workers_dev: true` on its own
+`workers.dev` name in a dev env, else a Custom Domain on the origin's host; never preview URLs (D294). Write routes
+come with C10 (`docs/batch-c-spec.md` "Console BFF routes"). D240–D244, D290–D297.
 
 **Every request.** The Worker runs first (assets with `run_worker_first`). A host other than `CONSOLE_ORIGIN`: `404`
 `Not found`. A non-GET/HEAD request without all four CSRF checks (`Sec-Fetch-Site: same-origin`, `Origin` =
 `CONSOLE_ORIGIN`, `x-hana-console: 1`, `content-type: application/json`, or exactly `application/octet-stream` on
 `/api/orgs/:org/apps/:app/logo`, D300): `403 {"error":{"code":"csrf",…}}`. `/api/*` goes
 to the routes below (any other path `404 not_found`, a wrong method `405` with `allow`); anything else is the SPA
-(`GET`/`HEAD` only; a placeholder page in C7, its single-page fallback for unknown paths). Every response carries the
-console CSP, `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy: same-origin`, `X-Content-Type-Options: nosniff`
-and `Strict-Transport-Security: max-age=63072000; includeSubDomains`; `/api/*` also `Cache-Control: no-store`. Errors
-are `{error: {code, message}}` with the RpcCode → HTTP map of console-core (`RPC_HTTP_STATUS`, `CONSOLE_ERROR_STATUS`).
+(`GET`/`HEAD` only: the Vite build of `apps/console/web`, with the single-page fallback for unknown paths). Every
+response carries the console CSP, `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy: same-origin`,
+`X-Content-Type-Options: nosniff` and `Strict-Transport-Security: max-age=63072000; includeSubDomains`; `/api/*` also
+`Cache-Control: no-store`. Errors are `{error: {code, message}}` with the RpcCode → HTTP map of console-core
+(`RPC_HTTP_STATUS`, `CONSOLE_ERROR_STATUS`); the message is the console's own, never the API's text.
+
+### Sign-in (the Google code flow with PKCE; D75, D290–D293)
+
+| Route | Request → answer | Notes |
+|---|---|---|
+| `POST /api/auth/start` | `{purpose: "login", invite?: <b64url of 32 bytes>}` → `{startUrl: "<authOrigin>/start?f=<43 chars>"}` and `Set-Cookie: __Host-hana_pre=…; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=600` | CSRF rules. Stores an `auth_flows` row: `sha256(f)`, `sha256(state)` (state = `b64url(sha256("hana-console/auth-state/v1\0" ‖ f))`), a PKCE verifier, the login nonce (console-core `consoleLoginNonce`), `scope = 'openid email'`, the pre-flow cookie's sha256, 5 min. An `invite` whose sha256 names no open, notified invite: `403 invite_invalid`, no flow (D293); a valid one binds the flow to it and its address becomes Google's `login_hint`. `400` for another purpose or field |
+| `GET <authOrigin>/start?f=` | → `303` to `https://accounts.google.com/o/oauth2/v2/auth` with `client_id`, `redirect_uri=<authOrigin>/callback`, `response_type=code`, `scope`, `prompt=select_account`, `state`, `nonce`, `code_challenge` (S256), `login_hint` when set; `Set-Cookie: __Host-hana_af=…` (same attributes) | The flow is found and marked started in one statement: unknown, expired, already started, a malformed or extra query: the static 400 page. No client id configured: the static page with `503` |
+| `GET <authOrigin>/callback?code&state` | → `303` to `<console.origin>/api/auth/complete?h=<43 chars>#` (an empty fragment: the implicit-flow guard), `__Host-hana_af` cleared | Only with `code` and `state` (each once), `sha256(state)` a started, unused, unexpired flow and `sha256(__Host-hana_af)` its cookie: found and marked used in one statement (a wrong or missing cookie consumes nothing). Then the code exchange (`https://oauth2.googleapis.com/token`, the client secret, the verifier; 8 s, 32 KiB) and the token check (`auth-token.ts`: RS256 on Google's JWKS, `iss`, `aud` and `azp` the console client, the flow's nonce, `exp`, `iat` ≤ 120 s old and ≤ 60 s ahead, the claims by scope: D290). A login writes a 60 s `handoff_codes` row with `{provider, sub, email, hd}` only. Anything else (`error=`, no query, a token in place of a code, a refused token, a Google 4xx): the static 400 page, no `Location`; Google 5xx, timeout, JWKS down or no secret: the same page with `503`. A step-up flow (C10) is refused here until C10 |
+| `GET /api/auth/complete?h=` | → `303 /` with `Set-Cookie: __Host-hana_cs=…; Path=/; Secure; HttpOnly; SameSite=Strict` and `__Host-hana_pre` cleared, or `303 /signin#error=<code>` | The handoff must be unused, inside its 60 s and its flow's `pre_cookie_hash` this request's `__Host-hana_pre` (found and used in one statement, then scrubbed). The membership rules then run (spec "Membership rules at sign-in": a disabled user `user_disabled`; an invite bound to the flow is accepted in one D1 batch, `invite_invalid` or `already_member`; no invite: an existing user with a membership in an active org whose `required_hd` is null or the token's `hd`, else `not_invited`); success writes the session (2 h idle, 12 h absolute, `/24` or `/48` and country kept for staff), the user's `last_sign_in_at` and current verified address, and `session.signed_in`, in one batch. Codes: `not_invited`, `invite_invalid`, `already_member`, `user_disabled`, `expired`, `rate_limited`, `internal` (D292) |
+| `POST /api/auth/logout` | `{}` → `{}`, the session cookie cleared | Session and CSRF rules; revokes this session (`session.signed_out`); `401` without a session |
+
+The static page (auth origin): `text/html`, no script, one link to `<console.origin>/signin#`, the same text for every
+refusal. Every auth-origin answer carries `Content-Security-Policy: default-src 'none'; frame-ancestors 'none';
+form-action 'none'; base-uri 'none'`, `Cache-Control: no-store`, `Referrer-Policy: no-referrer`,
+`X-Content-Type-Options: nosniff`, `Cross-Origin-Opener-Policy: same-origin` and HSTS. `/api/auth/*` and the two
+auth-origin routes share a per-IP limit: 10 a minute per IP (IPv6 by /64), key `<env>:console-auth:<ip subject>` on
+`CONSOLE_IP_LIMIT`; past it `429` (`retry-after: 60`; the static page on the auth origin, `/signin#error=rate_limited`
+from complete). Audit rows: `session.signed_in` (`invite: true|false`), `session.signed_out`, `signin.refused`
+(`not_invited` with the address's sha256 only, `user_disabled` with the user id; system actor `console-sign-in`).
+Logs: `auth_start`, `auth_callback`, `auth_complete`, `invite_accept`, with codes and, for a refused claim, its name
+only; never a token, code, cookie, address or `sub`.
+
+**`AuthHandler`** (named export, a `WorkerEntrypoint` with `fetch`; no route: bound only by console-auth as
+`CONSOLE`): answers only `GET /start` and `GET /callback` on `CONSOLE_AUTH_ORIGIN` (anything else `404`, with the
+auth-origin headers). **console-auth** (`apps/console-auth/src/index.ts`): forwards exactly those two requests
+unchanged (URL, cookies, `cf-connecting-ip`) to `CONSOLE` and sets the auth-origin headers again on the answer;
+any other path, method or host is `404 text/plain` without calling the console; a failing binding is `503`. It has no
+secret, D1, Hyperdrive or R2; vars `AUTH_ORIGIN`; invocation logs off.
+
+### Signed-in reads (read-only; D296)
+
+Each needs a live session (`401 unauthenticated` otherwise) and, under `/api/orgs/:org`, a membership of that org
+whose `required_hd` (if set) is the session's `hd`; anything else, a malformed id included, is `404 not_found`. The
+role is read from `members` on every request.
+
+| Route | Answer |
+|---|---|
+| `GET /api/me` | `{user: {id, email}, memberships: [{orgId, orgName, status, role}]}`: every hd-matching membership, frozen orgs included (read-only) |
+| `GET /api/orgs/:org` | `{org: {id, name, status, requiredHd?}, role}` |
+| `GET /api/orgs/:org/apps` | `{apps: AppSummary[]}` (`ConsoleRpc.listApps`) |
+| `GET /api/orgs/:org/apps/:app` | `{app: AppDetail}` (`ConsoleRpc.getApp`: origins with their display form and IDN flag, pending and active guarded changes, keys, settings); another org's app `404` |
+| `GET /api/orgs/:org/members` | `{members, invites, grants}`: members (address, role in force, `pendingOwnerFrom`, `addedBy` a user id or `hana`; no `sub`), open invites (`notified` says whether the link works yet), live owner grants |
+| `GET /api/orgs/:org/audit?cursor=` | `{entries, next?}`: the org's `audit_log` rows (`source: "console"`) merged newest first with `ConsoleRpc.listChanges` (`source: "api"`), 50 a page, cursor `<audit seq>.<change seq>`; staff shown as `hana` with no address, no `sub`, no IP prefix; a malformed cursor `400` |
+
+The ConsoleRpc calls carry the member actor (`id`, `sub`, `email`, `sessionHash` = b64url of the session's id hash),
+the request's id and `cf-connecting-ip`.
+
+### Emailed links (no session; C7)
 
 | Route | Body → answer | Notes |
 |---|---|---|
@@ -1433,14 +1488,15 @@ Inputs are console-core's strict zod schemas (`packages/console-core/src/staff.t
 target) or `conflict`; a write whose state moved meanwhile is `conflict`.
 
 **Bindings** (`apps/console/scripts/gen-wrangler.ts`): `CONSOLE_DB` (D1, `migrations/` 0001–0002), `API` → the API
-Worker's `ConsoleRpc` (the console calls `listApps`, `cancelChangeByLink`, and for logos `getApp` and `setLogo`),
-`LOGOS` and `STATEMENTS` (R2; `STATEMENTS` read only by code), `IMAGES` (the Images binding, C11), `ASSETS`,
-`CONSOLE_IP_LIMIT`;
-vars `ENV_NAME`, `CONSOLE_ORIGIN`, `CONSOLE_AUTH_ORIGIN`, `FILES_ORIGIN`, `NEAR_RPC`, `SIGNER_ACCOUNT`,
-`OWNER_GRANT_DELAY_MS`; no secret in C7. **Cron** `0 * * * *` (`docs/operations.md` "Partner console Worker").
-**Logs**: `staff_rpc`, `link_cancel`, `csrf_refused`, `console_cron`, `audit_write_failed`, `console_error`, `logo`
-(`code` is `logo_type:<reason>` for a refused file, never its bytes), with method, request id, actor kind, org id,
-outcome and code only.
+Worker's `ConsoleRpc` (the console calls `listApps`, `getApp`, `listChanges` and `cancelChangeByLink`, and for logos
+`getApp` and `setLogo`), `LOGOS` and `STATEMENTS` (R2; `STATEMENTS` read only by code), `IMAGES` (the Images binding,
+C11), `ASSETS` (`./dist`, the SPA build), `CONSOLE_IP_LIMIT`; vars `ENV_NAME`, `CONSOLE_ORIGIN`, `CONSOLE_AUTH_ORIGIN`,
+`CONSOLE_GOOGLE_CLIENT_ID` (the manifest's one `google` console audience, D294), `FILES_ORIGIN`, `NEAR_RPC`,
+`SIGNER_ACCOUNT`, `OWNER_GRANT_DELAY_MS`; secret `CONSOLE_GOOGLE_CLIENT_SECRET` (the code exchange only). **Cron**
+`0 * * * *` (`docs/operations.md` "Partner console Worker"). **Logs**: `staff_rpc`, `link_cancel`, `csrf_refused`,
+`auth_*`, `invite_accept`, `console_rpc`, `console_cron`, `audit_write_failed`, `console_error`, `logo` (`code` is
+`logo_type:<reason>` for a refused file, never its bytes), with method, request id, actor kind, org id, outcome, code
+and a refused claim's name only.
 
 **Hourly purge of replaced logos** (D301): the due `logo_objects` rows are deleted first (only while still marked and
 replaced more than 30 days ago, `RETURNING`), then those objects from `LOGOS`; if the object delete fails, the rows
@@ -1635,7 +1691,7 @@ email_domain_not_allowed`.
 The requester pays first (D198): the IP subject's limits, then the owner proof (`deviceTicket`, `unlockToken`) is
 checked, then (unless it was valid) the prefixes' limits (IPv4 /24, IPv6 /56 and /48, 1000 a day each), then the app
 gate and the body, then in one atomic call the mailbox's (the address without its `+tag`):
-the requester's lock, at most 5 live challenges, 35 challenges a day, and the code limits per (mailbox, requester) and
+the requester's lock, at most 5 live challenges, 35 challenges a day (dev envs: 20 and 250, D340), and the code limits per (mailbox, requester) and
 per mailbox; then the recipient domain's day, then the app's quota, then the global budget and the app's share of it.
 A later refusal refunds the mailbox, domain and app counts (never the IP ones) and stores nothing. Every mailbox-level
 refusal (the mailbox's limits and locks, the domain cap) is the same `429 rate_limited` body with `retry-after: 900`.
@@ -1798,25 +1854,33 @@ logs `email_complaint_rate` (error). `404` when no key is configured.
 
 ### Limits (D198; provisional, D123 Q22; the review defaults to confirm)
 
+The numbers are production's. **Dev envs** (`local*`, `sandbox*`: `isDevEnv` on `ENV_NAME`, D340) raise the rows
+marked "dev:"; every other row is the same in every env. The issuer picks the set once per request (`limitsFor`) and
+sends the mailbox object its set with each call; counters are keyed by window name and start, never by max, so a
+mailbox over production's numbers but under the dev ones passes at once on a dev env. A wrong-code lock is keyed by the
+max that set it, so production's lock doesn't hold under the dev set. A ticketed start's own code allowance (a device that
+signed in before: production 3 a day per address, 9 per mailbox, with no fall-back to the code limits) is 100 and 300
+on a dev env.
+
 All exact, on the issuer's `RateLimiter` objects (named `<env>:<subject>`). A mailbox is the normalized address
 without its `+tag` (`normalizeEmail().mailbox`), keyed by HMAC under K_rl; a requester inside it is a hash of the IP
 subject. Every mailbox decision is one atomic call (D198). Every mailbox-level refusal answers `retry-after: 900`.
 
 | Subject | Limit | Refusal |
 |---|---|---|
-| Mailbox × requester: code mails | 3 per 15 min, 10 per day (resends included) | 429 |
-| Mailbox: code mails | 10 per 15 min, 30 per day; then 5 a day for requesters new to it that day | 429 |
+| Mailbox × requester: code mails | 3 per 15 min, 10 per day (resends included); dev: 20 per 15 min, 100 per day | 429 |
+| Mailbox: code mails | 10 per 15 min, 30 per day (dev: 30 per 15 min, 200 per day); then 5 a day for requesters new to it that day | 429 |
 | Device ticket | 3 code mails a UTC day **per exact address** (all its tickets together) for the challenges they started, outside the two rows above, the live cap and the challenge cap; ≤ 5 live tickets per address (a 6th revokes the oldest); ≤ 10 ticket challenges per exact address a day; per mailbox (all its `+tag`s) ≤ 9 ticket mails and ≤ 30 owner challenges (grants included) a day, which never block the untagged address or a grant (they count toward them); past these the proof counts as nothing | 429 |
 | Unlock grant | one start within 24 h of the unlock; its challenge's mails free (≤ 2 resends); its checks in the ticket slot then a grant slot of 2 outside the ceiling | – |
-| Mailbox: live challenges | 5 at once | 429 |
-| Mailbox × requester: wrong codes | 10 per hour → that requester locked out of the mailbox for 1 h | 429 (start, resend, verify) |
-| Mailbox: failed code checks | hard ceiling 25 per UTC day, from everyone: any requester for the first 18 (the backstop), then an owner slot of 4 (requesters that started a challenge before the trip and have no failure, one each) and a ticket slot of 3 (ticketed challenges) | 429 until the UTC day ends; `mailbox_guess_limit` logged |
-| Mailbox: challenges created | 35 per UTC day, every kind | 429 |
+| Mailbox: live challenges | 5 at once; dev: 20 | 429 |
+| Mailbox × requester: wrong codes | 10 per hour → that requester locked out of the mailbox for 1 h; dev: 30 per hour | 429 (start, resend, verify) |
+| Mailbox: failed code checks | hard ceiling 25 per UTC day, from everyone: any requester for the first 18 (the backstop), then an owner slot of 4 (requesters that started a challenge before the trip and have no failure, one each) and a ticket slot of 3 (ticketed challenges); dev: ceiling 100 = backstop 80 + owner slot 17 + ticket slot 3 | 429 until the UTC day ends; `mailbox_guess_limit` logged |
+| Mailbox: challenges created | 35 per UTC day, every kind; dev: 250 | 429 |
 | Mailbox: staff unlocks, unsuppressions, ticket revocations | 1 a day and 3 in 30 days each | `429 staff_cap` |
 | Challenge | 10 min from creation; 5 wrong codes; ≤ 2 resends ≥ 30 s apart | 410 / 429 |
-| IP (IPv4 address, IPv6 /64): `start` | 10 per 10 min, 50 per day | 429 |
+| IP (IPv4 address, IPv6 /64): `start` | 10 per 10 min, 50 per day; dev: 30 per 10 min, 300 per day | 429 |
 | IP prefix (IPv4 /24, IPv6 /56, IPv6 /48): `start` | 1000 per day each; skipped with a valid ticket or grant | 429 |
-| IP: `verify` / `resend` (and `confirm`) / `google-match` (its prepared challenges too) / `google-record` / webhook | 30 / 10 / 120 / 120 / 120 per 10 min | 429 |
+| IP: `verify` / `resend` (and `confirm`) / `google-match` (its prepared challenges too) / `google-record` / webhook | 30 / 10 / 120 / 120 / 120 per 10 min; dev: `verify` 90, `resend` 30 (`confirm` stays 10) | 429 |
 | No usable `cf-connecting-ip` (IP-limited routes) | refused | `400 missing_client_ip`, logged |
 | Recipient domain (registrable, Public Suffix List): code mails | 100 + 2 × its distinct verified mailboxes a day over the trailing 7 days (only challenges that took a domain place), at most 2,000, per day; a verified challenge's places given back; except the listed consumer providers (`src/domain.ts`); each requester prefix (IPv4 /24, IPv6 /56, /48) ≤ 20% of the day's cap; ticketed and unlock-grant challenges not counted | 429; `email_domain_cap` logged when a day fills |
 | App: `start` | plan `per_minute` per minute; plan `per_day` per day; owner starts not counted | 429 |
@@ -1824,7 +1888,8 @@ subject. Every mailbox decision is one atomic call (D198). Every mailbox-level r
 | Staff | 20 actions per hour per staff member, all staff routes together | 429 |
 
 The guess bound: ≤ 25 failed checks a day per mailbox plus ≤ 2 per unlock (≤ 3 unlocks in 30 days): 365 × 25 + 37 × 2 =
-≈ 9,199 a year (≈ 9,273 in the worst case), ≈ 0.92% a year against a 6-digit code (D198).
+≈ 9,199 a year (≈ 9,273 in the worst case), ≈ 0.92% a year against a 6-digit code (D198). On a dev env (ceiling 100,
+D340): 365 × 100 + 37 × 2 ≈ 36,574 a year, ≈ 3.7% (testnet: no real funds).
 
 ### Durable Objects, D1 and bindings
 

@@ -1,0 +1,220 @@
+/* The partner console's one stylesheet (served from 'self': the CSP allows no inline style). System fonts only. */
+:root {
+  --fg: #1d1f24;
+  --muted: #6b7180;
+  --bg: #f7f7f9;
+  --card: #ffffff;
+  --line: #e3e5ea;
+  --accent: #2f5bd3;
+  --warn-bg: #fff6e0;
+  --warn-fg: #7a5200;
+  --err-bg: #fdecec;
+  --err-fg: #9b1c1c;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #e8e9ee;
+    --muted: #9aa0ad;
+    --bg: #15171c;
+    --card: #1d2027;
+    --line: #2e323b;
+    --accent: #7b9dff;
+    --warn-bg: #3a2e10;
+    --warn-fg: #f5d48a;
+    --err-bg: #3d1717;
+    --err-fg: #ffb4b4;
+  }
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+}
+a {
+  color: var(--accent);
+}
+main {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+main.narrow {
+  max-width: 480px;
+  padding-top: 15vh;
+}
+h1 {
+  font-size: 1.5rem;
+  margin: 0 0 12px;
+}
+h2 {
+  font-size: 1.1rem;
+  margin: 0 0 8px;
+}
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--card);
+}
+.brand {
+  font-weight: 600;
+  color: var(--fg);
+  text-decoration: none;
+}
+.who {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  color: var(--muted);
+}
+button {
+  font: inherit;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--fg);
+  cursor: pointer;
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  padding: 10px 16px;
+}
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.org-head {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+  margin: 12px 0 20px;
+}
+.tabs a {
+  padding: 8px 12px;
+  text-decoration: none;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+}
+.tabs a.active {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+.section {
+  margin: 24px 0;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+th,
+td {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+th {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+tr:last-child td {
+  border-bottom: none;
+}
+tr.failed td {
+  color: var(--err-fg);
+}
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+.small {
+  font-size: 0.8rem;
+}
+.muted {
+  color: var(--muted);
+}
+.badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.badge-warn {
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+  border-color: transparent;
+}
+.note {
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--card);
+  border: 1px solid var(--line);
+}
+.note-error {
+  background: var(--err-bg);
+  color: var(--err-fg);
+  border-color: transparent;
+}
+.note-warn {
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+  border-color: transparent;
+}
+.cards {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.cards li {
+  display: flex;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.settings {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 24px;
+  margin: 0;
+  padding: 12px 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.settings dt {
+  color: var(--muted);
+}
+.settings dd {
+  margin: 0;
+}
+.app-title {
+  font-size: 1.25rem;
+}

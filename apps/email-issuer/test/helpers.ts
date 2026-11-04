@@ -238,7 +238,8 @@ export async function harness(over: Partial<Deps> = {}): Promise<Harness> {
   const signer = await WorkerSecretSigner.create(env.ISSUER_SIGNING_KEY, env.EMAIL_ACTIVE_KID);
   const keys = await importKeys(env);
   const deps: Deps = {
-    // Each harness its own env name: limiter objects are named `<env>:<subject>`, so tests never share a window.
+    // Each harness its own env name: limiter objects are named `<env>:<subject>`, so tests never share a window. `t-…`
+    // is not a dev name (`isDevEnv`), so every test runs under the production limits unless it names a dev env (D340).
     env: { ...env, ENV_NAME: `t-${uid()}` },
     now: () => clock.now,
     chain,

@@ -5,14 +5,16 @@
 // precheck); the `orgId` filter is a backstop against console bugs, not against a compromise, which the breaker and the
 // hot-DB budget bound instead. The console never acts for `org_legacy` (forbidden).
 //
-// Built in batches C5 and C6; `usage` / `statements` / `ledger` (Neon only, over the writer's USAGE_DB binding, no
-// hot-DB statement) in C12 (usage/reports.ts).
+// Built in batches C5 and C6, plus C14's read-only `pendingUpgrades` and C12's `usage` / `statements` / `ledger`
+// (Neon only, over the writer's USAGE_DB binding, no hot-DB statement; usage/reports.ts).
 import {
   type RpcCode,
   cancelChangeByLinkInput,
   changeOriginsInput,
   consoleProposeChangeInput,
   cancelChangeInput,
+  consoleGetUserInput,
+  consoleListUsersInput,
   consoleSetSuspendedInput,
   createKeyInput,
   getAppInput,
@@ -20,6 +22,8 @@ import {
   listAppsInput,
   listChangesInput,
   ownerActionInput,
+  pendingUpgradesInput,
+  pendingUpgradesView,
   removeOriginsInput,
   revokeKeyInput,
   rotateKeyInput,
@@ -38,9 +42,11 @@ import { cancelChange, cancelChangeByLink } from '../changes/lifecycle.ts';
 import { changeOrigins, removeOrigins } from '../changes/origins.ts';
 import { proposeSettingByMember, setLogo, turnOff, updateSettings } from '../changes/settings.ts';
 import { setSuspensionBit } from '../changes/suspension.ts';
+import { governanceSnapshot } from '../governance-status.ts';
 import { SAFETY_METHODS, newCtx, runOwnerAction } from '../handlers.ts';
 import { finishUsageOnThrow } from '../usage/event.ts';
 import { orgLedger, orgStatements, orgUsage } from '../usage/reports.ts';
+import { consoleGetUser, consoleListUsers } from '../directory/read.ts';
 import { runRpc } from './common.ts';
 
 const MEMBER = ['member'] as const;
@@ -69,6 +75,11 @@ export const CONSOLE_COSTS = {
   proposeChange: 5,
   /** The scope-in-org read and, when a cap refuses, its `owner_cap` event. */
   ownerAction: 2,
+  /** The governance snapshot's one D1 batch of two reads (the JWKS cron's state), when the 10 s snapshot is stale (C14). */
+  pendingUpgrades: 2,
+  /** One SELECT each (directory/read.ts). */
+  listUsers: 1,
+  getUser: 1,
 } as const;
 
 /**
@@ -117,6 +128,18 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
   listChanges(c: unknown) {
     return runRpc(this.env, 'listChanges', listChangesInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.listChanges }, async ({ input, db }) => ({
       changes: await listChanges(db, input.orgId, input.beforeSeq, input.limit),
+    }));
+  }
+
+  /**
+   * The pending-upgrades page (batch C14, D86): pending upgrades, owner transfers, withdrawals, delay decreases and
+   * console-audience additions with their countdowns, from the GET /v1/governance snapshot. Contract-wide and public
+   * on chain, so nothing in it is filtered by org; the call is charged to the member's org and the console checks the
+   * membership first. Its only hot-DB use is the snapshot's one D1 batch, shared and at most once per 10 s.
+   */
+  pendingUpgrades(c: unknown) {
+    return runRpc(this.env, 'pendingUpgrades', pendingUpgradesInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.pendingUpgrades }, async () => ({
+      pendingUpgrades: pendingUpgradesView(await governanceSnapshot(this.env)),
     }));
   }
 
@@ -248,5 +271,15 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
         ...(status >= 400 && error ? { error: error.slice(0, 500) } : {}),
       };
     });
+  }
+
+  // ---- end users and their wallets (D310, D315): the org's own scopes only; no sub, identity key or email ----
+
+  listUsers(c: unknown) {
+    return runRpc(this.env, 'listUsers', consoleListUsersInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.listUsers }, ({ input, db, w }) => consoleListUsers(db, input, w.now));
+  }
+
+  getUser(c: unknown) {
+    return runRpc(this.env, 'getUser', consoleGetUserInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.getUser }, async ({ input, db, w }) => ({ user: await consoleGetUser(db, input, w.now) }));
   }
 }

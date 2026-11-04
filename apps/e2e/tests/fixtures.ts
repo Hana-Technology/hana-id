@@ -208,6 +208,18 @@ export async function directoryView(sub: string): Promise<DirectoryView> {
 }
 
 /** Raw EVM transactions the mocked chain received. */
+/** The wallet directory's users listing `address` (`GET /__e2e/wallets`, D310). */
+export interface WalletDirectoryUser {
+  userId: string;
+  scopeId: string;
+  wallets: { chain: string; address: string }[];
+  identities: { provider: string; sub: string | null; role: string; status: string }[];
+}
+
+export async function walletDirectory(address: string): Promise<WalletDirectoryUser[]> {
+  return (await (await fetch(`${API_URL}/__e2e/wallets?address=${encodeURIComponent(address)}`)).json()) as WalletDirectoryUser[];
+}
+
 export async function evmBroadcasts(): Promise<`0x${string}`[]> {
   return (await (await fetch(`${EVM_RPC}/__e2e/txs`)).json()) as `0x${string}`[];
 }
@@ -420,3 +432,26 @@ export async function reject(popup: Page): Promise<void> {
   await popup.getByRole('button', { name: 'Reject', exact: true }).click();
 }
 
+
+// ---- freezes ----
+
+/** The vault's login limit (packages/web/src/vault/login.ts LOGIN_PENDING_MS) and the banners' (AFTERWORD_MS). */
+export const LOGIN_PENDING_MS = 5 * 60_000;
+export const AFTERWORD_MS = 5 * 60_000;
+
+/**
+ * Whether `frame`'s main thread runs a script within `ms`. A frame stuck in a loop never does, nor does any page that
+ * shares its renderer process: in the suite's three browsers the partner page did, and on sandbox-dev the demo and the
+ * vault are one site (`*.tingtc.workers.dev`), so they share one in a desktop browser too.
+ */
+export async function responsive(frame: Frame, ms = 3_000): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), ms);
+  });
+  try {
+    return await Promise.race([frame.evaluate(() => true).catch(() => false), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}

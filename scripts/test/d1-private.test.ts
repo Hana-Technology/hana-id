@@ -7,11 +7,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Manifest } from '@hana-id/env';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { type CloudflareFetch, type IssuerD1Deps, STALE_SQL_FILE_MS, cloudflareApiBase, issuerD1Execute, parseD1Json, redactQuoted, withPrivateSqlFile } from '../lib/d1.ts';
+import { type CloudflareFetch, type IssuerD1Deps, STALE_SQL_FILE_MS, apiPrivateD1Execute, cloudflareApiBase, issuerD1Execute, parseD1Json, redactQuoted, withPrivateSqlFile } from '../lib/d1.ts';
 
 const ADDRESS = 'alice.private@example.com';
 const STATEMENT = `SELECT * FROM user_emails u WHERE u.email IN ('${ADDRESS}')`;
-const M = { name: 'sandbox-dev', emailIssuer: { cloudflare: { d1Name: 'hana-id-email-issuer-sandbox-dev', workerName: 'w' } } } as unknown as Manifest;
+const M = { name: 'sandbox-dev', cloudflare: { d1Name: 'hana-id-sandbox-dev' }, emailIssuer: { cloudflare: { d1Name: 'hana-id-email-issuer-sandbox-dev', workerName: 'w' } } } as unknown as Manifest;
 const ACCOUNT = 'a'.repeat(32);
 const UUID = '12345678-90ab-cdef-1234-567890abcdef';
 const TOKEN = 'cf-oauth-token-value';
@@ -159,6 +159,30 @@ describe('issuerD1Execute, local', () => {
       throw new Error(`No wrangler config (${env})`);
     };
     await expect(issuerD1Execute(M, STATEMENT, { remote: false }, d)).rejects.toThrow('No wrangler config (sandbox-dev)');
+  });
+});
+
+describe('apiPrivateD1Execute: the wallet directory’s reads of the API’s D1 (D316)', () => {
+  it('locally: wrangler with --file on the API’s database, never the statement in the argv; the file is gone after', async () => {
+    const { d, calls } = deps();
+    expect(await apiPrivateD1Execute(M, STATEMENT, { remote: false }, d)).toEqual(ROWS);
+    const argv = calls.wrangler[0]!;
+    expect(argv.slice(0, 8)).toEqual(['exec', 'wrangler', 'd1', 'execute', M.cloudflare.d1Name, '--local', '--json', '--file']);
+    expect(argv).not.toContain('--command');
+    noArgvHoldsTheAddress(calls);
+    expect(readdirSync(sqlDir)).toEqual([]);
+  });
+
+  it('remotely: D1’s REST query on the API’s database, the statement in the body only', async () => {
+    const { d, calls } = deps({
+      routes: {
+        [`GET /accounts/${ACCOUNT}/d1/database/${M.cloudflare.d1Name}`]: { status: 200, json: { success: true, result: { uuid: UUID, name: M.cloudflare.d1Name } } },
+      },
+    });
+    expect(await apiPrivateD1Execute(M, STATEMENT, { remote: true }, d)).toEqual(ROWS);
+    noArgvHoldsTheAddress(calls);
+    expect(calls.fetch.map((c) => c.url.replace('https://api.cloudflare.com/client/v4', ''))).toContain(`/accounts/${ACCOUNT}/d1/database/${M.cloudflare.d1Name}`);
+    expect(JSON.parse(calls.fetch.at(-1)!.body!)).toEqual({ sql: STATEMENT });
   });
 });
 

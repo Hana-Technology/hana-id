@@ -3,7 +3,16 @@
 Last verified against code: 2026-11-04 (branch `feat/batch-c-12`: "Reports and statements (batch C12, milestone M6)": the
 Neon migration 0006, the admin config's buckets and vars, the optional CoinGecko key, the 15-minute cron with the 00:30
 UTC daily work, issuing a statement, the rate override, exports, what to watch; "Usage ledger" lists 0006; the admin's
-cron triggers; D320–D329); 2026-11-04 (branch `feat/batch-c-11`: "Files Worker and logos (batch C11, milestone M5)": setup
+cron triggers; D320–D329); 2026-11-04 (branch `feat/batch-c-14`: "Admin Worker" → "Security & monitoring (batch C14)"
+(its setup: `watchdog.url`, the `WATCHDOG_STATUS_TOKEN` admin secret, the deploy order, the check, acknowledging
+sandbox-dev's alert #11, the failure codes, rotating the token) and "Pending upgrades page" (the release registry);
+the watchdog's step 7 and token rotation; the governance hand-off sections; D330–D338; the feed's first run starting at the current position, D344); 2026-11-04 (branch `feat/wallet-directory`: "Wallet directory (hot-DB migration 0011)":
+its prerequisites, the migration and deploy order, reading it with the CLI, its log events; the `user:*` lines in "Admin
+CLI" and "User directory (D269)"; D310–D317); 2026-11-04 (branch `feat/batch-c-9`, merged with `develop` @ bd0c9ea: "Partner console
+Worker … and console-auth": setup step 11 (the console's Google client, its JSON in `.secrets/<env>/`, the secret
+through a pipe), the route on by config, the SPA build in `deploy`, console-auth's `gen` and deploy order, the checks,
+taking sign-in down; "Console code-flow spike (open question 1)"; D290–D297); 2026-11-04 (branch `fix/dev-email-limits`:
+the email issuer's dev-env limits, D340); 2026-11-04 (branch `feat/batch-c-11`: "Files Worker and logos (batch C11, milestone M5)": setup
 step 7's R2 buckets with the `STATEMENTS` lock and the `EXPORTS` lifecycle, the Images binding, the files Worker's
 `gen` and deploy, the pages' `FILES_ORIGIN`, the order, the checks; the console section's bucket step and purge order;
 D300–D308); 2026-11-04 (branch `feat/batch-c-8`: "Admin Worker (`apps/admin`, batch C8)": its M4 setup (Access, Resend, the link and email secrets, the admin Hyperdrive id), its logs, the end of `app:changes:announce` once it runs; D278–D285); 2026-11-04 (branch `feat/batch-c-6-merge`, batch C6 on current `develop`; built on `feat/batch-c-6`: "Console sink scope (batch C6, milestone M3)" with
@@ -88,7 +97,8 @@ Never print, log, paste or commit any of these. The scripts never print them eit
 | Neon Postgres connection strings (batch C ledger, D73): pooled `DATABASE_URL` and `DATABASE_URL_DIRECT` of the env's Neon branch | `.secrets/<env>/neon.json` (`{project_id, branch, DATABASE_URL, DATABASE_URL_DIRECT, …}`); role `neondb_owner`, used only by `usage-migrate` and `usage-setup` | `neon connection-string <branch> --project-id <id> [--pooled]` (Neon CLI, `neon login`) |
 | Ledger role URLs (`usage_writer`, `usage_admin`, batch C4): each role's password; their copies live in the two Hyperdrive configs | `.secrets/<env>/neon-usage-writer.url`, `neon-usage-admin.url` | `usage-setup <env> roles` ("Usage capture" below) |
 | `USER_ID_KEY` (the uid key, base64 of 32 bytes; API only); never rotated within a contract term, backed up offline | `.secrets/<env>/user-id-key` | `usage-setup <env> user-id-key` (generates it once, sets the Worker secret) |
-| Watchdog secrets (`WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, its Resend key, Slack webhook, paging-app credentials, `HEARTBEAT_URL`) | `.secrets/<env>/watchdog-secrets.json` (flat `{NAME: value}`) | `watchdog secrets <env> init` (the key and token); the rest by hand ("Watchdog service" below) |
+| The console's Google client secret (`CONSOLE_GOOGLE_CLIENT_SECRET`, console Worker only; batch C9) | `.secrets/<env>/console-google-client.json` (Google's downloaded client JSON, `web.client_secret`) | saved by hand from Google Cloud (setup step 11, "Partner console Worker"); `wrangler secret put` through a pipe; read by `console-code-flow-spike` |
+| Watchdog secrets (`WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, its Resend key, Slack webhook, paging-app credentials, `HEARTBEAT_URL`); the admin Worker's copy of `WATCHDOG_STATUS_TOKEN` (batch C14) comes from the same file | `.secrets/<env>/watchdog-secrets.json` (flat `{NAME: value}`) | `watchdog secrets <env> init` (the key and token); the rest by hand ("Watchdog service" below) |
 | Worker copies of the above | Cloudflare Worker secrets (the watchdog's on its own Cloudflare account) | `wrangler secret put` (watchdog: `wrangler secret bulk`) |
 | Local dev copies | `apps/api/.dev.vars`, `apps/watchdog/.dev.vars`, `apps/email-issuer/.dev.vars` (0600) | `gen --dev-vars` |
 
@@ -166,7 +176,7 @@ mode with test users.
 |---|---|---|
 | Hana's own app | `googleClientIds` | becomes a client of `global` |
 | Shared login client | `sharedGoogleClientIds` | a different client ID from the above |
-| Hana console | `consoleAudiences` (`["google", "<id>"]`) | batch C signs in with it; becomes the only client of the console sink scope (never of `global`) |
+| Hana console | `consoleAudiences` (`["google", "<id>"]`, exactly one `google` entry: the console's `CONSOLE_GOOGLE_CLIENT_ID`, D294) | partner sign-in (code flow with PKCE, batch C9); becomes the only client of the console sink scope (never of `global`) |
 | Partner test client(s) | `scope:register --client` | for own-client tests; for the own-vs-shared address test use a separate Google Cloud project (the cross-project `sub` match was confirmed 2026-10-28, D42) |
 
 Register on each client:
@@ -175,6 +185,7 @@ Register on each client:
 |---|---|---|---|
 | Authorized redirect URIs | `{authOrigin}/login/callback`, exact (scheme, host, no trailing slash) | the shared client, and every partner's own client used through Hana's login page | the login popup (`response_type=id_token`, `redirect_uri={authOrigin}/login/callback`) |
 | Authorized redirect URIs | `http://localhost:5173/direct-callback.html`, exact | every client `apps/smoke`'s direct page signs in with | the direct page's openid-only popup (D271); no JavaScript origin is needed any more (Google Identity Services is gone) |
+| Authorized redirect URIs | `{console.authOrigin}/callback`, exact, and **nothing else**; **no JavaScript origins** | the Hana console client only | the console's code flow (batch C9; "Partner console Worker", setup step 11); its client secret is `CONSOLE_GOOGLE_CLIENT_SECRET` |
 
 Changes in Google Cloud can take a few minutes to apply. Changing `authOrigin` later breaks every own-client
 partner's redirect registration (not addresses).
@@ -544,8 +555,11 @@ On a governance contract `deploy-contract` compares `view_access_key_list(<signe
 
 ### Governance status for the admin portal (batch C hand-off)
 
-The admin portal (batch C) doesn't exist yet. Its "Security & monitoring" view (D83) and pending-upgrades page (D86)
-read these sources, all read-only:
+The admin portal's "Security & monitoring" view (D83) and pending-upgrades page (D86) are built (batch C14, not
+deployed; "Admin Worker" → [Security & monitoring](#security--monitoring-batch-c14)). They read the **API** and
+**Watchdog** sources below. Not read by the portal yet (D334): the contract through the portal's own RPC, and the
+council DAO (its policy and open proposals). So the `governance:status` findings about the owner account, the DAO's
+policy and the delay floors still come from `admin <env> governance:status`. The sources, all read-only:
 
 - **Contract** (through the portal's own RPC): the views and NEP-297 events in `docs/contract-interface.md`
   "Monitoring hand-off".
@@ -676,6 +690,59 @@ deploy. Logins are unaffected either way; events in between are not recorded.
 | `usage_uid_unavailable` | `missing_key` / `bad_key`: `USER_ID_KEY` unset or malformed (events recorded without uid); `bad_path`: a session path that doesn't parse for its scope | Set the key (step 4); `bad_path` should never happen |
 | `identity_usage_sync_failed` | The hourly identity-count copy failed | Nothing: the next hour copies the last 7 days again |
 | `first_session_write_failed` (`what` `scope` or `marker`) | One of the waiver's two hot-DB signs wasn't written | The other one stands; the next session attempt retries the scope's |
+
+## Wallet directory (hot-DB migration 0011)
+
+Branch `feat/wallet-directory` (D310–D317; not merged, nothing deployed). After each login the vault reports the
+wallet's Stellar and EVM addresses, each signed by its own key, to `POST /v1/wallets/record`; the API checks them
+against the live session on chain and keeps, in its own D1, each user (`hu_…`, its Support ID `HANA-XXXX-XXXX`), the
+wallets and the account's identities (`docs/architecture.md` "Wallet directory", `docs/api.md`). It never fails or
+slows a login. There is no backfill: a user appears with wallets at their next login after the deploy.
+
+**Prerequisites.** `USER_ID_KEY` on the API Worker (the uid key: "Usage capture" step 4, `usage-setup <env>
+user-id-key`; it needs no Neon). Without it every record answers `503 directory_unavailable` and the API logs
+`directory_unavailable` (`missing_key`) at most every 10 minutes per isolate; logins are unaffected. Never rotate it
+within a contract term: every user would get a new user id.
+
+**Applying it on sandbox-dev** (the user runs this, from the main checkout; additive, three new tables, no rollback
+step: an older Worker ignores them). Take a Time Travel bookmark first ("Restoring a D1 database (Time Travel)"), then:
+
+```sh
+corepack pnpm --dir apps/api exec wrangler d1 migrations list hana-id-sandbox-dev --remote     # 0011_wallet_directory.sql pending
+corepack pnpm --dir apps/api exec wrangler d1 migrations apply hana-id-sandbox-dev --remote
+corepack pnpm --filter @hana-id/api run deploy                                                 # the API with /v1/wallets/record
+# then the page Workers, so the vault sends the record ("Create an environment from scratch" step 9)
+```
+
+Order: the migration, then the API, then the vault bundle. In another order nothing breaks: an API without 0011
+answers `503 directory_write_failed` and logs `directory_write_failed` (`no_table`), and a vault without the record
+sends nothing. `GET /v1/health` keeps `hotDb: 9` (D313). Other envs: the same with `hana-id-<env>`.
+
+**Checking it.** Log in on the demo, then `admin sandbox-dev user:find --remote --address <the G… or 0x… address the
+demo shows>`: one user, both wallets, the Google (or email) identity as the account root.
+
+**Reading it** (Hana staff; `$A` as in "User directory (D269)"):
+
+```sh
+$A user:list --remote                            # each identity also shows its user id, Support ID, role and wallets per scope
+$A user:find --remote --address G…               # every user listing that wallet (warned when more than one)
+$A user:find --remote --address 0x…              # any case
+$A user:find --remote --user HANA-XXXX-XXXX      # or hu_…; any case, with or without HANA- and dashes
+$A user:find --remote                            # an address, sub, wallet, user id or Support ID on stdin
+```
+
+These read the API's D1 the way the issuer's is read (D316): locally the statement in a 0600 file under
+`.secrets/tmp/` passed as `--file`, remotely D1's REST query endpoint on `cloudflare.d1Name`, wrangler's log file off,
+errors never quoting the statement. `--address` and `--user` also work in an env without an email issuer (no
+addresses then). A wallet listed under more than one user is a reused or exported key, or a record made from an
+approved raw signature (D311): never treat a listed address as proof of who owns the wallet. Subs and addresses are
+for this terminal only, as in "User directory (D269)".
+
+**What to watch** (Worker logs): `directory_write_failed` (error: `no_table` before 0011, `internal` otherwise),
+`directory_sync_failed` (warn, `near_unavailable`: an identity sync after a login or a link change couldn't read the
+chain; the next one rewrites the account), `directory_unavailable` (warn, `missing_key`). The request log's
+`/v1/wallets/record` lines: `bad_wallet_record` or `session_mismatch` in volume are someone probing, `stale_record`
+a vault with a wrong clock.
 
 ## Hot DB migration 0006 and the new gate (batch C3, milestone M1)
 
@@ -835,18 +902,51 @@ of its initial allowance (0.5 NEAR, deploy-contract's default; set the Worker va
 keys were added with another `--owner-relayer-allowance`) writes an `owner_allowance_low` security event, once a day.
 Top it up by re-adding the key with a fresh allowance ("Relayer keys (either pool)").
 
-## Partner console Worker (`apps/console`, batch C7)
+## Partner console Worker (`apps/console`, batches C7 and C9) and console-auth (`apps/console-auth`, C9)
 
 The console Worker (`hana-id-console-<env>`, manifest `console.workerName`) holds `CONSOLE_DB` (orgs, members, invites,
-owner grants, console sessions, the console's audit log) and binds the API's `ConsoleRpc` (`API`). After C7 it has
-**no public route**: `workers_dev: false`, `preview_urls: false`, no `routes`. Only its bindings reach it: the admin
-Worker's `CONSOLE` → `StaffRpc` (batch C8) and its hourly cron. Partner sign-in, the console route and the SPA come with
-C9 (milestone M4); nothing below makes anything reachable by a partner. `docs/api.md` "Console Worker" lists what it
-serves; D240–D244 the readings.
+owner grants, console sessions, the console's audit log), binds the API's `ConsoleRpc` (`API`) and serves the partner
+SPA and its `/api/*` on `console.origin`. From C9 (branch `feat/batch-c-9`, not merged) its route is on in the config:
+on a `workers.dev` origin (dev envs only, and only the Worker's own name: `https://<console.workerName>.<subdomain>.workers.dev`)
+`workers_dev: true`, on any other host a Custom Domain route; preview URLs off (D294). The thin console-auth Worker
+(`console.authWorkerName`) serves `console.authOrigin`, the Google client's only redirect URI host, and forwards
+`GET /start` and `GET /callback` to the console's `AuthHandler`. `docs/api.md` "Console Worker and console-auth" lists
+what both serve; D240–D244 and D290–D297 the readings.
 
-It needs the dashboard blocks in the manifest (`console`, `files`, `admin`, `usage`, `email`, `ownerGrantDelayMs`;
-`docs/batch-c-build-plan.md` setup step 12): `gen` refuses an env without them, so sandbox-dev can't run it yet (Q3:
-the origins come first).
+Both need the dashboard blocks in the manifest (`console`, `files`, `admin`, `usage`, `email`, `ownerGrantDelayMs`;
+`docs/batch-c-build-plan.md` setup step 12) and exactly one `["google", <client id>]` entry in `consoleAudiences`
+(setup step 11, below): `gen` refuses an env without them, so sandbox-dev can't run them yet (Q3: the origins come
+first). Partners can sign in once both are deployed with the secret set (milestone M4); invites need the admin
+Worker's notices (C8), so without C8 no new partner can be invited (staff's `issueInvite` link only works after the
+admin Worker's ack).
+
+### Setup step 11: the console's Google OAuth client (for the user, once per env)
+
+In Google Cloud (the project of Hana's other clients), **APIs & Services → Credentials → Create OAuth client ID**:
+
+1. Type **Web application**, name `Hana ID console <env>`.
+2. **Authorized JavaScript origins: none.** No origin means Google Identity Services, One Tap and FedCM can't mint
+   tokens for this client; only the code flow works (spec "Google client setup").
+3. **Authorized redirect URIs: exactly one**, `<console.authOrigin>/callback` (for sandbox-dev
+   `https://<console.authWorkerName>.<subdomain>.workers.dev/callback`). No loopback URI, not even for testing: the
+   open-question spike below uses this one.
+4. Scopes: nothing to add on the consent screen beyond `openid` and `email` (the console never asks for `profile`).
+5. **Download JSON** and save it, without opening it in an editor that syncs, as
+   `.secrets/<env>/console-google-client.json`, then `chmod 600` it (the directory is 0700). It holds the client
+   secret; never paste it into a terminal, a chat or a ticket.
+6. Put the client id (public) in `envs/<env>.json` `consoleAudiences` as `["google", "<id>.apps.googleusercontent.com"]`
+   and, since console audiences live in the console sink scope, run the `deploy-contract` plan for it (C6, "Console sink
+   scope"): dry run, then `--yes`.
+7. The secret, through a pipe (from the repo root), after `gen` for the console:
+
+   ```sh
+   node -e 'process.stdout.write(require("./.secrets/<env>/console-google-client.json").web.client_secret)' \
+     | corepack pnpm --dir apps/console exec wrangler secret put CONSOLE_GOOGLE_CLIENT_SECRET
+   ```
+
+   Rotation: create a second secret on the same client in Google Cloud, update the JSON file, run the pipe again,
+   then delete the old secret in Google Cloud. Without the secret every callback answers the static page with `503`
+   (`auth_callback` `not_configured` in `wrangler tail`); nothing else in the console needs it.
 
 ### Setting it up (once per env, milestone M4, for the user to run)
 
@@ -855,31 +955,72 @@ From the repo root of the main checkout, logged in to the API's Cloudflare accou
 ```sh
 # 1. The console's D1 (setup step 5), next to the API's (APAC); note the id it prints (not a secret).
 corepack pnpm --dir apps/console exec wrangler d1 create <console.d1Name> --location apac
-# 2. The config, with that id (apps/console/wrangler.jsonc, gitignored).
+# 2. The configs: the console with that id (apps/console/wrangler.jsonc), console-auth (apps/console-auth/wrangler.jsonc);
+#    both gitignored.
 corepack pnpm --filter @hana-id/console gen <env> --d1-id <uuid>
+corepack pnpm --filter @hana-id/console-auth gen <env>
 # 3. The schema: apps/console/migrations (0001, 0002) on the remote database.
 corepack pnpm --dir apps/console exec wrangler d1 migrations apply <console.d1Name> --remote
 # 4. The R2 buckets the config binds must exist before the first deploy: setup step 7, all three buckets with their
 #    rules, as "Files Worker and logos" below says (the console binds LOGOS and STATEMENTS, the admin Worker EXPORTS).
 #    The config also binds the Images binding (`images: {binding: "IMAGES"}`): see that section too.
-# 5. The API first (its ConsoleRpc entrypoint, batch C5), then the console.
+# 5. The API first (its ConsoleRpc entrypoint, batch C5), then the console (`deploy` builds the SPA into dist/ first),
+#    then its secret (setup step 11.7), then console-auth (its binding needs the console's AuthHandler).
 corepack pnpm --dir apps/api exec wrangler deploy
-corepack pnpm --dir apps/console exec wrangler deploy
+corepack pnpm --filter @hana-id/console run deploy
+corepack pnpm --filter @hana-id/console-auth run deploy
 ```
 
-- The deploy prints no URL (no route). Check it with `corepack pnpm --dir apps/console exec wrangler deployments list`
-  and, after the next full hour, `wrangler tail <console.workerName>`: one `console_cron` line per step (`invites.expired`,
-  `grants.applied`, `purge`, `logos`) with a count, never an id of a person.
+- Check: `curl -sI <console.origin>/` is `200` with the console CSP; `curl -s <console.origin>/api/me` is `401
+  unauthenticated`; `curl -sI <console.authOrigin>/` is `404` with `content-security-policy: default-src 'none'; …`;
+  `curl -sI '<console.authOrigin>/start?f=x'` is the static `400` page. Then sign in from a browser as an invited member
+  (`/invite#t=…` from the invite email, or `/signin` once a member). `wrangler tail <console.workerName>` shows
+  `auth_start`, `auth_callback`, `auth_complete` with `outcome` and `code`, never an address, `sub`, token or cookie.
 - The cron is one more trigger on the account (`0 * * * *`); the free plan allows 5 per account (the API and the
-  watchdog have one each, per env).
-- The console has no secret in C7. `CONSOLE_GOOGLE_CLIENT_SECRET` comes with C9 (setup step 11); `INVITE_LINK_KEY` and
-  `CANCEL_LINK_KEY` are the **admin** Worker's (C8, setup step 10), never the console's: the console stores only the
-  sha256 of each emailed link token, which the admin Worker sends with its ack (D240).
+  watchdog have one each, per env). console-auth has none.
+- `INVITE_LINK_KEY` and `CANCEL_LINK_KEY` are the **admin** Worker's (C8, setup step 10), never the console's: the
+  console stores only the sha256 of each emailed link token, which the admin Worker sends with its ack (D240).
 - `OWNER_GRANT_DELAY_MS` comes from the manifest's `ownerGrantDelayMs` (D145). If it is missing or out of range, the
-  ack of a promotion's notice and every invite acceptance (C9's sign-in) refuse with `internal` (fail closed);
-  regenerate and redeploy.
-- Rollback: `wrangler rollback` in `apps/console` (it has no route, so nothing partner-facing changes). A schema problem
-  is a new migration, never an edit of an applied one.
+  ack of a promotion's notice and every invite acceptance (sign-in's) refuse with `internal` (fail closed; the person
+  sees `/signin#error=internal`); regenerate and redeploy.
+- Neither Worker records invocation logs (`observability.logs.invocation_logs: false`): the URLs carry sign-in's handoff
+  code and Google's `code` and `state`. Don't turn them on.
+- Rollback: `wrangler rollback` in `apps/console` (or `apps/console-auth`). To take sign-in down at once without a
+  rollback, delete console-auth's route (or the Worker): no new sign-in can complete, existing sessions keep working
+  read-only until they expire; to end those too, revoke them (`UPDATE console_sessions SET revoked_at = …` reviewed by a
+  second person, until the admin console's freeze and disable exist, C8). A schema problem is a new migration, never
+  an edit of an applied one.
+
+### Console code-flow spike (open question 1; D295)
+
+Before C10 (step-ups and owner actions) is built against it, run this once on an env with setup step 11 done; the
+console doesn't need to be deployed. It answers the spec's open question 1: does Google's code flow give the console
+client an ID token with no `email` (and nothing else outside the API's claim allow-list) for `scope=openid`?
+
+```sh
+corepack pnpm --filter @hana-id/scripts console-code-flow-spike <env>             # both legs
+corepack pnpm --filter @hana-id/scripts console-code-flow-spike <env> --leg openid  # the step-up leg only
+```
+
+For each leg the script prints a Google URL: open it in a browser, choose an account (repeat with a personal Gmail and
+a Workspace account), sign in. Google sends the browser to `<console.authOrigin>/callback`; the page may not load, or
+show "Sign-in didn't work" if console-auth is deployed (it exchanges nothing for a state it doesn't know): copy the whole
+address from the address bar and paste it at the prompt (not echoed; the code in it works once, for a few minutes). The
+script exchanges the code with the client secret (`.secrets/<env>/console-google-client.json`) and its own PKCE
+verifier, checks the ID token (RS256 on Google's JWKS, `iss`, `aud`, `azp`, nonce, `exp`, `iat`) and prints JSON with
+each leg's claim **names**, `outsideApiAllowList`, `hasEmailClaims`, `hasHd`, `hasAtHash`, `atHashMatches`, `passes`
+and a verdict; never a token, an address, a `sub` or a code. Exit code 1 if a leg doesn't pass.
+
+- `openid` leg `PASS`: open question 1 answered "yes"; nothing to change.
+- `NO EMAIL, BUT at_hash` (expected: Google documents `at_hash` as always present on server-flow ID tokens): no
+  personal claim, but the API's allow-list refuses `at_hash`; decide D295's options before C10.
+- `FAIL: Google added email or hd`: step-ups and owner actions stop until decided (the spec's fallback: accept the
+  address after an explicit partner disclosure).
+- `openid email` leg `PASS`: the console's sign-in accepts the token (D290); a `FAIL` there means sign-in would refuse
+  every account: don't deploy the console until it is understood.
+
+Record the result (the JSON, which holds no personal data, and the account kinds tried) in `docs/context.md` and the
+answer in `docs/batch-c-spec.md` open question 1, as the email spike's was.
 
 ### What runs and what it keeps
 
@@ -975,8 +1116,9 @@ the repo root of the main checkout, logged in to the API's Cloudflare account. N
    `done` line per run, `notice`, `feed` and `watcher` lines with ids, codes and counts only. "Feed and notices" in the
    SPA shows the backlog, each feed cursor's lag and the watcher's cursor.
 
-- **The first runs walk the history**: the feed's cursors start at 0, so the earlier `app_changes` and console audit
-  rows go out as digests (legacy rows, which have no security contacts, to the alias) over a few runs; the watcher
+- **The first run sends no history** (D344): a feed cursor with no row in `ops.state` starts at the source's current
+  position, read silently (a `feed` line with `code: cursor_initialised`; a long history continues next run with
+  `cursor_initialising`); only rows after it are emailed. Unnotified security events are still emailed. The watcher
   stores each scope's state as its baseline without an email.
 - **Cron triggers**: two per env (`*/5 * * * *`, and C12's `*/15 * * * *`, whose 00:30 UTC run also does the daily
   ledger work, D329); the free plan allows 5 per account (the API, the watchdog and the console have one each per env),
@@ -998,6 +1140,100 @@ the repo root of the main checkout, logged in to the API's Cloudflare account. N
 | `watcher` `near_unavailable` / `not_on_chain` | `get_scope` failed, or a hot-DB scope isn't on chain | NEAR RPC status; a scope row without a registered scope is a setup error |
 | `access_refused` (warn) with `code` | An `/api/*` request without a valid staff token (`not_staff`: a valid Access identity not on `admin.staffEmails`) | Expected for strangers; for staff, check the manifest list and the Access policy |
 | `access_refused` `access_config_missing` / `certs_unavailable` (error) | `accessAud` still `UNSET`, an unusable staff list, or the team's certs unreachable: every `/api/*` is 503 | Step 1; Cloudflare status |
+| `watchdog_call` with a `code` (C14, below) | The "Security & monitoring" view couldn't read the watchdog | The table in "Security & monitoring" |
+
+### Security & monitoring (batch C14)
+
+The SPA's **Security & monitoring** (`/security/monitoring`), **Pending upgrades** (`/security/upgrades`) and
+**Playbooks** (`/security/playbooks`) screens (D83, D86, D126; `docs/api.md` "Admin Worker", D330–D338). The admin
+Worker reads the watchdog's `GET /status`, `/alerts` and `/actions` **server-side** with the bearer
+`WATCHDOG_STATUS_TOKEN` (the browser never gets it), the API's governance snapshot through `AdminRpc.governance` (the
+same as `GET /v1/governance`) and the recent security events, and lists the findings it derives (a silent watchdog, a
+pause, a pending upgrade, owner transfer or withdrawal, a forged or unexecuted key change, an untracked signer key, an
+unacknowledged critical alert, …), each with its playbook. The portal never alerts and never acts on chain: the
+watchdog still sends every alert itself. Its one write is the **acknowledge** button on an unacknowledged critical
+alert, which forwards `POST /alerts/:id/ack` with your Access identity (`<email> (access:<sub>)`): it **stops only that
+alert's 15-minute re-sends**. It doesn't clear the condition, stop a first alert or change a check; a condition that
+still holds stays in "Open alerts" and in the findings.
+
+Setup (once per env, with or after the admin Worker's own setup above; for the user to run, from the repo root of the
+main checkout; nothing below prints the token):
+
+1. **The watchdog's URL in the manifest.** Add `watchdog.url` to `envs/<env>.json`: the watchdog Worker's https origin
+   on **its own** Cloudflare account, `https://<watchdog.cloudflare.workerName>.<that account's subdomain>.workers.dev`
+   (the URL its `wrangler deploy` printed, without a path; a custom domain is allowed). The schema refuses anything
+   but an https origin, and a workers.dev host must name `watchdog.cloudflare.workerName`. Not a secret. A production
+   manifest's admin `gen` refuses to run without it.
+2. **The bearer as an admin secret.** The admin Worker's copy of `WATCHDOG_STATUS_TOKEN` is the one in
+   `.secrets/<env>/watchdog-secrets.json` (written by `watchdog secrets <env> init`), sent through wrangler's stdin.
+   `jq -e` fails instead of uploading `null` when the file has no token:
+
+   ```sh
+   jq -er .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json | corepack pnpm --dir apps/admin exec wrangler secret put WATCHDOG_STATUS_TOKEN
+   ```
+
+3. **Config and deploy.** The API first (it gains `AdminRpc.governance` and both `pendingUpgrades`), then the admin
+   (`gen` writes the `WATCHDOG_URL` and `NEAR_NETWORK` vars; the token is never in the config):
+
+   ```sh
+   corepack pnpm --filter @hana-id/api run gen <env>
+   corepack pnpm --dir apps/api exec wrangler deploy
+   corepack pnpm --filter @hana-id/admin gen <env>
+   corepack pnpm --dir apps/admin exec wrangler deploy
+   ```
+
+4. **Check it.** Open `<admin.origin>/security/monitoring`: the Watchdog table shows the last run and the heartbeat,
+   "Contract governance" the pause state, the pending key changes and the updater keys against the signer's keys.
+   A `watchdog_unauthorized` means the two copies of the token differ (redo step 2 from the same file);
+   `watchdog_unconfigured` means `WATCHDOG_URL` or the secret is missing here, or the watchdog has no token.
+5. **sandbox-dev: acknowledge alert #11.** The watchdog's critical alert #11 on sandbox-dev is the expected
+   `governance_change` of the updater-key change (the planned rotation, not an attack). It re-pages every 15 minutes
+   until acknowledged. Once the view is up: Security & monitoring → Open alerts → #11 → **Acknowledge** (read the
+   confirmation: it stops the re-sends only). The row then shows `acknowledged … via portal` with your identity, the
+   "not acknowledged" finding goes, and the pages stop at the next 15-minute mark. Check the updater key it reported
+   against "Updater keys against the signer's access keys" first: it must be the key `deploy-contract` installed
+   (`.secrets/sandbox-dev/keys-updater.json`'s public key, `governance:status` lists it as tracked). This is
+   `docs/mainnet-readiness.md` item 5.9, the first real test of the ack flow.
+
+What the view's sources answer when they fail (each fails on its own: a watchdog that doesn't answer leaves the
+governance part standing, and the other way round; Worker log line `watchdog_call` with the code):
+
+| Code | Meaning | Action |
+|---|---|---|
+| `watchdog_unconfigured` | No `WATCHDOG_URL` var or no usable `WATCHDOG_STATUS_TOKEN` here (≥ 32 printable characters), or the watchdog answered 503 (no token of its own) | Steps 1–3; the watchdog's `secrets <env> check` |
+| `watchdog_unauthorized` | The watchdog refused the bearer: the copies differ | Step 2 from the same file |
+| `watchdog_timeout` | No full answer within 8 s (body included) | The watchdog's own account and logs; [watchdog-down](playbooks.md#watchdog-down) if `/status` is down too |
+| `watchdog_too_large` | An answer over its cap (`/status` 1 MiB, `/alerts` 2 MiB, `/actions` 512 KiB, an ack 64 KiB; D331) | A runaway alert's deliveries: check `/alerts` with the curl in the playbooks |
+| `watchdog_bad_answer` | Not a JSON object, or a redirect (never followed: it would carry the bearer elsewhere) | `watchdog.url` must be the Worker's own origin |
+| `watchdog_unavailable` | Network error or a 5xx | Cloudflare status of the watchdog's account |
+| `near_unavailable` (governance) | The API couldn't read the contract's views | NEAR RPC status; [near-rpc-outage](playbooks.md#near-rpc-outage) |
+
+- **Rotating the token**: change it in `.secrets/<env>/watchdog-secrets.json`, upload it to the watchdog (its own
+  account: `wrangler secret put WATCHDOG_STATUS_TOKEN` in `apps/watchdog`) and to the admin (step 2). In between the
+  view answers `watchdog_unauthorized`; the watchdog's alerts are unaffected.
+- **Playbooks** are the `@hana-id/playbooks` package bundled into the admin Worker: an edit there ships with the next
+  admin deploy (and `gen-docs` for `docs/playbooks.md`). Their commands are shown verbatim, placeholders unfilled.
+
+### Pending upgrades page
+
+`/security/upgrades` in the admin, and (from C10) the partner console's page on `GET
+/api/orgs/:org/governance/pending-upgrades`, show what the contract owner has queued: an upgrade (code hash, its
+source commit, reproducible-build command and the diff to the release before it), an owner transfer, a withdrawal,
+delay decreases and console-audience additions, each with its countdown (D86, D333). Both read the same view, built in
+the API from the governance snapshot.
+
+The commit, build command and diff come from the release registry `CONTRACT_RELEASES` in
+`packages/console-core/src/governance.ts`; a code hash that isn't listed there shows as **not a published release**.
+Testnet upgrades are `non-reproducible-wasm` builds, so on sandbox-dev every pending upgrade shows that way, which is
+accurate. Before the owner proposes an upgrade on an env whose builds are reproducible (mainnet, D86 Q14):
+
+1. Build it (`cd contracts/hana-signer && cargo near build reproducible-wasm`) and note the code hash
+   `deploy-contract <env> --upgrade` prints in its plan.
+2. Add the release to `CONTRACT_RELEASES` (oldest first: `codeHash`, `version` from `Cargo.toml`, the full source
+   `commit`, the reproducible `buildCommand`, `previousCommit` = the release before it); its test checks the shape and
+   the chain of commits.
+3. Merge and deploy the API (it serves the view), then propose. Partners then see the release beside the hash for the
+   whole `governance_delay_ms`.
 
 ## Files Worker and logos (`apps/files`, batch C11, milestone M5)
 
@@ -1132,7 +1368,7 @@ capture"). From the repo root of the main checkout.
    `.secrets/<env>/coingecko-api-key` (0600) and set it through stdin:
    `corepack pnpm --dir apps/admin exec wrangler secret put COINGECKO_API_KEY < .secrets/<env>/coingecko-api-key`.
 3. **Config and deploy**: `corepack pnpm --filter @hana-id/admin gen <env>` (keeps the Hyperdrive id) now binds
-   `STATEMENTS` and `EXPORTS`, sets `RELAYER_ACCOUNT` (the manifest's `relayer`) and `NETWORK`, and adds the
+   `STATEMENTS` and `EXPORTS`, sets `RELAYER_ACCOUNT` (the manifest's `relayer`; a statement names `NEAR_NETWORK`, C14's var), and adds the
    `*/15 * * * *` trigger. Deploy the API first (`ConsoleRpc.usage` / `statements` / `ledger`), then the console
    (`StaffRpc.recordStaffAction`), then the admin Worker:
 
@@ -1211,7 +1447,7 @@ admin <env> owner:proposals [--limit 20] [--json]
 admin <env> governance:status [--json]
 admin <env> council:replace-member --remove <old member> --add <new member> [--member <m>] [--approve-with <m>] [--yes]
 admin <env> user:list [--app <app id>] [--provider email|google] [--search <part of the address> | -] [--limit 50] [--json] [--remote]
-admin <env> user:find [--email <address> | --sub <sub>] [--provider email|google] [--json] [--remote]   # neither: read from stdin
+admin <env> user:find [--email <address> | --sub <sub> | --address <G…|0x…> | --user <hu_…|HANA-XXXX-XXXX>] [--provider email|google] [--json] [--remote]   # none: read from stdin
 ```
 
 The `user:*` commands read the user directory in the email issuer's own D1, read only: "User directory (D269)" under
@@ -1459,12 +1695,12 @@ curl -s <apiUrl>/v1/governance | jq '.signerAccessKeys[] | select(.updaterPermis
 curl -s <apiUrl>/v1/governance | jq '.updater'                                                # the cron's last run
 ```
 
-**Hand-off to batch C.** The admin portal's "Security & monitoring" view and the admin and partner consoles'
-pending-upgrades page (D83, D86) don't exist yet. Their contract-side items read this endpoint (one request, already
-normalised, with countdown inputs and JWKS verdicts), or the same views through the admin Worker's own RPC
-(`docs/contract-interface.md` "Monitoring hand-off"); the portal should warn when a snapshot is older than
-`readAtMs + 20 s` and must not treat the API as independent (it runs on Hana's main Cloudflare account). The council's
-open proposals and the full list of sources are in [Governance status for the admin portal](#governance-status-for-the-admin-portal-batch-c-hand-off).
+**Read by batch C14.** The admin portal's "Security & monitoring" view and the admin and partner consoles'
+pending-upgrades page (D83, D86) read this snapshot over the service binding (`AdminRpc.governance`,
+`AdminRpc.pendingUpgrades`, `ConsoleRpc.pendingUpgrades`: one read serves the endpoint and the RPCs for 10 s), not
+over HTTP, and show `readAtMs` beside every countdown. The API isn't independent (it runs on Hana's main Cloudflare
+account): the watchdog is the independent party, and its own status sits beside the snapshot in the same view. The
+council's open proposals and the full list of sources are in [Governance status for the admin portal](#governance-status-for-the-admin-portal-batch-c-hand-off).
 The watchdog's heartbeat, verdicts, actions log, alerts and acks come only from the watchdog service's `GET /status`,
 `/alerts`, `/actions` and `POST /alerts/:id/ack` ([Watchdog service](#watchdog-service-appswatchdog)). Nothing here
 alerts: alerts are the watchdog's (D85).
@@ -2119,7 +2355,8 @@ below logged in to the watchdog's account (`wrangler login` there, or `CLOUDFLAR
    first run, `heartbeat.ok`, every channel `configured`. The first run alerts critical on any active kid not in
    Google's JWKS (no pause) and on anything already pending: acknowledge after checking. Then send a test critical
    page to both founders (the forced-rotation drill of the migration plan does this for real).
-7. The admin Worker (batch C) gets the same `WATCHDOG_STATUS_TOKEN` and the watchdog's URL.
+7. The admin Worker gets the same `WATCHDOG_STATUS_TOKEN` (an admin secret) and the watchdog's URL (`watchdog.url`
+   in the manifest): "Admin Worker" → [Security & monitoring](#security--monitoring-batch-c14), steps 1–3.
 
 **Cloudflare Access** (before any staff call): one Access application for `{url}/v1/email/admin/*` (`{url}` the issuer's, D230), policy = the
 staff on `emailIssuer.access.staffEmails`, its AUD tag in `emailIssuer.access.aud`. In the application's settings set
@@ -2132,7 +2369,8 @@ test Slack channel and ntfy topic: local runs send real alerts and, with a real 
 transactions.
 
 Rotating its secrets: `WATCHDOG_KEY`: add a new function-call key (as in step 3), put it in the file, `wrangler secret
-put WATCHDOG_KEY`, then delete the old key on chain. `WATCHDOG_STATUS_TOKEN`: change it on both Workers. The others:
+put WATCHDOG_KEY`, then delete the old key on chain. `WATCHDOG_STATUS_TOKEN`: change it on both Workers (the admin's:
+"Security & monitoring" step 2; until both match the portal shows `watchdog_unauthorized`). The others:
 replace in the file and `wrangler secret put`.
 
 ### Email login: pins, link alarms, unrecorded wallets
@@ -2202,7 +2440,8 @@ them as `IDENTITY_PINS` and `identityToken.iss` as `IDENTITY_ISS`; an env withou
 ### Watchdog alerts (runbook)
 
 Critical alerts page both founders (paging app + Slack + email) and are re-sent every 15 min until someone
-acknowledges them in the admin portal (or in Pushover). Acknowledging stops only the re-sends. Every alert's text
+acknowledges them in the admin portal ("Security & monitoring" → Open alerts → Acknowledge, batch C14) or in
+Pushover. Acknowledging stops only the re-sends. Every alert's text
 names its id, its kind and its playbook (`Playbook: <id>`); the full details are in `GET /alerts`, and `GET /status`
 `alert_kinds` gives each kind's `playbook`.
 
@@ -2259,7 +2498,7 @@ waits `governance_delay_ms`: after adding the first watchdog, rotations go slow 
 The email login's issuer (`docs/api.md` "Email issuer", `apps/email-issuer/README.md`, D195–D199): its own Worker,
 separate from the API, holding the email signing key, K_sub, K_code, K_rl and the SendGrid key. **Deployed on sandbox-dev
 (2026-11-03, with batch 8b, 5 secrets, SendGrid from team@hanawallet.io; redeployed 2026-11-04 at `develop` f53d63e,
-version b0cb9058, after migration 0002 was applied); no other env yet.** Order matters: on sandbox-dev follow "Email login on sandbox-dev (build plan batch 6)" below (the watchdog's
+version b0cb9058, after migration 0002 was applied; then fa18b944 with the dev-env limits, D340); no other env yet.** Order matters: on sandbox-dev follow "Email login on sandbox-dev (build plan batch 6)" below (the watchdog's
 email pins are live before the owner posts any email key, and no app enables email, `apps.login_methods`, before
 batch 8). It is reached at `{emailIssuer.url}/v1/email/*` (D230): on a `workers.dev` env its own `workers.dev` URL,
 written by `init`; on a zone, the API's URL with a route `<api host>/v1/email/*` to this Worker. Below, `{url}` is that
@@ -2336,7 +2575,7 @@ Local: `gen <env> --dev-vars` writes `apps/email-issuer/.dev.vars` (0600) from t
 | `code_mail` errors with `misconfigured` / provider 401/403 | the SendGrid key is wrong, revoked or lacks Mail Send | new key into the file, `put --yes` |
 | `code_mail` errors with `unavailable` | SendGrid 429 or 5xx (the counts were taken back) | SendGrid status; users can resend after 30 s |
 | `google_account_mismatch` answers from google-match | A user picked another Google account on Google's email permission screen; the popup asks them to try again (D264) | none, unless a burst |
-| `mailbox_guess_limit` (error log, `code` `backstop` or `ceiling`, `subject` = mailbox key prefix) | someone is guessing codes for one mailbox: past the backstop (18) only owner-slot requesters and ticketed challenges can check, past the ceiling (25) nobody until midnight UTC (D198) | watch for repeats of the same `subject`. A user with a device ticket (an earlier sign-in on that browser) still gets 3 codes a day and the ticket slot. When a user without one contacts support: `admin/unlock` ("Staff calls" below). It mails a one-time link to the address itself (only the mailbox's holder can use it, so it is safe whoever asked), clears nothing, and adds at most 2 checks to the day; at most once a day and 3 times in 30 days per mailbox |
+| `mailbox_guess_limit` (error log, `code` `backstop` or `ceiling`, `subject` = mailbox key prefix) | someone is guessing codes for one mailbox: past the backstop (18; dev envs 80) only owner-slot requesters and ticketed challenges can check, past the ceiling (25; dev envs 100) nobody until midnight UTC (D198, D340) | watch for repeats of the same `subject`. A user with a device ticket (an earlier sign-in on that browser) still gets 3 codes a day and the ticket slot. When a user without one contacts support: `admin/unlock` ("Staff calls" below). It mails a one-time link to the address itself (only the mailbox's holder can use it, so it is safe whoever asked), clears nothing, and adds at most 2 checks to the day; at most once a day and 3 times in 30 days per mailbox |
 | A user says the codes never arrive | the address may be suppressed (a bounce in the last 30 days, or a spam complaint), or the mailbox limits refuse | once the cause is fixed (mailbox full, a complaint by mistake): **first** remove the address from the issuer subuser's suppression lists in SendGrid (Suppressions: Bounces, Spam Reports, Blocks; search the address, delete it), or SendGrid drops the confirmation too; **then** `admin/unsuppress` ("Staff calls"): it mails the address a confirmation link, and the suppression goes when the user opens it (24 h) |
 | A user lost a device, or a device ticket may have leaked | anyone holding the ticket gets that address's owner allowances (3 codes a day, the ticket slot), never a token | `admin/revoke-tickets` ("Staff calls"): every ticket of that exact address issued until now stops counting; the next sign-in issues a fresh one |
 | `limit` lines `ip:webhook:10m` (sandbox-dev first) | SendGrid's event posts from one IP passed 120 in 10 min (a guess, D199 L4); refused posts are retried by SendGrid | if it is SendGrid's real traffic, raise `IP_WEBHOOK_LIMITS` in `apps/email-issuer/src/limits.ts` |
@@ -2411,7 +2650,9 @@ $A user:find --remote --json
 ```
 
 Each user: the address, provider, `sub`, verified, first and last seen, and per app its scope and the identity's own
-on-chain path `{scope}#{provider}#{sub}#0` (a linked member's wallet is its account root's: `get_identity`). An
+on-chain path `{scope}#{provider}#{sub}#0` (a linked member's wallet is its account root's: `get_identity`); with the
+wallet directory (migration 0011, "Wallet directory (hot-DB migration 0011)"), per scope its user id, Support ID, role
+in the account and the account's wallets, read from the API's D1 the same private way. An
 exact address matches as typed (lowercased: Google rows) and normalized (`@hana-id/email`: email rows, so
 `Alice.Smith@gmail.com` finds `alicesmith@gmail.com`). **Unverified Google rows** (`email_verified = 0`):
 `user:find` lists the verified users first and these apart, after "UNVERIFIED: this Google account claims the address
@@ -2486,7 +2727,12 @@ admin <env>` (owner calls take the council's approvals as usual, `--approve-with
 
 Limits are in `docs/api.md` "Email issuer" (D198): per (mailbox, requester), per mailbox with a reserve for new
 requesters and the device ticket's allowance, live challenges, the wrong-code locks, the ceiling (18 + 4 + 3), the IP
-prefixes, the recipient domain and the budget's shares.
+prefixes, the recipient domain and the budget's shares. **Dev envs** (`local*`, `sandbox*`, so sandbox-dev) run higher
+code, wrong-code and per-IP limits (D340: 20 codes per 15 min and 100 a day per mailbox and requester, 30 and 200 per
+mailbox, 20 live and 250 challenges a day, 30 wrong codes an hour, ceiling 80 + 17 + 3, `start` 30 per 10 min and 300 a
+day per IP, `resend` 30, `verify` 90); the recipient-domain cap, tickets, grants and the budget are as in production.
+They take effect at the issuer's next deploy and apply to today's counters at once: a tester refused under the old
+numbers needs no reset. The env name decides; no manifest field can turn them on elsewhere.
 
 ## Email login on sandbox-dev (build plan batch 6)
 

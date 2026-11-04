@@ -31,6 +31,11 @@ export const AUDIT_DETAIL_KEYS = {
   // Batch C11: the outcome of the setLogo RPC after an upload or a removal (app_changes has the change itself).
   'app.logo_set': ['logoKey', 'code'],
   'app.logo_removed': ['code'],
+  // Sign-in (batch C9). A refusal names no person: a known user by id (`target`), anyone else by the sha256 of the
+  // address Google verified (spec "Membership rules at sign-in"), never the address itself.
+  'session.signed_in': ['invite'],
+  'session.signed_out': [],
+  'signin.refused': ['code', 'emailSha256'],
   // Batch C12 (StaffRpc.recordStaffAction, D327): the admin Worker's statement, export and rate-override acts.
   'statement.issued': ['month', 'csvSha256', 'pdfSha256', 'asOf', 'lines'],
   'ledger.exported': ['month', 'asOf', 'rows', 'sha256'],

@@ -18,6 +18,20 @@ export const ADMIN_ERROR_STATUS = {
   ledger_unavailable: 503,
   method_not_allowed: 405,
   payload_too_large: 413,
+  /** The watchdog (batch C14): no WATCHDOG_URL or WATCHDOG_STATUS_TOKEN in this Worker, or the watchdog has none. */
+  watchdog_unconfigured: 503,
+  /** It didn't answer (network), or answered 5xx. */
+  watchdog_unavailable: 502,
+  /** It took longer than the timeout (watchdog.ts WATCHDOG_TIMEOUT_MS), body included. */
+  watchdog_timeout: 504,
+  /** Its answer was bigger than the cap for that route (watchdog.ts WATCHDOG_LIMITS). */
+  watchdog_too_large: 502,
+  /** Its answer wasn't JSON of the expected shape, or was a redirect (never followed). */
+  watchdog_bad_answer: 502,
+  /** It refused this Worker's bearer token: the two copies of WATCHDOG_STATUS_TOKEN differ. */
+  watchdog_unauthorized: 502,
+  /** The alert was acknowledged already (the first ack is kept). */
+  already_acknowledged: 409,
 } as const;
 export type AdminErrorCode = keyof typeof ADMIN_ERROR_STATUS;
 export type ErrorCode = RpcCode | AdminErrorCode;
@@ -42,6 +56,13 @@ const MESSAGES: Partial<Record<ErrorCode, string>> = {
   method_not_allowed: 'Method not allowed',
   payload_too_large: 'The request body is too large',
   internal: 'Something went wrong',
+  watchdog_unconfigured: 'The watchdog is not configured for this admin Worker (WATCHDOG_URL, WATCHDOG_STATUS_TOKEN)',
+  watchdog_unavailable: 'The watchdog did not answer',
+  watchdog_timeout: 'The watchdog took too long to answer',
+  watchdog_too_large: 'The watchdog’s answer was larger than the admin Worker accepts',
+  watchdog_bad_answer: 'The watchdog’s answer was not what the admin Worker expects',
+  watchdog_unauthorized: 'The watchdog refused the admin Worker’s status token (the two copies differ)',
+  already_acknowledged: 'This alert was acknowledged already',
 };
 
 /** `{error: {code, message}}`. An upstream `error` text is ours (the RPCs write their own messages, never input). */

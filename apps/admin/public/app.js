@@ -166,23 +166,28 @@ async function orgOptions() {
 
 // ---- navigation ----
 
-// The screens of the spec's admin layout. Reports, statements and rates are C12's; later batches fill the disabled
-// ones: retention (C13), Security & monitoring (C14). The Users screen (proposed D275, C8b) is not listed until it is
-// confirmed and built.
+// The screens of the spec's admin layout. Reports, statements and rates are C12's; Security & monitoring, the
+// pending-upgrades page and the playbooks are C14's; the disabled one is retention (C13). The Users screen (proposed
+// D275, C8b) is not listed until it is confirmed and built.
 const NAV = [
   { path: '/orgs', label: 'Organisations' },
   { path: '/audit', label: 'Audit' },
   { path: '/security', label: 'Feed and notices' },
+  { path: '/security/monitoring', label: 'Security & monitoring' },
+  { path: '/security/upgrades', label: 'Pending upgrades' },
+  { path: '/security/playbooks', label: 'Playbooks' },
   { path: '/reports', label: 'Reports' },
   { path: '/statements', label: 'Statements' },
   { path: '/rates', label: 'Rates' },
   { label: 'Retention (C13)' },
-  { label: 'Security & monitoring (C14)' },
 ];
 
 function renderNav() {
   const nav = document.getElementById('nav');
-  nav.replaceChildren(...NAV.map((n) => (n.path ? h('a', { href: n.path, 'data-link': true, class: location.pathname.startsWith(n.path) ? 'active' : undefined }, n.label) : h('a', { class: 'disabled', 'aria-disabled': 'true' }, n.label))));
+  // The longest nav path the current path is under is the active one (/security/playbooks/x → Playbooks).
+  const under = (p) => location.pathname === p || location.pathname.startsWith(`${p}/`) || (p === '/orgs' && location.pathname === '/');
+  const active = NAV.filter((n) => n.path && under(n.path)).sort((a, b) => b.path.length - a.path.length)[0];
+  nav.replaceChildren(...NAV.map((n) => (n.path ? h('a', { href: n.path, 'data-link': true, class: n === active ? 'active' : undefined }, n.label) : h('a', { class: 'disabled', 'aria-disabled': 'true' }, n.label))));
 }
 
 document.addEventListener('click', (ev) => {
@@ -452,6 +457,330 @@ async function securityPage(main) {
   ledgerSecurity(main, d.ledger);
 }
 
+// ---- Security & monitoring, pending upgrades, playbooks (C14) ----
+//
+// Every value below comes from the admin Worker, which reduced the watchdog's answers to bounded plain data; it is
+// written as text like everything else. Links are only those the Worker built (playbook pages, the repo's docs,
+// explorer links of validated transaction hashes), and an external one is set only when it is https.
+
+/** "in 2 h 5 min" / "due 3 min ago" from a time in ms (the reader's clock, as the API's countdowns intend). */
+function countdown(atMs) {
+  if (typeof atMs !== 'number') return '';
+  const d = atMs - Date.now();
+  const abs = Math.abs(d);
+  const days = Math.floor(abs / 86_400_000);
+  const hours = Math.floor((abs % 86_400_000) / 3_600_000);
+  const mins = Math.round((abs % 3_600_000) / 60_000);
+  const span = days ? `${days} d ${hours} h` : hours ? `${hours} h ${mins} min` : `${mins} min`;
+  return d > 0 ? `in ${span} (${time(atMs)})` : `due ${span} ago (${time(atMs)})`;
+}
+
+const badge = (text, kind) => h('span', { class: `badge ${kind || ''}` }, text);
+const sev = (s) => badge(s, s);
+const external = (href, text) => (typeof href === 'string' && href.startsWith('https://') ? h('a', { href, target: '_blank', rel: 'noopener noreferrer' }, text) : text);
+const playbookLink = (p) => (p ? link(`/security/playbooks/${encodeURIComponent(p.id)}`, p.title) : h('span', { class: 'error' }, 'no playbook'));
+const plainJson = (v) => h('pre', {}, v === null || v === undefined ? 'None' : JSON.stringify(v, null, 2));
+
+/** Text with `backtick` spans shown as code (each span is text in a <code>, never markup). */
+function richText(s) {
+  return String(s)
+    .split('`')
+    .map((part, i) => (i % 2 ? h('code', {}, part) : part));
+}
+
+/** A command in a copyable block, verbatim (placeholders such as <env> stay as they are). */
+function commandBlock(cmd) {
+  const status = h('span', { class: 'muted' });
+  return h(
+    'div',
+    { class: 'command' },
+    h('pre', {}, h('code', {}, cmd)),
+    h(
+      'button',
+      {
+        type: 'button',
+        onclick: async () => {
+          try {
+            await navigator.clipboard.writeText(cmd);
+            status.textContent = ' copied';
+          } catch {
+            status.textContent = ' copy failed: select the text instead';
+          }
+        },
+      },
+      'Copy',
+    ),
+    status,
+  );
+}
+
+function sourceError(what, part) {
+  return h('p', { class: 'error' }, `${what} unavailable: ${part.code}`);
+}
+
+function alertsTable(alerts, opts = {}) {
+  return table(
+    ['Alert', 'Severity', 'Kind', 'Title', 'Raised', 'State', 'Re-sends', 'Acknowledged', 'Playbook', ''],
+    alerts.map((a) =>
+      tr(
+        `#${a.id}`,
+        sev(a.severity),
+        a.kind,
+        a.title,
+        time(a.createdAt),
+        a.open ? 'open (condition holds)' : `resolved ${time(a.resolvedAt)}`,
+        a.resendsUntilAck ? `${a.sendCount ?? 0} sent, last ${time(a.lastSentAt)}` : 'none (not critical)',
+        a.ackedAt ? `${time(a.ackedAt)} by ${a.ackedBy || '?'} via ${a.ackedVia || '?'}` : 'no',
+        playbookLink(a.playbook),
+        h(
+          'div',
+          {},
+          a.canAck
+            ? actionButton(
+                'Acknowledge',
+                () => api('POST', `/api/monitoring/alerts/${encodeURIComponent(a.id)}/ack`),
+                `Acknowledge alert #${a.id} (${a.kind})? This only stops its 15-minute re-sends. It does not clear the condition, and the watchdog keeps checking. Your Access identity is recorded.`,
+              )
+            : '',
+          opts.details ? h('details', {}, h('summary', {}, 'Details and deliveries'), plainJson(a.details), h('p', { class: 'muted' }, `Deliveries: the last ${a.deliveries.length} of ${a.deliveriesTotal}`), plainJson(a.deliveries)) : '',
+        ),
+      ),
+    ),
+  );
+}
+
+function actionsTable(actions) {
+  return table(
+    ['Action', 'At', 'Method', 'Reason', 'Result', 'Transaction', 'Args'],
+    actions.map((x) => tr(`#${x.id}`, time(x.at), x.method, x.reason || '', x.ok ? 'ok' : `failed${x.error ? `: ${x.error}` : ''}`, x.txHash ? external(x.txUrl, x.txHash) : '', h('code', {}, JSON.stringify(x.args)))),
+  );
+}
+
+async function monitoringPage(main) {
+  const params = new URLSearchParams(location.search);
+  const alertsQuery = new URLSearchParams();
+  for (const k of ['cursor', 'severity']) if (params.get(k)) alertsQuery.set(k, params.get(k));
+  const settle = (p) => p.then((v) => ({ ok: true, v }), (e) => ({ ok: false, e }));
+  const [d, alertPage, actions] = await Promise.all([api('GET', '/api/monitoring'), settle(api('GET', `/api/monitoring/alerts?${alertsQuery}`)), settle(api('GET', `/api/monitoring/actions${params.get('actionsCursor') ? `?cursor=${encodeURIComponent(params.get('actionsCursor'))}` : ''}`))]);
+  const w = d.watchdog;
+  const g = d.governance;
+  main.append(
+    h('h1', {}, 'Security & monitoring'),
+    h('p', { class: 'muted' }, `A view of the watchdog and the contract (${d.env}). The watchdog sends its own alerts; nothing here alerts or acts on chain. Read at ${time(d.now)}.`),
+  );
+  if (w.ok && w.silent) main.append(h('p', { class: 'banner critical' }, w.sinceLastRunMs === null ? 'The watchdog has never finished a run.' : `The watchdog has been silent for ${Math.round(w.sinceLastRunMs / 60000)} min: more than two ${Math.round(w.runIntervalMs / 60000)}-minute intervals. `, link('/security/playbooks/watchdog-down', 'Playbook: watchdog down')));
+
+  main.append(
+    h('h2', {}, 'Findings'),
+    d.findings.length ? h('ul', { class: 'findings' }, d.findings.map((f) => h('li', {}, sev(f.severity), ` ${f.source}: `, f.text, f.playbook ? [' ', playbookLink(f.playbook)] : ''))) : h('p', {}, 'None'),
+  );
+
+  // The watchdog.
+  main.append(h('h2', {}, 'Watchdog'));
+  if (!w.ok) main.append(sourceError('The watchdog status', w));
+  else {
+    const hb = w.heartbeat || {};
+    main.append(
+      table(
+        ['Env', 'Account', 'Network', 'Last run', 'Outcome', 'Heartbeat', 'Channels'],
+        [
+          tr(
+            w.env || '',
+            w.watchdogAccount || '',
+            w.network || '',
+            w.lastRun ? `#${w.lastRun.id} finished ${time(w.lastRun.finishedAt)}` : 'never',
+            w.lastRun ? w.lastRun.outcome || '' : '',
+            hb.configured === false ? 'not configured' : `${hb.ok ? 'ok' : 'failing'}, last ok ${time(hb.last_ok_at)}`,
+            Object.entries(w.channels || {})
+              .map(([k, v]) => `${k}: ${v && v.configured ? 'on' : 'off'}`)
+              .join(', '),
+          ),
+        ],
+      ),
+      h('h3', {}, 'Checks of the last run'),
+      table(['Check', 'What', 'Outcome', 'Detail', 'Shown in'], w.checks.map((c) => tr(c.known ? c.id : h('span', { class: 'error' }, `${c.id} (no portal rendering)`), c.title, c.outcome || 'not reported', c.detail || '', c.shownIn || ''))),
+      h('h3', {}, 'Open alerts'),
+      alertsTable(w.openAlerts),
+    );
+  }
+
+  // Governance.
+  main.append(h('h2', {}, 'Contract governance'));
+  if (!g.ok) main.append(sourceError('The governance state', g));
+  else {
+    main.append(
+      h('p', {}, `Read ${time(g.readAtMs)} · state version ${g.stateVersion} · `, g.pause.paused ? h('strong', { class: 'error' }, 'PAUSED') : 'not paused', g.pause.unpausedAtMs ? ` · last unpause ${time(g.pause.unpausedAtMs)}` : '', g.pause.lastWatchdogPause ? ` · the watchdog last paused at ${time(g.pause.lastWatchdogPause.at)} (${g.pause.lastWatchdogPause.reason || ''})` : ''),
+      h('h3', {}, 'Pending issuer-key changes'),
+      table(
+        ['Change', 'Provider', 'Kid', 'Op', 'Proposer', 'Executable', "Google's JWKS (the API's fetch)", "Watchdog's sighting"],
+        (g.keyChanges || []).map((c) => tr(String(c.id), c.provider, c.kid, c.op, c.by, countdown(c.executableAtMs), c.jwks, c.watchdogSeen ? `seen since ${time(c.watchdogSeen.firstSeenAt)}` : 'never seen')),
+      ),
+      h('h3', {}, 'Pending upgrades and owner actions'),
+      table(
+        ['What', 'Detail', 'When'],
+        [
+          g.pendingUpgrade ? tr('Upgrade', g.pendingUpgrade.codeHash, countdown(g.pendingUpgrade.executableAtMs)) : null,
+          g.pendingOwner ? tr('Owner transfer', g.pendingOwner.owner, countdown(g.pendingOwner.acceptableAtMs)) : null,
+          g.pendingWithdrawal ? tr('Withdrawal', `${g.pendingWithdrawal.amountYocto} yoctoNEAR to ${g.pendingWithdrawal.receiver}`, countdown(g.pendingWithdrawal.executableAtMs)) : null,
+          ...['pendingIssuerKeyDelay', 'pendingGovernanceDelay', 'pendingChangeDelay'].filter((k) => g.delays && g.delays[k]).map((k) => tr('Delay decrease', `${k}: ${g.delays[k].valueMs} ms`, countdown(g.delays[k].effectiveAtMs))),
+          ...(g.pendingConsoleAudiences || []).map((a) => tr('Console audience', `${a.provider} ${a.aud}`, countdown(a.effectiveAtMs))),
+        ].filter(Boolean),
+      ),
+      h('p', {}, link('/security/upgrades', 'The pending-upgrades page'), ' (what partners see too).'),
+      h('h3', {}, 'Updater keys against the signer’s access keys'),
+      table(['Updater key', 'On the signer account', 'Permission'], (g.updaterKeyCheck || []).map((k) => tr(h('code', {}, k.publicKey), k.onAccount === null ? 'unknown' : k.onAccount ? 'yes' : h('span', { class: 'error' }, 'no'), k.permissionOk === null ? '' : k.permissionOk ? 'ok' : h('span', { class: 'error' }, 'wrong')))),
+      table(['Other signer key', 'Kind', 'Receiver', 'Methods'], (g.otherSignerKeys || []).map((k) => tr(h('code', {}, k.publicKey), k.kind, k.receiverId || '', (k.methodNames || []).join(', ')))),
+      h('h3', {}, 'Watchdogs on chain'),
+      table(['Account', 'May confirm from', 'Can confirm'], (g.watchdogs || []).map((x) => tr(x.accountId, time(x.confirmFromMs), x.canConfirm ? 'yes' : 'not yet'))),
+      h('h3', {}, "The API's JWKS cron"),
+      plainJson(g.updater),
+    );
+  }
+
+  // History.
+  main.append(h('h2', {}, 'Alert history'));
+  const sevForm = h(
+    'form',
+    {
+      onsubmit: (ev) => {
+        ev.preventDefault();
+        const q = new URLSearchParams();
+        if (sevForm.elements.severity.value) q.set('severity', sevForm.elements.severity.value);
+        window.history.pushState(null, '', `/security/monitoring?${q}`);
+        render();
+      },
+    },
+    h('select', { name: 'severity' }, ['', 'critical', 'warning', 'info'].map((s) => h('option', { value: s, selected: params.get('severity') === s || undefined }, s || 'all severities'))),
+    h('button', { type: 'submit' }, 'Filter'),
+  );
+  main.append(sevForm);
+  if (!alertPage.ok) main.append(errorBox(alertPage.e));
+  else {
+    main.append(alertsTable(alertPage.v.alerts, { details: true }));
+    if (alertPage.v.nextCursor) {
+      const next = new URLSearchParams(params);
+      next.set('cursor', String(alertPage.v.nextCursor));
+      main.append(link(`/security/monitoring?${next}`, 'Older alerts'));
+    }
+  }
+  main.append(h('h2', {}, "The watchdog's actions"));
+  if (!actions.ok) main.append(errorBox(actions.e));
+  else {
+    main.append(actionsTable(actions.v.actions));
+    if (actions.v.nextCursor) {
+      const next = new URLSearchParams(params);
+      next.set('actionsCursor', String(actions.v.nextCursor));
+      main.append(link(`/security/monitoring?${next}`, 'Older actions'));
+    }
+  }
+
+  if (w.ok) {
+    main.append(
+      h('h2', {}, 'Seen kids'),
+      table(['Provider', 'Kid', 'Source', 'First seen', 'Last seen'], w.seenKids.map((k) => tr(k.provider || '', k.kid || '', k.source || '', time(k.firstSeenAt), time(k.lastSeenAt)))),
+      h('h2', {}, 'Relayer funds'),
+      plainJson(w.relayerFunds),
+      h('h2', {}, 'Email issuer pins and the chain'),
+      plainJson(w.email),
+      h('h2', {}, 'Identity token keys'),
+      plainJson(w.identity),
+      h('h2', {}, 'Link stats'),
+      plainJson(w.linkStats),
+      h('h2', {}, 'Alert kinds and their playbooks'),
+      table(['Kind', 'Severity', 'Check', 'Description', 'Playbook'], w.alertKinds.map((k) => tr(k.kind, sev(k.severity), k.check || '', k.description || '', playbookLink(k.playbook)))),
+    );
+  }
+  main.append(
+    h('h2', {}, 'Security events'),
+    d.events.ok ? table(['Id', 'Detected', 'Kind', 'Org', 'App', 'Scope', 'Emailed', 'Detail'], d.events.events.map((e) => tr(e.id, time(e.detectedAt), e.kind, e.orgId || '', e.appId || '', e.scopeId || '', e.notifiedAt ? time(e.notifiedAt) : 'not yet', h('code', {}, JSON.stringify(e.detail))))) : sourceError('The security events', d.events),
+  );
+}
+
+async function upgradesPage(main) {
+  const { pendingUpgrades: p } = await api('GET', '/api/governance/pending-upgrades');
+  main.append(
+    h('h1', {}, 'Pending upgrades'),
+    h('p', { class: 'muted' }, `What the contract owner has queued for ${p.signer} (${p.env}), read ${time(p.readAtMs)}. Partners see the same page. Each waits the governance delay (${Math.round(p.governanceDelayMs / 60000)} min) so partners and users can react, for example by exporting keys.`),
+  );
+  if (p.paused) main.append(h('p', { class: 'banner critical' }, 'The contract is paused.'));
+  if (!p.anyPending) main.append(h('p', {}, 'Nothing is pending.'));
+  if (p.upgrade) {
+    const u = p.upgrade;
+    main.append(h('h2', {}, 'Contract upgrade'), table(['Code hash', 'Proposed', 'Executable'], [tr(h('code', {}, u.codeHash), time(u.proposedAtMs), countdown(u.executableAtMs))]));
+    if (u.release) {
+      main.append(
+        h('p', {}, `Release ${u.release.version}, source commit `, h('code', {}, u.release.commit), '. Rebuild it and compare the hash:'),
+        commandBlock(u.release.buildCommand),
+        u.release.diffCommand ? [h('p', {}, 'The diff to the last release:'), commandBlock(u.release.diffCommand)] : h('p', { class: 'muted' }, 'The first published release: no earlier release to diff against.'),
+      );
+    } else main.append(h('p', { class: 'warn' }, 'This code hash is not a published release: no source commit or reproducible-build command is on record for it. Treat it as unexplained until it is published.'));
+  }
+  if (p.ownerTransfer) main.append(h('h2', {}, 'Owner transfer'), table(['New owner', 'Acceptable'], [tr(p.ownerTransfer.owner, countdown(p.ownerTransfer.acceptableAtMs))]));
+  if (p.withdrawal) main.append(h('h2', {}, 'Withdrawal'), table(['Receiver', 'Amount (yoctoNEAR)', 'Executable'], [tr(p.withdrawal.receiver, p.withdrawal.amountYocto, countdown(p.withdrawal.executableAtMs))]));
+  if (p.delayDecreases.length) main.append(h('h2', {}, 'Delay decreases'), table(['Delay', 'Now (ms)', 'Becomes (ms)', 'Effective'], p.delayDecreases.map((x) => tr(x.delay, String(x.currentMs), String(x.valueMs), countdown(x.effectiveAtMs)))));
+  if (p.consoleAudienceAdditions.length) main.append(h('h2', {}, 'Console audience additions'), table(['Provider', 'Audience', 'Effective'], p.consoleAudienceAdditions.map((x) => tr(x.provider, x.aud, countdown(x.effectiveAtMs)))));
+}
+
+async function playbooksPage(main) {
+  const params = new URLSearchParams(location.search);
+  const d = await api('GET', `/api/playbooks?${params}`);
+  const filter = h(
+    'form',
+    {
+      onsubmit: (ev) => {
+        ev.preventDefault();
+        const q = new URLSearchParams();
+        for (const k of ['q', 'kind', 'severity']) if (filter.elements[k].value.trim()) q.set(k, filter.elements[k].value.trim());
+        history.pushState(null, '', `/security/playbooks?${q}`);
+        render();
+      },
+    },
+    h('input', { name: 'q', placeholder: 'Search title, summary, signals, impact', value: params.get('q') || '' }),
+    h('select', { name: 'kind' }, ['', 'alert', 'incident'].map((s) => h('option', { value: s, selected: params.get('kind') === s || undefined }, s || 'alerts and incidents'))),
+    h('select', { name: 'severity' }, ['', 'critical', 'warning', 'info'].map((s) => h('option', { value: s, selected: params.get('severity') === s || undefined }, s || 'all severities'))),
+    h('button', { type: 'submit' }, 'Search'),
+  );
+  main.append(
+    h('h1', {}, 'Recovery playbooks'),
+    h('p', { class: 'muted' }, `From @hana-id/playbooks (last verified ${d.lastVerified}). Read-only: owner calls stay in scripts/ and the council's own signing.`),
+    filter,
+    table(
+      ['Playbook', 'Kind', 'Severity', 'Status', 'Summary', 'Alert kinds'],
+      d.playbooks.map((p) => tr(link(`/security/playbooks/${encodeURIComponent(p.id)}`, p.title), p.kind, sev(p.severity), p.status === 'planned' ? badge('planned: not built yet', 'warning') : 'live', p.summary, p.alertKinds.join(', '))),
+    ),
+  );
+}
+
+async function playbookPage(main, id) {
+  const { notes, playbook: p } = await api('GET', `/api/playbooks/${encodeURIComponent(id)}`);
+  const list = (items) => (items.length ? h('ul', {}, items.map((x) => h('li', {}, richText(x)))) : h('p', { class: 'muted' }, 'None'));
+  main.append(
+    h('p', {}, link('/security/playbooks', '← Playbooks')),
+    h('h1', {}, p.title),
+    h('p', {}, sev(p.severity), ' ', badge(p.kind), ' ', p.status === 'planned' ? badge('planned: not built yet', 'warning') : '', p.alertKinds.length ? ` Alert kinds: ${p.alertKinds.join(', ')}` : ''),
+    h('p', {}, richText(p.summary)),
+    h('div', { class: 'notice' }, h('strong', {}, 'Before you start'), h('ul', {}, notes.map((n) => h('li', {}, richText(n))))),
+    h('h2', {}, 'Signals'),
+    list(p.signals),
+    h('h2', {}, 'Impact'),
+    list(p.impact),
+    h('h2', {}, 'Steps'),
+    h(
+      'ol',
+      { class: 'steps' },
+      p.steps.map((s) => h('li', {}, h('p', {}, badge(s.who, 'who'), ' ', h('strong', {}, s.title)), h('p', {}, richText(s.detail)), s.commands.map(commandBlock))),
+    ),
+    h('h2', {}, 'Verify'),
+    list(p.verify),
+    h('h2', {}, 'Follow-ups'),
+    list(p.followUps),
+    h('h2', {}, 'References'),
+    h('ul', {}, p.refs.map((r) => h('li', {}, external(r.href, r.ref)))),
+    h('h2', {}, 'Related playbooks'),
+    p.related.length ? h('ul', {}, p.related.map((r) => h('li', {}, link(`/security/playbooks/${encodeURIComponent(r.id)}`, r.title)))) : h('p', { class: 'muted' }, 'None'),
+  );
+}
+
 /** The usage ledger's part of the security screen (C12): nonce checks, rejection and settlement alerts, partitions. */
 function ledgerSecurity(main, l) {
   main.append(h('h2', {}, 'Usage ledger'));
@@ -669,6 +998,10 @@ async function render() {
     else if ((m = /^\/orgs\/([^/]+)$/u.exec(path))) await orgPage(main, decodeURIComponent(m[1]));
     else if (path === '/audit') await auditPage(main);
     else if (path === '/security') await securityPage(main);
+    else if (path === '/security/monitoring') await monitoringPage(main);
+    else if (path === '/security/upgrades') await upgradesPage(main);
+    else if (path === '/security/playbooks') await playbooksPage(main);
+    else if ((m = /^\/security\/playbooks\/([a-z0-9-]{1,64})$/u.exec(path))) await playbookPage(main, m[1]);
     else if (path === '/reports') await reportsPage(main);
     else if (path === '/statements') await statementsPage(main);
     else if (path === '/rates') await ratesPage(main);

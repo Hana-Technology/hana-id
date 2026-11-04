@@ -1,7 +1,8 @@
 // The admin Worker's bindings (docs/batch-c-spec.md "Bindings"; written by scripts/gen-wrangler.ts from the manifest's
-// dashboard blocks). Vars are public. The three secrets (EMAIL_API_KEY, CANCEL_LINK_KEY, INVITE_LINK_KEY) are set with
-// `wrangler secret put` from `.secrets/<env>/` (docs/operations.md "Admin Worker"); each is optional in the type so a
-// missing one fails closed at the step that needs it (no notice is acked, no email leaves) instead of at start-up.
+// dashboard blocks). Vars are public. The four secrets (EMAIL_API_KEY, CANCEL_LINK_KEY, INVITE_LINK_KEY and, from C14,
+// WATCHDOG_STATUS_TOKEN) are set with `wrangler secret put` from `.secrets/<env>/` (docs/operations.md "Admin Worker");
+// each is optional in the type so a missing one fails closed at the step that needs it (no notice is acked, no email
+// leaves, the watchdog shows as not configured) instead of at start-up.
 import type {
   AppChange,
   AuditRow,
@@ -11,6 +12,7 @@ import type {
   MemberView,
   OrgView,
   OwnerGrantView,
+  PendingUpgradesView,
   RpcFail,
   RpcOk,
   ScopeRow,
@@ -68,6 +70,10 @@ export interface AdminRpcClient {
   markSecurityEventNotified(c: unknown): Answer<Record<string, never>>;
   /** Both relayer pools' public keys (settlement and the nonce check, C12). */
   relayerKeys(c: unknown): Answer<{ keys: { pool: 'session' | 'owner'; publicKey: string }[] }>;
+  /** The `GET /v1/governance` snapshot (batch C14): the API's normalised chain views, JWKS verdicts and cron state. */
+  governance(c: unknown): Answer<{ governance: Record<string, unknown> }>;
+  /** The pending-upgrades page's view (D86), the same one partners get from ConsoleRpc. */
+  pendingUpgrades(c: unknown): Answer<{ pendingUpgrades: PendingUpgradesView }>;
 }
 
 /** The console's `StaffRpc` entrypoint (apps/console/src/staff-rpc.ts) over the `CONSOLE` service binding. */
@@ -106,8 +112,6 @@ export interface Env {
    * and the nonce check reads its keys. Missing: settlement and the nonce check don't run (logged every run).
    */
   RELAYER_ACCOUNT?: string;
-  /** The manifest's NEAR network: a statement on a test network is labelled as valued at the mainnet price (D93). */
-  NETWORK: string;
   /** Cloudflare Access (D88): the team domain (`<team>.cloudflareaccess.com`) and the application's AUD tag. */
   ACCESS_TEAM_DOMAIN: string;
   /** 64 hex characters; `UNSET` (the manifest's value before the application exists) refuses every /api/* request. */
@@ -126,6 +130,22 @@ export interface Env {
   CANCEL_LINK_KEY?: string;
   /** 32 bytes, base64: the invite links. */
   INVITE_LINK_KEY?: string;
+  /**
+   * The watchdog Worker's https origin (manifest `watchdog.url`, batch C14): the "Security & monitoring" view reads its
+   * `/status`, `/alerts` and `/actions` and forwards acks to it. Absent or malformed: the view shows the watchdog as not
+   * configured (the governance part still renders).
+   */
+  WATCHDOG_URL?: string;
+  /**
+   * NEAR network (`testnet`/`mainnet`): the explorer links of the watchdog's transactions (C14), and a statement's
+   * network (C12: on a test network it is labelled as valued at the mainnet price, D93; issuing refuses without it).
+   */
+  NEAR_NETWORK?: string;
+  /**
+   * The watchdog status endpoint's bearer token (≥ 32 characters; the watchdog holds the other copy, D83). Secret: sent
+   * only in the `Authorization` header of this Worker's calls to WATCHDOG_URL, never logged, never in a response.
+   */
+  WATCHDOG_STATUS_TOKEN?: string;
   /** The API Worker's `AdminRpc` (the admin Worker is its only caller). */
   API: Fetcher & AdminRpcClient;
   /** The console Worker's `StaffRpc` (the admin Worker is its only caller). */

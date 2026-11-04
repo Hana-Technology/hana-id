@@ -135,6 +135,19 @@ describe('manifestSchema: watchdog', () => {
     expect(issues(watchdog({ account: 'Not An Account' })).length).toBeGreaterThan(0);
   });
 
+  it('takes an optional https origin as its url (the admin Worker reads the status there, C14)', () => {
+    expect(issues(watchdog({ url: 'https://hana-id-watchdog-test.ops.workers.dev' }))).toEqual([]);
+    expect(issues(watchdog({ url: 'https://hana-id-api-test.ops.workers.dev' }))).toEqual(['watchdog.url on workers.dev must be https://hana-id-watchdog-test.<subdomain>.workers.dev']);
+    expect(issues(watchdog({ url: 'https://a.b.ops.workers.dev' }))).toEqual(['watchdog.url on workers.dev must be https://hana-id-watchdog-test.<subdomain>.workers.dev']);
+    expect(issues(watchdog({ url: 'https://watchdog.hana.example' }))).toEqual([]);
+    expect(issues(watchdog({ url: 'http://watchdog.hana.example' }))).toEqual(['watchdog.url must be https']);
+    expect(issues(watchdog({ url: 'https://watchdog.hana.example/' }))).toEqual(['watchdog.url must be an origin only (no path, query or trailing slash)']);
+    expect(issues(watchdog({ url: 'https://watchdog.hana.example/status' }))).toEqual(['watchdog.url must be an origin only (no path, query or trailing slash)']);
+    expect(issues(watchdog({ url: 'https://u:p@watchdog.hana.example' }))).toEqual(['watchdog.url must not carry credentials']);
+    expect(issues(watchdog({ url: 'https://watchdog.hana.example:8443' }))).toEqual(['watchdog.url must not have a port']);
+    expect(issues(watchdog({ url: 'not a url' }))).toEqual(['watchdog.url is not a URL']);
+  });
+
   it('takes optional relayer funds thresholds in NEAR, critical below warn', () => {
     expect(issues(watchdog({ relayerFunds: {} }))).toEqual([]);
     expect(issues(watchdog({ relayerFunds: { balance: { warn: 10, critical: 2 }, sessionAllowance: { warn: 1, critical: 0.2 }, ownerAllowance: { warn: 0.2, critical: 0 } } }))).toEqual([]);

@@ -82,6 +82,11 @@ D1 database). Per-IP limiters always stay near their client. Changing it creates
 - `cloudflare.accountId`: the watchdog's **own** Cloudflare account (separate login and MFA from the API's, D86;
   sandbox-dev alone uses the API's account, D125),
   32 hex characters; `UNSET` until it exists (`gen` refuses `UNSET`). `workerName` must differ from the API's.
+- `url` (optional, batch C14, D330): the watchdog Worker's https origin on its own account
+  (`https://<workerName>.<subdomain>.workers.dev`, or a custom domain), no path, port or credentials; a workers.dev
+  host must name `cloudflare.workerName`. The admin Worker reads `/status`, `/alerts`, `/actions` and posts acks there
+  (`WATCHDOG_URL`, with the `WATCHDOG_STATUS_TOKEN` secret). Not a secret. A production manifest's admin `gen` refuses
+  without it (`docs/operations.md` "Admin Worker" → "Security & monitoring").
 - `alertEmails`: both founders (D85); `alertFrom`: an address on the dedicated sending subdomain (D87).
 - `pager`: `ntfy`, `pushover` or `pagerduty` (D85, chosen at setup); its credentials are Worker secrets.
 - `digestHourUtc` (0–23, default 0): the daily digest goes out on the first run after this hour (UTC).

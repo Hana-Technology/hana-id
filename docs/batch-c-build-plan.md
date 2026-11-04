@@ -1,14 +1,15 @@
 # Batch C build plan
 
-Status (2026-11-04, branches `feat/batch-c-8`, `feat/batch-c-11`, `feat/batch-c-12`): C1–C5 merged into `develop` and running in the sandbox-dev API as
-far as `develop` includes them (migrations 0006, 0009 and 0010 applied, usage capture off; `docs/operations.md`); C7
-(the console Worker backend, no route; D240–D244) merged, not deployed (its setup is step 5 below, at M4); C6 built on
-`feat/batch-c-6` and brought onto current `develop` (C7 included) on `feat/batch-c-6-merge` (the claim allow-list on its
-tokens, D277), merged into `develop`, not deployed (M3 not run); C8 (the admin Worker; D278–D285) built on
-`feat/batch-c-8`, tests green, not merged, not deployed (its setup is steps 4 and 8–10 below, at M4); C11 (the files Worker and logos; D300–D308) built on `feat/batch-c-11`, tests green, not merged, not deployed (its
-setup is step 7 below, at M5); C8 and C11 since merged; C12 (reports and statements; D320–D329) built on `feat/batch-c-12`, tests
-green, not merged, not deployed (its setup is `docs/operations.md` "Reports and statements", at M6); C9, C10 and
-C13–C17 not built. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
+Status (2026-11-04, branches `feat/batch-c-9` and `feat/batch-c-14`, on `develop`; `feat/batch-c-12`): C1–C5 merged into `develop` and running in the
+sandbox-dev API as far as `develop` includes them (migrations 0006, 0009 and 0010 applied, usage capture off;
+`docs/operations.md`); C6 (the claim allow-list on its tokens, D277), C7 (the console Worker backend; D240–D244), C8
+(the admin Worker; D278–D285) and C11 (the files Worker and logos; D300–D308) merged into `develop`, not deployed (M3
+not run; their setup is steps 4, 5 and 7–10 below, at M4 and M5); C9 (partner sign-in, D290–D297) merged into
+`develop`, not deployed (its setup is steps 11 and 12, at M4); C14 (Security & monitoring and the pending-upgrades
+page; D330–D338, D344) built on `feat/batch-c-14`, not merged, not deployed (its setup is step 10's
+`WATCHDOG_STATUS_TOKEN` and `watchdog.url`, at M4); C12 (reports and statements; D320–D329) built on
+`feat/batch-c-12`, tests green, not merged, not deployed (its setup is `docs/operations.md` "Reports and statements", at
+M6); C10, C13 and C15–C17 not built. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
 batches that each merge into `develop` on their own: tests green, the docs they change updated, and nothing a partner,
 a user or staff can reach that is half-wired. Ordered by dependency; the spec's "Build order" steps are noted per
 batch. This is a plan, not a spec: where it and the spec disagree, the spec wins or gets amended first.
@@ -287,6 +288,13 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
 - **Setup**: the console Google OAuth client (no JavaScript origins; redirect `<console.authOrigin>/callback`) and
   `CONSOLE_GOOGLE_CLIENT_SECRET` (setup step 11); open question 1 tested here.
 - **Visible after M4**: invited partners sign in and see their org read-only.
+- **Status** (2026-11-04): built on `feat/batch-c-9`, not merged, not deployed (D290–D297). `apps/console-auth`, the code
+  flow with PKCE and the implicit-flow guard, handoff codes, sessions, the membership rules through `acceptInvite`,
+  `GET /api/me`, the read-only routes and the SPA (`apps/console/web`), the route config (D294). The console's tokens
+  are held to the claim allow-list by scope (D290; the sign-in token keeps `openid email`, to confirm). Open question
+  1's harness is `scripts/console-code-flow-spike.ts`, not run (D295; Google's `at_hash` on server-flow tokens is the
+  expected finding, to decide before C10). Playwright sign-in under the CSP is left for C17 (D297). Setup step 11 is
+  `docs/operations.md` "Partner console Worker" → "Setup step 11".
 
 ## C10. Partner management
 
@@ -296,6 +304,8 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
   the cancel and cancel-owner pages (POST confirm), `GET /api/governance/pending-upgrades` stays for C14.
 - **Tests**: spec "Fresh sign-in"; "Settings, keys"; the role matrix; owner-action rows that need the console.
 - **Visible**: the console's write paths; the spec's "Done when" bullets 2–4 on the smoke scope.
+- **Users screen** (D310 point 5): over `ConsoleRpc.listUsers` / `getUser` (built on `feat/wallet-directory`, D315):
+  user id, Support ID, created and last seen, account kinds and wallets, the org's own scopes only, no email or sub.
 
 ## C11. Files Worker and logos
 
@@ -352,6 +362,17 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
   `@hana-id/playbooks` package** (being specified separately: spec §Hana admin console and `docs/operations.md`
   "Watchdog alerts" are owned by that work); this batch consumes the package and its completeness test rather than
   writing playbook text. Sources: the watchdog's status endpoint, `GET /v1/governance`, the security screen's events.
+- **Status** (2026-11-04): built on `feat/batch-c-14`, not merged, not deployed (D330–D338; also D344, the feed's
+  silent first run, user-confirmed). Built: the admin's `GET /api/monitoring`, `/api/monitoring/alerts`, `/actions`,
+  `POST /api/monitoring/alerts/:id/ack`, `GET /api/governance/pending-upgrades`, `GET /api/playbooks[/:id]` and the
+  SPA's Security & monitoring, Pending upgrades and Playbooks screens; the watchdog called server-side with the new
+  admin secret `WATCHDOG_STATUS_TOKEN` (size caps, 8 s deadline, plain text); `AdminRpc.governance`,
+  `AdminRpc.pendingUpgrades`, `ConsoleRpc.pendingUpgrades` over the `GET /v1/governance` snapshot; the release registry
+  `CONTRACT_RELEASES` (console-core); manifest `watchdog.url` → `WATCHDOG_URL`; the partner console's
+  `pendingUpgradesRoute` (`apps/console/src/governance.ts`) for C10 to route under `GET
+  /api/orgs/:org/governance/pending-upgrades` (D335). Not in C14 (D334, to confirm): the portal's own chain and council
+  DAO reads. Setup: with the admin Worker at M4, `docs/operations.md` "Admin Worker" → "Security & monitoring" (then
+  acknowledge sandbox-dev's alert #11).
 
 ## C8b. Users screen (proposed, D275; spec §Users and Support ID)
 
@@ -366,6 +387,9 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
   Worker.
 - **Visible after**: staff search users and see a user's apps and on-chain path in the admin console; the CLI's
   `user:*` keep working.
+- **Already built for it** (D310–D317, `feat/wallet-directory`): `AdminRpc.listUsers` / `getUser` / `findUsers` over
+  the API's wallet directory (user ids, Support IDs, identities with subs, wallets); the screen joins each identity's
+  `directoryKey` with `DirectoryRpc` for the email.
 
 ## C15. Support ID lookup (D96; proposed design D276, spec §Users and Support ID)
 
@@ -378,6 +402,8 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
   sessions by uid, errors by request ID, the app's changes); `user:erase` in the CLI.
 - **Tests**: the spec's Support ID, lookup, issuer uid write and migration rows.
 - **Open (D276)**: whether `user:erase` lands here or with C13.
+- **Since D312**: the Support code is `end_users.support_code` in the hot DB (indexed); `AdminRpc.findUsers` already
+  resolves a code to its users, so `IssuerRpc.uid` and `user_email_apps.uid` may not be needed (revisit D276 here).
 
 ## C16. CLI completion
 
@@ -434,9 +460,13 @@ Run from the main checkout; every file in `.secrets/` is 0600 in a 0700 director
 9. **Resend** (C8, D87): the sending subdomain with SPF, DKIM and DMARC; an API key for the admin Worker only.
 10. **Admin secrets** (C8): `EMAIL_API_KEY` (the Resend key of step 9), `CANCEL_LINK_KEY`, `INVITE_LINK_KEY` (32 random
     bytes each, base64, generated into `.secrets/<env>/`, then `wrangler secret put` from stdin; `docs/operations.md`
-    "Admin Worker" step 3).
+    "Admin Worker" step 3). From C14: `WATCHDOG_STATUS_TOKEN` (the watchdog's own, from
+    `.secrets/<env>/watchdog-secrets.json`) and the manifest's `watchdog.url` ("Admin Worker" → "Security & monitoring").
 11. **Console Google client** (C9): a Web client with no JavaScript origins and one redirect URI,
-    `<console.authOrigin>/callback`; its id in `consoleAudiences`, `CONSOLE_GOOGLE_CLIENT_SECRET` as a console secret.
+    `<console.authOrigin>/callback`; its id in `consoleAudiences` (the only `google` entry, D294), its downloaded JSON
+    in `.secrets/<env>/console-google-client.json` (0600), `CONSOLE_GOOGLE_CLIENT_SECRET` as a console secret through
+    a pipe; then the open-question-1 spike (`console-code-flow-spike <env>`, D295). Steps: `docs/operations.md`
+    "Partner console Worker" → "Setup step 11".
 12. **Manifest**: add the `console`, `files`, `admin`, `usage`, `email` blocks and `ownerGrantDelayMs` to
     `envs/sandbox-dev.json` once the origins exist (workers.dev for sandbox-dev, D93).
 

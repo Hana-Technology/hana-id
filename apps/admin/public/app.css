@@ -23,4 +23,18 @@ button.danger { color: #fff; background: #b91c1c; border: 1px solid #991b1b; }
 .notice { color: #1e3a8a; background: #dbeafe; padding: 0.5rem; border: 1px solid #93c5fd; }
 .warn { color: #78350f; background: #fef3c7; padding: 0.5rem; border: 1px solid #fcd34d; }
 .muted { color: #6b7280; }
+/* Security & monitoring, pending upgrades, playbooks (C14). */
+.badge { display: inline-block; padding: 0.05rem 0.4rem; border-radius: 0.25rem; font-size: 0.8rem; background: #e5e7eb; color: #1f2937; }
+.badge.critical { background: #b91c1c; color: #fff; }
+.badge.warning { background: #f59e0b; color: #1f2937; }
+.badge.info { background: #dbeafe; color: #1e3a8a; }
+.badge.who { background: #312e81; color: #fff; }
+.banner { padding: 0.75rem; font-weight: 600; }
+.banner.critical { color: #fff; background: #b91c1c; }
+.banner.critical a { color: #fff; }
+.findings li { margin: 0.25rem 0; }
+.command { display: flex; gap: 0.5rem; align-items: flex-start; margin: 0.25rem 0; }
+.command pre { flex: 1; margin: 0; white-space: pre-wrap; word-break: break-all; }
+.steps > li { margin-bottom: 1rem; }
+details summary { cursor: pointer; }
 .row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }

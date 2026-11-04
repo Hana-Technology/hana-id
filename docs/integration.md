@@ -11,7 +11,8 @@ popup, unless it falls under an auto-approve policy you set and the user accepte
 > for mainnet chains at all ([section 12](#12-test-and-live-keys)). This guide follows the code; the original
 > specification is `docs/batch-b-spec.md`.
 
-Last verified against code: 2026-11-04 (branch `feat/token-first-on`: "Sign-in methods and links": Google's one
+Last verified against code: 2026-11-04 (branch `fix/abandoned-login-freeze`: an unfinished login and `login_timeout`'s
+`data.stage`); 2026-11-04 (branch `feat/token-first-on`: "Sign-in methods and links": Google's one
 sign-in screen lists the email, cancelling it, the two-accounts screen; D270); 2026-11-03 (branch `feat/email-login-8b` review fixes: the email permission's screens and
 reasons, `api_unavailable`'s `path_unconfirmed` / `path_disputed`, `storage_unavailable` in a login, `hana.account()`'s
 5 s cache, D263–D265); 2026-11-03 (branch `feat/email-login-8b`: one wallet per person, "Sign-in methods and
@@ -217,6 +218,12 @@ button.addEventListener('click', async () => {
   and the call resolves once the user clicks it and signs in. That costs the user one more click.
 - Already logged in: `login()` resolves at once. A second `login()` while one is pending replaces it (the first
   rejects with `login_cancelled`). `hana.cancelLogin()` ends a pending one.
+- **An unfinished login.** A user who leaves the popup open (on the method chooser, Google's page, the email step or
+  a linking screen) or closes it after it connected leaves `login()` pending: the SDK stops watching the popup once it
+  has connected (Google's COOP can make its handle report closed). Keep the page usable meanwhile (`status` is
+  `logging_in`; offer a Cancel that calls `cancelLogin()`). After 5 minutes the vault ends it: `login()` rejects with
+  `login_timeout` and `data.stage: 'pending'`, and the status is `logged_out` again. A popup closed before it connected
+  is `coop_blocks_popup` at once; one that never connects is `login_timeout` with `data.stage: 'connect'` after 15 s.
 - A first login takes several seconds after the Google account choice (one NEAR transaction plus the MPC; estimated
   6.5–7 s, to be measured on testnet). Show progress with `loginProgress`. A reload needs one API call (estimated
   0.1–0.3 s).
@@ -759,7 +766,7 @@ code request), `emailCode` (waiting for the mail and typing the code), `emailVer
 | `vault_unavailable` | The vault didn't load (one automatic retry; `data.reason`: `csp_frame_src`, `no_answer`, `frame_timeout`, `ready_timeout`, `frame_replaced`, [section 3](#3-create-the-client)) | check `frame-src`, your origins, the network. A wrong origin or key takes about 10 s to report (`no_answer`) |
 | `popup_blocked` | The browser blocked the popup and the sign-in was cancelled | call `login()` in a click |
 | `coop_blocks_popup` | The popup closed before it connected (COOP `same-origin`, or the user closed it at once) | fix COOP |
-| `login_timeout` | The popup never connected (15 s), or the sign-in took over 5 min | retry |
+| `login_timeout` | The popup never connected (15 s, `data.stage: 'connect'`), or the sign-in was left unfinished for 5 min (`data.stage: 'pending'`: the popup left open or closed) | retry |
 | `login_cancelled` | `cancelLogin()`, or a newer `login()`, or the user cancelled the email step; `data.reason: 'email_consent_declined'` or `'google_account_mismatch'`: a new Google user refused Google's email permission (or chose another Google account there) and cancelled Hana's explanation | offer email sign-in |
 | `login_method_unavailable` | `login({method})` named a method your app doesn't offer (email not turned on) | offer the other method |
 | `code_invalid`, `challenge_expired` | Email login: the user cancelled after a wrong or expired code | let them retry |

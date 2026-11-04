@@ -79,6 +79,14 @@ describe('audit details', () => {
           "usdMicros",
           "overrideId",
         ],
+        "session.signed_in": [
+          "invite",
+        ],
+        "session.signed_out": [],
+        "signin.refused": [
+          "code",
+          "emailSha256",
+        ],
         "statement.issued": [
           "month",
           "csvSha256",
@@ -90,7 +98,11 @@ describe('audit details', () => {
         "user.enabled": [],
       }
     `);
-    for (const keys of Object.values(AUDIT_DETAIL_KEYS)) for (const k of keys) expect(k).not.toMatch(/email|sub|token|hash|cookie|ip|secret/iu);
+    // The one exception: a refused sign-in names the person only by the sha256 of the address Google verified, as the
+    // spec says ("Membership rules at sign-in": `not_invited` is audited with the email's sha256 only).
+    for (const [action, keys] of Object.entries(AUDIT_DETAIL_KEYS)) {
+      for (const k of keys) if (!(action === 'signin.refused' && k === 'emailSha256')) expect(k, action).not.toMatch(/email|sub|token|hash|cookie|ip|secret/iu);
+    }
   });
 
   it('refuses an unlisted key', () => {

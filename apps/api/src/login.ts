@@ -10,6 +10,7 @@ import { hex, sha256 } from './bytes.ts';
 import { type Ctx, appGate, appQuota, chainGate, chainGateResponse, checkClientScope, done, firstSession, lap, lapRelay, limiter, loginTokenRefusal, newCtx, reject, settle } from './handlers.ts';
 import { readJson } from './http.ts';
 import { type LinkRefusal, checkKey, precheckAutoLink } from './link-precheck.ts';
+import { inBackground, syncAfterLogin } from './directory/sync.ts';
 import { getAccount, getIdentity } from './link-views.ts';
 import { type LoginToken, verifyLoginToken } from './login-token.ts';
 import { log } from './log.ts';
@@ -228,6 +229,9 @@ async function login(request: Request, env: Env, ctx: Ctx, exec?: ExecutionConte
     // Email logins and new links per app and day (D1 `email_usage`, copied hourly to the ledger, D233).
     if (token.email) await countEmailUsage(env, app.id, 'email_sessions', ctx, exec);
     if (link) await countEmailUsage(env, app.id, 'links', ctx, exec);
+    // The wallet directory (D314): the user seen now, and a member's or a new link's identity rows.
+    const linkRef = link ? { provider: link.provider, sub: link.sub } : null;
+    await inBackground(exec, () => syncAfterLogin(env, app.scope_id, { provider: token.provider, sub: token.sub }, linkRef, standing, { requestId, endpoint: ctx.endpoint, appId: app.id }));
     return done(ctx, 200, {
       result: { big_y: r.big_y, big_c: r.big_c },
       // Informational: what the session must look like now. The vault reads the chain, never this.

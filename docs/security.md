@@ -3,7 +3,12 @@
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
 known open issues. Last verified against code: 2026-11-04 for reports and statements (branch `feat/batch-c-12`: the
 ledger writer's row now that settlement refuses another event's transaction, the admin Worker's settlement, nonce,
-statement and rate-override invariants, the console's statement files, `COINGECKO_API_KEY`; D320–D329); 2026-11-04 for the files Worker and logos (branch `feat/batch-c-11`: the
+statement and rate-override invariants, the console's statement files, `COINGECKO_API_KEY`; D320–D329); 2026-11-04 for Security & monitoring and the feed's first run (branch
+`feat/batch-c-14`: the admin's watchdog bearer, caps and ack, the pending-upgrades view, D330–D338, D344); 2026-11-04 for the wallet directory (branch `feat/wallet-directory`:
+what partners and staff see in Parties, the API's D1 and `USER_ID_KEY` in the compromise table, "Wallet directory" in
+the API's invariants, the wallet record's safety and its raw-signing residual (m); D310–D317); 2026-11-04 for partner sign-in (branch `feat/batch-c-9`, merged with
+`develop` @ a243d6b: "Console Worker"'s route, sign-in, sessions and partner views, the flow cookies, handoff codes,
+sign-in tokens and `CONSOLE_GOOGLE_CLIENT_SECRET` in the inventory, D290–D297); 2026-11-04 for the files Worker and logos (branch `feat/batch-c-11`: the
 logo upload's checks and the CSRF exception in "Console Worker", "Files Worker (logos)", the auth pages' `img-src`;
 D300–D308); 2026-11-04 for the admin Worker (branch `feat/batch-c-8`: its invariants, the cancel-link, link-key, Resend-key and Access-token rows; D278–D285); 2026-11-04 for owner-verified changes and owner actions on current `develop` (branch `feat/batch-c-6-merge`; built on
 `feat/batch-c-6`: the API's own step-up check in "RPC writers", the owner-action precheck's nonce recompute and the
@@ -83,7 +88,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | Google | Signing ID tokens only for the real account | Mint a token for any `sub`, client and nonce → open a session and derive that user's key in any scope | Nothing beyond what a token gives; it never sees keys |
 | Hana operator (owner, signer, relayer accounts; Cloudflare account) | Running the contract, API and pages honestly | Today, total control: post an issuer key (owner or `KEYS_UPDATER_KEY`) and mint tokens; upgrade the contract (signer full-access key, no lock); serve modified vault/auth bundles. Suspend apps, stop relaying, list or remove shared clients | Move a scope's registered clients or owners, or block derivation for a scope with its own client, **without** those powers above. Read keys in normal operation |
 | API Worker logic and D1 (not the pages, not the secrets) | Gating and relaying; holding shares | Deny service; with `VAULT_KEK` plus a device dump, get PRK; point a vault at another scope of the same user only together with a Google client the registry maps to that scope (the vault's login check, D56, refuses any other combination); set or widen `raw_sign`/policies (the user still approves raw requests and must accept a new `policyId`); make the vault page frameable by another origin (D1 origins) | Substitute the signer, path or CKD key (pinned in the bundles, path computed in the vault); read or swap the relayed token (end-to-end encrypted); sign without the vault |
-| Partner (app owner) | Its own app config and, in own-client mode, its Google client | Own-client mode: obtain tokens with any nonce for its client and derive its own users' keys in its scope (inherent: Hana can't see Google client settings). Set an auto-approve policy (delayed; users must accept it) | Anything in another scope. In shared mode: derive keys (no token with a nonce of its choosing) |
+| Partner (app owner) | Its own app config and, in own-client mode, its Google client | Own-client mode: obtain tokens with any nonce for its client and derive its own users' keys in its scope (inherent: Hana can't see Google client settings). Set an auto-approve policy (delayed; users must accept it). Through its console (C10, `ConsoleRpc.listUsers` / `getUser`, D315): its own scopes' users, their user ids and Support IDs, created and last seen, connected account kinds and wallet addresses | Anything in another scope. In shared mode: derive keys (no token with a nonce of its choosing). Read a user's sub, identity key or email (never selected for it; a search by sub refused), or another org's users (`not_found`, as no user) |
 | Partner page (incl. XSS, malicious dependency) | Nothing | Start a login (visible popup), read addresses, queue signature requests, drive an unlocked vault within its idle/absolute limits, get requests signed that match an accepted auto-approve policy; navigate, close or focus the approval popup it opened (D99, "Approval popup opened by the partner page") | Read keys, tokens, nonces; get any other signature without a guarded Approve in a Hana popup |
 | User's browser and device | Running Hana's pages; keeping the profile private | Malware or an extension in all frames: everything the user can do, including reading an exported key (on screen, or from the clipboard after Copy key, D268). A disk dump with a live share: unlock and get PRK | After logout, idle or absolute expiry or revoke: nothing (an open export window erases its key then too, and at most 5 min after deriving it, D111). A derive (the persisted session is used up) |
 | NEAR RPC (manifest `rpc`, and `rpcFallback` when set) | Liveness, honest views | Fail derives, report wrong counters or a wrong registry answer (a refused login), delay. For most reads the fallback is asked only when the primary fails, so a lying primary is not outvoted there. One provider alone could also name another identity's path (a forged "member of account R" view) and forge a CKD answer for it when it knows R's secret (R's owner), which the pairing check would pass: so every path that isn't the signed-in identity's own is read on `rpc` and `rpcFallback` separately and must agree, or the login (or export) is refused (D263) | Forge a CKD result for the user's own path (pairing check against the pinned key, which was read from ≥ 3 independent providers that all agreed at one final block, D100); steer a login to another identity's path unless both providers lie the same way |
@@ -116,7 +121,8 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | The KMS signer's AWS access key (`IDENTITY_AWS_*`, or the API Worker itself on a KMS env; none yet) | Have KMS sign forged identity tokens for any user of any app while the access key is active. The key itself can't be read or exported | Only `kms:Sign` on the active key with `ECDSA_SHA_256` and `DIGEST` (IAM policy; the key policy refuses `Sign` by any other principal, grants to everyone, key changes to all but the break-glass role). The standby isn't in the IAM policy (which also denies `Sign` on any other key), so it stays clean for the switch (D219). Only long-term credentials sign: the key policy denies `Sign` to session credentials, because the holder can always call `GetSessionToken` (no policy can deny it), its sessions keep the user's live permissions, and deactivating the access key isn't proven to end them (confirm on staging). Every signature is in CloudTrail, matched by `userIdentity.arn` (the planned reconciliation and alarms find unexplained ones; `GetSessionToken` by the signer user is an alarm). Recovery (planned playbook `identity-kms-signer-compromised`): deactivate the access key, check the `NoSessionCredentials` deny is on every key, switch to the standby, unpublish the suspect key, tell partners with CloudTrail's window and count |
 | `IDENTITY_SUB_KEY` | Map partners' `sub`s back to on-chain paths, so to the Google `sub` (privacy) | Funds and keys unaffected. Never rotated: a new key changes every user's `sub` at every partner (a `u2_` scheme with a 90-day `legacy_sub` window if it ever leaks) |
 | The ledger writer's credential (`usage_writer`: the Hyperdrive config, `.secrets/<env>/neon-usage-writer.url`) | Insert made-up usage events (any org, app, uid) and identity counts; call the report functions (C12) for any org | No read or change of any table (functions only, D141); events can't be altered or deleted, so real ones stay. Billed gas comes from settlement, which reads each `near_tx` at FINAL from chain (C12): a made-up hash never settles, and a real transaction that isn't the event's own is refused (D321: a `near_tx` another relayed event carries bills neither event, also at read time; a key outside the env's pools, or a transaction whose signer, key, nonce or receiver differ from the event's, is `unsettled` `signer_mismatch`), each refusal alerting the security alias. A flood of made-up events can only slow settlement (each unknown hash is read at most once an hour, D322) and show as unsettled. Rotate with `usage-setup roles` after deleting the role files, then update the Hyperdrive config |
-| `USER_ID_KEY` | Link a known Google `sub` to its ledger uid in a scope (and so its activity); with the ledger, re-identify users | No funds, keys or logins. Never rotated within a contract term (a new key makes every user new in MAU); API only, never logged |
+| `USER_ID_KEY` | Link a known Google `sub` to its ledger uid in a scope (and so its activity); with the ledger, re-identify users; compute any user's wallet-directory user id and Support ID (D312), which partners see | No funds, keys or logins. Never rotated within a contract term (a new key makes every user new in MAU and gives every user a new user id); API only, never logged |
+| The API's D1 read (the wallet directory, migration 0011; a Cloudflare account member or token that can read it) | Every recorded user's subs (Google and email), joined to their wallet addresses and so to their on-chain balances and history, per scope; with the issuer's directory, to their email (D269's cost, D310) | No key, token or signature is stored; a write could only mislead staff and partners' views, never move funds or change a login. Staff read it through `AdminRpc` and the CLI (statements off the argv, D316) |
 | One identity token (a partner's log, transit) | Act as that user at that partner's backend until `exp` (≤ 1 h) | That partner only (`aud`); never at Hana or on chain |
 | A session key (with its vault record) | Also: mint identity tokens while the session is live | The same session's limits, its app only; a logout or revoke stops new tokens in every app of the scope (the share check, D178: a share is kept 24 h after it dies), the 1 h `exp` bounds the old ones |
 
@@ -138,7 +144,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | Owner-pool keys `OWNER_RELAYER_KEYS` | same, owner methods | Worker secret; `.secrets/<env>/owner-relayer-keys.json` | Hana | Default 1 × 0.5 NEAR; allowance monitored like the session pool (D150) |
 | `KEYS_UPDATER_KEY` | ed25519 function-call key on `signer`. v1 contract: `set_issuer_key`, `remove_issuer_key`. Governance contract: exactly `set_issuer_key`, `propose_issuer_key_removal`, `execute_issuer_key_change`, installed only by the contract (`add_updater_key`); the API signs nothing else (`apps/api/src/relayer-config.ts` `UPDATER_METHODS`) | Worker secret; `.secrets/<env>/keys-updater.json` | Hana | 1 NEAR allowance. On the governance contract it can only propose (delayed, cancellable) and execute matured changes; a watchdog deletes it when it proposes a key Google doesn't publish. See open issue (e) and D33 |
 | `WATCHDOG_KEY` | ed25519 function-call key on the watchdog's account (manifest `watchdog.account`), receiver `signer`, methods `cancel_issuer_key_change`, `confirm_issuer_key_change`, `pause`, `delete_updater_key`, 1 NEAR | Watchdog Worker secret (its own Cloudflare account); `.secrets/<env>/watchdog-secrets.json` | Hana (operator) | Created by `watchdog secrets <env> init`; rotate by adding a new key, then deleting the old (`docs/operations.md` "Watchdog service"). DoS power only (cancel, confirm a proposed change, pause, delete updater keys) |
-| `WATCHDOG_STATUS_TOKEN` | random bearer token (32 bytes, base64url) | Watchdog and admin Worker secrets; same file | Hana | Read and acknowledge only: a holder can stop re-sends of an alert already paged, never a first alert or a check |
+| `WATCHDOG_STATUS_TOKEN` | random bearer token (32 bytes, base64url) | Watchdog and admin Worker secrets (the admin's from C14, uploaded through stdin with `jq -e`); same file | Hana | Read and acknowledge only: a holder can stop re-sends of an alert already paged, never a first alert or a check. In the admin Worker only `src/watchdog.ts` reads it, into the `Authorization` header of its calls to `WATCHDOG_URL` (https origin, redirects refused); never in a response, a log line or the browser (D330) |
 | Watchdog alert credentials (`RESEND_API_KEY`, `SLACK_WEBHOOK_URL`, paging app, `HEARTBEAT_URL`) | API keys / capability URLs | Watchdog Worker secrets; same file | Hana | The watchdog's own, not the admin Worker's (D87). Losing one channel leaves two (D85) |
 | Watchdog's Cloudflare account | account credentials | the operator | the user | Separate login and MFA from the API's account (D86); a compromise gives the watchdog key and its alerting, caught by the dead-man's switch |
 | Owner, signer, relayer account keys | ed25519 full-access (not ml-dsa-65: `docs/decisions.md`) | `~/.near-credentials/testnet/` on the operator's machine | the user (Hana admin) | Manual. Agents never ask for or handle them |
@@ -149,12 +155,16 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | Publishable keys | `pk_test_` / `pk_live_` + base58 | D1, partner pages | public | Not secrets |
 | Invite link tokens | T = HMAC-SHA256(`INVITE_LINK_KEY`, "hana-console/invite/v1" ‖ borsh(invite id)), 32 bytes | The invitee's mailbox (`<console.origin>/invite#t=…`, a fragment); `CONSOLE_DB` holds only sha256(T), set by the admin Worker's ack | the invitee | 7 days from creation, single use, email-bound; works only after every notice send was accepted. `INVITE_LINK_KEY` is the admin Worker's secret (C8), never the console's (D240) |
 | Owner-grant cancel tokens | T = HMAC-SHA256(`CANCEL_LINK_KEY`, "hana-console/owner-grant-cancel/v1" ‖ borsh(grant id)) | The grant notice's recipients (every owner, the security contacts, the alias); `CONSOLE_DB` holds only sha256(T) | them | Cancels one owner grant once, by POST, until `owner_from` |
+| Console session cookies (`__Host-hana_cs`) | 32 random bytes, b64url | The member's browser (`HttpOnly`, `SameSite=Strict`, console origin); `CONSOLE_DB` holds only sha256 | the member | 2 h idle, 12 h absolute; revoked on removal, role change, disable or a freeze of the member's only org. Created by sign-in (C9), a new one each time |
+| Console sign-in flow cookies (`__Host-hana_pre` on the console origin, `__Host-hana_af` on the auth origin) and the start handle `f` | 32 random bytes each, b64url | The browser (`HttpOnly`, `SameSite=Lax`, 10 min); `CONSOLE_DB` holds only sha256 of each (and of the state derived from `f`) | the member's browser | One flow (5 min), cleared at its end; bind create → complete and start → callback to one browser (D291) |
+| Console handoff codes | 32 random bytes | The callback's `Location` (`?h=`) for one hop; `CONSOLE_DB` holds sha256 and the verified `{provider, sub, email, hd}` (overwritten when used) | the member's browser | 60 s, single use, only with the flow's `__Host-hana_pre` |
+| Console sign-in ID tokens and Google's access token (C9) | RS256 JWT (console audience), `scope=openid email` | Transient: the callback's memory between the code exchange and the handoff row | the console Worker | Never relayed, stored, logged or returned; claims held to the allow-list plus `email`, `email_verified`, `hd`, `at_hash` (D290) |
+| `CONSOLE_GOOGLE_CLIENT_SECRET` (C9) | the console OAuth client's secret | Console Worker secret; `.secrets/<env>/console-google-client.json` (Google's client JSON, 0600) | Hana | Sent only to `https://oauth2.googleapis.com/token` in the code exchange (a source check). Alone it mints nothing: an exchange needs a code Google issued to the redirect URI and the flow's PKCE verifier. Rotation: a second secret in Google Cloud, `wrangler secret put`, delete the old one (`docs/operations.md` setup step 11) |
 | Guarded-change cancel tokens (batch C8) | T = HMAC-SHA256(`CANCEL_LINK_KEY`, "hana-id/cancel-link/v1" ‖ borsh(change id)) | The `change_pending` recipients' mailboxes (`<console.origin>/cancel/<id>#t=…`, a fragment); the hot DB holds only sha256(T), set by `ackNotice` | the alias and the org's security contacts | Cancels one pending change once, by POST, until `active_from`; deterministic, so a notice re-sent after a failed send carries the same working link |
 | `CANCEL_LINK_KEY`, `INVITE_LINK_KEY` (batch C8) | 32 random bytes each (base64) | Admin Worker secrets only; `.secrets/<env>/cancel-link-key`, `invite-link-key` (0600) | Hana | Generated with `openssl rand` into `.secrets/`, set through wrangler's stdin (`docs/operations.md` "Admin Worker"). Never in the API or the console, never logged. A leak lets the holder mint working cancel links (DoS: cancel pending changes and grants) and, with `INVITE_LINK_KEY`, an invite link only for an invite already acked to its invitee's address (acceptance still needs that Google account). Replacing one breaks the links already emailed |
 | `COINGECKO_API_KEY` (batch C12, optional) | CoinGecko demo API key (the daily NEAR/USD rate, D325) | Admin Worker secret; `.secrets/<env>/coingecko-api-key` (0600) | Hana | Read-only market data; a leak spends the key's quota. Sent as a header, never logged; without it the public endpoint is used |
 | `EMAIL_API_KEY` (batch C8) | Resend API key, sending access to the `email.from` domain only (D87) | Admin Worker secret; `.secrets/<env>/admin-resend-key` (0600) | Hana | Its own key, not the watchdog's. A leak sends mail as Hana's notice subdomain (phishing); it can't ack a notice (only the admin Worker's cron, as `system`, can) |
 | Cloudflare Access application tokens (batch C8) | RS256 JWT (`Cf-Access-Jwt-Assertion`), the team's certs | Transient, per request; never logged or stored | the staff member's Access session (1 h) | Checked on every admin `/api/*` request: signature, `kid`, `iss`, `aud`, expiry, `type = 'app'`, a `sub`, then the email on `admin.staffEmails` (D88) |
-| Console session cookies (`__Host-hana_cs`) | 32 random bytes, b64url | The member's browser (`HttpOnly`, `SameSite=Strict`, console origin); `CONSOLE_DB` holds only sha256 | the member | 2 h idle, 12 h absolute; revoked on removal, role change, disable or a freeze of the member's only org. Created by sign-in from C9 |
 | Identity signing keys (Worker slots `IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY`) | P-256 private JWKs (ES256), testnet and `local*` only | The active key: a Worker secret and `.secrets/<env>/identity-signing-key.json`. The standby: `identity-signing-key-standby.json` only, kept offline, never uploaded until a switch (D177). During a rotation a `next` and a `previous` key. 0600, the only copies | Hana | `scripts/identity-key.ts`: `init`, `next`, `switch --to next|standby`, `retire --key previous|standby` (wrangler stdin, never printed, files never overwritten); public halves in the manifest's `identityToken.publicKeys` (the JWKS). `activeKid` picks the signer. Staging and mainnet: AWS KMS (next row) |
 | Identity KMS keys (`identityToken.signer.keys`: `active`, `standby`, during a rotation `next`, `previous`); none yet | AWS KMS `ECC_NIST_P256` `SIGN_VERIFY`, origin `AWS_KMS`, single-region; the standby in another region (D219) | AWS KMS in D121's dedicated account; never exportable, never on the Worker. The manifest holds their ARNs and public keys only | Hana (break-glass role with MFA administers; the key policy in `docs/operations.md` "Identity token keys on AWS KMS") | Created in AWS by the operator; published with `identity-key kms-init / kms-add`, switched with `kms-switch`, unpublished with `kms-retire` (then disabled and deleted in KMS, 30 days); scheduled rotation every 12 months |
 | KMS signer's AWS access key (`IDENTITY_AWS_ACCESS_KEY_ID`, `IDENTITY_AWS_SECRET_ACCESS_KEY`) | Long-term IAM user key (`AKIA…`) of the env's signer user (`identityToken.signer.credentials.iamUser`) | API Worker secrets; `.secrets/<env>/identity-aws-access-key.json` (0600) only between `aws iam create-access-key` and the checked upload, then deleted | Hana | `identity-key kms-put-aws-key` (one `wrangler secret bulk`, never printed); rotated every 90 days and on suspicion; the user can only `kms:Sign` the active key (D215, D219); never logged |
@@ -269,6 +279,25 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   D25, D96, checked by `apps/api/test/session-flags.test.ts` and `owner-actions.test.ts`), scope check (`checkClientScope`, `handlers.ts:384`), `session_key_in_use`,
   session signature, session-use precheck mirroring the contract's counter and `max_uses` rules (`session-use.ts:29`,
   D20), BLS key shape. The scope is always the app's D1 `scope_id`, never the client's.
+- **Wallet directory** (D310–D317, branch `feat/wallet-directory`, `src/directory/`, migration 0011). An address is
+  stored for a user only on a **wallet record**: a signature by that address's own key over `"hana-id/wallet-record/v1"
+  ‖ 0x00 ‖ env ‖ signer ‖ app ‖ scope ‖ path ‖ chain ‖ address ‖ session_pk ‖ time` (core `wallet-record.ts`), plus a
+  live session on chain in the app's scope on **exactly that path** (`get_session`), from the vault origin, within
+  ±5 min. So a caller can't attach an address to a user whose key it doesn't hold, nor attach its own address to
+  another user's path (it holds no session there). A record can never be another signature (D311, each point tested
+  in `packages/core/test/wallet-record.test.ts`): Stellar transactions, Soroban auth entries and SEP-53 sign 32-byte
+  hashes and Ed25519 binds the exact, longer, message; EVM transactions, EIP-191 and EIP-712 sign keccak256 digests,
+  the record a sha256 one; the vault refuses raw Stellar bytes starting `hana-id` (D179) and its own session's record
+  digest as a raw EVM request; the domain is no other Hana message's. Open issue (m) is what an approved raw EVM
+  signature still allows. The vault sends only addresses and signatures, in the background, once, with a 15 s abort
+  (D317); the endpoint and the identity syncs never fail or slow a login (`apps/api/test/wallet-directory.test.ts`,
+  `packages/web/test/vault/wallet-record.test.ts`). Identities come from the API's own chain reads after its relays
+  (D314), never from a request's word. **Who sees what** (D310 point 5, D315): staff (`AdminRpc.listUsers` /
+  `getUser` / `findUsers`, `admin user:*`) see subs, identity keys, roles and wallets, and the email through D275's
+  `DirectoryRpc` (not built); partners (`ConsoleRpc.listUsers` / `getUser`) see only their own org's scopes (`scopes.
+  org_id` in every query), with user ids, Support IDs, times, account kinds and addresses: the query never selects a
+  sub or an identity key, a sub search is refused, and another org's user is `not_found` (tested by grepping the
+  answers for the sub, the key and `@`). Logs carry the app, endpoint and a code only.
 - **Usage capture fails open and carries no PII** (batch C4, `src/usage/`). The ledger event is built at the response
   and written after it (`waitUntil`); a missing binding, a refusing, slow or hanging server, a refused event or a
   missing uid key never changes a status, body or header or delays an answer (`apps/api/test/usage.test.ts`). A lost
@@ -536,15 +565,17 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
     `IDENTITY_ISS` first (`400 bad_token`), and the contract takes RS256 issuer keys only;
   - logs carry the app id, outcome, code, kid and timings, never a token, `sub`, `sid`, address or body.
 
-### Console Worker (`apps/console`, batch C7, no route; tests `apps/console/test/*.test.ts`)
+### Console Worker (`apps/console`, batches C7 and C9; tests `apps/console/test/*.test.ts`, `web/test`)
 
-- **No public route** (`workers_dev: false`, `preview_urls: false`, no `routes`; a config test). Until C9 only the admin
-  Worker's `StaffRpc` binding (C8) and the cron reach it.
+- **Route** (C9, branch `feat/batch-c-9`): on its own `workers.dev` name in a dev env only, else a Custom Domain on
+  `console.origin`; never preview URLs (config tests, D294). console-auth likewise on `console.authOrigin`.
 - **Its own origin only**: any other host is 404. Every response, assets included (the Worker runs first), carries the
   spec's CSP (`default-src 'none'`, `script-src`/`style-src`/`connect-src`/`font-src 'self'`, `img-src 'self' data:
   <files.origin>`, `frame-ancestors 'none'`, `object-src 'none'`, `base-uri 'none'`, `form-action 'self'`),
   `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy: same-origin`, `X-Content-Type-Options: nosniff` and HSTS
-  (2 years, subdomains); `/api/*` also `Cache-Control: no-store`. No cookie is set in C7.
+  (2 years, subdomains); `/api/*` also `Cache-Control: no-store`. Only `/api/*` sets cookies (an asset's `Set-Cookie`
+  is stripped), and only the console's `__Host-` ones. The SPA build has no inline script or style, nothing external,
+  and bundles no server code (a build test, D297).
 - **CSRF on every non-GET request**, whatever the path: `Sec-Fetch-Site: same-origin`, `Origin` exactly
   `console.origin`, `x-hana-console: 1` and `content-type: application/json`, else `403 csrf`. The one exception is the
   logo upload's raw body, which must be exactly `application/octet-stream` on that path (D300): not a CORS-safelisted
@@ -576,12 +607,33 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
 - **Roles**: the last usable owner can't be removed or demoted; a pending owner (inside the grant's wait) is a viewer;
   a new owner of an org with an owner waits `ownerGrantDelayMs` (missing or out of range: grant writes refuse); removals,
   demotions, disables and freezes of a member's only active org revoke sessions at once.
-- **Sessions** (model only until C9): looked up by sha256 of a 32-byte cookie (`__Host-hana_cs`, `Secure; HttpOnly;
-  SameSite=Strict; Path=/`), a doubled cookie name refused, 2 h idle and 12 h absolute, its user not disabled.
+- **Sessions**: looked up by sha256 of a 32-byte cookie (`__Host-hana_cs`, `Secure; HttpOnly; SameSite=Strict;
+  Path=/`), a doubled cookie name refused, 2 h idle and 12 h absolute, its user not disabled; a new id at every sign-in;
+  the role and the membership (with the org's `required_hd` against the session's `hd`) read from `members` on every
+  request; any org the member can't use is `404`, like an unknown one.
+- **Sign-in** (C9, D290–D293): the Google code flow with PKCE S256 on a separate origin (`console.authOrigin`, served
+  by console-auth, which serves no script, asset or page: CSP `default-src 'none'; frame-ancestors 'none';
+  form-action 'none'; base-uri 'none'`, `no-store`), so an XSS on the console can't start an implicit flow for the
+  redirect URI and read its fragment (the client has no JavaScript origin either). The implicit-flow guard: the
+  callback redirects only for a valid `code` and `state` of a started flow bound to this browser's `__Host-hana_af`,
+  and every success `Location` ends with `#`. Each step is single use and cookie-bound: the start handle (marked
+  started), the state (the flow marked used in the lookup, with the auth-origin cookie), Google's code (exchanged once,
+  with the client secret and the verifier), the handoff (60 s, with the console-origin `__Host-hana_pre`); a wrong or
+  missing cookie consumes nothing, and a flow finished in another browser fails. The ID token comes only from the
+  console's own exchange (fixed Google endpoints, never config) and is checked for signature, `iss`, `aud`/`azp` = the
+  console client, the flow's nonce (its own domain, so an owner-action, step-up or origin-change token can't serve),
+  `exp`, `iat` ≤ 120 s; it is never stored, logged or returned. The claim allow-list by scope (D290): `openid` exactly
+  the API's; sign-in's `openid email` adds only `email`, `email_verified`, `hd`, `at_hash` (checked against the access
+  token), with a verified address required. The membership rules run at completion, after the pre-flow cookie; invite
+  acceptance is one D1 batch. `/api/auth/*` and the auth origin are limited to 10 a minute per IP. The handoff row's
+  identity and the flow's PKCE verifier are overwritten once used.
 - **What it keeps about people**: members' and staff emails (display), Google subs (owner match), invitees' addresses
   on the invite row only (deleted 90 days after the invite ends; never in `audit_log`, whose details are allowlisted per
-  action), sessions' /24 or /48 network data (90 days). Logs carry ids and codes only. `STATEMENTS` is read only by
-  code (no `put`/`delete`, a source check).
+  action; a refused sign-in of someone with no account is audited by the sha256 of the address Google verified only),
+  sessions' /24 or /48 network data (90 days). Logs carry ids and codes only (a refused token claim by its name). The
+  partner views show no staff Access subject or address, no Google `sub` and no network prefix (D296); nothing in the
+  console reads the email issuer or its user directory, so partners never see an end user's address (D269; a source
+  check). `STATEMENTS` is read only by code (no `put`/`delete`, a source check).
 
 ### Admin Worker (`apps/admin`, batch C8, not deployed; tests `apps/admin/test/*.test.ts`, `test-ops/`, `scripts/test/`)
 
@@ -608,6 +660,15 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   partner text escaped and stripped of control characters, one-line subjects (no header injection).
 - **No NEAR key**, no Google client, no D1. **Logs** carry route patterns, ids, codes and counts only: never an email,
   a `sub`, a JWT, a link token or its hash (log allowlist; a source check and a log test).
+- **The feed's first run emails no history** (D344): a cursor with no row starts at the source's current position,
+  silently; unnotified security events still go out.
+- **Security & monitoring (C14; D330–D338)** is a view: it never alerts and never acts on chain. The watchdog is
+  called server-side only with the bearer (above), its answers capped per route (1 MiB `/status`, 2 MiB `/alerts`,
+  512 KiB `/actions`, 64 KiB an ack) under an 8 s deadline that covers the body, and reduced to bounded plain text
+  (controls and bidi overrides replaced, lengths cut) before the SPA writes it as text. Its one write is the ack,
+  forwarded with the Access identity as `by` (the body can't set it); an ack stops only an alert's re-sends. The
+  governance part is the API's snapshot (`AdminRpc.governance`), not independent of Hana's main account; the watchdog
+  beside it is the independent party. The pending-upgrades view (both consoles) is public chain data only.
 - **Billing (C12; tests `apps/admin/test-ops/settlement.test.ts`, `statements.test.ts`, `apps/api/test-usage/reports.test.ts`)**:
   a relayed event is billed only when settled final for itself, its `near_tx` carried by no other relayed event, its
   `relayer_pk` one of the env's pool keys and the transaction at FINAL signed by `RELAYER_ACCOUNT` with that key at that
@@ -621,10 +682,11 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   `nonce_unexplained` to the security alias (a lost write, or a signer other than the API: a leaked relayer key). It
   proves the newest transaction of each key is in the ledger, not that none in the middle of a day is missing.
 - Residual: a compromised admin Worker can send anything to anyone through Resend, ack notices without sending them,
-  and act as any staff member through the RPCs (trust boundary 3 in the spec's model); with the admin role it can also
-  insert settlements (bill a real event's gas for a made-up amount before settlement does), issue a statement or
-  override a rate, all of which leave their rows and audit trail; the feed's at-least-once
-  delivery can repeat a digest after a partial failure (Resend's idempotency key covers 24 h).
+  ack every watchdog alert (silencing the re-sends, never the first page) and act as any staff member through the RPCs
+  (trust boundary 3 in the spec's model); with the admin role it can also insert settlements (bill a real event's
+  gas for a made-up amount before settlement does), issue a statement or override a rate, all of which leave their
+  rows and audit trail; the feed's at-least-once delivery can repeat a digest after a partial
+  failure (Resend's idempotency key covers 24 h).
 
 ### Email issuer (`apps/email-issuer`, not deployed)
 
@@ -1110,7 +1172,7 @@ findings are tracked with their own fixes.
 
 Status: **fixed** (a), (b), (c), (d), (f); **fixed on sandbox-dev** (e) (the governance contract and watchdog run there
 since 2026-10-30; mainnet ships with them once its delay, council and watchdog account are set up: D80, D81, D86);
-**accepted** (k), and the residual risks named under (b)–(d) and
+**accepted** (k), (m), and the residual risks named under (b)–(d) and
 "Auto-approve policies"; **fixed for the CLI** (i); **open** (g), (h), (j) (sandbox-dev only; production envs
 need D38's two domains), (l) (pre-mainnet: the identity token's KMS signer; the JWKS pin check is built as detection only, D210). The 2026-10-29 security sweep's items in the API, tooling and CI: "Security sweep
 2026-10-29" below.
@@ -1241,7 +1303,8 @@ plan (D33; built, and deployed on sandbox-dev 2026-10-30), specified in `docs/go
   the JWKS URL can accept a forged key without Hana being alerted. Partner-side thumbprint pinning
   (`docs/integration.md`, the recommended default for anything of value) is the only prevention.
 - Monitoring (D83): every watchdog check, action and alert surfaces in the admin portal's "Security & monitoring"
-  view (a standing rule for future checks); the watchdog sends its own alerts, so a compromised Hana Cloudflare
+  view (a standing rule for future checks; built in C14, not deployed: `apps/admin/test/monitoring.test.ts` fails when
+  a watchdog check id has no portal rendering or an alert kind no playbook link); the watchdog sends its own alerts, so a compromised Hana Cloudflare
   account can't silence them.
 - Alerts (D85): critical (paging app + Slack + email to both founders, re-sent every 15 min until acknowledged),
   warning (Slack + email), info (portal + daily digest). Every upgrade proposal is critical; no independent upgrade
@@ -1287,6 +1350,16 @@ with the partner page; there, short unlock windows and zeroing PRK are the mitig
 (2026-10-28, `docs/decisions.md` D35): `contextString` is `''` for those kinds (`approval.ts` header,
 `approvalContextString`). Typed data carries its chain in its domain; messages and raw requests name no network, and
 the approve popup now says "This signature isn't tied to one network." on them.
+
+**(m) The wallet record and an approved raw EVM signature. Accepted** (D311, as D179's residual). A raw EVM request is
+any 32-byte digest, so a user who approves a raw EVM signature (the popup's red "can authorize any transaction"
+warning) over a digest an attacker computed from the attacker's own session and path lets the attacker list that
+user's EVM address under the attacker's own user in the wallet directory. It can't be prevented by any ECDSA proof
+(the vault refuses its own session's record digest, the only one it can know); the approval already gives the
+attacker the wallet; raw signing is off by default, a guarded change, never auto-approved and refused for test apps.
+The false row is only under the attacker's own user, never another user's; `sharedWith` and the CLI's warning show an
+address listed under more than one user, and neither staff nor partners may treat a listed address as proof of who
+owns it. A BIP-340 proof with the same key was rejected (unproven joint security of ECDSA and Schnorr on one key).
 
 **(l) Identity token: testnet signing key. Open (pre-mainnet).** Build steps 1–4 sign with
 a Worker-secret P-256 key (`IDENTITY_SIGNING_KEY`): anyone who can read the API Worker's secrets once can forge any

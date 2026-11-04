@@ -12,6 +12,13 @@ HANA_E2E_PORT_BASE=4510 corepack pnpm --filter @hana-id/e2e e2e   # another work
 corepack pnpm --filter @hana-id/e2e test          # unit tests of the stack's mocks (part of `pnpm -r test`)
 ```
 
+An unfinished login (`tests/abandoned-login.spec.ts`; the follow-up screens in `tests/linking.spec.ts`, the demo's in
+`tests/demo.spec.ts`): the popup left on the method chooser, Google's page, the email address or code step, a link
+code screen or a banner, or closed. The tests install Playwright's clock (`page.clock`, for the whole context: the
+partner page, the vault frame and the popup) and fast-forward past the vault's 5-minute limit; `responsive(frame)`
+(`tests/fixtures.ts`) checks the vault frame and the partner page still run a script. In all three browsers the
+partner page shares the vault frame's renderer here, so a loop in the vault freezes it too.
+
 ## What runs
 
 Ports are `HANA_E2E_PORT_BASE` (default 4410) plus the offsets below: the table shows the default.

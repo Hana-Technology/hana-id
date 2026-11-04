@@ -1,5 +1,5 @@
 // The console's generated config and the config rules across Workers (docs/batch-c-spec.md "Tests: Topology and
-// config"): no public route in C7; only the console binds ConsoleRpc and CONSOLE_DB, only the admin binds the console (C8); the console runs first on every
+// config"): the console route on (C9); only the console binds ConsoleRpc and CONSOLE_DB, only the admin (StaffRpc, C8) and console-auth (AuthHandler, C9) bind the console; the console runs first on every
 // request; R2, rate-limit and cron as the spec's bindings table says; and source checks (no put/delete on STATEMENTS,
 // no hash column read into a view, no `SELECT *` on the token-holding tables).
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -15,7 +15,8 @@ import { wranglerConfig as watchdogConfig, TEST_MANIFEST as WATCHDOG_MANIFEST } 
 import { wranglerConfig as filesConfig } from '../../../files/scripts/gen-wrangler.ts';
 import { MAX_OWNER_GRANT_DELAY_MS, MIN_OWNER_GRANT_DELAY_MS } from '../../src/config.ts';
 import { CONSOLE_RATE_LIMITS } from '../../src/limits.ts';
-import { CRON, LOCAL_D1_ID, TEST_MANIFEST, existingD1Id, main, testWranglerConfig, wranglerConfig } from '../gen-wrangler.ts';
+import { CRON, LOCAL_D1_ID, TEST_MANIFEST, consoleGoogleClientId, existingD1Id, main, testWranglerConfig, wranglerConfig } from '../gen-wrangler.ts';
+import { wranglerConfig as consoleAuthConfig } from '../../../console-auth/scripts/gen-wrangler.ts';
 import { VAULT_RATE_LIMITS } from '../../../api/src/vault/limits.ts';
 import { IDENTITY_RATE_LIMITS } from '../../../api/src/identity/limits.ts';
 
@@ -36,12 +37,34 @@ describe('the console config', () => {
     expect(manifestSchema.parse(TEST_MANIFEST)).toBeTruthy();
   });
 
-  it('has no public route in C7: not on workers.dev, no preview URLs, no routes', () => {
+  it('its route is on (C9): a Custom Domain on console.origin, no workers.dev, no preview URLs', () => {
     const c = testWranglerConfig() as Config;
     expect(c.workers_dev).toBe(false);
     expect(c.preview_urls).toBe(false);
-    expect(c.routes).toBeUndefined();
+    expect(c.routes).toEqual([{ pattern: 'console.test', custom_domain: true }]);
     expect(c.route).toBeUndefined();
+  });
+
+  it('a dev env may serve it on its own workers.dev name (D93); production may not; a wrong name or a port is refused', () => {
+    const dev = { ...TEST_MANIFEST, console: { ...TEST_MANIFEST.console!, origin: 'https://hana-id-console-test.acct.workers.dev' } } as Manifest;
+    const c = wranglerConfig(dev, LOCAL_D1_ID) as Config;
+    expect(c).toMatchObject({ workers_dev: true, preview_urls: false });
+    expect(c.routes).toBeUndefined();
+    expect(() => wranglerConfig({ ...dev, name: 'staging' } as Manifest, LOCAL_D1_ID)).toThrow(/local\*\/sandbox\* envs only/u);
+    expect(() => wranglerConfig({ ...dev, console: { ...dev.console!, origin: 'https://other.acct.workers.dev' } } as Manifest, LOCAL_D1_ID)).toThrow(/Worker's own/u);
+    expect(() => wranglerConfig({ ...TEST_MANIFEST, console: { ...TEST_MANIFEST.console!, origin: 'https://console.test:8443' } } as Manifest, LOCAL_D1_ID)).toThrow(/port/u);
+  });
+
+  it("takes the console's Google client from consoleAudiences: exactly one google entry, else no config", () => {
+    expect((wranglerConfig(TEST_MANIFEST, LOCAL_D1_ID) as { vars: Record<string, string> }).vars.CONSOLE_GOOGLE_CLIENT_ID).toBe('console-client.apps.googleusercontent.com');
+    expect(() => wranglerConfig({ ...TEST_MANIFEST, consoleAudiences: [] }, LOCAL_D1_ID)).toThrow(/exactly one google client/u);
+    expect(() => wranglerConfig({ ...TEST_MANIFEST, consoleAudiences: [['google', 'a.apps'], ['google', 'b.apps']] }, LOCAL_D1_ID)).toThrow(/has 2/u);
+    expect(consoleGoogleClientId({ ...TEST_MANIFEST, consoleAudiences: [['other', 'x'], ['google', 'a.apps']] })).toBe('a.apps');
+  });
+
+  it('serves the Vite build (dist) when deployed; the tests serve their fixed stand-in', () => {
+    expect((wranglerConfig(TEST_MANIFEST, LOCAL_D1_ID) as { assets: { directory: string } }).assets.directory).toBe('./dist');
+    expect((testWranglerConfig() as { assets: { directory: string } }).assets.directory).toBe('./test/assets');
   });
 
   it('binds what the spec lists, and runs first on every request', () => {
@@ -49,7 +72,7 @@ describe('the console config', () => {
     expect(c).toMatchObject({
       name: 'hana-id-console-test',
       main: 'src/index.ts',
-      vars: { ENV_NAME: 'sandbox-test', CONSOLE_ORIGIN: 'https://console.test', CONSOLE_AUTH_ORIGIN: 'https://console-auth.test', FILES_ORIGIN: 'https://files.test', NEAR_RPC: 'https://rpc.test.invalid', SIGNER_ACCOUNT: 'signer.test.near', OWNER_GRANT_DELAY_MS: '60000' },
+      vars: { ENV_NAME: 'sandbox-test', CONSOLE_ORIGIN: 'https://console.test', CONSOLE_AUTH_ORIGIN: 'https://console-auth.test', CONSOLE_GOOGLE_CLIENT_ID: 'console-client.apps.googleusercontent.com', FILES_ORIGIN: 'https://files.test', NEAR_RPC: 'https://rpc.test.invalid', SIGNER_ACCOUNT: 'signer.test.near', OWNER_GRANT_DELAY_MS: '60000' },
       d1_databases: [{ binding: 'CONSOLE_DB', database_name: 'hana-id-console-test', database_id: LOCAL_D1_ID, migrations_dir: 'migrations' }],
       services: [{ binding: 'API', service: 'hana-id-api-test', entrypoint: 'ConsoleRpc' }],
       r2_buckets: [
@@ -59,7 +82,7 @@ describe('the console config', () => {
       // Batch C11: logos are decoded and re-encoded through the Images binding.
       images: { binding: 'IMAGES' },
       ratelimits: [{ name: 'CONSOLE_IP_LIMIT', namespace_id: '95101', simple: { limit: 10, period: 60 } }],
-      assets: { directory: './public', binding: 'ASSETS', not_found_handling: 'single-page-application', run_worker_first: true },
+      assets: { directory: './test/assets', binding: 'ASSETS', not_found_handling: 'single-page-application', run_worker_first: true },
       triggers: { crons: ['0 * * * *'] },
       observability: { enabled: true, logs: { invocation_logs: false } },
     });
@@ -112,6 +135,7 @@ describe('across Workers (config snapshots)', () => {
     // The issuer's outbox sender (its test manifest's) is for local* envs only.
     ['email issuer', issuerConfig({ ...m, name: 'local-test' }, LOCAL_D1_ID, LOCAL_D1_ID) as Config],
     ['console', wranglerConfig(m, LOCAL_D1_ID) as Config],
+    ['console-auth', consoleAuthConfig(m) as Config],
     ['files', filesConfig(m) as Config],
     ['admin', adminConfig(m, { adminHyperdriveId: 'a'.repeat(32) }) as Config],
   ];
@@ -126,12 +150,19 @@ describe('across Workers (config snapshots)', () => {
     expect(binders).toEqual(['console']);
   });
 
-  it('only the admin Worker binds the console (StaffRpc, C8); nothing binds AuthHandler until console-auth (C9)', () => {
+  it('the console is bound by the admin Worker (StaffRpc, C8) and console-auth (AuthHandler, C9) only, each to its one entrypoint', () => {
     const binders = configs.filter(([, c]) => (c.services ?? []).some((s) => s.service === m.console!.workerName)).map(([n]) => n);
-    expect(binders).toEqual(['admin']);
-    const admin = configs.find(([n]) => n === 'admin')![1];
-    expect((admin.services ?? []).filter((s) => s.service === m.console!.workerName)).toEqual([{ binding: 'CONSOLE', service: m.console!.workerName, entrypoint: 'StaffRpc' }]);
-    expect(configs.filter(([, c]) => (c.services ?? []).some((s) => s.entrypoint === 'AuthHandler'))).toEqual([]);
+    expect(binders.sort()).toEqual(['admin', 'console-auth']);
+    const onConsole = (n: string) => (configs.find(([x]) => x === n)![1].services ?? []).filter((s) => s.service === m.console!.workerName);
+    expect(onConsole('admin')).toEqual([{ binding: 'CONSOLE', service: m.console!.workerName, entrypoint: 'StaffRpc' }]);
+    expect(onConsole('console-auth')).toEqual([{ binding: 'CONSOLE', service: m.console!.workerName, entrypoint: 'AuthHandler' }]);
+    expect(configs.filter(([, c]) => (c.services ?? []).some((s) => s.entrypoint === 'AuthHandler')).map(([n]) => n)).toEqual(['console-auth']);
+    expect(configs.filter(([, c]) => (c.services ?? []).some((s) => s.entrypoint === 'StaffRpc')).map(([n]) => n)).toEqual(['admin']);
+  });
+
+  it('console-auth has no secret, D1, Hyperdrive or R2 binding', () => {
+    const auth = configs.find(([n]) => n === 'console-auth')![1];
+    expect(JSON.stringify(auth)).not.toMatch(/d1_databases|hyperdrive|r2_buckets|SECRET/iu);
   });
 
   it('batch C11: only the console and the files Worker bind the logo bucket; the files Worker binds nothing else', () => {
@@ -171,7 +202,29 @@ describe('source checks', () => {
     for (const columns of views.matchAll(/_COLUMNS = '([^']*)'/gu)) expect(columns[1]).not.toMatch(/hash/u);
   });
 
-  it('the console never holds a link key or the client secret yet (D240: the admin Worker computes link tokens)', () => {
-    for (const { f, text } of sources) expect(text, f).not.toMatch(/\b(INVITE_LINK_KEY|CANCEL_LINK_KEY|CONSOLE_GOOGLE_CLIENT_SECRET)\b/u);
+  it('the console never holds a link key (D240: the admin Worker computes link tokens)', () => {
+    for (const { f, text } of sources) expect(text, f).not.toMatch(/\b(INVITE_LINK_KEY|CANCEL_LINK_KEY)\b/u);
+  });
+
+  it('only the callback reads the Google client secret, and only to send it to the token exchange', () => {
+    const readers = sources.filter(({ text }) => /\bCONSOLE_GOOGLE_CLIENT_SECRET\b/u.test(text)).map(({ f }) => f);
+    expect(readers.sort()).toEqual(['auth-flow.ts', 'env.ts']);
+    const flow = sources.find(({ f }) => f === 'auth-flow.ts')!.text;
+    expect(flow.match(/env\.CONSOLE_GOOGLE_CLIENT_SECRET/gu)).toHaveLength(2); // the presence check and exchangeCode's clientSecret
+    expect(flow).toMatch(/clientSecret: env\.CONSOLE_GOOGLE_CLIENT_SECRET/u);
+  });
+
+  it('the Google endpoints are constants, never config (no var can send the code or the secret elsewhere)', () => {
+    const google = readFileSync(join(srcDir, 'auth-google.ts'), 'utf8');
+    expect(google).toMatch(/export const GOOGLE_TOKEN_URL = 'https:\/\/oauth2\.googleapis\.com\/token';/u);
+    expect(google).toMatch(/export const GOOGLE_AUTH_URL = 'https:\/\/accounts\.google\.com\/o\/oauth2\/v2\/auth';/u);
+    expect(google).toMatch(/fetch\(GOOGLE_TOKEN_URL,/u);
+    expect(code(google)).not.toMatch(/env\./u);
+  });
+
+  it('nothing in the console reads the email issuer or its user directory (D269: partners never see end-user addresses)', () => {
+    for (const { f, text } of sources) expect(text, f).not.toMatch(/user_emails|user_email_apps|DirectoryRpc|ISSUER|email-issuer|emailIssuer/u);
+    const c = JSON.stringify(testWranglerConfig());
+    expect(c).not.toMatch(/issuer/iu);
   });
 });

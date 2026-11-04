@@ -4,8 +4,12 @@
 // legacy scopes, deleting apps, every suspension bit, the security contacts, the blocking notices (pendingNotices →
 // ackNotice), expedite, and the feeds. The admin Worker's crons call the feed and notice methods as a `system` actor.
 //
-// Built in batch C5: everything but `purgeAudit` / `deletedApps` (retention, C13).
+// Built in batch C5: everything but `purgeAudit` / `deletedApps` (retention, C13). Batch C14 adds the read-only
+// `governance` (the `GET /v1/governance` snapshot) and `pendingUpgrades` (the pending-upgrades page, D86).
 import {
+  adminFindUsersInput,
+  adminGetUserInput,
+  adminListUsersInput,
   ackNoticeInput,
   addOriginsInput,
   adminProposeChangeInput,
@@ -19,11 +23,13 @@ import {
   expediteChangeInput,
   getAppInput,
   getSecurityContactsInput,
+  governanceInput,
   listAppsInput,
   listChangesInput,
   listScopesInput,
   markSecurityEventNotifiedInput,
   pendingNoticesInput,
+  pendingUpgradesView,
   relayerKeysInput,
   removeOriginsInput,
   revokeKeyInput,
@@ -54,6 +60,8 @@ import { ackNotice, cancelChange, expediteChange, pendingNotices } from '../chan
 import { addOrigins, removeOrigins } from '../changes/origins.ts';
 import { proposeSetting, setLogo, turnOff, updateSettings } from '../changes/settings.ts';
 import { deleteApp, setSuspensionBit, suspendOrg } from '../changes/suspension.ts';
+import { governanceSnapshot } from '../governance-status.ts';
+import { adminFindUsers, adminGetUser, adminListUsers } from '../directory/read.ts';
 import { runRpc } from './common.ts';
 
 const HANA = ['hana'] as const;
@@ -188,5 +196,33 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
   /** Public keys only: never a secret. */
   relayerKeys(c: unknown) {
     return runRpc(this.env, 'admin.relayerKeys', relayerKeysInput, c, { actors: HANA_OR_SYSTEM }, async () => ({ keys: relayerKeys(this.env) }));
+  }
+
+  // ---- governance (batch C14, D83, D86): read-only, the snapshot GET /v1/governance serves ----
+
+  /** The whole snapshot, for the "Security & monitoring" view: staff only. */
+  governance(c: unknown) {
+    return runRpc(this.env, 'admin.governance', governanceInput, c, { actors: HANA }, async () => ({ governance: await governanceSnapshot(this.env) }));
+  }
+
+  /** The pending-upgrades page's view (the same one ConsoleRpc.pendingUpgrades gives partners). */
+  pendingUpgrades(c: unknown) {
+    return runRpc(this.env, 'admin.pendingUpgrades', governanceInput, c, { actors: HANA }, async () => ({ pendingUpgrades: pendingUpgradesView(await governanceSnapshot(this.env)) }));
+  }
+
+  // ---- end users and their wallets (D310, D315; staff only: subs and identity keys included, no email) ----
+
+  /** Newest first by last seen, for one org, one scope or all; `nextCursor` while more remain. */
+  listUsers(c: unknown) {
+    return runRpc(this.env, 'admin.listUsers', adminListUsersInput, c, { actors: HANA }, ({ input, db, w }) => adminListUsers(db, input, w.now));
+  }
+
+  getUser(c: unknown) {
+    return runRpc(this.env, 'admin.getUser', adminGetUserInput, c, { actors: HANA }, async ({ input, db, w }) => ({ user: await adminGetUser(db, input.userId, w.now) }));
+  }
+
+  /** By wallet address, user id, Support ID or sub (`provider` makes it a sub search). */
+  findUsers(c: unknown) {
+    return runRpc(this.env, 'admin.findUsers', adminFindUsersInput, c, { actors: HANA }, ({ input, db, w }) => adminFindUsers(db, input, w.now));
   }
 }

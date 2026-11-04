@@ -1,7 +1,8 @@
 // The console Worker's bindings (docs/batch-c-spec.md "Bindings"; written by scripts/gen-wrangler.ts from the manifest's
-// `console` and `files` blocks). Vars are public; the one secret (CONSOLE_GOOGLE_CLIENT_SECRET) comes with sign-in in
-// batch C9.
+// `console` and `files` blocks and `consoleAudiences`). Vars are public; the one secret is CONSOLE_GOOGLE_CLIENT_SECRET
+// (sign-in's code exchange, batch C9; `wrangler secret put`, docs/operations.md setup step 11).
 import type {
+  AppChange,
   AppDetail,
   AppSummary,
   CancelChangeByLinkInput,
@@ -10,6 +11,9 @@ import type {
   LedgerInput,
   LedgerRow,
   ListAppsInput,
+  ListChangesInput,
+  PendingUpgradesInput,
+  PendingUpgradesView,
   RpcFail,
   RpcOk,
   SetLogoInput,
@@ -28,10 +32,14 @@ type Answer<T extends object> = Promise<RpcOk<T> | RpcFail>;
  */
 export interface ConsoleRpcClient {
   listApps(c: ListAppsInput): Answer<{ apps: AppSummary[] }>;
-  cancelChangeByLink(c: CancelChangeByLinkInput): Answer<{ change: GuardedChange }>;
-  /** The logo upload (batch C11, logo.ts): the app's settings version and current logo, then the pointer. */
+  /** The app view (batch C9) and the logo upload's read of its settings version and current logo (batch C11). */
   getApp(c: GetAppInput): Answer<{ app: AppDetail }>;
+  listChanges(c: ListChangesInput): Answer<{ changes: AppChange[] }>;
+  cancelChangeByLink(c: CancelChangeByLinkInput): Answer<{ change: GuardedChange }>;
+  /** The logo upload (batch C11, logo.ts): the pointer. */
   setLogo(c: SetLogoInput): Answer<{ version: number }>;
+  /** The pending-upgrades page (batch C14, D86; governance.ts): contract-wide, charged to the member's org. */
+  pendingUpgrades(c: PendingUpgradesInput): Answer<{ pendingUpgrades: PendingUpgradesView }>;
   /** Reports, statements and the ledger (batch C12, reports.ts): Neon only on the API side. */
   usage(c: UsageInput): Answer<{ rows: UsageRow[] }>;
   statements(c: StatementsInput): Answer<{ statements: StatementWithTotals[] }>;
@@ -43,8 +51,18 @@ export interface Env {
   ENV_NAME: string;
   /** `console.origin`: the only host this Worker serves, and the `Origin` every non-GET request must carry. */
   CONSOLE_ORIGIN: string;
-  /** `console.authOrigin`: the thin console-auth Worker's origin (sign-in, batch C9). */
+  /**
+   * `console.authOrigin`: the thin console-auth Worker's origin. The only host `AuthHandler` answers for; the Google
+   * client's only redirect URI is `<authOrigin>/callback`.
+   */
   CONSOLE_AUTH_ORIGIN: string;
+  /** The console's Google OAuth client (the manifest's one `google` entry of `consoleAudiences`): `client_id` and `aud`. */
+  CONSOLE_GOOGLE_CLIENT_ID: string;
+  /**
+   * Secret: that client's secret, for the server-side code exchange. Missing: every callback answers 503 (fail closed);
+   * nothing else needs it. Never logged.
+   */
+  CONSOLE_GOOGLE_CLIENT_SECRET?: string;
   /** `files.origin`: partner logos, the CSP's only `img-src` besides `'self'` and `data:`. */
   FILES_ORIGIN: string;
   /** Read-only NEAR RPC and the signer account (the on-chain scope views, batch C10). */

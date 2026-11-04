@@ -731,7 +731,8 @@ binding in that Worker); the bucket lock and the Neon hash are what make a state
      verifier; verifies the ID token with `packages/oidc`: RS256 against Google's JWKS, `iss`, `aud` in
      `consoleAudiences`, `nonce`, `exp`, `iat` ≤ 120 s old.
    - Email claims by scope: `openid email` (login) needs `email` and `email_verified === true`; `openid` (every
-     step-up) must carry no `email` (open question 1).
+     step-up) must carry no `email` (open question 1). As built (C9, D290): `openid` exactly the claim allow-list
+     (D271); `openid email` the allow-list plus only `email`, `email_verified`, `hd` and a matching `at_hash`.
    - **Login:** writes a `handoff_codes` row (60 s) and 303s to `<console.origin>/api/auth/complete?h=…#`.
    - **Step-up:** §Fresh sign-in.
    - The ID token never reaches page JavaScript and is never stored.
@@ -1365,6 +1366,15 @@ Console-only codes: `unauthenticated` 401, `csrf` 403, `not_invited` 403, `invit
 D269 keeps each identity's verified address in the email issuer's own D1 (`user_emails`, `user_email_apps`, issuer
 migration 0002), for Hana staff only. This section gives staff a Users screen over it and lets the Support ID lookup
 reach it. Partners see neither (§What partners never see).
+
+**The wallet directory (D310–D317, built on `feat/wallet-directory`, not merged).** The API's hot DB now keeps each
+user per scope (`end_users`: the user id `hu_…` from the uid and its Support code, D312), the account's identities
+with their subs (`end_user_identities`) and the wallets its logins reported (`end_user_wallets`), with the read APIs
+the screens need: `AdminRpc.listUsers` / `getUser` / `findUsers` (by wallet, user id, Support ID or sub; each identity's
+`directoryKey` is the join with `DirectoryRpc` for the email) and, for the partner console's Users screen (C10),
+`ConsoleRpc.listUsers` / `getUser` (the org's own scopes, no sub or email; D315; `docs/api.md`). The Support code is
+stored and indexed there, so code → user no longer needs `IssuerRpc.uid` or `user_email_apps.uid` (D276's path, to
+revisit when C15 is built).
 
 ### Data path (D275)
 
@@ -2254,7 +2264,10 @@ Answered on 2026-10-29 (`docs/decisions.md` D87–D93), applied above; the numbe
 1. **Still open (to test).** Does Google's code flow return an ID token without `email` for `scope=openid` with the
    console client? D25 showed it for Hana's clients in the implicit flow; confirm for the code flow on sandbox-dev. If
    Google always adds email, step-ups and owner actions stop until decided; fallback: accept the email after an
-   explicit partner disclosure. **Blocks steps 4 and the smoke.**
+   explicit partner disclosure. **Blocks steps 4 and the smoke.** The test is built in C9 (2026-11-04,
+   `scripts/console-code-flow-spike.ts`, D295; `docs/operations.md` "Console code-flow spike"), not yet run. Expected
+   besides: Google documents `at_hash` on every server-flow ID token, which the API's allow-list refuses; decide
+   D295's options before C10.
 2. Email provider. **Answered (D87):** Resend, dedicated sending subdomain with SPF/DKIM/DMARC, behind a sender
    interface.
 3. **Still open:** the Hana-owned Cloudflare account and zone, and the console, console-auth, files and admin domains

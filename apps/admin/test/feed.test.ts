@@ -1,12 +1,12 @@
-// The security feed (docs/batch-c-spec.md "Tests: Admin and email"): each `app_changes`, `audit_log` and
-// `security_events` row is emailed once; a cursor advances only after its rows' sends were accepted and survives a
+// The security feed (docs/batch-c-spec.md "Tests: Admin and email"): the first run only sets the cursors at each
+// source's current position (D344); after it each `app_changes`, `audit_log` and `security_events` row is emailed once; a cursor advances only after its rows' sends were accepted and survives a
 // restart (it lives in ops.state); the feed works with the console Worker down. Against the real API and console.
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { everyFiveMinutes } from '../src/cron.ts';
-import { FEED_CURSORS, feedAudit, feedChanges, feedSecurityEvents, runFeed } from '../src/feed.ts';
+import { FEED_CURSORS, FEED_INIT_PAGE, FEED_INIT_PAGES, feedAudit, feedChanges, feedSecurityEvents, initKey, runFeed } from '../src/feed.ts';
 import { Budget } from '../src/mail.ts';
-import { ALIAS, FakeEmail, adminRequest, downBinding, envWith, memoryOps, newOpsData, seedConsoleOrg, seedHotApp, stubNetwork, uid, useFakeEmail, useMemoryOps } from './helpers.ts';
+import { ALIAS, FakeEmail, adminRequest, downBinding, envWith, memoryOps, newOpsData, overrideBinding, seedConsoleOrg, seedHotApp, stubNetwork, uid, useFakeEmail, useMemoryOps } from './helpers.ts';
 
 beforeEach(async () => {
   await stubNetwork();
@@ -27,10 +27,12 @@ async function drain(e: typeof env, data = newOpsData(), fake = new FakeEmail())
 
 describe('app_changes', () => {
   it('emails each row once to the org’s contacts; skips proposals and announcements; the cursor is in ops.state', async () => {
+    // The first run only sets the cursor (D344); rows after it are emailed.
+    const { data } = await drain(env);
     const app = await seedHotApp();
     await adminRequest(`/api/apps/${app.id}/suspend`, { body: { bit: 1 } });
     await adminRequest(`/api/apps/${app.id}/origins`, { body: { orgId: app.org, add: [`https://${uid()}.partner.example`], expectedVersion: 0 } });
-    const { data, fake } = await drain(env);
+    const { fake } = await drain(env, data);
     const mine = fake.to(app.contact);
     expect(mine).toHaveLength(1);
     expect(mine[0]!.text).toContain(app.id);
@@ -86,6 +88,63 @@ describe('app_changes', () => {
     expect(fake.to(app.contact)).toHaveLength(1);
     expect(r.audit_log).toBeNull();
     expect(data.state.get(FEED_CURSORS.audit)?.value).toBe(auditCursor);
+  });
+});
+
+describe('the first run starts at the current position (D344)', () => {
+  it('sends nothing and stores each source’s latest seq; a later row is sent once; a restart keeps the cursor', async () => {
+    // History before the feed's first run, in both sources.
+    const old = await seedHotApp();
+    await seedConsoleOrg(old.org);
+    await adminRequest(`/api/apps/${old.id}/suspend`, { body: { bit: 1 } });
+    await adminRequest(`/api/orgs/${old.org}/freeze`, { body: { frozen: true } });
+    const data = newOpsData();
+    const fake = new FakeEmail();
+    const r = await runFeed(env, memoryOps(data), fake, big());
+    expect(r.app_changes).toMatchObject({ emailedGroups: 0, initialised: true });
+    expect(r.audit_log).toMatchObject({ emailedGroups: 0, initialised: true });
+    expect(fake.attempts.filter((m) => m.text.includes(old.id) || m.text.includes(old.org))).toEqual([]);
+    const maxChange = await env.HOT_DB.prepare('SELECT MAX(seq) AS m FROM app_changes').first<number>('m');
+    const maxAudit = await env.CONSOLE_TEST_DB.prepare('SELECT MAX(seq) AS m FROM audit_log').first<number>('m');
+    expect(Number(data.state.get(FEED_CURSORS.changes)!.value)).toBe(maxChange);
+    expect(Number(data.state.get(FEED_CURSORS.audit)!.value)).toBe(maxAudit);
+
+    // A new row after the first run: sent once, to its org's contacts.
+    const app = await seedHotApp();
+    await adminRequest(`/api/apps/${app.id}/suspend`, { body: { bit: 1 } });
+    const f1 = new FakeEmail();
+    await feedChanges(env, memoryOps(data), f1, big());
+    expect(f1.to(app.contact)).toHaveLength(1);
+    expect(f1.about(old.id)).toEqual([]);
+    // A restart (a new store over the same state) keeps the cursor: nothing again.
+    const f2 = new FakeEmail();
+    await feedChanges(env, memoryOps(data), f2, big());
+    expect(f2.attempts).toEqual([]);
+    expect(Number(data.state.get(FEED_CURSORS.changes)!.value)).toBeGreaterThan(maxChange!);
+  });
+
+  it('an empty source starts at 0 and then sends its first row', async () => {
+    const data = newOpsData();
+    const empty = { ...env, API: overrideBinding(env.API, { changesSince: async () => ({ ok: true, changes: [] }) }) } as typeof env;
+    const r = await feedChanges(empty, memoryOps(data), new FakeEmail(), big());
+    expect(r).toMatchObject({ read: 0, initialised: true, cursor: 0 });
+    expect(data.state.get(FEED_CURSORS.changes)!.value).toBe('0');
+  });
+
+  it('a history longer than one run’s silent walk continues next run, still silent, before the cursor is set', async () => {
+    const data = newOpsData();
+    const rows = (from: number, n: number) => Array.from({ length: n }, (_, i) => ({ seq: from + i + 1, at: 1, kind: 'suspension.set', orgId: 'org_x', appId: 'app_x', detail: {}, actorKind: 'hana', actorId: 'x', requestId: `r${from + i}` }));
+    const total = FEED_INIT_PAGE * FEED_INIT_PAGES + 7;
+    const long = { ...env, API: overrideBinding(env.API, { changesSince: async (c: unknown) => { const { seq, limit } = c as { seq: number; limit: number }; return { ok: true, changes: rows(seq, Math.max(0, Math.min(limit, total - seq))) }; } }) } as typeof env;
+    const fake = new FakeEmail();
+    const first = await feedChanges(long, memoryOps(data), fake, big());
+    expect(first).toMatchObject({ initialised: false, cursor: FEED_INIT_PAGE * FEED_INIT_PAGES });
+    expect(data.state.has(FEED_CURSORS.changes)).toBe(false);
+    expect(data.state.get(initKey(FEED_CURSORS.changes))!.value).toBe(String(FEED_INIT_PAGE * FEED_INIT_PAGES));
+    const second = await feedChanges(long, memoryOps(data), fake, big());
+    expect(second).toMatchObject({ initialised: true, cursor: total });
+    expect(data.state.get(FEED_CURSORS.changes)!.value).toBe(String(total));
+    expect(fake.attempts).toEqual([]);
   });
 });
 

@@ -87,7 +87,8 @@ export function request(path: string, init: { method?: string; headers?: Record<
   const headers = new Headers(init.headers ?? {});
   if (!headers.has('cf-connecting-ip')) headers.set('cf-connecting-ip', init.ip ?? `10.${seq % 250}.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`);
   const body = init.body === undefined ? undefined : typeof init.body === 'string' ? init.body : JSON.stringify(init.body);
-  return (exports as unknown as { default: Fetcher }).default.fetch(new Request(`${init.host ?? ORIGIN}${path}`, { method: init.method ?? (body ? 'POST' : 'GET'), headers, body }));
+  // `manual`: a browser follows sign-in's 303s itself; a test reads each one.
+  return (exports as unknown as { default: Fetcher }).default.fetch(new Request(`${init.host ?? ORIGIN}${path}`, { method: init.method ?? (body ? 'POST' : 'GET'), headers, body, redirect: 'manual' }));
 }
 
 /** A POST with the CSRF headers. */

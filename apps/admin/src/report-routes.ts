@@ -126,8 +126,10 @@ export async function issueRoute(c: RouteCtx): Promise<Response> {
   if (!ORG_RE.test(org) || !MONTH_RE.test(month)) return errorResponse('bad_request', 'An org id and a month (YYYY-MM)');
   const bucket = c.env.STATEMENTS;
   if (!bucket) return errorResponse('internal', 'STATEMENTS is not bound in this environment');
+  const network = c.env.NEAR_NETWORK;
+  if (!network) return errorResponse('internal', 'NEAR_NETWORK is not set: a statement must name its network');
   return withLedger(c, 'POST /api/statements/:org/:month/issue', async (store) => {
-    const r = await issueStatement({ store, api: c.env.API, console: c.env.CONSOLE, bucket, network: c.env.NETWORK, staff: c.staff, now: Date.now() }, org, month);
+    const r = await issueStatement({ store, api: c.env.API, console: c.env.CONSOLE, bucket, network, staff: c.staff, now: Date.now() }, org, month);
     if (!r.ok) return refused('POST /api/statements/:org/:month/issue', c, r);
     log({ event: 'bff', route: 'POST /api/statements/:org/:month/issue', requestId: c.staff.requestId, orgId: org, outcome: 'ok' });
     return json(200, { statement: r.statement, view: statementView(r.statement), auditRecorded: r.auditRecorded });

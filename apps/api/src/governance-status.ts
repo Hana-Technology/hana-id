@@ -8,6 +8,7 @@
 // Hana's Cloudflare account. The on-chain views it summarises are documented in docs/contract-interface.md
 // "Monitoring hand-off"; a reader that must not trust the API reads them itself through its own RPC.
 import { publishedKeys } from '@hana-id/oidc';
+import { RpcRefusal } from './changes/cas.ts';
 import type { Env } from './env.ts';
 import { done, newCtx } from './handlers.ts';
 import { GOOGLE_PROVIDER, type KeyChange, parseKeyChanges, sameKeyMaterial, issuerKids } from './issuer-keys.ts';
@@ -290,6 +291,20 @@ async function snapshot(env: Env): Promise<GovernanceStatus> {
       building = null;
     });
   return building;
+}
+
+/**
+ * The same snapshot for the admin and console RPCs (`AdminRpc.governance`, `AdminRpc.pendingUpgrades`,
+ * `ConsoleRpc.pendingUpgrades`, batch C14): one read serves `GET /v1/governance` and both consoles for
+ * GOVERNANCE_CACHE_MS. A failed or unknown-shaped contract view is `near_unavailable` (nothing partial is reported).
+ */
+export async function governanceSnapshot(env: Env): Promise<GovernanceStatus> {
+  try {
+    return await snapshot(env);
+  } catch (err) {
+    if (err instanceof ShapeError) throw new RpcRefusal('near_unavailable', 'The contract answered with an unexpected governance state');
+    throw new RpcRefusal('near_unavailable', 'Could not read the governance state');
+  }
 }
 
 export async function handleGovernance(request: Request, env: Env, requestId: string): Promise<Response> {

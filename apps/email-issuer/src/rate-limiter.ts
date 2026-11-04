@@ -16,7 +16,11 @@
 // - `reserveGuess`: one code check, counted before the code is compared and refunded when it was right; inside a hard
 //   ceiling of 25 failed checks per UTC day: a backstop of 18 open to anyone, then an owner slot of 4 (requesters that
 //   started before the trip, no failures) and a ticket slot of 3 (challenges a ticket or a grant started); past the
-//   ceiling, a grant's own 2 checks;
+//   ceiling, a grant's own 2 checks (production numbers; dev envs raise them, D340);
+//
+// The limits that differ between dev and production (`MailboxLimits`) come with every call that uses them (the worker
+// picks them from its env name with `limitsFor`; absent, production's). Counters are keyed by window name and start,
+// never by max, so a changed set applies at once to the counts already stored.
 // - `staffAction`: the per-mailbox cap on staff actions (1 a day, 3 in 30 days per kind); `issueGrant`, `revokeTickets`;
 // - `reserveDomain` / `domainVerified` (a `dom:` object): one code mail to a recipient domain, within its day (which
 //   grows with its verified logins) and the requester prefixes' shares of it; a verified challenge's mails come back.
@@ -35,27 +39,19 @@ import {
   DOMAIN_SENDS_WINDOW,
   DOMAIN_VERIFIED_DAYS,
   ADDRESS_OWNER_CHALLENGES,
-  MAILBOX_CHALLENGES_PER_DAY,
-  MAILBOX_CODE_LIMITS,
   MAILBOX_GRANT_SLOT,
-  MAILBOX_IP_CODE_LIMITS,
   MAILBOX_IP_LOCK_MS,
   MAILBOX_IP_WRONG_DAY,
   MAILBOX_IP_WRONG_LIMIT,
   MAILBOX_OWNER_CHALLENGES,
-  MAILBOX_OWNER_SLOT,
   MAILBOX_RESERVE_LIMIT,
-  MAILBOX_TICKET_SENDS,
-  MAILBOX_TICKET_SENDS_TOTAL,
-  MAILBOX_TICKET_SLOT,
-  MAILBOX_WRONG_BACKSTOP,
-  MAILBOX_WRONG_CEILING,
-  MAX_LIVE_CHALLENGES,
   MAX_LIVE_TICKETS,
   STAFF_ACTIONS_PER_MAILBOX_30D,
   STAFF_ACTIONS_PER_MAILBOX_DAY,
   THIRTY_DAYS_MS,
+  PRODUCTION_LIMITS,
   UNLOCK_GRANT_TTL_MS,
+  type MailboxLimits,
   generalPool,
   ownerPool,
   staffPool,
@@ -67,6 +63,9 @@ export interface Limit {
   windowMs: number;
   max: number;
 }
+
+/** The mailbox limits a call uses when none are sent: production's (the strict default). */
+const DEFAULT_MAILBOX: MailboxLimits = PRODUCTION_LIMITS.mailbox;
 
 export type HitResult = { ok: true } | { ok: false; limit: string; retryAfterMs: number };
 
@@ -107,7 +106,11 @@ interface TicketEntry {
 
 const DAY = 86_400_000;
 const LIVE_KEY = 'live';
-const ipLock = (ip: string) => `lock:${ip}`;
+/**
+ * A requester's wrong-code lock, keyed by the max that set it (production's keeps the plain `lock:<ip>`), so a lock set
+ * under another set's lower max doesn't hold under a higher one: a dev env's counts are judged by the dev max at once.
+ */
+const ipLock = (ip: string, lim: MailboxLimits) => (lim.ipWrong.max === MAILBOX_IP_WRONG_LIMIT.max ? `lock:${ip}` : `lock:${ip}#${lim.ipWrong.max}`);
 /** Staff action logs (timestamps of the last 30 days) per kind. */
 const staffLog = (kind: string) => `staff-log:${kind}`;
 /** The live tickets of an exact address (≤ MAX_LIVE_TICKETS, oldest first); a ticket not listed is revoked. */
@@ -146,7 +149,7 @@ export class RateLimiter extends DurableObject<Env> {
   // ---- plain windows ----
 
   /** Counts one hit in every window, or none when any is full. */
-  async hit(limits: Limit[], now: number = Date.now()): Promise<HitResult> {
+  async hit(limits: readonly Limit[], now: number = Date.now()): Promise<HitResult> {
     const slots = limits.map((l) => this.slot(l, now));
     const full = this.firstFull(slots, now);
     if (full) return { ok: false, ...full };
@@ -156,7 +159,7 @@ export class RateLimiter extends DurableObject<Env> {
   }
 
   /** Whether a hit would pass, without counting it. */
-  peek(limits: Limit[], now: number = Date.now()): HitResult {
+  peek(limits: readonly Limit[], now: number = Date.now()): HitResult {
     const full = this.firstFull(
       limits.map((l) => this.slot(l, now)),
       now,
@@ -165,7 +168,7 @@ export class RateLimiter extends DurableObject<Env> {
   }
 
   /** Takes back one accepted `hit(limits, now)` (same `now`). */
-  unhit(limits: Limit[], now: number): void {
+  unhit(limits: readonly Limit[], now: number): void {
     this.refund({ keys: limits.map((l) => this.slot(l, now).key) });
   }
 
@@ -309,56 +312,67 @@ export class RateLimiter extends DurableObject<Env> {
    * the ticket slot for a ticket's or a grant's challenge, or the owner slot for an owner-slot requester; never past
    * the ceiling, except a grant's own 2 checks. Never during the requester's own lock.
    */
-  private guessSlot(ip: string, kind: 'ticket' | 'grant' | null, now: number): Slot | null {
-    if ((this.kv().get<number>(ipLock(ip)) ?? 0) > now) return null;
+  private guessSlot(ip: string, kind: 'ticket' | 'grant' | null, now: number, lim: MailboxLimits): Slot | null {
+    if ((this.kv().get<number>(ipLock(ip, lim)) ?? 0) > now) return null;
     const grantSlot = () => {
       if (kind !== 'grant') return null;
       const g = this.slot(MAILBOX_GRANT_SLOT, now);
       return g.count < g.l.max ? g : null;
     };
-    const ceiling = this.slot(MAILBOX_WRONG_CEILING, now);
+    const ceiling = this.slot(lim.wrongCeiling, now);
     if (ceiling.count >= ceiling.l.max) return grantSlot();
-    const backstop = this.slot(MAILBOX_WRONG_BACKSTOP, now);
+    const backstop = this.slot(lim.wrongBackstop, now);
     if (backstop.count < backstop.l.max) return backstop;
     if (kind) {
-      const t = this.slot(MAILBOX_TICKET_SLOT, now);
+      const t = this.slot(lim.ticketSlot, now);
       if (t.count < t.l.max) return t;
     }
     const g = grantSlot();
     if (g) return g;
     if (this.ownerExempt(ip, now)) {
-      const o = this.slot(MAILBOX_OWNER_SLOT, now);
+      const o = this.slot(lim.ownerSlot, now);
       if (o.count < o.l.max) return o;
     }
     return null;
   }
 
   /** ms until this requester may act on this mailbox again (0: now): its own lock, or the end of the UTC day. */
-  private lockedFor(ip: string, kind: 'ticket' | 'grant' | null, now: number): number {
-    if (this.guessSlot(ip, kind, now)) return 0;
-    const until = this.kv().get<number>(ipLock(ip)) ?? 0;
+  private lockedFor(ip: string, kind: 'ticket' | 'grant' | null, now: number, lim: MailboxLimits): number {
+    if (this.guessSlot(ip, kind, now, lim)) return 0;
+    const until = this.kv().get<number>(ipLock(ip, lim)) ?? 0;
     return until > now ? until - now : this.day(now) + DAY - now;
   }
 
   /**
-   * One code mail: a ticket's challenge from that ticket's own allowance; a grant's challenge free (its challenge is
-   * one, with at most 2 resends); any other within the code limits, then the reserve for requesters new today.
+   * One code mail: a ticket's challenge from that ticket's own allowance, and once that is used up within the code
+   * limits like any other (D345); a grant's challenge free (its challenge is one, with at most 2 resends); any other
+   * within the code limits, then the reserve for requesters new today.
    */
-  private trySend(ip: string, ref: OwnerRef | null, now: number): Reserved {
+  /** A ticket's own code allowance: per exact address (all its tickets) and per mailbox (all its `+tag`s). */
+  private ticketSendSlots(ref: Extract<OwnerRef, { kind: 'ticket' }>, now: number, lim: MailboxLimits): [Slot, Slot, { limit: string; retryAfterMs: number } | null] {
+    const t = this.slot(lim.ticketSends, now, `a:${ref.addrKey}:`);
+    const box = this.slot(lim.ticketSendsTotal, now);
+    // The untagged address is counted in the mailbox total but never blocked by it (other people's `+tag`s on a
+    // domain without sub-addressing could fill it).
+    return [t, box, this.firstFull(ref.untagged ? [t] : [t, box], now)];
+  }
+
+  private ticketSendsFull(ref: Extract<OwnerRef, { kind: 'ticket' }>, now: number, lim: MailboxLimits): boolean {
+    return this.ticketSendSlots(ref, now, lim)[2] !== null;
+  }
+
+  private trySend(ip: string, ref: OwnerRef | null, now: number, lim: MailboxLimits): Reserved {
     const kind = this.ownerKind(ref);
     if (kind === 'grant') return { ok: true, reservation: { keys: [] }, owner: 'grant' };
     if (kind === 'ticket' && ref?.kind === 'ticket') {
       // Per exact address (all its tickets together) and per mailbox (all its `+tag`s together).
-      const t = this.slot(MAILBOX_TICKET_SENDS, now, `a:${ref.addrKey}:`);
-      const box = this.slot(MAILBOX_TICKET_SENDS_TOTAL, now);
-      // The untagged address is counted in the mailbox total but never blocked by it (other people's `+tag`s on a
-      // domain without sub-addressing could fill it).
-      const full = this.firstFull(ref.untagged ? [t] : [t, box], now);
-      if (full) return { ok: false, reason: 'codes', retryAfterMs: full.retryAfterMs };
-      return { ok: true, reservation: { keys: this.count([t, box]) }, owner: 'ticket' };
+      const [t, box, full] = this.ticketSendSlots(ref, now, lim);
+      if (!full) return { ok: true, reservation: { keys: this.count([t, box]) }, owner: 'ticket' };
+      // D345: the ticket's own allowance is used up (a resend; a start drops the proof in `admit`): the code limits
+      // below, as for any requester without a ticket.
     }
-    const own = MAILBOX_IP_CODE_LIMITS.map((l) => this.slot(l, now, `ip:${ip}:`));
-    const shared = MAILBOX_CODE_LIMITS.map((l) => this.slot(l, now));
+    const own = lim.ipCodes.map((l) => this.slot(l, now, `ip:${ip}:`));
+    const shared = lim.codes.map((l) => this.slot(l, now));
     const ownFull = this.firstFull(own, now);
     const sharedFull = this.firstFull(shared, now);
     if (!ownFull && !sharedFull) return { ok: true, reservation: { keys: [...this.count(own), ...this.count(shared)] }, owner: null };
@@ -378,7 +392,7 @@ export class RateLimiter extends DurableObject<Env> {
    * a ticket (checked against revocation) or a grant (used up here; `unadmit` gives it back). A refused admit stores
    * nothing. An admitted one records when this requester first started here today.
    */
-  async admit(ip: string, expiresAtMs: number, send: boolean, now: number = Date.now(), claim: OwnerClaim | null = null): Promise<Admitted> {
+  async admit(ip: string, expiresAtMs: number, send: boolean, now: number = Date.now(), claim: OwnerClaim | null = null, lim: MailboxLimits = DEFAULT_MAILBOX): Promise<Admitted> {
     let owner = this.ownerOf(claim, now);
     // At most ADDRESS_OWNER_CHALLENGES ticket starts per exact address and MAILBOX_OWNER_CHALLENGES owner starts
     // (tickets and grants) per mailbox a day; past either, the proof counts as nothing.
@@ -387,16 +401,20 @@ export class RateLimiter extends DurableObject<Env> {
     // The untagged address and unlock grants count toward the mailbox total but are never blocked by it.
     const boxBlocks = owner?.kind === 'ticket' && !owner.untagged;
     if ((addrDay && addrDay.count >= addrDay.l.max) || (boxBlocks && boxDay && boxDay.count >= boxDay.l.max)) owner = null;
+    // D345: a ticket whose own code allowance is used up counts as nothing for a start that sends a code, so the start
+    // meets the code limits like any requester without a ticket (and no owner exemption from the lock, live, daily or
+    // domain caps): a returning device never gets less than a new one, and never more than its allowance as an owner.
+    if (send && owner?.kind === 'ticket' && this.ticketSendsFull(owner, now, lim)) owner = null;
     const ownerDay = owner ? [addrDay, boxDay].filter((x): x is Slot => x !== null) : [];
-    const locked = this.lockedFor(ip, owner?.kind ?? null, now);
+    const locked = this.lockedFor(ip, owner?.kind ?? null, now, lim);
     if (locked > 0) return { ok: false, reason: 'locked', retryAfterMs: locked };
     const live = (this.kv().get<number[]>(LIVE_KEY) ?? []).filter((t) => t > now);
-    const created = this.slot(MAILBOX_CHALLENGES_PER_DAY, now);
-    const capped = live.length >= MAX_LIVE_CHALLENGES ? 'live' : created.count >= created.l.max ? 'challenges' : null;
+    const created = this.slot(lim.challengesPerDay, now);
+    const capped = live.length >= lim.maxLive ? 'live' : created.count >= created.l.max ? 'challenges' : null;
     if (capped && !owner) return { ok: false, reason: capped, retryAfterMs: capped === 'live' ? Math.min(...live) - now : created.start + DAY - now };
     let reservation: Reservation | null = null;
     if (send) {
-      const r = this.trySend(ip, owner, now);
+      const r = this.trySend(ip, owner, now, lim);
       if (!r.ok) return r;
       reservation = r.reservation;
     }
@@ -419,10 +437,10 @@ export class RateLimiter extends DurableObject<Env> {
   }
 
   /** One more code mail for a live challenge (resend; a prepared case-A challenge's first code). */
-  async reserveSend(ip: string, now: number = Date.now(), owner: OwnerRef | null = null): Promise<Reserved> {
-    const locked = this.lockedFor(ip, this.ownerKind(owner), now);
+  async reserveSend(ip: string, now: number = Date.now(), owner: OwnerRef | null = null, lim: MailboxLimits = DEFAULT_MAILBOX): Promise<Reserved> {
+    const locked = this.lockedFor(ip, this.ownerKind(owner), now, lim);
     if (locked > 0) return { ok: false, reason: 'locked', retryAfterMs: locked };
-    const r = this.trySend(ip, owner, now);
+    const r = this.trySend(ip, owner, now, lim);
     if (r.ok) await this.sweepAt(now + DAY);
     return r;
   }
@@ -433,18 +451,18 @@ export class RateLimiter extends DurableObject<Env> {
    * an hour locks it out of this mailbox for an hour. Says when this check tripped the backstop or reached the ceiling,
    * so the worker can log the mailbox.
    */
-  async reserveGuess(ip: string, now: number = Date.now(), owner: OwnerRef | null = null): Promise<Guess> {
+  async reserveGuess(ip: string, now: number = Date.now(), owner: OwnerRef | null = null, lim: MailboxLimits = DEFAULT_MAILBOX): Promise<Guess> {
     const kind = this.ownerKind(owner);
-    const place = this.guessSlot(ip, kind, now);
-    if (!place) return { ok: false, reason: 'locked', retryAfterMs: this.lockedFor(ip, kind, now) };
-    const own = this.slot(MAILBOX_IP_WRONG_LIMIT, now, `ip:${ip}:`);
+    const place = this.guessSlot(ip, kind, now, lim);
+    if (!place) return { ok: false, reason: 'locked', retryAfterMs: this.lockedFor(ip, kind, now, lim) };
+    const own = this.slot(lim.ipWrong, now, `ip:${ip}:`);
     const ownDay = this.slot(MAILBOX_IP_WRONG_DAY, now, `ip:${ip}:`);
-    const ceiling = this.slot(MAILBOX_WRONG_CEILING, now);
+    const ceiling = this.slot(lim.wrongCeiling, now);
     const inCeiling = place.l.name !== MAILBOX_GRANT_SLOT.name;
     const keys = this.count(inCeiling ? [own, ownDay, ceiling, place] : [own, ownDay, place]);
-    if (own.count + 1 >= own.l.max) this.kv().put(ipLock(ip), now + MAILBOX_IP_LOCK_MS);
+    if (own.count + 1 >= own.l.max) this.kv().put(ipLock(ip, lim), now + MAILBOX_IP_LOCK_MS);
     let tripped: 'backstop' | 'ceiling' | undefined;
-    if (place.l.name === MAILBOX_WRONG_BACKSTOP.name && place.count + 1 >= place.l.max) {
+    if (place.l.name === lim.wrongBackstop.name && place.count + 1 >= place.l.max) {
       const k = `trip@${this.day(now)}`;
       if (this.kv().get(k) === undefined) this.kv().put(k, this.nextSeq(now));
       tripped = 'backstop';
@@ -458,11 +476,11 @@ export class RateLimiter extends DurableObject<Env> {
    * A right code (or no check made): its reservation is taken back, with the lock it may have set and, when the
    * backstop is below its max again, the trip marker (a check that turned out right never trips the backstop).
    */
-  refundGuess(ip: string, r: Reservation, now: number = Date.now()): void {
+  refundGuess(ip: string, r: Reservation, now: number = Date.now(), lim: MailboxLimits = DEFAULT_MAILBOX): void {
     this.refund(r);
-    const own = this.slot(MAILBOX_IP_WRONG_LIMIT, now, `ip:${ip}:`);
-    if (own.count < own.l.max) this.kv().delete(ipLock(ip));
-    const backstop = this.slot(MAILBOX_WRONG_BACKSTOP, now);
+    const own = this.slot(lim.ipWrong, now, `ip:${ip}:`);
+    if (own.count < own.l.max) this.kv().delete(ipLock(ip, lim));
+    const backstop = this.slot(lim.wrongBackstop, now);
     if (backstop.count < backstop.l.max) this.kv().delete(`trip@${this.day(now)}`);
   }
 

@@ -18,6 +18,9 @@
 //   GET  /__e2e/chain[?sub=<sub>]     {relayed: [{method, tokens: [{provider, sub, claims}]}], sessions}: the transactions
 //                                     the relayer sent that carried a token (of `sub`), and the live sessions on its
 //                                     path; claim names only, never a token
+//   GET  /__e2e/wallets?address=<a>   [{userId, scopeId, wallets: [{chain, address}], identities: [{provider, sub, role,
+//                                     status}]}]: the wallet directory's users listing that address (migration 0011,
+//                                     written by the Worker's own POST /v1/wallets/record)
 import {
   base64UrlDecode,
   ckdPayload,
@@ -174,6 +177,8 @@ export class MockApi {
       IDENTITY_SESSION_LIMIT: allowAllRateLimit,
       IDENTITY_ROOT_LIMIT: allowAllRateLimit,
       ...identityBindings(serves.apiUrl),
+      // The wallet directory's user ids (D312): a throwaway uid key, as usage-setup sets it on a real env.
+      USER_ID_KEY: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64'),
       ...(opts.email ? { EMAIL_ISS: opts.email.iss, EMAIL_PUBLIC_KEYS: JSON.stringify(opts.email.publicKeys) } : {}),
     };
     env.LOGIN_RELAY = new MemoryNamespace(api.LoginRelay, () => env);
@@ -394,6 +399,23 @@ export class MockApi {
     return { relayed, sessions };
   }
 
+  /** The wallet directory's users that list `address`, with their wallets and identities (tests only). */
+  walletUsers(address: string): { userId: string; scopeId: string; wallets: { chain: string; address: string }[]; identities: { provider: string; sub: string | null; role: string; status: string }[] }[] {
+    const users = this.d1.db.prepare('SELECT u.user_id, u.scope_id FROM end_users u WHERE u.user_id IN (SELECT user_id FROM end_user_wallets WHERE address = ?) ORDER BY u.user_id').all(address);
+    return users.map((u) => ({
+      userId: String(u.user_id),
+      scopeId: String(u.scope_id),
+      wallets: this.d1.db
+        .prepare("SELECT chain, address FROM end_user_wallets WHERE user_id = ? ORDER BY chain = 'evm', address")
+        .all(String(u.user_id))
+        .map((w) => ({ chain: String(w.chain), address: String(w.address) })),
+      identities: this.d1.db
+        .prepare('SELECT provider, sub, role, status FROM end_user_identities WHERE user_id = ? ORDER BY role DESC, provider')
+        .all(String(u.user_id))
+        .map((i) => ({ provider: String(i.provider), sub: i.sub === null ? null : String(i.sub), role: String(i.role), status: String(i.status) })),
+    }));
+  }
+
   // ---- control ----
 
   private async controlEndpoint(req: Request, url: URL): Promise<Response> {
@@ -403,6 +425,7 @@ export class MockApi {
     if (p === '/__e2e/health') return json(200, { ok: true, fingerprint: this.fingerprint });
     if (p === '/__e2e/google-key' && req.method === 'GET' && this.googleKey) return json(200, await this.googleKey());
     if (p === '/__e2e/chain' && req.method === 'GET') return json(200, this.chainView(url.searchParams.get('sub')));
+    if (p === '/__e2e/wallets' && req.method === 'GET') return json(200, this.walletUsers(url.searchParams.get('address') ?? ''));
     if (p === '/__e2e/apps' && req.method === 'POST') return json(201, this.createApp((await req.json()) as AppSpec));
     const m = /^\/__e2e\/apps\/(pk_(?:test|live)_[1-9A-HJ-NP-Za-km-z]+)\/(revoke|shares)$/u.exec(p);
     if (m?.[2] === 'revoke' && req.method === 'POST') return json(200, { revoked: this.revokeApp(m[1] as string) });

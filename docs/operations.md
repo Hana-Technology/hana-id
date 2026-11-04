@@ -1,6 +1,9 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-04 (branch `feat/batch-c-6-merge`, batch C6 on current `develop`; built on `feat/batch-c-6`: "Console sink scope (batch C6, milestone M3)" with
+Last verified against code: 2026-11-04 (branch `feat/batch-c-11`: "Files Worker and logos (batch C11, milestone M5)": setup
+step 7's R2 buckets with the `STATEMENTS` lock and the `EXPORTS` lifecycle, the Images binding, the files Worker's
+`gen` and deploy, the pages' `FILES_ORIGIN`, the order, the checks; the console section's bucket step and purge order;
+D300–D308); 2026-11-04 (branch `feat/batch-c-6-merge`, batch C6 on current `develop`; built on `feat/batch-c-6`: "Console sink scope (batch C6, milestone M3)" with
 the scan fixes (known owner accounts only, `--known-owner`, no removal a run can't follow with the registration), the
 console audiences no longer in `global` in the manifest and Google tables, the owner-pool allowance event and
 `OWNER_POOL_ALLOWANCE_YOCTO`; D235–D239); 2026-11-04 (branch `feat/batch-c-7-merge`, C7 merged onto `develop`; written on `feat/batch-c-7` 2026-11-02: "Partner console Worker": its setup steps for
@@ -851,10 +854,9 @@ corepack pnpm --dir apps/console exec wrangler d1 create <console.d1Name> --loca
 corepack pnpm --filter @hana-id/console gen <env> --d1-id <uuid>
 # 3. The schema: apps/console/migrations (0001, 0002) on the remote database.
 corepack pnpm --dir apps/console exec wrangler d1 migrations apply <console.d1Name> --remote
-# 4. The two R2 buckets the config binds must exist before the first deploy (setup step 7; the STATEMENTS bucket lock
-#    rule, 7 years, is set when statements start, batch C12, but setting it now does no harm).
-corepack pnpm --dir apps/console exec wrangler r2 bucket create <files.logosBucket>
-corepack pnpm --dir apps/console exec wrangler r2 bucket create <files.statementsBucket>
+# 4. The R2 buckets the config binds must exist before the first deploy: setup step 7, all three buckets with their
+#    rules, as "Files Worker and logos" below says (the console binds LOGOS and STATEMENTS, the admin Worker EXPORTS).
+#    The config also binds the Images binding (`images: {binding: "IMAGES"}`): see that section too.
 # 5. The API first (its ConsoleRpc entrypoint, batch C5), then the console.
 corepack pnpm --dir apps/api exec wrangler deploy
 corepack pnpm --dir apps/console exec wrangler deploy
@@ -879,8 +881,9 @@ corepack pnpm --dir apps/console exec wrangler deploy
 - **Hourly cron** (`src/cron.ts`): invites that expired unaccepted get one `invite.expired` audit row and their owner
   grant cancelled; matured owner grants are recorded (`members.role = 'owner'`, `member.owner_granted`); invites are
   deleted 90 days after acceptance, revocation or expiry, sessions 30 days after they ended (network data at 90 days),
-  auth flows, handoff codes and pending actions 24 h after expiry, and logos replaced more than 30 days ago (R2 object,
-  then row). At most 200 rows per step and run; a failing step is logged (`level: error`, the step and the error's class
+  auth flows, handoff codes and pending actions 24 h after expiry, and logos replaced more than 30 days ago (their rows
+  first, then the R2 objects; the rows are put back if the delete fails, D301). At most 200 rows per step and run (100
+  logos); a failing step is logged (`level: error`, the step and the error's class
   name) and the others still run. The audit log and owner grants are retention data (5 years, the admin Worker's monthly
   job, C13), never touched here.
 - **`StaffRpc`** (the admin Worker's binding, C8): orgs, members (`setMember`), users (`disableUser`), freeze, invites
@@ -896,6 +899,85 @@ invites, grants, member and role changes and sign-ins after the point (the audit
 removal, a demotion, a disable or a freeze made after the point is undone**: redo each through the admin console (or,
 until C8, a direct D1 statement reviewed by a second person) before the console route is on again. Owner grants that
 matured after the point mature again on the next cron run.
+
+## Files Worker and logos (`apps/files`, batch C11, milestone M5)
+
+Logos are written by the console (`POST /api/orgs/:org/apps/:app/logo`, routed for owners in C10; until then nothing
+uploads one) and served by the files Worker (`hana-id-files-<env>`, `files.workerName`) on `files.origin`. The auth
+pages show an app's logo beside its name, from `GET /v1/app`'s `logoUrl`. `docs/api.md` "Files Worker" and "Console
+Worker" have the routes and checks; D300–D308 the readings. Nothing here makes anything partner-facing until C10
+routes the upload: an app without a logo gets exactly batch B's pages, messages and policies.
+
+It needs the dashboard blocks in the manifest (setup step 12), like the console.
+
+### Setting it up (once per env, for the user to run)
+
+From the repo root of the main checkout, logged in to the API's Cloudflare account (`wrangler login`). Bucket names
+are the manifest's `files` block.
+
+```sh
+# 1. Setup step 7: the three R2 buckets (one set per env).
+corepack pnpm --dir apps/files exec wrangler r2 bucket create <files.logosBucket>
+corepack pnpm --dir apps/files exec wrangler r2 bucket create <files.statementsBucket>
+corepack pnpm --dir apps/files exec wrangler r2 bucket create <files.exportsBucket>
+# 2. STATEMENTS: one bucket-lock rule on every object, 7 years (2557 days with the leap days; D90, D308). Objects can't
+#    be overwritten or deleted until then, by anyone, the admin Worker included. Check it: `lock list`.
+corepack pnpm --dir apps/files exec wrangler r2 bucket lock add <files.statementsBucket> statements-7y "" --retention-days 2557
+corepack pnpm --dir apps/files exec wrangler r2 bucket lock list <files.statementsBucket>
+# 3. EXPORTS: on-demand exports expire after 30 days. R2's lifecycle rules take a prefix to include, not one to exclude,
+#    so the rule is on `exports/` (where C12 writes them) and the legacy export at `legacy/usage-<env>.csv` (C4b) is
+#    outside it and kept (D308). Check it: `lifecycle list`.
+corepack pnpm --dir apps/files exec wrangler r2 bucket lifecycle add <files.exportsBucket> exports-30d exports/ --expire-days 30
+corepack pnpm --dir apps/files exec wrangler r2 bucket lifecycle list <files.exportsBucket>
+#    LOGOS gets no rule: the console's hourly cron deletes replaced logos 30 days on (D301).
+# 4. The files Worker's config (apps/files/wrangler.jsonc, gitignored; no id or secret in it) and its deploy. A
+#    workers.dev files origin (sandbox-dev) must be `<files.workerName>.<subdomain>.workers.dev` (D307); any other
+#    hostname becomes a Custom Domain on the Hana zone.
+corepack pnpm --filter @hana-id/files gen <env>
+corepack pnpm --dir apps/files exec wrangler deploy
+# 5. The pages with the files origin: the API's gen writes FILES_ORIGIN into the auth page Worker's config, and the
+#    page build puts it into the logo pages' meta policy; deploy both page Workers (vault first, then auth).
+corepack pnpm --filter @hana-id/api run gen <env>
+corepack pnpm --filter @hana-id/web build
+corepack pnpm --filter @hana-id/api run deploy:pages
+# 6. The API (GET /v1/app's logoUrl needs FILES_ORIGIN, which the same gen wrote) and the console (the IMAGES binding,
+#    the logo backend). Deploy order doesn't matter for users: no app has a logo until C10's upload route.
+corepack pnpm --dir apps/api exec wrangler deploy
+corepack pnpm --filter @hana-id/console gen <env> --d1-id <uuid>
+corepack pnpm --dir apps/console exec wrangler deploy
+```
+
+- **The Images binding.** It needs no secret, only Cloudflare Images enabled on the account: dashboard → Images. The
+  console's config binds it (`images: {binding: "IMAGES"}`); without it an upload answers `internal` and stores
+  nothing. Before M5, check the plan's monthly transformation allowance and its price: each upload is one `info` of the input,
+  one transform and one `info` of the output. Uploads are capped at 10 a minute per org (D301). At M5, confirm on
+  the real binding that `fit: "pad"` with `background: "rgba(0,0,0,0)"` pads with transparency (D303, tested only
+  against a fake).
+- **Checks after the deploy.**
+  - `curl -sI <files.origin>/logos/app_x/<64 zeros>.png` answers `404`, `content-type: text/plain`, `cache-control:
+    no-store`, `content-security-policy: default-src 'none'; sandbox`.
+  - `curl -sI <files.origin>/` answers `404`, and so does any other path.
+  - `curl -s -D - -o /dev/null <authOrigin>/approve | grep -i content-security-policy` shows `img-src 'self' data:
+    <files.origin>`, and `/login/callback` doesn't.
+  - Once an owner uploads a logo (C10), its URL answers `200` with the seven headers of `docs/api.md` "Files
+    Worker". The page shows it beside the app's name in the sign-in, approval and export windows.
+- **What to watch** (`wrangler tail`):
+  - The files Worker: `logo` `rejected` with a code (`not_png_type`, `not_png`, `hash_mismatch`, `too_large`)
+    means an object in `LOGOS` that the console didn't write as it writes logos. Find out who wrote it (R2 has no
+    per-object writer: check the console's `audit_log` `app.logo_set` rows and the account's audit log). `logo`
+    `error` `r2_unavailable` is R2 down.
+  - The console: `logo` `rejected` lines carry `logo_type:<reason>` (a refused file), `error` `internal` an Images or
+    R2 failure, `files_origin_mismatch` an API and a console whose `FILES_ORIGIN` differ (regenerate both from the
+    same manifest).
+  - The auth page Worker: `auth_page` `files_origin_misconfigured` means a `FILES_ORIGIN` that isn't an origin. The
+    pages still work, without the logo.
+- **Rollback.**
+  - The files Worker: `wrangler rollback` in `apps/files`. Logos then 404 and the pages show names only.
+  - A bad logo on an app: an owner removes it (C10), or staff point it at nothing with `AdminRpc.setLogo`
+    (`logoKey: null`, through the admin Worker, C8). The pages stop showing it at once. Its object stays in the bucket
+    until the console's cron deletes it (the console marks it only after its own removals, so after a staff removal
+    it stays until deleted by hand).
+  - Never empty or delete `STATEMENTS` (it is locked); the lock rule can't be shortened for objects already under it.
 
 ## Local API (`wrangler dev`)
 

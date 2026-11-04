@@ -1,6 +1,8 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's and the console's)
 
-Last verified against code: 2026-11-04 (branch `feat/batch-c-6-merge`: batch C6 on current `develop`:
+Last verified against code: 2026-11-04 (branch `feat/batch-c-11`: `GET /v1/app`'s `logoUrl`, the logo pages' `img-src`
+with `FILES_ORIGIN` on the auth Worker, the console's logo upload backend (not routed until C10) and its `IMAGES`
+binding, the purge order, and the new "Files Worker" section; D300–D308); 2026-11-04 (branch `feat/batch-c-6-merge`: batch C6 on current `develop`:
 `ConsoleRpc.changeOrigins` / `proposeChange` with the API's own step-up verification (the claim allow-list on the
 step-up token), `ConsoleRpc.ownerAction` with `token_has_pii` on both of its tokens (D274 on every path), the
 owner-action precheck's nonce recompute on an uncached scope (`owner_nonce_mismatch`, the client-proof nonce), the
@@ -287,8 +289,14 @@ Headers: `x-hana-key`; from a Hana page also `x-hana-parent-origin`. Gate kind `
   "google": { "clientId": "string", "mode": "own" | "shared" } | null,
   "loginMethods": ["google", "email"], "email": { "aud": "email:<scopeId>" },
   "serverTimeMs": 0, "autoApprovePolicy": {} | null, "rawSign": "off" | "approval",
+  "logoUrl": "https://<files.origin>/logos/<app id>/<sha256 hex>.png" | null,
   "timings": { "totalMs": 0, "phases": {} }, "requestId": "string" }
 ```
+
+`logoUrl` (C11, D305): `<FILES_ORIGIN>/<apps.logo_key>`, or `null` when the app has no logo or the env has no files
+origin (no dashboard blocks). Read from the gate's row (no extra query). The vault passes it to the auth pages
+(`packages/web`), which show it beside the app's name only from the files origin their build pins; older clients
+ignore it.
 
 After the gate, the settings and `login_methods` rows (D1) and the registry read run side by side (D261), and both are
 awaited before any answer, on every path. The registry read is `get_scope`, then `get_config` only when the scope
@@ -599,6 +607,7 @@ One thin Worker per Hana origin in every env (D66; `workers.dev` in dev envs, a 
 | vault | `/vault` | forwarded to the API Worker (service binding `API`), unchanged but for a `Set-Cookie` header, which is dropped; `503` page with no config if it is unreachable |
 | auth | `/login/callback` | `login/callback.html` with `frame-ancestors 'none'; connect-src <API_URL> [https://oauth2.googleapis.com]` (Google's tokeninfo only when `EMAIL_ISSUER_URL` is set and valid: under `'token_first'` the callback reads the access token's `sub` there, D270; the built page's `<meta>` policy lists the same, `packages/web/src/auth/pages.ts`) |
 | auth | `/login`, `/approve` | `<path>.html` with `frame-ancestors 'none'` (neither fetches anything; the login popup makes no API call, D77) |
+| auth | logo pages: `/login`, `/login/email`, `/approve`, `/export` | with `FILES_ORIGIN` set (the manifest's `files.origin`, C11, D306), the base policy's `img-src 'self' data:` becomes `img-src 'self' data: <FILES_ORIGIN origin>` (in place, one `img-src`); the build's `<meta>` policy does the same from `HanaEnv.filesOrigin`. `/login/callback` never. A `FILES_ORIGIN` that isn't an origin is left out and logged (`files_origin_misconfigured`), the page still served |
 | auth | `/login/email` | `login/email.html` with `frame-ancestors 'none'; connect-src [<EMAIL_ISSUER_URL origin>] <API_URL>` (the email step, batch 8a: the issuer's `start`, `resend`, `verify` and the relay write; the auth Worker's `EMAIL_ISSUER_URL` is set by `gen` from `emailIssuer`, and a malformed one is a `503` page) |
 | auth | `/export` | `export.html` with `frame-ancestors 'none'; connect-src <API_URL> <NEAR_RPC> [<NEAR_RPC_FALLBACK>] https://www.googleapis.com` |
 | both | any other path | a static asset, never HTML (`*.html` and `text/html` → `404`) |
@@ -1350,7 +1359,8 @@ session routes and the SPA come with C9 and C10 (`docs/batch-c-spec.md` "Console
 
 **Every request.** The Worker runs first (assets with `run_worker_first`). A host other than `CONSOLE_ORIGIN`: `404`
 `Not found`. A non-GET/HEAD request without all four CSRF checks (`Sec-Fetch-Site: same-origin`, `Origin` =
-`CONSOLE_ORIGIN`, `x-hana-console: 1`, `content-type: application/json`): `403 {"error":{"code":"csrf",…}}`. `/api/*` goes
+`CONSOLE_ORIGIN`, `x-hana-console: 1`, `content-type: application/json`, or exactly `application/octet-stream` on
+`/api/orgs/:org/apps/:app/logo`, D300): `403 {"error":{"code":"csrf",…}}`. `/api/*` goes
 to the routes below (any other path `404 not_found`, a wrong method `405` with `allow`); anything else is the SPA
 (`GET`/`HEAD` only; a placeholder page in C7, its single-page fallback for unknown paths). Every response carries the
 console CSP, `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy: same-origin`, `X-Content-Type-Options: nosniff`
@@ -1365,6 +1375,27 @@ are `{error: {code, message}}` with the RpcCode → HTTP map of console-core (`R
 Both: `400 bad_request` for any other body shape (strict), `413` over 4 KiB (1 KiB without a `Content-Length`; the body is read as a stream and cut off at the cap), `429 rate_limited` (`retry-after: 60`) past
 10 requests a minute per IP (IPv6 by /64; the `CONSOLE_IP_LIMIT` rate-limiting binding, namespace `95101`, key
 `<env>:console-link:<ip subject>`), checked before the body is read.
+
+**Logo upload (C11, backend only; no route until C10's session routes, D300, D301).** `logoUploadRoute` in
+`src/logo.ts` serves `POST /api/orgs/:org/apps/:app/logo?expectedVersion=<settingsVersion>` for a caller the session
+route has checked (session, org member, owner role): the image as the raw body (`application/octet-stream`,
+`Content-Length` required) → `200 {logoUrl, version}`. In order:
+
+1. ≤ 512 KiB (`413 logo_too_large`); PNG, JPEG or WebP by magic bytes, one well-formed static image with nothing after
+   it (`400 logo_type`: SVG, GIF, AVIF, polyglots, APNG and animated WebP, bad CRCs; D302).
+2. `IMAGES.info`: the same type and size as the header, 128–2048 px per side, aspect ratio ≤ 1.25 (`400 logo_type`).
+3. `ConsoleRpc.getApp`: the org's app (`404 not_found`) at `expectedVersion` (`409 version_conflict`).
+4. The re-encode: `{width: 256, height: 256, fit: 'pad', background: 'rgba(0,0,0,0)'}` → PNG; the answer is checked
+   (a static 256 × 256 PNG), stripped to IHDR/PLTE/tRNS/IDAT/IEND, ≤ 128 KiB (`413 logo_too_large`) and decoded
+   again (D303).
+5. `logo_objects` (upsert, unmarked), then `LOGOS.put("logos/<app>/<sha256 of the stored bytes>.png", image/png)`.
+6. `ConsoleRpc.setLogo` (CAS); then the replaced key is marked `replaced_at` (the hourly cron deletes it 30 days on),
+   and `audit_log` gets `app.logo_set` (`ok`, or `failed` with the code).
+
+The current image again changes nothing. Uploads are limited to 10 a minute per org (`CONSOLE_IP_LIMIT`, key
+`<env>:console-logo:<org>`; `429 rate_limited`). Without the `IMAGES` binding (or `LOGOS`) it answers `500 internal`.
+`logoRemoveRoute` (`{expectedVersion}` → `{version}`; `setLogo(null)`, `app.logo_removed`) is the backend of C10's
+remove control; the spec lists no route for it.
 
 **`StaffRpc`** (named export, a `WorkerEntrypoint`; no route: bound only by the admin Worker as `CONSOLE`, batch C8).
 Inputs are console-core's strict zod schemas (`packages/console-core/src/staff.ts`); answers `{ok: true, …}` or
@@ -1387,11 +1418,37 @@ Inputs are console-core's strict zod schemas (`packages/console-core/src/staff.t
 target) or `conflict`; a write whose state moved meanwhile is `conflict`.
 
 **Bindings** (`apps/console/scripts/gen-wrangler.ts`): `CONSOLE_DB` (D1, `migrations/` 0001–0002), `API` → the API
-Worker's `ConsoleRpc`, `LOGOS` and `STATEMENTS` (R2; `STATEMENTS` read only by code), `ASSETS`, `CONSOLE_IP_LIMIT`;
+Worker's `ConsoleRpc` (the console calls `listApps`, `cancelChangeByLink`, and for logos `getApp` and `setLogo`),
+`LOGOS` and `STATEMENTS` (R2; `STATEMENTS` read only by code), `IMAGES` (the Images binding, C11), `ASSETS`,
+`CONSOLE_IP_LIMIT`;
 vars `ENV_NAME`, `CONSOLE_ORIGIN`, `CONSOLE_AUTH_ORIGIN`, `FILES_ORIGIN`, `NEAR_RPC`, `SIGNER_ACCOUNT`,
 `OWNER_GRANT_DELAY_MS`; no secret in C7. **Cron** `0 * * * *` (`docs/operations.md` "Partner console Worker").
-**Logs**: `staff_rpc`, `link_cancel`, `csrf_refused`, `console_cron`, `audit_write_failed`, `console_error`, with
-method, request id, actor kind, org id, outcome and code only.
+**Logs**: `staff_rpc`, `link_cancel`, `csrf_refused`, `console_cron`, `audit_write_failed`, `console_error`, `logo`
+(`code` is `logo_type:<reason>` for a refused file, never its bytes), with method, request id, actor kind, org id,
+outcome and code only.
+
+**Hourly purge of replaced logos** (D301): the due `logo_objects` rows are deleted first (only while still marked and
+replaced more than 30 days ago, `RETURNING`), then those objects from `LOGOS`; if the object delete fails, the rows
+are put back for the next hour.
+
+## Files Worker (`apps/files`, its own Worker) · C11
+
+`hana-id-files-<env>` (`files.workerName`) on `files.origin`: partner logos from the `LOGOS` bucket, and nothing else
+(D74, D304). No secret, D1, Hyperdrive, service binding, cookie or cron. Bindings (`apps/files/scripts/gen-wrangler.ts`):
+`LOGOS` (R2, read only by code: `get` is its only call, a source test) and the var `FILES_ORIGIN`. Placement follows the
+origin (D307): `<files.workerName>.<subdomain>.workers.dev` in a `local*`/`sandbox*` env, else a Custom Domain;
+preview URLs off.
+
+| Request | Answer |
+|---|---|
+| `GET`/`HEAD` `/logos/<app_…>/<64 hex>.png` on `FILES_ORIGIN` | `200` with the object, when it exists, is ≤ 128 KiB, has `contentType: image/png`, starts with the PNG signature and its sha256 is the hash in its key. Headers exactly: `Content-Type: image/png`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox`, `Cross-Origin-Resource-Policy: cross-origin`, `Content-Disposition: inline; filename="logo.png"`, `Cache-Control: public, max-age=31536000, immutable`, `Referrer-Policy: no-referrer` (plus `Content-Length`). A query string is ignored |
+| the same path, any object failing a check | `404` (logged `logo` `rejected` with a code, never the key) |
+| any other path or host | `404`, the bucket never read |
+| any other method | `405`, `allow: GET, HEAD` |
+| R2 fails | `503` |
+
+Every non-`200` answer is `text/plain` with `nosniff`, `default-src 'none'; sandbox`, `no-referrer` and
+`Cache-Control: no-store`.
 
 ## Email issuer (`apps/email-issuer`, its own Worker) · E
 

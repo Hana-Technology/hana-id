@@ -1,7 +1,9 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-04 for owner-verified changes and owner actions on current `develop` (branch `feat/batch-c-6-merge`; built on
+known open issues. Last verified against code: 2026-11-04 for the files Worker and logos (branch `feat/batch-c-11`: the
+logo upload's checks and the CSRF exception in "Console Worker", "Files Worker (logos)", the auth pages' `img-src`;
+D300–D308); 2026-11-04 for owner-verified changes and owner actions on current `develop` (branch `feat/batch-c-6-merge`; built on
 `feat/batch-c-6`: the API's own step-up check in "RPC writers", the owner-action precheck's nonce recompute and the
 safety budget in "Owner actions", the claim allow-list on both owner-action paths and on the step-up token, the
 guarded-change token in the inventory, the console sink scope, open issue (i); D235–D239, D277); 2026-11-04 for the console Worker (branch `feat/batch-c-7-merge`, C7 merged onto `develop`; written on `feat/batch-c-7` 2026-11-02: its
@@ -537,8 +539,17 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy: same-origin`, `X-Content-Type-Options: nosniff` and HSTS
   (2 years, subdomains); `/api/*` also `Cache-Control: no-store`. No cookie is set in C7.
 - **CSRF on every non-GET request**, whatever the path: `Sec-Fetch-Site: same-origin`, `Origin` exactly
-  `console.origin`, `x-hana-console: 1` and `content-type: application/json`, else `403 csrf`. A GET never changes
-  anything (the emailed links' pages only POST).
+  `console.origin`, `x-hana-console: 1` and `content-type: application/json`, else `403 csrf`. The one exception is the
+  logo upload's raw body, which must be exactly `application/octet-stream` on that path (D300): not a CORS-safelisted
+  type either, so it still needs a preflight the console never answers. A GET never changes anything (the emailed
+  links' pages only POST).
+- **Logo uploads** (C11; backend only, routed by C10 for owners): type by magic bytes (PNG, JPEG, WebP; never SVG),
+  ≤ 512 KiB, one well-formed static image ending where its format says (polyglots, APNG and animated WebP refused,
+  D302), the decoder's type and size held against the header, 128–2048 px, aspect ≤ 1.25; then re-encoded through the
+  Images binding to a 256 × 256 PNG that the console itself checks, strips to its image chunks (no EXIF, text, ICC or
+  time) and decodes again (D303). Stored content-addressed; the pointer through `ConsoleRpc.setLogo` (CAS,
+  `app_changes`, feed); 10 uploads a minute per org. A compromised console can still write any PNG it likes to the
+  bucket: the files Worker serves it sandboxed, and the feed shows the change.
 - **Emailed-link confirms** (no session, `link` actor): the guarded-change cancel goes to `ConsoleRpc.cancelChangeByLink`
   (the API checks the token, D228, D229); the owner-grant cancel compares sha256(token) with the stored
   `cancel_token_hash` inside the write's guard: single use, refused once `owner_from` passed, a wrong token, an unknown
@@ -603,7 +614,21 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   (`apps/api/src/vault/origins.ts:11`). `signer` is not in the config (the bundle's constant is used).
 - Auth pages: `frame-ancestors 'none'`, page-specific `connect-src` (none at all for `/login`, which fetches nothing:
   D77), no COOP header (`apps/api/src/pages/host.ts`
-  sets the headers; the build adds a `<meta>` CSP).
+  sets the headers; the build adds a `<meta>` CSP). Batch C11 (D306): on the pages that show the app's name (`/login`,
+  `/login/email`, `/approve`, `/export`) `img-src` also names the files origin, in place and in both policies (a test
+  holds the header and the meta policy to the same directives); the page shows a logo only from that origin, with
+  `alt=""` and `no-referrer`, and drops any other value (D305). No partner-hosted image ever (D74).
+
+### Files Worker (logos; `apps/files`, batch C11; tests `apps/files/test`, `apps/files/scripts/test`)
+
+- Serves only `GET`/`HEAD /logos/<app id>/<64 hex>.png` on `files.origin`: any other host or path is 404 without a
+  bucket read, any other method 405.
+- Re-checks every object (D304): `contentType: image/png`, the PNG signature, ≤ 128 KiB and the sha256 its key names;
+  anything else is 404, logged by code only. A direct bucket write or a compromised console gets no document onto a
+  Hana origin: the answer is `image/png` with `nosniff`, `Content-Security-Policy: default-src 'none'; sandbox`,
+  `Content-Disposition: inline`, no cookie.
+- Read only by code: `LOGOS.get` is the source's only bucket call (a source test); no secret, D1, Hyperdrive or
+  service binding (config snapshot).
 - Static assets on both Hana origins (`host.ts`, `staticAsset`): never HTML, and every one carries `default-src
   'none'; frame-ancestors 'none'; sandbox`, `nosniff`, `no-referrer` and a same-origin CORP, so an SVG or XML file in
   the build opened directly or framed runs and frames nothing.

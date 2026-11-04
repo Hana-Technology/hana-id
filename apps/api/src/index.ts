@@ -4,6 +4,7 @@ import { type AppEndpoint, APP_CONFIG_ENDPOINT, APP_ENDPOINTS, appPreflight, han
 import { GOVERNANCE_ENDPOINT, handleGovernance } from './governance-status.ts';
 import { json } from './http.ts';
 import { detectDrift } from './changes/drift.ts';
+import { WALLET_RECORD_ENDPOINT, handleWalletRecord } from './directory/record.ts';
 import { guardedChangesMaintenance } from './guarded/cron.ts';
 import { syncIssuerKeys } from './issuer-keys.ts';
 import { identityMaintenance } from './identity/maintenance.ts';
@@ -130,6 +131,12 @@ export default {
         // Vault only, like /v1/vault/* (same preflight: Origin must be VAULT_ORIGIN).
         if (request.method === 'OPTIONS') return vaultPreflight(request, env);
         if (request.method === 'POST') return await handleIdentityToken(request, env, requestId, ctx);
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
+      }
+      if (pathname === WALLET_RECORD_ENDPOINT) {
+        // Vault only, like /v1/vault/* (the wallet directory, D310).
+        if (request.method === 'OPTIONS') return vaultPreflight(request, env);
+        if (request.method === 'POST') return await handleWalletRecord(request, env, requestId);
         return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
       }
       if (IDENTITY_PUBLIC_ENDPOINTS.includes(pathname)) {

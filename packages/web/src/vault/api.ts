@@ -26,8 +26,10 @@ import {
   type UnlockResponse,
   type IdentityTokenBody,
   type IdentityTokenResponse,
+  type WalletRecordBody,
   base64UrlEncode,
   isIdentityTokenResponse,
+  isWalletRecordResponse,
   isAppConfig,
   isCkdResult,
   isCreateShareResponse,
@@ -189,6 +191,15 @@ export class VaultApi {
 
   async revokeAll(body: ShareActionBody): Promise<RevokeAllResponse> {
     return (await this.post('/v1/vault/revoke-all', body, isRevokeAllResponse)).value;
+  }
+
+  /**
+   * POST /v1/wallets/record: the wallet directory's report (wallet-record.ts), in the background after a login. Throws
+   * ApiError or a network error (the caller drops both).
+   */
+  async recordWallets(body: WalletRecordBody, signal?: AbortSignal): Promise<void> {
+    const { res, body: answer } = await this.request('/v1/wallets/record', { method: 'POST', headers: this.headers(true), body: JSON.stringify(body), ...(signal ? { signal } : {}) });
+    if (!isWalletRecordResponse(answer)) throw new ApiError(res.status, 'bad_response', 'Unexpected /v1/wallets/record response', null, str(answer.requestId));
   }
 
   /** POST /v1/identity/token: a partner identity token for the session that signed `body` (identity.ts). */

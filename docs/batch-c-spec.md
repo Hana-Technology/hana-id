@@ -1361,6 +1361,15 @@ D269 keeps each identity's verified address in the email issuer's own D1 (`user_
 migration 0002), for Hana staff only. This section gives staff a Users screen over it and lets the Support ID lookup
 reach it. Partners see neither (§What partners never see).
 
+**The wallet directory (D310–D317, built on `feat/wallet-directory`, not merged).** The API's hot DB now keeps each
+user per scope (`end_users`: the user id `hu_…` from the uid and its Support code, D312), the account's identities
+with their subs (`end_user_identities`) and the wallets its logins reported (`end_user_wallets`), with the read APIs
+the screens need: `AdminRpc.listUsers` / `getUser` / `findUsers` (by wallet, user id, Support ID or sub; each identity's
+`directoryKey` is the join with `DirectoryRpc` for the email) and, for the partner console's Users screen (C10),
+`ConsoleRpc.listUsers` / `getUser` (the org's own scopes, no sub or email; D315; `docs/api.md`). The Support code is
+stored and indexed there, so code → user no longer needs `IssuerRpc.uid` or `user_email_apps.uid` (D276's path, to
+revisit when C15 is built).
+
 ### Data path (D275)
 
 ```

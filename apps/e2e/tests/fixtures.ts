@@ -208,6 +208,18 @@ export async function directoryView(sub: string): Promise<DirectoryView> {
 }
 
 /** Raw EVM transactions the mocked chain received. */
+/** The wallet directory's users listing `address` (`GET /__e2e/wallets`, D310). */
+export interface WalletDirectoryUser {
+  userId: string;
+  scopeId: string;
+  wallets: { chain: string; address: string }[];
+  identities: { provider: string; sub: string | null; role: string; status: string }[];
+}
+
+export async function walletDirectory(address: string): Promise<WalletDirectoryUser[]> {
+  return (await (await fetch(`${API_URL}/__e2e/wallets?address=${encodeURIComponent(address)}`)).json()) as WalletDirectoryUser[];
+}
+
 export async function evmBroadcasts(): Promise<`0x${string}`[]> {
   return (await (await fetch(`${EVM_RPC}/__e2e/txs`)).json()) as `0x${string}`[];
 }

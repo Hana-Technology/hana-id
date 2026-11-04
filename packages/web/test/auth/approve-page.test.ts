@@ -131,13 +131,17 @@ const arm = () => {
   win.dispatch('pointermove', { pointerType: 'mouse', movementX: 3, movementY: 1 });
 };
 
-function start(): void {
+function start(env = ENV): void {
   win = new FakeWindow('/approve');
   vault = remoteWindow();
   win.opener = asWindow(vault);
-  page = startApprovePage({ win, env: ENV, isGesture: () => true });
+  page = startApprovePage({ win, env, isGesture: () => true });
   win.dispatch('focus');
 }
+
+/** Batch C11: the build's files origin and a logo on it. */
+const FILES = 'https://files.hana.test';
+const LOGO = `${FILES}/logos/app_abc/${'0d'.repeat(32)}.png`;
 
 beforeEach(() => {
   resetDom();
@@ -178,6 +182,34 @@ describe('/approve', () => {
     expect(text).toContain('11155111');
     expect(text).toContain(EVM);
     expect(text).toContain('1 (1000000000000000000 wei)');
+  });
+
+  it('batch C11: shows the app’s logo beside its name on a request and a consent screen, from the files origin only', () => {
+    page.stop();
+    resetDom();
+    start({ ...ENV, filesOrigin: FILES });
+    const r = evmRequest({ logoUrl: LOGO });
+    send(r);
+    expect(document.querySelector('header.app img.app-logo')?.getAttribute('src')).toBe(LOGO);
+    expect(pageText()).toContain('Request 1 of 1 from Partner App');
+    // The digest binds what the request is, not the decoration: the logo changes nothing there.
+    arm();
+    click(primary());
+    expect(results()[0]?.digest).toEqual(approvalDigest(digestInput(r)));
+    page.stop();
+    resetDom();
+    start({ ...ENV, filesOrigin: FILES });
+    send(consentRequest({ logoUrl: LOGO }));
+    expect(document.querySelector('header.app img.app-logo')?.getAttribute('src')).toBe(LOGO);
+    // Another origin, or a build without a files origin: the name alone.
+    for (const [env, logoUrl] of [[{ ...ENV, filesOrigin: FILES }, `https://cdn.partner.example/logos/app_abc/${'0d'.repeat(32)}.png`], [ENV, LOGO]] as const) {
+      page.stop();
+      resetDom();
+      start(env);
+      send(evmRequest({ logoUrl }));
+      expect(pageText()).toContain('from Partner App');
+      expect(document.querySelector('img')).toBeNull();
+    }
   });
 
   it('decodes and shows a Stellar transaction', () => {

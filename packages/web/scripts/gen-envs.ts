@@ -38,6 +38,8 @@ export function hanaEnv(m: Manifest): HanaEnv | null {
     devEnv: isDevEnv(m.name),
     // Email login: the issuer's origin (its own URL, D230, or the API's) and the tokens' iss.
     ...(m.emailIssuer ? { emailIssuerUrl: new URL(emailIssuerUrl(m)).origin, emailIss: m.emailIssuer.iss } : {}),
+    // Batch C11: the logo origin (the dashboard's `files` block), the only image origin the auth pages may show.
+    ...(m.files ? { filesOrigin: m.files.origin } : {}),
   };
 }
 

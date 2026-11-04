@@ -45,6 +45,7 @@ import {
   extractPrk,
   fetchGoogleJwks,
   jsonBytes,
+  logoUrlOn,
   newAppKey,
   newSessionKey,
   parseWindowMessage,
@@ -61,6 +62,7 @@ import { ChainLoginError, loginOnChain } from './chain-login.ts';
 import { ServerClock } from './clock.ts';
 import { type Dom, dom, errorView } from './dom.ts';
 import { PageError, apiErrorCode, errorMessage } from './errors.ts';
+import { appLogo } from './logo.ts';
 import type { NearReader } from './near-rpc.ts';
 import { PathCheckError, confirmPath } from '../path-check.ts';
 import { type GestureCheck, type PageWindow, isFramed, isUserGesture, randomName } from './page-window.ts';
@@ -437,6 +439,15 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
     }
   }
 
+  /**
+   * The app's logo (batch C11): this window's own GET /v1/app answer when it carries the field (as for the name), else
+   * the vault's context; shown and passed on only from this build's files origin.
+   */
+  function logoUrl(): string | null {
+    const ctx = context as WindowMessage<'hana:export-context'>;
+    return logoUrlOn(env.filesOrigin, app && app.logoUrl !== undefined ? app.logoUrl : ctx.logoUrl);
+  }
+
   function showReady(): void {
     const ctx = context as WindowMessage<'hana:export-context'>;
     state = 'ready';
@@ -451,7 +462,7 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
         'section',
         { class: 'panel export' },
         d.h('h1', {}, `Export your ${CHAIN_NAMES[ctx.chain]} key`),
-        d.h('p', {}, 'For your wallet in ', d.h('strong', {}, app?.name ?? ctx.appName), ' at ', d.h('span', { class: 'origin' }, ctx.parentOrigin)),
+        d.h('p', {}, appLogo(d, env, logoUrl()), 'For your wallet in ', d.h('strong', {}, app?.name ?? ctx.appName), ' at ', d.h('span', { class: 'origin' }, ctx.parentOrigin)),
         d.h('p', { class: 'account' }, 'Address ', d.h('code', { class: 'mono' }, ctx.address)),
         d.h(
           'p',
@@ -523,6 +534,7 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
         t: 'hana:auth-params',
         pk: ctx.pk,
         appName: a.name ?? ctx.appName,
+        ...(logoUrl() ? { logoUrl: logoUrl()! } : {}),
         parentOrigin: ctx.parentOrigin,
         scopeId: ctx.scopeId,
         signer: env.signer,

@@ -13,6 +13,7 @@ import { APPROVAL_KINDS, type ApprovalContext, type ApprovalKind, approvalKindCh
 import { base64Decode, from0xHex, toHex, utf8, utf8Length } from './bytes.ts';
 import { isDisplaySafeLine } from './display-safe.ts';
 import { IDENTITY_MAX_MAX_AGE_MS, IDENTITY_MIN_MAX_AGE_MS } from './identity.ts';
+import { isLogoUrl } from './logo.ts';
 import { KEY_INDEX_LIMIT, MAX_USES_LIMIT, RELAY_ID_PATTERN, SALT_MAX_BYTES, SALT_MIN_BYTES, SHARE_ID_BYTES } from './layouts.ts';
 import { type FollowProve, isFollowProve } from './relay.ts';
 import { type EvmTxRequest, evmTxSigningPayload, parseEvmTxRequest } from './signers/evm.ts';
@@ -712,6 +713,11 @@ export interface WindowMessageMap {
      * instead of a login; the session fields are unused. Then the vault asks (follow-up `prove`) for the account's.
      */
     task?: { kind: 'link'; provider: LoginMethod; prove: FollowProve };
+    /**
+     * Batch C11: the app's logo (logo.ts), shown beside its name; present only when the app has one on the files origin
+     * the vault's build pins, so an app without a logo sends exactly the message older pages take.
+     */
+    logoUrl?: string;
   };
   /**
    * Login popup → vault, in a login that offered email: the user went to Google (`google`, from the chooser or case B)
@@ -738,6 +744,11 @@ export interface WindowMessageMap {
     autoApprove?: AutoApproveNote;
     /** A pk_test_ app: the popup says that Hana signs only for test networks for it (docs/decisions.md D39). */
     testApp?: true;
+    /**
+     * Batch C11: the app's logo (logo.ts), shown beside its name; present only when the app has one on the files origin
+     * the vault's build pins, so an app without a logo sends exactly the message older pages take.
+     */
+    logoUrl?: string;
   };
   'hana:approve-result': { id: string; approved: boolean; digest: Uint8Array };
   'hana:approve-bye': Record<string, never>;
@@ -762,6 +773,11 @@ export interface WindowMessageMap {
      * (D111). Optional so an older vault bundle's context still parses.
      */
     sessionExpiresAtMs?: number;
+    /**
+     * Batch C11: the app's logo (logo.ts), shown beside its name; present only when the app has one on the files origin
+     * the vault's build pins, so an app without a logo sends exactly the message older pages take.
+     */
+    logoUrl?: string;
   };
   /**
    * Vault → export window: the session ended (logout, revoke, expiry, a newer login) or the vault's export job did;
@@ -782,6 +798,11 @@ export interface WindowMessageMap {
     queued: number;
     /** A pk_test_ app (as in hana:approve-request). */
     testApp?: true;
+    /**
+     * Batch C11: the app's logo (logo.ts), shown beside its name; present only when the app has one on the files origin
+     * the vault's build pins, so an app without a logo sends exactly the message older pages take.
+     */
+    logoUrl?: string;
   };
   /** Approval popup → vault: Allow (guarded like Approve) or Decline, with consentDigest of what it rendered. */
   'hana:consent-result': { id: string; allowed: boolean; digest: Uint8Array };
@@ -838,7 +859,8 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:hello': (m) => exactKeys(m, ['v', 't', 'sdk']) && typeof m.sdk === 'string' && /^[0-9A-Za-z.+-]{1,32}$/u.test(m.sdk),
   'hana:auth-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:auth-params': (m) =>
-    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'clientId', 'mode', 'sessionPublicKey', 'expiresAtMs', 'salt', 'keyIndex', 'maxUses', 'nonce', 'relayId', 'relayKey'], ['methods', 'method', 'emailHint', 'followKey', 'task', 'emailRecord']) &&
+    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'clientId', 'mode', 'sessionPublicKey', 'expiresAtMs', 'salt', 'keyIndex', 'maxUses', 'nonce', 'relayId', 'relayKey'], ['methods', 'method', 'emailHint', 'followKey', 'task', 'emailRecord', 'logoUrl']) &&
+    (m.logoUrl === undefined || isLogoUrl(m.logoUrl)) &&
     (m.followKey === undefined || (isBytes(m.followKey, 32, 32) && (Array.isArray(m.methods) || m.task !== undefined || m.emailRecord === true))) &&
     (m.emailRecord === undefined || (m.emailRecord === true && m.followKey !== undefined && m.methods === undefined && m.task === undefined)) &&
     (m.task === undefined ||
@@ -872,7 +894,8 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:auth-progress': (m) => exactKeys(m, ['v', 't', 'stage']) && (m.stage === 'email_code' || m.stage === 'google'),
   'hana:approve-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:approve-request': (m) => {
-    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove', 'testApp'])) return false;
+    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove', 'testApp', 'logoUrl'])) return false;
+    if (m.logoUrl !== undefined && !isLogoUrl(m.logoUrl)) return false;
     if (m.autoApprove !== undefined && !isAutoApproveNote(m.autoApprove)) return false;
     if (m.testApp !== undefined && m.testApp !== true) return false;
     if (!isRequestId(m.id) || !isAppName(m.appName) || !isOrigin(m.parentOrigin) || !isApprovalKind(m.kind) || !isChain(m.chain)) return false;
@@ -893,8 +916,9 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:export-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:export-end': (m) => exactKeys(m, ['v', 't']),
   'hana:export-context': (m) =>
-    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'keyIndex', 'chain', 'address'], ['sessionExpiresAtMs']) &&
+    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'keyIndex', 'chain', 'address'], ['sessionExpiresAtMs', 'logoUrl']) &&
     (m.sessionExpiresAtMs === undefined || isMs(m.sessionExpiresAtMs)) &&
+    (m.logoUrl === undefined || isLogoUrl(m.logoUrl)) &&
     isPublishableKey(m.pk) &&
     isAppName(m.appName) &&
     isOrigin(m.parentOrigin) &&
@@ -904,8 +928,9 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
     isChain(m.chain) &&
     isAddressFor(m.chain, m.address),
   'hana:consent-request': (m) =>
-    exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'policy', 'policyId', 'expiresAtMs', 'position', 'queued'], ['testApp']) &&
+    exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'policy', 'policyId', 'expiresAtMs', 'position', 'queued'], ['testApp', 'logoUrl']) &&
     (m.testApp === undefined || m.testApp === true) &&
+    (m.logoUrl === undefined || isLogoUrl(m.logoUrl)) &&
     isRequestId(m.id) &&
     isAppName(m.appName) &&
     isOrigin(m.parentOrigin) &&

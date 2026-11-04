@@ -437,6 +437,18 @@ describe('window messages', () => {
     expect(ok({ label: 'Swaps', active: true, extra: 1 })).toBeNull();
   });
 
+  it('auth-params, approve-request, consent-request and export-context take an optional logo URL of the logo shape only (C11)', () => {
+    const logo = `https://files.example/logos/app_abc/${'0f'.repeat(32)}.png`;
+    for (const t of ['hana:auth-params', 'hana:approve-request', 'hana:consent-request', 'hana:export-context'] as const) {
+      const base = VALID_WINDOW[t];
+      expect(parseWindowMessage({ ...base, logoUrl: logo }, [t]), t).not.toBeNull();
+      expect(parseWindowMessage({ ...base }, [t]), t).not.toBeNull();
+      for (const bad of [null, '', 'https://files.example/logo.png', `${logo}?x=1`, `${logo}#x`, `javascript:alert(1)//${logo}`, `https://u:p@files.example/logos/app_abc/${'0f'.repeat(32)}.png`, `https://files.example/logos/app_abc/${'0F'.repeat(32)}.png`, `data:image/png;base64,AAAA`, 1]) {
+        expect(parseWindowMessage({ ...base, logoUrl: bad }, [t]), `${t} ${String(bad)}`).toBeNull();
+      }
+    }
+  });
+
   it('approve-request and consent-request take an optional testApp flag that is only ever true (D39)', () => {
     for (const [t, base] of [['hana:approve-request', APPROVE_REQUEST], ['hana:consent-request', VALID_WINDOW['hana:consent-request']]] as const) {
       const ok = (testApp: unknown) => parseWindowMessage({ ...base, testApp }, [t]);

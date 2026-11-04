@@ -91,6 +91,8 @@ export function wranglerConfig(m: Manifest, d1Id: string, opts: { assetsDir?: st
       { binding: 'LOGOS', bucket_name: f.logosBucket },
       { binding: 'STATEMENTS', bucket_name: f.statementsBucket },
     ],
+    // Batch C11: every uploaded logo is decoded and re-encoded through the Cloudflare Images binding (D93).
+    images: { binding: 'IMAGES' },
     ratelimits: CONSOLE_RATE_LIMITS.map((r) => ({ name: r.name, namespace_id: r.namespace_id, simple: { ...r.simple } })),
     // The Worker runs first on every request (host dispatch, CSRF, headers on assets too).
     assets: { directory: opts.assetsDir ?? ASSETS_DIR, binding: 'ASSETS', not_found_handling: 'single-page-application', run_worker_first: true },

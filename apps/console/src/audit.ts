@@ -28,6 +28,9 @@ export const AUDIT_DETAIL_KEYS = {
   'org.frozen': [],
   'org.unfrozen': [],
   'change.link_cancel': ['code'],
+  // Batch C11: the outcome of the setLogo RPC after an upload or a removal (app_changes has the change itself).
+  'app.logo_set': ['logoKey', 'code'],
+  'app.logo_removed': ['code'],
   // Sign-in (batch C9). A refusal names no person: a known user by id (`target`), anyone else by the sha256 of the
   // address Google verified (spec "Membership rules at sign-in"), never the address itself.
   'session.signed_in': ['invite'],

@@ -67,6 +67,9 @@ function rpcError(answer: RpcFail, info: RequestInfo, method: string): Response 
 
 const ORG_ROUTE = /^\/api\/orgs\/([^/]+)(?:\/(apps)(?:\/([^/]+))?|\/(members)|\/(audit))?$/u;
 
+/** Whether `pathname` is one of the read routes below (any other path under `/api/orgs/` is 404, whatever the method). */
+export const isOrgReadPath = (pathname: string): boolean => ORG_ROUTE.test(pathname);
+
 /** `GET /api/orgs/:org`, `/apps`, `/apps/:app`, `/members`, `/audit?cursor=`; null when the path isn't one of them. */
 export async function orgRoute(url: URL, env: Env, info: RequestInfo, s: Session, now: number): Promise<Response | null> {
   const m = ORG_ROUTE.exec(url.pathname);

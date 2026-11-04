@@ -12,6 +12,7 @@ import type {
   ListChangesInput,
   RpcFail,
   RpcOk,
+  SetLogoInput,
 } from '@hana-id/console-core';
 
 type Answer<T extends object> = Promise<RpcOk<T> | RpcFail>;
@@ -23,9 +24,12 @@ type Answer<T extends object> = Promise<RpcOk<T> | RpcFail>;
  */
 export interface ConsoleRpcClient {
   listApps(c: ListAppsInput): Answer<{ apps: AppSummary[] }>;
+  /** The app view (batch C9) and the logo upload's read of its settings version and current logo (batch C11). */
   getApp(c: GetAppInput): Answer<{ app: AppDetail }>;
   listChanges(c: ListChangesInput): Answer<{ changes: AppChange[] }>;
   cancelChangeByLink(c: CancelChangeByLinkInput): Answer<{ change: GuardedChange }>;
+  /** The logo upload (batch C11, logo.ts): the pointer. */
+  setLogo(c: SetLogoInput): Answer<{ version: number }>;
 }
 
 export interface Env {
@@ -62,6 +66,11 @@ export interface Env {
    * Optional so a test or a config without R2 still runs; the cron then skips the logo purge.
    */
   LOGOS?: R2Bucket;
+  /**
+   * The Cloudflare Images binding (batch C11, D93): every uploaded logo is decoded and re-encoded through it to a
+   * 256 × 256 PNG (logo.ts). Optional so a config without it still runs; uploads then answer `internal`.
+   */
+  IMAGES?: ImagesBinding;
   /** Monthly statements: read only by code (`get`/`head`; a source check forbids `put` and `delete`, D74). */
   STATEMENTS?: R2Bucket;
   /** Workers rate-limiting binding: per-IP flood limits of the session-less routes (limits.ts). */

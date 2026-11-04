@@ -1,8 +1,10 @@
-# API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's and the console's)
+# API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
-Last verified against code: 2026-11-04 (branch `feat/batch-c-9`: "Console Worker and console-auth": partner sign-in
-(`/api/auth/start`, the auth origin's `/start` and `/callback` through `AuthHandler`, `/api/auth/complete`, logout), the
-signed-in reads, console-auth, the new bindings and secret, D290–D297); 2026-11-04 (branch `feat/batch-c-6-merge`: batch C6 on current `develop`:
+Last verified against code: 2026-11-04 (branch `feat/batch-c-9`, merged with `develop` @ a243d6b: "Console Worker and
+console-auth": partner sign-in (`/api/auth/start`, the auth origin's `/start` and `/callback` through `AuthHandler`,
+`/api/auth/complete`, logout), the signed-in reads, console-auth, the new bindings and secret, D290–D297); 2026-11-04 (branch `feat/batch-c-11`: `GET /v1/app`'s `logoUrl`, the logo pages' `img-src`
+with `FILES_ORIGIN` on the auth Worker, the console's logo upload backend (not routed until C10) and its `IMAGES`
+binding, the purge order, and the new "Files Worker" section; D300–D308); 2026-11-04 (branch `feat/batch-c-8`: "Admin Worker" (its routes, the Access check, the cron's notices, feed and watcher, its bindings), `AdminRpc.listApps`/`getApp` taking `system`, `StaffRpc.getOrg`'s `grants`; D278–D285); 2026-11-04 (branch `feat/batch-c-6-merge`: batch C6 on current `develop`:
 `ConsoleRpc.changeOrigins` / `proposeChange` with the API's own step-up verification (the claim allow-list on the
 step-up token), `ConsoleRpc.ownerAction` with `token_has_pii` on both of its tokens (D274 on every path), the
 owner-action precheck's nonce recompute on an uncached scope (`owner_nonce_mismatch`, the client-proof nonce), the
@@ -289,8 +291,14 @@ Headers: `x-hana-key`; from a Hana page also `x-hana-parent-origin`. Gate kind `
   "google": { "clientId": "string", "mode": "own" | "shared" } | null,
   "loginMethods": ["google", "email"], "email": { "aud": "email:<scopeId>" },
   "serverTimeMs": 0, "autoApprovePolicy": {} | null, "rawSign": "off" | "approval",
+  "logoUrl": "https://<files.origin>/logos/<app id>/<sha256 hex>.png" | null,
   "timings": { "totalMs": 0, "phases": {} }, "requestId": "string" }
 ```
+
+`logoUrl` (C11, D305): `<FILES_ORIGIN>/<apps.logo_key>`, or `null` when the app has no logo or the env has no files
+origin (no dashboard blocks). Read from the gate's row (no extra query). The vault passes it to the auth pages
+(`packages/web`), which show it beside the app's name only from the files origin their build pins; older clients
+ignore it.
 
 After the gate, the settings and `login_methods` rows (D1) and the registry read run side by side (D261), and both are
 awaited before any answer, on every path. The registry read is `get_scope`, then `get_config` only when the scope
@@ -601,6 +609,7 @@ One thin Worker per Hana origin in every env (D66; `workers.dev` in dev envs, a 
 | vault | `/vault` | forwarded to the API Worker (service binding `API`), unchanged but for a `Set-Cookie` header, which is dropped; `503` page with no config if it is unreachable |
 | auth | `/login/callback` | `login/callback.html` with `frame-ancestors 'none'; connect-src <API_URL> [https://oauth2.googleapis.com]` (Google's tokeninfo only when `EMAIL_ISSUER_URL` is set and valid: under `'token_first'` the callback reads the access token's `sub` there, D270; the built page's `<meta>` policy lists the same, `packages/web/src/auth/pages.ts`) |
 | auth | `/login`, `/approve` | `<path>.html` with `frame-ancestors 'none'` (neither fetches anything; the login popup makes no API call, D77) |
+| auth | logo pages: `/login`, `/login/email`, `/approve`, `/export` | with `FILES_ORIGIN` set (the manifest's `files.origin`, C11, D306), the base policy's `img-src 'self' data:` becomes `img-src 'self' data: <FILES_ORIGIN origin>` (in place, one `img-src`); the build's `<meta>` policy does the same from `HanaEnv.filesOrigin`. `/login/callback` never. A `FILES_ORIGIN` that isn't an origin is left out and logged (`files_origin_misconfigured`), the page still served |
 | auth | `/login/email` | `login/email.html` with `frame-ancestors 'none'; connect-src [<EMAIL_ISSUER_URL origin>] <API_URL>` (the email step, batch 8a: the issuer's `start`, `resend`, `verify` and the relay write; the auth Worker's `EMAIL_ISSUER_URL` is set by `gen` from `emailIssuer`, and a malformed one is a `503` page) |
 | auth | `/export` | `export.html` with `frame-ancestors 'none'; connect-src <API_URL> <NEAR_RPC> [<NEAR_RPC_FALLBACK>] https://www.googleapis.com` |
 | both | any other path | a static asset, never HTML (`*.html` and `text/html` → `404`) |
@@ -907,14 +916,14 @@ a ledger that never answers delays no response).
 
 `ConsoleRpc` and `AdminRpc` are `WorkerEntrypoint` classes exported by the API Worker (`docs/batch-c-spec.md` "RPC
 interfaces"). No route reaches them; the console Worker (batch C7) binds `ConsoleRpc` and the admin Worker (C8)
-binds `AdminRpc`. Nothing binds them yet, so they are inert in a deployed env. Every method takes one object: `Ctx`
+binds `AdminRpc` (`apps/admin`, built on `feat/batch-c-8`, not deployed), so both are inert in a deployed env until M4. Every method takes one object: `Ctx`
 (`actor`, `requestId`, `clientIp`) plus its fields. The object is validated with its `@hana-id/console-core` zod
 schema (`src/rpc.ts`: strict, so an unknown field is `bad_request`). The answer is `{ok: true, …}` or
 `{ok: false, code, error?}` (`RpcCode`; the BFFs map it to HTTP with `RPC_HTTP_STATUS`). Nothing throws out of a
 method: an unexpected error is logged (`event: "rpc"`, method, request id, `code: internal`) and answered `internal`.
 
 **Actors.** `ConsoleRpc` takes `member` actors only (`cancelChangeByLink`: `link` only) and never `org_legacy`
-(`forbidden`). `AdminRpc` takes `hana`; the methods its crons call also take `system` (`pendingNotices`,
+(`forbidden`). `AdminRpc` takes `hana`; the methods its crons call also take `system` (`listApps` and `getApp`, the watcher's reads, C8; `pendingNotices`,
 `getSecurityContacts`, `listScopes`, `changesSince`, `securityEvents`, `markSecurityEventNotified`, `relayerKeys`), and
 `ackNotice` takes `system` only (the notice cron). Any other actor is `forbidden`. The console's member is trusted
 (spec "Trust in the actor"); every org method still filters `WHERE org_id = ?`, so another org's app or change is
@@ -1354,7 +1363,8 @@ come with C10 (`docs/batch-c-spec.md` "Console BFF routes"). D240–D244, D290�
 
 **Every request.** The Worker runs first (assets with `run_worker_first`). A host other than `CONSOLE_ORIGIN`: `404`
 `Not found`. A non-GET/HEAD request without all four CSRF checks (`Sec-Fetch-Site: same-origin`, `Origin` =
-`CONSOLE_ORIGIN`, `x-hana-console: 1`, `content-type: application/json`): `403 {"error":{"code":"csrf",…}}`. `/api/*` goes
+`CONSOLE_ORIGIN`, `x-hana-console: 1`, `content-type: application/json`, or exactly `application/octet-stream` on
+`/api/orgs/:org/apps/:app/logo`, D300): `403 {"error":{"code":"csrf",…}}`. `/api/*` goes
 to the routes below (any other path `404 not_found`, a wrong method `405` with `allow`); anything else is the SPA
 (`GET`/`HEAD` only: the Vite build of `apps/console/web`, with the single-page fallback for unknown paths). Every
 response carries the console CSP, `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy: same-origin`,
@@ -1419,6 +1429,27 @@ Both: `400 bad_request` for any other body shape (strict), `413` over 4 KiB (1 K
 10 requests a minute per IP (IPv6 by /64; the `CONSOLE_IP_LIMIT` rate-limiting binding, namespace `95101`, key
 `<env>:console-link:<ip subject>`), checked before the body is read.
 
+**Logo upload (C11, backend only; no route until C10's session routes, D300, D301).** `logoUploadRoute` in
+`src/logo.ts` serves `POST /api/orgs/:org/apps/:app/logo?expectedVersion=<settingsVersion>` for a caller the session
+route has checked (session, org member, owner role): the image as the raw body (`application/octet-stream`,
+`Content-Length` required) → `200 {logoUrl, version}`. In order:
+
+1. ≤ 512 KiB (`413 logo_too_large`); PNG, JPEG or WebP by magic bytes, one well-formed static image with nothing after
+   it (`400 logo_type`: SVG, GIF, AVIF, polyglots, APNG and animated WebP, bad CRCs; D302).
+2. `IMAGES.info`: the same type and size as the header, 128–2048 px per side, aspect ratio ≤ 1.25 (`400 logo_type`).
+3. `ConsoleRpc.getApp`: the org's app (`404 not_found`) at `expectedVersion` (`409 version_conflict`).
+4. The re-encode: `{width: 256, height: 256, fit: 'pad', background: 'rgba(0,0,0,0)'}` → PNG; the answer is checked
+   (a static 256 × 256 PNG), stripped to IHDR/PLTE/tRNS/IDAT/IEND, ≤ 128 KiB (`413 logo_too_large`) and decoded
+   again (D303).
+5. `logo_objects` (upsert, unmarked), then `LOGOS.put("logos/<app>/<sha256 of the stored bytes>.png", image/png)`.
+6. `ConsoleRpc.setLogo` (CAS); then the replaced key is marked `replaced_at` (the hourly cron deletes it 30 days on),
+   and `audit_log` gets `app.logo_set` (`ok`, or `failed` with the code).
+
+The current image again changes nothing. Uploads are limited to 10 a minute per org (`CONSOLE_IP_LIMIT`, key
+`<env>:console-logo:<org>`; `429 rate_limited`). Without the `IMAGES` binding (or `LOGOS`) it answers `500 internal`.
+`logoRemoveRoute` (`{expectedVersion}` → `{version}`; `setLogo(null)`, `app.logo_removed`) is the backend of C10's
+remove control; the spec lists no route for it.
+
 **`StaffRpc`** (named export, a `WorkerEntrypoint`; no route: bound only by the admin Worker as `CONSOLE`, batch C8).
 Inputs are console-core's strict zod schemas (`packages/console-core/src/staff.ts`); answers `{ok: true, …}` or
 `{ok: false, code, error?}`. Staff writes take a `hana` actor; the reads the admin Worker's crons use also take
@@ -1426,7 +1457,7 @@ Inputs are console-core's strict zod schemas (`packages/console-core/src/staff.t
 
 | Method | What it does |
 |---|---|
-| `listOrgs({cursor?, limit ≤ 200})`, `getOrg({orgId})`, `listMembers({orgId})` | Orgs by id (`org_legacy` included); an org with its members (email, `sub`, the role in force, `pendingOwnerFrom` for a pending owner) and invites (newest first) |
+| `listOrgs({cursor?, limit ≤ 200})`, `getOrg({orgId})`, `listMembers({orgId})` | Orgs by id (`org_legacy` included); an org with its members (email, `sub`, the role in force, `pendingOwnerFrom` for a pending owner), invites (newest first) and, in `getOrg`, its live owner grants (`grants`: not cancelled, not applied, newest first, no hash column; C8, D283) |
 | `issueInvite({email, role, orgId? \| newOrgName?, kind?})` | An invite (`token_hash` NULL until the notice is acked), 7 days from creation; an owner invite to an existing org also creates its owner grant. Refused: `org_legacy` (`forbidden`), unknown org (`not_found`), frozen org, 11th open invite, a second open invite of the address to the org (`conflict`), a second partner org while passkeys haven't shipped (`passkeys_required`). Returns the invite view, never a token |
 | `revokeInvite({inviteId})` | Revokes an open invite and cancels its grant (`not_pending` once ended) |
 | `pendingMemberNotices({limit ≤ 100})` | The blocking notices to send, oldest first: open invites and live grants not yet acked, each with the org's current owners (a promotion also with the promoted member) |
@@ -1440,13 +1471,124 @@ Inputs are console-core's strict zod schemas (`packages/console-core/src/staff.t
 target) or `conflict`; a write whose state moved meanwhile is `conflict`.
 
 **Bindings** (`apps/console/scripts/gen-wrangler.ts`): `CONSOLE_DB` (D1, `migrations/` 0001–0002), `API` → the API
-Worker's `ConsoleRpc`, `LOGOS` and `STATEMENTS` (R2; `STATEMENTS` read only by code), `ASSETS` (`./dist`, the SPA
-build), `CONSOLE_IP_LIMIT`; vars `ENV_NAME`, `CONSOLE_ORIGIN`, `CONSOLE_AUTH_ORIGIN`, `CONSOLE_GOOGLE_CLIENT_ID` (the
-manifest's one `google` console audience, D294), `FILES_ORIGIN`, `NEAR_RPC`, `SIGNER_ACCOUNT`, `OWNER_GRANT_DELAY_MS`;
-secret `CONSOLE_GOOGLE_CLIENT_SECRET` (the code exchange only). **Cron** `0 * * * *` (`docs/operations.md` "Partner
-console Worker"). **Logs**: `staff_rpc`, `link_cancel`, `csrf_refused`, `auth_*`, `invite_accept`, `console_rpc`,
-`console_cron`, `audit_write_failed`, `console_error`, with method, request id, actor kind, org id, outcome, code and a
-refused claim's name only.
+Worker's `ConsoleRpc` (the console calls `listApps`, `getApp`, `listChanges` and `cancelChangeByLink`, and for logos
+`getApp` and `setLogo`), `LOGOS` and `STATEMENTS` (R2; `STATEMENTS` read only by code), `IMAGES` (the Images binding,
+C11), `ASSETS` (`./dist`, the SPA build), `CONSOLE_IP_LIMIT`; vars `ENV_NAME`, `CONSOLE_ORIGIN`, `CONSOLE_AUTH_ORIGIN`,
+`CONSOLE_GOOGLE_CLIENT_ID` (the manifest's one `google` console audience, D294), `FILES_ORIGIN`, `NEAR_RPC`,
+`SIGNER_ACCOUNT`, `OWNER_GRANT_DELAY_MS`; secret `CONSOLE_GOOGLE_CLIENT_SECRET` (the code exchange only). **Cron**
+`0 * * * *` (`docs/operations.md` "Partner console Worker"). **Logs**: `staff_rpc`, `link_cancel`, `csrf_refused`,
+`auth_*`, `invite_accept`, `console_rpc`, `console_cron`, `audit_write_failed`, `console_error`, `logo` (`code` is
+`logo_type:<reason>` for a refused file, never its bytes), with method, request id, actor kind, org id, outcome, code
+and a refused claim's name only.
+
+**Hourly purge of replaced logos** (D301): the due `logo_objects` rows are deleted first (only while still marked and
+replaced more than 30 days ago, `RETURNING`), then those objects from `LOGOS`; if the object delete fails, the rows
+are put back for the next hour.
+
+## Files Worker (`apps/files`, its own Worker) · C11
+
+`hana-id-files-<env>` (`files.workerName`) on `files.origin`: partner logos from the `LOGOS` bucket, and nothing else
+(D74, D304). No secret, D1, Hyperdrive, service binding, cookie or cron. Bindings (`apps/files/scripts/gen-wrangler.ts`):
+`LOGOS` (R2, read only by code: `get` is its only call, a source test) and the var `FILES_ORIGIN`. Placement follows the
+origin (D307): `<files.workerName>.<subdomain>.workers.dev` in a `local*`/`sandbox*` env, else a Custom Domain;
+preview URLs off.
+
+| Request | Answer |
+|---|---|
+| `GET`/`HEAD` `/logos/<app_…>/<64 hex>.png` on `FILES_ORIGIN` | `200` with the object, when it exists, is ≤ 128 KiB, has `contentType: image/png`, starts with the PNG signature and its sha256 is the hash in its key. Headers exactly: `Content-Type: image/png`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox`, `Cross-Origin-Resource-Policy: cross-origin`, `Content-Disposition: inline; filename="logo.png"`, `Cache-Control: public, max-age=31536000, immutable`, `Referrer-Policy: no-referrer` (plus `Content-Length`). A query string is ignored |
+| the same path, any object failing a check | `404` (logged `logo` `rejected` with a code, never the key) |
+| any other path or host | `404`, the bucket never read |
+| any other method | `405`, `allow: GET, HEAD` |
+| R2 fails | `503` |
+
+Every non-`200` answer is `text/plain` with `nosniff`, `default-src 'none'; sandbox`, `no-referrer` and
+`Cache-Control: no-store`.
+
+## Admin Worker (`apps/admin`, its own Worker; not deployed) · C8
+
+The Hana staff console's Worker (`hana-id-admin-<env>`) on `admin.origin`, behind Cloudflare Access. It binds the
+API's `AdminRpc` (`API`) and the console's `StaffRpc` (`CONSOLE`) and is the only caller of both; nothing binds it.
+Built on `feat/batch-c-8`, not merged or deployed (milestone M4, `docs/operations.md` "Admin Worker"). D278–D285.
+
+**Every request.** The Worker runs first (assets with `run_worker_first`). A host other than `ADMIN_ORIGIN`: `404 Not
+found`. **`/api/*`**: first the Access check, then (non-GET) the CSRF checks, then the route:
+- **Access** (D88): the `Cf-Access-Jwt-Assertion` header only (no cookie, no `ctx.access`), verified with
+  `@hana-id/oidc` `AccessJwtVerifier`: RS256 with a `kid` in `https://<ACCESS_TEAM_DOMAIN>/cdn-cgi/access/certs` (cached
+  ≤ 10 min, never stale), `iss = https://<ACCESS_TEAM_DOMAIN>`, `aud` contains `ACCESS_AUD`, `exp`/`nbf` (60 s skew),
+  `type = 'app'`, a non-empty `sub` (no service token) and `email`; then the lowercased email must be in
+  `STAFF_EMAILS`. No or a bad token: `401 unauthenticated`; not on the list: `403 not_staff`; `ACCESS_AUD` `UNSET`, an
+  unusable staff list or unreachable certs: `503 access_unavailable`.
+- **CSRF** (every non-GET request, any path): `Sec-Fetch-Site: same-origin`, `Origin` = `ADMIN_ORIGIN`,
+  `x-hana-admin: 1`, `content-type: application/json`, else `403 csrf`.
+- The staff actor `{kind: 'hana', id: <Access sub>, email}` is the actor of every RPC call (into `app_changes` and
+  `audit_log`); the request id is the `cf-ray` (else a random one), the client IP `cf-connecting-ip`. A route builds
+  its RPC input from named fields only.
+
+Everything else is the SPA (`public/`: plain HTML, CSS and JavaScript; `GET`/`HEAD` only, its fallback for unknown
+paths; Access guards it at the edge). Every response carries the console's CSP and headers (`docs/batch-c-spec.md`
+"Response headers"); `/api/*` also `Cache-Control: no-store`; no response sets a cookie. Errors are
+`{error: {code, message}}`; RpcCodes keep console-core's status; `503 upstream_unavailable` when the API or console
+binding throws; `405` with `allow`; `413` over 64 KiB (16 KiB without a `Content-Length`).
+
+| Route | Body or query → answer | Calls |
+|---|---|---|
+| `GET /api/me` | → `{email, sub, env, consoleOrigin}` | — |
+| `GET /api/orgs?cursor` | → `{orgs, next?}` (100 a page) | `StaffRpc.listOrgs` |
+| `GET /api/orgs/:org` | → `{org, members, invites, grants, securityContacts, apps, flags: {noSecurityContacts, ownersNotContacts}}` | `getOrg`, `getSecurityContacts`, `AdminRpc.listApps` |
+| `POST /api/orgs/:org/freeze`, `/suspend` | `{frozen}`, `{suspended}` | `StaffRpc.freezeOrg`, `AdminRpc.suspendOrg` |
+| `PUT /api/orgs/:org/security-contacts` | `{emails}` (trimmed and lowercased here) → `{emails}` | `setSecurityContacts` |
+| `GET /api/orgs/:org/members` | → `{members, invites, grants}` | `getOrg` |
+| `POST /api/orgs/:org/members/:user` | `{role: 'owner' \| 'viewer' \| null}` | `setMember` |
+| `GET /api/orgs/:org/changes?beforeSeq` | → `{changes}` (100) | `AdminRpc.listChanges` |
+| `POST /api/invites`, `/api/invites/:id/revoke` | `{email, role, orgId? \| newOrgName?, kind?}` → `{invite}` (never a token; the cron emails it) | `issueInvite`, `revokeInvite` |
+| `POST /api/users/:user/disable`, `/api/owner-grants/:id/cancel` | `{disabled}`, `{}` | `disableUser`, `cancelOwnerGrant` |
+| `POST /api/apps` | `{orgId, scopeId, environment, name, origins}` → `{app, publishableKey, createdScope}` | `listMembers` (the org's usable owners' subs), `createApp` |
+| `POST /api/scopes/:scope/assign` | `{orgId}` → `{apps}` | `listMembers`, `assignScopeOrg` |
+| `GET /api/apps/:app?org=` | → `{app}` | `getApp` |
+| `POST /api/apps/:app/suspend`, `/resume`, `/delete` | `{bit}` (suspend: 1 by default) → `{suspendedBy}`; `{}` | `setSuspended`, `deleteApp` |
+| `POST /api/apps/:app/origins`, `/origins/remove`, `/changes`, `/off` | `{orgId, add, expectedVersion}`, `{orgId, remove, expectedVersion}`, `{orgId, kind, policy?, expectedVersion}`, `{orgId, what, expectedVersion}` | `addOrigins`, `removeOrigins`, `proposeChange`, `turnOff` |
+| `POST /api/apps/:app/keys/:key/revoke` | `{orgId}` | `revokeKey` |
+| `POST /api/changes/:id/cancel`, `/expedite` | `{orgId}`, `{reason}` (≥ 20 characters) | `cancelChange`, `expediteChange` |
+| `GET /api/audit?orgId&appId&actorKind&actorId&action&from&to&cursor&changesBefore` | → `{rows, next?, changes}` (`changes`: the org's `app_changes` when `orgId` is set, else null) | `queryAudit`, `listChanges` |
+| `GET /api/audit.csv?…` (same filters) | CSV (`source, seq, at, org_id, app_id, scope_id, action, actor_kind, actor_id, actor_email, target, outcome, request_id, near_tx, country, detail`), newest first, ≤ 5 000 rows per source (`x-hana-truncated: 1` past it); text cells starting `=`, `+`, `-`, `@`, tab or CR get a `'` | as above |
+| `GET /api/security` | → the notice backlog, unnotified security events, each feed cursor with its lag, the watcher's cursor, the last cron run | `pendingNotices`, `pendingMemberNotices`, `securityEvents`, `changesSince`, `auditSince`, `ops.state` |
+
+Not yet: reports, statements, rates, exports (C12), retention (C13), Security & monitoring and pending upgrades (C14),
+the Users screen (`/api/users/search`, `/get`: proposed D275, C8b) and the Support ID lookup (C15).
+
+**Cron** `*/5 * * * *` (`src/cron.ts`; D280), as the `system` actor, with at most 40 outbound calls (emails and NEAR
+views) a run:
+1. **Blocking notices** (`src/notices.ts`; D279): `AdminRpc.pendingNotices` → one message to the security alias and to
+   each security contact, with `<CONSOLE_ORIGIN>/cancel/<id>#t=<T>` (T = HMAC(`CANCEL_LINK_KEY`, cancel-link layout))
+   → `AdminRpc.ackNotice({changeId, cancelTokenHash: b64url(sha256(T))})`. `StaffRpc.pendingMemberNotices`: an invite's
+   notice to every owner, the contacts and the alias, then the invitee's `<CONSOLE_ORIGIN>/invite#t=<T>` (key
+   `INVITE_LINK_KEY`) → `ackMemberNotice({inviteId, tokenHash})`; an owner grant's notice with
+   `<CONSOLE_ORIGIN>/cancel-owner/<id>#t=<T>` (key `CANCEL_LINK_KEY`) → `ackMemberNotice({grantId, tokenHash})`. **An
+   ack only after every send was accepted** (Resend 2xx with an id); a missing key or sender acks nothing.
+2. **The feed** (`src/feed.ts`; D281): `securityEvents({unnotifiedOnly})` → the alias and the org's contacts →
+   `markSecurityEventNotified`; `changesSince(feed.app_changes.seq)` and `StaffRpc.auditSince(feed.audit_log.seq)` →
+   one digest per org to its contacts (the alias when it has none), the cursor in `ops.state` moved only past
+   accepted rows. Skipped: proposals and announcements (the blocking notice covers them), the notices' own audit rows,
+   the console's link-cancel row.
+3. **The watcher** (`src/watcher.ts`; D282): 15 scopes a run from `listScopes` (round-robin, `watch.scope_cursor`),
+   `get_scope` uncached on `NEAR_RPC`; each pending change emailed once (`ops.scope_watch`), each owners/clients/
+   `allow_shared` diff against `ops.scope_snapshot` emailed once; a first sight is stored silently as the baseline.
+
+Steps 2 and 3 need `USAGE_DB`; without it (or with Neon down) they are skipped and step 1 still runs.
+
+**Email** (`src/email/`): `EmailSender` (one message in, accepted with the provider's id or an error), the Resend
+adapter (`POST https://api.resend.com/emails`, `Idempotency-Key` = sha256(purpose ‖ recipient), 10 s timeout; errors
+name the HTTP status only), one message per recipient, plain text plus simple HTML, no remote image, links only to
+`CONSOLE_ORIGIN`, never an approve link; partner text escaped and stripped of control characters, subjects on one line.
+
+**Bindings** (`apps/admin/scripts/gen-wrangler.ts`; D284): `API` → `AdminRpc`, `CONSOLE` → `StaffRpc`, `USAGE_DB`
+(Hyperdrive, the admin config, `--admin-hyperdrive-id`), `ASSETS`; vars `ENV_NAME`, `ADMIN_ORIGIN`, `CONSOLE_ORIGIN`,
+`FILES_ORIGIN`, `NEAR_RPC`, `SIGNER_ACCOUNT`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `STAFF_EMAILS` (JSON),
+`EMAIL_FROM`, `SECURITY_ALIAS`, `APP_CHANGE_DELAY_MS`, `OWNER_GRANT_DELAY_MS`; secrets `EMAIL_API_KEY`,
+`CANCEL_LINK_KEY`, `INVITE_LINK_KEY`. `preview_urls: false`; `workers_dev: true` only for a workers.dev `admin.origin`
+in a dev env, else a Custom Domain route. No D1 and no R2 in C8. **Logs**: `access_refused`, `csrf_refused`, `bff`,
+`notice`, `feed`, `watcher`, `cron`, `admin_error`, with route patterns, request ids, org, scope and target ids,
+outcomes, codes and counts only: never an email, a `sub`, a JWT, a link token or its hash.
 
 ## Email issuer (`apps/email-issuer`, its own Worker) · E
 

@@ -1,0 +1,30 @@
+{
+  "name": "@hana-id/admin",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The Hana admin console Worker (docs/batch-c-spec.md \"Hana admin console\"): the staff SPA and its /api/* backend behind Cloudflare Access, the blocking notices, the security feed and the on-chain watcher (5-minute cron), email through Resend. Batch C8.",
+  "type": "module",
+  "scripts": {
+    "gen": "tsx scripts/gen-wrangler.ts",
+    "deploy": "wrangler deploy",
+    "test": "vitest run && vitest run -c vitest.scripts.config.ts && vitest run -c vitest.ops.config.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts && tsc --noEmit -p test-ops"
+  },
+  "dependencies": {
+    "@hana-id/console-core": "workspace:*",
+    "@hana-id/oidc": "workspace:*",
+    "pg": "8.23.1"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.4",
+    "@cloudflare/workers-types": "5.20261016.1",
+    "@electric-sql/pglite": "0.5.11",
+    "@hana-id/env": "workspace:*",
+    "@types/node": "^22.0.0",
+    "@types/pg": "8.23.1",
+    "tsx": "4.23.15",
+    "typescript": "^5.7.0",
+    "vitest": "4.1.12",
+    "wrangler": "4.151.1"
+  }
+}

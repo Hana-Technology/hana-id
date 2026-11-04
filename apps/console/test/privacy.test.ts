@@ -16,6 +16,13 @@ describe('audit details', () => {
   it('the allowlist (snapshot: a new key is a reviewed change)', () => {
     expect(AUDIT_DETAIL_KEYS).toMatchInlineSnapshot(`
       {
+        "app.logo_removed": [
+          "code",
+        ],
+        "app.logo_set": [
+          "logoKey",
+          "code",
+        ],
         "change.link_cancel": [
           "code",
         ],

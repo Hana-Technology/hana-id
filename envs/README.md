@@ -52,7 +52,10 @@ Batch C fields (`docs/batch-c-spec.md` "Manifest", `packages/env/src/dashboard.t
   - Every dashboard origin is a Hana origin by the `vaultOrigin` rules, distinct from every other Hana origin (the
     API's, `vaultOrigin`, `authOrigin`) and, outside dev envs, on a different site from `vaultOrigin` (D38). Worker,
     D1, bucket and Hyperdrive names are distinct (the API's and the watchdog's included). `gen` passes the list of
-    all Hana origins to the API as `REFUSED_ORIGINS` (`hanaOwnOrigins`) and `files.origin` as `FILES_ORIGIN`.
+    all Hana origins to the API as `REFUSED_ORIGINS` (`hanaOwnOrigins`) and `files.origin` as `FILES_ORIGIN`; the
+    same `files.origin` goes to the auth page Worker (`FILES_ORIGIN`) and into the page build (`HanaEnv.filesOrigin`),
+    the logo pages' `img-src` (batch C11), and to the files Worker (`apps/files`, `gen <env>`), which is deployed on it:
+    a `workers.dev` files origin must be `<files.workerName>.<subdomain>.workers.dev`.
 
 `cloudflare.durableObjectLocation` (optional): the region for the Durable Objects every login shares (relayer keys, the
 per-app and owner-action limiters), as a Cloudflare location hint (`apac`, `weur`, `enam`, …). Without it each object

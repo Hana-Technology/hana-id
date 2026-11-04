@@ -27,8 +27,8 @@ import { RELAY_ID_PATTERN } from '@hana-id/core';
 export const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 /** Google's tokeninfo: the access token's client and `sub`, POSTed from the callback under token_first. */
 export const GOOGLE_TOKENINFO_URL = 'https://oauth2.googleapis.com/tokeninfo';
-/** Its origin: the callback page's connect-src in an env with an email issuer (auth/pages.ts, apps/api pages/host.ts). */
-export const GOOGLE_TOKENINFO_ORIGIN = 'https://oauth2.googleapis.com';
+/** Its origin (google-origins.ts, which pages.ts reads without the rest of this module). */
+export { GOOGLE_TOKENINFO_ORIGIN } from './google-origins.ts';
 /** The callback path on authOrigin; the only redirect URI registered on the Google clients. */
 export const CALLBACK_PATH = '/login/callback';
 /** What the relay may carry for Google's `error` (Google's codes are lowercase snake case). */

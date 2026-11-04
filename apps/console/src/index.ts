@@ -9,7 +9,7 @@
 // through the `StaffRpc` entrypoint (service binding, no route). The hourly cron runs the invite, owner-grant and
 // housekeeping jobs.
 import { createLoginFlow } from './auth-flow.ts';
-import { me, orgRoute, sessionOf } from './bff.ts';
+import { isOrgReadPath, me, orgRoute, sessionOf } from './bff.ts';
 import { hourly } from './cron.ts';
 import { SAFE_METHODS, csrfProblem } from './csrf.ts';
 import type { Env } from './env.ts';
@@ -28,7 +28,12 @@ export type { Env } from './env.ts';
 type Handler = (r: Request, env: Env, info: RequestInfo) => Promise<Response>;
 type SessionHandler = (r: Request, env: Env, info: RequestInfo, s: Session) => Promise<Response>;
 
-/** The session-less `/api/*` routes (method → handler): sign-in and the emailed links. */
+/**
+ * The session-less `/api/*` routes (method → handler): sign-in and the emailed links. The write routes come with C10;
+ * among them `POST /api/orgs/:org/apps/:app/logo` goes to `logoUploadRoute` (logo.ts, batch C11) once C10 has checked
+ * the session, the membership and the owner role (CSRF already takes that path's raw body, csrf.ts). Until then that
+ * path, like any path under `/api/orgs/` that isn't a read route, is 404; a non-GET to a read route is 405.
+ */
 const API_ROUTES: Record<string, Partial<Record<string, Handler>>> = {
   '/api/auth/start': { POST: createLoginFlow },
   '/api/auth/complete': { GET: completeSignIn },
@@ -46,8 +51,7 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
   const info = requestInfo(request);
   const plain = API_ROUTES[url.pathname];
   const withSession = SESSION_ROUTES[url.pathname];
-  const isOrgRoute = url.pathname.startsWith('/api/orgs/');
-  const routes = plain ?? withSession ?? (isOrgRoute ? { GET: true } : undefined);
+  const routes = plain ?? withSession ?? (isOrgReadPath(url.pathname) ? { GET: true } : undefined);
   if (!routes) return errorResponse('not_found');
   if (!Object.hasOwn(routes, request.method)) return errorResponse('method_not_allowed', undefined, { allow: Object.keys(routes).join(', ') });
   if (plain) return plain[request.method]!(request, env, info);

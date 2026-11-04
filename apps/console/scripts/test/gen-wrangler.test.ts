@@ -1,5 +1,5 @@
 // The console's generated config and the config rules across Workers (docs/batch-c-spec.md "Tests: Topology and
-// config"): no public route in C7; only the console binds ConsoleRpc and CONSOLE_DB; the console runs first on every
+// config"): the console route on (C9); only the console binds ConsoleRpc and CONSOLE_DB, only the admin (StaffRpc, C8) and console-auth (AuthHandler, C9) bind the console; the console runs first on every
 // request; R2, rate-limit and cron as the spec's bindings table says; and source checks (no put/delete on STATEMENTS,
 // no hash column read into a view, no `SELECT *` on the token-holding tables).
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -7,10 +7,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MAX_APP_CHANGE_DELAY_MS, MIN_APP_CHANGE_DELAY_MS, type Manifest, manifestSchema } from '@hana-id/env';
 import { describe, expect, it } from 'vitest';
+import { wranglerConfig as adminConfig } from '../../../admin/scripts/gen-wrangler.ts';
 import { wranglerConfig as apiConfig } from '../../../api/scripts/gen-wrangler.ts';
 import { pagesWranglerConfig } from '../../../api/scripts/pages-wrangler.ts';
 import { wranglerConfig as issuerConfig, TEST_MANIFEST as ISSUER_MANIFEST } from '../../../email-issuer/scripts/gen-wrangler.ts';
 import { wranglerConfig as watchdogConfig, TEST_MANIFEST as WATCHDOG_MANIFEST } from '../../../watchdog/scripts/gen-wrangler.ts';
+import { wranglerConfig as filesConfig } from '../../../files/scripts/gen-wrangler.ts';
 import { MAX_OWNER_GRANT_DELAY_MS, MIN_OWNER_GRANT_DELAY_MS } from '../../src/config.ts';
 import { CONSOLE_RATE_LIMITS } from '../../src/limits.ts';
 import { CRON, LOCAL_D1_ID, TEST_MANIFEST, consoleGoogleClientId, existingD1Id, main, testWranglerConfig, wranglerConfig } from '../gen-wrangler.ts';
@@ -77,6 +79,8 @@ describe('the console config', () => {
         { binding: 'LOGOS', bucket_name: 'hana-id-logos-test' },
         { binding: 'STATEMENTS', bucket_name: 'hana-id-statements-test' },
       ],
+      // Batch C11: logos are decoded and re-encoded through the Images binding.
+      images: { binding: 'IMAGES' },
       ratelimits: [{ name: 'CONSOLE_IP_LIMIT', namespace_id: '95101', simple: { limit: 10, period: 60 } }],
       assets: { directory: './test/assets', binding: 'ASSETS', not_found_handling: 'single-page-application', run_worker_first: true },
       triggers: { crons: ['0 * * * *'] },
@@ -132,6 +136,8 @@ describe('across Workers (config snapshots)', () => {
     ['email issuer', issuerConfig({ ...m, name: 'local-test' }, LOCAL_D1_ID, LOCAL_D1_ID) as Config],
     ['console', wranglerConfig(m, LOCAL_D1_ID) as Config],
     ['console-auth', consoleAuthConfig(m) as Config],
+    ['files', filesConfig(m) as Config],
+    ['admin', adminConfig(m, { adminHyperdriveId: 'a'.repeat(32) }) as Config],
   ];
 
   it('only the console binds ConsoleRpc', () => {
@@ -144,16 +150,32 @@ describe('across Workers (config snapshots)', () => {
     expect(binders).toEqual(['console']);
   });
 
-  it('only console-auth binds the console, and only its AuthHandler (StaffRpc gets its only caller, the admin Worker, in C8)', () => {
-    const binders = configs
-      .filter(([, c]) => (c.services ?? []).some((s) => s.service === m.console!.workerName || s.entrypoint === 'StaffRpc' || s.entrypoint === 'AuthHandler'))
-      .map(([n, c]) => [n, c.services]);
-    expect(binders).toEqual([['console-auth', [{ binding: 'CONSOLE', service: m.console!.workerName, entrypoint: 'AuthHandler' }]]]);
+  it('the console is bound by the admin Worker (StaffRpc, C8) and console-auth (AuthHandler, C9) only, each to its one entrypoint', () => {
+    const binders = configs.filter(([, c]) => (c.services ?? []).some((s) => s.service === m.console!.workerName)).map(([n]) => n);
+    expect(binders.sort()).toEqual(['admin', 'console-auth']);
+    const onConsole = (n: string) => (configs.find(([x]) => x === n)![1].services ?? []).filter((s) => s.service === m.console!.workerName);
+    expect(onConsole('admin')).toEqual([{ binding: 'CONSOLE', service: m.console!.workerName, entrypoint: 'StaffRpc' }]);
+    expect(onConsole('console-auth')).toEqual([{ binding: 'CONSOLE', service: m.console!.workerName, entrypoint: 'AuthHandler' }]);
+    expect(configs.filter(([, c]) => (c.services ?? []).some((s) => s.entrypoint === 'AuthHandler')).map(([n]) => n)).toEqual(['console-auth']);
+    expect(configs.filter(([, c]) => (c.services ?? []).some((s) => s.entrypoint === 'StaffRpc')).map(([n]) => n)).toEqual(['admin']);
   });
 
   it('console-auth has no secret, D1, Hyperdrive or R2 binding', () => {
     const auth = configs.find(([n]) => n === 'console-auth')![1];
     expect(JSON.stringify(auth)).not.toMatch(/d1_databases|hyperdrive|r2_buckets|SECRET/iu);
+  });
+
+  it('batch C11: only the console and the files Worker bind the logo bucket; the files Worker binds nothing else', () => {
+    const buckets = (c: Config) => ((c.r2_buckets as { binding: string; bucket_name: string }[] | undefined) ?? []);
+    const binders = configs.filter(([, c]) => buckets(c).some((b) => b.bucket_name === m.files!.logosBucket)).map(([n]) => n);
+    expect(binders).toEqual(['console', 'files']);
+    const files = configs.find(([n]) => n === 'files')![1];
+    expect(buckets(files)).toEqual([{ binding: 'LOGOS', bucket_name: m.files!.logosBucket }]);
+    expect(files.d1_databases ?? []).toEqual([]);
+    expect(files.services ?? []).toEqual([]);
+    expect(JSON.stringify(files)).not.toMatch(/hyperdrive|images/iu);
+    // Only the console re-encodes (the Images binding).
+    expect(configs.filter(([, c]) => c.images !== undefined).map(([n]) => n)).toEqual(['console']);
   });
 
   it('the console binds no other Worker’s database', () => {

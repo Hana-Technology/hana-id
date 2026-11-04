@@ -1,10 +1,12 @@
 # Batch C build plan
 
-Status (2026-11-04, branch `feat/batch-c-9`, on `develop` @ 8fc338e): C1–C5 merged into `develop` and running in the
+Status (2026-11-04, branch `feat/batch-c-9`, on `develop` @ a243d6b): C1–C5 merged into `develop` and running in the
 sandbox-dev API as far as `develop` includes them (migrations 0006, 0009 and 0010 applied, usage capture off;
-`docs/operations.md`); C7 (the console Worker backend; D240–D244) and C6 (the claim allow-list on its tokens, D277)
-merged, not deployed (M3 not run; C7's setup is step 5 below, at M4); C9 (partner sign-in, D290–D297) built on
-`feat/batch-c-9`, tests green, not merged, not deployed; C8 being built on `feat/batch-c-8`; C10–C17 not built. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
+`docs/operations.md`); C6 (the claim allow-list on its tokens, D277), C7 (the console Worker backend; D240–D244), C8
+(the admin Worker; D278–D285) and C11 (the files Worker and logos; D300–D308) merged into `develop`, not deployed (M3
+not run; their setup is steps 4, 5 and 7–10 below, at M4 and M5); C9 (partner sign-in, D290–D297) built on
+`feat/batch-c-9`, tests green, not merged, not deployed (its setup is steps 11 and 12, at M4); C10 and C12–C17 not
+built. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
 batches that each merge into `develop` on their own: tests green, the docs they change updated, and nothing a partner,
 a user or staff can reach that is half-wired. Ordered by dependency; the spec's "Build order" steps are noted per
 batch. This is a plan, not a spec: where it and the spec disagree, the spec wins or gets amended first.
@@ -264,6 +266,11 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
   `EMAIL_API_KEY`, `CANCEL_LINK_KEY`, `INVITE_LINK_KEY` secrets (step 10), the admin Hyperdrive id.
 - **Visible after M4**: staff console on sandbox-dev; notices emailed; CLI staff proposals announced by email instead
   of `app:changes:announce`.
+- **Status** (2026-11-04): built on `feat/batch-c-8`, not merged, not deployed (D278–D285). Additive changes outside
+  `apps/admin`: `AdminRpc.listApps` / `getApp` take the cron's `system` actor (the watcher's SetAllowShared notice),
+  `StaffRpc.getOrg` returns the live owner grants. Not in C8, as planned: the R2 bindings, settlement, the daily and
+  monthly jobs (C12, C13), the Users screen (C8b), Security & monitoring (C14). The setup is `docs/operations.md` "Admin
+  Worker" (setup steps 4, 8, 9, 10).
 
 ## C9. Partner sign-in
 
@@ -301,6 +308,12 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
 - **Tests**: spec "Settings, keys, logos" logo rows; no `put`/`delete` on `LOGOS` in the files Worker; headers.
 - **Setup**: R2 buckets with the `STATEMENTS` lock and `EXPORTS` lifecycle (setup step 7); Images binding on the
   account.
+- **Status** (2026-11-04): built on `feat/batch-c-11`, not merged, not deployed (D300–D308). Built: `apps/files`, the
+  console's upload backend (`apps/console/src/logo.ts`, `logo-format.ts`) with the CSRF exception for its raw body,
+  the purge reordered, `logoUrl` in `GET /v1/app`, the logo on `/login`, `/login/email`, `/approve`, `/export` with
+  `FILES_ORIGIN` in both of their CSPs, the `IMAGES` binding in the console's config. Left for C10: the session route
+  that checks the owner and calls `logoUploadRoute` (and `logoRemoveRoute`), the upload screen. The setup is in
+  `docs/operations.md` "Files Worker and logos". C12 must write its on-demand exports under `exports/` (D308).
 
 ## C12. Reports and statements
 
@@ -409,8 +422,9 @@ Run from the main checkout; every file in `.secrets/` is 0600 in a 0700 director
    Access on `workers.dev` for sandbox-dev, D75); policy: GitHub team `hana-admins` in `Hana-Technology` plus the
    exact-email Google fallback (open question 4); copy the team domain and AUD tag into the manifest.
 9. **Resend** (C8, D87): the sending subdomain with SPF, DKIM and DMARC; an API key for the admin Worker only.
-10. **Admin secrets** (C8): `EMAIL_API_KEY`, `CANCEL_LINK_KEY`, `INVITE_LINK_KEY` (32 random bytes each, generated
-    into `.secrets/<env>/`, then `wrangler secret put`).
+10. **Admin secrets** (C8): `EMAIL_API_KEY` (the Resend key of step 9), `CANCEL_LINK_KEY`, `INVITE_LINK_KEY` (32 random
+    bytes each, base64, generated into `.secrets/<env>/`, then `wrangler secret put` from stdin; `docs/operations.md`
+    "Admin Worker" step 3).
 11. **Console Google client** (C9): a Web client with no JavaScript origins and one redirect URI,
     `<console.authOrigin>/callback`; its id in `consoleAudiences` (the only `google` entry, D294), its downloaded JSON
     in `.secrets/<env>/console-google-client.json` (0600), `CONSOLE_GOOGLE_CLIENT_SECRET` as a console secret through

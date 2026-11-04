@@ -1,6 +1,7 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's)
 
-Last verified against code: 2026-11-04 (branch `feat/google-token-first`: the issuer's `POST /v1/email/google-record`
+Last verified against code: 2026-11-04 (branch `fix/user-emails-review`: the user directory's order-safe upserts in
+"Email issuer" D1); 2026-11-04 (branch `feat/google-token-first`: the issuer's `POST /v1/email/google-record`
 and its per-IP limit, google-match's user-directory write (D269, D270), the auth page Worker's callback CSP with Google's
 tokeninfo in an env with an email issuer); 2026-11-04 (branch `fix/sessions-allow-list`: `/v1/sessions`'s claim allow-list always on, `/v1/owner-actions`'s `token_has_pii` for owner tokens and client proofs, the `REJECT_PII_ON_SESSIONS` binding gone; D271, D274); 2026-11-04 (branch `feat/user-emails`: the issuer's `verify` writes the user directory, its D1's migration 0002 and the `directory_write_failed` log; D269); 2026-11-03 (branch `fix/8b-rereview`, onto `feat/email-login-8b`: the issuer's CORS exposes `retry-after`); 2026-11-03 (branch `feat/email-login-8b` review fixes: the login relay's 40 writes a minute per IP and 12 KiB body, google-match's `google_account_mismatch`, no revocation and 120 per 10 min per IP, D264, D265, D267); 2026-11-03 (branch `feat/email-login-8b`: the login relay's writes from `VAULT_ORIGIN` and the follow-up slots, the vault page's `connect-src` with `EMAIL_ISSUER_URL`, the issuer's case-B `verify` answering `sub` with its `linkTicket`, the web as the caller of google-match, `/v1/sessions/revoke` and `/v1/link*`; D254–D259); 2026-11-03 (branch `fix/demo-polish`: `GET /v1/app` reads its D1 rows and the registry
 and the registry side by side, `get_config` only when a shared client is needed, its `settings` and `chain` phases and
@@ -1550,8 +1551,10 @@ client_proof|unlock|unsuppress|revoke_tickets, ticket, scope_id?, action_nonce?,
 (0002, D269): `user_emails(provider email|google, sub, email, email_verified, hosted?, first_seen_ms, last_seen_ms)`,
 key (provider, sub), indexes on `email` and `last_seen_ms`, and `user_email_apps(provider, sub, app_id, scope_id,
 first_seen_ms, last_seen_ms)`, key (provider, sub, app_id), index (app_id, last_seen_ms); written by `src/directory.ts`
-after the answer (`waitUntil`): email rows by `verify`, Google rows by google-match and google-record (D270); read by
-Hana staff with `admin user:list` / `user:find` only (no route serves it). The
+after the answer (`waitUntil`): email rows by `verify`, Google rows by google-match and google-record (D270); upserts
+in which the write with the newest `last_seen_ms` sets `email`, `email_verified`, `hosted` (and an app row's
+`scope_id`), `first_seen_ms` is the MIN and `last_seen_ms` the MAX, so a late write never restores older values; read
+by Hana staff with `admin user:list` / `user:find` only (no route serves it). The
 verified address is stored readably there and only there: no log line, other table or Durable Object holds it
 (a live challenge's copy is encrypted, D197). SendGrid also keeps addresses: its suppression lists keep an address until it
 is removed there, whatever the activity retention below. `APP_DB` is the API's D1, read only (`apps`, `plans`).

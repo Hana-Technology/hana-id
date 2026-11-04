@@ -18,6 +18,8 @@ provider note, two "Superseded or amended" rows, the user-mail line under "Propo
 `feat/scope-email-client-tool`, to confirm) on 2026-11-03. D254–D259 (branch `feat/email-login-8b`, to
 confirm) on 2026-11-03, with batch 8b notes on D246 (lifted), D248 ("demo scopes only" lifted) and D249 (superseded).
 D268 (branch `feat/export-copy`, confirmed by the user) on 2026-11-04, with the D111 row of "Superseded or amended".
+D269's "Built" line on 2026-11-04 (branch `feat/user-emails`: the email-login write, `admin user:list` / `user:find`,
+the screen text), with D269 notes on D96, D119, D230 and D264 and two rows of "Superseded or amended".
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -1039,6 +1041,8 @@ answered question there points here.
   is handled transiently off chain at link time, only its HMAC kept, D25). It still never contacts users except for
   two kinds of message the user's own action triggered: sign-in codes and link notices, sent to the address while
   the issuer holds it in that call. No encrypted address is kept for security notices; those are in-product only.
+- Amended 2026-11-04 by D269: the email issuer now stores each user's verified address (its user directory, for
+  Hana staff only; partners never see it). Hana still contacts users only with the two kinds of message above.
 
 ### D97. The API Worker runs in a fixed region next to D1 (replaces D94's Smart Placement)
 - Date 2026-10-29 · Status: deployed to sandbox-dev · Source: `docs/operations.md` "Logs and latency"
@@ -1324,6 +1328,8 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
 - Rejected: Gmail-only linking (Workspace with a matching `hd` is as safe); silent pre-linking at every Google login
   (would hand the email issuer every Google wallet); a delay instead of a code in case A; global links; a separate
   `link_delay_ms`.
+- Amended 2026-11-04 by D269: on chain still pseudonymous ids only, but the issuer now keeps each identity's verified
+  address off chain in its user directory (`user_emails`), for Hana staff.
 
 ### D121. Email issuer signing key: Worker secret on testnet, AWS KMS before mainnet, two-signer-ready
 - Date 2026-10-30 · Status: confirmed by the user, not built · Source: conversation; `docs/email-login-spec.md`
@@ -3319,6 +3325,8 @@ five are **to confirm** by the user. None changes an address: no path, derivatio
   any later change to the API's logging or error paths could capture them; the API would also hold the issuer's
   availability); a redirect from the API (the browser still sends the body to the API first); the issuer on a custom
   domain for sandbox-dev (none is set up; the workers.dev URL gives the same property for free).
+- Amended 2026-11-04 by D269: the address still reaches only the issuer Worker, which now also keeps the verified
+  address in its own D1 (`user_emails`), read by Hana staff only (`admin user:list` / `user:find`).
 
 ### D231. Email tokens at the API: the manifest's keys, the issuer's exact form, the chain's policy, the app's methods
 - Date 2026-11-02 · Status: to confirm; built (`apps/api/src/email-token.ts`, `login-token.ts`, `login-methods.ts`,
@@ -3849,6 +3857,13 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   ended the login with "try again", which can't help.
 - Rejected: asking for the email scope up front in the login's own request (D254: the spike hasn't run); hiding the
   reason behind `email_match_unavailable`.
+- Amended 2026-11-04 by D269 (the screen text only): "it isn't kept" and "Hana uses it once and doesn't keep it" were
+  no longer true. The explainer now says "Google will now ask to share your email address with Hana. Hana uses it to
+  find a wallet you may already have with that address and keeps it with your account. It doesn't share it with the
+  app you're signing in to."; the declined screen "Hana checks whether your Google address already has a wallet. It
+  keeps the address with your account and doesn't share it with the app you're signing in to. Without it you can't
+  open a new wallet with Google here." ("Hana doesn't share it", not "the app can't see it": an app on its own Google
+  client can read the address through Google, D42.)
 
 ### D265. Google's access token is never revoked (amends D254); google-match is retried after 429 or 503
 - Date 2026-11-03 · Status: to confirm; built (`apps/email-issuer/src/handlers.ts` `handleGoogleMatch`,
@@ -3982,8 +3997,10 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   we want to be able to see the emails, no need to worry about privacy obligations … by default, partners cannot see
   the user's emails unless the user explicity approves … hide the user's emails for now') · Built: the table and its
   writer on `feat/user-emails-foundation` (`apps/email-issuer/migrations/0002_user_emails.sql`,
-  `apps/email-issuer/src/directory.ts`); the email and Google writes, the admin CLI and the screen text on
-  `feat/user-emails` and `feat/google-token-first` · Amends D119 and D230 ("the address is never kept"), D264's screen
+  `apps/email-issuer/src/directory.ts`); on `feat/user-emails`: the email write at every 200 of `verify`
+  (`handlers.ts` `handleVerify`: session, case B, the link purposes and auto_link), `admin user:list` / `user:find`
+  (`scripts/lib/admin-users.ts`, the issuer's D1 through wrangler with its log file off) and the screen text (D264's
+  note); the Google writes on `feat/google-token-first`. Migration 0002 not yet applied on sandbox-dev · Amends D119 and D230 ("the address is never kept"), D264's screen
   text ("it isn't kept"), the spec's "Privacy and what is stored"
 - Decision: the email issuer, the only part that ever sees an address, keeps a user directory in its own D1:
   `user_emails` (provider, sub as on chain, the verified address, `email_verified`, `hosted`, first and last seen)
@@ -4077,6 +4094,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 | google-match revokes Google's access token (D195, D254; the interactive email consent "the first time only") | Never revoked: revocation ends the whole grant, so the consent came back every login (D265) | batch 8b review |
 | A path through `get_identity` on the vault's RPC alone (batch 7) | A non-own path confirmed on `rpc` and `rpcFallback` separately; root pins (D263) | batch 8b review |
 | D255: no access token (declined) → `email_match_unavailable` | Declined or another account: the popup's consent screen, `email_consent_declined` / `google_account_mismatch` (D264) | batch 8b review |
+| Hana stores no end-user email address; the Google email is handled transiently, only its HMAC kept (D25 and D96 amended, D119, D230); the screens say "it isn't kept" (D264) | The issuer keeps each identity's verified address in its own D1 (`user_emails`, `user_email_apps`), for Hana staff only (`admin user:list` / `user:find`); partners never see it; the screens say Hana keeps it with the account and doesn't share it with the app (D269) | conversation 2026-11-04 |
 
 ## Proposed, not yet confirmed
 

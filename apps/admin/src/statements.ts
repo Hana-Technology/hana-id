@@ -59,7 +59,7 @@ export interface IssueDeps {
 
 export interface Issued {
   ok: true;
-  statement: StatementWithTotals & { csvKey: string; pdfKey: string };
+  statement: StatementWithTotals;
   auditRecorded: boolean;
 }
 
@@ -110,7 +110,7 @@ export async function issueStatement(d: IssueDeps, orgId: string, month: string)
   if (!auditRecorded) log({ event: 'statement', step: 'audit', orgId, outcome: 'error', code: 'audit_failed' }, 'error');
   const stored = (await d.store.statements(orgId)).find((s) => s.month === month);
   if (!stored) return { ok: false, code: 'internal', error: 'The statement was inserted but not read back' };
-  return { ok: true, statement: { ...statementOf(orgId, stored), csvKey, pdfKey }, auditRecorded };
+  return { ok: true, statement: statementOf(orgId, stored), auditRecorded };
 }
 
 export interface Exported {

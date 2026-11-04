@@ -163,7 +163,7 @@ describe('ConsoleRpc.statements and ledger', () => {
     answer = () => [{ month: '2026-01', as_of_ms: '1800000000000', csv_key: 'k.csv', csv_sha256: 'ab'.repeat(32), pdf_key: 'k.pdf', pdf_sha256: 'cd'.repeat(32), totals, issued_by: 'staff@hana.example', issued_at_ms: '1800000001000' }];
     const before = { ...count };
     const r = await rpc().statements({ ...member(), orgId: org });
-    expect(r).toEqual({ ok: true, statements: [{ orgId: org, month: '2026-01', asOf: 1_800_000_000_000, csvSha256: 'ab'.repeat(32), pdfSha256: 'cd'.repeat(32), issuedBy: 'staff@hana.example', issuedAt: 1_800_000_001_000, totals }] });
+    expect(r).toEqual({ ok: true, statements: [{ orgId: org, month: '2026-01', asOf: 1_800_000_000_000, csvSha256: 'ab'.repeat(32), pdfSha256: 'cd'.repeat(32), issuedBy: 'staff@hana.example', issuedAt: 1_800_000_001_000, totals, csvKey: 'k.csv', pdfKey: 'k.pdf' }] });
     expect(calls).toEqual([{ sql: ORG_STATEMENTS_SQL, params: [org] }]);
     expect(count).toEqual(before);
     answer = () => [{ month: '2026-01', as_of_ms: '1', csv_key: 'k', csv_sha256: 'ab'.repeat(32), pdf_key: null, pdf_sha256: null, totals: { v: 2 }, issued_by: 's', issued_at_ms: '1' }];

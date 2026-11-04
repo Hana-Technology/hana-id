@@ -309,6 +309,9 @@ export interface StatementWithTotals {
   issuedBy: string;
   issuedAt: number;
   totals: StatementTotals;
+  /** The files' keys in STATEMENTS (`statements/<org>/<YYYY-MM>/<as_of>.{csv,pdf}`): server-side reads only. */
+  csvKey: string;
+  pdfKey?: string;
 }
 
 export interface StatementSqlRow {
@@ -335,6 +338,8 @@ export function statementOf(orgId: string, r: StatementSqlRow): StatementWithTot
     issuedBy: r.issued_by,
     issuedAt: int(r.issued_at_ms),
     totals,
+    csvKey: r.csv_key,
+    ...(r.pdf_key ? { pdfKey: r.pdf_key } : {}),
   };
 }
 

@@ -93,7 +93,7 @@ describe('issuing a statement', () => {
     expect(s.csvKey).toBe(statementKey(ORG, JAN, ISSUE_AT, 'csv'));
     expect(s.csvKey).toBe('statements/org_acme/2025-01/2025-02-04T00:00:00.000Z.csv');
     const csv = bucket.objects.get(s.csvKey)!.bytes;
-    const pdf = bucket.objects.get(s.pdfKey)!.bytes;
+    const pdf = bucket.objects.get(s.pdfKey!)!.bytes;
     expect(await sha256Hex(csv)).toBe(s.csvSha256);
     expect(await sha256Hex(pdf)).toBe(s.pdfSha256);
     expect(s.asOf).toBe(ISSUE_AT);
@@ -127,7 +127,7 @@ describe('issuing a statement', () => {
       expect([cells[col('tgas')], cells[col('near')], cells[col('usd')], cells[col('relayed_rejected_tgas')], cells[col('logins')], cells[col('mau')]]).toEqual([row.tgas, row.near, row.usd, row.relayedRejectedTgas, String(row.logins), row.mau === undefined ? '' : String(row.mau)]);
     }
     const view = statementView(s);
-    const text = pdfText(bucket.objects.get(s.pdfKey)!.bytes);
+    const text = pdfText(bucket.objects.get(s.pdfKey!)!.bytes);
     expect(text).toContain(s.csvSha256);
     for (const [label, value] of [...view.header, ...view.summary]) {
       expect(text, label).toContain(`${label}:`);

@@ -13,6 +13,12 @@ a read-only RPC on the API replaces it (D251).
 Reference: endpoints, limits, Durable Objects, D1 and logs in `docs/api.md` "Email issuer"; setup and runbook in
 `docs/operations.md` "Email issuer"; keys and invariants in `docs/security.md`; decisions D195–D199.
 
+**The user directory (D269).** The issuer keeps each identity's verified address in its own D1 (`user_emails`,
+`user_email_apps`, migration 0002), for Hana staff only: written after the answer at every successful `verify`
+(`src/directory.ts`, best effort: a failure logs `directory_write_failed` and never fails a login), read with
+`admin <env> user:list` / `user:find` (`docs/operations.md` "User directory (D269)"). No route serves it; partners
+never see it. Logs still never carry an address.
+
 ## What it holds
 
 | Secret | What |
@@ -32,6 +38,7 @@ nothing on chain and holds no chain key.
 
 | File | Role |
 |---|---|
+| `src/directory.ts` | the user directory's writer (D269): one upsert per identity and per (identity, app), after the answer, never throwing |
 | `src/handlers.ts` | the routes: `start`, `resend`, `verify`, `google-match`, `admin/client-proof`, `admin/unlock`, `admin/unsuppress`, `admin/revoke-tickets`, `confirm`, JWKS, discovery, the SendGrid webhook |
 | `src/commitment.ts`, `src/layouts.ts` | purposes, commitments and every nonce (checked against the contract's `email_fixture.json`) |
 | `src/decide.ts` | the four cases of automatic linking, judged as the contract's `auto_link` will |
@@ -44,6 +51,7 @@ nothing on chain and holds no chain key.
 | `src/google.ts`, `src/chain.ts`, `src/apps.ts`, `src/access.ts`, `src/webhook.ts` | Google (ID token, tokeninfo, userinfo; the access token is never revoked, D265), NEAR views, the app lookup, Cloudflare Access, SendGrid's signed events |
 | `scripts/gen-contract-fixture.ts` | writes `contracts/hana-signer/src/issuer_tokens_fixture.json` (tokens from this code, for the contract's unit tests), deterministically from a public test seed; `scripts/test/gen-contract-fixture.test.ts` checks the committed file matches |
 | `migrations/0001_init.sql` | the issuer's D1: `email_issuance`, `email_hints`, `email_suppressions`, `email_admin_audit` |
+| `migrations/0002_user_emails.sql` | the user directory (D269): `user_emails`, `user_email_apps` |
 
 ## Commands
 
@@ -59,4 +67,5 @@ corepack pnpm --filter @hana-id/email-issuer dev
 
 The tests reach no network: Google, NEAR, SendGrid and KMS are fakes (Google's real client code runs against a fake
 fetch); the RSA keys and HMAC keys are throwaway values made per run. `test/privacy.test.ts` greps every log line of
-every flow for the address, the code, the `sub`, the tokens and the secrets.
+every flow for the address, the code, the `sub`, the tokens and the secrets, and checks that a verified address is in
+`user_emails` and no other table; `test/directory-verify.test.ts` covers which `verify` answers record.

@@ -107,7 +107,10 @@ describe('/login/callback with the follow-up channel (batch 8b)', () => {
     expect(win.location.assigned).toEqual([]);
     expect(document.getElementById('email-prompt-text')?.textContent).toBe(EMAIL_PROMPT_TEXT);
     expect(EMAIL_PROMPT_TEXT).toMatch(/share your email address/u);
-    expect(EMAIL_PROMPT_TEXT).toMatch(/isn’t kept/u);
+    // D269: Hana keeps the address; the partner app doesn't get it from Hana.
+    expect(EMAIL_PROMPT_TEXT).toMatch(/keeps it with your account/u);
+    expect(EMAIL_PROMPT_TEXT).toMatch(/doesn’t share it with the app you’re signing in to/u);
+    expect(EMAIL_PROMPT_TEXT).not.toMatch(/isn’t kept|doesn’t keep/u);
     (document.getElementById('email-prompt-continue') as HTMLButtonElement).click();
     const url = new URL(win.location.assigned[0]!);
     expect(url.searchParams.get('prompt')).toBeNull();

@@ -23,6 +23,7 @@
   "dependencies": {
     "@hana-id/console-core": "workspace:*",
     "@hana-id/core": "workspace:*",
+    "@hana-id/email": "workspace:*",
     "@hana-id/env": "workspace:*",
     "@hana-id/jwks": "workspace:*",
     "@near-js/crypto": "2.5.1",

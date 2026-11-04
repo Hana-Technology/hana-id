@@ -3,7 +3,8 @@
 -- the partner console read nothing from this D1. Written by the issuer only, best effort after the answer (a failed
 -- write never fails a login). Logs still never carry an address (src/log.ts).
 
--- One row per identity: email logins at a successful verify, Google logins at google-match (or google-record, D270).
+-- One row per identity: email logins at every 200 of verify (session, case B, the link purposes, auto_link), Google
+-- logins at google-match (or google-record, D270).
 -- A Google account's address can change: the row keeps the latest.
 CREATE TABLE user_emails (
   provider       TEXT NOT NULL CHECK (provider IN ('email', 'google')),

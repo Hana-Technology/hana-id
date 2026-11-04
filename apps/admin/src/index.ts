@@ -3,9 +3,12 @@
 // the admin headers on every response. Every `/api/*` request needs a valid Cloudflare Access JWT of a listed staff
 // member (access.ts), then the CSRF checks for a non-GET, then goes to the staff BFF (routes.ts) with that person as
 // the RPC actor. Everything else is the SPA (public/). The 5-minute cron sends the blocking notices, the security feed
-// and the on-chain watcher's emails (cron.ts). Nothing calls into this Worker: it has no entrypoint.
+// and the on-chain watcher's emails (cron.ts); the 15-minute and daily crons run the ledger's work (ledger-cron.ts).
+// Nothing calls into this Worker: it has no entrypoint.
 import { checkStaff } from './access.ts';
 import { everyFiveMinutes } from './cron.ts';
+import { FIFTEEN_MINUTES } from './crons.ts';
+import { everyFifteenMinutes } from './ledger-cron.ts';
 import { SAFE_METHODS, csrfProblem } from './csrf.ts';
 import type { Env } from './env.ts';
 import { withSecurityHeaders } from './headers.ts';
@@ -67,9 +70,10 @@ export default {
     return withSecurityHeaders(out.res, env.FILES_ORIGIN, { api: out.api });
   },
 
-  // Every 5 minutes (scripts/gen-wrangler.ts CRON): blocking notices, the feed, the watcher.
+  // The two triggers (src/crons.ts): every 5 minutes the blocking notices, the feed and the watcher (C8); every 15 the
+  // ledger's alerts, statement notices and settlement, and in the 00:30 UTC run the ledger's daily checks and rate (C12).
   async scheduled(controller: ScheduledController, env: Env): Promise<void> {
-    void controller;
-    await everyFiveMinutes(env);
+    if (controller.cron === FIFTEEN_MINUTES) await everyFifteenMinutes(env, controller.scheduledTime);
+    else await everyFiveMinutes(env);
   },
 } satisfies ExportedHandler<Env>;

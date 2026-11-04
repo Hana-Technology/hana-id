@@ -28,6 +28,7 @@ import {
   newOrg,
   orgApp,
   ownClock,
+  governanceViews,
   ownerChain,
   rid,
   rows,
@@ -215,7 +216,7 @@ describe('suspension bits', () => {
 describe('the hot-DB budget', () => {
   it('each ConsoleRpc method stays within two reads and one batch of at most eight statements, and its declared cost', async () => {
     const clock = ownClock();
-    ownerChain();
+    governanceViews(ownerChain());
     const app = await orgApp({ origins: [ORIGIN, SECOND] });
     const live = await orgApp({ live: true, org: app.org });
     const key = (await rows<{ id: string }>('SELECT id FROM app_keys WHERE app_id = ?1', app.id))[0]!.id;
@@ -261,6 +262,8 @@ describe('the hot-DB budget', () => {
         const nonce = await ownerActionNonce({ signer: env.SIGNER_ACCOUNT, method: 'cancel_change', args, actionNonce: 4 });
         return rpc.ownerAction({ ...member(), orgId: app.org, body: { method: 'cancel_change', args: { ...args, auth: { Oidc: { jwt: await stepUp(nonce) } } } } });
       }],
+      // Batch C14: the pending-upgrades page (the governance snapshot; no statement through the budget).
+      ['pendingUpgrades', (rpc) => rpc.pendingUpgrades({ ...member(), orgId: app.org })],
       // The wallet directory (D315): one SELECT each.
       ['listUsers', (rpc) => rpc.listUsers({ ...member(), orgId: app.org })],
       ['getUser', async (rpc) => {
@@ -541,7 +544,7 @@ describe('entrypoints', () => {
   it('ConsoleRpc has none of AdminRpc’s staff methods', () => {
     const consoleMethods = Object.getOwnPropertyNames(ConsoleRpc.prototype);
     // proposeChange is on both: a member's (with the step-up) and a staff proposal.
-    for (const m of ['createApp', 'assignScopeOrg', 'deleteApp', 'suspendOrg', 'addOrigins', 'expediteChange', 'pendingNotices', 'ackNotice', 'setSecurityContacts', 'getSecurityContacts', 'listScopes', 'changesSince', 'securityEvents', 'markSecurityEventNotified', 'relayerKeys']) {
+    for (const m of ['createApp', 'assignScopeOrg', 'deleteApp', 'suspendOrg', 'addOrigins', 'expediteChange', 'pendingNotices', 'ackNotice', 'setSecurityContacts', 'getSecurityContacts', 'listScopes', 'changesSince', 'securityEvents', 'markSecurityEventNotified', 'relayerKeys', 'governance']) {
       expect(consoleMethods, m).not.toContain(m);
       expect(Object.getOwnPropertyNames(AdminRpc.prototype), m).toContain(m);
     }

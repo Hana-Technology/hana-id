@@ -4,7 +4,13 @@ Who is trusted for what, every key and secret, the invariants and where each is 
 known open issues. Last verified against code: 2026-11-04 for the wallet directory's ids and the wallet record's
 session signature (branch `feat/user-id-identity-sub`: Parties' partner row, `IDENTITY_SUB_KEY` and `USER_ID_KEY` in
 the compromise table, "Wallet directory" in the API's invariants with the review finding and its fix; D346, D311 and
-D313 amended); 2026-11-04 for the wallet directory (branch `feat/wallet-directory`:
+D313 amended); 2026-11-04 for the popup close watch (branch
+`fix/google-cancel-back-to-chooser`: its signals in the linking invariants, D347); 2026-11-04 for a cancel on Google's screen (branch
+`fix/google-cancel-back-to-chooser`: the parked entry, fresh OAuth states and the close's `google_cancelled` in the
+linking invariants, D341); 2026-11-04 for reports and statements (branch `feat/batch-c-12`: the
+ledger writer's row now that settlement refuses another event's transaction, the admin Worker's settlement, nonce,
+statement and rate-override invariants, the console's statement files, `COINGECKO_API_KEY`; D320–D329); 2026-11-04 for Security & monitoring and the feed's first run (branch
+`feat/batch-c-14`: the admin's watchdog bearer, caps and ack, the pending-upgrades view, D330–D338, D344); 2026-11-04 for the wallet directory (branch `feat/wallet-directory`:
 what partners and staff see in Parties, the API's D1 and `USER_ID_KEY` in the compromise table, "Wallet directory" in
 the API's invariants, the wallet record's safety and its raw-signing residual (m); D310–D317); 2026-11-04 for partner sign-in (branch `feat/batch-c-9`, merged with
 `develop` @ a243d6b: "Console Worker"'s route, sign-in, sessions and partner views, the flow cookies, handoff codes,
@@ -120,7 +126,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | An identity signing key (the active one on the Worker, or a published standby or next key from `.secrets/`) | Forge identity tokens for any user of any app: be anyone at every partner that uses them as login evidence, while partners trust the key | No key, no signature, nothing at Hana or on chain (no Hana API accepts the token). The standby is never on the Worker (D177), so a Worker or Cloudflare leak exposes the active key only. Testnet only: staging and mainnet sign with a non-exportable AWS KMS key (next row). Recovery (playbook `identity-signing-key-compromised`): switch to a key the incident didn't touch (the standby, or a fresh one when both may be exposed), unpublish the exposed ones (partners reject them within 10 min), tell partners. A key of the attacker's own put in the JWKS (through the API Worker or the Cloudflare account) pages critical from the watchdog's pin check within one run, and fails the outside probe within 15 min, **if** it is served to them too: the same attacker can serve the watchdog and the probe a clean JWKS, or publish for less than a run (D210). Partners trusting the JWKS URL accept it until it is removed; partners pinning thumbprints never. A stolen key of Hana's own is invisible to both (its kid is pinned) |
 | The KMS signer's AWS access key (`IDENTITY_AWS_*`, or the API Worker itself on a KMS env; none yet) | Have KMS sign forged identity tokens for any user of any app while the access key is active. The key itself can't be read or exported | Only `kms:Sign` on the active key with `ECDSA_SHA_256` and `DIGEST` (IAM policy; the key policy refuses `Sign` by any other principal, grants to everyone, key changes to all but the break-glass role). The standby isn't in the IAM policy (which also denies `Sign` on any other key), so it stays clean for the switch (D219). Only long-term credentials sign: the key policy denies `Sign` to session credentials, because the holder can always call `GetSessionToken` (no policy can deny it), its sessions keep the user's live permissions, and deactivating the access key isn't proven to end them (confirm on staging). Every signature is in CloudTrail, matched by `userIdentity.arn` (the planned reconciliation and alarms find unexplained ones; `GetSessionToken` by the signer user is an alarm). Recovery (planned playbook `identity-kms-signer-compromised`): deactivate the access key, check the `NoSessionCredentials` deny is on every key, switch to the standby, unpublish the suspect key, tell partners with CloudTrail's window and count |
 | `IDENTITY_SUB_KEY` | Map partners' `sub`s (also the partner console's User IDs and so the Support IDs, D346) back to on-chain paths, so to the Google `sub` (privacy) | Funds and keys unaffected. Never rotated: a new key changes every user's `sub` (and User ID and Support ID) at every partner (a `u2_` scheme with a 90-day `legacy_sub` window if it ever leaks) |
-| The ledger writer's credential (`usage_writer`: the Hyperdrive config, `.secrets/<env>/neon-usage-writer.url`) | Insert made-up usage events (any org, app, uid) and identity counts; call the report functions (C12) for any org | No read or change of any table (functions only, D141); events can't be altered or deleted, so real ones stay. Billed gas comes from settlement, which reads each `near_tx` at FINAL from chain (C12): a made-up hash never settles, and C12 must also refuse a real transaction that isn't the event's own (a `near_tx` already in the ledger, or a transaction whose signer key and nonce differ from the event's `relayer_pk` and `relayer_nonce`; `docs/batch-c-build-plan.md` C12). Rotate with `usage-setup roles` after deleting the role files, then update the Hyperdrive config |
+| The ledger writer's credential (`usage_writer`: the Hyperdrive config, `.secrets/<env>/neon-usage-writer.url`) | Insert made-up usage events (any org, app, uid) and identity counts; call the report functions (C12) for any org | No read or change of any table (functions only, D141); events can't be altered or deleted, so real ones stay. Billed gas comes from settlement, which reads each `near_tx` at FINAL from chain (C12): a made-up hash never settles, and a real transaction that isn't the event's own is refused (D321: a `near_tx` another relayed event carries bills neither event, also at read time; a key outside the env's pools, or a transaction whose signer, key, nonce or receiver differ from the event's, is `unsettled` `signer_mismatch`), each refusal alerting the security alias. A flood of made-up events can only slow settlement (each unknown hash is read at most once an hour, D322) and show as unsettled. Rotate with `usage-setup roles` after deleting the role files, then update the Hyperdrive config |
 | `USER_ID_KEY` | Link a known Google `sub` to its ledger uid in a scope (and so its activity); with the ledger, re-identify users; compute any user's wallet-directory internal id (D312, staff only since D346) | No funds, keys or logins. Never rotated within a contract term (a new key makes every user new in MAU and gives every user a new user id); API only, never logged |
 | The API's D1 read (the wallet directory, migration 0011; a Cloudflare account member or token that can read it) | Every recorded user's subs (Google and email), joined to their wallet addresses and so to their on-chain balances and history, per scope; with the issuer's directory, to their email (D269's cost, D310) | No key, token or signature is stored; a write could only mislead staff and partners' views, never move funds or change a login. Staff read it through `AdminRpc` and the CLI (statements off the argv, D316) |
 | One identity token (a partner's log, transit) | Act as that user at that partner's backend until `exp` (≤ 1 h) | That partner only (`aud`); never at Hana or on chain |
@@ -144,7 +150,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | Owner-pool keys `OWNER_RELAYER_KEYS` | same, owner methods | Worker secret; `.secrets/<env>/owner-relayer-keys.json` | Hana | Default 1 × 0.5 NEAR; allowance monitored like the session pool (D150) |
 | `KEYS_UPDATER_KEY` | ed25519 function-call key on `signer`. v1 contract: `set_issuer_key`, `remove_issuer_key`. Governance contract: exactly `set_issuer_key`, `propose_issuer_key_removal`, `execute_issuer_key_change`, installed only by the contract (`add_updater_key`); the API signs nothing else (`apps/api/src/relayer-config.ts` `UPDATER_METHODS`) | Worker secret; `.secrets/<env>/keys-updater.json` | Hana | 1 NEAR allowance. On the governance contract it can only propose (delayed, cancellable) and execute matured changes; a watchdog deletes it when it proposes a key Google doesn't publish. See open issue (e) and D33 |
 | `WATCHDOG_KEY` | ed25519 function-call key on the watchdog's account (manifest `watchdog.account`), receiver `signer`, methods `cancel_issuer_key_change`, `confirm_issuer_key_change`, `pause`, `delete_updater_key`, 1 NEAR | Watchdog Worker secret (its own Cloudflare account); `.secrets/<env>/watchdog-secrets.json` | Hana (operator) | Created by `watchdog secrets <env> init`; rotate by adding a new key, then deleting the old (`docs/operations.md` "Watchdog service"). DoS power only (cancel, confirm a proposed change, pause, delete updater keys) |
-| `WATCHDOG_STATUS_TOKEN` | random bearer token (32 bytes, base64url) | Watchdog and admin Worker secrets; same file | Hana | Read and acknowledge only: a holder can stop re-sends of an alert already paged, never a first alert or a check |
+| `WATCHDOG_STATUS_TOKEN` | random bearer token (32 bytes, base64url) | Watchdog and admin Worker secrets (the admin's from C14, uploaded through stdin with `jq -e`); same file | Hana | Read and acknowledge only: a holder can stop re-sends of an alert already paged, never a first alert or a check. In the admin Worker only `src/watchdog.ts` reads it, into the `Authorization` header of its calls to `WATCHDOG_URL` (https origin, redirects refused); never in a response, a log line or the browser (D330) |
 | Watchdog alert credentials (`RESEND_API_KEY`, `SLACK_WEBHOOK_URL`, paging app, `HEARTBEAT_URL`) | API keys / capability URLs | Watchdog Worker secrets; same file | Hana | The watchdog's own, not the admin Worker's (D87). Losing one channel leaves two (D85) |
 | Watchdog's Cloudflare account | account credentials | the operator | the user | Separate login and MFA from the API's account (D86); a compromise gives the watchdog key and its alerting, caught by the dead-man's switch |
 | Owner, signer, relayer account keys | ed25519 full-access (not ml-dsa-65: `docs/decisions.md`) | `~/.near-credentials/testnet/` on the operator's machine | the user (Hana admin) | Manual. Agents never ask for or handle them |
@@ -162,6 +168,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | `CONSOLE_GOOGLE_CLIENT_SECRET` (C9) | the console OAuth client's secret | Console Worker secret; `.secrets/<env>/console-google-client.json` (Google's client JSON, 0600) | Hana | Sent only to `https://oauth2.googleapis.com/token` in the code exchange (a source check). Alone it mints nothing: an exchange needs a code Google issued to the redirect URI and the flow's PKCE verifier. Rotation: a second secret in Google Cloud, `wrangler secret put`, delete the old one (`docs/operations.md` setup step 11) |
 | Guarded-change cancel tokens (batch C8) | T = HMAC-SHA256(`CANCEL_LINK_KEY`, "hana-id/cancel-link/v1" ‖ borsh(change id)) | The `change_pending` recipients' mailboxes (`<console.origin>/cancel/<id>#t=…`, a fragment); the hot DB holds only sha256(T), set by `ackNotice` | the alias and the org's security contacts | Cancels one pending change once, by POST, until `active_from`; deterministic, so a notice re-sent after a failed send carries the same working link |
 | `CANCEL_LINK_KEY`, `INVITE_LINK_KEY` (batch C8) | 32 random bytes each (base64) | Admin Worker secrets only; `.secrets/<env>/cancel-link-key`, `invite-link-key` (0600) | Hana | Generated with `openssl rand` into `.secrets/`, set through wrangler's stdin (`docs/operations.md` "Admin Worker"). Never in the API or the console, never logged. A leak lets the holder mint working cancel links (DoS: cancel pending changes and grants) and, with `INVITE_LINK_KEY`, an invite link only for an invite already acked to its invitee's address (acceptance still needs that Google account). Replacing one breaks the links already emailed |
+| `COINGECKO_API_KEY` (batch C12, optional) | CoinGecko demo API key (the daily NEAR/USD rate, D325) | Admin Worker secret; `.secrets/<env>/coingecko-api-key` (0600) | Hana | Read-only market data; a leak spends the key's quota. Sent as a header, never logged; without it the public endpoint is used |
 | `EMAIL_API_KEY` (batch C8) | Resend API key, sending access to the `email.from` domain only (D87) | Admin Worker secret; `.secrets/<env>/admin-resend-key` (0600) | Hana | Its own key, not the watchdog's. A leak sends mail as Hana's notice subdomain (phishing); it can't ack a notice (only the admin Worker's cron, as `system`, can) |
 | Cloudflare Access application tokens (batch C8) | RS256 JWT (`Cf-Access-Jwt-Assertion`), the team's certs | Transient, per request; never logged or stored | the staff member's Access session (1 h) | Checked on every admin `/api/*` request: signature, `kid`, `iss`, `aud`, expiry, `type = 'app'`, a `sub`, then the email on `admin.staffEmails` (D88) |
 | Identity signing keys (Worker slots `IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY`) | P-256 private JWKs (ES256), testnet and `local*` only | The active key: a Worker secret and `.secrets/<env>/identity-signing-key.json`. The standby: `identity-signing-key-standby.json` only, kept offline, never uploaded until a switch (D177). During a rotation a `next` and a `previous` key. 0600, the only copies | Hana | `scripts/identity-key.ts`: `init`, `next`, `switch --to next|standby`, `retire --key previous|standby` (wrangler stdin, never printed, files never overwritten); public halves in the manifest's `identityToken.publicKeys` (the JWKS). `activeKid` picks the signer. Staging and mainnet: AWS KMS (next row) |
@@ -672,9 +679,33 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   partner text escaped and stripped of control characters, one-line subjects (no header injection).
 - **No NEAR key**, no Google client, no D1. **Logs** carry route patterns, ids, codes and counts only: never an email,
   a `sub`, a JWT, a link token or its hash (log allowlist; a source check and a log test).
+- **The feed's first run emails no history** (D344): a cursor with no row starts at the source's current position,
+  silently; unnotified security events still go out.
+- **Security & monitoring (C14; D330–D338)** is a view: it never alerts and never acts on chain. The watchdog is
+  called server-side only with the bearer (above), its answers capped per route (1 MiB `/status`, 2 MiB `/alerts`,
+  512 KiB `/actions`, 64 KiB an ack) under an 8 s deadline that covers the body, and reduced to bounded plain text
+  (controls and bidi overrides replaced, lengths cut) before the SPA writes it as text. Its one write is the ack,
+  forwarded with the Access identity as `by` (the body can't set it); an ack stops only an alert's re-sends. The
+  governance part is the API's snapshot (`AdminRpc.governance`), not independent of Hana's main account; the watchdog
+  beside it is the independent party. The pending-upgrades view (both consoles) is public chain data only.
+- **Billing (C12; tests `apps/admin/test-ops/settlement.test.ts`, `statements.test.ts`, `apps/api/test-usage/reports.test.ts`)**:
+  a relayed event is billed only when settled final for itself, its `near_tx` carried by no other relayed event, its
+  `relayer_pk` one of the env's pool keys and the transaction at FINAL signed by `RELAYER_ACCOUNT` with that key at that
+  nonce, to `SIGNER_ACCOUNT` (D321); one SQL rule (`usage.classified`) decides it for every report, ledger CSV and
+  statement, so they agree for the same `as_of`. A statement is frozen: its files are written once under new keys
+  (bucket lock), its row is insert-only for every role (trigger), its month's rates can't change, and every download
+  (admin, console) re-hashes the file against Neon before serving it. A rate is replaced only through
+  `usage.override_rate`, which writes an append-only audit row in the same transaction (the admin role has no direct
+  `UPDATE`). The admin role still can't update or delete an event, a settlement or a statement.
+- **Daily nonce cross-check** (D323): each pool key's latest landed nonce must have a relayed ledger row, else
+  `nonce_unexplained` to the security alias (a lost write, or a signer other than the API: a leaked relayer key). It
+  proves the newest transaction of each key is in the ledger, not that none in the middle of a day is missing.
 - Residual: a compromised admin Worker can send anything to anyone through Resend, ack notices without sending them,
-  and act as any staff member through the RPCs (trust boundary 3 in the spec's model); the feed's at-least-once
-  delivery can repeat a digest after a partial failure (Resend's idempotency key covers 24 h).
+  ack every watchdog alert (silencing the re-sends, never the first page) and act as any staff member through the RPCs
+  (trust boundary 3 in the spec's model); with the admin role it can also insert settlements (bill a real event's
+  gas for a made-up amount before settlement does), issue a statement or override a rate, all of which leave their
+  rows and audit trail; the feed's at-least-once delivery can repeat a digest after a partial
+  failure (Resend's idempotency key covers 24 h).
 
 ### Email issuer (`apps/email-issuer`, not deployed)
 
@@ -944,6 +975,22 @@ providers; a linked member's export on both is e2e-tested, `apps/e2e/tests/linki
   login. There tokeninfo is not needed: when it can't answer or refuses the token, the popup drops the access token
   (nothing in slot 1) and makes batch B's openid request with the account chooser and the login's nonce, and the
   login goes on with nothing recorded; another client's token still ends it.
+- **A cancel on Google's screen goes back, it doesn't end the login** (D341): token_first's `access_denied` (its
+  first request, or D273's interactive retry) is not relayed; the vault keeps waiting under its own 5-minute limit.
+  The callback parks `relayKey` and `followKey` in the popup's `sessionStorage` entry under the login's slot, marked
+  so that no Google answer may use it (refused as an expired sign-in), and `/login/email` takes it at once into
+  memory for the chooser. Each later Google attempt has a fresh random OAuth `state` whose entry names the slot, so
+  the cancelled attempt's `state` never finds an entry again; the nonce, the relay slot (still unwritten, single
+  use) and every check after it are the login's own. After a cancelled retry, Google again is that retry for the
+  same account (`login_hint`): slot 1 already holds that account's access token and can't be written twice, and an
+  ID token of another account still ends the login (`google_account_mismatch`). Closing the popup there sends only
+  `{error: 'google_cancelled'}`, encrypted under `relayKey` while the screen showed, to the login's slot; the keys
+  are zeroed and the context dropped, so a reload finds nothing.
+- **The close watch's signals carry nothing** (D347): `hana:auth-progress` `google`, `back` and `relayed` are taken
+  only from the popup window the vault answered, on `authOrigin`. The worst a forged or lost signal does is change
+  when a closed popup is noticed (a `relayed` makes the vault ignore the close, a `google` opens the 8 s COOP window);
+  it can't end a login that the user didn't, read a slot, or carry data. A close ends the login through the same abort
+  as a timeout: the relay reads stop and later slot writes are never read.
 - **The follow-up channel** (D256): the popup and the vault talk after Google's answer through relay slots derived
   from `followKey` (32 random bytes, in auth-params only for an app with email, stored in the popup's
   `sessionStorage` entry beside `relayKey` and zeroed after use), every value AES-GCM under `relayKey` with its slot's
@@ -1291,7 +1338,8 @@ plan (D33; built, and deployed on sandbox-dev 2026-10-30), specified in `docs/go
   the JWKS URL can accept a forged key without Hana being alerted. Partner-side thumbprint pinning
   (`docs/integration.md`, the recommended default for anything of value) is the only prevention.
 - Monitoring (D83): every watchdog check, action and alert surfaces in the admin portal's "Security & monitoring"
-  view (a standing rule for future checks); the watchdog sends its own alerts, so a compromised Hana Cloudflare
+  view (a standing rule for future checks; built in C14, not deployed: `apps/admin/test/monitoring.test.ts` fails when
+  a watchdog check id has no portal rendering or an alert kind no playbook link); the watchdog sends its own alerts, so a compromised Hana Cloudflare
   account can't silence them.
 - Alerts (D85): critical (paging app + Slack + email to both founders, re-sent every 15 min until acknowledged),
   warning (Slack + email), info (portal + daily digest). Every upgrade proposal is critical; no independent upgrade

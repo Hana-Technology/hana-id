@@ -17,7 +17,9 @@
 //     access token to slot 1, then makes a silent `response_type=id_token`, `scope=openid`, `prompt=none`,
 //     `login_hint=<sub>` request with the login's nonce; only that ID token is relayed for the chain. A silent failure
 //     gets one interactive openid-only retry for the same account (D273); an ID token of another account ends the
-//     login (`google_account_mismatch`).
+//     login (`google_account_mismatch`). A cancel on Google's screen (`access_denied`, on the first request or that
+//     retry) is not relayed: the popup goes back to Hana's method chooser, or case B's choices, and the vault keeps
+//     waiting (D341).
 // Whatever the flow, the request whose ID token is relayed asks for `scope=openid` only (`googleAuthUrl` can build
 // nothing else), and the callback, the vault and the API refuse an ID token with a claim outside the allow-list
 // (`token_has_pii`), so a Google change can lock logins out but never put the address on chain. `'one_request'`
@@ -44,6 +46,16 @@ export type GoogleEmailFlow = 'second_request' | 'token_first';
 export const GOOGLE_EMAIL_FLOW: GoogleEmailFlow = 'token_first';
 /** The silent request's errors that mean "Google needs the user": the callback asks once more, interactively. */
 export const SILENT_ERRORS: ReadonlySet<string> = new Set(['consent_required', 'interaction_required', 'login_required', 'account_selection_required']);
+/**
+ * Google's answer when the user cancels its sign-in screen. Under token_first (its first request, D273's interactive
+ * retry) it is never relayed: the popup goes back to Hana's method chooser, or case B's choices (D341).
+ */
+export const GOOGLE_CANCEL = 'access_denied';
+/**
+ * The popup's own relay code (never one of Google's) for "the user cancelled Google, then closed the window on the
+ * screen it went back to": the vault ends the login with `login_cancelled` (D341).
+ */
+export const GOOGLE_CANCELLED_RELAY_ERROR = 'google_cancelled';
 
 /**
  * Whether a login's own Google request starts with the email access token (token_first): only a login that carries

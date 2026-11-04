@@ -10,6 +10,7 @@ import {
   clickAction,
   clickLauncher,
   errorCode,
+  errorOf,
   expect,
   login,
   newApp,
@@ -118,15 +119,19 @@ test("a blocked popup falls back to the vault's \"Sign in with Hana\" launcher",
   await expect(page.locator(VAULT_FRAME)).toBeHidden();
 });
 
-test('Google #error ends the login with google_error', async ({ page }) => {
+test('a Google #error other than a cancel ends the login with google_error (a cancel goes back to the chooser: google-cancel.spec.ts, D341)', async ({ page, google }) => {
   const app = await newApp();
   await openPartner(page, app);
   const popupP = page.waitForEvent('popup');
   await clickAction(page, 'login', 'login');
   const popup = await popupP;
   await popup.waitForURL(/accounts\.google\.com/u);
-  await popup.click('#deny');
-  expect(await errorCode(page, 'login')).toBe('google_error');
+  // Google answers its sign-in screen with a failure of its own (not the user's Cancel).
+  const first = google.requests[0];
+  if (!first?.ok) throw new Error('no Google request');
+  await popup.goto(`${AUTH_ORIGIN}/login/callback#error=server_error&state=${first.request.state}`);
+  expect(await errorOf(page, 'login')).toMatchObject({ code: 'google_error' });
+  expect(await settled(page, 'login')).toMatchObject({ data: { error: 'server_error' } });
   expect(await status(page)).toBe('logged_out');
 });
 

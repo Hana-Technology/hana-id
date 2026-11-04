@@ -8,11 +8,19 @@ import type {
   CancelChangeByLinkInput,
   GetAppInput,
   GuardedChange,
+  LedgerInput,
+  LedgerRow,
   ListAppsInput,
   ListChangesInput,
+  PendingUpgradesInput,
+  PendingUpgradesView,
   RpcFail,
   RpcOk,
   SetLogoInput,
+  StatementWithTotals,
+  StatementsInput,
+  UsageInput,
+  UsageRow,
 } from '@hana-id/console-core';
 
 type Answer<T extends object> = Promise<RpcOk<T> | RpcFail>;
@@ -30,6 +38,12 @@ export interface ConsoleRpcClient {
   cancelChangeByLink(c: CancelChangeByLinkInput): Answer<{ change: GuardedChange }>;
   /** The logo upload (batch C11, logo.ts): the pointer. */
   setLogo(c: SetLogoInput): Answer<{ version: number }>;
+  /** The pending-upgrades page (batch C14, D86; governance.ts): contract-wide, charged to the member's org. */
+  pendingUpgrades(c: PendingUpgradesInput): Answer<{ pendingUpgrades: PendingUpgradesView }>;
+  /** Reports, statements and the ledger (batch C12, reports.ts): Neon only on the API side. */
+  usage(c: UsageInput): Answer<{ rows: UsageRow[] }>;
+  statements(c: StatementsInput): Answer<{ statements: StatementWithTotals[] }>;
+  ledger(c: LedgerInput): Answer<{ rows: LedgerRow[]; next?: string; asOf: number }>;
 }
 
 export interface Env {

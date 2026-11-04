@@ -1,7 +1,8 @@
 // The admin Worker's bindings (docs/batch-c-spec.md "Bindings"; written by scripts/gen-wrangler.ts from the manifest's
-// dashboard blocks). Vars are public. The three secrets (EMAIL_API_KEY, CANCEL_LINK_KEY, INVITE_LINK_KEY) are set with
-// `wrangler secret put` from `.secrets/<env>/` (docs/operations.md "Admin Worker"); each is optional in the type so a
-// missing one fails closed at the step that needs it (no notice is acked, no email leaves) instead of at start-up.
+// dashboard blocks). Vars are public. The four secrets (EMAIL_API_KEY, CANCEL_LINK_KEY, INVITE_LINK_KEY and, from C14,
+// WATCHDOG_STATUS_TOKEN) are set with `wrangler secret put` from `.secrets/<env>/` (docs/operations.md "Admin Worker");
+// each is optional in the type so a missing one fails closed at the step that needs it (no notice is acked, no email
+// leaves, the watchdog shows as not configured) instead of at start-up.
 import type {
   AppChange,
   AuditRow,
@@ -11,6 +12,7 @@ import type {
   MemberView,
   OrgView,
   OwnerGrantView,
+  PendingUpgradesView,
   RpcFail,
   RpcOk,
   ScopeRow,
@@ -66,6 +68,12 @@ export interface AdminRpcClient {
   changesSince(c: unknown): Answer<{ changes: AppChange[] }>;
   securityEvents(c: unknown): Answer<{ events: SecurityEvent[] }>;
   markSecurityEventNotified(c: unknown): Answer<Record<string, never>>;
+  /** Both relayer pools' public keys (settlement and the nonce check, C12). */
+  relayerKeys(c: unknown): Answer<{ keys: { pool: 'session' | 'owner'; publicKey: string }[] }>;
+  /** The `GET /v1/governance` snapshot (batch C14): the API's normalised chain views, JWKS verdicts and cron state. */
+  governance(c: unknown): Answer<{ governance: Record<string, unknown> }>;
+  /** The pending-upgrades page's view (D86), the same one partners get from ConsoleRpc. */
+  pendingUpgrades(c: unknown): Answer<{ pendingUpgrades: PendingUpgradesView }>;
 }
 
 /** The console's `StaffRpc` entrypoint (apps/console/src/staff-rpc.ts) over the `CONSOLE` service binding. */
@@ -83,6 +91,8 @@ export interface StaffRpcClient {
   freezeOrg(c: unknown): Loose;
   auditSince(c: unknown): Answer<{ rows: AuditRow[] }>;
   queryAudit(c: unknown): Answer<{ rows: AuditRow[]; next?: string }>;
+  /** The audit row of a statement issued, a ledger export or a rate override (C12, D327). */
+  recordStaffAction(c: unknown): Answer<Record<string, never>>;
 }
 
 export interface Env {
@@ -97,6 +107,11 @@ export interface Env {
   /** Read-only NEAR RPC and the signer account: `get_scope` for the on-chain watcher. */
   NEAR_RPC: string;
   SIGNER_ACCOUNT: string;
+  /**
+   * The relayer account whose pool keys sign every relay (C12): settlement checks each transaction's signer against it
+   * and the nonce check reads its keys. Missing: settlement and the nonce check don't run (logged every run).
+   */
+  RELAYER_ACCOUNT?: string;
   /** Cloudflare Access (D88): the team domain (`<team>.cloudflareaccess.com`) and the application's AUD tag. */
   ACCESS_TEAM_DOMAIN: string;
   /** 64 hex characters; `UNSET` (the manifest's value before the application exists) refuses every /api/* request. */
@@ -115,6 +130,22 @@ export interface Env {
   CANCEL_LINK_KEY?: string;
   /** 32 bytes, base64: the invite links. */
   INVITE_LINK_KEY?: string;
+  /**
+   * The watchdog Worker's https origin (manifest `watchdog.url`, batch C14): the "Security & monitoring" view reads its
+   * `/status`, `/alerts` and `/actions` and forwards acks to it. Absent or malformed: the view shows the watchdog as not
+   * configured (the governance part still renders).
+   */
+  WATCHDOG_URL?: string;
+  /**
+   * NEAR network (`testnet`/`mainnet`): the explorer links of the watchdog's transactions (C14), and a statement's
+   * network (C12: on a test network it is labelled as valued at the mainnet price, D93; issuing refuses without it).
+   */
+  NEAR_NETWORK?: string;
+  /**
+   * The watchdog status endpoint's bearer token (≥ 32 characters; the watchdog holds the other copy, D83). Secret: sent
+   * only in the `Authorization` header of this Worker's calls to WATCHDOG_URL, never logged, never in a response.
+   */
+  WATCHDOG_STATUS_TOKEN?: string;
   /** The API Worker's `AdminRpc` (the admin Worker is its only caller). */
   API: Fetcher & AdminRpcClient;
   /** The console Worker's `StaffRpc` (the admin Worker is its only caller). */
@@ -125,6 +156,15 @@ export interface Env {
    * screens don't need it.
    */
   USAGE_DB?: Hyperdrive;
+  /**
+   * Monthly statements (C12): the admin writes each statement's CSV and PDF under new keys (`put` only; a whole-bucket
+   * lock keeps them 7 years, D308) and serves them to staff. Optional so a config without R2 runs: issuing refuses.
+   */
+  STATEMENTS?: R2Bucket;
+  /** On-demand ledger exports under `exports/` (the 30-day lifecycle rule, D308). Optional: exports refuse without it. */
+  EXPORTS?: R2Bucket;
+  /** CoinGecko's demo API key for the daily rate (optional; sent as a header, never logged). */
+  COINGECKO_API_KEY?: string;
   /** The SPA's static files (assets with `run_worker_first`). */
   ASSETS: Fetcher;
 }

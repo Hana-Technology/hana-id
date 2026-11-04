@@ -236,6 +236,9 @@ export const usageRow = z
     revokes: z.number().int().nonnegative(),
     unlocks: z.number().int().nonnegative(),
     ownerActions: z.number().int().nonnegative(),
+    /** C12 (D324): ok link, link_cancel and link_unlink relays (email login), and identity tokens minted (D223). */
+    linkActions: z.number().int().nonnegative().optional(),
+    identityTokens: z.number().int().nonnegative().optional(),
     activeUsers: z.number().int().nonnegative().optional(),
     newUsers: z.number().int().nonnegative(),
     failuresByCode: z.record(z.string(), z.number().int().nonnegative()),
@@ -243,10 +246,15 @@ export const usageRow = z
     relayedRejectedTgas: z.string(),
     errorTgas: z.string(),
     burntYocto: decimal,
+    /** The relayed-then-rejected part of burntYocto and of usdMicros (D91: not billed by default). */
+    relayedRejectedBurntYocto: decimal.optional(),
     usdMicros: decimal.optional(),
+    relayedRejectedUsdMicros: decimal.optional(),
     p50: z.object({ login: z.number().optional(), derive: z.number().optional() }).strict(),
     p95: z.object({ login: z.number().optional(), derive: z.number().optional() }).strict(),
     unsettled: z.number().int().nonnegative(),
+    /** Events of the row received after the as_of of the month's statement (late events; Hana handles them by hand). */
+    afterStatement: z.number().int().nonnegative().optional(),
   })
   .strict();
 export type UsageRow = z.infer<typeof usageRow>;

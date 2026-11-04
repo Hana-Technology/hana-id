@@ -1,6 +1,12 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-04 (branch `feat/user-id-identity-sub`: "Wallet directory (hot-DB migration 0011)": both keys, the deploy pairing for the session signature, the three ids in `user:*`, the log codes; "Admin CLI"'s `--user`; D346); 2026-11-04 (branch `feat/wallet-directory`: "Wallet directory (hot-DB migration 0011)":
+Last verified against code: 2026-11-04 (branch `feat/user-id-identity-sub`: "Wallet directory (hot-DB migration 0011)": both keys, the deploy pairing for the session signature, the three ids in `user:*`, the log codes; "Admin CLI"'s `--user`; D346); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: the "Declined" row of "Turning linking on (batch 8b)", D341); 2026-11-04 (branch `feat/batch-c-12`: "Reports and statements (batch C12, milestone M6)": the
+Neon migration 0006, the admin config's buckets and vars, the optional CoinGecko key, the 15-minute cron with the 00:30
+UTC daily work, issuing a statement, the rate override, exports, what to watch; "Usage ledger" lists 0006; the admin's
+cron triggers; D320–D329); 2026-11-04 (branch `feat/batch-c-14`: "Admin Worker" → "Security & monitoring (batch C14)"
+(its setup: `watchdog.url`, the `WATCHDOG_STATUS_TOKEN` admin secret, the deploy order, the check, acknowledging
+sandbox-dev's alert #11, the failure codes, rotating the token) and "Pending upgrades page" (the release registry);
+the watchdog's step 7 and token rotation; the governance hand-off sections; D330–D338; the feed's first run starting at the current position, D344); 2026-11-04 (branch `feat/wallet-directory`: "Wallet directory (hot-DB migration 0011)":
 its prerequisites, the migration and deploy order, reading it with the CLI, its log events; the `user:*` lines in "Admin
 CLI" and "User directory (D269)"; D310–D317); 2026-11-04 (branch `feat/batch-c-9`, merged with `develop` @ bd0c9ea: "Partner console
 Worker … and console-auth": setup step 11 (the console's Google client, its JSON in `.secrets/<env>/`, the secret
@@ -92,7 +98,7 @@ Never print, log, paste or commit any of these. The scripts never print them eit
 | Ledger role URLs (`usage_writer`, `usage_admin`, batch C4): each role's password; their copies live in the two Hyperdrive configs | `.secrets/<env>/neon-usage-writer.url`, `neon-usage-admin.url` | `usage-setup <env> roles` ("Usage capture" below) |
 | `USER_ID_KEY` (the uid key, base64 of 32 bytes; API only); never rotated within a contract term, backed up offline | `.secrets/<env>/user-id-key` | `usage-setup <env> user-id-key` (generates it once, sets the Worker secret) |
 | The console's Google client secret (`CONSOLE_GOOGLE_CLIENT_SECRET`, console Worker only; batch C9) | `.secrets/<env>/console-google-client.json` (Google's downloaded client JSON, `web.client_secret`) | saved by hand from Google Cloud (setup step 11, "Partner console Worker"); `wrangler secret put` through a pipe; read by `console-code-flow-spike` |
-| Watchdog secrets (`WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, its Resend key, Slack webhook, paging-app credentials, `HEARTBEAT_URL`) | `.secrets/<env>/watchdog-secrets.json` (flat `{NAME: value}`) | `watchdog secrets <env> init` (the key and token); the rest by hand ("Watchdog service" below) |
+| Watchdog secrets (`WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, its Resend key, Slack webhook, paging-app credentials, `HEARTBEAT_URL`); the admin Worker's copy of `WATCHDOG_STATUS_TOKEN` (batch C14) comes from the same file | `.secrets/<env>/watchdog-secrets.json` (flat `{NAME: value}`) | `watchdog secrets <env> init` (the key and token); the rest by hand ("Watchdog service" below) |
 | Worker copies of the above | Cloudflare Worker secrets (the watchdog's on its own Cloudflare account) | `wrangler secret put` (watchdog: `wrangler secret bulk`) |
 | Local dev copies | `apps/api/.dev.vars`, `apps/watchdog/.dev.vars`, `apps/email-issuer/.dev.vars` (0600) | `gen --dev-vars` |
 
@@ -549,8 +555,11 @@ On a governance contract `deploy-contract` compares `view_access_key_list(<signe
 
 ### Governance status for the admin portal (batch C hand-off)
 
-The admin portal (batch C) doesn't exist yet. Its "Security & monitoring" view (D83) and pending-upgrades page (D86)
-read these sources, all read-only:
+The admin portal's "Security & monitoring" view (D83) and pending-upgrades page (D86) are built (batch C14, not
+deployed; "Admin Worker" → [Security & monitoring](#security--monitoring-batch-c14)). They read the **API** and
+**Watchdog** sources below. Not read by the portal yet (D334): the contract through the portal's own RPC, and the
+council DAO (its policy and open proposals). So the `governance:status` findings about the owner account, the DAO's
+policy and the delay floors still come from `admin <env> governance:status`. The sources, all read-only:
 
 - **Contract** (through the portal's own RPC): the views and NEP-297 events in `docs/contract-interface.md`
   "Monitoring hand-off".
@@ -595,7 +604,9 @@ corepack pnpm --filter @hana-id/scripts usage-migrate sandbox-dev --yes   # appl
   batch 6): `0001_ledger.sql` (events, users, settlements, rates, statements, `ops`, `record_event`, roles and grants),
   `0002_identity_tokens.sql` (identity tokens per app and day, `record_identity_tokens`, batch C4),
   `0003_writer_partitions.sql` (the writer may run `ensure_partitions`; 12 months ahead created, batch C4),
-  `0004_email_counts.sql` (email logins and new links per app and day, `record_email_counts`, email login batch 6, D233).
+  `0004_email_counts.sql` (email logins and new links per app and day, `record_email_counts`, email login batch 6, D233),
+  `0006_reports.sql` (the report, ledger and statement functions, the settlement checks' columns and tables, the
+  audited rate override; batch C12, D320). C13's retention functions will be `0007`.
 - Monthly partitions of `usage.events`: 0001 creates the current month and the next 3, 0003 the next 12, and the
   API's hourly cron keeps 12 months ahead (`usage.ensure_partitions(12)` as the writer, `usage_partitions_failed` on
   a failure). An event outside every partition is lost (`usage_write_failed` `pg_23514`).
@@ -1116,12 +1127,14 @@ the repo root of the main checkout, logged in to the API's Cloudflare account. N
    `done` line per run, `notice`, `feed` and `watcher` lines with ids, codes and counts only. "Feed and notices" in the
    SPA shows the backlog, each feed cursor's lag and the watcher's cursor.
 
-- **The first runs walk the history**: the feed's cursors start at 0, so the earlier `app_changes` and console audit
-  rows go out as digests (legacy rows, which have no security contacts, to the alias) over a few runs; the watcher
+- **The first run sends no history** (D344): a feed cursor with no row in `ops.state` starts at the source's current
+  position, read silently (a `feed` line with `code: cursor_initialised`; a long history continues next run with
+  `cursor_initialising`); only rows after it are emailed. Unnotified security events are still emailed. The watcher
   stores each scope's state as its baseline without an email.
-- **Cron triggers**: one more per env (`*/5 * * * *`); the free plan allows 5 per account (API, watchdog, console and
-  admin have one each per env). Each run makes at most 40 outbound calls (emails and NEAR views, D280); a backlog
-  drains over the next runs.
+- **Cron triggers**: two per env (`*/5 * * * *`, and C12's `*/15 * * * *`, whose 00:30 UTC run also does the daily
+  ledger work, D329); the free plan allows 5 per account (the API, the watchdog and the console have one each per env),
+  so two envs on one free account don't fit: the plan question (build plan open question 3). Each run makes at most 40
+  outbound calls (emails and NEAR reads, D280); a backlog drains over the next runs.
 - **Rollback**: `wrangler rollback` in `apps/admin`. While the Worker is down or can't email, guarded changes, invites
   and owner grants stay unannounced (fail closed): nothing goes live without its notice, and the API cancels a change
   left unannounced for 7 days. `app:changes:announce` is the no-email fallback and needs Hana security's sign-off.
@@ -1138,6 +1151,100 @@ the repo root of the main checkout, logged in to the API's Cloudflare account. N
 | `watcher` `near_unavailable` / `not_on_chain` | `get_scope` failed, or a hot-DB scope isn't on chain | NEAR RPC status; a scope row without a registered scope is a setup error |
 | `access_refused` (warn) with `code` | An `/api/*` request without a valid staff token (`not_staff`: a valid Access identity not on `admin.staffEmails`) | Expected for strangers; for staff, check the manifest list and the Access policy |
 | `access_refused` `access_config_missing` / `certs_unavailable` (error) | `accessAud` still `UNSET`, an unusable staff list, or the team's certs unreachable: every `/api/*` is 503 | Step 1; Cloudflare status |
+| `watchdog_call` with a `code` (C14, below) | The "Security & monitoring" view couldn't read the watchdog | The table in "Security & monitoring" |
+
+### Security & monitoring (batch C14)
+
+The SPA's **Security & monitoring** (`/security/monitoring`), **Pending upgrades** (`/security/upgrades`) and
+**Playbooks** (`/security/playbooks`) screens (D83, D86, D126; `docs/api.md` "Admin Worker", D330–D338). The admin
+Worker reads the watchdog's `GET /status`, `/alerts` and `/actions` **server-side** with the bearer
+`WATCHDOG_STATUS_TOKEN` (the browser never gets it), the API's governance snapshot through `AdminRpc.governance` (the
+same as `GET /v1/governance`) and the recent security events, and lists the findings it derives (a silent watchdog, a
+pause, a pending upgrade, owner transfer or withdrawal, a forged or unexecuted key change, an untracked signer key, an
+unacknowledged critical alert, …), each with its playbook. The portal never alerts and never acts on chain: the
+watchdog still sends every alert itself. Its one write is the **acknowledge** button on an unacknowledged critical
+alert, which forwards `POST /alerts/:id/ack` with your Access identity (`<email> (access:<sub>)`): it **stops only that
+alert's 15-minute re-sends**. It doesn't clear the condition, stop a first alert or change a check; a condition that
+still holds stays in "Open alerts" and in the findings.
+
+Setup (once per env, with or after the admin Worker's own setup above; for the user to run, from the repo root of the
+main checkout; nothing below prints the token):
+
+1. **The watchdog's URL in the manifest.** Add `watchdog.url` to `envs/<env>.json`: the watchdog Worker's https origin
+   on **its own** Cloudflare account, `https://<watchdog.cloudflare.workerName>.<that account's subdomain>.workers.dev`
+   (the URL its `wrangler deploy` printed, without a path; a custom domain is allowed). The schema refuses anything
+   but an https origin, and a workers.dev host must name `watchdog.cloudflare.workerName`. Not a secret. A production
+   manifest's admin `gen` refuses to run without it.
+2. **The bearer as an admin secret.** The admin Worker's copy of `WATCHDOG_STATUS_TOKEN` is the one in
+   `.secrets/<env>/watchdog-secrets.json` (written by `watchdog secrets <env> init`), sent through wrangler's stdin.
+   `jq -e` fails instead of uploading `null` when the file has no token:
+
+   ```sh
+   jq -er .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json | corepack pnpm --dir apps/admin exec wrangler secret put WATCHDOG_STATUS_TOKEN
+   ```
+
+3. **Config and deploy.** The API first (it gains `AdminRpc.governance` and both `pendingUpgrades`), then the admin
+   (`gen` writes the `WATCHDOG_URL` and `NEAR_NETWORK` vars; the token is never in the config):
+
+   ```sh
+   corepack pnpm --filter @hana-id/api run gen <env>
+   corepack pnpm --dir apps/api exec wrangler deploy
+   corepack pnpm --filter @hana-id/admin gen <env>
+   corepack pnpm --dir apps/admin exec wrangler deploy
+   ```
+
+4. **Check it.** Open `<admin.origin>/security/monitoring`: the Watchdog table shows the last run and the heartbeat,
+   "Contract governance" the pause state, the pending key changes and the updater keys against the signer's keys.
+   A `watchdog_unauthorized` means the two copies of the token differ (redo step 2 from the same file);
+   `watchdog_unconfigured` means `WATCHDOG_URL` or the secret is missing here, or the watchdog has no token.
+5. **sandbox-dev: acknowledge alert #11.** The watchdog's critical alert #11 on sandbox-dev is the expected
+   `governance_change` of the updater-key change (the planned rotation, not an attack). It re-pages every 15 minutes
+   until acknowledged. Once the view is up: Security & monitoring → Open alerts → #11 → **Acknowledge** (read the
+   confirmation: it stops the re-sends only). The row then shows `acknowledged … via portal` with your identity, the
+   "not acknowledged" finding goes, and the pages stop at the next 15-minute mark. Check the updater key it reported
+   against "Updater keys against the signer's access keys" first: it must be the key `deploy-contract` installed
+   (`.secrets/sandbox-dev/keys-updater.json`'s public key, `governance:status` lists it as tracked). This is
+   `docs/mainnet-readiness.md` item 5.9, the first real test of the ack flow.
+
+What the view's sources answer when they fail (each fails on its own: a watchdog that doesn't answer leaves the
+governance part standing, and the other way round; Worker log line `watchdog_call` with the code):
+
+| Code | Meaning | Action |
+|---|---|---|
+| `watchdog_unconfigured` | No `WATCHDOG_URL` var or no usable `WATCHDOG_STATUS_TOKEN` here (≥ 32 printable characters), or the watchdog answered 503 (no token of its own) | Steps 1–3; the watchdog's `secrets <env> check` |
+| `watchdog_unauthorized` | The watchdog refused the bearer: the copies differ | Step 2 from the same file |
+| `watchdog_timeout` | No full answer within 8 s (body included) | The watchdog's own account and logs; [watchdog-down](playbooks.md#watchdog-down) if `/status` is down too |
+| `watchdog_too_large` | An answer over its cap (`/status` 1 MiB, `/alerts` 2 MiB, `/actions` 512 KiB, an ack 64 KiB; D331) | A runaway alert's deliveries: check `/alerts` with the curl in the playbooks |
+| `watchdog_bad_answer` | Not a JSON object, or a redirect (never followed: it would carry the bearer elsewhere) | `watchdog.url` must be the Worker's own origin |
+| `watchdog_unavailable` | Network error or a 5xx | Cloudflare status of the watchdog's account |
+| `near_unavailable` (governance) | The API couldn't read the contract's views | NEAR RPC status; [near-rpc-outage](playbooks.md#near-rpc-outage) |
+
+- **Rotating the token**: change it in `.secrets/<env>/watchdog-secrets.json`, upload it to the watchdog (its own
+  account: `wrangler secret put WATCHDOG_STATUS_TOKEN` in `apps/watchdog`) and to the admin (step 2). In between the
+  view answers `watchdog_unauthorized`; the watchdog's alerts are unaffected.
+- **Playbooks** are the `@hana-id/playbooks` package bundled into the admin Worker: an edit there ships with the next
+  admin deploy (and `gen-docs` for `docs/playbooks.md`). Their commands are shown verbatim, placeholders unfilled.
+
+### Pending upgrades page
+
+`/security/upgrades` in the admin, and (from C10) the partner console's page on `GET
+/api/orgs/:org/governance/pending-upgrades`, show what the contract owner has queued: an upgrade (code hash, its
+source commit, reproducible-build command and the diff to the release before it), an owner transfer, a withdrawal,
+delay decreases and console-audience additions, each with its countdown (D86, D333). Both read the same view, built in
+the API from the governance snapshot.
+
+The commit, build command and diff come from the release registry `CONTRACT_RELEASES` in
+`packages/console-core/src/governance.ts`; a code hash that isn't listed there shows as **not a published release**.
+Testnet upgrades are `non-reproducible-wasm` builds, so on sandbox-dev every pending upgrade shows that way, which is
+accurate. Before the owner proposes an upgrade on an env whose builds are reproducible (mainnet, D86 Q14):
+
+1. Build it (`cd contracts/hana-signer && cargo near build reproducible-wasm`) and note the code hash
+   `deploy-contract <env> --upgrade` prints in its plan.
+2. Add the release to `CONTRACT_RELEASES` (oldest first: `codeHash`, `version` from `Cargo.toml`, the full source
+   `commit`, the reproducible `buildCommand`, `previousCommit` = the release before it); its test checks the shape and
+   the chain of commits.
+3. Merge and deploy the API (it serves the view), then propose. Partners then see the release beside the hash for the
+   whole `governance_delay_ms`.
 
 ## Files Worker and logos (`apps/files`, batch C11, milestone M5)
 
@@ -1251,6 +1358,80 @@ wrangler.vault.jsonc` and `wrangler dev -c wrangler.auth.jsonc` in other termina
 wrangler's dev registry). A single `wrangler dev -c a -c b` serves only its first config over HTTP, so the vault page
 couldn't reach the API; with a sandbox env's configs every page answers 404 (the local URL isn't the configured
 origin).
+
+## Reports and statements (batch C12, milestone M6)
+
+The admin Worker settles the gas of every relayed event at FINAL, checks the relayer nonces and the rejection rate
+daily, fetches the NEAR/USD rate, and issues the frozen monthly statements (CSV, PDF and on-screen, D92) with ledger CSV
+exports; partners will read their reports and statements in the console once C10 routes them (`docs/api.md` "Admin
+Worker", "Usage ledger functions"; D320–D329). Not deployed anywhere yet: it goes live at milestone M6.
+
+### Setting it up (once per env, for the user to run)
+
+Prerequisites: the admin Worker set up ("Admin Worker" above, with its Hyperdrive id), the R2 buckets of "Files Worker
+and logos" step 1 (`STATEMENTS` with its lock, `EXPORTS` with its lifecycle rule), and capture running ("Usage
+capture"). From the repo root of the main checkout.
+
+1. **The ledger migration**: `corepack pnpm --filter @hana-id/scripts usage-migrate <env>` (dry run: it lists
+   `0006_reports.sql`), then the same with `--yes`. It adds functions, columns and tables, rewrites no row, and takes
+   the admin role's direct `UPDATE` on `usage.near_usd_rates` away (overrides go through `usage.override_rate`).
+2. **Optional: a CoinGecko demo key** (the free public API works without one, with lower limits). Save it to
+   `.secrets/<env>/coingecko-api-key` (0600) and set it through stdin:
+   `corepack pnpm --dir apps/admin exec wrangler secret put COINGECKO_API_KEY < .secrets/<env>/coingecko-api-key`.
+3. **Config and deploy**: `corepack pnpm --filter @hana-id/admin gen <env>` (keeps the Hyperdrive id) now binds
+   `STATEMENTS` and `EXPORTS`, sets `RELAYER_ACCOUNT` (the manifest's `relayer`; a statement names `NEAR_NETWORK`, C14's var), and adds the
+   `*/15 * * * *` trigger. Deploy the API first (`ConsoleRpc.usage` / `statements` / `ledger`), then the console
+   (`StaffRpc.recordStaffAction`), then the admin Worker:
+
+   ```sh
+   corepack pnpm --dir apps/api exec wrangler deploy
+   corepack pnpm --dir apps/console exec wrangler deploy
+   corepack pnpm --dir apps/admin exec wrangler deploy
+   ```
+
+4. **Check it**: `corepack pnpm --dir apps/admin exec wrangler tail <admin.workerName>` across a quarter hour:
+   `ledger_cron` lines `alerts`, `statement_notices`, `settlement` with `outcome: ok`; at 00:30 UTC also `nonce_check`,
+   `rejection_rate`, `partitions`, `rates`. The admin console's Rates screen shows the fetched days; the Feed and
+   notices screen's ledger part shows each relayer key's nonce check, the settlement backlog and the partitions ahead.
+5. **Rates for the past**: the daily run fills only the last 10 days. Before issuing a statement for an earlier month,
+   set the missing days by hand (Rates → override, a reason naming the source), or the issue is refused.
+
+### Issuing a monthly statement
+
+From the 3rd of the next month (00:00 UTC), in the admin console: Statements → the org and month. It shows what still
+blocks the issue: relayed events not settled yet (settlement reads them every 15 minutes; one not final after 24 h is
+recorded unsettled and counted, never billed) and days without a rate. "Issue statement" freezes it: the CSV and PDF go
+to `STATEMENTS` under new keys, the hashes and totals to `usage.statements`, a `statement.issued` audit row to the
+console; within 15 minutes the org's security contacts, its billing email and the security alias get the statement hash.
+A second issue for the month is refused; nothing is ever recomputed.
+
+- **Late events** (received after the statement's `as_of`) stay in the ledger and show in the report as "after
+  statement"; Hana handles them under the service contract.
+- **Reconciling**: "Export ledger CSV" on an issued statement exports at its `as_of`; the sum of the `final` rows' gas
+  and tokens equals the statement's `tgas` and `near` (owner actions included), and every `near_tx` can be checked at
+  FINAL. Exports live 30 days under `exports/` (D308).
+- **Tax invoices** come from the accounting software and quote the org, the month and the statement hash.
+
+### Overriding a rate (audited)
+
+Rates → override: the day, the USD price as a decimal (at most 6 places) and a reason of at least 10 characters. It
+replaces the day's rate (`source: manual`, your email as `entered_by`) and appends a row to `usage.rate_overrides` with
+the previous rate, in one transaction, plus a `rate.overridden` audit row. Refused for a future day and for any day of a
+month that has a statement (the rates of a statement are frozen).
+
+### What to watch (Worker logs and emails)
+
+| Signal | Meaning | Action |
+|---|---|---|
+| Email "Relayer nonce unexplained" (`nonce_unexplained`) | A relayer key's last landed nonce has no ledger row: a usage write was lost (`usage_write_failed` in the API's logs), or something other than the API signed with the key | Treat it as a possible key leak until explained: check the API's logs for that hour; if no lost write explains it, follow `docs/playbooks.md` "A relayer key stolen" |
+| Email "Settlement refused … events" (`settlement_mismatch`) | Relayed events not billed: a duplicate `near_tx`, a key outside the pools, or a transaction at FINAL signed by another key or nonce (D321) | Check the transaction on chain at FINAL and the API's logs for the request ids; if the API didn't write the event, rotate the usage writer's password (`usage-setup <env> roles`, then the writer's Hyperdrive config) |
+| Email "Rejection rate over 5%" (`rejection_rate`) | An org had ≥ 100 relayed attempts in a day and more than 5 % were rejected after the relay (gas paid, not billed by default, D91) | Tell the partner; look for a client bug or third-party replays |
+| `ledger_cron` `usage_db_missing` / `ledger_unavailable` (error) | No `USAGE_DB`, or Neon/Hyperdrive down: nothing settles, no checks, no notices | `gen --admin-hyperdrive-id <id>`; Neon status |
+| `ledger_cron` `relayer_account_missing` / `relayer_keys_unavailable` (error) | No `RELAYER_ACCOUNT` var, or `AdminRpc.relayerKeys` failed: settlement and the nonce check don't run | Re-run `gen`; check the API |
+| Security screen: settlement backlog growing | More relayed events than a run can read (about 35 a run, D322), or the RPC can't find them | NEAR RPC status; the plan's subrequest limit |
+| Security screen: partitions ahead < 2 | Neither the API's hourly keeper nor the admin's daily one has run | Check both crons; `usage-migrate` re-runs nothing |
+| `bff` `statement_hash_mismatch` (error) | A statement file no longer matches the hash frozen in Neon | Tell Hana security: the bucket lock should make this impossible |
+| `bff`/`statement`/`export` `audit_failed` (error) | The act happened but its `audit_log` row wasn't written (the console was down) | Note it in the incident log; the statement row or the override row is the act's own record |
 
 ## Admin CLI (`scripts/admin.ts`)
 
@@ -1525,12 +1706,12 @@ curl -s <apiUrl>/v1/governance | jq '.signerAccessKeys[] | select(.updaterPermis
 curl -s <apiUrl>/v1/governance | jq '.updater'                                                # the cron's last run
 ```
 
-**Hand-off to batch C.** The admin portal's "Security & monitoring" view and the admin and partner consoles'
-pending-upgrades page (D83, D86) don't exist yet. Their contract-side items read this endpoint (one request, already
-normalised, with countdown inputs and JWKS verdicts), or the same views through the admin Worker's own RPC
-(`docs/contract-interface.md` "Monitoring hand-off"); the portal should warn when a snapshot is older than
-`readAtMs + 20 s` and must not treat the API as independent (it runs on Hana's main Cloudflare account). The council's
-open proposals and the full list of sources are in [Governance status for the admin portal](#governance-status-for-the-admin-portal-batch-c-hand-off).
+**Read by batch C14.** The admin portal's "Security & monitoring" view and the admin and partner consoles'
+pending-upgrades page (D83, D86) read this snapshot over the service binding (`AdminRpc.governance`,
+`AdminRpc.pendingUpgrades`, `ConsoleRpc.pendingUpgrades`: one read serves the endpoint and the RPCs for 10 s), not
+over HTTP, and show `readAtMs` beside every countdown. The API isn't independent (it runs on Hana's main Cloudflare
+account): the watchdog is the independent party, and its own status sits beside the snapshot in the same view. The
+council's open proposals and the full list of sources are in [Governance status for the admin portal](#governance-status-for-the-admin-portal-batch-c-hand-off).
 The watchdog's heartbeat, verdicts, actions log, alerts and acks come only from the watchdog service's `GET /status`,
 `/alerts`, `/actions` and `POST /alerts/:id/ack` ([Watchdog service](#watchdog-service-appswatchdog)). Nothing here
 alerts: alerts are the watchdog's (D85).
@@ -2185,7 +2366,8 @@ below logged in to the watchdog's account (`wrangler login` there, or `CLOUDFLAR
    first run, `heartbeat.ok`, every channel `configured`. The first run alerts critical on any active kid not in
    Google's JWKS (no pause) and on anything already pending: acknowledge after checking. Then send a test critical
    page to both founders (the forced-rotation drill of the migration plan does this for real).
-7. The admin Worker (batch C) gets the same `WATCHDOG_STATUS_TOKEN` and the watchdog's URL.
+7. The admin Worker gets the same `WATCHDOG_STATUS_TOKEN` (an admin secret) and the watchdog's URL (`watchdog.url`
+   in the manifest): "Admin Worker" → [Security & monitoring](#security--monitoring-batch-c14), steps 1–3.
 
 **Cloudflare Access** (before any staff call): one Access application for `{url}/v1/email/admin/*` (`{url}` the issuer's, D230), policy = the
 staff on `emailIssuer.access.staffEmails`, its AUD tag in `emailIssuer.access.aud`. In the application's settings set
@@ -2198,7 +2380,8 @@ test Slack channel and ntfy topic: local runs send real alerts and, with a real 
 transactions.
 
 Rotating its secrets: `WATCHDOG_KEY`: add a new function-call key (as in step 3), put it in the file, `wrangler secret
-put WATCHDOG_KEY`, then delete the old key on chain. `WATCHDOG_STATUS_TOKEN`: change it on both Workers. The others:
+put WATCHDOG_KEY`, then delete the old key on chain. `WATCHDOG_STATUS_TOKEN`: change it on both Workers (the admin's:
+"Security & monitoring" step 2; until both match the portal shows `watchdog_unauthorized`). The others:
 replace in the file and `wrangler secret put`.
 
 ### Email login: pins, link alarms, unrecorded wallets
@@ -2268,7 +2451,8 @@ them as `IDENTITY_PINS` and `identityToken.iss` as `IDENTITY_ISS`; an env withou
 ### Watchdog alerts (runbook)
 
 Critical alerts page both founders (paging app + Slack + email) and are re-sent every 15 min until someone
-acknowledges them in the admin portal (or in Pushover). Acknowledging stops only the re-sends. Every alert's text
+acknowledges them in the admin portal ("Security & monitoring" → Open alerts → Acknowledge, batch C14) or in
+Pushover. Acknowledging stops only the re-sends. Every alert's text
 names its id, its kind and its playbook (`Playbook: <id>`); the full details are in `GET /alerts`, and `GET /status`
 `alert_kinds` gives each kind's `playbook`.
 
@@ -2883,7 +3067,7 @@ What users see, by case (`docs/integration.md` "Sign-in methods and links" has t
 | B, Google-hosted | had a Google wallet, chooses "Continue with email" with its Gmail address and types the code | "This email belongs to a wallet you created by signing in with Google": **Link and continue** or **Sign in with Google**, then Google | the Google wallet; the email joins at once (a notice mail goes to the address) |
 | B, not hosted | the same with an address Google doesn't host | the same, then "An email will be able to open this wallet from {date}" with **Cancel this link** | the Google wallet; the email joins after `change_delay_ms` (sandbox-dev: the contract's value; 24 h on mainnet); an email login meanwhile is `link_pending` with the date |
 | C | has neither wallet | the usual sign-in | a new wallet for that method; a Google login records the hint for later |
-| Declined | a Google user cancels Google's one sign-in screen | nothing more: the email is asked on that screen, so cancelling it is no Google login at all (`google_error`, `access_denied`) | the user can try again or use email |
+| Declined | a Google user cancels Google's one sign-in screen | Hana's chooser again: "Google sign-in was cancelled.", **Continue with Google** or **Continue with email** (case B's own choices when its Google step was cancelled; D341) | Google again or email signs in; closing the popup there ends the login with `login_cancelled`, never `google_error` |
 | Another account | google-match finds the access token's account isn't the ID token's (`google_account_mismatch`; a user without a wallet) | "Another Google account was chosen": **Sign in with email instead**, **Try Google again** (Google's email permission for the signed-in account), Cancel (D264, kept under D270) | an email login, or Google again; Cancel ends `login_cancelled` (`google_account_mismatch`; a refusal on the retried screen `email_consent_declined`). A user with a wallet sees nothing of it |
 
 Checklist, in order (each check before the next):

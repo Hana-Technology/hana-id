@@ -105,7 +105,7 @@ test('the demo explains a blocked popup, then signs in through the Hana button',
   expect(await cspViolations(page)).toEqual([]);
 });
 
-test('the demo shows plain messages for a cancelled sign-in and a declined Google sign-in', async ({ page }) => {
+test('the demo shows plain messages for a cancelled sign-in, and for one cancelled at Google then closed', async ({ page }) => {
   await openDemo(page);
   const first = page.waitForEvent('popup');
   await page.getByRole('button', { name: 'Log in with Google' }).click();
@@ -117,8 +117,11 @@ test('the demo shows plain messages for a cancelled sign-in and a declined Googl
   await page.getByRole('button', { name: 'Log in with Google' }).click();
   const popup = await second;
   await popup.waitForURL(/accounts\.google\.com/u);
+  // Cancel at Google: the popup goes back to Hana's chooser (D341); closing it there is a cancelled sign-in.
   await popup.click('#deny');
-  await expect(page.getByRole('alert')).toHaveText('You declined the Google sign-in.');
+  await expect(popup.locator('#google-cancelled')).toHaveText('Google sign-in was cancelled.');
+  await popup.close();
+  await expect(page.getByRole('alert')).toHaveText('Sign-in cancelled.');
   await expect(page.locator('#status')).toHaveText('Logged out.');
 });
 

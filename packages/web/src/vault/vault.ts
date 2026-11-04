@@ -71,7 +71,7 @@ import { autoApproveStatus, consentActive, consentEnd, newConsent, withUsage } f
 import { type Persistence, type PolicyInForce, type RawSign, type VaultConfig, parentAllowed, policyInForce } from './config.ts';
 import { VaultError, apiErrorToVault, disconnected, notLoggedIn, toProtocolError, userRejected } from './errors.ts';
 import { Launcher, type LauncherHandle, type LauncherView } from './launcher.ts';
-import { type LoginContext, type LoginMode, type LoginRequest, type LoginStage, type LoginSuccess, PendingLink, PendingLogin, type RootPins, isOwnLoginPath, pathOwner, serverDetail } from './login.ts';
+import { type LoginContext, type LoginMode, type LoginRequest, type LoginStage, type LoginSuccess, PendingLink, PendingLogin, type PopupWatch, type RootPins, isOwnLoginPath, pathOwner, serverDetail } from './login.ts';
 import { type IssuerApi, issuerApi } from './issuer.ts';
 import type { GoogleEmailFlow } from '../auth/google.ts';
 import { NearView } from './near.ts';
@@ -186,6 +186,8 @@ export interface VaultOptions {
   loginFlow?: 'combined' | 'split';
   /** How the popup asks Google for the email scope; default auth/google.ts GOOGLE_EMAIL_FLOW (tests run every flow). */
   googleEmailFlow?: GoogleEmailFlow;
+  /** D347: the watch on the login popup's window (vault/login.ts POPUP_WATCH by default; tests shorten it). */
+  popupWatch?: Partial<PopupWatch>;
 }
 
 interface Share {
@@ -433,8 +435,10 @@ export class Vault {
       return;
     }
     if (t === 'hana:auth-progress') {
-      const m = this.pending ? parseWindowMessage(e.data, ['hana:auth-progress']) : null;
-      if (m) this.pending?.acceptProgress(e, m.stage);
+      const m = this.pending || this.pendingLink ? parseWindowMessage(e.data, ['hana:auth-progress']) : null;
+      if (m && this.pending) this.pending.acceptProgress(e, m.stage);
+      // A link task's popup: the close watch's signals only (D347).
+      else if (m && this.pendingLink) this.pendingLink.acceptPopupSignal(e, m.stage);
       return;
     }
     if (t === 'hana:export-hello') {
@@ -822,6 +826,7 @@ export class Vault {
       perfNow: this.perfNow,
       pins: this.rootPins(),
       ...(this.o.googleEmailFlow ? { googleEmailFlow: this.o.googleEmailFlow } : {}),
+      ...(this.o.popupWatch ? { popupWatch: this.o.popupWatch } : {}),
     };
   }
 

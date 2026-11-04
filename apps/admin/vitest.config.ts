@@ -35,6 +35,8 @@ export const TEST_KEYS = {
   CANCEL_LINK_KEY: btoa(String.fromCharCode(...new Uint8Array(32).fill(1))),
   INVITE_LINK_KEY: btoa(String.fromCharCode(...new Uint8Array(32).fill(2))),
   EMAIL_API_KEY: 're_test_suite_only',
+  /** The watchdog status bearer (C14): a fixed placeholder the tests' fake watchdog checks; never a real token. */
+  WATCHDOG_STATUS_TOKEN: 'test-suite-only-watchdog-status-token-placeholder',
 };
 
 export default defineConfig(async () => {

@@ -12,7 +12,25 @@ import { actionOf, breathe, createAction, getAs, member, postAs, stepUp } from '
 import { installChain, oidc, setChain, setScope, uninstallChain } from './chain.ts';
 import { MockGoogle, account, signIn } from './google.ts';
 import { auditRows, db, seedHotApp, shiftClock } from './helpers.ts';
-import { policyJson } from '../../../packages/core/test/policy-fixtures.ts';
+
+/** An auto-approve policy the validator accepts (apps/api/test/vault-helpers.ts autoApprovePolicy's shape). */
+const policyJson = () => ({
+  v: 1,
+  label: 'Swaps on Example',
+  maxConsentMs: 12 * 3600_000,
+  limits: { perDayCount: 5 },
+  evm: {
+    chains: [
+      {
+        chainId: 8453,
+        maxValueWei: '100000',
+        maxValueWeiPerDay: '100000',
+        maxFeeWei: '100000',
+        contracts: [{ address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', name: 'USDC', selectors: [{ selector: '0x095ea7b3', signature: 'approve(address,uint256)', addressArgs: 'self-or-listed' }] }],
+      },
+    ],
+  },
+});
 
 let google: MockGoogle;
 beforeEach(async () => {

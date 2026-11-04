@@ -14,17 +14,25 @@ import type {
   GetAppInput,
   GuardedChange,
   KeyView,
+  LedgerInput,
+  LedgerRow,
   ListAppsInput,
   ListChangesInput,
   OwnerActionInput,
+  PendingUpgradesInput,
+  PendingUpgradesView,
   RemoveOriginsInput,
   RevokeKeyInput,
   RotateKeyInput,
   RpcFail,
   RpcOk,
   SetLogoInput,
+  StatementsInput,
+  StatementWithTotals,
   TurnOffInput,
   UpdateSettingsInput,
+  UsageInput,
+  UsageRow,
 } from '@hana-id/console-core';
 import type { ConsoleUsersClient } from './users.ts';
 
@@ -56,6 +64,12 @@ export interface ConsoleRpcClient {
   revokeKey(c: RevokeKeyInput): Answer<object>;
   /** An on-chain owner action, relayed by the API's owner pool (`status` and the relay's answer once relayed). */
   ownerAction(c: OwnerActionInput): Answer<{ status: number; result?: unknown; nearTx?: string; code?: string; error?: string }>;
+  /** The pending-upgrades page (batch C14, D86; governance.ts): contract-wide, charged to the member's org. */
+  pendingUpgrades(c: PendingUpgradesInput): Answer<{ pendingUpgrades: PendingUpgradesView }>;
+  /** Reports, statements and the ledger (batch C12, reports.ts): Neon only on the API side. */
+  usage(c: UsageInput): Answer<{ rows: UsageRow[] }>;
+  statements(c: StatementsInput): Answer<{ statements: StatementWithTotals[] }>;
+  ledger(c: LedgerInput): Answer<{ rows: LedgerRow[]; next?: string; asOf: number }>;
 }
 
 export interface Env {

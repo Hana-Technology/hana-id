@@ -10,6 +10,7 @@ import { LEGACY_ORG_ID, UID_ENDPOINTS, b64url, uidFromPath, usageEventV1, type U
 import pg from 'pg';
 import type { Env } from '../env.ts';
 import { log } from '../log.ts';
+import { userIdKey } from './uid-key.ts';
 
 export const USAGE_RETRY_DELAY_MS = 250;
 /** Per attempt: Hyperdrive answers from Cloudflare's network; the writer role's statement_timeout is 5 s too. */
@@ -87,25 +88,6 @@ async function send(binding: Hyperdrive, e: UsageEventV1, at: LogCtx): Promise<v
       await sleep(USAGE_RETRY_DELAY_MS);
     }
   }
-}
-
-/** USER_ID_KEY (base64 of 32 bytes), parsed once per value; null (and one warning per value) when unusable. */
-let uidKey: { raw: string | undefined; key: Uint8Array | null } | null = null;
-function userIdKey(env: Pick<Env, 'USER_ID_KEY'>): Uint8Array | null {
-  if (uidKey && uidKey.raw === env.USER_ID_KEY) return uidKey.key;
-  let key: Uint8Array | null = null;
-  try {
-    const raw = env.USER_ID_KEY?.trim() ?? '';
-    if (/^[A-Za-z0-9+/]{43}=$/u.test(raw)) key = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0));
-  } catch {
-    key = null;
-  }
-  if (key?.length !== 32) {
-    key = null;
-    log({ event: 'usage_uid_unavailable', code: env.USER_ID_KEY === undefined ? 'missing_key' : 'bad_key' }, 'warn');
-  }
-  uidKey = { raw: env.USER_ID_KEY, key };
-  return key;
 }
 
 /** The scope's org for an owner action (no gate row): the hot DB's, `org_legacy` for a scope it doesn't hold. */

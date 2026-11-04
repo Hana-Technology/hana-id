@@ -1,12 +1,13 @@
 # Batch C build plan
 
-Status (2026-11-04, branch `feat/batch-c-9`, on `develop` @ a243d6b): C1–C5 merged into `develop` and running in the
+Status (2026-11-04, branches `feat/batch-c-9` and `feat/batch-c-14`, on `develop`; `feat/batch-c-12`): C1–C5 merged into `develop` and running in the
 sandbox-dev API as far as `develop` includes them (migrations 0006, 0009 and 0010 applied, usage capture off;
 `docs/operations.md`); C6 (the claim allow-list on its tokens, D277), C7 (the console Worker backend; D240–D244), C8
 (the admin Worker; D278–D285) and C11 (the files Worker and logos; D300–D308) merged into `develop`, not deployed (M3
-not run; their setup is steps 4, 5 and 7–10 below, at M4 and M5); C9 (partner sign-in, D290–D297) merged; C10 (partner management, D342, D343,
-D350–D358) built on `feat/batch-c-10`, not merged, not deployed; C12–C17 not built (some in progress on their own
-branches). Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
+not run; their setup is steps 4, 5 and 7–10 below, at M4 and M5); C9 (partner sign-in, D290–D297) merged into
+`develop`, not deployed (its setup is steps 11 and 12, at M4); C14 (Security & monitoring and the pending-upgrades
+page; D330–D338, D344) and C12 (reports and statements; D320–D329) merged, not deployed; C10 (partner management, D342,
+D343, D350–D358) built on `feat/batch-c-10`, not merged, not deployed; C13 and C15–C17 not built. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
 batches that each merge into `develop` on their own: tests green, the docs they change updated, and nothing a partner,
 a user or staff can reach that is half-wired. Ordered by dependency; the spec's "Build order" steps are noted per
 batch. This is a plan, not a spec: where it and the spec disagree, the spec wins or gets amended first.
@@ -29,7 +30,9 @@ Batches merge one at a time. Deploys happen at the milestones at the end; a merg
   ledger (C4) should also count `identity_tokens` per app and day (today `identity_usage` in D1). Taken by C4:
   hot-DB **0009** (`0009_session_markers.sql`, D220; 0007 stays C4b's) and Neon **0002**
   (`0002_identity_tokens.sql`, D223) and **0003** (`0003_writer_partitions.sql`, the writer keeps partitions
-  ahead), so C12's and C13's Neon functions take **0004** and **0005**.
+  ahead). The email work then took Neon **0004** (`0004_email_counts.sql`) and **0005** (`0005_link_events.sql`), so
+  C12's functions are **0006** (`0006_reports.sql`, D320) and C13's retention functions take **0007**; C15's indexes
+  take the next free number after whatever has merged.
 - Setup and deploy steps are instructions for the user. No batch's agent connects to Neon, creates Hyperdrive or D1
   resources, runs wrangler against an account, deploys or sends a chain transaction.
 - Neon is Postgres only, reached through Hyperdrive. Neon Auth, Better Auth and Neon's other services are not used
@@ -84,7 +87,7 @@ manifest blocks, tables or vars yet.
   - Neon ledger DDL: `apps/api/migrations-usage/0001_ledger.sql` (schemas `usage` and `ops`, every table, monthly
     partitions with `usage.ensure_partitions`, `usage.record_event`, the statement and rate triggers, roles `NOLOGIN`,
     grants with `EXECUTE` revoked from `PUBLIC`). The report, ledger, rejection-rate and retention functions come with
-    C12 and C13 as `0002`, `0003`.
+    C12 and C13 (planned as `0002`, `0003`; now `0006` and `0007`, see "Conventions").
   - `scripts/usage-migrate.ts`: applies `migrations-usage` in order as the owner over the direct URL from
     `.secrets/<env>/neon.json`, one transaction per file, recorded with its sha256 in `hana_migrations.applied`;
     refuses a changed applied file, a pooled URL and a non-`postgresql:` URL; dry run by default, `--yes` applies;
@@ -303,10 +306,13 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
   for every kind (`apps/console/src/actions.ts`), the write routes and the role matrix (`writes.ts`), the on-chain view,
   owner drift and the client-proof helper (`scopes.ts`, `near.ts`), C11's logo routes behind the session, the cancel
   pages, the SPA's write screens with the consent preview. The Users screen (D310, D346) is built against a typed stub
-  of the wallet directory's `ConsoleRpc.listUsers` / `getUser`, behind `USERS_SCREEN` (off, D357), until
-  `feat/wallet-directory` and `feat/user-id-identity-sub` land. `GET /api/governance/pending-upgrades` stays for C14.
+  of `ConsoleRpc.listUsers` / `getUser` (the wallet directory, merged) with D346's `u1_…` User ID (branch
+  `feat/user-id-identity-sub`, not merged), behind `USERS_SCREEN` (off, D357) until that lands. C12's report routes and
+  C14's `GET /api/orgs/:org/governance/pending-upgrades` are routed (any member); their SPA screens are not built.
   Setup: none new (the console's two new vars come from the manifest through `gen`). The owner-action relay itself
   isn't exercised in the tests (no owner-pool key in the test API); C17's smoke covers it on sandbox-dev.
+- **Users screen** (D310 point 5): over `ConsoleRpc.listUsers` / `getUser` (built on `feat/wallet-directory`, D315):
+  user id, Support ID, created and last seen, account kinds and wallets, the org's own scopes only, no email or sub.
 
 ## C11. Files Worker and logos
 
@@ -325,8 +331,8 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
 
 ## C12. Reports and statements
 
-- **Scope**: Neon `0004_reports.sql` (`org_report`, `org_statements`, `org_ledger`, `rejection_rates`; C13's
-  retention functions are `0005`); admin crons (settlement every 15 min, the daily nonce check, rate fetch with the
+- **Scope**: Neon `0006_reports.sql` (`org_report`, `org_statements`, `org_ledger`, `rejection_rates`; 0004 and 0005
+  were taken by the email work, so C13's retention functions are `0007`, D320); admin crons (settlement every 15 min, the daily nonce check, rate fetch with the
   audited override, `ensure_partitions` as a second keeper beside the API's hourly one (C4), rejection-rate alert); `ConsoleRpc.usage`/`statements`/`ledger`; report screens (console and admin); statement issue
   with CSV, PDF (`pdf-lib`, exact-pinned) and on-screen views, the ledger CSV and exports.
 - **Obligation from C4 (review L7, D222):** settlement bills a relayed event only when its transaction is its own:
@@ -335,10 +341,23 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
   listed) and alerts staff: a leaked writer credential could otherwise attach a real transaction to an org it isn't
   for. Test it with a duplicated `near_tx` and a wrong key and nonce.
 - **Tests**: spec "Usage ledger" report, settlement, nonce-check, statement, golden-CSV, rejection-rate and D92 rows.
+- **Status** (2026-11-04): built on `feat/batch-c-12`, tests green, not merged, not deployed (D320–D329). Built: Neon
+  `0006_reports.sql` (the report, ledger and statement functions over one billing rule, `usage.classified`; the
+  settlement columns and alert tables; the audited rate override); `ConsoleRpc.usage` / `statements` / `ledger`
+  (`apps/api/src/usage/reports.ts`); the admin Worker's settlement with the C4 obligation (a duplicate `near_tx`, a key
+  outside the pools, and a signer, key, nonce or receiver mismatch at FINAL are unsettled and alerted, D321), the daily
+  nonce check, rejection-rate check, partitions and CoinGecko rate in the 15-minute trigger's 00:30 UTC run (two
+  triggers, D329), statement issue with CSV, `pdf-lib` PDF and the on-screen view (D326), exports under `exports/`,
+  the rate override, the report, statement and rate screens and the security screen's ledger part in the admin SPA;
+  `StaffRpc.recordStaffAction` for their audit rows (D327); the console's report backend (`apps/console/src/reports.ts`).
+  **Left for C10**: the partner report screens and the session routes that call the console's report handlers
+  (`usageRoute`, `statementsRoute`, `statementViewRoute`, `statementFileRoute`, `ledgerCsvRoute`). The setup is
+  `docs/operations.md` "Reports and statements".
 
 ## C13. Retention
 
-- **Scope**: Neon `0003_retention.sql` (`drop_expired_partitions`, `strip_uids`, `purge_app_users`, `erase_uid`),
+- **Scope**: Neon `0007_retention.sql` (`drop_expired_partitions`, `strip_uids`, `purge_app_users`, `erase_uid`; the
+  number after C12's 0006, D320),
   `AdminRpc.purgeAudit`/`deletedApps`, `StaffRpc.purgeAudit`, the monthly job with `ops.retention_runs`, its screen
   and the `retention_failed` email, `scripts/uid-erase.ts`.
 - **Tests**: spec "Usage ledger" retention rows (D90).
@@ -350,6 +369,17 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
   `@hana-id/playbooks` package** (being specified separately: spec §Hana admin console and `docs/operations.md`
   "Watchdog alerts" are owned by that work); this batch consumes the package and its completeness test rather than
   writing playbook text. Sources: the watchdog's status endpoint, `GET /v1/governance`, the security screen's events.
+- **Status** (2026-11-04): built on `feat/batch-c-14`, not merged, not deployed (D330–D338; also D344, the feed's
+  silent first run, user-confirmed). Built: the admin's `GET /api/monitoring`, `/api/monitoring/alerts`, `/actions`,
+  `POST /api/monitoring/alerts/:id/ack`, `GET /api/governance/pending-upgrades`, `GET /api/playbooks[/:id]` and the
+  SPA's Security & monitoring, Pending upgrades and Playbooks screens; the watchdog called server-side with the new
+  admin secret `WATCHDOG_STATUS_TOKEN` (size caps, 8 s deadline, plain text); `AdminRpc.governance`,
+  `AdminRpc.pendingUpgrades`, `ConsoleRpc.pendingUpgrades` over the `GET /v1/governance` snapshot; the release registry
+  `CONTRACT_RELEASES` (console-core); manifest `watchdog.url` → `WATCHDOG_URL`; the partner console's
+  `pendingUpgradesRoute` (`apps/console/src/governance.ts`) for C10 to route under `GET
+  /api/orgs/:org/governance/pending-upgrades` (D335). Not in C14 (D334, to confirm): the portal's own chain and council
+  DAO reads. Setup: with the admin Worker at M4, `docs/operations.md` "Admin Worker" → "Security & monitoring" (then
+  acknowledge sandbox-dev's alert #11).
 
 ## C8b. Users screen (proposed, D275; spec §Users and Support ID)
 
@@ -364,6 +394,9 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
   Worker.
 - **Visible after**: staff search users and see a user's apps and on-chain path in the admin console; the CLI's
   `user:*` keep working.
+- **Already built for it** (D310–D317, `feat/wallet-directory`): `AdminRpc.listUsers` / `getUser` / `findUsers` over
+  the API's wallet directory (user ids, Support IDs, identities with subs, wallets); the screen joins each identity's
+  `directoryKey` with `DirectoryRpc` for the email.
 
 ## C15. Support ID lookup (D96; proposed design D276, spec §Users and Support ID)
 
@@ -376,6 +409,8 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
   sessions by uid, errors by request ID, the app's changes); `user:erase` in the CLI.
 - **Tests**: the spec's Support ID, lookup, issuer uid write and migration rows.
 - **Open (D276)**: whether `user:erase` lands here or with C13.
+- **Since D312**: the Support code is `end_users.support_code` in the hot DB (indexed); `AdminRpc.findUsers` already
+  resolves a code to its users, so `IssuerRpc.uid` and `user_email_apps.uid` may not be needed (revisit D276 here).
 
 ## C16. CLI completion
 
@@ -395,7 +430,7 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
 | M3 | C6 | RPC entrypoints (unbound), owner-action precheck and caps, the console sink scope |
 | M4 | C7–C9 | Console (sign-in, read-only), admin console, notices by email |
 | M5 | C10–C11 | Console write paths, logos |
-| M6 | C12–C13 | Reports, statements, retention |
+| M6 | C12–C13 | Reports, statements, retention (C12's setup: `docs/operations.md` "Reports and statements": Neon 0006, the admin's buckets and vars, the optional CoinGecko key) |
 
 ## Setup steps (for the user, when each milestone deploys)
 
@@ -432,7 +467,8 @@ Run from the main checkout; every file in `.secrets/` is 0600 in a 0700 director
 9. **Resend** (C8, D87): the sending subdomain with SPF, DKIM and DMARC; an API key for the admin Worker only.
 10. **Admin secrets** (C8): `EMAIL_API_KEY` (the Resend key of step 9), `CANCEL_LINK_KEY`, `INVITE_LINK_KEY` (32 random
     bytes each, base64, generated into `.secrets/<env>/`, then `wrangler secret put` from stdin; `docs/operations.md`
-    "Admin Worker" step 3).
+    "Admin Worker" step 3). From C14: `WATCHDOG_STATUS_TOKEN` (the watchdog's own, from
+    `.secrets/<env>/watchdog-secrets.json`) and the manifest's `watchdog.url` ("Admin Worker" → "Security & monitoring").
 11. **Console Google client** (C9): a Web client with no JavaScript origins and one redirect URI,
     `<console.authOrigin>/callback`; its id in `consoleAudiences` (the only `google` entry, D294), its downloaded JSON
     in `.secrets/<env>/console-google-client.json` (0600), `CONSOLE_GOOGLE_CLIENT_SECRET` as a console secret through

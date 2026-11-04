@@ -56,6 +56,10 @@ export const AUDIT_DETAIL_KEYS = {
   'key.created': ['code', 'keyId'],
   'key.rotated': ['code', 'keyId', 'newKeyId'],
   'key.revoked': ['code', 'keyId'],
+  // Batch C12 (StaffRpc.recordStaffAction, D327): the admin Worker's statement, export and rate-override acts.
+  'statement.issued': ['month', 'csvSha256', 'pdfSha256', 'asOf', 'lines'],
+  'ledger.exported': ['month', 'asOf', 'rows', 'sha256'],
+  'rate.overridden': ['day', 'usdMicros', 'overrideId'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type AuditAction = keyof typeof AUDIT_DETAIL_KEYS;

@@ -79,6 +79,12 @@ describe('audit details', () => {
           "keyId",
           "newKeyId",
         ],
+        "ledger.exported": [
+          "month",
+          "asOf",
+          "rows",
+          "sha256",
+        ],
         "member.added": [
           "role",
           "grantId",
@@ -136,6 +142,11 @@ describe('audit details', () => {
           "policyId",
           "changeId",
         ],
+        "rate.overridden": [
+          "day",
+          "usdMicros",
+          "overrideId",
+        ],
         "raw_sign.proposed": [
           "code",
           "version",
@@ -148,6 +159,13 @@ describe('audit details', () => {
         "signin.refused": [
           "code",
           "emailSha256",
+        ],
+        "statement.issued": [
+          "month",
+          "csvSha256",
+          "pdfSha256",
+          "asOf",
+          "lines",
         ],
         "step_up.failed": [
           "kind",

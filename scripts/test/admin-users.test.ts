@@ -4,14 +4,16 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { deriveAddresses } from '@hana-id/core/derivation';
 import { loadEnv, repoRoot } from '@hana-id/env';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { assertCommandPositionals } from '../lib/admin-args.ts';
-import { type DirectoryUser, UNVERIFIED_WARNING, type UserCmdDeps, addressCandidates, ownPath, userFind, userFindSql, userList, userListSql } from '../lib/admin-users.ts';
+import { type DirectoryUser, UNVERIFIED_WARNING, type UserCmdDeps, type WalletUser, addressCandidates, ownPath, userFind, userFindCommand, userFindSql, userList, userListSql, walletQuery } from '../lib/admin-users.ts';
 import { parseCli } from '../lib/cli.ts';
-import { PRIVATE_WRANGLER_ENV, issuerLocalD1Argv } from '../lib/d1.ts';
+import { PRIVATE_WRANGLER_ENV, apiLocalD1Argv, issuerLocalD1Argv } from '../lib/d1.ts';
+import { newHotDb } from './hot-db.ts';
 
-const SPEC = { strings: ['app', 'provider', 'search', 'limit', 'email', 'sub'], booleans: ['json'] };
+const SPEC = { strings: ['app', 'provider', 'search', 'limit', 'email', 'sub', 'address', 'user'], booleans: ['json'] };
 const T = Date.UTC(2026, 10, 4, 9);
 const MIN = 60_000;
 const WHERE = 'local D1 hana-id-email-issuer-test';
@@ -67,6 +69,7 @@ beforeEach(() => {
       state.statements.push(s);
       return db.prepare(s).all() as Record<string, unknown>[];
     },
+    apiD1: null,
     log: (l) => state.out.push(l),
     readLine: async () => {
       const l = state.stdin.shift();
@@ -99,6 +102,7 @@ describe('user:list', () => {
         { appId: 'app_other', scopeId: 's3', path: 's3#email#e1.alice#0', firstSeenMs: T + 5 * MIN, lastSeenMs: T + 30 * MIN },
         { appId: 'app_demo', scopeId: 's2', path: 's2#email#e1.alice#0', firstSeenMs: T, lastSeenMs: T + 10 * MIN },
       ],
+      accounts: [],
     });
     expect(us[0]!.hosted).toBe(false);
     expect(us[2]!.hosted).toBe(true);
@@ -314,5 +318,151 @@ describe('the issuer’s D1 and the command line', () => {
     expect(() => assertCommandPositionals('user:list', ['alice'])).toThrow('Unexpected argument');
     expect(() => assertCommandPositionals('user:find', ['alice@example.com'])).toThrow('Unexpected argument');
     expect(ownPath('s1', 'google', '1102')).toBe('s1#google#1102#0');
+  });
+});
+
+// ---- the wallet directory (D310, D316): the API's D1, migration 0011 ----
+
+const ALICE_S2 = `hu_${'a'.repeat(26)}`;
+const ALICE_S3 = `hu_${'b'.repeat(26)}`;
+const BOB_S3 = `hu_${'c'.repeat(26)}`;
+const ALICE_WALLET = deriveAddresses(new Uint8Array(32).fill(1));
+const G_ALICE = ALICE_WALLET.stellar;
+const EVM_ALICE = ALICE_WALLET.evm;
+const G_BOB = deriveAddresses(new Uint8Array(32).fill(2)).stellar;
+const G_NOBODY = deriveAddresses(new Uint8Array(32).fill(3)).stellar;
+
+function walletDb(): DatabaseSync {
+  const db = newHotDb();
+  const u = db.prepare('INSERT INTO end_users (user_id, support_code, scope_id, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)');
+  const w = db.prepare('INSERT INTO end_user_wallets (user_id, chain, address, key_index, first_seen_at, last_used_at) VALUES (?, ?, ?, 0, ?, ?)');
+  const i = db.prepare('INSERT INTO end_user_identities (scope_id, identity_key, user_id, provider, sub, role, status, effective_at, first_seen_at, observed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  // Alice in s2: her email identity is the root, her Google account a member; in s3: her email identity alone.
+  u.run(ALICE_S2, 'AAAAAAAA', 's2', T, T + 10 * MIN);
+  w.run(ALICE_S2, 'stellar', G_ALICE, T, T + 10 * MIN);
+  w.run(ALICE_S2, 'evm', EVM_ALICE, T, T + 10 * MIN);
+  i.run('s2', '1'.repeat(64), ALICE_S2, 'email', 'e1.alice', 'root', 'active', null, T, T);
+  i.run('s2', '2'.repeat(64), ALICE_S2, 'google', '1100', 'member', 'active', T + MIN, T + MIN, T + MIN);
+  u.run(ALICE_S3, 'BBBBBBBB', 's3', T + 5 * MIN, T + 30 * MIN);
+  i.run('s3', '3'.repeat(64), ALICE_S3, 'email', 'e1.alice', 'root', 'active', null, T, T);
+  // Bob in s3, with Alice's Stellar address too (a reused key: listed under two users).
+  u.run(BOB_S3, 'CCCCCCCC', 's3', T + 2 * MIN, T + 40 * MIN);
+  w.run(BOB_S3, 'stellar', G_BOB, T + 2 * MIN, T + 40 * MIN);
+  w.run(BOB_S3, 'stellar', G_ALICE, T + 3 * MIN, T + 3 * MIN);
+  i.run('s3', '4'.repeat(64), BOB_S3, 'google', '2200', 'root', 'active', null, T, T);
+  db.exec('PRAGMA query_only = ON');
+  return db;
+}
+
+function withWallets(): string[] {
+  const db = walletDb();
+  const apiStatements: string[] = [];
+  h.deps.apiD1 = async (s) => {
+    apiStatements.push(s);
+    return db.prepare(s).all() as Record<string, unknown>[];
+  };
+  h.deps.now = () => T + 60 * MIN;
+  return apiStatements;
+}
+
+const findAny = (...argv: string[]) => userFindCommand(parseCli(argv, SPEC), { issuer: WHERE, api: 'local D1 hana-id-test' }, h.deps);
+const walletJson = (): WalletUser[] => JSON.parse(h.out.at(-1)!) as WalletUser[];
+
+describe('user:list and user:find with the wallet directory', () => {
+  it('each identity gets its user id, Support ID, role and the account’s wallets, per scope', async () => {
+    withWallets();
+    const us = await list();
+    const alice = us.find((u) => u.sub === 'e1.alice')!;
+    expect(alice.accounts.map((a) => [a.scopeId, a.userId, a.supportId, a.role])).toEqual([
+      ['s3', ALICE_S3, 'HANA-BBBB-BBBB', 'root'],
+      ['s2', ALICE_S2, 'HANA-AAAA-AAAA', 'root'],
+    ]);
+    expect(alice.accounts[1]!.wallets.map((w) => [w.chain, w.address])).toEqual([
+      ['stellar', G_ALICE],
+      ['evm', EVM_ALICE],
+    ]);
+    const google = us.find((u) => u.sub === '1100')!;
+    expect(google.accounts.map((a) => [a.userId, a.role, a.status])).toEqual([[ALICE_S2, 'member', 'active']]);
+    const text = h.out.join('\n');
+    expect(text).toContain(`  user      ${ALICE_S2} (HANA-AAAA-AAAA) in scope s2: the account root`);
+    expect(text).toContain(`  wallets   stellar ${G_ALICE}  key 0`);
+    expect(text).toContain(`  user      ${ALICE_S2} (HANA-AAAA-AAAA) in scope s2: a member, active`);
+    expect(text).toContain(`  user      ${ALICE_S3} (HANA-BBBB-BBBB) in scope s3: the account root\n  wallets   none recorded yet`);
+  });
+
+  it('user:find --email shows the wallets too; carol, never recorded, has none', async () => {
+    withWallets();
+    await find('--email', 'carol@example.com');
+    expect(h.out.join('\n')).not.toContain('  user  ');
+    h.out.length = 0;
+    const [alice] = await find('--email', 'alicesmith@gmail.com');
+    expect(alice!.accounts).toHaveLength(2);
+  });
+
+  it('user:find --address: every user listing the wallet, with each account’s sub, role and address; any EVM case', async () => {
+    withWallets();
+    await findAny('--address', EVM_ALICE.toLowerCase(), '--json');
+    const [u] = walletJson();
+    expect(u!.userId).toBe(ALICE_S2);
+    expect(u!.identities.map((i) => [i.provider, i.sub, i.role, i.directory.map((d) => d.email)])).toEqual([
+      ['email', 'e1.alice', 'root', ['alicesmith@gmail.com']],
+      ['google', '1100', 'member', ['alice.smith@gmail.com']],
+    ]);
+    h.out.length = 0;
+    await findAny('--address', G_ALICE);
+    const text = h.out.join('\n');
+    expect(h.out[0]).toBe('2 users with that wallet (local D1 hana-id-test)');
+    expect(text).toContain('listed under more than one user');
+    expect(text).toContain(`${BOB_S3} (HANA-CCCC-CCCC)  scope s3`);
+    expect(text).toContain('[ALSO LISTED UNDER 1 OTHER USER');
+    expect(text).toContain('  accounts  email   sub e1.alice  the account root  alicesmith@gmail.com');
+    expect(text).toContain('            google  sub 1100  a member, active  alice.smith@gmail.com');
+    h.out.length = 0;
+    await findAny('--address', G_NOBODY);
+    expect(h.out).toEqual(['No user with that wallet (local D1 hana-id-test)']);
+  });
+
+  it('user:find --user takes a user id or a Support ID in any form; a stdin line is read as whichever it is', async () => {
+    withWallets();
+    for (const v of [ALICE_S3, ALICE_S3.toUpperCase().replace('HU_', 'hu_'), 'HANA-BBBB-BBBB', 'hana bbbb bbbb', 'bbbbbbbb']) {
+      h.out.length = 0;
+      await findAny('--user', v, '--json');
+      expect(walletJson().map((u) => u.userId), v).toEqual([ALICE_S3]);
+    }
+    h.out.length = 0;
+    h.stdin.push(G_BOB);
+    await findAny('--json');
+    expect(walletJson().map((u) => u.userId)).toEqual([BOB_S3]);
+    h.stdin.push('carol@example.com');
+    await findAny();
+    expect(h.out.join('\n')).toContain('carol@example.com');
+  });
+
+  it('refuses mixed or malformed flags, and works without an email issuer (no addresses)', async () => {
+    withWallets();
+    await expect(findAny('--address', 'hu_x')).rejects.toThrow('--address takes');
+    await expect(findAny('--user', G_ALICE)).rejects.toThrow('--user takes');
+    await expect(findAny('--address', G_ALICE, '--email', 'a@b.c')).rejects.toThrow('not --email and --address');
+    await expect(findAny('--address', G_ALICE, '--provider', 'email')).rejects.toThrow('--provider goes with');
+    expect(walletQuery(`G${'A'.repeat(54)}1`)).toBeNull();
+    h.deps.d1 = null;
+    h.out.length = 0;
+    await findAny('--address', G_BOB);
+    expect(h.out.join('\n')).toContain('This env has no email issuer: no addresses.');
+    await expect(find('--sub', '2200')).rejects.toThrow('no emailIssuer');
+  });
+
+  it('every wallet-directory statement is one SELECT; the API’s D1 is read with the statement in a file', async () => {
+    const apiStatements = withWallets();
+    await list();
+    await findAny('--address', G_ALICE);
+    await findAny('--user', 'HANA-AAAA-AAAA');
+    expect(apiStatements).toHaveLength(3);
+    for (const s of apiStatements) {
+      expect(s.startsWith('SELECT ')).toBe(true);
+      expect(s).not.toMatch(/;|\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|REPLACE|PRAGMA)\b/iu);
+    }
+    const m = loadEnv('sandbox-dev');
+    expect(apiLocalD1Argv(m, '/r/.secrets/tmp/d1-x.sql')).toEqual(['exec', 'wrangler', 'd1', 'execute', m.cloudflare.d1Name, '--local', '--json', '--file', '/r/.secrets/tmp/d1-x.sql']);
   });
 });

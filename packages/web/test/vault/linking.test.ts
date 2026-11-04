@@ -26,7 +26,7 @@ import {
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { HanaEnv } from '../../src/hana-env.ts';
 import { openRecordStore } from '../../src/vault/record.ts';
-import { EMAIL_CONSENT_ROUNDS, PIN_READ_TIMEOUT_MS } from '../../src/vault/login.ts';
+import { AFTERWORD_MS, EMAIL_CONSENT_ROUNDS, LOGIN_PENDING_MS, PIN_READ_TIMEOUT_MS } from '../../src/vault/login.ts';
 import { ACCOUNT_CACHE_MS } from '../../src/vault/vault.ts';
 import {
   Browser,
@@ -38,6 +38,7 @@ import {
   type Google,
   type LoginRun,
   SCOPE,
+  ABORTED_READS_CAP,
   SUB,
   type Tab,
   apiError,
@@ -169,6 +170,18 @@ describe('the path through get_identity (batch 7)', () => {
     expect(reply.error).toBeUndefined();
     expect((reply.result as { addresses: unknown }).addresses).toEqual(addressesOf(pathOf(E)));
     expect([...b.backend.sessions.values()][0]!.path).toBe(pathOf(E));
+  });
+
+  it('an active member’s login records its account root’s wallet: the record’s path is the root’s (D317)', async () => {
+    const b = new Browser();
+    b.backend.opened.add(Buffer.from(ik(E)).toString('hex'));
+    b.backend.link(E, G);
+    const t = await tab(b, ENV2);
+    const { reply } = await login(t, g);
+    await t.waitUntil(() => b.backend.count('/v1/wallets/record') === 1, 'the record');
+    const body = b.backend.calls.find((c) => c.path === '/v1/wallets/record')!.body as { path: string; wallets: { stellar: { address: string } } };
+    expect(body.path).toBe(pathOf(E));
+    expect(body.wallets.stellar.address).toBe((reply.result as { addresses: { stellar: string } }).addresses.stellar);
   });
 
   it('a pending member is refused before any chain call, with when it activates', async () => {
@@ -1009,5 +1022,128 @@ describe('a Google login of an app with email still opens the Google path for ca
     const run = await popupHello(t);
     await deliverToken(t, g, run);
     expect(((await pending).result as { addresses: unknown }).addresses).toEqual(addressesOf(pathOf(G)));
+  });
+});
+
+// The popup left open on one of the follow-up channel's screens (a link code, Google's email permission, a banner, a
+// link's proof): the login's deadline, a cancel, a newer login or the banners' own limit ends the wait, and the
+// channel's read must end with it. Before the fix that read looked only at whether the channel was closed; a browser's
+// fetch with an aborted signal rejects at once and the backoff sleep resolves at once, so it spun on microtasks: the
+// vault frame froze (and with it every same-site page in its renderer, such as the demo on sandbox-dev) and the login
+// never answered. The harness rejects such reads at once too, and breaks the loop after ABORTED_READS_CAP of them.
+describe('an abandoned popup on a follow-up screen ends the wait (no runaway relay poll)', () => {
+  /** Case A, not hosted: the vault waits on the popup's "Link and continue" / "Sign in with email" (slot 3). */
+  async function onLinkCode() {
+    const b = emailBrowser();
+    b.backend.opened.add(Buffer.from(ik(E)).toString('hex'));
+    const t = await tab(b);
+    const pending = t.request('hana_login');
+    const run = await popupHello(t);
+    b.backend.googleMatch = () => ({ decision: 'case_a', googleHosted: false, linkable: true, challenge: { challengeId: 'C'.repeat(43), expiresAtMs: 1_800_000_600_000, to: 'a…@example.com' } });
+    await googleAnswer(t, run);
+    expect((await notice(t, run, 2)).t).toBe('link_code');
+    await waitForRead(t, run, 3);
+    return { b, t, run, pending };
+  }
+
+  /** Waits until the vault is long-polling follow-up slot `n`. */
+  async function waitForRead(t: Tab, run: LoginRun, n: number): Promise<void> {
+    const { id } = followSlot(run.params.followKey as Uint8Array, n);
+    await t.waitUntil(() => t.browser.backend.calls.some((c) => c.method === 'GET' && c.path === `/v1/login-relay/${id}`), `the read of slot ${n}`);
+  }
+
+  it('the login’s 5-minute limit on the link code screen: login_timeout, the popup hears it, no aborted read', async () => {
+    const { b, t, run, pending } = await onLinkCode();
+    t.browser.timers.advance(LOGIN_PENDING_MS);
+    expect((await pending).error).toMatchObject({ code: 'login_timeout', data: { stage: 'pending' } });
+    expect(await notice(t, run, 4)).toEqual({ t: 'stop', code: 'login_timeout' });
+    expect(b.backend.abortedRelayReads).toBe(0);
+    expect(b.backend.count('/v1/login')).toBe(0);
+    expect((await t.request('hana_status')).error).toBeUndefined();
+  });
+
+  it('the partner’s cancelLogin on the link code screen: login_cancelled at once, no aborted read', async () => {
+    const { b, t, run, pending } = await onLinkCode();
+    expect((await t.request('hana_cancelLogin')).error).toBeUndefined();
+    expect((await pending).error?.code).toBe('login_cancelled');
+    expect(await notice(t, run, 4)).toEqual({ t: 'stop', code: 'login_cancelled' });
+    expect(b.backend.abortedRelayReads).toBe(0);
+  });
+
+  it('a newer login while the popup shows the link code: the old one ends, the new one runs, no aborted read', async () => {
+    const { b, t, pending } = await onLinkCode();
+    const next = t.request('hana_login');
+    expect((await pending).error?.code).toBe('login_cancelled');
+    b.backend.googleMatch = () => ({ decision: 'none', googleHosted: false, linkable: false });
+    const run2 = await popupHello(t);
+    await deliverToken(t, g, run2);
+    expect((await next).error).toBeUndefined();
+    expect(b.backend.abortedRelayReads).toBe(0);
+  });
+
+  it('Google’s email permission screen (D264) left open: login_timeout, no aborted read', async () => {
+    const b = emailBrowser();
+    const t = await tab(b);
+    const pending = t.request('hana_login', { method: 'google' });
+    const run = await popupHello(t);
+    const token = await g.token(tokenClaims(run.params, {}, t.browser.timers.now));
+    await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: token, access: 'follow' } as RelayPayload);
+    await answer(t, run, 0, { error: 'access_denied' });
+    expect((await notice(t, run, 2)).t).toBe('email_consent');
+    await waitForRead(t, run, 3);
+    t.browser.timers.advance(LOGIN_PENDING_MS);
+    expect((await pending).error?.code).toBe('login_timeout');
+    expect(b.backend.abortedRelayReads).toBe(0);
+  });
+
+  it('slot 1 never written (the popup gone after the ID token): login_timeout, no aborted read', async () => {
+    const b = emailBrowser();
+    const t = await tab(b);
+    const pending = t.request('hana_login', { method: 'google' });
+    const run = await popupHello(t);
+    const token = await g.token(tokenClaims(run.params, {}, t.browser.timers.now));
+    await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: token, access: 'follow' } as RelayPayload);
+    await waitForRead(t, run, 1);
+    t.browser.timers.advance(LOGIN_PENDING_MS);
+    expect((await pending).error?.code).toBe('login_timeout');
+    expect(b.backend.abortedRelayReads).toBe(0);
+  });
+
+  it('a banner with Cancel left open past AFTERWORD_MS: the banners’ wait ends, no aborted read, the vault answers', async () => {
+    const b = emailBrowser();
+    b.backend.opened.add(Buffer.from(ik(G)).toString('hex'));
+    const t = await tab(b);
+    const pending = t.request('hana_login');
+    const run = await popupHello(t);
+    const emailToken = await linkToken(t, run, { join: 2, immediate: false });
+    b.backend.googleMatch = () => ({ decision: 'case_b', googleHosted: false, linkable: true, emailToken, linkImmediate: false });
+    await googleAnswer(t, run, { caseB: { linkTicket: 'T'.repeat(43), emailSub: EMAIL_SUB } });
+    expect((await pending).error).toBeUndefined();
+    const done = (await notice(t, run, 2)) as Extract<FollowNotice, { t: 'done' }>;
+    expect(done.banners[0]?.action?.kind).toBe('cancel');
+    await waitForRead(t, run, 3);
+    t.browser.timers.advance(AFTERWORD_MS);
+    expect((await t.request('hana_status')).error).toBeUndefined();
+    // Time for a runaway loop to show itself (it would reach the harness's cap within a few ms).
+    await new Promise((r) => setTimeout(r, 100));
+    expect(b.backend.abortedRelayReads).toBe(0);
+    expect(ABORTED_READS_CAP).toBeGreaterThan(0);
+  });
+
+  it('hana.linkAccount’s proof screen left open past the limit: login_timeout, no aborted read', async () => {
+    const b = emailBrowser();
+    b.backend.opened.add(Buffer.from(ik(G)).toString('hex'));
+    const t = await tab(b);
+    await login(t, g);
+    const pending = t.request('hana_linkAccount', { method: 'email' });
+    const run = await popupHello(t);
+    const task = run.params.task as { prove: { commitment: { salt: number[] } } };
+    const newNonce = linkNewNonce(ENV.signer, SCOPE, ik(G), 'email', 0, Uint8Array.from(task.prove.commitment.salt));
+    await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: await issuer.token(emailClaims(run.params, { nonce: newNonce }, t.browser.timers.now)) });
+    expect((await notice(t, run, 2)).t).toBe('prove');
+    await waitForRead(t, run, 3);
+    t.browser.timers.advance(LOGIN_PENDING_MS);
+    expect((await pending).error?.code).toBe('login_timeout');
+    expect(b.backend.abortedRelayReads).toBe(0);
   });
 });

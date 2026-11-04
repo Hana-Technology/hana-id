@@ -12,6 +12,13 @@ HANA_E2E_PORT_BASE=4510 corepack pnpm --filter @hana-id/e2e e2e   # another work
 corepack pnpm --filter @hana-id/e2e test          # unit tests of the stack's mocks (part of `pnpm -r test`)
 ```
 
+An unfinished login (`tests/abandoned-login.spec.ts`; the follow-up screens in `tests/linking.spec.ts`, the demo's in
+`tests/demo.spec.ts`): the popup left on the method chooser, Google's page, the email address or code step, a link
+code screen or a banner, or closed. The tests install Playwright's clock (`page.clock`, for the whole context: the
+partner page, the vault frame and the popup) and fast-forward past the vault's 5-minute limit; `responsive(frame)`
+(`tests/fixtures.ts`) checks the vault frame and the partner page still run a script. In all three browsers the
+partner page shares the vault frame's renderer here, so a loop in the vault freezes it too.
+
 ## What runs
 
 Ports are `HANA_E2E_PORT_BASE` (default 4410) plus the offsets below: the table shows the default.
@@ -109,7 +116,14 @@ token's account and claim names. `tests/token-first.spec.ts` covers the flow its
 retry, tokeninfo unreadable (an app with email login ends `tokeninfo_unavailable`; a Google-only app falls back to the
 chooser and records nothing), the address in the issuer's directory (google-record for a Google-only app, google-match
 for one with email login, read through `GET {ISSUER}/__e2e/directory?sub=`: no CORS, refused with an `Origin`) and
-that every token on the mocked chain is openid only. The `second_request` flow is covered by `@hana-id/web`'s unit and
+that every token on the mocked chain is openid only. `tests/google-cancel.spec.ts` covers a cancel on Google's
+screen (the stub's `#deny`, Google's `access_denied`; D341): back to the chooser (an app with email login, a
+Google-only app) or to case B's choices, Google again signs in under a fresh OAuth state, email from the chooser
+signs in, and closing the popup there (or case B's Cancel) gives `login_cancelled`. `tests/popup-close.spec.ts` covers
+D347: closing the popup on the chooser, on Google's page (past the 8 s COOP window), on the email code step and on a
+follow-up screen gives `login_cancelled` (`popup_closed`) within seconds, and a slow trip to Google and back signs in.
+`tests/login.spec.ts` checks that
+another Google error (`server_error`, sent to the callback directly) still gives `google_error`. The `second_request` flow is covered by `@hana-id/web`'s unit and
 vault-harness tests only (the bundles have one flow compiled in). On the server side
 (`src/server/google-backend.ts`), the stack answers Google's JWKS, `tokeninfo`, `userinfo` and revoke (which the
 issuer must never call, D265) for the Workers in its process (the issuer's google-match and google-record), by wrapping

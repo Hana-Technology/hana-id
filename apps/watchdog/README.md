@@ -10,7 +10,7 @@ Deployed on sandbox-dev (2026-10-30, on the API's Cloudflare account for the dri
 with email-login batch 5; `docs/operations.md` "Watchdog service"); no other env yet. Testnet only: it checks the RPC's `chain_id` against the manifest's `network`
 every run and sends nothing on a mismatch.
 
-Last verified: 2026-11-02 (branch `feat/email-login-6`: the email JWKS URL's default under `emailIssuer.url`, D230); 2026-11-02 (branch `feat/identity-token-8`: the identity JWKS and discovery check, step 5b, the
+Last verified: 2026-11-04 (branch `feat/batch-c-14`: the admin portal's registry test and client, `watchdog.url`); 2026-11-02 (branch `feat/email-login-6`: the email JWKS URL's default under `emailIssuer.url`, D230); 2026-11-02 (branch `feat/identity-token-8`: the identity JWKS and discovery check, step 5b, the
 `identity` status and `pinnedIdentityKeys`, D210–D214); 2026-11-02 (branch `docs/consistency-pass`: the deploy line, against `docs/operations.md`).
 
 ## What a run does (every 5 min)
@@ -233,8 +233,11 @@ route answers 503. Responses are JSON, `cache-control: no-store`.
 | `POST /alerts/:id/ack` `{"by": "<who>"}` | Records the acknowledgement once (`acked_via: "portal"`, `acked_by` 1–200 characters: the Access identity), `200 {alert}`; `409` if already acknowledged (the first ack is kept); `404`, `400`, `413`, `415` |
 
 Nothing else is writable: the endpoint can't change a check, stop a first delivery or call the chain. The portal's
-registry test (batch C, not built yet) imports `CHECK_IDS` and `ALERT_KINDS` from `src/checks.ts` and fails when one
-has no rendering (D83's standing rule); the portal links each alert to its playbook by the kind's `playbook` id.
+registry test (`apps/admin/test/monitoring.test.ts`, batch C14) imports `CHECK_IDS` and `ALERT_KINDS` from
+`src/checks.ts` and fails when one has no rendering (D83's standing rule; a new check needs its entry in
+`apps/admin/src/monitoring-registry.ts`); the portal links each alert to its playbook by the kind's `playbook` id. The
+admin Worker calls this endpoint server-side from `watchdog.url` with its copy of the token, follows no redirect, caps
+each answer (1 MiB `/status`, 2 MiB `/alerts`) and gives up after 8 s (D330, D331): keep `/status` well under 1 MiB.
 
 ## Configuration
 

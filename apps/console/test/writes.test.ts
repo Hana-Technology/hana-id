@@ -62,6 +62,12 @@ async function samples(m: Member, app: { id: string; scope: string }): Promise<S
     { method: 'GET', path: `${o}/scopes/${app.scope}` },
     { method: 'GET', path: `${o}/scopes/${app.scope}/client-proof-helper?clientId=123-abc.apps.googleusercontent.com` },
     { method: 'POST', path: `${o}/scopes/${app.scope}/execute`, body: { changeId: 99 } },
+    { method: 'GET', path: `${o}/usage?from=2026-10-01&to=2026-10-02` },
+    { method: 'GET', path: `${o}/statements` },
+    { method: 'GET', path: `${o}/statements/2026-10` },
+    { method: 'GET', path: `${o}/statements/2026-10.csv` },
+    { method: 'GET', path: `${o}/ledger/2026-10.csv` },
+    { method: 'GET', path: `${o}/governance/pending-upgrades` },
     { method: 'GET', path: `${o}/users` },
     { method: 'GET', path: `${o}/users/u1_AAAAAAAAAAAAAAAAAAAAAA` },
   ];

@@ -13,17 +13,26 @@ export interface SessionStanding {
   pending: boolean;
   /** The path the session derives: `{scope}#{root provider}#{root sub}#{key_index}` for a member, else its own. */
   path: string;
+  /**
+   * The chain answered (or links can't exist yet, so every identity is its own): `path` and `pending` are the chain's.
+   * False when the read failed and the standing is the fail-open guess (the wallet directory then writes nothing).
+   */
+  confirmed: boolean;
+  /** The identity's own view, when it was read: the account root of a member and its link's activation time. */
+  member?: { root: { provider: string; sub: string }; effectiveAtMs: number | null };
 }
 
 export async function sessionStanding(env: Env, scopeId: string, provider: string, sub: string, keyIndex: number): Promise<SessionStanding> {
-  const own: SessionStanding = { pending: false, path: `${scopeId}#${provider}#${sub}#${keyIndex}` };
+  const own: SessionStanding = { pending: false, path: `${scopeId}#${provider}#${sub}#${keyIndex}`, confirmed: true };
   try {
     if (!(await getConfig(env)).links_open) return own;
     const view = await getIdentity(env, scopeId, provider, sub);
     if (view.status === 'pending') return { ...own, pending: true };
-    if (view.status === 'member' && view.root) return { pending: false, path: `${scopeId}#${view.root.provider}#${view.root.sub}#${keyIndex}` };
+    if (view.status === 'member' && view.root) {
+      return { pending: false, path: `${scopeId}#${view.root.provider}#${view.root.sub}#${keyIndex}`, confirmed: true, member: { root: view.root, effectiveAtMs: view.effectiveAtMs } };
+    }
     return own;
   } catch {
-    return own;
+    return { ...own, confirmed: false };
   }
 }

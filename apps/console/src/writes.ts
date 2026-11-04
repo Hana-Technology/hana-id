@@ -11,7 +11,8 @@
 // The writes that go to the hot DB are ConsoleRpc calls with the member actor (the API checks them, counts the
 // destructive ones in its breaker and writes `app_changes`); the console writes an outcome audit row after each, as for
 // the logo (C11). No route here takes a Google token: the guarded changes, settings, resume, member changes and owner
-// actions go through `POST …/actions` and a fresh sign-in (actions.ts).
+// actions go through `POST …/actions` and a fresh sign-in (actions.ts). The read routes of C12 (usage, statements, the
+// ledger CSV; reports.ts) and C14 (`/governance/pending-upgrades`; governance.ts) are routed here too, for any member.
 import { type Actor, type RpcFail, changeIdInput, inviteIdInput, keyIdInput, ownerGrantIdInput, scopeIdInput } from '@hana-id/console-core';
 import { z } from 'zod';
 import { type AuditAction, type Writer, auditInsert, entry } from './audit.ts';
@@ -26,6 +27,8 @@ import type { RequestInfo } from './links.ts';
 import { log } from './log.ts';
 import { logoRemoveRoute, logoUploadRoute } from './logo.ts';
 import { policyCheckRoute } from './policy.ts';
+import { pendingUpgradesRoute } from './governance.ts';
+import { ledgerCsvRoute, statementFileRoute, statementViewRoute, statementsRoute, usageRoute } from './reports.ts';
 import { helperRoute, scopeOfOrg, scopeRoute } from './scopes.ts';
 import { usersRoute, usersScreenOn } from './users.ts';
 
@@ -80,6 +83,7 @@ async function answered<T extends object>(c: RouteCall, method: string, action: 
 }
 
 const appOf = (c: RouteCall): string => c.m[1]!;
+const reportCaller = (c: RouteCall) => ({ orgId: c.caller.orgId, actor: actorOf(c.caller.session) });
 
 const ROUTES: OrgRouteDef[] = [
   // ---- fresh sign-in ----
@@ -276,6 +280,14 @@ const ROUTES: OrgRouteDef[] = [
       return json(ok ? 200 : 422, { status: r.status, ...(r.nearTx ? { nearTx: r.nearTx } : {}), ...(r.code ? { code: r.code } : {}), ...(r.error ? { error: r.error } : {}) });
     },
   },
+
+  // ---- reports and statements (C12's backend, reports.ts) and pending upgrades (C14's, governance.ts): any member ----
+  { method: 'GET', re: /^\/usage$/u, role: 'viewer', frozenOk: true, run: (c) => usageRoute(c.env, c.info, reportCaller(c), c.url) },
+  { method: 'GET', re: /^\/statements$/u, role: 'viewer', frozenOk: true, run: (c) => statementsRoute(c.env, c.info, reportCaller(c)) },
+  { method: 'GET', re: /^\/statements\/(\d{4}-\d{2})$/u, role: 'viewer', frozenOk: true, run: (c) => statementViewRoute(c.env, c.info, reportCaller(c), c.m[1]!) },
+  { method: 'GET', re: /^\/statements\/(\d{4}-\d{2})\.(csv|pdf)$/u, role: 'viewer', frozenOk: true, run: (c) => statementFileRoute(c.env, c.info, reportCaller(c), c.m[1]!, c.m[2] as 'csv' | 'pdf') },
+  { method: 'GET', re: /^\/ledger\/(\d{4}-\d{2})\.csv$/u, role: 'viewer', frozenOk: true, run: (c) => ledgerCsvRoute(c.env, c.info, reportCaller(c), c.m[1]!, c.url) },
+  { method: 'GET', re: /^\/governance\/pending-upgrades$/u, role: 'viewer', frozenOk: true, run: (c) => pendingUpgradesRoute(c.env, c.info, actorOf(c.caller.session), c.caller.orgId) },
 
   // ---- end users (D310, behind USERS_SCREEN) ----
   { method: 'GET', re: /^\/users$/u, role: 'viewer', frozenOk: true, enabled: usersScreenOn, run: (c) => usersRoute(c.env, c.url, c.info, { ...ctxOf(c), orgId: c.caller.orgId }, undefined) },

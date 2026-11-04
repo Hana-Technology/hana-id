@@ -196,3 +196,42 @@ let jti = 0;
 /** A console step-up token (`openid` only: no email, hd or email_verified) for `nonce`, issued now. */
 export const stepUp = (nonce: string, claims: Record<string, unknown> = {}): Promise<string> =>
   google.sign({ iss: GOOGLE_ISS, aud: CONSOLE_AUD, azp: CONSOLE_AUD, sub: STEP_UP_SUB, nonce, iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 3600, jti: `j${jti++}`, ...claims });
+
+/** The pending upgrade the governance views below report (a base58 sha256). */
+export const UPGRADE_HASH = '8Tf3Bq1sUk5XTzW1LbbpVBfX4qYyTDZwM5FCFBrCovLp';
+export const UPDATER_PK = 'ed25519:6E8sCci9badyRkXb3JoRpBj5p8C6Tw41ELDZoiihKEtp';
+
+/**
+ * Adds the views `GET /v1/governance` reads (get_config's governance fields, get_governance, get_key_changes) to a
+ * mock chain, with a pending upgrade, a pending owner transfer, a governance-delay decrease, a console-audience addition
+ * and an updater key (batch C14's RPCs).
+ */
+export function governanceViews<T extends Chain>(n: T, now = Date.now()): T {
+  const base = n.views.get_config!;
+  n.views.get_config = (a) => ({
+    ...(base(a) as object),
+    change_delay_ms: 172_800_000,
+    pending_change_delay: null,
+    issuer_key_delay_ms: 7_200_000,
+    pending_issuer_key_delay: null,
+    governance_delay_ms: 259_200_000,
+    pending_governance_delay: { change_delay_ms: 3_600_000, effective_at_ms: now + 259_200_000 },
+    pending_console_audiences: [{ provider: 'google', aud: 'console2.apps.googleusercontent.com', effective_at_ms: now + 60_000 }],
+    unpaused_at_ms: 0,
+    changes_unlock_floor_ms: 0,
+    sessions_valid_from_ms: 0,
+  });
+  n.views.get_governance = () => ({
+    state_version: 3,
+    watchdogs: [{ account_id: 'watchdog.test.near', confirm_from_ms: 0 }],
+    keys_slow_until_ms: 0,
+    updater_keys: [UPDATER_PK],
+    updater_methods: ['set_issuer_key', 'propose_issuer_key_removal', 'execute_issuer_key_change'],
+    pending_upgrade: { code_hash: UPGRADE_HASH, proposed_at_ms: now - 1000, executable_at_ms: now + 259_199_000 },
+    pending_owner: { owner: 'new-dao.sputnik.test.near', acceptable_at_ms: now + 1000 },
+    pending_withdrawal: null,
+  });
+  n.views.get_key_changes = () => [];
+  n.accessKeyList = [{ public_key: UPDATER_PK, access_key: { nonce: 1, permission: 'FullAccess' } }];
+  return n;
+}

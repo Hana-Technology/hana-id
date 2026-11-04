@@ -16,6 +16,7 @@ import type { Limit } from './rate-limiter.ts';
 import { beginUsage, finishUsageOnThrow } from './usage/event.ts';
 import type { App } from './apps.ts';
 import { fromHex, hex, sha256 } from './bytes.ts';
+import { inBackground, syncAccount } from './directory/sync.ts';
 import { countEmailUsage } from './email-usage.ts';
 import type { Env } from './env.ts';
 import { readJson } from './http.ts';
@@ -320,6 +321,10 @@ async function linkEndpoint(request: Request, env: Env, endpoint: LinkEndpoint, 
   if (!result.ok && NOT_EXECUTED.has(result.code)) await unclaim();
   if (!result.ok) return relayFailure(ctx, env, result, panicKey);
   await revokeAccountShares(env, app.scope_id, checked.root, ctx);
+  // The wallet directory's identities (D314): the account as the chain has it now, with the subs these tokens carried.
+  const known = tokens.map((t) => ({ provider: t.provider, sub: t.sub }));
+  const hint = body.kind === 'link' ? undefined : { memberKey: body.memberKey, action: body.kind };
+  await inBackground(exec, () => syncAccount(env, app.scope_id, checked.root, known, { requestId, endpoint: ctx.endpoint, appId: app.id }, hint ? { hint } : {}));
   if (body.kind === 'link') {
     await countEmailUsage(env, app.id, 'links', ctx, exec);
     const at = result.result;

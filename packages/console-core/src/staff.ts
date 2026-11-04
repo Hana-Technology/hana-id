@@ -81,6 +81,22 @@ export type AuditFilters = z.infer<typeof auditFilters>;
 /** The cursor is the last row's `seq` (rows come newest first): at most 15 digits, so always a safe integer. */
 export const queryAuditInput = ctx.extend({ filters: auditFilters, cursor: z.string().regex(/^[1-9]\d{0,14}$/u).optional(), limit: limit(500) }).strict();
 
+/**
+ * Staff actions of the admin Worker that have no StaffRpc or AdminRpc write of their own (batch C12, D327): a statement
+ * issued, a ledger export, a rate override. `recordStaffAction` appends their `audit_log` row (Hana actor), so the
+ * audit view and the feed show them beside every other staff act. Details are ids, months, hashes and counts.
+ */
+export const STAFF_ACTIONS = ['statement.issued', 'ledger.exported', 'rate.overridden'] as const;
+export const recordStaffActionInput = ctx
+  .extend({
+    orgId: orgIdInput.optional(),
+    action: z.enum(STAFF_ACTIONS),
+    target: z.string().min(1).max(128).optional(),
+    details: z.record(z.string().max(32), z.union([z.string().max(128), z.number(), z.boolean(), z.null()])).refine((d) => Object.keys(d).length <= 16, 'At most 16 details'),
+  })
+  .strict();
+export type RecordStaffActionInput = z.infer<typeof recordStaffActionInput>;
+
 // The console's emailed-link confirms (no session; the token is the proof; CSRF rules apply).
 export const cancelByLinkBody = z.object({ changeId: z.string().regex(/^gc_[A-Za-z0-9]{1,64}$/u), token: b64url32 }).strict();
 export const ownerGrantCancelBody = z.object({ grantId: ownerGrantIdInput, token: b64url32 }).strict();

@@ -71,12 +71,42 @@ export const setNearDown = (v: boolean): void => {
   nearDown = v;
 };
 
-/** Stubs the isolate's fetch: the Access certs and NEAR RPC are answered here; anything else fails the test. */
+// ---- the fake watchdog (C14): its status endpoint, as apps/watchdog/src/status.ts answers ----
+
+export const WATCHDOG = 'https://hana-id-watchdog-test.watchdog-test.workers.dev';
+/** The suite's bearer (vitest.config.ts TEST_KEYS); the fake watchdog answers 401 to anything else. */
+export const WATCHDOG_TOKEN = 'test-suite-only-watchdog-status-token-placeholder';
+
+export interface WatchdogCall {
+  method: string;
+  path: string;
+  authorization: string | null;
+  redirect: string | undefined;
+  body: unknown;
+}
+
+/** Every call the fake watchdog got, and how it answers (replace `answer` per test). */
+export const watchdog: { calls: WatchdogCall[]; answer: (c: WatchdogCall, init?: RequestInit) => Response | Promise<Response> } = {
+  calls: [],
+  answer: () => Response.json({ error: 'Not found', code: 'not_found' }, { status: 404 }),
+};
+
+/** Stubs the isolate's fetch: the Access certs, NEAR RPC and the watchdog are answered here; anything else fails the test. */
 export async function stubNetwork(opts: { certsDown?: boolean } = {}): Promise<void> {
   const s = await accessSigner();
   resetAccessVerifier();
+  watchdog.calls = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
+    if (url.startsWith(`${WATCHDOG}/`)) {
+      const u = new URL(url);
+      const headers = new Headers(init?.headers);
+      const raw = init?.body === undefined ? undefined : String(init.body);
+      const call: WatchdogCall = { method: init?.method ?? 'GET', path: `${u.pathname}${u.search}`, authorization: headers.get('authorization'), redirect: init?.redirect, body: raw === undefined ? undefined : (JSON.parse(raw) as unknown) };
+      watchdog.calls.push(call);
+      if (call.authorization !== `Bearer ${WATCHDOG_TOKEN}`) return Response.json({ error: 'Missing or wrong bearer token', code: 'unauthorized' }, { status: 401 });
+      return watchdog.answer(call, init);
+    }
     if (url === CERTS_URL) {
       if (opts.certsDown) throw new TypeError('Network connection lost.');
       return Response.json({ keys: [s.jwk] }, { headers: { 'cache-control': 'max-age=300' } });

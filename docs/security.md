@@ -1,7 +1,7 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-04 for owner-verified changes and owner actions on current `develop` (branch `feat/batch-c-6-merge`; built on
+known open issues. Last verified against code: 2026-11-04 for the admin Worker (branch `feat/batch-c-8`: its invariants, the cancel-link, link-key, Resend-key and Access-token rows; D278–D285); 2026-11-04 for owner-verified changes and owner actions on current `develop` (branch `feat/batch-c-6-merge`; built on
 `feat/batch-c-6`: the API's own step-up check in "RPC writers", the owner-action precheck's nonce recompute and the
 safety budget in "Owner actions", the claim allow-list on both owner-action paths and on the step-up token, the
 guarded-change token in the inventory, the console sink scope, open issue (i); D235–D239, D277); 2026-11-04 for the console Worker (branch `feat/batch-c-7-merge`, C7 merged onto `develop`; written on `feat/batch-c-7` 2026-11-02: its
@@ -145,6 +145,10 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | Publishable keys | `pk_test_` / `pk_live_` + base58 | D1, partner pages | public | Not secrets |
 | Invite link tokens | T = HMAC-SHA256(`INVITE_LINK_KEY`, "hana-console/invite/v1" ‖ borsh(invite id)), 32 bytes | The invitee's mailbox (`<console.origin>/invite#t=…`, a fragment); `CONSOLE_DB` holds only sha256(T), set by the admin Worker's ack | the invitee | 7 days from creation, single use, email-bound; works only after every notice send was accepted. `INVITE_LINK_KEY` is the admin Worker's secret (C8), never the console's (D240) |
 | Owner-grant cancel tokens | T = HMAC-SHA256(`CANCEL_LINK_KEY`, "hana-console/owner-grant-cancel/v1" ‖ borsh(grant id)) | The grant notice's recipients (every owner, the security contacts, the alias); `CONSOLE_DB` holds only sha256(T) | them | Cancels one owner grant once, by POST, until `owner_from` |
+| Guarded-change cancel tokens (batch C8) | T = HMAC-SHA256(`CANCEL_LINK_KEY`, "hana-id/cancel-link/v1" ‖ borsh(change id)) | The `change_pending` recipients' mailboxes (`<console.origin>/cancel/<id>#t=…`, a fragment); the hot DB holds only sha256(T), set by `ackNotice` | the alias and the org's security contacts | Cancels one pending change once, by POST, until `active_from`; deterministic, so a notice re-sent after a failed send carries the same working link |
+| `CANCEL_LINK_KEY`, `INVITE_LINK_KEY` (batch C8) | 32 random bytes each (base64) | Admin Worker secrets only; `.secrets/<env>/cancel-link-key`, `invite-link-key` (0600) | Hana | Generated with `openssl rand` into `.secrets/`, set through wrangler's stdin (`docs/operations.md` "Admin Worker"). Never in the API or the console, never logged. A leak lets the holder mint working cancel links (DoS: cancel pending changes and grants) and, with `INVITE_LINK_KEY`, an invite link only for an invite already acked to its invitee's address (acceptance still needs that Google account). Replacing one breaks the links already emailed |
+| `EMAIL_API_KEY` (batch C8) | Resend API key, sending access to the `email.from` domain only (D87) | Admin Worker secret; `.secrets/<env>/admin-resend-key` (0600) | Hana | Its own key, not the watchdog's. A leak sends mail as Hana's notice subdomain (phishing); it can't ack a notice (only the admin Worker's cron, as `system`, can) |
+| Cloudflare Access application tokens (batch C8) | RS256 JWT (`Cf-Access-Jwt-Assertion`), the team's certs | Transient, per request; never logged or stored | the staff member's Access session (1 h) | Checked on every admin `/api/*` request: signature, `kid`, `iss`, `aud`, expiry, `type = 'app'`, a `sub`, then the email on `admin.staffEmails` (D88) |
 | Console session cookies (`__Host-hana_cs`) | 32 random bytes, b64url | The member's browser (`HttpOnly`, `SameSite=Strict`, console origin); `CONSOLE_DB` holds only sha256 | the member | 2 h idle, 12 h absolute; revoked on removal, role change, disable or a freeze of the member's only org. Created by sign-in from C9 |
 | Identity signing keys (Worker slots `IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY`) | P-256 private JWKs (ES256), testnet and `local*` only | The active key: a Worker secret and `.secrets/<env>/identity-signing-key.json`. The standby: `identity-signing-key-standby.json` only, kept offline, never uploaded until a switch (D177). During a rotation a `next` and a `previous` key. 0600, the only copies | Hana | `scripts/identity-key.ts`: `init`, `next`, `switch --to next|standby`, `retire --key previous|standby` (wrangler stdin, never printed, files never overwritten); public halves in the manifest's `identityToken.publicKeys` (the JWKS). `activeKid` picks the signer. Staging and mainnet: AWS KMS (next row) |
 | Identity KMS keys (`identityToken.signer.keys`: `active`, `standby`, during a rotation `next`, `previous`); none yet | AWS KMS `ECC_NIST_P256` `SIGN_VERIFY`, origin `AWS_KMS`, single-region; the standby in another region (D219) | AWS KMS in D121's dedicated account; never exportable, never on the Worker. The manifest holds their ARNs and public keys only | Hana (break-glass role with MFA administers; the key policy in `docs/operations.md` "Identity token keys on AWS KMS") | Created in AWS by the operator; published with `identity-key kms-init / kms-add`, switched with `kms-switch`, unpublished with `kms-retire` (then disabled and deleted in KMS, 30 days); scheduled rotation every 12 months |
@@ -564,6 +568,35 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   on the invite row only (deleted 90 days after the invite ends; never in `audit_log`, whose details are allowlisted per
   action), sessions' /24 or /48 network data (90 days). Logs carry ids and codes only. `STATEMENTS` is read only by
   code (no `put`/`delete`, a source check).
+
+### Admin Worker (`apps/admin`, batch C8, not deployed; tests `apps/admin/test/*.test.ts`, `test-ops/`, `scripts/test/`)
+
+- **Two checks on every `/api/*` request, failing closed** (D88, D278): Cloudflare Access at the edge, then the Worker
+  itself verifies the Access JWT from the header only (signature against the team's certs, never stale; `kid`, `iss`,
+  `aud`, `exp`/`nbf`, `type = 'app'`, a non-empty `sub`, so no service token) and requires its lowercased email on
+  `admin.staffEmails`. 401 for any token problem, 403 `not_staff`, 503 while the AUD tag is `UNSET` or the certs are
+  unreachable. A cookie or another header never counts.
+- **Its own origin only**, the console's CSP and headers on every response, no cookie set, `/api/*` `no-store`; CSRF on
+  every non-GET (`Sec-Fetch-Site`, `Origin`, `x-hana-admin: 1`, JSON), since Access's cookie travels on a cross-site
+  POST. `preview_urls: false`; `workers_dev` only for a dev env's workers.dev origin (a config test).
+- **The staff actor travels into every write** (`{kind: 'hana', id: <Access sub>, email}` → `app_changes`,
+  `audit_log`); a request body can't set it or the request id. The admin Worker holds no D1 binding (a source check):
+  everything goes through `AdminRpc` and `StaffRpc`, and its only SQL is on Neon's `ops` schema as `usage_admin`.
+- **Blocking notices ack only after every send was accepted** (D279): one message per recipient, a provider 2xx with
+  a message id each; a failure, a skipped send, an unreadable contact list or a missing key leaves the change, invite
+  or grant unannounced (so not in force, the link not working, the wait not started). Only this Worker's cron, as
+  `system`, can ack (the API and the console refuse a `hana` actor). The link keys never leave this Worker; the
+  databases keep sha256(T) only.
+- **The feed and the watcher are independent of the console**: app changes and security events still go out with the
+  console Worker down; the watcher reads the chain itself (`get_scope`, uncached), so a compromised console can't
+  suppress an on-chain proposal's email. Cursors advance only after accepted sends (at least once, never a gap).
+- **Emails**: plain text and simple HTML, no remote image, links only to `console.origin`, never an approve link;
+  partner text escaped and stripped of control characters, one-line subjects (no header injection).
+- **No NEAR key**, no Google client, no D1. **Logs** carry route patterns, ids, codes and counts only: never an email,
+  a `sub`, a JWT, a link token or its hash (log allowlist; a source check and a log test).
+- Residual: a compromised admin Worker can send anything to anyone through Resend, ack notices without sending them,
+  and act as any staff member through the RPCs (trust boundary 3 in the spec's model); the feed's at-least-once
+  delivery can repeat a digest after a partial failure (Resend's idempotency key covers 24 h).
 
 ### Email issuer (`apps/email-issuer`, not deployed)
 

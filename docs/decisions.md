@@ -22,7 +22,8 @@ D269's "Built" line on 2026-11-04 (branch `feat/user-emails`: the email-login wr
 the screen text), with D269 notes on D96, D119, D230 and D264 and two rows of "Superseded or amended".
 D270's status (the spike passed, switched on) on 2026-11-04 (branch `feat/token-first-on`), with notes on D254, D265
 (its gate passed) and D273 (token_first in Playwright), the D254 row of "Superseded or amended" and D265's "to
-confirm" line.
+confirm" line. D275–D276 (branch `docs/batch-c-users-support-id`: proposed, to confirm by the user, spec text only)
+on 2026-11-04.
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -4287,3 +4288,101 @@ IAM policy on the active key only).
 
 Identity token step 8's readings D210–D214 (the watchdog's identity JWKS and discovery check, pin before publish, the
 "identity key on chain" kid check, the discovery fields, bounded alerts and the portal hand-off) are to confirm.
+
+To confirm by the user, from `docs/batch-c-users-support-id` (2026-11-04): D275 (the admin console's Users screen
+over D269's directory) and D276 (the Support ID made consistent with D269), below.
+
+### D275. The admin console's Users screen reads the user directory through a read-only, self-auditing RPC on the issuer
+- Date 2026-11-04 · Status: **proposed, to confirm by the user** · Source: D269 ("the admin console's Users page
+  later (batch C)") · Written: `docs/batch-c-spec.md` "Users and Support ID" (data path, Users screen, what partners
+  never see, tests, Q26); build plan C8b
+- Recommendation:
+  - **Data path.** The issuer exports `DirectoryRpc`, a `WorkerEntrypoint` with no route that only the admin Worker
+    binds (`ISSUER`). It has read methods only (`search`, `get`, `auditSince`; `byUid` with D276). A source test
+    holds the module to `SELECT`s on `user_emails` and `user_email_apps` and forbids imports of the signer, key,
+    challenge and mail modules.
+  - **The issuer checks the staff member.** Each call carries the staff request's Access JWT, which the issuer
+    verifies itself (admin application `aud`, team domain, staff list) and uses as the actor. Each call also writes
+    its `email_admin_audit` row in the same D1 batch as the read, with a required ticket and no address in it.
+    Issuer migration 0003 adds the actions and a `detail` column.
+  - **Budget.** Each staff email gets at most 500 identities an hour and 2 000 a day (provisional). Past that, the
+    call answers `rate_limited` and the security alias is emailed.
+  - **Features**:
+    - Search by address (exact, or a substring of at least 3 characters), provider, app, sub and "unverified only".
+    - The detail shows the address, provider, sub, verified and hosted flags, first and last seen, and the apps. It
+      also shows the on-chain path per scope, and for a linked member the account root, read live with
+      `get_identity` and `get_account`. A failed read shows "chain unavailable", never a guessed path.
+    - Unverified Google claims carry the CLI's warning and are never a match's default target.
+  - **No CSV export.** Bulk reads stay with `admin user:list --json`.
+  - **Partners get nothing.** No binding in the console, no `ConsoleRpc` field, no SDK or `/v1` field, nothing in
+    the partner feed.
+- Why: the issuer is the directory's only writer (D269), so a narrow read entrypoint keeps it so. Checking the JWT at
+  the issuer means a compromised admin Worker reads only what staff requests let it read, and those reads are
+  audited where the data lives. This is D251's direction (a narrow RPC instead of a broad D1 binding).
+- Main trade-off: more code in the Worker that holds the signing keys and `K_sub` (mitigated: no route, the source
+  test, additive methods), and the issuer must deploy before the screen.
+- Alternatives:
+  - (a) **An issuer D1 binding in the admin Worker.** Simplest, but D1 bindings are read-write and cover the whole
+    database. A bug or compromise there could write `email_hints` (which automatic linking reads, D266),
+    `email_suppressions` or the audit, and read with no audit row. Not recommended.
+  - (b) **Move the directory into a D1 of its own, bound to both Workers.** This keeps the hints out of the admin
+    Worker's reach. The admin Worker could still rewrite rows and mislead support, reads go unaudited, and there are
+    two writers. Cheap now (0002 isn't applied on sandbox-dev), but not recommended.
+  - (c) **The admin Worker calls the issuer's Access-protected HTTP routes.** This puts an address-serving route on
+    the public internet. Not recommended.
+  - (d) **A CSV export**, capped (e.g. 1 000 rows), audited and emailed to the alias. Useful for partner-wide
+    analysis, but one click takes out a slice of the directory. Not recommended for batch C; the CLI covers one-off
+    needs.
+- Also: the batch C spec's Support ID line ("no email or Google account") and "Hana stores contact details only for
+  partner members, security contacts and billing contacts" were rewritten. They now read as statements about
+  partners and about whom Hana contacts, consistent with D269.
+
+### D276. Support ID: the uid's first 40 bits; staff resolve it through the directory's stored uid; errors by request ID
+- Date 2026-11-04 · Status: **proposed, to confirm by the user** · Source: build plan C15's open question (D144:
+  confirmed, built from data Hana already keeps), made consistent with D269 · Written: `docs/batch-c-spec.md`
+  "Support ID lookup", Q27; build plan C15
+- Recommendation:
+  - **The code** is `HANA-XXXX-XXXX`: the Crockford base32 of the uid's first 5 bytes. The secret is
+    `USER_ID_KEY` through the uid (`hana-id/uid/v1`), so there is no new secret, domain string or table. It is per
+    scope and per account (a linked member shows its root's code).
+  - **Where it is shown.** The API returns `supportId` with the session (`/v1/login`, `/v1/sessions`). The vault
+    exposes it in `hana_status` (so partners' diagnostics carry it) and in the popup's account view.
+  - **Code → user.** The issuer fills a `uid` column in `user_email_apps` after each directory write, from a new
+    API entrypoint `IssuerRpc.uid` (bound only by the issuer; the entrypoint D251 plans), off the answer's path.
+    Staff reach that column only through `DirectoryRpc.byUid`, with a staff JWT. Without a directory row, the
+    fallback is the ledger only (`app_users` by uid prefix). Every match is listed (40 bits: rare collisions,
+    resolved by the app the partner names).
+  - **Address → user** is the Users search; the detail shows the code.
+  - **What a lookup shows**:
+    - Logins and sessions: the ledger's ok `login`, `session` and `derive` events by uid, with live vault shares
+      from `AdminRpc.userShares`.
+    - Errors: by the request IDs the partner sends, since the ledger keeps uids only on ok events, by design.
+    - The app's `app_changes`.
+    - Not consents: they live only in the vault's browser storage.
+  - **Partner side**: the code only, no address or sub, and no partner lookup in batch C.
+  - **Retention**: nothing new but the `uid` column (kept with its directory row) and audit rows (5 years). A code
+    resolves while the ledger holds the uid (24 months after the month, D90). Directory rows have no expiry under
+    D269. An erasure request deletes them with a new CLI `user:erase`, so `DirectoryRpc` stays read-only.
+  - **Migrations**: the Neon one adds `app_users (uid)` and `events (uid, at)` indexes, at the next free number
+    (0004 and 0005 are taken).
+- Why: D144 (no dedicated support table) holds, and the uid is already the ledger's key. Storing it beside the
+  address makes code → user a single indexed read instead of recomputing every directory row's uid at the API. The
+  key stays in the API only. A compromised issuer gains uids it can't join to anything (it can't read the ledger).
+  A compromised admin Worker can't compute uids without a staff JWT.
+- Main trade-off: the partner page sees a stable per-scope pseudonym (40 bits of the uid; no more than the identity
+  token's `sub` gives). The issuer also gains a call into the API, best effort and off the hot path, so a lost call
+  leaves the code unresolvable to a user until the next login.
+- Alternatives:
+  - (a) **A separate `SUPPORT_ID_KEY`** (HMAC of the uid). It adds a secret and still needs a stored code or a
+    scan. Not recommended.
+  - (b) **The code from the identity token's `sub`** (`IDENTITY_SUB_KEY`). Partners could map it themselves, but
+    it is a second pseudonym that the ledger doesn't use, and it needs its own index. Not recommended.
+  - (c) **No stored uid.** Recompute the uid at lookup for each directory row of the app through an
+    `AdminRpc.uid`. That costs O(users of the app) per lookup and lets the admin Worker compute uids on its own.
+    Not recommended.
+  - (d) **uids on post-verification error events**, so errors list per user. It means a migration of the ledger's
+    CHECK and more per-user data. Not recommended; request IDs cover support.
+  - (e) **An org-scoped lookup in the partner console** (the org's ledger rows for a code, no address). Deferred.
+- Amends in text only: D96's "it reveals no email or Google account" now holds for partners; staff reach the
+  directory (D269). `docs/email-login-spec.md` ("Support ID lookups show … never a `sub` or address") and
+  `docs/hana-home-spec.md` "Support ID" still say otherwise. They are to be aligned once this is confirmed.

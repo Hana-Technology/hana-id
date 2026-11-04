@@ -4,7 +4,7 @@ Two kinds of doc live here. **Reference docs** describe the system as it is now 
 any change they cover (rule in `CLAUDE.md`). **Specs** describe what a batch set out to change; they are history once
 the batch merges, so where a spec and a reference doc disagree, the reference doc (and the code) wins.
 
-Last verified: 2026-11-04 for the native apps spec row (branch `docs/native-apps-spec`: on `develop`, Q19); 2026-11-03 for the batch C, identity token and email login build plan rows (branch `docs/sandbox-dev-state`: what is merged and live on sandbox-dev); 2026-11-03 for the email login build plan's row (branch `feat/email-login-8b`); 2026-11-02 against `develop` @ 1c6a124 (branch `docs/consistency-pass`: the specs' build state); the email
+Last verified: 2026-11-04 for the batch C spec and build plan rows (branch `docs/batch-c-users-support-id`: the Users screen and the Support ID proposed, D275, D276); 2026-11-04 for the native apps spec row (branch `docs/native-apps-spec`: on `develop`, Q19); 2026-11-03 for the batch C, identity token and email login build plan rows (branch `docs/sandbox-dev-state`: what is merged and live on sandbox-dev); 2026-11-03 for the email login build plan's row (branch `feat/email-login-8b`); 2026-11-02 against `develop` @ 1c6a124 (branch `docs/consistency-pass`: the specs' build state); the email
 login build plan's row on 2026-11-02 (branch `feat/email-login-6`, against `develop` @ bbdd8ed).
 
 ## Reference (current state)
@@ -33,7 +33,7 @@ login build plan's row on 2026-11-02 (branch `feat/email-login-6`, against `deve
 | `batch-a-spec.md` | A: isolation (contract registry, API, environments) |
 | `batch-a2-shared-client.md` | A.2: shared Google client, sessions, follow-up fixes |
 | `batch-b-spec.md` | B: browser SDK, vault, one-transaction login, auto-approve policies (merged into `develop` and deployed on sandbox-dev, 2026-10-29) |
-| `batch-c-spec.md` | C: developer dashboard (D34 MVP cut and D73–D75 folded in; being built in the batches of `batch-c-build-plan.md`) |
+| `batch-c-spec.md` | C: developer dashboard (D34 MVP cut and D73–D75 folded in; being built in the batches of `batch-c-build-plan.md`, so still the current design until batch C merges; the staff Users screen and the Support ID lookup over D269's directory proposed 2026-11-04, D275, D276, to confirm) |
 | `batch-c-build-plan.md` | C: the spec split into mergeable batches C1–C17, milestones and the setup steps (C1–C5 merged into `develop` and running in the sandbox-dev API as far as `develop` includes them: migrations 0006, 0009, 0010 applied, usage capture off; C6 and C7 built, not merged; C8–C17 not built) |
 | `governance-spec.md` | Pre-mainnet governance (D33): delayed issuer keys with a watchdog, multisig owner, timelocked upgrades, pause (built; on sandbox-dev since 2026-10-30) |
 | `hana-home-spec.md` | Pre-mainnet Hana Home (D40, D45): cross-app wallets and key export for shared-login apps, consent revocation from any device (draft, for review) |

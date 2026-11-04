@@ -1,6 +1,8 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-04 (branch `feat/batch-c-6-merge`, batch C6 on current `develop`; built on `feat/batch-c-6`: "Console sink scope (batch C6, milestone M3)" with
+Last verified against code: 2026-11-04 (branch `feat/wallet-directory`: "Wallet directory (hot-DB migration 0011)":
+its prerequisites, the migration and deploy order, reading it with the CLI, its log events; the `user:*` lines in "Admin
+CLI" and "User directory (D269)"; D310–D317); 2026-11-04 (branch `feat/batch-c-6-merge`, batch C6 on current `develop`; built on `feat/batch-c-6`: "Console sink scope (batch C6, milestone M3)" with
 the scan fixes (known owner accounts only, `--known-owner`, no removal a run can't follow with the registration), the
 console audiences no longer in `global` in the manifest and Google tables, the owner-pool allowance event and
 `OWNER_POOL_ALLOWANCE_YOCTO`; D235–D239); 2026-11-04 (branch `feat/batch-c-7-merge`, C7 merged onto `develop`; written on `feat/batch-c-7` 2026-11-02: "Partner console Worker": its setup steps for
@@ -669,6 +671,59 @@ deploy. Logins are unaffected either way; events in between are not recorded.
 | `identity_usage_sync_failed` | The hourly identity-count copy failed | Nothing: the next hour copies the last 7 days again |
 | `first_session_write_failed` (`what` `scope` or `marker`) | One of the waiver's two hot-DB signs wasn't written | The other one stands; the next session attempt retries the scope's |
 
+## Wallet directory (hot-DB migration 0011)
+
+Branch `feat/wallet-directory` (D310–D317; not merged, nothing deployed). After each login the vault reports the
+wallet's Stellar and EVM addresses, each signed by its own key, to `POST /v1/wallets/record`; the API checks them
+against the live session on chain and keeps, in its own D1, each user (`hu_…`, its Support ID `HANA-XXXX-XXXX`), the
+wallets and the account's identities (`docs/architecture.md` "Wallet directory", `docs/api.md`). It never fails or
+slows a login. There is no backfill: a user appears with wallets at their next login after the deploy.
+
+**Prerequisites.** `USER_ID_KEY` on the API Worker (the uid key: "Usage capture" step 4, `usage-setup <env>
+user-id-key`; it needs no Neon). Without it every record answers `503 directory_unavailable` and the API logs
+`directory_unavailable` (`missing_key`) at most every 10 minutes per isolate; logins are unaffected. Never rotate it
+within a contract term: every user would get a new user id.
+
+**Applying it on sandbox-dev** (the user runs this, from the main checkout; additive, three new tables, no rollback
+step: an older Worker ignores them). Take a Time Travel bookmark first ("Restoring a D1 database (Time Travel)"), then:
+
+```sh
+corepack pnpm --dir apps/api exec wrangler d1 migrations list hana-id-sandbox-dev --remote     # 0011_wallet_directory.sql pending
+corepack pnpm --dir apps/api exec wrangler d1 migrations apply hana-id-sandbox-dev --remote
+corepack pnpm --filter @hana-id/api run deploy                                                 # the API with /v1/wallets/record
+# then the page Workers, so the vault sends the record ("Create an environment from scratch" step 9)
+```
+
+Order: the migration, then the API, then the vault bundle. In another order nothing breaks: an API without 0011
+answers `503 directory_write_failed` and logs `directory_write_failed` (`no_table`), and a vault without the record
+sends nothing. `GET /v1/health` keeps `hotDb: 9` (D313). Other envs: the same with `hana-id-<env>`.
+
+**Checking it.** Log in on the demo, then `admin sandbox-dev user:find --remote --address <the G… or 0x… address the
+demo shows>`: one user, both wallets, the Google (or email) identity as the account root.
+
+**Reading it** (Hana staff; `$A` as in "User directory (D269)"):
+
+```sh
+$A user:list --remote                            # each identity also shows its user id, Support ID, role and wallets per scope
+$A user:find --remote --address G…               # every user listing that wallet (warned when more than one)
+$A user:find --remote --address 0x…              # any case
+$A user:find --remote --user HANA-XXXX-XXXX      # or hu_…; any case, with or without HANA- and dashes
+$A user:find --remote                            # an address, sub, wallet, user id or Support ID on stdin
+```
+
+These read the API's D1 the way the issuer's is read (D316): locally the statement in a 0600 file under
+`.secrets/tmp/` passed as `--file`, remotely D1's REST query endpoint on `cloudflare.d1Name`, wrangler's log file off,
+errors never quoting the statement. `--address` and `--user` also work in an env without an email issuer (no
+addresses then). A wallet listed under more than one user is a reused or exported key, or a record made from an
+approved raw signature (D311): never treat a listed address as proof of who owns the wallet. Subs and addresses are
+for this terminal only, as in "User directory (D269)".
+
+**What to watch** (Worker logs): `directory_write_failed` (error: `no_table` before 0011, `internal` otherwise),
+`directory_sync_failed` (warn, `near_unavailable`: an identity sync after a login or a link change couldn't read the
+chain; the next one rewrites the account), `directory_unavailable` (warn, `missing_key`). The request log's
+`/v1/wallets/record` lines: `bad_wallet_record` or `session_mismatch` in volume are someone probing, `stale_record`
+a vault with a wrong clock.
+
 ## Hot DB migration 0006 and the new gate (batch C3, milestone M1)
 
 State on sandbox-dev (2026-11-03): done. Migrations 0006, 0009 and 0010 are applied to the API's D1, after a rehearsal on a scratch
@@ -955,7 +1010,7 @@ admin <env> owner:proposals [--limit 20] [--json]
 admin <env> governance:status [--json]
 admin <env> council:replace-member --remove <old member> --add <new member> [--member <m>] [--approve-with <m>] [--yes]
 admin <env> user:list [--app <app id>] [--provider email|google] [--search <part of the address> | -] [--limit 50] [--json] [--remote]
-admin <env> user:find [--email <address> | --sub <sub>] [--provider email|google] [--json] [--remote]   # neither: read from stdin
+admin <env> user:find [--email <address> | --sub <sub> | --address <G…|0x…> | --user <hu_…|HANA-XXXX-XXXX>] [--provider email|google] [--json] [--remote]   # none: read from stdin
 ```
 
 The `user:*` commands read the user directory in the email issuer's own D1, read only: "User directory (D269)" under
@@ -2155,7 +2210,9 @@ $A user:find --remote --json
 ```
 
 Each user: the address, provider, `sub`, verified, first and last seen, and per app its scope and the identity's own
-on-chain path `{scope}#{provider}#{sub}#0` (a linked member's wallet is its account root's: `get_identity`). An
+on-chain path `{scope}#{provider}#{sub}#0` (a linked member's wallet is its account root's: `get_identity`); with the
+wallet directory (migration 0011, "Wallet directory (hot-DB migration 0011)"), per scope its user id, Support ID, role
+in the account and the account's wallets, read from the API's D1 the same private way. An
 exact address matches as typed (lowercased: Google rows) and normalized (`@hana-id/email`: email rows, so
 `Alice.Smith@gmail.com` finds `alicesmith@gmail.com`). **Unverified Google rows** (`email_verified = 0`):
 `user:find` lists the verified users first and these apart, after "UNVERIFIED: this Google account claims the address

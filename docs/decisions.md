@@ -4484,8 +4484,16 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   to be able to see what are the wallet addresses linked to a user … It's ok to show wallet addresses for partners by
   default, but as usual email will be hidden from partners by default (until users explicitly approve this), but admins
   need to be able to see both email and wallet addresses … we want our end user experience similar to what Privy
-  provides', then 'go' on the five points below) · Built on `feat/wallet-directory` · Extends D269; informs D275 (the
-  staff Users screen) and the partner console's Users screen (C10)
+  provides', then 'go' on the five points below) · Built on `feat/wallet-directory` (not merged, not deployed; hot-DB
+  migration 0011 not applied anywhere): the record statement and its verifier (`packages/core/src/wallet-record.ts`,
+  D311), the vault's background report (`packages/web/src/vault/wallet-record.ts`, `vault.ts` `recordWallets`, D317),
+  `POST /v1/wallets/record` (`apps/api/src/directory/record.ts`, D313), migration `0011_wallet_directory.sql`
+  (`end_users`, `end_user_wallets`, `end_user_identities`), the identities kept current after `/v1/login` and the link
+  relays (`directory/sync.ts`, D314), `AdminRpc.listUsers` / `getUser` / `findUsers` and `ConsoleRpc.listUsers` /
+  `getUser` (`directory/read.ts`, D315), the user id and Support ID (`packages/console-core/src/users.ts`, D312), and
+  `admin user:list` / `user:find` with wallets, `--address` and `--user` (`scripts/lib/admin-users.ts`, D316); no UI
+  (C8b and C10 build the screens) · Extends D269; informs D275 (the staff Users screen) and the partner console's
+  Users screen (C10)
 - Decision:
   1. **A user** is one account in one scope: the root identity and its linked identities (D133). Wallets are per scope,
      so one person in two orgs' scopes is two users; staff can group them by email.
@@ -4506,6 +4514,133 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   on-chain activity is not indexed.
 - Rejected: recording addresses on chain (anyone could map Google accounts to wallets publicly); unsigned reports (a
   caller could attach any address to any user); partners seeing emails by default.
+
+### D311. The wallet record: ECDSA and Ed25519 over a `hana-id/wallet-record/v1` statement, the identity proof's scheme
+- Date 2026-11-04 · Status: to confirm (decided while building D310) · Built on `feat/wallet-directory`
+  (`packages/core/src/wallet-record.ts`, `test/wallet-record.test.ts`) · Source: D310 point 3, D179
+- Decision: each address is proven by its own key over
+  `"hana-id/wallet-record/v1" ‖ 0x00 ‖ borsh(env) ‖ borsh(signer) ‖ borsh(app_id) ‖ borsh(scope_id) ‖ borsh(path) ‖
+  borsh(chain) ‖ borsh(address) ‖ session_pk(32) ‖ u64le(issued_at_ms)`: Stellar, Ed25519 over the statement itself;
+  EVM, secp256k1 ECDSA (RFC 6979, low s, `r ‖ s ‖ v`) over `sha256(statement)`, the identity wallet proof's scheme
+  (D127). The prefix starts with `hana-id`, so the vault's D179 raw refusal covers it with no new rule, and the 0x00
+  ends it, so no other Hana message is a statement. The app id is in it too, beside what D310 lists.
+- Why it is never another signature (argued in the module's header, each point tested): Stellar transactions, Soroban
+  auth entries and SEP-53 sign a 32-byte hash and Ed25519 binds the exact message, which is always longer; EVM
+  transactions, EIP-191 and EIP-712 sign a keccak256 digest, ours is a sha256 digest (a cross-hash second preimage);
+  the approval flow's non-raw kinds sign those same hashes; a raw Stellar request starting `hana-id` is refused before
+  any popup (D179).
+- Accepted residual (D179's, by construction): a raw EVM request is any 32-byte digest, and every ECDSA proof is a
+  signature over one. The vault refuses its own session's record digest (D317), but a user who approves a raw EVM
+  signature over a digest an attacker computed for the attacker's own session can let the attacker list that EVM
+  address under the attacker's own user. That user approval already authorizes any transaction from the key (the popup's
+  red warning); raw signing is off by default, a guarded change, never auto-approved and refused for test apps; the row
+  is only ever under the attacker's own user; an address under more than one user is shown so (`sharedWith`, the CLI's
+  warning).
+- Rejected: a BIP-340 Schnorr signature with the EVM key for a strict "never" (no ECDSA raw signature is a Schnorr one):
+  using one secp256k1 key for ECDSA and Schnorr has no proof of joint security, and Bitcoin's designers advise keeping
+  them apart with a hardened derivation step (bitcoin-dev, P. Wuille), so it would trade a bounded bookkeeping residual
+  for an unproven risk to the funds key; a separate record key (a new derivation tuple: it proves nothing about the
+  wallet's own key); a session-key signature alone (it proves the session, not the address).
+
+### D312. The user id is the usage ledger's uid, `hu_` + Crockford base32; the Support ID is its first 8 characters
+- Date 2026-11-04 · Status: to confirm (decided while building D310) · Built on `feat/wallet-directory`
+  (`packages/console-core/src/users.ts`, `apps/api/src/directory/store.ts` `directoryUser`) · Source: D310 point 2,
+  D96, D144, D276
+- Decision: a user's id is deterministic: the uid (`HMAC-SHA256(USER_ID_KEY, "hana-id/uid/v1" ‖ borsh(scope) ‖
+  borsh(root provider) ‖ borsh(root sub))[0..16]`, console-core `uid`, the ledger's pseudonym, D96) of the account
+  root of the session's path, written `hu_` + the 26 lowercase Crockford base32 characters of its 16 bytes. The
+  Support ID `HANA-XXXX-XXXX` is the first 8 of those characters, uppercase: exactly the uid's first 40 bits (5 bytes),
+  so it is the user id's short form and D276's code at once. The hot DB stores it as `end_users.support_code`
+  (indexed), so code → user is one read. No new secret; without `USER_ID_KEY` nothing is recorded
+  (`directory_unavailable`).
+- Why: the same login always lands on the same row (no lookup-then-insert race between the record and the login's
+  sync), staff can join a user to its ledger events by uid, and D276's Support ID needs no table of its own.
+- Rejected: a random id stored per root (a read before every write, a race on the first two writes, and a Support ID
+  unrelated to the ledger); the identity token's `sub` (D276 (b): a second pseudonym the ledger doesn't use. Partners
+  can still join console rows to their backends' tokens by wallet address, which both carry); a new HMAC key (another
+  secret to keep for the same job).
+- Note: a partner sees the user id and the Support ID (D310 point 5), a per-scope pseudonym like the token's `sub`.
+  `USER_ID_KEY` must never be rotated within a contract term (D224): a new key is a new id for every user.
+
+### D313. `POST /v1/wallets/record`: the vault gate, the records, the session on that exact path; no session-key signature
+- Date 2026-11-04 · Status: to confirm (decided while building D310) · Built on `feat/wallet-directory`
+  (`apps/api/src/directory/record.ts`, `test/wallet-directory.test.ts`) · Source: D310 point 3
+- Decision: the endpoint takes `{sessionPublicKey, issuedAtMs, path, wallets: {stellar, evm}}` (≤ 4 KiB) from the vault
+  origin only (the vault gate and `vaultLimits`, as `/v1/vault/*`), refuses a statement time outside ±5 min
+  (`stale_record`), a path outside the app's scope, a record that doesn't verify (`bad_wallet_record`), an env without
+  `USER_ID_KEY` (503 `directory_unavailable`), then reads the session as the identity token does (`checkChainSession`:
+  live, the app's scope, re-read fresh before refusing, `410 session_ended`) and requires its path to be exactly the
+  record's (`403 session_mismatch`). One D1 batch writes the user, both wallets (per user: an address may be under two
+  users) and the root's identity row; times only move forward (MIN/MAX), so a replay changes nothing.
+- No session-key signature and no single-use marker: each chain key's signature already binds the session key, and the
+  chain binds the session to the path; a replayed request rewrites the same rows with the same times. Not paused-gated:
+  it relays nothing.
+- `HOT_DB_SCHEMA` stays 9: an API on a database without 0011 still serves every login; only the record answers 503
+  (`directory_write_failed`, logged `no_table`) and the syncs log the same.
+
+### D314. Identities kept current from chain reads after the API's own relays; one row per identity per scope
+- Date 2026-11-04 · Status: to confirm (decided while building D310) · Built on `feat/wallet-directory`
+  (`apps/api/src/directory/sync.ts`, `links.ts`, `login.ts`, `session-standing.ts` `confirmed`) · Source: D310 point 4
+- Decision:
+  - After a successful link relay (`/v1/link`, `/v1/link/cancel`, `/v1/link/unlink`) the API reads the account root's
+    `get_account` fresh and rewrites the account's rows from it: the root, each member (active, or pending with its
+    `effective_at`), and members no longer listed marked `unlinked` or `cancelled` (the relay's own action wins for its
+    member). The request only lends the subs its verified tokens carried; the chain lists members by key and provider.
+  - After a successful `/v1/login`: with a link, a fresh `get_identity` of the session identity, then its account, as
+    above; without one, the login's own standing read (no extra chain read): the user's last seen, the root's row, and
+    a member's own row (a member that logs in is active). A standing that is only the fail-open guess (the read failed,
+    `confirmed: false`) writes nothing.
+  - Rows are keyed by (scope, identity key), so a member that leaves one account and joins another moves; a write only
+    lands when its chain read is no older than the row's (`observed_at`). A pending member reads as active once
+    `effective_at` passes (at read time). A member Hana saw only on chain (a link made by calling the contract
+    directly) has a NULL sub until it logs in through Hana.
+  - Everything runs after the answer (`waitUntil`) and never fails or slows the request.
+- Rejected: trusting the request's view of the account (a relay that later fails, or another caller's change between
+  the precheck and the relay, would be stored); a read per plain login (an RPC call on every login for a state the
+  standing read already has).
+
+### D315. The read APIs: staff get identities with subs; partners get their own org's users with kinds and wallets only
+- Date 2026-11-04 · Status: to confirm (decided while building D310) · Built on `feat/wallet-directory`
+  (`apps/api/src/directory/read.ts`, `rpc/admin.ts`, `rpc/console.ts`, console-core `users.ts`) · Source: D310 point 5,
+  D275
+- Decision:
+  - `AdminRpc.listUsers({orgId?, scopeId?, cursor?, limit ≤ 200})`, `getUser({userId})`, `findUsers({query,
+    provider?})` (a wallet address, a user id, a Support ID, or a sub; `provider` makes it a sub search): `StaffUser`
+    with each identity's provider, sub, identity key, role, status and times, each wallet's key index and `sharedWith`.
+    The email's join point is each identity's `directoryKey` `{provider, sub}`, for D275's `DirectoryRpc` in the admin
+    Worker; the API never reads the issuer.
+  - `ConsoleRpc.listUsers({orgId, scopeId?, search?, cursor?, limit ≤ 100})` and `getUser({orgId, userId})`: only users
+    of scopes whose `scopes.org_id` is the org; `PartnerUser` is the user id, Support ID, scope, created and last seen,
+    the account kinds active or pending, and the wallets. The query never selects a sub or an identity key. A search
+    may be a wallet address, a user id or a Support ID; a sub is refused (`bad_request`), so a partner can't test whether
+    a Google account is a user. Another org's user is `not_found`, exactly as no user. Each call is one SELECT (cost 1).
+  - Pages are newest first by last seen, with a `lastSeenAt:userId` cursor.
+- Rejected: one shape for both with fields blanked (one mapping bug away from a sub reaching a partner).
+
+### D316. The admin CLI reads the wallet directory without the statement in a process argument
+- Date 2026-11-04 · Status: to confirm (decided while building D310) · Built on `feat/wallet-directory`
+  (`scripts/lib/d1.ts` `apiPrivateD1Execute`, `scripts/lib/admin-users.ts`, `scripts/admin.ts`) · Source: D269's CLI
+  rule, D310 point 5
+- Decision: the hot DB now holds subs and wallet addresses, so `user:*` read it as they read the issuer's D1: locally a
+  0600 file in `.secrets/tmp/` passed as `--file`, remotely D1's REST query endpoint, wrangler's log file off, errors
+  never quoting the statement. `user:list` / `user:find --email|--sub` add each identity's user id, Support ID, role and
+  the account's wallets per scope; `user:find --address <G…|0x…>` (every user listing the wallet, a warning when there
+  are several) and `--user <hu_…|HANA-XXXX-XXXX>` start from the wallet directory and join each identity's address from
+  the issuer when the env has one (they also work without one); a stdin line is read as whichever it is. The other
+  app commands keep `wrangler --command` (their statements hold no personal data).
+
+### D317. The vault reports the wallet once per login, in the background, with a 15 s limit and no retry
+- Date 2026-11-04 · Status: to confirm (decided while building D310) · Built on `feat/wallet-directory`
+  (`packages/web/src/vault/wallet-record.ts`, `vault.ts` `recordWallets`, `test/vault/wallet-record.test.ts`) · Source:
+  D310 point 3
+- Decision: when `finishLogin` adopts a new session (the login succeeded and its key passed the pairing check), the
+  vault signs both records with PRK in that turn (each chain key inside `withChainKey`, zeroed), for the session's
+  path (a linked member's is its account root's) and its server-corrected clock, and starts `POST /v1/wallets/record`
+  without awaiting it: one call, aborted after 15 s (`WALLET_RECORD_TIMEOUT_MS`), every failure dropped silently, no
+  retry (the next login writes the rows; the rows are upserts). Never at an unlock or a reload: "last used" is the last
+  login (D310). The session keeps the record's EVM digest and refuses a raw EVM request for it (D179's rule, D311).
+- Rejected: awaiting it (a slow API would slow every login); retrying (a storm against an API that is down, for rows
+  the next login writes); sending it from the export window (its login opens no wallet session).
 
 ## Superseded or amended
 
@@ -4559,6 +4694,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 | google-match revokes Google's access token (D195, D254; the interactive email consent "the first time only") | Never revoked: revocation ends the whole grant, so the consent came back every login (D265) | batch 8b review |
 | A path through `get_identity` on the vault's RPC alone (batch 7) | A non-own path confirmed on `rpc` and `rpcFallback` separately; root pins (D263) | batch 8b review |
 | D255: no access token (declined) → `email_match_unavailable` | Declined or another account: the popup's consent screen, `email_consent_declined` / `google_account_mismatch` (D264) | batch 8b review |
+| The API's D1 holds no `sub`, address or user id (only `sha256(path)`, `docs/architecture.md` "Data stores") | The wallet directory (hot-DB migration 0011): each user's uid-based id, the account's identities with their subs, and the wallets its logins reported (D310, D312–D314) | `docs/architecture.md` "Data stores" |
 | Hana stores no end-user email address; the Google email is handled transiently, only its HMAC kept (D25 and D96 amended, D119, D230); the screens say "it isn't kept" (D264) | The issuer keeps each identity's verified address in its own D1 (`user_emails`, `user_email_apps`), for Hana staff only (`admin user:list` / `user:find`); partners never see it; the screens say Hana keeps it with the account and doesn't share it with the app (D269) | conversation 2026-11-04 |
 
 ## Proposed, not yet confirmed
@@ -4630,6 +4766,11 @@ IAM policy on the active key only).
 
 Identity token step 8's readings D210–D214 (the watchdog's identity JWKS and discovery check, pin before publish, the
 "identity key on chain" kid check, the discovery fields, bounded alerts and the portal hand-off) are to confirm.
+
+To confirm from `feat/wallet-directory` (D310's build, 2026-11-04): D311 (the record's format and its raw-signing
+residual), D312 (the user id is the uid, the Support ID its first 8 characters), D313 (the record endpoint's checks),
+D314 (identities from chain reads), D315 (what the read APIs return), D316 (the CLI's private reads of the hot DB) and
+D317 (the vault's background report).
 
 To confirm by the user, from `docs/batch-c-users-support-id` (2026-11-04): D275 (the admin console's Users screen
 over D269's directory) and D276 (the Support ID made consistent with D269), below.

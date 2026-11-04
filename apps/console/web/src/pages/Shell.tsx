@@ -1,6 +1,7 @@
 // The signed-in frame: the header (the member's address, the org switcher, sign out) and, inside an org, its tabs.
 // `/` lists the member's organisations (straight to the only one). Inside an org the pages get the member's role and
-// whether the org is frozen (the outlet context), and show the write controls an owner has (batch C10).
+// whether the org is frozen (the outlet context), and show the write controls an owner has (batch C10). The usage,
+// statements and pending-upgrades tabs are reads for any member, frozen orgs included (D370).
 import type { MeAnswer, OrgAnswer } from '@hana-id/console-core';
 import { type ReactNode, useEffect } from 'react';
 import { Link, NavLink, Outlet, useNavigate, useParams } from 'react-router-dom';
@@ -100,6 +101,9 @@ export function OrgShell() {
                 Apps
               </NavLink>
               <NavLink to={`/orgs/${org}/members`}>Members</NavLink>
+              <NavLink to={`/orgs/${org}/usage`}>Usage</NavLink>
+              <NavLink to={`/orgs/${org}/statements`}>Statements</NavLink>
+              <NavLink to={`/orgs/${org}/upgrades`}>Pending upgrades</NavLink>
               {me.data?.features?.users === true && <NavLink to={`/orgs/${org}/users`}>Users</NavLink>}
               <NavLink to={`/orgs/${org}/audit`}>Audit</NavLink>
             </nav>

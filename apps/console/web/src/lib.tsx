@@ -50,6 +50,31 @@ export function duration(ms: number): string {
   return `${Math.round(ms / 1000)} s`;
 }
 
+/** The reader's clock, re-read every `everyMs` (the pending-upgrades countdowns; nothing is fetched again). */
+export function useNow(everyMs: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), everyMs);
+    return () => clearInterval(t);
+  }, [everyMs]);
+  return now;
+}
+
+/** How long until `atMs` on the reader's clock ("in 1 d 2 h"), or how long it has been due ("due for 5 min"). */
+export function countdown(atMs: number, now: number): string {
+  const d = atMs - now;
+  const abs = Math.abs(d);
+  const days = Math.floor(abs / 86_400_000);
+  const hours = Math.floor((abs % 86_400_000) / 3_600_000);
+  const mins = Math.floor((abs % 3_600_000) / 60_000);
+  const span = days ? `${days} d ${hours} h` : hours ? `${hours} h ${mins} min` : mins ? `${mins} min` : 'less than a minute';
+  return d > 0 ? `in ${span}` : `due for ${span}`;
+}
+
+/** The UTC day (`YYYY-MM-DD`) and month (`YYYY-MM`) of `ms`: reports and statements are by UTC day and month. */
+export const utcDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+export const utcMonth = (ms: number): string => new Date(ms).toISOString().slice(0, 7);
+
 export const SIGN_IN_MESSAGES: Record<SignInError, string> = {
   not_invited: 'This Google account isn’t a member of any organisation on the console. Ask an owner of your organisation, or Hana, for an invite.',
   invite_invalid: 'This invite can’t be used: it was used, revoked or has expired, or it was sent to another address or Workspace domain. Ask for a new one.',

@@ -7,8 +7,11 @@ import { Audit } from './pages/Audit.tsx';
 import { CancelChange, CancelOwner } from './pages/Cancel.tsx';
 import { Members } from './pages/Members.tsx';
 import { ScopePage } from './pages/Scope.tsx';
+import { StatementPage, Statements } from './pages/Statements.tsx';
 import { Framed, Home, OrgShell } from './pages/Shell.tsx';
 import { Invite, SignIn } from './pages/SignIn.tsx';
+import { Upgrades } from './pages/Upgrades.tsx';
+import { Usage } from './pages/Usage.tsx';
 import { Users } from './pages/Users.tsx';
 
 export function App() {
@@ -32,6 +35,10 @@ export function App() {
         <Route path="apps/:app" element={<AppPage />} />
         <Route path="scopes/:scope" element={<ScopePage />} />
         <Route path="members" element={<Members />} />
+        <Route path="usage" element={<Usage />} />
+        <Route path="statements" element={<Statements />} />
+        <Route path="statements/:month" element={<StatementPage />} />
+        <Route path="upgrades" element={<Upgrades />} />
         <Route path="users" element={<Users />} />
         <Route path="audit" element={<Audit />} />
       </Route>

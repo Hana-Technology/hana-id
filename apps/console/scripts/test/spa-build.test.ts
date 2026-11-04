@@ -1,7 +1,8 @@
 // The partner SPA's build under the console's CSP (docs/batch-c-spec.md "Response headers": `script-src 'self';
 // style-src 'self'; connect-src 'self'`, no third-party script): the Vite build emits no inline script or style, no
 // external URL and no data: script; and the SPA's sources keep to the rules that make that hold (no HTML injection, no
-// browser storage, no fetch to another origin, nothing but types from console-core, so no server code is bundled).
+// browser storage, no fetch to another origin, nothing but types from console-core, so no server code is bundled; no
+// inline style or script set from React either: the CSP has no 'unsafe-inline', and the sources don't lean on it).
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -52,6 +53,13 @@ describe('the SPA sources', () => {
   it('import only types from @hana-id/console-core', () => {
     for (const { f, text } of sources) {
       for (const m of text.matchAll(/^import ([^;]*) from '@hana-id\/console-core';/gmu)) expect(m[1], f).toMatch(/^type\b/u);
+    }
+  });
+
+  it('set no inline style or script: no style prop, no <style> or <script> element, no javascript: URL (the report screens included)', () => {
+    expect(sources.map((s) => s.f)).toEqual(expect.arrayContaining([expect.stringMatching(/Usage\.tsx$/u), expect.stringMatching(/Statements\.tsx$/u), expect.stringMatching(/Upgrades\.tsx$/u)]));
+    for (const { f, text } of sources) {
+      expect(text, f).not.toMatch(/\sstyle=\{|<style\b|<script\b|javascript:|\.style\.|setAttribute\(\s*['"](style|on)/u);
     }
   });
 

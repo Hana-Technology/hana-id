@@ -1,7 +1,7 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-04 for the claim allow-list's `at_hash`, a freeze pausing pending memberships and the partner console's fresh sign-in and write paths (branch `feat/batch-c-10`, D342, D343, D350–D358); 2026-11-04 for the wallet directory's ids and the wallet record's
+known open issues. Last verified against code: 2026-11-04 for a statement's issuer shown to partners as `hana` (branch `feat/console-reports-upgrades`, D371); 2026-11-04 for the claim allow-list's `at_hash`, a freeze pausing pending memberships and the partner console's fresh sign-in and write paths (branch `feat/batch-c-10`, D342, D343, D350–D358); 2026-11-04 for the wallet directory's ids and the wallet record's
 session signature (branch `feat/user-id-identity-sub`: Parties' partner row, `IDENTITY_SUB_KEY` and `USER_ID_KEY` in
 the compromise table, "Wallet directory" in the API's invariants with the review finding and its fix; D346, D311 and
 D313 amended); 2026-11-04 for the popup close watch (branch
@@ -679,7 +679,8 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   on the invite row only (deleted 90 days after the invite ends; never in `audit_log`, whose details are allowlisted per
   action; a refused sign-in of someone with no account is audited by the sha256 of the address Google verified only),
   sessions' /24 or /48 network data (90 days). Logs carry ids and codes only (a refused token claim by its name). The
-  partner views show no staff Access subject or address, no Google `sub` and no network prefix (D296); nothing in the
+  partner views show no staff Access subject or address, no Google `sub` and no network prefix (D296; a statement's
+  issuer is `hana`, D371); nothing in the
   console reads the email issuer or its user directory, so partners never see an end user's address (D269; a source
   check). `STATEMENTS` is read only by code (no `put`/`delete`, a source check).
 

@@ -12,8 +12,10 @@
 // (lib/council-members.ts). issuer-keys:lead-times reads the issuer key observations
 // (lib/admin-lead-times.ts) for D33's issuer-key delay. scope:add-email-client (dev envs only, D253) adds a scope's
 // email client with a locally minted client proof through the scope's NEAR owner (lib/admin-email-client.ts).
-// user:list and user:find read the user directory (D269) from the email issuer's own D1, read only
-// (lib/admin-users.ts): Hana staff only; the addresses go to this terminal and nowhere else.
+// user:list and user:find read the user directory (D269) from the email issuer's own D1, read only, with each
+// identity's user id, Support ID and wallets from the wallet directory in the API's D1 (D310, D316; both read without
+// the statement in a process argument), and user:find --address / --user start from the wallet directory
+// (lib/admin-users.ts): Hana staff only; addresses and subs go to this terminal and nowhere else.
 import { createInterface } from 'node:readline/promises';
 import { loadEnv, type Manifest } from '@hana-id/env';
 import { assertCommandPositionals } from './lib/admin-args.ts';
@@ -40,8 +42,8 @@ import { scopeAddEmailClient } from './lib/admin-email-client.ts';
 import { governanceStatusCmd, ownerCallCmd, ownerProposalsCmd, ownerVoteCmd } from './lib/admin-owner.ts';
 import { councilReplaceMemberCmd } from './lib/council-members.ts';
 import { tryView } from './lib/contract.ts';
-import { d1Execute, issuerD1Execute } from './lib/d1.ts';
-import { type UserCmdDeps, userFind, userList } from './lib/admin-users.ts';
+import { apiPrivateD1Execute, d1Execute, issuerD1Execute } from './lib/d1.ts';
+import { type UserCmdDeps, userFindCommand, userList } from './lib/admin-users.ts';
 import { NearRpc } from './lib/near.ts';
 
 const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
@@ -73,11 +75,14 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
   user:list [--app <app id>] [--provider email|google] [--search <part of the address> | -] [--limit 50] [--json]
                the user directory (D269, the email issuer's D1, read only), newest first by last seen: each user's
                address, provider, sub, verified, first and last seen, and per app its scope and on-chain path
-               ({scope}#{provider}#{sub}#0). --search -: the text on stdin (kept out of the shell history)
-  user:find [--email <address> | --sub <sub>] [--provider email|google] [--json]
-               one user by exact address (as typed, or normalized as email logins store it) or by sub; with neither
-               flag, the address or sub is read from stdin. Addresses are printed here only: never redirect the
-               output to a file outside .secrets/
+               ({scope}#{provider}#{sub}#0), and per scope its user id, Support ID, role in the account and
+               wallets (the wallet directory, D310, in the API's D1). --search -: the text on stdin (kept out of the
+               shell history)
+  user:find [--email <address> | --sub <sub> | --address <G…|0x…> | --user <hu_…|HANA-XXXX-XXXX>] [--provider email|google] [--json]
+               one user by exact address (as typed, or normalized as email logins store it) or by sub, with its user
+               ids and wallets; --address: every user listing that wallet, --user: a user id or Support ID, each with
+               its accounts (provider, sub, role, status, address); with no flag, any of these is read from stdin.
+               Addresses are printed here only: never redirect the output to a file outside .secrets/
   owner:call <method> [--args '<json>'] [--gas <Tgas, default 100>] [--member <m>] [--approve-with <m>] [--yes]
                an owner call on the contract through the manifest's owner: signed by the owner account, or a
                council DAO proposal by --member; --approve-with (dev envs on testnet only) approves it with a
@@ -93,7 +98,7 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
                council.members in envs/<env>.json (without --yes: prints that edit)
 
   --remote   act on the deployed D1 database (default: local, apps/api/.wrangler/state; user:*: the issuer's,
-             apps/email-issuer/.wrangler/state)
+             apps/email-issuer/.wrangler/state, and the API's for the wallet directory)
   --d1-name <name>  act on a rehearsal database (name containing "rehearsal") instead of the env's
   --yes      scope:register, scope:add-email-client, owner:call, owner:vote, council:replace-member: send the transaction (without it, only
              print it); app:origins:park, app:origins:unpark: write (without it, only list)
@@ -147,7 +152,8 @@ function appDeps(m: Manifest, remote: boolean): AppCmdDeps {
 
 function userDeps(m: Manifest, remote: boolean): UserCmdDeps {
   return {
-    d1: (statement) => issuerD1Execute(m, statement, { remote }),
+    d1: m.emailIssuer ? (statement) => issuerD1Execute(m, statement, { remote }) : null,
+    apiD1: (statement) => apiPrivateD1Execute(m, statement, { remote }),
     log: (line) => console.log(line),
     readLine: async (prompt) => {
       // The prompt on stderr, so --json output stays clean.
@@ -169,7 +175,7 @@ async function scopeExists(m: Manifest, scopeId: string): Promise<boolean> {
 
 async function main(): Promise<void> {
   const args = parseCli(process.argv.slice(2), {
-    strings: ['name', 'scope', 'plan', 'app', 'org', 'environment', 'persistence', 'session-ttl', 'idle-ttl', 'raw-sign', 'google-web-client', 'auto-approve', 'args', 'gas', 'member', 'approve-with', 'limit', 'remove', 'add', 'd1-name', 'provider', 'search', 'email', 'sub'],
+    strings: ['name', 'scope', 'plan', 'app', 'org', 'environment', 'persistence', 'session-ttl', 'idle-ttl', 'raw-sign', 'google-web-client', 'auto-approve', 'args', 'gas', 'member', 'approve-with', 'limit', 'remove', 'add', 'd1-name', 'provider', 'search', 'email', 'sub', 'address', 'user'],
     multiple: ['origin', 'client', 'owner-near', 'owner-google'],
     booleans: ['remote', 'yes', 'allow-shared', 'json', 'reject', 'help'],
   });
@@ -183,10 +189,13 @@ async function main(): Promise<void> {
   const remote = args.flag('remote');
   const where = remote ? `remote D1 ${m.cloudflare.d1Name}` : `local D1 ${m.cloudflare.d1Name}`;
   if (command.startsWith('user:')) {
-    if (args.str('d1-name') !== undefined) throw new CliError('--d1-name is for the API database; user:* read the email issuer’s');
-    if (!m.emailIssuer) throw new CliError(`envs/${m.name}.json has no emailIssuer: no user directory`);
-    const issuerWhere = `${remote ? 'remote' : 'local'} D1 ${m.emailIssuer.cloudflare.d1Name}`;
-    await (command === 'user:list' ? userList : userFind)(args, issuerWhere, userDeps(m, remote));
+    if (args.str('d1-name') !== undefined) throw new CliError('--d1-name is for the API database’s app commands; user:* read the env’s own databases');
+    const walletLookup = command === 'user:find' && (args.str('address') !== undefined || args.str('user') !== undefined);
+    if (!m.emailIssuer && !walletLookup) throw new CliError(`envs/${m.name}.json has no emailIssuer: no user directory (user:find --address or --user read the wallet directory)`);
+    const issuerWhere = m.emailIssuer ? `${remote ? 'remote' : 'local'} D1 ${m.emailIssuer.cloudflare.d1Name}` : 'no email issuer';
+    const deps = userDeps(m, remote);
+    if (command === 'user:list') await userList(args, issuerWhere, deps);
+    else await userFindCommand(args, { issuer: issuerWhere, api: where }, deps);
     return;
   }
 

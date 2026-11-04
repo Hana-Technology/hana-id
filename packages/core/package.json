@@ -18,6 +18,7 @@
     ".": "./src/index.ts",
     "./derivation": "./src/derivation.ts",
     "./identity": "./src/identity.ts",
+    "./wallet-record": "./src/wallet-record.ts",
     "./signers/stellar": "./src/signers/stellar.ts",
     "./decode": "./src/decode/index.ts",
     "./policy": "./src/policy/index.ts"
@@ -39,6 +40,10 @@
       "./identity": {
         "types": "./dist/identity.d.ts",
         "import": "./dist/identity.js"
+      },
+      "./wallet-record": {
+        "types": "./dist/wallet-record.d.ts",
+        "import": "./dist/wallet-record.js"
       },
       "./signers/stellar": {
         "types": "./dist/signers/stellar.d.ts",

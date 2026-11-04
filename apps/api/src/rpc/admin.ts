@@ -7,6 +7,9 @@
 // Built in batch C5: everything but `purgeAudit` / `deletedApps` (retention, C13). Batch C14 adds the read-only
 // `governance` (the `GET /v1/governance` snapshot) and `pendingUpgrades` (the pending-upgrades page, D86).
 import {
+  adminFindUsersInput,
+  adminGetUserInput,
+  adminListUsersInput,
   ackNoticeInput,
   addOriginsInput,
   adminProposeChangeInput,
@@ -58,6 +61,7 @@ import { addOrigins, removeOrigins } from '../changes/origins.ts';
 import { proposeSetting, setLogo, turnOff, updateSettings } from '../changes/settings.ts';
 import { deleteApp, setSuspensionBit, suspendOrg } from '../changes/suspension.ts';
 import { governanceSnapshot } from '../governance-status.ts';
+import { adminFindUsers, adminGetUser, adminListUsers } from '../directory/read.ts';
 import { runRpc } from './common.ts';
 
 const HANA = ['hana'] as const;
@@ -204,5 +208,21 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
   /** The pending-upgrades page's view (the same one ConsoleRpc.pendingUpgrades gives partners). */
   pendingUpgrades(c: unknown) {
     return runRpc(this.env, 'admin.pendingUpgrades', governanceInput, c, { actors: HANA }, async () => ({ pendingUpgrades: pendingUpgradesView(await governanceSnapshot(this.env)) }));
+  }
+
+  // ---- end users and their wallets (D310, D315; staff only: subs and identity keys included, no email) ----
+
+  /** Newest first by last seen, for one org, one scope or all; `nextCursor` while more remain. */
+  listUsers(c: unknown) {
+    return runRpc(this.env, 'admin.listUsers', adminListUsersInput, c, { actors: HANA }, ({ input, db, w }) => adminListUsers(db, input, w.now));
+  }
+
+  getUser(c: unknown) {
+    return runRpc(this.env, 'admin.getUser', adminGetUserInput, c, { actors: HANA }, async ({ input, db, w }) => ({ user: await adminGetUser(db, input.userId, w.now) }));
+  }
+
+  /** By wallet address, user id, Support ID or sub (`provider` makes it a sub search). */
+  findUsers(c: unknown) {
+    return runRpc(this.env, 'admin.findUsers', adminFindUsersInput, c, { actors: HANA }, ({ input, db, w }) => adminFindUsers(db, input, w.now));
   }
 }

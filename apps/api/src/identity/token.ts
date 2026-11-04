@@ -147,7 +147,7 @@ async function checkShare(env: Env, ctx: Ctx, app: App, parentOrigin: string, se
   return { ok: true, share: { idleUntilMs: row.idle_until, absCapMs } };
 }
 
-type ChainCheck = { ok: true; session: SessionView } | { ok: false; response: Response };
+export type ChainCheck = { ok: true; session: SessionView } | { ok: false; response: Response };
 
 /**
  * The on-chain session (step 3): live (get_session answers null for a revoked session and for one before
@@ -155,7 +155,7 @@ type ChainCheck = { ok: true; session: SessionView } | { ok: false; response: Re
  * a missing one is re-read for a while (SESSION_RETRY_FOR_MS, as share creation does): the node that answers may be a
  * block behind the login that created the session, and a wrong "no session" would end the user's session in the vault.
  */
-async function checkChainSession(env: Env, ctx: Ctx, app: App, sessionPk: Uint8Array, now: number): Promise<ChainCheck> {
+export async function checkChainSession(env: Env, ctx: Ctx, app: App, sessionPk: Uint8Array, now: number): Promise<ChainCheck> {
   const judge = (s: SessionView | null): 'ok' | 'missing' | 'expired' | 'scope_mismatch' =>
     !s ? 'missing' : s.expires_at_ms <= now ? 'expired' : s.scope_id !== app.scope_id ? 'scope_mismatch' : 'ok';
   let read;

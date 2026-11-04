@@ -214,7 +214,10 @@ describe('the mailbox object under each set', () => {
       }
       expect(sent).toBe(n);
       if (lim.ticketSends.max < ADDRESS_OWNER_CHALLENGES.max) {
-        expect(await b.admit('r-next', morning + 700_000, true, morning, ticket, lim)).toMatchObject({ ok: false, reason: 'codes' });
+        // D345: past the ticket's own allowance the start falls back to the code limits, as a plain requester.
+        const next = await b.admit('r-next', morning + 700_000, true, morning, ticket, lim);
+        expect(next).toMatchObject({ ok: true, owner: null });
+        expect(next.ok && next.send !== null).toBe(true);
       }
     });
 
@@ -259,6 +262,24 @@ describe('the mailbox object under each set', () => {
       expect(n + owner + t).toBe(lim.wrongCeiling.max);
     });
   }
+
+  it('D345: past its own allowance a ticketed start gets exactly what a plain requester gets, then the code limits refuse', async () => {
+    const b = await mailboxObject(await harness(), gmail('fallback'));
+    const lim = PRODUCTION_LIMITS.mailbox;
+    await b.registerTicket('ak', 'tk', morning, morning);
+    const ticket = { kind: 'ticket' as const, id: 'tk', addrKey: 'ak', issuedAtMs: morning, untagged: true };
+    const owned: boolean[] = [];
+    for (let i = 0; i < lim.ticketSends.max + maxOf(lim.ipCodes, 'codes:15m'); i++) {
+      const exp = morning + 600_000 + i;
+      const a = await b.admit('same-ip', exp, true, morning, ticket, lim);
+      expect(a.ok).toBe(true);
+      if (a.ok) owned.push(a.owner !== null);
+      await b.releaseLive(exp, morning);
+    }
+    // The ticket's 3, then the requester's own 3 per 15 minutes as a plain start (no owner).
+    expect(owned).toEqual([true, true, true, false, false, false]);
+    expect(await b.admit('same-ip', morning + 700_000, true, morning, ticket, lim)).toMatchObject({ ok: false, reason: 'codes' });
+  });
 
   it('counters stored under production pass at once under the dev set (no reset)', async () => {
     const b = await box();

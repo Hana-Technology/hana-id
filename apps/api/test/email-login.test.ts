@@ -192,8 +192,9 @@ describe('POST /v1/login with a link (D133)', () => {
     expect([tx.args.link_jwt, tx.args.link_immediate]).toEqual([req.linkJwt, true]);
     expect(tx.gas).toBe(250n * TGAS);
     expect(await emailUsage(app.id)).toEqual({ email_sessions: 0, links: 1 });
-    // Read fresh: both identities and both accounts, and the session identity's standing once more (session-standing.ts).
-    expect(near.viewCalls.filter((v) => v.method === 'get_identity' || v.method === 'get_account')).toHaveLength(5);
+    // Read fresh: both identities and both accounts, and the session identity's standing once more (session-standing.ts);
+    // then, after the answer, the wallet directory's own fresh read of the session identity and its account (D314).
+    expect(near.viewCalls.filter((v) => v.method === 'get_identity' || v.method === 'get_account')).toHaveLength(7);
   });
 
   it('case B (the email identity joins the Google wallet), pending: relays with link_immediate false', async () => {
@@ -562,10 +563,10 @@ describe('batch 6 review: requests bound to fail, link limits, unknown fields', 
   it('a member’s login derives (and its export limit and uid key on) the account root’s path; links closed: its own', async () => {
     const { app, near } = await setup();
     near.identities.set(`google#${G_SUB}`, { status: 'member', opened: false, root: { provider: 'email', sub: 'e1.root' } });
-    expect(await sessionStanding(env, app.scope, 'google', G_SUB, 0)).toEqual({ pending: false, path: `${app.scope}#email#e1.root#0` });
+    expect(await sessionStanding(env, app.scope, 'google', G_SUB, 0)).toEqual({ pending: false, path: `${app.scope}#email#e1.root#0`, confirmed: true, member: { root: { provider: 'email', sub: 'e1.root' }, effectiveAtMs: null } });
     near.unrecordedWallets = true;
     clearViewCaches();
-    expect(await sessionStanding(env, app.scope, 'google', G_SUB, 0)).toEqual({ pending: false, path: `${app.scope}#google#${G_SUB}#0` });
+    expect(await sessionStanding(env, app.scope, 'google', G_SUB, 0)).toEqual({ pending: false, path: `${app.scope}#google#${G_SUB}#0`, confirmed: true });
   });
 
   it('the same request after a link-state panic is answered from the isolate, not relayed again', async () => {

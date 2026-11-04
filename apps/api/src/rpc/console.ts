@@ -14,6 +14,8 @@ import {
   changeOriginsInput,
   consoleProposeChangeInput,
   cancelChangeInput,
+  consoleGetUserInput,
+  consoleListUsersInput,
   consoleSetSuspendedInput,
   createKeyInput,
   getAppInput,
@@ -41,6 +43,7 @@ import { setSuspensionBit } from '../changes/suspension.ts';
 import { governanceSnapshot } from '../governance-status.ts';
 import { SAFETY_METHODS, newCtx, runOwnerAction } from '../handlers.ts';
 import { finishUsageOnThrow } from '../usage/event.ts';
+import { consoleGetUser, consoleListUsers } from '../directory/read.ts';
 import { runRpc } from './common.ts';
 
 const MEMBER = ['member'] as const;
@@ -71,6 +74,9 @@ export const CONSOLE_COSTS = {
   ownerAction: 2,
   /** The governance snapshot's one D1 batch of two reads (the JWKS cron's state), when the 10 s snapshot is stale (C14). */
   pendingUpgrades: 2,
+  /** One SELECT each (directory/read.ts). */
+  listUsers: 1,
+  getUser: 1,
 } as const;
 
 /**
@@ -244,5 +250,15 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
         ...(status >= 400 && error ? { error: error.slice(0, 500) } : {}),
       };
     });
+  }
+
+  // ---- end users and their wallets (D310, D315): the org's own scopes only; no sub, identity key or email ----
+
+  listUsers(c: unknown) {
+    return runRpc(this.env, 'listUsers', consoleListUsersInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.listUsers }, ({ input, db, w }) => consoleListUsers(db, input, w.now));
+  }
+
+  getUser(c: unknown) {
+    return runRpc(this.env, 'getUser', consoleGetUserInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.getUser }, async ({ input, db, w }) => ({ user: await consoleGetUser(db, input, w.now) }));
   }
 }

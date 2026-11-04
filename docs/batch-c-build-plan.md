@@ -300,6 +300,8 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
   the cancel and cancel-owner pages (POST confirm), `GET /api/governance/pending-upgrades` stays for C14.
 - **Tests**: spec "Fresh sign-in"; "Settings, keys"; the role matrix; owner-action rows that need the console.
 - **Visible**: the console's write paths; the spec's "Done when" bullets 2–4 on the smoke scope.
+- **Users screen** (D310 point 5): over `ConsoleRpc.listUsers` / `getUser` (built on `feat/wallet-directory`, D315):
+  user id, Support ID, created and last seen, account kinds and wallets, the org's own scopes only, no email or sub.
 
 ## C11. Files Worker and logos
 
@@ -368,6 +370,9 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
   Worker.
 - **Visible after**: staff search users and see a user's apps and on-chain path in the admin console; the CLI's
   `user:*` keep working.
+- **Already built for it** (D310–D317, `feat/wallet-directory`): `AdminRpc.listUsers` / `getUser` / `findUsers` over
+  the API's wallet directory (user ids, Support IDs, identities with subs, wallets); the screen joins each identity's
+  `directoryKey` with `DirectoryRpc` for the email.
 
 ## C15. Support ID lookup (D96; proposed design D276, spec §Users and Support ID)
 
@@ -380,6 +385,8 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
   sessions by uid, errors by request ID, the app's changes); `user:erase` in the CLI.
 - **Tests**: the spec's Support ID, lookup, issuer uid write and migration rows.
 - **Open (D276)**: whether `user:erase` lands here or with C13.
+- **Since D312**: the Support code is `end_users.support_code` in the hot DB (indexed); `AdminRpc.findUsers` already
+  resolves a code to its users, so `IssuerRpc.uid` and `user_email_apps.uid` may not be needed (revisit D276 here).
 
 ## C16. CLI completion
 

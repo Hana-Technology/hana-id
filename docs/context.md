@@ -4,7 +4,7 @@ Carried over from the design conversation in wend-widget-demo (Oct 2026). Plan d
 https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi · Login journey diagrams: https://claude.ai/artifact/73xpB7AZknWd9s38xw4Fjo ·
 SDK security page: https://claude.ai/artifact/AwzpW8xZ7pAuMoTYgBfcvo
 
-Last verified: 2026-11-04 for the claim allow-list notes (branch `fix/sessions-allow-list`: always on, `REJECT_PII_ON_SESSIONS` retired, D271); 2026-11-02 against `develop` @ 1c6a124 and `docs/operations.md` (branch `docs/consistency-pass`: "Next
+Last verified: 2026-11-04 for "Google email scope spike" (branch `feat/token-first-on`: the user's spike results, the D270 gate met); 2026-11-04 for the claim allow-list notes (branch `fix/sessions-allow-list`: always on, `REJECT_PII_ON_SESSIONS` retired, D271); 2026-11-02 against `develop` @ 1c6a124 and `docs/operations.md` (branch `docs/consistency-pass`: "Next
 steps" and "Before mainnet", the user-mail provider, the batch B status note). The dated sections below are records
 of their day; "Next steps" is the current list.
 
@@ -178,6 +178,30 @@ origins, partner-origin `/v1/sessions`/`/v1/derive`/`/v1/sessions/revoke`) tied 
   client (project `875896…`) and a client in a second Cloud project (`596419…`) got the same `sub` (fingerprint
   match). The path has no client ID, so moving a scope from the shared client to a Hana-held branded client keeps its
   users' addresses (D42).
+
+### Google email scope spike (2026-11-04, `apps/smoke/spike-email.html`)
+
+Run by the user with sandbox-dev's shared login client (Google project `875896…`), for three account kinds: a personal
+Gmail, a Workspace account on its own domain, and a Google account registered with a non-Google (iCloud) address.
+Only the page's booleans and claim names are recorded here, no personal values.
+
+- Every leg passed for all three accounts.
+- **B**: the ID token was openid-only; the silent access token was issued.
+- **C** (a plain `openid` login once the email grant exists): no lockout claims (`tokenHasPiiLockout: false`), the
+  same account.
+- **D** (B's silent request again): silent, no prompt.
+- **E** (D270's `'token_first'`, as the popup runs it): `tokeninfoReachable: true` (status 200: tokeninfo answered the
+  browser's cross-origin POST), `tokeninfoHasSub`, `tokeninfoAudIsClient`, the silent ID token issued,
+  `emailInIdToken: false`, `idTokenPersonalClaims: []`, `nonceMatches`, `sameAccount`, `tokenFirstUsable: true`.
+- **E2** (the silent request alone, a returning user): `returningTokenClean: true`.
+- Every ID token's claims were exactly `{aud, azp, exp, iat, iss, jti, nbf, nonce, sub}`, as in the 2026-10-28 spike.
+  The Workspace account's `hd` appeared only in userinfo, never in an ID token.
+- Consent: for the account with no grant yet (E run first), one Google screen, "Sign in to Hana ID Dev / Google will
+  allow Hana ID Dev to access this info about you: [the address] Email address", Cancel / Continue. For accounts that
+  already had the grant, E showed no consent screen, only the account chooser.
+
+D270's gate (legs C and E for all three accounts) is met: `GOOGLE_EMAIL_FLOW` became `'token_first'` on
+`feat/token-first-on` (2026-11-04).
 
 ### Batch B status (2026-10-28)
 

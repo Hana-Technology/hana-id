@@ -27,7 +27,9 @@
       <code>packages/web/src/auth/google.ts</code>): an email access token first (<code>response_type=token</code>,
       <code>scope=openid email</code>), its <code>sub</code> from <code>tokeninfo</code>, then a silent
       <code>response_type=id_token</code>, <code>scope=openid</code>, <code>prompt=none</code> request for that account;
-      E2 repeats only that silent request, as a returning user's login. Legs C and E must pass before the switch.
+      E2 repeats only that silent request, as a returning user's login. Legs C and E gated the switch to that flow
+      (passed for all three account kinds on 2026-11-04; the popup runs it since): re-run them after any change to
+      the Google requests or for a new Google project.
       Run it with a personal Gmail account, a Workspace account on its own domain (<code>hd</code>), and a Google account
       registered with an outside address; note what the consent screen lists each time.
     </p>

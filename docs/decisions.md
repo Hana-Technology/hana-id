@@ -20,6 +20,9 @@ confirm) on 2026-11-03, with batch 8b notes on D246 (lifted), D248 ("demo scopes
 D268 (branch `feat/export-copy`, confirmed by the user) on 2026-11-04, with the D111 row of "Superseded or amended".
 D269's "Built" line on 2026-11-04 (branch `feat/user-emails`: the email-login write, `admin user:list` / `user:find`,
 the screen text), with D269 notes on D96, D119, D230 and D264 and two rows of "Superseded or amended".
+D270's status (the spike passed, switched on) on 2026-11-04 (branch `feat/token-first-on`), with notes on D254, D265
+(its gate passed) and D273 (token_first in Playwright), the D254 row of "Superseded or amended" and D265's "to
+confirm" line.
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -3615,8 +3618,9 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 
 ### D254. Google's verified email: a second, silent request by default; one interactive retry; the switch waits for the spike
 - Date 2026-11-03 · Status: to confirm; amended by D264 (an explainer before the retry), D265 (the token is never
-  revoked, so the retry is the first login's only), D270 (a third flow, `'token_first'`, built and off) and D273
-  (`'one_request'` removed; the callback's claim allow-list); built (`packages/web/src/auth/google.ts` `GOOGLE_EMAIL_FLOW`, `callback-page.ts`) ·
+  revoked, so the retry is the first login's only), D270 (a third flow, `'token_first'`, in force since 2026-11-04,
+  when the spike passed: `'second_request'` is now the tested fallback) and D273 (`'one_request'` removed; the
+  callback's claim allow-list); built (`packages/web/src/auth/google.ts` `GOOGLE_EMAIL_FLOW`, `callback-page.ts`) ·
   Source: spec "How the popup gets Google's verified email" (the spike decides; the fallback), build plan batch 0
 - Decision: `GOOGLE_EMAIL_FLOW = 'second_request'`, a code constant (changed only by a reviewed change). In a login of
   an app with email the login's own request stays `response_type=id_token`, `scope=openid`; the callback relays the
@@ -3883,7 +3887,9 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   google-match that takes over 30 s.
 - Gate: before 8b reaches real users, the user runs `apps/smoke/spike-email.html` legs C (a plain `openid` login after
   the grant: its ID token must carry no `email` or `email_verified`, or every later Google login of that user would be
-  `token_has_pii`) and D (the silent request again: it must succeed without a prompt) on real Google.
+  `token_has_pii`) and D (the silent request again: it must succeed without a prompt) on real Google. **Passed on
+  2026-11-04** for a Gmail, a Workspace and an outside-address account (`tokenHasPiiLockout: false`; D silent with no
+  prompt; `docs/context.md` "Google email scope spike").
 - Rejected: revoking (the reasons above); revoking only on a mismatch (the grant is the user's, not the token's).
 
 ### D266. Which email identity a Google address matches is the email issuer's word: accepted (extends D119)
@@ -4058,21 +4064,29 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 - Rejected: encrypting the column (exact-match search only; staff want Privy-like search); showing partners the
   address by default.
 
-### D270. Google's email permission on Google's own sign-in screen: an email access token first, then a silent openid sign-in (behind the spike)
+### D270. Google's email permission on Google's own sign-in screen: an email access token first, then a silent openid sign-in (spike passed; on)
 - Date 2026-11-04 · Status: confirmed by the user (2026-11-04: 'can we also do the "one request" thing so there is no
-  additional prompt during google sign ins?'; 'yes ask for email, assuming reverse flow works') · Built on
-  `feat/google-token-first`, **off** (`GOOGLE_EMAIL_FLOW` stays `'second_request'`; the switch is that one line) until
-  the user's spike run shows legs C and E pass: `packages/web/src/auth/google.ts` (`loginGoogleRequest`,
+  additional prompt during google sign ins?'; 'yes ask for email, assuming reverse flow works') · **Spike passed
+  2026-11-04; switched on**: the user ran `apps/smoke/spike-email.html` with sandbox-dev's shared login client for a
+  personal Gmail, a Workspace account on its own domain and a Google account on an iCloud address, and every leg passed
+  for all three (C: `tokenHasPiiLockout: false`; E: tokeninfo reachable from the browser, status 200, its `sub` and
+  `aud` right, the silent ID token issued with no email or other personal claim, the nonce matching, the same account,
+  `tokenFirstUsable: true`; E2: `returningTokenClean: true`; every ID token exactly the openid claim set, Workspace's
+  `hd` in userinfo only; first-time consent one Google screen listing "Email address", none for a returning grant;
+  `docs/context.md` "Google email scope spike"), so `GOOGLE_EMAIL_FLOW = 'token_first'` on `feat/token-first-on`
+  (not deployed; the deploy steps are `docs/operations.md` "Turning linking on (batch 8b)") · Built on
+  `feat/google-token-first`: `packages/web/src/auth/google.ts` (`loginGoogleRequest`,
   `googleTokenFirstUrl`, `accessTokenSub`), `auth/callback-page.ts` (`tokenFirstAccess`, `tokenFirstId`, the claim
   allow-list before relaying), `auth/login-page.ts`, `auth/email-page.ts` (case B), `auth/pages.ts` and
   `apps/api/src/pages/host.ts` (the callback's tokeninfo `connect-src`), core `hana:auth-params` `emailRecord`,
   `vault/login.ts` (`recordGoogle`), `vault/issuer.ts` (`googleRecord`), the issuer's `google-record` and
   google-match's directory write (`apps/email-issuer/src/handlers.ts` `checkGoogleSignIn`, `handleGoogleRecord`);
-  the silent failure and `'one_request'`'s removal are D273. Tested for both flows (unit and the vault harness); no
-  Playwright run of `'token_first'` (D273) · Depends on the spike: tokeninfo must answer the browser's CORS POST (else
+  the silent failure and `'one_request'`'s removal are D273. Tested for both flows (unit and the vault harness), and
+  token_first in Playwright since the switch (`apps/e2e/tests/token-first.spec.ts`, D273's note) · Depended on the
+  spike: tokeninfo must answer the browser's CORS POST (else
   every token_first login of an app with email login ends `tokeninfo_unavailable`; a record-only login falls back to
   batch B's openid login and records nothing, D269's review fixes); a command-line check on 2026-11-04 (`feat/spike-leg-e`) saw
-  it echo any `Origin` and allow the preflight, leg E confirms it in a real browser · Amends D254 (the flow), D264 (no explainer screen under
+  it echo any `Origin` and allow the preflight, and leg E confirmed it in a real browser (2026-11-04) · Amends D254 (the flow), D264 (no explainer screen under
   it), D25 unchanged
 - Decision: a third flow, `'token_first'`. The login's first request is `response_type=token`, `scope=openid email`
   with the account chooser: Google's single sign-in screen lists the email. The callback then makes a silent
@@ -4080,7 +4094,8 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   login's nonce; only that ID token goes on chain. Under it every Google login asks for the email, also in apps
   without email login (the address goes to the directory only there, no matching). A literal one request (`id_token
   token`, `openid email`) stays rejected: Google puts `email` in that ID token, which would put the address on chain.
-- Guarantees that no address reaches the chain: the spike's legs C and E on real Google before the switch; the
+- Guarantees that no address reaches the chain: the spike's legs C and E on real Google before the switch (passed
+  2026-11-04); the
   claim allow-list (`TOKEN_CLAIM_ALLOW_LIST`) refuses any token with another claim, `token_has_pii`, in the popup, the
   vault and the API before anything is submitted (on every route since D271): a Google change would lock logins out,
   never leak; tests that the on-chain request is `openid` only and that an email-carrying token is refused with
@@ -4134,9 +4149,13 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   explainer (D264) has nothing to explain. More than one retry would loop on a real refusal; failing outright would
   end logins that a single confirmation saves. An unhinted request is never made: the account must stay the one whose
   email the access token carries.
-- Not run in Playwright: the e2e bundles are built once per env with the flow compiled in, so a token_first run needs
-  a third e2e env (origins, ports, hosts, D1 apps), the Google stub's token_first requests, and a browser route for
-  tokeninfo with CORS; left for after the spike, when the flow's real Google behaviour is known.
+- Not run in Playwright when built: the e2e bundles are built once per env with the flow compiled in, so a
+  token_first run needed a third e2e env, the Google stub's token_first requests, and a browser route for tokeninfo
+  with CORS; left for after the spike. Since the switch (2026-11-04, `feat/token-first-on`) the e2e bundles carry
+  `'token_first'`, so no third env: the stub takes its requests (the chooser's access token, the silent ID request,
+  this retry for an account whose silent answer is an error) and the tests' contexts route tokeninfo
+  (`apps/e2e/tests/token-first.spec.ts`: the retry, tokeninfo unreadable, the directory rows, openid-only on chain);
+  `'second_request'` keeps its unit and vault-harness tests only.
 - Rejected: no retry (a Google quirk ends the login); Hana's explainer before the retry (nothing new is asked); keeping
   `'one_request'` behind the switch (a known-bad value one line away).
 
@@ -4200,7 +4219,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 | Email spec: case A's code started with `start` (purpose `auto_link`) and google-match called again with `link: true` | google-match prepares the `auto_link` challenge with Google's verified address; the popup sends its first code with `resend` (D195) | `docs/api.md` "Email issuer" |
 | Batch 8a: the vault fixes the path from the token (D249); no key export for email wallets (D246); email for demo scopes only (D248) | The path from `get_identity` (batch 7); email export over the export window's own session (D258); D248's limit lifted where Google logins write hints | `docs/architecture.md` "Automatic linking", "Key export" |
 | Email spec: the vault sends google-match with the popup's `{idToken, accessToken}` from one Google request | A second, silent `email` request by default (D254), relayed in a follow-up slot (D256) | `packages/web/src/auth/google.ts` |
-| D254: `GOOGLE_EMAIL_FLOW` `'second_request'` or `'one_request'` (`id_token token`, `openid email`) | `'second_request'` (in force) or `'token_first'` (built, off until the spike's legs C and E, D270); `'one_request'` removed (D273) | `packages/web/src/auth/google.ts` |
+| D254: `GOOGLE_EMAIL_FLOW` `'second_request'` or `'one_request'` (`id_token token`, `openid email`) | `'token_first'` (in force since the spike passed on 2026-11-04, D270) or `'second_request'` (the tested fallback); `'one_request'` removed (D273) | `packages/web/src/auth/google.ts` |
 | google-match revokes Google's access token (D195, D254; the interactive email consent "the first time only") | Never revoked: revocation ends the whole grant, so the consent came back every login (D265) | batch 8b review |
 | A path through `get_identity` on the vault's RPC alone (batch 7) | A non-own path confirmed on `rpc` and `rpcFallback` separately; root pins (D263) | batch 8b review |
 | D255: no access token (declined) → `email_match_unavailable` | Declined or another account: the popup's consent screen, `email_consent_declined` / `google_account_mismatch` (D264) | batch 8b review |
@@ -4251,7 +4270,7 @@ follow-up channel; `verify` answers the case-B `sub`), D257 (D137's recovery end
 `linkChanged`, `linkAccount`; what isn't built).
 To confirm from the batch 8b review (`feat/email-login-8b`): D263 (non-own paths confirmed on two RPC providers, root
 pins), D264 (the email permission's explainer, consent screen and reasons; D42's warning), D265 (the access token never
-revoked, google-match retried; the spike gate), D266 (the issuer's word on the match, accepted) and D267 (the relay's and
+revoked, google-match retried; the spike gate, passed 2026-11-04), D266 (the issuer's word on the match, accepted) and D267 (the relay's and
 google-match's per-IP limits, the relay body cap).
 To confirm from the demo polish (`fix/demo-polish`): D260 (an email login's own timing stages), D261 (`GET /v1/app`'s
 side-by-side reads, view timeouts, the login's retry and its timings) and D262 (the vault's `connected`, the SDK's one

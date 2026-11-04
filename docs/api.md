@@ -1,6 +1,7 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's)
 
-Last verified against code: 2026-11-04 (branch `fix/user-emails-review`: the user directory's order-safe upserts in
+Last verified against code: 2026-11-04 (branch `feat/token-first-on`: `google-record` in force under `'token_first'`,
+D270); 2026-11-04 (branch `fix/user-emails-review`: the user directory's order-safe upserts in
 "Email issuer" D1); 2026-11-04 (branch `feat/google-token-first`: the issuer's `POST /v1/email/google-record`
 and its per-IP limit, google-match's user-directory write (D269, D270), the auth page Worker's callback CSP with Google's
 tokeninfo in an env with an email issuer); 2026-11-04 (branch `fix/sessions-allow-list`: `/v1/sessions`'s claim allow-list always on, `/v1/owner-actions`'s `token_has_pii` for owner tokens and client proofs, the `REJECT_PII_ON_SESSIONS` binding gone; D271, D274); 2026-11-04 (branch `feat/user-emails`: the issuer's `verify` writes the user directory, its D1's migration 0002 and the `directory_write_failed` log; D269); 2026-11-03 (branch `fix/8b-rereview`, onto `feat/email-login-8b`: the issuer's CORS exposes `retry-after`); 2026-11-03 (branch `feat/email-login-8b` review fixes: the login relay's 40 writes a minute per IP and 12 KiB body, google-match's `google_account_mismatch`, no revocation and 120 per 10 min per IP, D264, D265, D267); 2026-11-03 (branch `feat/email-login-8b`: the login relay's writes from `VAULT_ORIGIN` and the follow-up slots, the vault page's `connect-src` with `EMAIL_ISSUER_URL`, the issuer's case-B `verify` answering `sub` with its `linkTicket`, the web as the caller of google-match, `/v1/sessions/revoke` and `/v1/link*`; D254–D259); 2026-11-03 (branch `fix/demo-polish`: `GET /v1/app` reads its D1 rows and the registry
@@ -1436,7 +1437,7 @@ answer and never changing it; errors and `409`s record nothing.
 ### `POST /v1/email/google-record` · E
 
 `{pk, accessToken, googleIdToken, commitment}` → `200 {accepted: true}` (D270). Under `GOOGLE_EMAIL_FLOW =
-'token_first'` (`packages/web/src/auth/google.ts`; built, not in force) a Google login of an app without email login
+'token_first'` (`packages/web/src/auth/google.ts`; in force since 2026-11-04) a Google login of an app without email login
 asks Google for the email too, and the vault sends the access token here, in the background, only for the user
 directory (D269).
 

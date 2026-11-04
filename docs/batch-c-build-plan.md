@@ -43,13 +43,14 @@ Batches merge one at a time. Deploys happen at the milestones at the end; a merg
 | C6 | Owner-verified changes and owner actions: `changeOrigins` / `proposeChange` verification, owner-action precheck, caps, allowance alert, `ConsoleRpc.ownerAction`, the console sink scope | 1 (part), 3 (part) | C2, C5 |
 | C7 | Console Worker backend: dispatch, headers, CSRF, `StaffRpc`, invites and owner grants (data path), hourly cron; no public route | 4 (part) | C1, C5 |
 | C8 | Admin Worker: Access check, screens, `EmailSender` (Resend), blocking notices, feed, watcher | 6 (part) | C5, C7 |
+| C8b | Users screen (proposed, D275): `DirectoryRpc` on the email issuer, issuer migration 0003, the admin screen | — | C8 |
 | C9 | Partner sign-in: console-auth Worker, code flow, sessions, membership rules, read-only console | 4 (part) | C2, C7, C8 |
 | C10 | Partner management: fresh sign-in, guarded-change UI with the policy editor, settings, keys, suspend and resume, members and invites, owner actions and the client-proof helper, cancel pages | 4 (part) | C6, C9 |
 | C11 | Files Worker, R2 buckets, logos, `logoUrl` in `GET /v1/app` and the auth pages | 5, 7 (part) | C5, C10 |
 | C12 | Reports, settlement, rates, nonce check, statements (CSV, PDF, on-screen), exports, rejection-rate alert | 6 (part) | C4, C8, C11 |
 | C13 | Retention: monthly purge job and screen, `purgeAudit` RPCs, `uid:erase`, console housekeeping purges | 6 (part) | C12 |
 | C14 | Admin "Security & monitoring" view and the pending-upgrades page (governance D83, D86) | — | C8 |
-| C15 | Support ID lookup (D96) | — | C4, C8 |
+| C15 | Support ID lookup (D96; proposed design D276) | — | C4, C8b |
 | C16 | CLI completion and cleanup: `scope:register --owners-from-org`, `owner:relay`, `app:*` retirement plan | 7 | C9 |
 | C17 | Testnet smoke on sandbox-dev | 8 | all |
 
@@ -311,11 +312,31 @@ Setup for the user: `docs/operations.md` "Usage capture (batch C4, milestone M2)
   "Watchdog alerts" are owned by that work); this batch consumes the package and its completeness test rather than
   writing playbook text. Sources: the watchdog's status endpoint, `GET /v1/governance`, the security screen's events.
 
-## C15. Support ID lookup (D96)
+## C8b. Users screen (proposed, D275; spec §Users and Support ID)
 
-- The spec names the screen but not its data path. Needs a short spec addition first (open question below): which
-  Hana secret derives the code, where sessions and errors for a uid come from (the ledger has per-request rows by
-  uid; the vault has none), retention.
+- **Scope**: `DirectoryRpc` (a `WorkerEntrypoint` in `apps/email-issuer`, no route: `search`, `get`, `auditSince`),
+  the issuer's own check of the staff Access JWT (`ADMIN_ACCESS_AUD`), the audit row in the same batch as each read,
+  the per-staff row budget on the issuer's `RateLimiter`; issuer migration `0003` (`email_admin_audit` rebuilt with
+  the new actions and `detail`; `user_email_apps.uid`, nullable, filled from C15); the admin Worker's `ISSUER`
+  binding, the `/users` screens and BFF routes, the issuer rows in the audit view, the `directory_budget` email.
+  `gen-wrangler` for both Workers.
+- **Tests**: spec "Users and Support ID" rows except the Support ID ones.
+- **Setup / deploy**: apply issuer migration 0002 (if not yet) and 0003 on the env, deploy the issuer, then the admin
+  Worker.
+- **Visible after**: staff search users and see a user's apps and on-chain path in the admin console; the CLI's
+  `user:*` keep working.
+
+## C15. Support ID lookup (D96; proposed design D276, spec §Users and Support ID)
+
+- **Scope**: the code from the uid (`console-core`, with vectors); `supportId` in the `/v1/login` and `/v1/sessions`
+  answers, the vault's `hana_status.supportId` and the popup's account view (`docs/api.md`, `docs/integration.md`
+  updated); `IssuerRpc.uid` on the API (the entrypoint D251 plans), bound only by the issuer, which fills
+  `user_email_apps.uid` after its directory writes; `DirectoryRpc.byUid`; `AdminRpc.userShares`; a Neon migration
+  (the next free number: 0004 and 0005 are taken by the email work, so C12's and C13's move too) with
+  `app_users (uid)` and `events (uid, at) WHERE uid IS NOT NULL`; the lookup screen (code or address, logins and
+  sessions by uid, errors by request ID, the app's changes); `user:erase` in the CLI.
+- **Tests**: the spec's Support ID, lookup, issuer uid write and migration rows.
+- **Open (D276)**: whether `user:erase` lands here or with C13.
 
 ## C16. CLI completion
 
@@ -388,6 +409,9 @@ Run from the main checkout; every file in `.secrets/` is 0600 in a 0700 director
    (the binding is optional) and logins are unaffected.
 4. **Support ID data path** (C15): the spec names the admin screen but not where a user's sessions, logins and
    errors come from. Recommended: derive the lookup from the ledger's `uid` (requests by the user) plus `app_changes`
-   for the app; no new store; a short spec section before C15.
+   for the app; no new store; a short spec section before C15. **Confirmed as D144; the section is written
+   (2026-11-04, proposed D276, spec §Users and Support ID):** logins and sessions by uid, errors by request ID (the
+   ledger has no uid on failures), live shares from `vault_shares`, and, after D269, the directory reached through
+   a `uid` column.
 5. **`ownerGrantDelayMs`**: kept as its own manifest field (the spec's), with `appChangeDelayMs`'s bounds and the
    same production minimum, rather than reusing `appChangeDelayMs`. Recommended as built in C1.

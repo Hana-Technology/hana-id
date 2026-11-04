@@ -51,8 +51,9 @@
 //
 // It calls only the issuer and the API's relay (its CSP's connect-src, pages.ts).
 //
-// SECURITY: the address and the code are sent to the issuer only; neither is stored (the device ticket's key is a hash
-// of the address), logged or put in a message. Tokens are held only until encrypted. The relay key (and the follow-up
+// SECURITY: the address and the code are sent to the issuer only; this page stores neither (the device ticket's key is
+// a hash of the address), logs them or puts them in a message. The issuer keeps the verified address in its user
+// directory, for Hana staff only (D269). Tokens are held only until encrypted. The relay key (and the follow-up
 // key) are taken (single use) only to relay, held in memory for the follow-up mode, and zeroed at its end.
 import {
   ApiError,
@@ -905,7 +906,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
           'p',
           { attrs: { id: 'consent-text' } },
           declined
-            ? 'This app checks whether your Google address already has a wallet. Hana uses it once and doesn’t keep it. Without it you can’t open a new wallet with Google here.'
+            ? 'Hana checks whether your Google address already has a wallet. It keeps the address with your account and doesn’t share it with the app you’re signing in to. Without it you can’t open a new wallet with Google here.'
             : 'You signed in with one Google account, then picked a different one when Google asked to share your email address. Try Google again and pick the account you signed in with, or sign in with email instead.',
         ),
         d.h('div', { class: 'actions' }, cancelB, viaEmail, again),

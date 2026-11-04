@@ -26,6 +26,9 @@ apps/watchdog/wrangler.vitest.jsonc
 # Generated per env by apps/console/scripts/gen-wrangler.ts (the real CONSOLE_DB id), and the console tests' config.
 apps/console/wrangler.jsonc
 apps/console/wrangler.vitest.jsonc
+# Generated per env by apps/files/scripts/gen-wrangler.ts, and the files tests' config.
+apps/files/wrangler.jsonc
+apps/files/wrangler.vitest.jsonc
 # Generated per env by apps/email-issuer/scripts/gen-wrangler.ts (real D1 ids), and the issuer tests' config.
 apps/email-issuer/wrangler.jsonc
 apps/email-issuer/wrangler.vitest.jsonc

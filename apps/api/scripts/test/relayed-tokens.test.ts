@@ -59,3 +59,41 @@ describe('Google tokens relayed by the API', () => {
     for (const f of files) expect(readFileSync(f, 'utf8'), relative(srcDir, f)).not.toMatch(/REJECT_PII_ON_SESSIONS/u);
   });
 });
+
+// The partner console verifies its own Google tokens (batch C9's sign-in; C10's step-ups and owner actions, whose
+// tokens the API verifies again here and relays). Every one is held to the allow-list by scope (D290): `openid` exactly
+// the API's list, sign-in's `openid email` the list plus exactly email, email_verified, hd and at_hash.
+describe('Google tokens the console verifies', () => {
+  const appsDir = join(import.meta.dirname, '..', '..', '..');
+  const consoleFiles = ['console', 'console-auth'].flatMap((app) => {
+    const dir = join(appsDir, app, 'src');
+    return (readdirSync(dir, { recursive: true }) as string[]).filter((f) => f.endsWith('.ts')).map((f) => ({ name: `${app}/src/${f.replaceAll('\\', '/')}`, text: readFileSync(join(dir, f), 'utf8') }));
+  });
+  const tokenFile = consoleFiles.find((f) => f.name === 'console/src/auth-token.ts')!.text;
+
+  it('only console/src/auth-token.ts verifies a Google token (console-auth verifies none)', () => {
+    expect(consoleFiles.filter((f) => calls(f.text, 'verifyIdToken') > 0).map((f) => f.name)).toEqual(['console/src/auth-token.ts']);
+    expect(calls(tokenFile, 'verifyIdToken')).toBe(1);
+  });
+
+  it('applies the allow-list right after the token checks, with no option to skip it', () => {
+    expect(tokenFile).toMatch(/const claim = disallowedClaim\(jwt, c\.scope\);\n\s*if \(claim !== null\) return \{ ok: false, code: 'claim_not_allowed', claim \};/u);
+    expect(tokenFile).not.toMatch(/claimAllowList|skipAllowList/u);
+    // Every caller passes the flow's own scope, read from its auth_flows row.
+    for (const f of consoleFiles.filter((x) => /verifyConsoleToken\(/u.test(x.text) && x.name !== 'console/src/auth-token.ts')) {
+      for (const m of f.text.matchAll(/verifyConsoleToken\([^;]*scope: ([^,}]+)/gu)) expect(m[1]!.trim(), f.name).toBe('flow.scope');
+    }
+  });
+
+  it("its openid list is the API's and core's; sign-in adds exactly email, email_verified, hd and at_hash", () => {
+    expect(listIn(tokenFile, 'TOKEN_CLAIM_ALLOW_LIST')).toEqual(TOKEN_CLAIM_ALLOW_LIST);
+    expect(listIn(tokenFile, 'SIGN_IN_EXTRA_CLAIMS')).toEqual(['email', 'email_verified', 'hd', 'at_hash']);
+    expect(tokenFile).toMatch(/scope === 'openid' \? TOKEN_CLAIM_ALLOW_LIST : \[\.\.\.TOKEN_CLAIM_ALLOW_LIST, \.\.\.SIGN_IN_EXTRA_CLAIMS\]/u);
+  });
+
+  it('a console flow asks Google for openid email (sign-in) or openid (step-ups): never profile, never more', () => {
+    const migration = readFileSync(join(appsDir, 'console', 'migrations', '0001_init.sql'), 'utf8');
+    expect(migration).toMatch(/scope\s+TEXT NOT NULL CHECK \(scope IN \('openid email', 'openid'\)\)/u);
+    expect(migration).toMatch(/CHECK \(purpose = 'step_up' OR scope = 'openid email'\)/u);
+  });
+});

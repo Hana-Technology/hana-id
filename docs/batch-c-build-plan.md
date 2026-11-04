@@ -1,12 +1,12 @@
 # Batch C build plan
 
-Status (2026-11-04, branches `feat/batch-c-8`, `feat/batch-c-11`): C1–C5 merged into `develop` and running in the sandbox-dev API as
-far as `develop` includes them (migrations 0006, 0009 and 0010 applied, usage capture off; `docs/operations.md`); C7
-(the console Worker backend, no route; D240–D244) merged, not deployed (its setup is step 5 below, at M4); C6 built on
-`feat/batch-c-6` and brought onto current `develop` (C7 included) on `feat/batch-c-6-merge` (the claim allow-list on its
-tokens, D277), merged into `develop`, not deployed (M3 not run); C8 (the admin Worker; D278–D285) built on
-`feat/batch-c-8`, tests green, not merged, not deployed (its setup is steps 4 and 8–10 below, at M4); C11 (the files Worker and logos; D300–D308) built on `feat/batch-c-11`, tests green, not merged, not deployed (its
-setup is step 7 below, at M5); C9, C10 and C12–C17 not built. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
+Status (2026-11-04, branch `feat/batch-c-9`, on `develop` @ a243d6b): C1–C5 merged into `develop` and running in the
+sandbox-dev API as far as `develop` includes them (migrations 0006, 0009 and 0010 applied, usage capture off;
+`docs/operations.md`); C6 (the claim allow-list on its tokens, D277), C7 (the console Worker backend; D240–D244), C8
+(the admin Worker; D278–D285) and C11 (the files Worker and logos; D300–D308) merged into `develop`, not deployed (M3
+not run; their setup is steps 4, 5 and 7–10 below, at M4 and M5); C9 (partner sign-in, D290–D297) built on
+`feat/batch-c-9`, tests green, not merged, not deployed (its setup is steps 11 and 12, at M4); C10 and C12–C17 not
+built. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
 batches that each merge into `develop` on their own: tests green, the docs they change updated, and nothing a partner,
 a user or staff can reach that is half-wired. Ordered by dependency; the spec's "Build order" steps are noted per
 batch. This is a plan, not a spec: where it and the spec disagree, the spec wins or gets amended first.
@@ -283,6 +283,13 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
 - **Setup**: the console Google OAuth client (no JavaScript origins; redirect `<console.authOrigin>/callback`) and
   `CONSOLE_GOOGLE_CLIENT_SECRET` (setup step 11); open question 1 tested here.
 - **Visible after M4**: invited partners sign in and see their org read-only.
+- **Status** (2026-11-04): built on `feat/batch-c-9`, not merged, not deployed (D290–D297). `apps/console-auth`, the code
+  flow with PKCE and the implicit-flow guard, handoff codes, sessions, the membership rules through `acceptInvite`,
+  `GET /api/me`, the read-only routes and the SPA (`apps/console/web`), the route config (D294). The console's tokens
+  are held to the claim allow-list by scope (D290; the sign-in token keeps `openid email`, to confirm). Open question
+  1's harness is `scripts/console-code-flow-spike.ts`, not run (D295; Google's `at_hash` on server-flow tokens is the
+  expected finding, to decide before C10). Playwright sign-in under the CSP is left for C17 (D297). Setup step 11 is
+  `docs/operations.md` "Partner console Worker" → "Setup step 11".
 
 ## C10. Partner management
 
@@ -419,7 +426,10 @@ Run from the main checkout; every file in `.secrets/` is 0600 in a 0700 director
     bytes each, base64, generated into `.secrets/<env>/`, then `wrangler secret put` from stdin; `docs/operations.md`
     "Admin Worker" step 3).
 11. **Console Google client** (C9): a Web client with no JavaScript origins and one redirect URI,
-    `<console.authOrigin>/callback`; its id in `consoleAudiences`, `CONSOLE_GOOGLE_CLIENT_SECRET` as a console secret.
+    `<console.authOrigin>/callback`; its id in `consoleAudiences` (the only `google` entry, D294), its downloaded JSON
+    in `.secrets/<env>/console-google-client.json` (0600), `CONSOLE_GOOGLE_CLIENT_SECRET` as a console secret through
+    a pipe; then the open-question-1 spike (`console-code-flow-spike <env>`, D295). Steps: `docs/operations.md`
+    "Partner console Worker" → "Setup step 11".
 12. **Manifest**: add the `console`, `files`, `admin`, `usage`, `email` blocks and `ownerGrantDelayMs` to
     `envs/sandbox-dev.json` once the origins exist (workers.dev for sandbox-dev, D93).
 

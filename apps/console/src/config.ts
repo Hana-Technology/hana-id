@@ -22,6 +22,11 @@ export const SESSION_IDLE_MS = 2 * HOUR_MS;
 export const SESSION_ABSOLUTE_MS = 12 * HOUR_MS;
 export const SESSION_TOUCH_MS = 5 * MINUTE_MS;
 
+/** Sign-in (§Code flow): a flow lives 5 min from its creation, a handoff code 60 s; the flow cookies' Max-Age. */
+export const AUTH_FLOW_TTL_MS = 5 * MINUTE_MS;
+export const HANDOFF_TTL_MS = 60_000;
+export const FLOW_COOKIE_MAX_AGE_S = 600;
+
 /** Housekeeping (§Retention): what the hourly cron removes, and when. */
 export const INVITE_KEEP_MS = 90 * DAY_MS;
 export const SESSION_KEEP_MS = 30 * DAY_MS;

@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-04 (branch `feat/token-first-on`: "Turning linking on (batch 8b)": the spike
+Last verified against code: 2026-11-04 (branch `docs/sandbox-dev-state-1104`: sandbox-dev redeployed at f53d63e, API 9fe0343a, issuer b0cb9058 after migration 0002); 2026-11-04 (branch `feat/token-first-on`: "Turning linking on (batch 8b)": the spike
 passed, `'token_first'` in force, deploying the switch (the issuer if needed, both page Workers), the check and the
 undo; the user directory's google-record rows in force; D270); 2026-11-04 (branch `fix/user-emails-review`: "User directory (D269)": the CLI's
 statement off the argv (a 0600 `.secrets/tmp/` file locally, D1's REST API remotely; why not wrangler's
@@ -667,7 +667,7 @@ deploy. Logins are unaffected either way; events in between are not recorded.
 
 State on sandbox-dev (2026-11-03): done. Migrations 0006, 0009 and 0010 are applied to the API's D1, after a rehearsal on a scratch
 D1; a Time Travel bookmark from before 0006 and an export backup are in `.secrets`. The API (`develop` c3c33ec, version
-b215b589) has the hot DB on and `createProof` true; usage capture is off (no `USAGE_DB` binding). The steps below are
+b215b589; redeployed 2026-11-04 at `develop` f53d63e, version 9fe0343a) has the hot DB on and `createProof` true; usage capture is off (no `USAGE_DB` binding). The steps below are
 the procedure for another env.
 
 Migration `0006_dashboard_expand.sql` adds batch C's hot-DB tables and columns (`docs/api.md` "D1 schema") without
@@ -1883,7 +1883,8 @@ waits `governance_delay_ms`: after adding the first watchdog, rotations go slow 
 
 The email login's issuer (`docs/api.md` "Email issuer", `apps/email-issuer/README.md`, D195–D199): its own Worker,
 separate from the API, holding the email signing key, K_sub, K_code, K_rl and the SendGrid key. **Deployed on sandbox-dev
-(2026-11-03, with batch 8b, version d3dc7965, 5 secrets, SendGrid from team@hanawallet.io); no other env yet.** Order matters: on sandbox-dev follow "Email login on sandbox-dev (build plan batch 6)" below (the watchdog's
+(2026-11-03, with batch 8b, 5 secrets, SendGrid from team@hanawallet.io; redeployed 2026-11-04 at `develop` f53d63e,
+version b0cb9058, after migration 0002 was applied); no other env yet.** Order matters: on sandbox-dev follow "Email login on sandbox-dev (build plan batch 6)" below (the watchdog's
 email pins are live before the owner posts any email key, and no app enables email, `apps.login_methods`, before
 batch 8). It is reached at `{emailIssuer.url}/v1/email/*` (D230): on a `workers.dev` env its own `workers.dev` URL,
 written by `init`; on a zone, the API's URL with a route `<api host>/v1/email/*` to this Worker. Below, `{url}` is that

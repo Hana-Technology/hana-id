@@ -1,7 +1,10 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-04 (branch `feat/batch-c-12`: reports, settlement and statements in Status,
+Last verified against code: 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: D347, a closed popup is
+`login_cancelled`, in "Login, one transaction" after step 4; D348's Google-only screen after a cancel; a cancel on token_first's Google
+screen goes back to the chooser or case B's choices, closing there is `login_cancelled`, in "Automatic linking" step 2;
+D341); 2026-11-04 (branch `feat/batch-c-12`: reports, settlement and statements in Status,
 Components and "Where data lives"; D320–D329); 2026-11-04 (branch `feat/batch-c-14`: Security & monitoring and the pending-upgrades
 page in Status, Components and the admin → watchdog row; D330–D338, D344); 2026-11-04 (branch `fix/abandoned-login-freeze`: "Automatic linking" step 1, the follow-up
 channel's reads end with the login or the banners' limit; step 5, D263's reads run side by side); 2026-11-04 (branch `feat/wallet-directory`: the wallet directory, D310–D317: Status,
@@ -236,6 +239,20 @@ Browser steps: `packages/web/src/vault/login.ts`, `packages/web/src/auth/login-p
    encrypts `{idToken}` under `relayKey` (AAD `"hana-id/relay/v1" ‖ relayId`) and posts it to
    `POST /v1/login-relay/<state>`. API: Hana-origin check, per-IP limit, one write per slot
    (`apps/api/src/login-relay.ts:170`, `LoginRelay.write` `:73`).
+   **A closed popup** (D347): from the hello on, the vault reads the popup window's `closed` every 250 ms
+   (`PopupTask.watchPopup`; its handle is the hello's `event.source`, valid across the popup's navigations: Hana's
+   auth pages send no COOP, and Google's sign-in pages send COOP report-only, checked 2026-11-04). Every Hana page
+   posts `hana:auth-progress` `google` before it navigates to Google, the callback posts `back` on arrival (it has its
+   opener, so the trip switched no browsing context group) and `relayed` before it closes itself, as `/login/email`
+   does; the signals go to the opener and its frames with `vaultOrigin` as the target, and the vault takes them only
+   from the popup it answered. A close while the login waits on the popup (its first slot; a follow-up screen's
+   answer; a link task's slots) ends it after 1 s of grace (an answer the window wrote just before closing itself
+   still wins) with `login_cancelled`, `data.reason: 'popup_closed'`: the relay reads abort (abort-aware `readSlot`),
+   the keys are dropped, and a later write to the slot is never read. A close while the vault works alone (google-match,
+   the chain) lets the login finish; a later wait on the popup ends at once. A close within 8 s of a `google` signal,
+   before `back`, is taken for an IdP's COOP switch (the opener's handle then reads closed while the window is open):
+   the watch stops for the rest of that login, which falls back to its 5-minute limit (and to D341's own close report
+   on the screen after a cancel).
 5. The vault long-polls `GET /v1/login-relay/<relayId>?wait=25` with `x-hana-relay-key`; the object checks
    `b64url(sha256(key)) === relayId` before consuming (`readKeyMatches` `login-relay.ts:52`, `LoginRelay.read` `:86`).
    The vault decrypts, verifies RS256 against Google's JWKS (`packages/core/src/id-token.ts:151`), `iss`, `aud`,
@@ -355,11 +372,27 @@ message.
      nonce. On a silent failure (`consent_required`, `interaction_required`, `login_required`,
      `account_selection_required`) it asks once more without `prompt=none`, still openid only and
      for that account, with no Hana screen (D273); a second failure, or any other error, is relayed. An ID token whose
-     `sub` isn't tokeninfo's ends the login (`google_account_mismatch`). The ID token is relayed with `access:
+     `sub` isn't tokeninfo's ends the login (`google_account_mismatch`). **A cancel on Google's screen** (D341:
+     `access_denied` answered to the first request, or to that interactive retry) is not relayed, so the vault's wait
+     goes on under the login's own 5-minute limit: the callback parks the login's keys under its slot (entry `x`, with
+     `bk` the screen to go back to and, after the retry, `h`: slot 1 already holds that account's access token) and
+     navigates to `/login/email#<relayId>`, which takes them into memory and shows that screen: Hana's method chooser
+     ("Google sign-in was cancelled.", Continue with Google, and Continue with email when the app offers it and the
+     partner didn't start the login with `hana.login({method: 'google'})`, D348: the email context keeps `method`), or case
+     B's own choices when its Google step was the one cancelled. Google again is a fresh attempt under a new random
+     OAuth `state` whose entry names the login's slot (`s`; the ID leg keeps that state), with the login's nonce, so
+     the cancelled attempt's state never finds an entry again (a parked entry is never a Google answer's either);
+     after a cancelled retry it is that retry again (the same account, no chooser). Case B's Google step always takes
+     such a fresh state under token_first. Email is the email step in place. Closing the window on that screen
+     (`pagehide`, not a navigation the page made) sends `{error: 'google_cancelled'}`, encrypted when the screen was
+     shown and written with `keepalive`, and the vault ends the login with `login_cancelled`; case B's Cancel there
+     relays `email_cancelled` as before. The screen stops at the email step's deadline (15 s before the vault's limit)
+     and starts nothing after it. With no email context to go back to (none was stored) the cancel is relayed
+     as before (`google_error`, `access_denied`); every other Google error is still relayed (`google_error`). The ID token is relayed with `access:
      'follow'`; an ID token answered to the access token request is never relayed (`invalid_response`). Then an app
      with email login goes to the follow-up mode, google-match runs as in step 3 (no explainer: Google's first screen
-     asked; declining it is Google's `access_denied` in the login's slot, so no Google login at all; D264's consent
-     screen stays for a google-match `google_account_mismatch`; D255 unchanged); a record-only login closes the
+     asked; declining it is the cancel above, back to the chooser; D264's consent screen stays for a google-match
+     `google_account_mismatch`; D255 unchanged); a record-only login closes the
      popup, and once `/v1/login` has succeeded and the key passed its check (step 10; a refused, failed or cancelled
      login is never recorded) the vault sends the access token, the verified Google token and the session commitment
      to `POST {issuer}/v1/email/google-record` in the background, never awaited by the login (best effort: read slot

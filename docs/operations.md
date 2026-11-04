@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-04 (branch `feat/batch-c-12`: "Reports and statements (batch C12, milestone M6)": the
+Last verified against code: 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: the "Declined" row of "Turning linking on (batch 8b)", D341); 2026-11-04 (branch `feat/batch-c-12`: "Reports and statements (batch C12, milestone M6)": the
 Neon migration 0006, the admin config's buckets and vars, the optional CoinGecko key, the 15-minute cron with the 00:30
 UTC daily work, issuing a statement, the rate override, exports, what to watch; "Usage ledger" lists 0006; the admin's
 cron triggers; D320–D329); 2026-11-04 (branch `feat/batch-c-14`: "Admin Worker" → "Security & monitoring (batch C14)"
@@ -3056,7 +3056,7 @@ What users see, by case (`docs/integration.md` "Sign-in methods and links" has t
 | B, Google-hosted | had a Google wallet, chooses "Continue with email" with its Gmail address and types the code | "This email belongs to a wallet you created by signing in with Google": **Link and continue** or **Sign in with Google**, then Google | the Google wallet; the email joins at once (a notice mail goes to the address) |
 | B, not hosted | the same with an address Google doesn't host | the same, then "An email will be able to open this wallet from {date}" with **Cancel this link** | the Google wallet; the email joins after `change_delay_ms` (sandbox-dev: the contract's value; 24 h on mainnet); an email login meanwhile is `link_pending` with the date |
 | C | has neither wallet | the usual sign-in | a new wallet for that method; a Google login records the hint for later |
-| Declined | a Google user cancels Google's one sign-in screen | nothing more: the email is asked on that screen, so cancelling it is no Google login at all (`google_error`, `access_denied`) | the user can try again or use email |
+| Declined | a Google user cancels Google's one sign-in screen | Hana's chooser again: "Google sign-in was cancelled.", **Continue with Google** or **Continue with email** (case B's own choices when its Google step was cancelled; D341) | Google again or email signs in; closing the popup there ends the login with `login_cancelled`, never `google_error` |
 | Another account | google-match finds the access token's account isn't the ID token's (`google_account_mismatch`; a user without a wallet) | "Another Google account was chosen": **Sign in with email instead**, **Try Google again** (Google's email permission for the signed-in account), Cancel (D264, kept under D270) | an email login, or Google again; Cancel ends `login_cancelled` (`google_account_mismatch`; a refusal on the retried screen `email_consent_declined`). A user with a wallet sees nothing of it |
 
 Checklist, in order (each check before the next):

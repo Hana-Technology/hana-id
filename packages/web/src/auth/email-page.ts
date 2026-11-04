@@ -30,6 +30,15 @@
 // - After `start` answered, it tells the vault (`hana:auth-progress`, `loginProgress: email_code`); before going to
 //   Google (case B) it says `google`.
 // - The partner's `emailHint` prefills the field; it is dropped from the stored context on load (kept in memory only).
+// - Back after a cancel on Google's screen (D341): when the user cancels token_first's Google step (its first request,
+//   or D273's interactive retry), /login/callback relays nothing and parks the login's keys under its slot
+//   (`cancelled`); this page takes them on load (in memory only) and shows the screen that Google step came from:
+//   Hana's method chooser ("Google sign-in was cancelled.", Continue with Google or with email, as the app offers) or
+//   case B's choices. Google again is a fresh attempt under a new OAuth `state` whose entry names the slot (or, after
+//   D273's retry, that retry again: slot 1 already holds the account's access token); email is the email step here.
+//   Closing the window on that screen (`pagehide`) relays `google_cancelled`, encrypted in advance and sent with
+//   `keepalive`, which the vault ends as `login_cancelled`. Case B's attempts under token_first always take a fresh
+//   `state` too, so a cancelled attempt's `state` never finds an entry again.
 // - `hana.linkAccount({method: 'email'})`: the same step over the vault's `link_new` commitment.
 // - The export window's re-authentication (export mode): the same step for the export window's own session; no case B
 //   link, no follow-up.
@@ -60,6 +69,7 @@ import {
   type FollowNotice,
   type FollowProve,
   type LinkBanner,
+  type RelayCiphertext,
   type RelayPayload,
   base64UrlEncode,
   decryptRelayValue,
@@ -73,8 +83,8 @@ import type { AuthApi } from './api.ts';
 import { type Dom, dom, errorView } from './dom.ts';
 import type { EmailApi, LinkPurpose, SessionCommitment, Verified } from './email-api.ts';
 import { EMAIL_STEP_LIMIT_MS, type EmailContext, deviceTicketFor, dropEmailContext, readEmailContext, saveDeviceTicket, storeEmailContext } from './email-storage.ts';
-import { GOOGLE_EMAIL_FLOW, type GoogleEmailFlow, googleAccessUrl, googleAuthUrl, loginGoogleRequest } from './google.ts';
-import { peekLogin, storeLoginEntry, takeLogin, zeroTaken } from './login-storage.ts';
+import { GOOGLE_CANCELLED_RELAY_ERROR, GOOGLE_EMAIL_FLOW, type GoogleEmailFlow, googleAccessUrl, googleAuthUrl, googleTokenFirstUrl, loginGoogleRequest } from './google.ts';
+import { type TakenLogin, peekLogin, storeLoginEntry, takeLogin, zeroTaken } from './login-storage.ts';
 import { type PageWindow, childFrame, isFramed } from './page-window.ts';
 
 export interface EmailPageDeps {
@@ -103,6 +113,8 @@ export type EmailStage =
   | 'relaying'
   | 'done'
   | 'error'
+  /** D341: the method chooser again, after the user cancelled Google's screen. */
+  | 'choosing'
   /** Follow-up mode: waiting for the vault's next notice. */
   | 'following'
   /** Follow-up mode: a screen that waits for the user (google-match's choice, banners, a stop). */
@@ -159,6 +171,9 @@ const STOP_TEXT: Record<string, string> = {
   token_invalid: 'The sign-in couldn’t be checked. Start again from the app.',
   derive_failed: 'The sign-in couldn’t finish. Start again from the app.',
 };
+
+/** D341: the line the screen after a cancel on Google's sign-in screen shows. */
+export const GOOGLE_CANCELLED_TEXT = 'Google sign-in was cancelled.';
 
 const providerName = (p: string): string => (p === 'google' ? 'Google' : 'email');
 const dateText = (ms: number): string => {
@@ -240,6 +255,24 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
   let startAs: StartAs = ctx.proof ? { kind: 'link', purpose: ctx.proof.purpose, commitment: ctx.proof.commitment } : { kind: 'session' };
   /** Follow-up mode's keys, in memory only (taken from the login entry). */
   let follow: { relayKey: Uint8Array; followKey: Uint8Array } | null = null;
+  /**
+   * D341: the login's keys after a cancel on Google's screen, taken from the entry the callback parked (in memory
+   * only), until the user picks a way on; `closeValue` is `{error: google_cancelled}` for the slot, encrypted in
+   * advance so `pagehide` can send it at once; `leaving` once this page navigates on by itself.
+   */
+  let held: TakenLogin | null = null;
+  let closeValue: RelayCiphertext | null = null;
+  let leaving = false;
+  /** The login's keys for a write or the next entry: the held ones (D341), else the stored entry (single use). */
+  const takeKeys = (): TakenLogin | null => {
+    const h = held;
+    held = null;
+    return h ?? takeLogin(win.sessionStorage, rid, now());
+  };
+  const dropHeld = () => {
+    if (held) zeroTaken(held);
+    held = null;
+  };
   // pk_test_ timings: the stage the page is in since `phaseAt` (it starts loading at this page's time 0).
   const spent: Record<EmailStepStage, number> = { emailLoad: 0, emailEntry: 0, emailStart: 0, emailCode: 0, emailVerify: 0 };
   let phase: EmailStepStage | null = 'emailLoad';
@@ -274,7 +307,8 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       await answer(sink.slot, { error: why });
       return;
     }
-    const taken = why ? takeLogin(win.sessionStorage, rid, now()) : null;
+    if (!why) dropHeld();
+    const taken = why ? takeKeys() : null;
     dropEmailContext(win.sessionStorage, rid);
     fatal(title, text, code);
     if (!taken) return;
@@ -314,8 +348,12 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     return b;
   };
 
-  /** Tells the vault where the user is (a progress signal only; the vault checks the sender). */
-  const tellVault = (progress: 'email_code' | 'google' = 'email_code') => {
+  /**
+   * Tells the vault where the user is (a progress signal only; the vault checks the sender): the code was sent, the
+   * window navigates to Google, or it closes itself after relaying (D347: the vault's close watch tells these from a
+   * user's close).
+   */
+  const tellVault = (progress: 'email_code' | 'google' | 'relayed' = 'email_code') => {
     const opener = win.opener;
     if (!opener || ctx.exportMode) return;
     try {
@@ -594,7 +632,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
    * Case B: the address belongs to a wallet created with Google here. With the issuer's ticket: "Link and continue"
    * (this email joins that wallet, D139) or "Sign in with Google"; without it: "Continue with Google".
    */
-  function showGoogleWallet(link: { linkTicket: string; emailSub: string } | null): void {
+  function showGoogleWallet(link: { linkTicket: string; emailSub: string } | null, cancelled = false): void {
     enter(null);
     const clientId = ctx.clientId;
     if (!clientId) {
@@ -604,7 +642,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     const toGoogle = (withLink: boolean) => {
       // The login's own Google request, as /login makes it (G-L3: google-match needs the access token in case B, so
       // token_first asks for it first here too).
-      const follows = peekLogin(win.sessionStorage, rid, now())?.follows === true;
+      const follows = held ? !!held.followKey : peekLogin(win.sessionStorage, rid, now())?.follows === true;
       const google = loginGoogleRequest({
         flow: deps.googleEmailFlow ?? GOOGLE_EMAIL_FLOW,
         clientId,
@@ -615,9 +653,14 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         task: !!ctx.proof,
         forceReauth: false,
       });
-      // The relay key entry stays for /login/callback; with the link, the ticket and the `sub` ride in it (D139), and
-      // under token_first the nonce of the ID token request that follows the access token.
-      if ((withLink && link) || google.tokenFirst) {
+      // token_first: an attempt under a fresh `state` that answers this login's slot, and whose cancel comes back to
+      // these choices (D341); the link, when picked, rides in its entry (D139).
+      if (google.tokenFirst) {
+        restartGoogle({ back: 'case_b', offer: link, caseB: withLink ? link : null });
+        return;
+      }
+      // The relay key entry stays for /login/callback; with the link, the ticket and the `sub` ride in it (D139).
+      if (withLink && link) {
         const taken = takeLogin(win.sessionStorage, rid, now());
         if (!taken) {
           fatal('Sign-in stopped', 'This sign-in has expired or was already used. Start again from the app.', 'login_timeout');
@@ -627,8 +670,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
           storeLoginEntry(win.sessionStorage, rid, taken.relayKey, now(), taken.timings ?? undefined, {
             ...(taken.followKey ? { followKey: taken.followKey } : {}),
             ...(taken.clientId ? { clientId: taken.clientId } : {}),
-            ...(withLink && link ? { caseB: link } : {}),
-            ...(google.tokenFirst ? { tokenFirst: true, nonce: ctx.nonce } : {}),
+            caseB: link,
           });
         } catch {
           fatal('Sign-in stopped', 'This browser blocked the storage the sign-in needs.', 'storage_unavailable');
@@ -670,6 +712,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         { class: 'panel' },
         d.h('h1', {}, 'Sign in with Google'),
         header(),
+        cancelled ? d.h('p', { class: 'note', attrs: { role: 'status', id: 'google-cancelled' } }, GOOGLE_CANCELLED_TEXT) : null,
         d.h('p', {}, 'This email belongs to a wallet you created by signing in with Google. Continue with Google to open it.'),
         link
           ? d.h(
@@ -681,8 +724,138 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         d.h('div', { class: 'actions' }, cancelButton(), ...buttons),
       ),
     );
-    notice = 'google_wallet';
+    notice = cancelled ? 'google_cancelled' : 'google_wallet';
     settle('google_wallet');
+  }
+
+  /**
+   * D341: Google again after a cancel (or case B's Google step under token_first): a fresh attempt under a new OAuth
+   * `state`, its entry naming this login's slot, with the login's nonce; a cancel on Google's screen comes back to
+   * `back`. With the held keys' `loginHint` (D273's interactive retry was what got cancelled, so slot 1 already holds
+   * that account's access token) it is that retry again: the openid ID token of that account; otherwise token_first's
+   * first request, with the account chooser.
+   */
+  function restartGoogle(o: { back: 'chooser' | 'case_b'; offer?: { linkTicket: string; emailSub: string } | null; caseB?: { linkTicket: string; emailSub: string } | null }): void {
+    // Past the login's limit the vault has stopped waiting: no new attempt (the page says the sign-in took too long).
+    if (pastDeadline()) return;
+    const clientId = ctx.clientId;
+    const taken = takeKeys();
+    if (!taken || !clientId) {
+      if (taken) zeroTaken(taken);
+      fatal('Sign-in stopped', 'This sign-in has expired or was already used. Start again from the app.', 'login_timeout');
+      return;
+    }
+    const state = base64UrlEncode(crypto.getRandomValues(new Uint8Array(32)));
+    const hint = taken.loginHint ?? null;
+    try {
+      storeLoginEntry(win.sessionStorage, state, taken.relayKey, now(), taken.timings ?? undefined, {
+        ...(taken.followKey ? { followKey: taken.followKey } : {}),
+        clientId,
+        tokenFirst: true,
+        nonce: ctx.nonce,
+        slot: rid,
+        back: o.back,
+        ...(o.offer ? { offer: o.offer } : {}),
+        ...(o.caseB ? { caseB: o.caseB } : {}),
+        ...(taken.record ? { record: true } : {}),
+        ...(hint ? { leg: 'id' as const, loginHint: hint, interactive: true } : {}),
+      });
+    } catch {
+      fatal('Sign-in stopped', 'This browser blocked the storage the sign-in needs.', 'storage_unavailable');
+      // The vault waits on the slot: it hears why (G-L2).
+      void encryptRelayPayload(taken.relayKey, rid, { error: 'storage_unavailable' })
+        .then((v) => api.writeRelay(rid, v))
+        .catch(() => undefined)
+        .finally(() => zeroTaken(taken));
+      return;
+    }
+    zeroTaken(taken);
+    const url = hint
+      ? googleAuthUrl({ clientId, authOrigin: env.authOrigin, nonce: ctx.nonce, state, forceReauth: false, loginHint: hint, silent: false })
+      : googleTokenFirstUrl({ clientId, authOrigin: env.authOrigin, state });
+    leaving = true;
+    clearT(deadlineTimer);
+    tellVault('google');
+    d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Signing in'), header(), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
+    win.location.assign(url);
+  }
+
+  /** D341: Hana's method chooser again, after the user cancelled Google's screen (the held keys wait for the choice). */
+  function showChooser(): void {
+    enter(null);
+    const buttons: HTMLElement[] = [];
+    const disable = () => {
+      for (const b of buttons) b.setAttribute('disabled', '');
+    };
+    if (ctx.methods.includes('google') && ctx.clientId) {
+      const google = d.h('button', { class: 'primary', attrs: { type: 'button', id: 'continue-google' } }, 'Continue with Google');
+      google.addEventListener('click', () => {
+        disable();
+        restartGoogle({ back: 'chooser' });
+      });
+      buttons.push(google);
+    }
+    // D348: email only when the partner didn't restrict the login to Google (`hana.login({method: 'google'})`).
+    if (ctx.methods.includes('email') && ctx.method !== 'google') {
+      const email = d.h('button', { attrs: { type: 'button', id: 'continue-email' } }, 'Continue with email');
+      email.addEventListener('click', () => {
+        disable();
+        chooseEmail();
+      });
+      buttons.push(email);
+    }
+    d.show(
+      d.h(
+        'section',
+        { class: 'panel' },
+        d.h('h1', {}, 'Sign in'),
+        header(),
+        d.h('p', { class: 'note', attrs: { role: 'status', id: 'google-cancelled' } }, GOOGLE_CANCELLED_TEXT),
+        d.h('div', { class: 'actions choose' }, ...buttons),
+      ),
+    );
+    notice = 'google_cancelled';
+    settle('choosing');
+  }
+
+  /** D341: the chooser's email: the login's entry back under its slot (as /login stores it), then the email step here. */
+  function chooseEmail(): void {
+    if (pastDeadline()) return;
+    const taken = takeKeys();
+    if (!taken) {
+      fatal('Sign-in stopped', 'This sign-in has expired or was already used. Start again from the app.', 'login_timeout');
+      return;
+    }
+    try {
+      storeLoginEntry(win.sessionStorage, rid, taken.relayKey, now(), taken.timings ?? undefined, {
+        ...(taken.followKey ? { followKey: taken.followKey } : {}),
+        ...(taken.clientId ? { clientId: taken.clientId } : {}),
+        tokenFirst: true,
+        nonce: ctx.nonce,
+        ...(taken.record ? { record: true } : {}),
+        // Slot 1 already holds this account's access token (D273's retry was cancelled): case B's Google step is that
+        // retry again.
+        ...(taken.loginHint ? { loginHint: taken.loginHint } : {}),
+      });
+    } catch {
+      fatal('Sign-in stopped', 'This browser blocked the storage the sign-in needs.', 'storage_unavailable');
+      return;
+    } finally {
+      zeroTaken(taken);
+    }
+    showAddress();
+  }
+
+  /** D341: the window closed on the screen after a cancel: the vault hears it at once (`login_cancelled`). */
+  function onPageHide(): void {
+    win.removeEventListener('pagehide', onPageHide);
+    const value = closeValue;
+    closeValue = null;
+    if (leaving || !held || !value) return;
+    dropHeld();
+    dropEmailContext(win.sessionStorage, rid);
+    // keepalive (api.ts): the write outlives the closing window.
+    void api.writeRelay(rid, value).catch(() => undefined);
   }
 
   /** Encrypts `payload` under the login's relay key (taken now, single use) and writes it to the first slot. */
@@ -690,7 +863,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     clearT(resendTimer);
     clearT(deadlineTimer);
     busy('Signing in', 'Finishing sign-in…', 'relaying');
-    const taken = takeLogin(win.sessionStorage, rid, now());
+    const taken = takeKeys();
     if (!taken) {
       dropEmailContext(win.sessionStorage, rid);
       fatal('Sign-in stopped', 'This sign-in has expired or was already used. Start again from the app.', 'login_timeout');
@@ -725,6 +898,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     zeroTaken(taken);
     d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'idToken' in payload ? 'Signed in' : 'Sign-in cancelled'), d.h('p', { class: 'muted' }, 'You can close this window.')));
     settle('done');
+    tellVault('relayed');
     win.close();
   }
 
@@ -758,6 +932,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       endFollow();
       d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Sign-in cancelled'), d.h('p', { class: 'muted' }, 'You can close this window.')));
       settle('done');
+      tellVault('relayed');
       win.close();
       return;
     }
@@ -951,6 +1126,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     follow = null;
     d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Continuing to Google'), header(), d.h('p', { class: 'muted' }, 'Google will ask to share your email address.')));
     settle('done');
+    tellVault('google');
     win.location.assign(googleAccessUrl({ clientId, authOrigin: env.authOrigin, state, loginHint, silent: false }));
   }
 
@@ -982,6 +1158,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       follow = null;
       d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, title ?? 'Confirm it’s you'), header(), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
       settle('done');
+      tellVault('google');
       win.location.assign(url);
       return;
     }
@@ -1068,6 +1245,30 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     }
     follow = { relayKey: taken.relayKey, followKey: taken.followKey };
     void readNotice(taken.next ?? 2);
+    return page;
+  }
+  // D341: back after a cancel on Google's screen (/login/callback parked the login's keys for this screen).
+  if (entry?.cancelled) {
+    const taken = takeLogin(win.sessionStorage, rid, now());
+    if (!taken?.followKey) {
+      if (taken) zeroTaken(taken);
+      fatal('Sign-in stopped', 'This sign-in has expired or was already used. Start again from the app.', 'login_timeout');
+      return page;
+    }
+    held = taken;
+    win.addEventListener('pagehide', onPageHide);
+    void encryptRelayPayload(taken.relayKey, rid, { error: GOOGLE_CANCELLED_RELAY_ERROR }).then(
+      (v) => {
+        closeValue = v;
+      },
+      () => undefined,
+    );
+    if (pastDeadline()) return page;
+    deadlineTimer = setT(() => {
+      if (stage !== 'done' && stage !== 'error' && stage !== 'relaying' && !follow) pastDeadline();
+    }, Math.max(0, deadlineAt - now()));
+    if (taken.back === 'case_b') showGoogleWallet(taken.offer ?? null, true);
+    else showChooser();
     return page;
   }
   if (pastDeadline()) return page;

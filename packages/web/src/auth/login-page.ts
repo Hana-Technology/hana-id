@@ -224,6 +224,8 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
               nonce: msg.nonce,
               clientId: methods.includes('google') ? msg.clientId : null,
               methods: [...methods],
+              // D348: a login the partner restricted to one method comes back to that method only after a cancel.
+              ...(msg.method && methods.includes(msg.method) ? { method: msg.method } : {}),
               emailHint: msg.emailHint ?? null,
               opener: mode === 'vault' ? 'vault' : 'partner',
               vaultFrame: parsed?.vaultFrame ?? null,
@@ -240,10 +242,13 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
         }
       };
       const toGoogle = (tell: boolean) => {
-        // The follow-up mode's context (not for a record-only login: it has no follow-up mode).
-        if (follow && !record && !storeContext()) return;
+        // The follow-up mode's context, and (D341) the screen a cancel on token_first's Google screen goes back to: a
+        // record-only login has no follow-up mode, but its cancel returns to a chooser with Google only.
+        if (follow && !storeContext()) return;
         // In a login that offered email, the vault reports `google` only when the popup says so (hana:auth-progress).
-        if (tell) {
+        // D347: the popup says so before every navigation to Google, so the vault's close watch never takes it (or an
+        // IdP's COOP switch on arrival) for a close; the export window's child has no vault to tell.
+        if (tell || mode !== 'export') {
           try {
             const target = mode === 'partner' ? childFrame(opener as Window, parsed?.vaultFrame as string) : opener;
             (target as Window | null)?.postMessage({ v: 1, t: 'hana:auth-progress', stage: 'google' }, env.vaultOrigin);

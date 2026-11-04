@@ -1,7 +1,19 @@
 // The console Worker's bindings (docs/batch-c-spec.md "Bindings"; written by scripts/gen-wrangler.ts from the manifest's
-// `console` and `files` blocks). Vars are public; the one secret (CONSOLE_GOOGLE_CLIENT_SECRET) comes with sign-in in
-// batch C9.
-import type { CancelChangeByLinkInput, GuardedChange, ListAppsInput, AppSummary, RpcFail, RpcOk } from '@hana-id/console-core';
+// `console` and `files` blocks and `consoleAudiences`). Vars are public; the one secret is CONSOLE_GOOGLE_CLIENT_SECRET
+// (sign-in's code exchange, batch C9; `wrangler secret put`, docs/operations.md setup step 11).
+import type {
+  AppChange,
+  AppDetail,
+  AppSummary,
+  CancelChangeByLinkInput,
+  GetAppInput,
+  GuardedChange,
+  ListAppsInput,
+  ListChangesInput,
+  RpcFail,
+  RpcOk,
+  SetLogoInput,
+} from '@hana-id/console-core';
 
 type Answer<T extends object> = Promise<RpcOk<T> | RpcFail>;
 
@@ -12,7 +24,12 @@ type Answer<T extends object> = Promise<RpcOk<T> | RpcFail>;
  */
 export interface ConsoleRpcClient {
   listApps(c: ListAppsInput): Answer<{ apps: AppSummary[] }>;
+  /** The app view (batch C9) and the logo upload's read of its settings version and current logo (batch C11). */
+  getApp(c: GetAppInput): Answer<{ app: AppDetail }>;
+  listChanges(c: ListChangesInput): Answer<{ changes: AppChange[] }>;
   cancelChangeByLink(c: CancelChangeByLinkInput): Answer<{ change: GuardedChange }>;
+  /** The logo upload (batch C11, logo.ts): the pointer. */
+  setLogo(c: SetLogoInput): Answer<{ version: number }>;
 }
 
 export interface Env {
@@ -20,8 +37,18 @@ export interface Env {
   ENV_NAME: string;
   /** `console.origin`: the only host this Worker serves, and the `Origin` every non-GET request must carry. */
   CONSOLE_ORIGIN: string;
-  /** `console.authOrigin`: the thin console-auth Worker's origin (sign-in, batch C9). */
+  /**
+   * `console.authOrigin`: the thin console-auth Worker's origin. The only host `AuthHandler` answers for; the Google
+   * client's only redirect URI is `<authOrigin>/callback`.
+   */
   CONSOLE_AUTH_ORIGIN: string;
+  /** The console's Google OAuth client (the manifest's one `google` entry of `consoleAudiences`): `client_id` and `aud`. */
+  CONSOLE_GOOGLE_CLIENT_ID: string;
+  /**
+   * Secret: that client's secret, for the server-side code exchange. Missing: every callback answers 503 (fail closed);
+   * nothing else needs it. Never logged.
+   */
+  CONSOLE_GOOGLE_CLIENT_SECRET?: string;
   /** `files.origin`: partner logos, the CSP's only `img-src` besides `'self'` and `data:`. */
   FILES_ORIGIN: string;
   /** Read-only NEAR RPC and the signer account (the on-chain scope views, batch C10). */
@@ -39,6 +66,11 @@ export interface Env {
    * Optional so a test or a config without R2 still runs; the cron then skips the logo purge.
    */
   LOGOS?: R2Bucket;
+  /**
+   * The Cloudflare Images binding (batch C11, D93): every uploaded logo is decoded and re-encoded through it to a
+   * 256 × 256 PNG (logo.ts). Optional so a config without it still runs; uploads then answer `internal`.
+   */
+  IMAGES?: ImagesBinding;
   /** Monthly statements: read only by code (`get`/`head`; a source check forbids `put` and `delete`, D74). */
   STATEMENTS?: R2Bucket;
   /** Workers rate-limiting binding: per-IP flood limits of the session-less routes (limits.ts). */

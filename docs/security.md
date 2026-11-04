@@ -3,7 +3,11 @@
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
 known open issues. Last verified against code: 2026-11-04 for the wallet directory (branch `feat/wallet-directory`:
 what partners and staff see in Parties, the API's D1 and `USER_ID_KEY` in the compromise table, "Wallet directory" in
-the API's invariants, the wallet record's safety and its raw-signing residual (m); D310–D317); 2026-11-04 for owner-verified changes and owner actions on current `develop` (branch `feat/batch-c-6-merge`; built on
+the API's invariants, the wallet record's safety and its raw-signing residual (m); D310–D317); 2026-11-04 for partner sign-in (branch `feat/batch-c-9`, merged with
+`develop` @ a243d6b: "Console Worker"'s route, sign-in, sessions and partner views, the flow cookies, handoff codes,
+sign-in tokens and `CONSOLE_GOOGLE_CLIENT_SECRET` in the inventory, D290–D297); 2026-11-04 for the files Worker and logos (branch `feat/batch-c-11`: the
+logo upload's checks and the CSRF exception in "Console Worker", "Files Worker (logos)", the auth pages' `img-src`;
+D300–D308); 2026-11-04 for the admin Worker (branch `feat/batch-c-8`: its invariants, the cancel-link, link-key, Resend-key and Access-token rows; D278–D285); 2026-11-04 for owner-verified changes and owner actions on current `develop` (branch `feat/batch-c-6-merge`; built on
 `feat/batch-c-6`: the API's own step-up check in "RPC writers", the owner-action precheck's nonce recompute and the
 safety budget in "Owner actions", the claim allow-list on both owner-action paths and on the step-up token, the
 guarded-change token in the inventory, the console sink scope, open issue (i); D235–D239, D277); 2026-11-04 for the console Worker (branch `feat/batch-c-7-merge`, C7 merged onto `develop`; written on `feat/batch-c-7` 2026-11-02: its
@@ -148,7 +152,15 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | Publishable keys | `pk_test_` / `pk_live_` + base58 | D1, partner pages | public | Not secrets |
 | Invite link tokens | T = HMAC-SHA256(`INVITE_LINK_KEY`, "hana-console/invite/v1" ‖ borsh(invite id)), 32 bytes | The invitee's mailbox (`<console.origin>/invite#t=…`, a fragment); `CONSOLE_DB` holds only sha256(T), set by the admin Worker's ack | the invitee | 7 days from creation, single use, email-bound; works only after every notice send was accepted. `INVITE_LINK_KEY` is the admin Worker's secret (C8), never the console's (D240) |
 | Owner-grant cancel tokens | T = HMAC-SHA256(`CANCEL_LINK_KEY`, "hana-console/owner-grant-cancel/v1" ‖ borsh(grant id)) | The grant notice's recipients (every owner, the security contacts, the alias); `CONSOLE_DB` holds only sha256(T) | them | Cancels one owner grant once, by POST, until `owner_from` |
-| Console session cookies (`__Host-hana_cs`) | 32 random bytes, b64url | The member's browser (`HttpOnly`, `SameSite=Strict`, console origin); `CONSOLE_DB` holds only sha256 | the member | 2 h idle, 12 h absolute; revoked on removal, role change, disable or a freeze of the member's only org. Created by sign-in from C9 |
+| Console session cookies (`__Host-hana_cs`) | 32 random bytes, b64url | The member's browser (`HttpOnly`, `SameSite=Strict`, console origin); `CONSOLE_DB` holds only sha256 | the member | 2 h idle, 12 h absolute; revoked on removal, role change, disable or a freeze of the member's only org. Created by sign-in (C9), a new one each time |
+| Console sign-in flow cookies (`__Host-hana_pre` on the console origin, `__Host-hana_af` on the auth origin) and the start handle `f` | 32 random bytes each, b64url | The browser (`HttpOnly`, `SameSite=Lax`, 10 min); `CONSOLE_DB` holds only sha256 of each (and of the state derived from `f`) | the member's browser | One flow (5 min), cleared at its end; bind create → complete and start → callback to one browser (D291) |
+| Console handoff codes | 32 random bytes | The callback's `Location` (`?h=`) for one hop; `CONSOLE_DB` holds sha256 and the verified `{provider, sub, email, hd}` (overwritten when used) | the member's browser | 60 s, single use, only with the flow's `__Host-hana_pre` |
+| Console sign-in ID tokens and Google's access token (C9) | RS256 JWT (console audience), `scope=openid email` | Transient: the callback's memory between the code exchange and the handoff row | the console Worker | Never relayed, stored, logged or returned; claims held to the allow-list plus `email`, `email_verified`, `hd`, `at_hash` (D290) |
+| `CONSOLE_GOOGLE_CLIENT_SECRET` (C9) | the console OAuth client's secret | Console Worker secret; `.secrets/<env>/console-google-client.json` (Google's client JSON, 0600) | Hana | Sent only to `https://oauth2.googleapis.com/token` in the code exchange (a source check). Alone it mints nothing: an exchange needs a code Google issued to the redirect URI and the flow's PKCE verifier. Rotation: a second secret in Google Cloud, `wrangler secret put`, delete the old one (`docs/operations.md` setup step 11) |
+| Guarded-change cancel tokens (batch C8) | T = HMAC-SHA256(`CANCEL_LINK_KEY`, "hana-id/cancel-link/v1" ‖ borsh(change id)) | The `change_pending` recipients' mailboxes (`<console.origin>/cancel/<id>#t=…`, a fragment); the hot DB holds only sha256(T), set by `ackNotice` | the alias and the org's security contacts | Cancels one pending change once, by POST, until `active_from`; deterministic, so a notice re-sent after a failed send carries the same working link |
+| `CANCEL_LINK_KEY`, `INVITE_LINK_KEY` (batch C8) | 32 random bytes each (base64) | Admin Worker secrets only; `.secrets/<env>/cancel-link-key`, `invite-link-key` (0600) | Hana | Generated with `openssl rand` into `.secrets/`, set through wrangler's stdin (`docs/operations.md` "Admin Worker"). Never in the API or the console, never logged. A leak lets the holder mint working cancel links (DoS: cancel pending changes and grants) and, with `INVITE_LINK_KEY`, an invite link only for an invite already acked to its invitee's address (acceptance still needs that Google account). Replacing one breaks the links already emailed |
+| `EMAIL_API_KEY` (batch C8) | Resend API key, sending access to the `email.from` domain only (D87) | Admin Worker secret; `.secrets/<env>/admin-resend-key` (0600) | Hana | Its own key, not the watchdog's. A leak sends mail as Hana's notice subdomain (phishing); it can't ack a notice (only the admin Worker's cron, as `system`, can) |
+| Cloudflare Access application tokens (batch C8) | RS256 JWT (`Cf-Access-Jwt-Assertion`), the team's certs | Transient, per request; never logged or stored | the staff member's Access session (1 h) | Checked on every admin `/api/*` request: signature, `kid`, `iss`, `aud`, expiry, `type = 'app'`, a `sub`, then the email on `admin.staffEmails` (D88) |
 | Identity signing keys (Worker slots `IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY`) | P-256 private JWKs (ES256), testnet and `local*` only | The active key: a Worker secret and `.secrets/<env>/identity-signing-key.json`. The standby: `identity-signing-key-standby.json` only, kept offline, never uploaded until a switch (D177). During a rotation a `next` and a `previous` key. 0600, the only copies | Hana | `scripts/identity-key.ts`: `init`, `next`, `switch --to next|standby`, `retire --key previous|standby` (wrangler stdin, never printed, files never overwritten); public halves in the manifest's `identityToken.publicKeys` (the JWKS). `activeKid` picks the signer. Staging and mainnet: AWS KMS (next row) |
 | Identity KMS keys (`identityToken.signer.keys`: `active`, `standby`, during a rotation `next`, `previous`); none yet | AWS KMS `ECC_NIST_P256` `SIGN_VERIFY`, origin `AWS_KMS`, single-region; the standby in another region (D219) | AWS KMS in D121's dedicated account; never exportable, never on the Worker. The manifest holds their ARNs and public keys only | Hana (break-glass role with MFA administers; the key policy in `docs/operations.md` "Identity token keys on AWS KMS") | Created in AWS by the operator; published with `identity-key kms-init / kms-add`, switched with `kms-switch`, unpublished with `kms-retire` (then disabled and deleted in KMS, 30 days); scheduled rotation every 12 months |
 | KMS signer's AWS access key (`IDENTITY_AWS_ACCESS_KEY_ID`, `IDENTITY_AWS_SECRET_ACCESS_KEY`) | Long-term IAM user key (`AKIA…`) of the env's signer user (`identityToken.signer.credentials.iamUser`) | API Worker secrets; `.secrets/<env>/identity-aws-access-key.json` (0600) only between `aws iam create-access-key` and the checked upload, then deleted | Hana | `identity-key kms-put-aws-key` (one `wrangler secret bulk`, never printed); rotated every 90 days and on suspicion; the user can only `kms:Sign` the active key (D215, D219); never logged |
@@ -549,18 +561,29 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
     `IDENTITY_ISS` first (`400 bad_token`), and the contract takes RS256 issuer keys only;
   - logs carry the app id, outcome, code, kid and timings, never a token, `sub`, `sid`, address or body.
 
-### Console Worker (`apps/console`, batch C7, no route; tests `apps/console/test/*.test.ts`)
+### Console Worker (`apps/console`, batches C7 and C9; tests `apps/console/test/*.test.ts`, `web/test`)
 
-- **No public route** (`workers_dev: false`, `preview_urls: false`, no `routes`; a config test). Until C9 only the admin
-  Worker's `StaffRpc` binding (C8) and the cron reach it.
+- **Route** (C9, branch `feat/batch-c-9`): on its own `workers.dev` name in a dev env only, else a Custom Domain on
+  `console.origin`; never preview URLs (config tests, D294). console-auth likewise on `console.authOrigin`.
 - **Its own origin only**: any other host is 404. Every response, assets included (the Worker runs first), carries the
   spec's CSP (`default-src 'none'`, `script-src`/`style-src`/`connect-src`/`font-src 'self'`, `img-src 'self' data:
   <files.origin>`, `frame-ancestors 'none'`, `object-src 'none'`, `base-uri 'none'`, `form-action 'self'`),
   `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy: same-origin`, `X-Content-Type-Options: nosniff` and HSTS
-  (2 years, subdomains); `/api/*` also `Cache-Control: no-store`. No cookie is set in C7.
+  (2 years, subdomains); `/api/*` also `Cache-Control: no-store`. Only `/api/*` sets cookies (an asset's `Set-Cookie`
+  is stripped), and only the console's `__Host-` ones. The SPA build has no inline script or style, nothing external,
+  and bundles no server code (a build test, D297).
 - **CSRF on every non-GET request**, whatever the path: `Sec-Fetch-Site: same-origin`, `Origin` exactly
-  `console.origin`, `x-hana-console: 1` and `content-type: application/json`, else `403 csrf`. A GET never changes
-  anything (the emailed links' pages only POST).
+  `console.origin`, `x-hana-console: 1` and `content-type: application/json`, else `403 csrf`. The one exception is the
+  logo upload's raw body, which must be exactly `application/octet-stream` on that path (D300): not a CORS-safelisted
+  type either, so it still needs a preflight the console never answers. A GET never changes anything (the emailed
+  links' pages only POST).
+- **Logo uploads** (C11; backend only, routed by C10 for owners): type by magic bytes (PNG, JPEG, WebP; never SVG),
+  ≤ 512 KiB, one well-formed static image ending where its format says (polyglots, APNG and animated WebP refused,
+  D302), the decoder's type and size held against the header, 128–2048 px, aspect ≤ 1.25; then re-encoded through the
+  Images binding to a 256 × 256 PNG that the console itself checks, strips to its image chunks (no EXIF, text, ICC or
+  time) and decodes again (D303). Stored content-addressed; the pointer through `ConsoleRpc.setLogo` (CAS,
+  `app_changes`, feed); 10 uploads a minute per org. A compromised console can still write any PNG it likes to the
+  bucket: the files Worker serves it sandboxed, and the feed shows the change.
 - **Emailed-link confirms** (no session, `link` actor): the guarded-change cancel goes to `ConsoleRpc.cancelChangeByLink`
   (the API checks the token, D228, D229); the owner-grant cancel compares sha256(token) with the stored
   `cancel_token_hash` inside the write's guard: single use, refused once `owner_from` passed, a wrong token, an unknown
@@ -580,12 +603,62 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
 - **Roles**: the last usable owner can't be removed or demoted; a pending owner (inside the grant's wait) is a viewer;
   a new owner of an org with an owner waits `ownerGrantDelayMs` (missing or out of range: grant writes refuse); removals,
   demotions, disables and freezes of a member's only active org revoke sessions at once.
-- **Sessions** (model only until C9): looked up by sha256 of a 32-byte cookie (`__Host-hana_cs`, `Secure; HttpOnly;
-  SameSite=Strict; Path=/`), a doubled cookie name refused, 2 h idle and 12 h absolute, its user not disabled.
+- **Sessions**: looked up by sha256 of a 32-byte cookie (`__Host-hana_cs`, `Secure; HttpOnly; SameSite=Strict;
+  Path=/`), a doubled cookie name refused, 2 h idle and 12 h absolute, its user not disabled; a new id at every sign-in;
+  the role and the membership (with the org's `required_hd` against the session's `hd`) read from `members` on every
+  request; any org the member can't use is `404`, like an unknown one.
+- **Sign-in** (C9, D290–D293): the Google code flow with PKCE S256 on a separate origin (`console.authOrigin`, served
+  by console-auth, which serves no script, asset or page: CSP `default-src 'none'; frame-ancestors 'none';
+  form-action 'none'; base-uri 'none'`, `no-store`), so an XSS on the console can't start an implicit flow for the
+  redirect URI and read its fragment (the client has no JavaScript origin either). The implicit-flow guard: the
+  callback redirects only for a valid `code` and `state` of a started flow bound to this browser's `__Host-hana_af`,
+  and every success `Location` ends with `#`. Each step is single use and cookie-bound: the start handle (marked
+  started), the state (the flow marked used in the lookup, with the auth-origin cookie), Google's code (exchanged once,
+  with the client secret and the verifier), the handoff (60 s, with the console-origin `__Host-hana_pre`); a wrong or
+  missing cookie consumes nothing, and a flow finished in another browser fails. The ID token comes only from the
+  console's own exchange (fixed Google endpoints, never config) and is checked for signature, `iss`, `aud`/`azp` = the
+  console client, the flow's nonce (its own domain, so an owner-action, step-up or origin-change token can't serve),
+  `exp`, `iat` ≤ 120 s; it is never stored, logged or returned. The claim allow-list by scope (D290): `openid` exactly
+  the API's; sign-in's `openid email` adds only `email`, `email_verified`, `hd`, `at_hash` (checked against the access
+  token), with a verified address required. The membership rules run at completion, after the pre-flow cookie; invite
+  acceptance is one D1 batch. `/api/auth/*` and the auth origin are limited to 10 a minute per IP. The handoff row's
+  identity and the flow's PKCE verifier are overwritten once used.
 - **What it keeps about people**: members' and staff emails (display), Google subs (owner match), invitees' addresses
   on the invite row only (deleted 90 days after the invite ends; never in `audit_log`, whose details are allowlisted per
-  action), sessions' /24 or /48 network data (90 days). Logs carry ids and codes only. `STATEMENTS` is read only by
-  code (no `put`/`delete`, a source check).
+  action; a refused sign-in of someone with no account is audited by the sha256 of the address Google verified only),
+  sessions' /24 or /48 network data (90 days). Logs carry ids and codes only (a refused token claim by its name). The
+  partner views show no staff Access subject or address, no Google `sub` and no network prefix (D296); nothing in the
+  console reads the email issuer or its user directory, so partners never see an end user's address (D269; a source
+  check). `STATEMENTS` is read only by code (no `put`/`delete`, a source check).
+
+### Admin Worker (`apps/admin`, batch C8, not deployed; tests `apps/admin/test/*.test.ts`, `test-ops/`, `scripts/test/`)
+
+- **Two checks on every `/api/*` request, failing closed** (D88, D278): Cloudflare Access at the edge, then the Worker
+  itself verifies the Access JWT from the header only (signature against the team's certs, never stale; `kid`, `iss`,
+  `aud`, `exp`/`nbf`, `type = 'app'`, a non-empty `sub`, so no service token) and requires its lowercased email on
+  `admin.staffEmails`. 401 for any token problem, 403 `not_staff`, 503 while the AUD tag is `UNSET` or the certs are
+  unreachable. A cookie or another header never counts.
+- **Its own origin only**, the console's CSP and headers on every response, no cookie set, `/api/*` `no-store`; CSRF on
+  every non-GET (`Sec-Fetch-Site`, `Origin`, `x-hana-admin: 1`, JSON), since Access's cookie travels on a cross-site
+  POST. `preview_urls: false`; `workers_dev` only for a dev env's workers.dev origin (a config test).
+- **The staff actor travels into every write** (`{kind: 'hana', id: <Access sub>, email}` → `app_changes`,
+  `audit_log`); a request body can't set it or the request id. The admin Worker holds no D1 binding (a source check):
+  everything goes through `AdminRpc` and `StaffRpc`, and its only SQL is on Neon's `ops` schema as `usage_admin`.
+- **Blocking notices ack only after every send was accepted** (D279): one message per recipient, a provider 2xx with
+  a message id each; a failure, a skipped send, an unreadable contact list or a missing key leaves the change, invite
+  or grant unannounced (so not in force, the link not working, the wait not started). Only this Worker's cron, as
+  `system`, can ack (the API and the console refuse a `hana` actor). The link keys never leave this Worker; the
+  databases keep sha256(T) only.
+- **The feed and the watcher are independent of the console**: app changes and security events still go out with the
+  console Worker down; the watcher reads the chain itself (`get_scope`, uncached), so a compromised console can't
+  suppress an on-chain proposal's email. Cursors advance only after accepted sends (at least once, never a gap).
+- **Emails**: plain text and simple HTML, no remote image, links only to `console.origin`, never an approve link;
+  partner text escaped and stripped of control characters, one-line subjects (no header injection).
+- **No NEAR key**, no Google client, no D1. **Logs** carry route patterns, ids, codes and counts only: never an email,
+  a `sub`, a JWT, a link token or its hash (log allowlist; a source check and a log test).
+- Residual: a compromised admin Worker can send anything to anyone through Resend, ack notices without sending them,
+  and act as any staff member through the RPCs (trust boundary 3 in the spec's model); the feed's at-least-once
+  delivery can repeat a digest after a partial failure (Resend's idempotency key covers 24 h).
 
 ### Email issuer (`apps/email-issuer`, not deployed)
 
@@ -625,7 +698,21 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   (`apps/api/src/vault/origins.ts:11`). `signer` is not in the config (the bundle's constant is used).
 - Auth pages: `frame-ancestors 'none'`, page-specific `connect-src` (none at all for `/login`, which fetches nothing:
   D77), no COOP header (`apps/api/src/pages/host.ts`
-  sets the headers; the build adds a `<meta>` CSP).
+  sets the headers; the build adds a `<meta>` CSP). Batch C11 (D306): on the pages that show the app's name (`/login`,
+  `/login/email`, `/approve`, `/export`) `img-src` also names the files origin, in place and in both policies (a test
+  holds the header and the meta policy to the same directives); the page shows a logo only from that origin, with
+  `alt=""` and `no-referrer`, and drops any other value (D305). No partner-hosted image ever (D74).
+
+### Files Worker (logos; `apps/files`, batch C11; tests `apps/files/test`, `apps/files/scripts/test`)
+
+- Serves only `GET`/`HEAD /logos/<app id>/<64 hex>.png` on `files.origin`: any other host or path is 404 without a
+  bucket read, any other method 405.
+- Re-checks every object (D304): `contentType: image/png`, the PNG signature, ≤ 128 KiB and the sha256 its key names;
+  anything else is 404, logged by code only. A direct bucket write or a compromised console gets no document onto a
+  Hana origin: the answer is `image/png` with `nosniff`, `Content-Security-Policy: default-src 'none'; sandbox`,
+  `Content-Disposition: inline`, no cookie.
+- Read only by code: `LOGOS.get` is the source's only bucket call (a source test); no secret, D1, Hyperdrive or
+  service binding (config snapshot).
 - Static assets on both Hana origins (`host.ts`, `staticAsset`): never HTML, and every one carries `default-src
   'none'; frame-ancestors 'none'; sandbox`, `nosniff`, `no-referrer` and a same-origin CORP, so an SVG or XML file in
   the build opened directly or framed runs and frames nothing.

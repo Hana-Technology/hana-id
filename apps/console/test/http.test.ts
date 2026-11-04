@@ -42,8 +42,9 @@ describe('headers', () => {
 
   it('on API answers and errors, with no-store', async () => {
     for (const [path, init, status] of [
-      ['/api/me', {}, 404],
-      ['/api/orgs/org_x/apps', {}, 404],
+      ['/api/me', {}, 401],
+      ['/api/unknown', {}, 404],
+      ['/api/orgs/org_x/apps', {}, 401],
       ['/api/cancel', {}, 405],
       ['/api/cancel', { method: 'POST', headers: {} }, 403],
     ] as const) {
@@ -129,7 +130,7 @@ describe('CSRF: every non-GET request needs all four checks', () => {
 
   it('GET and HEAD need none of them', async () => {
     expect((await request('/')).status).toBe(200);
-    expect((await request('/api/me')).status).toBe(404);
+    expect((await request('/api/me')).status).toBe(401);
   });
 });
 

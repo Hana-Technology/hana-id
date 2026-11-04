@@ -16,6 +16,13 @@ describe('audit details', () => {
   it('the allowlist (snapshot: a new key is a reviewed change)', () => {
     expect(AUDIT_DETAIL_KEYS).toMatchInlineSnapshot(`
       {
+        "app.logo_removed": [
+          "code",
+        ],
+        "app.logo_set": [
+          "logoKey",
+          "code",
+        ],
         "change.link_cancel": [
           "code",
         ],
@@ -61,11 +68,23 @@ describe('audit details', () => {
         "owner_grant.notified": [
           "ownerFrom",
         ],
+        "session.signed_in": [
+          "invite",
+        ],
+        "session.signed_out": [],
+        "signin.refused": [
+          "code",
+          "emailSha256",
+        ],
         "user.disabled": [],
         "user.enabled": [],
       }
     `);
-    for (const keys of Object.values(AUDIT_DETAIL_KEYS)) for (const k of keys) expect(k).not.toMatch(/email|sub|token|hash|cookie|ip|secret/iu);
+    // The one exception: a refused sign-in names the person only by the sha256 of the address Google verified, as the
+    // spec says ("Membership rules at sign-in": `not_invited` is audited with the email's sha256 only).
+    for (const [action, keys] of Object.entries(AUDIT_DETAIL_KEYS)) {
+      for (const k of keys) if (!(action === 'signin.refused' && k === 'emailSha256')) expect(k, action).not.toMatch(/email|sub|token|hash|cookie|ip|secret/iu);
+    }
   });
 
   it('refuses an unlisted key', () => {

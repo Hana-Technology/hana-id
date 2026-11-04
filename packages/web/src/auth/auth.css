@@ -132,6 +132,16 @@ p.takeover.banner {
   border-width: 2px;
 }
 
+/* The app's logo beside its name (batch C11): a 256 × 256 PNG from the files origin, shown small and never stretched. */
+img.app-logo {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  vertical-align: middle;
+  margin-right: 8px;
+  border-radius: 6px;
+}
+
 header.app {
   border-bottom: 1px solid var(--line);
   margin-bottom: 12px;

@@ -53,11 +53,15 @@ export function originOf(url: string | undefined): string | null {
   }
 }
 
-/** The headers every Hana page carries, with this page's extra directives. */
-export function pageHeaders(directives: string[], extra: Record<string, string> = {}): Record<string, string> {
+/**
+ * The headers every Hana page carries, with this page's extra directives. `imgOrigins` (an auth page that shows the
+ * app's logo, batch C11) extends the base `img-src` in place: a browser ignores a repeated directive.
+ */
+export function pageHeaders(directives: string[], extra: Record<string, string> = {}, imgOrigins: string[] = []): Record<string, string> {
+  const base = imgOrigins.length === 0 ? BASE_CSP : BASE_CSP.map((d) => (d.startsWith('img-src ') ? `${d} ${imgOrigins.join(' ')}` : d));
   return {
     'content-type': 'text/html; charset=utf-8',
-    'content-security-policy': [...BASE_CSP, ...directives].join('; '),
+    'content-security-policy': [...base, ...directives].join('; '),
     'cache-control': 'no-store',
     'referrer-policy': 'no-referrer',
     'x-content-type-options': 'nosniff',

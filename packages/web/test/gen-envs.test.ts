@@ -52,7 +52,15 @@ describe('hanaEnv', () => {
       devEnv: true,
       // Present exactly when the manifest has an emailIssuer block.
       ...(sandbox.emailIssuer ? { emailIssuerUrl: sandbox.emailIssuer.url, emailIss: sandbox.emailIssuer.iss } : {}),
+      // Present exactly when the manifest has the dashboard blocks (batch C11).
+      ...(sandbox.files ? { filesOrigin: sandbox.files.origin } : {}),
     });
+  });
+
+  it('passes files.origin through as filesOrigin with the dashboard blocks, and leaves it out otherwise (C11)', () => {
+    const files = { workerName: 'hana-id-files-x', origin: 'https://files.example', logosBucket: 'logos-x', statementsBucket: 'statements-x', exportsBucket: 'exports-x' };
+    expect(hanaEnv({ ...sandbox, files })?.filesOrigin).toBe('https://files.example');
+    expect(hanaEnv({ ...sandbox, files: undefined })).not.toHaveProperty('filesOrigin');
   });
 
   it('passes rpcFallback through when the manifest sets it, and leaves it out otherwise', async () => {

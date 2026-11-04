@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D140–D141 and D150–D152 on 2026-10-30 (branches
+Last verified against code: 2026-10-28 (commit 58edee9); D340 (branch `fix/dev-email-limits`) on 2026-11-04; D140–D141 and D150–D152 on 2026-10-30 (branches
 `feat/batch-c-1`, `feat/playbook-gaps`); D130–D139 on 2026-10-30 (branches `feat/email-login-1`, `feat/email-login-1-r2`);
 D154–D155 (branch `feat/email-login-2`) and D156–D159 (branch `feat/email-login-3`) on 2026-11-02; D159's `+tag`
 change (branch `fix/email-plus-tags`) on 2026-11-02; D190–D193 (branch `feat/email-login-5`) and D200 (branches
@@ -12,7 +12,7 @@ day) on 2026-11-02. D230–D234, D250–D252 (branch `feat/email-login-6`, to co
 D154, D155, D199 and D206. D263–D267 (the batch 8b review, branch `feat/email-login-8b`, to confirm) on 2026-11-03, with
 notes on D42, D254 and D255; D263's operations and pin-read notes and D264's screen count (`EMAIL_CONSENT_ROUNDS`)
 on 2026-11-03 (branch `fix/8b-rereview`). D240–D244 (branch `feat/batch-c-7`, to confirm) on 2026-11-02, re-checked
-on 2026-11-04 after merging `develop` (branch `feat/batch-c-7-merge`). Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
+on 2026-11-04 after merging `develop` (branch `feat/batch-c-7-merge`). D278–D285 (branch `feat/batch-c-8`, decided while building, to confirm) on 2026-11-04. Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
 provider note, two "Superseded or amended" rows, the user-mail line under "Proposed", and the headings from D125 on, checked against `develop` @ 1c6a124 and what sandbox-dev runs (`docs/operations.md`) on
 2026-11-02 (branch `docs/consistency-pass`); no decision changed. D220–D224 (branch `feat/batch-c-4`, to confirm) on
 2026-11-02. D245–D249 (branch `feat/email-login-8a`, to confirm) on 2026-11-02. D253 (branch
@@ -24,7 +24,9 @@ the screen text), with D269 notes on D96, D119, D230 and D264 and two rows of "S
 D270's status (the spike passed, switched on) on 2026-11-04 (branch `feat/token-first-on`), with notes on D254, D265
 (its gate passed) and D273 (token_first in Playwright), the D254 row of "Superseded or amended" and D265's "to
 confirm" line. D275–D276 (branch `docs/batch-c-users-support-id`: proposed, to confirm by the user, spec text only)
-on 2026-11-04.
+on 2026-11-04. D300–D308 (branch `feat/batch-c-11`: the files Worker and logos, decided while building, to confirm) on
+2026-11-04, with D301 amending the order of C7's replaced-logo purge. D290–D297 (branch `feat/batch-c-9`, partner
+sign-in: decided while building, to confirm) on 2026-11-04.
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -2017,14 +2019,15 @@ detail open or two of its lines pull apart. Each follows the spec's intent; all 
     (`system:invite_expired`); matured grants are recorded once (a grant whose member row is gone is cancelled,
     `system:not_member`); invites are purged 90 days after acceptance, revocation or logged expiry, sessions 30 days
     after they ended (revoked, idle or absolute, whichever first), sessions' network data at 90 days, auth flows,
-    handoff codes and pending actions 24 h after expiry, replaced logos (R2 object, then row) 30 days after
-    replacement; at most 200 rows per step and run; each step on its own (one failing doesn't stop the others).
+    handoff codes and pending actions 24 h after expiry, replaced logos (R2 object, then row; **amended by D301**:
+    row first, then object, the rows put back if the delete fails) 30 days after replacement; at most 200 rows per
+    step and run; each step on its own (one failing doesn't stop the others).
   - **Config.** The `LOGOS` and `STATEMENTS` R2 bindings are in the config from C7, so the two buckets must exist
     before the console's first deploy (setup in `docs/operations.md`); invocation logs off (C9's handoff code is in a
     URL); placement next to the API.
   - **Flagged for C11:** the logo upload (`POST …/logo`, an image body) can't meet the CSRF rule's
     `content-type: application/json`; C11 needs either a JSON body (base64) or an explicit exception for that one route
-    with the other three checks.
+    with the other three checks. **Resolved by D300**: the exception, `application/octet-stream` on that route only.
 - Why: nothing a partner can reach is half-wired until C9 (the build plan's rule), but the link confirms need no
   sign-in and exercise the console → API binding end to end.
 
@@ -4477,6 +4480,145 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   doesn't); exempting the step-up token because it isn't relayed (a name or picture claim there means the console
   asked Google for more than `openid`, a console bug worth refusing).
 
+## Batch C8: the admin Worker (branch `feat/batch-c-8`), 2026-11-04
+
+### D278. The admin BFF: routes, the Access check's order, error codes, what the SPA is
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/{index,access,csrf,routes,
+  export}.ts`, `public/` · Source: spec §Admin BFF routes, §Hana admin console, §Static assets
+- Decision:
+  - **Order on `/api/*`**: host (only `admin.origin`, else 404), then the Access JWT check (`Cf-Access-Jwt-Assertion`
+    only; no cookie, no `ctx.access`), then the console's four CSRF checks with the header `x-hana-admin: 1` (the
+    console's is `x-hana-console`), then the route. Assets need no JWT in the Worker (Access guards the whole origin at
+    the edge, and they hold no data); non-GET requests to them are CSRF-checked and 405.
+  - **Codes**: 401 `unauthenticated` (no token or any failed claim), 403 `not_staff` (valid identity, not on
+    `admin.staffEmails`), 503 `access_unavailable` (certs unreachable, or `ACCESS_AUD` still `UNSET`, or an unusable
+    staff list: fail closed), 503 `upstream_unavailable` (the API or console binding threw), 403 `csrf`; RpcCodes keep
+    console-core's statuses.
+  - **The app routes carry the org.** AdminRpc's org methods take `orgId` as a backstop filter, so `GET
+    /api/apps/:app?org=` and every app write's body name it; the spec's paths are otherwise kept. A handler builds its
+    RPC input from named fields only, so a body can't set the actor or the request id.
+  - **Additions to the spec's table**: `GET /api/me`, `GET /api/orgs/:org/changes` (the org's `app_changes`, for the
+    changes screen), `GET /api/apps/:app` (detail). `GET /api/audit` answers the console's `queryAudit` rows and, when
+    the filter names an org, its `listChanges` rows as a second list; `GET /api/audit.csv` merges both newest first with
+    a `source` column (at most 5 000 rows per source, `x-hana-truncated: 1` past that). Without an org filter the CSV
+    has the console rows only: `changesSince` walks forward from a seq and can't seek by time, so a global app-changes
+    export waits for a time-indexed RPC.
+  - **The SPA** is plain HTML, CSS and JavaScript in `public/` (no build, no framework; the console's React SPA is C9),
+    writing text only (a source check forbids HTML sinks). The nav shows Reports (C12), Retention (C13) and Security &
+    monitoring (C14) disabled; the Users screen (D275) has no entry until it is confirmed.
+- Why: the staff list is a second check behind the policy (D88), so both must fail closed; the org filter costs one
+  parameter and keeps the API's backstop for the admin too; a no-build SPA keeps C8 small and CSP-clean.
+- Rejected: `/api/orgs/:org/apps/:app/...` paths (a rename of the spec's table for the same effect); serving the
+  assets only with a JWT (no gain behind Access, and it breaks the error page before sign-in).
+
+### D279. Blocking notices: one message per recipient, who gets what, when the ack happens
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/notices.ts`, `mail.ts`,
+  `email/` · Source: spec §Email, §Notice and cancel, §Invites and owner grants
+- Decision:
+  - Every email is **one message per recipient** (no contact sees another's address), each with a Resend
+    `Idempotency-Key` of sha256(purpose ‖ recipient), so the retry of a notice after one failed send doesn't deliver
+    the accepted ones twice (within Resend's 24 h). "Every send accepted" means every recipient's message got a 2xx
+    with a message id.
+  - `change_pending`: the alias and every contact of the org (from `pendingNotices`), link
+    `<console.origin>/cancel/<id>#t=<T>`; then `ackNotice` with b64url(sha256(T)).
+  - `member_invite`: the notice to every current owner (`pendingMemberNotices.owners`), the org's contacts
+    (`getSecurityContacts`) and the alias; **then**, only if all of those were accepted, the invitee's link
+    `<console.origin>/invite#t=<T>`; then `ackMemberNotice`. A new-org invite has no owners or contacts: the alias and
+    the invitee. Contacts that can't be read (the API down) hold the notice back (fail closed).
+  - `owner_grant`: every owner, the contacts and the alias, with `<console.origin>/cancel-owner/<id>#t=<T>`.
+  - Nothing is acked when `EMAIL_API_KEY`, `CANCEL_LINK_KEY` or `INVITE_LINK_KEY` is missing or not 32 bytes of
+    base64. Link keys are base64 (or b64url) of 32 random bytes in `.secrets/<env>/`.
+  - The invite notice names no request country: `InviteView` carries none (the console records the country in its
+    audit row only). The org's name comes from `StaffRpc.getOrg`, once per org and run.
+- Why: the spec's fail-closed rule is about acceptance by the provider, so a per-recipient view is what can be
+  checked; sending the invitee last keeps a working-looking link from leaving while the owners weren't told.
+
+### D280. The 5-minute cron's order and its budget of outbound calls
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/cron.ts`, `mail.ts`
+  `RUN_BUDGET` · Source: spec §Crons
+- Decision: one cron (`*/5 * * * *`) runs the blocking notices (changes, then members), then the feed (security
+  events, app changes, console audit), then the watcher, each step on its own. They share a budget of **40 outbound
+  calls** per run (each email and each `get_scope`); a notice whose recipients don't fit in what's left waits whole
+  for the next run, and the feed and the watcher stop and resume from their cursors. The notices need no Neon; without
+  `USAGE_DB` (or with Neon down) the feed and the watcher are skipped and logged at error level every run.
+- Why: the Workers free plan allows 50 subrequests an invocation and the plan isn't settled (build plan open question
+  3); a bounded run never half-sends a notice, and the blocking work comes first.
+
+### D281. The feed: digests per org, what is skipped, who gets them, where the cursors start
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/feed.ts`, `ops.ts` · Source:
+  spec §Email (Feed), §Audit
+- Decision:
+  - Rows are read in pages of 50 after the cursor (`feed.app_changes.seq`, `feed.audit_log.seq` in `ops.state`) and
+    sent as **one digest per org and source per run**. The cursor moves past a page only up to the first row of the
+    first org whose digest wasn't accepted (at least once, never a gap).
+  - **Recipients**: the org's security contacts; an org with none, or a row with no org, goes to the alias instead so
+    nothing is mailed to nobody. `org.security_contacts` rows also go to the old and the new contacts. Security events
+    go to the alias and the org's contacts and are marked with `markSecurityEventNotified` (the API's `notified_at` is
+    their cursor).
+  - **Skipped** (a blocking notice or another row covers them): `origin.proposed`, `policy.proposed`,
+    `raw_sign.proposed`, `change.announced`, `invite.notified`, `owner_grant.notified`, `change.link_cancel`, and the
+    sign-in rows (`auth.*`, `session.*`) left to C9's hourly bulk refusal digest. **Everything else is emailed**, so a
+    new kind is never silent.
+  - The cursors start at 0: the first run walks the whole history (legacy rows have no contacts, so their digests go
+    to the alias) and catches up within a few runs.
+- Why: a digest per org keeps the mail volume and the run budget bounded; a skip-list fails loud where an allow-list
+  would fail silent.
+- Rejected: seeding the cursors at the current maximum on first run (loses rows written between the deploy and the
+  first run).
+
+### D282. The watcher: round-robin scopes, a silent baseline, retries until sent
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/watcher.ts`, `near.ts`;
+  `apps/api/src/rpc/admin.ts` (`listApps`, `getApp` take `system`) · Source: spec §On-chain owner actions (watcher)
+- Decision:
+  - Each run reads up to 15 scopes of `AdminRpc.listScopes` after `watch.scope_cursor` (wrapping to the start), one
+    uncached `get_scope` each, and emails the alias and the org's contacts.
+  - A pending change is written to `ops.scope_watch` when first seen and gets `notified_at` only once every send was
+    accepted; until then each run tries again. SetOwners lists the new owners with the added ones marked and calls out
+    an added `Owner::Oidc`; AddClient names the client; SetAllowShared lists the scope's active origins (read with
+    `AdminRpc.listApps` and `getApp`, which now also take the cron's `system` actor: reads only).
+  - The owners, clients and `allow_shared` diff against `ops.scope_snapshot` is emailed once; the snapshot is replaced
+    only after that email was accepted. Order of owners or clients is not a change. **A scope seen for the first time
+    is stored as the baseline without an email.**
+  - A scope `get_scope` can't read (NEAR down) is skipped this round and logged; one the contract doesn't have is
+    logged `not_on_chain`.
+- Why: the first state is what Hana registered (`scope:register`), so a "now watching" email for each would be noise;
+  round-robin keeps each run within the budget.
+- Trade-off: a change made between a scope's registration and the watcher's first read of it is in the baseline
+  unannounced. Registration and the first read are minutes apart and the registration itself is a staff action.
+
+### D283. `StaffRpc.getOrg` also returns the org's live owner grants
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/console/src/views.ts` `grantsOf`,
+  `staff-rpc.ts` · Source: spec §RPC (`getOrg` → org, members, invites), §Admin BFF routes ("pending invites and
+  grants", cancel by id)
+- Decision: an additive `grants` field (`OwnerGrantView[]`, not cancelled and not applied, newest first, at most 100;
+  never `cancel_token_hash`). The admin's members screen cancels a grant by its id from it.
+- Why: members carry `pendingOwnerFrom` but no grant id, and a grant not yet acked or of an unaccepted invite has no
+  member at all.
+
+### D284. The admin config: where it lives, the Hyperdrive id, what it binds in C8
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/scripts/gen-wrangler.ts` · Source:
+  spec §Topology (admin routes), §Bindings, build plan C8
+- Decision:
+  - `admin.origin` on `https://<admin.workerName>.<subdomain>.workers.dev` gives `workers_dev: true` in a dev env
+    (`local*`/`sandbox*`, not mainnet) only, with Worker-level Access to be turned on in the dashboard (D75); any other
+    https host gives a Custom Domain route and `workers_dev: false`; a production manifest on workers.dev is refused.
+    `preview_urls: false` always.
+  - `--admin-hyperdrive-id <id>|off` binds `USAGE_DB` to the admin config (`hana-id-usage-admin-<env>`); kept from an
+    existing config of the same Worker; required on a production manifest; `off` allowed in dev envs.
+  - C8 binds `API` → `AdminRpc`, `CONSOLE` → `StaffRpc`, `USAGE_DB`, `ASSETS`; **no R2 yet** (`STATEMENTS` and
+    `EXPORTS` are C12's) and no `RELAYER_ACCOUNT` (the nonce check, C12). Vars add `APP_CHANGE_DELAY_MS` and
+    `OWNER_GRANT_DELAY_MS` (only the notices' wording) and `STAFF_EMAILS` as JSON.
+- Why: nothing half-wired; the spec allows workers.dev only for a dev env without a Hana zone.
+
+### D285. The owner/contact flag and C8's part of the security screen
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/routes.ts` (`GET
+  /api/orgs/:org` flags), `security.ts` · Source: spec §Hana admin console (screens)
+- Decision: the org screen flags an org with **no security contacts** and lists **owners who aren't security
+  contacts** (the onboarding default makes every owner a contact). `GET /api/security` in C8 shows the notice backlog,
+  the unnotified security events, each feed cursor with its lag (the age of the oldest row not yet emailed), the
+  watcher cursor and the last cron run; breaker state, nonce checks and rejection-rate alerts come with C12, the
+  monitoring view with C14.
+
 ## Users and their wallets for staff and partners, 2026-11-04
 
 ### D310. Hana records each user's wallet addresses and linked accounts; staff see email and wallets, partners see wallets but not email
@@ -4643,10 +4785,328 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 - Rejected: awaiting it (a slow API would slow every login); retrying (a storm against an API that is down, for rows
   the next login writes); sending it from the export window (its login opens no wallet session).
 
+## Batch C11: the files Worker and logos (branch `feat/batch-c-11`), 2026-11-04
+
+Readings of `docs/batch-c-spec.md` ("Other app settings, name and logo", "R2", "Response headers", "Login-path reads")
+made while building C11, where the spec is silent or loose. Each took the safer reading.
+
+### D300. The logo upload takes a raw `application/octet-stream` body: the one exception to the console's JSON-only CSRF rule
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/console/src/csrf.ts` (`bodyTypeFor`,
+  `LOGO_UPLOAD_PATH_RE`), `src/logo.ts` `logoUploadRoute`
+- Decision: the spec has the upload as a raw body, but also says that every non-GET request needs `content-type:
+  application/json`. So `POST /api/orgs/:org/apps/:app/logo` needs exactly `application/octet-stream`, and every
+  other path keeps JSON. The other three CSRF checks apply unchanged. The image's type comes from its magic bytes,
+  never from the header. The request also needs:
+  - a `Content-Length` (a chunked body is refused: `bad_request`);
+  - `?expectedVersion=<settingsVersion>`, the CAS of the screen the owner saw (the spec gives the raw body no place
+    for it);
+  - and it answers `{logoUrl, version}`: the spec's `{logoUrl}` plus the new version for the next write.
+- Why: `octet-stream` isn't a CORS-safelisted type, so a cross-site page still can't send it without a preflight
+  (which the console never answers). The check keeps its purpose; only the type differs.
+- Rejected:
+  - the image as base64 inside JSON: +33% on a 512 KiB cap, and the spec says raw;
+  - `image/*` types: they are just as non-simple, but they invite trusting the header;
+  - reading the version inside the request (getApp only): that turns the CAS into "last writer wins" for the owner.
+
+### D301. Upload order: cheap checks, the decoder's `info`, then `getApp`, then the paid transform; the replaced logo is the one at the CAS version
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/console/src/logo.ts`, `src/cron.ts`
+  `purgeLogos`, `src/limits.ts` (`logo`)
+- Decision:
+  - **Order.** First the bytes (size, magic bytes, container; D302), then `IMAGES.info` (type, size, shape), then
+    `ConsoleRpc.getApp`. getApp refuses another org's app or a deleted one (`not_found`) and a stale screen
+    (`version_conflict`) before any transform, and it names the logo being replaced. After that come the transform
+    and the output checks (D303). Then the `logo_objects` row (upserted, `replaced_at = NULL`), then `LOGOS.put`
+    (`image/png`, with R2's own sha256 check), then `ConsoleRpc.setLogo` at the same `expectedVersion`.
+  - **Replaced object.** Only after `setLogo` succeeds is the key getApp named at that version marked
+    `replaced_at = now`. The CAS makes it exactly the key the pointer left, so two quick uploads can never mark the
+    current logo. Re-uploading the current image changes nothing (no version, no `app_changes` row).
+  - **Failures after the put** (a `setLogo` refusal) leave one object with an unmarked row: storage only, never a
+    broken logo. The outcome is audited (`app.logo_set` / `app.logo_removed`, `failed` with the code). A key isn't
+    marked on failure, since a concurrent upload of the same image could make it current.
+  - **Purge order** (amends C7's `purgeLogos`). It deletes the due rows first (`DELETE … RETURNING`, only while
+    still marked and past 30 days), then those objects. If the object delete fails, it puts the rows back
+    (`INSERT OR IGNORE`, so an upload in between wins), and the next hour retries. Whatever the timing, an upload
+    that un-marks a key keeps both the key and its object. One narrow window remains: an identical re-upload whose
+    `put` lands between the purge's row delete and its object delete. That loses the object, the files Worker
+    answers 404, the page shows the name alone, and a new upload repairs it.
+  - **Limit.** Uploads are capped at 10 a minute per org, on the console's existing rate-limit binding
+    (`console-logo:<org>`). Each upload is a paid transform. The ConsoleRpc budget applies as well (getApp 4 +
+    setLogo 4 statements).
+  - **Removal** (`removeAppLogo`, `logoRemoveRoute`): getApp, then `setLogo(null)`, then the old key is marked. The
+    spec lists no removal route: C10 wires the control.
+- Rejected: `setLogo` returning the previous key (one RPC fewer, but a stale or foreign app is refused only after the
+  transform and the put); marking every other object of the app on success (a race can mark the current logo);
+  objects first in the purge (C7's order: an un-mark between the select and the delete loses the current logo).
+
+### D302. "Polyglot" means anything that isn't exactly one static image of the type its magic bytes name
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/console/src/logo-format.ts`
+- Decision: an upload is refused `logo_type` when:
+  - there are bytes after the format's own end (PNG's IEND, JPEG's EOI, the WebP RIFF size);
+  - a PNG chunk's CRC is wrong, the first chunk isn't IHDR, there is no IDAT, a JPEG has no scan or no EOI or has
+    two frames, or a WebP's first chunk isn't VP8/VP8L/VP8X;
+  - it is animated (APNG `acTL`/`fcTL`/`fdAT`, WebP's animation flag or `ANIM`/`ANMF`);
+  - the decoder (`IMAGES.info`) reports another type, or another size than the header, except that a JPEG's sides
+    may be swapped (EXIF orientation).
+  This adds to the spec's magic-bytes rule (SVG, GIF, AVIF and anything else refused) and its size bounds. JPEGs
+  with trailing data (some phone pictures append a second image) are refused too.
+- Why: the stored file is re-encoded anyway, but the spec asks for polyglots to be refused. "The file ends where its
+  format says" is a rule that can be checked without decoding pixels. An animated logo would otherwise be silently
+  flattened to its first frame.
+- Rejected: scanning for markup (`<script`, `<svg`) inside the file (easy to evade, and it refuses benign text
+  chunks); passing animated files with `anim: false`.
+
+### D303. The re-encode: Images `fit: 'pad'` on transparent, PNG, then the console strips the output to its image chunks
+- Date 2026-11-04 · Status: decided while building, to confirm at milestone M5 against the real binding ·
+  Built: `apps/console/src/logo.ts` (`LOGO_TRANSFORM`, `LOGO_OUTPUT`, `reencode`), `src/logo-format.ts` `stripPng`
+- Decision:
+  - The spec's "fit contain, transparent padding" maps to `{width: 256, height: 256, fit: 'pad', background:
+    'rgba(0,0,0,0)'}`. Cloudflare's `contain` doesn't pad, so it would give a non-square image. The output is
+    `{format: 'image/png', anim: false}`.
+  - The answer must be `image/png`, and the console's own parser must read it as one well-formed static PNG of
+    exactly 256 × 256. Then it is cut to IHDR, PLTE, tRNS, IDAT and IEND: no text, EXIF, ICC, time or size
+    chunks, whatever the encoder keeps.
+  - The result must be ≤ 128 KiB (else `logo_too_large`) and decode again through `IMAGES.info` as a 256 × 256 PNG.
+    An output that fails any check is `logo_type`.
+  - The object key is the sha256 of these stored bytes.
+- To confirm at M5: that `pad` with that background really pads with transparency on the real binding (the tests use
+  a fake Images binding, as the spec says).
+- Rejected: trusting the encoder to drop metadata (the binding's types have no metadata option); keeping `sRGB` /
+  `gAMA` (colour hints, not personal data, but nothing needs them in a 32 px logo).
+
+### D304. The files Worker re-checks each object more than the spec asks, and answers errors uncached
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/files/src/index.ts`, `src/rules.ts`
+- Decision:
+  - The spec checks that the object exists, has `contentType` `image/png` and starts with the PNG signature. The
+    files Worker also requires the object to be ≤ 128 KiB and its sha256 to equal the hash in its key: a key is
+    content-addressed, so any other bytes are a write the console never made.
+  - It reads only `LOGOS.get`, a source test enforces that, and it never writes.
+  - A logo answers exactly the spec's seven headers plus `content-length`. HSTS isn't one of them, so it isn't sent.
+  - Everything else answers plain text with `nosniff`, `default-src 'none'; sandbox`, `no-referrer` and
+    `cache-control: no-store`, because a 404 must not be cached: the logo may appear later. That covers a 404 (any
+    other host, path or object), a 405 with `allow: GET, HEAD`, a 503 when R2 fails, and a 500.
+  - A query string is ignored. Refusals log a code, never a key.
+- Why: "logos are re-checked by the files Worker" (threat table, compromised console). The hash check costs one
+  sha256 of at most 128 KiB.
+- Rejected: streaming the body unchecked; sending HSTS (the spec lists the headers exactly).
+
+### D305. The auth pages get the logo from GET /v1/app through the vault's messages, never the inlined config
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/api/src/handlers.ts`
+  (`handleAppConfig`), `packages/core/src/logo.ts`, `protocol.ts`, `packages/web/src/vault/{vault,login,approvals}.ts`,
+  `src/auth/{logo,login-page,email-page,email-storage,approve-page,export-page}.ts`
+- Decision:
+  - `GET /v1/app` always carries `logoUrl`: `<FILES_ORIGIN>/<logo_key>`, or `null` when the app has no logo or the
+    env has no files origin. Older clients ignore it, and `isAppConfig` doesn't check it: a logo is decoration and
+    is checked where it is shown.
+  - The vault takes it from its own `GET /v1/app` only when it is this app's logo on the build's `filesOrigin`
+    (`logoUrlOn`). It passes it as an optional `logoUrl` in `hana:auth-params` (from the login's own read),
+    `hana:approve-request` / `hana:consent-request` and `hana:export-context` (from its latest read). The field is
+    present only when there is a logo.
+  - The protocol takes only the logo URL shape: canonical http(s), the logo path, no query, fragment or
+    credentials. The login page passes it on to the email step's stored context.
+  - The pages that show the app's name show the logo beside it: `/login` (the chooser), `/login/email`, `/approve`
+    (request and consent) and `/export`, which prefers its own `GET /v1/app` answer, as it does for the name.
+  - A page shows the logo only from its build's `filesOrigin`, `alt=""` (the name is the text), and removes it if it
+    fails to load. `/login/callback` shows no app and gets nothing.
+- Why: the vault config inlined by the API is checked with exact keys, so a new key there breaks every vault bundle
+  older than the API (a deploy-order hazard for every app with a logo). The optional message field has no such
+  hazard. An app without a logo sends exactly batch B's messages, so pages and API can deploy in either order.
+- Rejected: inlining `logoUrl` in the vault config (above); each popup fetching `GET /v1/app` itself (the login and
+  approval popups fetch nothing, D77); refusing a config or a message over a bad logo value (a login would fail
+  over decoration).
+
+### D306. `FILES_ORIGIN` joins `img-src` in place, on the logo pages only, in both policies; a malformed value is left out
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `packages/web/src/auth/pages.ts`
+  (`LOGO_PAGES`, `imgSources`, `authPageMetaCsp`), `apps/api/src/pages/host.ts` (`AUTH_LOGO_PATHS`, `FILES_ORIGIN`),
+  `src/vault/page.ts` `pageHeaders`, `scripts/pages-wrangler.ts`, `packages/web/scripts/gen-envs.ts` (`filesOrigin`)
+- Decision:
+  - The base policy's `img-src 'self' data:` gets the files origin appended in place, never as a second `img-src`,
+    which a browser ignores. This happens in the Worker's header policy (`FILES_ORIGIN`, from the manifest's
+    `files.origin` through `pages-wrangler`) and in the build's `<meta>` policy (`HanaEnv.filesOrigin`, from the same
+    field through `gen-envs`).
+  - It applies to `/login`, `/login/email`, `/approve` and `/export` only. An env without the dashboard blocks keeps
+    batch B's policies byte for byte.
+  - A test in `apps/api` builds both policies for every page, with and without a files origin, and requires the same
+    directives (frame-ancestors aside).
+  - If `FILES_ORIGIN` isn't an origin, the header leaves it out and logs `files_origin_misconfigured`. The page
+    still works, with the stricter policy: unlike the email issuer's URL, the logo isn't needed for the page to work.
+- Rejected: adding the origin to every auth page (the callback shows no image); a 503 for a malformed value (a login
+  failing over a logo).
+
+### D307. The files Worker's placement follows `files.origin`, like the page Workers; on workers.dev it must be its own name
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/files/scripts/gen-wrangler.ts`
+- Decision:
+  - A `<files.workerName>.<subdomain>.workers.dev` origin is allowed in `local*`/`sandbox*` envs only (D93), with
+    `workers_dev: true`. Any other https host gets a Custom Domain route. A loopback origin is `wrangler dev`'s.
+  - Preview URLs are always off.
+  - The config is `LOGOS` and `FILES_ORIGIN` only: no secret, D1, Hyperdrive, service, assets or cron (snapshot
+    tests, and the console's cross-Worker test: only the console and the files Worker bind the logo bucket, only
+    the console binds Images).
+  - `gen` refuses a workers.dev hostname whose first label isn't `files.workerName`, since that label is the
+    Worker's name there.
+- Rejected: a route on the API Worker (D66: one thin Worker per extra Hana origin).
+
+### D308. R2 rules: the `STATEMENTS` lock covers the whole bucket for 2557 days; the `EXPORTS` lifecycle applies to `exports/`, which C12 writes under
+- Date 2026-11-04 · Status: decided while building, to confirm · Written: `docs/operations.md` "Files Worker and
+  logos" (setup step 7)
+- Decision:
+  - `STATEMENTS` gets one bucket-lock rule with an empty prefix (every object) and `--retention-days 2557`: 7 years,
+    with the leap days. Statements are deleted by hand after review once it ends (D90).
+  - `EXPORTS` gets one lifecycle rule `--expire-days 30` on the prefix `exports/`. R2's lifecycle conditions are
+    prefix-include only, so "everything except `legacy/`" can't be written as one rule. The on-demand ledger CSVs
+    (C12) must therefore be written under `exports/`. The legacy export (C4b) stays at `legacy/usage-<env>.csv`,
+    outside the rule.
+  - No rule on `LOGOS`: the console's cron deletes replaced logos (D301).
+- Rejected: one lifecycle rule on every prefix (it would delete the legacy export after 30 days); per-object
+  expiry set by the admin Worker (R2 has none; a cron job would be one more thing to fail).
+## Batch C9: partner sign-in (branch `feat/batch-c-9`), 2026-11-04
+
+Readings of `docs/batch-c-spec.md` "Partner sign-in" taken while building C9, each the safest one found. All: Status
+decided while building, to confirm.
+
+### D290. The console holds every Google token it verifies to the claim allow-list by scope; sign-in may add exactly email, email_verified, hd and at_hash
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-9`
+  (`apps/console/src/auth-token.ts` `verifyConsoleToken`, `allowedClaims`; `apps/api/scripts/test/relayed-tokens.test.ts`
+  "Google tokens the console verifies") · Source: D271, D274, D277, spec "Code flow" ("Email claims by scope")
+- Decision:
+  - `scope=openid` (every step-up and owner action, batch C10, which the API verifies again and relays on chain):
+    exactly the API's `TOKEN_CLAIM_ALLOW_LIST`, nothing else (`claim_not_allowed`, the claim named in the log).
+  - `scope=openid email` (sign-in only): the same list plus exactly `email`, `email_verified`, `hd` and `at_hash`; a
+    `name`, `picture`, `locale` or any other claim is refused; `email` and `email_verified === true` are required;
+    `at_hash` must equal the hash of the access token returned with the ID token (checked, then the access token is
+    dropped). The sign-in token is never relayed, stored, logged or returned: only the verified `sub`, address and `hd`
+    go on, into the 60-second handoff row (D291).
+  - The API's source scan now also lists the console: only `console/src/auth-token.ts` calls `verifyIdToken`, the
+    allow-list follows it with no option to skip, its openid list equals the API's and core's, and every caller passes
+    the flow's own scope; console-auth verifies nothing.
+- Why the sign-in token isn't openid-only: the spec's membership rules need the address (an invite is bound to the
+  address it was sent to, so a forwarded link is useless to anyone else; members see each other's address; owners get
+  notices there) and `hd` (an org's `required_hd`), and Google puts them only in an `openid email` ID token. An
+  openid-only sign-in would make the invite link a bearer token and `required_hd` unenforceable. `CONSOLE_DB`'s own
+  CHECK (0001) already fixes a login flow's scope to `openid email`. The address is a partner member's (staff of the
+  org), never an end user's (D269 untouched).
+- **To confirm with the user:** the build brief said "the console token must be openid-only". Read here as every
+  console token that is relayed or used for a step-up (C10); the sign-in token keeps the spec's `openid email`. If the
+  user wants sign-in openid-only too, the price is the two properties above (or a second Google request for the address,
+  D270-style), and migration 0001's CHECK needs a new migration.
+- Rejected: one list for both scopes (sign-in would fail, or step-ups would accept an address); ignoring `at_hash`
+  (checking it costs nothing and binds the two tokens of one answer).
+
+### D291. The membership rules run at `/api/auth/complete`; the handoff row carries the verified identity, scrubbed when used; the state is derived from the start handle
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-9`
+  (`apps/console/src/auth-flow.ts` `flowState`, `callback`; `sign-in.ts` `completeSignIn`)
+- Decision:
+  - The callback (auth origin) verifies the token and writes the handoff row; the membership rules and invite
+    acceptance run at `/api/auth/complete` (console origin) after the pre-flow cookie matched (spec step 4). So an
+    invite is consumed only by a flow bound to one browser from start to finish: `__Host-hana_pre` (create → complete)
+    and `__Host-hana_af` (start → callback).
+  - The handoff's `result_json` is therefore `{provider, sub, email, hd}` (the spec's comment says "user id, invite
+    outcome"): never a token. It is overwritten with `{}` in the request that uses it; an unused one is purged by the
+    hourly cron 24 h after its 60 s. The PKCE verifier is overwritten in `auth_flows` as soon as the callback consumed
+    the flow.
+  - The state is `b64url(sha256("hana-console/auth-state/v1\0" ‖ f))`, f being the 32-byte start handle: `/start` can
+    send it to Google while `auth_flows` stores only `sha256(state)` and `sha256(f)`, as the schema has it.
+  - The flow, the handoff code and the session are each found and consumed in one `UPDATE … RETURNING` that includes
+    the cookie hash, so a wrong or missing cookie consumes nothing (the right browser can still finish).
+- Why: the spec places the rules at complete; running them in the callback would accept invites for flows a different
+  browser never finishes.
+- Rejected: storing the state in clear (a D1 read would give a live state); keeping the identity until the purge.
+
+### D292. `/api/auth/complete` answers with redirects: `/` on success, `/signin#error=<code>` on any refusal
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-9` (`sign-in.ts`,
+  console-core `SIGN_IN_ERRORS`, the SPA's `/signin`)
+- Decision: complete is the target of a top-level navigation (the callback's 303), so it never answers JSON: a refusal
+  is `303 /signin#error=<code>` with the pre-flow cookie cleared, the code one of `not_invited`, `invite_invalid`,
+  `already_member`, `user_disabled`, `expired` (unknown, used, expired or another browser's handoff), `rate_limited`,
+  `internal`. The spec's statuses (403 `not_invited`, 409 `already_member`, …) stay the codes' meaning; the code goes in
+  the fragment, so no server or log sees it in a URL. The SPA shows one message per code.
+- Rejected: a JSON 403 to a navigation (the browser shows raw JSON); a query parameter (logged with the URL).
+
+### D293. An invite link that names no live invite is refused at the start; invite refusals at completion are logged, not audited
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-9`
+  (`auth-flow.ts` `createLoginFlow`, `sign-in.ts` `membershipRules`)
+- Decision:
+  - `POST /api/auth/start` with an `invite` whose sha256 matches no open, notified invite answers `403
+    invite_invalid` and starts no flow (the spec's "`invite_id` if the hash matches a live invite" read as fail closed:
+    a sign-in that would end `not_invited` isn't started, and the person learns why at once). A valid invite's address
+    is the Google `login_hint`.
+  - At completion, `invite_invalid` and `already_member` are logged only; `not_invited` and `user_disabled` are audited
+    (`signin.refused`, system actor `console-sign-in`; `not_invited` with the address's sha256 only, `user_disabled`
+    with the user id as target), as the spec says. The spec's "a refused acceptance inserts no … audit row" is kept
+    literally. Sign-ins and logouts are audited (`session.signed_in` with `invite: true|false`, `session.signed_out`),
+    with no org (they aren't org events).
+  - The stored address of an existing user is replaced by the one Google verified at each sign-in (display and notices
+    only; identity stays `(provider, sub)`).
+- Rejected: an oracle-free start that silently drops a dead invite (the person signs in for nothing, then reads
+  `not_invited`); auditing invite refusals (the spec's test row says none is written).
+
+### D294. The console's Google client is the manifest's one `google` console audience; the console route is on by config
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-9`
+  (`apps/console/scripts/gen-wrangler.ts` `consoleGoogleClientId`, `placement`; `apps/console-auth/scripts/gen-wrangler.ts`)
+- Decision:
+  - `CONSOLE_GOOGLE_CLIENT_ID` is the single `["google", …]` entry of `consoleAudiences`; `gen` refuses none or several
+    (no field is added to the manifest). The callback requires `aud` (and `azp`) to equal that client, not just any
+    console audience: the token comes from the console's own exchange for that client.
+  - The route: `workers_dev: true` only in a dev env (`local*`/`sandbox*`) and only when the origin is the Worker's own
+    `<workerName>.<subdomain>.workers.dev`; otherwise a Custom Domain route on the origin's host; `preview_urls: false`
+    always. The same for console-auth (`console.authOrigin`, `authWorkerName`). Neither Worker records invocation logs
+    (the URLs carry the handoff code and Google's `code` and `state`).
+  - The Google endpoints are code constants, never vars, so no config can send the code and the secret elsewhere.
+- Rejected: a new `console.googleClientId` manifest field (one more thing to keep equal to `consoleAudiences`).
+
+### D295. Open question 1 is tested by a script on the console client's real redirect URI; `at_hash` is the expected finding
+- Date 2026-11-04 · Status: decided while building, to confirm; **the spike is not run** (the user runs it after setup
+  step 11) · Built on `feat/batch-c-9` (`scripts/console-code-flow-spike.ts`, `scripts/lib/console-code-flow.ts`)
+- Decision: `corepack pnpm --filter @hana-id/scripts console-code-flow-spike <env>` runs the code flow with the console
+  client for `scope=openid` and `scope=openid email`, on its only redirect URI (no extra one is registered): the
+  operator pastes the callback address from the browser (hidden input; the deployed callback, if any, exchanges
+  nothing for a state it doesn't know), the script exchanges the code with the secret from
+  `.secrets/<env>/console-google-client.json` and its own PKCE verifier, verifies the token and prints claim names and
+  verdicts only (`docs/operations.md` "Console code-flow spike (open question 1)").
+- Expected finding, to decide before C10: Google's docs say an ID token issued with an access token in the server flow
+  always carries `at_hash`. Then the `openid` leg reports "NO EMAIL, BUT at_hash": no personal claim, but the API's
+  allow-list refuses `at_hash`, so every step-up and owner-action token from the code flow would be `token_has_pii`.
+  Options then: add `at_hash` to `TOKEN_CLAIM_ALLOW_LIST` everywhere (core, the API, the console: it is a truncated hash
+  of a short-lived access token, not personal data; recommended), or allow it only on the console audiences' paths.
+  Not changed now: D271's list moves only with the user's word and the spike's answer.
+- Rejected: a loopback redirect URI on the console client for the test (the client must keep exactly one redirect
+  URI); a browser page like `spike-email.html` (the code exchange needs the client secret).
+
+### D296. What partners see: staff as `hana`, no `sub`, no network data; the audit merged by time with a two-part cursor; frozen orgs read-only
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-9` (`apps/console/src/bff.ts`,
+  console-core `partner.ts`)
+- Decision:
+  - The partner views (console-core `partner.ts`) carry no staff Access subject or staff address (an actor, inviter or
+    `added_by` that isn't a `usr_…` id is `hana`), no Google `sub` (members' or actors'), no IP prefix and no hash. The
+    audit's console rows keep `country`; `audit_log.ip_prefix` and the session network data stay staff-only (D93).
+  - `GET /api/orgs/:org/audit` merges the org's `audit_log` rows with `ConsoleRpc.listChanges`, newest first by time,
+    each source in its own `seq` order, 50 a page; the cursor is `<audit seq>.<change seq>`, each an exclusive bound,
+    so no row is skipped or repeated. Rows of one request share the `requestId` and sit together.
+  - `GET /api/me` lists every membership whose org's `required_hd` matches the session's `hd`, frozen orgs included
+    (read-only, shown as frozen); signing in needs at least one such membership in an **active** org (so C7's "freezing
+    their only org ends their sessions" also keeps them out).
+  - Any org the member can't use answers `404 not_found`, the same as an unknown org.
+- Rejected: listing `sub` for owners (C10's on-chain owner checks are the API's); a single merged sequence number (the
+  sources are two databases).
+
+### D297. The SPA: React 18.3.1, React Router 6.30.1, Vite 7 with esbuild's JSX; Playwright under the CSP left for C17
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-9` (`apps/console/web/`,
+  `vite.config.ts`, `scripts/test/spa-build.test.ts`)
+- Decision: `apps/console/web` builds to `apps/console/dist` (the Worker's assets; `deploy` builds first; the Worker
+  tests serve a fixed stand-in, `test/assets`). No React Vite plugin (esbuild's automatic JSX), no modulepreload
+  polyfill, no inlined asset: a build test checks one module script and one stylesheet from `/assets`, nothing inline or
+  external, and no server code bundled (the SPA imports only types from console-core). `react-router-dom` 6.30.1 is the
+  one new dependency (React 18.3.1 and the testing libraries were already in the lockfile).
+- Playwright sign-in under the CSP in three browsers (the spec's row) isn't in this batch: the e2e stack runs the API in
+  Node, and hosting the console would need D1, the `ConsoleRpc` and `AuthHandler` service bindings, the rate-limit
+  binding and a stub for Google's token endpoint, which the Worker can't be pointed at (D294): new infrastructure. It
+  is left for C17 on sandbox-dev or staging, against real Google; the component tests (happy-dom) and the build check
+  cover the SPA meanwhile.
+
 ## Superseded or amended
 
 | Was | Now | Source |
 |---|---|---|
+| The console's hourly purge deletes a replaced logo's R2 object, then its row (D244) | Its row first (only while still marked), then the object; the rows come back if the delete fails (D301) | `apps/console/src/cron.ts` `purgeLogos` |
 | Local git only, branch `develop`, no remotes (batch A) | Remote `Hana-Technology/hana-id`; feature branches, PRs into `develop`, `main` for releases | `docs/batch-a-spec.md`; CLAUDE.md |
 | One relayer key pool, 300 Tgas for everything (batch A) | Two pools, per-method gas (D19) | `docs/batch-a2-shared-client.md` |
 | Hana can never block derivation for a scope (batch A) | True for scopes with their own client; Hana can stop a shared-only scope by removing shared clients | `docs/contract-interface.md` security notes |
@@ -4870,3 +5330,42 @@ over D269's directory) and D276 (the Support ID made consistent with D269), belo
 - Amends in text only: D96's "it reveals no email or Google account" now holds for partners; staff reach the
   directory (D269). `docs/email-login-spec.md` ("Support ID lookups show … never a `sub` or address") and
   `docs/hana-home-spec.md` "Support ID" still say otherwise. They are to be aligned once this is confirmed.
+
+## Dev env email limits, 2026-11-04
+
+### D340. Dev envs (`local*`, `sandbox*`) get higher per-mailbox and per-IP email code limits; production keeps D198's
+- Date 2026-11-04 · Status: confirmed by the user (2026-11-04: "yes raise limits for dev environments please, as we
+  will be testing a lot and testnet don't really cost us money anyway") · Built on `fix/dev-email-limits` · Amends D198
+  (its numbers are now production's)
+- Decision: the email issuer picks its limit set from `ENV_NAME` with `isDevEnv` (`@hana-id/env`: `local*`,
+  `sandbox*`), once per request (`limitsFor` in `apps/email-issuer/src/limits.ts`). Every other name gets production's,
+  which are exactly D198's. Dev values (production in brackets):
+  - per (mailbox, requester) code mails: 20 per 15 min (3), 100 a day (10);
+  - per mailbox code mails: 30 per 15 min (10), 200 a day (30);
+  - challenges per mailbox a UTC day: 250 (35); live challenges at once: 20 (5), chosen so one tester's abandoned
+    starts never meet the live cap before the per-requester 15-min code limit;
+  - wrong codes per (mailbox, requester): 30 an hour (10) before the 1 h lock;
+  - failed checks per mailbox a UTC day: ceiling 100 (25), backstop 80 (18), owner slot 17 (4), ticket slot 3 (3). The
+    ceiling stays the sum of its three slots, so the owner slot still works past the backstop, and the requester lock
+    (30) still trips before the backstop (80);
+  - per IP: `start` 30 per 10 min (10) and 300 a day (50); `resend` 30 per 10 min (10); `verify` 90 per 10 min (30).
+- Unchanged in every env: the aggregate prefix limits, the recipient-domain cap (it protects Hana's sending
+  reputation), the ticket and grant allowances (the grant slot too), the google-match and google-record limits, the
+  webhook and staff limits, the budget and its pools, `confirm`'s per-IP bound (production's 10 per 10 min: a staff
+  unsuppress's mailed link, not the login flow), and each challenge's own 5 attempts and 2 resends.
+- How it applies to existing counters: the mailbox object gets the set with every call (none: production's). Its
+  counters are keyed by window name and start, never by max, and both sets use the same names and windows, so a
+  sandbox-dev mailbox over production's numbers but under the dev ones passes at once, with no reset. A requester's
+  wrong-code lock is keyed by the max that set it (production's keeps its `lock:<ip>` key), so a lock set at
+  production's 10 doesn't hold under the dev set.
+- Why: sandbox-dev is testnet, used by Hana's own testers many times a day; D198's numbers were sized against an
+  attacker on a mainnet mailbox and blocked repeat testing. The name rule (not a manifest flag) means no setting can turn
+  them on in a production env, as for the other dev-only privileges.
+- Main trade-off: on a dev env, a 6-digit code can be guessed with 100 failed checks a day instead of 25 (≈ 3.7% a year
+  instead of ≈ 0.9%). Testnet accounts hold no real funds.
+- Alternatives: (a) a manifest field for the limits: it could be set in a production env by mistake. Not recommended.
+  (b) Resetting the counters on sandbox-dev (rotating K_rl): a one-off that also drops device tickets and recurs at the
+  next busy day. Not recommended.
+- Amended 2026-11-04 (same day, `fix/dev-ticket-limits`): a ticketed start (a device that signed in before) never
+  falls back to the code limits, so its own allowance (production 3 a day per address, 9 per mailbox) blocked the
+  user's testing first; dev envs raise it to 100 and 300. Production unchanged.

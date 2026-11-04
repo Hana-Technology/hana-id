@@ -116,6 +116,11 @@ export const IP_RESEND_LIMITS: Limit[] = [{ name: 'ip:resend:10m', windowMs: 10 
  * commits to a session, and a live access token of that account, so junk costs the caller a Google sign-in each.
  */
 export const IP_MATCH_LIMITS: Limit[] = [{ name: 'ip:match:10m', windowMs: 10 * MIN, max: 120 }];
+/**
+ * `google-record` per IP (D270): google-match's bound and reasoning (D267), in a window of its own. A token_first login
+ * calls one of the two, never both: an app with email login google-match, one without google-record.
+ */
+export const IP_RECORD_LIMITS: Limit[] = [{ name: 'ip:record:10m', windowMs: 10 * MIN, max: 120 }];
 /** The SendGrid webhook per IP (it posts batches; L5). */
 export const IP_WEBHOOK_LIMITS: Limit[] = [{ name: 'ip:webhook:10m', windowMs: 10 * MIN, max: 120 }];
 /** Staff actions (client proofs, unlocks, unsuppressions, revocations together) per staff member. */

@@ -42,12 +42,17 @@ export interface AuthHostEnv {
   ASSETS: Fetcher;
 }
 
+/** Google's tokeninfo, which the callback page calls under token_first (packages/web auth/google.ts). */
+export const GOOGLE_TOKENINFO_ORIGIN = 'https://oauth2.googleapis.com';
+
 /** Each auth page's directives on top of the base policy (docs/batch-b-spec.md "Origins and pages"). */
 /** `origins.rpc` is the NEAR RPC origin, or the primary and fallback origins separated by a space. */
 export function authPageDirectives(pathname: string, origins: { api: string; rpc: string; emailIssuer?: string | null }): string[] | null {
   switch (pathname) {
     case '/login/callback':
-      return ["frame-ancestors 'none'", `connect-src ${origins.api}`];
+      // token_first (D270): the callback asks Google's tokeninfo for the access token's `sub`, in an env with an email
+      // issuer only. packages/web src/auth/pages.ts's meta policy lists the same: a browser enforces both.
+      return ["frame-ancestors 'none'", `connect-src ${origins.api}${origins.emailIssuer ? ` ${GOOGLE_TOKENINFO_ORIGIN}` : ''}`];
     case '/login/email':
       // The email step (build plan batch 8a): the issuer's start, resend and verify, and the relay write to the API.
       return ["frame-ancestors 'none'", `connect-src ${origins.emailIssuer ? `${origins.emailIssuer} ` : ''}${origins.api}`];

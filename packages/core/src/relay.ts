@@ -14,8 +14,8 @@ export const RELAY_MAX_BODY_BYTES = 12_288;
 /**
  * The largest plaintext a relay value may have: its ciphertext (plus the 16-byte tag), base64url in `{"iv","ct"}`, then
  * fits RELAY_MAX_BODY_BYTES with room to spare (33 + ⌈4·(9000 + 16)/3⌉ = 12 055 bytes). Every payload the format
- * allows fits: one-request mode's largest token payload (an ID token of 4096 and an access token of 2048 characters,
- * case B's proof and 8 timings) is about 6.6 KB (G-L7). encryptRelayValue refuses anything larger.
+ * allows fits: its largest token payload (an ID token of 4096 and an access token of 2048 characters beside it, case
+ * B's proof and 8 timings) is about 6.6 KB (G-L7). encryptRelayValue refuses anything larger.
  */
 export const RELAY_MAX_PLAINTEXT_BYTES = 9000;
 const GOOGLE_ERROR = /^[a-z_]{1,64}$/u;
@@ -26,8 +26,10 @@ const GOOGLE_ERROR = /^[a-z_]{1,64}$/u;
  * timings.ts), which the vault adds to the login's timings.
  *
  * Email login and linking (build plan batch 8b), only in a login whose auth-params carried a `followKey`:
- * - `accessToken`: Google's access token for the `email` scope (one-request mode), for the vault's google-match only;
- * - `access: 'follow'`: Google's access token follows in follow-up slot 1 (the second, silent request);
+ * - `accessToken`: Google's access token beside the ID token, for the vault's google-match only (one-request mode's
+ *   form; no popup sends it since that mode's removal, D273);
+ * - `access: 'follow'`: Google's access token is in follow-up slot 1 (second_request's silent request, or
+ *   token_first's first request, D270; in a token_first record-only login, `emailRecord`, for google-record);
  * - `caseB`: this popup's email step found the address's Google wallet (`verify` → `linkTicket`, the address's
  *   `sub`), and the user chose "Link and continue" before going to Google (D139);
  * - `as`: what a token answering the vault's follow-up is (`link`: case A's `auto_link` token after the code step;

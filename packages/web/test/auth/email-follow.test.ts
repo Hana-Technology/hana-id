@@ -168,18 +168,31 @@ describe('case B: “Link and continue” (D139)', () => {
     expect(url.searchParams.get('scope')).toBe('openid');
   });
 
-  it('G-L3: in one-request mode case B’s Google request asks for the email scope too (google-match needs its token)', async () => {
-    for (const flow of ['one_request', 'second_request'] as const) {
-      resetDom();
-      const s = setup({ flow });
-      s.issuer.verify.mockResolvedValueOnce({ kind: 'google_wallet', deviceTicket: null, link: { linkTicket: 'T'.repeat(43), emailSub: E_SUB } });
-      await toCode();
-      typeInto('email-code', '123456');
-      submit('email-verify');
-      await vi.waitFor(() => expect(s.page.stage).toBe('google_wallet'));
-      click('email-google');
-      const url = new URL(s.win.location.assigned[0]!);
-      expect([url.searchParams.get('response_type'), url.searchParams.get('scope')], flow).toEqual(flow === 'one_request' ? ['id_token token', 'openid email'] : ['id_token', 'openid']);
+  it('G-L3: case B’s Google request is the login’s own, as /login makes it under each flow (google-match needs the access token)', async () => {
+    for (const flow of ['token_first', 'second_request'] as const) {
+      for (const button of ['email-google', 'email-link-google']) {
+        resetDom();
+        const s = setup({ flow });
+        s.issuer.verify.mockResolvedValueOnce({ kind: 'google_wallet', deviceTicket: null, link: { linkTicket: 'T'.repeat(43), emailSub: E_SUB } });
+        await toCode();
+        typeInto('email-code', '123456');
+        submit('email-verify');
+        await vi.waitFor(() => expect(s.page.stage).toBe('google_wallet'));
+        click(button);
+        const url = new URL(s.win.location.assigned[0]!);
+        const entry = JSON.parse(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + s.relayId)!);
+        if (flow === 'token_first') {
+          // The access token first (`openid email`, no ID token, no nonce); the entry keeps the nonce for the ID request.
+          expect([url.searchParams.get('response_type'), url.searchParams.get('scope'), url.searchParams.get('nonce')], button).toEqual(['token', 'openid email', null]);
+          expect(entry).toMatchObject({ tf: 1, n: s.nonce });
+        } else {
+          expect([url.searchParams.get('response_type'), url.searchParams.get('scope'), url.searchParams.get('nonce')], button).toEqual(['id_token', 'openid', s.nonce]);
+          expect(entry.tf).toBeUndefined();
+        }
+        expect(url.searchParams.get('state')).toBe(s.relayId);
+        // The ticket rides only with "Link and continue" (D139).
+        expect(entry.b === undefined, button).toBe(button === 'email-google');
+      }
     }
   });
 

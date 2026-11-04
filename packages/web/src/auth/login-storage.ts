@@ -10,6 +10,9 @@
 // follow-up mode (`next`: the vault's next notice slot). `home` names the login (its first slot, `hana.email.<home>`);
 // `b` is case B's "Link and continue" (D139); `c` the Google client, `i` that the interactive retry was spent; `task`
 // marks a `hana.linkAccount` popup.
+// token_first (D270, auth/google.ts): `tf` marks a login whose Google request asked for the access token first, `n`
+// is the login's nonce (the ID token request after it needs it), `leg: 'id'` that ID token request's entry, `h` its
+// `login_hint`, and `r` a record-only login (an app without email login: no follow-up mode, the window closes).
 //
 // SECURITY: relayKey and followKey are session secrets. They live here only between pages and are deleted on read.
 import { type CaseBProof, FOLLOW_KEY_BYTES, RELAY_ID_PATTERN, RELAY_KEY_BYTES, base64UrlDecode, base64UrlEncode, isTimings } from '@hana-id/core';
@@ -26,13 +29,19 @@ export interface FollowEntry {
   home?: string;
   /** The vault's next notice slot, once this leg is relayed. */
   next?: number;
-  leg?: 'access' | 'proof';
+  leg?: 'access' | 'proof' | 'id';
   caseB?: CaseBProof;
   clientId?: string;
   interactive?: boolean;
-  /** The access leg: the Google `sub` the second request asks for (its `login_hint`). */
+  /** The access leg and token_first's ID leg: the Google `sub` the request asks for (its `login_hint`). */
   loginHint?: string;
   task?: boolean;
+  /** token_first: the login's Google request asked for the access token first (auth/google.ts). */
+  tokenFirst?: boolean;
+  /** token_first: the login's nonce, for the ID token request after the access token. */
+  nonce?: string;
+  /** token_first in an app without email login: the access token is for the issuer's directory only; no follow-up mode. */
+  record?: boolean;
 }
 
 interface LoginEntry {
@@ -44,12 +53,15 @@ interface LoginEntry {
   f?: string;
   home?: string;
   next?: number;
-  leg?: 'access' | 'proof';
+  leg?: 'access' | 'proof' | 'id';
   b?: CaseBProof;
   c?: string;
   i?: 1;
   h?: string;
   task?: 1;
+  tf?: 1;
+  n?: string;
+  r?: 1;
 }
 
 /** What /login/callback takes: the relay key and /login's timings (null for a pk_live_ app). */
@@ -58,6 +70,8 @@ export interface TakenLogin extends FollowEntry {
   timings: Record<string, number> | null;
 }
 
+/** A session nonce (core protocol.ts `isNonce`). */
+const NONCE = /^[A-Za-z0-9_-]{43}$/u;
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isCaseB = (v: unknown): v is CaseBProof =>
   isObj(v) && typeof v.linkTicket === 'string' && /^[A-Za-z0-9_-]{22,64}$/u.test(v.linkTicket) && typeof v.emailSub === 'string' && /^e1\.[A-Za-z0-9_-]{43}$/u.test(v.emailSub);
@@ -76,12 +90,15 @@ function readEntry(storage: Storage, key: string): LoginEntry | null {
       ...(typeof e.f === 'string' ? { f: e.f } : {}),
       ...(typeof e.home === 'string' && RELAY_ID_PATTERN.test(e.home) ? { home: e.home } : {}),
       ...(Number.isInteger(e.next) && (e.next as number) >= 2 && (e.next as number) <= 12 ? { next: e.next as number } : {}),
-      ...(e.leg === 'access' || e.leg === 'proof' ? { leg: e.leg } : {}),
+      ...(e.leg === 'access' || e.leg === 'proof' || e.leg === 'id' ? { leg: e.leg } : {}),
       ...(isCaseB(e.b) ? { b: { linkTicket: e.b.linkTicket, emailSub: e.b.emailSub } } : {}),
       ...(typeof e.c === 'string' && e.c.length <= 256 ? { c: e.c } : {}),
       ...(e.i === 1 ? { i: 1 as const } : {}),
       ...(typeof e.h === 'string' && /^[0-9A-Za-z_-]{1,255}$/u.test(e.h) ? { h: e.h } : {}),
       ...(e.task === 1 ? { task: 1 as const } : {}),
+      ...(e.tf === 1 ? { tf: 1 as const } : {}),
+      ...(typeof e.n === 'string' && NONCE.test(e.n) ? { n: e.n } : {}),
+      ...(e.r === 1 ? { r: 1 as const } : {}),
     };
   } catch {
     return null;
@@ -109,6 +126,7 @@ export function storeLoginEntry(storage: Storage, relayId: string, relayKey: Uin
   if (!RELAY_ID_PATTERN.test(relayId)) throw new Error('Malformed relayId');
   if (relayKey.length !== RELAY_KEY_BYTES) throw new Error('Malformed relayKey');
   if (follow.followKey && follow.followKey.length !== FOLLOW_KEY_BYTES) throw new Error('Malformed followKey');
+  if (follow.nonce !== undefined && !NONCE.test(follow.nonce)) throw new Error('Malformed nonce');
   pruneLoginEntries(storage, now);
   const entry: LoginEntry = {
     v: 1,
@@ -124,6 +142,9 @@ export function storeLoginEntry(storage: Storage, relayId: string, relayKey: Uin
     ...(follow.interactive ? { i: 1 as const } : {}),
     ...(follow.loginHint ? { h: follow.loginHint } : {}),
     ...(follow.task ? { task: 1 as const } : {}),
+    ...(follow.tokenFirst ? { tf: 1 as const } : {}),
+    ...(follow.nonce ? { n: follow.nonce } : {}),
+    ...(follow.record ? { r: 1 as const } : {}),
   };
   storage.setItem(LOGIN_ENTRY_PREFIX + relayId, JSON.stringify(entry));
 }
@@ -171,6 +192,9 @@ const toTaken = (e: LoginEntry): TakenLogin | null => {
     ...(e.i ? { interactive: true } : {}),
     ...(e.h ? { loginHint: e.h } : {}),
     ...(e.task ? { task: true } : {}),
+    ...(e.tf ? { tokenFirst: true } : {}),
+    ...(e.n ? { nonce: e.n } : {}),
+    ...(e.r ? { record: true } : {}),
   };
 };
 

@@ -70,6 +70,7 @@ import { VaultError, apiErrorToVault, disconnected, notLoggedIn, toProtocolError
 import { Launcher, type LauncherHandle, type LauncherView } from './launcher.ts';
 import { type LoginContext, type LoginMode, type LoginRequest, type LoginStage, type LoginSuccess, PendingLink, PendingLogin, type RootPins, isOwnLoginPath, pathOwner, serverDetail } from './login.ts';
 import { type IssuerApi, issuerApi } from './issuer.ts';
+import type { GoogleEmailFlow } from '../auth/google.ts';
 import { NearView } from './near.ts';
 import {
   type ConsentV1,
@@ -180,6 +181,8 @@ export interface VaultOptions {
   jwks?: (kid: string) => Promise<Jwk | null>;
   /** The split login fallback (until the ship gate decides). Default 'combined'. */
   loginFlow?: 'combined' | 'split';
+  /** How the popup asks Google for the email scope; default auth/google.ts GOOGLE_EMAIL_FLOW (tests run every flow). */
+  googleEmailFlow?: GoogleEmailFlow;
 }
 
 interface Share {
@@ -806,6 +809,7 @@ export class Vault {
       flow: this.o.loginFlow ?? 'combined',
       perfNow: this.perfNow,
       pins: this.rootPins(),
+      ...(this.o.googleEmailFlow ? { googleEmailFlow: this.o.googleEmailFlow } : {}),
     };
   }
 

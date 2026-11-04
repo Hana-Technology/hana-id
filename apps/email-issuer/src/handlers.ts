@@ -1,5 +1,5 @@
 // The issuer's endpoints (docs/email-login-spec.md "Endpoints"; docs/api.md "Email issuer"). POST JSON, CORS for one
-// Hana origin each (start, resend, verify: authOrigin; google-match: the vault's origin, D199), no cookies, every
+// Hana origin each (start, resend, verify: authOrigin; google-match, google-record: the vault's origin, D199), no cookies, every
 // response `Cache-Control: no-store`; of the browser routes only `start` carries an address. Enumeration-safe: `start`
 // answers 202 with the same body for every valid address (suppressed included) and the same generic 429, with one
 // `retry-after`, for every mailbox-level limit; the provider's send happens after the response, in waitUntil. Every
@@ -8,6 +8,7 @@
 import { base64UrlDecode, base64UrlEncode, sha256, toHex, utf8 } from './bytes.ts';
 import { emailSub, isDisposableDomain, isGoogleHosted, normalizeEmail } from '@hana-id/email';
 import { type IssuerApp, appById, appByKey, isPublishableKey, scopeHasEmailApp } from './apps.ts';
+import { recordUserEmailLater } from './directory.ts';
 import type { ChallengeRecord, TicketRecord } from './challenge.ts';
 import { type ChallengeId, decryptEmail, encryptEmail, newChallengeId, parseChallengeId } from './challenge-id.ts';
 import { ChainUnavailable } from './chain.ts';
@@ -16,7 +17,7 @@ import { type Judgement, type Side, judge } from './decide.ts';
 import type { Deps } from './deps.ts';
 import { isExemptDomain, registrableDomain } from './domain.ts';
 import { dailySendBudget } from './env.ts';
-import { GoogleUnavailable } from './google.ts';
+import { GoogleUnavailable, type UserInfo } from './google.ts';
 import { corsHeaders, error, isObj, json, onlyKeys, readJson } from './http.ts';
 import { ipAggregates, ipSubject, isClientIp } from './ip.ts';
 import { type EmailClaims, TOKEN_LIFETIME_S, mintJws } from './jws.ts';
@@ -31,6 +32,7 @@ import {
   NON_HOSTED_HINT_TTL_MS,
   IP_AGGREGATE_START_LIMITS,
   IP_MATCH_LIMITS,
+  IP_RECORD_LIMITS,
   IP_RESEND_LIMITS,
   IP_START_LIMITS,
   IP_VERIFY_LIMITS,
@@ -582,12 +584,90 @@ export const maskEmail = (normalized: string): string => {
   return `${normalized.slice(0, 1)}…${normalized.slice(at)}`;
 };
 
+/** What google-match and google-record establish before they act: the app, the session, the Google account. */
+interface GoogleSignIn {
+  app: IssuerApp;
+  commitment: SessionCommitment;
+  googleSub: string;
+  info: UserInfo;
+  now: number;
+}
+
+/**
+ * google-match's and google-record's shared checks, in order: the per-IP limit, the app (`gate`), the session
+ * commitment and its scope, the app's Google clients, the ID token (RS256 against Google's JWKS, iss, aud, exp) and
+ * its nonce over the commitment, the access token's tokeninfo (its client and `sub` must be the ID token's) and
+ * userinfo (the same `sub`). A token of another Google account is `google_account_mismatch` (D264).
+ */
+async function checkGoogleSignIn(
+  ctx: Ctx,
+  request: Request,
+  b: Record<string, unknown>,
+  accessToken: string,
+  limits: Limit[],
+  gate: (ctx: Ctx, pk: unknown) => Promise<{ ok: true; app: IssuerApp } | { ok: false; response: Response }>,
+): Promise<{ ok: true; value: GoogleSignIn } | { ok: false; response: Response }> {
+  const { deps } = ctx;
+  const refuse = (response: Response) => ({ ok: false as const, response });
+  const limited = await ipLimit(ctx, request, limits);
+  if (limited) return refuse(limited);
+  const g = await gate(ctx, b.pk);
+  if (!g.ok) return g;
+  const { app } = g;
+  const now = deps.now();
+  const sc = parseSessionCommitment(b.commitment, now);
+  if (!sc.ok) return refuse(fail(ctx, 400, 'bad_request', sc.message));
+  if (sc.value.scopeId !== app.scopeId) return refuse(fail(ctx, 400, 'scope_mismatch', 'The commitment is for another app’s scope'));
+
+  // The app's Google clients: its scope's own (only its web client when it set one), shared ones when allowed.
+  const scope = await deps.chain.scope(app.scopeId);
+  const own = (scope?.clients ?? []).filter(([p, a]) => p === 'google' && (app.googleWebClientId === null || a === app.googleWebClientId)).map(([, a]) => a);
+  const audiences = [...own, ...(scope?.allowShared ? await deps.chain.sharedGoogleClients() : [])];
+  if (audiences.length === 0) return refuse(fail(ctx, 409, 'no_google_client', 'The app has no Google client'));
+
+  const id = await deps.google.verifyIdToken(b.googleIdToken as string, audiences);
+  if (!id.ok) return refuse(fail(ctx, 400, 'google_token_invalid', 'The Google ID token is not valid for this app'));
+  if (id.value.nonce !== sessionNonceOf(deps, sc.value)) return refuse(fail(ctx, 400, 'nonce_mismatch', 'The Google ID token nonce does not commit to this session'));
+  const ti = await deps.google.checkAccessToken(accessToken, id.value.aud, id.value.sub);
+  // Another Google account's token (the user picked another account on Google's permission screen): its own code,
+  // so the popup can say so (D264).
+  if (!ti.ok && ti.reason === 'tokeninfo_sub') return refuse(fail(ctx, 400, 'google_account_mismatch', 'The Google access token is another Google account’s'));
+  if (!ti.ok) return refuse(fail(ctx, 400, 'google_token_invalid', 'The Google access token is not for this sign-in'));
+  const ui = await deps.google.userInfo(accessToken, id.value.sub);
+  if (!ui.ok && ui.reason === 'userinfo_sub') return refuse(fail(ctx, 400, 'google_account_mismatch', 'The Google access token is another Google account’s'));
+  if (!ui.ok) return refuse(fail(ctx, 400, 'google_token_invalid', 'Google did not return the account’s address'));
+  return { ok: true, value: { app, commitment: sc.value, googleSub: id.value.sub, info: ui.value, now } };
+}
+
+/** The access token of a google-match or google-record body, or null when it is missing or oversized. */
+const accessTokenOf = (b: Record<string, unknown>): string | null => (typeof b.accessToken === 'string' && b.accessToken.length > 0 && b.accessToken.length <= 4096 ? b.accessToken : null);
+
+/**
+ * The user directory's row for a checked Google sign-in (D269), after the answer and best effort
+ * (directory.ts recordUserEmailLater): userinfo's address, whether Google verified it, and whether it is Google-hosted
+ * (D158; false when unverified or not a valid address).
+ */
+function recordGoogleSignIn(ctx: Ctx, s: GoogleSignIn): void {
+  const r = s.info.emailVerified ? normalizeEmail(s.info.email) : null;
+  const hosted = r?.ok ? isGoogleHosted({ email: r.email, emailVerified: true, hd: s.info.hd }) : false;
+  recordUserEmailLater(ctx.deps.env.DB, ctx.deps.waitUntil, {
+    provider: 'google',
+    sub: s.googleSub,
+    email: s.info.email,
+    emailVerified: s.info.emailVerified,
+    hosted,
+    appId: s.app.id,
+    scopeId: s.app.scopeId,
+    nowMs: s.now,
+  });
+}
+
 /**
  * The access token is never revoked here (D265, amending D254): Google's revocation ends the user's whole grant to the
  * client, so the email consent would come back at every login, and on Hana's shared client it would cancel the grant
  * other apps of that client rely on (and two logins at once would revoke each other's token). The token is
  * email-scope only, expires within the hour, is never stored or logged, and reaches the issuer once per login through
- * a single-use relay slot.
+ * a single-use relay slot. Once the checks pass, the Google identity's address goes to the user directory (D269).
  */
 export async function handleGoogleMatch(request: Request, ctx: Ctx): Promise<Response> {
   const { deps } = ctx;
@@ -597,45 +677,21 @@ export async function handleGoogleMatch(request: Request, ctx: Ctx): Promise<Res
   if (!isObj(b) || !onlyKeys(b, ['pk', 'accessToken', 'googleIdToken', 'commitment', 'link'], ['linkTicket'])) {
     return fail(ctx, 400, 'bad_request', 'Body must be {pk, accessToken, googleIdToken, commitment, linkTicket?, link}');
   }
-  const accessToken = typeof b.accessToken === 'string' && b.accessToken.length > 0 && b.accessToken.length <= 4096 ? b.accessToken : null;
+  const accessToken = accessTokenOf(b);
   if (!accessToken || typeof b.googleIdToken !== 'string' || typeof b.link !== 'boolean' || (b.linkTicket !== undefined && !isId(b.linkTicket))) {
     return fail(ctx, 400, 'bad_request', 'Malformed google-match request');
   }
-  const limited = await ipLimit(ctx, request, IP_MATCH_LIMITS);
-  if (limited) return limited;
-  const gate = await emailApp(ctx, b.pk);
-  if (!gate.ok) return gate.response;
-  const { app } = gate;
-  const now = deps.now();
-  const sc = parseSessionCommitment(b.commitment, now);
-  if (!sc.ok) return fail(ctx, 400, 'bad_request', sc.message);
-  if (sc.value.scopeId !== app.scopeId) return fail(ctx, 400, 'scope_mismatch', 'The commitment is for another app’s scope');
+  const checked = await checkGoogleSignIn(ctx, request, b, accessToken, IP_MATCH_LIMITS, emailApp);
+  if (!checked.ok) return checked.response;
+  const { app, commitment: sc, googleSub, info, now } = checked.value;
+  recordGoogleSignIn(ctx, checked.value);
 
-  // The app's Google clients: its scope's own (only its web client when it set one), shared ones when allowed.
-  const scope = await deps.chain.scope(app.scopeId);
-  const own = (scope?.clients ?? []).filter(([p, a]) => p === 'google' && (app.googleWebClientId === null || a === app.googleWebClientId)).map(([, a]) => a);
-  const audiences = [...own, ...(scope?.allowShared ? await deps.chain.sharedGoogleClients() : [])];
-  if (audiences.length === 0) return fail(ctx, 409, 'no_google_client', 'The app has no Google client');
-
-  const id = await deps.google.verifyIdToken(b.googleIdToken, audiences);
-  if (!id.ok) return fail(ctx, 400, 'google_token_invalid', 'The Google ID token is not valid for this app');
-  if (id.value.nonce !== sessionNonceOf(deps, sc.value)) return fail(ctx, 400, 'nonce_mismatch', 'The Google ID token nonce does not commit to this session');
-  const ti = await deps.google.checkAccessToken(accessToken, id.value.aud, id.value.sub);
-  // Another Google account's token (the user picked another account on Google's permission screen): its own code,
-  // so the popup can say so (D264).
-  if (!ti.ok && ti.reason === 'tokeninfo_sub') return fail(ctx, 400, 'google_account_mismatch', 'The Google access token is another Google account’s');
-  if (!ti.ok) return fail(ctx, 400, 'google_token_invalid', 'The Google access token is not for this sign-in');
-  const ui = await deps.google.userInfo(accessToken, id.value.sub);
-  if (!ui.ok && ui.reason === 'userinfo_sub') return fail(ctx, 400, 'google_account_mismatch', 'The Google access token is another Google account’s');
-  if (!ui.ok) return fail(ctx, 400, 'google_token_invalid', 'Google did not return the account’s address');
-
-  // Only a Google-verified address can match (D119); the address lives in this call only.
-  const r = ui.value.emailVerified ? normalizeEmail(ui.value.email) : null;
+  // Only a Google-verified address can match (D119); the address lives in this call (and the directory) only.
+  const r = info.emailVerified ? normalizeEmail(info.email) : null;
   if (!r?.ok) return ok(ctx, 200, { decision: 'none', googleHosted: false, linkable: false }, { appId: app.id, decision: 'none' });
-  const googleHosted = isGoogleHosted({ email: r.email, emailVerified: ui.value.emailVerified, hd: ui.value.hd });
+  const googleHosted = isGoogleHosted({ email: r.email, emailVerified: info.emailVerified, hd: info.hd });
   const keys = await deps.keys();
   const sub = await emailSub(keys.sub, r.email);
-  const googleSub = id.value.sub;
   // The hint a Google login writes for every Google-verified address (D119, D122: a hosted one kept while the scope
   // exists). A non-hosted one counts for 180 days after this login, then is pruned, and its case B links only after
   // 24 h (mode 0 below), with link notices (D199's residual risk).
@@ -657,7 +713,7 @@ export async function handleGoogleMatch(request: Request, ctx: Ctx): Promise<Res
   let linkable = j.linkable;
   if (linkable && (j.decision === 'case_a' || j.decision === 'case_b') && (await deps.chain.unrecordedWallets())) linkable = false;
   const base = { decision: j.decision, googleHosted, linkable };
-  const sessionHash = sha256(sessionPreimage(deps.env.SIGNER_ACCOUNT, sc.value));
+  const sessionHash = sha256(sessionPreimage(deps.env.SIGNER_ACCOUNT, sc));
   const sessionIk = identityKey(app.scopeId, 'google', googleSub);
 
   if (j.decision === 'case_a' && linkable && j.join) {
@@ -715,6 +771,38 @@ export async function handleGoogleMatch(request: Request, ctx: Ctx): Promise<Res
 }
 
 const sessionNonceOf = (deps: Deps, c: SessionCommitment): string => nonceOf(sessionPreimage(deps.env.SIGNER_ACCOUNT, c));
+
+// ---- google-record ----
+
+/** google-record's gate: any active app (email login need not be on: D270 asks every Google login for the email). */
+async function activeApp(ctx: Ctx, pk: unknown): Promise<{ ok: true; app: IssuerApp } | { ok: false; response: Response }> {
+  if (!isPublishableKey(pk)) return { ok: false, response: fail(ctx, 401, 'invalid_key', 'Unknown publishable key') };
+  const app = await appByKey(ctx.deps.env.APP_DB, pk, ctx.deps.now());
+  if (!app) return { ok: false, response: fail(ctx, 401, 'invalid_key', 'Unknown publishable key') };
+  if (!app.active) return { ok: false, response: fail(ctx, 403, 'app_suspended', 'The app is suspended') };
+  return { ok: true, app };
+}
+
+/**
+ * `POST /v1/email/google-record` (D269, D270): under token_first, a Google login of an app without email login sends
+ * its access token here only to record the address in the user directory. The same authentication and checks as
+ * google-match (checkGoogleSignIn: the ID token, its nonce over the session commitment, tokeninfo, userinfo) and the
+ * same CORS (the vault's origin); its own per-IP limit (IP_RECORD_LIMITS). It answers `{accepted: true}`, with no
+ * match data (no decision, no hint, no token), then records after the answer. Nothing is matched, minted, mailed or
+ * written besides the directory; the access token is never revoked or stored (D265).
+ */
+export async function handleGoogleRecord(request: Request, ctx: Ctx): Promise<Response> {
+  const parsed = await readJson(request, MAX_BODY);
+  if (!parsed.ok) return fail(ctx, parsed.status, 'bad_request', parsed.message);
+  const b = parsed.body;
+  if (!isObj(b) || !onlyKeys(b, ['pk', 'accessToken', 'googleIdToken', 'commitment'])) return fail(ctx, 400, 'bad_request', 'Body must be {pk, accessToken, googleIdToken, commitment}');
+  const accessToken = accessTokenOf(b);
+  if (!accessToken || typeof b.googleIdToken !== 'string') return fail(ctx, 400, 'bad_request', 'Malformed google-record request');
+  const checked = await checkGoogleSignIn(ctx, request, b, accessToken, IP_RECORD_LIMITS, activeApp);
+  if (!checked.ok) return checked.response;
+  recordGoogleSignIn(ctx, checked.value);
+  return ok(ctx, 200, { accepted: true }, { appId: checked.value.app.id });
+}
 
 // ---- staff (admin/*) ----
 
@@ -919,6 +1007,7 @@ export const ROUTES = {
   resend: '/v1/email/resend',
   verify: '/v1/email/verify',
   googleMatch: '/v1/email/google-match',
+  googleRecord: '/v1/email/google-record',
   clientProof: '/v1/email/admin/client-proof',
   unlock: '/v1/email/admin/unlock',
   unsuppress: '/v1/email/admin/unsuppress',
@@ -930,13 +1019,13 @@ export const ROUTES = {
 } as const;
 
 /** Routes whose limits key on the client's IP: refused without a usable `cf-connecting-ip` (L4). */
-const IP_ROUTES: ReadonlySet<string> = new Set([ROUTES.start, ROUTES.resend, ROUTES.verify, ROUTES.confirm, ROUTES.googleMatch, ROUTES.sendgridWebhook]);
+const IP_ROUTES: ReadonlySet<string> = new Set([ROUTES.start, ROUTES.resend, ROUTES.verify, ROUTES.confirm, ROUTES.googleMatch, ROUTES.googleRecord, ROUTES.sendgridWebhook]);
 const isStaffRoute = (path: string): boolean => path.startsWith('/v1/email/admin/');
 
 /** Which browser origin may call a POST route (null: no browser caller, no CORS). */
 function allowedOrigin(deps: Deps, path: string): string | null {
   if (path === ROUTES.start || path === ROUTES.resend || path === ROUTES.verify || path === ROUTES.confirm) return deps.env.AUTH_ORIGIN;
-  if (path === ROUTES.googleMatch) return deps.env.VAULT_ORIGIN;
+  if (path === ROUTES.googleMatch || path === ROUTES.googleRecord) return deps.env.VAULT_ORIGIN;
   return null;
 }
 
@@ -959,6 +1048,7 @@ export async function route(request: Request, deps: Deps): Promise<Response> {
       [ROUTES.resend]: handleResend,
       [ROUTES.verify]: handleVerify,
       [ROUTES.googleMatch]: handleGoogleMatch,
+      [ROUTES.googleRecord]: handleGoogleRecord,
       [ROUTES.clientProof]: handleClientProof,
       [ROUTES.unlock]: handleUnlock,
       [ROUTES.unsuppress]: handleUnsuppress,

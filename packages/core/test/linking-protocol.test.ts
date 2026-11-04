@@ -47,6 +47,17 @@ describe('auth-params (batch 8b)', () => {
     expect(parseWindowMessage(params({ followKey, task: { ...task, provider: 'email' } }), ['hana:auth-params'])).toBeNull();
     expect(parseWindowMessage(params({ followKey, task, methods: ['google', 'email'], method: 'google' }), ['hana:auth-params'])).toBeNull();
   });
+
+  it('token_first’s record-only login (D270): `emailRecord: true` with the follow-up key, never with methods or a task', () => {
+    const followKey = new Uint8Array(32).fill(5);
+    const task = { kind: 'link', provider: 'google', prove: { method: 'google', nonce: 'N'.repeat(43), loginHint: null } };
+    expect(parseWindowMessage(params({ followKey, emailRecord: true }), ['hana:auth-params'])).not.toBeNull();
+    expect(parseWindowMessage(params({ emailRecord: true }), ['hana:auth-params'])).toBeNull();
+    expect(parseWindowMessage(params({ followKey, emailRecord: false }), ['hana:auth-params'])).toBeNull();
+    expect(parseWindowMessage(params({ followKey, emailRecord: 1 }), ['hana:auth-params'])).toBeNull();
+    expect(parseWindowMessage(params({ followKey, emailRecord: true, methods: ['google', 'email'] }), ['hana:auth-params'])).toBeNull();
+    expect(parseWindowMessage(params({ followKey, emailRecord: true, task }), ['hana:auth-params'])).toBeNull();
+  });
 });
 
 describe('relay payloads', () => {

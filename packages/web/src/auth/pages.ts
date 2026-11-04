@@ -3,6 +3,7 @@
 // serves them; the Worker (apps/api src/pages/host.ts) sends the full policy and the other headers itself
 // (frame-ancestors only works as a header).
 import type { HanaEnv } from '../hana-env.ts';
+import { GOOGLE_TOKENINFO_ORIGIN } from './google.ts';
 
 export type AuthPageName = 'login' | 'email' | 'callback' | 'approve' | 'export';
 
@@ -42,8 +43,9 @@ const originOf = (url: string): string => new URL(url).origin;
 type CspEnv = Pick<HanaEnv, 'apiUrl' | 'rpc' | 'rpcFallback' | 'emailIssuerUrl'>;
 
 /**
- * What the page may fetch: the API (callback, email, export), the email issuer (email), the NEAR RPC and Google's JWKS
- * (export).
+ * What the page may fetch: the API (callback, email, export), Google's tokeninfo (callback, with an email issuer), the
+ * email issuer (email), the NEAR RPC and Google's JWKS (export). apps/api src/pages/host.ts sends the same lists in
+ * the header policy: a browser enforces both, so they must agree.
  */
 export function connectSources(env: CspEnv, page: AuthPageName): string[] {
   switch (page) {
@@ -56,7 +58,11 @@ export function connectSources(env: CspEnv, page: AuthPageName): string[] {
       // env without an email issuer gets the API only, and the page stops at once.
       return env.emailIssuerUrl ? [originOf(env.emailIssuerUrl), originOf(env.apiUrl)] : [originOf(env.apiUrl)];
     case 'callback':
-      return [originOf(env.apiUrl)];
+      // token_first (D270, auth/google.ts accessTokenSub): the callback asks Google's tokeninfo for the access token's
+      // `sub`. Only an env with an email issuer can run it (the vault sends the follow-up key only there), so only
+      // such an env's callback may reach tokeninfo; it is listed whatever GOOGLE_EMAIL_FLOW says, so the flow's switch
+      // stays one line and the header policy (which can't read the flow) always matches this one.
+      return env.emailIssuerUrl ? [originOf(env.apiUrl), GOOGLE_TOKENINFO_ORIGIN] : [originOf(env.apiUrl)];
     case 'export':
       // Both NEAR providers: the window falls back to rpcFallback, and a linked identity's path is read on both
       // (D263). The Worker's header policy lists the same; a browser enforces both policies, so the meta one must too.

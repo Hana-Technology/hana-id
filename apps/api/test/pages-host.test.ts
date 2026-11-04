@@ -140,6 +140,21 @@ describe('auth origin Worker', () => {
     }
   });
 
+  it('token_first (D270): with an email issuer the callback may also reach Google’s tokeninfo, and only the callback', async () => {
+    const withIssuer = authEnv({ EMAIL_ISSUER_URL: 'https://issuer.test/' });
+    const callback = await call(authWorker, withIssuer, `${AUTH}/login/callback`);
+    expect(callback.status).toBe(200);
+    expect(csp(callback)).toBe(`${BASE}; frame-ancestors 'none'; connect-src https://api.test https://oauth2.googleapis.com`);
+    // No other page gets it: the chooser, the email step, the approval popup and the export window.
+    for (const path of ['/login', '/login/email', '/approve', '/export']) {
+      expect(csp(await call(authWorker, authEnv({ EMAIL_ISSUER_URL: 'https://issuer.test/' }), `${AUTH}${path}`)), path).not.toContain('oauth2.googleapis.com');
+    }
+    // Without an issuer no login can be token_first: the callback reaches the API only.
+    expect(csp(await call(authWorker, authEnv(), `${AUTH}/login/callback`))).toBe(`${BASE}; frame-ancestors 'none'; connect-src https://api.test`);
+    // A malformed issuer URL drops it (token_first logins then fail closed at tokeninfo), never a looser policy.
+    expect(csp(await call(authWorker, authEnv({ EMAIL_ISSUER_URL: 'not a url' }), `${AUTH}/login/callback`))).toBe(`${BASE}; frame-ancestors 'none'; connect-src https://api.test`);
+  });
+
   it('HEAD gives the page headers and no body', async () => {
     const res = await call(authWorker, authEnv(), `${AUTH}/login`, { method: 'HEAD' });
     expect(res.status).toBe(200);

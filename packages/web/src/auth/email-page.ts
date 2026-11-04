@@ -71,7 +71,7 @@ import type { AuthApi } from './api.ts';
 import { type Dom, dom, errorView } from './dom.ts';
 import type { EmailApi, LinkPurpose, SessionCommitment, Verified } from './email-api.ts';
 import { EMAIL_STEP_LIMIT_MS, type EmailContext, deviceTicketFor, dropEmailContext, readEmailContext, saveDeviceTicket, storeEmailContext } from './email-storage.ts';
-import { GOOGLE_EMAIL_FLOW, type GoogleEmailFlow, googleAccessUrl, googleAuthUrl, wantsEmailScope } from './google.ts';
+import { GOOGLE_EMAIL_FLOW, type GoogleEmailFlow, googleAccessUrl, googleAuthUrl, loginGoogleRequest } from './google.ts';
 import { peekLogin, storeLoginEntry, takeLogin, zeroTaken } from './login-storage.ts';
 import { type PageWindow, childFrame, isFramed } from './page-window.ts';
 
@@ -600,8 +600,22 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       return;
     }
     const toGoogle = (withLink: boolean) => {
-      // The relay key entry stays for /login/callback; with the link, the ticket and the `sub` ride in it (D139).
-      if (withLink && link) {
+      // The login's own Google request, as /login makes it (G-L3: google-match needs the access token in case B, so
+      // token_first asks for it first here too).
+      const follows = peekLogin(win.sessionStorage, rid, now())?.follows === true;
+      const google = loginGoogleRequest({
+        flow: deps.googleEmailFlow ?? GOOGLE_EMAIL_FLOW,
+        clientId,
+        authOrigin: env.authOrigin,
+        nonce: ctx.nonce,
+        state: rid,
+        follow: follows && !ctx.exportMode,
+        task: !!ctx.proof,
+        forceReauth: false,
+      });
+      // The relay key entry stays for /login/callback; with the link, the ticket and the `sub` ride in it (D139), and
+      // under token_first the nonce of the ID token request that follows the access token.
+      if ((withLink && link) || google.tokenFirst) {
         const taken = takeLogin(win.sessionStorage, rid, now());
         if (!taken) {
           fatal('Sign-in stopped', 'This sign-in has expired or was already used. Start again from the app.', 'login_timeout');
@@ -611,7 +625,8 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
           storeLoginEntry(win.sessionStorage, rid, taken.relayKey, now(), taken.timings ?? undefined, {
             ...(taken.followKey ? { followKey: taken.followKey } : {}),
             ...(taken.clientId ? { clientId: taken.clientId } : {}),
-            caseB: link,
+            ...(withLink && link ? { caseB: link } : {}),
+            ...(google.tokenFirst ? { tokenFirst: true, nonce: ctx.nonce } : {}),
           });
         } catch {
           fatal('Sign-in stopped', 'This browser blocked the storage the sign-in needs.', 'storage_unavailable');
@@ -622,10 +637,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       }
       clearT(deadlineTimer);
       tellVault('google');
-      // One-request mode asks for the email scope here too, as /login does (G-L3): google-match needs it in case B.
-      const follows = peekLogin(win.sessionStorage, rid, now())?.follows === true;
-      const withEmailScope = wantsEmailScope(deps.googleEmailFlow ?? GOOGLE_EMAIL_FLOW, { follow: follows && !ctx.exportMode, task: !!ctx.proof });
-      win.location.assign(googleAuthUrl({ clientId, authOrigin: env.authOrigin, nonce: ctx.nonce, state: rid, forceReauth: false, withEmailScope }));
+      win.location.assign(google.url);
     };
     const buttons: HTMLElement[] = [];
     if (link) {

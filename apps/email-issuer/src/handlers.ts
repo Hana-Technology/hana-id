@@ -14,6 +14,7 @@ import { ChainUnavailable } from './chain.ts';
 import { type Purpose, commitmentNonce, isScopeId, parseSessionCommitment } from './commitment.ts';
 import { type Judgement, type Side, judge } from './decide.ts';
 import type { Deps } from './deps.ts';
+import { recordUserEmailLater } from './directory.ts';
 import { isExemptDomain, registrableDomain } from './domain.ts';
 import { dailySendBudget } from './env.ts';
 import { GoogleUnavailable } from './google.ts';
@@ -520,6 +521,14 @@ export async function handleVerify(request: Request, ctx: Ctx): Promise<Response
   const issued = await issueDeviceTicket(keys, addrKey, now);
   await box.registerTicket(addrKey, issued.id, issued.issuedAtMs, now);
   const owner = issued.ticket;
+  // The user directory (D269): every answer below that carries a 200 proved control of this address for this app and
+  // scope (case B included: no token, but the code was right), so each records the email identity, after the answer
+  // (waitUntil) and never failing or slowing it. Refusals (`409 links_unavailable`, `409 link_refused`) and errors
+  // record nothing.
+  const recorded = (res: Response): Response => {
+    recordUserEmailLater(deps.env.DB, deps.waitUntil, { provider: 'email', sub, email, emailVerified: true, hosted: null, appId: app.id, scopeId: rec.scopeId, nowMs: now });
+    return res;
+  };
 
   if (rec.purpose === 'session') {
     // Case B lookup: a Google identity that reported this address as verified has the wallet here (D119). A hint for a
@@ -550,10 +559,10 @@ export async function handleVerify(request: Request, ctx: Ctx): Promise<Response
       }
       // With the ticket goes this address's `sub` (a pseudonym, never the address): the vault signs the case-B link
       // only for a link token of this `sub`, so it needs this popup's own email step (D139, D256).
-      return ok(ctx, 200, { googleWallet: true, deviceTicket: owner, ...(linkTicket ? { linkTicket, sub } : {}) }, { appId: app.id, purpose: rec.purpose, decision: 'case_b' });
+      return recorded(ok(ctx, 200, { googleWallet: true, deviceTicket: owner, ...(linkTicket ? { linkTicket, sub } : {}) }, { appId: app.id, purpose: rec.purpose, decision: 'case_b' }));
     }
     const { token: idToken } = await mint(ctx, app, rec.scopeId, sub, rec.nonce!, 'session');
-    return ok(ctx, 200, { idToken, googleWallet: false, deviceTicket: owner }, { appId: app.id, purpose: rec.purpose });
+    return recorded(ok(ctx, 200, { idToken, googleWallet: false, deviceTicket: owner }, { appId: app.id, purpose: rec.purpose }));
   }
 
   if (await deps.chain.unrecordedWallets()) return fail(ctx, 409, 'links_unavailable', 'Links wait until the owner accepts the wallets opened before v3');
@@ -567,11 +576,11 @@ export async function handleVerify(request: Request, ctx: Ctx): Promise<Response
     const nonce = nonceOf(autoLinkPreimage(deps.env.SIGNER_ACCOUNT, rec.scopeId, base64UrlDecode(a.sessionHash), sessionIk, { ...j.join, mode: 1 }));
     const { token: idToken } = await mint(ctx, app, rec.scopeId, sub, nonce, 'auto_link');
     deps.waitUntil(notify(ctx, email, app.name, false, app.id, rec.budgetShare));
-    return ok(ctx, 200, { idToken, googleWallet: false, decision: 'case_a', linkImmediate: true, deviceTicket: owner }, { appId: app.id, purpose: rec.purpose, decision: 'case_a' });
+    return recorded(ok(ctx, 200, { idToken, googleWallet: false, decision: 'case_a', linkImmediate: true, deviceTicket: owner }, { appId: app.id, purpose: rec.purpose, decision: 'case_a' }));
   }
 
   const { token: idToken } = await mint(ctx, app, rec.scopeId, sub, rec.nonce!, rec.purpose);
-  return ok(ctx, 200, { idToken, googleWallet: false, deviceTicket: owner }, { appId: app.id, purpose: rec.purpose });
+  return recorded(ok(ctx, 200, { idToken, googleWallet: false, deviceTicket: owner }, { appId: app.id, purpose: rec.purpose }));
 }
 
 // ---- google-match ----

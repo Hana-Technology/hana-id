@@ -5,7 +5,8 @@
 // The authorization endpoint takes exactly the requests the popup makes, and refuses anything else:
 //   - a login: id_token in the fragment, `scope=openid` only, the account chooser (`prompt=select_account`), a nonce,
 //     a state: it shows an account chooser, one link per account, each carrying a freshly signed RS256 ID token with
-//     only the claims Google sends for `scope=openid` (the spike's set), or `#error=access_denied`;
+//     only the claims Google sends for `scope=openid` (the spike's set), or `#error=access_denied`; an account with
+//     `emailInIdToken` gets `email` and `email_verified` in its token too (a leaking Google, which Hana must refuse);
 //   - a proof the vault asked for (build plan batch 8b: a link method's or a banner's): the same with `login_hint`
 //     (the account's sub) instead of the chooser: it answers for that account at once;
 //   - the second request for Google's verified email (batch 8b, two-request mode): `response_type=token`, `scope=email`,
@@ -34,6 +35,12 @@ export interface StubAccount {
   emailVerified?: boolean;
   /** A Workspace account's domain (`hd`). */
   hd?: string;
+  /**
+   * The account's ID tokens also carry `email` and `email_verified` (what Google puts in a token whose request asked
+   * for the email scope, and what Google Identity Services tokens carry): a Google that leaks the address, which the
+   * vault, the popup and the API must refuse (`token_has_pii`) before anything reaches the chain.
+   */
+  emailInIdToken?: boolean;
 }
 
 export const DEFAULT_ACCOUNTS: readonly StubAccount[] = Object.freeze([
@@ -118,6 +125,8 @@ export class GoogleStub {
   coop: string | null = null;
   /** Every authorization request seen, checked or not (tests assert on them). */
   readonly requests: AuthCheck[] = [];
+  /** Every ID token signed: its account and claim names (never the token itself). */
+  readonly issued: { sub: string; claims: string[] }[] = [];
   private keys: Promise<{ pair: CryptoKeyPair; kid: string }> | null = null;
 
   constructor(private readonly o: GoogleStubOptions = {}) {}
@@ -160,7 +169,7 @@ export class GoogleStub {
   /** The claims Google sends for an openid-only request (the spike's set: no email, name, picture or hd). */
   async idToken(r: AuthRequest, account: StubAccount, nowMs = Date.now()): Promise<string> {
     const now = Math.floor(nowMs / 1000);
-    return this.sign({
+    const claims: Record<string, unknown> = {
       iss: 'https://accounts.google.com',
       azp: r.clientId,
       aud: r.clientId,
@@ -170,7 +179,11 @@ export class GoogleStub {
       iat: now,
       exp: now + 3600,
       jti: base64UrlEncode(crypto.getRandomValues(new Uint8Array(16))),
-    });
+    };
+    // A leaking Google (StubAccount.emailInIdToken): the address in the token itself.
+    if (account.emailInIdToken) Object.assign(claims, { email: account.email ?? `${account.sub}@gmail.com`, email_verified: account.emailVerified ?? true });
+    this.issued.push({ sub: account.sub, claims: Object.keys(claims) });
+    return this.sign(claims);
   }
 
   /** The access token for the email scope (a test value the stack reads back, google-backend.ts). */

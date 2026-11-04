@@ -6,19 +6,20 @@ testnet** environment. They are test tooling, not the SDK and not an integration
 | Page | Flow | Use it for |
 |---|---|---|
 | `/` (`index.html`, `src/vault-page.ts`) | The real partner client, `@hana-id/web`: vault iframe → Hana login popup → Google (openid only) → `POST /v1/login` (`create_session_and_derive`) → CKD decryption and derivation v1 **inside the vault** | Everything a partner gets: login, timings, persistence and unlock, logout, export, approval and the auto-approve demo |
-| `/direct.html` (`src/direct.ts`) | The in-page flow from before the vault: Google Identity Services → `POST /v1/sessions` → `POST /v1/derive` → CKD decryption in the page | The split-flow baseline for the ship gate, and what the vault can't do: `key_index` ≠ 0, choosing the Google client, derive again, revoke, replays |
+| `/direct.html` (`src/direct.ts`) | The in-page flow from before the vault: Google, `scope=openid` only (a popup through `direct-callback.html`) → `POST /v1/sessions` → `POST /v1/derive` → CKD decryption in the page | The split-flow baseline for the ship gate, and what the vault can't do: `key_index` ≠ 0, choosing the Google client, derive again, revoke, replays |
 
 The vault page sees only what a partner sees: status, addresses, expiry, persistence, events and, for `pk_test_`
 apps, the login's and the unlock's per-stage timings (names and durations only, [Timings](#timings)). The Google token, the session key, the CKD secret and the chain keys stay in the
-Hana pages. The direct page sends the Google token only to `POST /v1/sessions` (kept in memory for the replay button)
-and zeroes the CKD secret and derived keys inside one function call; neither page displays, logs, stores or sends
+Hana pages. The direct page sends the Google token only to `POST /v1/sessions` (kept in memory for the replay button),
+never one with a claim outside the API's allow-list, and zeroes the CKD secret and derived keys inside one function call; neither page displays, logs, stores or sends
 them anywhere else. Partners integrate through `@hana-id/web` like the vault page, never like the direct
 page: see [`docs/integration.md`](../../docs/integration.md).
 
-> **The direct page works only while the env's `REJECT_PII_ON_SESSIONS` is `"0"`** (every env's default until the
-> user turns it on, `docs/batch-b-spec.md` "Order of work" step 7). Google Identity Services tokens carry `email`,
-> which `/v1/sessions` refuses with 400 `token_has_pii` once it is `"1"`; the page then says so. The vault's tokens
-> are openid-only and pass.
+> **Both pages get openid-only Google tokens.** The API refuses any Google token with a claim outside the allow-list
+> (`iss azp aud sub iat exp nonce nbf jti auth_time`) with 400 `token_has_pii` on every route, `/v1/sessions`
+> included, with no flag to turn it off (D271). The direct page used Google Identity Services, whose tokens carry
+> `email`, until D271; it now asks Google's implicit flow for `response_type=id_token`, `scope=openid` (as the Hana
+> login popup does) and checks the claims itself before sending anything.
 
 > **Addresses use derivation v1** (`@hana-id/core/derivation`, HKDF-SHA256 with salt `hana-id/chain-keys/v1/extract`),
 > which replaced the PROVISIONAL legacy derivation (salt `hana-embed-ckd-v1`) in batch B, so addresses logged before
@@ -51,7 +52,8 @@ page: see [`docs/integration.md`](../../docs/integration.md).
    CLI"). `--environment` is needed only for a scope with no app yet.
 3. **Google OAuth clients.** Vault page: every client the app logs in with (its own, or Hana's shared one) lists
    `{authOrigin}/login/callback` under *Authorized redirect URIs*. Direct page: the client also lists
-   `http://localhost:5173` under *Authorized JavaScript origins* (Google also recommends `http://localhost`). Changes
+   `http://localhost:5173/direct-callback.html` under *Authorized redirect URIs* (exact; no JavaScript origin is needed
+   any more). Changes
    there can take a few minutes to apply.
 
 ## Run
@@ -230,8 +232,12 @@ gets the popup; raw signing is always 4100 here: this page's apps are `pk_test_`
 2. **Session**: choose `key_index` (default 0; 0 to 2^31 − 1, higher values are reserved and refused) and `max_uses`
    (default 5, 1 to 500) → *Start session*. The page makes a
    non-extractable Ed25519 session key, a random 32-byte salt and an expiry of now + 1 h, computes the batch A.2 session
-   nonce and renders the Google button for the chosen client.
-3. Sign in. The page checks the token's `nonce` and `aud`, calls `POST /v1/sessions`, then immediately derives
+   nonce and shows *Sign in with Google (openid only)* for the chosen client.
+3. Click it: Google's account chooser opens in a popup (`response_type=id_token`, `scope=openid`,
+   `prompt=select_account`, the session nonce, a random `state`) and returns through `/direct-callback.html` (to the
+   page by `postMessage`, or a same-origin `BroadcastChannel` when Google's pages severed the opener; nothing is
+   stored). The page takes only the fragment with its own `state`, checks the token's `nonce` and `aud` and that every
+   claim is in the allow-list (otherwise it logs the claim and sends nothing), calls `POST /v1/sessions`, then immediately derives
    (counter 1): fresh BLS12-381 key, session signature over
    `"hana-id-session-v1:" ‖ counter u64 LE ‖ sha256("hana-id-ckd-v1:{pk1}:{pk2}")`, `POST /v1/derive`, decryption, pairing
    check against the pinned `ckdNetworkKey`, derivation v1 addresses and `app_id`.
@@ -265,9 +271,35 @@ Hana-held branded client without any address change (the path is `scope#provider
 ## Google email scope spike (`spike-email.html`)
 
 `http://localhost:5173/spike-email.html` is email login's batch 0 spike (`docs/email-login-build-plan.md`; not run yet):
-it decides whether the login popup can ask Google for the `email` scope in its one request, or needs the fallback the
-popup uses today (`GOOGLE_EMAIL_FLOW = 'second_request'` in `packages/web/src/auth/google.ts`). Same callback and
+it checks, on real Google, how the login popup can get an access token for the `email` scope while the ID token that
+goes on chain stays openid-only (D25). The popup uses the fallback today (`GOOGLE_EMAIL_FLOW = 'second_request'` in
+`packages/web/src/auth/google.ts`); the flow decided in D270, `'token_first'`, is leg E. Same callback and
 redirect-URI rule as `spike.html`; no Hana API, no chain.
+
+### Running it
+
+1. **A Google client.** Use a *Web application* OAuth client whose consent screen is the one users will see: the env's
+   shared login client (`sharedGoogleClientIds` in `envs/sandbox-dev.json`) for the real screen, or any test client in
+   a Google Cloud project you control. In Google Cloud > APIs & Services > Credentials, add
+   `http://localhost:5173/spike-callback.html` (exact: `http`, `localhost`, port 5173) under *Authorized redirect
+   URIs*; changes can take a few minutes. That redirect URI is the only client setting the page needs: its origin is
+   `http://localhost:5173` (open it as `localhost`, not `127.0.0.1`, or the callback can't hand back), and it doesn't
+   need to be an *Authorized JavaScript origin* (the 2026-10-28 `spike.html` run worked without; if Google shows
+   `origin_mismatch`, add `http://localhost:5173` there too). Remove the redirect URI after the spike.
+2. **Serve the page**: `pnpm install`, then `pnpm --filter @hana-id/smoke dev` (Vite on `http://localhost:5173`, port
+   fixed). It reads the env manifest at start (default `sandbox-dev`) but this page calls no Hana API.
+3. **Open** `http://localhost:5173/spike-email.html?client=<client id>` (or paste the ID into the field). Allow
+   popups for `localhost`.
+4. **For each of three accounts**: a personal Gmail account (`@gmail.com`); a Google Workspace account on its own
+   domain (Google returns `hd` for it); and a Google account registered with a non-Google address (a consumer Google
+   account created with, for example, an Outlook or company address, no Workspace). Run **B, C, D, then E and E2**
+   (A too if you want its answer; it doesn't gate anything). Between accounts, remove the client's access at
+   <https://myaccount.google.com/connections> only if you want to see the first-time consent screen again; the gate
+   is about what Google does with the grant in place, so don't remove it between the legs of one account.
+5. **Write down** what each consent screen listed, copy the *Summary to paste back* block (booleans, claim names,
+   error codes and scope names only: never an address, a `sub` or a token), and record both in `docs/context.md`.
+
+### The legs
 
 - **A** asks once: `response_type=id_token token`, `scope=openid email`. The summary's `oneRequestUsable` is true only
   when the ID token carried no personal claim (`emailInIdToken: false`) and an access token came with it.
@@ -282,21 +314,43 @@ redirect-URI rule as `spike.html`; no Hana API, no chain.
 - **D** (after B): B's silent request again (`prompt=none`, the same `login_hint`), with no interactive retry. With
   the grant no longer revoked (D265) it must answer an access token silently (`silentAccessToken: true`, no
   `silentError`); a `silentError` means Google asks for consent at every login.
+- **E** is D270's `'token_first'`, exactly as production will run it. Step 1: `response_type=token`,
+  `scope=openid email`, `prompt=select_account` (no ID token in this answer: `idTokenInAccessAnswer: false`). Step 2:
+  the account's `sub` from that access token, by `POST https://oauth2.googleapis.com/tokeninfo` with the form body
+  `access_token=…` (as `apps/email-issuer/src/google.ts` `checkAccessToken`; the token never goes in a URL). The
+  summary records `tokeninfoReachable` (false when the browser's fetch threw: a CORS refusal from the page, or no
+  network; the console says which), `tokeninfoStatus`, `tokeninfoHasSub`, `tokeninfoAudIsClient` and
+  `tokeninfoScopes`. (Checked from the command line on 2026-11-04 with a dummy token: tokeninfo answers
+  `access-control-allow-origin` with the request's `Origin`, any origin, and its preflight allows `POST` with
+  `content-type`; E confirms it in a real browser with a real token.) Without a `sub` no silent request is sent (`silentRequest: 'not sent: no sub'`). Step 3: a
+  silent `response_type=id_token`, `scope=openid`, `prompt=none`, `login_hint=<that sub>` request with a fresh nonce;
+  the summary has `silentIdToken` or Google's `silentError` (no interactive retry), the ID token's
+  `idTokenClaimNames` and `idTokenPersonalClaims`, `emailInIdToken`, `nonceMatches` and `sameAccount` (the ID token's
+  `sub` equals tokeninfo's), plus step 1's `userinfo` checks (what google-match would read). The verdict
+  `tokenFirstUsable` is true only when the silent request answered an ID token with no personal claim, for the same
+  account, with the nonce sent.
+- **E2** (after E, its button unlocks): E's silent `id_token`/`openid` request alone, again, for E's account, with a
+  fresh nonce: a returning user's login now that the email grant exists. Its verdict `returningTokenClean` has the
+  same four conditions; it shows a returning user's on-chain token stays clean.
 
-A, B and D then call Google's `tokeninfo` by POST (aud and sub match; the token never goes in a URL) and `userinfo`
+A, B, D and E then call Google's `tokeninfo` by POST (aud and sub match; the token never goes in a URL) and `userinfo`
 (an address, `email_verified`, `hd` present and equal to the address's domain, a Gmail address), from the page, and
 never revoke the token (as production, D265). Each leg has its own single-use `state`, and a fragment with more than
 one `state` is ignored, as production's callback. The summary holds booleans and claim names only (never the
-address, `sub` or a token). Run it with a personal Gmail account, a Workspace account whose `hd` is its own domain,
-and a Google account registered with an outside address, each through A, B, C and D in that order; write down what
-the consent screen lists, and record the results in `docs/context.md`. The popup has no one-request flow any more
-(D273: Google puts `email` in that ID token, D270); `GOOGLE_EMAIL_FLOW` may become `'token_first'` (built, D270) once
-legs C and E pass (a reviewed one-line change, `docs/operations.md` "Turning linking on (batch 8b)"; the popup, the
-vault and the API keep refusing an ID token with `email` either way).
+address, `sub` or a token). A's `'one_request'` stays rejected (D270: Google puts `email` in that ID token), and the
+popup no longer has that flow (D273); A is kept to record that. `GOOGLE_EMAIL_FLOW` may become `'token_first'` (built,
+D270: `packages/web/src/auth/google.ts`, the same three steps as E, with one interactive openid-only retry of step 3,
+D273) once the gate below passes: a reviewed one-line change, `docs/operations.md` "Turning linking on (batch 8b)".
 
 **Gate (D265):** legs C and D on real Google, by the user, before batch 8b reaches real users: C must show no
 lockout and D must succeed silently (`docs/email-login-build-plan.md` batch 8b, `docs/operations.md` "Turning
 linking on (batch 8b)").
+
+**Gate (D270):** legs **C and E must pass**, for all three accounts, before `GOOGLE_EMAIL_FLOW` becomes
+`'token_first'`: C with `tokenHasPiiLockout: false`, E with `tokenFirstUsable: true` (and E2 with
+`returningTokenClean: true`). If E shows `tokeninfoReachable: false`, the popup can't take the `sub` from tokeninfo
+in the browser and `'token_first'` needs another source for `login_hint` before the switch. The vault and the API
+keep refusing any ID token with a claim outside the allow-list (`token_has_pii`) either way.
 
 ## Test checklist
 
@@ -305,8 +359,8 @@ linking on (batch 8b)").
 - [ ] **Login through the vault**: one click on *Log in with Hana* → Google's account chooser → addresses. The run
       has every login stage of [Timings](#timings) with a small `other`, and the log shows no `/v1/sessions` or
       `/v1/derive` call from this page (DevTools → Network, this page and the vault frame: one `POST /v1/login`).
-- [ ] **openid-only token**: the login succeeds with `REJECT_PII_ON_SESSIONS` either way (the vault and `/v1/login`
-      always apply the claim allow-list; a refused claim shows as `token_has_pii` with the claim).
+- [ ] **openid-only token**: the login succeeds (the vault and the API always apply the claim allow-list; a refused
+      claim shows as `token_has_pii` with the claim).
 - [ ] **Vault agrees with the in-page derivation**: same Google account and scope, a direct-page run at `key_index` 0
       and a vault login: the vault run notes "same addresses as the in-page derivation".
 - [ ] **Isolation, app A vs B**: same account label, apps in different scopes: "same account, other scope … addresses
@@ -347,17 +401,19 @@ linking on (batch 8b)").
 - [ ] **Safari/WebKit storage retention**: in Safari, log in, then reload after 10 min, 1 h and a day idle, and after
       quitting and reopening Safari: each reload gives an unlock run, or a logged-out load (no unlock run) if Safari
       dropped the vault's partitioned IndexedDB. Record which in `docs/context.md`.
-- [ ] **Ship gate**: 10 vault logins and 10 direct-page sessions, with no `VITE_HANA_API_URL` override (the direct page
-      needs `REJECT_PII_ON_SESSIONS = "0"`): the panel's verdict. Record it, the gas of a few
+- [ ] **Ship gate**: 10 vault logins and 10 direct-page sessions, with no `VITE_HANA_API_URL` override: the panel's
+      verdict. Record it, the gas of a few
       `create_session_and_derive` transactions (nearblocks) and the unlock total in `docs/context.md`.
 - [ ] **BLS precheck CPU time** (D64, before `BLS_PRECHECK` is turned on in any env): on a scratch deploy only, on the
       Workers Paid plan, set the var `BLS_PRECHECK = "1"`, do a few vault logins and read the `/v1/login` CPU time
       per request from the Workers dashboard (the Worker's metrics or its logs). Record it in `docs/context.md` next to the
       ship gate and the unlock total, then delete the scratch deploy.
-- [ ] **After `REJECT_PII_ON_SESSIONS = "1"`** (the user's switch): the direct page's sign-in fails with "400
-      token_has_pii … the direct flow is retired here", and the vault page keeps logging in.
 
-### Direct page (while `REJECT_PII_ON_SESSIONS = "0"`)
+### Direct page
+
+- [ ] **openid-only sign-in**: DevTools → Network shows the popup's `accounts.google.com/o/oauth2/v2/auth` request with
+      `scope=openid` and `response_type=id_token` (no `gsi/client` script anywhere), and `POST /v1/sessions` succeeds.
+      A token with any other claim would be logged as "… outside the allow-list (openid only): not sent".
 
 - [ ] **Real MPC**: a derive succeeds and the pairing check passes against the pinned `ckdNetworkKey` (a wrong pinned
       key fails with "CKD response failed the pairing check").

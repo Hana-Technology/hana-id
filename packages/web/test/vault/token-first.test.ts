@@ -212,8 +212,9 @@ describe('the on-chain token stays openid-only (D25, D270), under every flow', (
     const t = await tab(b);
     const pending = t.request('hana_login');
     const run = await popupHello(t);
-    await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { error: 'token_has_pii' });
-    expect((await pending).error?.code).toBe('token_has_pii');
+    await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { error: 'token_has_pii', claim: 'email' });
+    // The same error as the vault's own refusal: the partner hears which claim.
+    expect((await pending).error).toMatchObject({ code: 'token_has_pii', data: { claim: 'email' } });
     expect(b.backend.count('/v1/login')).toBe(0);
   });
 

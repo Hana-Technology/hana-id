@@ -4,7 +4,7 @@ Carried over from the design conversation in wend-widget-demo (Oct 2026). Plan d
 https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi · Login journey diagrams: https://claude.ai/artifact/73xpB7AZknWd9s38xw4Fjo ·
 SDK security page: https://claude.ai/artifact/AwzpW8xZ7pAuMoTYgBfcvo
 
-Last verified: 2026-11-02 against `develop` @ 1c6a124 and `docs/operations.md` (branch `docs/consistency-pass`: "Next
+Last verified: 2026-11-04 for the claim allow-list notes (branch `fix/sessions-allow-list`: always on, `REJECT_PII_ON_SESSIONS` retired, D271); 2026-11-02 against `develop` @ 1c6a124 and `docs/operations.md` (branch `docs/consistency-pass`: "Next
 steps" and "Before mainnet", the user-mail provider, the batch B status note). The dated sections below are records
 of their day; "Next steps" is the current list.
 
@@ -218,7 +218,8 @@ receipts and the latency median, D26), unlock latency from SIN with the page ren
 (`timings.scopeCheck`/`scopeWait`, D56), the BLS precheck's Worker CPU time (D64, before `BLS_PRECHECK` is on
 anywhere), one forced MPC-side failure (Q11), and Safari/WebKit retention of partitioned IndexedDB (Q4). The
 cross-project `sub` test passed (spike above, D42). After the smoke run on the vault (the spec's step 7):
-`REJECT_PII_ON_SESSIONS = "1"` and session-key rotation to allowlist state 2 (gate passes) or 3 (gate fails).
+session-key rotation to allowlist state 2 (gate passes) or 3 (gate fails). (The spec's `REJECT_PII_ON_SESSIONS`
+switch is gone: the claim allow-list is always on, D271.)
 
 ## Batch C decisions (2026-10-27; spec `docs/batch-c-spec.md`, draft)
 
@@ -361,9 +362,9 @@ hard-coded · NEAR Auth/FastAuth and per-tx signing code no longer needed.
   in memory, and on disk only under the API's share (`'session'` mode).
 - CKD network key read over RPC → pinned per env build (`ckdNetworkKey`), checked by the build (`ckdKeyProblem`).
 - Full Google token (with email) public on chain → the openid-only implicit flow plus the claim allow-list on
-  `/v1/login`. `/v1/sessions` gets the allow-list when the user sets `REJECT_PII_ON_SESSIONS = "1"` after the spec's
-  step 7 (only `apps/smoke`'s `direct.html` still uses Google Identity Services). A direct contract caller is not
-  bound by it.
+  every route that relays a Google token (`/v1/login`, `/v1/sessions`, the link routes, `/v1/owner-actions`), always
+  on (D271, D274); `apps/smoke`'s `direct.html` moved to openid-only tokens. A direct contract caller is not bound
+  by it.
 - HKDF salt `hana-embed-ckd-v1` → derivation v1 (`hana-id/chain-keys/v1/extract`), confirmed by the user.
 
 ## Next steps

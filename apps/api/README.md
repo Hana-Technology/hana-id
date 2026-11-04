@@ -40,7 +40,7 @@ keys, e.g. the content of `.secrets/<env>/relayer-keys.json`) → `wrangler secr
 | `NEAR_RPC_FALLBACK` | optional var (manifest) | `rpcFallback`, written only when set: the vault and export pages' `connect-src` (D65); the API itself reads only `NEAR_RPC` |
 | `DO_LOCATION_HINT` | optional var (manifest) | `cloudflare.durableObjectLocation`: region of the shared Durable Objects (`src/placement.ts`) |
 | `VAULT_ORIGIN`, `AUTH_ORIGIN` | vars (manifest) | `vaultOrigin`, `authOrigin`; `gen` refuses an env without them |
-| `BLS_PRECHECK`, `REJECT_PII_ON_SESSIONS` | vars | `"0"` everywhere until their step in `docs/batch-b-spec.md` ("Order of work") |
+| `BLS_PRECHECK` | var | `"0"` everywhere until its step in `docs/batch-b-spec.md` ("Order of work"). (`REJECT_PII_ON_SESSIONS` is retired: the claim allow-list is always on and a leftover var is ignored, D271) |
 | `RELAYER_KEYS` | secret | Session pool: JSON array of function-call keys on `RELAYER_ACCOUNT` (receiver `SIGNER_ACCOUNT`; `create_session`, `create_session_and_derive`, `derive_key`, `revoke_session`, `prune_sessions`) |
 | `OWNER_RELAYER_KEYS` | secret | Owner pool (small allowance), same format: `propose_change`, `cancel_change`, `remove_client`, `disable_shared_login`, `execute_change`, `register_scope`, `apply_pending_config`. Without it `/v1/owner-actions` answers 503 and logins are unaffected |
 | `GAS_<METHOD>_TGAS` | optional vars | Per-method gas override in Tgas (integer 1..300), e.g. `GAS_DERIVE_KEY_TGAS=80`; invalid values are ignored (logged) |
@@ -92,6 +92,8 @@ Checks, in order (rejected before anything is relayed):
      fail), `iss` → provider, `exp` with 60 s of clock skew (`401 invalid_token`, `400 unsupported_issuer`,
      `400 token_expired`, `503 issuer_keys_unavailable`). Segments must be canonical base64url (no unused bits set),
      as the contract's decoder requires.
+   - Claim allow-list, always (D271): a Google token with a claim outside `iss azp aud sub iat exp nonce nbf jti
+     auth_time` (`src/claims.ts`) is `400 token_has_pii` with `data: {claim}`, and nothing is relayed.
    - The token must carry a `nonce` equal to the session nonce recomputed from the body, `SIGNER_ACCOUNT` and the app's
      `scope_id` (`400 nonce_mismatch`; layout in `src/session-crypto.ts` and `docs/batch-a2-shared-client.md`).
    - Scope: if `scope_for_client(provider, aud)` (cached 60 s, a miss 10 s; dropped in this isolate after an owner
@@ -164,16 +166,17 @@ key, so `OPTIONS` succeeds when any active app allows the origin; the real reque
 ### `POST /v1/login` (`src/login.ts`)
 
 One transaction per login. Checks, in order: the gate (checks 1–3, `relay` quota); the body (`400 bad_request`); the
-token as for `/v1/sessions`, plus the claim allow-list (`src/claims.ts`: only `iss azp aud sub iat exp nonce nbf jti
-auth_time`; anything else is `400 token_has_pii` with `data: {claim}`) and the nonce; scope and `session_key_in_use`
+token as for `/v1/sessions`, the claim allow-list included (`src/claims.ts`: only `iss azp aud sub iat exp nonce nbf
+jti auth_time`; anything else is `400 token_has_pii` with `data: {claim}`), and the nonce; scope and `session_key_in_use`
 side by side (`403 …`, `409 session_exists`); the signature over counter 1 (`401 invalid_signature`); pk1/pk2 each one
 compressed, non-identity point (`400 invalid_app_key`); with `BLS_PRECHECK = "1"` (off everywhere, D64) the pairing
 `e(pk1, −g2) · e(g1, pk2) = 1` (`400 invalid_app_key`; the same var gates it on `/v1/derive`). Failures map by the
 failing receipt's executor: the signer → `422 contract_rejected` (with `reason: "session_key_in_use"` for that panic;
 the session was not created), `MPC_ACCOUNT` → `422 ckd_failed` with `session: {used: 1}` (the session is committed),
 else `502 near_error`; `504 timeout` and relayer errors keep their codes and `nearTx`. Usage: one `login` event
-(relayed when the transaction can have executed; a uid on success). `/v1/sessions` applies the claim allow-list too once
-`REJECT_PII_ON_SESSIONS = "1"`. From `AUTH_ORIGIN` (the export window, a key export) the call is also limited to 3 per
+(relayed when the transaction can have executed; a uid on success). Every route that verifies a Google token
+(`/v1/sessions`, `/v1/login`, the link routes through `src/login-token.ts`, and `/v1/owner-actions`) applies the
+claim allow-list, with no flag or option to skip it (D271, D274). From `AUTH_ORIGIN` (the export window, a key export) the call is also limited to 3 per
 hour per `(app, sha256(path))`, counted right after the nonce check and before anything is relayed (`429 rate_limited`
 + `retry-after`, `503 rate_limiter_unavailable`; D59).
 
@@ -306,7 +309,8 @@ including the nonces):
 
 - `auth` token: RS256 signature against the issuer's JWKS (Google's, cached per its `max-age`), issuer, expiry
   (`401 invalid_token` / `token_expired`, `400 unsupported_issuer`, `503 issuer_keys_unavailable` when the JWKS can't
-  be fetched); `(provider, aud)` ∈ `get_config().console_audiences` (cached 60 s; `403 not_console_token`); the token
+  be fetched); the claim allow-list, as login tokens (`400 token_has_pii` with `data: {claim}`, D274: the token goes
+  on chain); `(provider, aud)` ∈ `get_config().console_audiences` (cached 60 s; `403 not_console_token`); the token
   has not been relayed before (a token is bound to one action by its nonce; `409 token_used`). The token is reserved
   atomically in a Durable Object before relaying, so concurrent copies can't all pass; the reservation is released
   only when the request is turned away by the global cap or the transaction certainly never executed
@@ -318,7 +322,8 @@ including the nonces):
   (`409 change_locked`). `remove_client`: the client is in the scope (`404 unknown_client`) and not the last one unless the scope
   has `allow_shared` (`409 last_client`). `disable_shared_login`: shared login is on (`409 shared_login_disabled`) and
   the scope has a client of its own (`409 last_client`). `propose_change(AddClient)`: `client_proof` is a genuine token
-  for that `(provider, aud)` (`400 invalid_client_proof`), not already in the scope (`409 client_registered`), not a
+  for that `(provider, aud)` (`400 invalid_client_proof`) with only allow-listed claims (`400 token_has_pii`, D274),
+  not already in the scope (`409 client_registered`), not a
   shared or pending shared client (`409 shared_client`). `propose_change(SetAllowShared)`: not already on
   (`409 shared_login_enabled`).
 - Then the global cap (only requests that passed the checks count).

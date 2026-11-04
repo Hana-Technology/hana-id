@@ -2,7 +2,7 @@
 
 Last verified against code: 2026-11-04 (branch `feat/google-token-first`: the issuer's `POST /v1/email/google-record`
 and its per-IP limit, google-match's user-directory write (D269, D270), the auth page Worker's callback CSP with Google's
-tokeninfo in an env with an email issuer); 2026-11-03 (branch `fix/8b-rereview`, onto `feat/email-login-8b`: the issuer's CORS exposes `retry-after`); 2026-11-03 (branch `feat/email-login-8b` review fixes: the login relay's 40 writes a minute per IP and 12 KiB body, google-match's `google_account_mismatch`, no revocation and 120 per 10 min per IP, D264, D265, D267); 2026-11-03 (branch `feat/email-login-8b`: the login relay's writes from `VAULT_ORIGIN` and the follow-up slots, the vault page's `connect-src` with `EMAIL_ISSUER_URL`, the issuer's case-B `verify` answering `sub` with its `linkTicket`, the web as the caller of google-match, `/v1/sessions/revoke` and `/v1/link*`; D254–D259); 2026-11-03 (branch `fix/demo-polish`: `GET /v1/app` reads its D1 rows and the registry
+tokeninfo in an env with an email issuer); 2026-11-04 (branch `fix/sessions-allow-list`: `/v1/sessions`'s claim allow-list always on, `/v1/owner-actions`'s `token_has_pii` for owner tokens and client proofs, the `REJECT_PII_ON_SESSIONS` binding gone; D271, D274); 2026-11-04 (branch `feat/user-emails`: the issuer's `verify` writes the user directory, its D1's migration 0002 and the `directory_write_failed` log; D269); 2026-11-03 (branch `fix/8b-rereview`, onto `feat/email-login-8b`: the issuer's CORS exposes `retry-after`); 2026-11-03 (branch `feat/email-login-8b` review fixes: the login relay's 40 writes a minute per IP and 12 KiB body, google-match's `google_account_mismatch`, no revocation and 120 per 10 min per IP, D264, D265, D267); 2026-11-03 (branch `feat/email-login-8b`: the login relay's writes from `VAULT_ORIGIN` and the follow-up slots, the vault page's `connect-src` with `EMAIL_ISSUER_URL`, the issuer's case-B `verify` answering `sub` with its `linkTicket`, the web as the caller of google-match, `/v1/sessions/revoke` and `/v1/link*`; D254–D259); 2026-11-03 (branch `fix/demo-polish`: `GET /v1/app` reads its D1 rows and the registry
 and the registry side by side, `get_config` only when a shared client is needed, its `settings` and `chain` phases and
 its `timings` for `pk_test_` apps, the 8 s timeout on every contract view, the self-healing shared `get_config` read;
 D261); 2026-11-02 (branch `feat/email-login-8a`: the auth page Worker's `/login/email` and its
@@ -341,8 +341,9 @@ The scope is always the app's (D1). Checks after the gate and shape (`400 bad_re
    finite number is `401 invalid_token`. `email`, `email_verified`, `iat`, `hd`, `azp`, `amr` and `auth_time` are
    not read, and one of the wrong JSON type is ignored, not refused (D201). A valid signature's `kid` is recorded once per isolate after the
    response (`issuer_key_observations.first_token_ms`, here and on `/v1/login`; the kid only, never the token).
-2. Only with `REJECT_PII_ON_SESSIONS = "1"`: claim allow-list (`iss azp aud sub iat exp nonce nbf jti auth_time`),
-   else `400 token_has_pii` with `data: {claim}`.
+2. Claim allow-list, always (D271; a Google token only, an email token is held to its own claims):
+   `iss azp aud sub iat exp nonce nbf jti auth_time`, else `400 token_has_pii` with `data: {claim}`, before any chain
+   read; nothing is relayed.
 3. `nonce` equals the session nonce recomputed with `SIGNER_ACCOUNT` and the app's scope (`400 nonce_mismatch`).
 3b. (L) `signature` verifies as the proof of possession for exactly these parameters (`401 invalid_signature`): only
    the session key's holder can open a session, and a proof seen once can't open the key with other parameters.
@@ -764,14 +765,15 @@ No app key. `{"method", "args"}` only, `args` exactly as the contract takes them
 | 409 | `shared_login_disabled` / `last_client` | `disable_shared_login` |
 | 400 / 409 | `invalid_client_proof` / `client_registered`, `shared_client` | `AddClient` |
 | 409 | `shared_login_enabled` | `SetAllowShared` already on |
+| 400 | `token_has_pii` | the `auth` token or the `client_proof` has a claim outside the allow-list (`data: {claim}`, D274) |
 | 409 | `token_used` | this exact token was reserved before |
 | 503 / 502 | `issuer_keys_unavailable` / `near_unavailable` | JWKS / chain read failed |
 
 The `auth` token and the `client_proof` are checked like a login token (RS256, issuer, `exp` without skew, a finite
-`exp`), the proof for its `(provider, aud)`. Their other claims are not read: an `email`, `email_verified` or `hd`
-(a console token should be `openid` only, but nothing refuses one that isn't) is ignored, as is any of the
-optional claims with the wrong JSON type (D201), and none is logged, returned or stored; only the token's sha256
-is kept. The token itself is relayed to the contract unchanged.
+`exp`), the proof for its `(provider, aud)`. Both are relayed to the chain, where they are public, so both are held to the
+login tokens' claim allow-list (D274): a claim outside it (`email`, `email_verified`, `hd`, …) is `400
+token_has_pii` with `data: {claim}`, before the token is reserved or anything relayed. An allow-listed claim of the
+wrong JSON type is ignored (D201). No claim is logged, returned or stored; only the token's sha256 is kept. The token itself is relayed to the contract unchanged.
 
 The token's sha256 is reserved atomically (`RateLimiter` object `owner-actions:tokens`, until the token's `exp`)
 before relaying. Then the caps (table above) are asked from the most specific in, at one instant; when one refuses,
@@ -1160,7 +1162,7 @@ Vars are generated from `envs/<env>.json` by `apps/api/scripts/gen-wrangler.ts` 
 | `API_URL` | var | `apiUrl` | vault page `connect-src` |
 | `EMAIL_ISSUER_URL` | var, optional | `emailIssuer.url`, else `apiUrl` (only with an `emailIssuer` block) | the vault page's `connect-src` (google-match, batch 8b) |
 | `DO_LOCATION_HINT` | var | `cloudflare.durableObjectLocation` | only written when set |
-| `BLS_PRECHECK`, `REJECT_PII_ON_SESSIONS` | var | `gen` writes `"0"` | `"1"` turns each on |
+| `BLS_PRECHECK` | var | `gen` writes `"0"` | `"1"` turns it on (`REJECT_PII_ON_SESSIONS` is retired: the claim allow-list is always on, and a leftover var is ignored, D271) |
 | `APP_CHANGE_DELAY_MS` | var | `appChangeDelayMs` | the guarded-change delay (`guarded/config.ts`): missing, not an integer, outside 60 s..7 d, or under 24 h on `mainnet` makes every guarded change refuse with `internal` (`AdminRpc.addOrigins`, `proposeChange`, `createApp`, `ackNotice`) |
 | `NETWORK` | var | `network` | the production origin rules on `mainnet` (`guarded/config.ts`) |
 | `REFUSED_ORIGINS` | var | every Hana origin (`@hana-id/env` `hanaOwnOrigins`), JSON array | refused as app origins (`guarded/config.ts`; the CLI applies the same list from the manifest) |
@@ -1380,6 +1382,9 @@ challenge; 10 wrong from one requester lock it out of that mailbox for an hour; 
 only the owner slot (4) and the ticket slot (3) are open, and past 25 nothing until the UTC day ends), `410
 challenge_expired`, `429 rate_limited` (IP, or a lock), `403 email_not_enabled` (the app was suspended or turned email
 off meanwhile: nothing is minted). A correct code is single use: the challenge is deleted before the token is minted.
+Every `200` (each purpose, case B included: the code proved the address) also records the email identity in the user
+directory (`user_emails`, `user_email_apps`: its `e1.` sub, the normalized address, the app and scope; D269), after the
+answer and never changing it; errors and `409`s record nothing.
 
 - `deviceTicket`: `dt2.` + 75 characters, an owner device ticket for this exact address (30 days, its own nonce;
   registered in the mailbox object, at most 5 live per address, a newer one revoking the oldest); batch 8's popup keeps it on `authOrigin` and sends it with the next `start`. A verified challenge also
@@ -1536,16 +1541,19 @@ The guess bound: ≤ 25 failed checks a day per mailbox plus ≤ 2 per unlock (�
 | `RateLimiter`, one per subject (`mbx:<mailbox key>`, `dom:<domain key>`, `ip:<subject or prefix>`, `app:<id>`, `global`, `staff:<sha256 hex>`) | fixed-window counts; in a mailbox's object also the live challenges' expiry times, the requesters' locks, the unlock grant (sha256 of its token, 24 h), per-ticket send counts, ticket revocations (per address key, 30 days) and 30 days of staff actions; in a domain's, the per-prefix shares (hashed prefixes) and 8 days of verified-login counts; in `global`, the owner pool and per-app use; in `global` the per-app budget use; an alarm drops what ended |
 | `Outbox` (binding `OUTBOX`, `local*` envs only) | the outbox stub's last 200 messages, read by tests through the binding; no route |
 
-Issuer D1 (`apps/email-issuer/migrations/0001_init.sql`): `email_issuance(jti, app_id, purpose, kid, iat)` (24 months,
+Issuer D1 (`apps/email-issuer/migrations/0001_init.sql`, `0002_user_emails.sql`): `email_issuance(jti, app_id, purpose, kid, iat)` (24 months,
 D90; the pruning job is a batch C13 follow-up), `email_hints(scope_id, email_sub, google_sub, hosted, updated_at_ms)`
 (a hosted one kept while the scope exists, D122; a non-hosted one honoured and kept 180 days after its last login,
 D199), `email_suppressions(email_key = HMAC(K_sup, exact normalized address), reason
 bounce|complaint, at_ms)` (K_sup derived from K_sub), `email_admin_audit(at_ms, staff, action
-client_proof|unlock|unsuppress|revoke_tickets, ticket, scope_id?, action_nonce?, jti?, subject?)`. Migration
-`0002_user_emails.sql` (D269): the user directory, `user_emails(provider, sub, email, email_verified, hosted,
-first_seen_ms, last_seen_ms)` and `user_email_apps(provider, sub, app_id, scope_id, first_seen_ms, last_seen_ms)`, for
-Hana staff only; its Google rows are written by google-match and google-record. Outside that directory the issuer
-stores no address readably (logs, the other tables, Durable Objects). SendGrid does: its suppression lists keep an address until it
+client_proof|unlock|unsuppress|revoke_tickets, ticket, scope_id?, action_nonce?, jti?, subject?)`; the user directory
+(0002, D269): `user_emails(provider email|google, sub, email, email_verified, hosted?, first_seen_ms, last_seen_ms)`,
+key (provider, sub), indexes on `email` and `last_seen_ms`, and `user_email_apps(provider, sub, app_id, scope_id,
+first_seen_ms, last_seen_ms)`, key (provider, sub, app_id), index (app_id, last_seen_ms); written by `src/directory.ts`
+after the answer (`waitUntil`): email rows by `verify`, Google rows by google-match and google-record (D270); read by
+Hana staff with `admin user:list` / `user:find` only (no route serves it). The
+verified address is stored readably there and only there: no log line, other table or Durable Object holds it
+(a live challenge's copy is encrypted, D197). SendGrid also keeps addresses: its suppression lists keep an address until it
 is removed there, whatever the activity retention below. `APP_DB` is the API's D1, read only (`apps`, `plans`).
 
 Vars (from `emailIssuer`, `scripts/gen-wrangler.ts`): `ENV_NAME`, `NEAR_RPC`, `NEAR_RPC_FALLBACK`, `SIGNER_ACCOUNT`,
@@ -1571,6 +1579,7 @@ the add-on.
 the domain key, the mail that filled the domain's day), `staff_mail` (`code` `unlock` / `confirm`, or the provider's
 reason), `device_tickets_revoked` (warn, staff), `missing_client_ip` (warn), `mailbox_unlocked` (warn,
 staff), `suppression_removed` (warn, staff), `mailbox_guess_limit` (error: `code` `backstop` or `ceiling`, `subject` =
-12 characters of the mailbox key; staff see targeted mailboxes), `google_revoke` (warn). Never an address, a code, a
+12 characters of the mailbox key; staff see targeted mailboxes), `google_revoke` (warn), `directory_write_failed`
+(warn: `appId`, `scopeId`; a user directory write failed, the login went on, D269). Never an address, a code, a
 `sub`, a token, a device or link ticket, an unlock or confirmation token, an access token, a key or a body: `test/privacy.test.ts` greps every line of
 every flow for them.

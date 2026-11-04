@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Hana ID smoke test (direct): Google callback</title>
+  </head>
+  <body>
+    <p>Returning the Google sign-in to the direct page…</p>
+    <script type="module">
+      // Google's redirect for the direct page's openid-only sign-in (src/google.ts). Hands the URL fragment (id_token
+      // and state, or error and state) to the opener on this same origin, then closes. The fragment is never shown.
+      const hash = location.hash.slice(1);
+      history.replaceState(null, '', location.pathname);
+      const message = { t: 'hana-smoke-direct-callback', hash };
+      if (window.opener) {
+        window.opener.postMessage(message, location.origin);
+      } else {
+        // Google's pages may sever the opener (COOP): a same-origin BroadcastChannel instead, which stores nothing.
+        const channel = new BroadcastChannel('hana-smoke-direct-callback');
+        channel.postMessage(message);
+        channel.close();
+      }
+      window.close();
+    </script>
+  </body>
+</html>

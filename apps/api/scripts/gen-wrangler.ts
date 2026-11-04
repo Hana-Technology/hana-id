@@ -37,11 +37,11 @@ export const LOCAL_D1_ID = '00000000-0000-4000-8000-000000000000';
 export const COMPATIBILITY_DATE = '2026-10-01';
 
 /**
- * Batch B's runtime flags, off in every env until their step (docs/batch-b-spec.md, "Order of work"):
- * REJECT_PII_ON_SESSIONS once apps/smoke is on the vault, BLS_PRECHECK only after its CPU time is measured on the
- * Workers Paid plan.
+ * Batch B's runtime flags, off in every env until their step (docs/batch-b-spec.md, "Order of work"): BLS_PRECHECK
+ * only after its CPU time is measured on the Workers Paid plan. (REJECT_PII_ON_SESSIONS is gone: the claim allow-list
+ * is always on, D271.)
  */
-export const FLAG_DEFAULTS = { BLS_PRECHECK: '0', REJECT_PII_ON_SESSIONS: '0' } as const;
+export const FLAG_DEFAULTS = { BLS_PRECHECK: '0' } as const;
 
 /**
  * The identity token's vars (docs/identity-token-spec.md): its `iss`, the JWKS (public keys only), the signer kind and

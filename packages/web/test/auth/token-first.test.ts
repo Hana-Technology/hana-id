@@ -408,7 +408,7 @@ describe('the claim allow-list before anything is relayed (D270)', () => {
       const a = api();
       expect(await run(s.win, a)).toBe('stopped');
       expect(a.writeRelay).toHaveBeenCalledTimes(1);
-      expect(await decrypt(s.relayKey, s.state, a)).toEqual({ error: 'token_has_pii' });
+      expect(await decrypt(s.relayKey, s.state, a)).toEqual({ error: 'token_has_pii', claim: Object.keys(claim)[0] });
       expect(JSON.stringify(a.writeRelay.mock.calls)).not.toContain(jwt(claims));
       expect(s.win.location.assigned).toEqual([]);
       expect(pageText()).toContain('Code: token_has_pii');

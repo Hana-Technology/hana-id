@@ -20,10 +20,14 @@
       Local only: no Hana API, no chain. Tokens are decoded in this page; the access token goes only to Google
       (<code>tokeninfo</code> by POST, <code>userinfo</code>; never revoked, as production since D265: revoking ends
       the whole grant, so Google would ask again at every login). Nothing personal reaches the summary:
-      no address, no <code>sub</code>, no token. It answers whether one Google request can serve email linking
-      (<code>response_type=id_token token</code>, <code>scope=openid email</code>) with an ID token that stays
-      openid-only (D25), or whether the vault needs the fallback (a second, silent <code>response_type=token</code>,
-      <code>scope=email</code> request: <code>packages/web/src/auth/google.ts</code> <code>GOOGLE_EMAIL_FLOW</code>).
+      no address, no <code>sub</code>, no token. The on-chain ID token must stay openid-only (D25). A and B compare one
+      request (<code>response_type=id_token token</code>, <code>scope=openid email</code>) with the fallback (a second,
+      silent <code>response_type=token</code>, <code>scope=email</code> request); C and D check B's grant afterwards.
+      E is the flow decided in D270 (<code>GOOGLE_EMAIL_FLOW = 'token_first'</code> in
+      <code>packages/web/src/auth/google.ts</code>): an email access token first (<code>response_type=token</code>,
+      <code>scope=openid email</code>), its <code>sub</code> from <code>tokeninfo</code>, then a silent
+      <code>response_type=id_token</code>, <code>scope=openid</code>, <code>prompt=none</code> request for that account;
+      E2 repeats only that silent request, as a returning user's login. Legs C and E must pass before the switch.
       Run it with a personal Gmail account, a Workspace account on its own domain (<code>hd</code>), and a Google account
       registered with an outside address; note what the consent screen lists each time.
     </p>
@@ -35,6 +39,9 @@
     <br />
     <button id="three" disabled>C. After B: a plain openid login (does the ID token now carry email?)</button>
     <button id="four" disabled>D. After B: B's silent email request again (must succeed without a prompt)</button>
+    <br />
+    <button id="five">E. token_first (D270): email access token, tokeninfo sub, then a silent openid ID token</button>
+    <button id="fiveAgain" disabled>E2. After E: the silent openid request again (a returning user's on-chain token)</button>
     <div id="out"></div>
     <h2>Summary to paste back (no personal values)</h2>
     <pre id="summary">—</pre>
@@ -46,6 +53,8 @@
       let pending = null;
       /** After a B run: its client and account, for C and D (memory only, never in the summary). */
       let afterB = null;
+      /** After an E run that got a sub from tokeninfo: its client and account, for E2 (memory only, never in the summary). */
+      let afterE = null;
 
       function open(params) {
         const q = new URLSearchParams({ client_id: pending.clientId, redirect_uri: `${location.origin}/spike-callback.html`, response_mode: 'fragment', ...params, state: pending.state });
@@ -53,12 +62,24 @@
       }
 
       function begin(mode) {
-        const clientId = mode === 'three' || mode === 'four' ? afterB?.clientId : $('client').value.trim();
-        if (!clientId || !clientId.endsWith('.apps.googleusercontent.com')) return void note('Paste a Google client ID first.');
+        const clientId = mode === 'three' || mode === 'four' ? afterB?.clientId : mode === 'fiveAgain' ? afterE?.clientId : $('client').value.trim();
         if ((mode === 'three' || mode === 'four') && !afterB) return void note('Run B first.');
+        if (mode === 'fiveAgain' && !afterE) return void note('Run E first.');
+        if (!clientId || !clientId.endsWith('.apps.googleusercontent.com')) return void note('Paste a Google client ID first.');
         // Each leg has its own single-use state, as production's relay slots (auth/google.ts, login-storage.ts).
         pending = { mode, clientId, nonce: hex(16), state: hex(16), leg: 1, record: { run: summaries.length + 1, mode } };
         if (mode === 'one') open({ response_type: 'id_token token', scope: 'openid email', prompt: 'select_account', nonce: pending.nonce });
+        else if (mode === 'five') {
+          // Leg E, step 1 (D270 'token_first'): an access token only; Google's one screen lists the email. No nonce:
+          // this answer carries no ID token.
+          pending.step = 'access';
+          open({ response_type: 'token', scope: 'openid email', prompt: 'select_account' });
+        } else if (mode === 'fiveAgain') {
+          // Leg E2: E's silent openid request again, for E's account, with a fresh nonce (a returning user's login).
+          pending.step = 'silent';
+          pending.sub = afterE.sub;
+          silentIdToken();
+        }
         else if (mode === 'four') {
           // Leg D: B's second request again, silent only (D265: the grant from B was not revoked).
           pending.leg = 2;
@@ -72,6 +93,8 @@
       $('two').onclick = () => begin('two');
       $('three').onclick = () => begin('three');
       $('four').onclick = () => begin('four');
+      $('five').onclick = () => begin('five');
+      $('fiveAgain').onclick = () => begin('fiveAgain');
 
       window.addEventListener('message', (e) => {
         if (e.origin === location.origin && e.data?.t === 'spike-callback') void handle(e.data.hash);
@@ -104,6 +127,10 @@
         } catch {
           r.tokeninfo = 'unreachable from the browser';
         }
+        await userinfoChecks(accessToken, idClaims.sub, r);
+      }
+
+      async function userinfoChecks(accessToken, sub, r) {
         try {
           const ui = await fetch('https://openidconnect.googleapis.com/v1/userinfo', { headers: { authorization: `Bearer ${accessToken}` } }).then((x) => x.json());
           const email = typeof ui.email === 'string' ? ui.email : null;
@@ -113,10 +140,105 @@
           r.hdPresent = typeof ui.hd === 'string';
           r.hdEqualsEmailDomain = typeof ui.hd === 'string' && domain !== null && ui.hd.toLowerCase() === domain;
           r.emailIsGmail = domain === 'gmail.com' || domain === 'googlemail.com';
-          r.userinfoSubMatches = ui.sub === idClaims.sub;
+          r.userinfoSubMatches = ui.sub === sub;
         } catch {
           r.userinfo = 'unreachable from the browser';
         }
+      }
+
+      /**
+       * tokeninfo exactly as production calls it (apps/email-issuer/src/google.ts checkAccessToken): POST, the token in a
+       * form body, never in a URL. `reachable: false` means the fetch threw: from a page, the browser's CORS refusal (or
+       * no network); the page can't tell the two apart, the console can.
+       */
+      async function tokeninfo(accessToken) {
+        let res;
+        try {
+          res = await fetch('https://oauth2.googleapis.com/tokeninfo', {
+            method: 'POST',
+            headers: { 'content-type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ access_token: accessToken }).toString(),
+          });
+        } catch {
+          return { reachable: false, status: null, body: {} };
+        }
+        let body = null;
+        try {
+          body = await res.json();
+        } catch {
+          // Not JSON: the checks below see an empty body.
+        }
+        return { reachable: true, status: res.status, body: body && typeof body === 'object' && !Array.isArray(body) ? body : {} };
+      }
+
+      /** Leg E's silent request (and E2's): id_token, openid only, no prompt, for the account's sub, a fresh nonce. */
+      function silentIdToken() {
+        pending.nonce = hex(16);
+        pending.state = hex(16);
+        open({ response_type: 'id_token', scope: 'openid', prompt: 'none', login_hint: pending.sub, nonce: pending.nonce });
+      }
+
+      /** Leg E (D270 'token_first') and E2. Each verdict is true only when every one of its checks is. */
+      async function handleTokenFirst(p) {
+        const r = pending.record;
+        const verdict = pending.mode === 'five' ? 'tokenFirstUsable' : 'returningTokenClean';
+        if (pending.step === 'access') {
+          if (p.get('error')) {
+            r.error = p.get('error');
+            r[verdict] = false;
+            return finish();
+          }
+          const accessToken = p.get('access_token');
+          r.accessToken = !!accessToken;
+          r.idTokenInAccessAnswer = !!p.get('id_token');
+          if (!accessToken) {
+            r[verdict] = false;
+            return finish();
+          }
+          // The account's sub for login_hint, the way production gets it.
+          const ti = await tokeninfo(accessToken);
+          const o = ti.body;
+          r.tokeninfoReachable = ti.reachable;
+          if (!ti.reachable) r.tokeninfo = 'fetch threw: CORS refused from this page, or no network (see the console)';
+          r.tokeninfoStatus = ti.status;
+          r.tokeninfoHasSub = typeof o.sub === 'string' && o.sub.length > 0;
+          r.tokeninfoAudIsClient = o.aud === pending.clientId && (o.azp === undefined || o.azp === pending.clientId);
+          r.tokeninfoScopes = String(o.scope ?? '').split(' ').filter(Boolean).sort();
+          r.tokeninfoHasEmail = typeof o.email === 'string';
+          if (!r.tokeninfoHasSub) {
+            r.silentRequest = 'not sent: no sub';
+            r[verdict] = false;
+            return finish();
+          }
+          pending.step = 'silent';
+          pending.sub = o.sub;
+          pending.accessToken = accessToken;
+          return silentIdToken();
+        }
+        // The silent request's answer: Google's error code, or the ID token that would go on chain.
+        if (p.get('error')) {
+          r.silentIdToken = false;
+          r.silentError = p.get('error');
+          r[verdict] = false;
+          return finish();
+        }
+        const jwt = p.get('id_token');
+        r.silentIdToken = !!jwt;
+        if (!jwt) {
+          r[verdict] = false;
+          return finish();
+        }
+        const claims = decode(jwt);
+        r.idTokenClaimNames = Object.keys(claims).sort();
+        r.idTokenPersonalClaims = PII.filter((k) => k in claims);
+        r.emailInIdToken = 'email' in claims;
+        r.nonceMatches = claims.nonce === pending.nonce;
+        r.sameAccount = claims.sub === pending.sub;
+        r.accessTokenWithIdToken = !!p.get('access_token');
+        // E only: step 1's access token is what google-match reads the address with (userinfo; never in the summary).
+        if (pending.accessToken) await userinfoChecks(pending.accessToken, claims.sub, r);
+        r[verdict] = r.silentIdToken && r.idTokenPersonalClaims.length === 0 && r.sameAccount && r.nonceMatches;
+        return finish();
       }
 
       async function handle(hash) {
@@ -126,6 +248,7 @@
         const states = p.getAll('state');
         if (states.length !== 1 || !pending.state || states[0] !== pending.state) return void note('state mismatch: ignored');
         pending.state = null;
+        if (pending.mode === 'five' || pending.mode === 'fiveAgain') return void (await handleTokenFirst(p));
         const r = pending.record;
         if (pending.leg === 2) {
           // The fallback's second request: silent first, then once more without prompt=none (not in leg D).
@@ -186,6 +309,10 @@
           afterB = { clientId: pending.clientId, sub: pending.idClaims.sub };
           $('three').disabled = false;
           $('four').disabled = false;
+        }
+        if (pending.mode === 'five' && pending.sub) {
+          afterE = { clientId: pending.clientId, sub: pending.sub };
+          $('fiveAgain').disabled = false;
         }
         pending = null;
         $('summary').textContent = JSON.stringify(summaries, null, 1);

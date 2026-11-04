@@ -3,8 +3,11 @@
 // it, so a request is relayed only if it would plausibly succeed: a genuine (signature-checked), unexpired console
 // token of an owner of an existing scope, a change that exists (and, for execute_change, is unlocked), and a client
 // proof that matches the change. The contract still checks everything, including the nonces.
+// Both tokens are relayed to the chain, where they are public, so both are held to the claim allow-list (claims.ts,
+// `token_has_pii`) as login tokens are (D271, D274): an owner's email or Workspace domain is never relayed.
 import { verifyIdToken } from '@hana-id/oidc';
 import { hex } from './bytes.ts';
+import { disallowedClaim } from './claims.ts';
 import type { Env } from './env.ts';
 import { logStaleJwks } from './log.ts';
 import type { ContractCall } from './near/tx.ts';
@@ -18,9 +21,15 @@ export type OwnerPrecheck =
       /** The OIDC owner the token proves (null for execute_change, which takes no auth): the per-owner caps' subject. */
       owner: { provider: string; sub: string } | null;
     }
-  | { ok: false; status: number; code: string; error: string };
+  | { ok: false; status: number; code: string; error: string; data?: Record<string, unknown> };
 
 const no = (status: number, code: string, error: string): OwnerPrecheck => ({ ok: false, status, code, error });
+
+/** `token_has_pii` for a verified token with a claim outside the allow-list, else null (D274). */
+function piiRefusal(jwt: string, which: string): OwnerPrecheck | null {
+  const claim = disallowedClaim(jwt);
+  return claim === null ? null : { ok: false, status: 400, code: 'token_has_pii', error: `${which} carries a claim outside the allow-list`, data: { claim } };
+}
 
 const isOidcOwner = (owner: unknown, provider: string, sub: string): boolean => {
   const o = (owner as { Oidc?: { provider?: unknown; sub?: unknown } } | null)?.Oidc;
@@ -45,6 +54,8 @@ export async function precheckOwnerAction(env: Env, call: ContractCall, now: num
     const jwt = (args.auth as { Oidc: { jwt: string } }).Oidc.jwt;
     const v = await verifyIdToken(jwt, now, { onStaleKeys: logStaleJwks, identityIssuer: env.IDENTITY_ISS });
     if (!v.ok) return no(v.code === 'unsupported_issuer' || v.code === 'bad_token' ? 400 : 401, v.code, v.error);
+    const pii = piiRefusal(jwt, 'The owner token');
+    if (pii) return pii;
     const config = await getConfig(env);
     if (!config.console_audiences.some(([p, a]) => p === v.token.provider && a === v.token.aud)) return no(403, 'not_console_token', 'Token is not for the Hana console');
     owner = { provider: v.token.provider, sub: v.token.sub };
@@ -81,6 +92,8 @@ export async function precheckOwnerAction(env: Env, call: ContractCall, now: num
       if (add) {
         const proof = await verifyIdToken(args.client_proof as string, now, { onStaleKeys: logStaleJwks, identityIssuer: env.IDENTITY_ISS });
         if (!proof.ok) return no(400, proof.code === 'bad_token' ? 'bad_token' : 'invalid_client_proof', `Client proof: ${proof.error}`);
+        const proofPii = piiRefusal(args.client_proof as string, 'The client proof');
+        if (proofPii) return proofPii;
         if (proof.token.provider !== add.provider || proof.token.aud !== add.aud) return no(400, 'invalid_client_proof', 'Client proof is for another client');
         if (scope.clients.some(([p, a]) => p === add.provider && a === add.aud)) return no(409, 'client_registered', 'Client is already in this scope');
         const config = await getConfig(env);

@@ -1269,7 +1269,10 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
       // The email step's cancel (D245), only in a login that offered email; anything else is Google's answer.
       if (this.emailOffered && Object.hasOwn(EMAIL_RELAY_ERRORS, payload.error)) throw this.emailAnswerError(payload.error);
       // The popup refused an ID token with a claim outside the allow-list before relaying it (D270).
-      if (payload.error === 'token_has_pii') throw fail('token_has_pii', 'The Google token carries a claim outside the allow-list');
+      if (payload.error === 'token_has_pii') {
+        const claim = 'claim' in payload && typeof payload.claim === 'string' ? { claim: payload.claim.slice(0, 64) } : undefined;
+        throw fail('token_has_pii', 'The Google token carries a claim outside the allow-list', claim);
+      }
       throw fail('google_error', 'Google returned an error', { error: payload.error });
     }
     if (!isRelayToken(payload)) throw fail('token_invalid', 'The sign-in answer was refused');

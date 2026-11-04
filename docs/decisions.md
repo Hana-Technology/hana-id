@@ -18,6 +18,8 @@ provider note, two "Superseded or amended" rows, the user-mail line under "Propo
 `feat/scope-email-client-tool`, to confirm) on 2026-11-03. D254–D259 (branch `feat/email-login-8b`, to
 confirm) on 2026-11-03, with batch 8b notes on D246 (lifted), D248 ("demo scopes only" lifted) and D249 (superseded).
 D268 (branch `feat/export-copy`, confirmed by the user) on 2026-11-04, with the D111 row of "Superseded or amended".
+D269's "Built" line on 2026-11-04 (branch `feat/user-emails`: the email-login write, `admin user:list` / `user:find`,
+the screen text), with D269 notes on D96, D119, D230 and D264 and two rows of "Superseded or amended".
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -1039,6 +1041,8 @@ answered question there points here.
   is handled transiently off chain at link time, only its HMAC kept, D25). It still never contacts users except for
   two kinds of message the user's own action triggered: sign-in codes and link notices, sent to the address while
   the issuer holds it in that call. No encrypted address is kept for security notices; those are in-product only.
+- Amended 2026-11-04 by D269: the email issuer now stores each user's verified address (its user directory, for
+  Hana staff only; partners never see it). Hana still contacts users only with the two kinds of message above.
 
 ### D97. The API Worker runs in a fixed region next to D1 (replaces D94's Smart Placement)
 - Date 2026-10-29 · Status: deployed to sandbox-dev · Source: `docs/operations.md` "Logs and latency"
@@ -1324,6 +1328,8 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
 - Rejected: Gmail-only linking (Workspace with a matching `hd` is as safe); silent pre-linking at every Google login
   (would hand the email issuer every Google wallet); a delay instead of a code in case A; global links; a separate
   `link_delay_ms`.
+- Amended 2026-11-04 by D269: on chain still pseudonymous ids only, but the issuer now keeps each identity's verified
+  address off chain in its user directory (`user_emails`), for Hana staff.
 
 ### D121. Email issuer signing key: Worker secret on testnet, AWS KMS before mainnet, two-signer-ready
 - Date 2026-10-30 · Status: confirmed by the user, not built · Source: conversation; `docs/email-login-spec.md`
@@ -3319,6 +3325,8 @@ five are **to confirm** by the user. None changes an address: no path, derivatio
   any later change to the API's logging or error paths could capture them; the API would also hold the issuer's
   availability); a redirect from the API (the browser still sends the body to the API first); the issuer on a custom
   domain for sandbox-dev (none is set up; the workers.dev URL gives the same property for free).
+- Amended 2026-11-04 by D269: the address still reaches only the issuer Worker, which now also keeps the verified
+  address in its own D1 (`user_emails`), read by Hana staff only (`admin user:list` / `user:find`).
 
 ### D231. Email tokens at the API: the manifest's keys, the issuer's exact form, the chain's policy, the app's methods
 - Date 2026-11-02 · Status: to confirm; built (`apps/api/src/email-token.ts`, `login-token.ts`, `login-methods.ts`,
@@ -3852,6 +3860,13 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   ended the login with "try again", which can't help.
 - Rejected: asking for the email scope up front in the login's own request (D254: the spike hasn't run); hiding the
   reason behind `email_match_unavailable`.
+- Amended 2026-11-04 by D269 (the screen text only): "it isn't kept" and "Hana uses it once and doesn't keep it" were
+  no longer true. The explainer now says "Google will now ask to share your email address with Hana. Hana uses it to
+  find a wallet you may already have with that address and keeps it with your account. It doesn't share it with the
+  app you're signing in to."; the declined screen "Hana checks whether your Google address already has a wallet. It
+  keeps the address with your account and doesn't share it with the app you're signing in to. Without it you can't
+  open a new wallet with Google here." ("Hana doesn't share it", not "the app can't see it": an app on its own Google
+  client can read the address through Google, D42.)
 
 ### D265. Google's access token is never revoked (amends D254); google-match is retried after 429 or 503
 - Date 2026-11-03 · Status: to confirm; built (`apps/email-issuer/src/handlers.ts` `handleGoogleMatch`,
@@ -3985,8 +4000,13 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   we want to be able to see the emails, no need to worry about privacy obligations … by default, partners cannot see
   the user's emails unless the user explicity approves … hide the user's emails for now') · Built: the table and its
   writer on `feat/user-emails-foundation` (`apps/email-issuer/migrations/0002_user_emails.sql`,
-  `apps/email-issuer/src/directory.ts`); the email and Google writes, the admin CLI and the screen text on
-  `feat/user-emails` and `feat/google-token-first` · Amends D119 and D230 ("the address is never kept"), D264's screen
+  `apps/email-issuer/src/directory.ts`); on `feat/user-emails`: the email write at every 200 of `verify`
+  (`handlers.ts` `handleVerify`: session, case B, the link purposes and auto_link), `admin user:list` / `user:find`
+  (`scripts/lib/admin-users.ts`, the issuer's D1 through wrangler with its log file off) and the screen text (D264's
+  note); on `feat/google-token-first`: the Google writes, google-match's after its checks pass (whatever the
+  decision) and google-record's (D270's token_first, an app without email login), both userinfo's address with
+  `email_verified` and `hosted` (`handlers.ts` `checkGoogleSignIn`, `recordGoogleSignIn`, `handleGoogleRecord`).
+  Migration 0002 not yet applied on sandbox-dev · Amends D119 and D230 ("the address is never kept"), D264's screen
   text ("it isn't kept"), the spec's "Privacy and what is stored"
 - Decision: the email issuer, the only part that ever sees an address, keeps a user directory in its own D1:
   `user_emails` (provider, sub as on chain, the verified address, `email_verified`, `hosted`, first and last seen)
@@ -4017,7 +4037,8 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   google-match's directory write (`apps/email-issuer/src/handlers.ts` `checkGoogleSignIn`, `handleGoogleRecord`);
   the silent failure and `'one_request'`'s removal are D273. Tested for both flows (unit and the vault harness); no
   Playwright run of `'token_first'` (D273) · Depends on the spike: tokeninfo must answer the browser's CORS POST (else
-  every token_first login ends `tokeninfo_unavailable`) · Amends D254 (the flow), D264 (no explainer screen under
+  every token_first login ends `tokeninfo_unavailable`); a command-line check on 2026-11-04 (`feat/spike-leg-e`) saw
+  it echo any `Origin` and allow the preflight, leg E confirms it in a real browser · Amends D254 (the flow), D264 (no explainer screen under
   it), D25 unchanged
 - Decision: a third flow, `'token_first'`. The login's first request is `response_type=token`, `scope=openid email`
   with the account chooser: Google's single sign-in screen lists the email. The callback then makes a silent
@@ -4035,6 +4056,20 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 ### D271. The API's claim allow-list is on for every route that relays a Google token (REJECT_PII_ON_SESSIONS retired)
 - Date 2026-11-04 · Status: confirmed by the user (2026-11-04: 'how can we be sure that the reversed flow works without
   mistakenly storing emails on chain?', then 'yes go ahead and build all these') · Built on `fix/sessions-allow-list`
+  (merged into `develop`; not deployed): `apps/api/src/login-token.ts` `verifyLoginToken` applies `disallowedClaim` to every
+  Google token with no `claimAllowList` option left to turn off, so `/v1/sessions`, `/v1/login` (its `jwt` and
+  `linkJwt`) and `/v1/link`, `/v1/link/cancel`, `/v1/link/unlink` all refuse; `/v1/owner-actions` too (D274);
+  `REJECT_PII_ON_SESSIONS` removed from `env.ts`, `gen-wrangler.ts` `FLAG_DEFAULTS` and the test config (a leftover
+  var in a deployed config is ignored until the next `gen` and deploy drop it); `apps/smoke/direct.html` moved from
+  Google Identity Services to the implicit flow, `scope=openid` (`src/google.ts`, `direct-callback.html`; the page
+  also refuses to send a token with another claim) rather than retired, since it still covers what the vault can't
+  (the ship gate's split side, `key_index` ≠ 0, the client choice, revoke, replays). Tests: `session-flags.test.ts`
+  (every named claim on `/v1/sessions` is `400 token_has_pii` with no RPC call and no transaction; a leftover `"0"`
+  var changes nothing), `email-login.test.ts` (the link routes), `owner-actions.test.ts`,
+  `scripts/test/relayed-tokens.test.ts` (only `login-token.ts` and `owner-actions.ts` call `verifyIdToken`, each
+  followed by the allow-list; the API's list equals `@hana-id/core`'s), `apps/smoke` `direct-page.test.ts` and
+  `direct-callback-page.test.ts`. The user's step: add `http://localhost:5173/direct-callback.html` to the redirect
+  URIs of the Google clients the direct page uses (`docs/operations.md` "Google clients")
 - Decision: `/v1/sessions` refuses a Google token with a claim outside the allow-list (`token_has_pii`), as `/v1/login`
   and the link routes already do; the `REJECT_PII_ON_SESSIONS` flag is removed so it can't be turned off. The smoke
   pages that sent Google Identity Services tokens (which carry `email`) move to openid-only tokens or are retired.
@@ -4055,8 +4090,10 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
     so under every flow the only request whose ID token is relayed asks for `scope=openid` only. The vault still reads
     an access token beside an ID token (the relay format and the vault's tests use it); no popup sends one.
   - `/login/callback` checks every ID token it would relay (a login's, an ID leg's, a proof's, the export window's)
-    against the claim allow-list first; one with any other claim is never relayed: the slot says `token_has_pii`, the
-    window shows it, and the vault ends the login `token_has_pii` (D270's "refused with nothing relayed").
+    against the claim allow-list first; one with any other claim is never relayed: the slot says `{error:
+    'token_has_pii', claim}` (core `isRelayPayload` takes `claim` beside that error only), the window shows it and
+    stays open, and the vault ends the login `token_has_pii` with `data.claim`, as its own refusal does (D270's
+    "refused with nothing relayed"; `apps/e2e/tests/login.spec.ts` checks it in three browsers).
 - Why the retry: the user has just signed in on Google's own screen in this window, so a silent failure is a Google
   session quirk (a Workspace re-auth policy, several signed-in accounts, cookies), not a refusal; one interactive
   openid-only request for the same account keeps that login alive without asking for anything new, so Hana's
@@ -4068,6 +4105,21 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   tokeninfo with CORS; left for after the spike, when the flow's real Google behaviour is known.
 - Rejected: no retry (a Google quirk ends the login); Hana's explainer before the retry (nothing new is asked); keeping
   `'one_request'` behind the switch (a known-bad value one line away).
+
+## Claim allow-list on owner actions (branch `fix/sessions-allow-list`), 2026-11-04
+
+### D274. Owner-action tokens and client proofs are held to the same claim allow-list
+- Date 2026-11-04 · Status: decided while building D271 (Claude, under D271's "every route that relays a Google
+  token"), to confirm · Built on `fix/sessions-allow-list` (`apps/api/src/owner-actions.ts` `piiRefusal`) · Amends the
+  `/v1/owner-actions` note in `docs/api.md` ("Their other claims are not read … nothing refuses one that isn't")
+- Decision: `/v1/owner-actions` refuses an `auth` owner token or an `AddClient` `client_proof` with a claim outside
+  `TOKEN_CLAIM_ALLOW_LIST`: `400 token_has_pii` with `data: {claim}`, after the signature check and before the token
+  is reserved or anything is relayed. The contract stays permissive (direct callers are unaffected).
+- Why: both tokens are relayed to `hana-signer` as call arguments, so they are public on chain like login tokens; an
+  owner's email or Workspace domain (`hd`) would otherwise be published. Nothing sends such tokens today (no console
+  or CLI posts to `/v1/owner-actions` yet), and the batch C spec already plans openid-only step-up tokens for owner
+  actions ("Email claims by scope": `openid` must carry no `email`), so no flow breaks.
+- Rejected: leaving owner tokens unchecked (D271's guarantee would have a hole on the owner pool); a separate flag.
 
 ## Superseded or amended
 
@@ -4118,6 +4170,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 | google-match revokes Google's access token (D195, D254; the interactive email consent "the first time only") | Never revoked: revocation ends the whole grant, so the consent came back every login (D265) | batch 8b review |
 | A path through `get_identity` on the vault's RPC alone (batch 7) | A non-own path confirmed on `rpc` and `rpcFallback` separately; root pins (D263) | batch 8b review |
 | D255: no access token (declined) → `email_match_unavailable` | Declined or another account: the popup's consent screen, `email_consent_declined` / `google_account_mismatch` (D264) | batch 8b review |
+| Hana stores no end-user email address; the Google email is handled transiently, only its HMAC kept (D25 and D96 amended, D119, D230); the screens say "it isn't kept" (D264) | The issuer keeps each identity's verified address in its own D1 (`user_emails`, `user_email_apps`), for Hana staff only (`admin user:list` / `user:find`); partners never see it; the screens say Hana keeps it with the account and doesn't share it with the app (D269) | conversation 2026-11-04 |
 
 ## Proposed, not yet confirmed
 

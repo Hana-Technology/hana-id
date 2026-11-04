@@ -38,16 +38,17 @@
   <body>
     <h1>Hana ID smoke test: direct flow</h1>
     <p>
-      The in-page flow from before the vault: Google Identity Services → <code>POST /v1/sessions</code> →
+      The in-page flow from before the vault: Google (openid only) → <code>POST /v1/sessions</code> →
       <code>POST /v1/derive</code> → CKD decryption in this page. Kept as the split-flow baseline for the ship gate and
       for key_index, client choice, revoke and replay tests; the <a href="./index.html">vault page</a> is the main one.
       Shows public data only: no Google token, CKD secret or private key is ever displayed, logged, stored or sent
       anywhere but the API.
     </p>
     <div class="banner warn">
-      Works only while the env's <code>REJECT_PII_ON_SESSIONS</code> is <code>"0"</code>: Google Identity Services
-      tokens carry <code>email</code>, which <code>/v1/sessions</code> refuses (400 <code>token_has_pii</code>) once it
-      is turned on.
+      Google is asked for <code>scope=openid</code> only, in a popup that returns to
+      <code>/direct-callback.html</code>: the chosen Google client must list
+      <code>http://localhost:5173/direct-callback.html</code> as an Authorized redirect URI. The API refuses any token
+      with another claim (400 <code>token_has_pii</code>), and this page doesn't send one.
     </div>
     <dl id="env"></dl>
     <div id="env-problem" class="banner error" hidden></div>

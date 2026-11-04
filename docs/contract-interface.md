@@ -1,6 +1,6 @@
 # hana-signer contract interface (batch A, A.2, B, governance and email login)
 
-Last verified against code: 2026-11-02 (branch `feat/email-login-6`: the API's gas values in the conventions and in "Gas
+Last verified against code: 2026-11-04 (branch `fix/sessions-allow-list`: "No claim allow-list on chain", the API's allow-list on every relayed token, D271, D274); 2026-11-02 (branch `feat/email-login-6`: the API's gas values in the conventions and in "Gas
 of the email login calls", D155); 2026-11-02 (branch `docs/consistency-pass`: the conventions' gas note points at the
 sandbox measurement of `create_session_and_derive`); 2026-11-02 (branch `feat/link-cap`: the hourly link counter, D200: `set_link_thresholds`,
 `get_link_stats`, `link_threshold_reached`, gas; it never refuses a link); 2026-11-02 (branch `feat/email-login-2`: contract v3 with `migrate_v1` removed, the email
@@ -223,10 +223,11 @@ then checks `nonce` against the commitment below (`... nonce ...` panics). Token
 one purpose, so a published token can't be reused for anything else.
 
 **No claim allow-list on chain.** Claims other than the ones above are ignored, whatever they are: the contract
-accepts a token carrying `email`, `name`, `hd` or any other claim, on any method. This is deliberate: console
-owner-action tokens (batch C) may legitimately carry `email`. Keeping personal data off the chain is an API and vault
-rule (batch B's claim allow-list, `token_has_pii`), and it binds only tokens the API relays (`/v1/login`, and
-`/v1/sessions` once `REJECT_PII_ON_SESSIONS` is on); a direct caller can still put any valid token on chain.
+accepts a token carrying `email`, `name`, `hd` or any other claim, on any method. This is deliberate: the contract
+stays permissive and keeping personal data off the chain is an API and vault rule (batch B's claim allow-list,
+`token_has_pii`). It binds every token the API relays (`/v1/login`, `/v1/sessions`, the link routes and
+`/v1/owner-actions`'s owner tokens and client proofs, always on, D271, D274); a direct caller can still put any
+valid token on chain.
 
 ## Byte layouts (nonces, commitments, signed messages)
 

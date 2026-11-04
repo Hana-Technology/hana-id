@@ -88,6 +88,21 @@ describe('relay payloads', () => {
       expect(isRelayPayload(p), JSON.stringify(p)).toBe(false);
     }
   });
+
+  it('the popup’s token_has_pii may name the claim (D273), and only that error, and only a claim name', () => {
+    expect(isRelayPayload({ error: 'token_has_pii', claim: 'email' })).toBe(true);
+    expect(isRelayPayload({ error: 'token_has_pii', claim: 'email_verified', timings: { callbackPrep: 1 } })).toBe(true);
+    for (const p of [
+      { error: 'google_error', claim: 'email' },
+      { error: 'token_has_pii', claim: '' },
+      { error: 'token_has_pii', claim: 'ada@example.com' },
+      { error: 'token_has_pii', claim: 'x'.repeat(65) },
+      { error: 'token_has_pii', claim: 1 },
+      { error: 'token_has_pii', claim: 'email', other: 1 },
+    ]) {
+      expect(isRelayPayload(p), JSON.stringify(p)).toBe(false);
+    }
+  });
 });
 
 describe('follow-up notices', () => {

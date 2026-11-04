@@ -23,7 +23,7 @@ Ports are `HANA_E2E_PORT_BASE` (default 4410) plus the offsets below: the table 
 | `http://localhost:4412` | the hosted demo (`apps/demo`), built for the e2e env and served by its own Worker handler with its real CSP (`tests/demo.spec.ts`) |
 | `http://127.0.0.1:4420` | `vaultOrigin`: apps/api's vault host, and the vault page rendered by apps/api's `handleVaultPage` from D1 |
 | `http://127.0.0.1:4430` | `authOrigin`: apps/api's auth host over the built auth pages |
-| `http://127.0.0.1:4440` | the Hana API: apps/api's Worker, with `/v1/login`, `/v1/derive`, `/v1/sessions/revoke` and `/v1/link*` mocked; plus `/__e2e/*` control endpoints (`/__e2e/google-key`: the stack's Google signing key) |
+| `http://127.0.0.1:4440` | the Hana API: apps/api's Worker, with `/v1/login`, `/v1/derive`, `/v1/sessions/revoke` and `/v1/link*` mocked; plus `/__e2e/*` control endpoints (`/__e2e/google-key`: the stack's Google signing key; `/__e2e/chain`: what the relayer sent to the mocked chain) |
 | `http://127.0.0.1:4442` | the email issuer: apps/email-issuer's Worker with the `outbox` stub; plus `GET /__e2e/outbox` (the mails, for the tests) |
 | `http://127.0.0.1:4450`, `:4460` | mocked NEAR RPC and EVM chain RPC |
 | `http://127.0.0.1:4451` | the same mocked chain as the env's `rpcFallback`: a member's path is confirmed on both (D263) |
@@ -37,7 +37,11 @@ vault through its `frame-ancestors`.
 The API is `apps/api/src/index.ts` itself, run in Node: routing, CORS, the app gate and origin rule, `GET /v1/app`,
 the vault endpoints (KEK wrapping, counters and the real SQL on `vault_shares`) and the login relay (the `LoginRelay`
 Durable Object class, on in-memory storage). Only `/v1/login` and `/v1/derive` (and batch 8b's link calls, below) are mocked (`src/server/api.ts`), after
-the Worker's own app gate, since they need the relayer and the MPC. The rate limiter object and the vault's Rate
+the Worker's own app gate, since they need the relayer and the MPC. The mocked `/v1/login` applies the Worker's own claim
+allow-list (apps/api `claims.ts`: a Google token with any other claim is `400 token_has_pii`), and every transaction the
+mock relays with a token (`create_session_and_derive`, the link methods) is recorded with its identities and claim
+names, never the token: `GET {API}/__e2e/chain[?sub=<sub>]` lists them (of that `sub`) and counts the live sessions on
+its path, which is how a test asserts that nothing reached the chain. The rate limiter object and the vault's Rate
 Limiting bindings always allow (and the limiter grants every single-use marker): every page in the suite is one
 client, and apps/api's tests cover the limits. The partner identity token is the real one: the stack gives the Worker
 a fresh throwaway P-256 key pair, a standby and a sub key per run (`identityBindings`), and `tests/identity.spec.ts`
@@ -77,13 +81,20 @@ opened. `/v1/sessions/revoke`, `/v1/link`, `/v1/link/cancel` and `/v1/link/unlin
 the relayer); the vault's own D133 and D139 checks are what the specs exercise, the API's link precheck has its own
 tests in apps/api. The vault page's CSP names the issuer (`EMAIL_ISSUER_URL`), since the vault calls google-match.
 Each test uses its own Google account and addresses: links are per scope, and the stack's test apps share scope `e2e`.
+A linked member's key export (Google joined to an email wallet) is exported from the member: the export window
+confirms the root's path on `rpc` and on `rpcFallback` (`:4451`, the same chain on a second origin, D263), and the
+test checks both answered its `get_identity` reads, so an export page CSP without the fallback fails it
+(`path_unconfirmed`).
 
 Google is never contacted. In the browser, each test's context routes `accounts.google.com/o/oauth2/v2/auth` and
 `www.googleapis.com/oauth2/v3/certs` to an OIDC stub (`src/google-stub.ts`) that takes exactly the popup's requests:
 the openid-only login with the account chooser, a proof the vault asks for (`login_hint`, answered at once), and
 the second, silent request for the email scope (`response_type=token`, `scope=email`, `login_hint`, `prompt=none`;
 answered with an access token). It refuses an ID token with the email scope, and signs RS256 tokens with the claims
-Google sends for `scope=openid`. On the server side (`src/server/google-backend.ts`), the stack answers Google's JWKS,
+Google sends for `scope=openid`; an account with `emailInIdToken` gets `email` and `email_verified` in its ID token
+too (a Google that leaks the address: `tests/login.spec.ts` checks the login popup's callback refuses it before
+relaying it, D273, so only `{error: 'token_has_pii', claim}` crosses the relay, the SDK gets `token_has_pii` with the
+claim, no `/v1/login` call is made and nothing reaches the chain). `google.issued` lists each token's account and claim names. On the server side (`src/server/google-backend.ts`), the stack answers Google's JWKS,
 `tokeninfo`, `userinfo` and revoke (which the issuer must never call, D265) for the Workers in its process (the issuer's google-match), by wrapping that
 process's `fetch` for those three Google hosts. One RSA key per stack signs every ID token: the browser stubs fetch it
 from `GET {API}/__e2e/google-key` (no CORS, refused with an `Origin`), so the issuer's JWKS cache always knows the

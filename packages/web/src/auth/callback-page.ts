@@ -27,7 +27,7 @@
 // never logged, stored or shown, and dropped once encrypted (an access token is sent only to Google's tokeninfo, in a
 // POST body); relayKey and followKey are zeroed after use, or stored again (sessionStorage, 10 min) only for the next
 // leg.
-import { ApiError, type RelayPayload, disallowedClaim, encryptRelayPayload, followSlot } from '@hana-id/core';
+import { ApiError, RELAY_CLAIM_NAME, type RelayPayload, disallowedClaim, encryptRelayPayload, followSlot } from '@hana-id/core';
 import type { AuthApi } from './api.ts';
 import { dom, errorView } from './dom.ts';
 import { type AccessTokenSub, type CallbackFragment, SILENT_ERRORS, accessTokenSub, googleAccessUrl, googleAuthUrl, parseCallbackFragment, unverifiedClaims, unverifiedSub } from './google.ts';
@@ -167,11 +167,15 @@ const STOPS = {
 } as const;
 export type CallbackStopCode = keyof typeof STOPS;
 
-/** Relays `{error: code}` to `slot` (best effort), shows why, zeroes the entry's keys: the login ends here. */
-async function stopLogin(deps: CallbackPageDeps, taken: TakenLogin, slot: string, code: CallbackStopCode): Promise<CallbackOutcome> {
+/**
+ * Relays `{error: code}` to `slot` (with `claim`, the first claim outside the allow-list, for `token_has_pii`; best
+ * effort), shows why, zeroes the entry's keys: the login ends here.
+ */
+async function stopLogin(deps: CallbackPageDeps, taken: TakenLogin, slot: string, code: CallbackStopCode, claim?: string): Promise<CallbackOutcome> {
   const d = dom(deps.win.document);
   try {
-    await deps.api.writeRelay(slot, await encryptRelayPayload(taken.relayKey, slot, { error: code }));
+    const named = claim !== undefined && RELAY_CLAIM_NAME.test(claim) ? { claim } : {};
+    await deps.api.writeRelay(slot, await encryptRelayPayload(taken.relayKey, slot, { error: code, ...named }));
   } catch {
     // The vault ends the login at its limit instead; this window says why either way.
   }
@@ -279,7 +283,7 @@ async function tokenFirstId(deps: CallbackPageDeps, fragment: Exclude<CallbackFr
 
 /** What the explainer before Google's email prompt says (D264, G-M2). */
 export const EMAIL_PROMPT_TEXT =
-  'Google will now ask to share your email address with Hana. Only Hana’s email service sees it, to find a wallet you may already have with that address, and it isn’t kept.';
+  'Google will now ask to share your email address with Hana. Hana uses it to find a wallet you may already have with that address and keeps it with your account. It doesn’t share it with the app you’re signing in to.';
 
 function explainEmailPrompt(d: ReturnType<typeof dom>, on: { onContinue: () => void; onSkip: () => void }): void {
   const go = d.h('button', { class: 'primary', attrs: { type: 'button', id: 'email-prompt-continue' } }, 'Continue');
@@ -310,7 +314,8 @@ async function relayLeg(deps: CallbackPageDeps, fragment: Exclude<CallbackFragme
   // D270: an ID token with a claim outside the allow-list (an `email`, an `hd`) is never relayed, whichever leg.
   if (fragment.kind === 'token') {
     const claims = unverifiedClaims(fragment.idToken);
-    if (claims && disallowedClaim(claims) !== null) return stopLogin(deps, taken, fragment.state, 'token_has_pii');
+    const claim = claims ? disallowedClaim(claims) : null;
+    if (claim !== null) return stopLogin(deps, taken, fragment.state, 'token_has_pii', claim);
   }
   let payload: RelayPayload | null = payloadFor(fragment, taken);
   // second_request: the login's own token says an access token follows, in slot 1 (never with a link task's proof, a

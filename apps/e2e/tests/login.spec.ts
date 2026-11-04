@@ -1,7 +1,26 @@
 // Login through the popup and the relay (docs/batch-b-spec.md "Login"), and the partner-page COOP cases.
-import { GoogleStub, stackGoogleKey } from '../src/google-stub.ts';
+import { TOKEN_CLAIM_ALLOW_LIST } from '@hana-id/core';
+import { GOOGLE_AUTH_URL, GoogleStub, stackGoogleKey } from '../src/google-stub.ts';
 import { API_URL, NEAR_RPC } from '../src/stack.ts';
-import { LOGIN_ENDPOINT, VAULT_FRAME, chooseAccount, clickAction, clickLauncher, errorCode, expect, login, newApp, okValue, openPartner, routeStubs, status, test } from './fixtures.ts';
+import {
+  LOGIN_ENDPOINT,
+  VAULT_FRAME,
+  chainView,
+  chooseAccount,
+  clickAction,
+  clickLauncher,
+  errorCode,
+  expect,
+  login,
+  newApp,
+  okValue,
+  openPartner,
+  routeStubs,
+  settled,
+  status,
+  test,
+  vaultRecordKeys,
+} from './fixtures.ts';
 
 test('one click on the partner button plus the chooser logs in', async ({ page, google, requests }) => {
   const app = await newApp();
@@ -171,4 +190,48 @@ test('the callback closes itself right after its relay POST, and the token still
   await chooseAccount(popup);
   expect(order).toEqual(['relay 204', 'closed']);
   expect((await okValue<{ evm: string }>(page, 'login')).evm).toMatch(/^0x/u);
+});
+
+test('a Google ID token that carries the email is refused (token_has_pii): no /v1/login, nothing relayed to the chain', async ({ page, google, requests }) => {
+  // The token goes on chain (the contract verifies it there), so an address in it would be public for good. Google
+  // here leaks `email` and `email_verified` into the openid-only login's token (src/google-stub.ts emailInIdToken).
+  const sub = `1${Array.from(crypto.getRandomValues(new Uint8Array(20)), (b) => String(b % 10)).join('')}`;
+  google.accounts = [{ sub, label: 'Leaky', email: `leak${sub.slice(-8)}@gmail.com`, emailVerified: true, emailInIdToken: true }];
+  const app = await newApp();
+  await openPartner(page, app);
+  const popupP = page.waitForEvent('popup');
+  await clickAction(page, 'login', 'login');
+  const popup = await popupP;
+  await popup.waitForURL(`${GOOGLE_AUTH_URL}**`);
+  await popup.click('#account-0');
+  // The callback refuses the token before relaying it (D273): it relays only `{error: 'token_has_pii', claim}` and
+  // stays open to say why.
+  await expect(popup.locator('body')).toContainText('Code: token_has_pii');
+
+  // The SDK's error, naming the first claim outside the allow-list (as the vault's own refusal does).
+  const r = await settled(page, 'login');
+  expect(r).toMatchObject({ state: 'error', code: 'token_has_pii', data: { claim: 'email' } });
+  expect(await status(page)).toBe('logged_out');
+  // The premise: the token Google sent really carried the address.
+  expect(google.issued.filter((t) => t.sub === sub).map((t) => t.claims)).toEqual([expect.arrayContaining(['email', 'email_verified'])]);
+  // Only the popup's refusal crossed the end-to-end encrypted relay; the vault never asked the API to relay anything on chain.
+  expect(requests.count(`${API_URL}/v1/login-relay/`)).toBeGreaterThanOrEqual(2);
+  expect(requests.count(LOGIN_ENDPOINT)).toBe(0);
+  expect(requests.count(`${API_URL}/v1/derive`)).toBe(0);
+  // Nothing reached the chain: no relayed transaction with this account's token, no session on its path, no record.
+  expect(await chainView(sub)).toEqual({ relayed: [], sessions: 0 });
+  // Nor did any Google token with a claim outside the allow-list, in any test so far.
+  const leaked = (await chainView()).relayed.flatMap((t) => t.tokens).filter((t) => t.provider === 'google' && t.claims.some((c) => !TOKEN_CLAIM_ALLOW_LIST.includes(c)));
+  expect(leaked).toEqual([]);
+  expect(await vaultRecordKeys(page)).toEqual([]);
+
+  // The same account once Google sends the openid claims only: the login goes through, and its one transaction is
+  // what the chain double records (so the empty view above is a real observation, not a blind spot).
+  await popup.close();
+  google.accounts = [{ ...google.accounts[0]!, emailInIdToken: false }];
+  await login(page, { name: 'clean' });
+  expect(requests.count(LOGIN_ENDPOINT)).toBe(1);
+  const after = await chainView(sub);
+  expect(after.relayed).toEqual([{ method: 'create_session_and_derive', tokens: [{ provider: 'google', sub, claims: expect.not.arrayContaining(['email']) }] }]);
+  expect(after.sessions).toBe(1);
 });

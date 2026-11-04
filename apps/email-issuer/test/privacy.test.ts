@@ -1,6 +1,7 @@
 // The log-capture test (spec "Tests" → "Issuer": "nothing logged (a log-capture test greps for the address, code, sub
 // and token)"): every line of every flow, errors included, is grepped for the address (raw and normalized), the code,
-// the sub, every token, the Google access token and every secret binding.
+// the sub, every token, the Google access token and every secret binding. Since D269 a verified address is stored on
+// purpose, in the user directory (`user_emails`, for Hana staff): the tests check it is there, and in no other table.
 import { describe, expect, it } from 'vitest';
 import { emailSub } from '@hana-id/email';
 import { SECRET_NAMES } from '../src/env.ts';
@@ -14,6 +15,15 @@ const jwt = async (key: CryptoKey, claims: Record<string, unknown>): Promise<str
   const c = base64UrlEncode(utf8(JSON.stringify(claims)));
   return `${h}.${c}.${base64UrlEncode(new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, utf8(`${h}.${c}`))))}`;
 };
+/** Every row of the issuer's D1 tables other than the directory, as one string (the address must be in none of them). */
+const otherTables = async (): Promise<string> => {
+  const out: unknown[] = [];
+  for (const t of ['email_issuance', 'email_hints', 'email_suppressions', 'email_admin_audit']) out.push((await env.DB.prepare(`SELECT * FROM ${t}`).all()).results);
+  return JSON.stringify(out).toLowerCase();
+};
+const directoryEmail = async (provider: string, sub: string): Promise<string | null> =>
+  (await env.DB.prepare('SELECT email FROM user_emails WHERE provider = ?1 AND sub = ?2').bind(provider, sub).first<{ email: string }>())?.email ?? null;
+
 const derOf = (p1363: Uint8Array): Uint8Array => {
   const int = (b: Uint8Array) => {
     let i = 0;
@@ -84,6 +94,9 @@ describe('nothing personal or secret is ever logged', () => {
     }
     // And the lines are the structured ones only.
     for (const l of lines) expect(l.startsWith('{"level"')).toBe(true);
+    // The verified login's address is in the directory (D269), normalized, under its sub; no other table holds it.
+    expect(await directoryEmail('email', await emailSub((await h.deps.keys()).sub, normalized))).toBe(normalized);
+    expect(await otherTables()).not.toContain(local.toLowerCase());
   });
 
   it('google-record (D270) and google-match’s directory write: accepted, refused, Google down, the directory down', async () => {
@@ -211,5 +224,13 @@ describe('nothing personal or secret is ever logged', () => {
     expect(h0.sender.to(corp).some((x) => x.kind === 'link_notice')).toBe(true);
     for (const needle of [victim, vAddr, victim.toLowerCase(), supp, corp, ...secrets]) expect(all).not.toContain(needle);
     for (const l of lines) expect(l.startsWith('{"level"')).toBe(true);
+    // Case A's verified code put its address in the directory (D269); the guessed-at and the suppressed addresses never
+    // passed a code, so they are in no table (suppressions and the audit hold HMAC prefixes only).
+    const eSub = await emailSub((await h.deps.keys()).sub, corp);
+    expect(await directoryEmail('email', eSub)).toBe(corp);
+    const stored = JSON.stringify((await env.DB.prepare('SELECT * FROM user_emails').all()).results).toLowerCase();
+    for (const addr of [vAddr, supp]) expect(stored).not.toContain(addr);
+    const others = await otherTables();
+    for (const addr of [vAddr, supp, corp]) expect(others).not.toContain(addr);
   });
 });

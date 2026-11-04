@@ -35,7 +35,10 @@ const GOOGLE_ERROR = /^[a-z_]{1,64}$/u;
  * - `as`: what a token answering the vault's follow-up is (`link`: case A's `auto_link` token after the code step;
  *   `session`: an email login's token; `proof`: a link method's proof).
  */
-export type RelayPayload = RelayTokenPayload | (({ accessToken: string } | { error: string }) & { timings?: Record<string, number> });
+export type RelayPayload = RelayTokenPayload | (({ accessToken: string } | { error: string; claim?: string }) & { timings?: Record<string, number> });
+
+/** A claim name the popup may name beside `{error: 'token_has_pii'}` (the first claim outside the allow-list, D273). */
+export const RELAY_CLAIM_NAME = /^[A-Za-z0-9_.:-]{1,64}$/u;
 
 /** A relayed token (RelayPayload's first form). */
 export interface RelayTokenPayload {
@@ -78,8 +81,9 @@ const isCaseB = (v: unknown): v is CaseBProof =>
 const TOKEN_EXTRAS: readonly string[] = ['accessToken', 'access', 'caseB', 'as'];
 
 /**
- * True for `{idToken[, accessToken | access, caseB, as]}`, `{accessToken}` or `{error: ^[a-z_]{1,64}$}`, each with an
- * optional `timings` record.
+ * True for `{idToken[, accessToken | access, caseB, as]}`, `{accessToken}` or `{error: ^[a-z_]{1,64}$}` (with
+ * `claim` only beside `token_has_pii`: the popup refused an ID token before relaying it, D273), each with an optional
+ * `timings` record.
  */
 export function isRelayPayload(v: unknown): v is RelayPayload {
   if (!isObj(v)) return false;
@@ -92,6 +96,9 @@ export function isRelayPayload(v: unknown): v is RelayPayload {
     if (v.access !== undefined && v.access !== 'follow') return false;
     if (v.caseB !== undefined && !isCaseB(v.caseB)) return false;
     return v.as === undefined || v.as === 'link' || v.as === 'session' || v.as === 'proof';
+  }
+  if (keys.length === 2 && keys.includes('error') && keys.includes('claim')) {
+    return v.error === 'token_has_pii' && typeof v.claim === 'string' && RELAY_CLAIM_NAME.test(v.claim);
   }
   if (keys.length !== 1) return false;
   if (keys[0] === 'accessToken') return isAccessToken(v.accessToken);

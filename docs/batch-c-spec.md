@@ -4,7 +4,8 @@
 decisions confirmed: D28, D29 (as amended by D89), D30 (as
 amended by D73), D31, D32, D34, D51, D52, D73, D74, D75, and on 2026-10-29 D87–D93.** Everything else in this file is
 a proposal that follows from them; the open questions at the end say what still needs the user (Q1, Q3, Q4's
-fallback addresses, Q5). The 2026-10-27 multi-agent draft (four decision records, a
+fallback addresses, Q5; and, added 2026-11-04 for D269, Q26 and Q27: the Users screen and the Support ID, D275 and
+D276, to confirm). The 2026-10-27 multi-agent draft (four decision records, a
 reconciliation table, passkeys, four roles, two notice channels, a queue, rollups) is superseded by this rewrite; its
 history is in git.
 
@@ -40,9 +41,12 @@ so. Plan doc: https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi
   renders a recovery playbook for every watchdog alert kind and incident, from `@hana-id/playbooks` (D126).
 - **Still open:** Q1 (the code flow's `openid`-only token, to test), Q3 (Hana Cloudflare account, zone, domains), Q4's
   fallback email addresses, Q5 (Neon project setup).
-- **Support ID (D96).** The admin portal gets a Support ID lookup: paste a user's `HANA-XXXX-XXXX` code to see that
-  user's sessions, logins, errors and consents for the app (via the hashed user id; no email or Google account).
-  Hana stores contact details only for partner members, security contacts and billing contacts.
+- **Support ID (D96, amended by D269).** The admin portal gets a Support ID lookup: paste a user's `HANA-XXXX-XXXX`
+  code to see that user's sessions, logins and errors for the app (via the hashed user id). Partners see no email or
+  Google account for it, anywhere. Staff can go from the code, or from an address, to the user's entry in the email
+  issuer's user directory (D269; proposed design: §Users and Support ID, D275, D276). Hana *contacts* only partner
+  members, security contacts and billing contacts; end users get only the sign-in codes and link notices their own
+  action triggers (D96 as amended). End users' verified addresses are stored only in that directory, for staff.
 
 ## Decisions this spec implements
 
@@ -163,8 +167,9 @@ staff ─Access─▶ hana-id-admin-<env> ────────────�
 popups, console ─▶ hana-id-files-<env>  LOGOS (R2, read)
 ```
 
-- **Call directions:** console → API, admin → API, admin → console, console-auth → console. Nothing calls into the
-  admin Worker; the API calls none of the others.
+- **Call directions:** console → API, admin → API, admin → console, console-auth → console; proposed (D275,
+  D276): admin → email issuer (`DirectoryRpc`) and email issuer → API (`IssuerRpc`). Nothing calls into the admin
+  Worker; the API calls none of the others.
 - **Workers.** The three main Workers (API, console, admin) hold the bindings and the trust split D34 keeps. Each
   extra Hana origin gets one thin Worker (D66): `console-auth` forwards `GET /start` and `GET /callback` unchanged to
   the console's `AuthHandler` entrypoint and serves nothing else; `files` serves logos from R2. Neither has a secret,
@@ -192,7 +197,8 @@ popups, console ─▶ hana-id-files-<env>  LOGOS (R2, read)
 | console | `CONSOLE_DB` | — | `LOGOS` (read/write), `STATEMENTS` (read only by code) | `API` → `ConsoleRpc` | `NEAR_RPC`, `SIGNER_ACCOUNT`, origins | `CONSOLE_GOOGLE_CLIENT_SECRET` |
 | console-auth | — | — | — | `CONSOLE` → `AuthHandler` | `AUTH_ORIGIN` | — |
 | files | — | — | `LOGOS` (read only by code) | — | `FILES_ORIGIN` | — |
-| admin | — | `USAGE_DB` (role `usage_admin`) | `STATEMENTS`, `EXPORTS` | `API` → `AdminRpc`, `CONSOLE` → `StaffRpc` | `NEAR_RPC`, `SIGNER_ACCOUNT`, `RELAYER_ACCOUNT`, Access ids | `EMAIL_API_KEY` (Resend, D87), `CANCEL_LINK_KEY`, `INVITE_LINK_KEY` |
+| admin | — | `USAGE_DB` (role `usage_admin`) | `STATEMENTS`, `EXPORTS` | `API` → `AdminRpc`, `CONSOLE` → `StaffRpc`, proposed `ISSUER` → `DirectoryRpc` (D275) | `NEAR_RPC`, `SIGNER_ACCOUNT`, `RELAYER_ACCOUNT`, Access ids | `EMAIL_API_KEY` (Resend, D87), `CANCEL_LINK_KEY`, `INVITE_LINK_KEY` |
+| email issuer (batch C additions only, proposed) | its own `DB` (unchanged) | — | — | `API` → `IssuerRpc` (D276, C15) | `ADMIN_ACCESS_AUD` (D275) | — |
 
 - **Hyperdrive.** Two configs per env (`hana-id-usage-writer-<env>`, `hana-id-usage-admin-<env>`), each with its own
   Neon role and password. The credentials live in the Hyperdrive config, created by `scripts/usage-setup.ts`, which
@@ -1291,6 +1297,7 @@ Console-only codes: `unauthenticated` 401, `csrf` 403, `not_invited` 403, `invit
 | `POST /api/owner-grants/:id/cancel`; `GET /api/orgs/:org/members` pending invites and grants | D89 |
 | `GET /api/retention` | the monthly purge runs (D90) |
 | `GET /api/monitoring`, `POST /api/monitoring/alerts/:id/ack`, `GET /api/governance/pending-upgrades` | governance batch (D83, D86) |
+| `POST /api/users/search`, `POST /api/users/get`, `POST /api/support/lookup` | proposed (D275, D276): §Users and Support ID. POST so no address or code lands in a URL |
 
 ## Hana admin console (D75)
 
@@ -1311,8 +1318,8 @@ Console-only codes: `unauthenticated` 401, `csrf` 403, `not_invited` 403, `invit
   suspend/resume, staff proposals, removals, cancel, expedite, key revoke, delete); audit (filter, CSV); security
   (events, feed lag, notices, breaker, nonce checks, watcher, rejection-rate alerts, D91); reports and statements
   (on-screen statement, D92); rates; retention (each monthly purge run: time, rows per table, failures, next run;
-  D90). Added by the governance batch: "Security & monitoring" (watchdog, pending key changes, pause, pending upgrades
-  and owner actions, alert history with acknowledge; D83, `docs/governance-spec.md` "Monitoring in the admin portal")
+  D90); proposed: Users and the Support ID lookup (§Users and Support ID, D275, D276). Added by the governance
+  batch: "Security & monitoring" (watchdog, pending key changes, pause, pending upgrades and owner actions, alert history with acknowledge; D83, `docs/governance-spec.md` "Monitoring in the admin portal")
   and the pending-upgrades page (D86, also in the partner console). Its sources are built: the watchdog's `GET
   /status`, `/alerts`, `/actions` and `POST /alerts/:id/ack` (bearer `WATCHDOG_STATUS_TOKEN`, `apps/watchdog/README.md`
   "Status endpoint"; the check and alert-kind registry for the portal's registry test is `apps/watchdog/src/checks.ts`)
@@ -1341,7 +1348,159 @@ Console-only codes: `unauthenticated` 401, `csrf` 403, `not_invited` 403, `invit
   - Read-only: the page sends nothing; owner calls stay in `scripts/` and the council's own signing (no NEAR keys in
     the portal).
 - **No NEAR keys.** `admin_register_scope` and contract admin stay in `scripts/`. NEAR calls are read-only: `tx` for
-  settlement, `get_scope` for the watcher, `view_access_key` for the nonce check.
+  settlement, `get_scope` for the watcher, `view_access_key` for the nonce check, and (proposed) `get_identity` and
+  `get_account` for the Users screen.
+
+## Users and Support ID (staff only; D269, D96, D144)
+
+**Proposed 2026-11-04, to confirm by the user (D275, D276).** Built in build-plan batches C8b (Users) and C15
+(Support ID).
+
+D269 keeps each identity's verified address in the email issuer's own D1 (`user_emails`, `user_email_apps`, issuer
+migration 0002), for Hana staff only. This section gives staff a Users screen over it and lets the Support ID lookup
+reach it. Partners see neither (§What partners never see).
+
+### Data path (D275)
+
+```
+staff ─Access─▶ hana-id-admin-<env> ──ISSUER──▶ hana-id-email-issuer-<env>  exports DirectoryRpc (no route)
+                      │                            DB (own D1): user_emails, user_email_apps, email_admin_audit
+                      ├──API──▶ AdminRpc.userShares (C15)          │
+                      └──USAGE_DB──▶ Neon (C15)                    └──API──▶ IssuerRpc.uid (C15)
+```
+
+- **`DirectoryRpc`**: a `WorkerEntrypoint` exported by the issuer and bound only by the admin Worker (`ISSUER`). No
+  route: the issuer's public `fetch` doesn't change. Its methods are reads. A source test holds its module to
+  `SELECT`s on `user_emails` and `user_email_apps` plus its own audit `INSERT`, and to no import of the signer, key,
+  challenge or mail modules (the pattern of D251's `APP_DB` test).
+- **The issuer checks the staff member itself.** Every call carries the request's Access JWT
+  (`Cf-Access-Jwt-Assertion`), and the issuer verifies it with `packages/oidc`: the admin application's `aud`
+  (new issuer var `ADMIN_ACCESS_AUD` = the manifest's admin `accessAud`), the team domain, and the email on the
+  staff list. The JWT's email is the actor. So a compromised admin Worker can read the directory only while a staff
+  member is sending it requests (within that JWT's life), and every read names a real Access identity.
+- **Audit before data.** The audit `INSERT` and the read go in one D1 batch, so a failed audit write returns no rows
+  (`internal`). Issuer migration 0003 rebuilds `email_admin_audit` with the actions `user_search`, `user_view` and
+  `support_lookup` and a `detail` JSON column, keeping its rows. Each row records the staff email, the `ticket`
+  (required, 1–64 characters: the support reference or a short reason, as the issuer's staff routes already ask)
+  and `detail`. For a search, `detail` holds the filters used, the address term as a 12-character keyed hash (the
+  form unlock subjects use) and the row count. For a view it holds `{provider, sub}`, and for a lookup the code.
+  Never an address.
+- **Row budget.** Each staff email can get 500 identities an hour and 2 000 a day back (provisional constants),
+  counted in the issuer's `RateLimiter` object. Over that, the call answers `rate_limited` and logs
+  `directory_budget`, and the admin Worker emails the security alias (a Direct kind, §Email). A hijacked staff
+  session gets a slice of the directory, not all of it.
+- **Not a D1 binding.** A D1 binding is read-write and gives a Worker the whole database. An issuer D1 binding in
+  the admin Worker would let a bug or compromise there write `email_hints` (which automatic linking reads, D266),
+  `email_suppressions` and the audit, and read without leaving any audit row (D275 has the alternatives).
+
+```ts
+// apps/email-issuer, bound only by the admin Worker. Every method verifies accessJwt itself, reads only, audits first.
+interface StaffCall { requestId: string; accessJwt: string; ticket: string }
+interface DirectoryRpc {
+  search(c: StaffCall & { q?: string; provider?: 'email' | 'google'; appId?: string; sub?: string;
+                          unverifiedOnly?: boolean; cursor?: string; limit: number /* ≤ 100 */ })
+    : Rpc<{ users: UserRow[]; next?: string }>;
+  get(c: StaffCall & { provider: 'email' | 'google'; sub: string }): Rpc<{ user: UserRow; apps: UserApp[] }>;
+  byUid(c: StaffCall & { uidPrefix: string /* b64url, 5 bytes */ })                      // C15
+    : Rpc<{ matches: (UserRow & { scopeId: string; uid: string })[] }>;
+  auditSince(c: StaffCall & { id: number; limit: number }): Rpc<{ rows: DirectoryAuditRow[] }>;
+}
+interface UserRow { provider; sub; email; emailVerified: boolean; hosted: boolean | null; firstSeenMs; lastSeenMs;
+  appCount: number; uids?: { scopeId; uid }[] /* C15 */ }
+interface UserApp { appId; scopeId; firstSeenMs; lastSeenMs }
+// apps/api, bound only by the email issuer (C15; the same entrypoint D251 plans for the issuer's app lookup).
+interface IssuerRpc { uid(c: { scopeId: string; provider: string; sub: string }): Promise<{ uid: string }> }
+// apps/api AdminRpc addition (C15): live vault shares of one path in one app (no share ids, no counters).
+//   userShares(c: Ctx & { appId; path })
+//     : Rpc<{ shares: { createdAt; idleUntil; absExpiresAt; revokedAt: number | null }[] }>
+```
+
+### Users screen (`/users`, C8b)
+
+- **Search**: one box plus filters, keyset-paged by `last_seen_ms` descending, 50 a page and at most 100.
+  - Address: an exact match (indexed) for a full address. Otherwise a case-insensitive substring of at least 3
+    characters (`instr` over the stored lowercase form: a scan of `user_emails`, with its time measured in the
+    smoke).
+  - Provider (`email`, `google`), app (an app id picked from the apps list, `user_email_apps_app`), sub (exact),
+    and "unverified claims only".
+  - A `HANA-XXXX-XXXX` code goes to the Support ID lookup.
+  - Each result shows the address, provider, verified and hosted flags, app count and last seen.
+- **Unverified Google claims** (`provider = 'google'`, `email_verified = 0`) carry the CLI's warning on the row and
+  the detail: "UNVERIFIED: this Google account claims the address but Google hasn't verified it; don't treat it as
+  the owner". An address search lists them after the verified rows, and they are never the default target of an
+  address or code match (D269 review fixes).
+- **User detail** (`/users/:provider/:sub`):
+  - The directory row: address, provider, sub, `email_verified`, `hosted` (Google-hosted, D158; blank for email),
+    and first and last seen. These are the times the issuer saw the identity. Writes are best effort, so a lost
+    write leaves a gap.
+  - The identity's apps (`user_email_apps`): app name and environment (`AdminRpc.getApp`), scope, and first and
+    last seen.
+  - For each scope, read live from the chain over the admin Worker's read-only RPC, with the block height shown:
+    `get_identity(scope, provider, sub)` gives the status (`own`, `member`, or `pending` with `effective_at_ms`) and
+    `opened`. The path is `{scope}#{provider}#{sub}#0` for `own` (key_index 0 in the MVP, D8). For `member` it is
+    the account root's path, with a link to the root's directory row when there is one, and `get_account` lists
+    the members. A failed read shows "chain unavailable", never a guessed path.
+  - No wallet address. Hana's servers never see one: the CKD output reaches only the vault, and identity tokens
+    carry proven addresses but none is stored.
+  - For each scope, the Support ID and its activity (§Support ID lookup, from C15).
+- **No CSV export** (D275). Bulk reads stay with the CLI (`admin user:list --json`, for founders with wrangler
+  credentials, printed to the terminal only). The screen has no "select all".
+- **Access**: the admin Worker's Access check and staff list (§Hana admin console), plus the issuer's own JWT check.
+  The admin audit view adds the issuer's rows (`DirectoryRpc.auditSince`) as a third source beside `queryAudit` and
+  `changesSince`, filterable by staff and action. Directory reads never go into the partner feed, and they aren't
+  emailed except for the budget alert.
+
+### Support ID lookup (C15, D276)
+
+- **The code.** `HANA-` + `c[0..4]` + `-` + `c[4..8]`, where `c` is the Crockford base32 of the uid's first 5 bytes
+  (40 bits, uppercase, no padding). The parser accepts lowercase, `O` for 0, `I` and `L` for 1, and missing
+  dashes. The secret is `USER_ID_KEY`, through the uid (§Nonce layouts, `hana-id/uid/v1`), so there is no new
+  secret, domain string or store (D96, D144). It is per scope and per account. The uid comes from the path, so a
+  linked member gets its root's code, and every app of a scope shows the same code.
+- **Shown to the user and the partner.** The API returns `supportId` next to the session in the `/v1/login` and
+  `/v1/sessions` answers, computed from the path it already uses for the uid. The vault keeps it with the session
+  and exposes it in `hana_status` (so the partner page's *Copy diagnostics* carries it), the Hana popup's account
+  view and, later, Hana Home. It carries no address and no sub.
+- **Staff: code → user.**
+  1. The directory: `DirectoryRpc.byUid` over `user_email_apps.uid`. Issuer migration 0003 adds that column
+     (BLOB(16), nullable, indexed). After each directory write whose row has no uid, the issuer fills it in
+     `waitUntil` from `IssuerRpc.uid(scope, provider, sub)`. A failure logs `directory_uid_failed` (app and scope
+     only), never fails or slows the answer, and the next login fills it. Each match's uid is the one the ledger
+     uses for that identity's own path. For a linked account, the root's row matches, and the detail lists the
+     members.
+  2. Without a directory match (an env without the issuer, or a lost write), the ledger only: `usage.app_users`
+     by uid prefix (C15's Neon migration, the next free number, adds `app_users (uid)`) gives the app, scope and
+     first and last day, marked "no directory entry".
+  3. Every match is listed; two identities can share 40 bits (about 45 pairs among 10 M identities). The app named
+     in the partner's escalation tells them apart. A code isn't a credential: staff change nothing on a code alone.
+- **Staff: address → user**: the Users search, then the detail's Support ID (from the stored uid; none when it is
+  still NULL).
+- **What the lookup shows for a uid**, all from data Hana already keeps (D144):
+  - Logins and sessions: the ledger's ok `login`, `session` and `derive` events by uid (the same migration
+    adds `events (uid, at) WHERE uid IS NOT NULL`). They show the time, app, endpoint, latency and `near_tx` (an
+    explorer link), over the last 30 days by default and at most 400.
+  - Live sessions: `AdminRpc.userShares` over `vault_shares` by `(app_id, sha256(path))`, for persistence apps.
+  - Errors: by the request IDs the escalation gives (`usage.events` by `request_id`, every outcome with its
+    `code`). The ledger keeps uids only on ok events (its CHECK), so it can't list errors per user, by design.
+  - The app's policy and setting changes (`app_changes`). Consents aren't shown: they live only in the vault's
+    browser storage (D23).
+- **Partner side**: the code and nothing else. The partner console has no Support ID lookup in batch C; partners
+  escalate with the code and request IDs (D96).
+- **Retention.** C15 keeps two new things. The first is `user_email_apps.uid`, which stays with its directory row
+  and joins only ledger rows that still carry uids. The second is the audit rows, kept 5 years (D90). A code
+  resolves while the ledger holds the uid: 24 months after the month ends, and while `app_users` keeps the row
+  (D90). D269 sets no expiry for the directory itself (its `K_sub`-loss reason argues for none). An erasure request
+  deletes the identity's directory rows with a CLI command (`user:erase`, beside `uid:erase`, through D1's REST API
+  as the operator), so `DirectoryRpc` stays read-only.
+
+### What partners never see
+
+- **Partner console**: no binding to the issuer, `DirectoryRpc` or `IssuerRpc` (config snapshot). No `ConsoleRpc`
+  method returns a directory field, and the screens show aggregates only (§User lists).
+- **SDK**: `hana_status`, `hana.account()`, events and errors carry no address (the Support ID, yes).
+- **API**: no binding to the issuer's D1 and no route that reads it. A user-approved share to a partner (the
+  identity token's opt-in email claim, D120 steps 5–6) is later work with its own consent UX, not part of this.
+- **Emails to partner contacts**: the feed has no directory rows.
 
 ## Usage capture and reporting
 
@@ -1483,8 +1642,10 @@ count(*) FILTER (WHERE e.relayed AND (g.request_id IS NULL OR g.result = 'unsett
 
 ### User lists
 
-None in the MVP, and no wallet addresses: aggregates only. An HMAC tells a partner nothing, an SDK-reported address
-is unauthenticated, and uid-to-address pairs would re-identify users through chain activity.
+None for partners in the MVP, and no wallet addresses: aggregates only. An HMAC tells a partner nothing, an
+SDK-reported address is unauthenticated, and uid-to-address pairs would re-identify users through chain activity.
+Hana staff get the Users screen over the email issuer's directory (D269; proposed: §Users and Support ID), which
+holds verified email addresses, never wallet addresses.
 
 ## Audit
 
@@ -1521,7 +1682,8 @@ is unauthenticated, and uid-to-address pairs would re-identify users through cha
   security contacts changes (to old and new contacts), refused sign-ins in bulk once per hour, statements issued. A
   cursor advances only after a row's sends are accepted; the admin console shows the lag.
 - **Watcher:** `scope_pending_change`, `scope_changed` (§On-chain owner actions).
-- **Direct:** `nonce_unexplained`, `rejection_rate` (D91), `retention_failed` (D90), to the security alias. The invite
+- **Direct:** `nonce_unexplained`, `rejection_rate` (D91), `retention_failed` (D90), and (proposed, D275)
+  `directory_budget`, to the security alias. The invite
   link (`<console.origin>/invite#t=…`) goes in the blocking `member_invite` send.
 - Plain text plus simple HTML, no remote images; links only to `console.origin`; never approve links.
 
@@ -1583,6 +1745,7 @@ is unauthenticated, and uid-to-address pairs would re-identify users through cha
 | `scope:register` | Gains `--owners-from-org <org>` (reads the owners' subs from `CONSOLE_DB`) |
 | new `owner:relay --body <file>` | The staff relay runbook: dry run, `--yes`, never prints the JWT |
 | new `uid:erase --scope --provider --sub` | Recomputes the uid with `USER_ID_KEY` from `.secrets/`, calls `usage.erase_uid` as `usage_admin`; never prints the key |
+| proposed `user:erase --provider --sub` (D276) | Deletes the identity's `user_emails` and `user_email_apps` rows in the issuer's D1 through D1's REST API as the operator (the `user:*` path); asks for the ticket; prints no address |
 | new `usage:setup`, `usage:migrate`, `usage:legacy-export` | Neon roles and Hyperdrive configs from `.secrets/`; Neon migrations; the one-off export of D1 `usage` |
 
 The `app:*` commands are removed once the admin console covers them after the pilot; `scope:register`,
@@ -1616,7 +1779,8 @@ Trust boundaries, most to least trusted:
 | Replay of a public on-chain owner token | Login or a step-up | Random server-held login nonces; domain-separated layouts; token reservation | — |
 | Cross-environment replay | — | `env` and the signer in every digest | — |
 | Usage inflation | Billable-looking usage | Only post-gate events; plan `per_day`; the splits | Relayed-rejected gas is real cost, borne by Hana by default (D91); the rejection-rate alert |
-| Re-identifying users from `uid` | Linking uids to paths | Keyed HMAC on the API only; stripped after month + 24 months (D90); no user list; the writer role can't read the ledger | Hana, holding the key, can always re-identify within 24 months; a key leak re-links uids |
+| Re-identifying users from `uid` | Linking uids to paths | Keyed HMAC on the API only; stripped after month + 24 months (D90); no partner user list; the writer role can't read the ledger; (proposed, D276) the directory's stored uid is reached only through `DirectoryRpc` with a staff JWT, and the API's `IssuerRpc` is bound only by the issuer, which can't read the ledger | Hana, holding the key, can always re-identify within 24 months; a key leak re-links uids; staff can go from an address to ledger rows by design (D269) |
+| Reading the user directory (proposed, D275) | Every user's verified address joined to its public `sub` and so its on-chain activity (D269's accepted cost) | Only the admin Worker binds `DirectoryRpc`; the issuer verifies the staff Access JWT itself; each read audited in the issuer's D1 in the same batch; a per-staff row budget with an alert; no export route; no D1 binding outside the issuer | A compromised admin Worker reads what staff requests it sees, within a JWT's life, up to the budget; a staff member can read up to the budget, audited; Cloudflare account members can read the D1 directly (trust root) |
 | Hijacked owner account adds a co-owner | A second owner identity in the org | Fresh sign-in per invite; blocking notice to every owner and security contact; 24 h as a viewer with cancel by any owner, Hana or the link (D89) | Someone must read the notice within 24 h; console ownership alone isn't on-chain ownership |
 | Dashboard load or bug | Logins | Separate Workers and databases; RPC-only access; bounded hot-DB budget; usage writes after the response; Neon failure is a logged no-op | RPC runs in the API's isolate (logical, not physical, isolation) |
 
@@ -1647,6 +1811,9 @@ Trust boundaries, most to least trusted:
 | Settlement calls `tx` per relayed transaction | RPC load at scale | Bounded batches; revisit at scale (D93) |
 | `USER_ID_KEY` is a single point | Losing it breaks new-user continuity; a leak re-links users | Offline backup; API-only; never logged |
 | `app_users` is a lasting pseudonymous per-user record | Needed for new-user counts | Deleted with the app + 30 days; `uid:erase` |
+| (Proposed, D275) Directory reads through an RPC on the issuer, which holds the signing keys and `K_sub` | More code in the key-holding Worker; the issuer deploys before the Users screen | No route; a source test holds the module to directory reads and forbids key-module imports; additive methods |
+| (Proposed, D275) No CSV export of users | Staff can't hand a list to anyone from the console | `admin user:list --json` for founders, terminal only |
+| (Proposed, D276) The Support ID is 40 bits of the uid, visible to the partner page | A stable per-scope pseudonym for the partner (as the identity token's `sub` is); rare collisions | No address or sub in it; every match listed; staff act on nothing by code alone |
 | uid is per scope | Two apps in one scope share pseudonyms | Same partner, same wallets |
 | MAU counts only login, session and derive events | A user whose only activity in a month is unlocking a share made the previous month isn't counted | Shares live ≤ 23 h 50 min, so only month-boundary users are missed; stated on the statement |
 | Statements are gross | The signer's 30% gas reward isn't netted | Stated on the statement |
@@ -1687,7 +1854,8 @@ Trust boundaries, most to least trusted:
 - **The admin Worker binding `CONSOLE_DB`; a staff table in a partner-writable database.**
 - **D1 or Supabase for the ledger** (D73); **Supabase Storage** (D74).
 - **Extending the D1 `usage` counters; rounded pNEAR/Mgas totals; HyperLogLog MAU; MAU from an indexer.**
-- **Unkeyed `sha256(sub)`; user lists or SDK-reported addresses; recording gate rejections in the ledger.**
+- **Unkeyed `sha256(sub)`; user lists for partners or SDK-reported addresses; recording gate rejections in the
+  ledger.**
 - **Ledger retention of 40 or 100 days, or 400 days** (D90).
 - **Delay rules per mode or key type; exempting own-client or test-key apps.**
 - **Applying a change when its notice fails; GET cancel links; approve links in email.**
@@ -1717,6 +1885,8 @@ longer needed). The service contract names the same periods.
 | `auth_flows`, `handoff_codes`, `pending_actions` | 24 h after expiry | Console hourly |
 | Replaced logos | 30 days | Console hourly |
 | `EXPORTS` | 30 days (`legacy/` kept) | R2 lifecycle |
+| Issuer `user_emails`, `user_email_apps` (D269), with the proposed `uid` column (D276) | No expiry set by D269; deleted on an erasure request | `user:erase` (proposed, D276), by the operator |
+| Issuer `email_admin_audit`, directory reads included (proposed, D275) | 5 years, as the other audit logs (D90; not set for this table until now) | Not specified yet: an issuer purge to add with C13 |
 | D1 Time Travel / Neon PITR | 30 days / the plan's window | — |
 
 - **Monthly purge job (D90).** The admin Worker's monthly cron runs the Neon functions above and calls
@@ -1873,6 +2043,44 @@ endpoint, the JWKS, the Access JWKS, NEAR RPC, the Images binding and the email 
   the history links to its playbook's page; the search finds an incident playbook by a word of its signals; a kind
   with no playbook renders the "no playbook" error (the watchdog's `test/registry.test.ts` already forbids one).
 
+**Users and Support ID (proposed, D275, D276)**
+
+- Config snapshots: only the admin Worker binds `DirectoryRpc`; only the email issuer binds `IssuerRpc`; the console
+  binds neither; no Worker but the issuer binds the issuer's D1. Neither entrypoint is reachable through any
+  Worker's public `fetch`.
+- Source checks: `DirectoryRpc`'s module issues only `SELECT`s on `user_emails` and `user_email_apps` and the audit
+  `INSERT`, and imports none of the signer, key, challenge or mail modules.
+- Access: every `DirectoryRpc` method refuses a missing, expired, wrong-`aud`, wrong-`iss` or unknown-`kid` JWT and an
+  email not on the staff list (`forbidden`), reading no row and writing no audit row; the audit's `staff` is the
+  JWT's email even when the `Ctx` names someone else; a missing or over-long `ticket` is `bad_request`.
+- Audit: each method writes its row in the same batch as its read; a failing audit insert answers `internal` with no
+  rows; no audit row or log line of any flow contains an address (the grep of the issuer's `test/privacy.test.ts`,
+  extended); the admin audit view shows the issuer's rows beside `queryAudit` and `changesSince`.
+- Budget: the 501st identity in an hour (the 2 001st in a day) for one staff email is `rate_limited` and emails the
+  alias once; another staff email is unaffected.
+- Search: exact address, substring (3 characters accepted, 2 refused), provider, app, sub and unverified-only filters
+  against fixture rows; keyset paging stable while rows are written; at most 100 a page; the address and the code
+  never in a URL or a log line (the BFF routes are POST; log snapshot).
+- Unverified claims: a Google row with `email_verified = 0` shows the warning on the row and the detail, sorts after
+  verified rows, and is never the default target of an address or code match.
+- Detail: `get_identity` mocked as own, member (the root's path and the root's row linked), pending
+  (`effective_at_ms`) and failing ("chain unavailable", no path); every path is `{scope}#{provider}#{sub}#0`.
+- No export: the admin BFF route table has no user export (snapshot).
+- Partners: over a fixture user with a directory row, no `ConsoleRpc` answer, console route, `/v1` answer, SDK
+  status or event carries the address (response snapshots).
+- Support ID: vectors against an independent Node implementation (uid → code; the Crockford alphabet; the parser's
+  lowercase, `O`, `I`, `L` and missing-dash cases); the code in the `/v1/login` and `/v1/sessions` answers equals the
+  code of the ledger's uid for the same path (login, session and derive; a linked member gets its root's);
+  `hana_status.supportId` set at login and cleared at logout.
+- Lookup: a code finds the identity through `user_email_apps.uid`; with no directory row it falls back to
+  `app_users` ("no directory entry"); two identities sharing 40 bits are both listed; a code whose uid was stripped
+  (month + 24 months) finds nothing; request IDs find rejected and error events, which carry no uid.
+- Issuer uid write: after a directory write leaving `uid` NULL the issuer calls `IssuerRpc.uid` once in `waitUntil`;
+  a failing call leaves it NULL, logs `directory_uid_failed` (app and scope only) and never changes or slows the
+  answer; the next write fills it; the stored uid equals the API's for that identity's own path (shared vectors).
+- Migrations: issuer 0003 on a 0002 database keeps every `email_admin_audit` row, its CHECK accepts the new actions
+  and nothing else, and `uid` is nullable and indexed; C15's Neon migration adds the two indexes.
+
 **Hot DB and gate**
 
 - 0006 on an empty DB and on a sandbox-dev snapshot (origins, legacy usage, vault shares): row counts unchanged;
@@ -1964,7 +2172,8 @@ About 16k lines and 35 engineer-days; steps 2–3 and 5 can run beside 4 once st
 
 - Everything in §Deferred.
 - Public registration and self-serve scope registration (`public_registration` stays off).
-- Per-user lists, wallet addresses, opt-in address reporting.
+- Per-user lists for partners, wallet addresses, opt-in address reporting. A user-approved share of the address to a
+  partner (D269: UX not designed). Staff get the Users screen (proposed, §Users and Support ID).
 - Hash-chained or externally anchored audit (D93).
 - Origins or policies on chain; NEAR events from `create_session`/`derive_key` as a billing cross-check (contract
   change, needs the external audit).
@@ -2083,3 +2292,14 @@ Answered on 2026-10-29 (`docs/decisions.md` D87–D93), applied above; the numbe
 24. Two staff for shared-login live-app proposals. **Answered (D93):** no, not in the MVP.
 25. Local testing. **Answered (D93):** against a Hana-run testnet env with its own console; production keeps refusing
     loopback.
+
+**Users and Support ID (added 2026-11-04 after D269; to confirm by the user)**
+
+26. **The Users screen (D275).** Recommended: the admin Worker reads the directory through `DirectoryRpc`, a read-only
+    entrypoint on the issuer that verifies the staff Access JWT and audits each read itself, with a per-staff row
+    budget and no CSV export. Alternatives in D275: an issuer D1 binding in the admin Worker, a separate directory D1
+    bound to both, the issuer's Access HTTP routes; a capped, audited export.
+27. **The Support ID (D276).** Recommended: the uid's first 40 bits (`USER_ID_KEY`, no new secret), returned by the API
+    with the session; resolved through a `uid` column the issuer fills from the API's `IssuerRpc`, with a ledger-only
+    fallback; errors by request ID; no partner lookup. Alternatives in D276: a separate key, the identity token's
+    `sub`, recomputing uids at lookup, uids on error events, an org-scoped partner lookup.

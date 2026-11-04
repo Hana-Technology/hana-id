@@ -8,5 +8,6 @@ export * from './names.ts';
 export * from './origins.ts';
 export * from './owner-actions.ts';
 export * from './rpc.ts';
+export * from './staff.ts';
 export * from './types.ts';
 export * from './usage-event.ts';

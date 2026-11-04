@@ -11,7 +11,8 @@ change (branch `fix/email-plus-tags`) on 2026-11-02; D190–D193 (branch `feat/e
 day) on 2026-11-02. D230–D234, D250–D252 (branch `feat/email-login-6`, to confirm) on 2026-11-02, with batch 6 notes on D137,
 D154, D155, D199 and D206. D263–D267 (the batch 8b review, branch `feat/email-login-8b`, to confirm) on 2026-11-03, with
 notes on D42, D254 and D255; D263's operations and pin-read notes and D264's screen count (`EMAIL_CONSENT_ROUNDS`)
-on 2026-11-03 (branch `fix/8b-rereview`). Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
+on 2026-11-03 (branch `fix/8b-rereview`). D240–D244 (branch `feat/batch-c-7`, to confirm) on 2026-11-02, re-checked
+on 2026-11-04 after merging `develop` (branch `feat/batch-c-7-merge`). Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
 provider note, two "Superseded or amended" rows, the user-mail line under "Proposed", and the headings from D125 on, checked against `develop` @ 1c6a124 and what sandbox-dev runs (`docs/operations.md`) on
 2026-11-02 (branch `docs/consistency-pass`); no decision changed. D220–D224 (branch `feat/batch-c-4`, to confirm) on
 2026-11-02. D245–D249 (branch `feat/email-login-8a`, to confirm) on 2026-11-02. D253 (branch
@@ -22,7 +23,8 @@ D269's "Built" line on 2026-11-04 (branch `feat/user-emails`: the email-login wr
 the screen text), with D269 notes on D96, D119, D230 and D264 and two rows of "Superseded or amended".
 D270's status (the spike passed, switched on) on 2026-11-04 (branch `feat/token-first-on`), with notes on D254, D265
 (its gate passed) and D273 (token_first in Playwright), the D254 row of "Superseded or amended" and D265's "to
-confirm" line.
+confirm" line. D275–D276 (branch `docs/batch-c-users-support-id`: proposed, to confirm by the user, spec text only)
+on 2026-11-04.
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -1897,6 +1899,134 @@ detail open or a safer reading was needed. Each follows the spec's intent; all f
 - **Amended 2026-11-04 (D277):** "a token carrying them is refused" is now the claim allow-list (D271, D274), on every
   path that verifies a Google token: `/v1/owner-actions` no longer ignores them, a client proof is held to it too, and
   the step-up token is refused for any claim outside the list, not only `email`, `email_verified` and `hd`.
+
+## Batch C7: the console Worker backend (2026-11-02)
+
+Readings made while building `docs/batch-c-build-plan.md` C7 on `feat/batch-c-7` (`apps/console`: dispatch, headers,
+CSRF, `StaffRpc`, invites and owner grants, the hourly cron; no public route), where `docs/batch-c-spec.md` left a
+detail open or two of its lines pull apart. Each follows the spec's intent; all five are **to confirm** by the user.
+
+### D240. The console never holds or returns an invite token ("`issueInvite` returns the token once")
+- Date 2026-11-02 · Status: to confirm; built (`apps/console/src/invites.ts`, `staff-rpc.ts`) · Source: spec "Tests:
+  Invites and roles" ("`issueInvite` returns the token once; it is never stored, logged or returned again") against
+  §Nonce layouts (T = HMAC(`INVITE_LINK_KEY`, …), a key only the admin Worker holds), §RPC `issueInvite` ("the admin
+  Worker computes and emails the token") and §Invites "Notice first"
+- Decision: `issueInvite` returns the invite view and no token. The token exists only in the admin Worker: its notice
+  cron computes T from `INVITE_LINK_KEY` and the invite id, emails the link, and after every send is accepted calls
+  `ackMemberNotice` with sha256(T), the only form the console ever sees. So the test row reads: no StaffRpc answer
+  (`issueInvite`, `getOrg`, `listMembers`, `pendingMemberNotices`, `auditSince`) carries a token or a token hash, the
+  views' column lists never select `token_hash` or `cancel_token_hash`, and the console's code names neither link key
+  (a source check). The same holds for the owner-grant cancel token (`CANCEL_LINK_KEY`, admin Worker only).
+- Why: a token returned at issue would be a working link before the notice went out (the spec's fail-closed rule), and
+  the console would need the key; "once" is the admin Worker's single computation per notice.
+- Rejected: the console generating a random token and returning it to the admin Worker (the console would hold live
+  links; a re-sent notice after a failed ack could not carry the same link without storing it).
+
+### D241. An owner invite to an existing org always gets a grant; its notice comes before acceptance
+- Date 2026-11-02 · Status: to confirm; built (`invites.ts` `issueInvite`, `acceptInvite`; `cron.ts`) · Source: spec
+  "Invites and owner grants" ("an owner invite to an org that already has an owner also creates an `owner_grants`
+  row"; "every grant notice carries a cancel link"; the first-owner exception), §Membership rules
+- Decision:
+  - Every owner invite to an existing org creates its `owner_grants` row at issue, whether or not the org has an owner
+    then. Whether the new member waits is decided **at acceptance**, inside the acceptance batch: an org with a usable
+    owner (role or matured grant, user not disabled) gives a viewer with `owner_from = accepted_at +
+    ownerGrantDelayMs`; an org with none gives an owner at once and the grant `applied_at = owner_from = accepted_at`
+    (the first-owner exception). A grant cancelled before acceptance leaves a viewer. A new-org invite has no grant
+    (its acceptor is the first owner).
+  - Such an invite has two blocking notices, listed separately by `pendingMemberNotices`: the invite's (the link to
+    the invitee) and the grant's (with its cancel link, carrying the invite). Acceptance needs both acked, so the
+    owners and contacts hold the cancel link before the 24 h can start.
+  - Acceptance writes its `invite.accepted` audit row first and gates every other statement on it (D243), so two
+    concurrent acceptances, even by one person in the same millisecond, give one member and one audit row. A probe statement before it aborts the batch when the request id already committed an acceptance (a reused id never runs the gated statements for another token), and the invite update re-checks the open-invite conditions.
+- Why: deciding at issue would be wrong whenever the org's owners change between issue and acceptance (up to 7
+  days); acceptance runs in one serialised batch, so the decision there is exact. Accepting before the grant's notice
+  would start a wait nobody can cancel by link.
+- Rejected: a grant only when the org has an owner at issue; one combined notice (`ackMemberNotice` takes one hash, and
+  the two links go to different people).
+
+### D242. `invites.new_org_kind` (CONSOLE_DB migration 0002) and the passkey gate's count
+- Date 2026-11-02 · Status: to confirm; built (`apps/console/migrations/0002_invites_kind_audit_request.sql`,
+  `invites.ts`) · Source: spec §RPC `issueInvite({…, kind?})`, §Deferred (the passkey gate), §`CONSOLE_DB` (the invite
+  row has no kind; the acceptance SQL inserts the org with the default kind)
+- Decision: migration 0002 adds `invites.new_org_kind` (`partner` | `internal`, set exactly with `new_org_name`, by
+  triggers; the default `partner`), and acceptance creates the org with it. The gate refuses `issueInvite` with
+  `newOrgName` and `kind = 'partner'` with `passkeys_required` while `PASSKEYS_SHIPPED` (a build constant, false) is
+  false and either a `partner` org other than `org_legacy` exists or an **open** new-partner-org invite does; the check
+  is inside the insert's guard, so two concurrent issues can't both pass. Internal orgs, and invites into existing
+  orgs, never count.
+- Why: without the column `kind` would be lost at acceptance; without counting open invites, two first-partner invites
+  issued before either is accepted would make two partner orgs.
+
+### D243. StaffRpc readings: actors, the audit commit row, the last-owner rule, what the audit keeps
+- Date 2026-11-02 · Status: to confirm; built (`apps/console/src/{staff-rpc,members,grants,invites,audit,sql}.ts`) ·
+  Source: spec §RPC `StaffRpc` ("every method takes a Hana actor"), §Roles, §Invites, §Audit, §Sessions; D229 (the
+  API's actor rule for `ackNotice`)
+- Decision:
+  - **Actors.** Staff writes take `hana` only; the reads the admin Worker's crons need (`listOrgs`, `getOrg`,
+    `listMembers`, `pendingMemberNotices`, `auditSince`) also take `system`; `ackMemberNotice` takes `system` only, so
+    a staffer can't make an invite link work or start a grant's wait by hand. `member` and `link` actors are
+    `forbidden` everywhere (C10's owner actions reuse the same data functions with a member actor).
+  - **One write, one batch, the audit row first.** Every console write inserts its `audit_log` row first, only while
+    its guard holds, and gates every other statement on it, like `app_changes` in the API. Migration 0002 adds a
+    unique index on `audit_log (request_id, action)`: a replayed request id aborts the batch, answered
+    `already_applied` (same actor and target) or `conflict`. A write whose state moved between its read and its batch
+    is `conflict` (retry). Cron rows use `cron-<run>-<target>` request ids.
+  - **Codes the spec doesn't name.** `forbidden`: `org_legacy` (no members, no invites, can't be frozen). `not_found`:
+    unknown org, user, invite or grant, or removing a non-member. `conflict`: a frozen org (no invites), the 11th open
+    invite, a second open invite of the same address to an org, the last owner removed or demoted, a second promotion
+    while one is pending, adding or promoting a disabled user (promoting added on 2026-11-04, branch
+    `feat/batch-c-7-merge`: a disabled owner doesn't count, so it would leave an ownerless org looking owned).
+    `bad_request` also covers an audit cursor, time or `seq` past 2^53 − 1 (the console writes them as SQL literals). `not_pending`: revoking or acking an ended invite, cancelling a
+    grant that is cancelled, applied or past `owner_from`. A repeated ack with the same hash is a no-op; with another,
+    `conflict`. A change to the role already in force writes nothing.
+  - **Roles.** The last-owner rule and the first-owner exception count only usable owners (not disabled); a pending
+    owner is a viewer. `setMember(viewer)` on a pending owner cancels the grant; on an owner, demotes (last-owner rule).
+    `setMember(owner)`: through a grant when the org has another owner, at once when it has none. Removal cancels the
+    member's live grants.
+  - **Sessions** are revoked (`revoked_at`, purged 30 days later) on a removal, a demotion, an immediate promotion, a
+    disable, and a freeze for members with no other active org; not when the cron records a matured grant (the role in
+    force doesn't change then).
+  - **What the audit keeps.** Details are allowlisted per action (`AUDIT_DETAIL_KEYS`, snapshot-tested): ids, roles,
+    kinds, codes, times. The invitee's address is never in the audit trail (the invite row has it and is purged 90
+    days after it ends; the audit is kept 5 years); `actor_email` is the acting staffer's or member's own; `ip_prefix`
+    is the caller's /24 or /48. Logs carry ids and codes only, never an email, a sub, a token or a hash.
+  - **Notices.** Each `pendingMemberNotices` entry lists the org's current usable owners; a promotion's grant also
+    carries the promoted `member` (user id and email), additive like D226, so the admin Worker needs no second call.
+- Why: the admin Worker is more trusted than the console (spec §Security model), but the notice must fail closed even
+  against a staff mistake, as in D229; the rest makes the spec's rules exact under concurrency and replays.
+
+### D244. The console's C7 surface: two link routes, CSRF everywhere, the cron's details
+- Date 2026-11-02 · Status: to confirm; built (`apps/console/src/{index,links,csrf,headers,cron}.ts`,
+  `apps/console/scripts/gen-wrangler.ts`) · Source: spec §Static assets, §Response headers, §Sessions (CSRF, rate
+  limits), §Console BFF routes, §Audit, §Retention; build plan C7 ("no public route")
+- Decision:
+  - **Routes.** The Worker serves its own origin only (404 for any other host), sends `/api/*` to its backend and the
+    rest to the SPA's assets (a placeholder page until C9). The only backend routes in C7 are the two session-less link
+    confirms, `POST /api/cancel` (through `ConsoleRpc.cancelChangeByLink`) and `POST /api/owner-grants/cancel`; any other
+    `/api/*` path is 404. The config has `workers_dev: false`, no `routes`, `preview_urls: false`.
+  - **CSRF on every non-GET request**, assets included (four checks, `403 csrf`); a write to a non-API path is 405.
+    `/api/*` answers carry `cache-control: no-store` besides the spec's headers; no response sets a cookie in C7.
+  - **The link routes' per-IP limit**: the rate-limiting binding (`CONSOLE_IP_LIMIT`, namespace `95101`, 10 a minute,
+    IPv6 by /64; C9's `/api/auth/*` will share the binding with its own key), before the body is read; the API keeps
+    its own exact link limits (D228, D229).
+  - **The link cancel's audit row** (the outcome of a console-initiated RPC) is written for a cancel and for a refusal
+    of a real link (`not_pending`, `already_applied`, `conflict`, `internal`, `near_unavailable`); a wrong token,
+    malformed input or a rate limit is only logged, since anyone can send them and audit rows are kept 5 years. The
+    owner-grant link cancel writes its own row only when it cancels.
+  - **The cron** (hourly, `0 * * * *`): expired invites get one `invite.expired` row each and their grant cancelled
+    (`system:invite_expired`); matured grants are recorded once (a grant whose member row is gone is cancelled,
+    `system:not_member`); invites are purged 90 days after acceptance, revocation or logged expiry, sessions 30 days
+    after they ended (revoked, idle or absolute, whichever first), sessions' network data at 90 days, auth flows,
+    handoff codes and pending actions 24 h after expiry, replaced logos (R2 object, then row) 30 days after
+    replacement; at most 200 rows per step and run; each step on its own (one failing doesn't stop the others).
+  - **Config.** The `LOGOS` and `STATEMENTS` R2 bindings are in the config from C7, so the two buckets must exist
+    before the console's first deploy (setup in `docs/operations.md`); invocation logs off (C9's handoff code is in a
+    URL); placement next to the API.
+  - **Flagged for C11:** the logo upload (`POST …/logo`, an image body) can't meet the CSRF rule's
+    `content-type: application/json`; C11 needs either a JSON body (base64) or an explicit exception for that one route
+    with the other three checks.
+- Why: nothing a partner can reach is half-wired until C9 (the build plan's rule), but the link confirms need no
+  sign-in and exercise the console → API binding end to end.
 
 ## Partner identity token, build steps 1–4 (2026-10-30)
 
@@ -4461,9 +4591,110 @@ To confirm from `fix/user-emails-review`: D269's review fixes (the CLI's remote 
 wrangler; a record-only login that still ends on another client's access token).
 To confirm from `feat/scope-email-client-tool`: D253 (dev envs mint the email client proof locally; production keeps
 the issuer's Access route).
+Batch C7's D240–D244 (the console never holds an invite token, an owner invite's grant and its two notices,
+`invites.new_org_kind` and the passkey gate, StaffRpc's actors, commit rows and codes, the console's C7 routes and
+cron) are to confirm.
 To confirm from the identity token's step 7 (the KMS signer's code): D215 (the manifest shape and credentials), D216
 (`DIGEST`), D217 (strict DER, the self-check), D218 (one `Sign`, no retry, limits) and D219 (the standby's region, the
 IAM policy on the active key only).
 
 Identity token step 8's readings D210–D214 (the watchdog's identity JWKS and discovery check, pin before publish, the
 "identity key on chain" kid check, the discovery fields, bounded alerts and the portal hand-off) are to confirm.
+
+To confirm by the user, from `docs/batch-c-users-support-id` (2026-11-04): D275 (the admin console's Users screen
+over D269's directory) and D276 (the Support ID made consistent with D269), below.
+
+### D275. The admin console's Users screen reads the user directory through a read-only, self-auditing RPC on the issuer
+- Date 2026-11-04 · Status: **proposed, to confirm by the user** · Source: D269 ("the admin console's Users page
+  later (batch C)") · Written: `docs/batch-c-spec.md` "Users and Support ID" (data path, Users screen, what partners
+  never see, tests, Q26); build plan C8b
+- Recommendation:
+  - **Data path.** The issuer exports `DirectoryRpc`, a `WorkerEntrypoint` with no route that only the admin Worker
+    binds (`ISSUER`). It has read methods only (`search`, `get`, `auditSince`; `byUid` with D276). A source test
+    holds the module to `SELECT`s on `user_emails` and `user_email_apps` and forbids imports of the signer, key,
+    challenge and mail modules.
+  - **The issuer checks the staff member.** Each call carries the staff request's Access JWT, which the issuer
+    verifies itself (admin application `aud`, team domain, staff list) and uses as the actor. Each call also writes
+    its `email_admin_audit` row in the same D1 batch as the read, with a required ticket and no address in it.
+    Issuer migration 0003 adds the actions and a `detail` column.
+  - **Budget.** Each staff email gets at most 500 identities an hour and 2 000 a day (provisional). Past that, the
+    call answers `rate_limited` and the security alias is emailed.
+  - **Features**:
+    - Search by address (exact, or a substring of at least 3 characters), provider, app, sub and "unverified only".
+    - The detail shows the address, provider, sub, verified and hosted flags, first and last seen, and the apps. It
+      also shows the on-chain path per scope, and for a linked member the account root, read live with
+      `get_identity` and `get_account`. A failed read shows "chain unavailable", never a guessed path.
+    - Unverified Google claims carry the CLI's warning and are never a match's default target.
+  - **No CSV export.** Bulk reads stay with `admin user:list --json`.
+  - **Partners get nothing.** No binding in the console, no `ConsoleRpc` field, no SDK or `/v1` field, nothing in
+    the partner feed.
+- Why: the issuer is the directory's only writer (D269), so a narrow read entrypoint keeps it so. Checking the JWT at
+  the issuer means a compromised admin Worker reads only what staff requests let it read, and those reads are
+  audited where the data lives. This is D251's direction (a narrow RPC instead of a broad D1 binding).
+- Main trade-off: more code in the Worker that holds the signing keys and `K_sub` (mitigated: no route, the source
+  test, additive methods), and the issuer must deploy before the screen.
+- Alternatives:
+  - (a) **An issuer D1 binding in the admin Worker.** Simplest, but D1 bindings are read-write and cover the whole
+    database. A bug or compromise there could write `email_hints` (which automatic linking reads, D266),
+    `email_suppressions` or the audit, and read with no audit row. Not recommended.
+  - (b) **Move the directory into a D1 of its own, bound to both Workers.** This keeps the hints out of the admin
+    Worker's reach. The admin Worker could still rewrite rows and mislead support, reads go unaudited, and there are
+    two writers. Cheap now (0002 isn't applied on sandbox-dev), but not recommended.
+  - (c) **The admin Worker calls the issuer's Access-protected HTTP routes.** This puts an address-serving route on
+    the public internet. Not recommended.
+  - (d) **A CSV export**, capped (e.g. 1 000 rows), audited and emailed to the alias. Useful for partner-wide
+    analysis, but one click takes out a slice of the directory. Not recommended for batch C; the CLI covers one-off
+    needs.
+- Also: the batch C spec's Support ID line ("no email or Google account") and "Hana stores contact details only for
+  partner members, security contacts and billing contacts" were rewritten. They now read as statements about
+  partners and about whom Hana contacts, consistent with D269.
+
+### D276. Support ID: the uid's first 40 bits; staff resolve it through the directory's stored uid; errors by request ID
+- Date 2026-11-04 · Status: **proposed, to confirm by the user** · Source: build plan C15's open question (D144:
+  confirmed, built from data Hana already keeps), made consistent with D269 · Written: `docs/batch-c-spec.md`
+  "Support ID lookup", Q27; build plan C15
+- Recommendation:
+  - **The code** is `HANA-XXXX-XXXX`: the Crockford base32 of the uid's first 5 bytes. The secret is
+    `USER_ID_KEY` through the uid (`hana-id/uid/v1`), so there is no new secret, domain string or table. It is per
+    scope and per account (a linked member shows its root's code).
+  - **Where it is shown.** The API returns `supportId` with the session (`/v1/login`, `/v1/sessions`). The vault
+    exposes it in `hana_status` (so partners' diagnostics carry it) and in the popup's account view.
+  - **Code → user.** The issuer fills a `uid` column in `user_email_apps` after each directory write, from a new
+    API entrypoint `IssuerRpc.uid` (bound only by the issuer; the entrypoint D251 plans), off the answer's path.
+    Staff reach that column only through `DirectoryRpc.byUid`, with a staff JWT. Without a directory row, the
+    fallback is the ledger only (`app_users` by uid prefix). Every match is listed (40 bits: rare collisions,
+    resolved by the app the partner names).
+  - **Address → user** is the Users search; the detail shows the code.
+  - **What a lookup shows**:
+    - Logins and sessions: the ledger's ok `login`, `session` and `derive` events by uid, with live vault shares
+      from `AdminRpc.userShares`.
+    - Errors: by the request IDs the partner sends, since the ledger keeps uids only on ok events, by design.
+    - The app's `app_changes`.
+    - Not consents: they live only in the vault's browser storage.
+  - **Partner side**: the code only, no address or sub, and no partner lookup in batch C.
+  - **Retention**: nothing new but the `uid` column (kept with its directory row) and audit rows (5 years). A code
+    resolves while the ledger holds the uid (24 months after the month, D90). Directory rows have no expiry under
+    D269. An erasure request deletes them with a new CLI `user:erase`, so `DirectoryRpc` stays read-only.
+  - **Migrations**: the Neon one adds `app_users (uid)` and `events (uid, at)` indexes, at the next free number
+    (0004 and 0005 are taken).
+- Why: D144 (no dedicated support table) holds, and the uid is already the ledger's key. Storing it beside the
+  address makes code → user a single indexed read instead of recomputing every directory row's uid at the API. The
+  key stays in the API only. A compromised issuer gains uids it can't join to anything (it can't read the ledger).
+  A compromised admin Worker can't compute uids without a staff JWT.
+- Main trade-off: the partner page sees a stable per-scope pseudonym (40 bits of the uid; no more than the identity
+  token's `sub` gives). The issuer also gains a call into the API, best effort and off the hot path, so a lost call
+  leaves the code unresolvable to a user until the next login.
+- Alternatives:
+  - (a) **A separate `SUPPORT_ID_KEY`** (HMAC of the uid). It adds a secret and still needs a stored code or a
+    scan. Not recommended.
+  - (b) **The code from the identity token's `sub`** (`IDENTITY_SUB_KEY`). Partners could map it themselves, but
+    it is a second pseudonym that the ledger doesn't use, and it needs its own index. Not recommended.
+  - (c) **No stored uid.** Recompute the uid at lookup for each directory row of the app through an
+    `AdminRpc.uid`. That costs O(users of the app) per lookup and lets the admin Worker compute uids on its own.
+    Not recommended.
+  - (d) **uids on post-verification error events**, so errors list per user. It means a migration of the ledger's
+    CHECK and more per-user data. Not recommended; request IDs cover support.
+  - (e) **An org-scoped lookup in the partner console** (the org's ledger rows for a code, no address). Deferred.
+- Amends in text only: D96's "it reveals no email or Google account" now holds for partners; staff reach the
+  directory (D269). `docs/email-login-spec.md` ("Support ID lookups show … never a `sub` or address") and
+  `docs/hana-home-spec.md` "Support ID" still say otherwise. They are to be aligned once this is confirmed.

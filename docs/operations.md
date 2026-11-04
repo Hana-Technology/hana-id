@@ -3,7 +3,9 @@
 Last verified against code: 2026-11-04 (branch `feat/batch-c-6-merge`, batch C6 on current `develop`; built on `feat/batch-c-6`: "Console sink scope (batch C6, milestone M3)" with
 the scan fixes (known owner accounts only, `--known-owner`, no removal a run can't follow with the registration), the
 console audiences no longer in `global` in the manifest and Google tables, the owner-pool allowance event and
-`OWNER_POOL_ALLOWANCE_YOCTO`; D235–D239); 2026-11-04 (branch `docs/sandbox-dev-state-1104`: sandbox-dev redeployed at f53d63e, API 9fe0343a, issuer b0cb9058 after migration 0002); 2026-11-04 (branch `feat/token-first-on`: "Turning linking on (batch 8b)": the spike
+`OWNER_POOL_ALLOWANCE_YOCTO`; D235–D239); 2026-11-04 (branch `feat/batch-c-7-merge`, C7 merged onto `develop`; written on `feat/batch-c-7` 2026-11-02: "Partner console Worker": its setup steps for
+milestone M4 (D1, `gen`, migrations, the R2 buckets, deploy order), the hourly cron, StaffRpc, no public route, the
+`CONSOLE_DB` restore notes, D240–D244; on the merge branch: the cron-trigger count with the watchdog's, what a missing `OWNER_GRANT_DELAY_MS` refuses); 2026-11-04 (branch `docs/sandbox-dev-state-1104`: sandbox-dev redeployed at f53d63e, API 9fe0343a, issuer b0cb9058 after migration 0002); 2026-11-04 (branch `feat/token-first-on`: "Turning linking on (batch 8b)": the spike
 passed, `'token_first'` in force, deploying the switch (the issuer if needed, both page Workers), the check and the
 undo; the user directory's google-record rows in force; D270); 2026-11-04 (branch `fix/user-emails-review`: "User directory (D269)": the CLI's
 statement off the argv (a 0600 `.secrets/tmp/` file locally, D1's REST API remotely; why not wrangler's
@@ -52,6 +54,7 @@ offline standby and `identity-key next / switch / retire` (D177), the identity s
 `gov/sandbox-handover`: sandbox-dev's owner is now its council DAO, council-setup's DAO check, the upgrade drill).
 
 Commands and flags are from `scripts/`, `apps/api/scripts/gen-wrangler.ts`, `apps/api/scripts/pages-wrangler.ts`,
+`apps/console/scripts/gen-wrangler.ts`,
 `apps/demo/scripts/gen-wrangler.ts`, the `package.json` scripts and their tests. Endpoints:
 `docs/api.md`. Contract methods: `docs/contract-interface.md`. Design and measurements: `docs/context.md`.
 
@@ -823,6 +826,76 @@ The API's hourly cron also watches the owner pool that pays for owner actions: e
 of its initial allowance (0.5 NEAR, deploy-contract's default; set the Worker var `OWNER_POOL_ALLOWANCE_YOCTO` when the
 keys were added with another `--owner-relayer-allowance`) writes an `owner_allowance_low` security event, once a day.
 Top it up by re-adding the key with a fresh allowance ("Relayer keys (either pool)").
+
+## Partner console Worker (`apps/console`, batch C7)
+
+The console Worker (`hana-id-console-<env>`, manifest `console.workerName`) holds `CONSOLE_DB` (orgs, members, invites,
+owner grants, console sessions, the console's audit log) and binds the API's `ConsoleRpc` (`API`). After C7 it has
+**no public route**: `workers_dev: false`, `preview_urls: false`, no `routes`. Only its bindings reach it: the admin
+Worker's `CONSOLE` → `StaffRpc` (batch C8) and its hourly cron. Partner sign-in, the console route and the SPA come with
+C9 (milestone M4); nothing below makes anything reachable by a partner. `docs/api.md` "Console Worker" lists what it
+serves; D240–D244 the readings.
+
+It needs the dashboard blocks in the manifest (`console`, `files`, `admin`, `usage`, `email`, `ownerGrantDelayMs`;
+`docs/batch-c-build-plan.md` setup step 12): `gen` refuses an env without them, so sandbox-dev can't run it yet (Q3:
+the origins come first).
+
+### Setting it up (once per env, milestone M4, for the user to run)
+
+From the repo root of the main checkout, logged in to the API's Cloudflare account (`wrangler login`):
+
+```sh
+# 1. The console's D1 (setup step 5), next to the API's (APAC); note the id it prints (not a secret).
+corepack pnpm --dir apps/console exec wrangler d1 create <console.d1Name> --location apac
+# 2. The config, with that id (apps/console/wrangler.jsonc, gitignored).
+corepack pnpm --filter @hana-id/console gen <env> --d1-id <uuid>
+# 3. The schema: apps/console/migrations (0001, 0002) on the remote database.
+corepack pnpm --dir apps/console exec wrangler d1 migrations apply <console.d1Name> --remote
+# 4. The two R2 buckets the config binds must exist before the first deploy (setup step 7; the STATEMENTS bucket lock
+#    rule, 7 years, is set when statements start, batch C12, but setting it now does no harm).
+corepack pnpm --dir apps/console exec wrangler r2 bucket create <files.logosBucket>
+corepack pnpm --dir apps/console exec wrangler r2 bucket create <files.statementsBucket>
+# 5. The API first (its ConsoleRpc entrypoint, batch C5), then the console.
+corepack pnpm --dir apps/api exec wrangler deploy
+corepack pnpm --dir apps/console exec wrangler deploy
+```
+
+- The deploy prints no URL (no route). Check it with `corepack pnpm --dir apps/console exec wrangler deployments list`
+  and, after the next full hour, `wrangler tail <console.workerName>`: one `console_cron` line per step (`invites.expired`,
+  `grants.applied`, `purge`, `logos`) with a count, never an id of a person.
+- The cron is one more trigger on the account (`0 * * * *`); the free plan allows 5 per account (the API and the
+  watchdog have one each, per env).
+- The console has no secret in C7. `CONSOLE_GOOGLE_CLIENT_SECRET` comes with C9 (setup step 11); `INVITE_LINK_KEY` and
+  `CANCEL_LINK_KEY` are the **admin** Worker's (C8, setup step 10), never the console's: the console stores only the
+  sha256 of each emailed link token, which the admin Worker sends with its ack (D240).
+- `OWNER_GRANT_DELAY_MS` comes from the manifest's `ownerGrantDelayMs` (D145). If it is missing or out of range, the
+  ack of a promotion's notice and every invite acceptance (C9's sign-in) refuse with `internal` (fail closed);
+  regenerate and redeploy.
+- Rollback: `wrangler rollback` in `apps/console` (it has no route, so nothing partner-facing changes). A schema problem
+  is a new migration, never an edit of an applied one.
+
+### What runs and what it keeps
+
+- **Hourly cron** (`src/cron.ts`): invites that expired unaccepted get one `invite.expired` audit row and their owner
+  grant cancelled; matured owner grants are recorded (`members.role = 'owner'`, `member.owner_granted`); invites are
+  deleted 90 days after acceptance, revocation or expiry, sessions 30 days after they ended (network data at 90 days),
+  auth flows, handoff codes and pending actions 24 h after expiry, and logos replaced more than 30 days ago (R2 object,
+  then row). At most 200 rows per step and run; a failing step is logged (`level: error`, the step and the error's class
+  name) and the others still run. The audit log and owner grants are retention data (5 years, the admin Worker's monthly
+  job, C13), never touched here.
+- **`StaffRpc`** (the admin Worker's binding, C8): orgs, members (`setMember`), users (`disableUser`), freeze, invites
+  (issue, revoke, the notice list and ack), owner grants (cancel), the audit feed and queries. Until C8 deploys nothing
+  calls it; there is no CLI for it.
+- **Logs** carry ids and codes only: never an email (invitee, member or staff), a Google `sub`, a token or a hash.
+
+### Restoring `CONSOLE_DB`
+
+As "Restoring a D1 database (Time Travel)" below, from `apps/console` with its `wrangler.jsonc`, on `<console.d1Name>`.
+The export holds members' emails and invitees' addresses: keep it under `.secrets/<env>/` (0600). What a restore loses:
+invites, grants, member and role changes and sign-ins after the point (the audit rows of those writes too); **a member
+removal, a demotion, a disable or a freeze made after the point is undone**: redo each through the admin console (or,
+until C8, a direct D1 statement reviewed by a second person) before the console route is on again. Owner grants that
+matured after the point mature again on the next cron run.
 
 ## Local API (`wrangler dev`)
 

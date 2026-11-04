@@ -3,7 +3,7 @@
 // types. Each schema is the call's `Ctx` (actor, requestId, clientIp) plus its own fields, strict (an unknown field is
 // `bad_request`, so a caller can't think it set something the API ignores).
 import { z } from 'zod';
-import { ctx, environment } from './types.ts';
+import { ctx, environment, ownerActionBody } from './types.ts';
 import { APP_NAME_MAX } from './names.ts';
 import { MAX_APP_ORIGINS } from './origins.ts';
 
@@ -34,6 +34,12 @@ const b64url32 = z.string().regex(/^[A-Za-z0-9_-]{43}$/u);
 export const LOGO_KEY_RE = /^logos\/(app_[A-Za-z0-9]{1,64})\/[0-9a-f]{64}\.png$/u;
 
 const appName = appNameRaw;
+/**
+ * A compact JWS (a Google ID token: the step-up token of a guarded change). The contract's limit is 7168 bytes; the
+ * API verifies it (signature, audience, age, nonce, owner) and never logs or stores it.
+ */
+export const JWT_MAX = 7168;
+const jwt = z.string().max(JWT_MAX).regex(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u);
 
 const org = { orgId: orgIdInput };
 const app = { orgId: orgIdInput, appId: appIdInput };
@@ -63,6 +69,16 @@ export const createKeyInput = ctx.extend(app).strict();
 export const rotateKeyInput = ctx.extend({ ...app, keyId: keyIdInput }).strict();
 export const revokeKeyInput = ctx.extend({ ...app, keyId: keyIdInput }).strict();
 export const listChangesInput = ctx.extend({ ...org, beforeSeq: z.number().int().positive().optional(), limit: limit(200) }).strict();
+/** A member's origin add (with any removes sent with it), bound to its step-up token (spec "API verification"). */
+export const changeOriginsInput = ctx
+  .extend({ ...app, add: origins, remove: z.array(originInput).max(MAX_APP_ORIGINS), expectedVersion: version, stepUpJwt: jwt })
+  .strict();
+/** A member's policy set or raw-signing enable, bound to its step-up token. */
+export const consoleProposeChangeInput = ctx
+  .extend({ ...app, kind: z.enum(['policy_set', 'raw_sign_on']), policy: z.unknown().optional(), expectedVersion: version, stepUpJwt: jwt })
+  .strict();
+/** An on-chain owner action, relayed byte-identical through the owner pool (the API checks it as /v1/owner-actions does). */
+export const ownerActionInput = ctx.extend({ ...org, body: ownerActionBody }).strict();
 
 // ---- AdminRpc ----
 
@@ -113,6 +129,9 @@ export type CreateKeyInput = z.infer<typeof createKeyInput>;
 export type RotateKeyInput = z.infer<typeof rotateKeyInput>;
 export type RevokeKeyInput = z.infer<typeof revokeKeyInput>;
 export type ListChangesInput = z.infer<typeof listChangesInput>;
+export type ChangeOriginsInput = z.infer<typeof changeOriginsInput>;
+export type ConsoleProposeChangeInput = z.infer<typeof consoleProposeChangeInput>;
+export type OwnerActionInput = z.infer<typeof ownerActionInput>;
 export type CreateAppInput = z.infer<typeof createAppInput>;
 export type AssignScopeOrgInput = z.infer<typeof assignScopeOrgInput>;
 export type DeleteAppInput = z.infer<typeof deleteAppInput>;

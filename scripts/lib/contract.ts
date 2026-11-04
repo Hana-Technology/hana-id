@@ -75,6 +75,14 @@ export const OWNER_METHODS = [
 ] as const;
 export type OwnerMethod = (typeof OWNER_METHODS)[number];
 
+/**
+ * Scope-owner calls the owner sends as an `Owner::Near` of a Hana scope (`auth: "Near"`), not as the contract's owner:
+ * deploy-contract's console sink step removes the console audiences from "global" with them (D238). owner-tx sends
+ * them like owner calls (the owner account, or a council proposal); `admin owner:call` does not take them.
+ */
+export const SCOPE_OWNER_CALLS = ['remove_client'] as const;
+export type ScopeOwnerCall = (typeof SCOPE_OWNER_CALLS)[number];
+
 export interface WatchdogView {
   account_id: string;
   confirm_from_ms: number;

@@ -22,6 +22,8 @@ export const USAGE_ENDPOINT: Readonly<Record<string, UsageEndpoint>> = {
   '/v1/sessions/revoke': 'revoke',
   '/v1/vault/unlock': 'unlock',
   '/v1/owner-actions': 'owner_action',
+  /** The same owner actions relayed for the console (rpc/console.ts ownerAction). */
+  'ConsoleRpc.ownerAction': 'owner_action',
   '/v1/link': 'link',
   '/v1/link/cancel': 'link_cancel',
   '/v1/link/unlink': 'link_unlink',

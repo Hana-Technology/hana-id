@@ -5,9 +5,10 @@
 // - setLogo: the `logo_key` pointer only (the console uploads and re-encodes, batch C11); immediate;
 // - turnOff: the policy removed or raw signing off, immediate, any pending value dropped and the guarded changes
 //   ended or cancelled (a kill switch: no step-up, not counted by the breaker);
-// - proposeChange (AdminRpc, a staff proposal): a policy set or raw-signing enable as a pending guarded change, nothing
-//   in `apps` until its notice is acked (lifecycle.ts). Member proposals with the step-up come with batch C6.
-import { LOGO_KEY_RE, newId, normaliseAppName } from '@hana-id/console-core';
+// - proposeChange: a policy set or raw-signing enable as a pending guarded change, nothing in `apps` until its notice
+//   is acked (lifecycle.ts): a staff proposal (AdminRpc) or a member's with the API-verified step-up (ConsoleRpc,
+//   changes/step-up.ts, the settings-change layout over the policyId and the stored settings_version).
+import { LOGO_KEY_RE, newId, nonceOf, normaliseAppName, settingsChangeDigest } from '@hana-id/console-core';
 import type { Env } from '../env.ts';
 import { IDLE_TTL_MIN_MS, SESSION_TTL_MAX_MS, SESSION_TTL_MIN_MS } from '../vault/settings.ts';
 import { expectVersion, planApp } from './apps.ts';
@@ -16,7 +17,8 @@ import { scopeGoogleClients } from './chain.ts';
 import type { HotDb } from './db.ts';
 import { requireChangeConfig } from './origins.ts';
 import { fitsTtl, pendingPolicy, policyInForce, rawSignInForce, storedPolicy, validatePolicy } from './policy.ts';
-import { type Q, join, q } from './sql.ts';
+import { type Q, join, q, raw } from './sql.ts';
+import { type StepUpToken, confirmStepUp, releaseStepUp, verifyStepUpToken } from './step-up.ts';
 import { type ChangeRow, changeView } from './views.ts';
 
 /** An app name as stored: NFC, trimmed, 1..64 characters, one display-safe line (console-core normaliseAppName). */
@@ -122,23 +124,36 @@ export async function turnOff(db: HotDb, w: Writer, i: { orgId: string | null; a
   return { version: i.expectedVersion + 1 };
 }
 
+/** ConsoleRpc.proposeChange: a member's policy set or raw-signing enable, bound to the member's step-up token. */
+export async function proposeSettingByMember(
+  db: HotDb,
+  env: Env,
+  w: Writer,
+  i: { orgId: string; appId: string; kind: 'policy_set' | 'raw_sign_on'; policy?: unknown; expectedVersion: number; stepUpJwt: string },
+): Promise<{ version: number; change: ReturnType<typeof changeView> }> {
+  const token = await verifyStepUpToken(env, i.stepUpJwt, w.actor, w.now);
+  return proposeSetting(db, env, w, i, token);
+}
+
 /**
- * AdminRpc.proposeChange: a staff proposal of a policy set or a raw-signing enable. Refused within `appChangeDelayMs`
- * of a scope assignment, for raw signing on a test app (D39), for a value already in force, and while another change of
- * the same kind is pending (cancel it first). Never a waiver; never expedited.
+ * A proposal of a policy set or a raw-signing enable: Hana staff's (AdminRpc.proposeChange, `token` null) or a member's
+ * with a verified step-up token. Refused for raw signing on a test app (D39), for a value already in force, and while
+ * another change of the same kind is pending (cancel it first); a staff proposal also within `appChangeDelayMs` of a
+ * scope assignment. Staff proposals never get a waiver and are never expedited.
  */
 export async function proposeSetting(
   db: HotDb,
   env: Env,
   w: Writer,
   i: { orgId: string; appId: string; kind: 'policy_set' | 'raw_sign_on'; policy?: unknown; expectedVersion: number },
+  token: StepUpToken | null = null,
 ): Promise<{ version: number; change: ReturnType<typeof changeView> }> {
   expectReplay(w, ['policy.proposed', 'raw_sign.proposed']);
   const config = requireChangeConfig(env);
   const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, w, with: { changes: true } });
   const a = plan.app;
   expectVersion(a.settings_version, i.expectedVersion);
-  if (a.assigned_at > w.now - config.delayMs) refuse('conflict', 'The scope was assigned to this org less than appChangeDelayMs ago: staff proposals wait for it');
+  if (!token && a.assigned_at > w.now - config.delayMs) refuse('conflict', 'The scope was assigned to this org less than appChangeDelayMs ago: staff proposals wait for it');
   let policy: { json: string; id: string } | null = null;
   if (i.kind === 'raw_sign_on') {
     if (i.policy !== undefined) refuse('bad_request', 'raw_sign_on takes no policy');
@@ -159,21 +174,36 @@ export async function proposeSetting(
     const stillPending = pendingPolicy(a, w.now);
     if (stillPending !== null && (await storedPolicy(stillPending, a.session_ttl_ms))?.id === policy.id) refuse('conflict', 'This policy is already pending');
   }
+  if (token) {
+    // Steps 4–6 of the API verification, after the version check and every input and state check.
+    const expectedNonce = nonceOf(
+      await settingsChangeDigest({ signer: env.SIGNER_ACCOUNT, appId: i.appId, kind: i.kind, ...(policy ? { policyId: policy.id } : {}), settingsVersion: a.settings_version }),
+    );
+    await confirmStepUp(env, token, { expectedNonce, scopeId: a.scope_id });
+    w.sub = token.sub;
+  }
+  const by = token ? { kind: 'member' as const, sub: token.sub } : { kind: 'hana' as const, sub: null };
   const changeId = newId('guardedChange');
-  await runWrite(db, w, [
-    commitOnApp(
-      w,
-      { kind: i.kind === 'policy_set' ? 'policy.proposed' : 'raw_sign.proposed', detail: policy ? { changeId, policyId: policy.id } : { changeId } },
-      i.appId,
-      i.orgId,
-      q`a.settings_version = ${i.expectedVersion} AND a.deleted_at IS NULL
-        AND (SELECT assigned_at FROM scopes WHERE scope_id = a.scope_id) <= ${w.now - config.delayMs}
-        AND NOT EXISTS (SELECT 1 FROM guarded_changes g WHERE g.app_id = a.id AND g.kind = ${i.kind} AND ${NOT_YET(w.now, 'g')})`,
-    ),
-    q`UPDATE apps SET settings_version = settings_version + 1 WHERE id = ${i.appId} AND ${committed(w.requestId)}`,
-    q`INSERT INTO guarded_changes (id, app_id, kind, policy_json, policy_id, status, proposed_by_kind, proposed_by, proposed_at, request_id)
-      SELECT ${changeId}, ${i.appId}, ${i.kind}, ${policy?.json ?? null}, ${policy?.id ?? null}, 'pending', 'hana', ${actorId(w.actor)}, ${w.now}, ${w.requestId} WHERE ${committed(w.requestId)}`,
-  ]);
+  try {
+    await runWrite(db, w, [
+      commitOnApp(
+        w,
+        { kind: i.kind === 'policy_set' ? 'policy.proposed' : 'raw_sign.proposed', detail: policy ? { changeId, policyId: policy.id } : { changeId } },
+        i.appId,
+        i.orgId,
+        q`a.settings_version = ${i.expectedVersion} AND a.deleted_at IS NULL
+          AND (${token ? raw('1') : q`(SELECT assigned_at FROM scopes WHERE scope_id = a.scope_id) <= ${w.now - config.delayMs}`})
+          AND NOT EXISTS (SELECT 1 FROM guarded_changes g WHERE g.app_id = a.id AND g.kind = ${i.kind} AND ${NOT_YET(w.now, 'g')})`,
+      ),
+      q`UPDATE apps SET settings_version = settings_version + 1 WHERE id = ${i.appId} AND ${committed(w.requestId)}`,
+      q`INSERT INTO guarded_changes (id, app_id, kind, policy_json, policy_id, status, proposed_by_kind, proposed_by, proposer_sub, proposed_at, request_id)
+        SELECT ${changeId}, ${i.appId}, ${i.kind}, ${policy?.json ?? null}, ${policy?.id ?? null}, 'pending', ${by.kind}, ${actorId(w.actor)}, ${by.sub}, ${w.now}, ${w.requestId} WHERE ${committed(w.requestId)}`,
+    ]);
+  } catch (err) {
+    // Nothing was written (the batch is all or nothing): the token may be used again.
+    if (token && !w.wrote) await releaseStepUp(env, token);
+    throw err;
+  }
   const row: ChangeRow = {
     id: changeId,
     app_id: i.appId,
@@ -182,9 +212,9 @@ export async function proposeSetting(
     policy_json: policy?.json ?? null,
     policy_id: policy?.id ?? null,
     status: 'pending',
-    proposed_by_kind: 'hana',
+    proposed_by_kind: by.kind,
     proposed_by: actorId(w.actor),
-    proposer_sub: null,
+    proposer_sub: by.sub,
     proposed_at: w.now,
     request_country: null,
     waiver: null,

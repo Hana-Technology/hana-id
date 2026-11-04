@@ -118,6 +118,7 @@ deploy-contract <env> [--yes] [--relayer-keys 3] [--relayer-allowance 2]
                       [--owner-relayer-keys 1] [--owner-relayer-allowance 0.5]
                       [--upgrade] [--wasm <file>] [--skip-build]
                       [--transfer-owner] [--member <council member>] [--approve-with <council member>]
+                      [--known-owner <account,…>]
 deploy-contract <env> --creation-plan [--wasm <reproducible build>] [--updater-public-key <pk>] [--creation-public-key <pk>]
 ```
 
@@ -156,12 +157,14 @@ same run). Steps:
    `--transfer-owner` adds `propose_owner(<council DAO>)` and, once due, the DAO's `accept_owner` (then the script sets
    `owner` / `ownerKind` in the manifest).
 5. `set_issuer("google", ["https://accounts.google.com", "accounts.google.com"])`, `set_sponsors([relayer])`,
-   `set_console_audiences` if the manifest lists any, `set_shared_clients` with `sharedGoogleClientIds`, and
-   `admin_register_scope` for the reserved `global` scope with `googleClientIds` plus the `consoleAudiences` and
-   `allow_shared: false` (Hana's own app uses its own client). Each of the last two is skipped with a warning while
-   its manifest field is still an `UNSET…` placeholder. Console audiences go into `global` so no scope owner can claim
-   them with `propose_change(AddClient)`. Set `consoleAudiences` before the first deploy: once `global` exists, a
-   missing console audience is only a warning, and adding it later takes a timelocked `propose_change` by the owner.
+   `set_console_audiences` if the manifest lists any, `set_shared_clients` with `sharedGoogleClientIds`, the console
+   sink scope (`admin_register_scope` of a new `sN` whose only clients are the `consoleAudiences`, owner `owner`,
+   `allow_shared: false`), and `admin_register_scope` for the reserved `global` scope with `googleClientIds` only and
+   `allow_shared: false` (Hana's own app uses its own client). The shared clients and `global` are skipped with a
+   warning while their manifest field is still an `UNSET…` placeholder. The console audiences go into the sink so no
+   scope owner can claim them with `propose_change(AddClient)`, and never into `global`, where a console token could
+   open a session (D238). On an env whose `global` still lists them, the plan removes them from it (`remove_client`)
+   and registers the sink once their quarantine is over (`docs/operations.md` "Console sink scope").
 
    `set_shared_clients` replaces the whole list. Clients that are new take effect after `changeDelayMs`, and until
    then the plan reports them as pending, with their unlock time. Clients no longer in the manifest are removed at

@@ -1,7 +1,10 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-04 for the console Worker (branch `feat/batch-c-7-merge`, C7 merged onto `develop`; written on `feat/batch-c-7` 2026-11-02: its
+known open issues. Last verified against code: 2026-11-04 for owner-verified changes and owner actions on current `develop` (branch `feat/batch-c-6-merge`; built on
+`feat/batch-c-6`: the API's own step-up check in "RPC writers", the owner-action precheck's nonce recompute and the
+safety budget in "Owner actions", the claim allow-list on both owner-action paths and on the step-up token, the
+guarded-change token in the inventory, the console sink scope, open issue (i); D235–D239, D277); 2026-11-04 for the console Worker (branch `feat/batch-c-7-merge`, C7 merged onto `develop`; written on `feat/batch-c-7` 2026-11-02: its
 invariants, the invite, owner-grant and session token rows, D240–D244; re-checked against `develop`'s D269–D274, which the console's C7 surface doesn't touch: it relays no Google token until C9); 2026-11-04 for `'token_first'` in force (branch
 `feat/token-first-on`: the spike passed, "Google's verified email" now describes token_first first and
 second_request as the fallback, D270); 2026-11-04 for the user directory's review fixes (branch
@@ -137,7 +140,8 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | Owner, signer, relayer account keys | ed25519 full-access (not ml-dsa-65: `docs/decisions.md`) | `~/.near-credentials/testnet/` on the operator's machine | the user (Hana admin) | Manual. Agents never ask for or handle them |
 | Google ID tokens | RS256 JWT | Transient; public on chain once used | user's browser, relay (ciphertext), API (in transit) | Never logged or stored; openid-only claims |
 | Google RSA public keys | JWKS | On chain (issuers); API isolate cache (≤ 6 h stale on fetch failure) | public | v1 contract: hourly cron sync. Governance contract: the 15-min cron proposes and executes delayed changes, the watchdog checks them against its own JWKS copy |
-| Console owner-action tokens | RS256 JWT (console audience) | Transient; `sha256` marker in a `RateLimiter` until `exp` | partner owner | Single use (nonce bound to `action_nonce`) |
+| Console owner-action tokens | RS256 JWT (console audience) | Transient; `sha256` marker in a `RateLimiter` until `exp` | partner owner | Single use (nonce bound to `action_nonce`, recomputed by the API's precheck before relaying); on both paths held to the claim allow-list (no `email`/`hd`/name: it is public once relayed; `token_has_pii`, D274, D277) |
+| Console step-up tokens for guarded changes (batch C6) | RS256 JWT (console audience), nonce = the origin-change or settings-change layout | Transient: verified by the API, `sha256` marker in `owner-actions:tokens` until `exp`; never logged, stored or returned; only its verified `sub` is kept (`proposer_sub`, `actor_sub`) | partner owner | Single use; ≤ 300 s old; bound to one change at one version; refused with `email` or `hd` |
 | Publishable keys | `pk_test_` / `pk_live_` + base58 | D1, partner pages | public | Not secrets |
 | Invite link tokens | T = HMAC-SHA256(`INVITE_LINK_KEY`, "hana-console/invite/v1" ‖ borsh(invite id)), 32 bytes | The invitee's mailbox (`<console.origin>/invite#t=…`, a fragment); `CONSOLE_DB` holds only sha256(T), set by the admin Worker's ack | the invitee | 7 days from creation, single use, email-bound; works only after every notice send was accepted. `INVITE_LINK_KEY` is the admin Worker's secret (C8), never the console's (D240) |
 | Owner-grant cancel tokens | T = HMAC-SHA256(`CANCEL_LINK_KEY`, "hana-console/owner-grant-cancel/v1" ‖ borsh(grant id)) | The grant notice's recipients (every owner, the security contacts, the alias); `CONSOLE_DB` holds only sha256(T) | them | Cancels one owner grant once, by POST, until `owner_from` |
@@ -178,6 +182,11 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   only into a scope with `allow_shared`; anything else is refused. Path = `scope#provider#sub#key_index`.
 - Clients are globally unique; shared and scope clients are disjoint; removed clients are quarantined for
   `change_delay_ms`; dropped shared clients are retired forever.
+- Console audiences live in the console sink scope (batch C6, D93 Q7, D238; `deploy-contract`): a Hana `sN` owned by
+  `Owner::Near`, the console audiences its only clients, no shared login, no app. So no partner can claim one with
+  `AddClient`, and a console-client token can open no session in a scope with wallets: in `global` (where they were
+  before), a console token whose nonce followed the session layout would have opened a `global` session and derived
+  that user's `global` key, and a compromised console chooses the nonce at every sign-in.
 - Timelocks: `AddClient`, `SetOwners`, `SetAllowShared` and shared-client additions wait `change_delay_ms`; a delay
   decrease waits the current delay; removals and `disable_shared_login` are immediate. `public_registration` is
   one-way.
@@ -304,19 +313,29 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   for 60 s, so a replayed doomed request can't drain the session pool.
 - **Addresses never through the API** (D230): the email issuer is reached at its own URL (sandbox-dev) or by a zone
   route (production); the API serves nothing under `/v1/email/` and never forwards those bodies.
-- **Owner actions**: OIDC auth only, console audience, a current owner of the scope, change exists / unlocked, client
-  proof matches; the token is reserved single-use before relaying and released only if the tx certainly didn't
-  execute; caps per owner identity (5/min, 30/day), per scope (10/min, 50/day) and global (20/min, 200/day), asked in
-  that order and taken back from the earlier windows when a later one refuses (`hitAll`, `RateLimiter.unhit`);
-  unauthenticated `execute_change` has its own per-scope window, never the owners'; `cancel_change` is outside all of
-  these: 5/min, 20/day per owner identity, then 25/min, 100/day per target scope (only that scope's on-chain owners,
-  verified before counting, reach it; sized for the contract's `MAX_OWNERS` = 5 at their cap), then a spend-bound
-  ceiling of 100/min, 1000/day for all cancels; refused without an owner identity (D100; `handlers.ts`
-  `ownerActionWindows`, `handleOwnerAction`, `owner-actions.ts`). Remaining starvation limits: in a scope, only all 5
-  owners together can fill its cancel window; the global one needs ≥ 20 identities at their cap per minute (≥ 4
-  attacker-owned scopes) or ≥ 50 per day plus 1000 cancellable changes (≥ 100 scopes' `MAX_PENDING`); an owner can
-  always cancel on chain directly (`docs/operations.md`). The owner pool's allowance is the hard spend bound. The off-chain check doesn't recompute `owner_action_nonce`: a token with a wrong nonce is
-  relayed and fails on chain, at the cost of its owner's own windows only.
+- **Owner actions** (`/v1/owner-actions` and `ConsoleRpc.ownerAction`, one path: `handlers.ts` `runOwnerAction`): OIDC
+  auth only, console audience, a current owner of the scope, the owner-action nonce recomputed from the body at the
+  scope's current `action_nonce` (an **uncached** `get_scope`; `owner_nonce_mismatch` 409, D236), change exists /
+  unlocked, client proof for that client with the scope's client-proof nonce (`invalid_client_proof`); the token is
+  reserved single-use before relaying and released only if the tx certainly didn't execute; caps per owner identity
+  (2/min, 4/day: the scope's divided by `MAX_OWNERS`, so one owner can't use up its co-owners' proposals), per scope
+  (10/min, 20 a UTC day) and global (20/min, 200/day) for `propose_change`, asked in that
+  order and taken back from the earlier windows when a later one refuses (`hitAll`, `RateLimiter.unhit`);
+  unauthenticated `execute_change` has its own per-scope window, never the owners'; the safety budget
+  (`cancel_change`, `remove_client`, `disable_shared_login`) is outside all of these: 5/min, 20/day per owner identity,
+  then 25/min, 100/day per target scope (only that scope's on-chain owners, verified before counting, reach it; sized
+  for the contract's `MAX_OWNERS` = 5 at their cap), then a spend-bound ceiling of 100/min, 1000/day; refused without
+  an owner identity (D100, D236; `ownerActionWindows`, `owner-actions.ts`). Every cap refusal writes an `owner_cap`
+  security event (once per window; the owner's identity is never in it). Remaining starvation limits: in a scope, only
+  all 5 owners together can fill its safety window; the global one needs ≥ 20 identities at their cap per minute (≥ 4
+  attacker-owned scopes) or ≥ 50 per day plus 1000 actions the scopes' state allows (≥ 100 scopes' `MAX_PENDING`); an
+  owner can always cancel on chain directly (`docs/operations.md`). The owner pool's allowance is the hard spend bound;
+  the hourly cron writes `owner_allowance_low` for a key below 25% of its initial allowance (`owner-pool.ts`).
+  Both tokens (the owner's and an `AddClient` client proof) are public once relayed, so both are held to the login
+  tokens' claim allow-list on both paths (`400 token_has_pii`, right after each signature check, before the reservation; D274, D277): no
+  owner's or partner's email, `hd` or name reaches the chain through the API. Through `ConsoleRpc.ownerAction` the
+  scope must also be one of the org's in `scopes` (`not_found`) and the owner token's optional claims are checked
+  strictly: a console bug can't publish a member's address on chain.
 - **Origin rules** (`apps/api/src/origins.ts:81`): a Hana page (`Origin` = `VAULT_ORIGIN`/`AUTH_ORIGIN`) may call only
   its endpoints, and only for an `x-hana-parent-origin` the app allows. Partner origins: `GET /v1/app` always; the
   session endpoints only for test-scope apps in dev envs. Loopback origins and `http://localhost:*` only for
@@ -366,7 +385,7 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   | `GET /v1/app` per IP per app | plan `per_ip_minute`, its own window |
   | Vault endpoints | 60/min per IP per app (*per location*); 10 × `per_minute` per app; 10/min per share (share actions, *per location*) |
   | Login relay per IP | writes 40/min, reads 120/min (a Google login of an app with email writes about 5 slots: the token, the access token, a notice, an answer, the last word; a consent, code or proof round 2 more; so about eight such logins a minute behind one NAT, D267) |
-  | Owner actions | 10/min per IP; per owner 5/min, 30/day; per scope 10/min, 50/day; global 20/min, 200/day; `execute_change` its own 10/min, 50/day per scope; `cancel_change` only 5/min, 20/day per owner, 25/min, 100/day per scope and 100/min, 1000/day for all cancels (D100) |
+  | Owner actions (and `ConsoleRpc.ownerAction`, its `clientIp` on the same per-IP limiter) | 10/min per IP; `propose_change` per owner 2/min, 4/day, per scope 10/min, 20 a UTC day, global 20/min, 200/day; `execute_change` its own 10/min, 50/day per scope; the safety budget (`cancel_change`, `remove_client`, `disable_shared_login`) only 5/min, 20/day per owner, 25/min, 100/day per scope and 100/min, 1000/day for all of them (D100, D236) |
 
   Each request's windows are asked in turn: per IP first, and the per-app window only once the IP window accepted,
   so a request the IP window refuses never uses (or holds) any of the app's shared quota. On the relay endpoints the
@@ -437,9 +456,20 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   - a member never touches suspension bits 1 or 2; `deleteApp` revokes every key and leaves the app suspended for
     good; staff proposals get the full delay, no waiver but `createApp`'s `no_session`, and are refused within
     `appChangeDelayMs` of a scope assignment; expedite only for an announced member proposal, with a reason;
+  - member proposals (`changeOrigins`, `proposeChange`; batch C6) apply only with a step-up token the API verifies
+    itself (`changes/step-up.ts`, spec "API verification", D235), in order and failing closed: RS256 signature and
+    expiry (strict optional claims), `(provider, aud)` in the on-chain `console_audiences` read fresh, `iat` ≤ 300 s
+    old (≤ 60 s ahead), `sub` equal to the member actor's, only allow-listed claims (no `email`/`hd`, D277), the nonce equal to the origin-change or
+    settings-change layout over the request and the stored version (which must be `expectedVersion`), `sub` an
+    `Owner::Oidc` of the scope on an uncached `get_scope`, then `sha256(jwt)` reserved single use until `exp` (shared
+    with the owner-action tokens, so no token serves twice anywhere). A compromised console therefore proposes nothing
+    an on-chain owner didn't sign for this exact change; it can still replay none of them, and what it gets is the
+    notice and the delay like any proposal;
   - the `no_session` waiver is decided inside the acking statements and fails closed exactly as the CLI's does (a
-    member candidate also needs an API-verified `proposer_sub`); `loopback` only for a member's loopback origin on a
-    test scope in a dev env on a non-production network;
+    member candidate also needs the API-verified `proposer_sub`, written only by the verification above; an origin
+    removed while in force, by `removeOrigins` or the removes of a `changeOrigins`, counts as a sign of a user through
+    its ledger row); `loopback` only for a member's loopback origin on a test scope in a dev env on a non-production
+    network;
   - the cancel link is checked as `sha256(token)` against the stored hash, single use, until `active_from`;
   - a compromised console is bounded: destructive calls (`setSuspended(true)`, `revokeKey`, `rotateKey`,
     `removeOrigins`, a `googleWebClientId` change) at 5 per org and 20 across orgs per rolling hour (`rate_limited`,
@@ -1165,7 +1195,8 @@ leaked key can call them directly within its allowance.
 
 **(i) The 20-origin cap is enforced only by the vault page. Fixed for the CLI (batch C3).** `admin app:create` and
 `app:origins:add` refuse more than 20 active-or-pending origins per app (`MAX_APP_ORIGINS`, `@hana-id/console-core`);
-`AdminRpc.addOrigins` applies the same cap (batch C5; the member path, `changeOrigins`, comes with C6). A direct D1 write can still exceed it; the vault page then answers
+`AdminRpc.addOrigins` (batch C5) and `ConsoleRpc.changeOrigins` (batch C6, counting the removes sent with the adds)
+apply the same cap. A direct D1 write can still exceed it; the vault page then answers
 403 `too_many_origins` (availability, not safety).
 
 **(j) sandbox-dev's two Hana origins are one site. Open (sandbox-dev only; outside dev envs the schema refuses a

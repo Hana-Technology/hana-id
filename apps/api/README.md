@@ -285,7 +285,11 @@ failure changes neither and a replay revokes nothing. `503 vault_key_unavailable
 `VAULT_KEK_PREVIOUS`) is missing; unlock unwraps K_s before the counter moves. Each unlock past the vault gate is one `unlock` usage event. D1 holds
 only `share_enc = iv ‖ AES-GCM(VAULT_KEK, iv, K_s, aad = share_id ‖ app_id ‖ session_pk)` (`src/vault/kek.ts`).
 
-### `POST /v1/owner-actions` (no app auth; 10 per IP per minute, 20 per minute and 200 per day globally)
+### `POST /v1/owner-actions` (no app auth; 10 per IP per minute; caps per owner, scope and globally, `docs/api.md` "Rate limits")
+
+The console relays the same actions through `ConsoleRpc.ownerAction` (`src/rpc/console.ts`), which runs this code
+path (`runOwnerAction`) with its member's `clientIp`, the scope checked against the org, and the owner token's
+optional claims checked strictly; the claim allow-list below (`token_has_pii`) holds on both paths (D274, D277).
 
 `{"method": …, "args": {…}}` with `args` exactly as the contract takes them. Only:
 
@@ -316,17 +320,21 @@ including the nonces):
   only when the request is turned away by the global cap or the transaction certainly never executed
   (`method_not_allowed`, `relayer_unconfigured`, `near_unavailable`, `near_rejected`, `relayer_busy`), and kept on
   an unknown outcome (`relayer_unavailable`, `near_error`, `timeout`, a contract rejection).
-- `get_scope(scope_id)` (cached 10 s, dropped after each relayed action): exists (`404 unknown_scope`); the token's
-  `(provider, sub)` is an `Oidc` owner (`403 not_owner`).
+- `get_scope(scope_id)`, read uncached: exists (`404 unknown_scope`); the token's `(provider, sub)` is an `Oidc` owner
+  (`403 not_owner`); the token's nonce is the owner-action nonce of exactly this body at the scope's current
+  `action_nonce` (`409 owner_nonce_mismatch`: rebuild the action; `@hana-id/console-core` `ownerActionNonce`).
 - `cancel_change` / `execute_change`: the change is pending (`404 unknown_change`); `execute_change`: unlocked
   (`409 change_locked`). `remove_client`: the client is in the scope (`404 unknown_client`) and not the last one unless the scope
   has `allow_shared` (`409 last_client`). `disable_shared_login`: shared login is on (`409 shared_login_disabled`) and
   the scope has a client of its own (`409 last_client`). `propose_change(AddClient)`: `client_proof` is a genuine token
-  for that `(provider, aud)` (`400 invalid_client_proof`) with only allow-listed claims (`400 token_has_pii`, D274),
-  not already in the scope (`409 client_registered`), not a
+  for that `(provider, aud)` whose nonce is the scope's client-proof nonce (`400 invalid_client_proof`), with only
+  allow-listed claims (`400 token_has_pii`, D274), not already in the scope (`409 client_registered`), not a
   shared or pending shared client (`409 shared_client`). `propose_change(SetAllowShared)`: not already on
   (`409 shared_login_enabled`).
-- Then the global cap (only requests that passed the checks count).
+- Then the caps (only requests that passed the checks count): `propose_change` per owner, per scope (20 a UTC day) and
+  globally; `execute_change` per scope and globally; the safety budget (`cancel_change`, `remove_client`,
+  `disable_shared_login`) on windows of its own, which no proposal or execute flood can fill. A refusal writes an
+  `owner_cap` security event (D236).
 
 ### `GET /v1/health`
 

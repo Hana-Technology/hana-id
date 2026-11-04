@@ -31,6 +31,11 @@ export interface Env {
   /** Secret: owner pool. JSON array of `ed25519:...` secret keys, small allowance, used by /v1/owner-actions only. */
   OWNER_RELAYER_KEYS?: string;
   /**
+   * Optional var: the allowance (decimal yoctoNEAR) the owner-pool keys were added with, when deploy-contract ran with
+   * another `--owner-relayer-allowance` than its 0.5 NEAR default: the base of the hourly `owner_allowance_low` check.
+   */
+  OWNER_POOL_ALLOWANCE_YOCTO?: string;
+  /**
    * Secret: the keys-updater key, a function-call key on SIGNER_ACCOUNT that the contract installed with exactly
    * UPDATER_METHODS (set_issuer_key, propose_issuer_key_removal, execute_issuer_key_change; relayer-config.ts).
    */

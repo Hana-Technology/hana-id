@@ -50,6 +50,8 @@ export interface Writer {
   expect?: ReplayExpect;
   /** Set by runWrite once the write applied (a no-op or a refusal leaves it unset; the breaker refunds those). */
   wrote?: boolean;
+  /** The sub of an API-verified step-up (changes/step-up.ts), recorded as `app_changes.actor_sub`; unset otherwise. */
+  sub?: string;
 }
 
 /** Declares what this write records, for the replay check (call before the plan read). */
@@ -57,8 +59,9 @@ export function expectReplay(w: Writer, kinds: readonly string[], appId?: string
   w.expect = { kinds, ...(appId === undefined ? {} : { appId }), ...(actor ? { actor } : {}) };
 }
 
-/** The actor columns of `app_changes`. `actor_sub` is only an API-verified step-up's sub (C6), never set here. */
+/** The actor columns of `app_changes`. `actor_sub` is only an API-verified step-up's sub (`Writer.sub`). */
 export const actorId = (a: Actor): string => a.id;
+const actorSub = (w: Writer): string | null => w.sub ?? null;
 
 /** This write's commit row exists (only ever this batch's own: see the header). */
 export const committed = (requestId: string): Q => q`EXISTS (SELECT 1 FROM app_changes WHERE request_id = ${requestId})`;
@@ -81,8 +84,8 @@ const detailOf = (d: CommitRow['detail']): Q => ('sql' in d && 'args' in d && Ar
  */
 export function commitOnApp(w: Writer, row: CommitRow, appId: string, orgId: string | null, predicate: Q): Q {
   const org = orgId === null ? raw('1') : q`a.org_id = ${orgId}`;
-  return q`INSERT INTO app_changes (at, org_id, app_id, scope_id, kind, detail_json, actor_kind, actor_id, request_id)
-    SELECT ${w.now}, a.org_id, a.id, a.scope_id, ${row.kind}, ${detailOf(row.detail)}, ${w.actor.kind}, ${actorId(w.actor)}, ${w.requestId}
+  return q`INSERT INTO app_changes (at, org_id, app_id, scope_id, kind, detail_json, actor_kind, actor_id, actor_sub, request_id)
+    SELECT ${w.now}, a.org_id, a.id, a.scope_id, ${row.kind}, ${detailOf(row.detail)}, ${w.actor.kind}, ${actorId(w.actor)}, ${actorSub(w)}, ${w.requestId}
       FROM apps a WHERE a.id = ${appId} AND ((${org} AND ${predicate}) OR ${replayed(w.requestId)})`;
 }
 
@@ -92,15 +95,15 @@ export function commitOnApp(w: Writer, row: CommitRow, appId: string, orgId: str
  */
 export function commitOnChange(w: Writer, row: CommitRow, changeId: string, orgId: string | null, predicate: Q, actor?: { kind: string; id: string }): Q {
   const org = orgId === null ? raw('1') : q`a.org_id = ${orgId}`;
-  return q`INSERT INTO app_changes (at, org_id, app_id, scope_id, kind, detail_json, actor_kind, actor_id, request_id)
-    SELECT ${w.now}, a.org_id, a.id, a.scope_id, ${row.kind}, ${detailOf(row.detail)}, ${actor?.kind ?? w.actor.kind}, ${actor?.id ?? actorId(w.actor)}, ${w.requestId}
+  return q`INSERT INTO app_changes (at, org_id, app_id, scope_id, kind, detail_json, actor_kind, actor_id, actor_sub, request_id)
+    SELECT ${w.now}, a.org_id, a.id, a.scope_id, ${row.kind}, ${detailOf(row.detail)}, ${actor?.kind ?? w.actor.kind}, ${actor?.id ?? actorId(w.actor)}, ${actor ? null : actorSub(w)}, ${w.requestId}
       FROM guarded_changes g JOIN apps a ON a.id = g.app_id WHERE g.id = ${changeId} AND ((${org} AND ${predicate}) OR ${replayed(w.requestId)})`;
 }
 
 /** The commit row of a write that is not on one app (an org's contacts, a scope's org, a whole org's suspension). */
 export function commitOn(w: Writer, row: CommitRow, ids: { orgId: string; appId?: string | null; scopeId?: string | null }, predicate: Q): Q {
-  return q`INSERT INTO app_changes (at, org_id, app_id, scope_id, kind, detail_json, actor_kind, actor_id, request_id)
-    SELECT ${w.now}, ${ids.orgId}, ${ids.appId ?? null}, ${ids.scopeId ?? null}, ${row.kind}, ${detailOf(row.detail)}, ${w.actor.kind}, ${actorId(w.actor)}, ${w.requestId}
+  return q`INSERT INTO app_changes (at, org_id, app_id, scope_id, kind, detail_json, actor_kind, actor_id, actor_sub, request_id)
+    SELECT ${w.now}, ${ids.orgId}, ${ids.appId ?? null}, ${ids.scopeId ?? null}, ${row.kind}, ${detailOf(row.detail)}, ${w.actor.kind}, ${actorId(w.actor)}, ${actorSub(w)}, ${w.requestId}
      WHERE (${predicate}) OR ${replayed(w.requestId)}`;
 }
 

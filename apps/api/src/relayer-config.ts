@@ -76,6 +76,13 @@ export type Pool = keyof typeof POOL_METHODS;
 export type RelayMethod = (typeof POOL_METHODS)[Pool][number];
 export const POOLS: readonly Pool[] = ['session', 'owner'];
 
+/**
+ * Each owner-pool key's allowance when deploy-contract adds it (its `--owner-relayer-allowance` default, 0.5 NEAR;
+ * scripts/test/deploy-plan.test.ts keeps the two equal): the base of the hourly `owner_allowance_low` check
+ * (owner-pool.ts), unless the Worker var OWNER_POOL_ALLOWANCE_YOCTO says the keys were added with another one.
+ */
+export const OWNER_POOL_ALLOWANCE_YOCTO = 5n * 10n ** 23n;
+
 /** Secret holding each pool's keys. */
 export const POOL_SECRET: Readonly<Record<Pool, 'RELAYER_KEYS' | 'OWNER_RELAYER_KEYS'>> = { session: 'RELAYER_KEYS', owner: 'OWNER_RELAYER_KEYS' };
 

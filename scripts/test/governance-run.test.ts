@@ -9,7 +9,7 @@ import { loadEnv, type Manifest } from '@hana-id/env';
 import { KeyPair } from '@near-js/crypto';
 import { OWNER_RELAYER_METHODS, SESSION_RELAYER_METHODS } from '../lib/contract.ts';
 import { writeCouncilKey } from '../lib/council.ts';
-import { CLOCK_MARGIN_MS } from '../lib/deploy-plan.ts';
+import { CLOCK_MARGIN_MS, QUARANTINE_MARGIN_MS, SINK_WAIT_MAX_MS } from '../lib/deploy-plan.ts';
 import { DRY_RUN_LINE, deployMain } from '../lib/deploy-run.ts';
 import { keysUpdaterFile, readKeysUpdater, writeKeysUpdater, writePoolKeys } from '../lib/keys.ts';
 import { codeHashOf, TGAS } from '../lib/near.ts';
@@ -47,6 +47,7 @@ function configFor(m: Manifest) {
 
 beforeEach(() => {
   roots = tempRoots();
+  slept = [];
   chain = new SimChain(base.signer, { now: NOW, daoCodeHash: PIN.code_hash });
   secrets = [];
   manifestEdits = [];
@@ -72,7 +73,9 @@ beforeEach(() => {
   for (const k of owner) chain.accounts.get(base.relayer)!.keys.push(fcEntry(k, base.signer, [...OWNER_RELAYER_METHODS], (10n ** 23n).toString()));
   secrets.push(...session, ...owner);
   chain.issuer = { iss_values: ['https://accounts.google.com', 'accounts.google.com'], kids: [] };
-  chain.globalScope = { id: 'global', clients: base.consoleAudiences };
+  // Hana's Google clients in "global"; the console audiences already in their sink scope (D238).
+  chain.globalScope = { id: 'global', owners: [{ Near: { account_id: base.owner } }], clients: base.googleClientIds.map((aud) => ['google', aud]), allow_shared: false };
+  chain.scopes = { s8: { id: 's8', owners: [{ Near: { account_id: base.owner } }], clients: base.consoleAudiences.map(([p, a]) => [p, a]), allow_shared: false } };
   wasm = join(roots.dir, 'hana_signer.wasm');
   writeFileSync(wasm, Buffer.from('v2 wasm'));
 });
@@ -102,6 +105,9 @@ function v2(m: Manifest = base): KeyPair {
   return k;
 }
 
+/** The quarantine waits deploy-contract asked for (deps.sleep), each moving the sim clock on by that much. */
+let slept: number[] = [];
+
 async function deploy(argv: string[], m: Manifest = base) {
   const out: string[] = [];
   const sentBefore = chain.sent.length;
@@ -117,6 +123,10 @@ async function deploy(argv: string[], m: Manifest = base) {
     existingWasm: () => wasm,
     updateManifest: (_name, fields) => manifestEdits.push(fields),
     now: () => chain.now,
+    sleep: async (ms) => {
+      slept.push(ms);
+      chain.now += ms;
+    },
     sputnikCodeHash: PIN.code_hash,
   });
   const text = out.join('\n');
@@ -192,7 +202,8 @@ describe('owner transfer to the council DAO', () => {
 
     // With the manifest updated, the env is clean; the DAO is the owner from now on.
     const daoOwned: Manifest = { ...base, owner: dao, ownerKind: 'sputnik' };
-    const after = await deploy([base.name, '--transfer-owner'], daoOwned);
+    // The console sink was registered by the owner before the transfer: a known Hana owner, named (D238).
+    const after = await deploy([base.name, '--transfer-owner', '--known-owner', base.owner], daoOwned);
     expect(after.code).toBe(0);
     expect(after.out).toContain(`The council DAO ${dao} owns ${base.signer}`);
     expect(after.out).toContain('Nothing to do.');
@@ -230,6 +241,7 @@ describe('a council-owned env', () => {
 
   it('without --approve-with: proposes the first owner step and stops until it is approved; a re-run reuses the proposal', async () => {
     v2(daoOwned);
+    chain.scopes.s8!.owners = [{ Near: { account_id: dao } }];
     chain.config = { ...chain.config, owner: dao, governance_delay_ms: 600_000 };
     chain.governance!.watchdogs = [];
     const r = await deploy([base.name, '--yes'], daoOwned);
@@ -246,6 +258,77 @@ describe('a council-owned env', () => {
     expect(approved.code).toBe(0);
     expect(chain.governance?.watchdogs.map((w) => w.account_id)).toEqual([WATCHDOG]);
     expect(chain.daos.get(dao)!.proposals.map((p) => p.status)).toEqual(['Approved', 'Approved']);
+  });
+});
+
+describe('the console sink scope on an existing env (D238)', () => {
+  it('removes each console audience from "global", waits out its quarantine, registers the sink; a re-run has nothing to do', async () => {
+    v2();
+    const audiences = base.consoleAudiences.map(([p, a]) => [p, a] as [string, string]);
+    expect(audiences.length).toBeGreaterThan(0);
+    const own = base.googleClientIds.map((aud) => ['google', aud] as [string, string]);
+    chain.globalScope = { id: 'global', owners: [{ Near: { account_id: base.owner } }], clients: [...own, ...audiences], allow_shared: false };
+    chain.scopes = {};
+    const dry = await deploy([base.name]);
+    expect(dry.sent).toEqual([]);
+    expect(dry.out).toContain('Remove console audience');
+    expect(dry.out).toContain('Register the console sink scope');
+    const run = await deploy([base.name, '--yes']);
+    expect(run.code).toBe(0);
+    expect(run.calls).toEqual([...audiences.map(() => `${base.owner}→${base.signer}:remove_client`), `${base.owner}→${base.signer}:admin_register_scope`]);
+    expect(JSON.parse(Buffer.from(run.sent[0]!.actions[0]!.functionCall!.args).toString())).toEqual({ scope_id: 'global', auth: 'Near', provider: audiences[0]![0], aud: audiences[0]![1] });
+    // The quarantine (change_delay_ms) was waited out before the registration, which the contract would refuse earlier.
+    expect(slept).toHaveLength(1);
+    expect(slept[0]).toBeGreaterThanOrEqual(base.changeDelayMs);
+    expect((chain.globalScope as { clients: unknown }).clients).toEqual(own);
+    expect(Object.values(chain.scopes)).toEqual([{ id: 's9', owners: [{ Near: { account_id: base.owner } }], clients: audiences, allow_shared: false }]);
+    const again = await deploy([base.name]);
+    expect(again.out).toContain('Console sink scope "s9" holds');
+    expect(again.out).toContain('Nothing to do.');
+  });
+
+  it('a quarantine longer than one run waits: nothing is removed from "global" (no unattended gap)', async () => {
+    v2();
+    const audiences = base.consoleAudiences.map(([p, a]) => [p, a] as [string, string]);
+    chain.globalScope = { id: 'global', owners: [{ Near: { account_id: base.owner } }], clients: [...base.googleClientIds.map((aud) => ['google', aud]), ...audiences], allow_shared: false };
+    chain.scopes = {};
+    chain.config = { ...chain.config, change_delay_ms: 86_400_000 };
+    const run = await deploy([base.name, '--yes']);
+    expect(run.code).toBe(1);
+    expect(run.out).toContain('Refusing to remove the console audiences');
+    expect(run.sent).toEqual([]);
+    expect((chain.globalScope as { clients: unknown[] }).clients).toHaveLength(base.googleClientIds.length + audiences.length);
+  });
+
+  it('a quarantine of 10 min minus the margin: removed, waited out exactly as planned, registered in the same run', async () => {
+    v2();
+    const audiences = base.consoleAudiences.map(([p, a]) => [p, a] as [string, string]);
+    chain.globalScope = { id: 'global', owners: [{ Near: { account_id: base.owner } }], clients: [...base.googleClientIds.map((aud) => ['google', aud]), ...audiences], allow_shared: false };
+    chain.scopes = {};
+    chain.config = { ...chain.config, change_delay_ms: SINK_WAIT_MAX_MS - QUARANTINE_MARGIN_MS };
+    const run = await deploy([base.name, '--yes']);
+    expect(run.code).toBe(0);
+    expect(run.calls.at(-1)).toBe(`${base.owner}→${base.signer}:admin_register_scope`);
+    expect(slept).toEqual([SINK_WAIT_MAX_MS]);
+    expect(Object.values(chain.scopes).map((x) => x.clients)).toEqual([audiences]);
+  });
+
+  it('a re-run inside the quarantine fails on chain and changes nothing; after it, the sink is registered', async () => {
+    v2();
+    const audiences = base.consoleAudiences.map(([p, a]) => [p, a] as [string, string]);
+    chain.globalScope = { id: 'global', owners: [{ Near: { account_id: base.owner } }], clients: [...base.googleClientIds.map((aud) => ['google', aud]), ...audiences], allow_shared: false };
+    chain.scopes = {};
+    // Removed in an earlier run (e.g. one that stopped): the clients are unregistered and quarantined.
+    for (const [p, a] of audiences) {
+      chain.globalScope = { ...(chain.globalScope as object), clients: (chain.globalScope as { clients: [string, string][] }).clients.filter(([cp, ca]) => cp !== p || ca !== a) };
+      chain.removedClients[`${p}/${a}`] = { scopeId: 'global', freeAt: chain.now + base.changeDelayMs };
+    }
+    await expect(deploy([base.name, '--yes'])).rejects.toThrow('recently removed');
+    expect(chain.scopes).toEqual({});
+    chain.now += base.changeDelayMs;
+    const run = await deploy([base.name, '--yes']);
+    expect(run.calls).toEqual([`${base.owner}→${base.signer}:admin_register_scope`]);
+    expect(slept).toEqual([]);
   });
 });
 

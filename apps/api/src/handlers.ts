@@ -5,6 +5,7 @@ import { appKeyPairs, appKeyProblem } from './bls.ts';
 import type { Env } from './env.ts';
 import { type Headers_, corsHeaders, json, readJson } from './http.ts';
 import { ipSubject } from './ip.ts';
+import { eventId } from './changes/guard.ts';
 import { log } from './log.ts';
 import { placedStub } from './placement.ts';
 import { type Caller, PARENT_ORIGIN_HEADER, RELAY_KEY_HEADER, checkCaller, isTestApp, preflightAllows } from './origins.ts';
@@ -24,52 +25,63 @@ import { MAX_BODY, isError, toCreateSession, toDeriveKey, toOwnerAction, toRevok
 import { type AppSettings, effectiveSettings, getSettingsRow } from './vault/settings.ts';
 import { type LoginMethod, appLoginMethods } from './login-methods.ts';
 import { LINK_ADDS_PER_IP_MINUTE, LINK_CHANGES_PER_IP_MINUTE } from './links.ts';
-import { effectiveSharedClients, forgetScope, forgetSession, getConfig, getScope, isIssuerKeyActive, isSessionView, isSharedClient, recordSessionUse, rememberSession, scopeForClient, sessionKeyInUse } from './views.ts';
+import { TtlCache, effectiveSharedClients, forgetScope, forgetSession, getConfig, getScope, isIssuerKeyActive, isSessionView, isSharedClient, recordSessionUse, rememberSession, scopeForClient, sessionKeyInUse } from './views.ts';
 
 const APP_ALLOW_HEADERS = `content-type, x-hana-key, ${PARENT_ORIGIN_HEADER}, ${RELAY_KEY_HEADER}`;
 const APP_METHODS = 'GET, POST, OPTIONS';
 /** Owner actions are unauthenticated at the API (the proof is in the args): keep them slow. */
 export const OWNER_ACTIONS_PER_IP_MINUTE = 10;
 /**
- * Caps on relayed owner actions (only requests that passed every off-chain check count; D100, security sweep APIW-3).
- * They are paid from the owner pool (OWNER_RELAYER_KEYS, small allowance), never from the login pool. Asked from the
- * most specific in, so one owner's excess stops at its own window and never reaches what other scopes share; a
- * request refused by a later window is taken back from the earlier ones (`unhit`), so a refusal costs nothing:
- * - authenticated actions (propose_change, remove_client, disable_shared_login): per owner identity (provider, sub),
- *   then per scope, then the global ceiling that bounds the pool's spend;
+ * Caps on relayed owner actions (only requests that passed every off-chain check count; D100, security sweep APIW-3;
+ * docs/batch-c-spec.md "On-chain owner actions" Limits, as reconciled in D236). They are paid from the owner pool
+ * (OWNER_RELAYER_KEYS, small allowance), never from the login pool. Asked from the most specific in, so one owner's
+ * excess stops at its own window and never reaches what other scopes share; a request refused by a later window is
+ * taken back from the earlier ones (`unhit`), so a refusal costs nothing. Day windows are UTC days. Reaching a cap
+ * writes an `owner_cap` security event (once per window, ownerCapEvent):
+ * - propose_change: per owner identity (provider, sub), then per scope (10 a minute, 20 a UTC day), then the global
+ *   ceiling that bounds the pool's spend. The per-owner windows are the scope's divided by CONTRACT_MAX_OWNERS (2 a
+ *   minute, 4 a day; D236), so no one owner, nor any four of five, can use up the scope's proposals: within a scope
+ *   only all of its owners together can fill them, as with the safety budget;
  * - execute_change (no auth, anyone may send it): its own per-scope window, never the one the scope's owners use, then
  *   the global ceiling;
- * - cancel_change: none of the above. Its own allowance per owner identity, then per scope (keyed by the target
- *   scope: only that scope's on-chain owners pass the precheck, so only they can fill it, and it is sized for all
- *   CONTRACT_MAX_OWNERS of them at once), then a high cancel-only global ceiling that is only a spend bound. No other
- *   scope's owners, no shared traffic and no execute flood can starve a timelock's cancel window; within the scope,
- *   only all of its owners together can. A cancel without an owner identity is refused (fail closed).
+ * - the safety budget, cancel_change, remove_client and disable_shared_login: none of the above. Its own allowance per
+ *   owner identity, then per scope (keyed by the target scope: only that scope's on-chain owners pass the precheck, so
+ *   only they can fill it, and it is sized for all CONTRACT_MAX_OWNERS of them at once), then a high safety-only global
+ *   ceiling that is only a spend bound. No other scope's owners, no proposal flood and no execute flood can starve a
+ *   timelock's cancel or a client removal; within the scope, only all of its owners together can. A safety action
+ *   without an owner identity is refused (fail closed). Each one is also bounded by the scope's state: a cancel needs
+ *   a pending change (≤ CONTRACT_MAX_PENDING), a removal one of the scope's clients, a disable shared login on.
  */
-export const OWNER_ACTIONS_PER_OWNER_MINUTE = 5;
-export const OWNER_ACTIONS_PER_OWNER_DAY = 30;
+/** The scope's windows divided by CONTRACT_MAX_OWNERS (a test keeps scope ≥ owners × owner), so co-owners can't be starved. */
+export const OWNER_ACTIONS_PER_OWNER_MINUTE = 2;
+export const OWNER_ACTIONS_PER_OWNER_DAY = 4;
 export const OWNER_ACTIONS_PER_SCOPE_MINUTE = 10;
-export const OWNER_ACTIONS_PER_SCOPE_DAY = 50;
+/** The spec's 20 owner actions per scope per UTC day (docs/batch-c-spec.md "On-chain owner actions", D93 Q23). */
+export const OWNER_ACTIONS_PER_SCOPE_DAY = 20;
 export const EXECUTES_PER_SCOPE_MINUTE = 10;
 export const EXECUTES_PER_SCOPE_DAY = 50;
 export const OWNER_ACTIONS_GLOBAL_MINUTE = 20;
 export const OWNER_ACTIONS_GLOBAL_DAY = 200;
-export const CANCELS_PER_OWNER_MINUTE = 5;
-export const CANCELS_PER_OWNER_DAY = 20;
+/** The safety budget's methods: they only stop or undo something, so no other traffic may exhaust them. */
+export const SAFETY_METHODS: readonly string[] = ['cancel_change', 'remove_client', 'disable_shared_login'];
+export const SAFETY_PER_OWNER_MINUTE = 5;
+export const SAFETY_PER_OWNER_DAY = 20;
 /** hana-signer's `MAX_OWNERS` per scope (registry.rs; scripts/test/contract-constants.test.ts keeps them equal). */
 export const CONTRACT_MAX_OWNERS = 5;
 /** hana-signer's `MAX_PENDING` changes per scope: at most this many cancels can pass the precheck at a time. */
 export const CONTRACT_MAX_PENDING = 10;
 /** Per scope: every owner's whole allowance at once, so fewer than all of a scope's owners can never fill it. */
-export const CANCELS_PER_SCOPE_MINUTE = CONTRACT_MAX_OWNERS * CANCELS_PER_OWNER_MINUTE;
-export const CANCELS_PER_SCOPE_DAY = CONTRACT_MAX_OWNERS * CANCELS_PER_OWNER_DAY;
+export const SAFETY_PER_SCOPE_MINUTE = CONTRACT_MAX_OWNERS * SAFETY_PER_OWNER_MINUTE;
+export const SAFETY_PER_SCOPE_DAY = CONTRACT_MAX_OWNERS * SAFETY_PER_OWNER_DAY;
 /**
  * A spend bound only (the owner pool's allowance is the hard one). Filling the minute window takes 20 owner
  * identities at their own cap (≥ 4 scopes the attacker fully owns, at CONTRACT_MAX_OWNERS each); the day window takes
- * 50 identities (≥ 10 such scopes) and 1000 cancellable changes, which is ≥ 100 scopes' CONTRACT_MAX_PENDING at once
- * or more proposals than the shared OWNER_ACTIONS_GLOBAL_DAY lets through in five days.
+ * 50 identities (≥ 10 such scopes) and 1000 actions the scopes' state allows, which is ≥ 100 scopes' worth of
+ * CONTRACT_MAX_PENDING cancels at once or more proposals than the shared OWNER_ACTIONS_GLOBAL_DAY lets through in five
+ * days.
  */
-export const CANCELS_GLOBAL_MINUTE = 100;
-export const CANCELS_GLOBAL_DAY = 1000;
+export const SAFETY_GLOBAL_MINUTE = 100;
+export const SAFETY_GLOBAL_DAY = 1000;
 /** Clock skew tolerated on an ID token's `exp` (the contract checks `exp` against the block time again). */
 export const TOKEN_EXP_SKEW_MS = 60_000;
 const MINUTE = 60_000;
@@ -632,9 +644,10 @@ export const ownerLimiterKey = async (owner: { provider: string; sub: string }):
 export const scopeLimiterKey = (scopeId: string): string => `owner-actions:scope:${scopeId}`;
 /** execute_change's own per-scope subject: unauthenticated, so it never shares the window the scope's owners use. */
 export const executeLimiterKey = (scopeId: string): string => `owner-actions:execute:${scopeId}`;
-/** cancel_change's per-scope subject: only the target scope's owners (checked on chain state first) count here. */
-export const cancelScopeLimiterKey = (scopeId: string): string => `owner-actions:cancel:${scopeId}`;
-export const CANCEL_GLOBAL_LIMITER = 'owner-actions:cancel-global';
+/** The safety budget's per-scope subject: only the target scope's owners (checked on chain state first) count here. */
+export const safetyScopeLimiterKey = (scopeId: string): string => `owner-actions:safety:${scopeId}`;
+export const SAFETY_GLOBAL_LIMITER = 'owner-actions:safety-global';
+export const OWNER_GLOBAL_LIMITER = 'owner-actions:global';
 
 export interface OwnerActionWindow {
   subject: string;
@@ -651,18 +664,18 @@ export async function ownerActionWindows(method: string, check: { scopeId: strin
     { name: `${prefix}minute`, windowMs: MINUTE, max: minute },
     { name: `${prefix}day`, windowMs: DAY, max: day },
   ];
-  const global = { subject: 'owner-actions:global', label: 'owner actions', limits: pair('', OWNER_ACTIONS_GLOBAL_MINUTE, OWNER_ACTIONS_GLOBAL_DAY) };
+  const global = { subject: OWNER_GLOBAL_LIMITER, label: 'owner actions', limits: pair('', OWNER_ACTIONS_GLOBAL_MINUTE, OWNER_ACTIONS_GLOBAL_DAY) };
   if (method === 'execute_change') {
     return [{ subject: executeLimiterKey(check.scopeId), label: 'executes per scope', limits: pair('', EXECUTES_PER_SCOPE_MINUTE, EXECUTES_PER_SCOPE_DAY) }, global];
   }
   // Every other method carries an OIDC owner proof (toOwnerAction, precheckOwnerAction); without one, fail closed.
   if (!check.owner) return null;
   const owner = await ownerLimiterKey(check.owner);
-  if (method === 'cancel_change') {
+  if (SAFETY_METHODS.includes(method)) {
     return [
-      { subject: owner, label: 'cancels per owner', limits: pair('cancel:', CANCELS_PER_OWNER_MINUTE, CANCELS_PER_OWNER_DAY) },
-      { subject: cancelScopeLimiterKey(check.scopeId), label: 'cancels per scope', limits: pair('', CANCELS_PER_SCOPE_MINUTE, CANCELS_PER_SCOPE_DAY) },
-      { subject: CANCEL_GLOBAL_LIMITER, label: 'cancels', limits: pair('', CANCELS_GLOBAL_MINUTE, CANCELS_GLOBAL_DAY) },
+      { subject: owner, label: 'safety actions per owner', limits: pair('safety:', SAFETY_PER_OWNER_MINUTE, SAFETY_PER_OWNER_DAY) },
+      { subject: safetyScopeLimiterKey(check.scopeId), label: 'safety actions per scope', limits: pair('', SAFETY_PER_SCOPE_MINUTE, SAFETY_PER_SCOPE_DAY) },
+      { subject: SAFETY_GLOBAL_LIMITER, label: 'safety actions', limits: pair('', SAFETY_GLOBAL_MINUTE, SAFETY_GLOBAL_DAY) },
     ];
   }
   return [
@@ -672,12 +685,21 @@ export async function ownerActionWindows(method: string, check: { scopeId: strin
   ];
 }
 
+export interface CapRefusal {
+  window: OwnerActionWindow;
+  /** The refusing window's name (`minute`, `day`, `safety:minute`, …). */
+  limit: string;
+  retryAfterS: number;
+  /** The instant every window was asked at. */
+  at: number;
+}
+
 /**
  * Asks `windows` in turn at one instant; the first refusal takes back the hits the earlier ones accepted (`unhit`), so
  * a refused request uses up no window. Returns the refusal, or null when every window accepted. Throws when a limiter
  * can't be reached (the caller refuses: fail closed); a failed take-back is logged and leaves that count in place.
  */
-export async function hitAll(env: Env, windows: readonly OwnerActionWindow[], requestId?: string): Promise<{ window: OwnerActionWindow; limit: string; retryAfterS: number } | null> {
+export async function hitAll(env: Env, windows: readonly OwnerActionWindow[], requestId?: string): Promise<CapRefusal | null> {
   const now = Date.now();
   const accepted: OwnerActionWindow[] = [];
   for (const w of windows) {
@@ -690,48 +712,108 @@ export async function hitAll(env: Env, windows: readonly OwnerActionWindow[], re
           log({ event: 'rate_limit_unhit_failed', requestId, endpoint: '/v1/owner-actions' }, 'warn');
         }
       }
-      return { window: w, limit: hit.limit, retryAfterS: hit.retryAfterS };
+      return { window: w, limit: hit.limit, retryAfterS: hit.retryAfterS, at: now };
     }
     accepted.push(w);
   }
   return null;
 }
 
+/** Event ids this isolate wrote recently: a flood of refusals of one full window costs one D1 write, not one each. */
+const capEventsSeen = new TtlCache<true>(10 * 60_000, 512);
+/** Tests only. */
+export const forgetCapEvents = (): void => capEventsSeen.clear();
+
+/**
+ * The `owner_cap` security event of a refusal (docs/batch-c-spec.md "On-chain owner actions" Limits): one per window,
+ * subject and window start (a deterministic id), with the scope and its org (from `scopes`, when the hot DB has it).
+ * The detail names the window, never the owner (an owner's window is keyed by a hash). A failure is logged, never
+ * thrown: the refusal stands either way.
+ */
+export async function ownerCapEvent(env: Env, refusal: CapRefusal, c: { method: string; scopeId: string }): Promise<void> {
+  const limit = refusal.window.limits.find((l) => l.name === refusal.limit);
+  const windowStart = limit ? Math.floor(refusal.at / limit.windowMs) * limit.windowMs : refusal.at;
+  const id = await eventId('owner_cap', refusal.window.subject, refusal.limit, String(windowStart));
+  if (capEventsSeen.get(id)) return;
+  try {
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO security_events (id, detected_at, kind, org_id, scope_id, detail_json)
+       VALUES (?1, ?2, 'owner_cap', (SELECT org_id FROM scopes WHERE scope_id = ?3), ?3, ?4)`,
+    )
+      .bind(id, refusal.at, c.scopeId, JSON.stringify({ method: c.method, window: refusal.window.label, limit: refusal.limit.replace(/^safety:/u, ''), max: limit?.max ?? null, windowStart }))
+      .run();
+    capEventsSeen.set(id, true);
+  } catch {
+    log({ event: 'owner_cap_event_failed', endpoint: '/v1/owner-actions' }, 'error');
+  }
+}
+
 export async function handleOwnerAction(request: Request, env: Env, requestId: string, exec?: ExecutionContext): Promise<Response> {
   const ctx = newCtx(env, requestId, '/v1/owner-actions', request, corsHeaders('*', 'content-type'));
   try {
-    return await ownerAction(request, env, ctx, exec);
+    return (
+      await runOwnerAction(env, ctx, {
+        clientIp: request.headers.get('cf-connecting-ip'),
+        body: () => readJson(request, MAX_BODY),
+        ...(exec ? { exec } : {}),
+      })
+    ).response;
   } catch (err) {
     finishUsageOnThrow(ctx);
     throw err;
   }
 }
 
-async function ownerAction(request: Request, env: Env, ctx: Ctx, exec?: ExecutionContext): Promise<Response> {
+/** Where an owner action comes from: the public endpoint, or ConsoleRpc.ownerAction (rpc/console.ts). */
+export interface OwnerActionSource {
+  /** The caller's address for the per-IP limiter (`cf-connecting-ip`, or the console's `clientIp`). */
+  clientIp: string | null;
+  /** The body, read after the per-IP limit. */
+  body: () => Promise<{ ok: true; body: unknown } | { ok: false; status: number; error: string }>;
+  exec?: ExecutionContext;
+  /**
+   * ConsoleRpc only: the org the action is for (its scope must be one of the org's in the hot DB, else 404
+   * `unknown_scope`, before any chain read) and the console's token rules (precheck `console`).
+   */
+  console?: { orgId: string };
+}
+
+/**
+ * One owner action, from the per-IP limit to the relay; the answer is the HTTP response /v1/owner-actions sends
+ * (ConsoleRpc maps it). `relayed`: the transaction was sent (the outcome, good or bad, is the contract's).
+ */
+export async function runOwnerAction(env: Env, ctx: Ctx, src: OwnerActionSource): Promise<{ response: Response; relayed: boolean }> {
   const { requestId } = ctx;
+  const no = (status: number, code: string, error: string, extra: Headers_ = {}) => ({ response: reject(ctx, status, code, error, extra), relayed: false });
   try {
-    const hit = await limiter(env, ipKey(request)).hit([{ name: 'owner-actions:minute', windowMs: MINUTE, max: OWNER_ACTIONS_PER_IP_MINUTE }]);
-    if (!hit.ok) return reject(ctx, 429, 'rate_limited', 'Rate limit exceeded (per IP per minute)', { 'retry-after': String(hit.retryAfterS) });
+    const hit = await limiter(env, `ip:${ipSubject(src.clientIp)}`).hit([{ name: 'owner-actions:minute', windowMs: MINUTE, max: OWNER_ACTIONS_PER_IP_MINUTE }]);
+    if (!hit.ok) return no(429, 'rate_limited', 'Rate limit exceeded (per IP per minute)', { 'retry-after': String(hit.retryAfterS) });
   } catch {
-    return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
+    return no(503, 'rate_limiter_unavailable', 'Try again');
   }
-  const parsed = await readJson(request, MAX_BODY);
-  if (!parsed.ok) return reject(ctx, parsed.status, 'bad_request', parsed.error);
+  const parsed = await src.body();
+  if (!parsed.ok) return no(parsed.status, 'bad_request', parsed.error);
   const call = toOwnerAction(parsed.body);
-  if (isError(call)) return reject(ctx, 400, 'bad_request', call.error);
+  if (isError(call)) return no(400, 'bad_request', call.error);
+  if (src.console) {
+    // The org filter is a backstop against console bugs (spec §RPC "Trust in the actor"): one hot-DB read.
+    const scopeId = call.args.scope_id as string;
+    const mine = await env.DB.prepare('SELECT 1 AS ok FROM scopes WHERE scope_id = ?1 AND org_id = ?2').bind(scopeId, src.console.orgId).first();
+    if (!mine) return no(404, 'unknown_scope', `No scope ${scopeId} in this org`);
+  }
 
   // Off-chain checks: a request that would certainly fail on chain is not relayed (it would still cost gas).
   let check;
   try {
-    check = await precheckOwnerAction(env, call);
+    check = await precheckOwnerAction(env, call, Date.now(), src.console ? { console: true } : {});
   } catch (err) {
-    if (err instanceof JwksUnavailableError) return reject(ctx, 503, 'issuer_keys_unavailable', 'Could not read the token issuer keys, try again');
-    return reject(ctx, 502, 'near_unavailable', 'Could not read the registry');
+    if (err instanceof JwksUnavailableError) return no(503, 'issuer_keys_unavailable', 'Could not read the token issuer keys, try again');
+    return no(502, 'near_unavailable', 'Could not read the registry');
   }
-  if (!check.ok) return done(ctx, check.status, { error: check.error, code: check.code, ...(check.data ? { data: check.data } : {}) });
+  if (!check.ok) return { response: done(ctx, check.status, { error: check.error, code: check.code, ...(check.data ? { data: check.data } : {}) }), relayed: false };
   // Past the owner check: every outcome from here on is one usage event, for the scope (owner actions have no gate
-  // row: the scope's org is read after the response).
-  beginUsage(ctx, { orgId: null, appId: null, scopeId: check.scopeId, exec });
+  // row: the scope's org is read after the response, or is the console's, checked above).
+  beginUsage(ctx, { orgId: src.console?.orgId ?? null, appId: null, scopeId: check.scopeId, ...(src.exec ? { exec: src.exec } : {}) });
 
   const tokens = limiter(env, 'owner-actions:tokens');
   const token = check.authToken;
@@ -746,24 +828,25 @@ async function ownerAction(request: Request, env: Env, ctx: Ctx, exec?: Executio
   try {
     // An owner token is bound to one action by its nonce: once relayed it can only fail. Reserve it atomically
     // before relaying, so concurrent copies of one request can't all pass.
-    if (token && !(await tokens.reserve(token.hash, token.expMs))) return reject(ctx, 409, 'token_used', 'This owner token was already used, get a fresh one');
+    if (token && !(await tokens.reserve(token.hash, token.expMs))) return no(409, 'token_used', 'This owner token was already used, get a fresh one');
   } catch {
-    return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
+    return no(503, 'rate_limiter_unavailable', 'Try again');
   }
   try {
     const windows = await ownerActionWindows(call.method, check);
     if (!windows) {
       await release();
-      return reject(ctx, 403, 'not_owner', 'This owner action needs an owner token');
+      return no(403, 'not_owner', 'This owner action needs an owner token');
     }
     const refused = await hitAll(env, windows, requestId);
     if (refused) {
       await release();
-      return reject(ctx, 429, 'rate_limited', `Rate limit exceeded (${refused.window.label} per ${refused.limit.replace(/^cancel:/u, '')})`, { 'retry-after': String(refused.retryAfterS) });
+      await ownerCapEvent(env, refused, { method: call.method, scopeId: check.scopeId });
+      return no(429, 'rate_limited', `Rate limit exceeded (${refused.window.label} per ${refused.limit.replace(/^safety:/u, '')})`, { 'retry-after': String(refused.retryAfterS) });
     }
   } catch {
     await release();
-    return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
+    return no(503, 'rate_limiter_unavailable', 'Try again');
   }
 
   lap(ctx, 'checks');
@@ -772,8 +855,8 @@ async function ownerAction(request: Request, env: Env, ctx: Ctx, exec?: Executio
   forgetScope(check.scopeId);
   // The reservation stays unless the transaction certainly never executed (an unknown outcome may still land).
   if (!result.ok && NOT_EXECUTED.has(result.code)) await release();
-  if (!result.ok) return done(ctx, result.status, { error: result.error, code: result.code, nearTx: result.nearTx });
-  return done(ctx, 200, { result: result.result ?? null, nearTx: result.nearTx });
+  if (!result.ok) return { response: done(ctx, result.status, { error: result.error, code: result.code, nearTx: result.nearTx }), relayed: true };
+  return { response: done(ctx, 200, { result: result.result ?? null, nearTx: result.nearTx }), relayed: true };
 }
 
 // ---- Health ----

@@ -6,7 +6,8 @@
 // write (manual SQL, a buggy script): it writes a `drift` security event, once per finding (the event id is derived
 // from it), which the admin feed emails. It doesn't catch an insider who also forges `guarded_changes` rows.
 //
-// A baseline explains a value only while no later `app_changes` row ended it (an origin removed, the policy removed,
+// A baseline explains a value only while no later `app_changes` row ended it (an origin removed, by removeOrigins or by
+// the removes a member's changeOrigins sent with its adds (`origin.proposed` detail `removed`), the policy removed,
 // replaced or its pending value dropped, raw signing off), so a value put back by hand after a kill switch is drift.
 //
 // An `app.created` row explains nothing on its own (D228): the origins it lists are guarded changes since 0006, and
@@ -70,8 +71,8 @@ export async function detectDrift(env: Pick<Env, 'DB'>, now = Date.now()): Promi
                            AND g.notified_at IS NOT NULL AND g.active_from IS NOT NULL AND g.active_from <= o.active_from AND g.status IN ('pending', 'active'))
           AND NOT (o.active_from = 0 AND EXISTS (SELECT 1 FROM app_changes b, json_each(b.detail_json, '$.origins') j
                                                  WHERE b.kind = 'migration.baseline' AND b.app_id = o.app_id AND j.value = o.origin
-                                                   AND NOT EXISTS (SELECT 1 FROM app_changes e, json_each(e.detail_json, '$.origins') r
-                                                                    WHERE e.app_id = o.app_id AND e.seq > b.seq AND e.kind = 'origin.removed'
+                                                   AND NOT EXISTS (SELECT 1 FROM app_changes e, json_each(e.detail_json, CASE WHEN e.kind = 'origin.removed' THEN '$.origins' ELSE '$.removed' END) r
+                                                                    WHERE e.app_id = o.app_id AND e.seq > b.seq AND e.kind IN ('origin.removed', 'origin.proposed')
                                                                       AND json_extract(r.value, '$.origin') = o.origin)))
         ORDER BY o.app_id, o.origin LIMIT ?2`,
     )

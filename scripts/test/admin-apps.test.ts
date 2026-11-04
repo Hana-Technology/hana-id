@@ -189,6 +189,17 @@ describe('app:changes:announce', () => {
       ['a vault share', "INSERT INTO vault_shares (share_id, app_id, session_pk, path_hash, partner_origin, share_enc, kek_id, created_at, idle_until, abs_expires_at) VALUES (x'01', 'app_1', x'02', x'03', 'https://a.example.com', x'04', 1, 1, 2, 3)"],
       ['an identity count', "INSERT INTO identity_usage (app_id, day, tokens) VALUES ('app_1', '2026-11-02', 1)"],
       ['another app of the scope with an origin in force', "INSERT INTO app_origins (app_id, origin, active_from) VALUES ('app_1', 'https://other.example.com', 0)"],
+      // An origin that was in force and is gone (its row deleted) still counts: its ledger row says so (D235).
+      [
+        'an origin removed while in force',
+        `INSERT INTO app_changes (at, org_id, app_id, scope_id, kind, detail_json, actor_kind, actor_id, request_id)
+         VALUES (1, 'org_legacy', 'app_1', 's7', 'origin.removed', '{"origins":[{"origin":"https://gone.example.com","wasInForce":true}]}', 'hana', 'x', 'r_removed')`,
+      ],
+      [
+        'an origin removed while in force by a console change',
+        `INSERT INTO app_changes (at, org_id, app_id, scope_id, kind, detail_json, actor_kind, actor_id, request_id)
+         VALUES (1, 'org_legacy', 'app_1', 's7', 'origin.proposed', '{"changes":[],"removed":[{"origin":"https://gone.example.com","wasInForce":true}]}', 'member', 'x', 'r_changed')`,
+      ],
     ];
     for (const [what, sql] of signs) {
       h = { ...h, db: newHotDb(), out: [] };

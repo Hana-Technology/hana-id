@@ -13,7 +13,7 @@
 import type { Manifest } from '@hana-id/env';
 import { actionCreators } from '@near-js/transactions';
 import { CliError } from './cli.ts';
-import { OWNER_METHODS, type OwnerMethod } from './contract.ts';
+import { OWNER_METHODS, type OwnerMethod, SCOPE_OWNER_CALLS, type ScopeOwnerCall } from './contract.ts';
 import { councilKeysOnDisk, loadMemberKey } from './council.ts';
 import { loadLegacyCredential } from './keys.ts';
 import { explorerTx, type NearRpc, TGAS } from './near.ts';
@@ -44,7 +44,7 @@ export interface OwnerTxDeps {
 }
 
 export interface OwnerCall {
-  method: OwnerMethod;
+  method: OwnerMethod | ScopeOwnerCall;
   args: object;
   /** Gas for the hana-signer call (default 100 Tgas). */
   gas?: bigint;
@@ -69,7 +69,7 @@ export function isOwnerMethod(method: string): method is OwnerMethod {
 }
 
 /** Who sends the call: the owner account, or the council DAO (the owner, or for accept_owner the proposed owner). */
-export function ownerRoute(m: Manifest, method: OwnerMethod): OwnerRoute {
+export function ownerRoute(m: Manifest, method: OwnerMethod | ScopeOwnerCall): OwnerRoute {
   if (method === 'accept_owner') {
     if (!m.council) throw new CliError(`accept_owner is sent by the proposed owner, the council DAO, but envs/${m.name}.json has no council`);
     return { kind: 'sputnik', dao: m.council.dao };
@@ -187,7 +187,7 @@ export async function voteApprove(m: Manifest, dao: string, id: number, member: 
 
 /** Sends (account) or proposes and, with approveWith, approves (sputnik) one owner call. */
 export async function sendOwnerCall(m: Manifest, call: OwnerCall, opts: OwnerTxOptions, deps: OwnerTxDeps): Promise<OwnerTxResult> {
-  if (!isOwnerMethod(call.method)) throw new CliError(`${call.method as string} is not an owner method of hana-signer`);
+  if (!isOwnerMethod(call.method) && !(SCOPE_OWNER_CALLS as readonly string[]).includes(call.method)) throw new CliError(`${call.method as string} is not an owner method of hana-signer`);
   const route = ownerRoute(m, call.method);
   checkOwnerTxOptions(m, route, opts);
   const gas = call.gas ?? PROPOSAL_CALL_GAS;

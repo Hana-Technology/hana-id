@@ -135,3 +135,16 @@ export async function membersOf(db: D1Database, orgId: string, now: number): Pro
     ...(r.pending_owner_from !== null && !r.is_owner ? { pendingOwnerFrom: r.pending_owner_from } : {}),
   }));
 }
+
+/**
+ * An org's live owner grants (not cancelled, not yet recorded as applied), newest first, for the admin console's
+ * members screen: staff cancel a pending grant by its id (D283, an additive field of `StaffRpc.getOrg`). Allowlisted
+ * columns only: never `cancel_token_hash`.
+ */
+export async function grantsOf(db: D1Database, orgId: string): Promise<OwnerGrantView[]> {
+  const { results } = await db
+    .prepare(`SELECT ${GRANT_COLUMNS} FROM owner_grants WHERE org_id = ? AND cancelled_at IS NULL AND applied_at IS NULL ORDER BY created_at DESC, id LIMIT 100`)
+    .bind(orgId)
+    .all<GrantRow>();
+  return results.map(grantView);
+}

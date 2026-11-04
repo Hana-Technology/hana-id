@@ -2,25 +2,36 @@
   "name": "@hana-id/console",
   "version": "0.0.0",
   "private": true,
-  "description": "The partner console Worker (docs/batch-c-spec.md): CONSOLE_DB and its migrations, host dispatch, headers and CSRF, StaffRpc, invites and owner grants, the hourly cron. Batch C7: backend only, no public route; sign-in and the SPA come in C9.",
+  "description": "The partner console Worker (docs/batch-c-spec.md): CONSOLE_DB and its migrations, host dispatch, headers and CSRF, StaffRpc, invites and owner grants, the hourly cron, partner sign-in (AuthHandler, sessions) and the read-only partner SPA (web/, React 18, Vite, React Router). Write paths come in C10.",
   "type": "module",
   "scripts": {
     "gen": "tsx scripts/gen-wrangler.ts",
-    "deploy": "wrangler deploy",
-    "test": "vitest run && vitest run -c vitest.scripts.config.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts"
+    "build": "vite build",
+    "dev:web": "vite",
+    "deploy": "vite build && wrangler deploy",
+    "test": "vitest run && vitest run -c vitest.scripts.config.ts && vitest run -c vitest.web.config.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts && tsc --noEmit -p web"
   },
   "dependencies": {
     "@hana-id/console-core": "workspace:*",
-    "@hana-id/oidc": "workspace:*"
+    "@hana-id/oidc": "workspace:*",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-router-dom": "6.30.1"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.4.4",
     "@cloudflare/workers-types": "5.20261016.1",
     "@hana-id/env": "workspace:*",
+    "@testing-library/dom": "10.4.2",
+    "@testing-library/react": "16.3.3",
     "@types/node": "^22.0.0",
+    "@types/react": "18.3.31",
+    "@types/react-dom": "18.3.7",
+    "happy-dom": "21.0.3",
     "tsx": "4.23.15",
     "typescript": "^5.7.0",
+    "vite": "7.3.7",
     "vitest": "4.1.12",
     "wrangler": "4.151.1"
   }

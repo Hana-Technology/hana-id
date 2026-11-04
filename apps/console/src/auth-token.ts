@@ -7,18 +7,20 @@
 // The claim allow-list (D271, D274, D277: every Google token Hana verifies is held to it, and the API's source scan
 // in apps/api/scripts/test/relayed-tokens.test.ts lists this file):
 //   - `openid` (every step-up and owner action, batch C10, whose tokens the API verifies again and relays on chain):
-//     exactly the API's TOKEN_CLAIM_ALLOW_LIST, nothing else;
-//   - `openid email` (sign-in only, never relayed): the same list plus exactly `email`, `email_verified`, `hd` and
-//     `at_hash` (D290). Sign-in needs the address (an invite is bound to it; members see each other's) and `hd` (an
-//     org's `required_hd`); a code-flow ID token carries `at_hash`, the hash of the access token issued with it, which
-//     is checked against that token here. A name, picture or locale (`profile` scope) is refused.
+//     exactly the API's TOKEN_CLAIM_ALLOW_LIST, nothing else. The list includes `at_hash` (D342): a code-flow ID token
+//     carries it, the hash of the access token issued with it, nothing personal;
+//   - `openid email` (sign-in only, never relayed): the same list plus exactly `email`, `email_verified` and `hd`
+//     (D290). Sign-in needs the address (an invite is bound to it; members see each other's) and `hd` (an org's
+//     `required_hd`). A name, picture or locale (`profile` scope) is refused.
+// In both scopes an `at_hash` must equal the hash of the access token from the same exchange (checked here; the API,
+// which never sees that access token, accepts the claim as listed).
 import { b64url, sha256 } from '@hana-id/console-core';
 import { JwksUnavailableError, verifyIdToken } from '@hana-id/oidc';
 
 /** The API's claim allow-list (apps/api/src/claims.ts, @hana-id/core TOKEN_CLAIM_ALLOW_LIST; the scan pins all three). */
-export const TOKEN_CLAIM_ALLOW_LIST: readonly string[] = Object.freeze(['iss', 'azp', 'aud', 'sub', 'iat', 'exp', 'nonce', 'nbf', 'jti', 'auth_time']);
+export const TOKEN_CLAIM_ALLOW_LIST: readonly string[] = Object.freeze(['iss', 'azp', 'aud', 'sub', 'iat', 'exp', 'nonce', 'nbf', 'jti', 'auth_time', 'at_hash']);
 /** What a sign-in token (`openid email`) may carry besides the allow-list (D290). */
-export const SIGN_IN_EXTRA_CLAIMS: readonly string[] = Object.freeze(['email', 'email_verified', 'hd', 'at_hash']);
+export const SIGN_IN_EXTRA_CLAIMS: readonly string[] = Object.freeze(['email', 'email_verified', 'hd']);
 
 export type ConsoleScope = 'openid email' | 'openid';
 
@@ -132,4 +134,31 @@ export async function verifyConsoleToken(jwt: string, c: ConsoleTokenCheck): Pro
   if (t.email === undefined || t.email.length === 0 || t.email.length > 254) return { ok: false, code: 'email_missing' };
   if (t.email_verified !== true) return { ok: false, code: 'email_unverified' };
   return { ok: true, identity: { provider: t.provider, sub: t.sub, email: t.email.toLowerCase(), hd: t.hd ?? null } };
+}
+
+// ---- an AddClient's client proof (docs/batch-c-spec.md "On-chain owner actions" step 3) ----
+
+/** Why a pasted client proof was refused (shown to the owner by code; never with the token). */
+export type ProofRefusal = 'invalid_token' | 'token_expired' | 'unsupported_issuer' | 'bad_token' | 'wrong_audience' | 'wrong_nonce' | 'claim_not_allowed' | 'jwks_unavailable';
+
+/**
+ * Checks a client proof before the console builds an AddClient around it: the signature (Google's JWKS), `iss`, `exp`,
+ * `aud` the client being added, the client-proof nonce at the scope's `action_nonce`, and the claim allow-list (the
+ * proof is relayed on chain, so it is public: D274 refuses one with `email`, `hd` or a name, and so does this, before
+ * the owner signs anything; D350). The API checks all of it again in its precheck.
+ */
+export async function verifyClientProof(jwt: string, c: { provider: string; aud: string; nonce: string; now: number }): Promise<{ ok: true } | { ok: false; code: ProofRefusal; claim?: string }> {
+  let v;
+  try {
+    v = await verifyIdToken(jwt, c.now);
+  } catch (err) {
+    if (err instanceof JwksUnavailableError) return { ok: false, code: 'jwks_unavailable' };
+    throw err;
+  }
+  if (!v.ok) return { ok: false, code: v.code };
+  const claim = disallowedClaim(jwt, 'openid');
+  if (claim !== null) return { ok: false, code: 'claim_not_allowed', claim };
+  if (v.token.provider !== c.provider || v.token.aud !== c.aud || (v.token.azp !== undefined && v.token.azp !== c.aud)) return { ok: false, code: 'wrong_audience' };
+  if (v.token.nonce !== c.nonce) return { ok: false, code: 'wrong_nonce' };
+  return { ok: true };
 }

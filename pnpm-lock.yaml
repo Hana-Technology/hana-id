@@ -126,6 +126,9 @@ importers:
       '@hana-id/console-core':
         specifier: workspace:*
         version: link:../../packages/console-core
+      '@hana-id/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@hana-id/oidc':
         specifier: workspace:*
         version: link:../../packages/oidc
@@ -138,6 +141,9 @@ importers:
       react-router-dom:
         specifier: 6.30.1
         version: 6.30.1(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
     devDependencies:
       '@cloudflare/vitest-plugin':
         specifier: 1.4.4

@@ -11,9 +11,11 @@ export const GOOGLE_JWKS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
 
 /**
  * The only claims a token may carry (fixed by the 2026-10-28 spike: `scope=openid` gives exactly
- * {aud, azp, exp, iat, iss, jti, nbf, nonce, sub}; `auth_time` appears with `max_age`).
+ * {aud, azp, exp, iat, iss, jti, nbf, nonce, sub}; `auth_time` appears with `max_age`). `at_hash` (D342): Google adds
+ * it to an ID token issued with an access token (the console's code flow; an implicit `id_token token` answer), a
+ * truncated SHA-256 of that short-lived access token, nothing about the person.
  */
-export const TOKEN_CLAIM_ALLOW_LIST: readonly string[] = Object.freeze(['iss', 'azp', 'aud', 'sub', 'iat', 'exp', 'nonce', 'nbf', 'jti', 'auth_time']);
+export const TOKEN_CLAIM_ALLOW_LIST: readonly string[] = Object.freeze(['iss', 'azp', 'aud', 'sub', 'iat', 'exp', 'nonce', 'nbf', 'jti', 'auth_time', 'at_hash']);
 /** Claims refused by name (all outside the allow-list); `hd` identifies an employer. Documentation and tests only. */
 export const NAMED_PII_CLAIMS: readonly string[] = Object.freeze(['hd', 'email', 'email_verified', 'name', 'picture', 'given_name', 'family_name', 'locale', 'profile']);
 /** Clock skew on exp, iat and nbf: the same 60 s as the API's TOKEN_EXP_SKEW_MS. */

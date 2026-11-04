@@ -36,7 +36,12 @@ export type Membership = z.infer<typeof membership>;
 
 /** `GET /api/me`: the member's own account and the memberships usable with this session's Workspace domain. */
 export const meAnswer = z
-  .object({ user: z.object({ id, email: z.string() }).strict(), memberships: z.array(membership) })
+  .object({
+    user: z.object({ id, email: z.string() }).strict(),
+    memberships: z.array(membership),
+    /** Screens the server has on (C10: the Users screen, D310, behind USERS_SCREEN). */
+    features: z.object({ users: z.boolean() }).strict().optional(),
+  })
   .strict();
 export type MeAnswer = z.infer<typeof meAnswer>;
 

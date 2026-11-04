@@ -28,10 +28,12 @@ export async function expireInvites(db: D1Database, now: number): Promise<number
 /**
  * Records matured grants: an announced, uncancelled grant whose `owner_from` has passed already makes its member an
  * owner by predicate; this writes `members.role = 'owner'`, `applied_at` and `member.owner_granted`, once. A grant whose
- * member row is gone (removed meanwhile, which cancels grants, so only by a direct edit) is cancelled instead.
+ * member row is gone (removed meanwhile, which cancels grants, so only by a direct edit) is cancelled instead. A frozen
+ * org's grants are left alone until it is active again (D343; the freeze already undid every grant still waiting).
  */
 export async function applyGrants(db: D1Database, now: number): Promise<{ applied: number; orphaned: number }> {
-  const matured = `g.cancelled_at IS NULL AND g.applied_at IS NULL AND g.notified_at IS NOT NULL AND g.owner_from IS NOT NULL AND g.owner_from <= ${lit(now)} AND g.user_id IS NOT NULL`;
+  const matured = `g.cancelled_at IS NULL AND g.applied_at IS NULL AND g.notified_at IS NOT NULL AND g.owner_from IS NOT NULL AND g.owner_from <= ${lit(now)} AND g.user_id IS NOT NULL
+    AND EXISTS (SELECT 1 FROM orgs o WHERE o.id = g.org_id AND o.status = 'active')`;
   const withMember = `EXISTS (SELECT 1 FROM members m WHERE m.org_id = g.org_id AND m.user_id = g.user_id)`;
   const due = `SELECT g.id FROM owner_grants g WHERE ${matured} AND ${withMember} ORDER BY g.owner_from, g.id LIMIT ${CRON_BATCH}`;
   const [audit, , , orphans] = await db.batch([

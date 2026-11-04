@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-04 (branch `feat/user-id-identity-sub`: "Wallet directory (hot-DB migration 0011)": both keys, the deploy pairing for the session signature, the three ids in `user:*`, the log codes; "Admin CLI"'s `--user`; D346); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: the "Declined" row of "Turning linking on (batch 8b)", D341); 2026-11-04 (branch `feat/batch-c-12`: "Reports and statements (batch C12, milestone M6)": the
+Last verified against code: 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342; the console's C10 vars `NETWORK`, `REFUSED_ORIGINS` and the `USERS_SCREEN` switch, no new secret or setup step); 2026-11-04 (branch `feat/user-id-identity-sub`: "Wallet directory (hot-DB migration 0011)": both keys, the deploy pairing for the session signature, the three ids in `user:*`, the log codes; "Admin CLI"'s `--user`; D346); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: the "Declined" row of "Turning linking on (batch 8b)", D341); 2026-11-04 (branch `feat/batch-c-12`: "Reports and statements (batch C12, milestone M6)": the
 Neon migration 0006, the admin config's buckets and vars, the optional CoinGecko key, the 15-minute cron with the 00:30
 UTC daily work, issuing a statement, the rate override, exports, what to watch; "Usage ledger" lists 0006; the admin's
 cron triggers; D320–D329); 2026-11-04 (branch `feat/batch-c-14`: "Admin Worker" → "Security & monitoring (batch C14)"
@@ -913,7 +913,7 @@ of its initial allowance (0.5 NEAR, deploy-contract's default; set the Worker va
 keys were added with another `--owner-relayer-allowance`) writes an `owner_allowance_low` security event, once a day.
 Top it up by re-adding the key with a fresh allowance ("Relayer keys (either pool)").
 
-## Partner console Worker (`apps/console`, batches C7 and C9) and console-auth (`apps/console-auth`, C9)
+## Partner console Worker (`apps/console`, batches C7, C9 and C10) and console-auth (`apps/console-auth`, C9)
 
 The console Worker (`hana-id-console-<env>`, manifest `console.workerName`) holds `CONSOLE_DB` (orgs, members, invites,
 owner grants, console sessions, the console's audit log), binds the API's `ConsoleRpc` (`API`) and serves the partner
@@ -930,6 +930,16 @@ Both need the dashboard blocks in the manifest (`console`, `files`, `admin`, `us
 first). Partners can sign in once both are deployed with the secret set (milestone M4); invites need the admin
 Worker's notices (C8), so without C8 no new partner can be invited (staff's `issueInvite` link only works after the
 admin Worker's ack).
+
+**C10 (partner management, branch `feat/batch-c-10`).** No new secret, binding or setup step: `gen` now also writes
+`NETWORK` and `REFUSED_ORIGINS` (the API's origin rules, from the manifest), so redeploy the console after `gen`. The
+step-ups use the same Google client and redirect URI as sign-in (`scope=openid`; `at_hash` is in the claim allow-list,
+D342). Owner actions are relayed by the API's owner pool (its keys and allowance, "Owner actions"); `execute_change`
+from the console needs nothing else. The partner **Users screen** is off until the wallet directory's
+`ConsoleRpc.listUsers` / `getUser` are deployed in the API (D357): then set the console var `USERS_SCREEN = "1"` (in
+`wrangler.jsonc` `vars` after `gen`, or a `--var` on deploy; `gen` doesn't write it) and redeploy the console; unset it
+to hide the screen again. The client-proof helper (AddClient) asks the partner to register the helper page's address as
+a redirect URI of their own client while they use it (D351); Hana's console client is unchanged.
 
 ### Setup step 11: the console's Google OAuth client (for the user, once per env)
 
@@ -1022,9 +1032,9 @@ verifier, checks the ID token (RS256 on Google's JWKS, `iss`, `aud`, `azp`, nonc
 each leg's claim **names**, `outsideApiAllowList`, `hasEmailClaims`, `hasHd`, `hasAtHash`, `atHashMatches`, `passes`
 and a verdict; never a token, an address, a `sub` or a code. Exit code 1 if a leg doesn't pass.
 
-- `openid` leg `PASS`: open question 1 answered "yes"; nothing to change.
-- `NO EMAIL, BUT at_hash` (expected: Google documents `at_hash` as always present on server-flow ID tokens): no
-  personal claim, but the API's allow-list refuses `at_hash`; decide D295's options before C10.
+- `openid` leg `PASS`: open question 1 answered "yes"; nothing to change. `at_hash` (Google documents it on every
+  server-flow ID token) is in the allow-list since D342, so a leg with it passes (`PASS … (at_hash included, D342)`)
+  when it matches the access token; a mismatch is `FAIL: at_hash does not match`.
 - `FAIL: Google added email or hd`: step-ups and owner actions stop until decided (the spec's fallback: accept the
   address after an explicit partner disclosure).
 - `openid email` leg `PASS`: the console's sign-in accepts the token (D290); a `FAIL` there means sign-in would refuse
@@ -1046,6 +1056,9 @@ answer in `docs/batch-c-spec.md` open question 1, as the email spike's was.
 - **`StaffRpc`** (the admin Worker's binding, C8): orgs, members (`setMember`), users (`disableUser`), freeze, invites
   (issue, revoke, the notice list and ack), owner grants (cancel), the audit feed and queries. Until C8 deploys nothing
   calls it; there is no CLI for it.
+- **Pending actions** (C10): one row per fresh sign-in started, 5 minutes, used once; purged 24 h after expiry. They
+  hold the canonical action and its decoded view, never a token. A step-up that ran writes its audit row
+  (`step_up_id` = the action), a refused one `step_up.failed`.
 - **Logs** carry ids and codes only: never an email (invitee, member or staff), a Google `sub`, a token or a hash.
 
 ### Restoring `CONSOLE_DB`
@@ -1251,8 +1264,9 @@ accurate. Before the owner proposes an upgrade on an env whose builds are reprod
 Logos are written by the console (`POST /api/orgs/:org/apps/:app/logo`, routed for owners in C10; until then nothing
 uploads one) and served by the files Worker (`hana-id-files-<env>`, `files.workerName`) on `files.origin`. The auth
 pages show an app's logo beside its name, from `GET /v1/app`'s `logoUrl`. `docs/api.md` "Files Worker" and "Console
-Worker" have the routes and checks; D300–D308 the readings. Nothing here makes anything partner-facing until C10
-routes the upload: an app without a logo gets exactly batch B's pages, messages and policies.
+Worker" have the routes and checks; D300–D308 the readings. C10 (`feat/batch-c-10`) routes the upload behind the
+session and the owner role; until an owner uploads one, an app without a logo gets exactly batch B's pages, messages and
+policies.
 
 It needs the dashboard blocks in the manifest (setup step 12), like the console.
 
@@ -1287,7 +1301,7 @@ corepack pnpm --filter @hana-id/api run gen <env>
 corepack pnpm --filter @hana-id/web build
 corepack pnpm --filter @hana-id/api run deploy:pages
 # 6. The API (GET /v1/app's logoUrl needs FILES_ORIGIN, which the same gen wrote) and the console (the IMAGES binding,
-#    the logo backend). Deploy order doesn't matter for users: no app has a logo until C10's upload route.
+#    the logo backend). Deploy order doesn't matter for users: no app has a logo until an owner uploads one (C10's route).
 corepack pnpm --dir apps/api exec wrangler deploy
 corepack pnpm --filter @hana-id/console gen <env> --d1-id <uuid>
 corepack pnpm --dir apps/console exec wrangler deploy
@@ -1363,7 +1377,7 @@ origin).
 
 The admin Worker settles the gas of every relayed event at FINAL, checks the relayer nonces and the rejection rate
 daily, fetches the NEAR/USD rate, and issues the frozen monthly statements (CSV, PDF and on-screen, D92) with ledger CSV
-exports; partners will read their reports and statements in the console once C10 routes them (`docs/api.md` "Admin
+exports; partners read their reports and statements through the console's routes (C10 routes them, `feat/batch-c-10`; the SPA screens are still to build) (`docs/api.md` "Admin
 Worker", "Usage ledger functions"; D320–D329). Not deployed anywhere yet: it goes live at milestone M6.
 
 ### Setting it up (once per env, for the user to run)

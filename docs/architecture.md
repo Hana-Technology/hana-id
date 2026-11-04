@@ -1,7 +1,7 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-04 (branch `feat/user-id-identity-sub`: the wallet directory's three ids and the record's session signature, D346 and the D311/D313 amendments: Status, "Wallet directory" steps 1, 2 and 4, "Data stores"' D1 row, the Glossary); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: D347, a closed popup is
+Last verified against code: 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342; the partner console's fresh sign-in and write paths, D343, D350–D358); 2026-11-04 (branch `feat/user-id-identity-sub`: the wallet directory's three ids and the record's session signature, D346 and the D311/D313 amendments: Status, "Wallet directory" steps 1, 2 and 4, "Data stores"' D1 row, the Glossary); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: D347, a closed popup is
 `login_cancelled`, in "Login, one transaction" after step 4; D348's Google-only screen after a cancel; a cancel on token_first's Google
 screen goes back to the chooser or case B's choices, closing there is `login_cancelled`, in "Automatic linking" step 2;
 D341); 2026-11-04 (branch `feat/batch-c-12`: reports, settlement and statements in Status,
@@ -95,8 +95,8 @@ statements) is built on `feat/batch-c-12`, not merged; C9, C10 and C13–C17 (si
 | Batch C7: the console Worker backend (`apps/console`: host dispatch, the security headers and CSRF, the two emailed-link confirms over the `API` → `ConsoleRpc` binding, `StaffRpc` for the admin Worker, invites and owner grants with acceptance's data path, the session model, the hourly cron; `CONSOLE_DB` migration 0002) | `develop` (from `feat/batch-c-7`) | Merged; not deployed: it needs the manifest's dashboard blocks (setup step 12) and the M4 setup in `docs/operations.md` "Partner console Worker". On `develop` it has no public route; C9 (below) turns the route on in the config; the admin Worker (C8, below) binds `StaffRpc` |
 | Batch C8: the admin Worker (`apps/admin`: the Access JWT check on every `/api/*` with the staff list, host dispatch and the headers, the staff BFF and a plain SPA over `AdminRpc` and `StaffRpc`, `EmailSender` with Resend, the blocking notices acked only after every send, the feed with cursors in `ops.state`, the on-chain watcher; `gen-wrangler` with the admin Hyperdrive binding) | `feat/batch-c-8` (not merged) | Code done, not deployed (milestone M4: Access, Resend, the link and email secrets, the admin Hyperdrive id; `docs/operations.md` "Admin Worker"). D278–D285 |
 | Batch C9: partner sign-in (the Google code flow with PKCE on console-auth, handoff codes, `__Host-` sessions, the membership rules and invite acceptance, `GET /api/me`, the read-only screens and SPA, the console route in the config) and the open-question-1 spike | `feat/batch-c-9` (not merged) | Code done, tests green, not deployed (milestone M4: setup steps 5, 11, 12; `docs/operations.md` "Partner console Worker"); the spike not run (D295). Write paths (C10) not built |
-| Batch C14: "Security & monitoring", the pending-upgrades page and the playbooks in the admin (`apps/admin/src/{watchdog,monitoring,monitoring-registry,playbooks,plain}.ts`, the SPA's `/security/monitoring`, `/security/upgrades`, `/security/playbooks`), `AdminRpc.governance` / `pendingUpgrades` and `ConsoleRpc.pendingUpgrades` over the `GET /v1/governance` snapshot, the release registry (`console-core` `CONTRACT_RELEASES`), the partner console's backend route (no route until C10), `watchdog.url`; the feed's silent first run (D344) | `feat/batch-c-14` (not merged) | Code done, not deployed (with the admin Worker at M4: `watchdog.url`, the `WATCHDOG_STATUS_TOKEN` admin secret; `docs/operations.md` "Admin Worker" → "Security & monitoring"). D330–D338 |
-| Batch C11: the files Worker (`apps/files`: only `GET /logos/<app>/<sha256>.png` from R2, re-checked, sandboxed), the console's logo upload backend (`apps/console/src/logo.ts`: magic bytes, container and polyglot checks, the Images re-encode to a 256 × 256 PNG without metadata, `logo_objects`, `ConsoleRpc.setLogo`; no route until C10), `GET /v1/app` `logoUrl`, the logo beside the app's name on `/login`, `/login/email`, `/approve`, `/export` with `FILES_ORIGIN` in their `img-src` (D300–D308) | `feat/batch-c-11` (not merged) | Code done, not deployed (milestone M5: the R2 buckets and rules, the Images binding, the files Worker, then the pages; `docs/operations.md` "Files Worker and logos"). Inert until a logo exists: the upload has no route until C10, and an app without a logo gets exactly batch B's messages and policies |
+| Batch C14: "Security & monitoring", the pending-upgrades page and the playbooks in the admin (`apps/admin/src/{watchdog,monitoring,monitoring-registry,playbooks,plain}.ts`, the SPA's `/security/monitoring`, `/security/upgrades`, `/security/playbooks`), `AdminRpc.governance` / `pendingUpgrades` and `ConsoleRpc.pendingUpgrades` over the `GET /v1/governance` snapshot, the release registry (`console-core` `CONTRACT_RELEASES`), the partner console's backend route (routed by C10, `feat/batch-c-10`), `watchdog.url`; the feed's silent first run (D344) | `feat/batch-c-14` (not merged) | Code done, not deployed (with the admin Worker at M4: `watchdog.url`, the `WATCHDOG_STATUS_TOKEN` admin secret; `docs/operations.md` "Admin Worker" → "Security & monitoring"). D330–D338 |
+| Batch C11: the files Worker (`apps/files`: only `GET /logos/<app>/<sha256>.png` from R2, re-checked, sandboxed), the console's logo upload backend (`apps/console/src/logo.ts`: magic bytes, container and polyglot checks, the Images re-encode to a 256 × 256 PNG without metadata, `logo_objects`, `ConsoleRpc.setLogo`; routed behind the session by C10, `feat/batch-c-10`), `GET /v1/app` `logoUrl`, the logo beside the app's name on `/login`, `/login/email`, `/approve`, `/export` with `FILES_ORIGIN` in their `img-src` (D300–D308) | `feat/batch-c-11` (not merged) | Code done, not deployed (milestone M5: the R2 buckets and rules, the Images binding, the files Worker, then the pages; `docs/operations.md` "Files Worker and logos"). Inert until a logo exists: the upload has no route until C10, and an app without a logo gets exactly batch B's messages and policies |
 | Governance contract (delayed issuer keys, watchdogs, pause, timelocked upgrades, DAO owner) | `develop` (from `feat/governance`) | Deployed on sandbox-dev 2026-10-30: migrated in place to v2 (same signer, same addresses), owned by the council DAO since 2026-10-30, one upgrade through the DAO (contract 0.1.1) (`docs/operations.md` "Governance migration (sandbox-dev)") |
 | `apps/watchdog` (independent watchdog Worker, alerts, status endpoint for the admin portal) | `develop` (from `feat/governance`) | Deployed on sandbox-dev 2026-10-30 (forged-key and pause drills), redeployed 2026-11-02 with batch 5 (below); its pager (ntfy.sh) and heartbeat are set, Slack and email aren't (`docs/operations.md` "Watchdog service") |
 | Governance API (delayed JWKS sync, `issuer_key_pending` / `paused` gate, `GET /v1/governance`) | `develop` (from `feat/governance`) | Deployed on sandbox-dev with the migration, 2026-10-30 (D1 migration 0005; `docs/operations.md` "Deploying the governance API") |
@@ -728,19 +728,48 @@ XSS on the console could run on ever receives a Google redirect (D75; `docs/api.
 3. **Callback** (auth origin): only a valid `code` and `state` of a started flow carrying this browser's
    `__Host-hana_af` gets a redirect, ending in `#` (the implicit-flow guard). The console exchanges the code with its
    client secret and the verifier, checks the ID token (`apps/console/src/auth-token.ts`: signature, `iss`, `aud`, the
-   nonce, `iat` ≤ 120 s, the claim allow-list plus `email`, `email_verified`, `hd`, `at_hash` for sign-in, D290), writes
+   nonce, `iat` ≤ 120 s, the claim allow-list, which holds `at_hash` (D342), plus `email`, `email_verified`, `hd` for sign-in, D290), writes
    a 60-second handoff row with the verified identity and 303s to `console.origin/api/auth/complete?h=…#`.
 4. **Complete** (console origin): with the flow's `__Host-hana_pre`, the handoff is used once; the membership rules run
    (a disabled user; an invite accepted in one D1 batch; or an existing member of an active org whose `required_hd`
    matches); a session (`__Host-hana_cs`, 2 h idle, 12 h absolute) and an audit row are written, and the browser goes
    to `/`; a refusal goes to `/signin#error=<code>` (D291–D293).
 
-Every later request reads the session and the member's role from `CONSOLE_DB`; the read-only screens (apps, an app's
-origins, guarded changes, keys and settings, members and invites, the audit merged with the API's `app_changes`) come
-from `ConsoleRpc` and `CONSOLE_DB`, shown without staff identities, Google `sub`s or network data (D296). Nothing in
-the console reads the email issuer's user directory (D269). Step-ups (fresh sign-in for one action, `scope=openid`,
-held to exactly the API's allow-list) are batch C10; open question 1 (does Google's code flow keep that token free of
-`email`, and `at_hash`?) is tested by `scripts/console-code-flow-spike.ts` (D295).
+Every later request reads the session and the member's role from `CONSOLE_DB`; the screens (apps, an app's origins,
+guarded changes, keys and settings, members and invites, the audit merged with the API's `app_changes`) come from
+`ConsoleRpc` and `CONSOLE_DB`, shown without staff identities, Google `sub`s or network data (D296). Nothing in the
+console reads the email issuer's user directory (D269). Open question 1 (does Google's code flow keep the `openid`
+token free of `email`?) is tested by `scripts/console-code-flow-spike.ts` (D295); the code flow's `at_hash` is in the
+allow-list (D342).
+
+**Writes (batch C10; `apps/console/src/writes.ts`, `actions.ts`).** An owner's immediate writes (removing an origin,
+turning the policy or raw signing off, cancelling a guarded change, suspending, renaming, keys, the logo, revoking an
+invite, cancelling an owner grant, executing a matured on-chain change) are `ConsoleRpc` calls with the member actor,
+each with an outcome audit row; a viewer gets `403`, and a frozen org keeps only the cancels and kill switches (D356).
+Everything the spec marks "fresh sign-in" is a **step-up**:
+
+1. `POST /api/orgs/:org/actions {kind, params}`: the console builds the canonical action and its Google nonce (the
+   origin-change or settings-change layout, which the API recomputes; the contract's owner-action layout at the scope's
+   `action_nonce`, read uncached from NEAR; the generic step-up layout bound to the session otherwise), stores a
+   5-minute `pending_actions` row and answers the decoded view, which `/actions/:id` shows (for a policy, the consent
+   screen as users see it, packages/web's `renderConsent`, D352).
+2. `POST /api/actions/:id/google`: an `auth_flows` row with `purpose = 'step_up'`, `scope = 'openid'`, the action's
+   nonce and the session's `sub` as `login_hint`; the same `/start` → Google → `/callback` path as sign-in.
+3. The callback verifies the token (`openid`: exactly the claim allow-list), then runs the action with it: the token's
+   `sub` must be the session's, the action unused, its session live, the member still an owner. Guarded changes and
+   owner actions go to the API with the JWT, which verifies it again (`changes/step-up.ts`, the owner-action precheck)
+   and, for an owner action, relays it through the owner pool; member changes and `org.policy` consume the action,
+   apply the change and audit it in one D1 batch. The browser lands on `/actions/:id#`, which reads the outcome. The
+   token is never stored; the action is used once whatever the outcome (D354).
+
+An AddClient needs a client proof: the console offers a downloadable helper page (Google's implicit flow, `scope=openid`,
+the scope's client-proof nonce; D351) that the partner opens on one of the client's own origins; the pasted token is
+checked (signature, `aud`, nonce, the claim allow-list, D350) after a warning that it becomes public on chain. The scope
+page also shows owner drift (the org's owners against the scope's on-chain `Oidc` owners) and offers a SetOwners built
+from the org's owners (D353). The emailed cancel links land on `/cancel/:changeId#t=` and `/cancel-owner/:grantId#t=`,
+SPA pages that POST only after a click. The partner Users screen (D310, D346: the User ID is the identity token's `sub`,
+the Support ID its short form; account kinds and wallet addresses, never an email or a Google account id) is built
+behind `USERS_SCREEN`, off until the wallet directory's reads land (D357).
 
 ### Key export
 

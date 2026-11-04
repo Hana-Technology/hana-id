@@ -23,6 +23,31 @@ describe('audit details', () => {
           "logoKey",
           "code",
         ],
+        "app.renamed": [
+          "code",
+          "version",
+        ],
+        "app.resumed": [
+          "code",
+          "suspendedBy",
+        ],
+        "app.settings_changed": [
+          "code",
+          "version",
+          "fields",
+        ],
+        "app.suspended": [
+          "code",
+          "suspendedBy",
+        ],
+        "app.turned_off": [
+          "code",
+          "version",
+          "what",
+        ],
+        "change.cancelled": [
+          "code",
+        ],
         "change.link_cancel": [
           "code",
         ],
@@ -40,6 +65,19 @@ describe('audit details', () => {
         "invite.notified": [],
         "invite.revoked": [
           "grantCancelled",
+        ],
+        "key.created": [
+          "code",
+          "keyId",
+        ],
+        "key.revoked": [
+          "code",
+          "keyId",
+        ],
+        "key.rotated": [
+          "code",
+          "keyId",
+          "newKeyId",
         ],
         "ledger.exported": [
           "month",
@@ -64,7 +102,31 @@ describe('audit details', () => {
           "grantCancelled",
         ],
         "org.frozen": [],
+        "org.policy": [
+          "requiredHd",
+        ],
         "org.unfrozen": [],
+        "origin.proposed": [
+          "code",
+          "version",
+          "added",
+          "removed",
+        ],
+        "origins.removed": [
+          "code",
+          "version",
+          "removed",
+        ],
+        "owner_action.executed": [
+          "code",
+          "status",
+          "changeId",
+        ],
+        "owner_action.relayed": [
+          "code",
+          "method",
+          "status",
+        ],
         "owner_grant.cancelled": [
           "via",
         ],
@@ -74,10 +136,21 @@ describe('audit details', () => {
         "owner_grant.notified": [
           "ownerFrom",
         ],
+        "policy.proposed": [
+          "code",
+          "version",
+          "policyId",
+          "changeId",
+        ],
         "rate.overridden": [
           "day",
           "usdMicros",
           "overrideId",
+        ],
+        "raw_sign.proposed": [
+          "code",
+          "version",
+          "changeId",
         ],
         "session.signed_in": [
           "invite",
@@ -93,6 +166,10 @@ describe('audit details', () => {
           "pdfSha256",
           "asOf",
           "lines",
+        ],
+        "step_up.failed": [
+          "kind",
+          "code",
         ],
         "user.disabled": [],
         "user.enabled": [],

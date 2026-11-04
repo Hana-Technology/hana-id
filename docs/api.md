@@ -1,6 +1,6 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
-Last verified against code: 2026-11-04 (branch `feat/user-id-identity-sub`: `POST /v1/wallets/record`'s `sessionSignature` and key checks (Routing, its section), `ConsoleRpc` / `AdminRpc` user reads with the User ID `u1_…`, the Support ID from it and the staff-only internal id, `end_users.token_sub` in "D1 schema", `directory_unavailable`'s codes; D346, D311/D313 amended); 2026-11-04 (branch `feat/batch-c-12`: `ConsoleRpc.usage` / `statements` / `ledger`,
+Last verified against code: 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342; `freezeOrg` pauses pending invites and owner grants, D343; the console's fresh sign-in and write routes, D350–D358); 2026-11-04 (branch `feat/user-id-identity-sub`: `POST /v1/wallets/record`'s `sessionSignature` and key checks (Routing, its section), `ConsoleRpc` / `AdminRpc` user reads with the User ID `u1_…`, the Support ID from it and the staff-only internal id, `end_users.token_sub` in "D1 schema", `directory_unavailable`'s codes; D346, D311/D313 amended); 2026-11-04 (branch `feat/batch-c-12`: `ConsoleRpc.usage` / `statements` / `ledger`,
 `StaffRpc.recordStaffAction`, the console's report backend (not routed until C10), the admin Worker's report,
 statement, rate and export routes, its 15-minute cron with the daily ledger work at 00:30 UTC, its
 `STATEMENTS`/`EXPORTS`/`RELAYER_ACCOUNT` bindings, and the "Usage ledger functions" section; D320–D329); 2026-11-04 (branch `feat/batch-c-14`: `AdminRpc.governance`, `AdminRpc.pendingUpgrades`
@@ -374,8 +374,9 @@ The scope is always the app's (D1). Checks after the gate and shape (`400 bad_re
    not read, and one of the wrong JSON type is ignored, not refused (D201). A valid signature's `kid` is recorded once per isolate after the
    response (`issuer_key_observations.first_token_ms`, here and on `/v1/login`; the kid only, never the token).
 2. Claim allow-list, always (D271; a Google token only, an email token is held to its own claims):
-   `iss azp aud sub iat exp nonce nbf jti auth_time`, else `400 token_has_pii` with `data: {claim}`, before any chain
-   read; nothing is relayed.
+   `iss azp aud sub iat exp nonce nbf jti auth_time at_hash` (`at_hash` since D342: the hash of an access token issued
+   with the ID token, nothing personal), else `400 token_has_pii` with `data: {claim}`, before any chain read; nothing
+   is relayed.
 3. `nonce` equals the session nonce recomputed with `SIGNER_ACCOUNT` and the app's scope (`400 nonce_mismatch`).
 3b. (L) `signature` verifies as the proof of possession for exactly these parameters (`401 invalid_signature`): only
    the session key's holder can open a session, and a proof seen once can't open the key with other parameters.
@@ -1448,13 +1449,14 @@ wallet directory's (W) `directory_write_failed` (error, `code` `no_table` / `int
 owner action's request line has `endpoint: ConsoleRpc.ownerAction`; and from the page
 Workers `vault_host` and `auth_page` (`code`).
 
-## Console Worker (`apps/console`, its own Worker) and console-auth · C7, C9
+## Console Worker (`apps/console`, its own Worker) and console-auth · C7, C9, C10
 
 The partner console's Worker (`hana-id-console-<env>`), on `console.origin`, and the thin console-auth Worker
 (`hana-id-console-auth-<env>`) on `console.authOrigin`. Batch C7 built the backend; C9 (branch `feat/batch-c-9`, not
 merged) adds partner sign-in, the read-only routes, the SPA and the route config: `workers_dev: true` on its own
-`workers.dev` name in a dev env, else a Custom Domain on the origin's host; never preview URLs (D294). Write routes
-come with C10 (`docs/batch-c-spec.md` "Console BFF routes"). D240–D244, D290–D297.
+`workers.dev` name in a dev env, else a Custom Domain on the origin's host; never preview URLs (D294). C10 (branch
+`feat/batch-c-10`, not merged) adds fresh sign-in and the write routes ("Fresh sign-in", "Signed-in writes" below).
+D240–D244, D290–D297, D342, D343, D350–D358.
 
 **Every request.** The Worker runs first (assets with `run_worker_first`). A host other than `CONSOLE_ORIGIN`: `404`
 `Not found`. A non-GET/HEAD request without all four CSRF checks (`Sec-Fetch-Site: same-origin`, `Origin` =
@@ -1473,7 +1475,7 @@ response carries the console CSP, `Referrer-Policy: no-referrer`, `Cross-Origin-
 |---|---|---|
 | `POST /api/auth/start` | `{purpose: "login", invite?: <b64url of 32 bytes>}` → `{startUrl: "<authOrigin>/start?f=<43 chars>"}` and `Set-Cookie: __Host-hana_pre=…; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=600` | CSRF rules. Stores an `auth_flows` row: `sha256(f)`, `sha256(state)` (state = `b64url(sha256("hana-console/auth-state/v1\0" ‖ f))`), a PKCE verifier, the login nonce (console-core `consoleLoginNonce`), `scope = 'openid email'`, the pre-flow cookie's sha256, 5 min. An `invite` whose sha256 names no open, notified invite: `403 invite_invalid`, no flow (D293); a valid one binds the flow to it and its address becomes Google's `login_hint`. `400` for another purpose or field |
 | `GET <authOrigin>/start?f=` | → `303` to `https://accounts.google.com/o/oauth2/v2/auth` with `client_id`, `redirect_uri=<authOrigin>/callback`, `response_type=code`, `scope`, `prompt=select_account`, `state`, `nonce`, `code_challenge` (S256), `login_hint` when set; `Set-Cookie: __Host-hana_af=…` (same attributes) | The flow is found and marked started in one statement: unknown, expired, already started, a malformed or extra query: the static 400 page. No client id configured: the static page with `503` |
-| `GET <authOrigin>/callback?code&state` | → `303` to `<console.origin>/api/auth/complete?h=<43 chars>#` (an empty fragment: the implicit-flow guard), `__Host-hana_af` cleared | Only with `code` and `state` (each once), `sha256(state)` a started, unused, unexpired flow and `sha256(__Host-hana_af)` its cookie: found and marked used in one statement (a wrong or missing cookie consumes nothing). Then the code exchange (`https://oauth2.googleapis.com/token`, the client secret, the verifier; 8 s, 32 KiB) and the token check (`auth-token.ts`: RS256 on Google's JWKS, `iss`, `aud` and `azp` the console client, the flow's nonce, `exp`, `iat` ≤ 120 s old and ≤ 60 s ahead, the claims by scope: D290). A login writes a 60 s `handoff_codes` row with `{provider, sub, email, hd}` only. Anything else (`error=`, no query, a token in place of a code, a refused token, a Google 4xx): the static 400 page, no `Location`; Google 5xx, timeout, JWKS down or no secret: the same page with `503`. A step-up flow (C10) is refused here until C10 |
+| `GET <authOrigin>/callback?code&state` | → `303` to `<console.origin>/api/auth/complete?h=<43 chars>#` (an empty fragment: the implicit-flow guard), `__Host-hana_af` cleared | Only with `code` and `state` (each once), `sha256(state)` a started, unused, unexpired flow and `sha256(__Host-hana_af)` its cookie: found and marked used in one statement (a wrong or missing cookie consumes nothing). Then the code exchange (`https://oauth2.googleapis.com/token`, the client secret, the verifier; 8 s, 32 KiB) and the token check (`auth-token.ts`: RS256 on Google's JWKS, `iss`, `aud` and `azp` the console client, the flow's nonce, `exp`, `iat` ≤ 120 s old and ≤ 60 s ahead, the claims by scope: D290). A login writes a 60 s `handoff_codes` row with `{provider, sub, email, hd}` only. A step-up flow (C10) runs its pending action instead and answers `303 <console.origin>/actions/:id#` ("Fresh sign-in" below). Anything else (`error=`, no query, a token in place of a code, a refused token, a Google 4xx): the static 400 page, no `Location`; Google 5xx, timeout, JWKS down or no secret: the same page with `503` |
 | `GET /api/auth/complete?h=` | → `303 /` with `Set-Cookie: __Host-hana_cs=…; Path=/; Secure; HttpOnly; SameSite=Strict` and `__Host-hana_pre` cleared, or `303 /signin#error=<code>` | The handoff must be unused, inside its 60 s and its flow's `pre_cookie_hash` this request's `__Host-hana_pre` (found and used in one statement, then scrubbed). The membership rules then run (spec "Membership rules at sign-in": a disabled user `user_disabled`; an invite bound to the flow is accepted in one D1 batch, `invite_invalid` or `already_member`; no invite: an existing user with a membership in an active org whose `required_hd` is null or the token's `hd`, else `not_invited`); success writes the session (2 h idle, 12 h absolute, `/24` or `/48` and country kept for staff), the user's `last_sign_in_at` and current verified address, and `session.signed_in`, in one batch. Codes: `not_invited`, `invite_invalid`, `already_member`, `user_disabled`, `expired`, `rate_limited`, `internal` (D292) |
 | `POST /api/auth/logout` | `{}` → `{}`, the session cookie cleared | Session and CSRF rules; revokes this session (`session.signed_out`); `401` without a session |
 
@@ -1503,7 +1505,7 @@ role is read from `members` on every request.
 
 | Route | Answer |
 |---|---|
-| `GET /api/me` | `{user: {id, email}, memberships: [{orgId, orgName, status, role}]}`: every hd-matching membership, frozen orgs included (read-only) |
+| `GET /api/me` | `{user: {id, email}, memberships: [{orgId, orgName, status, role}], features: {users}}`: every hd-matching membership, frozen orgs included (read-only); `features.users` is whether the Users screen is on (`USERS_SCREEN`, D357) |
 | `GET /api/orgs/:org` | `{org: {id, name, status, requiredHd?}, role}` |
 | `GET /api/orgs/:org/apps` | `{apps: AppSummary[]}` (`ConsoleRpc.listApps`) |
 | `GET /api/orgs/:org/apps/:app` | `{app: AppDetail}` (`ConsoleRpc.getApp`: origins with their display form and IDN flag, pending and active guarded changes, keys, settings); another org's app `404` |
@@ -1512,6 +1514,47 @@ role is read from `members` on every request.
 
 The ConsoleRpc calls carry the member actor (`id`, `sub`, `email`, `sessionHash` = b64url of the session's id hash),
 the request's id and `cf-connecting-ip`.
+
+### Fresh sign-in (step-up; C10, D354)
+
+| Route | Request → answer | Notes |
+|---|---|---|
+| `POST /api/orgs/:org/actions` | `{kind, params}` → `{id: "act_…", kind, decoded, expiresAt}` | An owner of an active org. Builds the canonical action and its Google nonce: the origin-change layout (`origin.add` `{appId, add, remove?}`: normalised, checked against the API's origin rules with `NETWORK` and `REFUSED_ORIGINS`, ≤ 20 origins), the settings-change layout (`policy.set` `{appId, policy}`, validated by `@hana-id/core/policy` at the app's session TTL; `raw_sign.on` `{appId}`, live apps only), the contract's owner-action layout at the scope's `action_nonce` read with an uncached `get_scope` (`owner_action` `{scopeId, method, change?, changeId?, aud?}`: `propose_change` with `{kind: "AddClient", aud, clientProof, piiWarningAccepted: true}`, `{kind: "SetAllowShared"}` or `{kind: "SetOwners"}` (built from the org's owners, D353), `cancel_change`, `remove_client`, `disable_shared_login`; the member must be an on-chain owner, else `403 not_owner`), else the generic step-up layout bound to this session (`app.resume` `{appId}`, `app.settings` `{appId, persistence?, sessionTtlMs?, idleTtlMs?, googleWebClientId?}`, `member.invite` `{email, role}`, `member.role` `{userId, role}`, `member.remove` `{userId}`, `org.policy` `{requiredHd}`, D355). Stores `pending_actions` for 5 min. `decoded` is what the page shows: origins with their display form and IDN flag, the validated policy with its `policyId` and label (the consent preview), on-chain owners as members, never a `sub`. Refused before any sign-in: `400 bad_request`, `origin_refused`, `policy_invalid`, `invalid_client_proof` (a pasted proof checked for its signature, `aud`, the client-proof nonce and the claim allow-list, D350), `403 not_owner`, `404`, `409 conflict` (a pending change of the same kind, 10 open invites, …), `503 near_unavailable`; a 48 KiB body cap |
+| `POST /api/actions/:id/google` | `{}` → `{startUrl}` | The action's own session only (else `404`), unused and unexpired (else `409 step_up_expired`). Creates the `auth_flows` row: `purpose = 'step_up'`, `scope = 'openid'`, the action's nonce, the session's `sub` as `login_hint`, expiring with the action. Shares the per-IP limit of `/api/auth/*` |
+| the callback (above) | → `303 <console.origin>/actions/:id#` | After the token checks (`scope=openid`: exactly the claim allow-list, `at_hash` matching the exchange's access token): the token's `sub` must be the session user's (`sub_mismatch`), the action unused and unexpired (`step_up_expired`), its session live (`session_ended`), the member still an owner of the active org (`forbidden`). Then it runs: `origin.add` → `ConsoleRpc.changeOrigins`, `policy.set` / `raw_sign.on` → `proposeChange` (the token as `stepUpJwt`; the API verifies it itself), `app.resume` → `setSuspended(false)`, `app.settings` → `updateSettings`, `owner_action` → `get_scope` again (a moved `action_nonce` is `nonce_moved` and nothing is sent), then `ConsoleRpc.ownerAction` with `auth: {Oidc: {jwt}}` on the stored arguments; `member.*` and `org.policy` consume the action, apply the change and write its audit row in one D1 batch. The action is used once whatever the outcome; the token is never stored |
+| `GET /api/actions/:id` | → `{id, kind, status: "pending" \| "ok" \| "failed" \| "expired", decoded, expiresAt, outcome?}` | The action's user only (`404` otherwise). `outcome`: `{status, code?, message?, version?, changeId?, inviteId?, grantId?, nearTx?, relayStatus?, noChange?}`. A refusal after the token verified is also an audit row, `step_up.failed` |
+
+### Signed-in writes (C10, D356)
+
+The session, the membership (as for the reads) and the CSRF rules, then the role: a viewer (a pending owner included)
+gets `403 forbidden` on every owner route. In a frozen org only the cancels and the kill switches stay open (✓ below);
+any other write is `403 org_frozen`. Each ConsoleRpc write writes an outcome `audit_log` row after the RPC returns
+(app_changes stays authoritative), with the RpcCode of a refusal.
+
+| Route | Body → answer | ConsoleRpc / effect | Frozen |
+|---|---|---|---|
+| `POST /api/orgs/:org/apps/:app/origins/remove` | `{remove, expectedVersion}` → `{version}` | `removeOrigins` (immediate; counted by the breaker); `origins.removed` | ✓ |
+| `POST /api/orgs/:org/apps/:app/off` | `{what: "policy" \| "raw_sign", expectedVersion}` → `{version}` | `turnOff`; `app.turned_off` | ✓ |
+| `POST /api/orgs/:org/changes/:id/cancel` | `{}` → `GuardedChange` | `cancelChange`; `change.cancelled` | ✓ |
+| `POST /api/orgs/:org/apps/:app/suspend` | `{}` → `{suspendedBy}` | `setSuspended(true)`, bit 4; `app.suspended` (resuming is the `app.resume` action) | ✓ |
+| `POST /api/orgs/:org/apps/:app/profile` | `{name, expectedVersion}` → `{version}` | `updateSettings({name})`; `app.renamed` | — |
+| `POST /api/orgs/:org/apps/:app/logo?expectedVersion=` | the raw image → `{logoUrl, version}` | `logoUploadRoute` (below) | — |
+| `POST /api/orgs/:org/apps/:app/logo/remove` | `{expectedVersion}` → `{version}` | `logoRemoveRoute` (`setLogo(null)`) | — |
+| `POST /api/orgs/:org/apps/:app/policy/check` | `{policy}` → `{policyId, label, policy}`, or `400 {error: {code: "policy_invalid", …}, problems}` | `getApp` (the session TTL), then the validator; writes nothing (the editor's preview, D352) | — |
+| `POST /api/orgs/:org/apps/:app/keys` | `{}` → `KeyView` | `createKey`; `key.created` (`409 key_limit` past 5) | — |
+| `POST /api/orgs/:org/apps/:app/keys/:key/rotate` | `{}` → `KeyView` and `oldKeyRevokedAt` | `rotateKey` (the old key works 24 h more); `key.rotated` | — |
+| `POST /api/orgs/:org/apps/:app/keys/:key/revoke` | `{}` → `{}` | `revokeKey` (immediate); `key.revoked` | ✓ |
+| `POST /api/orgs/:org/invites/:id/revoke` | `{}` → `{}` | CONSOLE_DB: the org's open invite and its grant (`409 not_pending` once ended) | ✓ |
+| `POST /api/orgs/:org/owner-grants/:id/cancel` | `{}` → `{}` | CONSOLE_DB: until `owner_from`; the person stays a viewer | ✓ |
+| `POST /api/orgs/:org/scopes/:scope/execute` | `{changeId}` → `{status, nearTx?}` (`422` with the relay's `code` when the contract refuses) | `ownerAction(execute_change)` (no token: anyone may execute a matured change); `owner_action.executed` | — |
+| `GET /api/orgs/:org/scopes/:scope` (viewer) | → `{scope: {id, actionNonce, allowShared, clients, owners, pending}, drift: {hasDrift, missingOnChain, notOrgOwners, unknownOnChain}, youAreOnChainOwner}` | `get_scope`, uncached; owners as `{kind: "member", userId, email, orgOwner}`, `{kind: "near", accountId}` or `{kind: "other_google"}`, never a `sub` | ✓ |
+| `GET /api/orgs/:org/scopes/:scope/client-proof-helper?clientId=` | → the helper page, `Content-Disposition: attachment` | The scope's client-proof nonce at its current `action_nonce`; Google's implicit flow with `scope=openid` (D351) | ✓ |
+| `GET /api/orgs/:org/users?scope&search&cursor`, `GET /api/orgs/:org/users/:userId` (viewer) | → `{users, next?}`, `{user}` | `404` while `USERS_SCREEN` is off (D357). `ConsoleRpc.listUsers` / `getUser` (the wallet directory's), re-shaped field by field: `{userId (u1_…, D346), supportId, scopeId, createdAt, lastSeenAt, accounts: [{kind, status}], wallets: [{chain, address, firstSeenAt, lastUsedAt}]}`; never an email address, a `sub` or an identity key | ✓ |
+
+C12's report routes and C14's pending-upgrades page are routed here too, for any member (frozen orgs included), each
+its own backend's checks and answers: `GET /api/orgs/:org/usage?from&to&by&apps`, `/statements`, `/statements/:month`,
+`/statements/:month.csv` and `.pdf`, `/ledger/:month.csv` (reports.ts, "Report backend" below) and
+`/governance/pending-upgrades` (governance.ts, "Pending upgrades" below). Their SPA screens are not built yet.
 
 ### Emailed links (no session; C7)
 
@@ -1524,17 +1567,17 @@ Both: `400 bad_request` for any other body shape (strict), `413` over 4 KiB (1 K
 10 requests a minute per IP (IPv6 by /64; the `CONSOLE_IP_LIMIT` rate-limiting binding, namespace `95101`, key
 `<env>:console-link:<ip subject>`), checked before the body is read.
 
-**Pending upgrades (C14, backend only; no route until C10's session routes, D335).** `pendingUpgradesRoute` in
-`src/governance.ts` serves `GET /api/orgs/:org/governance/pending-upgrades` for a signed-in member (any role) once C10
-routes it after the session check. It checks again that the member belongs to the org (a `members` row, the user not
+**Pending upgrades (C14's backend behind C10's session route, D335).** `pendingUpgradesRoute` in
+`src/governance.ts` serves `GET /api/orgs/:org/governance/pending-upgrades` for a signed-in member (any role), routed by C10
+(`writes.ts`) after the session check. It checks again that the member belongs to the org (a `members` row, the user not
 disabled): another org, an unknown or malformed org id, or a disabled user is `404 not_found`, with no RPC call. Then
 `ConsoleRpc.pendingUpgrades` with the member actor and the org → `200 {pendingUpgrades}` (the view above). RPC
 refusals keep their status with the console's own message (`429 rate_limited`, `403 forbidden` for `org_legacy`,
 `503 near_unavailable`); a binding that throws is `503 near_unavailable`. Logged as `console_rpc` `pendingUpgrades`.
 
-**Logo upload (C11, backend only; no route until C10's session routes, D300, D301).** `logoUploadRoute` in
+**Logo upload (C11's backend behind C10's session route, D300, D301).** `logoUploadRoute` in
 `src/logo.ts` serves `POST /api/orgs/:org/apps/:app/logo?expectedVersion=<settingsVersion>` for a caller the session
-route has checked (session, org member, owner role): the image as the raw body (`application/octet-stream`,
+route has checked (session, org member, owner role, an active org): the image as the raw body (`application/octet-stream`,
 `Content-Length` required) → `200 {logoUrl, version}`. In order:
 
 1. ≤ 512 KiB (`413 logo_too_large`); PNG, JPEG or WebP by magic bytes, one well-formed static image with nothing after
@@ -1550,8 +1593,8 @@ route has checked (session, org member, owner role): the image as the raw body (
 
 The current image again changes nothing. Uploads are limited to 10 a minute per org (`CONSOLE_IP_LIMIT`, key
 `<env>:console-logo:<org>`; `429 rate_limited`). Without the `IMAGES` binding (or `LOGOS`) it answers `500 internal`.
-`logoRemoveRoute` (`{expectedVersion}` → `{version}`; `setLogo(null)`, `app.logo_removed`) is the backend of C10's
-remove control; the spec lists no route for it.
+`logoRemoveRoute` (`{expectedVersion}` → `{version}`; `setLogo(null)`, `app.logo_removed`) serves
+`POST /api/orgs/:org/apps/:app/logo/remove` (C10; the spec lists no route for it, D358).
 
 **`StaffRpc`** (named export, a `WorkerEntrypoint`; no route: bound only by the admin Worker as `CONSOLE`, batch C8).
 Inputs are console-core's strict zod schemas (`packages/console-core/src/staff.ts`); answers `{ok: true, …}` or
@@ -1563,11 +1606,11 @@ Inputs are console-core's strict zod schemas (`packages/console-core/src/staff.t
 | `listOrgs({cursor?, limit ≤ 200})`, `getOrg({orgId})`, `listMembers({orgId})` | Orgs by id (`org_legacy` included); an org with its members (email, `sub`, the role in force, `pendingOwnerFrom` for a pending owner), invites (newest first) and, in `getOrg`, its live owner grants (`grants`: not cancelled, not applied, newest first, no hash column; C8, D283) |
 | `issueInvite({email, role, orgId? \| newOrgName?, kind?})` | An invite (`token_hash` NULL until the notice is acked), 7 days from creation; an owner invite to an existing org also creates its owner grant. Refused: `org_legacy` (`forbidden`), unknown org (`not_found`), frozen org, 11th open invite, a second open invite of the address to the org (`conflict`), a second partner org while passkeys haven't shipped (`passkeys_required`). Returns the invite view, never a token |
 | `revokeInvite({inviteId})` | Revokes an open invite and cancels its grant (`not_pending` once ended) |
-| `pendingMemberNotices({limit ≤ 100})` | The blocking notices to send, oldest first: open invites and live grants not yet acked, each with the org's current owners (a promotion also with the promoted member) |
-| `ackMemberNotice({inviteId \| grantId, tokenHash})` | After every send was accepted: stores the link token's sha256 (an invite's link works from now; a promotion's wait starts: `owner_from = now + OWNER_GRANT_DELAY_MS`). Same hash again: no-op; another: `conflict` |
+| `pendingMemberNotices({limit ≤ 100})` | The blocking notices to send, oldest first: open invites and live grants not yet acked, each with the org's current owners (a promotion also with the promoted member); none of a frozen org's (D343) |
+| `ackMemberNotice({inviteId \| grantId, tokenHash})` | After every send was accepted: stores the link token's sha256 (an invite's link works from now; a promotion's wait starts, and an accepted owner invite's whose notice a freeze undid: `owner_from = now + OWNER_GRANT_DELAY_MS`). Same hash again: no-op; another: `conflict`; a frozen org's: `not_pending` (D343) |
 | `cancelOwnerGrant({grantId})` | Until `owner_from` (`not_pending` after) |
 | `setMember({orgId, userId, role \| null})` | Add, remove, demote or promote (through a grant when the org has another owner); the last usable owner stays (`conflict`); a disabled user is never added or promoted (`conflict`) |
-| `disableUser({userId, disabled})`, `freezeOrg({orgId, frozen})` | Revoke sessions as the spec's "Sessions" says |
+| `disableUser({userId, disabled})`, `freezeOrg({orgId, frozen})` | Revoke sessions as the spec's "Sessions" says. A freeze also pauses the org's pending memberships in the same batch (D343): open invites lose their notice (`token_hash`, `notified_at` cleared: the link stops working and must be announced again after the unfreeze), live grants still waiting lose their notice and clock (`notified_at`, `cancel_token_hash`, `owner_from` cleared: re-announced after the unfreeze, then the full delay); the hourly cron records no grant of a frozen org |
 | `auditSince({seq, limit ≤ 500})`, `queryAudit({filters, cursor?, limit ≤ 500})` | The feed (oldest first) and the staff screen's query (newest first; filters `orgId`, `appId`, `actorKind`, `actorId`, `action`, `from`, `to`); `seq`, the cursor and the times are safe integers (`bad_request` past 2^53 − 1) |
 
 | `recordStaffAction({orgId?, action, target?, details})` (C12, D327) | Hana only: the `audit_log` row of an admin act with no RPC write of its own: `statement.issued` (`month`, `csvSha256`, `pdfSha256`, `asOf`, `lines`), `ledger.exported` (`month`, `asOf`, `rows`, `sha256`), `rate.overridden` (`day`, `usdMicros`, `overrideId`); another detail key is `bad_request`; a repeat of (request id, action) is `already_applied` and writes nothing |
@@ -1575,7 +1618,7 @@ Inputs are console-core's strict zod schemas (`packages/console-core/src/staff.t
 `purgeAudit` (the monthly retention job) comes with C13. A replayed request id is `already_applied` (same actor and
 target) or `conflict`; a write whose state moved meanwhile is `conflict`.
 
-**Report backend for C10** (`src/reports.ts`, batch C12; not routed until the session routes of C9/C10 call it for a
+**Report backend** (`src/reports.ts`, batch C12; routed by C10's session routes, `writes.ts`, for a
 member of the org, as the logo routes): `usageRoute` (`GET /api/orgs/:org/usage?from&to&by&apps` → `ConsoleRpc.usage`),
 `statementsRoute` (`/statements`: metadata and hashes, no file keys), `statementViewRoute` (`/statements/:month`: the
 stored totals and console-core `statementView`, the same view the PDF prints), `statementFileRoute`
@@ -1585,13 +1628,15 @@ streamed page by page at one as_of, `x-hana-as-of`; a page failing after the fir
 line; at most 200 pages).
 
 **Bindings** (`apps/console/scripts/gen-wrangler.ts`): `CONSOLE_DB` (D1, `migrations/` 0001–0002), `API` → the API
-Worker's `ConsoleRpc` (the console calls `listApps`, `getApp`, `listChanges` and `cancelChangeByLink`, and for logos
-`getApp` and `setLogo`), `LOGOS` and `STATEMENTS` (R2; `STATEMENTS` read only by code), `IMAGES` (the Images binding,
+Worker's `ConsoleRpc` (every method but `usage`, `statements` and `ledger`, which C12 adds; `listUsers` and `getUser`
+once the wallet directory lands), `LOGOS` and `STATEMENTS` (R2; `STATEMENTS` read only by code), `IMAGES` (the Images binding,
 C11), `ASSETS` (`./dist`, the SPA build), `CONSOLE_IP_LIMIT`; vars `ENV_NAME`, `CONSOLE_ORIGIN`, `CONSOLE_AUTH_ORIGIN`,
 `CONSOLE_GOOGLE_CLIENT_ID` (the manifest's one `google` console audience, D294), `FILES_ORIGIN`, `NEAR_RPC`,
-`SIGNER_ACCOUNT`, `OWNER_GRANT_DELAY_MS`; secret `CONSOLE_GOOGLE_CLIENT_SECRET` (the code exchange only). **Cron**
+`SIGNER_ACCOUNT`, `OWNER_GRANT_DELAY_MS`, `NETWORK` and `REFUSED_ORIGINS` (the API's origin rules, C10), `USERS_SCREEN`
+(optional, `"1"` turns the Users screen on; not written by `gen`, D357); secret `CONSOLE_GOOGLE_CLIENT_SECRET` (the code exchange only). **Cron**
 `0 * * * *` (`docs/operations.md` "Partner console Worker"). **Logs**: `staff_rpc`, `link_cancel`, `csrf_refused`,
-`auth_*`, `invite_accept`, `console_rpc`, `console_cron`, `audit_write_failed`, `console_error`, `logo` (`code` is
+`auth_*`, `invite_accept`, `console_rpc`, `console_cron`, `audit_write_failed`, `console_error`, `step_up_create`,
+`step_up_start`, `step_up_run`, `console_write`, `users_shape`, `logo` (`code` is
 `logo_type:<reason>` for a refused file, never its bytes), with method, request id, actor kind, org id, outcome, code
 and a refused claim's name only.
 

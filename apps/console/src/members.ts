@@ -6,7 +6,7 @@
 import { LEGACY_ORG_ID, type OrgView, type Role, newId } from '@hana-id/console-core';
 import { type AuditAction, type Writer, auditInsert, entry, replayOf } from './audit.ts';
 import { refuse } from './errors.ts';
-import { type Frag, applied, frag, gate, gated, orgHasOwner, ownerNow, runBatch } from './sql.ts';
+import { type Frag, applied, frag, gate, gated, lit, orgHasOwner, ownerNow, runBatch } from './sql.ts';
 import { ORG_COLUMNS, type OrgRow, orgView } from './views.ts';
 
 /** Revokes every live session of a user (gated on the write's commit row). */
@@ -66,19 +66,45 @@ function stateGuard(orgId: string, userId: string, s: MemberState, now: number, 
  * owner, a pending grant, a disabled user added or promoted, or the membership changed meanwhile). A change to the role
  * already in force writes nothing.
  */
-export async function setMember(db: D1Database, w: Writer, i: { orgId: string; userId: string; role: Role | null; stepUpId?: string | null }): Promise<{ grantId?: string }> {
+export interface SetMemberInput {
+  orgId: string;
+  userId: string;
+  role: Role | null;
+  stepUpId?: string | null;
+  /**
+   * An owner's step-up (C10, `member.role` / `member.remove`): the pending action is consumed in the same batch as the
+   * change and its audit row, only while unused and unexpired (spec "Fresh sign-in": console-only kinds consume, change
+   * and audit atomically), and only an existing member of an active org is changed (an owner adds people by invite).
+   */
+  consume?: { actionId: string };
+}
+
+/** The guard of a step-up's consumption, and its gated statement (sql.ts). */
+export const consumeGuard = (actionId: string, now: number): Frag => frag(`EXISTS (SELECT 1 FROM pending_actions pa WHERE pa.id = ? AND pa.used_at IS NULL AND pa.expires_at > ${lit(now)})`, actionId);
+export const consumeStmt = (db: D1Database, actionId: string, now: number, g: Frag): D1PreparedStatement =>
+  gated(db, `UPDATE pending_actions SET used_at = ?, outcome = '{"status":"ok"}' WHERE id = ? AND used_at IS NULL`, [now, actionId], g);
+
+export async function setMember(db: D1Database, w: Writer, i: SetMemberInput): Promise<{ grantId?: string; noop?: true }> {
   if (i.orgId === LEGACY_ORG_ID) return refuse('forbidden', `${LEGACY_ORG_ID} has no members`);
   const now = w.now;
   const s = await memberState(db, i.orgId, i.userId, now);
   if (s.orgStatus === null) return refuse('not_found', 'No such org');
   if (!s.userExists) return refuse('not_found', 'No such user');
+  if (i.consume) {
+    if (s.role === null) return refuse('not_found', 'Not a member of this org');
+    if (s.orgStatus !== 'active') return refuse('forbidden', 'The org is frozen');
+  }
   const lastOwner = s.isOwner && !s.otherOwner;
   const keepsOwner = orgHasOwner('?', now, '?');
   const base = { orgId: i.orgId, target: i.userId, stepUpId: i.stepUpId ?? null };
   const plan = (action: AuditAction, details: Record<string, string | number | boolean>, extra?: { sql: string; binds: unknown[] }) => {
-    const guard = stateGuard(i.orgId, i.userId, s, now, extra?.sql);
-    guard.binds.push(...(extra?.binds ?? []));
-    return { action, first: auditInsert(db, entry(w, action, { ...base, details }), guard), g: gate(w.requestId, action) };
+    const parts = [extra, i.consume ? consumeGuard(i.consume.actionId, now) : undefined, i.consume ? frag("EXISTS (SELECT 1 FROM orgs WHERE id = ? AND status = 'active')", i.orgId) : undefined].filter(
+      (x): x is Frag => x !== undefined,
+    );
+    const guard = stateGuard(i.orgId, i.userId, s, now, parts.length ? parts.map((x) => x.sql).join(' AND ') : undefined);
+    for (const x of parts) guard.binds.push(...x.binds);
+    const g = gate(w.requestId, action);
+    return { action, first: auditInsert(db, entry(w, action, { ...base, details }), guard), g, consume: i.consume ? [consumeStmt(db, i.consume.actionId, now, g)] : [] };
   };
   const insertMember = (role: Role, g: Frag) =>
     gated(db, 'INSERT INTO members (org_id, user_id, role, role_since, added_by, added_at) SELECT ?, ?, ?, ?, ?, ? WHERE 1', [i.orgId, i.userId, role, now, w.actor.id, now], g);
@@ -108,10 +134,10 @@ export async function setMember(db: D1Database, w: Writer, i: { orgId: string; u
       p = plan('owner_grant.cancelled', { via: w.actor.kind });
       stmts.push(p.first, cancelGrants(db, w, i.orgId, i.userId, p.g));
     } else {
-      return {};
+      return { noop: true };
     }
   } else {
-    if (s.isOwner) return {};
+    if (s.isOwner) return { noop: true };
     if (s.role !== null && s.liveGrants > 0) return refuse('conflict', 'An owner grant for this member is already pending');
     // Adding or promoting: a disabled user can't sign in and doesn't count as an owner, so making one an owner would
     // leave an ownerless org looking owned (and give the first-owner exception to the next invite).
@@ -133,8 +159,9 @@ export async function setMember(db: D1Database, w: Writer, i: { orgId: string; u
       stmts.push(p.first, setRole('owner', p.g), revokeSessions(db, i.userId, now, p.g));
     }
   }
+  stmts.push(...p.consume);
   const results = await runBatch(db, stmts, replayOf(w, p.action, i.userId));
-  if (!applied(results)) refuse('conflict', 'The membership changed meanwhile; read it again and retry');
+  if (!applied(results)) refuse('conflict', 'The membership changed meanwhile, or this confirmation was already used; read it again and retry');
   return grantId ? { grantId } : {};
 }
 
@@ -157,6 +184,16 @@ export async function disableUser(db: D1Database, w: Writer, userId: string, dis
 /**
  * `StaffRpc.freezeOrg`: a frozen org refuses every console write except cancels and the kill switches (enforced by the
  * BFF from C9), and can't accept invites. Freezing ends the sessions of members with no other active org.
+ *
+ * Freezing also pauses the org's pending memberships (D343), in the same batch:
+ * - every open invite's notice is undone (`token_hash`, `notified_at` cleared): its link stops working, the notice
+ *   isn't sent again while the org is frozen (invites.ts pendingMemberNotices), and after an unfreeze it must be
+ *   announced again (the invitee, every owner, the contacts and the alias) before it works. Its 7 days keep running;
+ * - every live owner grant still inside its wait (or not announced yet) loses its notice and its clock
+ *   (`notified_at`, `cancel_token_hash`, `owner_from` cleared): it can't mature while frozen, and after an unfreeze it
+ *   is announced again and waits the full `ownerGrantDelayMs` from that new notice (re-confirmed, not resumed). A grant
+ *   whose `owner_from` had already passed before the freeze has matured: its member is an owner by predicate, and the
+ *   hourly cron records it once the org is active again.
  */
 export async function freezeOrg(db: D1Database, w: Writer, orgId: string, frozen: boolean): Promise<void> {
   if (orgId === LEGACY_ORG_ID) return refuse('forbidden', `${LEGACY_ORG_ID} can't be frozen`);
@@ -173,6 +210,19 @@ export async function freezeOrg(db: D1Database, w: Writer, orgId: string, frozen
     stmts.push(
       gated(
         db,
+        `UPDATE invites SET token_hash = NULL, notified_at = NULL WHERE org_id = ? AND notified_at IS NOT NULL AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > ${lit(w.now)}`,
+        [orgId],
+        g,
+      ),
+      gated(
+        db,
+        `UPDATE owner_grants SET notified_at = NULL, cancel_token_hash = NULL, owner_from = NULL
+          WHERE org_id = ? AND cancelled_at IS NULL AND applied_at IS NULL AND (owner_from IS NULL OR owner_from > ${lit(w.now)})`,
+        [orgId],
+        g,
+      ),
+      gated(
+        db,
         `UPDATE console_sessions SET revoked_at = ? WHERE revoked_at IS NULL AND user_id IN (
            SELECT m.user_id FROM members m WHERE m.org_id = ? AND NOT EXISTS (
              SELECT 1 FROM members m2 JOIN orgs o ON o.id = m2.org_id WHERE m2.user_id = m.user_id AND m2.org_id <> ? AND o.status = 'active'))`,
@@ -183,6 +233,46 @@ export async function freezeOrg(db: D1Database, w: Writer, orgId: string, frozen
   }
   const results = await runBatch(db, stmts, replayOf(w, action, orgId));
   if (!applied(results)) refuse('conflict', 'The org changed meanwhile; retry');
+}
+
+/**
+ * An owner's `org.policy` step-up (C10): the org's `required_hd` (a Google Workspace domain every member's sign-in
+ * must carry, or null for none), consumed, changed and audited in one batch. A domain other than the acting session's
+ * own is refused (`conflict`): the owner would lock themself out with their next request (D355). Members whose session
+ * domain doesn't match lose the org at their next request (memberships are read per request), and their sessions are
+ * revoked when it was their only active org.
+ */
+export async function setOrgPolicy(db: D1Database, w: Writer, i: { orgId: string; requiredHd: string | null; sessionHd: string | null; consume: { actionId: string } }): Promise<{ noop?: true }> {
+  if (i.orgId === LEGACY_ORG_ID) return refuse('forbidden', `${LEGACY_ORG_ID} has no members`);
+  if (i.requiredHd !== null && i.requiredHd !== i.sessionHd) return refuse('conflict', 'Your own sign-in isn’t from that Google Workspace domain: you would lose access to the organisation');
+  const row = await db.prepare('SELECT status, required_hd FROM orgs WHERE id = ?').bind(i.orgId).first<{ status: string; required_hd: string | null }>();
+  if (!row) return refuse('not_found', 'No such org');
+  if (row.status !== 'active') return refuse('forbidden', 'The org is frozen');
+  if (row.required_hd === i.requiredHd) return { noop: true };
+  const action = 'org.policy';
+  const g = gate(w.requestId, action);
+  const guard = frag(`EXISTS (SELECT 1 FROM orgs WHERE id = ? AND status = 'active' AND required_hd IS ?) AND ${consumeGuard(i.consume.actionId, w.now).sql}`, i.orgId, row.required_hd, i.consume.actionId);
+  const stmts = [
+    auditInsert(db, entry(w, action, { orgId: i.orgId, target: i.orgId, stepUpId: i.consume.actionId, details: { requiredHd: i.requiredHd } }), guard),
+    gated(db, 'UPDATE orgs SET required_hd = ? WHERE id = ?', [i.requiredHd, i.orgId], g),
+    consumeStmt(db, i.consume.actionId, w.now, g),
+  ];
+  if (i.requiredHd !== null) {
+    stmts.push(
+      gated(
+        db,
+        `UPDATE console_sessions SET revoked_at = ? WHERE revoked_at IS NULL AND hd IS NOT ? AND user_id IN (
+           SELECT m.user_id FROM members m WHERE m.org_id = ? AND NOT EXISTS (
+             SELECT 1 FROM members m2 JOIN orgs o ON o.id = m2.org_id WHERE m2.user_id = m.user_id AND m2.org_id <> ? AND o.status = 'active'
+               AND (o.required_hd IS NULL OR o.required_hd = console_sessions.hd)))`,
+        [w.now, i.requiredHd, i.orgId, i.orgId],
+        g,
+      ),
+    );
+  }
+  const results = await runBatch(db, stmts, replayOf(w, action, i.orgId));
+  if (!applied(results)) refuse('conflict', 'The org changed meanwhile, or this confirmation was already used; retry');
+  return {};
 }
 
 export async function listOrgs(db: D1Database, cursor: string | undefined, limit: number): Promise<{ orgs: OrgView[]; next?: string }> {

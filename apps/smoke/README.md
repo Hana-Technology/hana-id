@@ -16,7 +16,7 @@ them anywhere else. Partners integrate through `@hana-id/web` like the vault pag
 page: see [`docs/integration.md`](../../docs/integration.md).
 
 > **Both pages get openid-only Google tokens.** The API refuses any Google token with a claim outside the allow-list
-> (`iss azp aud sub iat exp nonce nbf jti auth_time`) with 400 `token_has_pii` on every route, `/v1/sessions`
+> (`iss azp aud sub iat exp nonce nbf jti auth_time at_hash`; `at_hash` since D342) with 400 `token_has_pii` on every route, `/v1/sessions`
 > included, with no flag to turn it off (D271). The direct page used Google Identity Services, whose tokens carry
 > `email`, until D271; it now asks Google's implicit flow for `response_type=id_token`, `scope=openid` (as the Hana
 > login popup does) and checks the claims itself before sending anything.

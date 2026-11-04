@@ -31,6 +31,7 @@ import type { RequestInfo } from './links.ts';
 import { log } from './log.ts';
 import { type Session, readSession } from './sessions.ts';
 import { lit, ownerNow } from './sql.ts';
+import { usersScreenOn } from './users.ts';
 import { GRANT_COLUMNS, type GrantRow, INVITE_COLUMNS, type InviteRow, membersOf } from './views.ts';
 
 /** The signed-in member of a request, or null (401 `unauthenticated`). */
@@ -55,7 +56,7 @@ export async function memberships(env: Env, s: Session, now: number, orgId?: str
 
 /** `GET /api/me` → `{user, memberships}`. */
 export async function me(env: Env, s: Session, now: number): Promise<Response> {
-  const body: MeAnswer = { user: { id: s.userId, email: s.email }, memberships: await memberships(env, s, now) };
+  const body: MeAnswer = { user: { id: s.userId, email: s.email }, memberships: await memberships(env, s, now), features: { users: usersScreenOn(env) } };
   return json(200, body);
 }
 

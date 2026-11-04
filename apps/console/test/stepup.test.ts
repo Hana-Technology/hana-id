@@ -12,6 +12,7 @@ import { actionOf, breathe, createAction, getAs, member, postAs, stepUp } from '
 import { installChain, oidc, setChain, setScope, uninstallChain } from './chain.ts';
 import { MockGoogle, account, signIn } from './google.ts';
 import { auditRows, db, seedHotApp, shiftClock } from './helpers.ts';
+import { policyJson } from '../../../packages/core/test/policy-fixtures.ts';
 
 let google: MockGoogle;
 beforeEach(async () => {
@@ -96,6 +97,31 @@ describe('origin.add: build, confirm with Google, the API verifies and proposes'
       const r = await postAs(m, `/api/orgs/${m.org}/actions`, { kind: 'origin.add', params: { appId: app.id, add } });
       expect([r.status, (r.body as { error: { code: string } }).error.code], add[0]).toEqual([code === 'bad_request' ? 400 : 400, code]);
     }
+  });
+});
+
+describe('policy.set: validated in the console, the consent preview data, proposed through the API', () => {
+  it('builds the settings-change nonce over the policyId and the API stores the pending policy', async () => {
+    const { settingsChangeDigest } = await import('@hana-id/console-core');
+    const { m, app } = await ownerWithApp();
+    await env.HOT_DB.prepare('UPDATE apps SET session_ttl_ms = ? WHERE id = ?').bind(12 * 3600_000, app.id).run();
+    const check = await postAs<{ policyId: string; label: string }>(m, `/api/orgs/${m.org}/apps/${app.id}/policy/check`, { policy: policyJson() });
+    expect(check.status).toBe(200);
+    const a = await createAction(m, 'policy.set', { appId: app.id, policy: policyJson() });
+    expect(a.decoded).toMatchObject({ appId: app.id, label: 'Swaps on Example', policyId: check.body.policyId, parentOrigin: 'https://app.partner.example', sessionTtlMs: 12 * 3600_000 });
+    const v = (await env.HOT_DB.prepare('SELECT settings_version AS v FROM apps WHERE id = ?').bind(app.id).first<number>('v'))!;
+    const s = await stepUp(google, m, a.id);
+    expect(s.nonce).toBe(nonceOf(await settingsChangeDigest({ signer: 'signer.test.near', appId: app.id, kind: 'policy_set', policyId: check.body.policyId, settingsVersion: v })));
+    expect((await actionOf(m, a.id)).body).toMatchObject({ status: 'ok' });
+    expect(await env.HOT_DB.prepare("SELECT kind, policy_id, status FROM guarded_changes WHERE app_id = ? AND kind = 'policy_set'").bind(app.id).first()).toEqual({ kind: 'policy_set', policy_id: check.body.policyId, status: 'pending' });
+  });
+
+  it('an invalid policy is policy_invalid, before any sign-in', async () => {
+    const { m, app } = await ownerWithApp();
+    const r = await postAs(m, `/api/orgs/${m.org}/actions`, { kind: 'policy.set', params: { appId: app.id, policy: { ...policyJson(), label: '' } } });
+    expect(r).toMatchObject({ status: 400, body: { error: { code: 'policy_invalid' } } });
+    const c = await postAs(m, `/api/orgs/${m.org}/apps/${app.id}/policy/check`, { policy: { v: 2 } });
+    expect(c.status).toBe(400);
   });
 });
 

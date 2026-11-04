@@ -49,3 +49,32 @@ export async function startSignIn(invite?: string): Promise<void> {
   const { startUrl } = await postJson<{ startUrl: string }>('/api/auth/start', { purpose: 'login', ...(invite ? { invite } : {}) });
   nav.assign(startUrl);
 }
+
+/** A raw-body POST (the logo upload: `application/octet-stream`, the one non-JSON write the console takes). */
+export async function postBytes<T>(path: string, bytes: Uint8Array<ArrayBuffer>, contentType = 'application/octet-stream'): Promise<T> {
+  const res = await fetch(path, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'content-type': contentType, 'x-hana-console': '1', accept: 'application/json' },
+    body: bytes,
+  });
+  if (!res.ok) throw await errorOf(res);
+  return (await res.json()) as T;
+}
+
+/** A created fresh-sign-in action (`POST /api/orgs/:org/actions`). */
+export interface CreatedAction {
+  id: string;
+  kind: string;
+  decoded: Record<string, unknown>;
+  expiresAt: number;
+}
+
+/** Builds an action on the server; the caller sends the member to `/actions/:id` to review and confirm it. */
+export const createAction = (org: string, kind: string, params: unknown): Promise<CreatedAction> => postJson<CreatedAction>(`/api/orgs/${org}/actions`, { kind, params });
+
+/** Starts the action's fresh sign-in: the whole window goes to the auth origin, then Google. */
+export async function confirmWithGoogle(actionId: string): Promise<void> {
+  const { startUrl } = await postJson<{ startUrl: string }>(`/api/actions/${actionId}/google`, {});
+  nav.assign(startUrl);
+}

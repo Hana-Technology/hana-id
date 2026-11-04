@@ -33,4 +33,10 @@ export interface HanaEnv {
    */
   readonly emailIssuerUrl?: string;
   readonly emailIss?: string;
+  /**
+   * Batch C11: manifest `files.origin`, where app logos live (core logo.ts). The auth pages that show the app's name
+   * show its logo only from here, and their CSP `img-src` adds this origin (src/auth/pages.ts). Unset in an env without
+   * the dashboard blocks: no logo, and `img-src` stays 'self' data:.
+   */
+  readonly filesOrigin?: string;
 }

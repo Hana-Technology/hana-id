@@ -105,6 +105,35 @@ describe('replaced logos', () => {
   });
 });
 
+describe('replaced logos: races with an upload (batch C11)', () => {
+  const now = Date.now();
+  const key = (n: string) => `logos/app_race${n}/${'0'.repeat(63)}${n}.png`;
+  const rowOf = (k: string) => db.prepare('SELECT replaced_at FROM logo_objects WHERE key = ?').bind(k).first<{ replaced_at: number | null }>();
+
+  it('takes only rows still marked: a key an upload un-marked keeps its object and its row', async () => {
+    await env.LOGOS!.put(key('a'), new Uint8Array([137, 80, 78, 71]));
+    await db.prepare('INSERT INTO logo_objects (key, app_id, created_at, replaced_at) VALUES (?, ?, ?, ?)').bind(key('a'), 'app_racea', now - 40 * DAY, now - 31 * DAY).run();
+    // The upload's statement (logo.ts): the same image again is current again.
+    await db.prepare('INSERT INTO logo_objects (key, app_id, created_at, replaced_at) VALUES (?1, ?2, ?3, NULL) ON CONFLICT (key) DO UPDATE SET replaced_at = NULL').bind(key('a'), 'app_racea', now).run();
+    const del = vi.fn((keys: string[]) => env.LOGOS!.delete(keys));
+    expect(await purgeLogos({ CONSOLE_DB: db, LOGOS: { delete: del } as unknown as R2Bucket }, now)).toBe(0);
+    expect(del).not.toHaveBeenCalled();
+    expect(await env.LOGOS!.head(key('a'))).not.toBeNull();
+    expect(await rowOf(key('a'))).toEqual({ replaced_at: null });
+  });
+
+  it('a failed object delete puts the rows back, so the next run retries them', async () => {
+    await db.prepare('INSERT INTO logo_objects (key, app_id, created_at, replaced_at) VALUES (?, ?, ?, ?)').bind(key('b'), 'app_raceb', now - 40 * DAY, now - 31 * DAY).run();
+    await env.LOGOS!.put(key('b'), new Uint8Array([137, 80, 78, 71]));
+    const broken = { CONSOLE_DB: db, LOGOS: { delete: () => Promise.reject(new Error('r2 down')) } as unknown as R2Bucket };
+    await expect(purgeLogos(broken, now)).rejects.toThrow('r2 down');
+    expect(await rowOf(key('b'))).toEqual({ replaced_at: now - 31 * DAY });
+    expect(await purgeLogos(env, now)).toBe(1);
+    expect(await env.LOGOS!.head(key('b'))).toBeNull();
+    expect(await rowOf(key('b'))).toBeNull();
+  });
+});
+
 describe('the scheduled handler', () => {
   it('runs every step; one step failing doesn’t stop the others', async () => {
     const org = await seedOrg();

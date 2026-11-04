@@ -67,15 +67,35 @@ export async function purgeShortLived(db: D1Database, now: number): Promise<Reco
   return { invites: invites!, sessions: sessions!, network: network!, authFlows: authFlows!, handoffCodes: handoffCodes!, pendingActions: pendingActions! };
 }
 
-/** Logo objects replaced more than 30 days ago: deleted from LOGOS, then their rows. */
+/**
+ * Logo objects replaced more than 30 days ago: their rows first (only while still marked, and returned), then those
+ * objects from LOGOS. Rows first because an upload of the same image again un-marks the row before it writes the
+ * object (logo.ts): a key un-marked meanwhile is neither returned nor deleted. If the object delete fails, the rows
+ * come back as they were (unless an upload wrote the key again meanwhile), so the next hour retries them.
+ */
 export async function purgeLogos(env: Pick<Env, 'CONSOLE_DB' | 'LOGOS'>, now: number): Promise<number> {
   if (!env.LOGOS) return 0;
-  const { results } = await env.CONSOLE_DB.prepare(`SELECT key FROM logo_objects WHERE replaced_at IS NOT NULL AND replaced_at <= ${lit(now - LOGO_KEEP_MS)} ORDER BY replaced_at LIMIT 100`).all<{ key: string }>();
+  const cutoff = lit(now - LOGO_KEEP_MS);
+  const due = `SELECT key FROM logo_objects WHERE replaced_at IS NOT NULL AND replaced_at <= ${cutoff} ORDER BY replaced_at LIMIT 100`;
+  const { results } = await env.CONSOLE_DB.prepare(`DELETE FROM logo_objects WHERE key IN (${due}) AND replaced_at IS NOT NULL AND replaced_at <= ${cutoff} RETURNING key, app_id, created_at, replaced_at`).all<{
+    key: string;
+    app_id: string;
+    created_at: number;
+    replaced_at: number;
+  }>();
   if (!results.length) return 0;
-  const keys = results.map((r) => r.key);
-  await env.LOGOS.delete(keys);
-  await env.CONSOLE_DB.prepare('DELETE FROM logo_objects WHERE key IN (SELECT value FROM json_each(?)) AND replaced_at IS NOT NULL').bind(JSON.stringify(keys)).run();
-  return keys.length;
+  try {
+    await env.LOGOS.delete(results.map((r) => r.key));
+  } catch (err) {
+    await env.CONSOLE_DB.prepare(
+      `INSERT OR IGNORE INTO logo_objects (key, app_id, created_at, replaced_at)
+       SELECT json_extract(value, '$.key'), json_extract(value, '$.app_id'), json_extract(value, '$.created_at'), json_extract(value, '$.replaced_at') FROM json_each(?)`,
+    )
+      .bind(JSON.stringify(results))
+      .run();
+    throw err;
+  }
+  return results.length;
 }
 
 /** The hourly run: every step, each on its own, logged with counts only. */

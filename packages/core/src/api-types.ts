@@ -31,6 +31,12 @@ export interface AppConfig {
   loginMethods?: ('google' | 'email')[];
   /** Present when `loginMethods` has email: the scope's email client, `email:<scopeId>`. */
   email?: { aud: string };
+  /**
+   * Batch C11: the app's logo on Hana's files origin (`<files origin>/logos/<app id>/<sha256 hex>.png`, logo.ts), or
+   * null; older APIs omit it. Checked where used (logoUrlOn, against the files origin the build pins): a value of
+   * another shape is dropped, never a reason to refuse the config (a logo is decoration).
+   */
+  logoUrl?: unknown;
   /** pk_test_ apps: the API's own total and phases (docs/api.md "Timings"); checked where used (isServerTimings). */
   timings?: unknown;
   requestId: string;

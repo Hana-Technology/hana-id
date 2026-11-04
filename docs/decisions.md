@@ -24,7 +24,8 @@ the screen text), with D269 notes on D96, D119, D230 and D264 and two rows of "S
 D270's status (the spike passed, switched on) on 2026-11-04 (branch `feat/token-first-on`), with notes on D254, D265
 (its gate passed) and D273 (token_first in Playwright), the D254 row of "Superseded or amended" and D265's "to
 confirm" line. D275–D276 (branch `docs/batch-c-users-support-id`: proposed, to confirm by the user, spec text only)
-on 2026-11-04.
+on 2026-11-04. D300–D308 (branch `feat/batch-c-11`: the files Worker and logos, decided while building, to confirm) on
+2026-11-04, with D301 amending the order of C7's replaced-logo purge.
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -2017,14 +2018,15 @@ detail open or two of its lines pull apart. Each follows the spec's intent; all 
     (`system:invite_expired`); matured grants are recorded once (a grant whose member row is gone is cancelled,
     `system:not_member`); invites are purged 90 days after acceptance, revocation or logged expiry, sessions 30 days
     after they ended (revoked, idle or absolute, whichever first), sessions' network data at 90 days, auth flows,
-    handoff codes and pending actions 24 h after expiry, replaced logos (R2 object, then row) 30 days after
-    replacement; at most 200 rows per step and run; each step on its own (one failing doesn't stop the others).
+    handoff codes and pending actions 24 h after expiry, replaced logos (R2 object, then row; **amended by D301**:
+    row first, then object, the rows put back if the delete fails) 30 days after replacement; at most 200 rows per
+    step and run; each step on its own (one failing doesn't stop the others).
   - **Config.** The `LOGOS` and `STATEMENTS` R2 bindings are in the config from C7, so the two buckets must exist
     before the console's first deploy (setup in `docs/operations.md`); invocation logs off (C9's handoff code is in a
     URL); placement next to the API.
   - **Flagged for C11:** the logo upload (`POST …/logo`, an image body) can't meet the CSRF rule's
     `content-type: application/json`; C11 needs either a JSON body (base64) or an explicit exception for that one route
-    with the other three checks.
+    with the other three checks. **Resolved by D300**: the exception, `application/octet-stream` on that route only.
 - Why: nothing a partner can reach is half-wired until C9 (the build plan's rule), but the link confirms need no
   sign-in and exercise the console → API binding end to end.
 
@@ -4646,10 +4648,185 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 - Rejected: recording addresses on chain (anyone could map Google accounts to wallets publicly); unsigned reports (a
   caller could attach any address to any user); partners seeing emails by default.
 
+## Batch C11: the files Worker and logos (branch `feat/batch-c-11`), 2026-11-04
+
+Readings of `docs/batch-c-spec.md` ("Other app settings, name and logo", "R2", "Response headers", "Login-path reads")
+made while building C11, where the spec is silent or loose. Each took the safer reading.
+
+### D300. The logo upload takes a raw `application/octet-stream` body: the one exception to the console's JSON-only CSRF rule
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/console/src/csrf.ts` (`bodyTypeFor`,
+  `LOGO_UPLOAD_PATH_RE`), `src/logo.ts` `logoUploadRoute`
+- Decision: the spec has the upload as a raw body, but also says that every non-GET request needs `content-type:
+  application/json`. So `POST /api/orgs/:org/apps/:app/logo` needs exactly `application/octet-stream`, and every
+  other path keeps JSON. The other three CSRF checks apply unchanged. The image's type comes from its magic bytes,
+  never from the header. The request also needs:
+  - a `Content-Length` (a chunked body is refused: `bad_request`);
+  - `?expectedVersion=<settingsVersion>`, the CAS of the screen the owner saw (the spec gives the raw body no place
+    for it);
+  - and it answers `{logoUrl, version}`: the spec's `{logoUrl}` plus the new version for the next write.
+- Why: `octet-stream` isn't a CORS-safelisted type, so a cross-site page still can't send it without a preflight
+  (which the console never answers). The check keeps its purpose; only the type differs.
+- Rejected:
+  - the image as base64 inside JSON: +33% on a 512 KiB cap, and the spec says raw;
+  - `image/*` types: they are just as non-simple, but they invite trusting the header;
+  - reading the version inside the request (getApp only): that turns the CAS into "last writer wins" for the owner.
+
+### D301. Upload order: cheap checks, the decoder's `info`, then `getApp`, then the paid transform; the replaced logo is the one at the CAS version
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/console/src/logo.ts`, `src/cron.ts`
+  `purgeLogos`, `src/limits.ts` (`logo`)
+- Decision:
+  - **Order.** First the bytes (size, magic bytes, container; D302), then `IMAGES.info` (type, size, shape), then
+    `ConsoleRpc.getApp`. getApp refuses another org's app or a deleted one (`not_found`) and a stale screen
+    (`version_conflict`) before any transform, and it names the logo being replaced. After that come the transform
+    and the output checks (D303). Then the `logo_objects` row (upserted, `replaced_at = NULL`), then `LOGOS.put`
+    (`image/png`, with R2's own sha256 check), then `ConsoleRpc.setLogo` at the same `expectedVersion`.
+  - **Replaced object.** Only after `setLogo` succeeds is the key getApp named at that version marked
+    `replaced_at = now`. The CAS makes it exactly the key the pointer left, so two quick uploads can never mark the
+    current logo. Re-uploading the current image changes nothing (no version, no `app_changes` row).
+  - **Failures after the put** (a `setLogo` refusal) leave one object with an unmarked row: storage only, never a
+    broken logo. The outcome is audited (`app.logo_set` / `app.logo_removed`, `failed` with the code). A key isn't
+    marked on failure, since a concurrent upload of the same image could make it current.
+  - **Purge order** (amends C7's `purgeLogos`). It deletes the due rows first (`DELETE … RETURNING`, only while
+    still marked and past 30 days), then those objects. If the object delete fails, it puts the rows back
+    (`INSERT OR IGNORE`, so an upload in between wins), and the next hour retries. Whatever the timing, an upload
+    that un-marks a key keeps both the key and its object. One narrow window remains: an identical re-upload whose
+    `put` lands between the purge's row delete and its object delete. That loses the object, the files Worker
+    answers 404, the page shows the name alone, and a new upload repairs it.
+  - **Limit.** Uploads are capped at 10 a minute per org, on the console's existing rate-limit binding
+    (`console-logo:<org>`). Each upload is a paid transform. The ConsoleRpc budget applies as well (getApp 4 +
+    setLogo 4 statements).
+  - **Removal** (`removeAppLogo`, `logoRemoveRoute`): getApp, then `setLogo(null)`, then the old key is marked. The
+    spec lists no removal route: C10 wires the control.
+- Rejected: `setLogo` returning the previous key (one RPC fewer, but a stale or foreign app is refused only after the
+  transform and the put); marking every other object of the app on success (a race can mark the current logo);
+  objects first in the purge (C7's order: an un-mark between the select and the delete loses the current logo).
+
+### D302. "Polyglot" means anything that isn't exactly one static image of the type its magic bytes name
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/console/src/logo-format.ts`
+- Decision: an upload is refused `logo_type` when:
+  - there are bytes after the format's own end (PNG's IEND, JPEG's EOI, the WebP RIFF size);
+  - a PNG chunk's CRC is wrong, the first chunk isn't IHDR, there is no IDAT, a JPEG has no scan or no EOI or has
+    two frames, or a WebP's first chunk isn't VP8/VP8L/VP8X;
+  - it is animated (APNG `acTL`/`fcTL`/`fdAT`, WebP's animation flag or `ANIM`/`ANMF`);
+  - the decoder (`IMAGES.info`) reports another type, or another size than the header, except that a JPEG's sides
+    may be swapped (EXIF orientation).
+  This adds to the spec's magic-bytes rule (SVG, GIF, AVIF and anything else refused) and its size bounds. JPEGs
+  with trailing data (some phone pictures append a second image) are refused too.
+- Why: the stored file is re-encoded anyway, but the spec asks for polyglots to be refused. "The file ends where its
+  format says" is a rule that can be checked without decoding pixels. An animated logo would otherwise be silently
+  flattened to its first frame.
+- Rejected: scanning for markup (`<script`, `<svg`) inside the file (easy to evade, and it refuses benign text
+  chunks); passing animated files with `anim: false`.
+
+### D303. The re-encode: Images `fit: 'pad'` on transparent, PNG, then the console strips the output to its image chunks
+- Date 2026-11-04 · Status: decided while building, to confirm at milestone M5 against the real binding ·
+  Built: `apps/console/src/logo.ts` (`LOGO_TRANSFORM`, `LOGO_OUTPUT`, `reencode`), `src/logo-format.ts` `stripPng`
+- Decision:
+  - The spec's "fit contain, transparent padding" maps to `{width: 256, height: 256, fit: 'pad', background:
+    'rgba(0,0,0,0)'}`. Cloudflare's `contain` doesn't pad, so it would give a non-square image. The output is
+    `{format: 'image/png', anim: false}`.
+  - The answer must be `image/png`, and the console's own parser must read it as one well-formed static PNG of
+    exactly 256 × 256. Then it is cut to IHDR, PLTE, tRNS, IDAT and IEND: no text, EXIF, ICC, time or size
+    chunks, whatever the encoder keeps.
+  - The result must be ≤ 128 KiB (else `logo_too_large`) and decode again through `IMAGES.info` as a 256 × 256 PNG.
+    An output that fails any check is `logo_type`.
+  - The object key is the sha256 of these stored bytes.
+- To confirm at M5: that `pad` with that background really pads with transparency on the real binding (the tests use
+  a fake Images binding, as the spec says).
+- Rejected: trusting the encoder to drop metadata (the binding's types have no metadata option); keeping `sRGB` /
+  `gAMA` (colour hints, not personal data, but nothing needs them in a 32 px logo).
+
+### D304. The files Worker re-checks each object more than the spec asks, and answers errors uncached
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/files/src/index.ts`, `src/rules.ts`
+- Decision:
+  - The spec checks that the object exists, has `contentType` `image/png` and starts with the PNG signature. The
+    files Worker also requires the object to be ≤ 128 KiB and its sha256 to equal the hash in its key: a key is
+    content-addressed, so any other bytes are a write the console never made.
+  - It reads only `LOGOS.get`, a source test enforces that, and it never writes.
+  - A logo answers exactly the spec's seven headers plus `content-length`. HSTS isn't one of them, so it isn't sent.
+  - Everything else answers plain text with `nosniff`, `default-src 'none'; sandbox`, `no-referrer` and
+    `cache-control: no-store`, because a 404 must not be cached: the logo may appear later. That covers a 404 (any
+    other host, path or object), a 405 with `allow: GET, HEAD`, a 503 when R2 fails, and a 500.
+  - A query string is ignored. Refusals log a code, never a key.
+- Why: "logos are re-checked by the files Worker" (threat table, compromised console). The hash check costs one
+  sha256 of at most 128 KiB.
+- Rejected: streaming the body unchecked; sending HSTS (the spec lists the headers exactly).
+
+### D305. The auth pages get the logo from GET /v1/app through the vault's messages, never the inlined config
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/api/src/handlers.ts`
+  (`handleAppConfig`), `packages/core/src/logo.ts`, `protocol.ts`, `packages/web/src/vault/{vault,login,approvals}.ts`,
+  `src/auth/{logo,login-page,email-page,email-storage,approve-page,export-page}.ts`
+- Decision:
+  - `GET /v1/app` always carries `logoUrl`: `<FILES_ORIGIN>/<logo_key>`, or `null` when the app has no logo or the
+    env has no files origin. Older clients ignore it, and `isAppConfig` doesn't check it: a logo is decoration and
+    is checked where it is shown.
+  - The vault takes it from its own `GET /v1/app` only when it is this app's logo on the build's `filesOrigin`
+    (`logoUrlOn`). It passes it as an optional `logoUrl` in `hana:auth-params` (from the login's own read),
+    `hana:approve-request` / `hana:consent-request` and `hana:export-context` (from its latest read). The field is
+    present only when there is a logo.
+  - The protocol takes only the logo URL shape: canonical http(s), the logo path, no query, fragment or
+    credentials. The login page passes it on to the email step's stored context.
+  - The pages that show the app's name show the logo beside it: `/login` (the chooser), `/login/email`, `/approve`
+    (request and consent) and `/export`, which prefers its own `GET /v1/app` answer, as it does for the name.
+  - A page shows the logo only from its build's `filesOrigin`, `alt=""` (the name is the text), and removes it if it
+    fails to load. `/login/callback` shows no app and gets nothing.
+- Why: the vault config inlined by the API is checked with exact keys, so a new key there breaks every vault bundle
+  older than the API (a deploy-order hazard for every app with a logo). The optional message field has no such
+  hazard. An app without a logo sends exactly batch B's messages, so pages and API can deploy in either order.
+- Rejected: inlining `logoUrl` in the vault config (above); each popup fetching `GET /v1/app` itself (the login and
+  approval popups fetch nothing, D77); refusing a config or a message over a bad logo value (a login would fail
+  over decoration).
+
+### D306. `FILES_ORIGIN` joins `img-src` in place, on the logo pages only, in both policies; a malformed value is left out
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `packages/web/src/auth/pages.ts`
+  (`LOGO_PAGES`, `imgSources`, `authPageMetaCsp`), `apps/api/src/pages/host.ts` (`AUTH_LOGO_PATHS`, `FILES_ORIGIN`),
+  `src/vault/page.ts` `pageHeaders`, `scripts/pages-wrangler.ts`, `packages/web/scripts/gen-envs.ts` (`filesOrigin`)
+- Decision:
+  - The base policy's `img-src 'self' data:` gets the files origin appended in place, never as a second `img-src`,
+    which a browser ignores. This happens in the Worker's header policy (`FILES_ORIGIN`, from the manifest's
+    `files.origin` through `pages-wrangler`) and in the build's `<meta>` policy (`HanaEnv.filesOrigin`, from the same
+    field through `gen-envs`).
+  - It applies to `/login`, `/login/email`, `/approve` and `/export` only. An env without the dashboard blocks keeps
+    batch B's policies byte for byte.
+  - A test in `apps/api` builds both policies for every page, with and without a files origin, and requires the same
+    directives (frame-ancestors aside).
+  - If `FILES_ORIGIN` isn't an origin, the header leaves it out and logs `files_origin_misconfigured`. The page
+    still works, with the stricter policy: unlike the email issuer's URL, the logo isn't needed for the page to work.
+- Rejected: adding the origin to every auth page (the callback shows no image); a 503 for a malformed value (a login
+  failing over a logo).
+
+### D307. The files Worker's placement follows `files.origin`, like the page Workers; on workers.dev it must be its own name
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/files/scripts/gen-wrangler.ts`
+- Decision:
+  - A `<files.workerName>.<subdomain>.workers.dev` origin is allowed in `local*`/`sandbox*` envs only (D93), with
+    `workers_dev: true`. Any other https host gets a Custom Domain route. A loopback origin is `wrangler dev`'s.
+  - Preview URLs are always off.
+  - The config is `LOGOS` and `FILES_ORIGIN` only: no secret, D1, Hyperdrive, service, assets or cron (snapshot
+    tests, and the console's cross-Worker test: only the console and the files Worker bind the logo bucket, only
+    the console binds Images).
+  - `gen` refuses a workers.dev hostname whose first label isn't `files.workerName`, since that label is the
+    Worker's name there.
+- Rejected: a route on the API Worker (D66: one thin Worker per extra Hana origin).
+
+### D308. R2 rules: the `STATEMENTS` lock covers the whole bucket for 2557 days; the `EXPORTS` lifecycle applies to `exports/`, which C12 writes under
+- Date 2026-11-04 · Status: decided while building, to confirm · Written: `docs/operations.md` "Files Worker and
+  logos" (setup step 7)
+- Decision:
+  - `STATEMENTS` gets one bucket-lock rule with an empty prefix (every object) and `--retention-days 2557`: 7 years,
+    with the leap days. Statements are deleted by hand after review once it ends (D90).
+  - `EXPORTS` gets one lifecycle rule `--expire-days 30` on the prefix `exports/`. R2's lifecycle conditions are
+    prefix-include only, so "everything except `legacy/`" can't be written as one rule. The on-demand ledger CSVs
+    (C12) must therefore be written under `exports/`. The legacy export (C4b) stays at `legacy/usage-<env>.csv`,
+    outside the rule.
+  - No rule on `LOGOS`: the console's cron deletes replaced logos (D301).
+- Rejected: one lifecycle rule on every prefix (it would delete the legacy export after 30 days); per-object
+  expiry set by the admin Worker (R2 has none; a cron job would be one more thing to fail).
+
 ## Superseded or amended
 
 | Was | Now | Source |
 |---|---|---|
+| The console's hourly purge deletes a replaced logo's R2 object, then its row (D244) | Its row first (only while still marked), then the object; the rows come back if the delete fails (D301) | `apps/console/src/cron.ts` `purgeLogos` |
 | Local git only, branch `develop`, no remotes (batch A) | Remote `Hana-Technology/hana-id`; feature branches, PRs into `develop`, `main` for releases | `docs/batch-a-spec.md`; CLAUDE.md |
 | One relayer key pool, 300 Tgas for everything (batch A) | Two pools, per-method gas (D19) | `docs/batch-a2-shared-client.md` |
 | Hana can never block derivation for a scope (batch A) | True for scopes with their own client; Hana can stop a shared-only scope by removing shared clients | `docs/contract-interface.md` security notes |

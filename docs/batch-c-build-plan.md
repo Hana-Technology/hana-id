@@ -1,11 +1,12 @@
 # Batch C build plan
 
-Status (2026-11-04, branch `feat/batch-c-8`): C1–C5 merged into `develop` and running in the sandbox-dev API as
+Status (2026-11-04, branches `feat/batch-c-8`, `feat/batch-c-11`): C1–C5 merged into `develop` and running in the sandbox-dev API as
 far as `develop` includes them (migrations 0006, 0009 and 0010 applied, usage capture off; `docs/operations.md`); C7
 (the console Worker backend, no route; D240–D244) merged, not deployed (its setup is step 5 below, at M4); C6 built on
 `feat/batch-c-6` and brought onto current `develop` (C7 included) on `feat/batch-c-6-merge` (the claim allow-list on its
 tokens, D277), merged into `develop`, not deployed (M3 not run); C8 (the admin Worker; D278–D285) built on
-`feat/batch-c-8`, tests green, not merged, not deployed (its setup is steps 4 and 8–10 below, at M4); C9–C17 not built. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
+`feat/batch-c-8`, tests green, not merged, not deployed (its setup is steps 4 and 8–10 below, at M4); C11 (the files Worker and logos; D300–D308) built on `feat/batch-c-11`, tests green, not merged, not deployed (its
+setup is step 7 below, at M5); C9, C10 and C12–C17 not built. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
 batches that each merge into `develop` on their own: tests green, the docs they change updated, and nothing a partner,
 a user or staff can reach that is half-wired. Ordered by dependency; the spec's "Build order" steps are noted per
 batch. This is a plan, not a spec: where it and the spec disagree, the spec wins or gets amended first.
@@ -300,6 +301,12 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
 - **Tests**: spec "Settings, keys, logos" logo rows; no `put`/`delete` on `LOGOS` in the files Worker; headers.
 - **Setup**: R2 buckets with the `STATEMENTS` lock and `EXPORTS` lifecycle (setup step 7); Images binding on the
   account.
+- **Status** (2026-11-04): built on `feat/batch-c-11`, not merged, not deployed (D300–D308). Built: `apps/files`, the
+  console's upload backend (`apps/console/src/logo.ts`, `logo-format.ts`) with the CSRF exception for its raw body,
+  the purge reordered, `logoUrl` in `GET /v1/app`, the logo on `/login`, `/login/email`, `/approve`, `/export` with
+  `FILES_ORIGIN` in both of their CSPs, the `IMAGES` binding in the console's config. Left for C10: the session route
+  that checks the owner and calls `logoUploadRoute` (and `logoRemoveRoute`), the upload screen. The setup is in
+  `docs/operations.md` "Files Worker and logos". C12 must write its on-demand exports under `exports/` (D308).
 
 ## C12. Reports and statements
 

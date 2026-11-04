@@ -28,6 +28,7 @@ import {
   type AccountMethod,
   type AccountResult,
   type AppConfig,
+  logoUrlOn,
   type LoginMethod,
   ErrorCode,
   type Jwk,
@@ -370,6 +371,11 @@ export class Vault {
   private continueIntent: LauncherHandle | null = null;
   private exportJob: ExportJob | null = null;
   private appConfigPromise: Promise<AppConfig> | null = null;
+  /**
+   * Batch C11: the app's logo from the latest GET /v1/app, when it is this app's on the build's files origin (core
+   * logoUrlOn), for the approval and export windows; null until an answer, or without a logo.
+   */
+  private logoUrl: string | null = null;
   /** Each GET /v1/app answer's round trip on this clock (pk_test_ login timings: `appRtt`). */
   private readonly appRtts = new WeakMap<AppConfig, number>();
   private declinedPolicyId: string | null = null;
@@ -462,6 +468,7 @@ export class Vault {
       authOrigin: this.env.authOrigin,
       parentWindow: this.host.parent,
       appName: this.config.appName,
+      logoUrl: () => this.logoUrl,
       parentOrigin: e.origin,
       open: (url, name, features) => this.host.open(url, name, features),
       launcher: this.launcher,
@@ -552,6 +559,7 @@ export class Vault {
       const sent = this.perfNow();
       const p = this.api!.app().then((app) => {
         this.appRtts.set(app, this.perfNow() - sent);
+        this.logoUrl = logoUrlOn(this.env.filesOrigin, app.logoUrl, this.config.appId);
         this.applyServedPolicy(app, at);
         this.applyServedRawSign(app, at);
         return app;
@@ -2155,6 +2163,7 @@ export class Vault {
         chain: job.chain,
         address: job.address,
         sessionExpiresAtMs: s.expiresAtMs,
+        ...(this.logoUrl ? { logoUrl: this.logoUrl } : {}),
       },
       this.env.authOrigin,
     );

@@ -38,6 +38,11 @@ export interface AuthHostEnv {
    * Unset: that page gets the API alone (it then stops at once, as its build does).
    */
   EMAIL_ISSUER_URL?: string;
+  /**
+   * Batch C11: manifest `files.origin`, where app logos live; the logo pages' (AUTH_LOGO_PATHS) only `img-src` besides
+   * 'self' and data:. Unset in an env without the dashboard blocks.
+   */
+  FILES_ORIGIN?: string;
   /** Static assets: packages/web/dist/pages/<env>/auth. */
   ASSETS: Fetcher;
 }
@@ -66,6 +71,13 @@ export function authPageDirectives(pathname: string, origins: { api: string; rpc
       return null;
   }
 }
+
+/**
+ * The auth pages that show the app's name and so its logo (batch C11): their `img-src` adds FILES_ORIGIN. packages/web
+ * src/auth/pages.ts LOGO_PAGES lists the same pages for the meta policy: a browser enforces both, so they must agree.
+ * The callback shows no app and loads no image from elsewhere.
+ */
+export const AUTH_LOGO_PATHS: readonly string[] = ['/login', '/login/email', '/approve', '/export'];
 
 /** The auth pages' routes; each is served from the built file `<route>.html`. */
 export const AUTH_PAGE_PATHS = ['/login', '/login/email', '/login/callback', '/approve', '/export'] as const;
@@ -188,5 +200,19 @@ export async function handleAuthHost(request: Request, env: AuthHostEnv): Promis
     return unavailable(head);
   }
   if (head) await asset.body?.cancel();
-  return new Response(head ? null : asset.body, { status: 200, headers: pageHeaders(directives) });
+  return new Response(head ? null : asset.body, { status: 200, headers: pageHeaders(directives, {}, logoImgOrigins(url.pathname, env.FILES_ORIGIN)) });
+}
+
+/**
+ * The files origin for a logo page's `img-src`, or none. A FILES_ORIGIN that isn't an origin is left out (and logged):
+ * the page then shows no logo but still works, with the stricter policy, never a looser one.
+ */
+function logoImgOrigins(pathname: string, filesOrigin: string | undefined): string[] {
+  if (!filesOrigin || !AUTH_LOGO_PATHS.includes(pathname)) return [];
+  const origin = originOf(filesOrigin);
+  if (!origin) {
+    log({ event: 'auth_page', endpoint: pathname, outcome: 'error', status: 200, code: 'files_origin_misconfigured' }, 'error');
+    return [];
+  }
+  return [origin];
 }

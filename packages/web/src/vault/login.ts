@@ -59,6 +59,7 @@ import {
   ApiError,
   type AppConfig,
   type Bytes,
+  logoUrlOn,
   type CkdResult,
   type EmailChainKey,
   type EmailSignerPolicy,
@@ -305,6 +306,15 @@ export function serverDetail(prefix: string, raw: unknown, groups: Record<string
   return out;
 }
 
+/**
+ * auth-params' `logoUrl` (batch C11): the app's logo from GET /v1/app when it is this app's on the build's files origin
+ * (core logoUrlOn), else nothing, so an app without a logo sends exactly the message older pages take.
+ */
+export function logoOf(env: Pick<HanaEnv, 'filesOrigin'>, appId: string, app: Pick<AppConfig, 'logoUrl'>): { logoUrl?: string } {
+  const logoUrl = logoUrlOn(env.filesOrigin, app.logoUrl, appId);
+  return logoUrl ? { logoUrl } : {};
+}
+
 /** The GET /v1/app phases (apps/api handlers.ts handleAppConfig) behind each appServer* detail. */
 export const APP_SERVER_GROUPS = { Gate: ['app', 'limits'], Settings: ['settings'], Chain: ['chain'] } as const;
 
@@ -342,6 +352,8 @@ type AuthParams = {
   nonce: string;
   relayId: string;
   relayKey: Uint8Array;
+  /** Batch C11: the app's logo, from this login's GET /v1/app, on the build's files origin (core logoUrlOn). */
+  logoUrl?: string;
 };
 
 const fail = (code: ConstructorParameters<typeof VaultError>[0], message: string, data?: Record<string, unknown>) => new VaultError(code, message, data);
@@ -685,6 +697,7 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
         t: 'hana:auth-params',
         pk: config.publishableKey,
         appName: config.appName,
+        ...logoOf(env, config.appId, app),
         parentOrigin: ctx.parentOrigin,
         scopeId: config.scopeId,
         signer: env.signer,
@@ -1383,6 +1396,7 @@ export class PendingLink extends PopupTask<MadeLink> {
         t: 'hana:auth-params',
         pk: config.publishableKey,
         appName: config.appName,
+        ...logoOf(env, config.appId, app),
         parentOrigin: ctx.parentOrigin,
         scopeId,
         signer: env.signer,

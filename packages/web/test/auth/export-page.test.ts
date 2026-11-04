@@ -85,6 +85,8 @@ function run(
     rawEmailViews?: { keys?: unknown; policy?: unknown };
     /** The Clipboard API (default: one that records each write); null: the browser has none. */
     clipboard?: { writeText(text: string): Promise<void> } | null;
+    /** Batch C11: the context's logoUrl. */
+    contextLogo?: string;
   } = {},
 ): Run {
   const chain = o.chain ?? 'stellar';
@@ -159,6 +161,7 @@ function run(
     chain,
     address: o.address ?? addressFor(chain),
     ...(o.sessionExpiresAtMs === undefined ? {} : { sessionExpiresAtMs: o.sessionExpiresAtMs }),
+    ...(o.contextLogo === undefined ? {} : { logoUrl: o.contextLogo }),
   };
   win.message(context, ENV.vaultOrigin, vault);
   return {
@@ -233,6 +236,45 @@ async function signIn(r: Run): Promise<void> {
 beforeEach(async () => {
   resetDom();
   signer ??= await tokenSigner();
+});
+
+describe('/export: the app’s logo (batch C11)', () => {
+  const FILES = 'https://files.hana.test';
+  const logo = (n: string) => `${FILES}/logos/app_abc/${n.repeat(64)}.png`;
+  const FILES_ENV = { ...ENV, filesOrigin: FILES };
+  const ready = (r: Run) => vi.waitFor(() => expect(r.page.state).toBe('ready'));
+
+  it('shows its own GET /v1/app’s logo beside the name and hands it to the sign-in child', async () => {
+    const r = run({ env: FILES_ENV, config: appConfig({ logoUrl: logo('a') }), contextLogo: logo('b') });
+    await ready(r);
+    expect(document.querySelector('img.app-logo')?.getAttribute('src')).toBe(logo('a'));
+    await signIn(r);
+    expect(parseWindowMessage(r.child.received[0], ['hana:auth-params'])?.logoUrl).toBe(logo('a'));
+  });
+
+  it('a GET /v1/app answer of null means no logo; an older API (no field) leaves the vault’s', async () => {
+    const none = run({ env: FILES_ENV, config: appConfig({ logoUrl: null }), contextLogo: logo('b') });
+    await ready(none);
+    expect(document.querySelector('img')).toBeNull();
+    await signIn(none);
+    expect(none.child.received[0]).not.toHaveProperty('logoUrl');
+    resetDom();
+    const older = run({ env: FILES_ENV, contextLogo: logo('b') });
+    await ready(older);
+    expect(document.querySelector('img.app-logo')?.getAttribute('src')).toBe(logo('b'));
+  });
+
+  it('never a logo off the build’s files origin, or in a build without one', async () => {
+    const other = run({ env: FILES_ENV, config: appConfig({ logoUrl: `https://cdn.partner.example/logos/app_abc/${'c'.repeat(64)}.png` }) });
+    await ready(other);
+    expect(document.querySelector('img')).toBeNull();
+    await signIn(other);
+    expect(other.child.received[0]).not.toHaveProperty('logoUrl');
+    resetDom();
+    const noFiles = run({ config: appConfig({ logoUrl: logo('a') }) });
+    await ready(noFiles);
+    expect(document.querySelector('img')).toBeNull();
+  });
 });
 
 describe('/export resolves the path through get_identity (batch 7) and takes an email code (batch 8b, D246 lifted)', () => {

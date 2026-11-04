@@ -21,6 +21,9 @@ const TICKET = `dt2.${'T'.repeat(75)}`;
 const TICKET2 = `dt2.${'U'.repeat(75)}`;
 const CID = 'c'.repeat(43);
 const CID2 = 'd'.repeat(43);
+/** Batch C11: the build's files origin and a logo on it. */
+const FILES = 'https://files.hana.test';
+const LOGO = `${FILES}/logos/app_abc/${'0e'.repeat(32)}.png`;
 const TOKEN = '{"payload":"eyJ","signatures":[{"protected":"eyJ","signature":"sig"}]}';
 
 function authParams(over: Record<string, unknown> = {}) {
@@ -127,6 +130,45 @@ describe('/login method chooser', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it('batch C11: shows the app’s logo from the build’s files origin beside the name, and hands it to the email step', async () => {
+    const env = { ...EMAIL_ENV, filesOrigin: FILES };
+    const s = loginSetup(env);
+    const params = authParams({ methods: ['google', 'email'], logoUrl: LOGO });
+    s.win.message(params, ENV.vaultOrigin, s.vault);
+    expect((await s.page.done).stage).toBe('choosing');
+    const img = document.querySelector('img.app-logo') as HTMLImageElement;
+    expect(img.getAttribute('src')).toBe(LOGO);
+    expect([img.getAttribute('alt'), img.getAttribute('referrerpolicy'), img.getAttribute('width')]).toEqual(['', 'no-referrer', '32']);
+    // Decorative: the text is unchanged, and an image that fails to load goes away.
+    expect(pageText()).toContain('Signing in to Partner App at https://partner.example');
+    img.dispatchEvent(new Event('error'));
+    expect(document.querySelector('img')).toBeNull();
+    click('continue-email');
+    expect(readEmailContext(s.win.sessionStorage, params.relayId, NOW)!.context.logoUrl).toBe(LOGO);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('batch C11: no logo for one on another origin, or in a build without a files origin; no logoUrl stored without one', async () => {
+    for (const [env, logoUrl] of [
+      [{ ...EMAIL_ENV, filesOrigin: FILES }, `https://evil.example/logos/app_abc/${'0e'.repeat(32)}.png`],
+      [EMAIL_ENV, LOGO],
+    ] as const) {
+      resetDom();
+      const s = loginSetup(env);
+      const params = authParams({ methods: ['google', 'email'], logoUrl });
+      s.win.message(params, ENV.vaultOrigin, s.vault);
+      expect((await s.page.done).stage).toBe('choosing');
+      expect(document.querySelector('img')).toBeNull();
+    }
+    resetDom();
+    const s = loginSetup({ ...EMAIL_ENV, filesOrigin: FILES });
+    const params = authParams({ methods: ['google', 'email'] });
+    s.win.message(params, ENV.vaultOrigin, s.vault);
+    await s.page.done;
+    click('continue-email');
+    expect(readEmailContext(s.win.sessionStorage, params.relayId, NOW)!.context).not.toHaveProperty('logoUrl');
+  });
+
   it('a preselected method skips the chooser', async () => {
     const e = loginSetup();
     const pe = authParams({ methods: ['google', 'email'], method: 'email' });
@@ -200,7 +242,7 @@ interface EmailSetup {
 }
 
 function emailSetup(
-  opts: { hint?: string | null; clientId?: string | null; env?: HanaEnv; storeEntry?: boolean; framed?: boolean; f?: Fakes; now?: number; timings?: Record<string, number>; perfNow?: () => number } = {},
+  opts: { hint?: string | null; clientId?: string | null; env?: HanaEnv; storeEntry?: boolean; framed?: boolean; f?: Fakes; now?: number; timings?: Record<string, number>; perfNow?: () => number; logoUrl?: string } = {},
 ): EmailSetup {
   const p = authParams();
   const relayId = p.relayId;
@@ -221,6 +263,7 @@ function emailSetup(
         c: {
           pk: PK,
           appName: 'Partner App',
+          ...(opts.logoUrl ? { logoUrl: opts.logoUrl } : {}),
           parentOrigin: PARTNER,
           scopeId: 's1',
           sessionPublicKey: Buffer.from(p.sessionPublicKey).toString('base64url'),
@@ -263,6 +306,26 @@ async function toCode(s: EmailSetup, address = 'Ada@Example.com'): Promise<void>
 }
 
 describe('/login/email', () => {
+  it('batch C11: shows the stored logo beside the app’s name, only from the build’s files origin', async () => {
+    emailSetup({ env: { ...EMAIL_ENV, filesOrigin: FILES }, logoUrl: LOGO });
+    await flush();
+    expect(pageText()).toContain('Signing in to Partner App at https://partner.example');
+    expect(document.querySelector('img.app-logo')?.getAttribute('src')).toBe(LOGO);
+    resetDom();
+    emailSetup({ logoUrl: LOGO });
+    await flush();
+    expect(pageText()).toContain('Signing in to Partner App');
+    expect(document.querySelector('img')).toBeNull();
+  });
+
+  it('batch C11: a stored context with a logoUrl that is not a logo URL is unreadable', () => {
+    const ok = emailSetup({ logoUrl: LOGO });
+    expect(readEmailContext(ok.win.sessionStorage, ok.relayId, NOW)?.context.logoUrl).toBe(LOGO);
+    resetDom();
+    const s = emailSetup({ logoUrl: 'javascript:alert(1)' });
+    expect(readEmailContext(s.win.sessionStorage, s.relayId, NOW)).toBeNull();
+  });
+
   it('address → start → code → verify → relays the email token under the relay key and closes', async () => {
     const s = emailSetup({ hint: 'ada@example.com' });
     expect(s.page.stage).toBe('address');

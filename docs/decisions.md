@@ -1796,7 +1796,9 @@ detail open or a safer reading was needed. Each follows the spec's intent; all f
   `already_applied`); a distinct RpcCode for a wrong nonce (the spec's list has none; `forbidden` with the reason).
 
 ### D236. Owner actions: the precheck's nonce, and the caps reconciled with D100
-- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/owner-actions.ts`, `handlers.ts` `ownerActionWindows`,
+- Date 2026-11-02 · Status: the per-owner proposal windows (2 a minute, 4 a day) **confirmed by the user (2026-11-04:
+  "yes" to keeping them shared)**: counted per owner identity across all of its scopes (`ownerLimiterKey` has no scope
+  in it), as built; the rest to confirm; built (`apps/api/src/owner-actions.ts`, `handlers.ts` `ownerActionWindows`,
   `ownerCapEvent`, `owner-pool.ts`, `@hana-id/console-core` `owner-actions.ts`) · Source: spec "On-chain owner
   actions" (Limits, Allowance alert), D93 Q23, D100
 - Decision:
@@ -1809,7 +1811,8 @@ detail open or a safer reading was needed. Each follows the spec's intent; all f
     10 per scope per day) and D100's (decided later the same day, after the security sweep) are combined so that
     neither is weakened where it protects something:
     - `propose_change`: per scope 10/min (D100) and **20 a UTC day** (the spec, replacing D100's 50), global 20/min,
-      200/day (both), and per owner **2/min, 4/day**: the scope's windows divided by the contract's `MAX_OWNERS` (5),
+      200/day (both), and per owner **2/min, 4/day** (one window per owner identity, shared by every scope that owner
+      holds; confirmed 2026-11-04): the scope's windows divided by the contract's `MAX_OWNERS` (5),
       so the per-scope windows are at least `MAX_OWNERS` × the per-owner ones, as for the safety budget. With D100's
       5/min, 30/day per owner under a 20/day scope cap, one owner (a compromised or careless one) could use up the
       scope's day and block its co-owners' proposals. The alternative, the scope at 5 × 30 = 150/day, was rejected: it
@@ -1945,6 +1948,9 @@ detail open or two of its lines pull apart. Each follows the spec's intent; all 
   would start a wait nobody can cancel by link.
 - Rejected: a grant only when the org has an owner at issue; one combined notice (`ackMemberNotice` takes one hash, and
   the two links go to different people).
+- Amended by D343 (2026-11-04): a freeze undoes both notices of an open owner invite and the notice and clock of an
+  accepted one's grant; after the unfreeze each is announced again, and an accepted invite's grant then waits the full
+  delay from its new notice.
 
 ### D242. `invites.new_org_kind` (CONSOLE_DB migration 0002) and the passkey gate's count
 - Date 2026-11-02 · Status: to confirm; built (`apps/console/migrations/0002_invites_kind_audit_request.sql`,
@@ -1996,6 +2002,8 @@ detail open or two of its lines pull apart. Each follows the spec's intent; all 
     carries the promoted `member` (user id and email), additive like D226, so the admin Worker needs no second call.
 - Why: the admin Worker is more trusted than the console (spec §Security model), but the notice must fail closed even
   against a staff mistake, as in D229; the rest makes the spec's rules exact under concurrency and replays.
+- Amended by D343 (2026-11-04): `freezeOrg` also pauses the org's pending invites and owner grants in its batch, and
+  `pendingMemberNotices` / `ackMemberNotice` skip and refuse (`not_pending`) a frozen org's notices.
 
 ### D244. The console's C7 surface: two link routes, CSRF everywhere, the cron's details
 - Date 2026-11-02 · Status: to confirm; built (`apps/console/src/{index,links,csrf,headers,cron}.ts`,
@@ -4995,6 +5003,36 @@ decided while building, to confirm.
 - Rejected: `at_hash` only on the console audiences' paths (two lists to keep in step, and the API's step-up check
   would need the audience before the list); asking Google for an ID token without an access token (the code flow
   always returns one).
+
+### D343. Freezing an org pauses its pending owner grants and invites; a paused grant is re-confirmed, not resumed
+- Date 2026-11-04 · Status: confirmed by the user (2026-11-04, on C7's review findings; the choice between a paused
+  clock and a re-confirmation was left to the build, which took re-confirmation as the safer) · Built on
+  `feat/batch-c-10` (`apps/console/src/members.ts` `freezeOrg`, `invites.ts` `pendingMemberNotices`,
+  `ackMemberNotice`, `cron.ts` `applyGrants`; tests in `apps/console/test/owners.test.ts` "a freeze pauses …") ·
+  Amends D241, D243
+- Gaps it closes (C7 review): a pending owner grant kept maturing while its org was frozen (ownership is a predicate on
+  `owner_from`, and the hourly cron recorded it); invites issued before a freeze were still announced during it and
+  became usable after an unfreeze.
+- Decision:
+  - **Grants.** In the freeze's own batch, every live grant still inside its wait or not yet announced loses its
+    notice and its clock (`notified_at`, `cancel_token_hash`, `owner_from` cleared), so it can't mature while frozen.
+    After the unfreeze it is listed by `pendingMemberNotices` again (an accepted owner invite's grant too) and, once
+    every send of the new notice is accepted, waits the **full** `ownerGrantDelayMs` from that ack. The emailed cancel
+    link stops working meanwhile (the grant can't mature, so nothing needs cancelling by link; owners and staff still
+    can) and works again after the new notice (the token is deterministic per grant). A grant whose `owner_from` had
+    already passed before the freeze had matured: its member stays an owner by predicate, and the cron records it only
+    once the org is active again (`applyGrants` skips frozen orgs).
+  - **Invites.** In the same batch every open, announced invite of the org loses its notice (`token_hash`,
+    `notified_at` cleared), so its link stops working at once; while frozen no invite of the org is listed or acked
+    (`not_pending`), and acceptance already required an active org. After the unfreeze each is announced again
+    (invitee, every owner, the contacts, the alias) before its link works; its 7 days keep counting from creation.
+- Why re-confirmation over a paused clock: a freeze is Hana's response to a suspected compromise or dispute, so what
+  was pending at the freeze may be what prompted it; a fresh notice to every owner, the contacts and the alias, and a
+  full wait after it, gives them the whole window again, and needs no stored "time already waited" (a paused clock
+  would need a new column and a resume rule, and would let a grant mature soon after an unfreeze nobody re-noticed).
+- Rejected: a paused clock (above); cancelling or revoking everything pending at a freeze (destroys legitimate
+  invites and grants for a freeze that turns out to be precautionary); leaving announced invites usable after an
+  unfreeze (nobody is told again that they are live).
 
 ## Superseded or amended
 

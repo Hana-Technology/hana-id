@@ -1,7 +1,7 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-04 for the claim allow-list's `at_hash` (branch `feat/batch-c-10`, D342); 2026-11-04 for partner sign-in (branch `feat/batch-c-9`, merged with
+known open issues. Last verified against code: 2026-11-04 for the claim allow-list's `at_hash` and a freeze pausing pending memberships (branch `feat/batch-c-10`, D342, D343); 2026-11-04 for partner sign-in (branch `feat/batch-c-9`, merged with
 `develop` @ a243d6b: "Console Worker"'s route, sign-in, sessions and partner views, the flow cookies, handoff codes,
 sign-in tokens and `CONSOLE_GOOGLE_CLIENT_SECRET` in the inventory, D290–D297); 2026-11-04 for the files Worker and logos (branch `feat/batch-c-11`: the
 logo upload's checks and the CSRF exception in "Console Worker", "Files Worker (logos)", the auth pages' `img-src`;
@@ -582,7 +582,10 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   no user, org, member or audit row.
 - **Roles**: the last usable owner can't be removed or demoted; a pending owner (inside the grant's wait) is a viewer;
   a new owner of an org with an owner waits `ownerGrantDelayMs` (missing or out of range: grant writes refuse); removals,
-  demotions, disables and freezes of a member's only active org revoke sessions at once.
+  demotions, disables and freezes of a member's only active org revoke sessions at once. A freeze pauses pending
+  memberships (D343): no grant matures or is recorded while the org is frozen (a waiting grant must be announced again
+  and wait the full delay after the unfreeze), and no invite is announced, acked or accepted (an announced one must be
+  announced again).
 - **Sessions**: looked up by sha256 of a 32-byte cookie (`__Host-hana_cs`, `Secure; HttpOnly; SameSite=Strict;
   Path=/`), a doubled cookie name refused, 2 h idle and 12 h absolute, its user not disabled; a new id at every sign-in;
   the role and the membership (with the org's `required_hd` against the session's `hd`) read from `members` on every

@@ -6,7 +6,7 @@
 import { LEGACY_ORG_ID, type OrgView, type Role, newId } from '@hana-id/console-core';
 import { type AuditAction, type Writer, auditInsert, entry, replayOf } from './audit.ts';
 import { refuse } from './errors.ts';
-import { type Frag, applied, frag, gate, gated, orgHasOwner, ownerNow, runBatch } from './sql.ts';
+import { type Frag, applied, frag, gate, gated, lit, orgHasOwner, ownerNow, runBatch } from './sql.ts';
 import { ORG_COLUMNS, type OrgRow, orgView } from './views.ts';
 
 /** Revokes every live session of a user (gated on the write's commit row). */
@@ -157,6 +157,16 @@ export async function disableUser(db: D1Database, w: Writer, userId: string, dis
 /**
  * `StaffRpc.freezeOrg`: a frozen org refuses every console write except cancels and the kill switches (enforced by the
  * BFF from C9), and can't accept invites. Freezing ends the sessions of members with no other active org.
+ *
+ * Freezing also pauses the org's pending memberships (D343), in the same batch:
+ * - every open invite's notice is undone (`token_hash`, `notified_at` cleared): its link stops working, the notice
+ *   isn't sent again while the org is frozen (invites.ts pendingMemberNotices), and after an unfreeze it must be
+ *   announced again (the invitee, every owner, the contacts and the alias) before it works. Its 7 days keep running;
+ * - every live owner grant still inside its wait (or not announced yet) loses its notice and its clock
+ *   (`notified_at`, `cancel_token_hash`, `owner_from` cleared): it can't mature while frozen, and after an unfreeze it
+ *   is announced again and waits the full `ownerGrantDelayMs` from that new notice (re-confirmed, not resumed). A grant
+ *   whose `owner_from` had already passed before the freeze has matured: its member is an owner by predicate, and the
+ *   hourly cron records it once the org is active again.
  */
 export async function freezeOrg(db: D1Database, w: Writer, orgId: string, frozen: boolean): Promise<void> {
   if (orgId === LEGACY_ORG_ID) return refuse('forbidden', `${LEGACY_ORG_ID} can't be frozen`);
@@ -171,6 +181,19 @@ export async function freezeOrg(db: D1Database, w: Writer, orgId: string, frozen
   ];
   if (frozen) {
     stmts.push(
+      gated(
+        db,
+        `UPDATE invites SET token_hash = NULL, notified_at = NULL WHERE org_id = ? AND notified_at IS NOT NULL AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > ${lit(w.now)}`,
+        [orgId],
+        g,
+      ),
+      gated(
+        db,
+        `UPDATE owner_grants SET notified_at = NULL, cancel_token_hash = NULL, owner_from = NULL
+          WHERE org_id = ? AND cancelled_at IS NULL AND applied_at IS NULL AND (owner_from IS NULL OR owner_from > ${lit(w.now)})`,
+        [orgId],
+        g,
+      ),
       gated(
         db,
         `UPDATE console_sessions SET revoked_at = ? WHERE revoked_at IS NULL AND user_id IN (

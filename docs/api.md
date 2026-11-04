@@ -1,6 +1,6 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
-Last verified against code: 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342); 2026-11-04 (branch `feat/batch-c-9`, merged with `develop` @ bd0c9ea: "Console Worker and
+Last verified against code: 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342; `freezeOrg` pauses pending invites and owner grants, D343); 2026-11-04 (branch `feat/batch-c-9`, merged with `develop` @ bd0c9ea: "Console Worker and
 console-auth": partner sign-in (`/api/auth/start`, the auth origin's `/start` and `/callback` through `AuthHandler`,
 `/api/auth/complete`, logout), the signed-in reads, console-auth, the new bindings and secret, D290–D297); 2026-11-04
 (branch `fix/dev-email-limits`: "Email issuer" "Limits", dev envs' higher code, wrong-code and per-IP limits, D340);
@@ -1463,11 +1463,11 @@ Inputs are console-core's strict zod schemas (`packages/console-core/src/staff.t
 | `listOrgs({cursor?, limit ≤ 200})`, `getOrg({orgId})`, `listMembers({orgId})` | Orgs by id (`org_legacy` included); an org with its members (email, `sub`, the role in force, `pendingOwnerFrom` for a pending owner), invites (newest first) and, in `getOrg`, its live owner grants (`grants`: not cancelled, not applied, newest first, no hash column; C8, D283) |
 | `issueInvite({email, role, orgId? \| newOrgName?, kind?})` | An invite (`token_hash` NULL until the notice is acked), 7 days from creation; an owner invite to an existing org also creates its owner grant. Refused: `org_legacy` (`forbidden`), unknown org (`not_found`), frozen org, 11th open invite, a second open invite of the address to the org (`conflict`), a second partner org while passkeys haven't shipped (`passkeys_required`). Returns the invite view, never a token |
 | `revokeInvite({inviteId})` | Revokes an open invite and cancels its grant (`not_pending` once ended) |
-| `pendingMemberNotices({limit ≤ 100})` | The blocking notices to send, oldest first: open invites and live grants not yet acked, each with the org's current owners (a promotion also with the promoted member) |
-| `ackMemberNotice({inviteId \| grantId, tokenHash})` | After every send was accepted: stores the link token's sha256 (an invite's link works from now; a promotion's wait starts: `owner_from = now + OWNER_GRANT_DELAY_MS`). Same hash again: no-op; another: `conflict` |
+| `pendingMemberNotices({limit ≤ 100})` | The blocking notices to send, oldest first: open invites and live grants not yet acked, each with the org's current owners (a promotion also with the promoted member); none of a frozen org's (D343) |
+| `ackMemberNotice({inviteId \| grantId, tokenHash})` | After every send was accepted: stores the link token's sha256 (an invite's link works from now; a promotion's wait starts, and an accepted owner invite's whose notice a freeze undid: `owner_from = now + OWNER_GRANT_DELAY_MS`). Same hash again: no-op; another: `conflict`; a frozen org's: `not_pending` (D343) |
 | `cancelOwnerGrant({grantId})` | Until `owner_from` (`not_pending` after) |
 | `setMember({orgId, userId, role \| null})` | Add, remove, demote or promote (through a grant when the org has another owner); the last usable owner stays (`conflict`); a disabled user is never added or promoted (`conflict`) |
-| `disableUser({userId, disabled})`, `freezeOrg({orgId, frozen})` | Revoke sessions as the spec's "Sessions" says |
+| `disableUser({userId, disabled})`, `freezeOrg({orgId, frozen})` | Revoke sessions as the spec's "Sessions" says. A freeze also pauses the org's pending memberships in the same batch (D343): open invites lose their notice (`token_hash`, `notified_at` cleared: the link stops working and must be announced again after the unfreeze), live grants still waiting lose their notice and clock (`notified_at`, `cancel_token_hash`, `owner_from` cleared: re-announced after the unfreeze, then the full delay); the hourly cron records no grant of a frozen org |
 | `auditSince({seq, limit ≤ 500})`, `queryAudit({filters, cursor?, limit ≤ 500})` | The feed (oldest first) and the staff screen's query (newest first; filters `orgId`, `appId`, `actorKind`, `actorId`, `action`, `from`, `to`); `seq`, the cursor and the times are safe integers (`bad_request` past 2^53 − 1) |
 
 `purgeAudit` (the monthly retention job) comes with C13. A replayed request id is `already_applied` (same actor and

@@ -1,7 +1,8 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-04 for `'token_first'` in force (branch
+known open issues. Last verified against code: 2026-11-04 for the console Worker (branch `feat/batch-c-7-merge`, C7 merged onto `develop`; written on `feat/batch-c-7` 2026-11-02: its
+invariants, the invite, owner-grant and session token rows, D240–D244; re-checked against `develop`'s D269–D274, which the console's C7 surface doesn't touch: it relays no Google token until C9); 2026-11-04 for `'token_first'` in force (branch
 `feat/token-first-on`: the spike passed, "Google's verified email" now describes token_first first and
 second_request as the fallback, D270); 2026-11-04 for the user directory's review fixes (branch
 `fix/user-emails-review`: order-safe writes, unverified Google rows apart in the CLI, the CLI's statement off the
@@ -138,6 +139,9 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | Google RSA public keys | JWKS | On chain (issuers); API isolate cache (≤ 6 h stale on fetch failure) | public | v1 contract: hourly cron sync. Governance contract: the 15-min cron proposes and executes delayed changes, the watchdog checks them against its own JWKS copy |
 | Console owner-action tokens | RS256 JWT (console audience) | Transient; `sha256` marker in a `RateLimiter` until `exp` | partner owner | Single use (nonce bound to `action_nonce`) |
 | Publishable keys | `pk_test_` / `pk_live_` + base58 | D1, partner pages | public | Not secrets |
+| Invite link tokens | T = HMAC-SHA256(`INVITE_LINK_KEY`, "hana-console/invite/v1" ‖ borsh(invite id)), 32 bytes | The invitee's mailbox (`<console.origin>/invite#t=…`, a fragment); `CONSOLE_DB` holds only sha256(T), set by the admin Worker's ack | the invitee | 7 days from creation, single use, email-bound; works only after every notice send was accepted. `INVITE_LINK_KEY` is the admin Worker's secret (C8), never the console's (D240) |
+| Owner-grant cancel tokens | T = HMAC-SHA256(`CANCEL_LINK_KEY`, "hana-console/owner-grant-cancel/v1" ‖ borsh(grant id)) | The grant notice's recipients (every owner, the security contacts, the alias); `CONSOLE_DB` holds only sha256(T) | them | Cancels one owner grant once, by POST, until `owner_from` |
+| Console session cookies (`__Host-hana_cs`) | 32 random bytes, b64url | The member's browser (`HttpOnly`, `SameSite=Strict`, console origin); `CONSOLE_DB` holds only sha256 | the member | 2 h idle, 12 h absolute; revoked on removal, role change, disable or a freeze of the member's only org. Created by sign-in from C9 |
 | Identity signing keys (Worker slots `IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY`) | P-256 private JWKs (ES256), testnet and `local*` only | The active key: a Worker secret and `.secrets/<env>/identity-signing-key.json`. The standby: `identity-signing-key-standby.json` only, kept offline, never uploaded until a switch (D177). During a rotation a `next` and a `previous` key. 0600, the only copies | Hana | `scripts/identity-key.ts`: `init`, `next`, `switch --to next|standby`, `retire --key previous|standby` (wrangler stdin, never printed, files never overwritten); public halves in the manifest's `identityToken.publicKeys` (the JWKS). `activeKid` picks the signer. Staging and mainnet: AWS KMS (next row) |
 | Identity KMS keys (`identityToken.signer.keys`: `active`, `standby`, during a rotation `next`, `previous`); none yet | AWS KMS `ECC_NIST_P256` `SIGN_VERIFY`, origin `AWS_KMS`, single-region; the standby in another region (D219) | AWS KMS in D121's dedicated account; never exportable, never on the Worker. The manifest holds their ARNs and public keys only | Hana (break-glass role with MFA administers; the key policy in `docs/operations.md` "Identity token keys on AWS KMS") | Created in AWS by the operator; published with `identity-key kms-init / kms-add`, switched with `kms-switch`, unpublished with `kms-retire` (then disabled and deleted in KMS, 30 days); scheduled rotation every 12 months |
 | KMS signer's AWS access key (`IDENTITY_AWS_ACCESS_KEY_ID`, `IDENTITY_AWS_SECRET_ACCESS_KEY`) | Long-term IAM user key (`AKIA…`) of the env's signer user (`identityToken.signer.credentials.iamUser`) | API Worker secrets; `.secrets/<env>/identity-aws-access-key.json` (0600) only between `aws iam create-access-key` and the checked upload, then deleted | Hana | `identity-key kms-put-aws-key` (one `wrangler secret bulk`, never printed); rotated every 90 days and on suspicion; the user can only `kms:Sign` the active key (D215, D219); never logged |
@@ -492,6 +496,44 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   - no Hana API accepts an identity token: `verifyIdToken` refuses `typ: hana-identity+jwt` or `iss` =
     `IDENTITY_ISS` first (`400 bad_token`), and the contract takes RS256 issuer keys only;
   - logs carry the app id, outcome, code, kid and timings, never a token, `sub`, `sid`, address or body.
+
+### Console Worker (`apps/console`, batch C7, no route; tests `apps/console/test/*.test.ts`)
+
+- **No public route** (`workers_dev: false`, `preview_urls: false`, no `routes`; a config test). Until C9 only the admin
+  Worker's `StaffRpc` binding (C8) and the cron reach it.
+- **Its own origin only**: any other host is 404. Every response, assets included (the Worker runs first), carries the
+  spec's CSP (`default-src 'none'`, `script-src`/`style-src`/`connect-src`/`font-src 'self'`, `img-src 'self' data:
+  <files.origin>`, `frame-ancestors 'none'`, `object-src 'none'`, `base-uri 'none'`, `form-action 'self'`),
+  `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy: same-origin`, `X-Content-Type-Options: nosniff` and HSTS
+  (2 years, subdomains); `/api/*` also `Cache-Control: no-store`. No cookie is set in C7.
+- **CSRF on every non-GET request**, whatever the path: `Sec-Fetch-Site: same-origin`, `Origin` exactly
+  `console.origin`, `x-hana-console: 1` and `content-type: application/json`, else `403 csrf`. A GET never changes
+  anything (the emailed links' pages only POST).
+- **Emailed-link confirms** (no session, `link` actor): the guarded-change cancel goes to `ConsoleRpc.cancelChangeByLink`
+  (the API checks the token, D228, D229); the owner-grant cancel compares sha256(token) with the stored
+  `cancel_token_hash` inside the write's guard: single use, refused once `owner_from` passed, a wrong token, an unknown
+  or unannounced grant all `forbidden` alike. Both are limited per IP (10 a minute, IPv6 by /64) before the body is
+  read, with bodies capped at 4 KiB (1 KiB when chunked), counted as a stream and cut off at the cap, never buffered whole.
+- **Invites fail closed** (D240, D241): created with no token hash, so no link works until the admin Worker's ack
+  (`system` actor only) after every notice send was accepted; an owner invite to an existing org also needs its
+  grant's notice (with the cancel link) acked before acceptance. The console never holds `INVITE_LINK_KEY` or
+  `CANCEL_LINK_KEY` and no answer carries a token or a token hash (source check and tests).
+- **The passkey gate** (spec §Deferred, D242): a second partner org is refused (`passkeys_required`) while passkeys
+  haven't shipped, counting open new-partner-org invites; checked inside the insert, so concurrent issues can't race
+  past it.
+- **Every write is one D1 batch with its audit row first** (D243), inserted only while the write's guard holds, every
+  other statement gated on it; a replayed request id fails on `audit_log (request_id, action)` UNIQUE and writes
+  nothing. Acceptance is one batch the same way: two concurrent acceptances give one member, and a refused one writes
+  no user, org, member or audit row.
+- **Roles**: the last usable owner can't be removed or demoted; a pending owner (inside the grant's wait) is a viewer;
+  a new owner of an org with an owner waits `ownerGrantDelayMs` (missing or out of range: grant writes refuse); removals,
+  demotions, disables and freezes of a member's only active org revoke sessions at once.
+- **Sessions** (model only until C9): looked up by sha256 of a 32-byte cookie (`__Host-hana_cs`, `Secure; HttpOnly;
+  SameSite=Strict; Path=/`), a doubled cookie name refused, 2 h idle and 12 h absolute, its user not disabled.
+- **What it keeps about people**: members' and staff emails (display), Google subs (owner match), invitees' addresses
+  on the invite row only (deleted 90 days after the invite ends; never in `audit_log`, whose details are allowlisted per
+  action), sessions' /24 or /48 network data (90 days). Logs carry ids and codes only. `STATEMENTS` is read only by
+  code (no `put`/`delete`, a source check).
 
 ### Email issuer (`apps/email-issuer`, not deployed)
 

@@ -1,6 +1,6 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
-Last verified against code: 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342; `freezeOrg` pauses pending invites and owner grants, D343; the console's fresh sign-in and write routes, D350–D358); 2026-11-04 (branch `feat/user-id-identity-sub`: `POST /v1/wallets/record`'s `sessionSignature` and key checks (Routing, its section), `ConsoleRpc` / `AdminRpc` user reads with the User ID `u1_…`, the Support ID from it and the staff-only internal id, `end_users.token_sub` in "D1 schema", `directory_unavailable`'s codes; D346, D311/D313 amended); 2026-11-04 (branch `feat/batch-c-12`: `ConsoleRpc.usage` / `statements` / `ledger`,
+Last verified against code: 2026-11-04 (branch `feat/console-reports-upgrades`: the partner SPA's usage, statement and pending-upgrades screens over the report and pending-upgrades routes; a statement's `issuedBy` answered as `hana`; D370–D374); 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342; `freezeOrg` pauses pending invites and owner grants, D343; the console's fresh sign-in and write routes, D350–D358); 2026-11-04 (branch `feat/user-id-identity-sub`: `POST /v1/wallets/record`'s `sessionSignature` and key checks (Routing, its section), `ConsoleRpc` / `AdminRpc` user reads with the User ID `u1_…`, the Support ID from it and the staff-only internal id, `end_users.token_sub` in "D1 schema", `directory_unavailable`'s codes; D346, D311/D313 amended); 2026-11-04 (branch `feat/batch-c-12`: `ConsoleRpc.usage` / `statements` / `ledger`,
 `StaffRpc.recordStaffAction`, the console's report backend (not routed until C10), the admin Worker's report,
 statement, rate and export routes, its 15-minute cron with the daily ledger work at 00:30 UTC, its
 `STATEMENTS`/`EXPORTS`/`RELAYER_ACCOUNT` bindings, and the "Usage ledger functions" section; D320–D329); 2026-11-04 (branch `feat/batch-c-14`: `AdminRpc.governance`, `AdminRpc.pendingUpgrades`
@@ -1554,7 +1554,11 @@ any other write is `403 org_frozen`. Each ConsoleRpc write writes an outcome `au
 C12's report routes and C14's pending-upgrades page are routed here too, for any member (frozen orgs included), each
 its own backend's checks and answers: `GET /api/orgs/:org/usage?from&to&by&apps`, `/statements`, `/statements/:month`,
 `/statements/:month.csv` and `.pdf`, `/ledger/:month.csv` (reports.ts, "Report backend" below) and
-`/governance/pending-upgrades` (governance.ts, "Pending upgrades" below). Their SPA screens are not built yet.
+`/governance/pending-upgrades` (governance.ts, "Pending upgrades" below). The SPA's screens over them (D370–D374):
+`/orgs/:org/usage` (the report form and table), `/orgs/:org/statements` (the list, the ledger CSV of any month) and
+`/orgs/:org/statements/:month` (the on-screen statement), and `/orgs/:org/upgrades` (the pending-upgrades view); the
+files are plain `<a href download>` links to these routes (the browser builds no file; the ledger of an issued month at
+its statement's `?asOf=`).
 
 ### Emailed links (no session; C7)
 
@@ -1620,8 +1624,9 @@ target) or `conflict`; a write whose state moved meanwhile is `conflict`.
 
 **Report backend** (`src/reports.ts`, batch C12; routed by C10's session routes, `writes.ts`, for a
 member of the org, as the logo routes): `usageRoute` (`GET /api/orgs/:org/usage?from&to&by&apps` → `ConsoleRpc.usage`),
-`statementsRoute` (`/statements`: metadata and hashes, no file keys), `statementViewRoute` (`/statements/:month`: the
-stored totals and console-core `statementView`, the same view the PDF prints), `statementFileRoute`
+`statementsRoute` (`/statements`: metadata and hashes, no file keys; `issuedBy` is always `hana`, never the staff
+address, D371), `statementViewRoute` (`/statements/:month`: `{statement, view}`, the stored totals and console-core
+`statementView`, the same view the PDF prints), `statementFileRoute`
 (`/statements/:month.csv` / `.pdf`: `STATEMENTS.get` of a key under `statements/<org>/<month>/`, served only when its
 sha256 equals the statement's, with `x-hana-sha256`), `ledgerCsvRoute` (`/ledger/:month.csv?asOf`: `ConsoleRpc.ledger`
 streamed page by page at one as_of, `x-hana-as-of`; a page failing after the first ends the file with an `# incomplete`

@@ -315,3 +315,56 @@ textarea {
 .consent .contract {
   margin: 4px 0;
 }
+/* Reports, statements and pending upgrades. */
+.table-wrap {
+  overflow-x: auto;
+  max-width: 100%;
+}
+table.report th,
+table.report td {
+  white-space: nowrap;
+}
+table.report td.small {
+  white-space: normal;
+  min-width: 10rem;
+}
+.apps-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 12px;
+  margin: 0;
+}
+.apps-filter legend {
+  font-size: 0.9rem;
+  padding: 0 4px;
+}
+.downloads {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.hash {
+  margin: 4px 0;
+}
+.strong {
+  font-weight: 600;
+}
+pre.command {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+button.link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+}

@@ -1,7 +1,7 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342; the partner console's fresh sign-in and write paths, D343, D350–D358); 2026-11-04 (branch `feat/user-id-identity-sub`: the wallet directory's three ids and the record's session signature, D346 and the D311/D313 amendments: Status, "Wallet directory" steps 1, 2 and 4, "Data stores"' D1 row, the Glossary); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: D347, a closed popup is
+Last verified against code: 2026-11-04 (branch `feat/console-reports-upgrades`: the partner console's usage, statement and pending-upgrades screens, D370–D374); 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342; the partner console's fresh sign-in and write paths, D343, D350–D358); 2026-11-04 (branch `feat/user-id-identity-sub`: the wallet directory's three ids and the record's session signature, D346 and the D311/D313 amendments: Status, "Wallet directory" steps 1, 2 and 4, "Data stores"' D1 row, the Glossary); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: D347, a closed popup is
 `login_cancelled`, in "Login, one transaction" after step 4; D348's Google-only screen after a cancel; a cancel on token_first's Google
 screen goes back to the chooser or case B's choices, closing there is `login_cancelled`, in "Automatic linking" step 2;
 D341); 2026-11-04 (branch `feat/batch-c-12`: reports, settlement and statements in Status,
@@ -737,7 +737,10 @@ XSS on the console could run on ever receives a Google redirect (D75; `docs/api.
 
 Every later request reads the session and the member's role from `CONSOLE_DB`; the screens (apps, an app's origins,
 guarded changes, keys and settings, members and invites, the audit merged with the API's `app_changes`) come from
-`ConsoleRpc` and `CONSOLE_DB`, shown without staff identities, Google `sub`s or network data (D296). Nothing in the
+`ConsoleRpc` and `CONSOLE_DB`, shown without staff identities, Google `sub`s or network data (D296). Any member also
+gets the usage report, the monthly statements (on screen, with the CSV, PDF and ledger CSV as plain links to the
+console's routes, which serve a statement file only when it matches its hash) and the pending-upgrades page, frozen
+orgs included (D370–D374). Nothing in the
 console reads the email issuer's user directory (D269). Open question 1 (does Google's code flow keep the `openid`
 token free of `email`?) is tested by `scripts/console-code-flow-spike.ts` (D295); the code flow's `at_hash` is in the
 allow-list (D342).

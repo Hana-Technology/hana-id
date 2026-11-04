@@ -45,13 +45,19 @@ describe('usage and statements', () => {
     expect((await usageRoute(e, info, caller, new URL('https://console.test/x?from=jan'))).status).toBe(400);
   });
 
-  it('lists statements without their file keys; the on-screen statement renders the stored totals', async () => {
+  it('lists statements without their file keys or the issuing staff address; the on-screen statement renders the stored totals', async () => {
     const st = { orgId: ORG, month: '2026-01', asOf: totals.asOf, csvSha256: 'ab'.repeat(32), issuedBy: 'staff@hana.example', issuedAt: 1, totals, csvKey: `statements/${ORG}/2026-01/x.csv` };
     const e = withApi({ statements: async () => ({ ok: true, statements: [st] }) });
     const list = (await (await statementsRoute(e, info, caller)).json()) as { statements: Record<string, unknown>[] };
-    expect(list.statements).toEqual([{ orgId: ORG, month: '2026-01', asOf: totals.asOf, csvSha256: 'ab'.repeat(32), issuedBy: 'staff@hana.example', issuedAt: 1 }]);
-    const view = (await (await statementViewRoute(e, info, caller, '2026-01')).json()) as { view: unknown };
+    expect(list.statements).toEqual([{ orgId: ORG, month: '2026-01', asOf: totals.asOf, csvSha256: 'ab'.repeat(32), issuedBy: 'hana', issuedAt: 1 }]);
+    const viewRes = await statementViewRoute(e, info, caller, '2026-01');
+    const viewText = await viewRes.text();
+    const view = JSON.parse(viewText) as { view: unknown; statement: { issuedBy: string } };
     expect(view.view).toEqual(statementView(st));
+    // Partners never see the staff member who issued it (D296, D371): neither answer carries the address.
+    expect(view.statement.issuedBy).toBe('hana');
+    expect(viewText).not.toContain('staff@hana.example');
+    expect(JSON.stringify(list)).not.toContain('staff@hana.example');
     expect((await statementViewRoute(e, info, caller, '2026-02')).status).toBe(404);
   });
 

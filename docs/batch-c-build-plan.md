@@ -7,7 +7,8 @@ sandbox-dev API as far as `develop` includes them (migrations 0006, 0009 and 001
 not run; their setup is steps 4, 5 and 7–10 below, at M4 and M5); C9 (partner sign-in, D290–D297) merged into
 `develop`, not deployed (its setup is steps 11 and 12, at M4); C14 (Security & monitoring and the pending-upgrades
 page; D330–D338, D344) and C12 (reports and statements; D320–D329) merged, not deployed; C10 (partner management, D342,
-D343, D350–D358) built on `feat/batch-c-10`, not merged, not deployed; C13 and C15–C17 not built. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
+D343, D350–D358) merged into `develop`, not deployed; the partner screens over C12's and C14's routes (usage,
+statements, pending upgrades; D370–D374) built on `feat/console-reports-upgrades`, not merged; C13 and C15–C17 not built. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
 batches that each merge into `develop` on their own: tests green, the docs they change updated, and nothing a partner,
 a user or staff can reach that is half-wired. Ordered by dependency; the spec's "Build order" steps are noted per
 batch. This is a plan, not a spec: where it and the spec disagree, the spec wins or gets amended first.
@@ -302,13 +303,15 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
   the cancel and cancel-owner pages (POST confirm), `GET /api/governance/pending-upgrades` stays for C14.
 - **Tests**: spec "Fresh sign-in"; "Settings, keys"; the role matrix; owner-action rows that need the console.
 - **Visible**: the console's write paths; the spec's "Done when" bullets 2–4 on the smoke scope.
-- **Status** (2026-11-04): built on `feat/batch-c-10`, not merged, not deployed (D342, D343, D350–D358). Fresh sign-in
+- **Status** (2026-11-04): built on `feat/batch-c-10`, merged into `develop` (6220f33), not deployed (D342, D343, D350–D358). Fresh sign-in
   for every kind (`apps/console/src/actions.ts`), the write routes and the role matrix (`writes.ts`), the on-chain view,
   owner drift and the client-proof helper (`scopes.ts`, `near.ts`), C11's logo routes behind the session, the cancel
   pages, the SPA's write screens with the consent preview. The Users screen (D310, D346) is built on top
   of `ConsoleRpc.listUsers` / `getUser` (the wallet directory) with D346's `u1_…` User ID, both merged, behind
   `USERS_SCREEN` (off, D357) until an env's API runs D346. C12's report routes and
-  C14's `GET /api/orgs/:org/governance/pending-upgrades` are routed (any member); their SPA screens are not built.
+  C14's `GET /api/orgs/:org/governance/pending-upgrades` are routed (any member); their SPA screens (usage,
+  statements with the downloads, pending upgrades) are built on `feat/console-reports-upgrades`, not merged
+  (D370–D374).
   Setup: none new (the console's two new vars come from the manifest through `gen`). The owner-action relay itself
   isn't exercised in the tests (no owner-pool key in the test API); C17's smoke covers it on sandbox-dev.
 - **Users screen** (D310 point 5): over `ConsoleRpc.listUsers` / `getUser` (built on `feat/wallet-directory`, D315):
@@ -354,7 +357,8 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
   the rate override, the report, statement and rate screens and the security screen's ledger part in the admin SPA;
   `StaffRpc.recordStaffAction` for their audit rows (D327); the console's report backend (`apps/console/src/reports.ts`).
   **Left for C10**: the partner report screens and the session routes that call the console's report handlers
-  (`usageRoute`, `statementsRoute`, `statementViewRoute`, `statementFileRoute`, `ledgerCsvRoute`). The setup is
+  (`usageRoute`, `statementsRoute`, `statementViewRoute`, `statementFileRoute`, `ledgerCsvRoute`); C10 routed them, the
+  screens are built on `feat/console-reports-upgrades` (D370–D374), not merged. The setup is
   `docs/operations.md` "Reports and statements".
 
 ## C13. Retention

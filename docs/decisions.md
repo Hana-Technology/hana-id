@@ -31,7 +31,8 @@ on 2026-11-04. D300–D308 (branch `feat/batch-c-11`: the files Worker and logos
 sign-in: decided while building, to confirm) on 2026-11-04. D320–D329 (branch `feat/batch-c-12`: reports,
 statements, settlement and the ledger's checks, decided while building, to confirm) on 2026-11-04. D346 (branch `feat/user-id-identity-sub`, confirmed by the
 user) on 2026-11-04, with its amendments to D276, D312, D313, D315 and D316, and the security review's amendments to
-D311, D313 and D317 (the wallet record's session signature).
+D311, D313 and D317 (the wallet record's session signature). D370–D374 (branch `feat/console-reports-upgrades`: the
+partner console's usage, statement and pending-upgrades screens, decided while building, to confirm) on 2026-11-04.
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -5794,6 +5795,91 @@ changes a derivation path or an address. Every one is **decided while building, 
     the security screen warns below 2 future partitions.
   - The admin config binds `STATEMENTS` and `EXPORTS` (`files.statementsBucket`, `files.exportsBucket`) and sets
     `RELAYER_ACCOUNT` (a statement names its network from C14's `NEAR_NETWORK`, and issuing refuses without it); settlement and the nonce check skip, logged every run, without `RELAYER_ACCOUNT`.
+
+## The partner console's report, statement and pending-upgrades screens (branch `feat/console-reports-upgrades`), 2026-11-04
+
+The SPA screens over C12's report backend and C14's pending-upgrades route, both routed by C10 (D358) and left for a
+follow-up there.
+
+### D370. Three tabs for any member: Usage, Statements, Pending upgrades; reads only, frozen orgs included
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/console-reports-upgrades`
+  (`apps/console/web/src/pages/{Usage,Statements,Upgrades}.tsx`, `App.tsx`, `Shell.tsx`) · Source: spec "Roles and
+  permissions" ("View … usage, statements": owner and viewer), D86 Q11, D335, D356
+- Decision: the org shell gets the tabs Usage (`/orgs/:org/usage`), Statements (`/orgs/:org/statements`, one statement
+  at `/orgs/:org/statements/:month`) and Pending upgrades (`/orgs/:org/upgrades`), shown to every member (owner, viewer,
+  a pending owner) of an active or a frozen org, as the server's routes allow (`role: 'viewer'`, `frozenOk: true`). The
+  screens have no write control, so there is no owner gate and nothing for a freeze to hide; a frozen org shows them
+  under the shell's frozen note. The tab doesn't fetch the pending-upgrades view to badge itself (each read costs 2 in
+  the org's hot-DB budget, D335).
+- Rejected: hiding statements from viewers (the spec gives viewers usage and statements); a pending-upgrades badge on
+  every org page.
+
+### D371. A statement's issuer is shown to partners as `hana`, never the staff address
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/console/src/reports.ts` (`listItem`),
+  `test/reports.test.ts` · Source: D296 ("an actor … that isn't a `usr_…` id is `hana`")
+- Decision: C12's console backend passed `issuedBy` (the staff member's address the admin Worker records) through to
+  the statement list and the on-screen statement. Statements are only issued by staff, so the console's answers now say
+  `issuedBy: "hana"`, and the SPA shows "by Hana" without reading the field. Neon's `usage.statements.issued_by` and the
+  admin console keep the address.
+- Why: D296's rule for every partner view; a partner had no need for it.
+- Rejected: dropping the field (StatementMeta's shape is the spec's).
+
+### D372. Downloads are plain links to the console's routes; the hashes beside them; the ledger at the statement's as_of
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `web/src/pages/Statements.tsx` · Source: spec
+  "Monthly statements" ("partners download the same files read-only … with the sha256 beside them"), "Ledger CSV", D92,
+  D326
+- Decision:
+  - The statement CSV and PDF and the ledger CSV are `<a href download>` links to `/api/orgs/:org/statements/:month.csv`,
+    `.pdf` and `/ledger/:month.csv`: the browser follows them with the `SameSite=Strict` session cookie (a same-origin
+    GET, no CSRF header needed) and saves what the Worker sends. The SPA never fetches a file, builds a blob or computes
+    a hash, so what is saved is exactly what the Worker checked against Neon's sha256.
+  - The CSV's sha256 (the statement hash) and the PDF's are printed beside the links with the `shasum -a 256` check.
+    The PDF link appears only when the statement has a PDF.
+  - The ledger CSV of a month with a statement is linked at that statement's `asOf` (`?asOf=`), so its final gas sums
+    to the statement's Tgas and NEAR (spec "Ledger CSV"); any other month's is as of now. The page says what an
+    `# incomplete` last line means.
+  - A refused download (a session that ended, a missing or tampered file) shows as a failed download in the browser,
+    or in some browsers saves the error's JSON under the file's name; the page can't show the error without fetching
+    the file itself. Accepted: the routes refuse only on faults, and reloading the page shows the session state.
+- Rejected: fetching the file and saving a blob (the browser would build the file; it also needs the whole ledger in
+  memory); a check request before each download (one more read of the rate-limited RPC per click).
+
+### D373. The usage screen shows the server's rows as they are: every statement count, exact NEAR and USD, no totals added
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `web/src/pages/Usage.tsx`, `web/src/units.ts`
+  · Source: spec "Reports", D324, D297
+- Decision:
+  - The form: from, to (UTC days, this UTC month by day by default), by day or month, and an app filter (the org's apps
+    as checkboxes; none ticked = every app and the owner-action rows; ticking any leaves the owner actions out, D324,
+    and the page says so). A start after the end isn't sent; the 400-day and 100-app limits are the server's and its
+    refusal is shown.
+  - The table has a column for each count the statement CSV has (logins, derives, revokes, unlocks, owner actions,
+    link actions, identity tokens, active users, new users, failures by code), then Tgas with its relayed-then-rejected
+    and error parts, NEAR and USD with their relayed-then-rejected parts, p50 / p95 latencies and unsettled events.
+    "After the statement" (late events) is a column only when a row has one.
+  - NEAR and USD are formatted from `burntYocto` and `usdMicros` with the SPA's own copy of console-core's
+    `formatUnits` (the SPA imports only types from console-core, D297); a test checks the two agree. A period without
+    a NEAR/USD rate shows "—", not 0.
+  - The page adds nothing up: active users can't be summed, and the monthly statement is the billing total.
+  - Aggregates only: no row has a user field, so no end user is named.
+- Rejected: a totals row computed in the browser (it could disagree with the statement).
+
+### D374. Pending upgrades: countdowns on the reader's clock without a reload; "not a published release" as an alert
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `web/src/pages/Upgrades.tsx`, `web/src/lib.tsx`
+  (`useNow`, `countdown`) · Source: D86 Q11, D333, governance-spec "Alerts"
+- Decision:
+  - The page shows the signer and env, when the chain was read, the governance delay, the pause state (an alert), and
+    each pending item: the upgrade (code hash, proposed, takes effect), an owner transfer, a withdrawal (exact NEAR from
+    yocto), shorter delays (now → becomes) and new console audiences. With a published release: its version, source
+    commit, reproducible-build command and the diff command to the release before it ("the first published release"
+    when there is none). Without one: **Not a published release** as an alert, telling partners to treat the upgrade as
+    unexplained and ask Hana.
+  - Countdowns are `atMs − now` on the reader's clock, re-rendered every 30 s; the view itself is read once (a "read
+    the chain again" button, and "Try again" after an error such as `503 near_unavailable`). An item past its time, or
+    one the view marks `due`, says it can be executed or accepted now.
+  - Everything shown is contract-wide and public on chain; the page carries nothing of the org or its users.
+- Why: a countdown that only moves on reload misleads; re-reading the chain every 30 s would spend the org's budget for
+  no new information (the timelocks don't move).
+- Rejected: polling the route; showing the raw yoctoNEAR amount only.
 
 ## Superseded or amended
 

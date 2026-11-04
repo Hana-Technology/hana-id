@@ -1,7 +1,7 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-03 (branch `docs/sandbox-dev-state`: what sandbox-dev runs, per the operator on 2026-11-03: contract v3, migrations 0006/0009/0010, the API at `develop` c3c33ec, the page Workers, the email issuer Worker, the demo with email; the Status table and Components); 2026-11-03 (branch `fix/8b-rereview`: the issuer's CORS exposing `retry-after`, 3 consent
+Last verified against code: 2026-11-04 (branch `feat/export-copy`: "Key export", the Show key / Hide key toggle and Copy key, D268); 2026-11-03 (branch `docs/sandbox-dev-state`: what sandbox-dev runs, per the operator on 2026-11-03: contract v3, migrations 0006/0009/0010, the API at `develop` c3c33ec, the page Workers, the email issuer Worker, the demo with email; the Status table and Components); 2026-11-03 (branch `fix/8b-rereview`: the issuer's CORS exposing `retry-after`, 3 consent
 screens, the pin read's 1 s timeout (fail closed), the login's signal on google-match and the confirming reads; D263–D265); 2026-11-03 (branch `feat/email-login-8b` review fixes: member paths confirmed on both
 RPCs and root pins, D263; the email permission's explainer and consent screen, D264; the access token never revoked and
 google-match retried, D265; relay limits, D267); 2026-11-03 (branch `feat/email-login-8b`: automatic linking and the path through
@@ -557,8 +557,13 @@ which runs its own fresh login (`/login?mode=export`, `max_age=0`, `max_uses = 1
 an app with email (batch 8b, D246 lifted, D258) the child popup's chooser and `/login/email`'s code step over the export
 window's own session (purpose `session`; the token checked against the chain's email keys as the vault does). It
 resolves the path through `get_identity` on its own RPC (a linked identity exports its account root's key; a pending
-one is refused, `link_pending`), decrypts against that path, aborts if the address differs from the vault's, and shows the key (SEP-23 `S…` or `0x` hex)
-while a button is held after a typed confirmation. The key is erased 5 min after it is derived, or earlier when the
+one is refused, `link_pending`), decrypts against that path, aborts if the address differs from the vault's, and after a
+typed confirmation shows the key (SEP-23 `S…` or `0x` hex) on a "Show key" / "Hide key" toggle, selectable while shown and
+hidden again on window blur, a hidden tab and pagehide; "Copy key" writes it with `navigator.clipboard.writeText` in the
+click, shown or not, and says how to copy by hand when the Clipboard API is missing or refuses (no `execCommand`
+fallback). Both act only on real gestures. The window tries to blank the clipboard (an empty `writeText`, never a read)
+60 s after the last copy, at the erase and at pagehide, only while it has focus: Chromium allows that, Firefox and Safari
+likely refuse it without a gesture (D268). The key is erased 5 min after it is derived, or earlier when the
 vault session ends: the context carries `sessionExpiresAtMs`, and the vault's `cancelExport` posts
 `hana:export-end` on logout, revoke, expiry, a newer login or its 15 min job limit; the window also ends if its vault
 frame goes away (D111). The vault's PRK is never used for export. The `auth_time` freshness

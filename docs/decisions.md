@@ -4500,7 +4500,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   5. **Who sees what**: staff (admin console, CLI) see email (D269, from the issuer's directory), connected accounts,
      wallets, user id, created and last seen. Partners (partner console, for their own org's scopes only) see the user
      id, created and last seen, connected account kinds ("Google", "Email") without any address or Google account id,
-     and the wallet addresses. Partners see an address only once a user approves (UX later).
+     and the wallet addresses. Partners see an email address only once a user approves (UX later).
 - Gaps accepted: no backfill (a user appears with wallets at their next login); the partner Users screen needs C9/C10
   and the M4 setup, the staff one D275 and C8; a partner on its own Google client can read emails through Google (D42);
   on-chain activity is not indexed.

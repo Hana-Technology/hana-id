@@ -26,7 +26,9 @@ D270's status (the spike passed, switched on) on 2026-11-04 (branch `feat/token-
 confirm" line. D275–D276 (branch `docs/batch-c-users-support-id`: proposed, to confirm by the user, spec text only)
 on 2026-11-04. D300–D308 (branch `feat/batch-c-11`: the files Worker and logos, decided while building, to confirm) on
 2026-11-04, with D301 amending the order of C7's replaced-logo purge. D290–D297 (branch `feat/batch-c-9`, partner
-sign-in: decided while building, to confirm) on 2026-11-04.
+sign-in: decided while building, to confirm) on 2026-11-04. D346 (branch `feat/user-id-identity-sub`, confirmed by the
+user) on 2026-11-04, with its amendments to D276, D312, D313, D315 and D316, and the security review's amendments to
+D311, D313 and D317 (the wallet record's session signature).
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -4683,6 +4685,23 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   them apart with a hardened derivation step (bitcoin-dev, P. Wuille), so it would trade a bounded bookkeeping residual
   for an unproven risk to the funds key; a separate record key (a new derivation tuple: it proves nothing about the
   wallet's own key); a session-key signature alone (it proves the session, not the address).
+- **Amended 2026-11-04 (security review finding, MEDIUM; branch `feat/user-id-identity-sub`): a session-key signature
+  is now required too.** The chain-key proofs alone don't tie an address to the path: the API can't derive addresses,
+  and a session public key is public (`get_session`), so anyone could sign a statement with their own Stellar or EVM
+  key naming a victim's live session key and path, pass the session check, and have their address listed as the
+  victim's wallet (a wrong payout address for a partner that trusts the list). The vault now also signs, with the
+  session's non-extractable WebCrypto key, `"hana-id/wallet-record-session/v1" ‖ 0x00 ‖ borsh(env) ‖ borsh(signer) ‖
+  borsh(app_id) ‖ borsh(scope_id) ‖ borsh(path) ‖ session_pk(32) ‖ u64le(issued_at_ms) ‖ sha256("hana-id/wallet-record-
+  proofs/v1" ‖ 0x00 ‖ for stellar then evm: borsh(chain) ‖ borsh(address) ‖ borsh(Vec<u8> signature))` (Ed25519 over
+  the message itself; core `walletRecordSessionMessage`, `signWalletRecordSession`, `verifyWalletRecordSession`, zip215
+  off). It covers every field of the body and the env, signer, app and scope the API supplies. It is never another
+  session-key signature, nor another one it: the session key signs only the contract's `"hana-id-session-v1:"`
+  messages, the vault share actions' `"hana-id-vault-v1:"` and the identity token's `"hana-id-identity-v1:"`, fixed
+  layouts the vault builds itself (it never signs caller-chosen bytes with that key); this domain differs from each in
+  its first 8 bytes and none is a prefix of another, and Ed25519 binds the exact message (tested in
+  `packages/core/test/wallet-record.test.ts`). The chain-key proofs stay: the session signature proves the vault, the
+  chain-key ones that it holds those keys. D311's raw-EVM residual is unchanged (the attacker still needs its own
+  session's key, so the row stays under its own user).
 
 ### D312. The user id is the usage ledger's uid, `hu_` + Crockford base32; the Support ID is its first 8 characters
 - Date 2026-11-04 · Status: to confirm (decided while building D310) · Built on `feat/wallet-directory`
@@ -4703,6 +4722,10 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   secret to keep for the same job).
 - Note: a partner sees the user id and the Support ID (D310 point 5), a per-scope pseudonym like the token's `sub`.
   `USER_ID_KEY` must never be rotated within a contract term (D224): a new key is a new id for every user.
+- **Amended 2026-11-04 by D346:** `hu_…` is now the **internal id**, staff only (the row's key and the join to the
+  ledger). The id partners see ("User ID") is the identity token's `sub` (`u1_…`, `end_users.token_sub`), and the
+  Support ID is cut from that, no longer from `hu_…`. The rejection of the token's `sub` above is reversed: partners
+  wanted one id, the one their backends already store (Privy's DID).
 
 ### D313. `POST /v1/wallets/record`: the vault gate, the records, the session on that exact path; no session-key signature
 - Date 2026-11-04 · Status: to confirm (decided while building D310) · Built on `feat/wallet-directory`
@@ -4719,6 +4742,14 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   it relays nothing.
 - `HOT_DB_SCHEMA` stays 9: an API on a database without 0011 still serves every login; only the record answers 503
   (`directory_write_failed`, logged `no_table`) and the syncs log the same.
+- **Amended 2026-11-04 (security review finding; branch `feat/user-id-identity-sub`):** "no session-key signature" was
+  wrong: a chain key's signature binds a session key it names, not one its signer holds, so anyone could attach their
+  own address to a victim's live session (D311's amendment). The body now carries `sessionSignature` (64 bytes, D311's
+  session message) and the endpoint checks it against `sessionPublicKey` right after the chain-key records and before
+  any key check, chain read or write (`401 invalid_signature`; a missing or malformed one is `400 bad_request`). Still
+  no single-use marker: a replay within ±5 min rewrites the same rows, outside it is `stale_record`.
+- **Amended 2026-11-04 by D346:** `directory_unavailable` also when `IDENTITY_SUB_KEY` is missing or malformed (the
+  User ID and Support ID come from it); the log's `code` says which (`no_user_id_key`, `no_sub_key`, `bad_sub_key`).
 
 ### D314. Identities kept current from chain reads after the API's own relays; one row per identity per scope
 - Date 2026-11-04 · Status: to confirm (decided while building D310) · Built on `feat/wallet-directory`
@@ -4758,6 +4789,11 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
     a Google account is a user. Another org's user is `not_found`, exactly as no user. Each call is one SELECT (cost 1).
   - Pages are newest first by last seen, with a `lastSeenAt:userId` cursor.
 - Rejected: one shape for both with fields blanked (one mapping bug away from a sub reaching a partner).
+- **Amended 2026-11-04 by D346:** `userId` in both shapes is now the User ID (`u1_…`, the identity token's `sub`);
+  `StaffUser` adds `internalId` (`hu_…`); `PartnerUser`'s keys are unchanged and its query never selects
+  `end_users.user_id`. `getUser` takes `{userId}` (u1_) on both, or `{internalId}` (hu_) for staff, exactly one;
+  `findUsers` also takes an internal id (any case). A partner's search by an internal id is `bad_request`, as a sub is.
+  Pages tie by User ID, so the cursor is `lastSeenAt:u1_…` (no internal id in a partner's hands).
 
 ### D316. The admin CLI reads the wallet directory without the statement in a process argument
 - Date 2026-11-04 · Status: to confirm (decided while building D310) · Built on `feat/wallet-directory`
@@ -4770,6 +4806,8 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   are several) and `--user <hu_…|HANA-XXXX-XXXX>` start from the wallet directory and join each identity's address from
   the issuer when the env has one (they also work without one); a stdin line is read as whichever it is. The other
   app commands keep `wrangler --command` (their statements hold no personal data).
+- **Amended 2026-11-04 by D346:** every user line shows all three ids (`u1_… (HANA-XXXX-XXXX; internal hu_…)`), and
+  `--user` takes `u1_…` (exact case), `hu_…` (any case) or a Support ID.
 
 ### D317. The vault reports the wallet once per login, in the background, with a 15 s limit and no retry
 - Date 2026-11-04 · Status: to confirm (decided while building D310) · Built on `feat/wallet-directory`
@@ -4784,6 +4822,54 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   login (D310). The session keeps the record's EVM digest and refuses a raw EVM request for it (D179's rule, D311).
 - Rejected: awaiting it (a slow API would slow every login); retrying (a storm against an API that is down, for rows
   the next login writes); sending it from the export window (its login opens no wallet session).
+- **Amended 2026-11-04 (security review; D311 and D313 as amended):** after the two chain keys sign (synchronously,
+  PRK checked live first), the session key signs the whole request (`signWalletRecordSession`, asynchronous WebCrypto);
+  the record's EVM digest is set on the session before that first await, and nothing is sent if the session changed
+  meanwhile.
+
+## Partner User ID = the identity token's `sub`; the Support ID its short form (branch `feat/user-id-identity-sub`), 2026-11-04
+
+### D346. Partners see one user id, the identity token's `sub`; the Support ID is its first 40 bits; `hu_…` is internal
+- Date 2026-11-04 · Status: confirmed by the user (2026-11-04: "ok go with your recommendation") · Built on
+  `feat/user-id-identity-sub` (not merged, not deployed; hot-DB migration 0011 still applied nowhere) · Amends D276,
+  D312, D313, D315, D316 · Source: the wallet directory review (D310–D317), Privy's DID
+- Decision:
+  1. **User ID** (what partners see, like Privy's DID) is the identity token's `sub`: `"u1_" ‖ b64url(HMAC-SHA256(
+     IDENTITY_SUB_KEY, "hana-id/idt-sub/v1" ‖ 0x00 ‖ borsh(scope_id) ‖ borsh(root_provider) ‖ borsh(root_sub))[0..16])`,
+     computed with core `identitySub` (the token's own code, not a copy). The value the partner's backend already
+     stores from the token. Used in `ConsoleRpc.listUsers` / `getUser` (field `userId`), their search and the partner
+     console. Stored as `end_users.token_sub` (unique index).
+  2. **Support ID** is the User ID's short form: `"HANA-" ‖ c[0..4] ‖ "-" ‖ c[4..8]` with `c` = Crockford base32
+     (alphabet `0123456789ABCDEFGHJKMNPQRSTVWXYZ`, most significant bit first) of the first 5 bytes (40 bits) of the
+     same 16 HMAC bytes the User ID encodes. 8 characters exactly, no padding, D276's format kept. Anyone holding a User
+     ID can compute it without a key (decode the 22 base64url characters, take 5 bytes): a partner can show it next to
+     its own user records. It is not a visible prefix of the `u1_` text (base64url and base32 split the bits apart).
+     Pinned against the identity token's vectors (`packages/console-core/test/users.test.ts`: `u1_EcoIFjT5lAWZsk0862e8Tg`
+     → `HANA-2750-G5HM`). Stored as `end_users.support_code` (indexed); console-core `supportIdOf(userId)`.
+  3. **Internal id** `hu_…` (D312's, the usage ledger's uid under `USER_ID_KEY`) stays: the hot DB's key and the
+     join to the ledger's events. Staff only: `AdminRpc` (`StaffUser.internalId`, `getUser({internalId})`,
+     `findUsers`) and the CLI. Never in a `ConsoleRpc` answer, cursor or accepted input (a search by it is
+     `bad_request`, as a sub's is).
+  4. **Staff** (`AdminRpc`, `admin user:*`) see all three and search by any of them.
+  5. **Without `IDENTITY_SUB_KEY`** (missing or malformed) nothing is recorded, as without `USER_ID_KEY`: the record
+     answers `503 directory_unavailable`, the login syncs write nothing, the log says which key (`no_sub_key`,
+     `bad_sub_key`, `no_user_id_key`). A row without the id partners see would be a user the console can't name. Every
+     env that mints identity tokens has the key already (D127).
+- Why: one id across the token, the console and support, so a partner never maps between two pseudonyms; D312's
+  reason for `hu_…` (joining the ledger) holds for staff, who keep it.
+- Main trade-off: the Support ID now needs a directory row to resolve (the ledger keys on `hu_…`, so a code no longer
+  is a prefix of a ledger uid): a user who hasn't logged in since the directory's deploy has no resolvable Support ID
+  (D276's ledger-only fallback is gone). The 40 bits collide as before (every match listed).
+- Rejected: keeping `hu_…` as the partner id (D312's choice: two pseudonyms for one user at the partner); a Support ID
+  from `hu_…` beside a `u1_` User ID (a partner could not compute it from what it stores); a new key for the code.
+- Not changed: wallet derivation, paths and every address (the ids are computed from the root identity, beside it).
+  `IDENTITY_SUB_KEY` and `USER_ID_KEY` are never rotated (D127, D224): a new one would be new ids for every user.
+- Not built: the vault and popup don't show a Support ID yet (D276 planned it in `hana_status` and the popup's account
+  view, from the API's session answers); when built it must come from the API (`supportIdOf(sub)`), never be derived
+  anywhere else.
+- RPC change for C10: `PartnerUser.userId` is now `u1_…` (same key, new value); `ConsoleRpc.getUser({userId})` takes
+  `u1_…`; the page cursor is `lastSeenAt:u1_…`. `StaffUser` adds `internalId`; `AdminRpc.getUser` takes `{userId}` or
+  `{internalId}`.
 
 ## Batch C11: the files Worker and logos (branch `feat/batch-c-11`), 2026-11-04
 
@@ -5119,6 +5205,8 @@ decided while building, to confirm.
 
 | Was | Now | Source |
 |---|---|---|
+| The wallet directory's user id shown to partners is `hu_…` (the ledger's uid) and the Support ID its first 8 characters (D312, D276) | The User ID is the identity token's `sub` (`u1_…`); the Support ID is Crockford base32 of its first 5 bytes; `hu_…` is the internal id, staff only (D346) | `packages/console-core/src/users.ts`; `apps/api/src/directory/` |
+| `POST /v1/wallets/record` needs no session-key signature (D313) | It needs the session key's signature over the whole record (D311, D313 amended: a security review finding) | `packages/core/src/wallet-record.ts`; `apps/api/src/directory/record.ts` |
 | The console's hourly purge deletes a replaced logo's R2 object, then its row (D244) | Its row first (only while still marked), then the object; the rows come back if the delete fails (D301) | `apps/console/src/cron.ts` `purgeLogos` |
 | Local git only, branch `develop`, no remotes (batch A) | Remote `Hana-Technology/hana-id`; feature branches, PRs into `develop`, `main` for releases | `docs/batch-a-spec.md`; CLAUDE.md |
 | One relayer key pool, 300 Tgas for everything (batch A) | Two pools, per-method gas (D19) | `docs/batch-a2-shared-client.md` |
@@ -5343,6 +5431,15 @@ over D269's directory) and D276 (the Support ID made consistent with D269), belo
 - Amends in text only: D96's "it reveals no email or Google account" now holds for partners; staff reach the
   directory (D269). `docs/email-login-spec.md` ("Support ID lookups show … never a `sub` or address") and
   `docs/hana-home-spec.md` "Support ID" still say otherwise. They are to be aligned once this is confirmed.
+- **Amended 2026-11-04 by D346 (confirmed by the user): the code's derivation.** The code is now the Crockford base32
+  of the first 5 bytes of the identity token's `sub` HMAC (`IDENTITY_SUB_KEY`, the 16 bytes `u1_…` encodes), no
+  longer of the uid: alternative (b) above, taken so the partner's one id (the `sub`) and its Support ID are the same
+  user's, and a partner can compute the code from the `sub` it stores. The format `HANA-XXXX-XXXX` is unchanged.
+  Code → user is `end_users.support_code` in the hot DB (D312, built), then `end_users.user_id` (the uid, `hu_…`) for
+  the ledger; the issuer's `uid` column and `IssuerRpc.uid` above are no longer needed for it, and the ledger-only
+  fallback (a uid prefix) is gone: a user with no directory row since the deploy has no resolvable code.
+  "Where it is shown" still stands as planned and is not built: neither `/v1/login`, `/v1/sessions`, `hana_status`
+  nor the popup carries a Support ID yet.
 
 ## Dev env email limits, 2026-11-04
 

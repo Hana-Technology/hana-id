@@ -3,7 +3,8 @@
 **Status: APPROVED (2026-10-30); build steps 1–4 (no email claim) merged (D170–D179) and deployed on sandbox-dev
 2026-11-02; step 8 built on `feat/identity-token-8` (D210–D214): the watchdog's JWKS pin check plus an outside probe,
 which detect a key served to everyone but not one cloaked from them (partner-side pinning prevents; D210); step 7's
-code (the KMS signer) merged (D215–D219), its AWS setup not done; steps 5–6 not built.** The current state is in the reference docs (`api.md` "Identity token", `integration.md`
+code (the KMS signer) merged (D215–D219), its AWS setup not done; steps 5–6 not built. Since D346 (2026-11-04, branch
+`feat/user-id-identity-sub`) the `sub` is also the wallet directory's User ID and the Support ID's source.** The current state is in the reference docs (`api.md` "Identity token", `integration.md`
 section 15, `architecture.md`, `security.md`, `operations.md` "Identity token keys"). Specifies `docs/decisions.md` D120 (a short-lived JWT a partner's
 backend can verify, with an opt-in verified email per app). The user answered all 16
 [open questions](#open-questions-for-the-user) on 2026-10-30, each with the recommended option A; recorded as D127.
@@ -221,7 +222,7 @@ Payload (example, sandbox-dev):
 |---|---|---|---|
 | `iss` | yes | the manifest's `identityToken.iss`; `{apiUrl}/v1/identity` on sandbox-dev | Differs from the email issuer's `{apiUrl}/v1/email` and from Google's. A production hostname to fix before partners go live ([Q14](#open-questions-for-the-user)) |
 | `aud` | yes | the D1 `apps.id` (`app_…`) | Not the publishable key (that is a credential-shaped string partners might log or rotate). A test app and a live app have different ids and scopes (D51) |
-| `sub` | yes | `"u1_" ‖ b64url(HMAC-SHA256(IDENTITY_SUB_KEY, "hana-id/idt-sub/v1" ‖ 0x00 ‖ borsh(scope_id) ‖ borsh(root_provider) ‖ borsh(root_sub))[0..16])`, 25 characters | Per **scope**, from the account's root identity, `key_index` dropped ([below](#sub-the-per-app-pseudonymous-id); [Q1](#open-questions-for-the-user)) |
+| `sub` | yes | `"u1_" ‖ b64url(HMAC-SHA256(IDENTITY_SUB_KEY, "hana-id/idt-sub/v1" ‖ 0x00 ‖ borsh(scope_id) ‖ borsh(root_provider) ‖ borsh(root_sub))[0..16])`, 25 characters | Per **scope**, from the account's root identity, `key_index` dropped ([below](#sub-the-per-app-pseudonymous-id); [Q1](#open-questions-for-the-user)). It is also the partner console's User ID, and the Support ID `HANA-XXXX-XXXX` is its short form: Crockford base32 of the first 5 of those 16 bytes (D346) |
 | `sid` | yes | `"s1_" ‖ b64url(HMAC-SHA256(IDENTITY_SUB_KEY, "hana-id/idt-sid/v1" ‖ 0x00 ‖ borsh(app_id) ‖ session_pk)[0..16])` | One value per session key: shared by every tab and reload of that session, new at every interactive login, never repeated ([Q15](#open-questions-for-the-user)) |
 | `iat`, `exp` | yes | seconds; `exp ≤ iat + 3600`, capped at the session's end ([Lifetime](#lifetime-refresh-and-caching)) | No `nbf` (equal to `iat`) |
 | `jti` | yes | 16 random bytes, b64url | For a partner's own replay or audit logic; Hana keeps no per-token log |

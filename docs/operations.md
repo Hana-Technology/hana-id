@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-04 (branch `feat/wallet-directory`: "Wallet directory (hot-DB migration 0011)":
+Last verified against code: 2026-11-04 (branch `feat/user-id-identity-sub`: "Wallet directory (hot-DB migration 0011)": both keys, the deploy pairing for the session signature, the three ids in `user:*`, the log codes; "Admin CLI"'s `--user`; D346); 2026-11-04 (branch `feat/wallet-directory`: "Wallet directory (hot-DB migration 0011)":
 its prerequisites, the migration and deploy order, reading it with the CLI, its log events; the `user:*` lines in "Admin
 CLI" and "User directory (D269)"; D310–D317); 2026-11-04 (branch `feat/batch-c-9`, merged with `develop` @ bd0c9ea: "Partner console
 Worker … and console-auth": setup step 11 (the console's Google client, its JSON in `.secrets/<env>/`, the secret
@@ -682,16 +682,21 @@ deploy. Logins are unaffected either way; events in between are not recorded.
 
 ## Wallet directory (hot-DB migration 0011)
 
-Branch `feat/wallet-directory` (D310–D317; not merged, nothing deployed). After each login the vault reports the
-wallet's Stellar and EVM addresses, each signed by its own key, to `POST /v1/wallets/record`; the API checks them
-against the live session on chain and keeps, in its own D1, each user (`hu_…`, its Support ID `HANA-XXXX-XXXX`), the
-wallets and the account's identities (`docs/architecture.md` "Wallet directory", `docs/api.md`). It never fails or
+D310–D317 merged into `develop`; D346's ids and the record's session signature on `feat/user-id-identity-sub` (not
+merged); nothing deployed, 0011 applied in no env. After each login the vault reports the wallet's Stellar and EVM
+addresses, each signed by its own key, with the whole request signed by the session key, to `POST /v1/wallets/record`;
+the API checks them against the live session on chain and keeps, in its own D1, each user with three ids (the User
+ID partners see, `u1_…`, which is the identity token's `sub`; its Support ID `HANA-XXXX-XXXX`; the staff-only internal
+id `hu_…`, the ledger's uid; D346), the wallets and the account's identities (`docs/architecture.md` "Wallet directory", `docs/api.md`). It never fails or
 slows a login. There is no backfill: a user appears with wallets at their next login after the deploy.
 
 **Prerequisites.** `USER_ID_KEY` on the API Worker (the uid key: "Usage capture" step 4, `usage-setup <env>
-user-id-key`; it needs no Neon). Without it every record answers `503 directory_unavailable` and the API logs
-`directory_unavailable` (`missing_key`) at most every 10 minutes per isolate; logins are unaffected. Never rotate it
-within a contract term: every user would get a new user id.
+user-id-key`; it needs no Neon) and `IDENTITY_SUB_KEY` (the identity token's `sub` key, "Identity token keys"; already
+set on every env that mints tokens, sandbox-dev included). Without either every record answers `503
+directory_unavailable` and the API logs `directory_unavailable` (`no_user_id_key`, `no_sub_key` or `bad_sub_key`) at
+most every 10 minutes per isolate; logins are unaffected. Never rotate either within a contract term: every user would
+get a new internal id (`USER_ID_KEY`) or a new User ID and Support ID (`IDENTITY_SUB_KEY`, which also changes every
+partner's token `sub`).
 
 **Applying it on sandbox-dev** (the user runs this, from the main checkout; additive, three new tables, no rollback
 step: an older Worker ignores them). Take a Time Travel bookmark first ("Restoring a D1 database (Time Travel)"), then:
@@ -705,7 +710,9 @@ corepack pnpm --filter @hana-id/api run deploy                                  
 
 Order: the migration, then the API, then the vault bundle. In another order nothing breaks: an API without 0011
 answers `503 directory_write_failed` and logs `directory_write_failed` (`no_table`), and a vault without the record
-sends nothing. `GET /v1/health` keeps `hotDb: 9` (D313). Other envs: the same with `hana-id-<env>`.
+sends nothing. The API and the vault must both be at least `feat/user-id-identity-sub`'s: a vault without the
+session signature gets `400 bad_request` from a newer API (and a newer vault's from an older API), so nothing is
+recorded until both are deployed; logins are unaffected either way. `GET /v1/health` keeps `hotDb: 9` (D313). Other envs: the same with `hana-id-<env>`.
 
 **Checking it.** Log in on the demo, then `admin sandbox-dev user:find --remote --address <the G… or 0x… address the
 demo shows>`: one user, both wallets, the Google (or email) identity as the account root.
@@ -713,11 +720,13 @@ demo shows>`: one user, both wallets, the Google (or email) identity as the acco
 **Reading it** (Hana staff; `$A` as in "User directory (D269)"):
 
 ```sh
-$A user:list --remote                            # each identity also shows its user id, Support ID, role and wallets per scope
+$A user:list --remote                            # each identity also shows its user (u1_… (HANA-…; internal hu_…)), role and wallets per scope
 $A user:find --remote --address G…               # every user listing that wallet (warned when more than one)
 $A user:find --remote --address 0x…              # any case
-$A user:find --remote --user HANA-XXXX-XXXX      # or hu_…; any case, with or without HANA- and dashes
-$A user:find --remote                            # an address, sub, wallet, user id or Support ID on stdin
+$A user:find --remote --user HANA-XXXX-XXXX      # any case, with or without HANA- and dashes
+$A user:find --remote --user u1_…                # the User ID a partner sends (its token's sub; exact case)
+$A user:find --remote --user hu_…                # the internal id (the ledger's uid; any case)
+$A user:find --remote                            # an address, sub, wallet, User ID, internal id or Support ID on stdin
 ```
 
 These read the API's D1 the way the issuer's is read (D316): locally the statement in a 0600 file under
@@ -729,9 +738,11 @@ for this terminal only, as in "User directory (D269)".
 
 **What to watch** (Worker logs): `directory_write_failed` (error: `no_table` before 0011, `internal` otherwise),
 `directory_sync_failed` (warn, `near_unavailable`: an identity sync after a login or a link change couldn't read the
-chain; the next one rewrites the account), `directory_unavailable` (warn, `missing_key`). The request log's
-`/v1/wallets/record` lines: `bad_wallet_record` or `session_mismatch` in volume are someone probing, `stale_record`
-a vault with a wrong clock.
+chain; the next one rewrites the account), `directory_unavailable` (warn, `no_user_id_key`, `no_sub_key` or
+`bad_sub_key`: set the named key). The request log's `/v1/wallets/record` lines: `bad_wallet_record`,
+`invalid_signature` (a record without its session's own signature: someone naming another user's session) or
+`session_mismatch` in volume are someone probing, `stale_record` a vault with a wrong clock, `bad_request` in volume
+right after a deploy a vault and API from before and after the session signature.
 
 ## Hot DB migration 0006 and the new gate (batch C3, milestone M1)
 
@@ -1266,7 +1277,7 @@ admin <env> owner:proposals [--limit 20] [--json]
 admin <env> governance:status [--json]
 admin <env> council:replace-member --remove <old member> --add <new member> [--member <m>] [--approve-with <m>] [--yes]
 admin <env> user:list [--app <app id>] [--provider email|google] [--search <part of the address> | -] [--limit 50] [--json] [--remote]
-admin <env> user:find [--email <address> | --sub <sub> | --address <G…|0x…> | --user <hu_…|HANA-XXXX-XXXX>] [--provider email|google] [--json] [--remote]   # none: read from stdin
+admin <env> user:find [--email <address> | --sub <sub> | --address <G…|0x…> | --user <u1_…|hu_…|HANA-XXXX-XXXX>] [--provider email|google] [--json] [--remote]   # none: read from stdin
 ```
 
 The `user:*` commands read the user directory in the email issuer's own D1, read only: "User directory (D269)" under
@@ -1653,7 +1664,7 @@ below; `gen` and the schema refuse a Worker-secret key off testnet).
 | `identity-signing-key-next.json` | a rotation's incoming key (`next`), published | no, until `switch --to next` |
 | `identity-signing-key-previous.json` | the key a switch replaced, still published so its tokens keep verifying | yes, until `retire --key previous` deletes its slot |
 | `identity-slots.json` | which Worker slot holds which kid (public data) | — |
-| `identity-sub-key` | `IDENTITY_SUB_KEY`, base64 of 32 bytes. **Never rotated** (a new key changes every user's `sub` at every partner); back it up offline with the council backup (D81) | yes |
+| `identity-sub-key` | `IDENTITY_SUB_KEY`, base64 of 32 bytes. **Never rotated** (a new key changes every user's `sub` at every partner, and so every User ID and Support ID, D346); back it up offline with the council backup (D81) | yes |
 
 Every command below prints its plan without `--yes`. After `init`, `next`, `switch` and `retire`, put the changed
 `envs/<env>.json` in the repo, run `gen` and deploy the API: the JWKS and the active kid come from the manifest.
@@ -2467,7 +2478,7 @@ $A user:find --remote --json
 
 Each user: the address, provider, `sub`, verified, first and last seen, and per app its scope and the identity's own
 on-chain path `{scope}#{provider}#{sub}#0` (a linked member's wallet is its account root's: `get_identity`); with the
-wallet directory (migration 0011, "Wallet directory (hot-DB migration 0011)"), per scope its user id, Support ID, role
+wallet directory (migration 0011, "Wallet directory (hot-DB migration 0011)"), per scope its User ID (`u1_…`), Support ID, internal id (`hu_…`), role
 in the account and the account's wallets, read from the API's D1 the same private way. An
 exact address matches as typed (lowercased: Google rows) and normalized (`@hana-id/email`: email rows, so
 `Alice.Smith@gmail.com` finds `alicesmith@gmail.com`). **Unverified Google rows** (`email_verified = 0`):

@@ -1,6 +1,6 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
-Last verified against code: 2026-11-04 (branch `feat/wallet-directory`: `POST /v1/wallets/record` (Routing, Rate limits,
+Last verified against code: 2026-11-04 (branch `feat/user-id-identity-sub`: `POST /v1/wallets/record`'s `sessionSignature` and key checks (Routing, its section), `ConsoleRpc` / `AdminRpc` user reads with the User ID `u1_…`, the Support ID from it and the staff-only internal id, `end_users.token_sub` in "D1 schema", `directory_unavailable`'s codes; D346, D311/D313 amended); 2026-11-04 (branch `feat/wallet-directory`: `POST /v1/wallets/record` (Routing, Rate limits,
 its section), the wallet directory's syncs after `/v1/login` and the link relays, `AdminRpc.listUsers` / `getUser` /
 `findUsers` and `ConsoleRpc.listUsers` / `getUser`, migration 0011 in "D1 schema", the new log events; D310–D317); 2026-11-04 (branch `feat/batch-c-9`, merged with `develop` @ bd0c9ea: "Console Worker and
 console-auth": partner sign-in (`/api/auth/start`, the auth origin's `/start` and `/callback` through `AuthHandler`,
@@ -85,7 +85,7 @@ page origins never reach the API routes: a request whose URL origin is `VAULT_OR
 | `/v1/login-relay/<relayId>` | GET, POST, OPTIONS | `login-relay.ts` | Hana origin only; read key for GET | B |
 | `/v1/vault/shares`, `/unlock`, `/touch`, `/revoke`, `/revoke-all` | POST, OPTIONS | `vault/endpoints.ts` | publishable key + vault origin + session signature (vault message) | B |
 | `/v1/identity/token` | POST, OPTIONS | `identity/token.ts` | publishable key + vault origin + session signature (identity message) | I |
-| `/v1/wallets/record` | POST, OPTIONS | `directory/record.ts` | publishable key + vault origin + each address's own signature (wallet record) + a live session on that path | W |
+| `/v1/wallets/record` | POST, OPTIONS | `directory/record.ts` | publishable key + vault origin + each address's own signature (wallet record) + the session key's signature over the request + a live session on that path | W |
 | `/v1/identity/jwks.json`, `/v1/identity/.well-known/openid-configuration` | GET, HEAD, OPTIONS | `identity/public.ts` | none (public keys only) | I |
 | `/v1/owner-actions` | POST, OPTIONS | `handlers.ts` | OIDC owner token inside the args | |
 | cron `*/15 * * * *` | — | `issuer-keys.ts`, `vault/cron.ts`, `key-observations.ts`, `identity/maintenance.ts`, `guarded/cron.ts`, `changes/drift.ts` | — | vault part B; JWKS sync every 15 min since G; identity counts' retention I; guarded changes and drift C |
@@ -681,8 +681,8 @@ changes nothing and a replay revokes nothing.
 
 `directory/record.ts` (D310, D313). The vault sends it once after each login, in the background (D317). Body
 (≤ 4 KiB, exactly these fields): `{sessionPublicKey: number[32], issuedAtMs, path, wallets: {stellar: {address,
-signature: number[64]}, evm: {address, signature: number[65]}}}`. Each signature is by that address's own key over the
-record statement (`@hana-id/core/wallet-record`, D311):
+signature: number[64]}, evm: {address, signature: number[65]}}, sessionSignature: number[64]}`. Each wallet signature
+is by that address's own key over the record statement (`@hana-id/core/wallet-record`, D311):
 
 ```
 "hana-id/wallet-record/v1" ‖ 0x00 ‖ borsh(ENV_NAME) ‖ borsh(SIGNER_ACCOUNT) ‖ borsh(apps.id) ‖ borsh(scope_id)
@@ -692,15 +692,27 @@ record statement (`@hana-id/core/wallet-record`, D311):
 Stellar: Ed25519 over the statement (strict RFC 8032). EVM: secp256k1 over `sha256(statement)`, `r ‖ s ‖ v`, v ∈ {27,
 28}; the address in any case, stored in EIP-55.
 
+`sessionSignature` is the session key's Ed25519 signature (strict RFC 8032) over the whole request (D311 as amended
+after a security review: the wallet signatures alone let anyone name a victim's public session key with their own
+address):
+
+```
+"hana-id/wallet-record-session/v1" ‖ 0x00 ‖ borsh(ENV_NAME) ‖ borsh(SIGNER_ACCOUNT) ‖ borsh(apps.id) ‖ borsh(scope_id)
+‖ borsh(path) ‖ session_pk(32) ‖ u64le(issuedAtMs) ‖ sha256("hana-id/wallet-record-proofs/v1" ‖ 0x00
+‖ for stellar then evm: borsh(chain) ‖ borsh(canonical address) ‖ borsh(Vec<u8> signature))
+```
+
 Checks in order: the vault gate (as "Vault endpoints") → vault limits → body (`400 bad_request`; `413` over 4 KiB) →
 `|now − issuedAtMs| ≤ 5 min` (`400 stale_record` with `serverTimeMs`) → `path` is `{app's scope}#provider#sub#key_index`
-(`400 bad_request`) → both records verify (`400 bad_wallet_record` with `chain`) → `USER_ID_KEY` usable (`503
-directory_unavailable`) → `get_session` (cached, re-read fresh before refusing, re-read every 300 ms for up to 2 s while
+(`400 bad_request`) → both records verify (`400 bad_wallet_record` with `chain`) → the session signature verifies
+against `sessionPublicKey` (`401 invalid_signature`) → `USER_ID_KEY` and `IDENTITY_SUB_KEY` usable (`503
+directory_unavailable`, D346) → `get_session` (cached, re-read fresh before refusing, re-read every 300 ms for up to 2 s while
 missing): live and unexpired (`410 session_ended`, `reason: no_session`), the app's scope (`403 scope_mismatch`;
 `502 near_unavailable`), its `path` exactly the body's (`403 session_mismatch`) → one D1 batch (`503
 directory_write_failed` when it fails, e.g. before migration 0011). `200 {recorded: true}`.
 
-What it writes (migration 0011): the user `hu_…` of the path's account root (D312) with `created_at` the MIN and
+What it writes (migration 0011): the user of the path's account root with its three ids (D346: `user_id` the internal
+id `hu_…`, D312; `token_sub` the User ID, the identity token's `sub`; `support_code`) with `created_at` the MIN and
 `last_seen_at` the MAX of `issuedAtMs`; both wallets with `first_seen_at` MIN and `last_used_at` MAX and the path's
 `key_index`; the root's identity row (role `root`, `active`). Nothing about the request is logged but the app, outcome
 and code; no signature is stored.
@@ -710,7 +722,7 @@ slowing the request: after a successful `/v1/login` (with a `linkJwt`: `get_iden
 `get_account` of its root, fresh; without one: the login's own standing read, nothing more) and after a successful
 link relay (`get_account` of the account root, fresh). Failures log `directory_sync_failed` (`near_unavailable`),
 `directory_write_failed` (`no_table` / `internal`) or, at most every 10 min per isolate, `directory_unavailable`
-(`missing_key`).
+(`no_user_id_key`, `no_sub_key` or `bad_sub_key`).
 
 ### Identity token · I
 
@@ -986,7 +998,7 @@ method: an unexpected error is logged (`event: "rpc"`, method, request id, `code
 | `proposeChange` (C6) | A member's `policy_set` or `raw_sign_on` with `stepUpJwt` (verified as for `changeOrigins`, the settings-change layout): the staff proposal's rules without the assignment wait; `proposer_sub` and `actor_sub` set |
 | `ownerAction` (C6) | `{orgId, body}`: an on-chain owner action relayed through the owner pool exactly as `POST /v1/owner-actions` relays it (the same per-IP limiter fed `clientIp`, precheck, token reservation, caps, usage event, endpoint `ConsoleRpc.ownerAction` in the request log). Console rules on top (D237): the scope must be in `scopes` with the org (`not_found`, before any chain read); the owner token's optional claims are checked strictly (`forbidden`). The claim allow-list holds here as on the endpoint, for the owner token and an `AddClient` proof alike (D274, D277: `token_has_pii`, an RpcCode `forbidden` whose message names the claim; both are public once relayed). A refusal before the relay is an RpcCode (the precheck's code first in `error`: `unknown_change: …`): `owner_nonce_mismatch`, `invalid_client_proof`, `token_used`, `not_owner`, `rate_limited`, `not_found` (scope, change, client), `conflict` (locked, last client, shared login state, a registered or shared client), `forbidden` (token), `near_unavailable` (NEAR or Google's keys), `bad_request`. Once relayed: `{ok: true, status, result?, nearTx?, code?, error?}`, the relay's own answer, a contract panic included (`status: 422`, `code: contract_rejected`). The safety methods may spend the kill-switch reserve |
 
-| `listUsers`, `getUser` (W) | The wallet directory for the org's own scopes only (`scopes.org_id`, D315): `{users: PartnerUser[], nextCursor}` newest first by last seen (`scopeId`, `search` = a wallet address, a user id or a Support ID, `cursor`, `limit` ≤ 100), `{user}`. A `PartnerUser` is `{userId, supportId, scopeId, createdAt, lastSeenAt, accounts: [{kind, status: 'active' \| 'pending'}], wallets: [{chain, address, firstSeenAt, lastUsedAt}]}`: never a sub, an identity key or an email. A sub as `search` is `bad_request`; another org's user is `not_found`. Cost 1 each |
+| `listUsers`, `getUser` (W) | The wallet directory for the org's own scopes only (`scopes.org_id`, D315, D346): `{users: PartnerUser[], nextCursor}` newest first by last seen (`scopeId`, `search` = a wallet address, a User ID `u1_…` (exact case) or a Support ID, `cursor` = `lastSeenAt:u1_…` from the last page, `limit` ≤ 100), `getUser({orgId, userId: 'u1_…'})` → `{user}`. A `PartnerUser` is `{userId, supportId, scopeId, createdAt, lastSeenAt, accounts: [{kind, status: 'active' \| 'pending'}], wallets: [{chain, address, firstSeenAt, lastUsedAt}]}`: `userId` is the identity token's `sub` (the value the partner's backend stores), `supportId` its short form `HANA-XXXX-XXXX`; never the internal id `hu_…`, a sub, an identity key or an email. A sub or an internal id as `search` is `bad_request` (and `getUser` with one); another org's user is `not_found`. Cost 1 each |
 
 Not built yet: `usage`, `statements`, `ledger` (C12); calling them is an RPC error (no such method).
 
@@ -1020,7 +1032,7 @@ no budget, plus:
 | `setSecurityContacts`, `getSecurityContacts` | 1–10 lowercased emails replacing the set (CAS on the set as read); `org.security_contacts` lists `old` and `new` |
 | `listScopes`, `changesSince`, `securityEvents`, `markSecurityEventNotified` | The feeds: scopes by `scope_id` cursor, `app_changes` after a `seq`, security events (all or unnotified), marked once |
 | `relayerKeys` | The public keys of both pools; never a secret |
-| `listUsers`, `getUser`, `findUsers` (W) | The wallet directory for staff (D315): `listUsers({orgId?, scopeId?, cursor?, limit ≤ 200})`, `getUser({userId})` (`not_found`), `findUsers({query, provider?})` (a Stellar or EVM address: every user listing it; a user id; a Support ID, any case, with or without `HANA-` and dashes: every user whose id starts with it; else a sub, which `provider` narrows and forces), at most 50. A `StaffUser` is `{userId, supportId, scopeId, orgId, createdAt, lastSeenAt, identities: [{provider, sub, identityKey, role, status, effectiveAt, firstSeenAt, observedAt, directoryKey}], wallets: [{chain, address, keyIndex, firstSeenAt, lastUsedAt, sharedWith}]}`. `status` is read at answer time (a pending member past `effectiveAt` is `active`). The email isn't here: `directoryKey` `{provider, sub}` is the key for D275's `DirectoryRpc` (C8b) |
+| `listUsers`, `getUser`, `findUsers` (W) | The wallet directory for staff (D315): `listUsers({orgId?, scopeId?, cursor?, limit ≤ 200})`, `getUser({userId})` or `getUser({internalId})`, exactly one (`not_found`), `findUsers({query, provider?})` (a Stellar or EVM address: every user listing it; a User ID `u1_…`; an internal id `hu_…`, any case; a Support ID, any case, with or without `HANA-` and dashes: every user it is the short form of; else a sub, which `provider` narrows and forces), at most 50. A `StaffUser` is `{userId, supportId, internalId, scopeId, orgId, createdAt, lastSeenAt, identities: [{provider, sub, identityKey, role, status, effectiveAt, firstSeenAt, observedAt, directoryKey}], wallets: [{chain, address, keyIndex, firstSeenAt, lastUsedAt, sharedWith}]}`. `status` is read at answer time (a pending member past `effectiveAt` is `active`). The email isn't here: `directoryKey` `{provider, sub}` is the key for D275's `DirectoryRpc` (C8b) |
 
 Not built yet: `purgeAudit`, `deletedApps` (C13).
 
@@ -1171,7 +1183,7 @@ this key's public key, start at R with no chain read (skips up to 99 nonces) and
 | `session_markers` (C) | `app_id` PK → apps, `first_at` ms: written once, when the relay of a session-pool request on a scope with no `first_session_at` settled; the `no_session` waiver's sign besides `first_session_at` (D220). No user data | 0009 |
 | `apps` (added, L) | `login_methods` `'google'` (default) / `'email'` / `'google,email'` (CHECK): the sign-in methods the app offers (read only by `GET /v1/app` and for email tokens, never in the gate; the email issuer reads it too) | 0010 |
 | `email_usage` (L) | (`app_id` → apps, `day` `YYYY-MM-DD` UTC) PK, `email_sessions`, `links`: email logins and new links per app and day, as `identity_usage`; copied hourly to the ledger's `usage.email_counts` (D233) | 0010 |
-| `end_users` (W) | `user_id` PK (`hu_` + 26 Crockford base32 characters of the uid of the account root, D312), `support_code` (its first 8 characters, uppercase; indexed), `scope_id`, `created_at` (MIN), `last_seen_at` (MAX); indexes by scope and by recency. Personal data (a pseudonym per scope, like the ledger's uid) | 0011 |
+| `end_users` (W) | `user_id` PK (the internal id: `hu_` + 26 Crockford base32 characters of the uid of the account root, D312; staff only), `token_sub` (the User ID partners see: the identity token's `sub`, `u1_…`, 25 characters; unique, D346), `support_code` (the Support ID's 8 characters: Crockford base32 of the first 5 bytes of `token_sub`'s 16; indexed), `scope_id`, `created_at` (MIN), `last_seen_at` (MAX); indexes by scope and by recency, ties by `token_sub`. Personal data (pseudonyms per scope) | 0011 |
 | `end_user_wallets` (W) | (`user_id` → end_users, `chain` `stellar`/`evm`, `address`) PK, `key_index`, `first_seen_at` (MIN), `last_used_at` (MAX: the last login that recorded it); index on `address` (an address may be under several users: a reused key) | 0011 |
 | `end_user_identities` (W) | (`scope_id`, `identity_key` hex) PK, `user_id` → end_users (indexed), `provider`, `sub` (NULL for a member seen only on chain; indexed), `role` `root`/`member`, `status` `active`/`pending`/`unlinked`/`cancelled`, `effective_at` (a member's link; pending reads as active once passed), `first_seen_at`, `observed_at` (a write lands only when no older than the row's). Holds Google and email `sub`s: staff only; `ConsoleRpc` never selects `sub` or `identity_key` | 0011 |
 | `vault_shares` | `share_id` BLOB(16) PK, `app_id`, `session_pk` BLOB(32) UNIQUE, `path_hash` = sha256(path), `partner_origin`, `share_enc` = iv ‖ AES-GCM(KEK, K_s, aad = share_id ‖ app_id ‖ session_pk), `kek_id`, `counter`, `created_at`, `idle_until`, `abs_expires_at`, `revoked_at`; indexes (`app_id`, `path_hash`), `abs_expires_at`, `kek_id` | 0003 |
@@ -1400,7 +1412,7 @@ or email), `drift_detection` (`added`; error `code: internal`), `console_rpc` (`
 `settle_failed`), C6's `owner_cap_event_failed` and `owner_allowance_check` (`code` `owner_allowance_low` (warn),
 `near_unavailable` / `event_write_failed` (error)), and `owner_token_release_failed` with `endpoint: step_up`; the
 wallet directory's (W) `directory_write_failed` (error, `code` `no_table` / `internal`), `directory_sync_failed` (warn,
-`near_unavailable`) and `directory_unavailable` (warn, `missing_key`, at most every 10 min per isolate), each with
+`near_unavailable`) and `directory_unavailable` (warn, `no_user_id_key`, `no_sub_key` or `bad_sub_key`, at most every 10 min per isolate), each with
 `requestId`, `endpoint` and `appId` only, never a sub, an address or a user id; a console
 owner action's request line has `endpoint: ConsoleRpc.ownerAction`; and from the page
 Workers `vault_host` and `auth_page` (`code`).

@@ -1,7 +1,7 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-04 (branch `fix/abandoned-login-freeze`: "Automatic linking" step 1, the follow-up
+Last verified against code: 2026-11-04 (branch `feat/user-id-identity-sub`: the wallet directory's three ids and the record's session signature, D346 and the D311/D313 amendments: Status, "Wallet directory" steps 1, 2 and 4, "Data stores"' D1 row, the Glossary); 2026-11-04 (branch `fix/abandoned-login-freeze`: "Automatic linking" step 1, the follow-up
 channel's reads end with the login or the banners' limit; step 5, D263's reads run side by side); 2026-11-04 (branch `feat/wallet-directory`: the wallet directory, D310–D317: Status,
 Components, "Who talks to whom"'s vault row, the login's step 10, the link relays, the new "Wallet directory" flow,
 "Data stores"' D1 row (the hot DB now holds subs and wallet addresses), the Glossary); 2026-11-04 (branch `feat/batch-c-9`, merged with `develop` @ a243d6b: partner sign-in in
@@ -85,7 +85,7 @@ C6 is built (on current `develop` as `feat/batch-c-6-merge`) but not merged. The
 | Developer dashboard, admin console, billing-grade usage (batch C; `docs/batch-c-spec.md`, `docs/batch-c-build-plan.md`) | `develop`: C1–C5 | C1 (manifest fields, the Neon ledger schema, `console-core`), C2 (`packages/oidc`), C3 (migration 0006, the gate on `app_keys` and `scopes`, the CLI on it), C4 (usage capture, `session_markers`) and C5 (below) merged. **Running on sandbox-dev** (2026-11-03): migrations 0006, 0009 and 0010 applied (after a rehearsal on a scratch D1; a Time Travel bookmark from before 0006 and an export backup are kept in `.secrets`), the API has the hot DB on; usage capture is **off** (no `USAGE_DB` binding). C7 (below) is merged but not deployed; C6 is built but not merged; C8 (the admin Worker, below) is built on `feat/batch-c-8`, not merged; C9–C17 (sign-in, statements) not built (milestone M1, `docs/operations.md` "Hot DB migration 0006 and the new gate") |
 | Batch C5: the API's `ConsoleRpc` and `AdminRpc` entrypoints (CAS writes on `app_changes`, keys, settings, staff proposals, notice ack, cancel, expedite, the breaker and hot-DB budget) and drift detection | `develop` (from `feat/batch-c-5`) | Merged and in the sandbox-dev API; inert until the console (C7) and admin (C8) Workers bind them. The console Worker (C7, below) binds `ConsoleRpc` but has no route; member proposals and owner actions (C6) are built but not merged; the Neon reports (C12) not built |
 | Batch C6: member proposals (`ConsoleRpc.changeOrigins` / `proposeChange`, the API's own step-up check), `ConsoleRpc.ownerAction`, the owner-action precheck's nonce recompute, the safety budget and `owner_cap` events, the owner-pool allowance alert, the console sink scope in `deploy-contract` | `feat/batch-c-6-merge` (C6 on current `develop`, C7 included; not merged) | Code done, not deployed (milestone M3: deploy the API, then run the sink plan on sandbox-dev) |
-| The wallet directory (D310–D317): the vault's signed wallet record after each login, `POST /v1/wallets/record`, hot-DB migration 0011 (`end_users`, `end_user_wallets`, `end_user_identities`), identities kept current after `/v1/login` and the link relays, `AdminRpc` / `ConsoleRpc` user reads, `admin user:*` with wallets | `feat/wallet-directory` (not merged) | Code done, not deployed; 0011 applied nowhere. Needs `USER_ID_KEY` on the API (usage setup step 4). No UI: the staff Users screen is C8b (D275), the partner's C10 |
+| The wallet directory (D310–D317): the vault's signed wallet record after each login, `POST /v1/wallets/record`, hot-DB migration 0011 (`end_users`, `end_user_wallets`, `end_user_identities`), identities kept current after `/v1/login` and the link relays, `AdminRpc` / `ConsoleRpc` user reads, `admin user:*` with wallets | `develop` (from `feat/wallet-directory`); D346's ids and the record's session signature on `feat/user-id-identity-sub` (not merged) | Code done, not deployed; 0011 applied nowhere. Needs `USER_ID_KEY` (usage setup step 4) and `IDENTITY_SUB_KEY` (already set where identity tokens are) on the API. No UI: the staff Users screen is C8b (D275), the partner's C10 |
 | Batch C7: the console Worker backend (`apps/console`: host dispatch, the security headers and CSRF, the two emailed-link confirms over the `API` → `ConsoleRpc` binding, `StaffRpc` for the admin Worker, invites and owner grants with acceptance's data path, the session model, the hourly cron; `CONSOLE_DB` migration 0002) | `develop` (from `feat/batch-c-7`) | Merged; not deployed: it needs the manifest's dashboard blocks (setup step 12) and the M4 setup in `docs/operations.md` "Partner console Worker". On `develop` it has no public route; C9 (below) turns the route on in the config; the admin Worker (C8, below) binds `StaffRpc` |
 | Batch C8: the admin Worker (`apps/admin`: the Access JWT check on every `/api/*` with the staff list, host dispatch and the headers, the staff BFF and a plain SPA over `AdminRpc` and `StaffRpc`, `EmailSender` with Resend, the blocking notices acked only after every send, the feed with cursors in `ops.state`, the on-chain watcher; `gen-wrangler` with the admin Hyperdrive binding) | `feat/batch-c-8` (not merged) | Code done, not deployed (milestone M4: Access, Resend, the link and email secrets, the admin Hyperdrive id; `docs/operations.md` "Admin Worker"). D278–D285 |
 | Batch C9: partner sign-in (the Google code flow with PKCE on console-auth, handoff codes, `__Host-` sessions, the membership rules and invite acceptance, `GET /api/me`, the read-only screens and SPA, the console route in the config) and the open-question-1 spike | `feat/batch-c-9` (not merged) | Code done, tests green, not deployed (milestone M4: setup steps 5, 11, 12; `docs/operations.md` "Partner console Worker"); the spike not run (D295). Write paths (C10) not built |
@@ -433,7 +433,7 @@ message.
    wallet and no account, asks (`prove`) for the account root's proof over `link_account`, and relays
    `POST /v1/link`. The link is pending for `change_delay_ms`.
 
-### Wallet directory (D310–D317, branch `feat/wallet-directory`)
+### Wallet directory (D310–D317, D346)
 
 Code: `packages/core/src/wallet-record.ts`, `packages/web/src/vault/wallet-record.ts`, `apps/api/src/directory/`,
 `packages/console-core/src/users.ts`, `scripts/lib/admin-users.ts`. Hot-DB migration 0011.
@@ -442,24 +442,35 @@ Code: `packages/core/src/wallet-record.ts`, `packages/web/src/vault/wallet-recor
    the vault signs, with PRK, right after (a 0 ms timer, only while that session is still current), one record per
    chain: the Stellar key (Ed25519) over the statement
    `"hana-id/wallet-record/v1" ‖ 0x00 ‖ env ‖ signer ‖ app ‖ scope ‖ path ‖ chain ‖ address ‖ session_pk ‖ issued_at_ms`
-   (borsh strings), the EVM key (ECDSA) over its sha256 (D311). The path is the session's, so a linked member reports
-   its account root's wallet. It sends `POST /v1/wallets/record` without awaiting it: one call, aborted after 15 s, no
-   retry, every failure dropped (D317). Only addresses and signatures leave the vault. A raw EVM request for the
-   record's digest is refused for that session (D179).
-2. **The endpoint (API).** The vault gate and its limits, ±5 min on `issuedAtMs`, both records verified, `USER_ID_KEY`
-   present, the session live on chain in the app's scope and on exactly that path (`get_session`, as the identity token
-   reads it), then one D1 batch: the user (`hu_` + the uid of the path's account root, D312), both wallets
-   (`first_seen_at` MIN, `last_used_at` MAX: the last login, not on-chain activity), the root's identity row (D313).
+   (borsh strings), the EVM key (ECDSA) over its sha256 (D311). Then the session key (its non-extractable WebCrypto
+   key) signs the whole request: `"hana-id/wallet-record-session/v1" ‖ 0x00 ‖ env ‖ signer ‖ app ‖ scope ‖ path ‖
+   session_pk ‖ issued_at_ms ‖ sha256(both addresses and chain signatures)` (D311 as amended after a security review:
+   without it anyone could list their own address under a victim's public session key). The path is the session's,
+   so a linked member reports its account root's wallet. It sends `POST /v1/wallets/record` without awaiting it: one
+   call, aborted after 15 s, no retry, every failure dropped (D317). Only addresses and signatures leave the vault. A
+   raw EVM request for the record's digest is refused for that session (D179).
+2. **The endpoint (API).** The vault gate and its limits, ±5 min on `issuedAtMs`, both records verified, the session
+   signature verified against the body's session key, `USER_ID_KEY` and `IDENTITY_SUB_KEY` present (D346), the session
+   live on chain in the app's scope and on exactly that path (`get_session`, as the identity token reads it), then one
+   D1 batch: the user of the path's account root with its three ids (below), both wallets (`first_seen_at` MIN,
+   `last_used_at` MAX: the last login, not on-chain activity), the root's identity row (D313).
+   **A user's ids (D346)**, all from the scope and the root's provider and sub: the **User ID** partners see, the
+   identity token's `sub` (`u1_…`, `IDENTITY_SUB_KEY`, computed with core `identitySub`); its **Support ID**
+   `HANA-XXXX-XXXX` (Crockford base32 of the first 5 bytes of the same HMAC); and the **internal id** `hu_…` (the uid
+   under `USER_ID_KEY`, the ledger's pseudonym, D312), the row's key, for staff only. Without either key nothing is
+   written (`directory_unavailable`).
 3. **Identities (API, after the answer).** After a successful link relay, a fresh `get_account` of the account root
    rewrites the account's rows (members active or pending, removed ones `unlinked` / `cancelled`); after a successful
    `/v1/login`, a linked login reads the session identity's account fresh, a plain one reuses the login's standing read
    (the user's last seen, the root's row, a member's own row). Rows are per (scope, identity key) and move when a member
    joins another account; an older read never overwrites a newer row (D314).
-4. **Reads.** Staff: `AdminRpc.listUsers` / `getUser` / `findUsers` (by wallet, user id, Support ID or sub) with
-   identities and subs; the email comes from the issuer's directory through D275's `DirectoryRpc`, joined on each
-   identity's `directoryKey` (not built). Partners: `ConsoleRpc.listUsers` / `getUser` for their org's scopes only,
-   with the user id, Support ID, times, account kinds and wallets, never a sub, identity key or email (D315). The CLI:
-   `admin user:list` / `user:find` with each identity's user and wallets, `user:find --address` / `--user` (D316).
+4. **Reads.** Staff: `AdminRpc.listUsers` / `getUser` / `findUsers` (by wallet, User ID, internal id, Support ID or
+   sub) with all three ids, identities and subs; the email comes from the issuer's directory through D275's
+   `DirectoryRpc`, joined on each identity's `directoryKey` (not built). Partners: `ConsoleRpc.listUsers` / `getUser`
+   for their org's scopes only, with the User ID (`u1_…`), Support ID, times, account kinds and wallets, never the
+   internal id, a sub, an identity key or an email (D315, D346). The CLI: `admin user:list` / `user:find` with each
+   identity's user (all three ids) and wallets, `user:find --address` / `--user` (D316). The vault and the popup don't
+   show a Support ID yet (D276's plan, not built).
 
 ### Login, two transactions (split path)
 
@@ -769,7 +780,7 @@ would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
 |---|---|---|
 | `hana-signer` state (public) | Config (owner, mpc, domain, sponsors, console audiences, shared clients, change delay), issuers and Google RSA public keys, scopes (owners, clients, pending changes, `action_nonce`), client index, quarantine / retired-client records, sessions (`path`, `scope_id`, `expires_at_ms`, `max_uses`, `used`), revoke tombstones, expiry FIFO | Keys, S, PRK |
 | NEAR transaction args (public forever) | Google ID tokens used in `create_session*`, register proofs, owner tokens; session signatures; BLS `pk1`/`pk2`; MPC responses (encrypted to `a`) | Anything usable without the session key or `a` |
-| D1 `DB` | `plans`, `scopes` (org, environment, `first_session_at`), `apps` (+ 0003 settings: `persistence`, `session_ttl_ms`, `idle_ttl_ms`, `raw_sign*`, `auto_approve_*`, `google_web_client_id`; + 0006: `org_id`, `suspended_by`, the two versions, `logo_key`, `deleted_at`), `app_keys` (publishable keys, public), `app_origins` (+ `active_from`, `change_id`), `guarded_changes`, `app_changes` (append-only ledger of every app write, actors as staff ids or `cli:<login>`), `security_events`, `org_security_contacts` (staff-set emails; none yet), `session_markers` (the first session-pool relay per app, the waiver's sign), the legacy `usage` (`sessions`, `derives`, `unlocks` per app per UTC day; not written since batch C4), `issuer_key_missing`, `vault_shares` (`share_enc` under `VAULT_KEK`, `session_pk`, `path_hash`, `partner_origin`, counter, times), `identity_issuance_hourly` (tokens per signing key and hour), `identity_usage` (tokens per app and day); with migration 0011 (branch `feat/wallet-directory`), the wallet directory: `end_users` (user id `hu_…` from the uid, Support code, scope, created, last seen), `end_user_wallets` (chain, address, key index, first seen, last used), `end_user_identities` (scope, identity key, user, provider, `sub`, role, status, `effective_at`, times): personal data, read by staff (`AdminRpc`, the CLI) and, without subs or keys, by partners for their own scopes (`ConsoleRpc`) | Plaintext `K_s`, tokens, signatures, identity tokens, `sid`, email addresses; before 0011 also no `sub`, user id or address (only `sha256(path)`) |
+| D1 `DB` | `plans`, `scopes` (org, environment, `first_session_at`), `apps` (+ 0003 settings: `persistence`, `session_ttl_ms`, `idle_ttl_ms`, `raw_sign*`, `auto_approve_*`, `google_web_client_id`; + 0006: `org_id`, `suspended_by`, the two versions, `logo_key`, `deleted_at`), `app_keys` (publishable keys, public), `app_origins` (+ `active_from`, `change_id`), `guarded_changes`, `app_changes` (append-only ledger of every app write, actors as staff ids or `cli:<login>`), `security_events`, `org_security_contacts` (staff-set emails; none yet), `session_markers` (the first session-pool relay per app, the waiver's sign), the legacy `usage` (`sessions`, `derives`, `unlocks` per app per UTC day; not written since batch C4), `issuer_key_missing`, `vault_shares` (`share_enc` under `VAULT_KEK`, `session_pk`, `path_hash`, `partner_origin`, counter, times), `identity_issuance_hourly` (tokens per signing key and hour), `identity_usage` (tokens per app and day); with migration 0011 (branch `feat/wallet-directory`), the wallet directory: `end_users` (internal id `hu_…` from the uid, User ID `token_sub` = the identity token's `sub`, Support code, scope, created, last seen; D346), `end_user_wallets` (chain, address, key index, first seen, last used), `end_user_identities` (scope, identity key, user, provider, `sub`, role, status, `effective_at`, times): personal data, read by staff (`AdminRpc`, the CLI) and, without internal ids, subs or keys, by partners for their own scopes (`ConsoleRpc`) | Plaintext `K_s`, tokens, signatures, identity tokens, `sid`, email addresses; before 0011 also no `sub`, user id or address (only `sha256(path)`) |
 | D1 `CONSOLE_DB` (console Worker only; batches C7 and C9, not deployed) | Orgs, console users (Google `sub` in clear: it must equal the on-chain owner; the email lowercased, display only, refreshed at each sign-in), members and roles, invites (the invitee's address, 90 days after the invite ends), owner grants, console sessions (2 h idle, 12 h absolute; /24 or /48 network data), auth flows (5 min; the PKCE verifier overwritten once used, the invitee's address as `login_hint`), handoff codes (the verified `{provider, sub, email, hd}` for ≤ 60 s, overwritten once used), pending step-up actions, logo objects, `audit_log` (append-only, 5 years) | Invite, cancel-link, session, flow-cookie or handoff tokens (only their sha256), Google ID or access tokens, the client secret, link keys, any hot-DB app config (which app belongs to which org lives only in the hot DB); no invitee address in `audit_log` (a refused sign-in of someone with no account: the address's sha256 only) |
 | R2 `LOGOS` (`files.logosBucket`; batch C11, not created yet) | App logos at `logos/<app id>/<sha256 hex>.png`: 256 × 256 PNGs the console re-encoded, with no metadata chunk; replaced ones until the console's cron deletes them 30 days on | The uploaded original, EXIF, text or ICC chunks, anything not re-encoded |
 | Usage ledger (Neon, `usage` and `ops` schemas) | Per request past the gate: request id, time, org, app, scope, endpoint, outcome, code, status, latency, relayed, transaction, relayer key and nonce, provisional gas, and on ok login/session/derive the uid (`HMAC(USER_ID_KEY, scope ‖ provider ‖ sub)[0..16]`, a pseudonym, D96); `app_users` (first and last day per uid); identity tokens per app and day | A sub, JWT, email, IP, session key, share id or path |
@@ -887,6 +898,7 @@ would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
 | `sub` (identity token) | `u1_` + HMAC-SHA256(`IDENTITY_SUB_KEY`, scope ‖ root provider ‖ root sub)[0..16]: per scope and account, never the Google `sub` |
 | `sid` | `s1_` + HMAC-SHA256(`IDENTITY_SUB_KEY`, app id ‖ session key)[0..16]: one per session, new at each interactive login |
 | wallet proof | A signature by an address's own key over the identity wallet message, bound to the session key and app |
-| wallet record | A signature by an address's own key over the `hana-id/wallet-record/v1` statement (env, signer, app, scope, path, chain, address, session key, time): what the API stores an address for a user on (D311) |
-| user id | `hu_` + Crockford base32 of the uid (`HMAC(USER_ID_KEY, scope ‖ root provider ‖ root sub)[0..16]`): one per scope and account, shown to staff and partners (D312) |
-| Support ID | `HANA-XXXX-XXXX`: the user id's first 8 characters, the uid's first 40 bits (D276, D312) |
+| wallet record | A signature by an address's own key over the `hana-id/wallet-record/v1` statement (env, signer, app, scope, path, chain, address, session key, time), plus the session key's signature over the whole request (`hana-id/wallet-record-session/v1`): what the API stores an address for a user on (D311) |
+| User ID | The identity token's `sub` (`u1_…`): the one id partners see for a user, in the token and the partner console (D346) |
+| internal id | `hu_` + Crockford base32 of the uid (`HMAC(USER_ID_KEY, scope ‖ root provider ‖ root sub)[0..16]`): the wallet directory's key and the ledger's pseudonym, staff only (D312, D346) |
+| Support ID | `HANA-XXXX-XXXX`: Crockford base32 of the first 5 bytes (40 bits) of the User ID's 16 HMAC bytes, its short form (D276 as amended by D346) |

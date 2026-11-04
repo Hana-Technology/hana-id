@@ -1,7 +1,9 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-04 for partner sign-in (branch `feat/batch-c-9`, merged with
+known open issues. Last verified against code: 2026-11-04 for a cancel on Google's screen (branch
+`fix/google-cancel-back-to-chooser`: the parked entry, fresh OAuth states and the close's `google_cancelled` in the
+linking invariants, D341); 2026-11-04 for partner sign-in (branch `feat/batch-c-9`, merged with
 `develop` @ a243d6b: "Console Worker"'s route, sign-in, sessions and partner views, the flow cookies, handoff codes,
 sign-in tokens and `CONSOLE_GOOGLE_CLIENT_SECRET` in the inventory, D290–D297); 2026-11-04 for the files Worker and logos (branch `feat/batch-c-11`: the
 logo upload's checks and the CSRF exception in "Console Worker", "Files Worker (logos)", the auth pages' `img-src`;
@@ -906,6 +908,17 @@ providers; a linked member's export on both is e2e-tested, `apps/e2e/tests/linki
   login. There tokeninfo is not needed: when it can't answer or refuses the token, the popup drops the access token
   (nothing in slot 1) and makes batch B's openid request with the account chooser and the login's nonce, and the
   login goes on with nothing recorded; another client's token still ends it.
+- **A cancel on Google's screen goes back, it doesn't end the login** (D341): token_first's `access_denied` (its
+  first request, or D273's interactive retry) is not relayed; the vault keeps waiting under its own 5-minute limit.
+  The callback parks `relayKey` and `followKey` in the popup's `sessionStorage` entry under the login's slot, marked
+  so that no Google answer may use it (refused as an expired sign-in), and `/login/email` takes it at once into
+  memory for the chooser. Each later Google attempt has a fresh random OAuth `state` whose entry names the slot, so
+  the cancelled attempt's `state` never finds an entry again; the nonce, the relay slot (still unwritten, single
+  use) and every check after it are the login's own. After a cancelled retry, Google again is that retry for the
+  same account (`login_hint`): slot 1 already holds that account's access token and can't be written twice, and an
+  ID token of another account still ends the login (`google_account_mismatch`). Closing the popup there sends only
+  `{error: 'google_cancelled'}`, encrypted under `relayKey` while the screen showed, to the login's slot; the keys
+  are zeroed and the context dropped, so a reload finds nothing.
 - **The follow-up channel** (D256): the popup and the vault talk after Google's answer through relay slots derived
   from `followKey` (32 random bytes, in auth-params only for an app with email, stored in the popup's
   `sessionStorage` entry beside `relayKey` and zeroed after use), every value AES-GCM under `relayKey` with its slot's

@@ -23,6 +23,13 @@
 // dropped, nothing goes to slot 1, and the login is batch B's openid login with the account chooser (the vault then
 // records nothing); only another client's token still ends it.
 //
+// A cancel on token_first's Google screen (D341: `access_denied` answered to its first request, or to D273's
+// interactive retry) is not relayed: the vault keeps waiting, and this window goes back to the screen the Google step
+// started from, the email page's method chooser (`back: 'chooser'`) or case B's choices (`'case_b'`), with the login's
+// keys parked under its slot (`cancelled`). Google again from there is a fresh attempt under a new OAuth `state` whose
+// entry names the slot (`slot`); after D273's retry it is that retry again (slot 1 already holds the account's access
+// token). With no email context to go back to, the cancel is relayed as before (`google_error`).
+//
 // Every ID token is checked against the claim allow-list before it is relayed (D270): one with any other claim (an
 // `email`, an `hd`) is never relayed; the slot says `token_has_pii` and the login ends.
 //
@@ -33,7 +40,19 @@
 import { ApiError, RELAY_CLAIM_NAME, type RelayPayload, disallowedClaim, encryptRelayPayload, followSlot } from '@hana-id/core';
 import type { AuthApi } from './api.ts';
 import { dom, errorView } from './dom.ts';
-import { type AccessTokenSub, type CallbackFragment, SILENT_ERRORS, accessTokenSub, googleAccessUrl, googleAuthUrl, parseCallbackFragment, unverifiedClaims, unverifiedSub } from './google.ts';
+import { readEmailContext } from './email-storage.ts';
+import {
+  type AccessTokenSub,
+  type CallbackFragment,
+  GOOGLE_CANCEL,
+  SILENT_ERRORS,
+  accessTokenSub,
+  googleAccessUrl,
+  googleAuthUrl,
+  parseCallbackFragment,
+  unverifiedClaims,
+  unverifiedSub,
+} from './google.ts';
 import { type TakenLogin, storeLoginEntry, takeLogin, zeroTaken } from './login-storage.ts';
 import { type PageWindow, isFramed } from './page-window.ts';
 
@@ -88,7 +107,9 @@ export type CallbackOutcome =
   /** Google needs the user for its email permission: this window explains it and waits for a click (D264). */
   | 'confirm'
   /** The login ended here (token_first's checks, an ID token with a claim outside the allow-list): the slot says why. */
-  | 'stopped';
+  | 'stopped'
+  /** The user cancelled token_first's Google screen: nothing relayed, the window goes back to the login's choices (D341). */
+  | 'cancelled';
 
 /** Where a login of an app with email goes once a leg is relayed (batch 8b): the email step's follow-up mode. */
 export const FOLLOW_PATH = '/login/email';
@@ -118,7 +139,9 @@ export async function runCallbackPage(deps: CallbackPageDeps): Promise<CallbackO
     return 'refused';
   }
   const taken = takeLogin(win.sessionStorage, fragment.state, now());
-  if (!taken) {
+  // A parked entry (D341) is the email page's, for the screen after a cancel: no Google answer may use it.
+  if (!taken || taken.cancelled) {
+    if (taken) zeroTaken(taken);
     d.show(errorView(d, 'Sign-in stopped', 'This sign-in has expired or was already used. Start again from the app.'));
     return 'refused';
   }
@@ -157,7 +180,48 @@ export async function runCallbackPage(deps: CallbackPageDeps): Promise<CallbackO
   // token_first (D270): the login's first answer (an access token), then its ID token request's.
   if (followKey && taken.tokenFirst && !taken.leg && !taken.task) return tokenFirstAccess(deps, fragment, taken, scriptStart);
   if (followKey && taken.leg === 'id') return tokenFirstId(deps, fragment, taken, scriptStart);
-  return relayLeg(deps, fragment, taken, scriptStart);
+  return relayLeg(deps, toSlot(fragment, taken), taken, scriptStart);
+}
+
+/** The fragment as its relay slot's: an attempt under a fresh OAuth `state` (D341) answers the slot its entry names. */
+function toSlot<F extends { state: string }>(fragment: F, taken: TakenLogin): F {
+  return taken.slot ? { ...fragment, state: taken.slot } : fragment;
+}
+
+/**
+ * D341: the user cancelled token_first's Google screen. Nothing is relayed (the vault keeps waiting, under its own
+ * limit); the login's keys are parked under its slot (`cancelled`) for the email page, which shows the screen the
+ * Google step started from: the method chooser, or case B's choices. `loginHint`: D273's retry was cancelled, so slot 1
+ * already holds that account's access token. Null when there is no email context to go back to (the cancel is then
+ * relayed as before).
+ */
+function goBack(deps: CallbackPageDeps, taken: TakenLogin, slot: string, loginHint: string | null, scriptStart: number): Promise<CallbackOutcome> | CallbackOutcome | null {
+  const { win } = deps;
+  const now = deps.now ?? (() => Date.now());
+  const { followKey, clientId, nonce } = taken;
+  if (!followKey || !clientId || !nonce || taken.task) return null;
+  if (!readEmailContext(win.sessionStorage, slot, now())) return null;
+  try {
+    storeLoginEntry(win.sessionStorage, slot, taken.relayKey, now(), taken.timings ?? undefined, {
+      followKey,
+      clientId,
+      nonce,
+      tokenFirst: true,
+      back: taken.back ?? 'chooser',
+      cancelled: true,
+      ...(taken.offer ? { offer: taken.offer } : {}),
+      ...(taken.record ? { record: true } : {}),
+      ...(loginHint ? { loginHint } : {}),
+    });
+  } catch {
+    // The vault waits on the slot: it hears why (G-L2).
+    return relayLeg(deps, { kind: 'error', state: slot, error: 'storage_unavailable' }, taken, scriptStart);
+  }
+  zeroTaken(taken);
+  const d = dom(win.document);
+  d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Sign in'), d.h('p', { class: 'muted' }, 'Google sign-in was cancelled.')));
+  win.location.assign(`${FOLLOW_PATH}#${slot}`);
+  return 'cancelled';
 }
 
 /** Why token_first's checks, or the claim allow-list, ended a login here: the relayed code and what this window says. */
@@ -190,28 +254,36 @@ async function stopLogin(deps: CallbackPageDeps, taken: TakenLogin, slot: string
 /**
  * token_first's first leg: Google's access token for `openid email`. tokeninfo names its client and `sub`; the token
  * goes to follow-up slot 1 now; then the silent openid-only ID token request for that `sub`, answered to the login's
- * own slot (`leg: 'id'`). Google's error (the user declined, closed the chooser) is relayed: the login ends.
+ * own slot (`leg: 'id'`). The user cancelling Google's screen goes back to the login's choices (D341); any other
+ * error of Google's is relayed: the login ends.
  */
 async function tokenFirstAccess(deps: CallbackPageDeps, fragment: Exclude<CallbackFragment, { kind: 'no_state' }>, taken: TakenLogin, scriptStart: number): Promise<CallbackOutcome> {
   const { win, api } = deps;
   const now = deps.now ?? (() => Date.now());
   const authOrigin = deps.authOrigin ?? (typeof location === 'undefined' ? '' : location.origin);
   const d = dom(win.document);
+  /** This attempt's OAuth `state` (its next leg's too), and the relay slot it answers (D341: they differ after a cancel). */
+  const state = fragment.state;
+  const slot = taken.slot ?? state;
   // An ID token was never asked for here (it would carry the email, D270): never relayed, whatever it holds.
-  if (fragment.kind === 'token') return relayLeg(deps, { kind: 'error', state: fragment.state, error: 'invalid_response' }, taken, scriptStart);
-  if (fragment.kind !== 'access') return relayLeg(deps, fragment, taken, scriptStart);
+  if (fragment.kind === 'token') return relayLeg(deps, { kind: 'error', state: slot, error: 'invalid_response' }, taken, scriptStart);
+  // The user cancelled Google's sign-in screen: back to the login's choices, nothing relayed (D341).
+  if (fragment.kind === 'error' && fragment.error === GOOGLE_CANCEL) {
+    const back = goBack(deps, taken, slot, null, scriptStart);
+    if (back) return back;
+  }
+  if (fragment.kind !== 'access') return relayLeg(deps, { ...fragment, state: slot }, taken, scriptStart);
   const { clientId, nonce } = taken;
   const followKey = taken.followKey as Uint8Array;
-  const state = fragment.state;
-  if (!clientId || !nonce) return relayLeg(deps, { kind: 'error', state, error: 'invalid_response' }, taken, scriptStart);
+  if (!clientId || !nonce) return relayLeg(deps, { kind: 'error', state: slot, error: 'invalid_response' }, taken, scriptStart);
   // The login hint: the access token's own `sub`, from Google (D270). Never a request without it.
   const info = await (deps.tokenInfo ?? accessTokenSub)(fragment.accessToken, clientId);
   // A record-only login (no email login, so no match: D269's directory is best effort) doesn't need tokeninfo: when
   // it can't answer or refuses the token, the access token is dropped (nothing goes to slot 1) and the login is batch
   // B's openid login, with the account chooser and the login's nonce. Another client's token still ends it (that
   // isn't an outage). An app with email login stops on every failure: its match needs the account (D255).
-  if (!info.ok && taken.record && info.reason !== 'wrong_client') return recordOnlyFallback(deps, taken, clientId, nonce, state, scriptStart);
-  if (!info.ok) return stopLogin(deps, taken, state, info.reason === 'wrong_client' ? 'tokeninfo_client_mismatch' : info.reason === 'unavailable' ? 'tokeninfo_unavailable' : 'tokeninfo_invalid');
+  if (!info.ok && taken.record && info.reason !== 'wrong_client') return recordOnlyFallback(deps, taken, clientId, nonce, state, slot, scriptStart);
+  if (!info.ok) return stopLogin(deps, taken, slot, info.reason === 'wrong_client' ? 'tokeninfo_client_mismatch' : info.reason === 'unavailable' ? 'tokeninfo_unavailable' : 'tokeninfo_invalid');
   // Slot 1 now: the access token is never kept across Google's next page.
   const slot1 = followSlot(followKey, 1).id;
   try {
@@ -220,7 +292,7 @@ async function tokenFirstAccess(deps: CallbackPageDeps, fragment: Exclude<Callba
     const used = err instanceof ApiError && err.code === 'relay_used';
     try {
       // The vault waits on the login's slot: it hears that this login can't go on.
-      await api.writeRelay(state, await encryptRelayPayload(taken.relayKey, state, { error: 'relay_failed' }));
+      await api.writeRelay(slot, await encryptRelayPayload(taken.relayKey, slot, { error: 'relay_failed' }));
     } catch {
       // The vault ends the login at its limit instead.
     }
@@ -239,7 +311,7 @@ async function tokenFirstAccess(deps: CallbackPageDeps, fragment: Exclude<Callba
     storeLoginEntry(win.sessionStorage, state, taken.relayKey, now(), taken.timings ?? undefined, idLegEntry(taken, info.sub, false));
   } catch {
     // The vault waits on this slot: it hears why (G-L2).
-    return relayLeg(deps, { kind: 'error', state, error: 'storage_unavailable' }, taken, scriptStart);
+    return relayLeg(deps, { kind: 'error', state: slot, error: 'storage_unavailable' }, taken, scriptStart);
   }
   zeroTaken(taken);
   win.location.assign(googleAuthUrl({ clientId, authOrigin, nonce, state, forceReauth: false, loginHint: info.sub, silent: true }));
@@ -252,14 +324,14 @@ async function tokenFirstAccess(deps: CallbackPageDeps, fragment: Exclude<Callba
  * key, no `leg`), so the callback relays that ID token with no `access: 'follow'` and closes: the vault reads no slot
  * 1 and records nothing (D269 best effort). The access token is never relayed or stored.
  */
-function recordOnlyFallback(deps: CallbackPageDeps, taken: TakenLogin, clientId: string, nonce: string, state: string, scriptStart: number): CallbackOutcome | Promise<CallbackOutcome> {
+function recordOnlyFallback(deps: CallbackPageDeps, taken: TakenLogin, clientId: string, nonce: string, state: string, slot: string, scriptStart: number): CallbackOutcome | Promise<CallbackOutcome> {
   const now = deps.now ?? (() => Date.now());
   const authOrigin = deps.authOrigin ?? (typeof location === 'undefined' ? '' : location.origin);
   try {
-    storeLoginEntry(deps.win.sessionStorage, state, taken.relayKey, now(), taken.timings ?? undefined);
+    storeLoginEntry(deps.win.sessionStorage, state, taken.relayKey, now(), taken.timings ?? undefined, slot !== state ? { slot } : {});
   } catch {
     // The vault waits on this slot: it hears why (G-L2).
-    return relayLeg(deps, { kind: 'error', state, error: 'storage_unavailable' }, taken, scriptStart);
+    return relayLeg(deps, { kind: 'error', state: slot, error: 'storage_unavailable' }, taken, scriptStart);
   }
   zeroTaken(taken);
   deps.win.location.assign(googleAuthUrl({ clientId, authOrigin, nonce, state, forceReauth: false }));
@@ -278,35 +350,45 @@ function idLegEntry(taken: TakenLogin, sub: string, interactive: boolean): Param
     ...(interactive ? { interactive: true } : {}),
     ...(taken.caseB ? { caseB: taken.caseB } : {}),
     ...(taken.record ? { record: true } : {}),
+    ...(taken.slot ? { slot: taken.slot } : {}),
+    ...(taken.back ? { back: taken.back } : {}),
+    ...(taken.offer ? { offer: taken.offer } : {}),
   };
 }
 
 /**
  * token_first's ID leg: the openid-only ID token of the account tokeninfo named. A silent failure Google needs the
- * user for is asked once more interactively, still openid only and for that account (D273); a second failure, or any
- * other error, is relayed. An ID token of another account ends the login (`google_account_mismatch`).
+ * user for is asked once more interactively, still openid only and for that account (D273); the user cancelling that
+ * retry goes back to the login's choices (D341); a second failure, or any other error, is relayed. An ID token of
+ * another account ends the login (`google_account_mismatch`).
  */
 async function tokenFirstId(deps: CallbackPageDeps, fragment: Exclude<CallbackFragment, { kind: 'no_state' }>, taken: TakenLogin, scriptStart: number): Promise<CallbackOutcome> {
   const { win } = deps;
   const now = deps.now ?? (() => Date.now());
   const authOrigin = deps.authOrigin ?? (typeof location === 'undefined' ? '' : location.origin);
   const state = fragment.state;
+  const slot = taken.slot ?? state;
   const { clientId, nonce, loginHint } = taken;
-  if (!clientId || !nonce || !loginHint) return relayLeg(deps, { kind: 'error', state, error: 'invalid_response' }, taken, scriptStart);
+  if (!clientId || !nonce || !loginHint) return relayLeg(deps, { kind: 'error', state: slot, error: 'invalid_response' }, taken, scriptStart);
   if (fragment.kind === 'error' && SILENT_ERRORS.has(fragment.error) && !taken.interactive) {
     try {
       storeLoginEntry(win.sessionStorage, state, taken.relayKey, now(), taken.timings ?? undefined, idLegEntry(taken, loginHint, true));
     } catch {
-      return relayLeg(deps, { kind: 'error', state, error: 'storage_unavailable' }, taken, scriptStart);
+      return relayLeg(deps, { kind: 'error', state: slot, error: 'storage_unavailable' }, taken, scriptStart);
     }
     zeroTaken(taken);
     // Google's own page for the same account (it may ask the user to confirm or sign in again); no email is asked.
     win.location.assign(googleAuthUrl({ clientId, authOrigin, nonce, state, forceReauth: false, loginHint, silent: false }));
     return 'relayed';
   }
-  if (fragment.kind === 'access') return relayLeg(deps, { kind: 'error', state, error: 'invalid_response' }, taken, scriptStart);
-  if (fragment.kind === 'token' && unverifiedSub(fragment.idToken) !== loginHint) return stopLogin(deps, taken, state, 'google_account_mismatch');
-  return relayLeg(deps, fragment, taken, scriptStart);
+  // The user cancelled D273's interactive retry (Google's own page): back to the login's choices (D341).
+  if (fragment.kind === 'error' && fragment.error === GOOGLE_CANCEL && taken.interactive) {
+    const back = goBack(deps, taken, slot, loginHint, scriptStart);
+    if (back) return back;
+  }
+  if (fragment.kind === 'access') return relayLeg(deps, { kind: 'error', state: slot, error: 'invalid_response' }, taken, scriptStart);
+  if (fragment.kind === 'token' && unverifiedSub(fragment.idToken) !== loginHint) return stopLogin(deps, taken, slot, 'google_account_mismatch');
+  return relayLeg(deps, { ...fragment, state: slot }, taken, scriptStart);
 }
 
 /** What the explainer before Google's email prompt says (D264, G-M2). */

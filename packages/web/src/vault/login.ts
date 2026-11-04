@@ -117,7 +117,7 @@ import type { VaultApi } from './api.ts';
 import { type Persistence, SESSION_TTL_CAP_MS, type VaultConfig } from './config.ts';
 import { VaultError, apiErrorToVault } from './errors.ts';
 import { type GoogleMatch, type IssuerApi, MatchBusy, type MatchRequest } from './issuer.ts';
-import { GOOGLE_EMAIL_FLOW, type GoogleEmailFlow } from '../auth/google.ts';
+import { GOOGLE_CANCELLED_RELAY_ERROR, GOOGLE_EMAIL_FLOW, type GoogleEmailFlow } from '../auth/google.ts';
 import { type NearView, ckdResultOf } from './near.ts';
 import { PathCheckError, confirmPath } from '../path-check.ts';
 import { type Clock, type Timers, type WindowMessageEvent, type WindowRef, realTimers, sleep } from './runtime.ts';
@@ -1285,6 +1285,10 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
     if ('error' in payload) {
       // The email step's cancel (D245), only in a login that offered email; anything else is Google's answer.
       if (this.emailOffered && Object.hasOwn(EMAIL_RELAY_ERRORS, payload.error)) throw this.emailAnswerError(payload.error);
+      // D341: the user cancelled Google's screen, then closed the window on the screen it went back to (token_first's
+      // logins only: they carry the follow-up key). A cancel alone relays nothing: this wait goes on, under the
+      // login's own limit.
+      if ((this.emailOffered || this.recordOffered) && payload.error === GOOGLE_CANCELLED_RELAY_ERROR) throw fail('login_cancelled', 'The sign-in was cancelled');
       // The popup refused an ID token with a claim outside the allow-list before relaying it (D270).
       if (payload.error === 'token_has_pii') {
         const claim = 'claim' in payload && typeof payload.claim === 'string' ? { claim: payload.claim.slice(0, 64) } : undefined;

@@ -1,7 +1,8 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D340 (branch `fix/dev-email-limits`) on 2026-11-04; D140–D141 and D150–D152 on 2026-10-30 (branches
+Last verified against code: 2026-10-28 (commit 58edee9); D341 (branch `fix/google-cancel-back-to-chooser`, confirmed
+by the user) on 2026-11-04, with notes on D264, D270 and D273 and a row of "Superseded or amended"; D340 (branch `fix/dev-email-limits`) on 2026-11-04; D140–D141 and D150–D152 on 2026-10-30 (branches
 `feat/batch-c-1`, `feat/playbook-gaps`); D130–D139 on 2026-10-30 (branches `feat/email-login-1`, `feat/email-login-1-r2`);
 D154–D155 (branch `feat/email-login-2`) and D156–D159 (branch `feat/email-login-3`) on 2026-11-02; D159's `+tag`
 change (branch `fix/email-plus-tags`) on 2026-11-02; D190–D193 (branch `feat/email-login-5`) and D200 (branches
@@ -4117,7 +4118,9 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   `showEmailConsent`, `vault/login.ts` `matchGoogle`, core `FollowNotice` `email_consent`, issuer
   `google_account_mismatch`) · Source: the batch 8b review (G-M1, G-M2); amends D255; D42 · Amended by D270: under
   `'token_first'` there is no explainer (Google's sign-in screen lists the email) and declining that screen is no
-  Google login at all; the consent screen stays for a google-match `google_account_mismatch`
+  Google login at all; the consent screen stays for a google-match `google_account_mismatch` · Amended by D341:
+  declining that screen no longer ends the login (`google_error`, `access_denied`); the popup goes back to Hana's
+  method chooser, and closing it there is `login_cancelled`
 - Decision:
   - Before the interactive retry of the silent email request (D254), the popup shows Hana's own screen: "Google will
     now ask to share your email address with Hana. Only Hana's email service sees it, to find a wallet you may
@@ -4380,6 +4383,9 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   never leak; tests that the on-chain request is `openid` only and that an email-carrying token is refused with
   nothing relayed.
 - Rejected: the literal one request (above); keeping the explainer and Google's second screen (the user's ask).
+- Amended 2026-11-04 by D341: a cancel on the first request's screen (Google's `access_denied`) is no longer relayed
+  as the login's end (`google_error`); the popup goes back to Hana's method chooser (or case B's choices) and the
+  login goes on, and closing the window there is `login_cancelled`.
 
 ### D271. The API's claim allow-list is on for every route that relays a Google token (REJECT_PII_ON_SESSIONS retired)
 - Date 2026-11-04 · Status: confirmed by the user (2026-11-04: 'how can we be sure that the reversed flow works without
@@ -4413,7 +4419,8 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
     `interaction_required`, `consent_required` or `account_selection_required`, the callback asks once more without
     `prompt=none`: still `response_type=id_token`, `scope=openid`, the same `login_hint`, nonce and slot, with no Hana
     screen first. A second failure, or any other error, is relayed (`google_error`); an ID token whose `sub` isn't the
-    access token's (tokeninfo's) ends the login with `google_account_mismatch`.
+    access token's (tokeninfo's) ends the login with `google_account_mismatch`. (Amended by D341: the user cancelling
+    this retry, `access_denied`, goes back to the login's choices instead of being relayed.)
   - `'one_request'` is removed from `GoogleEmailFlow` and the popup (it can't keep `email` out of the ID token, D270),
     so under every flow the only request whose ID token is relayed asks for `scope=openid` only. The vault still reads
     an access token beside an ID token (the relay format and the vault's tests use it); no popup sends one.
@@ -5019,6 +5026,7 @@ decided while building, to confirm.
 | google-match revokes Google's access token (D195, D254; the interactive email consent "the first time only") | Never revoked: revocation ends the whole grant, so the consent came back every login (D265) | batch 8b review |
 | A path through `get_identity` on the vault's RPC alone (batch 7) | A non-own path confirmed on `rpc` and `rpcFallback` separately; root pins (D263) | batch 8b review |
 | D255: no access token (declined) → `email_match_unavailable` | Declined or another account: the popup's consent screen, `email_consent_declined` / `google_account_mismatch` (D264) | batch 8b review |
+| D264, D270, D273: cancelling token_first's Google screen ends the login, `google_error` (`data.error: 'access_denied'`) | The popup goes back to Hana's method chooser (or case B's choices) and the login goes on; closing it there is `login_cancelled`; `google_error` only for Google's real failures (D341) | `packages/web/src/auth/callback-page.ts`, `auth/email-page.ts` |
 | Hana stores no end-user email address; the Google email is handled transiently, only its HMAC kept (D25 and D96 amended, D119, D230); the screens say "it isn't kept" (D264) | The issuer keeps each identity's verified address in its own D1 (`user_emails`, `user_email_apps`), for Hana staff only (`admin user:list` / `user:find`); partners never see it; the screens say Hana keeps it with the account and doesn't share it with the app (D269) | conversation 2026-11-04 |
 
 ## Proposed, not yet confirmed
@@ -5227,3 +5235,54 @@ over D269's directory) and D276 (the Support ID made consistent with D269), belo
 - Amended 2026-11-04 (same day, `fix/dev-ticket-limits`): a ticketed start (a device that signed in before) never
   falls back to the code limits, so its own allowance (production 3 a day per address, 9 per mailbox) blocked the
   user's testing first; dev envs raise it to 100 and 300. Production unchanged.
+
+## A cancel on Google's sign-in screen (branch `fix/google-cancel-back-to-chooser`), 2026-11-04
+
+### D341. Cancelling Google's sign-in screen goes back to Hana's method chooser; closing the popup there is `login_cancelled`
+- Date 2026-11-04 · Status: confirmed by the user (2026-11-04: "yes" to "the popup goes back to Hana's method chooser
+  … the partner app gets `login_cancelled`, … `google_error` stays for real Google failures") · Built on
+  `fix/google-cancel-back-to-chooser` (`packages/web/src/auth/callback-page.ts` `goBack`, `toSlot`;
+  `auth/email-page.ts` `showChooser`, `restartGoogle`, `chooseEmail`, `onPageHide`; `auth/login-storage.ts`
+  `slot`, `back`, `offer`, `cancelled`; `auth/login-page.ts` (the record-only login's email context);
+  `vault/login.ts` `readRelay`; `auth/google.ts` `GOOGLE_CANCEL`, `GOOGLE_CANCELLED_RELAY_ERROR`) · Source: the user's
+  report (Cancel on Google's screen showed "Sign-in stopped … Code: google_error" at `/login/email#…`) · Amends D264,
+  D270 and D273 (a cancel ended the Google login with `google_error`, `access_denied`)
+- Decision:
+  - Under token_first, when Google answers `error=access_denied` to the login's first request (from the chooser, from
+    `/login` directly, or from case B's Google step on `/login/email`) or to D273's interactive retry, the callback
+    relays nothing. The vault's wait goes on under the login's own 5-minute limit (`LOGIN_PENDING_MS`). The popup goes
+    back to the screen the Google step came from, on `/login/email#<relayId>`: Hana's method chooser with the line
+    "Google sign-in was cancelled." and the app's methods (Continue with Google; Continue with email when the app
+    offers it: a Google-only app's chooser has Google only), or case B's own choices (Link and continue when the
+    issuer offered it, Sign in with Google, Cancel) with the same line.
+  - Google again is a fresh attempt: a new random OAuth `state` whose login entry names the login's relay slot
+    (`slot`), with the login's nonce and the same binding checks; the ID leg reuses that attempt's state. The cancelled
+    attempt's state never finds an entry again. Between the two, the login's keys are parked under the slot
+    (`cancelled`, never usable by a Google answer: refused as an expired sign-in) and the email page takes them into
+    memory on load. Case B's Google step always uses such a fresh state under token_first. After a cancelled D273
+    retry, Google again is that retry once more (the same account, `login_hint`, no chooser): slot 1 already holds
+    that account's access token and a relay slot takes one write.
+  - Email from the chooser is the email step in place (the login's entry back under its slot).
+  - Closing the popup on that screen (`pagehide` when the page didn't navigate on itself) writes `{error:
+    'google_cancelled'}`, encrypted when the screen was shown and sent with `keepalive`, to the login's slot; the vault
+    ends the login with `login_cancelled` (only in a login with the follow-up key, the token_first ones). The keys are
+    zeroed and the email context dropped, so a reload shows an expired sign-in. Case B's Cancel there relays
+    `email_cancelled` as before (`login_cancelled`).
+  - `google_error` stays for Google's real failures: any other error code, `invalid_response`, the tokeninfo stops,
+    `google_account_mismatch`, a second failure of the D273 retry, the silent ID request's errors (no screen was
+    shown). A cancel is still relayed as `access_denied` (`google_error`) where there is no screen to go back to: no
+    email context stored, a login without the follow-up key (an env without an email issuer, batch B's request), and
+    the record-only fallback's openid request when tokeninfo couldn't answer.
+- Why: the user cancelling Google's screen is a choice, not a failure. Ending the login with a stop screen and a
+  code made them start again from the app; Hana's own chooser lets them pick again in the same window. A partner's
+  "cancelled" handling is `login_cancelled`, the code a close or `cancelLogin()` already gives.
+- Main trade-off: the close relies on `pagehide` (every desktop browser fires it on close, and the e2e checks it in
+  Chromium, Firefox and WebKit); where it doesn't fire (a crashed or killed browser, some mobile cases) the partner
+  gets the login's `login_timeout` after 5 minutes, as before for any abandoned popup.
+- Alternatives: (a) relay the cancel and let the vault end the login with `login_cancelled` at once: the user loses
+  the chance to pick again in the window. Not recommended. (b) Reuse the login's slot as the OAuth `state` for every
+  attempt: simpler, but a cancelled attempt's state would find an entry again. Not recommended. (c) A Cancel button
+  on the chooser: not asked; the original chooser has none and closing the window is the way out. Not done.
+- Not changed: closing the popup at other points (the email step, Google's own page, the follow-up screens) still
+  leaves the vault waiting until its limit (`login_timeout`); that is the abandoned-popup work on
+  `fix/abandoned-login-freeze`.

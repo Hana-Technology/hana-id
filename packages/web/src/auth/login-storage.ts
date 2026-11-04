@@ -13,6 +13,11 @@
 // token_first (D270, auth/google.ts): `tf` marks a login whose Google request asked for the access token first, `n`
 // is the login's nonce (the ID token request after it needs it), `leg: 'id'` that ID token request's entry, `h` its
 // `login_hint`, and `r` a record-only login (an app without email login: no follow-up mode, the window closes).
+// A cancel on Google's screen (D341): `bk` says where token_first's Google step returns (Hana's method chooser, or case
+// B's own choices with `ob`, the link the issuer offered there); `x` marks the entry the callback parks under the
+// login's slot for that screen (no Google answer may use it: the email page takes it on load); `s` is the relay slot an
+// attempt started after it (or from case B) answers, under an OAuth `state` of its own, so a cancelled attempt's state
+// never finds an entry again.
 //
 // SECURITY: relayKey and followKey are session secrets. They live here only between pages and are deleted on read.
 import { type CaseBProof, FOLLOW_KEY_BYTES, RELAY_ID_PATTERN, RELAY_KEY_BYTES, base64UrlDecode, base64UrlEncode, isTimings } from '@hana-id/core';
@@ -42,6 +47,14 @@ export interface FollowEntry {
   nonce?: string;
   /** token_first in an app without email login: the access token is for the issuer's directory only; no follow-up mode. */
   record?: boolean;
+  /** D341: the relay slot this Google attempt answers, when its OAuth `state` is a fresh one (not the slot's id). */
+  slot?: string;
+  /** D341: where a cancel on token_first's Google screen returns: Hana's method chooser, or case B's own choices. */
+  back?: 'chooser' | 'case_b';
+  /** D341: case B's link offer (the issuer's ticket), so its "Link and continue" can be offered again after a cancel. */
+  offer?: CaseBProof;
+  /** D341: parked by the callback after a cancel, for the email page's return screen; never a Google answer's entry. */
+  cancelled?: boolean;
 }
 
 interface LoginEntry {
@@ -62,6 +75,10 @@ interface LoginEntry {
   tf?: 1;
   n?: string;
   r?: 1;
+  s?: string;
+  bk?: 'c' | 'b';
+  ob?: CaseBProof;
+  x?: 1;
 }
 
 /** What /login/callback takes: the relay key and /login's timings (null for a pk_live_ app). */
@@ -99,6 +116,10 @@ function readEntry(storage: Storage, key: string): LoginEntry | null {
       ...(e.tf === 1 ? { tf: 1 as const } : {}),
       ...(typeof e.n === 'string' && NONCE.test(e.n) ? { n: e.n } : {}),
       ...(e.r === 1 ? { r: 1 as const } : {}),
+      ...(typeof e.s === 'string' && RELAY_ID_PATTERN.test(e.s) ? { s: e.s } : {}),
+      ...(e.bk === 'c' || e.bk === 'b' ? { bk: e.bk } : {}),
+      ...(isCaseB(e.ob) ? { ob: { linkTicket: e.ob.linkTicket, emailSub: e.ob.emailSub } } : {}),
+      ...(e.x === 1 ? { x: 1 as const } : {}),
     };
   } catch {
     return null;
@@ -127,6 +148,7 @@ export function storeLoginEntry(storage: Storage, relayId: string, relayKey: Uin
   if (relayKey.length !== RELAY_KEY_BYTES) throw new Error('Malformed relayKey');
   if (follow.followKey && follow.followKey.length !== FOLLOW_KEY_BYTES) throw new Error('Malformed followKey');
   if (follow.nonce !== undefined && !NONCE.test(follow.nonce)) throw new Error('Malformed nonce');
+  if (follow.slot !== undefined && !RELAY_ID_PATTERN.test(follow.slot)) throw new Error('Malformed slot');
   pruneLoginEntries(storage, now);
   const entry: LoginEntry = {
     v: 1,
@@ -145,6 +167,10 @@ export function storeLoginEntry(storage: Storage, relayId: string, relayKey: Uin
     ...(follow.tokenFirst ? { tf: 1 as const } : {}),
     ...(follow.nonce ? { n: follow.nonce } : {}),
     ...(follow.record ? { r: 1 as const } : {}),
+    ...(follow.slot ? { s: follow.slot } : {}),
+    ...(follow.back ? { bk: follow.back === 'case_b' ? ('b' as const) : ('c' as const) } : {}),
+    ...(follow.offer ? { ob: follow.offer } : {}),
+    ...(follow.cancelled ? { x: 1 as const } : {}),
   };
   storage.setItem(LOGIN_ENTRY_PREFIX + relayId, JSON.stringify(entry));
 }
@@ -195,6 +221,10 @@ const toTaken = (e: LoginEntry): TakenLogin | null => {
     ...(e.tf ? { tokenFirst: true } : {}),
     ...(e.n ? { nonce: e.n } : {}),
     ...(e.r ? { record: true } : {}),
+    ...(e.s ? { slot: e.s } : {}),
+    ...(e.bk ? { back: e.bk === 'b' ? ('case_b' as const) : ('chooser' as const) } : {}),
+    ...(e.ob ? { offer: e.ob } : {}),
+    ...(e.x ? { cancelled: true } : {}),
   };
 };
 

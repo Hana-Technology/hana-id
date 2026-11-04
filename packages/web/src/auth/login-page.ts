@@ -240,8 +240,9 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
         }
       };
       const toGoogle = (tell: boolean) => {
-        // The follow-up mode's context (not for a record-only login: it has no follow-up mode).
-        if (follow && !record && !storeContext()) return;
+        // The follow-up mode's context, and (D341) the screen a cancel on token_first's Google screen goes back to: a
+        // record-only login has no follow-up mode, but its cancel returns to a chooser with Google only.
+        if (follow && !storeContext()) return;
         // In a login that offered email, the vault reports `google` only when the popup says so (hana:auth-progress).
         if (tell) {
           try {

@@ -1,7 +1,9 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-04 (branch `feat/batch-c-9`, merged with `develop` @ a243d6b: partner sign-in in
+Last verified against code: 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: a cancel on token_first's Google
+screen goes back to the chooser or case B's choices, closing there is `login_cancelled`, in "Automatic linking" step 2;
+D341); 2026-11-04 (branch `feat/batch-c-9`, merged with `develop` @ a243d6b: partner sign-in in
 Status, Components (the console Worker's C9 files, the SPA, console-auth), Data stores and the new flow "Partner sign-in
 to the console"; D290–D297); 2026-11-04 (branch `feat/batch-c-11`: the files Worker and logos in Status, Components and
 Data stores: `apps/files`, the console's logo upload backend, `logoUrl` from `GET /v1/app` to the auth pages, the R2
@@ -340,11 +342,25 @@ message.
      nonce. On a silent failure (`consent_required`, `interaction_required`, `login_required`,
      `account_selection_required`) it asks once more without `prompt=none`, still openid only and
      for that account, with no Hana screen (D273); a second failure, or any other error, is relayed. An ID token whose
-     `sub` isn't tokeninfo's ends the login (`google_account_mismatch`). The ID token is relayed with `access:
+     `sub` isn't tokeninfo's ends the login (`google_account_mismatch`). **A cancel on Google's screen** (D341:
+     `access_denied` answered to the first request, or to that interactive retry) is not relayed, so the vault's wait
+     goes on under the login's own 5-minute limit: the callback parks the login's keys under its slot (entry `x`, with
+     `bk` the screen to go back to and, after the retry, `h`: slot 1 already holds that account's access token) and
+     navigates to `/login/email#<relayId>`, which takes them into memory and shows that screen: Hana's method chooser
+     ("Google sign-in was cancelled.", Continue with Google, and Continue with email when the app offers it), or case
+     B's own choices when its Google step was the one cancelled. Google again is a fresh attempt under a new random
+     OAuth `state` whose entry names the login's slot (`s`; the ID leg keeps that state), with the login's nonce, so
+     the cancelled attempt's state never finds an entry again (a parked entry is never a Google answer's either);
+     after a cancelled retry it is that retry again (the same account, no chooser). Case B's Google step always takes
+     such a fresh state under token_first. Email is the email step in place. Closing the window on that screen
+     (`pagehide`, not a navigation the page made) sends `{error: 'google_cancelled'}`, encrypted when the screen was
+     shown and written with `keepalive`, and the vault ends the login with `login_cancelled`; case B's Cancel there
+     relays `email_cancelled` as before. With no email context to go back to (none was stored) the cancel is relayed
+     as before (`google_error`, `access_denied`); every other Google error is still relayed (`google_error`). The ID token is relayed with `access:
      'follow'`; an ID token answered to the access token request is never relayed (`invalid_response`). Then an app
      with email login goes to the follow-up mode, google-match runs as in step 3 (no explainer: Google's first screen
-     asked; declining it is Google's `access_denied` in the login's slot, so no Google login at all; D264's consent
-     screen stays for a google-match `google_account_mismatch`; D255 unchanged); a record-only login closes the
+     asked; declining it is the cancel above, back to the chooser; D264's consent screen stays for a google-match
+     `google_account_mismatch`; D255 unchanged); a record-only login closes the
      popup, and once `/v1/login` has succeeded and the key passed its check (step 10; a refused, failed or cancelled
      login is never recorded) the vault sends the access token, the verified Google token and the session commitment
      to `POST {issuer}/v1/email/google-record` in the background, never awaited by the login (best effort: read slot

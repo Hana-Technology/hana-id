@@ -182,14 +182,14 @@ describe('/login under token_first', () => {
     expect(readEmailContext(s.win.sessionStorage, p.relayId, NOW)).not.toBeNull();
   });
 
-  it('a record-only login (`emailRecord`, an app without email login): the same request; no email context, marked `r`', async () => {
+  it('a record-only login (`emailRecord`, an app without email login): the same request, marked `r`; an email context with Google only (D341’s screen after a cancel)', async () => {
     const s = loginPage('token_first');
     const p = params({ emailRecord: true, followKey: crypto.getRandomValues(new Uint8Array(32)) });
     s.win.message(p, ENV.vaultOrigin, s.vault);
     expect((await s.page.done).stage).toBe('redirecting');
     expect(query(s.win.location.assigned[0]!)).toMatchObject({ response_type: 'token', scope: 'openid email' });
     expect(JSON.parse(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + p.relayId)!)).toMatchObject({ tf: 1, r: 1, n: p.nonce });
-    expect(readEmailContext(s.win.sessionStorage, p.relayId, NOW)).toBeNull();
+    expect(readEmailContext(s.win.sessionStorage, p.relayId, NOW)?.context).toMatchObject({ methods: ['google'], clientId: CLIENT_ID, appName: 'Partner App' });
   });
 
   it('a Google-only login (no follow-up key) and a link task stay openid-only ID token requests', async () => {
@@ -378,7 +378,7 @@ describe('/login/callback, token_first’s access leg', () => {
     expect(await decrypt(s.relayKey, s.state, a)).toEqual({ error: 'invalid_response' });
   });
 
-  it('Google’s error (the user declined the one sign-in screen) is relayed: no Google login at all', async () => {
+  it('Google’s error with no email context to go back to is relayed: no Google login at all (with one, a cancel goes back to the chooser: google-cancel.test.ts, D341)', async () => {
     const s = started((st) => `#error=access_denied&state=${st}`);
     const a = api();
     await run(s.win, a);

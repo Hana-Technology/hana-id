@@ -11,7 +11,7 @@ popup, unless it falls under an auto-approve policy you set and the user accepte
 > for mainnet chains at all ([section 12](#12-test-and-live-keys)). This guide follows the code; the original
 > specification is `docs/batch-b-spec.md`.
 
-Last verified against code: 2026-11-04 (branch `feat/token-first-on`: "Sign-in methods and links": Google's one
+Last verified against code: 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: a cancel on Google's sign-in screen goes back to the chooser, closing there is `login_cancelled`, in "Sign-in methods and links" and the error table; D341); 2026-11-04 (branch `feat/token-first-on`: "Sign-in methods and links": Google's one
 sign-in screen lists the email, cancelling it, the two-accounts screen; D270); 2026-11-03 (branch `feat/email-login-8b` review fixes: the email permission's screens and
 reasons, `api_unavailable`'s `path_unconfirmed` / `path_disputed`, `storage_unavailable` in a login, `hana.account()`'s
 5 s cache, D263–D265); 2026-11-03 (branch `feat/email-login-8b`: one wallet per person, "Sign-in methods and
@@ -257,7 +257,7 @@ button.addEventListener('click', async () => {
   | signs in with email, and a Google wallet exists for that address | "This email belongs to a wallet you created by signing in with Google": **Link and continue** or **Sign in with Google**, then Google | the Google wallet's addresses; the email joins it at once (Google-hosted) or after 24 h (other addresses: a pending banner with **Cancel this link**) |
   | has neither wallet | the usual sign-in | a new wallet for that method |
   | signs in with Google for the first time with this Google client | Google's one sign-in screen, which also lists "Email address" (Hana asks for it there, D270); a returning user sees only Google's account chooser | as above |
-  | cancels that Google screen | nothing more: no Google login | `login()` rejects with `google_error` (`data.error: 'access_denied'`) |
+  | cancels that Google screen | the Hana popup goes back to its chooser: "Google sign-in was cancelled.", with **Continue with Google** and **Continue with email** (or, if the Google step started from "This email belongs to a wallet you created by signing in with Google", that screen's choices again) | `login()` keeps waiting: Google again or email signs in as usual; closing the popup there rejects with `login_cancelled`, never `google_error` (D341) |
   | signs in with Google, has no wallet yet, and Google's answers name two different Google accounts | **Sign in with email instead** or **Try Google again** (Google's "share your email address" for the account they signed in with) | an email wallet, or Google again; Cancel rejects with `login_cancelled` (`data.reason: 'google_account_mismatch'`, or `'email_consent_declined'` after declining that screen) |
 
   Nobody ever gets a second wallet for the same verified address. While a link is pending, signing in with the
@@ -760,12 +760,12 @@ code request), `emailCode` (waiting for the mail and typing the code), `emailVer
 | `popup_blocked` | The browser blocked the popup and the sign-in was cancelled | call `login()` in a click |
 | `coop_blocks_popup` | The popup closed before it connected (COOP `same-origin`, or the user closed it at once) | fix COOP |
 | `login_timeout` | The popup never connected (15 s), or the sign-in took over 5 min | retry |
-| `login_cancelled` | `cancelLogin()`, or a newer `login()`, or the user cancelled the email step; `data.reason: 'email_consent_declined'` or `'google_account_mismatch'`: a new Google user refused Google's email permission (or chose another Google account there) and cancelled Hana's explanation | offer email sign-in |
+| `login_cancelled` | `cancelLogin()`, or a newer `login()`, or the user cancelled the email step, or cancelled Google's sign-in screen and then closed the Hana popup on the screen it went back to (D341); `data.reason: 'email_consent_declined'` or `'google_account_mismatch'`: a new Google user refused Google's email permission (or chose another Google account there) and cancelled Hana's explanation | offer email sign-in |
 | `login_method_unavailable` | `login({method})` named a method your app doesn't offer (email not turned on) | offer the other method |
 | `code_invalid`, `challenge_expired` | Email login: the user cancelled after a wrong or expired code | let them retry |
 | `link_pending` | This sign-in method is waiting to join a wallet (`data.effectiveAtMs`: when it can open it) | show when; sign in with the wallet's other method meanwhile |
 | `link_refused` | The sign-in methods can't be linked (`data.reason`); `login()` with the wallet's own method still works | offer the other method |
-| `google_error` | Google returned an error (`data.error`) | retry; `access_denied` means the user declined |
+| `google_error` | Google returned an error (`data.error`), or Hana couldn't check Google's answer (`tokeninfo_unavailable`, `tokeninfo_client_mismatch`, `tokeninfo_invalid`, `google_account_mismatch`, `invalid_response`). The user cancelling Google's sign-in screen is not one: the popup goes back to its chooser, and closing it there is `login_cancelled` (D341). `access_denied` remains only where Hana has no screen to go back to (a login in an environment without Hana's email service, or the fallback Google request a Google-only app makes when Google's tokeninfo can't be reached) | retry; with `access_denied`, the user declined |
 | `no_google_client` | Your scope has no usable Google client | ask Hana |
 | `token_invalid`, `token_has_pii` | The Google token failed Hana's checks | retry; report it if it persists |
 | `config_mismatch` | Hana's pages disagree about the signer, scope or client, or the scope doesn't match the on-chain registry (`data.reason: 'scope_mismatch'`) | report it to Hana; never retry around it |

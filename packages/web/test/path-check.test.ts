@@ -62,3 +62,43 @@ describe('confirmPath', () => {
     expect(await reason(confirmPath({ scopeId: S, via: E, viaView: own, path: E, views: { primary: provider({}), second: provider(second) } }))).toBe('path_disputed');
   });
 });
+
+describe('confirmPath reads both providers in parallel (the second provider is slow: rpc.testnet.near.org, ~3.3 s)', () => {
+  type Log = { name: string; at: 'start' | 'end' }[];
+  /** A provider whose reads take `ms` each and log when they start and end. */
+  const timed = (name: string, ms: number, log: Log, views: Record<string, unknown> = honest): ViewRead => {
+    const inner = provider(views);
+    return async (method, args) => {
+      log.push({ name, at: 'start' });
+      await new Promise((r) => setTimeout(r, ms));
+      try {
+        return await inner(method, args);
+      } finally {
+        log.push({ name, at: 'end' });
+      }
+    };
+  };
+
+  it('every read (the view and the root, on each provider) starts before any of them ends', async () => {
+    const log: Log = [];
+    const started = performance.now();
+    expect(await reason(confirmPath({ scopeId: S, via: G, viaView: member, path: E, views: { primary: timed('primary', 60, log), second: timed('second', 150, log) } }))).toBeNull();
+    const elapsed = performance.now() - started;
+    const firstEnd = log.findIndex((e) => e.at === 'end');
+    expect(log.slice(0, firstEnd).map((e) => `${e.name} ${e.at}`)).toEqual(['primary start', 'second start', 'primary start', 'second start']);
+    // One round of the slow provider, not one per read (one after the other would be 2 × 60 + 2 × 150 ms).
+    expect(elapsed).toBeLessThan(150 + 60 + 80);
+  });
+
+  it('still fail closed: a fast answer doesn’t decide before the slow provider’s, and a slow failure still refuses', async () => {
+    const log: Log = [];
+    const lying = { [`google#${G.sub}`]: view(G, { status: 'member', root: A }) };
+    expect(await reason(confirmPath({ scopeId: S, via: G, viaView: member, path: E, views: { primary: timed('primary', 10, log), second: timed('second', 80, log, lying) } }))).toBe('path_disputed');
+    expect(log.filter((e) => e.at === 'end')).toHaveLength(4);
+    const slowDown: ViewRead = async () => {
+      await new Promise((r) => setTimeout(r, 80));
+      throw new TypeError('Failed to fetch');
+    };
+    expect(await reason(confirmPath({ scopeId: S, via: G, viaView: member, path: E, views: { primary: provider(honest), second: slowDown } }))).toBe('path_unconfirmed');
+  });
+});

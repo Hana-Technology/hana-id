@@ -1,7 +1,8 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-04 (branch `feat/wallet-directory`: the wallet directory, D310–D317: Status,
+Last verified against code: 2026-11-04 (branch `fix/abandoned-login-freeze`: "Automatic linking" step 1, the follow-up
+channel's reads end with the login or the banners' limit; step 5, D263's reads run side by side); 2026-11-04 (branch `feat/wallet-directory`: the wallet directory, D310–D317: Status,
 Components, "Who talks to whom"'s vault row, the login's step 10, the link relays, the new "Wallet directory" flow,
 "Data stores"' D1 row (the hot DB now holds subs and wallet addresses), the Glossary); 2026-11-04 (branch `feat/batch-c-9`, merged with `develop` @ a243d6b: partner sign-in in
 Status, Components (the console Worker's C9 files, the SPA, console-auth), Data stores and the new flow "Partner sign-in
@@ -320,6 +321,12 @@ message.
    (token_first's first answer; under `'second_request'` the second request's). After its token is relayed the popup doesn't close: `/login/callback` hands over to
    `/login/email`'s follow-up mode (or the email step goes on in place), which long-polls the vault's next notice and
    shows it (`FollowNotice`: `link_code`, `use_email`, `prove`, `done`, `stop`).
+   Every read of the channel by the vault ends when what it waits for ends: the login (its 5-minute limit,
+   `LOGIN_PENDING_MS`, `cancelLogin()`, a newer login, a logout), a `linkAccount` task, or the banners' 5 minutes
+   (`AFTERWORD_MS`). The login then ends with its own error (`login_timeout`, `login_cancelled`) and writes `stop` to
+   the popup, which shows it after its next answer. (Before `fix/abandoned-login-freeze` such a read went on after the
+   abort: an aborted fetch rejects at once, so it spun on microtasks, the vault frame froze, and with it the partner
+   page in the same renderer process, which on sandbox-dev, where the demo and the vault are one site, was the demo.)
 2. **Google's verified email**, by `GOOGLE_EMAIL_FLOW` (`packages/web/src/auth/google.ts`, a code constant; the
    pages and the vault take it as a dependency, `googleEmailFlow`, so the tests run both values):
    - **`'token_first'` (in force since 2026-11-04, D270: the user's spike passed every leg for a Gmail, a Workspace
@@ -398,7 +405,9 @@ message.
    `effectiveAtMs`, also told to the popup). Any path that isn't the identity's own (a member's root, a link's target
    root, a path a pairing failure moved to) is confirmed on `rpc` and `rpcFallback`, each read alone: the same view
    on both, and the root `own` on both; else `api_unavailable` with `path_unconfirmed` or `path_disputed`, never the
-   own path instead (D263). The vault pins the root it derived per identity (memory, and IndexedDB beside the record
+   own path instead (D263). The two providers are read side by side (`confirmPath`, `packages/web/src/path-check.ts`:
+   the view and the root on both at once, the verdict after every answer), in the vault and in the export window, so a
+   slow second provider (`rpc.testnet.near.org`, about 3.3 s) costs one round, not one per read. The vault pins the root it derived per identity (memory, and IndexedDB beside the record
    when the app keeps the wallet; identity keys only); a root that changed other than own → member is confirmed on
    both again, as is any path but the identity's own when the pin read fails or doesn't answer within 1 s. The confirming reads and google-match
    also end when the login does (its abort signal). With a link (D133): fresh `get_config` (links open only when

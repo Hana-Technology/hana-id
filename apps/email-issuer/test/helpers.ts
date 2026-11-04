@@ -257,7 +257,7 @@ export async function harness(over: Partial<Deps> = {}): Promise<Harness> {
     const headers = new Headers(opts.headers ?? {});
     if (opts.contentType !== null) headers.set('content-type', opts.contentType ?? 'application/json');
     if (opts.ip !== null) headers.set('cf-connecting-ip', opts.ip ?? randomIp);
-    const origin = opts.origin === undefined ? (path.endsWith('/google-match') ? VAULT : AUTH) : opts.origin;
+    const origin = opts.origin === undefined ? (path.endsWith('/google-match') || path.endsWith('/google-record') ? VAULT : AUTH) : opts.origin;
     if (origin) headers.set('origin', origin);
     const res = await route(new Request(`https://api.test${path}`, { method: opts.method ?? 'POST', headers, body: body === undefined ? undefined : JSON.stringify(body) }), deps);
     while (pending.length) await pending.shift();

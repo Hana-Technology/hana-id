@@ -2,8 +2,10 @@
 
 The Hana-run email issuer (`docs/email-login-spec.md` "Email issuer (Hana-run)", build plan batch 4): a Cloudflare
 Worker, separate from the API, that sends sign-in codes, mints email tokens (JWS General JSON, RS256) whose nonces it
-computes per purpose, answers `google-match` for automatic linking, publishes its JWKS and serves the staff routes (client proofs, unlock,
-unsuppress) behind Cloudflare Access. It is reached at `{emailIssuer.url}/v1/email/*` (D230): its own `workers.dev`
+computes per purpose, answers `google-match` for automatic linking and `google-record` (D270: under the popup's
+`'token_first'` flow, a Google login of an app without email login, for the user directory only), keeps the user
+directory (D269: each identity's address, for Hana staff only), publishes its JWKS and serves the staff routes (client
+proofs, unlock, unsuppress) behind Cloudflare Access. It is reached at `{emailIssuer.url}/v1/email/*` (D230): its own `workers.dev`
 URL on a `workers.dev` env (sandbox-dev), the API's URL through a zone route in production; never through the API
 Worker, so an address or a code never passes through it. `gen` turns on `workers_dev` only for a `workers.dev` `url`.
 Its `APP_DB` binding is the API's D1, read-write as every D1 binding is; a source check holds the code to SELECTs until
@@ -39,7 +41,7 @@ nothing on chain and holds no chain key.
 | File | Role |
 |---|---|
 | `src/directory.ts` | the user directory's writer (D269): one upsert per identity and per (identity, app), after the answer, never throwing |
-| `src/handlers.ts` | the routes: `start`, `resend`, `verify`, `google-match`, `admin/client-proof`, `admin/unlock`, `admin/unsuppress`, `admin/revoke-tickets`, `confirm`, JWKS, discovery, the SendGrid webhook |
+| `src/handlers.ts` | the routes: `start`, `resend`, `verify`, `google-match` and `google-record` (one set of Google checks, `checkGoogleSignIn`; both write the Google identity to the directory after the answer), `admin/client-proof`, `admin/unlock`, `admin/unsuppress`, `admin/revoke-tickets`, `confirm`, JWKS, discovery, the SendGrid webhook |
 | `src/commitment.ts`, `src/layouts.ts` | purposes, commitments and every nonce (checked against the contract's `email_fixture.json`) |
 | `src/decide.ts` | the four cases of automatic linking, judged as the contract's `auto_link` will |
 | `src/challenge.ts`, `src/challenge-id.ts` | `Challenge` Durable Object: one challenge or link ticket, atomic attempts, single use; the challengeId's public half (the object's name) and secret half (the address's encryption key) |
@@ -51,7 +53,7 @@ nothing on chain and holds no chain key.
 | `src/google.ts`, `src/chain.ts`, `src/apps.ts`, `src/access.ts`, `src/webhook.ts` | Google (ID token, tokeninfo, userinfo; the access token is never revoked, D265), NEAR views, the app lookup, Cloudflare Access, SendGrid's signed events |
 | `scripts/gen-contract-fixture.ts` | writes `contracts/hana-signer/src/issuer_tokens_fixture.json` (tokens from this code, for the contract's unit tests), deterministically from a public test seed; `scripts/test/gen-contract-fixture.test.ts` checks the committed file matches |
 | `migrations/0001_init.sql` | the issuer's D1: `email_issuance`, `email_hints`, `email_suppressions`, `email_admin_audit` |
-| `migrations/0002_user_emails.sql` | the user directory (D269): `user_emails`, `user_email_apps` |
+| `migrations/0002_user_emails.sql` | the user directory (D269): `user_emails`, `user_email_apps`; written after the answer, best effort (`src/directory.ts` `recordUserEmailLater`: a failure logs `directory_write_failed` with the app and scope only) |
 
 ## Commands
 
@@ -67,5 +69,10 @@ corepack pnpm --filter @hana-id/email-issuer dev
 
 The tests reach no network: Google, NEAR, SendGrid and KMS are fakes (Google's real client code runs against a fake
 fetch); the RSA keys and HMAC keys are throwaway values made per run. `test/privacy.test.ts` greps every log line of
-every flow for the address, the code, the `sub`, the tokens and the secrets, and checks that a verified address is in
-`user_emails` and no other table; `test/directory-verify.test.ts` covers which `verify` answers record.
+every flow for the address, the code, the `sub`, the tokens and the secrets (google-record and the directory's failure
+line included), and checks that a verified address is in `user_emails` and no other table;
+`test/directory-verify.test.ts` covers which `verify` answers record, `test/google-record.test.ts` google-record and
+google-match's directory write.
+
+Last verified: 2026-11-04 (branch `feat/google-token-first`: `google-record`, google-match's directory write, D269,
+D270).

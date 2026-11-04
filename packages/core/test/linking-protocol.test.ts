@@ -47,6 +47,17 @@ describe('auth-params (batch 8b)', () => {
     expect(parseWindowMessage(params({ followKey, task: { ...task, provider: 'email' } }), ['hana:auth-params'])).toBeNull();
     expect(parseWindowMessage(params({ followKey, task, methods: ['google', 'email'], method: 'google' }), ['hana:auth-params'])).toBeNull();
   });
+
+  it('token_first’s record-only login (D270): `emailRecord: true` with the follow-up key, never with methods or a task', () => {
+    const followKey = new Uint8Array(32).fill(5);
+    const task = { kind: 'link', provider: 'google', prove: { method: 'google', nonce: 'N'.repeat(43), loginHint: null } };
+    expect(parseWindowMessage(params({ followKey, emailRecord: true }), ['hana:auth-params'])).not.toBeNull();
+    expect(parseWindowMessage(params({ emailRecord: true }), ['hana:auth-params'])).toBeNull();
+    expect(parseWindowMessage(params({ followKey, emailRecord: false }), ['hana:auth-params'])).toBeNull();
+    expect(parseWindowMessage(params({ followKey, emailRecord: 1 }), ['hana:auth-params'])).toBeNull();
+    expect(parseWindowMessage(params({ followKey, emailRecord: true, methods: ['google', 'email'] }), ['hana:auth-params'])).toBeNull();
+    expect(parseWindowMessage(params({ followKey, emailRecord: true, task }), ['hana:auth-params'])).toBeNull();
+  });
 });
 
 describe('relay payloads', () => {
@@ -73,6 +84,21 @@ describe('relay payloads', () => {
       { idToken: 'a.b.c', email: 'ada@example.com' },
       { accessToken: 'has space' },
       { accessToken: 'x', error: 'y' },
+    ]) {
+      expect(isRelayPayload(p), JSON.stringify(p)).toBe(false);
+    }
+  });
+
+  it('the popup’s token_has_pii may name the claim (D273), and only that error, and only a claim name', () => {
+    expect(isRelayPayload({ error: 'token_has_pii', claim: 'email' })).toBe(true);
+    expect(isRelayPayload({ error: 'token_has_pii', claim: 'email_verified', timings: { callbackPrep: 1 } })).toBe(true);
+    for (const p of [
+      { error: 'google_error', claim: 'email' },
+      { error: 'token_has_pii', claim: '' },
+      { error: 'token_has_pii', claim: 'ada@example.com' },
+      { error: 'token_has_pii', claim: 'x'.repeat(65) },
+      { error: 'token_has_pii', claim: 1 },
+      { error: 'token_has_pii', claim: 'email', other: 1 },
     ]) {
       expect(isRelayPayload(p), JSON.stringify(p)).toBe(false);
     }

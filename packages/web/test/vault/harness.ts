@@ -276,6 +276,12 @@ export class FakeBackend {
   /** The email issuer's google-match: the test's answer for each call (the request is recorded), or a 503. */
   googleMatch: ((body: Record<string, unknown>) => Record<string, unknown> | Response) | null = null;
   readonly matchCalls: Record<string, unknown>[] = [];
+  /**
+   * The email issuer's google-record (token_first, D270): the test's answer (default `{accepted: true}`), a Response, or
+   * a promise that never settles (a hung issuer). Each request is recorded.
+   */
+  googleRecord: (body: Record<string, unknown>) => Record<string, unknown> | Response | Promise<never> = () => ({ accepted: true });
+  readonly recordCalls: Record<string, unknown>[] = [];
   /** POSTs to the login relay (the vault's follow-up notices, the popup's answers in tests). */
   readonly relayWrites: string[] = [];
   private txSeq = 0;
@@ -438,6 +444,12 @@ export class FakeBackend {
       if (!this.googleMatch) return corsView(apiError(503, 'unavailable'));
       const r = this.googleMatch(b);
       // The issuer is another origin: the vault reads only what its CORS exposes.
+      return corsView(r instanceof Response ? r : json(200, r));
+    }
+    if (url.origin === 'https://issuer.test' && url.pathname === '/v1/email/google-record') {
+      const b = body as Record<string, unknown>;
+      this.recordCalls.push(b);
+      const r = await this.googleRecord(b);
       return corsView(r instanceof Response ? r : json(200, r));
     }
     const call: ApiCall = { method: init?.method ?? 'GET', path: url.pathname, headers, body };

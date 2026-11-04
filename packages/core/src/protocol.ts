@@ -701,6 +701,13 @@ export interface WindowMessageMap {
      */
     followKey?: Uint8Array;
     /**
+     * token_first (D270): a login of an app without email login, in an env with an email issuer. The popup asks Google
+     * for the email in the login's own request and relays the access token in follow-up slot 1, for the issuer's user
+     * directory only (D269): no google-match, no follow-up notices; the popup closes once the ID token is relayed.
+     * Only with `followKey`, never with `methods` or `task`.
+     */
+    emailRecord?: true;
+    /**
      * `hana.linkAccount({method})`: this popup signs in the new method with `prove` (its nonce or email commitment)
      * instead of a login; the session fields are unused. Then the vault asks (follow-up `prove`) for the account's.
      */
@@ -831,8 +838,9 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:hello': (m) => exactKeys(m, ['v', 't', 'sdk']) && typeof m.sdk === 'string' && /^[0-9A-Za-z.+-]{1,32}$/u.test(m.sdk),
   'hana:auth-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:auth-params': (m) =>
-    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'clientId', 'mode', 'sessionPublicKey', 'expiresAtMs', 'salt', 'keyIndex', 'maxUses', 'nonce', 'relayId', 'relayKey'], ['methods', 'method', 'emailHint', 'followKey', 'task']) &&
-    (m.followKey === undefined || (isBytes(m.followKey, 32, 32) && (Array.isArray(m.methods) || m.task !== undefined))) &&
+    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'clientId', 'mode', 'sessionPublicKey', 'expiresAtMs', 'salt', 'keyIndex', 'maxUses', 'nonce', 'relayId', 'relayKey'], ['methods', 'method', 'emailHint', 'followKey', 'task', 'emailRecord']) &&
+    (m.followKey === undefined || (isBytes(m.followKey, 32, 32) && (Array.isArray(m.methods) || m.task !== undefined || m.emailRecord === true))) &&
+    (m.emailRecord === undefined || (m.emailRecord === true && m.followKey !== undefined && m.methods === undefined && m.task === undefined)) &&
     (m.task === undefined ||
       (m.followKey !== undefined &&
         isPlainObject(m.task) &&

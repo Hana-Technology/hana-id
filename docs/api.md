@@ -1,6 +1,8 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's)
 
-Last verified against code: 2026-11-04 (branch `fix/sessions-allow-list`: `/v1/sessions`'s claim allow-list always on, `/v1/owner-actions`'s `token_has_pii` for owner tokens and client proofs, the `REJECT_PII_ON_SESSIONS` binding gone; D271, D274); 2026-11-04 (branch `feat/user-emails`: the issuer's `verify` writes the user directory, its D1's migration 0002 and the `directory_write_failed` log; D269); 2026-11-03 (branch `fix/8b-rereview`, onto `feat/email-login-8b`: the issuer's CORS exposes `retry-after`); 2026-11-03 (branch `feat/email-login-8b` review fixes: the login relay's 40 writes a minute per IP and 12 KiB body, google-match's `google_account_mismatch`, no revocation and 120 per 10 min per IP, D264, D265, D267); 2026-11-03 (branch `feat/email-login-8b`: the login relay's writes from `VAULT_ORIGIN` and the follow-up slots, the vault page's `connect-src` with `EMAIL_ISSUER_URL`, the issuer's case-B `verify` answering `sub` with its `linkTicket`, the web as the caller of google-match, `/v1/sessions/revoke` and `/v1/link*`; D254–D259); 2026-11-03 (branch `fix/demo-polish`: `GET /v1/app` reads its D1 rows and the registry
+Last verified against code: 2026-11-04 (branch `feat/google-token-first`: the issuer's `POST /v1/email/google-record`
+and its per-IP limit, google-match's user-directory write (D269, D270), the auth page Worker's callback CSP with Google's
+tokeninfo in an env with an email issuer); 2026-11-04 (branch `fix/sessions-allow-list`: `/v1/sessions`'s claim allow-list always on, `/v1/owner-actions`'s `token_has_pii` for owner tokens and client proofs, the `REJECT_PII_ON_SESSIONS` binding gone; D271, D274); 2026-11-04 (branch `feat/user-emails`: the issuer's `verify` writes the user directory, its D1's migration 0002 and the `directory_write_failed` log; D269); 2026-11-03 (branch `fix/8b-rereview`, onto `feat/email-login-8b`: the issuer's CORS exposes `retry-after`); 2026-11-03 (branch `feat/email-login-8b` review fixes: the login relay's 40 writes a minute per IP and 12 KiB body, google-match's `google_account_mismatch`, no revocation and 120 per 10 min per IP, D264, D265, D267); 2026-11-03 (branch `feat/email-login-8b`: the login relay's writes from `VAULT_ORIGIN` and the follow-up slots, the vault page's `connect-src` with `EMAIL_ISSUER_URL`, the issuer's case-B `verify` answering `sub` with its `linkTicket`, the web as the caller of google-match, `/v1/sessions/revoke` and `/v1/link*`; D254–D259); 2026-11-03 (branch `fix/demo-polish`: `GET /v1/app` reads its D1 rows and the registry
 and the registry side by side, `get_config` only when a shared client is needed, its `settings` and `chain` phases and
 its `timings` for `pk_test_` apps, the 8 s timeout on every contract view, the self-healing shared `get_config` read;
 D261); 2026-11-02 (branch `feat/email-login-8a`: the auth page Worker's `/login/email` and its
@@ -587,7 +589,7 @@ One thin Worker per Hana origin in every env (D66; `workers.dev` in dev envs, a 
 | Origin | Path | Response |
 |---|---|---|
 | vault | `/vault` | forwarded to the API Worker (service binding `API`), unchanged but for a `Set-Cookie` header, which is dropped; `503` page with no config if it is unreachable |
-| auth | `/login/callback` | `login/callback.html` with `frame-ancestors 'none'; connect-src <API_URL>` |
+| auth | `/login/callback` | `login/callback.html` with `frame-ancestors 'none'; connect-src <API_URL> [https://oauth2.googleapis.com]` (Google's tokeninfo only when `EMAIL_ISSUER_URL` is set and valid: under `'token_first'` the callback reads the access token's `sub` there, D270; the built page's `<meta>` policy lists the same, `packages/web/src/auth/pages.ts`) |
 | auth | `/login`, `/approve` | `<path>.html` with `frame-ancestors 'none'` (neither fetches anything; the login popup makes no API call, D77) |
 | auth | `/login/email` | `login/email.html` with `frame-ancestors 'none'; connect-src [<EMAIL_ISSUER_URL origin>] <API_URL>` (the email step, batch 8a: the issuer's `start`, `resend`, `verify` and the relay write; the auth Worker's `EMAIL_ISSUER_URL` is set by `gen` from `emailIssuer`, and a malformed one is a `503` page) |
 | auth | `/export` | `export.html` with `frame-ancestors 'none'; connect-src <API_URL> <NEAR_RPC> [<NEAR_RPC_FALLBACK>] https://www.googleapis.com` |
@@ -1307,7 +1309,7 @@ the API's D1 (read only); it writes nothing on chain.
 ### Conventions
 
 - Browser routes are `POST` JSON (`Content-Type: application/json`, else 415) from exactly one origin each (D199):
-  `start`, `resend`, `verify` from `AUTH_ORIGIN`, `google-match` from `VAULT_ORIGIN`; any other or missing `Origin` is
+  `start`, `resend`, `verify` from `AUTH_ORIGIN`, `google-match` and `google-record` from `VAULT_ORIGIN`; any other or missing `Origin` is
   `403 origin_not_allowed` with no CORS headers; an allowed origin's responses (preflight `204` too) carry
   `access-control-expose-headers: retry-after`, so the vault and the auth page can read it. No cookies, no credentials (D70). Bodies ≤ 8 KB, exactly the listed
   fields (else `400 bad_request`); only `start` carries an address. Every response `Cache-Control: no-store`.
@@ -1425,6 +1427,29 @@ answer and never changing it; errors and `409`s record nothing.
    expiresAtMs, to: "a…@domain"}`, a prepared `auto_link` challenge whose first code `resend` sends (D195); none for a
    suppressed mailbox or one the mailbox limits refuse.
 
+6. Once steps 1–2 pass, whatever the decision, the Google identity goes to the user directory (D269, `src/directory.ts`
+   `recordUserEmailLater`, after the answer, best effort): `user_emails` (`google`, the Google `sub`, userinfo's
+   address lowercased, `email_verified`, `hosted`: Google-hosted by D158, false when unverified) and `user_email_apps`
+   (this app and scope). A failed write logs `directory_write_failed` (app and scope only) and never changes the answer.
+
+### `POST /v1/email/google-record` · E
+
+`{pk, accessToken, googleIdToken, commitment}` → `200 {accepted: true}` (D270). Under `GOOGLE_EMAIL_FLOW =
+'token_first'` (`packages/web/src/auth/google.ts`; built, not in force) a Google login of an app without email login
+asks Google for the email too, and the vault sends the access token here, in the background, only for the user
+directory (D269).
+
+- Its own app gate: `pk` → an app as above (`401 invalid_key`, `403 app_suspended`), **email login need not be on** and
+  the scope needs no email client.
+- google-match's steps 1 and 2 exactly (the same code, `checkGoogleSignIn`): the ID token, its nonce over the
+  commitment, the commitment's scope, `tokeninfo`, `userinfo`, `google_account_mismatch`, the access token never
+  revoked or stored. Per IP: 120 per 10 min in a window of its own (`ip:record:10m`; a login calls google-match or
+  google-record, never both), `429` with `retry-after`.
+- The answer carries no match data (no decision, no hosted flag, no hint, no token, no challenge); nothing is matched,
+  minted, mailed or hinted. After it, google-match's step 6 (the directory row), best effort.
+- The vault calls it once per login, gives up after 30 s and never retries; any failure is dropped and never reaches
+  the login (`packages/web/src/vault/login.ts` `recordGoogle`).
+
 ### Staff routes (`/v1/email/admin/*`) · E
 
 Common to all of them (D199): a valid Cloudflare Access JWT (`Cf-Access-Jwt-Assertion`: RS256 against the team's certs,
@@ -1498,7 +1523,7 @@ subject. Every mailbox decision is one atomic call (D198). Every mailbox-level r
 | Challenge | 10 min from creation; 5 wrong codes; ≤ 2 resends ≥ 30 s apart | 410 / 429 |
 | IP (IPv4 address, IPv6 /64): `start` | 10 per 10 min, 50 per day | 429 |
 | IP prefix (IPv4 /24, IPv6 /56, IPv6 /48): `start` | 1000 per day each; skipped with a valid ticket or grant | 429 |
-| IP: `verify` / `resend` (and `confirm`) / `google-match` (its prepared challenges too) / webhook | 30 / 10 / 30 / 120 per 10 min | 429 |
+| IP: `verify` / `resend` (and `confirm`) / `google-match` (its prepared challenges too) / `google-record` / webhook | 30 / 10 / 120 / 120 / 120 per 10 min | 429 |
 | No usable `cf-connecting-ip` (IP-limited routes) | refused | `400 missing_client_ip`, logged |
 | Recipient domain (registrable, Public Suffix List): code mails | 100 + 2 × its distinct verified mailboxes a day over the trailing 7 days (only challenges that took a domain place), at most 2,000, per day; a verified challenge's places given back; except the listed consumer providers (`src/domain.ts`); each requester prefix (IPv4 /24, IPv6 /56, /48) ≤ 20% of the day's cap; ticketed and unlock-grant challenges not counted | 429; `email_domain_cap` logged when a day fills |
 | App: `start` | plan `per_minute` per minute; plan `per_day` per day; owner starts not counted | 429 |
@@ -1525,7 +1550,8 @@ client_proof|unlock|unsuppress|revoke_tickets, ticket, scope_id?, action_nonce?,
 (0002, D269): `user_emails(provider email|google, sub, email, email_verified, hosted?, first_seen_ms, last_seen_ms)`,
 key (provider, sub), indexes on `email` and `last_seen_ms`, and `user_email_apps(provider, sub, app_id, scope_id,
 first_seen_ms, last_seen_ms)`, key (provider, sub, app_id), index (app_id, last_seen_ms); written by `src/directory.ts`
-after the answer (`waitUntil`), read by Hana staff with `admin user:list` / `user:find` only (no route serves it). The
+after the answer (`waitUntil`): email rows by `verify`, Google rows by google-match and google-record (D270); read by
+Hana staff with `admin user:list` / `user:find` only (no route serves it). The
 verified address is stored readably there and only there: no log line, other table or Durable Object holds it
 (a live challenge's copy is encrypted, D197). SendGrid also keeps addresses: its suppression lists keep an address until it
 is removed there, whatever the activity retention below. `APP_DB` is the API's D1, read only (`apps`, `plans`).

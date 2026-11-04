@@ -14,8 +14,8 @@ export const RELAY_MAX_BODY_BYTES = 12_288;
 /**
  * The largest plaintext a relay value may have: its ciphertext (plus the 16-byte tag), base64url in `{"iv","ct"}`, then
  * fits RELAY_MAX_BODY_BYTES with room to spare (33 + ⌈4·(9000 + 16)/3⌉ = 12 055 bytes). Every payload the format
- * allows fits: one-request mode's largest token payload (an ID token of 4096 and an access token of 2048 characters,
- * case B's proof and 8 timings) is about 6.6 KB (G-L7). encryptRelayValue refuses anything larger.
+ * allows fits: its largest token payload (an ID token of 4096 and an access token of 2048 characters beside it, case
+ * B's proof and 8 timings) is about 6.6 KB (G-L7). encryptRelayValue refuses anything larger.
  */
 export const RELAY_MAX_PLAINTEXT_BYTES = 9000;
 const GOOGLE_ERROR = /^[a-z_]{1,64}$/u;
@@ -26,14 +26,19 @@ const GOOGLE_ERROR = /^[a-z_]{1,64}$/u;
  * timings.ts), which the vault adds to the login's timings.
  *
  * Email login and linking (build plan batch 8b), only in a login whose auth-params carried a `followKey`:
- * - `accessToken`: Google's access token for the `email` scope (one-request mode), for the vault's google-match only;
- * - `access: 'follow'`: Google's access token follows in follow-up slot 1 (the second, silent request);
+ * - `accessToken`: Google's access token beside the ID token, for the vault's google-match only (one-request mode's
+ *   form; no popup sends it since that mode's removal, D273);
+ * - `access: 'follow'`: Google's access token is in follow-up slot 1 (second_request's silent request, or
+ *   token_first's first request, D270; in a token_first record-only login, `emailRecord`, for google-record);
  * - `caseB`: this popup's email step found the address's Google wallet (`verify` → `linkTicket`, the address's
  *   `sub`), and the user chose "Link and continue" before going to Google (D139);
  * - `as`: what a token answering the vault's follow-up is (`link`: case A's `auto_link` token after the code step;
  *   `session`: an email login's token; `proof`: a link method's proof).
  */
-export type RelayPayload = RelayTokenPayload | (({ accessToken: string } | { error: string }) & { timings?: Record<string, number> });
+export type RelayPayload = RelayTokenPayload | (({ accessToken: string } | { error: string; claim?: string }) & { timings?: Record<string, number> });
+
+/** A claim name the popup may name beside `{error: 'token_has_pii'}` (the first claim outside the allow-list, D273). */
+export const RELAY_CLAIM_NAME = /^[A-Za-z0-9_.:-]{1,64}$/u;
 
 /** A relayed token (RelayPayload's first form). */
 export interface RelayTokenPayload {
@@ -76,8 +81,9 @@ const isCaseB = (v: unknown): v is CaseBProof =>
 const TOKEN_EXTRAS: readonly string[] = ['accessToken', 'access', 'caseB', 'as'];
 
 /**
- * True for `{idToken[, accessToken | access, caseB, as]}`, `{accessToken}` or `{error: ^[a-z_]{1,64}$}`, each with an
- * optional `timings` record.
+ * True for `{idToken[, accessToken | access, caseB, as]}`, `{accessToken}` or `{error: ^[a-z_]{1,64}$}` (with
+ * `claim` only beside `token_has_pii`: the popup refused an ID token before relaying it, D273), each with an optional
+ * `timings` record.
  */
 export function isRelayPayload(v: unknown): v is RelayPayload {
   if (!isObj(v)) return false;
@@ -90,6 +96,9 @@ export function isRelayPayload(v: unknown): v is RelayPayload {
     if (v.access !== undefined && v.access !== 'follow') return false;
     if (v.caseB !== undefined && !isCaseB(v.caseB)) return false;
     return v.as === undefined || v.as === 'link' || v.as === 'session' || v.as === 'proof';
+  }
+  if (keys.length === 2 && keys.includes('error') && keys.includes('claim')) {
+    return v.error === 'token_has_pii' && typeof v.claim === 'string' && RELAY_CLAIM_NAME.test(v.claim);
   }
   if (keys.length !== 1) return false;
   if (keys[0] === 'accessToken') return isAccessToken(v.accessToken);

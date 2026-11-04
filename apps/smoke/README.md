@@ -337,8 +337,10 @@ A, B, D and E then call Google's `tokeninfo` by POST (aud and sub match; the tok
 (an address, `email_verified`, `hd` present and equal to the address's domain, a Gmail address), from the page, and
 never revoke the token (as production, D265). Each leg has its own single-use `state`, and a fragment with more than
 one `state` is ignored, as production's callback. The summary holds booleans and claim names only (never the
-address, `sub` or a token). A's `'one_request'` stays rejected (D270: Google puts `email` in that ID token); A is
-kept to record that.
+address, `sub` or a token). A's `'one_request'` stays rejected (D270: Google puts `email` in that ID token), and the
+popup no longer has that flow (D273); A is kept to record that. `GOOGLE_EMAIL_FLOW` may become `'token_first'` (built,
+D270: `packages/web/src/auth/google.ts`, the same three steps as E, with one interactive openid-only retry of step 3,
+D273) once the gate below passes: a reviewed one-line change, `docs/operations.md` "Turning linking on (batch 8b)".
 
 **Gate (D265):** legs C and D on real Google, by the user, before batch 8b reaches real users: C must show no
 lockout and D must succeed silently (`docs/email-login-build-plan.md` batch 8b, `docs/operations.md` "Turning

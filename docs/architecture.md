@@ -1,7 +1,9 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-04 (branch `fix/sessions-allow-list`: the claim allow-list on every route that relays a Google token, `/v1/sessions` and `/v1/owner-actions` included, `REJECT_PII_ON_SESSIONS` retired, the smoke direct page on openid-only tokens, D271, D274); 2026-11-04 (branch `feat/user-emails`: the user directory in the email issuer's D1,
+Last verified against code: 2026-11-04 (branch `feat/google-token-first`: "Automatic linking" step 2, Google's email under each
+`GOOGLE_EMAIL_FLOW` (`'token_first'` built, off; `'one_request'` removed; the callback's claim allow-list; the
+callback's tokeninfo CSP), the issuer's `google-record` and google-match's directory write, D269, D270, D273); 2026-11-04 (branch `fix/sessions-allow-list`: the claim allow-list on every route that relays a Google token, `/v1/sessions` and `/v1/owner-actions` included, `REJECT_PII_ON_SESSIONS` retired, the smoke direct page on openid-only tokens, D271, D274); 2026-11-04 (branch `feat/user-emails`: the user directory in the email issuer's D1,
 written at every successful email `verify` and read by `admin user:list` / `user:find`, in "Email login in the popup"
 step 3, the email permission's explainer, "Data stores" and the issuer's row in Components; D269); 2026-11-04 (branch `feat/export-copy`: "Key export", the Show key / Hide key toggle and Copy key, D268); 2026-11-03 (branch `docs/sandbox-dev-state`: what sandbox-dev runs, per the operator on 2026-11-03: contract v3, migrations 0006/0009/0010, the API at `develop` c3c33ec, the page Workers, the email issuer Worker, the demo with email; the Status table and Components); 2026-11-03 (branch `fix/8b-rereview`: the issuer's CORS exposing `retry-after`, 3 consent
 screens, the pin read's 1 s timeout (fail closed), the login's signal on google-match and the confirming reads; D263–D265); 2026-11-03 (branch `feat/email-login-8b` review fixes: member paths confirmed on both
@@ -153,10 +155,11 @@ Who talks to whom:
 | Partner client → vault | `postMessage` hello, then a `MessageChannel` port (`packages/web/src/client/vault-connection.ts`) | Port methods (`hana_login`, `eth_signTransaction`, …) and events. Never key material. The vault says `connected` on the port once it has taken the hello (before storage and the unlock call), then `ready`; the SDK gives each frame 5 s to answer (5 s more while it is still loading; a loaded frame that doesn't answer is replaced once), then gives `ready` 20 s after `connected`, and on a failure removes the frame and reports `vault_unavailable` with `data.reason` (D262) |
 | Vault ↔ auth popups | `postMessage`, checked by `event.origin` and `event.source` (a popup the partner page opened reaches the vault as `opener.frames[v]`) | `hana:auth-params` (incl. `relayKey`, and `followKey` in a login that offers email), approval requests/results and `hana:approve-close`, export context |
 | Partner client → approval popup | `window.open` only (it holds the WindowProxy; the popup takes no message from it) | — |
-| Auth popup → Google | top-level navigation | Implicit flow, `response_type=id_token`, `scope=openid`, `prompt=select_account`; in a login that offers email, then a second silent request `response_type=token`, `scope=email`, `prompt=none`, `login_hint=<sub>` (D254) |
+| Auth popup → Google | top-level navigation | Implicit flow, `response_type=id_token`, `scope=openid`, `prompt=select_account`; in a login that offers email, then a second silent request `response_type=token`, `scope=email`, `prompt=none`, `login_hint=<sub>` (D254). Under `'token_first'` (D270, off): `response_type=token`, `scope=openid email` first, then a silent `response_type=id_token`, `scope=openid`, `prompt=none`, `login_hint=<sub>` ("Automatic linking" step 2) |
+| `/login/callback` → Google tokeninfo | `fetch` `POST https://oauth2.googleapis.com/tokeninfo` (form body, no cookies; its CSP `connect-src` lists it in an env with an email issuer, in both the Worker's header and the built `<meta>` policy) | Only under `'token_first'`: the access token, for its client and `sub` (the login hint) |
 | `/login/callback`, `/login/email` → API | `POST /v1/login-relay/:relayId` (`Origin: authOrigin`) | AES-GCM ciphertext of the token; in a login that offers email also the access token and the answers to the vault's follow-up notices (follow-up slots) |
 | Vault → API | `fetch`, `Origin: vaultOrigin`, `x-hana-key`, `x-hana-parent-origin` | `/v1/app`, relay read and (follow-up notices, batch 8b) relay write, `/v1/login`, `/v1/sessions/revoke`, `/v1/link*`, `/v1/vault/*` |
-| Vault → email issuer | `fetch`, `Origin: vaultOrigin`, no cookies | `POST /v1/email/google-match` (Google's ID and access tokens, the session commitment; batch 8b) |
+| Vault → email issuer | `fetch`, `Origin: vaultOrigin`, no cookies | `POST /v1/email/google-match` (Google's ID and access tokens, the session commitment; batch 8b); under `'token_first'` in an app without email login `POST /v1/email/google-record` (the same tokens and commitment; the user directory only, D269) |
 | Vault → NEAR RPC | JSON-RPC (manifest `rpc`; `rpcFallback` only when `rpc` errors or times out, one endpoint per answer: `packages/web/src/near-call.ts`; and both read separately to confirm any path that isn't the signed-in identity's own: `packages/web/src/path-check.ts`, D263) | `get_session` re-sync, the login's registry check (`scope_for_client`, or `get_scope` and `get_config`), `get_identity` (the path, batch 7), `get_account` and `get_config().unrecorded_wallets` (links), the email keys and policy, `EXPERIMENTAL_tx_status` polling; the export window the same |
 | Vault, export window → Google | `https://www.googleapis.com/oauth2/v3/certs` | JWKS for the defence-in-depth RS256 check |
 | Partner page → API | `fetch` from the partner origin | `GET /v1/app` (any key); `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke` only for test-scope apps in dev envs (`apps/smoke`) |
@@ -278,7 +281,8 @@ Browser steps: `packages/web/src/auth/login-page.ts`, `email-page.ts`, `email-ap
 Browser steps: `packages/web/src/vault/login.ts` (`PendingLogin.matchGoogle`, `judgeLink`, `ownPath`, `Afterword`,
 `PendingLink`, `FollowChannel`), `vault/issuer.ts`, `auth/callback-page.ts`, `auth/email-page.ts` (follow-up mode),
 `auth/google.ts`, `packages/core/src/links.ts`, `relay.ts`. Only in a login that offers email; a Google-only app's
-login is batch B's, message for message (no follow-up key, no google-match, no email scope).
+login is batch B's, message for message (no follow-up key, no google-match, no email scope), except under
+`'token_first'` (step 2, not in force) in an env with an email issuer.
 
 1. **The follow-up channel** (D256). The vault adds `followKey` (32 random bytes) to `hana:auth-params`. Slot `n`
    (1..12) of the login's channel is a relay slot whose read key is `HMAC-SHA256(followKey, "hana-id/relay-follow/v1"
@@ -288,17 +292,46 @@ login is batch B's, message for message (no follow-up key, no google-match, no e
    request's access token. After its token is relayed the popup doesn't close: `/login/callback` hands over to
    `/login/email`'s follow-up mode (or the email step goes on in place), which long-polls the vault's next notice and
    shows it (`FollowNotice`: `link_code`, `use_email`, `prove`, `done`, `stop`).
-2. **Google's verified email** (D254). `GOOGLE_EMAIL_FLOW = 'second_request'`: the login's Google request stays
-   `response_type=id_token`, `scope=openid`; the callback relays the token with `access: 'follow'`, then makes a
-   second, silent request (`response_type=token`, `scope=email`, `prompt=none`, `login_hint=<sub>`) whose access token
-   it relays to slot 1. When Google needs the user (`consent_required`, `interaction_required`, `login_required`,
-   `account_selection_required`: the first time, since the token is never revoked, D265), it shows Hana's own screen
-   (what Google will ask and why: Hana uses the address to find a wallet and keeps it with the account, never
-   sharing it with the app; Continue or Not now, D264, D269), then asks once more without `prompt=none`. The switch's other value,
-   `'one_request'` (`id_token token`, `openid email`), waits for the batch 0 spike (`apps/smoke/spike-email.html`).
-   The full address never reaches the vault or the partner page (the vault relays only case A's masked hint,
-   `a…@domain`, to the popup, end to end); the on-chain token stays openid-only (D25, the vault's and the API's
-   `token_has_pii`). The issuer never revokes the access token (D265).
+2. **Google's verified email**, by `GOOGLE_EMAIL_FLOW` (`packages/web/src/auth/google.ts`, a code constant; the
+   pages and the vault take it as a dependency, `googleEmailFlow`, so the tests run both values):
+   - **`'second_request'` (in force, D254).** Only in a login of an app with email. The login's Google request stays
+     `response_type=id_token`, `scope=openid`; the callback relays the token with `access: 'follow'`, then makes a
+     second, silent request (`response_type=token`, `scope=email`, `prompt=none`, `login_hint=<sub>`) whose access
+     token it relays to slot 1. When Google needs the user (`consent_required`, `interaction_required`,
+     `login_required`, `account_selection_required`: the first time, since the token is never revoked, D265), it shows
+     Hana's own screen (what Google will ask and why: Hana uses the address to find a wallet and keeps it with the
+     account, never sharing it with the app; Continue or Not now, D264, D269), then asks once more without
+     `prompt=none`.
+   - **`'token_first'` (D270; built, off until the user's spike run shows legs C and E pass).** Every Google login of
+     an env with an email issuer carries the follow-up key; an app without email login also gets `emailRecord: true`
+     in auth-params. `/login` (and case B's Google request on `/login/email`) asks first for `response_type=token`,
+     `scope=openid email` with the account chooser and the relay `state`, so Google's one sign-in screen lists the
+     email; no ID token, no nonce. Its entry keeps the login's nonce (`n`) and marks it (`tf`; `r` for a record-only
+     login). `/login/callback` then: reads the access token's client and `sub` with `POST
+     https://oauth2.googleapis.com/tokeninfo` (form body, no cookies, no referrer; `accessTokenSub`): another
+     client's token (`aud`/`azp`), no answer (a network error, a 5xx, a CORS refusal) or a refusal ends the login
+     (`tokeninfo_client_mismatch`, `tokeninfo_unavailable`, `tokeninfo_invalid` in the login's slot, `google_error`
+     with that `data.error` at the partner), never a request without the hint; relays the access token to slot 1 at
+     once (it is never stored across Google's page); stores the ID leg (`leg: 'id'`, `login_hint`) under the login's
+     own slot and asks `response_type=id_token`, `scope=openid`, `prompt=none`, `login_hint=<sub>` with the login's
+     nonce. On a silent failure (the four codes above) it asks once more without `prompt=none`, still openid only and
+     for that account, with no Hana screen (D273); a second failure, or any other error, is relayed. An ID token whose
+     `sub` isn't tokeninfo's ends the login (`google_account_mismatch`). The ID token is relayed with `access:
+     'follow'`; an ID token answered to the access token request is never relayed (`invalid_response`). Then an app
+     with email login goes to the follow-up mode, google-match runs as in step 3 (no explainer: Google's first screen
+     asked; declining it is Google's `access_denied` in the login's slot, so no Google login at all; D264's consent
+     screen stays for a google-match `google_account_mismatch`; D255 unchanged); a record-only login closes the
+     popup, and the vault sends the access token, the verified Google token and the session commitment to `POST
+     {issuer}/v1/email/google-record` in the background (best effort: read slot 1, one call, no retry, at most 30 s,
+     `RECORD_TIMEOUT_MS`; any failure is dropped and never reaches the login; the next login writes the row).
+   - `'one_request'` (`id_token token`, `openid email`) is gone (D273): Google puts `email` in that ID token (D270).
+   Under every flow the only request whose ID token is relayed is `response_type=id_token`, `scope=openid`
+   (`googleAuthUrl` builds nothing else), and `/login/callback` checks every ID token against the claim allow-list
+   before relaying it: one with any other claim (`email`, `email_verified`, `hd`, …) is never relayed, the slot says
+   `{error: 'token_has_pii', claim}` and the vault ends the login with that code and `data.claim`, as its own refusal
+   does (the window stays open with the error); the vault and the API refuse such a token too (D25,
+   D271). The full address never reaches the vault or the partner page (the vault relays only case A's masked hint,
+   `a…@domain`, to the popup, end to end). The issuer never revokes the access token (D265).
 3. **google-match before any chain call.** The vault sends `POST {issuer}/v1/email/google-match {pk, accessToken,
    googleIdToken, commitment, link: true, linkTicket?}` (CORS for `vaultOrigin`, D199; the vault page's CSP
    `connect-src` names the issuer, `EMAIL_ISSUER_URL`). A `429` or `503` is retried within the login (its
@@ -630,13 +663,13 @@ would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
 | NEAR transaction args (public forever) | Google ID tokens used in `create_session*`, register proofs, owner tokens; session signatures; BLS `pk1`/`pk2`; MPC responses (encrypted to `a`) | Anything usable without the session key or `a` |
 | D1 `DB` | `plans`, `scopes` (org, environment, `first_session_at`), `apps` (+ 0003 settings: `persistence`, `session_ttl_ms`, `idle_ttl_ms`, `raw_sign*`, `auto_approve_*`, `google_web_client_id`; + 0006: `org_id`, `suspended_by`, the two versions, `logo_key`, `deleted_at`), `app_keys` (publishable keys, public), `app_origins` (+ `active_from`, `change_id`), `guarded_changes`, `app_changes` (append-only ledger of every app write, actors as staff ids or `cli:<login>`), `security_events`, `org_security_contacts` (staff-set emails; none yet), `session_markers` (the first session-pool relay per app, the waiver's sign), the legacy `usage` (`sessions`, `derives`, `unlocks` per app per UTC day; not written since batch C4), `issuer_key_missing`, `vault_shares` (`share_enc` under `VAULT_KEK`, `session_pk`, `path_hash`, `partner_origin`, counter, times), `identity_issuance_hourly` (tokens per signing key and hour), `identity_usage` (tokens per app and day) | Plaintext `K_s`, tokens, user ids (only `sha256(path)`), identity tokens, `sub`, `sid`, addresses |
 | Usage ledger (Neon, `usage` and `ops` schemas) | Per request past the gate: request id, time, org, app, scope, endpoint, outcome, code, status, latency, relayed, transaction, relayer key and nonce, provisional gas, and on ok login/session/derive the uid (`HMAC(USER_ID_KEY, scope ‖ provider ‖ sub)[0..16]`, a pseudonym, D96); `app_users` (first and last day per uid); identity tokens per app and day | A sub, JWT, email, IP, session key, share id or path |
-| Email issuer D1 (`emailIssuer.cloudflare.d1Name`, the issuer's own; `apps/email-issuer/migrations`) | 0001: `email_issuance` (jti, app, purpose, kid, iat), `email_hints` (scope, email `sub`, Google `sub`, hosted, time), `email_suppressions` (an HMAC of the address), `email_admin_audit` (staff, action, ticket, key prefix or scope). 0002, **the user directory** (D269, `src/directory.ts`): `user_emails` (provider, `sub` as on chain, the verified address in clear: email the normalized login address, Google userinfo's lowercased; `email_verified`, `hosted`, first and last seen; one row per identity, the latest address) and `user_email_apps` (provider, `sub`, app, scope, first and last seen). Written best effort after the answer (`waitUntil`; a failure logs `directory_write_failed` with the app and scope only and never fails or slows the login) at every 200 of email `verify` (session, case B, the link purposes, auto_link); Google identities' rows come with the Google-side writes (google-match and google-record, D270), built on `feat/google-token-first`, not on `develop` yet. Read only by Hana staff: `admin <env> user:list` / `user:find` (`scripts/lib/admin-users.ts`, through wrangler with its log file off). The API, the SDK and the partner console read nothing from this D1 | Codes, tokens, keys; an address anywhere but `user_emails` |
+| Email issuer D1 (`emailIssuer.cloudflare.d1Name`, the issuer's own; `apps/email-issuer/migrations`) | 0001: `email_issuance` (jti, app, purpose, kid, iat), `email_hints` (scope, email `sub`, Google `sub`, hosted, time), `email_suppressions` (an HMAC of the address), `email_admin_audit` (staff, action, ticket, key prefix or scope). 0002, **the user directory** (D269, `src/directory.ts`): `user_emails` (provider, `sub` as on chain, the verified address in clear: email the normalized login address, Google userinfo's lowercased; `email_verified`, `hosted`, first and last seen; one row per identity, the latest address) and `user_email_apps` (provider, `sub`, app, scope, first and last seen). Written best effort after the answer (`waitUntil`; a failure logs `directory_write_failed` with the app and scope only and never fails or slows the login) at every 200 of email `verify` (session, case B, the link purposes, auto_link); and for Google identities at google-match once its checks pass (whatever the decision) and at google-record (D270's `'token_first'`, an app without email login; built, the flow off): userinfo's address, lowercased. Read only by Hana staff: `admin <env> user:list` / `user:find` (`scripts/lib/admin-users.ts`, through wrangler with its log file off). The API, the SDK and the partner console read nothing from this D1 | Codes, tokens, keys; an address anywhere but `user_emails` |
 | `RelayerKey` DO storage | Per key: `publicKey`, nonce reservation, last block hash and time | Secret keys (they are Worker secrets) |
 | `RateLimiter` DO storage | `<window>@<start>` counters; `mark:<sha256(owner token)>` single-use markers until the token's `exp`; `mark:<sha256(identity proof signature)>` until the proof's `issuedAtMs` + 120 s | Tokens |
 | `LoginRelay` DO storage | One slot: `{iv, ct}` for ≤ 120 s, then a tombstone for 120 s | Plaintext tokens (the API has no `relayKey`) |
 | Per-isolate memory (API) | JWKS (≤ max-age, stale ≤ 6 h on fetch failure), config / scope / client views (≤ 60 s; "no scope" ≤ 10 s), sessions (≤ 10 s), parsed KEKs, counter holds | — |
 | Browser, `vaultOrigin` | IndexedDB `hana-vault` records (partitioned by top-level site; format 2 adds the identity wallet proofs); memory: session key, PRK, consent and counters, the current identity token | S, `a` (memory only, dropped), plaintext PRK on disk, an identity token on disk |
-| Browser, `authOrigin` | `sessionStorage` `hana.login.<relayId>` = `{v, createdAt, relayKey}` (≤ 10 min, single use) | Tokens |
+| Browser, `authOrigin` | `sessionStorage` `hana.login.<relayId>` = `{v, createdAt, relayKey}` (≤ 10 min, single use), in a login that carries the follow-up key also `followKey` and the next leg's facts (the Google client, the `login_hint`, under `'token_first'` the login's nonce: `auth/login-storage.ts`) | Tokens (token_first's access token goes to slot 1 before Google's next page, never into storage) |
 | `.secrets/<env>/` (operator machine, gitignored, 0700/0600) | `relayer-keys.json`, `owner-relayer-keys.json`, `keys-updater.json` (`scripts/lib/secrets.ts:66`), `vault-kek` (+ `vault-kek.previous` during a rotation; `scripts/lib/vault-kek.ts`), `identity-signing-key.json` (active), `identity-signing-key-standby.json` (published, never uploaded; keep it offline), `-next.json` / `-previous.json` during a rotation, `identity-slots.json`, `identity-sub-key` (`scripts/lib/identity-key.ts`, D177), `neon.json` (the ledger owner's URLs), `neon-usage-writer.url`, `neon-usage-admin.url`, `user-id-key` (`scripts/lib/usage-setup.ts`, D224) | — |
 | `~/.near-credentials/testnet/` (operator machine) | Full-access keys of the owner, signer and relayer accounts (`scripts/lib/keys.ts`) | — |
 | Worker secrets | `RELAYER_KEYS`, `OWNER_RELAYER_KEYS`, `KEYS_UPDATER_KEY`, `VAULT_KEK`, `VAULT_KEK_PREVIOUS`, `IDENTITY_SIGNING_KEY` / `IDENTITY_SIGNING_KEY_STANDBY` (two slots: the active identity key, and during a switch the incoming one), `IDENTITY_SUB_KEY` | — |

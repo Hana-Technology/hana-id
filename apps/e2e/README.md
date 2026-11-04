@@ -92,8 +92,9 @@ the openid-only login with the account chooser, a proof the vault asks for (`log
 the second, silent request for the email scope (`response_type=token`, `scope=email`, `login_hint`, `prompt=none`;
 answered with an access token). It refuses an ID token with the email scope, and signs RS256 tokens with the claims
 Google sends for `scope=openid`; an account with `emailInIdToken` gets `email` and `email_verified` in its ID token
-too (a Google that leaks the address: `tests/login.spec.ts` checks the vault refuses it with `token_has_pii`, no
-`/v1/login` call is made and nothing reaches the chain). `google.issued` lists each token's account and claim names. On the server side (`src/server/google-backend.ts`), the stack answers Google's JWKS,
+too (a Google that leaks the address: `tests/login.spec.ts` checks the login popup's callback refuses it before
+relaying it, D273, so only `{error: 'token_has_pii', claim}` crosses the relay, the SDK gets `token_has_pii` with the
+claim, no `/v1/login` call is made and nothing reaches the chain). `google.issued` lists each token's account and claim names. On the server side (`src/server/google-backend.ts`), the stack answers Google's JWKS,
 `tokeninfo`, `userinfo` and revoke (which the issuer must never call, D265) for the Workers in its process (the issuer's google-match), by wrapping that
 process's `fetch` for those three Google hosts. One RSA key per stack signs every ID token: the browser stubs fetch it
 from `GET {API}/__e2e/google-key` (no CORS, refused with an `Origin`), so the issuer's JWKS cache always knows the

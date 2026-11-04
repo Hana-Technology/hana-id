@@ -7,6 +7,7 @@ import { loadEnv } from '@hana-id/env';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ASSET_DIR, type BuiltEnv, ORIGIN_DIR, buildAuthPages, pageHtml, selectEnvs } from '../../scripts/build-auth-pages.ts';
 import { hanaEnv } from '../../scripts/gen-envs.ts';
+import { GOOGLE_TOKENINFO_ORIGIN, GOOGLE_TOKENINFO_URL } from '../../src/auth/google.ts';
 import { AUTH_PAGES, authPageCsp, authPageMetaCsp } from '../../src/auth/pages.ts';
 import type { HanaEnv } from '../../src/hana-env.ts';
 
@@ -17,7 +18,9 @@ describe('auth page policies', () => {
   it('sets the spec’s CSP per page: base policy, connect-src and frame-ancestors none', () => {
     // The login popup fetches nothing (D77): no connect-src, so default-src 'none' applies.
     expect(authPageCsp(sandbox, 'login')).toBe(`${BASE}; frame-ancestors 'none'`);
-    expect(authPageCsp(sandbox, 'callback')).toBe(`${BASE}; connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev; frame-ancestors 'none'`);
+    // The callback reaches Google's tokeninfo too when the env has an email issuer (token_first, D270; below).
+    const tokeninfo = sandbox.emailIssuerUrl ? ' https://oauth2.googleapis.com' : '';
+    expect(authPageCsp(sandbox, 'callback')).toBe(`${BASE}; connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev${tokeninfo}; frame-ancestors 'none'`);
     expect(authPageCsp(sandbox, 'approve')).toBe(`${BASE}; frame-ancestors 'none'`);
     const { rpcFallback: _fallback, ...oneRpc } = sandbox;
     expect(authPageCsp(oneRpc, 'export')).toBe(
@@ -55,6 +58,18 @@ describe('auth page policies', () => {
     );
     // The chooser stays fetch-free with email on (D77).
     expect(authPageCsp(withIssuer, 'login')).toBe(`${BASE}; frame-ancestors 'none'`);
+  });
+
+  it('token_first (D270): with an email issuer the callback’s meta policy also lists Google’s tokeninfo, as the header does', () => {
+    const { emailIssuerUrl: _url, emailIss: _iss, ...noIssuer } = sandbox;
+    const withIssuer = { ...noIssuer, emailIssuerUrl: 'https://hana-id-email-sandbox-dev.tingtc.workers.dev', emailIss: 'https://hana-id-email-sandbox-dev.tingtc.workers.dev/v1/email' };
+    // The same string apps/api's pages/host.ts sends (its test pins it): a browser enforces both policies.
+    expect(authPageMetaCsp(withIssuer, 'callback')).toBe(`${BASE}; connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev https://oauth2.googleapis.com`);
+    expect(GOOGLE_TOKENINFO_URL.startsWith(`${GOOGLE_TOKENINFO_ORIGIN}/`)).toBe(true);
+    // Only the callback: no other page may reach it.
+    for (const p of AUTH_PAGES.filter((x) => x.name !== 'callback')) expect(authPageMetaCsp(withIssuer, p.name), p.name).not.toContain('oauth2.googleapis.com');
+    // Without an issuer no login can be token_first.
+    expect(authPageMetaCsp(noIssuer, 'callback')).toBe(`${BASE}; connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev`);
   });
 
   it('serves the five pages at the spec’s paths', () => {

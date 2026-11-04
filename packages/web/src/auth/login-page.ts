@@ -22,7 +22,7 @@ import type { HanaEnv } from '../hana-env.ts';
 import { type Dom, dom, errorView } from './dom.ts';
 import { PageError } from './errors.ts';
 import { type EmailContext, storeEmailContext } from './email-storage.ts';
-import { GOOGLE_EMAIL_FLOW, googleAuthUrl, wantsEmailScope } from './google.ts';
+import { GOOGLE_EMAIL_FLOW, type GoogleEmailFlow, loginGoogleRequest } from './google.ts';
 import { addLoginTimings, storeLoginEntry } from './login-storage.ts';
 import { type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed } from './page-window.ts';
 
@@ -42,6 +42,8 @@ export interface LoginPageDeps {
   now?: () => number;
   /** Monotonic ms for a pk_test_ app's `authCheck` timing; defaults to performance.now. */
   perfNow?: () => number;
+  /** How a login asks Google for the email scope (auth/google.ts GOOGLE_EMAIL_FLOW; tests run every flow). */
+  googleEmailFlow?: GoogleEmailFlow;
 }
 
 export type LoginPageState =
@@ -152,27 +154,50 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
       // A link task (`hana.linkAccount`, batch 8b) signs in the new method with the vault's proof nonce instead.
       const task = mode !== 'export' && msg.task && msg.followKey ? msg.task : null;
       const follow = mode !== 'export' && msg.followKey ? msg.followKey : null;
+      /** token_first's record-only login (D270): an app without email login, so no follow-up mode after Google. */
+      const record = !!follow && !task && msg.emailRecord === true;
+      const googleNonce = task?.prove.method === 'google' ? task.prove.nonce : msg.nonce;
+      // The login's own Google request (auth/google.ts): token_first asks for the email access token first.
+      const googleRequest = loginGoogleRequest({
+        flow: deps.googleEmailFlow ?? GOOGLE_EMAIL_FLOW,
+        clientId: msg.clientId,
+        authOrigin: env.authOrigin,
+        nonce: googleNonce,
+        state: msg.relayId,
+        follow: !!follow,
+        task: !!task,
+        forceReauth: mode === 'export',
+      });
+      // A record-only login under another flow (a popup built before the vault's switch) is batch B's openid login:
+      // the callback then relays no access token, and the vault records nothing.
       try {
         // pk_test_ apps: this page's part of the vault's hello → token (its checks, the nonce, the entry), forwarded
         // by the callback inside the encrypted relay slot. A duration on this page's clock, nothing else.
         const timings = isTestPublishableKey(msg.pk) ? { authCheck: Math.max(0, perfNow() - checkStarted) } : undefined;
-        storeLoginEntry(win.sessionStorage, msg.relayId, msg.relayKey, now(), timings, follow ? { followKey: follow, clientId: msg.clientId, ...(task ? { task: true } : {}) } : {});
+        storeLoginEntry(
+          win.sessionStorage,
+          msg.relayId,
+          msg.relayKey,
+          now(),
+          timings,
+          follow
+            ? {
+                followKey: follow,
+                clientId: msg.clientId,
+                ...(task ? { task: true } : {}),
+                // token_first: the callback makes the ID token request after the access token, with this nonce.
+                ...(googleRequest.tokenFirst ? { tokenFirst: true, nonce: googleNonce } : {}),
+                ...(record ? { record: true } : {}),
+              }
+            : {},
+        );
       } catch {
         throw new PageError('storage_unavailable', 'This browser blocked the storage the sign-in needs.');
       } finally {
         msg.relayKey.fill(0);
         msg.followKey?.fill(0);
       }
-      const googleNonce = task?.prove.method === 'google' ? task.prove.nonce : msg.nonce;
-      const url = googleAuthUrl({
-        clientId: msg.clientId,
-        authOrigin: env.authOrigin,
-        nonce: googleNonce,
-        state: msg.relayId,
-        forceReauth: mode === 'export',
-        // One-request mode (auth/google.ts GOOGLE_EMAIL_FLOW): the login's own request asks for the email scope too.
-        withEmailScope: wantsEmailScope(GOOGLE_EMAIL_FLOW, { follow: !!follow, task: !!task }),
-      });
+      const url = googleRequest.url;
       const intro = () => d.h('p', {}, task ? 'Adding a sign-in method in ' : 'Signing in to ', d.h('strong', {}, msg.appName), ' at ', d.h('span', { class: 'origin' }, msg.parentOrigin));
       // Email is offered only by the vault or the export window, only for an env with an email issuer.
       const methods: readonly LoginMethod[] = msg.methods && env.emailIssuerUrl ? msg.methods : ['google'];
@@ -211,7 +236,8 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
         }
       };
       const toGoogle = (tell: boolean) => {
-        if (follow && !storeContext()) return;
+        // The follow-up mode's context (not for a record-only login: it has no follow-up mode).
+        if (follow && !record && !storeContext()) return;
         // In a login that offered email, the vault reports `google` only when the popup says so (hana:auth-progress).
         if (tell) {
           try {

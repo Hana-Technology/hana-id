@@ -1,6 +1,7 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-04 (branch `fix/sessions-allow-list`: the smoke direct page's openid-only sign-in and its redirect URI, `REJECT_PII_ON_SESSIONS` retired, D271); 2026-11-04 (branch `feat/user-emails`: `admin user:list` / `user:find` in "Admin CLI",
+Last verified against code: 2026-11-04 (branch `feat/google-token-first`: "Turning linking on (batch 8b)"'s spike
+paragraph, switching to `'token_first'`, the user directory's Google rows, D270, D273); 2026-11-04 (branch `fix/sessions-allow-list`: the smoke direct page's openid-only sign-in and its redirect URI, `REJECT_PII_ON_SESSIONS` retired, D271); 2026-11-04 (branch `feat/user-emails`: `admin user:list` / `user:find` in "Admin CLI",
 "User directory (D269)" under "Email issuer" with applying migration 0002 on sandbox-dev, the runbook's
 `directory_write_failed`); 2026-11-04 (branch `feat/spike-leg-e`: "Google's verified email: the spike", leg E and the D270 gate); 2026-11-03 (branch `docs/sandbox-dev-state`: what sandbox-dev runs, per the operator on 2026-11-03: a state note under the hot DB gate, the watchdog's email pins and the email issuer sections); 2026-11-03 (branch `fix/8b-rereview`: "Turning linking on (batch 8b)"'s slow second
 provider and watching `path_unconfirmed`, D263); 2026-11-03 (branch `feat/email-login-8b` review fixes: "Turning linking on (batch 8b)"'s
@@ -1988,8 +1989,9 @@ rotation at Cloudflare reaches the issuer at most 30 s late.
 The issuer keeps each identity's verified address for Hana staff (D269): `user_emails` (provider, `sub` as on chain,
 the address, `email_verified`, `hosted`, first and last seen) and `user_email_apps` (which apps and scopes), in its own
 D1 (migration `0002_user_emails.sql`; `docs/api.md` "Durable Objects, D1 and bindings"). An email login writes its row
-at every successful `verify`, after the answer; Google logins write theirs once the Google-side change (D270,
-`feat/google-token-first`) is merged. A failed write logs `directory_write_failed` and never fails a login. Nothing
+at every successful `verify`, after the answer; a Google login writes its row at google-match once its checks pass
+(apps with email login), and under `'token_first'` (D270, built, not in force) at google-record (apps without email
+login): userinfo's address, `email_verified` and `hosted`. A failed write logs `directory_write_failed` and never fails a login. Nothing
 partner-facing reads it. There is no backfill: a user appears at their first login after the migration.
 
 **Applying migration 0002 on sandbox-dev** (the user runs this, from the main checkout; additive, two new tables, so
@@ -2447,14 +2449,22 @@ either way. The readiness item is `docs/mainnet-readiness.md` row 7.1g.
 
 **Google's verified email: the spike** (`apps/smoke/spike-email.html`, build plan batch 0; not run yet). The popup
 asks Google twice today (`GOOGLE_EMAIL_FLOW = 'second_request'`): the openid-only login request, then a silent
-`response_type=token`, `scope=email` request. The spike measures whether one request (`id_token token`, `openid
-email`) keeps `email` out of the ID token; run it with a Gmail, a Workspace and an outside-address Google account
-(`apps/smoke/README.md`) and record the results in `docs/context.md` before changing the switch. Its leg **E** runs
-D270's `'token_first'` exactly: a `response_type=token`, `scope=openid email` request, the account's `sub` from
-`tokeninfo` (POST, from the page: it also records whether the browser's CORS allows that call), then a silent
-`response_type=id_token`, `scope=openid`, `prompt=none`, `login_hint=<sub>` request; **E2** repeats only the silent
-request. **Before `GOOGLE_EMAIL_FLOW` becomes `'token_first'` (D270)**, legs C and E must pass for all three accounts
-(`tokenHasPiiLockout: false`; `tokenFirstUsable: true`, and E2's `returningTokenClean: true`).
+`response_type=token`, `scope=email` request. The one-request value (`id_token token`, `openid email`) is gone from
+the popup (D273: Google puts `email` in that ID token, D270); the spike's leg A still records it. Run the spike with a
+Gmail, a Workspace and an outside-address Google account (`apps/smoke/README.md`) and record the results in
+`docs/context.md` before changing the switch. Its leg **E** runs D270's `'token_first'` exactly: a
+`response_type=token`, `scope=openid email` request, the account's `sub` from `tokeninfo` (POST, from the page: it
+also records whether the browser's CORS allows that call), then a silent `response_type=id_token`, `scope=openid`,
+`prompt=none`, `login_hint=<sub>` request; **E2** repeats only the silent request. The popup's `'token_first'` (built
+and tested, not in force) is the same sequence, plus one interactive openid-only retry of the silent request (D273).
+**Before `GOOGLE_EMAIL_FLOW` becomes `'token_first'` (D270)**, legs C and E must pass for all three accounts
+(`tokenHasPiiLockout: false`; `tokenFirstUsable: true`, and E2's `returningTokenClean: true`). If tokeninfo doesn't
+answer the browser's cross-origin POST, every token_first login ends `tokeninfo_unavailable`, by design.
+**Switching to it** is the one-line change of `GOOGLE_EMAIL_FLOW` in `packages/web/src/auth/google.ts`, reviewed. Then
+rebuild and redeploy both page Workers (the vault and the auth pages carry the constant; the callback's CSP already
+lists `https://oauth2.googleapis.com` in an env with an email issuer, in both policies) and the email issuer (its
+`google-record` route). After the switch every Google login of an env with an email issuer asks Google for the email,
+also in apps without email login (their address goes to the issuer's user directory only, D269).
 
 **Gate before real users (D265):** the user runs the spike's legs **C** and **D** on real Google, for each of the three
 accounts, after B: C (a plain `openid` login once the email grant exists) must show `tokenHasPiiLockout: false` (no

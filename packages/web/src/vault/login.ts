@@ -25,6 +25,10 @@
 //     google-match unreachable, or no access token: a Google identity that has no wallet and no account is refused
 //     (`api_unavailable`, `email_match_unavailable`): it might be case A, and a plain login would open a second wallet
 //     (D122, D255); one that has a wallet or an account logs in as usual.
+//     Under token_first (auth/google.ts GOOGLE_EMAIL_FLOW, D270) an app without email login, in an env with an email
+//     issuer, gets the follow-up key too (`emailRecord`): the popup's one Google screen asks for the email, and the
+//     vault sends the access token to the issuer's google-record (D269: the user directory only, no match), in the
+//     background and best effort: its failure or slowness never touches the login.
 //  8. The path (batch 7): `{scope}#{provider}#{sub}#{keyIndex}` of the identity `get_identity` on the vault's own RPC
 //     names: the identity itself when it is "own", its account root when it is an active member; a pending member is
 //     refused (`link_pending`, with when it activates). With a link token (D133) the vault reads both identities and
@@ -109,7 +113,8 @@ import type { HanaEnv } from '../hana-env.ts';
 import type { VaultApi } from './api.ts';
 import { type Persistence, SESSION_TTL_CAP_MS, type VaultConfig } from './config.ts';
 import { VaultError, apiErrorToVault } from './errors.ts';
-import { type GoogleMatch, type IssuerApi, MatchBusy } from './issuer.ts';
+import { type GoogleMatch, type IssuerApi, MatchBusy, type MatchRequest } from './issuer.ts';
+import { GOOGLE_EMAIL_FLOW, type GoogleEmailFlow } from '../auth/google.ts';
 import { type NearView, ckdResultOf } from './near.ts';
 import { PathCheckError, confirmPath } from '../path-check.ts';
 import { type Clock, type Timers, type WindowMessageEvent, type WindowRef, realTimers, sleep } from './runtime.ts';
@@ -153,6 +158,11 @@ export const PIN_READ_TIMEOUT_MS = 1_000;
  * last one ends the login with `login_cancelled`.
  */
 export const EMAIL_CONSENT_ROUNDS = 3;
+/**
+ * token_first's google-record (D269, D270): the longest the vault's background record waits, for the access token's
+ * slot and the issuer's answer together. It runs beside the login and never delays it.
+ */
+export const RECORD_TIMEOUT_MS = 30_000;
 
 /**
  * What the login vault remembers per signed-in identity (D263): the identity whose path it last derived, the account
@@ -232,6 +242,8 @@ export interface LoginContext {
   perfNow(): number;
   /** The account root each identity last opened (D263); none: no pin is kept or checked. */
   pins?: RootPins;
+  /** How the popup asks Google for the email scope (auth/google.ts GOOGLE_EMAIL_FLOW; tests run every flow). */
+  googleEmailFlow?: GoogleEmailFlow;
 }
 
 /** A link this login made: the method that joined, and when it opens the wallet (now, or after the delay). */
@@ -310,6 +322,7 @@ type AuthParams = {
   method?: LoginMethod;
   emailHint?: string;
   followKey?: Uint8Array;
+  emailRecord?: true;
   task?: { kind: 'link'; provider: LoginMethod; prove: FollowProve };
   t: 'hana:auth-params';
   pk: string;
@@ -460,6 +473,10 @@ abstract class PopupTask<T> {
   protected helloSource: unknown = null;
   /** Email is offered in this login (set once the app config is read). */
   protected emailOffered = false;
+  /** token_first's record-only login (an app without email login, D270): the token may say `access: 'follow'`. */
+  protected recordOffered = false;
+  /** token_first's background google-record, once started (tests wait for it); it never rejects. */
+  recorded: Promise<void> | null = null;
   /** The popup's progress stages already reported (each once). */
   protected readonly progressed = new Set<string>();
   /** The follow-up channel (a login that offers email). Survives the login for its banners (`afterword`). */
@@ -631,6 +648,10 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
     const emailOn = !!(env.emailIssuerUrl && env.emailIss && ctx.issuer && app.loginMethods?.includes('email') && app.email?.aud === emailAud);
     if (this.request.method === 'email' && !emailOn) throw fail('login_method_unavailable', 'Email sign-in is not available for this app');
     this.emailOffered = emailOn;
+    // D269, D270: under token_first every Google login of an env with an email issuer asks for the email; an app
+    // without email login sends it to the issuer's directory only (google-record), never to google-match.
+    const recordOn = !emailOn && (ctx.googleEmailFlow ?? GOOGLE_EMAIL_FLOW) === 'token_first' && !!(env.emailIssuerUrl && ctx.issuer);
+    this.recordOffered = recordOn;
     mark('app');
     const appRtt = ctx.appRtt?.(app);
     if (appRtt !== undefined) timings.appRtt = Math.max(0, appRtt);
@@ -650,7 +671,7 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
     const salt = randomBytes(32);
     const relayKey = randomBytes(32);
     const relayReadKey = randomBytes(32);
-    const followKey = emailOn ? randomBytes(32) : null;
+    const followKey = emailOn || recordOn ? randomBytes(32) : null;
     try {
       const relayId = relayIdFor(relayReadKey);
       const expiresAtMs = Math.floor(ctx.clock.now()) + Math.min(config.settings.sessionTtlMs, SESSION_TTL_CAP_MS);
@@ -683,8 +704,9 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
               followKey: Uint8Array.from(followKey as Uint8Array),
             }
           : {}),
+        ...(recordOn ? { followKey: Uint8Array.from(followKey as Uint8Array), emailRecord: true as const } : {}),
       };
-      if (followKey) this.follow = new FollowChannel(ctx.api, ctx.timers, Uint8Array.from(relayKey), Uint8Array.from(followKey));
+      if (followKey && emailOn) this.follow = new FollowChannel(ctx.api, ctx.timers, Uint8Array.from(relayKey), Uint8Array.from(followKey));
       mark('keygen');
 
       // Step 3: wait for the popup.
@@ -722,6 +744,8 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
       const verify = new TokenCheck(ctx, app, emailChain, () => this.check());
       // Step 7: who signed in (never the API's word), then (email on, a Google token) google-match and its case.
       let who = await verify.first(relayed.payload, nonce);
+      // token_first in an app without email login: the access token is in slot 1, for the directory only (D269).
+      if (recordOn && followKey && who.ref.provider === 'google' && relayed.payload.access === 'follow') this.recordGoogle(who, commitment, relayKey, followKey);
       let link: LinkPlan | null = null;
       if (who.ref.provider === 'google' && emailOn && this.follow) {
         const decided = await this.matchGoogle(who, relayed.payload, commitment, verify, nonce);
@@ -951,6 +975,33 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
         this.check();
       }
     }
+  }
+
+  /**
+   * token_first's record (D269, D270), in the background: slot 1's access token, then the issuer's google-record with
+   * the login's verified Google token and session commitment. Best effort: nothing it does (a missing slot, the
+   * issuer down or slow, a refusal) reaches the login, and it gives up after RECORD_TIMEOUT_MS. A missed record is
+   * written at the user's next login (the directory's rows are upserts). No retry: it would only hold the access
+   * token longer for a row the next login writes anyway.
+   */
+  private recordGoogle(google: Who, commitment: MatchRequest['commitment'], relayKey: Uint8Array, followKey: Uint8Array): void {
+    const { ctx } = this;
+    const issuer = ctx.issuer as IssuerApi;
+    const keys = { relayKey: Uint8Array.from(relayKey), followKey: Uint8Array.from(followKey) };
+    const ctl = new AbortController();
+    const timer = ctx.timers.setTimeout(() => ctl.abort(), RECORD_TIMEOUT_MS);
+    const run = async (): Promise<void> => {
+      const { id, readKey } = followSlot(keys.followKey, 1);
+      const a = await readSlot(ctx.api, ctx.timers, keys.relayKey, id, readKey, ctl.signal, () => (ctl.signal.aborted ? fail('login_timeout', 'The record took too long') : null));
+      if (!('accessToken' in a) || 'idToken' in a) return;
+      await issuer.googleRecord({ pk: ctx.config.publishableKey, accessToken: a.accessToken, googleIdToken: google.token, commitment }, ctl.signal);
+    };
+    this.recorded = run()
+      .catch(() => undefined)
+      .finally(() => {
+        ctx.timers.clearTimeout(timer);
+        zero(keys.relayKey, keys.followKey);
+      });
   }
 
   /**
@@ -1217,11 +1268,18 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
     if ('error' in payload) {
       // The email step's cancel (D245), only in a login that offered email; anything else is Google's answer.
       if (this.emailOffered && Object.hasOwn(EMAIL_RELAY_ERRORS, payload.error)) throw this.emailAnswerError(payload.error);
+      // The popup refused an ID token with a claim outside the allow-list before relaying it (D270).
+      if (payload.error === 'token_has_pii') {
+        const claim = 'claim' in payload && typeof payload.claim === 'string' ? { claim: payload.claim.slice(0, 64) } : undefined;
+        throw fail('token_has_pii', 'The Google token carries a claim outside the allow-list', claim);
+      }
       throw fail('google_error', 'Google returned an error', { error: payload.error });
     }
     if (!isRelayToken(payload)) throw fail('token_invalid', 'The sign-in answer was refused');
-    // The follow-up fields count only in a login that offered them (a Google-only popup never sends them).
-    if (!this.emailOffered && (payload.accessToken !== undefined || payload.access !== undefined || payload.caseB !== undefined || payload.as !== undefined)) {
+    // The follow-up fields count only in a login that offered them (a Google-only popup never sends them); a
+    // record-only login's token may only say its access token follows.
+    const extras = payload.accessToken !== undefined || payload.caseB !== undefined || payload.as !== undefined;
+    if (!this.emailOffered && (extras || (payload.access !== undefined && !this.recordOffered))) {
       throw fail('token_invalid', 'The sign-in answer was refused');
     }
     const held = payload._heldMs;

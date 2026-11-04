@@ -1,6 +1,6 @@
 // Login through the popup and the relay (docs/batch-b-spec.md "Login"), and the partner-page COOP cases.
 import { TOKEN_CLAIM_ALLOW_LIST } from '@hana-id/core';
-import { GoogleStub, stackGoogleKey } from '../src/google-stub.ts';
+import { GOOGLE_AUTH_URL, GoogleStub, stackGoogleKey } from '../src/google-stub.ts';
 import { API_URL, NEAR_RPC } from '../src/stack.ts';
 import {
   LOGIN_ENDPOINT,
@@ -201,15 +201,20 @@ test('a Google ID token that carries the email is refused (token_has_pii): no /v
   await openPartner(page, app);
   const popupP = page.waitForEvent('popup');
   await clickAction(page, 'login', 'login');
-  await chooseAccount(await popupP);
+  const popup = await popupP;
+  await popup.waitForURL(`${GOOGLE_AUTH_URL}**`);
+  await popup.click('#account-0');
+  // The callback refuses the token before relaying it (D273): it relays only `{error: 'token_has_pii', claim}` and
+  // stays open to say why.
+  await expect(popup.locator('body')).toContainText('Code: token_has_pii');
 
-  // The SDK's error: the vault's refusal, naming the first claim outside the allow-list.
+  // The SDK's error, naming the first claim outside the allow-list (as the vault's own refusal does).
   const r = await settled(page, 'login');
   expect(r).toMatchObject({ state: 'error', code: 'token_has_pii', data: { claim: 'email' } });
   expect(await status(page)).toBe('logged_out');
-  // The premise: the token the popup relayed really carried the address.
+  // The premise: the token Google sent really carried the address.
   expect(google.issued.filter((t) => t.sub === sub).map((t) => t.claims)).toEqual([expect.arrayContaining(['email', 'email_verified'])]);
-  // It crossed only the end-to-end encrypted relay; the vault never asked the API to relay it on chain.
+  // Only the popup's refusal crossed the end-to-end encrypted relay; the vault never asked the API to relay anything on chain.
   expect(requests.count(`${API_URL}/v1/login-relay/`)).toBeGreaterThanOrEqual(2);
   expect(requests.count(LOGIN_ENDPOINT)).toBe(0);
   expect(requests.count(`${API_URL}/v1/derive`)).toBe(0);
@@ -222,6 +227,7 @@ test('a Google ID token that carries the email is refused (token_has_pii): no /v
 
   // The same account once Google sends the openid claims only: the login goes through, and its one transaction is
   // what the chain double records (so the empty view above is a real observation, not a blind spot).
+  await popup.close();
   google.accounts = [{ ...google.accounts[0]!, emailInIdToken: false }];
   await login(page, { name: 'clean' });
   expect(requests.count(LOGIN_ENDPOINT)).toBe(1);

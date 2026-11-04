@@ -1,7 +1,9 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-04 for the claim allow-list on every route that relays a Google token (branch `fix/sessions-allow-list`: `/v1/sessions`, `/v1/owner-actions`, no flag, D271, D274); 2026-11-04 for the user directory (branch `feat/user-emails`: the issuer
+known open issues. Last verified against code: 2026-11-04 for Google's email under `'token_first'` (built, off: the
+on-chain token stays openid-only under every flow, the callback's claim allow-list and tokeninfo, `google-record`;
+branch `feat/google-token-first`, D270, D273); 2026-11-04 for the claim allow-list on every route that relays a Google token (branch `fix/sessions-allow-list`: `/v1/sessions`, `/v1/owner-actions`, no flag, D271, D274); 2026-11-04 for the user directory (branch `feat/user-emails`: the issuer
 keeps each verified address for Hana staff, what a reader of its D1 learns, the CLI's wrangler settings, D269);
 2026-11-04 for the e2e coverage of the claim allow-list and of a linked member's export on both RPC providers (branch `test/e2e-pii-linked-export`); 2026-11-04 for the export window's Show key toggle, Copy key and clipboard clear (branch `feat/export-copy`, D268); 2026-11-03 for the batch 8b re-review fixes (branch `fix/8b-rereview`:
 the pin read's 1 s timeout, failing closed, and the pins' privacy note, D263); 2026-11-03 for the batch 8b review fixes (branch `feat/email-login-8b`:
@@ -256,7 +258,8 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   `email-login.test.ts`, `owner-actions.test.ts`; `scripts/test/relayed-tokens.test.ts` fails on a new
   `verifyIdToken` caller). The vault and the login popup apply the same list (`@hana-id/core`), and the smoke direct
   page refuses to send such a token. End to end, a Google token carrying `email` is refused by
-  the vault (`token_has_pii`) before any `/v1/login` call, and nothing reaches the chain
+  the login popup's callback before it is relayed (D273: only `{error: 'token_has_pii', claim}` crosses the relay),
+  and the vault answers `token_has_pii` with the claim before any `/v1/login` call; nothing reaches the chain
   (`apps/e2e/tests/login.spec.ts`). A direct contract caller is still not bound by it.
 - **Relayer allowlists** per pool in the Worker and in the object; gas only from `gas.ts`; receiver always
   `SIGNER_ACCOUNT`. The session pool also relays the three link methods (batch 6); no pool relays an owner,
@@ -503,8 +506,8 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
 | No address, code, `sub`, token, device or link ticket, unlock or confirmation token, access token or key in any log line (typed fields only). The verified address is stored readably in one place, on purpose: the user directory (`user_emails`, D269), written after a successful `verify` (best effort, never failing a login; its failure logs the app and scope only), read only by Hana staff through `admin user:list` / `user:find` (no route serves it; the CLI runs wrangler with its log file, metrics and error reports off and prints to the terminal only); partners never see it. No other table holds an address; a live challenge (≤ 10 min) holds it encrypted under the challengeId's secret half, which only the client holds (D197). SendGrid also keeps addresses (outside Hana's control): its activity feed for its retention period, and its suppression lists until an address is removed | `src/log.ts`, `src/directory.ts`, `src/challenge-id.ts`, `scripts/lib/d1.ts` `PRIVATE_WRANGLER_ENV`; `test/privacy.test.ts` greps every flow and checks the address is in `user_emails` and no other table; `test/directory-verify.test.ts` |
 | Suppressions per exact address (keyed by K_sup, from K_sub), limits per mailbox (address without `+tag`): a bounce on `victim+x@` never suppresses `victim@`. Only signed events of the issuer's own categories count; a bounce lapses after 30 days, a complaint stays until the address's holder confirms a staff `admin/unsuppress` from a mailed link (audited, capped); more than 5 complaints in 24 h is logged (D199) | `src/keys.ts` `suppressionKey`, `mailboxKey`; `src/webhook.ts`; `handleUnsuppress` |
 | Webhook: headers (timestamp ≤ 10 min, signature shape) checked before the body is read; ECDSA P-256 over timestamp ‖ body with a key imported once; 120 per 10 min per IP | `src/webhook.ts`, `handleWebhook` |
-| The Google access token is checked (tokeninfo aud/azp and sub = the ID token's; another account's token is `google_account_mismatch`), used for userinfo, never stored, logged or revoked (D265: revocation would end the user's whole grant to the client, and on the shared client other apps' too; the token is email-scope only and expires within the hour); tokens never in a URL. google-match per IP: 120 per 10 min (D267) | `src/google.ts`, `handleGoogleMatch` |
-| CORS: `start`/`resend`/`verify` only from `authOrigin`, `google-match` only from `vaultOrigin`, no credentials. Staff routes only behind Cloudflare Access plus the staff allowlist (D88), JSON only, any `Origin` refused (with the Access cookie SameSite=Strict, no cross-site request reaches them), a support `ticket` in every audit row, the row written before the action; certs failures negatively cached 30 s (D199) | `handlers.ts` `route`, `staffGate`, `src/access.ts`; `test/adapters.test.ts` |
+| The Google access token is checked (tokeninfo aud/azp and sub = the ID token's; another account's token is `google_account_mismatch`), used for userinfo, never stored, logged or revoked (D265: revocation would end the user's whole grant to the client, and on the shared client other apps' too; the token is email-scope only and expires within the hour); tokens never in a URL. google-match per IP: 120 per 10 min (D267); google-record runs the same checks (`checkGoogleSignIn`), 120 per 10 min in a window of its own, and answers no match data (D270) | `src/google.ts`, `handleGoogleMatch`, `handleGoogleRecord` |
+| CORS: `start`/`resend`/`verify` only from `authOrigin`, `google-match` and `google-record` only from `vaultOrigin`, no credentials. Staff routes only behind Cloudflare Access plus the staff allowlist (D88), JSON only, any `Origin` refused (with the Access cookie SameSite=Strict, no cross-site request reaches them), a support `ticket` in every audit row, the row written before the action; certs failures negatively cached 30 s (D199) | `handlers.ts` `route`, `staffGate`, `src/access.ts`; `test/adapters.test.ts` |
 | Client proofs only for a scope read from `get_scope` now, at its current `action_nonce`, with an active email app | `handleClientProof`; `test/adapters.test.ts` |
 | Case B: `verify` returns no `idToken` when a hinted Google identity has the wallet (no second wallet even if the popup misbehaves); a non-Google-hosted hint counts only within 180 days of that Google identity's last login with the address (older ones pruned), and its case B joins only after 24 h, with link notices (D119; the stale-account residual risk and the alternative in D199); a `linkTicket` binds the app, the `sub` and the hinted Google identities (D199) | `handleVerify`, `handleGoogleMatch`; `test/google-match.test.ts` |
 | Each purpose's mail says what the code does (sign in, add this email, allow another sign-in method, remove one, link Google), so a code phished for one action doesn't read as a sign-in (D199) | `src/mail.ts`; `test/review.test.ts` |
@@ -720,6 +723,16 @@ providers; a linked member's export on both is e2e-tested, `apps/e2e/tests/linki
   stores, logs or revokes it (D265; it expires within the hour). The vault never sees the address; it relays only
   case A's masked hint (`a…@domain`) to the popup. The vault page's CSP adds only the issuer's origin. Before
   Google's interactive email prompt the popup says what it is for (D264).
+- **Under `'token_first'`** (D270, built, not in force; `packages/web/src/auth/google.ts`): the email is asked on
+  Google's first screen with `response_type=token` only, so no ID token of that request exists to relay; the ID token
+  that goes on chain comes from a second, `scope=openid` request (`googleAuthUrl` builds no other ID token request,
+  tested for every flow). The callback reads the access token's `sub` from Google's tokeninfo (a POST body; its CSP
+  lists `oauth2.googleapis.com` for the callback page only, in an env with an email issuer, in both the header and
+  the `<meta>` policy) and ends the login on another client's token, no answer or another account's ID token, never
+  asking without the hint. Every ID token the callback relays is checked against the claim allow-list first: one with
+  `email`, `hd` or any other claim is never relayed (`token_has_pii`), and the vault and the API refuse it too, so a
+  Google change locks logins out, never leaks the address on chain. An app without email login sends the access token
+  only to google-record (the directory, D269), in the background; a failure never touches the login.
 - **The follow-up channel** (D256): the popup and the vault talk after Google's answer through relay slots derived
   from `followKey` (32 random bytes, in auth-params only for an app with email, stored in the popup's
   `sessionStorage` entry beside `relayKey` and zeroed after use), every value AES-GCM under `relayKey` with its slot's

@@ -289,9 +289,10 @@ never revoke the token (as production, D265). Each leg has its own single-use `s
 one `state` is ignored, as production's callback. The summary holds booleans and claim names only (never the
 address, `sub` or a token). Run it with a personal Gmail account, a Workspace account whose `hd` is its own domain,
 and a Google account registered with an outside address, each through A, B, C and D in that order; write down what
-the consent screen lists, and record the results in `docs/context.md`. If A is usable for all three,
-`GOOGLE_EMAIL_FLOW` may become `'one_request'` (a reviewed change; the vault and the API keep refusing an ID token
-with `email` either way).
+the consent screen lists, and record the results in `docs/context.md`. The popup has no one-request flow any more
+(D273: Google puts `email` in that ID token, D270); `GOOGLE_EMAIL_FLOW` may become `'token_first'` (built, D270) once
+legs C and E pass (a reviewed one-line change, `docs/operations.md` "Turning linking on (batch 8b)"; the popup, the
+vault and the API keep refusing an ID token with `email` either way).
 
 **Gate (D265):** legs C and D on real Google, by the user, before batch 8b reaches real users: C must show no
 lockout and D must succeed silently (`docs/email-login-build-plan.md` batch 8b, `docs/operations.md` "Turning

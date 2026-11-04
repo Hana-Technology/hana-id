@@ -1,6 +1,7 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-03 (branch `docs/sandbox-dev-state`: what sandbox-dev runs, per the operator on 2026-11-03: a state note under the hot DB gate, the watchdog's email pins and the email issuer sections); 2026-11-03 (branch `fix/8b-rereview`: "Turning linking on (batch 8b)"'s slow second
+Last verified against code: 2026-11-04 (branch `feat/google-token-first`: "Turning linking on (batch 8b)"'s spike
+paragraph, switching to `'token_first'`, D270, D273); 2026-11-03 (branch `docs/sandbox-dev-state`: what sandbox-dev runs, per the operator on 2026-11-03: a state note under the hot DB gate, the watchdog's email pins and the email issuer sections); 2026-11-03 (branch `fix/8b-rereview`: "Turning linking on (batch 8b)"'s slow second
 provider and watching `path_unconfirmed`, D263); 2026-11-03 (branch `feat/email-login-8b` review fixes: "Turning linking on (batch 8b)"'s
 second RPC, the consent screens, the API's and the issuer's redeploys for the new limits, the spike's legs C and D as
 a gate, D263–D267; "Logs and latency"'s `google_account_mismatch`); 2026-11-03 (branch `feat/email-login-8b`: "Turning linking on (batch 8b)": what users see
@@ -2389,9 +2390,18 @@ either way. The readiness item is `docs/mainnet-readiness.md` row 7.1g.
 
 **Google's verified email: the spike** (`apps/smoke/spike-email.html`, build plan batch 0; not run yet). The popup
 asks Google twice today (`GOOGLE_EMAIL_FLOW = 'second_request'`): the openid-only login request, then a silent
-`response_type=token`, `scope=email` request. The spike measures whether one request (`id_token token`, `openid
-email`) keeps `email` out of the ID token; run it with a Gmail, a Workspace and an outside-address Google account
-(`apps/smoke/README.md`) and record the results in `docs/context.md` before changing the switch.
+`response_type=token`, `scope=email` request. The one-request value (`id_token token`, `openid email`) is gone (D273:
+Google puts `email` in that ID token, D270). The other value, `'token_first'` (D270, built and tested, not in force),
+asks for the email on Google's sign-in screen (`response_type=token`, `scope=openid email`), reads the access
+token's `sub` from Google's tokeninfo in the callback, then makes a silent openid-only ID token request for it.
+**Switching to it** is the one-line change of `GOOGLE_EMAIL_FLOW` in `packages/web/src/auth/google.ts`, reviewed,
+after the user's spike run shows legs **C** and **E** pass for a Gmail, a Workspace and an outside-address account
+(`apps/smoke/README.md`; E includes whether tokeninfo answers the browser's cross-origin POST: if it doesn't, every
+token_first login ends `tokeninfo_unavailable`, by design). Then rebuild and redeploy both page Workers (the vault and
+the auth pages carry the constant; the callback's CSP already lists `https://oauth2.googleapis.com` in an env with an
+email issuer, in both policies) and the email issuer (its `google-record` route). Record the results in
+`docs/context.md`. After the switch every Google login of an env with an email issuer asks Google for the email, also
+in apps without email login (their address goes to the issuer's user directory only, D269).
 
 **Gate before real users (D265):** the user runs the spike's legs **C** and **D** on real Google, for each of the three
 accounts, after B: C (a plain `openid` login once the email grant exists) must show `tokenHasPiiLockout: false` (no

@@ -15,7 +15,7 @@ import { wranglerConfig as consoleConfig } from '../../../console/scripts/gen-wr
 import { wranglerConfig as issuerConfig, TEST_MANIFEST as ISSUER_MANIFEST } from '../../../email-issuer/scripts/gen-wrangler.ts';
 import { wranglerConfig as watchdogConfig, TEST_MANIFEST as WATCHDOG_MANIFEST } from '../../../watchdog/scripts/gen-wrangler.ts';
 import { adminCsp } from '../../src/headers.ts';
-import { CRON, LOCAL_ADMIN_CONNECTION_STRING, TEST_ADMIN_HYPERDRIVE_ID, TEST_MANIFEST, existingAdminHyperdriveId, main, testWranglerConfig, wranglerConfig } from '../gen-wrangler.ts';
+import { CRON, LOCAL_ADMIN_CONNECTION_STRING, TEST_ADMIN_HYPERDRIVE_ID, TEST_MANIFEST, TEST_WATCHDOG_URL, existingAdminHyperdriveId, main, testWranglerConfig, wranglerConfig } from '../gen-wrangler.ts';
 
 const LOCAL_D1_ID = '00000000-0000-4000-8000-000000000000';
 const WRITER_ID = 'b'.repeat(32);
@@ -62,6 +62,8 @@ describe('the admin config', () => {
         SECURITY_ALIAS: 'security@hana.example',
         APP_CHANGE_DELAY_MS: '60000',
         OWNER_GRANT_DELAY_MS: '60000',
+        NEAR_NETWORK: 'testnet',
+        WATCHDOG_URL: TEST_WATCHDOG_URL,
       },
       services: [
         { binding: 'API', service: 'hana-id-api-test', entrypoint: 'AdminRpc' },
@@ -76,7 +78,10 @@ describe('the admin config', () => {
     // No D1, no R2 yet (statements and exports come with C12), no secret in vars, no ConsoleRpc.
     expect(c.d1_databases).toBeUndefined();
     expect(c.r2_buckets).toBeUndefined();
-    expect(JSON.stringify(c)).not.toMatch(/ConsoleRpc|EMAIL_API_KEY|CANCEL_LINK_KEY|INVITE_LINK_KEY/u);
+    expect(JSON.stringify(c)).not.toMatch(/ConsoleRpc|EMAIL_API_KEY|CANCEL_LINK_KEY|INVITE_LINK_KEY|WATCHDOG_STATUS_TOKEN/u);
+    expect(Object.keys(c.vars!).sort()).toEqual(
+      ['ACCESS_AUD', 'ACCESS_TEAM_DOMAIN', 'ADMIN_ORIGIN', 'APP_CHANGE_DELAY_MS', 'CONSOLE_ORIGIN', 'EMAIL_FROM', 'ENV_NAME', 'FILES_ORIGIN', 'NEAR_NETWORK', 'NEAR_RPC', 'OWNER_GRANT_DELAY_MS', 'SECURITY_ALIAS', 'SIGNER_ACCOUNT', 'STAFF_EMAILS', 'WATCHDOG_URL'].sort(),
+    );
     expect(LOCAL_ADMIN_CONNECTION_STRING).toMatch(/\.invalid:/u);
   });
 
@@ -96,6 +101,20 @@ describe('the admin config', () => {
     expect(() => wranglerConfig(prod, { adminHyperdriveId: null })).toThrow(/--admin-hyperdrive-id/u);
     expect((testWranglerConfig() as Config).hyperdrive).toBeUndefined();
     expect(() => wranglerConfig(TEST_MANIFEST, { adminHyperdriveId: 'not-hex' })).toThrow(/32 lowercase hex/u);
+  });
+
+  it('the watchdog: its origin is a var from watchdog.url, its bearer is never in the config; production needs the url (C14)', () => {
+    const { url: _u, ...noUrl } = TEST_MANIFEST.watchdog!;
+    const dev = wranglerConfig({ ...TEST_MANIFEST, watchdog: noUrl } as Manifest, { adminHyperdriveId: null }) as Config;
+    expect(dev.vars!.WATCHDOG_URL).toBeUndefined();
+    const { watchdog: _w, ...noWatchdog } = TEST_MANIFEST;
+    expect((wranglerConfig(noWatchdog as Manifest, { adminHyperdriveId: null }) as Config).vars!.WATCHDOG_URL).toBeUndefined();
+    const prod = { ...withAdmin({ origin: 'https://admin.hana.example' }, { name: 'staging' }), watchdog: noUrl } as Manifest;
+    expect(() => wranglerConfig(prod, { adminHyperdriveId: TEST_ADMIN_HYPERDRIVE_ID })).toThrow(/set watchdog\.url/u);
+    const prodOk = wranglerConfig(withAdmin({ origin: 'https://admin.hana.example' }, { name: 'staging' }), { adminHyperdriveId: TEST_ADMIN_HYPERDRIVE_ID }) as Config;
+    expect(prodOk.vars!.WATCHDOG_URL).toBe(TEST_WATCHDOG_URL);
+    // No secret of any Worker is written into any generated config.
+    expect(JSON.stringify(prodOk)).not.toMatch(/TOKEN|SECRET|_KEY"/u);
   });
 
   it('refuses a manifest without the dashboard blocks', () => {
@@ -193,6 +212,30 @@ describe('source checks', () => {
     for (const { f, text } of sources) {
       for (const call of text.matchAll(/log\(\{[^}]*\}/gu)) expect(call[0].replace(/'[^']*'/gu, "''"), f).not.toMatch(/\b(token\w*|\w*key|\w*hash|email|jwt)\b/iu);
     }
+  });
+
+  it('the watchdog bearer is read only by watchdog.ts, and goes only into the Authorization header (C14, D330)', () => {
+    const readers = sources.filter(({ text }) => /\.WATCHDOG_STATUS_TOKEN\b/u.test(text)).map(({ f }) => f.replace(srcDir, ''));
+    expect(readers).toEqual(['watchdog.ts']);
+    const client = sources.find(({ f }) => f.endsWith('/watchdog.ts'))!.text;
+    const uses = [...client.matchAll(/\btoken\b/gu)].length;
+    expect(client).toMatch(/authorization: `Bearer \$\{token\}`/u);
+    // `token` appears in its declaration, the usable check and the header only: never in a log, a return or an error.
+    expect(uses).toBe(3);
+    expect(client).not.toMatch(/log\([^)]*token/u);
+  });
+
+  it('the SPA’s C14 pages: playbook routes, the "no playbook" error, the ack’s wording, https-only links, no watchdog call', () => {
+    const spa = readFileSync(new URL('../../public/app.js', import.meta.url), 'utf8');
+    expect(spa).toContain("'/security/playbooks'");
+    expect(spa).toMatch(/\^\\\/security\\\/playbooks\\\/\(\[a-z0-9-\]\{1,64\}\)\$/u);
+    expect(spa).toMatch(/h\('span', \{ class: 'error' \}, 'no playbook'\)/u);
+    expect(spa).toMatch(/This only stops its 15-minute re-sends\. It does not clear the condition/u);
+    expect(spa).toMatch(/href\.startsWith\('https:\/\/'\)/u);
+    // The browser talks to its own origin only: the watchdog and its bearer stay server-side.
+    expect(spa).not.toMatch(/\.workers\.dev|WATCHDOG_/u);
+    expect(spa).not.toMatch(/bearer|authorization/iu);
+    for (const m of spa.matchAll(/api\('(?:GET|POST)', [`'](\/[^`']*)/gu)) expect(m[1], m[0]).toMatch(/^\/api\//u);
   });
 
   it('the SPA writes text only: no innerHTML, outerHTML, insertAdjacentHTML, document.write, eval or remote URL', () => {

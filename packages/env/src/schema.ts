@@ -59,6 +59,24 @@ const signerPolicyPins = z
     if (new Set(all).size !== all.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['signers'], message: 'A key is pinned once, for one signer' });
   });
 
+/**
+ * Why `url` can't be the watchdog's status origin, or null: an https origin exactly (no credentials, port, path, query
+ * or fragment), since the admin Worker sends its bearer token there and follows no redirect.
+ */
+export function watchdogUrlProblem(v: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(v);
+  } catch {
+    return 'is not a URL';
+  }
+  if (u.protocol !== 'https:') return 'must be https';
+  if (u.username || u.password) return 'must not carry credentials';
+  if (u.port) return 'must not have a port';
+  if (u.origin !== v) return 'must be an origin only (no path, query or trailing slash)';
+  return null;
+}
+
 const watchdogSchema = z.object({
   /**
    * The watchdog's own NEAR account: one of the contract's watchdogs (`add_watchdog`). Its Worker secret
@@ -72,6 +90,20 @@ const watchdogSchema = z.object({
     workerName,
     d1Name: z.string().min(1),
   }),
+  /**
+   * The watchdog Worker's https origin on its own account (`https://<workerName>.<subdomain>.workers.dev`, or a custom
+   * domain), with no path: the admin Worker reads its `/status`, `/alerts`, `/actions` and posts acks there with the
+   * bearer `WATCHDOG_STATUS_TOKEN` (batch C14, D330). Not a secret. Optional: without it the admin's "Security &
+   * monitoring" view shows the watchdog as not configured; a production admin config requires it.
+   */
+  url: z
+    .string()
+    .max(253 + 8)
+    .superRefine((v, ctx) => {
+      const problem = watchdogUrlProblem(v);
+      if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `watchdog.url ${problem}` });
+    })
+    .optional(),
   /** Who gets warning and critical emails and the daily digest: both founders (D85). */
   alertEmails: z.array(z.string().email()).min(1).max(10),
   /** Sender address on the dedicated sending subdomain (D87). */
@@ -130,6 +162,11 @@ function watchdogRules(
 ): void {
   if (!(m.watchdogs ?? []).includes(w.account)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'account'], message: `watchdog.account ${w.account} must be listed in watchdogs (the contract's watchdog accounts)` });
+  }
+  // A workers.dev url names the Worker it reaches: it must be the watchdog's own (a typo would send the bearer elsewhere).
+  const host = w.url && !watchdogUrlProblem(w.url) ? new URL(w.url).hostname : null;
+  if (host?.endsWith('.workers.dev') && /^([a-z0-9-]+)\.[a-z0-9-]+\.workers\.dev$/u.exec(host)?.[1] !== w.cloudflare.workerName) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'url'], message: `watchdog.url on workers.dev must be https://${w.cloudflare.workerName}.<subdomain>.workers.dev` });
   }
   for (const field of ['signer', 'relayer', 'owner', 'mpc'] as const) {
     if (w.account === m[field]) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'account'], message: `watchdog.account must not be the ${field} account` });

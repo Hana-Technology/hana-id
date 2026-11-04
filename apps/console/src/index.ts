@@ -33,6 +33,8 @@ type SessionHandler = (r: Request, env: Env, info: RequestInfo, s: Session) => P
  * among them `POST /api/orgs/:org/apps/:app/logo` goes to `logoUploadRoute` (logo.ts, batch C11) once C10 has checked
  * the session, the membership and the owner role (CSRF already takes that path's raw body, csrf.ts). Until then that
  * path, like any path under `/api/orgs/` that isn't a read route, is 404; a non-GET to a read route is 405.
+ * C10 also routes `GET /api/orgs/:org/governance/pending-upgrades` to `pendingUpgradesRoute` (governance.ts, batch C14)
+ * for any member, after the session and membership checks.
  */
 const API_ROUTES: Record<string, Partial<Record<string, Handler>>> = {
   '/api/auth/start': { POST: createLoginFlow },

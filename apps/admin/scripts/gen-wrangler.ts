@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { type Manifest, isDevEnv, isLoopbackHost, loadEnv } from '@hana-id/env';
 import { workersDevHost } from '../../api/scripts/pages-wrangler.ts';
 import { TEST_MANIFEST as CONSOLE_TEST_MANIFEST } from '../../console/scripts/gen-wrangler.ts';
+import { TEST_MANIFEST as WATCHDOG_TEST_MANIFEST } from '../../watchdog/scripts/gen-wrangler.ts';
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const COMPATIBILITY_DATE = '2026-10-01';
@@ -63,6 +64,10 @@ export function wranglerConfig(m: Manifest, opts: { adminHyperdriveId?: string |
   const id = opts.adminHyperdriveId ?? null;
   if (id !== null && !HYPERDRIVE_ID_RE.test(id)) throw new Error('A Hyperdrive id is 32 lowercase hex characters');
   if (id === null && isProductionManifest(m)) throw new Error(`envs/${m.name}.json is a production env: pass --admin-hyperdrive-id (the ${m.usage.adminHyperdrive} config; the feed and the watcher need it)`);
+  // "Security & monitoring" (C14, D330): the watchdog's origin is a var; its bearer WATCHDOG_STATUS_TOKEN is a secret,
+  // never written here. A production admin without the watchdog would show no monitoring, so it is refused.
+  const watchdogUrl = m.watchdog?.url ?? null;
+  if (watchdogUrl === null && isProductionManifest(m)) throw new Error(`envs/${m.name}.json is a production env: set watchdog.url (the watchdog Worker's https origin) so the admin's Security & monitoring view can read it`);
   return {
     $schema: 'node_modules/wrangler/config-schema.json',
     ...adminPlacement(m),
@@ -87,6 +92,8 @@ export function wranglerConfig(m: Manifest, opts: { adminHyperdriveId?: string |
       SECURITY_ALIAS: e.securityAlias,
       APP_CHANGE_DELAY_MS: String(m.appChangeDelayMs),
       OWNER_GRANT_DELAY_MS: String(m.ownerGrantDelayMs),
+      NEAR_NETWORK: m.network,
+      ...(watchdogUrl ? { WATCHDOG_URL: watchdogUrl } : {}),
     },
     // AdminRpc on the API and StaffRpc on the console: the admin Worker is the only caller of each.
     services: [
@@ -101,8 +108,19 @@ export function wranglerConfig(m: Manifest, opts: { adminHyperdriveId?: string |
   };
 }
 
-/** The admin tests' manifest: the console's, with a real-looking AUD tag (64 hex) so the Access check can pass. */
-export const TEST_MANIFEST: Manifest = { ...CONSOLE_TEST_MANIFEST, admin: { ...CONSOLE_TEST_MANIFEST.admin!, accessAud: 'ab'.repeat(32) } };
+/** The watchdog origin of the admin tests (answered by the tests' fetch stub; test/helpers.ts WATCHDOG). */
+export const TEST_WATCHDOG_URL = 'https://hana-id-watchdog-test.watchdog-test.workers.dev';
+
+/**
+ * The admin tests' manifest: the console's, with a real-looking AUD tag (64 hex) so the Access check can pass, and the
+ * watchdog test manifest's block with a `url` (the "Security & monitoring" view's source).
+ */
+export const TEST_MANIFEST: Manifest = {
+  ...CONSOLE_TEST_MANIFEST,
+  admin: { ...CONSOLE_TEST_MANIFEST.admin!, accessAud: 'ab'.repeat(32) },
+  watchdogs: WATCHDOG_TEST_MANIFEST.watchdogs,
+  watchdog: { ...WATCHDOG_TEST_MANIFEST.watchdog!, url: TEST_WATCHDOG_URL },
+};
 /** Fixed fake Hyperdrive ids for the config snapshots (no real config). */
 export const TEST_ADMIN_HYPERDRIVE_ID = 'a'.repeat(32);
 

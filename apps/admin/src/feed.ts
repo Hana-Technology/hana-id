@@ -5,6 +5,12 @@
 //   audit_log        StaffRpc.auditSince(cursor `feed.audit_log.seq`)                  → the org's security contacts
 //   security_events  AdminRpc.securityEvents(unnotified) → the alias and the org's contacts → markSecurityEventNotified
 //
+// A cursor with no row in ops.state yet starts at the source's current position, silently (D344, amending D281): the
+// first run reads to the end without sending anything and stores where it stopped, so the history before the deploy
+// is never emailed; from then on only new rows are. A source too long to read in one run continues from
+// `<cursor key>.init` the next run, still silent, until it reaches the end. Security events keep their own per-row
+// `notified_at` and are emailed as before (each one is a security signal).
+//
 // Rows are grouped per org into one digest per run (one message per recipient). A cursor advances only past rows
 // whose digest every recipient's send accepted, so a failure means a repeat next run, never a gap. An org with no
 // security contacts gets its digest sent to the security alias instead, so no row goes nowhere. Each source runs on its
@@ -29,6 +35,11 @@ export const FEED_CURSORS = { changes: 'feed.app_changes.seq', audit: 'feed.audi
 /** Rows read per page; at most FEED_PAGES pages per source and run. */
 export const FEED_PAGE = 50;
 export const FEED_PAGES = 4;
+/** The silent first walk (D344): pages of this many rows (the RPCs' maximum), at most FEED_INIT_PAGES per run. */
+export const FEED_INIT_PAGE = 500;
+export const FEED_INIT_PAGES = 10;
+/** Where an unfinished silent first walk keeps its place between runs. */
+export const initKey = (key: string): string => `${key}.init`;
 
 export const SKIPPED_CHANGE_KINDS: ReadonlySet<string> = new Set(['origin.proposed', 'policy.proposed', 'raw_sign.proposed', 'change.announced']);
 export const SKIPPED_AUDIT_ACTIONS: ReadonlySet<string> = new Set(['invite.notified', 'owner_grant.notified', 'change.link_cancel']);
@@ -41,6 +52,35 @@ export interface FeedStepResult {
   emailedGroups: number;
   failedGroups: number;
   cursor?: number;
+  /** D344: this run was (part of) the silent first walk; `true` once it reached the current position. */
+  initialised?: boolean;
+}
+
+const seqOf = (v: string | undefined): number | null => {
+  if (v === undefined) return null;
+  const n = Number(v);
+  return Number.isSafeInteger(n) && n >= 0 ? n : null;
+};
+
+/**
+ * D344: a source whose cursor has no row yet is read to its end without sending anything, and the cursor is stored at
+ * its last row (0 for an empty source). A walk that doesn't reach the end in this run stores its place under
+ * `initKey(key)` and goes on next run; the cursor itself is written only at the end, so the feed never starts mid-way.
+ */
+async function initialise<R extends { seq: number }>(ops: OpsStore, key: string, from: number, read: (seq: number, limit: number) => Promise<R[]>): Promise<FeedStepResult> {
+  let cursor = from;
+  let total = 0;
+  for (let p = 0; p < FEED_INIT_PAGES; p++) {
+    const rows = await read(cursor, FEED_INIT_PAGE);
+    total += rows.length;
+    if (rows.length) cursor = Math.max(cursor, rows[rows.length - 1]!.seq);
+    if (rows.length < FEED_INIT_PAGE) {
+      await ops.setState(key, String(cursor));
+      return { read: total, emailedGroups: 0, failedGroups: 0, cursor, initialised: true };
+    }
+  }
+  await ops.setState(initKey(key), String(cursor));
+  return { read: total, emailedGroups: 0, failedGroups: 0, cursor, initialised: false };
 }
 
 /** Each org's security contacts for this run (null: unreadable, so its digest waits). */
@@ -84,17 +124,18 @@ function groupByOrg<R>(rows: R[], orgOf: (r: R) => string | null): Group<R>[] {
 async function walk<R extends { seq: number }>(
   ops: OpsStore,
   key: string,
-  read: (seq: number) => Promise<R[]>,
+  read: (seq: number, limit: number) => Promise<R[]>,
   emailed: (r: R) => boolean,
   orgOf: (r: R) => string | null,
   send: (g: Group<R>) => Promise<'sent' | 'failed' | 'budget'>,
 ): Promise<FeedStepResult> {
-  const state = await ops.getState([key]);
-  const stored = Number(state.get(key)?.value ?? '0');
-  let cursor = Number.isSafeInteger(stored) && stored >= 0 ? stored : 0;
+  const state = await ops.getState([key, initKey(key)]);
+  const row = state.get(key);
+  if (!row) return initialise(ops, key, seqOf(state.get(initKey(key))?.value) ?? 0, read);
+  let cursor = seqOf(row.value) ?? 0;
   const result: FeedStepResult = { read: 0, emailedGroups: 0, failedGroups: 0 };
   for (let p = 0; p < FEED_PAGES; p++) {
-    const rows = await read(cursor);
+    const rows = await read(cursor, FEED_PAGE);
     result.read += rows.length;
     if (rows.length === 0) break;
     const groups = groupByOrg(rows.filter(emailed), orgOf);
@@ -138,8 +179,8 @@ export function feedChanges(env: Env, ops: OpsStore, sender: EmailSender, budget
   return walk<AppChange>(
     ops,
     FEED_CURSORS.changes,
-    async (seq) => {
-      const r = await env.API.changesSince({ ...systemCtx(), seq, limit: FEED_PAGE });
+    async (seq, limit) => {
+      const r = await env.API.changesSince({ ...systemCtx(), seq, limit });
       if (!r.ok) throw new Error(`changesSince: ${r.code}`);
       return r.changes;
     },
@@ -160,8 +201,8 @@ export function feedAudit(env: Env, ops: OpsStore, sender: EmailSender, budget: 
   return walk<AuditRow>(
     ops,
     FEED_CURSORS.audit,
-    async (seq) => {
-      const r = await env.CONSOLE.auditSince({ ...systemCtx(), seq, limit: FEED_PAGE });
+    async (seq, limit) => {
+      const r = await env.CONSOLE.auditSince({ ...systemCtx(), seq, limit });
       if (!r.ok) throw new Error(`auditSince: ${r.code}`);
       return r.rows;
     },
@@ -207,7 +248,7 @@ export async function runFeed(env: Env, ops: OpsStore, sender: EmailSender, budg
     try {
       out[step] = await run();
       const r = out[step]!;
-      log({ event: 'feed', step, outcome: r.failedGroups ? 'rejected' : 'ok', count: r.read, sent: r.emailedGroups, failed: r.failedGroups });
+      log({ event: 'feed', step, outcome: r.failedGroups ? 'rejected' : 'ok', count: r.read, sent: r.emailedGroups, failed: r.failedGroups, ...(r.initialised !== undefined ? { code: r.initialised ? 'cursor_initialised' : 'cursor_initialising' } : {}) });
     } catch (err) {
       out[step] = null;
       log({ event: 'feed', step, outcome: 'error', error: errorName(err) }, 'error');

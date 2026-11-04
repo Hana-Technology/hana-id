@@ -222,7 +222,7 @@ describe('audit and CSV', () => {
 });
 
 describe('the route table', () => {
-  it('is the spec’s C8 routes; no user export, no user or support lookup yet (D275, D276)', () => {
+  it('is the spec’s C8 routes and C14’s; no user export, no user or support lookup yet (D275, D276)', () => {
     expect(ROUTE_TABLE).toMatchInlineSnapshot(`
       [
         "GET /api/me",
@@ -254,6 +254,13 @@ describe('the route table', () => {
         "GET /api/audit",
         "GET /api/audit.csv",
         "GET /api/security",
+        "GET /api/monitoring",
+        "GET /api/monitoring/alerts",
+        "GET /api/monitoring/actions",
+        "POST /api/monitoring/alerts/:id/ack",
+        "GET /api/governance/pending-upgrades",
+        "GET /api/playbooks",
+        "GET /api/playbooks/:id",
       ]
     `);
     expect(ROUTE_TABLE.join('\n')).not.toMatch(/export|users\/search|users\/get|support/u);

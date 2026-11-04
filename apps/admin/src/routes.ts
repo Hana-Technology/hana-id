@@ -7,14 +7,17 @@
 // The org methods of AdminRpc take the app's `orgId` (a backstop filter, as for the console), so the app routes carry
 // it: in the body of writes, as `?org=` on reads.
 //
-// Not here yet: reports, statements, rates and exports (C12), retention (C13), "Security & monitoring" and the
-// governance views (C14); the Users screen (`/api/users/search`, `/api/users/get`, proposed D275, C8b) and the Support
-// ID lookup (C15). Their paths answer 404 until those batches add them.
+// C14 adds "Security & monitoring" (the watchdog through monitoring.ts, the governance snapshot), the pending-upgrades
+// page and the playbooks (playbooks.ts). Not here yet: reports, statements, rates and exports (C12), retention (C13);
+// the Users screen (`/api/users/search`, `/api/users/get`, proposed D275, C8b) and the Support ID lookup (C15). Their
+// paths answer 404 until those batches add them.
 import type { AppChange, AuditRow, MemberView } from '@hana-id/console-core';
 import type { Env } from './env.ts';
 import { auditCsv } from './export.ts';
 import { errorResponse, json, readJson } from './http.ts';
 import { errorName, log } from './log.ts';
+import { ackRoute, actionsRoute, alertsRoute, monitoringRoute, pendingUpgradesRoute } from './monitoring.ts';
+import { getPlaybookRoute, listPlaybooksRoute } from './playbooks.ts';
 import { securityView } from './security.ts';
 import { type StaffRequest, staffCtx } from './rpc.ts';
 
@@ -218,6 +221,15 @@ const ROUTES: Route[] = [
 
   // ---- the feed's and the notices' state ----
   { method: 'GET', pattern: '/api/security', handler: (c) => securityView(c.env, c.staff) },
+
+  // ---- Security & monitoring, pending upgrades, playbooks (C14) ----
+  { method: 'GET', pattern: '/api/monitoring', handler: (c) => monitoringRoute(c.env, c.staff) },
+  { method: 'GET', pattern: '/api/monitoring/alerts', handler: (c) => alertsRoute(c.env, c.staff, c.url) },
+  { method: 'GET', pattern: '/api/monitoring/actions', handler: (c) => actionsRoute(c.env, c.staff, c.url) },
+  { method: 'POST', pattern: '/api/monitoring/alerts/:id/ack', handler: (c) => ackRoute(c.env, c.staff, c.params.id!) },
+  { method: 'GET', pattern: '/api/governance/pending-upgrades', handler: (c) => pendingUpgradesRoute(c.env, c.staff) },
+  { method: 'GET', pattern: '/api/playbooks', handler: async (c) => listPlaybooksRoute(c.url) },
+  { method: 'GET', pattern: '/api/playbooks/:id', handler: async (c) => getPlaybookRoute(c.params.id!) },
 ];
 
 function matchRoute(path: string): { routes: { route: Route; params: Record<string, string> }[] } {

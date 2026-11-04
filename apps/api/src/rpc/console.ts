@@ -5,7 +5,8 @@
 // precheck); the `orgId` filter is a backstop against console bugs, not against a compromise, which the breaker and the
 // hot-DB budget bound instead. The console never acts for `org_legacy` (forbidden).
 //
-// Built in batches C5 and C6: everything but `usage` / `statements` / `ledger` (Neon, C12). Those methods don't exist
+// Built in batches C5 and C6, plus C14's read-only `pendingUpgrades`: everything but `usage` / `statements` /
+// `ledger` (Neon, C12). Those methods don't exist
 // yet, so a console calling them gets an RPC error rather than a half-built answer.
 import {
   type RpcCode,
@@ -21,6 +22,8 @@ import {
   listAppsInput,
   listChangesInput,
   ownerActionInput,
+  pendingUpgradesInput,
+  pendingUpgradesView,
   removeOriginsInput,
   revokeKeyInput,
   rotateKeyInput,
@@ -37,6 +40,7 @@ import { cancelChange, cancelChangeByLink } from '../changes/lifecycle.ts';
 import { changeOrigins, removeOrigins } from '../changes/origins.ts';
 import { proposeSettingByMember, setLogo, turnOff, updateSettings } from '../changes/settings.ts';
 import { setSuspensionBit } from '../changes/suspension.ts';
+import { governanceSnapshot } from '../governance-status.ts';
 import { SAFETY_METHODS, newCtx, runOwnerAction } from '../handlers.ts';
 import { finishUsageOnThrow } from '../usage/event.ts';
 import { consoleGetUser, consoleListUsers } from '../directory/read.ts';
@@ -68,6 +72,8 @@ export const CONSOLE_COSTS = {
   proposeChange: 5,
   /** The scope-in-org read and, when a cap refuses, its `owner_cap` event. */
   ownerAction: 2,
+  /** The governance snapshot's one D1 batch of two reads (the JWKS cron's state), when the 10 s snapshot is stale (C14). */
+  pendingUpgrades: 2,
   /** One SELECT each (directory/read.ts). */
   listUsers: 1,
   getUser: 1,
@@ -119,6 +125,18 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
   listChanges(c: unknown) {
     return runRpc(this.env, 'listChanges', listChangesInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.listChanges }, async ({ input, db }) => ({
       changes: await listChanges(db, input.orgId, input.beforeSeq, input.limit),
+    }));
+  }
+
+  /**
+   * The pending-upgrades page (batch C14, D86): pending upgrades, owner transfers, withdrawals, delay decreases and
+   * console-audience additions with their countdowns, from the GET /v1/governance snapshot. Contract-wide and public
+   * on chain, so nothing in it is filtered by org; the call is charged to the member's org and the console checks the
+   * membership first. Its only hot-DB use is the snapshot's one D1 batch, shared and at most once per 10 s.
+   */
+  pendingUpgrades(c: unknown) {
+    return runRpc(this.env, 'pendingUpgrades', pendingUpgradesInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.pendingUpgrades }, async () => ({
+      pendingUpgrades: pendingUpgradesView(await governanceSnapshot(this.env)),
     }));
   }
 

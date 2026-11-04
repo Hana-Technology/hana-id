@@ -10,6 +10,8 @@ import type {
   GuardedChange,
   ListAppsInput,
   ListChangesInput,
+  PendingUpgradesInput,
+  PendingUpgradesView,
   RpcFail,
   RpcOk,
   SetLogoInput,
@@ -30,6 +32,8 @@ export interface ConsoleRpcClient {
   cancelChangeByLink(c: CancelChangeByLinkInput): Answer<{ change: GuardedChange }>;
   /** The logo upload (batch C11, logo.ts): the pointer. */
   setLogo(c: SetLogoInput): Answer<{ version: number }>;
+  /** The pending-upgrades page (batch C14, D86; governance.ts): contract-wide, charged to the member's org. */
+  pendingUpgrades(c: PendingUpgradesInput): Answer<{ pendingUpgrades: PendingUpgradesView }>;
 }
 
 export interface Env {

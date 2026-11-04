@@ -427,6 +427,8 @@ linking (`docs/email-login-spec.md`, approved 2026-10-30: D4, D119, D121–D123;
 testnet, AWS KMS before mainnet), and the partner identity token with opt-in verified email per app (D120; `docs/identity-token-spec.md` approved
 2026-10-30, D127). Sign in with Apple (D124; `docs/apple-login-spec.md`) is paused: not in the initial build, built
 when partners ask for it (D160, 2026-11-02).
+Native partner apps (iOS, Android, React Native / Expo; batch B Q24): `docs/native-apps-spec.md`
+(draft 2026-10-30, 19 open questions; recommends Hana's vault in the system browser sheet, no contract change).
 
 **Before mainnet:**
 

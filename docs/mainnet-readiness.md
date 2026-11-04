@@ -3,7 +3,7 @@
 Everything that must be true before Hana ID runs on mainnet with real funds. This is a current-state doc for the
 two founders to track. Update a row in the same branch as the change that moves it (rule in `CLAUDE.md`).
 
-Last verified: 2026-11-03 for row 4.19 (branch `fix/8b-rereview`, the second NEAR provider, D263); 2026-11-03 for rows 7.1h and 7.1i (branch `feat/email-login-8b` review fixes, D263–D267); 2026-11-03 for
+Last verified: 2026-11-04 for the "Not tracked as blockers" note (branch `docs/native-apps-spec`: the native apps spec on `develop`); 2026-11-03 for row 4.19 (branch `fix/8b-rereview`, the second NEAR provider, D263); 2026-11-03 for rows 7.1h and 7.1i (branch `feat/email-login-8b` review fixes, D263–D267); 2026-11-03 for
 rows 7.1f and 7.1g (branch `feat/email-login-8b`, automatic linking, D254–D259); 2026-11-02
 before that (branch `feat/email-login-8a`, plain email login in the web, D245–D249);
 2026-11-02 for rows 7.1–7.1e (branch `feat/email-login-6`, the API's email login part and its reviews, D230–D234, D250–D252);
@@ -198,7 +198,7 @@ These have the longest lead time, or other rows wait on them.
 | 7.14 | Settlement (C12) checks each relayed event against its transaction: `near_tx` unique in the ledger, and the transaction's signer key and nonce equal the event's `relayer_pk` and `relayer_nonce`; anything else is not billed and is alerted | A leaked writer credential could otherwise bill a partner for a real transaction that isn't theirs | not built | Claude build | D222; batch-c-build-plan C12; security.md "What a compromise gives" |
 
 Not tracked as blockers: Sign in with Apple (paused, D160) and the native apps spec (`docs/native-apps-spec.md`, a
-draft on `docs/native-apps-spec`, not on `develop`).
+draft with 19 open questions, on `develop` since 2026-11-04).
 
 ## 8. Address freeze
 

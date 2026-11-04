@@ -233,8 +233,9 @@ export type AccessTokenSub = { ok: true; sub: string } | { ok: false; reason: 'u
  * referrer is sent. Never throws, and never puts the token or the answer in a result or an error.
  *
  * ASSUMPTION (D270, to confirm in the spike): tokeninfo answers a browser's cross-origin POST with CORS headers the
- * browser accepts. If it doesn't, this returns `unavailable` and every token_first login ends there
- * (`tokeninfo_unavailable`); it never falls back to a request without the hint.
+ * browser accepts. If it doesn't, this returns `unavailable` and every token_first login of an app with email login
+ * ends there (`tokeninfo_unavailable`), never a request without the hint; a record-only login (an app without email
+ * login) instead drops the access token and makes batch B's openid request with the account chooser (nothing recorded).
  */
 export async function accessTokenSub(accessToken: string, clientId: string, fetchFn: typeof fetch = (...args) => fetch(...args)): Promise<AccessTokenSub> {
   let res: Response;

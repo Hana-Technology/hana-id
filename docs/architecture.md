@@ -419,7 +419,8 @@ Code: `packages/core/src/wallet-record.ts`, `packages/web/src/vault/wallet-recor
 `packages/console-core/src/users.ts`, `scripts/lib/admin-users.ts`. Hot-DB migration 0011.
 
 1. **The record (vault).** When a login's session is adopted (`/v1/login` succeeded, the key passed the pairing check),
-   the vault signs, with PRK in that turn, one record per chain: the Stellar key (Ed25519) over the statement
+   the vault signs, with PRK, right after (a 0 ms timer, only while that session is still current), one record per
+   chain: the Stellar key (Ed25519) over the statement
    `"hana-id/wallet-record/v1" ‖ 0x00 ‖ env ‖ signer ‖ app ‖ scope ‖ path ‖ chain ‖ address ‖ session_pk ‖ issued_at_ms`
    (borsh strings), the EVM key (ECDSA) over its sha256 (D311). The path is the session's, so a linked member reports
    its account root's wallet. It sends `POST /v1/wallets/record` without awaiting it: one call, aborted after 15 s, no

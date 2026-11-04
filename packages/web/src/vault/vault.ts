@@ -1743,12 +1743,18 @@ export class Vault {
   // ---- wallet directory (D310, D317) ----
 
   /**
-   * Signs the session's two wallet records with PRK now (in the login's turn) and sends them without waiting
+   * Right after the login's result is on its way (a timer, so the two signatures never delay it), while the session is
+   * still this one and PRK is in memory, signs its two wallet records and sends them without waiting
    * (wallet-record.ts): one call, a 15 s limit, every failure dropped. The login's result never depends on it.
    */
   private recordWallets(s: Session): void {
+    this.timers.setTimeout(() => this.sendWalletRecords(s), 0);
+  }
+
+  private sendWalletRecords(s: Session): void {
     const api = this.api;
-    if (!api) return;
+    // A session that already ended (or went dormant: PRK zeroed) records nothing; the next login does.
+    if (!api || this.session !== s || s.prk.every((b) => b === 0)) return;
     let signed;
     try {
       signed = signWalletRecords(

@@ -4634,7 +4634,8 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   (`packages/web/src/vault/wallet-record.ts`, `vault.ts` `recordWallets`, `test/vault/wallet-record.test.ts`) · Source:
   D310 point 3
 - Decision: when `finishLogin` adopts a new session (the login succeeded and its key passed the pairing check), the
-  vault signs both records with PRK in that turn (each chain key inside `withChainKey`, zeroed), for the session's
+  vault signs both records with PRK on a 0 ms timer right after (so the signatures never delay the login's result;
+  nothing if the session already ended or went dormant), each chain key inside `withChainKey` and zeroed, for the session's
   path (a linked member's is its account root's) and its server-corrected clock, and starts `POST /v1/wallets/record`
   without awaiting it: one call, aborted after 15 s (`WALLET_RECORD_TIMEOUT_MS`), every failure dropped silently, no
   retry (the next login writes the rows; the rows are upserts). Never at an unlock or a reload: "last used" is the last

@@ -3,8 +3,9 @@
 // record statement (@hana-id/core wallet-record.ts) for the session's path: the active path, so a linked member's
 // login reports its account root's wallet.
 //
-// Never in front of the user and never in the login's way: the body is signed in the same turn as the login's result
-// (PRK is in memory then; each chain key is derived for one signature inside withChainKey and zeroed), and the call
+// Never in front of the user and never in the login's way: the body is signed on a 0 ms timer right after the login's
+// result is on its way, only while that session is still the vault's (PRK is in memory then; each chain key is derived
+// for one signature inside withChainKey and zeroed), and the call
 // is started without being awaited. It is sent once, with no retry (a missed record is written at the next login: the
 // rows are upserts), and given up after WALLET_RECORD_TIMEOUT_MS. Any failure, a refusal or an outage, is dropped
 // silently. Only addresses and signatures leave the vault, never a key.

@@ -141,7 +141,7 @@ export async function runCallbackPage(deps: CallbackPageDeps): Promise<CallbackO
 
 /** What the explainer before Google's email prompt says (D264, G-M2). */
 export const EMAIL_PROMPT_TEXT =
-  'Google will now ask to share your email address with Hana. Only Hana’s email service sees it, to find a wallet you may already have with that address, and it isn’t kept.';
+  'Google will now ask to share your email address with Hana. Hana uses it to find a wallet you may already have with that address and keeps it with your account. It doesn’t share it with the app you’re signing in to.';
 
 function explainEmailPrompt(d: ReturnType<typeof dom>, on: { onContinue: () => void; onSkip: () => void }): void {
   const go = d.h('button', { class: 'primary', attrs: { type: 'button', id: 'email-prompt-continue' } }, 'Continue');

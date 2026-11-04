@@ -1,6 +1,8 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-04 (branch `fix/sessions-allow-list`: the smoke direct page's openid-only sign-in and its redirect URI, `REJECT_PII_ON_SESSIONS` retired, D271); 2026-11-04 (branch `feat/spike-leg-e`: "Google's verified email: the spike", leg E and the D270 gate); 2026-11-03 (branch `docs/sandbox-dev-state`: what sandbox-dev runs, per the operator on 2026-11-03: a state note under the hot DB gate, the watchdog's email pins and the email issuer sections); 2026-11-03 (branch `fix/8b-rereview`: "Turning linking on (batch 8b)"'s slow second
+Last verified against code: 2026-11-04 (branch `fix/sessions-allow-list`: the smoke direct page's openid-only sign-in and its redirect URI, `REJECT_PII_ON_SESSIONS` retired, D271); 2026-11-04 (branch `feat/user-emails`: `admin user:list` / `user:find` in "Admin CLI",
+"User directory (D269)" under "Email issuer" with applying migration 0002 on sandbox-dev, the runbook's
+`directory_write_failed`); 2026-11-04 (branch `feat/spike-leg-e`: "Google's verified email: the spike", leg E and the D270 gate); 2026-11-03 (branch `docs/sandbox-dev-state`: what sandbox-dev runs, per the operator on 2026-11-03: a state note under the hot DB gate, the watchdog's email pins and the email issuer sections); 2026-11-03 (branch `fix/8b-rereview`: "Turning linking on (batch 8b)"'s slow second
 provider and watching `path_unconfirmed`, D263); 2026-11-03 (branch `feat/email-login-8b` review fixes: "Turning linking on (batch 8b)"'s
 second RPC, the consent screens, the API's and the issuer's redeploys for the new limits, the spike's legs C and D as
 a gate, D263–D267; "Logs and latency"'s `google_account_mismatch`); 2026-11-03 (branch `feat/email-login-8b`: "Turning linking on (batch 8b)": what users see
@@ -827,7 +829,12 @@ admin <env> owner:vote <proposal id> --member <m> [--reject] [--yes]
 admin <env> owner:proposals [--limit 20] [--json]
 admin <env> governance:status [--json]
 admin <env> council:replace-member --remove <old member> --add <new member> [--member <m>] [--approve-with <m>] [--yes]
+admin <env> user:list [--app <app id>] [--provider email|google] [--search <part of the address> | -] [--limit 50] [--json] [--remote]
+admin <env> user:find [--email <address> | --sub <sub>] [--provider email|google] [--json] [--remote]   # neither: read from stdin
 ```
+
+The `user:*` commands read the user directory in the email issuer's own D1, read only: "User directory (D269)" under
+"Email issuer".
 
 The `owner:*`, `council:*` and `governance:status` commands: [Governance](#governance-owner-council-upgrades-migration)
 ("Owner actions through the council", "Replacing a council member").
@@ -1952,6 +1959,7 @@ Local: `gen <env> --dev-vars` writes `apps/email-issuer/.dev.vars` (0600) from t
 | A user lost a device, or a device ticket may have leaked | anyone holding the ticket gets that address's owner allowances (3 codes a day, the ticket slot), never a token | `admin/revoke-tickets` ("Staff calls"): every ticket of that exact address issued until now stops counting; the next sign-in issues a fresh one |
 | `limit` lines `ip:webhook:10m` (sandbox-dev first) | SendGrid's event posts from one IP passed 120 in 10 min (a guess, D199 L4); refused posts are retried by SendGrid | if it is SendGrid's real traffic, raise `IP_WEBHOOK_LIMITS` in `apps/email-issuer/src/limits.ts` |
 | A suspected key leak | anyone with the Worker's secrets can mint email tokens (1-of-1, D121): sessions for any email user's path | "Suspected issuer key leak" below |
+| `directory_write_failed` (warn log, `appId`, `scopeId`) | a user directory write failed (D269); the login itself went on | one now and then: D1 had a blip, the next login writes the row. Every login: migration 0002 isn't applied on this env's issuer D1 ("User directory (D269)" below) or D1 is down |
 
 ### Staff calls
 
@@ -1974,6 +1982,55 @@ ticket, mailbox or address key prefix, or scope) is written before the action. 2
 member, all routes together; unlock, unsuppress and revoke-tickets at most once a day and 3 times in 30 days per
 mailbox each (`429 staff_cap`). Access's certs: a failed fetch or an unknown kid is cached for 30 s (L3), so a key
 rotation at Cloudflare reaches the issuer at most 30 s late.
+
+### User directory (D269)
+
+The issuer keeps each identity's verified address for Hana staff (D269): `user_emails` (provider, `sub` as on chain,
+the address, `email_verified`, `hosted`, first and last seen) and `user_email_apps` (which apps and scopes), in its own
+D1 (migration `0002_user_emails.sql`; `docs/api.md` "Durable Objects, D1 and bindings"). An email login writes its row
+at every successful `verify`, after the answer; Google logins write theirs once the Google-side change (D270,
+`feat/google-token-first`) is merged. A failed write logs `directory_write_failed` and never fails a login. Nothing
+partner-facing reads it. There is no backfill: a user appears at their first login after the migration.
+
+**Applying migration 0002 on sandbox-dev** (the user runs this, from the main checkout; additive, two new tables, so
+no rollback step: an older Worker ignores them). Apply it before deploying an issuer that writes the directory (in the
+other order every login logs `directory_write_failed` until it is applied, and still works):
+
+```sh
+corepack pnpm --filter @hana-id/email-issuer gen sandbox-dev            # keeps the D1 ids already in wrangler.jsonc
+corepack pnpm --dir apps/email-issuer exec wrangler d1 migrations list hana-id-email-issuer-sandbox-dev --remote    # 0002_user_emails.sql pending
+corepack pnpm --dir apps/email-issuer exec wrangler d1 migrations apply hana-id-email-issuer-sandbox-dev --remote
+corepack pnpm --filter @hana-id/email-issuer run deploy
+```
+
+Check: `migrations list` shows nothing pending; after an email login on the demo, `admin sandbox-dev user:list --remote
+--limit 1` shows it. Other envs: the same with `hana-id-email-issuer-<env>`.
+
+**Reading it** (Hana staff with Cloudflare access to the issuer's D1; `$A` = `corepack pnpm --filter @hana-id/scripts
+admin <env>`, `--remote` for the deployed D1, without it the local one in `apps/email-issuer/.wrangler/state`; needs
+`apps/email-issuer/wrangler.jsonc` from `gen`):
+
+```sh
+$A user:list --remote                                   # newest first by last seen, 50 by default
+$A user:list --remote --app app_… --provider email --limit 200
+$A user:list --remote --search -                        # type part of the address on stdin
+$A user:find --remote                                   # type the exact address (or a sub) on stdin
+$A user:find --remote --sub e1.…
+$A user:find --remote --json
+```
+
+Each user: the address, provider, `sub`, verified, first and last seen, and per app its scope and the identity's own
+on-chain path `{scope}#{provider}#{sub}#0` (a linked member's wallet is its account root's: `get_identity`). An
+exact address matches as typed (lowercased: Google rows) and normalized (`@hana-id/email`: email rows, so
+`Alice.Smith@gmail.com` finds `alicesmith@gmail.com`). The commands only SELECT. **The addresses are for this
+terminal only**: type them on stdin (`-`, or `user:find` with no flag) so they stay out of the shell history, never
+redirect the output to a file outside `.secrets/`, never paste them into a ticket or chat. The CLI runs wrangler with
+`WRANGLER_WRITE_LOGS=false` (wrangler otherwise copies its output, the rows included, to `~/.wrangler/logs`), and no
+metrics or error reports.
+
+If `K_sub` were ever lost, the `sub` stored per address keeps the existing email users' wallets reachable (their
+paths are `{scope}#email#{sub}#0`; an issuer change would look the `sub` up here instead of computing it); users not in
+the directory would still be locked out, so the offline K_sub backups stay required.
 
 ### Suspected issuer key leak
 
@@ -2599,6 +2656,7 @@ Google token (`docs/contract-interface.md` "Gas of the email login calls" and "U
 | A login's `app` stage takes seconds (`pk_test_` timings) | the `GET /v1/app` the vault asked after `ready` was still out: `appServer*` say whether the API (D1, the registry views) or the network took the time (D261) | look at the `/v1/app` request log line's `phases` and `colo`; a stalled RPC view now fails after 8 s (every view, logins included) and `/v1/app` is asked once more |
 | `409 no_google_client` on `/v1/app` | scope has no Google client and no usable shared client (or shared client still in its timelock) | add a client, or `--allow-shared` + wait `changeDelayMs` |
 | `admin`: "No wrangler config in apps/api" | `wrangler.jsonc` missing | `corepack pnpm --filter @hana-id/api run gen <env>` |
+| `admin user:*`: "No wrangler config in apps/email-issuer" | the issuer's `wrangler.jsonc` missing | `corepack pnpm --filter @hana-id/email-issuer gen <env> --d1-id <issuer uuid> --app-d1-id <the API's D1 uuid>` |
 | `deploy-contract` "Cannot deploy until these are fixed" | a key with the wrong receiver, methods, empty method list or too-large/unlimited allowance | run the printed `near account delete-keys …`, re-run |
 | A test fails after someone filled in `envs/sandbox-dev.json` | the test read the real manifest and expected `UNSET` placeholders | tests pin their own fixture manifest (see `scripts/test/deploy-plan.test.ts`, commit fdde123); never depend on live manifest values |
 | smoke refuses to derive: "UNSET placeholder" | `ckdNetworkKey` not pinned | `fetch-ckd-key <env>`, restart the dev server |

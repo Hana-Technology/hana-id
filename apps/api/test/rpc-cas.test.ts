@@ -261,6 +261,13 @@ describe('the hot-DB budget', () => {
         const nonce = await ownerActionNonce({ signer: env.SIGNER_ACCOUNT, method: 'cancel_change', args, actionNonce: 4 });
         return rpc.ownerAction({ ...member(), orgId: app.org, body: { method: 'cancel_change', args: { ...args, auth: { Oidc: { jwt: await stepUp(nonce) } } } } });
       }],
+      // The wallet directory (D315): one SELECT each.
+      ['listUsers', (rpc) => rpc.listUsers({ ...member(), orgId: app.org })],
+      ['getUser', async (rpc) => {
+        const userId = `hu_${'1'.repeat(26)}`;
+        await env.DB.prepare('INSERT OR IGNORE INTO end_users (user_id, support_code, scope_id, created_at, last_seen_at) VALUES (?1, ?2, ?3, 1, 1)').bind(userId, '11111111', app.scope).run();
+        return rpc.getUser({ ...member(), orgId: app.org, userId });
+      }],
     ];
     expect(new Set(calls.map(([m]) => m))).toEqual(new Set(Object.keys(CONSOLE_COSTS)));
     for (const [method, run] of calls) {

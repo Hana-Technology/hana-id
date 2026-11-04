@@ -16,6 +16,10 @@
 // security contacts gets its digest sent to the security alias instead, so no row goes nowhere. Each source runs on its
 // own: the console being down stops only the audit_log source.
 //
+// Budget (D280, D380): every page read, contacts lookup and mark is one RPC of the run's budget, every email one call.
+// A page or a digest that doesn't fit what is left isn't started; the cursor (or the silent walk's place) stays, and
+// the next run carries on from it.
+//
 // Not emailed (they are covered by a blocking notice, or by the app_changes row of the same act): the proposals and
 // the announcement of a guarded change (`origin.proposed`, `policy.proposed`, `raw_sign.proposed`, `change.announced`),
 // the notices' own audit rows (`invite.notified`, `owner_grant.notified`) and the console's record of a link cancel
@@ -27,7 +31,7 @@ import { auditDigest, changesDigest, type MailContext, securityDigest } from './
 import type { Rendered } from './email/render.ts';
 import type { EmailSender } from './email/sender.ts';
 import { errorName, log } from './log.ts';
-import { type Budget, recipients, sendToAll } from './mail.ts';
+import { type Budget, meteredEnv, recipients, sendToAll } from './mail.ts';
 import type { OpsStore } from './ops.ts';
 import { systemCtx } from './rpc.ts';
 
@@ -67,10 +71,12 @@ const seqOf = (v: string | undefined): number | null => {
  * its last row (0 for an empty source). A walk that doesn't reach the end in this run stores its place under
  * `initKey(key)` and goes on next run; the cursor itself is written only at the end, so the feed never starts mid-way.
  */
-async function initialise<R extends { seq: number }>(ops: OpsStore, key: string, from: number, read: (seq: number, limit: number) => Promise<R[]>): Promise<FeedStepResult> {
+async function initialise<R extends { seq: number }>(ops: OpsStore, key: string, from: number, read: (seq: number, limit: number) => Promise<R[]>, budget: Budget): Promise<FeedStepResult> {
   let cursor = from;
   let total = 0;
   for (let p = 0; p < FEED_INIT_PAGES; p++) {
+    // Each page is one RPC of the run's budget; without one the walk keeps its place for the next run.
+    if (!budget.fits(1, 1)) break;
     const rows = await read(cursor, FEED_INIT_PAGE);
     total += rows.length;
     if (rows.length) cursor = Math.max(cursor, rows[rows.length - 1]!.seq);
@@ -87,6 +93,10 @@ async function initialise<R extends { seq: number }>(ops: OpsStore, key: string,
 class Contacts {
   private readonly cache = new Map<string, string[] | null>();
   constructor(private readonly env: Env) {}
+  /** Whether `of(orgId)` would make an RPC (each org's contacts are read once a run). */
+  uncached(orgId: string | null): boolean {
+    return orgId !== null && !this.cache.has(orgId);
+  }
   async of(orgId: string): Promise<string[] | null> {
     if (!this.cache.has(orgId)) {
       const r = await this.env.API.getSecurityContacts({ ...systemCtx(), orgId }).catch(() => null);
@@ -128,13 +138,17 @@ async function walk<R extends { seq: number }>(
   emailed: (r: R) => boolean,
   orgOf: (r: R) => string | null,
   send: (g: Group<R>) => Promise<'sent' | 'failed' | 'budget'>,
+  budget: Budget,
 ): Promise<FeedStepResult> {
   const state = await ops.getState([key, initKey(key)]);
   const row = state.get(key);
-  if (!row) return initialise(ops, key, seqOf(state.get(initKey(key))?.value) ?? 0, read);
+  if (!row) return initialise(ops, key, seqOf(state.get(initKey(key))?.value) ?? 0, read, budget);
   let cursor = seqOf(row.value) ?? 0;
   const result: FeedStepResult = { read: 0, emailedGroups: 0, failedGroups: 0 };
   for (let p = 0; p < FEED_PAGES; p++) {
+    // Each page is one RPC of the run's budget, read only with room for one digest after it (its contacts and an
+    // email); otherwise the cursor stays for the next run.
+    if (!budget.fits(3, 2)) break;
     const rows = await read(cursor, FEED_PAGE);
     result.read += rows.length;
     if (rows.length === 0) break;
@@ -163,18 +177,27 @@ async function walk<R extends { seq: number }>(
   return result;
 }
 
-async function sendGroup(env: Env, sender: EmailSender, budget: Budget, contacts: Contacts, orgId: string | null, extra: string[], message: Rendered, purpose: string, alsoAlias: boolean): Promise<'sent' | 'failed' | 'budget'> {
+/**
+ * One org's digest: its contacts (one RPC, once a run), one email per recipient, and `after` RPCs once sent (the
+ * security events' mark). A digest that doesn't fit what is left of the budget is 'budget': not started, it and the
+ * rest of the page wait for the next run (D280, D380).
+ */
+async function sendGroup(env: Env, sender: EmailSender, budget: Budget, contacts: Contacts, orgId: string | null, extra: string[], message: Rendered, purpose: string, alsoAlias: boolean, after = 0): Promise<'sent' | 'failed' | 'budget'> {
+  const lookup = contacts.uncached(orgId) ? 1 : 0;
+  if (!budget.fits(lookup + 1 + after, lookup + after)) return 'budget';
   const orgContacts = orgId ? await contacts.of(orgId) : [];
   if (orgContacts === null) return 'failed';
   let to = recipients(orgContacts, extra, alsoAlias ? env.SECURITY_ALIAS : undefined);
   if (to.length === 0) to = [env.SECURITY_ALIAS];
+  if (!budget.fits(to.length + after, after)) return 'budget';
   const r = await sendToAll(sender, budget, to, message, purpose);
   return r.outOfBudget ? 'budget' : r.allAccepted ? 'sent' : 'failed';
 }
 
 const mail = (env: Env): MailContext => ({ env: env.ENV_NAME, consoleOrigin: env.CONSOLE_ORIGIN });
 
-export function feedChanges(env: Env, ops: OpsStore, sender: EmailSender, budget: Budget): Promise<FeedStepResult> {
+export function feedChanges(rawEnv: Env, ops: OpsStore, sender: EmailSender, budget: Budget): Promise<FeedStepResult> {
+  const env = meteredEnv(rawEnv, budget);
   const contacts = new Contacts(env);
   return walk<AppChange>(
     ops,
@@ -193,10 +216,12 @@ export function feedChanges(env: Env, ops: OpsStore, sender: EmailSender, budget
       const last = g.rows[g.rows.length - 1]!.seq;
       return sendGroup(env, sender, budget, contacts, g.orgId, extra, changesDigest(mail(env), g.orgId ?? 'no organisation', g.rows), `feed:app_changes:${g.orgId}:${first}-${last}`, false);
     },
+    budget,
   );
 }
 
-export function feedAudit(env: Env, ops: OpsStore, sender: EmailSender, budget: Budget): Promise<FeedStepResult> {
+export function feedAudit(rawEnv: Env, ops: OpsStore, sender: EmailSender, budget: Budget): Promise<FeedStepResult> {
+  const env = meteredEnv(rawEnv, budget);
   const contacts = new Contacts(env);
   return walk<AuditRow>(
     ops,
@@ -213,17 +238,22 @@ export function feedAudit(env: Env, ops: OpsStore, sender: EmailSender, budget: 
       const last = g.rows[g.rows.length - 1]!.seq;
       return sendGroup(env, sender, budget, contacts, g.orgId, [], auditDigest(mail(env), g.orgId, g.rows), `feed:audit_log:${g.orgId}:${first}-${last}`, false);
     },
+    budget,
   );
 }
 
 /** Security events: the API's `notified_at` is their cursor; marked once the group's sends were all accepted. */
-export async function feedSecurityEvents(env: Env, sender: EmailSender, budget: Budget): Promise<FeedStepResult> {
+export async function feedSecurityEvents(rawEnv: Env, sender: EmailSender, budget: Budget): Promise<FeedStepResult> {
+  const env = meteredEnv(rawEnv, budget);
+  // The page read is one RPC, worth it only with room for one digest after it (its contacts, an email, the mark);
+  // without that nothing is read and every event waits for the next run.
+  if (!budget.fits(4, 3)) return { read: 0, emailedGroups: 0, failedGroups: 0 };
   const r = await env.API.securityEvents({ ...systemCtx(), unnotifiedOnly: true, limit: FEED_PAGE });
   if (!r.ok) throw new Error(`securityEvents: ${r.code}`);
   const contacts = new Contacts(env);
   const result: FeedStepResult = { read: r.events.length, emailedGroups: 0, failedGroups: 0 };
   for (const g of groupByOrg<SecurityEvent>(r.events, (e) => e.orgId ?? null)) {
-    const outcome = await sendGroup(env, sender, budget, contacts, g.orgId, [], securityDigest(mail(env), g.orgId, g.rows), `feed:security_events:${g.rows.map((e) => e.id).join(',')}`, true);
+    const outcome = await sendGroup(env, sender, budget, contacts, g.orgId, [], securityDigest(mail(env), g.orgId, g.rows), `feed:security_events:${g.rows.map((e) => e.id).join(',')}`, true, 1);
     if (outcome === 'budget') break;
     if (outcome === 'failed') {
       result.failedGroups++;

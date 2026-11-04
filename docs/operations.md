@@ -1,6 +1,7 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-04 (branch `feat/batch-c-13`: "Retention (batch C13, milestone M6)": the Neon
+Last verified against code: 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
+what counts, each job's share in both crons, the `budget` log lines; settlement's reads a run; D380); 2026-11-04 (branch `feat/batch-c-13`: "Retention (batch C13, milestone M6)": the Neon
 migration 0007, the deploy order, the monthly job in the 15-minute cron, `retention_failed`, `admin retention:issuer`,
 `uid-erase` for an erasure request, statements and rates by hand, what to watch; "Usage ledger" lists 0007; D360–D369);
 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342; the console's C10 vars `NETWORK`, `REFUSED_ORIGINS` and the `USERS_SCREEN` switch, no new secret or setup step); 2026-11-04 (branch `feat/user-id-identity-sub`: "Wallet directory (hot-DB migration 0011)": both keys, the deploy pairing for the session signature, the three ids in `user:*`, the log codes; "Admin CLI"'s `--user`; D346); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: the "Declined" row of "Turning linking on (batch 8b)", D341); 2026-11-04 (branch `feat/batch-c-12`: "Reports and statements (batch C12, milestone M6)": the
@@ -1151,10 +1152,45 @@ the repo root of the main checkout, logged in to the API's Cloudflare account. N
 - **Cron triggers**: two per env (`*/5 * * * *`, and C12's `*/15 * * * *`, whose 00:30 UTC run also does the daily
   ledger work, D329); the free plan allows 5 per account (the API, the watchdog and the console have one each per env),
   so two envs on one free account don't fit: the plan question (build plan open question 3). Each run makes at most 40
-  outbound calls (emails and NEAR reads, D280); a backlog drains over the next runs.
+  outbound calls, every kind counted ("The crons' call budget" below); a backlog drains over the next runs.
 - **Rollback**: `wrangler rollback` in `apps/admin`. While the Worker is down or can't email, guarded changes, invites
   and owner grants stay unannounced (fail closed): nothing goes live without its notice, and the API cancels a change
   left unannounced for 7 days. `app:changes:announce` is the no-email fallback and needs Hana security's sign-off.
+
+### The crons' call budget (D280, D380)
+
+Each cron run is one invocation, and the Workers free plan allows it 50 subrequests; a call past that fails and the
+run stops wherever it was. So each run has a budget of **40 outbound calls**, and every outbound call of every job
+takes one: the run's Hyperdrive connection (charged once, its queries free: Cloudflare's docs don't count Hyperdrive,
+so this is the cautious reading), every `AdminRpc` / `StaffRpc` call over the `API` and `CONSOLE` service bindings
+(at most **30** of the 40: a request may make 32 Worker invocations, its own included), every email (one per
+recipient), every NEAR read and every rate fetch. A job checks before each unit of work (a notice with every email
+and its ack, a digest, a scope, a statement, a page with room for one unit after it) and stops cleanly before one
+that doesn't fit; the next run carries on from its cursor, its queue or its `partial` row. The jobs, in order, and
+what each can take:
+
+| Cron | Job | Calls | Worst case in one run |
+|---|---|---|---|
+| `*/5` | `ops` | the ops connection, set aside first | 1 |
+| `*/5` | `notices` | each page 1; a change notice: one per recipient + the ack; an invite: its org's name and contacts (once a run) + one per recipient + the invitee's link + the ack | all that is left (they block changes, invites and grants) |
+| `*/5` | `feed` | each page 1; a digest: its org's contacts (once a run) + one per recipient (+ the mark for security events) | what the notices leave |
+| `*/5` | `watcher` | `listScopes` 1; each scope `get_scope` + its org's contacts (once a run) + one per recipient; a SetAllowShared also `listApps` + a `getApp` per app | what is left, at most 15 scopes |
+| `*/15` | `ledger` | the ledger connection | 1 |
+| `*/15` | `relayer_keys` | `AdminRpc.relayerKeys` (only with `RELAYER_ACCOUNT`) | 1 |
+| `*/15` | `nonce_check` (00:30 UTC) | one `view_access_key` per pool key | one per key |
+| `*/15` | `retention` (from the 1st 01:00 UTC until a run ends `ok`) | each RPC 1 | 12 |
+| `*/15` | `alerts`, `retention_alerts` | one email to the alias per digest | 3, 2 |
+| `*/15` | `statement_notices` | per statement 2 RPCs + one per recipient (contacts, billing email, alias); at most 5 statements | what is left |
+| `*/15` | `rates` (00:30 UTC) | one fetch per missing day of the last 10 | what is left, at most 10 |
+| `*/15` | `settlement` | one `tx` per event read | what is left: **38** in a run with nothing else (≈ 3 600 a day) |
+
+Measured worst cases (`apps/admin/test-ops/budget.test.ts`): a `*/15` 00:30 tick with every job due (a due retention
+run, both alerts, six statements with three recipients each, ten missing rates, 60 events to settle) takes
+`ledger 1, relayer_keys 1, nonce_check 2, retention 12, alerts 2, statement_notices 20, rates 2` = 40; settlement gets
+nothing that run and its 60 events are settled in the next two, the other rates the next day. A `*/5` tick with 60
+change notices (three recipients each) takes `ops 1, notices 37` (nine notices); the notices drain first, then the
+feed and the watcher get their shares. Each run's shares are in its `budget` log line (`cron` or `ledger_cron`,
+`count` and `calls`), and the 5-minute run's also in `cron.last_run`.
 
 ### What to watch (Worker logs)
 
@@ -1165,6 +1201,7 @@ the repo root of the main checkout, logged in to the API's Cloudflare account. N
 | `notice` `contacts_unavailable` | The org's security contacts couldn't be read (the API) | Check the API |
 | `cron` `usage_db_missing` / `ops_unavailable` (error) | No `USAGE_DB` binding, or Neon/Hyperdrive down: the feed and the watcher don't run; notices still go out | `gen --admin-hyperdrive-id <id>`; Neon status |
 | `feed` with `failed` > 0 | A digest wasn't accepted; its cursor waits | As `send_failed` |
+| `notice` `out_of_budget` (warn); `cron` `budget` with `count` 38–40 run after run | The run's 40 calls were spent before a step's page: a backlog (D380); it drains over the next runs, blocking notices first | Expected after a burst; if it lasts hours, see "The crons' call budget" and the plan question (`docs/mainnet-readiness.md` 7.15) |
 | `watcher` `near_unavailable` / `not_on_chain` | `get_scope` failed, or a hot-DB scope isn't on chain | NEAR RPC status; a scope row without a registered scope is a setup error |
 | `access_refused` (warn) with `code` | An `/api/*` request without a valid staff token (`not_staff`: a valid Access identity not on `admin.staffEmails`) | Expected for strangers; for staff, check the manifest list and the Access policy |
 | `access_refused` `access_config_missing` / `certs_unavailable` (error) | `accessAud` still `UNSET`, an unusable staff list, or the team's certs unreachable: every `/api/*` is 503 | Step 1; Cloudflare status |
@@ -1409,7 +1446,7 @@ capture"). From the repo root of the main checkout.
 
 4. **Check it**: `corepack pnpm --dir apps/admin exec wrangler tail <admin.workerName>` across a quarter hour:
    `ledger_cron` lines `alerts`, `statement_notices`, `settlement` with `outcome: ok`; at 00:30 UTC also `nonce_check`,
-   `rejection_rate`, `partitions`, `rates`. The admin console's Rates screen shows the fetched days; the Feed and
+   `rejection_rate`, `partitions`, `rates`; last a `budget` line with the run's calls per job (at most 40, D380). The admin console's Rates screen shows the fetched days; the Feed and
    notices screen's ledger part shows each relayer key's nonce check, the settlement backlog and the partitions ahead.
 5. **Rates for the past**: the daily run fills only the last 10 days. Before issuing a statement for an earlier month,
    set the missing days by hand (Rates → override, a reason naming the source), or the issue is refused.
@@ -1420,7 +1457,9 @@ From the 3rd of the next month (00:00 UTC), in the admin console: Statements →
 blocks the issue: relayed events not settled yet (settlement reads them every 15 minutes; one not final after 24 h is
 recorded unsettled and counted, never billed) and days without a rate. "Issue statement" freezes it: the CSV and PDF go
 to `STATEMENTS` under new keys, the hashes and totals to `usage.statements`, a `statement.issued` audit row to the
-console; within 15 minutes the org's security contacts, its billing email and the security alias get the statement hash.
+console; within 15 minutes (a run or two later when many statements are issued at once: each takes 2 RPCs and an
+email per recipient of the run's 40 calls, D380) the org's security contacts, its billing email and the security alias
+get the statement hash.
 A second issue for the month is refused; nothing is ever recomputed.
 
 - **Late events** (received after the statement's `as_of`) stay in the ledger and show in the report as "after
@@ -1446,7 +1485,7 @@ month that has a statement (the rates of a statement are frozen).
 | Email "Rejection rate over 5%" (`rejection_rate`) | An org had ≥ 100 relayed attempts in a day and more than 5 % were rejected after the relay (gas paid, not billed by default, D91) | Tell the partner; look for a client bug or third-party replays |
 | `ledger_cron` `usage_db_missing` / `ledger_unavailable` (error) | No `USAGE_DB`, or Neon/Hyperdrive down: nothing settles, no checks, no notices | `gen --admin-hyperdrive-id <id>`; Neon status |
 | `ledger_cron` `relayer_account_missing` / `relayer_keys_unavailable` (error) | No `RELAYER_ACCOUNT` var, or `AdminRpc.relayerKeys` failed: settlement and the nonce check don't run | Re-run `gen`; check the API |
-| Security screen: settlement backlog growing | More relayed events than a run can read (about 35 a run, D322), or the RPC can't find them | NEAR RPC status; the plan's subrequest limit |
+| Security screen: settlement backlog growing | More relayed events than a run can read (at most 38 a run, fewer when notices or the monthly job take calls; D322, D380), or the RPC can't find them | NEAR RPC status; the `ledger_cron` `budget` line's `calls`; the plan's subrequest limit |
 | Security screen: partitions ahead < 2 | Neither the API's hourly keeper nor the admin's daily one has run | Check both crons; `usage-migrate` re-runs nothing |
 | `bff` `statement_hash_mismatch` (error) | A statement file no longer matches the hash frozen in Neon | Tell Hana security: the bucket lock should make this impossible |
 | `bff`/`statement`/`export` `audit_failed` (error) | The act happened but its `audit_log` row wasn't written (the console was down) | Note it in the incident log; the statement row or the override row is the act's own record |

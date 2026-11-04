@@ -12,6 +12,10 @@
 // Fails closed: a missing key or sender, a failed or skipped send, or an unreadable recipient list means no ack; the
 // next run tries again with the same token (it is deterministic, so a link from an earlier attempt works once acked).
 // A token is never logged or stored here; the console and the API store only its sha256.
+//
+// Budget (D280, D380): every RPC (the page, an org's name and contacts, the ack) and every email is one call of the
+// run's budget. A notice is started only when its lookups, every email and its ack fit what is left; otherwise it and
+// the rest of the page wait whole for the next run, so a notice is never sent without the room to ack it.
 import { b64url, linkToken, linkTokenHash } from '@hana-id/console-core';
 import type { MemberNotice } from '@hana-id/console-core';
 import type { ChangeNotice, Env } from './env.ts';
@@ -19,7 +23,7 @@ import { changePending, inviteLink, inviteNotice, ownerGrantNotice, type MailCon
 import { consoleLink } from './email/render.ts';
 import type { EmailSender } from './email/sender.ts';
 import { errorName, log } from './log.ts';
-import { type Budget, linkKey, recipients, sendToAll } from './mail.ts';
+import { type Budget, linkKey, meteredEnv, recipients, sendToAll } from './mail.ts';
 import { systemCtx } from './rpc.ts';
 
 /** Notices read per run and kind (the budget usually ends a run first). */
@@ -38,11 +42,22 @@ const delay = (raw: string | undefined, fallback: number): number => {
 
 const mailContext = (env: Env): MailContext => ({ env: env.ENV_NAME, consoleOrigin: env.CONSOLE_ORIGIN });
 
-export async function runChangeNotices(env: Env, sender: EmailSender, budget: Budget): Promise<StepResult> {
+/** A page read is worth it only with room for one notice after it: the page (RPC), one email and the ack (RPC). */
+const PAGE_AND_ONE = 3;
+
+/** The step's page read didn't fit the budget: nothing done, the whole step waits for the next run. */
+const noRoom = (step: string): void => log({ event: 'notice', step, outcome: 'skipped', code: 'out_of_budget' }, 'warn');
+
+export async function runChangeNotices(rawEnv: Env, sender: EmailSender, budget: Budget): Promise<StepResult> {
   const out: StepResult = { acked: 0, failed: 0, skipped: 0 };
+  const env = meteredEnv(rawEnv, budget);
   const key = linkKey(env.CANCEL_LINK_KEY);
   if (!key) {
     log({ event: 'notice', step: 'change_pending', outcome: 'skipped', code: 'cancel_link_key_missing' }, 'error');
+    return out;
+  }
+  if (!budget.fits(PAGE_AND_ONE, 2)) {
+    noRoom('change_pending');
     return out;
   }
   const page = await env.API.pendingNotices({ ...systemCtx(), limit: NOTICE_PAGE });
@@ -55,6 +70,11 @@ export async function runChangeNotices(env: Env, sender: EmailSender, budget: Bu
     const id = n.change.id;
     const token = await linkToken('cancelLink', key, id);
     const to = recipients(env.SECURITY_ALIAS, n.contacts);
+    // Every recipient's email and the ack, or the notice waits whole for the next run (D280, D380).
+    if (!budget.fits(to.length + 1, 1)) {
+      out.skipped++;
+      break;
+    }
     const message = changePending(mailContext(env), n, { cancelUrl: consoleLink(env.CONSOLE_ORIGIN, `/cancel/${encodeURIComponent(id)}#t=${b64url(token)}`), delayMs });
     const sent = await sendToAll(sender, budget, to, message, `change_pending:${id}`);
     if (sent.outOfBudget) {
@@ -84,6 +104,12 @@ class OrgLookups {
   private readonly contacts = new Map<string, string[] | null>();
   constructor(private readonly env: Env) {}
 
+  /** The RPCs `name` and `securityContacts` would still make for the org (0 to 2: each is read once a run). */
+  uncached(orgId: string | undefined): number {
+    if (!orgId) return 0;
+    return (this.names.has(orgId) ? 0 : 1) + (this.contacts.has(orgId) ? 0 : 1);
+  }
+
   async name(orgId: string | undefined): Promise<string | undefined> {
     if (!orgId) return undefined;
     if (!this.names.has(orgId)) {
@@ -104,13 +130,18 @@ class OrgLookups {
   }
 }
 
-export async function runMemberNotices(env: Env, sender: EmailSender, budget: Budget): Promise<StepResult> {
+export async function runMemberNotices(rawEnv: Env, sender: EmailSender, budget: Budget): Promise<StepResult> {
   const out: StepResult = { acked: 0, failed: 0, skipped: 0 };
+  const env = meteredEnv(rawEnv, budget);
   const inviteKey = linkKey(env.INVITE_LINK_KEY);
   const cancelKey = linkKey(env.CANCEL_LINK_KEY);
   if (!inviteKey || !cancelKey) {
     const missing = inviteKey ? 'cancel_link_key_missing' : 'invite_link_key_missing';
     log({ event: 'notice', step: 'member', outcome: 'skipped', code: missing }, 'error');
+    return out;
+  }
+  if (!budget.fits(PAGE_AND_ONE, 2)) {
+    noRoom('member');
     return out;
   }
   const page = await env.CONSOLE.pendingMemberNotices({ ...systemCtx(), limit: NOTICE_PAGE });
@@ -125,6 +156,13 @@ export async function runMemberNotices(env: Env, sender: EmailSender, budget: Bu
     const orgId = n.kind === 'invite' ? n.invite?.orgId : n.grant?.orgId;
     const target = n.kind === 'invite' ? n.invite?.id : n.grant?.id;
     if (!target) continue;
+    // The org's lookups, at least one email and the ack; then (below) every email and the ack. A notice that doesn't
+    // fit waits whole for the next run, with the rest of the page (D280, D380).
+    const lookups = orgs.uncached(orgId);
+    if (!budget.fits(lookups + 2, lookups + 1)) {
+      out.skipped++;
+      break;
+    }
     const contacts = await orgs.securityContacts(orgId);
     if (contacts === null) {
       out.failed++;
@@ -133,6 +171,10 @@ export async function runMemberNotices(env: Env, sender: EmailSender, budget: Bu
     }
     const orgName = await orgs.name(orgId);
     const to = recipients(n.owners.map((o) => o.email), contacts, env.SECURITY_ALIAS);
+    if (!budget.fits(to.length + (n.kind === 'invite' ? 1 : 0) + 1, 1)) {
+      out.skipped++;
+      break;
+    }
     let token: Uint8Array;
     let ok: boolean;
     let outOfBudget = false;

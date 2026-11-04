@@ -1,6 +1,8 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
-Last verified against code: 2026-11-04 (branch `feat/batch-c-13`: "Usage ledger retention functions" (0007),
+Last verified against code: 2026-11-04 (branch `fix/admin-cron-budget`: the admin Worker's two crons count every
+outbound call (the connection, every RPC, every email and NEAR read) in their 40, at most 30 RPCs, each job's share
+logged; D380); 2026-11-04 (branch `feat/batch-c-13`: "Usage ledger retention functions" (0007),
 `AdminRpc.purgeAudit` / `deletedApps` / `purgeDirectory`, `StaffRpc.purgeAudit`, the admin Worker's `GET /api/retention`
 and the monthly retention job in its 15-minute cron with `retention_failed`; D360–D369); 2026-11-04 (branch `feat/console-reports-upgrades`: the partner SPA's usage, statement and pending-upgrades screens over the report and pending-upgrades routes; a statement's `issuedBy` answered as `hana`; D370–D374); 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342; `freezeOrg` pauses pending invites and owner grants, D343; the console's fresh sign-in and write routes, D350–D358); 2026-11-04 (branch `feat/user-id-identity-sub`: `POST /v1/wallets/record`'s `sessionSignature` and key checks (Routing, its section), `ConsoleRpc` / `AdminRpc` user reads with the User ID `u1_…`, the Support ID from it and the staff-only internal id, `end_users.token_sub` in "D1 schema", `directory_unavailable`'s codes; D346, D311/D313 amended); 2026-11-04 (branch `feat/batch-c-12`: `ConsoleRpc.usage` / `statements` / `ledger`,
 `StaffRpc.recordStaffAction`, the console's report backend (not routed until C10), the admin Worker's report,
@@ -1797,8 +1799,12 @@ kid), `pause: {paused, unpausedAtMs, lastWatchdogPause}`, `updaterKeyCheck: [{pu
 `otherSignerKeys`; `findings` is `[{severity, source: watchdog | governance | portal, text, playbook?}]`, critical
 first (D337).
 
-**Cron** `*/5 * * * *` (`src/cron.ts`; D280), as the `system` actor, with at most 40 outbound calls (emails and NEAR
-views) a run:
+**Cron** `*/5 * * * *` (`src/cron.ts`; D280, D380), as the `system` actor, with at most 40 outbound calls a run, every
+kind counted: the ops connection, every `AdminRpc` and `StaffRpc` call (at most 30 of the 40: a request's 32 Worker
+invocations), every email and every `get_scope`. A notice is started only when its lookups, every email and its ack
+fit what is left, a digest or a scope only when its reads and emails do, a page only with room for one of them after
+it; what doesn't fit waits whole for the next run (the cursors stay). Each job's share is in `cron.last_run` (`calls`)
+and the run's `cron` `budget` log line:
 1. **Blocking notices** (`src/notices.ts`; D279): `AdminRpc.pendingNotices` → one message to the security alias and to
    each security contact, with `<CONSOLE_ORIGIN>/cancel/<id>#t=<T>` (T = HMAC(`CANCEL_LINK_KEY`, cancel-link layout))
    → `AdminRpc.ackNotice({changeId, cancelTokenHash: b64url(sha256(T))})`. `StaffRpc.pendingMemberNotices`: an invite's
@@ -1818,13 +1824,17 @@ views) a run:
 
 Steps 2 and 3 need `USAGE_DB`; without it (or with Neon down) they are skipped and step 1 still runs.
 
-**Cron** `*/15 * * * *` (C12, `src/ledger-cron.ts`; D322), one ledger connection and its own 40 outbound calls:
+**Cron** `*/15 * * * *` (C12, `src/ledger-cron.ts`; D322, D380), one ledger connection and its own 40 outbound calls,
+every kind counted: the connection, `AdminRpc.relayerKeys`, the retention RPCs, each statement notice's
+`getSecurityContacts` and `StaffRpc.getOrg`, every email, `tx`, `view_access_key` and rate fetch. Each job's share is in
+the run's `ledger_cron` `budget` log line (`calls`):
 1. **Alerts** (`src/alerts.ts`): one digest each to the security alias of the unexplained nonce checks
    (`nonce_unexplained`), the rejection-rate alerts (`rejection_rate`) and the settlement alerts not yet sent,
    `alerted_at` set only after the send was accepted.
 2. **Statement notices**: each statement without an `ops.statement_notices` row is emailed (org name, month, as_of,
    both sha256s) to the org's security contacts, its `billing_email` and the alias; the row is written once every send
-   was accepted.
+   was accepted. At most 5 a run, each two RPCs and one call per recipient; one that doesn't fit what is left waits,
+   with the rest, for the next run.
 3. **Settlement** (`src/settlement.ts`; D321, D322): `AdminRpc.relayerKeys` (both pools), then relayed events without
    a settlement row, oldest first, at most the budget left (≤ 500), each read at most once an hour
    (`ops.settlement_tries`). A `near_tx` another relayed event carries → `unsettled` `duplicate_tx`; a `relayer_pk`

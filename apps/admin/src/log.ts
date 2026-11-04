@@ -21,11 +21,13 @@ export interface LogFields {
   count?: number;
   sent?: number;
   failed?: number;
+  /** A cron run's outbound calls per job (D380): counts only. */
+  calls?: Record<string, number>;
   /** An error's class name only (never its message, which can echo input or a driver's host name). */
   error?: string;
 }
 
-const ALLOWED: ReadonlySet<string> = new Set(['event', 'requestId', 'route', 'method', 'orgId', 'scopeId', 'target', 'outcome', 'status', 'code', 'step', 'count', 'sent', 'failed', 'error']);
+const ALLOWED: ReadonlySet<string> = new Set(['event', 'requestId', 'route', 'method', 'orgId', 'scopeId', 'target', 'outcome', 'status', 'code', 'step', 'count', 'sent', 'failed', 'calls', 'error']);
 
 export function log(fields: LogFields, level: 'info' | 'warn' | 'error' = 'info'): void {
   const line: Record<string, unknown> = { level, at: new Date().toISOString() };

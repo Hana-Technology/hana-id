@@ -1,7 +1,8 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
+Last verified against code: 2026-10-28 (commit 58edee9); D380 (branch `fix/admin-cron-budget`, decided while
+building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
 confirmed by the user) on 2026-11-04, amending D341; D341 (branch `fix/google-cancel-back-to-chooser`, confirmed
 by the user) on 2026-11-04, with notes on D264, D270 and D273 and a row of "Superseded or amended"; D340 (branch `fix/dev-email-limits`) on 2026-11-04; D140–D141 and D150–D152 on 2026-10-30 (branches
 `feat/batch-c-1`, `feat/playbook-gaps`); D130–D139 on 2026-10-30 (branches `feat/email-login-1`, `feat/email-login-1-r2`);
@@ -4561,7 +4562,8 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   `RUN_BUDGET` · Source: spec §Crons
 - Decision: one cron (`*/5 * * * *`) runs the blocking notices (changes, then members), then the feed (security
   events, app changes, console audit), then the watcher, each step on its own. They share a budget of **40 outbound
-  calls** per run (each email and each `get_scope`); a notice whose recipients don't fit in what's left waits whole
+  calls** per run (each email and each `get_scope`; *amended by D380: every RPC and the ops connection count too, at
+  most 30 RPCs*); a notice whose recipients don't fit in what's left waits whole
   for the next run, and the feed and the watcher stop and resume from their cursors. The notices need no Neon; without
   `USAGE_DB` (or with Neon down) the feed and the watcher are skipped and logged at error level every run.
 - Why: the Workers free plan allows 50 subrequests an invocation and the plan isn't settled (build plan open question
@@ -5672,7 +5674,8 @@ changes a derivation path or an address. Every one is **decided while building, 
     event the 3-day window missed (settlement down for days) would otherwise never be settled and would hold its
     month's statement back forever; past 24 h it is written `unsettled` (`not_final`) on its first read.
   - At most `min(500, budget left)` events a run; each `tx` read takes one call of the run's 40 (D280), so a run reads
-    about 35 transactions (≈ 3 400 a day). Enough for the pilot; past it, the paid plan's subrequest limit is the lever
+    about 35 transactions (≈ 3 400 a day). (*D380: with the connection and `relayerKeys` counted, at most 38 a run,
+    ≈ 3 600 a day.*) Enough for the pilot; past it, the paid plan's subrequest limit is the lever
     (`docs/mainnet-readiness.md`). Duplicate and pool-key refusals need no call.
   - An event whose transaction isn't final yet (or the RPC doesn't know it) is read again **an hour later**
     (`ops.settlement_tries`), so a backlog of unknown hashes (a forged event, an RPC that lost the tx) can't take every
@@ -5820,7 +5823,8 @@ changes a derivation path or an address. Every one is **decided while building, 
     `retention_due`) use the run's connection and no outbound call. **Every RPC** (`deletedApps`, `purgeDirectory`, both
     `purgeAudit`) **takes one call of the run's 40** (D280), at most 12 a run, so the job never starves settlement and the
     run stays under the free plan's 50 subrequests whatever the RPCs answer. (C12's own RPC reads, `relayerKeys` and the
-    statement notices' two per statement, are not charged to the budget; see the note in the final report.)
+    statement notices' two per statement, are not charged to the budget; see the note in the final report.) *Fixed by
+    D380: they are, as is the ledger connection; the job's RPCs go through the metered bindings.*
   - Each step runs on its own; a failing one is recorded as the step and a code (an RpcCode, `pg_<SQLSTATE>` or a class
     name: never a message, which could echo data) and the others still run. The run's `rows` hold counts per table and
     the calls used.
@@ -6082,10 +6086,59 @@ follow-up there.
   no new information (the timelocks don't move).
 - Rejected: polling the route; showing the raw yoctoNEAR amount only.
 
+## The admin crons' call budget (branch `fix/admin-cron-budget`), 2026-11-04
+
+### D380. Every outbound call of an admin cron run comes out of its 40, RPCs and the connection included; at most 30 RPCs
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/mail.ts` (`Budget`,
+  `metered`, `meteredEnv`, `RPC_BUDGET`, `OutOfBudget`), `cron.ts`, `ledger-cron.ts`, `notices.ts`, `feed.ts`,
+  `watcher.ts`, `alerts.ts`, `retention.ts`; `apps/admin/test-ops/budget.test.ts` · Amends D280, D322 and D360
+- The bug: D280 counted emails and `get_scope` only, with "room for the RPC calls between them". C12 added RPCs that
+  weren't charged (`AdminRpc.relayerKeys` every 15-minute run, two reads per statement notice: up to 11 a run), and
+  the 5-minute cron's own RPCs weren't either (the notice pages, every ack, an org's name and contacts, the feed's
+  pages, lookups and marks, `listScopes`, `listApps` / `getApp`): a full page of 20 change notices is 20 acks beside
+  its emails. A worst-case run could pass the free plan's 50 subrequests and fail part-way (a notice emailed and not
+  acked, a cursor not stored).
+- Decision:
+  - **What counts** (Cloudflare's docs, read 2026-11-04, cited in `mail.ts`): every `fetch` (Resend, NEAR, CoinGecko;
+    Workers limits, "Subrequests"); every service-binding call ("Each request to a Worker via a Service binding counts
+    toward your subrequest limit", Service bindings, "Limits"); R2, KV and D1 (the crons use none). Hyperdrive isn't
+    named as a subrequest anywhere: `pg` opens one socket per run with `connect()`, which the docs count only toward
+    the six simultaneous connections. Charged anyway, one call per run's connection (the 5-minute run sets it aside
+    before the notices); the queries on it take none.
+  - **At most 30 RPCs** a run (`RPC_BUDGET`, inside the 40): "A single request has a maximum of 32 Worker invocations,
+    and each call to a Service binding counts towards this limit"; the cron's own invocation is one.
+  - **Enforced at one place**: each job meters the bindings it is given (`meteredEnv`, a no-op on a binding already
+    metered by the same budget), so a call without budget left is refused (a rejected `OutOfBudget`) instead of made,
+    and an RPC added later can't go uncounted. `Budget.as(job)` records each job's share: the 15-minute run's summary
+    and `ledger_cron` `budget` line, the 5-minute run's `cron.last_run` and `cron` `budget` line (`calls`).
+  - **Clean stops**: before each unit of work a job checks that all of it fits (`fits(calls, rpcs)`): a change notice
+    with every email and its ack; an invite with its org's lookups, every email, the link and the ack; a digest with
+    its org's contacts, every email and (security events) the mark; a scope with its `get_scope` and its org's
+    contacts, a SetAllowShared's `listApps` and `getApp`s with its emails; a statement's two reads and at least the
+    alias. A page is read only with room for one unit after it. What doesn't fit waits whole: the next run carries on
+    from the cursors, the queues and a `partial` retention run, as settlement and retention already did.
+  - The order and priorities stay (D280, D322, D329, D360). `RUN_BUDGET` stays 40: the 10 under 50 are now a margin
+    for what the docs leave open, not room for uncounted calls. Settlement reads at most 38 a run (was "about 35"),
+    fewer in a run that also sends notices or runs the monthly job. The shares and the measured worst cases are in
+    `docs/operations.md` "The crons' call budget".
+- Why: a run that dies at its 51st subrequest loses work in the middle of a step; a budget that counts every call can't.
+- Trade-offs: a statement notice whose recipients turn out not to fit has spent its two reads (and an invite its
+  lookups); they are read again next run. In a run where the blocking notices take everything, the feed and the
+  watcher wait (by design: the notices hold changes back).
+- To confirm (unsure from the docs): (1) whether a service-binding callee's own subrequests (the API's D1 queries inside
+  an `AdminRpc` call) count toward the caller's 50; if they do, one RPC costs more than one call and the budget is too
+  generous: measure on sandbox-dev before M4 (a run with a full notice page, `wrangler tail`). (2) Whether Hyperdrive's
+  socket counts at all (charged here). (3) Whether the 32-invocation limit is the total or the depth of a request's
+  calls (the total assumed).
+- Rejected: charging RPCs by hand in the jobs that make them (D360's way: the next RPC added would be missed again);
+  raising the budget to 48 (no margin for the open questions); a fixed share per job (an idle job's share would be
+  wasted while a backlog waits).
+
 ## Superseded or amended
 
 | Was | Now | Source |
 |---|---|---|
+| The admin crons' budget counts emails and NEAR reads only, with room for the RPCs (D280); C12's `relayerKeys` and statement-notice reads uncharged (D360's note) | Every outbound call counts: the connection, every RPC (at most 30), every email, NEAR read and rate fetch; a unit of work starts only when it fits (D380) | `apps/admin/src/mail.ts`, `cron.ts`, `ledger-cron.ts` |
 | `usage.erase_uid(app_ids text[], uid bytea)` (spec "Usage ledger" functions) | `usage.erase_uid(uid bytea)`: by uid alone, in any app (D362); the uid indexes C15 planned are in 0007 | `apps/api/migrations-usage/0007_retention.sql` |
 | `uid:erase` (ledger only) and the proposed `user:erase` (issuer only), separately (spec "CLI", D276) | One script, `uid-erase`, per scope across the ledger, the wallet directory and the issuer directory (D361) | `scripts/lib/uid-erase.ts` |
 | The client-proof helper loads Google Identity Services; the console warns the proof carries the staffer's email and name (spec "On-chain owner actions" step 3) | Google's implicit flow with `scope=openid`; a proof with an email or a name is refused, and the warning names the account id that stays public (D350, D351) | `apps/console/src/scopes.ts`, `auth-token.ts` |

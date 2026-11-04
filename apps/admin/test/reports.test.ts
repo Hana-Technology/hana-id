@@ -181,7 +181,9 @@ describe('the C12 crons', () => {
   it('without USAGE_DB, the 15-minute run (the daily one too) is skipped with an error line each time', async () => {
     for (const t of [undefined, DAILY_TICK]) {
       const lines = await run(FIFTEEN_MINUTES, env as unknown as Env, t);
-      expect(lines.filter((l) => l.event === 'ledger_cron').map((l) => [l.level, l.code])).toEqual([['error', 'usage_db_missing']]);
+      expect(lines.filter((l) => l.event === 'ledger_cron').map((l) => [l.level, l.code])).toEqual([['error', 'usage_db_missing'], ['info', undefined]]);
+      // The run's budget line: nothing taken (no connection, no ledger, so no step ran).
+      expect(lines.find((l) => l.event === 'ledger_cron' && l.step === 'budget')).toMatchObject({ count: 0, calls: {} });
     }
   });
 
@@ -201,7 +203,10 @@ describe('the C12 crons', () => {
       ['retention_alerts', 'ok'],
       ['statement_notices', 'ok'],
       ['settlement', 'ok'],
+      ['budget', 'ok'],
     ]);
+    // The real API's relayerKeys over the service binding is one call of the run's budget (D380).
+    expect(fifteen.find((l) => l.event === 'ledger_cron' && l.step === 'budget')).toMatchObject({ count: 1, calls: { relayer_keys: 1 } });
     expect(calls).toContain('settlementQueue');
     calls.length = 0;
     // The rate source isn't reachable from the test: the fetch fails and is counted, never thrown.
@@ -217,6 +222,7 @@ describe('the C12 crons', () => {
       ['statement_notices', 'ok'],
       ['rates', 'ok'],
       ['settlement', 'ok'],
+      ['budget', 'ok'],
     ]);
     expect(calls).toEqual(expect.arrayContaining(['rejectionRates', 'ensurePartitions', 'ratesBetween']));
     // Without RELAYER_ACCOUNT the steps that need it are skipped and logged.

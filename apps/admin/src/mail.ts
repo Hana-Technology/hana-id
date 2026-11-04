@@ -1,27 +1,127 @@
-// Sending one notice to many people, and the per-run budget of outbound calls the 5-minute cron shares between its
-// steps (D280): every email is one message per recipient, the run stops sending when the budget is spent, and whatever
-// is left waits for the next run.
+// Sending one notice to many people, and the per-run budget of outbound calls each cron run shares between its steps
+// (D280, D380): every email is one message per recipient, every outbound call of a run takes one of its budget, a step
+// stops before a unit of work (a notice, a digest, a scope, a statement) that doesn't fit what is left, and whatever is
+// left waits for the next run.
+//
+// What an outbound call is (Cloudflare's docs, read 2026-11-04):
+//   - https://developers.cloudflare.com/workers/platform/limits/#subrequests: "A subrequest is any request a Worker
+//     makes using the Fetch API or to Cloudflare services like R2, KV, or D1"; the free plan allows 50 per invocation.
+//     Here: every email (Resend), every NEAR RPC read and every rate fetch (CoinGecko). The crons touch no R2, KV or D1.
+//   - https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/#limits: "Each request to a
+//     Worker via a Service binding counts toward your subrequest limit", and "A single request has a maximum of 32
+//     Worker invocations, and each call to a Service binding counts towards this limit". Here: every AdminRpc call on
+//     `API` and every StaffRpc call on `CONSOLE`, each one call of the budget and one of RPC_BUDGET (`metered` below).
+//   - Hyperdrive: neither https://developers.cloudflare.com/hyperdrive/platform/limits/ nor the Workers limits page
+//     names it as a subrequest. `pg` reaches it over one TCP socket per run (`connect()`, which the limits page counts
+//     toward the six simultaneous open connections only), and the queries travel on that socket. Charged
+//     conservatively: opening the run's connection takes one call; its queries take none.
 import { b64url, fromB64url, sha256, utf8 } from '@hana-id/console-core';
 import type { EmailSender } from './email/sender.ts';
 import type { Rendered } from './email/render.ts';
 
 /**
- * Outbound calls (emails and NEAR views) one cron run may make. Below the Workers free plan's 50 subrequests per
- * invocation, with room for the RPC calls between them; a backlog drains over the next runs.
+ * Outbound calls one cron run may make, every kind above counted. Below the Workers free plan's 50 subrequests per
+ * invocation, with room for what the docs leave open (D380); a backlog drains over the next runs.
  */
 export const RUN_BUDGET = 40;
+/**
+ * Service-binding calls one run may make, inside RUN_BUDGET: a request has at most 32 Worker invocations, the cron's
+ * own among them, and a call past that throws.
+ */
+export const RPC_BUDGET = 30;
 
+/** A metered call found the budget spent. Jobs check `fits` before each unit of work, so this is the backstop. */
+export class OutOfBudget extends Error {
+  constructor(what: string) {
+    super(`out of budget: ${what}`);
+    this.name = 'OutOfBudget';
+  }
+}
+
+/**
+ * One run's budget. Every outbound call takes one (`take`; a service-binding call through `metered` takes one of both
+ * counts), recorded under the job running it (`as`), so a run's summary shows each job's share.
+ */
 export class Budget {
-  constructor(private left: number = RUN_BUDGET) {}
+  private left: number;
+  private rpcLeft: number;
+  private job = 'run';
+  /** Calls taken per job. */
+  readonly used: Record<string, number> = {};
+
+  constructor(left: number = RUN_BUDGET, rpc: number = Math.min(left, RPC_BUDGET)) {
+    this.left = left;
+    this.rpcLeft = rpc;
+  }
   get remaining(): number {
     return this.left;
   }
-  /** Takes `n` calls if that many are left. */
+  get rpcRemaining(): number {
+    return this.rpcLeft;
+  }
+  /** Calls taken so far. */
+  get spent(): number {
+    return Object.values(this.used).reduce((a, b) => a + b, 0);
+  }
+  /** Whether `n` more calls fit, `rpc` of them service-binding calls. */
+  fits(n: number, rpc = 0): boolean {
+    return this.left >= n && this.rpcLeft >= rpc;
+  }
+  /** Takes `n` calls (fetches: emails, NEAR reads, rates; the run's connection) if that many are left. */
   take(n = 1): boolean {
     if (this.left < n) return false;
     this.left -= n;
+    this.used[this.job] = (this.used[this.job] ?? 0) + n;
     return true;
   }
+  /** Takes one service-binding call, if one is left of both counts. */
+  takeRpc(): boolean {
+    if (!this.fits(1, 1)) return false;
+    this.rpcLeft--;
+    return this.take(1);
+  }
+  /** Runs `fn` with the calls it takes counted under `job`. */
+  async as<T>(job: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.job;
+    this.job = job;
+    try {
+      return await fn();
+    } finally {
+      this.job = prev;
+    }
+  }
+}
+
+const meteredBy = new WeakMap<object, Budget>();
+
+/**
+ * A service binding (`API`, `CONSOLE`) whose every method call first takes one call of `budget` (`takeRpc`), and
+ * throws OutOfBudget instead of calling when none is left. Every job meters the bindings it is given (`meteredEnv`),
+ * so no RPC of a run goes uncounted; metering a binding already metered by the same budget returns it as it is, so a
+ * call is never counted twice.
+ */
+export function metered<T extends object>(binding: T, budget: Budget): T {
+  // An absent binding (a config without it) stays absent: its calls fail as they would unmetered.
+  if (typeof binding !== 'object' || binding === null || meteredBy.get(binding) === budget) return binding;
+  const proxy = new Proxy(binding, {
+    // Every string property is a method on an RPC stub (a JS RPC property is callable whatever `typeof` says of it);
+    // `then` stays as it is, so the binding is never taken for a promise.
+    get(target, prop) {
+      if (typeof prop !== 'string' || prop === 'then') return (target as Record<string | symbol, unknown>)[prop];
+      return (...args: unknown[]) => {
+        // Rejected, not thrown: every RPC answers a promise, and a caller's `.catch` must see this as it sees a failure.
+        if (!budget.takeRpc()) return Promise.reject(new OutOfBudget(prop));
+        return (target as Record<string, (...a: unknown[]) => unknown>)[prop]!(...args);
+      };
+    },
+  });
+  meteredBy.set(proxy, budget);
+  return proxy;
+}
+
+/** The env with both service bindings metered against `budget`. */
+export function meteredEnv<E extends { API: object; CONSOLE: object }>(env: E, budget: Budget): E {
+  return { ...env, API: metered(env.API, budget), CONSOLE: metered(env.CONSOLE, budget) };
 }
 
 /** Lowercased, trimmed, distinct, in order; empty strings dropped. */

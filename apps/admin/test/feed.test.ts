@@ -5,7 +5,7 @@ import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { everyFiveMinutes } from '../src/cron.ts';
 import { FEED_CURSORS, FEED_INIT_PAGE, FEED_INIT_PAGES, feedAudit, feedChanges, feedSecurityEvents, initKey, runFeed } from '../src/feed.ts';
-import { Budget } from '../src/mail.ts';
+import { Budget, RUN_BUDGET } from '../src/mail.ts';
 import { ALIAS, FakeEmail, adminRequest, downBinding, envWith, memoryOps, newOpsData, overrideBinding, seedConsoleOrg, seedHotApp, stubNetwork, uid, useFakeEmail, useMemoryOps } from './helpers.ts';
 
 beforeEach(async () => {
@@ -201,6 +201,11 @@ describe('the 5-minute cron', () => {
     expect(s.watcher).toBe(true);
     expect(fake.to(app.contact).some((m) => m.subject.includes('Pending change'))).toBe(true);
     expect(JSON.parse(data.state.get('cron.last_run')!.value)).toMatchObject({ feed: true, watcher: true });
+    // Every call over the real service bindings came out of the run's budget, recorded per job (D380): at least the
+    // notices' two pages and the feed's reads.
+    expect(s.calls.notices).toBeGreaterThanOrEqual(2);
+    expect(s.calls.feed).toBeGreaterThanOrEqual(1);
+    expect(Object.values(s.calls).reduce((a, b) => a + b, 0)).toBe(RUN_BUDGET - s.budgetLeft);
   });
 
   it('without USAGE_DB the notices still go out; the feed and the watcher are skipped', async () => {

@@ -7,9 +7,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { loadEnv, repoRoot } from '@hana-id/env';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { assertCommandPositionals } from '../lib/admin-args.ts';
-import { type DirectoryUser, type UserCmdDeps, addressCandidates, ownPath, userFind, userFindSql, userList, userListSql } from '../lib/admin-users.ts';
+import { type DirectoryUser, UNVERIFIED_WARNING, type UserCmdDeps, addressCandidates, ownPath, userFind, userFindSql, userList, userListSql } from '../lib/admin-users.ts';
 import { parseCli } from '../lib/cli.ts';
-import { PRIVATE_WRANGLER_ENV, issuerD1Argv } from '../lib/d1.ts';
+import { PRIVATE_WRANGLER_ENV, issuerLocalD1Argv } from '../lib/d1.ts';
 
 const SPEC = { strings: ['app', 'provider', 'search', 'limit', 'email', 'sub'], booleans: ['json'] };
 const T = Date.UTC(2026, 10, 4, 9);
@@ -41,6 +41,12 @@ function seed(db: DatabaseSync): void {
   a.run('email', 'e1.carol', 'app_demo', 's2', T, T);
 }
 
+/** Mallory: a Google account that claims Bob's address, unverified by Google (email_verified = 0). */
+function seedClaim(db: DatabaseSync, lastSeenMs: number = T + 50 * MIN): void {
+  db.prepare('INSERT INTO user_emails (provider, sub, email, email_verified, hosted, first_seen_ms, last_seen_ms) VALUES (?, ?, ?, ?, ?, ?, ?)').run('google', '6600', 'bob@corp.example', 0, 0, T + 3 * MIN, lastSeenMs);
+  db.prepare('INSERT INTO user_email_apps (provider, sub, app_id, scope_id, first_seen_ms, last_seen_ms) VALUES (?, ?, ?, ?, ?, ?)').run('google', '6600', 'app_other', 's3', T + 3 * MIN, lastSeenMs);
+}
+
 interface H {
   db: DatabaseSync;
   out: string[];
@@ -53,11 +59,11 @@ let h: H;
 beforeEach(() => {
   const db = newDb();
   seed(db);
-  // Read only from here on: a write would throw.
+  // Read only from here on (the tests that add a claim switch it back briefly): a write would throw.
   db.exec('PRAGMA query_only = ON');
   const state = { db, out: [] as string[], statements: [] as string[], stdin: [] as string[] } as H;
   state.deps = {
-    d1: (s) => {
+    d1: async (s) => {
       state.statements.push(s);
       return db.prepare(s).all() as Record<string, unknown>[];
     },
@@ -86,6 +92,7 @@ describe('user:list', () => {
       sub: 'e1.alice',
       emailVerified: true,
       hosted: null,
+      unverifiedClaim: false,
       firstSeenMs: T,
       lastSeenMs: T + 30 * MIN,
       apps: [
@@ -196,6 +203,92 @@ describe('user:find', () => {
   });
 });
 
+describe('unverified Google rows (email_verified = 0): a claim, never the owner', () => {
+  const addClaim = (lastSeenMs?: number) => {
+    h.db.exec('PRAGMA query_only = OFF');
+    seedClaim(h.db, lastSeenMs);
+    h.db.exec('PRAGMA query_only = ON');
+  };
+
+  it('user:find --email lists the verified owner first and the claim apart, under the warning', async () => {
+    addClaim();
+    const us = await find('--email', 'bob@corp.example');
+    expect(ids(us)).toEqual(['google:2200', 'google:6600']);
+    expect(us.map((u) => u.unverifiedClaim)).toEqual([false, true]);
+    expect(h.out[0]).toBe(`1 user (${WHERE})`);
+    const text = h.out.join('\n');
+    const warning = text.indexOf(`${UNVERIFIED_WARNING}.`);
+    expect(UNVERIFIED_WARNING).toBe('UNVERIFIED: this Google account claims the address but Google hasn’t verified it; don’t treat it as the owner');
+    // The owner's block comes before the warning, the claim's after it.
+    expect(warning).toBeGreaterThan(text.indexOf('  sub       2200'));
+    expect(text.indexOf('  sub       6600')).toBeGreaterThan(warning);
+    expect(text).toContain('bob@corp.example  [UNVERIFIED: claimed, not verified by Google]');
+    expect(text).toContain('  verified  NO: Google hasn’t verified this address; the account only claims it, not Google-hosted');
+    // The owner's own block carries no marker.
+    expect(text.slice(0, warning)).not.toContain('UNVERIFIED');
+  });
+
+  it('the claim stays apart even when it was seen last (the SQL order would put it first)', async () => {
+    addClaim(T + 90 * MIN);
+    expect(ids(await find('--email', 'bob@corp.example'))).toEqual(['google:2200', 'google:6600']);
+    expect(h.statements.at(-1)).toContain('ORDER BY u.last_seen_ms DESC');
+  });
+
+  it('only a claim: "No verified user", then the warning; never counted as a user', async () => {
+    h.db.exec('PRAGMA query_only = OFF');
+    h.db.prepare('INSERT INTO user_emails (provider, sub, email, email_verified, hosted, first_seen_ms, last_seen_ms) VALUES (?, ?, ?, ?, ?, ?, ?)').run('google', '7700', 'dave@example.org', 0, 0, T, T);
+    h.db.exec('PRAGMA query_only = ON');
+    const us = await find('--email', 'dave@example.org');
+    expect(ids(us)).toEqual(['google:7700']);
+    expect(h.out[0]).toBe(`No verified user with that address (${WHERE})`);
+    expect(h.out).toContain(`${UNVERIFIED_WARNING}.`);
+    expect(h.out).toContain('dave@example.org  [UNVERIFIED: claimed, not verified by Google]');
+  });
+
+  it('several claims: the warning counts them', async () => {
+    addClaim();
+    h.db.exec('PRAGMA query_only = OFF');
+    h.db.prepare('INSERT INTO user_emails (provider, sub, email, email_verified, hosted, first_seen_ms, last_seen_ms) VALUES (?, ?, ?, ?, ?, ?, ?)').run('google', '8800', 'bob@corp.example', 0, 0, T, T);
+    h.db.exec('PRAGMA query_only = ON');
+    await find('--email', 'bob@corp.example');
+    expect(h.out).toContain(`${UNVERIFIED_WARNING} (2 Google accounts).`);
+  });
+
+  it('user:find --sub shows an unverified row marked the same way', async () => {
+    addClaim();
+    await find('--sub', '6600');
+    expect(h.out[0]).toBe(`No verified user with that sub (${WHERE})`);
+    expect(h.out).toContain(`${UNVERIFIED_WARNING}.`);
+  });
+
+  it('user:find --json: the verified first, each with unverifiedClaim', async () => {
+    addClaim(T + 90 * MIN);
+    await find('--email', 'bob@corp.example', '--json');
+    expect(h.out).toHaveLength(1);
+    expect((JSON.parse(h.out[0]!) as DirectoryUser[]).map((u) => [u.sub, u.emailVerified, u.unverifiedClaim])).toEqual([['2200', true, false], ['6600', false, true]]);
+  });
+
+  it('user:list marks each unverified row on its address line and counts them in a note', async () => {
+    addClaim();
+    const us = await list();
+    expect(ids(us)[0]).toBe('google:6600');
+    expect(us[0]!.unverifiedClaim).toBe(true);
+    expect(us.filter((u) => u.unverifiedClaim)).toHaveLength(1);
+    expect(h.out[1]).toBe('1 of them is a Google account whose address Google hasn’t verified, marked [UNVERIFIED: claimed, not verified by Google]: a claim, never the address’s owner.');
+    const text = h.out.join('\n');
+    expect(text.match(/\[UNVERIFIED: claimed, not verified by Google\]/gu)).toHaveLength(2); // the note and the row
+    expect(text).toContain('bob@corp.example  [UNVERIFIED: claimed, not verified by Google]\n  provider  google\n  sub       6600');
+    // Bob's own (verified) row is plain.
+    expect(text).toContain('bob@corp.example\n  provider  google\n  sub       2200');
+  });
+
+  it('user:list without unverified rows prints no note; email rows are never claims', async () => {
+    const us = await list();
+    expect(us.every((u) => !u.unverifiedClaim)).toBe(true);
+    expect(h.out.join('\n')).not.toContain('UNVERIFIED');
+  });
+});
+
 describe('the issuer’s D1 and the command line', () => {
   it('every statement is one SELECT', async () => {
     h.stdin.push('carol@example.com');
@@ -209,14 +302,12 @@ describe('the issuer’s D1 and the command line', () => {
     }
   });
 
-  it('wrangler runs on emailIssuer.cloudflare.d1Name with its log file, metrics and error reports off', () => {
+  it('wrangler runs on emailIssuer.cloudflare.d1Name, the statement in a file, with its log file, metrics and error reports off', () => {
     const m = loadEnv('sandbox-dev');
     expect(m.emailIssuer).toBeDefined();
-    const argv = issuerD1Argv(m, 'SELECT 1', { remote: true });
-    expect(argv).toEqual(['exec', 'wrangler', 'd1', 'execute', m.emailIssuer!.cloudflare.d1Name, '--remote', '--json', '--command', 'SELECT 1']);
-    expect(issuerD1Argv(m, 'SELECT 1', { remote: false })).toContain('--local');
+    expect(issuerLocalD1Argv(m, '/r/.secrets/tmp/d1-x.sql')).toEqual(['exec', 'wrangler', 'd1', 'execute', m.emailIssuer!.cloudflare.d1Name, '--local', '--json', '--file', '/r/.secrets/tmp/d1-x.sql']);
     expect(PRIVATE_WRANGLER_ENV).toEqual({ WRANGLER_WRITE_LOGS: 'false', WRANGLER_SEND_METRICS: 'false', WRANGLER_SEND_ERROR_REPORTS: 'false' });
-    expect(() => issuerD1Argv({ name: 'x', emailIssuer: undefined }, 'SELECT 1', { remote: false })).toThrow('has no emailIssuer');
+    expect(() => issuerLocalD1Argv({ name: 'x', emailIssuer: undefined }, 'f')).toThrow('has no emailIssuer');
   });
 
   it('the commands take no positionals; ownPath is the contract’s path format', () => {

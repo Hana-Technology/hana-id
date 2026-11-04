@@ -107,7 +107,45 @@ describe('token_first in an app without email login (google-record, D269)', () =
     expect(b3.backend.recordCalls).toEqual([]);
   });
 
-  it('a token without `access: follow` (a popup under another flow) logs in and records nothing', async () => {
+  it('google-record starts only after /v1/login has succeeded (never before the chain step)', async () => {
+    const b = new Browser();
+    const atLogin: number[] = [];
+    b.backend.overrides.set('/v1/login', () => {
+      atLogin.push(b.backend.recordCalls.length);
+      return undefined;
+    });
+    const t = await tab(b);
+    const { reply } = await loginReply(t);
+    expect(reply.error).toBeUndefined();
+    await t.waitUntil(() => b.backend.recordCalls.length === 1, 'google-record');
+    expect(atLogin).toEqual([0]);
+  });
+
+  it('a refused /v1/login records nothing: the app’s directory row never says a failed login logged in', async () => {
+    for (const refusal of [() => apiError(400, 'token_invalid'), () => apiError(403, 'app_suspended')]) {
+      const b = new Browser();
+      b.backend.overrides.set('/v1/login', refusal);
+      const t = await tab(b);
+      const { reply, recorded } = await loginReply(t);
+      expect(reply.error).toBeDefined();
+      expect(recorded()).toBeNull();
+      t.browser.timers.advance(RECORD_TIMEOUT_MS);
+      expect(b.backend.recordCalls).toEqual([]);
+    }
+  });
+
+  it('a login that ends before the chain (the scope isn’t the registry’s) records nothing', async () => {
+    const b = new Browser();
+    b.backend.scopes.clear();
+    const t = await tab(b);
+    const { reply, recorded } = await loginReply(t);
+    expect(reply.error).toBeDefined();
+    expect(b.backend.count('/v1/login')).toBe(0);
+    expect(recorded()).toBeNull();
+    expect(b.backend.recordCalls).toEqual([]);
+  });
+
+  it('a token without `access: follow` (a popup under another flow, or token_first’s record-only fallback when tokeninfo failed: no slot 1) logs in and records nothing', async () => {
     const b = new Browser();
     const t = await tab(b);
     const pending = t.request('hana_login');

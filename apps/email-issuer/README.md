@@ -17,7 +17,8 @@ Reference: endpoints, limits, Durable Objects, D1 and logs in `docs/api.md` "Ema
 
 **The user directory (D269).** The issuer keeps each identity's verified address in its own D1 (`user_emails`,
 `user_email_apps`, migration 0002), for Hana staff only: written after the answer at every successful `verify`
-(`src/directory.ts`, best effort: a failure logs `directory_write_failed` and never fails a login), read with
+(`src/directory.ts`, best effort: a failure logs `directory_write_failed` and never fails a login; writes may land
+out of order, and a row keeps the newest write's address, `email_verified`, `hosted` and scope), read with
 `admin <env> user:list` / `user:find` (`docs/operations.md` "User directory (D269)"). No route serves it; partners
 never see it. Logs still never carry an address.
 
@@ -72,7 +73,8 @@ fetch); the RSA keys and HMAC keys are throwaway values made per run. `test/priv
 every flow for the address, the code, the `sub`, the tokens and the secrets (google-record and the directory's failure
 line included), and checks that a verified address is in `user_emails` and no other table;
 `test/directory-verify.test.ts` covers which `verify` answers record, `test/google-record.test.ts` google-record and
-google-match's directory write.
+google-match's directory write, `test/directory.test.ts` the upserts in both arrival orders.
 
-Last verified: 2026-11-04 (branch `feat/google-token-first`: `google-record`, google-match's directory write, D269,
+Last verified: 2026-11-04 (branch `fix/user-emails-review`: the directory's order-safe upserts, D269); 2026-11-04
+(branch `feat/google-token-first`: `google-record`, google-match's directory write, D269,
 D270).

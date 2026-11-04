@@ -19,6 +19,9 @@
 // then, instead of closing, the window goes to /login/email's follow-up mode, which reads the vault's next notice
 // (google-match's screens, link banners, the vault's last word). A record-only login (token_first in an app without
 // email login, `record`: the access token is for the issuer's directory only, D269) has no follow-up mode: it closes.
+// It doesn't depend on tokeninfo either: when tokeninfo can't answer or refuses the token, the access token is
+// dropped, nothing goes to slot 1, and the login is batch B's openid login with the account chooser (the vault then
+// records nothing); only another client's token still ends it.
 //
 // Every ID token is checked against the claim allow-list before it is relayed (D270): one with any other claim (an
 // `email`, an `hd`) is never relayed; the slot says `token_has_pii` and the login ends.
@@ -203,6 +206,11 @@ async function tokenFirstAccess(deps: CallbackPageDeps, fragment: Exclude<Callba
   if (!clientId || !nonce) return relayLeg(deps, { kind: 'error', state, error: 'invalid_response' }, taken, scriptStart);
   // The login hint: the access token's own `sub`, from Google (D270). Never a request without it.
   const info = await (deps.tokenInfo ?? accessTokenSub)(fragment.accessToken, clientId);
+  // A record-only login (no email login, so no match: D269's directory is best effort) doesn't need tokeninfo: when
+  // it can't answer or refuses the token, the access token is dropped (nothing goes to slot 1) and the login is batch
+  // B's openid login, with the account chooser and the login's nonce. Another client's token still ends it (that
+  // isn't an outage). An app with email login stops on every failure: its match needs the account (D255).
+  if (!info.ok && taken.record && info.reason !== 'wrong_client') return recordOnlyFallback(deps, taken, clientId, nonce, state, scriptStart);
   if (!info.ok) return stopLogin(deps, taken, state, info.reason === 'wrong_client' ? 'tokeninfo_client_mismatch' : info.reason === 'unavailable' ? 'tokeninfo_unavailable' : 'tokeninfo_invalid');
   // Slot 1 now: the access token is never kept across Google's next page.
   const slot1 = followSlot(followKey, 1).id;
@@ -235,6 +243,26 @@ async function tokenFirstAccess(deps: CallbackPageDeps, fragment: Exclude<Callba
   }
   zeroTaken(taken);
   win.location.assign(googleAuthUrl({ clientId, authOrigin, nonce, state, forceReauth: false, loginHint: info.sub, silent: true }));
+  return 'relayed';
+}
+
+/**
+ * A record-only login whose access token tokeninfo couldn't check: Google's openid-only ID token request with the
+ * account chooser and the login's nonce, answered to the login's own slot. Its entry is a plain login's (no follow-up
+ * key, no `leg`), so the callback relays that ID token with no `access: 'follow'` and closes: the vault reads no slot
+ * 1 and records nothing (D269 best effort). The access token is never relayed or stored.
+ */
+function recordOnlyFallback(deps: CallbackPageDeps, taken: TakenLogin, clientId: string, nonce: string, state: string, scriptStart: number): CallbackOutcome | Promise<CallbackOutcome> {
+  const now = deps.now ?? (() => Date.now());
+  const authOrigin = deps.authOrigin ?? (typeof location === 'undefined' ? '' : location.origin);
+  try {
+    storeLoginEntry(deps.win.sessionStorage, state, taken.relayKey, now(), taken.timings ?? undefined);
+  } catch {
+    // The vault waits on this slot: it hears why (G-L2).
+    return relayLeg(deps, { kind: 'error', state, error: 'storage_unavailable' }, taken, scriptStart);
+  }
+  zeroTaken(taken);
+  deps.win.location.assign(googleAuthUrl({ clientId, authOrigin, nonce, state, forceReauth: false }));
   return 'relayed';
 }
 

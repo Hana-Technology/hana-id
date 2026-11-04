@@ -17,6 +17,7 @@ import {
   ckdAppId,
   consentDigest,
   encryptRelayPayload,
+  followSlot,
   type RelayPayload,
   fromUtf8,
   identityKeyHex,
@@ -936,9 +937,19 @@ export function tokenClaims(params: Record<string, unknown>, over: Record<string
 /** The callback: Google's answer, encrypted under the popup's relayKey, into the relay slot. */
 export async function deliverToken(tab: Tab, g: Google, run: LoginRun, over: Record<string, unknown> = {}, nowMs?: number): Promise<string> {
   const token = await g.token(tokenClaims(run.params, over, nowMs ?? tab.browser.timers.now));
-  // A login of an app with email (batch 8b): the popup's one-request answer carries Google's access token beside it.
+  const relayKey = run.params.relayKey as Uint8Array;
+  if (run.params.emailRecord === true) {
+    // token_first's record-only login (an app without email login, D269, D270): the callback relays the access token
+    // to follow-up slot 1, then the openid ID token with `access: 'follow'` (auth/callback-page.ts).
+    const { id } = followSlot(run.params.followKey as Uint8Array, 1);
+    tab.browser.backend.writeRelayRaw(id, await encryptRelayPayload(relayKey, id, { accessToken: ACCESS_TOKEN }));
+    await tab.browser.backend.writeRelay(run.params.relayId as string, relayKey, { idToken: token, access: 'follow' });
+    return token;
+  }
+  // A login of an app with email (batch 8b): the access token beside the ID token, a relay format the vault still
+  // reads (D273; the popups send it in slot 1 instead, as the follow-up tests do).
   const extra = run.params.followKey ? { accessToken: ACCESS_TOKEN } : {};
-  await tab.browser.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: token, ...extra });
+  await tab.browser.backend.writeRelay(run.params.relayId as string, relayKey, { idToken: token, ...extra });
   return token;
 }
 

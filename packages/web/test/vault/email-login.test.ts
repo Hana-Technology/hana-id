@@ -90,12 +90,24 @@ describe('the path (golden)', () => {
 });
 
 describe('the offer', () => {
-  it('a Google-only app’s auth-params are batch B’s, key for key', async () => {
+  const BATCH_B_PARAMS = ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'clientId', 'mode', 'sessionPublicKey', 'expiresAtMs', 'salt', 'keyIndex', 'maxUses', 'nonce', 'relayId', 'relayKey'];
+
+  it('a Google-only app’s auth-params are batch B’s, key for key, plus (token_first, the default) the record-only keys in an env with an issuer', async () => {
+    // token_first (D270): every Google login of an env with an email issuer carries the follow-up key; an app without
+    // email login is marked `emailRecord` (google-record, D269), never offered email.
     const t = await tab();
-    const { run } = await login(t, g);
-    expect(Object.keys(run.params).sort()).toEqual(
-      ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'clientId', 'mode', 'sessionPublicKey', 'expiresAtMs', 'salt', 'keyIndex', 'maxUses', 'nonce', 'relayId', 'relayKey'].sort(),
-    );
+    const { run, reply } = await login(t, g);
+    expect(reply.error).toBeUndefined();
+    expect(Object.keys(run.params).sort()).toEqual([...BATCH_B_PARAMS, 'followKey', 'emailRecord'].sort());
+    expect(run.params.emailRecord).toBe(true);
+    // No email issuer in the env: batch B's, whatever the flow.
+    for (const flow of ['token_first', 'second_request'] as const) {
+      const u = await tab(new Browser(), { env: ENV, options: { googleEmailFlow: flow } });
+      expect(Object.keys((await login(u, g)).run.params).sort(), flow).toEqual([...BATCH_B_PARAMS].sort());
+    }
+    // second_request: batch B's in an env with an issuer too.
+    const w = await tab(new Browser(), { options: { googleEmailFlow: 'second_request' } });
+    expect(Object.keys((await login(w, g)).run.params).sort()).toEqual([...BATCH_B_PARAMS].sort());
   });
 
   it('an app with email offers both methods; hana_login’s method and hint ride along', async () => {
@@ -238,13 +250,17 @@ describe('hana:auth-progress', () => {
     expect(stages.filter((s) => s === 'email_code')).toHaveLength(1);
     expect(stages.indexOf('email_code')).toBeLessThan(stages.indexOf('token'));
 
-    const u = await tab();
-    const p2 = u.request('hana_login');
-    const run2 = await popupHello(u);
-    u.dispatch({ data: progress, origin: ENV.authOrigin, source: run2.popup });
-    await deliverToken(u, g, run2);
-    expect((await p2).error).toBeUndefined();
-    expect(u.events.some((e) => e.event === 'loginProgress' && (e.data as { stage: string }).stage === 'email_code')).toBe(false);
+    // A Google-only app (token_first's record-only login, and second_request's batch B login): email isn't offered,
+    // so the popup's email_code is ignored.
+    for (const flow of ['token_first', 'second_request'] as const) {
+      const u = await tab(new Browser(), { options: { googleEmailFlow: flow } });
+      const p2 = u.request('hana_login');
+      const run2 = await popupHello(u);
+      u.dispatch({ data: progress, origin: ENV.authOrigin, source: run2.popup });
+      await deliverToken(u, g, run2);
+      expect((await p2).error, flow).toBeUndefined();
+      expect(u.events.some((e) => e.event === 'loginProgress' && (e.data as { stage: string }).stage === 'email_code'), flow).toBe(false);
+    }
   });
 });
 
@@ -277,10 +293,12 @@ describe('google progress (only on the Google path)', () => {
     expect(u.browser.backend.matchCalls).toHaveLength(1);
   });
 
-  it('a Google-only app reports `google` at connect, as before', async () => {
-    const t = await tab();
-    await login(t, g);
-    expect(stagesOf(t)).toEqual(['popup_connected', 'google', 'token', 'chain', 'done']);
+  it('a Google-only app reports `google` at connect, as before (token_first’s record-only login and second_request)', async () => {
+    for (const flow of ['token_first', 'second_request'] as const) {
+      const t = await tab(new Browser(), { options: { googleEmailFlow: flow } });
+      await login(t, g);
+      expect(stagesOf(t), flow).toEqual(['popup_connected', 'google', 'token', 'chain', 'done']);
+    }
   });
 });
 

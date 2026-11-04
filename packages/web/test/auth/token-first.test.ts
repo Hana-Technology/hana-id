@@ -43,6 +43,12 @@ const query = (url: string) => {
   return Object.fromEntries(u.searchParams);
 };
 
+describe('the flow in force', () => {
+  it('is token_first: switched on after the spike passed every leg (2026-11-04, D270); second_request stays the tested fallback', () => {
+    expect(GOOGLE_EMAIL_FLOW).toBe('token_first');
+  });
+});
+
 describe('the requests whose ID token goes on chain ask for scope=openid only (D25, D270)', () => {
   it('under every flow, every login shape: an ID token request is `id_token` + `openid`; token_first’s first request asks for no ID token', () => {
     expect(FLOWS).toContain(GOOGLE_EMAIL_FLOW);
@@ -383,6 +389,45 @@ describe('/login/callback, token_first’s ID leg', () => {
     const b = api();
     await run(t.win, b);
     expect(await decrypt(t.relayKey, t.state, b)).toEqual({ error: 'invalid_response' });
+  });
+});
+
+describe('D264’s explainer (“One more step with Google”) never shows under token_first', () => {
+  const noExplainer = (label: string) => {
+    expect(document.getElementById('email-prompt-continue'), label).toBeNull();
+    expect(pageText(), label).not.toContain('One more step with Google');
+  };
+
+  it('on the access leg (Google’s answer, success or any error), the ID leg (silent failures, the interactive retry, success) and for a record-only login', async () => {
+    for (const record of [false, true]) {
+      const extra = record ? { record: true } : {};
+      for (const error of [...['login_required', 'interaction_required', 'consent_required', 'account_selection_required'], 'access_denied']) {
+        resetDom();
+        const s = started((st) => `#error=${error}&state=${st}`, extra);
+        const a = api();
+        expect(await run(s.win, a), `access ${error}`).toBe('relayed');
+        noExplainer(`access ${error} record=${record}`);
+        expect(await decrypt(s.relayKey, s.state, a)).toEqual({ error });
+        // The ID leg: the first silent failure goes straight to Google's own page; the second is relayed.
+        resetDom();
+        const t = idLeg((st) => `#error=${error}&state=${st}`, extra);
+        const b = api();
+        expect(await run(t.win, b)).toBe('relayed');
+        noExplainer(`id ${error} record=${record}`);
+        if (error === 'access_denied') continue;
+        t.win.location.hash = `#error=${error}&state=${t.state}`;
+        expect(await run(t.win, b)).toBe('relayed');
+        noExplainer(`id retry ${error} record=${record}`);
+      }
+      resetDom();
+      const ok = started((st) => `#access_token=${ACCESS}&state=${st}`, extra);
+      expect(await run(ok.win, api())).toBe('relayed');
+      noExplainer(`access token record=${record}`);
+      resetDom();
+      const id = idLeg((st) => `#id_token=${GTOKEN}&state=${st}`, extra);
+      expect(await run(id.win, api())).toBe('relayed');
+      noExplainer(`id token record=${record}`);
+    }
   });
 });
 

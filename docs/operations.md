@@ -2180,7 +2180,7 @@ waits `governance_delay_ms`: after adding the first watchdog, rotations go slow 
 The email login's issuer (`docs/api.md` "Email issuer", `apps/email-issuer/README.md`, D195–D199): its own Worker,
 separate from the API, holding the email signing key, K_sub, K_code, K_rl and the SendGrid key. **Deployed on sandbox-dev
 (2026-11-03, with batch 8b, 5 secrets, SendGrid from team@hanawallet.io; redeployed 2026-11-04 at `develop` f53d63e,
-version b0cb9058, after migration 0002 was applied); no other env yet.** Order matters: on sandbox-dev follow "Email login on sandbox-dev (build plan batch 6)" below (the watchdog's
+version b0cb9058, after migration 0002 was applied; then fa18b944 with the dev-env limits, D340); no other env yet.** Order matters: on sandbox-dev follow "Email login on sandbox-dev (build plan batch 6)" below (the watchdog's
 email pins are live before the owner posts any email key, and no app enables email, `apps.login_methods`, before
 batch 8). It is reached at `{emailIssuer.url}/v1/email/*` (D230): on a `workers.dev` env its own `workers.dev` URL,
 written by `init`; on a zone, the API's URL with a route `<api host>/v1/email/*` to this Worker. Below, `{url}` is that

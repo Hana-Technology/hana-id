@@ -8,7 +8,7 @@
 // (`forbidden`), and answers `{ok: true, …}` or `{ok: false, code, error?}`; nothing it throws escapes. An unexpected
 // error is logged (method, request id, actor kind, org: never an email, sub or token) and answered `internal`.
 //
-// Built in C7: every method but `purgeAudit` (the monthly retention job, C13).
+// Built in C7: every method but `purgeAudit` (the monthly retention job, C13); `recordStaffAction` added in C12 (D327).
 import {
   type Actor,
   type RpcCode,
@@ -24,11 +24,12 @@ import {
   listOrgsInput,
   pendingMemberNoticesInput,
   queryAuditInput,
+  recordStaffActionInput,
   revokeInviteInput,
   setMemberInput,
 } from '@hana-id/console-core';
 import { WorkerEntrypoint } from 'cloudflare:workers';
-import { type Writer, auditSince, queryAudit } from './audit.ts';
+import { AUDIT_DETAIL_KEYS, type Writer, auditInsert, auditSince, entry, queryAudit } from './audit.ts';
 import { ownerGrantDelayMs } from './config.ts';
 import type { Env } from './env.ts';
 import { RpcRefusal } from './errors.ts';
@@ -171,5 +172,24 @@ export class StaffRpc extends WorkerEntrypoint<Env> {
 
   queryAudit(c: unknown) {
     return runStaff('staff.queryAudit', queryAuditInput, c, HANA, (i) => queryAudit(this.db, i.filters, i.cursor, i.limit));
+  }
+
+  /**
+   * The audit row of a staff act the admin Worker did on its own (a statement issued, a ledger export, a rate
+   * override; D327). Idempotent on (request id, action): a repeat is `already_applied` and writes nothing.
+   */
+  recordStaffAction(c: unknown) {
+    return runStaff('staff.recordStaffAction', recordStaffActionInput, c, HANA, async (i, w) => {
+      const allowed: readonly string[] = AUDIT_DETAIL_KEYS[i.action];
+      const extra = Object.keys(i.details).find((k) => !allowed.includes(k));
+      if (extra) throw new RpcRefusal('bad_request', `details.${extra} is not recorded for ${i.action}`);
+      try {
+        await auditInsert(this.db, entry(w, i.action, { orgId: i.orgId ?? null, target: i.target ?? null, details: i.details })).run();
+      } catch (err) {
+        if (/UNIQUE/u.test(err instanceof Error ? err.message : String(err))) throw new RpcRefusal('already_applied', 'This act is already recorded');
+        throw err;
+      }
+      return {};
+    });
   }
 }

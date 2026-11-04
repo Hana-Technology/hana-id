@@ -66,6 +66,8 @@ export interface AdminRpcClient {
   changesSince(c: unknown): Answer<{ changes: AppChange[] }>;
   securityEvents(c: unknown): Answer<{ events: SecurityEvent[] }>;
   markSecurityEventNotified(c: unknown): Answer<Record<string, never>>;
+  /** Both relayer pools' public keys (settlement and the nonce check, C12). */
+  relayerKeys(c: unknown): Answer<{ keys: { pool: 'session' | 'owner'; publicKey: string }[] }>;
 }
 
 /** The console's `StaffRpc` entrypoint (apps/console/src/staff-rpc.ts) over the `CONSOLE` service binding. */
@@ -83,6 +85,8 @@ export interface StaffRpcClient {
   freezeOrg(c: unknown): Loose;
   auditSince(c: unknown): Answer<{ rows: AuditRow[] }>;
   queryAudit(c: unknown): Answer<{ rows: AuditRow[]; next?: string }>;
+  /** The audit row of a statement issued, a ledger export or a rate override (C12, D327). */
+  recordStaffAction(c: unknown): Answer<Record<string, never>>;
 }
 
 export interface Env {
@@ -97,6 +101,13 @@ export interface Env {
   /** Read-only NEAR RPC and the signer account: `get_scope` for the on-chain watcher. */
   NEAR_RPC: string;
   SIGNER_ACCOUNT: string;
+  /**
+   * The relayer account whose pool keys sign every relay (C12): settlement checks each transaction's signer against it
+   * and the nonce check reads its keys. Missing: settlement and the nonce check don't run (logged every run).
+   */
+  RELAYER_ACCOUNT?: string;
+  /** The manifest's NEAR network: a statement on a test network is labelled as valued at the mainnet price (D93). */
+  NETWORK: string;
   /** Cloudflare Access (D88): the team domain (`<team>.cloudflareaccess.com`) and the application's AUD tag. */
   ACCESS_TEAM_DOMAIN: string;
   /** 64 hex characters; `UNSET` (the manifest's value before the application exists) refuses every /api/* request. */
@@ -125,6 +136,15 @@ export interface Env {
    * screens don't need it.
    */
   USAGE_DB?: Hyperdrive;
+  /**
+   * Monthly statements (C12): the admin writes each statement's CSV and PDF under new keys (`put` only; a whole-bucket
+   * lock keeps them 7 years, D308) and serves them to staff. Optional so a config without R2 runs: issuing refuses.
+   */
+  STATEMENTS?: R2Bucket;
+  /** On-demand ledger exports under `exports/` (the 30-day lifecycle rule, D308). Optional: exports refuse without it. */
+  EXPORTS?: R2Bucket;
+  /** CoinGecko's demo API key for the daily rate (optional; sent as a header, never logged). */
+  COINGECKO_API_KEY?: string;
   /** The SPA's static files (assets with `run_worker_first`). */
   ASSETS: Fetcher;
 }

@@ -7,14 +7,15 @@
 // The org methods of AdminRpc take the app's `orgId` (a backstop filter, as for the console), so the app routes carry
 // it: in the body of writes, as `?org=` on reads.
 //
-// Not here yet: reports, statements, rates and exports (C12), retention (C13), "Security & monitoring" and the
-// governance views (C14); the Users screen (`/api/users/search`, `/api/users/get`, proposed D275, C8b) and the Support
+// Reports, statements, rates and exports are C12's (report-routes.ts). Not here yet: retention (C13), "Security &
+// monitoring" and the governance views (C14); the Users screen (`/api/users/search`, `/api/users/get`, proposed D275, C8b) and the Support
 // ID lookup (C15). Their paths answer 404 until those batches add them.
 import type { AppChange, AuditRow, MemberView } from '@hana-id/console-core';
 import type { Env } from './env.ts';
 import { auditCsv } from './export.ts';
 import { errorResponse, json, readJson } from './http.ts';
 import { errorName, log } from './log.ts';
+import { exportFileRoute, exportRoute, issueRoute, rateOverrideRoute, ratesRoute, reportsRoute, statementRoute, statementsListRoute } from './report-routes.ts';
 import { securityView } from './security.ts';
 import { type StaffRequest, staffCtx } from './rpc.ts';
 
@@ -218,6 +219,16 @@ const ROUTES: Route[] = [
 
   // ---- the feed's and the notices' state ----
   { method: 'GET', pattern: '/api/security', handler: (c) => securityView(c.env, c.staff) },
+
+  // ---- reports, statements, rates, exports (C12) ----
+  { method: 'GET', pattern: '/api/reports', handler: reportsRoute },
+  { method: 'GET', pattern: '/api/statements', handler: statementsListRoute },
+  { method: 'GET', pattern: '/api/statements/:org/:month', handler: statementRoute },
+  { method: 'POST', pattern: '/api/statements/:org/:month/issue', handler: issueRoute },
+  { method: 'POST', pattern: '/api/exports/:org/:month', handler: exportRoute },
+  { method: 'GET', pattern: '/api/exports/:org/:month/:file', handler: exportFileRoute },
+  { method: 'GET', pattern: '/api/rates', handler: ratesRoute },
+  { method: 'PUT', pattern: '/api/rates/:day', handler: rateOverrideRoute },
 ];
 
 function matchRoute(path: string): { routes: { route: Route; params: Record<string, string> }[] } {

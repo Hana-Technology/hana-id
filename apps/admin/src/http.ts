@@ -14,6 +14,8 @@ export const ADMIN_ERROR_STATUS = {
   access_unavailable: 503,
   /** A Worker this one calls (API or console) didn't answer. */
   upstream_unavailable: 503,
+  /** The usage ledger (USAGE_DB) isn't bound or didn't answer (C12's reports, statements, rates and exports). */
+  ledger_unavailable: 503,
   method_not_allowed: 405,
   payload_too_large: 413,
 } as const;
@@ -35,6 +37,7 @@ const MESSAGES: Partial<Record<ErrorCode, string>> = {
   csrf: 'The request is missing the admin console’s same-origin checks',
   access_unavailable: 'The Access check is unavailable; try again shortly',
   upstream_unavailable: 'A Hana service did not answer; try again shortly',
+  ledger_unavailable: 'The usage ledger is unavailable; try again shortly',
   not_found: 'Not found',
   method_not_allowed: 'Method not allowed',
   payload_too_large: 'The request body is too large',

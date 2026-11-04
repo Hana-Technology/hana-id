@@ -6,7 +6,7 @@ import type { Outbox } from './outbox.ts';
 import type { RateLimiter } from './rate-limiter.ts';
 
 export interface Env {
-  /** The issuer's own D1: email_issuance, email_hints, email_suppressions, email_admin_audit. */
+  /** The issuer's own D1: email_issuance, email_hints, email_suppressions, email_admin_audit, user_emails, user_email_apps (D269). */
   DB: D1Database;
   /**
    * The API's D1, read only (apps, plans): `pk` → app, scope, status, plan and `login_methods`. The issuer never

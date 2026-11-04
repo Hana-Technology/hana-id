@@ -5311,6 +5311,10 @@ decided while building, to confirm.
   - The console gets the API's origin rules (`NETWORK`, `REFUSED_ORIGINS`, written by `gen` from the manifest) and
     checks an origin add before the sign-in; the API checks it again.
   - `/api/me` answers `features: {users}`.
+  - C12's report backend (`usage`, `statements`, the statement files, the ledger CSV) and C14's
+    `/api/orgs/:org/governance/pending-upgrades`, both merged while C10 was built, are routed by `writes.ts` for any
+    member (frozen orgs included: they are reads); their SPA screens are left for a follow-up. The brief's "stays for
+    C14" is read as "C14 owns the backend": the route itself had to come from C10's session router.
   - Tests: the test API Worker's outbound fetches go to a fake upstream (`test/fake-upstream.js`: hana-signer's views and
     Google's JWKS from a test D1), so the API verifies step-up and owner tokens for real; the relay itself isn't
     exercised (the test API has no owner-pool key: C17's smoke covers it).

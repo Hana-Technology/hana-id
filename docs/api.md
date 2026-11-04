@@ -1539,7 +1539,10 @@ any other write is `403 org_frozen`. Each ConsoleRpc write writes an outcome `au
 | `GET /api/orgs/:org/scopes/:scope/client-proof-helper?clientId=` | → the helper page, `Content-Disposition: attachment` | The scope's client-proof nonce at its current `action_nonce`; Google's implicit flow with `scope=openid` (D351) | ✓ |
 | `GET /api/orgs/:org/users?scope&search&cursor`, `GET /api/orgs/:org/users/:userId` (viewer) | → `{users, next?}`, `{user}` | `404` while `USERS_SCREEN` is off (D357). `ConsoleRpc.listUsers` / `getUser` (the wallet directory's), re-shaped field by field: `{userId (u1_…, D346), supportId, scopeId, createdAt, lastSeenAt, accounts: [{kind, status}], wallets: [{chain, address, firstSeenAt, lastUsedAt}]}`; never an email address, a `sub` or an identity key | ✓ |
 
-Not built here (C14): `GET /api/governance/pending-upgrades` (`404`).
+C12's report routes and C14's pending-upgrades page are routed here too, for any member (frozen orgs included), each
+its own backend's checks and answers: `GET /api/orgs/:org/usage?from&to&by&apps`, `/statements`, `/statements/:month`,
+`/statements/:month.csv` and `.pdf`, `/ledger/:month.csv` (reports.ts, "Report backend" below) and
+`/governance/pending-upgrades` (governance.ts, "Pending upgrades" below). Their SPA screens are not built yet.
 
 ### Emailed links (no session; C7)
 
@@ -1603,7 +1606,7 @@ Inputs are console-core's strict zod schemas (`packages/console-core/src/staff.t
 `purgeAudit` (the monthly retention job) comes with C13. A replayed request id is `already_applied` (same actor and
 target) or `conflict`; a write whose state moved meanwhile is `conflict`.
 
-**Report backend for C10** (`src/reports.ts`, batch C12; not routed until the session routes of C9/C10 call it for a
+**Report backend** (`src/reports.ts`, batch C12; routed by C10's session routes, `writes.ts`, for a
 member of the org, as the logo routes): `usageRoute` (`GET /api/orgs/:org/usage?from&to&by&apps` → `ConsoleRpc.usage`),
 `statementsRoute` (`/statements`: metadata and hashes, no file keys), `statementViewRoute` (`/statements/:month`: the
 stored totals and console-core `statementView`, the same view the PDF prints), `statementFileRoute`

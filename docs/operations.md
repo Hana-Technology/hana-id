@@ -1253,8 +1253,9 @@ accurate. Before the owner proposes an upgrade on an env whose builds are reprod
 Logos are written by the console (`POST /api/orgs/:org/apps/:app/logo`, routed for owners in C10; until then nothing
 uploads one) and served by the files Worker (`hana-id-files-<env>`, `files.workerName`) on `files.origin`. The auth
 pages show an app's logo beside its name, from `GET /v1/app`'s `logoUrl`. `docs/api.md` "Files Worker" and "Console
-Worker" have the routes and checks; D300–D308 the readings. Nothing here makes anything partner-facing until C10
-routes the upload: an app without a logo gets exactly batch B's pages, messages and policies.
+Worker" have the routes and checks; D300–D308 the readings. C10 (`feat/batch-c-10`) routes the upload behind the
+session and the owner role; until an owner uploads one, an app without a logo gets exactly batch B's pages, messages and
+policies.
 
 It needs the dashboard blocks in the manifest (setup step 12), like the console.
 
@@ -1289,7 +1290,7 @@ corepack pnpm --filter @hana-id/api run gen <env>
 corepack pnpm --filter @hana-id/web build
 corepack pnpm --filter @hana-id/api run deploy:pages
 # 6. The API (GET /v1/app's logoUrl needs FILES_ORIGIN, which the same gen wrote) and the console (the IMAGES binding,
-#    the logo backend). Deploy order doesn't matter for users: no app has a logo until C10's upload route.
+#    the logo backend). Deploy order doesn't matter for users: no app has a logo until an owner uploads one (C10's route).
 corepack pnpm --dir apps/api exec wrangler deploy
 corepack pnpm --filter @hana-id/console gen <env> --d1-id <uuid>
 corepack pnpm --dir apps/console exec wrangler deploy
@@ -1365,7 +1366,7 @@ origin).
 
 The admin Worker settles the gas of every relayed event at FINAL, checks the relayer nonces and the rejection rate
 daily, fetches the NEAR/USD rate, and issues the frozen monthly statements (CSV, PDF and on-screen, D92) with ledger CSV
-exports; partners will read their reports and statements in the console once C10 routes them (`docs/api.md` "Admin
+exports; partners read their reports and statements through the console's routes (C10 routes them, `feat/batch-c-10`; the SPA screens are still to build) (`docs/api.md` "Admin
 Worker", "Usage ledger functions"; D320–D329). Not deployed anywhere yet: it goes live at milestone M6.
 
 ### Setting it up (once per env, for the user to run)

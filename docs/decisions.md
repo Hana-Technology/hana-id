@@ -4828,7 +4828,9 @@ Readings of `docs/batch-c-spec.md` "Partner sign-in" taken while building C9, ea
 decided while building, to confirm.
 
 ### D290. The console holds every Google token it verifies to the claim allow-list by scope; sign-in may add exactly email, email_verified, hd and at_hash
-- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-9`
+- Date 2026-11-04 · Status: confirmed by the user (2026-11-04: "accept both, go ahead with C10"; the sign-in token
+  stays `openid email`, every relayed or step-up token is held to the allow-list). `at_hash` moved into the allow-list
+  itself (D342), so sign-in's extras are now `email`, `email_verified` and `hd` · Built on `feat/batch-c-9`
   (`apps/console/src/auth-token.ts` `verifyConsoleToken`, `allowedClaims`; `apps/api/scripts/test/relayed-tokens.test.ts`
   "Google tokens the console verifies") · Source: D271, D274, D277, spec "Code flow" ("Email claims by scope")
 - Decision:
@@ -4931,7 +4933,8 @@ decided while building, to confirm.
   allow-list refuses `at_hash`, so every step-up and owner-action token from the code flow would be `token_has_pii`.
   Options then: add `at_hash` to `TOKEN_CLAIM_ALLOW_LIST` everywhere (core, the API, the console: it is a truncated hash
   of a short-lived access token, not personal data; recommended), or allow it only on the console audiences' paths.
-  Not changed now: D271's list moves only with the user's word and the spike's answer.
+  Not changed now: D271's list moves only with the user's word and the spike's answer. **Decided: D342** (the first
+  option, confirmed 2026-11-04 before the spike runs).
 - Rejected: a loopback redirect URI on the console client for the test (the client must keep exactly one redirect
   URI); a browser page like `spike-email.html` (the code exchange needs the client secret).
 
@@ -4965,6 +4968,33 @@ decided while building, to confirm.
   binding and a stub for Google's token endpoint, which the Worker can't be pointed at (D294): new infrastructure. It
   is left for C17 on sandbox-dev or staging, against real Google; the component tests (happy-dom) and the build check
   cover the SPA meanwhile.
+
+## Batch C10: partner management (branch `feat/batch-c-10`), 2026-11-04
+
+### D342. `at_hash` joins the claim allow-list everywhere (amends D271)
+- Date 2026-11-04 · Status: confirmed by the user (2026-11-04: "accept both, go ahead with C10", on D295's recommended
+  option) · Built on `feat/batch-c-10` (`packages/core/src/id-token.ts` `TOKEN_CLAIM_ALLOW_LIST`,
+  `apps/api/src/claims.ts` `ALLOWED_CLAIMS`, `apps/console/src/auth-token.ts` `TOKEN_CLAIM_ALLOW_LIST`,
+  `scripts/lib/console-code-flow.ts`; `apps/api/scripts/test/relayed-tokens.test.ts` keeps the three equal) · Amends
+  D271 (and D290's sign-in extras)
+- Decision: the allow-list is `iss azp aud sub iat exp nonce nbf jti auth_time at_hash` in core (the vault, the login
+  popup's callback, the smoke pages), the API (every route that relays a Google token, the step-up check) and the
+  console (both scopes). Sign-in's extras shrink to `email`, `email_verified`, `hd`. The console still checks an
+  `at_hash` against the access token of its own code exchange, now in both scopes (`at_hash_mismatch`); the API, which
+  never sees that access token, accepts the claim as listed.
+- Why: Google adds `at_hash` to every ID token issued alongside an access token (the server-side code flow the console
+  uses, D295's expected finding), so the console's step-up and owner-action tokens, which the API verifies again and
+  relays, would otherwise all be `token_has_pii`. It is the left half of SHA-256 over a short-lived access token: it
+  says nothing about the person and can't be reversed into the access token. One list everywhere is easier to keep
+  right than a second list for the console audiences (the rejected option).
+- Login paths: none depends on the old ten names being exact. The vault's and the API's checks only refuse claims
+  outside the list; Hana's own login requests (implicit `response_type=id_token`, `scope=openid`) carry no `at_hash`,
+  so their tokens are unchanged; the e2e Google stub's `OPENID_CLAIMS` is what the stub emits, not the list. A token
+  that does carry `at_hash` (an `id_token token` answer) now passes and puts that hash on chain, which is not personal
+  data. The contract ignores unknown claims either way.
+- Rejected: `at_hash` only on the console audiences' paths (two lists to keep in step, and the API's step-up check
+  would need the audience before the list); asking Google for an ID token without an access token (the code flow
+  always returns one).
 
 ## Superseded or amended
 

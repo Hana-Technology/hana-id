@@ -199,10 +199,10 @@ describe('POST /v1/login', () => {
       expect([res.status, await body(res)], claim).toEqual([400, expect.objectContaining({ code: 'token_has_pii', data: { claim } })]);
     }
     expect(near.sent).toHaveLength(0);
-    // The spike's exact openid-only claim set, plus auth_time: all allowed.
-    expect([...ALLOWED_CLAIMS].sort()).toEqual(['aud', 'auth_time', 'azp', 'exp', 'iat', 'iss', 'jti', 'nbf', 'nonce', 'sub']);
+    // The spike's exact openid-only claim set, plus auth_time and at_hash (D342): all allowed.
+    expect([...ALLOWED_CLAIMS].sort()).toEqual(['at_hash', 'aud', 'auth_time', 'azp', 'exp', 'iat', 'iss', 'jti', 'nbf', 'nonce', 'sub']);
     const now = Math.floor(Date.now() / 1000);
-    const res = await login(app, await loginBody(app.scope, aud, {}, { azp: aud, iat: now, nbf: now - 5, jti: 'j1', auth_time: now }));
+    const res = await login(app, await loginBody(app.scope, aud, {}, { azp: aud, iat: now, nbf: now - 5, jti: 'j1', auth_time: now, at_hash: 'pKoRe4wHbXLoKz8BsUNdXg' }));
     expect(res.status).toBe(200);
   });
 

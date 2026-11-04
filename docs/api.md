@@ -1,6 +1,6 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
-Last verified against code: 2026-11-04 (branch `feat/batch-c-9`, merged with `develop` @ bd0c9ea: "Console Worker and
+Last verified against code: 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342); 2026-11-04 (branch `feat/batch-c-9`, merged with `develop` @ bd0c9ea: "Console Worker and
 console-auth": partner sign-in (`/api/auth/start`, the auth origin's `/start` and `/callback` through `AuthHandler`,
 `/api/auth/complete`, logout), the signed-in reads, console-auth, the new bindings and secret, D290–D297); 2026-11-04
 (branch `fix/dev-email-limits`: "Email issuer" "Limits", dev envs' higher code, wrong-code and per-IP limits, D340);
@@ -362,8 +362,9 @@ The scope is always the app's (D1). Checks after the gate and shape (`400 bad_re
    not read, and one of the wrong JSON type is ignored, not refused (D201). A valid signature's `kid` is recorded once per isolate after the
    response (`issuer_key_observations.first_token_ms`, here and on `/v1/login`; the kid only, never the token).
 2. Claim allow-list, always (D271; a Google token only, an email token is held to its own claims):
-   `iss azp aud sub iat exp nonce nbf jti auth_time`, else `400 token_has_pii` with `data: {claim}`, before any chain
-   read; nothing is relayed.
+   `iss azp aud sub iat exp nonce nbf jti auth_time at_hash` (`at_hash` since D342: the hash of an access token issued
+   with the ID token, nothing personal), else `400 token_has_pii` with `data: {claim}`, before any chain read; nothing
+   is relayed.
 3. `nonce` equals the session nonce recomputed with `SIGNER_ACCOUNT` and the app's scope (`400 nonce_mismatch`).
 3b. (L) `signature` verifies as the proof of possession for exactly these parameters (`401 invalid_signature`): only
    the session key's holder can open a session, and a proof seen once can't open the key with other parameters.

@@ -1,7 +1,7 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-04 for partner sign-in (branch `feat/batch-c-9`, merged with
+known open issues. Last verified against code: 2026-11-04 for the claim allow-list's `at_hash` (branch `feat/batch-c-10`, D342); 2026-11-04 for partner sign-in (branch `feat/batch-c-9`, merged with
 `develop` @ a243d6b: "Console Worker"'s route, sign-in, sessions and partner views, the flow cookies, handoff codes,
 sign-in tokens and `CONSOLE_GOOGLE_CLIENT_SECRET` in the inventory, D290–D297); 2026-11-04 for the files Worker and logos (branch `feat/batch-c-11`: the
 logo upload's checks and the CSRF exception in "Console Worker", "Files Worker (logos)", the auth pages' `img-src`;
@@ -152,7 +152,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | Console session cookies (`__Host-hana_cs`) | 32 random bytes, b64url | The member's browser (`HttpOnly`, `SameSite=Strict`, console origin); `CONSOLE_DB` holds only sha256 | the member | 2 h idle, 12 h absolute; revoked on removal, role change, disable or a freeze of the member's only org. Created by sign-in (C9), a new one each time |
 | Console sign-in flow cookies (`__Host-hana_pre` on the console origin, `__Host-hana_af` on the auth origin) and the start handle `f` | 32 random bytes each, b64url | The browser (`HttpOnly`, `SameSite=Lax`, 10 min); `CONSOLE_DB` holds only sha256 of each (and of the state derived from `f`) | the member's browser | One flow (5 min), cleared at its end; bind create → complete and start → callback to one browser (D291) |
 | Console handoff codes | 32 random bytes | The callback's `Location` (`?h=`) for one hop; `CONSOLE_DB` holds sha256 and the verified `{provider, sub, email, hd}` (overwritten when used) | the member's browser | 60 s, single use, only with the flow's `__Host-hana_pre` |
-| Console sign-in ID tokens and Google's access token (C9) | RS256 JWT (console audience), `scope=openid email` | Transient: the callback's memory between the code exchange and the handoff row | the console Worker | Never relayed, stored, logged or returned; claims held to the allow-list plus `email`, `email_verified`, `hd`, `at_hash` (D290) |
+| Console sign-in ID tokens and Google's access token (C9) | RS256 JWT (console audience), `scope=openid email` | Transient: the callback's memory between the code exchange and the handoff row | the console Worker | Never relayed, stored, logged or returned; claims held to the allow-list (with `at_hash`, D342) plus `email`, `email_verified`, `hd` (D290) |
 | `CONSOLE_GOOGLE_CLIENT_SECRET` (C9) | the console OAuth client's secret | Console Worker secret; `.secrets/<env>/console-google-client.json` (Google's client JSON, 0600) | Hana | Sent only to `https://oauth2.googleapis.com/token` in the code exchange (a source check). Alone it mints nothing: an exchange needs a code Google issued to the redirect URI and the flow's PKCE verifier. Rotation: a second secret in Google Cloud, `wrangler secret put`, delete the old one (`docs/operations.md` setup step 11) |
 | Guarded-change cancel tokens (batch C8) | T = HMAC-SHA256(`CANCEL_LINK_KEY`, "hana-id/cancel-link/v1" ‖ borsh(change id)) | The `change_pending` recipients' mailboxes (`<console.origin>/cancel/<id>#t=…`, a fragment); the hot DB holds only sha256(T), set by `ackNotice` | the alias and the org's security contacts | Cancels one pending change once, by POST, until `active_from`; deterministic, so a notice re-sent after a failed send carries the same working link |
 | `CANCEL_LINK_KEY`, `INVITE_LINK_KEY` (batch C8) | 32 random bytes each (base64) | Admin Worker secrets only; `.secrets/<env>/cancel-link-key`, `invite-link-key` (0600) | Hana | Generated with `openssl rand` into `.secrets/`, set through wrangler's stdin (`docs/operations.md` "Admin Worker"). Never in the API or the console, never logged. A leak lets the holder mint working cancel links (DoS: cancel pending changes and grants) and, with `INVITE_LINK_KEY`, an invite link only for an invite already acked to its invitee's address (acceptance still needs that Google account). Replacing one breaks the links already emailed |
@@ -281,7 +281,9 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   `usage.record_identity_tokens`, `usage.record_email_counts` (D233) and `usage.ensure_partitions` (bounded, creates missing months only); nothing on the login path, and nothing the `no_session` waiver decides, reads Neon.
 - **Replay precheck.** A cached session view never refuses on its own: it is re-read fresh first. A second request
   for the same `(session key, counter)` in the same isolate waits for the first (`session-use.ts:76`).
-- **Claim allow-list** `{iss, azp, aud, sub, iat, exp, nonce, nbf, jti, auth_time}` (`apps/api/src/claims.ts:8`):
+- **Claim allow-list** `{iss, azp, aud, sub, iat, exp, nonce, nbf, jti, auth_time, at_hash}` (`apps/api/src/claims.ts`;
+  `at_hash` since D342: Google adds it to an ID token issued with an access token, the console's code flow, and it is
+  a truncated hash of that short-lived access token, nothing about the person):
   always on, with no flag or option, for every Google token the API relays: `/v1/login`, `/v1/sessions`, the link
   routes (`verifyLoginToken`, D271) and `/v1/owner-actions`'s owner tokens and client proofs (D274). A token with any
   other claim is `400 token_has_pii` and nothing is relayed (`apps/api/test/session-flags.test.ts`,
@@ -596,9 +598,9 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   missing cookie consumes nothing, and a flow finished in another browser fails. The ID token comes only from the
   console's own exchange (fixed Google endpoints, never config) and is checked for signature, `iss`, `aud`/`azp` = the
   console client, the flow's nonce (its own domain, so an owner-action, step-up or origin-change token can't serve),
-  `exp`, `iat` ≤ 120 s; it is never stored, logged or returned. The claim allow-list by scope (D290): `openid` exactly
-  the API's; sign-in's `openid email` adds only `email`, `email_verified`, `hd`, `at_hash` (checked against the access
-  token), with a verified address required. The membership rules run at completion, after the pre-flow cookie; invite
+  `exp`, `iat` ≤ 120 s; it is never stored, logged or returned. The claim allow-list by scope (D290, D342): `openid` exactly
+  the API's (which holds `at_hash`); sign-in's `openid email` adds only `email`, `email_verified`, `hd`, with a verified
+  address required; in both an `at_hash` must equal the hash of the access token from the same exchange. The membership rules run at completion, after the pre-flow cookie; invite
   acceptance is one D1 batch. `/api/auth/*` and the auth origin are limited to 10 a minute per IP. The handoff row's
   identity and the flow's PKCE verifier are overwritten once used.
 - **What it keeps about people**: members' and staff emails (display), Google subs (owner match), invitees' addresses

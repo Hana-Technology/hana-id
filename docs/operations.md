@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-04 (branch `feat/batch-c-9`, merged with `develop` @ bd0c9ea: "Partner console
+Last verified against code: 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342); 2026-11-04 (branch `feat/batch-c-9`, merged with `develop` @ bd0c9ea: "Partner console
 Worker … and console-auth": setup step 11 (the console's Google client, its JSON in `.secrets/<env>/`, the secret
 through a pipe), the route on by config, the SPA build in `deploy`, console-auth's `gen` and deploy order, the checks,
 taking sign-in down; "Console code-flow spike (open question 1)"; D290–D297); 2026-11-04 (branch `fix/dev-email-limits`:
@@ -945,9 +945,9 @@ verifier, checks the ID token (RS256 on Google's JWKS, `iss`, `aud`, `azp`, nonc
 each leg's claim **names**, `outsideApiAllowList`, `hasEmailClaims`, `hasHd`, `hasAtHash`, `atHashMatches`, `passes`
 and a verdict; never a token, an address, a `sub` or a code. Exit code 1 if a leg doesn't pass.
 
-- `openid` leg `PASS`: open question 1 answered "yes"; nothing to change.
-- `NO EMAIL, BUT at_hash` (expected: Google documents `at_hash` as always present on server-flow ID tokens): no
-  personal claim, but the API's allow-list refuses `at_hash`; decide D295's options before C10.
+- `openid` leg `PASS`: open question 1 answered "yes"; nothing to change. `at_hash` (Google documents it on every
+  server-flow ID token) is in the allow-list since D342, so a leg with it passes (`PASS … (at_hash included, D342)`)
+  when it matches the access token; a mismatch is `FAIL: at_hash does not match`.
 - `FAIL: Google added email or hd`: step-ups and owner actions stop until decided (the spec's fallback: accept the
   address after an explicit partner disclosure).
 - `openid email` leg `PASS`: the console's sign-in accepts the token (D290); a `FAIL` there means sign-in would refuse

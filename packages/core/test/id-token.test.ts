@@ -110,14 +110,14 @@ describe('verifyGoogleIdToken', () => {
   });
 
   it.each(TOKEN_CLAIM_ALLOW_LIST)('allows claim %s', async (claim) => {
-    const extra = claim === 'auth_time' ? { auth_time: NOW_S - 5 } : {};
+    const extra = claim === 'auth_time' ? { auth_time: NOW_S - 5 } : claim === 'at_hash' ? { at_hash: 'pKoRe4wHbXLoKz8BsUNdXg' } : {};
     const c = { ...goodClaims(), ...extra };
     expect(Object.keys(c)).toContain(claim);
     expect((await verify(await jwt(c))).ok).toBe(true);
   });
 
-  it('the allow-list is the spec’s, and hd is refused', () => {
-    expect([...TOKEN_CLAIM_ALLOW_LIST].sort()).toEqual(['aud', 'auth_time', 'azp', 'exp', 'iat', 'iss', 'jti', 'nbf', 'nonce', 'sub']);
+  it('the allow-list is the spec’s with at_hash (D342), and hd is refused', () => {
+    expect([...TOKEN_CLAIM_ALLOW_LIST].sort()).toEqual(['at_hash', 'aud', 'auth_time', 'azp', 'exp', 'iat', 'iss', 'jti', 'nbf', 'nonce', 'sub']);
     expect(disallowedClaim({ iss: 'x', hd: 'example.com' })).toBe('hd');
     expect(disallowedClaim(goodClaims())).toBeNull();
   });

@@ -726,7 +726,8 @@ binding in that Worker); the bucket lock and the Neon hash are what make a state
      `consoleAudiences`, `nonce`, `exp`, `iat` ≤ 120 s old.
    - Email claims by scope: `openid email` (login) needs `email` and `email_verified === true`; `openid` (every
      step-up) must carry no `email` (open question 1). As built (C9, D290): `openid` exactly the claim allow-list
-     (D271); `openid email` the allow-list plus only `email`, `email_verified`, `hd` and a matching `at_hash`.
+     (D271; with `at_hash` since D342, which must match the exchange's access token); `openid email` the allow-list
+     plus only `email`, `email_verified` and `hd`.
    - **Login:** writes a `handoff_codes` row (60 s) and 303s to `<console.origin>/api/auth/complete?h=…#`.
    - **Step-up:** §Fresh sign-in.
    - The ID token never reaches page JavaScript and is never stored.
@@ -2239,8 +2240,8 @@ Answered on 2026-10-29 (`docs/decisions.md` D87–D93), applied above; the numbe
    Google always adds email, step-ups and owner actions stop until decided; fallback: accept the email after an
    explicit partner disclosure. **Blocks steps 4 and the smoke.** The test is built in C9 (2026-11-04,
    `scripts/console-code-flow-spike.ts`, D295; `docs/operations.md` "Console code-flow spike"), not yet run. Expected
-   besides: Google documents `at_hash` on every server-flow ID token, which the API's allow-list refuses; decide
-   D295's options before C10.
+   besides: Google documents `at_hash` on every server-flow ID token. **Decided (D342, confirmed 2026-11-04):**
+   `at_hash` joins the claim allow-list everywhere (core, the API, the console).
 2. Email provider. **Answered (D87):** Resend, dedicated sending subdomain with SPF/DKIM/DMARC, behind a sender
    interface.
 3. **Still open:** the Hana-owned Cloudflare account and zone, and the console, console-auth, files and admin domains

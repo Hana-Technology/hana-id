@@ -2,7 +2,8 @@
 // authorization-code flow give the console client an ID token with no `email` (or any other claim outside the API's
 // allow-list) for `scope=openid`? Step-ups and owner actions (batch C10) need exactly that: the API relays those tokens
 // on chain and refuses any claim outside TOKEN_CLAIM_ALLOW_LIST (D271, D274, D277). The second leg checks sign-in's
-// `openid email` token against what the console accepts (the allow-list plus email, email_verified, hd, at_hash; D290).
+// `openid email` token against what the console accepts (the allow-list plus email, email_verified, hd; D290). The
+// allow-list holds `at_hash` since D342 (Google documents it on every server-flow ID token); a mismatched one fails.
 //
 // It runs the real flow with the console's own client and its only redirect URI (`<console.authOrigin>/callback`), so it
 // tests exactly the production configuration and needs no extra redirect URI: the operator opens the printed URL, signs
@@ -23,7 +24,7 @@ export const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 export const GOOGLE_JWKS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
 const GOOGLE_ISSUERS = ['https://accounts.google.com', 'accounts.google.com'];
 /** The API's claim allow-list (@hana-id/core TOKEN_CLAIM_ALLOW_LIST; the test pins it to core's source). */
-export const TOKEN_CLAIM_ALLOW_LIST: readonly string[] = ['iss', 'azp', 'aud', 'sub', 'iat', 'exp', 'nonce', 'nbf', 'jti', 'auth_time'];
+export const TOKEN_CLAIM_ALLOW_LIST: readonly string[] = ['iss', 'azp', 'aud', 'sub', 'iat', 'exp', 'nonce', 'nbf', 'jti', 'auth_time', 'at_hash'];
 const SKEW_S = 60;
 
 interface RsaJwk {
@@ -75,7 +76,7 @@ function checkToken(jwt: string, keys: readonly RsaJwk[], clientId: string, nonc
   return null;
 }
 /** What the console's sign-in accepts beyond the allow-list (apps/console/src/auth-token.ts SIGN_IN_EXTRA_CLAIMS). */
-export const SIGN_IN_EXTRA_CLAIMS: readonly string[] = ['email', 'email_verified', 'hd', 'at_hash'];
+export const SIGN_IN_EXTRA_CLAIMS: readonly string[] = ['email', 'email_verified', 'hd'];
 /** Google's downloaded client JSON, saved as this file in `.secrets/<env>/` (0600). */
 export const CONSOLE_CLIENT_FILE = 'console-google-client.json';
 
@@ -187,7 +188,7 @@ export interface LegReport {
   atHashMatches: boolean | null;
   /**
    * `openid` leg: the token passes the API's allow-list as is (step-ups and owner actions work with no change).
-   * `openid email` leg: the token passes the console's sign-in rule (allow-list + email, email_verified, hd, at_hash).
+   * `openid email` leg: the token passes the console's sign-in rule (allow-list + email, email_verified, hd).
    */
   passes: boolean;
   verdict: string;
@@ -216,9 +217,9 @@ export async function reportLeg(tokens: Tokens, leg: Leg, client: ConsoleClient,
     passes = false;
     verdict = 'NOT VERIFIED: the token failed the signature or claim checks; nothing can be concluded from this leg';
   } else if (leg.scope === 'openid') {
-    passes = outside.length === 0;
-    if (passes) verdict = 'PASS: openid-only, exactly within the API allow-list; step-ups and owner actions need no change';
-    else if (!hasEmailClaims && !hasHd && outside.every((c) => c === 'at_hash')) verdict = 'NO EMAIL, BUT at_hash: no personal claim, yet the API allow-list refuses at_hash; a decision is needed before C10 (D295)';
+    passes = outside.length === 0 && atHashMatches !== false;
+    if (passes) verdict = `PASS: openid-only, exactly within the API allow-list${hasAtHash ? ' (at_hash included, D342)' : ''}; step-ups and owner actions need no change`;
+    else if (outside.length === 0) verdict = 'FAIL: at_hash does not match the access token';
     else if (hasEmailClaims || hasHd) verdict = 'FAIL: Google added email or hd for scope=openid; step-ups and owner actions stop until decided (spec open question 1 fallback)';
     else verdict = `FAIL: claims outside the allow-list (${outside.join(', ')})`;
   } else {

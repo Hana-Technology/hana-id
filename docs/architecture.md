@@ -1,7 +1,7 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-04 (branch `feat/batch-c-9`, merged with `develop` @ a243d6b: partner sign-in in
+Last verified against code: 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342); 2026-11-04 (branch `feat/batch-c-9`, merged with `develop` @ a243d6b: partner sign-in in
 Status, Components (the console Worker's C9 files, the SPA, console-auth), Data stores and the new flow "Partner sign-in
 to the console"; D290–D297); 2026-11-04 (branch `feat/batch-c-11`: the files Worker and logos in Status, Components and
 Data stores: `apps/files`, the console's logo upload backend, `logoUrl` from `GET /v1/app` to the auth pages, the R2
@@ -638,7 +638,7 @@ XSS on the console could run on ever receives a Google redirect (D75; `docs/api.
 3. **Callback** (auth origin): only a valid `code` and `state` of a started flow carrying this browser's
    `__Host-hana_af` gets a redirect, ending in `#` (the implicit-flow guard). The console exchanges the code with its
    client secret and the verifier, checks the ID token (`apps/console/src/auth-token.ts`: signature, `iss`, `aud`, the
-   nonce, `iat` ≤ 120 s, the claim allow-list plus `email`, `email_verified`, `hd`, `at_hash` for sign-in, D290), writes
+   nonce, `iat` ≤ 120 s, the claim allow-list, which holds `at_hash` (D342), plus `email`, `email_verified`, `hd` for sign-in, D290), writes
    a 60-second handoff row with the verified identity and 303s to `console.origin/api/auth/complete?h=…#`.
 4. **Complete** (console origin): with the flow's `__Host-hana_pre`, the handoff is used once; the membership rules run
    (a disabled user; an invite accepted in one D1 batch; or an existing member of an active org whose `required_hd`
@@ -650,7 +650,8 @@ origins, guarded changes, keys and settings, members and invites, the audit merg
 from `ConsoleRpc` and `CONSOLE_DB`, shown without staff identities, Google `sub`s or network data (D296). Nothing in
 the console reads the email issuer's user directory (D269). Step-ups (fresh sign-in for one action, `scope=openid`,
 held to exactly the API's allow-list) are batch C10; open question 1 (does Google's code flow keep that token free of
-`email`, and `at_hash`?) is tested by `scripts/console-code-flow-spike.ts` (D295).
+`email`?) is tested by `scripts/console-code-flow-spike.ts` (D295); the code flow's `at_hash` is in the allow-list
+(D342).
 
 ### Key export
 

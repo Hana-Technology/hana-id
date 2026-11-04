@@ -7,18 +7,20 @@
 // The claim allow-list (D271, D274, D277: every Google token Hana verifies is held to it, and the API's source scan
 // in apps/api/scripts/test/relayed-tokens.test.ts lists this file):
 //   - `openid` (every step-up and owner action, batch C10, whose tokens the API verifies again and relays on chain):
-//     exactly the API's TOKEN_CLAIM_ALLOW_LIST, nothing else;
-//   - `openid email` (sign-in only, never relayed): the same list plus exactly `email`, `email_verified`, `hd` and
-//     `at_hash` (D290). Sign-in needs the address (an invite is bound to it; members see each other's) and `hd` (an
-//     org's `required_hd`); a code-flow ID token carries `at_hash`, the hash of the access token issued with it, which
-//     is checked against that token here. A name, picture or locale (`profile` scope) is refused.
+//     exactly the API's TOKEN_CLAIM_ALLOW_LIST, nothing else. The list includes `at_hash` (D342): a code-flow ID token
+//     carries it, the hash of the access token issued with it, nothing personal;
+//   - `openid email` (sign-in only, never relayed): the same list plus exactly `email`, `email_verified` and `hd`
+//     (D290). Sign-in needs the address (an invite is bound to it; members see each other's) and `hd` (an org's
+//     `required_hd`). A name, picture or locale (`profile` scope) is refused.
+// In both scopes an `at_hash` must equal the hash of the access token from the same exchange (checked here; the API,
+// which never sees that access token, accepts the claim as listed).
 import { b64url, sha256 } from '@hana-id/console-core';
 import { JwksUnavailableError, verifyIdToken } from '@hana-id/oidc';
 
 /** The API's claim allow-list (apps/api/src/claims.ts, @hana-id/core TOKEN_CLAIM_ALLOW_LIST; the scan pins all three). */
-export const TOKEN_CLAIM_ALLOW_LIST: readonly string[] = Object.freeze(['iss', 'azp', 'aud', 'sub', 'iat', 'exp', 'nonce', 'nbf', 'jti', 'auth_time']);
+export const TOKEN_CLAIM_ALLOW_LIST: readonly string[] = Object.freeze(['iss', 'azp', 'aud', 'sub', 'iat', 'exp', 'nonce', 'nbf', 'jti', 'auth_time', 'at_hash']);
 /** What a sign-in token (`openid email`) may carry besides the allow-list (D290). */
-export const SIGN_IN_EXTRA_CLAIMS: readonly string[] = Object.freeze(['email', 'email_verified', 'hd', 'at_hash']);
+export const SIGN_IN_EXTRA_CLAIMS: readonly string[] = Object.freeze(['email', 'email_verified', 'hd']);
 
 export type ConsoleScope = 'openid email' | 'openid';
 

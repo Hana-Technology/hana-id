@@ -5,7 +5,8 @@
 // are mocked here, since they need the relayer and the MPC: they run the real
 // app gate first, then check every signature and the session nonce, and keep sessions on the mocked chain, where the
 // Worker's own get_session read finds them. They don't check the Google token's RS256 signature (the vault does; the
-// API's own check has its own tests in apps/api).
+// API's own check has its own tests in apps/api), but /v1/login applies the Worker's claim allow-list (apps/api
+// claims.ts, `token_has_pii`). Every relayed transaction that carried a token is recorded (Chain.relayed).
 //
 // Control endpoints for the tests (`/__e2e/*`, no CORS, so no page can call them):
 //   POST /__e2e/apps                  {name?, scopeId?, origins, status?, settings?, publishableKey?, live?, loginMethods?} → {appId, pk}
@@ -14,6 +15,9 @@
 //   POST /__e2e/apps/<pk>/revoke      every live share of the app is revoked (an unlock then gets 410 share_revoked)
 //   GET  /__e2e/apps/<pk>/shares      [{counter, revoked, partnerOrigin}], oldest first
 //   GET  /__e2e/health                {ok, fingerprint} (fingerprint.ts)
+//   GET  /__e2e/chain[?sub=<sub>]     {relayed: [{method, tokens: [{provider, sub, claims}]}], sessions}: the transactions
+//                                     the relayer sent that carried a token (of `sub`), and the live sessions on its
+//                                     path; claim names only, never a token
 import {
   base64UrlDecode,
   ckdPayload,
@@ -30,7 +34,7 @@ import { createHash, generateKeyPairSync } from 'node:crypto';
 import { base58 } from '@scure/base';
 import { API_URL, AUTH_ORIGIN, E2E_ENV, ENV_NAME, LIVE_SCOPE_ID, NEAR_RPC, VAULT_ORIGIN } from '../stack.ts';
 import type { ApiApp, ApiCtx, ApiEnv, ApiModules } from './api-modules.ts';
-import { CHANGE_DELAY_MS, type Chain, mpcAnswer } from './chain.ts';
+import { CHANGE_DELAY_MS, type Chain, type RelayedTx, mpcAnswer } from './chain.ts';
 import type { D1Shim } from './d1.ts';
 import { json } from './http.ts';
 import { ExecContext, MemoryNamespace, allowAllLimiter, allowAllRateLimit } from './workers.ts';
@@ -55,18 +59,22 @@ const isObj = (v: unknown): v is Body => typeof v === 'object' && v !== null && 
 const isInt = (v: unknown): v is number => Number.isSafeInteger(v);
 const bytes = (v: number[]): Uint8Array => Uint8Array.from(v);
 
-/** The identity and nonce a token names (an email token's JWS JSON payload, or a Google JWT's), unverified. */
-function tokenIdentity(jwt: unknown): { provider: 'google' | 'email'; sub: string; nonce: unknown } | null {
+/** The identity, nonce and claim names a token carries (an email token's JWS JSON payload, or a Google JWT's), unverified. */
+function tokenIdentity(jwt: unknown): { provider: 'google' | 'email'; sub: string; nonce: unknown; claims: string[] } | null {
   if (typeof jwt !== 'string') return null;
   const email = jwt.startsWith('{');
   try {
     const payload = email ? (JSON.parse(jwt) as { payload?: unknown }).payload : jwt.split('.')[1];
     const claims = JSON.parse(fromUtf8(base64UrlDecode(typeof payload === 'string' ? payload : ''))) as { sub?: unknown; nonce?: unknown };
-    return typeof claims.sub === 'string' ? { provider: email ? 'email' : 'google', sub: claims.sub, nonce: claims.nonce } : null;
+    if (!isObj(claims)) return null;
+    return typeof claims.sub === 'string' ? { provider: email ? 'email' : 'google', sub: claims.sub, nonce: claims.nonce, claims: Object.keys(claims) } : null;
   } catch {
     return null;
   }
 }
+
+/** A relayed token as Chain.relayed records it: identity and claim names only. */
+const relayedToken = (t: { provider: string; sub: string; claims: string[] }) => ({ provider: t.provider, sub: t.sub, claims: t.claims });
 
 /** The endpoints the stack mocks (they need the relayer, or the MPC): the Worker's app gate runs first. */
 const MOCKED = new Set(['/v1/login', '/v1/derive', '/v1/sessions/revoke', '/v1/link', '/v1/link/cancel', '/v1/link/unlink']);
@@ -283,6 +291,10 @@ export class MockApi {
     // account root's, batch 7). The token's signature is the vault's to check here (and apps/api's own tests'), as for
     // Google.
     const who = tokenIdentity(b.jwt);
+    // apps/api's claim allow-list (claims.ts, the real function): a Google token with any other claim (an email, a
+    // Workspace domain) is refused before it can be relayed, as the Worker's /v1/login does.
+    const claim = who?.provider === 'google' ? this.api.disallowedClaim(b.jwt) : null;
+    if (claim) throw new HttpError(400, 'token_has_pii', { data: { claim } });
     const sessionPublicKey = bytes(b.sessionPublicKey);
     const nonce = sessionNonce({ signer: E2E_ENV.signer, scopeId: app.scope_id, sessionPublicKey, expiresAtMs: b.expiresAtMs, keyIndex: b.keyIndex, maxUses: b.maxUses, salt: bytes(b.salt) });
     if (!who || who.nonce !== nonce) throw new HttpError(401, 'token_invalid');
@@ -292,6 +304,9 @@ export class MockApi {
     if (!(await verifyEd25519(sessionPublicKey, bytes(b.signature), sessionMessage(1, signed)))) throw new HttpError(401, 'invalid_signature');
     const self = { provider: who.provider, sub: who.sub };
     if (this.chain.pathIdentity(app.scope_id, self) === 'pending') throw new HttpError(409, 'link_pending');
+    // The relayer sends create_session_and_derive: what reached the chain (the contract may still refuse a link below).
+    const linkWho = typeof b.linkJwt === 'string' ? tokenIdentity(b.linkJwt) : null;
+    this.chain.relayed.push({ method: 'create_session_and_derive', tokens: [relayedToken(who), ...(linkWho ? [relayedToken(linkWho)] : [])] });
     if (link) {
       const e = tokenIdentity(link.jwt);
       if (!e || e.provider !== 'email') throw new HttpError(400, 'bad_request');
@@ -348,6 +363,7 @@ export class MockApi {
       const a = tokenIdentity(b.accountJwt);
       const n = tokenIdentity(b.newJwt);
       if (!a || !n) throw new HttpError(400, 'bad_request');
+      this.chain.relayed.push({ method: 'link_identity', tokens: [relayedToken(a), relayedToken(n)] });
       const root = this.chain.pathIdentity(app.scope_id, a);
       if (root === 'pending') throw new HttpError(409, 'link_pending');
       const account = this.chain.accountOf(identityKeyHex(app.scope_id, root.provider, root.sub));
@@ -359,11 +375,23 @@ export class MockApi {
       this.chain.link(app.scope_id, root, n, { active: false, effectiveAtMs, auto: false });
       return this.api.done(ctx, 200, { result: { effectiveAtMs }, nearTx: this.chain.newTxHash() });
     }
-    if (typeof b.memberKey !== 'string' || !tokenIdentity(b.jwt)) throw new HttpError(400, 'bad_request');
+    const t = tokenIdentity(b.jwt);
+    if (typeof b.memberKey !== 'string' || !t) throw new HttpError(400, 'bad_request');
+    this.chain.relayed.push({ method: endpoint === '/v1/link/unlink' ? 'unlink_identity' : 'cancel_link', tokens: [relayedToken(t)] });
     const found = this.chain.accountOf(b.memberKey);
     if (!found || found.account.epoch !== b.epoch) throw new HttpError(422, 'contract_rejected', { reason: 'wrong_epoch' });
     if (!this.chain.unlink(b.memberKey, endpoint === '/v1/link/unlink')) throw new HttpError(422, 'contract_rejected', { reason: 'no_such_member' });
     return this.api.done(ctx, 200, { result: null, nearTx: this.chain.newTxHash() });
+  }
+
+  /**
+   * What reached the mocked chain: the relayed transactions that carried a token (with `sub`: of that `sub` only) and
+   * the live sessions whose path names `sub`. Identities and claim names only, never a token.
+   */
+  chainView(sub: string | null): { relayed: RelayedTx[]; sessions: number } {
+    const relayed = sub === null ? this.chain.relayed : this.chain.relayed.filter((t) => t.tokens.some((x) => x.sub === sub));
+    const sessions = sub === null ? this.chain.sessions.size : [...this.chain.sessions.values()].filter((s) => s.path.split('#')[2] === sub).length;
+    return { relayed, sessions };
   }
 
   // ---- control ----
@@ -374,6 +402,7 @@ export class MockApi {
     const p = url.pathname;
     if (p === '/__e2e/health') return json(200, { ok: true, fingerprint: this.fingerprint });
     if (p === '/__e2e/google-key' && req.method === 'GET' && this.googleKey) return json(200, await this.googleKey());
+    if (p === '/__e2e/chain' && req.method === 'GET') return json(200, this.chainView(url.searchParams.get('sub')));
     if (p === '/__e2e/apps' && req.method === 'POST') return json(201, this.createApp((await req.json()) as AppSpec));
     const m = /^\/__e2e\/apps\/(pk_(?:test|live)_[1-9A-HJ-NP-Za-km-z]+)\/(revoke|shares)$/u.exec(p);
     if (m?.[2] === 'revoke' && req.method === 'POST') return json(200, { revoked: this.revokeApp(m[1] as string) });

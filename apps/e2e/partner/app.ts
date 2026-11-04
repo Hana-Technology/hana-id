@@ -53,7 +53,7 @@ const hana = createHana({
   stellar: { networkPassphrase: PASSPHRASE },
 });
 
-type Result = { state: 'pending' } | { state: 'ok'; value: unknown } | { state: 'error'; code: unknown; message: string };
+type Result = { state: 'pending' } | { state: 'ok'; value: unknown } | { state: 'error'; code: unknown; message: string; reason: unknown; data: unknown };
 
 const results: Record<string, Result> = {};
 const events: { name: string; data: unknown }[] = [];
@@ -80,13 +80,14 @@ for (const name of ['statusChanged', 'accountsChanged', 'sessionExpired', 'disco
  * Errors as plain data (HanaError, ProviderRpcError and SWK's `{code, message}` all carry `code`), with the vault's
  * `data.reason` where there is one (`raw_sign_off`, `raw_not_allowed_for_test_apps`, …).
  */
-function errorOf(e: unknown): { code: unknown; message: string; reason: unknown } {
+/** The error's code, message, `data.reason` and its whole `data` (HanaError's, e.g. token_has_pii's `{claim}`). */
+function errorOf(e: unknown): { code: unknown; message: string; reason: unknown; data: unknown } {
   if (typeof e === 'object' && e !== null) {
     const o = e as { code?: unknown; message?: unknown; data?: unknown };
     const reason = typeof o.data === 'object' && o.data !== null ? ((o.data as { reason?: unknown }).reason ?? null) : null;
-    return { code: o.code ?? null, message: String(o.message ?? e), reason };
+    return { code: o.code ?? null, message: String(o.message ?? e), reason, data: o.data === undefined ? null : plain(o.data) };
   }
-  return { code: null, message: String(e), reason: null };
+  return { code: null, message: String(e), reason: null, data: null };
 }
 
 /** Structured-clone-safe for page.evaluate: bytes become hex, bigints strings. */

@@ -5,8 +5,8 @@
 // wallet: every case opens the wallet that already exists (D119, D122). Each test has its own Google account and
 // address (links are per scope, and the stack's apps share scope `e2e`).
 import type { Page, TestInfo } from '@playwright/test';
-import { ISSUER_URL } from '../src/stack.ts';
-import { addressOfExport } from '@hana-id/core';
+import { ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK } from '../src/stack.ts';
+import { addressOfExport, base64Decode, fromUtf8 } from '@hana-id/core';
 import { type App, chooseAccount, clickAction, clickLauncher, errorOf, expect, newApp, okValue, openPartner, runAction, test, waitPersisted } from './fixtures.ts';
 
 const MATCH = `${ISSUER_URL}/v1/email/google-match`;
@@ -283,6 +283,71 @@ test('an email wallet’s key export: the export window’s child popup takes an
   await expect(secret).toHaveText(/^0x[0-9a-f]{64}$/u);
   const shown = (await secret.textContent()) ?? '';
   expect(addressOfExport('evm', shown)).toBe(wallet.evm);
+});
+
+/** The NEAR view calls a page's requests got answers to, per provider: `{rpc, method, args}` (call_function only). */
+function nearViews(p: Page): { rpc: string; method: string; args: Record<string, unknown> }[] {
+  const seen: { rpc: string; method: string; args: Record<string, unknown> }[] = [];
+  p.on('response', (res) => {
+    const rpc = [NEAR_RPC, NEAR_RPC_FALLBACK].find((o) => res.url() === o || res.url().startsWith(`${o}/`));
+    if (!rpc || res.request().method() !== 'POST') return;
+    const params = (res.request().postDataJSON() as { params?: { request_type?: string; method_name?: string; args_base64?: string } } | null)?.params;
+    if (params?.request_type !== 'call_function' || typeof params.method_name !== 'string') return;
+    seen.push({ rpc, method: params.method_name, args: JSON.parse(fromUtf8(base64Decode(params.args_base64 ?? ''))) as Record<string, unknown> });
+  });
+  return seen;
+}
+
+test('a linked identity’s key export: Google, a member of an email wallet, exports that wallet’s key, confirmed on both NEAR providers', async ({ page, google }, info) => {
+  // Case A, Google-hosted: the email wallet first, then Google with that Gmail joins it as a member. Google's own path
+  // is then the email root's, so the export window must confirm it on `rpc` and on `rpcFallback` separately (D263);
+  // its CSP must let it reach both (a meta CSP without rpcFallback failed this with path_unconfirmed).
+  expect(new URL(NEAR_RPC_FALLBACK).origin).not.toBe(new URL(NEAR_RPC).origin);
+  const to = gmail(info, 'lx');
+  const sub = newSub();
+  google.accounts = [{ sub, label: 'LX', email: to, emailVerified: true }];
+  await emailApp(page);
+  const wallet = await emailLogin(page, to, 'email');
+  await logout(page, 'out');
+  const popup = await googleStart(page, 'google');
+  expect(await okValue(page, 'google')).toEqual(wallet);
+  const closed = popup.waitForEvent('close');
+  await popup.click('#banner-done');
+  await closed;
+  expect(await runAccount(page, 'acct')).toEqual({
+    methods: [
+      { provider: 'email', status: 'active', effectiveAtMs: null, root: true },
+      { provider: 'google', status: 'active', effectiveAtMs: expect.any(Number), root: false },
+    ],
+  });
+  await waitPersisted(page, wallet.evm);
+
+  await runAction(page, 'export', 'exportKey', 'evm');
+  const exportWindow = await clickLauncher(page, 'Export key in Hana');
+  const views = nearViews(exportWindow);
+  expect(await okValue(page, 'export')).toBeNull();
+  await expect(exportWindow.getByText(wallet.evm)).toBeVisible();
+  const childP = exportWindow.waitForEvent('popup');
+  await exportWindow.getByRole('button', { name: 'Sign in again to continue' }).click();
+  const child = await childP;
+  await child.click('#continue-google');
+  await chooseAccount(child);
+  expect(google.requests.at(-1)).toMatchObject({ ok: true, request: { kind: 'login', maxAge: '0' } });
+
+  await exportWindow.getByRole('textbox').fill('EXPORT');
+  await exportWindow.getByRole('button', { name: 'Continue' }).click();
+  const secret = exportWindow.locator('code.secret');
+  await exportWindow.getByRole('button', { name: 'Show key' }).click();
+  await expect(secret).toHaveText(/^0x[0-9a-f]{64}$/u);
+  // The key is the email wallet's: the root's path, not Google's own.
+  expect(addressOfExport('evm', (await secret.textContent()) ?? '')).toBe(wallet.evm);
+
+  // Both providers answered the member's `get_identity` and the root's (the root is an email identity).
+  for (const rpc of [NEAR_RPC, NEAR_RPC_FALLBACK]) {
+    const identities = views.filter((v) => v.rpc === rpc && v.method === 'get_identity').map((v) => ({ provider: v.args.provider, sub: v.args.sub }));
+    expect(identities, rpc).toContainEqual({ provider: 'google', sub });
+    expect(identities.filter((i) => i.provider === 'email'), rpc).toHaveLength(1);
+  }
 });
 
 test('a Google login on a Google-only app is unchanged: no google-match, no second Google request', async ({ page, google, requests }) => {

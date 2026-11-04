@@ -1,6 +1,8 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's and the console's)
 
-Last verified against code: 2026-11-04 (branch `feat/batch-c-6-merge`: batch C6 on current `develop`:
+Last verified against code: 2026-11-04 (branch `feat/batch-c-9`: "Console Worker and console-auth": partner sign-in
+(`/api/auth/start`, the auth origin's `/start` and `/callback` through `AuthHandler`, `/api/auth/complete`, logout), the
+signed-in reads, console-auth, the new bindings and secret, D290–D297); 2026-11-04 (branch `feat/batch-c-6-merge`: batch C6 on current `develop`:
 `ConsoleRpc.changeOrigins` / `proposeChange` with the API's own step-up verification (the claim allow-list on the
 step-up token), `ConsoleRpc.ownerAction` with `token_has_pii` on both of its tokens (D274 on every path), the
 owner-action precheck's nonce recompute on an uncached scope (`owner_nonce_mismatch`, the client-proof nonce), the
@@ -1342,20 +1344,71 @@ or email), `drift_detection` (`added`; error `code: internal`), `console_rpc` (`
 owner action's request line has `endpoint: ConsoleRpc.ownerAction`; and from the page
 Workers `vault_host` and `auth_page` (`code`).
 
-## Console Worker (`apps/console`, its own Worker; no route yet) · C7
+## Console Worker (`apps/console`, its own Worker) and console-auth · C7, C9
 
-The partner console's Worker (`hana-id-console-<env>`). Batch C7 built its backend only; it has **no public route**
-(`workers_dev: false`, no `routes`), so in a deployed env only its bindings and cron reach it. Partner sign-in, the
-session routes and the SPA come with C9 and C10 (`docs/batch-c-spec.md` "Console BFF routes"). D240–D244.
+The partner console's Worker (`hana-id-console-<env>`), on `console.origin`, and the thin console-auth Worker
+(`hana-id-console-auth-<env>`) on `console.authOrigin`. Batch C7 built the backend; C9 (branch `feat/batch-c-9`, not
+merged) adds partner sign-in, the read-only routes, the SPA and the route config: `workers_dev: true` on its own
+`workers.dev` name in a dev env, else a Custom Domain on the origin's host; never preview URLs (D294). Write routes
+come with C10 (`docs/batch-c-spec.md` "Console BFF routes"). D240–D244, D290–D297.
 
 **Every request.** The Worker runs first (assets with `run_worker_first`). A host other than `CONSOLE_ORIGIN`: `404`
 `Not found`. A non-GET/HEAD request without all four CSRF checks (`Sec-Fetch-Site: same-origin`, `Origin` =
 `CONSOLE_ORIGIN`, `x-hana-console: 1`, `content-type: application/json`): `403 {"error":{"code":"csrf",…}}`. `/api/*` goes
 to the routes below (any other path `404 not_found`, a wrong method `405` with `allow`); anything else is the SPA
-(`GET`/`HEAD` only; a placeholder page in C7, its single-page fallback for unknown paths). Every response carries the
-console CSP, `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy: same-origin`, `X-Content-Type-Options: nosniff`
-and `Strict-Transport-Security: max-age=63072000; includeSubDomains`; `/api/*` also `Cache-Control: no-store`. Errors
-are `{error: {code, message}}` with the RpcCode → HTTP map of console-core (`RPC_HTTP_STATUS`, `CONSOLE_ERROR_STATUS`).
+(`GET`/`HEAD` only: the Vite build of `apps/console/web`, with the single-page fallback for unknown paths). Every
+response carries the console CSP, `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy: same-origin`,
+`X-Content-Type-Options: nosniff` and `Strict-Transport-Security: max-age=63072000; includeSubDomains`; `/api/*` also
+`Cache-Control: no-store`. Errors are `{error: {code, message}}` with the RpcCode → HTTP map of console-core
+(`RPC_HTTP_STATUS`, `CONSOLE_ERROR_STATUS`); the message is the console's own, never the API's text.
+
+### Sign-in (the Google code flow with PKCE; D75, D290–D293)
+
+| Route | Request → answer | Notes |
+|---|---|---|
+| `POST /api/auth/start` | `{purpose: "login", invite?: <b64url of 32 bytes>}` → `{startUrl: "<authOrigin>/start?f=<43 chars>"}` and `Set-Cookie: __Host-hana_pre=…; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=600` | CSRF rules. Stores an `auth_flows` row: `sha256(f)`, `sha256(state)` (state = `b64url(sha256("hana-console/auth-state/v1\0" ‖ f))`), a PKCE verifier, the login nonce (console-core `consoleLoginNonce`), `scope = 'openid email'`, the pre-flow cookie's sha256, 5 min. An `invite` whose sha256 names no open, notified invite: `403 invite_invalid`, no flow (D293); a valid one binds the flow to it and its address becomes Google's `login_hint`. `400` for another purpose or field |
+| `GET <authOrigin>/start?f=` | → `303` to `https://accounts.google.com/o/oauth2/v2/auth` with `client_id`, `redirect_uri=<authOrigin>/callback`, `response_type=code`, `scope`, `prompt=select_account`, `state`, `nonce`, `code_challenge` (S256), `login_hint` when set; `Set-Cookie: __Host-hana_af=…` (same attributes) | The flow is found and marked started in one statement: unknown, expired, already started, a malformed or extra query: the static 400 page. No client id configured: the static page with `503` |
+| `GET <authOrigin>/callback?code&state` | → `303` to `<console.origin>/api/auth/complete?h=<43 chars>#` (an empty fragment: the implicit-flow guard), `__Host-hana_af` cleared | Only with `code` and `state` (each once), `sha256(state)` a started, unused, unexpired flow and `sha256(__Host-hana_af)` its cookie: found and marked used in one statement (a wrong or missing cookie consumes nothing). Then the code exchange (`https://oauth2.googleapis.com/token`, the client secret, the verifier; 8 s, 32 KiB) and the token check (`auth-token.ts`: RS256 on Google's JWKS, `iss`, `aud` and `azp` the console client, the flow's nonce, `exp`, `iat` ≤ 120 s old and ≤ 60 s ahead, the claims by scope: D290). A login writes a 60 s `handoff_codes` row with `{provider, sub, email, hd}` only. Anything else (`error=`, no query, a token in place of a code, a refused token, a Google 4xx): the static 400 page, no `Location`; Google 5xx, timeout, JWKS down or no secret: the same page with `503`. A step-up flow (C10) is refused here until C10 |
+| `GET /api/auth/complete?h=` | → `303 /` with `Set-Cookie: __Host-hana_cs=…; Path=/; Secure; HttpOnly; SameSite=Strict` and `__Host-hana_pre` cleared, or `303 /signin#error=<code>` | The handoff must be unused, inside its 60 s and its flow's `pre_cookie_hash` this request's `__Host-hana_pre` (found and used in one statement, then scrubbed). The membership rules then run (spec "Membership rules at sign-in": a disabled user `user_disabled`; an invite bound to the flow is accepted in one D1 batch, `invite_invalid` or `already_member`; no invite: an existing user with a membership in an active org whose `required_hd` is null or the token's `hd`, else `not_invited`); success writes the session (2 h idle, 12 h absolute, `/24` or `/48` and country kept for staff), the user's `last_sign_in_at` and current verified address, and `session.signed_in`, in one batch. Codes: `not_invited`, `invite_invalid`, `already_member`, `user_disabled`, `expired`, `rate_limited`, `internal` (D292) |
+| `POST /api/auth/logout` | `{}` → `{}`, the session cookie cleared | Session and CSRF rules; revokes this session (`session.signed_out`); `401` without a session |
+
+The static page (auth origin): `text/html`, no script, one link to `<console.origin>/signin#`, the same text for every
+refusal. Every auth-origin answer carries `Content-Security-Policy: default-src 'none'; frame-ancestors 'none';
+form-action 'none'; base-uri 'none'`, `Cache-Control: no-store`, `Referrer-Policy: no-referrer`,
+`X-Content-Type-Options: nosniff`, `Cross-Origin-Opener-Policy: same-origin` and HSTS. `/api/auth/*` and the two
+auth-origin routes share a per-IP limit: 10 a minute per IP (IPv6 by /64), key `<env>:console-auth:<ip subject>` on
+`CONSOLE_IP_LIMIT`; past it `429` (`retry-after: 60`; the static page on the auth origin, `/signin#error=rate_limited`
+from complete). Audit rows: `session.signed_in` (`invite: true|false`), `session.signed_out`, `signin.refused`
+(`not_invited` with the address's sha256 only, `user_disabled` with the user id; system actor `console-sign-in`).
+Logs: `auth_start`, `auth_callback`, `auth_complete`, `invite_accept`, with codes and, for a refused claim, its name
+only; never a token, code, cookie, address or `sub`.
+
+**`AuthHandler`** (named export, a `WorkerEntrypoint` with `fetch`; no route: bound only by console-auth as
+`CONSOLE`): answers only `GET /start` and `GET /callback` on `CONSOLE_AUTH_ORIGIN` (anything else `404`, with the
+auth-origin headers). **console-auth** (`apps/console-auth/src/index.ts`): forwards exactly those two requests
+unchanged (URL, cookies, `cf-connecting-ip`) to `CONSOLE` and sets the auth-origin headers again on the answer;
+any other path, method or host is `404 text/plain` without calling the console; a failing binding is `503`. It has no
+secret, D1, Hyperdrive or R2; vars `AUTH_ORIGIN`; invocation logs off.
+
+### Signed-in reads (read-only; D296)
+
+Each needs a live session (`401 unauthenticated` otherwise) and, under `/api/orgs/:org`, a membership of that org
+whose `required_hd` (if set) is the session's `hd`; anything else, a malformed id included, is `404 not_found`. The
+role is read from `members` on every request.
+
+| Route | Answer |
+|---|---|
+| `GET /api/me` | `{user: {id, email}, memberships: [{orgId, orgName, status, role}]}`: every hd-matching membership, frozen orgs included (read-only) |
+| `GET /api/orgs/:org` | `{org: {id, name, status, requiredHd?}, role}` |
+| `GET /api/orgs/:org/apps` | `{apps: AppSummary[]}` (`ConsoleRpc.listApps`) |
+| `GET /api/orgs/:org/apps/:app` | `{app: AppDetail}` (`ConsoleRpc.getApp`: origins with their display form and IDN flag, pending and active guarded changes, keys, settings); another org's app `404` |
+| `GET /api/orgs/:org/members` | `{members, invites, grants}`: members (address, role in force, `pendingOwnerFrom`, `addedBy` a user id or `hana`; no `sub`), open invites (`notified` says whether the link works yet), live owner grants |
+| `GET /api/orgs/:org/audit?cursor=` | `{entries, next?}`: the org's `audit_log` rows (`source: "console"`) merged newest first with `ConsoleRpc.listChanges` (`source: "api"`), 50 a page, cursor `<audit seq>.<change seq>`; staff shown as `hana` with no address, no `sub`, no IP prefix; a malformed cursor `400` |
+
+The ConsoleRpc calls carry the member actor (`id`, `sub`, `email`, `sessionHash` = b64url of the session's id hash),
+the request's id and `cf-connecting-ip`.
+
+### Emailed links (no session; C7)
 
 | Route | Body → answer | Notes |
 |---|---|---|
@@ -1387,11 +1440,13 @@ Inputs are console-core's strict zod schemas (`packages/console-core/src/staff.t
 target) or `conflict`; a write whose state moved meanwhile is `conflict`.
 
 **Bindings** (`apps/console/scripts/gen-wrangler.ts`): `CONSOLE_DB` (D1, `migrations/` 0001–0002), `API` → the API
-Worker's `ConsoleRpc`, `LOGOS` and `STATEMENTS` (R2; `STATEMENTS` read only by code), `ASSETS`, `CONSOLE_IP_LIMIT`;
-vars `ENV_NAME`, `CONSOLE_ORIGIN`, `CONSOLE_AUTH_ORIGIN`, `FILES_ORIGIN`, `NEAR_RPC`, `SIGNER_ACCOUNT`,
-`OWNER_GRANT_DELAY_MS`; no secret in C7. **Cron** `0 * * * *` (`docs/operations.md` "Partner console Worker").
-**Logs**: `staff_rpc`, `link_cancel`, `csrf_refused`, `console_cron`, `audit_write_failed`, `console_error`, with
-method, request id, actor kind, org id, outcome and code only.
+Worker's `ConsoleRpc`, `LOGOS` and `STATEMENTS` (R2; `STATEMENTS` read only by code), `ASSETS` (`./dist`, the SPA
+build), `CONSOLE_IP_LIMIT`; vars `ENV_NAME`, `CONSOLE_ORIGIN`, `CONSOLE_AUTH_ORIGIN`, `CONSOLE_GOOGLE_CLIENT_ID` (the
+manifest's one `google` console audience, D294), `FILES_ORIGIN`, `NEAR_RPC`, `SIGNER_ACCOUNT`, `OWNER_GRANT_DELAY_MS`;
+secret `CONSOLE_GOOGLE_CLIENT_SECRET` (the code exchange only). **Cron** `0 * * * *` (`docs/operations.md` "Partner
+console Worker"). **Logs**: `staff_rpc`, `link_cancel`, `csrf_refused`, `auth_*`, `invite_accept`, `console_rpc`,
+`console_cron`, `audit_write_failed`, `console_error`, with method, request id, actor kind, org id, outcome, code and a
+refused claim's name only.
 
 ## Email issuer (`apps/email-issuer`, its own Worker) · E
 

@@ -128,11 +128,14 @@ describe('the report', () => {
     expect(r.verdict).toMatch(/^PASS/u);
   });
 
-  it('openid with only at_hash beyond the list: no email, but flagged for a decision (D295)', async () => {
+  it('openid with a matching at_hash: PASS, at_hash is in the allow-list (D342); a mismatched one FAILs', async () => {
     const leg = newLeg(client, 'openid');
     const r = await reportLeg({ idToken: jwt({ ...base(leg.nonce), at_hash: atHash('ya29.x') }), accessToken: 'ya29.x' }, leg, client, { jwks });
-    expect(r).toMatchObject({ verified: true, outsideApiAllowList: ['at_hash'], hasEmailClaims: false, hasAtHash: true, atHashMatches: true, passes: false });
-    expect(r.verdict).toMatch(/^NO EMAIL, BUT at_hash/u);
+    expect(r).toMatchObject({ verified: true, outsideApiAllowList: [], hasEmailClaims: false, hasAtHash: true, atHashMatches: true, passes: true });
+    expect(r.verdict).toMatch(/^PASS.*at_hash included/u);
+    const bad = await reportLeg({ idToken: jwt({ ...base(leg.nonce), at_hash: atHash('ya29.other') }), accessToken: 'ya29.x' }, leg, client, { jwks });
+    expect(bad).toMatchObject({ atHashMatches: false, passes: false });
+    expect(bad.verdict).toMatch(/^FAIL: at_hash does not match/u);
   });
 
   it('openid with email or hd: FAIL', async () => {

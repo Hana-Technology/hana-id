@@ -31,6 +31,7 @@ import type { RequestInfo } from './links.ts';
 import { log } from './log.ts';
 import { type Session, readSession } from './sessions.ts';
 import { lit, ownerNow } from './sql.ts';
+import { usersScreenOn } from './users.ts';
 import { GRANT_COLUMNS, type GrantRow, INVITE_COLUMNS, type InviteRow, membersOf } from './views.ts';
 
 /** The signed-in member of a request, or null (401 `unauthenticated`). */
@@ -43,7 +44,7 @@ export const memberActor = (s: Session): Actor => ({ kind: 'member', id: s.userI
 export const partnerActorId = (id: string): string => (/^usr_[A-Za-z0-9]{1,64}$/u.test(id) ? id : 'hana');
 
 /** The member's usable memberships: hd-matching orgs, frozen ones included (read-only), with the role in force now. */
-async function memberships(env: Env, s: Session, now: number, orgId?: string): Promise<Membership[]> {
+export async function memberships(env: Env, s: Session, now: number, orgId?: string): Promise<Membership[]> {
   const { results } = await env.CONSOLE_DB.prepare(
     `SELECT o.id, o.name, o.status, ${ownerNow('m', now)} AS is_owner FROM members m JOIN orgs o ON o.id = m.org_id
       WHERE m.user_id = ? AND (o.required_hd IS NULL OR o.required_hd = ?)${orgId ? ' AND o.id = ?' : ''} ORDER BY o.name, o.id`,
@@ -55,7 +56,7 @@ async function memberships(env: Env, s: Session, now: number, orgId?: string): P
 
 /** `GET /api/me` → `{user, memberships}`. */
 export async function me(env: Env, s: Session, now: number): Promise<Response> {
-  const body: MeAnswer = { user: { id: s.userId, email: s.email }, memberships: await memberships(env, s, now) };
+  const body: MeAnswer = { user: { id: s.userId, email: s.email }, memberships: await memberships(env, s, now), features: { users: usersScreenOn(env) } };
   return json(200, body);
 }
 

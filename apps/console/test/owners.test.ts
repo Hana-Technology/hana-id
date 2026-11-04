@@ -2,7 +2,7 @@
 // D241): grant timing for an owner invite and a promotion, the first-owner exception, the hourly cron recording a
 // matured grant once, cancel by staff and by the emailed link (POST only, single use, refused after owner_from), the
 // last-owner rule with a pending owner, and acceptance as one batch (the data path C9's sign-in calls).
-import { type AcceptanceOutcome, acceptInvite } from '../src/invites.ts';
+import { type AcceptanceOutcome, acceptInvite, pendingMemberNotices } from '../src/invites.ts';
 import { applyGrants } from '../src/cron.ts';
 import { ipPrefix } from '../src/ip.ts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -364,5 +364,108 @@ describe('acceptance fails closed (scan findings)', () => {
     expect(await userCount(p.sub)).toBe(0);
     expect(await counts()).toEqual(before);
     expect(await auditRows("action = 'invite.accepted' AND org_id = ?", org)).toEqual([]);
+  });
+});
+
+// D343: freezing an org pauses its pending memberships. A grant still waiting loses its notice and its clock (it is
+// re-confirmed after the unfreeze: a new notice, then the full wait), the cron records nothing in a frozen org, open
+// invites lose their notice (the link stops working) and no notice of a frozen org is listed or acked.
+describe('a freeze pauses pending owner grants and invites (D343)', () => {
+  const freeze = (orgId: string, frozen: boolean) => staffRpc().freezeOrg({ ...hana(), orgId, frozen });
+  // The data function itself, with a limit past every other test's leftovers (StaffRpc caps a page).
+  const notices = () => pendingMemberNotices(db, Date.now(), 10_000);
+  const appliedAt = (grantId: string) => db.prepare('SELECT applied_at FROM owner_grants WHERE id = ?').bind(grantId).first<number | null>('applied_at');
+
+  it('an accepted owner invite’s grant neither matures nor is recorded while frozen, and waits the full delay from its new notice', async () => {
+    const org = await seedOrg();
+    await seedMember(org, 'owner');
+    const p = person();
+    const { invite, grantId, cancel } = await announcedOwnerInvite(org, p.email);
+    const out = await accept(invite.hash, p);
+    if (!out.ok) throw new Error(out.code);
+    expect(await freeze(org, true)).toEqual({ ok: true });
+    expect(await db.prepare('SELECT notified_at, owner_from, cancel_token_hash FROM owner_grants WHERE id = ?').bind(grantId).first()).toEqual({ notified_at: null, owner_from: null, cancel_token_hash: null });
+    // Past the old owner_from: still a viewer, and the cron records nothing; no notice is listed for a frozen org.
+    const later = Date.now() + DELAY + 1000;
+    shiftClock(DELAY + 1000);
+    expect(await roleOf(org, out.userId)).toBe('viewer');
+    await applyGrants(db, later);
+    expect(await appliedAt(grantId)).toBeNull();
+    expect((await notices()).some((n) => n.grant?.id === grantId)).toBe(false);
+    // The old cancel link doesn't work while the notice is undone (the grant can't mature meanwhile).
+    expect((await post('/api/owner-grants/cancel', { grantId, token: cancel.tokenB64 })).status).toBe(403);
+    // An ack while frozen is refused.
+    expect(await staffRpc().ackMemberNotice({ ...system(), grantId, tokenHash: cancel.hashB64 })).toMatchObject({ ok: false, code: 'not_pending' });
+    // After the unfreeze it is listed again and, once acked, waits the whole ownerGrantDelayMs from that notice.
+    expect(await freeze(org, false)).toEqual({ ok: true });
+    expect((await notices()).some((n) => n.kind === 'owner_grant' && n.grant?.id === grantId)).toBe(true);
+    expect(await roleOf(org, out.userId)).toBe('viewer');
+    const ackAt = Date.now();
+    expect(await staffRpc().ackMemberNotice({ ...system(), grantId, tokenHash: cancel.hashB64 })).toEqual({ ok: true });
+    const ownerFrom = (await db.prepare('SELECT owner_from FROM owner_grants WHERE id = ?').bind(grantId).first<number>('owner_from'))!;
+    expect(ownerFrom).toBeGreaterThanOrEqual(ackAt + DELAY);
+    expect(await roleOf(org, out.userId)).toBe('viewer');
+    await applyGrants(db, ownerFrom - 1);
+    expect(await appliedAt(grantId)).toBeNull();
+    await applyGrants(db, ownerFrom + 1);
+    expect(await appliedAt(grantId)).toBe(ownerFrom + 1);
+    expect(await db.prepare('SELECT role FROM members WHERE org_id = ? AND user_id = ?').bind(org, out.userId).first('role')).toBe('owner');
+  });
+
+  it('a promotion’s grant is paused and re-confirmed the same way', async () => {
+    const org = await seedOrg();
+    await seedMember(org, 'owner');
+    const v = await seedMember(org, 'viewer');
+    expect(await staffRpc().setMember({ ...hana(), orgId: org, userId: v.id, role: 'owner' })).toEqual({ ok: true });
+    const grantId = (await db.prepare('SELECT id FROM owner_grants WHERE org_id = ? AND user_id = ?').bind(org, v.id).first<string>('id'))!;
+    const cancel = await linkPair();
+    expect(await staffRpc().ackMemberNotice({ ...system(), grantId, tokenHash: cancel.hashB64 })).toEqual({ ok: true });
+    expect(await freeze(org, true)).toEqual({ ok: true });
+    shiftClock(DELAY + 1000);
+    expect(await roleOf(org, v.id)).toBe('viewer');
+    expect(await freeze(org, false)).toEqual({ ok: true });
+    expect(await roleOf(org, v.id)).toBe('viewer');
+    expect((await notices()).some((n) => n.grant?.id === grantId && n.member?.userId === v.id)).toBe(true);
+  });
+
+  it('a grant that had matured before the freeze stays matured, and the cron records it only once the org is active', async () => {
+    const org = await seedOrg();
+    await seedMember(org, 'owner');
+    const v = await seedMember(org, 'viewer');
+    expect(await staffRpc().setMember({ ...hana(), orgId: org, userId: v.id, role: 'owner' })).toEqual({ ok: true });
+    const grantId = (await db.prepare('SELECT id FROM owner_grants WHERE org_id = ? AND user_id = ?').bind(org, v.id).first<string>('id'))!;
+    expect(await staffRpc().ackMemberNotice({ ...system(), grantId, tokenHash: (await linkPair()).hashB64 })).toEqual({ ok: true });
+    await db.prepare('UPDATE owner_grants SET owner_from = ? WHERE id = ?').bind(Date.now() - 1000, grantId).run();
+    expect(await freeze(org, true)).toEqual({ ok: true });
+    expect(await roleOf(org, v.id)).toBe('owner');
+    await applyGrants(db, Date.now());
+    expect(await appliedAt(grantId)).toBeNull();
+    expect(await freeze(org, false)).toEqual({ ok: true });
+    await applyGrants(db, Date.now());
+    expect(await appliedAt(grantId)).not.toBeNull();
+  });
+
+  it('open invites lose their notice: the link stops working, no notice is listed or acked while frozen, and a new one is needed after', async () => {
+    const org = await seedOrg();
+    await seedMember(org, 'owner');
+    const p = person();
+    const r = await staffRpc().issueInvite({ ...hana(), email: p.email, role: 'viewer', orgId: org });
+    if (!r.ok) throw new Error(r.code);
+    const unsent = await staffRpc().issueInvite({ ...hana(), email: person().email, role: 'viewer', orgId: org });
+    if (!unsent.ok) throw new Error(unsent.code);
+    const link = await linkPair();
+    expect(await staffRpc().ackMemberNotice({ ...system(), inviteId: r.invite.id, tokenHash: link.hashB64 })).toEqual({ ok: true });
+    expect(await freeze(org, true)).toEqual({ ok: true });
+    expect(await db.prepare('SELECT token_hash, notified_at FROM invites WHERE id = ?').bind(r.invite.id).first()).toEqual({ token_hash: null, notified_at: null });
+    expect((await notices()).some((n) => n.invite?.orgId === org)).toBe(false);
+    expect(await staffRpc().ackMemberNotice({ ...system(), inviteId: unsent.invite.id, tokenHash: (await linkPair()).hashB64 })).toMatchObject({ ok: false, code: 'not_pending' });
+    expect(await accept(link.hash, p)).toEqual({ ok: false, code: 'invite_invalid' });
+    // After the unfreeze the old link still doesn't work until the invite's notice is sent and acked again.
+    expect(await freeze(org, false)).toEqual({ ok: true });
+    expect(await accept(link.hash, p)).toEqual({ ok: false, code: 'invite_invalid' });
+    const listed = (await notices()).filter((n) => n.kind === 'invite' && n.invite?.orgId === org).map((n) => n.invite!.id);
+    expect(listed.sort()).toEqual([r.invite.id, unsent.invite.id].sort());
+    expect(await staffRpc().ackMemberNotice({ ...system(), inviteId: r.invite.id, tokenHash: link.hashB64 })).toEqual({ ok: true });
+    expect(await accept(link.hash, p)).toMatchObject({ ok: true, role: 'viewer' });
   });
 });

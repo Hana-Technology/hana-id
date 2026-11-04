@@ -4,23 +4,39 @@
 //
 //   1. the vault gate: key, app active, Origin = VAULT_ORIGIN, parent allowed for the app, no scope_conflict; then the
 //      vault's limits (per IP, then the app's vault quota);
-//   2. the body: exactly {sessionPublicKey (32 bytes), issuedAtMs, path, wallets: {stellar, evm}}, ≤ 4 KiB;
+//   2. the body: exactly {sessionPublicKey (32 bytes), issuedAtMs, path, wallets: {stellar, evm}, sessionSignature
+//      (64 bytes)}, ≤ 4 KiB;
 //   3. issuedAtMs within ±5 min of the API's clock (`stale_record`);
 //   4. the path is the app's scope's (`scope#provider#sub#key_index`);
 //   5. each record verifies for (env, signer, app, scope, path, chain, address, session key, issuedAtMs) by the
 //      address's own key (`bad_wallet_record`);
-//   6. a directory key (USER_ID_KEY) is set (`directory_unavailable`, 503);
+//   5b. the session signature verifies against `sessionPublicKey` over the whole request (env, signer, app, scope,
+//      path, session key, time, both canonical addresses and both chain signatures; core walletRecordSessionMessage)
+//      (`invalid_signature`, 401). Without it, anyone could pair a proof by their own Stellar or EVM key with a
+//      victim's public session key (readable on chain) and path, and their address would be listed as the victim's
+//      wallet: the chain-key proofs show who holds the address's key, only the session key shows it is this session's
+//      vault (D311 as amended, a security review finding);
+//   6. both directory keys are set: USER_ID_KEY (the internal id) and IDENTITY_SUB_KEY (the User ID and Support ID,
+//      D346) (`directory_unavailable`, 503);
 //   7. the session on chain is live, in the app's scope (identity/token.ts checkChainSession, re-read fresh before
 //      refusing) and its path is exactly the record's (`session_mismatch`): another session's path is refused;
 //   8. one D1 batch: the user (the path's account root, D312), both wallets, the root's identity row.
 //
-// No session-key signature: the record binds the session key inside each chain key's signature, and step 7 binds the
-// session to the path; a replay of a whole request rewrites the same rows with the same times, so it changes nothing.
-// The vault sends it in the background, never awaited by the login, once, with a timeout (D317).
+// No single-use marker: a replay of a whole request within the window rewrites the same rows with the same times, so
+// it changes nothing, and outside it is `stale_record`. The vault sends it in the background, never awaited by the
+// login, once, with a timeout (D317).
 //
 // SECURITY: nothing here logs the body, an address, the path or a sub; the request log has the app, outcome and code.
 import { identityRoot } from '@hana-id/core/identity';
-import { WALLET_RECORD_MAX_BODY, WALLET_RECORD_WINDOW_MS, type WalletRecordChain, type WalletRecordContext, verifyWalletRecord } from '@hana-id/core/wallet-record';
+import {
+  WALLET_RECORD_MAX_BODY,
+  WALLET_RECORD_WINDOW_MS,
+  type WalletRecordChain,
+  type WalletRecordContext,
+  type WalletRecordProofs,
+  verifyWalletRecord,
+  verifyWalletRecordSession,
+} from '@hana-id/core/wallet-record';
 import type { Env } from '../env.ts';
 import { type Ctx, done, lap, newCtx, reject } from '../handlers.ts';
 import { readJson } from '../http.ts';
@@ -40,16 +56,18 @@ interface RecordRequest {
   issuedAtMs: number;
   path: string;
   wallets: Record<WalletRecordChain, { address: string; signature: Uint8Array }>;
+  sessionSignature: Uint8Array;
 }
 
 const SIG_BYTES: Record<WalletRecordChain, number> = { stellar: 64, evm: 65 };
 
 /** Exactly the documented body, each field well formed; null otherwise. */
 export function toRecordRequest(body: unknown): RecordRequest | null {
-  if (!isObj(body) || !exactly(body, ['sessionPublicKey', 'issuedAtMs', 'path', 'wallets'])) return null;
+  if (!isObj(body) || !exactly(body, ['sessionPublicKey', 'issuedAtMs', 'path', 'wallets', 'sessionSignature'])) return null;
   const sessionPk = bytesOf(body.sessionPublicKey, 32);
+  const sessionSignature = bytesOf(body.sessionSignature, 64);
   const { issuedAtMs, path, wallets } = body;
-  if (!sessionPk || !Number.isSafeInteger(issuedAtMs) || (issuedAtMs as number) < 0) return null;
+  if (!sessionPk || !sessionSignature || !Number.isSafeInteger(issuedAtMs) || (issuedAtMs as number) < 0) return null;
   if (typeof path !== 'string' || path.length === 0 || path.length > 512) return null;
   if (!isObj(wallets) || !exactly(wallets, ['stellar', 'evm'])) return null;
   const out = {} as RecordRequest['wallets'];
@@ -60,10 +78,11 @@ export function toRecordRequest(body: unknown): RecordRequest | null {
     if (!signature) return null;
     out[chain] = { address: w.address, signature };
   }
-  return { sessionPk, issuedAtMs: issuedAtMs as number, path, wallets: out };
+  return { sessionPk, issuedAtMs: issuedAtMs as number, path, wallets: out, sessionSignature };
 }
 
-const bad = (ctx: Ctx): Response => reject(ctx, 400, 'bad_request', 'Body must be {sessionPublicKey: 32 bytes, issuedAtMs, path, wallets: {stellar: {address, signature}, evm: {address, signature}}}');
+const bad = (ctx: Ctx): Response =>
+  reject(ctx, 400, 'bad_request', 'Body must be {sessionPublicKey: 32 bytes, issuedAtMs, path, wallets: {stellar: {address, signature}, evm: {address, signature}}, sessionSignature: 64 bytes}');
 
 export async function handleWalletRecord(request: Request, env: Env, requestId: string): Promise<Response> {
   const ctx = newCtx(env, requestId, WALLET_RECORD_ENDPOINT, request);
@@ -92,11 +111,17 @@ export async function handleWalletRecord(request: Request, env: Env, requestId: 
     if (address === null) return done(ctx, 400, { error: 'A wallet record does not verify', code: 'bad_wallet_record', chain });
     addresses[chain] = address;
   }
+  // The whole request by the session key: only the vault that opened this session holds it.
+  const proofs: WalletRecordProofs = {
+    stellar: { address: addresses.stellar, signature: req.wallets.stellar.signature },
+    evm: { address: addresses.evm, signature: req.wallets.evm.signature },
+  };
+  if (!verifyWalletRecordSession(base, proofs, req.sessionSignature)) return reject(ctx, 401, 'invalid_signature', 'Invalid session signature');
   lap(ctx, 'records');
 
   const user = await directoryUser(env, app.scope_id, root);
-  if (!user) {
-    noteDirectoryUnavailable({ requestId, endpoint: ctx.endpoint, appId: app.id });
+  if (typeof user === 'string') {
+    noteDirectoryUnavailable({ requestId, endpoint: ctx.endpoint, appId: app.id }, user);
     return reject(ctx, 503, 'directory_unavailable', 'The wallet directory is unavailable in this environment');
   }
 
@@ -110,10 +135,10 @@ export async function handleWalletRecord(request: Request, env: Env, requestId: 
     env,
     [
       upsertUser(env.DB, user, app.scope_id, req.issuedAtMs),
-      upsertWallet(env.DB, user.userId, { chain: 'stellar', address: addresses.stellar, keyIndex }, req.issuedAtMs),
-      upsertWallet(env.DB, user.userId, { chain: 'evm', address: addresses.evm, keyIndex }, req.issuedAtMs),
+      upsertWallet(env.DB, user.internalId, { chain: 'stellar', address: addresses.stellar, keyIndex }, req.issuedAtMs),
+      upsertWallet(env.DB, user.internalId, { chain: 'evm', address: addresses.evm, keyIndex }, req.issuedAtMs),
       // The path's owner is the account root, as the chain's session says.
-      upsertIdentity(env.DB, { scopeId: app.scope_id, identityKey: await identityKeyHex(app.scope_id, root), userId: user.userId, provider: root.provider, sub: root.sub, role: 'root', status: 'active', effectiveAt: null }, now),
+      upsertIdentity(env.DB, { scopeId: app.scope_id, identityKey: await identityKeyHex(app.scope_id, root), internalId: user.internalId, provider: root.provider, sub: root.sub, role: 'root', status: 'active', effectiveAt: null }, now),
     ],
     { requestId, endpoint: ctx.endpoint, appId: app.id },
   );

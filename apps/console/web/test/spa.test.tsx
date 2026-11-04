@@ -113,6 +113,7 @@ describe('signed in', () => {
         },
       },
     };
+    routes['/api/orgs/org_a'] = { body: { ...ORG, role: 'viewer' } };
     at('/');
     expect(await screen.findByText('Wallet')).toBeTruthy();
     expect(window.location.pathname).toBe('/orgs/org_a');
@@ -124,7 +125,7 @@ describe('signed in', () => {
     expect(screen.getByText('30 min')).toBeTruthy();
     expect(screen.getByText(/Suspended by your organisation/u)).toBeTruthy();
     expect(screen.getByText(/Pending: active from/u)).toBeTruthy();
-    // Read-only: no write control on the page (sign out is the only button).
+    // A viewer: no write control on the page (sign out is the only button).
     expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual(['Sign out']);
   });
 

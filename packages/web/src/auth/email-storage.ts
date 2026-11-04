@@ -49,6 +49,11 @@ export interface EmailContext {
   /** The Google client, for the case-B "Continue with Google"; null when the app offers no Google. */
   clientId: string | null;
   methods: LoginMethod[];
+  /**
+   * D348: the method the partner named (`hana.login({method})`), when it did. After a cancel on Google's screen the
+   * chooser then offers that method only.
+   */
+  method?: LoginMethod;
   /** How /login was opened, so /login/email can tell the vault the code was sent (`hana:auth-progress`). */
   opener: OpenerKind;
   vaultFrame: string | null;
@@ -97,6 +102,7 @@ function decode(raw: string | null): Stored | null {
       (c.clientId === null || typeof c.clientId === 'string') &&
       Array.isArray(c.methods) &&
       c.methods.every((m) => m === 'google' || m === 'email') &&
+      (c.method === undefined || c.method === 'google' || c.method === 'email') &&
       (c.emailHint === null || isEmailHint(c.emailHint)) &&
       (c.opener === 'partner' || c.opener === 'vault') &&
       (c.vaultFrame === null || typeof c.vaultFrame === 'string') &&

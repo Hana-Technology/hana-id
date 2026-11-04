@@ -33,6 +33,14 @@ type Config = Record<string, unknown> & {
 };
 
 describe('the console config', () => {
+  it("carries the API's origin rules (NETWORK, REFUSED_ORIGINS), so an origin add is checked before its fresh sign-in (C10)", () => {
+    const vars = (wranglerConfig(TEST_MANIFEST, LOCAL_D1_ID) as { vars: Record<string, string> }).vars;
+    const api = (apiConfig(TEST_MANIFEST, LOCAL_D1_ID) as { vars: Record<string, string> }).vars;
+    expect(vars.NETWORK).toBe(TEST_MANIFEST.network);
+    expect(vars.REFUSED_ORIGINS).toBe(api.REFUSED_ORIGINS);
+    expect(JSON.parse(vars.REFUSED_ORIGINS!)).toContain('https://console.test');
+  });
+
   it('validates as a manifest with every dashboard block (the test manifest is a real one)', () => {
     expect(manifestSchema.parse(TEST_MANIFEST)).toBeTruthy();
   });

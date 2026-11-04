@@ -9,7 +9,10 @@ import { COMPATIBILITY_DATE, TEST_MANIFEST, testWranglerConfig } from './scripts
 // auxiliary Worker under the name the config binds, so the console's calls cross a real service binding into the real
 // `ConsoleRpc` (C5 tested the entrypoints only directly). The API's hot DB is shared with the tests as HOT_DB (same D1
 // id) so they can seed it; API_ADMIN, a test-only binding to the same Worker's AdminRpc, stands in for the admin
-// Worker (C8) to propose and announce changes. Nothing reaches a network: NEAR RPC is an invalid host, unused here.
+// Worker (C8) to propose and announce changes. Nothing reaches a network: the API Worker's outbound fetches go to a
+// fake upstream (test/fake-upstream.js: hana-signer's views and Google's JWKS from the FAKE_UPSTREAM D1 the tests
+// write), so the API verifies C10's step-up and owner tokens for real; the console's own NEAR reads are mocked in its
+// isolate (test/chain.ts) from the same table.
 const here = (p: string) => new URL(p, import.meta.url).pathname;
 
 const TEST_WRANGLER_CONFIG = here('./wrangler.vitest.jsonc');
@@ -30,6 +33,8 @@ function bundleApi(): string {
 }
 
 const HOT_DB_ID = 'hana-id-test-hot';
+const UPSTREAM_DB_ID = 'hana-id-test-upstream';
+const UPSTREAM_WORKER = 'fake-upstream';
 
 export default defineConfig(async () => {
   const migrations = await readD1Migrations(here('./migrations'));
@@ -42,7 +47,7 @@ export default defineConfig(async () => {
         miniflare: {
           // The console client's secret is a throwaway test value: Google's token endpoint is mocked in the tests.
           bindings: { TEST_MIGRATIONS: migrations, TEST_API_MIGRATIONS: apiMigrations, CONSOLE_GOOGLE_CLIENT_SECRET: 'test-console-client-secret' },
-          d1Databases: { HOT_DB: HOT_DB_ID },
+          d1Databases: { HOT_DB: HOT_DB_ID, FAKE_UPSTREAM: UPSTREAM_DB_ID },
           serviceBindings: { API_ADMIN: { name: TEST_MANIFEST.cloudflare.workerName, entrypoint: 'AdminRpc' } },
           workers: [
             {
@@ -52,6 +57,7 @@ export default defineConfig(async () => {
               compatibilityDate: COMPATIBILITY_DATE,
               compatibilityFlags: ['nodejs_compat'],
               d1Databases: { DB: HOT_DB_ID },
+              outboundService: UPSTREAM_WORKER,
               durableObjects: {
                 RATE_LIMITER: { className: 'RateLimiter', useSQLite: true },
                 RELAYER_KEY: { className: 'RelayerKey', useSQLite: true },
@@ -70,6 +76,7 @@ export default defineConfig(async () => {
                 RELAYER_KEYS: '[]',
               },
             },
+            { name: UPSTREAM_WORKER, modules: true, scriptPath: here('./test/fake-upstream.js'), compatibilityDate: COMPATIBILITY_DATE, d1Databases: { FAKE_UPSTREAM: UPSTREAM_DB_ID } },
           ],
         },
       }),

@@ -267,8 +267,8 @@ describe('the hot-DB budget', () => {
       // The wallet directory (D315): one SELECT each.
       ['listUsers', (rpc) => rpc.listUsers({ ...member(), orgId: app.org })],
       ['getUser', async (rpc) => {
-        const userId = `hu_${'1'.repeat(26)}`;
-        await env.DB.prepare('INSERT OR IGNORE INTO end_users (user_id, support_code, scope_id, created_at, last_seen_at) VALUES (?1, ?2, ?3, 1, 1)').bind(userId, '11111111', app.scope).run();
+        const userId = `u1_${'E'.repeat(21)}A`;
+        await env.DB.prepare('INSERT OR IGNORE INTO end_users (user_id, token_sub, support_code, scope_id, created_at, last_seen_at) VALUES (?1, ?2, ?3, ?4, 1, 1)').bind(`hu_${'1'.repeat(26)}`, userId, '11111111', app.scope).run();
         return rpc.getUser({ ...member(), orgId: app.org, userId });
       }],
     ];

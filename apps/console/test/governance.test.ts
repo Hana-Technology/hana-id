@@ -90,8 +90,12 @@ describe('pendingUpgradesRoute', () => {
     expect((await pendingUpgradesRoute(down.e, info(), actorOf(u), org)).status).toBe(503);
   });
 
-  it('no route reaches it before C10 (the session routes)', async () => {
-    const res = await request('/api/orgs/org_abc/governance/pending-upgrades');
-    expect(res.status).toBe(404);
+  it('C10 routes it behind the session: 401 without one, 404 for an org the member isn’t in', async () => {
+    expect((await request('/api/orgs/org_abc/governance/pending-upgrades')).status).toBe(401);
+    const { member, getAs } = await import('./c10.ts');
+    const m = await member('viewer');
+    expect((await getAs(m, '/api/orgs/org_abc/governance/pending-upgrades')).status).toBe(404);
+    // A member reaches the real ConsoleRpc (which can't read the chain here, so it is near_unavailable, not 404).
+    expect((await getAs(m, `/api/orgs/${m.org}/governance/pending-upgrades`)).status).not.toBe(404);
   });
 });

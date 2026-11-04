@@ -1,13 +1,25 @@
 // The signed-in frame: the header (the member's address, the org switcher, sign out) and, inside an org, its tabs.
-// `/` lists the member's organisations (straight to the only one). Read-only in this release: the console shows what is
-// configured; changes are made by Hana staff until the write paths ship.
+// `/` lists the member's organisations (straight to the only one). Inside an org the pages get the member's role and
+// whether the org is frozen (the outlet context), and show the write controls an owner has (batch C10). The usage,
+// statements and pending-upgrades tabs are reads for any member, frozen orgs included (D370).
 import type { MeAnswer, OrgAnswer } from '@hana-id/console-core';
-import { useEffect } from 'react';
+import { type ReactNode, useEffect } from 'react';
 import { Link, NavLink, Outlet, useNavigate, useParams } from 'react-router-dom';
 import { postJson } from '../api.ts';
-import { ErrorNote, useApi } from '../lib.tsx';
+import { ErrorNote, type OrgContext, useApi } from '../lib.tsx';
 
-function Header({ me }: { me: MeAnswer | undefined }) {
+/** A signed-in page outside an org (a fresh sign-in's action page). */
+export function Framed({ children }: { children: ReactNode }) {
+  const me = useApi<MeAnswer>('/api/me');
+  return (
+    <>
+      <Header me={me.data} />
+      {children}
+    </>
+  );
+}
+
+export function Header({ me }: { me: MeAnswer | undefined }) {
   const navigate = useNavigate();
   const signOut = async () => {
     try {
@@ -83,15 +95,19 @@ export function OrgShell() {
               <span className="badge">{o.data.role}</span>
               {o.data.org.requiredHd && <span className="muted">Google Workspace: {o.data.org.requiredHd}</span>}
             </div>
-            {o.data.org.status === 'frozen' && <p className="note note-warn">Hana has frozen this organisation: nothing can be changed until it is unfrozen.</p>}
+            {o.data.org.status === 'frozen' && <p className="note note-warn">Hana has frozen this organisation: only cancels and kill switches (removing an origin, turning the policy or raw signing off, suspending, revoking a key) work until it is unfrozen.</p>}
             <nav className="tabs">
               <NavLink to={`/orgs/${org}`} end>
                 Apps
               </NavLink>
               <NavLink to={`/orgs/${org}/members`}>Members</NavLink>
+              <NavLink to={`/orgs/${org}/usage`}>Usage</NavLink>
+              <NavLink to={`/orgs/${org}/statements`}>Statements</NavLink>
+              <NavLink to={`/orgs/${org}/upgrades`}>Pending upgrades</NavLink>
+              {me.data?.features?.users === true && <NavLink to={`/orgs/${org}/users`}>Users</NavLink>}
               <NavLink to={`/orgs/${org}/audit`}>Audit</NavLink>
             </nav>
-            <Outlet />
+            <Outlet context={{ org: org!, role: o.data.role, frozen: o.data.org.status === 'frozen' } satisfies OrgContext} />
           </>
         )}
       </main>

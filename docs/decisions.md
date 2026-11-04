@@ -1,7 +1,9 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D340 (branch `fix/dev-email-limits`) on 2026-11-04; D140–D141 and D150–D152 on 2026-10-30 (branches
+Last verified against code: 2026-10-28 (commit 58edee9); D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
+confirmed by the user) on 2026-11-04, amending D341; D341 (branch `fix/google-cancel-back-to-chooser`, confirmed
+by the user) on 2026-11-04, with notes on D264, D270 and D273 and a row of "Superseded or amended"; D340 (branch `fix/dev-email-limits`) on 2026-11-04; D140–D141 and D150–D152 on 2026-10-30 (branches
 `feat/batch-c-1`, `feat/playbook-gaps`); D130–D139 on 2026-10-30 (branches `feat/email-login-1`, `feat/email-login-1-r2`);
 D154–D155 (branch `feat/email-login-2`) and D156–D159 (branch `feat/email-login-3`) on 2026-11-02; D159's `+tag`
 change (branch `fix/email-plus-tags`) on 2026-11-02; D190–D193 (branch `feat/email-login-5`) and D200 (branches
@@ -27,7 +29,10 @@ confirm" line. D275–D276 (branch `docs/batch-c-users-support-id`: proposed, to
 on 2026-11-04. D300–D308 (branch `feat/batch-c-11`: the files Worker and logos, decided while building, to confirm) on
 2026-11-04, with D301 amending the order of C7's replaced-logo purge. D290–D297 (branch `feat/batch-c-9`, partner
 sign-in: decided while building, to confirm) on 2026-11-04. D320–D329 (branch `feat/batch-c-12`: reports,
-statements, settlement and the ledger's checks, decided while building, to confirm) on 2026-11-04. D360–D369 (branch
+statements, settlement and the ledger's checks, decided while building, to confirm) on 2026-11-04. D346 (branch `feat/user-id-identity-sub`, confirmed by the
+user) on 2026-11-04, with its amendments to D276, D312, D313, D315 and D316, and the security review's amendments to
+D311, D313 and D317 (the wallet record's session signature). D370–D374 (branch `feat/console-reports-upgrades`: the
+partner console's usage, statement and pending-upgrades screens, decided while building, to confirm) on 2026-11-04. D360–D369 (branch
 `feat/batch-c-13`: retention and the erasure path, decided while building, to confirm) on 2026-11-04, with two rows of
 "Superseded or amended".
 
@@ -1800,7 +1805,9 @@ detail open or a safer reading was needed. Each follows the spec's intent; all f
   `already_applied`); a distinct RpcCode for a wrong nonce (the spec's list has none; `forbidden` with the reason).
 
 ### D236. Owner actions: the precheck's nonce, and the caps reconciled with D100
-- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/owner-actions.ts`, `handlers.ts` `ownerActionWindows`,
+- Date 2026-11-02 · Status: the per-owner proposal windows (2 a minute, 4 a day) **confirmed by the user (2026-11-04:
+  "yes" to keeping them shared)**: counted per owner identity across all of its scopes (`ownerLimiterKey` has no scope
+  in it), as built; the rest to confirm; built (`apps/api/src/owner-actions.ts`, `handlers.ts` `ownerActionWindows`,
   `ownerCapEvent`, `owner-pool.ts`, `@hana-id/console-core` `owner-actions.ts`) · Source: spec "On-chain owner
   actions" (Limits, Allowance alert), D93 Q23, D100
 - Decision:
@@ -1813,7 +1820,8 @@ detail open or a safer reading was needed. Each follows the spec's intent; all f
     10 per scope per day) and D100's (decided later the same day, after the security sweep) are combined so that
     neither is weakened where it protects something:
     - `propose_change`: per scope 10/min (D100) and **20 a UTC day** (the spec, replacing D100's 50), global 20/min,
-      200/day (both), and per owner **2/min, 4/day**: the scope's windows divided by the contract's `MAX_OWNERS` (5),
+      200/day (both), and per owner **2/min, 4/day** (one window per owner identity, shared by every scope that owner
+      holds; confirmed 2026-11-04): the scope's windows divided by the contract's `MAX_OWNERS` (5),
       so the per-scope windows are at least `MAX_OWNERS` × the per-owner ones, as for the safety budget. With D100's
       5/min, 30/day per owner under a 20/day scope cap, one owner (a compromised or careless one) could use up the
       scope's day and block its co-owners' proposals. The alternative, the scope at 5 × 30 = 150/day, was rejected: it
@@ -1949,6 +1957,9 @@ detail open or two of its lines pull apart. Each follows the spec's intent; all 
   would start a wait nobody can cancel by link.
 - Rejected: a grant only when the org has an owner at issue; one combined notice (`ackMemberNotice` takes one hash, and
   the two links go to different people).
+- Amended by D343 (2026-11-04): a freeze undoes both notices of an open owner invite and the notice and clock of an
+  accepted one's grant; after the unfreeze each is announced again, and an accepted invite's grant then waits the full
+  delay from its new notice.
 
 ### D242. `invites.new_org_kind` (CONSOLE_DB migration 0002) and the passkey gate's count
 - Date 2026-11-02 · Status: to confirm; built (`apps/console/migrations/0002_invites_kind_audit_request.sql`,
@@ -2000,6 +2011,8 @@ detail open or two of its lines pull apart. Each follows the spec's intent; all 
     carries the promoted `member` (user id and email), additive like D226, so the admin Worker needs no second call.
 - Why: the admin Worker is more trusted than the console (spec §Security model), but the notice must fail closed even
   against a staff mistake, as in D229; the rest makes the spec's rules exact under concurrency and replays.
+- Amended by D343 (2026-11-04): `freezeOrg` also pauses the org's pending invites and owner grants in its batch, and
+  `pendingMemberNotices` / `ackMemberNotice` skip and refuse (`not_pending`) a frozen org's notices.
 
 ### D244. The console's C7 surface: two link routes, CSRF everywhere, the cron's details
 - Date 2026-11-02 · Status: to confirm; built (`apps/console/src/{index,links,csrf,headers,cron}.ts`,
@@ -4121,7 +4134,9 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   `showEmailConsent`, `vault/login.ts` `matchGoogle`, core `FollowNotice` `email_consent`, issuer
   `google_account_mismatch`) · Source: the batch 8b review (G-M1, G-M2); amends D255; D42 · Amended by D270: under
   `'token_first'` there is no explainer (Google's sign-in screen lists the email) and declining that screen is no
-  Google login at all; the consent screen stays for a google-match `google_account_mismatch`
+  Google login at all; the consent screen stays for a google-match `google_account_mismatch` · Amended by D341:
+  declining that screen no longer ends the login (`google_error`, `access_denied`); the popup goes back to Hana's
+  method chooser, and closing it there is `login_cancelled`
 - Decision:
   - Before the interactive retry of the silent email request (D254), the popup shows Hana's own screen: "Google will
     now ask to share your email address with Hana. Only Hana's email service sees it, to find a wallet you may
@@ -4384,6 +4399,9 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   never leak; tests that the on-chain request is `openid` only and that an email-carrying token is refused with
   nothing relayed.
 - Rejected: the literal one request (above); keeping the explainer and Google's second screen (the user's ask).
+- Amended 2026-11-04 by D341: a cancel on the first request's screen (Google's `access_denied`) is no longer relayed
+  as the login's end (`google_error`); the popup goes back to Hana's method chooser (or case B's choices) and the
+  login goes on, and closing the window there is `login_cancelled`.
 
 ### D271. The API's claim allow-list is on for every route that relays a Google token (REJECT_PII_ON_SESSIONS retired)
 - Date 2026-11-04 · Status: confirmed by the user (2026-11-04: 'how can we be sure that the reversed flow works without
@@ -4417,7 +4435,8 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
     `interaction_required`, `consent_required` or `account_selection_required`, the callback asks once more without
     `prompt=none`: still `response_type=id_token`, `scope=openid`, the same `login_hint`, nonce and slot, with no Hana
     screen first. A second failure, or any other error, is relayed (`google_error`); an ID token whose `sub` isn't the
-    access token's (tokeninfo's) ends the login with `google_account_mismatch`.
+    access token's (tokeninfo's) ends the login with `google_account_mismatch`. (Amended by D341: the user cancelling
+    this retry, `access_denied`, goes back to the login's choices instead of being relayed.)
   - `'one_request'` is removed from `GoogleEmailFlow` and the popup (it can't keep `email` out of the ID token, D270),
     so under every flow the only request whose ID token is relayed asks for `scope=openid` only. The vault still reads
     an access token beside an ID token (the relay format and the vault's tests use it); no popup sends one.
@@ -4688,6 +4707,23 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   them apart with a hardened derivation step (bitcoin-dev, P. Wuille), so it would trade a bounded bookkeeping residual
   for an unproven risk to the funds key; a separate record key (a new derivation tuple: it proves nothing about the
   wallet's own key); a session-key signature alone (it proves the session, not the address).
+- **Amended 2026-11-04 (security review finding, MEDIUM; branch `feat/user-id-identity-sub`): a session-key signature
+  is now required too.** The chain-key proofs alone don't tie an address to the path: the API can't derive addresses,
+  and a session public key is public (`get_session`), so anyone could sign a statement with their own Stellar or EVM
+  key naming a victim's live session key and path, pass the session check, and have their address listed as the
+  victim's wallet (a wrong payout address for a partner that trusts the list). The vault now also signs, with the
+  session's non-extractable WebCrypto key, `"hana-id/wallet-record-session/v1" ‖ 0x00 ‖ borsh(env) ‖ borsh(signer) ‖
+  borsh(app_id) ‖ borsh(scope_id) ‖ borsh(path) ‖ session_pk(32) ‖ u64le(issued_at_ms) ‖ sha256("hana-id/wallet-record-
+  proofs/v1" ‖ 0x00 ‖ for stellar then evm: borsh(chain) ‖ borsh(address) ‖ borsh(Vec<u8> signature))` (Ed25519 over
+  the message itself; core `walletRecordSessionMessage`, `signWalletRecordSession`, `verifyWalletRecordSession`, zip215
+  off). It covers every field of the body and the env, signer, app and scope the API supplies. It is never another
+  session-key signature, nor another one it: the session key signs only the contract's `"hana-id-session-v1:"`
+  messages, the vault share actions' `"hana-id-vault-v1:"` and the identity token's `"hana-id-identity-v1:"`, fixed
+  layouts the vault builds itself (it never signs caller-chosen bytes with that key); this domain differs from each in
+  its first 8 bytes and none is a prefix of another, and Ed25519 binds the exact message (tested in
+  `packages/core/test/wallet-record.test.ts`). The chain-key proofs stay: the session signature proves the vault, the
+  chain-key ones that it holds those keys. D311's raw-EVM residual is unchanged (the attacker still needs its own
+  session's key, so the row stays under its own user).
 
 ### D312. The user id is the usage ledger's uid, `hu_` + Crockford base32; the Support ID is its first 8 characters
 - Date 2026-11-04 · Status: to confirm (decided while building D310) · Built on `feat/wallet-directory`
@@ -4708,6 +4744,10 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   secret to keep for the same job).
 - Note: a partner sees the user id and the Support ID (D310 point 5), a per-scope pseudonym like the token's `sub`.
   `USER_ID_KEY` must never be rotated within a contract term (D224): a new key is a new id for every user.
+- **Amended 2026-11-04 by D346:** `hu_…` is now the **internal id**, staff only (the row's key and the join to the
+  ledger). The id partners see ("User ID") is the identity token's `sub` (`u1_…`, `end_users.token_sub`), and the
+  Support ID is cut from that, no longer from `hu_…`. The rejection of the token's `sub` above is reversed: partners
+  wanted one id, the one their backends already store (Privy's DID).
 
 ### D313. `POST /v1/wallets/record`: the vault gate, the records, the session on that exact path; no session-key signature
 - Date 2026-11-04 · Status: to confirm (decided while building D310) · Built on `feat/wallet-directory`
@@ -4724,6 +4764,14 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   it relays nothing.
 - `HOT_DB_SCHEMA` stays 9: an API on a database without 0011 still serves every login; only the record answers 503
   (`directory_write_failed`, logged `no_table`) and the syncs log the same.
+- **Amended 2026-11-04 (security review finding; branch `feat/user-id-identity-sub`):** "no session-key signature" was
+  wrong: a chain key's signature binds a session key it names, not one its signer holds, so anyone could attach their
+  own address to a victim's live session (D311's amendment). The body now carries `sessionSignature` (64 bytes, D311's
+  session message) and the endpoint checks it against `sessionPublicKey` right after the chain-key records and before
+  any key check, chain read or write (`401 invalid_signature`; a missing or malformed one is `400 bad_request`). Still
+  no single-use marker: a replay within ±5 min rewrites the same rows, outside it is `stale_record`.
+- **Amended 2026-11-04 by D346:** `directory_unavailable` also when `IDENTITY_SUB_KEY` is missing or malformed (the
+  User ID and Support ID come from it); the log's `code` says which (`no_user_id_key`, `no_sub_key`, `bad_sub_key`).
 
 ### D314. Identities kept current from chain reads after the API's own relays; one row per identity per scope
 - Date 2026-11-04 · Status: to confirm (decided while building D310) · Built on `feat/wallet-directory`
@@ -4763,6 +4811,11 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
     a Google account is a user. Another org's user is `not_found`, exactly as no user. Each call is one SELECT (cost 1).
   - Pages are newest first by last seen, with a `lastSeenAt:userId` cursor.
 - Rejected: one shape for both with fields blanked (one mapping bug away from a sub reaching a partner).
+- **Amended 2026-11-04 by D346:** `userId` in both shapes is now the User ID (`u1_…`, the identity token's `sub`);
+  `StaffUser` adds `internalId` (`hu_…`); `PartnerUser`'s keys are unchanged and its query never selects
+  `end_users.user_id`. `getUser` takes `{userId}` (u1_) on both, or `{internalId}` (hu_) for staff, exactly one;
+  `findUsers` also takes an internal id (any case). A partner's search by an internal id is `bad_request`, as a sub is.
+  Pages tie by User ID, so the cursor is `lastSeenAt:u1_…` (no internal id in a partner's hands).
 
 ### D316. The admin CLI reads the wallet directory without the statement in a process argument
 - Date 2026-11-04 · Status: to confirm (decided while building D310) · Built on `feat/wallet-directory`
@@ -4775,6 +4828,8 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   are several) and `--user <hu_…|HANA-XXXX-XXXX>` start from the wallet directory and join each identity's address from
   the issuer when the env has one (they also work without one); a stdin line is read as whichever it is. The other
   app commands keep `wrangler --command` (their statements hold no personal data).
+- **Amended 2026-11-04 by D346:** every user line shows all three ids (`u1_… (HANA-XXXX-XXXX; internal hu_…)`), and
+  `--user` takes `u1_…` (exact case), `hu_…` (any case) or a Support ID.
 
 ### D317. The vault reports the wallet once per login, in the background, with a 15 s limit and no retry
 - Date 2026-11-04 · Status: to confirm (decided while building D310) · Built on `feat/wallet-directory`
@@ -4789,6 +4844,54 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   login (D310). The session keeps the record's EVM digest and refuses a raw EVM request for it (D179's rule, D311).
 - Rejected: awaiting it (a slow API would slow every login); retrying (a storm against an API that is down, for rows
   the next login writes); sending it from the export window (its login opens no wallet session).
+- **Amended 2026-11-04 (security review; D311 and D313 as amended):** after the two chain keys sign (synchronously,
+  PRK checked live first), the session key signs the whole request (`signWalletRecordSession`, asynchronous WebCrypto);
+  the record's EVM digest is set on the session before that first await, and nothing is sent if the session changed
+  meanwhile.
+
+## Partner User ID = the identity token's `sub`; the Support ID its short form (branch `feat/user-id-identity-sub`), 2026-11-04
+
+### D346. Partners see one user id, the identity token's `sub`; the Support ID is its first 40 bits; `hu_…` is internal
+- Date 2026-11-04 · Status: confirmed by the user (2026-11-04: "ok go with your recommendation") · Built on
+  `feat/user-id-identity-sub` (not merged, not deployed; hot-DB migration 0011 still applied nowhere) · Amends D276,
+  D312, D313, D315, D316 · Source: the wallet directory review (D310–D317), Privy's DID
+- Decision:
+  1. **User ID** (what partners see, like Privy's DID) is the identity token's `sub`: `"u1_" ‖ b64url(HMAC-SHA256(
+     IDENTITY_SUB_KEY, "hana-id/idt-sub/v1" ‖ 0x00 ‖ borsh(scope_id) ‖ borsh(root_provider) ‖ borsh(root_sub))[0..16])`,
+     computed with core `identitySub` (the token's own code, not a copy). The value the partner's backend already
+     stores from the token. Used in `ConsoleRpc.listUsers` / `getUser` (field `userId`), their search and the partner
+     console. Stored as `end_users.token_sub` (unique index).
+  2. **Support ID** is the User ID's short form: `"HANA-" ‖ c[0..4] ‖ "-" ‖ c[4..8]` with `c` = Crockford base32
+     (alphabet `0123456789ABCDEFGHJKMNPQRSTVWXYZ`, most significant bit first) of the first 5 bytes (40 bits) of the
+     same 16 HMAC bytes the User ID encodes. 8 characters exactly, no padding, D276's format kept. Anyone holding a User
+     ID can compute it without a key (decode the 22 base64url characters, take 5 bytes): a partner can show it next to
+     its own user records. It is not a visible prefix of the `u1_` text (base64url and base32 split the bits apart).
+     Pinned against the identity token's vectors (`packages/console-core/test/users.test.ts`: `u1_EcoIFjT5lAWZsk0862e8Tg`
+     → `HANA-2750-G5HM`). Stored as `end_users.support_code` (indexed); console-core `supportIdOf(userId)`.
+  3. **Internal id** `hu_…` (D312's, the usage ledger's uid under `USER_ID_KEY`) stays: the hot DB's key and the
+     join to the ledger's events. Staff only: `AdminRpc` (`StaffUser.internalId`, `getUser({internalId})`,
+     `findUsers`) and the CLI. Never in a `ConsoleRpc` answer, cursor or accepted input (a search by it is
+     `bad_request`, as a sub's is).
+  4. **Staff** (`AdminRpc`, `admin user:*`) see all three and search by any of them.
+  5. **Without `IDENTITY_SUB_KEY`** (missing or malformed) nothing is recorded, as without `USER_ID_KEY`: the record
+     answers `503 directory_unavailable`, the login syncs write nothing, the log says which key (`no_sub_key`,
+     `bad_sub_key`, `no_user_id_key`). A row without the id partners see would be a user the console can't name. Every
+     env that mints identity tokens has the key already (D127).
+- Why: one id across the token, the console and support, so a partner never maps between two pseudonyms; D312's
+  reason for `hu_…` (joining the ledger) holds for staff, who keep it.
+- Main trade-off: the Support ID now needs a directory row to resolve (the ledger keys on `hu_…`, so a code no longer
+  is a prefix of a ledger uid): a user who hasn't logged in since the directory's deploy has no resolvable Support ID
+  (D276's ledger-only fallback is gone). The 40 bits collide as before (every match listed).
+- Rejected: keeping `hu_…` as the partner id (D312's choice: two pseudonyms for one user at the partner); a Support ID
+  from `hu_…` beside a `u1_` User ID (a partner could not compute it from what it stores); a new key for the code.
+- Not changed: wallet derivation, paths and every address (the ids are computed from the root identity, beside it).
+  `IDENTITY_SUB_KEY` and `USER_ID_KEY` are never rotated (D127, D224): a new one would be new ids for every user.
+- Not built: the vault and popup don't show a Support ID yet (D276 planned it in `hana_status` and the popup's account
+  view, from the API's session answers); when built it must come from the API (`supportIdOf(sub)`), never be derived
+  anywhere else.
+- RPC change for C10: `PartnerUser.userId` is now `u1_…` (same key, new value); `ConsoleRpc.getUser({userId})` takes
+  `u1_…`; the page cursor is `lastSeenAt:u1_…`. `StaffUser` adds `internalId`; `AdminRpc.getUser` takes `{userId}` or
+  `{internalId}`.
 
 ## Batch C11: the files Worker and logos (branch `feat/batch-c-11`), 2026-11-04
 
@@ -4969,7 +5072,9 @@ Readings of `docs/batch-c-spec.md` "Partner sign-in" taken while building C9, ea
 decided while building, to confirm.
 
 ### D290. The console holds every Google token it verifies to the claim allow-list by scope; sign-in may add exactly email, email_verified, hd and at_hash
-- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-9`
+- Date 2026-11-04 · Status: confirmed by the user (2026-11-04: "accept both, go ahead with C10"; the sign-in token
+  stays `openid email`, every relayed or step-up token is held to the allow-list). `at_hash` moved into the allow-list
+  itself (D342), so sign-in's extras are now `email`, `email_verified` and `hd` · Built on `feat/batch-c-9`
   (`apps/console/src/auth-token.ts` `verifyConsoleToken`, `allowedClaims`; `apps/api/scripts/test/relayed-tokens.test.ts`
   "Google tokens the console verifies") · Source: D271, D274, D277, spec "Code flow" ("Email claims by scope")
 - Decision:
@@ -5072,7 +5177,8 @@ decided while building, to confirm.
   allow-list refuses `at_hash`, so every step-up and owner-action token from the code flow would be `token_has_pii`.
   Options then: add `at_hash` to `TOKEN_CLAIM_ALLOW_LIST` everywhere (core, the API, the console: it is a truncated hash
   of a short-lived access token, not personal data; recommended), or allow it only on the console audiences' paths.
-  Not changed now: D271's list moves only with the user's word and the spike's answer.
+  Not changed now: D271's list moves only with the user's word and the spike's answer. **Decided: D342** (the first
+  option, confirmed 2026-11-04 before the spike runs).
 - Rejected: a loopback redirect URI on the console client for the test (the client must keep exactly one redirect
   URI); a browser page like `spike-email.html` (the code exchange needs the client secret).
 
@@ -5107,6 +5213,203 @@ decided while building, to confirm.
   is left for C17 on sandbox-dev or staging, against real Google; the component tests (happy-dom) and the build check
   cover the SPA meanwhile.
 
+## Batch C10: partner management (branch `feat/batch-c-10`), 2026-11-04
+
+### D342. `at_hash` joins the claim allow-list everywhere (amends D271)
+- Date 2026-11-04 · Status: confirmed by the user (2026-11-04: "accept both, go ahead with C10", on D295's recommended
+  option) · Built on `feat/batch-c-10` (`packages/core/src/id-token.ts` `TOKEN_CLAIM_ALLOW_LIST`,
+  `apps/api/src/claims.ts` `ALLOWED_CLAIMS`, `apps/console/src/auth-token.ts` `TOKEN_CLAIM_ALLOW_LIST`,
+  `scripts/lib/console-code-flow.ts`; `apps/api/scripts/test/relayed-tokens.test.ts` keeps the three equal) · Amends
+  D271 (and D290's sign-in extras)
+- Decision: the allow-list is `iss azp aud sub iat exp nonce nbf jti auth_time at_hash` in core (the vault, the login
+  popup's callback, the smoke pages), the API (every route that relays a Google token, the step-up check) and the
+  console (both scopes). Sign-in's extras shrink to `email`, `email_verified`, `hd`. The console still checks an
+  `at_hash` against the access token of its own code exchange, now in both scopes (`at_hash_mismatch`); the API, which
+  never sees that access token, accepts the claim as listed.
+- Why: Google adds `at_hash` to every ID token issued alongside an access token (the server-side code flow the console
+  uses, D295's expected finding), so the console's step-up and owner-action tokens, which the API verifies again and
+  relays, would otherwise all be `token_has_pii`. It is the left half of SHA-256 over a short-lived access token: it
+  says nothing about the person and can't be reversed into the access token. One list everywhere is easier to keep
+  right than a second list for the console audiences (the rejected option).
+- Login paths: none depends on the old ten names being exact. The vault's and the API's checks only refuse claims
+  outside the list; Hana's own login requests (implicit `response_type=id_token`, `scope=openid`) carry no `at_hash`,
+  so their tokens are unchanged; the e2e Google stub's `OPENID_CLAIMS` is what the stub emits, not the list. A token
+  that does carry `at_hash` (an `id_token token` answer) now passes and puts that hash on chain, which is not personal
+  data. The contract ignores unknown claims either way.
+- Rejected: `at_hash` only on the console audiences' paths (two lists to keep in step, and the API's step-up check
+  would need the audience before the list); asking Google for an ID token without an access token (the code flow
+  always returns one).
+
+### D343. Freezing an org pauses its pending owner grants and invites; a paused grant is re-confirmed, not resumed
+- Date 2026-11-04 · Status: confirmed by the user (2026-11-04, on C7's review findings; the choice between a paused
+  clock and a re-confirmation was left to the build, which took re-confirmation as the safer) · Built on
+  `feat/batch-c-10` (`apps/console/src/members.ts` `freezeOrg`, `invites.ts` `pendingMemberNotices`,
+  `ackMemberNotice`, `cron.ts` `applyGrants`; tests in `apps/console/test/owners.test.ts` "a freeze pauses …") ·
+  Amends D241, D243
+- Gaps it closes (C7 review): a pending owner grant kept maturing while its org was frozen (ownership is a predicate on
+  `owner_from`, and the hourly cron recorded it); invites issued before a freeze were still announced during it and
+  became usable after an unfreeze.
+- Decision:
+  - **Grants.** In the freeze's own batch, every live grant still inside its wait or not yet announced loses its
+    notice and its clock (`notified_at`, `cancel_token_hash`, `owner_from` cleared), so it can't mature while frozen.
+    After the unfreeze it is listed by `pendingMemberNotices` again (an accepted owner invite's grant too) and, once
+    every send of the new notice is accepted, waits the **full** `ownerGrantDelayMs` from that ack. The emailed cancel
+    link stops working meanwhile (the grant can't mature, so nothing needs cancelling by link; owners and staff still
+    can) and works again after the new notice (the token is deterministic per grant). A grant whose `owner_from` had
+    already passed before the freeze had matured: its member stays an owner by predicate, and the cron records it only
+    once the org is active again (`applyGrants` skips frozen orgs).
+  - **Invites.** In the same batch every open, announced invite of the org loses its notice (`token_hash`,
+    `notified_at` cleared), so its link stops working at once; while frozen no invite of the org is listed or acked
+    (`not_pending`), and acceptance already required an active org. After the unfreeze each is announced again
+    (invitee, every owner, the contacts, the alias) before its link works; its 7 days keep counting from creation.
+- Why re-confirmation over a paused clock: a freeze is Hana's response to a suspected compromise or dispute, so what
+  was pending at the freeze may be what prompted it; a fresh notice to every owner, the contacts and the alias, and a
+  full wait after it, gives them the whole window again, and needs no stored "time already waited" (a paused clock
+  would need a new column and a resume rule, and would let a grant mature soon after an unfreeze nobody re-noticed).
+- Rejected: a paused clock (above); cancelling or revoking everything pending at a freeze (destroys legitimate
+  invites and grants for a freeze that turns out to be precautionary); leaving announced invites usable after an
+  unfreeze (nobody is told again that they are live).
+
+### D350. A client proof pasted into the console is held to the claim allow-list; the PII warning names what stays public
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10`
+  (`apps/console/src/auth-token.ts` `verifyClientProof`, `actions.ts` `buildOwnerAction`, `web/src/pages/Scope.tsx`) ·
+  Source: spec "On-chain owner actions" step 3; D274, D277
+- Decision: before an AddClient is built the console verifies the pasted proof (Google's JWKS, `iss`, `exp`, `aud` and
+  `azp` the client being added, the client-proof nonce at the scope's `action_nonce`) and refuses any claim outside the
+  claim allow-list (`invalid_client_proof`, the claim named), as the API's precheck will (D274). The spec's warning
+  ("it carries the staffer's email and name and becomes public on chain") can no longer be true: a proof with an email
+  or a name is refused. The warning says instead that the proof becomes public on NEAR with the Google account id
+  (`sub`) of whoever signed in for that client, and suggests a team account; the owner must tick it
+  (`piiWarningAccepted: true` is required by the server, not only the page).
+- Why: checking first stops a doomed sign-in and a doomed owner action; the warning has to describe what actually
+  becomes public.
+- Rejected: keeping the spec's wording (it would describe a proof Hana refuses); no warning (the `sub` is still public).
+
+### D351. The client-proof helper uses Google's implicit flow with `scope=openid`, not Google Identity Services
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10` (`apps/console/src/scopes.ts`
+  `helperHtml`, `helperRoute`) · Source: spec "On-chain owner actions" step 3 ("it loads GIS with that nonce")
+- Decision: the downloaded helper (a self-contained page, `Content-Disposition: attachment`, the client id, scope and
+  client-proof nonce at the scope's current `action_nonce` inside it) sends the browser to Google's authorization
+  endpoint with `response_type=id_token`, `scope=openid`, the nonce and `prompt=select_account`, the page's own address
+  as `redirect_uri`, and shows the returned token (after checking its `aud`, nonce and claim names) to copy. The partner
+  registers the page's address as a redirect URI of their client while they use it.
+- Why: GIS ID tokens always carry `email`, `email_verified` and a name, which D274 refuses on chain; the implicit flow
+  with `scope=openid` is the only browser-only way to an openid-only token (the vault does the same). The proof is good
+  only until the scope's next owner action (the nonce moves), which the page says.
+- Rejected: GIS (every proof refused); the console serving the page (the spec: the proof must come from the client's
+  own origin, and the console never serves it).
+
+### D352. The policy editor's consent preview is packages/web's own renderer, fed by a console check route
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10`
+  (`apps/console/web/src/pages/Consent.tsx`, `src/policy.ts` `policyCheckRoute`, `writes.ts`) · Source: spec "Policy and
+  raw-signing input rules" ("the editor shows the consent screen as users will see it (`render-consent.ts`, …)")
+- Decision: the SPA imports `packages/web/src/auth/render-consent.ts` and `dom.ts` by relative path (no new package
+  export; the SDK's tarballs are unchanged) and mounts the DOM it builds (text nodes only) in a container. The policy it
+  shows is the one the console validated: `POST /api/orgs/:org/apps/:app/policy/check {policy}` (owner, writes nothing,
+  not in the spec's route table) runs `@hana-id/core/policy`'s validator at the app's session TTL and answers the
+  canonical policy, its `policyId` and label, or `policy_invalid` with the problems. `policy.set` validates again
+  before the sign-in and the API a third time.
+- Why: a copy of the consent screen would drift from what users see; the validator stays out of the SPA's bundle.
+- Rejected: a React copy of the consent screen; validating only in the browser (the vault's validator would ship in the
+  console bundle and the server would still have to check).
+
+### D353. Owner drift's SetOwners is built by the server from the org's owners and keeps the scope's NEAR owners
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10` (`apps/console/src/scopes.ts`
+  `scopeAnswer`, `actions.ts` `buildOwnerAction`) · Source: spec "Apps, scopes and client mode" → "Owner drift"; D296
+- Decision: the scope page compares the org's usable owners (role or matured grant, not disabled) with the scope's
+  on-chain `Oidc` owners and lists who is missing on chain, who is on chain but not an owner in the console, and how many
+  on-chain owners aren't members (no `sub` is ever answered). `SetOwners` takes no owner list from the browser: the
+  server sets the scope's `Near` owners plus `Oidc{google, sub}` of each org owner (at most 5, the contract's limit).
+  Every other owner action and the pending changes are decoded the same way (members by address, "a Google account
+  that isn't a member" otherwise).
+- Why: partners never see or type `sub`s (D296), and a list typed in the browser could add a stranger; keeping `Near`
+  owners avoids a drift fix silently removing an operator account.
+- Rejected: a free-form owner list; dropping `Near` owners.
+
+### D354. A fresh sign-in's action is used once whatever the outcome; where each refusal lands
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10` (`apps/console/src/actions.ts`,
+  `auth-flow.ts` `callback`, `web/src/pages/Action.tsx`) · Source: spec "Fresh sign-in", "On-chain owner actions" step 5
+- Decision:
+  - Every step-up action has a page, `/actions/:id`, that shows the decoded action (what will be applied), the "Confirm
+    with Google" button while it is pending, and its outcome (`GET /api/actions/:id`, the action's user only; any of
+    their sessions may read it, only the creating session may start it).
+  - A token the callback refuses (signature, nonce, `iat`, a claim outside the allow-list, a wrong `at_hash`) gets the
+    static 400 page, like a sign-in, and the action stays pending until it expires. After the token verified, every
+    refusal consumes the action and is stored as its outcome and audited (`step_up.failed`): `sub_mismatch`,
+    `step_up_expired`, `session_ended` (revoked or expired between creation and callback), `forbidden` (no longer an
+    owner of an active org).
+  - API kinds consume the action before the RPC (so the token goes out once) and store the RPC's answer, success or
+    refusal (`version_conflict`, `not_owner`, `token_used`, …). Console-only kinds consume it in the change's own batch;
+    a change already in force (a no-op) consumes it with `noChange`.
+  - Owner actions: the callback re-reads `get_scope`; a moved `action_nonce` fails the action (`nonce_moved`) without
+    calling the API. The spec's "staff relay runbook" (showing the owner the signed body to send Hana when a safety call
+    is `rate_limited`) is not built: the token is used in the callback and never stored, so the console has no signed
+    body to show afterwards; the page tells the owner to contact Hana security, who can act through a staff proposal or
+    `owner:relay` with a new token (to confirm).
+- Why: one use per action and per token, whatever happens, is the simplest invariant to keep right; a refused token says
+  nothing about the action, so it doesn't spend it.
+- Rejected: letting a failed action be retried with a new sign-in (a second token for the same digest); storing the
+  token for a later relay.
+
+### D355. An owner sets `required_hd` only to their own session's Workspace domain
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10` (`apps/console/src/members.ts`
+  `setOrgPolicy`) · Source: spec "Roles and permissions" (Org `required_hd`: owner, fresh sign-in)
+- Decision: `org.policy` refuses a domain other than the acting session's `hd` (`conflict`, before the sign-in and again
+  in the batch); null (no requirement) is always allowed. The change, the action's consumption and the `org.policy`
+  audit row (`requiredHd`, the org's own domain) are one batch, which also revokes the sessions of members whose
+  session domain doesn't match when this was their only active org.
+- Why: setting another domain would lock the owner (and possibly every owner) out at their next request, leaving the
+  org to Hana staff.
+- Rejected: allowing any domain with a warning.
+
+### D356. The role matrix as built: frozen orgs keep exactly the cancels and the kill switches
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10` (`apps/console/src/writes.ts`
+  `ROUTES`, `runOrgRoute`; `test/writes.test.ts` "the role matrix") · Source: spec "Roles and permissions", "Console BFF
+  routes"
+- Decision: every signed-in write route declares its role (`owner`) and whether a frozen org allows it. Open while
+  frozen: removing an origin, turning the policy or raw signing off, suspending, revoking a key, cancelling a guarded
+  change, revoking an invite and cancelling an owner grant; refused (`403 org_frozen`): every step-up, rotating or
+  creating a key, renaming, the logo, the policy check and `execute_change` (applying a change, not stopping one). A
+  viewer, a pending owner included, is `403 forbidden` on every owner route; a member of another org, or a session whose
+  domain doesn't match `required_hd`, is `404`. `member.role` and `member.remove` act only on existing members (an owner
+  adds people by invite; staff's `setMember` still adds). Every ConsoleRpc write writes an outcome audit row after the
+  RPC returns, like the logo (C11).
+- Why: a freeze stops changes but must never stop an owner turning something off; a test lists every route so a new one
+  has to choose.
+- Rejected: allowing `execute_change` in a frozen org (it makes a pending change take effect).
+
+### D357. The partner Users screen ships behind `USERS_SCREEN` (off until an env's API runs D346)
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10` (`apps/console/src/users.ts`,
+  `web/src/pages/Users.tsx`, `/api/me` `features.users`) · Source: D310, D346; the build brief ("if the wallet directory
+  hasn't landed, build it against a typed client stub, behind a feature flag that's off")
+- Decision: `GET /api/orgs/:org/users` and `/users/:userId` (viewer) call `ConsoleRpc.listUsers` / `getUser` as
+  `feat/wallet-directory` defines them, with D346's fields from `feat/user-id-identity-sub` (`userId` = the identity
+  token's `sub`, `u1_…`; `supportId` its short form; the internal `hu_…` id never shown). Both merged into `develop`
+  while C10 was built: the screen was first built against a typed stub, then switched to console-core's types
+  (`PartnerUser`, `ConsoleListUsersInput`, `USER_ID_RE`). The routes are `404` and the tab hidden unless the console var
+  `USERS_SCREEN = "1"`: a console with the flag on in front of an API without D346 would get `hu_…` ids, which the
+  allowlist drops, so turn it on per env only after that env's API is deployed with D346. Every row is rebuilt field by field (User ID, Support ID, scope, times, account
+  kinds, wallet addresses of each chain's form), and a malformed row is dropped and logged, so no email, `sub`, identity
+  or directory key can reach a partner whatever the API sends (tested by data shape).
+- Setup: per env, after the API with D346 is deployed, set `USERS_SCREEN = "1"` on the console and redeploy it.
+- Rejected: shipping the screen on with a mock answer; waiting for the wallet directory before building it.
+
+### D358. Routes and checks the spec doesn't list
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10`
+- Decision:
+  - `POST /api/orgs/:org/apps/:app/logo/remove {expectedVersion}` (C11's `logoRemoveRoute`), `POST …/policy/check`
+    (D352), and the SPA pages `/actions/:id`, `/orgs/:org/scopes/:scope`, `/orgs/:org/users`.
+  - The console gets the API's origin rules (`NETWORK`, `REFUSED_ORIGINS`, written by `gen` from the manifest) and
+    checks an origin add before the sign-in; the API checks it again.
+  - `/api/me` answers `features: {users}`.
+  - C12's report backend (`usage`, `statements`, the statement files, the ledger CSV) and C14's
+    `/api/orgs/:org/governance/pending-upgrades`, both merged while C10 was built, are routed by `writes.ts` for any
+    member (frozen orgs included: they are reads); their SPA screens are left for a follow-up. The brief's "stays for
+    C14" is read as "C14 owns the backend": the route itself had to come from C10's session router.
+  - Tests: the test API Worker's outbound fetches go to a fake upstream (`test/fake-upstream.js`: hana-signer's views and
+    Google's JWKS from a test D1), so the API verifies step-up and owner tokens for real; the relay itself isn't
+    exercised (the test API has no owner-pool key: C17's smoke covers it).
+- Why: each closes a gap the spec leaves (a removal control, a preview, a page to confirm on).
 ## Batch C14: Security & monitoring and the pending-upgrades page (branch `feat/batch-c-14`), 2026-11-04
 
 Readings of `docs/governance-spec.md` "Monitoring in the admin portal", `docs/batch-c-spec.md` "Hana admin console"
@@ -5532,7 +5835,7 @@ changes a derivation path or an address. Every one is **decided while building, 
 
 ### D361. The erasure path: one script, `scripts/uid-erase.ts`, per scope, across the ledger and both directories
 - Date 2026-11-04 · Status: decided while building, to confirm · Built: `scripts/uid-erase.ts`,
-  `scripts/lib/uid-erase.ts`, console-core `uidOfUserId`; `scripts/test/uid-erase.test.ts` · Source: spec "CLI"
+  `scripts/lib/uid-erase.ts`, console-core `uidOfInternalId`; `scripts/test/uid-erase.test.ts` · Source: spec "CLI"
   (`uid:erase --scope --provider --sub`, the proposed `user:erase --provider --sub`), D269, D275, D276 (its open
   "whether `user:erase` lands here or with C13"), D310
 - Decision:
@@ -5542,9 +5845,9 @@ changes a derivation path or an address. Every one is **decided while building, 
   - **The unit is the account in one scope**, read from the chain (the source of truth): `get_identity` of the named
     identity, its root's `get_identity`, the root's `get_account` (members by key). A failed or malformed read stops it;
     the root is never guessed.
-  - **The uids**: the root's (the account's user id, D312) and each known identity's own (a member's events from before
+  - **The uids**: the root's (the account's internal id `hu_…`, D312, D346) and each known identity's own (a member's events from before
     it was linked carry its own uid), known = the named identity, the root and the members the wallet directory has a
-    sub for; plus the uid of every wallet-directory user those identity keys point to (`uidOfUserId`). USER_ID_KEY
+    sub for; plus the uid of every wallet-directory user those identity keys point to (`uidOfInternalId`). USER_ID_KEY
     from `.secrets/<env>/user-id-key`, zeroed after use, never printed.
   - **The stores**: the ledger through `usage.erase_uid` as `usage_admin` (`.secrets/<env>/neon-usage-admin.url`); the
     wallet directory (the API's D1) through **a reviewed script, not AdminRpc**, with lib/d1.ts's private executor (D1's
@@ -5552,7 +5855,8 @@ changes a derivation path or an address. Every one is **decided while building, 
     CLI pattern as `user:*`. In the wallet directory: the users with their wallets and identities, and any identity row
     of the account's keys in the scope. In the issuer: the identities' `user_email_apps` rows of the scope, then each
     identity's `user_emails` row once it has no app row left in any scope.
-  - **Dry run by default** (the plan with counts per store, the user ids and Support IDs, and the other scopes the
+  - **Dry run by default** (the plan with counts per store, the internal ids with the User ID and Support ID of each
+    wallet-directory row, and the other scopes the
     account's identities are seen in: an erasure is per scope, run again for each). `--yes` erases, **re-counts** (any
     row left fails the command, nothing recorded; every step is idempotent, so it is simply run again) and records the
     erasure in `ops.erasures`: ticket, operator (`cli:<login>`), scope and counts, **never a uid, a sub or an address**.
@@ -5693,12 +5997,101 @@ changes a derivation path or an address. Every one is **decided while building, 
     and a person who needs it sooner fixes the cause of a failure.
 - Why: unbounded lists and single statements over a month of uids don't fit a Worker's limits.
 
+## The partner console's report, statement and pending-upgrades screens (branch `feat/console-reports-upgrades`), 2026-11-04
+
+The SPA screens over C12's report backend and C14's pending-upgrades route, both routed by C10 (D358) and left for a
+follow-up there.
+
+### D370. Three tabs for any member: Usage, Statements, Pending upgrades; reads only, frozen orgs included
+- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/console-reports-upgrades`
+  (`apps/console/web/src/pages/{Usage,Statements,Upgrades}.tsx`, `App.tsx`, `Shell.tsx`) · Source: spec "Roles and
+  permissions" ("View … usage, statements": owner and viewer), D86 Q11, D335, D356
+- Decision: the org shell gets the tabs Usage (`/orgs/:org/usage`), Statements (`/orgs/:org/statements`, one statement
+  at `/orgs/:org/statements/:month`) and Pending upgrades (`/orgs/:org/upgrades`), shown to every member (owner, viewer,
+  a pending owner) of an active or a frozen org, as the server's routes allow (`role: 'viewer'`, `frozenOk: true`). The
+  screens have no write control, so there is no owner gate and nothing for a freeze to hide; a frozen org shows them
+  under the shell's frozen note. The tab doesn't fetch the pending-upgrades view to badge itself (each read costs 2 in
+  the org's hot-DB budget, D335).
+- Rejected: hiding statements from viewers (the spec gives viewers usage and statements); a pending-upgrades badge on
+  every org page.
+
+### D371. A statement's issuer is shown to partners as `hana`, never the staff address
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/console/src/reports.ts` (`listItem`),
+  `test/reports.test.ts` · Source: D296 ("an actor … that isn't a `usr_…` id is `hana`")
+- Decision: C12's console backend passed `issuedBy` (the staff member's address the admin Worker records) through to
+  the statement list and the on-screen statement. Statements are only issued by staff, so the console's answers now say
+  `issuedBy: "hana"`, and the SPA shows "by Hana" without reading the field. Neon's `usage.statements.issued_by` and the
+  admin console keep the address.
+- Why: D296's rule for every partner view; a partner had no need for it.
+- Rejected: dropping the field (StatementMeta's shape is the spec's).
+
+### D372. Downloads are plain links to the console's routes; the hashes beside them; the ledger at the statement's as_of
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `web/src/pages/Statements.tsx` · Source: spec
+  "Monthly statements" ("partners download the same files read-only … with the sha256 beside them"), "Ledger CSV", D92,
+  D326
+- Decision:
+  - The statement CSV and PDF and the ledger CSV are `<a href download>` links to `/api/orgs/:org/statements/:month.csv`,
+    `.pdf` and `/ledger/:month.csv`: the browser follows them with the `SameSite=Strict` session cookie (a same-origin
+    GET, no CSRF header needed) and saves what the Worker sends. The SPA never fetches a file, builds a blob or computes
+    a hash, so what is saved is exactly what the Worker checked against Neon's sha256.
+  - The CSV's sha256 (the statement hash) and the PDF's are printed beside the links with the `shasum -a 256` check.
+    The PDF link appears only when the statement has a PDF.
+  - The ledger CSV of a month with a statement is linked at that statement's `asOf` (`?asOf=`), so its final gas sums
+    to the statement's Tgas and NEAR (spec "Ledger CSV"); any other month's is as of now. The page says what an
+    `# incomplete` last line means.
+  - A refused download (a session that ended, a missing or tampered file) shows as a failed download in the browser,
+    or in some browsers saves the error's JSON under the file's name; the page can't show the error without fetching
+    the file itself. Accepted: the routes refuse only on faults, and reloading the page shows the session state.
+- Rejected: fetching the file and saving a blob (the browser would build the file; it also needs the whole ledger in
+  memory); a check request before each download (one more read of the rate-limited RPC per click).
+
+### D373. The usage screen shows the server's rows as they are: every statement count, exact NEAR and USD, no totals added
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `web/src/pages/Usage.tsx`, `web/src/units.ts`
+  · Source: spec "Reports", D324, D297
+- Decision:
+  - The form: from, to (UTC days, this UTC month by day by default), by day or month, and an app filter (the org's apps
+    as checkboxes; none ticked = every app and the owner-action rows; ticking any leaves the owner actions out, D324,
+    and the page says so). A start after the end isn't sent; the 400-day and 100-app limits are the server's and its
+    refusal is shown.
+  - The table has a column for each count the statement CSV has (logins, derives, revokes, unlocks, owner actions,
+    link actions, identity tokens, active users, new users, failures by code), then Tgas with its relayed-then-rejected
+    and error parts, NEAR and USD with their relayed-then-rejected parts, p50 / p95 latencies and unsettled events.
+    "After the statement" (late events) is a column only when a row has one.
+  - NEAR and USD are formatted from `burntYocto` and `usdMicros` with the SPA's own copy of console-core's
+    `formatUnits` (the SPA imports only types from console-core, D297); a test checks the two agree. A period without
+    a NEAR/USD rate shows "—", not 0.
+  - The page adds nothing up: active users can't be summed, and the monthly statement is the billing total.
+  - Aggregates only: no row has a user field, so no end user is named.
+- Rejected: a totals row computed in the browser (it could disagree with the statement).
+
+### D374. Pending upgrades: countdowns on the reader's clock without a reload; "not a published release" as an alert
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `web/src/pages/Upgrades.tsx`, `web/src/lib.tsx`
+  (`useNow`, `countdown`) · Source: D86 Q11, D333, governance-spec "Alerts"
+- Decision:
+  - The page shows the signer and env, when the chain was read, the governance delay, the pause state (an alert), and
+    each pending item: the upgrade (code hash, proposed, takes effect), an owner transfer, a withdrawal (exact NEAR from
+    yocto), shorter delays (now → becomes) and new console audiences. With a published release: its version, source
+    commit, reproducible-build command and the diff command to the release before it ("the first published release"
+    when there is none). Without one: **Not a published release** as an alert, telling partners to treat the upgrade as
+    unexplained and ask Hana.
+  - Countdowns are `atMs − now` on the reader's clock, re-rendered every 30 s; the view itself is read once (a "read
+    the chain again" button, and "Try again" after an error such as `503 near_unavailable`). An item past its time, or
+    one the view marks `due`, says it can be executed or accepted now.
+  - Everything shown is contract-wide and public on chain; the page carries nothing of the org or its users.
+- Why: a countdown that only moves on reload misleads; re-reading the chain every 30 s would spend the org's budget for
+  no new information (the timelocks don't move).
+- Rejected: polling the route; showing the raw yoctoNEAR amount only.
+
 ## Superseded or amended
 
 | Was | Now | Source |
 |---|---|---|
 | `usage.erase_uid(app_ids text[], uid bytea)` (spec "Usage ledger" functions) | `usage.erase_uid(uid bytea)`: by uid alone, in any app (D362); the uid indexes C15 planned are in 0007 | `apps/api/migrations-usage/0007_retention.sql` |
 | `uid:erase` (ledger only) and the proposed `user:erase` (issuer only), separately (spec "CLI", D276) | One script, `uid-erase`, per scope across the ledger, the wallet directory and the issuer directory (D361) | `scripts/lib/uid-erase.ts` |
+| The client-proof helper loads Google Identity Services; the console warns the proof carries the staffer's email and name (spec "On-chain owner actions" step 3) | Google's implicit flow with `scope=openid`; a proof with an email or a name is refused, and the warning names the account id that stays public (D350, D351) | `apps/console/src/scopes.ts`, `auth-token.ts` |
+| The claim allow-list is the ten names of the 2026-10-28 spike (D271) | The same plus `at_hash` (D342) | `packages/core/src/id-token.ts`, `apps/api/src/claims.ts`, `apps/console/src/auth-token.ts` |
+| The wallet directory's user id shown to partners is `hu_…` (the ledger's uid) and the Support ID its first 8 characters (D312, D276) | The User ID is the identity token's `sub` (`u1_…`); the Support ID is Crockford base32 of its first 5 bytes; `hu_…` is the internal id, staff only (D346) | `packages/console-core/src/users.ts`; `apps/api/src/directory/` |
+| `POST /v1/wallets/record` needs no session-key signature (D313) | It needs the session key's signature over the whole record (D311, D313 amended: a security review finding) | `packages/core/src/wallet-record.ts`; `apps/api/src/directory/record.ts` |
 | The admin feed's cursors start at 0, so its first runs email the whole history (D281) | A cursor with no row starts at the source's current position, read silently; only later rows are emailed (D344) | `apps/admin/src/feed.ts` |
 | The console's hourly purge deletes a replaced logo's R2 object, then its row (D244) | Its row first (only while still marked), then the object; the rows come back if the delete fails (D301) | `apps/console/src/cron.ts` `purgeLogos` |
 | Local git only, branch `develop`, no remotes (batch A) | Remote `Hana-Technology/hana-id`; feature branches, PRs into `develop`, `main` for releases | `docs/batch-a-spec.md`; CLAUDE.md |
@@ -5749,6 +6142,7 @@ changes a derivation path or an address. Every one is **decided while building, 
 | google-match revokes Google's access token (D195, D254; the interactive email consent "the first time only") | Never revoked: revocation ends the whole grant, so the consent came back every login (D265) | batch 8b review |
 | A path through `get_identity` on the vault's RPC alone (batch 7) | A non-own path confirmed on `rpc` and `rpcFallback` separately; root pins (D263) | batch 8b review |
 | D255: no access token (declined) → `email_match_unavailable` | Declined or another account: the popup's consent screen, `email_consent_declined` / `google_account_mismatch` (D264) | batch 8b review |
+| D264, D270, D273: cancelling token_first's Google screen ends the login, `google_error` (`data.error: 'access_denied'`) | The popup goes back to Hana's method chooser (or case B's choices) and the login goes on; closing it there is `login_cancelled`; `google_error` only for Google's real failures (D341) | `packages/web/src/auth/callback-page.ts`, `auth/email-page.ts` |
 | The API's D1 holds no `sub`, address or user id (only `sha256(path)`, `docs/architecture.md` "Data stores") | The wallet directory (hot-DB migration 0011): each user's uid-based id, the account's identities with their subs, and the wallets its logins reported (D310, D312–D314) | `docs/architecture.md` "Data stores" |
 | Hana stores no end-user email address; the Google email is handled transiently, only its HMAC kept (D25 and D96 amended, D119, D230); the screens say "it isn't kept" (D264) | The issuer keeps each identity's verified address in its own D1 (`user_emails`, `user_email_apps`), for Hana staff only (`admin user:list` / `user:find`); partners never see it; the screens say Hana keeps it with the account and doesn't share it with the app (D269) | conversation 2026-11-04 |
 
@@ -5924,6 +6318,15 @@ over D269's directory) and D276 (the Support ID made consistent with D269), belo
 - Amends in text only: D96's "it reveals no email or Google account" now holds for partners; staff reach the
   directory (D269). `docs/email-login-spec.md` ("Support ID lookups show … never a `sub` or address") and
   `docs/hana-home-spec.md` "Support ID" still say otherwise. They are to be aligned once this is confirmed.
+- **Amended 2026-11-04 by D346 (confirmed by the user): the code's derivation.** The code is now the Crockford base32
+  of the first 5 bytes of the identity token's `sub` HMAC (`IDENTITY_SUB_KEY`, the 16 bytes `u1_…` encodes), no
+  longer of the uid: alternative (b) above, taken so the partner's one id (the `sub`) and its Support ID are the same
+  user's, and a partner can compute the code from the `sub` it stores. The format `HANA-XXXX-XXXX` is unchanged.
+  Code → user is `end_users.support_code` in the hot DB (D312, built), then `end_users.user_id` (the uid, `hu_…`) for
+  the ledger; the issuer's `uid` column and `IssuerRpc.uid` above are no longer needed for it, and the ledger-only
+  fallback (a uid prefix) is gone: a user with no directory row since the deploy has no resolvable code.
+  "Where it is shown" still stands as planned and is not built: neither `/v1/login`, `/v1/sessions`, `hana_status`
+  nor the popup carries a Support ID yet.
 
 ## Dev env email limits, 2026-11-04
 
@@ -5963,3 +6366,113 @@ over D269's directory) and D276 (the Support ID made consistent with D269), belo
 - Amended 2026-11-04 (same day, `fix/dev-ticket-limits`): a ticketed start (a device that signed in before) never
   falls back to the code limits, so its own allowance (production 3 a day per address, 9 per mailbox) blocked the
   user's testing first; dev envs raise it to 100 and 300. Production unchanged.
+
+## A cancel on Google's sign-in screen (branch `fix/google-cancel-back-to-chooser`), 2026-11-04
+
+### D341. Cancelling Google's sign-in screen goes back to Hana's method chooser; closing the popup there is `login_cancelled`
+- Date 2026-11-04 · Status: confirmed by the user (2026-11-04: "yes" to "the popup goes back to Hana's method chooser
+  … the partner app gets `login_cancelled`, … `google_error` stays for real Google failures") · Built on
+  `fix/google-cancel-back-to-chooser` (`packages/web/src/auth/callback-page.ts` `goBack`, `toSlot`;
+  `auth/email-page.ts` `showChooser`, `restartGoogle`, `chooseEmail`, `onPageHide`; `auth/login-storage.ts`
+  `slot`, `back`, `offer`, `cancelled`; `auth/login-page.ts` (the record-only login's email context);
+  `vault/login.ts` `readRelay`; `auth/google.ts` `GOOGLE_CANCEL`, `GOOGLE_CANCELLED_RELAY_ERROR`) · Source: the user's
+  report (Cancel on Google's screen showed "Sign-in stopped … Code: google_error" at `/login/email#…`) · Amends D264,
+  D270 and D273 (a cancel ended the Google login with `google_error`, `access_denied`)
+- Decision:
+  - Under token_first, when Google answers `error=access_denied` to the login's first request (from the chooser, from
+    `/login` directly, or from case B's Google step on `/login/email`) or to D273's interactive retry, the callback
+    relays nothing. The vault's wait goes on under the login's own 5-minute limit (`LOGIN_PENDING_MS`). The popup goes
+    back to the screen the Google step came from, on `/login/email#<relayId>`: Hana's method chooser with the line
+    "Google sign-in was cancelled." and the app's methods (Continue with Google; Continue with email when the app
+    offers it: a Google-only app's chooser has Google only), or case B's own choices (Link and continue when the
+    issuer offered it, Sign in with Google, Cancel) with the same line.
+  - Google again is a fresh attempt: a new random OAuth `state` whose login entry names the login's relay slot
+    (`slot`), with the login's nonce and the same binding checks; the ID leg reuses that attempt's state. The cancelled
+    attempt's state never finds an entry again. Between the two, the login's keys are parked under the slot
+    (`cancelled`, never usable by a Google answer: refused as an expired sign-in) and the email page takes them into
+    memory on load. Case B's Google step always uses such a fresh state under token_first. After a cancelled D273
+    retry, Google again is that retry once more (the same account, `login_hint`, no chooser): slot 1 already holds
+    that account's access token and a relay slot takes one write.
+  - Email from the chooser is the email step in place (the login's entry back under its slot).
+  - Closing the popup on that screen (`pagehide` when the page didn't navigate on itself) writes `{error:
+    'google_cancelled'}`, encrypted when the screen was shown and sent with `keepalive`, to the login's slot; the vault
+    ends the login with `login_cancelled` (only in a login with the follow-up key, the token_first ones). The keys are
+    zeroed and the email context dropped, so a reload shows an expired sign-in. Case B's Cancel there relays
+    `email_cancelled` as before (`login_cancelled`).
+  - `google_error` stays for Google's real failures: any other error code, `invalid_response`, the tokeninfo stops,
+    `google_account_mismatch`, a second failure of the D273 retry, the silent ID request's errors (no screen was
+    shown). A cancel is still relayed as `access_denied` (`google_error`) where there is no screen to go back to: no
+    email context stored, a login without the follow-up key (an env without an email issuer, batch B's request), and
+    the record-only fallback's openid request when tokeninfo couldn't answer.
+- Why: the user cancelling Google's screen is a choice, not a failure. Ending the login with a stop screen and a
+  code made them start again from the app; Hana's own chooser lets them pick again in the same window. A partner's
+  "cancelled" handling is `login_cancelled`, the code a close or `cancelLogin()` already gives.
+- Main trade-off: the close relies on `pagehide` (every desktop browser fires it on close, and the e2e checks it in
+  Chromium, Firefox and WebKit); where it doesn't fire (a crashed or killed browser, some mobile cases) the partner
+  gets the login's `login_timeout` after 5 minutes, as before for any abandoned popup.
+- Alternatives: (a) relay the cancel and let the vault end the login with `login_cancelled` at once: the user loses
+  the chance to pick again in the window. Not recommended. (b) Reuse the login's slot as the OAuth `state` for every
+  attempt: simpler, but a cancelled attempt's state would find an entry again. Not recommended. (c) A Cancel button
+  on the chooser: not asked; the original chooser has none and closing the window is the way out. Not done.
+- The login's limit still applies: the screen stops at the email step's deadline (`EMAIL_STEP_LIMIT_MS`, 15 s before
+  the vault's), and Google or email picked after it starts nothing. Once the vault has ended the login (its limit, a
+  newer login, `cancelLogin()`), its reads of the slot have stopped (`fix/abandoned-login-freeze`'s abort-aware
+  `readSlot`), so a late `google_cancelled` lands in a slot nobody reads.
+- Not changed then: closing the popup at other points (the email step, Google's own page, the follow-up screens) left
+  the vault waiting until its limit (`login_timeout`, `data.stage: 'pending'`). Amended the same day by D347 (any close
+  while the login waits on the popup is `login_cancelled`) and D348 (a `method: 'google'` login comes back to Google
+  only).
+
+### D347. Closing the login popup at any point ends the login within seconds with `login_cancelled`
+- Date 2026-11-04 · Status: confirmed by the user (2026-11-04, "yes") · Built on `fix/google-cancel-back-to-chooser`
+  (`packages/web/src/vault/login.ts` `PopupTask.watchPopup`, `popupWait`, `POPUP_WATCH`; `vault/vault.ts`;
+  `auth/callback-page.ts` `signalVault`; `auth/login-page.ts`, `auth/email-page.ts` `tellVault`; core `hana:auth-progress`
+  stages `relayed` and `back`) · Amends D341 ("closing the popup at other points still leaves the vault waiting") and
+  the partner guide's "An unfinished login" (a closed popup was `login_timeout` after 5 minutes)
+- The signal: the vault's own handle on the popup window (the hello's `event.source`, partner and vault mode alike),
+  read every 250 ms. It stays valid across the popup's navigations because Hana's auth pages send no
+  Cross-Origin-Opener-Policy and Google's sign-in pages send it report-only (checked with `curl` on 2026-11-04 for the
+  authorization endpoint, the identifier and account-chooser pages: `cross-origin-opener-policy-report-only:
+  same-origin`; only Google's OAuth error page enforces `same-origin`). `pagehide` alone can't be the signal (it fires
+  on every navigation, and no Hana code runs on Google's page); the SDK's handle isn't used after the popup connected,
+  as before.
+- Decision:
+  - The popup tells the vault what the handle can't: every Hana page posts `hana:auth-progress` `google` before it
+    navigates to Google; the callback posts `back` as it loads (it still has its opener, so that trip switched no
+    browsing context group); a page that closes itself after relaying (the callback, the email step) posts `relayed`
+    first. The callback doesn't know the vault frame's name, so it posts to the opener and each of its frames with
+    `vaultOrigin` as the target origin; the vault takes the signal only from the popup it answered.
+  - A close while the login waits on the popup (its first slot, a follow-up screen's answer, a link task's slots) ends
+    it after a 1 s grace with `login_cancelled`, `data.reason: 'popup_closed'`: the login aborts (the freeze fix's
+    abort-aware relay reads stop), its keys are dropped, and a later write to its slots is never read. The grace lets
+    an answer the popup wrote just before it closed itself win even if `relayed` was lost.
+  - A close while the vault works alone (google-match, the chain) lets the login finish; a later wait on the popup
+    then ends at once.
+  - A close within 8 s of a `google` signal, before `back`, is taken for an IdP's COOP switching the popup's browsing
+    context group (the opener's handle then reads closed while the window is open: the spec makes the two
+    indistinguishable). The watch stops for the rest of that login, which falls back to its 5-minute limit and to
+    D341's own close report on the screen after a cancel.
+- Why: Privy-like behaviour; a closed popup is the user's cancel, and a partner waiting 5 minutes for `login_timeout`
+  can't tell the user anything meanwhile.
+- Main trade-off: a user who closes the popup within 8 s of reaching Google's page gets the 5-minute
+  `login_timeout`, not `login_cancelled`. The alternative is a false cancel of every login if Google starts enforcing
+  COOP on its sign-in pages (it reports violations today). If Google switches to an enforcing policy on a later page
+  (after the 8 s), a login would be cancelled while the user is still at Google: the watch's assumption to recheck
+  (`curl -sI` on the authorization URL) before each release.
+- Alternatives: (a) the SDK polling its own handle after connect: the same handle semantics, with one more hop. Not
+  done. (b) The popup reporting its own close on every page (`pagehide` with a pre-encrypted relay write, as D341's
+  screen does): it can't cover Google's page, and slot writes are single use. Kept only for D341's screen. (c) A
+  heartbeat through the API: no Hana code runs on Google's page either. Not recommended.
+
+### D348. After a cancel, a login the partner restricted to Google comes back to Google only
+- Date 2026-11-04 · Status: confirmed by the user (2026-11-04, "yes") · Built on `fix/google-cancel-back-to-chooser`
+  (`packages/web/src/auth/email-storage.ts` `EmailContext.method`, `auth/login-page.ts`, `auth/email-page.ts`
+  `showChooser`) · Amends D341 (its chooser offered the app's methods whatever the partner asked)
+- Decision: `/login` keeps the method the partner named (`hana.login({method})`) in the email context. When a login
+  started with `method: 'google'` is cancelled on Google's screen, the screen it goes back to offers **Continue with
+  Google** only, even in an app with email login; **Continue with email** appears only when the partner didn't
+  restrict the method. Closing the popup there is `login_cancelled` as before.
+- Why: a partner that names Google has its own sign-in choices (often a separate email button); offering email in
+  Hana's popup would override that choice.
+- Alternatives: (a) the app's full chooser (D341 as built): it ignores the partner's `method`. Not recommended.
+

@@ -135,10 +135,12 @@ sends `login_hint=<sub>` so Google preselects the same account.
 ## Support ID (D96)
 
 Home and the Hana popups show the user's **Support ID** for the app in view: a short code derived from that app's
-hashed user id (HMAC with a Hana secret, the same derivation the usage ledger uses), e.g. `HANA-7F3K-92QD`. It is
-included in "Copy diagnostics". Staff look it up in the admin portal (batch C) to see that user's sessions, logins,
-errors and consents. It reveals no email or Google account and can't be reversed without Hana's secret. Hana never
-contacts end users; partners escalate with the Support ID and request IDs.
+hashed user id (HMAC with a Hana secret), e.g. `HANA-7F3K-92QD`. Since D346 (2026-11-04) it is the short form of the
+user's partner User ID, the identity token's `sub` for that app's scope: Crockford base32 of the first 5 bytes of the
+`sub`'s HMAC (`IDENTITY_SUB_KEY`), not of the usage ledger's uid. It is included in "Copy diagnostics". Staff look it up
+in the admin portal (batch C) to see that user's sessions, logins, errors and consents. It reveals no email or Google
+account and can't be reversed without Hana's secret. Hana never contacts end users; partners escalate with the Support
+ID and request IDs.
 
 ## Discovery: finding a user's apps
 

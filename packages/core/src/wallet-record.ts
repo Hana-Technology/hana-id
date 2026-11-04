@@ -42,15 +42,40 @@
 //   "hana-id/identity-wallet/v1", the approval digest "hana-id/approve/v1"), and the 0x00 after it ends the domain, so
 //   no other Hana message is a record statement or the other way round.
 //
+// The session signature (D311 as amended 2026-11-04, a security review finding). The chain-key proofs alone don't tie
+// an address to the path: the API can't derive addresses, and a session public key is public (`get_session`), so
+// anyone could sign a statement with their own Stellar or EVM key naming a victim's live session and path, and the
+// address would be listed as the victim's wallet. So the whole request is also signed by the session's private key,
+// which only the vault that opened the session holds (non-extractable WebCrypto):
+//
+//   session message = "hana-id/wallet-record-session/v1" ‖ 0x00 ‖ borsh(env) ‖ borsh(signer) ‖ borsh(app_id)
+//                     ‖ borsh(scope_id) ‖ borsh(path) ‖ session_pk(32) ‖ u64le(issued_at_ms) ‖ sha256(proofs)
+//   proofs         = "hana-id/wallet-record-proofs/v1" ‖ 0x00 ‖ for stellar then evm: borsh(chain) ‖ borsh(address)
+//                     ‖ borsh(Vec<u8> signature)
+//   Ed25519 (RFC 8032) by the session key over the session message itself, 64 bytes; checked strictly (zip215 off).
+//
+// Every field of the body (path, session key, time, both addresses and both chain signatures) and the env, signer, app
+// and scope the API supplies are under it, so an attacker can neither make one without the victim's session key nor
+// change a byte of the vault's. It can't be replayed as another session-key signature, nor another as it: the session
+// key signs only the contract's "hana-id-session-v1:" messages (sessionMessage: create_session, derive, revoke, the
+// linked login), the vault share actions' "hana-id-vault-v1:" and the identity token's "hana-id-identity-v1:", all
+// fixed-prefix layouts the vault builds itself (it never signs caller-chosen bytes with the session key). This domain
+// differs from each of them within its first 8 bytes ("hana-id/" vs "hana-id-") and none is a prefix of another, and
+// Ed25519 binds the exact message, so no session message is a valid one of those or the other way round. It is also
+// not a record statement (another domain, and those are signed by chain keys, never the session key). The chain-key
+// proofs stay: they prove the vault holds those keys (the session alone proves nothing about an address).
+//
 // SECURITY: the chain keys come from derivation.ts withChainKey, for one signature each, and are zeroed there. A record
 // is not secret (it says "this address is this path's"), but it is never logged, and the API keeps only the address.
-import { concatBytes, borshString, sha256, toBytes, u64le, utf8, type Bytes } from './bytes.ts';
+import { concatBytes, borshString, sha256, toBytes, u32le, u64le, utf8, type Bytes } from './bytes.ts';
 import { type IdentityChain, IDENTITY_CHAINS, canonicalWalletAddress, signWalletProof } from './identity.ts';
 import { recoverEvmAddress } from './signers/evm.ts';
 import { STRKEY_VERSION, decodeStrKey } from './addresses.ts';
 import { ed25519 } from '@noble/curves/ed25519';
 
 export const WALLET_RECORD_DOMAIN = 'hana-id/wallet-record/v1';
+export const WALLET_RECORD_SESSION_DOMAIN = 'hana-id/wallet-record-session/v1';
+export const WALLET_RECORD_PROOFS_DOMAIN = 'hana-id/wallet-record-proofs/v1';
 /** The API accepts a record whose `issuedAtMs` is within this of its clock (a replay changes nothing: rows only move forward in time). */
 export const WALLET_RECORD_WINDOW_MS = 5 * 60_000;
 /** The vault gives the background report this long, then drops it (one call, no retry). */
@@ -151,6 +176,58 @@ export function verifyWalletRecord(ctx: WalletRecordContext, chain: WalletRecord
   }
 }
 
+// ---- the session signature (header: "The session signature") ----
+
+/** Both chains' records as they go in the body (addresses canonical). */
+export type WalletRecordProofs = Record<WalletRecordChain, WalletRecordProof>;
+
+const borshBytes = (b: Uint8Array): Bytes => concatBytes(u32le(b.length), toBytes(b));
+
+/** sha256("hana-id/wallet-record-proofs/v1" ‖ 0x00 ‖ for stellar then evm: borsh(chain) ‖ borsh(address) ‖ borsh(Vec<u8> sig)). */
+export function walletRecordProofsHash(proofs: WalletRecordProofs): Bytes {
+  const parts: Uint8Array[] = [utf8(WALLET_RECORD_PROOFS_DOMAIN), Uint8Array.of(0)];
+  for (const chain of WALLET_RECORD_CHAINS) {
+    const p = proofs[chain];
+    if (!p || typeof p.address !== 'string' || !(p.signature instanceof Uint8Array)) throw new Error(`The ${chain} record is missing`);
+    parts.push(borshString(chain), borshString(p.address), borshBytes(p.signature));
+  }
+  return sha256(concatBytes(...parts));
+}
+
+/** The message the session key signs over the whole request (layout in the header). Throws on a malformed input. */
+export function walletRecordSessionMessage(ctx: WalletRecordContext, proofs: WalletRecordProofs): Bytes {
+  if (!(ctx.sessionPublicKey instanceof Uint8Array) || ctx.sessionPublicKey.length !== 32) throw new Error('Session public key must be 32 bytes');
+  if (!Number.isSafeInteger(ctx.issuedAtMs) || ctx.issuedAtMs < 0) throw new Error('issuedAtMs must be a non-negative integer');
+  if (!ctx.path.startsWith(`${ctx.scopeId}#`)) throw new Error('The path is not of this scope');
+  return concatBytes(
+    utf8(WALLET_RECORD_SESSION_DOMAIN),
+    Uint8Array.of(0),
+    field(ctx.env, 'env'),
+    field(ctx.signer, 'signer'),
+    field(ctx.appId, 'appId'),
+    field(ctx.scopeId, 'scopeId'),
+    field(ctx.path, 'path'),
+    toBytes(ctx.sessionPublicKey),
+    u64le(ctx.issuedAtMs),
+    walletRecordProofsHash(proofs),
+  );
+}
+
+/** The session signature (64 bytes) by the vault's non-extractable WebCrypto session key. */
+export async function signWalletRecordSession(privateKey: CryptoKey, ctx: WalletRecordContext, proofs: WalletRecordProofs): Promise<Bytes> {
+  return new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, privateKey, walletRecordSessionMessage(ctx, proofs)));
+}
+
+/** True when `signature` is the session key's (`ctx.sessionPublicKey`, strict RFC 8032) over the session message. */
+export function verifyWalletRecordSession(ctx: WalletRecordContext, proofs: WalletRecordProofs, signature: Uint8Array): boolean {
+  if (!(signature instanceof Uint8Array) || signature.length !== 64) return false;
+  try {
+    return ed25519.verify(signature, walletRecordSessionMessage(ctx, proofs), ctx.sessionPublicKey, { zip215: false });
+  } catch {
+    return false;
+  }
+}
+
 // ---- POST /v1/wallets/record ----
 
 /** The request body: bytes as JSON number arrays. */
@@ -159,6 +236,8 @@ export interface WalletRecordBody {
   issuedAtMs: number;
   path: string;
   wallets: { stellar: { address: string; signature: number[] }; evm: { address: string; signature: number[] } };
+  /** The session key's signature over walletRecordSessionMessage (64 bytes). */
+  sessionSignature: number[];
 }
 
 export interface WalletRecordResponse {

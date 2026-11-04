@@ -2,8 +2,8 @@
 // sign-in's error codes.
 import type { SignInError } from '@hana-id/console-core';
 import { type ReactNode, useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ApiError, getJson } from './api.ts';
+import { useNavigate, useOutletContext } from 'react-router-dom';
+import { ApiError, createAction, getJson } from './api.ts';
 
 export interface Loaded<T> {
   data: T | undefined;
@@ -50,6 +50,31 @@ export function duration(ms: number): string {
   return `${Math.round(ms / 1000)} s`;
 }
 
+/** The reader's clock, re-read every `everyMs` (the pending-upgrades countdowns; nothing is fetched again). */
+export function useNow(everyMs: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), everyMs);
+    return () => clearInterval(t);
+  }, [everyMs]);
+  return now;
+}
+
+/** How long until `atMs` on the reader's clock ("in 1 d 2 h"), or how long it has been due ("due for 5 min"). */
+export function countdown(atMs: number, now: number): string {
+  const d = atMs - now;
+  const abs = Math.abs(d);
+  const days = Math.floor(abs / 86_400_000);
+  const hours = Math.floor((abs % 86_400_000) / 3_600_000);
+  const mins = Math.floor((abs % 3_600_000) / 60_000);
+  const span = days ? `${days} d ${hours} h` : hours ? `${hours} h ${mins} min` : mins ? `${mins} min` : 'less than a minute';
+  return d > 0 ? `in ${span}` : `due for ${span}`;
+}
+
+/** The UTC day (`YYYY-MM-DD`) and month (`YYYY-MM`) of `ms`: reports and statements are by UTC day and month. */
+export const utcDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+export const utcMonth = (ms: number): string => new Date(ms).toISOString().slice(0, 7);
+
 export const SIGN_IN_MESSAGES: Record<SignInError, string> = {
   not_invited: 'This Google account isn’t a member of any organisation on the console. Ask an owner of your organisation, or Hana, for an invite.',
   invite_invalid: 'This invite can’t be used: it was used, revoked or has expired, or it was sent to another address or Workspace domain. Ask for a new one.',
@@ -74,5 +99,108 @@ export function Section({ title, children }: { title: string; children: ReactNod
       <h2>{title}</h2>
       {children}
     </section>
+  );
+}
+
+/** What an org's pages know about the member (OrgShell's outlet context): the org, the role, whether it is frozen. */
+export interface OrgContext {
+  org: string;
+  role: 'owner' | 'viewer';
+  frozen: boolean;
+}
+
+export const useOrg = (): OrgContext => useOutletContext<OrgContext>();
+
+/** A write in progress: `run` keeps the button busy and the error to show; `done` is the last success message. */
+export function useWrite(): { busy: boolean; error: ApiError | undefined; done: string | undefined; run: (fn: () => Promise<string | void>) => Promise<void> } {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<ApiError | undefined>();
+  const [done, setDone] = useState<string | undefined>();
+  const run = useCallback(async (fn: () => Promise<string | void>) => {
+    setBusy(true);
+    setError(undefined);
+    setDone(undefined);
+    try {
+      const msg = await fn();
+      if (msg) setDone(msg);
+    } catch (err) {
+      setError(err instanceof ApiError ? err : new ApiError(0, 'network', 'The console could not be reached'));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+  return { busy, error, done, run };
+}
+
+/**
+ * A change that needs a fresh sign-in: the server builds the action, then the member reviews exactly what will be
+ * applied on `/actions/:id` and confirms it with Google there.
+ */
+export function useStepUp(org: string): { busy: boolean; error: ApiError | undefined; start: (kind: string, params: unknown) => Promise<void> } {
+  const navigate = useNavigate();
+  const w = useWrite();
+  const start = useCallback(
+    (kind: string, params: unknown) =>
+      w.run(async () => {
+        const a = await createAction(org, kind, params);
+        navigate(`/actions/${a.id}`, { state: { org } });
+      }),
+    [org, navigate, w],
+  );
+  return { busy: w.busy, error: w.error, start };
+}
+
+export function WriteNote({ error, done }: { error?: ApiError | undefined; done?: string | undefined }) {
+  if (error) return <ErrorNote error={error} />;
+  if (done)
+    return (
+      <p className="note" role="status">
+        {done}
+      </p>
+    );
+  return null;
+}
+
+/** An origin with its Unicode form and the IDN flag (an `xn--` label), as everywhere in the console and the notices. */
+export function OriginText({ origin, display, idn }: { origin: string; display: string; idn: boolean }) {
+  return (
+    <>
+      {display}
+      {idn && (
+        <span className="badge badge-warn" title={origin}>
+          IDN
+        </span>
+      )}
+      {display !== origin && <div className="muted mono">{origin}</div>}
+    </>
+  );
+}
+
+/** A destructive, immediate write: a first click asks, a second one does it (no browser dialog). */
+export function ConfirmButton({ label, confirm, busy, onConfirm }: { label: string; confirm: string; busy?: boolean; onConfirm: () => void }) {
+  const [asking, setAsking] = useState(false);
+  if (!asking)
+    return (
+      <button type="button" disabled={busy} onClick={() => setAsking(true)}>
+        {label}
+      </button>
+    );
+  return (
+    <span className="confirm">
+      <button
+        type="button"
+        className="danger"
+        disabled={busy}
+        onClick={() => {
+          setAsking(false);
+          onConfirm();
+        }}
+      >
+        {confirm}
+      </button>
+      <button type="button" onClick={() => setAsking(false)}>
+        Keep
+      </button>
+    </span>
   );
 }

@@ -5,7 +5,8 @@ decisions confirmed: D28, D29 (as amended by D89), D30 (as
 amended by D73), D31, D32, D34, D51, D52, D73, D74, D75, and on 2026-10-29 D87–D93.** Everything else in this file is
 a proposal that follows from them; the open questions at the end say what still needs the user (Q1, Q3, Q4's
 fallback addresses, Q5; and, added 2026-11-04 for D269, Q26 and Q27: the Users screen and the Support ID, D275 and
-D276, to confirm). The 2026-10-27 multi-agent draft (four decision records, a
+D276, to confirm; Q27's derivation answered by D346 on 2026-11-04: the Support ID is the short form of the identity
+token's `sub`, which is also the partner's User ID). The 2026-10-27 multi-agent draft (four decision records, a
 reconciliation table, passkeys, four roles, two notice channels, a queue, rollups) is superseded by this rewrite; its
 history is in git.
 
@@ -42,7 +43,8 @@ so. Plan doc: https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi
 - **Still open:** Q1 (the code flow's `openid`-only token, to test), Q3 (Hana Cloudflare account, zone, domains), Q4's
   fallback email addresses, Q5 (Neon project setup).
 - **Support ID (D96, amended by D269).** The admin portal gets a Support ID lookup: paste a user's `HANA-XXXX-XXXX`
-  code to see that user's sessions, logins and errors for the app (via the hashed user id). Partners see no email or
+  code to see that user's sessions, logins and errors for the app (the code is the short form of the partner's User
+  ID, the identity token's `sub`, D346; the activity via the ledger's uid). Partners see no email or
   Google account for it, anywhere. Staff can go from the code, or from an address, to the user's entry in the email
   issuer's user directory (D269; proposed design: §Users and Support ID, D275, D276). Hana *contacts* only partner
   members, security contacts and billing contacts; end users get only the sign-in codes and link notices their own
@@ -738,7 +740,8 @@ binding in that Worker); the bucket lock and the Neon hash are what make a state
      `consoleAudiences`, `nonce`, `exp`, `iat` ≤ 120 s old.
    - Email claims by scope: `openid email` (login) needs `email` and `email_verified === true`; `openid` (every
      step-up) must carry no `email` (open question 1). As built (C9, D290): `openid` exactly the claim allow-list
-     (D271); `openid email` the allow-list plus only `email`, `email_verified`, `hd` and a matching `at_hash`.
+     (D271; with `at_hash` since D342, which must match the exchange's access token); `openid email` the allow-list
+     plus only `email`, `email_verified` and `hd`.
    - **Login:** writes a `handoff_codes` row (60 s) and 303s to `<console.origin>/api/auth/complete?h=…#`.
    - **Step-up:** §Fresh sign-in.
    - The ID token never reaches page JavaScript and is never stored.
@@ -1373,23 +1376,28 @@ D269 keeps each identity's verified address in the email issuer's own D1 (`user_
 migration 0002), for Hana staff only. This section gives staff a Users screen over it and lets the Support ID lookup
 reach it. Partners see neither (§What partners never see).
 
-**The wallet directory (D310–D317, built on `feat/wallet-directory`, not merged).** The API's hot DB now keeps each
-user per scope (`end_users`: the user id `hu_…` from the uid and its Support code, D312), the account's identities
-with their subs (`end_user_identities`) and the wallets its logins reported (`end_user_wallets`), with the read APIs
-the screens need: `AdminRpc.listUsers` / `getUser` / `findUsers` (by wallet, user id, Support ID or sub; each identity's
-`directoryKey` is the join with `DirectoryRpc` for the email) and, for the partner console's Users screen (C10),
-`ConsoleRpc.listUsers` / `getUser` (the org's own scopes, no sub or email; D315; `docs/api.md`). The Support code is
-stored and indexed there, so code → user no longer needs `IssuerRpc.uid` or `user_email_apps.uid` (D276's path, to
-revisit when C15 is built).
+**The wallet directory (D310–D317, D346; merged into `develop`, not deployed).** The API's hot DB keeps each user per
+scope with three ids (`end_users`, D346): the **User ID** partners see, the identity token's `sub` (`u1_…`,
+`token_sub`); its **Support ID** (`support_code`); and the **internal id** `hu_…` (the ledger's uid, `user_id`, staff
+only, D312). Beside it, the account's identities with their subs (`end_user_identities`) and the wallets its logins
+reported (`end_user_wallets`), with the read APIs the screens need: `AdminRpc.listUsers` / `getUser` / `findUsers`
+(by wallet, User ID, internal id, Support ID or sub; each identity's `directoryKey` is the join with `DirectoryRpc` for
+the email) and, for the partner console's Users screen (C10), `ConsoleRpc.listUsers` / `getUser` (the org's own
+scopes; `userId` = `u1_…` and `supportId`; never the internal id, a sub or an email; D315, D346; `docs/api.md`). The
+Support code is stored and indexed there, so code → user needs neither `IssuerRpc.uid` nor `user_email_apps.uid`
+(D276 as amended by D346).
 
 ### Data path (D275)
 
 ```
 staff ─Access─▶ hana-id-admin-<env> ──ISSUER──▶ hana-id-email-issuer-<env>  exports DirectoryRpc (no route)
                       │                            DB (own D1): user_emails, user_email_apps, email_admin_audit
-                      ├──API──▶ AdminRpc.userShares (C15)          │
-                      └──USAGE_DB──▶ Neon (C15)                    └──API──▶ IssuerRpc.uid (C15)
+                      ├──API──▶ AdminRpc.userShares, findUsers (C15)
+                      └──USAGE_DB──▶ Neon (C15)
 ```
+
+(D346: code → user goes through the API's wallet directory, `AdminRpc.findUsers`; the issuer's `IssuerRpc.uid` write
+and `DirectoryRpc.byUid` that D276 planned are dropped.)
 
 - **`DirectoryRpc`**: a `WorkerEntrypoint` exported by the issuer and bound only by the admin Worker (`ISSUER`). No
   route: the issuer's public `fetch` doesn't change. Its methods are reads. A source test holds its module to
@@ -1423,8 +1431,6 @@ interface DirectoryRpc {
                           unverifiedOnly?: boolean; cursor?: string; limit: number /* ≤ 100 */ })
     : Rpc<{ users: UserRow[]; next?: string }>;
   get(c: StaffCall & { provider: 'email' | 'google'; sub: string }): Rpc<{ user: UserRow; apps: UserApp[] }>;
-  byUid(c: StaffCall & { uidPrefix: string /* b64url, 5 bytes */ })                      // C15
-    : Rpc<{ matches: (UserRow & { scopeId: string; uid: string })[] }>;
   auditSince(c: StaffCall & { id: number; limit: number }): Rpc<{ rows: DirectoryAuditRow[] }>;
 }
 interface UserRow { provider; sub; email; emailVerified: boolean; hosted: boolean | null; firstSeenMs; lastSeenMs;
@@ -1462,8 +1468,8 @@ interface IssuerRpc { uid(c: { scopeId: string; provider: string; sub: string })
     `opened`. The path is `{scope}#{provider}#{sub}#0` for `own` (key_index 0 in the MVP, D8). For `member` it is
     the account root's path, with a link to the root's directory row when there is one, and `get_account` lists
     the members. A failed read shows "chain unavailable", never a guessed path.
-  - No wallet address. Hana's servers never see one: the CKD output reaches only the vault, and identity tokens
-    carry proven addresses but none is stored.
+  - No wallet address from the issuer's directory. Since D310 the wallet directory holds the proven addresses: the
+    detail shows them per scope from `AdminRpc` (with the User ID, Support ID and internal id, D346).
   - For each scope, the Support ID and its activity (§Support ID lookup, from C15).
 - **No CSV export** (D275). Bulk reads stay with the CLI (`admin user:list --json`, for founders with wrangler
   credentials, printed to the terminal only). The screen has no "select all".
@@ -1474,29 +1480,29 @@ interface IssuerRpc { uid(c: { scopeId: string; provider: string; sub: string })
 
 ### Support ID lookup (C15, D276)
 
-- **The code.** `HANA-` + `c[0..4]` + `-` + `c[4..8]`, where `c` is the Crockford base32 of the uid's first 5 bytes
-  (40 bits, uppercase, no padding). The parser accepts lowercase, `O` for 0, `I` and `L` for 1, and missing
-  dashes. The secret is `USER_ID_KEY`, through the uid (§Nonce layouts, `hana-id/uid/v1`), so there is no new
-  secret, domain string or store (D96, D144). It is per scope and per account. The uid comes from the path, so a
-  linked member gets its root's code, and every app of a scope shows the same code.
-- **Shown to the user and the partner.** The API returns `supportId` next to the session in the `/v1/login` and
-  `/v1/sessions` answers, computed from the path it already uses for the uid. The vault keeps it with the session
-  and exposes it in `hana_status` (so the partner page's *Copy diagnostics* carries it), the Hana popup's account
-  view and, later, Hana Home. It carries no address and no sub.
-- **Staff: code → user.**
-  1. The directory: `DirectoryRpc.byUid` over `user_email_apps.uid`. Issuer migration 0003 adds that column
-     (BLOB(16), nullable, indexed). After each directory write whose row has no uid, the issuer fills it in
-     `waitUntil` from `IssuerRpc.uid(scope, provider, sub)`. A failure logs `directory_uid_failed` (app and scope
-     only), never fails or slows the answer, and the next login fills it. Each match's uid is the one the ledger
-     uses for that identity's own path. For a linked account, the root's row matches, and the detail lists the
-     members.
-  2. Without a directory match (an env without the issuer, or a lost write), the ledger only: `usage.app_users`
-     by uid prefix (C15's Neon migration, the next free number, adds `app_users (uid)`) gives the app, scope and
-     first and last day, marked "no directory entry".
+- **The code (D346).** `HANA-` + `c[0..4]` + `-` + `c[4..8]`, where `c` is the Crockford base32 (alphabet
+  `0123456789ABCDEFGHJKMNPQRSTVWXYZ`, most significant bit first) of the first 5 bytes (40 bits) of the identity
+  token's `sub` HMAC: the 16 bytes the User ID `u1_…` encodes (`IDENTITY_SUB_KEY`, `hana-id/idt-sub/v1`,
+  `docs/identity-token-spec.md`). Uppercase, no padding. The parser accepts lowercase, `O` for 0, `I` and `L` for 1,
+  and missing dashes. No new secret, domain string or table (D96, D144): it is the User ID's short form, and anyone
+  holding a User ID (the partner's backend) can compute it without a key. It is per scope and per account: it comes
+  from the account root, so a linked member gets its root's code, and every app of a scope shows the same code. Code
+  `console-core` `supportIdOf(userId)`; stored as `end_users.support_code`.
+- **Shown to the user and the partner** (planned, not built). The API returns `supportId` next to the session in the
+  `/v1/login` and `/v1/sessions` answers, computed from the path's root with `supportIdOf(identitySub(…))`, the same
+  code as the directory's. The vault keeps it with the session and exposes it in `hana_status` (so the partner page's
+  *Copy diagnostics* carries it), the Hana popup's account view and, later, Hana Home. It carries no address and no
+  sub. The partner console shows it beside the User ID (`ConsoleRpc`, D346).
+- **Staff: code → user (D346).**
+  1. The wallet directory: `AdminRpc.findUsers({query: code})` over `end_users.support_code` (indexed, D312), which
+     gives the User ID, the internal id `hu_…` (the ledger's uid, for the activity below) and each identity's
+     `directoryKey` for its address. No issuer `uid` column or `IssuerRpc.uid` is needed.
+  2. Without a directory row (a user who hasn't logged in since the directory's deploy, or a lost write), the code
+     can't be resolved: it is no longer a prefix of a ledger uid. Staff ask the partner for the User ID (`u1_…`) or a
+     wallet address, which `findUsers` also takes.
   3. Every match is listed; two identities can share 40 bits (about 45 pairs among 10 M identities). The app named
      in the partner's escalation tells them apart. A code isn't a credential: staff change nothing on a code alone.
-- **Staff: address → user**: the Users search, then the detail's Support ID (from the stored uid; none when it is
-  still NULL).
+- **Staff: address → user**: the Users search, then the detail's Support ID.
 - **What the lookup shows for a uid**, all from data Hana already keeps (D144):
   - Logins and sessions: the ledger's ok `login`, `session` and `derive` events by uid (the same migration
     adds `events (uid, at) WHERE uid IS NOT NULL`). They show the time, app, endpoint, latency and `near_tx` (an
@@ -1506,12 +1512,12 @@ interface IssuerRpc { uid(c: { scopeId: string; provider: string; sub: string })
     `code`). The ledger keeps uids only on ok events (its CHECK), so it can't list errors per user, by design.
   - The app's policy and setting changes (`app_changes`). Consents aren't shown: they live only in the vault's
     browser storage (D23).
-- **Partner side**: the code and nothing else. The partner console has no Support ID lookup in batch C; partners
-  escalate with the code and request IDs (D96).
-- **Retention.** C15 keeps two new things. The first is `user_email_apps.uid`, which stays with its directory row
-  and joins only ledger rows that still carry uids. The second is the audit rows, kept 5 years (D90). A code
-  resolves while the ledger holds the uid: 24 months after the month ends, and while `app_users` keeps the row
-  (D90). D269 sets no expiry for the directory itself (its `K_sub`-loss reason argues for none). An erasure request
+- **Partner side**: the User ID and its Support ID (the Users screen, D346), never the internal id. The partner
+  console's Users search takes a Support ID or a User ID for the org's own scopes; there is no activity lookup in
+  batch C; partners escalate with the code (or the User ID) and request IDs (D96).
+- **Retention.** C15 keeps the audit rows, 5 years (D90). A code resolves while its `end_users` row exists; the
+  activity behind it while the ledger holds the uid: 24 months after the month ends, and while `app_users` keeps the
+  row (D90). D269 sets no expiry for the directory itself (its `K_sub`-loss reason argues for none). An erasure request
   deletes the identity's directory rows with a CLI command (`user:erase`, beside `uid:erase`, through D1's REST API
   as the operator), so `DirectoryRpc` stays read-only.
 
@@ -1676,10 +1682,14 @@ count(*) FILTER (WHERE e.relayed AND (g.request_id IS NULL OR g.result = 'unsett
 
 ### User lists
 
-None for partners in the MVP, and no wallet addresses: aggregates only. An HMAC tells a partner nothing, an
-SDK-reported address is unauthenticated, and uid-to-address pairs would re-identify users through chain activity.
-Hana staff get the Users screen over the email issuer's directory (D269; proposed: §Users and Support ID), which
-holds verified email addresses, never wallet addresses.
+Superseded by D310 and D346 (2026-11-04): partners get a **Users screen** (C10) over `ConsoleRpc.listUsers` /
+`getUser`, for their own org's scopes only. Each user shows its **User ID**, which is the identity token's `sub`
+(`u1_…`, the value the partner's backend already stores, like Privy's DID), its **Support ID** `HANA-XXXX-XXXX` (the
+User ID's short form), created and last seen, the connected account kinds ("Google", "Email") and the wallet
+addresses, each proven by its own key and the session key (D311). The search takes a wallet address, a User ID or a
+Support ID. Never shown: the internal id `hu_…` (the ledger's uid, staff only), a sub, an identity key or an email
+(the email only once a user approves, UX later). Hana staff get the Users screen over the email issuer's directory
+and the wallet directory (D269, D275; §Users and Support ID), with all three ids.
 
 ## Audit
 
@@ -1848,7 +1858,7 @@ Trust boundaries, most to least trusted:
 | `app_users` is a lasting pseudonymous per-user record | Needed for new-user counts | Deleted with the app + 30 days; `uid:erase` |
 | (Proposed, D275) Directory reads through an RPC on the issuer, which holds the signing keys and `K_sub` | More code in the key-holding Worker; the issuer deploys before the Users screen | No route; a source test holds the module to directory reads and forbids key-module imports; additive methods |
 | (Proposed, D275) No CSV export of users | Staff can't hand a list to anyone from the console | `admin user:list --json` for founders, terminal only |
-| (Proposed, D276) The Support ID is 40 bits of the uid, visible to the partner page | A stable per-scope pseudonym for the partner (as the identity token's `sub` is); rare collisions | No address or sub in it; every match listed; staff act on nothing by code alone |
+| (D346) The Support ID is 40 bits of the identity token's `sub`, the partner's User ID | The partner can compute it from the `sub` it stores; rare collisions; a code resolves only through a wallet-directory row (no ledger fallback) | No address or sub in it; every match listed; staff act on nothing by code alone |
 | uid is per scope | Two apps in one scope share pseudonyms | Same partner, same wallets |
 | MAU counts only login, session and derive events | A user whose only activity in a month is unlocking a share made the previous month isn't counted | Shares live ≤ 23 h 50 min, so only month-boundary users are missed; stated on the statement |
 | Statements are gross | The signer's 30% gas reward isn't netted | Stated on the statement |
@@ -2104,18 +2114,17 @@ endpoint, the JWKS, the Access JWKS, NEAR RPC, the Images binding and the email 
 - No export: the admin BFF route table has no user export (snapshot).
 - Partners: over a fixture user with a directory row, no `ConsoleRpc` answer, console route, `/v1` answer, SDK
   status or event carries the address (response snapshots).
-- Support ID: vectors against an independent Node implementation (uid → code; the Crockford alphabet; the parser's
-  lowercase, `O`, `I`, `L` and missing-dash cases); the code in the `/v1/login` and `/v1/sessions` answers equals the
-  code of the ledger's uid for the same path (login, session and derive; a linked member gets its root's);
-  `hana_status.supportId` set at login and cleared at logout.
-- Lookup: a code finds the identity through `user_email_apps.uid`; with no directory row it falls back to
-  `app_users` ("no directory entry"); two identities sharing 40 bits are both listed; a code whose uid was stripped
-  (month + 24 months) finds nothing; request IDs find rejected and error events, which carry no uid.
-- Issuer uid write: after a directory write leaving `uid` NULL the issuer calls `IssuerRpc.uid` once in `waitUntil`;
-  a failing call leaves it NULL, logs `directory_uid_failed` (app and scope only) and never changes or slows the
-  answer; the next write fills it; the stored uid equals the API's for that identity's own path (shared vectors).
-- Migrations: issuer 0003 on a 0002 database keeps every `email_admin_audit` row, its CHECK accepts the new actions
-  and nothing else, and `uid` is nullable and indexed; C15's Neon migration adds the two indexes.
+- Support ID (D346): pinned against the identity token's `sub` vectors (`sub` → code, built on
+  `feat/user-id-identity-sub`); the Crockford alphabet; the parser's lowercase, `O`, `I`, `L` and missing-dash cases;
+  the directory's User ID equals the `sub` of a token the same session mints (built); the code in the `/v1/login` and
+  `/v1/sessions` answers equals `supportIdOf` of the token's `sub` for the same path (a linked member gets its
+  root's); `hana_status.supportId` set at login and cleared at logout.
+- Lookup: a code finds the user through `end_users.support_code` (`AdminRpc.findUsers`, built); two identities
+  sharing 40 bits are both listed; the ledger activity is found by the row's internal id (`hu_…`); a uid stripped
+  from the ledger (month + 24 months) shows no activity; request IDs find rejected and error events, which carry no
+  uid.
+- Migrations: issuer 0003 on a 0002 database keeps every `email_admin_audit` row and its CHECK accepts the new
+  actions and nothing else; C15's Neon migration adds the two indexes.
 
 **Hot DB and gate**
 
@@ -2274,8 +2283,8 @@ Answered on 2026-10-29 (`docs/decisions.md` D87–D93), applied above; the numbe
    Google always adds email, step-ups and owner actions stop until decided; fallback: accept the email after an
    explicit partner disclosure. **Blocks steps 4 and the smoke.** The test is built in C9 (2026-11-04,
    `scripts/console-code-flow-spike.ts`, D295; `docs/operations.md` "Console code-flow spike"), not yet run. Expected
-   besides: Google documents `at_hash` on every server-flow ID token, which the API's allow-list refuses; decide
-   D295's options before C10.
+   besides: Google documents `at_hash` on every server-flow ID token. **Decided (D342, confirmed 2026-11-04):**
+   `at_hash` joins the claim allow-list everywhere (core, the API, the console).
 2. Email provider. **Answered (D87):** Resend, dedicated sending subdomain with SPF/DKIM/DMARC, behind a sender
    interface.
 3. **Still open:** the Hana-owned Cloudflare account and zone, and the console, console-auth, files and admin domains
@@ -2341,4 +2350,6 @@ Answered on 2026-10-29 (`docs/decisions.md` D87–D93), applied above; the numbe
 27. **The Support ID (D276).** Recommended: the uid's first 40 bits (`USER_ID_KEY`, no new secret), returned by the API
     with the session; resolved through a `uid` column the issuer fills from the API's `IssuerRpc`, with a ledger-only
     fallback; errors by request ID; no partner lookup. Alternatives in D276: a separate key, the identity token's
-    `sub`, recomputing uids at lookup, uids on error events, an org-scoped partner lookup.
+    `sub`, recomputing uids at lookup, uids on error events, an org-scoped partner lookup. **Answered 2026-11-04 by
+    D346: the identity token's `sub`** (the partner's User ID), resolved through the wallet directory; no issuer uid
+    column, no ledger fallback.

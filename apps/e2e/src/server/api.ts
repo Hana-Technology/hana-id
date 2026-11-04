@@ -18,9 +18,10 @@
 //   GET  /__e2e/chain[?sub=<sub>]     {relayed: [{method, tokens: [{provider, sub, claims}]}], sessions}: the transactions
 //                                     the relayer sent that carried a token (of `sub`), and the live sessions on its
 //                                     path; claim names only, never a token
-//   GET  /__e2e/wallets?address=<a>   [{userId, scopeId, wallets: [{chain, address}], identities: [{provider, sub, role,
-//                                     status}]}]: the wallet directory's users listing that address (migration 0011,
-//                                     written by the Worker's own POST /v1/wallets/record)
+//   GET  /__e2e/wallets?address=<a>   [{userId, supportCode, internalId, scopeId, wallets: [{chain, address}],
+//                                     identities: [{provider, sub, role, status}]}]: the wallet directory's users listing
+//                                     that address (migration 0011, written by the Worker's own POST /v1/wallets/record;
+//                                     userId is end_users.token_sub, internalId end_users.user_id, D346)
 import {
   base64UrlDecode,
   ckdPayload,
@@ -400,10 +401,19 @@ export class MockApi {
   }
 
   /** The wallet directory's users that list `address`, with their wallets and identities (tests only). */
-  walletUsers(address: string): { userId: string; scopeId: string; wallets: { chain: string; address: string }[]; identities: { provider: string; sub: string | null; role: string; status: string }[] }[] {
-    const users = this.d1.db.prepare('SELECT u.user_id, u.scope_id FROM end_users u WHERE u.user_id IN (SELECT user_id FROM end_user_wallets WHERE address = ?) ORDER BY u.user_id').all(address);
+  walletUsers(address: string): {
+    userId: string;
+    supportCode: string;
+    internalId: string;
+    scopeId: string;
+    wallets: { chain: string; address: string }[];
+    identities: { provider: string; sub: string | null; role: string; status: string }[];
+  }[] {
+    const users = this.d1.db.prepare('SELECT u.user_id, u.token_sub, u.support_code, u.scope_id FROM end_users u WHERE u.user_id IN (SELECT user_id FROM end_user_wallets WHERE address = ?) ORDER BY u.user_id').all(address);
     return users.map((u) => ({
-      userId: String(u.user_id),
+      userId: String(u.token_sub),
+      supportCode: String(u.support_code),
+      internalId: String(u.user_id),
       scopeId: String(u.scope_id),
       wallets: this.d1.db
         .prepare("SELECT chain, address FROM end_user_wallets WHERE user_id = ? ORDER BY chain = 'evm', address")

@@ -232,18 +232,20 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
     return runRpc(this.env, 'admin.purgeDirectory', purgeDirectoryInput, c, { actors: SYSTEM }, ({ input, db, w }) => purgeDirectory(db, input, w.now));
   }
 
-  // ---- end users and their wallets (D310, D315; staff only: subs and identity keys included, no email) ----
+  // ---- end users and their wallets (D310, D315, D346; staff only: the internal id, subs and identity keys included,
+  // no email) ----
 
   /** Newest first by last seen, for one org, one scope or all; `nextCursor` while more remain. */
   listUsers(c: unknown) {
     return runRpc(this.env, 'admin.listUsers', adminListUsersInput, c, { actors: HANA }, ({ input, db, w }) => adminListUsers(db, input, w.now));
   }
 
+  /** By `userId` (`u1_…`) or `internalId` (`hu_…`), exactly one. */
   getUser(c: unknown) {
-    return runRpc(this.env, 'admin.getUser', adminGetUserInput, c, { actors: HANA }, async ({ input, db, w }) => ({ user: await adminGetUser(db, input.userId, w.now) }));
+    return runRpc(this.env, 'admin.getUser', adminGetUserInput, c, { actors: HANA }, async ({ input, db, w }) => ({ user: await adminGetUser(db, input, w.now) }));
   }
 
-  /** By wallet address, user id, Support ID or sub (`provider` makes it a sub search). */
+  /** By wallet address, User ID, internal id, Support ID or sub (`provider` makes it a sub search). */
   findUsers(c: unknown) {
     return runRpc(this.env, 'admin.findUsers', adminFindUsersInput, c, { actors: HANA }, ({ input, db, w }) => adminFindUsers(db, input, w.now));
   }

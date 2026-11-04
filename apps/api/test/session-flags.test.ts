@@ -56,7 +56,7 @@ describe('/v1/sessions claim allow-list (always on, D271)', () => {
     const aud = newAud();
     const near = chain({ [aud]: app.scope });
     const now = Math.floor(Date.now() / 1000);
-    const ok = await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud, {}, { azp: aud, iat: now, nbf: now, jti: 'j', auth_time: now }) });
+    const ok = await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud, {}, { azp: aud, iat: now, nbf: now, jti: 'j', auth_time: now, at_hash: 'pKoRe4wHbXLoKz8BsUNdXg' }) });
     expect(ok.status).toBe(200);
     expect(near.sent.map((t) => t.method)).toEqual(['create_session']);
   });

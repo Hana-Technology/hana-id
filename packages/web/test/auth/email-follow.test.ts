@@ -159,14 +159,17 @@ describe('case B: “Link and continue” (D139)', () => {
     expect(pageText()).toContain('Sign in with Google');
     expect(pageText()).toContain('waits 24 hours');
     click('email-link-google');
-    const entry = JSON.parse(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + s.relayId)!);
+    const url = new URL(s.win.location.assigned[0]!);
+    // token_first (D341): the attempt's own OAuth state, its entry naming the login's slot; nothing left under the slot.
+    const state = url.searchParams.get('state')!;
+    expect(state).not.toBe(s.relayId);
+    expect(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + s.relayId)).toBeNull();
+    const entry = JSON.parse(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + state)!);
     expect(entry.b).toEqual({ linkTicket: 'T'.repeat(43), emailSub: E_SUB });
     expect(entry.f).toBe(Buffer.from(s.followKey).toString('base64url'));
     // The default flow (token_first, D270): the access token's request first, the nonce kept on the entry for the
-    // ID request after it (G-L3 below runs both flows).
-    expect(entry).toMatchObject({ tf: 1, n: s.nonce });
-    const url = new URL(s.win.location.assigned[0]!);
-    expect(url.searchParams.get('state')).toBe(s.relayId);
+    // ID request after it (G-L3 below runs both flows); a cancel comes back to these choices, the offer kept (D341).
+    expect(entry).toMatchObject({ tf: 1, n: s.nonce, s: s.relayId, bk: 'b', ob: { linkTicket: 'T'.repeat(43), emailSub: E_SUB } });
     expect([url.searchParams.get('response_type'), url.searchParams.get('scope'), url.searchParams.get('nonce')]).toEqual(['token', 'openid email', null]);
   });
 
@@ -182,16 +185,19 @@ describe('case B: “Link and continue” (D139)', () => {
         await vi.waitFor(() => expect(s.page.stage).toBe('google_wallet'));
         click(button);
         const url = new URL(s.win.location.assigned[0]!);
-        const entry = JSON.parse(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + s.relayId)!);
+        const state = url.searchParams.get('state')!;
+        const entry = JSON.parse(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + state)!);
         if (flow === 'token_first') {
-          // The access token first (`openid email`, no ID token, no nonce); the entry keeps the nonce for the ID request.
+          // The access token first (`openid email`, no ID token, no nonce); the entry keeps the nonce for the ID request,
+          // under the attempt's own state, naming the login's slot (D341).
           expect([url.searchParams.get('response_type'), url.searchParams.get('scope'), url.searchParams.get('nonce')], button).toEqual(['token', 'openid email', null]);
-          expect(entry).toMatchObject({ tf: 1, n: s.nonce });
+          expect(entry).toMatchObject({ tf: 1, n: s.nonce, s: s.relayId, bk: 'b' });
+          expect(state).not.toBe(s.relayId);
         } else {
           expect([url.searchParams.get('response_type'), url.searchParams.get('scope'), url.searchParams.get('nonce')], button).toEqual(['id_token', 'openid', s.nonce]);
           expect(entry.tf).toBeUndefined();
+          expect(state).toBe(s.relayId);
         }
-        expect(url.searchParams.get('state')).toBe(s.relayId);
         // The ticket rides only with "Link and continue" (D139).
         expect(entry.b === undefined, button).toBe(button === 'email-google');
       }
@@ -206,8 +212,33 @@ describe('case B: “Link and continue” (D139)', () => {
     submit('email-verify');
     await vi.waitFor(() => expect(s.page.stage).toBe('google_wallet'));
     click('email-google');
-    expect(JSON.parse(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + s.relayId)!).b).toBeUndefined();
     expect(s.win.location.assigned).toHaveLength(1);
+    const state = new URL(s.win.location.assigned[0]!).searchParams.get('state')!;
+    const entry = JSON.parse(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + state)!);
+    expect(entry.b).toBeUndefined();
+    // The offer stays only so a cancel can show "Link and continue" again (D341); the callback never relays it.
+    expect(entry.ob).toEqual({ linkTicket: 'T'.repeat(43), emailSub: E_SUB });
+  });
+});
+
+describe('D347: the close watch’s signals from the follow-up mode', () => {
+  const vaultOf = (s: Setup) => ((s.win.opener as unknown as { frames: Record<string, { postMessage: ReturnType<typeof vi.fn> }> }).frames[VAULT_FRAME]!);
+  const stagesOf = (s: Setup) => vaultOf(s).postMessage.mock.calls.filter((c) => (c[0] as { t?: string }).t === 'hana:auth-progress').map((c) => (c[0] as { stage: string }).stage);
+
+  it('a Google proof says `google` before the navigation', async () => {
+    const s = setup({ next: 2 });
+    await s.vaultSays(2, { t: 'prove', why: 'link_account', provider: 'google', prove: { method: 'google', nonce: 'P'.repeat(43), loginHint: SUBJECT } });
+    await vi.waitFor(() => expect(s.win.location.assigned).toHaveLength(1));
+    expect(stagesOf(s)).toEqual(['google']);
+  });
+
+  it('a Cancel answer says `relayed` before the window closes itself', async () => {
+    const s = setup({ next: 2 });
+    await s.vaultSays(2, { t: 'use_email', reason: 'unavailable' });
+    await vi.waitFor(() => expect(s.page.stage).toBe('link_choice'));
+    click('email-cancel');
+    await vi.waitFor(() => expect(s.win.closed).toBe(true));
+    expect(stagesOf(s)).toEqual(['relayed']);
   });
 });
 

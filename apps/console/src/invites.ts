@@ -16,11 +16,23 @@ import { type InviteView, LEGACY_ORG_ID, type MemberNotice, type OwnerGrantView,
 import { type Writer, auditInsert, entry, replayOf } from './audit.ts';
 import { PASSKEYS_SHIPPED } from './config.ts';
 import { refuse } from './errors.ts';
+import { consumeGuard, consumeStmt } from './members.ts';
 import { applied, frag, gate, gated, isReplay, lit, orgHasOwner, ownerNow, runBatch } from './sql.ts';
 import { GRANT_COLUMNS, type GrantRow, INVITE_COLUMNS, type InviteRow, grantView, inviteView } from './views.ts';
 
 /** An invite is open while unaccepted, unrevoked and unexpired. */
 const openInvite = (i: string, now: number) => `${i}.accepted_at IS NULL AND ${i}.revoked_at IS NULL AND ${i}.expires_at > ${lit(now)}`;
+
+/** The org (a SQL expression) is active: a frozen org's notices wait, and its acks are refused (D343). */
+const orgActive = (orgExpr: string) => `EXISTS (SELECT 1 FROM orgs ao WHERE ao.id = ${orgExpr} AND ao.status = 'active')`;
+
+/**
+ * A live grant whose notice can be sent or acked: unannounced, uncancelled, unapplied, in an active org, and either a
+ * promotion, an accepted owner invite's (its notice undone by a freeze, D343) or an open invite's.
+ */
+const grantNoticeDue = (g: string, i: string, now: number) =>
+  `${g}.notified_at IS NULL AND ${g}.cancelled_at IS NULL AND ${g}.applied_at IS NULL AND ${orgActive(`${g}.org_id`)}
+     AND (${g}.invite_id IS NULL OR ${g}.user_id IS NOT NULL OR (${openInvite(i, now)}))`;
 
 export interface IssueInvite {
   email: string;
@@ -31,6 +43,8 @@ export interface IssueInvite {
   /** `hana` (StaffRpc) or `member` (an owner's `member.invite` step-up, batch C10, with its pending action id). */
   createdByKind: 'hana' | 'member';
   stepUpId?: string | null;
+  /** A member's step-up: consumed in the invite's own batch, only while unused and unexpired (members.ts consumeGuard). */
+  consume?: { actionId: string };
 }
 
 /**
@@ -65,6 +79,11 @@ export async function issueInvite(db: D1Database, w: Writer, i: IssueInvite): Pr
     );
     binds.push(i.orgId, i.orgId, i.orgId, i.email);
   }
+  if (i.consume) {
+    const c = consumeGuard(i.consume.actionId, now);
+    guards.push(c.sql);
+    binds.push(...c.binds);
+  }
   if (kind === 'partner' && !PASSKEYS_SHIPPED) {
     guards.push(
       `NOT EXISTS (SELECT 1 FROM orgs WHERE kind = 'partner' AND id <> '${LEGACY_ORG_ID}')`,
@@ -97,6 +116,7 @@ export async function issueInvite(db: D1Database, w: Writer, i: IssueInvite): Pr
       ),
     );
   }
+  if (i.consume) stmts.push(consumeStmt(db, i.consume.actionId, now, g));
   // A replay can't compare the target: each call draws a fresh invite id.
   const results = await runBatch(db, stmts, replayOf(w, action, null));
   if (!applied(results)) await whyNotIssued(db, i, kind, now);
@@ -117,7 +137,7 @@ async function whyNotIssued(db: D1Database, i: IssueInvite, kind: string | null,
     if ((open?.n ?? 0) >= MAX_OPEN_INVITES) refuse('conflict', `The org has ${MAX_OPEN_INVITES} open invites`);
   }
   if (kind === 'partner') refuse('passkeys_required', 'A second partner org needs member passkeys first');
-  return refuse('conflict', 'The invite was not issued; retry');
+  return refuse('conflict', i.consume ? 'The invite was not issued: this confirmation was already used or has expired' : 'The invite was not issued; retry');
 }
 
 /**
@@ -151,15 +171,16 @@ export async function invitesOf(db: D1Database, orgId: string): Promise<InviteVi
 
 /**
  * The blocking notices still to send, oldest first: open invites whose notice isn't acked, and live grants whose
- * notice isn't acked (an invite's grant only while its invite is open). Each lists the org's current owners.
+ * notice isn't acked (an invite's grant only while its invite is open, or once it was accepted and a freeze undid the
+ * notice). A frozen org's are held back until it is active again (D343). Each lists the org's current owners.
  */
 export async function pendingMemberNotices(db: D1Database, now: number, limit: number): Promise<MemberNotice[]> {
-  const invites = (await db.prepare(`SELECT ${INVITE_COLUMNS} FROM invites i WHERE i.notified_at IS NULL AND ${openInvite('i', now)} ORDER BY i.created_at, i.id LIMIT ?`).bind(limit).all<InviteRow>()).results;
+  const invites = (await db.prepare(`SELECT ${INVITE_COLUMNS} FROM invites i WHERE i.notified_at IS NULL AND ${openInvite('i', now)} AND (i.org_id IS NULL OR ${orgActive('i.org_id')}) ORDER BY i.created_at, i.id LIMIT ?`).bind(limit).all<InviteRow>()).results;
   const grants = (
     await db
       .prepare(
         `SELECT ${GRANT_COLUMNS.split(', ').map((c) => `g.${c}`).join(', ')} FROM owner_grants g LEFT JOIN invites i ON i.id = g.invite_id
-          WHERE g.notified_at IS NULL AND g.cancelled_at IS NULL AND g.applied_at IS NULL AND (g.invite_id IS NULL OR (${openInvite('i', now)}))
+          WHERE ${grantNoticeDue('g', 'i', now)}
           ORDER BY g.created_at, g.id LIMIT ?`,
       )
       .bind(limit)
@@ -234,7 +255,11 @@ export async function ackMemberNotice(db: D1Database, w: Writer, a: { inviteId?:
     const results = await runBatch(
       db,
       [
-        auditInsert(db, entry(w, action, { orgId: row.org_id, target: a.inviteId }), frag(`EXISTS (SELECT 1 FROM invites i WHERE i.id = ? AND i.notified_at IS NULL AND ${openInvite('i', now)})`, a.inviteId)),
+        auditInsert(
+          db,
+          entry(w, action, { orgId: row.org_id, target: a.inviteId }),
+          frag(`EXISTS (SELECT 1 FROM invites i WHERE i.id = ? AND i.notified_at IS NULL AND ${openInvite('i', now)} AND (i.org_id IS NULL OR ${orgActive('i.org_id')}))`, a.inviteId),
+        ),
         gated(db, 'UPDATE invites SET token_hash = ?, notified_at = ? WHERE id = ? AND notified_at IS NULL', [hash, now, a.inviteId], g),
       ],
       replayOf(w, action, a.inviteId),
@@ -242,16 +267,17 @@ export async function ackMemberNotice(db: D1Database, w: Writer, a: { inviteId?:
     if (!applied(results)) {
       const again = await db.prepare('SELECT hex(token_hash) AS h FROM invites WHERE id = ?').bind(a.inviteId).first<{ h: string | null }>();
       if (again?.h) return sameHash(again.h, hash);
-      refuse('not_pending', 'The invite was revoked, accepted or expired');
+      refuse('not_pending', 'The invite was revoked, accepted or expired, or its org is frozen');
     }
     return;
   }
   const grantId = a.grantId!;
-  const row = await db.prepare('SELECT org_id, invite_id, hex(cancel_token_hash) AS h FROM owner_grants WHERE id = ?').bind(grantId).first<{ org_id: string; invite_id: string | null; h: string | null }>();
+  const row = await db.prepare('SELECT org_id, invite_id, user_id, hex(cancel_token_hash) AS h FROM owner_grants WHERE id = ?').bind(grantId).first<{ org_id: string; invite_id: string | null; user_id: string | null; h: string | null }>();
   if (!row) return refuse('not_found', 'No such owner grant');
   if (row.h) return sameHash(row.h, hash);
-  // A promotion's wait starts at its notice; an owner invite's at acceptance (owner_from stays NULL until then).
-  const ownerFrom = row.invite_id === null ? now + delayMs() : null;
+  // A promotion's wait starts at its notice; an owner invite's at acceptance (owner_from stays NULL until then), except
+  // an accepted one whose notice and clock a freeze undid (D343): its full wait starts again at this new notice.
+  const ownerFrom = row.invite_id === null || row.user_id !== null ? now + delayMs() : null;
   const action = 'owner_grant.notified';
   const g = gate(w.requestId, action);
   const results = await runBatch(
@@ -261,8 +287,7 @@ export async function ackMemberNotice(db: D1Database, w: Writer, a: { inviteId?:
         db,
         entry(w, action, { orgId: row.org_id, target: grantId, details: ownerFrom !== null ? { ownerFrom } : {} }),
         frag(
-          `EXISTS (SELECT 1 FROM owner_grants g LEFT JOIN invites i ON i.id = g.invite_id WHERE g.id = ? AND g.notified_at IS NULL AND g.cancelled_at IS NULL
-             AND g.applied_at IS NULL AND (g.invite_id IS NULL OR (${openInvite('i', now)})))`,
+          `EXISTS (SELECT 1 FROM owner_grants g LEFT JOIN invites i ON i.id = g.invite_id WHERE g.id = ? AND ${grantNoticeDue('g', 'i', now)})`,
           grantId,
         ),
       ),
@@ -273,7 +298,7 @@ export async function ackMemberNotice(db: D1Database, w: Writer, a: { inviteId?:
   if (!applied(results)) {
     const again = await db.prepare('SELECT hex(cancel_token_hash) AS h FROM owner_grants WHERE id = ?').bind(grantId).first<{ h: string | null }>();
     if (again?.h) return sameHash(again.h, hash);
-    refuse('not_pending', 'The grant was cancelled or applied, or its invite ended');
+    refuse('not_pending', 'The grant was cancelled or applied, its invite ended, or its org is frozen');
   }
 }
 

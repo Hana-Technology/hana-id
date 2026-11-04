@@ -93,7 +93,7 @@ Checks, in order (rejected before anything is relayed):
      `400 token_expired`, `503 issuer_keys_unavailable`). Segments must be canonical base64url (no unused bits set),
      as the contract's decoder requires.
    - Claim allow-list, always (D271): a Google token with a claim outside `iss azp aud sub iat exp nonce nbf jti
-     auth_time` (`src/claims.ts`) is `400 token_has_pii` with `data: {claim}`, and nothing is relayed.
+     auth_time at_hash` (`src/claims.ts`; `at_hash` since D342) is `400 token_has_pii` with `data: {claim}`, and nothing is relayed.
    - The token must carry a `nonce` equal to the session nonce recomputed from the body, `SIGNER_ACCOUNT` and the app's
      `scope_id` (`400 nonce_mismatch`; layout in `src/session-crypto.ts` and `docs/batch-a2-shared-client.md`).
    - Scope: if `scope_for_client(provider, aud)` (cached 60 s, a miss 10 s; dropped in this isolate after an owner
@@ -167,7 +167,7 @@ key, so `OPTIONS` succeeds when any active app allows the origin; the real reque
 
 One transaction per login. Checks, in order: the gate (checks 1–3, `relay` quota); the body (`400 bad_request`); the
 token as for `/v1/sessions`, the claim allow-list included (`src/claims.ts`: only `iss azp aud sub iat exp nonce nbf
-jti auth_time`; anything else is `400 token_has_pii` with `data: {claim}`), and the nonce; scope and `session_key_in_use`
+jti auth_time at_hash`; anything else is `400 token_has_pii` with `data: {claim}`), and the nonce; scope and `session_key_in_use`
 side by side (`403 …`, `409 session_exists`); the signature over counter 1 (`401 invalid_signature`); pk1/pk2 each one
 compressed, non-identity point (`400 invalid_app_key`); with `BLS_PRECHECK = "1"` (off everywhere, D64) the pairing
 `e(pk1, −g2) · e(g1, pk2) = 1` (`400 invalid_app_key`; the same var gates it on `/v1/derive`). Failures map by the

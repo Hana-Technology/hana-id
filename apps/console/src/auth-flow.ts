@@ -8,7 +8,9 @@
 // 3. `GET <authOrigin>/callback`: answers a 3xx only for a query with `code` and `state` whose state names a started,
 //    unused, unexpired flow carrying this browser's `__Host-hana_af`; marks it used in that lookup, exchanges the code
 //    server-side, verifies the ID token (auth-token.ts) and, for a login, writes a 60-second handoff code and 303s to
-//    `<console.origin>/api/auth/complete?h=…#`. Anything else is the static 400 page, with no `Location`.
+//    `<console.origin>/api/auth/complete?h=…#`; for a step-up (C10) it runs the pending action with the token
+//    (actions.ts runStepUp) and 303s to `<console.origin>/actions/:id#`. Anything else is the static 400 page, with no
+//    `Location`.
 //
 // The implicit-flow guard: Google also answers `response_type=id_token` for a registered redirect URI, so a fragment
 // with a token may reach `/callback`. A browser never sends a fragment to a server, and a redirect inherits the
@@ -22,6 +24,7 @@
 // SECURITY: the code, the verifier, the nonce, the cookies and the ID token are never logged or returned; only codes and
 // claim names are logged.
 import { authStartBody, b64url, concatBytes, consoleLoginNonce, fromB64url, randomBytes, sha256, utf8 } from '@hana-id/console-core';
+import { runStepUp } from './actions.ts';
 import { authorizationUrl, exchangeCode, pkceChallenge } from './auth-google.ts';
 import { type ConsoleScope, verifyConsoleToken } from './auth-token.ts';
 import { AUTH_FLOW_TTL_MS, FLOW_COOKIE_MAX_AGE_S, HANDOFF_TTL_MS } from './config.ts';
@@ -206,21 +209,27 @@ export async function callback(request: Request, env: Env, info: RequestInfo): P
   // Found and marked used in one statement, only with this browser's flow cookie: a wrong cookie consumes nothing.
   const flow = await env.CONSOLE_DB.prepare(
     `UPDATE auth_flows SET used_at = ? WHERE state_hash = ? AND af_cookie_hash = ? AND started_at IS NOT NULL AND used_at IS NULL AND expires_at > ${lit(now)}
-      RETURNING purpose, scope, nonce, pkce_verifier`,
+      RETURNING purpose, scope, nonce, pkce_verifier, pending_action_id`,
   )
     .bind(now, stateHash, afHash)
-    .first<{ purpose: 'login' | 'step_up'; scope: ConsoleScope; nonce: string; pkce_verifier: string }>();
+    .first<{ purpose: 'login' | 'step_up'; scope: ConsoleScope; nonce: string; pkce_verifier: string; pending_action_id: string | null }>();
   if (!flow) return refuse('unknown_flow');
   // The verifier is needed once, now: it doesn't stay in D1 for the daily purge.
   await env.CONSOLE_DB.prepare("UPDATE auth_flows SET pkce_verifier = '' WHERE state_hash = ?").bind(stateHash).run();
-  // Step-ups (fresh sign-in) are batch C10's: no step-up flow can be created yet, so none can arrive here.
-  if (flow.purpose !== 'login') return refuse('step_up_unsupported');
   if (!env.CONSOLE_GOOGLE_CLIENT_ID || !env.CONSOLE_GOOGLE_CLIENT_SECRET) return refuse('not_configured', 503);
   const exchange = await exchangeCode({ code, verifier: flow.pkce_verifier, clientId: env.CONSOLE_GOOGLE_CLIENT_ID, clientSecret: env.CONSOLE_GOOGLE_CLIENT_SECRET, authOrigin: env.CONSOLE_AUTH_ORIGIN });
   if (!exchange.ok) return refuse(exchange.code, exchange.code === 'google_unavailable' ? 503 : 400);
   const verified = await verifyConsoleToken(exchange.idToken, { clientId: env.CONSOLE_GOOGLE_CLIENT_ID, nonce: flow.nonce, scope: flow.scope, now, accessToken: exchange.accessToken });
   if (!verified.ok) return refuse(verified.code, verified.code === 'jwks_unavailable' ? 503 : 400, verified.claim);
   const id = verified.identity;
+  if (flow.purpose === 'step_up') {
+    // A fresh sign-in (batch C10, actions.ts): the action runs here, with the token, which is then dropped.
+    const location = await runStepUp(env, info, { actionId: flow.pending_action_id!, sub: id.sub, jwt: exchange.idToken });
+    log({ event: 'auth_callback', requestId: info.requestId, outcome: 'ok', code: 'step_up' });
+    const headers = new Headers({ location, ...authOriginHeaders() });
+    headers.append('set-cookie', clearFlowCookie(AF_COOKIE));
+    return new Response(null, { status: 303, headers });
+  }
   const result: HandoffResult = { provider: id.provider, sub: id.sub, email: id.email!, hd: id.hd };
   const h = randomBytes(32);
   await env.CONSOLE_DB.prepare('INSERT INTO handoff_codes (code_hash, state_hash, result_json, expires_at) VALUES (?, ?, ?, ?)')

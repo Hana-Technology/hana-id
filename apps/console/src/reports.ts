@@ -51,7 +51,11 @@ export async function usageRoute(env: Env, info: RequestInfo, c: ReportCaller, u
   return json(200, { rows: r.rows });
 }
 
-const listItem = (s: StatementWithTotals) => ({ orgId: s.orgId, month: s.month, asOf: s.asOf, csvSha256: s.csvSha256, ...(s.pdfSha256 ? { pdfSha256: s.pdfSha256 } : {}), issuedBy: s.issuedBy, issuedAt: s.issuedAt });
+/**
+ * A statement as partners see it. Statements are issued only by Hana staff (the admin Worker), and partners never see a
+ * staff address (D296): `issuedBy` is always `hana` here (D371).
+ */
+const listItem = (s: StatementWithTotals) => ({ orgId: s.orgId, month: s.month, asOf: s.asOf, csvSha256: s.csvSha256, ...(s.pdfSha256 ? { pdfSha256: s.pdfSha256 } : {}), issuedBy: 'hana', issuedAt: s.issuedAt });
 
 async function statementsOf(env: Env, info: RequestInfo, c: ReportCaller): Promise<{ ok: true; statements: StatementWithTotals[] } | { ok: false; res: Response }> {
   let r;
@@ -64,7 +68,7 @@ async function statementsOf(env: Env, info: RequestInfo, c: ReportCaller): Promi
   return { ok: true, statements: r.statements };
 }
 
-/** `GET /api/orgs/:org/statements` → the metadata and hashes (StatementMeta[]; no file keys). */
+/** `GET /api/orgs/:org/statements` → the metadata and hashes (StatementMeta[]; no file keys, staff shown as `hana`). */
 export async function statementsRoute(env: Env, info: RequestInfo, c: ReportCaller): Promise<Response> {
   const s = await statementsOf(env, info, c);
   return s.ok ? json(200, { statements: s.statements.map(listItem) }) : s.res;

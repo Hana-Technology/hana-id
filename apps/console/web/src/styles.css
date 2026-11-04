@@ -218,3 +218,153 @@ tr.failed td {
 .app-title {
   font-size: 1.25rem;
 }
+/* Batch C10: the write controls. */
+button.danger {
+  background: var(--err-bg);
+  color: var(--err-fg);
+  border-color: transparent;
+}
+.confirm {
+  display: inline-flex;
+  gap: 6px;
+}
+td button + button,
+td .confirm + button,
+td button + .confirm {
+  margin-left: 6px;
+}
+.inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: flex-end;
+  margin: 12px 0;
+}
+.inline-form label,
+.editor label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9rem;
+}
+input,
+select,
+textarea {
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--fg);
+}
+textarea {
+  min-width: min(560px, 100%);
+}
+.editor {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+  padding: 12px 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.editor textarea {
+  width: 100%;
+}
+.check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.logo {
+  display: block;
+  margin: 8px 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+/* The consent preview: packages/web's renderConsent markup (its classes), framed as the popup frames it. */
+.consent-preview {
+  margin: 12px 0;
+}
+.consent-preview > div {
+  max-width: 480px;
+  padding: 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.consent h1 {
+  font-size: 1.2rem;
+}
+.consent .warn {
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+  padding: 8px 10px;
+  border-radius: 6px;
+}
+.consent .danger {
+  color: var(--err-fg);
+}
+.consent .verified {
+  color: #16794a;
+}
+.consent .label {
+  font-style: italic;
+}
+.consent .contract {
+  margin: 4px 0;
+}
+/* Reports, statements and pending upgrades. */
+.table-wrap {
+  overflow-x: auto;
+  max-width: 100%;
+}
+table.report th,
+table.report td {
+  white-space: nowrap;
+}
+table.report td.small {
+  white-space: normal;
+  min-width: 10rem;
+}
+.apps-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 12px;
+  margin: 0;
+}
+.apps-filter legend {
+  font-size: 0.9rem;
+  padding: 0 4px;
+}
+.downloads {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.hash {
+  margin: 4px 0;
+}
+.strong {
+  font-weight: 600;
+}
+pre.command {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+button.link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+}

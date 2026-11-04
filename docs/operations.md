@@ -3,7 +3,7 @@
 Last verified against code: 2026-11-04 (branch `feat/batch-c-13`: "Retention (batch C13, milestone M6)": the Neon
 migration 0007, the deploy order, the monthly job in the 15-minute cron, `retention_failed`, `admin retention:issuer`,
 `uid-erase` for an erasure request, statements and rates by hand, what to watch; "Usage ledger" lists 0007; D360–D369);
-2026-11-04 (branch `feat/batch-c-12`: "Reports and statements (batch C12, milestone M6)": the
+2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342; the console's C10 vars `NETWORK`, `REFUSED_ORIGINS` and the `USERS_SCREEN` switch, no new secret or setup step); 2026-11-04 (branch `feat/user-id-identity-sub`: "Wallet directory (hot-DB migration 0011)": both keys, the deploy pairing for the session signature, the three ids in `user:*`, the log codes; "Admin CLI"'s `--user`; D346); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: the "Declined" row of "Turning linking on (batch 8b)", D341); 2026-11-04 (branch `feat/batch-c-12`: "Reports and statements (batch C12, milestone M6)": the
 Neon migration 0006, the admin config's buckets and vars, the optional CoinGecko key, the 15-minute cron with the 00:30
 UTC daily work, issuing a statement, the rate override, exports, what to watch; "Usage ledger" lists 0006; the admin's
 cron triggers; D320–D329); 2026-11-04 (branch `feat/batch-c-14`: "Admin Worker" → "Security & monitoring (batch C14)"
@@ -697,16 +697,21 @@ deploy. Logins are unaffected either way; events in between are not recorded.
 
 ## Wallet directory (hot-DB migration 0011)
 
-Branch `feat/wallet-directory` (D310–D317; not merged, nothing deployed). After each login the vault reports the
-wallet's Stellar and EVM addresses, each signed by its own key, to `POST /v1/wallets/record`; the API checks them
-against the live session on chain and keeps, in its own D1, each user (`hu_…`, its Support ID `HANA-XXXX-XXXX`), the
-wallets and the account's identities (`docs/architecture.md` "Wallet directory", `docs/api.md`). It never fails or
+D310–D317 merged into `develop`; D346's ids and the record's session signature on `feat/user-id-identity-sub` (not
+merged); nothing deployed, 0011 applied in no env. After each login the vault reports the wallet's Stellar and EVM
+addresses, each signed by its own key, with the whole request signed by the session key, to `POST /v1/wallets/record`;
+the API checks them against the live session on chain and keeps, in its own D1, each user with three ids (the User
+ID partners see, `u1_…`, which is the identity token's `sub`; its Support ID `HANA-XXXX-XXXX`; the staff-only internal
+id `hu_…`, the ledger's uid; D346), the wallets and the account's identities (`docs/architecture.md` "Wallet directory", `docs/api.md`). It never fails or
 slows a login. There is no backfill: a user appears with wallets at their next login after the deploy.
 
 **Prerequisites.** `USER_ID_KEY` on the API Worker (the uid key: "Usage capture" step 4, `usage-setup <env>
-user-id-key`; it needs no Neon). Without it every record answers `503 directory_unavailable` and the API logs
-`directory_unavailable` (`missing_key`) at most every 10 minutes per isolate; logins are unaffected. Never rotate it
-within a contract term: every user would get a new user id.
+user-id-key`; it needs no Neon) and `IDENTITY_SUB_KEY` (the identity token's `sub` key, "Identity token keys"; already
+set on every env that mints tokens, sandbox-dev included). Without either every record answers `503
+directory_unavailable` and the API logs `directory_unavailable` (`no_user_id_key`, `no_sub_key` or `bad_sub_key`) at
+most every 10 minutes per isolate; logins are unaffected. Never rotate either within a contract term: every user would
+get a new internal id (`USER_ID_KEY`) or a new User ID and Support ID (`IDENTITY_SUB_KEY`, which also changes every
+partner's token `sub`).
 
 **Applying it on sandbox-dev** (the user runs this, from the main checkout; additive, three new tables, no rollback
 step: an older Worker ignores them). Take a Time Travel bookmark first ("Restoring a D1 database (Time Travel)"), then:
@@ -720,7 +725,9 @@ corepack pnpm --filter @hana-id/api run deploy                                  
 
 Order: the migration, then the API, then the vault bundle. In another order nothing breaks: an API without 0011
 answers `503 directory_write_failed` and logs `directory_write_failed` (`no_table`), and a vault without the record
-sends nothing. `GET /v1/health` keeps `hotDb: 9` (D313). Other envs: the same with `hana-id-<env>`.
+sends nothing. The API and the vault must both be at least `feat/user-id-identity-sub`'s: a vault without the
+session signature gets `400 bad_request` from a newer API (and a newer vault's from an older API), so nothing is
+recorded until both are deployed; logins are unaffected either way. `GET /v1/health` keeps `hotDb: 9` (D313). Other envs: the same with `hana-id-<env>`.
 
 **Checking it.** Log in on the demo, then `admin sandbox-dev user:find --remote --address <the G… or 0x… address the
 demo shows>`: one user, both wallets, the Google (or email) identity as the account root.
@@ -728,11 +735,13 @@ demo shows>`: one user, both wallets, the Google (or email) identity as the acco
 **Reading it** (Hana staff; `$A` as in "User directory (D269)"):
 
 ```sh
-$A user:list --remote                            # each identity also shows its user id, Support ID, role and wallets per scope
+$A user:list --remote                            # each identity also shows its user (u1_… (HANA-…; internal hu_…)), role and wallets per scope
 $A user:find --remote --address G…               # every user listing that wallet (warned when more than one)
 $A user:find --remote --address 0x…              # any case
-$A user:find --remote --user HANA-XXXX-XXXX      # or hu_…; any case, with or without HANA- and dashes
-$A user:find --remote                            # an address, sub, wallet, user id or Support ID on stdin
+$A user:find --remote --user HANA-XXXX-XXXX      # any case, with or without HANA- and dashes
+$A user:find --remote --user u1_…                # the User ID a partner sends (its token's sub; exact case)
+$A user:find --remote --user hu_…                # the internal id (the ledger's uid; any case)
+$A user:find --remote                            # an address, sub, wallet, User ID, internal id or Support ID on stdin
 ```
 
 These read the API's D1 the way the issuer's is read (D316): locally the statement in a 0600 file under
@@ -744,9 +753,11 @@ for this terminal only, as in "User directory (D269)".
 
 **What to watch** (Worker logs): `directory_write_failed` (error: `no_table` before 0011, `internal` otherwise),
 `directory_sync_failed` (warn, `near_unavailable`: an identity sync after a login or a link change couldn't read the
-chain; the next one rewrites the account), `directory_unavailable` (warn, `missing_key`). The request log's
-`/v1/wallets/record` lines: `bad_wallet_record` or `session_mismatch` in volume are someone probing, `stale_record`
-a vault with a wrong clock.
+chain; the next one rewrites the account), `directory_unavailable` (warn, `no_user_id_key`, `no_sub_key` or
+`bad_sub_key`: set the named key). The request log's `/v1/wallets/record` lines: `bad_wallet_record`,
+`invalid_signature` (a record without its session's own signature: someone naming another user's session) or
+`session_mismatch` in volume are someone probing, `stale_record` a vault with a wrong clock, `bad_request` in volume
+right after a deploy a vault and API from before and after the session signature.
 
 ## Hot DB migration 0006 and the new gate (batch C3, milestone M1)
 
@@ -906,7 +917,7 @@ of its initial allowance (0.5 NEAR, deploy-contract's default; set the Worker va
 keys were added with another `--owner-relayer-allowance`) writes an `owner_allowance_low` security event, once a day.
 Top it up by re-adding the key with a fresh allowance ("Relayer keys (either pool)").
 
-## Partner console Worker (`apps/console`, batches C7 and C9) and console-auth (`apps/console-auth`, C9)
+## Partner console Worker (`apps/console`, batches C7, C9 and C10) and console-auth (`apps/console-auth`, C9)
 
 The console Worker (`hana-id-console-<env>`, manifest `console.workerName`) holds `CONSOLE_DB` (orgs, members, invites,
 owner grants, console sessions, the console's audit log), binds the API's `ConsoleRpc` (`API`) and serves the partner
@@ -923,6 +934,16 @@ Both need the dashboard blocks in the manifest (`console`, `files`, `admin`, `us
 first). Partners can sign in once both are deployed with the secret set (milestone M4); invites need the admin
 Worker's notices (C8), so without C8 no new partner can be invited (staff's `issueInvite` link only works after the
 admin Worker's ack).
+
+**C10 (partner management, branch `feat/batch-c-10`).** No new secret, binding or setup step: `gen` now also writes
+`NETWORK` and `REFUSED_ORIGINS` (the API's origin rules, from the manifest), so redeploy the console after `gen`. The
+step-ups use the same Google client and redirect URI as sign-in (`scope=openid`; `at_hash` is in the claim allow-list,
+D342). Owner actions are relayed by the API's owner pool (its keys and allowance, "Owner actions"); `execute_change`
+from the console needs nothing else. The partner **Users screen** is off until the wallet directory's
+`ConsoleRpc.listUsers` / `getUser` are deployed in the API (D357): then set the console var `USERS_SCREEN = "1"` (in
+`wrangler.jsonc` `vars` after `gen`, or a `--var` on deploy; `gen` doesn't write it) and redeploy the console; unset it
+to hide the screen again. The client-proof helper (AddClient) asks the partner to register the helper page's address as
+a redirect URI of their own client while they use it (D351); Hana's console client is unchanged.
 
 ### Setup step 11: the console's Google OAuth client (for the user, once per env)
 
@@ -1015,9 +1036,9 @@ verifier, checks the ID token (RS256 on Google's JWKS, `iss`, `aud`, `azp`, nonc
 each leg's claim **names**, `outsideApiAllowList`, `hasEmailClaims`, `hasHd`, `hasAtHash`, `atHashMatches`, `passes`
 and a verdict; never a token, an address, a `sub` or a code. Exit code 1 if a leg doesn't pass.
 
-- `openid` leg `PASS`: open question 1 answered "yes"; nothing to change.
-- `NO EMAIL, BUT at_hash` (expected: Google documents `at_hash` as always present on server-flow ID tokens): no
-  personal claim, but the API's allow-list refuses `at_hash`; decide D295's options before C10.
+- `openid` leg `PASS`: open question 1 answered "yes"; nothing to change. `at_hash` (Google documents it on every
+  server-flow ID token) is in the allow-list since D342, so a leg with it passes (`PASS … (at_hash included, D342)`)
+  when it matches the access token; a mismatch is `FAIL: at_hash does not match`.
 - `FAIL: Google added email or hd`: step-ups and owner actions stop until decided (the spec's fallback: accept the
   address after an explicit partner disclosure).
 - `openid email` leg `PASS`: the console's sign-in accepts the token (D290); a `FAIL` there means sign-in would refuse
@@ -1039,6 +1060,9 @@ answer in `docs/batch-c-spec.md` open question 1, as the email spike's was.
 - **`StaffRpc`** (the admin Worker's binding, C8): orgs, members (`setMember`), users (`disableUser`), freeze, invites
   (issue, revoke, the notice list and ack), owner grants (cancel), the audit feed and queries. Until C8 deploys nothing
   calls it; there is no CLI for it.
+- **Pending actions** (C10): one row per fresh sign-in started, 5 minutes, used once; purged 24 h after expiry. They
+  hold the canonical action and its decoded view, never a token. A step-up that ran writes its audit row
+  (`step_up_id` = the action), a refused one `step_up.failed`.
 - **Logs** carry ids and codes only: never an email (invitee, member or staff), a Google `sub`, a token or a hash.
 
 ### Restoring `CONSOLE_DB`
@@ -1244,8 +1268,9 @@ accurate. Before the owner proposes an upgrade on an env whose builds are reprod
 Logos are written by the console (`POST /api/orgs/:org/apps/:app/logo`, routed for owners in C10; until then nothing
 uploads one) and served by the files Worker (`hana-id-files-<env>`, `files.workerName`) on `files.origin`. The auth
 pages show an app's logo beside its name, from `GET /v1/app`'s `logoUrl`. `docs/api.md` "Files Worker" and "Console
-Worker" have the routes and checks; D300–D308 the readings. Nothing here makes anything partner-facing until C10
-routes the upload: an app without a logo gets exactly batch B's pages, messages and policies.
+Worker" have the routes and checks; D300–D308 the readings. C10 (`feat/batch-c-10`) routes the upload behind the
+session and the owner role; until an owner uploads one, an app without a logo gets exactly batch B's pages, messages and
+policies.
 
 It needs the dashboard blocks in the manifest (setup step 12), like the console.
 
@@ -1280,7 +1305,7 @@ corepack pnpm --filter @hana-id/api run gen <env>
 corepack pnpm --filter @hana-id/web build
 corepack pnpm --filter @hana-id/api run deploy:pages
 # 6. The API (GET /v1/app's logoUrl needs FILES_ORIGIN, which the same gen wrote) and the console (the IMAGES binding,
-#    the logo backend). Deploy order doesn't matter for users: no app has a logo until C10's upload route.
+#    the logo backend). Deploy order doesn't matter for users: no app has a logo until an owner uploads one (C10's route).
 corepack pnpm --dir apps/api exec wrangler deploy
 corepack pnpm --filter @hana-id/console gen <env> --d1-id <uuid>
 corepack pnpm --dir apps/console exec wrangler deploy
@@ -1356,7 +1381,7 @@ origin).
 
 The admin Worker settles the gas of every relayed event at FINAL, checks the relayer nonces and the rejection rate
 daily, fetches the NEAR/USD rate, and issues the frozen monthly statements (CSV, PDF and on-screen, D92) with ledger CSV
-exports; partners will read their reports and statements in the console once C10 routes them (`docs/api.md` "Admin
+exports; partners read their reports and statements through the console's routes (C10 routes them, `feat/batch-c-10`; the SPA screens are still to build) (`docs/api.md` "Admin
 Worker", "Usage ledger functions"; D320–D329). Not deployed anywhere yet: it goes live at milestone M6.
 
 ### Setting it up (once per env, for the user to run)
@@ -1556,7 +1581,7 @@ admin <env> owner:proposals [--limit 20] [--json]
 admin <env> governance:status [--json]
 admin <env> council:replace-member --remove <old member> --add <new member> [--member <m>] [--approve-with <m>] [--yes]
 admin <env> user:list [--app <app id>] [--provider email|google] [--search <part of the address> | -] [--limit 50] [--json] [--remote]
-admin <env> user:find [--email <address> | --sub <sub> | --address <G…|0x…> | --user <hu_…|HANA-XXXX-XXXX>] [--provider email|google] [--json] [--remote]   # none: read from stdin
+admin <env> user:find [--email <address> | --sub <sub> | --address <G…|0x…> | --user <u1_…|hu_…|HANA-XXXX-XXXX>] [--provider email|google] [--json] [--remote]   # none: read from stdin
 admin <env> retention:issuer [--yes] [--remote]      # the issuer's part of the monthly retention (C13, D365)
 ```
 
@@ -1944,7 +1969,7 @@ below; `gen` and the schema refuse a Worker-secret key off testnet).
 | `identity-signing-key-next.json` | a rotation's incoming key (`next`), published | no, until `switch --to next` |
 | `identity-signing-key-previous.json` | the key a switch replaced, still published so its tokens keep verifying | yes, until `retire --key previous` deletes its slot |
 | `identity-slots.json` | which Worker slot holds which kid (public data) | — |
-| `identity-sub-key` | `IDENTITY_SUB_KEY`, base64 of 32 bytes. **Never rotated** (a new key changes every user's `sub` at every partner); back it up offline with the council backup (D81) | yes |
+| `identity-sub-key` | `IDENTITY_SUB_KEY`, base64 of 32 bytes. **Never rotated** (a new key changes every user's `sub` at every partner, and so every User ID and Support ID, D346); back it up offline with the council backup (D81) | yes |
 
 Every command below prints its plan without `--yes`. After `init`, `next`, `switch` and `retire`, put the changed
 `envs/<env>.json` in the repo, run `gen` and deploy the API: the JWKS and the active kid come from the manifest.
@@ -2761,7 +2786,7 @@ $A user:find --remote --json
 
 Each user: the address, provider, `sub`, verified, first and last seen, and per app its scope and the identity's own
 on-chain path `{scope}#{provider}#{sub}#0` (a linked member's wallet is its account root's: `get_identity`); with the
-wallet directory (migration 0011, "Wallet directory (hot-DB migration 0011)"), per scope its user id, Support ID, role
+wallet directory (migration 0011, "Wallet directory (hot-DB migration 0011)"), per scope its User ID (`u1_…`), Support ID, internal id (`hu_…`), role
 in the account and the account's wallets, read from the API's D1 the same private way. An
 exact address matches as typed (lowercased: Google rows) and normalized (`@hana-id/email`: email rows, so
 `Alice.Smith@gmail.com` finds `alicesmith@gmail.com`). **Unverified Google rows** (`email_verified = 0`):
@@ -3166,7 +3191,7 @@ What users see, by case (`docs/integration.md` "Sign-in methods and links" has t
 | B, Google-hosted | had a Google wallet, chooses "Continue with email" with its Gmail address and types the code | "This email belongs to a wallet you created by signing in with Google": **Link and continue** or **Sign in with Google**, then Google | the Google wallet; the email joins at once (a notice mail goes to the address) |
 | B, not hosted | the same with an address Google doesn't host | the same, then "An email will be able to open this wallet from {date}" with **Cancel this link** | the Google wallet; the email joins after `change_delay_ms` (sandbox-dev: the contract's value; 24 h on mainnet); an email login meanwhile is `link_pending` with the date |
 | C | has neither wallet | the usual sign-in | a new wallet for that method; a Google login records the hint for later |
-| Declined | a Google user cancels Google's one sign-in screen | nothing more: the email is asked on that screen, so cancelling it is no Google login at all (`google_error`, `access_denied`) | the user can try again or use email |
+| Declined | a Google user cancels Google's one sign-in screen | Hana's chooser again: "Google sign-in was cancelled.", **Continue with Google** or **Continue with email** (case B's own choices when its Google step was cancelled; D341) | Google again or email signs in; closing the popup there ends the login with `login_cancelled`, never `google_error` |
 | Another account | google-match finds the access token's account isn't the ID token's (`google_account_mismatch`; a user without a wallet) | "Another Google account was chosen": **Sign in with email instead**, **Try Google again** (Google's email permission for the signed-in account), Cancel (D264, kept under D270) | an email login, or Google again; Cancel ends `login_cancelled` (`google_account_mismatch`; a refusal on the retried screen `email_consent_declined`). A user with a wallet sees nothing of it |
 
 Checklist, in order (each check before the next):

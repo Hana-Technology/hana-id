@@ -39,6 +39,8 @@ export interface GoogleAccount {
 /** What the next token answer's ID token carries: the account, and claim overrides (`undefined` deletes a claim). */
 export type ClaimEdits = Record<string, unknown>;
 
+let sharedSigner: RsaSigner | undefined;
+
 export class MockGoogle {
   signer!: RsaSigner;
   readonly jwks = new FakeJwks();
@@ -52,7 +54,10 @@ export class MockGoogle {
   nextStatus: number | null = null;
 
   async init(): Promise<void> {
-    this.signer = await rsaSigner('console-test-kid');
+    // One key for the whole file: the API Worker (C10's step-ups, through the fake upstream) caches Google's JWKS by
+    // kid in its own isolate, which a test can't clear, so a new key per test would fail its signature check there.
+    sharedSigner ??= await rsaSigner('console-test-kid');
+    this.signer = sharedSigner;
     this.jwks.body = { keys: [this.signer.jwk] };
     clearJwksCache();
     const real = globalThis.fetch.bind(globalThis);
@@ -60,7 +65,8 @@ export class MockGoogle {
       const req = input instanceof Request ? input : new Request(input, init);
       if (req.url === GOOGLE_JWKS_URL) return this.jwks.fetch(req.url, init);
       if (req.url === GOOGLE_TOKEN_URL) return this.token(req);
-      if (req.url.startsWith('https://')) throw new Error(`Unexpected fetch to ${req.url}`);
+      // The fake chain's NEAR RPC (test/chain.ts installChain) is answered underneath this mock.
+      if (req.url.startsWith('https://') && !req.url.startsWith('https://rpc.test.invalid')) throw new Error(`Unexpected fetch to ${req.url}`);
       return real(input, init);
     });
   }

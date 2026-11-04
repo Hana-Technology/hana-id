@@ -58,6 +58,7 @@ import {
   signVaultMessage,
   unsupportedMethodId,
   vaultPayload,
+  walletRecordEvmDigest,
 } from '@hana-id/core';
 import { deriveAddresses } from '@hana-id/core/derivation';
 import { type AutoApproveResult, matchAutoApprovePolicy, recordAutoApproveUse } from '@hana-id/core/policy';
@@ -70,7 +71,7 @@ import { autoApproveStatus, consentActive, consentEnd, newConsent, withUsage } f
 import { type Persistence, type PolicyInForce, type RawSign, type VaultConfig, parentAllowed, policyInForce } from './config.ts';
 import { VaultError, apiErrorToVault, disconnected, notLoggedIn, toProtocolError, userRejected } from './errors.ts';
 import { Launcher, type LauncherHandle, type LauncherView } from './launcher.ts';
-import { type LoginContext, type LoginMode, type LoginRequest, type LoginStage, type LoginSuccess, PendingLink, PendingLogin, type RootPins, isOwnLoginPath, pathOwner, serverDetail } from './login.ts';
+import { type LoginContext, type LoginMode, type LoginRequest, type LoginStage, type LoginSuccess, PendingLink, PendingLogin, type PopupWatch, type RootPins, isOwnLoginPath, pathOwner, serverDetail } from './login.ts';
 import { type IssuerApi, issuerApi } from './issuer.ts';
 import type { GoogleEmailFlow } from '../auth/google.ts';
 import { NearView } from './near.ts';
@@ -185,6 +186,8 @@ export interface VaultOptions {
   loginFlow?: 'combined' | 'split';
   /** How the popup asks Google for the email scope; default auth/google.ts GOOGLE_EMAIL_FLOW (tests run every flow). */
   googleEmailFlow?: GoogleEmailFlow;
+  /** D347: the watch on the login popup's window (vault/login.ts POPUP_WATCH by default; tests shorten it). */
+  popupWatch?: Partial<PopupWatch>;
 }
 
 interface Share {
@@ -432,8 +435,10 @@ export class Vault {
       return;
     }
     if (t === 'hana:auth-progress') {
-      const m = this.pending ? parseWindowMessage(e.data, ['hana:auth-progress']) : null;
-      if (m) this.pending?.acceptProgress(e, m.stage);
+      const m = this.pending || this.pendingLink ? parseWindowMessage(e.data, ['hana:auth-progress']) : null;
+      if (m && this.pending) this.pending.acceptProgress(e, m.stage);
+      // A link task's popup: the close watch's signals only (D347).
+      else if (m && this.pendingLink) this.pendingLink.acceptPopupSignal(e, m.stage);
       return;
     }
     if (t === 'hana:export-hello') {
@@ -821,6 +826,7 @@ export class Vault {
       perfNow: this.perfNow,
       pins: this.rootPins(),
       ...(this.o.googleEmailFlow ? { googleEmailFlow: this.o.googleEmailFlow } : {}),
+      ...(this.o.popupWatch ? { popupWatch: this.o.popupWatch } : {}),
     };
   }
 
@@ -1751,29 +1757,30 @@ export class Vault {
   // ---- wallet directory (D310, D317) ----
 
   /**
-   * Right after the login's result is on its way (a timer, so the two signatures never delay it), while the session is
-   * still this one and PRK is in memory, signs its two wallet records and sends them without waiting
-   * (wallet-record.ts): one call, a 15 s limit, every failure dropped. The login's result never depends on it.
+   * Right after the login's result is on its way (a timer, so the signatures never delay it), while the session is
+   * still this one and PRK is in memory, signs its two wallet records and the session signature over the request and
+   * sends them without waiting (wallet-record.ts): one call, a 15 s limit, every failure dropped. The login's result
+   * never depends on it.
    */
   private recordWallets(s: Session): void {
-    this.timers.setTimeout(() => this.sendWalletRecords(s), 0);
+    this.timers.setTimeout(() => void this.sendWalletRecords(s), 0);
   }
 
-  private sendWalletRecords(s: Session): void {
+  private async sendWalletRecords(s: Session): Promise<void> {
     const api = this.api;
     // A session that already ended (or went dormant: PRK zeroed) records nothing; the next login does.
     if (!api || this.session !== s || s.prk.every((b) => b === 0)) return;
+    const ctx = { env: this.env.name, signer: this.env.signer, appId: this.config.appId, scopeId: this.config.scopeId, path: s.path, sessionPublicKey: s.sessionPk, issuedAtMs: this.clock.now() };
     let signed;
     try {
-      signed = signWalletRecords(
-        s.prk,
-        { env: this.env.name, signer: this.env.signer, appId: this.config.appId, scopeId: this.config.scopeId, path: s.path, sessionPublicKey: s.sessionPk, issuedAtMs: this.clock.now() },
-        s.addresses,
-      );
+      // The digest is refused as a raw EVM request from now on, before the first await (D179, D317).
+      s.recordDigest = walletRecordEvmDigest(ctx, s.addresses.evm);
+      // The chain keys sign synchronously inside (PRK checked live just above); then the session key, asynchronously.
+      signed = await signWalletRecords(s.prk, s.keyPair.privateKey, ctx, s.addresses);
     } catch {
       return;
     }
-    s.recordDigest = signed.evmDigest;
+    if (this.session !== s) return;
     void reportWallets((body, signal) => api.recordWallets(body, signal), signed.body, this.timers);
   }
 

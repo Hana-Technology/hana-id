@@ -62,14 +62,23 @@ export function publicIdentityConfig(env: Pick<Env, 'IDENTITY_ISS' | 'IDENTITY_P
 
 const SUB_KEY_RE = /^[A-Za-z0-9+/]{43}=$/u;
 
+/**
+ * IDENTITY_SUB_KEY alone (32 bytes from base64), or why not. The token's `sub` and the wallet directory's User ID
+ * (directory/store.ts, D346) both come from it.
+ */
+export function identitySubKey(env: Pick<Env, 'IDENTITY_SUB_KEY'>): Uint8Array | 'no_sub_key' | 'bad_sub_key' {
+  if (!env.IDENTITY_SUB_KEY) return 'no_sub_key';
+  if (!SUB_KEY_RE.test(env.IDENTITY_SUB_KEY)) return 'bad_sub_key';
+  const subKey = base64Decode(env.IDENTITY_SUB_KEY);
+  return subKey.length === 32 ? subKey : 'bad_sub_key';
+}
+
 /** The whole configuration for minting, or the first problem. */
 export function identityConfig(env: Env): IdentityConfig | IdentityConfigProblem {
   const pub = publicIdentityConfig(env);
   if (typeof pub === 'string') return pub;
-  if (!env.IDENTITY_SUB_KEY) return 'no_sub_key';
-  if (!SUB_KEY_RE.test(env.IDENTITY_SUB_KEY)) return 'bad_sub_key';
-  const subKey = base64Decode(env.IDENTITY_SUB_KEY);
-  if (subKey.length !== 32) return 'bad_sub_key';
+  const subKey = identitySubKey(env);
+  if (typeof subKey === 'string') return subKey;
   return { ...pub, subKey };
 }
 

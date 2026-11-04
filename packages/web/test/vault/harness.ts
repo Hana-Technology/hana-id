@@ -283,6 +283,11 @@ export class FakeBackend {
    */
   googleRecord: (body: Record<string, unknown>) => Record<string, unknown> | Response | Promise<never> = () => ({ accepted: true });
   readonly recordCalls: Record<string, unknown>[] = [];
+  /**
+   * POST /v1/wallets/record (the wallet directory, D317): the test's answer (default `{recorded: true}`), a Response,
+   * or a promise that never settles (a hung API). The requests are in `calls`.
+   */
+  walletRecord: (body: Record<string, unknown>, signal?: AbortSignal) => Record<string, unknown> | Response | Promise<never> = () => ({ recorded: true });
   /** POSTs to the login relay (the vault's follow-up notices, the popup's answers in tests). */
   readonly relayWrites: string[] = [];
   private txSeq = 0;
@@ -547,6 +552,10 @@ export class FakeBackend {
       return json(200, { ...v, serverTimeMs: this.serverNow(), ...(this.relayHeldMs === null ? {} : { heldMs: this.relayHeldMs }) });
     }
     if (call.path === '/v1/identity/token') return this.identityToken(call);
+    if (call.path === '/v1/wallets/record') {
+      const r = await this.walletRecord(b, signal);
+      return r instanceof Response ? r : json(200, { ...r, requestId: 'rq' });
+    }
     if (call.path === '/v1/vault/shares') return this.createShare(call);
     if (call.path.startsWith('/v1/vault/')) return this.shareAction(call, call.path.slice('/v1/vault/'.length));
     void url;

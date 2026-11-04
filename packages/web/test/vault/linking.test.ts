@@ -171,6 +171,18 @@ describe('the path through get_identity (batch 7)', () => {
     expect([...b.backend.sessions.values()][0]!.path).toBe(pathOf(E));
   });
 
+  it('an active member’s login records its account root’s wallet: the record’s path is the root’s (D317)', async () => {
+    const b = new Browser();
+    b.backend.opened.add(Buffer.from(ik(E)).toString('hex'));
+    b.backend.link(E, G);
+    const t = await tab(b, ENV2);
+    const { reply } = await login(t, g);
+    await t.waitUntil(() => b.backend.count('/v1/wallets/record') === 1, 'the record');
+    const body = b.backend.calls.find((c) => c.path === '/v1/wallets/record')!.body as { path: string; wallets: { stellar: { address: string } } };
+    expect(body.path).toBe(pathOf(E));
+    expect(body.wallets.stellar.address).toBe((reply.result as { addresses: { stellar: string } }).addresses.stellar);
+  });
+
   it('a pending member is refused before any chain call, with when it activates', async () => {
     const b = new Browser();
     b.backend.link(E, G, { active: false, effectiveAtMs: 1_900_000_000_000 });

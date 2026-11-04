@@ -1752,7 +1752,9 @@ The numbers are production's. **Dev envs** (`local*`, `sandbox*`: `isDevEnv` on 
 marked "dev:"; every other row is the same in every env. The issuer picks the set once per request (`limitsFor`) and
 sends the mailbox object its set with each call; counters are keyed by window name and start, never by max, so a
 mailbox over production's numbers but under the dev ones passes at once on a dev env. A wrong-code lock is keyed by the
-max that set it, so production's lock doesn't hold under the dev set.
+max that set it, so production's lock doesn't hold under the dev set. A ticketed start's own code allowance (a device that
+signed in before: production 3 a day per address, 9 per mailbox, with no fall-back to the code limits) is 100 and 300
+on a dev env.
 
 All exact, on the issuer's `RateLimiter` objects (named `<env>:<subject>`). A mailbox is the normalized address
 without its `+tag` (`normalizeEmail().mailbox`), keyed by HMAC under K_rl; a requester inside it is a hash of the IP

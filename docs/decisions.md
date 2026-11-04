@@ -4477,6 +4477,36 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   doesn't); exempting the step-up token because it isn't relayed (a name or picture claim there means the console
   asked Google for more than `openid`, a console bug worth refusing).
 
+## Users and their wallets for staff and partners, 2026-11-04
+
+### D310. Hana records each user's wallet addresses and linked accounts; staff see email and wallets, partners see wallets but not email
+- Date 2026-11-04 · Status: confirmed by the user (2026-11-04: 'we should also store wallet addreses, as admins we want
+  to be able to see what are the wallet addresses linked to a user … It's ok to show wallet addresses for partners by
+  default, but as usual email will be hidden from partners by default (until users explicitly approve this), but admins
+  need to be able to see both email and wallet addresses … we want our end user experience similar to what Privy
+  provides', then 'go' on the five points below) · Built on `feat/wallet-directory` · Extends D269; informs D275 (the
+  staff Users screen) and the partner console's Users screen (C10)
+- Decision:
+  1. **A user** is one account in one scope: the root identity and its linked identities (D133). Wallets are per scope,
+     so one person in two orgs' scopes is two users; staff can group them by email.
+  2. **User id**: a stable opaque id per scope (Privy's `cmvq…` equivalent), shown to partners and staff; the
+     `HANA-XXXX-XXXX` Support ID (D276) is its short form.
+  3. **Wallet addresses**: after each successful login the vault reports the wallet's Stellar (`G…`) and EVM (`0x…`)
+     addresses in the background, each with a signature by that chain's key over a domain-separated statement (scope,
+     path, chain, address, session) that can never be a valid transaction on either chain; the API verifies and stores
+     them in its hot DB, never failing or slowing the login. "Last used" is the last login that opened the wallet, not
+     on-chain activity.
+  4. **Linked accounts** (provider kinds per user) are kept current as links are made and removed.
+  5. **Who sees what**: staff (admin console, CLI) see email (D269, from the issuer's directory), connected accounts,
+     wallets, user id, created and last seen. Partners (partner console, for their own org's scopes only) see the user
+     id, created and last seen, connected account kinds ("Google", "Email") without any address or Google account id,
+     and the wallet addresses. Partners see an address only once a user approves (UX later).
+- Gaps accepted: no backfill (a user appears with wallets at their next login); the partner Users screen needs C9/C10
+  and the M4 setup, the staff one D275 and C8; a partner on its own Google client can read emails through Google (D42);
+  on-chain activity is not indexed.
+- Rejected: recording addresses on chain (anyone could map Google accounts to wallets publicly); unsigned reports (a
+  caller could attach any address to any user); partners seeing emails by default.
+
 ## Superseded or amended
 
 | Was | Now | Source |

@@ -12,7 +12,7 @@ day) on 2026-11-02. D230–D234, D250–D252 (branch `feat/email-login-6`, to co
 D154, D155, D199 and D206. D263–D267 (the batch 8b review, branch `feat/email-login-8b`, to confirm) on 2026-11-03, with
 notes on D42, D254 and D255; D263's operations and pin-read notes and D264's screen count (`EMAIL_CONSENT_ROUNDS`)
 on 2026-11-03 (branch `fix/8b-rereview`). D240–D244 (branch `feat/batch-c-7`, to confirm) on 2026-11-02, re-checked
-on 2026-11-04 after merging `develop` (branch `feat/batch-c-7-merge`). Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
+on 2026-11-04 after merging `develop` (branch `feat/batch-c-7-merge`). D278–D285 (branch `feat/batch-c-8`, decided while building, to confirm) on 2026-11-04. Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
 provider note, two "Superseded or amended" rows, the user-mail line under "Proposed", and the headings from D125 on, checked against `develop` @ 1c6a124 and what sandbox-dev runs (`docs/operations.md`) on
 2026-11-02 (branch `docs/consistency-pass`); no decision changed. D220–D224 (branch `feat/batch-c-4`, to confirm) on
 2026-11-02. D245–D249 (branch `feat/email-login-8a`, to confirm) on 2026-11-02. D253 (branch
@@ -4478,6 +4478,175 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 - Rejected: keeping C6's console-only check next to D274's (two rules, and the narrower one decides nothing D274
   doesn't); exempting the step-up token because it isn't relayed (a name or picture claim there means the console
   asked Google for more than `openid`, a console bug worth refusing).
+
+## Batch C8: the admin Worker (branch `feat/batch-c-8`), 2026-11-04
+
+### D278. The admin BFF: routes, the Access check's order, error codes, what the SPA is
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/{index,access,csrf,routes,
+  export}.ts`, `public/` · Source: spec §Admin BFF routes, §Hana admin console, §Static assets
+- Decision:
+  - **Order on `/api/*`**: host (only `admin.origin`, else 404), then the Access JWT check (`Cf-Access-Jwt-Assertion`
+    only; no cookie, no `ctx.access`), then the console's four CSRF checks with the header `x-hana-admin: 1` (the
+    console's is `x-hana-console`), then the route. Assets need no JWT in the Worker (Access guards the whole origin at
+    the edge, and they hold no data); non-GET requests to them are CSRF-checked and 405.
+  - **Codes**: 401 `unauthenticated` (no token or any failed claim), 403 `not_staff` (valid identity, not on
+    `admin.staffEmails`), 503 `access_unavailable` (certs unreachable, or `ACCESS_AUD` still `UNSET`, or an unusable
+    staff list: fail closed), 503 `upstream_unavailable` (the API or console binding threw), 403 `csrf`; RpcCodes keep
+    console-core's statuses.
+  - **The app routes carry the org.** AdminRpc's org methods take `orgId` as a backstop filter, so `GET
+    /api/apps/:app?org=` and every app write's body name it; the spec's paths are otherwise kept. A handler builds its
+    RPC input from named fields only, so a body can't set the actor or the request id.
+  - **Additions to the spec's table**: `GET /api/me`, `GET /api/orgs/:org/changes` (the org's `app_changes`, for the
+    changes screen), `GET /api/apps/:app` (detail). `GET /api/audit` answers the console's `queryAudit` rows and, when
+    the filter names an org, its `listChanges` rows as a second list; `GET /api/audit.csv` merges both newest first with
+    a `source` column (at most 5 000 rows per source, `x-hana-truncated: 1` past that). Without an org filter the CSV
+    has the console rows only: `changesSince` walks forward from a seq and can't seek by time, so a global app-changes
+    export waits for a time-indexed RPC.
+  - **The SPA** is plain HTML, CSS and JavaScript in `public/` (no build, no framework; the console's React SPA is C9),
+    writing text only (a source check forbids HTML sinks). The nav shows Reports (C12), Retention (C13) and Security &
+    monitoring (C14) disabled; the Users screen (D275) has no entry until it is confirmed.
+- Why: the staff list is a second check behind the policy (D88), so both must fail closed; the org filter costs one
+  parameter and keeps the API's backstop for the admin too; a no-build SPA keeps C8 small and CSP-clean.
+- Rejected: `/api/orgs/:org/apps/:app/...` paths (a rename of the spec's table for the same effect); serving the
+  assets only with a JWT (no gain behind Access, and it breaks the error page before sign-in).
+
+### D279. Blocking notices: one message per recipient, who gets what, when the ack happens
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/notices.ts`, `mail.ts`,
+  `email/` · Source: spec §Email, §Notice and cancel, §Invites and owner grants
+- Decision:
+  - Every email is **one message per recipient** (no contact sees another's address), each with a Resend
+    `Idempotency-Key` of sha256(purpose ‖ recipient), so the retry of a notice after one failed send doesn't deliver
+    the accepted ones twice (within Resend's 24 h). "Every send accepted" means every recipient's message got a 2xx
+    with a message id.
+  - `change_pending`: the alias and every contact of the org (from `pendingNotices`), link
+    `<console.origin>/cancel/<id>#t=<T>`; then `ackNotice` with b64url(sha256(T)).
+  - `member_invite`: the notice to every current owner (`pendingMemberNotices.owners`), the org's contacts
+    (`getSecurityContacts`) and the alias; **then**, only if all of those were accepted, the invitee's link
+    `<console.origin>/invite#t=<T>`; then `ackMemberNotice`. A new-org invite has no owners or contacts: the alias and
+    the invitee. Contacts that can't be read (the API down) hold the notice back (fail closed).
+  - `owner_grant`: every owner, the contacts and the alias, with `<console.origin>/cancel-owner/<id>#t=<T>`.
+  - Nothing is acked when `EMAIL_API_KEY`, `CANCEL_LINK_KEY` or `INVITE_LINK_KEY` is missing or not 32 bytes of
+    base64. Link keys are base64 (or b64url) of 32 random bytes in `.secrets/<env>/`.
+  - The invite notice names no request country: `InviteView` carries none (the console records the country in its
+    audit row only). The org's name comes from `StaffRpc.getOrg`, once per org and run.
+- Why: the spec's fail-closed rule is about acceptance by the provider, so a per-recipient view is what can be
+  checked; sending the invitee last keeps a working-looking link from leaving while the owners weren't told.
+
+### D280. The 5-minute cron's order and its budget of outbound calls
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/cron.ts`, `mail.ts`
+  `RUN_BUDGET` · Source: spec §Crons
+- Decision: one cron (`*/5 * * * *`) runs the blocking notices (changes, then members), then the feed (security
+  events, app changes, console audit), then the watcher, each step on its own. They share a budget of **40 outbound
+  calls** per run (each email and each `get_scope`); a notice whose recipients don't fit in what's left waits whole
+  for the next run, and the feed and the watcher stop and resume from their cursors. The notices need no Neon; without
+  `USAGE_DB` (or with Neon down) the feed and the watcher are skipped and logged at error level every run.
+- Why: the Workers free plan allows 50 subrequests an invocation and the plan isn't settled (build plan open question
+  3); a bounded run never half-sends a notice, and the blocking work comes first.
+
+### D281. The feed: digests per org, what is skipped, who gets them, where the cursors start
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/feed.ts`, `ops.ts` · Source:
+  spec §Email (Feed), §Audit
+- Decision:
+  - Rows are read in pages of 50 after the cursor (`feed.app_changes.seq`, `feed.audit_log.seq` in `ops.state`) and
+    sent as **one digest per org and source per run**. The cursor moves past a page only up to the first row of the
+    first org whose digest wasn't accepted (at least once, never a gap).
+  - **Recipients**: the org's security contacts; an org with none, or a row with no org, goes to the alias instead so
+    nothing is mailed to nobody. `org.security_contacts` rows also go to the old and the new contacts. Security events
+    go to the alias and the org's contacts and are marked with `markSecurityEventNotified` (the API's `notified_at` is
+    their cursor).
+  - **Skipped** (a blocking notice or another row covers them): `origin.proposed`, `policy.proposed`,
+    `raw_sign.proposed`, `change.announced`, `invite.notified`, `owner_grant.notified`, `change.link_cancel`, and the
+    sign-in rows (`auth.*`, `session.*`) left to C9's hourly bulk refusal digest. **Everything else is emailed**, so a
+    new kind is never silent.
+  - The cursors start at 0: the first run walks the whole history (legacy rows have no contacts, so their digests go
+    to the alias) and catches up within a few runs.
+- Why: a digest per org keeps the mail volume and the run budget bounded; a skip-list fails loud where an allow-list
+  would fail silent.
+- Rejected: seeding the cursors at the current maximum on first run (loses rows written between the deploy and the
+  first run).
+
+### D282. The watcher: round-robin scopes, a silent baseline, retries until sent
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/watcher.ts`, `near.ts`;
+  `apps/api/src/rpc/admin.ts` (`listApps`, `getApp` take `system`) · Source: spec §On-chain owner actions (watcher)
+- Decision:
+  - Each run reads up to 15 scopes of `AdminRpc.listScopes` after `watch.scope_cursor` (wrapping to the start), one
+    uncached `get_scope` each, and emails the alias and the org's contacts.
+  - A pending change is written to `ops.scope_watch` when first seen and gets `notified_at` only once every send was
+    accepted; until then each run tries again. SetOwners lists the new owners with the added ones marked and calls out
+    an added `Owner::Oidc`; AddClient names the client; SetAllowShared lists the scope's active origins (read with
+    `AdminRpc.listApps` and `getApp`, which now also take the cron's `system` actor: reads only).
+  - The owners, clients and `allow_shared` diff against `ops.scope_snapshot` is emailed once; the snapshot is replaced
+    only after that email was accepted. Order of owners or clients is not a change. **A scope seen for the first time
+    is stored as the baseline without an email.**
+  - A scope `get_scope` can't read (NEAR down) is skipped this round and logged; one the contract doesn't have is
+    logged `not_on_chain`.
+- Why: the first state is what Hana registered (`scope:register`), so a "now watching" email for each would be noise;
+  round-robin keeps each run within the budget.
+- Trade-off: a change made between a scope's registration and the watcher's first read of it is in the baseline
+  unannounced. Registration and the first read are minutes apart and the registration itself is a staff action.
+
+### D283. `StaffRpc.getOrg` also returns the org's live owner grants
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/console/src/views.ts` `grantsOf`,
+  `staff-rpc.ts` · Source: spec §RPC (`getOrg` → org, members, invites), §Admin BFF routes ("pending invites and
+  grants", cancel by id)
+- Decision: an additive `grants` field (`OwnerGrantView[]`, not cancelled and not applied, newest first, at most 100;
+  never `cancel_token_hash`). The admin's members screen cancels a grant by its id from it.
+- Why: members carry `pendingOwnerFrom` but no grant id, and a grant not yet acked or of an unaccepted invite has no
+  member at all.
+
+### D284. The admin config: where it lives, the Hyperdrive id, what it binds in C8
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/scripts/gen-wrangler.ts` · Source:
+  spec §Topology (admin routes), §Bindings, build plan C8
+- Decision:
+  - `admin.origin` on `https://<admin.workerName>.<subdomain>.workers.dev` gives `workers_dev: true` in a dev env
+    (`local*`/`sandbox*`, not mainnet) only, with Worker-level Access to be turned on in the dashboard (D75); any other
+    https host gives a Custom Domain route and `workers_dev: false`; a production manifest on workers.dev is refused.
+    `preview_urls: false` always.
+  - `--admin-hyperdrive-id <id>|off` binds `USAGE_DB` to the admin config (`hana-id-usage-admin-<env>`); kept from an
+    existing config of the same Worker; required on a production manifest; `off` allowed in dev envs.
+  - C8 binds `API` → `AdminRpc`, `CONSOLE` → `StaffRpc`, `USAGE_DB`, `ASSETS`; **no R2 yet** (`STATEMENTS` and
+    `EXPORTS` are C12's) and no `RELAYER_ACCOUNT` (the nonce check, C12). Vars add `APP_CHANGE_DELAY_MS` and
+    `OWNER_GRANT_DELAY_MS` (only the notices' wording) and `STAFF_EMAILS` as JSON.
+- Why: nothing half-wired; the spec allows workers.dev only for a dev env without a Hana zone.
+
+### D285. The owner/contact flag and C8's part of the security screen
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/routes.ts` (`GET
+  /api/orgs/:org` flags), `security.ts` · Source: spec §Hana admin console (screens)
+- Decision: the org screen flags an org with **no security contacts** and lists **owners who aren't security
+  contacts** (the onboarding default makes every owner a contact). `GET /api/security` in C8 shows the notice backlog,
+  the unnotified security events, each feed cursor with its lag (the age of the oldest row not yet emailed), the
+  watcher cursor and the last cron run; breaker state, nonce checks and rejection-rate alerts come with C12, the
+  monitoring view with C14.
+
+## Users and their wallets for staff and partners, 2026-11-04
+
+### D310. Hana records each user's wallet addresses and linked accounts; staff see email and wallets, partners see wallets but not email
+- Date 2026-11-04 · Status: confirmed by the user (2026-11-04: 'we should also store wallet addreses, as admins we want
+  to be able to see what are the wallet addresses linked to a user … It's ok to show wallet addresses for partners by
+  default, but as usual email will be hidden from partners by default (until users explicitly approve this), but admins
+  need to be able to see both email and wallet addresses … we want our end user experience similar to what Privy
+  provides', then 'go' on the five points below) · Built on `feat/wallet-directory` · Extends D269; informs D275 (the
+  staff Users screen) and the partner console's Users screen (C10)
+- Decision:
+  1. **A user** is one account in one scope: the root identity and its linked identities (D133). Wallets are per scope,
+     so one person in two orgs' scopes is two users; staff can group them by email.
+  2. **User id**: a stable opaque id per scope (Privy's `cmvq…` equivalent), shown to partners and staff; the
+     `HANA-XXXX-XXXX` Support ID (D276) is its short form.
+  3. **Wallet addresses**: after each successful login the vault reports the wallet's Stellar (`G…`) and EVM (`0x…`)
+     addresses in the background, each with a signature by that chain's key over a domain-separated statement (scope,
+     path, chain, address, session) that can never be a valid transaction on either chain; the API verifies and stores
+     them in its hot DB, never failing or slowing the login. "Last used" is the last login that opened the wallet, not
+     on-chain activity.
+  4. **Linked accounts** (provider kinds per user) are kept current as links are made and removed.
+  5. **Who sees what**: staff (admin console, CLI) see email (D269, from the issuer's directory), connected accounts,
+     wallets, user id, created and last seen. Partners (partner console, for their own org's scopes only) see the user
+     id, created and last seen, connected account kinds ("Google", "Email") without any address or Google account id,
+     and the wallet addresses. Partners see an address only once a user approves (UX later).
+- Gaps accepted: no backfill (a user appears with wallets at their next login); the partner Users screen needs C9/C10
+  and the M4 setup, the staff one D275 and C8; a partner on its own Google client can read emails through Google (D42);
+  on-chain activity is not indexed.
+- Rejected: recording addresses on chain (anyone could map Google accounts to wallets publicly); unsigned reports (a
+  caller could attach any address to any user); partners seeing emails by default.
 
 ## Batch C11: the files Worker and logos (branch `feat/batch-c-11`), 2026-11-04
 

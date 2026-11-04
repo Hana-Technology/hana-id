@@ -265,6 +265,13 @@ describe('getOrg, listOrgs, listMembers', () => {
     expect(got.org).toMatchObject({ id: org, kind: 'internal', status: 'active', requiredHd: 'partner.example' });
     expect(got.members).toEqual([expect.objectContaining({ userId: owner.id, email: owner.email, sub: owner.sub, role: 'owner', disabled: false })]);
     expect(got.invites.map((i) => i.id)).toEqual([r.invite.id]);
+    // D283: the live owner grants (an owner invite to an org with an owner has one), without any hash column.
+    expect(got.grants).toEqual([]);
+    const ownerInvite = await issue({ orgId: org, role: 'owner' });
+    const again = await staffRpc().getOrg({ ...hana(), orgId: org });
+    if (!again.ok || !ownerInvite.ok) throw new Error('getOrg');
+    expect(again.grants).toEqual([expect.objectContaining({ orgId: org, inviteId: ownerInvite.invite.id, grantedByKind: 'hana' })]);
+    expect(JSON.stringify(again.grants)).not.toMatch(/hash/iu);
     expect(await staffRpc().getOrg({ ...hana(), orgId: 'org_none12345' })).toMatchObject({ ok: false, code: 'not_found' });
     const all: string[] = [];
     let cursor: string | undefined;

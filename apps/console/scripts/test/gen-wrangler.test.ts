@@ -1,5 +1,5 @@
 // The console's generated config and the config rules across Workers (docs/batch-c-spec.md "Tests: Topology and
-// config"): no public route in C7; only the console binds ConsoleRpc and CONSOLE_DB; the console runs first on every
+// config"): no public route in C7; only the console binds ConsoleRpc and CONSOLE_DB, only the admin binds the console (C8); the console runs first on every
 // request; R2, rate-limit and cron as the spec's bindings table says; and source checks (no put/delete on STATEMENTS,
 // no hash column read into a view, no `SELECT *` on the token-holding tables).
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MAX_APP_CHANGE_DELAY_MS, MIN_APP_CHANGE_DELAY_MS, type Manifest, manifestSchema } from '@hana-id/env';
 import { describe, expect, it } from 'vitest';
+import { wranglerConfig as adminConfig } from '../../../admin/scripts/gen-wrangler.ts';
 import { wranglerConfig as apiConfig } from '../../../api/scripts/gen-wrangler.ts';
 import { pagesWranglerConfig } from '../../../api/scripts/pages-wrangler.ts';
 import { wranglerConfig as issuerConfig, TEST_MANIFEST as ISSUER_MANIFEST } from '../../../email-issuer/scripts/gen-wrangler.ts';
@@ -112,6 +113,7 @@ describe('across Workers (config snapshots)', () => {
     ['email issuer', issuerConfig({ ...m, name: 'local-test' }, LOCAL_D1_ID, LOCAL_D1_ID) as Config],
     ['console', wranglerConfig(m, LOCAL_D1_ID) as Config],
     ['files', filesConfig(m) as Config],
+    ['admin', adminConfig(m, { adminHyperdriveId: 'a'.repeat(32) }) as Config],
   ];
 
   it('only the console binds ConsoleRpc', () => {
@@ -124,11 +126,12 @@ describe('across Workers (config snapshots)', () => {
     expect(binders).toEqual(['console']);
   });
 
-  it('no Worker binds the console in C7: StaffRpc gets its only caller, the admin Worker, in C8', () => {
-    const binders = configs
-      .filter(([, c]) => (c.services ?? []).some((s) => s.service === m.console!.workerName || s.entrypoint === 'StaffRpc' || s.entrypoint === 'AuthHandler'))
-      .map(([n]) => n);
-    expect(binders).toEqual([]);
+  it('only the admin Worker binds the console (StaffRpc, C8); nothing binds AuthHandler until console-auth (C9)', () => {
+    const binders = configs.filter(([, c]) => (c.services ?? []).some((s) => s.service === m.console!.workerName)).map(([n]) => n);
+    expect(binders).toEqual(['admin']);
+    const admin = configs.find(([n]) => n === 'admin')![1];
+    expect((admin.services ?? []).filter((s) => s.service === m.console!.workerName)).toEqual([{ binding: 'CONSOLE', service: m.console!.workerName, entrypoint: 'StaffRpc' }]);
+    expect(configs.filter(([, c]) => (c.services ?? []).some((s) => s.entrypoint === 'AuthHandler'))).toEqual([]);
   });
 
   it('batch C11: only the console and the files Worker bind the logo bucket; the files Worker binds nothing else', () => {

@@ -545,6 +545,10 @@ describe('entrypoints', () => {
     expect(await consoleRpc(clk).listApps({ ...hana(), orgId: app.org })).toMatchObject({ ok: false, code: 'forbidden' });
     expect(await adminRpc().listApps({ ...member(), orgId: app.org })).toMatchObject({ ok: false, code: 'forbidden' });
     expect(await adminRpc().createApp({ ...system(), orgId: app.org, scopeId: 's1', environment: 'test', name: 'x', origins: [], orgOwnerSubs: [] })).toMatchObject({ ok: false, code: 'forbidden' });
+    // The admin watcher's reads (C8, D282): listApps and getApp take the cron's system actor; writes don't.
+    expect(await adminRpc().listApps({ ...system(), orgId: app.org })).toMatchObject({ ok: true });
+    expect(await adminRpc().getApp({ ...system(), orgId: app.org, appId: app.id })).toMatchObject({ ok: true });
+    expect(await adminRpc().revokeKey({ ...system(), orgId: app.org, appId: app.id, keyId: 'key_x' })).toMatchObject({ ok: false, code: 'forbidden' });
     expect(await consoleRpc(clk).cancelChangeByLink({ ...member(), changeId: 'gc_x', token: 'A'.repeat(43) })).toMatchObject({ ok: false, code: 'forbidden' });
     expect(await consoleRpc(clk).listApps({ ...member(), orgId: app.org, extra: 1 })).toMatchObject({ ok: false, code: 'bad_request' });
     expect(await consoleRpc(clk).listApps({ ...member(), orgId: 'not-an-org' })).toMatchObject({ ok: false, code: 'bad_request' });

@@ -3,7 +3,7 @@
 Last verified against code: 2026-11-04 (branch `feat/batch-c-11`: "Files Worker and logos (batch C11, milestone M5)": setup
 step 7's R2 buckets with the `STATEMENTS` lock and the `EXPORTS` lifecycle, the Images binding, the files Worker's
 `gen` and deploy, the pages' `FILES_ORIGIN`, the order, the checks; the console section's bucket step and purge order;
-D300–D308); 2026-11-04 (branch `feat/batch-c-6-merge`, batch C6 on current `develop`; built on `feat/batch-c-6`: "Console sink scope (batch C6, milestone M3)" with
+D300–D308); 2026-11-04 (branch `feat/batch-c-8`: "Admin Worker (`apps/admin`, batch C8)": its M4 setup (Access, Resend, the link and email secrets, the admin Hyperdrive id), its logs, the end of `app:changes:announce` once it runs; D278–D285); 2026-11-04 (branch `feat/batch-c-6-merge`, batch C6 on current `develop`; built on `feat/batch-c-6`: "Console sink scope (batch C6, milestone M3)" with
 the scan fixes (known owner accounts only, `--known-owner`, no removal a run can't follow with the registration), the
 console audiences no longer in `global` in the manifest and Google tables, the owner-pool allowance event and
 `OWNER_POOL_ALLOWANCE_YOCTO`; D235–D239); 2026-11-04 (branch `feat/batch-c-7-merge`, C7 merged onto `develop`; written on `feat/batch-c-7` 2026-11-02: "Partner console Worker": its setup steps for
@@ -900,6 +900,99 @@ removal, a demotion, a disable or a freeze made after the point is undone**: red
 until C8, a direct D1 statement reviewed by a second person) before the console route is on again. Owner grants that
 matured after the point mature again on the next cron run.
 
+## Admin Worker (`apps/admin`, batch C8)
+
+The Hana staff console (`hana-id-admin-<env>`, manifest `admin.workerName`) on `admin.origin`, behind Cloudflare
+Access. It holds no D1: it calls the API's `AdminRpc` (`API`) and the console's `StaffRpc` (`CONSOLE`), keeps its
+feed cursors and watcher state in the ledger's `ops` schema (`USAGE_DB`, Hyperdrive, role `usage_admin`), and sends
+every email (Resend, D87). Its 5-minute cron sends the **blocking notices** (a guarded change's clock, an invite link
+and an owner grant's wait start only once every send was accepted), the **security feed** (app changes, console audit
+rows, security events, after the fact) and the **on-chain watcher**'s emails (`docs/api.md` "Admin Worker"; D278–D285).
+Not deployed anywhere yet: it goes live at milestone M4 with the console (C7, C9).
+
+**Once it runs in an env, stop using `admin <env> app:changes:announce`**: that announces a change without any email.
+The admin Worker announces every staff proposal by email within 5 minutes.
+
+### Setting it up (once per env, milestone M4, for the user to run)
+
+Prerequisites: the manifest's dashboard blocks (`docs/batch-c-build-plan.md` setup step 12; `gen` refuses an env
+without them), the console set up ("Partner console Worker" above), and the ledger's roles and Hyperdrive configs
+("Usage capture", steps 1–3: `usage-setup <env> hyperdrive` printed the **admin** config's id beside the writer's). From
+the repo root of the main checkout, logged in to the API's Cloudflare account. Nothing below prints a secret.
+
+1. **Cloudflare Access** (build plan setup step 8, D75, D88).
+   - sandbox-dev (no Hana zone): `admin.origin` is `https://<admin.workerName>.<subdomain>.workers.dev`. Deploy once
+     (step 4), then in the dashboard: Workers & Pages → the admin Worker → Settings → Domains & Routes → `workers.dev`
+     → enable Cloudflare Access. Production: a self-hosted Access application on the Custom Domain `admin.origin` (the
+     config's `routes` creates the domain; `gen` refuses workers.dev outside `local*`/`sandbox*`).
+   - Policy: include the GitHub team `hana-admins` of `Hana-Technology` (the GitHub org requires 2FA); a second rule
+     with exact-email Google identities only (never a domain rule; open question 4). Session duration 1 h. No service
+     token: the Worker refuses tokens without a `sub`.
+   - Copy the team domain (`<team>.cloudflareaccess.com`) and the application's AUD tag (64 hex) into the manifest's
+     `admin.accessTeamDomain` and `admin.accessAud`, and list the same people, lowercased, in `admin.staffEmails`
+     (the Worker's own second check). Until `accessAud` is set (`UNSET`), every `/api/*` answers `503
+     access_unavailable`.
+2. **Resend** (step 9, D87): verify the sending subdomain of `email.from` in Resend with SPF, DKIM and DMARC records on
+   the Hana zone; create an API key with **sending access to that domain only**, for this Worker only (the watchdog
+   has its own). Save it to `.secrets/<env>/admin-resend-key` (0600), never in a shell history:
+   `umask 077; pbpaste > .secrets/<env>/admin-resend-key` after copying it from Resend.
+3. **The link keys and the email key as secrets** (step 10). Each link key is 32 random bytes, base64, generated into
+   `.secrets/<env>/` and sent through wrangler's stdin (never an argument, never printed). The admin Worker must exist
+   first (step 4's first deploy, or `wrangler secret put` creates it):
+
+   ```sh
+   umask 077
+   openssl rand -base64 32 > .secrets/<env>/cancel-link-key
+   openssl rand -base64 32 > .secrets/<env>/invite-link-key
+   corepack pnpm --dir apps/admin exec wrangler secret put CANCEL_LINK_KEY < .secrets/<env>/cancel-link-key
+   corepack pnpm --dir apps/admin exec wrangler secret put INVITE_LINK_KEY < .secrets/<env>/invite-link-key
+   corepack pnpm --dir apps/admin exec wrangler secret put EMAIL_API_KEY < .secrets/<env>/admin-resend-key
+   ```
+
+   Keep `cancel-link-key` and `invite-link-key`: the tokens are deterministic per change, invite and grant, so a
+   replaced key breaks every link already emailed and not yet used (cancel links until the change is in force, invite
+   links for 7 days). Rotate only when no notice is pending, or accept that those links stop working (an owner or
+   staff can still cancel in the consoles).
+4. **Config and deploy** (with the admin Hyperdrive id, build plan setup step 4):
+
+   ```sh
+   corepack pnpm --filter @hana-id/admin gen <env> --admin-hyperdrive-id <admin Hyperdrive id>
+   # The API and the console first (AdminRpc's watcher reads and StaffRpc's grants are C8 additions).
+   corepack pnpm --dir apps/api exec wrangler deploy
+   corepack pnpm --dir apps/console exec wrangler deploy
+   corepack pnpm --dir apps/admin exec wrangler deploy
+   ```
+
+   `gen` keeps the Hyperdrive id on later runs; `--admin-hyperdrive-id off` (dev envs only) leaves the feed and the
+   watcher off. A production manifest needs the id.
+5. **Check it**: open `admin.origin` (Access signs you in; the header shows your email and the env), list the orgs,
+   then `corepack pnpm --dir apps/admin exec wrangler tail <admin.workerName>` across a 5-minute mark: one `cron`
+   `done` line per run, `notice`, `feed` and `watcher` lines with ids, codes and counts only. "Feed and notices" in the
+   SPA shows the backlog, each feed cursor's lag and the watcher's cursor.
+
+- **The first runs walk the history**: the feed's cursors start at 0, so the earlier `app_changes` and console audit
+  rows go out as digests (legacy rows, which have no security contacts, to the alias) over a few runs; the watcher
+  stores each scope's state as its baseline without an email.
+- **Cron triggers**: one more per env (`*/5 * * * *`); the free plan allows 5 per account (API, watchdog, console and
+  admin have one each per env). Each run makes at most 40 outbound calls (emails and NEAR views, D280); a backlog
+  drains over the next runs.
+- **Rollback**: `wrangler rollback` in `apps/admin`. While the Worker is down or can't email, guarded changes, invites
+  and owner grants stay unannounced (fail closed): nothing goes live without its notice, and the API cancels a change
+  left unannounced for 7 days. `app:changes:announce` is the no-email fallback and needs Hana security's sign-off.
+
+### What to watch (Worker logs)
+
+| Line | Meaning | Action |
+|---|---|---|
+| `cron` `email_api_key_missing`, `notice` `cancel_link_key_missing` / `invite_link_key_missing` (error) | A secret is missing or not 32 bytes of base64: nothing is acked | Set it (step 3) |
+| `notice` `send_failed` (warn), with `target` | A recipient's send wasn't accepted (Resend refused or timed out); retried every run | Check Resend's dashboard and the domain's DNS |
+| `notice` `contacts_unavailable` | The org's security contacts couldn't be read (the API) | Check the API |
+| `cron` `usage_db_missing` / `ops_unavailable` (error) | No `USAGE_DB` binding, or Neon/Hyperdrive down: the feed and the watcher don't run; notices still go out | `gen --admin-hyperdrive-id <id>`; Neon status |
+| `feed` with `failed` > 0 | A digest wasn't accepted; its cursor waits | As `send_failed` |
+| `watcher` `near_unavailable` / `not_on_chain` | `get_scope` failed, or a hot-DB scope isn't on chain | NEAR RPC status; a scope row without a registered scope is a setup error |
+| `access_refused` (warn) with `code` | An `/api/*` request without a valid staff token (`not_staff`: a valid Access identity not on `admin.staffEmails`) | Expected for strangers; for staff, check the manifest list and the Access policy |
+| `access_refused` `access_config_missing` / `certs_unavailable` (error) | `accessAud` still `UNSET`, an unusable staff list, or the team's certs unreachable: every `/api/*` is 503 | Step 1; Cloudflare status |
+
 ## Files Worker and logos (`apps/files`, batch C11, milestone M5)
 
 Logos are written by the console (`POST /api/orgs/:org/apps/:app/logo`, routed for owners in C10; until then nothing
@@ -973,10 +1066,11 @@ corepack pnpm --dir apps/console exec wrangler deploy
     pages still work, without the logo.
 - **Rollback.**
   - The files Worker: `wrangler rollback` in `apps/files`. Logos then 404 and the pages show names only.
-  - A bad logo on an app: an owner removes it (C10), or staff point it at nothing with `AdminRpc.setLogo`
-    (`logoKey: null`, through the admin Worker, C8). The pages stop showing it at once. Its object stays in the bucket
-    until the console's cron deletes it (the console marks it only after its own removals, so after a staff removal
-    it stays until deleted by hand).
+  - A bad logo on an app: an owner removes it (C10). Staff have `AdminRpc.setLogo` (`logoKey: null`), but the admin
+    Worker (C8) has no screen or route for it yet. Until one exists, use a reviewed `UPDATE apps SET logo_key = NULL,
+    settings_version = settings_version + 1` on the hot DB, checked by a second person. The pages stop showing the
+    logo at once. The console marks an object for its cron only after its own removals, so after a staff removal the
+    object stays in the bucket until deleted by hand (`wrangler r2 object delete`).
   - Never empty or delete `STATEMENTS` (it is locked); the lock rule can't be shortened for objects already under it.
 
 ## Local API (`wrangler dev`)

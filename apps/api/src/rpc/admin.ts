@@ -65,12 +65,13 @@ const SYSTEM = ['system'] as const;
 export class AdminRpc extends WorkerEntrypoint<Env> {
   // ---- the ConsoleRpc org methods, for any org ----
 
+  /** Also the watcher's (a `system` actor): a SetAllowShared notice lists the scope's active origins (C8, D282). */
   listApps(c: unknown) {
-    return runRpc(this.env, 'admin.listApps', listAppsInput, c, { actors: HANA }, async ({ input, db, w }) => ({ apps: await listApps(db, input.orgId, w.now, this.env.FILES_ORIGIN) }));
+    return runRpc(this.env, 'admin.listApps', listAppsInput, c, { actors: HANA_OR_SYSTEM }, async ({ input, db, w }) => ({ apps: await listApps(db, input.orgId, w.now, this.env.FILES_ORIGIN) }));
   }
 
   getApp(c: unknown) {
-    return runRpc(this.env, 'admin.getApp', getAppInput, c, { actors: HANA }, async ({ input, db, w }) => ({ app: await getApp(db, input.appId, input.orgId, w.now, this.env.FILES_ORIGIN) }));
+    return runRpc(this.env, 'admin.getApp', getAppInput, c, { actors: HANA_OR_SYSTEM }, async ({ input, db, w }) => ({ app: await getApp(db, input.appId, input.orgId, w.now, this.env.FILES_ORIGIN) }));
   }
 
   listChanges(c: unknown) {

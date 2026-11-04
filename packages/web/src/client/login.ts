@@ -9,7 +9,8 @@
 //   - closed first → `coop_blocks_popup` (partner COOP same-origin, or the user closed it before it loaded);
 //   - 15 s from opening without `popup_connected` → `hana_cancelLogin`, close the popup, `login_timeout`
 //     (`data.stage: 'connect'`).
-//   After `popup_connected` it stops looking at `popup.closed`, because Google's COOP may make the handle report closed.
+//   After `popup_connected` it stops looking at `popup.closed`: from then on the vault watches its own handle on the
+//   popup and ends the login with `login_cancelled` (`popup_closed`) when the user closes it (D347; vault/login.ts).
 // - A newer login supersedes this one (`login_cancelled`); the partner's cancelLogin() ends it with `login_cancelled`,
 //   or `popup_blocked` when it was waiting on the launcher. Either way the vault is told (`hana_cancelLogin`) when it
 //   has the request, so it drops its pending state.

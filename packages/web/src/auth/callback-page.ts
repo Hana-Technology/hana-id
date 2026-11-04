@@ -68,6 +68,33 @@ export interface CallbackPageDeps {
   navigation?: () => CallbackNavigation | null;
   /** token_first's tokeninfo call (auth/google.ts accessTokenSub); tests stub it. */
   tokenInfo?: (accessToken: string, clientId: string) => Promise<AccessTokenSub>;
+  /** env.vaultOrigin: where the D347 signals (`google`, `relayed`) go; none, no signal. */
+  vaultOrigin?: string;
+}
+
+/**
+ * D347: tells the vault, through the opener while there is one, that this window navigates to Google (`google`) or
+ * closes itself after relaying (`relayed`), so its close watch doesn't take either for the user closing it. This page
+ * doesn't know the vault frame's name: the signal goes to the opener and each of its frames, with vaultOrigin as the
+ * target origin, so only Hana's vault frames receive it, and each takes it only from the popup it answered.
+ */
+export function signalVault(win: PageWindow, vaultOrigin: string | undefined, stage: 'google' | 'relayed' | 'back'): void {
+  const opener = win.opener;
+  if (!opener || !vaultOrigin) return;
+  const message = { v: 1, t: 'hana:auth-progress', stage };
+  const targets: unknown[] = [opener];
+  try {
+    for (let i = 0; i < Math.min(opener.length, 32); i++) targets.push(opener[i]);
+  } catch {
+    // The opener's frames can't be listed: the opener alone (vault mode).
+  }
+  for (const t of targets) {
+    try {
+      (t as Window | null)?.postMessage(message, vaultOrigin);
+    } catch {
+      // Gone: nothing to tell.
+    }
+  }
 }
 
 /** The parts of this page's PerformanceNavigationTiming the timings use. */
@@ -134,6 +161,8 @@ export async function runCallbackPage(deps: CallbackPageDeps): Promise<CallbackO
     d.show(errorView(d, 'Sign-in stopped', 'The Hana sign-in window can’t run inside another page.'));
     return 'refused';
   }
+  // D347: back from Google with the opener (no COOP switch on the way): the vault's close watch may trust its handle.
+  signalVault(win, deps.vaultOrigin, 'back');
   if (fragment.kind === 'no_state') {
     d.show(errorView(d, 'Sign-in stopped', 'Google’s answer did not belong to a sign-in started here. Start again from the app.'));
     return 'refused';
@@ -164,7 +193,10 @@ export async function runCallbackPage(deps: CallbackPageDeps): Promise<CallbackO
     zeroTaken(taken);
     explainEmailPrompt(d, {
       // A click, so Google's page loads as the user's own navigation.
-      onContinue: () => win.location.assign(url),
+      onContinue: () => {
+        signalVault(win, deps.vaultOrigin, 'google');
+        win.location.assign(url);
+      },
       // "Not now": the same as declining on Google's screen, for the vault's consent screen (D264).
       onSkip: () => {
         const again = takeLogin(win.sessionStorage, state, now());
@@ -314,6 +346,7 @@ async function tokenFirstAccess(deps: CallbackPageDeps, fragment: Exclude<Callba
     return relayLeg(deps, { kind: 'error', state: slot, error: 'storage_unavailable' }, taken, scriptStart);
   }
   zeroTaken(taken);
+  signalVault(win, deps.vaultOrigin, 'google');
   win.location.assign(googleAuthUrl({ clientId, authOrigin, nonce, state, forceReauth: false, loginHint: info.sub, silent: true }));
   return 'relayed';
 }
@@ -334,6 +367,7 @@ function recordOnlyFallback(deps: CallbackPageDeps, taken: TakenLogin, clientId:
     return relayLeg(deps, { kind: 'error', state: slot, error: 'storage_unavailable' }, taken, scriptStart);
   }
   zeroTaken(taken);
+  signalVault(deps.win, deps.vaultOrigin, 'google');
   deps.win.location.assign(googleAuthUrl({ clientId, authOrigin, nonce, state, forceReauth: false }));
   return 'relayed';
 }
@@ -378,6 +412,7 @@ async function tokenFirstId(deps: CallbackPageDeps, fragment: Exclude<CallbackFr
     }
     zeroTaken(taken);
     // Google's own page for the same account (it may ask the user to confirm or sign in again); no email is asked.
+    signalVault(win, deps.vaultOrigin, 'google');
     win.location.assign(googleAuthUrl({ clientId, authOrigin, nonce, state, forceReauth: false, loginHint, silent: false }));
     return 'relayed';
   }
@@ -481,6 +516,7 @@ async function relayLeg(deps: CallbackPageDeps, fragment: Exclude<CallbackFragme
           d.show(errorView(d, 'Sign-in stopped', STORAGE_TEXT, 'storage_unavailable'));
           return 'relay_failed';
         }
+        signalVault(win, deps.vaultOrigin, 'google');
         win.location.assign(googleAccessUrl({ clientId: taken.clientId as string, authOrigin, state: slot, loginHint: accessLeg, silent: true }));
         return 'relayed';
       }
@@ -503,6 +539,7 @@ async function relayLeg(deps: CallbackPageDeps, fragment: Exclude<CallbackFragme
   }
   zeroTaken(taken);
   d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Signed in'), d.h('p', { class: 'muted' }, 'You can close this window.')));
+  signalVault(win, deps.vaultOrigin, 'relayed');
   win.close();
   return 'relayed';
 }

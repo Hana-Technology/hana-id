@@ -403,9 +403,11 @@ describe('window messages', () => {
     expect(parseWindowMessage({ ...AUTH_PARAMS, ...change }, ['hana:auth-params'])).toBeNull();
   });
 
-  it('auth-progress carries only the google and email_code stages', () => {
+  it('auth-progress carries only the google, email_code, relayed and back stages', () => {
     expect(parseWindowMessage({ v: 1, t: 'hana:auth-progress', stage: 'email_code' }, ['hana:auth-progress'])).not.toBeNull();
     expect(parseWindowMessage({ v: 1, t: 'hana:auth-progress', stage: 'google' }, ['hana:auth-progress'])).not.toBeNull();
+    expect(parseWindowMessage({ v: 1, t: 'hana:auth-progress', stage: 'relayed' }, ['hana:auth-progress'])).not.toBeNull();
+    expect(parseWindowMessage({ v: 1, t: 'hana:auth-progress', stage: 'back' }, ['hana:auth-progress'])).not.toBeNull();
     expect(parseWindowMessage({ v: 1, t: 'hana:auth-progress', stage: 'done' }, ['hana:auth-progress'])).toBeNull();
     expect(parseWindowMessage({ v: 1, t: 'hana:auth-progress', stage: 'email_code', code: '123456' }, ['hana:auth-progress'])).toBeNull();
   });

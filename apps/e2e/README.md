@@ -119,7 +119,10 @@ for one with email login, read through `GET {ISSUER}/__e2e/directory?sub=`: no C
 that every token on the mocked chain is openid only. `tests/google-cancel.spec.ts` covers a cancel on Google's
 screen (the stub's `#deny`, Google's `access_denied`; D341): back to the chooser (an app with email login, a
 Google-only app) or to case B's choices, Google again signs in under a fresh OAuth state, email from the chooser
-signs in, and closing the popup there (or case B's Cancel) gives `login_cancelled`. `tests/login.spec.ts` checks that
+signs in, and closing the popup there (or case B's Cancel) gives `login_cancelled`. `tests/popup-close.spec.ts` covers
+D347: closing the popup on the chooser, on Google's page (past the 8 s COOP window), on the email code step and on a
+follow-up screen gives `login_cancelled` (`popup_closed`) within seconds, and a slow trip to Google and back signs in.
+`tests/login.spec.ts` checks that
 another Google error (`server_error`, sent to the callback directly) still gives `google_error`. The `second_request` flow is covered by `@hana-id/web`'s unit and
 vault-harness tests only (the bundles have one flow compiled in). On the server side
 (`src/server/google-backend.ts`), the stack answers Google's JWKS, `tokeninfo`, `userinfo` and revoke (which the

@@ -246,7 +246,9 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
         // record-only login has no follow-up mode, but its cancel returns to a chooser with Google only.
         if (follow && !storeContext()) return;
         // In a login that offered email, the vault reports `google` only when the popup says so (hana:auth-progress).
-        if (tell) {
+        // D347: the popup says so before every navigation to Google, so the vault's close watch never takes it (or an
+        // IdP's COOP switch on arrival) for a close; the export window's child has no vault to tell.
+        if (tell || mode !== 'export') {
           try {
             const target = mode === 'partner' ? childFrame(opener as Window, parsed?.vaultFrame as string) : opener;
             (target as Window | null)?.postMessage({ v: 1, t: 'hana:auth-progress', stage: 'google' }, env.vaultOrigin);

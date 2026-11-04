@@ -47,6 +47,15 @@
 // 10. It decrypts the CKD with the pairing check against the pinned key for ckdAppId(SIGNER, path), extracts PRK
 //     (zeroing S) and derives the addresses. A pairing failure re-reads the session and the identity once: a link that
 //     activated between the vault's read and the transaction moves the path to the root's (spec "Sessions").
+//  D347. From the hello on, the vault watches the popup's window (`closed`, every 250 ms). A close while the login
+//     waits on the popup (its first slot, a screen's answer) ends it with `login_cancelled` (`data.reason:
+//     'popup_closed'`) after a 1 s grace (an answer written just before the window closed itself still wins); a close
+//     while the vault works alone (google-match, the chain) lets the login finish, and any later wait on the popup ends
+//     at once. The popup announces each navigation to Google (`hana:auth-progress` `google`), its return to the
+//     callback with its opener (`back`) and closing itself after a relay (`relayed`). An IdP that enforces COOP would switch the popup's browsing context group, which the handle
+//     can't tell from a close: a `closed` within 8 s of a `google` announcement is taken as that switch, and the watch
+//     stops for the rest of the login (the login's 5-minute limit, and the post-cancel screen's own close report, D341,
+//     remain).
 // 11. With the follow-up channel, the vault's last word to the popup: `done` (close, or link banners first: a pending
 //     method with Cancel, a method this login added, recent ones, from `get_account`), or `stop` with the error.
 //     A banner's Cancel or Remove is a fresh sign-in of this login's method over a `link_change` nonce, relayed as
@@ -124,6 +133,21 @@ import { type Clock, type Timers, type WindowMessageEvent, type WindowRef, realT
 
 /** The pending login ends after this long without finishing (`login_timeout`, stage 'pending'). */
 export const LOGIN_PENDING_MS = 5 * 60_000;
+
+/** D347: how the vault watches the login popup's window for a close. */
+export interface PopupWatch {
+  /** How often `closed` is read. */
+  pollMs: number;
+  /**
+   * A `closed` this soon after the popup announced a navigation to Google (and before it said it was back) may be an
+   * IdP's COOP switching the popup's browsing context group (the opener's handle then reads closed while the window is
+   * open): the watch stops.
+   */
+  severWindowMs: number;
+  /** After a close, how long a wait on the popup may still get the answer the popup wrote just before it closed. */
+  graceMs: number;
+}
+export const POPUP_WATCH: Readonly<PopupWatch> = Object.freeze({ pollMs: 250, severWindowMs: 8_000, graceMs: 1_000 });
 export const KEY_INDEX = 0;
 /** The relay long-poll's wait, in seconds (the API's maximum). */
 export const RELAY_WAIT_S = 25;
@@ -247,6 +271,8 @@ export interface LoginContext {
   pins?: RootPins;
   /** How the popup asks Google for the email scope (auth/google.ts GOOGLE_EMAIL_FLOW; tests run every flow). */
   googleEmailFlow?: GoogleEmailFlow;
+  /** D347's popup watch (POPUP_WATCH by default; tests shorten it). */
+  popupWatch?: Partial<PopupWatch>;
 }
 
 /** A link this login made: the method that joined, and when it opens the wallet (now, or after the delay). */
@@ -507,6 +533,18 @@ abstract class PopupTask<T> {
   protected follow: FollowChannel | null = null;
   /** When the vault took the request (perfNow), for the `vault` total. */
   readonly startedAt: number;
+  // D347's watch on the popup's window.
+  private readonly watch: PopupWatch;
+  private watchTimer: unknown = null;
+  private closeTimer: unknown = null;
+  /** The popup's window closed (a user's close, not a navigation or the popup closing itself after a relay). */
+  private popupGone = false;
+  /** Waits on the popup in progress (its first slot, a screen's answer). */
+  private popupWaits = 0;
+  /** When the popup last announced a navigation to Google (perfNow), or never. */
+  private leftForGoogleAt = Number.NEGATIVE_INFINITY;
+  /** The popup said it relayed its answer and closes itself: its `closed` is no cancel. */
+  private selfClosing = false;
 
   constructor(
     protected readonly ctx: LoginContext,
@@ -515,6 +553,7 @@ abstract class PopupTask<T> {
     readonly popupBlocked: boolean,
   ) {
     this.startedAt = ctx.perfNow();
+    this.watch = { ...POPUP_WATCH, ...ctx.popupWatch };
     this.helloSeen = new Promise<void>((resolve) => {
       this.resolveHello = resolve;
     });
@@ -525,6 +564,7 @@ abstract class PopupTask<T> {
     this.pendingTimer = this.ctx.timers.setTimeout(() => this.abort(fail('login_timeout', 'The sign-in took too long', { stage: 'pending' })), LOGIN_PENDING_MS);
     this.done = this.run().finally(() => {
       this.ctx.timers.clearTimeout(this.pendingTimer);
+      this.stopWatch();
       this.dropSecrets();
     });
     // The caller may attach its handler later; never an unhandled rejection.
@@ -542,7 +582,83 @@ abstract class PopupTask<T> {
     if (this.abortError) return;
     this.abortError = err;
     this.abortCtl.abort();
+    this.stopWatch();
     this.resolveHello?.();
+  }
+
+  // ---- D347: the popup's window ----
+
+  /** Reads the popup's `closed` every `pollMs` from the hello on, until the login ends or the watch stops. */
+  private watchPopup(): void {
+    const tick = () => {
+      this.watchTimer = null;
+      if (this.abortError || this.popupGone) return;
+      let closed = false;
+      try {
+        closed = (this.helloSource as WindowRef | null)?.closed === true;
+      } catch {
+        // An unreadable handle says nothing: keep watching.
+      }
+      if (!closed) {
+        this.watchTimer = this.ctx.timers.setTimeout(tick, this.watch.pollMs);
+        return;
+      }
+      // The popup closed itself after relaying (the callback, the email step): nothing to cancel.
+      if (this.selfClosing) return;
+      // An IdP's COOP may have moved the popup to another browsing context group as it reached Google: the handle
+      // reads closed while the window is open. Stop watching; the login's own limit still applies.
+      if (this.ctx.perfNow() - this.leftForGoogleAt < this.watch.severWindowMs) return;
+      this.popupGone = true;
+      this.armClose();
+    };
+    this.watchTimer = this.ctx.timers.setTimeout(tick, this.watch.pollMs);
+  }
+
+  private stopWatch(): void {
+    if (this.watchTimer !== null) this.ctx.timers.clearTimeout(this.watchTimer);
+    if (this.closeTimer !== null) this.ctx.timers.clearTimeout(this.closeTimer);
+    this.watchTimer = null;
+    this.closeTimer = null;
+  }
+
+  /** The popup is gone and the login waits on it: after the grace, the login ends (`login_cancelled`). */
+  private armClose(): void {
+    if (!this.popupGone || this.popupWaits === 0 || this.closeTimer !== null || this.abortError) return;
+    this.closeTimer = this.ctx.timers.setTimeout(() => {
+      this.closeTimer = null;
+      if (this.popupWaits > 0) this.abort(fail('login_cancelled', 'The sign-in window was closed', { reason: 'popup_closed' }));
+    }, this.watch.graceMs);
+  }
+
+  /** A wait only the popup can end (its first slot, a screen's answer): a closed popup ends it (D347). */
+  protected async popupWait<R>(wait: () => Promise<R>): Promise<R> {
+    this.popupWaits += 1;
+    this.armClose();
+    try {
+      return await wait();
+    } finally {
+      this.popupWaits -= 1;
+    }
+  }
+
+  /** `hana:auth-progress` `google` or `relayed` from the popup (the sender checked): what the watch needs to know. */
+  protected notePopup(stage: 'google' | 'email_code' | 'relayed' | 'back'): void {
+    if (stage === 'google') this.leftForGoogleAt = this.ctx.perfNow();
+    // Back on Hana's callback with its opener: no browsing context switch happened on this trip to Google.
+    if (stage === 'back') this.leftForGoogleAt = Number.NEGATIVE_INFINITY;
+    if (stage === 'relayed') this.selfClosing = true;
+  }
+
+  /** Whether `e` comes from the popup this task answered, on authOrigin. */
+  protected fromPopup(e: WindowMessageEvent): boolean {
+    return this.helloAccepted && e.origin === this.ctx.env.authOrigin && !!e.source && e.source === this.helloSource;
+  }
+
+  /** A link task's popup signal (`google`, `relayed`): the watch only, no progress event. */
+  acceptPopupSignal(e: WindowMessageEvent, stage: 'google' | 'email_code' | 'relayed' | 'back'): boolean {
+    if (this.abortError || !this.fromPopup(e)) return false;
+    this.notePopup(stage);
+    return true;
   }
 
   protected check(): void {
@@ -584,6 +700,7 @@ abstract class PopupTask<T> {
       zero(message.relayKey, message.salt, message.followKey);
     }
     this.resolveHello?.();
+    this.watchPopup();
     return true;
   }
 
@@ -592,9 +709,11 @@ abstract class PopupTask<T> {
    * after its hello was answered, from authOrigin and from that same window (a navigation keeps the window). Only a
    * progress event follows; nothing else depends on it.
    */
-  acceptProgress(e: WindowMessageEvent, stage: 'google' | 'email_code'): boolean {
-    if (this.abortError || !this.helloAccepted || !this.emailOffered) return false;
-    if (e.origin !== this.ctx.env.authOrigin || !e.source || e.source !== this.helloSource) return false;
+  acceptProgress(e: WindowMessageEvent, stage: 'google' | 'email_code' | 'relayed' | 'back'): boolean {
+    if (this.abortError || !this.fromPopup(e)) return false;
+    // D347: every navigation to Google and a self-close, whatever the app offers.
+    this.notePopup(stage);
+    if (!this.emailOffered || stage === 'relayed' || stage === 'back') return false;
     if (this.progressed.has(stage)) return false;
     this.progressed.add(stage);
     this.ctx.progress(stage);
@@ -741,11 +860,14 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
       ctx.progress('popup_connected');
       // With email offered the user may not go to Google: the popup says so itself (hana:auth-progress), except for
       // `method: 'google'`, which goes straight there.
-      if (!emailOn || this.request.method === 'google') ctx.progress('google');
+      if (!emailOn || this.request.method === 'google') {
+        ctx.progress('google');
+        this.progressed.add('google');
+      }
       mark('popup');
 
       // Step 7: the token, through the relay.
-      const relayed = await this.readRelay(relayId, relayReadKey, relayKey);
+      const relayed = await this.popupWait(() => this.readRelay(relayId, relayReadKey, relayKey));
       ctx.progress('token');
       mark('google');
       // The popup's and the relay's own parts of hello → token, each measured on one clock and passed as a duration.
@@ -912,7 +1034,7 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
       if (round > EMAIL_CONSENT_ROUNDS) throw fail('login_cancelled', 'Google’s email address is needed to open a new wallet with Google here', { reason });
       // D264: the popup explains why the address is needed and offers email instead, or Google's screen again.
       const slot = await follow.notice({ t: 'email_consent', reason: problem, loginHint: google.ref.sub }, true);
-      const a = await follow.answer(slot, this.abortCtl.signal, () => this.abortError);
+      const a = await this.popupWait(() => follow.answer(slot, this.abortCtl.signal, () => this.abortError));
       this.check();
       if ('accessToken' in a && !('idToken' in a)) {
         accessToken = a.accessToken;
@@ -942,7 +1064,7 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
       // Not hosted (a code first), or a case A that can't link: the popup's screen, then its answer.
       const notice: FollowNotice = match.challenge && match.linkable ? { t: 'link_code', ...match.challenge } : { t: 'use_email', reason: match.linkable ? 'unavailable' : 'provider_taken' };
       const slot = await follow.notice(notice, true);
-      const answer = await follow.answer(slot, this.abortCtl.signal, () => this.abortError);
+      const answer = await this.popupWait(() => follow.answer(slot, this.abortCtl.signal, () => this.abortError));
       this.check();
       if ('error' in answer) throw this.emailAnswerError(answer.error);
       if (!isRelayToken(answer) || !isJsonFormToken(answer.idToken)) throw fail('token_invalid', 'The sign-in answer was refused');
@@ -1435,7 +1557,7 @@ export class PendingLink extends PopupTask<MadeLink> {
       this.dropSecrets();
 
       // N's proof, in the login's first slot.
-      const first = await readSlot(ctx.api, ctx.timers, relayKey, relayId, relayReadKey, this.abortCtl.signal, () => this.abortError);
+      const first = await this.popupWait(() => readSlot(ctx.api, ctx.timers, relayKey, relayId, relayReadKey, this.abortCtl.signal, () => this.abortError));
       if ('error' in first) {
         if (Object.hasOwn(EMAIL_RELAY_ERRORS, first.error)) throw fail('login_cancelled', 'The sign-in was cancelled');
         throw fail('google_error', 'Google returned an error', { error: first.error });
@@ -1472,7 +1594,7 @@ export class PendingLink extends PopupTask<MadeLink> {
             };
       const follow = this.follow as FollowChannel;
       const slot = await follow.notice({ t: 'prove', why: 'link_account', prove: rootProve, provider: root.provider }, true);
-      const answer = await follow.answer(slot, this.abortCtl.signal, () => this.abortError);
+      const answer = await this.popupWait(() => follow.answer(slot, this.abortCtl.signal, () => this.abortError));
       this.check();
       if ('error' in answer) throw fail('login_cancelled', 'The sign-in was cancelled');
       if (!isRelayToken(answer) || answer.as !== 'proof') throw fail('token_invalid', 'The sign-in answer was refused');

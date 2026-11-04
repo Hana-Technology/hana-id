@@ -1,7 +1,8 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-04 for a cancel on Google's screen (branch
+known open issues. Last verified against code: 2026-11-04 for the popup close watch (branch
+`fix/google-cancel-back-to-chooser`: its signals in the linking invariants, D347); 2026-11-04 for a cancel on Google's screen (branch
 `fix/google-cancel-back-to-chooser`: the parked entry, fresh OAuth states and the close's `google_cancelled` in the
 linking invariants, D341); 2026-11-04 for the wallet directory (branch `feat/wallet-directory`:
 what partners and staff see in Parties, the API's D1 and `USER_ID_KEY` in the compromise table, "Wallet directory" in
@@ -941,6 +942,11 @@ providers; a linked member's export on both is e2e-tested, `apps/e2e/tests/linki
   ID token of another account still ends the login (`google_account_mismatch`). Closing the popup there sends only
   `{error: 'google_cancelled'}`, encrypted under `relayKey` while the screen showed, to the login's slot; the keys
   are zeroed and the context dropped, so a reload finds nothing.
+- **The close watch's signals carry nothing** (D347): `hana:auth-progress` `google`, `back` and `relayed` are taken
+  only from the popup window the vault answered, on `authOrigin`. The worst a forged or lost signal does is change
+  when a closed popup is noticed (a `relayed` makes the vault ignore the close, a `google` opens the 8 s COOP window);
+  it can't end a login that the user didn't, read a slot, or carry data. A close ends the login through the same abort
+  as a timeout: the relay reads stop and later slot writes are never read.
 - **The follow-up channel** (D256): the popup and the vault talk after Google's answer through relay slots derived
   from `followKey` (32 random bytes, in auth-params only for an app with email, stored in the popup's
   `sessionStorage` entry beside `relayKey` and zeroed after use), every value AES-GCM under `relayKey` with its slot's

@@ -1,7 +1,8 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: a cancel on token_first's Google
+Last verified against code: 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: D347, a closed popup is
+`login_cancelled`, in "Login, one transaction" after step 4; D348's Google-only screen after a cancel; a cancel on token_first's Google
 screen goes back to the chooser or case B's choices, closing there is `login_cancelled`, in "Automatic linking" step 2;
 D341); 2026-11-04 (branch `fix/abandoned-login-freeze`: "Automatic linking" step 1, the follow-up
 channel's reads end with the login or the banners' limit; step 5, D263's reads run side by side); 2026-11-04 (branch `feat/wallet-directory`: the wallet directory, D310–D317: Status,
@@ -234,6 +235,20 @@ Browser steps: `packages/web/src/vault/login.ts`, `packages/web/src/auth/login-p
    encrypts `{idToken}` under `relayKey` (AAD `"hana-id/relay/v1" ‖ relayId`) and posts it to
    `POST /v1/login-relay/<state>`. API: Hana-origin check, per-IP limit, one write per slot
    (`apps/api/src/login-relay.ts:170`, `LoginRelay.write` `:73`).
+   **A closed popup** (D347): from the hello on, the vault reads the popup window's `closed` every 250 ms
+   (`PopupTask.watchPopup`; its handle is the hello's `event.source`, valid across the popup's navigations: Hana's
+   auth pages send no COOP, and Google's sign-in pages send COOP report-only, checked 2026-11-04). Every Hana page
+   posts `hana:auth-progress` `google` before it navigates to Google, the callback posts `back` on arrival (it has its
+   opener, so the trip switched no browsing context group) and `relayed` before it closes itself, as `/login/email`
+   does; the signals go to the opener and its frames with `vaultOrigin` as the target, and the vault takes them only
+   from the popup it answered. A close while the login waits on the popup (its first slot; a follow-up screen's
+   answer; a link task's slots) ends it after 1 s of grace (an answer the window wrote just before closing itself
+   still wins) with `login_cancelled`, `data.reason: 'popup_closed'`: the relay reads abort (abort-aware `readSlot`),
+   the keys are dropped, and a later write to the slot is never read. A close while the vault works alone (google-match,
+   the chain) lets the login finish; a later wait on the popup ends at once. A close within 8 s of a `google` signal,
+   before `back`, is taken for an IdP's COOP switch (the opener's handle then reads closed while the window is open):
+   the watch stops for the rest of that login, which falls back to its 5-minute limit (and to D341's own close report
+   on the screen after a cancel).
 5. The vault long-polls `GET /v1/login-relay/<relayId>?wait=25` with `x-hana-relay-key`; the object checks
    `b64url(sha256(key)) === relayId` before consuming (`readKeyMatches` `login-relay.ts:52`, `LoginRelay.read` `:86`).
    The vault decrypts, verifies RS256 against Google's JWKS (`packages/core/src/id-token.ts:151`), `iss`, `aud`,

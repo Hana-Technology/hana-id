@@ -221,6 +221,27 @@ describe('case B: “Link and continue” (D139)', () => {
   });
 });
 
+describe('D347: the close watch’s signals from the follow-up mode', () => {
+  const vaultOf = (s: Setup) => ((s.win.opener as unknown as { frames: Record<string, { postMessage: ReturnType<typeof vi.fn> }> }).frames[VAULT_FRAME]!);
+  const stagesOf = (s: Setup) => vaultOf(s).postMessage.mock.calls.filter((c) => (c[0] as { t?: string }).t === 'hana:auth-progress').map((c) => (c[0] as { stage: string }).stage);
+
+  it('a Google proof says `google` before the navigation', async () => {
+    const s = setup({ next: 2 });
+    await s.vaultSays(2, { t: 'prove', why: 'link_account', provider: 'google', prove: { method: 'google', nonce: 'P'.repeat(43), loginHint: SUBJECT } });
+    await vi.waitFor(() => expect(s.win.location.assigned).toHaveLength(1));
+    expect(stagesOf(s)).toEqual(['google']);
+  });
+
+  it('a Cancel answer says `relayed` before the window closes itself', async () => {
+    const s = setup({ next: 2 });
+    await s.vaultSays(2, { t: 'use_email', reason: 'unavailable' });
+    await vi.waitFor(() => expect(s.page.stage).toBe('link_choice'));
+    click('email-cancel');
+    await vi.waitFor(() => expect(s.win.closed).toBe(true));
+    expect(stagesOf(s)).toEqual(['relayed']);
+  });
+});
+
 describe('the follow-up mode', () => {
   it('after an email login’s token: reads the vault’s last word in slot 2; done without banners closes', async () => {
     const s = setup();

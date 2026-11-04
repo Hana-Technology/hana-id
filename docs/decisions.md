@@ -1,8 +1,8 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D348 (branch `fix/google-cancel-back-to-chooser`, confirmed by
-the user) on 2026-11-04, amending D341; D341 (branch `fix/google-cancel-back-to-chooser`, confirmed
+Last verified against code: 2026-10-28 (commit 58edee9); D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
+confirmed by the user) on 2026-11-04, amending D341; D341 (branch `fix/google-cancel-back-to-chooser`, confirmed
 by the user) on 2026-11-04, with notes on D264, D270 and D273 and a row of "Superseded or amended"; D340 (branch `fix/dev-email-limits`) on 2026-11-04; D140–D141 and D150–D152 on 2026-10-30 (branches
 `feat/batch-c-1`, `feat/playbook-gaps`); D130–D139 on 2026-10-30 (branches `feat/email-login-1`, `feat/email-login-1-r2`);
 D154–D155 (branch `feat/email-login-2`) and D156–D159 (branch `feat/email-login-3`) on 2026-11-02; D159's `+tag`
@@ -5443,8 +5443,51 @@ over D269's directory) and D276 (the Support ID made consistent with D269), belo
   the vault's), and Google or email picked after it starts nothing. Once the vault has ended the login (its limit, a
   newer login, `cancelLogin()`), its reads of the slot have stopped (`fix/abandoned-login-freeze`'s abort-aware
   `readSlot`), so a late `google_cancelled` lands in a slot nobody reads.
-- Not changed: closing the popup at other points (the email step, Google's own page, the follow-up screens) still
-  leaves the vault waiting until its limit (`login_timeout`, `data.stage: 'pending'`).
+- Not changed then: closing the popup at other points (the email step, Google's own page, the follow-up screens) left
+  the vault waiting until its limit (`login_timeout`, `data.stage: 'pending'`). Amended the same day by D347 (any close
+  while the login waits on the popup is `login_cancelled`) and D348 (a `method: 'google'` login comes back to Google
+  only).
+
+### D347. Closing the login popup at any point ends the login within seconds with `login_cancelled`
+- Date 2026-11-04 · Status: confirmed by the user (2026-11-04, "yes") · Built on `fix/google-cancel-back-to-chooser`
+  (`packages/web/src/vault/login.ts` `PopupTask.watchPopup`, `popupWait`, `POPUP_WATCH`; `vault/vault.ts`;
+  `auth/callback-page.ts` `signalVault`; `auth/login-page.ts`, `auth/email-page.ts` `tellVault`; core `hana:auth-progress`
+  stages `relayed` and `back`) · Amends D341 ("closing the popup at other points still leaves the vault waiting") and
+  the partner guide's "An unfinished login" (a closed popup was `login_timeout` after 5 minutes)
+- The signal: the vault's own handle on the popup window (the hello's `event.source`, partner and vault mode alike),
+  read every 250 ms. It stays valid across the popup's navigations because Hana's auth pages send no
+  Cross-Origin-Opener-Policy and Google's sign-in pages send it report-only (checked with `curl` on 2026-11-04 for the
+  authorization endpoint, the identifier and account-chooser pages: `cross-origin-opener-policy-report-only:
+  same-origin`; only Google's OAuth error page enforces `same-origin`). `pagehide` alone can't be the signal (it fires
+  on every navigation, and no Hana code runs on Google's page); the SDK's handle isn't used after the popup connected,
+  as before.
+- Decision:
+  - The popup tells the vault what the handle can't: every Hana page posts `hana:auth-progress` `google` before it
+    navigates to Google; the callback posts `back` as it loads (it still has its opener, so that trip switched no
+    browsing context group); a page that closes itself after relaying (the callback, the email step) posts `relayed`
+    first. The callback doesn't know the vault frame's name, so it posts to the opener and each of its frames with
+    `vaultOrigin` as the target origin; the vault takes the signal only from the popup it answered.
+  - A close while the login waits on the popup (its first slot, a follow-up screen's answer, a link task's slots) ends
+    it after a 1 s grace with `login_cancelled`, `data.reason: 'popup_closed'`: the login aborts (the freeze fix's
+    abort-aware relay reads stop), its keys are dropped, and a later write to its slots is never read. The grace lets
+    an answer the popup wrote just before it closed itself win even if `relayed` was lost.
+  - A close while the vault works alone (google-match, the chain) lets the login finish; a later wait on the popup
+    then ends at once.
+  - A close within 8 s of a `google` signal, before `back`, is taken for an IdP's COOP switching the popup's browsing
+    context group (the opener's handle then reads closed while the window is open: the spec makes the two
+    indistinguishable). The watch stops for the rest of that login, which falls back to its 5-minute limit and to
+    D341's own close report on the screen after a cancel.
+- Why: Privy-like behaviour; a closed popup is the user's cancel, and a partner waiting 5 minutes for `login_timeout`
+  can't tell the user anything meanwhile.
+- Main trade-off: a user who closes the popup within 8 s of reaching Google's page gets the 5-minute
+  `login_timeout`, not `login_cancelled`. The alternative is a false cancel of every login if Google starts enforcing
+  COOP on its sign-in pages (it reports violations today). If Google switches to an enforcing policy on a later page
+  (after the 8 s), a login would be cancelled while the user is still at Google: the watch's assumption to recheck
+  (`curl -sI` on the authorization URL) before each release.
+- Alternatives: (a) the SDK polling its own handle after connect: the same handle semantics, with one more hop. Not
+  done. (b) The popup reporting its own close on every page (`pagehide` with a pre-encrypted relay write, as D341's
+  screen does): it can't cover Google's page, and slot writes are single use. Kept only for D341's screen. (c) A
+  heartbeat through the API: no Hana code runs on Google's page either. Not recommended.
 
 ### D348. After a cancel, a login the partner restricted to Google comes back to Google only
 - Date 2026-11-04 · Status: confirmed by the user (2026-11-04, "yes") · Built on `fix/google-cancel-back-to-chooser`

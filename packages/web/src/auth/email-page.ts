@@ -348,8 +348,12 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     return b;
   };
 
-  /** Tells the vault where the user is (a progress signal only; the vault checks the sender). */
-  const tellVault = (progress: 'email_code' | 'google' = 'email_code') => {
+  /**
+   * Tells the vault where the user is (a progress signal only; the vault checks the sender): the code was sent, the
+   * window navigates to Google, or it closes itself after relaying (D347: the vault's close watch tells these from a
+   * user's close).
+   */
+  const tellVault = (progress: 'email_code' | 'google' | 'relayed' = 'email_code') => {
     const opener = win.opener;
     if (!opener || ctx.exportMode) return;
     try {
@@ -894,6 +898,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     zeroTaken(taken);
     d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'idToken' in payload ? 'Signed in' : 'Sign-in cancelled'), d.h('p', { class: 'muted' }, 'You can close this window.')));
     settle('done');
+    tellVault('relayed');
     win.close();
   }
 
@@ -927,6 +932,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       endFollow();
       d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Sign-in cancelled'), d.h('p', { class: 'muted' }, 'You can close this window.')));
       settle('done');
+      tellVault('relayed');
       win.close();
       return;
     }
@@ -1120,6 +1126,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     follow = null;
     d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Continuing to Google'), header(), d.h('p', { class: 'muted' }, 'Google will ask to share your email address.')));
     settle('done');
+    tellVault('google');
     win.location.assign(googleAccessUrl({ clientId, authOrigin: env.authOrigin, state, loginHint, silent: false }));
   }
 
@@ -1151,6 +1158,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       follow = null;
       d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, title ?? 'Confirm it’s you'), header(), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
       settle('done');
+      tellVault('google');
       win.location.assign(url);
       return;
     }

@@ -7,8 +7,8 @@
 // Nothing calls into this Worker: it has no entrypoint.
 import { checkStaff } from './access.ts';
 import { everyFiveMinutes } from './cron.ts';
-import { DAILY, FIFTEEN_MINUTES } from './crons.ts';
-import { daily, everyFifteenMinutes } from './ledger-cron.ts';
+import { FIFTEEN_MINUTES } from './crons.ts';
+import { everyFifteenMinutes } from './ledger-cron.ts';
 import { SAFE_METHODS, csrfProblem } from './csrf.ts';
 import type { Env } from './env.ts';
 import { withSecurityHeaders } from './headers.ts';
@@ -70,11 +70,10 @@ export default {
     return withSecurityHeaders(out.res, env.FILES_ORIGIN, { api: out.api });
   },
 
-  // The three triggers (src/crons.ts): every 5 minutes the blocking notices, the feed and the watcher (C8); every 15
-  // the ledger's alerts, statement notices and settlement, daily at 00:30 UTC the ledger's checks and rate (C12).
+  // The two triggers (src/crons.ts): every 5 minutes the blocking notices, the feed and the watcher (C8); every 15 the
+  // ledger's alerts, statement notices and settlement, and in the 00:30 UTC run the ledger's daily checks and rate (C12).
   async scheduled(controller: ScheduledController, env: Env): Promise<void> {
     if (controller.cron === FIFTEEN_MINUTES) await everyFifteenMinutes(env, controller.scheduledTime);
-    else if (controller.cron === DAILY) await daily(env, controller.scheduledTime);
     else await everyFiveMinutes(env);
   },
 } satisfies ExportedHandler<Env>;

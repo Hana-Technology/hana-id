@@ -8,7 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../src/env.ts';
 import worker from '../src/index.ts';
 import { type LedgerStore, ledgerSource } from '../src/ledger.ts';
-import { DAILY, FIFTEEN_MINUTES } from '../src/crons.ts';
+import { FIFTEEN_MINUTES } from '../src/crons.ts';
+import { isDailyTick } from '../src/ledger-cron.ts';
 import { adminRequest, envWith, json, stubNetwork, useFakeEmail } from './helpers.ts';
 
 /** A ledger store that answers empty, with `over` replacing methods; every call is recorded. */
@@ -163,24 +164,31 @@ describe('the C12 routes', () => {
 });
 
 describe('the C12 crons', () => {
-  const run = async (cron: string, e: Env = env as unknown as Env) => {
+  const DAILY_TICK = Date.UTC(2026, 10, 5, 0, 30);
+  const run = async (cron: string, e: Env = env as unknown as Env, scheduledTime = Date.UTC(2026, 10, 5, 3, 15)) => {
     const lines: Record<string, unknown>[] = [];
     const spy = (level: 'log' | 'error' | 'warn') => vi.spyOn(console, level).mockImplementation((s: unknown) => void lines.push(JSON.parse(String(s)) as Record<string, unknown>));
     spy('log');
     spy('error');
     spy('warn');
-    await worker.scheduled(createScheduledController({ cron, scheduledTime: Date.now() }), e);
+    await worker.scheduled(createScheduledController({ cron, scheduledTime }), e);
     return lines;
   };
 
-  it('without USAGE_DB, the 15-minute and daily runs are skipped with an error line each time', async () => {
-    for (const cron of [FIFTEEN_MINUTES, DAILY]) {
-      const lines = await run(cron);
+  it('without USAGE_DB, the 15-minute run (the daily one too) is skipped with an error line each time', async () => {
+    for (const t of [undefined, DAILY_TICK]) {
+      const lines = await run(FIFTEEN_MINUTES, env as unknown as Env, t);
       expect(lines.filter((l) => l.event === 'ledger_cron').map((l) => [l.level, l.code])).toEqual([['error', 'usage_db_missing']]);
     }
   });
 
-  it('the 15-minute run reads the pool keys from the real API, then settles; the daily run checks, keeps partitions, fetches rates', async () => {
+  it('the daily work runs in the 00:30 UTC tick only', () => {
+    expect(isDailyTick(DAILY_TICK)).toBe(true);
+    expect(isDailyTick(DAILY_TICK + 14 * 60_000)).toBe(true);
+    for (const t of [DAILY_TICK - 15 * 60_000, DAILY_TICK + 15 * 60_000, DAILY_TICK + 12 * 3_600_000]) expect(isDailyTick(t)).toBe(false);
+  });
+
+  it('the 15-minute run reads the pool keys from the real API, then settles; its 00:30 tick checks, keeps partitions, fetches rates', async () => {
     useFakeEmail();
     withStore();
     const fifteen = await run(FIFTEEN_MINUTES);
@@ -193,18 +201,21 @@ describe('the C12 crons', () => {
     calls.length = 0;
     // The rate source isn't reachable from the test: the fetch fails and is counted, never thrown.
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('no', { status: 503 }));
-    const daily = await run(DAILY);
+    const daily = await run(FIFTEEN_MINUTES, env as unknown as Env, DAILY_TICK);
     expect(daily.filter((l) => l.event === 'ledger_cron').map((l) => [l.step, l.outcome])).toEqual([
       ['nonce_check', 'ok'],
       ['rejection_rate', 'ok'],
       ['partitions', 'ok'],
       ['alerts', 'ok'],
+      ['statement_notices', 'ok'],
       ['rates', 'ok'],
+      ['settlement', 'ok'],
     ]);
     expect(calls).toEqual(expect.arrayContaining(['rejectionRates', 'ensurePartitions', 'ratesBetween']));
     // Without RELAYER_ACCOUNT the steps that need it are skipped and logged.
     const lines = await run(FIFTEEN_MINUTES, envWith({ RELAYER_ACCOUNT: undefined } as never) as unknown as Env);
-    expect(lines.find((l) => l.step === 'settlement')).toMatchObject({ outcome: 'skipped', code: 'relayer_account_missing' });
+    expect(lines.find((l) => l.step === 'relayer')).toMatchObject({ outcome: 'skipped', code: 'relayer_account_missing' });
+    expect(lines.some((l) => l.step === 'settlement')).toBe(false);
   });
 
   it('the 5-minute trigger still runs the C8 cron', async () => {

@@ -1,4 +1,4 @@
-// The Hana admin console SPA (batch C8): plain JavaScript, no build step and no dependency, under the admin CSP
+// The Hana admin console SPA (batch C8; reports, statements and rates in C12): plain JavaScript, no build step and no dependency, under the admin CSP
 // (script-src 'self', style-src 'self'). Every value from the API is put in the page as text (textContent), never as
 // HTML. Writes send the admin's CSRF headers; Cloudflare Access adds the staff identity at the edge.
 'use strict';
@@ -112,16 +112,70 @@ function table(headers, rows) {
 const tr = (...cells) => h('tr', {}, cells.map((c) => h('td', {}, c)));
 const lines = (s) => s.split(/[\s,]+/u).map((x) => x.trim()).filter(Boolean);
 
+/** An integer decimal string of 10^-decimals units, exactly (string arithmetic, never a float); '' when absent. */
+function units(v, decimals) {
+  if (v === undefined || v === null || v === '') return '';
+  const s = String(v);
+  if (!/^\d+$/u.test(s)) return s;
+  const padded = s.padStart(decimals + 1, '0');
+  const int = padded.slice(0, padded.length - decimals).replace(/^0+(?=\d)/u, '');
+  const frac = padded.slice(padded.length - decimals).replace(/0+$/u, '');
+  return frac ? `${int}.${frac}` : int;
+}
+const near = (yocto) => units(yocto, 24);
+const usd = (micros) => (micros === undefined || micros === null ? '—' : units(micros, 6));
+const enc = encodeURIComponent;
+const thisMonth = () => new Date().toISOString().slice(0, 7);
+const today = () => new Date().toISOString().slice(0, 10);
+
+/** A filter form that writes its fields into the page's query string (GET), then re-renders. */
+function queryForm(path, fields, label) {
+  const params = new URLSearchParams(location.search);
+  const el = h(
+    'form',
+    {
+      onsubmit: (ev) => {
+        ev.preventDefault();
+        const q = new URLSearchParams();
+        for (const f of fields) {
+          const v = String(el.elements[f.name].value || '').trim();
+          if (v) q.set(f.name, v);
+        }
+        history.pushState(null, '', `${path}?${q}`);
+        render();
+      },
+    },
+    fields.map((f) => {
+      const value = params.get(f.name) ?? f.value ?? '';
+      const input =
+        f.type === 'select'
+          ? h('select', { name: f.name }, f.options.map((o) => h('option', { value: o.value ?? o, selected: (o.value ?? o) === value }, o.label ?? o)))
+          : h('input', { name: f.name, type: f.type || 'text', placeholder: f.placeholder || '', value });
+      return h('label', {}, `${f.label || f.name} `, input);
+    }),
+    h('button', { type: 'submit' }, label),
+  );
+  return el;
+}
+
+/** The organisations as select options (the first page). */
+async function orgOptions() {
+  const d = await api('GET', '/api/orgs');
+  return d.orgs.map((o) => ({ value: o.id, label: `${o.name} (${o.id})` }));
+}
+
 // ---- navigation ----
 
-// The screens of the spec's admin layout. Later batches fill the disabled ones: reports, statements and rates (C12),
-// retention (C13), Security & monitoring (C14). The Users screen (proposed D275, C8b) is not listed until it is
+// The screens of the spec's admin layout. Reports, statements and rates are C12's; later batches fill the disabled
+// ones: retention (C13), Security & monitoring (C14). The Users screen (proposed D275, C8b) is not listed until it is
 // confirmed and built.
 const NAV = [
   { path: '/orgs', label: 'Organisations' },
   { path: '/audit', label: 'Audit' },
   { path: '/security', label: 'Feed and notices' },
-  { label: 'Reports (C12)' },
+  { path: '/reports', label: 'Reports' },
+  { path: '/statements', label: 'Statements' },
+  { path: '/rates', label: 'Rates' },
   { label: 'Retention (C13)' },
   { label: 'Security & monitoring (C14)' },
 ];
@@ -395,7 +449,205 @@ async function securityPage(main) {
     h('h2', {}, 'Security events not yet emailed'),
     d.unnotifiedEvents === null ? h('p', { class: 'error' }, 'The API did not answer') : table(['Id', 'Detected', 'Kind', 'Org', 'App', 'Scope', 'Detail'], d.unnotifiedEvents.map((e) => tr(e.id, time(e.detectedAt), e.kind, e.orgId || '', e.appId || '', e.scopeId || '', h('code', {}, JSON.stringify(e.detail))))),
   );
+  ledgerSecurity(main, d.ledger);
 }
+
+/** The usage ledger's part of the security screen (C12): nonce checks, rejection and settlement alerts, partitions. */
+function ledgerSecurity(main, l) {
+  main.append(h('h2', {}, 'Usage ledger'));
+  if (!l || l.error) {
+    main.append(h('p', { class: 'warn' }, l && l.error ? l.error : 'Unavailable'));
+    return;
+  }
+  if (!l.relayerAccountSet) main.append(h('p', { class: 'warn' }, 'RELAYER_ACCOUNT is not set: settlement and the nonce check do not run.'));
+  main.append(
+    l.partitionsLow ? h('p', { class: 'warn' }, `Only ${l.partitionsAhead} future monthly partition(s) of usage.events: an event outside every partition is lost. Check the API's and the admin's partition keepers.`) : h('p', {}, `Future monthly partitions: ${l.partitionsAhead}`),
+    h('h3', {}, 'Settlement backlog'),
+    h('p', {}, `${l.settlementBacklog.pending} relayed event(s) without a settlement${l.settlementBacklog.oldestAt ? `, the oldest from ${time(l.settlementBacklog.oldestAt)}` : ''}`),
+    h('h3', {}, 'Nonce cross-check (latest per relayer key)'),
+    table(
+      ['Relayer key', 'Checked', 'Nonce on chain', 'Result', 'Ledger rows since last', 'Alerted'],
+      l.nonceChecks.map((n) => tr(h('code', {}, n.relayerPk), time(n.checkedAt), n.chainNonce, n.explained ? 'explained' : h('strong', { class: 'error' }, 'UNEXPLAINED'), String(n.ledgerRelayedSinceLast), n.alertedAt ? time(n.alertedAt) : n.explained ? '' : 'not yet')),
+    ),
+    h('h3', {}, 'Rejection-rate alerts (D91)'),
+    table(
+      ['Org', 'Day', 'Relayed', 'Rejected after relay', 'Alerted'],
+      l.rejectionAlerts.map((a) => tr(a.orgId, a.day, String(a.relayed), `${a.rejected} (${((a.rejected * 100) / Math.max(1, a.relayed)).toFixed(1)}%)`, a.alertedAt ? time(a.alertedAt) : 'not yet')),
+    ),
+    h('h3', {}, 'Settlement refusals (not billed)'),
+    h('p', { class: 'muted' }, 'A relayed event is billed only when its transaction is its own: no other event carries it, and it is signed by the event’s pool key at its nonce.'),
+    table(
+      ['Detected', 'Reason', 'Org', 'Request', 'Event time', 'Transaction', 'Detail', 'Alerted'],
+      l.settlementAlerts.map((a) => tr(time(a.detectedAt), a.reason, a.orgId, a.requestId, time(a.at), h('code', {}, a.nearTx), h('code', {}, JSON.stringify(a.detail)), a.alertedAt ? time(a.alertedAt) : 'not yet')),
+    ),
+  );
+}
+
+// ---- reports, statements, rates (C12) ----
+
+async function reportsPage(main) {
+  const params = new URLSearchParams(location.search);
+  const first = `${thisMonth()}-01`;
+  main.append(
+    h('h1', {}, 'Usage reports'),
+    queryForm(
+      '/reports',
+      [
+        { name: 'org', label: 'Organisation', type: 'select', options: [{ value: '', label: '(choose)' }, ...(await orgOptions())] },
+        { name: 'from', label: 'From', type: 'date', value: first },
+        { name: 'to', label: 'To', type: 'date', value: today() },
+        { name: 'by', label: 'By', type: 'select', options: ['day', 'month'] },
+        { name: 'apps', label: 'Apps', placeholder: 'app ids, comma separated (optional)' },
+      ],
+      'Show',
+    ),
+    h('p', { class: 'muted' }, 'At most 400 days and 100 apps. Gas is settled gas at FINAL; unsettled events are never billed. Late events (received after the month’s statement) are flagged.'),
+  );
+  const org = params.get('org');
+  if (!org) return;
+  const q = new URLSearchParams({ org, from: params.get('from') || first, to: params.get('to') || today(), by: params.get('by') || 'day' });
+  if (params.get('apps')) q.set('apps', lines(params.get('apps')).join(','));
+  const d = await api('GET', `/api/reports?${q}`);
+  main.append(
+    table(
+      ['Period', 'App or scope', 'Logins', 'Derives', 'Owner actions', 'Link actions', 'Identity tokens', 'Active users', 'New users', 'Tgas', 'Rejected Tgas', 'Error Tgas', 'NEAR', 'USD', 'Login p50 ms', 'Login p95 ms', 'Failures', 'Unsettled', 'After statement'],
+      d.rows.map((r) =>
+        tr(
+          r.period,
+          r.appId ? r.appId : `owner actions, ${r.scopeId}`,
+          String(r.logins),
+          String(r.derives),
+          String(r.ownerActions),
+          String(r.linkActions ?? 0),
+          String(r.identityTokens ?? 0),
+          String(r.activeUsers ?? ''),
+          String(r.newUsers),
+          r.tgas,
+          r.relayedRejectedTgas,
+          r.errorTgas,
+          near(r.burntYocto),
+          usd(r.usdMicros),
+          r.p50.login === undefined ? '' : String(r.p50.login),
+          r.p95.login === undefined ? '' : String(r.p95.login),
+          Object.entries(r.failuresByCode).map(([k, v]) => `${k}=${v}`).join('; '),
+          r.unsettled ? h('strong', {}, String(r.unsettled)) : '0',
+          r.afterStatement ? h('strong', { class: 'warn' }, `${r.afterStatement} late`) : '0',
+        ),
+      ),
+    ),
+  );
+}
+
+/** The on-screen statement (D92): the same labels and values as its PDF. */
+function statementBlock(st, view) {
+  return h(
+    'div',
+    {},
+    h('h2', {}, view.title),
+    h('p', { class: 'notice' }, 'Statement hash (SHA-256 of the CSV): ', h('code', {}, st.csvSha256)),
+    table(['', ''], view.header.map(([k, v]) => tr(k, v))),
+    table(['App or scope', ...view.tableColumns], view.table.map((r) => tr(r.label, ...r.cells))),
+    table(['', ''], view.summary.map(([k, v]) => tr(k.startsWith('Billed') ? h('strong', {}, k) : k, k.startsWith('Billed') ? h('strong', {}, v) : v))),
+    view.notes.map((n) => h('p', { class: 'muted' }, n)),
+    h('p', {}, `Issued ${time(st.issuedAt)} by ${st.issuedBy}${st.pdfSha256 ? ` · PDF SHA-256 ${st.pdfSha256}` : ''}`),
+  );
+}
+
+async function statementsPage(main) {
+  const params = new URLSearchParams(location.search);
+  const now = new Date();
+  const prev = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).toISOString().slice(0, 7);
+  main.append(
+    h('h1', {}, 'Monthly statements'),
+    queryForm(
+      '/statements',
+      [
+        { name: 'org', label: 'Organisation', type: 'select', options: [{ value: '', label: '(choose)' }, ...(await orgOptions())] },
+        { name: 'month', label: 'Month', type: 'month', value: prev },
+      ],
+      'Show',
+    ),
+  );
+  const org = params.get('org');
+  if (!org) return;
+  const month = params.get('month') || prev;
+  const base = `/api/statements/${enc(org)}/${enc(month)}`;
+  const d = await api('GET', base);
+  if (d.statement) {
+    main.append(
+      statementBlock(d.statement, d.view),
+      h('p', { class: 'row' }, h('a', { href: `${base}.csv`, download: true }, 'Download CSV'), h('a', { href: `${base}.pdf`, download: true }, 'Download PDF')),
+    );
+  } else {
+    const b = d.blockers;
+    main.append(
+      h('h2', {}, `${month}: not issued`),
+      h('p', {}, `Can be issued from ${time(d.issuableFrom)}.`),
+      b.pending ? h('p', { class: 'warn' }, `${b.pending} relayed event(s) of the month are not settled yet (settlement runs every 15 minutes).`) : h('p', {}, 'Every relayed event of the month has a settlement.'),
+      b.missingRateDays.length ? h('p', { class: 'warn' }, `Days without a NEAR/USD rate: ${b.missingRateDays.join(', ')} (set them on the Rates screen).`) : h('p', {}, 'Every day of the month has a rate.'),
+      actionButton('Issue statement', () => api('POST', `${base}/issue`, {}), `Issue the ${month} statement for ${org}? It is frozen once issued: no change, no second statement.`),
+    );
+  }
+  const exportOut = h('div');
+  main.append(
+    h('h2', {}, 'Ledger export'),
+    h('p', { class: 'muted' }, d.statement ? 'As of the statement’s time, so its final gas sums to the statement’s Tgas and NEAR.' : 'As of now.'),
+    h(
+      'button',
+      {
+        onclick: async () => {
+          exportOut.replaceChildren(h('p', { class: 'muted' }, 'Exporting…'));
+          try {
+            const out = await api('POST', `/api/exports/${enc(org)}/${enc(month)}`, d.statement ? { asOf: d.statement.asOf } : {});
+            exportOut.replaceChildren(
+              h('p', { class: 'notice' }, `${out.rows} rows as of ${time(out.asOf)}; final gas ${units(out.finalGas, 12)} Tgas, ${near(out.finalTokens)} NEAR; SHA-256 `, h('code', {}, out.sha256)),
+              h('p', {}, h('a', { href: `/api/exports/${enc(org)}/${enc(month)}/${enc(out.file)}`, download: true }, 'Download the export'), h('span', { class: 'muted' }, ' (kept 30 days)')),
+            );
+          } catch (err) {
+            exportOut.replaceChildren(errorBox(err));
+          }
+        },
+      },
+      'Export ledger CSV',
+    ),
+    exportOut,
+    h('h2', {}, 'Statements of this organisation'),
+  );
+  const list = await api('GET', `/api/statements?org=${enc(org)}`);
+  main.append(
+    table(
+      ['Month', 'As of', 'CSV SHA-256', 'Issued', 'By'],
+      list.statements.map((s) => tr(link(`/statements?org=${enc(org)}&month=${enc(s.month)}`, s.month), time(s.asOf), h('code', {}, s.csvSha256), time(s.issuedAt), s.issuedBy)),
+    ),
+  );
+}
+
+async function ratesPage(main) {
+  const params = new URLSearchParams(location.search);
+  const month = params.get('month') || thisMonth();
+  main.append(h('h1', {}, 'NEAR/USD rates'), queryForm('/rates', [{ name: 'month', label: 'Month', type: 'month', value: month }], 'Show'));
+  const d = await api('GET', `/api/rates?month=${enc(month)}`);
+  main.append(
+    h('p', { class: 'muted' }, 'Fetched daily from CoinGecko (the price at 00:00 UTC of the day). A month with a statement is frozen. Testnet usage is valued at the mainnet price.'),
+    d.missing.length ? h('p', { class: 'warn' }, `Days without a rate: ${d.missing.join(', ')}`) : h('p', {}, 'Every past day of the month has a rate.'),
+    table(['Day', 'USD per NEAR', 'Source', 'Entered by', 'Set at'], d.rates.map((r) => tr(r.day, usd(r.usdMicros), r.source, r.enteredBy || '(fetched)', time(r.fetchedAt)))),
+    h('h2', {}, 'Override a rate'),
+    h('p', { class: 'muted' }, 'Audited: the old and new rate, who and why are kept with it. Refused once the month has a statement.'),
+    form(
+      [
+        { name: 'day', type: 'date', required: true },
+        { name: 'usd', placeholder: 'USD per NEAR, e.g. 2.345678', required: true },
+        { name: 'reason', placeholder: 'Why (10 to 500 characters)', required: true },
+      ],
+      'Set rate',
+      (v) => api('PUT', `/api/rates/${enc(v.day)}`, { usd: v.usd.trim(), reason: v.reason.trim() }),
+      { confirm: 'Set this rate by hand? It replaces the fetched one for that day.' },
+    ),
+    h('h2', {}, 'Override history'),
+    table(['At', 'Day', 'USD', 'Was', 'By', 'Reason'], d.overrides.map((o) => tr(time(o.at), o.day, usd(o.usdMicros), o.previousUsdMicros ? `${usd(o.previousUsdMicros)} (${o.previousSource})` : '(none)', o.enteredBy, o.reason))),
+  );
+}
+
 
 // ---- router ----
 
@@ -417,6 +669,9 @@ async function render() {
     else if ((m = /^\/orgs\/([^/]+)$/u.exec(path))) await orgPage(main, decodeURIComponent(m[1]));
     else if (path === '/audit') await auditPage(main);
     else if (path === '/security') await securityPage(main);
+    else if (path === '/reports') await reportsPage(main);
+    else if (path === '/statements') await statementsPage(main);
+    else if (path === '/rates') await ratesPage(main);
     else main.append(h('h1', {}, 'Not found'), link('/orgs', 'Organisations'));
   } catch (err) {
     main.append(errorBox(err));

@@ -39,7 +39,7 @@ describe('the admin config', () => {
     expect(manifestSchema.parse(TEST_MANIFEST)).toBeTruthy();
   });
 
-  it('binds what the spec lists for C8 and C12, runs first on every request, on its three crons', () => {
+  it('binds what the spec lists for C8 and C12, runs first on every request, on its two crons', () => {
     const c = wranglerConfig(TEST_MANIFEST, { adminHyperdriveId: TEST_ADMIN_HYPERDRIVE_ID }) as Config;
     expect(c).toMatchObject({
       name: 'hana-id-admin-test',
@@ -75,7 +75,7 @@ describe('the admin config', () => {
         { binding: 'STATEMENTS', bucket_name: TEST_MANIFEST.files!.statementsBucket },
         { binding: 'EXPORTS', bucket_name: TEST_MANIFEST.files!.exportsBucket },
       ],
-      triggers: { crons: ['*/5 * * * *', '*/15 * * * *', '30 0 * * *'] },
+      triggers: { crons: ['*/5 * * * *', '*/15 * * * *'] },
       observability: { enabled: true, logs: { invocation_logs: false } },
     });
     expect(CRON).toBe('*/5 * * * *');

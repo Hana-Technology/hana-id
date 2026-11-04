@@ -57,7 +57,7 @@ const query = (url: string) => {
 };
 
 /** One login: its slot (relayId), keys, nonce, and the email context /login stores before Google (D341's screen). */
-function login(o: { methods?: ('google' | 'email')[]; context?: boolean } = {}) {
+function login(o: { methods?: ('google' | 'email')[]; context?: boolean; method?: 'google' | 'email' } = {}) {
   const sessionPublicKey = crypto.getRandomValues(new Uint8Array(32));
   const salt = crypto.getRandomValues(new Uint8Array(32));
   const expiresAtMs = 1_900_000_000_000;
@@ -82,6 +82,7 @@ function login(o: { methods?: ('google' | 'email')[]; context?: boolean } = {}) 
         nonce,
         clientId: CLIENT_ID,
         methods: o.methods ?? ['google', 'email'],
+        ...(o.method ? { method: o.method } : {}),
         emailHint: null,
         opener: 'partner',
         vaultFrame: null,
@@ -387,6 +388,19 @@ describe('/login/email after a cancel: the screen the Google step came from (D34
       expect(entryOf(l.relayId), button).toBeNull();
       expect(p.a.writeRelay, button).not.toHaveBeenCalled();
     }
+  });
+
+  it('D348: a login the partner started with `method: google` comes back to Google only, though the app has email login', async () => {
+    const l = login({ method: 'google' });
+    parked(l);
+    const p = emailPage(l);
+    await vi.waitFor(() => expect(p.page.stage).toBe('choosing'));
+    expect(document.getElementById('google-cancelled')?.textContent).toBe(GOOGLE_CANCELLED_TEXT);
+    expect(document.getElementById('continue-google')).not.toBeNull();
+    expect(document.getElementById('continue-email')).toBeNull();
+    click('continue-google');
+    expect(query(p.win.location.assigned[0]!)).toMatchObject({ response_type: 'token', scope: 'openid email' });
+    // Without a method named, the same app's chooser offers email too (the test above).
   });
 
   it('a record-only login’s chooser offers Google only', async () => {

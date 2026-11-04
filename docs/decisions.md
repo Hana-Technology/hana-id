@@ -1,7 +1,8 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D341 (branch `fix/google-cancel-back-to-chooser`, confirmed
+Last verified against code: 2026-10-28 (commit 58edee9); D348 (branch `fix/google-cancel-back-to-chooser`, confirmed by
+the user) on 2026-11-04, amending D341; D341 (branch `fix/google-cancel-back-to-chooser`, confirmed
 by the user) on 2026-11-04, with notes on D264, D270 and D273 and a row of "Superseded or amended"; D340 (branch `fix/dev-email-limits`) on 2026-11-04; D140–D141 and D150–D152 on 2026-10-30 (branches
 `feat/batch-c-1`, `feat/playbook-gaps`); D130–D139 on 2026-10-30 (branches `feat/email-login-1`, `feat/email-login-1-r2`);
 D154–D155 (branch `feat/email-login-2`) and D156–D159 (branch `feat/email-login-3`) on 2026-11-02; D159's `+tag`
@@ -5444,3 +5445,16 @@ over D269's directory) and D276 (the Support ID made consistent with D269), belo
   `readSlot`), so a late `google_cancelled` lands in a slot nobody reads.
 - Not changed: closing the popup at other points (the email step, Google's own page, the follow-up screens) still
   leaves the vault waiting until its limit (`login_timeout`, `data.stage: 'pending'`).
+
+### D348. After a cancel, a login the partner restricted to Google comes back to Google only
+- Date 2026-11-04 · Status: confirmed by the user (2026-11-04, "yes") · Built on `fix/google-cancel-back-to-chooser`
+  (`packages/web/src/auth/email-storage.ts` `EmailContext.method`, `auth/login-page.ts`, `auth/email-page.ts`
+  `showChooser`) · Amends D341 (its chooser offered the app's methods whatever the partner asked)
+- Decision: `/login` keeps the method the partner named (`hana.login({method})`) in the email context. When a login
+  started with `method: 'google'` is cancelled on Google's screen, the screen it goes back to offers **Continue with
+  Google** only, even in an app with email login; **Continue with email** appears only when the partner didn't
+  restrict the method. Closing the popup there is `login_cancelled` as before.
+- Why: a partner that names Google has its own sign-in choices (often a separate email button); offering email in
+  Hana's popup would override that choice.
+- Alternatives: (a) the app's full chooser (D341 as built): it ignores the partner's `method`. Not recommended.
+

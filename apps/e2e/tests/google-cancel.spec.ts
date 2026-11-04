@@ -78,6 +78,25 @@ for (const [label, emailApp] of [
   });
 }
 
+test('D348: `hana.login({method: google})` in an app with email login: Cancel at Google comes back to Google only', async ({ page, google, requests }) => {
+  google.accounts = [{ sub: newSub(), label: 'OnlyGoogle', email: `e2egconly${rand()}@gmail.com`, emailVerified: true }];
+  await openPartner(page, await newApp({ loginMethods: 'google,email' }));
+  const popupP = page.waitForEvent('popup');
+  await clickAction(page, 'login', 'loginWith', { method: 'google' });
+  const popup = await popupP;
+  await popup.waitForURL(`${GOOGLE_AUTH_URL}**`);
+  await cancelAtGoogle(popup);
+  await expect(popup.locator('#continue-google')).toBeVisible();
+  await expect(popup.locator('#continue-email')).toHaveCount(0);
+  await popup.click('#continue-google');
+  await popup.waitForURL(`${GOOGLE_AUTH_URL}**`);
+  const closed = popup.waitForEvent('close', { timeout: 20_000 });
+  await popup.click('#account-0');
+  await closed;
+  expect((await okValue<{ evm: string }>(page, 'login')).evm).toMatch(/^0x/u);
+  expect(requests.count(LOGIN_ENDPOINT)).toBe(1);
+});
+
 test('an app with email login: Cancel at Google, then email from the chooser signs in with email', async ({ page, google }, info) => {
   google.accounts = [{ sub: newSub(), label: 'ThenEmail', email: `e2egcmail${rand()}@gmail.com`, emailVerified: true }];
   await openPartner(page, await newApp({ loginMethods: 'google,email' }));

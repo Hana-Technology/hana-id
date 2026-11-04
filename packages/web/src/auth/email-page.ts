@@ -791,7 +791,8 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       });
       buttons.push(google);
     }
-    if (ctx.methods.includes('email')) {
+    // D348: email only when the partner didn't restrict the login to Google (`hana.login({method: 'google'})`).
+    if (ctx.methods.includes('email') && ctx.method !== 'google') {
       const email = d.h('button', { attrs: { type: 'button', id: 'continue-email' } }, 'Continue with email');
       email.addEventListener('click', () => {
         disable();

@@ -178,8 +178,8 @@ describe('/login under token_first', () => {
     const entry = JSON.parse(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + p.relayId)!);
     expect(entry).toMatchObject({ tf: 1, n: p.nonce, c: CLIENT_ID });
     expect(entry.r).toBeUndefined();
-    // The follow-up mode's context, as in second_request.
-    expect(readEmailContext(s.win.sessionStorage, p.relayId, NOW)).not.toBeNull();
+    // The follow-up mode's context, as in second_request, with the method the partner named (D348).
+    expect(readEmailContext(s.win.sessionStorage, p.relayId, NOW)?.context).toMatchObject({ methods: ['google', 'email'], method: 'google' });
   });
 
   it('a record-only login (`emailRecord`, an app without email login): the same request, marked `r`; an email context with Google only (D341’s screen after a cancel)', async () => {

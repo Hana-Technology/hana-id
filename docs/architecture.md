@@ -358,7 +358,8 @@ message.
      goes on under the login's own 5-minute limit: the callback parks the login's keys under its slot (entry `x`, with
      `bk` the screen to go back to and, after the retry, `h`: slot 1 already holds that account's access token) and
      navigates to `/login/email#<relayId>`, which takes them into memory and shows that screen: Hana's method chooser
-     ("Google sign-in was cancelled.", Continue with Google, and Continue with email when the app offers it), or case
+     ("Google sign-in was cancelled.", Continue with Google, and Continue with email when the app offers it and the
+     partner didn't start the login with `hana.login({method: 'google'})`, D348: the email context keeps `method`), or case
      B's own choices when its Google step was the one cancelled. Google again is a fresh attempt under a new random
      OAuth `state` whose entry names the login's slot (`s`; the ID leg keeps that state), with the login's nonce, so
      the cancelled attempt's state never finds an entry again (a parked entry is never a Google answer's either);

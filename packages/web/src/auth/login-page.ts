@@ -224,6 +224,8 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
               nonce: msg.nonce,
               clientId: methods.includes('google') ? msg.clientId : null,
               methods: [...methods],
+              // D348: a login the partner restricted to one method comes back to that method only after a cancel.
+              ...(msg.method && methods.includes(msg.method) ? { method: msg.method } : {}),
               emailHint: msg.emailHint ?? null,
               opener: mode === 'vault' ? 'vault' : 'partner',
               vaultFrame: parsed?.vaultFrame ?? null,

@@ -1,6 +1,7 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
-Last verified against code: 2026-11-04 (branch `feat/batch-c-11`: `GET /v1/app`'s `logoUrl`, the logo pages' `img-src`
+Last verified against code: 2026-11-04 (branch `fix/dev-email-limits`: "Email issuer" "Limits", dev envs' higher
+code, wrong-code and per-IP limits, D340); 2026-11-04 (branch `feat/batch-c-11`: `GET /v1/app`'s `logoUrl`, the logo pages' `img-src`
 with `FILES_ORIGIN` on the auth Worker, the console's logo upload backend (not routed until C10) and its `IMAGES`
 binding, the purge order, and the new "Files Worker" section; D300–D308); 2026-11-04 (branch `feat/batch-c-8`: "Admin Worker" (its routes, the Access check, the cron's notices, feed and watcher, its bindings), `AdminRpc.listApps`/`getApp` taking `system`, `StaffRpc.getOrg`'s `grants`; D278–D285); 2026-11-04 (branch `feat/batch-c-6-merge`: batch C6 on current `develop`:
 `ConsoleRpc.changeOrigins` / `proposeChange` with the API's own step-up verification (the claim allow-list on the
@@ -1584,7 +1585,7 @@ email_domain_not_allowed`.
 The requester pays first (D198): the IP subject's limits, then the owner proof (`deviceTicket`, `unlockToken`) is
 checked, then (unless it was valid) the prefixes' limits (IPv4 /24, IPv6 /56 and /48, 1000 a day each), then the app
 gate and the body, then in one atomic call the mailbox's (the address without its `+tag`):
-the requester's lock, at most 5 live challenges, 35 challenges a day, and the code limits per (mailbox, requester) and
+the requester's lock, at most 5 live challenges, 35 challenges a day (dev envs: 20 and 250, D340), and the code limits per (mailbox, requester) and
 per mailbox; then the recipient domain's day, then the app's quota, then the global budget and the app's share of it.
 A later refusal refunds the mailbox, domain and app counts (never the IP ones) and stores nothing. Every mailbox-level
 refusal (the mailbox's limits and locks, the domain cap) is the same `429 rate_limited` body with `retry-after: 900`.
@@ -1747,25 +1748,31 @@ logs `email_complaint_rate` (error). `404` when no key is configured.
 
 ### Limits (D198; provisional, D123 Q22; the review defaults to confirm)
 
+The numbers are production's. **Dev envs** (`local*`, `sandbox*`: `isDevEnv` on `ENV_NAME`, D340) raise the rows
+marked "dev:"; every other row is the same in every env. The issuer picks the set once per request (`limitsFor`) and
+sends the mailbox object its set with each call; counters are keyed by window name and start, never by max, so a
+mailbox over production's numbers but under the dev ones passes at once on a dev env. A wrong-code lock is keyed by the
+max that set it, so production's lock doesn't hold under the dev set.
+
 All exact, on the issuer's `RateLimiter` objects (named `<env>:<subject>`). A mailbox is the normalized address
 without its `+tag` (`normalizeEmail().mailbox`), keyed by HMAC under K_rl; a requester inside it is a hash of the IP
 subject. Every mailbox decision is one atomic call (D198). Every mailbox-level refusal answers `retry-after: 900`.
 
 | Subject | Limit | Refusal |
 |---|---|---|
-| Mailbox × requester: code mails | 3 per 15 min, 10 per day (resends included) | 429 |
-| Mailbox: code mails | 10 per 15 min, 30 per day; then 5 a day for requesters new to it that day | 429 |
+| Mailbox × requester: code mails | 3 per 15 min, 10 per day (resends included); dev: 20 per 15 min, 100 per day | 429 |
+| Mailbox: code mails | 10 per 15 min, 30 per day (dev: 30 per 15 min, 200 per day); then 5 a day for requesters new to it that day | 429 |
 | Device ticket | 3 code mails a UTC day **per exact address** (all its tickets together) for the challenges they started, outside the two rows above, the live cap and the challenge cap; ≤ 5 live tickets per address (a 6th revokes the oldest); ≤ 10 ticket challenges per exact address a day; per mailbox (all its `+tag`s) ≤ 9 ticket mails and ≤ 30 owner challenges (grants included) a day, which never block the untagged address or a grant (they count toward them); past these the proof counts as nothing | 429 |
 | Unlock grant | one start within 24 h of the unlock; its challenge's mails free (≤ 2 resends); its checks in the ticket slot then a grant slot of 2 outside the ceiling | – |
-| Mailbox: live challenges | 5 at once | 429 |
-| Mailbox × requester: wrong codes | 10 per hour → that requester locked out of the mailbox for 1 h | 429 (start, resend, verify) |
-| Mailbox: failed code checks | hard ceiling 25 per UTC day, from everyone: any requester for the first 18 (the backstop), then an owner slot of 4 (requesters that started a challenge before the trip and have no failure, one each) and a ticket slot of 3 (ticketed challenges) | 429 until the UTC day ends; `mailbox_guess_limit` logged |
-| Mailbox: challenges created | 35 per UTC day, every kind | 429 |
+| Mailbox: live challenges | 5 at once; dev: 20 | 429 |
+| Mailbox × requester: wrong codes | 10 per hour → that requester locked out of the mailbox for 1 h; dev: 30 per hour | 429 (start, resend, verify) |
+| Mailbox: failed code checks | hard ceiling 25 per UTC day, from everyone: any requester for the first 18 (the backstop), then an owner slot of 4 (requesters that started a challenge before the trip and have no failure, one each) and a ticket slot of 3 (ticketed challenges); dev: ceiling 100 = backstop 80 + owner slot 17 + ticket slot 3 | 429 until the UTC day ends; `mailbox_guess_limit` logged |
+| Mailbox: challenges created | 35 per UTC day, every kind; dev: 250 | 429 |
 | Mailbox: staff unlocks, unsuppressions, ticket revocations | 1 a day and 3 in 30 days each | `429 staff_cap` |
 | Challenge | 10 min from creation; 5 wrong codes; ≤ 2 resends ≥ 30 s apart | 410 / 429 |
-| IP (IPv4 address, IPv6 /64): `start` | 10 per 10 min, 50 per day | 429 |
+| IP (IPv4 address, IPv6 /64): `start` | 10 per 10 min, 50 per day; dev: 30 per 10 min, 300 per day | 429 |
 | IP prefix (IPv4 /24, IPv6 /56, IPv6 /48): `start` | 1000 per day each; skipped with a valid ticket or grant | 429 |
-| IP: `verify` / `resend` (and `confirm`) / `google-match` (its prepared challenges too) / `google-record` / webhook | 30 / 10 / 120 / 120 / 120 per 10 min | 429 |
+| IP: `verify` / `resend` (and `confirm`) / `google-match` (its prepared challenges too) / `google-record` / webhook | 30 / 10 / 120 / 120 / 120 per 10 min; dev: `verify` 90, `resend` 30 (`confirm` stays 10) | 429 |
 | No usable `cf-connecting-ip` (IP-limited routes) | refused | `400 missing_client_ip`, logged |
 | Recipient domain (registrable, Public Suffix List): code mails | 100 + 2 × its distinct verified mailboxes a day over the trailing 7 days (only challenges that took a domain place), at most 2,000, per day; a verified challenge's places given back; except the listed consumer providers (`src/domain.ts`); each requester prefix (IPv4 /24, IPv6 /56, /48) ≤ 20% of the day's cap; ticketed and unlock-grant challenges not counted | 429; `email_domain_cap` logged when a day fills |
 | App: `start` | plan `per_minute` per minute; plan `per_day` per day; owner starts not counted | 429 |
@@ -1773,7 +1780,8 @@ subject. Every mailbox decision is one atomic call (D198). Every mailbox-level r
 | Staff | 20 actions per hour per staff member, all staff routes together | 429 |
 
 The guess bound: ≤ 25 failed checks a day per mailbox plus ≤ 2 per unlock (≤ 3 unlocks in 30 days): 365 × 25 + 37 × 2 =
-≈ 9,199 a year (≈ 9,273 in the worst case), ≈ 0.92% a year against a 6-digit code (D198).
+≈ 9,199 a year (≈ 9,273 in the worst case), ≈ 0.92% a year against a 6-digit code (D198). On a dev env (ceiling 100,
+D340): 365 × 100 + 37 × 2 ≈ 36,574 a year, ≈ 3.7% (testnet: no real funds).
 
 ### Durable Objects, D1 and bindings
 

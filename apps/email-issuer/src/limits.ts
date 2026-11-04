@@ -1,6 +1,10 @@
 // Every limit of the issuer (spec "Codes, attempts, expiry, replay" and "Rate limits and abuse"; D123 Q22: provisional,
 // tuned on sandbox-dev; D198 for how they are keyed and the review defaults "to confirm"). All exact, on RateLimiter
 // objects: the Rate Limiting binding's 10 s / 60 s periods can't express these windows.
+//
+// The named constants below are the production values. Dev envs (`local*`, `sandbox*`: `isDevEnv`) raise the per-mailbox
+// and per-IP code limits (D340): `limitsFor(envName)` picks the set, and every caller takes its limits from it.
+import { isDevEnv } from '@hana-id/env/origins';
 import type { Limit } from './rate-limiter.ts';
 
 const MIN = 60_000;
@@ -156,6 +160,94 @@ export const CONFIRM_TTL_MS = DAY;
 export const NON_HOSTED_HINT_TTL_MS = 180 * DAY;
 /** Rows of stale non-hosted hints pruned per hint write (the issuer has no cron). */
 export const HINT_PRUNE_BATCH = 50;
+
+/**
+ * The limits that differ between dev and production envs: the mailbox object's (sent with every call to it, so a
+ * changed set applies to the counters already there: they are keyed by window name, never by max) and the per-IP
+ * `start`, `resend` and `verify` limits. Everything else (aggregate prefix, recipient domain, ticket and grant
+ * allowances, google-match and google-record, webhook, staff, the budget) is the same in every env.
+ */
+export interface MailboxLimits {
+  ipCodes: readonly Limit[];
+  codes: readonly Limit[];
+  maxLive: number;
+  challengesPerDay: Limit;
+  ipWrong: Limit;
+  wrongCeiling: Limit;
+  wrongBackstop: Limit;
+  ownerSlot: Limit;
+  ticketSlot: Limit;
+}
+export interface Limits {
+  dev: boolean;
+  mailbox: MailboxLimits;
+  ipStart: readonly Limit[];
+  ipResend: readonly Limit[];
+  ipVerify: readonly Limit[];
+}
+
+const freeze = (l: Limits): Limits => {
+  for (const v of Object.values(l.mailbox)) Object.freeze(v);
+  Object.freeze(l.mailbox);
+  for (const v of [l.ipStart, l.ipResend, l.ipVerify]) for (const x of v) Object.freeze(x);
+  return Object.freeze(l);
+};
+
+export const PRODUCTION_LIMITS: Limits = freeze({
+  dev: false,
+  mailbox: {
+    ipCodes: MAILBOX_IP_CODE_LIMITS.map((l) => ({ ...l })),
+    codes: MAILBOX_CODE_LIMITS.map((l) => ({ ...l })),
+    maxLive: MAX_LIVE_CHALLENGES,
+    challengesPerDay: { ...MAILBOX_CHALLENGES_PER_DAY },
+    ipWrong: { ...MAILBOX_IP_WRONG_LIMIT },
+    wrongCeiling: { ...MAILBOX_WRONG_CEILING },
+    wrongBackstop: { ...MAILBOX_WRONG_BACKSTOP },
+    ownerSlot: { ...MAILBOX_OWNER_SLOT },
+    ticketSlot: { ...MAILBOX_TICKET_SLOT },
+  },
+  ipStart: IP_START_LIMITS.map((l) => ({ ...l })),
+  ipResend: IP_RESEND_LIMITS.map((l) => ({ ...l })),
+  ipVerify: IP_VERIFY_LIMITS.map((l) => ({ ...l })),
+});
+
+/**
+ * Dev envs (D340: testnet, tested a lot, no real funds): the same windows and names, higher maxes. The ceiling is
+ * still the sum of its three slots (80 backstop + 17 owner + 3 ticket = 100), so the owner slot still works past the
+ * backstop; the per-requester wrong-code lock (30 an hour) still trips before the backstop. 20 live challenges at once
+ * (production 5), so one tester's abandoned starts never hit the live cap before the per-requester 15-min code limit.
+ */
+export const DEV_LIMITS: Limits = freeze({
+  dev: true,
+  mailbox: {
+    ipCodes: [
+      { name: 'codes:15m', windowMs: 15 * MIN, max: 20 },
+      { name: 'codes:1d', windowMs: DAY, max: 100 },
+    ],
+    codes: [
+      { name: 'codes:15m', windowMs: 15 * MIN, max: 30 },
+      { name: 'codes:1d', windowMs: DAY, max: 200 },
+    ],
+    maxLive: 20,
+    challengesPerDay: { ...MAILBOX_CHALLENGES_PER_DAY, max: 250 },
+    ipWrong: { ...MAILBOX_IP_WRONG_LIMIT, max: 30 },
+    wrongCeiling: { ...MAILBOX_WRONG_CEILING, max: 100 },
+    wrongBackstop: { ...MAILBOX_WRONG_BACKSTOP, max: 80 },
+    ownerSlot: { ...MAILBOX_OWNER_SLOT, max: 17 },
+    ticketSlot: { ...MAILBOX_TICKET_SLOT },
+  },
+  ipStart: [
+    { name: 'ip:start:10m', windowMs: 10 * MIN, max: 30 },
+    { name: 'ip:start:1d', windowMs: DAY, max: 300 },
+  ],
+  ipResend: [{ name: 'ip:resend:10m', windowMs: 10 * MIN, max: 30 }],
+  ipVerify: [{ name: 'ip:verify:10m', windowMs: 10 * MIN, max: 90 }],
+});
+
+/** The env's limit set: `DEV_LIMITS` for a dev env name (`local*`, `sandbox*`), `PRODUCTION_LIMITS` for every other. */
+export function limitsFor(envName: string): Limits {
+  return isDevEnv(envName) ? DEV_LIMITS : PRODUCTION_LIMITS;
+}
 
 /**
  * Per app: `start` the plan's `per_minute` per minute and its `per_day` per day (H1: the spec's "20 ×" dropped until

@@ -47,7 +47,7 @@ nothing on chain and holds no chain key.
 | `src/decide.ts` | the four cases of automatic linking, judged as the contract's `auto_link` will |
 | `src/challenge.ts`, `src/challenge-id.ts` | `Challenge` Durable Object: one challenge or link ticket, atomic attempts, single use; the challengeId's public half (the object's name) and secret half (the address's encryption key) |
 | `src/keys.ts` | the HMAC keys, their derived keys (K_sup, K_device), codes, owner device tickets |
-| `src/rate-limiter.ts`, `src/limits.ts` | `RateLimiter` Durable Object and every limit (D198): per (mailbox, requester), per mailbox, the device ticket's allowance, the 25-a-day guess ceiling, the budget's per-app shares |
+| `src/rate-limiter.ts`, `src/limits.ts` | `RateLimiter` Durable Object and every limit (D198): per (mailbox, requester), per mailbox, the device ticket's allowance, the 25-a-day guess ceiling, the budget's per-app shares. Dev envs (`local*`, `sandbox*`) get higher code, wrong-code and per-IP limits (D340): `limitsFor(ENV_NAME)` picks the set once per request and the mailbox object gets it with each call, so a change applies to the counters already stored |
 | `src/domain.ts`, `src/ip.ts` | the recipient domain's cap (registrable domain, exempt consumer providers); IP subjects and their /24, /56, /48 prefixes |
 | `src/jws.ts`, `src/signer.ts`, `src/kms.ts` | JWS JSON minting with a self-check; the Worker-secret signer; the KMS adapter (aws4fetch) |
 | `src/sender.ts`, `src/sendgrid.ts`, `src/outbox.ts`, `src/mail.ts` | the sender interface, SendGrid v3, the `local*`-only outbox stub, the per-purpose mail texts |
@@ -75,6 +75,7 @@ line included), and checks that a verified address is in `user_emails` and no ot
 `test/directory-verify.test.ts` covers which `verify` answers record, `test/google-record.test.ts` google-record and
 google-match's directory write, `test/directory.test.ts` the upserts in both arrival orders.
 
-Last verified: 2026-11-04 (branch `fix/user-emails-review`: the directory's order-safe upserts, D269); 2026-11-04
+Last verified: 2026-11-04 (branch `fix/dev-email-limits`: dev envs' limit set, D340, `test/dev-limits.test.ts`; every
+other test runs under production's, its harness env names `t-…` not being dev names); 2026-11-04 (branch `fix/user-emails-review`: the directory's order-safe upserts, D269); 2026-11-04
 (branch `feat/google-token-first`: `google-record`, google-match's directory write, D269,
 D270).

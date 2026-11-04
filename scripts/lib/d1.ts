@@ -221,10 +221,35 @@ async function accountId(deps: IssuerD1Deps, base: string, headers: Record<strin
  * on the database named `emailIssuer.cloudflare.d1Name`. Errors never quote the statement.
  */
 export async function issuerD1Execute<Row = Record<string, unknown>>(m: Manifest, statement: string, opts: D1Options, deps: IssuerD1Deps = defaultIssuerD1Deps()): Promise<Row[]> {
-  const name = issuerD1Name(m);
+  return privateD1Execute<Row>(m, issuerD1Name(m), (file) => issuerLocalD1Argv(m, file), statement, opts, deps);
+}
+
+/** wrangler d1 execute argv for the API's local D1 with the statement in a file (apiPrivateD1Execute). */
+export function apiLocalD1Argv(m: Pick<Manifest, 'cloudflare'>, sqlFile: string): string[] {
+  return ['exec', 'wrangler', 'd1', 'execute', m.cloudflare.d1Name, '--local', '--json', '--file', sqlFile];
+}
+
+/** The private executor's deps for the API's D1 (wrangler in apps/api, its log file off). */
+export const defaultApiPrivateD1Deps = (): IssuerD1Deps => ({
+  ...defaultIssuerD1Deps(),
+  wrangler: (argv) => runPnpm(apiDir, argv, PRIVATE_WRANGLER_ENV, true),
+  requireLocalConfig: (envName) => requireWranglerConfig(apiDir, `pnpm --filter @hana-id/api gen ${envName}`),
+});
+
+/**
+ * Executes a read on the API's own D1 the way issuerD1Execute reads the issuer's: for statements that hold personal
+ * data (the wallet directory, migration 0011: a wallet address or a sub to look up, D316), so the statement never goes
+ * in a process argument, wrangler's log file stays off, and errors never quote it. `m.cloudflare.d1Name` (the CLI's
+ * `--d1-name` rehearsal database included).
+ */
+export async function apiPrivateD1Execute<Row = Record<string, unknown>>(m: Manifest, statement: string, opts: D1Options, deps: IssuerD1Deps = defaultApiPrivateD1Deps()): Promise<Row[]> {
+  return privateD1Execute<Row>(m, m.cloudflare.d1Name, (file) => apiLocalD1Argv(m, file), statement, opts, deps);
+}
+
+async function privateD1Execute<Row>(m: Manifest, name: string, localArgv: (file: string) => string[], statement: string, opts: D1Options, deps: IssuerD1Deps): Promise<Row[]> {
   if (!opts.remote) {
     deps.requireLocalConfig(m.name);
-    return withPrivateSqlFile(statement, (file) => parseD1Json<Row>(deps.wrangler(issuerLocalD1Argv(m, file)), true), deps.sqlDir);
+    return withPrivateSqlFile(statement, (file) => parseD1Json<Row>(deps.wrangler(localArgv(file)), true), deps.sqlDir);
   }
   const base = cloudflareApiBase(deps.env);
   const headers = cloudflareAuthHeaders(deps);

@@ -2,12 +2,14 @@
 // users with their identities and wallets as JSON aggregates), so a ConsoleRpc call stays far inside its hot-DB
 // budget (two reads, changes/db.ts).
 //
-// - Staff (`StaffUser`): every scope; identities with their subs, roles, statuses and identity keys; wallets with
-//   their key index and how many other users list the same address. The email is not here: the admin Worker joins
-//   each identity's `directoryKey` with D275's DirectoryRpc (the API never reads the issuer).
+// - Staff (`StaffUser`): every scope; the three ids (User ID `u1_…`, Support ID, internal id `hu_…`, D346);
+//   identities with their subs, roles, statuses and identity keys; wallets with their key index and how many other
+//   users list the same address. The email is not here: the admin Worker joins each identity's `directoryKey` with
+//   D275's DirectoryRpc (the API never reads the issuer).
 // - Partners (`PartnerUser`): only users of the org's own scopes (`scopes.org_id`, the same filter every ConsoleRpc
-//   query has); the user id, Support ID, times, the connected account kinds that are active or pending, and the
-//   wallet addresses. The SELECT never names `sub` or `identity_key`, so no bug in the mapping can hand one out.
+//   query has); the User ID (the identity token's `sub`), Support ID, times, the connected account kinds that are
+//   active or pending, and the wallet addresses. The SELECT never names `u.user_id` (the internal id), `sub` or
+//   `identity_key` as an output column, so no bug in the mapping can hand one out; a page cursor is `lastSeenAt:u1_…`.
 import {
   type PartnerUser,
   type StaffIdentity,
@@ -25,7 +27,7 @@ import { type Q, join, q, raw } from '../changes/sql.ts';
 export const USER_PAGE_DEFAULT = 50;
 export const USER_FIND_MAX = 50;
 
-const STAFF_COLUMNS = raw(`u.user_id, u.support_code, u.scope_id, s.org_id, u.created_at, u.last_seen_at,
+const STAFF_COLUMNS = raw(`u.user_id, u.token_sub, u.support_code, u.scope_id, s.org_id, u.created_at, u.last_seen_at,
   (SELECT json_group_array(json_object('provider', i.provider, 'sub', i.sub, 'identity_key', i.identity_key, 'role', i.role, 'status', i.status,
      'effective_at', i.effective_at, 'first_seen_at', i.first_seen_at, 'observed_at', i.observed_at))
      FROM end_user_identities i WHERE i.user_id = u.user_id) AS identities_json,
@@ -34,17 +36,19 @@ const STAFF_COLUMNS = raw(`u.user_id, u.support_code, u.scope_id, s.org_id, u.cr
      'shared', (SELECT COUNT(*) FROM end_user_wallets x WHERE x.chain = w.chain AND x.address = w.address AND x.user_id <> w.user_id)))
      FROM end_user_wallets w WHERE w.user_id = u.user_id) AS wallets_json`);
 
-// Partners: no sub, no identity key, no key index; only active or pending identities.
-const PARTNER_COLUMNS = raw(`u.user_id, u.support_code, u.scope_id, u.created_at, u.last_seen_at,
+// Partners: no internal id (`u.user_id` is only ever joined on, never selected), no sub, no identity key, no key index;
+// only active or pending identities.
+const PARTNER_COLUMNS = raw(`u.token_sub, u.support_code, u.scope_id, u.created_at, u.last_seen_at,
   (SELECT json_group_array(json_object('provider', i.provider, 'status', i.status, 'effective_at', i.effective_at, 'role', i.role))
      FROM end_user_identities i WHERE i.user_id = u.user_id AND i.status IN ('active', 'pending')) AS identities_json,
   (SELECT json_group_array(json_object('chain', w.chain, 'address', w.address, 'first_seen_at', w.first_seen_at, 'last_used_at', w.last_used_at))
      FROM end_user_wallets w WHERE w.user_id = u.user_id) AS wallets_json`);
 
-const ORDER = raw(' ORDER BY u.last_seen_at DESC, u.user_id DESC');
+// Ties by the User ID, so a page cursor (`lastSeenAt:u1_…`) names no internal id.
+const ORDER = raw(' ORDER BY u.last_seen_at DESC, u.token_sub DESC');
 
 interface Row {
-  user_id: string;
+  token_sub: string;
   support_code: string;
   scope_id: string;
   org_id?: string | null;
@@ -52,6 +56,11 @@ interface Row {
   last_seen_at: number;
   identities_json: string;
   wallets_json: string;
+}
+
+/** A staff row also carries the internal id; a partner row never selects it. */
+interface StaffRow extends Row {
+  user_id: string;
 }
 
 type Json = Record<string, unknown>;
@@ -68,7 +77,7 @@ export function statusAt(status: string, effectiveAt: number | null, now: number
 const byWallet = (a: { chain: string; address: string }, b: { chain: string; address: string }) => (a.chain === b.chain ? (a.address < b.address ? -1 : 1) : a.chain === 'stellar' ? -1 : 1);
 const ROLE_ORDER = { root: 0, member: 1 } as const;
 
-export function staffUser(r: Row, now: number): StaffUser {
+export function staffUser(r: StaffRow, now: number): StaffUser {
   const identities = list(r.identities_json)
     .map((i): StaffIdentity => {
       const sub = typeof i.sub === 'string' ? i.sub : null;
@@ -91,8 +100,9 @@ export function staffUser(r: Row, now: number): StaffUser {
     .map((w) => ({ chain: w.chain as WalletChain, address: String(w.address), keyIndex: n(w.key_index), firstSeenAt: n(w.first_seen_at), lastUsedAt: n(w.last_used_at), sharedWith: n(w.shared) }))
     .sort(byWallet);
   return {
-    userId: r.user_id,
+    userId: r.token_sub,
     supportId: formatSupportId(r.support_code),
+    internalId: r.user_id,
     scopeId: r.scope_id,
     orgId: r.org_id ?? null,
     createdAt: r.created_at,
@@ -110,13 +120,13 @@ export function partnerUser(r: Row, now: number): PartnerUser {
   const wallets = list(r.wallets_json)
     .map((w) => ({ chain: w.chain as WalletChain, address: String(w.address), firstSeenAt: n(w.first_seen_at), lastUsedAt: n(w.last_used_at) }))
     .sort(byWallet);
-  return { userId: r.user_id, supportId: formatSupportId(r.support_code), scopeId: r.scope_id, createdAt: r.created_at, lastSeenAt: r.last_seen_at, accounts, wallets };
+  return { userId: r.token_sub, supportId: formatSupportId(r.support_code), scopeId: r.scope_id, createdAt: r.created_at, lastSeenAt: r.last_seen_at, accounts, wallets };
 }
 
-/** `lastSeenAt:userId` of the page's last row, when the page is full. */
+/** `lastSeenAt:userId` (the User ID, `u1_…`) of the page's last row, when the page is full. */
 function nextCursor(rows: Row[], limit: number): string | null {
   const last = rows.at(-1);
-  return rows.length === limit && last ? `${last.last_seen_at}:${last.user_id}` : null;
+  return rows.length === limit && last ? `${last.last_seen_at}:${last.token_sub}` : null;
 }
 
 function afterCursor(cursor: string | undefined): Q | null {
@@ -124,12 +134,17 @@ function afterCursor(cursor: string | undefined): Q | null {
   const at = cursor.indexOf(':');
   const seen = Number(cursor.slice(0, at));
   const id = cursor.slice(at + 1);
-  return q`(u.last_seen_at < ${seen} OR (u.last_seen_at = ${seen} AND u.user_id < ${id}))`;
+  return q`(u.last_seen_at < ${seen} OR (u.last_seen_at = ${seen} AND u.token_sub < ${id}))`;
 }
 
-/** The search's WHERE clause; refused (`bad_request`) when the string names nothing or an address that isn't one. */
-function searchClause(s: UserSearch | null, provider?: string): Q {
-  if (!s) return refuse('bad_request', 'search: not a wallet address, user id or Support ID');
+const NOT_A_SEARCH = 'search: not a wallet address, user id or Support ID';
+
+/**
+ * The search's WHERE clause; refused (`bad_request`) when the string names nothing or an address that isn't one, and,
+ * unless `staff`, for an internal id or a sub (parseUserSearch gives a partner neither; this is the second lock).
+ */
+function searchClause(s: UserSearch | null, opts: { staff: boolean; provider?: string }): Q {
+  if (!s) return refuse('bad_request', NOT_A_SEARCH);
   switch (s.kind) {
     case 'address': {
       const address = canonicalWalletAddress(s.chain, s.address);
@@ -137,12 +152,15 @@ function searchClause(s: UserSearch | null, provider?: string): Q {
       return q`u.user_id IN (SELECT user_id FROM end_user_wallets WHERE chain = ${s.chain} AND address = ${address})`;
     }
     case 'userId':
-      return q`u.user_id = ${s.userId}`;
+      return q`u.token_sub = ${s.userId}`;
     case 'supportId':
       return q`u.support_code = ${s.code}`;
+    case 'internalId':
+      return opts.staff ? q`u.user_id = ${s.internalId}` : refuse('bad_request', NOT_A_SEARCH);
     case 'sub':
-      return provider
-        ? q`u.user_id IN (SELECT user_id FROM end_user_identities WHERE sub = ${s.sub} AND provider = ${provider})`
+      if (!opts.staff) return refuse('bad_request', NOT_A_SEARCH);
+      return opts.provider
+        ? q`u.user_id IN (SELECT user_id FROM end_user_identities WHERE sub = ${s.sub} AND provider = ${opts.provider})`
         : q`u.user_id IN (SELECT user_id FROM end_user_identities WHERE sub = ${s.sub})`;
   }
 }
@@ -156,7 +174,7 @@ const where = (parts: (Q | null)[]): Q => {
 
 export async function adminListUsers(db: HotDb, i: { orgId?: string; scopeId?: string; cursor?: string; limit?: number }, now: number): Promise<{ users: StaffUser[]; nextCursor: string | null }> {
   const limit = i.limit ?? USER_PAGE_DEFAULT;
-  const rows = await db.all<Row>(
+  const rows = await db.all<StaffRow>(
     q`SELECT ${STAFF_COLUMNS} FROM end_users u LEFT JOIN scopes s ON s.scope_id = u.scope_id${where([
       i.orgId ? q`s.org_id = ${i.orgId}` : null,
       i.scopeId ? q`u.scope_id = ${i.scopeId}` : null,
@@ -166,19 +184,22 @@ export async function adminListUsers(db: HotDb, i: { orgId?: string; scopeId?: s
   return { users: rows.map((r) => staffUser(r, now)), nextCursor: nextCursor(rows, limit) };
 }
 
-export async function adminGetUser(db: HotDb, userId: string, now: number): Promise<StaffUser> {
-  const row = await db.first<Row>(q`SELECT ${STAFF_COLUMNS} FROM end_users u LEFT JOIN scopes s ON s.scope_id = u.scope_id WHERE u.user_id = ${userId}`);
+/** One user by its User ID (`u1_…`) or its internal id (`hu_…`), exactly one given (the input schema checks it). */
+export async function adminGetUser(db: HotDb, id: { userId?: string | undefined; internalId?: string | undefined }, now: number): Promise<StaffUser> {
+  const by = id.userId !== undefined ? q`u.token_sub = ${id.userId}` : id.internalId !== undefined ? q`u.user_id = ${id.internalId}` : refuse('bad_request', 'Give userId or internalId');
+  const row = await db.first<StaffRow>(q`SELECT ${STAFF_COLUMNS} FROM end_users u LEFT JOIN scopes s ON s.scope_id = u.scope_id WHERE ${by}`);
   return row ? staffUser(row, now) : refuse('not_found', 'No such user');
 }
 
 /**
- * Staff search: a wallet address (every user listing it), a user id, a Support ID (every user whose id starts with
- * it: 40 bits collide rarely, and the scope tells them apart), or a sub (`provider` narrows it, and makes the query a
- * sub whatever it looks like). At most USER_FIND_MAX, newest first.
+ * Staff search: a wallet address (every user listing it), a User ID, an internal id, a Support ID (every user whose
+ * User ID starts with those 40 bits: they collide rarely, and the scope tells them apart), or a sub (`provider`
+ * narrows it, and makes the query a sub whatever it looks like). At most USER_FIND_MAX, newest first.
  */
 export async function adminFindUsers(db: HotDb, i: { query: string; provider?: string }, now: number): Promise<{ users: StaffUser[] }> {
-  const s: UserSearch | null = i.provider ? (i.query.trim() && !/\s/u.test(i.query.trim()) ? { kind: 'sub', sub: i.query.trim() } : null) : parseUserSearch(i.query, { allowSub: true });
-  const rows = await db.all<Row>(q`SELECT ${STAFF_COLUMNS} FROM end_users u LEFT JOIN scopes s ON s.scope_id = u.scope_id WHERE ${searchClause(s, i.provider)}${ORDER} LIMIT ${USER_FIND_MAX}`);
+  const s: UserSearch | null = i.provider ? (i.query.trim() && !/\s/u.test(i.query.trim()) ? { kind: 'sub', sub: i.query.trim() } : null) : parseUserSearch(i.query, { staff: true });
+  const clause = searchClause(s, i.provider ? { staff: true, provider: i.provider } : { staff: true });
+  const rows = await db.all<StaffRow>(q`SELECT ${STAFF_COLUMNS} FROM end_users u LEFT JOIN scopes s ON s.scope_id = u.scope_id WHERE ${clause}${ORDER} LIMIT ${USER_FIND_MAX}`);
   return { users: rows.map((r) => staffUser(r, now)) };
 }
 
@@ -195,7 +216,8 @@ export async function consoleListUsers(
   const rows = await db.all<Row>(
     q`SELECT ${PARTNER_COLUMNS} ${ORG_USERS(i.orgId)}${where([
       i.scopeId ? q`u.scope_id = ${i.scopeId}` : null,
-      i.search !== undefined ? searchClause(parseUserSearch(i.search, { allowSub: false })) : null,
+      // A wallet address, a User ID or a Support ID; an internal id or a sub is `bad_request`.
+      i.search !== undefined ? searchClause(parseUserSearch(i.search, { staff: false }), { staff: false }) : null,
       afterCursor(i.cursor),
     ])}${ORDER} LIMIT ${limit}`,
   );
@@ -203,7 +225,7 @@ export async function consoleListUsers(
 }
 
 export async function consoleGetUser(db: HotDb, i: { orgId: string; userId: string }, now: number): Promise<PartnerUser> {
-  const row = await db.first<Row>(q`SELECT ${PARTNER_COLUMNS} ${ORG_USERS(i.orgId)} WHERE u.user_id = ${i.userId}`);
+  const row = await db.first<Row>(q`SELECT ${PARTNER_COLUMNS} ${ORG_USERS(i.orgId)} WHERE u.token_sub = ${i.userId}`);
   // Another org's user is the same `not_found` as no user: a partner learns nothing about other orgs' users.
   return row ? partnerUser(row, now) : refuse('not_found', 'No such user');
 }

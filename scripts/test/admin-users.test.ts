@@ -4,6 +4,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { supportCodeOf, supportIdOf } from '@hana-id/console-core';
 import { deriveAddresses } from '@hana-id/core/derivation';
 import { loadEnv, repoRoot } from '@hana-id/env';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -321,11 +322,16 @@ describe('the issuer’s D1 and the command line', () => {
   });
 });
 
-// ---- the wallet directory (D310, D316): the API's D1, migration 0011 ----
+// ---- the wallet directory (D310, D316, D346): the API's D1, migration 0011 ----
 
+// Internal ids (end_users.user_id, `hu_…`) and User IDs (end_users.token_sub, `u1_…`, the identity token's `sub`).
 const ALICE_S2 = `hu_${'a'.repeat(26)}`;
 const ALICE_S3 = `hu_${'b'.repeat(26)}`;
 const BOB_S3 = `hu_${'c'.repeat(26)}`;
+const ALICE_S2_ID = `u1_${'q'.repeat(21)}A`;
+const ALICE_S3_ID = `u1_${'r'.repeat(21)}Q`;
+const BOB_S3_ID = `u1_${'s'.repeat(21)}g`;
+const SID = { a2: supportIdOf(ALICE_S2_ID), a3: supportIdOf(ALICE_S3_ID), b3: supportIdOf(BOB_S3_ID) };
 const ALICE_WALLET = deriveAddresses(new Uint8Array(32).fill(1));
 const G_ALICE = ALICE_WALLET.stellar;
 const EVM_ALICE = ALICE_WALLET.evm;
@@ -334,19 +340,21 @@ const G_NOBODY = deriveAddresses(new Uint8Array(32).fill(3)).stellar;
 
 function walletDb(): DatabaseSync {
   const db = newHotDb();
-  const u = db.prepare('INSERT INTO end_users (user_id, support_code, scope_id, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)');
+  const ins = db.prepare('INSERT INTO end_users (user_id, token_sub, support_code, scope_id, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)');
+  const ids: Record<string, string> = { [ALICE_S2]: ALICE_S2_ID, [ALICE_S3]: ALICE_S3_ID, [BOB_S3]: BOB_S3_ID };
+  const u = { run: (internal: string, scope: string, created: number, seen: number) => ins.run(internal, ids[internal]!, supportCodeOf(ids[internal]!), scope, created, seen) };
   const w = db.prepare('INSERT INTO end_user_wallets (user_id, chain, address, key_index, first_seen_at, last_used_at) VALUES (?, ?, ?, 0, ?, ?)');
   const i = db.prepare('INSERT INTO end_user_identities (scope_id, identity_key, user_id, provider, sub, role, status, effective_at, first_seen_at, observed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
   // Alice in s2: her email identity is the root, her Google account a member; in s3: her email identity alone.
-  u.run(ALICE_S2, 'AAAAAAAA', 's2', T, T + 10 * MIN);
+  u.run(ALICE_S2, 's2', T, T + 10 * MIN);
   w.run(ALICE_S2, 'stellar', G_ALICE, T, T + 10 * MIN);
   w.run(ALICE_S2, 'evm', EVM_ALICE, T, T + 10 * MIN);
   i.run('s2', '1'.repeat(64), ALICE_S2, 'email', 'e1.alice', 'root', 'active', null, T, T);
   i.run('s2', '2'.repeat(64), ALICE_S2, 'google', '1100', 'member', 'active', T + MIN, T + MIN, T + MIN);
-  u.run(ALICE_S3, 'BBBBBBBB', 's3', T + 5 * MIN, T + 30 * MIN);
+  u.run(ALICE_S3, 's3', T + 5 * MIN, T + 30 * MIN);
   i.run('s3', '3'.repeat(64), ALICE_S3, 'email', 'e1.alice', 'root', 'active', null, T, T);
   // Bob in s3, with Alice's Stellar address too (a reused key: listed under two users).
-  u.run(BOB_S3, 'CCCCCCCC', 's3', T + 2 * MIN, T + 40 * MIN);
+  u.run(BOB_S3, 's3', T + 2 * MIN, T + 40 * MIN);
   w.run(BOB_S3, 'stellar', G_BOB, T + 2 * MIN, T + 40 * MIN);
   w.run(BOB_S3, 'stellar', G_ALICE, T + 3 * MIN, T + 3 * MIN);
   i.run('s3', '4'.repeat(64), BOB_S3, 'google', '2200', 'root', 'active', null, T, T);
@@ -369,25 +377,25 @@ const findAny = (...argv: string[]) => userFindCommand(parseCli(argv, SPEC), { i
 const walletJson = (): WalletUser[] => JSON.parse(h.out.at(-1)!) as WalletUser[];
 
 describe('user:list and user:find with the wallet directory', () => {
-  it('each identity gets its user id, Support ID, role and the account’s wallets, per scope', async () => {
+  it('each identity gets its User ID, Support ID, internal id, role and the account’s wallets, per scope', async () => {
     withWallets();
     const us = await list();
     const alice = us.find((u) => u.sub === 'e1.alice')!;
-    expect(alice.accounts.map((a) => [a.scopeId, a.userId, a.supportId, a.role])).toEqual([
-      ['s3', ALICE_S3, 'HANA-BBBB-BBBB', 'root'],
-      ['s2', ALICE_S2, 'HANA-AAAA-AAAA', 'root'],
+    expect(alice.accounts.map((a) => [a.scopeId, a.userId, a.supportId, a.internalId, a.role])).toEqual([
+      ['s3', ALICE_S3_ID, SID.a3, ALICE_S3, 'root'],
+      ['s2', ALICE_S2_ID, SID.a2, ALICE_S2, 'root'],
     ]);
     expect(alice.accounts[1]!.wallets.map((w) => [w.chain, w.address])).toEqual([
       ['stellar', G_ALICE],
       ['evm', EVM_ALICE],
     ]);
     const google = us.find((u) => u.sub === '1100')!;
-    expect(google.accounts.map((a) => [a.userId, a.role, a.status])).toEqual([[ALICE_S2, 'member', 'active']]);
+    expect(google.accounts.map((a) => [a.userId, a.role, a.status])).toEqual([[ALICE_S2_ID, 'member', 'active']]);
     const text = h.out.join('\n');
-    expect(text).toContain(`  user      ${ALICE_S2} (HANA-AAAA-AAAA) in scope s2: the account root`);
+    expect(text).toContain(`  user      ${ALICE_S2_ID} (${SID.a2}; internal ${ALICE_S2}) in scope s2: the account root`);
     expect(text).toContain(`  wallets   stellar ${G_ALICE}  key 0`);
-    expect(text).toContain(`  user      ${ALICE_S2} (HANA-AAAA-AAAA) in scope s2: a member, active`);
-    expect(text).toContain(`  user      ${ALICE_S3} (HANA-BBBB-BBBB) in scope s3: the account root\n  wallets   none recorded yet`);
+    expect(text).toContain(`  user      ${ALICE_S2_ID} (${SID.a2}; internal ${ALICE_S2}) in scope s2: a member, active`);
+    expect(text).toContain(`  user      ${ALICE_S3_ID} (${SID.a3}; internal ${ALICE_S3}) in scope s3: the account root\n  wallets   none recorded yet`);
   });
 
   it('user:find --email shows the wallets too; carol, never recorded, has none', async () => {
@@ -403,7 +411,7 @@ describe('user:list and user:find with the wallet directory', () => {
     withWallets();
     await findAny('--address', EVM_ALICE.toLowerCase(), '--json');
     const [u] = walletJson();
-    expect(u!.userId).toBe(ALICE_S2);
+    expect([u!.userId, u!.supportId, u!.internalId]).toEqual([ALICE_S2_ID, SID.a2, ALICE_S2]);
     expect(u!.identities.map((i) => [i.provider, i.sub, i.role, i.directory.map((d) => d.email)])).toEqual([
       ['email', 'e1.alice', 'root', ['alicesmith@gmail.com']],
       ['google', '1100', 'member', ['alice.smith@gmail.com']],
@@ -413,7 +421,7 @@ describe('user:list and user:find with the wallet directory', () => {
     const text = h.out.join('\n');
     expect(h.out[0]).toBe('2 users with that wallet (local D1 hana-id-test)');
     expect(text).toContain('listed under more than one user');
-    expect(text).toContain(`${BOB_S3} (HANA-CCCC-CCCC)  scope s3`);
+    expect(text).toContain(`${BOB_S3_ID} (${SID.b3}; internal ${BOB_S3})  scope s3`);
     expect(text).toContain('[ALSO LISTED UNDER 1 OTHER USER');
     expect(text).toContain('  accounts  email   sub e1.alice  the account root  alicesmith@gmail.com');
     expect(text).toContain('            google  sub 1100  a member, active  alice.smith@gmail.com');
@@ -422,17 +430,33 @@ describe('user:list and user:find with the wallet directory', () => {
     expect(h.out).toEqual(['No user with that wallet (local D1 hana-id-test)']);
   });
 
-  it('user:find --user takes a user id or a Support ID in any form; a stdin line is read as whichever it is', async () => {
+  it('user:find --user takes a User ID, an internal id (any case) or a Support ID in any form; a stdin line is read as whichever it is', async () => {
     withWallets();
-    for (const v of [ALICE_S3, ALICE_S3.toUpperCase().replace('HU_', 'hu_'), 'HANA-BBBB-BBBB', 'hana bbbb bbbb', 'bbbbbbbb']) {
+    const spaced = SID.a3.toLowerCase().replace(/-/gu, ' ');
+    const bare = SID.a3.slice(5).replace('-', '').toLowerCase();
+    for (const v of [ALICE_S3_ID, ALICE_S3, ALICE_S3.toUpperCase().replace('HU_', 'hu_'), SID.a3, spaced, bare]) {
       h.out.length = 0;
       await findAny('--user', v, '--json');
-      expect(walletJson().map((u) => u.userId), v).toEqual([ALICE_S3]);
+      expect(walletJson().map((u) => u.userId), v).toEqual([ALICE_S3_ID]);
     }
+    h.out.length = 0;
+    await findAny('--user', ALICE_S3_ID);
+    expect(h.out[0]).toBe('1 user with that User ID (local D1 hana-id-test)');
+    h.out.length = 0;
+    await findAny('--user', ALICE_S3);
+    expect(h.out[0]).toBe('1 user with that internal id (local D1 hana-id-test)');
+    // A User ID is case-sensitive: another case is another id.
+    h.out.length = 0;
+    await findAny('--user', ALICE_S3_ID.replace('u1_r', 'u1_R'));
+    expect(h.out[0]).toBe('No user with that User ID (local D1 hana-id-test)');
+    h.out.length = 0;
+    h.stdin.push(ALICE_S2_ID);
+    await findAny('--json');
+    expect(walletJson().map((u) => u.internalId)).toEqual([ALICE_S2]);
     h.out.length = 0;
     h.stdin.push(G_BOB);
     await findAny('--json');
-    expect(walletJson().map((u) => u.userId)).toEqual([BOB_S3]);
+    expect(walletJson().map((u) => u.userId)).toEqual([BOB_S3_ID]);
     h.stdin.push('carol@example.com');
     await findAny();
     expect(h.out.join('\n')).toContain('carol@example.com');

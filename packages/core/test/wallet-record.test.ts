@@ -11,17 +11,22 @@ import { APPROVAL_DIGEST_DOMAIN } from '../src/approval.ts';
 import { fromHex, sha256, toHex } from '../src/bytes.ts';
 import { deriveAddresses, withChainKey } from '../src/derivation.ts';
 import { IDENTITY_MESSAGE_DOMAIN, IDENTITY_WALLET_DOMAIN, walletProofMessage } from '../src/identity.ts';
-import { SESSION_MESSAGE_DOMAIN, VAULT_MESSAGE_DOMAIN } from '../src/layouts.ts';
+import { CKD_PAYLOAD_PREFIX, CREATE_PROOF_PREFIX, SESSION_MESSAGE_DOMAIN, VAULT_MESSAGE_DOMAIN } from '../src/layouts.ts';
 import { recoverEvmAddress } from '../src/signers/evm.ts';
 import { sep53MessageHash, stellarTransactionHash, verifyStellarSignature } from '../src/signers/stellar.ts';
 import {
   WALLET_RECORD_DOMAIN,
+  WALLET_RECORD_SESSION_DOMAIN,
   type WalletRecordChain,
   type WalletRecordContext,
+  type WalletRecordProofs,
   isWalletRecordResponse,
   signWalletRecord,
+  signWalletRecordSession,
   verifyWalletRecord,
+  verifyWalletRecordSession,
   walletRecordEvmDigest,
+  walletRecordSessionMessage,
   walletRecordStatement,
 } from '../src/wallet-record.ts';
 
@@ -188,6 +193,94 @@ describe('a record can never be replayed as an EVM signature', () => {
 
   it('gives the vault the digest it refuses as a raw EVM request for its own session', () => {
     expect(toHex(walletRecordEvmDigest(CTX, ADDR.evm))).toBe(toHex(sha256(statement)));
+  });
+});
+
+// ---- the session signature (D311 as amended: a security review finding) ----
+
+async function sessionKey(): Promise<{ privateKey: CryptoKey; publicKey: Uint8Array }> {
+  const kp = (await crypto.subtle.generateKey({ name: 'Ed25519' }, false, ['sign', 'verify'])) as CryptoKeyPair;
+  return { privateKey: kp.privateKey, publicKey: new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey)) };
+}
+
+function referenceSessionMessage(c: WalletRecordContext, proofs: WalletRecordProofs): Buffer {
+  const b = (s: string) => {
+    const v = Buffer.from(s, 'utf8');
+    const len = Buffer.alloc(4);
+    len.writeUInt32LE(v.length);
+    return Buffer.concat([len, v]);
+  };
+  const bb = (v: Uint8Array) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32LE(v.length);
+    return Buffer.concat([len, Buffer.from(v)]);
+  };
+  const t = Buffer.alloc(8);
+  t.writeBigUInt64LE(BigInt(c.issuedAtMs));
+  const p = createHash('sha256')
+    .update(Buffer.concat([Buffer.from('hana-id/wallet-record-proofs/v1'), Buffer.of(0), b('stellar'), b(proofs.stellar.address), bb(proofs.stellar.signature), b('evm'), b(proofs.evm.address), bb(proofs.evm.signature)]))
+    .digest();
+  return Buffer.concat([Buffer.from('hana-id/wallet-record-session/v1'), Buffer.of(0), b(c.env), b(c.signer), b(c.appId), b(c.scopeId), b(c.path), Buffer.from(c.sessionPublicKey), t, p]);
+}
+
+describe('the session signature over the whole record', () => {
+  const proofsFor = (ctx: WalletRecordContext, prk = PRK): WalletRecordProofs => {
+    const a = deriveAddresses(prk);
+    return { stellar: { address: a.stellar, signature: sign('stellar', ctx, prk, a.stellar) }, evm: { address: a.evm, signature: sign('evm', ctx, prk, a.evm) } };
+  };
+
+  it('is the documented layout, byte for byte', () => {
+    const proofs = proofsFor(CTX);
+    expect(toHex(walletRecordSessionMessage(CTX, proofs))).toBe(referenceSessionMessage(CTX, proofs).toString('hex'));
+  });
+
+  it('verifies for the session key that signed it, and for no other key', async () => {
+    const s = await sessionKey();
+    const ctx = { ...CTX, sessionPublicKey: s.publicKey };
+    const proofs = proofsFor(ctx);
+    const sig = await signWalletRecordSession(s.privateKey, ctx, proofs);
+    expect(verifyWalletRecordSession(ctx, proofs, sig)).toBe(true);
+    // The attack the signature closes: a valid record by the attacker's own key, naming the victim's session key,
+    // signed by any session key but the victim's.
+    const attacker = await sessionKey();
+    const forged = proofsFor(ctx, OTHER_PRK);
+    expect(verifyWalletRecordSession(ctx, forged, await signWalletRecordSession(attacker.privateKey, ctx, forged))).toBe(false);
+    expect(verifyWalletRecordSession(ctx, forged, sig)).toBe(false);
+    expect(verifyWalletRecordSession(ctx, proofs, new Uint8Array(64))).toBe(false);
+    expect(verifyWalletRecordSession(ctx, proofs, sig.subarray(1))).toBe(false);
+  });
+
+  it('binds every field: env, signer, app, scope, path, session key, time, each address and each chain signature', async () => {
+    const s = await sessionKey();
+    const ctx = { ...CTX, sessionPublicKey: s.publicKey };
+    const proofs = proofsFor(ctx);
+    const sig = await signWalletRecordSession(s.privateKey, ctx, proofs);
+    const other = deriveAddresses(OTHER_PRK);
+    const flip = (b: Uint8Array) => Uint8Array.from(b, (x, i) => (i === 5 ? x ^ 1 : x));
+    const changed: [string, WalletRecordContext, WalletRecordProofs][] = [
+      ['env', { ...ctx, env: 'sandbox-dev' }, proofs],
+      ['signer', { ...ctx, signer: 'other.test.near' }, proofs],
+      ['app', { ...ctx, appId: 'app_Other' }, proofs],
+      ['scope', { ...ctx, scopeId: 's2', path: 's2#google#1102#0' }, proofs],
+      ['path', { ...ctx, path: 's1#google#999#0' }, proofs],
+      ['session key', { ...ctx, sessionPublicKey: (await sessionKey()).publicKey }, proofs],
+      ['time', { ...ctx, issuedAtMs: ctx.issuedAtMs + 1 }, proofs],
+      ['stellar address', ctx, { ...proofs, stellar: { ...proofs.stellar, address: other.stellar } }],
+      ['evm address', ctx, { ...proofs, evm: { ...proofs.evm, address: other.evm } }],
+      ['stellar signature', ctx, { ...proofs, stellar: { ...proofs.stellar, signature: flip(proofs.stellar.signature) } }],
+      ['evm signature', ctx, { ...proofs, evm: { ...proofs.evm, signature: flip(proofs.evm.signature) } }],
+    ];
+    for (const [what, c, p] of changed) expect(verifyWalletRecordSession(c, p, sig), what).toBe(false);
+  });
+
+  it('has a domain no other session-key message (or Hana signature) uses, closed by 0x00', () => {
+    const m = walletRecordSessionMessage(CTX, proofsFor(CTX));
+    expect(m[WALLET_RECORD_SESSION_DOMAIN.length]).toBe(0);
+    for (const other of [SESSION_MESSAGE_DOMAIN, VAULT_MESSAGE_DOMAIN, IDENTITY_MESSAGE_DOMAIN, IDENTITY_WALLET_DOMAIN, APPROVAL_DIGEST_DOMAIN, WALLET_RECORD_DOMAIN, CREATE_PROOF_PREFIX, CKD_PAYLOAD_PREFIX]) {
+      expect(WALLET_RECORD_SESSION_DOMAIN.startsWith(other) || other.startsWith(WALLET_RECORD_SESSION_DOMAIN), other).toBe(false);
+      // Different within the first 8 bytes ("hana-id/" vs "hana-id-") or later, never a prefix of each other.
+      expect(Buffer.from(m.subarray(0, other.length)).toString('utf8')).not.toBe(other);
+    }
   });
 });
 

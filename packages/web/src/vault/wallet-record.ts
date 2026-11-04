@@ -1,7 +1,8 @@
 // The vault's side of the wallet directory (D310 point 3, D317): after a login succeeded and its key passed the
 // pairing check, the wallet's two addresses go to `POST /v1/wallets/record`, each signed by its own chain key over the
-// record statement (@hana-id/core wallet-record.ts) for the session's path: the active path, so a linked member's
-// login reports its account root's wallet.
+// record statement (@hana-id/core wallet-record.ts) for the session's path, and the whole request signed by the
+// session key (only this vault holds it): the active path, so a linked member's login reports its account root's
+// wallet.
 //
 // Never in front of the user and never in the login's way: the body is signed on a 0 ms timer right after the login's
 // result is on its way, only while that session is still the vault's (PRK is in memory then; each chain key is derived
@@ -15,6 +16,7 @@ import {
   type WalletRecordChain,
   type WalletRecordContext,
   signWalletRecord,
+  signWalletRecordSession,
   walletRecordEvmDigest,
   walletRecordStatement,
 } from '@hana-id/core';
@@ -27,15 +29,24 @@ export interface WalletRecordSigned {
   evmDigest: Uint8Array;
 }
 
-/** Both records for account 0, signed with PRK (each chain key for its one signature, then zeroed). */
-export function signWalletRecords(prk: Uint8Array, ctx: WalletRecordContext, addresses: { stellar: string; evm: string }): WalletRecordSigned {
-  const record = (chain: WalletRecordChain) => ({
+/**
+ * Both records for account 0, signed with PRK (each chain key for its one signature, then zeroed), and the whole
+ * request signed by the session key (`sessionPrivateKey`, the session's non-extractable WebCrypto key): without that
+ * signature anyone could pair their own address's proof with this session's public key (D311, amended).
+ */
+export async function signWalletRecords(prk: Uint8Array, sessionPrivateKey: CryptoKey, ctx: WalletRecordContext, addresses: { stellar: string; evm: string }): Promise<WalletRecordSigned> {
+  const proof = (chain: WalletRecordChain) => ({
     address: addresses[chain],
-    signature: Array.from(withChainKey(prk, chain, 0, (key) => signWalletRecord(chain, key, walletRecordStatement(ctx, chain, addresses[chain])))),
+    signature: withChainKey(prk, chain, 0, (key) => signWalletRecord(chain, key, walletRecordStatement(ctx, chain, addresses[chain]))),
   });
+  // Both chain keys are used (and zeroed) before the first await: PRK is read only while the caller checked it live.
+  const proofs = { stellar: proof('stellar'), evm: proof('evm') };
+  const evmDigest = walletRecordEvmDigest(ctx, addresses.evm);
+  const sessionSignature = await signWalletRecordSession(sessionPrivateKey, ctx, proofs);
+  const wire = (chain: WalletRecordChain) => ({ address: proofs[chain].address, signature: Array.from(proofs[chain].signature) });
   return {
-    body: { sessionPublicKey: Array.from(ctx.sessionPublicKey), issuedAtMs: ctx.issuedAtMs, path: ctx.path, wallets: { stellar: record('stellar'), evm: record('evm') } },
-    evmDigest: walletRecordEvmDigest(ctx, addresses.evm),
+    body: { sessionPublicKey: Array.from(ctx.sessionPublicKey), issuedAtMs: ctx.issuedAtMs, path: ctx.path, wallets: { stellar: wire('stellar'), evm: wire('evm') }, sessionSignature: Array.from(sessionSignature) },
+    evmDigest,
   };
 }
 

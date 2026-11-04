@@ -17,12 +17,13 @@
 // derivation"; key_index 0 in the MVP). A linked member's wallet is its account root's path instead (`get_identity`
 // on chain); an email identity recorded in case B has no wallet of its own yet.
 //
-// The wallet directory (D310, D316; the API's own D1, migration 0011): each identity's user id (and Support ID) per
-// scope, its role in the account and the account's wallets, read from the API's D1 with the same private executor
-// (lib/d1.ts apiPrivateD1Execute: a sub or an address to look up never goes in a process argument). `user:find
-// --address <G…|0x…>` and `--user <hu_…|HANA-XXXX-XXXX>` start from the API's D1 and join each identity's address
-// from the issuer's directory when the env has one.
-import { USER_ID_RE, formatSupportId, parseSupportId } from '@hana-id/console-core';
+// The wallet directory (D310, D316, D346; the API's own D1, migration 0011): each identity's user per scope with its
+// three ids (the User ID `u1_…` partners see, the identity token's `sub`; its Support ID; the internal id `hu_…`, the
+// ledger's uid, staff only), its role in the account and the account's wallets, read from the API's D1 with the same
+// private executor (lib/d1.ts apiPrivateD1Execute: a sub or an address to look up never goes in a process argument).
+// `user:find --address <G…|0x…>` and `--user <u1_…|hu_…|HANA-XXXX-XXXX>` start from the API's D1 and join each
+// identity's address from the issuer's directory when the env has one.
+import { INTERNAL_ID_RE, USER_ID_RE, formatSupportId, parseSupportId } from '@hana-id/console-core';
 import { canonicalWalletAddress } from '@hana-id/core/identity';
 import { normalizeEmail } from '@hana-id/email';
 import { formatTime } from './admin-lead-times.ts';
@@ -90,8 +91,11 @@ export interface WalletRow {
 /** One identity's place in the wallet directory: its scope's user, its role there and the account's wallets. */
 export interface WalletAccount {
   scopeId: string;
+  /** The User ID: the identity token's `sub` (`u1_…`), what the partner sees. */
   userId: string;
   supportId: string;
+  /** `hu_…`, the ledger's uid (staff only). */
+  internalId: string;
   role: 'root' | 'member';
   /** As stored, a pending link read as active once its time passed. */
   status: 'active' | 'pending' | 'unlinked' | 'cancelled';
@@ -111,8 +115,11 @@ export interface WalletUserIdentity {
 
 /** A user of the wallet directory with its identities. */
 export interface WalletUser {
+  /** `u1_…`, the identity token's `sub`. */
   userId: string;
   supportId: string;
+  /** `hu_…`, the ledger's uid. */
+  internalId: string;
   scopeId: string;
   createdMs: number;
   lastSeenMs: number;
@@ -133,7 +140,11 @@ export interface UserListFilter {
 }
 
 export type UserFindQuery = { kind: 'email'; candidates: string[]; provider?: UserProvider } | { kind: 'sub'; sub: string; provider?: UserProvider };
-export type WalletFindQuery = { kind: 'address'; chain: 'stellar' | 'evm'; address: string } | { kind: 'userId'; userId: string } | { kind: 'supportId'; code: string };
+export type WalletFindQuery =
+  | { kind: 'address'; chain: 'stellar' | 'evm'; address: string }
+  | { kind: 'userId'; userId: string }
+  | { kind: 'internalId'; internalId: string }
+  | { kind: 'supportId'; code: string };
 
 /** `{scope}#{provider}#{sub}#0` (sessions.rs; docs/architecture.md "Key derivation"). */
 export const ownPath = (scopeId: string, provider: string, sub: string): string => `${scopeId}#${provider}#${sub}#0`;
@@ -181,22 +192,24 @@ const WALLETS_JSON =
 export function accountsBySubsSql(subs: readonly string[]): string {
   if (subs.length === 0) throw new CliError('No sub to look up');
   return (
-    'SELECT i.provider, i.sub, i.scope_id, i.role, i.status, i.effective_at, u.user_id, u.support_code, ' +
+    'SELECT i.provider, i.sub, i.scope_id, i.role, i.status, i.effective_at, u.user_id, u.token_sub, u.support_code, ' +
     WALLETS_JSON +
     ` FROM end_user_identities i JOIN end_users u ON u.user_id = i.user_id WHERE i.sub IN (${subs.map((x) => sql`${x}`).join(', ')}) ORDER BY u.last_seen_at DESC, u.user_id`
   );
 }
 
-/** Users by a wallet address (every user listing it), a user id or a Support ID, with identities and wallets. */
+/** Users by a wallet address (every user listing it), a User ID, an internal id or a Support ID, with identities and wallets. */
 export function walletUsersSql(q: WalletFindQuery): string {
   const where =
     q.kind === 'address'
       ? sql`u.user_id IN (SELECT user_id FROM end_user_wallets WHERE chain = ${q.chain} AND address = ${q.address})`
       : q.kind === 'userId'
-        ? sql`u.user_id = ${q.userId}`
-        : sql`u.support_code = ${q.code}`;
+        ? sql`u.token_sub = ${q.userId}`
+        : q.kind === 'internalId'
+          ? sql`u.user_id = ${q.internalId}`
+          : sql`u.support_code = ${q.code}`;
   return (
-    'SELECT u.user_id, u.support_code, u.scope_id, u.created_at, u.last_seen_at, ' +
+    'SELECT u.user_id, u.token_sub, u.support_code, u.scope_id, u.created_at, u.last_seen_at, ' +
     "(SELECT json_group_array(json_object('provider', i.provider, 'sub', i.sub, 'role', i.role, 'status', i.status, 'effective_at', i.effective_at)) FROM end_user_identities i WHERE i.user_id = u.user_id) AS identities_json, " +
     WALLETS_JSON +
     ` FROM end_users u WHERE ${where} ORDER BY u.last_seen_at DESC, u.user_id LIMIT 50`
@@ -224,8 +237,9 @@ export function parseAccountRow(r: Record<string, unknown>, now: number): Wallet
     provider: str(r.provider),
     sub: str(r.sub),
     scopeId: str(r.scope_id),
-    userId: str(r.user_id),
+    userId: str(r.token_sub),
     supportId: formatSupportId(str(r.support_code)),
+    internalId: str(r.user_id),
     role: r.role === 'member' ? 'member' : 'root',
     status: statusAt(r.status, effectiveAtMs, now),
     effectiveAtMs,
@@ -236,8 +250,9 @@ export function parseAccountRow(r: Record<string, unknown>, now: number): Wallet
 /** A row of walletUsersSql → the user (its identities' directory rows are joined after). */
 export function parseWalletUserRow(r: Record<string, unknown>, now: number): WalletUser {
   return {
-    userId: str(r.user_id),
+    userId: str(r.token_sub),
     supportId: formatSupportId(str(r.support_code)),
+    internalId: str(r.user_id),
     scopeId: str(r.scope_id),
     createdMs: num(r.created_at),
     lastSeenMs: num(r.last_seen_at),
@@ -305,7 +320,7 @@ export function formatUser(u: DirectoryUser): string[] {
     lines.push(`  ${i === 0 ? 'apps' : '    '}      ${a.appId} (scope ${a.scopeId})  path ${a.path}  seen ${formatTime(a.firstSeenMs)} first, ${formatTime(a.lastSeenMs)} last`);
   }
   for (const a of u.accounts) {
-    lines.push(`  user      ${a.userId} (${a.supportId}) in scope ${a.scopeId}: ${accountRole(a)}`);
+    lines.push(`  user      ${a.userId} (${a.supportId}; internal ${a.internalId}) in scope ${a.scopeId}: ${accountRole(a)}`);
     lines.push(...walletLines(a.wallets));
   }
   return lines;
@@ -328,7 +343,7 @@ export function walletLines(wallets: readonly WalletRow[]): string[] {
 
 /** One wallet-directory user, for the terminal. */
 export function formatWalletUser(u: WalletUser): string[] {
-  const lines = [`${u.userId} (${u.supportId})  scope ${u.scopeId}`, `  seen      ${formatTime(u.createdMs)} first, ${formatTime(u.lastSeenMs)} last`, ...walletLines(u.wallets)];
+  const lines = [`${u.userId} (${u.supportId}; internal ${u.internalId})  scope ${u.scopeId}`, `  seen     ${formatTime(u.createdMs)} first, ${formatTime(u.lastSeenMs)} last`, ...walletLines(u.wallets)];
   for (const [n, i] of u.identities.entries()) {
     const emails = i.directory.map((d) => (d.unverifiedClaim ? `${d.email} ${UNVERIFIED_TAG}` : d.email));
     lines.push(`  ${n === 0 ? 'accounts' : '        '}  ${i.provider.padEnd(7)} sub ${i.sub ?? '(only seen on chain)'}  ${accountRole(i)}  ${emails.length ? emails.join(', ') : 'no address in the directory'}`);
@@ -454,7 +469,9 @@ export function walletQuery(input: string): WalletFindQuery | null {
     if (!address) throw new CliError('Not a valid EVM address');
     return { kind: 'address', chain: 'evm', address };
   }
-  if (USER_ID_RE.test(v.toLowerCase())) return { kind: 'userId', userId: v.toLowerCase() };
+  // A User ID is case-sensitive (base64url); an internal id is read in any case.
+  if (USER_ID_RE.test(v)) return { kind: 'userId', userId: v };
+  if (INTERNAL_ID_RE.test(v.toLowerCase())) return { kind: 'internalId', internalId: v.toLowerCase() };
   if (/^hana[\s-]?/iu.test(v) || /^[0-9a-z]{4}-?[0-9a-z]{4}$/iu.test(v)) {
     const code = parseSupportId(v);
     if (code) return { kind: 'supportId', code };
@@ -479,7 +496,7 @@ export async function userFindWallets(q: WalletFindQuery, args: Args, where: str
     deps.log(JSON.stringify(users, null, 2));
     return users;
   }
-  const what = q.kind === 'address' ? 'wallet' : q.kind === 'userId' ? 'user id' : 'Support ID';
+  const what = { address: 'wallet', userId: 'User ID', internalId: 'internal id', supportId: 'Support ID' }[q.kind];
   deps.log(users.length ? `${users.length} user${users.length === 1 ? '' : 's'} with that ${what} (${where})` : `No user with that ${what} (${where})`);
   if (q.kind === 'address' && users.length > 1) deps.log('The address is listed under more than one user: a reused or exported key, or a record made from an approved raw signature (D311). Never treat it as proof of who owns the wallet.');
   if (!deps.d1 && users.length) deps.log('This env has no email issuer: no addresses.');
@@ -491,7 +508,7 @@ export async function userFindWallets(q: WalletFindQuery, args: Args, where: str
 }
 
 /**
- * `user:find [--email <address> | --sub <sub> | --address <G…|0x…> | --user <hu_…|HANA-XXXX-XXXX>] [--provider …] [--json]`;
+ * `user:find [--email <address> | --sub <sub> | --address <G…|0x…> | --user <u1_…|hu_…|HANA-XXXX-XXXX>] [--provider …] [--json]`;
  * no flag: one line on stdin, read as whichever it is.
  */
 export async function userFindCommand(args: Args, where: { issuer: string; api: string }, deps: UserCmdDeps): Promise<void> {
@@ -503,7 +520,7 @@ export async function userFindCommand(args: Args, where: { issuer: string; api: 
     if (args.str('provider') !== undefined) throw new CliError('--provider goes with --email or --sub');
     const q = walletQuery(address ?? user ?? '');
     if (!q || (address !== undefined && q.kind !== 'address') || (user !== undefined && q.kind === 'address')) {
-      throw new CliError(address !== undefined ? '--address takes a Stellar G… or EVM 0x… address' : '--user takes a user id (hu_…) or a Support ID (HANA-XXXX-XXXX)');
+      throw new CliError(address !== undefined ? '--address takes a Stellar G… or EVM 0x… address' : '--user takes a User ID (u1_…), an internal id (hu_…) or a Support ID (HANA-XXXX-XXXX)');
     }
     await userFindWallets(q, args, where.api, deps);
     return;

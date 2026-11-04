@@ -305,14 +305,17 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
 - **Status** (2026-11-04): built on `feat/batch-c-10`, not merged, not deployed (D342, D343, D350–D358). Fresh sign-in
   for every kind (`apps/console/src/actions.ts`), the write routes and the role matrix (`writes.ts`), the on-chain view,
   owner drift and the client-proof helper (`scopes.ts`, `near.ts`), C11's logo routes behind the session, the cancel
-  pages, the SPA's write screens with the consent preview. The Users screen (D310, D346) is built against a typed stub
-  of `ConsoleRpc.listUsers` / `getUser` (the wallet directory, merged) with D346's `u1_…` User ID (branch
-  `feat/user-id-identity-sub`, not merged), behind `USERS_SCREEN` (off, D357) until that lands. C12's report routes and
+  pages, the SPA's write screens with the consent preview. The Users screen (D310, D346) is built on top
+  of `ConsoleRpc.listUsers` / `getUser` (the wallet directory) with D346's `u1_…` User ID, both merged, behind
+  `USERS_SCREEN` (off, D357) until an env's API runs D346. C12's report routes and
   C14's `GET /api/orgs/:org/governance/pending-upgrades` are routed (any member); their SPA screens are not built.
   Setup: none new (the console's two new vars come from the manifest through `gen`). The owner-action relay itself
   isn't exercised in the tests (no owner-pool key in the test API); C17's smoke covers it on sandbox-dev.
 - **Users screen** (D310 point 5): over `ConsoleRpc.listUsers` / `getUser` (built on `feat/wallet-directory`, D315):
   user id, Support ID, created and last seen, account kinds and wallets, the org's own scopes only, no email or sub.
+  Since D346 (`feat/user-id-identity-sub`): `userId` is the identity token's `sub` (`u1_…`, label it "User ID"),
+  `supportId` its short form; `getUser({userId})` takes `u1_…`; the cursor is `lastSeenAt:u1_…`; the internal id
+  `hu_…` never reaches the console.
 
 ## C11. Files Worker and logos
 
@@ -411,6 +414,10 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
 - **Open (D276)**: whether `user:erase` lands here or with C13.
 - **Since D312**: the Support code is `end_users.support_code` in the hot DB (indexed); `AdminRpc.findUsers` already
   resolves a code to its users, so `IssuerRpc.uid` and `user_email_apps.uid` may not be needed (revisit D276 here).
+- **Since D346**: the code is the short form of the identity token's `sub` (`console-core` `supportIdOf`, built, with
+  vectors), not of the uid; code → user is the wallet directory (`findUsers`), then its internal id `hu_…` for the
+  ledger. `IssuerRpc.uid`, `user_email_apps.uid` and `DirectoryRpc.byUid` are dropped, and there is no ledger-only
+  fallback.
 
 ## C16. CLI completion
 

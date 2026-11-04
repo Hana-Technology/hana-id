@@ -5,38 +5,33 @@
 // the console re-shapes every row through the allowlist below before it answers, so a field the API adds later (or a
 // bug there) can't reach a partner's screen. The shape is the data contract the tests pin, not just what the UI renders.
 //
-// Behind `USERS_SCREEN` (off): the ConsoleRpc reads (`listUsers`, `getUser`) come with the wallet directory (branch
-// `feat/wallet-directory`), not yet on `develop` when C10 was built. Until the flag is on, the routes are 404 and the
-// tab is hidden (D357). The client type mirrors that branch's console-core `users.ts`, with D346's change from branch
-// `feat/user-id-identity-sub`: `userId` is the identity token's `sub` (`u1_…`) and `supportId` its short form.
-import type { Actor, RpcFail, RpcOk } from '@hana-id/console-core';
+// Behind `USERS_SCREEN` (off by default; D357): the ConsoleRpc reads (`listUsers`, `getUser`) are the wallet
+// directory's (D310, D315) with D346's User ID (`userId` = the identity token's `sub`, `u1_…`; `supportId` its short
+// form; the internal `hu_…` id never reaches a partner). Until the flag is on in an env, the routes are 404 and the tab
+// is hidden: turn it on once that env's API runs D346.
+import {
+  type ConsoleGetUserInput,
+  type ConsoleListUsersInput,
+  type PartnerUser,
+  type RpcFail,
+  type RpcOk,
+  USER_CURSOR_RE as CORE_CURSOR_RE,
+  USER_ID_RE as CORE_USER_ID_RE,
+} from '@hana-id/console-core';
 import type { Env } from './env.ts';
 import { errorResponse, json } from './http.ts';
 import type { RequestInfo } from './links.ts';
 import { log } from './log.ts';
 
-/** The partner user, as the wallet directory's console-core `PartnerUser` has it, with D346's `userId` (`u1_…`). */
-export interface PartnerUserIn {
-  userId: string;
-  supportId: string;
-  scopeId: string;
-  createdAt: number;
-  lastSeenAt: number;
-  accounts: { kind: string; status: 'active' | 'pending' }[];
-  wallets: { chain: 'stellar' | 'evm'; address: string; firstSeenAt: number; lastUsedAt: number }[];
-}
+/** The partner user as ConsoleRpc answers it (console-core `PartnerUser`). */
+export type PartnerUserIn = PartnerUser;
 
-interface UsersCtx {
-  actor: Actor;
-  requestId: string;
-  clientIp: string;
-  orgId: string;
-}
+type UsersCtx = Omit<ConsoleListUsersInput, 'scopeId' | 'search' | 'cursor' | 'limit'>;
 
-/** The two ConsoleRpc reads the screen needs (the wallet directory's; a typed stub until it lands). */
+/** The two ConsoleRpc reads the screen needs (apps/api/src/rpc/console.ts). */
 export interface ConsoleUsersClient {
-  listUsers(c: UsersCtx & { scopeId?: string; search?: string; cursor?: string; limit?: number }): Promise<RpcOk<{ users: PartnerUserIn[]; nextCursor: string | null }> | RpcFail>;
-  getUser(c: UsersCtx & { userId: string }): Promise<RpcOk<{ user: PartnerUserIn }> | RpcFail>;
+  listUsers(c: ConsoleListUsersInput): Promise<RpcOk<{ users: PartnerUserIn[]; nextCursor: string | null }> | RpcFail>;
+  getUser(c: ConsoleGetUserInput): Promise<RpcOk<{ user: PartnerUserIn }> | RpcFail>;
 }
 
 /** What the console answers for a user: exactly these fields, nothing else. */
@@ -52,16 +47,16 @@ export interface PartnerUserOut {
 }
 
 /**
- * The User ID partners see (D346): the identity token's `sub` (`u1_` ‖ 22 base64url characters, @hana-id/core
- * identity.ts), one per scope and account, like Privy's DID. The directory's internal `hu_…` key is never shown.
+ * The User ID partners see (D346): the identity token's `sub` (`u1_` ‖ 22 base64url characters), one per scope and
+ * account, like Privy's DID. The directory's internal `hu_…` key is never shown. console-core's own pattern.
  */
-export const USER_ID_RE = /^u1_[A-Za-z0-9_-]{22}$/u;
+export const USER_ID_RE = CORE_USER_ID_RE;
 const SUPPORT_ID_RE = /^HANA-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/u;
 const SCOPE_RE = /^(global|s[0-9a-z]{1,32})$/u;
 const STELLAR_RE = /^G[A-Z2-7]{55}$/u;
 const EVM_RE = /^0x[0-9a-fA-F]{40}$/u;
-/** The API's page cursor, passed back as given (its form is the API's; checked loosely here). */
-export const USER_CURSOR_RE = /^\d{1,16}:[A-Za-z0-9_-]{1,64}$/u;
+/** The API's page cursor (console-core's pattern), passed back as given. */
+export const USER_CURSOR_RE = CORE_CURSOR_RE;
 const KINDS = new Set(['google', 'email', 'apple']);
 
 const time = (v: unknown): number | null => (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null);

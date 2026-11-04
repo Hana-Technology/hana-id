@@ -8,7 +8,7 @@ import type { Env } from '../src/env.ts';
 import { type ConsoleUsersClient, type PartnerUserOut, partnerUserView, usersClient, usersRoute } from '../src/users.ts';
 import { member, getAs } from './c10.ts';
 
-const USER = 'u1_AbCdEfGhIjKlMnOpQrStUv';
+const USER = 'u1_AbCdEfGhIjKlMnOpQrStUA';
 const G = `G${'A'.repeat(55)}`;
 const EVM = '0x52908400098527886E0F7030069857D2E4169EE7';
 
@@ -124,6 +124,15 @@ describe('the routes', () => {
     expect((await usersRoute(fakeEnv(true, calls), new URL('https://console.test/x'), info, ctx(), 'hu_0123456789abcdefghjkmnpqrs')).status).toBe(404);
     expect(calls).toHaveLength(1);
     expect((await usersRoute(fakeEnv(true), new URL('https://console.test/x?cursor=%27--'), info, ctx(), undefined)).status).toBe(400);
+  });
+
+  it('with the flag on, the real ConsoleRpc answers through the binding (an org with no users: an empty page; an unknown user 404)', async () => {
+    const { env } = await import('cloudflare:workers');
+    const on = { USERS_SCREEN: '1', API: env.API };
+    expect(usersClient(on)).not.toBeNull();
+    const list = await usersRoute(on, new URL('https://console.test/api/orgs/org_users1/users'), info, ctx(), undefined);
+    expect([list.status, await list.json()]).toEqual([200, { users: [] }]);
+    expect((await usersRoute(on, new URL('https://console.test/x'), info, ctx(), USER)).status).toBe(404);
   });
 
   it('the deployed config has the screen off: GET /api/orgs/:org/users is 404 for a member', async () => {

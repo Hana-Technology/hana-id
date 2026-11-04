@@ -11,7 +11,7 @@ popup, unless it falls under an auto-approve policy you set and the user accepte
 > for mainnet chains at all ([section 12](#12-test-and-live-keys)). This guide follows the code; the original
 > specification is `docs/batch-b-spec.md`.
 
-Last verified against code: 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: D347's closed popup in section 4 and the error table, D348's Google-only screen; a cancel on Google's sign-in screen goes back to the chooser, closing there is `login_cancelled`, in "Sign-in methods and links" and the error table; D341); 2026-11-04 (branch `fix/abandoned-login-freeze`: an unfinished login and `login_timeout`'s
+Last verified against code: 2026-11-04 (branch `feat/user-id-identity-sub`: section 15's `sub` row, the User ID and Support ID, D346); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: D347's closed popup in section 4 and the error table, D348's Google-only screen; a cancel on Google's sign-in screen goes back to the chooser, closing there is `login_cancelled`, in "Sign-in methods and links" and the error table; D341); 2026-11-04 (branch `fix/abandoned-login-freeze`: an unfinished login and `login_timeout`'s
 `data.stage`); 2026-11-04 (branch `feat/token-first-on`: "Sign-in methods and links": Google's one
 sign-in screen lists the email, cancelling it, the two-accounts screen; D270); 2026-11-03 (branch `feat/email-login-8b` review fixes: the email permission's screens and
 reasons, `api_unavailable`'s `path_unconfirmed` / `path_disputed`, `storage_unavailable` in a login, `hana.account()`'s
@@ -847,7 +847,7 @@ past the Hana session:
 |---|---|
 | `iss` | `{Hana API}/v1/identity` (sandbox-dev: `https://hana-id-api-sandbox-dev.tingtc.workers.dev/v1/identity`; a stable Hana hostname replaces it before any partner goes live, D127) |
 | `aud` | your app id (`app_…`), not your publishable key |
-| `sub` | `u1_…` (25 characters): stable per user in your app's scope, the same for every login method of their account and after a key rotation; different at every other partner; never the Google `sub` |
+| `sub` | `u1_…` (25 characters): stable per user in your app's scope, the same for every login method of their account and after a key rotation; different at every other partner; never the Google `sub`. It is also the user's User ID in the partner console (when it ships), and their Support ID `HANA-XXXX-XXXX` is its short form: Crockford base32 of the first 5 bytes of the 16 the `sub`'s base64url encodes, so you can compute it yourself to show beside your own records |
 | `sid` | `s1_…`: one per Hana session, shared by its tabs and reloads, new at every interactive login, never repeated |
 | `iat`, `exp`, `jti` | seconds; `exp` ≤ `iat` + 3600 and never past the session's end; `jti` is random |
 | `wallets` | `[{chain: 'stellar', address: 'G…'}, {chain: 'evm', address: '0x…'}]`, a real JSON array; the holder of this Hana session proved control of each address's key (a signature bound to this session and app) |

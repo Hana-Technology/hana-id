@@ -210,7 +210,12 @@ export async function directoryView(sub: string): Promise<DirectoryView> {
 /** Raw EVM transactions the mocked chain received. */
 /** The wallet directory's users listing `address` (`GET /__e2e/wallets`, D310). */
 export interface WalletDirectoryUser {
+  /** The User ID (`u1_…`, the identity token's `sub`). */
   userId: string;
+  /** The Support ID's 8 characters. */
+  supportCode: string;
+  /** `hu_…`, the ledger's uid. */
+  internalId: string;
   scopeId: string;
   wallets: { chain: string; address: string }[];
   identities: { provider: string; sub: string | null; role: string; status: string }[];

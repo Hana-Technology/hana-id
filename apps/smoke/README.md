@@ -265,9 +265,35 @@ Hana-held branded client without any address change (the path is `scope#provider
 ## Google email scope spike (`spike-email.html`)
 
 `http://localhost:5173/spike-email.html` is email login's batch 0 spike (`docs/email-login-build-plan.md`; not run yet):
-it decides whether the login popup can ask Google for the `email` scope in its one request, or needs the fallback the
-popup uses today (`GOOGLE_EMAIL_FLOW = 'second_request'` in `packages/web/src/auth/google.ts`). Same callback and
+it checks, on real Google, how the login popup can get an access token for the `email` scope while the ID token that
+goes on chain stays openid-only (D25). The popup uses the fallback today (`GOOGLE_EMAIL_FLOW = 'second_request'` in
+`packages/web/src/auth/google.ts`); the flow decided in D270, `'token_first'`, is leg E. Same callback and
 redirect-URI rule as `spike.html`; no Hana API, no chain.
+
+### Running it
+
+1. **A Google client.** Use a *Web application* OAuth client whose consent screen is the one users will see: the env's
+   shared login client (`sharedGoogleClientIds` in `envs/sandbox-dev.json`) for the real screen, or any test client in
+   a Google Cloud project you control. In Google Cloud > APIs & Services > Credentials, add
+   `http://localhost:5173/spike-callback.html` (exact: `http`, `localhost`, port 5173) under *Authorized redirect
+   URIs*; changes can take a few minutes. That redirect URI is the only client setting the page needs: its origin is
+   `http://localhost:5173` (open it as `localhost`, not `127.0.0.1`, or the callback can't hand back), and it doesn't
+   need to be an *Authorized JavaScript origin* (the 2026-10-28 `spike.html` run worked without; if Google shows
+   `origin_mismatch`, add `http://localhost:5173` there too). Remove the redirect URI after the spike.
+2. **Serve the page**: `pnpm install`, then `pnpm --filter @hana-id/smoke dev` (Vite on `http://localhost:5173`, port
+   fixed). It reads the env manifest at start (default `sandbox-dev`) but this page calls no Hana API.
+3. **Open** `http://localhost:5173/spike-email.html?client=<client id>` (or paste the ID into the field). Allow
+   popups for `localhost`.
+4. **For each of three accounts**: a personal Gmail account (`@gmail.com`); a Google Workspace account on its own
+   domain (Google returns `hd` for it); and a Google account registered with a non-Google address (a consumer Google
+   account created with, for example, an Outlook or company address, no Workspace). Run **B, C, D, then E and E2**
+   (A too if you want its answer; it doesn't gate anything). Between accounts, remove the client's access at
+   <https://myaccount.google.com/connections> only if you want to see the first-time consent screen again; the gate
+   is about what Google does with the grant in place, so don't remove it between the legs of one account.
+5. **Write down** what each consent screen listed, copy the *Summary to paste back* block (booleans, claim names,
+   error codes and scope names only: never an address, a `sub` or a token), and record both in `docs/context.md`.
+
+### The legs
 
 - **A** asks once: `response_type=id_token token`, `scope=openid email`. The summary's `oneRequestUsable` is true only
   when the ID token carried no personal claim (`emailInIdToken: false`) and an access token came with it.
@@ -282,20 +308,41 @@ redirect-URI rule as `spike.html`; no Hana API, no chain.
 - **D** (after B): B's silent request again (`prompt=none`, the same `login_hint`), with no interactive retry. With
   the grant no longer revoked (D265) it must answer an access token silently (`silentAccessToken: true`, no
   `silentError`); a `silentError` means Google asks for consent at every login.
+- **E** is D270's `'token_first'`, exactly as production will run it. Step 1: `response_type=token`,
+  `scope=openid email`, `prompt=select_account` (no ID token in this answer: `idTokenInAccessAnswer: false`). Step 2:
+  the account's `sub` from that access token, by `POST https://oauth2.googleapis.com/tokeninfo` with the form body
+  `access_token=…` (as `apps/email-issuer/src/google.ts` `checkAccessToken`; the token never goes in a URL). The
+  summary records `tokeninfoReachable` (false when the browser's fetch threw: a CORS refusal from the page, or no
+  network; the console says which), `tokeninfoStatus`, `tokeninfoHasSub`, `tokeninfoAudIsClient` and
+  `tokeninfoScopes`. (Checked from the command line on 2026-11-04 with a dummy token: tokeninfo answers
+  `access-control-allow-origin` with the request's `Origin`, any origin, and its preflight allows `POST` with
+  `content-type`; E confirms it in a real browser with a real token.) Without a `sub` no silent request is sent (`silentRequest: 'not sent: no sub'`). Step 3: a
+  silent `response_type=id_token`, `scope=openid`, `prompt=none`, `login_hint=<that sub>` request with a fresh nonce;
+  the summary has `silentIdToken` or Google's `silentError` (no interactive retry), the ID token's
+  `idTokenClaimNames` and `idTokenPersonalClaims`, `emailInIdToken`, `nonceMatches` and `sameAccount` (the ID token's
+  `sub` equals tokeninfo's), plus step 1's `userinfo` checks (what google-match would read). The verdict
+  `tokenFirstUsable` is true only when the silent request answered an ID token with no personal claim, for the same
+  account, with the nonce sent.
+- **E2** (after E, its button unlocks): E's silent `id_token`/`openid` request alone, again, for E's account, with a
+  fresh nonce: a returning user's login now that the email grant exists. Its verdict `returningTokenClean` has the
+  same four conditions; it shows a returning user's on-chain token stays clean.
 
-A, B and D then call Google's `tokeninfo` by POST (aud and sub match; the token never goes in a URL) and `userinfo`
+A, B, D and E then call Google's `tokeninfo` by POST (aud and sub match; the token never goes in a URL) and `userinfo`
 (an address, `email_verified`, `hd` present and equal to the address's domain, a Gmail address), from the page, and
 never revoke the token (as production, D265). Each leg has its own single-use `state`, and a fragment with more than
 one `state` is ignored, as production's callback. The summary holds booleans and claim names only (never the
-address, `sub` or a token). Run it with a personal Gmail account, a Workspace account whose `hd` is its own domain,
-and a Google account registered with an outside address, each through A, B, C and D in that order; write down what
-the consent screen lists, and record the results in `docs/context.md`. If A is usable for all three,
-`GOOGLE_EMAIL_FLOW` may become `'one_request'` (a reviewed change; the vault and the API keep refusing an ID token
-with `email` either way).
+address, `sub` or a token). A's `'one_request'` stays rejected (D270: Google puts `email` in that ID token); A is
+kept to record that.
 
 **Gate (D265):** legs C and D on real Google, by the user, before batch 8b reaches real users: C must show no
 lockout and D must succeed silently (`docs/email-login-build-plan.md` batch 8b, `docs/operations.md` "Turning
 linking on (batch 8b)").
+
+**Gate (D270):** legs **C and E must pass**, for all three accounts, before `GOOGLE_EMAIL_FLOW` becomes
+`'token_first'`: C with `tokenHasPiiLockout: false`, E with `tokenFirstUsable: true` (and E2 with
+`returningTokenClean: true`). If E shows `tokeninfoReachable: false`, the popup can't take the `sub` from tokeninfo
+in the browser and `'token_first'` needs another source for `login_hint` before the switch. The vault and the API
+keep refusing any ID token with a claim outside the allow-list (`token_has_pii`) either way.
 
 ## Test checklist
 

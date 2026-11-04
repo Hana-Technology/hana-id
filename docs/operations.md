@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-03 (branch `docs/sandbox-dev-state`: what sandbox-dev runs, per the operator on 2026-11-03: a state note under the hot DB gate, the watchdog's email pins and the email issuer sections); 2026-11-03 (branch `fix/8b-rereview`: "Turning linking on (batch 8b)"'s slow second
+Last verified against code: 2026-11-04 (branch `feat/spike-leg-e`: "Google's verified email: the spike", leg E and the D270 gate); 2026-11-03 (branch `docs/sandbox-dev-state`: what sandbox-dev runs, per the operator on 2026-11-03: a state note under the hot DB gate, the watchdog's email pins and the email issuer sections); 2026-11-03 (branch `fix/8b-rereview`: "Turning linking on (batch 8b)"'s slow second
 provider and watching `path_unconfirmed`, D263); 2026-11-03 (branch `feat/email-login-8b` review fixes: "Turning linking on (batch 8b)"'s
 second RPC, the consent screens, the API's and the issuer's redeploys for the new limits, the spike's legs C and D as
 a gate, D263–D267; "Logs and latency"'s `google_account_mismatch`); 2026-11-03 (branch `feat/email-login-8b`: "Turning linking on (batch 8b)": what users see
@@ -2391,7 +2391,12 @@ either way. The readiness item is `docs/mainnet-readiness.md` row 7.1g.
 asks Google twice today (`GOOGLE_EMAIL_FLOW = 'second_request'`): the openid-only login request, then a silent
 `response_type=token`, `scope=email` request. The spike measures whether one request (`id_token token`, `openid
 email`) keeps `email` out of the ID token; run it with a Gmail, a Workspace and an outside-address Google account
-(`apps/smoke/README.md`) and record the results in `docs/context.md` before changing the switch.
+(`apps/smoke/README.md`) and record the results in `docs/context.md` before changing the switch. Its leg **E** runs
+D270's `'token_first'` exactly: a `response_type=token`, `scope=openid email` request, the account's `sub` from
+`tokeninfo` (POST, from the page: it also records whether the browser's CORS allows that call), then a silent
+`response_type=id_token`, `scope=openid`, `prompt=none`, `login_hint=<sub>` request; **E2** repeats only the silent
+request. **Before `GOOGLE_EMAIL_FLOW` becomes `'token_first'` (D270)**, legs C and E must pass for all three accounts
+(`tokenHasPiiLockout: false`; `tokenFirstUsable: true`, and E2's `returningTokenClean: true`).
 
 **Gate before real users (D265):** the user runs the spike's legs **C** and **D** on real Google, for each of the three
 accounts, after B: C (a plain `openid` login once the email grant exists) must show `tokenHasPiiLockout: false` (no

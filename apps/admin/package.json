@@ -13,6 +13,7 @@
   "dependencies": {
     "@hana-id/console-core": "workspace:*",
     "@hana-id/oidc": "workspace:*",
+    "pdf-lib": "1.17.1",
     "pg": "8.23.1"
   },
   "devDependencies": {

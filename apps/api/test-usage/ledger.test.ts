@@ -43,7 +43,7 @@ const asWriter = <T>(fn: () => Promise<T>) => db.asRole('usage_writer', fn);
 const asAdmin = <T>(fn: () => Promise<T>) => db.asRole('usage_admin', fn);
 const count = async (sql: string, params: unknown[] = []) => Number((await db.query<{ n: string }>(sql, params))[0]!.n);
 
-const TABLES = ['usage.events', 'usage.app_users', 'usage.gas_settlements', 'usage.near_usd_rates', 'usage.statements', 'usage.identity_tokens', 'ops.state', 'ops.scope_snapshot', 'ops.scope_watch', 'ops.nonce_checks', 'ops.retention_runs', 'ops.rejection_alerts'];
+const TABLES = ['usage.events', 'usage.app_users', 'usage.gas_settlements', 'usage.near_usd_rates', 'usage.statements', 'usage.identity_tokens', 'usage.email_counts', 'usage.rate_overrides', 'ops.state', 'ops.scope_snapshot', 'ops.scope_watch', 'ops.nonce_checks', 'ops.retention_runs', 'ops.rejection_alerts', 'ops.settlement_alerts', 'ops.settlement_tries', 'ops.statement_notices'];
 
 describe('migrations-usage on an empty database', () => {
   it('creates the schemas, tables and the current month with the next 12 (0001 made 3, 0003 the rest)', async () => {
@@ -79,8 +79,9 @@ describe('migrations-usage on an empty database', () => {
           [role],
         )
       ).map((r) => r.f);
-    expect(await fns('usage_writer')).toEqual(['usage.ensure_partitions', 'usage.record_email_counts', 'usage.record_event', 'usage.record_identity_tokens']);
-    expect(await fns('usage_admin')).toEqual(['usage.ensure_partitions']);
+    // 0006 (batch C12) adds the report functions to both roles and the admin's own; `usage.classified` is nobody's.
+    expect(await fns('usage_writer')).toEqual(['usage.ensure_partitions', 'usage.org_ledger', 'usage.org_report', 'usage.org_statements', 'usage.record_email_counts', 'usage.record_event', 'usage.record_identity_tokens']);
+    expect(await fns('usage_admin')).toEqual(['usage.ensure_partitions', 'usage.org_ledger', 'usage.org_report', 'usage.org_statements', 'usage.override_rate', 'usage.rejection_rates', 'usage.statement_blockers']);
     expect(await fns('usage_test_nobody')).toEqual([]);
   });
 });
@@ -130,7 +131,8 @@ describe('the admin role', () => {
       expect((await db.query('SELECT count(*) FROM usage.events')).length).toBe(1);
       await db.query("INSERT INTO usage.gas_settlements (request_id, at, near_tx, result, gas_burnt, tokens_burnt) VALUES ('s-1', now(), 'tx', 'final', 1, 2)");
       await db.query("INSERT INTO usage.near_usd_rates (day, usd_micros, source) VALUES ('2001-01-01', 2500000, 'coingecko')");
-      await db.query("UPDATE usage.near_usd_rates SET usd_micros = 2600000, entered_by = 'staff' WHERE day = '2001-01-01'");
+      // A rate is replaced only through the audited override (0006); a direct UPDATE is refused.
+      await db.query("SELECT usage.override_rate('2001-01-01', 2600000, 'staff', 'corrected from the contract source')");
       await db.query("INSERT INTO ops.state (key, value) VALUES ('feed.cursor', '0')");
       await db.query("UPDATE ops.state SET value = '1' WHERE key = 'feed.cursor'");
       await db.query("INSERT INTO ops.retention_runs (started_at) VALUES (now())");
@@ -150,6 +152,9 @@ describe('the admin role', () => {
       'DELETE FROM usage.gas_settlements',
       'DELETE FROM usage.near_usd_rates',
       "UPDATE usage.near_usd_rates SET day = '2001-01-02'",
+      "UPDATE usage.near_usd_rates SET usd_micros = 1",
+      'DELETE FROM usage.rate_overrides',
+      "UPDATE usage.rate_overrides SET reason = 'x'",
       'DELETE FROM usage.app_users',
       'TRUNCATE usage.events',
       'CREATE TABLE ops.mine (x int)',
@@ -301,7 +306,8 @@ describe('frozen statements and rates', () => {
     expect((await failure(db.query("INSERT INTO usage.near_usd_rates (day, usd_micros, source) VALUES ('2001-02-11', 1, 'x')")))?.code).toBe('42501');
     expect((await failure(db.query("UPDATE usage.near_usd_rates SET day = '2001-02-12' WHERE day = '2001-03-10'")))?.code).toBe('42501');
     // Another month's rate still changes (the audited override, PUT /api/rates/:day).
-    expect(await failure(asAdmin(() => db.query("UPDATE usage.near_usd_rates SET usd_micros = 2600000, entered_by = 'staff' WHERE day = '2001-03-10'")))).toBeNull();
+    expect(await failure(asAdmin(() => db.query("SELECT usage.override_rate('2001-03-10', 2600000, 'staff', 'corrected from the contract source')")))).toBeNull();
+    expect((await failure(asAdmin(() => db.query("SELECT usage.override_rate('2001-02-10', 2600000, 'staff', 'corrected from the contract source')"))))?.code).toBe('42501');
   });
 
   it('checks statement shapes: first-of-month, 32-byte hashes, a PDF key with its hash', async () => {

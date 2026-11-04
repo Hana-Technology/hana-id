@@ -389,8 +389,8 @@ describe('statements: blockers, late events, rates', () => {
   it('overrides a rate through usage.override_rate only, with an audit row; refused once the month has a statement', async () => {
     const admin = <T>(fn: () => Promise<T>) => db.asRole('usage_admin', fn);
     await admin(() => db.query("INSERT INTO usage.near_usd_rates (day, usd_micros, source) VALUES ('2025-03-10', 2000000, 'coingecko')"));
-    const [{ id }] = (await admin(() => db.query<{ id: string }>("SELECT usage.override_rate('2025-03-10', 2100000, 'staff@hana.example', 'Provider outage: rate from the contract source') AS id")))!;
-    expect(Number(id)).toBeGreaterThan(0);
+    const [row] = await admin(() => db.query<{ id: string }>("SELECT usage.override_rate('2025-03-10', 2100000, 'staff@hana.example', 'Provider outage: rate from the contract source') AS id"));
+    expect(Number(row!.id)).toBeGreaterThan(0);
     const [rate] = await db.query('SELECT usd_micros::text, source, entered_by FROM usage.near_usd_rates WHERE day = $1', ['2025-03-10']);
     expect(rate).toEqual({ usd_micros: '2100000', source: 'manual', entered_by: 'staff@hana.example' });
     const [audit] = await admin(() => db.query('SELECT usd_micros::text, previous_usd_micros::text, previous_source, entered_by, reason FROM usage.rate_overrides WHERE day = $1', ['2025-03-10']));

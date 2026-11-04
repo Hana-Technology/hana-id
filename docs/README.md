@@ -4,7 +4,9 @@ Two kinds of doc live here. **Reference docs** describe the system as it is now 
 any change they cover (rule in `CLAUDE.md`). **Specs** describe what a batch set out to change; they are history once
 the batch merges, so where a spec and a reference doc disagree, the reference doc (and the code) wins.
 
-Last verified: 2026-11-04 for the batch C build plan row (branch `feat/batch-c-11`: C11 built, not merged; `api.md`'s new
+Last verified: 2026-11-04 for the batch C spec and build plan rows (branch `feat/batch-c-12`: C12 built, not merged,
+D320–D329; `api.md`'s "Usage ledger functions" and the admin Worker's report, statement, rate and export routes and
+crons; `operations.md`'s "Reports and statements"); 2026-11-04 for the batch C build plan row (branch `feat/batch-c-11`: C11 built, not merged; `api.md`'s new
 files Worker section); 2026-11-04 for the batch C build plan row and `api.md`'s admin Worker section (branch `feat/batch-c-8`: C8 built, D278–D285); 2026-11-04 for the batch C build plan row (branch `feat/batch-c-6-merge`: C6 on current `develop`, with C7, not merged); 2026-11-04 for the batch C build plan row and `api.md`'s console Worker section (branch `feat/batch-c-7-merge`: C7 merged onto `develop`); 2026-11-04 for the batch C spec and build plan rows (branch `docs/batch-c-users-support-id`: the Users screen and the Support ID proposed, D275, D276); 2026-11-04 for the native apps spec row (branch `docs/native-apps-spec`: on `develop`, Q19); 2026-11-03 for the batch C, identity token and email login build plan rows (branch `docs/sandbox-dev-state`: what is merged and live on sandbox-dev); 2026-11-03 for the email login build plan's row (branch `feat/email-login-8b`); 2026-11-02 against `develop` @ 1c6a124 (branch `docs/consistency-pass`: the specs' build state); the email
 login build plan's row on 2026-11-02 (branch `feat/email-login-6`, against `develop` @ bbdd8ed).
 
@@ -15,9 +17,9 @@ login build plan's row on 2026-11-02 (branch `feat/email-login-6`, against `deve
 | `architecture.md` | What the parts are, how they talk, each flow step by step, key derivation, where data lives, glossary |
 | `security.md` | Who is trusted for what, what each compromise gives, key and secret inventory, invariants, open issues |
 | `contract-interface.md` | `hana-signer` methods, types, byte layouts, events, panics |
-| `api.md` | Every HTTP endpoint, auth, errors, rate limits; D1 schema, Durable Objects, bindings, request logs; the email issuer's, the console Worker's, the admin Worker's and the files Worker's routes, entrypoints and crons |
+| `api.md` | Every HTTP endpoint, auth, errors, rate limits; D1 schema, Durable Objects, bindings, request logs; the usage ledger's functions; the email issuer's, the console Worker's, the admin Worker's and the files Worker's routes, entrypoints and crons |
 | `integration.md` | Partner guide: getting an app, `createHana`, page requirements, Google client, app settings, signing, auto-approve, React, Sodax, test and live keys, errors, the identity token and its verification (section 15) |
-| `operations.md` | Setting up and deploying an environment, Google clients, key rotation, smoke tests, the hosted demo, logs, common failures |
+| `operations.md` | Setting up and deploying an environment, Google clients, key rotation, smoke tests, the hosted demo, logs, common failures; issuing statements, rate overrides and the ledger's alerts (batch C12) |
 | `playbooks.md` | Step-by-step recovery for every watchdog alert kind and every incident (signals, impact, steps with who acts, commands, verify); generated from `packages/playbooks` (D126), the same source as the admin portal's "Security & monitoring" playbooks |
 | `decisions.md` | Every decision: when, why, what was rejected, status |
 | `context.md` | Project background, the early design decisions, testnet measurements, next steps |
@@ -35,7 +37,7 @@ login build plan's row on 2026-11-02 (branch `feat/email-login-6`, against `deve
 | `batch-a2-shared-client.md` | A.2: shared Google client, sessions, follow-up fixes |
 | `batch-b-spec.md` | B: browser SDK, vault, one-transaction login, auto-approve policies (merged into `develop` and deployed on sandbox-dev, 2026-10-29) |
 | `batch-c-spec.md` | C: developer dashboard (D34 MVP cut and D73–D75 folded in; being built in the batches of `batch-c-build-plan.md`, so still the current design until batch C merges; the staff Users screen and the Support ID lookup over D269's directory proposed 2026-11-04, D275, D276, to confirm) |
-| `batch-c-build-plan.md` | C: the spec split into mergeable batches C1–C17, milestones and the setup steps (C1–C5 merged into `develop` and running in the sandbox-dev API as far as `develop` includes them: migrations 0006, 0009, 0010 applied, usage capture off; C7 merged, not deployed (no route; the console D1 not created); C6 merged, M3 not run; C8 built on `feat/batch-c-8`, not merged, not deployed (D278–D285); C11 (the files Worker and logos) built on `feat/batch-c-11`, not merged, not deployed (D300–D308); C9, C10 and C12–C17 not built) |
+| `batch-c-build-plan.md` | C: the spec split into mergeable batches C1–C17, milestones and the setup steps (C1–C5 merged into `develop` and running in the sandbox-dev API as far as `develop` includes them: migrations 0006, 0009, 0010 applied, usage capture off; C7 merged, not deployed (no route; the console D1 not created); C6 merged, M3 not run; C8 and C11 merged, not deployed (D278–D285, D300–D308); C12 (reports, settlement, statements) built on `feat/batch-c-12`, not merged, not deployed (D320–D329; Neon 0006); C9, C10 and C13–C17 not built) |
 | `governance-spec.md` | Pre-mainnet governance (D33): delayed issuer keys with a watchdog, multisig owner, timelocked upgrades, pause (built; on sandbox-dev since 2026-10-30) |
 | `hana-home-spec.md` | Pre-mainnet Hana Home (D40, D45): cross-app wallets and key export for shared-login apps, consent revocation from any device (draft, for review) |
 | `email-login-spec.md` | Pre-mainnet email login (D4): Hana-run email issuer (Worker-secret key on testnet, AWS KMS before mainnet, two-signer-ready), automatic Privy-style account linking with pseudonymous ids on chain, explicit `linkAccount` (approved 2026-10-30: D119, D121–D123; built in the batches of `email-login-build-plan.md`) |

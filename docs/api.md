@@ -1,6 +1,9 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
-Last verified against code: 2026-11-04 (branch `feat/batch-c-11`: `GET /v1/app`'s `logoUrl`, the logo pages' `img-src`
+Last verified against code: 2026-11-04 (branch `feat/batch-c-12`: `ConsoleRpc.usage` / `statements` / `ledger`,
+`StaffRpc.recordStaffAction`, the console's report backend (not routed until C10), the admin Worker's report,
+statement, rate and export routes, its 15-minute and daily crons, its `STATEMENTS`/`EXPORTS`/`RELAYER_ACCOUNT`/`NETWORK`
+bindings, and the "Usage ledger functions" section; D320–D329); 2026-11-04 (branch `feat/batch-c-11`: `GET /v1/app`'s `logoUrl`, the logo pages' `img-src`
 with `FILES_ORIGIN` on the auth Worker, the console's logo upload backend (not routed until C10) and its `IMAGES`
 binding, the purge order, and the new "Files Worker" section; D300–D308); 2026-11-04 (branch `feat/batch-c-8`: "Admin Worker" (its routes, the Access check, the cron's notices, feed and watcher, its bindings), `AdminRpc.listApps`/`getApp` taking `system`, `StaffRpc.getOrg`'s `grants`; D278–D285); 2026-11-04 (branch `feat/batch-c-6-merge`: batch C6 on current `develop`:
 `ConsoleRpc.changeOrigins` / `proposeChange` with the API's own step-up verification (the claim allow-list on the
@@ -910,11 +913,31 @@ attempt}`, never with the connection string or the driver's message. Without `US
 Tests: `apps/api/test/usage.test.ts` (a refusing server: every endpoint answers the same status, body and headers;
 a ledger that never answers delays no response).
 
+### Usage ledger functions (`migrations-usage/0006_reports.sql`, batch C12)
+
+The owner's `SECURITY DEFINER` functions the reports, statements and settlement use (D320, D321). `EXECUTE` is revoked
+from `PUBLIC` and granted by name.
+
+| Function | What | Roles |
+|---|---|---|
+| `usage.classified(org, from_ts, to_ts, as_of)` | Internal: the org's events with `received_at ≤ as_of` and what billing makes of each (`gas_status` `none` / `pending` / `final` / `unsettled`): `final` only when settled final for that very `(request_id, at)` and no other relayed event received by `as_of` carries its `near_tx` | none (called by the functions below) |
+| `usage.org_report(org, from_day, to_day, by, app_ids, as_of)` | The report rows per UTC day or month, per app and (owner actions) per scope: counts, MAU (distinct uids), new users (`app_users.first_seen`), identity tokens, failures by code, settled gas and NEAR split into rejected and error, USD per day (round half up of yocto × usd_micros / 10^24, a month the sum of its days; NULL when a day with gas has no rate), exact nearest-rank p50/p95 of ok logins and derives, unsettled, `after_statement`. ≤ 400 days, 1–100 apps (an app filter leaves owner actions out) | writer, admin |
+| `usage.org_statements(org)` | The org's statements, newest first (≤ 120), with their totals | writer, admin |
+| `usage.org_ledger(org, month, as_of, after, lim)` | The ledger CSV's rows, keyset `(request_id, at)`, gas only on final rows | writer, admin |
+| `usage.rejection_rates(day)` | Per org: relayed attempts and relayed-then-rejected ones (D91) | admin |
+| `usage.statement_blockers(org, month)` | Relayed events with no settlement row, and the days without a rate | admin |
+| `usage.override_rate(day, usd_micros, entered_by, reason)` | The audited override: the rate (`source = 'manual'`) and its `usage.rate_overrides` row together; a future day, a rate ≤ 0 or > 1 000 000 USD, a reason under 10 characters refused (`22023`); a month with a statement refused (`42501`) | admin |
+
+0006 also adds `gas_settlements.reason` (`not_final`, `duplicate_tx`, `signer_mismatch`; only on unsettled rows), an
+index on relayed events' `near_tx`, `usage.rate_overrides` (append-only), `ops.settlement_alerts`,
+`ops.settlement_tries` and `ops.statement_notices`, and takes the admin role's direct `UPDATE` on `near_usd_rates`
+away (a fetched rate is an `INSERT … ON CONFLICT DO NOTHING`; a replacement goes through `override_rate`).
+
 ## RPC entrypoints (`src/rpc/`, `src/changes/`, batches C5 and C6) · C
 
 `ConsoleRpc` and `AdminRpc` are `WorkerEntrypoint` classes exported by the API Worker (`docs/batch-c-spec.md` "RPC
 interfaces"). No route reaches them; the console Worker (batch C7) binds `ConsoleRpc` and the admin Worker (C8)
-binds `AdminRpc` (`apps/admin`, built on `feat/batch-c-8`, not deployed), so both are inert in a deployed env until M4. Every method takes one object: `Ctx`
+binds `AdminRpc` (`apps/admin`, merged, not deployed), so both are inert in a deployed env until M4. Every method takes one object: `Ctx`
 (`actor`, `requestId`, `clientIp`) plus its fields. The object is validated with its `@hana-id/console-core` zod
 schema (`src/rpc.ts`: strict, so an unknown field is `bad_request`). The answer is `{ok: true, …}` or
 `{ok: false, code, error?}` (`RpcCode`; the BFFs map it to HTTP with `RPC_HTTP_STATUS`). Nothing throws out of a
@@ -942,7 +965,9 @@ method: an unexpected error is logged (`event: "rpc"`, method, request id, `code
 | `proposeChange` (C6) | A member's `policy_set` or `raw_sign_on` with `stepUpJwt` (verified as for `changeOrigins`, the settings-change layout): the staff proposal's rules without the assignment wait; `proposer_sub` and `actor_sub` set |
 | `ownerAction` (C6) | `{orgId, body}`: an on-chain owner action relayed through the owner pool exactly as `POST /v1/owner-actions` relays it (the same per-IP limiter fed `clientIp`, precheck, token reservation, caps, usage event, endpoint `ConsoleRpc.ownerAction` in the request log). Console rules on top (D237): the scope must be in `scopes` with the org (`not_found`, before any chain read); the owner token's optional claims are checked strictly (`forbidden`). The claim allow-list holds here as on the endpoint, for the owner token and an `AddClient` proof alike (D274, D277: `token_has_pii`, an RpcCode `forbidden` whose message names the claim; both are public once relayed). A refusal before the relay is an RpcCode (the precheck's code first in `error`: `unknown_change: …`): `owner_nonce_mismatch`, `invalid_client_proof`, `token_used`, `not_owner`, `rate_limited`, `not_found` (scope, change, client), `conflict` (locked, last client, shared login state, a registered or shared client), `forbidden` (token), `near_unavailable` (NEAR or Google's keys), `bad_request`. Once relayed: `{ok: true, status, result?, nearTx?, code?, error?}`, the relay's own answer, a contract panic included (`status: 422`, `code: contract_rejected`). The safety methods may spend the kill-switch reserve |
 
-Not built yet: `usage`, `statements`, `ledger` (C12); calling them is an RPC error (no such method).
+| `usage` (C12) | `{orgId, from, to, by: 'day' \| 'month', appIds?}` → `{rows: UsageRow[]}`: `usage.org_report` over the writer's `USAGE_DB` (Neon only: no hot-DB statement, no hot-DB cost). Refused before Neon: more than 400 days, `from` after `to`, more than 100 apps (`bad_request`); per member 60 a minute and 1 200 an hour on the `RateLimiter` (`console-report:<user id>`, `rate_limited`); no `USAGE_DB` or a Neon failure is `internal`. C12's optional fields: `linkActions`, `identityTokens`, `relayedRejectedBurntYocto`, `relayedRejectedUsdMicros`, `afterStatement` (D324) |
+| `statements` (C12) | `{orgId}` → `{statements}`: `usage.org_statements` (newest first, ≤ 120): `StatementMeta` plus the stored `totals` (checked against console-core `statementTotals`; a mismatch is `internal`) and the files' `csvKey` / `pdfKey` (server-side reads only) |
+| `ledger` (C12) | `{orgId, month, asOf?, after?}` → `{rows: LedgerRow[], next?, asOf}`: one page of 1 000 of `usage.org_ledger`, events with `received_at ≤ asOf` (default: now, answered so the caller pins every page to it), keyset `next` = `<request_id>,<at ms>` |
 
 **The API's step-up verification (`changes/step-up.ts`, spec "API verification", D235).** In order, failing closed, before
 anything is written or reserved: (1) RS256 signature, issuer and expiry (`@hana-id/oidc`, optional claims strict); (2)
@@ -1414,8 +1439,19 @@ Inputs are console-core's strict zod schemas (`packages/console-core/src/staff.t
 | `disableUser({userId, disabled})`, `freezeOrg({orgId, frozen})` | Revoke sessions as the spec's "Sessions" says |
 | `auditSince({seq, limit ≤ 500})`, `queryAudit({filters, cursor?, limit ≤ 500})` | The feed (oldest first) and the staff screen's query (newest first; filters `orgId`, `appId`, `actorKind`, `actorId`, `action`, `from`, `to`); `seq`, the cursor and the times are safe integers (`bad_request` past 2^53 − 1) |
 
+| `recordStaffAction({orgId?, action, target?, details})` (C12, D327) | Hana only: the `audit_log` row of an admin act with no RPC write of its own: `statement.issued` (`month`, `csvSha256`, `pdfSha256`, `asOf`, `lines`), `ledger.exported` (`month`, `asOf`, `rows`, `sha256`), `rate.overridden` (`day`, `usdMicros`, `overrideId`); another detail key is `bad_request`; a repeat of (request id, action) is `already_applied` and writes nothing |
+
 `purgeAudit` (the monthly retention job) comes with C13. A replayed request id is `already_applied` (same actor and
 target) or `conflict`; a write whose state moved meanwhile is `conflict`.
+
+**Report backend for C10** (`src/reports.ts`, batch C12; not routed until the session routes of C9/C10 call it for a
+member of the org, as the logo routes): `usageRoute` (`GET /api/orgs/:org/usage?from&to&by&apps` → `ConsoleRpc.usage`),
+`statementsRoute` (`/statements`: metadata and hashes, no file keys), `statementViewRoute` (`/statements/:month`: the
+stored totals and console-core `statementView`, the same view the PDF prints), `statementFileRoute`
+(`/statements/:month.csv` / `.pdf`: `STATEMENTS.get` of a key under `statements/<org>/<month>/`, served only when its
+sha256 equals the statement's, with `x-hana-sha256`), `ledgerCsvRoute` (`/ledger/:month.csv?asOf`: `ConsoleRpc.ledger`
+streamed page by page at one as_of, `x-hana-as-of`; a page failing after the first ends the file with an `# incomplete`
+line; at most 200 pages).
 
 **Bindings** (`apps/console/scripts/gen-wrangler.ts`): `CONSOLE_DB` (D1, `migrations/` 0001–0002), `API` → the API
 Worker's `ConsoleRpc` (the console calls `listApps`, `cancelChangeByLink`, and for logos `getApp` and `setLogo`),
@@ -1454,7 +1490,9 @@ Every non-`200` answer is `text/plain` with `nosniff`, `default-src 'none'; sand
 
 The Hana staff console's Worker (`hana-id-admin-<env>`) on `admin.origin`, behind Cloudflare Access. It binds the
 API's `AdminRpc` (`API`) and the console's `StaffRpc` (`CONSOLE`) and is the only caller of both; nothing binds it.
-Built on `feat/batch-c-8`, not merged or deployed (milestone M4, `docs/operations.md` "Admin Worker"). D278–D285.
+Built in C8 (merged, not deployed; milestone M4, `docs/operations.md` "Admin Worker"; D278–D285); the reports,
+statements, rates, exports, settlement and the daily ledger checks in C12 (`feat/batch-c-12`, D320–D329; milestone M6,
+`docs/operations.md` "Reports and statements").
 
 **Every request.** The Worker runs first (assets with `run_worker_first`). A host other than `ADMIN_ORIGIN`: `404 Not
 found`. **`/api/*`**: first the Access check, then (non-GET) the CSRF checks, then the route:
@@ -1497,9 +1535,21 @@ binding throws; `405` with `allow`; `413` over 64 KiB (16 KiB without a `Content
 | `POST /api/changes/:id/cancel`, `/expedite` | `{orgId}`, `{reason}` (≥ 20 characters) | `cancelChange`, `expediteChange` |
 | `GET /api/audit?orgId&appId&actorKind&actorId&action&from&to&cursor&changesBefore` | → `{rows, next?, changes}` (`changes`: the org's `app_changes` when `orgId` is set, else null) | `queryAudit`, `listChanges` |
 | `GET /api/audit.csv?…` (same filters) | CSV (`source, seq, at, org_id, app_id, scope_id, action, actor_kind, actor_id, actor_email, target, outcome, request_id, near_tx, country, detail`), newest first, ≤ 5 000 rows per source (`x-hana-truncated: 1` past it); text cells starting `=`, `+`, `-`, `@`, tab or CR get a `'` | as above |
-| `GET /api/security` | → the notice backlog, unnotified security events, each feed cursor with its lag, the watcher's cursor, the last cron run | `pendingNotices`, `pendingMemberNotices`, `securityEvents`, `changesSince`, `auditSince`, `ops.state` |
+| `GET /api/security` | → the notice backlog, unnotified security events, each feed cursor with its lag, the watcher's cursor, the last cron run; C12's `ledger`: each relayer key's latest nonce check, rejection-rate alerts, settlement alerts, the settlement backlog (`pending`, `oldestAt`), `partitionsAhead` and `partitionsLow` (< 2) | `pendingNotices`, `pendingMemberNotices`, `securityEvents`, `changesSince`, `auditSince`, `ops.state`, the ledger |
+| `GET /api/reports?org&from&to&by&apps` (C12) | → `{rows: UsageRow[]}` for any org (no as_of bound; `afterStatement` counts late events) | `usage.org_report` |
+| `GET /api/statements?org` (C12) | → `{statements}` (metadata, hashes, totals, keys) | `usage.org_statements` |
+| `GET /api/statements/:org/:month` (C12) | issued: `{statement, view}` (console-core `statementView` of the stored totals, D92); not issued: `{statement: null, issuableFrom, blockers: {pending, missingRateDays}}` | `org_statements`, `statement_blockers` |
+| `GET /api/statements/:org/:month.csv`, `.pdf` (C12) | the file from `STATEMENTS`, only when its sha256 equals the one frozen in Neon (else `500` and an error line), `x-hana-sha256` | `STATEMENTS.get` |
+| `POST /api/statements/:org/:month/issue` (C12) | `{}` → `{statement, view, auditRecorded}`; `409 conflict` before the 3rd of the next month 00:00 UTC, with a relayed event not settled, with a day without a rate, or when issued already | `statements.ts` (D326), `StaffRpc.getOrg`, `AdminRpc.listApps`, `recordStaffAction` |
+| `POST /api/exports/:org/:month` (C12) | `{asOf?}` (ms; a statement's, to reconcile) → `{key, file, sha256, rows, asOf, finalGas, finalTokens}`; more than 200 000 rows is `409` | `usage.org_ledger`, `EXPORTS.put`, `recordStaffAction` |
+| `GET /api/exports/:org/:month/:file` (C12) | the export CSV (kept 30 days by the lifecycle rule) | `EXPORTS.get` |
+| `GET /api/rates?month` (C12) | → `{month, rates, overrides, missing}` | `near_usd_rates`, `rate_overrides` |
+| `PUT /api/rates/:day` (C12) | `{usd: '2.345678', reason}` (≤ 6 decimals as a string; reason 10–500 characters) → `{day, usdMicros, source: 'manual', overrideId}`; a month with a statement is `409`, a future day `400` | `usage.override_rate`, `recordStaffAction` |
 
-Not yet: reports, statements, rates, exports (C12), retention (C13), Security & monitoring and pending upgrades (C14),
+The C12 routes open one ledger connection per request (`USAGE_DB`, `usage_admin`); without it they answer `503
+ledger_unavailable`.
+
+Not yet: retention (C13), Security & monitoring and pending upgrades (C14),
 the Users screen (`/api/users/search`, `/get`: proposed D275, C8b) and the Support ID lookup (C15).
 
 **Cron** `*/5 * * * *` (`src/cron.ts`; D280), as the `system` actor, with at most 40 outbound calls (emails and NEAR
@@ -1522,6 +1572,29 @@ views) a run:
 
 Steps 2 and 3 need `USAGE_DB`; without it (or with Neon down) they are skipped and step 1 still runs.
 
+**Cron** `*/15 * * * *` (C12, `src/ledger-cron.ts`; D322), one ledger connection and its own 40 outbound calls:
+1. **Alerts** (`src/alerts.ts`): one digest each to the security alias of the unexplained nonce checks
+   (`nonce_unexplained`), the rejection-rate alerts (`rejection_rate`) and the settlement alerts not yet sent,
+   `alerted_at` set only after the send was accepted.
+2. **Statement notices**: each statement without an `ops.statement_notices` row is emailed (org name, month, as_of,
+   both sha256s) to the org's security contacts, its `billing_email` and the alias; the row is written once every send
+   was accepted.
+3. **Settlement** (`src/settlement.ts`; D321, D322): `AdminRpc.relayerKeys` (both pools), then relayed events without
+   a settlement row, oldest first, at most the budget left (≤ 500), each read at most once an hour
+   (`ops.settlement_tries`). A `near_tx` another relayed event carries → `unsettled` `duplicate_tx`; a `relayer_pk`
+   not in the pools → `unsettled` `signer_mismatch`; otherwise `tx` at `wait_until: FINAL` (`sender_account_id` =
+   `RELAYER_ACCOUNT`): signed by `RELAYER_ACCOUNT` with that key at that nonce, to `SIGNER_ACCOUNT`, with that hash →
+   `final` with the BigInt sums over the transaction and every receipt; any mismatch → `unsettled`
+   `signer_mismatch` with the chain's values. Each refusal also writes `ops.settlement_alerts` (emailed by step 1).
+   Not final after 24 h → `unsettled` `not_final`. Needs `RELAYER_ACCOUNT` (else skipped, logged).
+
+**Cron** `30 0 * * *` (C12, daily): the **nonce cross-check** (`src/nonce-check.ts`; D323: each pool key's
+`view_access_key` nonce at final against the ledger's relayed `(relayer_pk, relayer_nonce)`; one `ops.nonce_checks`
+row per key), the **rejection-rate check** for the previous UTC day (`src/rejections.ts`: ≥ 100 relayed and > 5 %
+rejected → one `ops.rejection_alerts` row per org and day), `usage.ensure_partitions(12)` (the second keeper beside
+the API's hourly one), the alerts (as above), then the **NEAR/USD rate** (`src/rates.ts`; D325: CoinGecko's daily
+history for each day of the last 10 without a rate, never replacing one; `COINGECKO_API_KEY` optional).
+
 **Email** (`src/email/`): `EmailSender` (one message in, accepted with the provider's id or an error), the Resend
 adapter (`POST https://api.resend.com/emails`, `Idempotency-Key` = sha256(purpose ‖ recipient), 10 s timeout; errors
 name the HTTP status only), one message per recipient, plain text plus simple HTML, no remote image, links only to
@@ -1532,8 +1605,10 @@ name the HTTP status only), one message per recipient, plain text plus simple HT
 `FILES_ORIGIN`, `NEAR_RPC`, `SIGNER_ACCOUNT`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `STAFF_EMAILS` (JSON),
 `EMAIL_FROM`, `SECURITY_ALIAS`, `APP_CHANGE_DELAY_MS`, `OWNER_GRANT_DELAY_MS`; secrets `EMAIL_API_KEY`,
 `CANCEL_LINK_KEY`, `INVITE_LINK_KEY`. `preview_urls: false`; `workers_dev: true` only for a workers.dev `admin.origin`
-in a dev env, else a Custom Domain route. No D1 and no R2 in C8. **Logs**: `access_refused`, `csrf_refused`, `bff`,
-`notice`, `feed`, `watcher`, `cron`, `admin_error`, with route patterns, request ids, org, scope and target ids,
+in a dev env, else a Custom Domain route. No D1. C12 adds the R2 buckets `STATEMENTS` (`put` of new keys and `get`
+only: a source check) and `EXPORTS`, vars `RELAYER_ACCOUNT` and `NETWORK`, the optional secret `COINGECKO_API_KEY`, and
+the crons `*/15 * * * *` and `30 0 * * *`. **Logs**: `access_refused`, `csrf_refused`, `bff`,
+`notice`, `feed`, `watcher`, `cron`, `ledger_cron`, `statement`, `export`, `admin_error`, with route patterns, request ids, org, scope and target ids,
 outcomes, codes and counts only: never an email, a `sub`, a JWT, a link token or its hash.
 
 ## Email issuer (`apps/email-issuer`, its own Worker) · E

@@ -25,7 +25,8 @@ D270's status (the spike passed, switched on) on 2026-11-04 (branch `feat/token-
 (its gate passed) and D273 (token_first in Playwright), the D254 row of "Superseded or amended" and D265's "to
 confirm" line. D275–D276 (branch `docs/batch-c-users-support-id`: proposed, to confirm by the user, spec text only)
 on 2026-11-04. D300–D308 (branch `feat/batch-c-11`: the files Worker and logos, decided while building, to confirm) on
-2026-11-04, with D301 amending the order of C7's replaced-logo purge.
+2026-11-04, with D301 amending the order of C7's replaced-logo purge. D320–D329 (branch `feat/batch-c-12`: reports,
+statements, settlement and the ledger's checks, decided while building, to confirm) on 2026-11-04.
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -4821,6 +4822,197 @@ made while building C11, where the spec is silent or loose. Each took the safer 
   - No rule on `LOGOS`: the console's cron deletes replaced logos (D301).
 - Rejected: one lifecycle rule on every prefix (it would delete the legacy export after 30 days); per-object
   expiry set by the admin Worker (R2 has none; a cron job would be one more thing to fail).
+
+## Batch C12: reports and statements (branch `feat/batch-c-12`), 2026-11-04
+
+Made while building C12 (`docs/batch-c-build-plan.md` C12, `docs/batch-c-spec.md` "Usage capture and reporting"). None
+changes a derivation path or an address. Every one is **decided while building, to confirm**.
+
+### D320. C12's Neon migration is `0006_reports.sql`; C13 takes `0007`; one billing rule in `usage.classified`
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/api/migrations-usage/0006_reports.sql`,
+  `apps/api/test-usage/reports.test.ts` · Source: build plan "Conventions" (C12 = 0004, C13 = 0005), taken by the email
+  work's `0004_email_counts.sql` and `0005_link_events.sql`
+- Decision:
+  - The report, ledger, statement and settlement-check functions are **0006**; C13's retention functions take **0007**,
+    and C15's Support ID indexes the number after the last merged one. The build plan's conventions line and C13's
+    scope line now say so.
+  - One rule for what is billed, `usage.classified(org, from, to, as_of)` (internal, granted to no role): every report
+    row, every ledger CSV row and every statement goes through it, so a statement and the ledger CSV for the same
+    `as_of` can't disagree. `gas_status` is `final` only for an event settled final **for its own `(request_id, at)`**
+    whose `near_tx` no other relayed event received by `as_of` carries; `pending` when no settlement row has its request
+    id; otherwise `unsettled`. A second event with an existing settlement's request id (a different `at`) is
+    `unsettled`, never `pending`, so it can neither be billed nor hold a statement back.
+  - The admin role loses the direct `UPDATE` on `near_usd_rates` that 0001 gave it: a fetched rate is an `INSERT … ON
+    CONFLICT DO NOTHING`, a replacement goes through `usage.override_rate` (D325), which writes the audit row in the same
+    transaction.
+- Why: the email work merged first; renumbering merged files is not allowed. A single classification is the only way the
+  spec's reconciliation property ("the ledger CSV's `final` gas for the same `as_of` equals the statement's") holds by
+  construction.
+- Rejected: taking 0004/0005 and renumbering the email files (immutable once merged); computing the billing rule
+  separately in the report and the ledger SQL (two rules drift).
+
+### D321. Settlement bills a relayed event only for its own transaction (the C4 obligation, review L7)
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/settlement.ts`, `near.ts`
+  (`txFinal`, `parseTxResult`), `0006_reports.sql` (`gas_settlements.reason`, `ops.settlement_alerts`,
+  `usage.classified`), `apps/admin/test-ops/settlement.test.ts` · Source: build plan C12 "Obligation from C4", D222
+- Decision: before a relayed event is billed:
+  1. **Unique transaction**: no other relayed event in the ledger (any org, any month) carries its `near_tx`. A
+     duplicate bills **neither**: settlement writes each `unsettled` with reason `duplicate_tx`, and `usage.classified`
+     also refuses at read time any `final` event whose transaction another relayed event received by the same `as_of`
+     carries, so a copy written after the first was settled un-bills the first too (under-bills Hana, never over-bills a
+     partner), while a statement already issued stays reproducible from its `as_of`.
+  2. **A pool key**: `relayer_pk` is one of the env's relayer keys (`AdminRpc.relayerKeys`, session and owner pools,
+     read once per run); otherwise `signer_mismatch` without a chain read.
+  3. **Its signature**: the transaction read with `tx` at `wait_until: FINAL` has that hash, `signer_id` =
+     `RELAYER_ACCOUNT`, `public_key` = `relayer_pk`, `nonce` = `relayer_nonce` and `receiver_id` = `SIGNER_ACCOUNT`;
+     any difference is `signer_mismatch`, with the chain's values in the alert.
+  - A refusal is written `unsettled` with its reason (`gas_settlements.reason`; a CHECK keeps reasons on unsettled rows
+    only), never billed, counted on the statement, and recorded in `ops.settlement_alerts` (first, so no refusal goes
+    unheard), which the security screen lists and the alert step emails once to the security alias
+    (`settlement_mismatch`).
+- Why: a leaked writer credential can attach a real transaction (public on chain, with its key and nonce) to an org it
+  isn't for; the key and nonce check alone can't see that, uniqueness can. A JSON nonce past 2^53 is treated as
+  malformed rather than rounded.
+- Trade-off: a key rotated out of the pool before its events settle makes them `signer_mismatch` (unbilled, alerted).
+  Settlement runs within minutes, rotations are rare and announced.
+- Rejected: billing the first of two duplicates (the order the writer chose decides who pays); checking the call's
+  arguments against the scope (borsh/JSON per method, more surface for the same guarantee).
+
+### D322. Settlement's run: the 40-call budget, any age, one read an hour, alerts and notices first
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/settlement.ts`,
+  `ledger-cron.ts`, `ledger.ts` (`settlementQueue`, `ops.settlement_tries`) · Source: spec "Settlement" (≤ 500 a run,
+  the last 3 days), D280
+- Decision:
+  - The queue is every relayed event without a settlement row for its request id, **of any age**, oldest first: an
+    event the 3-day window missed (settlement down for days) would otherwise never be settled and would hold its
+    month's statement back forever; past 24 h it is written `unsettled` (`not_final`) on its first read.
+  - At most `min(500, budget left)` events a run; each `tx` read takes one call of the run's 40 (D280), so a run reads
+    about 35 transactions (≈ 3 400 a day). Enough for the pilot; past it, the paid plan's subrequest limit is the lever
+    (`docs/mainnet-readiness.md`). Duplicate and pool-key refusals need no call.
+  - An event whose transaction isn't final yet (or the RPC doesn't know it) is read again **an hour later**
+    (`ops.settlement_tries`), so a backlog of unknown hashes (a forged event, an RPC that lost the tx) can't take every
+    run's budget for a day.
+  - The 15-minute run sends the alerts first, then the statement notices, then settles with what is left.
+- Why: the spec's per-run cap assumed the paid plan; the budget is the binding constraint until the plan is settled.
+
+### D323. The nonce cross-check: a silent baseline, relayed rows only, skipped keys never alert
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/nonce-check.ts`, `ledger.ts`,
+  `alerts.ts` · Source: spec "Daily nonce cross-check", D34, D93 Q13
+- Decision: the keys are `AdminRpc.relayerKeys` (both pools); `view_access_key` at `finality: final` on
+  `RELAYER_ACCOUNT`. Explained: N unchanged since the key's last check; or a **relayed** ledger row with
+  `(relayer_pk, relayer_nonce) = (key, N)` (the spec's index); or the key's **first** check when the ledger has no
+  relayed row of that key at all (its earlier use predates the ledger: the baseline, as the watcher's, D282). Anything
+  else is `nonce_unexplained`. A key the account doesn't have, an unreadable RPC or an empty budget skips the key (no
+  row, no alert). The unexplained rows are emailed to the security alias as one digest, retried by every 15-minute run
+  until accepted (`alerted_at`). `ledger_relayed_since_last` counts relayed rows by `received_at` since the last check.
+- Why: a first check that alerted on every key's pre-ledger history would teach staff to ignore the alert.
+- Trade-off: a transaction landing seconds before the check whose event write is still in flight can alert once; the
+  next day's check explains it.
+
+### D324. Reports and the statement CSV: link relays and identity tokens added; exact decimals; what is billed
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `0006_reports.sql` (`usage.org_report`),
+  `packages/console-core/src/reports.ts`, `apps/admin/src/statement.ts` · Source: spec "Reports", "CSV"
+- Decision:
+  - Two count columns the spec's list predates: `link_actions` (ok `link`, `link_cancel`, `link_unlink` events, email
+    login batch 6; their gas was already in `tgas`) and `identity_tokens` (`usage.identity_tokens`, D223), after
+    `owner_actions` in the CSV and as optional `linkActions` / `identityTokens` in `UsageRow`. `UsageRow` also gains
+    the optional `relayedRejectedBurntYocto`, `relayedRejectedUsdMicros` and `afterStatement` (late events, the admin's
+    "after statement").
+  - Decimals are exact: Tgas = gas / 10^12, NEAR = yocto / 10^24, USD = micro-dollars / 10^6, trailing zeros dropped
+    (`0` for zero). USD per day is `(yocto × usd_micros × 2 + 10^24) div (2 × 10^24)` (round half up, integers only: a
+    numeric division could round the quotient before `round` sees it).
+  - **Billed** = all settled gas minus the relayed-then-rejected part (D91); error gas (settled timeouts and
+    `near_error`) is billed. The statement shows billed, not billed and unsettled lines.
+  - An app filter (`appIds`) leaves owner-action rows out (they have no app).
+- Why: link relays and identity tokens are usage partners are charged for or asked about; a report that hid them would
+  disagree with the ledger CSV's row count.
+
+### D325. The NEAR/USD rate: CoinGecko's daily history, ten days back, never replaced; the audited override
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/rates.ts`,
+  `report-routes.ts` (`PUT /api/rates/:day`), `0006_reports.sql` (`usage.override_rate`, `usage.rate_overrides`) ·
+  Source: spec "Crons", D93 Q17
+- Decision:
+  - Source `coingecko`: `/api/v3/coins/near/history?date=DD-MM-YYYY`, whose price is the 00:00 UTC snapshot of the
+    date, so **a day's rate is its opening price**. The daily run fetches each of the last 10 UTC days (today included)
+    without a rate, oldest first, one call each; a fetched rate never replaces an existing one; a price outside
+    (0, 1 000 000] USD is refused. An optional `COINGECKO_API_KEY` secret is sent as `x-cg-demo-api-key`.
+  - The override (`PUT /api/rates/:day {usd, reason}`, staff): `usage.override_rate` sets the rate with `source =
+    'manual'` and the staff email as `entered_by`, and appends a `usage.rate_overrides` row (previous rate and source,
+    who, why) in the same transaction; the table refuses UPDATE, DELETE and TRUNCATE. A reason of 10–500 characters is
+    required; a future day is refused; a month with a statement is refused (the 0001 trigger). The console's
+    `audit_log` also gets a `rate.overridden` row (D327).
+- Why: the spec's audited override has to survive a rate being replaced twice; a row per change in Neon, written by the
+  only path that can change a rate, is that audit.
+- To confirm: the source is named in the service contract (D93); the history endpoint's rate limits on the free key.
+
+### D326. Issuing a statement: refusals, keys, the commit point, the notice, the files served only by hash
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/statements.ts`,
+  `statement.ts`, `statement-pdf.ts`, `alerts.ts` (`runStatementNotices`), `report-routes.ts`,
+  `apps/console/src/reports.ts` · Source: spec "Monthly statements", D92
+- Decision:
+  - Refused (`409 conflict`, with the reason) before the 3rd of the next month 00:00 UTC, while a relayed event of the
+    month has no settlement row, while a day of the month has no rate, and when the month was issued.
+  - `as_of` = now. The rows are `usage.org_report` per day (the CSV's day rows) and per month (the totals: MAU and
+    percentiles exact over the month), both at that `as_of`. Keys `statements/<org>/<YYYY-MM>/<as_of ISO>.{csv,pdf}`,
+    uploaded with R2's `sha256` check before the `usage.statements` insert, the commit point; a failure before it
+    leaves locked orphan files that nothing points at.
+  - `totals` (console-core `statementTotals`) holds the per-app and per-scope totals as formatted decimals, the org's
+    sums, and the billed and not-billed lines; console-core `statementView` renders the on-screen statement from it and
+    the PDF prints the same view (A4 landscape, Helvetica; text outside WinAnsi shown as `?`; no producer, dates = the
+    `as_of`), so the three views carry one set of numbers and the CSV's sha256.
+  - The notice ("the feed emails the security contacts and `billing_email`"): the 15-minute run emails each statement
+    without an `ops.statement_notices` row to the org's security contacts, its billing email and the alias, and
+    writes the row once every send was accepted (at least once).
+  - Downloads (admin, and the console's backend for C10) read the file and serve it only when its sha256 equals the
+    one frozen in Neon, with `x-hana-sha256`; a mismatch is a 500 and an error line (tamper evidence at read time).
+- Why: Neon's row is the only commit point the spec gives; the hash check costs one digest per download.
+
+### D327. The admin's own acts are audited through `StaffRpc.recordStaffAction`
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/console/src/staff-rpc.ts`, `audit.ts`,
+  `packages/console-core/src/staff.ts` · Source: spec "Monthly statements" ("audited (`statement.issued`)"), "Audit"
+- Decision: a Hana-only `StaffRpc.recordStaffAction({orgId?, action, target?, details})` appends the `audit_log` row of
+  an act with no RPC write of its own: `statement.issued` (month, both hashes, `as_of`, lines), `ledger.exported`
+  (month, `as_of`, rows, hash) and `rate.overridden` (day, micro-dollars, override id). Details are each action's
+  allowlist (another key is `bad_request`); a repeat of (request id, action) is `already_applied`. The statement's row
+  uses the request id `statement_<org>_<month>`, so a retry can't add a second one. The row follows the act's own commit
+  (the statement insert, the override); a failure is logged (`audit_failed`) and answered (`auditRecorded: false`),
+  never undoing the act; the act's own record (the statement row, the override row) stays.
+- Why: one audit trail for staff acts, merged with `app_changes` in the audit view, without a second audit store in
+  the admin Worker.
+
+### D328. The partner side: `ConsoleRpc.usage` / `statements` / `ledger`, and the console's backend for C10
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/api/src/usage/reports.ts`,
+  `src/rpc/console.ts`, `apps/console/src/reports.ts` · Source: spec "RPC interfaces", "Console BFF routes", "Reports"
+- Decision:
+  - The three methods call the owner's functions over the writer's `USAGE_DB` and issue no hot-DB statement, so they
+    carry no hot-DB cost. Per member: 60 a minute and 1 200 an hour (`RateLimiter`, `console-report:<user id>`); never
+    `org_legacy`; the 400-day and 100-app limits are refused by the input schema before Neon (the function refuses them
+    again). No `USAGE_DB` or a Neon failure is `internal`.
+  - `statements` returns `StatementMeta` plus the stored totals and the file keys (server-side reads only; the console
+    lists statements without them). `ledger` pages 1 000 rows, keyset `<request_id>,<at ms>`, and answers its `asOf` (now
+    when not given) so every page of one CSV has the same bound.
+  - The console's handlers (usage, statement list, on-screen statement, statement files, ledger CSV) are built and
+    tested but not routed: C9/C10's session routes call them for a member of the org, as C11's logo routes. A statement
+    file is read with `STATEMENTS.get` only, under the org's prefix, and served only when it matches its hash. The ledger
+    CSV streams pages; a page failing after the first ends the file with an `# incomplete` line (at most 200 pages).
+
+### D329. Exports, partitions and the admin's crons
+- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/statements.ts`
+  (`exportLedger`), `ledger-cron.ts`, `crons.ts`, `scripts/gen-wrangler.ts`, `security.ts` · Source: spec "Crons",
+  "Ledger CSV", D280, D308
+- Decision:
+  - **Exports** (`POST /api/exports/:org/:month {asOf?}`) write the ledger CSV to `EXPORTS` at
+    `exports/<org>/<YYYY-MM>/<as_of ISO>-<request id>.csv` (under `exports/`, so D308's 30-day rule deletes them), with
+    the sha256 and the final gas and NEAR sums in the answer, audited (`ledger.exported`). More than 200 000 rows is
+    refused, never truncated. Staff download them with `GET /api/exports/:org/:month/:file`.
+  - **Two cron triggers**: the spec's daily 00:30 UTC work (nonce check, rejection check, partitions, rate) runs in the
+    15-minute trigger's 00:30 UTC tick, first, before that run's alerts, notices and settlement, all sharing its 40
+    calls. A third trigger would put each env at six (API, watchdog, console, admin × 2 + 1) over the free plan's five
+    per account.
+  - `usage.ensure_partitions(12)` daily (the API's own horizon, so the two keepers agree; the spec's 3 would be a no-op);
+    the security screen warns below 2 future partitions.
+  - The admin config binds `STATEMENTS` and `EXPORTS` (`files.statementsBucket`, `files.exportsBucket`) and sets
+    `RELAYER_ACCOUNT` and `NETWORK`; settlement and the nonce check skip, logged every run, without `RELAYER_ACCOUNT`.
 
 ## Superseded or amended
 

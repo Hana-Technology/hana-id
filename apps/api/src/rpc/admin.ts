@@ -4,8 +4,9 @@
 // legacy scopes, deleting apps, every suspension bit, the security contacts, the blocking notices (pendingNotices →
 // ackNotice), expedite, and the feeds. The admin Worker's crons call the feed and notice methods as a `system` actor.
 //
-// Built in batch C5: everything but `purgeAudit` / `deletedApps` (retention, C13). Batch C14 adds the read-only
-// `governance` (the `GET /v1/governance` snapshot) and `pendingUpgrades` (the pending-upgrades page, D86).
+// Built in batch C5; batch C14 adds the read-only `governance` (the `GET /v1/governance` snapshot) and `pendingUpgrades`
+// (the pending-upgrades page, D86); batch C13 the retention methods `purgeAudit`, `deletedApps` and `purgeDirectory` (the
+// admin Worker's monthly job only: a `system` actor, D360).
 import {
   adminFindUsersInput,
   adminGetUserInput,
@@ -20,6 +21,7 @@ import {
   createAppInput,
   createKeyInput,
   deleteAppInput,
+  deletedAppsInput,
   expediteChangeInput,
   getAppInput,
   getSecurityContactsInput,
@@ -30,6 +32,8 @@ import {
   markSecurityEventNotifiedInput,
   pendingNoticesInput,
   pendingUpgradesView,
+  purgeAuditInput,
+  purgeDirectoryInput,
   relayerKeysInput,
   removeOriginsInput,
   revokeKeyInput,
@@ -62,6 +66,7 @@ import { proposeSetting, setLogo, turnOff, updateSettings } from '../changes/set
 import { deleteApp, setSuspensionBit, suspendOrg } from '../changes/suspension.ts';
 import { governanceSnapshot } from '../governance-status.ts';
 import { adminFindUsers, adminGetUser, adminListUsers } from '../directory/read.ts';
+import { deletedApps, purgeAudit, purgeDirectory } from '../changes/retention.ts';
 import { runRpc } from './common.ts';
 
 const HANA = ['hana'] as const;
@@ -208,6 +213,23 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
   /** The pending-upgrades page's view (the same one ConsoleRpc.pendingUpgrades gives partners). */
   pendingUpgrades(c: unknown) {
     return runRpc(this.env, 'admin.pendingUpgrades', governanceInput, c, { actors: HANA }, async () => ({ pendingUpgrades: pendingUpgradesView(await governanceSnapshot(this.env)) }));
+  }
+
+  // ---- retention (batch C13, D90): the admin Worker's monthly job only ----
+
+  /** app_changes and guarded_changes rows older than min(before, 60 months ago), `limit` of each at most (D364). */
+  purgeAudit(c: unknown) {
+    return runRpc(this.env, 'admin.purgeAudit', purgeAuditInput, c, { actors: SYSTEM }, ({ input, db }) => purgeAudit(db, input));
+  }
+
+  /** Apps deleted at or before min(before, 30 days ago), for the ledger's app_users purge; paged by `next`. */
+  deletedApps(c: unknown) {
+    return runRpc(this.env, 'admin.deletedApps', deletedAppsInput, c, { actors: SYSTEM }, ({ input, db, w }) => deletedApps(db, input, w.now));
+  }
+
+  /** The wallet directory of scopes whose every app was deleted 30 days ago or more (D363). */
+  purgeDirectory(c: unknown) {
+    return runRpc(this.env, 'admin.purgeDirectory', purgeDirectoryInput, c, { actors: SYSTEM }, ({ input, db, w }) => purgeDirectory(db, input, w.now));
   }
 
   // ---- end users and their wallets (D310, D315; staff only: subs and identity keys included, no email) ----

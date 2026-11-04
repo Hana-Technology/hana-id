@@ -8,9 +8,9 @@
 // it: in the body of writes, as `?org=` on reads.
 //
 // C12's reports, statements, rates and exports (report-routes.ts); C14's "Security & monitoring" (the watchdog through
-// monitoring.ts, the governance snapshot), the pending-upgrades page and the playbooks (playbooks.ts). Not here yet:
-// retention (C13); the Users screen (`/api/users/search`, `/api/users/get`, proposed D275, C8b) and the Support ID
-// lookup (C15). Their paths answer 404 until those batches add them.
+// monitoring.ts, the governance snapshot), the pending-upgrades page and the playbooks (playbooks.ts); C13's retention
+// screen (retention-routes.ts). Not here yet: the Users screen (`/api/users/search`, `/api/users/get`, proposed D275,
+// C8b) and the Support ID lookup (C15). Their paths answer 404 until those batches add them.
 import type { AppChange, AuditRow, MemberView } from '@hana-id/console-core';
 import type { Env } from './env.ts';
 import { auditCsv } from './export.ts';
@@ -19,6 +19,7 @@ import { errorName, log } from './log.ts';
 import { exportFileRoute, exportRoute, issueRoute, rateOverrideRoute, ratesRoute, reportsRoute, statementRoute, statementsListRoute } from './report-routes.ts';
 import { ackRoute, actionsRoute, alertsRoute, monitoringRoute, pendingUpgradesRoute } from './monitoring.ts';
 import { getPlaybookRoute, listPlaybooksRoute } from './playbooks.ts';
+import { retentionRoute } from './retention-routes.ts';
 import { securityView } from './security.ts';
 import { type StaffRequest, staffCtx } from './rpc.ts';
 
@@ -240,6 +241,8 @@ const ROUTES: Route[] = [
   { method: 'GET', pattern: '/api/exports/:org/:month/:file', handler: exportFileRoute },
   { method: 'GET', pattern: '/api/rates', handler: ratesRoute },
   { method: 'PUT', pattern: '/api/rates/:day', handler: rateOverrideRoute },
+  // ---- retention (C13): the monthly job's runs, read only ----
+  { method: 'GET', pattern: '/api/retention', handler: retentionRoute },
 ];
 
 function matchRoute(path: string): { routes: { route: Route; params: Record<string, string> }[] } {

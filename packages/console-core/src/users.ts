@@ -47,6 +47,28 @@ export function userIdOf(uidBytes: Uint8Array): string {
   return USER_ID_PREFIX + crockford32(uidBytes).toLowerCase();
 }
 
+/**
+ * The 16-byte uid of a user id (userIdOf's inverse; the erasure script, D361), or null when it isn't one: wrong
+ * prefix, length or alphabet, or the last character's two padding bits set (no uid encodes to it).
+ */
+export function uidOfUserId(userId: string): Uint8Array | null {
+  if (!USER_ID_RE.test(userId)) return null;
+  const out = new Uint8Array(16);
+  let acc = 0;
+  let bits = 0;
+  let n = 0;
+  for (const ch of userId.slice(USER_ID_PREFIX.length).toUpperCase()) {
+    acc = (acc << 5) | CROCKFORD.indexOf(ch);
+    bits += 5;
+    if (bits >= 8) {
+      out[n++] = (acc >>> (bits - 8)) & 0xff;
+      bits -= 8;
+    }
+    acc &= (1 << bits) - 1;
+  }
+  return n === 16 && acc === 0 ? out : null;
+}
+
 /** The stored Support code of a user id (its first 8 characters, uppercase). */
 export function supportCodeOf(userId: string): string {
   if (!USER_ID_RE.test(userId)) throw new TypeError('Not a user id');

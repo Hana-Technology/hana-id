@@ -23,7 +23,7 @@ import { MONTH_RE, type Refusal, exportKey, exportLedger, issueStatement, issuab
 const ORG_RE = /^org_[A-Za-z0-9]{1,64}$/u;
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/u;
 
-async function withLedger(c: RouteCtx, route: string, fn: (store: LedgerStore) => Promise<Response>): Promise<Response> {
+export async function withLedger(c: RouteCtx, route: string, fn: (store: LedgerStore) => Promise<Response>): Promise<Response> {
   let store: LedgerStore | null;
   try {
     store = await ledgerSource.open(c.env.USAGE_DB);

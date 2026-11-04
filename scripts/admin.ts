@@ -15,7 +15,9 @@
 // user:list and user:find read the user directory (D269) from the email issuer's own D1, read only, with each
 // identity's user id, Support ID and wallets from the wallet directory in the API's D1 (D310, D316; both read without
 // the statement in a process argument), and user:find --address / --user start from the wallet directory
-// (lib/admin-users.ts): Hana staff only; addresses and subs go to this terminal and nowhere else.
+// (lib/admin-users.ts): Hana staff only; addresses and subs go to this terminal and nowhere else. retention:issuer
+// is the email issuer's part of the monthly retention (lib/admin-retention.ts, D365): the admin Worker has no binding
+// to the issuer's D1.
 import { createInterface } from 'node:readline/promises';
 import { loadEnv, type Manifest } from '@hana-id/env';
 import { assertCommandPositionals } from './lib/admin-args.ts';
@@ -44,6 +46,7 @@ import { councilReplaceMemberCmd } from './lib/council-members.ts';
 import { tryView } from './lib/contract.ts';
 import { apiPrivateD1Execute, d1Execute, issuerD1Execute } from './lib/d1.ts';
 import { type UserCmdDeps, userFindCommand, userList } from './lib/admin-users.ts';
+import { retentionIssuer } from './lib/admin-retention.ts';
 import { NearRpc } from './lib/near.ts';
 
 const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
@@ -83,6 +86,10 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
                ids and wallets; --address: every user listing that wallet, --user: a user id or Support ID, each with
                its accounts (provider, sub, role, status, address); with no flag, any of these is read from stdin.
                Addresses are printed here only: never redirect the output to a file outside .secrets/
+  retention:issuer [--yes]
+               the email issuer's part of the monthly retention (D90): user_email_apps rows of apps deleted 30 days
+               ago or more, email_admin_audit rows older than 60 months; dry run without --yes. Run after each
+               month's retention job (docs/operations.md "Retention"). An end user's erasure is scripts/uid-erase.ts
   owner:call <method> [--args '<json>'] [--gas <Tgas, default 100>] [--member <m>] [--approve-with <m>] [--yes]
                an owner call on the contract through the manifest's owner: signed by the owner account, or a
                council DAO proposal by --member; --approve-with (dev envs on testnet only) approves it with a
@@ -101,7 +108,7 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
              apps/email-issuer/.wrangler/state, and the API's for the wallet directory)
   --d1-name <name>  act on a rehearsal database (name containing "rehearsal") instead of the env's
   --yes      scope:register, scope:add-email-client, owner:call, owner:vote, council:replace-member: send the transaction (without it, only
-             print it); app:origins:park, app:origins:unpark: write (without it, only list)
+             print it); app:origins:park, app:origins:unpark, retention:issuer: write (without it, only list)
   --allow-shared  scope:register only: the app may log in through Hana's shared Google client; with it, --client is
                   optional (an app with no Google client of its own)
 
@@ -135,6 +142,7 @@ const COMMANDS = [
   'council:replace-member',
   'user:list',
   'user:find',
+  'retention:issuer',
 ] as const;
 type Command = (typeof COMMANDS)[number];
 
@@ -196,6 +204,19 @@ async function main(): Promise<void> {
     const deps = userDeps(m, remote);
     if (command === 'user:list') await userList(args, issuerWhere, deps);
     else await userFindCommand(args, { issuer: issuerWhere, api: where }, deps);
+    return;
+  }
+
+  if (command === 'retention:issuer') {
+    if (args.str('d1-name') !== undefined) throw new CliError('--d1-name is for the API database’s app commands; retention:issuer acts on the env’s own databases');
+    if (!m.emailIssuer) throw new CliError(`envs/${m.name}.json has no emailIssuer: nothing to purge`);
+    const issuerWhere = `${remote ? 'remote' : 'local'} D1 ${m.emailIssuer.cloudflare.d1Name}`;
+    await retentionIssuer(args, { api: where, issuer: issuerWhere }, {
+      apiD1: (statement) => d1Execute(m, statement, { remote }),
+      issuerD1: (statement) => issuerD1Execute(m, statement, { remote }),
+      now: () => Date.now(),
+      log: (line) => console.log(line),
+    });
     return;
   }
 
@@ -262,6 +283,7 @@ async function main(): Promise<void> {
       return;
     case 'user:list':
     case 'user:find':
+    case 'retention:issuer':
       return; // handled above, before the API database's commands
   }
 }

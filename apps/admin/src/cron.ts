@@ -2,7 +2,7 @@
 // changes, invites and owner grants back), then the security feed, then the on-chain watcher, sharing one budget of
 // outbound calls (D280). Each step runs on its own: a failing one is logged and the others still run. The notices need
 // no Neon; the feed and the watcher keep their state in `ops` (USAGE_DB) and are skipped, with an error line each run,
-// without it. The settlement (15 min), daily and monthly jobs come with C12 and C13.
+// without it. The settlement, daily and monthly jobs run in the 15-minute trigger (ledger-cron.ts; C12, C13).
 import type { Env } from './env.ts';
 import { outbound } from './email/sender.ts';
 import { runFeed } from './feed.ts';

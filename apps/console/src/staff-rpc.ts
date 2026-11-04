@@ -8,7 +8,8 @@
 // (`forbidden`), and answers `{ok: true, …}` or `{ok: false, code, error?}`; nothing it throws escapes. An unexpected
 // error is logged (method, request id, actor kind, org: never an email, sub or token) and answered `internal`.
 //
-// Built in C7: every method but `purgeAudit` (the monthly retention job, C13); `recordStaffAction` added in C12 (D327).
+// Built in C7; `recordStaffAction` added in C12 (D327); `purgeAudit` in C13 (the admin's monthly retention job only, a
+// `system` actor, D360).
 import {
   type Actor,
   type RpcCode,
@@ -23,6 +24,7 @@ import {
   listMembersInput,
   listOrgsInput,
   pendingMemberNoticesInput,
+  purgeAuditInput,
   queryAuditInput,
   recordStaffActionInput,
   revokeInviteInput,
@@ -38,6 +40,7 @@ import { ackMemberNotice, invitesOf, issueInvite, pendingMemberNotices, revokeIn
 import { ipPrefix } from './ip.ts';
 import { log } from './log.ts';
 import { disableUser, freezeOrg, getOrgRow, listOrgs, setMember } from './members.ts';
+import { purgeAudit } from './retention.ts';
 import { grantsOf, membersOf } from './views.ts';
 
 type Answer<T extends object> = ({ ok: true } & T) | RpcFail;
@@ -172,6 +175,14 @@ export class StaffRpc extends WorkerEntrypoint<Env> {
 
   queryAudit(c: unknown) {
     return runStaff('staff.queryAudit', queryAuditInput, c, HANA, (i) => queryAudit(this.db, i.filters, i.cursor, i.limit));
+  }
+
+  /**
+   * Retention (D90): `audit_log` rows and closed owner grants older than min(before, 60 months ago), `limit` of each at
+   * most. Only the admin Worker's monthly job (a `system` actor): staff never purge by hand.
+   */
+  purgeAudit(c: unknown) {
+    return runStaff('staff.purgeAudit', purgeAuditInput, c, SYSTEM, (i) => purgeAudit(this.db, i));
   }
 
   /**

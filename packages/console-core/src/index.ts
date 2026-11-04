@@ -10,6 +10,7 @@ export * from './origins.ts';
 export * from './owner-actions.ts';
 export * from './partner.ts';
 export * from './reports.ts';
+export * from './retention.ts';
 export * from './rpc.ts';
 export * from './staff.ts';
 export * from './types.ts';

@@ -1,9 +1,11 @@
 // The batch C12 emails (docs/batch-c-spec.md "Email": direct `nonce_unexplained`, `rejection_rate` to the security
-// alias; the feed's "statements issued"; D321's settlement alerts). Builders only: who gets each and when is
-// alerts.ts and statement-notices.ts. No key, token or end-user data: ids, hashes, counts and the chain's figures.
+// alias; the feed's "statements issued"; D321's settlement alerts) and C13's direct `retention_failed`. Builders only:
+// who gets each and when is alerts.ts, statement-notices.ts and retention.ts. No key, token or end-user data: ids,
+// hashes, counts and the chain's figures.
 import type { NonceCheck, RejectionAlert, SettlementAlert } from '../ledger.ts';
+import type { RetentionRun } from '../retention-store.ts';
 import type { MailContext } from './messages.ts';
-import { type Block, type Rendered, isoTime, oneLine, render } from './render.ts';
+import { type Block, type Rendered, duration, isoTime, oneLine, render } from './render.ts';
 
 /** `nonce_unexplained`: relayer keys whose last landed nonce has no ledger row. */
 export function nonceUnexplained(c: MailContext, rows: NonceCheck[]): Rendered {
@@ -66,4 +68,40 @@ export function statementIssued(c: MailContext, s: { orgId: string; orgName: str
     ],
     c.consoleOrigin,
   );
+}
+
+export type RetentionProblem =
+  | { kind: 'failed'; runs: RetentionRun[]; retryAfterMs: number }
+  | { kind: 'overdue'; month: string; dueAt: number; latest: RetentionRun | null }
+  | { kind: 'skipped'; month: string; reason: string };
+
+/**
+ * `retention_failed` (D90): the monthly retention job failed, was skipped (no ledger at its due time), or has no
+ * complete run a day after it was due. The error is the step and a code, never a message; counts only.
+ */
+export function retentionFailed(c: MailContext, p: RetentionProblem): Rendered {
+  const blocks: Block[] = [];
+  let subject: string;
+  if (p.kind === 'failed') {
+    subject = `Retention job failed (${p.runs.length} run${p.runs.length === 1 ? '' : 's'})`;
+    blocks.push({ kind: 'warn', text: `The monthly retention job (D90) failed. Each step runs on its own, so the others did their part; the job runs again ${duration(p.retryAfterMs)} after a failure until a run completes.` });
+    for (const r of p.runs) {
+      blocks.push({ kind: 'kv', rows: [['Run', String(r.id)], ['Month', r.month], ['Started', isoTime(r.startedAt)], ['Finished', r.finishedAt === null ? '' : isoTime(r.finishedAt)], ['Error', oneLine(r.error ?? '', 500)]] });
+    }
+  } else if (p.kind === 'overdue') {
+    subject = `Retention job overdue for ${p.month}`;
+    blocks.push({ kind: 'warn', text: `The monthly retention job for ${p.month} was due at ${isoTime(p.dueAt)} and no run has completed since.` });
+    blocks.push({
+      kind: 'kv',
+      rows: p.latest
+        ? [['Latest run', String(p.latest.id)], ['Status', p.latest.status], ['Started', isoTime(p.latest.startedAt)], ['Error', oneLine(p.latest.error ?? 'none', 500)]]
+        : [['Latest run', 'none this month']],
+    });
+    blocks.push({ kind: 'p', text: 'A run that ends partial ran out of its calls and continues every 15 minutes; one that never starts means the admin Worker cannot reach the usage ledger.' });
+  } else {
+    subject = `Retention job skipped for ${p.month}`;
+    blocks.push({ kind: 'warn', text: `The monthly retention job for ${p.month} could not start: ${oneLine(p.reason, 200)}. Nothing was recorded; it runs once the usage ledger is reachable.` });
+  }
+  blocks.push({ kind: 'p', text: 'The admin console’s retention screen lists every run with its rows per table. docs/operations.md "Retention" has the recovery steps.' });
+  return render(c.env, subject, blocks, c.consoleOrigin);
 }

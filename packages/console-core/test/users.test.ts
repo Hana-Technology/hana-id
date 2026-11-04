@@ -12,6 +12,7 @@ import {
   supportCodeOf,
   supportIdOf,
   uid,
+  uidOfUserId,
   userIdOf,
 } from '../src/index.ts';
 
@@ -37,6 +38,19 @@ describe('user id and Support ID', () => {
     expect(supportIdOf(id)).toMatch(/^HANA-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/u);
     expect(() => userIdOf(u.subarray(1))).toThrow();
     expect(() => supportCodeOf('usr_abc')).toThrow();
+  });
+
+  it('a user id decodes back to its uid (the erasure script, D361); anything else is null', async () => {
+    for (let k = 0; k < 20; k++) {
+      const u = await uid(new Uint8Array(32).fill(k), { scopeId: `s${k}`, provider: 'email', sub: `e1.${k}` });
+      expect(uidOfUserId(userIdOf(u))).toEqual(u);
+    }
+    expect(uidOfUserId(userIdOf(new Uint8Array(16)))).toEqual(new Uint8Array(16));
+    expect(uidOfUserId(userIdOf(new Uint8Array(16).fill(0xff)))).toEqual(new Uint8Array(16).fill(0xff));
+    // The last character carries 3 data bits and 2 zero padding bits: a set padding bit is no user id.
+    const id = userIdOf(new Uint8Array(16));
+    expect(uidOfUserId(`${id.slice(0, -1)}1`)).toBeNull();
+    for (const bad of ['', 'hu_', id.slice(0, -1), `${id}0`, id.replace('hu_', 'hx_'), id.toUpperCase(), `${id.slice(0, -1)}u`]) expect(uidOfUserId(bad), bad).toBeNull();
   });
 
   it('reads a typed Support ID with or without HANA-, dashes, case and look-alikes', () => {

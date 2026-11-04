@@ -252,7 +252,7 @@ async function linkEndpoint(request: Request, env: Env, endpoint: LinkEndpoint, 
   const tokens: LoginToken[] = [];
   for (const jwt of jwts) {
     // A removal takes an email token whatever the app's login_methods say (review L6).
-    const v = await verifyLoginToken(env, jwt, now, { claimAllowList: true, appId: app.id, exec, anyLoginMethod: !add });
+    const v = await verifyLoginToken(env, jwt, now, { appId: app.id, exec, anyLoginMethod: !add });
     if (!v.ok) return loginTokenRefusal(ctx, v);
     if (v.token.nonce === null) return reject(ctx, 400, 'nonce_mismatch', 'The ID token has no nonce');
     tokens.push(v.token);

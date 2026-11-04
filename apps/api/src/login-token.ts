@@ -1,6 +1,8 @@
 // The token of a session request (/v1/sessions, /v1/login) and of a link relay: a Google ID token (compact JWT,
 // @hana-id/oidc) or an email token (JWS JSON, email-token.ts), by its form, as the contract dispatches it
 // (`verify_token`: `is_json_form`). Either answers the same shape; the caller then checks the nonce and the scope.
+// A Google token is always held to the claim allow-list (claims.ts, `token_has_pii`), with no option to skip it: every
+// caller relays the token to the chain, where it is public (D25, D271).
 import { JwksUnavailableError, verifyIdToken } from '@hana-id/oidc';
 import { disallowedClaim } from './claims.ts';
 import { EMAIL_PROVIDER, isJsonForm, verifyEmailToken } from './email-token.ts';
@@ -26,8 +28,6 @@ export type LoginTokenResult = { ok: true; token: LoginToken } | { ok: false; st
 const EMAIL_KEY_PENDING_RETRY_S = 30;
 
 export interface LoginTokenOptions {
-  /** Refuse a Google token with a claim outside the allow-list (claims.ts). Email tokens are always held to theirs. */
-  claimAllowList: boolean;
   /** The app the request is for: an email token needs `email` in its login methods (unless `anyLoginMethod`). */
   appId: string;
   /**
@@ -76,8 +76,10 @@ export async function verifyLoginToken(env: Env, jwt: string, now: number, opts:
   if (!verified.ok) return { ok: false, status: verified.code === 'invalid_token' ? 401 : 400, code: verified.code, error: verified.error };
   // Only Google is a compact-JWT provider today; the email provider can never arrive in that form.
   if (verified.token.provider === EMAIL_PROVIDER) return { ok: false, status: 400, code: 'unsupported_issuer', error: 'Unsupported token issuer' };
-  const claim = opts.claimAllowList ? disallowedClaim(jwt) : null;
-  if (claim) return { ok: false, status: 400, code: 'token_has_pii', error: 'The ID token carries a claim outside the allow-list', data: { claim } };
+  // The claim allow-list, unconditionally (D271): no email, name or Workspace domain is ever relayed. An email token is
+  // held to its own claim set by verifyEmailToken.
+  const claim = disallowedClaim(jwt);
+  if (claim !== null) return { ok: false, status: 400, code: 'token_has_pii', error: 'The ID token carries a claim outside the allow-list', data: { claim } };
   const t = verified.token;
   return { ok: true, token: { provider: t.provider, aud: t.aud, sub: t.sub, nonce: t.nonce, kid: t.kid, email: false } };
 }

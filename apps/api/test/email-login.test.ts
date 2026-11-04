@@ -398,6 +398,16 @@ describe('POST /v1/link (explicit linking)', () => {
     expect(near.sent).toHaveLength(0);
   });
 
+  it('refuses a Google account token carrying email (token_has_pii), relaying nothing (D271)', async () => {
+    const { app, aud, near, req, nSub } = await explicit();
+    const root = fromHex(ikSync(app.scope, 'google', G_SUB));
+    const nonce = await linkAccountNonce(env.SIGNER_ACCOUNT, app.scope, root, fromHex(ikSync(app.scope, 'email', nSub)), 0, Uint8Array.from(salt));
+    const accountJwt = await google.sign({ iss: 'https://accounts.google.com', aud, sub: G_SUB, nonce, exp: Math.floor(Date.now() / 1000) + 600, email: 'a@example.com', email_verified: true });
+    const res = await linkCall('/v1/link', app, { ...req, accountJwt });
+    expect([res.status, await body(res)]).toEqual([400, expect.objectContaining({ code: 'token_has_pii', data: { claim: 'email' } })]);
+    expect(near.sent).toHaveLength(0);
+  });
+
   it('per IP, adds have their own window: a flood of adds never blocks a cancel', async () => {
     // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom).
     await minuteHeadroom(15_000);
@@ -441,6 +451,20 @@ describe('POST /v1/link/cancel and /v1/link/unlink', () => {
     expect(await revokedAt(share)).not.toBeNull();
     // Cancels and unlinks aren't counted as links.
     expect(await emailUsage(app.id)).toBeNull();
+  });
+
+  it('cancel and unlink refuse a Google token carrying hd or email (token_has_pii), relaying nothing (D271)', async () => {
+    const { app, aud, near, root, member } = await account(false);
+    for (const [path, action, extra] of [
+      ['/v1/link/cancel', 'cancel', { hd: 'example.com' }],
+      ['/v1/link/unlink', 'unlink', { email: 'a@example.com' }],
+    ] as const) {
+      const nonce = await linkChangeNonce(env.SIGNER_ACCOUNT, app.scope, action, root, fromHex(member), 1, Uint8Array.from(salt));
+      const jwt = await google.sign({ iss: 'https://accounts.google.com', aud, sub: G_SUB, nonce, exp: Math.floor(Date.now() / 1000) + 600, ...extra });
+      const res = await linkCall(path, app, { jwt, memberKey: member, epoch: 1, salt });
+      expect([res.status, await body(res)], path).toEqual([400, expect.objectContaining({ code: 'token_has_pii', data: { claim: Object.keys(extra)[0] } })]);
+    }
+    expect(near.sent).toHaveLength(0);
   });
 
   it('cancel refuses an active member, a wrong nonce and a stale epoch', async () => {

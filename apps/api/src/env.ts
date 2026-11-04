@@ -24,8 +24,6 @@ export interface Env {
   AUTH_ORIGIN?: string;
   /** "1": BLS pairing precheck of the app key on /v1/login and /v1/derive (Workers Paid plan only). Default off. */
   BLS_PRECHECK?: string;
-  /** "1": /v1/sessions also refuses tokens with claims outside the allow-list. Default off until smoke moves. */
-  REJECT_PII_ON_SESSIONS?: string;
   /** Optional Durable Object location hint for the shared objects (manifest cloudflare.durableObjectLocation). */
   DO_LOCATION_HINT?: string;
   /** Secret: session pool. JSON array of `ed25519:...` secret keys (create_session, create_session_and_derive, derive_key, revoke_session, prune_sessions). */

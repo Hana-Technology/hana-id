@@ -43,7 +43,6 @@ export default defineConfig(async () => {
             ENV_NAME: 'sandbox-test',
             MPC_ACCOUNT: 'mpc.test.near',
             BLS_PRECHECK: '0',
-            REJECT_PII_ON_SESSIONS: '0',
             // Tests use unplaced objects unless they set a hint (the test manifest has none either).
             DO_LOCATION_HINT: '',
             RELAYER_KEYS: JSON.stringify(relayerKeys),

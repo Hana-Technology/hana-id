@@ -1,7 +1,7 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-04 for the e2e coverage of the claim allow-list and of a linked member's export on both RPC providers (branch `test/e2e-pii-linked-export`); 2026-11-04 for the export window's Show key toggle, Copy key and clipboard clear (branch `feat/export-copy`, D268); 2026-11-03 for the batch 8b re-review fixes (branch `fix/8b-rereview`:
+known open issues. Last verified against code: 2026-11-04 for the claim allow-list on every route that relays a Google token (branch `fix/sessions-allow-list`: `/v1/sessions`, `/v1/owner-actions`, no flag, D271, D274); 2026-11-04 for the e2e coverage of the claim allow-list and of a linked member's export on both RPC providers (branch `test/e2e-pii-linked-export`); 2026-11-04 for the export window's Show key toggle, Copy key and clipboard clear (branch `feat/export-copy`, D268); 2026-11-03 for the batch 8b re-review fixes (branch `fix/8b-rereview`:
 the pin read's 1 s timeout, failing closed, and the pins' privacy note, D263); 2026-11-03 for the batch 8b review fixes (branch `feat/email-login-8b`:
 member paths confirmed on two RPC providers and root pins, D263; the email permission's screens, D264; the access token
 never revoked, D265; the issuer's word on the match, D266; relay and google-match limits, D267); 2026-11-03 for
@@ -247,9 +247,14 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
 - **Replay precheck.** A cached session view never refuses on its own: it is re-read fresh first. A second request
   for the same `(session key, counter)` in the same isolate waits for the first (`session-use.ts:76`).
 - **Claim allow-list** `{iss, azp, aud, sub, iat, exp, nonce, nbf, jti, auth_time}` (`apps/api/src/claims.ts:8`):
-  always on `/v1/login`; on `/v1/sessions` only with `REJECT_PII_ON_SESSIONS = "1"` (off today). End to end, a Google
-  token carrying `email` is refused by the vault (`token_has_pii`) before any `/v1/login` call, and nothing reaches the
-  chain (`apps/e2e/tests/login.spec.ts`).
+  always on, with no flag or option, for every Google token the API relays: `/v1/login`, `/v1/sessions`, the link
+  routes (`verifyLoginToken`, D271) and `/v1/owner-actions`'s owner tokens and client proofs (D274). A token with any
+  other claim is `400 token_has_pii` and nothing is relayed (`apps/api/test/session-flags.test.ts`,
+  `email-login.test.ts`, `owner-actions.test.ts`; `scripts/test/relayed-tokens.test.ts` fails on a new
+  `verifyIdToken` caller). The vault and the login popup apply the same list (`@hana-id/core`), and the smoke direct
+  page refuses to send such a token. End to end, a Google token carrying `email` is refused by
+  the vault (`token_has_pii`) before any `/v1/login` call, and nothing reaches the chain
+  (`apps/e2e/tests/login.spec.ts`). A direct contract caller is still not bound by it.
 - **Relayer allowlists** per pool in the Worker and in the object; gas only from `gas.ts`; receiver always
   `SIGNER_ACCOUNT`. The session pool also relays the three link methods (batch 6); no pool relays an owner,
   governance or updater method (`GOVERNANCE_METHODS`, tested).

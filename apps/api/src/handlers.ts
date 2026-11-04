@@ -415,8 +415,8 @@ async function appEndpoint(request: Request, env: Env, endpoint: AppEndpoint, ct
 
     // 5. The token is genuine and unexpired: a Google ID token (RS256 against Google's JWKS), or an email token (JWS
     //    JSON against the email keys and the on-chain signer policy, for an app with email on), with a nonce...
-    // The claim allow-list (claims.ts) for Google tokens only once REJECT_PII_ON_SESSIONS is on: smoke's GIS tokens carry `email`.
-    const verified = await verifyLoginToken(env, req.jwt, now, { claimAllowList: env.REJECT_PII_ON_SESSIONS === '1', appId: app.id, exec });
+    //    A Google token with a claim outside the allow-list is refused (400 token_has_pii), always (D271): nothing is relayed.
+    const verified = await verifyLoginToken(env, req.jwt, now, { appId: app.id, exec });
     if (!verified.ok) return loginTokenRefusal(ctx, verified);
     const token = verified.token;
     if (token.nonce === null) return reject(ctx, 400, 'nonce_mismatch', 'The ID token has no nonce');
@@ -728,7 +728,7 @@ async function ownerAction(request: Request, env: Env, ctx: Ctx, exec?: Executio
     if (err instanceof JwksUnavailableError) return reject(ctx, 503, 'issuer_keys_unavailable', 'Could not read the token issuer keys, try again');
     return reject(ctx, 502, 'near_unavailable', 'Could not read the registry');
   }
-  if (!check.ok) return reject(ctx, check.status, check.code, check.error);
+  if (!check.ok) return done(ctx, check.status, { error: check.error, code: check.code, ...(check.data ? { data: check.data } : {}) });
   // Past the owner check: every outcome from here on is one usage event, for the scope (owner actions have no gate
   // row: the scope's org is read after the response).
   beginUsage(ctx, { orgId: null, appId: null, scopeId: check.scopeId, exec });

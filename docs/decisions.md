@@ -4024,10 +4024,37 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 ### D271. The API's claim allow-list is on for every route that relays a Google token (REJECT_PII_ON_SESSIONS retired)
 - Date 2026-11-04 · Status: confirmed by the user (2026-11-04: 'how can we be sure that the reversed flow works without
   mistakenly storing emails on chain?', then 'yes go ahead and build all these') · Built on `fix/sessions-allow-list`
+  (not merged; nothing deployed): `apps/api/src/login-token.ts` `verifyLoginToken` applies `disallowedClaim` to every
+  Google token with no `claimAllowList` option left to turn off, so `/v1/sessions`, `/v1/login` (its `jwt` and
+  `linkJwt`) and `/v1/link`, `/v1/link/cancel`, `/v1/link/unlink` all refuse; `/v1/owner-actions` too (D274);
+  `REJECT_PII_ON_SESSIONS` removed from `env.ts`, `gen-wrangler.ts` `FLAG_DEFAULTS` and the test config (a leftover
+  var in a deployed config is ignored until the next `gen` and deploy drop it); `apps/smoke/direct.html` moved from
+  Google Identity Services to the implicit flow, `scope=openid` (`src/google.ts`, `direct-callback.html`; the page
+  also refuses to send a token with another claim) rather than retired, since it still covers what the vault can't
+  (the ship gate's split side, `key_index` ≠ 0, the client choice, revoke, replays). Tests: `session-flags.test.ts`
+  (every named claim on `/v1/sessions` is `400 token_has_pii` with no RPC call and no transaction; a leftover `"0"`
+  var changes nothing), `email-login.test.ts` (the link routes), `owner-actions.test.ts`,
+  `scripts/test/relayed-tokens.test.ts` (only `login-token.ts` and `owner-actions.ts` call `verifyIdToken`, each
+  followed by the allow-list; the API's list equals `@hana-id/core`'s), `apps/smoke` `direct-page.test.ts` and
+  `direct-callback-page.test.ts`. The user's step: add `http://localhost:5173/direct-callback.html` to the redirect
+  URIs of the Google clients the direct page uses (`docs/operations.md` "Google clients")
 - Decision: `/v1/sessions` refuses a Google token with a claim outside the allow-list (`token_has_pii`), as `/v1/login`
   and the link routes already do; the `REJECT_PII_ON_SESSIONS` flag is removed so it can't be turned off. The smoke
   pages that sent Google Identity Services tokens (which carry `email`) move to openid-only tokens or are retired.
 - Why: D270's guarantee ("no route relays an address") must hold for every route, not only the vault's.
+
+### D274. Owner-action tokens and client proofs are held to the same claim allow-list
+- Date 2026-11-04 · Status: decided while building D271 (Claude, under D271's "every route that relays a Google
+  token"), to confirm · Built on `fix/sessions-allow-list` (`apps/api/src/owner-actions.ts` `piiRefusal`) · Amends the
+  `/v1/owner-actions` note in `docs/api.md` ("Their other claims are not read … nothing refuses one that isn't")
+- Decision: `/v1/owner-actions` refuses an `auth` owner token or an `AddClient` `client_proof` with a claim outside
+  `TOKEN_CLAIM_ALLOW_LIST`: `400 token_has_pii` with `data: {claim}`, after the signature check and before the token
+  is reserved or anything is relayed. The contract stays permissive (direct callers are unaffected).
+- Why: both tokens are relayed to `hana-signer` as call arguments, so they are public on chain like login tokens; an
+  owner's email or Workspace domain (`hd`) would otherwise be published. Nothing sends such tokens today (no console
+  or CLI posts to `/v1/owner-actions` yet), and the batch C spec already plans openid-only step-up tokens for owner
+  actions ("Email claims by scope": `openid` must carry no `email`), so no flow breaks.
+- Rejected: leaving owner tokens unchecked (D271's guarantee would have a hole on the owner pool); a separate flag.
 
 ## Superseded or amended
 

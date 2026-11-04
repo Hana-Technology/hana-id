@@ -1,6 +1,6 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's)
 
-Last verified against code: 2026-11-03 (branch `fix/8b-rereview`, onto `feat/email-login-8b`: the issuer's CORS exposes `retry-after`); 2026-11-03 (branch `feat/email-login-8b` review fixes: the login relay's 40 writes a minute per IP and 12 KiB body, google-match's `google_account_mismatch`, no revocation and 120 per 10 min per IP, D264, D265, D267); 2026-11-03 (branch `feat/email-login-8b`: the login relay's writes from `VAULT_ORIGIN` and the follow-up slots, the vault page's `connect-src` with `EMAIL_ISSUER_URL`, the issuer's case-B `verify` answering `sub` with its `linkTicket`, the web as the caller of google-match, `/v1/sessions/revoke` and `/v1/link*`; D254–D259); 2026-11-03 (branch `fix/demo-polish`: `GET /v1/app` reads its D1 rows and the registry
+Last verified against code: 2026-11-04 (branch `fix/sessions-allow-list`: `/v1/sessions`'s claim allow-list always on, `/v1/owner-actions`'s `token_has_pii` for owner tokens and client proofs, the `REJECT_PII_ON_SESSIONS` binding gone; D271, D274); 2026-11-03 (branch `fix/8b-rereview`, onto `feat/email-login-8b`: the issuer's CORS exposes `retry-after`); 2026-11-03 (branch `feat/email-login-8b` review fixes: the login relay's 40 writes a minute per IP and 12 KiB body, google-match's `google_account_mismatch`, no revocation and 120 per 10 min per IP, D264, D265, D267); 2026-11-03 (branch `feat/email-login-8b`: the login relay's writes from `VAULT_ORIGIN` and the follow-up slots, the vault page's `connect-src` with `EMAIL_ISSUER_URL`, the issuer's case-B `verify` answering `sub` with its `linkTicket`, the web as the caller of google-match, `/v1/sessions/revoke` and `/v1/link*`; D254–D259); 2026-11-03 (branch `fix/demo-polish`: `GET /v1/app` reads its D1 rows and the registry
 and the registry side by side, `get_config` only when a shared client is needed, its `settings` and `chain` phases and
 its `timings` for `pk_test_` apps, the 8 s timeout on every contract view, the self-healing shared `get_config` read;
 D261); 2026-11-02 (branch `feat/email-login-8a`: the auth page Worker's `/login/email` and its
@@ -339,8 +339,9 @@ The scope is always the app's (D1). Checks after the gate and shape (`400 bad_re
    finite number is `401 invalid_token`. `email`, `email_verified`, `iat`, `hd`, `azp`, `amr` and `auth_time` are
    not read, and one of the wrong JSON type is ignored, not refused (D201). A valid signature's `kid` is recorded once per isolate after the
    response (`issuer_key_observations.first_token_ms`, here and on `/v1/login`; the kid only, never the token).
-2. Only with `REJECT_PII_ON_SESSIONS = "1"`: claim allow-list (`iss azp aud sub iat exp nonce nbf jti auth_time`),
-   else `400 token_has_pii` with `data: {claim}`.
+2. Claim allow-list, always (D271; a Google token only, an email token is held to its own claims):
+   `iss azp aud sub iat exp nonce nbf jti auth_time`, else `400 token_has_pii` with `data: {claim}`, before any chain
+   read; nothing is relayed.
 3. `nonce` equals the session nonce recomputed with `SIGNER_ACCOUNT` and the app's scope (`400 nonce_mismatch`).
 3b. (L) `signature` verifies as the proof of possession for exactly these parameters (`401 invalid_signature`): only
    the session key's holder can open a session, and a proof seen once can't open the key with other parameters.
@@ -762,14 +763,15 @@ No app key. `{"method", "args"}` only, `args` exactly as the contract takes them
 | 409 | `shared_login_disabled` / `last_client` | `disable_shared_login` |
 | 400 / 409 | `invalid_client_proof` / `client_registered`, `shared_client` | `AddClient` |
 | 409 | `shared_login_enabled` | `SetAllowShared` already on |
+| 400 | `token_has_pii` | the `auth` token or the `client_proof` has a claim outside the allow-list (`data: {claim}`, D274) |
 | 409 | `token_used` | this exact token was reserved before |
 | 503 / 502 | `issuer_keys_unavailable` / `near_unavailable` | JWKS / chain read failed |
 
 The `auth` token and the `client_proof` are checked like a login token (RS256, issuer, `exp` without skew, a finite
-`exp`), the proof for its `(provider, aud)`. Their other claims are not read: an `email`, `email_verified` or `hd`
-(a console token should be `openid` only, but nothing refuses one that isn't) is ignored, as is any of the
-optional claims with the wrong JSON type (D201), and none is logged, returned or stored; only the token's sha256
-is kept. The token itself is relayed to the contract unchanged.
+`exp`), the proof for its `(provider, aud)`. Both are relayed to the chain, where they are public, so both are held to the
+login tokens' claim allow-list (D274): a claim outside it (`email`, `email_verified`, `hd`, …) is `400
+token_has_pii` with `data: {claim}`, before the token is reserved or anything relayed. An allow-listed claim of the
+wrong JSON type is ignored (D201). No claim is logged, returned or stored; only the token's sha256 is kept. The token itself is relayed to the contract unchanged.
 
 The token's sha256 is reserved atomically (`RateLimiter` object `owner-actions:tokens`, until the token's `exp`)
 before relaying. Then the caps (table above) are asked from the most specific in, at one instant; when one refuses,
@@ -1158,7 +1160,7 @@ Vars are generated from `envs/<env>.json` by `apps/api/scripts/gen-wrangler.ts` 
 | `API_URL` | var | `apiUrl` | vault page `connect-src` |
 | `EMAIL_ISSUER_URL` | var, optional | `emailIssuer.url`, else `apiUrl` (only with an `emailIssuer` block) | the vault page's `connect-src` (google-match, batch 8b) |
 | `DO_LOCATION_HINT` | var | `cloudflare.durableObjectLocation` | only written when set |
-| `BLS_PRECHECK`, `REJECT_PII_ON_SESSIONS` | var | `gen` writes `"0"` | `"1"` turns each on |
+| `BLS_PRECHECK` | var | `gen` writes `"0"` | `"1"` turns it on (`REJECT_PII_ON_SESSIONS` is retired: the claim allow-list is always on, and a leftover var is ignored, D271) |
 | `APP_CHANGE_DELAY_MS` | var | `appChangeDelayMs` | the guarded-change delay (`guarded/config.ts`): missing, not an integer, outside 60 s..7 d, or under 24 h on `mainnet` makes every guarded change refuse with `internal` (`AdminRpc.addOrigins`, `proposeChange`, `createApp`, `ackNotice`) |
 | `NETWORK` | var | `network` | the production origin rules on `mainnet` (`guarded/config.ts`) |
 | `REFUSED_ORIGINS` | var | every Hana origin (`@hana-id/env` `hanaOwnOrigins`), JSON array | refused as app origins (`guarded/config.ts`; the CLI applies the same list from the manifest) |

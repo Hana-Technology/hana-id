@@ -1,15 +1,16 @@
-// Hana ID smoke, direct page: the in-page flow from before the vault (Google Identity Services → POST /v1/sessions →
+// Hana ID smoke, direct page: the in-page flow from before the vault (Google, openid only → POST /v1/sessions →
 // POST /v1/derive → CKD decryption here). It stays as the split-flow baseline for the ship gate and for what the vault
-// can't do (key_index ≠ 0, a client choice, derive again, revoke, replays), and works only while the env's
-// REJECT_PII_ON_SESSIONS is "0": GIS tokens carry `email`, which the claim allow-list refuses once the user turns it on
-// (400 token_has_pii). Public data only on screen, in the log and in storage. Never display, log, persist or send
-// (except the token to POST /v1/sessions) the Google ID token, the CKD secret or derived private keys.
+// can't do (key_index ≠ 0, a client choice, derive again, revoke, replays). Google is asked with `scope=openid` only
+// (google.ts, the implicit flow the Hana login popup uses), so the token passes the API's claim allow-list, which is
+// always on (D271); the page also refuses to send a token with any other claim. Public data only on screen, in the log
+// and in storage. Never display, log, persist or send (except the token to POST /v1/sessions) the Google ID token, the
+// CKD secret or derived private keys.
 import { checkSessionParams, ckdKeyProblem, jsonBytes, toHex } from '@hana-id/core';
 import { ApiError, type AppConfig, type CreateSessionBody, type GoogleMode, HanaApi } from './api.ts';
 import type { PageEnv } from './config.ts';
 import { $, code, fillDl, h, logEvent, ms, txLink } from './dom.ts';
 import { deriveOnce } from './flow.ts';
-import { readClaims, renderGoogleButton } from './google.ts';
+import { type GoogleSignIn, openGoogleSignIn, readClaims } from './google.ts';
 import { NearRpc, formatNear, formatTgas, googleOwnClients, googleSharedClients, type ScopeView } from './near.ts';
 import { type RunRecord, type StepTimings, compareRun, parseStoredRuns, pkPrefix, resultsJson } from './runs.ts';
 import { type PendingSession, newPendingSession, signCreateProof, signRevoke } from './session.ts';
@@ -20,7 +21,8 @@ const rpc = new NearRpc(env.rpc);
 
 function describeError(err: unknown): string {
   if (err instanceof ApiError && err.code === 'token_has_pii') {
-    return `${err.message}: this env refuses GIS tokens on /v1/sessions (REJECT_PII_ON_SESSIONS = "1"), so the direct flow is retired here; use the vault page${err.requestId ? ` [request ${err.requestId}]` : ''}`;
+    // The page checks the claims before sending, so this means the API's allow-list and @hana-id/core's differ.
+    return `${err.message}: the API refused the Google token for a claim outside its allow-list, which this page's check let through: report it${err.requestId ? ` [request ${err.requestId}]` : ''}`;
   }
   if (err instanceof ApiError) return `${err.message}${err.nearTx ? ` (tx ${err.nearTx})` : ''}${err.requestId ? ` [request ${err.requestId}]` : ''}`;
   return err instanceof Error ? err.message : String(err);
@@ -45,6 +47,8 @@ interface ActiveSession {
   app: LoadedApp;
   client: ClientChoice;
   pending: PendingSession;
+  /** The Google popup this session waits on, if any. */
+  signIn: GoogleSignIn | null;
   /** Set once POST /v1/sessions succeeded. */
   path: string | null;
   used: number;
@@ -291,6 +295,7 @@ async function startSession(): Promise<void> {
     app,
     client,
     pending,
+    signIn: null,
     path: null,
     used: 0,
     maxUses,
@@ -305,11 +310,27 @@ async function startSession(): Promise<void> {
   session = s;
   render();
   const googleStart = performance.now();
-  await renderGoogleButton($('google-button'), client.clientId, pending.nonce, (jwt) => {
-    if (session !== s || s.path !== null) return;
-    s.googleMs = performance.now() - googleStart;
-    void withBusy(() => openSessionAndDerive(s, jwt, runStart));
+  const signInButton = h('button', { id: 'google-sign-in' }, 'Sign in with Google (openid only)');
+  // The popup opens in the click itself (user activation); the session and its nonce are ready by then.
+  signInButton.addEventListener('click', () => {
+    if (busy || session !== s || s.path !== null) return;
+    s.signIn?.cancel();
+    const signIn = openGoogleSignIn(s.client.clientId, s.pending.nonce);
+    s.signIn = signIn;
+    signIn.token.then(
+      (jwt) => {
+        if (session !== s || s.signIn !== signIn || s.path !== null) return;
+        s.signIn = null;
+        s.googleMs = performance.now() - googleStart;
+        void withBusy(() => openSessionAndDerive(s, jwt, runStart));
+      },
+      (err: unknown) => {
+        if (session === s && s.signIn === signIn) s.signIn = null;
+        logEvent(describeError(err), 'error');
+      },
+    );
   });
+  $('google-button').replaceChildren(signInButton);
   logEvent(`Session key ready (key_index ${keyIndex}, max_uses ${maxUses}): sign in with Google`);
 }
 
@@ -317,6 +338,10 @@ async function openSessionAndDerive(s: ActiveSession, jwt: string, runStart: num
   const claims = readClaims(jwt);
   if (claims.nonce !== s.pending.nonce) throw new Error('Google returned a token for a different nonce');
   if (claims.aud !== s.client.clientId) throw new Error(`Google returned a token for ${claims.aud}, not ${s.client.clientId}`);
+  // Never send a token the API's allow-list refuses (D271): it would carry an email, name or Workspace domain.
+  if (claims.disallowed !== null) {
+    throw new Error(`Google returned a token with the claim "${claims.disallowed.slice(0, 64)}", outside the allow-list (openid only): not sent`);
+  }
   $('google-button').replaceChildren();
   const body: CreateSessionBody = {
     jwt,
@@ -478,6 +503,7 @@ async function replay(kind: 'create_session' | 'derive', s: ActiveSession): Prom
 
 function restart(): void {
   // Drop the session (and with it the non-extractable key and the in-memory token) and start over.
+  session?.signIn?.cancel();
   session = null;
   renderResult(null);
   $('google-button').replaceChildren();

@@ -1,6 +1,6 @@
 # Batch C build plan
 
-Status (2026-11-04, branches `feat/batch-c-9`, `feat/batch-c-14` and `feat/batch-c-12`, on `develop`; `feat/batch-c-13`; 2026-11-05, `feat/batch-c-15`, `feat/batch-c-8b`, `feat/batch-c-15-screen`): C1–C5 merged into `develop` and running in the
+Status (2026-11-04, branches `feat/batch-c-9`, `feat/batch-c-14` and `feat/batch-c-12`, on `develop`; `feat/batch-c-13`; 2026-11-05, `feat/batch-c-15`, `feat/batch-c-8b`, `feat/batch-c-15-screen`, `fix/usage-setup-neon-api-passwords` (setup step 3, D403)): C1–C5 merged into `develop` and running in the
 sandbox-dev API as far as `develop` includes them (migrations 0006, 0009 and 0010 applied, usage capture off;
 `docs/operations.md`); C6 (the claim allow-list on its tokens, D277), C7 (the console Worker backend; D240–D244), C8
 (the admin Worker; D278–D285) and C11 (the files Worker and logos; D300–D308) merged into `develop`, not deployed (M3
@@ -524,10 +524,14 @@ Run from the main checkout; every file in `.secrets/` is 0600 in a 0700 director
 2. **Ledger schema** (C1 onwards): `corepack pnpm --filter @hana-id/scripts usage-migrate sandbox-dev` (dry run: lists
    pending files), then the same with `--yes`. Uses `DATABASE_URL_DIRECT` (the owner role over a direct, non-pooled
    connection).
-3. **Roles' credentials** (C4): `corepack pnpm --filter @hana-id/scripts usage-setup sandbox-dev roles` (dry run)
-   then `--yes`: generates a password per role, writes `.secrets/sandbox-dev/neon-usage-writer.url` and
-   `neon-usage-admin.url` (pooled host is not used: Hyperdrive pools), then runs `ALTER ROLE usage_writer|usage_admin
-   LOGIN PASSWORD '<SCRAM verifier>'` as the owner (D224).
+3. **Roles' credentials** (C4): save a project-scoped Neon API key to `.secrets/sandbox-dev/neon-api-key` (0600;
+   `docs/operations.md` "Usage capture" step 2 has the console steps), then `corepack pnpm --filter @hana-id/scripts
+   usage-setup sandbox-dev roles` (dry run) then `--yes`: as the owner, `ALTER ROLE usage_writer|usage_admin WITH
+   LOGIN` (no password); then Neon's API resets each role's password (Neon generates it; Neon takes no SCRAM
+   verifier) and the script writes it into `.secrets/sandbox-dev/neon-usage-writer.url` and `neon-usage-admin.url`
+   (the direct host: Hyperdrive pools) and checks each role logs in (D224 as amended by D403). Every run resets both
+   and replaces the files, so run it before step 4 and re-create the Hyperdrive configs after any later run. Revoke the
+   API key afterwards.
 4. **Hyperdrive** (C4 writer, C8 admin): `usage-setup sandbox-dev hyperdrive --yes` creates
    `hana-id-usage-writer-sandbox-dev` and `hana-id-usage-admin-sandbox-dev` with caching disabled and prints their ids
    (not secret); pass them to `gen` (`--usage-hyperdrive-id`, `--admin-hyperdrive-id` from C8). Confirm Hyperdrive is

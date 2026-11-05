@@ -1077,15 +1077,41 @@ async function retentionPage(main) {
 // ---- users (C8b, D275): the issuer's directory, the wallet directory, the chain ----
 
 // The search and the last support reference live in memory only: never in the URL, history or storage (no address,
-// sub or code in a URL; the server's routes are POST).
-const usersState = { form: {}, result: null, kind: null, ticket: '' };
+// sub or code in a URL; the server's routes are POST). An opened user is too (D410): its page is the fixed path
+// USER_OPEN_PATH, and the history entry holds only an opaque number into `opened` (this page's memory), so back and
+// forward move between the users opened in this tab, and a reload or a copied link opens nobody.
+const usersState = { form: {}, result: null, kind: null, ticket: '', opened: new Map(), seq: 0 };
+const USER_OPEN_PATH = '/users/open';
+/** Users kept for back and forward in this tab (the oldest forgotten past it). */
+const OPENED_MAX = 50;
 /** Labels shared with the partner console's Users screen (apps/console/web/src/pages/Users.tsx). */
 const KIND = { google: 'Google', email: 'Email', apple: 'Apple' };
 const kindLabel = (k) => KIND[k] || k;
 const chainLabel = (c) => (c === 'stellar' ? 'Stellar' : c === 'evm' ? 'EVM' : c);
-const userPath = (provider, sub) => `/users/${encodeURIComponent(provider)}/${encodeURIComponent(sub)}`;
+/** Opens one identity's page from memory: the fixed path, the identity never in the URL or history state. */
+function openUser(provider, sub) {
+  usersState.seq += 1;
+  usersState.opened.set(usersState.seq, { provider, sub });
+  for (const k of usersState.opened.keys()) if (usersState.opened.size > OPENED_MAX) usersState.opened.delete(k);
+  go(USER_OPEN_PATH, { user: usersState.seq });
+}
+/** A link to one identity's page: its href is the fixed path; a click opens it from memory (`openUser`). */
+const userLink = (provider, sub, text) =>
+  h(
+    'a',
+    {
+      href: USER_OPEN_PATH,
+      onclick: (ev) => {
+        ev.preventDefault();
+        openUser(provider, sub);
+      },
+    },
+    text,
+  );
 /** A Support ID as the search box takes it (`HANA-XXXX-XXXX`, any case): it goes to the Support ID lookup (D399). */
 const supportIdQuery = (q) => /^hana[\s-]?[0-9a-z]{4}-?[0-9a-z]{4}$/iu.test(q.trim());
+/** A full address (console-core isFullAddress): an exact search, which names one identity and so needs the ticket (D410). */
+const fullAddress = (q) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(q.trim());
 /** What the search box names that the wallet directory answers (AdminRpc.findUsers) instead of the issuer's directory. */
 function walletQuery(q) {
   const s = q.trim();
@@ -1108,7 +1134,7 @@ function directoryRows(users, warning) {
           u.hosted === null ? '' : u.hosted ? 'Google-hosted' : 'no',
           String(u.appCount),
           time(u.lastSeenMs),
-          link(userPath(u.provider, u.sub), 'Open'),
+          userLink(u.provider, u.sub, 'Open'),
         ),
       ),
     ),
@@ -1124,7 +1150,7 @@ function walletUserBlock(u) {
     h('p', {}, h('button', { type: 'button', onclick: () => openLookup(u.userId, usersState.ticket, false) }, 'Support ID lookup: activity, shares, emails')),
     table(
       ['Account', 'Sub', 'Role', 'Status', 'Effective', 'Observed'],
-      u.identities.map((i) => tr(kindLabel(i.provider), i.sub ? link(userPath(i.provider, i.sub), i.sub) : h('span', { class: 'muted' }, 'seen on chain only'), i.role, i.status, i.effectiveAt ? time(i.effectiveAt) : '', time(i.observedAt))),
+      u.identities.map((i) => tr(kindLabel(i.provider), i.sub ? userLink(i.provider, i.sub, i.sub) : h('span', { class: 'muted' }, 'seen on chain only'), i.role, i.status, i.effectiveAt ? time(i.effectiveAt) : '', time(i.observedAt))),
     ),
     table(
       ['Wallet', 'Address', 'Key index', 'First seen', 'Last used'],
@@ -1156,9 +1182,17 @@ async function usersPage(main) {
         openLookup(q, (f.ticket || '').trim(), true);
         return;
       }
+      const ticket = (f.ticket || '').trim();
+      // The reference typed here is the one an opened user or the lookup is offered next (memory only).
+      if (ticket) usersState.ticket = ticket;
+      // A search that names one user (an id, a wallet, a sub or a full address) needs the support reference (D410).
+      if (!ticket && ((q && (walletQuery(q) || fullAddress(q))) || (f.sub || '').trim())) {
+        results.replaceChildren(h('p', { class: 'error' }, 'A support reference is required to search by User ID, internal id, wallet, sub or a full address: it is recorded in the audit. Browsing (a part of an address, the account kind, an app, unverified claims) needs none.'));
+        return;
+      }
       if (q && walletQuery(q)) {
         usersState.kind = 'wallet';
-        usersState.result = await api('POST', '/api/users/find', { query: q });
+        usersState.result = await api('POST', '/api/users/find', { query: q, ticket });
       } else {
         usersState.kind = 'directory';
         const body = { limit: 50 };
@@ -1189,13 +1223,13 @@ async function usersPage(main) {
     input('appId', 'App id'),
     input('sub', 'Sub (exact)'),
     h('label', {}, h('input', { name: 'unverifiedOnly', type: 'checkbox', checked: !!f.unverifiedOnly }), ' Unverified claims only'),
-    input('ticket', 'Support reference (optional)'),
+    input('ticket', 'Support reference (for an id, wallet, sub or full address)'),
     h('button', { type: 'submit' }, 'Search'),
   );
   main.append(
     h('h1', {}, 'Users'),
     h('p', { class: 'muted' }, 'Hana staff only: partners never see addresses. Every search and every opened user is audited by the email issuer under your Access identity, and each staff member can read at most 500 identities an hour and 2 000 a day (past that the reads stop and Hana security is emailed). There is no export: bulk reads stay with `admin <env> user:list --json`.'),
-    h('p', { class: 'muted' }, 'A Support ID (HANA-XXXX-XXXX) opens the Support ID lookup, which needs a support reference; a User ID, internal id or wallet lists the wallet directory’s users.'),
+    h('p', { class: 'muted' }, 'A Support ID (HANA-XXXX-XXXX) opens the Support ID lookup; a User ID, internal id or wallet lists the wallet directory’s users. Both, and a search by sub or by a full address, need a support reference (recorded in the audit); browsing by a part of an address, the account kind, an app or unverified claims doesn’t.'),
     el,
     results,
   );
@@ -1211,12 +1245,12 @@ function standingBlock(s) {
     ['Identity key', h('code', {}, s.identityKey)],
     ['Read at block', s.blockHeight === null ? 'unknown' : String(s.blockHeight)],
   ];
-  if (s.root) rows.splice(2, 0, ['Account root', link(userPath(s.root.provider, s.root.sub), `${kindLabel(s.root.provider)} ${s.root.sub}`)]);
+  if (s.root) rows.splice(2, 0, ['Account root', userLink(s.root.provider, s.root.sub, `${kindLabel(s.root.provider)} ${s.root.sub}`)]);
   const parts = [h('h3', {}, s.scopeId), table(['', ''], rows.map(([k, v]) => tr(k, v)))];
   if (s.account) {
     parts.push(
-      h('p', {}, 'Account root: ', link(userPath(s.account.root.provider, s.account.root.sub), `${kindLabel(s.account.root.provider)} ${s.account.root.sub}`), ` (epoch ${s.account.epoch})`),
-      table(['Member', 'Sub', 'Key', 'Active', 'Effective'], s.account.members.map((m) => tr(kindLabel(m.provider), m.sub ? link(userPath(m.provider, m.sub), m.sub) : h('span', { class: 'muted' }, 'unknown to the wallet directory'), h('code', {}, m.key), m.active ? 'yes' : 'no', m.effectiveAtMs ? time(m.effectiveAtMs) : ''))),
+      h('p', {}, 'Account root: ', userLink(s.account.root.provider, s.account.root.sub, `${kindLabel(s.account.root.provider)} ${s.account.root.sub}`), ` (epoch ${s.account.epoch})`),
+      table(['Member', 'Sub', 'Key', 'Active', 'Effective'], s.account.members.map((m) => tr(kindLabel(m.provider), m.sub ? userLink(m.provider, m.sub, m.sub) : h('span', { class: 'muted' }, 'unknown to the wallet directory'), h('code', {}, m.key), m.active ? 'yes' : 'no', m.effectiveAtMs ? time(m.effectiveAtMs) : ''))),
     );
   } else if (s.accountUnread) parts.push(h('p', { class: 'warn' }, `In an account; its members: ${s.accountUnread === 'not_read' ? 'not read (this page’s call budget)' : 'chain unavailable'}`));
   return h('div', {}, parts);
@@ -1257,7 +1291,15 @@ function userDetail(main, d) {
   main.append(h('h2', {}, 'On chain, per scope (read live)'), d.chain.length ? h('div', {}, d.chain.map(standingBlock)) : h('p', { class: 'muted' }, 'No scope to read.'));
 }
 
-async function userPage(main, provider, sub) {
+async function userPage(main) {
+  const st = history.state;
+  const who = st && typeof st.user === 'number' ? usersState.opened.get(st.user) : undefined;
+  if (!who) {
+    // A reload, a copied link or a user forgotten past OPENED_MAX: the identity was never in the URL, so open it again.
+    main.append(h('h1', {}, 'No user open'), h('p', { class: 'muted' }, 'An opened user lives in this tab’s memory only, never in the URL: search Users and open them again.'), link('/users', 'Users'));
+    return;
+  }
+  const { provider, sub } = who;
   main.append(h('h1', {}, `${kindLabel(provider)} ${sub}`), link('/users', 'Back to the search'));
   const out = h('div');
   const el = h(
@@ -1357,7 +1399,7 @@ function supportMatchBlock(m, k, n, activity, ledger, emails, days) {
         tr(
           kindLabel(i.provider),
           emailCell(i.directoryKey, i.directoryKey ? emails.get(emailKey(i.directoryKey.provider, i.directoryKey.sub)) : undefined),
-          i.sub ? link(userPath(i.provider, i.sub), i.sub) : h('span', { class: 'muted' }, 'seen on chain only'),
+          i.sub ? userLink(i.provider, i.sub, i.sub) : h('span', { class: 'muted' }, 'seen on chain only'),
           i.role,
           i.status,
           i.effectiveAt ? time(i.effectiveAt) : '',
@@ -1473,7 +1515,7 @@ async function supportPage(main) {
     supportState.result = null;
     out.replaceChildren(h('p', { class: 'muted' }, 'Searching…'));
     try {
-      supportState.wallet = await api('POST', '/api/users/find', { query: f.query.trim() });
+      supportState.wallet = await api('POST', '/api/users/find', { query: f.query.trim(), ticket: f.ticket.trim() });
       show();
     } catch (err) {
       out.replaceChildren(errorBox(err));
@@ -1493,7 +1535,7 @@ async function supportPage(main) {
     h('label', {}, 'Days ', h('input', { name: 'days', type: 'number', min: 1, max: 731, value: f.days })),
     h('label', {}, 'Request IDs from the escalation (up to 20) ', h('textarea', { name: 'requestIds', placeholder: 'req_… one per line' }, f.requestIds)),
     h('button', { type: 'submit' }, 'Look up'),
-    h('button', { type: 'button', onclick: walletOnly }, 'Wallet directory only (no activity)'),
+    h('button', { type: 'button', onclick: walletOnly }, 'Wallet directory only (no activity; the ticket still recorded)'),
   );
   main.append(
     h('h1', {}, 'Support ID lookup'),
@@ -1516,9 +1558,9 @@ async function supportPage(main) {
 
 let me = null;
 
-/** Moves to `path` (no data in it) and renders it. */
-function go(path) {
-  history.pushState(null, '', path);
+/** Moves to `path` (no data in it) and renders it; `state` is at most an opaque number (openUser), never data. */
+function go(path, state = null) {
+  history.pushState(state, '', path);
   render();
 }
 
@@ -1548,7 +1590,13 @@ async function render() {
     else if (path === '/retention') await retentionPage(main);
     else if (path === '/users') await usersPage(main);
     else if (path === '/support') await supportPage(main);
-    else if ((m = /^\/users\/(email|google)\/([^/]+)$/u.exec(path))) await userPage(main, m[1], decodeURIComponent(m[2]));
+    else if (path === USER_OPEN_PATH) await userPage(main);
+    else if (/^\/users\/(email|google)\//u.test(path)) {
+      // The old detail path held the sub (before D410): this entry is rewritten to the search, and nothing is read.
+      history.replaceState(null, '', '/users');
+      renderNav();
+      await usersPage(main);
+    }
     else main.append(h('h1', {}, 'Not found'), link('/orgs', 'Organisations'));
   } catch (err) {
     main.append(errorBox(err));

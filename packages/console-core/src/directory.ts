@@ -4,7 +4,8 @@
 // verifies itself (the admin application's AUD, the team domain, the staff list) and records as the actor; every read
 // writes its `email_admin_audit` row in the same D1 batch; each staff email gets at most DIRECTORY_ROWS_PER_HOUR and
 // DIRECTORY_ROWS_PER_DAY identities back. A support reference (`ticket`) is required to open one identity (`get`) and
-// optional for a search. A `get` is audited as `user_view` (the Users detail) or `support_lookup` (the Support ID
+// for a search that names one (a `sub` filter or a full address, D410); a browsing search (a part of an address,
+// provider, app, unverified only, or nothing) takes it optionally. A `get` is audited as `user_view` (the Users detail) or `support_lookup` (the Support ID
 // lookup's email join, D399).
 //
 // Partners never reach any of this: no partner Worker binds the issuer, and no ConsoleRpc, `/v1` or SDK field carries a
@@ -61,6 +62,17 @@ export const DIRECTORY_CURSOR_RE = /^[01]:\d{1,16}:(email|google):\S{1,255}$/u;
 
 export const staffCall = z.object({ requestId, accessJwt });
 
+/**
+ * Whether a search names one identity, and so needs a support reference as `get` does (D410): a `sub` filter (at most
+ * one identity per provider: the address of a known sub, `get` without its ticket otherwise) or a full address (an
+ * exact match: the subs and history of a known address). A part of an address, a provider, an app or "unverified only"
+ * browse and stay ticketless (D392), bounded by the row budget and audited with the term's keyed hash.
+ */
+export const searchNamesIdentity = (s: { sub?: string | undefined; q?: string | undefined }): boolean => s.sub !== undefined || (s.q !== undefined && isFullAddress(s.q));
+
+/** The refusal's words, the same at the admin BFF and the issuer. */
+export const SEARCH_TICKET_REQUIRED = 'A support reference (ticket) is required to search by sub or by a full address';
+
 export const directorySearchInput = staffCall
   .extend({
     ticket: ticket.optional(),
@@ -72,7 +84,8 @@ export const directorySearchInput = staffCall
     cursor: z.string().regex(DIRECTORY_CURSOR_RE).optional(),
     limit: z.number().int().min(1).max(DIRECTORY_PAGE_MAX).optional(),
   })
-  .strict();
+  .strict()
+  .refine((v) => v.ticket !== undefined || !searchNamesIdentity(v), { message: SEARCH_TICKET_REQUIRED, path: ['ticket'] });
 
 /**
  * Why one identity is opened, which names its audit row: `user_view` (the Users detail, the default) or

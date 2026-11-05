@@ -3,10 +3,15 @@
 //
 //   POST /api/users/search  the email issuer's directory (`ISSUER` → DirectoryRpc.search): address (a full address
 //                           exactly, else a ≥ 3-character substring), provider, app, sub, unverified only; keyset pages.
-//                           A support reference (`ticket`) is optional here.
+//                           A support reference (`ticket`) is required when the search names one identity (a sub or a
+//                           full address: console-core `searchNamesIdentity`, refused here before any call and again by
+//                           the issuer; D410), optional when it browses.
 //   POST /api/users/find    the wallet directory (`API` → AdminRpc.findUsers): a wallet address, User ID (`u1_…`),
 //                           internal id (`hu_…`) or Support ID (`HANA-XXXX-XXXX`); identities with their subs, wallets
-//                           and ids, no address (the Support ID lookup with activity is C15).
+//                           and ids, no address (the Support ID lookup with activity is C15). Every query names one user,
+//                           so the ticket is required and the console's audit row (`users.find`, org-less: the id or
+//                           wallet address as its target, the query's kind and the ticket; a sub is refused, so never
+//                           one) is written first: no row, no read (D410, as D396).
 //   POST /api/users/get     one identity, the ticket required: its directory row and apps (DirectoryRpc.get, audited
 //                           by the issuer), the app names (AdminRpc.appNames), the wallet directory's users holding it
 //                           (AdminRpc.findUsers by provider and sub: User ID, Support ID, internal id, wallets; D310,
@@ -19,7 +24,19 @@
 // calls come out of one D380 budget (40 calls, at most 30 RPCs), so the page never passes the plan's subrequest limit:
 // what doesn't fit is marked "not read".
 import { ACCESS_JWT_HEADER } from '@hana-id/oidc';
-import { type AppNameView, DIRECTORY_PAGE_MAX, type DirectoryFail, type DirectoryUserApp, type DirectoryUserRow, type StaffUser, UNVERIFIED_CLAIM_WARNING } from '@hana-id/console-core';
+import {
+  type AppNameView,
+  DIRECTORY_PAGE_MAX,
+  type DirectoryFail,
+  type DirectoryUserApp,
+  type DirectoryUserRow,
+  SEARCH_TICKET_REQUIRED,
+  type StaffUser,
+  UNVERIFIED_CLAIM_WARNING,
+  formatSupportId,
+  parseUserSearch,
+  searchNamesIdentity,
+} from '@hana-id/console-core';
 import { directoryBudget } from './email/ledger-messages.ts';
 import { outbound } from './email/sender.ts';
 import type { Env } from './env.ts';
@@ -99,9 +116,14 @@ const unavailable = (c: RouteCtx, route: string, err?: unknown): Response => {
 /** POST /api/users/search */
 export async function usersSearchRoute(c: RouteCtx): Promise<Response> {
   const route = 'POST /api/users/search';
-  if (!c.env.ISSUER) return unavailable(c, route);
   const limit = typeof c.body.limit === 'number' ? Math.min(c.body.limit, DIRECTORY_PAGE_MAX) : c.body.limit;
-  const input = { ...staffCall(c), ...pick(c.body, 'ticket', 'q', 'provider', 'appId', 'sub', 'cursor'), ...(c.body.unverifiedOnly === true ? { unverifiedOnly: true } : {}), ...(limit !== undefined ? { limit } : {}) };
+  const filters = pick(c.body, 'ticket', 'q', 'provider', 'appId', 'sub', 'cursor');
+  const input = { ...staffCall(c), ...filters, ...(c.body.unverifiedOnly === true ? { unverifiedOnly: true } : {}), ...(limit !== undefined ? { limit } : {}) };
+  // A search that names one identity is a targeted read, ticketed as `get` (D410): refused before any call. (A sub or
+  // term of the wrong type is named here too; the issuer refuses its form.)
+  const named = searchNamesIdentity({ sub: filters.sub === undefined ? undefined : String(filters.sub), q: typeof filters.q === 'string' ? filters.q : undefined });
+  if (named && (typeof filters.ticket !== 'string' || !TICKET_RE.test(filters.ticket))) return errorResponse('bad_request', SEARCH_TICKET_REQUIRED);
+  if (!c.env.ISSUER) return unavailable(c, route);
   let r;
   try {
     r = await c.env.ISSUER.search(input);
@@ -113,12 +135,30 @@ export async function usersSearchRoute(c: RouteCtx): Promise<Response> {
   return json(200, { users: r.users, ...(r.next ? { next: r.next } : {}), unverifiedWarning: UNVERIFIED_CLAIM_WARNING });
 }
 
-/** POST /api/users/find: the wallet directory by wallet address, User ID, internal id or Support ID. */
+/** POST /api/users/find: the wallet directory by wallet address, User ID, internal id or Support ID; ticketed, audited first. */
 export async function usersFindRoute(c: RouteCtx): Promise<Response> {
   const route = 'POST /api/users/find';
+  const { query, ticket } = c.body;
+  // A sub is the directory search's (`sub` filter, ticketed there); here only the forms that name one wallet-directory user.
+  const s = typeof query === 'string' ? parseUserSearch(query, { staff: true }) : null;
+  if (!s || s.kind === 'sub') return errorResponse('bad_request', 'query: a wallet address (G… or 0x…), User ID (u1_…), internal id (hu_…) or Support ID (HANA-XXXX-XXXX); search a sub in the directory');
+  if (typeof ticket !== 'string' || !TICKET_RE.test(ticket)) return errorResponse('bad_request', 'A support reference (ticket: 1–64 letters, digits or ._#:-) is required to find a user');
+  const target = s.kind === 'address' ? s.address : s.kind === 'userId' ? s.userId : s.kind === 'internalId' ? s.internalId : formatSupportId(s.code);
+  const ctx = staffCtx(c.staff);
+  // The audit row first, as the Support ID lookup's (D396): no row, no read (D410).
+  try {
+    const a = await c.env.CONSOLE.recordStaffAction({ ...ctx, action: 'users.find', target, details: { by: s.kind === 'address' ? s.chain : s.kind, ticket } });
+    if (!a.ok) {
+      log({ event: 'audit_failed', route, requestId: c.staff.requestId, code: a.code }, 'error');
+      return errorResponse(a.code === 'bad_request' ? 'bad_request' : 'internal', a.code === 'bad_request' ? a.error : 'The find could not be recorded, so nothing was read');
+    }
+  } catch (err) {
+    log({ event: 'audit_failed', route, requestId: c.staff.requestId, code: 'upstream_unavailable', error: errorName(err) }, 'error');
+    return errorResponse('upstream_unavailable', 'The find could not be recorded, so nothing was read');
+  }
   let r;
   try {
-    r = await c.env.API.findUsers({ ...staffCtx(c.staff), query: c.body.query });
+    r = await c.env.API.findUsers({ ...ctx, query: target });
   } catch (err) {
     log({ event: 'bff', route, requestId: c.staff.requestId, outcome: 'error', code: 'upstream_unavailable', error: errorName(err) }, 'error');
     return errorResponse('upstream_unavailable');

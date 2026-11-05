@@ -13,7 +13,9 @@
 //       `ledger: {available}`) plus `emails`: the issuer's directory row of each identity the matches hold.
 //
 // Order (D396, D399): (1) the audit row (`StaffRpc.recordStaffAction`, `support.lookup`, org-less: the staff email, the
-// query as given, the ticket, the request-ID count and the window), and nothing is read when it can't be written; (2)
+// query as given, the ticket, the request-ID count, the request IDs themselves (`requestIdList`, ≤ 20, each checked by
+// supportLookupBody's request-ID rule and again by StaffRpc; D410) and the window), and nothing is read when it can't
+// be written; (2)
 // the hot-DB part (`AdminRpc.supportLookup`); (3) together, the ledger part as `usage_admin` over USAGE_DB and the email
 // join: for each distinct identity of the matches (at most SUPPORT_EMAILS_MAX), `DirectoryRpc.get` with the request's
 // Access JWT, the same ticket and `purpose: 'support_lookup'`, so the issuer's own audit row says why the address was
@@ -150,7 +152,7 @@ export async function supportLookupRoute(c: RouteCtx): Promise<Response> {
 
   // 1. The audit row first: no row, no data.
   try {
-    const a = await c.env.CONSOLE.recordStaffAction({ ...ctx, action: 'support.lookup', target, details: { by: query.kind, ticket: body.ticket, requestIds: requestIds.length, days } });
+    const a = await c.env.CONSOLE.recordStaffAction({ ...ctx, action: 'support.lookup', target, details: { by: query.kind, ticket: body.ticket, requestIds: requestIds.length, ...(requestIds.length ? { requestIdList: requestIds } : {}), days } });
     if (!a.ok) {
       log({ event: 'audit_failed', route: ROUTE, requestId: c.staff.requestId, code: a.code }, 'error');
       return errorResponse(a.code === 'bad_request' ? 'bad_request' : 'internal', a.code === 'bad_request' ? a.error : 'The lookup could not be recorded, so nothing was read');

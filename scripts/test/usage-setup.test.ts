@@ -1,7 +1,8 @@
 // usage-setup roles / hyperdrive / user-id-key against a temp .secrets root, PGlite as the Neon owner (D140), a fake
 // Neon API (fetch) and a fake wrangler: the --yes gate, file modes, the API key file's checks, passwords Neon generates
-// written to the role files (replaced on a re-run), the busy-retry and operation polling, and that no password, URL
-// or key ever reaches the output or an error (D403).
+// written to the role files (replaced on a re-run), the busy-retry and operation polling, a role whose reset didn't
+// happen set NOLOGIN again, the Hyperdrive configs created through a fake Cloudflare API with the password only in the
+// HTTPS body (D412), and that no password, URL or key ever reaches the output, an argument or an error (D403).
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,7 +12,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { CliError } from '../lib/cli.ts';
 import { NEON_API, NEON_API_KEY_FILE } from '../lib/neon-api.ts';
 import { applyMigrations, readMigrations, type SqlConn } from '../lib/usage-migrate.ts';
-import { ROLE_FILES, USER_ID_KEY_FILE, type UsageSetupDeps, type WranglerResult, hyperdriveNames, readRoleUrl, rolePasswordProblem, roleUrl, usageSetup } from '../lib/usage-setup.ts';
+import { CLOUDFLARE_API } from '../lib/cloudflare-api.ts';
+import { CLOUDFLARE_HYPERDRIVE_TOKEN_FILE, ROLE_FILES, USER_ID_KEY_FILE, type UsageSetupDeps, type WranglerResult, hyperdriveBody, hyperdriveNames, readRoleUrl, rolePasswordProblem, roleUrl, usageSetup } from '../lib/usage-setup.ts';
 import { DRY_RUN_LINE } from '../lib/vault-kek.ts';
 import { PGLITE, PGLITE_HOOK_MS } from './pglite.ts';
 
@@ -373,6 +375,40 @@ describe('usage-setup roles', PGLITE, () => {
     expectClean(String(second));
   });
 
+  it('a failed reset after the throwaway’s COMMIT sets the roles not reset NOLOGIN again; the reset one keeps LOGIN (D412)', async () => {
+    writeKey();
+    neonOverride = (method, path) => (method === 'POST' && path.includes('usage_admin') ? json(500, { code: 'X', message: 'nope' }) : undefined);
+    const err = await run(['roles', '--yes']).catch((e: Error) => e);
+    expect(String(err)).toMatch(/\(usage_writer already reset, its file written\)\. Running roles --yes again resets both\. usage_admin set NOLOGIN again \(not reset: no login until roles succeeds\)\./u);
+    expect(await canLogin('usage_admin')).toBe(false);
+    expect(await canLogin('usage_writer')).toBe(true);
+    expectClean(String(err));
+    // The first reset failing: both roles lose LOGIN.
+    neonOverride = (method) => (method === 'POST' ? json(500, { code: 'X', message: 'nope' }) : undefined);
+    const both = await run(['roles', '--yes']).catch((e: Error) => e);
+    expect(String(both)).toMatch(/usage_writer and usage_admin set NOLOGIN again/u);
+    expect([await canLogin('usage_writer'), await canLogin('usage_admin')]).toEqual([false, false]);
+    // A later run that succeeds gives LOGIN back.
+    neonOverride = () => undefined;
+    await run(['roles', '--yes']);
+    expect([await canLogin('usage_writer'), await canLogin('usage_admin')]).toEqual([true, true]);
+  });
+
+  it('when NOLOGIN can’t be set either, the error says so and how, with the owner URL and every password removed', async () => {
+    writeKey();
+    let owners = 0;
+    const flaky = async (url: string) => {
+      if (url === OWNER && ++owners > 1) throw new Error(`connection to ${OWNER} refused (password owner-pw-not-real)`);
+      return connect(url);
+    };
+    neonOverride = (method) => (method === 'POST' ? json(500, { code: 'X', message: 'nope' }) : undefined);
+    const err = await run(['roles', '--yes'], { connect: flaky }).catch((e: Error) => e);
+    expect(String(err)).toMatch(/could not set usage_writer and usage_admin NOLOGIN \(connection to <url> refused/u);
+    expect(String(err)).toMatch(/run ALTER ROLE usage_writer, usage_admin NOLOGIN as the owner/u);
+    expectClean(String(err));
+    expect(await canLogin('usage_writer')).toBe(true);
+  });
+
   it('a role that can’t log in with its file’s password fails the run, the URL and password removed', async () => {
     writeKey();
     const wrong = async (url: string) => {
@@ -405,51 +441,130 @@ describe('rolePasswordProblem / readRoleUrl', () => {
 describe('usage-setup hyperdrive', PGLITE, () => {
   const ID_W = '0123456789abcdef0123456789abcdef';
   const ID_A = 'fedcba9876543210fedcba9876543210';
+  const ACCOUNT = '0123456789abcdef0123456789abcdef'.split('').reverse().join('');
+  const CF_TOKEN = 'cf-hyperdrive-token-not-real-0123456789abcdef';
+  let cfCalls: { method: string; path: string; auth: string | null; body: Record<string, any> | undefined; init: RequestInit }[];
+  let cfOverride: (method: string, path: string, body: Record<string, any> | undefined) => Response | undefined;
+  const envelope = (result: unknown, status = 200) => json(status, { success: status < 300, result, errors: [], messages: [] });
 
-  it('creates both configs with caching disabled from the role files and prints only names and ids', async () => {
+  /** Cloudflare's API as hyperdrive uses it: the token's accounts, and creating a config (the password write-only). */
+  async function fakeCloudflare(url: string, init: RequestInit): Promise<Response> {
+    expect(url.startsWith(CLOUDFLARE_API)).toBe(true);
+    expect(init.redirect).toBe('error');
+    const path = url.slice(CLOUDFLARE_API.length);
+    const method = init.method ?? 'GET';
+    const body = typeof init.body === 'string' ? (JSON.parse(init.body) as Record<string, any>) : undefined;
+    cfCalls.push({ method, path, auth: new Headers(init.headers).get('authorization'), body, init });
+    const over = cfOverride(method, path, body);
+    if (over) return over;
+    if (method === 'GET' && path.startsWith('/accounts?')) return envelope([{ id: ACCOUNT, name: 'Hana testnet' }]);
+    if (method === 'POST' && path === `/accounts/${ACCOUNT}/hyperdrive/configs`) {
+      const { password: _pw, ...origin } = body!.origin;
+      return envelope({ id: body!.name === hyperdriveNames(m).usage_writer ? ID_W : ID_A, name: body!.name, origin, caching: body!.caching });
+    }
+    return json(404, { success: false, errors: [{ code: 7003, message: `no route ${method} ${path}` }] });
+  }
+  const writeCfToken = (value = CF_TOKEN, fileMode = 0o600) => {
+    writeFileSync(join(dir, CLOUDFLARE_HYPERDRIVE_TOKEN_FILE), `${value}\n`, { mode: fileMode });
+    chmodSync(join(dir, CLOUDFLARE_HYPERDRIVE_TOKEN_FILE), fileMode);
+  };
+  const cfDeps = { fetch: fakeCloudflare, env: {} };
+
+  beforeEach(() => {
+    cfCalls = [];
+    cfOverride = () => undefined;
+  });
+
+  it('creates both configs with caching disabled through Cloudflare’s API, the password only in the HTTPS body; no wrangler, no argument; prints names and ids', async () => {
     writeKey();
     await run(['roles', '--yes']);
     out = [];
-    await run(['hyperdrive']);
+    calls = [];
+    // Without the token file: refused, naming the file and the one permission.
+    await expect(run(['hyperdrive'], cfDeps)).rejects.toThrow(/cloudflare-hyperdrive-token is missing: create an account API token with only "Account › Hyperdrive › Edit"/u);
+    writeCfToken();
+    await run(['hyperdrive'], cfDeps);
     expect(out.at(-1)).toBe(DRY_RUN_LINE);
+    expect(printed()).toMatch(/in account \(the token's only account\) with \.secrets\/usage-test\/cloudflare-hyperdrive-token; each password goes only in the HTTPS body/u);
+    expect(cfCalls).toEqual([]);
+    await run(['hyperdrive', '--yes'], cfDeps);
     expect(calls).toEqual([]);
-    // Another 32-hex value comes first (an account id in wrangler's banner): only the "Created" line's id counts.
-    wranglerReply = (args) => ({
-      status: 0,
-      stdout: `account aaaaaaaabbbbbbbbccccccccdddddddd\n🚧 Creating '${args[2]}'\n✅ Created new Hyperdrive PostgreSQL config: ${args[2] === hyperdriveNames(m).usage_writer ? ID_W : ID_A}\n{"origin": {"host": "${HOST}", "user": "usage_writer"}}`,
-      stderr: '',
-    });
-    await run(['hyperdrive', '--yes']);
-    expect(calls.map((c) => [c.args.slice(0, 3), c.args.slice(4)])).toEqual([
-      [['hyperdrive', 'create', 'hana-id-usage-writer-usage-test'], ['--caching-disabled']],
-      [['hyperdrive', 'create', 'hana-id-usage-admin-usage-test'], ['--caching-disabled']],
+    expect(cfCalls.map((c) => [c.method, c.path])).toEqual([
+      ['GET', '/accounts?page=1&per_page=50'],
+      ['POST', `/accounts/${ACCOUNT}/hyperdrive/configs`],
+      ['POST', `/accounts/${ACCOUNT}/hyperdrive/configs`],
     ]);
-    expect(calls[0]!.args[3]).toBe(`--connection-string=${fileUrl('usage_writer').toString()}`);
+    for (const c of cfCalls) expect(c.auth).toBe(`Bearer ${CF_TOKEN}`);
+    expect(cfCalls[1]!.body).toEqual({ name: 'hana-id-usage-writer-usage-test', origin: { scheme: 'postgres', host: HOST, port: 5432, database: 'neondb', user: 'usage_writer', password: filePassword('usage_writer') }, caching: { disabled: true } });
+    expect(cfCalls[2]!.body).toMatchObject({ name: 'hana-id-usage-admin-usage-test', origin: { user: 'usage_admin', password: filePassword('usage_admin') }, caching: { disabled: true } });
+    // The password is in the body only: never the URL or a header.
+    for (const c of cfCalls) {
+      expect(c.path).not.toContain(filePassword('usage_writer'));
+      expect(JSON.stringify(c.init.headers)).not.toMatch(/npg_/u);
+    }
     expect(out).toEqual(expect.arrayContaining([`hana-id-usage-writer-usage-test (usage_writer): ${ID_W}`, `hana-id-usage-admin-usage-test (usage_admin): ${ID_A}`]));
     expect(printed()).not.toMatch(/neon\.tech|postgresql:/u);
     expectClean(printed() + stdout.join(''));
+    expect(printed() + stdout.join('')).not.toContain(CF_TOKEN);
   });
 
-  it('uses the manifest’s usage block names; refuses without the role files; a failure’s output has the URL removed', async () => {
-    expect(hyperdriveNames({ name: 'x', usage: { neonRegion: 'aws-ap-southeast-2', writerHyperdrive: 'w-x', adminHyperdrive: 'a-x' } })).toEqual({ usage_writer: 'w-x', usage_admin: 'a-x' });
-    await expect(run(['hyperdrive', '--yes'])).rejects.toThrow();
+  it('takes the account from --account-id or the manifest without listing; refuses a malformed one and a token reaching several', async () => {
     writeKey();
     await run(['roles', '--yes']);
+    writeCfToken();
+    await run(['hyperdrive', '--yes', '--account-id', ACCOUNT], cfDeps);
+    expect(cfCalls.map((c) => c.method)).toEqual(['POST', 'POST']);
+    cfCalls = [];
+    await run(['hyperdrive', '--yes'], { ...cfDeps, loadManifest: () => ({ ...m, cloudflare: { ...m.cloudflare, accountId: ACCOUNT } }) });
+    expect(cfCalls.map((c) => c.method)).toEqual(['POST', 'POST']);
+    await expect(run(['hyperdrive', '--yes', '--account-id', 'nope'], cfDeps)).rejects.toThrow(CliError);
+    await expect(run(['roles', '--account-id', ACCOUNT], cfDeps)).rejects.toThrow(/--account-id is for hyperdrive only/u);
+    cfOverride = (method) => (method === 'GET' ? envelope([{ id: ACCOUNT }, { id: ID_W }]) : undefined);
+    await expect(run(['hyperdrive', '--yes'], cfDeps)).rejects.toThrow(/The token reaches 2 accounts: pass --account-id/u);
+  });
+
+  it('a refusal gives Cloudflare’s code and message with the password, URL and token removed; a taken name says how to re-create; a lost answer isn’t sent again', async () => {
+    writeKey();
+    await run(['roles', '--yes']);
+    writeCfToken();
+    const pw = filePassword('usage_writer');
     const url = fileUrl('usage_writer').toString();
-    wranglerReply = () => ({ status: 1, stdout: '', stderr: `✘ could not connect to ${url}` });
-    const err = await run(['hyperdrive', '--yes']).catch((e: Error) => e);
-    expect(String(err)).toMatch(/failed \(exit 1\)/u);
-    expect(String(err)).not.toContain(filePassword('usage_writer'));
-    // A config of that name already there (made before a roles re-run): how to re-create it.
-    wranglerReply = () => ({ status: 1, stdout: '', stderr: '✘ A Hyperdrive config with the given name already exists [code: 2017]' });
-    await expect(run(['hyperdrive', '--yes'])).rejects.toThrow(/already exists: delete it .*wrangler hyperdrive delete <id>/u);
-    // A role file someone loosened is refused.
+    cfOverride = (method) => (method === 'POST' ? json(400, { success: false, errors: [{ code: 2008, message: `could not connect to ${url} with ${pw} (token ${CF_TOKEN})` }] }) : undefined);
+    const err = await run(['hyperdrive', '--yes', '--account-id', ACCOUNT], cfDeps).catch((e: Error) => e);
+    expect(String(err)).toMatch(/creating Hyperdrive config hana-id-usage-writer-usage-test answered HTTP 400 \(code 2008: could not connect to/u);
+    expectClean(String(err));
+    expect(String(err)).not.toContain(CF_TOKEN);
+    cfOverride = (method) => (method === 'POST' ? json(409, { success: false, errors: [{ code: 2017, message: 'A Hyperdrive config with the given name already exists' }] }) : undefined);
+    await expect(run(['hyperdrive', '--yes', '--account-id', ACCOUNT], cfDeps)).rejects.toThrow(/already exists: delete it .*wrangler hyperdrive delete <id>/u);
+    cfCalls = [];
+    cfOverride = (method) => {
+      if (method === 'POST') throw new TypeError('fetch failed');
+      return undefined;
+    };
+    await expect(run(['hyperdrive', '--yes', '--account-id', ACCOUNT], cfDeps)).rejects.toThrow(/got no answer \(TypeError\); Cloudflare may or may not have applied it/u);
+    expect(cfCalls.filter((c) => c.method === 'POST')).toHaveLength(1);
+    // Success without a config id: refused, never a guessed id.
+    cfOverride = (method) => (method === 'POST' ? envelope({ name: 'x' }) : undefined);
+    await expect(run(['hyperdrive', '--yes', '--account-id', ACCOUNT], cfDeps)).rejects.toThrow(/answered no config id/u);
+  });
+
+  it('refuses without the role files, a loosened role or token file', async () => {
+    await expect(run(['hyperdrive', '--yes'], cfDeps)).rejects.toThrow();
+    writeKey();
+    await run(['roles', '--yes']);
+    writeCfToken(CF_TOKEN, 0o644);
+    await expect(run(['hyperdrive', '--yes'], cfDeps)).rejects.toThrow(/0600/u);
+    writeCfToken();
     chmodSync(join(dir, ROLE_FILES.usage_admin), 0o644);
-    await expect(run(['hyperdrive', '--yes'])).rejects.toThrow(/0600/u);
-    chmodSync(join(dir, ROLE_FILES.usage_admin), 0o600);
-    // Success without the "Created … config: <id>" line (a changed wrangler): refused, never a guessed id.
-    wranglerReply = () => ({ status: 0, stdout: 'done 0123456789abcdef0123456789abcdef', stderr: '' });
-    await expect(run(['hyperdrive', '--yes'])).rejects.toThrow(/printed no config id/u);
+    await expect(run(['hyperdrive', '--yes'], cfDeps)).rejects.toThrow(/0600/u);
+    expect(cfCalls).toEqual([]);
+  });
+
+  it('the body: the URL’s host, port, database and user, the password decoded; the manifest’s usage block names', () => {
+    expect(hyperdriveNames({ name: 'x', usage: { neonRegion: 'aws-ap-southeast-2', writerHyperdrive: 'w-x', adminHyperdrive: 'a-x' } })).toEqual({ usage_writer: 'w-x', usage_admin: 'a-x' });
+    const url = roleUrl(`postgresql://o:p@${HOST}:6543/ledger?sslmode=require`, 'usage_admin', 'npg_a/b@c:d%e#f');
+    expect(hyperdriveBody('n', url)).toEqual({ name: 'n', origin: { scheme: 'postgres', host: HOST, port: 6543, database: 'ledger', user: 'usage_admin', password: 'npg_a/b@c:d%e#f' }, caching: { disabled: true } });
+    expect(() => hyperdriveBody('n', `postgresql://u:p@${HOST}/`)).toThrow(/no database/u);
   });
 });
 

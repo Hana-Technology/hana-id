@@ -3,7 +3,8 @@
 // admin Worker's API answered at `fetch` (the routes themselves: test/support.test.ts, test/users.test.ts). What is
 // checked: the ticket asked before any read, the body the screen sends, every part of SupportLookupView rendered
 // (ledger unavailable said plainly, errors of request IDs, collisions with `truncated`), data put in as text only, and
-// nothing in the URL.
+// nothing in the URL. Also the Users screen itself (D410): the ticket for a search that names one user, and an opened
+// user kept in memory at a fixed path (back and forward between them, nobody after a reload).
 import { readFileSync } from 'node:fs';
 import { Window } from 'happy-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -134,9 +135,17 @@ describe('the Support ID lookup screen', () => {
     // Data is text, never markup: the address shows as typed, and no element came from it.
     expect(t).toContain(SCRIPT_EMAIL);
     expect(s.main().querySelector('img')).toBeNull();
-    // The sub links to the Users detail; nothing went into the URL.
-    expect([...s.main().querySelectorAll('a[data-link]')].map((a) => a.getAttribute('href'))).toContain('/users/google/1001');
+    // The sub links to the Users detail by the fixed path only (D410); nothing went into the URL.
+    const subLink = [...s.main().querySelectorAll('a')].find((a) => a.textContent === '1001')!;
+    expect(subLink.getAttribute('href')).toBe('/users/open');
+    for (const a of s.main().querySelectorAll('a')) expect(a.getAttribute('href') ?? '').not.toContain('1001');
     expect([s.w.location.pathname, s.w.location.search, s.w.location.hash]).toEqual(['/support', '', '']);
+    // Clicking it opens that identity from memory: the path stays fixed, the history entry holds a number only.
+    subLink.click();
+    await vi.waitFor(() => expect(s.text()).toContain('Google 1001'));
+    expect([s.w.location.pathname, s.w.location.search, s.w.location.hash]).toEqual(['/users/open', '', '']);
+    expect(JSON.stringify(s.w.history.state)).toMatch(/^\{"user":\d+\}$/u);
+    expect(s.api().map((c) => c.path)).toEqual(['/api/support/lookup']);
   });
 
   it('with the ledger: each match’s events, the request IDs’ events with their errors, the IDs with none; a collision lists every match and the truncated flag', async () => {
@@ -190,13 +199,14 @@ describe('the Support ID lookup screen', () => {
     expect(s.field('query').value).toBe('HANA-0000-0000');
   });
 
-  it('"Wallet directory only" asks /api/users/find, with no ticket and no lookup', async () => {
+  it('"Wallet directory only" asks /api/users/find with the ticket (audited there, D410), and no lookup', async () => {
     const s = boot('/support', () => ({ body: { users: [staffUser(3)] } }));
     await vi.waitFor(() => expect(s.form()).toBeTruthy());
     s.field('query').value = 'HANA-2750-G5HM';
+    s.field('ticket').value = 'ZD-3';
     s.button('Wallet directory only').click();
     await vi.waitFor(() => expect(s.text()).toContain('u1_AAAAAAAAAAAAAAAAAAAA3A'));
-    expect(s.api().map((c) => [c.path, c.body])).toEqual([['/api/users/find', { query: 'HANA-2750-G5HM' }]]);
+    expect(s.api().map((c) => [c.path, c.body])).toEqual([['/api/users/find', { query: 'HANA-2750-G5HM', ticket: 'ZD-3' }]]);
   });
 });
 
@@ -225,18 +235,19 @@ describe('the Users screen’s ways into the lookup', () => {
     expect(t.api()).toEqual([]);
   });
 
-  it('a User ID still goes to /api/users/find; its block links to the lookup by User ID with the ticket carried over, run only on "Look up"', async () => {
+  it('a User ID still goes to /api/users/find, with the ticket (D410); its block links to the lookup by User ID with the ticket carried over, run only on "Look up"', async () => {
     const s = boot('/users', usersAnswer);
     await vi.waitFor(() => expect(s.field('q')).toBeTruthy());
     s.field('q').value = 'u1_AAAAAAAAAAAAAAAAAAAA4A';
+    s.field('ticket').value = 'ZD-78';
     s.submit();
     await vi.waitFor(() => expect(s.text()).toContain('Wallet directory'));
-    expect(s.api().map((c) => c.path)).toEqual(['/api/users/find']);
+    expect(s.api().map((c) => [c.path, c.body])).toEqual([['/api/users/find', { query: 'u1_AAAAAAAAAAAAAAAAAAAA4A', ticket: 'ZD-78' }]]);
     s.button('Support ID lookup').click();
     await vi.waitFor(() => expect(s.w.location.pathname).toBe('/support'));
     await vi.waitFor(() => expect(s.field('query').value).toBe('u1_AAAAAAAAAAAAAAAAAAAA4A'));
+    expect(s.field('ticket').value).toBe('ZD-78');
     expect(s.api().map((c) => c.path)).toEqual(['/api/users/find']);
-    s.field('ticket').value = 'ZD-78';
     s.submit();
     await vi.waitFor(() => expect(s.api().map((c) => c.path)).toEqual(['/api/users/find', '/api/support/lookup']));
     expect(s.api()[1]!.body).toEqual({ query: 'u1_AAAAAAAAAAAAAAAAAAAA4A', ticket: 'ZD-78' });
@@ -244,8 +255,16 @@ describe('the Users screen’s ways into the lookup', () => {
 
   it('the detail page (opened with a ticket) offers the lookup for its wallet-directory user, the ticket filled in', async () => {
     const detail = { provider: 'google', sub: '1004', user: null, apps: [], walletUsers: [staffUser(4)], chain: [] };
-    const s = boot('/users/google/1004', (c) => (c.path === '/api/users/get' ? { body: detail } : usersAnswer(c)));
+    const s = boot('/users', (c) => (c.path === '/api/users/get' ? { body: detail } : usersAnswer(c)));
+    await vi.waitFor(() => expect(s.field('q')).toBeTruthy());
+    s.field('q').value = 'u1_AAAAAAAAAAAAAAAAAAAA4A';
+    s.field('ticket').value = 'ZD-89';
+    s.submit();
+    await vi.waitFor(() => expect(s.text()).toContain('Wallet directory'));
+    [...s.main().querySelectorAll('a')].find((a) => a.textContent === '1004')!.click();
+    await vi.waitFor(() => expect(s.text()).toContain('Google 1004'));
     await vi.waitFor(() => expect(s.field('ticket')).toBeTruthy());
+    expect(s.field('ticket').value).toBe('ZD-89');
     s.field('ticket').value = 'ZD-90';
     s.submit();
     await vi.waitFor(() => expect(s.text()).toContain('Wallets and ids'));
@@ -253,6 +272,83 @@ describe('the Users screen’s ways into the lookup', () => {
     await vi.waitFor(() => expect(s.w.location.pathname).toBe('/support'));
     await vi.waitFor(() => expect(s.field('ticket').value).toBe('ZD-90'));
     expect(s.field('query').value).toBe('u1_AAAAAAAAAAAAAAAAAAAA4A');
-    expect(s.api().map((c) => c.path)).toEqual(['/api/users/get']);
+    expect(s.api().map((c) => c.path)).toEqual(['/api/users/find', '/api/users/get']);
+  });
+});
+
+describe('the Users screen: the ticket for a search naming one user, nobody in the URL (D410)', () => {
+  const row = (provider: string, sub: string, email: string) => ({ provider, sub, email, emailVerified: true, hosted: false, unverifiedClaim: false, firstSeenMs: T - DAY, lastSeenMs: T, appCount: 1 });
+  const rows = [row('google', '2001', 'ann@acme.example'), row('email', 'e1.bob', 'bob@acme.example')];
+  const detailOf = (c: Call) => ({ provider: c.body!.provider, sub: c.body!.sub, user: rows.find((r) => r.sub === c.body!.sub) ?? null, apps: [], walletUsers: [staffUser(5, [identity(String(c.body!.provider), String(c.body!.sub)), identity('email', 'e1.bob', 'member')])], chain: [] });
+  const answer = (c: Call): Answer => (c.path === '/api/users/get' ? { body: detailOf(c) } : { body: { users: rows, unverifiedWarning: 'x' } });
+
+  it('a full address, a sub, an id or a wallet without a support reference reads nothing and says why; browsing needs none', async () => {
+    const s = boot('/users', answer);
+    await vi.waitFor(() => expect(s.field('q')).toBeTruthy());
+    for (const [q, sub] of [['ann@acme.example', ''], ['', '2001'], ['u1_AAAAAAAAAAAAAAAAAAAA4A', ''], [`G${'A'.repeat(55)}`, ''], ['hu_00000000000000000000000001', '']]) {
+      s.field('q').value = q!;
+      s.field('sub').value = sub!;
+      s.submit();
+      await vi.waitFor(() => expect(s.text()).toContain('A support reference is required to search by User ID, internal id, wallet, sub or a full address'));
+    }
+    expect(s.api()).toEqual([]);
+    // A part of an address browses without one; the same address in full goes with the reference.
+    s.field('q').value = 'acme';
+    s.field('sub').value = '';
+    s.submit();
+    await vi.waitFor(() => expect(s.text()).toContain('ann@acme.example'));
+    s.field('q').value = 'ann@acme.example';
+    s.field('ticket').value = 'ZD-11';
+    s.submit();
+    await vi.waitFor(() => expect(s.api()).toHaveLength(2));
+    expect(s.api().map((c) => c.body)).toEqual([{ limit: 50, q: 'acme' }, { limit: 50, q: 'ann@acme.example', ticket: 'ZD-11' }]);
+  });
+
+  it('opens a user at the fixed path from memory; back and forward move between the users opened; the ticket asked first', async () => {
+    const s = boot('/users', answer);
+    await vi.waitFor(() => expect(s.field('q')).toBeTruthy());
+    s.field('q').value = 'acme';
+    s.submit();
+    await vi.waitFor(() => expect(s.text()).toContain('ann@acme.example'));
+    const opens = [...s.main().querySelectorAll('a')].filter((a) => a.textContent === 'Open');
+    expect(opens.map((a) => a.getAttribute('href'))).toEqual(['/users/open', '/users/open']);
+    opens[0]!.click();
+    await vi.waitFor(() => expect(s.text()).toContain('Google 2001'));
+    expect([s.w.location.pathname, s.w.location.search, s.w.location.hash]).toEqual(['/users/open', '', '']);
+    expect(JSON.stringify(s.w.history.state)).not.toMatch(/2001|google|acme/u);
+    // Nothing is read until the support reference is given.
+    expect(s.api().map((c) => c.path)).toEqual(['/api/users/search']);
+    s.field('ticket').value = 'ZD-12';
+    s.submit();
+    await vi.waitFor(() => expect(s.text()).toContain('Wallets and ids'));
+    expect(s.api()[1]).toMatchObject({ path: '/api/users/get', body: { provider: 'google', sub: '2001', ticket: 'ZD-12' } });
+    // A member's link opens the second user, still at the fixed path.
+    [...s.main().querySelectorAll('a')].find((a) => a.textContent === 'e1.bob')!.click();
+    await vi.waitFor(() => expect(s.text()).toContain('Email e1.bob'));
+    expect(s.w.location.pathname).toBe('/users/open');
+    expect(s.field('ticket').value).toBe('ZD-12');
+    // Back: the first user again (its page, unread until opened again); forward: the second.
+    s.w.history.back();
+    await vi.waitFor(() => expect(s.text()).toContain('Google 2001'));
+    s.w.history.forward();
+    await vi.waitFor(() => expect(s.text()).toContain('Email e1.bob'));
+    // Back twice: the search.
+    s.w.history.back();
+    await vi.waitFor(() => expect(s.text()).toContain('Google 2001'));
+    s.w.history.back();
+    await vi.waitFor(() => expect(s.w.location.pathname).toBe('/users'));
+    await vi.waitFor(() => expect(s.field('q')).toBeTruthy());
+    expect(s.api().map((c) => c.path)).toEqual(['/api/users/search', '/api/users/get']);
+  });
+
+  it('a reload of the fixed path opens nobody; the old /users/<provider>/<sub> path is rewritten to the search, nothing read', async () => {
+    const s = boot('/users/open', answer);
+    await vi.waitFor(() => expect(s.text()).toContain('No user open'));
+    expect(s.api()).toEqual([]);
+    const t = boot('/users/google/1004', answer);
+    await vi.waitFor(() => expect(t.field('q')).toBeTruthy());
+    expect([t.w.location.pathname, t.w.location.search]).toEqual(['/users', '']);
+    expect(t.text()).not.toContain('1004');
+    expect(t.api()).toEqual([]);
   });
 });

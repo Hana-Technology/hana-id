@@ -154,11 +154,11 @@ describe('search', () => {
       { provider: 'google', sub: '1002', email: 'a.lice@gmail.com', verified: false, seen: now },
       { provider: 'email', email: 'bob@example.com' },
     );
-    const r = await rpc().search(await call({ q: '  A.Lice@GoogleMail.com ' }));
+    const r = await rpc().search(await call({ q: '  A.Lice@GoogleMail.com ', ticket: 'T-1' }));
     // Normalized, `a.lice@googlemail.com` is the email row's `alice@gmail.com`; as typed (lowercased) it isn't the
     // Google rows' `a.lice@gmail.com`: Google's own address is matched as Google gave it.
     expect(r.ok && r.users.map((u) => u.sub)).toEqual(['e1.alice']);
-    const g = await rpc().search(await call({ q: 'A.Lice@Gmail.com' }));
+    const g = await rpc().search(await call({ q: 'A.Lice@Gmail.com', ticket: 'T-1' }));
     expect(g.ok && g.users.map((u) => [u.sub, u.unverifiedClaim])).toEqual([
       ['e1.alice', false],
       ['1001', false],
@@ -190,13 +190,26 @@ describe('search', () => {
       return r.users.map((u) => u.sub).sort();
     };
     expect(await subs({ provider: 'google' })).toEqual(['2001', '2002']);
-    expect(await subs({ sub: '2001' })).toEqual(['2001']);
+    expect(await subs({ sub: '2001', ticket: 'T-1' })).toEqual(['2001']);
     expect(await subs({ appId: 'app_one' })).toEqual(['2001', 'e1.f1']);
     expect(await subs({ appId: 'app_two' })).toEqual(['2001']);
     expect(await subs({ unverifiedOnly: true })).toEqual(['2002']);
     expect(await subs({ q: 'x.example', provider: 'email' })).toEqual(['e1.f1']);
-    const r = await rpc().search(await call({ sub: '2001' }));
+    const r = await rpc().search(await call({ sub: '2001', ticket: 'T-1' }));
     expect(r.ok && r.users[0]!.appCount).toBe(2);
+  });
+
+  it('a search naming one identity (a sub, a full address) without a ticket is refused before the token or a row is read (D410)', async () => {
+    await seed({ provider: 'google', sub: '2101', email: 'g1@x.example' });
+    for (const extra of [{ sub: '2101' }, { sub: '2101', provider: 'google' }, { q: 'g1@x.example' }, { q: 'x.example', sub: '2101' }]) {
+      const r = await rpc().search(await call(extra));
+      expect(r, JSON.stringify(extra)).toEqual({ ok: false, code: 'bad_request', error: 'A support reference (ticket) is required to search by sub or by a full address' });
+    }
+    expect(await auditRows()).toEqual([]);
+    // Browsing stays ticketless; with the ticket the named search reads and records it.
+    expect(await rpc().search(await call({ q: 'x.example' }))).toMatchObject({ ok: true, users: [{ sub: '2101' }] });
+    expect(await rpc().search(await call({ sub: '2101', ticket: 'ZD-21' }))).toMatchObject({ ok: true, users: [{ sub: '2101', email: 'g1@x.example' }] });
+    expect((await auditRows()).map((a) => (a as { ticket: string | null }).ticket)).toEqual([null, 'ZD-21']);
   });
 
   it('pages newest first by last seen, without repeats or gaps, the cursor holding no address', async () => {
@@ -262,7 +275,7 @@ describe('search', () => {
     await env.DB.prepare("CREATE TRIGGER audit_down BEFORE INSERT ON email_admin_audit BEGIN SELECT RAISE(ABORT, 'audit down'); END").run();
     try {
       const staff = 'other-staff@hana.example';
-      const r = await rpc().search(await call({ q: 'atomic@example.com' }, await accessJwt({ email: staff })));
+      const r = await rpc().search(await call({ q: 'atomic@example.com', ticket: 'T-1' }, await accessJwt({ email: staff })));
       expect(r).toEqual({ ok: false, code: 'internal', error: 'The directory read or its audit row failed' });
       expect(await rpc().get(await call({ provider: 'email', sub: 'e1.none', ticket: 'T-1' }, await accessJwt({ email: staff })))).toMatchObject({ ok: false, code: 'internal' });
       // Nothing was counted against the staff member.
@@ -277,7 +290,7 @@ describe('search', () => {
   });
 
   it('refuses an address search when the issuer has no EMAIL_RL_KEY (the term could not be recorded)', async () => {
-    expect(await rpc({ EMAIL_RL_KEY: undefined }).search(await call({ q: 'x@example.com' }))).toMatchObject({ ok: false, code: 'internal' });
+    expect(await rpc({ EMAIL_RL_KEY: undefined }).search(await call({ q: 'x@example.com', ticket: 'T-1' }))).toMatchObject({ ok: false, code: 'internal' });
     expect(await auditRows()).toEqual([]);
   });
 });
@@ -381,7 +394,7 @@ describe('auditSince', () => {
   it('walks the issuer’s staff audit after an id or before one, by staff and action; no row of its own', async () => {
     await env.DB.prepare("INSERT INTO email_admin_audit (at_ms, staff, action, ticket, subject) VALUES (1, 'staff@hana.example', 'unlock', 'T-1', 'abcdefabcdef')").run();
     await seed({ email: 'w@example.com' });
-    await rpc().search(await call({ q: 'w@example.com' }));
+    await rpc().search(await call({ q: 'w@example.com', ticket: 'T-2' }));
     await rpc().search(await call({}, await accessJwt({ email: 'other-staff@hana.example' })));
     const after = await rpc().auditSince(await call({ id: 0, limit: 10 }));
     if (!after.ok) throw new Error(after.code);

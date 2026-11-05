@@ -30,7 +30,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { type Manifest, loadEnv, manifestPath } from '@hana-id/env';
-import { ACCOUNT_ID_RE, CLOUDFLARE_ACCESS_TOKEN_FILE, CloudflareApi, type CloudflareApiDeps, readCloudflareToken } from './cloudflare-api.ts';
+import { ACCOUNT_ID_RE, CLOUDFLARE_ACCESS_TOKEN_FILE, CloudflareApi, type CloudflareApiDeps, readCloudflareToken, resolveAccount } from './cloudflare-api.ts';
 import { CliError, parseCli } from './cli.ts';
 import { setAdminAccess } from './manifest-edit.ts';
 import { secretsDir } from './secrets.ts';
@@ -368,17 +368,6 @@ export function findApp(apps: unknown[], host: string, name: string, log: (l: st
   const [one] = matches;
   if (one && one.type !== 'self_hosted') throw new Error(`Access application ${one.id} on ${host} is of type ${String(one.type)}, not self_hosted: delete it in the dashboard, then run this again`);
   return one;
-}
-
-async function resolveAccount(api: CloudflareApi, given: string | undefined): Promise<string> {
-  if (given) {
-    if (!ACCOUNT_ID_RE.test(given)) throw new CliError('The Cloudflare account id is 32 lowercase hex characters');
-    return given;
-  }
-  const list = await api.list('/accounts', "listing the token's accounts", 'access to one account', 50);
-  const ids = list.map((a) => (a as { id?: unknown })?.id).filter((id): id is string => typeof id === 'string' && ACCOUNT_ID_RE.test(id));
-  if (ids.length === 1) return ids[0]!;
-  throw new Error(ids.length === 0 ? 'The token reaches no account: pass --account-id (or set CLOUDFLARE_ACCOUNT_ID)' : `The token reaches ${ids.length} accounts: pass --account-id (or set CLOUDFLARE_ACCOUNT_ID)`);
 }
 
 const policyBody = (p: DesiredPolicy) => ({ name: p.name, decision: p.decision, include: p.include, require: p.require, exclude: p.exclude, session_duration: p.session_duration });

@@ -4,7 +4,8 @@
 //   roles        give `usage_writer` and `usage_admin` LOGIN (SQL, as the owner over the direct URL from
 //                .secrets/<env>/neon.json), have Neon's API reset each role's password (Neon generates it; D403) and
 //                write each role's URL with it to .secrets/<env>/neon-usage-*.url, replacing the file
-//   hyperdrive   create the two Hyperdrive configs (caching disabled) from those URLs and print their ids (not secret)
+//   hyperdrive   create the two Hyperdrive configs (caching disabled) from those URLs through Cloudflare's API, the
+//                password only in the HTTPS body (D412), and print their ids (not secret)
 //   user-id-key  generate USER_ID_KEY (32 random bytes, base64) into .secrets/<env>/user-id-key and set it as the
 //                API Worker's secret through wrangler's stdin
 //
@@ -12,20 +13,25 @@
 // passwords again and replaces the files (a reset invalidates the old password, so a Hyperdrive config made from an
 // older file must be re-created), `user-id-key` never replaces the key file (a new key would make every user a new
 // user, D96) and sets the existing one again. Nothing prints a password, a URL, the Neon API key or the uid key. Neon
-// accepts only plain-text passwords (not the SCRAM verifiers D224 first sent), so Neon generates them: no password
-// travels in SQL, an argument or an environment variable, only in the HTTPS answer to the API call.
+// accepts only plain-text passwords (not the SCRAM verifiers D224 first sent), so Neon generates them: no role
+// password travels in SQL, an argument or an environment variable, only in the HTTPS answer to Neon's API call and, for
+// `hyperdrive`, in the HTTPS body of Cloudflare's (never `wrangler hyperdrive create --connection-string`, whose
+// argument any local process can read; D412, mainnet-readiness 4.18). The one SQL password is `roles`' throwaway
+// (random, never stored or printed, replaced by the reset within seconds); a role whose reset doesn't happen after
+// the throwaway's COMMIT is set NOLOGIN again, best effort (D412).
 import { spawnSync } from 'node:child_process';
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { type Manifest, loadEnv, repoRoot } from '@hana-id/env';
 import { CliError, parseCli } from './cli.ts';
+import { CloudflareApi, CloudflareApiError, readCloudflareToken, resolveAccount } from './cloudflare-api.ts';
 import { NEON_API_KEY_FILE, NeonApi, readNeonApiKey, scrub } from './neon-api.ts';
 import { FILE_MODE, assertPrivate, ensureSecretDir, secretsDir } from './secrets.ts';
 import { ownerUrlProblem, redact, type SqlConn } from './usage-migrate.ts';
 import { DRY_RUN_LINE, writeNewSecretFile } from './vault-kek.ts';
 
-export const USAGE_SETUP_USAGE = `Usage: usage-setup.ts <env> <roles | hyperdrive | user-id-key> [--yes]
+export const USAGE_SETUP_USAGE = `Usage: usage-setup.ts <env> <roles | hyperdrive | user-id-key> [--yes] [--account-id <id>]
   roles        LOGIN for usage_writer and usage_admin (SQL as the Neon owner, over DATABASE_URL_DIRECT from
                .secrets/<env>/neon.json), then resets each role's password through Neon's API (project_id and
                branch_id from neon.json, the key from .secrets/<env>/neon-api-key, 0600; Neon generates the
@@ -33,7 +39,9 @@ export const USAGE_SETUP_USAGE = `Usage: usage-setup.ts <env> <roles | hyperdriv
                checks each role logs in. A reset invalidates the old password: re-create any Hyperdrive config made
                from an older file (roles first, then hyperdrive).
   hyperdrive   creates the Hyperdrive configs hana-id-usage-writer-<env> and hana-id-usage-admin-<env> (or the
-               manifest's usage block names), caching disabled, from those files; prints their ids for
+               manifest's usage block names), caching disabled, from those files, through Cloudflare's API (the
+               token from .secrets/<env>/cloudflare-hyperdrive-token, 0600, "Hyperdrive Edit"; the account from
+               --account-id, the manifest's cloudflare.accountId or the token's only account); prints their ids for
                \`gen --usage-hyperdrive-id\` (the writer's) and the admin Worker (batch C8)
   user-id-key  generates USER_ID_KEY into .secrets/<env>/user-id-key (0600, never replaced) and sets it on the API
                Worker; make an offline backup of the file
@@ -45,15 +53,17 @@ export const ROLES = ['usage_writer', 'usage_admin'] as const;
 export type LedgerRole = (typeof ROLES)[number];
 export const ROLE_FILES: Record<LedgerRole, string> = { usage_writer: 'neon-usage-writer.url', usage_admin: 'neon-usage-admin.url' };
 export const USER_ID_KEY_FILE = 'user-id-key';
+/** The Cloudflare API token `hyperdrive` uses (one line, 0600): an account token with Hyperdrive Edit only (D412). */
+export const CLOUDFLARE_HYPERDRIVE_TOKEN_FILE = 'cloudflare-hyperdrive-token';
+/** The permission's name in the dashboard's token form (the API reference calls it "Hyperdrive Write"). */
+export const HYPERDRIVE_PERMISSION = 'Account › Hyperdrive › Edit';
+/** Cloudflare's error code for a config name already taken. */
+export const HYPERDRIVE_NAME_TAKEN = 2017;
 const USER_ID_KEY_RE = /^[A-Za-z0-9+/]{43}=$/u;
 /** Neon's project and branch ids (`quiet-sky-12345678`, `br-quiet-sky-a1b2c3d4`), as neon.json holds them. */
 const PROJECT_ID_RE = /^[a-z0-9][a-z0-9-]{0,62}$/u;
 const BRANCH_ID_RE = /^br-[a-z0-9-]{1,60}$/u;
-/**
- * The id in wrangler's success line (`✅ Created new Hyperdrive PostgreSQL config: <id>`), anchored to it: wrangler also
- * echoes the config (with other ids and hex), and only this line names the new config.
- */
-export const CREATED_ID_RE = /^\W*Created new Hyperdrive\b[^\n]*?\bconfig:\s*([0-9a-f]{32})\s*$/mu;
+const HYPERDRIVE_ID_RE = /^[0-9a-f]{32}$/u;
 
 export interface WranglerResult {
   status: number | null;
@@ -79,6 +89,8 @@ export interface UsageSetupDeps {
   wrangler(args: string[], input?: string): WranglerResult;
   randomBytes(n: number): Uint8Array;
   log(line: string): void;
+  /** CLOUDFLARE_ACCOUNT_ID and the like (default: process.env). */
+  env?: Record<string, string | undefined>;
   /** Directory holding .secrets/ (default: the repo root). */
   secretsRoot?: string;
   loadManifest?: (name: string) => Manifest;
@@ -153,6 +165,18 @@ function writeSecretText(file: string, value: string): void {
   renameSync(tmp, abs);
 }
 
+/**
+ * Cloudflare's create-config body (POST /accounts/{id}/hyperdrive/configs): the role URL's parts, the password a
+ * write-only field Cloudflare never returns, caching disabled. Hyperdrive connects to a Postgres origin over TLS.
+ */
+export function hyperdriveBody(name: string, url: string): { name: string; origin: { scheme: 'postgres'; host: string; port: number; database: string; user: string; password: string }; caching: { disabled: true } } {
+  const u = new URL(url);
+  const database = decodeURIComponent(u.pathname.replace(/^\//u, ''));
+  if (!database || database.includes('/')) throw new Error('the role URL names no database');
+  const port = u.port ? Number(u.port) : 5432;
+  return { name, origin: { scheme: 'postgres', host: u.hostname, port, database, user: decodeURIComponent(u.username), password: decodeURIComponent(u.password) }, caching: { disabled: true } };
+}
+
 /** The Hyperdrive config names: the manifest's `usage` block when it has one, else the spec's defaults. */
 export function hyperdriveNames(m: Pick<Manifest, 'name' | 'usage'>): Record<LedgerRole, string> {
   return {
@@ -163,12 +187,13 @@ export function hyperdriveNames(m: Pick<Manifest, 'name' | 'usage'>): Record<Led
 
 /** Runs `usage-setup <argv>`. */
 export async function usageSetup(argv: readonly string[], deps: UsageSetupDeps): Promise<void> {
-  const args = parseCli(argv, { booleans: ['yes', 'help'] });
+  const args = parseCli(argv, { booleans: ['yes', 'help'], strings: ['account-id'] });
   if (args.flag('help')) return void deps.log(USAGE_SETUP_USAGE);
   const [envName, command, ...rest] = args.positionals;
   if (!envName || !command) throw new CliError('Expected <env> <roles | hyperdrive | user-id-key>');
   if (rest.length) throw new CliError(`Unexpected argument ${rest.join(' ')}`);
   if (command !== 'roles' && command !== 'hyperdrive' && command !== 'user-id-key') throw new CliError(`Unknown command ${command}`);
+  if (args.str('account-id') !== undefined && command !== 'hyperdrive') throw new CliError('--account-id is for hyperdrive only');
   const m = (deps.loadManifest ?? loadEnv)(envName);
   if (m.network !== 'testnet') throw new Error(`envs/${m.name}.json is not a testnet env`);
   const dir = secretsDir(m.name, deps.secretsRoot ?? repoRoot);
@@ -196,33 +221,78 @@ export async function usageSetup(argv: readonly string[], deps: UsageSetupDeps):
     return void deps.log(`Set USER_ID_KEY on Worker ${worker}.`);
   }
 
-  if (command === 'hyperdrive') {
-    const names = hyperdriveNames(m);
-    const urls = ROLES.map((role) => ({ role, ...readRoleUrl(join(dir, ROLE_FILES[role]), role, shown(ROLE_FILES[role])) }));
-    deps.log(`Plan (env ${m.name}): create Hyperdrive configs ${ROLES.map((r) => names[r]).join(' and ')} (caching disabled) from ${ROLES.map((r) => shown(ROLE_FILES[r])).join(' and ')}.`);
-    if (!apply) return void deps.log(DRY_RUN_LINE);
-    for (const { role, url } of urls) {
-      const res = deps.wrangler(['hyperdrive', 'create', names[role], `--connection-string=${url}`, '--caching-disabled']);
-      // wrangler echoes the origin (host, user); only the id is printed, and an error has the URL and password removed.
-      const out = redact(`${res.stdout}\n${res.stderr}`, url);
-      if (res.status !== 0) {
-        // A config of that name from before a `roles` re-run: its password is the old one, so it is re-created.
-        const exists = /already exists/iu.test(out)
-          ? ` A config named ${names[role]} already exists: delete it (\`wrangler hyperdrive list\`, then \`wrangler hyperdrive delete <id>\`) and run hyperdrive again; pass the new ids on (docs/operations.md "Usage capture" step 3).`
-          : '';
-        throw new Error(`wrangler hyperdrive create ${names[role]} failed (exit ${res.status}): ${out.trim().split('\n').slice(-3).join(' ').slice(0, 400)}${exists}`);
-      }
-      const id = CREATED_ID_RE.exec(res.stdout)?.[1];
-      if (!id) throw new Error(`wrangler hyperdrive create ${names[role]} printed no config id; find it with \`wrangler hyperdrive list\``);
-      deps.log(`${names[role]} (${role}): ${id}`);
-    }
-    return void deps.log('Pass the writer id to the API: corepack pnpm --filter @hana-id/api gen <env> --usage-hyperdrive-id <id>.');
-  }
+  if (command === 'hyperdrive') return hyperdriveCommand(m, dir, shown, apply, args.str('account-id'), deps);
 
   return rolesCommand(m, dir, shown, apply, deps);
 }
 
 type Conn = SqlConn & { close(): Promise<void> };
+
+/**
+ * `hyperdrive` (D412): both configs through Cloudflare's API, each role's password only in the HTTPS body (Cloudflare
+ * keeps it write-only). A POST whose answer is lost isn't sent again (CloudflareApi): the next run finds the name taken.
+ */
+async function hyperdriveCommand(m: Manifest, dir: string, shown: (f: string) => string, apply: boolean, accountFlag: string | undefined, deps: UsageSetupDeps): Promise<void> {
+  const names = hyperdriveNames(m);
+  const urls = ROLES.map((role) => ({ role, ...readRoleUrl(join(dir, ROLE_FILES[role]), role, shown(ROLE_FILES[role])) }));
+  const tokenShown = shown(CLOUDFLARE_HYPERDRIVE_TOKEN_FILE);
+  const how = `create an account API token with only "${HYPERDRIVE_PERMISSION}" on this env's account, and save it with \`umask 077; pbpaste > ${tokenShown}\` (docs/operations.md "Usage capture" step 3); revoke it after`;
+  const token = readCloudflareToken(join(dir, CLOUDFLARE_HYPERDRIVE_TOKEN_FILE), tokenShown, how);
+  const given = accountFlag ?? m.cloudflare.accountId ?? (deps.env ?? process.env).CLOUDFLARE_ACCOUNT_ID;
+  deps.log(
+    `Plan (env ${m.name}): create Hyperdrive configs ${ROLES.map((r) => names[r]).join(' and ')} (caching disabled) from ${ROLES.map((r) => shown(ROLE_FILES[r])).join(' and ')}, ` +
+      `through Cloudflare's API in account ${given ?? "(the token's only account)"} with ${tokenShown}; each password goes only in the HTTPS body.`,
+  );
+  if (!apply) return void deps.log(DRY_RUN_LINE);
+  const api = new CloudflareApi(token, { fetch: deps.fetch, sleep: deps.sleep, log: deps.log });
+  // Every message that leaves: the token, every role URL and password removed.
+  const clean = (e: unknown) => scrub(urls.reduce((t, u) => redact(t, u.url), e instanceof Error ? e.message : String(e)), [token, ...urls.flatMap((u) => [u.url, u.password])]);
+  let account: string;
+  try {
+    account = await resolveAccount(api, given);
+  } catch (e) {
+    if (e instanceof CliError) throw e;
+    throw new Error(clean(e));
+  }
+  for (const { role, url } of urls) {
+    let result: unknown;
+    try {
+      ({ result } = await api.request('POST', `/accounts/${account}/hyperdrive/configs`, `creating Hyperdrive config ${names[role]}`, HYPERDRIVE_PERMISSION, hyperdriveBody(names[role], url)));
+    } catch (e) {
+      // A config of that name from before a `roles` re-run: its password is the old one, so it is re-created.
+      const taken = e instanceof CloudflareApiError && (e.codes.includes(HYPERDRIVE_NAME_TAKEN) || /already exists/iu.test(e.message));
+      const hint = taken ? ` A config named ${names[role]} already exists: delete it (\`wrangler hyperdrive list\`, then \`wrangler hyperdrive delete <id>\`) and run hyperdrive again; pass the new ids on (docs/operations.md "Usage capture" step 3).` : '';
+      throw new Error(`${clean(e)}${hint}`);
+    }
+    const id = (result as { id?: unknown } | null)?.id;
+    if (typeof id !== 'string' || !HYPERDRIVE_ID_RE.test(id)) throw new Error(`Cloudflare created ${names[role]} but answered no config id; find it with \`wrangler hyperdrive list\``);
+    deps.log(`${names[role]} (${role}): ${id}`);
+  }
+  deps.log('Pass the writer id to the API: corepack pnpm --filter @hana-id/api gen <env> --usage-hyperdrive-id <id>. Then revoke the Hyperdrive token and delete its file.');
+}
+
+/**
+ * After a failed reset: `ALTER ROLE … NOLOGIN` as the owner, over a new connection (a reset drops the old one), for
+ * each role still holding the throwaway password. Best effort: the sentence for the error, its own failure scrubbed.
+ */
+async function lockRoles(owner: string, roles: readonly LedgerRole[], deps: UsageSetupDeps, clean: (s: string) => string): Promise<string> {
+  if (roles.length === 0) return '';
+  let db: Conn | undefined;
+  const locked: LedgerRole[] = [];
+  try {
+    db = await deps.connect(owner);
+    for (const role of roles) {
+      await db.exec(`ALTER ROLE ${role} NOLOGIN`);
+      locked.push(role);
+    }
+  } catch (e) {
+    const left = roles.filter((r) => !locked.includes(r));
+    return `${locked.length ? `${locked.join(' and ')} set NOLOGIN; ` : ''}could not set ${left.join(' and ')} NOLOGIN (${clean(e instanceof Error ? e.message : String(e)).slice(0, 200)}): it still has LOGIN with the throwaway password nobody holds; run ALTER ROLE ${left.join(', ')} NOLOGIN as the owner if roles isn't re-run soon.`;
+  } finally {
+    await db?.close().catch(() => undefined);
+  }
+  return `${locked.join(' and ')} set NOLOGIN again (not reset: no login until roles succeeds).`;
+}
 
 /** `roles`: LOGIN by SQL, then a password reset per role through Neon's API, each written to its file (D403). */
 async function rolesCommand(m: Manifest, dir: string, shown: (f: string) => string, apply: boolean, deps: UsageSetupDeps): Promise<void> {
@@ -298,9 +368,12 @@ async function rolesCommand(m: Manifest, dir: string, shown: (f: string) => stri
   // A reset drops the endpoint's open connections: this one is closed first.
   await db?.close().catch(() => undefined);
 
+  // Roles whose reset has happened (Neon answered a password): the throwaway is dead for them.
+  const reset = new Set<LedgerRole>();
   for (const [i, role] of ROLES.entries()) {
     try {
       const { password, operations } = await api.resetRolePassword(projectId, branchId, role);
+      reset.add(role);
       passwords.push(password);
       const why = rolePasswordProblem(password);
       if (why) throw new Error(`Neon returned a password for ${role} this script can't use (${why}; not shown)`);
@@ -313,7 +386,9 @@ async function rolesCommand(m: Manifest, dir: string, shown: (f: string) => stri
     } catch (e) {
       const done = ROLES.slice(0, i);
       const note = done.length ? ` (${done.join(' and ')} already reset, its file written)` : '';
-      fail(new Error(`${e instanceof Error ? e.message : String(e)}${note}. Running roles --yes again resets both.`));
+      // The roles not reset still have LOGIN with the throwaway password: take LOGIN away again (D412).
+      const lock = await lockRoles(owner, ROLES.filter((r) => !reset.has(r)), deps, (x) => scrub(redact(x, owner), [key, ownerPassword, ...urls, ...passwords]));
+      fail(new Error(`${e instanceof Error ? e.message : String(e)}${note}. Running roles --yes again resets both.${lock ? ` ${lock}` : ''}`));
     }
   }
 

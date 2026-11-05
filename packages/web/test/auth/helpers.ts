@@ -137,6 +137,25 @@ export class FakeWindow implements PageWindow {
 
 export const asWindow = (w: RemoteWindow): Window => w as unknown as Window;
 
+/**
+ * D400: `vault` acks each `hana:auth-progress` posted to it with vaultOrigin as the target, to `page`, as the vault's
+ * PopupTask does (`hana:auth-progress-ack`, from vaultOrigin, a task later: here a microtask). Returns the acks sent.
+ */
+export function vaultAcks(vault: RemoteWindow, page: FakeWindow, origin = ENV.vaultOrigin): string[] {
+  const acked: string[] = [];
+  const record = vault.postMessage.getMockImplementation() as ((m: unknown, targetOrigin: string) => void) | undefined;
+  vault.postMessage.mockImplementation((m: unknown, targetOrigin: string) => {
+    record?.(m, targetOrigin);
+    const msg = m as { t?: string; stage?: string };
+    if (msg.t !== 'hana:auth-progress' || targetOrigin !== origin) return;
+    queueMicrotask(() => {
+      acked.push(msg.stage as string);
+      page.message({ v: 1, t: 'hana:auth-progress-ack', stage: msg.stage }, origin, vault);
+    });
+  });
+  return acked;
+}
+
 /** Resets the shared happy-dom document and storage between tests. */
 export function resetDom(): void {
   document.body.replaceChildren();

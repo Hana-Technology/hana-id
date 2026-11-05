@@ -303,6 +303,7 @@ const VALID_WINDOW: Record<WindowMessageType, Record<string, unknown>> = {
   'hana:auth-hello': { v: 1, t: 'hana:auth-hello' },
   'hana:auth-params': AUTH_PARAMS,
   'hana:auth-progress': { v: 1, t: 'hana:auth-progress', stage: 'email_code' },
+  'hana:auth-progress-ack': { v: 1, t: 'hana:auth-progress-ack', stage: 'google' },
   'hana:approve-hello': { v: 1, t: 'hana:approve-hello' },
   'hana:approve-request': APPROVE_REQUEST,
   'hana:approve-result': { v: 1, t: 'hana:approve-result', id: newRequestId(), approved: true, digest: new Uint8Array(32) },
@@ -410,6 +411,14 @@ describe('window messages', () => {
     expect(parseWindowMessage({ v: 1, t: 'hana:auth-progress', stage: 'back' }, ['hana:auth-progress'])).not.toBeNull();
     expect(parseWindowMessage({ v: 1, t: 'hana:auth-progress', stage: 'done' }, ['hana:auth-progress'])).toBeNull();
     expect(parseWindowMessage({ v: 1, t: 'hana:auth-progress', stage: 'email_code', code: '123456' }, ['hana:auth-progress'])).toBeNull();
+  });
+
+  it('auth-progress-ack (D400) carries only a stage, the same four, and is no auth-progress', () => {
+    for (const stage of ['google', 'email_code', 'relayed', 'back']) expect(parseWindowMessage({ v: 1, t: 'hana:auth-progress-ack', stage }, ['hana:auth-progress-ack'])).toEqual({ v: 1, t: 'hana:auth-progress-ack', stage });
+    expect(parseWindowMessage({ v: 1, t: 'hana:auth-progress-ack', stage: 'done' }, ['hana:auth-progress-ack'])).toBeNull();
+    expect(parseWindowMessage({ v: 1, t: 'hana:auth-progress-ack' }, ['hana:auth-progress-ack'])).toBeNull();
+    expect(parseWindowMessage({ v: 1, t: 'hana:auth-progress-ack', stage: 'google', extra: 1 }, ['hana:auth-progress-ack'])).toBeNull();
+    expect(parseWindowMessage({ v: 1, t: 'hana:auth-progress-ack', stage: 'google' }, ['hana:auth-progress'])).toBeNull();
   });
 
   it.each([

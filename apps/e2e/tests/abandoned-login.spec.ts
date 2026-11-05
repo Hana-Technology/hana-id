@@ -1,10 +1,11 @@
 // A login the user never finishes (the bug report "the login popup appears, isn't completed, and after a while the demo
-// freezes"): the popup left on Hana's method chooser, on Google's page, on the email address or code step, or closed.
+// freezes"): the popup left on Hana's method chooser, on Google's page, or on the email address or code step.
 // Each waits the vault's 5-minute limit (LOGIN_PENDING_MS; the page's clock is fast-forwarded past it), then the
 // partner's login() rejects `login_timeout` (`data.stage: 'pending'`), the status is back to `logged_out`, and neither
 // the vault frame nor the partner page is frozen. The follow-up screens (a link code, a banner), where the freeze was,
-// are in linking.spec.ts. A popup closed after it connected isn't seen by the SDK (after `popup_connected` Google's COOP
-// can make the handle report closed), so the partner shows "signing in" until the limit or its own cancelLogin().
+// are in linking.spec.ts. A popup closed after it connected is the vault's to see (D347: its own handle on the
+// window): on the chooser it ends the login with `login_cancelled` (`popup_closed`) within seconds, and nothing is
+// frozen either; popup-close.spec.ts has every other close.
 import type { Page, TestInfo } from '@playwright/test';
 import { GOOGLE_AUTH_URL } from '../src/google-stub.ts';
 import { ISSUER_URL } from '../src/stack.ts';
@@ -35,6 +36,11 @@ async function expectTimedOut(page: Page): Promise<void> {
   await page.clock.fastForward(11_000);
   expect(await errorOf(page, 'login', 10_000)).toEqual({ code: 'login_timeout', reason: null });
   expect(await page.evaluate(() => (window as any).e2e.results.login.data)).toEqual({ stage: 'pending' });
+  await expectNothingFrozen(page);
+}
+
+/** The login is over: logged out, and every frame still runs. */
+async function expectNothingFrozen(page: Page): Promise<void> {
   expect(await status(page)).toBe('logged_out');
   expect(await responsive(vaultFrame(page)), 'the vault frame runs').toBe(true);
   expect(await responsive(page.mainFrame()), 'the partner page runs').toBe(true);
@@ -78,11 +84,14 @@ test('left on the email code step: login_timeout at 5 minutes, nothing frozen', 
   await expectTimedOut(page);
 });
 
-test('the popup closed on the chooser: “signing in” until the limit (or cancelLogin), then login_timeout, nothing frozen', async ({ page }) => {
+test('the popup closed on the chooser: login_cancelled (popup_closed) within seconds, nothing frozen', async ({ page }) => {
+  // D347. The page's clock runs on in real time after install (startLogin), so the vault's watch (250 ms) and grace
+  // (1 s) run as in a user's browser; nothing is fast-forwarded here.
   const popup = await startLogin(page);
   await expect(popup.locator('#continue-google')).toBeVisible();
   await popup.close();
-  await expectTimedOut(page);
+  expect(await errorOf(page, 'login', 5_000)).toEqual({ code: 'login_cancelled', reason: 'popup_closed' });
+  await expectNothingFrozen(page);
 });
 
 test('the popup closed on Google’s page, then the partner cancels: login_cancelled at once, nothing frozen', async ({ page }) => {

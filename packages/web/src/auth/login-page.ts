@@ -26,6 +26,7 @@ import { GOOGLE_EMAIL_FLOW, type GoogleEmailFlow, loginGoogleRequest } from './g
 import { addLoginTimings, storeLoginEntry } from './login-storage.ts';
 import { appLogo } from './logo.ts';
 import { type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed } from './page-window.ts';
+import { vaultSignals } from './vault-signal.ts';
 
 export type OpenerMode = 'partner' | 'vault' | 'export';
 
@@ -113,6 +114,9 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
 
   const parsed = openerMode(win.location.search);
   const opener = win.opener;
+  // D347's signals: to the vault frame (partner mode) or the vault's window (vault mode). The export window's child
+  // has no vault to tell (its opener is the export window, on authOrigin).
+  const signals = vaultSignals(win, () => (!parsed || !opener || parsed.mode === 'export' ? [] : [parsed.mode === 'partner' ? childFrame(opener, parsed.vaultFrame as string) : opener]), env.vaultOrigin);
 
   function onMessage(event: Event): void {
     if (accepted || !parsed || !opener) return;
@@ -248,18 +252,15 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
         // In a login that offered email, the vault reports `google` only when the popup says so (hana:auth-progress).
         // D347: the popup says so before every navigation to Google, so the vault's close watch never takes it (or an
         // IdP's COOP switch on arrival) for a close; the export window's child has no vault to tell.
-        if (tell || mode !== 'export') {
-          try {
-            const target = mode === 'partner' ? childFrame(opener as Window, parsed?.vaultFrame as string) : opener;
-            (target as Window | null)?.postMessage({ v: 1, t: 'hana:auth-progress', stage: 'google' }, env.vaultOrigin);
-          } catch {
-            // The vault is gone: the login fails there anyway.
-          }
-        }
+        // D400: it navigates once the vault acked (or after SIGNAL_ACK_WAIT_MS): Chromium drops the signal's source
+        // when the navigation starts in the same task.
+        if (tell || mode !== 'export') signals.post('google');
         d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, mode === 'export' ? 'Confirm it’s you' : 'Signing in'), intro(), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
         state = { stage: 'redirecting', mode, url };
-        finish(state);
-        win.location.assign(url);
+        void signals.leave(() => {
+          finish(state);
+          win.location.assign(url);
+        });
       };
       const toEmail = (proof: EmailContext['proof'] = null) => {
         if (!storeContext(proof)) return;

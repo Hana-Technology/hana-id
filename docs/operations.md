@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
+Last verified against code: 2026-11-05 (branch `docs/sandbox-dev-state-1105`: sandbox-dev redeployed at `develop` 8aab09d with the wallet directory: `USER_ID_KEY`, the bookmark, 0011, API 6141ba3d, vault abe7cc61, auth 6b9a4bee, issuer 1542a60c); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
 what counts, each job's share in both crons, the `budget` log lines; settlement's reads a run; D380); 2026-11-04 (branch `feat/batch-c-13`: "Retention (batch C13, milestone M6)": the Neon
 migration 0007, the deploy order, the monthly job in the 15-minute cron, `retention_failed`, `admin retention:issuer`,
 `uid-erase` for an erasure request, statements and rates by hand, what to watch; "Usage ledger" lists 0007; D360–D369);
@@ -698,8 +698,9 @@ deploy. Logins are unaffected either way; events in between are not recorded.
 
 ## Wallet directory (hot-DB migration 0011)
 
-D310–D317 merged into `develop`; D346's ids and the record's session signature on `feat/user-id-identity-sub` (not
-merged); nothing deployed, 0011 applied in no env. After each login the vault reports the wallet's Stellar and EVM
+D310–D317 and D346 merged into `develop`. **On sandbox-dev since 2026-11-05**: `USER_ID_KEY` set, Time Travel bookmark
+`00000308-00000000-0000511a-8c2d20dbe35ad898ca18c4aeeb9cbac9` taken before 0011, 0011 applied, then the API
+(6141ba3d) and the pages (vault abe7cc61, auth 6b9a4bee) deployed at `develop` 8aab09d; no other env yet. After each login the vault reports the wallet's Stellar and EVM
 addresses, each signed by its own key, with the whole request signed by the session key, to `POST /v1/wallets/record`;
 the API checks them against the live session on chain and keeps, in its own D1, each user with three ids (the User
 ID partners see, `u1_…`, which is the identity token's `sub`; its Support ID `HANA-XXXX-XXXX`; the staff-only internal
@@ -764,7 +765,7 @@ right after a deploy a vault and API from before and after the session signature
 
 State on sandbox-dev (2026-11-03): done. Migrations 0006, 0009 and 0010 are applied to the API's D1, after a rehearsal on a scratch
 D1; a Time Travel bookmark from before 0006 and an export backup are in `.secrets`. The API (`develop` c3c33ec, version
-b215b589; redeployed 2026-11-04 at `develop` f53d63e, version 9fe0343a) has the hot DB on and `createProof` true; usage capture is off (no `USAGE_DB` binding). The steps below are
+b215b589; redeployed 2026-11-04 at `develop` f53d63e, version 9fe0343a; again 2026-11-05 at `develop` 8aab09d, version 6141ba3d, with the wallet directory; the vault abe7cc61 and auth 6b9a4bee pages with it) has the hot DB on and `createProof` true; usage capture is off (no `USAGE_DB` binding). The steps below are
 the procedure for another env.
 
 Migration `0006_dashboard_expand.sql` adds batch C's hot-DB tables and columns (`docs/api.md` "D1 schema") without
@@ -2672,7 +2673,7 @@ waits `governance_delay_ms`: after adding the first watchdog, rotations go slow 
 The email login's issuer (`docs/api.md` "Email issuer", `apps/email-issuer/README.md`, D195–D199): its own Worker,
 separate from the API, holding the email signing key, K_sub, K_code, K_rl and the SendGrid key. **Deployed on sandbox-dev
 (2026-11-03, with batch 8b, 5 secrets, SendGrid from team@hanawallet.io; redeployed 2026-11-04 at `develop` f53d63e,
-version b0cb9058, after migration 0002 was applied; then fa18b944 with the dev-env limits, D340); no other env yet.** Order matters: on sandbox-dev follow "Email login on sandbox-dev (build plan batch 6)" below (the watchdog's
+version b0cb9058, after migration 0002 was applied; then fa18b944 with the dev-env limits, D340; 2026-11-05 at `develop` 8aab09d, version 1542a60c, with D345's ticket fallback); no other env yet.** Order matters: on sandbox-dev follow "Email login on sandbox-dev (build plan batch 6)" below (the watchdog's
 email pins are live before the owner posts any email key, and no app enables email, `apps.login_methods`, before
 batch 8). It is reached at `{emailIssuer.url}/v1/email/*` (D230): on a `workers.dev` env its own `workers.dev` URL,
 written by `init`; on a zone, the API's URL with a route `<api host>/v1/email/*` to this Worker. Below, `{url}` is that

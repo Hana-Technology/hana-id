@@ -9,9 +9,14 @@
 // - authOrigin: `/login`, `/login/email`, `/login/callback`, `/approve` and `/export` are the built HTML files (`<path>.html`), served
 //   with each page's CSP and headers. Every other path is a static asset.
 //
+// - both: `GET /.well-known/hana-build` is `{"build": <id> | null}`, the build id the Worker was deployed with
+//   (HANA_BUILD, ../build.ts, D384), for `deploy-check`; the bundles carry their own (the vault's `/vault.js` banner,
+//   the auth pages' `<meta name="hana-build">`).
+//
 // Nothing else is served: no other path reaches the API (so `{vaultOrigin}/v1/*` is not the API), HTML files are never
 // served under their own names (only on their page route, with its headers), a request on any other host (a preview
 // URL) gets 404, and only GET and HEAD are allowed.
+import { BUILD_PATH, deployedBuild } from '../build.ts';
 import { log } from '../log.ts';
 import { BASE_CSP, GOOGLE_CERTS_ORIGIN, VAULT_PAGE_PATH, originOf, pageHeaders } from '../vault/page.ts';
 
@@ -23,6 +28,8 @@ export interface VaultHostEnv {
   ASSETS: Fetcher;
   /** Service binding to the API Worker, which renders `/vault`. */
   API: Fetcher;
+  /** The build id, set only by the `deploy:pages` script (../build.ts); served at BUILD_PATH. */
+  HANA_BUILD?: string;
 }
 
 /** The auth origin's Worker (wrangler.auth.jsonc). */
@@ -45,6 +52,8 @@ export interface AuthHostEnv {
   FILES_ORIGIN?: string;
   /** Static assets: packages/web/dist/pages/<env>/auth. */
   ASSETS: Fetcher;
+  /** The build id, set only by the `deploy:pages` script (../build.ts); served at BUILD_PATH. */
+  HANA_BUILD?: string;
 }
 
 /** Google's tokeninfo, which the callback page calls under token_first (packages/web auth/google.ts). */
@@ -149,6 +158,11 @@ async function staticAsset(request: Request, assets: Fetcher, head: boolean): Pr
   return new Response(head ? null : res.body, { status: res.status, headers });
 }
 
+/** BUILD_PATH: the Worker's build id as JSON, uncached, with the headers of a response that runs nothing. */
+function buildResponse(value: string | undefined, head: boolean): Response {
+  return new Response(head ? null : `${JSON.stringify({ build: deployedBuild(value) })}\n`, { status: 200, headers: plainHeaders({ 'content-type': 'application/json; charset=utf-8' }) });
+}
+
 /** Common gate: only the configured origin, only GET and HEAD. Returns the refusal, or null to go on. */
 function gate(request: Request, origin: string): Response | null {
   const head = request.method === 'HEAD';
@@ -161,7 +175,9 @@ export async function handleVaultHost(request: Request, env: VaultHostEnv): Prom
   const refused = gate(request, env.VAULT_ORIGIN);
   if (refused) return refused;
   const head = request.method === 'HEAD';
-  if (new URL(request.url).pathname === VAULT_PAGE_PATH) {
+  const { pathname } = new URL(request.url);
+  if (pathname === BUILD_PATH) return buildResponse(env.HANA_BUILD, head);
+  if (pathname === VAULT_PAGE_PATH) {
     try {
       return withoutCookies(await env.API.fetch(request));
     } catch {
@@ -177,6 +193,7 @@ export async function handleAuthHost(request: Request, env: AuthHostEnv): Promis
   if (refused) return refused;
   const head = request.method === 'HEAD';
   const url = new URL(request.url);
+  if (url.pathname === BUILD_PATH) return buildResponse(env.HANA_BUILD, head);
   if (!(AUTH_PAGE_PATHS as readonly string[]).includes(url.pathname)) return staticAsset(request, env.ASSETS, head);
   const api = originOf(env.API_URL);
   const primary = originOf(env.NEAR_RPC);

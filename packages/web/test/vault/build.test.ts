@@ -4,6 +4,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadEnv } from '@hana-id/env';
+import { parseVaultBanner } from '@hana-id/env/build-id';
+import { localBuild } from '@hana-id/env/local-build';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { VAULT_SCRIPT, VAULT_ORIGIN_DIR, type BuiltVault, buildVault } from '../../scripts/build-vault.ts';
 import { hanaEnv } from '../../scripts/gen-envs.ts';
@@ -29,8 +31,8 @@ describe('vault build', () => {
 
   beforeAll(async () => {
     out = mkdtempSync(join(tmpdir(), 'hana-vault-build-'));
-    built = await buildVault(sandbox, out);
-    builtProd = await buildVault(prod, out);
+    built = await buildVault(sandbox, out, '0485faa1c2d3');
+    builtProd = await buildVault(prod, out, '0485faa1c2d3-dirty');
   }, 60_000);
   afterAll(() => rmSync(out, { recursive: true, force: true }));
 
@@ -62,6 +64,19 @@ describe('vault build', () => {
     expect(sandboxJs).not.toContain('__HANA_ENV__');
     expect(prodJs).not.toContain('__HANA_ENV__');
   });
+
+  it('D384: starts with the build id it was given (by default this checkout’s), which deploy-check reads', async () => {
+    const js = readFileSync(built.script, 'utf8');
+    expect(js.split('\n')[0]).toBe('/* hana-build 0485faa1c2d3 */');
+    expect(parseVaultBanner(js)).toEqual({ id: '0485faa1c2d3', commit: '0485faa1c2d3', dirty: false });
+    expect(parseVaultBanner(readFileSync(builtProd.script, 'utf8'))?.id).toBe('0485faa1c2d3-dirty');
+    expect(built.buildId).toBe('0485faa1c2d3');
+    const local = await buildVault(prod, out);
+    expect(parseVaultBanner(readFileSync(local.script, 'utf8'))?.id).toBe(localBuild().id);
+    // An id that isn't one never reaches the bundle (a JS comment), and deletes nothing.
+    await expect(buildVault(prod, out, '0485faa1c2d3 */ x() /*')).rejects.toThrow(/build id/u);
+    expect(existsSync(local.script)).toBe(true);
+  }, 60_000);
 
   it('replaces only its own root on a rebuild: stale vault files go, the auth root stays', async () => {
     const authDir = join(out, 'sandbox-dev', 'auth');

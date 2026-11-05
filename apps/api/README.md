@@ -231,7 +231,8 @@ Both answer only on their own origin (404 on any other host), only `GET`/`HEAD` 
 its own name (404; pages exist only on their routes, with their headers), and add
 `content-security-policy: default-src 'none'; frame-ancestors 'none'; sandbox` (an SVG or XML asset opened as a
 document runs, loads and frames nothing; browsers don't apply it to the scripts and styles the pages load), `nosniff`,
-`no-referrer` and a same-origin CORP to every asset. No other path reaches the API, so `{vaultOrigin}/v1/*` is not the API. A missing page file
+`no-referrer` and a same-origin CORP to every asset. Both answer `GET /.well-known/hana-build` with
+`{"build": <id> | null}`, the build id they were deployed with (`HANA_BUILD`, D384, `src/build.ts`). No other path reaches the API, so `{vaultOrigin}/v1/*` is not the API. A missing page file
 or an unreachable API gives 503 with no config script. Neither sets a cookie: a `Set-Cookie` from a binding is
 dropped (`withoutCookies`, D70). Placement follows the origin: `<worker>.<subdomain>.workers.dev`
 → a `workers.dev` Worker named `<worker>` (dev envs only; same subdomain as a `workers.dev` `apiUrl`, since the service
@@ -243,8 +244,13 @@ Deploy (testnet only), after this Worker, since the vault Worker binds to it:
 ```sh
 pnpm --filter @hana-id/api gen <env> --d1-id <id> # also writes wrangler.vault.jsonc and wrangler.auth.jsonc
 pnpm --filter @hana-id/api run deploy:pages       # the web build (packages/web/dist/pages/<env>/{vault,auth}) first, then
-                                                  # wrangler deploy -c wrangler.vault.jsonc and -c wrangler.auth.jsonc
+                                                  # scripts/deploy.ts -c wrangler.vault.jsonc and -c wrangler.auth.jsonc
+pnpm --filter @hana-id/scripts run deploy-check <env> --d1   # API, page Workers, bundles and issuer on this commit (D384)
 ```
+
+`deploy` and `deploy:pages` run `scripts/deploy.ts`, which is `wrangler deploy <args> --var HANA_BUILD:<build id>`
+(this checkout's commit, `-dirty` for uncommitted changes; `@hana-id/env/local-build`). Never deploy with a raw
+`wrangler deploy`: the Worker then reports `build: null` and `deploy-check` fails.
 
 Locally, only for a `local*` env (loopback `vaultOrigin`/`authOrigin`; none is in `envs/` today, `apps/e2e` runs its
 own stack): run each Worker in its own process, `pnpm --dir apps/api exec wrangler dev` (the API, on `apiUrl`'s

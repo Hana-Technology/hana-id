@@ -1,7 +1,8 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
+Last verified against code: 2026-10-28 (commit 58edee9); D384 (branch `feat/deploy-build-check`, asked for by the
+user, implementation choices to confirm) on 2026-11-05; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
 flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
 confirmed by the user) on 2026-11-04, amending D341; D341 (branch `fix/google-cancel-back-to-chooser`, confirmed
@@ -6203,6 +6204,40 @@ follow-up there.
   skipping the TypeScript job for docs-only changes (`packages/playbooks` tests read `docs/`); measuring a push from
   `github.event.before` (a cancelled run's changes would never be tested); disabling `cancel-in-progress` instead (it
   costs the minutes back).
+
+### D384. Every Worker and page bundle carries a build id; `deploy-check` compares them after a deploy
+- Date 2026-11-05 · Status: **asked for by the user** (implementation choices: to confirm) · Built:
+  `packages/env/src/build-id.ts`, `local-build.ts`; `apps/api/scripts/deploy.ts`, `src/build.ts`, `src/pages/host.ts`
+  (`/.well-known/hana-build`), `GET /v1/health` `build`; `apps/email-issuer/scripts/deploy.ts`, `GET /v1/email/health`;
+  `packages/web/scripts/build-vault.ts`, `build-auth-pages.ts`; `scripts/lib/deploy-check.ts` · Number note: D384
+  was the next free number on `origin/develop` (D383) and on the in-flight branches checked; a branch racing this
+  one may take it too: renumber on merge
+- Context: on 2026-11-05 sandbox-dev's page Workers were deployed with a stale `packages/web/dist` build, so the vault
+  sent wallet records the new API refused (`400`), and the same day a D1 migration was applied from a checkout older
+  than the code deployed. Nothing showed which commit each piece ran; `deploy:pages` now builds first, but nothing
+  checked it.
+- Decision: a build id = the commit's first 12 hex characters, `-dirty` when the working tree has any change (tracked
+  or untracked). The Workers get it as the var `HANA_BUILD`, passed only at deploy time by each app's `deploy` script
+  (`wrangler deploy --var HANA_BUILD:<id>`), never by `gen`; a raw `wrangler deploy` leaves it unset (`null`). The page
+  bundles get it from the web build: `/vault.js` starts with `/* hana-build <id> */` (esbuild `banner`), each auth page
+  has `<meta name="hana-build">` (in the HTML, so the content-hashed scripts don't change with each commit). Read
+  back from `GET /v1/health` (`build`, additive), `GET /v1/email/health` (new), `GET /.well-known/hana-build` on each
+  page Worker (new; JSON with the 404's headers) and the bundles themselves, by `deploy-check <env> [--d1]
+  [--skip-head] [--strict]`: exit 1 unless every piece is stamped with this checkout's commit; `--d1` adds `wrangler d1
+  migrations list --remote` for the API's and the issuer's D1. A dirty deploy warns (`--strict` fails it). The
+  runbook runs it after each deploy step and applies migrations from a checkout at the deployed commit.
+- Why: the stale part on 2026-11-05 was the assets, not the Worker script, so the bundles carry their own id;
+  stamping at deploy time (not in the generated config) means a config generated earlier can't carry an old id, and an
+  unstamped Worker is a failure rather than a pass.
+- Limits: `migrations list` matches names only (`d1_migrations` keeps no hash), so a same-named file with other
+  content (the 0011 draft) is invisible to it; the checkout rule covers that. The id is reported by whoever deploys: a
+  hygiene check, not an attestation. The watchdog, console, console-auth, admin and files Workers aren't stamped yet.
+- Rejected: the build time in the id (rebuilds of one commit would differ, and the auth bundles' hashes would change
+  every build); writing `HANA_BUILD` in `gen` (a config generated before a pull would stamp the wrong commit);
+  esbuild/wrangler `define` for the Workers (the Worker tests would need it too; a var reads the same); Cloudflare's
+  version metadata (its version id says nothing about the commit, and reading a `--tag` needs a `version_metadata`
+  binding on every Worker); a response header on every page (a route is checked once and leaves the pages' headers
+  unchanged).
 
 ## Superseded or amended
 

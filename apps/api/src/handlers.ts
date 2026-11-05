@@ -2,6 +2,7 @@
 import { JwksUnavailableError } from '@hana-id/oidc';
 import { type App, HOT_DB_SCHEMA, PUBLISHABLE_KEY_RE, appSuspended, getAppByKey, markSession, startFirstSession } from './apps.ts';
 import { appKeyPairs, appKeyProblem } from './bls.ts';
+import { deployedBuild } from './build.ts';
 import type { Env } from './env.ts';
 import { type Headers_, corsHeaders, json, readJson } from './http.ts';
 import { ipSubject } from './ip.ts';
@@ -877,7 +878,13 @@ export const API_CAPABILITIES = { createProof: true } as const;
  * until the deployed API reports 6 or more (an API from before batch C3 would treat an origin that is only proposed as
  * in force; docs/operations.md "Rolling the API back below batch C3"), and announcements until it reports 9 or more
  * (the batch C4 API writes the session markers the `no_session` waiver reads).
+ * `build`: the build id this Worker was deployed with, or null (build.ts, D384), which `deploy-check` compares with the
+ * page Workers', their bundles' and the email issuer's.
  */
 export function handleHealth(env: Env, requestId: string): Response {
-  return json(200, { ok: true, env: env.ENV_NAME, signer: env.SIGNER_ACCOUNT, hotDb: HOT_DB_SCHEMA, capabilities: API_CAPABILITIES, requestId }, { 'access-control-allow-origin': '*', 'x-request-id': requestId });
+  return json(
+    200,
+    { ok: true, env: env.ENV_NAME, signer: env.SIGNER_ACCOUNT, hotDb: HOT_DB_SCHEMA, capabilities: API_CAPABILITIES, build: deployedBuild(env.HANA_BUILD), requestId },
+    { 'access-control-allow-origin': '*', 'x-request-id': requestId },
+  );
 }

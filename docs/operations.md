@@ -1,6 +1,8 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-05 (branch `fix/deploy-pages-builds`: `deploy:pages` runs the web build first; the 0011 apply note; the rebuilt page versions); 2026-11-05 (branch `chore/ci-cost`: "CI and git": which jobs run when, the nightly WebKit and Firefox run; the identity probe every 3 hours, D383); 2026-11-05 (branch `docs/sandbox-dev-state-1105`: sandbox-dev redeployed at `develop` 8aab09d with the wallet directory: `USER_ID_KEY`, the bookmark, 0011, API 6141ba3d, vault abe7cc61, auth 6b9a4bee, issuer 1542a60c); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
+Last verified against code: 2026-11-05 (branch `feat/deploy-build-check`: "Checking a deploy (`deploy-check`)", D384:
+the build id in every Worker and page bundle, `deploy-check <env> [--d1]` after each deploy step, migrations applied
+from a checkout at the deployed commit, the API's raw `wrangler deploy` lines now `run deploy`); 2026-11-05 (branch `fix/deploy-pages-builds`: `deploy:pages` runs the web build first; the 0011 apply note; the rebuilt page versions); 2026-11-05 (branch `chore/ci-cost`: "CI and git": which jobs run when, the nightly WebKit and Firefox run; the identity probe every 3 hours, D383); 2026-11-05 (branch `docs/sandbox-dev-state-1105`: sandbox-dev redeployed at `develop` 8aab09d with the wallet directory: `USER_ID_KEY`, the bookmark, 0011, API 6141ba3d, vault abe7cc61, auth 6b9a4bee, issuer 1542a60c); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
 what counts, each job's share in both crons, the `budget` log lines; settlement's reads a run; D380); 2026-11-04 (branch `feat/batch-c-13`: "Retention (batch C13, milestone M6)": the Neon
 migration 0007, the deploy order, the monthly job in the 15-minute cron, `retention_failed`, `admin retention:issuer`,
 `uid-erase` for an erasure request, statements and rates by hand, what to watch; "Usage ledger" lists 0007; D360–D369);
@@ -258,6 +260,9 @@ the signer is part of every address. Dev-only privileges (loopback origins, part
    corepack pnpm --dir apps/api exec wrangler d1 migrations apply <cloudflare.d1Name> --remote
    ```
 
+   Run `migrations apply` (here and everywhere in this runbook) from a checkout at the commit you are deploying, with
+   a clean tree: wrangler applies the files on disk, by name ("Checking a deploy" below).
+
    Without `--d1-id`, `gen` keeps the id already in `wrangler.jsonc` only if that file names the same
    `database_name`, else it writes the local placeholder `00000000-0000-4000-8000-000000000000`. The generated files
    are gitignored (`wrangler.jsonc` holds the env's D1 id): re-run `gen <env>` whenever you switch envs, and never commit them.
@@ -296,8 +301,10 @@ the signer is part of every address. Dev-only privileges (loopback origins, part
 
    ```sh
    corepack pnpm --filter @hana-id/api run deploy
-   curl -s https://<worker-url>/v1/health          # {"ok":true,"env":"<env>","signer":"<signer>",…}
+   curl -s https://<worker-url>/v1/health          # {"ok":true,"env":"<env>","signer":"<signer>",…,"build":"<commit>"}
    ```
+
+   Always through `run deploy` (never a raw `wrangler deploy`): it stamps the Worker with the build id (D384).
 
 9. **Deploy the two page Workers** (`vaultOrigin`, `authOrigin`; one thin Worker each, D66), after the API: the vault
    Worker reaches it through a service binding. `gen` (step 6) already wrote their configs; the web build writes the
@@ -306,7 +313,8 @@ the signer is part of every address. Dev-only privileges (loopback origins, part
    on 2026-11-05 a deploy of an old build sent wallet records without the session signature (`400 bad_request`).
 
    ```sh
-   corepack pnpm --filter @hana-id/api run deploy:pages   # the web build first, then wrangler deploy -c wrangler.vault.jsonc and -c wrangler.auth.jsonc
+   corepack pnpm --filter @hana-id/api run deploy:pages   # the web build first, then the stamped deploys of -c wrangler.vault.jsonc and -c wrangler.auth.jsonc
+   corepack pnpm --filter @hana-id/scripts run deploy-check <env> --d1   # every piece on this commit, no migration pending
    ```
 
    Rebuild and redeploy them whenever the manifest's `signer`, `relayer`, `rpc`, `rpcFallback`, `apiUrl`,
@@ -314,6 +322,52 @@ the signer is part of every address. Dev-only privileges (loopback origins, part
 10. **Google redirect URI**: add `{authOrigin}/login/callback` on the shared client and on every partner's own client
     that logs in through Hana's pages (table above).
 11. **Register apps** (next section), then **smoke test**.
+
+### Checking a deploy (`deploy-check`, D384)
+
+Every deployed piece of an env carries the build id of the checkout it came from: the commit's first 12 hex
+characters, `-dirty` when the tree had uncommitted changes (tracked or untracked). On 2026-11-05 sandbox-dev's page
+Workers served a vault bundle older than the API (every wallet record `400 bad_request`), and earlier that day a D1
+migration was applied from an older checkout; nothing showed either. **After every deploy step in this runbook** (the
+API, the page Workers, the email issuer), once the last Worker of the step is out, run from the checkout you deployed:
+
+```sh
+corepack pnpm --filter @hana-id/scripts run deploy-check <env>          # every piece on this checkout's commit
+corepack pnpm --filter @hana-id/scripts run deploy-check <env> --d1     # and no D1 migration of this checkout pending
+```
+
+| Piece | Read from | Stamped by |
+|---|---|---|
+| API Worker | `GET {apiUrl}/v1/health` → `build` | `pnpm --filter @hana-id/api run deploy` (`HANA_BUILD` var) |
+| vault Worker | `GET {vaultOrigin}/.well-known/hana-build` → `build` | `run deploy:pages` |
+| vault bundle | `{vaultOrigin}/vault.js`, first line `/* hana-build <id> */` | the web build (`deploy:pages` runs it first) |
+| auth Worker | `GET {authOrigin}/.well-known/hana-build` → `build` | `run deploy:pages` |
+| auth pages | `{authOrigin}/login`, `<meta name="hana-build">` | the web build |
+| email issuer | `GET {emailIssuer.url}/v1/email/health` → `build` | `pnpm --filter @hana-id/email-issuer run deploy` |
+| `--d1` | `wrangler d1 migrations list <db> --remote` from `apps/api` (`cloudflare.d1Name`) and `apps/email-issuer` (`emailIssuer.cloudflare.d1Name`) | needs both `wrangler.jsonc` generated for `<env>` (`gen`) |
+
+Exit 1 (each reason on a `FAIL:` line) when a piece can't be read (a status, a redirect, unreachable), isn't stamped
+(`null`: deployed with a raw `wrangler deploy`; no `build` field or no stamp in a bundle: deployed before D384), runs
+another commit than this checkout's HEAD, or (`--d1`) a database lacks a migration file of this checkout. Warnings, not
+failures: a piece deployed from a dirty tree (`--strict` makes it a failure; use `--strict` outside dev envs) and a
+dirty checkout here. `--skip-head` compares the pieces with each other only, to check an env from another commit.
+An env runs one commit: when a step deploys only some pieces (only the API, say), deploy the others from the same
+checkout too (`run deploy:pages`, the issuer's `run deploy`) before the check, which otherwise fails and names each
+piece that lags (as it does between the steps of a multi-Worker deploy). It holds no secret, prints only the manifest's URLs, statuses and well-formed build ids, and changes
+nothing (`migrations list` reads the remote `d1_migrations` table; it creates that table only if it is missing, which
+it never is on a migrated database).
+
+**Migrations: apply from the deployed commit.** `wrangler d1 migrations apply` applies the `.sql` files on disk that
+the remote database hasn't recorded, by name. Apply from a checkout at the commit you then deploy, `git status` clean
+(`deploy-check` prints this checkout's id: it must not end in `-dirty`). `--d1` then confirms nothing of that commit is
+pending. It can't see a file applied under the same name with other content (`d1_migrations` keeps names, not
+hashes): 2026-11-05's draft of `0011_wallet_directory.sql` was such a case, so the checkout rule is what prevents it.
+
+After a `wrangler rollback`, the rolled-back Worker reports the id of the version it returned to (an older commit, or
+none before D384): check from a checkout at that commit, or with `--skip-head` once every piece is rolled back.
+
+Not stamped yet: the watchdog, the console, console-auth, the admin and the files Workers (`deploy-check` doesn't read
+them).
 
 ### Upgrading an env deployed from `develop` to batch B
 
@@ -727,6 +781,8 @@ corepack pnpm --dir apps/api exec wrangler d1 migrations list hana-id-sandbox-de
 corepack pnpm --dir apps/api exec wrangler d1 migrations apply hana-id-sandbox-dev --remote
 corepack pnpm --filter @hana-id/api run deploy                                                 # the API with /v1/wallets/record
 # then the page Workers, so the vault sends the record ("Create an environment from scratch" step 9)
+corepack pnpm --filter @hana-id/api run deploy:pages
+corepack pnpm --filter @hana-id/scripts run deploy-check sandbox-dev --d1                      # API, pages and bundles on this commit; 0011 applied
 ```
 
 Order: the migration, then the API, then the vault bundle. In another order nothing breaks: an API without 0011
@@ -834,7 +890,7 @@ Cloudflare account, with `corepack pnpm --filter @hana-id/api run gen sandbox-de
    in c is 1, D1 didn't run that query as one transaction: stop and report it (D207). Delete the scratch database either
    way (it holds the export's vault shares), after step d.
 
-4. **Apply 0006**: `corepack pnpm --dir apps/api exec wrangler d1 migrations apply hana-id-sandbox-dev --remote`
+4. **Apply 0006** (from a checkout at the commit step 6 deploys, clean tree; "Checking a deploy"): `corepack pnpm --dir apps/api exec wrangler d1 migrations apply hana-id-sandbox-dev --remote`
    (it lists `0006_dashboard_expand.sql`, then any later file not applied yet: batch C4's `0009_session_markers.sql`
    and email login batch 6's `0010_login_methods.sql`, which only add a table and a defaulted column; confirm).
 
@@ -997,7 +1053,7 @@ corepack pnpm --dir apps/console exec wrangler d1 migrations apply <console.d1Na
 #    The config also binds the Images binding (`images: {binding: "IMAGES"}`): see that section too.
 # 5. The API first (its ConsoleRpc entrypoint, batch C5), then the console (`deploy` builds the SPA into dist/ first),
 #    then its secret (setup step 11.7), then console-auth (its binding needs the console's AuthHandler).
-corepack pnpm --dir apps/api exec wrangler deploy
+corepack pnpm --filter @hana-id/api run deploy
 corepack pnpm --filter @hana-id/console run deploy
 corepack pnpm --filter @hana-id/console-auth run deploy
 ```
@@ -1138,7 +1194,7 @@ the repo root of the main checkout, logged in to the API's Cloudflare account. N
    ```sh
    corepack pnpm --filter @hana-id/admin gen <env> --admin-hyperdrive-id <admin Hyperdrive id>
    # The API and the console first (AdminRpc's watcher reads and StaffRpc's grants are C8 additions).
-   corepack pnpm --dir apps/api exec wrangler deploy
+   corepack pnpm --filter @hana-id/api run deploy
    corepack pnpm --dir apps/console exec wrangler deploy
    corepack pnpm --dir apps/admin exec wrangler deploy
    ```
@@ -1247,7 +1303,7 @@ main checkout; nothing below prints the token):
 
    ```sh
    corepack pnpm --filter @hana-id/api run gen <env>
-   corepack pnpm --dir apps/api exec wrangler deploy
+   corepack pnpm --filter @hana-id/api run deploy
    corepack pnpm --filter @hana-id/admin gen <env>
    corepack pnpm --dir apps/admin exec wrangler deploy
    ```
@@ -1348,7 +1404,7 @@ corepack pnpm --filter @hana-id/web build
 corepack pnpm --filter @hana-id/api run deploy:pages
 # 6. The API (GET /v1/app's logoUrl needs FILES_ORIGIN, which the same gen wrote) and the console (the IMAGES binding,
 #    the logo backend). Deploy order doesn't matter for users: no app has a logo until an owner uploads one (C10's route).
-corepack pnpm --dir apps/api exec wrangler deploy
+corepack pnpm --filter @hana-id/api run deploy
 corepack pnpm --filter @hana-id/console gen <env> --d1-id <uuid>
 corepack pnpm --dir apps/console exec wrangler deploy
 ```
@@ -1444,7 +1500,7 @@ capture"). From the repo root of the main checkout.
    (`StaffRpc.recordStaffAction`), then the admin Worker:
 
    ```sh
-   corepack pnpm --dir apps/api exec wrangler deploy
+   corepack pnpm --filter @hana-id/api run deploy
    corepack pnpm --dir apps/console exec wrangler deploy
    corepack pnpm --dir apps/admin exec wrangler deploy
    ```
@@ -1528,7 +1584,7 @@ its migration 0006 applied. From the repo root of the main checkout; nothing her
    and its Neon steps still run. No new binding, var, secret or trigger: `gen` is unchanged.
 
    ```sh
-   corepack pnpm --dir apps/api exec wrangler deploy
+   corepack pnpm --filter @hana-id/api run deploy
    corepack pnpm --dir apps/console exec wrangler deploy
    corepack pnpm --dir apps/admin exec wrangler deploy
    ```
@@ -2715,7 +2771,8 @@ origin. The API never forwards these requests.
    in `emailIssuer.sendgridWebhookPublicKey` (public); events of other categories are ignored.
 4. **D1 and config**: `wrangler d1 create hana-id-email-issuer-<env>`, then
    `corepack pnpm --filter @hana-id/email-issuer gen <env> --d1-id <issuer uuid> --app-d1-id <the API's D1 uuid>` and
-   `wrangler d1 migrations apply hana-id-email-issuer-<env> --remote` from `apps/email-issuer`. `gen` refuses a
+   `wrangler d1 migrations apply hana-id-email-issuer-<env> --remote` from `apps/email-issuer` (from a checkout at the
+   commit you deploy, "Checking a deploy"). `gen` refuses a
    Worker-secret signer off testnet, the `aws-kms` signer (until batch 10) and the outbox outside `local*`.
 5. **Secrets** (the user runs this): `corepack pnpm --filter @hana-id/scripts email-issuer <env> put` (plan), then
    `--yes`: sets `ISSUER_SIGNING_KEY`, `EMAIL_SUB_KEY`, `EMAIL_CODE_KEY`, `EMAIL_RL_KEY` and, when its file exists,
@@ -2729,7 +2786,7 @@ origin. The API never forwards these requests.
    (`local*`, `sandbox*`) `admin <env> scope:add-email-client --scope <id>` mints it locally instead and sends the
    owner's calls (D253; "Email login demo on sandbox-dev (batch 8a)" step 3).
 7. **Deploy**: `corepack pnpm --filter @hana-id/email-issuer run deploy` (before step 6's keys go on chain, so the
-   watchdog's JWKS check finds it). On a zone env, add the route `<api host>/v1/email/*` → `hana-id-email-issuer-<env>`
+   watchdog's JWKS check finds it), then `deploy-check <env> --d1` ("Checking a deploy"). On a zone env, add the route `<api host>/v1/email/*` → `hana-id-email-issuer-<env>`
    (Workers Routes on the API's zone; the more specific route wins over the API's); on `workers.dev` nothing more.
    `gen` turns `workers_dev` on only when `emailIssuer.url` is a `workers.dev` URL; a zone-routed issuer has no
    `workers.dev` URL (a second way in, around the zone's rules and Access). **Open for batch 8**: the staff routes'
@@ -2810,9 +2867,10 @@ corepack pnpm --filter @hana-id/email-issuer gen sandbox-dev            # keeps 
 corepack pnpm --dir apps/email-issuer exec wrangler d1 migrations list hana-id-email-issuer-sandbox-dev --remote    # 0002_user_emails.sql pending
 corepack pnpm --dir apps/email-issuer exec wrangler d1 migrations apply hana-id-email-issuer-sandbox-dev --remote
 corepack pnpm --filter @hana-id/email-issuer run deploy
+corepack pnpm --filter @hana-id/scripts run deploy-check sandbox-dev --d1
 ```
 
-Check: `migrations list` shows nothing pending; after an email login on the demo, `admin sandbox-dev user:list --remote
+Check: `deploy-check` passes (`migrations list` shows nothing pending); after an email login on the demo, `admin sandbox-dev user:list --remote
 --limit 1` shows it. Other envs: the same with `hana-id-email-issuer-<env>`.
 
 **Reading it** (Hana staff with Cloudflare access to the issuer's D1; `$A` = `corepack pnpm --filter @hana-id/scripts

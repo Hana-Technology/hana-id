@@ -104,6 +104,7 @@ cd contracts/hana-signer && cargo test
 | `VAULT_KEK` | `pnpm --filter @hana-id/scripts run vault-kek <env> init\|put\|rotate [--yes]` |
 | Identity token keys (`IDENTITY_SIGNING_KEY`, `…_STANDBY`, `IDENTITY_SUB_KEY`) | `pnpm --filter @hana-id/scripts run identity-key <env> init [--local]\|put\|show [--yes]` (`docs/operations.md` "Identity token keys") |
 | Hana pages (vault, auth) | `pnpm --filter @hana-id/web build` · `pnpm --filter @hana-id/api run deploy:pages` |
+| After any deploy: every Worker and page bundle on this commit, no D1 migration pending | `pnpm --filter @hana-id/scripts run deploy-check <env> [--d1] [--skip-head] [--strict]` (`docs/operations.md` "Checking a deploy") |
 | Recovery playbooks doc | `pnpm --filter @hana-id/playbooks gen-docs` (writes `docs/playbooks.md`; edit `packages/playbooks`) |
 | SDK tarballs: build, check, install outside the repo | `pnpm run pack:check` · version: `pnpm --filter @hana-id/scripts run sdk-version <x.y.z>` (`docs/operations.md` "Releasing the SDK packages") |
 | Browser tests | `pnpm --filter @hana-id/e2e e2e` (`HANA_E2E_PORT_BASE` for a second worktree; `apps/e2e/README.md`) |
@@ -367,6 +368,7 @@ throwaway names. The signer account is part of every user's derived key, so chan
    ```sh
    pnpm --filter @hana-id/web build              # packages/web/dist/pages/<env>/{vault,auth}
    pnpm --filter @hana-id/api run deploy:pages   # wrangler.vault.jsonc and wrangler.auth.jsonc, written by gen above
+   pnpm --filter @hana-id/scripts run deploy-check <env> --d1   # every Worker and bundle on this commit (D384)
    ```
    Google redirects logins to `{authOrigin}/login/callback`: add it as an Authorized redirect URI on the shared client
    and on every own client that logs in through the Hana pages.

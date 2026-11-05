@@ -4,6 +4,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadEnv } from '@hana-id/env';
+import { parseBuildMeta } from '@hana-id/env/build-id';
+import { localBuild } from '@hana-id/env/local-build';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ASSET_DIR, type BuiltEnv, ORIGIN_DIR, buildAuthPages, pageHtml, selectEnvs } from '../../scripts/build-auth-pages.ts';
 import { hanaEnv } from '../../scripts/gen-envs.ts';
@@ -103,13 +105,22 @@ describe('auth page policies', () => {
   });
 
   it('page HTML escapes what it writes into attributes', () => {
-    const html = pageHtml(sandbox, AUTH_PAGES[0]!, '/assets/a"b.js', '/assets/c.css');
+    const html = pageHtml(sandbox, AUTH_PAGES[0]!, '/assets/a"b.js', '/assets/c.css', '0485faa1c2d3');
     expect(html).toContain('src="/assets/a&quot;b.js"');
+  });
+
+  it('D384: every page carries its build id in one <meta name="hana-build">; nothing else is accepted as one', () => {
+    for (const page of AUTH_PAGES) {
+      const html = pageHtml(sandbox, page, '/assets/a.js', '/assets/c.css', '0485faa1c2d3-dirty');
+      expect(html).toContain('<meta name="hana-build" content="0485faa1c2d3-dirty">');
+      expect(parseBuildMeta(html)?.id).toBe('0485faa1c2d3-dirty');
+      expect(() => pageHtml(sandbox, page, '/assets/a.js', '/assets/c.css', '"><script>')).toThrow(/build id/u);
+    }
   });
 
   it('every page opts out of browser auto-translation (AUTH-4)', () => {
     for (const page of AUTH_PAGES) {
-      const html = pageHtml(sandbox, page, '/assets/a.js', '/assets/c.css');
+      const html = pageHtml(sandbox, page, '/assets/a.js', '/assets/c.css', '0485faa1c2d3');
       expect(html).toContain('<html lang="en" translate="no">');
       expect(html).toContain('<meta name="google" content="notranslate">');
     }
@@ -135,8 +146,8 @@ describe('per-env build', () => {
 
   beforeAll(async () => {
     out = mkdtempSync(join(tmpdir(), 'hana-auth-pages-'));
-    built = await buildAuthPages(sandbox, out);
-    builtProd = await buildAuthPages(prod, out);
+    built = await buildAuthPages(sandbox, out, '0485faa1c2d3');
+    builtProd = await buildAuthPages(prod, out, '0485faa1c2d3');
   }, 60_000);
   afterAll(() => rmSync(out, { recursive: true, force: true }));
 
@@ -213,11 +224,25 @@ describe('per-env build', () => {
     writeFileSync(join(vaultDir, 'vault.js'), '// vault');
     writeFileSync(join(built.dir, ASSET_DIR, 'stale-OLD.js'), '// stale');
     const before = readdirSync(join(built.dir, ASSET_DIR)).filter((f) => f.endsWith('.js') && !f.startsWith('stale')).sort();
-    const again = await buildAuthPages(sandbox, out);
+    // Another build id (D384) changes the pages' meta, never the bundles' content hashes (browsers keep their cache).
+    const again = await buildAuthPages(sandbox, out, '111111111111-dirty');
     expect(readFileSync(join(vaultDir, 'vault.js'), 'utf8')).toBe('// vault');
     expect(existsSync(join(again.dir, ASSET_DIR, 'stale-OLD.js'))).toBe(false);
     expect(readdirSync(join(again.dir, ASSET_DIR)).filter((f) => f.endsWith('.js')).sort()).toEqual(before);
+    for (const page of AUTH_PAGES) expect(parseBuildMeta(readFileSync(join(again.dir, page.file), 'utf8'))?.id).toBe('111111111111-dirty');
     rmSync(vaultDir, { recursive: true, force: true });
+    built = await buildAuthPages(sandbox, out, '0485faa1c2d3');
+  }, 60_000);
+
+  it('D384: stamps every page with the build id it was given, by default this checkout’s', async () => {
+    expect(built.buildId).toBe('0485faa1c2d3');
+    for (const page of AUTH_PAGES) expect(parseBuildMeta(readFileSync(join(built.dir, page.file), 'utf8'))?.id).toBe('0485faa1c2d3');
+    const local = await buildAuthPages(prod, out);
+    expect(local.buildId).toBe(localBuild().id);
+    expect(parseBuildMeta(readFileSync(join(local.dir, 'login.html'), 'utf8'))?.id).toBe(localBuild().id);
+    await expect(buildAuthPages(prod, out, 'nope')).rejects.toThrow(/build id/u);
+    // A refused id deletes nothing: the last build stays.
+    expect(existsSync(join(local.dir, 'login.html'))).toBe(true);
   }, 60_000);
 
   it('refuses an env name that is not a plain manifest name (it becomes a deleted path)', async () => {

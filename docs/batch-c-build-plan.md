@@ -527,7 +527,7 @@ Run from the main checkout; every file in `.secrets/` is 0600 in a 0700 director
 3. **Roles' credentials** (C4): save a project-scoped Neon API key to `.secrets/sandbox-dev/neon-api-key` (0600;
    `docs/operations.md` "Usage capture" step 2 has the console steps), then `corepack pnpm --filter @hana-id/scripts
    usage-setup sandbox-dev roles` (dry run) then `--yes`: as the owner, `ALTER ROLE usage_writer|usage_admin WITH
-   LOGIN` (no password); then Neon's API resets each role's password (Neon generates it; Neon takes no SCRAM
+   LOGIN` with a random throwaway password (never stored; Neon's reset needs a role that has one); then Neon's API resets each role's password (Neon generates it; Neon takes no SCRAM
    verifier) and the script writes it into `.secrets/sandbox-dev/neon-usage-writer.url` and `neon-usage-admin.url`
    (the direct host: Hyperdrive pools) and checks each role logs in (D224 as amended by D403). Every run resets both
    and replaces the files, so run it before step 4 and re-create the Hyperdrive configs after any later run. Revoke the

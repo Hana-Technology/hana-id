@@ -200,8 +200,15 @@ describe('usage-setup roles', () => {
       expect(filePassword(role)).toBe(neonPasswords[role]);
       expect(await canLogin(role)).toBe(true);
     }
-    // SQL never set a password: Neon's API did.
-    expect((await db.query<{ n: number }>("SELECT count(*)::int AS n FROM pg_authid WHERE rolname LIKE 'usage_%' AND rolpassword IS NOT NULL")).rows[0]!.n).toBe(0);
+    // SQL set only a throwaway (Neon's reset needs a role with a password, D403 amended); the files hold Neon's
+    // passwords, never the throwaway, and the throwaway is printed nowhere.
+    expect((await db.query<{ n: number }>("SELECT count(*)::int AS n FROM pg_authid WHERE rolname LIKE 'usage_%' AND rolpassword IS NOT NULL")).rows[0]!.n).toBe(2);
+    for (const role of ROLE_NAMES) {
+      const stored = (await db.query<{ p: string }>('SELECT rolpassword AS p FROM pg_authid WHERE rolname = $1', [role])).rows[0]!.p;
+      expect(stored).toMatch(/^(SCRAM-SHA-256\$|md5)/u); // PGlite keeps a hash of the throwaway, not Neon's password
+      expect(filePassword(role)).not.toMatch(/^[0-9a-f]{64}$/u);
+    }
+    expect(printed() + stdout.join('')).not.toMatch(/[0-9a-f]{64}/u);
     expect(roleLogins).toEqual(ROLE_NAMES);
     expect(filePassword('usage_writer')).not.toBe(filePassword('usage_admin'));
     expect(printed()).toMatch(/log in on usage-test's ledger with the new passwords/u);

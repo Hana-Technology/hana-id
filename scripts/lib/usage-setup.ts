@@ -243,7 +243,7 @@ async function rolesCommand(m: Manifest, dir: string, shown: (f: string) => stri
   const files = ROLES.map((r) => `${existsSync(join(dir, ROLE_FILES[r])) ? 'REPLACE' : 'write'} ${shown(ROLE_FILES[r])}`);
   deps.log(
     `Plan (env ${m.name}): Neon project ${projectId}, branch ${branchId}, endpoint ${host}. Check the endpoint is the branch's; ` +
-      `as the owner, check ${ROLES.join(' and ')} exist and ALTER ROLE … WITH LOGIN (no password); reset each role's password ` +
+      `as the owner, check ${ROLES.join(' and ')} exist and ALTER ROLE … WITH LOGIN with a random throwaway password (never stored); reset each role's password ` +
       `through Neon's API (Neon generates it; open connections to the endpoint are dropped); ${files.join(' and ')} (0600) ` +
       `with the new passwords; check each role logs in with its file.`,
   );
@@ -278,8 +278,17 @@ async function rolesCommand(m: Manifest, dir: string, shown: (f: string) => stri
     const missing = ROLES.filter((r) => !found.includes(r));
     if (missing.length) throw new Error(`role ${missing.join(' and ')} doesn't exist on ${m.name}'s ledger: run usage-migrate ${m.name} --yes first`);
     await db.exec('BEGIN');
-    // LOGIN only: Neon refuses a password that isn't plain text, and its API sets it below.
-    for (const role of ROLES) await db.exec(`ALTER ROLE ${role} WITH LOGIN`);
+    // LOGIN with a throwaway password (D403 as amended 2026-11-05): Neon's reset refuses a role that has no password
+    // (`ROLE_PASSWORD_NOT_AVAILABLE`), and Neon takes only plain-text passwords in SQL. The throwaway is random, never
+    // stored or printed, and dead within seconds, when the reset below replaces it with Neon's own.
+    for (const role of ROLES) {
+      const raw = deps.randomBytes(32);
+      if (raw.length !== 32) throw new Error('randomBytes returned the wrong length');
+      const throwaway = Buffer.from(raw).toString('hex');
+      raw.fill(0);
+      passwords.push(throwaway);
+      await db.exec(`ALTER ROLE ${role} WITH LOGIN PASSWORD '${throwaway}'`);
+    }
     await db.exec('COMMIT');
   } catch (e) {
     await db?.exec('ROLLBACK').catch(() => undefined);

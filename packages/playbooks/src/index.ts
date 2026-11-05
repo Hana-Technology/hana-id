@@ -10,7 +10,7 @@ export type { Actor, Playbook, Severity, Step } from './types.ts';
 export { ACTORS } from './types.ts';
 
 /** Bumped whenever the playbooks are re-checked against the code and the runbooks. */
-export const LAST_VERIFIED = '2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`)';
+export const LAST_VERIFIED = '2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`)';
 
 /** Shown above every playbook: how its commands are meant to be run. */
 export const NOTES: readonly string[] = [

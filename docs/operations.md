@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-05 (branch `feat/batch-c-15-screen`: "Support ID lookup" → "In the admin console" (the screen, the email join, the ticket rule, what to watch) and "Users screen (C8b)" (a Support ID goes to the lookup; the check), D399); 2026-11-05 (branch `feat/batch-c-8b`: "Admin Worker" → "Users screen (C8b)": issuer migration 0003, the deploy order issuer → API → admin, the checks and failures, D388–D392; "Retention" and "User directory (D269)" notes); 2026-11-05 (branch `chore/ci-cost`: "CI and git": CI and the identity probe turned off, the local checks, D387); 2026-11-05 (branch `feat/batch-c-15`: "Support ID lookup", `admin <env> support:lookup`, the admin route's audit, D394–D397); 2026-11-05 (branch `feat/coop-canary`: "Before each release: the COOP canary" (`coop-canary`, what a failure means, D386), step 0 of "A release."); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: "Common failures"' `derive_failed` `webcrypto_unsupported` / `webcrypto_failed`, D385); 2026-11-05 (branch `feat/deploy-build-check`: "Checking a deploy (`deploy-check`)", D384:
+Last verified against code: 2026-11-05 (branch `fix/usage-setup-neon-api-passwords`: "Usage capture" steps 2, 3 and 8: `usage-setup <env> roles` gives LOGIN by SQL and has Neon's API reset each role's password with the new `.secrets/<env>/neon-api-key` (how to create, save and revoke it), every run replaces the role files, Hyperdrive configs from older files re-created, the step-8 gate without the SCRAM question; the secrets table's Neon API key row; D403); 2026-11-05 (branch `feat/batch-c-15-screen`: "Support ID lookup" → "In the admin console" (the screen, the email join, the ticket rule, what to watch) and "Users screen (C8b)" (a Support ID goes to the lookup; the check), D399); 2026-11-05 (branch `feat/batch-c-8b`: "Admin Worker" → "Users screen (C8b)": issuer migration 0003, the deploy order issuer → API → admin, the checks and failures, D388–D392; "Retention" and "User directory (D269)" notes); 2026-11-05 (branch `chore/ci-cost`: "CI and git": CI and the identity probe turned off, the local checks, D387); 2026-11-05 (branch `feat/batch-c-15`: "Support ID lookup", `admin <env> support:lookup`, the admin route's audit, D394–D397); 2026-11-05 (branch `feat/coop-canary`: "Before each release: the COOP canary" (`coop-canary`, what a failure means, D386), step 0 of "A release."); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: "Common failures"' `derive_failed` `webcrypto_unsupported` / `webcrypto_failed`, D385); 2026-11-05 (branch `feat/deploy-build-check`: "Checking a deploy (`deploy-check`)", D384:
 the build id in every Worker and page bundle, `deploy-check <env> [--d1]` after each deploy step, migrations applied
 from a checkout at the deployed commit, the API's raw `wrangler deploy` lines now `run deploy`); 2026-11-05 (branch `fix/deploy-pages-builds`: `deploy:pages` runs the web build first; the 0011 apply note; the rebuilt page versions); 2026-11-05 (branch `chore/ci-cost`: "CI and git": which jobs run when, the nightly WebKit and Firefox run; the identity probe every 3 hours, D383); 2026-11-05 (branch `docs/sandbox-dev-state-1105`: sandbox-dev redeployed at `develop` 8aab09d with the wallet directory: `USER_ID_KEY`, the bookmark, 0011, API 6141ba3d, vault abe7cc61, auth 6b9a4bee, issuer 1542a60c); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
 what counts, each job's share in both crons, the `budget` log lines; settlement's reads a run; D380); 2026-11-04 (branch `feat/batch-c-13`: "Retention (batch C13, milestone M6)": the Neon
@@ -100,8 +100,9 @@ Never print, log, paste or commit any of these. The scripts never print them eit
 | Email issuer signing key (`ISSUER_SIGNING_KEY`; testnet and `local*` only) | `.secrets/<env>/email-issuer-signing-key.json` (active), `email-issuer-signing-key-standby.json` (published and on chain, **never uploaded**: keep it offline); RSA-2048 private JWKs, the only copies | `email-issuer <env> init`; upload with `email-issuer <env> put --yes` ("Email issuer" below) |
 | Email issuer HMAC keys (`EMAIL_SUB_KEY` = K_sub, `EMAIL_CODE_KEY`, `EMAIL_RL_KEY`) | `.secrets/<env>/email-sub-key`, `email-code-key`, `email-rl-key` (base64 of 32 bytes); K_sub is never rotated and is backed up offline twice (D81) | `email-issuer <env> init`; `put --yes` |
 | SendGrid key for user mail (`SENDGRID_API_KEY`, Mail Send only, D194) | `.secrets/<env>/email-issuer-sendgrid-key` | pasted by hand; `email-issuer <env> put --yes` |
-| Neon Postgres connection strings (batch C ledger, D73): pooled `DATABASE_URL` and `DATABASE_URL_DIRECT` of the env's Neon branch | `.secrets/<env>/neon.json` (`{project_id, branch, DATABASE_URL, DATABASE_URL_DIRECT, …}`); role `neondb_owner`, used only by `usage-migrate` and `usage-setup` | `neon connection-string <branch> --project-id <id> [--pooled]` (Neon CLI, `neon login`) |
+| Neon Postgres connection strings (batch C ledger, D73): pooled `DATABASE_URL` and `DATABASE_URL_DIRECT` of the env's Neon branch | `.secrets/<env>/neon.json` (`{project_id, org_id, branch, branch_id, region, DATABASE_URL, DATABASE_URL_DIRECT}`); role `neondb_owner`, used only by `usage-migrate` and `usage-setup` (which also reads `project_id` and `branch_id` for Neon's API, D403) | `neon connection-string <branch> --project-id <id> [--pooled]` (Neon CLI, `neon login`) |
 | Ledger role URLs (`usage_writer`, `usage_admin`, batch C4): each role's password; their copies live in the two Hyperdrive configs | `.secrets/<env>/neon-usage-writer.url`, `neon-usage-admin.url` | `usage-setup <env> roles` ("Usage capture" below) |
+| Neon API key for `usage-setup <env> roles` (D403): a project-scoped key of the env's Neon project; it can change and delete anything in that project | `.secrets/<env>/neon-api-key` (one line, 0600), only while setting up or rotating the roles: then revoke the key in Neon and delete the file | created by hand in Neon's console and saved with `umask 077; pbpaste > .secrets/<env>/neon-api-key` ("Usage capture" step 2) |
 | `USER_ID_KEY` (the uid key, base64 of 32 bytes; API only); never rotated within a contract term, backed up offline | `.secrets/<env>/user-id-key` | `usage-setup <env> user-id-key` (generates it once, sets the Worker secret) |
 | The console's Google client secret (`CONSOLE_GOOGLE_CLIENT_SECRET`, console Worker only; batch C9) | `.secrets/<env>/console-google-client.json` (Google's downloaded client JSON, `web.client_secret`) | saved by hand from Google Cloud (setup step 11, "Partner console Worker"); `wrangler secret put` through a pipe; read by `console-code-flow-spike` |
 | Watchdog secrets (`WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, its Resend key, Slack webhook, paging-app credentials, `HEARTBEAT_URL`); the admin Worker's copy of `WATCHDOG_STATUS_TOKEN` (batch C14) comes from the same file | `.secrets/<env>/watchdog-secrets.json` (flat `{NAME: value}`) | `watchdog secrets <env> init` (the key and token); the rest by hand ("Watchdog service" below) |
@@ -658,7 +659,7 @@ corepack pnpm --filter @hana-id/scripts usage-migrate sandbox-dev --yes   # appl
 - Each file runs in its own transaction with its sha256 recorded in `hana_migrations.applied`, under an advisory lock.
   A file changed after it was applied, or an applied file the repo doesn't have, stops the run: add a new file instead.
 - The schema creates the roles `usage_writer` (the API) and `usage_admin` (the admin Worker) `NOLOGIN`, with no
-  password; `usage-setup <env> roles` gives them `LOGIN` and passwords ("Usage capture" below).
+  password; `usage-setup <env> roles` gives them `LOGIN` and has Neon generate their passwords ("Usage capture" below).
 - Files (also `0005_link_events.sql`: the link relays' events, `link` / `link_cancel` / `link_unlink`, email login
   batch 6): `0001_ledger.sql` (events, users, settlements, rates, statements, `ops`, `record_event`, roles and grants),
   `0002_identity_tokens.sql` (identity tokens per app and day, `record_identity_tokens`, batch C4),
@@ -686,24 +687,55 @@ and of email login counts (`email_usage`, from migration 0010) to `usage.email_c
 ### Setting it up on sandbox-dev (for the user; run from the main checkout)
 
 Nothing here is run by an agent. Every command prints its plan and changes nothing without `--yes`; none prints a
-password, a URL or the key. Prerequisites: `.secrets/sandbox-dev/neon.json` with `DATABASE_URL_DIRECT` (the owner,
-direct endpoint), wrangler logged in to the Hana Cloudflare account, and Hyperdrive available on its plan (build plan
+password, a URL or a key. Prerequisites: `.secrets/sandbox-dev/neon.json` with `DATABASE_URL_DIRECT` (the owner,
+direct endpoint), `project_id` and `branch_id`, a Neon API key in `.secrets/sandbox-dev/neon-api-key` (step 2), wrangler logged in to the Hana Cloudflare account, and Hyperdrive available on its plan (build plan
 open question 3).
 
 1. **Ledger schema** (applies `0002_identity_tokens.sql`, `0003_writer_partitions.sql`, and from email login batch 6
    `0004_email_counts.sql` and `0005_link_events.sql`; `0001` if it isn't yet):
    `corepack pnpm --filter @hana-id/scripts usage-migrate sandbox-dev`, then the same with `--yes`.
-2. **Role passwords**: `corepack pnpm --filter @hana-id/scripts usage-setup sandbox-dev roles` (plan), then `--yes`.
-   It generates a password per role, writes `.secrets/sandbox-dev/neon-usage-writer.url` and `neon-usage-admin.url`
-   (0600: the owner's direct endpoint and database, the role, `sslmode=require`) and, as the owner, runs
-   `ALTER ROLE usage_writer|usage_admin WITH LOGIN PASSWORD '<SCRAM verifier>'` in one transaction: Neon gets a
-   verifier, never the password. Running it again reuses the passwords in the files (to resume a run that stopped).
+2. **Role passwords** (D403). Neon takes only plain-text passwords, so Neon generates them through its API.
+   1. **Create a Neon API key** (once; revoke it at the end of this step). In Neon's console, switch to the
+      organization that owns the `hana-id` project, open **Settings → API keys**, click **Create new**, choose
+      **Project-scoped**, pick the project `hana-id` and name the key `usage-setup sandbox-dev`. Project-scoped keys need
+      an organization admin; on a personal account (no organization) use **Account settings → API keys → Create new**
+      (a personal key: it reaches all your projects, so revoke it straight after). Neon shows the key **once**: copy it
+      and, without pasting it anywhere else, save it from the clipboard:
+
+      ```sh
+      (umask 077; pbpaste > .secrets/sandbox-dev/neon-api-key) && pbcopy < /dev/null && ls -l .secrets/sandbox-dev/neon-api-key
+      ```
+
+      (`-rw-------`; the last command also empties the clipboard). `neon.json` must hold `project_id` and `branch_id`
+      (the sandbox-dev branch's `br-…` id).
+   2. **Plan**: `corepack pnpm --filter @hana-id/scripts usage-setup sandbox-dev roles`. It checks the key file (0600)
+      and `neon.json` and prints the project, branch, endpoint and which role files it will write or **REPLACE**;
+      nothing is sent to Neon.
+   3. **Do it**: the same with `--yes`. It checks that the owner URL's endpoint is the branch's
+      (`GET …/branches/<branch_id>/endpoints`); as the owner, that both roles exist and `ALTER ROLE usage_writer|usage_admin
+      WITH LOGIN` (no password); then, per role, `POST …/branches/<branch_id>/roles/<role>/reset_password`: Neon generates
+      the password, which goes straight into `.secrets/sandbox-dev/neon-usage-writer.url` / `neon-usage-admin.url`
+      (0600: the owner's direct endpoint and database, the role, `sslmode=require`), never printed; it waits for Neon's
+      operations to finish (a busy project, HTTP 423, is retried) and last logs in as each role with its file. A reset
+      drops the endpoint's open connections. On a failure it prints the HTTP status and Neon's error code and message
+      only; running it again resets both again.
+   4. **Revoke the key** when it says both roles log in: Neon's console, the same **API keys** page → **Revoke** next to
+      `usage-setup sandbox-dev`; then `rm .secrets/sandbox-dev/neon-api-key`. Create a new one for the next rotation.
+
+   **Every run resets both passwords and replaces both files**: the old passwords stop working at once. Run `roles`
+   before `hyperdrive`. If the Hyperdrive configs already exist (a later rotation), they still hold the old passwords:
+   capture fails open (`usage_write_failed` `pg_28P01`) until they are re-created in step 3.
 3. **Hyperdrive configs**: `usage-setup sandbox-dev hyperdrive` (plan), then `--yes`: `wrangler hyperdrive create
    hana-id-usage-writer-sandbox-dev` and `hana-id-usage-admin-sandbox-dev` (the manifest's `usage` block names once it
    has one) with `--caching-disabled`, from the role files. It prints each config's id (not secret). The admin config
    is for the admin Worker (batch C8); create both now. Note: wrangler takes the role URL as an argument, so it is
    briefly visible in the local process list. **Before production** the configs are created through Cloudflare's
    REST API with the password in the HTTPS body instead (`docs/mainnet-readiness.md` row 4.18).
+   **After a `roles` re-run** (configs already there): `hyperdrive --yes` stops with "already exists". Delete the old
+   configs (`corepack pnpm --dir apps/api exec wrangler hyperdrive list`, then `… wrangler hyperdrive delete <id>` for
+   each of the two), run `hyperdrive --yes` again, pass the new writer id to `gen … --usage-hyperdrive-id <id>` and
+   deploy the API (step 6), and the new admin id to the admin Worker's `gen … --admin-hyperdrive-id <id>` and deploy it
+   ("Admin Worker"). Capture is lost in between (fail open; logins are unaffected).
 4. **`USER_ID_KEY`**: `usage-setup sandbox-dev user-id-key` (plan), then `--yes`: generates 32 random bytes (base64)
    into `.secrets/sandbox-dev/user-id-key` (0600, never replaced) and sets the API Worker's `USER_ID_KEY` through
    wrangler's stdin. **Make an offline backup of the file** (with the council backup, as `identity-sub-key`): the key
@@ -727,11 +759,11 @@ open question 3).
 8. **Gate: the writer logs in and the event lands.** Do not go on (no admin Worker, no partner relying on usage
    numbers, no C4b) until this passes. Log in on sandbox-dev (the demo or `apps/smoke`), then as the owner
    `SELECT endpoint, outcome, code, relayed, uid IS NOT NULL AS has_uid FROM usage.events ORDER BY received_at DESC
-   LIMIT 5;` must show the login (`ok`, relayed, a uid), and the Worker logs no `usage_write_failed`. This is the
-   first time Neon checks a password `usage-setup` set as a SCRAM verifier (D224; PGlite only proved Postgres stores
-   it): `usage_write_failed` `pg_28P01` means Neon didn't accept it. Then stop: turn capture off ("Turning capture off"
-   below; logins are unaffected) and report the SQLSTATE before going further; never set a plain-text password by hand
-   instead. Optional, for the gas test's fixture: compare the event's `relay_gas_burnt` with the transaction's own sum
+   LIMIT 5;` must show the login (`ok`, relayed, a uid), and the Worker logs no `usage_write_failed`. `roles` already
+   proved each file's password logs in (D403), so `usage_write_failed` `pg_28P01` means the Hyperdrive config holds an
+   older password (made before the last `roles` run: re-create it, step 3). Any other failure: stop, turn capture off
+   ("Turning capture off" below; logins are unaffected) and report the code before going further; never set a
+   password by hand instead. Optional, for the gas test's fixture: compare the event's `relay_gas_burnt` with the transaction's own sum
    (`tx` at FINAL: `transaction_outcome` plus every receipt) and keep that `tx` JSON (`apps/api/test/usage.test.ts` uses
    a hand-shaped one).
 
@@ -745,7 +777,7 @@ deploy. Logins are unaffected either way; events in between are not recorded.
 | `usage_write_failed` (`code` `connection`, `attempt` 2) | Neon/Hyperdrive unreachable or slow for both tries: the event is lost (under-bills Hana, never a partner) | Check Neon and Hyperdrive status; the daily nonce cross-check (C12) shows lost relayed rows |
 | `usage_write_failed` (`code` `pg_23514`) | No partition for the event's month | Look for `usage_partitions_failed`; as the owner, `SELECT usage.ensure_partitions(12);` |
 | `usage_partitions_failed` (`code`) | The hourly `ensure_partitions(12)` failed (12 months are ahead, so there's time) | Check the writer's grant (`usage-migrate`: 0003) and Neon; the next hour retries |
-| `usage_write_failed` (other `pg_*`) | The server refused it (e.g. `pg_42501`: the role lost its grant; `pg_28P01`: wrong password in the Hyperdrive config) | Re-run `usage-migrate` / `usage-setup … roles`, or fix the Hyperdrive config |
+| `usage_write_failed` (other `pg_*`) | The server refused it (e.g. `pg_42501`: the role lost its grant; `pg_28P01`: wrong password in the Hyperdrive config) | Re-run `usage-migrate`; for `pg_28P01`, re-create the Hyperdrive config from the current role file ("Usage capture" step 3; a `usage-setup … roles` run resets the passwords, so re-create the configs after it) |
 | `usage_write_rejected` | The event failed UsageEvent v1 (`invalid_event`, never sent) or the function refused it (`pg_22023`) | A bug: the event's `problems` name the fields |
 | `usage_uid_unavailable` | `missing_key` / `bad_key`: `USER_ID_KEY` unset or malformed (events recorded without uid); `bad_path`: a session path that doesn't parse for its scope | Set the key (step 4); `bad_path` should never happen |
 | `identity_usage_sync_failed` | The hourly identity-count copy failed | Nothing: the next hour copies the last 7 days again |
@@ -3182,7 +3214,7 @@ AUTH=https://hana-id-auth-sandbox-dev.tingtc.workers.dev
    **Usage capture (batch C4): optional for the demo.** The API records usage in the Neon ledger only with the
    `USAGE_DB` binding; without it capture is off and every endpoint answers as before (fail open, D222). To capture,
    run "Usage capture" steps 1–4 and 6 now (`usage-migrate` applies `0002`–`0005` here: identity tokens, writer
-   partitions, email counts, the link relays' events; the role passwords as SCRAM verifiers; the two Hyperdrive configs;
+   partitions, email counts, the link relays' events; the role passwords from Neon's API, D403; the two Hyperdrive configs;
    `USER_ID_KEY`; `gen $ENV --usage-hyperdrive-id <writer id>`), and its step 8 gate after step 4 below. Skip all of it
    for the demo if you like: nothing below depends on it. **Not optional**: "Usage capture" step 7 (the legacy counters
    into `session_markers`), right after step 4's deploy.

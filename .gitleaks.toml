@@ -66,13 +66,25 @@ keywords = ["postgres://", "postgresql://"]
 description = "Test and doc placeholders that say they are fake"
 stopwords = ["not-real", "not-a-real", "placeholder", "fake-pw", "sekrit"]  # sekrit: an earlier commit's test fake
 
+# A Neon API key (`napi_` + letters and digits, as Neon's console shows a new key), as .secrets/<env>/neon-api-key holds
+# it for `usage-setup <env> roles` (D403): pasted into a doc or a script. Placeholders (`napi_<key>`, `napi_…`) don't
+# match.
+[[rules]]
+id = "hana-neon-api-key"
+description = "Neon API key"
+regex = '''\b(napi_[A-Za-z0-9]{40,128})\b'''
+secretGroup = 1
+entropy = 3.5
+keywords = ["napi_"]
+
 # Hana's secret files, whatever they contain: anything under a .secrets/ directory (the council key files
 # .secrets/<env>/council/<account>.json included), .dev.vars, the relayer and keys-updater key files, the watchdog's
-# secrets file, the vault KEK files, the identity token's and the email issuer's key files, wherever they are. All gitignored; this catches `git add -f` and copies.
+# secrets file, the vault KEK files, the identity token's and the email issuer's key files, the ledger's Neon files (neon.json,
+# the role URLs, the Neon API key neon-api-key, D403), wherever they are. All gitignored; this catches `git add -f` and copies.
 [[rules]]
 id = "hana-secret-file"
 description = "Hana secret file (.secrets/, .dev.vars, key files, vault KEK)"
-path = '''(^|/)(\.secrets/|\.dev\.vars$|(owner-)?relayer-keys\.json$|keys-updater\.json$|watchdog-secrets\.json$|vault-kek(\.previous|\.next)?$|identity-signing-key(-standby)?\.json$|identity-sub-key$|email-issuer-signing-key(-standby)?\.json$|email-(sub|code|rl)-key$|email-issuer-sendgrid-key$|user-id-key$|neon(-usage-(writer|admin)\.url|\.json)$)'''
+path = '''(^|/)(\.secrets/|\.dev\.vars$|(owner-)?relayer-keys\.json$|keys-updater\.json$|watchdog-secrets\.json$|vault-kek(\.previous|\.next)?$|identity-signing-key(-standby)?\.json$|identity-sub-key$|email-issuer-signing-key(-standby)?\.json$|email-(sub|code|rl)-key$|email-issuer-sendgrid-key$|user-id-key$|neon(-usage-(writer|admin)\.url|\.json|-api-key)$)'''
 
 # Contract test fixtures: Google-style ID tokens signed by a throwaway RSA key whose private half is discarded
 # (contracts/hana-signer/scripts/gen-fixtures.mjs). Only the `jwt` rule is waived here; any other secret in the

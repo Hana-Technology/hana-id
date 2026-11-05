@@ -6,14 +6,15 @@ import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite, PGliteInterface } from '@electric-sql/pglite';
 import { formatSupportId, internalIdOf, uid } from '@hana-id/console-core';
 import { repoRoot } from '@hana-id/env';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { assertCommandPositionals } from '../lib/admin-args.ts';
 import { type SupportCmdDeps, type SupportLedgerConn, supportChangesSql, supportLookupCommand, supportSharesSql } from '../lib/admin-support.ts';
 import { parseCli } from '../lib/cli.ts';
 import { newHotDb, seedHotApp } from './hot-db.ts';
+import { PGLITE, PGLITE_HOOK_MS, migratedLedger } from './pglite.ts';
 
 const KEY = new Uint8Array(32).fill(5);
 const SCOPE = 's9';
@@ -29,9 +30,7 @@ function issuerDb(): DatabaseSync {
   return db;
 }
 async function ledgerDb(): Promise<PGlite> {
-  const db = new PGlite();
-  const dir = join(repoRoot, 'apps', 'api', 'migrations-usage');
-  for (const f of readdirSync(dir).filter((n) => n.endsWith('.sql')).sort()) await db.exec(readFileSync(join(dir, f), 'utf8'));
+  const db = await migratedLedger();
   // The writer keeps partitions ahead; here the months the events fall in.
   await db.query('SELECT usage.ensure_partitions(1)');
   for (const t of [NOW - 60 * DAY, NOW - 30 * DAY]) {
@@ -42,7 +41,7 @@ async function ledgerDb(): Promise<PGlite> {
   }
   return db;
 }
-const asAdmin = (db: PGlite): SupportLedgerConn => ({
+const asAdmin = (db: PGliteInterface): SupportLedgerConn => ({
   async query(sql, params) {
     await db.exec('SET ROLE usage_admin');
     try {
@@ -58,7 +57,9 @@ const sha = (s: string): Buffer => createHash('sha256').update(s, 'utf8').digest
 
 let api: DatabaseSync;
 let issuer: DatabaseSync;
-let ledger: PGlite;
+/** The ledger with its partitions, built once (./pglite.ts); each test gets a clone. */
+let template: PGlite;
+let ledger: PGliteInterface;
 let out: string[];
 let aliceId: string;
 const CODE = 'ABCD2345';
@@ -78,10 +79,16 @@ function deps(over: Partial<SupportCmdDeps> = {}): SupportCmdDeps {
   };
 }
 
+beforeAll(async () => {
+  template = await ledgerDb();
+}, PGLITE_HOOK_MS);
+afterAll(async () => {
+  await template.close();
+}, PGLITE_HOOK_MS);
 beforeEach(async () => {
   api = newHotDb();
   issuer = issuerDb();
-  ledger = await ledgerDb();
+  ledger = await template.clone();
   out = [];
   aliceId = internalIdOf(await uid(KEY, { scopeId: SCOPE, ...ALICE }));
   seedHotApp(api, { id: 'app_s9', key: 'pk_test_S9S9S9S9S9S9S9S9S9', scope: SCOPE, name: 'Demo', orgId: 'org_demo' });
@@ -118,14 +125,14 @@ beforeEach(async () => {
   await ev('req_derive_0001', NOW - DAY / 2, 'derive', 'ok', null, hex);
   await ev('req_login_00old', NOW - 45 * DAY, 'login', 'ok', null, hex);
   await ev('req_failed_0001', NOW - DAY / 4, 'login', 'rejected', 'nonce_mismatch', null);
-});
+}, PGLITE_HOOK_MS);
 afterEach(async () => {
   await ledger.close();
-});
+}, PGLITE_HOOK_MS);
 
 const run = (input: string, argv: string[] = [], o: Partial<SupportCmdDeps> = {}) => supportLookupCommand(input, parseCli(argv, SPEC), deps(o));
 
-describe('admin support:lookup', () => {
+describe('admin support:lookup', PGLITE, () => {
   it('resolves the code typed any way to every user sharing it, each with its accounts, apps, shares, changes and events', async () => {
     for (const input of ['HANA-ABCD-2345', 'hana-abcd-2345', 'abcd2345', 'ABCD-2345', 'hana abcd 2345']) {
       out = [];

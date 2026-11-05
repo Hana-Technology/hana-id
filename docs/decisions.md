@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
+Last verified against code: 2026-10-28 (commit 58edee9); D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
 flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
 confirmed by the user) on 2026-11-04, amending D341; D341 (branch `fix/google-cancel-back-to-chooser`, confirmed
@@ -6160,6 +6160,12 @@ follow-up there.
 - Rejected: a different error code for a WebCrypto failure (it would still fail the login); generating the key from
   our own randomness and importing it (the key must stay non-extractable WebCrypto, and an import path in WebKit Linux
   may have the same leading-zero bug); a test-only workaround (the flake is the product failing).
+- Addendum 2026-11-05 (D385, branch `fix/webcrypto-linux-webkit`): the refused keys are those whose **seed or** public
+  key starts with a zero byte (2 in 256, about 1 in 128): 39 of 5 000 refused, and none of the 4 961 keys returned had
+  either (about 19 of each expected); four refusals in a row are about 4 in 10^9, not 10^8. The import path does have
+  the bug: a PKCS#8 import of a seed starting with `0x00` fails (`DataError`, 33 of 33), a JWK import of it works. A
+  key it still can't make is no longer `api_unavailable`: D385 gives it `derive_failed` with a reason, which amends the
+  first "Rejected" item (the login still fails, but the error now says why).
 
 ### D382. The outside identity-JWKS probe runs hourly, not every 15 minutes
 - Date 2026-11-05 · Status: **confirmed by the user** · Built: `.github/workflows/identity-probe.yml` (`17 * * * *`) ·
@@ -6204,10 +6210,53 @@ follow-up there.
   `github.event.before` (a cancelled run's changes would never be tested); disabling `cancel-in-progress` instead (it
   costs the minutes back).
 
+## The vault's WebCrypto failures and the WebKit Linux audit (branch `fix/webcrypto-linux-webkit`), 2026-11-05
+
+### D385. A session key the browser can't make is `derive_failed` with `data.reason`, not `api_unavailable`; the other WebCrypto calls are unaffected by WebKit Linux's zero-byte bug
+- Date 2026-11-05 · Status: decided while following up D381, to confirm · Amends D381 (its first "Rejected" item) ·
+  Numbered D385 because D384 is taken on `chore/ci-cost` (not merged when this was written) ·
+  Built: `packages/core/src/session.ts` (`sessionKeyFailure`), `packages/web/src/vault/errors.ts` (`sessionKeyError`),
+  `vault/login.ts` (the login and `hana_linkAccount`), `auth/export-page.ts` and `auth/errors.ts` (`sessionKeyText`),
+  `apps/demo/src/errors.ts`; tests: `packages/core/test/layouts.test.ts`, `packages/web/test/vault/login.test.ts`,
+  `vault/linking.test.ts`, `auth/export-page.test.ts`, `apps/demo/test/errors.test.ts` (all "D385"),
+  `apps/e2e/tests/login.spec.ts` ("D385"), `apps/e2e/tests/webcrypto.spec.ts`
+- The error: when `newSessionKey` rejects (Ed25519 missing from WebCrypto, or D381's `OperationError` four times in a
+  row), the login, a link and the export window's sign-in now end with `derive_failed` and `data.reason`
+  `webcrypto_unsupported` (a `NotSupportedError`, or no `crypto.subtle`: Chrome and Edge before 137, Firefox before
+  129, Safari before 17) or `webcrypto_failed` (anything else), with `data.error` the platform error's name when it
+  is a plain identifier (never its message). Before, it was not a `VaultError`, so `api_unavailable` ("The request
+  failed"; the demo: "Could not reach Hana's service"). The key is made right after `GET /v1/app`, so the login ends
+  before the popup gets its parameters and before any `/v1/login`. The export window says "This browser can't create
+  the key the sign-in needs. Update it, or use another browser." (or "… Try again."); the demo says the same.
+- Why an existing code: `derive_failed` already means "the key couldn't be produced; log in again" in the partner
+  guide, and the export window already used it for a start that failed. A new code would be a partner-visible change
+  that SDKs already installed can't read: the SDK validates a reply's code against its own list, so an older SDK
+  would get a malformed reply (`-32603`) instead. `data.reason` is how the vault already refines a code
+  (`link_restart`), and old SDKs pass `data` through. `storage_unavailable` was the other candidate (its advice is
+  "try another browser"), but it means blocked storage, and its "allow site data" advice would mislead.
+- The audit (2026-11-05, Playwright 1.64.1: macOS WebKit 27.2, Chromium 156, Firefox 157, and the same in
+  `mcr.microsoft.com/playwright:v1.64.1-noble` with 2 CPUs): every `crypto.subtle` call on the login, export and
+  signing paths, each with 3 000 random keys (5 000 for key generation) and fixed vectors made by Node's OpenSSL and
+  `@noble/curves`, with keys starting with zero bytes. WebKit Linux fails only (a) Ed25519 `generateKey`: 20, 19, 23,
+  26 and 39 refusals in runs of 3 000, 3 000, 3 000, 3 000 and 5 000 (`OperationError`), and none of the keys it
+  returns has a seed or public key starting with `0x00`; (b) a PKCS#8 import of an Ed25519 private key whose seed
+  starts with `0x00` (`DataError`, 33 of 33 fixed seeds, 7 of 3 000 random); (c) the same two for X25519. Hana makes
+  only (a), already retried (D381). Everything Hana imports passes in all six browsers: AES-256-GCM raw keys (the
+  relay keys, K_s; 3 081 vectors, 81 with leading zero bytes, the all-zero key), HKDF-SHA-256 raw PRKs (3 081, same
+  bytes as Node), Ed25519 raw public keys (3 100, at least 67 starting with `0x00`, 3 of them with `0x0000`), RS256
+  JWKs (400), and session keys restored from IndexedDB (300). No address depends on WebCrypto at all: CKD, the chain keys and their
+  signatures are `@noble` (`docs/architecture.md` "WebCrypto on the login, export and signing paths"), so nothing here
+  changes a derivation or an address. Also seen: Safari on macOS signs Ed25519 with a random nonce (valid, not RFC
+  8032's bytes); nothing depends on a session signature's bytes.
+- Rejected: a new public code (`browser_unsupported`, say: older SDKs would see a malformed reply, above); a JWK
+  import for the session key to avoid the PKCS#8 bug (Hana imports no private key; the session key is generated
+  non-extractable); retrying the other calls (none fails).
+
 ## Superseded or amended
 
 | Was | Now | Source |
 |---|---|---|
+| D381: a session key WebCrypto can't make ends the login `api_unavailable` (a different code rejected) | `derive_failed` with `data.reason` `webcrypto_unsupported` / `webcrypto_failed` (D385) | `packages/web/src/vault/errors.ts` |
 | The outside identity-JWKS probe runs hourly (D382) | Every 3 hours, at minute 17 (D383) | `.github/workflows/identity-probe.yml` |
 | The outside identity-JWKS probe runs every 15 min (D210) | Hourly, at minute 17 (D382) | `.github/workflows/identity-probe.yml` |
 | The admin crons' budget counts emails and NEAR reads only, with room for the RPCs (D280); C12's `relayerKeys` and statement-notice reads uncharged (D360's note) | Every outbound call counts: the connection, every RPC (at most 30), every email, NEAR read and rate fetch; a unit of work starts only when it fits (D380) | `apps/admin/src/mail.ts`, `cron.ts`, `ledger-cron.ts` |

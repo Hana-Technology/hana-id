@@ -609,6 +609,26 @@ describe('/export', () => {
     for (const n of names) expect(n).toMatch(/^hana-login-[0-9a-f]{32}$/u);
   });
 
+  describe('D385: a browser that can’t make the export’s session key says so', () => {
+    afterEach(() => vi.restoreAllMocks());
+    it.each([
+      ['NotSupportedError', 1, 'Update it, or use another browser.'],
+      ['OperationError', 4, 'couldn’t create the key the sign-in needs. Try again.'],
+    ] as const)('%s: derive_failed with its own text (asked %i time(s)), no sign-in params', async (name, calls, text) => {
+      const spy = vi.spyOn(crypto.subtle, 'generateKey').mockImplementation((() => Promise.reject(new DOMException('a platform message', name))) as typeof crypto.subtle.generateKey);
+      const r = run();
+      await vi.waitFor(() => expect(r.page.state).toBe('ready'));
+      click(button(/Sign in with Google/u));
+      await vi.waitFor(() => expect(r.page.state).toBe('error'));
+      expect(r.page.errorCode).toBe('derive_failed');
+      expect(pageText()).toContain(text);
+      expect(pageText()).not.toContain('platform message');
+      expect(spy).toHaveBeenCalledTimes(calls);
+      r.win.message({ v: 1, t: 'hana:auth-hello' }, ENV.authOrigin, r.child);
+      expect(r.child.postMessage).not.toHaveBeenCalled();
+    });
+  });
+
   it('opens the child popup synchronously in the click, before any await', async () => {
     const r = run();
     await vi.waitFor(() => expect(r.page.state).toBe('ready'));

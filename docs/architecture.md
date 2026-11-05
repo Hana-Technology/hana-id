@@ -1,7 +1,7 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-05 (branch `fix/e2e-flakes`: the login's step 2, the session key's retry on WebKit Linux's
+Last verified against code: 2026-11-05 (branch `fix/webcrypto-linux-webkit`: the login's step 2, the session key's failure as `derive_failed` with its reason and which keys WebKit Linux refuses, D385; "WebCrypto on the login, export and signing paths"); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-05 (branch `fix/e2e-flakes`: the login's step 2, the session key's retry on WebKit Linux's
 Ed25519 `OperationError`, D381); 2026-11-04 (branch `feat/batch-c-13`: retention and the erasure path in Status, Components
 (the usage ledger and admin Worker rows) and "Data stores" (what is purged when, D360–D369)); 2026-11-04 (branch `feat/console-reports-upgrades`: the partner console's usage, statement and pending-upgrades screens, D370–D374); 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342; the partner console's fresh sign-in and write paths, D343, D350–D358); 2026-11-04 (branch `feat/user-id-identity-sub`: the wallet directory's three ids and the record's session signature, D346 and the D311/D313 amendments: Status, "Wallet directory" steps 1, 2 and 4, "Data stores"' D1 row, the Glossary); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: D347, a closed popup is
 `login_cancelled`, in "Login, one transaction" after step 4; D348's Google-only screen after a cancel; a cancel on token_first's Google
@@ -220,8 +220,10 @@ Browser steps: `packages/web/src/vault/login.ts`, `packages/web/src/auth/login-p
 1. Partner calls `hana.login()` in its click handler; the SDK opens `{authOrigin}/login?v=<vault frame name>` before
    any `await`, then sends `hana_login` on the port. Popup blocked → the vault shows a "Sign in with Hana" launcher.
 2. The vault makes a non-extractable Ed25519 session key (`newSessionKey`, `packages/core/src/session.ts`: a WebCrypto
-   `OperationError` is asked again, up to 4 attempts, since WebKit's Linux ports refuse about 1 in 100 Ed25519 keys,
-   D381), 32-byte salt, `expiresAtMs = now() + min(session_ttl_ms,
+   `OperationError` is asked again, up to 4 attempts, since WebKit's Linux ports refuse about 1 in 128 Ed25519 keys,
+   those whose seed or public key starts with a zero byte, D381, D385; a key it still can't make ends the login with
+   `derive_failed`, `data.reason` `webcrypto_unsupported` (no Ed25519 in WebCrypto) or `webcrypto_failed`, D385; a
+   link and the export window's own sign-in do the same), 32-byte salt, `expiresAtMs = now() + min(session_ttl_ms,
    24 h − 10 min)` on the server-corrected clock, `keyIndex = 0`, `maxUses` (1 in `'session'` mode, 2 in `'none'`),
    `nonce = sessionNonce(SIGNER, scopeId, …)` (`packages/core/src/layouts.ts:71`), `relayKey`, `relayReadKey` and
    `relayId = b64url(sha256(relayReadKey))` (`relayIdFor`, `layouts.ts:166`). `SIGNER` is a build constant; `scopeId`
@@ -846,6 +848,29 @@ already exists. No path layout or derivation input changed in batches 7 and 8b.
 
 Before the freeze, anything that changes an address must be called out (CLAUDE.md); after it, never. A scheme change
 would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
+
+### WebCrypto on the login, export and signing paths
+
+No address goes through WebCrypto: CKD (BLS12-381), the HKDF of the chain keys, the Stellar (Ed25519) and EVM
+(secp256k1) keys and their signatures are `@noble/curves` and `@noble/hashes` (`ckd.ts`, `derivation.ts`,
+`signers/`). WebCrypto holds the session key and the symmetric keys around it. Audited on 2026-11-05 (D385) in
+Playwright 1.64.1's browsers on macOS and in its Linux image (WebKit 27.2, Chromium 156, Firefox 157), with
+thousands of random keys per call and fixed keys starting with zero bytes; `apps/e2e/tests/webcrypto.spec.ts` keeps
+the fixed-key checks on every browser CI runs.
+
+| Call | Where | Key | Linux WebKit |
+|---|---|---|---|
+| Ed25519 `generateKey` (non-extractable), `exportKey('raw')` of its public half | `core/session.ts` `newSessionKey` | fresh random | refuses the keys whose seed or public key starts with `0x00` (`OperationError`, about 1 in 128): retried, up to 4 attempts (D381); a key it still can't make is `derive_failed`, `webcrypto_failed` / `webcrypto_unsupported` (D385) |
+| Ed25519 `sign` | `core/session.ts`, `core/wallet-record.ts`, `web/vault/identity.ts` | the session key (also restored from IndexedDB) | fine |
+| Ed25519 `importKey('raw')` public, `verify` | `core/session.ts` `verifyEd25519` (the e2e stack's mock API; not called in a browser) | given | fine, including public keys starting with `0x00` or `0x0000` |
+| AES-256-GCM `importKey('raw')`, `encrypt`, `decrypt` | `core/relay.ts` (relay keys), `web/vault/record.ts` (K_s) | random (relay keys), the server-held share (K_s) | fine, including keys starting with zero bytes and the all-zero key |
+| HKDF-SHA-256 `importKey('raw')`, `deriveKey` to AES-GCM | `web/vault/record.ts` `consentKey` | the PRK (derived) | fine, same bytes as Node |
+| RSASSA-PKCS1-v1_5 `importKey('jwk')`, `verify` | `core/id-token.ts`, `core/email-token.ts` | Google's and the email issuer's keys | fine |
+
+Linux WebKit also refuses a PKCS#8 import (`DataError`) of an Ed25519 or X25519 private key whose first byte is
+`0x00`, and X25519 `generateKey` the same way as Ed25519's; Hana makes neither call (a JWK import of the same key
+works). Safari on Apple platforms signs Ed25519 with a random nonce (valid signatures that differ from RFC 8032's
+deterministic ones); nothing in Hana depends on a session signature's bytes.
 
 ## Data stores
 

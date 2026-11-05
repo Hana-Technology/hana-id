@@ -19,11 +19,12 @@ export const SESSION_KEYGEN_ATTEMPTS = 4;
  * A fresh non-extractable Ed25519 session key.
  *
  * D381: WebKit's Linux ports (WebKitGTK and WPE: GNOME Web, embedded WPE browsers, Playwright's Linux WebKit) reject
- * about 1 in 100 Ed25519 generateKey calls with an OperationError; their successful keys never have a public key
- * that starts with a zero byte, so it looks like keys with a leading zero byte are the ones refused. Each attempt is a
- * fresh random key, so an OperationError is retried, up to SESSION_KEYGEN_ATTEMPTS in all (four failures in a row
- * there: about 1 in 10^8). Any other error (Ed25519 unsupported, say) is passed on at once. Safari on Apple platforms,
- * Chromium and Firefox never failed in testing.
+ * about 1 in 128 Ed25519 generateKey calls with an OperationError: the keys whose private seed or public key starts
+ * with a zero byte (D385's audit: none of the keys it returns has either, and it refuses a PKCS#8 import of a seed
+ * that starts with one). Each attempt is a fresh random key, so an OperationError is retried, up to
+ * SESSION_KEYGEN_ATTEMPTS in all (four failures in a row there: about 4 in 10^9). Any other error (Ed25519 unsupported,
+ * say) is passed on at once. Safari on Apple platforms, Chromium and Firefox never failed in testing. Callers report a
+ * failure as `derive_failed` with sessionKeyFailure's reason (D385), never as a network error.
  */
 export async function newSessionKey(): Promise<SessionKey> {
   for (let attempt = 1; ; attempt++) {
@@ -40,7 +41,34 @@ export async function newSessionKey(): Promise<SessionKey> {
   }
 }
 
-const isOperationError = (e: unknown): boolean => typeof e === 'object' && e !== null && (e as { name?: unknown }).name === 'OperationError';
+const errorName = (e: unknown): string | undefined => {
+  const name = typeof e === 'object' && e !== null ? (e as { name?: unknown }).name : undefined;
+  return typeof name === 'string' ? name : undefined;
+};
+const isOperationError = (e: unknown): boolean => errorName(e) === 'OperationError';
+
+/** Why newSessionKey failed (D385), as the login's `derive_failed` `data.reason`. */
+export type SessionKeyFailureReason = 'webcrypto_unsupported' | 'webcrypto_failed';
+
+export interface SessionKeyFailure {
+  reason: SessionKeyFailureReason;
+  /** The platform error's name (`NotSupportedError`, `OperationError`, …) when it is a plain identifier. Never its message. */
+  error?: string;
+}
+
+/**
+ * Classifies what newSessionKey threw (D385). `webcrypto_unsupported`: the browser has no Ed25519 in WebCrypto
+ * (`NotSupportedError`: Chrome and Edge before 137, Firefox before 129, Safari before 17), or no WebCrypto at all
+ * (`crypto.subtle` is missing outside a secure context: a TypeError). `webcrypto_failed`: anything else, which
+ * includes D381's OperationError after SESSION_KEYGEN_ATTEMPTS refusals; trying again can help there, not with the
+ * first.
+ */
+export function sessionKeyFailure(e: unknown): SessionKeyFailure {
+  const name = errorName(e);
+  const error = name !== undefined && /^[A-Za-z]{1,40}$/u.test(name) ? name : undefined;
+  const unsupported = name === 'NotSupportedError' || e instanceof TypeError || typeof globalThis.crypto?.subtle?.generateKey !== 'function';
+  return { reason: unsupported ? 'webcrypto_unsupported' : 'webcrypto_failed', ...(error === undefined ? {} : { error }) };
+}
 
 /** `n` random bytes from the platform CSPRNG (session salt, relay keys). */
 export const randomBytes = (n: number): Bytes => crypto.getRandomValues(new Uint8Array(n));

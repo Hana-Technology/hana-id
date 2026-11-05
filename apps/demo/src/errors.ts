@@ -77,11 +77,15 @@ export function plainMessage(e: unknown, action: DemoAction): string {
       return 'Your Hana session has ended. Log in again.';
     case 'session_consumed':
       return 'Click “Continue signing in” on the Hana button at the bottom right to finish signing in.';
+    case 'derive_failed':
+      // D385: the browser couldn't make the sign-in's session key (Ed25519 in WebCrypto).
+      if (reason === 'webcrypto_unsupported') return 'This browser can’t create the key Hana’s sign-in needs (no Ed25519 in WebCrypto). Update it, or use another browser.';
+      if (reason === 'webcrypto_failed') return `This browser failed to create the key Hana’s sign-in needs. Try again. ${REPORT}`;
+      return `Sign-in failed (${code}). Try again. ${REPORT}`;
     case 'token_invalid':
     case 'token_has_pii':
     case 'config_mismatch':
     case 'ckd_failed':
-    case 'derive_failed':
     case 'pairing_failed':
     case 'address_mismatch':
       return `Sign-in failed (${code}). Try again. ${REPORT}`;

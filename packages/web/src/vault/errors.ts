@@ -1,6 +1,6 @@
 // Errors the vault answers on the port (docs/batch-b-spec.md "Envelope" error table), and the mapping from API errors.
 // A VaultError's message and data never carry key material, tokens or session secrets: they go to the partner page.
-import { ApiError, ErrorCode, type HanaErrorCode, type ProtocolError } from '@hana-id/core';
+import { ApiError, ErrorCode, type HanaErrorCode, type ProtocolError, sessionKeyFailure } from '@hana-id/core';
 
 export class VaultError extends Error {
   constructor(
@@ -20,6 +20,18 @@ export class VaultError extends Error {
 export const notLoggedIn = (): VaultError => new VaultError(ErrorCode.unauthorized, 'Not logged in');
 export const userRejected = (message = 'The user rejected the request'): VaultError => new VaultError(ErrorCode.userRejected, message);
 export const disconnected = (message = 'The vault is disconnected'): VaultError => new VaultError(ErrorCode.disconnected, message);
+
+/**
+ * newSessionKey's failure as the login's error (D385): `derive_failed` with `data.reason` `webcrypto_unsupported`
+ * (this browser has no Ed25519 WebCrypto: update it or use another) or `webcrypto_failed` (the browser refused to make
+ * the key: D381's OperationError four times in a row, or anything else; trying again can help), and `data.error`, the
+ * platform error's name. Before D385 this fell through to `api_unavailable`, which blamed the network.
+ */
+export function sessionKeyError(e: unknown): VaultError {
+  const f = sessionKeyFailure(e);
+  const message = f.reason === 'webcrypto_unsupported' ? 'This browser cannot create the sign-in key (no Ed25519 in WebCrypto)' : 'This browser failed to create the sign-in key';
+  return new VaultError('derive_failed', message, { ...f });
+}
 
 /** Any thrown value as a port error. Unknown errors get a generic message (their text may come from a dependency). */
 export function toProtocolError(e: unknown, fallback: HanaErrorCode = 'api_unavailable'): ProtocolError {

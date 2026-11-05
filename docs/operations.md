@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-05 (branch `docs/sandbox-dev-state-1105`: sandbox-dev redeployed at `develop` 8aab09d with the wallet directory: `USER_ID_KEY`, the bookmark, 0011, API 6141ba3d, vault abe7cc61, auth 6b9a4bee, issuer 1542a60c); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
+Last verified against code: 2026-11-05 (branch `chore/ci-cost`: "CI and git": which jobs run when, the nightly WebKit and Firefox run; the identity probe every 3 hours, D383); 2026-11-05 (branch `docs/sandbox-dev-state-1105`: sandbox-dev redeployed at `develop` 8aab09d with the wallet directory: `USER_ID_KEY`, the bookmark, 0011, API 6141ba3d, vault abe7cc61, auth 6b9a4bee, issuer 1542a60c); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
 what counts, each job's share in both crons, the `budget` log lines; settlement's reads a run; D380); 2026-11-04 (branch `feat/batch-c-13`: "Retention (batch C13, milestone M6)": the Neon
 migration 0007, the deploy order, the monthly job in the 15-minute cron, `retention_failed`, `admin retention:issuer`,
 `uid-erase` for an erasure request, statements and rates by hand, what to watch; "Usage ledger" lists 0007; D360–D369);
@@ -2596,8 +2596,8 @@ them as `IDENTITY_PINS` and `identityToken.iss` as `IDENTITY_ISS`; an env withou
 - **What that catches, and what it doesn't** (D210): an attacker who publishes the same JWKS to everyone. Someone who
   controls Hana's Cloudflare account can recognise the watchdog's fetches (they come from Cloudflare's network) and
   serve them a clean JWKS while partners get another, or publish a key for less than a run. The **outside probe**
-  narrows the first: the GitHub Actions workflow `identity-probe` (`.github/workflows/identity-probe.yml`, hourly
-  at :17 since D382, no secrets) fetches each non-`local*` env's JWKS and discovery document from GitHub's network with a `jose`
+  narrows the first: the GitHub Actions workflow `identity-probe` (`.github/workflows/identity-probe.yml`, every 3
+  hours at :17 since D383, no secrets) fetches each non-`local*` env's JWKS and discovery document from GitHub's network with a `jose`
   User-Agent and the same rules (`@hana-id/jwks/identity`), against `watchdog.pinnedIdentityKeys` in the repo's
   manifests, and fails on any finding (every value from Hana's answers is printed JSON-quoted, escaped to printable
   ASCII with `%` too, and cut, and no line can start with `::`, so a hostile JWKS can't inject a workflow command);
@@ -3607,6 +3607,26 @@ skips everything while the `NPM_TOKEN` secret is missing, and npm refuses `"priv
   typecheck`, `pnpm -r test` (this includes `@hana-id/react`'s suite on React 18, `packages/react/react18`); the
   Playwright suite (`apps/e2e`, three browsers); sandbox e2e (`contracts/integration-tests`); the SDK pack check
   (`pnpm run pack:check`, [Releasing the SDK packages](#releasing-the-sdk-packages)).
+- What runs when (D383). GitHub bills each job by the minute, rounded up, from minutes shared by every org repo, so
+  CI runs only the jobs a change can affect. The `changes` job (`scripts/ci-changes.mjs`) diffs the change and sets
+  the outputs the other jobs read:
+
+  | Job | Runs when |
+  |---|---|
+  | gitleaks, TypeScript (typecheck + tests) | every PR and push (the tests read `docs/` and `contracts/`) |
+  | Contract (cargo test + wasm), sandbox e2e | something changed under `contracts/`, or in a file the Rust tests read outside it (`scripts/lib/contract.ts`, `apps/api/src/gas.ts`, `apps/api/src/relayer-config.ts`) |
+  | Playwright, SDK pack check | something changed outside `docs/`, `contracts/` and Markdown (a package README counts: it ships in the tarball) |
+  | everything | a change to `ci.yml` or `scripts/ci-changes.mjs`; a push to `main`; a manual run (Actions → CI → Run workflow) |
+
+  A push is measured from the head of the last successful push run on its branch, so the changes of a run that was
+  cancelled (a newer push cancels it) or failed count again on the next push. A PR is measured from where it branched.
+  No usable base (none yet, or a force push) runs everything. The Playwright suite runs Chromium on PRs and `develop`
+  pushes; WebKit and Firefox run nightly (03:41 UTC) on `develop` when web code changed since the last good nightly
+  run, and all three on `main` and manual runs. A WebKit- or Firefox-only regression is therefore caught within a day
+  rather than on its push (D381's WebKit failure is the kind it would delay). Before a release, run CI manually on
+  `develop` for the full suite. A new file the Rust tests read outside `contracts/` must be added to
+  `RUST_EXTERNAL_INPUTS` in `scripts/ci-changes.mjs`; `scripts/test/ci-changes.test.ts` fails if a repo-root path read
+  by the Rust tests is missing.
 - The pre-commit hook runs `gitleaks git --staged` with `.gitleaks.toml`. Never bypass it (`--no-verify`). Scan
   locally with `corepack pnpm secrets:scan`.
 - `.gitleaks.toml` adds rules for this repo's own secrets, which gitleaks' defaults miss (security sweep OPER-2):

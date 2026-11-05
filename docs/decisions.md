@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
+Last verified against code: 2026-10-28 (commit 58edee9); D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
 user, implementation choices to confirm) on 2026-11-05; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
 flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
@@ -3295,7 +3295,7 @@ or the contract. All five are **to confirm** by the user.
   Cloudflare account can recognise the watchdog's fetches (they leave from Cloudflare's network, through the
   watchdog's own Worker) and serve them a clean JWKS while partners get another, or publish a key between two runs
   (5 min) and remove it again. So the watchdog is detection against a non-cloaking attacker only. The **outside
-  probe** narrows the cloaking: a scheduled GitHub Actions workflow (every 15 min, hourly since D382, every 3 hours since D383, standard actions pinned by commit,
+  probe** narrows the cloaking: a scheduled GitHub Actions workflow (every 15 min, hourly since D382, every 3 hours since D383, turned off on testnet since D387, standard actions pinned by commit,
   no secrets) runs `scripts/identity-probe.ts` from GitHub's network with jose's User-Agent and Accept and no
   `CF-Worker` header, applies the same rules against every non-`local*` env's `watchdog.pinnedIdentityKeys` in the
   repo, and fails on any finding (GitHub emails the failure). Values from Hana's answers reach the Actions log only
@@ -6417,6 +6417,27 @@ follow-up there.
 - Rejected: adding the field unconditionally (breaks deployed SDKs); a new port method (`hana_supportId`), which an old
   SDK can't call anyway and which splits the session state across two calls.
 
+### D387. CI and the outside identity-JWKS probe are turned off while only testnet runs
+- Date 2026-11-05 · Status: **decided by the user** · Built: the `CI` and `Identity JWKS probe` workflows disabled in
+  GitHub (`gh workflow disable`; the files stay as D383 left them) · Amends D382 and D383
+- Context: the org's included Actions minutes are shared by every repo and were used up by 2026-11-05 (D382, D383).
+  Only sandbox-dev (testnet) runs: no real partners, users or funds depend on the identity token yet.
+- Decision: both workflows off for now. Checks run locally before a merge (docs/operations.md "CI and git" lists the
+  commands); the watchdog's own JWKS pin check (every 5 min, from Cloudflare) is unchanged. Before mainnet: CI back
+  on (with D383's gating), and the outside probe moved to **AWS Lambda + EventBridge** (SNS email for findings) in an
+  AWS account of its own, not the one holding the identity token's KMS key (D215): within Lambda's always-free
+  allowance at any interval, so it can run every 15 min or tighter again, and its requests come from a network
+  partners' own verifiers use. Tracked as `docs/mainnet-readiness.md` rows 4.20 and 5.10.
+- Alternatives to weigh at that point (none chosen over Lambda yet): **Google Cloud Functions + Cloud Scheduler**
+  (free at this volume: 3 scheduler jobs and the functions allowance; the same shape as Lambda, if another AWS account
+  is unwelcome); **a small VPS with cron** (about $4–6 a month; a fixed IP partners don't share, and a machine to
+  patch). Either still needs its own account and a findings alert by email.
+- Trade-offs: nothing enforces the checks on a merge, and Linux-only failures (D381's WebKit one) can merge unseen;
+  a key served only to partners and not to Cloudflare-origin fetches (D210's cloaking) goes unnoticed on testnet.
+- Rejected: keeping the probe every 3 hours on GitHub (no testnet need for it; about 240 billed minutes a month); a
+  separate public repo for the probe (it publishes what the probe looks like, and GitHub pauses scheduled workflows
+  after 60 days without activity).
+
 ## Superseded or amended
 
 | Was | Now | Source |
@@ -6424,6 +6445,7 @@ follow-up there.
 | D381: a session key WebCrypto can't make ends the login `api_unavailable` (a different code rejected) | `derive_failed` with `data.reason` `webcrypto_unsupported` / `webcrypto_failed` (D385) | `packages/web/src/vault/errors.ts` |
 | D347's assumption rechecked with `curl -sI` on the authorization URL before each release | `coop-canary <env>` before each release: every hop of the product's requests under six User-Agents, and Chromium, Firefox and WebKit, with positive controls (D386) | `scripts/lib/coop-canary.ts`; docs/operations.md "Before each release: the COOP canary" |
 | D276's code → user through the issuer's `user_email_apps.uid` (`IssuerRpc.uid`, `DirectoryRpc.byUid`) with a ledger-only fallback; the code from the uid; `user:erase` | Through the wallet directory's `end_users.support_code` / `token_sub` / `user_id` (no issuer uid, no `IssuerRpc.uid`, no `byUid`, no fallback); the code from the identity token's `sub` (D346); the lookup's hot-DB part in `AdminRpc`, its ledger part read as `usage_admin` (D394); erasure by `uid-erase` (D361) | `apps/api/src/directory/support.ts`, `apps/admin/src/support.ts`, `scripts/lib/admin-support.ts` |
+| The outside identity-JWKS probe runs every 3 hours on GitHub Actions (D383); CI runs on every push and PR (D383) | Both workflows disabled while only testnet runs; before mainnet CI back on and the probe on AWS Lambda + EventBridge (D387) | GitHub workflow settings; `docs/mainnet-readiness.md` 4.20, 5.10 |
 | The outside identity-JWKS probe runs hourly (D382) | Every 3 hours, at minute 17 (D383) | `.github/workflows/identity-probe.yml` |
 | The outside identity-JWKS probe runs every 15 min (D210) | Hourly, at minute 17 (D382) | `.github/workflows/identity-probe.yml` |
 | The admin crons' budget counts emails and NEAR reads only, with room for the RPCs (D280); C12's `relayerKeys` and statement-notice reads uncharged (D360's note) | Every outbound call counts: the connection, every RPC (at most 30), every email, NEAR read and rate fetch; a unit of work starts only when it fits (D380) | `apps/admin/src/mail.ts`, `cron.ts`, `ledger-cron.ts` |

@@ -1,7 +1,7 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-05 for the Support ID and its lookup (branch `feat/batch-c-15`:
+known open issues. Last verified against code: 2026-11-05 for the outside probe's schedule (branch `chore/ci-cost`: the probe turned off on testnet, D387); 2026-11-05 for the Support ID and its lookup (branch `feat/batch-c-15`:
 what a user shows, what the staff lookup reveals and to whom, its audit, D394–D397); 2026-11-05 for the build id (branch `feat/deploy-build-check`: a public
 commit id in `/v1/health`, `/v1/email/health`, the page origins' `/.well-known/hana-build` and the bundles, D384);
 2026-11-05 for the outside probe's schedule (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383; before it branch `chore/identity-probe-hourly`, hourly, D382); 2026-11-04 for retention and erasure (branch `feat/batch-c-13`: the
@@ -1481,7 +1481,7 @@ revoked; KMS makes the key unexportable and every signature visible, not misuse 
 already refuse a Worker-secret key outside testnet. Step 8 is built (branch `feat/identity-token-8`, D210–D214): the
 watchdog pages critical for an unpinned or private key in the JWKS and a wrong discovery `issuer` or `jwks_uri`, an
 answer it can't judge, and an identity key's thumbprint as an issuer kid on chain; it never pauses for them (the chain
-isn't involved), and an outside probe from GitHub Actions applies the same rules every 3 hours (D383). Both detect, neither
+isn't involved), and an outside probe from GitHub Actions applies the same rules every 3 hours (D383; turned off while only testnet runs, D387: until it is back, the watchdog is the only check). Both detect, neither
 prevents, and only an attacker who serves everyone the same JWKS: one who controls Hana's Cloudflare account can cloak a
 key from both or publish it between reads, and partners that trust the JWKS URL accept it until it is removed (≤ 10 min
 of cache after). Partner-side thumbprint pinning is the recommended default for anything of value

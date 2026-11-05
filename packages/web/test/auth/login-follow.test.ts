@@ -10,7 +10,7 @@ import type { GoogleEmailFlow } from '../../src/auth/google.ts';
 import { EMAIL_PATH, startLoginPage } from '../../src/auth/login-page.ts';
 import { LOGIN_ENTRY_PREFIX } from '../../src/auth/login-storage.ts';
 import type { HanaEnv } from '../../src/hana-env.ts';
-import { CLIENT_ID, ENV, FakeWindow, PARTNER, PK, asWindow, remoteWindow, resetDom } from './helpers.ts';
+import { CLIENT_ID, ENV, FakeWindow, PARTNER, PK, asWindow, remoteWindow, resetDom, vaultAcks } from './helpers.ts';
 
 const ISSUER = 'https://issuer.hana-email.test';
 const EMAIL_ENV: HanaEnv = Object.freeze({ ...ENV, emailIssuerUrl: ISSUER, emailIss: `${ISSUER}/v1/email` });
@@ -51,6 +51,7 @@ function setup(flow?: GoogleEmailFlow) {
   const vault = remoteWindow({ parent: opener });
   opener.frames[VAULT_FRAME] = vault;
   win.opener = asWindow(opener);
+  vaultAcks(vault, win);
   const page = startLoginPage({ win, env: EMAIL_ENV, now: () => NOW, ...(flow ? { googleEmailFlow: flow } : {}) });
   return { win, vault, page };
 }

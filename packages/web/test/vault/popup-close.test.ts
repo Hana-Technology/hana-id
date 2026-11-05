@@ -353,6 +353,66 @@ describe('a close inside the COOP window: the popup has 90 s to answer (D398)', 
   });
 });
 
+describe('the vault acks each signal it takes (D400)', () => {
+  const acks = (run: LoginRun) => run.popup.posted.filter((p) => p.message.t === 'hana:auth-progress-ack').map((p) => [p.message, p.targetOrigin]);
+
+  it('to the popup it answered, with authOrigin as the target: `google`, `back`, `email_code`, `relayed`, each time', async () => {
+    const b = new Browser();
+    enableEmail(b.backend, issuer);
+    const t = await tab(b);
+    void t.request('hana_login');
+    const run = await popupHello(t);
+    for (const stage of ['google', 'back', 'google', 'email_code', 'relayed'] as const) t.dispatch({ data: { v: 1, t: 'hana:auth-progress', stage }, origin: ENV.authOrigin, source: run.popup });
+    expect(acks(run)).toEqual(['google', 'back', 'google', 'email_code', 'relayed'].map((stage) => [{ v: 1, t: 'hana:auth-progress-ack', stage }, ENV.authOrigin]));
+  });
+
+  it('never for a signal it doesn’t take: another window, another origin, before the hello, after the login ended', async () => {
+    const t = await tab(new Browser(), ENV);
+    const pending = t.request('hana_login');
+    const other = new FakeWindow(`${ENV.authOrigin}/login`);
+    // Before the hello was answered.
+    t.dispatch({ data: { v: 1, t: 'hana:auth-progress', stage: 'google' }, origin: ENV.authOrigin, source: other });
+    const run = await popupHello(t);
+    t.dispatch({ data: { v: 1, t: 'hana:auth-progress', stage: 'google' }, origin: ENV.authOrigin, source: other });
+    t.dispatch({ data: { v: 1, t: 'hana:auth-progress', stage: 'google' }, origin: 'https://evil.test', source: run.popup });
+    // Chromium's null source on a message posted just before a navigation: nothing to ack, nothing taken.
+    t.dispatch({ data: { v: 1, t: 'hana:auth-progress', stage: 'google' }, origin: ENV.authOrigin, source: null });
+    expect(other.posted.filter((p) => p.message.t === 'hana:auth-progress-ack')).toEqual([]);
+    expect(acks(run)).toEqual([]);
+    expect((await t.request('hana_cancelLogin')).result).toBeNull();
+    expect((await pending).error).toMatchObject({ code: 'login_cancelled' });
+    signal(t, run, 'relayed');
+    expect(acks(run)).toEqual([]);
+  });
+
+  it('a link task’s popup too', async () => {
+    const b = new Browser();
+    enableEmail(b.backend, issuer);
+    const t = await tab(b, { ...EMAIL_ENV, rpcFallback: RPC_FALLBACK });
+    await login(t, g);
+    void t.request('hana_linkAccount', { method: 'email' });
+    const run = await popupHello(t);
+    signal(t, run, 'google');
+    expect(acks(run)).toEqual([[{ v: 1, t: 'hana:auth-progress-ack', stage: 'google' }, ENV.authOrigin]]);
+  });
+
+  it('a popup that can’t be posted to any more is no error: the signal still counts', async () => {
+    const t = await tab(new Browser(), EMAIL_ENV, { severWindowMs: 60_000, pollMs: 10, graceMs: 20 });
+    const pending = t.request('hana_login');
+    const settled = settledFlag(pending);
+    const run = await popupHello(t);
+    run.popup.postMessage = () => {
+      throw new DOMException('gone');
+    };
+    signal(t, run, 'google');
+    // Taken: a close right after is the COOP window's, not a plain close.
+    run.popup.closed = true;
+    await pause(200);
+    expect(settled()).toBe(false);
+    expect((await t.request('hana_cancelLogin')).result).toBeNull();
+  });
+});
+
 describe('after the cancel', () => {
   it('a newer login works; the watch of the old one is over', async () => {
     const b = new Browser();

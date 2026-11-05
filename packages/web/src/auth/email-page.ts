@@ -28,7 +28,8 @@
 //   `email_challenge_expired` / `email_rate_limited` when that was the last thing the user saw), which the vault turns
 //   into `login_cancelled`, `code_invalid`, `challenge_expired` or `rate_limited` (D245).
 // - After `start` answered, it tells the vault (`hana:auth-progress`, `loginProgress: email_code`); before going to
-//   Google (case B) it says `google`.
+//   Google (case B) it says `google`, and it navigates (or closes itself after `relayed`) once the vault acked, or after
+//   SIGNAL_ACK_WAIT_MS (D400, auth/vault-signal.ts).
 // - The partner's `emailHint` prefills the field; it is dropped from the stored context on load (kept in memory only).
 // - Back after a cancel on Google's screen (D341): when the user cancels token_first's Google step (its first request,
 //   or D273's interactive retry), /login/callback relays nothing and parks the login's keys under its slot
@@ -86,6 +87,7 @@ import { EMAIL_STEP_LIMIT_MS, type EmailContext, deviceTicketFor, dropEmailConte
 import { GOOGLE_CANCELLED_RELAY_ERROR, GOOGLE_EMAIL_FLOW, type GoogleEmailFlow, googleAccessUrl, googleAuthUrl, googleTokenFirstUrl, loginGoogleRequest } from './google.ts';
 import { type TakenLogin, peekLogin, storeLoginEntry, takeLogin, zeroTaken } from './login-storage.ts';
 import { type PageWindow, childFrame, isFramed } from './page-window.ts';
+import { vaultSignals } from './vault-signal.ts';
 
 export interface EmailPageDeps {
   win: PageWindow;
@@ -351,18 +353,24 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
   /**
    * Tells the vault where the user is (a progress signal only; the vault checks the sender): the code was sent, the
    * window navigates to Google, or it closes itself after relaying (D347: the vault's close watch tells these from a
-   * user's close).
+   * user's close). The export window's step has no vault to tell.
    */
-  const tellVault = (progress: 'email_code' | 'google' | 'relayed' = 'email_code') => {
-    const opener = win.opener;
-    if (!opener || ctx.exportMode) return;
-    try {
-      const target = ctx.opener === 'partner' && ctx.vaultFrame ? childFrame(opener, ctx.vaultFrame) : opener;
-      (target as Window | null)?.postMessage({ v: 1, t: 'hana:auth-progress', stage: progress }, env.vaultOrigin);
-    } catch {
-      // The opener went away: the login still finishes through the relay.
-    }
-  };
+  const signals = vaultSignals(
+    win,
+    () => {
+      const opener = win.opener;
+      if (!opener || ctx.exportMode) return [];
+      return [ctx.opener === 'partner' && ctx.vaultFrame ? childFrame(opener, ctx.vaultFrame) : opener];
+    },
+    env.vaultOrigin,
+    { timers: { setTimeout: setT, clearTimeout: clearT } },
+  );
+  const tellVault = (): void => signals.post('email_code');
+  /**
+   * D400: `google` or `relayed`, then the navigation or the close once the vault acked (or after SIGNAL_ACK_WAIT_MS):
+   * Chromium drops a signal's source when the page navigates in the same task.
+   */
+  const tellVaultThen = (progress: 'google' | 'relayed', go: () => void): void => void signals.postThenLeave(progress, go);
 
   // ---- screens ----
 
@@ -680,8 +688,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         }
       }
       clearT(deadlineTimer);
-      tellVault('google');
-      win.location.assign(google.url);
+      tellVaultThen('google', () => win.location.assign(google.url));
     };
     const buttons: HTMLElement[] = [];
     if (link) {
@@ -775,9 +782,8 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       : googleTokenFirstUrl({ clientId, authOrigin: env.authOrigin, state });
     leaving = true;
     clearT(deadlineTimer);
-    tellVault('google');
     d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Signing in'), header(), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
-    win.location.assign(url);
+    tellVaultThen('google', () => win.location.assign(url));
   }
 
   /** D341: Hana's method chooser again, after the user cancelled Google's screen (the held keys wait for the choice). */
@@ -898,8 +904,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     zeroTaken(taken);
     d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'idToken' in payload ? 'Signed in' : 'Sign-in cancelled'), d.h('p', { class: 'muted' }, 'You can close this window.')));
     settle('done');
-    tellVault('relayed');
-    win.close();
+    tellVaultThen('relayed', () => win.close());
   }
 
   /** Cancel: the vault hears why (D245), and the window closes. */
@@ -932,8 +937,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       endFollow();
       d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Sign-in cancelled'), d.h('p', { class: 'muted' }, 'You can close this window.')));
       settle('done');
-      tellVault('relayed');
-      win.close();
+      tellVaultThen('relayed', () => win.close());
       return;
     }
     await readNotice(slot + 2);
@@ -1126,8 +1130,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     follow = null;
     d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Continuing to Google'), header(), d.h('p', { class: 'muted' }, 'Google will ask to share your email address.')));
     settle('done');
-    tellVault('google');
-    win.location.assign(googleAccessUrl({ clientId, authOrigin: env.authOrigin, state, loginHint, silent: false }));
+    tellVaultThen('google', () => win.location.assign(googleAccessUrl({ clientId, authOrigin: env.authOrigin, state, loginHint, silent: false })));
   }
 
   function toEmailLogin(slot: number): void {
@@ -1158,8 +1161,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       follow = null;
       d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, title ?? 'Confirm it’s you'), header(), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
       settle('done');
-      tellVault('google');
-      win.location.assign(url);
+      tellVaultThen('google', () => win.location.assign(url));
       return;
     }
     startAs = p.purpose === 'session' ? { kind: 'session' } : { kind: 'link', purpose: p.purpose, commitment: p.commitment };

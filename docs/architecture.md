@@ -1,7 +1,7 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-05 (branch `feat/batch-c-15-screen`: "Support ID lookup": the admin screen and the email join through `DirectoryRpc.get` as `support_lookup`, D399; the Components row of `ISSUER`); 2026-11-05 (branch `feat/batch-c-8b`: the Users screen in Status, Components' connections, "Staff reads of the user directory" and the issuer D1's 0003; D388–D392); 2026-11-05 (branch `fix/popup-early-close-deadline`: login step 4's closed popup, a close within D347's 8 s waits 90 s for an answer, then `login_cancelled`, D398); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/batch-c-15`: "Wallet directory" step 5, the Support ID in the
+Last verified against code: 2026-11-05 (branch `fix/popup-signal-before-navigate`: login step 4's signals, acked by the vault before the popup leaves, D400); 2026-11-05 (branch `feat/batch-c-15-screen`: "Support ID lookup": the admin screen and the email join through `DirectoryRpc.get` as `support_lookup`, D399; the Components row of `ISSUER`); 2026-11-05 (branch `feat/batch-c-8b`: the Users screen in Status, Components' connections, "Staff reads of the user directory" and the issuer D1's 0003; D388–D392); 2026-11-05 (branch `fix/popup-early-close-deadline`: login step 4's closed popup, a close within D347's 8 s waits 90 s for an answer, then `login_cancelled`, D398); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/batch-c-15`: "Wallet directory" step 5, the Support ID in the
 session answers and the vault; the new "Support ID lookup", D394–D397); 2026-11-05 (branch `feat/coop-canary`: "Login, one transaction" step 4's closed popup: Google's COOP rechecked before each release by `coop-canary`, D386); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: the login's step 2, the session key's failure as `derive_failed` with its reason and which keys WebKit Linux refuses, D385; "WebCrypto on the login, export and signing paths"); 2026-11-05 (branch `feat/deploy-build-check`: "Environments and manifests": the build id
 in every Worker and page bundle and `deploy-check`, D384); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-05 (branch `fix/e2e-flakes`: the login's step 2, the session key's retry on WebKit Linux's
 Ed25519 `OperationError`, D381); 2026-11-04 (branch `feat/batch-c-13`: retention and the erasure path in Status, Components
@@ -256,7 +256,10 @@ Browser steps: `packages/web/src/vault/login.ts`, `packages/web/src/auth/login-p
    posts `hana:auth-progress` `google` before it navigates to Google, the callback posts `back` on arrival (it has its
    opener, so the trip switched no browsing context group) and `relayed` before it closes itself, as `/login/email`
    does; the signals go to the opener and its frames with `vaultOrigin` as the target, and the vault takes them only
-   from the popup it answered. A close while the login waits on the popup (its first slot; a follow-up screen's
+   from the popup it answered. The vault acks each signal it takes (`hana:auth-progress-ack`, to that popup on
+   `authOrigin`), and a page navigates or closes only once its signals are acked, or after 150 ms
+   (`auth/vault-signal.ts`, D400): Chromium delivers a message posted in the navigation's own task with a null
+   `event.source`, which the vault can't take. A close while the login waits on the popup (its first slot; a follow-up screen's
    answer; a link task's slots) ends it after 1 s of grace (an answer the window wrote just before closing itself
    still wins) with `login_cancelled`, `data.reason: 'popup_closed'`: the relay reads abort (abort-aware `readSlot`),
    the keys are dropped, and a later write to the slot is never read. A close while the vault works alone (google-match,

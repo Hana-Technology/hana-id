@@ -52,7 +52,9 @@
 //     'popup_closed'`) after a 1 s grace (an answer written just before the window closed itself still wins); a close
 //     while the vault works alone (google-match, the chain) lets the login finish, and any later wait on the popup ends
 //     at once. The popup announces each navigation to Google (`hana:auth-progress` `google`), its return to the
-//     callback with its opener (`back`) and closing itself after a relay (`relayed`). An IdP that enforces COOP would switch the popup's browsing context group, which the handle
+//     callback with its opener (`back`) and closing itself after a relay (`relayed`); the vault acks each signal it
+//     takes (`hana:auth-progress-ack`, D400), and the popup navigates or closes only after the ack (or a 150 ms wait),
+//     since Chromium nulls the source of a message posted in the navigation's own task. An IdP that enforces COOP would switch the popup's browsing context group, which the handle
 //     can't tell from a close: a `closed` within 8 s of a `google` announcement may be that switch, so the watch stops
 //     and gives the popup 90 s to answer (D398). An answer in time shows the window was open: the login goes on, with
 //     no watch for the rest of it (the 5-minute limit, and the post-cancel screen's own close report, D341, remain).
@@ -690,7 +692,20 @@ abstract class PopupTask<T> {
   acceptPopupSignal(e: WindowMessageEvent, stage: 'google' | 'email_code' | 'relayed' | 'back'): boolean {
     if (this.abortError || !this.fromPopup(e)) return false;
     this.notePopup(stage);
+    this.ackPopup(stage);
     return true;
+  }
+
+  /**
+   * D400: tells the popup its signal was taken, so a page that signalled and then leaves (navigates to Google, closes
+   * itself) does so only once the vault has it. Only to the popup this task answered, on authOrigin; best effort.
+   */
+  private ackPopup(stage: 'google' | 'email_code' | 'relayed' | 'back'): void {
+    try {
+      (this.helloSource as WindowRef).postMessage({ v: 1, t: 'hana:auth-progress-ack', stage }, this.ctx.env.authOrigin);
+    } catch {
+      // The popup is gone or navigated cross-origin: it leaves after its own short wait.
+    }
   }
 
   protected check(): void {
@@ -745,6 +760,7 @@ abstract class PopupTask<T> {
     if (this.abortError || !this.fromPopup(e)) return false;
     // D347: every navigation to Google and a self-close, whatever the app offers.
     this.notePopup(stage);
+    this.ackPopup(stage);
     if (!this.emailOffered || stage === 'relayed' || stage === 'back') return false;
     if (this.progressed.has(stage)) return false;
     this.progressed.add(stage);

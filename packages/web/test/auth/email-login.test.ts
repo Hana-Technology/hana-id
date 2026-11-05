@@ -11,7 +11,7 @@ import { DEVICE_TICKET_PREFIX, EMAIL_ENTRY_PREFIX, deviceTicketFor, deviceTicket
 import { EMAIL_PATH, startLoginPage } from '../../src/auth/login-page.ts';
 import { LOGIN_ENTRY_PREFIX, storeLoginEntry } from '../../src/auth/login-storage.ts';
 import type { HanaEnv } from '../../src/hana-env.ts';
-import { CLIENT_ID, ENV, FakeWindow, PARTNER, PK, type RemoteWindow, asWindow, flush, pageText, remoteWindow, resetDom } from './helpers.ts';
+import { CLIENT_ID, ENV, FakeWindow, PARTNER, PK, type RemoteWindow, asWindow, flush, pageText, remoteWindow, resetDom, vaultAcks } from './helpers.ts';
 
 const ISSUER = 'https://issuer.hana-email.test';
 const EMAIL_ENV: HanaEnv = Object.freeze({ ...ENV, emailIssuerUrl: ISSUER, emailIss: `${ISSUER}/v1/email` });
@@ -79,6 +79,7 @@ function loginSetup(env: HanaEnv = EMAIL_ENV, perfNow?: () => number) {
   const vault = remoteWindow({ parent: opener });
   opener.frames[VAULT_FRAME] = vault;
   win.opener = asWindow(opener);
+  vaultAcks(vault, win);
   const page = startLoginPage({ win, env, now: () => NOW, ...(perfNow ? { perfNow } : {}) });
   return { win, vault, page };
 }
@@ -105,6 +106,9 @@ describe('/login method chooser', () => {
     click('continue-google');
     // The vault reports `google` only when the popup says so, in a login that offered email.
     expect(s.vault.postMessage).toHaveBeenCalledWith({ v: 1, t: 'hana:auth-progress', stage: 'google' }, ENV.vaultOrigin);
+    // D400: not in the click's own task; once the vault acked.
+    expect(s.win.location.assigned).toEqual([]);
+    await flush();
     const url = new URL(s.win.location.assigned[0] as string);
     expect(url.origin + url.pathname).toBe('https://accounts.google.com/o/oauth2/v2/auth');
     expect(url.searchParams.get('scope')).toBe('openid');
@@ -252,6 +256,7 @@ function emailSetup(
   const vault = remoteWindow({ parent: opener });
   opener.frames[VAULT_FRAME] = vault;
   win.opener = asWindow(opener);
+  vaultAcks(vault, win);
   if (opts.framed) win.top = {};
   if (opts.storeEntry !== false) {
     storeLoginEntry(win.sessionStorage, relayId, p.relayKey, NOW, opts.timings);
@@ -608,6 +613,7 @@ describe('/login/email', () => {
     expect(s.f.api.writeRelay).not.toHaveBeenCalled();
     expect(deviceTicketFor(window.localStorage, 'ada@example.com', NOW)).toBe(TICKET2);
     click('email-google');
+    await flush();
     const url = new URL(s.win.location.assigned[0] as string);
     expect(url.origin).toBe('https://accounts.google.com');
     expect(url.searchParams.get('state')).toBe(s.relayId);

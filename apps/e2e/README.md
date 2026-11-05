@@ -14,7 +14,7 @@ corepack pnpm --filter @hana-id/e2e test          # unit tests of the stack's mo
 
 An unfinished login (`tests/abandoned-login.spec.ts`; the follow-up screens in `tests/linking.spec.ts`, the demo's in
 `tests/demo.spec.ts`): the popup left on the method chooser, Google's page, the email address or code step, a link
-code screen or a banner, or closed. The tests install Playwright's clock (`page.clock`, for the whole context: the
+code screen or a banner, or closed (on the chooser: `login_cancelled` within seconds, D347, in real time). The tests install Playwright's clock (`page.clock`, for the whole context: the
 partner page, the vault frame and the popup) and fast-forward past the vault's 5-minute limit; `responsive(frame)`
 (`tests/fixtures.ts`) checks the vault frame and the partner page still run a script. In all three browsers the
 partner page shares the vault frame's renderer here, so a loop in the vault freezes it too.
@@ -130,8 +130,11 @@ signs in, and closing the popup there (or case B's Cancel) gives `login_cancelle
 D347: closing the popup on the chooser, on Google's page (past the 8 s COOP window), on the email code step and on a
 follow-up screen gives `login_cancelled` (`popup_closed`) within seconds, and a slow trip to Google and back signs in;
 a close a couple of seconds after reaching Google's page gives the same at D398's 90 s deadline (the page's clock
-fast-forwarded; Firefox and WebKit: `fixme` on Chromium, which drops the chooser's `google` signal, D398), and with the
-stub enforcing COOP (Chromium and Firefox) the account chosen in time still signs in.
+fast-forwarded; from the chooser's click and from a Google-only app, in all three browsers: the page leaves for Google
+only once the vault acked its `google` signal, D400), and with the stub enforcing COOP (Chromium and Firefox) the
+account chosen in time still signs in. `page.clock.install()` lets time run on in real time; `fastForward` moves every
+overdue timer to the target time and runs ties in creation order, so a test that fast-forwards past two timers can't
+tell which a user would see first (abandoned-login's chooser close waits in real time for that reason, D400).
 `tests/login.spec.ts` checks that
 another Google error (`server_error`, sent to the callback directly) still gives `google_error`. The `second_request` flow is covered by `@hana-id/web`'s unit and
 vault-harness tests only (the bundles have one flow compiled in). `tests/webcrypto.spec.ts` (D385) checks, in

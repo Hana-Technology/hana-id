@@ -23,7 +23,7 @@ import {
 import { startLoginPage } from '../../src/auth/login-page.ts';
 import { LOGIN_ENTRY_PREFIX, storeLoginEntry } from '../../src/auth/login-storage.ts';
 import type { HanaEnv } from '../../src/hana-env.ts';
-import { CLIENT_ID, ENV, FakeWindow, PARTNER, PK, asWindow, pageText, remoteWindow, resetDom } from './helpers.ts';
+import { CLIENT_ID, ENV, FakeWindow, PARTNER, PK, asWindow, pageText, remoteWindow, resetDom, vaultAcks } from './helpers.ts';
 
 const FLOWS: readonly GoogleEmailFlow[] = ['second_request', 'token_first'];
 const NOW = 1_800_000_000_000;
@@ -164,6 +164,7 @@ function loginPage(flow: GoogleEmailFlow) {
   const vault = remoteWindow({ parent: opener });
   opener.frames[VAULT_FRAME] = vault;
   win.opener = asWindow(opener);
+  vaultAcks(vault, win);
   const page = startLoginPage({ win, env: EMAIL_ENV, now: () => NOW, googleEmailFlow: flow });
   return { win, vault, page };
 }

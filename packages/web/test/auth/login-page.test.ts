@@ -5,7 +5,7 @@ import { relayIdFor, sessionNonce } from '@hana-id/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HELLO_TIMEOUT_MS, openerMode, startLoginPage } from '../../src/auth/login-page.ts';
 import { LOGIN_ENTRY_PREFIX } from '../../src/auth/login-storage.ts';
-import { CLIENT_ID, ENV, EVIL, FakeWindow, PARTNER, PK, type RemoteWindow, asWindow, crossOriginWindow, flush, pageText, remoteWindow, resetDom } from './helpers.ts';
+import { CLIENT_ID, ENV, EVIL, FakeWindow, PARTNER, PK, type RemoteWindow, asWindow, crossOriginWindow, flush, pageText, remoteWindow, resetDom, vaultAcks } from './helpers.ts';
 
 const VAULT_FRAME = `hana-vault-${'ab'.repeat(16)}`;
 const SCOPE = 's1';
@@ -51,6 +51,8 @@ function setup(mode: 'partner' | 'vault' | 'export'): Setup & { page: ReturnType
   const vault = remoteWindow({ parent: opener });
   opener.frames[VAULT_FRAME] = vault;
   win.opener = asWindow(opener);
+  // The vault (the partner's vault frame, or the vault's own window) acks the popup's signals (D400).
+  vaultAcks(mode === 'partner' ? vault : opener, win);
   const page = startLoginPage({ win, env: ENV, now: () => 1_800_000_000_000 });
   return { win, opener, vault, fetch: fetchSpy, page };
 }

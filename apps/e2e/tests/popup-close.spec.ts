@@ -119,38 +119,41 @@ test('to Google and back, slowly, is never a close: the login signs in', async (
   expect((await okValue<{ evm: string }>(page, 'login')).evm).toMatch(/^0x/u);
 });
 
-test('closed within 8 s on Google’s page: login_cancelled after the deadline, not the 5-minute limit', async ({ page, google, requests, browserName }) => {
-  // Chromium drops the popup's `google` signal when the page navigates in the same task as its postMessage (seen on
-  // 2026-11-05: never delivered from the chooser's click, now and then from the Google-only path), so there the vault
-  // never opens the COOP window and a quick close is a plain close (login_cancelled within seconds). To fix separately.
-  test.fixme(browserName === 'chromium', 'Chromium drops the `google` signal posted just before a navigation');
-  google.accounts = [{ sub: newSub(), label: 'Quick', email: `e2epcquick${rand()}@gmail.com`, emailVerified: true }];
-  await page.clock.install();
-  // An app with email login: the partner hears `loginProgress` `google` only when the vault took the popup's own
-  // `google` signal, which is what opens the COOP window.
-  await openPartner(page, await newApp({ loginMethods: 'google,email' }));
-  const popup = await openLogin(page, 'login');
-  await popup.click('#continue-google');
-  await popup.waitForURL(`${GOOGLE_AUTH_URL}**`);
-  await expect.poll(() => page.evaluate(() => (window as any).e2e.events.some((e: { name: string; data?: { stage?: string } }) => e.name === 'loginProgress' && e.data?.stage === 'google'))).toBe(true);
-  // A user's quick close, a couple of seconds after Google's page appears (well inside the COOP window): the vault's
-  // handle reads closed as it would after a COOP switch, so it waits for an answer.
-  await popup.waitForTimeout(QUICK_CLOSE_MS);
-  await popup.close();
-  const closedAt = await page.evaluate(() => Date.now());
-  await page.waitForTimeout(QUICK_MS);
-  expect(await peek(page, 'login')).toEqual({ state: 'pending' });
-  // Just short of the deadline nothing has happened yet; just past it, the login is cancelled.
-  await page.clock.fastForward(EARLY_CLOSE_DEADLINE_MS - QUICK_MS - 5_000);
-  expect(await peek(page, 'login')).toEqual({ state: 'pending' });
-  await page.clock.fastForward(10_000);
-  expect(await errorOf(page, 'login', QUICK_MS)).toEqual({ code: 'login_cancelled', reason: 'popup_closed' });
-  const endedAt = await page.evaluate(() => Date.now());
-  expect(endedAt - closedAt).toBeGreaterThanOrEqual(EARLY_CLOSE_DEADLINE_MS);
-  expect(endedAt - closedAt).toBeLessThan(LOGIN_PENDING_MS);
-  expect(await status(page)).toBe('logged_out');
-  expect(requests.count(LOGIN_ENDPOINT)).toBe(0);
-});
+for (const path of ['the chooser’s click', 'a Google-only app'] as const) {
+  test(`closed within 8 s on Google’s page (${path}): login_cancelled after the deadline, not the 5-minute limit`, async ({ page, google, requests }) => {
+    // In every browser, Chromium included: the page navigates to Google only once the vault acked its `google` signal
+    // (D400; Chromium nulls the source of a message posted in the navigation's own task, so the vault can't take it:
+    // from the chooser's click nearly always, from a Google-only app's message handler now and then).
+    google.accounts = [{ sub: newSub(), label: 'Quick', email: `e2epcquick${rand()}@gmail.com`, emailVerified: true }];
+    await page.clock.install();
+    const chooser = path === 'the chooser’s click';
+    await openPartner(page, await newApp(chooser ? { loginMethods: 'google,email' } : {}));
+    const popup = await openLogin(page, 'login');
+    if (chooser) await popup.click('#continue-google');
+    await popup.waitForURL(`${GOOGLE_AUTH_URL}**`);
+    // An app with email login: the partner hears `loginProgress` `google` only when the vault took the popup's own
+    // `google` signal, which is what opens the COOP window. A Google-only app's partner hears no such event: the
+    // deadline below is what shows the signal was taken.
+    if (chooser) await expect.poll(() => page.evaluate(() => (window as any).e2e.events.some((e: { name: string; data?: { stage?: string } }) => e.name === 'loginProgress' && e.data?.stage === 'google'))).toBe(true);
+    // A user's quick close, a couple of seconds after Google's page appears (well inside the COOP window): the vault's
+    // handle reads closed as it would after a COOP switch, so it waits for an answer.
+    await popup.waitForTimeout(QUICK_CLOSE_MS);
+    await popup.close();
+    const closedAt = await page.evaluate(() => Date.now());
+    await page.waitForTimeout(QUICK_MS);
+    expect(await peek(page, 'login')).toEqual({ state: 'pending' });
+    // Just short of the deadline nothing has happened yet; just past it, the login is cancelled.
+    await page.clock.fastForward(EARLY_CLOSE_DEADLINE_MS - QUICK_MS - 5_000);
+    expect(await peek(page, 'login')).toEqual({ state: 'pending' });
+    await page.clock.fastForward(10_000);
+    expect(await errorOf(page, 'login', QUICK_MS)).toEqual({ code: 'login_cancelled', reason: 'popup_closed' });
+    const endedAt = await page.evaluate(() => Date.now());
+    expect(endedAt - closedAt).toBeGreaterThanOrEqual(EARLY_CLOSE_DEADLINE_MS);
+    expect(endedAt - closedAt).toBeLessThan(LOGIN_PENDING_MS);
+    expect(await status(page)).toBe('logged_out');
+    expect(requests.count(LOGIN_ENDPOINT)).toBe(0);
+  });
+}
 
 test('an IdP that enforces COOP: the switch on arrival is no cancel, and the account in time signs in', async ({ page, google, browserName }) => {
   test.skip(browserName === 'webkit', 'Playwright’s WebKit applies no COOP to a route-fulfilled response (login.spec.ts)');

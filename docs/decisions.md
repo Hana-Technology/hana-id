@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
+Last verified against code: 2026-10-28 (commit 58edee9); D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
 user, implementation choices to confirm) on 2026-11-05; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
 flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
@@ -6492,6 +6492,8 @@ follow-up there.
   Google that enforced COOP, the switch would be taken for a close. Every page that posts `google` (or `relayed`) and
   then navigates or closes is affected (`auth/login-page.ts` `toGoogle`, `auth/callback-page.ts`, `auth/email-page.ts`);
   the fix and its decision are for a separate branch. The e2e case below is `fixme` on Chromium until then.
+  Resolved by D400 (2026-11-05): the message wasn't dropped but delivered with a null `event.source`; the pages now
+  wait for the vault's ack before they leave, and the e2e case runs on Chromium too.
 - Tests: `packages/web/test/vault/popup-close.test.ts` ("a close inside the COOP window": cancelled at 90 s, an answer
   at 60 s signs in, an answer in the grace wins, `hana_cancelLogin`, a newer login, the 5-minute limit first, a later
   trip to Google, a follow-up screen, a link task, no timer left behind); `apps/e2e/tests/popup-close.spec.ts` ("closed
@@ -6686,10 +6688,77 @@ still take them: renumber on merge.
   itself takes every form); the issuer's `get` still reads the identity's apps for a `support_lookup`, which the admin
   Worker drops.
 
+## The popup's signals before it leaves (branch `fix/popup-signal-before-navigate`), 2026-11-05
+
+### D400. A Hana page that signals the vault and then navigates or closes waits for the vault's ack (at most 150 ms)
+- Date 2026-11-05 · Status: decided while fixing what D398 found, to confirm · Built on
+  `fix/popup-signal-before-navigate` (`packages/web/src/auth/vault-signal.ts` `vaultSignals`, `SIGNAL_ACK_WAIT_MS`;
+  `auth/login-page.ts` `toGoogle`; `auth/callback-page.ts` `vaultTargets` and every leave; `auth/email-page.ts`
+  `tellVaultThen`; `vault/login.ts` `PopupTask.ackPopup`; core `hana:auth-progress-ack`) · Amends D347 ("every Hana
+  page posts `hana:auth-progress` `google` before it navigates to Google … `relayed` first") and resolves D398's "Found
+  while testing". Numbered D400: D399 was taken on `develop` while this was built (C15's screen).
+- Context, measured on 2026-11-05 in the e2e stack (Playwright 1.64.1: Chromium 1248, Firefox 1555, WebKit 2370), with
+  a listener in the vault frame recording each `hana:auth-progress`:
+  - Chromium doesn't drop the message: it delivers it with `event.source === null` when the posting page starts a
+    cross-document navigation in the same task (or in a microtask of it). The vault takes a signal only from the popup
+    it answered (`e.source === helloSource`), so a null source is no signal. From the chooser's click: null 19 times in
+    20 (the page's own code, and a bare `postMessage` then `location.assign` in a click handler alike); from a
+    Google-only app's message handler: 1 in 20.
+  - The same post followed by the navigation one task later (`setTimeout(0)`, or `requestAnimationFrame`): the source
+    kept, 30 in 30 under 8 workers in all three browsers, and 10 in 10 with the vault frame busy for 1.5 s when the
+    message came (so what matters is that the navigation starts after the post's own task, not when the vault reads the
+    message). A `window.close()` in the same task kept the source (20 in 20). Firefox and WebKit kept it in every case.
+  - A round trip (the vault answering the signal, the page navigating on the answer): about 14 ms in Chromium (8–16 ms,
+    the vault frame's turn on its own renderer), 0–2 ms in Firefox and WebKit.
+- Decision:
+  - The vault acks each signal it takes: `hana:auth-progress-ack` with the same stage, posted to the popup it answered
+    (`helloSource`) with `authOrigin` as the target, from `acceptProgress` and a link task's `acceptPopupSignal`, after
+    the same sender check as the signal. A signal it doesn't take (another window, another origin, a null source, an
+    ended login) gets no ack.
+  - A page that posts a signal and then leaves (`google` before Google, `relayed` before closing itself) leaves when
+    every signal it posted so far is acked, or after `SIGNAL_ACK_WAIT_MS` (150 ms), whichever comes first. The ack
+    counts only from `vaultOrigin` and from a window the page signalled. The callback's `back` (posted on arrival) is
+    waited for the same way by its next navigation (the follow-up page, the screen after a cancel), whose ack has long
+    come by then in any normal case. A page with nothing to tell (no opener, the export window's child) leaves at once,
+    as before.
+  - All the sites: `/login`'s `toGoogle` (the chooser's click and the Google-only path); `/login/callback`'s
+    `google` (D264's "Continue", token_first's silent and interactive ID legs, the record-only fallback,
+    second_request's access leg), its follow-up navigation and its `relayed` close; `/login/email`'s `google` (case
+    B, the screen after a cancel, D264's "Try Google again", a banner's proof) and its `relayed` closes.
+- Why the ack rather than the one-task delay alone: the ack shows the vault took the signal, sender check included,
+  instead of relying on an ordering inside Chromium that only measurement shows; and its fallback is the delay
+  (150 ms later, so many tasks), so a missing ack (a vault from an older build, an ended login) costs the wait and
+  nothing else. It doesn't slow logins measurably (below) and changes no origin check.
+- Measured (2026-11-05, local e2e stack, a login's `google` stage and its whole vault time, median of 15 logins
+  before and 30 after, run back to back): Chromium's chooser path +21 ms (two `google` signals wait for their ack:
+  `/login`'s and the callback's silent ID leg; 75 → 97 ms `google`, 243 → 264 ms in all), its Google-only path and
+  Firefox's and WebKit's every path within ±11 ms, the runs' noise. Against a real login (the user at Google's pages,
+  the network) that is not measurable.
+- Main trade-off: one more message type in the protocol, and up to 150 ms more before the navigation when no ack comes.
+  `window.close()` didn't need the wait in any browser measured; it waits too, for one rule at every site.
+- Alternatives: (a) `setTimeout(0)` before each navigation: enough in every case measured, with no protocol change, but
+  it rests on Chromium's ordering of the post against the navigation's start. Its effect is what the ack's fallback
+  gives. Not chosen alone. (b) A microtask: not enough (19 in 20 null, as the same task). (c) Taking a null-source
+  signal in the vault: it can't be authenticated (any page can post one). Never. (d) Re-posting the signal on Google's
+  side: no Hana code runs there.
+- Tests: `packages/web/test/auth/vault-signal.test.ts` (the wait, the ack's checks, the timeout, every signal pending,
+  a target that can't be posted to); `test/auth/popup-signals.test.ts` (the callback's targets, `relayed` close on the
+  ack or at the wait); the pages' tests with an acking vault (`vaultAcks`); `test/vault/popup-close.test.ts` ("the
+  vault acks each signal it takes"); core `protocol.test.ts`; `apps/e2e/tests/popup-close.spec.ts` (D398's quick close,
+  from the chooser and from a Google-only app, now in Chromium too).
+- Also found (2026-11-05): `apps/e2e/tests/abandoned-login.spec.ts`'s "the popup closed on the chooser" expected
+  `login_timeout` at 5 minutes, which D347 replaced with `login_cancelled` within seconds. It passed only because
+  Playwright's `clock.fastForward` moves every overdue timer to the target time and runs ties in creation order: the
+  login's 5-minute timer (made at the start) ran before the close's 1 s grace (made after the close) whenever the
+  vault's 250 ms watch hadn't read the close before the first fast-forward; when it had (WebKit, once), the grace fired
+  on that first jump and the test failed. The code was right: the test now expects `login_cancelled` (`popup_closed`)
+  in real time, and nothing frozen.
+
 ## Superseded or amended
 
 | Was | Now | Source |
 |---|---|---|
+| D347: every Hana page posts `hana:auth-progress` (`google`, `relayed`) and then navigates or closes | The page navigates or closes once the vault acked (`hana:auth-progress-ack`), or after 150 ms: Chromium nulls the source of a message posted in the navigation's own task (D400) | `packages/web/src/auth/vault-signal.ts`; docs/architecture.md login step 4 |
 | The lookup's ticket: 1–64 printable ASCII characters, no `@`, no leading or trailing space (D396) | console-core `SUPPORT_TICKET_RE`, 1–64 letters, digits or `._#:-`: the issuer's rule, the same ticket in both audits (D399) | `packages/console-core/src/support.ts` `supportTicket` |
 | The issuer's `support_lookup` audit action unused; every `DirectoryRpc.get` audited `user_view` (D392) | `get` takes `purpose`; the Support ID lookup's email join is audited `support_lookup` with the lookup's request id (D399) | `apps/email-issuer/src/directory-rpc.ts` `get` |
 | Every DirectoryRpc call carries a required ticket (spec "Data path", D275 as proposed) | Required to open one identity (`get`); optional for a search or list page; every read audited either way (D275 as confirmed 2026-11-05) | `apps/email-issuer/src/directory-rpc.ts`, migration 0003 |
@@ -7121,6 +7190,9 @@ below.
 - Amended 2026-11-05 by D398: a close within the 8 s still stops the watch, but the login then waits 90 s for the
   popup's answer and ends with `login_cancelled` (`popup_closed`) without one, rather than waiting for its 5-minute
   limit.
+- Amended 2026-11-05 by D400: a page that posts `google` or `relayed` navigates or closes only once the vault acked
+  it (`hana:auth-progress-ack`), or after 150 ms; Chromium delivered a signal posted in the navigation's own task with
+  a null `event.source`, which the vault can't take.
 
 ### D348. After a cancel, a login the partner restricted to Google comes back to Google only
 - Date 2026-11-04 · Status: confirmed by the user (2026-11-04, "yes") · Built on `fix/google-cancel-back-to-chooser`

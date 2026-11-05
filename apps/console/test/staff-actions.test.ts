@@ -40,4 +40,33 @@ describe('StaffRpc.recordStaffAction', () => {
     expect(await staffRpc().recordStaffAction({ ...hana(), orgId: org, action: 'support.lookup', details: { by: 'supportId' } })).toMatchObject({ ok: false, code: 'bad_request' });
     expect(await staffRpc().recordStaffAction({ ...hana(), action: 'support.lookup', details: { by: 'supportId', email: 'x@y.example' } })).toMatchObject({ ok: false, code: 'bad_request' });
   });
+
+  it('a lookup’s request IDs are kept as a list (D410): request-ID form only, at most 20, on that one key only', async () => {
+    const ids = ['req_aaaaaaaa', 'req_bbbbbbbb'];
+    const c = { ...hana(), action: 'support.lookup', target: 'HANA-2750-G5HM', details: { by: 'supportId', ticket: 'T-2', requestIds: 2, requestIdList: ids, days: 30 } };
+    expect(await staffRpc().recordStaffAction(c)).toEqual({ ok: true });
+    const row = await env.CONSOLE_DB.prepare("SELECT details_json FROM audit_log WHERE request_id = ? AND action = 'support.lookup'").bind(c.requestId).first<{ details_json: string }>();
+    expect(JSON.parse(row!.details_json).requestIdList).toEqual(ids);
+    const refused = [
+      { requestIdList: Array.from({ length: 21 }, (_, i) => `req_${String(i).padStart(8, '0')}`) },
+      { requestIdList: ['short'] },
+      { requestIdList: ['req_aaaaaaaa x'] },
+      { requestIdList: 'req_aaaaaaaa' },
+      { requestIds: ['req_aaaaaaaa'] },
+      { ticket: ['T-1'] },
+    ];
+    for (const d of refused) expect(await staffRpc().recordStaffAction({ ...hana(), action: 'support.lookup', details: { by: 'supportId', ...d } }), JSON.stringify(d)).toMatchObject({ ok: false, code: 'bad_request' });
+    // A list on any other action is refused too.
+    expect(await staffRpc().recordStaffAction({ ...hana(), action: 'users.find', details: { by: 'userId', ticket: ['T-1'] } })).toMatchObject({ ok: false, code: 'bad_request' });
+  });
+
+  it('records a Users find without an org, refuses one with an org or an unlisted detail (D410)', async () => {
+    const org = await seedOrg();
+    const c = { ...hana(), action: 'users.find', target: 'u1_AAAAAAAAAAAAAAAAAAAAAA', details: { by: 'userId', ticket: 'T-3' } };
+    expect(await staffRpc().recordStaffAction(c)).toEqual({ ok: true });
+    const row = await env.CONSOLE_DB.prepare("SELECT org_id, target, details_json FROM audit_log WHERE request_id = ? AND action = 'users.find'").bind(c.requestId).first();
+    expect(row).toEqual({ org_id: null, target: 'u1_AAAAAAAAAAAAAAAAAAAAAA', details_json: JSON.stringify(c.details) });
+    expect(await staffRpc().recordStaffAction({ ...hana(), orgId: org, action: 'users.find', details: { by: 'userId' } })).toMatchObject({ ok: false, code: 'bad_request', error: expect.stringMatching(/users\.find is recorded without an org/u) });
+    expect(await staffRpc().recordStaffAction({ ...hana(), action: 'users.find', details: { by: 'sub', sub: '1234' } })).toMatchObject({ ok: false, code: 'bad_request' });
+  });
 });

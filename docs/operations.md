@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-05 (branch `feat/account-migration`: "Moving an env to another Cloudflare account" (new: the order, the commands, `env-secrets`, `d1-move`, `admin issuer:iss`, what users see, Neon and Google Cloud notes, the testnet move pending), the manifest's `cloudflare.accountId` and custom-domain placements in "Accounts and services per environment", "Email issuer" step 7's Custom Domain, the hosted demo's `HANA_DEMO_ORIGIN`, the admin command list, the secrets table's D1 exports and API tokens; D404); 2026-11-05 (branch `feat/deploy-check-all-workers`: "Checking a deploy" (every Worker through its `run deploy`, the shared wrapper; the console, console-auth, files Workers and the console SPA read over HTTP, the admin and watchdog through wrangler, `--only`/`--skip`, the console and watchdog D1 in `--d1`), the console, admin, files and watchdog deploy lines now `run deploy`, with `deploy-check` after each, D406); 2026-11-05 (branch `fix/usage-setup-throwaway-password`: "Usage capture" step 3's throwaway password before Neon's reset, D403 amended); 2026-11-05 (branch `feat/access-setup`: "Admin Worker" step 1: the admin console's Cloudflare Access by `access-setup <env>` (the team and login methods in the dashboard, the least-privilege token, created and revoked, plan / `--yes` / `--write-manifest` / `--check`), sandbox* Google exact emails only and the free-tier guard it enforces (D408), the workers.dev hostname application against the dashboard toggle, the dashboard path; the secrets table's Cloudflare API token row; the issuer's "Open for batch 8" note; D409); 2026-11-05 (branch `feat/sdk-error-request-id`: "Support ID lookup": partners' request IDs come from the SDK's errors and the demo's diagnostics, D405); 2026-11-05 (branch `docs/zero-trust-free-guard`: "Admin Worker" step 1's Zero Trust free-tier guard, D408); 2026-11-05 (branch `fix/usage-setup-neon-api-passwords`: "Usage capture" steps 2, 3 and 8: `usage-setup <env> roles` gives LOGIN by SQL and has Neon's API reset each role's password with the new `.secrets/<env>/neon-api-key` (how to create, save and revoke it), every run replaces the role files, Hyperdrive configs from older files re-created, the step-8 gate without the SCRAM question; the secrets table's Neon API key row; D403); 2026-11-05 (branch `feat/batch-c-15-screen`: "Support ID lookup" → "In the admin console" (the screen, the email join, the ticket rule, what to watch) and "Users screen (C8b)" (a Support ID goes to the lookup; the check), D399); 2026-11-05 (branch `feat/batch-c-8b`: "Admin Worker" → "Users screen (C8b)": issuer migration 0003, the deploy order issuer → API → admin, the checks and failures, D388–D392; "Retention" and "User directory (D269)" notes); 2026-11-05 (branch `chore/ci-cost`: "CI and git": CI and the identity probe turned off, the local checks, D387); 2026-11-05 (branch `feat/batch-c-15`: "Support ID lookup", `admin <env> support:lookup`, the admin route's audit, D394–D397); 2026-11-05 (branch `feat/coop-canary`: "Before each release: the COOP canary" (`coop-canary`, what a failure means, D386), step 0 of "A release."); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: "Common failures"' `derive_failed` `webcrypto_unsupported` / `webcrypto_failed`, D385); 2026-11-05 (branch `feat/deploy-build-check`: "Checking a deploy (`deploy-check`)", D384:
+Last verified against code: 2026-11-05 (branch `fix/security-review-1105`: "Users screen (C8b)": the ticket for a search by sub or full address and for a wallet-directory find (audited first, `users.find`), the detail at `/users/open` from memory, the check updated; "Support ID lookup": the audit's request IDs, "Wallet directory only" with the ticket; "Usage capture" step 2's NOLOGIN after a failed reset and step 3's Hyperdrive configs through Cloudflare's API with `.secrets/<env>/cloudflare-hyperdrive-token`; the secrets table's row; D410, D411); 2026-11-05 (branch `feat/account-migration`: "Moving an env to another Cloudflare account" (new: the order, the commands, `env-secrets`, `d1-move`, `admin issuer:iss`, what users see, Neon and Google Cloud notes, the testnet move pending), the manifest's `cloudflare.accountId` and custom-domain placements in "Accounts and services per environment", "Email issuer" step 7's Custom Domain, the hosted demo's `HANA_DEMO_ORIGIN`, the admin command list, the secrets table's D1 exports and API tokens; D404); 2026-11-05 (branch `feat/deploy-check-all-workers`: "Checking a deploy" (every Worker through its `run deploy`, the shared wrapper; the console, console-auth, files Workers and the console SPA read over HTTP, the admin and watchdog through wrangler, `--only`/`--skip`, the console and watchdog D1 in `--d1`), the console, admin, files and watchdog deploy lines now `run deploy`, with `deploy-check` after each, D406); 2026-11-05 (branch `fix/usage-setup-throwaway-password`: "Usage capture" step 3's throwaway password before Neon's reset, D403 amended); 2026-11-05 (branch `feat/access-setup`: "Admin Worker" step 1: the admin console's Cloudflare Access by `access-setup <env>` (the team and login methods in the dashboard, the least-privilege token, created and revoked, plan / `--yes` / `--write-manifest` / `--check`), sandbox* Google exact emails only and the free-tier guard it enforces (D408), the workers.dev hostname application against the dashboard toggle, the dashboard path; the secrets table's Cloudflare API token row; the issuer's "Open for batch 8" note; D409); 2026-11-05 (branch `feat/sdk-error-request-id`: "Support ID lookup": partners' request IDs come from the SDK's errors and the demo's diagnostics, D405); 2026-11-05 (branch `docs/zero-trust-free-guard`: "Admin Worker" step 1's Zero Trust free-tier guard, D408); 2026-11-05 (branch `fix/usage-setup-neon-api-passwords`: "Usage capture" steps 2, 3 and 8: `usage-setup <env> roles` gives LOGIN by SQL and has Neon's API reset each role's password with the new `.secrets/<env>/neon-api-key` (how to create, save and revoke it), every run replaces the role files, Hyperdrive configs from older files re-created, the step-8 gate without the SCRAM question; the secrets table's Neon API key row; D403); 2026-11-05 (branch `feat/batch-c-15-screen`: "Support ID lookup" → "In the admin console" (the screen, the email join, the ticket rule, what to watch) and "Users screen (C8b)" (a Support ID goes to the lookup; the check), D399); 2026-11-05 (branch `feat/batch-c-8b`: "Admin Worker" → "Users screen (C8b)": issuer migration 0003, the deploy order issuer → API → admin, the checks and failures, D388–D392; "Retention" and "User directory (D269)" notes); 2026-11-05 (branch `chore/ci-cost`: "CI and git": CI and the identity probe turned off, the local checks, D387); 2026-11-05 (branch `feat/batch-c-15`: "Support ID lookup", `admin <env> support:lookup`, the admin route's audit, D394–D397); 2026-11-05 (branch `feat/coop-canary`: "Before each release: the COOP canary" (`coop-canary`, what a failure means, D386), step 0 of "A release."); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: "Common failures"' `derive_failed` `webcrypto_unsupported` / `webcrypto_failed`, D385); 2026-11-05 (branch `feat/deploy-build-check`: "Checking a deploy (`deploy-check`)", D384:
 the build id in every Worker and page bundle, `deploy-check <env> [--d1]` after each deploy step, migrations applied
 from a checkout at the deployed commit, the API's raw `wrangler deploy` lines now `run deploy`); 2026-11-05 (branch `fix/deploy-pages-builds`: `deploy:pages` runs the web build first; the 0011 apply note; the rebuilt page versions); 2026-11-05 (branch `chore/ci-cost`: "CI and git": which jobs run when, the nightly WebKit and Firefox run; the identity probe every 3 hours, D383); 2026-11-05 (branch `docs/sandbox-dev-state-1105`: sandbox-dev redeployed at `develop` 8aab09d with the wallet directory: `USER_ID_KEY`, the bookmark, 0011, API 6141ba3d, vault abe7cc61, auth 6b9a4bee, issuer 1542a60c); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
 what counts, each job's share in both crons, the `budget` log lines; settlement's reads a run; D380); 2026-11-04 (branch `feat/batch-c-13`: "Retention (batch C13, milestone M6)": the Neon
@@ -104,6 +104,7 @@ Never print, log, paste or commit any of these. The scripts never print them eit
 | Ledger role URLs (`usage_writer`, `usage_admin`, batch C4): each role's password; their copies live in the two Hyperdrive configs | `.secrets/<env>/neon-usage-writer.url`, `neon-usage-admin.url` | `usage-setup <env> roles` ("Usage capture" below) |
 | Neon API key for `usage-setup <env> roles` (D403): a project-scoped key of the env's Neon project; it can change and delete anything in that project | `.secrets/<env>/neon-api-key` (one line, 0600), only while setting up or rotating the roles: then revoke the key in Neon and delete the file | created by hand in Neon's console and saved with `umask 077; pbpaste > .secrets/<env>/neon-api-key` ("Usage capture" step 2) |
 | Cloudflare API token for `access-setup <env>` (D409): "Access: Apps and Policies Edit" and "Access: Organizations, Identity Providers, and Groups Read" on the API's account; it can change or delete any Access application and policy of that account | `.secrets/<env>/cloudflare-access-token` (one line, 0600), only while setting up or changing the admin's Access application: then delete the token in Cloudflare and the file | created by hand (My Profile → API Tokens, TTL today) and saved with `umask 077; pbpaste > .secrets/<env>/cloudflare-access-token` ("Admin Worker" step 1) |
+| Cloudflare API token for `usage-setup <env> hyperdrive` (D411): "Account › Hyperdrive › Edit" on the env's account; it can create, change or delete that account's Hyperdrive configs | `.secrets/<env>/cloudflare-hyperdrive-token` (one line, 0600), only while creating the ledger's Hyperdrive configs: then delete the token in Cloudflare and the file | created by hand (My Profile → API Tokens, TTL today) and saved with `umask 077; pbpaste > .secrets/<env>/cloudflare-hyperdrive-token` ("Usage capture" step 3) |
 | `USER_ID_KEY` (the uid key, base64 of 32 bytes; API only); never rotated within a contract term, backed up offline | `.secrets/<env>/user-id-key` | `usage-setup <env> user-id-key` (generates it once, sets the Worker secret) |
 | The console's Google client secret (`CONSOLE_GOOGLE_CLIENT_SECRET`, console Worker only; batch C9) | `.secrets/<env>/console-google-client.json` (Google's downloaded client JSON, `web.client_secret`) | saved by hand from Google Cloud (setup step 11, "Partner console Worker"); `wrangler secret put` through a pipe; read by `console-code-flow-spike` |
 | Watchdog secrets (`WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, its Resend key, Slack webhook, paging-app credentials, `HEARTBEAT_URL`); the admin Worker's copy of `WATCHDOG_STATUS_TOKEN` (batch C14) comes from the same file | `.secrets/<env>/watchdog-secrets.json` (flat `{NAME: value}`) | `watchdog secrets <env> init` (the key and token); the rest by hand ("Watchdog service" below) |
@@ -763,20 +764,29 @@ open question 3).
       (0600: the owner's direct endpoint and database, the role, `sslmode=require`), never printed; it waits for Neon's
       operations to finish (a busy project, HTTP 423, is retried) and last logs in as each role with its file. A reset
       drops the endpoint's open connections. On a failure it prints the HTTP status and Neon's error code and message
-      only; running it again resets both again.
+      only; running it again resets both again. A reset that fails after the LOGIN step sets each role not yet reset
+      `NOLOGIN` again (its throwaway password is dead-ended; D411), and says so; if even that fails, the message names
+      the role and the `ALTER ROLE … NOLOGIN` to run as the owner.
    4. **Revoke the key** when it says both roles log in: Neon's console, the same **API keys** page → **Revoke** next to
       `usage-setup sandbox-dev`; then `rm .secrets/sandbox-dev/neon-api-key`. Create a new one for the next rotation.
 
    **Every run resets both passwords and replaces both files**: the old passwords stop working at once. Run `roles`
    before `hyperdrive`. If the Hyperdrive configs already exist (a later rotation), they still hold the old passwords:
    capture fails open (`usage_write_failed` `pg_28P01`) until they are re-created in step 3.
-3. **Hyperdrive configs**: `usage-setup sandbox-dev hyperdrive` (plan), then `--yes`: `wrangler hyperdrive create
-   hana-id-usage-writer-sandbox-dev` and `hana-id-usage-admin-sandbox-dev` (the manifest's `usage` block names once it
-   has one) with `--caching-disabled`, from the role files. It prints each config's id (not secret). The admin config
-   is for the admin Worker (batch C8); create both now. Note: wrangler takes the role URL as an argument, so it is
-   briefly visible in the local process list. **Before production** the configs are created through Cloudflare's
-   REST API with the password in the HTTPS body instead (`docs/mainnet-readiness.md` row 4.18).
-   **After a `roles` re-run** (configs already there): `hyperdrive --yes` stops with "already exists". Delete the old
+3. **Hyperdrive configs** (D411): first a short-lived Cloudflare API token. Dashboard → **My Profile** → **API Tokens** →
+   **Create Token** → **Custom token**: name `usage-setup sandbox-dev`, permission **Account › Hyperdrive › Edit**
+   only, on this env's account only, TTL today; then
+   `umask 077; pbpaste > .secrets/sandbox-dev/cloudflare-hyperdrive-token` (one line, 0600). Then
+   `usage-setup sandbox-dev hyperdrive` (plan), then `--yes` (add `--account-id <id>` when the token reaches more than
+   one account and the manifest's `cloudflare.accountId` is unset): it creates `hana-id-usage-writer-sandbox-dev` and
+   `hana-id-usage-admin-sandbox-dev` (the manifest's `usage` block names once it has one), caching disabled, through
+   Cloudflare's API (`POST /accounts/<id>/hyperdrive/configs`) from the role files: each password goes only in the
+   HTTPS body (Cloudflare keeps it write-only), never a process argument as `wrangler hyperdrive create
+   --connection-string` would put it. It prints each config's id (not secret). The admin config is for the admin
+   Worker (batch C8); create both now. **Delete the token** afterwards (the same page) and
+   `rm .secrets/sandbox-dev/cloudflare-hyperdrive-token`.
+   **After a `roles` re-run** (configs already there): `hyperdrive --yes` stops with "already exists" (Cloudflare's
+   code 2017). Delete the old
    configs (`corepack pnpm --dir apps/api exec wrangler hyperdrive list`, then `… wrangler hyperdrive delete <id>` for
    each of the two), run `hyperdrive --yes` again, pass the new writer id to `gen … --usage-hyperdrive-id <id>` and
    deploy the API (step 6), and the new admin id to the admin Worker's `gen … --admin-hyperdrive-id <id>` and deploy it
@@ -944,8 +954,9 @@ User ID or internal id, the support reference (required: 1–64 letters, digits 
 and no address, it is stored), and optionally the escalation's request IDs (≤ 20) and the window (1–731 days, 30 by
 default), then **Look up**. The Users search sends a Support ID here (with a support reference typed there it runs at
 once), and every wallet-directory user's block (a Users `find` answer, a user's detail) has a "Support ID lookup"
-button that fills in the User ID and the ticket already given; "Wallet directory only" on the screen is the old
-`find` answer (no ticket, no activity). The screen calls `POST /api/support/lookup {query, ticket, requestIds?, days?}`
+button that fills in the User ID and the ticket already given; "Wallet directory only" on the screen is the
+`find` answer (no activity; the ticket is still required and recorded as `users.find`, D410). A match's sub opens
+the Users detail at `/users/open` from memory (no sub in the URL). The screen calls `POST /api/support/lookup {query, ticket, requestIds?, days?}`
 (`docs/api.md` "The Support ID lookup") and shows the CLI's report plus each identity's address: every match (a
 collision lists each and says so; past 10 it says "Truncated"), their ids, identities with the issuer directory's
 address (an unverified Google claim marked with the CLI's warning), wallets, apps, the vault shares not yet expired
@@ -953,7 +964,8 @@ address (an unverified Google claim marked with the CLI's warning), wallets, app
 ledger it says "Ledger unavailable: …" at the top and in each part, and shows the rest.
 
 The lookup is recorded with the staff member's identity in the console's audit log before anything is read
-(`support.lookup`, shown in the admin audit view; never in a partner's, never emailed). Each address is then read
+(`support.lookup`, shown in the admin audit view; never in a partner's, never emailed; its details name the query's
+kind, the ticket, the window and the request IDs themselves, `requestIdList`, D410). Each address is then read
 from the issuer's directory with the same ticket, as `DirectoryRpc.get` with `purpose: 'support_lookup'`: the issuer
 writes its own `support_lookup` row per identity (Audit → "Issuer directory reads", `detail.lookup` = the console
 row's request id) and takes one row of that staff member's directory budget each (at most 20 identities per lookup).
@@ -1458,8 +1470,12 @@ wallet directory (`AdminRpc.findUsers`, `appNames`) and the chain (`get_identity
 every call's Access JWT itself against the **admin** application (the manifest's `admin` block: no new Access
 application, no new secret: the audit's keyed hash uses the issuer's `EMAIL_RL_KEY`), audits every read in
 `email_admin_audit` (issuer migration 0003) and keeps the per-staff row budget (500 identities an hour, 2 000 a day,
-provisional). A support reference is required to open a user, optional to search. Not deployed anywhere yet: with the
-admin Worker at M4.
+provisional). A support reference is required to open a user, to search by sub or by a full address, and to find a
+user in the wallet directory (a User ID, internal id or wallet: `POST /api/users/find`, recorded first in the
+console's audit log as `users.find`, org-less, never emailed); browsing (a part of an address, the account kind, an
+app, unverified claims) needs none (D410). An opened user's page is `/users/open`, opened from the tab's memory: no
+sub in any URL, back and forward move between the users opened, and a reload or a copied link shows "No user open".
+Not deployed anywhere yet: with the admin Worker at M4.
 
 **Deploy order** (for the user, from a clean checkout at the commit being deployed, logged in to the account; nothing
 prints a secret; `<env>` throughout):
@@ -1483,13 +1499,15 @@ prints a secret; `<env>` throughout):
    `503 directory_unavailable`.
 6. `corepack pnpm --filter @hana-id/scripts run deploy-check <env> --d1` (the issuer's D1 shows nothing pending).
 
-**Check it**: in the admin console, Users → search a known address (your own test login) → one row; open it with a
-ticket (e.g. `TEST-1`) → the directory row, the apps by name, the wallet directory's User ID, Support ID, internal id
+**Check it**: in the admin console, Users → search a known address (your own test login) without a ticket → "A
+support reference is required…", nothing read; again with `TEST-1` in the ticket field → one row; open it (the URL
+stays `/users/open`) with the ticket (`TEST-1`, carried over) → the directory row, the apps by name, the wallet directory's User ID, Support ID, internal id
 and wallets, and each scope's path with its block height. Its "Support ID lookup" button opens the lookup with the
 User ID and `TEST-1` filled in; **Look up** → the same user with your address beside the identity (and "Ledger
 unavailable" while `USAGE_DB` isn't bound). Searching Users for the Support ID with a ticket lands on the same
-lookup; a User ID or wallet still lists the wallet directory. Audit → "Issuer directory reads" lists both reads under your
-email (the search with no ticket, the view with `TEST-1`), no address in either (after the lookup, its `support_lookup` row with the same ticket too). `wrangler tail
+lookup; a User ID or wallet (with a ticket) still lists the wallet directory, and Audit → the console's rows show it
+as `users.find` with its ticket. Audit → "Issuer directory reads" lists both reads under your
+email (the search and the view, each with `TEST-1`), no address in either (after the lookup, its `support_lookup` row with the same ticket too). `wrangler tail
 hana-id-email-issuer-<env>` shows `directory_read` lines with codes and counts only.
 
 | Symptom | Meaning | Action |
@@ -1497,6 +1515,8 @@ hana-id-email-issuer-<env>` shows `directory_read` lines with codes and counts o
 | `503 directory_unavailable` on every Users call | no `ISSUER` binding (the env has no `emailIssuer`, or `gen` ran before it), the issuer isn't deployed with `DirectoryRpc`, or its `ADMIN_*` vars are missing (issuer log `directory_refused`, `access_config_missing`) or the Access certs are unreachable | regenerate and redeploy in the order above |
 | `502 directory_refused` | the issuer refused a staff identity the admin Worker accepted: its `ADMIN_ACCESS_AUD` or `ADMIN_STAFF_EMAILS` differ from the admin Worker's (an issuer generated from an older manifest) | `gen <env>` and redeploy the issuer |
 | `500 internal` from search or open, issuer log `directory_read_failed` | the read or its audit insert failed: migration 0003 isn't applied (no `detail` column), or D1 is down; nothing was returned and no row counted | apply 0003; else D1 status |
+| `400 bad_request` "A support reference (ticket) is required…" on a search or a find | a search by sub or a full address, or a wallet-directory find, without a ticket (D410) | type the support reference in the ticket field |
+| `503` / `500` from `POST /api/users/find`, admin log `audit_failed` | the console didn't record the find (`users.find`), so nothing was read | check the console Worker |
 | `429 rate_limited`, an email `User directory budget reached by <staff>` to the alias | that staff member read 500 identities this hour (or 2 000 today); reads open again at the time shown | expected support work: wait; unexpected: treat the session as compromised (remove the person from the Access policy and `admin.staffEmails`, then review their rows in the audit view) |
 
 - **Rollback**: the admin Worker's `wrangler rollback` hides the screen; the issuer's leaves the binding without an

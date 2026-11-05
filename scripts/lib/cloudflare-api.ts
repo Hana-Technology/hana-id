@@ -1,10 +1,12 @@
 // Cloudflare's v4 API (https://api.cloudflare.com/client/v4) with a token read from a file: the calls
-// `access-setup <env>` makes to Zero Trust Access (D409). Endpoints and permissions are in lib/access-setup.ts.
+// `access-setup <env>` makes to Zero Trust Access (D409; endpoints and permissions in lib/access-setup.ts) and the
+// Hyperdrive configs `usage-setup <env> hyperdrive` creates (D411, lib/usage-setup.ts).
 //
-// The token is read from .secrets/<env>/cloudflare-access-token (0600) and goes only into the Authorization header of
+// The token is read from .secrets/<env>/<its file> (0600) and goes only into the Authorization header of
 // an in-process fetch: never an argument or environment variable of a child process, never printed. No response body
 // is printed or put in an error: an error carries the HTTP status and Cloudflare's error codes and messages (trimmed,
 // the token removed), and for 401/403 the permission the call needs.
+import { CliError } from './cli.ts';
 import { scrub } from './neon-api.ts';
 import { readOneLineSecret } from './secrets.ts';
 
@@ -32,10 +34,25 @@ export class CloudflareApiError extends Error {
   }
 }
 
-/** The token from its file (0600, one line); errors name the file and how to make the token, never the value. */
-export function readCloudflareToken(file: string, shown: string): string {
-  const how = `create an account API token with "Access: Apps and Policies Edit" and "Access: Organizations, Identity Providers, and Groups Read" on this account only, and save it with \`umask 077; pbpaste > ${shown}\` (docs/operations.md "Admin Worker" step 1)`;
-  return readOneLineSecret(file, shown, how, 'one API token');
+/**
+ * The token from its file (0600, one line); errors name the file and how to make the token, never the value. `how`
+ * defaults to access-setup's token.
+ */
+export function readCloudflareToken(file: string, shown: string, how?: string): string {
+  const access = `create an account API token with "Access: Apps and Policies Edit" and "Access: Organizations, Identity Providers, and Groups Read" on this account only, and save it with \`umask 077; pbpaste > ${shown}\` (docs/operations.md "Admin Worker" step 1)`;
+  return readOneLineSecret(file, shown, how ?? access, 'one API token');
+}
+
+/** The account: the one given (checked), else the token's only account. */
+export async function resolveAccount(api: CloudflareApi, given: string | undefined): Promise<string> {
+  if (given) {
+    if (!ACCOUNT_ID_RE.test(given)) throw new CliError('The Cloudflare account id is 32 lowercase hex characters');
+    return given;
+  }
+  const list = await api.list('/accounts', "listing the token's accounts", 'access to one account', 50);
+  const ids = list.map((a) => (a as { id?: unknown })?.id).filter((id): id is string => typeof id === 'string' && ACCOUNT_ID_RE.test(id));
+  if (ids.length === 1) return ids[0]!;
+  throw new Error(ids.length === 0 ? 'The token reaches no account: pass --account-id (or set CLOUDFLARE_ACCOUNT_ID)' : `The token reaches ${ids.length} accounts: pass --account-id (or set CLOUDFLARE_ACCOUNT_ID)`);
 }
 
 type Envelope = { success?: unknown; result?: unknown; result_info?: unknown; errors?: unknown };

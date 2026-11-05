@@ -325,6 +325,19 @@ describe('source checks', () => {
     expect(pages).not.toMatch(/csv|download|select all|localStorage|sessionStorage|pushState|location\.search/iu);
     expect(users).toContain('UNVERIFIED claim');
     expect(spa).toContain("{ path: '/users', label: 'Users' }");
+    // An opened user's provider and sub never reach a URL (D410): one fixed path, opened from memory, the history entry
+    // holding only an opaque number; no path is built from a sub, and the old `/users/<provider>/<sub>` route is gone.
+    expect(users).toContain("const USER_OPEN_PATH = '/users/open';");
+    expect(users).toContain('go(USER_OPEN_PATH, { user: usersState.seq });');
+    expect(spa).not.toMatch(/userPath|`\/users\/\$\{|encodeURIComponent\((provider|sub|u\.sub|i\.sub|m\.sub)\)/u);
+    expect(spa).toContain('else if (path === USER_OPEN_PATH) await userPage(main);');
+    expect(spa).not.toMatch(/userPage\(main, /u);
+    for (const m of users.matchAll(/h\('a', \{([^}]*)\}/gu)) expect(m[1], m[0]).toMatch(/href: (USER_OPEN_PATH|path)/u);
+    // Every history write in the SPA carries no state but that number: `null` or go()'s `state`.
+    for (const m of spa.matchAll(/history\.(?:pushState|replaceState)\(([^,]*),/gu)) expect(['null', 'state'], m[0]).toContain(m[1]);
+    // A search naming one user (an id, a wallet, a sub, a full address) asks for the ticket before any call (D410).
+    expect(users).toContain("usersState.result = await api('POST', '/api/users/find', { query: q, ticket });");
+    expect(users).toMatch(/if \(!ticket && \(\(q && \(walletQuery\(q\) \|\| fullAddress\(q\)\)\) \|\| \(f\.sub \|\| ''\)\.trim\(\)\)\) \{/u);
   });
 
   it('the SPA’s Support ID lookup (C15, D399): POST reads, the ticket required in the issuer’s rule, no export or storage, nothing in the URL; Support IDs routed there, /find kept', () => {
@@ -334,7 +347,7 @@ describe('source checks', () => {
     expect(start).toBeGreaterThan(0);
     const lookup = spa.slice(start, end);
     expect(lookup).toContain("api('POST', '/api/support/lookup', body)");
-    expect(lookup).toContain("api('POST', '/api/users/find', { query: f.query.trim() })");
+    expect(lookup).toContain("api('POST', '/api/users/find', { query: f.query.trim(), ticket: f.ticket.trim() })");
     expect(lookup).not.toMatch(/api\('GET'/u);
     expect(lookup).toMatch(/h\('input', \{ name: 'ticket', required: true, maxlength: 64, pattern: SUPPORT_TICKET_PATTERN/u);
     expect(lookup).not.toMatch(/csv|download|select all|localStorage|sessionStorage|pushState|replaceState|location\.(search|hash)/iu);
@@ -343,7 +356,7 @@ describe('source checks', () => {
     // The screen moves only to literal paths: a code, id or address never lands in the URL.
     const moves = [...spa.matchAll(/\bgo\(([^)]*)\)/gu)].map((m) => m[1]);
     expect(moves.length).toBeGreaterThan(0);
-    for (const m of moves) expect(m === 'path' || /^'\/[a-z]+'$/u.test(m!), m).toBe(true);
+    for (const m of moves) expect(m === 'path, state = null' || m === 'USER_OPEN_PATH, { user: usersState.seq }' || /^'\/[a-z]+'$/u.test(m!), m).toBe(true);
     // The input's pattern accepts exactly what console-core's SUPPORT_TICKET_RE does (the route's and the issuer's rule).
     const raw = /const SUPPORT_TICKET_PATTERN = '([^']+)'/u.exec(lookup)![1]!.replaceAll('\\\\', '\\');
     const html = new RegExp(`^(?:${raw})$`, 'v');

@@ -7,7 +7,7 @@ import type { Page, TestInfo } from '@playwright/test';
 import { TOKEN_CLAIM_ALLOW_LIST } from '@hana-id/core';
 import { GOOGLE_AUTH_URL } from '../src/google-stub.ts';
 import { ISSUER_URL } from '../src/stack.ts';
-import { LOGIN_ENDPOINT, type RequestLog, chainView, clickAction, directoryView, expect, newApp, okValue, openPartner, settled, status, test } from './fixtures.ts';
+import { LOGIN_ENDPOINT, type RequestLog, chainView, clickAction, clickClosing, clickMayClose, closeOf, directoryView, expect, newApp, okValue, openPartner, settled, status, test } from './fixtures.ts';
 
 const MATCH = `${ISSUER_URL}/v1/email/google-match`;
 const RECORD = `${ISSUER_URL}/v1/email/google-record`;
@@ -37,7 +37,7 @@ async function googleLogin(page: Page, name: string, o: { emailApp?: boolean } =
   const popup = await popupP;
   if (o.emailApp) await popup.click('#continue-google');
   await popup.waitForURL(`${GOOGLE_AUTH_URL}**`);
-  await popup.click('#account-0');
+  await clickMayClose(popup, '#account-0');
   return popup;
 }
 
@@ -50,7 +50,7 @@ test('a Google-only app: one chooser, tokeninfo, the silent openid ID token on c
   const app = await newApp();
   await openPartner(page, app);
   const popup = await googleLogin(page, 'login');
-  await popup.waitForEvent('close', { timeout: 20_000 });
+  await closeOf(popup);
   expect((await okValue<{ evm: string }>(page, 'login')).evm).toMatch(/^0x/u);
 
   // Google's one sign-in screen asked for `openid email` as an access token (no ID token, no nonce); tokeninfo named
@@ -84,7 +84,7 @@ test('an app with email login: google-match gets the access token, writes the di
   const app = await newApp({ loginMethods: 'google,email' });
   await openPartner(page, app);
   const popup = await googleLogin(page, 'login', { emailApp: true });
-  await popup.waitForEvent('close', { timeout: 20_000 });
+  await closeOf(popup);
   expect((await okValue<{ evm: string }>(page, 'login')).evm).toMatch(/^0x/u);
   // No Hana explainer, no second Google screen (D264 amended by D270): the login finished with no other click.
   expect(google.kinds).toEqual(['token_first', 'id']);
@@ -106,7 +106,7 @@ test('D273: a silent ID request Google answers with interaction_required is aske
   await openPartner(page, app);
   const popup = await googleLogin(page, 'login');
   // No Hana screen before the retry (nothing new is asked): the popup closes with no other click.
-  await popup.waitForEvent('close', { timeout: 20_000 });
+  await closeOf(popup);
   expect((await okValue<{ evm: string }>(page, 'login')).evm).toMatch(/^0x/u);
   expect(google.kinds).toEqual(['token_first', 'id', 'proof']);
   const retry = google.requests[2]?.ok ? google.requests[2].request : null;
@@ -143,8 +143,7 @@ test('tokeninfo unreadable, a Google-only app: batch B’s openid login with the
   const popup = await googleLogin(page, 'login');
   // The record-only fallback: the access token is dropped and Google's chooser comes back for the openid login.
   await popup.waitForURL(/response_type=id_token/u);
-  await popup.click('#account-0');
-  await popup.waitForEvent('close', { timeout: 20_000 });
+  await clickClosing(popup, '#account-0');
   expect((await okValue<{ evm: string }>(page, 'login')).evm).toMatch(/^0x/u);
   expect(google.kinds).toEqual(['token_first', 'login']);
   expect(loginCount(requests)).toBe(1);

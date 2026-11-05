@@ -1,7 +1,7 @@
 // Byte layouts against independent implementations: the on-chain ones against contracts/hana-signer/src/test_fixture.json
 // (the vectors hana-signer's Rust tests use), the off-chain ones against test/vectors/layouts-v1.json
 // (scripts/gen-layout-vectors.mjs). Ported from apps/smoke/test/{layouts,session}.test.ts, plus the batch B layouts.
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type ApprovalChain, type ApprovalContext, type ApprovalDigestInput, type ApprovalKind, approvalContextString, approvalDigest } from '../src/approval.ts';
 import { base64UrlDecode, fromHex, toHex, utf8 } from '../src/bytes.ts';
 import { decodeJwt } from '../src/id-token.ts';
@@ -21,7 +21,7 @@ import {
   vaultMessage,
   vaultPayload,
 } from '../src/layouts.ts';
-import { newSessionKey, signCreate, signDerive, signRevoke, signVaultMessage, verifyEd25519 } from '../src/session.ts';
+import { SESSION_KEYGEN_ATTEMPTS, newSessionKey, signCreate, signDerive, signRevoke, signVaultMessage, verifyEd25519 } from '../src/session.ts';
 import { type Example, contractFixture, ed25519KeyFromSeed, readJson } from './helpers.ts';
 
 const fixture = contractFixture();
@@ -124,6 +124,40 @@ describe('session key', () => {
     await expect(crypto.subtle.exportKey('pkcs8', s.keyPair.privateKey)).rejects.toThrow();
     expect(s.publicKey).toHaveLength(32);
     expect(toHex((await newSessionKey()).publicKey)).not.toBe(toHex(s.publicKey));
+  });
+
+  describe('D381: WebKit Linux refuses some Ed25519 keys with an OperationError', () => {
+    const operationError = () => new DOMException('The operation failed for an operation-specific reason', 'OperationError');
+    afterEach(() => vi.restoreAllMocks());
+
+    it('asks again after an OperationError, and the key it returns is a fresh working one', async () => {
+      const real = crypto.subtle.generateKey.bind(crypto.subtle);
+      let calls = 0;
+      vi.spyOn(crypto.subtle, 'generateKey').mockImplementation(((...args: Parameters<typeof real>) => {
+        calls += 1;
+        return calls <= SESSION_KEYGEN_ATTEMPTS - 1 ? Promise.reject(operationError()) : real(...args);
+      }) as typeof crypto.subtle.generateKey);
+      const s = await newSessionKey();
+      expect(calls).toBe(SESSION_KEYGEN_ATTEMPTS);
+      expect(s.publicKey).toHaveLength(32);
+      expect(s.keyPair.privateKey.extractable).toBe(false);
+      const sig = await signRevoke(s.keyPair.privateKey, 1);
+      expect(await verifyEd25519(s.publicKey, sig, sessionMessage(1, revokePayload()))).toBe(true);
+    });
+
+    it(`passes the OperationError on after ${SESSION_KEYGEN_ATTEMPTS} attempts`, async () => {
+      const spy = vi.spyOn(crypto.subtle, 'generateKey').mockImplementation((() => Promise.reject(operationError())) as typeof crypto.subtle.generateKey);
+      await expect(newSessionKey()).rejects.toMatchObject({ name: 'OperationError' });
+      expect(spy).toHaveBeenCalledTimes(SESSION_KEYGEN_ATTEMPTS);
+    });
+
+    it('passes any other error on at once (Ed25519 unsupported is not retried)', async () => {
+      const spy = vi
+        .spyOn(crypto.subtle, 'generateKey')
+        .mockImplementation((() => Promise.reject(new DOMException('Unrecognized algorithm name', 'NotSupportedError'))) as typeof crypto.subtle.generateKey);
+      await expect(newSessionKey()).rejects.toMatchObject({ name: 'NotSupportedError' });
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('signs derive and revoke messages that verify against the session public key', async () => {

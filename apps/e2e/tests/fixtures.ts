@@ -361,13 +361,63 @@ async function vaultStoreKeys(page: Page): Promise<string[]> {
   );
 }
 
+// ---- windows that close themselves ----
+
+/**
+ * Resolves once `page` has closed, at once if it already has. Call it before the step that closes the window.
+ * `page.waitForEvent('close')` alone, on a window that has already closed, waits for its timeout: a Hana popup can
+ * close before the test gets to it (WebKit can even report a popup's `popup` and `close` events together).
+ */
+export function closeOf(page: Page, timeout = 20_000): Promise<void> {
+  if (page.isClosed()) return Promise.resolve();
+  return page.waitForEvent('close', { timeout }).then(() => undefined);
+}
+
+/** How long a click's error waits for the close event that may follow it (closedSoon). */
+const CLOSE_AFTER_CLICK_MS = 2_000;
+
+/** Whether `page` is closed, or closes within `ms`. */
+async function closedSoon(page: Page, ms = CLOSE_AFTER_CLICK_MS): Promise<boolean> {
+  if (page.isClosed()) return true;
+  return closeOf(page, ms).then(
+    () => true,
+    () => page.isClosed(),
+  );
+}
+
+/**
+ * Clicks `selector` in `page`, a control whose click may close the window (the popup closes itself in the click's own
+ * handler, or once the click's navigation relays its answer). A window that closes while Playwright still performs
+ * the click makes the click reject with "Target page, context or browser has been closed": that rejection is the
+ * click working, so it is dropped, but only when the window is in fact closed (its close event can follow the error by
+ * a moment). Any other failure, or the same one with the window still open, is rethrown.
+ */
+export async function clickMayClose(page: Page, selector: string): Promise<void> {
+  try {
+    await page.click(selector);
+  } catch (e) {
+    if (!(await closedSoon(page))) throw e;
+  }
+}
+
+/**
+ * Clicks a control that closes the window (a banner's Done or Cancel, the email step's Cancel, the stub's account
+ * when the callback relays and closes) and waits until it has closed (clickMayClose, closeOf).
+ */
+export async function clickClosing(page: Page, selector: string, timeout = 20_000): Promise<void> {
+  const closed = closeOf(page, timeout);
+  // Awaited below: no unhandled rejection while the click runs (or if it throws).
+  closed.catch(() => undefined);
+  await clickMayClose(page, selector);
+  await closed;
+}
+
 // ---- login ----
 
 /** In the login popup: waits for the Google stub's chooser, picks `account`, and waits for the callback to close it. */
 export async function chooseAccount(popup: Page, account = 0): Promise<void> {
   await popup.waitForURL(`${GOOGLE_AUTH_URL}**`);
-  await popup.click(`#account-${account}`);
-  await popup.waitForEvent('close', { timeout: 20_000 });
+  await clickClosing(popup, `#account-${account}`);
 }
 
 /**

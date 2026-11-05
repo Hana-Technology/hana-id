@@ -1,7 +1,8 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-04 (branch `feat/batch-c-13`: retention and the erasure path in Status, Components
+Last verified against code: 2026-11-05 (branch `fix/e2e-flakes`: the login's step 2, the session key's retry on WebKit Linux's
+Ed25519 `OperationError`, D381); 2026-11-04 (branch `feat/batch-c-13`: retention and the erasure path in Status, Components
 (the usage ledger and admin Worker rows) and "Data stores" (what is purged when, D360–D369)); 2026-11-04 (branch `feat/console-reports-upgrades`: the partner console's usage, statement and pending-upgrades screens, D370–D374); 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342; the partner console's fresh sign-in and write paths, D343, D350–D358); 2026-11-04 (branch `feat/user-id-identity-sub`: the wallet directory's three ids and the record's session signature, D346 and the D311/D313 amendments: Status, "Wallet directory" steps 1, 2 and 4, "Data stores"' D1 row, the Glossary); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: D347, a closed popup is
 `login_cancelled`, in "Login, one transaction" after step 4; D348's Google-only screen after a cancel; a cancel on token_first's Google
 screen goes back to the chooser or case B's choices, closing there is `login_cancelled`, in "Automatic linking" step 2;
@@ -218,7 +219,9 @@ Browser steps: `packages/web/src/vault/login.ts`, `packages/web/src/auth/login-p
 
 1. Partner calls `hana.login()` in its click handler; the SDK opens `{authOrigin}/login?v=<vault frame name>` before
    any `await`, then sends `hana_login` on the port. Popup blocked → the vault shows a "Sign in with Hana" launcher.
-2. The vault makes a non-extractable Ed25519 session key, 32-byte salt, `expiresAtMs = now() + min(session_ttl_ms,
+2. The vault makes a non-extractable Ed25519 session key (`newSessionKey`, `packages/core/src/session.ts`: a WebCrypto
+   `OperationError` is asked again, up to 4 attempts, since WebKit's Linux ports refuse about 1 in 100 Ed25519 keys,
+   D381), 32-byte salt, `expiresAtMs = now() + min(session_ttl_ms,
    24 h − 10 min)` on the server-corrected clock, `keyIndex = 0`, `maxUses` (1 in `'session'` mode, 2 in `'none'`),
    `nonce = sessionNonce(SIGNER, scopeId, …)` (`packages/core/src/layouts.ts:71`), `relayKey`, `relayReadKey` and
    `relayId = b64url(sha256(relayReadKey))` (`relayIdFor`, `layouts.ts:166`). `SIGNER` is a build constant; `scopeId`

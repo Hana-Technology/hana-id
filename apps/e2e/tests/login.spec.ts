@@ -1,7 +1,7 @@
 // Login through the popup and the relay (docs/batch-b-spec.md "Login"), and the partner-page COOP cases.
 import { TOKEN_CLAIM_ALLOW_LIST } from '@hana-id/core';
 import { GOOGLE_AUTH_URL, GoogleStub, stackGoogleKey } from '../src/google-stub.ts';
-import { API_URL, AUTH_ORIGIN, NEAR_RPC } from '../src/stack.ts';
+import { API_URL, AUTH_ORIGIN, NEAR_RPC, VAULT_ORIGIN } from '../src/stack.ts';
 import {
   LOGIN_ENDPOINT,
   VAULT_FRAME,
@@ -9,6 +9,7 @@ import {
   chooseAccount,
   clickAction,
   clickLauncher,
+  clickMayClose,
   errorCode,
   errorOf,
   expect,
@@ -20,6 +21,7 @@ import {
   settled,
   status,
   test,
+  vaultFrame,
   vaultRecordKeys,
 } from './fixtures.ts';
 
@@ -50,6 +52,33 @@ test('one click on the partner button plus the chooser logs in', async ({ page, 
   // shared client (D117: get_config), in parallel; the path through `get_identity` (batch 7); and, after the login,
   // the wallet's sign-in methods (`get_account`, for `linkChanged`). Re-syncs are only for failures.
   expect(requests.count(NEAR_RPC)).toBe(4);
+});
+
+test('D381: a session key WebCrypto refuses once (WebKit Linux’s Ed25519 OperationError) is asked for again: the popup stays and signs in', async ({ page }) => {
+  // WebKitGTK and WPE reject about 1 in 100 Ed25519 generateKey calls. The login's newSessionKey then failed the login
+  // at once (api_unavailable), and the SDK closed the popup it had just opened: the WebKit flakes of popup-close and
+  // demo specs in CI. Here the vault frame's first Ed25519 key generation fails the same way, in every browser.
+  await page.addInitScript((vault) => {
+    if (location.origin !== vault) return;
+    const subtle = crypto.subtle;
+    const real = subtle.generateKey.bind(subtle);
+    (window as any).__keygenRefused = 0;
+    subtle.generateKey = ((algorithm: AlgorithmIdentifier, ...rest: [boolean, KeyUsage[]]) => {
+      const name = typeof algorithm === 'string' ? algorithm : algorithm.name;
+      if (name === 'Ed25519' && (window as any).__keygenRefused === 0) {
+        (window as any).__keygenRefused += 1;
+        return Promise.reject(new DOMException('The operation failed for an operation-specific reason', 'OperationError'));
+      }
+      return real(algorithm, ...rest);
+    }) as typeof subtle.generateKey;
+  }, VAULT_ORIGIN);
+  await openPartner(page, await newApp());
+  const popupP = page.waitForEvent('popup');
+  await clickAction(page, 'login', 'login');
+  const popup = await popupP;
+  await chooseAccount(popup);
+  expect((await okValue<{ evm: string }>(page, 'login')).evm).toMatch(/^0x[0-9a-fA-F]{40}$/u);
+  expect(await vaultFrame(page).evaluate(() => (window as any).__keygenRefused)).toBe(1);
 });
 
 test('the same Google account gets the same addresses on another device, another account other ones', async ({ page, browser }) => {
@@ -179,7 +208,7 @@ test('an IdP that enforces COOP same-origin still completes through the relay', 
   } else {
     expect(severed).toBe(true);
   }
-  await popup.click('#account-0');
+  await clickMayClose(popup, '#account-0');
   const addresses = await okValue<{ stellar: string }>(page, 'login');
   expect(addresses.stellar).toMatch(/^G/u);
 });

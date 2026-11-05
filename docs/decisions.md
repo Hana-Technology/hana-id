@@ -1,7 +1,8 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D380 (branch `fix/admin-cron-budget`, decided while
+Last verified against code: 2026-10-28 (commit 58edee9); D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
+flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
 confirmed by the user) on 2026-11-04, amending D341; D341 (branch `fix/google-cancel-back-to-chooser`, confirmed
 by the user) on 2026-11-04, with notes on D264, D270 and D273 and a row of "Superseded or amended"; D340 (branch `fix/dev-email-limits`) on 2026-11-04; D140–D141 and D150–D152 on 2026-10-30 (branches
@@ -6133,6 +6134,32 @@ follow-up there.
 - Rejected: charging RPCs by hand in the jobs that make them (D360's way: the next RPC added would be missed again);
   raising the budget to 48 (no margin for the open questions); a fixed share per job (an idle job's share would be
   wasted while a backlog waits).
+
+## WebKit Linux's Ed25519 keys and the e2e flakes (branch `fix/e2e-flakes`), 2026-11-05
+
+### D381. The session key's WebCrypto `generateKey` is asked again after an `OperationError`, up to 4 attempts
+- Date 2026-11-05 · Status: decided while fixing CI's Playwright flakes, to confirm · Built:
+  `packages/core/src/session.ts` (`newSessionKey`, `SESSION_KEYGEN_ATTEMPTS`); tests: `packages/core/test/layouts.test.ts`
+  ("D381"), `apps/e2e/tests/login.spec.ts` ("D381")
+- The bug: WebKit's Linux ports (WebKitGTK and WPE: GNOME Web, embedded WPE browsers, Playwright's Linux WebKit, the
+  one CI runs) reject Ed25519 `generateKey` with an `OperationError` about 1 time in 100 (measured 2026-11-05 in
+  Playwright 1.64.1's Linux WebKit: 29 and 28 of 3 000; the macOS build, Chromium and Firefox: 0 of 3 000). None of the
+  keys it does return has a public key starting with a zero byte (0 of 5 943, where about 23 are expected), so the keys
+  with a leading zero byte look like the refused ones. The vault's login (and a link, and the export window's fresh
+  sign-in) makes its session key right after reading the app config, so the error ended the login at once: not a
+  `VaultError`, so `api_unavailable` ("The request failed"; the demo: "Could not reach Hana's service"), and the SDK
+  closed the popup it had just opened, about 100 ms after opening it. That was CI's recurring WebKit flake
+  (`popup-close.spec.ts` "to Google and back, slowly" and `demo.spec.ts`'s cancelled sign-ins): the popup closed before
+  its own script ran.
+- Decision: `newSessionKey` asks again when `generateKey` rejects with an `OperationError`, up to
+  `SESSION_KEYGEN_ATTEMPTS` (4) in all; four refusals in a row (about 1 in 10^8 there) and any other error (Ed25519 not
+  supported, say) still reject as before. Each attempt is a fresh random key, so nothing about the key changes: no
+  layout, nonce, path or address depends on which attempt succeeded.
+- Why: a real user on a Linux WebKit browser lost about one login in 100 to an error that tells them to check their
+  connection; retrying costs nothing where it doesn't fail.
+- Rejected: a different error code for a WebCrypto failure (it would still fail the login); generating the key from
+  our own randomness and importing it (the key must stay non-extractable WebCrypto, and an import path in WebKit Linux
+  may have the same leading-zero bug); a test-only workaround (the flake is the product failing).
 
 ## Superseded or amended
 

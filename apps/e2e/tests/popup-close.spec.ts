@@ -5,7 +5,7 @@
 import type { Page, TestInfo } from '@playwright/test';
 import { GOOGLE_AUTH_URL } from '../src/google-stub.ts';
 import { ISSUER_URL } from '../src/stack.ts';
-import { LOGIN_ENDPOINT, clickAction, errorOf, expect, newApp, okValue, openPartner, peek, runAction, test, waitPersisted } from './fixtures.ts';
+import { LOGIN_ENDPOINT, clickAction, clickClosing, clickMayClose, closeOf, errorOf, expect, newApp, okValue, openPartner, peek, runAction, test, waitPersisted } from './fixtures.ts';
 
 const rand = (): string => crypto.randomUUID().replace(/-/gu, '').slice(0, 10);
 const newSub = (): string => `1${Array.from(crypto.getRandomValues(new Uint8Array(20)), (b) => String(b % 10)).join('')}`;
@@ -34,7 +34,7 @@ async function typeCode(popup: Page, to: string, before: number): Promise<void> 
   const code = /\b(\d{6})\b/u.exec(codes[codes.length - 1]!.text)?.[1];
   if (!code) throw new Error('no code in the mail');
   await popup.fill('#email-code', code);
-  await popup.click('#email-verify');
+  await clickMayClose(popup, '#email-verify');
 }
 
 async function openLogin(page: Page, name: string, options?: Record<string, unknown>): Promise<Page> {
@@ -86,7 +86,7 @@ test('closed on a follow-up screen (case A’s “This email already has a walle
   await openPartner(page, await newApp({ loginMethods: 'google,email' }));
   // An email wallet for that address first.
   const first = await openLogin(page, 'email', { method: 'email' });
-  const firstClosed = first.waitForEvent('close', { timeout: 20_000 });
+  const firstClosed = closeOf(first);
   await typeCode(first, to, await sendCode(first, to));
   await firstClosed;
   await waitPersisted(page, (await okValue<{ evm: string }>(page, 'email')).evm);
@@ -112,8 +112,6 @@ test('to Google and back, slowly, is never a close: the login signs in', async (
   // Past the COOP window on Google's page, then the account: no false cancel on the way back either.
   await popup.waitForTimeout(SEVER_WINDOW_MS + 500);
   expect(await peek(page, 'login')).toEqual({ state: 'pending' });
-  const closed = popup.waitForEvent('close', { timeout: 20_000 });
-  await popup.click('#account-0');
-  await closed;
+  await clickClosing(popup, '#account-0');
   expect((await okValue<{ evm: string }>(page, 'login')).evm).toMatch(/^0x/u);
 });

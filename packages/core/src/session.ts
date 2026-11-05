@@ -12,13 +12,35 @@ export interface SessionKey {
   publicKey: Bytes;
 }
 
-/** A fresh non-extractable Ed25519 session key. */
+/** How many times newSessionKey asks WebCrypto for a key pair before it passes the platform's OperationError on. */
+export const SESSION_KEYGEN_ATTEMPTS = 4;
+
+/**
+ * A fresh non-extractable Ed25519 session key.
+ *
+ * D381: WebKit's Linux ports (WebKitGTK and WPE: GNOME Web, embedded WPE browsers, Playwright's Linux WebKit) reject
+ * about 1 in 100 Ed25519 generateKey calls with an OperationError; their successful keys never have a public key
+ * that starts with a zero byte, so it looks like keys with a leading zero byte are the ones refused. Each attempt is a
+ * fresh random key, so an OperationError is retried, up to SESSION_KEYGEN_ATTEMPTS in all (four failures in a row
+ * there: about 1 in 10^8). Any other error (Ed25519 unsupported, say) is passed on at once. Safari on Apple platforms,
+ * Chromium and Firefox never failed in testing.
+ */
 export async function newSessionKey(): Promise<SessionKey> {
-  const keyPair = await crypto.subtle.generateKey({ name: 'Ed25519' }, false, ['sign', 'verify']);
-  // The public half of a WebCrypto key pair is always exportable, even with extractable = false.
-  const publicKey = new Uint8Array(await crypto.subtle.exportKey('raw', keyPair.publicKey));
-  return { keyPair, publicKey };
+  for (let attempt = 1; ; attempt++) {
+    let keyPair: CryptoKeyPair;
+    try {
+      keyPair = await crypto.subtle.generateKey({ name: 'Ed25519' }, false, ['sign', 'verify']);
+    } catch (e) {
+      if (attempt < SESSION_KEYGEN_ATTEMPTS && isOperationError(e)) continue;
+      throw e;
+    }
+    // The public half of a WebCrypto key pair is always exportable, even with extractable = false.
+    const publicKey = new Uint8Array(await crypto.subtle.exportKey('raw', keyPair.publicKey));
+    return { keyPair, publicKey };
+  }
 }
+
+const isOperationError = (e: unknown): boolean => typeof e === 'object' && e !== null && (e as { name?: unknown }).name === 'OperationError';
 
 /** `n` random bytes from the platform CSPRNG (session salt, relay keys). */
 export const randomBytes = (n: number): Bytes => crypto.getRandomValues(new Uint8Array(n));

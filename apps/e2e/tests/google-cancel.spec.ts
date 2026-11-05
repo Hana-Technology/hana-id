@@ -6,7 +6,7 @@
 import type { Page, TestInfo } from '@playwright/test';
 import { GOOGLE_AUTH_URL } from '../src/google-stub.ts';
 import { ISSUER_URL } from '../src/stack.ts';
-import { LOGIN_ENDPOINT, clickAction, errorOf, expect, newApp, okValue, openPartner, peek, runAction, test, waitPersisted } from './fixtures.ts';
+import { LOGIN_ENDPOINT, clickAction, clickClosing, clickMayClose, errorOf, expect, newApp, okValue, openPartner, peek, runAction, test, waitPersisted } from './fixtures.ts';
 
 const rand = (): string => crypto.randomUUID().replace(/-/gu, '').slice(0, 10);
 /** A fresh Google `sub` (21 digits, as Google's). */
@@ -55,9 +55,7 @@ for (const [label, emailApp] of [
 
     await popup.click('#continue-google');
     await popup.waitForURL(`${GOOGLE_AUTH_URL}**`);
-    const closed = popup.waitForEvent('close', { timeout: 20_000 });
-    await popup.click('#account-0');
-    await closed;
+    await clickClosing(popup, '#account-0');
     expect((await okValue<{ evm: string }>(page, 'login')).evm).toMatch(/^0x/u);
     expect(requests.count(LOGIN_ENDPOINT)).toBe(1);
     // Two first requests (the cancelled one, the fresh one), each under its own state; the ID request reuses the fresh one's.
@@ -90,9 +88,7 @@ test('D348: `hana.login({method: google})` in an app with email login: Cancel at
   await expect(popup.locator('#continue-email')).toHaveCount(0);
   await popup.click('#continue-google');
   await popup.waitForURL(`${GOOGLE_AUTH_URL}**`);
-  const closed = popup.waitForEvent('close', { timeout: 20_000 });
-  await popup.click('#account-0');
-  await closed;
+  await clickClosing(popup, '#account-0');
   expect((await okValue<{ evm: string }>(page, 'login')).evm).toMatch(/^0x/u);
   expect(requests.count(LOGIN_ENDPOINT)).toBe(1);
 });
@@ -126,7 +122,8 @@ async function emailCode(popup: Page, to: string): Promise<void> {
   const code = /\b(\d{6})\b/u.exec(codes[codes.length - 1]!.text)?.[1];
   if (!code) throw new Error('no code in the mail');
   await popup.fill('#email-code', code);
-  await popup.click('#email-verify');
+  // An email login's popup closes once it relays; case B's shows its screen.
+  await clickMayClose(popup, '#email-verify');
 }
 
 test('case B: Cancel at Google goes back to case B’s own choices; Link and continue then opens the Google wallet', async ({ page, google }, info) => {
@@ -135,9 +132,7 @@ test('case B: Cancel at Google goes back to case B’s own choices; Link and con
   await openPartner(page, await newApp({ loginMethods: 'google,email' }));
   // A Google wallet for that Gmail address (google-match keeps the hint).
   const first = await toGoogle(page, 'google', { emailApp: true });
-  const firstClosed = first.waitForEvent('close', { timeout: 20_000 });
-  await first.click('#account-0');
-  await firstClosed;
+  await clickClosing(first, '#account-0');
   const wallet = await okValue<{ stellar: string; evm: string }>(page, 'google');
   await waitPersisted(page, wallet.evm);
   await runAction(page, 'out', 'logout');
@@ -163,7 +158,7 @@ test('case B: Cancel at Google goes back to case B’s own choices; Link and con
   await popup.click('#account-0');
   expect(await okValue(page, 'email')).toEqual(wallet);
   await expect(popup.locator('#link-banners')).toContainText('email sign-in now opens this wallet too');
-  await popup.click('#banner-done');
+  await clickClosing(popup, '#banner-done');
 });
 
 test('case B: Cancel at Google, then the screen’s Cancel: login_cancelled', async ({ page, google }, info) => {
@@ -171,9 +166,7 @@ test('case B: Cancel at Google, then the screen’s Cancel: login_cancelled', as
   google.accounts = [{ sub: newSub(), label: 'BC', email: to, emailVerified: true }];
   await openPartner(page, await newApp({ loginMethods: 'google,email' }));
   const first = await toGoogle(page, 'google', { emailApp: true });
-  const firstClosed = first.waitForEvent('close', { timeout: 20_000 });
-  await first.click('#account-0');
-  await firstClosed;
+  await clickClosing(first, '#account-0');
   await waitPersisted(page, (await okValue<{ evm: string }>(page, 'google')).evm);
   await runAction(page, 'out', 'logout');
   await okValue(page, 'out');
@@ -185,8 +178,6 @@ test('case B: Cancel at Google, then the screen’s Cancel: login_cancelled', as
   await popup.click('#email-google');
   await popup.waitForURL(`${GOOGLE_AUTH_URL}**`);
   await cancelAtGoogle(popup);
-  const closed = popup.waitForEvent('close', { timeout: 10_000 });
-  await popup.click('#email-cancel');
-  await closed;
+  await clickClosing(popup, '#email-cancel', 10_000);
   expect((await errorOf(page, 'email', 10_000)).code).toBe('login_cancelled');
 });

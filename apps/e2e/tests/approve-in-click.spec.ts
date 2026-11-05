@@ -5,7 +5,7 @@
 // window, can't make it show or approve anything.
 import { type BrowserContext, type Page } from '@playwright/test';
 import { AUTH_ORIGIN, EVM_CHAIN_ID } from '../src/stack.ts';
-import { approve, clickAction, clickLauncher, errorCode, expect, login, newApp, okValue, openPartner, test } from './fixtures.ts';
+import { approve, clickAction, clickLauncher, closeOf, errorCode, expect, login, newApp, okValue, openPartner, test } from './fixtures.ts';
 
 /** Partner-page events of `name` recorded since `since` (the e2e app's event log). */
 async function eventsSince(page: Page, name: string, since: number): Promise<unknown[]> {
@@ -162,7 +162,7 @@ test('an auto-approved request opens the popup in the click and closes it withou
   await clickAction(page, 'auto', 'ethSignTx', depositTx(0));
   const popup = await popupP;
   const openedAt = Date.now();
-  if (!popup.isClosed()) await popup.waitForEvent('close', { timeout: 10_000 });
+  await closeOf(popup, 10_000);
   const openFor = Date.now() - openedAt;
   expect(await okValue(page, 'auto')).toMatchObject({ valid: true });
   expect(await eventsSince(page, 'autoApproved', mark)).toEqual([{ kind: 'eth_signTransaction', chain: 'evm', contract: DEPOSIT_CONTRACT, function: 'deposit(uint256)' }]);
@@ -200,5 +200,5 @@ test('the partner page posting fake requests to an approval window it holds gets
   await expect(popup.getByText('Totally Hana')).toHaveCount(0);
   await expect(popup.getByRole('button')).toHaveCount(0);
   // Nothing to adopt it for: it closes itself.
-  await popup.waitForEvent('close', { timeout: 15_000 });
+  await closeOf(popup, 15_000);
 });

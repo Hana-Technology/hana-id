@@ -5,7 +5,7 @@
 import type { Page, TestInfo } from '@playwright/test';
 import { GoogleStub, stackGoogleKey } from '../src/google-stub.ts';
 import { API_URL, ISSUER_URL } from '../src/stack.ts';
-import { LOGIN_ENDPOINT, chooseAccount, clickAction, expect, login, newApp, okValue, openPartner, routeStubs, status, test, waitPersisted } from './fixtures.ts';
+import { LOGIN_ENDPOINT, chooseAccount, clickAction, clickClosing, expect, login, newApp, okValue, openPartner, routeStubs, status, test, waitPersisted } from './fixtures.ts';
 
 /** A fresh address per test and browser (the issuer's per-address limits are real here). */
 const address = (info: TestInfo, tag: string): string => `e2e-${tag}-${info.project.name}-${crypto.randomUUID().slice(0, 8)}@mail-e2e.example.com`;
@@ -36,9 +36,7 @@ async function emailStep(popup: Page, to: string, opts: { prefilled?: boolean } 
   await expect(popup.locator('#email-code')).toHaveAttribute('autocomplete', 'one-time-code');
   const code = await codeFor(to, before);
   await popup.fill('#email-code', code);
-  const closed = popup.waitForEvent('close', { timeout: 20_000 });
-  await popup.click('#email-verify');
-  await closed;
+  await clickClosing(popup, '#email-verify');
 }
 
 test('email login through the chooser opens a wallet; no Google request, one login, no link', async ({ page, google, requests }, info) => {
@@ -110,9 +108,7 @@ test('a wrong code says so and the right one still works', async ({ page }, info
   await popup.click('#email-verify');
   await expect(popup.locator('#email-notice')).toContainText('That code is wrong');
   await popup.fill('#email-code', code);
-  const closed = popup.waitForEvent('close', { timeout: 20_000 });
-  await popup.click('#email-verify');
-  await closed;
+  await clickClosing(popup, '#email-verify');
   expect((await okValue<{ evm: string }>(page, 'login')).evm).toMatch(/^0x/u);
 });
 

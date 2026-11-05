@@ -8,7 +8,7 @@ import type { Page, TestInfo } from '@playwright/test';
 import type { GoogleStub } from '../src/google-stub.ts';
 import { ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK } from '../src/stack.ts';
 import { addressOfExport, base64Decode, fromUtf8 } from '@hana-id/core';
-import { AFTERWORD_MS, type App, LOGIN_PENDING_MS, chooseAccount, clickAction, clickLauncher, errorOf, expect, newApp, okValue, openPartner, peek, responsive, runAction, status, test, vaultFrame, waitPersisted } from './fixtures.ts';
+import { AFTERWORD_MS, type App, LOGIN_PENDING_MS, chooseAccount, clickAction, clickClosing, clickLauncher, clickMayClose, closeOf, errorOf, expect, newApp, okValue, openPartner, peek, responsive, runAction, status, test, vaultFrame, waitPersisted } from './fixtures.ts';
 
 const MATCH = `${ISSUER_URL}/v1/email/google-match`;
 const RECORD = `${ISSUER_URL}/v1/email/google-record`;
@@ -37,7 +37,8 @@ const codeCount = async (to: string): Promise<number> => (await mails(to)).filte
 async function enterCode(popup: Page, to: string, before: number): Promise<void> {
   await expect(popup.locator('#email-code')).toBeVisible();
   await popup.fill('#email-code', await codeFor(to, before));
-  await popup.click('#email-verify');
+  // An email login's popup closes once it relays; a link's shows its next screen.
+  await clickMayClose(popup, '#email-verify');
 }
 
 /** The address screen: `to`, Send code, then the code. */
@@ -55,7 +56,7 @@ async function emailLogin(page: Page, to: string, name: string): Promise<{ stell
   await clickAction(page, name, 'loginWith', { method: 'email' });
   const popup = await popupP;
   await popup.waitForURL(/\/login\/email#/u);
-  const closed = popup.waitForEvent('close', { timeout: 20_000 });
+  const closed = closeOf(popup);
   await emailCode(popup, to);
   await closed;
   const w = await okValue<{ stellar: string; evm: string }>(page, name);
@@ -70,7 +71,7 @@ async function googleStart(page: Page, name: string): Promise<Page> {
   const popup = await popupP;
   await popup.click('#continue-google');
   await popup.waitForURL(/accounts\.google\.com/u);
-  await popup.click('#account-0');
+  await clickMayClose(popup, '#account-0');
   return popup;
 }
 
@@ -91,7 +92,7 @@ test('case C: a Google login of an app with email asks google-match first, then 
   google.accounts = [{ sub: newSub(), label: 'C', email: gmail(info, 'c'), emailVerified: true }];
   await emailApp(page);
   const popup = await googleStart(page, 'login');
-  await popup.waitForEvent('close', { timeout: 20_000 });
+  await closeOf(popup);
   expect((await okValue<{ evm: string }>(page, 'login')).evm).toMatch(/^0x/u);
   expect(requests.count(MATCH)).toBe(1);
   // token_first (D270): the email scope on Google's one sign-in screen (an access token), then the silent
@@ -111,9 +112,7 @@ test('case A, Google-hosted: an email wallet, then Google with that Gmail addres
   // No screen to decide on: the login opens the email wallet; the popup's banner says so.
   expect(await okValue(page, 'google')).toEqual(wallet);
   await expect(popup.locator('#link-banners')).toContainText('Your Google sign-in now opens this wallet too');
-  const closed = popup.waitForEvent('close');
-  await popup.click('#banner-done');
-  await closed;
+  await clickClosing(popup, '#banner-done');
   await expect.poll(() => linkEvents(page)).toContainEqual(expect.objectContaining({ provider: 'google', status: 'active' }));
   // A link notice went to the address.
   await expect.poll(async () => (await mails(to)).some((m) => m.kind === 'link_notice')).toBe(true);
@@ -134,12 +133,12 @@ test('case A, not hosted: “Link and continue” sends a code to the address fi
   await enterCode(popup, to, before);
   expect(await okValue(page, 'google')).toEqual(wallet);
   await expect(popup.locator('#link-banners')).toContainText('Your Google sign-in now opens this wallet too');
-  await popup.click('#banner-done');
+  await clickClosing(popup, '#banner-done');
 
   // Linked: the next Google login opens the email wallet with no screen at all.
   await logout(page, 'out2');
   const again = await googleStart(page, 'again');
-  await again.waitForEvent('close', { timeout: 20_000 });
+  await closeOf(again);
   expect(await okValue(page, 'again')).toEqual(wallet);
 });
 
@@ -152,7 +151,7 @@ test('case A, not hosted: “Sign in with email” instead is an email login to 
 
   const popup = await googleStart(page, 'google');
   await popup.click('#link-use-email');
-  const closed = popup.waitForEvent('close', { timeout: 20_000 });
+  const closed = closeOf(popup);
   await emailCode(popup, to);
   await closed;
   expect(await okValue(page, 'google')).toEqual(wallet);
@@ -170,7 +169,7 @@ test('case B, Google-hosted: a Google wallet, then the same Gmail by email: “L
   await emailApp(page);
   // The Google login writes the hint (google-match).
   const first = await googleStart(page, 'google');
-  await first.waitForEvent('close', { timeout: 20_000 });
+  await closeOf(first);
   const wallet = await okValue<{ stellar: string; evm: string }>(page, 'google');
   await waitPersisted(page, wallet.evm);
   await logout(page, 'out');
@@ -186,7 +185,7 @@ test('case B, Google-hosted: a Google wallet, then the same Gmail by email: “L
   await popup.click('#account-0');
   expect(await okValue(page, 'email')).toEqual(wallet);
   await expect(popup.locator('#link-banners')).toContainText('email sign-in now opens this wallet too');
-  await popup.click('#banner-done');
+  await clickClosing(popup, '#banner-done');
   await expect.poll(() => linkEvents(page)).toContainEqual(expect.objectContaining({ provider: 'email', status: 'active' }));
 
   // From now on the email alone opens the Google wallet.
@@ -200,7 +199,7 @@ test('case B, not hosted: the email joins pending 24 h; the partner sees it; it 
   google.accounts = [{ sub, label: 'BN', email: to, emailVerified: true }];
   await emailApp(page);
   const first = await googleStart(page, 'google');
-  await first.waitForEvent('close', { timeout: 20_000 });
+  await closeOf(first);
   const wallet = await okValue<{ stellar: string; evm: string }>(page, 'google');
   await waitPersisted(page, wallet.evm);
   await logout(page, 'out');
@@ -226,9 +225,7 @@ test('case B, not hosted: the email joins pending 24 h; the partner sees it; it 
   expect(methods.methods[1]!.effectiveAtMs! - Date.now()).toBeGreaterThan(23 * 3_600_000);
 
   // The banner's Cancel: a fresh Google sign-in of this account (the stub answers for it at once), then cancel_link.
-  const closed = popup.waitForEvent('close', { timeout: 20_000 });
-  await popup.click('#banner-cancel-0');
-  await closed;
+  await clickClosing(popup, '#banner-cancel-0');
   await expect.poll(() => linkEvents(page)).toContainEqual({ provider: 'email', status: 'removed', effectiveAtMs: null });
   expect(google.requests.filter((r) => r.ok && r.request.kind === 'proof').map((r) => r.ok && r.request.loginHint)).toEqual([sub]);
   expect(await runAccount(page, 'acct2')).toEqual({ methods: [{ provider: 'google', status: 'active', effectiveAtMs: null, root: true }] });
@@ -239,7 +236,7 @@ test('case B, not hosted: while the link is pending, an email login of that addr
   google.accounts = [{ sub: newSub(), label: 'BP', email: to, emailVerified: true }];
   await emailApp(page);
   const first = await googleStart(page, 'google');
-  await first.waitForEvent('close', { timeout: 20_000 });
+  await closeOf(first);
   const wallet = await okValue<{ stellar: string; evm: string }>(page, 'google');
   await waitPersisted(page, wallet.evm);
   await logout(page, 'out');
@@ -251,7 +248,7 @@ test('case B, not hosted: while the link is pending, an email login of that addr
   await popup.waitForURL(/accounts\.google\.com/u);
   await popup.click('#account-0');
   expect(await okValue(page, 'email')).toEqual(wallet);
-  await popup.click('#banner-done');
+  await clickClosing(popup, '#banner-done');
   await logout(page, 'out2');
 
   const p2 = page.waitForEvent('popup');
@@ -275,7 +272,7 @@ test('an email wallet’s key export: the export window’s child popup takes an
   const child = await childP;
   await child.click('#continue-email');
   await child.waitForURL(/\/login\/email#/u);
-  const closed = child.waitForEvent('close', { timeout: 20_000 });
+  const closed = closeOf(child);
   await emailCode(child, to);
   await closed;
 
@@ -314,9 +311,7 @@ test('a linked identity’s key export: Google, a member of an email wallet, exp
   await logout(page, 'out');
   const popup = await googleStart(page, 'google');
   expect(await okValue(page, 'google')).toEqual(wallet);
-  const closed = popup.waitForEvent('close');
-  await popup.click('#banner-done');
-  await closed;
+  await clickClosing(popup, '#banner-done');
   expect(await runAccount(page, 'acct')).toEqual({
     methods: [
       { provider: 'email', status: 'active', effectiveAtMs: null, root: true },
@@ -416,7 +411,7 @@ test('a banner with “Cancel this link” left open past its limit: the vault s
   google.accounts = [{ sub: newSub(), label: 'BL', email: to, emailVerified: true }];
   await emailApp(page);
   const first = await googleStart(page, 'google');
-  await first.waitForEvent('close', { timeout: 20_000 });
+  await closeOf(first);
   const wallet = await okValue<{ stellar: string; evm: string }>(page, 'google');
   await waitPersisted(page, wallet.evm);
   await logout(page, 'out');

@@ -493,6 +493,11 @@ export async function reject(popup: Page): Promise<void> {
 /** The vault's login limit (packages/web/src/vault/login.ts LOGIN_PENDING_MS) and the banners' (AFTERWORD_MS). */
 export const LOGIN_PENDING_MS = 5 * 60_000;
 export const AFTERWORD_MS = 5 * 60_000;
+/**
+ * D385: after a close within 8 s of the popup leaving for Google (taken for a possible COOP switch), how long the vault
+ * waits for the popup's answer before ending the login with login_cancelled (login.ts POPUP_WATCH.earlyCloseDeadlineMs).
+ */
+export const EARLY_CLOSE_DEADLINE_MS = 90_000;
 
 /**
  * Whether `frame`'s main thread runs a script within `ms`. A frame stuck in a loop never does, nor does any page that

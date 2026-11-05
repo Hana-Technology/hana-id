@@ -1,12 +1,13 @@
 // D347: the vault watches the login popup's window from the hello on. A close while the login waits on the popup ends
 // it with `login_cancelled` (`data.reason: 'popup_closed'`) after a short grace; a navigation to Google (and an IdP's
 // COOP switch on arrival, which makes the handle read closed) never counts; a window that closes itself after relaying
-// never counts; a close while the vault works alone lets the login finish.
+// never counts; a close while the vault works alone lets the login finish. D385: a `closed` inside the COOP window gives
+// the popup 90 s to answer (a window open behind the switch); no answer by then is the close it most likely was.
 import { type FollowNotice, decryptRelayValue, encryptRelayPayload, followSlot, isFollowNotice } from '@hana-id/core';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { HanaEnv } from '../../src/hana-env.ts';
-import { POPUP_WATCH, type PopupWatch } from '../../src/vault/login.ts';
-import { Browser, EMAIL_ENV, ENV, type EmailIssuer, FakeWindow, type Google, type LoginRun, type Tab, apiError, deliverToken, emailIssuer, enableEmail, google, popupHello, readyTab } from './harness.ts';
+import { LOGIN_PENDING_MS, POPUP_WATCH, type PopupWatch } from '../../src/vault/login.ts';
+import { Browser, EMAIL_ENV, ENV, type EmailIssuer, FakeWindow, type Google, type LoginRun, RPC_FALLBACK, type Tab, apiError, deliverToken, emailIssuer, enableEmail, google, login, popupHello, readyTab } from './harness.ts';
 
 let g: Google;
 let issuer: EmailIssuer;
@@ -31,8 +32,11 @@ const signal = (t: Tab, run: LoginRun, stage: 'google' | 'back' | 'relayed') => 
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe('the default watch', () => {
-  it('polls every 250 ms, takes a close within 8 s of leaving for Google as a COOP switch, and allows 1 s of grace', () => {
-    expect(POPUP_WATCH).toEqual({ pollMs: 250, severWindowMs: 8_000, graceMs: 1_000 });
+  it('polls every 250 ms, takes a close within 8 s of leaving for Google as a COOP switch, waits 90 s for an answer after one, and allows 1 s of grace', () => {
+    expect(POPUP_WATCH).toEqual({ pollMs: 250, severWindowMs: 8_000, earlyCloseDeadlineMs: 90_000, graceMs: 1_000 });
+    expect(Object.isFrozen(POPUP_WATCH)).toBe(true);
+    // The deadline ends a login well before its own limit.
+    expect(POPUP_WATCH.earlyCloseDeadlineMs + POPUP_WATCH.graceMs).toBeLessThan(LOGIN_PENDING_MS);
   });
 });
 
@@ -171,6 +175,181 @@ describe('what never counts as a close', () => {
     t.dispatch({ data: { v: 1, t: 'hana:auth-progress', stage: 'relayed' }, origin: 'https://evil.test', source: run.popup });
     run.popup.closed = true;
     expect((await pending).error).toMatchObject({ code: 'login_cancelled', data: { reason: 'popup_closed' } });
+  });
+});
+
+/** The popup leaves for Google and its handle reads closed at once (a COOP switch, or a user's quick close). */
+async function closedOnArrival(t: Tab, run: LoginRun): Promise<number> {
+  signal(t, run, 'google');
+  const at = t.browser.timers.now;
+  run.popup.closed = true;
+  // The watch's next read (a real tick) arms the deadline.
+  await t.waitUntil(() => t.browser.timers.dueAt().includes(at + POPUP_WATCH.earlyCloseDeadlineMs), 'the early-close deadline');
+  return at + POPUP_WATCH.earlyCloseDeadlineMs;
+}
+
+function settledFlag(p: Promise<unknown>): () => boolean {
+  let settled = false;
+  void p.finally(() => {
+    settled = true;
+  });
+  return () => settled;
+}
+
+describe('a close inside the COOP window: the popup has 90 s to answer (D385)', () => {
+  it('no answer: login_cancelled (popup_closed) at the deadline, and a late answer is never read', async () => {
+    const b = new Browser();
+    const t = await tab(b, ENV);
+    const pending = t.request('hana_login');
+    const settled = settledFlag(pending);
+    const run = await popupHello(t);
+    const deadline = await closedOnArrival(t, run);
+    // Well past the watch's seconds, and just short of the deadline: still waiting.
+    await pause(60);
+    t.browser.timers.advance(POPUP_WATCH.earlyCloseDeadlineMs - 1_000);
+    await pause(40);
+    expect(settled()).toBe(false);
+    t.browser.timers.advance(1_000);
+    expect((await pending).error).toMatchObject({ code: 'login_cancelled', data: { reason: 'popup_closed' } });
+    // Nothing left behind: the deadline and the login's 5-minute limit are both gone.
+    expect(t.browser.timers.dueAt()).not.toContain(deadline);
+    expect(t.browser.timers.dueAt()).toEqual([]);
+    await deliverToken(t, g, run);
+    await pause(40);
+    expect(b.backend.relay.get(run.params.relayId as string)).not.toBe('consumed');
+    expect(b.backend.count('/v1/login')).toBe(0);
+  });
+
+  it('the answer at 60 s (the window was open behind the switch): the login signs in, the deadline cleared', async () => {
+    const b = new Browser();
+    const t = await tab(b, ENV);
+    const pending = t.request('hana_login');
+    const run = await popupHello(t);
+    const iat = Math.floor(t.browser.timers.now / 1000);
+    const deadline = await closedOnArrival(t, run);
+    t.browser.timers.advance(60_000);
+    await deliverToken(t, g, run, { iat, exp: iat + 3600 });
+    expect((await pending).error).toBeUndefined();
+    expect(t.browser.timers.dueAt()).not.toContain(deadline);
+    // Past where the deadline was: the wallet stays open.
+    t.browser.timers.advance(POPUP_WATCH.earlyCloseDeadlineMs);
+    await pause(40);
+    expect((await t.request('hana_status')).result).toMatchObject({ status: 'logged_in' });
+    expect(b.backend.count('/v1/login')).toBe(1);
+  });
+
+  it('an answer in the grace after the deadline still wins (as after any close)', async () => {
+    // A grace the test's clock holds (the harness runs short timers on the next real tick).
+    const t = await tab(new Browser(), ENV, { graceMs: 10_000 });
+    const pending = t.request('hana_login');
+    const run = await popupHello(t);
+    // Google's clock: the token was issued when the user picked the account.
+    const iat = Math.floor(t.browser.timers.now / 1000);
+    await closedOnArrival(t, run);
+    t.browser.timers.advance(POPUP_WATCH.earlyCloseDeadlineMs);
+    await deliverToken(t, g, run, { iat, exp: iat + 3600 });
+    expect((await pending).error).toBeUndefined();
+  });
+
+  it('hana_cancelLogin before the deadline: login_cancelled at once, the deadline cleared', async () => {
+    const t = await tab(new Browser(), ENV);
+    const pending = t.request('hana_login');
+    const run = await popupHello(t);
+    const deadline = await closedOnArrival(t, run);
+    t.browser.timers.advance(30_000);
+    expect((await t.request('hana_cancelLogin')).result).toBeNull();
+    const reply = await pending;
+    expect(reply.error?.code).toBe('login_cancelled');
+    expect(reply.error?.data).not.toMatchObject({ reason: 'popup_closed' });
+    expect(t.browser.timers.dueAt()).not.toContain(deadline);
+  });
+
+  it('a newer login ends the old one and its deadline: the new login is not cancelled at the old deadline', async () => {
+    const t = await tab(new Browser(), ENV);
+    const first = t.request('hana_login');
+    const run1 = await popupHello(t);
+    const deadline = await closedOnArrival(t, run1);
+    const second = t.request('hana_login');
+    expect((await first).error?.code).toBe('login_cancelled');
+    expect(t.browser.timers.dueAt()).not.toContain(deadline);
+    const run2 = await popupHello(t, new FakeWindow('p2', 'p2', '', t.parent));
+    const iat = Math.floor(t.browser.timers.now / 1000);
+    const settled = settledFlag(second);
+    t.browser.timers.advance(POPUP_WATCH.earlyCloseDeadlineMs + POPUP_WATCH.graceMs);
+    await pause(40);
+    expect(settled()).toBe(false);
+    await deliverToken(t, g, run2, { iat, exp: iat + 3600 });
+    expect((await second).error).toBeUndefined();
+  });
+
+  it('a close late in the login: the 5-minute limit comes first (login_timeout), and the deadline goes with it', async () => {
+    const t = await tab(new Browser(), ENV);
+    const pending = t.request('hana_login');
+    const run = await popupHello(t);
+    t.browser.timers.advance(4 * 60_000);
+    const deadline = await closedOnArrival(t, run);
+    t.browser.timers.advance(60_000);
+    expect((await pending).error).toMatchObject({ code: 'login_timeout', data: { stage: 'pending' } });
+    expect(t.browser.timers.dueAt()).not.toContain(deadline);
+  });
+
+  it('a close early in the login: the deadline comes long before the 5-minute limit, which goes with the login', async () => {
+    const t = await tab(new Browser(), ENV);
+    const pending = t.request('hana_login');
+    const run = await popupHello(t);
+    const deadline = await closedOnArrival(t, run);
+    expect(t.browser.timers.dueAt().at(-1)).toBeGreaterThan(deadline);
+    t.browser.timers.advance(POPUP_WATCH.earlyCloseDeadlineMs);
+    expect((await pending).error).toMatchObject({ code: 'login_cancelled', data: { reason: 'popup_closed' } });
+    expect(t.browser.timers.dueAt()).toEqual([]);
+  });
+
+  it('a later trip to Google (token_first’s second trip, D273’s retry): the same deadline', async () => {
+    const t = await tab(new Browser(), ENV);
+    const pending = t.request('hana_login');
+    const run = await popupHello(t);
+    // The first trip came back with its opener; the callback sends the popup to Google again.
+    signal(t, run, 'google');
+    signal(t, run, 'back');
+    await closedOnArrival(t, run);
+    t.browser.timers.advance(POPUP_WATCH.earlyCloseDeadlineMs);
+    expect((await pending).error).toMatchObject({ code: 'login_cancelled', data: { reason: 'popup_closed' } });
+  });
+
+  it('a follow-up screen whose “Google again” closes at once: login_cancelled at the deadline', async () => {
+    const b = new Browser();
+    enableEmail(b.backend, issuer);
+    b.backend.googleMatch = () => apiError(400, 'google_account_mismatch');
+    const t = await tab(b);
+    const pending = t.request('hana_login', { method: 'google' });
+    const run = await popupHello(t);
+    const { id } = followSlot(run.params.followKey as Uint8Array, 1);
+    b.backend.writeRelayRaw(id, await encryptRelayPayload(run.params.relayKey as Uint8Array, id, { accessToken: 'ya29.x' }));
+    const token = await g.token({ iss: 'https://accounts.google.com', azp: run.params.clientId, aud: run.params.clientId, sub: '1234567890', iat: Math.floor(t.browser.timers.now / 1000), exp: Math.floor(t.browser.timers.now / 1000) + 3600, nonce: run.params.nonce, jti: 'j' });
+    await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: token, access: 'follow' });
+    const n2 = followSlot(run.params.followKey as Uint8Array, 2);
+    const notice: FollowNotice = await decryptRelayValue(run.params.relayKey as Uint8Array, n2.id, await b.backend.takeRelay(n2.id), isFollowNotice);
+    expect(notice.t).toBe('email_consent');
+    await closedOnArrival(t, run);
+    t.browser.timers.advance(POPUP_WATCH.earlyCloseDeadlineMs);
+    expect((await pending).error).toMatchObject({ code: 'login_cancelled', data: { reason: 'popup_closed' } });
+    expect(b.backend.count('/v1/login')).toBe(0);
+  });
+
+  it('a link task (hana_linkAccount) closed on arrival at Google: login_cancelled at the deadline', async () => {
+    const b = new Browser();
+    enableEmail(b.backend, issuer);
+    const t = await tab(b, { ...EMAIL_ENV, rpcFallback: RPC_FALLBACK });
+    await login(t, g);
+    const pending = t.request('hana_linkAccount', { method: 'email' });
+    const settled = settledFlag(pending);
+    const run = await popupHello(t);
+    const deadline = await closedOnArrival(t, run);
+    await pause(60);
+    expect(settled()).toBe(false);
+    t.browser.timers.advance(POPUP_WATCH.earlyCloseDeadlineMs);
+    expect((await pending).error).toMatchObject({ code: 'login_cancelled', data: { reason: 'popup_closed' } });
+    expect(t.browser.timers.dueAt()).not.toContain(deadline);
   });
 });
 

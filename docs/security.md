@@ -1,7 +1,7 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-05 for the outside probe's schedule (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383; before it branch `chore/identity-probe-hourly`, hourly, D382); 2026-11-04 for retention and erasure (branch `feat/batch-c-13`: the
+known open issues. Last verified against code: 2026-11-05 for the popup close watch's deadline (branch `fix/popup-early-close-deadline`: a forged `google` delays a close by at most 90 s, D385); 2026-11-05 for the outside probe's schedule (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383; before it branch `chore/identity-probe-hourly`, hourly, D382); 2026-11-04 for retention and erasure (branch `feat/batch-c-13`: the
 admin Worker's retention invariants and residual, D360–D369); 2026-11-04 for a statement's issuer shown to partners as `hana` (branch `feat/console-reports-upgrades`, D371); 2026-11-04 for the claim allow-list's `at_hash`, a freeze pausing pending memberships and the partner console's fresh sign-in and write paths (branch `feat/batch-c-10`, D342, D343, D350–D358); 2026-11-04 for the wallet directory's ids and the wallet record's
 session signature (branch `feat/user-id-identity-sub`: Parties' partner row, `IDENTITY_SUB_KEY` and `USER_ID_KEY` in
 the compromise table, "Wallet directory" in the API's invariants with the review finding and its fix; D346, D311 and
@@ -1029,7 +1029,8 @@ providers; a linked member's export on both is e2e-tested, `apps/e2e/tests/linki
   are zeroed and the context dropped, so a reload finds nothing.
 - **The close watch's signals carry nothing** (D347): `hana:auth-progress` `google`, `back` and `relayed` are taken
   only from the popup window the vault answered, on `authOrigin`. The worst a forged or lost signal does is change
-  when a closed popup is noticed (a `relayed` makes the vault ignore the close, a `google` opens the 8 s COOP window);
+  when a closed popup is noticed (a `relayed` makes the vault ignore the close, a `google` opens the 8 s COOP window,
+  after which a close is noticed only at D385's 90 s deadline unless the popup answers first);
   it can't end a login that the user didn't, read a slot, or carry data. A close ends the login through the same abort
   as a timeout: the relay reads stop and later slot writes are never read.
 - **The follow-up channel** (D256): the popup and the vault talk after Google's answer through relay slots derived

@@ -4,9 +4,13 @@ import { appChangeDelayProblems, DASHBOARD_BLOCKS, emailFromProblem, hanaOwnOrig
 
 type Raw = Record<string, unknown>;
 // Without identityToken: these tests move apiUrl, and the identity issuer must follow it (tested in identity.test.ts).
+// Without the dashboard blocks: sandbox-dev has them (M4), and these tests add their own set (`dashboard()` below) or
+// none, so they hold whatever the real manifest's blocks say.
 const raw = (): Raw => {
-  const { identityToken: _i, ...m } = JSON.parse(readFileSync(manifestPath('sandbox-dev'), 'utf8')) as Raw & { identityToken?: unknown };
-  return m as Raw;
+  const m = JSON.parse(readFileSync(manifestPath('sandbox-dev'), 'utf8')) as Raw;
+  delete m.identityToken;
+  for (const k of DASHBOARD_BLOCKS) delete m[k];
+  return m;
 };
 
 /** A complete set of dashboard fields on sandbox-dev's workers.dev subdomain. */
@@ -72,9 +76,17 @@ describe('appChangeDelayMs', () => {
 });
 
 describe('dashboard blocks', () => {
-  it('sandbox-dev validates without them (an env without a dashboard)', () => {
+  it('an env without them validates (it runs the API only)', () => {
+    const r = manifestSchema.safeParse(raw());
+    expect(r.success).toBe(true);
+    for (const k of DASHBOARD_BLOCKS) expect(r.data![k]).toBeUndefined();
+  });
+
+  it('sandbox-dev sets the complete set (M4), its Access application still a placeholder', () => {
     const env = loadEnv('sandbox-dev');
-    for (const k of DASHBOARD_BLOCKS) expect(env[k]).toBeUndefined();
+    for (const k of DASHBOARD_BLOCKS) expect(env[k], k).toBeDefined();
+    expect(env.admin!.accessAud).toBe('UNSET');
+    expect(env.ownerGrantDelayMs).toBe(60_000);
   });
 
   it('accept a complete set', () => {
@@ -174,13 +186,18 @@ describe('email.from', () => {
 
 describe('hanaOwnOrigins (REFUSED_ORIGINS)', () => {
   it('lists the API, page and dashboard origins once each, sorted', () => {
-    const env = loadEnv('sandbox-dev');
-    expect(hanaOwnOrigins(env)).toEqual([new URL(env.apiUrl).origin, env.vaultOrigin, env.authOrigin].sort());
+    const bare = manifestSchema.parse(raw());
+    expect(hanaOwnOrigins(bare)).toEqual([new URL(bare.apiUrl).origin, bare.vaultOrigin, bare.authOrigin].sort());
     const full = manifestSchema.parse(withDashboard());
     const list = hanaOwnOrigins(full);
     expect(list).toHaveLength(7);
     expect(list).toEqual([...list].sort());
     expect(list).toContain(full.console!.authOrigin);
     expect(list).toContain(full.files!.origin);
+    // sandbox-dev's own seven.
+    const env = loadEnv('sandbox-dev');
+    expect(hanaOwnOrigins(env)).toEqual(
+      [new URL(env.apiUrl).origin, env.vaultOrigin, env.authOrigin, env.console!.origin, env.console!.authOrigin, env.files!.origin, env.admin!.origin].sort(),
+    );
   });
 });

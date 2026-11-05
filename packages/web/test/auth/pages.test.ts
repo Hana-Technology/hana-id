@@ -13,7 +13,10 @@ import { GOOGLE_TOKENINFO_ORIGIN, GOOGLE_TOKENINFO_URL } from '../../src/auth/go
 import { AUTH_PAGES, LOGO_PAGES, authPageCsp, authPageMetaCsp, imgSources } from '../../src/auth/pages.ts';
 import type { HanaEnv } from '../../src/hana-env.ts';
 
-const sandbox = hanaEnv(loadEnv('sandbox-dev')) as HanaEnv;
+const sandboxEnv = hanaEnv(loadEnv('sandbox-dev')) as HanaEnv;
+// Without the files origin: the policies below are the base ones; the batch C11 tests add a files origin themselves
+// (sandbox-dev's manifest has one since M4, checked against its build at the end).
+const { filesOrigin: _sandboxFiles, ...sandbox } = sandboxEnv;
 const BASE = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'";
 
 describe('auth page policies', () => {
@@ -132,7 +135,7 @@ describe('per-env build', () => {
   let built: BuiltEnv;
   // A second env with its own signer, relayer and origins, to show each bundle carries only its env's constants.
   const prod: HanaEnv = {
-    ...sandbox,
+    ...sandboxEnv,
     name: 'prod-test',
     signer: 'hana-signer-prod.example',
     relayer: 'hana-relayer-prod.example',
@@ -146,7 +149,7 @@ describe('per-env build', () => {
 
   beforeAll(async () => {
     out = mkdtempSync(join(tmpdir(), 'hana-auth-pages-'));
-    built = await buildAuthPages(sandbox, out, '0485faa1c2d3');
+    built = await buildAuthPages(sandboxEnv, out, '0485faa1c2d3');
     builtProd = await buildAuthPages(prod, out, '0485faa1c2d3');
   }, 60_000);
   afterAll(() => rmSync(out, { recursive: true, force: true }));
@@ -161,7 +164,7 @@ describe('per-env build', () => {
   it('writes every page with a meta CSP, one same-origin stylesheet and one same-origin module script, nothing inline', () => {
     for (const page of AUTH_PAGES) {
       const html = readFileSync(join(built.dir, page.file), 'utf8');
-      expect(html).toContain(`<meta http-equiv="Content-Security-Policy" content="${authPageMetaCsp(sandbox, page.name)}">`);
+      expect(html).toContain(`<meta http-equiv="Content-Security-Policy" content="${authPageMetaCsp(sandboxEnv, page.name)}">`);
       const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gu)];
       expect(scripts).toHaveLength(1);
       expect(scripts[0]?.[1]).toMatch(/^ type="module" src="\/assets\/[a-z]+-[A-Z0-9]+\.js"$/u);
@@ -183,8 +186,12 @@ describe('per-env build', () => {
       expect(html, page.name).toContain(`<meta http-equiv="Content-Security-Policy" content="${authPageMetaCsp(prod, page.name)}">`);
       expect(html.includes("img-src 'self' data: https://files.hana-prod.example;"), page.name).toBe(page.name !== 'callback');
     }
-    // sandbox-dev's manifest has no dashboard blocks yet: its pages keep the base img-src.
-    if (!sandbox.filesOrigin) for (const page of AUTH_PAGES) expect(readFileSync(join(built.dir, page.file), 'utf8')).toContain("img-src 'self' data:;");
+    // sandbox-dev's manifest has its dashboard blocks (M4): its logo pages carry its files origin the same way.
+    expect(sandboxEnv.filesOrigin).toBe(loadEnv('sandbox-dev').files!.origin);
+    for (const page of AUTH_PAGES) {
+      const html = readFileSync(join(built.dir, page.file), 'utf8');
+      expect(html.includes(`img-src 'self' data: ${sandboxEnv.filesOrigin};`), page.name).toBe(page.name !== 'callback');
+    }
   });
 
   it('loads no third-party script: bundles import only their own chunks', () => {
@@ -200,9 +207,9 @@ describe('per-env build', () => {
   it('inlines each env’s own pinned constants', () => {
     const sandboxJs = assetText(built);
     const prodJs = assetText(builtProd);
-    for (const v of [sandbox.signer, sandbox.relayer, sandbox.vaultOrigin, sandbox.authOrigin, sandbox.ckdNetworkKey]) expect(sandboxJs).toContain(v);
+    for (const v of [sandboxEnv.signer, sandboxEnv.relayer, sandboxEnv.vaultOrigin, sandboxEnv.authOrigin, sandboxEnv.ckdNetworkKey]) expect(sandboxJs).toContain(v);
     for (const v of [prod.signer, prod.relayer, prod.vaultOrigin, prod.authOrigin]) expect(prodJs).toContain(v);
-    expect(prodJs).not.toContain(sandbox.signer);
+    expect(prodJs).not.toContain(sandboxEnv.signer);
     expect(sandboxJs).not.toContain(prod.signer);
     expect(prodJs).not.toContain('__HANA_ENV__');
   });
@@ -225,13 +232,13 @@ describe('per-env build', () => {
     writeFileSync(join(built.dir, ASSET_DIR, 'stale-OLD.js'), '// stale');
     const before = readdirSync(join(built.dir, ASSET_DIR)).filter((f) => f.endsWith('.js') && !f.startsWith('stale')).sort();
     // Another build id (D384) changes the pages' meta, never the bundles' content hashes (browsers keep their cache).
-    const again = await buildAuthPages(sandbox, out, '111111111111-dirty');
+    const again = await buildAuthPages(sandboxEnv, out, '111111111111-dirty');
     expect(readFileSync(join(vaultDir, 'vault.js'), 'utf8')).toBe('// vault');
     expect(existsSync(join(again.dir, ASSET_DIR, 'stale-OLD.js'))).toBe(false);
     expect(readdirSync(join(again.dir, ASSET_DIR)).filter((f) => f.endsWith('.js')).sort()).toEqual(before);
     for (const page of AUTH_PAGES) expect(parseBuildMeta(readFileSync(join(again.dir, page.file), 'utf8'))?.id).toBe('111111111111-dirty');
     rmSync(vaultDir, { recursive: true, force: true });
-    built = await buildAuthPages(sandbox, out, '0485faa1c2d3');
+    built = await buildAuthPages(sandboxEnv, out, '0485faa1c2d3');
   }, 60_000);
 
   it('D384: stamps every page with the build id it was given, by default this checkout’s', async () => {
@@ -246,11 +253,11 @@ describe('per-env build', () => {
   }, 60_000);
 
   it('refuses an env name that is not a plain manifest name (it becomes a deleted path)', async () => {
-    await expect(buildAuthPages({ ...sandbox, name: '../x' }, out)).rejects.toThrow(/Invalid environment name/u);
+    await expect(buildAuthPages({ ...sandboxEnv, name: '../x' }, out)).rejects.toThrow(/Invalid environment name/u);
   });
 
   it('fails for an env whose pinned CKD key is unusable, and for an env without the Hana origins', async () => {
-    await expect(buildAuthPages({ ...sandbox, name: 'sandbox-bad', ckdNetworkKey: 'UNSET' }, out)).rejects.toThrow(/sandbox-bad\.json ckdNetworkKey/u);
+    await expect(buildAuthPages({ ...sandboxEnv, name: 'sandbox-bad', ckdNetworkKey: 'UNSET' }, out)).rejects.toThrow(/sandbox-bad\.json ckdNetworkKey/u);
     expect(() => selectEnvs(['no-such-env'])).toThrow(/does not exist or does not set vaultOrigin and authOrigin/u);
     expect(selectEnvs([]).map((e) => e.name)).toContain('sandbox-dev');
   });

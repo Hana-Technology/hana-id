@@ -30,7 +30,9 @@ import { parseCli } from '../lib/cli.ts';
 import { d1Of, newHotDb, seedHotApp, testIds } from './hot-db.ts';
 
 const NOW = Date.UTC(2026, 10, 2, 9);
-const sandbox = loadEnv('sandbox-dev');
+// sandbox-dev without its dashboard blocks: an env with no admin Worker, where app:changes:announce stands in for
+// the acknowledged notice (sandbox-dev itself has one since M4; see the refusal test).
+const { console: _console, files: _files, admin: _admin, usage: _usage, email: _email, ownerGrantDelayMs: _ownerGrant, ...sandbox } = loadEnv('sandbox-dev');
 const DELAY = sandbox.appChangeDelayMs;
 const SPEC = { strings: ['org', 'name', 'scope', 'environment', 'plan', 'app'], multiple: ['origin'] };
 /** Fixture publishable keys (public by design; low-entropy so they read as fixtures). */
@@ -242,8 +244,8 @@ describe('app:changes:announce', () => {
   it('is refused with an admin Worker, on a production network, and for a change that is not pending', async () => {
     seedHotApp(h.db, { id: 'app_a', key: APP_KEY, scope: 's1' });
     await appOriginsAdd(sandbox, args(['--app', 'app_a', '--origin', 'https://new.example.com']), 'local D1 test', h.deps);
-    const withAdmin = { ...sandbox, admin: {} as NonNullable<typeof sandbox.admin> };
-    await expect(announce('gc_1', withAdmin)).rejects.toThrow('has an admin Worker');
+    // sandbox-dev's real manifest has an admin block (M4): its admin Worker announces, so the CLI refuses.
+    await expect(announce('gc_1', loadEnv('sandbox-dev'))).rejects.toThrow('sandbox-dev has an admin Worker');
     await expect(announce('gc_1', { ...sandbox, network: 'mainnet' as 'testnet' })).rejects.toThrow('refused on a production network');
     await expect(announce('gc_nope')).rejects.toThrow('No guarded change gc_nope');
     appOriginsRemove(args(['--app', 'app_a', '--origin', 'https://new.example.com']), 'local D1 test', h.deps);

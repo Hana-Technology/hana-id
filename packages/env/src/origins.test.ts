@@ -1,10 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { hanaOriginProblem, isDevEnv, isLocalEnv, isLoopbackHost, loadEnv, manifestPath, manifestSchema, siteOf } from './index.ts';
+import { DASHBOARD_BLOCKS, hanaOriginProblem, isDevEnv, isLocalEnv, isLoopbackHost, loadEnv, manifestPath, manifestSchema, siteOf } from './index.ts';
 
 // Without identityToken: these tests move apiUrl, and the identity issuer must follow it (tested in identity.test.ts).
+// Without the dashboard blocks: these tests rename the env and move vaultOrigin/authOrigin, and the dashboard's own
+// origin rules (D38 against the vault's site, tested in dashboard.test.ts) would add issues of their own.
 const raw = (): Record<string, unknown> => {
-  const { identityToken: _i, ...m } = JSON.parse(readFileSync(manifestPath('sandbox-dev'), 'utf8')) as Record<string, unknown>;
+  const m = JSON.parse(readFileSync(manifestPath('sandbox-dev'), 'utf8')) as Record<string, unknown>;
+  delete m.identityToken;
+  for (const k of DASHBOARD_BLOCKS) delete m[k];
   return m;
 };
 

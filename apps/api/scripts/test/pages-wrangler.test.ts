@@ -12,7 +12,10 @@ const apiDir = resolve(fileURLToPath(import.meta.url), '..', '..', '..');
 // sandbox-dev without its identity token block: these tests move apiUrl and list exact vars; the identity vars
 // have their own tests.
 // Also without its emailIssuer block (the live manifest may or may not carry one); the email test adds a fixture block.
-const { identityToken: _identity, emailIssuer: _emailIssuer, ...manifest } = loadEnv('sandbox-dev');
+// And without its dashboard blocks (sandbox-dev has them since M4): the exact-vars tests are for an env that runs the API
+// only; the batch C tests add a fixture set, and "sandbox-dev's own" cases below read the real manifest.
+const { identityToken: _identity, emailIssuer: _emailIssuer, console: _console, files: _files, admin: _admin, usage: _usage, email: _email, ownerGrantDelayMs: _ownerGrant, ...manifest } =
+  loadEnv('sandbox-dev');
 
 const dirs: string[] = [];
 const tmp = (): string => {
@@ -77,6 +80,10 @@ describe('page Worker configs', () => {
     // rpcFallback joins the export page's connect-src when the manifest sets it.
     const fb = pagesWranglerConfig(variant({ rpcFallback: 'https://rpc.fallback.example' }), 'auth', COMPATIBILITY_DATE);
     expect(fb.vars).toEqual({ AUTH_ORIGIN: manifest.authOrigin, API_URL: manifest.apiUrl, NEAR_RPC: manifest.rpc, NEAR_RPC_FALLBACK: 'https://rpc.fallback.example' });
+    // With the dashboard blocks (sandbox-dev's own, M4) the logo pages' img-src gets the files origin.
+    const real = loadEnv('sandbox-dev');
+    expect(pagesWranglerConfig(real, 'auth', COMPATIBILITY_DATE).vars).toMatchObject({ FILES_ORIGIN: real.files!.origin });
+    expect(pagesWranglerConfig(real, 'vault', COMPATIBILITY_DATE).vars).not.toHaveProperty('FILES_ORIGIN');
   });
 
   it('auth: EMAIL_ISSUER_URL, /login/email’s connect-src, with an emailIssuer block (batch 8a)', () => {

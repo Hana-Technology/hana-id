@@ -13,7 +13,9 @@ import { applyMigrations, readMigrations, type SqlConn } from '../lib/usage-migr
 import { ROLE_FILES, USER_ID_KEY_FILE, type UsageSetupDeps, type WranglerResult, hyperdriveNames, roleUrl, scramVerifier, usageSetup } from '../lib/usage-setup.ts';
 import { DRY_RUN_LINE } from '../lib/vault-kek.ts';
 
-const m: Manifest = { ...loadEnv('sandbox-dev'), name: 'usage-test', cloudflare: { workerName: 'hana-id-api-usage-test', d1Name: 'hana-id-usage-test' } };
+// sandbox-dev renamed, without its dashboard blocks (it has them since M4), so the Hyperdrive names are the defaults.
+const { console: _console, files: _files, admin: _admin, usage: _usage, email: _email, ownerGrantDelayMs: _ownerGrant, ...sandboxBare } = loadEnv('sandbox-dev');
+const m: Manifest = { ...sandboxBare, name: 'usage-test', cloudflare: { workerName: 'hana-id-api-usage-test', d1Name: 'hana-id-usage-test' } };
 // A placeholder of the shape Neon gives (not a real endpoint or password).
 const OWNER = 'postgresql://neondb_owner:owner-pw-not-real@ep-quiet-sky-a1b2c3d4.ap-southeast-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require';
 const mode = (p: string) => statSync(p).mode & 0o777;
@@ -186,6 +188,7 @@ describe('usage-setup hyperdrive', () => {
 
   it('uses the manifest’s usage block names; refuses without the role files; a failure’s output has the URL removed', async () => {
     expect(hyperdriveNames({ name: 'x', usage: { neonRegion: 'aws-ap-southeast-2', writerHyperdrive: 'w-x', adminHyperdrive: 'a-x' } })).toEqual({ usage_writer: 'w-x', usage_admin: 'a-x' });
+    expect(hyperdriveNames(loadEnv('sandbox-dev'))).toEqual({ usage_writer: 'hana-id-usage-writer-sandbox-dev', usage_admin: 'hana-id-usage-admin-sandbox-dev' });
     await expect(run(['hyperdrive', '--yes'])).rejects.toThrow();
     await run(['roles', '--yes']);
     const url = fileUrl('usage_writer').toString();

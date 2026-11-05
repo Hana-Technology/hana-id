@@ -1,6 +1,6 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
-Last verified against code: 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup's screen: the email join in `POST /api/support/lookup` (`emails`, `emailsNote`, `unverifiedWarning`), its ticket in the issuer's rule, `DirectoryRpc.get`'s `purpose` (`support_lookup`), D399); 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
+Last verified against code: 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: the admin Worker's "Email" through SendGrid, accepted on `202`, no idempotency key, the per-isolate memo; D401); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup's screen: the email join in `POST /api/support/lookup` (`emails`, `emailsNote`, `unverifiedWarning`), its ticket in the issuer's rule, `DirectoryRpc.get`'s `purpose` (`support_lookup`), D399); 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
 answers, D395; `AdminRpc.supportLookup` / `userShares`; the admin Worker's `POST /api/support/lookup`; the
 `support.lookup` staff action; D394–D396); 2026-11-05 (branch `feat/deploy-build-check`: the build id, D384: `GET /v1/health`'s
 `build`, the page Workers' `GET /.well-known/hana-build`, the issuer's `GET /v1/email/health`, the `HANA_BUILD` var
@@ -1881,7 +1881,7 @@ and the run's `cron` `budget` log line:
    notice to every owner, the contacts and the alias, then the invitee's `<CONSOLE_ORIGIN>/invite#t=<T>` (key
    `INVITE_LINK_KEY`) → `ackMemberNotice({inviteId, tokenHash})`; an owner grant's notice with
    `<CONSOLE_ORIGIN>/cancel-owner/<id>#t=<T>` (key `CANCEL_LINK_KEY`) → `ackMemberNotice({grantId, tokenHash})`. **An
-   ack only after every send was accepted** (Resend 2xx with an id); a missing key or sender acks nothing.
+   ack only after every send was accepted** (SendGrid `202`, D401); a missing key or sender acks nothing.
 2. **The feed** (`src/feed.ts`; D281): `securityEvents({unnotifiedOnly})` → the alias and the org's contacts →
    `markSecurityEventNotified`; `changesSince(feed.app_changes.seq)` and `StaffRpc.auditSince(feed.audit_log.seq)` →
    one digest per org to its contacts (the alias when it has none), the cursor in `ops.state` moved only past
@@ -1934,9 +1934,12 @@ is retried an hour after. **`retention_failed`** to the alias: the failed runs n
 day after its due time (overdue); and from the due tick only, a run that couldn't start for want of the ledger
 (skipped). The issuer's directory isn't reached from here: `admin <env> retention:issuer` (D365).
 
-**Email** (`src/email/`): `EmailSender` (one message in, accepted with the provider's id or an error), the Resend
-adapter (`POST https://api.resend.com/emails`, `Idempotency-Key` = sha256(purpose ‖ recipient), 10 s timeout; errors
-name the HTTP status only), one message per recipient, plain text plus simple HTML, no remote image, links only to
+**Email** (`src/email/`): `EmailSender` (one message in, accepted or an error), the SendGrid adapter
+(`sendgridSender` over `@hana-id/sendgrid`: `POST https://api.sendgrid.com/v3/mail/send` with `EMAIL_API_KEY`, accepted
+only on `202`, 10 s timeout, click, open and subscription tracking off, category `hana-id-admin`; errors name the HTTP
+status only; D401). SendGrid has no idempotency key: `sendToAll` (`mail.ts`) keys each message by sha256(purpose ‖
+recipient) and, per isolate for 24 h, doesn't send again one SendGrid accepted, so a retry goes only to the recipients
+that failed; across isolates a message can arrive twice, never zero times. One message per recipient, plain text plus simple HTML, no remote image, links only to
 `CONSOLE_ORIGIN`, never an approve link; partner text escaped and stripped of control characters, subjects on one line.
 
 **Bindings** (`apps/admin/scripts/gen-wrangler.ts`; D284): `API` → `AdminRpc`, `CONSOLE` → `StaffRpc`, `USAGE_DB`

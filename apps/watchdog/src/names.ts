@@ -8,7 +8,7 @@ export type PagerProvider = (typeof PAGER_PROVIDERS)[number];
 export const SECRET_NAMES = [
   'WATCHDOG_KEY',
   'WATCHDOG_STATUS_TOKEN',
-  'RESEND_API_KEY',
+  'SENDGRID_API_KEY',
   'SLACK_WEBHOOK_URL',
   'NTFY_TOPIC_URL',
   'NTFY_TOKEN',

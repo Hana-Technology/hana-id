@@ -17,6 +17,7 @@
     "@hana-id/env": "workspace:*",
     "@hana-id/jwks": "workspace:*",
     "@hana-id/oidc": "workspace:*",
+    "@hana-id/sendgrid": "workspace:*",
     "@noble/hashes": "1.8.0",
     "aws4fetch": "1.0.20",
     "tldts": "7.4.18"

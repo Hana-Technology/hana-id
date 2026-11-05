@@ -1,9 +1,10 @@
 // Alert channels behind small interfaces (D85, D87): a paging app (ntfy, Pushover or PagerDuty, chosen at setup),
-// Slack (incoming webhook), email (Resend, the watchdog's own key), and the dead-man's switch. Tests swap in doubles;
+// Slack (incoming webhook), email (SendGrid, the watchdog's own key), and the dead-man's switch. Tests swap in doubles;
 // nothing here is called with real credentials in tests. Errors never carry a URL, token or response body.
 // Titles and texts carry on-chain strings (already allow-listed or escaped by `sanitize.ts` where they are built);
 // each sender also makes the whole message safe for its format: no CR, LF or non-ASCII in a header or subject line,
 // and Slack's `&`, `<`, `>` as entities.
+import { sendgridSend } from '@hana-id/sendgrid';
 import type { Channel, Severity } from './checks.ts';
 import { type Env, alertEmails, pagerProvider } from './env.ts';
 import { headerValue, slackEscape } from './sanitize.ts';
@@ -49,7 +50,7 @@ export interface Notifier {
   pager: Pager;
   slack: Sender;
   email: Sender;
-  /** Raw email for the daily digest (same Resend key and recipients). */
+  /** Raw email for the daily digest (same SendGrid key and recipients). */
   digest: { configured: boolean; send(subject: string, text: string): Promise<SendResult> };
   heartbeat: Heartbeat;
 }
@@ -97,28 +98,26 @@ export function slackSender(webhookUrl: string | undefined, envName: string): Se
   };
 }
 
-// ---- Email (Resend, D87) ----
+// ---- Email (SendGrid, D87, D401) ----
 
-export const RESEND_URL = 'https://api.resend.com/emails';
+/** The SendGrid category of the watchdog's mail (never one of the email issuer's, whose webhook acts on its own). */
+export const WATCHDOG_CATEGORY = 'hana-id-watchdog';
 
-/** Accepted only when Resend answers 2xx with an id (D87: a send counts only when the provider accepts it). */
-export function resendEmail(apiKey: string | undefined, from: string): Email & { configured: boolean } {
+/**
+ * Through the shared SendGrid adapter, with the watchdog's own Mail-Send-only key: accepted only on SendGrid's 202
+ * (D87: a send counts only when the provider accepts it). Each recipient gets its own copy; SendGrid has no
+ * idempotency key, so a send retried after a lost answer may arrive twice (D401).
+ */
+export function sendgridEmail(apiKey: string | undefined, from: string): Email & { configured: boolean } {
   return {
     configured: !!apiKey,
     async send({ to, subject, text }) {
       if (!apiKey) return notConfigured;
       if (to.length === 0) return { ok: false, error: 'no recipients' };
-      const res = await post(RESEND_URL, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({ from, to, subject, text }),
-      });
-      const f = failed(res);
-      if (f) return f;
-      const r = res as Response;
-      if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
-      const body = (await r.json().catch(() => null)) as { id?: unknown } | null;
-      return typeof body?.id === 'string' ? { ok: true, ref: body.id } : { ok: false, error: 'no message id in the answer' };
+      // The adapter's own timeout is this file's TIMEOUT_MS (10 s); it never puts the key, a body or an address in r.
+      const r = await sendgridSend(apiKey, from, { to, subject, text, category: WATCHDOG_CATEGORY });
+      if (r.ok) return r.messageId ? { ok: true, ref: r.messageId } : { ok: true };
+      return { ok: false, error: r.status !== undefined ? `HTTP ${r.status}` : r.reason === 'unavailable' ? 'network error or timeout' : r.reason };
     },
   };
 }
@@ -260,7 +259,7 @@ export function notifierFromEnv(env: Env): Notifier {
           ? ntfyPager(env.NTFY_TOPIC_URL, env.NTFY_TOKEN, env.ENV_NAME)
           : { ...ntfyPager(undefined, undefined, env.ENV_NAME), provider: env.PAGER_PROVIDER || 'none' };
   const to = alertEmails(env);
-  const email = resendEmail(env.RESEND_API_KEY, env.ALERT_FROM);
+  const email = sendgridEmail(env.SENDGRID_API_KEY, env.ALERT_FROM);
   return {
     pager,
     slack: slackSender(env.SLACK_WEBHOOK_URL, env.ENV_NAME),

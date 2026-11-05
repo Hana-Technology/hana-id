@@ -1,5 +1,5 @@
 // The Worker end to end: the cron handler with the real wiring (RPC client, signer, JWKS fetch, channel adapters)
-// against one stubbed fetch that plays the NEAR RPC, Google, ntfy, Slack, Resend and the heartbeat service. Also
+// against one stubbed fetch that plays the NEAR RPC, Google, ntfy, Slack, SendGrid and the heartbeat service. Also
 // proves that no secret appears in any log line or stored alert.
 import { KeyPair } from '@near-js/crypto';
 import { SignedTransaction } from '@near-js/transactions';
@@ -10,7 +10,7 @@ import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type Env, SECRET_NAMES } from '../src/env.ts';
 import worker from '../src/index.ts';
-import { RESEND_URL } from '../src/channels.ts';
+import { SENDGRID_URL } from '@hana-id/sendgrid';
 import { Store } from '../src/store.ts';
 import { baseConfig, baseGovernance, councilPolicy, IDENTITY_ISS, identityKey, jwk } from './helpers.ts';
 
@@ -18,7 +18,7 @@ const rand = (n: number) => baseEncode(crypto.getRandomValues(new Uint8Array(n))
 const SECRETS = {
   WATCHDOG_KEY: KeyPair.fromRandom('ed25519').toString(),
   WATCHDOG_STATUS_TOKEN: `tok${rand(32)}`,
-  RESEND_API_KEY: `re_${rand(20)}`,
+  SENDGRID_API_KEY: `SG.${rand(16)}.${rand(32)}`,
   SLACK_WEBHOOK_URL: `https://hooks.slack.com/services/T0/B0/${rand(16)}`,
   NTFY_TOPIC_URL: `https://ntfy.example.com/${rand(20)}`,
   NTFY_TOKEN: `tk_${rand(20)}`,
@@ -57,7 +57,7 @@ class Net {
       }
       if (url === env.NEAR_RPC) return Response.json({ jsonrpc: '2.0', id: 'x', ...this.rpc(JSON.parse(String(init?.body)) as { method: string; params: Record<string, unknown> }) });
       this.posts.push({ url, body: typeof init?.body === 'string' ? init.body : '', headers: new Headers(init?.headers) });
-      return url === RESEND_URL ? Response.json({ id: 'email-1' }) : new Response('ok');
+      return url === SENDGRID_URL ? new Response(null, { status: 202, headers: { 'x-message-id': 'email-1' } }) : new Response('ok');
     });
   }
 
@@ -138,9 +138,9 @@ describe('the cron handler, end to end', () => {
       [e.WATCHDOG_ACCOUNT, e.SIGNER_ACCOUNT, 'delete_updater_key', { public_key: baseGovernance().updater_keys[1] }],
       [e.WATCHDOG_ACCOUNT, e.SIGNER_ACCOUNT, 'pause', {}],
     ]);
-    // Two critical alerts, each on ntfy, Slack and Resend.
+    // Two critical alerts, each on ntfy, Slack and SendGrid.
     const hosts = net.posts.map((p) => new URL(p.url).host).sort();
-    expect(hosts).toEqual(['api.resend.com', 'api.resend.com', 'hooks.slack.com', 'hooks.slack.com', 'ntfy.example.com', 'ntfy.example.com']);
+    expect(hosts).toEqual(['api.sendgrid.com', 'api.sendgrid.com', 'hooks.slack.com', 'hooks.slack.com', 'ntfy.example.com', 'ntfy.example.com']);
     expect(net.posts.find((p) => p.url === SECRETS.NTFY_TOPIC_URL)?.headers.get('priority')).toBe('urgent');
     expect(net.pings).toBe(2);
 
@@ -177,7 +177,7 @@ describe('the cron handler, end to end', () => {
     expect(net.txs).toEqual([]);
     const [a] = (await store.listAlerts(null, 50)).filter((x) => x.kind === 'identity_key_unpinned');
     expect(a?.severity).toBe('critical');
-    expect(net.posts.map((p) => new URL(p.url).host).sort()).toEqual(['api.resend.com', 'hooks.slack.com', 'ntfy.example.com']);
+    expect(net.posts.map((p) => new URL(p.url).host).sort()).toEqual(['api.sendgrid.com', 'hooks.slack.com', 'ntfy.example.com']);
     expect(net.posts.find((p) => p.url === SECRETS.NTFY_TOPIC_URL)?.headers.get('title')).toContain('CRITICAL');
   });
 

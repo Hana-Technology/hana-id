@@ -2,7 +2,7 @@
 // breaks, Slack control sequences, huge lengths and non-ASCII never reach a header, Slack or an email as is.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { alertText } from '../src/alerts.ts';
-import { type AlertMessage, emailSender, ntfyPager, pagerDutyPager, pushoverPager, resendEmail, slackSender } from '../src/channels.ts';
+import { type AlertMessage, emailSender, ntfyPager, pagerDutyPager, pushoverPager, sendgridEmail, slackSender } from '../src/channels.ts';
 import { headerValue, ident, MAX_IDENT_CHARS, printable, slackEscape } from '../src/sanitize.ts';
 import { alertsOf, initialized, jwk, T0 } from './helpers.ts';
 
@@ -108,8 +108,8 @@ describe('channels with hostile titles', () => {
   });
 
   it('email: the subject is one printable line', async () => {
-    const calls = capture(() => Response.json({ id: 'm1' }));
-    await emailSender(resendEmail('re_k', 'a@b.co'), ['x@y.co'], 'e').send(hostileMsg(HOSTILE.newline + HOSTILE.unicode));
+    const calls = capture(() => new Response(null, { status: 202 }));
+    await emailSender(sendgridEmail('SG.k', 'a@b.co'), ['x@y.co'], 'e').send(hostileMsg(HOSTILE.newline + HOSTILE.unicode));
     const subject = JSON.parse(calls[0]!.body).subject as string;
     expect(subject).toMatch(PRINTABLE_ASCII);
     expect(subject).not.toMatch(/[\r\n]/u);

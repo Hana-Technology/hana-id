@@ -12,8 +12,8 @@ import { clientProofClaims } from '../src/client-proof.ts';
 import { clientProofPreimage, nonceOf } from '../src/layouts.ts';
 import { codeMail, displayAppName, linkNoticeMail } from '../src/mail.ts';
 import { OutboxSender } from '../src/outbox.ts';
-import { SENDGRID_URL, SendGridSender, parseFrom } from '../src/sendgrid.ts';
-import { derToP1363 } from '../src/webhook.ts';
+import { SENDGRID_URL, SendGridSender, issuerCategory, parseFrom } from '../src/sendgrid.ts';
+import { ISSUER_CATEGORIES, derToP1363 } from '../src/webhook.ts';
 import { captureLogs, decodeToken, env, harness, mailboxObject, seedApp, sessionCommitment, uid } from './helpers.ts';
 
 const mail = codeMail({ to: 'a@example.com', code: '123456', appName: 'Wallet', authOrigin: 'https://auth.test', purpose: 'session' });
@@ -49,6 +49,20 @@ describe('SendGrid sender', () => {
     const down = new SendGridSender('SG.key', 'a@b.co', (async () => Promise.reject(new Error('net'))) as unknown as typeof fetch);
     expect(await down.send(mail)).toEqual({ ok: false, reason: 'unavailable' });
     expect(parseFrom('login@mail.example.com')).toEqual({ email: 'login@mail.example.com' });
+  });
+
+  it('each kind of mail carries its own category, the ones the event webhook acts on; never another Worker’s (D401)', async () => {
+    const kinds = ['code', 'link_notice', 'unlock', 'confirm'] as const;
+    expect(new Set(kinds.map(issuerCategory))).toEqual(ISSUER_CATEGORIES);
+    // The admin Worker's and the watchdog's mail goes through the same SendGrid account: its bounces never suppress.
+    for (const other of ['hana-id-admin', 'hana-id-watchdog']) expect(ISSUER_CATEGORIES.has(other)).toBe(false);
+    const seen: string[] = [];
+    const fetcher = (async (_url: string, init: RequestInit) => {
+      seen.push(JSON.parse(init.body as string).categories[0]);
+      return new Response(null, { status: 202 });
+    }) as unknown as typeof fetch;
+    await new SendGridSender('SG.key', 'a@b.co', fetcher).send(mail);
+    expect(seen).toEqual(['hana-id-code']);
   });
 
   it('the env picks the adapter: sendgrid, or the outbox stub where its binding exists', async () => {

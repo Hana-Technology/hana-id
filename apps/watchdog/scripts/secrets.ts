@@ -5,13 +5,14 @@
 //                                                         prints the public key and the near CLI command adding it
 //   pnpm --filter @hana-id/watchdog secrets <env> check   which secrets are set (names only) and which are missing
 //
-// The other values (Resend key, Slack webhook, paging-app credentials, heartbeat URL) are pasted into the file by
+// The other values (SendGrid key, Slack webhook, paging-app credentials, heartbeat URL) are pasted into the file by
 // hand; `check` validates them.
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { KeyPair } from '@near-js/crypto';
 import { type Manifest, loadEnv, repoRoot } from '@hana-id/env';
+import { SENDGRID_KEY_RE } from '@hana-id/sendgrid';
 import { readSecretJson, secretsDir, writeSecretJson } from '../../../scripts/lib/secrets.ts';
 
 export const SECRET_FILE = 'watchdog-secrets.json';
@@ -20,7 +21,7 @@ export const SECRET_FILE = 'watchdog-secrets.json';
 export const SECRET_RULES: Record<string, RegExp> = {
   WATCHDOG_KEY: /^ed25519:[1-9A-HJ-NP-Za-km-z]{80,90}$/u,
   WATCHDOG_STATUS_TOKEN: /^[A-Za-z0-9_-]{32,256}$/u,
-  RESEND_API_KEY: /^re_[A-Za-z0-9_]{8,200}$/u,
+  SENDGRID_API_KEY: SENDGRID_KEY_RE,
   SLACK_WEBHOOK_URL: /^https:\/\/hooks\.slack\.com\/services\/\S+$/u,
   NTFY_TOPIC_URL: /^https:\/\/[^/\s]+\/[A-Za-z0-9_-]{16,64}$/u,
   NTFY_TOKEN: /^tk_[A-Za-z0-9]{8,200}$/u,
@@ -45,7 +46,8 @@ export function secretProblems(secrets: unknown): string[] {
   const problems: string[] = [];
   for (const [k, v] of Object.entries(secrets)) {
     const rule = SECRET_RULES[k];
-    if (!rule) problems.push(`${k} is not a watchdog secret`);
+    if (k === 'RESEND_API_KEY') problems.push('RESEND_API_KEY is no longer used: the watchdog emails through SendGrid (SENDGRID_API_KEY, D401)');
+    else if (!rule) problems.push(`${k} is not a watchdog secret`);
     else if (typeof v !== 'string' || !rule.test(v)) problems.push(`${k} has an invalid value`);
   }
   return problems;
@@ -64,7 +66,7 @@ export function readWatchdogSecrets(envName: string, root: string = repoRoot): R
 /** Which secrets the env still needs (names only). */
 export function missingSecrets(m: Manifest, secrets: Record<string, string>): string[] {
   const pager = m.watchdog ? (PAGER_SECRETS[m.watchdog.pager] ?? []) : [];
-  return ['WATCHDOG_KEY', 'WATCHDOG_STATUS_TOKEN', 'RESEND_API_KEY', 'SLACK_WEBHOOK_URL', ...pager, 'HEARTBEAT_URL'].filter((k) => !secrets[k]);
+  return ['WATCHDOG_KEY', 'WATCHDOG_STATUS_TOKEN', 'SENDGRID_API_KEY', 'SLACK_WEBHOOK_URL', ...pager, 'HEARTBEAT_URL'].filter((k) => !secrets[k]);
 }
 
 /** The near CLI (near-cli-rs) command that installs the watchdog key with exactly the watchdog methods. */

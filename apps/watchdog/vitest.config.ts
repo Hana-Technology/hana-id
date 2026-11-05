@@ -4,7 +4,7 @@ import { defineConfig } from 'vitest/config';
 import { testWranglerConfig } from './scripts/gen-wrangler.ts';
 
 // The per-env wrangler.jsonc is generated and gitignored, so the tests use their own, generated from a fixed test
-// manifest by the same generator. Tests never reach a real RPC, Google, Slack, Resend, a paging app or a heartbeat
+// manifest by the same generator. Tests never reach a real RPC, Google, Slack, SendGrid, a paging app or a heartbeat
 // service: the run tests inject doubles, and the adapter tests stub fetch. No secret binding is set here: tests that
 // need one pass a throwaway value of their own.
 const TEST_WRANGLER_CONFIG = new URL('./wrangler.vitest.jsonc', import.meta.url).pathname;

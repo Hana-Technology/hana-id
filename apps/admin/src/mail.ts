@@ -6,7 +6,7 @@
 // What an outbound call is (Cloudflare's docs, read 2026-11-04):
 //   - https://developers.cloudflare.com/workers/platform/limits/#subrequests: "A subrequest is any request a Worker
 //     makes using the Fetch API or to Cloudflare services like R2, KV, or D1"; the free plan allows 50 per invocation.
-//     Here: every email (Resend), every NEAR RPC read and every rate fetch (CoinGecko). The crons touch no R2, KV or D1.
+//     Here: every email (SendGrid), every NEAR RPC read and every rate fetch (CoinGecko). The crons touch no R2, KV or D1.
 //   - https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/#limits: "Each request to a
 //     Worker via a Service binding counts toward your subrequest limit", and "A single request has a maximum of 32
 //     Worker invocations, and each call to a Service binding counts towards this limit". Here: every AdminRpc call on
@@ -134,38 +134,79 @@ export function recipients(...lists: (readonly string[] | string | undefined)[])
   return out;
 }
 
-/** The provider's idempotency key for one message: sha256 of its purpose and recipient (no address in the header). */
-export async function idempotencyKey(purpose: string, to: string): Promise<string> {
+/**
+ * One message's identity: sha256 of its purpose and recipient (no address kept in clear). SendGrid has no idempotency
+ * key (D401), so this isolate remembers which of these it saw accepted, for `ACCEPTED_MEMO_MS` (the window Resend's
+ * key had), and doesn't send them again: the retry of a notice that failed for one recipient goes to that recipient
+ * only. The memo is per isolate and lost on eviction, so a repeat can still go out twice; it never holds back a
+ * message that was not accepted.
+ */
+export async function messageKey(purpose: string, to: string): Promise<string> {
   return b64url(await sha256(utf8(`${purpose}\n${to}`)));
 }
 
+export const ACCEPTED_MEMO_MS = 24 * 60 * 60_000;
+/** At most this many remembered messages; the oldest are forgotten first. */
+export const ACCEPTED_MEMO_MAX = 5000;
+const acceptedAt = new Map<string, number>();
+
+function wasAccepted(key: string, now: number): boolean {
+  const at = acceptedAt.get(key);
+  if (at === undefined) return false;
+  if (at <= now && now - at < ACCEPTED_MEMO_MS) return true;
+  acceptedAt.delete(key);
+  return false;
+}
+
+function rememberAccepted(key: string, now: number): void {
+  acceptedAt.delete(key);
+  acceptedAt.set(key, now);
+  for (const oldest of acceptedAt.keys()) {
+    if (acceptedAt.size <= ACCEPTED_MEMO_MAX) break;
+    acceptedAt.delete(oldest);
+  }
+}
+
+/** Test hook: forget every accepted message (as a fresh isolate would). */
+export function forgetAccepted(): void {
+  acceptedAt.clear();
+}
+
 export interface SendOutcome {
-  /** Every recipient's send was accepted by the provider. */
+  /** Every recipient's message was accepted by the provider (in this call, or earlier in this isolate). */
   allAccepted: boolean;
   sent: number;
   failed: number;
+  /** Recipients not sent to again: this isolate already saw this message accepted for them. */
+  skipped: number;
   /** The budget ran out before every recipient was tried. */
   outOfBudget: boolean;
 }
 
 /**
- * Sends `message` to each of `to`, one message each. Every send is tried (a failure doesn't stop the others: the
- * provider's idempotency key makes the next run's repeat of an accepted one a no-op), unless the budget runs out first.
- * The caller acks a blocking notice only when `allAccepted`.
+ * Sends `message` to each of `to`, one message each. Every send is tried (a failure doesn't stop the others; the next
+ * run retries, skipping the recipients this isolate saw accepted), unless the budget runs out first. The caller acks a
+ * blocking notice only when `allAccepted`: a send counts only when the provider accepted it, so a lost answer leads to
+ * a repeat at worst, never to a notice acked that nobody was sent.
  */
-export async function sendToAll(sender: EmailSender, budget: Budget, to: readonly string[], message: Rendered, purpose: string): Promise<SendOutcome> {
-  if (to.length === 0) return { allAccepted: false, sent: 0, failed: 0, outOfBudget: false };
-  if (!sender.configured) return { allAccepted: false, sent: 0, failed: to.length, outOfBudget: false };
-  if (budget.remaining < to.length) return { allAccepted: false, sent: 0, failed: 0, outOfBudget: true };
+export async function sendToAll(sender: EmailSender, budget: Budget, to: readonly string[], message: Rendered, purpose: string, now: number = Date.now()): Promise<SendOutcome> {
+  if (to.length === 0) return { allAccepted: false, sent: 0, failed: 0, skipped: 0, outOfBudget: false };
+  if (!sender.configured) return { allAccepted: false, sent: 0, failed: to.length, skipped: 0, outOfBudget: false };
+  const keyed = await Promise.all(to.map(async (addr) => ({ addr, key: await messageKey(purpose, addr) })));
+  const pending = keyed.filter((k) => !wasAccepted(k.key, now));
+  const skipped = keyed.length - pending.length;
+  if (budget.remaining < pending.length) return { allAccepted: false, sent: 0, failed: 0, skipped, outOfBudget: true };
   let sent = 0;
   let failed = 0;
-  for (const addr of to) {
+  for (const { addr, key } of pending) {
     budget.take();
-    const r = await sender.send({ to: addr, subject: message.subject, text: message.text, html: message.html, idempotencyKey: await idempotencyKey(purpose, addr) });
-    if (r.ok) sent++;
-    else failed++;
+    const r = await sender.send({ to: addr, subject: message.subject, text: message.text, html: message.html, messageKey: key });
+    if (r.ok) {
+      sent++;
+      rememberAccepted(key, now);
+    } else failed++;
   }
-  return { allAccepted: failed === 0, sent, failed, outOfBudget: false };
+  return { allAccepted: failed === 0, sent, failed, skipped, outOfBudget: false };
 }
 
 /** A 32-byte key from a secret (standard base64 with padding, or b64url), or null when missing or malformed. */

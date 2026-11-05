@@ -1,12 +1,13 @@
-// EmailSender (docs/batch-c-spec.md "Email", D87): one message in, accepted with the provider's id or an error. Code
-// above it never knows the provider; switching to another (Postmark, …) is a new adapter. The Resend adapter is the
-// only one in production; the tests use a fake (test/fake-email.ts) through `outbound.email` below.
+// EmailSender (docs/batch-c-spec.md "Email", D87, D401): one message in, accepted or an error. Code above it never
+// knows the provider; switching to another is a new adapter. SendGrid (the shared @hana-id/sendgrid adapter, D401) is
+// the only one in production; the tests use a fake (test/helpers.ts FakeEmail) through `outbound.email` below.
 //
-// "Accepted" means the provider answered 2xx with a message id: anything else (a network error, a timeout, a 4xx, a
-// 5xx, a 2xx without an id) is a failure, so a blocking notice is not acked on it. Each message carries an
-// idempotency key derived from what it is (the notice and the recipient), so a retry after a lost answer is not sent
-// twice by the provider within its window (Resend: 24 h). Errors carry the HTTP status only, never the key, the body
-// or the provider's text (which can echo the recipient).
+// "Accepted" means SendGrid answered 202: anything else (a network error, a timeout, a 4xx, a 5xx, any other 2xx) is
+// a failure, so a blocking notice is not acked on it. SendGrid has no idempotency key (Resend's deduplicated a retry
+// for 24 h): a retry after a lost answer can deliver a message twice, never zero times. `sendToAll` (mail.ts) skips a
+// recipient this isolate already saw accepted for the same message, which removes most repeats (D401). Errors carry
+// the HTTP status only, never the key, the body or the provider's text (which can echo the recipient).
+import { sendgridSend } from '@hana-id/sendgrid';
 
 export interface EmailMessage {
   /** Exactly one recipient per message: no contact ever sees another's address. */
@@ -14,42 +15,31 @@ export interface EmailMessage {
   subject: string;
   text: string;
   html: string;
-  /** Stable per (message purpose, recipient): the provider drops a repeat within its window. */
-  idempotencyKey: string;
+  /**
+   * This message's identity (mail.ts `messageKey`: its purpose and recipient, hashed). Not sent to SendGrid, which has
+   * no idempotency key; `sendToAll` uses it to skip a repeat, and it shows in tests which message a send was.
+   */
+  messageKey: string;
 }
 
-export type SendResult = { ok: true; id: string } | { ok: false; error: string };
+export type SendResult = { ok: true; id: string | null } | { ok: false; error: string };
 
 export interface EmailSender {
   readonly configured: boolean;
   send(message: EmailMessage): Promise<SendResult>;
 }
 
-export const RESEND_URL = 'https://api.resend.com/emails';
-export const SEND_TIMEOUT_MS = 10_000;
+/** The SendGrid category of every admin mail (never one of the email issuer's, whose event webhook acts on its own). */
+export const ADMIN_CATEGORY = 'hana-id-admin';
 
-export function resendSender(apiKey: string | undefined, from: string): EmailSender {
+export function sendgridSender(apiKey: string | undefined, from: string, fetcher?: typeof fetch): EmailSender {
   return {
     configured: !!apiKey,
     async send(m) {
       if (!apiKey) return { ok: false, error: 'not configured' };
-      let res: Response;
-      try {
-        res = await fetch(RESEND_URL, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}`, 'idempotency-key': m.idempotencyKey },
-          body: JSON.stringify({ from, to: [m.to], subject: m.subject, text: m.text, html: m.html }),
-          signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
-        });
-      } catch {
-        return { ok: false, error: 'network error or timeout' };
-      }
-      if (!res.ok) {
-        await res.body?.cancel().catch(() => undefined);
-        return { ok: false, error: `HTTP ${res.status}` };
-      }
-      const body = (await res.json().catch(() => null)) as { id?: unknown } | null;
-      return typeof body?.id === 'string' && body.id.length > 0 ? { ok: true, id: body.id } : { ok: false, error: 'no message id in the answer' };
+      const r = await sendgridSend(apiKey, from, { to: [m.to], subject: m.subject, text: m.text, html: m.html, category: ADMIN_CATEGORY }, fetcher);
+      if (r.ok) return { ok: true, id: r.messageId };
+      return { ok: false, error: r.status === undefined ? (r.reason === 'unavailable' ? 'network error or timeout' : r.reason) : `HTTP ${r.status}` };
     },
   };
 }
@@ -60,6 +50,6 @@ export function resendSender(apiKey: string | undefined, from: string): EmailSen
  */
 export const outbound = {
   email(env: { EMAIL_API_KEY?: string | undefined; EMAIL_FROM: string }): EmailSender {
-    return resendSender(env.EMAIL_API_KEY, env.EMAIL_FROM);
+    return sendgridSender(env.EMAIL_API_KEY, env.EMAIL_FROM);
   },
 };

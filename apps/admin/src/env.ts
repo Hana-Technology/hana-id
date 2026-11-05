@@ -152,7 +152,10 @@ export interface Env {
   /** Manifest `appChangeDelayMs` and `ownerGrantDelayMs`: only the notices' wording ("takes effect about … after"). */
   APP_CHANGE_DELAY_MS: string;
   OWNER_GRANT_DELAY_MS: string;
-  /** Resend's API key (D87): only this Worker holds one. Missing: no email leaves, so no blocking notice is acked. */
+  /**
+   * The admin Worker's own SendGrid API key, restricted to Mail Send (D87, D401): only this Worker holds it. Missing:
+   * no email leaves, so no blocking notice is acked.
+   */
   EMAIL_API_KEY?: string;
   /** 32 bytes, base64: the guarded-change cancel links and the owner-grant cancel links (spec "Nonce layouts"). */
   CANCEL_LINK_KEY?: string;

@@ -72,7 +72,10 @@ async function directoryFailure(c: RouteCtx, route: string, f: DirectoryFail): P
   }
 }
 
-/** `directory_budget` to the security alias: one message per staff member and window (the provider drops repeats). */
+/**
+ * `directory_budget` to the security alias: one message per staff member and window (a repeat in the same isolate is
+ * skipped, mail.ts sendToAll; another isolate may send it again, D401).
+ */
 export async function budgetAlert(c: RouteCtx, b: NonNullable<DirectoryFail['budget']>): Promise<void> {
   const now = Date.now();
   const opens = Math.round((now + b.retryAfterMs) / 60_000);

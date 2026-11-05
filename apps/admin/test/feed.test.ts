@@ -181,8 +181,9 @@ describe('security_events', () => {
     await feedSecurityEvents(env, fake, big());
     const mine = fake.sent.filter((m) => m.text.includes(id));
     expect([...new Set(mine.map((m) => m.to))].sort()).toEqual([ALIAS, app.contact].sort());
-    // The contact's copy went out on both runs with one idempotency key: the provider delivers it once.
-    expect(new Set(mine.filter((m) => m.to === app.contact).map((m) => m.idempotencyKey)).size).toBe(1);
+    // The contact's copy, accepted on the first run, was not sent again on the retry (D401); the alias's was retried.
+    expect(mine.filter((m) => m.to === app.contact)).toHaveLength(1);
+    expect(fake.attempts.filter((m) => m.to === ALIAS && m.text.includes(id))).toHaveLength(2);
     expect(await env.HOT_DB.prepare('SELECT notified_at FROM security_events WHERE id = ?1').bind(id).first('notified_at')).not.toBeNull();
     const again = new FakeEmail();
     await feedSecurityEvents(env, again, big());

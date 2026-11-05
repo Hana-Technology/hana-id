@@ -1,7 +1,7 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-05 (branch `fix/e2e-flakes`: the login's step 2, the session key's retry on WebKit Linux's
+Last verified against code: 2026-11-05 (branch `feat/coop-canary`: "Login, one transaction" step 4's closed popup: Google's COOP rechecked before each release by `coop-canary`, D385); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-05 (branch `fix/e2e-flakes`: the login's step 2, the session key's retry on WebKit Linux's
 Ed25519 `OperationError`, D381); 2026-11-04 (branch `feat/batch-c-13`: retention and the erasure path in Status, Components
 (the usage ledger and admin Worker rows) and "Data stores" (what is purged when, D360–D369)); 2026-11-04 (branch `feat/console-reports-upgrades`: the partner console's usage, statement and pending-upgrades screens, D370–D374); 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342; the partner console's fresh sign-in and write paths, D343, D350–D358); 2026-11-04 (branch `feat/user-id-identity-sub`: the wallet directory's three ids and the record's session signature, D346 and the D311/D313 amendments: Status, "Wallet directory" steps 1, 2 and 4, "Data stores"' D1 row, the Glossary); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: D347, a closed popup is
 `login_cancelled`, in "Login, one transaction" after step 4; D348's Google-only screen after a cancel; a cancel on token_first's Google
@@ -245,7 +245,8 @@ Browser steps: `packages/web/src/vault/login.ts`, `packages/web/src/auth/login-p
    (`apps/api/src/login-relay.ts:170`, `LoginRelay.write` `:73`).
    **A closed popup** (D347): from the hello on, the vault reads the popup window's `closed` every 250 ms
    (`PopupTask.watchPopup`; its handle is the hello's `event.source`, valid across the popup's navigations: Hana's
-   auth pages send no COOP, and Google's sign-in pages send COOP report-only, checked 2026-11-04). Every Hana page
+   auth pages send no COOP, and Google's sign-in pages send COOP report-only, checked 2026-11-04 and rechecked before
+   each release by `coop-canary`, D385). Every Hana page
    posts `hana:auth-progress` `google` before it navigates to Google, the callback posts `back` on arrival (it has its
    opener, so the trip switched no browsing context group) and `relayed` before it closes itself, as `/login/email`
    does; the signals go to the opener and its frames with `vaultOrigin` as the target, and the vault takes them only

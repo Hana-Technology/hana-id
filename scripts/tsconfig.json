@@ -1,7 +1,10 @@
+// DOM: lib/coop-canary.ts imports packages/web's Google URL builders, and through them @hana-id/core's WebCrypto
+// session key types (as apps/e2e does); it also gives the WebCrypto globals (CryptoKey, HmacKeyAlgorithm) that
+// apps/email-issuer's signer and @hana-id/email name, which @types/node keeps under node:crypto's `webcrypto`.
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2024"],
+    "lib": ["ES2024", "DOM"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "strict": true,

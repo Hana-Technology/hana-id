@@ -516,6 +516,53 @@ const googleJwksOutage: Playbook = {
   related: ['key-sync-stalled', 'confirm-failed', 'watchdog-degraded'],
 };
 
+const googleEnforcesCoop: Playbook = {
+  id: 'google-enforces-coop',
+  title: 'Google enforces COOP on its sign-in pages (the COOP canary fails)',
+  kind: 'incident',
+  severity: 'warning',
+  status: 'live',
+  summary:
+    "A page of the login popup's trip (Google's sign-in pages, or Hana's callback) sends an enforcing Cross-Origin-Opener-Policy: the vault's popup-close watch (D347) can read a popup that is still at Google as closed and cancel the login.",
+  signals: [
+    '`coop-canary <env>` exits 1 with `enforces Cross-Origin-Opener-Policy` (or `-Embedder-Policy`) on a page other than Google\'s error page, or its browser check reads `popup.closed` true while the popup is open (D385).',
+    "Partners or users report `login_cancelled` with `data.reason: 'popup_closed'` while the user was still signing in at Google.",
+  ],
+  impact: [
+    "Enforcement on Google's first page: D347's 8 s rule takes the close for a COOP switch and stops the watch, so logins still finish through the relay; a user who really closes the popup waits for the 5-minute `login_timeout` instead of `login_cancelled`.",
+    'Enforcement on a later page (one the user reaches after 8 s: the password, a second factor, consent): the login is cancelled while the user is still at Google. Those users cannot sign in with Google until the watch is changed.',
+    "An enforcing policy on Hana's own callback or auth pages is a Hana regression: those pages must send none (docs/api.md), and the callback's `back` signal to the vault needs its opener.",
+  ],
+  steps: [
+    {
+      title: 'Confirm and find the page',
+      who: 'a founder',
+      detail:
+        "Run the canary again: the header check names each enforcing hop (status, host and path) under each User-Agent; the browser check says in which browsers `.closed` flips, and at what time. A Google change that comes and goes (an experiment) still counts. A finding on Hana's host: revert the change that added the header and redeploy the page Workers.",
+      commands: ['corepack pnpm --filter @hana-id/scripts run coop-canary <env>'],
+    },
+    {
+      title: 'Hold the release',
+      who: 'a founder',
+      detail:
+        'Release nothing (pages, SDK) while the canary fails. What is live keeps working on the first page (the 8 s rule); on a later page, tell partners that Google logins may end with `login_cancelled` and that a retry does not help.',
+    },
+    {
+      title: 'Change the watch for the new policy',
+      who: 'a founder',
+      detail:
+        "A reviewed change to `packages/web/src/vault/login.ts` (`PopupTask.watchPopup`, `POPUP_WATCH`) with a decision entry: the usual fix stops the watch from the popup's `google` signal until its `back` (the whole Google trip, not only 8 s), so a close at Google is the 5-minute `login_timeout` again. Test it with the e2e Google stub's enforcing COOP (`apps/e2e/src/google-stub.ts` `coop`) on the page that enforces, then deploy the vault page Worker.",
+    },
+  ],
+  verify: [
+    "`coop-canary <env>` passes, or its remaining finding is on a page the changed watch tolerates and the decision says so (then update the canary's rules with it).",
+    'A Google login that waits longer than 8 s on the enforcing page is not cancelled; closing the popup on a Hana page still ends the login within seconds.',
+  ],
+  followUps: ['Update D347 and the partner guide\'s "A closed popup" (docs/integration.md) with what the watch now does.'],
+  refs: ['docs/operations.md#before-each-release-the-coop-canary', 'D347', 'D385'],
+  related: ['google-jwks-outage'],
+};
+
 const nearRpcOutage: Playbook = {
   id: 'near-rpc-outage',
   title: 'NEAR RPC outage',
@@ -860,6 +907,7 @@ export const INCIDENT_PLAYBOOKS: readonly Playbook[] = [
   unexpectedOwnerAction,
   contractPaused,
   googleJwksOutage,
+  googleEnforcesCoop,
   nearRpcOutage,
   mpcOutage,
   d1Loss,

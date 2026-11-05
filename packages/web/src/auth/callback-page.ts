@@ -55,6 +55,7 @@ import {
 } from './google.ts';
 import { type TakenLogin, storeLoginEntry, takeLogin, zeroTaken } from './login-storage.ts';
 import { type PageWindow, isFramed } from './page-window.ts';
+import { type SignalTimers, type VaultSignals, vaultSignals } from './vault-signal.ts';
 
 export interface CallbackPageDeps {
   win: PageWindow;
@@ -70,32 +71,31 @@ export interface CallbackPageDeps {
   tokenInfo?: (accessToken: string, clientId: string) => Promise<AccessTokenSub>;
   /** env.vaultOrigin: where the D347 signals (`google`, `relayed`) go; none, no signal. */
   vaultOrigin?: string;
+  /** D400: the timers of the wait for the vault's ack (auth/vault-signal.ts); tests fake them. */
+  signalTimers?: SignalTimers;
 }
 
 /**
- * D347: tells the vault, through the opener while there is one, that this window navigates to Google (`google`) or
- * closes itself after relaying (`relayed`), so its close watch doesn't take either for the user closing it. This page
- * doesn't know the vault frame's name: the signal goes to the opener and each of its frames, with vaultOrigin as the
- * target origin, so only Hana's vault frames receive it, and each takes it only from the popup it answered.
+ * D347: the windows that may be the vault, for its signals (`back` on arrival, `google` before a navigation to Google,
+ * `relayed` before closing itself): this page doesn't know the vault frame's name, so the opener and each of its
+ * frames (at most 32). The signals go with vaultOrigin as the target origin, so only Hana's vault frames receive them,
+ * and each takes them only from the popup it answered; none without an opener. D400: the page leaves only once the
+ * vault acked (auth/vault-signal.ts).
  */
-export function signalVault(win: PageWindow, vaultOrigin: string | undefined, stage: 'google' | 'relayed' | 'back'): void {
+export function vaultTargets(win: PageWindow): unknown[] {
   const opener = win.opener;
-  if (!opener || !vaultOrigin) return;
-  const message = { v: 1, t: 'hana:auth-progress', stage };
+  if (!opener) return [];
   const targets: unknown[] = [opener];
   try {
     for (let i = 0; i < Math.min(opener.length, 32); i++) targets.push(opener[i]);
   } catch {
     // The opener's frames can't be listed: the opener alone (vault mode).
   }
-  for (const t of targets) {
-    try {
-      (t as Window | null)?.postMessage(message, vaultOrigin);
-    } catch {
-      // Gone: nothing to tell.
-    }
-  }
+  return targets;
 }
+
+/** One run of the page: its deps and its signals to the vault. */
+type CallbackRun = CallbackPageDeps & { readonly signals: VaultSignals };
 
 /** The parts of this page's PerformanceNavigationTiming the timings use. */
 export interface CallbackNavigation {
@@ -141,8 +141,9 @@ export type CallbackOutcome =
 /** Where a login of an app with email goes once a leg is relayed (batch 8b): the email step's follow-up mode. */
 export const FOLLOW_PATH = '/login/email';
 
-export async function runCallbackPage(deps: CallbackPageDeps): Promise<CallbackOutcome> {
-  const { win, api } = deps;
+export async function runCallbackPage(pageDeps: CallbackPageDeps): Promise<CallbackOutcome> {
+  const { win } = pageDeps;
+  const deps: CallbackRun = { ...pageDeps, signals: vaultSignals(win, () => vaultTargets(win), pageDeps.vaultOrigin, pageDeps.signalTimers ? { timers: pageDeps.signalTimers } : {}) };
   const now = deps.now ?? (() => Date.now());
   const perfNow = deps.perfNow ?? (() => performance.now());
   /** Google's redirect URI for a second request: this page's own origin (the env's authOrigin). */
@@ -162,7 +163,7 @@ export async function runCallbackPage(deps: CallbackPageDeps): Promise<CallbackO
     return 'refused';
   }
   // D347: back from Google with the opener (no COOP switch on the way): the vault's close watch may trust its handle.
-  signalVault(win, deps.vaultOrigin, 'back');
+  deps.signals.post('back');
   if (fragment.kind === 'no_state') {
     d.show(errorView(d, 'Sign-in stopped', 'Google’s answer did not belong to a sign-in started here. Start again from the app.'));
     return 'refused';
@@ -193,10 +194,7 @@ export async function runCallbackPage(deps: CallbackPageDeps): Promise<CallbackO
     zeroTaken(taken);
     explainEmailPrompt(d, {
       // A click, so Google's page loads as the user's own navigation.
-      onContinue: () => {
-        signalVault(win, deps.vaultOrigin, 'google');
-        win.location.assign(url);
-      },
+      onContinue: () => void deps.signals.postThenLeave('google', () => win.location.assign(url)),
       // "Not now": the same as declining on Google's screen, for the vault's consent screen (D264).
       onSkip: () => {
         const again = takeLogin(win.sessionStorage, state, now());
@@ -227,7 +225,7 @@ function toSlot<F extends { state: string }>(fragment: F, taken: TakenLogin): F 
  * already holds that account's access token. Null when there is no email context to go back to (the cancel is then
  * relayed as before).
  */
-function goBack(deps: CallbackPageDeps, taken: TakenLogin, slot: string, loginHint: string | null, scriptStart: number): Promise<CallbackOutcome> | CallbackOutcome | null {
+function goBack(deps: CallbackRun, taken: TakenLogin, slot: string, loginHint: string | null, scriptStart: number): Promise<CallbackOutcome> | CallbackOutcome | null {
   const { win } = deps;
   const now = deps.now ?? (() => Date.now());
   const { followKey, clientId, nonce } = taken;
@@ -252,8 +250,8 @@ function goBack(deps: CallbackPageDeps, taken: TakenLogin, slot: string, loginHi
   zeroTaken(taken);
   const d = dom(win.document);
   d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Sign in'), d.h('p', { class: 'muted' }, 'Google sign-in was cancelled.')));
-  win.location.assign(`${FOLLOW_PATH}#${slot}`);
-  return 'cancelled';
+  // `back` may not be acked yet (nothing awaited since it went out).
+  return deps.signals.leave(() => win.location.assign(`${FOLLOW_PATH}#${slot}`)).then(() => 'cancelled' as const);
 }
 
 /** Why token_first's checks, or the claim allow-list, ended a login here: the relayed code and what this window says. */
@@ -270,7 +268,7 @@ export type CallbackStopCode = keyof typeof STOPS;
  * Relays `{error: code}` to `slot` (with `claim`, the first claim outside the allow-list, for `token_has_pii`; best
  * effort), shows why, zeroes the entry's keys: the login ends here.
  */
-async function stopLogin(deps: CallbackPageDeps, taken: TakenLogin, slot: string, code: CallbackStopCode, claim?: string): Promise<CallbackOutcome> {
+async function stopLogin(deps: CallbackRun, taken: TakenLogin, slot: string, code: CallbackStopCode, claim?: string): Promise<CallbackOutcome> {
   const d = dom(deps.win.document);
   try {
     const named = claim !== undefined && RELAY_CLAIM_NAME.test(claim) ? { claim } : {};
@@ -289,7 +287,7 @@ async function stopLogin(deps: CallbackPageDeps, taken: TakenLogin, slot: string
  * own slot (`leg: 'id'`). The user cancelling Google's screen goes back to the login's choices (D341); any other
  * error of Google's is relayed: the login ends.
  */
-async function tokenFirstAccess(deps: CallbackPageDeps, fragment: Exclude<CallbackFragment, { kind: 'no_state' }>, taken: TakenLogin, scriptStart: number): Promise<CallbackOutcome> {
+async function tokenFirstAccess(deps: CallbackRun, fragment: Exclude<CallbackFragment, { kind: 'no_state' }>, taken: TakenLogin, scriptStart: number): Promise<CallbackOutcome> {
   const { win, api } = deps;
   const now = deps.now ?? (() => Date.now());
   const authOrigin = deps.authOrigin ?? (typeof location === 'undefined' ? '' : location.origin);
@@ -346,8 +344,7 @@ async function tokenFirstAccess(deps: CallbackPageDeps, fragment: Exclude<Callba
     return relayLeg(deps, { kind: 'error', state: slot, error: 'storage_unavailable' }, taken, scriptStart);
   }
   zeroTaken(taken);
-  signalVault(win, deps.vaultOrigin, 'google');
-  win.location.assign(googleAuthUrl({ clientId, authOrigin, nonce, state, forceReauth: false, loginHint: info.sub, silent: true }));
+  await deps.signals.postThenLeave('google', () => win.location.assign(googleAuthUrl({ clientId, authOrigin, nonce, state, forceReauth: false, loginHint: info.sub, silent: true })));
   return 'relayed';
 }
 
@@ -357,7 +354,7 @@ async function tokenFirstAccess(deps: CallbackPageDeps, fragment: Exclude<Callba
  * key, no `leg`), so the callback relays that ID token with no `access: 'follow'` and closes: the vault reads no slot
  * 1 and records nothing (D269 best effort). The access token is never relayed or stored.
  */
-function recordOnlyFallback(deps: CallbackPageDeps, taken: TakenLogin, clientId: string, nonce: string, state: string, slot: string, scriptStart: number): CallbackOutcome | Promise<CallbackOutcome> {
+function recordOnlyFallback(deps: CallbackRun, taken: TakenLogin, clientId: string, nonce: string, state: string, slot: string, scriptStart: number): CallbackOutcome | Promise<CallbackOutcome> {
   const now = deps.now ?? (() => Date.now());
   const authOrigin = deps.authOrigin ?? (typeof location === 'undefined' ? '' : location.origin);
   try {
@@ -367,9 +364,7 @@ function recordOnlyFallback(deps: CallbackPageDeps, taken: TakenLogin, clientId:
     return relayLeg(deps, { kind: 'error', state: slot, error: 'storage_unavailable' }, taken, scriptStart);
   }
   zeroTaken(taken);
-  signalVault(deps.win, deps.vaultOrigin, 'google');
-  deps.win.location.assign(googleAuthUrl({ clientId, authOrigin, nonce, state, forceReauth: false }));
-  return 'relayed';
+  return deps.signals.postThenLeave('google', () => deps.win.location.assign(googleAuthUrl({ clientId, authOrigin, nonce, state, forceReauth: false }))).then(() => 'relayed' as const);
 }
 
 /** token_first's ID leg entry: the login's own slot again, for the openid-only ID token of `sub`. */
@@ -396,7 +391,7 @@ function idLegEntry(taken: TakenLogin, sub: string, interactive: boolean): Param
  * retry goes back to the login's choices (D341); a second failure, or any other error, is relayed. An ID token of
  * another account ends the login (`google_account_mismatch`).
  */
-async function tokenFirstId(deps: CallbackPageDeps, fragment: Exclude<CallbackFragment, { kind: 'no_state' }>, taken: TakenLogin, scriptStart: number): Promise<CallbackOutcome> {
+async function tokenFirstId(deps: CallbackRun, fragment: Exclude<CallbackFragment, { kind: 'no_state' }>, taken: TakenLogin, scriptStart: number): Promise<CallbackOutcome> {
   const { win } = deps;
   const now = deps.now ?? (() => Date.now());
   const authOrigin = deps.authOrigin ?? (typeof location === 'undefined' ? '' : location.origin);
@@ -412,8 +407,7 @@ async function tokenFirstId(deps: CallbackPageDeps, fragment: Exclude<CallbackFr
     }
     zeroTaken(taken);
     // Google's own page for the same account (it may ask the user to confirm or sign in again); no email is asked.
-    signalVault(win, deps.vaultOrigin, 'google');
-    win.location.assign(googleAuthUrl({ clientId, authOrigin, nonce, state, forceReauth: false, loginHint, silent: false }));
+    await deps.signals.postThenLeave('google', () => win.location.assign(googleAuthUrl({ clientId, authOrigin, nonce, state, forceReauth: false, loginHint, silent: false })));
     return 'relayed';
   }
   // The user cancelled D273's interactive retry (Google's own page): back to the login's choices (D341).
@@ -447,7 +441,7 @@ function explainEmailPrompt(d: ReturnType<typeof dom>, on: { onContinue: () => v
 }
 
 /** Relays one leg's answer to its slot (`fragment.state`), then goes on: the next leg, the follow-up mode, or closes. */
-async function relayLeg(deps: CallbackPageDeps, fragment: Exclude<CallbackFragment, { kind: 'no_state' }>, taken: TakenLogin, scriptStart: number): Promise<CallbackOutcome> {
+async function relayLeg(deps: CallbackRun, fragment: Exclude<CallbackFragment, { kind: 'no_state' }>, taken: TakenLogin, scriptStart: number): Promise<CallbackOutcome> {
   const { win, api } = deps;
   const now = deps.now ?? (() => Date.now());
   const perfNow = deps.perfNow ?? (() => performance.now());
@@ -516,8 +510,7 @@ async function relayLeg(deps: CallbackPageDeps, fragment: Exclude<CallbackFragme
           d.show(errorView(d, 'Sign-in stopped', STORAGE_TEXT, 'storage_unavailable'));
           return 'relay_failed';
         }
-        signalVault(win, deps.vaultOrigin, 'google');
-        win.location.assign(googleAccessUrl({ clientId: taken.clientId as string, authOrigin, state: slot, loginHint: accessLeg, silent: true }));
+        await deps.signals.postThenLeave('google', () => win.location.assign(googleAccessUrl({ clientId: taken.clientId as string, authOrigin, state: slot, loginHint: accessLeg, silent: true })));
         return 'relayed';
       }
       // The vault's next notice, read by the email step's follow-up mode (it shows google-match's screens and banners).
@@ -534,13 +527,12 @@ async function relayLeg(deps: CallbackPageDeps, fragment: Exclude<CallbackFragme
     } finally {
       zeroTaken(taken);
     }
-    win.location.assign(`${FOLLOW_PATH}#${home}`);
+    await deps.signals.leave(() => win.location.assign(`${FOLLOW_PATH}#${home}`));
     return 'relayed';
   }
   zeroTaken(taken);
   d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Signed in'), d.h('p', { class: 'muted' }, 'You can close this window.')));
-  signalVault(win, deps.vaultOrigin, 'relayed');
-  win.close();
+  await deps.signals.postThenLeave('relayed', () => win.close());
   return 'relayed';
 }
 

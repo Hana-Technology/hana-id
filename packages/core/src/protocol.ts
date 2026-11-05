@@ -738,6 +738,13 @@ export interface WindowMessageMap {
    * user's close.
    */
   'hana:auth-progress': { stage: 'google' | 'email_code' | 'relayed' | 'back' };
+  /**
+   * Vault → login popup (D400): the vault took the popup's `hana:auth-progress` of that stage (from the popup it
+   * answered). A page that signals and then navigates or closes waits for it, up to the web package's
+   * SIGNAL_ACK_WAIT_MS, so Chromium's null `event.source` on a message posted just before a navigation can't drop the
+   * signal. Carries nothing but the stage; the popup takes it only from vaultOrigin and a window it signalled.
+   */
+  'hana:auth-progress-ack': { stage: 'google' | 'email_code' | 'relayed' | 'back' };
   'hana:approve-hello': Record<string, never>;
   'hana:approve-request': {
     id: string;
@@ -910,6 +917,7 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
     isRelayId(m.relayId) &&
     isBytes(m.relayKey, 32, 32),
   'hana:auth-progress': (m) => exactKeys(m, ['v', 't', 'stage']) && (m.stage === 'email_code' || m.stage === 'google' || m.stage === 'relayed' || m.stage === 'back'),
+  'hana:auth-progress-ack': (m) => exactKeys(m, ['v', 't', 'stage']) && (m.stage === 'email_code' || m.stage === 'google' || m.stage === 'relayed' || m.stage === 'back'),
   'hana:approve-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:approve-request': (m) => {
     if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove', 'testApp', 'logoUrl', 'supportId'])) return false;

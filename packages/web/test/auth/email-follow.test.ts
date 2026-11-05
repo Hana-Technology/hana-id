@@ -12,7 +12,7 @@ import type { GoogleEmailFlow } from '../../src/auth/google.ts';
 import { EMAIL_PATH } from '../../src/auth/login-page.ts';
 import { LOGIN_ENTRY_PREFIX, storeLoginEntry } from '../../src/auth/login-storage.ts';
 import type { HanaEnv } from '../../src/hana-env.ts';
-import { CLIENT_ID, ENV, FakeWindow, PARTNER, PK, asWindow, flush, pageText, remoteWindow, resetDom } from './helpers.ts';
+import { CLIENT_ID, ENV, FakeWindow, PARTNER, PK, type RemoteWindow, asWindow, flush, pageText, remoteWindow, resetDom, vaultAcks } from './helpers.ts';
 
 const ISSUER = 'https://issuer.hana-email.test';
 const EMAIL_ENV: HanaEnv = Object.freeze({ ...ENV, emailIssuerUrl: ISSUER, emailIss: `${ISSUER}/v1/email` });
@@ -69,6 +69,7 @@ function setup(o: { next?: number; flow?: GoogleEmailFlow } = {}): Setup {
   const opener = remoteWindow();
   opener.frames[VAULT_FRAME] = remoteWindow({ parent: opener });
   win.opener = asWindow(opener);
+  vaultAcks(opener.frames[VAULT_FRAME] as RemoteWindow, win);
   storeLoginEntry(win.sessionStorage, relayId, Uint8Array.from(relayKey), NOW, undefined, { followKey: Uint8Array.from(followKey), clientId: CLIENT_ID, ...(o.next ? { home: relayId, next: o.next } : {}) });
   win.sessionStorage.setItem(
     EMAIL_ENTRY_PREFIX + relayId,
@@ -159,6 +160,7 @@ describe('case B: “Link and continue” (D139)', () => {
     expect(pageText()).toContain('Sign in with Google');
     expect(pageText()).toContain('waits 24 hours');
     click('email-link-google');
+    await flush();
     const url = new URL(s.win.location.assigned[0]!);
     // token_first (D341): the attempt's own OAuth state, its entry naming the login's slot; nothing left under the slot.
     const state = url.searchParams.get('state')!;
@@ -184,6 +186,7 @@ describe('case B: “Link and continue” (D139)', () => {
         submit('email-verify');
         await vi.waitFor(() => expect(s.page.stage).toBe('google_wallet'));
         click(button);
+        await flush();
         const url = new URL(s.win.location.assigned[0]!);
         const state = url.searchParams.get('state')!;
         const entry = JSON.parse(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + state)!);
@@ -212,6 +215,7 @@ describe('case B: “Link and continue” (D139)', () => {
     submit('email-verify');
     await vi.waitFor(() => expect(s.page.stage).toBe('google_wallet'));
     click('email-google');
+    await flush();
     expect(s.win.location.assigned).toHaveLength(1);
     const state = new URL(s.win.location.assigned[0]!).searchParams.get('state')!;
     const entry = JSON.parse(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + state)!);
@@ -319,6 +323,7 @@ describe('the follow-up mode', () => {
     await s.vaultSays(2, { t: 'email_consent', reason: 'declined', loginHint: SUBJECT });
     await vi.waitFor(() => expect(s.page.stage).toBe('link_choice'));
     click('consent-google');
+    await flush();
     const url = new URL(s.win.location.assigned[0]!);
     const slot3 = followSlot(s.followKey, 3).id;
     expect(Object.fromEntries(url.searchParams)).toMatchObject({ response_type: 'token', scope: 'email', login_hint: SUBJECT, state: slot3, client_id: CLIENT_ID });
@@ -352,6 +357,7 @@ describe('the follow-up mode', () => {
     await vi.waitFor(() => expect(s.page.stage).toBe('banners'));
     expect(pageText()).toContain('An email will be able to open this wallet from');
     click('banner-cancel-0');
+    await flush();
     const url = new URL(s.win.location.assigned[0]!);
     expect(url.searchParams.get('nonce')).toBe(nonce);
     expect(url.searchParams.get('login_hint')).toBe(SUBJECT);

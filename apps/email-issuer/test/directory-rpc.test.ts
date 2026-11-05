@@ -306,6 +306,24 @@ describe('get', () => {
     await env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(budgetObjectName(env.ENV_NAME, staff))).returnRows((left as { keys: string[] }).keys, DIRECTORY_ROWS_PER_HOUR);
   });
 
+  it('a Support ID lookup’s email join is audited as support_lookup, naming the admin request (D399); another purpose is refused', async () => {
+    await seed({ provider: 'google', sub: '3002', email: 'sl@example.com', verified: true, hosted: false });
+    const c = await call({ provider: 'google', sub: '3002', ticket: 'ZD-1002', purpose: 'support_lookup' });
+    expect(await rpc().get(c)).toMatchObject({ ok: true, user: { email: 'sl@example.com' } });
+    expect(await rpc().get(await call({ provider: 'email', sub: 'e1.nobody', ticket: 'ZD-1002', purpose: 'support_lookup' }))).toMatchObject({ ok: false, code: 'not_found' });
+    for (const purpose of ['user_search', 'unlock', '', 1]) expect(await rpc().get(await call({ provider: 'google', sub: '3002', ticket: 'T', purpose }))).toMatchObject({ ok: false, code: 'bad_request' });
+    const rows = await auditRows();
+    expect(rows.map((r) => [r.action, r.ticket])).toEqual([
+      ['support_lookup', 'ZD-1002'],
+      ['support_lookup', 'ZD-1002'],
+    ]);
+    expect(JSON.parse(rows[0]!.detail!)).toEqual({ provider: 'google', sub: '3002', lookup: c.requestId, found: 1 });
+    expect(JSON.parse(rows[1]!.detail!)).toMatchObject({ provider: 'email', sub: 'e1.nobody', found: 0 });
+    // The default stays the Users detail's.
+    await rpc().get(await call({ provider: 'google', sub: '3002', ticket: 'T-3', purpose: 'user_view' }));
+    expect((await auditRows()).at(-1)).toMatchObject({ action: 'user_view', ticket: 'T-3' });
+  });
+
   it('lists at most DIRECTORY_APPS_MAX apps, flagged when cut', async () => {
     await seed({ provider: 'email', sub: 'e1.many', email: 'many@example.com', apps: Array.from({ length: DIRECTORY_APPS_MAX + 2 }, (_, k) => ({ appId: `app_${k}`, scopeId: 's1', seen: 1000 + k })) });
     const r = await rpc().get(await call({ provider: 'email', sub: 'e1.many', ticket: 'T-2' }));

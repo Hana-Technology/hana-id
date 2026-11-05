@@ -21,7 +21,8 @@ Reference: endpoints, limits, Durable Objects, D1 and logs in `docs/api.md` "Ema
 out of order, and a row keeps the newest write's address, `email_verified`, `hosted` and scope), read with
 `admin <env> user:list` / `user:find` (`docs/operations.md` "User directory (D269)") and by the admin console's Users
 screen through **`DirectoryRpc`** (C8b, D275): a named entrypoint with no route, bound only by the admin Worker as
-`ISSUER`, with three reads (`search`, `get`, `auditSince`). Every call carries the staff request's Access JWT, which
+`ISSUER`, with three reads (`search`, `get`, `auditSince`; a `get` is audited `user_view`, or `support_lookup` for
+the admin's Support ID lookup, D399). Every call carries the staff request's Access JWT, which
 the issuer verifies itself against the admin application (`ADMIN_ACCESS_TEAM_DOMAIN`, `ADMIN_ACCESS_AUD`,
 `ADMIN_STAFF_EMAILS`, written by `gen` from the manifest's `admin` block); each read takes its rows from the staff
 member's budget (500 identities an hour, 2 000 a day) and writes its `email_admin_audit` row in the same D1 batch
@@ -88,7 +89,8 @@ google-match's directory write, `test/directory.test.ts` the upserts in both arr
 DirectoryRpc (the staff check, the searches, the ticket rule, the audit's atomicity and `detail`, the row budget, no
 address in a log line).
 
-Last verified: 2026-11-05 (branch `feat/batch-c-8b`: `DirectoryRpc`, migration 0003, the `ADMIN_*` vars, D388–D392);
+Last verified: 2026-11-05 (branch `feat/batch-c-15-screen`: `DirectoryRpc.get`'s `purpose`, D399); 2026-11-05 (branch
+`feat/batch-c-8b`: `DirectoryRpc`, migration 0003, the `ADMIN_*` vars, D388–D392);
 2026-11-05 (branch `feat/deploy-build-check`: `GET /v1/email/health`, `scripts/deploy.ts`, D384);
 2026-11-04 (branch `fix/dev-email-limits`: dev envs' limit set, D340, `test/dev-limits.test.ts`; every
 other test runs under production's, its harness env names `t-…` not being dev names); 2026-11-04 (branch `fix/user-emails-review`: the directory's order-safe upserts, D269); 2026-11-04

@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DIRECTORY_AUDIT_ACTIONS,
+  DIRECTORY_GET_PURPOSES,
   DIRECTORY_PAGE_MAX,
   DIRECTORY_ROWS_PER_DAY,
   DIRECTORY_ROWS_PER_HOUR,
@@ -26,6 +27,15 @@ describe('DirectoryRpc inputs', () => {
       expect(directoryGetInput.safeParse({ ...call, provider: 'email', sub: 'e1.x', ticket }).success, ticket).toBe(false);
       expect(SUPPORT_TICKET_RE.test(ticket), ticket).toBe(false);
     }
+  });
+
+  it('get’s purpose names its audit row: user_view (the default) or support_lookup (the lookup’s email join, D399), nothing else', () => {
+    const base = { ...call, provider: 'google', sub: '1', ticket: 'ZD-1' };
+    expect(DIRECTORY_GET_PURPOSES).toEqual(['user_view', 'support_lookup']);
+    for (const purpose of DIRECTORY_GET_PURPOSES) expect(directoryGetInput.safeParse({ ...base, purpose }).success, purpose).toBe(true);
+    // Each purpose is one of the issuer audit's actions (migration 0003's CHECK list).
+    for (const purpose of DIRECTORY_GET_PURPOSES) expect(DIRECTORY_AUDIT_ACTIONS).toContain(purpose);
+    for (const purpose of ['user_search', 'unlock', 'support.lookup', '', null]) expect(directoryGetInput.safeParse({ ...base, purpose }).success, String(purpose)).toBe(false);
   });
 
   it('bounds: a page of at most 100, two providers, a sub without spaces, no extra field, the cursor’s form', () => {

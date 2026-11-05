@@ -47,9 +47,9 @@ describe('inputs', () => {
     expect(userSharesInput.safeParse({ ...staff, appId: 'app_1', path: 's1#google#1#0' }).success).toBe(true);
   });
 
-  it('the BFF body: a ticket of printable characters with no address (it is stored), up to 20 request IDs', () => {
-    expect(supportLookupBody.safeParse({ query: 'q', ticket: 'ZD-1234 refund' }).success).toBe(true);
-    for (const ticket of ['', 'a@b.example', ' T', 'T ', 'x'.repeat(65), 'tab\there', 'é']) expect(supportLookupBody.safeParse({ query: 'q', ticket }).success, ticket).toBe(false);
+  it('the BFF body: a ticket in the staff reads’ rule (SUPPORT_TICKET_RE, the issuer’s too: D399; never an address), up to 20 request IDs', () => {
+    for (const ticket of ['ZD-1234', 'T', 'a.b_c#d:e-f', 'x'.repeat(64)]) expect(supportLookupBody.safeParse({ query: 'q', ticket }).success, ticket).toBe(true);
+    for (const ticket of ['', 'a@b.example', ' T', 'T ', 'ZD-1234 refund', 'x'.repeat(65), 'tab\there', 'é']) expect(supportLookupBody.safeParse({ query: 'q', ticket }).success, ticket).toBe(false);
     expect(supportLookupBody.safeParse({ query: 'q', ticket: 'T', requestIds: Array.from({ length: 20 }, (_, i) => `req_${String(i).padStart(8, '0')}`) }).success).toBe(true);
     expect(supportLookupBody.safeParse({ query: 'q', ticket: 'T', requestIds: Array.from({ length: 21 }, (_, i) => `req_${String(i).padStart(8, '0')}`) }).success).toBe(false);
     expect(supportLookupBody.safeParse({ query: 'q', ticket: 'T', requestIds: ['short'] }).success).toBe(false);

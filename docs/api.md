@@ -1,6 +1,6 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
-Last verified against code: 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
+Last verified against code: 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup's screen: the email join in `POST /api/support/lookup` (`emails`, `emailsNote`, `unverifiedWarning`), its ticket in the issuer's rule, `DirectoryRpc.get`'s `purpose` (`support_lookup`), D399); 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
 answers, D395; `AdminRpc.supportLookup` / `userShares`; the admin Worker's `POST /api/support/lookup`; the
 `support.lookup` staff action; D394–D396); 2026-11-05 (branch `feat/deploy-build-check`: the build id, D384: `GET /v1/health`'s
 `build`, the page Workers' `GET /.well-known/hana-build`, the issuer's `GET /v1/email/health`, the `HANA_BUILD` var
@@ -1796,7 +1796,7 @@ binding throws; `405` with `allow`; `413` over 64 KiB (16 KiB without a `Content
 | `PUT /api/rates/:day` (C12) | `{usd: '2.345678', reason}` (≤ 6 decimals as a string; reason 10–500 characters) → `{day, usdMicros, source: 'manual', overrideId}`; a month with a statement is `409`, a future day `400` | `usage.override_rate`, `recordStaffAction` |
 
 | `GET /api/retention` (C13) | → `{month, dueAt, done, state, nextRunAt, maxCallsPerRun, warning, runs, due, erasures}`: the month's state (`due`, `continuing`, `done`, `not_yet`, `running`, `retry_later`), a `warning` while the last run failed or the month has no complete run an hour after its due time, the last 24 runs (`id`, `month`, `startedAt`, `finishedAt`, `status`, `rows` per table, `error`), the latest `retention_due` counts and the last 20 erasures (ticket, operator, scope, counts) | `ops.retention_runs`, `ops.erasures`, the job's `dueState` |
-| `POST /api/support/lookup` (C15) | `{query, ticket, requestIds?, days?}` → `SupportLookupView` (below); the audit row first | `recordStaffAction`, `AdminRpc.supportLookup`, `usage.events` |
+| `POST /api/support/lookup` (C15) | `{query, ticket, requestIds?, days?}` → `SupportLookupView` plus `emails` (below); the audit row first | `recordStaffAction`, `AdminRpc.supportLookup`, `usage.events`, `DirectoryRpc.get` (`purpose: 'support_lookup'`) |
 
 The C12 and C13 routes open one ledger connection per request (`USAGE_DB`, `usage_admin`); without it they answer `503
 ledger_unavailable`.
@@ -1807,20 +1807,21 @@ URL; each forwards the request's `Cf-Access-Jwt-Assertion` as it came, for the i
 | Route | Body → answer | Calls |
 |---|---|---|
 | `POST /api/users/search` | `{q?, provider?, appId?, sub?, unverifiedOnly?, cursor?, limit? (≤ 100, default 50), ticket?}` → `{users: [{provider, sub, email, emailVerified, hosted, unverifiedClaim, firstSeenMs, lastSeenMs, appCount}], next?, unverifiedWarning}`; `q` a full address (exact) or ≥ 3 characters of one (substring) | `DirectoryRpc.search` |
-| `POST /api/users/find` | `{query}` (a wallet address, User ID `u1_…`, internal id `hu_…` or Support ID) → `{users: StaffUser[]}` (no address; the Support ID lookup with activity is `POST /api/support/lookup` below) | `AdminRpc.findUsers` |
+| `POST /api/users/find` | `{query}` (a wallet address, User ID `u1_…`, internal id `hu_…` or Support ID) → `{users: StaffUser[]}` (no address; the SPA sends a Support ID to the lookup screen, `POST /api/support/lookup` below, and calls `find` for the rest and for the lookup screen's "Wallet directory only") | `AdminRpc.findUsers` |
 | `POST /api/users/get` | `{provider, sub, ticket}` (the ticket required: `400` before any call) → `{provider, sub, user \| null, warning?, apps: [{appId, scopeId, firstSeenMs, lastSeenMs, name, orgId, environment, deletedAt}], appsTruncated?, appNamesError?, walletUsers: StaffUser[] \| null, walletError?, chain: [{scopeId, ok: true, blockHeight, status, opened, identityKey, path, root, effectiveAtMs, account, accountUnread?} \| {scopeId, ok: false, reason: 'chain_unavailable' \| 'not_read'}]}`; `user` null when the directory has no row (the miss is audited) | `DirectoryRpc.get`, `AdminRpc.findUsers({query: sub, provider})`, `AdminRpc.appNames`, `get_identity` / `get_account` per scope (at most 8) |
 
 Errors: `503 directory_unavailable` (no `ISSUER`, the issuer didn't answer, or its own Access check can't run), `502
 directory_refused` (the issuer refused a staff identity this Worker accepted: the two Access configs differ), `429
 rate_limited` with `Retry-After` past the staff member's row budget (the security alias gets `directory_budget`, one
 per staff member and window), `400` / `404` / `500` as the issuer answers. A detail's outbound calls come out of one
-budget of 40 (at most 30 RPCs, D380): what doesn't fit is `not_read`. Not yet: the Support ID lookup's screen (it
-calls `POST /api/support/lookup`; after C8b merges).
+budget of 40 (at most 30 RPCs, D380): what doesn't fit is `not_read`. The SPA's Support ID lookup screen (`/support`)
+calls `POST /api/support/lookup` below.
 
-**The Support ID lookup (C15; D394–D396; `src/support.ts`).** `POST /api/support/lookup` `{query, ticket, requestIds?,
-days?}` (console-core `supportLookupBody`, strict: `query` as `AdminRpc.supportLookup` takes it; `ticket` 1–64
-printable ASCII, no `@`, no leading or trailing space; up to 20 `requestIds` as the API's `x-request-id`; `days` 1–731,
-30 by default; else `400 bad_request`) → console-core `SupportLookupView`: `AdminRpc.supportLookup`'s answer plus
+**The Support ID lookup (C15; D394–D396, D399; `src/support.ts`).** `POST /api/support/lookup` `{query, ticket,
+requestIds?, days?}` (console-core `supportLookupBody`, strict: `query` as `AdminRpc.supportLookup` takes it; `ticket`
+in console-core `SUPPORT_TICKET_RE`, 1–64 letters, digits or `._#:-`, the issuer's rule too (D399); up to 20
+`requestIds` as the API's `x-request-id`; `days` 1–731, 30 by default; else `400 bad_request`) → console-core
+`SupportLookupView` and the email join (below): `AdminRpc.supportLookup`'s answer plus
 `days`, `ledger` (`{available: true}` or `{available: false, reason}`, the reason starting `ledger unavailable`),
 `activity` (per match, its ok `login`, `session` and `derive` events by uid over the window, newest first, at most 400:
 `{requestId, at, appId, endpoint, status, latencyMs, relayed, nearTx}`; null without the ledger), `requests` (the
@@ -1830,8 +1831,18 @@ status, latencyMs, relayed, nearTx, byMatch}`, `byMatch` when it carries a match
 `target` the query as given, `details {by, ticket, requestIds, days}`), and `503 upstream_unavailable` / `500
 internal` with nothing read when it can't be written; then `AdminRpc.supportLookup` (its refusal as is); then the
 ledger over `USAGE_DB` (`usage_admin`, `SUPPORT_ACTIVITY_SQL` on `events_uid_at`, `SUPPORT_REQUESTS_SQL` on the
-primary key). Without the binding, a connection or a read: still `200`, with `ledger: {available: false}`. POST only
-(`405` otherwise), CSRF rules as every write. Logs carry counts only, never the query.
+primary key). Without the binding, a connection or a read: still `200`, with `ledger: {available: false}`. Together
+with the ledger, **the email join** (D399): for each distinct `directoryKey` of the matches' identities, at most
+`SUPPORT_EMAILS_MAX` (20) in parallel, `DirectoryRpc.get({…, ticket, provider, sub, purpose: 'support_lookup'})` with
+the request's Access JWT, so the issuer audits each read as `support_lookup` (the same ticket, `detail.lookup` = this
+request's id, the console row's `request_id`) and takes it from the staff member's row budget. The answer adds `emails:
+[{provider, sub, found: true, email, emailVerified, hosted, unverifiedClaim, firstSeenMs, lastSeenMs} | {provider, sub,
+found: false, reason: 'not_found' | 'not_read' | 'no_directory' | 'directory_unavailable' | 'directory_refused' |
+'rate_limited' | 'failed'}]`, `emailsNote?` (no issuer bound; the row budget reached, with its window, after the
+security alias is emailed `directory_budget` as the Users routes do; identities past 20) and `unverifiedWarning?`
+(console-core `UNVERIFIED_CLAIM_WARNING`, when an address is a Google account's unverified claim). An issuer failure
+never fails the lookup: each identity says why. POST only (`405` otherwise), CSRF rules as every write. Logs carry
+counts only (`calls: {directoryRead, directoryMissing}`), never the query, a sub or an address.
 
 **Security & monitoring (C14; D83, D126, D330–D338).** The watchdog is called **server-side only**
 (`src/watchdog.ts`): `Authorization: Bearer <WATCHDOG_STATUS_TOKEN>` to `WATCHDOG_URL` (an https origin exactly; else
@@ -2111,14 +2122,16 @@ that email is the actor. Answers `{ok: true, …}` or `{ok: false, code, error?,
 | Method | Input → answer |
 |---|---|
 | `search` | `{q?, provider?, appId?, sub?, unverifiedOnly?, cursor?, limit? ≤ 100 (50), ticket?}` → `{users: [{provider, sub, email, emailVerified, hosted, unverifiedClaim, firstSeenMs, lastSeenMs, appCount}], next?}`. `q`: a full address matches exactly (as typed lowercased and normalized), else a substring of ≥ 3 characters; newest first by last seen, an address search with Google's unverified claims after the verified rows; `next` with a full page (`<claim>:<lastSeenMs>:<provider>:<sub>`) |
-| `get` | `{provider, sub, ticket}` (the ticket required) → `{user, apps: [{appId, scopeId, firstSeenMs, lastSeenMs}] (≤ 200, newest first), appsTruncated?}`; `not_found` without a row (audited, costs no row) |
+| `get` | `{provider, sub, ticket, purpose?}` (the ticket required; `purpose` `user_view`, the default, or `support_lookup`, D399) → `{user, apps: [{appId, scopeId, firstSeenMs, lastSeenMs}] (≤ 200, newest first), appsTruncated?}`; `not_found` without a row (audited, costs no row) |
 | `auditSince` | `{id}` (after it, oldest first) or `{before}` (newest first), `staff?`, `action?`, `limit ≤ 200` → `{rows: [{id, atMs, staff, action, ticket, scopeId, actionNonce, jti, subject, detail}]}`; no row budget, no audit row |
 
 `search` and `get` take their rows first from the staff member's budget (`staff-dir:<email>`: 500 identities an hour,
 2 000 a UTC day, provisional; a page past what is left is cut to it, rows not returned are given back) and write one
 `email_admin_audit` row **in the same D1 batch** as the read (a failed insert returns no rows): `user_search` with the
 ticket if given and `detail` `{filters, q: {match, hash}, page, rows, budgetCut?}` (`hash`: 12 characters of HMAC(K_rl),
-the mailbox subject form for a full address), or `user_view` with the ticket and `{provider, sub, found}`. Never an
+the mailbox subject form for a full address), or `user_view` with the ticket and `{provider, sub, found}`, or for the
+Support ID lookup's email join `support_lookup` with the ticket and `{provider, sub, lookup, found}` (`lookup` the admin
+request's id: the console's `support.lookup` row of the same request, D399). Never an
 address in a row or a log line (`directory_read`, `directory_refused`, `directory_budget`, `directory_read_failed`
 carry codes and counts).
 

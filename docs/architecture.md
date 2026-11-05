@@ -1,7 +1,7 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-05 (branch `feat/batch-c-8b`: the Users screen in Status, Components' connections, "Staff reads of the user directory" and the issuer D1's 0003; D388–D392); 2026-11-05 (branch `fix/popup-early-close-deadline`: login step 4's closed popup, a close within D347's 8 s waits 90 s for an answer, then `login_cancelled`, D398); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/batch-c-15`: "Wallet directory" step 5, the Support ID in the
+Last verified against code: 2026-11-05 (branch `feat/batch-c-15-screen`: "Support ID lookup": the admin screen and the email join through `DirectoryRpc.get` as `support_lookup`, D399; the Components row of `ISSUER`); 2026-11-05 (branch `feat/batch-c-8b`: the Users screen in Status, Components' connections, "Staff reads of the user directory" and the issuer D1's 0003; D388–D392); 2026-11-05 (branch `fix/popup-early-close-deadline`: login step 4's closed popup, a close within D347's 8 s waits 90 s for an answer, then `login_cancelled`, D398); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/batch-c-15`: "Wallet directory" step 5, the Support ID in the
 session answers and the vault; the new "Support ID lookup", D394–D397); 2026-11-05 (branch `feat/coop-canary`: "Login, one transaction" step 4's closed popup: Google's COOP rechecked before each release by `coop-canary`, D386); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: the login's step 2, the session key's failure as `derive_failed` with its reason and which keys WebKit Linux refuses, D385; "WebCrypto on the login, export and signing paths"); 2026-11-05 (branch `feat/deploy-build-check`: "Environments and manifests": the build id
 in every Worker and page bundle and `deploy-check`, D384); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-05 (branch `fix/e2e-flakes`: the login's step 2, the session key's retry on WebKit Linux's
 Ed25519 `OperationError`, D381); 2026-11-04 (branch `feat/batch-c-13`: retention and the erasure path in Status, Components
@@ -211,7 +211,7 @@ Who talks to whom:
 | Watchdog → Hana's identity JWKS and discovery document | `{identityToken.iss}/jwks.json` and `/.well-known/openid-configuration`, `cache: no-store`, `redirect: manual`, 64 KB cap, every 5 min, only with `identityToken` in the manifest | Each key's RFC 7638 thumbprint against `watchdog.pinnedIdentityKeys`, public members only, private members, duplicate members, the shape, `issuer` and `jwks_uri`; critical alerts, never an action (D210, D213, D214) |
 | Outside probe (GitHub Actions) → Hana's identity JWKS and discovery document | `.github/workflows/identity-probe.yml` every 3 hours (D383); **disabled in GitHub since 2026-11-05** (D387: testnet only; to move to AWS Lambda + EventBridge before mainnet), `scripts/identity-probe.ts`: jose's User-Agent, no redirect followed, 64 KB cap, every non-`local*` env with `identityToken` | The watchdog's rules (`@hana-id/jwks/identity`) from outside Cloudflare; a finding fails the run (GitHub's email). No secrets (D210) |
 | Watchdog → paging app, Slack, Resend, heartbeat | HTTPS with its own credentials (`apps/watchdog/src/channels.ts`) | Critical: page + Slack + email, re-sent every 15 min until acknowledged; warning: Slack + email; daily digest; dead-man's switch ping |
-| Admin Worker (batch C8b) → email issuer | service binding `ISSUER` → the `DirectoryRpc` entrypoint (no route, no D1 binding): `search`, `get`, `auditSince`, each with the staff request's Access JWT, which the issuer verifies itself | The user directory's rows for the Users screen and the issuer's staff audit; the issuer audits each read in the same D1 batch and keeps a per-staff row budget (D275, D388–D392) |
+| Admin Worker (batch C8b) → email issuer | service binding `ISSUER` → the `DirectoryRpc` entrypoint (no route, no D1 binding): `search`, `get`, `auditSince`, each with the staff request's Access JWT, which the issuer verifies itself | The user directory's rows for the Users screen and the Support ID lookup's email join (`get` with `purpose: 'support_lookup'`, D399), and the issuer's staff audit; the issuer audits each read in the same D1 batch and keeps a per-staff row budget (D275, D388–D392) |
 | Admin Worker (batch C14) → watchdog | `GET /status`, `/alerts`, `/actions`, `POST /alerts/:id/ack` at `WATCHDOG_URL` (manifest `watchdog.url`), bearer `WATCHDOG_STATUS_TOKEN` (an admin secret, server-side only), redirects refused, 8 s deadline, size caps per route | The "Security & monitoring" view; text reduced to bounded plain data; acks (with the Access identity as `by`) stop re-sends only (D330–D332) |
 | Operator → `hana-signer`, D1, Worker | `scripts/`, `wrangler` | Deploy, register scopes, apps, origins, secrets |
 
@@ -531,10 +531,10 @@ Code: `packages/core/src/wallet-record.ts`, `packages/web/src/vault/wallet-recor
    `hana_login` and `ready` to an SDK of 0.2.0 or later (`hana.supportId`; older SDKs' validators refuse an unknown
    key, D393) and on the approval popup's account line (`docs/integration.md`); it never computes one.
 
-### Support ID lookup (staff; C15, D276 as amended, D394–D397)
+### Support ID lookup (staff; C15, D276 as amended, D394–D397, D399)
 
-Code: `packages/console-core/src/support.ts`, `apps/api/src/directory/support.ts`, `apps/admin/src/support.ts`,
-`scripts/lib/admin-support.ts`. No migration of its own.
+Code: `packages/console-core/src/support.ts`, `apps/api/src/directory/support.ts`, `apps/admin/src/support.ts`, the
+admin SPA's `/support` screen (`apps/admin/public/app.js`), `scripts/lib/admin-support.ts`. No migration of its own.
 
 ```
 staff ─Access─▶ admin Worker POST /api/support/lookup {query, ticket, requestIds?, days?}
@@ -544,6 +544,8 @@ staff ─Access─▶ admin Worker POST /api/support/lookup {query, ticket, requ
                                                                            vault_shares, app_changes
                   3. USAGE_DB (usage_admin)                                usage.events by uid (events_uid_at) and by
                                                                            request_id; "ledger unavailable" without it
+                     with ISSUER DirectoryRpc.get(purpose support_lookup)  each identity's address (≤ 20), the same
+                                                                           ticket and Access JWT; audited by the issuer
 operator ─ admin <env> support:lookup ─▶ the same reads: the API's D1 (private executor), the issuer's D1 (addresses),
                                           Neon as usage_admin (.secrets/<env>/neon-usage-admin.url)
 ```
@@ -552,8 +554,9 @@ operator ─ admin <env> support:lookup ─▶ the same reads: the API's D1 (pri
    or a sub goes through the user search first.
 2. **Code → users**: `end_users.support_code` (or `token_sub`, `user_id`), every match listed (40 bits collide; at most
    10 in full, `truncated` beyond); each match's internal id is its ledger uid.
-3. **Per match**: its ids, identities (with subs; the admin screen joins each `directoryKey` with `DirectoryRpc` for
-   the email after C8b, the CLI joins the issuer's D1 now), wallets; the scope's apps; the shares not past
+3. **Per match**: its ids, identities (with subs; the admin route joins each `directoryKey` with `DirectoryRpc.get`
+   for the email, audited by the issuer as `support_lookup` with the lookup's ticket and request id (D399); the CLI
+   joins the issuer's D1), wallets; the scope's apps; the shares not past
    `abs_expires_at` (the account root's path at each key index); the apps' `app_changes` in the window (30 days by
    default); the ledger's ok `login`, `session` and `derive` events by uid (at most 400).
 4. **Errors** come only by the request IDs the partner's escalation gives (every outcome; `byMatch` when the event
@@ -561,6 +564,10 @@ operator ─ admin <env> support:lookup ─▶ the same reads: the API's D1 (pri
 5. **Partners** have no lookup: they see the code beside the User ID on their Users page (D310, D346).
 6. **Erasure**: `uid-erase` (D361) deletes the account's directory rows and NULLs its uids, so the code resolves to
    nothing afterwards.
+7. **The screen** (`/support`): the query, the ticket (required, the issuer's rule), the request IDs and the window
+   are typed in and kept in memory only (no URL, no storage); the Users search sends a Support ID there (run at once
+   when it carries a ticket) and each wallet-directory user's block links to it by User ID; "Wallet directory only"
+   still asks `POST /api/users/find`. No export.
 
 ### Staff reads of the user directory (the admin Users screen, batch C8b)
 

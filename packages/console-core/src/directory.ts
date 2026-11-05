@@ -4,7 +4,8 @@
 // verifies itself (the admin application's AUD, the team domain, the staff list) and records as the actor; every read
 // writes its `email_admin_audit` row in the same D1 batch; each staff email gets at most DIRECTORY_ROWS_PER_HOUR and
 // DIRECTORY_ROWS_PER_DAY identities back. A support reference (`ticket`) is required to open one identity (`get`) and
-// optional for a search.
+// optional for a search. A `get` is audited as `user_view` (the Users detail) or `support_lookup` (the Support ID
+// lookup's email join, D399).
 //
 // Partners never reach any of this: no partner Worker binds the issuer, and no ConsoleRpc, `/v1` or SDK field carries a
 // directory value (tests in apps/email-issuer/scripts/test/directory-rpc-source.test.ts and apps/admin's config tests).
@@ -73,7 +74,15 @@ export const directorySearchInput = staffCall
   })
   .strict();
 
-export const directoryGetInput = staffCall.extend({ ticket, provider, sub }).strict();
+/**
+ * Why one identity is opened, which names its audit row: `user_view` (the Users detail, the default) or
+ * `support_lookup` (the Support ID lookup's email join, D399: the identity of a match the console's `support.lookup`
+ * row recorded under the same request ID and ticket).
+ */
+export const DIRECTORY_GET_PURPOSES = ['user_view', 'support_lookup'] as const;
+export type DirectoryGetPurpose = (typeof DIRECTORY_GET_PURPOSES)[number];
+
+export const directoryGetInput = staffCall.extend({ ticket, provider, sub, purpose: z.enum(DIRECTORY_GET_PURPOSES).optional() }).strict();
 
 /** Rows after `id` oldest first (the feed-like walk), or before `before` newest first (the audit screen): one of the two. */
 export const directoryAuditInput = staffCall

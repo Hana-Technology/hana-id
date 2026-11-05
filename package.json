@@ -11,6 +11,8 @@
     "typecheck": "pnpm -r typecheck",
     "pack:check": "pnpm --filter @hana-id/scripts run pack:check",
     "prepare": "git config core.hooksPath .githooks",
-    "secrets:scan": "gitleaks git --no-banner --redact --config .gitleaks.toml"
+    "secrets:scan": "gitleaks git --no-banner --redact --config .gitleaks.toml",
+    "verify": "node scripts/verify.mjs",
+    "verify:install-hook": "node scripts/verify-hook.mjs install"
   }
 }

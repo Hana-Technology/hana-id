@@ -86,12 +86,17 @@ pnpm -r test
 cd contracts/hana-signer && cargo test
 ```
 
+CI is off while only testnet runs (D387): `pnpm verify` is the local gate (`docs/operations.md` "CI and git", D413).
+`pnpm verify --quick` while working; `pnpm verify` before every merge into `develop`; `pnpm verify --full` before a
+deploy. `pnpm verify:install-hook` (optional) makes a push to `develop` or `main` run `--quick` first.
+
 ## Commands
 
 | What | Command |
 |---|---|
 | Contract tests / wasm | `cd contracts/hana-signer && cargo test` · `cargo near build non-reproducible-wasm` |
 | TS tests / types | `pnpm -r test` · `pnpm -r typecheck` |
+| Local gate (CI's checks for the change, D413) | `pnpm verify [--quick \| --full] [--all] [--base <ref>] [--plan]` · pre-push hook: `pnpm verify:install-hook [--status \| --uninstall]` |
 | API dev server | `pnpm --filter @hana-id/api dev` |
 | Deploy the contract | `pnpm --filter @hana-id/scripts run deploy-contract <env> [--yes]` |
 | Migrate / upgrade it (propose, then execute) | `pnpm --filter @hana-id/scripts run deploy-contract <env> --upgrade [--yes]` |

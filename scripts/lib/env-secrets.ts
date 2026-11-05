@@ -108,7 +108,6 @@ export function workerTargets(m: Manifest): WorkerTarget[] {
 
 const ED25519_SECRET_RE = /^ed25519:[1-9A-HJ-NP-Za-km-z]{60,100}$/u;
 const B64_32_RE = /^[A-Za-z0-9+/]{43}=$/u;
-const RESEND_RE = /^re_[A-Za-z0-9_]{8,200}$/u;
 
 /** Reads one source; a thrown error becomes `invalid` with its message (which names the file, never its contents). */
 function item(worker: WorkerId, name: string, source: string, required: boolean, file: string, read: () => string, note?: string): SecretItem {
@@ -250,7 +249,7 @@ export function secretInventory(m: Manifest, root: string = repoRoot, only?: Wor
     const rules: [string, RegExp, boolean][] = [
       ['WATCHDOG_KEY', /^ed25519:[1-9A-HJ-NP-Za-km-z]{80,90}$/u, true],
       ['WATCHDOG_STATUS_TOKEN', /^[A-Za-z0-9_-]{32,256}$/u, true],
-      ['RESEND_API_KEY', RESEND_RE, true],
+      ['SENDGRID_API_KEY', SENDGRID_RE, true],
       ['SLACK_WEBHOOK_URL', /^https:\/\/hooks\.slack\.com\/services\/\S+$/u, true],
       ...pager.map((n): [string, RegExp, boolean] => [n, /^\S+$/u, true]),
       ['HEARTBEAT_URL', /^https:\/\/\S+$/u, true],
@@ -282,7 +281,7 @@ export function secretInventory(m: Manifest, root: string = repoRoot, only?: Wor
   }
 
   if (m.admin && want('admin')) {
-    out.push(item('admin', 'EMAIL_API_KEY', shown('admin-resend-key'), true, f('admin-resend-key'), () => readText(f('admin-resend-key'), RESEND_RE, 'a Resend API key (re_…)'), 'Resend, sending access to the admin domain only (D87)'));
+    out.push(item('admin', 'EMAIL_API_KEY', shown('admin-sendgrid-key'), true, f('admin-sendgrid-key'), () => readText(f('admin-sendgrid-key'), SENDGRID_RE, 'a SendGrid API key (SG.<id>.<secret>)'), 'SendGrid, Mail Send only, never the issuer\'s subuser (D401)'));
     out.push(item('admin', 'CANCEL_LINK_KEY', shown('cancel-link-key'), true, f('cancel-link-key'), () => readText(f('cancel-link-key'), B64_32_RE, 'base64 of 32 bytes'), 'keep it: a new key breaks the cancel links already emailed'));
     out.push(item('admin', 'INVITE_LINK_KEY', shown('invite-link-key'), true, f('invite-link-key'), () => readText(f('invite-link-key'), B64_32_RE, 'base64 of 32 bytes'), 'keep it: a new key breaks the invite links already emailed'));
     if (m.watchdog?.url) {

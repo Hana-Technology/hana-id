@@ -80,9 +80,10 @@ describe('change_pending', () => {
     const row = await changeRow(id);
     expect(row!.notified_at).not.toBeNull();
     expect(row!.h).toBe((await sha256Hex(first)).toUpperCase());
-    // The retry carried the same idempotency key per recipient, so the provider drops a duplicate.
-    const keys = fake.attempts.filter((m) => m.to === ALIAS && m.text.includes(id)).map((m) => m.idempotencyKey);
-    expect(new Set(keys).size).toBe(1);
+    // SendGrid has no idempotency key (D401): the retry went to the recipient that failed only; the alias, accepted on
+    // the first run, was not sent the notice again from this isolate.
+    expect(fake.attempts.filter((m) => m.to === ALIAS && m.text.includes(id))).toHaveLength(1);
+    expect(fake.attempts.filter((m) => m.to === app.contact && m.text.includes(id))).toHaveLength(2);
   });
 
   it('acks nothing without the email key, without the cancel-link key, or when the budget runs out', async () => {

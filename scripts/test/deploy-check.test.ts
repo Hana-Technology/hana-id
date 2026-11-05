@@ -349,7 +349,7 @@ function fakeWrangler(id: string | null, over: { status?: WranglerResult; view?:
     if (argv[0] === 'deployments') return over.status ?? { status: 0, stdout: JSON.stringify({ id: 'dep', author_email: PRIVATE[0], versions: [{ version_id: VID, percentage: 100 }] }), stderr: '' };
     const bindings = [
       { type: 'plain_text', name: 'STAFF_EMAILS', text: PRIVATE[1] },
-      { type: 'secret_text', name: 'RESEND_API_KEY' },
+      { type: 'secret_text', name: 'EMAIL_API_KEY' },
       ...(id === null ? [] : [{ type: 'plain_text', name: 'HANA_BUILD', text: id }]),
     ];
     return over.view ?? { status: 0, stdout: JSON.stringify({ id: VID, metadata: { author_email: PRIVATE[0] }, resources: { bindings } }), stderr: '' };

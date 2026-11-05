@@ -4,7 +4,7 @@ Carried over from the design conversation in wend-widget-demo (Oct 2026). Plan d
 https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi · Login journey diagrams: https://claude.ai/artifact/73xpB7AZknWd9s38xw4Fjo ·
 SDK security page: https://claude.ai/artifact/AwzpW8xZ7pAuMoTYgBfcvo
 
-Last verified: 2026-11-04 for "Google email scope spike" (branch `feat/token-first-on`: the user's spike results, the D270 gate met); 2026-11-04 for the claim allow-list notes (branch `fix/sessions-allow-list`: always on, `REJECT_PII_ON_SESSIONS` retired, D271); 2026-11-02 against `develop` @ 1c6a124 and `docs/operations.md` (branch `docs/consistency-pass`: "Next
+Last verified: 2026-11-05 for "Next steps" 7 and "Before mainnet" (branch `feat/sandbox-dev-dashboard-blocks`: the admin Worker and the watchdog email through SendGrid too, D401); 2026-11-04 for "Google email scope spike" (branch `feat/token-first-on`: the user's spike results, the D270 gate met); 2026-11-04 for the claim allow-list notes (branch `fix/sessions-allow-list`: always on, `REJECT_PII_ON_SESSIONS` retired, D271); 2026-11-02 against `develop` @ 1c6a124 and `docs/operations.md` (branch `docs/consistency-pass`: "Next
 steps" and "Before mainnet", the user-mail provider, the batch B status note). The dated sections below are records
 of their day; "Next steps" is the current list.
 
@@ -438,8 +438,8 @@ is left before mainnet: `docs/mainnet-readiness.md`.
    `sandbox-dev`; mainnet's ledger gets its own Neon project (D143). Neon Auth and Neon's other services are not used (D75, D74). Batch C is unblocked.
 7. **Confirm the user-mail provider with the colleague** before creating any account: SendGrid (D194, which Hana
    already uses for Hana Wallet and Wend) replaces Resend (D87) for login codes, final once the colleague agrees. The
-   watchdog's alert email stays on Resend (D87); whether it and the admin Worker's notices move too is decided
-   separately. The email code sits behind one small interface, so a switch is cheap.
+   watchdog's alert email and the admin Worker's notices moved to SendGrid too (D401, 2026-11-05): Resend is no longer
+   used. The email code sits behind one small interface, so a switch is cheap.
 8. **Choose the watchdog's paging app with the colleague** (paused 2026-10-30). Candidates: Pushover (30-day trial,
    then $4.99 one-time per platform per user; adapter reads its acks), PagerDuty free (≤ 5 users; adapter exists, acks
    stay in PagerDuty), incident.io (free Basic on-call for one team; needs a new adapter, built around Slack/Teams).
@@ -464,7 +464,7 @@ Native partner apps (iOS, Android, React Native / Expo; batch B Q24): `docs/nati
 - Hana Home: key export for every shared-login app and cross-device consent revocation (D40, D45).
 - A Hana Cloudflare account and the two registrable domains for `vaultOrigin`/`authOrigin` (D38, D18). User mail:
   SendGrid (D194, final once the colleague agrees), set up on a sending subdomain once the domain exists; the
-  watchdog's alert email: Resend (D87).
+  watchdog's alert email and the admin Worker's notices: SendGrid too, each in its own subuser (D401).
 - External audit.
 - Address freeze: final accounts deployed (D2, D5); after it, nothing may change a path or key derivation.
 - Mainnet launch date: not set (D39).

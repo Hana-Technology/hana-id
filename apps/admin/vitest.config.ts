@@ -12,7 +12,7 @@ import { COMPATIBILITY_DATE, TEST_MANIFEST, testWranglerConfig } from './scripts
 // `CONSOLE` service bindings reach the real API and console Workers (bundled here with wrangler's dry run) as auxiliary
 // Workers under the names the config binds, so every staff route and cron step crosses real service bindings into the
 // real `AdminRpc` and `StaffRpc`. The tests share both Workers' D1s (HOT_DB, CONSOLE_TEST_DB) to seed and inspect them.
-// Nothing reaches a network: the Access certs, Resend and NEAR RPC are answered by stubs of the isolate's fetch; the
+// Nothing reaches a network: the Access certs, SendGrid and NEAR RPC are answered by stubs of the isolate's fetch; the
 // API's own NEAR RPC is an invalid host.
 //
 // C8b: the `ISSUER` binding reaches the real email issuer Worker's DirectoryRpc (bundled the same way), on its own D1

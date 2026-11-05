@@ -1,7 +1,7 @@
 // admin.ts app:settings (docs/batch-b-spec.md "Tests → Scripts", docs/batch-c-spec.md §CLI), against a real SQLite
 // database with apps/api's migrations applied (0006 included), so every write also passes (or is refused by) the
 // migrations' CHECKs and triggers. Raw signing and new policies are staff proposals, announced here with
-// app:changes:announce (sandbox-dev has no admin Worker).
+// app:changes:announce (on sandbox-dev without its dashboard blocks: an env with no admin Worker).
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -90,7 +90,8 @@ const policy = (label = 'Approvals', extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
-const sandbox = loadEnv('sandbox-dev');
+// Without the dashboard blocks (sandbox-dev has them since M4): an env with no admin Worker, so the CLI announces.
+const { console: _console, files: _files, admin: _admin, usage: _usage, email: _email, ownerGrantDelayMs: _ownerGrant, ...sandbox } = loadEnv('sandbox-dev');
 const DELAY = sandbox.appChangeDelayMs;
 
 interface Harness {

@@ -17,7 +17,9 @@ import { CLOUDFLARE_HYPERDRIVE_TOKEN_FILE, ROLE_FILES, USER_ID_KEY_FILE, type Us
 import { DRY_RUN_LINE } from '../lib/vault-kek.ts';
 import { PGLITE, PGLITE_HOOK_MS } from './pglite.ts';
 
-const m: Manifest = { ...loadEnv('sandbox-dev'), name: 'usage-test', cloudflare: { workerName: 'hana-id-api-usage-test', d1Name: 'hana-id-usage-test' } };
+// sandbox-dev renamed, without its dashboard blocks (it has them since M4), so the Hyperdrive names are the defaults.
+const { console: _console, files: _files, admin: _admin, usage: _usage, email: _email, ownerGrantDelayMs: _ownerGrant, ...sandboxBare } = loadEnv('sandbox-dev');
+const m: Manifest = { ...sandboxBare, name: 'usage-test', cloudflare: { workerName: 'hana-id-api-usage-test', d1Name: 'hana-id-usage-test' } };
 // Placeholders of the shapes Neon gives (not a real endpoint, id, key or password).
 const HOST = 'ep-quiet-sky-a1b2c3d4.ap-southeast-2.aws.neon.tech';
 const OWNER = `postgresql://neondb_owner:owner-pw-not-real@${HOST}/neondb?sslmode=require&channel_binding=require`;
@@ -562,6 +564,7 @@ describe('usage-setup hyperdrive', PGLITE, () => {
 
   it('the body: the URL’s host, port, database and user, the password decoded; the manifest’s usage block names', () => {
     expect(hyperdriveNames({ name: 'x', usage: { neonRegion: 'aws-ap-southeast-2', writerHyperdrive: 'w-x', adminHyperdrive: 'a-x' } })).toEqual({ usage_writer: 'w-x', usage_admin: 'a-x' });
+    expect(hyperdriveNames(loadEnv('sandbox-dev'))).toEqual({ usage_writer: 'hana-id-usage-writer-sandbox-dev', usage_admin: 'hana-id-usage-admin-sandbox-dev' });
     const url = roleUrl(`postgresql://o:p@${HOST}:6543/ledger?sslmode=require`, 'usage_admin', 'npg_a/b@c:d%e#f');
     expect(hyperdriveBody('n', url)).toEqual({ name: 'n', origin: { scheme: 'postgres', host: HOST, port: 6543, database: 'ledger', user: 'usage_admin', password: 'npg_a/b@c:d%e#f' }, caching: { disabled: true } });
     expect(() => hyperdriveBody('n', `postgresql://u:p@${HOST}/`)).toThrow(/no database/u);

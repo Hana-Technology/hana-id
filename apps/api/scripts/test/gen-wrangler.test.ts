@@ -64,7 +64,10 @@ const updaterKey = KeyPair.fromRandom('ed25519').toString();
 // sandbox-dev without its identity token block: these tests move apiUrl and list exact vars; the identity vars
 // have their own tests. Also without its emailIssuer block, which the live manifest may or may not carry: the exact-vars
 // tests assume none, and the email login tests add their own fixture block.
-const { identityToken: _identity, emailIssuer: _emailIssuer, ...manifest } = loadEnv('sandbox-dev');
+// And without its dashboard blocks (sandbox-dev has them since M4): the exact-vars tests are for an env that runs the API
+// only; the batch C tests add a fixture set, and "sandbox-dev's own" cases below read the real manifest.
+const { identityToken: _identity, emailIssuer: _emailIssuer, console: _console, files: _files, admin: _admin, usage: _usage, email: _email, ownerGrantDelayMs: _ownerGrant, ...manifest } =
+  loadEnv('sandbox-dev');
 
 function seedSecrets(root: string, env = manifest.name): void {
   const dir = join(root, '.secrets', env);
@@ -269,6 +272,12 @@ describe('wrangler.jsonc', () => {
     expect(vars(full).FILES_ORIGIN).toBe(host('f'));
     const refused = JSON.parse(vars(full).REFUSED_ORIGINS!) as string[];
     expect(refused).toEqual([new URL(manifest.apiUrl).origin, manifest.vaultOrigin, manifest.authOrigin, host('c'), host('ca'), host('f'), host('a')].sort());
+    // sandbox-dev's own (M4): its files origin, and the seven Hana origins refused as partner origins.
+    const real = loadEnv('sandbox-dev');
+    expect(vars(real).FILES_ORIGIN).toBe(real.files!.origin);
+    expect(JSON.parse(vars(real).REFUSED_ORIGINS!)).toEqual(
+      [new URL(real.apiUrl).origin, real.vaultOrigin, real.authOrigin, real.console!.origin, real.console!.authOrigin, real.files!.origin, real.admin!.origin].sort(),
+    );
   });
 
   it('sets DO_LOCATION_HINT only when the manifest names a Durable Object location', () => {

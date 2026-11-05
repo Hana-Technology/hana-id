@@ -92,7 +92,7 @@ function seedAll(): void {
   const wd = {
     WATCHDOG_KEY: KeyPair.fromRandom('ed25519').toString(),
     WATCHDOG_STATUS_TOKEN: 't'.repeat(40),
-    RESEND_API_KEY: 're_abcdefghijkl',
+    SENDGRID_API_KEY: `SG.${'c'.repeat(22)}.${'d'.repeat(43)}`,
     SLACK_WEBHOOK_URL: 'https://hooks.slack.com/services/T0/B0/xyz',
     NTFY_TOPIC_URL: 'https://ntfy.sh/abcdefghijklmnopqrst',
     HEARTBEAT_URL: 'https://hc-ping.com/uuid',
@@ -224,7 +224,7 @@ describe('env-secrets --yes', () => {
     ]);
     spawned = [];
     run(['--worker', 'watchdog', '--yes'], { CLOUDFLARE_ACCOUNT_ID: WATCHDOG_ACCOUNT });
-    expect(spawned.map((s) => s.argv[4])).toEqual(['WATCHDOG_KEY', 'WATCHDOG_STATUS_TOKEN', 'RESEND_API_KEY', 'SLACK_WEBHOOK_URL', 'NTFY_TOPIC_URL', 'HEARTBEAT_URL']);
+    expect(spawned.map((s) => s.argv[4])).toEqual(['WATCHDOG_KEY', 'WATCHDOG_STATUS_TOKEN', 'SENDGRID_API_KEY', 'SLACK_WEBHOOK_URL', 'NTFY_TOPIC_URL', 'HEARTBEAT_URL']);
     expect(new Set(spawned.map((s) => s.cwd))).toEqual(new Set([join(root, 'apps/watchdog')]));
     expectNoValuePrinted();
   });

@@ -170,9 +170,9 @@ describe('POST /api/users/search (the issuer’s directory)', () => {
     expect(fake.sent[0]!.subject).toContain(`User directory budget reached by ${STAFF_EMAIL}`);
     expect(fake.sent[0]!.text).toMatch(/500 identities an hour/u);
     await requestWith(e, '/api/users/search', {});
-    // The provider drops the repeat: the same idempotency key for the same staff member and window.
-    expect(fake.attempts).toHaveLength(2);
-    expect(fake.attempts[1]!.idempotencyKey).toBe(fake.attempts[0]!.idempotencyKey);
+    // The repeat (same staff member and window) is not sent again from this isolate (D401: SendGrid has no idempotency
+    // key); a fresh isolate may send it once more.
+    expect(fake.attempts).toHaveLength(1);
   });
 });
 

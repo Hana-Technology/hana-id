@@ -271,7 +271,7 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
   (`USAGE_DB` admin binding, `preview_urls: false`, `workers_dev: false` on production manifests).
 - **Tests**: spec "Admin and email"; the watcher rows of "Apps, scopes, owner actions"; config snapshots (only the
   API and admin bind Hyperdrive, to different configs).
-- **Setup / deploy (milestone M4, with C9)**: Access application (setup step 8), Resend domain and key (step 9),
+- **Setup / deploy (milestone M4, with C9)**: Access application (setup step 8), SendGrid sender and key (step 9, D401),
   `EMAIL_API_KEY`, `CANCEL_LINK_KEY`, `INVITE_LINK_KEY` secrets (step 10), the admin Hyperdrive id.
 - **Visible after M4**: staff console on sandbox-dev; notices emailed; CLI staff proposals announced by email instead
   of `app:changes:announce`.
@@ -550,8 +550,11 @@ Run from the main checkout; every file in `.secrets/` is 0600 in a 0700 director
 8. **Cloudflare Access** (C8): the admin application on `admin.origin` (Custom Domain on production; Worker-level
    Access on `workers.dev` for sandbox-dev, D75); policy: GitHub team `hana-admins` in `Hana-Technology` plus the
    exact-email Google fallback (open question 4); copy the team domain and AUD tag into the manifest.
-9. **Resend** (C8, D87): the sending subdomain with SPF, DKIM and DMARC; an API key for the admin Worker only.
-10. **Admin secrets** (C8): `EMAIL_API_KEY` (the Resend key of step 9), `CANCEL_LINK_KEY`, `INVITE_LINK_KEY` (32 random
+9. **SendGrid** (C8, D87, D401; was Resend until 2026-11-05): `email.from`'s domain authenticated in SendGrid (SPF,
+   DKIM, DMARC), outside the email issuer's subuser; a restricted API key, **Mail Send only**, for the admin Worker
+   only, saved to `.secrets/<env>/admin-sendgrid-key` (`docs/operations.md` "Admin Worker" step 2). The watchdog has
+   its own (`SENDGRID_API_KEY`, "Watchdog service" step 3).
+10. **Admin secrets** (C8): `EMAIL_API_KEY` (the SendGrid key of step 9), `CANCEL_LINK_KEY`, `INVITE_LINK_KEY` (32 random
     bytes each, base64, generated into `.secrets/<env>/`, then `wrangler secret put` from stdin; `docs/operations.md`
     "Admin Worker" step 3). From C14: `WATCHDOG_STATUS_TOKEN` (the watchdog's own, from
     `.secrets/<env>/watchdog-secrets.json`) and the manifest's `watchdog.url` ("Admin Worker" → "Security & monitoring").

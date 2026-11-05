@@ -178,8 +178,11 @@ describe("package selection (this repo's workspace)", () => {
     expect(has(sel('docs/playbooks.md'), '@hana-id/admin')).toBe(true);
   });
 
-  it('a leaf package runs alone; @hana-id/react runs its React 18 suite too', () => {
-    expect(names(sel('examples/identity-verify/src/verify.ts'))).toEqual(['@hana-id/example-identity-verify']);
+  it('a leaf package runs with its readers only; @hana-id/react runs its React 18 suite too', () => {
+    const leaf = sel('examples/identity-verify/src/verify.ts');
+    expect(leaf.all).toBe(false);
+    expect(has(leaf, '@hana-id/example-identity-verify')).toBe(true);
+    for (const n of ['@hana-id/api', '@hana-id/web', '@hana-id/core', '@hana-id/admin']) expect(has(leaf, n), n).toBe(false);
     expect(has(sel('packages/react/src/index.ts'), '@hana-id/react-on-react18')).toBe(true);
   });
 

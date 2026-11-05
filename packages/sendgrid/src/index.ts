@@ -6,6 +6,15 @@
 // a 4xx, a 5xx, any other 2xx. Callers count a send only when it is accepted. SendGrid has no idempotency key: a retry
 // after a lost answer may deliver the message twice, never zero times (D401).
 //
+// **202 is accepted, not delivered.** SendGrid answers 202 and then drops, without telling the sender, a message to an
+// address on its account's (or subuser's) bounce, spam-report or unsubscribe lists. A message whose loss would be
+// silent and dangerous (a watchdog alert, an admin security alert, a notice an action waits on) sets
+// `bypassSuppressions`: `mail_settings.bypass_bounce_management`, `bypass_spam_management` and
+// `bypass_unsubscribe_management` on, so SendGrid sends it whatever those lists say (D401 as amended). The granular
+// three, not `bypass_list_management` (which SendGrid documents "should only be used in emergencies" and which can't
+// be combined with them): Hana's mail has no unsubscribe groups to bypass. The email issuer's login codes never set
+// it: its suppression handling (D194) is what keeps a bounced or complaining address from being mailed again.
+//
 // Click, open and subscription tracking are off on every message: a rewritten link would point at SendGrid's
 // redirector instead of Hana's own origin (codes carry no link; notices link only to the console origin).
 //
@@ -31,7 +40,19 @@ export interface SendGridMail {
    * another Worker's category never suppresses a login address.
    */
   category: string;
+  /**
+   * Send even to an address on the bounce, spam-report or global-unsubscribe list (the three granular bypass
+   * filters). For alerts and blocking notices only, never the issuer's user mail.
+   */
+  bypassSuppressions?: boolean;
 }
+
+/** The mail settings of a message that bypasses suppressions (SendGrid v3 `mail_settings`). */
+export const BYPASS_SUPPRESSIONS = {
+  bypass_bounce_management: { enable: true },
+  bypass_spam_management: { enable: true },
+  bypass_unsubscribe_management: { enable: true },
+} as const;
 
 export type SendGridFailure = 'misconfigured' | 'unavailable' | 'rejected';
 
@@ -57,6 +78,7 @@ export function sendgridBody(from: string, m: SendGridMail): Record<string, unkn
       subscription_tracking: { enable: false },
       ganalytics: { enable: false },
     },
+    ...(m.bypassSuppressions === true ? { mail_settings: BYPASS_SUPPRESSIONS } : {}),
   };
 }
 

@@ -10,7 +10,7 @@ Deployed on sandbox-dev (2026-10-30, on the API's Cloudflare account for the dri
 with email-login batch 5; `docs/operations.md` "Watchdog service"); no other env yet. Testnet only: it checks the RPC's `chain_id` against the manifest's `network`
 every run and sends nothing on a mismatch.
 
-Last verified: 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: alert email through SendGrid, `SENDGRID_API_KEY`, D401); 2026-11-04 (branch `feat/batch-c-14`: the admin portal's registry test and client, `watchdog.url`); 2026-11-02 (branch `feat/email-login-6`: the email JWKS URL's default under `emailIssuer.url`, D230); 2026-11-02 (branch `feat/identity-token-8`: the identity JWKS and discovery check, step 5b, the
+Last verified: 2026-11-05 (branch `fix/sendgrid-suppression`: every alert email bypasses SendGrid's suppression lists, D401 as amended); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: alert email through SendGrid, `SENDGRID_API_KEY`, D401); 2026-11-04 (branch `feat/batch-c-14`: the admin portal's registry test and client, `watchdog.url`); 2026-11-02 (branch `feat/email-login-6`: the email JWKS URL's default under `emailIssuer.url`, D230); 2026-11-02 (branch `feat/identity-token-8`: the identity JWKS and discovery check, step 5b, the
 `identity` status and `pinnedIdentityKeys`, D210–D214); 2026-11-02 (branch `docs/consistency-pass`: the deploy line, against `docs/operations.md`).
 
 ## What a run does (every 5 min)

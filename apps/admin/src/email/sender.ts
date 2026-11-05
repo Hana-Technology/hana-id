@@ -5,8 +5,10 @@
 // "Accepted" means SendGrid answered 202: anything else (a network error, a timeout, a 4xx, a 5xx, any other 2xx) is
 // a failure, so a blocking notice is not acked on it. SendGrid has no idempotency key (Resend's deduplicated a retry
 // for 24 h): a retry after a lost answer can deliver a message twice, never zero times. `sendToAll` (mail.ts) skips a
-// recipient this isolate already saw accepted for the same message, which removes most repeats (D401). Errors carry
-// the HTTP status only, never the key, the body or the provider's text (which can echo the recipient).
+// recipient this isolate already saw accepted for the same message, which removes most repeats (D401). Accepted is
+// not delivered: SendGrid drops a message to an address on its suppression lists after the 202, so alerts and
+// blocking notices set `bypassSuppressions` (mail.ts BYPASS_PURPOSES; D401 as amended). Errors carry the HTTP status
+// only, never the key, the body or the provider's text (which can echo the recipient).
 import { sendgridSend } from '@hana-id/sendgrid';
 
 export interface EmailMessage {
@@ -20,6 +22,8 @@ export interface EmailMessage {
    * no idempotency key; `sendToAll` uses it to skip a repeat, and it shows in tests which message a send was.
    */
   messageKey: string;
+  /** Send even to an address on SendGrid's bounce, spam-report or unsubscribe list (alerts and blocking notices). */
+  bypassSuppressions: boolean;
 }
 
 export type SendResult = { ok: true; id: string | null } | { ok: false; error: string };
@@ -37,7 +41,7 @@ export function sendgridSender(apiKey: string | undefined, from: string, fetcher
     configured: !!apiKey,
     async send(m) {
       if (!apiKey) return { ok: false, error: 'not configured' };
-      const r = await sendgridSend(apiKey, from, { to: [m.to], subject: m.subject, text: m.text, html: m.html, category: ADMIN_CATEGORY }, fetcher);
+      const r = await sendgridSend(apiKey, from, { to: [m.to], subject: m.subject, text: m.text, html: m.html, category: ADMIN_CATEGORY, bypassSuppressions: m.bypassSuppressions }, fetcher);
       if (r.ok) return { ok: true, id: r.messageId };
       return { ok: false, error: r.status === undefined ? (r.reason === 'unavailable' ? 'network error or timeout' : r.reason) : `HTTP ${r.status}` };
     },

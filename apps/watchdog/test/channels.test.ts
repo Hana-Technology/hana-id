@@ -89,6 +89,8 @@ describe('Email (SendGrid, D401)', () => {
     expect(body.content).toEqual([{ type: 'text/plain', value: 'kid: k9' }]);
     expect(body.categories).toEqual([WATCHDOG_CATEGORY]);
     expect(body.tracking_settings.click_tracking).toEqual({ enable: false, enable_text: false });
+    // Every alert bypasses the bounce, spam-report and unsubscribe lists: SendGrid would otherwise answer 202 and drop it.
+    expect(body.mail_settings).toEqual({ bypass_bounce_management: { enable: true }, bypass_spam_management: { enable: true }, bypass_unsubscribe_management: { enable: true } });
     // A 202 without the message id header is accepted too (SendGrid queued it).
     vi.restoreAllMocks();
     stubFetch(() => new Response(null, { status: 202 }));

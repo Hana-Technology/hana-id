@@ -2,7 +2,9 @@
 // counts only on that 202. The API key (SENDGRID_API_KEY) is restricted to Mail Send and used by this Worker alone
 // (the admin Worker and the watchdog hold their own). Click, open and subscription tracking are off: code mails carry
 // no link, and a rewritten link in a notice would point away from authOrigin. No response body is ever logged (an
-// error body can echo the recipient); the shared adapter drains at most 4 KB of it.
+// error body can echo the recipient); the shared adapter drains at most 4 KB of it. Login mail never bypasses
+// SendGrid's suppression lists (no `bypassSuppressions`, D401 as amended): an address that bounced or complained stays
+// unmailed, as D194's suppression handling intends.
 import { sendgridSend } from '@hana-id/sendgrid';
 import { globalFetch } from './http.ts';
 import type { EmailSender, MailMessage, SendResult } from './sender.ts';

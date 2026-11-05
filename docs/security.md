@@ -1,7 +1,7 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-05 for the email keys (branch `feat/sandbox-dev-dashboard-blocks`: SendGrid for the admin Worker and the watchdog, their keys' rows and blast radius, "Email keys", the admin Worker's residual, D401); 2026-11-05 for the ledger role passwords and the Neon API key (branch `fix/usage-setup-neon-api-passwords`: Neon generates the passwords, the project-scoped key revoked after use, D403); 2026-11-05 for the close watch's signals (branch `fix/popup-signal-before-navigate`: the vault's ack, a null-source signal never taken, D400); 2026-11-05 for the Support ID lookup's screen (branch `feat/batch-c-15-screen`: the email join through `DirectoryRpc.get` audited as `support_lookup` under the lookup's ticket, one ticket rule for both audits, D399); 2026-11-05 for the admin Users screen's read path (branch `feat/batch-c-8b`: `DirectoryRpc`'s invariants, its compromise row, the admin Worker's Users invariants, the audit and the row budget; D388–D392); 2026-11-05 for the popup close watch's deadline (branch `fix/popup-early-close-deadline`: a forged `google` delays a close by at most 90 s, D398); 2026-11-05 for the outside probe's schedule (branch `chore/ci-cost`: the probe turned off on testnet, D387); 2026-11-05 for the Support ID and its lookup (branch `feat/batch-c-15`:
+known open issues. Last verified against code: 2026-11-05 for "Email keys"' delivery (branch `fix/sendgrid-suppression`: 202 is accepted, not delivered; alerts and blocking notices bypass SendGrid's suppression lists, login mail keeps them; admin and watchdog on their own subusers, D401 as amended); 2026-11-05 for the email keys (branch `feat/sandbox-dev-dashboard-blocks`: SendGrid for the admin Worker and the watchdog, their keys' rows and blast radius, "Email keys", the admin Worker's residual, D401); 2026-11-05 for the ledger role passwords and the Neon API key (branch `fix/usage-setup-neon-api-passwords`: Neon generates the passwords, the project-scoped key revoked after use, D403); 2026-11-05 for the close watch's signals (branch `fix/popup-signal-before-navigate`: the vault's ack, a null-source signal never taken, D400); 2026-11-05 for the Support ID lookup's screen (branch `feat/batch-c-15-screen`: the email join through `DirectoryRpc.get` audited as `support_lookup` under the lookup's ticket, one ticket rule for both audits, D399); 2026-11-05 for the admin Users screen's read path (branch `feat/batch-c-8b`: `DirectoryRpc`'s invariants, its compromise row, the admin Worker's Users invariants, the audit and the row budget; D388–D392); 2026-11-05 for the popup close watch's deadline (branch `fix/popup-early-close-deadline`: a forged `google` delays a close by at most 90 s, D398); 2026-11-05 for the outside probe's schedule (branch `chore/ci-cost`: the probe turned off on testnet, D387); 2026-11-05 for the Support ID and its lookup (branch `feat/batch-c-15`:
 what a user shows, what the staff lookup reveals and to whom, its audit, D394–D397); 2026-11-05 for the build id (branch `feat/deploy-build-check`: a public
 commit id in `/v1/health`, `/v1/email/health`, the page origins' `/.well-known/hana-build` and the bundles, D384);
 2026-11-05 for the outside probe's schedule (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383; before it branch `chore/identity-probe-hourly`, hourly, D382); 2026-11-04 for retention and erasure (branch `feat/batch-c-13`: the
@@ -218,6 +218,23 @@ restricted key with Mail Send only, held by its Worker and one `.secrets/<env>/`
 - No key, body or address is in a send's result or a log line (the shared adapter returns the HTTP status at most).
 - Retries: SendGrid has no idempotency key, so a lost answer leads to a duplicate email, never to a notice counted as
   sent that wasn't (D401).
+- **202 is accepted, not delivered.** SendGrid answers 202 and then drops, without a word to the sender, a message to
+  an address on its bounce, spam-report or unsubscribe list (and a later bounce or block shows only in its activity
+  feed). A notice acked on that 202, or an alert, could so be lost silently: the watchdog's alerts and the admin
+  Worker's alerts and blocking notices (`apps/admin/src/mail.ts` `BYPASS_PURPOSES`: pending changes, invite and owner
+  grant notices, the watcher's, the feed's security and app-change digests, nonce, rejection, settlement, retention
+  and `directory_budget` alerts) set SendGrid's granular bypass filters (`mail_settings.bypass_bounce_management`,
+  `bypass_spam_management`, `bypass_unsubscribe_management`; [Mail Send](https://www.twilio.com/docs/sendgrid/api-reference/mail-send/mail-send)),
+  so SendGrid sends them whatever those lists say. Routine admin mail (an invitee's link, a statement's notice, the
+  org audit digest) keeps the lists, and the issuer's login mail never bypasses them: a bounced or complaining address
+  stays unmailed (D194). A bypass is not a delivery receipt either: an address that really doesn't exist still bounces,
+  so the alias and the founders' alert addresses are checked in SendGrid's activity feed after setup (and the watchdog's
+  other channels, D85, don't depend on email). A source test holds every admin mail purpose to one of the two lists.
+- **Separate subusers where the plan allows.** The admin Worker and the watchdog send from their own subusers, never the
+  issuer's: a subuser's suppression lists apply to everything it sends, so an admin notice's bounce would otherwise
+  suppress a user's login address, and a bypassing alert would mail past the issuer's lists (D194 M3, D401). On a
+  plan without subusers (sandbox-dev today) they share the account and its lists with each other, not with the
+  issuer's subuser.
 
 ## Invariants and where they are enforced
 

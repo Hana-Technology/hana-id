@@ -106,7 +106,9 @@ export const WATCHDOG_CATEGORY = 'hana-id-watchdog';
 /**
  * Through the shared SendGrid adapter, with the watchdog's own Mail-Send-only key: accepted only on SendGrid's 202
  * (D87: a send counts only when the provider accepts it). Each recipient gets its own copy; SendGrid has no
- * idempotency key, so a send retried after a lost answer may arrive twice (D401).
+ * idempotency key, so a send retried after a lost answer may arrive twice (D401). Every alert bypasses SendGrid's
+ * bounce, spam-report and unsubscribe lists (`bypassSuppressions`): a 202 is not delivery, and an alert SendGrid
+ * dropped for an earlier bounce would be lost without a trace (D401 as amended).
  */
 export function sendgridEmail(apiKey: string | undefined, from: string): Email & { configured: boolean } {
   return {
@@ -115,7 +117,7 @@ export function sendgridEmail(apiKey: string | undefined, from: string): Email &
       if (!apiKey) return notConfigured;
       if (to.length === 0) return { ok: false, error: 'no recipients' };
       // The adapter's own timeout is this file's TIMEOUT_MS (10 s); it never puts the key, a body or an address in r.
-      const r = await sendgridSend(apiKey, from, { to, subject, text, category: WATCHDOG_CATEGORY });
+      const r = await sendgridSend(apiKey, from, { to, subject, text, category: WATCHDOG_CATEGORY, bypassSuppressions: true });
       if (r.ok) return r.messageId ? { ok: true, ref: r.messageId } : { ok: true };
       return { ok: false, error: r.status !== undefined ? `HTTP ${r.status}` : r.reason === 'unavailable' ? 'network error or timeout' : r.reason };
     },

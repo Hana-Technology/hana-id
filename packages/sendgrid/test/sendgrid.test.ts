@@ -2,7 +2,7 @@
 // tracking off, the category), accepted only on 202, every other answer a failure by status, nothing of the key, the
 // body or an address in a result, and a capped drain of the answer.
 import { describe, expect, it } from 'vitest';
-import { SENDGRID_KEY_RE, SENDGRID_MAX_RECIPIENTS, SENDGRID_URL, classify, parseFrom, sendgridBody, sendgridSend, type SendGridMail } from '../src/index.ts';
+import { BYPASS_SUPPRESSIONS, SENDGRID_KEY_RE, SENDGRID_MAX_RECIPIENTS, SENDGRID_URL, classify, parseFrom, sendgridBody, sendgridSend, type SendGridMail } from '../src/index.ts';
 
 const KEY = 'SG.fixture-key-not-real.fixture-secret-not-real-0123456789abcdef';
 const FROM = 'Hana ID <notices@mail.hana.example>';
@@ -55,6 +55,19 @@ describe('sendgridSend', () => {
     // Plain text only when there is no HTML part.
     const { html: _h, ...textOnly } = mail;
     expect((sendgridBody(FROM, textOnly) as Record<string, any>).content).toEqual([{ type: 'text/plain', value: 'Text' }]);
+  });
+
+  it('bypassSuppressions sets the three granular bypass filters, never bypass_list_management; without it no mail_settings at all', async () => {
+    expect(BYPASS_SUPPRESSIONS).toEqual({ bypass_bounce_management: { enable: true }, bypass_spam_management: { enable: true }, bypass_unsubscribe_management: { enable: true } });
+    const on = sendgridBody(FROM, { ...mail, bypassSuppressions: true }) as Record<string, any>;
+    expect(on.mail_settings).toEqual(BYPASS_SUPPRESSIONS);
+    // SendGrid refuses bypass_list_management combined with the granular filters; it is never sent.
+    expect(JSON.stringify(on)).not.toContain('bypass_list_management');
+    for (const m of [mail, { ...mail, bypassSuppressions: false }]) expect('mail_settings' in (sendgridBody(FROM, m) as Record<string, unknown>)).toBe(false);
+    // On the wire too.
+    const { fetcher, seen } = fake(() => new Response(null, { status: 202 }));
+    await sendgridSend(KEY, FROM, { ...mail, bypassSuppressions: true }, fetcher);
+    expect(JSON.parse(String(seen[0]!.init.body)).mail_settings).toEqual(BYPASS_SUPPRESSIONS);
   });
 
   it('every other answer is a failure, classified by status; nothing of the key, the body or the address in it', async () => {

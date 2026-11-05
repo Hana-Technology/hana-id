@@ -187,7 +187,8 @@ export interface SendOutcome {
  * Sends `message` to each of `to`, one message each. Every send is tried (a failure doesn't stop the others; the next
  * run retries, skipping the recipients this isolate saw accepted), unless the budget runs out first. The caller acks a
  * blocking notice only when `allAccepted`: a send counts only when the provider accepted it, so a lost answer leads to
- * a repeat at worst, never to a notice acked that nobody was sent.
+ * a repeat at worst, never to a notice acked that nobody was sent. Accepted is not delivered: a blocking notice or an
+ * alert bypasses the provider's suppression lists (`bypassesSuppressions`), so it isn't dropped after the 202.
  */
 export async function sendToAll(sender: EmailSender, budget: Budget, to: readonly string[], message: Rendered, purpose: string, now: number = Date.now()): Promise<SendOutcome> {
   if (to.length === 0) return { allAccepted: false, sent: 0, failed: 0, skipped: 0, outOfBudget: false };
@@ -196,11 +197,12 @@ export async function sendToAll(sender: EmailSender, budget: Budget, to: readonl
   const pending = keyed.filter((k) => !wasAccepted(k.key, now));
   const skipped = keyed.length - pending.length;
   if (budget.remaining < pending.length) return { allAccepted: false, sent: 0, failed: 0, skipped, outOfBudget: true };
+  const bypass = bypassesSuppressions(purpose);
   let sent = 0;
   let failed = 0;
   for (const { addr, key } of pending) {
     budget.take();
-    const r = await sender.send({ to: addr, subject: message.subject, text: message.text, html: message.html, messageKey: key });
+    const r = await sender.send({ to: addr, subject: message.subject, text: message.text, html: message.html, messageKey: key, bypassSuppressions: bypass });
     if (r.ok) {
       sent++;
       rememberAccepted(key, now);
@@ -208,6 +210,40 @@ export async function sendToAll(sender: EmailSender, budget: Budget, to: readonl
   }
   return { allAccepted: failed === 0, sent, failed, skipped, outOfBudget: false };
 }
+
+/**
+ * Which admin mail bypasses SendGrid's bounce, spam-report and unsubscribe lists (D401 as amended). SendGrid answers
+ * 202 and then silently drops a message to a suppressed address, and `sendToAll` acks a blocking notice on that 202:
+ * so every alert and every notice an action or a cursor waits on is sent whatever the lists say. Routine mail keeps
+ * them: an invitation to an address a partner typed (the most likely to bounce or be reported, and nothing waits on
+ * its delivery but the invitee), a statement's notice, and the org audit digest. Keyed by the purpose's kind (its text
+ * before the first `:`, or `feed:<source>`); a kind in neither list bypasses (fail towards delivery), and a source
+ * test holds every purpose in the code to one of the two.
+ */
+export const BYPASS_PURPOSES: ReadonlySet<string> = new Set([
+  'change_pending',
+  'invite_notice',
+  'owner_grant',
+  'watch_pending',
+  'watch_changed',
+  'feed:security_events',
+  'feed:app_changes',
+  'nonce_unexplained',
+  'rejection_rate',
+  'settlement_mismatch',
+  'retention_failed',
+  'retention_overdue',
+  'retention_skipped',
+  'directory_budget',
+]);
+export const ROUTINE_PURPOSES: ReadonlySet<string> = new Set(['invite_link', 'statement_issued', 'feed:audit_log']);
+
+/** A purpose's kind: `feed:<source>` for the feed's digests, else the text before the first `:`. */
+export const purposeKind = (purpose: string): string => {
+  const [a, b] = purpose.split(':');
+  return a === 'feed' && b ? `feed:${b}` : (a ?? '');
+};
+export const bypassesSuppressions = (purpose: string): boolean => !ROUTINE_PURPOSES.has(purposeKind(purpose));
 
 /** A 32-byte key from a secret (standard base64 with padding, or b64url), or null when missing or malformed. */
 export function linkKey(raw: string | undefined): Uint8Array | null {

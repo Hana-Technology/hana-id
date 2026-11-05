@@ -1,19 +1,20 @@
 // EmailSender's SendGrid adapter (accepted only on 202; no idempotency header, SendGrid has none; nothing of the key,
 // the answer or the address in an error; the admin category), sending to many (one message per recipient; a retry
 // skips what this isolate saw accepted and never what it didn't, D401) and the rendering rules (escaped partner
-// text, one-line subjects, links only to the console origin, no remote image).
+// text, one-line subjects, links only to the console origin, no remote image); which mail bypasses SendGrid's
+// suppression lists (alerts and blocking notices) and which keeps them (D401 as amended).
 import { SENDGRID_URL } from '@hana-id/sendgrid';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { changePending } from '../src/email/messages.ts';
 import { consoleLink, oneLine, render } from '../src/email/render.ts';
 import { ADMIN_CATEGORY, outbound, sendgridSender } from '../src/email/sender.ts';
-import { ACCEPTED_MEMO_MS, Budget, forgetAccepted, linkKey, messageKey, recipients, sendToAll } from '../src/mail.ts';
+import { ACCEPTED_MEMO_MS, Budget, bypassesSuppressions, forgetAccepted, linkKey, messageKey, recipients, sendToAll } from '../src/mail.ts';
 import { FakeEmail } from './helpers.ts';
 
 afterEach(() => vi.restoreAllMocks());
 
 const KEY = 'SG.fixture-admin-not-real.fixture-secret-not-real-0123456789abcd';
-const msg = { to: 'a@partner.example', subject: 's', text: 't', html: '<p>t</p>', messageKey: 'k1' };
+const msg = { to: 'a@partner.example', subject: 's', text: 't', html: '<p>t</p>', messageKey: 'k1', bypassSuppressions: false };
 const rendered = { subject: 's', text: 't', html: 'h' };
 
 describe('the SendGrid adapter', () => {
@@ -41,6 +42,11 @@ describe('the SendGrid adapter', () => {
     // A link in a notice must stay a console link: no click tracking rewrites it.
     expect(body.tracking_settings.click_tracking).toEqual({ enable: false, enable_text: false });
     expect(body.tracking_settings.open_tracking).toEqual({ enable: false });
+    // A routine message keeps SendGrid's suppression lists; an alert or a blocking notice bypasses them.
+    expect(body.mail_settings).toBeUndefined();
+    calls.length = 0;
+    await sendgridSender(KEY, 'x@mail.hana.example').send({ ...msg, bypassSuppressions: true });
+    expect(JSON.parse(String(calls[0]!.init.body)).mail_settings).toEqual({ bypass_bounce_management: { enable: true }, bypass_spam_management: { enable: true }, bypass_unsubscribe_management: { enable: true } });
     // The Worker's sender is this adapter, with the Worker's own key and EMAIL_FROM.
     calls.length = 0;
     expect((await outbound.email({ EMAIL_API_KEY: KEY, EMAIL_FROM: 'team@hanawallet.example' }).send(msg)).ok).toBe(true);
@@ -139,6 +145,18 @@ describe('sending to many', () => {
     });
     await sendgridSender(KEY, 'x@mail.hana.example').send({ ...msg, messageKey: 'key-that-stays-here' });
     expect(bodies[0]).not.toContain('key-that-stays-here');
+  });
+
+  it('alerts and blocking notices bypass the suppression lists; invitations, statements and the audit digest keep them (D401 as amended)', async () => {
+    for (const p of ['change_pending:c1', 'invite_notice:i1', 'owner_grant:g1', 'watch_pending:s:1', 'watch_changed:s:x', 'feed:security_events:1,2', 'feed:app_changes:org_1:1-2', 'nonce_unexplained:x', 'rejection_rate:x', 'settlement_mismatch:x', 'retention_failed:x', 'retention_overdue:2026-10', 'retention_skipped:2026-10', 'directory_budget:sandbox:a@hana.example:1h:1'])
+      expect(bypassesSuppressions(p), p).toBe(true);
+    for (const p of ['invite_link:i1', 'statement_issued:org_1:2026-10:abc', 'feed:audit_log:org_1:1-2']) expect(bypassesSuppressions(p), p).toBe(false);
+    // An unknown kind fails towards delivery.
+    expect(bypassesSuppressions('something_new:1')).toBe(true);
+    const fake = new FakeEmail();
+    await sendToAll(fake, new Budget(5), ['a@x.example'], rendered, 'owner_grant:g9');
+    await sendToAll(fake, new Budget(5), ['a@x.example'], rendered, 'invite_link:i9');
+    expect(fake.attempts.map((m) => m.bypassSuppressions)).toEqual([true, false]);
   });
 
   it('link keys: 32 bytes of base64 or b64url, anything else refused', () => {

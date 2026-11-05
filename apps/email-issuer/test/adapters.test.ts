@@ -36,6 +36,8 @@ describe('SendGrid sender', () => {
     expect(body.subject).toBe('Your sign-in code for Wallet');
     expect(body.content.map((c: { type: string }) => c.type)).toEqual(['text/plain', 'text/html']);
     expect(body.tracking_settings).toEqual({ click_tracking: { enable: false, enable_text: false }, open_tracking: { enable: false }, subscription_tracking: { enable: false }, ganalytics: { enable: false } });
+    // Login mail keeps SendGrid's suppression lists (D194): no bypass filter, no mail_settings at all (D401 as amended).
+    expect(body.mail_settings).toBeUndefined();
     for (const [status, reason] of [[400, 'rejected'], [401, 'misconfigured'], [403, 'misconfigured'], [429, 'unavailable'], [500, 'unavailable'], [200, 'rejected']] as const) {
       reply.status = status;
       reply.body = status === 400 ? JSON.stringify({ errors: [{ message: 'bad a@example.com' }] }) : '';

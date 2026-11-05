@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
+Last verified against code: 2026-10-28 (commit 58edee9); D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
 user, implementation choices to confirm) on 2026-11-05; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
 flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
@@ -6975,11 +6975,65 @@ still take them: renumber on merge.
   carry the env; a PUT resets application settings the script doesn't manage to Cloudflare's defaults; an
   application made by the dashboard toggle isn't matched (only pointed out), so it is turned off first.
 
+## Every Worker stamped: the dashboard Workers and the watchdog in `deploy-check` (branch `feat/deploy-check-all-workers`), 2026-11-05
+
+### D406. The console, console-auth, files, admin and watchdog Workers carry the build id; the admin's and the watchdog's are read from their deployed version with wrangler
+- Date 2026-11-05 · Status: **asked for by the user** (implementation choices: to confirm) · Amends D384 (its
+  "Limits": those five Workers weren't stamped; and its rejected "Cloudflare's version metadata", see "Why") · Built:
+  `packages/env/src/stamped-deploy.ts` (the one wrapper), `build-id.ts` (`deployedBuild`, `buildBody`); each app's
+  `deploy` script; `apps/console/src/index.ts`, `apps/console-auth/src/index.ts`, `apps/files/src/index.ts`
+  (`/.well-known/hana-build`); `apps/console/scripts/build-stamp.ts`, `vite.config.ts` (the SPA's meta);
+  `scripts/lib/deploy-check.ts` (groups, `--only`/`--skip`, wrangler reads, the console's and watchdog's D1 in `--d1`)
+  · Number note: D406 was chosen with D401–D405 possibly taken by branches in flight (D403 and, by merge time, D408 on
+  `origin/develop`; D404–D407 not there); a branch racing this one may take D406 too: renumber on merge
+- Context: D384 stamped the API, both page Workers and the email issuer; the other five Workers of an env could run
+  any commit unseen.
+- Decision:
+  - **One wrapper.** Every app that deploys a Worker of an env (api, email-issuer, console, console-auth, files, admin,
+    watchdog) runs `tsx ../../packages/env/src/stamped-deploy.ts [args]` as its `deploy` (and the API's `deploy:pages`):
+    `wrangler deploy <args> --var HANA_BUILD:<id>`. The per-app copies (`apps/api`, `apps/email-issuer`
+    `scripts/deploy.ts`) are gone. The console's `deploy` stays `vite build &&` the wrapper. The watchdog's deploy, a
+    raw `wrangler deploy` until now, goes through `run deploy` too.
+  - **Public Workers: the page Workers' route.** The console, console-auth and files Workers answer `GET`/`HEAD
+    /.well-known/hana-build` with `{"build": <id> | null}` on their own origin only, under their usual headers (the
+    console's CSP and `no-store`; console-auth's allow-nothing CSP; the files Worker's sandbox CSP and `no-store`),
+    without touching the console's AuthHandler or the logo bucket. Other methods: 405 (console, files) or 404
+    (console-auth, which serves nothing else).
+  - **The console SPA is stamped too**: `vite build` writes `<meta name="hana-build">` into `dist/index.html`, read from
+    `{console.origin}/`. dist/ is gitignored and survives checkouts, so a dist/ built elsewhere is the vault's
+    2026-11-05 risk again; the meta shows it.
+  - **The admin: no route.** Its whole origin is behind Cloudflare Access, which deploy-check can't pass and which gets
+    no exception. deploy-check reads the deployed version's `HANA_BUILD` with wrangler, logged in to the API's account
+    (as for any deploy): `wrangler deployments status --name <worker> --json`, then `wrangler versions view <id>
+    --name <worker> --json`, both read-only, run from an empty directory so no generated config applies. Only that
+    var is taken from the output; nothing else (other vars, the author's email) is printed. A gradual deployment (two
+    versions, or one under 100%) is a failure. The admin's `public/` assets ship in the same version from the same
+    tree (no build step), so the var covers them.
+  - **The watchdog: the same wrangler read, on its own account**, with `CLOUDFLARE_ACCOUNT_ID` =
+    `watchdog.cloudflare.accountId`. Every watchdog route needs the status token (C14) and it has no public health
+    route; none is added (D86 keeps its surface minimal). As its account has its own login, a default run doesn't read
+    it (it says so): `deploy-check <env> --only watchdog`, logged in there, does.
+  - **Groups and flags.** Each piece is in a group (api, pages, issuer, console, console-auth, files, admin,
+    watchdog), read when the manifest has it; `--only` / `--skip` take groups. `--d1` adds the console's D1 (and the
+    watchdog's, with `--only watchdog`).
+- Why: the public Workers get the route the page Workers already have (one reader, one shape). For the admin, a hole
+  in Access is not worth a build id; the authenticated admin API can't be reached by a script either. D384 rejected
+  "Cloudflare's version metadata" for its version id and tags, which say nothing about the commit; here the metadata
+  carries the `HANA_BUILD` var itself, so the read is as good as the HTTP one, needs no binding, and needs only the
+  login the deploy already used.
+- Limits: the admin's and the watchdog's reads need wrangler credentials for their account (a login with several
+  accounts: set `CLOUDFLARE_ACCOUNT_ID` for the admin's); the hosted demo (`apps/demo`) isn't an env Worker and stays
+  unstamped. As in D384, the id is reported by whoever deploys: a hygiene check, not an attestation.
+- Rejected: a route on the admin excluded from Access (a hole in the staff console's perimeter); a `build` field on
+  the watchdog's `/status` read with the status token (deploy-check would hold a secret); a public route on the
+  watchdog; copying `scripts/deploy.ts` into each app.
+
 ## Superseded or amended
 
 | Was | Now | Source |
 |---|---|---|
 | sandbox-dev's admin Access: the GitHub team `hana-admins` plus exact-email Google rules (D88), the workers.dev Worker-level toggle turned on in the dashboard (D284), the policy and AUD by hand | `sandbox*`: Google, exact emails only; every env's application and policies made and checked by `access-setup <env>` from the manifest, a hostname application on workers.dev (D409) | `scripts/lib/access-setup.ts`; docs/operations.md "Admin Worker" step 1 |
+| D384: the watchdog, console, console-auth, admin and files Workers unstamped; `deploy-check` reads the API, the page Workers and bundles and the issuer; each of the API and issuer has its own `scripts/deploy.ts` | Every env Worker deploys through `packages/env/src/stamped-deploy.ts`; the console, console-auth and files Workers serve `/.well-known/hana-build`, the console SPA carries the meta; the admin's and the watchdog's id is read from the deployed version with wrangler (`--only watchdog` for the watchdog); `--only`/`--skip` (D406) | `packages/env/src/stamped-deploy.ts`, `scripts/lib/deploy-check.ts`; docs/operations.md "Checking a deploy" |
 | `usage-setup roles`: a locally generated password per role, set as a SCRAM-SHA-256 verifier by `ALTER ROLE … LOGIN PASSWORD`; a re-run reuses the role files (D224) | SQL gives `LOGIN` only; Neon's API (`reset_password`) generates each password, written straight to the role file; every run resets both and replaces the files, so Hyperdrive configs from older files are re-created; the key in `.secrets/<env>/neon-api-key` (D403) | `scripts/lib/usage-setup.ts`, `scripts/lib/neon-api.ts`; docs/operations.md "Usage capture" step 2 |
 | D347: every Hana page posts `hana:auth-progress` (`google`, `relayed`) and then navigates or closes | The page navigates or closes once the vault acked (`hana:auth-progress-ack`), or after 150 ms: Chromium nulls the source of a message posted in the navigation's own task (D400) | `packages/web/src/auth/vault-signal.ts`; docs/architecture.md login step 4 |
 | The lookup's ticket: 1–64 printable ASCII characters, no `@`, no leading or trailing space (D396) | console-core `SUPPORT_TICKET_RE`, 1–64 letters, digits or `._#:-`: the issuer's rule, the same ticket in both audits (D399) | `packages/console-core/src/support.ts` `supportTicket` |

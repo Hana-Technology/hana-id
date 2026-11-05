@@ -132,6 +132,12 @@ export interface Env {
   CONSOLE_ORIGIN: string;
   /** `files.origin`: partner logos, the CSP's only `img-src` besides `'self'` and `data:`. */
   FILES_ORIGIN: string;
+  /**
+   * The build id (D406): set only by `run deploy` (the shared wrapper's `wrangler deploy --var HANA_BUILD:<id>`), never
+   * by `gen`. No route serves it (the whole origin is behind Cloudflare Access): `deploy-check` reads it from the
+   * deployed version's metadata (`wrangler versions view`). Nothing in the Worker reads it.
+   */
+  HANA_BUILD?: string;
   /** Read-only NEAR RPC and the signer account: `get_scope` for the on-chain watcher. */
   NEAR_RPC: string;
   SIGNER_ACCOUNT: string;

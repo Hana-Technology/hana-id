@@ -7,7 +7,9 @@
 // `/start` and `/callback` reaching `AuthHandler` through console-auth), `GET /api/me`, the read-only org views and the
 // two session-less emailed-link confirms; the write routes come with C10. The admin Worker reaches the console's data
 // through the `StaffRpc` entrypoint (service binding, no route). The hourly cron runs the invite, owner-grant and
-// housekeeping jobs.
+// housekeeping jobs. `GET /.well-known/hana-build` reports the build id it was deployed with (D406), and the SPA's
+// index.html carries its own (`<meta name="hana-build">`, scripts/build-stamp.ts), for `deploy-check`.
+import { BUILD_PATH, buildBody } from '@hana-id/env/build-id';
 import { actionStatus, startStepUp } from './actions.ts';
 import { authLimited, createLoginFlow } from './auth-flow.ts';
 import { isOrgReadPath, me, memberships, orgRoute, sessionOf } from './bff.ts';
@@ -83,11 +85,22 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
   return (await orgRoute(url, env, info, session, now)) ?? errorResponse('not_found');
 }
 
+/**
+ * `GET /.well-known/hana-build`: `{"build": <id> | null}`, the HANA_BUILD var the shared deploy wrapper sets (D384,
+ * D406). Sent with the console's headers and `no-store`, like every `/api/*` answer; HEAD has no body.
+ */
+function buildAnswer(request: Request, value: string | undefined): Response {
+  if (!SAFE_METHODS.has(request.method)) return errorResponse('method_not_allowed', undefined, { allow: 'GET, HEAD' });
+  return new Response(request.method === 'HEAD' ? null : buildBody(value), { status: 200, headers: { 'content-type': 'application/json; charset=utf-8' } });
+}
+
 async function route(request: Request, env: Env): Promise<{ res: Response; api: boolean }> {
   const url = new URL(request.url);
   const isApi = url.pathname === '/api' || url.pathname.startsWith('/api/');
   // Host dispatch: this Worker answers for console.origin only.
   if (url.origin !== env.CONSOLE_ORIGIN) return { res: new Response('Not found', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' } }), api: false };
+  // The build id (D406), for `deploy-check`: read-only, so no CSRF check; any other method is 405.
+  if (url.pathname === BUILD_PATH) return { res: buildAnswer(request, env.HANA_BUILD), api: true };
   const problem = csrfProblem(request, env.CONSOLE_ORIGIN);
   if (problem) {
     log({ event: 'csrf_refused', requestId: requestInfo(request).requestId, code: problem });

@@ -6,7 +6,27 @@ import { buildMeta, vaultBanner } from '@hana-id/env/build-id';
 import type { LocalBuild } from '@hana-id/env/local-build';
 import { describe, expect, it } from 'vitest';
 import { CliError } from '../lib/cli.ts';
-import { BANNER_LIMIT, checkTargets, d1Targets, deployCheck, judge, migrationsListArgv, observe, pendingMigrations, type Observed } from '../lib/deploy-check.ts';
+import {
+  BANNER_LIMIT,
+  GROUPS,
+  checkTargets,
+  d1Targets,
+  deployCheck,
+  deployedVersions,
+  deploymentStatusArgv,
+  judge,
+  migrationsListArgv,
+  observe,
+  observeWrangler,
+  parseGroups,
+  pendingMigrations,
+  selectGroups,
+  versionBuild,
+  versionViewArgv,
+  type Observed,
+  type WranglerResult,
+  type WranglerRun,
+} from '../lib/deploy-check.ts';
 
 const HEAD = '0485faa1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7';
 const ID = '0485faa1c2d3';
@@ -69,14 +89,16 @@ describe('checkTargets', () => {
       ['vault worker', URLS.vaultWorker, 'json'],
       ['vault bundle', URLS.vaultJs, 'vault-js'],
       ['auth worker', URLS.authWorker, 'json'],
-      ['auth pages', URLS.authLogin, 'auth-html'],
+      ['auth pages', URLS.authLogin, 'html-meta'],
       ['email issuer', URLS.issuer, 'json'],
+      // sandbox-dev has a watchdog block: a piece, read only with --only watchdog (selectGroups).
+      ['watchdog worker', `wrangler: ${m.watchdog!.cloudflare.workerName}`, 'wrangler'],
     ]);
   });
 
   it('leaves out what the manifest doesn’t have; the issuer defaults to the API’s URL', () => {
     expect(checkTargets(noIssuer).map((t) => t.name)).not.toContain('email issuer');
-    const { vaultOrigin: _v, authOrigin: _a, ...apiOnly } = noIssuer;
+    const { vaultOrigin: _v, authOrigin: _a, watchdog: _w, ...apiOnly } = noIssuer;
     expect(checkTargets(apiOnly as Manifest).map((t) => t.name)).toEqual(['api']);
     const shared = { ...m, apiUrl: 'https://api.example.test/', emailIssuer: { ...m.emailIssuer!, url: undefined } } as Manifest;
     expect(checkTargets(shared).find((t) => t.name === 'email issuer')?.url).toBe('https://api.example.test/v1/email/health');
@@ -270,5 +292,291 @@ describe('deployCheck', () => {
     await expect(run(['a', 'b'], fetchFn)).rejects.toBeInstanceOf(CliError);
     await expect(run(['local-dev'], fetchFn)).rejects.toThrow(/local\* envs/u);
     await expect(run(['sandbox-dev', '--fix'], fetchFn)).rejects.toBeInstanceOf(CliError);
+  });
+});
+
+// ---- D406: the console, console-auth, files, admin and watchdog Workers ----
+
+/** sandbox-dev with every dashboard block (as a production env has them), on test origins. */
+const full = {
+  ...withIssuer,
+  console: { workerName: 'hana-id-console-x', d1Name: 'hana-id-console-x', origin: 'https://console.example.test', authWorkerName: 'hana-id-console-auth-x', authOrigin: 'https://console-auth.example.test' },
+  files: { workerName: 'hana-id-files-x', origin: 'https://files.example.test', logosBucket: 'hana-id-logos-x', statementsBucket: 'hana-id-statements-x', exportsBucket: 'hana-id-exports-x' },
+  admin: { workerName: 'hana-id-admin-x', origin: 'https://admin.example.test', accessTeamDomain: 'team.cloudflareaccess.com', accessAud: 'UNSET', staffEmails: ['staff@example.com'] },
+} as Manifest;
+const WATCHDOG = full.watchdog!.cloudflare;
+
+const DASH_URLS = {
+  consoleWorker: 'https://console.example.test/.well-known/hana-build',
+  consoleSpa: 'https://console.example.test/',
+  consoleAuth: 'https://console-auth.example.test/.well-known/hana-build',
+  files: 'https://files.example.test/.well-known/hana-build',
+};
+
+/** Every HTTP piece of `full` runs `id` unless `over` says otherwise. */
+function fullServer(id: string, over: Partial<Record<keyof typeof DASH_URLS, Answer>> = {}) {
+  const base = server(id);
+  const seen: string[] = [];
+  const defaults: Record<keyof typeof DASH_URLS, () => Response> = {
+    consoleWorker: () => Response.json({ build: id }),
+    consoleSpa: () => new Response(`<!doctype html><html><head><title>Hana ID console</title>${buildMeta(id)}\n  </head><body><div id="root"></div></body></html>`),
+    consoleAuth: () => Response.json({ build: id }),
+    files: () => Response.json({ build: id }),
+  };
+  const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    seen.push(url);
+    const key = (Object.keys(DASH_URLS) as (keyof typeof DASH_URLS)[]).find((k) => DASH_URLS[k] === url);
+    if (!key) return base.fetchFn(input, init);
+    const a = over[key];
+    if (a instanceof Error) throw a;
+    if (a instanceof Response) return a;
+    return (a ?? defaults[key])();
+  }) as typeof fetch;
+  return { fetchFn, seen };
+}
+
+const VID = '11111111-2222-4333-8444-555555555555';
+const VID2 = '66666666-7777-4888-9999-aaaaaaaaaaaa';
+/** What wrangler prints besides HANA_BUILD: never shown. */
+const PRIVATE = ['owner@example.com', 'staff-only-value'];
+
+/** A wrangler whose every Worker's deployed version carries `id` (null: no HANA_BUILD var), unless `over` says otherwise. */
+function fakeWrangler(id: string | null, over: { status?: WranglerResult; view?: WranglerResult } = {}) {
+  const calls: { app: string; argv: string[]; env: Record<string, string> }[] = [];
+  const run: WranglerRun = (app, argv, env) => {
+    calls.push({ app, argv, env });
+    if (argv[0] === 'deployments') return over.status ?? { status: 0, stdout: JSON.stringify({ id: 'dep', author_email: PRIVATE[0], versions: [{ version_id: VID, percentage: 100 }] }), stderr: '' };
+    const bindings = [
+      { type: 'plain_text', name: 'STAFF_EMAILS', text: PRIVATE[1] },
+      { type: 'secret_text', name: 'RESEND_API_KEY' },
+      ...(id === null ? [] : [{ type: 'plain_text', name: 'HANA_BUILD', text: id }]),
+    ];
+    return over.view ?? { status: 0, stdout: JSON.stringify({ id: VID, metadata: { author_email: PRIVATE[0] }, resources: { bindings } }), stderr: '' };
+  };
+  return { run, calls };
+}
+
+const runFull = async (argv: string[], fetchFn: typeof fetch, extra: Parameters<typeof deployCheck>[1] = {}) => {
+  const lines: string[] = [];
+  const code = await deployCheck(argv, { fetch: fetchFn, localBuild: () => head(), loadManifest: () => full, log: (l) => lines.push(l), wrangler: fakeWrangler(ID).run, ...extra });
+  return { code, out: lines.join('\n') };
+};
+
+describe('checkTargets: the dashboard Workers and the watchdog (D406)', () => {
+  it('reads each one the manifest has, where it serves its id; the admin and the watchdog through wrangler', () => {
+    const t = checkTargets(full);
+    expect(t.map((x) => [x.group, x.name, x.url, x.kind])).toEqual([
+      ['api', 'api', URLS.api, 'json'],
+      ['pages', 'vault worker', URLS.vaultWorker, 'json'],
+      ['pages', 'vault bundle', URLS.vaultJs, 'vault-js'],
+      ['pages', 'auth worker', URLS.authWorker, 'json'],
+      ['pages', 'auth pages', URLS.authLogin, 'html-meta'],
+      ['issuer', 'email issuer', URLS.issuer, 'json'],
+      ['console', 'console worker', DASH_URLS.consoleWorker, 'json'],
+      ['console', 'console spa', DASH_URLS.consoleSpa, 'html-meta'],
+      ['console-auth', 'console-auth worker', DASH_URLS.consoleAuth, 'json'],
+      ['files', 'files worker', DASH_URLS.files, 'json'],
+      ['admin', 'admin worker', 'wrangler: hana-id-admin-x', 'wrangler'],
+      ['watchdog', 'watchdog worker', `wrangler: ${WATCHDOG.workerName}`, 'wrangler'],
+    ]);
+    // The admin on the login's own account (the API's); the watchdog on its own.
+    expect(t.find((x) => x.group === 'admin')!.wrangler).toMatchObject({ worker: 'hana-id-admin-x', app: 'admin', accountId: null });
+    expect(t.find((x) => x.group === 'watchdog')!.wrangler).toMatchObject({ worker: WATCHDOG.workerName, app: 'watchdog', accountId: WATCHDOG.accountId });
+    // Nothing on the admin's origin is fetched: it is behind Cloudflare Access.
+    expect(t.some((x) => x.url.startsWith('https://admin.example.test'))).toBe(false);
+  });
+});
+
+describe('selectGroups, --only and --skip', () => {
+  const all = checkTargets(full);
+
+  it('by default reads every group the manifest has but the watchdog, and says how to check that', () => {
+    const s = selectGroups(full, all, [], []);
+    expect(s.groups).toEqual(['api', 'pages', 'issuer', 'console', 'console-auth', 'files', 'admin']);
+    expect(s.notRead).toEqual(['watchdog']);
+    expect(s.notes.join('\n')).toMatch(new RegExp(`watchdog \\(${WATCHDOG.workerName}\\) is on its own Cloudflare account .*deploy-check sandbox-dev --only watchdog`, 'u'));
+  });
+
+  it('--only reads just those (the watchdog too); --skip all but those', () => {
+    expect(selectGroups(full, all, ['watchdog'], []).groups).toEqual(['watchdog']);
+    const some = selectGroups(full, all, ['files', 'admin'], []);
+    expect(some.groups).toEqual(['files', 'admin']);
+    expect(some.notes).toEqual(['not read (--only): api, pages, issuer, console, console-auth, watchdog']);
+    const skipped = selectGroups(full, all, [], ['admin', 'watchdog']);
+    expect(skipped.groups).toEqual(['api', 'pages', 'issuer', 'console', 'console-auth', 'files']);
+    expect(skipped.notes).toEqual(['not read (--skip): admin, watchdog']);
+  });
+
+  it('refuses both flags, an --only group the manifest lacks, skipping everything, and an unknown name', () => {
+    expect(() => selectGroups(full, all, ['api'], ['files'])).toThrow(CliError);
+    expect(() => selectGroups(withIssuer, checkTargets(withIssuer), ['admin'], [])).toThrow(/envs\/sandbox-dev\.json has no admin/u);
+    expect(() => selectGroups(full, all, [], [...GROUPS])).toThrow(/Nothing to check/u);
+    expect(parseGroups(['console,files', 'files', ' admin'], 'only')).toEqual(['console', 'files', 'admin']);
+    expect(() => parseGroups(['consoles'], 'only')).toThrow(/unknown group "consoles"/u);
+  });
+});
+
+describe('observe: the console, console-auth and files Workers, the console SPA', () => {
+  const t = (url: string) => checkTargets(full).find((x) => x.url === url)!;
+
+  it('reads `build` from each Worker’s build path and the SPA’s meta', async () => {
+    const { fetchFn } = fullServer(`${ID}-dirty`);
+    for (const url of Object.values(DASH_URLS)) {
+      const o = await observe(t(url), fetchFn);
+      expect(o.problem, url).toBeNull();
+      expect(o.build?.id, url).toBe(`${ID}-dirty`);
+    }
+  });
+
+  it('names a stale or unstamped SPA, and an unstamped or pre-D406 Worker', async () => {
+    const cases: [keyof typeof DASH_URLS, Answer, RegExp][] = [
+      ['consoleSpa', new Response('<!doctype html><head><title>Hana ID console</title></head>'), /no build id in the page/u],
+      ['consoleWorker', Response.json({ build: null }), /not stamped/u],
+      ['consoleAuth', new Response('Not found', { status: 404 }), /^HTTP 404$/u],
+      ['files', Response.json({}), /deployed before D384 \(D406 for the console, console-auth and files Workers\)/u],
+    ];
+    for (const [k, answer, want] of cases) {
+      const o = await observe(t(DASH_URLS[k]), fullServer(ID, { [k]: answer }).fetchFn);
+      expect(o.build, k).toBeNull();
+      expect(o.problem, k).toMatch(want);
+    }
+  });
+});
+
+describe('observeWrangler: the admin’s and the watchdog’s deployed version', () => {
+  const admin = checkTargets(full).find((x) => x.group === 'admin')!;
+  const watchdog = checkTargets(full).find((x) => x.group === 'watchdog')!;
+
+  it('reads HANA_BUILD from the one version deployed, with read-only commands, outside any wrangler config', () => {
+    expect(deploymentStatusArgv('w')).toEqual(['deployments', 'status', '--name', 'w', '--json']);
+    expect(versionViewArgv(VID, 'w')).toEqual(['versions', 'view', VID, '--name', 'w', '--json']);
+    const { run, calls } = fakeWrangler(`${ID}-dirty`);
+    const o = observeWrangler(admin, run);
+    expect(o).toEqual({ name: 'admin worker', url: 'wrangler: hana-id-admin-x', build: { id: `${ID}-dirty`, commit: ID, dirty: true }, problem: null });
+    expect(calls).toEqual([
+      { app: 'admin', argv: deploymentStatusArgv('hana-id-admin-x'), env: {} },
+      { app: 'admin', argv: versionViewArgv(VID, 'hana-id-admin-x'), env: {} },
+    ]);
+    for (const c of calls) expect(c.argv.join(' ')).not.toMatch(/deploy\b(?!ments)|rollback|secret|delete|put/u);
+  });
+
+  it('asks the watchdog’s own account for the watchdog', () => {
+    const { run, calls } = fakeWrangler(ID);
+    expect(observeWrangler(watchdog, run).build?.id).toBe(ID);
+    expect(calls).toEqual([
+      { app: 'watchdog', argv: deploymentStatusArgv(WATCHDOG.workerName), env: { CLOUDFLARE_ACCOUNT_ID: WATCHDOG.accountId } },
+      { app: 'watchdog', argv: versionViewArgv(VID, WATCHDOG.workerName), env: { CLOUDFLARE_ACCOUNT_ID: WATCHDOG.accountId } },
+    ]);
+    const unset = { ...watchdog, wrangler: { ...watchdog.wrangler!, accountId: 'UNSET' } };
+    const none = fakeWrangler(ID);
+    expect(observeWrangler(unset, none.run).problem).toMatch(/accountId is UNSET/u);
+    expect(none.calls).toEqual([]);
+  });
+
+  it('names an unstamped, secret or malformed var, a gradual deployment, a failed or unrecognised run, never printing what else wrangler said', () => {
+    const json = (v: unknown): WranglerResult => ({ status: 0, stdout: JSON.stringify(v), stderr: '' });
+    const cases: [ReturnType<typeof fakeWrangler>, RegExp][] = [
+      [fakeWrangler(null), /^not stamped: .*or before D406$/u],
+      [fakeWrangler(ID, { view: json({ resources: { bindings: [{ type: 'secret_text', name: 'HANA_BUILD' }] } }) }), /not a plain-text var/u],
+      [fakeWrangler('latest\u001b[31m'), /^malformed build id$/u],
+      [fakeWrangler(ID, { status: json({ versions: [{ version_id: VID, percentage: 90 }, { version_id: VID2, percentage: 10 }] }) }), /gradual deployment is in progress \(90% \/ 10%\)/u],
+      [fakeWrangler(ID, { status: json({ versions: [{ version_id: VID, percentage: 50 }] }) }), /gradual deployment/u],
+      [fakeWrangler(ID, { status: json({ versions: [{ version_id: '--config=evil', percentage: 100 }] }) }), /deployments status printed something unexpected/u],
+      [fakeWrangler(ID, { status: { status: 0, stdout: 'Not JSON', stderr: '' } }), /deployments status printed something unexpected/u],
+      [fakeWrangler(ID, { view: { status: 0, stdout: '{"oops":', stderr: '' } }), /versions view printed something unexpected/u],
+      [fakeWrangler(ID, { status: { status: 1, stdout: `{"author_email":"${PRIVATE[0]}"}`, stderr: '\u001b[31m✘ [ERROR]\u001b[0m Not logged in.\n\n' } }), /deployments status failed \(exit 1\): logged in to the API's Cloudflare account\?:\n {4}✘ \[ERROR\] Not logged in\.$/u],
+      [fakeWrangler(ID, { view: { status: 2, stdout: '', stderr: 'Authentication error [code: 10000]' } }), /versions view failed \(exit 2\)/u],
+    ];
+    for (const [w, want] of cases) {
+      const o = observeWrangler(admin, w.run);
+      expect(o.build, String(want)).toBeNull();
+      expect(o.problem, String(want)).toMatch(want);
+      for (const p of PRIVATE) expect(o.problem).not.toContain(p);
+      expect(o.problem).not.toContain('\u001b');
+    }
+    // A version id that isn't one is never passed to wrangler.
+    const odd = fakeWrangler(ID, { status: json({ versions: [{ version_id: '--config=evil', percentage: 100 }] }) });
+    observeWrangler(admin, odd.run);
+    expect(odd.calls).toHaveLength(1);
+  });
+
+  it('parses only what it uses', () => {
+    expect(deployedVersions({ versions: [{ version_id: VID, percentage: 100 }] })).toEqual([{ id: VID, percentage: 100 }]);
+    for (const v of [null, {}, { versions: [] }, { versions: [{ version_id: VID }] }]) expect(deployedVersions(v)).toBeNull();
+    expect(versionBuild({ resources: { bindings: [{ type: 'plain_text', name: 'HANA_BUILD', text: ID }] } }).build?.id).toBe(ID);
+    expect(versionBuild({ resources: {} }).problem).toMatch(/unexpected/u);
+  });
+});
+
+describe('deployCheck with the dashboard Workers', () => {
+  it('exit 0 when every piece runs HEAD; the watchdog is not read, and the run says so', async () => {
+    const { fetchFn, seen } = fullServer(ID);
+    const w = fakeWrangler(ID);
+    const { code, out } = await runFull(['sandbox-dev'], fetchFn, { wrangler: w.run });
+    expect(code).toBe(0);
+    for (const url of Object.values(DASH_URLS)) expect(seen).toContain(url);
+    expect(seen.some((u) => u.includes('admin.example.test'))).toBe(false);
+    expect(w.calls.map((c) => c.app)).toEqual(['admin', 'admin']);
+    for (const name of ['console worker', 'console spa', 'console-auth worker', 'files worker', 'admin worker']) expect(out).toMatch(new RegExp(`${name}\\s+${ID}`, 'u'));
+    expect(out).not.toMatch(/watchdog worker\s/u);
+    expect(out).toMatch(/note: the watchdog .* --only watchdog/u);
+    expect(out).toContain(`OK: every piece of sandbox-dev runs ${ID} (this checkout); not read: watchdog`);
+    for (const p of PRIVATE) expect(out).not.toContain(p);
+  });
+
+  it('exit 1 on a stale console SPA, an unstamped files Worker or an admin on another commit', async () => {
+    for (const [over, wranglerId, want] of [
+      [{ consoleSpa: new Response(`<head>${buildMeta(OLD)}</head>`) }, ID, `console spa runs ${OLD}`],
+      [{ files: Response.json({ build: null }) }, ID, 'files worker: not stamped'],
+      [{}, OLD, `admin worker runs ${OLD}`],
+    ] as const) {
+      const { code, out } = await runFull(['sandbox-dev'], fullServer(ID, over).fetchFn, { wrangler: fakeWrangler(wranglerId).run });
+      expect(code, want).toBe(1);
+      expect(out).toContain(`FAIL: ${want}`);
+    }
+  });
+
+  it('--only watchdog reads only the watchdog, on its account, and fetches nothing', async () => {
+    const { fetchFn, seen } = fullServer(ID);
+    const w = fakeWrangler(ID);
+    const { code, out } = await runFull(['sandbox-dev', '--only', 'watchdog'], fetchFn, { wrangler: w.run });
+    expect(code).toBe(0);
+    expect(seen).toEqual([]);
+    expect(w.calls.every((c) => c.app === 'watchdog' && c.env.CLOUDFLARE_ACCOUNT_ID === WATCHDOG.accountId)).toBe(true);
+    expect(out).toMatch(new RegExp(`watchdog worker\\s+${ID}\\s+wrangler: ${WATCHDOG.workerName}`, 'u'));
+    expect(out).toContain('note: not read (--only): api, pages, issuer, console, console-auth, files, admin');
+  });
+
+  it('--skip leaves groups out; --only/--skip of an unknown group is refused', async () => {
+    const { fetchFn, seen } = fullServer(ID);
+    const w = fakeWrangler(ID);
+    expect((await runFull(['sandbox-dev', '--skip', 'admin,console'], fetchFn, { wrangler: w.run })).code).toBe(0);
+    expect(w.calls).toEqual([]);
+    expect(seen).not.toContain(DASH_URLS.consoleWorker);
+    expect(seen).toContain(DASH_URLS.files);
+    await expect(runFull(['sandbox-dev', '--only', 'dashboard'], fetchFn)).rejects.toThrow(/unknown group/u);
+    await expect(runFull(['sandbox-dev', '--only', 'api', '--skip', 'files'], fetchFn)).rejects.toThrow(/not both/u);
+  });
+
+  it('--d1 adds the console’s D1 by default and the watchdog’s with --only watchdog', async () => {
+    expect(d1Targets(full).map((x) => [x.name, x.db, x.dir.split('/').slice(-2).join('/')])).toEqual([
+      ['api D1', full.cloudflare.d1Name, 'apps/api'],
+      ['issuer D1', full.emailIssuer!.cloudflare.d1Name, 'apps/email-issuer'],
+      ['console D1', 'hana-id-console-x', 'apps/console'],
+    ]);
+    expect(d1Targets(full, ['watchdog']).map((x) => [x.name, x.db, x.dir.split('/').slice(-2).join('/')])).toEqual([['watchdog D1', WATCHDOG.d1Name, 'apps/watchdog']]);
+    const dirs: string[] = [];
+    const pnpm = (dir: string) => {
+      dirs.push(dir.split('/').slice(-2).join('/'));
+      return { status: 0, output: '✅ No migrations to apply!' };
+    };
+    expect((await runFull(['sandbox-dev', '--d1'], fullServer(ID).fetchFn, { pnpm, hasWranglerConfig: () => true })).code).toBe(0);
+    expect(dirs).toEqual(['apps/api', 'apps/email-issuer', 'apps/console']);
+    dirs.length = 0;
+    expect((await runFull(['sandbox-dev', '--only', 'watchdog', '--d1'], fullServer(ID).fetchFn, { pnpm, hasWranglerConfig: () => true })).code).toBe(0);
+    expect(dirs).toEqual(['apps/watchdog']);
+    const missing = await runFull(['sandbox-dev', '--only', 'console', '--d1'], fullServer(ID).fetchFn, { pnpm, hasWranglerConfig: () => false });
+    expect(missing.out).toMatch(/console D1: no wrangler config in apps\/console; generate it for sandbox-dev first: corepack pnpm --filter @hana-id\/console gen sandbox-dev --d1-id <its id>/u);
   });
 });

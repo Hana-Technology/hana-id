@@ -1,7 +1,7 @@
 # Recovery playbooks
 
 Generated from `packages/playbooks` (D126) by `corepack pnpm --filter @hana-id/playbooks gen-docs`: edit the package,
-not this file (a test fails when it is stale). Last verified against code: 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/coop-canary`: the `google-enforces-coop` incident, D386); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`).
+not this file (a test fails when it is stale). Last verified against code: 2026-11-05 (branch `feat/deploy-check-all-workers`: the watchdog deploys through `run deploy`, stamped with the build id, D406); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/coop-canary`: the `google-enforces-coop` incident, D386); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`).
 
 One step-by-step guide for every watchdog alert kind and for every incident the watchdog does not raise. The admin
 portal's "Security & monitoring" view renders the same playbooks (`docs/batch-c-spec.md`), and every watchdog
@@ -195,7 +195,7 @@ A pending issuer key Google doesn't publish (or with other key material), an ema
 
    ```sh
    corepack pnpm --filter @hana-id/watchdog gen <env>
-   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   corepack pnpm --filter @hana-id/watchdog run deploy
    ```
 
 6. **Install a fresh updater key** (who: council (2 of 3)). A founder moves the old key file aside (never re-add a key that may be compromised) and runs `deploy-contract`, which generates a new key into `.secrets/<env>/keys-updater.json` and plans the owner's `add_updater_key` (a council proposal; dev envs add `--approve-with <member>`). Then a founder uploads it as `KEYS_UPDATER_KEY` from the repo root (needs `apps/api/wrangler.jsonc` for the env: `gen <env>`; the documented pipe can print a key fragment on a malformed file, security sweep OPER-5: check the file first).
@@ -538,14 +538,14 @@ Its account isn't a contract watchdog, its key is missing or malformed, or its R
 
    ```sh
    corepack pnpm --filter @hana-id/watchdog gen <env>
-   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   corepack pnpm --filter @hana-id/watchdog run deploy
    ```
 
 5. **`pins_invalid`: regenerate the pins** (who: a founder). `EMAIL_PINS` doesn't parse, so no email key counts as pinned: pending email keys are cancelled and an active one pauses (D190). `gen` writes it from `watchdog.pinnedIssuerKeys.email`, which the schema validates: a broken value was set by hand or by a broken deploy. Regenerate and redeploy; if the watchdog paused on Hana's own keys meanwhile, the council unpauses once the next run is clean, and re-posts any email key it cancelled.
 
    ```sh
    corepack pnpm --filter @hana-id/watchdog gen <env>
-   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   corepack pnpm --filter @hana-id/watchdog run deploy
    curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)" https://<workerName>.<subdomain>.workers.dev/status
    ```
 
@@ -941,7 +941,7 @@ The relayer account's available balance, or a pool key's remaining allowance, is
 
    ```sh
    corepack pnpm --filter @hana-id/watchdog gen <env>
-   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   corepack pnpm --filter @hana-id/watchdog run deploy
    ```
 
 **Verify**
@@ -987,7 +987,7 @@ The email issuer on chain (`get_issuer("email")`, `get_self_issued("email")`) do
 
    ```sh
    corepack pnpm --filter @hana-id/watchdog gen <env>
-   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   corepack pnpm --filter @hana-id/watchdog run deploy
    ```
 
 3. **Nobody planned it: stay paused** (who: council (2 of 3)). A weaker policy can only come from an executed upgrade: follow [unexpected-owner-action](#unexpected-owner-action). Remove every email key that isn't Hana's own pinned key at once (`remove_issuer_key`, immediate), then raise the session floor past the pause before any unpause, as for a forged active key (follow [forged-active-key](#forged-active-key)).
@@ -1083,7 +1083,7 @@ Hana's published email JWKS (`{emailIssuer.url}/v1/email/jwks.json`, the watchdo
 
    ```sh
    corepack pnpm --filter @hana-id/watchdog gen <env>
-   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   corepack pnpm --filter @hana-id/watchdog run deploy
    ```
 
 **Verify**
@@ -1206,7 +1206,7 @@ The partner identity token's JWKS (`{iss}/jwks.json`) lists a key whose RFC 7638
    curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)" https://<workerName>.<subdomain>.workers.dev/status
    corepack pnpm --filter @hana-id/scripts run identity-key <env> show
    corepack pnpm --filter @hana-id/watchdog gen <env>
-   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   corepack pnpm --filter @hana-id/watchdog run deploy
    corepack pnpm --filter @hana-id/api run gen <env>
    corepack pnpm --filter @hana-id/api run deploy
    ```
@@ -1271,7 +1271,7 @@ A key in `watchdog.pinnedIdentityKeys` isn't in the identity JWKS under its thum
    corepack pnpm --filter @hana-id/api run gen <env>
    corepack pnpm --filter @hana-id/api run deploy
    corepack pnpm --filter @hana-id/watchdog gen <env>
-   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   corepack pnpm --filter @hana-id/watchdog run deploy
    ```
 
 2. **The key is missing for no planned reason** (who: a founder). Check the API's health and the JWKS itself; a 503 `identity_unavailable` means the API Worker lost its identity configuration (regenerate and redeploy). A key under another kid or with extra members is a changed Worker: see [identity-jwks-forged](#identity-jwks-forged).
@@ -1650,7 +1650,7 @@ The watchdog stopped running: no cancels of forged keys, no pause, no confirmati
    ```sh
    corepack pnpm --filter @hana-id/watchdog gen <env>
    corepack pnpm --dir apps/watchdog exec wrangler secret bulk ../../.secrets/<env>/watchdog-secrets.json
-   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   corepack pnpm --filter @hana-id/watchdog run deploy
    ```
 
 4. **If its D1 was lost or damaged: restore it** (who: a founder). Logged in to the watchdog's account: Time Travel back to a minute before the loss (30 days). A point after its first run keeps `initialized_at`, so the pause still works; first compare the active kids with Google's JWKS (an active kid Google published and dropped entirely inside the gap would look never published and be paused). The next runs re-alert every governance change since the point (check, then acknowledge) and re-raise conditions still true.
@@ -1737,7 +1737,7 @@ Someone holds the watchdog's key, its status token or its Cloudflare account. It
    corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel info <watchdog.cloudflare.d1Name> --timestamp=<RFC 3339 time before the loss>
    corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel restore <watchdog.cloudflare.d1Name> --bookmark=<bookmark>
    corepack pnpm --filter @hana-id/watchdog gen <env>
-   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   corepack pnpm --filter @hana-id/watchdog run deploy
    ```
 
 **Verify**
@@ -2038,7 +2038,7 @@ The manifest's `rpc` provider is down or wrong. The API reads only `rpc`; the va
    corepack pnpm --filter @hana-id/web build
    corepack pnpm --filter @hana-id/api run deploy:pages
    corepack pnpm --filter @hana-id/watchdog gen <env>
-   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   corepack pnpm --filter @hana-id/watchdog run deploy
    ```
 
 **Verify**
@@ -2336,7 +2336,7 @@ Whoever holds an identity signing key can forge any user's identity token for an
    corepack pnpm --filter @hana-id/scripts run identity-key <env> retire --key standby --yes
    corepack pnpm --filter @hana-id/scripts run identity-key <env> next --yes
    corepack pnpm --filter @hana-id/watchdog gen <env>
-   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   corepack pnpm --filter @hana-id/watchdog run deploy
    corepack pnpm --filter @hana-id/api run gen <env>
    corepack pnpm --filter @hana-id/api run deploy
    corepack pnpm --filter @hana-id/scripts run identity-key <env> switch --to next --yes
@@ -2351,7 +2351,7 @@ Whoever holds an identity signing key can forge any user's identity token for an
    corepack pnpm --filter @hana-id/api run gen <env>
    corepack pnpm --filter @hana-id/api run deploy
    corepack pnpm --filter @hana-id/watchdog gen <env>
-   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   corepack pnpm --filter @hana-id/watchdog run deploy
    ```
 
 5. **Tell partners** (who: a founder). Their security contacts: the `kid`, the window in which forged tokens may have been accepted, and what to re-check (emails recorded, credits granted, sessions opened). Pinning partners update their pins.
@@ -2361,7 +2361,7 @@ Whoever holds an identity signing key can forge any user's identity token for an
    ```sh
    corepack pnpm --filter @hana-id/scripts run identity-key <env> next --yes
    corepack pnpm --filter @hana-id/watchdog gen <env>
-   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   corepack pnpm --filter @hana-id/watchdog run deploy
    corepack pnpm --filter @hana-id/api run gen <env>
    corepack pnpm --filter @hana-id/api run deploy
    ```
@@ -2413,7 +2413,7 @@ No env signs with AWS KMS yet (the adapter is built, the AWS account isn't: docs
    corepack pnpm --filter @hana-id/api run gen <env>
    corepack pnpm --filter @hana-id/api run deploy
    corepack pnpm --filter @hana-id/watchdog gen <env>
-   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   corepack pnpm --filter @hana-id/watchdog run deploy
    ```
 
 4. **Tell partners** (who: a founder). Their security contacts: the `kid`, the window and the count of forged signatures from CloudTrail (by `userIdentity.arn`), and what to re-check. Pinning partners update their pins.
@@ -2423,7 +2423,7 @@ No env signs with AWS KMS yet (the adapter is built, the AWS account isn't: docs
    ```sh
    corepack pnpm --filter @hana-id/scripts run identity-key <env> kms-add --role standby --key <get-public-key.json> --yes
    corepack pnpm --filter @hana-id/watchdog gen <env>
-   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   corepack pnpm --filter @hana-id/watchdog run deploy
    corepack pnpm --filter @hana-id/api run gen <env>
    corepack pnpm --filter @hana-id/api run deploy
    ```

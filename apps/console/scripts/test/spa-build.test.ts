@@ -6,8 +6,11 @@
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { buildMeta, parseBuildMeta } from '@hana-id/env/build-id';
+import { localBuild } from '@hana-id/env/local-build';
 import { build } from 'vite';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { buildStamp, stampIndexHtml } from '../build-stamp.ts';
 
 const appDir = new URL('../../', import.meta.url).pathname;
 const webSrc = join(appDir, 'web', 'src');
@@ -31,6 +34,14 @@ describe('the SPA build', () => {
     expect(html).not.toMatch(/https?:\/\//u);
   });
 
+  it('index.html carries this checkout’s build id, once (D406), for deploy-check', () => {
+    const html = readFileSync(join(out, 'index.html'), 'utf8');
+    expect(parseBuildMeta(html)?.id).toBe(localBuild().id);
+    expect(html.match(/name="hana-build"/gu)).toHaveLength(1);
+    // Only index.html: the content-hashed assets don't change with each commit.
+    for (const f of readdirSync(join(out, 'assets'))) expect(readFileSync(join(out, 'assets', f), 'utf8'), f).not.toContain(localBuild().commit);
+  });
+
   it('every asset is a file under /assets; no source map, no data: script', () => {
     const files = readdirSync(join(out, 'assets'));
     expect(files.every((f) => /^[\w-]+\.(js|css)$/u.test(f))).toBe(true);
@@ -44,6 +55,40 @@ describe('the SPA build', () => {
   it('bundles no server code (zod schemas, console-core layouts)', () => {
     const js = readdirSync(join(out, 'assets')).filter((f) => f.endsWith('.js')).map((f) => readFileSync(join(out, 'assets', f), 'utf8')).join('\n');
     expect(js).not.toMatch(/ZodError|hana-console\/login\/v1/u);
+  });
+});
+
+describe('the build stamp (scripts/build-stamp.ts)', () => {
+  const page = '<!doctype html>\n<html>\n  <head>\n    <title>x</title>\n  </head>\n  <body></body>\n</html>';
+
+  it('puts the meta just before </head>, in the form deploy-check parses', () => {
+    const stamped = stampIndexHtml(page, '0485faa1c2d3-dirty');
+    expect(stamped).toContain(`${buildMeta('0485faa1c2d3-dirty')}\n  </head>`);
+    expect(parseBuildMeta(stamped)).toEqual({ id: '0485faa1c2d3-dirty', commit: '0485faa1c2d3', dirty: true });
+  });
+
+  it('refuses a page without one </head>, a second stamp, and anything but a build id', () => {
+    expect(() => stampIndexHtml('<html><body></body></html>', '0485faa1c2d3')).toThrow(/exactly one/u);
+    expect(() => stampIndexHtml(`${page}</head>`, '0485faa1c2d3')).toThrow(/exactly one/u);
+    expect(() => stampIndexHtml(stampIndexHtml(page, '0485faa1c2d3'), '0485faa1c2d3')).toThrow(/already/u);
+    expect(() => stampIndexHtml(page, '"><script>')).toThrow(/Not a build id/u);
+  });
+
+  it('runs on builds only, reading the id once per build', () => {
+    const build = vi.fn(() => ({ id: '0485faa1c2d3' }));
+    const plugin = buildStamp(build);
+    expect(plugin.apply).toBe('build');
+    const hook = plugin.transformIndexHtml as { order: string; handler: (html: string) => string };
+    expect(hook.order).toBe('post');
+    expect(() => hook.handler(page)).toThrow(/no build id/u);
+    (plugin.buildStart as () => void)();
+    expect(parseBuildMeta(hook.handler(page))?.id).toBe('0485faa1c2d3');
+    expect(build).toHaveBeenCalledTimes(1);
+  });
+
+  it('`deploy` builds the SPA, then deploys through the shared stamped wrapper', () => {
+    const scripts = (JSON.parse(readFileSync(join(appDir, 'package.json'), 'utf8')) as { scripts: Record<string, string> }).scripts;
+    expect(scripts.deploy).toBe('vite build && tsx ../../packages/env/src/stamped-deploy.ts');
   });
 });
 

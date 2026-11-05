@@ -244,11 +244,11 @@ Deploy (testnet only), after this Worker, since the vault Worker binds to it:
 ```sh
 pnpm --filter @hana-id/api gen <env> --d1-id <id> # also writes wrangler.vault.jsonc and wrangler.auth.jsonc
 pnpm --filter @hana-id/api run deploy:pages       # the web build (packages/web/dist/pages/<env>/{vault,auth}) first, then
-                                                  # scripts/deploy.ts -c wrangler.vault.jsonc and -c wrangler.auth.jsonc
+                                                  # the stamped deploys of -c wrangler.vault.jsonc and -c wrangler.auth.jsonc
 pnpm --filter @hana-id/scripts run deploy-check <env> --d1   # API, page Workers, bundles and issuer on this commit (D384)
 ```
 
-`deploy` and `deploy:pages` run `scripts/deploy.ts`, which is `wrangler deploy <args> --var HANA_BUILD:<build id>`
+`deploy` and `deploy:pages` run the shared wrapper `packages/env/src/stamped-deploy.ts` (D406), which is `wrangler deploy <args> --var HANA_BUILD:<build id>`
 (this checkout's commit, `-dirty` for uncommitted changes; `@hana-id/env/local-build`). Never deploy with a raw
 `wrangler deploy`: the Worker then reports `build: null` and `deploy-check` fails.
 

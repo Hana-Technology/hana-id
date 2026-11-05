@@ -10,7 +10,7 @@ Deployed on sandbox-dev (2026-10-30, on the API's Cloudflare account for the dri
 with email-login batch 5; `docs/operations.md` "Watchdog service"); no other env yet. Testnet only: it checks the RPC's `chain_id` against the manifest's `network`
 every run and sends nothing on a mismatch.
 
-Last verified: 2026-11-04 (branch `feat/batch-c-14`: the admin portal's registry test and client, `watchdog.url`); 2026-11-02 (branch `feat/email-login-6`: the email JWKS URL's default under `emailIssuer.url`, D230); 2026-11-02 (branch `feat/identity-token-8`: the identity JWKS and discovery check, step 5b, the
+Last verified: 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy` stamps the build id, `deploy-check --only watchdog`, D406); 2026-11-04 (branch `feat/batch-c-14`: the admin portal's registry test and client, `watchdog.url`); 2026-11-02 (branch `feat/email-login-6`: the email JWKS URL's default under `emailIssuer.url`, D230); 2026-11-02 (branch `feat/identity-token-8`: the identity JWKS and discovery check, step 5b, the
 `identity` status and `pinnedIdentityKeys`, D210–D214); 2026-11-02 (branch `docs/consistency-pass`: the deploy line, against `docs/operations.md`).
 
 ## What a run does (every 5 min)
@@ -298,7 +298,11 @@ corepack pnpm --filter @hana-id/watchdog dev                    # wrangler dev -
 corepack pnpm --filter @hana-id/watchdog test
 ```
 
-Setup and deploy steps are in `docs/operations.md` "Watchdog service".
+Setup and deploy steps are in `docs/operations.md` "Watchdog service". Deploy with `corepack pnpm --filter
+@hana-id/watchdog run deploy` (logged in to the watchdog's account), never a raw `wrangler deploy`: it is the shared
+wrapper `packages/env/src/stamped-deploy.ts`, which sets the `HANA_BUILD` var (this checkout's build id, D384, D406).
+No route serves it (every route needs the status token); `deploy-check <env> --only watchdog` reads it from the
+deployed version's metadata with wrangler, on the watchdog's account.
 
 ## Tests
 

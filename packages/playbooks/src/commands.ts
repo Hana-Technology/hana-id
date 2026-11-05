@@ -68,7 +68,7 @@ export const watchdogSecretsInit = 'corepack pnpm --filter @hana-id/watchdog sec
 export const watchdogSecretsCheck = 'corepack pnpm --filter @hana-id/watchdog secrets <env> check';
 export const watchdogGen = 'corepack pnpm --filter @hana-id/watchdog gen <env>';
 export const watchdogSecretBulk = 'corepack pnpm --dir apps/watchdog exec wrangler secret bulk ../../.secrets/<env>/watchdog-secrets.json';
-export const watchdogDeploy = 'corepack pnpm --dir apps/watchdog exec wrangler deploy';
+export const watchdogDeploy = 'corepack pnpm --filter @hana-id/watchdog run deploy';
 
 /** Updater key rotation (`docs/operations.md` "Keys-updater key"): the old file aside, a new key through the owner. */
 export const moveUpdaterKeyAside = 'mv .secrets/<env>/keys-updater.json .secrets/<env>/keys-updater.revoked-<yyyymmdd>.json';

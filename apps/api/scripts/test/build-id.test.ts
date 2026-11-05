@@ -24,9 +24,9 @@ describe('build id (D384)', () => {
   });
 
   it('deploy and deploy:pages stamp every Worker; deploy:pages builds the pages first', () => {
-    expect(scripts.deploy).toBe('tsx scripts/deploy.ts');
+    expect(scripts.deploy).toBe('tsx ../../packages/env/src/stamped-deploy.ts');
     const steps = scripts['deploy:pages']!.split(' && ');
-    expect(steps).toEqual(['pnpm --filter @hana-id/web build', 'tsx scripts/deploy.ts -c wrangler.vault.jsonc', 'tsx scripts/deploy.ts -c wrangler.auth.jsonc']);
+    expect(steps).toEqual(['pnpm --filter @hana-id/web build', 'tsx ../../packages/env/src/stamped-deploy.ts -c wrangler.vault.jsonc', 'tsx ../../packages/env/src/stamped-deploy.ts -c wrangler.auth.jsonc']);
     expect(Object.values(scripts).join('\n')).not.toMatch(/(^|&& )wrangler deploy/mu);
   });
 

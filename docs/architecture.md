@@ -1,7 +1,7 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-05 (branch `feat/sdk-error-request-id`: "Support ID lookup" step 4, the request IDs partners get from the SDK's errors, D405); 2026-11-05 (branch `fix/usage-setup-neon-api-passwords`: the `.secrets/<env>/` row: `neon-api-key`, role passwords from Neon, D403); 2026-11-05 (branch `fix/popup-signal-before-navigate`: login step 4's signals, acked by the vault before the popup leaves, D400); 2026-11-05 (branch `feat/batch-c-15-screen`: "Support ID lookup": the admin screen and the email join through `DirectoryRpc.get` as `support_lookup`, D399; the Components row of `ISSUER`); 2026-11-05 (branch `feat/batch-c-8b`: the Users screen in Status, Components' connections, "Staff reads of the user directory" and the issuer D1's 0003; D388–D392); 2026-11-05 (branch `fix/popup-early-close-deadline`: login step 4's closed popup, a close within D347's 8 s waits 90 s for an answer, then `login_cancelled`, D398); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/batch-c-15`: "Wallet directory" step 5, the Support ID in the
+Last verified against code: 2026-11-05 (branch `feat/deploy-check-all-workers`: the build id on every Worker through the shared deploy wrapper, the console SPA's meta, the admin's and watchdog's read through wrangler, D406); 2026-11-05 (branch `feat/sdk-error-request-id`: "Support ID lookup" step 4, the request IDs partners get from the SDK's errors, D405); 2026-11-05 (branch `fix/usage-setup-neon-api-passwords`: the `.secrets/<env>/` row: `neon-api-key`, role passwords from Neon, D403); 2026-11-05 (branch `fix/popup-signal-before-navigate`: login step 4's signals, acked by the vault before the popup leaves, D400); 2026-11-05 (branch `feat/batch-c-15-screen`: "Support ID lookup": the admin screen and the email join through `DirectoryRpc.get` as `support_lookup`, D399; the Components row of `ISSUER`); 2026-11-05 (branch `feat/batch-c-8b`: the Users screen in Status, Components' connections, "Staff reads of the user directory" and the issuer D1's 0003; D388–D392); 2026-11-05 (branch `fix/popup-early-close-deadline`: login step 4's closed popup, a close within D347's 8 s waits 90 s for an answer, then `login_cancelled`, D398); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/batch-c-15`: "Wallet directory" step 5, the Support ID in the
 session answers and the vault; the new "Support ID lookup", D394–D397); 2026-11-05 (branch `feat/coop-canary`: "Login, one transaction" step 4's closed popup: Google's COOP rechecked before each release by `coop-canary`, D386); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: the login's step 2, the session key's failure as `derive_failed` with its reason and which keys WebKit Linux refuses, D385; "WebCrypto on the login, export and signing paths"); 2026-11-05 (branch `feat/deploy-build-check`: "Environments and manifests": the build id
 in every Worker and page bundle and `deploy-check`, D384); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-05 (branch `fix/e2e-flakes`: the login's step 2, the session key's retry on WebKit Linux's
 Ed25519 `OperationError`, D381); 2026-11-04 (branch `feat/batch-c-13`: retention and the erasure path in Status, Components
@@ -1007,12 +1007,15 @@ deterministic ones); nothing in Hana depends on a session signature's bytes.
   `.secrets/<env>/`, plus the page Workers' `wrangler.vault.jsonc` / `wrangler.auth.jsonc`. It refuses an env without
   both Hana origins. All three are per env and gitignored (the deployed D1 id is passed with `--d1-id` and never
   committed); the API tests generate their own `wrangler.vitest.jsonc` from a fixed test manifest.
-- The build id (D384, `packages/env/src/build-id.ts`): each Worker's `deploy` script (API, page Workers, email issuer)
-  passes `HANA_BUILD` = the commit's first 12 hex characters (`-dirty` for a tree with uncommitted changes), never
-  `gen`; the web build writes the same id into `/vault.js`'s first line and each auth page's `<meta name="hana-build">`.
-  They are read back from `GET /v1/health`, `GET /v1/email/health`, each page origin's `/.well-known/hana-build` and
-  the bundles by `scripts/deploy-check.ts`, which fails unless every piece (and, with `--d1`, every D1 migration) is
-  this checkout's (`docs/operations.md` "Checking a deploy").
+- The build id (D384, D406, `packages/env/src/build-id.ts`): every Worker's `deploy` script (API, page Workers, email
+  issuer, console, console-auth, files, admin, watchdog) runs the one wrapper `packages/env/src/stamped-deploy.ts`,
+  which passes `HANA_BUILD` = the commit's first 12 hex characters (`-dirty` for a tree with uncommitted changes), never
+  `gen`; the web build writes the same id into `/vault.js`'s first line and each auth page's `<meta name="hana-build">`,
+  the console's `vite build` into its `index.html`. They are read back from `GET /v1/health`, `GET /v1/email/health`,
+  `/.well-known/hana-build` on each page origin, the console, console-auth and files origins, and the bundles; the
+  admin's (behind Access) and the watchdog's (behind its token, on its own account: `--only watchdog`) from the
+  deployed version's metadata with wrangler. `scripts/deploy-check.ts` fails unless every piece (and, with `--d1`,
+  every D1 migration) is this checkout's (`docs/operations.md` "Checking a deploy").
 - `packages/web/scripts/gen-envs.ts` writes the gitignored `packages/web/src/envs.generated.ts` with the pinned
   per-env constants (`signer`, `relayer`, `rpc`, `rpcFallback` when set, `ckdNetworkKey`, origins, `devEnv`) for every
   manifest with both origins; it fails on an unusable CKD key.

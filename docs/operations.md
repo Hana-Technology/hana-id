@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-05 (branch `fix/usage-setup-throwaway-password`: "Usage capture" step 3's throwaway password before Neon's reset, D403 amended); 2026-11-05 (branch `feat/access-setup`: "Admin Worker" step 1: the admin console's Cloudflare Access by `access-setup <env>` (the team and login methods in the dashboard, the least-privilege token, created and revoked, plan / `--yes` / `--write-manifest` / `--check`), sandbox* Google exact emails only and the free-tier guard it enforces (D408), the workers.dev hostname application against the dashboard toggle, the dashboard path; the secrets table's Cloudflare API token row; the issuer's "Open for batch 8" note; D409); 2026-11-05 (branch `feat/sdk-error-request-id`: "Support ID lookup": partners' request IDs come from the SDK's errors and the demo's diagnostics, D405); 2026-11-05 (branch `docs/zero-trust-free-guard`: "Admin Worker" step 1's Zero Trust free-tier guard, D408); 2026-11-05 (branch `fix/usage-setup-neon-api-passwords`: "Usage capture" steps 2, 3 and 8: `usage-setup <env> roles` gives LOGIN by SQL and has Neon's API reset each role's password with the new `.secrets/<env>/neon-api-key` (how to create, save and revoke it), every run replaces the role files, Hyperdrive configs from older files re-created, the step-8 gate without the SCRAM question; the secrets table's Neon API key row; D403); 2026-11-05 (branch `feat/batch-c-15-screen`: "Support ID lookup" → "In the admin console" (the screen, the email join, the ticket rule, what to watch) and "Users screen (C8b)" (a Support ID goes to the lookup; the check), D399); 2026-11-05 (branch `feat/batch-c-8b`: "Admin Worker" → "Users screen (C8b)": issuer migration 0003, the deploy order issuer → API → admin, the checks and failures, D388–D392; "Retention" and "User directory (D269)" notes); 2026-11-05 (branch `chore/ci-cost`: "CI and git": CI and the identity probe turned off, the local checks, D387); 2026-11-05 (branch `feat/batch-c-15`: "Support ID lookup", `admin <env> support:lookup`, the admin route's audit, D394–D397); 2026-11-05 (branch `feat/coop-canary`: "Before each release: the COOP canary" (`coop-canary`, what a failure means, D386), step 0 of "A release."); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: "Common failures"' `derive_failed` `webcrypto_unsupported` / `webcrypto_failed`, D385); 2026-11-05 (branch `feat/deploy-build-check`: "Checking a deploy (`deploy-check`)", D384:
+Last verified against code: 2026-11-05 (branch `feat/deploy-check-all-workers`: "Checking a deploy" (every Worker through its `run deploy`, the shared wrapper; the console, console-auth, files Workers and the console SPA read over HTTP, the admin and watchdog through wrangler, `--only`/`--skip`, the console and watchdog D1 in `--d1`), the console, admin, files and watchdog deploy lines now `run deploy`, with `deploy-check` after each, D406); 2026-11-05 (branch `fix/usage-setup-throwaway-password`: "Usage capture" step 3's throwaway password before Neon's reset, D403 amended); 2026-11-05 (branch `feat/access-setup`: "Admin Worker" step 1: the admin console's Cloudflare Access by `access-setup <env>` (the team and login methods in the dashboard, the least-privilege token, created and revoked, plan / `--yes` / `--write-manifest` / `--check`), sandbox* Google exact emails only and the free-tier guard it enforces (D408), the workers.dev hostname application against the dashboard toggle, the dashboard path; the secrets table's Cloudflare API token row; the issuer's "Open for batch 8" note; D409); 2026-11-05 (branch `feat/sdk-error-request-id`: "Support ID lookup": partners' request IDs come from the SDK's errors and the demo's diagnostics, D405); 2026-11-05 (branch `docs/zero-trust-free-guard`: "Admin Worker" step 1's Zero Trust free-tier guard, D408); 2026-11-05 (branch `fix/usage-setup-neon-api-passwords`: "Usage capture" steps 2, 3 and 8: `usage-setup <env> roles` gives LOGIN by SQL and has Neon's API reset each role's password with the new `.secrets/<env>/neon-api-key` (how to create, save and revoke it), every run replaces the role files, Hyperdrive configs from older files re-created, the step-8 gate without the SCRAM question; the secrets table's Neon API key row; D403); 2026-11-05 (branch `feat/batch-c-15-screen`: "Support ID lookup" → "In the admin console" (the screen, the email join, the ticket rule, what to watch) and "Users screen (C8b)" (a Support ID goes to the lookup; the check), D399); 2026-11-05 (branch `feat/batch-c-8b`: "Admin Worker" → "Users screen (C8b)": issuer migration 0003, the deploy order issuer → API → admin, the checks and failures, D388–D392; "Retention" and "User directory (D269)" notes); 2026-11-05 (branch `chore/ci-cost`: "CI and git": CI and the identity probe turned off, the local checks, D387); 2026-11-05 (branch `feat/batch-c-15`: "Support ID lookup", `admin <env> support:lookup`, the admin route's audit, D394–D397); 2026-11-05 (branch `feat/coop-canary`: "Before each release: the COOP canary" (`coop-canary`, what a failure means, D386), step 0 of "A release."); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: "Common failures"' `derive_failed` `webcrypto_unsupported` / `webcrypto_failed`, D385); 2026-11-05 (branch `feat/deploy-build-check`: "Checking a deploy (`deploy-check`)", D384:
 the build id in every Worker and page bundle, `deploy-check <env> [--d1]` after each deploy step, migrations applied
 from a checkout at the deployed commit, the API's raw `wrangler deploy` lines now `run deploy`); 2026-11-05 (branch `fix/deploy-pages-builds`: `deploy:pages` runs the web build first; the 0011 apply note; the rebuilt page versions); 2026-11-05 (branch `chore/ci-cost`: "CI and git": which jobs run when, the nightly WebKit and Firefox run; the identity probe every 3 hours, D383); 2026-11-05 (branch `docs/sandbox-dev-state-1105`: sandbox-dev redeployed at `develop` 8aab09d with the wallet directory: `USER_ID_KEY`, the bookmark, 0011, API 6141ba3d, vault abe7cc61, auth 6b9a4bee, issuer 1542a60c); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
 what counts, each job's share in both crons, the `budget` log lines; settlement's reads a run; D380); 2026-11-04 (branch `feat/batch-c-13`: "Retention (batch C13, milestone M6)": the Neon
@@ -325,39 +325,73 @@ the signer is part of every address. Dev-only privileges (loopback origins, part
     that logs in through Hana's pages (table above).
 11. **Register apps** (next section), then **smoke test**.
 
-### Checking a deploy (`deploy-check`, D384)
+### Checking a deploy (`deploy-check`, D384, D406)
 
 Every deployed piece of an env carries the build id of the checkout it came from: the commit's first 12 hex
 characters, `-dirty` when the tree had uncommitted changes (tracked or untracked). On 2026-11-05 sandbox-dev's page
 Workers served a vault bundle older than the API (every wallet record `400 bad_request`), and earlier that day a D1
 migration was applied from an older checkout; nothing showed either. **After every deploy step in this runbook** (the
-API, the page Workers, the email issuer), once the last Worker of the step is out, run from the checkout you deployed:
+API, the page Workers, the email issuer, the console and console-auth, the files and admin Workers, the watchdog), once
+the last Worker of the step is out, run from the checkout you deployed:
 
 ```sh
 corepack pnpm --filter @hana-id/scripts run deploy-check <env>          # every piece on this checkout's commit
 corepack pnpm --filter @hana-id/scripts run deploy-check <env> --d1     # and no D1 migration of this checkout pending
+corepack pnpm --filter @hana-id/scripts run deploy-check <env> --only watchdog [--d1]   # logged in to the watchdog's account
 ```
 
-| Piece | Read from | Stamped by |
-|---|---|---|
-| API Worker | `GET {apiUrl}/v1/health` → `build` | `pnpm --filter @hana-id/api run deploy` (`HANA_BUILD` var) |
-| vault Worker | `GET {vaultOrigin}/.well-known/hana-build` → `build` | `run deploy:pages` |
-| vault bundle | `{vaultOrigin}/vault.js`, first line `/* hana-build <id> */` | the web build (`deploy:pages` runs it first) |
-| auth Worker | `GET {authOrigin}/.well-known/hana-build` → `build` | `run deploy:pages` |
-| auth pages | `{authOrigin}/login`, `<meta name="hana-build">` | the web build |
-| email issuer | `GET {emailIssuer.url}/v1/email/health` → `build` | `pnpm --filter @hana-id/email-issuer run deploy` |
-| `--d1` | `wrangler d1 migrations list <db> --remote` from `apps/api` (`cloudflare.d1Name`) and `apps/email-issuer` (`emailIssuer.cloudflare.d1Name`) | needs both `wrangler.jsonc` generated for `<env>` (`gen`) |
+**Every Worker deploys through its `run deploy`** (`corepack pnpm --filter @hana-id/<app> run deploy`; the API's page
+Workers through `run deploy:pages`), never a raw `wrangler deploy`: each is the one shared wrapper,
+`packages/env/src/stamped-deploy.ts`, which runs `wrangler deploy <args> --var HANA_BUILD:<build id>` in the app's
+directory (D406). The console's `run deploy` builds its SPA first.
 
-Exit 1 (each reason on a `FAIL:` line) when a piece can't be read (a status, a redirect, unreachable), isn't stamped
-(`null`: deployed with a raw `wrangler deploy`; no `build` field or no stamp in a bundle: deployed before D384), runs
-another commit than this checkout's HEAD, or (`--d1`) a database lacks a migration file of this checkout. Warnings, not
-failures: a piece deployed from a dirty tree (`--strict` makes it a failure; use `--strict` outside dev envs) and a
-dirty checkout here. `--skip-head` compares the pieces with each other only, to check an env from another commit.
-An env runs one commit: when a step deploys only some pieces (only the API, say), deploy the others from the same
-checkout too (`run deploy:pages`, the issuer's `run deploy`) before the check, which otherwise fails and names each
-piece that lags (as it does between the steps of a multi-Worker deploy). It holds no secret, prints only the manifest's URLs, statuses and well-formed build ids, and changes
-nothing (`migrations list` reads the remote `d1_migrations` table; it creates that table only if it is missing, which
-it never is on a migrated database).
+| Group | Piece | Read from | Stamped by |
+|---|---|---|---|
+| `api` | API Worker | `GET {apiUrl}/v1/health` → `build` | `pnpm --filter @hana-id/api run deploy` (`HANA_BUILD` var) |
+| `pages` | vault Worker | `GET {vaultOrigin}/.well-known/hana-build` → `build` | `run deploy:pages` |
+| | vault bundle | `{vaultOrigin}/vault.js`, first line `/* hana-build <id> */` | the web build (`deploy:pages` runs it first) |
+| | auth Worker | `GET {authOrigin}/.well-known/hana-build` → `build` | `run deploy:pages` |
+| | auth pages | `{authOrigin}/login`, `<meta name="hana-build">` | the web build |
+| `issuer` | email issuer | `GET {emailIssuer.url}/v1/email/health` → `build` | `pnpm --filter @hana-id/email-issuer run deploy` |
+| `console` | console Worker | `GET {console.origin}/.well-known/hana-build` → `build` | `pnpm --filter @hana-id/console run deploy` |
+| | console SPA | `{console.origin}/` (index.html), `<meta name="hana-build">` | its `vite build` (`run deploy` runs it first) |
+| `console-auth` | console-auth Worker | `GET {console.authOrigin}/.well-known/hana-build` → `build` | `pnpm --filter @hana-id/console-auth run deploy` |
+| `files` | files Worker | `GET {files.origin}/.well-known/hana-build` → `build` | `pnpm --filter @hana-id/files run deploy` |
+| `admin` | admin Worker | the deployed version's `HANA_BUILD` var: `wrangler deployments status` + `versions view --json` (see below) | `pnpm --filter @hana-id/admin run deploy` |
+| `watchdog` | watchdog Worker | the same, on `watchdog.cloudflare.accountId`; **only with `--only watchdog`** | `pnpm --filter @hana-id/watchdog run deploy` |
+| `--d1` | each D1 of the groups read | `wrangler d1 migrations list <db> --remote` from `apps/api` (`cloudflare.d1Name`), `apps/email-issuer` (`emailIssuer.cloudflare.d1Name`), `apps/console` (`console.d1Name`), `apps/watchdog` (`watchdog.cloudflare.d1Name`) | needs each `wrangler.jsonc` generated for `<env>` (`gen`) |
+
+A group is read only when the manifest has it (the dashboard blocks, `emailIssuer`, `watchdog`). `--only <g,…>` reads
+just those groups, `--skip <g,…>` all but those (comma-separated or repeated; not both). Each run prints what it didn't
+read.
+
+- **The admin Worker** has no build route: its whole origin is behind Cloudflare Access, which `deploy-check` can't
+  pass and which gets no exception for it. So `deploy-check` asks wrangler (read-only), logged in to the API's
+  Cloudflare account as for the deploy, for the deployment serving the Worker (`wrangler deployments status --name
+  <admin.workerName> --json`) and that version's metadata (`wrangler versions view <id> --json`), and reads only the
+  `HANA_BUILD` var from it (nothing else wrangler prints is shown). It runs wrangler from an empty directory, so a
+  `wrangler.jsonc` generated for another env doesn't apply; with several accounts on one login, set
+  `CLOUDFLARE_ACCOUNT_ID`. A gradual deployment (two versions, or one under 100%) fails: finish or roll it back
+  first. The admin's `public/` files have no build step and ship in the same version, so the var covers them.
+- **The watchdog** serves nothing without its status token, and gets no public route (D86). It is read the same way,
+  with `CLOUDFLARE_ACCOUNT_ID` set to `watchdog.cloudflare.accountId`, but only by `--only watchdog`: its account has
+  its own login, so a default run (the API's login) says it isn't read. After a watchdog deploy, run `deploy-check
+  <env> --only watchdog --d1` logged in to the watchdog's account (sandbox-dev's watchdog is on the API's account,
+  D125, so the API's login reads it too).
+
+Exit 1 (each reason on a `FAIL:` line) when a piece can't be read (a status, a redirect, unreachable, a failed wrangler
+run), isn't stamped (`null`, or no `HANA_BUILD` var: deployed with a raw `wrangler deploy`; no `build` field or no stamp
+in a bundle: deployed before D384, or before D406 for the console, console-auth, files, admin and watchdog Workers and
+the console SPA), runs another commit than this checkout's HEAD, or (`--d1`) a database lacks a migration file of this
+checkout. Warnings, not failures: a piece deployed from a dirty tree (`--strict` makes it a failure; use `--strict`
+outside dev envs) and a dirty checkout here. `--skip-head` compares the pieces with each other only, to check an env
+from another commit. An env runs one commit: when a step deploys only some pieces (only the API, say), deploy the
+others from the same checkout too (`run deploy:pages`, each other app's `run deploy`) before the check, which otherwise
+fails and names each piece that lags (as it does between the steps of a multi-Worker deploy; `--only` checks just the
+groups a step deployed). It holds no secret, prints only the manifest's URLs and Worker names, statuses, well-formed
+build ids and the last lines of a failed wrangler run's own error, and changes nothing (`deployments status`, `versions
+view` and `migrations list` only read; `migrations list` creates the remote `d1_migrations` table only if it is
+missing, which it never is on a migrated database).
 
 **Migrations: apply from the deployed commit.** `wrangler d1 migrations apply` applies the `.sql` files on disk that
 the remote database hasn't recorded, by name. Apply from a checkout at the commit you then deploy, `git status` clean
@@ -366,10 +400,9 @@ pending. It can't see a file applied under the same name with other content (`d1
 hashes): 2026-11-05's draft of `0011_wallet_directory.sql` was such a case, so the checkout rule is what prevents it.
 
 After a `wrangler rollback`, the rolled-back Worker reports the id of the version it returned to (an older commit, or
-none before D384): check from a checkout at that commit, or with `--skip-head` once every piece is rolled back.
+none before D384/D406): check from a checkout at that commit, or with `--skip-head` once every piece is rolled back.
 
-Not stamped yet: the watchdog, the console, console-auth, the admin and the files Workers (`deploy-check` doesn't read
-them).
+Not stamped: the hosted demo (`apps/demo`, not an env Worker).
 
 ### Upgrading an env deployed from `develop` to batch B
 
@@ -1163,6 +1196,8 @@ corepack pnpm --dir apps/console exec wrangler d1 migrations apply <console.d1Na
 corepack pnpm --filter @hana-id/api run deploy
 corepack pnpm --filter @hana-id/console run deploy
 corepack pnpm --filter @hana-id/console-auth run deploy
+# 6. Every piece on this commit, the console's D1 migrations applied ("Checking a deploy").
+corepack pnpm --filter @hana-id/scripts run deploy-check <env> --only api,console,console-auth --d1
 ```
 
 - Check: `curl -sI <console.origin>/` is `200` with the console CSP; `curl -s <console.origin>/api/me` is `401
@@ -1381,8 +1416,9 @@ the repo root of the main checkout, logged in to the API's Cloudflare account. N
    # The API and the console first (AdminRpc's watcher reads and StaffRpc's grants are C8 additions); with an email
    # issuer, it and its migration 0003 before both ("Users screen (C8b)" below: the ISSUER binding needs DirectoryRpc).
    corepack pnpm --filter @hana-id/api run deploy
-   corepack pnpm --dir apps/console exec wrangler deploy
-   corepack pnpm --dir apps/admin exec wrangler deploy
+   corepack pnpm --filter @hana-id/console run deploy
+   corepack pnpm --filter @hana-id/admin run deploy
+   corepack pnpm --filter @hana-id/scripts run deploy-check <env> --only api,console,admin   # the admin's id through wrangler ("Checking a deploy")
    ```
 
    `gen` keeps the Hyperdrive id on later runs; `--admin-hyperdrive-id off` (dev envs only) leaves the feed and the
@@ -1432,7 +1468,7 @@ prints a secret; `<env>` throughout):
 3. **The issuer** (with `DirectoryRpc`): `corepack pnpm --filter @hana-id/email-issuer run deploy`.
 4. **The API** (`AdminRpc.appNames`): its usual deploy (`docs/operations.md` "Deploying").
 5. **The admin Worker**: `corepack pnpm --filter @hana-id/admin gen <env>` (adds the `ISSUER` service binding when the
-   manifest has `emailIssuer`), then `corepack pnpm --dir apps/admin exec wrangler deploy`. In the other order the
+   manifest has `emailIssuer`), then `corepack pnpm --filter @hana-id/admin run deploy`. In the other order the
    binding names a Worker or entrypoint that doesn't exist yet: wrangler refuses the deploy, or the screen answers
    `503 directory_unavailable`.
 6. `corepack pnpm --filter @hana-id/scripts run deploy-check <env> --d1` (the issuer's D1 shows nothing pending).
@@ -1545,7 +1581,7 @@ main checkout; nothing below prints the token):
    corepack pnpm --filter @hana-id/api run gen <env>
    corepack pnpm --filter @hana-id/api run deploy
    corepack pnpm --filter @hana-id/admin gen <env>
-   corepack pnpm --dir apps/admin exec wrangler deploy
+   corepack pnpm --filter @hana-id/admin run deploy
    ```
 
 4. **Check it.** Open `<admin.origin>/security/monitoring`: the Watchdog table shows the last run and the heartbeat,
@@ -1636,7 +1672,7 @@ corepack pnpm --dir apps/files exec wrangler r2 bucket lifecycle list <files.exp
 #    workers.dev files origin (sandbox-dev) must be `<files.workerName>.<subdomain>.workers.dev` (D307); any other
 #    hostname becomes a Custom Domain on the Hana zone.
 corepack pnpm --filter @hana-id/files gen <env>
-corepack pnpm --dir apps/files exec wrangler deploy
+corepack pnpm --filter @hana-id/files run deploy
 # 5. The pages with the files origin: the API's gen writes FILES_ORIGIN into the auth page Worker's config, and the
 #    page build puts it into the logo pages' meta policy; deploy both page Workers (vault first, then auth).
 corepack pnpm --filter @hana-id/api run gen <env>
@@ -1646,7 +1682,9 @@ corepack pnpm --filter @hana-id/api run deploy:pages
 #    the logo backend). Deploy order doesn't matter for users: no app has a logo until an owner uploads one (C10's route).
 corepack pnpm --filter @hana-id/api run deploy
 corepack pnpm --filter @hana-id/console gen <env> --d1-id <uuid>
-corepack pnpm --dir apps/console exec wrangler deploy
+corepack pnpm --filter @hana-id/console run deploy
+# 7. Every piece on this commit ("Checking a deploy"): the files Worker answers /.well-known/hana-build.
+corepack pnpm --filter @hana-id/scripts run deploy-check <env> --only api,pages,console,files
 ```
 
 - **The Images binding.** It needs no secret, only Cloudflare Images enabled on the account: dashboard → Images. The
@@ -1741,8 +1779,8 @@ capture"). From the repo root of the main checkout.
 
    ```sh
    corepack pnpm --filter @hana-id/api run deploy
-   corepack pnpm --dir apps/console exec wrangler deploy
-   corepack pnpm --dir apps/admin exec wrangler deploy
+   corepack pnpm --filter @hana-id/console run deploy
+   corepack pnpm --filter @hana-id/admin run deploy
    ```
 
 4. **Check it**: `corepack pnpm --dir apps/admin exec wrangler tail <admin.workerName>` across a quarter hour:
@@ -1825,8 +1863,8 @@ its migration 0006 applied. From the repo root of the main checkout; nothing her
 
    ```sh
    corepack pnpm --filter @hana-id/api run deploy
-   corepack pnpm --dir apps/console exec wrangler deploy
-   corepack pnpm --dir apps/admin exec wrangler deploy
+   corepack pnpm --filter @hana-id/console run deploy
+   corepack pnpm --filter @hana-id/admin run deploy
    ```
 
 3. **Check it**: the Retention screen shows the month's state and next run. On the 1st, from 01:00 UTC,
@@ -2330,7 +2368,7 @@ there, not to the API's account; sandbox-dev's watchdog shares the API's account
 
 ```sh
 corepack pnpm --filter @hana-id/watchdog gen <env>              # IDENTITY_PINS, IDENTITY_ISS (and the rest)
-corepack pnpm --dir apps/watchdog exec wrangler deploy
+corepack pnpm --filter @hana-id/watchdog run deploy
 ```
 
 Check `/status` `identity.pinned` after the watchdog deploy and `identity.jwks` (`unpinned: 0`, `missing: []`) after
@@ -2823,7 +2861,8 @@ below logged in to the watchdog's account (`wrangler login` there, or `CLOUDFLAR
    corepack pnpm --filter @hana-id/watchdog gen <env> --d1-id <uuid>                          # apps/watchdog/wrangler.jsonc
    corepack pnpm --dir apps/watchdog exec wrangler d1 migrations apply <d1Name> --remote
    corepack pnpm --dir apps/watchdog exec wrangler secret bulk ../../.secrets/<env>/watchdog-secrets.json
-   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   corepack pnpm --filter @hana-id/watchdog run deploy                                       # stamped with the build id (D406)
+   corepack pnpm --filter @hana-id/scripts run deploy-check <env> --only watchdog --d1        # read through wrangler on this account
    ```
 
 6. Check: `curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)"
@@ -2859,7 +2898,7 @@ come only from the watchdog's own manifest, never from the chain or Hana's JWKS.
   active one. So the order on an env is: write the thumbprints of the issuer's keys (primary, standby: batch 4's
   `scripts/email-issuer.ts init` prints them; `corepack pnpm --filter @hana-id/watchdog pin <public key file>` prints
   the pin of any public JWK, JWKS or PEM with the Worker's own function, and says whether a JWKS kid matches) under `pinnedIssuerKeys.email.signers.hana` with `required: 1`, then
-  `corepack pnpm --filter @hana-id/watchdog gen <env>` and `corepack pnpm --dir apps/watchdog exec wrangler deploy`
+  `corepack pnpm --filter @hana-id/watchdog gen <env>` and `corepack pnpm --filter @hana-id/watchdog run deploy`
   (no new D1 migration), and check `/status` `email.pinned`; only then does the council run `set_issuer("email", …)`,
   `mark_self_issued("email")` and `set_issuer_key(…, signer: "hana")` (build plan batch 6). Between `set_issuer` and
   `mark_self_issued` a `signer_policy_transition` warning and the `governance_change` alerts are expected.
@@ -3270,7 +3309,7 @@ AUTH=https://hana-id-auth-sandbox-dev.tingtc.workers.dev
 
    ```sh
    corepack pnpm --filter @hana-id/watchdog gen $ENV
-   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   corepack pnpm --filter @hana-id/watchdog run deploy
    ```
 
    Check: the watchdog's `/status` shows `email.pinned` with both kids under `hana` and `required` 1, `email.jwks_url`

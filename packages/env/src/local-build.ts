@@ -1,5 +1,5 @@
 // The build id of this checkout (./build-id.ts, D384), read from git, and the stamped `wrangler deploy` that each
-// Worker's `deploy` script runs (apps/api, apps/email-issuer `scripts/deploy.ts`). Node only.
+// Worker's `deploy` script runs through the one shared wrapper, ./stamped-deploy.ts (D406). Node only.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { BUILD_VAR, type BuildId, formatBuildId, parseBuildId } from './build-id.ts';
 import { repoRoot } from './index.ts';

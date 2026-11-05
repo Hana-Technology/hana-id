@@ -91,6 +91,11 @@ export interface Env {
   CONSOLE_GOOGLE_CLIENT_SECRET?: string;
   /** `files.origin`: partner logos, the CSP's only `img-src` besides `'self'` and `data:`. */
   FILES_ORIGIN: string;
+  /**
+   * The build id (D406), served at `/.well-known/hana-build`: set only by `run deploy` (the shared wrapper's
+   * `wrangler deploy --var HANA_BUILD:<id>`), never by `gen`. Absent or malformed: reported as null.
+   */
+  HANA_BUILD?: string;
   /** Read-only NEAR RPC and the signer account (the on-chain scope views, batch C10). */
   NEAR_RPC: string;
   SIGNER_ACCOUNT: string;

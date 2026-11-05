@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D385 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
+Last verified against code: 2026-10-28 (commit 58edee9); D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
 flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
 confirmed by the user) on 2026-11-04, amending D341; D341 (branch `fix/google-cancel-back-to-chooser`, confirmed
@@ -6206,7 +6206,7 @@ follow-up there.
 
 ## The COOP canary before each release (branch `feat/coop-canary`), 2026-11-05
 
-### D385. A manual pre-release COOP canary checks D347's assumption, in place of `curl -sI`
+### D386. A manual pre-release COOP canary checks D347's assumption, in place of `curl -sI`
 - Date 2026-11-05 · Status: **agreed by the user** (2026-11-05, "the canary: agreed", as a manual pre-release check;
   the rules and the controls below: decided while building, to confirm) · Built: `scripts/coop-canary.ts`,
   `scripts/lib/coop-canary.ts` (`coop-canary` in `scripts/package.json`); tests: `scripts/test/coop-canary.test.ts`;
@@ -6240,14 +6240,13 @@ follow-up there.
   default (the hops' headers would be lost); the signed-in pages (account chooser, consent): they need a Google
   account and its cookies in the canary, which no script may hold (CLAUDE.md); report-only as a finding (Google has
   sent it since before batch B).
-- Note: the number follows D384, which is on the unmerged `chore/ci-cost` (CI and the identity probe turned off on
-  testnet); renumber if another branch takes D385 first.
+- Note: built as D385 and renumbered D386 at merge (D384 went to `deploy-check`, D385 to the WebCrypto errors).
 
 ## Superseded or amended
 
 | Was | Now | Source |
 |---|---|---|
-| D347's assumption rechecked with `curl -sI` on the authorization URL before each release | `coop-canary <env>` before each release: every hop of the product's requests under six User-Agents, and Chromium, Firefox and WebKit, with positive controls (D385) | `scripts/lib/coop-canary.ts`; docs/operations.md "Before each release: the COOP canary" |
+| D347's assumption rechecked with `curl -sI` on the authorization URL before each release | `coop-canary <env>` before each release: every hop of the product's requests under six User-Agents, and Chromium, Firefox and WebKit, with positive controls (D386) | `scripts/lib/coop-canary.ts`; docs/operations.md "Before each release: the COOP canary" |
 | The outside identity-JWKS probe runs hourly (D382) | Every 3 hours, at minute 17 (D383) | `.github/workflows/identity-probe.yml` |
 | The outside identity-JWKS probe runs every 15 min (D210) | Hourly, at minute 17 (D382) | `.github/workflows/identity-probe.yml` |
 | The admin crons' budget counts emails and NEAR reads only, with room for the RPCs (D280); C12's `relayerKeys` and statement-notice reads uncharged (D360's note) | Every outbound call counts: the connection, every RPC (at most 30), every email, NEAR read and rate fetch; a unit of work starts only when it fits (D380) | `apps/admin/src/mail.ts`, `cron.ts`, `ledger-cron.ts` |
@@ -6623,7 +6622,7 @@ over D269's directory) and D276 (the Support ID made consistent with D269), belo
   `login_timeout`, not `login_cancelled`. The alternative is a false cancel of every login if Google starts enforcing
   COOP on its sign-in pages (it reports violations today). If Google switches to an enforcing policy on a later page
   (after the 8 s), a login would be cancelled while the user is still at Google: the watch's assumption to recheck
-  before each release, with `coop-canary <env>` (D385; it replaced `curl -sI` on the authorization URL).
+  before each release, with `coop-canary <env>` (D386; it replaced `curl -sI` on the authorization URL).
 - Alternatives: (a) the SDK polling its own handle after connect: the same handle semantics, with one more hop. Not
   done. (b) The popup reporting its own close on every page (`pagehide` with a pre-encrypted relay write, as D341's
   screen does): it can't cover Google's page, and slot writes are single use. Kept only for D341's screen. (c) A

@@ -525,7 +525,7 @@ const googleEnforcesCoop: Playbook = {
   summary:
     "A page of the login popup's trip (Google's sign-in pages, or Hana's callback) sends an enforcing Cross-Origin-Opener-Policy: the vault's popup-close watch (D347) can read a popup that is still at Google as closed and cancel the login.",
   signals: [
-    '`coop-canary <env>` exits 1 with `enforces Cross-Origin-Opener-Policy` (or `-Embedder-Policy`) on a page other than Google\'s error page, or its browser check reads `popup.closed` true while the popup is open (D385).',
+    '`coop-canary <env>` exits 1 with `enforces Cross-Origin-Opener-Policy` (or `-Embedder-Policy`) on a page other than Google\'s error page, or its browser check reads `popup.closed` true while the popup is open (D386).',
     "Partners or users report `login_cancelled` with `data.reason: 'popup_closed'` while the user was still signing in at Google.",
   ],
   impact: [
@@ -559,7 +559,7 @@ const googleEnforcesCoop: Playbook = {
     'A Google login that waits longer than 8 s on the enforcing page is not cancelled; closing the popup on a Hana page still ends the login within seconds.',
   ],
   followUps: ['Update D347 and the partner guide\'s "A closed popup" (docs/integration.md) with what the watch now does.'],
-  refs: ['docs/operations.md#before-each-release-the-coop-canary', 'D347', 'D385'],
+  refs: ['docs/operations.md#before-each-release-the-coop-canary', 'D347', 'D386'],
   related: ['google-jwks-outage'],
 };
 

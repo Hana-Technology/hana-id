@@ -1,7 +1,7 @@
 # Recovery playbooks
 
 Generated from `packages/playbooks` (D126) by `corepack pnpm --filter @hana-id/playbooks gen-docs`: edit the package,
-not this file (a test fails when it is stale). Last verified against code: 2026-11-05 (branch `feat/coop-canary`: the `google-enforces-coop` incident, D385); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`).
+not this file (a test fails when it is stale). Last verified against code: 2026-11-05 (branch `feat/coop-canary`: the `google-enforces-coop` incident, D386); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`).
 
 One step-by-step guide for every watchdog alert kind and for every incident the watchdog does not raise. The admin
 portal's "Security & monitoring" view renders the same playbooks (`docs/batch-c-spec.md`), and every watchdog
@@ -1972,7 +1972,7 @@ A page of the login popup's trip (Google's sign-in pages, or Hana's callback) se
 
 **Signals**
 
-- `coop-canary <env>` exits 1 with `enforces Cross-Origin-Opener-Policy` (or `-Embedder-Policy`) on a page other than Google's error page, or its browser check reads `popup.closed` true while the popup is open (D385).
+- `coop-canary <env>` exits 1 with `enforces Cross-Origin-Opener-Policy` (or `-Embedder-Policy`) on a page other than Google's error page, or its browser check reads `popup.closed` true while the popup is open (D386).
 - Partners or users report `login_cancelled` with `data.reason: 'popup_closed'` while the user was still signing in at Google.
 
 **Impact**
@@ -2002,7 +2002,7 @@ A page of the login popup's trip (Google's sign-in pages, or Hana's callback) se
 
 - Update D347 and the partner guide's "A closed popup" (docs/integration.md) with what the watch now does.
 
-**Refs:** [`docs/operations.md#before-each-release-the-coop-canary`](operations.md#before-each-release-the-coop-canary), D347 (`docs/decisions.md`), D385 (`docs/decisions.md`) · **See also:** [google-jwks-outage](#google-jwks-outage)
+**Refs:** [`docs/operations.md#before-each-release-the-coop-canary`](operations.md#before-each-release-the-coop-canary), D347 (`docs/decisions.md`), D386 (`docs/decisions.md`) · **See also:** [google-jwks-outage](#google-jwks-outage)
 
 <a id="near-rpc-outage"></a>
 

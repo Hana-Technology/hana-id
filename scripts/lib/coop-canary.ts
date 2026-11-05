@@ -1,4 +1,4 @@
-// coop-canary.ts's body: the manual pre-release check of D347's assumption (D385). The vault notices a closed login
+// coop-canary.ts's body: the manual pre-release check of D347's assumption (D386). The vault notices a closed login
 // popup by reading its window handle's `.closed` every 250 ms (D347). That handle stays valid across the popup's trip
 // to Google only while no page on the way *enforces* Cross-Origin-Opener-Policy: an enforcing page switches the
 // popup's browsing context group, and the opener's handle then reads `closed: true` while the window is still open
@@ -560,7 +560,7 @@ export async function coopCanary(argv: readonly string[], deps: CanaryDeps): Pro
   const m = (deps.loadManifest ?? loadEnv)(args.positionals[0]!);
   const e = canaryEnv(m);
   const { log } = deps;
-  log(safeLine(`COOP canary for ${e.env}: client ${e.clientId}, redirect ${e.authOrigin}${CALLBACK_PATH} (D347, D385)`));
+  log(safeLine(`COOP canary for ${e.env}: client ${e.clientId}, redirect ${e.authOrigin}${CALLBACK_PATH} (D347, D386)`));
   log('Header check (fetch, manual redirects; per hop: status, host+path, COOP / COOP report-only / CORP):');
   const h = await headerCheck(e, log, deps.fetchFn);
   let b: BrowserResult | null = null;

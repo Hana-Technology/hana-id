@@ -1,4 +1,4 @@
-// The COOP canary (D385, D347's guard): which requests it checks (the product's own builders), the header rules
+// The COOP canary (D386, D347's guard): which requests it checks (the product's own builders), the header rules
 // (enforcing COOP or COEP fails; report-only, `unsafe-none` and CORP don't; Google's error page is exempt), how it
 // follows a chain (manual redirects, a cookie jar it never prints), the browser verdicts and their positive control,
 // and the exit codes. Stubbed fetch and browsers: no network.

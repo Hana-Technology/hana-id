@@ -128,7 +128,10 @@ screen (the stub's `#deny`, Google's `access_denied`; D341): back to the chooser
 Google-only app) or to case B's choices, Google again signs in under a fresh OAuth state, email from the chooser
 signs in, and closing the popup there (or case B's Cancel) gives `login_cancelled`. `tests/popup-close.spec.ts` covers
 D347: closing the popup on the chooser, on Google's page (past the 8 s COOP window), on the email code step and on a
-follow-up screen gives `login_cancelled` (`popup_closed`) within seconds, and a slow trip to Google and back signs in.
+follow-up screen gives `login_cancelled` (`popup_closed`) within seconds, and a slow trip to Google and back signs in;
+a close a couple of seconds after reaching Google's page gives the same at D398's 90 s deadline (the page's clock
+fast-forwarded; Firefox and WebKit: `fixme` on Chromium, which drops the chooser's `google` signal, D398), and with the
+stub enforcing COOP (Chromium and Firefox) the account chosen in time still signs in.
 `tests/login.spec.ts` checks that
 another Google error (`server_error`, sent to the callback directly) still gives `google_error`. The `second_request` flow is covered by `@hana-id/web`'s unit and
 vault-harness tests only (the bundles have one flow compiled in). `tests/webcrypto.spec.ts` (D385) checks, in

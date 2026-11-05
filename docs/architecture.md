@@ -1,7 +1,7 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-05 (branch `feat/batch-c-8b`: the Users screen in Status, Components' connections, "Staff reads of the user directory" and the issuer D1's 0003; D388–D392); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/batch-c-15`: "Wallet directory" step 5, the Support ID in the
+Last verified against code: 2026-11-05 (branch `feat/batch-c-8b`: the Users screen in Status, Components' connections, "Staff reads of the user directory" and the issuer D1's 0003; D388–D392); 2026-11-05 (branch `fix/popup-early-close-deadline`: login step 4's closed popup, a close within D347's 8 s waits 90 s for an answer, then `login_cancelled`, D398); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/batch-c-15`: "Wallet directory" step 5, the Support ID in the
 session answers and the vault; the new "Support ID lookup", D394–D397); 2026-11-05 (branch `feat/coop-canary`: "Login, one transaction" step 4's closed popup: Google's COOP rechecked before each release by `coop-canary`, D386); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: the login's step 2, the session key's failure as `derive_failed` with its reason and which keys WebKit Linux refuses, D385; "WebCrypto on the login, export and signing paths"); 2026-11-05 (branch `feat/deploy-build-check`: "Environments and manifests": the build id
 in every Worker and page bundle and `deploy-check`, D384); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-05 (branch `fix/e2e-flakes`: the login's step 2, the session key's retry on WebKit Linux's
 Ed25519 `OperationError`, D381); 2026-11-04 (branch `feat/batch-c-13`: retention and the erasure path in Status, Components
@@ -261,9 +261,13 @@ Browser steps: `packages/web/src/vault/login.ts`, `packages/web/src/auth/login-p
    still wins) with `login_cancelled`, `data.reason: 'popup_closed'`: the relay reads abort (abort-aware `readSlot`),
    the keys are dropped, and a later write to the slot is never read. A close while the vault works alone (google-match,
    the chain) lets the login finish; a later wait on the popup ends at once. A close within 8 s of a `google` signal,
-   before `back`, is taken for an IdP's COOP switch (the opener's handle then reads closed while the window is open):
-   the watch stops for the rest of that login, which falls back to its 5-minute limit (and to D341's own close report
-   on the screen after a cancel).
+   before `back`, may be an IdP's COOP switch (the opener's handle then reads closed while the window is open): the
+   watch stops and arms a 90 s deadline (`POPUP_WATCH.earlyCloseDeadlineMs`, D398). The popup's answer before it
+   (only an open window writes one) clears it, and the login goes on with its 5-minute limit only (and D341's own close
+   report on the screen after a cancel); no answer by then is taken as the close, with the same grace,
+   `login_cancelled` (`popup_closed`), aborted reads and dropped keys. Any end of the login clears the deadline. This
+   covers every trip to Google: the first, token_first's silent second trip and D273's retry (the callback's own
+   `google` signal), a screen's "Google again", and link tasks.
 5. The vault long-polls `GET /v1/login-relay/<relayId>?wait=25` with `x-hana-relay-key`; the object checks
    `b64url(sha256(key)) === relayId` before consuming (`readKeyMatches` `login-relay.ts:52`, `LoginRelay.read` `:86`).
    The vault decrypts, verifies RS256 against Google's JWKS (`packages/core/src/id-token.ts:151`), `iss`, `aud`,

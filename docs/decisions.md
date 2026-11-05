@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
+Last verified against code: 2026-10-28 (commit 58edee9); D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
 user, implementation choices to confirm) on 2026-11-05; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
 flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
@@ -6437,6 +6437,63 @@ follow-up there.
 - Rejected: keeping the probe every 3 hours on GitHub (no testnet need for it; about 240 billed minutes a month); a
   separate public repo for the probe (it publishes what the probe looks like, and GitHub pauses scheduled workflows
   after 60 days without activity).
+## A quick close on Google's page (branch `fix/popup-early-close-deadline`), 2026-11-05
+
+### D398. A close inside D347's COOP window ends the login after 90 s without an answer, not after 5 minutes
+- Date 2026-11-05 · Status: **asked for by the user** (2026-11-05, "yes make it give up after about 90 seconds";
+  implementation choices: to confirm) · Built on `fix/popup-early-close-deadline` (`packages/web/src/vault/login.ts`
+  `POPUP_WATCH.earlyCloseDeadlineMs`, `PopupTask.watchPopup`, `popupWait`, `stopWatch`) · Amends D347 ("the watch
+  stops for the rest of that login, which falls back to its 5-minute limit") and the partner guide's "An unfinished
+  login" (a close within seconds of reaching Google's page was `login_timeout` after 5 minutes). Built as D385 and renumbered
+  D398 at merge (D384–D397 were taken on `develop` by then).
+- Context: people close the popup 2–5 s after Google's account chooser appears, inside D347's 8 s window, so the
+  partner showed "signing in…" for 5 minutes. Checked again on 2026-11-05: Google's sign-in pages still send COOP
+  report-only; Google's OAuth error page enforces `same-origin` (the handle reads closed about 0.5 s after it
+  commits); Gmail moved from report-only to enforced in January 2026. The window stays: a sign-in page that starts
+  enforcing would otherwise cancel every login on arrival.
+- Decision:
+  - A `closed` reading within `severWindowMs` (8 s) of a `google` signal, before `back`, still stops the watch (the
+    handle can't be read again either way), and now arms a deadline: `POPUP_WATCH.earlyCloseDeadlineMs`, 90 s from
+    that reading, on the vault's injectable timers.
+  - The popup's answer before the deadline (whatever ends the wait in progress: the first slot, a follow-up screen's
+    answer, a link task's slot; only an open window can write one) shows the window was open behind a switch: the
+    deadline is cleared and the login goes on. The handle stays unread for the rest of that login, whose later waits
+    have the 5-minute limit only, as D347 had.
+  - No answer by the deadline: the popup is taken as closed, exactly as a detected close. After the 1 s grace, a
+    wait in progress ends with `login_cancelled`, `data.reason: 'popup_closed'`; the relay reads abort, the keys are
+    dropped and a later slot write is never read. A vault working alone at that moment (google-match, the chain)
+    finishes, and a later wait on the popup ends at once.
+  - Every end of the login clears the deadline: success, `hana_cancelLogin`, a newer login, `login_timeout`, any
+    error. The 5-minute limit wins when it comes first (a close in the window more than 3.5 minutes into the login).
+  - It applies wherever the 8 s rule does: the first trip to Google, D273's interactive retry and token_first's
+    silent second trip (the callback's own `google` signal), a follow-up screen's "Google again", and link tasks.
+  - The public surface is unchanged: the same code and `popup_closed` reason as any close; only the timing differs
+    (about 90 s rather than about 2 s).
+- Why: the quick close is common, and 5 minutes of "signing in…" after the user has left is the bug D347 fixed for
+  every other close. 90 s is longer than a normal Google sign-in (choose an account, or type a password and a second
+  factor) and well inside the 5-minute limit.
+- Main trade-off: if Google ever enforces COOP on its sign-in pages, every login's handle reads closed on arrival, and
+  a user still on Google's pages 90 s later (a slow password reset, a second factor on another device) is cancelled
+  with `popup_closed` while the window is open; finishing then writes a slot no one reads, and the user signs in
+  again. Today that applies only to Google's OAuth error page, a dead end anyway. D347's recheck before each release
+  (`curl -sI` on the authorization URL and the sign-in pages) is what would show it; a switch to enforcing calls for
+  revisiting this number, or for a signal that survives the switch.
+- Alternatives: (a) D347 as built (5 minutes): what users saw. Not chosen. (b) A distinct reason,
+  `popup_closed_unconfirmed`: a partner does the same for both (the user is gone, or has to start again), and a new
+  reason widens the documented surface for no partner action; the vault's timing tells the two apart if ever needed.
+  Not chosen. (c) A shorter deadline (30 s): a COOP-enforcing Google would cancel more real sign-ins. Not
+  recommended.
+- Found while testing (2026-11-05), not fixed here: Chromium drops the popup's `hana:auth-progress` `google` when the
+  page navigates in the same task as its `postMessage` (from the chooser's click it never arrived; from the
+  Google-only path, now and then under load; navigating one task later delivered it). Where it is lost the vault never
+  opens the COOP window, so in Chromium a quick close is a plain close (`login_cancelled` within seconds) and, on a
+  Google that enforced COOP, the switch would be taken for a close. Every page that posts `google` (or `relayed`) and
+  then navigates or closes is affected (`auth/login-page.ts` `toGoogle`, `auth/callback-page.ts`, `auth/email-page.ts`);
+  the fix and its decision are for a separate branch. The e2e case below is `fixme` on Chromium until then.
+- Tests: `packages/web/test/vault/popup-close.test.ts` ("a close inside the COOP window": cancelled at 90 s, an answer
+  at 60 s signs in, an answer in the grace wins, `hana_cancelLogin`, a newer login, the 5-minute limit first, a later
+  trip to Google, a follow-up screen, a link task, no timer left behind); `apps/e2e/tests/popup-close.spec.ts` ("closed
+  within 8 s on Google's page", the page's clock fast-forwarded; "an IdP that enforces COOP", Chromium and Firefox).
 
 ## Batch C8b: the admin console's Users screen (branch `feat/batch-c-8b`), 2026-11-05
 
@@ -6583,6 +6640,7 @@ still take them: renumber on merge.
 | D347's assumption rechecked with `curl -sI` on the authorization URL before each release | `coop-canary <env>` before each release: every hop of the product's requests under six User-Agents, and Chromium, Firefox and WebKit, with positive controls (D386) | `scripts/lib/coop-canary.ts`; docs/operations.md "Before each release: the COOP canary" |
 | D276's code → user through the issuer's `user_email_apps.uid` (`IssuerRpc.uid`, `DirectoryRpc.byUid`) with a ledger-only fallback; the code from the uid; `user:erase` | Through the wallet directory's `end_users.support_code` / `token_sub` / `user_id` (no issuer uid, no `IssuerRpc.uid`, no `byUid`, no fallback); the code from the identity token's `sub` (D346); the lookup's hot-DB part in `AdminRpc`, its ledger part read as `usage_admin` (D394); erasure by `uid-erase` (D361) | `apps/api/src/directory/support.ts`, `apps/admin/src/support.ts`, `scripts/lib/admin-support.ts` |
 | The outside identity-JWKS probe runs every 3 hours on GitHub Actions (D383); CI runs on every push and PR (D383) | Both workflows disabled while only testnet runs; before mainnet CI back on and the probe on AWS Lambda + EventBridge (D387) | GitHub workflow settings; `docs/mainnet-readiness.md` 4.20, 5.10 |
+| A close within 8 s of the popup leaving for Google stops the watch; the login waits for its 5-minute limit (D347) | The login waits 90 s for the popup's answer, then ends with `login_cancelled` (`popup_closed`), as after any close (D398) | `packages/web/src/vault/login.ts` `POPUP_WATCH.earlyCloseDeadlineMs` |
 | The outside identity-JWKS probe runs hourly (D382) | Every 3 hours, at minute 17 (D383) | `.github/workflows/identity-probe.yml` |
 | The outside identity-JWKS probe runs every 15 min (D210) | Hourly, at minute 17 (D382) | `.github/workflows/identity-probe.yml` |
 | The admin crons' budget counts emails and NEAR reads only, with room for the RPCs (D280); C12's `relayerKeys` and statement-notice reads uncharged (D360's note) | Every outbound call counts: the connection, every RPC (at most 30), every email, NEAR read and rate fetch; a unit of work starts only when it fits (D380) | `apps/admin/src/mail.ts`, `cron.ts`, `ledger-cron.ts` |
@@ -7002,6 +7060,9 @@ below.
   done. (b) The popup reporting its own close on every page (`pagehide` with a pre-encrypted relay write, as D341's
   screen does): it can't cover Google's page, and slot writes are single use. Kept only for D341's screen. (c) A
   heartbeat through the API: no Hana code runs on Google's page either. Not recommended.
+- Amended 2026-11-05 by D398: a close within the 8 s still stops the watch, but the login then waits 90 s for the
+  popup's answer and ends with `login_cancelled` (`popup_closed`) without one, rather than waiting for its 5-minute
+  limit.
 
 ### D348. After a cancel, a login the partner restricted to Google comes back to Google only
 - Date 2026-11-04 · Status: confirmed by the user (2026-11-04, "yes") · Built on `fix/google-cancel-back-to-chooser`

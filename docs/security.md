@@ -1,7 +1,7 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-05 for the admin Users screen's read path (branch `feat/batch-c-8b`: `DirectoryRpc`'s invariants, its compromise row, the admin Worker's Users invariants, the audit and the row budget; D388–D392); 2026-11-05 for the outside probe's schedule (branch `chore/ci-cost`: the probe turned off on testnet, D387); 2026-11-05 for the Support ID and its lookup (branch `feat/batch-c-15`:
+known open issues. Last verified against code: 2026-11-05 for the admin Users screen's read path (branch `feat/batch-c-8b`: `DirectoryRpc`'s invariants, its compromise row, the admin Worker's Users invariants, the audit and the row budget; D388–D392); 2026-11-05 for the popup close watch's deadline (branch `fix/popup-early-close-deadline`: a forged `google` delays a close by at most 90 s, D398); 2026-11-05 for the outside probe's schedule (branch `chore/ci-cost`: the probe turned off on testnet, D387); 2026-11-05 for the Support ID and its lookup (branch `feat/batch-c-15`:
 what a user shows, what the staff lookup reveals and to whom, its audit, D394–D397); 2026-11-05 for the build id (branch `feat/deploy-build-check`: a public
 commit id in `/v1/health`, `/v1/email/health`, the page origins' `/.well-known/hana-build` and the bundles, D384);
 2026-11-05 for the outside probe's schedule (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383; before it branch `chore/identity-probe-hourly`, hourly, D382); 2026-11-04 for retention and erasure (branch `feat/batch-c-13`: the
@@ -1066,7 +1066,8 @@ providers; a linked member's export on both is e2e-tested, `apps/e2e/tests/linki
   are zeroed and the context dropped, so a reload finds nothing.
 - **The close watch's signals carry nothing** (D347): `hana:auth-progress` `google`, `back` and `relayed` are taken
   only from the popup window the vault answered, on `authOrigin`. The worst a forged or lost signal does is change
-  when a closed popup is noticed (a `relayed` makes the vault ignore the close, a `google` opens the 8 s COOP window);
+  when a closed popup is noticed (a `relayed` makes the vault ignore the close, a `google` opens the 8 s COOP window,
+  after which a close is noticed only at D398's 90 s deadline unless the popup answers first);
   it can't end a login that the user didn't, read a slot, or carry data. A close ends the login through the same abort
   as a timeout: the relay reads stop and later slot writes are never read.
 - **The follow-up channel** (D256): the popup and the vault talk after Google's answer through relay slots derived

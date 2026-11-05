@@ -4306,8 +4306,8 @@ skips everything while the `NPM_TOKEN` secret is missing, and npm refuses `"priv
     `wasm32-unknown-unknown` (the contract and sandbox e2e), Playwright's browsers (`pnpm --filter @hana-id/e2e
     e2e:install`), the npm registry (the pack check). macOS WebKit is not Linux WebKit: D381's bug would pass here.
   - Timings on the dev Mac (16 cores, idle, warm caches), every package and job selected (as for a change to the
-    verify files): `--quick` about 1 min 10 s (typecheck 11 s, unit tests 50 s, gitleaks and the docs checks a few
-    seconds); the default tier about 22 min, of which the sandbox e2e is 18–20 min (it runs its tests one at a time),
+    verify files): `--quick` about 1 min (55–70 s: typecheck 12 s, unit tests 43–50 s, gitleaks and the docs checks a
+    few seconds); the default tier about 22 min, of which the sandbox e2e is 18–20 min (it runs its tests one at a time),
     Playwright on Chromium 32 s, the pack check 10 s, the contract a few seconds once built (about 2.5 min for
     `cargo test` and 1.5 min for the wasm from cold). Without a Rust change the default tier is about 2 min. On a
     machine under heavy load `--quick` took 4 min, and workerd tests timed out.

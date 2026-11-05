@@ -54,7 +54,7 @@
 //     at once. The popup announces each navigation to Google (`hana:auth-progress` `google`), its return to the
 //     callback with its opener (`back`) and closing itself after a relay (`relayed`). An IdP that enforces COOP would switch the popup's browsing context group, which the handle
 //     can't tell from a close: a `closed` within 8 s of a `google` announcement may be that switch, so the watch stops
-//     and gives the popup 90 s to answer (D385). An answer in time shows the window was open: the login goes on, with
+//     and gives the popup 90 s to answer (D398). An answer in time shows the window was open: the login goes on, with
 //     no watch for the rest of it (the 5-minute limit, and the post-cancel screen's own close report, D341, remain).
 //     No answer in time is taken as the close it most likely was: `login_cancelled` (`popup_closed`) as above.
 // 11. With the follow-up channel, the vault's last word to the popup: `done` (close, or link banners first: a pending
@@ -146,7 +146,7 @@ export interface PopupWatch {
    */
   severWindowMs: number;
   /**
-   * D385: after such a `closed`, how long the login waits for the popup's answer (a window that was open behind the
+   * D398: after such a `closed`, how long the login waits for the popup's answer (a window that was open behind the
    * switch) before taking it for the close it most likely was (`login_cancelled`, `popup_closed`, after `graceMs`).
    */
   earlyCloseDeadlineMs: number;
@@ -543,7 +543,7 @@ abstract class PopupTask<T> {
   private readonly watch: PopupWatch;
   private watchTimer: unknown = null;
   private closeTimer: unknown = null;
-  /** D385: armed by a `closed` inside the COOP window; an answer from the popup clears it, its end is a close. */
+  /** D398: armed by a `closed` inside the COOP window; an answer from the popup clears it, its end is a close. */
   private earlyCloseTimer: unknown = null;
   /** The popup's window closed (a user's close, not a navigation or the popup closing itself after a relay). */
   private popupGone = false;
@@ -615,7 +615,7 @@ abstract class PopupTask<T> {
       if (this.selfClosing) return;
       // An IdP's COOP may have moved the popup to another browsing context group as it reached Google: the handle
       // reads closed while the window is open, and stays so. Stop watching; the popup's answer within the deadline
-      // shows the window was open (D385).
+      // shows the window was open (D398).
       if (this.ctx.perfNow() - this.leftForGoogleAt < this.watch.severWindowMs) {
         this.earlyCloseTimer = this.ctx.timers.setTimeout(() => {
           this.earlyCloseTimer = null;
@@ -654,7 +654,7 @@ abstract class PopupTask<T> {
     this.armClose();
     try {
       const answer = await wait();
-      // D385: only an open window writes an answer, so the `closed` inside the COOP window was the switch. The handle
+      // D398: only an open window writes an answer, so the `closed` inside the COOP window was the switch. The handle
       // can't be read again: the rest of the login has its own limit only.
       if (this.earlyCloseTimer !== null) {
         this.ctx.timers.clearTimeout(this.earlyCloseTimer);

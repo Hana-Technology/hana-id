@@ -133,7 +133,7 @@ test('an unfinished sign-in: “Signing in…” with Cancel until the vault’s
   const popup = await opened;
   await popup.waitForURL(/accounts\.google\.com/u);
   // Left open on Google's page without finishing: the page keeps showing the sign-in with its Cancel until the vault's
-  // limit. (A popup closed there ends sooner, with login_cancelled: popup-close.spec.ts, D347 and D385.)
+  // limit. (A popup closed there ends sooner, with login_cancelled: popup-close.spec.ts, D347 and D398.)
   await expect(page.locator('#status')).toHaveText('Signing in…');
   await expect(page.getByRole('button', { name: 'Cancel sign-in' })).toBeVisible();
   await page.clock.fastForward(LOGIN_PENDING_MS + 1_000);

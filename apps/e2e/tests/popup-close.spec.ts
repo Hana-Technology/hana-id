@@ -2,7 +2,7 @@
 // 'popup_closed'`) within a few seconds, instead of the 5-minute `login_timeout`: on the chooser, on Google's page, on
 // the email code step and on a follow-up screen. A navigation to Google and back is never a close, and neither is a
 // popup that is merely slow. A close right on arrival at Google (taken for a possible COOP switch) ends the login at
-// D385's deadline (90 s), not the 5-minute limit; the page's clock is fast-forwarded to it.
+// D398's deadline (90 s), not the 5-minute limit; the page's clock is fast-forwarded to it.
 import type { Page, TestInfo } from '@playwright/test';
 import { GOOGLE_AUTH_URL } from '../src/google-stub.ts';
 import { ISSUER_URL } from '../src/stack.ts';

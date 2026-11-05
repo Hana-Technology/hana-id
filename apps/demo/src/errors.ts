@@ -46,7 +46,7 @@ export function plainMessage(e: unknown, action: DemoAction): string {
       return 'The Hana sign-in window closed before it finished loading. Try again and keep the window open.';
     case 'login_timeout':
       // data.stage (docs/integration.md section 13): 'connect', the window never connected (15 s); 'pending', the
-      // sign-in was left unfinished for 5 minutes (the window left open; a closed one is login_cancelled, D347, D385).
+      // sign-in was left unfinished for 5 minutes (the window left open; a closed one is login_cancelled, D347, D398).
       return isObj(e) && isObj(e.data) && e.data.stage === 'pending'
         ? 'The sign-in wasn’t finished within 5 minutes, so it stopped. Log in again when you’re ready.'
         : 'The Hana sign-in window did not respond in time. Try again.';

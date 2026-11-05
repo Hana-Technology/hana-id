@@ -1,7 +1,7 @@
 // D347: the vault watches the login popup's window from the hello on. A close while the login waits on the popup ends
 // it with `login_cancelled` (`data.reason: 'popup_closed'`) after a short grace; a navigation to Google (and an IdP's
 // COOP switch on arrival, which makes the handle read closed) never counts; a window that closes itself after relaying
-// never counts; a close while the vault works alone lets the login finish. D385: a `closed` inside the COOP window gives
+// never counts; a close while the vault works alone lets the login finish. D398: a `closed` inside the COOP window gives
 // the popup 90 s to answer (a window open behind the switch); no answer by then is the close it most likely was.
 import { type FollowNotice, decryptRelayValue, encryptRelayPayload, followSlot, isFollowNotice } from '@hana-id/core';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -196,7 +196,7 @@ function settledFlag(p: Promise<unknown>): () => boolean {
   return () => settled;
 }
 
-describe('a close inside the COOP window: the popup has 90 s to answer (D385)', () => {
+describe('a close inside the COOP window: the popup has 90 s to answer (D398)', () => {
   it('no answer: login_cancelled (popup_closed) at the deadline, and a late answer is never read', async () => {
     const b = new Browser();
     const t = await tab(b, ENV);

@@ -1,7 +1,7 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-05 (branch `fix/popup-early-close-deadline`: login step 4's closed popup, a close within D347's 8 s waits 90 s for an answer, then `login_cancelled`, D385); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-05 (branch `fix/e2e-flakes`: the login's step 2, the session key's retry on WebKit Linux's
+Last verified against code: 2026-11-05 (branch `fix/popup-early-close-deadline`: login step 4's closed popup, a close within D347's 8 s waits 90 s for an answer, then `login_cancelled`, D398); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-05 (branch `fix/e2e-flakes`: the login's step 2, the session key's retry on WebKit Linux's
 Ed25519 `OperationError`, D381); 2026-11-04 (branch `feat/batch-c-13`: retention and the erasure path in Status, Components
 (the usage ledger and admin Worker rows) and "Data stores" (what is purged when, D360–D369)); 2026-11-04 (branch `feat/console-reports-upgrades`: the partner console's usage, statement and pending-upgrades screens, D370–D374); 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342; the partner console's fresh sign-in and write paths, D343, D350–D358); 2026-11-04 (branch `feat/user-id-identity-sub`: the wallet directory's three ids and the record's session signature, D346 and the D311/D313 amendments: Status, "Wallet directory" steps 1, 2 and 4, "Data stores"' D1 row, the Glossary); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: D347, a closed popup is
 `login_cancelled`, in "Login, one transaction" after step 4; D348's Google-only screen after a cancel; a cancel on token_first's Google
@@ -255,7 +255,7 @@ Browser steps: `packages/web/src/vault/login.ts`, `packages/web/src/auth/login-p
    the keys are dropped, and a later write to the slot is never read. A close while the vault works alone (google-match,
    the chain) lets the login finish; a later wait on the popup ends at once. A close within 8 s of a `google` signal,
    before `back`, may be an IdP's COOP switch (the opener's handle then reads closed while the window is open): the
-   watch stops and arms a 90 s deadline (`POPUP_WATCH.earlyCloseDeadlineMs`, D385). The popup's answer before it
+   watch stops and arms a 90 s deadline (`POPUP_WATCH.earlyCloseDeadlineMs`, D398). The popup's answer before it
    (only an open window writes one) clears it, and the login goes on with its 5-minute limit only (and D341's own close
    report on the screen after a cancel); no answer by then is taken as the close, with the same grace,
    `login_cancelled` (`popup_closed`), aborted reads and dropped keys. Any end of the login clears the deadline. This

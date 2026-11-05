@@ -494,7 +494,7 @@ export async function reject(popup: Page): Promise<void> {
 export const LOGIN_PENDING_MS = 5 * 60_000;
 export const AFTERWORD_MS = 5 * 60_000;
 /**
- * D385: after a close within 8 s of the popup leaving for Google (taken for a possible COOP switch), how long the vault
+ * D398: after a close within 8 s of the popup leaving for Google (taken for a possible COOP switch), how long the vault
  * waits for the popup's answer before ending the login with login_cancelled (login.ts POPUP_WATCH.earlyCloseDeadlineMs).
  */
 export const EARLY_CLOSE_DEADLINE_MS = 90_000;

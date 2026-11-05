@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
+Last verified against code: 2026-10-28 (commit 58edee9); D384 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
 flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
 confirmed by the user) on 2026-11-04, amending D341; D341 (branch `fix/google-cancel-back-to-chooser`, confirmed
@@ -3293,7 +3293,7 @@ or the contract. All five are **to confirm** by the user.
   Cloudflare account can recognise the watchdog's fetches (they leave from Cloudflare's network, through the
   watchdog's own Worker) and serve them a clean JWKS while partners get another, or publish a key between two runs
   (5 min) and remove it again. So the watchdog is detection against a non-cloaking attacker only. The **outside
-  probe** narrows the cloaking: a scheduled GitHub Actions workflow (every 15 min, hourly since D382, every 3 hours since D383, standard actions pinned by commit,
+  probe** narrows the cloaking: a scheduled GitHub Actions workflow (every 15 min, hourly since D382, every 3 hours since D383, turned off on testnet since D384, standard actions pinned by commit,
   no secrets) runs `scripts/identity-probe.ts` from GitHub's network with jose's User-Agent and Accept and no
   `CF-Worker` header, applies the same rules against every non-`local*` env's `watchdog.pinnedIdentityKeys` in the
   repo, and fails on any finding (GitHub emails the failure). Values from Hana's answers reach the Actions log only
@@ -6204,10 +6204,28 @@ follow-up there.
   `github.event.before` (a cancelled run's changes would never be tested); disabling `cancel-in-progress` instead (it
   costs the minutes back).
 
+### D384. CI and the outside identity-JWKS probe are turned off while only testnet runs
+- Date 2026-11-05 · Status: **decided by the user** · Built: the `CI` and `Identity JWKS probe` workflows disabled in
+  GitHub (`gh workflow disable`; the files stay as D383 left them) · Amends D382 and D383
+- Context: the org's included Actions minutes are shared by every repo and were used up by 2026-11-05 (D382, D383).
+  Only sandbox-dev (testnet) runs: no real partners, users or funds depend on the identity token yet.
+- Decision: both workflows off for now. Checks run locally before a merge (docs/operations.md "CI and git" lists the
+  commands); the watchdog's own JWKS pin check (every 5 min, from Cloudflare) is unchanged. Before mainnet: CI back
+  on (with D383's gating), and the outside probe moved to **AWS Lambda + EventBridge** (SNS email for findings) in an
+  AWS account of its own, not the one holding the identity token's KMS key (D215): within Lambda's always-free
+  allowance at any interval, so it can run every 15 min or tighter again, and its requests come from a network
+  partners' own verifiers use. Tracked as `docs/mainnet-readiness.md` rows 4.20 and 5.10.
+- Trade-offs: nothing enforces the checks on a merge, and Linux-only failures (D381's WebKit one) can merge unseen;
+  a key served only to partners and not to Cloudflare-origin fetches (D210's cloaking) goes unnoticed on testnet.
+- Rejected: keeping the probe every 3 hours on GitHub (no testnet need for it; about 240 billed minutes a month); a
+  separate public repo for the probe (it publishes what the probe looks like, and GitHub pauses scheduled workflows
+  after 60 days without activity); a VPS (not cheaper).
+
 ## Superseded or amended
 
 | Was | Now | Source |
 |---|---|---|
+| The outside identity-JWKS probe runs every 3 hours on GitHub Actions (D383); CI runs on every push and PR (D383) | Both workflows disabled while only testnet runs; before mainnet CI back on and the probe on AWS Lambda + EventBridge (D384) | GitHub workflow settings; `docs/mainnet-readiness.md` 4.20, 5.10 |
 | The outside identity-JWKS probe runs hourly (D382) | Every 3 hours, at minute 17 (D383) | `.github/workflows/identity-probe.yml` |
 | The outside identity-JWKS probe runs every 15 min (D210) | Hourly, at minute 17 (D382) | `.github/workflows/identity-probe.yml` |
 | The admin crons' budget counts emails and NEAR reads only, with room for the RPCs (D280); C12's `relayerKeys` and statement-notice reads uncharged (D360's note) | Every outbound call counts: the connection, every RPC (at most 30), every email, NEAR read and rate fetch; a unit of work starts only when it fits (D380) | `apps/admin/src/mail.ts`, `cron.ts`, `ledger-cron.ts` |

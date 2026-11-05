@@ -1,7 +1,7 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-05 for the outside probe's schedule (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383; before it branch `chore/identity-probe-hourly`, hourly, D382); 2026-11-04 for retention and erasure (branch `feat/batch-c-13`: the
+known open issues. Last verified against code: 2026-11-05 for the outside probe's schedule (branch `chore/ci-cost`: the probe turned off on testnet, D384; every 3 hours, D383; before it branch `chore/identity-probe-hourly`, hourly, D382); 2026-11-04 for retention and erasure (branch `feat/batch-c-13`: the
 admin Worker's retention invariants and residual, D360–D369); 2026-11-04 for a statement's issuer shown to partners as `hana` (branch `feat/console-reports-upgrades`, D371); 2026-11-04 for the claim allow-list's `at_hash`, a freeze pausing pending memberships and the partner console's fresh sign-in and write paths (branch `feat/batch-c-10`, D342, D343, D350–D358); 2026-11-04 for the wallet directory's ids and the wallet record's
 session signature (branch `feat/user-id-identity-sub`: Parties' partner row, `IDENTITY_SUB_KEY` and `USER_ID_KEY` in
 the compromise table, "Wallet directory" in the API's invariants with the review finding and its fix; D346, D311 and
@@ -1456,7 +1456,7 @@ revoked; KMS makes the key unexportable and every signature visible, not misuse 
 already refuse a Worker-secret key outside testnet. Step 8 is built (branch `feat/identity-token-8`, D210–D214): the
 watchdog pages critical for an unpinned or private key in the JWKS and a wrong discovery `issuer` or `jwks_uri`, an
 answer it can't judge, and an identity key's thumbprint as an issuer kid on chain; it never pauses for them (the chain
-isn't involved), and an outside probe from GitHub Actions applies the same rules every 3 hours (D383). Both detect, neither
+isn't involved), and an outside probe from GitHub Actions applies the same rules every 3 hours (D383; turned off while only testnet runs, D384: until it is back, the watchdog is the only check). Both detect, neither
 prevents, and only an attacker who serves everyone the same JWKS: one who controls Hana's Cloudflare account can cloak a
 key from both or publish it between reads, and partners that trust the JWKS URL accept it until it is removed (≤ 10 min
 of cache after). Partner-side thumbprint pinning is the recommended default for anything of value

@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-05 (branch `docs/sandbox-dev-state-1105`: sandbox-dev redeployed at `develop` 8aab09d with the wallet directory: `USER_ID_KEY`, the bookmark, 0011, API 6141ba3d, vault abe7cc61, auth 6b9a4bee, issuer 1542a60c); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
+Last verified against code: 2026-11-05 (branch `fix/deploy-pages-builds`: `deploy:pages` runs the web build first; the 0011 apply note; the rebuilt page versions); 2026-11-05 (branch `docs/sandbox-dev-state-1105`: sandbox-dev redeployed at `develop` 8aab09d with the wallet directory: `USER_ID_KEY`, the bookmark, 0011, API 6141ba3d, vault abe7cc61, auth 6b9a4bee, issuer 1542a60c); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
 what counts, each job's share in both crons, the `budget` log lines; settlement's reads a run; D380); 2026-11-04 (branch `feat/batch-c-13`: "Retention (batch C13, milestone M6)": the Neon
 migration 0007, the deploy order, the monthly job in the 15-minute cron, `retention_failed`, `admin retention:issuer`,
 `uid-erase` for an erasure request, statements and rates by hand, what to watch; "Usage ledger" lists 0007; D360–D369);
@@ -301,11 +301,12 @@ the signer is part of every address. Dev-only privileges (loopback origins, part
 
 9. **Deploy the two page Workers** (`vaultOrigin`, `authOrigin`; one thin Worker each, D66), after the API: the vault
    Worker reaches it through a service binding. `gen` (step 6) already wrote their configs; the web build writes the
-   per-env bundles they serve (`apps/api/README.md`, "Page Workers"):
+   per-env bundles they serve (`apps/api/README.md`, "Page Workers"). `deploy:pages` runs that build itself
+   (`packages/web/dist/pages/<env>/{vault,auth}`, every env with both origins), so a deploy never ships a stale bundle:
+   on 2026-11-05 a deploy of an old build sent wallet records without the session signature (`400 bad_request`).
 
    ```sh
-   corepack pnpm --filter @hana-id/web build          # packages/web/dist/pages/<env>/{vault,auth}, every env with both origins
-   corepack pnpm --filter @hana-id/api run deploy:pages   # wrangler deploy -c wrangler.vault.jsonc, then -c wrangler.auth.jsonc
+   corepack pnpm --filter @hana-id/api run deploy:pages   # the web build first, then wrangler deploy -c wrangler.vault.jsonc and -c wrangler.auth.jsonc
    ```
 
    Rebuild and redeploy them whenever the manifest's `signer`, `relayer`, `rpc`, `rpcFallback`, `apiUrl`,
@@ -700,7 +701,8 @@ deploy. Logins are unaffected either way; events in between are not recorded.
 
 D310–D317 and D346 merged into `develop`. **On sandbox-dev since 2026-11-05**: `USER_ID_KEY` set, Time Travel bookmark
 `00000308-00000000-0000511a-8c2d20dbe35ad898ca18c4aeeb9cbac9` taken before 0011, 0011 applied, then the API
-(6141ba3d) and the pages (vault abe7cc61, auth 6b9a4bee) deployed at `develop` 8aab09d; no other env yet. After each login the vault reports the wallet's Stellar and EVM
+(6141ba3d) and the pages (vault 95cd3408, auth 9f89b47b, rebuilt) deployed at `develop` 8aab09d; checked: a login
+lists the user, both wallets and both identities in `user:find`; no other env yet. After each login the vault reports the wallet's Stellar and EVM
 addresses, each signed by its own key, with the whole request signed by the session key, to `POST /v1/wallets/record`;
 the API checks them against the live session on chain and keeps, in its own D1, each user with three ids (the User
 ID partners see, `u1_…`, which is the identity token's `sub`; its Support ID `HANA-XXXX-XXXX`; the staff-only internal
@@ -715,7 +717,9 @@ most every 10 minutes per isolate; logins are unaffected. Never rotate either wi
 get a new internal id (`USER_ID_KEY`) or a new User ID and Support ID (`IDENTITY_SUB_KEY`, which also changes every
 partner's token `sub`).
 
-**Applying it on sandbox-dev** (the user runs this, from the main checkout; additive, three new tables, no rollback
+**Applying it on sandbox-dev** (the user runs this, from the main checkout once it is at the `develop` being deployed:
+wrangler applies the migration file on disk, and on 2026-11-05 an older draft of 0011 without `token_sub` was applied
+from a stale checkout, then dropped (the tables were empty) and the current file applied; additive, three new tables, no rollback
 step: an older Worker ignores them). Take a Time Travel bookmark first ("Restoring a D1 database (Time Travel)"), then:
 
 ```sh
@@ -765,7 +769,7 @@ right after a deploy a vault and API from before and after the session signature
 
 State on sandbox-dev (2026-11-03): done. Migrations 0006, 0009 and 0010 are applied to the API's D1, after a rehearsal on a scratch
 D1; a Time Travel bookmark from before 0006 and an export backup are in `.secrets`. The API (`develop` c3c33ec, version
-b215b589; redeployed 2026-11-04 at `develop` f53d63e, version 9fe0343a; again 2026-11-05 at `develop` 8aab09d, version 6141ba3d, with the wallet directory; the vault abe7cc61 and auth 6b9a4bee pages with it) has the hot DB on and `createProof` true; usage capture is off (no `USAGE_DB` binding). The steps below are
+b215b589; redeployed 2026-11-04 at `develop` f53d63e, version 9fe0343a; again 2026-11-05 at `develop` 8aab09d, version 6141ba3d, with the wallet directory; the vault 95cd3408 and auth 9f89b47b pages with it, rebuilt) has the hot DB on and `createProof` true; usage capture is off (no `USAGE_DB` binding). The steps below are
 the procedure for another env.
 
 Migration `0006_dashboard_expand.sql` adds batch C's hot-DB tables and columns (`docs/api.md` "D1 schema") without

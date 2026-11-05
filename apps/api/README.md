@@ -241,9 +241,9 @@ envs) → `wrangler dev` on that host and port. Preview URLs are off.
 Deploy (testnet only), after this Worker, since the vault Worker binds to it:
 
 ```sh
-pnpm --filter @hana-id/web build                 # writes packages/web/dist/pages/<env>/{vault,auth}
 pnpm --filter @hana-id/api gen <env> --d1-id <id> # also writes wrangler.vault.jsonc and wrangler.auth.jsonc
-pnpm --filter @hana-id/api run deploy:pages       # wrangler deploy -c wrangler.vault.jsonc, then -c wrangler.auth.jsonc
+pnpm --filter @hana-id/api run deploy:pages       # the web build (packages/web/dist/pages/<env>/{vault,auth}) first, then
+                                                  # wrangler deploy -c wrangler.vault.jsonc and -c wrangler.auth.jsonc
 ```
 
 Locally, only for a `local*` env (loopback `vaultOrigin`/`authOrigin`; none is in `envs/` today, `apps/e2e` runs its

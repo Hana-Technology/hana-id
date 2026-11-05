@@ -4,18 +4,67 @@ on:
   pull_request:
   push:
     branches: [develop, main]
+  # Nightly on develop (the default branch): WebKit and Firefox, which pushes skip (D383).
+  schedule:
+    - cron: '41 3 * * *'
+  # Everything, all three browsers.
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 # Actions are pinned to commit SHAs (supply-chain safety); the comment gives the tag.
 jobs:
+  # Which jobs this change needs (D383; scripts/ci-changes.mjs, docs/operations.md "CI and git"). A push is measured
+  # from the head of the last successful push run on its branch, so a cancelled or failed run's changes count again;
+  # a PR from its base; the nightly run from the last successful nightly run.
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      rust: ${{ steps.changes.outputs.rust }}
+      web: ${{ steps.changes.outputs.web }}
+      playwright_args: ${{ steps.changes.outputs.playwright_args }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Base commit
+        id: base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          BRANCH: ${{ github.ref_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          case "$EVENT" in
+            pull_request) base="$PR_BASE" ;;
+            push|schedule)
+              base=$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --branch "$BRANCH" --event "$EVENT" \
+                --status success --limit 1 --json headSha --jq '.[0].headSha // ""') || base="" ;;
+            *) base="" ;;
+          esac
+          echo "sha=$base" >> "$GITHUB_OUTPUT"
+      - name: Classify
+        id: changes
+        env:
+          CI_EVENT: ${{ github.event_name }}
+          CI_REF: ${{ github.ref }}
+          CI_BASE: ${{ steps.base.outputs.sha }}
+        run: node scripts/ci-changes.mjs
+
   secrets:
     name: Secret scan (gitleaks)
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -43,6 +92,8 @@ jobs:
 
   contract:
     name: Contract (cargo test + wasm)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -74,6 +125,7 @@ jobs:
 
   typescript:
     name: TypeScript (typecheck + tests)
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -91,6 +143,8 @@ jobs:
   # workspace, type-checks and imports them there (scripts/pack-check.ts). Publishes nothing.
   packages:
     name: SDK packages (pack check)
+    needs: changes
+    if: github.event_name != 'schedule' && needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -104,7 +158,9 @@ jobs:
       - run: pnpm run pack:check
 
   playwright:
-    name: Playwright (Chromium, WebKit, Firefox)
+    name: Playwright
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -119,10 +175,18 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
         working-directory: .
-      # The browsers Playwright 1.64.1 pins, with their system libraries.
-      - run: pnpm run e2e:install
-      # The suite builds the vault and auth bundles for its local env and starts the local stack itself.
-      - run: pnpm run e2e
+      # The browsers Playwright 1.64.1 pins, with their system libraries: only the ones this run tests.
+      - name: Install the browsers
+        env:
+          PLAYWRIGHT_ARGS: ${{ needs.changes.outputs.playwright_args }}
+        run: |
+          browsers="${PLAYWRIGHT_ARGS//--project /}"
+          if [ -z "$browsers" ]; then pnpm run e2e:install; else pnpm exec playwright install --with-deps $browsers; fi
+      # The suite builds the vault and auth bundles for its local env and starts the local stack itself. Chromium on
+      # PRs and develop pushes, WebKit and Firefox nightly, all three on main and manual runs (D383).
+      - run: pnpm run e2e $PLAYWRIGHT_ARGS
+        env:
+          PLAYWRIGHT_ARGS: ${{ needs.changes.outputs.playwright_args }}
       - name: Upload the report and traces
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -135,9 +199,10 @@ jobs:
 
   e2e:
     name: Sandbox e2e (near-workspaces)
+    needs: [changes, contract]
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: contract
     defaults:
       run:
         working-directory: contracts/integration-tests

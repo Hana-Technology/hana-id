@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
+Last verified against code: 2026-10-28 (commit 58edee9); D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
 flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
 confirmed by the user) on 2026-11-04, amending D341; D341 (branch `fix/google-cancel-back-to-chooser`, confirmed
@@ -3293,7 +3293,7 @@ or the contract. All five are **to confirm** by the user.
   Cloudflare account can recognise the watchdog's fetches (they leave from Cloudflare's network, through the
   watchdog's own Worker) and serve them a clean JWKS while partners get another, or publish a key between two runs
   (5 min) and remove it again. So the watchdog is detection against a non-cloaking attacker only. The **outside
-  probe** narrows the cloaking: a scheduled GitHub Actions workflow (every 15 min, hourly since D382, standard actions pinned by commit,
+  probe** narrows the cloaking: a scheduled GitHub Actions workflow (every 15 min, hourly since D382, every 3 hours since D383, standard actions pinned by commit,
   no secrets) runs `scripts/identity-probe.ts` from GitHub's network with jose's User-Agent and Accept and no
   `CF-Worker` header, applies the same rules against every non-`local*` env's `watchdog.pinnedIdentityKeys` in the
   repo, and fails on any finding (GitHub emails the failure). Values from Hana's answers reach the Actions log only
@@ -6178,10 +6178,37 @@ follow-up there.
 - Rejected: keeping 15 min on testnet (it alone uses up the org's minutes and blocks CI); dropping the probe (the
   watchdog's fetches can be told apart, D210).
 
+### D383. CI runs only the jobs a change can affect; WebKit and Firefox nightly; the identity probe every 3 hours
+- Date 2026-11-05 · Status: **asked for by the user** (implementation choices: to confirm) · Built:
+  `.github/workflows/ci.yml` (job `changes`, the gates, the nightly schedule), `scripts/ci-changes.mjs`,
+  `.github/workflows/identity-probe.yml` (`17 */3 * * *`) · Amends D382
+- Context: Nov 1–5 hana-id used about 2 270 billed Actions minutes (about $13.60 at $0.006 a minute; the org's
+  included minutes, shared by every repo, were already used up). About 14 pushes a day to `develop` each ran every
+  job (about 33 billed minutes): sandbox e2e 698 min, Playwright 526, TypeScript 424, the probe 303 (most of it
+  before D382). Only 5 of the 73 `develop` commits touched `contracts/`, and 17 changed only docs.
+- Decision: a `changes` job decides per run (docs/operations.md "CI and git"). The Rust jobs run only for changes
+  under `contracts/` or the three files the Rust tests read outside it; Playwright and the pack check only for changes
+  outside `docs/`, `contracts/` and Markdown; gitleaks and the TypeScript job always (its tests read docs and
+  contracts). A push is measured from the last successful push run on its branch, not the previous commit, so a
+  cancelled or failed run's changes are tested again. Playwright runs Chromium on pushes and PRs; WebKit and Firefox
+  nightly on `develop` (when web code changed since the last good nightly), all three on `main` and manual runs. The
+  probe runs every 3 hours at :17 (about 240 billed minutes a month, from about 720).
+- Trade-offs: a WebKit- or Firefox-only regression (D381's was one) is caught within a day, not on its push; a new
+  Rust read outside `contracts/` that isn't added to the script would skip the Rust jobs (a test fails for the
+  `repo root` reads the Rust tests make today, and `main` and manual runs always run everything); a key of an
+  attacker's own served to the probe is caught within 3 hours rather than one (the watchdog's check is unchanged,
+  and neither closes D210's gap).
+- Revisit at the mainnet-readiness check: with D382's question (the probe's interval or a cheaper outside runner).
+- Rejected: `dorny/paths-filter` (a third-party action with the repo's checkout; the script is short and tested);
+  skipping the TypeScript job for docs-only changes (`packages/playbooks` tests read `docs/`); measuring a push from
+  `github.event.before` (a cancelled run's changes would never be tested); disabling `cancel-in-progress` instead (it
+  costs the minutes back).
+
 ## Superseded or amended
 
 | Was | Now | Source |
 |---|---|---|
+| The outside identity-JWKS probe runs hourly (D382) | Every 3 hours, at minute 17 (D383) | `.github/workflows/identity-probe.yml` |
 | The outside identity-JWKS probe runs every 15 min (D210) | Hourly, at minute 17 (D382) | `.github/workflows/identity-probe.yml` |
 | The admin crons' budget counts emails and NEAR reads only, with room for the RPCs (D280); C12's `relayerKeys` and statement-notice reads uncharged (D360's note) | Every outbound call counts: the connection, every RPC (at most 30), every email, NEAR read and rate fetch; a unit of work starts only when it fits (D380) | `apps/admin/src/mail.ts`, `cron.ts`, `ledger-cron.ts` |
 | `usage.erase_uid(app_ids text[], uid bytea)` (spec "Usage ledger" functions) | `usage.erase_uid(uid bytea)`: by uid alone, in any app (D362); the uid indexes C15 planned are in 0007 | `apps/api/migrations-usage/0007_retention.sql` |

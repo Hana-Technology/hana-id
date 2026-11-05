@@ -9,8 +9,8 @@ name: Identity JWKS probe
 
 on:
   schedule:
-    # Hourly, at :17 (off the top of the hour, when GitHub's scheduler is busiest): D382.
-    - cron: '17 * * * *'
+    # Every 3 hours, at :17 (off the top of the hour, when GitHub's scheduler is busiest): D383, amending D382.
+    - cron: '17 */3 * * *'
   workflow_dispatch:
 
 permissions:

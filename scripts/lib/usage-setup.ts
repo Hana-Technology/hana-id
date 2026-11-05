@@ -1,30 +1,37 @@
 // usage-setup's body (batch C4, docs/batch-c-spec.md "Bindings": Hyperdrive; "uid"): what the usage ledger's
 // Workers need besides the schema (usage-migrate), for one testnet env.
 //
-//   roles        give `usage_writer` and `usage_admin` LOGIN and a generated password each, as the owner over the
-//                direct URL from .secrets/<env>/neon.json; keep each role's URL in .secrets/<env>/neon-usage-*.url
+//   roles        give `usage_writer` and `usage_admin` LOGIN (SQL, as the owner over the direct URL from
+//                .secrets/<env>/neon.json), have Neon's API reset each role's password (Neon generates it; D403) and
+//                write each role's URL with it to .secrets/<env>/neon-usage-*.url, replacing the file
 //   hyperdrive   create the two Hyperdrive configs (caching disabled) from those URLs and print their ids (not secret)
 //   user-id-key  generate USER_ID_KEY (32 random bytes, base64) into .secrets/<env>/user-id-key and set it as the
 //                API Worker's secret through wrangler's stdin
 //
-// Every command prints its plan and changes nothing without --yes, and each can be run again: `roles` reuses the
-// passwords already in the files (it only generates a missing one), `user-id-key` never replaces the key file (a new
-// key would make every user a new user, D96) and sets the existing one again. Nothing prints a password, a URL or the
-// key; the role passwords reach Neon only as SCRAM-SHA-256 verifiers (never as plain text in a statement).
+// Every command prints its plan and changes nothing without --yes, and each can be run again: `roles` resets both
+// passwords again and replaces the files (a reset invalidates the old password, so a Hyperdrive config made from an
+// older file must be re-created), `user-id-key` never replaces the key file (a new key would make every user a new
+// user, D96) and sets the existing one again. Nothing prints a password, a URL, the Neon API key or the uid key. Neon
+// accepts only plain-text passwords (not the SCRAM verifiers D224 first sent), so Neon generates them: no password
+// travels in SQL, an argument or an environment variable, only in the HTTPS answer to the API call.
 import { spawnSync } from 'node:child_process';
-import { createHash, createHmac, pbkdf2Sync, randomBytes as nodeRandomBytes } from 'node:crypto';
+import { randomBytes as nodeRandomBytes } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { type Manifest, loadEnv, repoRoot } from '@hana-id/env';
 import { CliError, parseCli } from './cli.ts';
+import { NEON_API_KEY_FILE, NeonApi, readNeonApiKey, scrub } from './neon-api.ts';
 import { FILE_MODE, assertPrivate, ensureSecretDir, secretsDir } from './secrets.ts';
 import { ownerUrlProblem, redact, type SqlConn } from './usage-migrate.ts';
 import { DRY_RUN_LINE, writeNewSecretFile } from './vault-kek.ts';
 
 export const USAGE_SETUP_USAGE = `Usage: usage-setup.ts <env> <roles | hyperdrive | user-id-key> [--yes]
-  roles        LOGIN and a generated password for usage_writer and usage_admin (as the Neon owner, over
-               DATABASE_URL_DIRECT from .secrets/<env>/neon.json); writes .secrets/<env>/neon-usage-writer.url and
-               neon-usage-admin.url (0600). Re-running reuses the passwords in those files.
+  roles        LOGIN for usage_writer and usage_admin (SQL as the Neon owner, over DATABASE_URL_DIRECT from
+               .secrets/<env>/neon.json), then resets each role's password through Neon's API (project_id and
+               branch_id from neon.json, the key from .secrets/<env>/neon-api-key, 0600; Neon generates the
+               password) and REPLACES .secrets/<env>/neon-usage-writer.url and neon-usage-admin.url (0600) with it;
+               checks each role logs in. A reset invalidates the old password: re-create any Hyperdrive config made
+               from an older file (roles first, then hyperdrive).
   hyperdrive   creates the Hyperdrive configs hana-id-usage-writer-<env> and hana-id-usage-admin-<env> (or the
                manifest's usage block names), caching disabled, from those files; prints their ids for
                \`gen --usage-hyperdrive-id\` (the writer's) and the admin Worker (batch C8)
@@ -32,21 +39,21 @@ export const USAGE_SETUP_USAGE = `Usage: usage-setup.ts <env> <roles | hyperdriv
                Worker; make an offline backup of the file
   --yes        do it (without it, only print the plan)
 
-Testnet envs only. Never prints a password, a URL or the key.`;
+Testnet envs only. Never prints a password, a URL or a key.`;
 
 export const ROLES = ['usage_writer', 'usage_admin'] as const;
 export type LedgerRole = (typeof ROLES)[number];
 export const ROLE_FILES: Record<LedgerRole, string> = { usage_writer: 'neon-usage-writer.url', usage_admin: 'neon-usage-admin.url' };
 export const USER_ID_KEY_FILE = 'user-id-key';
 const USER_ID_KEY_RE = /^[A-Za-z0-9+/]{43}=$/u;
-const PASSWORD_RE = /^[A-Za-z0-9_-]{43}$/u;
+/** Neon's project and branch ids (`quiet-sky-12345678`, `br-quiet-sky-a1b2c3d4`), as neon.json holds them. */
+const PROJECT_ID_RE = /^[a-z0-9][a-z0-9-]{0,62}$/u;
+const BRANCH_ID_RE = /^br-[a-z0-9-]{1,60}$/u;
 /**
  * The id in wrangler's success line (`✅ Created new Hyperdrive PostgreSQL config: <id>`), anchored to it: wrangler also
  * echoes the config (with other ids and hex), and only this line names the new config.
  */
 export const CREATED_ID_RE = /^\W*Created new Hyperdrive\b[^\n]*?\bconfig:\s*([0-9a-f]{32})\s*$/mu;
-/** Postgres's default for SCRAM-SHA-256 verifiers (scram_iterations). */
-export const SCRAM_ITERATIONS = 4096;
 
 export interface WranglerResult {
   status: number | null;
@@ -54,11 +61,20 @@ export interface WranglerResult {
   stderr: string;
 }
 
+export interface NeonSecrets {
+  DATABASE_URL_DIRECT?: unknown;
+  project_id?: unknown;
+  branch_id?: unknown;
+}
+
 export interface UsageSetupDeps {
   /** .secrets/<env>/neon.json, read with the 0600 check; undefined when absent. */
-  readNeonSecrets(env: string): { DATABASE_URL_DIRECT?: unknown } | undefined;
-  /** Opens the owner's connection. */
+  readNeonSecrets(env: string): NeonSecrets | undefined;
+  /** Opens a connection: the owner's, or a role's (to check its new password). */
   connect(url: string): Promise<SqlConn & { close(): Promise<void> }>;
+  /** Neon's API, in process (the key only in a request header). */
+  fetch: (url: string, init: RequestInit) => Promise<Response>;
+  sleep: (ms: number) => Promise<void>;
   /** Runs `wrangler <args>` from apps/api (stdin `input`); output captured, never echoed by this function. */
   wrangler(args: string[], input?: string): WranglerResult;
   randomBytes(n: number): Uint8Array;
@@ -74,6 +90,8 @@ export function defaultUsageSetupDeps(connect: UsageSetupDeps['connect'], readNe
   return {
     readNeonSecrets,
     connect,
+    fetch: (url, init) => fetch(url, init),
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     wrangler: (args, input) => {
       const res = spawnSync('pnpm', ['exec', 'wrangler', ...args], { cwd: apiDir, input, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
       if (res.error) throw res.error;
@@ -84,42 +102,41 @@ export function defaultUsageSetupDeps(connect: UsageSetupDeps['connect'], readNe
   };
 }
 
-/**
- * A SCRAM-SHA-256 verifier for `password` (RFC 5802/7677, as Postgres stores it in pg_authid): `ALTER ROLE … PASSWORD`
- * with it sets the password without sending it. `SCRAM-SHA-256$<iter>:<salt>$<StoredKey>:<ServerKey>`, base64.
- */
-export function scramVerifier(password: string, salt: Uint8Array, iterations = SCRAM_ITERATIONS): string {
-  const salted = pbkdf2Sync(password, salt, iterations, 32, 'sha256');
-  const clientKey = createHmac('sha256', salted).update('Client Key').digest();
-  const storedKey = createHash('sha256').update(clientKey).digest();
-  const serverKey = createHmac('sha256', salted).update('Server Key').digest();
-  const b64 = (b: Uint8Array) => Buffer.from(b).toString('base64');
-  return `SCRAM-SHA-256$${iterations}:${b64(salt)}$${b64(storedKey)}:${b64(serverKey)}`;
-}
-
 /** A role's URL: the owner's direct endpoint and database, TLS required, as the role (Hyperdrive pools for it). */
 export function roleUrl(ownerUrl: string, role: LedgerRole, password: string): string {
   const u = new URL(ownerUrl);
   u.username = role;
-  u.password = password;
+  // Encoded first: the URL setter leaves `%` as it is, which a reader would then decode wrongly.
+  u.password = encodeURIComponent(password);
   // Only TLS: the owner URL's other options (e.g. Neon's channel_binding) are for its own client.
   u.search = '';
   u.searchParams.set('sslmode', 'require');
   return u.toString();
 }
 
-/** A role's URL from its file: 0600, the role's name, a generated password, on the owner's Neon endpoint. */
+/**
+ * Why a role password can't be used, or null: 12–512 characters, no whitespace or control characters. Neon generates
+ * them (`npg_` and random letters and digits); files written before D403 hold 43 base64url characters.
+ */
+export function rolePasswordProblem(password: string): string | null {
+  if (password.length < 12 || password.length > 512) return 'not 12–512 characters';
+  if (/[\s\x00-\x1f\x7f]/u.test(password)) return 'has whitespace or control characters';
+  return null;
+}
+
+/** A role's URL from its file: 0600, the role's name, a usable password, on the owner's Neon endpoint. */
 export function readRoleUrl(file: string, role: LedgerRole, shown: string): { url: string; password: string } {
   assertPrivate(file);
   const url = readFileSync(file, 'utf8').trim();
   let u: URL;
+  let password: string;
   try {
     u = new URL(url);
+    password = decodeURIComponent(u.password);
   } catch {
     throw new Error(`${shown} is not a URL`);
   }
-  const password = decodeURIComponent(u.password);
-  if (u.username !== role || !PASSWORD_RE.test(password)) throw new Error(`${shown} is not a ${role} URL written by usage-setup roles`);
+  if (u.username !== role || rolePasswordProblem(password)) throw new Error(`${shown} is not a ${role} URL written by usage-setup roles`);
   const problem = ownerUrlProblem(url);
   if (problem) throw new Error(`${shown} ${problem}`);
   return { url, password };
@@ -188,7 +205,13 @@ export async function usageSetup(argv: readonly string[], deps: UsageSetupDeps):
       const res = deps.wrangler(['hyperdrive', 'create', names[role], `--connection-string=${url}`, '--caching-disabled']);
       // wrangler echoes the origin (host, user); only the id is printed, and an error has the URL and password removed.
       const out = redact(`${res.stdout}\n${res.stderr}`, url);
-      if (res.status !== 0) throw new Error(`wrangler hyperdrive create ${names[role]} failed (exit ${res.status}): ${out.trim().split('\n').slice(-3).join(' ').slice(0, 400)}`);
+      if (res.status !== 0) {
+        // A config of that name from before a `roles` re-run: its password is the old one, so it is re-created.
+        const exists = /already exists/iu.test(out)
+          ? ` A config named ${names[role]} already exists: delete it (\`wrangler hyperdrive list\`, then \`wrangler hyperdrive delete <id>\`) and run hyperdrive again; pass the new ids on (docs/operations.md "Usage capture" step 3).`
+          : '';
+        throw new Error(`wrangler hyperdrive create ${names[role]} failed (exit ${res.status}): ${out.trim().split('\n').slice(-3).join(' ').slice(0, 400)}${exists}`);
+      }
       const id = CREATED_ID_RE.exec(res.stdout)?.[1];
       if (!id) throw new Error(`wrangler hyperdrive create ${names[role]} printed no config id; find it with \`wrangler hyperdrive list\``);
       deps.log(`${names[role]} (${role}): ${id}`);
@@ -196,51 +219,111 @@ export async function usageSetup(argv: readonly string[], deps: UsageSetupDeps):
     return void deps.log('Pass the writer id to the API: corepack pnpm --filter @hana-id/api gen <env> --usage-hyperdrive-id <id>.');
   }
 
-  // roles
-  const owner = deps.readNeonSecrets(m.name)?.DATABASE_URL_DIRECT;
+  return rolesCommand(m, dir, shown, apply, deps);
+}
+
+type Conn = SqlConn & { close(): Promise<void> };
+
+/** `roles`: LOGIN by SQL, then a password reset per role through Neon's API, each written to its file (D403). */
+async function rolesCommand(m: Manifest, dir: string, shown: (f: string) => string, apply: boolean, deps: UsageSetupDeps): Promise<void> {
+  const neon = deps.readNeonSecrets(m.name);
+  const owner = neon?.DATABASE_URL_DIRECT;
   if (typeof owner !== 'string') throw new Error(`${shown('neon.json')} has no DATABASE_URL_DIRECT (docs/operations.md "Usage ledger")`);
   const problem = ownerUrlProblem(owner);
   if (problem) throw new Error(`DATABASE_URL_DIRECT in ${shown('neon.json')} ${problem}`);
-  const existing = ROLES.filter((r) => existsSync(join(dir, ROLE_FILES[r])));
+  const projectId = neon?.project_id;
+  const branchId = neon?.branch_id;
+  if (typeof projectId !== 'string' || !PROJECT_ID_RE.test(projectId)) throw new Error(`${shown('neon.json')} has no valid project_id (Neon's project id, e.g. quiet-sky-12345678)`);
+  if (typeof branchId !== 'string' || !BRANCH_ID_RE.test(branchId)) throw new Error(`${shown('neon.json')} has no valid branch_id (Neon's branch id, br-…)`);
+  const key = readNeonApiKey(join(dir, NEON_API_KEY_FILE), shown(NEON_API_KEY_FILE));
+  const ownerParts = new URL(owner);
+  const host = ownerParts.hostname;
+  const ownerPassword = decodeURIComponent(ownerParts.password);
+
+  const files = ROLES.map((r) => `${existsSync(join(dir, ROLE_FILES[r])) ? 'REPLACE' : 'write'} ${shown(ROLE_FILES[r])}`);
   deps.log(
-    `Plan (env ${m.name}): ${ROLES.map((r) => (existing.includes(r) ? `reuse the password in ${shown(ROLE_FILES[r])}` : `generate a password for ${r} into ${shown(ROLE_FILES[r])} (0600)`)).join('; ')}; ` +
-      `then, as the owner, ALTER ROLE … LOGIN PASSWORD (a SCRAM verifier) for ${ROLES.join(' and ')}.`,
+    `Plan (env ${m.name}): Neon project ${projectId}, branch ${branchId}, endpoint ${host}. Check the endpoint is the branch's; ` +
+      `as the owner, check ${ROLES.join(' and ')} exist and ALTER ROLE … WITH LOGIN (no password); reset each role's password ` +
+      `through Neon's API (Neon generates it; open connections to the endpoint are dropped); ${files.join(' and ')} (0600) ` +
+      `with the new passwords; check each role logs in with its file.`,
+  );
+  deps.log(
+    `Every run resets both passwords and replaces both files: the old passwords stop working at once. A Hyperdrive config ` +
+      `created from an older file must be re-created afterwards (usage-setup ${m.name} hyperdrive; docs/operations.md "Usage capture" step 3).`,
   );
   if (!apply) return void deps.log(DRY_RUN_LINE);
-  const passwords = {} as Record<LedgerRole, string>;
-  for (const role of ROLES) {
-    const file = join(dir, ROLE_FILES[role]);
-    if (existsSync(file)) {
-      passwords[role] = readRoleUrl(file, role, shown(ROLE_FILES[role])).password;
-      continue;
+
+  const api = new NeonApi(key, { fetch: deps.fetch, sleep: deps.sleep, log: deps.log }, [owner, ownerPassword]);
+  const urls: string[] = [];
+  const passwords: string[] = [];
+  // Every message that leaves: the owner URL, the key, every password and role URL removed.
+  const fail = (e: unknown): never => {
+    throw new Error(scrub(redact(e instanceof Error ? e.message : String(e), owner), [key, ownerPassword, ...urls, ...passwords]));
+  };
+
+  try {
+    // The owner URL's endpoint must be this branch's: otherwise the resets change another branch's roles.
+    const hosts = await api.branchEndpointHosts(projectId, branchId);
+    if (!hosts.includes(host)) {
+      throw new Error(`the endpoint of DATABASE_URL_DIRECT (${host}) is not one of branch ${branchId}'s (${hosts.join(', ') || 'none'}); check project_id, branch_id and the URLs in ${shown('neon.json')}`);
     }
-    const raw = deps.randomBytes(32);
-    if (raw.length !== 32) throw new Error('randomBytes returned the wrong length');
-    passwords[role] = Buffer.from(raw).toString('base64url');
-    raw.fill(0);
-    // On disk before Neon has it: a stop in between is resumed by running roles again.
-    writeSecretText(file, `${roleUrl(owner, role, passwords[role])}\n`);
-    deps.log(`Wrote ${shown(ROLE_FILES[role])} (0600, value not shown).`);
+  } catch (e) {
+    fail(e);
   }
-  let db: (SqlConn & { close(): Promise<void> }) | undefined;
+
+  let db: Conn | undefined;
   try {
     db = await deps.connect(owner);
+    const found = (await db.query<{ rolname: string }>('SELECT rolname FROM pg_roles WHERE rolname = ANY($1::text[])', [[...ROLES]])).map((r) => r.rolname);
+    const missing = ROLES.filter((r) => !found.includes(r));
+    if (missing.length) throw new Error(`role ${missing.join(' and ')} doesn't exist on ${m.name}'s ledger: run usage-migrate ${m.name} --yes first`);
     await db.exec('BEGIN');
-    for (const role of ROLES) {
-      const verifier = scramVerifier(passwords[role], deps.randomBytes(16));
-      // The verifier is base64 and `$:` only: no quote can end the literal.
-      await db.exec(`ALTER ROLE ${role} WITH LOGIN PASSWORD '${verifier}'`);
-    }
+    // LOGIN only: Neon refuses a password that isn't plain text, and its API sets it below.
+    for (const role of ROLES) await db.exec(`ALTER ROLE ${role} WITH LOGIN`);
     await db.exec('COMMIT');
   } catch (e) {
     await db?.exec('ROLLBACK').catch(() => undefined);
-    let message = redact(e instanceof Error ? e.message : String(e), owner);
-    for (const role of ROLES) message = message.split(passwords[role]).join('<password>');
-    // A driver may quote the statement: its verifier is a password hash.
-    message = message.replace(/SCRAM-SHA-256\$[^'\s]*/gu, '<verifier>');
-    throw new Error(message);
-  } finally {
     await db?.close().catch(() => undefined);
+    fail(e);
   }
-  deps.log(`${ROLES.join(' and ')} can now log in on ${m.name}'s ledger. Next: usage-setup ${m.name} hyperdrive.`);
+  // A reset drops the endpoint's open connections: this one is closed first.
+  await db?.close().catch(() => undefined);
+
+  for (const [i, role] of ROLES.entries()) {
+    try {
+      const { password, operations } = await api.resetRolePassword(projectId, branchId, role);
+      passwords.push(password);
+      const why = rolePasswordProblem(password);
+      if (why) throw new Error(`Neon returned a password for ${role} this script can't use (${why}; not shown)`);
+      const url = roleUrl(owner, role, password);
+      urls.push(url);
+      // On disk before anything else: Neon answers the password only once.
+      writeSecretText(join(dir, ROLE_FILES[role]), `${url}\n`);
+      deps.log(`Reset ${role}'s password; wrote ${shown(ROLE_FILES[role])} (0600, value not shown).`);
+      await api.waitForOperations(projectId, operations, `${role}'s reset`);
+    } catch (e) {
+      const done = ROLES.slice(0, i);
+      const note = done.length ? ` (${done.join(' and ')} already reset, its file written)` : '';
+      fail(new Error(`${e instanceof Error ? e.message : String(e)}${note}. Running roles --yes again resets both.`));
+    }
+  }
+
+  // Each role logs in with the password in its file: that file is what Hyperdrive gets.
+  for (const role of ROLES) {
+    let conn: Conn | undefined;
+    try {
+      const { url } = readRoleUrl(join(dir, ROLE_FILES[role]), role, shown(ROLE_FILES[role]));
+      conn = await deps.connect(url);
+      const [row] = await conn.query<{ who: string }>('SELECT current_user AS who');
+      if (row?.who !== role) throw new Error(`logged in as ${String(row?.who)}, not ${role}`);
+    } catch (e) {
+      await conn?.close().catch(() => undefined);
+      fail(new Error(`${role} can't log in with the password in ${shown(ROLE_FILES[role])}: ${e instanceof Error ? e.message : String(e)}`));
+    }
+    await conn?.close().catch(() => undefined);
+  }
+  deps.log(
+    `${ROLES.join(' and ')} log in on ${m.name}'s ledger with the new passwords. Next: usage-setup ${m.name} hyperdrive ` +
+      `(a config made from the old files is deleted and created again first; docs/operations.md "Usage capture" step 3).`,
+  );
 }

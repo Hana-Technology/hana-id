@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D401 (branch `feat/sandbox-dev-dashboard-blocks`, asked for by the user: SendGrid for every Hana email; the isolate memo to confirm) and D402 (same branch, agreed by the user: sandbox-dev's 1-day statement lock) on 2026-11-05, amending D87, D279, D308 and settling D194's open point, with rows of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
+Last verified against code: 2026-10-28 (commit 58edee9); D401 (branch `feat/sandbox-dev-dashboard-blocks`, asked for by the user: SendGrid for every Hana email; the isolate memo to confirm) and D402 (same branch, agreed by the user: sandbox-dev's 1-day statement lock) on 2026-11-05, amending D87, D279, D308 and settling D194's open point, with rows of "Superseded or amended"; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
 user, implementation choices to confirm) on 2026-11-05; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
 flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
@@ -3472,7 +3472,7 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
 - Rejected: an `identity_token` event per mint in `usage.events` (a new endpoint value in a CHECK of a partitioned
   table, a Neon write per mint, and a change in the identity signing files).
 
-### D224. `usage-setup` and the binding: subcommands, SCRAM verifiers, re-runnable; capture optional on sandbox-dev
+### D224. `usage-setup` and the binding: subcommands, SCRAM verifiers (amended by D403), re-runnable; capture optional on sandbox-dev
 - Date 2026-11-02 · Status: to confirm; built (`scripts/lib/usage-setup.ts`, `apps/api/scripts/gen-wrangler.ts`) ·
   Source: build plan "Setup steps" 3, 4 and 6
 - Decision: `usage-setup <env> roles | hyperdrive | user-id-key [--yes]` (testnet only, dry run by default).
@@ -3493,6 +3493,10 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
   a process argument) is a before-production item (`docs/mainnet-readiness.md` 4.18). The step-8 SCRAM login check on
   sandbox-dev is an explicit gate in `docs/operations.md`.
 - Why: the spec's steps, made safe to repeat after a stop, and M2 without waiting for the dashboard blocks.
+- Amended 2026-11-05 by D403: Neon refuses a password that isn't plain text (`ALTER ROLE … PASSWORD '<SCRAM
+  verifier>'` got "Neon only supports being given plaintext passwords" on sandbox-dev), so `roles` gives `LOGIN` by SQL
+  and has Neon's API reset each password, written straight to the role file; every run resets both and replaces the
+  files (no reuse), and checks each role logs in. The SCRAM verifier code and the step-8 SCRAM question are gone.
 
 ## Identity token build, step 7 (the AWS KMS signer, code only), 2026-11-02
 
@@ -6764,7 +6768,8 @@ still take them: renumber on merge.
 ## SendGrid for every Hana email, and sandbox-dev's statement lock (branch `feat/sandbox-dev-dashboard-blocks`), 2026-11-05
 
 Numbered D401 and D402: D400 was taken on `develop` (merged into this branch before writing) by
-`fix/popup-signal-before-navigate`; if another branch takes D401 or D402 before this merges, renumber here.
+`fix/popup-signal-before-navigate`, and D403 by `fix/usage-setup-neon-api-passwords`, which left D401–D402 for this
+branch.
 
 ### D401. The admin Worker's notices and the watchdog's alerts go through SendGrid too; Resend is gone (amends D87, settles D194's open point)
 - Date 2026-11-05 · Status: asked for by the user ("can we replace Resend with Sendgrid?", 2026-11-05), recommended and
@@ -6827,12 +6832,75 @@ Numbered D401 and D402: D400 was taken on `develop` (merged into this branch bef
   Worker can't overwrite a statement it just wrote).
 - Main trade-off: sandbox-dev doesn't test the real retention period; nothing reads it but R2.
 
+## Ledger role passwords from Neon's API (branch `fix/usage-setup-neon-api-passwords`), 2026-11-05
+
+### D403. `usage-setup <env> roles` has Neon's API reset each role's password; SQL only gives LOGIN; every run replaces the role files
+- Date 2026-11-05 · Status: **decided by the user** (2026-11-05, option A: "let Neon generate the passwords via its
+  API"; implementation choices: to confirm) · Built on `fix/usage-setup-neon-api-passwords`: `scripts/lib/neon-api.ts`
+  (`NeonApi`, `readNeonApiKey`, `scrub`), `scripts/lib/usage-setup.ts` (`rolesCommand`, `rolePasswordProblem`,
+  `roleUrl`), `.gitleaks.toml` (`neon-api-key` in `hana-secret-file`, rule `hana-neon-api-key`); tests
+  `scripts/test/usage-setup.test.ts`, `scripts/secret-scan-selftest.mjs` · Amends D224 ("sets `LOGIN PASSWORD` to a
+  SCRAM-SHA-256 verifier … so Neon never sees the password; a re-run reuses the files' passwords") · Number: the next
+  free one when written was D401 (D400 the highest on `develop`), but `feat/sandbox-dev-dashboard-blocks` was in flight
+  and may take D401–D402; renumber at merge if another branch took D403 first.
+- Context: on sandbox-dev (2026-11-05) `usage-setup sandbox-dev roles --yes` wrote both role files and then failed:
+  `ALTER ROLE … LOGIN PASSWORD '<SCRAM verifier>'` got `Received HTTP code 400 from control plane: {"error":"Neon only
+  supports being given plaintext passwords"}`. Neon's compute hands every role password change to its control plane,
+  which takes plain text only ("Hashed passwords are not supported", Neon's "Manage roles"). No password was set.
+- Decision:
+  1. **SQL gives LOGIN, Neon sets the password.** As the owner (`DATABASE_URL_DIRECT`): check `usage_writer` and
+     `usage_admin` exist (else "run usage-migrate first") and `ALTER ROLE … WITH LOGIN` (no password), one
+     transaction; the connection is closed before the resets (a reset drops the endpoint's connections). Then, per
+     role in turn, `POST https://console.neon.tech/api/v2/projects/{project_id}/branches/{branch_id}/roles/{role}/reset_password`
+     with `Authorization: Bearer <key>`: Neon generates the password and answers it once (`role.password`) with the
+     operations it started. The script writes the role's URL (the owner's direct host and database, the role,
+     `sslmode=require`; the password URL-encoded) to its file at once, atomically, 0600, then polls
+     `GET /projects/{project_id}/operations/{id}` every 2 s (up to 3 minutes) until each is `finished` or `skipped`
+     (`failed`, `error`, `cancelled` stop the run). Last, each role logs in with its file's URL (`SELECT current_user`)
+     in process: the file Hyperdrive gets is proven to work. This replaces D224's step-8 question (does Neon accept a
+     SCRAM verifier).
+  2. **Inputs.** `project_id` and `branch_id` from `.secrets/<env>/neon.json`; the API key from a new file
+     `.secrets/<env>/neon-api-key` (0600, one line), refused when missing, empty, not one printable token, or readable
+     by group or others. Before any change, `GET …/branches/{branch_id}/endpoints` must list the owner URL's host: a
+     `branch_id` of another branch would reset that branch's roles.
+  3. **Every run resets both and replaces both files** (unlike D224, which reused them): a reset invalidates the old
+     password at once, so a Hyperdrive config made from an older file must be re-created (delete it, `usage-setup <env>
+     hyperdrive`, the new ids to `gen` and the admin config). Order: `roles`, then `hyperdrive`. The plan says which
+     files it writes or REPLACES and warns about the configs; `hyperdrive`'s "already exists" failure says how to
+     re-create one.
+  4. **Retries.** 409, 423 (Neon's "operation in progress"), 429 and 503 mean the request wasn't applied: sent again up
+     to 8 tries, 2 s × the try apart, each logged with Neon's code and message. A POST whose answer was lost (network,
+     timeout) is never re-sent (it may have been applied): the error says so and a re-run resets again. A failure on
+     the second role says the first is already reset and written.
+  5. **No secret leaves.** The key is only in the request header of an in-process `fetch` (`redirect: 'error'`), never
+     an argument or environment variable of a child process; the password is only in the HTTPS answer and the file. No
+     response body is printed or put in an error: an error carries the HTTP status and, for a non-2xx answer, only
+     Neon's `code` and `message` (an error answer has no new password), trimmed to one line, with the key, the owner's
+     URL and password, and every password and role URL received so far removed. A success body without a usable
+     password is refused without showing it.
+  6. Role passwords are now Neon's format (`npg_` and random letters and digits), so the role files' check
+     (`readRoleUrl`, also used by `admin` and `uid-erase`) takes 12–512 characters without whitespace or control
+     characters instead of D224's 43 base64url characters.
+- Why: the user's choice of the two ways Neon allows (plain text in SQL, or Neon generates it): no password in a SQL
+  statement (statement text can end up in Postgres's and Neon's logs), none typed or pasted, and the password is
+  created where it is set.
+- Rejected: `ALTER ROLE … PASSWORD '<plain text>'` as the owner (option B: the password in a SQL statement);
+  keeping the SCRAM path for PGlite tests only (code no env can use: replaced by a mocked Neon API); re-using the
+  files' passwords on a re-run (Neon can't be given them); a personal or organization API key when a project-scoped
+  one is possible (it reaches every project).
+- Trade-offs: the key can change and delete anything in the project while it exists (Neon's project-scoped keys have
+  that scope), so it is revoked after use (`docs/security.md`); a reset drops the endpoint's open connections (the
+  API's Hyperdrive pool reconnects; nothing is on the login path); whether Neon's API knows a role created by SQL was
+  not documented: if it answers 404 the run stops before any file is written, and the roles can be checked in Neon's
+  console (Branches → the branch → Roles).
+
 ## Superseded or amended
 
 | Was | Now | Source |
 |---|---|---|
 | D87: the admin Worker's notices and the watchdog's alerts through Resend, each with its own Resend key; D279: a Resend `Idempotency-Key` per message, so a retry within 24 h isn't delivered twice | SendGrid for every Hana email through one shared adapter, each Worker its own Mail-Send-only key (admin `EMAIL_API_KEY`, watchdog `SENDGRID_API_KEY`); no provider idempotency: a per-isolate memo of accepted messages, a repeat possible, a skip never (D401) | `packages/sendgrid`; `docs/operations.md` "Admin Worker" step 2, "Watchdog service" |
 | D308: the `STATEMENTS` lock is 2557 days in every env | 1 day on sandbox-dev, 2557 days in production (D402) | `docs/operations.md` "Files Worker and logos" step 2 |
+| `usage-setup roles`: a locally generated password per role, set as a SCRAM-SHA-256 verifier by `ALTER ROLE … LOGIN PASSWORD`; a re-run reuses the role files (D224) | SQL gives `LOGIN` only; Neon's API (`reset_password`) generates each password, written straight to the role file; every run resets both and replaces the files, so Hyperdrive configs from older files are re-created; the key in `.secrets/<env>/neon-api-key` (D403) | `scripts/lib/usage-setup.ts`, `scripts/lib/neon-api.ts`; docs/operations.md "Usage capture" step 2 |
 | D347: every Hana page posts `hana:auth-progress` (`google`, `relayed`) and then navigates or closes | The page navigates or closes once the vault acked (`hana:auth-progress-ack`), or after 150 ms: Chromium nulls the source of a message posted in the navigation's own task (D400) | `packages/web/src/auth/vault-signal.ts`; docs/architecture.md login step 4 |
 | The lookup's ticket: 1–64 printable ASCII characters, no `@`, no leading or trailing space (D396) | console-core `SUPPORT_TICKET_RE`, 1–64 letters, digits or `._#:-`: the issuer's rule, the same ticket in both audits (D399) | `packages/console-core/src/support.ts` `supportTicket` |
 | The issuer's `support_lookup` audit action unused; every `DirectoryRpc.get` audited `user_view` (D392) | `get` takes `purpose`; the Support ID lookup's email join is audited `support_lookup` with the lookup's request id (D399) | `apps/email-issuer/src/directory-rpc.ts` `get` |

@@ -50,6 +50,8 @@ const rsaPrivateJwk = () =>
   JSON.stringify({ kty: 'RSA', n: randomBytes(256).toString('base64url'), e: 'AQAB', d: randomBytes(256).toString('base64url'), p: randomBytes(128).toString('base64url'), q: randomBytes(128).toString('base64url'), dp: randomBytes(128).toString('base64url'), dq: randomBytes(128).toString('base64url'), qi: randomBytes(128).toString('base64url') });
 /** A fake public JWKS entry (no `d`): public, must not be flagged. */
 const publicJwk = () => JSON.stringify({ kty: 'EC', crv: 'P-256', x: randomBytes(32).toString('base64url'), y: randomBytes(32).toString('base64url'), kid: randomBytes(32).toString('base64url'), use: 'sig', alg: 'ES256' });
+/** A fake Neon API key (`napi_` + 64 letters and digits; only the shape matters). */
+const neonApiKey = () => `napi_${base58(randomBytes(48)).slice(0, 64)}`;
 const keyFile = (account) => `${JSON.stringify({ account_id: account, public_key: publicKey(), private_key: secretKey() }, null, 2)}\n`;
 
 /** Each case: files to write, and the rule ids gitleaks must report for them (at least these). */
@@ -86,6 +88,8 @@ const CASES = [
     files: { 'backup/neon-usage-writer.url': `postgresql://usage_writer:${randomBytes(32).toString('base64url')}@ep-x-${randomBytes(4).toString('hex')}.ap-southeast-2.aws.neon.tech/neondb?sslmode=require\n` },
     expect: ['hana-secret-file', 'hana-postgres-url'],
   },
+  { name: 'Neon API key file copied out of .secrets', files: { 'copy/neon-api-key': `${neonApiKey()}\n` }, expect: ['hana-secret-file', 'hana-neon-api-key'] },
+  { name: 'Neon API key pasted into an innocent file', files: { 'notes/neon.sh': `curl -H "Authorization: Bearer ${neonApiKey()}" https://console.neon.tech/api/v2/projects\n` }, expect: ['hana-neon-api-key'] },
   // 10 distinct characters (random order): log2(10) ≈ 3.3 bits each, over the rule's 3.0 floor.
   { name: 'Postgres URL with a short (10-character) password', files: { 'notes/short.txt': 'postgres://app:' + shortPassword(10) + '@db.example.net/app\n' }, expect: ['hana-postgres-url'] },
   { name: 'Postgres URL with a password in an innocent file', files: { 'notes/db.txt': `psql "postgresql://neondb_owner:${randomBytes(18).toString('base64url')}@ep-y.ap-southeast-2.aws.neon.tech/neondb"\n` }, expect: ['hana-postgres-url'] },
@@ -128,7 +132,7 @@ const NEGATIVE = {
   'scripts/vault-kek.ts': '// vault-kek.ts <env> <init | put | rotate>\n',
   'envs/x.json': `{ "watchdogs": ["${publicKey()}"], "identityToken": { "publicKeys": [${publicJwk()}] } }\n`,
   'docs/jwks.md': `IDENTITY_SIGNING_KEY=<a P-256 private JWK>\nIDENTITY_SUB_KEY=<base64 of 32 bytes>\n`,
-  'docs/usage.md': 'postgresql://usage_writer:<password>@<host>/neondb?sslmode=require\nUSER_ID_KEY=<base64 of 32 bytes>\npostgresql://usage_writer:unused@usage-db.test.invalid:5432/usage\n',
+  'docs/usage.md': 'postgresql://usage_writer:<password>@<host>/neondb?sslmode=require\nUSER_ID_KEY=<base64 of 32 bytes>\npostgresql://usage_writer:unused@usage-db.test.invalid:5432/usage\nAuthorization: Bearer napi_<key>; napi_…\n',
 };
 
 function scan(dir) {

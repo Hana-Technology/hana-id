@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-05 (branch `feat/sdk-error-request-id`: "Support ID lookup": partners' request IDs come from the SDK's errors and the demo's diagnostics, D405); 2026-11-05 (branch `docs/zero-trust-free-guard`: "Admin Worker" step 1's Zero Trust free-tier guard, D408); 2026-11-05 (branch `fix/usage-setup-neon-api-passwords`: "Usage capture" steps 2, 3 and 8: `usage-setup <env> roles` gives LOGIN by SQL and has Neon's API reset each role's password with the new `.secrets/<env>/neon-api-key` (how to create, save and revoke it), every run replaces the role files, Hyperdrive configs from older files re-created, the step-8 gate without the SCRAM question; the secrets table's Neon API key row; D403); 2026-11-05 (branch `feat/batch-c-15-screen`: "Support ID lookup" → "In the admin console" (the screen, the email join, the ticket rule, what to watch) and "Users screen (C8b)" (a Support ID goes to the lookup; the check), D399); 2026-11-05 (branch `feat/batch-c-8b`: "Admin Worker" → "Users screen (C8b)": issuer migration 0003, the deploy order issuer → API → admin, the checks and failures, D388–D392; "Retention" and "User directory (D269)" notes); 2026-11-05 (branch `chore/ci-cost`: "CI and git": CI and the identity probe turned off, the local checks, D387); 2026-11-05 (branch `feat/batch-c-15`: "Support ID lookup", `admin <env> support:lookup`, the admin route's audit, D394–D397); 2026-11-05 (branch `feat/coop-canary`: "Before each release: the COOP canary" (`coop-canary`, what a failure means, D386), step 0 of "A release."); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: "Common failures"' `derive_failed` `webcrypto_unsupported` / `webcrypto_failed`, D385); 2026-11-05 (branch `feat/deploy-build-check`: "Checking a deploy (`deploy-check`)", D384:
+Last verified against code: 2026-11-05 (branch `feat/access-setup`: "Admin Worker" step 1: the admin console's Cloudflare Access by `access-setup <env>` (the team and login methods in the dashboard, the least-privilege token, created and revoked, plan / `--yes` / `--write-manifest` / `--check`), sandbox* Google exact emails only and the free-tier guard it enforces (D408), the workers.dev hostname application against the dashboard toggle, the dashboard path; the secrets table's Cloudflare API token row; the issuer's "Open for batch 8" note; D409); 2026-11-05 (branch `feat/sdk-error-request-id`: "Support ID lookup": partners' request IDs come from the SDK's errors and the demo's diagnostics, D405); 2026-11-05 (branch `docs/zero-trust-free-guard`: "Admin Worker" step 1's Zero Trust free-tier guard, D408); 2026-11-05 (branch `fix/usage-setup-neon-api-passwords`: "Usage capture" steps 2, 3 and 8: `usage-setup <env> roles` gives LOGIN by SQL and has Neon's API reset each role's password with the new `.secrets/<env>/neon-api-key` (how to create, save and revoke it), every run replaces the role files, Hyperdrive configs from older files re-created, the step-8 gate without the SCRAM question; the secrets table's Neon API key row; D403); 2026-11-05 (branch `feat/batch-c-15-screen`: "Support ID lookup" → "In the admin console" (the screen, the email join, the ticket rule, what to watch) and "Users screen (C8b)" (a Support ID goes to the lookup; the check), D399); 2026-11-05 (branch `feat/batch-c-8b`: "Admin Worker" → "Users screen (C8b)": issuer migration 0003, the deploy order issuer → API → admin, the checks and failures, D388–D392; "Retention" and "User directory (D269)" notes); 2026-11-05 (branch `chore/ci-cost`: "CI and git": CI and the identity probe turned off, the local checks, D387); 2026-11-05 (branch `feat/batch-c-15`: "Support ID lookup", `admin <env> support:lookup`, the admin route's audit, D394–D397); 2026-11-05 (branch `feat/coop-canary`: "Before each release: the COOP canary" (`coop-canary`, what a failure means, D386), step 0 of "A release."); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: "Common failures"' `derive_failed` `webcrypto_unsupported` / `webcrypto_failed`, D385); 2026-11-05 (branch `feat/deploy-build-check`: "Checking a deploy (`deploy-check`)", D384:
 the build id in every Worker and page bundle, `deploy-check <env> [--d1]` after each deploy step, migrations applied
 from a checkout at the deployed commit, the API's raw `wrangler deploy` lines now `run deploy`); 2026-11-05 (branch `fix/deploy-pages-builds`: `deploy:pages` runs the web build first; the 0011 apply note; the rebuilt page versions); 2026-11-05 (branch `chore/ci-cost`: "CI and git": which jobs run when, the nightly WebKit and Firefox run; the identity probe every 3 hours, D383); 2026-11-05 (branch `docs/sandbox-dev-state-1105`: sandbox-dev redeployed at `develop` 8aab09d with the wallet directory: `USER_ID_KEY`, the bookmark, 0011, API 6141ba3d, vault abe7cc61, auth 6b9a4bee, issuer 1542a60c); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
 what counts, each job's share in both crons, the `budget` log lines; settlement's reads a run; D380); 2026-11-04 (branch `feat/batch-c-13`: "Retention (batch C13, milestone M6)": the Neon
@@ -103,6 +103,7 @@ Never print, log, paste or commit any of these. The scripts never print them eit
 | Neon Postgres connection strings (batch C ledger, D73): pooled `DATABASE_URL` and `DATABASE_URL_DIRECT` of the env's Neon branch | `.secrets/<env>/neon.json` (`{project_id, org_id, branch, branch_id, region, DATABASE_URL, DATABASE_URL_DIRECT}`); role `neondb_owner`, used only by `usage-migrate` and `usage-setup` (which also reads `project_id` and `branch_id` for Neon's API, D403) | `neon connection-string <branch> --project-id <id> [--pooled]` (Neon CLI, `neon login`) |
 | Ledger role URLs (`usage_writer`, `usage_admin`, batch C4): each role's password; their copies live in the two Hyperdrive configs | `.secrets/<env>/neon-usage-writer.url`, `neon-usage-admin.url` | `usage-setup <env> roles` ("Usage capture" below) |
 | Neon API key for `usage-setup <env> roles` (D403): a project-scoped key of the env's Neon project; it can change and delete anything in that project | `.secrets/<env>/neon-api-key` (one line, 0600), only while setting up or rotating the roles: then revoke the key in Neon and delete the file | created by hand in Neon's console and saved with `umask 077; pbpaste > .secrets/<env>/neon-api-key` ("Usage capture" step 2) |
+| Cloudflare API token for `access-setup <env>` (D409): "Access: Apps and Policies Edit" and "Access: Organizations, Identity Providers, and Groups Read" on the API's account; it can change or delete any Access application and policy of that account | `.secrets/<env>/cloudflare-access-token` (one line, 0600), only while setting up or changing the admin's Access application: then delete the token in Cloudflare and the file | created by hand (My Profile → API Tokens, TTL today) and saved with `umask 077; pbpaste > .secrets/<env>/cloudflare-access-token` ("Admin Worker" step 1) |
 | `USER_ID_KEY` (the uid key, base64 of 32 bytes; API only); never rotated within a contract term, backed up offline | `.secrets/<env>/user-id-key` | `usage-setup <env> user-id-key` (generates it once, sets the Worker secret) |
 | The console's Google client secret (`CONSOLE_GOOGLE_CLIENT_SECRET`, console Worker only; batch C9) | `.secrets/<env>/console-google-client.json` (Google's downloaded client JSON, `web.client_secret`) | saved by hand from Google Cloud (setup step 11, "Partner console Worker"); `wrangler secret put` through a pipe; read by `console-code-flow-spike` |
 | Watchdog secrets (`WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, its Resend key, Slack webhook, paging-app credentials, `HEARTBEAT_URL`); the admin Worker's copy of `WATCHDOG_STATUS_TOKEN` (batch C14) comes from the same file | `.secrets/<env>/watchdog-secrets.json` (flat `{NAME: value}`) | `watchdog secrets <env> init` (the key and token); the rest by hand ("Watchdog service" below) |
@@ -1261,25 +1262,96 @@ without them), the console set up ("Partner console Worker" above), and the ledg
 ("Usage capture", steps 1–3: `usage-setup <env> hyperdrive` printed the **admin** config's id beside the writer's). From
 the repo root of the main checkout, logged in to the API's Cloudflare account. Nothing below prints a secret.
 
-1. **Cloudflare Access** (build plan setup step 8, D75, D88).
-   - sandbox-dev (no Hana zone): `admin.origin` is `https://<admin.workerName>.<subdomain>.workers.dev`. Deploy once
-     (step 4), then in the dashboard: Workers & Pages → the admin Worker → Settings → Domains & Routes → `workers.dev`
-     → enable Cloudflare Access. Production: a self-hosted Access application on the Custom Domain `admin.origin` (the
-     config's `routes` creates the domain; `gen` refuses workers.dev outside `local*`/`sandbox*`).
-   - Policy: include the GitHub team `hana-admins` of `Hana-Technology` (the GitHub org requires 2FA); a second rule
-     with exact-email Google identities only (never a domain rule; open question 4). Session duration 1 h. No service
-     token: the Worker refuses tokens without a `sub`.
-   - Copy the team domain (`<team>.cloudflareaccess.com`) and the application's AUD tag (64 hex) into the manifest's
-     `admin.accessTeamDomain` and `admin.accessAud`, and list the same people, lowercased, in `admin.staffEmails`
-     (the Worker's own second check). Until `accessAud` is set (`UNSET`), every `/api/*` answers `503
-     access_unavailable`.
-   - **Zero Trust stays on the free tier** (D408; the account's card is authorised for usage past the free limits, so
-     sandbox must never get there). Free is 50 seats: a seat is a person who signs in through Access, and sandbox has
-     2 (`admin.staffEmails`). Keep the policy to exact emails (never a domain, `everyone` or group rule), Google as
-     the only login method (remove One-time PIN), and enable nothing else in Zero Trust (no Gateway, WARP enrolment,
-     Browser Isolation, DLP or CASB: each is billed or metered per seat). After setup and monthly: Zero Trust →
-     Settings → Account → seat usage shows only the staff emails (remove any other seat), and Billing shows $0.00.
-     Before adding staff or a Zero Trust feature, check it against the free limits first.
+1. **Cloudflare Access** (build plan setup step 8, D75, D88, D409). What it must be, whichever path makes it: one
+   **self-hosted Access application** on `admin.origin`'s host (sandbox-dev, no Hana zone:
+   `<admin.workerName>.<subdomain>.workers.dev`; production: the Custom Domain the config's `routes` creates, `gen`
+   refusing workers.dev outside `local*`/`sandbox*`), **session 1 h**, the cookie HttpOnly and SameSite=Lax (the
+   Worker's CSRF check assumes Lax), not in the App Launcher, **no service token** (the Worker refuses tokens without a
+   `sub`), and Allow policies by env:
+   - **`sandbox*`** (the user, 2026-11-05): Google only, **exact emails only**: one policy `Hana staff (<env>)`
+     including each `admin.staffEmails` address and requiring the Google login method; the application allows only
+     Google and redirects straight to it.
+   - **Every other env** (D88): `Hana staff GitHub (<env>)` including the GitHub team `hana-admins` of
+     `Hana-Technology` (the org requires 2FA), then `Hana staff (<env>)` as above (the exact-email Google fallback;
+     never a domain rule); the application allows GitHub and Google (so no auto-redirect).
+
+   `admin.staffEmails` (lowercased) is both the policy's list and the Worker's own second check. Until
+   `admin.accessAud` is set (`UNSET`), every `/api/*` answers `503 access_unavailable`.
+
+   **Zero Trust stays on the free tier** (D408; the account's card is authorised for usage past the free limits, so
+   sandbox must never get there). Free is 50 seats: a seat is a person who signs in through Access, and sandbox has 2
+   (`admin.staffEmails`). Keep the policy to exact emails (never a domain, `everyone` or group rule), Google as the
+   only login method (remove One-time PIN), and enable nothing else in Zero Trust (no Gateway, WARP enrolment, Browser
+   Isolation, DLP or CASB: each is billed or metered per seat). `access-setup` enforces the parts it owns on `sandbox*`
+   (D409): it only ever writes exact-email includes and Google as the only IdP, refuses more than 50 staff emails and
+   warns above 10, `--check` reports any non-email include or other IdP on the application as drift, it notes other
+   login methods on the account, and it touches nothing but this application and its policies. After setup and
+   monthly: Zero Trust → Settings → Account → seat usage shows only the staff emails (remove any other seat), and
+   Billing shows $0.00. Before adding staff or a Zero Trust feature, check it against the free limits first.
+
+   **Script path** (`scripts/access-setup.ts`, from the repo root of the main checkout; nothing it prints is secret):
+   1. **The Zero Trust team** (dashboard, once per Cloudflare account, on the API's account): Zero Trust → pick the
+      team name (`<team>.cloudflareaccess.com`) → the **Free** plan.
+   2. **The Google login method** (dashboard): Zero Trust → Settings → Authentication → Login methods → Add new →
+      Google, with a Google OAuth client made for it (authorised redirect URI
+      `https://<team>.cloudflareaccess.com/cdn-cgi/access/callback`), then **Test**. Other envs also need **GitHub**
+      (Add new → GitHub, an OAuth app of the `Hana-Technology` org). The script reads login methods; it never makes one.
+   3. **A short-lived, least-privilege API token** (dashboard → My Profile → API Tokens → Create Token → Create Custom
+      Token), named `access-setup <env>`:
+      - Permissions: **Account · Access: Apps and Policies · Edit** and **Account · Access: Organizations, Identity
+        Providers, and Groups · Read** (Cloudflare's API reference calls the first "Write"), nothing else;
+      - Account Resources: **Include · the API's account** only; Client IP Address Filtering: your current IP
+        (optional); TTL: ends today.
+
+      Cloudflare shows it **once**: copy it and save it from the clipboard without pasting it anywhere else:
+
+      ```sh
+      (umask 077; pbpaste > .secrets/<env>/cloudflare-access-token) && pbcopy < /dev/null && ls -l .secrets/<env>/cloudflare-access-token
+      ```
+
+      (`-rw-------`; the script refuses the file otherwise).
+   4. **Plan, apply, check** (the account id is the API's Cloudflare account; without `--account-id` or
+      `CLOUDFLARE_ACCOUNT_ID` the script uses the token's only account):
+
+      ```sh
+      corepack pnpm --filter @hana-id/scripts access-setup <env> --account-id <account id>        # the plan, changes nothing
+      corepack pnpm --filter @hana-id/scripts access-setup <env> --account-id <account id> --yes --write-manifest
+      corepack pnpm --filter @hana-id/scripts access-setup <env> --account-id <account id> --check  # exit 0: no drift
+      ```
+
+      The plan reads the team domain, the login methods (refusing without Google, or GitHub outside `sandbox*`, and
+      saying where to add it), the policies by name and the application by host or name, and says per object
+      `create`, `update (what differs)` or `matches`. `--yes` creates or updates the policies, then the application
+      (PUT of the whole object: re-running is harmless; it never deletes anything), and prints the application id, the
+      team domain and the AUD tag. `--write-manifest` puts the last two into `envs/<env>.json`'s `admin` block in place
+      (or copy them by hand); commit that, then `gen` and deploy the admin Worker (step 4) and the email issuer (its
+      `ADMIN_ACCESS_AUD` comes from the same block). `--check` compares Cloudflare with the manifest (emails, session,
+      IdPs, policies attached and their order, cookie settings, team domain, AUD) and exits 1 on any difference.
+      Errors carry the HTTP status, Cloudflare's error code and message, and for 401/403 the permission the call needs.
+      The script refuses an application on every Worker (`all_workers`, which would front the admin Worker with
+      another AUD), two applications matching the host or name, and duplicate policy names.
+   5. **Revoke the token** once it's done: My Profile → API Tokens → `access-setup <env>` → Delete; then
+      `rm .secrets/<env>/cloudflare-access-token`. Make a new one for the next change or check.
+
+   Re-run steps 3–5 whenever `admin.staffEmails` changes (the policy follows the manifest; `--check` shows the
+   difference first), and after any dashboard edit to the application, to put it back.
+
+   **workers.dev** (sandbox-dev): the dashboard's toggle (the admin Worker → Settings → Domains & Routes →
+   `workers.dev` → Enable Cloudflare Access) makes a Worker-level application (a `worker` destination, by the Worker's
+   id), which the API can make too but only with the Worker's id, so the token would also need Workers Scripts Read.
+   The script makes a **hostname** application instead, which Cloudflare documents for a `workers.dev` hostname
+   ([Workers → Cloudflare Access](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)). For
+   the admin Worker the two are equivalent: its config has `preview_urls: false` and no routes, so the workers.dev
+   hostname is all it serves (the Worker-level kind would also cover preview URLs and routes); both put a JWT with
+   the application's AUD in `Cf-Access-Jwt-Assertion`. Don't use both: if the toggle was turned on, turn it off (or
+   delete its application) first; the script points a Worker-level application out.
+
+   **Dashboard path** (no token): Zero Trust → Access → Applications → Add an application → Self-hosted, with the
+   settings above (name `Hana ID admin (<env>)`, the host, session 1 h, the login methods, Instant Auth for one IdP,
+   cookie settings HttpOnly and SameSite Lax, App Launcher off) and reusable policies as above; copy the team domain
+   (Settings → Custom Pages, or the application's Overview) and the AUD tag (Overview → Application Audience (AUD)
+   Tag) into `admin.accessTeamDomain` and `admin.accessAud`. `access-setup <env> --check` then confirms it matches;
+   `--check` only reads, so its token can have **Access: Apps and Policies · Read** instead of Edit.
 2. **Resend** (step 9, D87): verify the sending subdomain of `email.from` in Resend with SPF, DKIM and DMARC records on
    the Hana zone; create an API key with **sending access to that domain only**, for this Worker only (the watchdog
    has its own). Save it to `.secrets/<env>/admin-resend-key` (0600), never in a shell history:
@@ -2960,8 +3032,9 @@ origin. The API never forwards these requests.
    (Workers Routes on the API's zone; the more specific route wins over the API's); on `workers.dev` nothing more.
    `gen` turns `workers_dev` on only when `emailIssuer.url` is a `workers.dev` URL; a zone-routed issuer has no
    `workers.dev` URL (a second way in, around the zone's rules and Access). **Open for batch 8**: the staff routes'
-   Cloudflare Access application on a `workers.dev` hostname (sandbox-dev) — whether Access can protect it there, or the
-   staff routes wait for a custom domain.
+   Cloudflare Access application on a `workers.dev` hostname (sandbox-dev). Cloudflare documents self-hosted
+   applications on a `workers.dev` hostname or path, which the admin console's uses (D409); `access-setup` doesn't
+   make the issuer's (`{url}/v1/email/admin/*`) yet.
 
 Local: `gen <env> --dev-vars` writes `apps/email-issuer/.dev.vars` (0600) from the files (the active key only), then
 `corepack pnpm --filter @hana-id/email-issuer dev`.

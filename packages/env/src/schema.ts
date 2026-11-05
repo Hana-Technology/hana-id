@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { adminSchema, consoleSchema, dashboardRules, delayMs, emailSchema, filesSchema, usageSchema } from './dashboard.ts';
+import { CLOUDFLARE_ACCOUNT_ID_RE } from './cloudflare.ts';
 import { emailIssuerRules, emailIssuerSchema } from './email-issuer.ts';
 import { identityTokenRules, identityTokenSchema } from './identity.ts';
 import { hanaOriginProblem, isDevEnv, isLocalEnv, isLoopbackHost, siteOf } from './origins.ts';
@@ -154,7 +155,7 @@ function watchdogRules(
     owner: string;
     mpc: string;
     watchdogs?: string[] | undefined;
-    cloudflare: { workerName: string };
+    cloudflare: { workerName: string; accountId?: string | undefined };
     identityToken?: { publicKeys: { kid: string }[] } | undefined;
   },
   w: z.infer<typeof watchdogSchema>,
@@ -170,6 +171,10 @@ function watchdogRules(
   }
   for (const field of ['signer', 'relayer', 'owner', 'mpc'] as const) {
     if (w.account === m[field]) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'account'], message: `watchdog.account must not be the ${field} account` });
+  }
+  // D86: the watchdog runs on its own Cloudflare account (separate login and MFA), never the env's main one.
+  if (m.cloudflare.accountId !== undefined && w.cloudflare.accountId === m.cloudflare.accountId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'cloudflare', 'accountId'], message: "watchdog.cloudflare.accountId must be the watchdog's own account, not cloudflare.accountId (D86)" });
   }
   if (w.cloudflare.workerName === m.cloudflare.workerName) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'cloudflare', 'workerName'], message: "watchdog.cloudflare.workerName must differ from the API's Worker name" });
@@ -314,6 +319,13 @@ export const manifestSchema = z
      */
     allowSignerFullAccessKey: z.boolean().optional(),
     cloudflare: z.object({
+      /**
+       * The Cloudflare account every Worker of the env except the watchdog deploys to (the API, its two page Workers,
+       * the email issuer, the dashboard Workers and the demo): every `gen` writes it as the config's `account_id`, and
+       * refuses a `CLOUDFLARE_ACCOUNT_ID` in the shell that names another account (`cloudflare.ts` accountIdFields,
+       * D404). Optional: without it wrangler deploys to `CLOUDFLARE_ACCOUNT_ID` or the login's account. Not a secret.
+       */
+      accountId: z.string().regex(CLOUDFLARE_ACCOUNT_ID_RE, 'A Cloudflare account id is 32 lowercase hex characters').optional(),
       workerName: z.string().min(1),
       d1Name: z.string().min(1),
       /**

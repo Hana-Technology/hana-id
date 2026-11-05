@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-05 (branch `fix/usage-setup-neon-api-passwords`: "Usage capture" steps 2, 3 and 8: `usage-setup <env> roles` gives LOGIN by SQL and has Neon's API reset each role's password with the new `.secrets/<env>/neon-api-key` (how to create, save and revoke it), every run replaces the role files, Hyperdrive configs from older files re-created, the step-8 gate without the SCRAM question; the secrets table's Neon API key row; D403); 2026-11-05 (branch `feat/batch-c-15-screen`: "Support ID lookup" → "In the admin console" (the screen, the email join, the ticket rule, what to watch) and "Users screen (C8b)" (a Support ID goes to the lookup; the check), D399); 2026-11-05 (branch `feat/batch-c-8b`: "Admin Worker" → "Users screen (C8b)": issuer migration 0003, the deploy order issuer → API → admin, the checks and failures, D388–D392; "Retention" and "User directory (D269)" notes); 2026-11-05 (branch `chore/ci-cost`: "CI and git": CI and the identity probe turned off, the local checks, D387); 2026-11-05 (branch `feat/batch-c-15`: "Support ID lookup", `admin <env> support:lookup`, the admin route's audit, D394–D397); 2026-11-05 (branch `feat/coop-canary`: "Before each release: the COOP canary" (`coop-canary`, what a failure means, D386), step 0 of "A release."); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: "Common failures"' `derive_failed` `webcrypto_unsupported` / `webcrypto_failed`, D385); 2026-11-05 (branch `feat/deploy-build-check`: "Checking a deploy (`deploy-check`)", D384:
+Last verified against code: 2026-11-05 (branch `feat/account-migration`: "Moving an env to another Cloudflare account" (new: the order, the commands, `env-secrets`, `d1-move`, `admin issuer:iss`, what users see, Neon and Google Cloud notes, the testnet move pending), the manifest's `cloudflare.accountId` and custom-domain placements in "Accounts and services per environment", "Email issuer" step 7's Custom Domain, the hosted demo's `HANA_DEMO_ORIGIN`, the admin command list, the secrets table's D1 exports and API tokens; D404); 2026-11-05 (branch `fix/usage-setup-neon-api-passwords`: "Usage capture" steps 2, 3 and 8: `usage-setup <env> roles` gives LOGIN by SQL and has Neon's API reset each role's password with the new `.secrets/<env>/neon-api-key` (how to create, save and revoke it), every run replaces the role files, Hyperdrive configs from older files re-created, the step-8 gate without the SCRAM question; the secrets table's Neon API key row; D403); 2026-11-05 (branch `feat/batch-c-15-screen`: "Support ID lookup" → "In the admin console" (the screen, the email join, the ticket rule, what to watch) and "Users screen (C8b)" (a Support ID goes to the lookup; the check), D399); 2026-11-05 (branch `feat/batch-c-8b`: "Admin Worker" → "Users screen (C8b)": issuer migration 0003, the deploy order issuer → API → admin, the checks and failures, D388–D392; "Retention" and "User directory (D269)" notes); 2026-11-05 (branch `chore/ci-cost`: "CI and git": CI and the identity probe turned off, the local checks, D387); 2026-11-05 (branch `feat/batch-c-15`: "Support ID lookup", `admin <env> support:lookup`, the admin route's audit, D394–D397); 2026-11-05 (branch `feat/coop-canary`: "Before each release: the COOP canary" (`coop-canary`, what a failure means, D386), step 0 of "A release."); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: "Common failures"' `derive_failed` `webcrypto_unsupported` / `webcrypto_failed`, D385); 2026-11-05 (branch `feat/deploy-build-check`: "Checking a deploy (`deploy-check`)", D384:
 the build id in every Worker and page bundle, `deploy-check <env> [--d1]` after each deploy step, migrations applied
 from a checkout at the deployed commit, the API's raw `wrangler deploy` lines now `run deploy`); 2026-11-05 (branch `fix/deploy-pages-builds`: `deploy:pages` runs the web build first; the 0011 apply note; the rebuilt page versions); 2026-11-05 (branch `chore/ci-cost`: "CI and git": which jobs run when, the nightly WebKit and Firefox run; the identity probe every 3 hours, D383); 2026-11-05 (branch `docs/sandbox-dev-state-1105`: sandbox-dev redeployed at `develop` 8aab09d with the wallet directory: `USER_ID_KEY`, the bookmark, 0011, API 6141ba3d, vault abe7cc61, auth 6b9a4bee, issuer 1542a60c); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
 what counts, each job's share in both crons, the `budget` log lines; settlement's reads a run; D380); 2026-11-04 (branch `feat/batch-c-13`: "Retention (batch C13, milestone M6)": the Neon
@@ -108,6 +108,8 @@ Never print, log, paste or commit any of these. The scripts never print them eit
 | Watchdog secrets (`WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, its Resend key, Slack webhook, paging-app credentials, `HEARTBEAT_URL`); the admin Worker's copy of `WATCHDOG_STATUS_TOKEN` (batch C14) comes from the same file | `.secrets/<env>/watchdog-secrets.json` (flat `{NAME: value}`) | `watchdog secrets <env> init` (the key and token); the rest by hand ("Watchdog service" below) |
 | Worker copies of the above | Cloudflare Worker secrets (the watchdog's on its own Cloudflare account) | `wrangler secret put` (watchdog: `wrangler secret bulk`) |
 | Local dev copies | `apps/api/.dev.vars`, `apps/watchdog/.dev.vars`, `apps/email-issuer/.dev.vars` (0600) | `gen --dev-vars` |
+| D1 exports of an account move (every row of a database: the API's holds the wallet directory and the wrapped vault shares, the issuer's users' email addresses) | `.secrets/<env>/d1-export-<db>-<yyyymmdd>.sql` (0600); delete once the move is checked | `d1-move <env> --db <db>` ("Moving an env to another Cloudflare account") |
+| Cloudflare API tokens for an account move, one per account (optional: one login that is a member of both also works) | the shell only (`HANA_FROM_CLOUDFLARE_API_TOKEN`, `HANA_TO_CLOUDFLARE_API_TOKEN`), never a file in the repo; revoke both after the move | created by hand in each account's dashboard |
 
 `.secrets/` is gitignored, directories 0700, files 0600 (`scripts/lib/secrets.ts` refuses to read a file that group
 or others can read). Google ID tokens, CKD outputs and derived keys are never stored anywhere.
@@ -161,10 +163,18 @@ Every name comes from `envs/<env>.json` (schema: `packages/env/src/schema.ts`; n
 | `appChangeDelayMs` | batch C guarded-change delay (60 s..7 days; ≥ 24 h and ≤ `changeDelayMs` on a production network) | sandbox-dev: 60 s; read by the API and CLI from batch C3 |
 | `console`, `files`, `admin`, `usage`, `email`, `ownerGrantDelayMs` | batch C dashboard: console, files and admin Workers and origins, R2 buckets, Access, Hyperdrive names, sender (`envs/README.md`) | all or none; sandbox-dev has none yet (`docs/batch-c-build-plan.md` "Setup steps") |
 | `cloudflare.workerName`, `cloudflare.d1Name` | Worker and D1 names | |
+| `cloudflare.accountId` (optional) | the Cloudflare account of every Worker but the watchdog's (D404): each `gen` writes it as `account_id` and refuses a shell `CLOUDFLARE_ACCOUNT_ID` naming another account | not a secret; never the watchdog's account (D86); sandbox-dev has none yet (wrangler's login picks the account) |
 | `cloudflare.durableObjectLocation` | optional DO region hint (`apac`, `weur`, …) | changing it creates new objects |
 
-Also needed: a Cloudflare account with a `workers.dev` subdomain (production needs a Hana-owned account), and a
-Google Cloud project.
+Also needed: a Cloudflare account with a `workers.dev` subdomain, or a zone on that account for Custom Domains
+(production needs a Hana-owned account), and a Google Cloud project. Where each Worker is served follows from its
+origin in the manifest (D404): a `workers.dev` origin is the Worker's own `workers.dev` URL (dev envs only, and named
+after the Worker); any other https origin is a Custom Domain (`routes: [{pattern: <host>, custom_domain: true}]`,
+`workers_dev: false`, no preview URLs) on a zone **of the same account**: `apiUrl` (a bare origin then), the two page
+origins, `emailIssuer.url`, the dashboard origins, `watchdog.url` (on the watchdog's account) and the demo
+(`HANA_DEMO_ORIGIN`). A dev env (`local*`, `sandbox*`) may put them all under one registrable domain (e.g.
+`api.`, `vault.`, `auth.`, `email.id-dev.hanawallet.io`); production keeps the vault on its own site, apart from the
+auth pages, the API and the dashboard (D38; the schema refuses it), so it needs two registrable domains.
 
 Values containing `UNSET` are placeholders: `deploy-contract` skips the step that needs them (with a warning),
 `scope:register --allow-shared` warns, and `@hana-id/core`'s `ckdKeyProblem` makes smoke and the web build refuse an
@@ -1835,6 +1845,7 @@ admin <env> scope:register [--client <google client id> …] [--allow-shared] (-
 admin <env> scope:add-email-client --scope <scope id> [--yes]      # dev envs only (local*, sandbox*), D253
 admin <env> issuer-keys:lead-times [--remote]
 admin <env> owner:call <method> [--args '<json>'] [--gas <Tgas>] [--member <m>] [--approve-with <m>] [--yes]
+admin <env> issuer:iss <provider> --add <iss> | --remove <iss> [--member <m>] [--approve-with <m>] [--yes]   # D404
 admin <env> owner:vote <proposal id> --member <m> [--reject] [--yes]
 admin <env> owner:proposals [--limit 20] [--json]
 admin <env> governance:status [--json]
@@ -2650,7 +2661,7 @@ ids). Details: `apps/demo/README.md`.
 |---|---|
 | URL | `https://hana-id-demo-sandbox-dev.tingtc.workers.dev` (Worker `hana-id-demo-<env>` on the subdomain of the manifest's `apiUrl`) |
 | App | Smoke B, `pk_test_85gdPtFF4kYzqgPisccZbsT9fQP1tq7ie` (shared Google client); `HANA_DEMO_PUBLISHABLE_KEY` overrides it |
-| Env | `HANA_DEMO_ENV` (default `sandbox-dev`); only testnet `sandbox*`/`local*` envs whose API is on workers.dev |
+| Env | `HANA_DEMO_ENV` (default `sandbox-dev`); only testnet `sandbox*`/`local*` envs; on the API's workers.dev subdomain, or with `HANA_DEMO_ORIGIN=https://<host>` a Custom Domain on the env's account (required when the API is on a custom domain, D404) |
 
 ```sh
 # once per app: the vault loads only on the app's origins (needs apps/api/wrangler.jsonc: `gen sandbox-dev`); a staff
@@ -2951,7 +2962,8 @@ origin. The API never forwards these requests.
    watchdog's JWKS check finds it), then `deploy-check <env> --d1` ("Checking a deploy"). On a zone env, add the route `<api host>/v1/email/*` → `hana-id-email-issuer-<env>`
    (Workers Routes on the API's zone; the more specific route wins over the API's); on `workers.dev` nothing more.
    `gen` turns `workers_dev` on only when `emailIssuer.url` is a `workers.dev` URL; a zone-routed issuer has no
-   `workers.dev` URL (a second way in, around the zone's rules and Access). **Open for batch 8**: the staff routes'
+   `workers.dev` URL (a second way in, around the zone's rules and Access). An `emailIssuer.url` on any other host (a
+   dev env on custom domains, `https://email.<dev domain>`) is a Custom Domain the deploy creates (D404). **Open for batch 8**: the staff routes'
    Cloudflare Access application on a `workers.dev` hostname (sandbox-dev) — whether Access can protect it there, or the
    staff routes wait for a custom domain.
 
@@ -3553,6 +3565,232 @@ accounts, after B: C (a plain `openid` login once the email grant exists) must s
 `email` or `email_verified` in the ID token, else every later Google login of that user would be refused
 `token_has_pii`), and D (B's silent request again) must answer an access token with no `silentError` (the grant
 persists, now that google-match no longer revokes it). Until both pass, batch 8b stays on Hana's own testers.
+
+## Moving an env to another Cloudflare account
+
+D404. **Pending for sandbox-dev:** the user decided on 2026-11-05 that testnet too moves from the personal accounts to
+company accounts: Cloudflare (`*.tingtc.workers.dev` today), Neon (the usage ledger's project) and the Google Cloud
+project that owns the OAuth clients. Timing is open (with the colleague); `docs/mainnet-readiness.md` row 4.21 tracks
+it. Nothing below has been run on sandbox-dev yet. The tools (`env-secrets`, `d1-move`, `admin issuer:iss`) are tested
+against mocks only.
+
+Cloudflare doesn't move Workers, D1 databases, Durable Objects, Hyperdrive configs or R2 buckets from one account to
+another (we found no such feature documented), so the env is re-created on the new account and its data copied. Put it
+on **custom domains** of a zone in the new account at the same time: a `workers.dev` origin names the account's
+subdomain, so every origin would change again on the next move. A dev env may put every origin under one registrable
+domain (`api.id-dev.hanawallet.io`, `vault.id-dev.…`, `auth.id-dev.…`, `email.id-dev.…`); production may not (the
+vault on its own site, D38). The **watchdog stays on its own account** (D86; the schema refuses `cloudflare.accountId`
+equal to `watchdog.cloudflare.accountId`).
+
+**Wallets don't change.** A wallet's path is `scope#provider#sub#key_index` (`contracts/hana-signer/src/sessions.rs`,
+the session's `path: format!("{}#{}#{}#{}", scope_id, path_provider, path_sub, key_index)`, with the provider and `sub`
+of the token's identity or its account root), where `provider` is the contract's provider name for the token's `iss`
+(`iss_index`, `issuers.rs` `verify_token`; `set_issuer` maps 1 to 4 `iss` values to one provider and keeps its keys),
+never the `iss` or a URL; the email `sub` is HMAC(K_sub, the normalized
+address) (`packages/email/src/sub.ts`), K_sub coming from `.secrets/<env>/email-sub-key`; Google's `sub` is Google's.
+`signer`, `mpc`, `ckdDomainId` and the MPC key don't move. So a new issuer URL keeps every address as long as its new
+`iss` is added to the **same** provider (`email`) before the issuer signs with it. Keep the files in `.secrets/<env>/`:
+K_sub, `user-id-key` and `identity-sub-key` are never replaced (a new K_sub moves every email address, a new
+`USER_ID_KEY` makes every user a new user, a new `IDENTITY_SUB_KEY` changes every partner's `sub`).
+
+### What users and partners see
+
+- **Everyone is logged out once.** Sessions, the vault's device state and the auth pages' device tickets live in the
+  browser storage of the old `vaultOrigin` / `authOrigin`; the new origins start empty. Users sign in again (Google or
+  email); their addresses and balances are unchanged. The `vault_shares` rows copied with the API's D1 can't be used
+  without their browser half and expire as usual.
+- Lost with the Durable Objects (not copied): logins and email codes in flight at the switch (retry), the per-IP,
+  per-app and per-mailbox limiters' counts (they start from zero), the relayer keys' stored reservations (each key
+  re-reads its nonce from chain on first use, `coldChainRead`).
+- **Partners** must: allow the new `vaultOrigin` in their CSP `frame-src` (and the new `apiUrl` where their CSP lists
+  it), install the SDK release that carries the new origins (the package inlines every env's origins: "Releasing the
+  SDK packages"), add `{new authOrigin}/login/callback` to their own Google clients' redirect URIs (own-client apps
+  only), and switch identity-token verification to the new `iss` and JWKS (`{apiUrl}/v1/identity`, D127). Their
+  publishable keys, app settings and origins move with the API's D1 and don't change. Tell them before the switch.
+
+### Prerequisites
+
+- The new account (a company account: members with MFA, the plan chosen; the free plan allows 5 cron triggers per
+  account: the API 1, the console 1, the admin 2; D1 Time Travel keeps 30 days on Workers Paid, 7 on Free) and either
+  its `workers.dev` subdomain or, better, a **zone on that account** for the Custom Domains (a Worker's Custom Domain
+  must be on a zone of the Worker's own account: if `hanawallet.io` lives in another Cloudflare account, the Workers go
+  there, or `id-dev.hanawallet.io` becomes its own zone, which needs a plan with subdomain zones: check before
+  choosing). The hostnames must have no DNS record yet (`wrangler deploy` creates the record and the certificate).
+- Access to both accounts from the same machine. Either one wrangler login that is a member of both (wrangler then
+  asks or takes `CLOUDFLARE_ACCOUNT_ID`), or wrangler's named profiles (`wrangler auth create personal`, `wrangler auth
+  create company`, experimental in 4.151.1; `d1-move --from-profile/--to-profile`), or one API token per account
+  (Workers Scripts, D1, Workers Routes/Zone DNS for the Custom Domains, Hyperdrive, R2 and Access as needed), kept in
+  the shell only as `HANA_FROM_CLOUDFLARE_API_TOKEN` / `HANA_TO_CLOUDFLARE_API_TOKEN` for `d1-move` and as
+  `CLOUDFLARE_API_TOKEN` for the other commands. Revoke both tokens after the move. Every `gen` refuses a shell
+  `CLOUDFLARE_ACCOUNT_ID` that isn't the manifest's account for that Worker, so set it per step:
+
+  ```sh
+  export OLD=<old account id> NEW=<new account id> ENV=sandbox-dev
+  ```
+
+- Record two test users' addresses before you start (a Google one and an email one, on the demo app): the check at
+  the end compares them.
+
+### Steps
+
+1. **Freeze and bookmark.** Announce the window (partners, colleagues): no app, origin or settings changes from here on
+   (writes to the old D1 after the export are not copied). Note each database's current Time Travel bookmark on the old
+   account (it undoes anything that goes wrong there; "Restoring a D1 database"):
+
+   ```sh
+   CLOUDFLARE_ACCOUNT_ID=$OLD corepack pnpm --dir apps/api exec wrangler d1 time-travel info hana-id-sandbox-dev
+   CLOUDFLARE_ACCOUNT_ID=$OLD corepack pnpm --dir apps/api exec wrangler d1 time-travel info hana-id-email-issuer-sandbox-dev
+   ```
+
+2. **The manifest, in one commit** (on a branch, reviewed; `pnpm -r test` validates it): `cloudflare.accountId` = the
+   new account; `apiUrl`, `vaultOrigin`, `authOrigin` (bare https origins on the new zone); `emailIssuer.url` and
+   `emailIssuer.iss` (`{url}/v1/email`, the schema checks it); `identityToken.iss` (`{apiUrl}/v1/identity`); the
+   dashboard origins and the Access fields (`admin.accessTeamDomain` / `accessAud`, `emailIssuer.access`: the new
+   account's Zero Trust team and applications) when the env has them; `watchdog.pinnedIssuerKeys.email.jwksUrl` if it
+   is set. Keys, kids, client ids and account names stay. Update the docs that quote the old URLs in the same branch
+   (`docs/integration.md`'s sandbox-dev values, this file's examples, `docs/architecture.md`'s status rows). Merge it
+   before the deploys: every `gen` below reads it.
+3. **New resources on the new account** (each prints its id; ids aren't secrets):
+
+   ```sh
+   export CLOUDFLARE_ACCOUNT_ID=$NEW
+   corepack pnpm --dir apps/api exec wrangler d1 create hana-id-sandbox-dev --location apac
+   corepack pnpm --dir apps/api exec wrangler d1 create hana-id-email-issuer-sandbox-dev --location apac
+   # dashboard envs: the console's D1, the R2 buckets with their rules ("Files Worker and logos" step 1-3), Access
+   # applications for the admin origin and the issuer's staff routes; Hyperdrive comes in step 7
+   ```
+
+   Don't `migrations apply` the new databases: the export carries the schema and `d1_migrations`.
+4. **The email `iss` on chain, beside the old one** (the council; immediate, no governance delay; on a dev env one
+   command proposes and approves). The contract keeps 1 to 4 `iss` values per provider and refuses one another
+   provider uses; `set_issuer` keeps the provider's keys:
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run admin $ENV issuer:iss email --add https://email.id-dev.hanawallet.io/v1/email --approve-with hana-id-council-b-dev1.testnet       # plan
+   corepack pnpm --filter @hana-id/scripts run admin $ENV issuer:iss email --add https://email.id-dev.hanawallet.io/v1/email --approve-with hana-id-council-b-dev1.testnet --yes
+   ```
+
+   It reads `get_issuer("email")` and sends the whole list (old, new). The watchdog raises `governance_change`
+   (`email_issuer`) on its next run: expected, acknowledge it. Off dev envs it only proposes, and two members sign.
+   Google's `iss` values never change. The identity token's `iss` is not on chain: the manifest alone (step 2).
+5. **Copy the databases** (before any Worker runs on the new account: the API's cron writes to its D1 every 15 min, and
+   an import goes only into an empty database). Per database: export from the old account into
+   `.secrets/<env>/d1-export-<db>-<yyyymmdd>.sql` (0600), import into the new one, then every table's row count in the
+   export, the new database and the old one now (`d1_migrations` included):
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run d1-move $ENV --db api --from-account $OLD --to-account $NEW            # plan
+   corepack pnpm --filter @hana-id/scripts run d1-move $ENV --db api --from-account $OLD --to-account $NEW --yes
+   corepack pnpm --filter @hana-id/scripts run d1-move $ENV --db issuer --from-account $OLD --to-account $NEW --yes
+   # dashboard envs: --db console
+   ```
+
+   `--step export|import|compare` runs one step (`--file` names an older export). It fails if the new database differs
+   from the export, and lists the tables the old one changed in since: the old crons' own tables
+   (`issuer_key_*`) are expected; anything else (apps, origins, the wallet or user directory) means a write was lost:
+   stop it, `wrangler d1 delete` the new database, create it again and repeat. Wrangler runs in an empty scratch
+   directory with each side's account, so no generated `wrangler.jsonc` points a name at the other account's id.
+6. **Configs** (`CLOUDFLARE_ACCOUNT_ID=$NEW` or unset; each config now carries `account_id`):
+
+   ```sh
+   corepack pnpm --filter @hana-id/api gen $ENV --d1-id <new API D1 id> --usage-hyperdrive-id off
+   corepack pnpm --filter @hana-id/email-issuer gen $ENV --d1-id <new issuer D1 id> --app-d1-id <new API D1 id>
+   # dashboard envs: console, console-auth, files, admin (each its gen, the console's with its new D1 id)
+   ```
+
+   Always pass the new ids: a `gen` keeps the ids of an existing config generated for the same names, which are the
+   old account's (the same goes for the Hyperdrive ids: `off` until step 7 makes new ones).
+
+7. **Deploy, then the secrets**, in this order (the vault Worker's service binding and the issuer's `APP_DB` need the
+   API; the admin's needs the issuer's `DirectoryRpc`):
+
+   ```sh
+   corepack pnpm --filter @hana-id/api run deploy
+   corepack pnpm --filter @hana-id/api run deploy:pages
+   corepack pnpm --filter @hana-id/email-issuer run deploy
+   corepack pnpm --filter @hana-id/scripts run env-secrets $ENV                  # every secret, its file, ok / MISSING / INVALID
+   corepack pnpm --filter @hana-id/scripts run env-secrets $ENV --worker api --yes
+   corepack pnpm --filter @hana-id/scripts run env-secrets $ENV --worker issuer --yes
+   ```
+
+   `env-secrets` lists what each Worker needs (the API: `RELAYER_KEYS`, `OWNER_RELAYER_KEYS`, `KEYS_UPDATER_KEY`,
+   `VAULT_KEK` and, during a rotation, `VAULT_KEK_PREVIOUS`, the identity key in the slot `identity-slots.json` names,
+   `IDENTITY_SUB_KEY`, `USER_ID_KEY`; the issuer: `ISSUER_SIGNING_KEY` with the active kid, `EMAIL_SUB_KEY`,
+   `EMAIL_CODE_KEY`, `EMAIL_RL_KEY`, `SENDGRID_API_KEY`; the console: `CONSOLE_GOOGLE_CLIENT_SECRET`; the admin:
+   `EMAIL_API_KEY`, `CANCEL_LINK_KEY`, `INVITE_LINK_KEY`, `WATCHDOG_STATUS_TOKEN`, `COINGECKO_API_KEY`; the watchdog's
+   six or more) from `.secrets/<env>/`, checks each file is there, 0600 and well-formed, and with `--yes` sets them
+   through wrangler's stdin on the account the generated config names. It refuses while a required one is missing:
+   a file that is gone is never re-invented (Cloudflare can't give a secret back). The relayer, updater and
+   `VAULT_KEK` can be made anew with their own commands ("Key rotation"); K_sub, `USER_ID_KEY` and `IDENTITY_SUB_KEY`
+   only from their offline backups. The offline standbys are never uploaded. Usage capture (when the env has it):
+   `usage-setup $ENV hyperdrive --yes` creates both Hyperdrive configs on the new account from the role files, then
+   `gen $ENV --usage-hyperdrive-id <writer id>` and the admin's `gen --admin-hyperdrive-id <admin id>`, and redeploy.
+   Dashboard envs: the console, console-auth, files and admin deploys, `env-secrets $ENV --worker console --yes` and
+   `--worker admin --yes`, the R2 objects copied (an S3-compatible copy such as rclone between the two accounts' R2
+   endpoints; `STATEMENTS`' locked objects can't be deleted from the old bucket before their 7 years).
+8. **Check the deploy:** `corepack pnpm --filter @hana-id/scripts run deploy-check $ENV --d1` (every Worker on one
+   commit, no migration pending: `d1_migrations` came with the export), `curl -s $API/v1/health`,
+   `curl -s $ISSUER/v1/email/jwks.json` (the manifest's two kids), `curl -s $API/v1/identity/jwks.json`.
+9. **Google Cloud OAuth** (a few minutes to apply): on the shared login client add `{new authOrigin}/login/callback`;
+   the same on Hana's own client (`googleClientIds`) where it logs in through Hana's pages; on the console client
+   (dashboard envs) replace its one redirect URI with `{new console.authOrigin}/callback`; on the client Cloudflare
+   Access signs in with, the new team's `https://<team>.cloudflareaccess.com/cdn-cgi/access/callback`. Keep the old
+   URIs until step 13. Client ids don't change, so nothing on chain does.
+10. **The watchdog** (its own account, unchanged): `gen $ENV` and deploy it, so its `IDENTITY_ISS` and
+    `EMAIL_JWKS_URL` follow the manifest (before that it checks the old URLs, which still answer). If the watchdog's
+    account moves too: `d1-move $ENV --db watchdog` and `env-secrets $ENV --worker watchdog --yes` with the watchdog's
+    accounts, and `watchdog.url` plus the admin's `WATCHDOG_URL` follow. Acknowledge step 4's alert. On sandbox-dev
+    the watchdog's account today is the personal one the other Workers leave (mainnet-readiness 4.5): it may stay
+    there, apart from the new main account, until it gets an account of its own.
+11. **The demo:** add its new origin to its app (a staff proposal, in force `appChangeDelayMs` after the announcement),
+    then deploy it (`HANA_DEMO_ORIGIN=https://demo.id-dev.hanawallet.io` on custom domains):
+
+    ```sh
+    corepack pnpm --filter @hana-id/scripts run admin $ENV app:origins:add --app pk_test_85gdPtFF4kYzqgPisccZbsT9fQP1tq7ie --origin <new demo origin> --remote
+    corepack pnpm --filter @hana-id/scripts run admin $ENV app:changes:announce <gc id> --remote
+    HANA_DEMO_ORIGIN=<new demo origin> corepack pnpm --filter @hana-id/demo run deploy
+    ```
+
+12. **Smoke test:** `apps/smoke` and the demo against the new origins: a Google login and an email login (a code by
+    mail), a reload unlock, a signature, an export, `admin $ENV app:list --remote`. The two test users' addresses must
+    equal the ones recorded before the move; if one differs, stop: the provider or a key file is wrong (never "fix"
+    it by changing a path input).
+13. **Retire the old account's Workers** once the new env works: `wrangler delete <name>` for each old Worker
+    (`CLOUDFLARE_ACCOUNT_ID=$OLD`), which also takes the old origins down; then remove the old `iss`
+    (`admin $ENV issuer:iss email --remove <old iss> --approve-with <member> --yes`; it refuses the manifest's own
+    `iss`), the old redirect URIs and the demo's old origin (`app:origins:remove`). Keep the old D1 databases (and the
+    bookmarks of step 1) for 30 days, then delete them; delete the `d1-export-*.sql` files once you no longer need
+    them, and revoke the API tokens.
+
+### Neon (the usage ledger)
+
+The ledger is a Neon project (`.secrets/<env>/neon.json`: `project_id`, `org_id`). Two ways to put it under the company:
+
+- **Transfer the project** to the company's Neon organization (Neon console, or `POST
+  /organizations/{source_org_id}/projects/transfer` with a personal API key that has access to both organizations).
+  Neon: "Transferring a project does not change its credentials or connection string", so `neon.json`, the role files
+  and the Hyperdrive configs keep working (update `org_id` in `neon.json`). Its rules: Admin in the source
+  organization, a project-creating role in the destination; the destination's plan the same tier or higher; integrations
+  (GitHub, Vercel) disconnected first; Vercel-managed organizations can't send or receive; billing follows the
+  destination. Members and collaborators aren't carried over (re-add them). The page doesn't say what happens to
+  project-scoped API keys: create a new one for the next `usage-setup <env> roles` (D403). Source:
+  <https://neon.com/docs/manage/orgs-project-transfer> (checked 2026-11-05).
+- **A new project** in the company organization: `usage-migrate` and `usage-setup <env> roles`, new role files and
+  Hyperdrive configs, and the old rows exported with `pg_dump` / restored if they matter (testnet usage rows usually
+  don't).
+
+Prefer the transfer for testnet: nothing in Hana changes.
+
+### Google Cloud (the project that owns the OAuth clients)
+
+OAuth clients belong to a Google Cloud project. A standalone project (created without an organization) can be
+migrated into the company's organization; Google says the project ID and number, its API keys and its resources stay
+the same (<https://docs.cloud.google.com/resource-manager/docs/project-migration>, checked 2026-11-05; that page
+doesn't mention OAuth clients: check the client ids and the consent screen right after the move). Without an
+organization, add the company's admins as project Owners in IAM and remove the personal account later. Either way the
+client ids, and so the manifest and the chain (`googleClientIds`, `sharedGoogleClientIds`, `consoleAudiences`, the
+scopes' clients), don't change. A new project would mean new client ids: new chain registrations, and for partners
+who use Hana's shared client a client change that the cross-project `sub` match makes address-neutral (D42); avoid it.
 
 ## Restoring a D1 database (Time Travel)
 

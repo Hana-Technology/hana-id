@@ -33,6 +33,8 @@ export class SimChain {
   governance: GovernanceView | null = null;
   keyChanges: KeyChangeView[] = [];
   issuer: { iss_values: string[]; kids: string[] } | null = null;
+  /** Issuers by provider, when a test seeds them: get_issuer and set_issuer use these first (else `issuer`). */
+  issuersByProvider: Record<string, { iss_values: string[]; kids: string[] }> = {};
   globalScope: unknown = null;
   /** Other scopes by id (the console sink, D238); admin_register_scope adds `s<next>`. */
   scopes: Record<string, { id: string; owners: unknown[]; clients: [string, string][]; allow_shared: boolean }> = {};
@@ -116,7 +118,7 @@ export class SimChain {
         if (!this.governance) throw new Error('MethodNotFound');
         return structuredClone(this.keyChanges);
       case 'get_issuer':
-        return structuredClone(this.issuer);
+        return structuredClone(this.issuersByProvider[String(args.provider)] ?? this.issuer);
       case 'get_scope':
         return structuredClone(args.scope_id === 'global' ? this.globalScope : (this.scopes[String(args.scope_id)] ?? null));
       case 'scope_for_client': {
@@ -352,6 +354,12 @@ export class SimChain {
       case 'execute_issuer_key_change':
       case 'remove_issuer_key':
         return method === 'remove_issuer_key' ? true : 7;
+      case 'set_issuer': {
+        this.assertOwner(predecessor);
+        const seeded = this.issuersByProvider[String(args.provider)];
+        if (seeded) seeded.iss_values = [...(args.iss_values as string[])];
+        return null;
+      }
       case 'admin_register_scope': {
         this.assertOwner(predecessor);
         const clients = (args.clients ?? []) as [string, string][];

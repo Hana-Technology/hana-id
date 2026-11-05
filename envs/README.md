@@ -57,6 +57,15 @@ Batch C fields (`docs/batch-c-spec.md` "Manifest", `packages/env/src/dashboard.t
     the logo pages' `img-src` (batch C11), and to the files Worker (`apps/files`, `gen <env>`), which is deployed on it:
     a `workers.dev` files origin must be `<files.workerName>.<subdomain>.workers.dev`.
 
+`cloudflare.accountId` (optional, D404): the Cloudflare account (32 hex, not a secret) of every Worker of the env but
+the watchdog's: the API, its page Workers, the email issuer, the dashboard Workers and the demo. Every `gen` writes it
+as the config's `account_id` and refuses a shell `CLOUDFLARE_ACCOUNT_ID` that names another account; it must differ
+from `watchdog.cloudflare.accountId` (D86). Without it wrangler deploys to `CLOUDFLARE_ACCOUNT_ID` or the login's
+account. Origins off `workers.dev` (`apiUrl`, then a bare origin; the Hana origins; `emailIssuer.url`; the dashboard
+origins; `watchdog.url` on the watchdog's account) are Custom Domains on a zone of that account, created by the deploy.
+A dev env may put them all under one registrable domain; production keeps `vaultOrigin` on its own site (below).
+Moving an env: `docs/operations.md` "Moving an env to another Cloudflare account".
+
 `cloudflare.durableObjectLocation` (optional): the region for the Durable Objects every login shares (relayer keys, the
 per-app and owner-action limiters), as a Cloudflare location hint (`apac`, `weur`, `enam`, …). Without it each object
 lives wherever its first request happened to arrive. Pick the region of most users (sandbox-dev: `apac`, next to its

@@ -100,6 +100,11 @@ describe('the admin config', () => {
     expect(() => wranglerConfig(prod, { adminHyperdriveId: TEST_ADMIN_HYPERDRIVE_ID })).toThrow(/workers\.dev is for local\*\/sandbox\*/u);
     const prodDomain = wranglerConfig(withAdmin({ origin: 'https://admin.hana.example' }, { name: 'staging' }), { adminHyperdriveId: TEST_ADMIN_HYPERDRIVE_ID }) as Config;
     expect(prodDomain).toMatchObject({ workers_dev: false, preview_urls: false, routes: [{ pattern: 'admin.hana.example', custom_domain: true }] });
+    expect(prodDomain).not.toHaveProperty('account_id');
+    // The manifest's account, when it names one (D404).
+    const id = '0123456789abcdef0123456789abcdef';
+    const pinned = wranglerConfig({ ...TEST_MANIFEST, cloudflare: { ...TEST_MANIFEST.cloudflare, accountId: id } } as Manifest, { adminHyperdriveId: TEST_ADMIN_HYPERDRIVE_ID });
+    expect(pinned).toMatchObject({ account_id: id });
   });
 
   it('a production env needs the admin Hyperdrive id; a dev env may go without (feed and watcher off)', () => {

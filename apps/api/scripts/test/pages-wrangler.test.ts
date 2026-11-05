@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type Manifest, loadEnv, manifestSchema } from '@hana-id/env';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CUSTOM_DOMAIN, customDomainManifest } from '../../../../packages/env/src/custom-domain.fixture.ts';
 import { COMPATIBILITY_DATE } from '../gen-wrangler.ts';
 import { PAGES_CONFIG_FILES, pagesAssetsDir, pagesPlacement, pagesWranglerConfig, workersDevHost, writePagesWranglerConfigs } from '../pages-wrangler.ts';
 
@@ -197,5 +198,28 @@ describe('writePagesWranglerConfigs', () => {
     expect(() => writePagesWranglerConfigs(m, COMPATIBILITY_DATE, dir)).toThrow();
     expect(existsSync(join(dir, PAGES_CONFIG_FILES.vault))).toBe(false);
     expect(existsSync(join(dir, PAGES_CONFIG_FILES.auth))).toBe(false);
+  });
+});
+
+describe('page Workers on custom domains in another account (D404)', () => {
+  afterEach(() => void vi.unstubAllEnvs());
+
+  it('each page origin is a Custom Domain, named after the API Worker, on the manifest account', () => {
+    vi.stubEnv('CLOUDFLARE_ACCOUNT_ID', '');
+    const m = customDomainManifest();
+    const vault = pagesWranglerConfig(m, 'vault', COMPATIBILITY_DATE);
+    const auth = pagesWranglerConfig(m, 'auth', COMPATIBILITY_DATE);
+    expect(vault).toMatchObject({
+      name: `${m.cloudflare.workerName}-vault`,
+      account_id: CUSTOM_DOMAIN.accountId,
+      workers_dev: false,
+      preview_urls: false,
+      routes: [{ pattern: 'vault.id-dev.hanawallet.io', custom_domain: true }],
+      services: [{ binding: 'API', service: m.cloudflare.workerName }],
+    });
+    expect(auth).toMatchObject({ name: `${m.cloudflare.workerName}-auth`, account_id: CUSTOM_DOMAIN.accountId, workers_dev: false, routes: [{ pattern: 'auth.id-dev.hanawallet.io', custom_domain: true }] });
+    expect((auth.vars as Record<string, string>).EMAIL_ISSUER_URL).toBe(CUSTOM_DOMAIN.emailIssuerUrl);
+    // sandbox-dev's own pages pin no account.
+    expect(pagesWranglerConfig(manifest, 'vault', COMPATIBILITY_DATE)).not.toHaveProperty('account_id');
   });
 });

@@ -6,6 +6,7 @@ import { COMPATIBILITY_DATE } from '../../api/scripts/gen-wrangler.ts';
 import { pageCsp } from '../src/csp.ts';
 import { CONFIG_FILE, demoPlacement, demoWranglerConfig, writeDemoWranglerConfig } from '../scripts/gen-wrangler.ts';
 import { CONFIG, MANIFEST, variant } from './fixtures.ts';
+import { CUSTOM_DOMAIN, customDomainManifest } from '../../../packages/env/src/custom-domain.fixture.ts';
 
 const dirs: string[] = [];
 const tmp = (): string => {
@@ -19,7 +20,7 @@ afterEach(() => {
 
 describe('demoPlacement', () => {
   it("names the Worker hana-id-demo-<env> on the API's workers.dev subdomain", () => {
-    expect(demoPlacement(MANIFEST)).toEqual({ name: 'hana-id-demo-sandbox-dev', origin: 'https://hana-id-demo-sandbox-dev.tingtc.workers.dev' });
+    expect(demoPlacement(MANIFEST)).toEqual({ name: 'hana-id-demo-sandbox-dev', origin: 'https://hana-id-demo-sandbox-dev.tingtc.workers.dev', target: { workers_dev: true, preview_urls: false } });
     expect(demoPlacement(variant({ name: 'sandbox-x', apiUrl: 'https://api-x.other.workers.dev' })).origin).toBe('https://hana-id-demo-sandbox-x.other.workers.dev');
   });
 
@@ -28,6 +29,22 @@ describe('demoPlacement', () => {
     expect(() => demoPlacement(prod)).toThrow(/sandbox\*\/local\* envs only/u);
     expect(() => demoPlacement(variant({ apiUrl: 'https://api.hana.example' }))).toThrow(/not on workers.dev/u);
     expect(() => demoPlacement(variant({ vaultOrigin: 'https://hana-id-demo-sandbox-dev.tingtc.workers.dev' }))).toThrow(/already one of the env's Hana origins/u);
+  });
+
+  it('HANA_DEMO_ORIGIN: a Custom Domain for an env on custom domains, on the manifest account (D404)', () => {
+    const m = customDomainManifest();
+    expect(demoPlacement(m, 'https://demo.id-dev.hanawallet.io')).toEqual({
+      name: 'hana-id-demo-sandbox-cd',
+      origin: 'https://demo.id-dev.hanawallet.io',
+      target: { workers_dev: false, preview_urls: false, routes: [{ pattern: 'demo.id-dev.hanawallet.io', custom_domain: true }] },
+    });
+    expect(() => demoPlacement(m)).toThrow(/set HANA_DEMO_ORIGIN/u);
+    expect(() => demoPlacement(m, CUSTOM_DOMAIN.vaultOrigin)).toThrow(/already one of the env's Hana origins/u);
+    expect(() => demoPlacement(m, CUSTOM_DOMAIN.emailIssuerUrl)).toThrow(/already one of the env's Hana origins/u);
+    expect(() => demoPlacement(m, 'https://demo.id-dev.hanawallet.io/x')).toThrow(/bare origin/u);
+    expect(() => demoPlacement(m, 'https://co.uk')).toThrow(/registrable domain/u);
+    const config = demoWranglerConfig(m, { ...CONFIG, environment: m.name, vaultOrigin: m.vaultOrigin! }, COMPATIBILITY_DATE, 'https://demo.id-dev.hanawallet.io');
+    expect(config).toMatchObject({ account_id: CUSTOM_DOMAIN.accountId, workers_dev: false, routes: [{ pattern: 'demo.id-dev.hanawallet.io', custom_domain: true }], vars: { DEMO_ORIGIN: 'https://demo.id-dev.hanawallet.io' } });
   });
 });
 

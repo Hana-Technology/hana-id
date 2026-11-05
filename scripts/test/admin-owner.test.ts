@@ -4,7 +4,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { loadEnv, type Manifest, rsaJwkThumbprint } from '@hana-id/env';
 import { KeyPair } from '@near-js/crypto';
 import { assertCommandPositionals } from '../lib/admin-args.ts';
-import { emailKeyProblem, governanceStatus, governanceStatusCmd, OWNER_DRY_RUN_LINE, ownerCallCmd, ownerProposalsCmd, ownerVoteCmd } from '../lib/admin-owner.ts';
+import { emailKeyProblem, governanceStatus, governanceStatusCmd, issuerIssCmd, OWNER_DRY_RUN_LINE, ownerCallCmd, ownerProposalsCmd, ownerVoteCmd } from '../lib/admin-owner.ts';
 import { parseCli } from '../lib/cli.ts';
 import { writeCouncilKey } from '../lib/council.ts';
 import { councilPolicy, readPin } from '../lib/sputnik.ts';
@@ -87,6 +87,52 @@ describe('admin owner:call', () => {
     expect(() => assertCommandPositionals('owner:call', [])).toThrow('owner:call takes exactly one <method>');
     expect(() => assertCommandPositionals('owner:vote', ['1', '2'])).toThrow('exactly one <proposal id>');
     expect(() => assertCommandPositionals('owner:proposals', ['x'])).toThrow('Unexpected argument');
+  });
+});
+
+describe('admin issuer:iss (moving an issuer URL, D404)', () => {
+  const OLD_ISS = 'https://hana-id-email-issuer-sandbox-dev.tingtc.workers.dev/v1/email';
+  const NEW_ISS = 'https://email.id-dev.hanawallet.io/v1/email';
+  const issArgv = (a: string[]) => parseCli(a, { strings: ['add', 'remove', 'gas', 'member', 'approve-with'], booleans: ['yes'] });
+  const moved: Manifest = { ...daoOwned, emailIssuer: { ...daoOwned.emailIssuer!, url: 'https://email.id-dev.hanawallet.io', iss: NEW_ISS } };
+  beforeEach(() => {
+    chain.issuersByProvider = { email: { iss_values: [OLD_ISS], kids: ['k1', 'k2'] }, google: { iss_values: ['https://accounts.google.com', 'accounts.google.com'], kids: ['g'] } };
+  });
+
+  it('adds the new iss beside the old one (the whole list in one set_issuer), keeping the keys; dry run first', async () => {
+    await issuerIssCmd(moved, 'email', issArgv(['--add', NEW_ISS, '--approve-with', B]), deps());
+    expect(out.join('\n')).toContain(`set_issuer({"provider":"email","iss_values":["${OLD_ISS}","${NEW_ISS}"]})`);
+    expect(out.at(-1)).toBe(OWNER_DRY_RUN_LINE);
+    expect(chain.issuersByProvider.email!.iss_values).toEqual([OLD_ISS]);
+    out = [];
+    await issuerIssCmd(moved, 'email', issArgv(['--add', NEW_ISS, '--approve-with', B, '--yes']), deps());
+    expect(chain.issuersByProvider.email).toEqual({ iss_values: [OLD_ISS, NEW_ISS], kids: ['k1', 'k2'] });
+    expect(out.at(-1)).toBe(`Done: proposal #0 approved and executed; email iss "${OLD_ISS}", "${NEW_ISS}".`);
+    out = [];
+    await issuerIssCmd(moved, 'email', issArgv(['--add', NEW_ISS, '--yes']), deps());
+    expect(out.at(-1)).toBe(`${NEW_ISS} is already an iss of email: nothing to do.`);
+  });
+
+  it('removes the old iss later; never the one the manifest signs with, the last one, or Google’s', async () => {
+    chain.issuersByProvider.email!.iss_values = [OLD_ISS, NEW_ISS];
+    await expect(issuerIssCmd(moved, 'email', issArgv(['--remove', NEW_ISS]), deps())).rejects.toThrow(/emailIssuer.iss: the deployed issuer signs with it/u);
+    await issuerIssCmd(moved, 'email', issArgv(['--remove', OLD_ISS, '--approve-with', B, '--yes']), deps());
+    expect(chain.issuersByProvider.email!.iss_values).toEqual([NEW_ISS]);
+    await expect(issuerIssCmd(daoOwned, 'email', issArgv(['--remove', NEW_ISS]), deps())).rejects.toThrow(/only iss: an issuer needs at least one/u);
+    await expect(issuerIssCmd(moved, 'email', issArgv(['--remove', OLD_ISS]), deps())).rejects.toThrow(/is not an iss of email/u);
+    await expect(issuerIssCmd(moved, 'google', issArgv(['--remove', 'accounts.google.com']), deps())).rejects.toThrow(/Google's iss values/u);
+  });
+
+  it('refuses a 5th value, a malformed email iss, an unknown provider and a wrong flag set', async () => {
+    chain.issuersByProvider.email!.iss_values = ['https://a.example/v1/email', 'https://b.example/v1/email', 'https://c.example/v1/email', 'https://d.example/v1/email'];
+    await expect(issuerIssCmd(moved, 'email', issArgv(['--add', NEW_ISS]), deps())).rejects.toThrow(/already has 4 iss values/u);
+    for (const bad of ['http://email.example/v1/email', 'https://email.example/v1/emails', 'https://email.example/v1/email/', 'not a url']) {
+      await expect(issuerIssCmd(moved, 'email', issArgv(['--add', bad]), deps()), bad).rejects.toThrow(/https URL \+ \/v1\/email|no whitespace/u);
+    }
+    await expect(issuerIssCmd(moved, 'apple', issArgv(['--add', 'https://appleid.apple.com']), deps())).rejects.toThrow(/No issuer "apple"/u);
+    await expect(issuerIssCmd(moved, 'email', issArgv([]), deps())).rejects.toThrow(/exactly one of --add/u);
+    await expect(issuerIssCmd(moved, 'email', issArgv(['--add', NEW_ISS, '--remove', OLD_ISS]), deps())).rejects.toThrow(/exactly one of --add/u);
+    expect(() => assertCommandPositionals('issuer:iss', [])).toThrow('issuer:iss takes exactly one <provider>');
   });
 });
 

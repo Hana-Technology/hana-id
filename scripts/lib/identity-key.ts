@@ -152,14 +152,14 @@ export function newSubKey(randomBytes: (n: number) => Uint8Array): string {
   return value;
 }
 
-function readKeyFile(file: string): P256PrivateJwk {
+export function readKeyFile(file: string): P256PrivateJwk {
   assertPrivate(file);
   const v = parseSecretJson<unknown>(readFileSync(file, 'utf8'), file);
   if (!isP256PrivateJwk(v)) throw new Error(`${file} is not a P-256 private JWK`);
   return { kty: 'EC', crv: 'P-256', x: v.x, y: v.y, d: v.d };
 }
 
-function readSubKeyFile(file: string): string {
+export function readSubKeyFile(file: string): string {
   assertPrivate(file);
   const v = readFileSync(file, 'utf8').trim();
   if (!SUB_KEY_RE.test(v) || Buffer.from(v, 'base64').length !== 32) throw new Error(`${file} is not base64 of 32 bytes`);

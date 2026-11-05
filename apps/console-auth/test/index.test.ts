@@ -113,6 +113,10 @@ describe('its config', () => {
     const dev = { ...TEST_MANIFEST, console: { ...TEST_MANIFEST.console!, authOrigin: 'https://hana-id-console-auth-test.acct.workers.dev' } } as Manifest;
     const devConfig = wranglerConfig(dev);
     expect(devConfig).toMatchObject({ workers_dev: true, preview_urls: false });
+    // The manifest's account, when it names one (D404).
+    const id = '0123456789abcdef0123456789abcdef';
+    expect(wranglerConfig({ ...TEST_MANIFEST, cloudflare: { ...TEST_MANIFEST.cloudflare, accountId: id } } as Manifest)).toMatchObject({ account_id: id });
+    expect(wranglerConfig(TEST_MANIFEST)).not.toHaveProperty('account_id');
     expect(devConfig.routes).toBeUndefined();
     const wrongName = { ...dev, console: { ...dev.console!, authOrigin: 'https://other-worker.acct.workers.dev' } } as Manifest;
     expect(() => wranglerConfig(wrongName)).toThrow(/Worker's own/u);

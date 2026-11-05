@@ -10,6 +10,7 @@ import { IDENTITY_PER_ROOT_MINUTE, IDENTITY_PER_SESSION_MINUTE } from '../../src
 import { SHARE_PER_MINUTE, VAULT_PER_IP_MINUTE } from '../../src/vault/limits.ts';
 import { createHash, generateKeyPairSync, randomBytes } from 'node:crypto';
 import { IDENTITY_SECRET_FILES, identityIssuerFor, p256Thumbprint, type Manifest } from '@hana-id/env';
+import { CUSTOM_DOMAIN, customDomainManifest } from '../../../../packages/env/src/custom-domain.fixture.ts';
 import {
   LOCAL_D1_ID,
   LOCAL_USAGE_CONNECTION_STRING,
@@ -500,5 +501,45 @@ describe('email login', () => {
     // The vault page's connect-src names the issuer (the vault calls google-match, batch 8b).
     expect(vars.EMAIL_ISSUER_URL).toBe(url);
     expect(emailVars(manifest as Manifest)).toEqual({});
+  });
+});
+
+describe('a dev env on custom domains in another account (D404)', () => {
+  afterEach(() => void vi.unstubAllEnvs());
+
+  it('the API Worker gets a Custom Domain route on apiUrl, no workers.dev URL, and the manifest account', () => {
+    vi.stubEnv('CLOUDFLARE_ACCOUNT_ID', '');
+    const m = customDomainManifest();
+    const config = wranglerConfig(m, LOCAL_D1_ID);
+    expect(config).toMatchObject({
+      name: m.cloudflare.workerName,
+      account_id: CUSTOM_DOMAIN.accountId,
+      workers_dev: false,
+      preview_urls: false,
+      routes: [{ pattern: 'api.id-dev.hanawallet.io', custom_domain: true }],
+    });
+    expect((config.vars as Record<string, string>).API_URL).toBe(CUSTOM_DOMAIN.apiUrl);
+    expect((config.vars as Record<string, string>).EMAIL_ISSUER_URL).toBe(CUSTOM_DOMAIN.emailIssuerUrl);
+    expect((config.vars as Record<string, string>).IDENTITY_ISS).toBe(`${CUSTOM_DOMAIN.apiUrl}/v1/identity`);
+  });
+
+  it('a workers.dev apiUrl adds no placement and no account (sandbox-dev unchanged)', () => {
+    vi.stubEnv('CLOUDFLARE_ACCOUNT_ID', '');
+    const config = wranglerConfig(loadEnv('sandbox-dev'), LOCAL_D1_ID);
+    for (const k of ['account_id', 'routes', 'workers_dev', 'preview_urls']) expect(config).not.toHaveProperty(k);
+  });
+
+  it('refuses a CLOUDFLARE_ACCOUNT_ID in the shell that names another account', () => {
+    vi.stubEnv('CLOUDFLARE_ACCOUNT_ID', 'ffffffffffffffffffffffffffffffff');
+    expect(() => wranglerConfig(customDomainManifest(), LOCAL_D1_ID)).toThrow(/CLOUDFLARE_ACCOUNT_ID is f+ but cloudflare.accountId/u);
+  });
+
+  it('refuses an apiUrl with a path on a Custom Domain (a Custom Domain is a whole hostname)', () => {
+    vi.stubEnv('CLOUDFLARE_ACCOUNT_ID', '');
+    expect(() => wranglerConfig({ ...customDomainManifest(), apiUrl: 'https://api.id-dev.hanawallet.io/hana' }, LOCAL_D1_ID)).toThrow(/bare origin/u);
+  });
+
+  it("the tests' config stays local: no route for the placeholder apiUrl", () => {
+    for (const k of ['routes', 'workers_dev', 'preview_urls', 'account_id']) expect(testWranglerConfig()).not.toHaveProperty(k);
   });
 });

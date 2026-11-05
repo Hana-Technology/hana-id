@@ -19,7 +19,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type Manifest, isDevEnv, isLoopbackHost, loadEnv } from '@hana-id/env';
+import { type Manifest, accountIdFields, isDevEnv, isLoopbackHost, loadEnv } from '@hana-id/env';
 import { workersDevHost } from '../../api/scripts/pages-wrangler.ts';
 import { TEST_MANIFEST as CONSOLE_TEST_MANIFEST } from '../../console/scripts/gen-wrangler.ts';
 import { CRONS, FIVE_MINUTES } from '../src/crons.ts';
@@ -72,6 +72,8 @@ export function wranglerConfig(m: Manifest, opts: { adminHyperdriveId?: string |
   if (watchdogUrl === null && isProductionManifest(m)) throw new Error(`envs/${m.name}.json is a production env: set watchdog.url (the watchdog Worker's https origin) so the admin's Security & monitoring view can read it`);
   return {
     $schema: 'node_modules/wrangler/config-schema.json',
+    // The env's Cloudflare account, when the manifest names it (D404).
+    ...accountIdFields(m.cloudflare.accountId, 'cloudflare.accountId'),
     ...adminPlacement(m),
     main: 'src/index.ts',
     compatibility_date: COMPATIBILITY_DATE,

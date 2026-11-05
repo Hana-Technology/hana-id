@@ -10,6 +10,10 @@ const REPO_MIGRATIONS = join(repoRoot, 'apps', 'api', 'migrations-usage');
 // A placeholder of the shape Neon gives (not a real endpoint or password).
 const URL_OK = 'postgresql://neondb_owner:not-a-real-password@ep-quiet-sky-a1b2c3d4.ap-southeast-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require';
 
+// Each PGlite test boots its own Postgres (WASM): ~1 s alone, but over vitest's 5 s default when `pnpm -r test` runs
+// every package's suite at once. The PGlite describes take the budget apps/api's PGlite suite has (vitest.usage.config.ts).
+const PGLITE = { timeout: 30_000 };
+
 const conn = (db: PGlite): SqlConn & { close(): Promise<void> } => ({
   exec: async (sql) => void (await db.exec(sql)),
   query: async <T>(sql: string, params: unknown[] = []) => (await db.query<T>(sql, params)).rows,
@@ -42,7 +46,7 @@ describe('readMigrations', () => {
   });
 });
 
-describe('applyMigrations (PGlite)', () => {
+describe('applyMigrations (PGlite)', PGLITE, () => {
   it('applies the ledger once; a second run applies nothing', async () => {
     const db = new PGlite();
     const files = readMigrations(REPO_MIGRATIONS);
@@ -90,16 +94,18 @@ describe('the owner URL', () => {
   });
 });
 
-describe('usageMigrate (the command)', () => {
+describe('usageMigrate (the command)', PGLITE, () => {
   const run = async (argv: string[], over: { url?: unknown; db?: PGlite; failConnect?: string } = {}) => {
     const lines: string[] = [];
-    const db = over.db ?? new PGlite();
+    // Booted only when the command connects: the refusals below never do.
+    let db = over.db;
     const result = await usageMigrate(
       argv,
       {
         readNeonSecrets: () => ('url' in over ? { DATABASE_URL_DIRECT: over.url } : { DATABASE_URL_DIRECT: URL_OK }),
         connect: async () => {
           if (over.failConnect) throw new Error(over.failConnect);
+          db ??= new PGlite();
           return conn(db);
         },
         migrationsDir: REPO_MIGRATIONS,
@@ -109,6 +115,7 @@ describe('usageMigrate (the command)', () => {
         if (env !== 'sandbox-dev') throw new Error(`No manifest ${env}`);
       },
     );
+    if (!db) throw new Error('usageMigrate returned without connecting');
     return { result, lines, db };
   };
 

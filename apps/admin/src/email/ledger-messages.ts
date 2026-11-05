@@ -105,3 +105,22 @@ export function retentionFailed(c: MailContext, p: RetentionProblem): Rendered {
   blocks.push({ kind: 'p', text: 'The admin console’s retention screen lists every run with its rows per table. docs/operations.md "Retention" has the recovery steps.' });
   return render(c.env, subject, blocks, c.consoleOrigin);
 }
+
+/**
+ * `directory_budget` (D275, C8b; a Direct kind to the security alias): a staff member's Users screen reads reached the
+ * row budget, so the issuer refused the next one. The staff address is Hana's own (an Access identity), never an end
+ * user's; no search term, sub or row is in it.
+ */
+export function directoryBudget(c: MailContext, o: { staff: string; window: '1h' | '1d'; limit: number; retryAfterMs: number; at: number }): Rendered {
+  const per = o.window === '1h' ? 'an hour' : 'a UTC day';
+  return render(
+    c.env,
+    `User directory budget reached by ${oneLine(o.staff, 120)}`,
+    [
+      { kind: 'warn', text: `A staff member read ${o.limit} identities ${per} from the user directory (the Users screen), the budget per staff email, so the email issuer refused the next read.` },
+      { kind: 'kv', rows: [['Staff', oneLine(o.staff, 120)], ['Window', o.window], ['Budget', `${o.limit} identities ${per}`], ['Refused at', isoTime(o.at)], ['Reads again from', isoTime(o.at + o.retryAfterMs)]] },
+      { kind: 'p', text: 'If this isn’t expected support work, treat the staff session as compromised: remove the person from the Access policy and admin.staffEmails, and review their rows in the admin console’s audit (issuer directory reads).' },
+    ],
+    c.consoleOrigin,
+  );
+}

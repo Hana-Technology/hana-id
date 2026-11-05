@@ -123,7 +123,7 @@ describe('host dispatch, CSRF and the SPA', () => {
   });
 
   it('answers 404 for an unknown /api path and 405 with allow for a wrong method', async () => {
-    expect((await adminRequest('/api/users/search', { body: {} })).status).toBe(404);
+    expect((await adminRequest('/api/no-such-route', { body: {} })).status).toBe(404);
     const res = await adminRequest('/api/orgs', { method: 'DELETE', body: {} });
     expect(res.status).toBe(405);
     expect(res.headers.get('allow')).toBe('GET');

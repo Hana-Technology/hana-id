@@ -6495,10 +6495,147 @@ follow-up there.
   trip to Google, a follow-up screen, a link task, no timer left behind); `apps/e2e/tests/popup-close.spec.ts` ("closed
   within 8 s on Google's page", the page's clock fast-forwarded; "an IdP that enforces COOP", Chromium and Firefox).
 
+## Batch C8b: the admin console's Users screen (branch `feat/batch-c-8b`), 2026-11-05
+
+Built over D275 as the user confirmed it on 2026-11-05 (below, under "Proposed, not yet confirmed", D275's entry).
+Number note: D388 was the next free number on `origin/develop` (D387, merged from `chore/ci-cost` the same day);
+C15, merged into `develop` while this was built, took D393–D397, so D388–D392 stayed free. A branch racing this one may
+still take them: renumber on merge.
+
+### D388. DirectoryRpc as built: the admin application's Access check in the issuer, three reads, no `byUid`
+- Date 2026-11-05 · Status: decided while building, to confirm · Built: `apps/email-issuer/src/directory-rpc.ts`,
+  `src/index.ts` (the export), `src/env.ts`, `scripts/gen-wrangler.ts`; `packages/console-core/src/directory.ts`;
+  `apps/admin/scripts/gen-wrangler.ts` (`ISSUER`) · Source: D275 (confirmed with amendments), spec "Users and Support
+  ID" → "Data path"
+- Decision:
+  - **The staff check** is `@hana-id/oidc`'s `AccessJwtVerifier` (the admin Worker's own: `type = 'app'`, `iss`, `aud`,
+    expiry, `nbf`, a `sub`, an email, the certs never served stale) against three new issuer vars written by the
+    issuer's `gen` from the manifest's `admin` block: `ADMIN_ACCESS_TEAM_DOMAIN` (`admin.accessTeamDomain`),
+    `ADMIN_ACCESS_AUD` (`admin.accessAud`) and `ADMIN_STAFF_EMAILS` (`admin.staffEmails`, JSON). No new manifest field.
+    The issuer's own `emailIssuer.access` (its staff routes' application) is a different AUD: its tokens don't open the
+    directory. A missing, `UNSET` or malformed value, or unreachable certs, is `access_unavailable` (fail closed); a
+    refused token `unauthenticated`; an email off the list `not_staff`. Neither writes an audit row.
+  - **Methods**: `search`, `get`, `auditSince`. `byUid` is not built and not left for C15 either: D346 dropped the
+    issuer's uid column and `IssuerRpc.uid` (code → user is the wallet directory's `end_users.support_code`).
+  - **Answers**: `{ok: true, …}` or `{ok: false, code, error?, budget?}` with console-core's `DIRECTORY_CODES`. The
+    admin BFF maps the issuer's `unauthenticated` / `not_staff` (a staff identity the admin Worker accepted: config
+    drift between the two lists or AUDs) to `502 directory_refused` and `access_unavailable` (or a binding that throws,
+    or no `ISSUER`) to `503 directory_unavailable`; the rest keep console-core's statuses.
+  - **`auditSince`** takes `id` (rows after it, oldest first, as the spec's signature) or `before` (rows before it,
+    newest first: the audit screen), exactly one, filtered by staff email and action, at most 200. It returns no end
+    user's address (`detail` never holds one), so it takes no row budget and writes no audit row of its own.
+  - The source test (`apps/email-issuer/scripts/test/directory-rpc-source.test.ts`) holds the module to SELECTs on
+    `user_emails`, `user_email_apps` and `email_admin_audit` and one INSERT into `email_admin_audit`; to the `DB` and
+    `RATE_LIMITER` bindings, its Access vars, `ENV_NAME` and `EMAIL_RL_KEY` (the keyed hash, D389); to value imports of
+    `bytes.ts`, `limits.ts` and `log.ts` only (no signer, keys, KMS, challenge, mail, sender, handlers or deps module,
+    directly or through another); and checks that no other module imports it (no route).
+- Why: one verifier implementation for the admin Worker and the issuer, so the two checks can't drift in what they
+  accept; the admin block already holds the three values, and a second copy in `emailIssuer` could disagree.
+- Rejected: reusing the issuer's own `AccessVerifier` (no `type` check, a different cache); a new
+  `emailIssuer.adminAccess` manifest block (a copy of `admin`'s).
+
+### D389. The directory search: exact or substring, verified rows first on an address search, the audit's `detail`
+- Date 2026-11-05 · Status: decided while building, to confirm · Built: `apps/email-issuer/src/directory-rpc.ts`
+  (`search`, `get`, `termHash`), `test/directory-rpc.test.ts` · Source: spec "Users screen", D275, D269's review fixes
+- Decision:
+  - **Address term**: a full address (console-core `isFullAddress`) matches exactly, as typed and lowercased (Google
+    rows) and normalized (`@hana-id/email`, email rows), the CLI's `user:find --email` candidates; anything else is a
+    case-insensitive substring of at least 3 characters (`instr(lower(email), …)`, a scan), shorter is `bad_request`
+    before any row is counted or audited. Filters: provider, app (`EXISTS` on `user_email_apps`), sub (exact),
+    unverified only. No filter at all lists the newest identities.
+  - **Order and pages**: newest first by `last_seen_ms`, ties by provider and sub; an address search first puts every
+    Google account's unverified claim (`email_verified = 0`) after the verified rows (a claim is never first, so never
+    a default target). The cursor is `<claim>:<lastSeenMs>:<provider>:<sub>` of the page's last row (no address);
+    `next` comes with a full page. Default 50, at most 100.
+  - **Audit `detail`**, built in the same D1 batch as the read: a search `{filters, q: {match: exact|substring, hash},
+    page: first|next, rows, budgetCut?}`, where `rows` is counted in SQL from the same query and `hash` is 12
+    characters of HMAC-SHA256(K_rl, label ‖ 0x00 ‖ value), b64url: label `mailbox` over the normalized address
+    without its `+tag` for a full address (exactly an unlock's `subject`, so a search and an unlock of one address
+    correlate in the audit), `directory-term` over the lowercased term for a substring. Without a usable `EMAIL_RL_KEY`
+    an address search is refused (`internal`): it couldn't be recorded. A view `{provider, sub, found: 0|1}`: a miss is
+    audited too. The ticket column is null on a search without one.
+  - `get` lists the identity's apps newest first, at most 200 (`appsTruncated` past that).
+- Why: the exact match is the indexed path support uses; the hash keeps "who looked for this address" answerable
+  without storing it; counting in SQL keeps the audit and the read in one batch (the count can't come from the
+  answer).
+- Trade-offs: the claim-first order applies only to address searches (a list or filter walk keeps the `last_seen_ms`
+  index order); a substring term's hash identifies the term only to someone holding K_rl.
+
+### D390. The row budget: rows granted before the read, the rest given back; the alias emailed once per window
+- Date 2026-11-05 · Status: decided while building, to confirm (the numbers are the user's, provisional) · Built:
+  `apps/email-issuer/src/rate-limiter.ts` (`takeRows`, `returnRows`), `src/limits.ts` (`DIRECTORY_ROW_LIMITS`),
+  console-core `DIRECTORY_ROWS_PER_HOUR` / `DIRECTORY_ROWS_PER_DAY`; `apps/admin/src/users.ts` (`budgetAlert`),
+  `src/email/ledger-messages.ts` (`directoryBudget`) · Source: D275 as confirmed ("past that the call answers
+  `rate_limited` and the security alias is emailed; reuse the admin Worker's alert path and its call budget rules")
+- Decision:
+  - One RateLimiter object per staff email (`<env>:staff-dir:<sha256 hex of the email>`: a limiter key never holds an address), two fixed windows (500 an hour, 2 000 a UTC
+    day). Before a read, `takeRows` grants as many rows as the fullest window has left, up to the page asked for
+    (a page past what is left is cut to it, `budgetCut` in the audit); after the read the rows not returned go back
+    (`returnRows`), so an empty answer, a miss or a failed batch costs nothing. A view takes one row. A window with
+    nothing left refuses: `rate_limited` with `budget: {window, limit, retryAfterMs}`, logged `directory_budget`, no
+    audit row (nothing was read).
+  - The admin Worker, on that answer, emails the security alias `directory_budget` (a Direct kind) through the same
+    `sendToAll` and Resend sender as its other alerts, from a one-call `Budget` (D380's accounting), before answering
+    `429` with `Retry-After`. The idempotency key is sha256 of `directory_budget:<env>:<staff>:<window>:<when it
+    opens, in minutes>`, so the provider drops the repeats of one window (Resend: 24 h). The email names the staff
+    address (Hana's own), the window and the times; never a term, sub or row.
+  - A detail page's own outbound calls (the issuer, the API, NEAR) come out of one `Budget` of 40, at most 30 RPCs
+    (D380's numbers for one invocation): what doesn't fit is marked `not_read`.
+- Why: counting what is returned (not what is asked) is what the budget bounds; a refusal-time email from the request
+  is immediate, and the idempotency key keeps a hammering session to one email per window.
+- Trade-off: a compromised admin Worker could skip the email (the issuer's `directory_budget` log line stays, and the
+  reads stop either way).
+
+### D391. The admin Users screen: three POST routes, the wallet directory and the chain joined by provider and sub
+- Date 2026-11-05 · Status: decided while building, to confirm · Built: `apps/admin/src/users.ts`, `routes.ts`,
+  `near.ts` (`getIdentity`, `getAccount` with the block height), `public/app.js`; `apps/api/src/rpc/admin.ts`
+  `appNames`, `directory/read.ts` `adminAppNames`; console-core `adminAppNamesInput` · Source: spec "Users screen",
+  D275, D310 ("admins see email and wallets"), D346
+- Decision:
+  - `POST /api/users/search` (the issuer's `search`, ticket optional), `POST /api/users/get` (ticket required: refused
+    at the BFF before any call, then by the issuer), and an addition, `POST /api/users/find`: a wallet address, User ID
+    (`u1_…`), internal id (`hu_…`) or Support ID goes to `AdminRpc.findUsers` (the wallet directory; no address, no
+    issuer call); the SPA sends those forms of the search box there. The lookup with a user's activity is C15's
+    `POST /api/support/lookup` (D394–D396, its own audit in the console's `audit_log`); its screen isn't built yet.
+  - **The detail** joins, by provider and sub: the issuer's row and apps; `AdminRpc.findUsers({query: sub, provider})`
+    (every wallet-directory user holding the identity, per scope: User ID, Support ID, internal id, identities,
+    wallets); the apps' names, orgs and environments in one call of a new read, **`AdminRpc.appNames({appIds ≤ 50})`**
+    (deleted apps included; `getApp` needs the org, which the directory doesn't know); and per scope (the directory's
+    apps' and the wallet users', at most 8) `get_identity` and, when it is in an account, `get_account`, with the block
+    height. The path is `{scope}#{provider}#{sub}#0` for `own` and the root's for `member` and `pending` (from
+    `effective_at_ms`); a failed read is `chain_unavailable` with no path; members are listed by key with the sub where
+    the wallet directory knows it. A directory miss still shows the wallet directory and the chain.
+  - **The SPA** keeps the search and the last ticket in memory only (no URL, no storage), opens nothing by itself,
+    shows the CLI's warning text (console-core `UNVERIFIED_CLAIM_WARNING`, now also the CLI's) on unverified rows and
+    details, and has no export or select-all. Labels follow the partner Users screen ("User ID", "Support ID",
+    "Google"/"Email", "Stellar"/"EVM").
+  - **The audit view** adds the issuer's rows (`auditSince`, newest first, by staff and action) as a third source of
+    `GET /api/audit` (`directory`, with `{error}` in its place when the issuer fails, so the page stays up). The CSV
+    keeps the console's rows only.
+- Why: the wallet directory is the API's (D310), so the join happens in the admin Worker, the only place that may hold
+  both; one `appNames` read instead of a `getApp` per app keeps the page inside its call budget.
+- Rejected: `AdminRpc.listScopes` to find each app's org (a walk of every scope); listing directory emails beside a
+  `find` answer (each would be a directory read with its own audit row and budget: staff open the identity instead).
+
+### D392. Issuer migration 0003: the audit rebuilt with every row, the ticket optional on a search only, `support_lookup` now
+- Date 2026-11-05 · Status: decided while building, to confirm · Built: `apps/email-issuer/migrations/
+  0003_directory_audit.sql`; `scripts/test/directory-rpc-source.test.ts` · Source: spec "Data path" (0003), the user's
+  ticket rule (2026-11-05)
+- Decision: `email_admin_audit` is rebuilt (create, copy with ids, drop, rename; the AUTOINCREMENT sequence moves with
+  it) with the actions `client_proof`, `unlock`, `unsuppress`, `revoke_tickets`, `user_search`, `user_view` and
+  `support_lookup` (the spec's; C15 as built audits its lookup in the console's `audit_log` instead, D396, so it is
+  unused for now and costs nothing), `ticket` 1–64 characters and required except on `user_search`,
+  `detail` JSON (`json_valid`) or null, and indexes on `(staff, id)` and `at_ms`. `user_email_apps` gets **no `uid`
+  column**: the build plan's C8b line predates D346, which dropped it. The remote apply is the user's (docs/
+  operations.md "Users screen (C8b)").
+- Why: one rebuild for every action batch C plans; the `at_ms` index serves C13's `retention:issuer` purge.
+
 ## Superseded or amended
 
 | Was | Now | Source |
 |---|---|---|
+| Every DirectoryRpc call carries a required ticket (spec "Data path", D275 as proposed) | Required to open one identity (`get`); optional for a search or list page; every read audited either way (D275 as confirmed 2026-11-05) | `apps/email-issuer/src/directory-rpc.ts`, migration 0003 |
+| C8b's issuer migration 0003 adds `user_email_apps.uid` (build plan C8b) | No uid column (D346 dropped it); 0003 rebuilds `email_admin_audit` only (D392) | `apps/email-issuer/migrations/0003_directory_audit.sql` |
 | D381: a session key WebCrypto can't make ends the login `api_unavailable` (a different code rejected) | `derive_failed` with `data.reason` `webcrypto_unsupported` / `webcrypto_failed` (D385) | `packages/web/src/vault/errors.ts` |
 | D347's assumption rechecked with `curl -sI` on the authorization URL before each release | `coop-canary <env>` before each release: every hop of the product's requests under six User-Agents, and Chromium, Firefox and WebKit, with positive controls (D386) | `scripts/lib/coop-canary.ts`; docs/operations.md "Before each release: the COOP canary" |
 | D276's code → user through the issuer's `user_email_apps.uid` (`IssuerRpc.uid`, `DirectoryRpc.byUid`) with a ledger-only fallback; the code from the uid; `user:erase` | Through the wallet directory's `end_users.support_code` / `token_sub` / `user_id` (no issuer uid, no `IssuerRpc.uid`, no `byUid`, no fallback); the code from the identity token's `sub` (D346); the lookup's hot-DB part in `AdminRpc`, its ledger part read as `usage_admin` (D394); erasure by `uid-erase` (D361) | `apps/api/src/directory/support.ts`, `apps/admin/src/support.ts`, `scripts/lib/admin-support.ts` |
@@ -6642,13 +6779,31 @@ residual), D312 (the user id is the uid, the Support ID its first 8 characters),
 D314 (identities from chain reads), D315 (what the read APIs return), D316 (the CLI's private reads of the hot DB) and
 D317 (the vault's background report).
 
-To confirm by the user, from `docs/batch-c-users-support-id` (2026-11-04): D275 (the admin console's Users screen
-over D269's directory) and D276 (the Support ID made consistent with D269), below.
+From `docs/batch-c-users-support-id` (2026-11-04): D275 (the admin console's Users screen over D269's directory)
+**confirmed by the user on 2026-11-05 with amendments** and built in C8b (D388–D392, to confirm); D276 (the Support ID
+made consistent with D269) confirmed by the user on 2026-11-05 as amended by D346 and built in C15 (D393–D397). Both
+below.
 
 ### D275. The admin console's Users screen reads the user directory through a read-only, self-auditing RPC on the issuer
-- Date 2026-11-04 · Status: **proposed, to confirm by the user** · Source: D269 ("the admin console's Users page
-  later (batch C)") · Written: `docs/batch-c-spec.md` "Users and Support ID" (data path, Users screen, what partners
-  never see, tests, Q26); build plan C8b
+- Date 2026-11-04 · Status: **confirmed by the user** (2026-11-05, with the amendments below) · Source: D269 ("the
+  admin console's Users page later (batch C)") · Written: `docs/batch-c-spec.md` "Users and Support ID" (data path,
+  Users screen, what partners never see, tests, Q26); build plan C8b · Built: branch `feat/batch-c-8b` (C8b; not
+  merged, not deployed; the build's own readings D388–D392)
+- **Amendments by the user (2026-11-05)**, otherwise as recommended below:
+  - **The support-ticket reference is required to open a single user's detail** (`get`, and any call that returns
+    one identity's full record), and **optional for list and search views** (`search`, list pages). Every call is
+    still audited in `email_admin_audit`, with the ticket when given and never an address in the audit row.
+  - **The per-staff budget as proposed, provisional**: at most 500 identities an hour and 2 000 a day per staff email;
+    past that the call answers `rate_limited` and the security alias is emailed (the admin Worker's existing alert and
+    email path, under its call-budget rules, D380). The numbers are named constants (console-core
+    `DIRECTORY_ROWS_PER_HOUR`, `DIRECTORY_ROWS_PER_DAY`).
+  - **The admin screen also shows the user's wallets, User ID (`u1_…`), Support ID and internal `hu_…`** from the wallet
+    directory through the API's AdminRpc (admins see email and wallets, D310), joined by provider and sub.
+  - Confirmed as recommended: `DirectoryRpc` with no route, bound only by the admin Worker as `ISSUER`; read-only
+    methods (`search`, `get`, `auditSince`; `byUid` not built: D346 dropped the uid it would read); the source test;
+    the issuer's own JWT check as the actor; the audit row in the same D1 batch as the read; issuer migration 0003; the
+    search filters and the detail's fields; "chain unavailable", never a guess; the unverified-claim warning and
+    never a default target; no CSV export; nothing for partners, with tests that enforce it.
 - Recommendation:
   - **Data path.** The issuer exports `DirectoryRpc`, a `WorkerEntrypoint` with no route that only the admin Worker
     binds (`ISSUER`). It has read methods only (`search`, `get`, `auditSince`; `byUid` with D276). A source test

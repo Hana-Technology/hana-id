@@ -38,6 +38,10 @@ export default defineConfig(async () => {
             EMAIL_CODE_KEY: randomBytes(32).toString('base64'),
             EMAIL_RL_KEY: randomBytes(32).toString('base64'),
             SENDGRID_API_KEY: `SG.${randomBytes(16).toString('base64url')}.${randomBytes(24).toString('base64url')}`,
+            // DirectoryRpc's staff check (D275): the admin application the tests' Access JWTs are minted for.
+            ADMIN_ACCESS_TEAM_DOMAIN: 'hana-admin-test.cloudflareaccess.com',
+            ADMIN_ACCESS_AUD: 'cd'.repeat(32),
+            ADMIN_STAFF_EMAILS: JSON.stringify(['staff@hana.example', 'other-staff@hana.example', 'budget@hana.example', 'budget2@hana.example']),
           },
           d1Databases: { DB: 'hana-id-email-issuer-test', APP_DB: 'hana-id-test', APP_DB_OLD: 'hana-id-test-old' },
         },

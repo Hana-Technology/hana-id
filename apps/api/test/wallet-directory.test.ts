@@ -456,6 +456,22 @@ describe('AdminRpc: users for staff', () => {
     }
     expect(seen.sort()).toEqual([...ids].sort());
   });
+
+  it('appNames (C8b): names, orgs, scopes and environments of the ids given, deleted apps too; staff only; bounded', async () => {
+    const staff = { actor: { kind: 'hana' as const, id: 'staff-1', email: 'staff@hana.example' }, requestId: rid(), clientIp: '203.0.113.1' };
+    const a = await orgApp();
+    const b = await orgApp({ live: true });
+    await env.DB.prepare('UPDATE apps SET deleted_at = 1234 WHERE id = ?1').bind(b.id).run();
+    const r = (await adminRpc().appNames({ ...staff, appIds: [b.id, a.id, 'app_unknown', a.id] })) as unknown as { ok: true; apps: Record<string, unknown>[] };
+    expect(r.ok).toBe(true);
+    expect(r.apps.map((x) => x.id)).toEqual([a.id, b.id].sort());
+    expect(r.apps.find((x) => x.id === a.id)).toMatchObject({ orgId: a.org, scopeId: a.scope, environment: 'test', deletedAt: null });
+    expect(r.apps.find((x) => x.id === b.id)).toMatchObject({ orgId: b.org, scopeId: b.scope, deletedAt: 1234 });
+    expect(Object.keys(r.apps[0]!).sort()).toEqual(['deletedAt', 'environment', 'id', 'name', 'orgId', 'scopeId']);
+    expect(await adminRpc().appNames({ ...member(), appIds: [a.id] })).toMatchObject({ ok: false, code: 'forbidden' });
+    expect(await adminRpc().appNames({ ...staff, requestId: rid(), appIds: [] })).toMatchObject({ ok: false, code: 'bad_request' });
+    expect(await adminRpc().appNames({ ...staff, requestId: rid(), appIds: Array.from({ length: 51 }, (_, k) => `app_${k}`) })).toMatchObject({ ok: false, code: 'bad_request' });
+  });
 });
 
 describe('ConsoleRpc: users for partners', () => {

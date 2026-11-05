@@ -300,6 +300,9 @@ importers:
 
   apps/email-issuer:
     dependencies:
+      '@hana-id/console-core':
+        specifier: workspace:*
+        version: link:../../packages/console-core
       '@hana-id/email':
         specifier: workspace:*
         version: link:../../packages/email
@@ -309,6 +312,9 @@ importers:
       '@hana-id/jwks':
         specifier: workspace:*
         version: link:../../packages/jwks
+      '@hana-id/oidc':
+        specifier: workspace:*
+        version: link:../../packages/oidc
       '@noble/hashes':
         specifier: 1.8.0
         version: 1.8.0

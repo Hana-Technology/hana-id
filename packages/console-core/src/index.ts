@@ -1,6 +1,7 @@
 // @hana-id/console-core: what the API, the console, the admin Worker and the CLI must agree on byte for byte
 // (docs/batch-c-spec.md "Repo layout": packages/console-core).
 export * from './bytes.ts';
+export * from './directory.ts';
 export * from './governance.ts';
 export * from './ids.ts';
 export * from './jcs.ts';

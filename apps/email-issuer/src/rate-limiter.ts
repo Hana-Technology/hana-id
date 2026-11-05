@@ -93,6 +93,8 @@ export type Reserved = { ok: true; reservation: Reservation; owner: 'ticket' | '
 export type Guess = { ok: true; reservation: Reservation; tripped?: 'backstop' | 'ceiling' } | { ok: false; reason: 'locked'; retryAfterMs: number };
 export type DomainReserved = { ok: true; reservation: Reservation; filled: boolean; cap: number } | { ok: false; limit: 'domain' | 'prefix' };
 export type Budget = { ok: true; reservation: Reservation; crossed: string[] } | { ok: false; limit: 'global' | 'app' | 'reserve' | 'owner' | 'staff' };
+/** A row grant of `takeRows`: how many rows the read may return, or the window that is full. */
+export type RowGrant = { ok: true; granted: number; keys: string[] } | { ok: false; limit: string; max: number; retryAfterMs: number };
 /**
  * Which pool a mail may draw on: a user's (the general pool); an owner's (the owner pool, a fresh ticket's only below
  * half of it, then the general pool like a user's; `owner_aged`: a ticket ≥ 7 days old or an unlock grant); staff's.
@@ -179,6 +181,38 @@ export class RateLimiter extends DurableObject<Env> {
       const c = kv.get<number>(key) ?? 0;
       if (c > 1) kv.put(key, c - 1);
       else if (c === 1) kv.delete(key);
+    }
+  }
+
+  // ---- the user directory's row budget (a `staff-dir:` object per staff member, DirectoryRpc) ----
+
+  /**
+   * Takes up to `want` rows from every window at once: as many as the fullest window has left (at least one), or none
+   * and the first full window when any has nothing left. The caller reads at most `granted` rows and gives back what it
+   * didn't return (`returnRows`).
+   */
+  async takeRows(limits: readonly Limit[], want: number, now: number = Date.now()): Promise<RowGrant> {
+    if (!Number.isSafeInteger(want) || want < 1) throw new RangeError('want must be a positive integer');
+    const slots = limits.map((l) => this.slot(l, now));
+    const full = this.firstFull(slots, now);
+    if (full) {
+      const l = limits.find((x) => x.name === full.limit)!;
+      return { ok: false, limit: full.limit, max: l.max, retryAfterMs: full.retryAfterMs };
+    }
+    const granted = Math.min(want, ...slots.map((s) => s.l.max - s.count));
+    for (const s of slots) this.kv().put(s.key, s.count + granted);
+    await this.sweepAt(now + DAY);
+    return { ok: true, granted, keys: slots.map((s) => s.key) };
+  }
+
+  /** Gives back `n` rows of a grant to the windows it counted (a window that ended since is gone anyway). */
+  returnRows(keys: readonly string[], n: number): void {
+    if (!Number.isSafeInteger(n) || n < 1) return;
+    const kv = this.kv();
+    for (const key of keys) {
+      const c = kv.get<number>(key) ?? 0;
+      if (c > n) kv.put(key, c - n);
+      else if (c > 0) kv.delete(key);
     }
   }
 

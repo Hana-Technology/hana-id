@@ -1,4 +1,7 @@
+import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Env } from '../src/env.ts';
+import { handleHealth } from '../src/handlers.ts';
 import { ORIGIN, appHeaders, call, chain, deriveBody, newKey, newSessionKey, seedApp, sessionBody, uid } from './helpers.ts';
 
 afterEach(() => vi.restoreAllMocks());
@@ -16,7 +19,18 @@ describe('routing', () => {
   it('GET /v1/health', async () => {
     const res = await call('/v1/health');
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ ok: true, env: 'sandbox-test', signer: 'signer.test.near', hotDb: 9 });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({ ok: true, env: 'sandbox-test', signer: 'signer.test.near', hotDb: 9, capabilities: { createProof: true } });
+    // D384, additive: the build id the Worker was deployed with; the test bindings have none.
+    expect(body.build).toBeNull();
+    expect(Object.keys(body).sort()).toEqual(['build', 'capabilities', 'env', 'hotDb', 'ok', 'requestId', 'signer']);
+  });
+
+  it('GET /v1/health reports the deployed build id (HANA_BUILD), and null for a malformed one', async () => {
+    for (const [HANA_BUILD, build] of [['0485faa1c2d3', '0485faa1c2d3'], ['0485faa1c2d3-dirty', '0485faa1c2d3-dirty'], ['garbage', null]] as const) {
+      const res = handleHealth({ ...env, HANA_BUILD } as Env, 'r1');
+      expect(((await res.json()) as { build: unknown }).build).toBe(build);
+    }
   });
 
   it('404s unknown paths and 405s wrong methods', async () => {

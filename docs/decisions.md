@@ -1,7 +1,8 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D384 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
+Last verified against code: 2026-10-28 (commit 58edee9); D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
+user, implementation choices to confirm) on 2026-11-05; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
 flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
 confirmed by the user) on 2026-11-04, amending D341; D341 (branch `fix/google-cancel-back-to-chooser`, confirmed
@@ -3293,7 +3294,7 @@ or the contract. All five are **to confirm** by the user.
   Cloudflare account can recognise the watchdog's fetches (they leave from Cloudflare's network, through the
   watchdog's own Worker) and serve them a clean JWKS while partners get another, or publish a key between two runs
   (5 min) and remove it again. So the watchdog is detection against a non-cloaking attacker only. The **outside
-  probe** narrows the cloaking: a scheduled GitHub Actions workflow (every 15 min, hourly since D382, every 3 hours since D383, turned off on testnet since D384, standard actions pinned by commit,
+  probe** narrows the cloaking: a scheduled GitHub Actions workflow (every 15 min, hourly since D382, every 3 hours since D383, turned off on testnet since D387, standard actions pinned by commit,
   no secrets) runs `scripts/identity-probe.ts` from GitHub's network with jose's User-Agent and Accept and no
   `CF-Worker` header, applies the same rules against every non-`local*` env's `watchdog.pinnedIdentityKeys` in the
   repo, and fails on any finding (GitHub emails the failure). Values from Hana's answers reach the Actions log only
@@ -6160,6 +6161,12 @@ follow-up there.
 - Rejected: a different error code for a WebCrypto failure (it would still fail the login); generating the key from
   our own randomness and importing it (the key must stay non-extractable WebCrypto, and an import path in WebKit Linux
   may have the same leading-zero bug); a test-only workaround (the flake is the product failing).
+- Addendum 2026-11-05 (D385, branch `fix/webcrypto-linux-webkit`): the refused keys are those whose **seed or** public
+  key starts with a zero byte (2 in 256, about 1 in 128): 39 of 5 000 refused, and none of the 4 961 keys returned had
+  either (about 19 of each expected); four refusals in a row are about 4 in 10^9, not 10^8. The import path does have
+  the bug: a PKCS#8 import of a seed starting with `0x00` fails (`DataError`, 33 of 33), a JWK import of it works. A
+  key it still can't make is no longer `api_unavailable`: D385 gives it `derive_failed` with a reason, which amends the
+  first "Rejected" item (the login still fails, but the error now says why).
 
 ### D382. The outside identity-JWKS probe runs hourly, not every 15 minutes
 - Date 2026-11-05 · Status: **confirmed by the user** · Built: `.github/workflows/identity-probe.yml` (`17 * * * *`) ·
@@ -6204,7 +6211,120 @@ follow-up there.
   `github.event.before` (a cancelled run's changes would never be tested); disabling `cancel-in-progress` instead (it
   costs the minutes back).
 
-### D384. CI and the outside identity-JWKS probe are turned off while only testnet runs
+### D384. Every Worker and page bundle carries a build id; `deploy-check` compares them after a deploy
+- Date 2026-11-05 · Status: **asked for by the user** (implementation choices: to confirm) · Built:
+  `packages/env/src/build-id.ts`, `local-build.ts`; `apps/api/scripts/deploy.ts`, `src/build.ts`, `src/pages/host.ts`
+  (`/.well-known/hana-build`), `GET /v1/health` `build`; `apps/email-issuer/scripts/deploy.ts`, `GET /v1/email/health`;
+  `packages/web/scripts/build-vault.ts`, `build-auth-pages.ts`; `scripts/lib/deploy-check.ts` · Number note: D384
+  was the next free number on `origin/develop` (D383) and on the in-flight branches checked; a branch racing this
+  one may take it too: renumber on merge
+- Context: on 2026-11-05 sandbox-dev's page Workers were deployed with a stale `packages/web/dist` build, so the vault
+  sent wallet records the new API refused (`400`), and the same day a D1 migration was applied from a checkout older
+  than the code deployed. Nothing showed which commit each piece ran; `deploy:pages` now builds first, but nothing
+  checked it.
+- Decision: a build id = the commit's first 12 hex characters, `-dirty` when the working tree has any change (tracked
+  or untracked). The Workers get it as the var `HANA_BUILD`, passed only at deploy time by each app's `deploy` script
+  (`wrangler deploy --var HANA_BUILD:<id>`), never by `gen`; a raw `wrangler deploy` leaves it unset (`null`). The page
+  bundles get it from the web build: `/vault.js` starts with `/* hana-build <id> */` (esbuild `banner`), each auth page
+  has `<meta name="hana-build">` (in the HTML, so the content-hashed scripts don't change with each commit). Read
+  back from `GET /v1/health` (`build`, additive), `GET /v1/email/health` (new), `GET /.well-known/hana-build` on each
+  page Worker (new; JSON with the 404's headers) and the bundles themselves, by `deploy-check <env> [--d1]
+  [--skip-head] [--strict]`: exit 1 unless every piece is stamped with this checkout's commit; `--d1` adds `wrangler d1
+  migrations list --remote` for the API's and the issuer's D1. A dirty deploy warns (`--strict` fails it). The
+  runbook runs it after each deploy step and applies migrations from a checkout at the deployed commit.
+- Why: the stale part on 2026-11-05 was the assets, not the Worker script, so the bundles carry their own id;
+  stamping at deploy time (not in the generated config) means a config generated earlier can't carry an old id, and an
+  unstamped Worker is a failure rather than a pass.
+- Limits: `migrations list` matches names only (`d1_migrations` keeps no hash), so a same-named file with other
+  content (the 0011 draft) is invisible to it; the checkout rule covers that. The id is reported by whoever deploys: a
+  hygiene check, not an attestation. The watchdog, console, console-auth, admin and files Workers aren't stamped yet.
+- Rejected: the build time in the id (rebuilds of one commit would differ, and the auth bundles' hashes would change
+  every build); writing `HANA_BUILD` in `gen` (a config generated before a pull would stamp the wrong commit);
+  esbuild/wrangler `define` for the Workers (the Worker tests would need it too; a var reads the same); Cloudflare's
+  version metadata (its version id says nothing about the commit, and reading a `--tag` needs a `version_metadata`
+  binding on every Worker); a response header on every page (a route is checked once and leaves the pages' headers
+  unchanged).
+
+## The vault's WebCrypto failures and the WebKit Linux audit (branch `fix/webcrypto-linux-webkit`), 2026-11-05
+
+### D385. A session key the browser can't make is `derive_failed` with `data.reason`, not `api_unavailable`; the other WebCrypto calls are unaffected by WebKit Linux's zero-byte bug
+- Date 2026-11-05 · Status: decided while following up D381, to confirm · Amends D381 (its first "Rejected" item) ·
+  Numbered D385 because D384 is taken on `chore/ci-cost` (not merged when this was written) ·
+  Built: `packages/core/src/session.ts` (`sessionKeyFailure`), `packages/web/src/vault/errors.ts` (`sessionKeyError`),
+  `vault/login.ts` (the login and `hana_linkAccount`), `auth/export-page.ts` and `auth/errors.ts` (`sessionKeyText`),
+  `apps/demo/src/errors.ts`; tests: `packages/core/test/layouts.test.ts`, `packages/web/test/vault/login.test.ts`,
+  `vault/linking.test.ts`, `auth/export-page.test.ts`, `apps/demo/test/errors.test.ts` (all "D385"),
+  `apps/e2e/tests/login.spec.ts` ("D385"), `apps/e2e/tests/webcrypto.spec.ts`
+- The error: when `newSessionKey` rejects (Ed25519 missing from WebCrypto, or D381's `OperationError` four times in a
+  row), the login, a link and the export window's sign-in now end with `derive_failed` and `data.reason`
+  `webcrypto_unsupported` (a `NotSupportedError`, or no `crypto.subtle`: Chrome and Edge before 137, Firefox before
+  129, Safari before 17) or `webcrypto_failed` (anything else), with `data.error` the platform error's name when it
+  is a plain identifier (never its message). Before, it was not a `VaultError`, so `api_unavailable` ("The request
+  failed"; the demo: "Could not reach Hana's service"). The key is made right after `GET /v1/app`, so the login ends
+  before the popup gets its parameters and before any `/v1/login`. The export window says "This browser can't create
+  the key the sign-in needs. Update it, or use another browser." (or "… Try again."); the demo says the same.
+- Why an existing code: `derive_failed` already means "the key couldn't be produced; log in again" in the partner
+  guide, and the export window already used it for a start that failed. A new code would be a partner-visible change
+  that SDKs already installed can't read: the SDK validates a reply's code against its own list, so an older SDK
+  would get a malformed reply (`-32603`) instead. `data.reason` is how the vault already refines a code
+  (`link_restart`), and old SDKs pass `data` through. `storage_unavailable` was the other candidate (its advice is
+  "try another browser"), but it means blocked storage, and its "allow site data" advice would mislead.
+- The audit (2026-11-05, Playwright 1.64.1: macOS WebKit 27.2, Chromium 156, Firefox 157, and the same in
+  `mcr.microsoft.com/playwright:v1.64.1-noble` with 2 CPUs): every `crypto.subtle` call on the login, export and
+  signing paths, each with 3 000 random keys (5 000 for key generation) and fixed vectors made by Node's OpenSSL and
+  `@noble/curves`, with keys starting with zero bytes. WebKit Linux fails only (a) Ed25519 `generateKey`: 20, 19, 23,
+  26 and 39 refusals in runs of 3 000, 3 000, 3 000, 3 000 and 5 000 (`OperationError`), and none of the keys it
+  returns has a seed or public key starting with `0x00`; (b) a PKCS#8 import of an Ed25519 private key whose seed
+  starts with `0x00` (`DataError`, 33 of 33 fixed seeds, 7 of 3 000 random); (c) the same two for X25519. Hana makes
+  only (a), already retried (D381). Everything Hana imports passes in all six browsers: AES-256-GCM raw keys (the
+  relay keys, K_s; 3 081 vectors, 81 with leading zero bytes, the all-zero key), HKDF-SHA-256 raw PRKs (3 081, same
+  bytes as Node), Ed25519 raw public keys (3 100, at least 67 starting with `0x00`, 3 of them with `0x0000`), RS256
+  JWKs (400), and session keys restored from IndexedDB (300). No address depends on WebCrypto at all: CKD, the chain keys and their
+  signatures are `@noble` (`docs/architecture.md` "WebCrypto on the login, export and signing paths"), so nothing here
+  changes a derivation or an address. Also seen: Safari on macOS signs Ed25519 with a random nonce (valid, not RFC
+  8032's bytes); nothing depends on a session signature's bytes.
+- Rejected: a new public code (`browser_unsupported`, say: older SDKs would see a malformed reply, above); a JWK
+  import for the session key to avoid the PKCS#8 bug (Hana imports no private key; the session key is generated
+  non-extractable); retrying the other calls (none fails).
+## The COOP canary before each release (branch `feat/coop-canary`), 2026-11-05
+
+### D386. A manual pre-release COOP canary checks D347's assumption, in place of `curl -sI`
+- Date 2026-11-05 · Status: **agreed by the user** (2026-11-05, "the canary: agreed", as a manual pre-release check;
+  the rules and the controls below: decided while building, to confirm) · Built: `scripts/coop-canary.ts`,
+  `scripts/lib/coop-canary.ts` (`coop-canary` in `scripts/package.json`); tests: `scripts/test/coop-canary.test.ts`;
+  the `google-enforces-coop` playbook (`packages/playbooks/src/incidents.ts`) · Amends D347 ("recheck (`curl -sI` on
+  the authorization URL) before each release")
+- Context: D347's popup-close watch reads the vault's handle on the popup every 250 ms; an enforcing
+  Cross-Origin-Opener-Policy on a page of the popup's trip makes the handle read `closed` while the window is open.
+  Google sends `cross-origin-opener-policy-report-only: same-origin` on its authorization endpoint, the identifier page
+  and the account chooser, nothing on consent, and enforces `same-origin` on `/signin/oauth/error` (2026-11-05: `curl`, and
+  Playwright in Chromium, Firefox and WebKit, where `.closed` flips about 0.5 s after the error page loads). A `curl
+  -sI` of one URL misses the hops after the redirect, the User-Agents Google varies on, and what browsers do.
+- Decision: `corepack pnpm --filter @hana-id/scripts run coop-canary <env>` before each release (docs/operations.md
+  "Before each release: the COOP canary"), run by hand: no GitHub Actions workflow (the org's minutes, D383). It
+  builds the requests with the product's own builders (`packages/web/src/auth/google.ts`: token_first's first
+  request, D273's interactive retry, the silent ID-token request) for the env's first shared client and
+  `authOrigin + /login/callback`, signed out, and:
+  - Header check: follows each by hand (manual redirects, a cookie jar it never prints) under six browser
+    User-Agents; any hop other than Google's OAuth error page with an enforcing COOP other than `unsafe-none`
+    (unknown and doubled values included), or an enforcing COEP other than `unsafe-none`, fails; report-only headers
+    and CORP never do. A chain that ends on the error page, on a non-200, or away from Google's sign-in page (Hana's
+    callback for the silent request) fails too: the request itself is refused.
+  - Browser check (apps/e2e's Playwright, headless): a localhost opener `window.open`s the first request and reads
+    `.closed` every 250 ms for 10 s; `true` while the popup is open fails; a real close must then read `true`.
+  - Positive controls: the same request with a redirect URI no client registers (`https://coop-canary.invalid`)
+    must reach the error page with an enforcing COOP (header check) and flip `.closed` in each browser. If a control
+    doesn't, the canary can't see an enforcing page and the run is inconclusive, never a pass.
+  - Exit 0 pass, 1 a finding, 2 inconclusive (network, browsers missing, a control). `--headers-only` skips the
+    browsers. It prints status, host and path per hop and the policy headers only: no cookie, query value or fragment.
+- Why: it checks every hop and browser the product meets, and its controls show it can see an enforcing page.
+- Rejected: a scheduled workflow (Actions minutes; a release is when it matters); following redirects with the fetch
+  default (the hops' headers would be lost); the signed-in pages (account chooser, consent): they need a Google
+  account and its cookies in the canary, which no script may hold (CLAUDE.md); report-only as a finding (Google has
+  sent it since before batch B).
+- Note: built as D385 and renumbered D386 at merge (D384 went to `deploy-check`, D385 to the WebCrypto errors).
+
+### D387. CI and the outside identity-JWKS probe are turned off while only testnet runs
 - Date 2026-11-05 · Status: **decided by the user** · Built: the `CI` and `Identity JWKS probe` workflows disabled in
   GitHub (`gh workflow disable`; the files stay as D383 left them) · Amends D382 and D383
 - Context: the org's included Actions minutes are shared by every repo and were used up by 2026-11-05 (D382, D383).
@@ -6229,7 +6349,9 @@ follow-up there.
 
 | Was | Now | Source |
 |---|---|---|
-| The outside identity-JWKS probe runs every 3 hours on GitHub Actions (D383); CI runs on every push and PR (D383) | Both workflows disabled while only testnet runs; before mainnet CI back on and the probe on AWS Lambda + EventBridge (D384) | GitHub workflow settings; `docs/mainnet-readiness.md` 4.20, 5.10 |
+| D381: a session key WebCrypto can't make ends the login `api_unavailable` (a different code rejected) | `derive_failed` with `data.reason` `webcrypto_unsupported` / `webcrypto_failed` (D385) | `packages/web/src/vault/errors.ts` |
+| D347's assumption rechecked with `curl -sI` on the authorization URL before each release | `coop-canary <env>` before each release: every hop of the product's requests under six User-Agents, and Chromium, Firefox and WebKit, with positive controls (D386) | `scripts/lib/coop-canary.ts`; docs/operations.md "Before each release: the COOP canary" |
+| The outside identity-JWKS probe runs every 3 hours on GitHub Actions (D383); CI runs on every push and PR (D383) | Both workflows disabled while only testnet runs; before mainnet CI back on and the probe on AWS Lambda + EventBridge (D387) | GitHub workflow settings; `docs/mainnet-readiness.md` 4.20, 5.10 |
 | The outside identity-JWKS probe runs hourly (D382) | Every 3 hours, at minute 17 (D383) | `.github/workflows/identity-probe.yml` |
 | The outside identity-JWKS probe runs every 15 min (D210) | Hourly, at minute 17 (D382) | `.github/workflows/identity-probe.yml` |
 | The admin crons' budget counts emails and NEAR reads only, with room for the RPCs (D280); C12's `relayerKeys` and statement-notice reads uncharged (D360's note) | Every outbound call counts: the connection, every RPC (at most 30), every email, NEAR read and rate fetch; a unit of work starts only when it fits (D380) | `apps/admin/src/mail.ts`, `cron.ts`, `ledger-cron.ts` |
@@ -6605,7 +6727,7 @@ over D269's directory) and D276 (the Support ID made consistent with D269), belo
   `login_timeout`, not `login_cancelled`. The alternative is a false cancel of every login if Google starts enforcing
   COOP on its sign-in pages (it reports violations today). If Google switches to an enforcing policy on a later page
   (after the 8 s), a login would be cancelled while the user is still at Google: the watch's assumption to recheck
-  (`curl -sI` on the authorization URL) before each release.
+  before each release, with `coop-canary <env>` (D386; it replaced `curl -sI` on the authorization URL).
 - Alternatives: (a) the SDK polling its own handle after connect: the same handle semantics, with one more hop. Not
   done. (b) The popup reporting its own close on every page (`pagehide` with a pre-encrypted relay write, as D341's
   screen does): it can't cover Google's page, and slot writes are single use. Kept only for D341's screen. (c) A

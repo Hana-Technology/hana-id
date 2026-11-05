@@ -1,7 +1,8 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D384); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-05 (branch `fix/e2e-flakes`: the login's step 2, the session key's retry on WebKit Linux's
+Last verified against code: 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/coop-canary`: "Login, one transaction" step 4's closed popup: Google's COOP rechecked before each release by `coop-canary`, D386); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: the login's step 2, the session key's failure as `derive_failed` with its reason and which keys WebKit Linux refuses, D385; "WebCrypto on the login, export and signing paths"); 2026-11-05 (branch `feat/deploy-build-check`: "Environments and manifests": the build id
+in every Worker and page bundle and `deploy-check`, D384); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-05 (branch `fix/e2e-flakes`: the login's step 2, the session key's retry on WebKit Linux's
 Ed25519 `OperationError`, D381); 2026-11-04 (branch `feat/batch-c-13`: retention and the erasure path in Status, Components
 (the usage ledger and admin Worker rows) and "Data stores" (what is purged when, D360–D369)); 2026-11-04 (branch `feat/console-reports-upgrades`: the partner console's usage, statement and pending-upgrades screens, D370–D374); 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342; the partner console's fresh sign-in and write paths, D343, D350–D358); 2026-11-04 (branch `feat/user-id-identity-sub`: the wallet directory's three ids and the record's session signature, D346 and the D311/D313 amendments: Status, "Wallet directory" steps 1, 2 and 4, "Data stores"' D1 row, the Glossary); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: D347, a closed popup is
 `login_cancelled`, in "Login, one transaction" after step 4; D348's Google-only screen after a cancel; a cancel on token_first's Google
@@ -88,7 +89,7 @@ C6 is built (on current `develop` as `feat/batch-c-6-merge`) but not merged. The
 | `@hana-id/react` (`HanaProvider`, `useHana`, `useWallet`), `@hana-id/sodax` (Stellar and EVM wallet-provider adapters) | `develop` (packaging from `feat/sdk-packaging`) | Code done; tarballs as `@hana-id/web`, not published |
 | `admin app:settings` | `develop` | Code done |
 | `apps/smoke` | `develop` | `/` logs in through `@hana-id/web` (the vault); `/direct.html` keeps the split path for the ship gate, signing in with Google's implicit flow, `scope=openid` only (D271) |
-| `apps/e2e` (Playwright: Chromium, WebKit, Firefox; local builds against the real API Worker; CI job: Chromium on each push, WebKit and Firefox nightly, D383; CI disabled since 2026-11-05, D384) | `develop` | Code done |
+| `apps/e2e` (Playwright: Chromium, WebKit, Firefox; local builds against the real API Worker; CI job: Chromium on each push, WebKit and Firefox nightly, D383; CI disabled since 2026-11-05, D387) | `develop` | Code done |
 | Developer dashboard, admin console, billing-grade usage (batch C; `docs/batch-c-spec.md`, `docs/batch-c-build-plan.md`) | `develop`: C1–C5 | C1 (manifest fields, the Neon ledger schema, `console-core`), C2 (`packages/oidc`), C3 (migration 0006, the gate on `app_keys` and `scopes`, the CLI on it), C4 (usage capture, `session_markers`) and C5 (below) merged. **Running on sandbox-dev** (2026-11-03): migrations 0006, 0009 and 0010 applied (after a rehearsal on a scratch D1; a Time Travel bookmark from before 0006 and an export backup are kept in `.secrets`), the API has the hot DB on; usage capture is **off** (no `USAGE_DB` binding). C7 (below) is merged but not deployed; C6 is built but not merged; C8 (the admin Worker, below) and C11 (the files Worker) are merged, not deployed; C12 (reports, settlement and
 statements) and C14 are merged, not deployed; C13 (retention, the monthly job and the erasure path) is built on `feat/batch-c-13`, not merged; C9 and C10 are merged; C15–C17 not built (milestone M1, `docs/operations.md` "Hot DB migration 0006 and the new gate") |
 | Batch C5: the API's `ConsoleRpc` and `AdminRpc` entrypoints (CAS writes on `app_changes`, keys, settings, staff proposals, notice ack, cancel, expedite, the breaker and hot-DB budget) and drift detection | `develop` (from `feat/batch-c-5`) | Merged and in the sandbox-dev API; inert until the console (C7) and admin (C8) Workers bind them. The console Worker (C7, below) binds `ConsoleRpc` but has no route; member proposals and owner actions (C6) are built but not merged; the Neon reports (C12) not built |
@@ -206,7 +207,7 @@ Who talks to whom:
 | Watchdog → NEAR | its own RPC (manifest `rpc`, then `rpcFallback`): `status`, views `get_key_changes`, `get_issuer` and `get_issuer_keys` (`google`, `email`), `get_self_issued("email")` and `get_link_stats()` (absent on v2: read as no email issuer), `get_config`, `get_governance`, the owner's `view_account` and (a DAO) `get_policy`, the relayer's `view_account` and `view_access_key_list` (final; alert only, D150); `send_tx` from `WATCHDOG_KEY` on `watchdog.account` | `cancel_issuer_key_change`, `confirm_issuer_key_change`, `pause`, `delete_updater_key` only |
 | Watchdog → Hana's email JWKS | `watchdog.pinnedIssuerKeys.email.jwksUrl` (default `{emailIssuer.url}/v1/email/jwks.json`, else under `apiUrl`), only with pins | Compared with the pins and the active email keys; warning only, never trusted |
 | Watchdog → Hana's identity JWKS and discovery document | `{identityToken.iss}/jwks.json` and `/.well-known/openid-configuration`, `cache: no-store`, `redirect: manual`, 64 KB cap, every 5 min, only with `identityToken` in the manifest | Each key's RFC 7638 thumbprint against `watchdog.pinnedIdentityKeys`, public members only, private members, duplicate members, the shape, `issuer` and `jwks_uri`; critical alerts, never an action (D210, D213, D214) |
-| Outside probe (GitHub Actions) → Hana's identity JWKS and discovery document | `.github/workflows/identity-probe.yml` every 3 hours (D383); **disabled in GitHub since 2026-11-05** (D384: testnet only; to move to AWS Lambda + EventBridge before mainnet), `scripts/identity-probe.ts`: jose's User-Agent, no redirect followed, 64 KB cap, every non-`local*` env with `identityToken` | The watchdog's rules (`@hana-id/jwks/identity`) from outside Cloudflare; a finding fails the run (GitHub's email). No secrets (D210) |
+| Outside probe (GitHub Actions) → Hana's identity JWKS and discovery document | `.github/workflows/identity-probe.yml` every 3 hours (D383); **disabled in GitHub since 2026-11-05** (D387: testnet only; to move to AWS Lambda + EventBridge before mainnet), `scripts/identity-probe.ts`: jose's User-Agent, no redirect followed, 64 KB cap, every non-`local*` env with `identityToken` | The watchdog's rules (`@hana-id/jwks/identity`) from outside Cloudflare; a finding fails the run (GitHub's email). No secrets (D210) |
 | Watchdog → paging app, Slack, Resend, heartbeat | HTTPS with its own credentials (`apps/watchdog/src/channels.ts`) | Critical: page + Slack + email, re-sent every 15 min until acknowledged; warning: Slack + email; daily digest; dead-man's switch ping |
 | Admin Worker (batch C14) → watchdog | `GET /status`, `/alerts`, `/actions`, `POST /alerts/:id/ack` at `WATCHDOG_URL` (manifest `watchdog.url`), bearer `WATCHDOG_STATUS_TOKEN` (an admin secret, server-side only), redirects refused, 8 s deadline, size caps per route | The "Security & monitoring" view; text reduced to bounded plain data; acks (with the Access identity as `by`) stop re-sends only (D330–D332) |
 | Operator → `hana-signer`, D1, Worker | `scripts/`, `wrangler` | Deploy, register scopes, apps, origins, secrets |
@@ -220,8 +221,10 @@ Browser steps: `packages/web/src/vault/login.ts`, `packages/web/src/auth/login-p
 1. Partner calls `hana.login()` in its click handler; the SDK opens `{authOrigin}/login?v=<vault frame name>` before
    any `await`, then sends `hana_login` on the port. Popup blocked → the vault shows a "Sign in with Hana" launcher.
 2. The vault makes a non-extractable Ed25519 session key (`newSessionKey`, `packages/core/src/session.ts`: a WebCrypto
-   `OperationError` is asked again, up to 4 attempts, since WebKit's Linux ports refuse about 1 in 100 Ed25519 keys,
-   D381), 32-byte salt, `expiresAtMs = now() + min(session_ttl_ms,
+   `OperationError` is asked again, up to 4 attempts, since WebKit's Linux ports refuse about 1 in 128 Ed25519 keys,
+   those whose seed or public key starts with a zero byte, D381, D385; a key it still can't make ends the login with
+   `derive_failed`, `data.reason` `webcrypto_unsupported` (no Ed25519 in WebCrypto) or `webcrypto_failed`, D385; a
+   link and the export window's own sign-in do the same), 32-byte salt, `expiresAtMs = now() + min(session_ttl_ms,
    24 h − 10 min)` on the server-corrected clock, `keyIndex = 0`, `maxUses` (1 in `'session'` mode, 2 in `'none'`),
    `nonce = sessionNonce(SIGNER, scopeId, …)` (`packages/core/src/layouts.ts:71`), `relayKey`, `relayReadKey` and
    `relayId = b64url(sha256(relayReadKey))` (`relayIdFor`, `layouts.ts:166`). `SIGNER` is a build constant; `scopeId`
@@ -245,7 +248,8 @@ Browser steps: `packages/web/src/vault/login.ts`, `packages/web/src/auth/login-p
    (`apps/api/src/login-relay.ts:170`, `LoginRelay.write` `:73`).
    **A closed popup** (D347): from the hello on, the vault reads the popup window's `closed` every 250 ms
    (`PopupTask.watchPopup`; its handle is the hello's `event.source`, valid across the popup's navigations: Hana's
-   auth pages send no COOP, and Google's sign-in pages send COOP report-only, checked 2026-11-04). Every Hana page
+   auth pages send no COOP, and Google's sign-in pages send COOP report-only, checked 2026-11-04 and rechecked before
+   each release by `coop-canary`, D386). Every Hana page
    posts `hana:auth-progress` `google` before it navigates to Google, the callback posts `back` on arrival (it has its
    opener, so the trip switched no browsing context group) and `relayed` before it closes itself, as `/login/email`
    does; the signals go to the opener and its frames with `vaultOrigin` as the target, and the vault takes them only
@@ -847,6 +851,29 @@ already exists. No path layout or derivation input changed in batches 7 and 8b.
 Before the freeze, anything that changes an address must be called out (CLAUDE.md); after it, never. A scheme change
 would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
 
+### WebCrypto on the login, export and signing paths
+
+No address goes through WebCrypto: CKD (BLS12-381), the HKDF of the chain keys, the Stellar (Ed25519) and EVM
+(secp256k1) keys and their signatures are `@noble/curves` and `@noble/hashes` (`ckd.ts`, `derivation.ts`,
+`signers/`). WebCrypto holds the session key and the symmetric keys around it. Audited on 2026-11-05 (D385) in
+Playwright 1.64.1's browsers on macOS and in its Linux image (WebKit 27.2, Chromium 156, Firefox 157), with
+thousands of random keys per call and fixed keys starting with zero bytes; `apps/e2e/tests/webcrypto.spec.ts` keeps
+the fixed-key checks on every browser CI runs.
+
+| Call | Where | Key | Linux WebKit |
+|---|---|---|---|
+| Ed25519 `generateKey` (non-extractable), `exportKey('raw')` of its public half | `core/session.ts` `newSessionKey` | fresh random | refuses the keys whose seed or public key starts with `0x00` (`OperationError`, about 1 in 128): retried, up to 4 attempts (D381); a key it still can't make is `derive_failed`, `webcrypto_failed` / `webcrypto_unsupported` (D385) |
+| Ed25519 `sign` | `core/session.ts`, `core/wallet-record.ts`, `web/vault/identity.ts` | the session key (also restored from IndexedDB) | fine |
+| Ed25519 `importKey('raw')` public, `verify` | `core/session.ts` `verifyEd25519` (the e2e stack's mock API; not called in a browser) | given | fine, including public keys starting with `0x00` or `0x0000` |
+| AES-256-GCM `importKey('raw')`, `encrypt`, `decrypt` | `core/relay.ts` (relay keys), `web/vault/record.ts` (K_s) | random (relay keys), the server-held share (K_s) | fine, including keys starting with zero bytes and the all-zero key |
+| HKDF-SHA-256 `importKey('raw')`, `deriveKey` to AES-GCM | `web/vault/record.ts` `consentKey` | the PRK (derived) | fine, same bytes as Node |
+| RSASSA-PKCS1-v1_5 `importKey('jwk')`, `verify` | `core/id-token.ts`, `core/email-token.ts` | Google's and the email issuer's keys | fine |
+
+Linux WebKit also refuses a PKCS#8 import (`DataError`) of an Ed25519 or X25519 private key whose first byte is
+`0x00`, and X25519 `generateKey` the same way as Ed25519's; Hana makes neither call (a JWK import of the same key
+works). Safari on Apple platforms signs Ed25519 with a random nonce (valid signatures that differ from RFC 8032's
+deterministic ones); nothing in Hana depends on a session signature's bytes.
+
 ## Data stores
 
 | Store | Holds | Never holds |
@@ -898,6 +925,12 @@ would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
   `.secrets/<env>/`, plus the page Workers' `wrangler.vault.jsonc` / `wrangler.auth.jsonc`. It refuses an env without
   both Hana origins. All three are per env and gitignored (the deployed D1 id is passed with `--d1-id` and never
   committed); the API tests generate their own `wrangler.vitest.jsonc` from a fixed test manifest.
+- The build id (D384, `packages/env/src/build-id.ts`): each Worker's `deploy` script (API, page Workers, email issuer)
+  passes `HANA_BUILD` = the commit's first 12 hex characters (`-dirty` for a tree with uncommitted changes), never
+  `gen`; the web build writes the same id into `/vault.js`'s first line and each auth page's `<meta name="hana-build">`.
+  They are read back from `GET /v1/health`, `GET /v1/email/health`, each page origin's `/.well-known/hana-build` and
+  the bundles by `scripts/deploy-check.ts`, which fails unless every piece (and, with `--d1`, every D1 migration) is
+  this checkout's (`docs/operations.md` "Checking a deploy").
 - `packages/web/scripts/gen-envs.ts` writes the gitignored `packages/web/src/envs.generated.ts` with the pinned
   per-env constants (`signer`, `relayer`, `rpc`, `rpcFallback` when set, `ckdNetworkKey`, origins, `devEnv`) for every
   manifest with both origins; it fails on an unusable CKD key.

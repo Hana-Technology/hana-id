@@ -7,7 +7,7 @@
   "scripts": {
     "gen": "tsx scripts/gen-wrangler.ts",
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "deploy": "tsx scripts/deploy.ts",
     "test": "vitest run && vitest run -c vitest.scripts.config.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p scripts"
   },

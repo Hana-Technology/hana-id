@@ -110,6 +110,11 @@ export interface Env {
    * its origin, since the vault calls the issuer's google-match (build plan batch 8b). Absent without an issuer.
    */
   EMAIL_ISSUER_URL?: string;
+  /**
+   * The build id (D384, build.ts): set only by the `deploy` script (`wrangler deploy --var HANA_BUILD:<id>`), never by
+   * `gen`; reported by GET /v1/health as `build`. Absent: deployed without the script.
+   */
+  HANA_BUILD?: string;
   /** Optional per-method gas overrides in Tgas (see gas.ts), e.g. GAS_DERIVE_KEY_TGAS. */
   [gasOverride: `GAS_${string}_TGAS`]: string | undefined;
   DB: D1Database;

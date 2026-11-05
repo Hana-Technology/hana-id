@@ -1,6 +1,6 @@
 // Errors the auth pages show. Codes are the protocol's (docs/batch-b-spec.md "Envelope"); messages are for the user and
 // never carry a token, key or request body.
-import { ApiError, type HanaErrorCode } from '@hana-id/core';
+import { ApiError, type HanaErrorCode, type SessionKeyFailure } from '@hana-id/core';
 
 export class PageError extends Error {
   constructor(
@@ -50,3 +50,9 @@ const MESSAGES: Partial<Record<HanaErrorCode, string>> = {
 };
 
 export const errorMessage = (code: HanaErrorCode): string => MESSAGES[code] ?? 'Something went wrong.';
+
+/** What a page says when the browser can't make the session key (D385; core's sessionKeyFailure). */
+export const sessionKeyText = (f: SessionKeyFailure): string =>
+  f.reason === 'webcrypto_unsupported'
+    ? 'This browser can’t create the key the sign-in needs. Update it, or use another browser.'
+    : 'This browser couldn’t create the key the sign-in needs. Try again.';

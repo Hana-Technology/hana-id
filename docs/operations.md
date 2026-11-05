@@ -1,6 +1,8 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-05 (branch `chore/ci-cost`: "CI and git": CI and the identity probe turned off, the local checks, D384); 2026-11-05 (branch `chore/ci-cost`: "CI and git": which jobs run when, the nightly WebKit and Firefox run; the identity probe every 3 hours, D383); 2026-11-05 (branch `docs/sandbox-dev-state-1105`: sandbox-dev redeployed at `develop` 8aab09d with the wallet directory: `USER_ID_KEY`, the bookmark, 0011, API 6141ba3d, vault abe7cc61, auth 6b9a4bee, issuer 1542a60c); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
+Last verified against code: 2026-11-05 (branch `chore/ci-cost`: "CI and git": CI and the identity probe turned off, the local checks, D387); 2026-11-05 (branch `feat/coop-canary`: "Before each release: the COOP canary" (`coop-canary`, what a failure means, D386), step 0 of "A release."); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: "Common failures"' `derive_failed` `webcrypto_unsupported` / `webcrypto_failed`, D385); 2026-11-05 (branch `feat/deploy-build-check`: "Checking a deploy (`deploy-check`)", D384:
+the build id in every Worker and page bundle, `deploy-check <env> [--d1]` after each deploy step, migrations applied
+from a checkout at the deployed commit, the API's raw `wrangler deploy` lines now `run deploy`); 2026-11-05 (branch `fix/deploy-pages-builds`: `deploy:pages` runs the web build first; the 0011 apply note; the rebuilt page versions); 2026-11-05 (branch `chore/ci-cost`: "CI and git": which jobs run when, the nightly WebKit and Firefox run; the identity probe every 3 hours, D383); 2026-11-05 (branch `docs/sandbox-dev-state-1105`: sandbox-dev redeployed at `develop` 8aab09d with the wallet directory: `USER_ID_KEY`, the bookmark, 0011, API 6141ba3d, vault abe7cc61, auth 6b9a4bee, issuer 1542a60c); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
 what counts, each job's share in both crons, the `budget` log lines; settlement's reads a run; D380); 2026-11-04 (branch `feat/batch-c-13`: "Retention (batch C13, milestone M6)": the Neon
 migration 0007, the deploy order, the monthly job in the 15-minute cron, `retention_failed`, `admin retention:issuer`,
 `uid-erase` for an erasure request, statements and rates by hand, what to watch; "Usage ledger" lists 0007; D360–D369);
@@ -258,6 +260,9 @@ the signer is part of every address. Dev-only privileges (loopback origins, part
    corepack pnpm --dir apps/api exec wrangler d1 migrations apply <cloudflare.d1Name> --remote
    ```
 
+   Run `migrations apply` (here and everywhere in this runbook) from a checkout at the commit you are deploying, with
+   a clean tree: wrangler applies the files on disk, by name ("Checking a deploy" below).
+
    Without `--d1-id`, `gen` keeps the id already in `wrangler.jsonc` only if that file names the same
    `database_name`, else it writes the local placeholder `00000000-0000-4000-8000-000000000000`. The generated files
    are gitignored (`wrangler.jsonc` holds the env's D1 id): re-run `gen <env>` whenever you switch envs, and never commit them.
@@ -296,16 +301,20 @@ the signer is part of every address. Dev-only privileges (loopback origins, part
 
    ```sh
    corepack pnpm --filter @hana-id/api run deploy
-   curl -s https://<worker-url>/v1/health          # {"ok":true,"env":"<env>","signer":"<signer>",…}
+   curl -s https://<worker-url>/v1/health          # {"ok":true,"env":"<env>","signer":"<signer>",…,"build":"<commit>"}
    ```
+
+   Always through `run deploy` (never a raw `wrangler deploy`): it stamps the Worker with the build id (D384).
 
 9. **Deploy the two page Workers** (`vaultOrigin`, `authOrigin`; one thin Worker each, D66), after the API: the vault
    Worker reaches it through a service binding. `gen` (step 6) already wrote their configs; the web build writes the
-   per-env bundles they serve (`apps/api/README.md`, "Page Workers"):
+   per-env bundles they serve (`apps/api/README.md`, "Page Workers"). `deploy:pages` runs that build itself
+   (`packages/web/dist/pages/<env>/{vault,auth}`, every env with both origins), so a deploy never ships a stale bundle:
+   on 2026-11-05 a deploy of an old build sent wallet records without the session signature (`400 bad_request`).
 
    ```sh
-   corepack pnpm --filter @hana-id/web build          # packages/web/dist/pages/<env>/{vault,auth}, every env with both origins
-   corepack pnpm --filter @hana-id/api run deploy:pages   # wrangler deploy -c wrangler.vault.jsonc, then -c wrangler.auth.jsonc
+   corepack pnpm --filter @hana-id/api run deploy:pages   # the web build first, then the stamped deploys of -c wrangler.vault.jsonc and -c wrangler.auth.jsonc
+   corepack pnpm --filter @hana-id/scripts run deploy-check <env> --d1   # every piece on this commit, no migration pending
    ```
 
    Rebuild and redeploy them whenever the manifest's `signer`, `relayer`, `rpc`, `rpcFallback`, `apiUrl`,
@@ -313,6 +322,52 @@ the signer is part of every address. Dev-only privileges (loopback origins, part
 10. **Google redirect URI**: add `{authOrigin}/login/callback` on the shared client and on every partner's own client
     that logs in through Hana's pages (table above).
 11. **Register apps** (next section), then **smoke test**.
+
+### Checking a deploy (`deploy-check`, D384)
+
+Every deployed piece of an env carries the build id of the checkout it came from: the commit's first 12 hex
+characters, `-dirty` when the tree had uncommitted changes (tracked or untracked). On 2026-11-05 sandbox-dev's page
+Workers served a vault bundle older than the API (every wallet record `400 bad_request`), and earlier that day a D1
+migration was applied from an older checkout; nothing showed either. **After every deploy step in this runbook** (the
+API, the page Workers, the email issuer), once the last Worker of the step is out, run from the checkout you deployed:
+
+```sh
+corepack pnpm --filter @hana-id/scripts run deploy-check <env>          # every piece on this checkout's commit
+corepack pnpm --filter @hana-id/scripts run deploy-check <env> --d1     # and no D1 migration of this checkout pending
+```
+
+| Piece | Read from | Stamped by |
+|---|---|---|
+| API Worker | `GET {apiUrl}/v1/health` → `build` | `pnpm --filter @hana-id/api run deploy` (`HANA_BUILD` var) |
+| vault Worker | `GET {vaultOrigin}/.well-known/hana-build` → `build` | `run deploy:pages` |
+| vault bundle | `{vaultOrigin}/vault.js`, first line `/* hana-build <id> */` | the web build (`deploy:pages` runs it first) |
+| auth Worker | `GET {authOrigin}/.well-known/hana-build` → `build` | `run deploy:pages` |
+| auth pages | `{authOrigin}/login`, `<meta name="hana-build">` | the web build |
+| email issuer | `GET {emailIssuer.url}/v1/email/health` → `build` | `pnpm --filter @hana-id/email-issuer run deploy` |
+| `--d1` | `wrangler d1 migrations list <db> --remote` from `apps/api` (`cloudflare.d1Name`) and `apps/email-issuer` (`emailIssuer.cloudflare.d1Name`) | needs both `wrangler.jsonc` generated for `<env>` (`gen`) |
+
+Exit 1 (each reason on a `FAIL:` line) when a piece can't be read (a status, a redirect, unreachable), isn't stamped
+(`null`: deployed with a raw `wrangler deploy`; no `build` field or no stamp in a bundle: deployed before D384), runs
+another commit than this checkout's HEAD, or (`--d1`) a database lacks a migration file of this checkout. Warnings, not
+failures: a piece deployed from a dirty tree (`--strict` makes it a failure; use `--strict` outside dev envs) and a
+dirty checkout here. `--skip-head` compares the pieces with each other only, to check an env from another commit.
+An env runs one commit: when a step deploys only some pieces (only the API, say), deploy the others from the same
+checkout too (`run deploy:pages`, the issuer's `run deploy`) before the check, which otherwise fails and names each
+piece that lags (as it does between the steps of a multi-Worker deploy). It holds no secret, prints only the manifest's URLs, statuses and well-formed build ids, and changes
+nothing (`migrations list` reads the remote `d1_migrations` table; it creates that table only if it is missing, which
+it never is on a migrated database).
+
+**Migrations: apply from the deployed commit.** `wrangler d1 migrations apply` applies the `.sql` files on disk that
+the remote database hasn't recorded, by name. Apply from a checkout at the commit you then deploy, `git status` clean
+(`deploy-check` prints this checkout's id: it must not end in `-dirty`). `--d1` then confirms nothing of that commit is
+pending. It can't see a file applied under the same name with other content (`d1_migrations` keeps names, not
+hashes): 2026-11-05's draft of `0011_wallet_directory.sql` was such a case, so the checkout rule is what prevents it.
+
+After a `wrangler rollback`, the rolled-back Worker reports the id of the version it returned to (an older commit, or
+none before D384): check from a checkout at that commit, or with `--skip-head` once every piece is rolled back.
+
+Not stamped yet: the watchdog, the console, console-auth, the admin and the files Workers (`deploy-check` doesn't read
+them).
 
 ### Upgrading an env deployed from `develop` to batch B
 
@@ -700,7 +755,8 @@ deploy. Logins are unaffected either way; events in between are not recorded.
 
 D310–D317 and D346 merged into `develop`. **On sandbox-dev since 2026-11-05**: `USER_ID_KEY` set, Time Travel bookmark
 `00000308-00000000-0000511a-8c2d20dbe35ad898ca18c4aeeb9cbac9` taken before 0011, 0011 applied, then the API
-(6141ba3d) and the pages (vault abe7cc61, auth 6b9a4bee) deployed at `develop` 8aab09d; no other env yet. After each login the vault reports the wallet's Stellar and EVM
+(6141ba3d) and the pages (vault 95cd3408, auth 9f89b47b, rebuilt) deployed at `develop` 8aab09d; checked: a login
+lists the user, both wallets and both identities in `user:find`; no other env yet. After each login the vault reports the wallet's Stellar and EVM
 addresses, each signed by its own key, with the whole request signed by the session key, to `POST /v1/wallets/record`;
 the API checks them against the live session on chain and keeps, in its own D1, each user with three ids (the User
 ID partners see, `u1_…`, which is the identity token's `sub`; its Support ID `HANA-XXXX-XXXX`; the staff-only internal
@@ -715,7 +771,9 @@ most every 10 minutes per isolate; logins are unaffected. Never rotate either wi
 get a new internal id (`USER_ID_KEY`) or a new User ID and Support ID (`IDENTITY_SUB_KEY`, which also changes every
 partner's token `sub`).
 
-**Applying it on sandbox-dev** (the user runs this, from the main checkout; additive, three new tables, no rollback
+**Applying it on sandbox-dev** (the user runs this, from the main checkout once it is at the `develop` being deployed:
+wrangler applies the migration file on disk, and on 2026-11-05 an older draft of 0011 without `token_sub` was applied
+from a stale checkout, then dropped (the tables were empty) and the current file applied; additive, three new tables, no rollback
 step: an older Worker ignores them). Take a Time Travel bookmark first ("Restoring a D1 database (Time Travel)"), then:
 
 ```sh
@@ -723,6 +781,8 @@ corepack pnpm --dir apps/api exec wrangler d1 migrations list hana-id-sandbox-de
 corepack pnpm --dir apps/api exec wrangler d1 migrations apply hana-id-sandbox-dev --remote
 corepack pnpm --filter @hana-id/api run deploy                                                 # the API with /v1/wallets/record
 # then the page Workers, so the vault sends the record ("Create an environment from scratch" step 9)
+corepack pnpm --filter @hana-id/api run deploy:pages
+corepack pnpm --filter @hana-id/scripts run deploy-check sandbox-dev --d1                      # API, pages and bundles on this commit; 0011 applied
 ```
 
 Order: the migration, then the API, then the vault bundle. In another order nothing breaks: an API without 0011
@@ -765,7 +825,7 @@ right after a deploy a vault and API from before and after the session signature
 
 State on sandbox-dev (2026-11-03): done. Migrations 0006, 0009 and 0010 are applied to the API's D1, after a rehearsal on a scratch
 D1; a Time Travel bookmark from before 0006 and an export backup are in `.secrets`. The API (`develop` c3c33ec, version
-b215b589; redeployed 2026-11-04 at `develop` f53d63e, version 9fe0343a; again 2026-11-05 at `develop` 8aab09d, version 6141ba3d, with the wallet directory; the vault abe7cc61 and auth 6b9a4bee pages with it) has the hot DB on and `createProof` true; usage capture is off (no `USAGE_DB` binding). The steps below are
+b215b589; redeployed 2026-11-04 at `develop` f53d63e, version 9fe0343a; again 2026-11-05 at `develop` 8aab09d, version 6141ba3d, with the wallet directory; the vault 95cd3408 and auth 9f89b47b pages with it, rebuilt) has the hot DB on and `createProof` true; usage capture is off (no `USAGE_DB` binding). The steps below are
 the procedure for another env.
 
 Migration `0006_dashboard_expand.sql` adds batch C's hot-DB tables and columns (`docs/api.md` "D1 schema") without
@@ -830,7 +890,7 @@ Cloudflare account, with `corepack pnpm --filter @hana-id/api run gen sandbox-de
    in c is 1, D1 didn't run that query as one transaction: stop and report it (D207). Delete the scratch database either
    way (it holds the export's vault shares), after step d.
 
-4. **Apply 0006**: `corepack pnpm --dir apps/api exec wrangler d1 migrations apply hana-id-sandbox-dev --remote`
+4. **Apply 0006** (from a checkout at the commit step 6 deploys, clean tree; "Checking a deploy"): `corepack pnpm --dir apps/api exec wrangler d1 migrations apply hana-id-sandbox-dev --remote`
    (it lists `0006_dashboard_expand.sql`, then any later file not applied yet: batch C4's `0009_session_markers.sql`
    and email login batch 6's `0010_login_methods.sql`, which only add a table and a defaulted column; confirm).
 
@@ -993,7 +1053,7 @@ corepack pnpm --dir apps/console exec wrangler d1 migrations apply <console.d1Na
 #    The config also binds the Images binding (`images: {binding: "IMAGES"}`): see that section too.
 # 5. The API first (its ConsoleRpc entrypoint, batch C5), then the console (`deploy` builds the SPA into dist/ first),
 #    then its secret (setup step 11.7), then console-auth (its binding needs the console's AuthHandler).
-corepack pnpm --dir apps/api exec wrangler deploy
+corepack pnpm --filter @hana-id/api run deploy
 corepack pnpm --filter @hana-id/console run deploy
 corepack pnpm --filter @hana-id/console-auth run deploy
 ```
@@ -1134,7 +1194,7 @@ the repo root of the main checkout, logged in to the API's Cloudflare account. N
    ```sh
    corepack pnpm --filter @hana-id/admin gen <env> --admin-hyperdrive-id <admin Hyperdrive id>
    # The API and the console first (AdminRpc's watcher reads and StaffRpc's grants are C8 additions).
-   corepack pnpm --dir apps/api exec wrangler deploy
+   corepack pnpm --filter @hana-id/api run deploy
    corepack pnpm --dir apps/console exec wrangler deploy
    corepack pnpm --dir apps/admin exec wrangler deploy
    ```
@@ -1243,7 +1303,7 @@ main checkout; nothing below prints the token):
 
    ```sh
    corepack pnpm --filter @hana-id/api run gen <env>
-   corepack pnpm --dir apps/api exec wrangler deploy
+   corepack pnpm --filter @hana-id/api run deploy
    corepack pnpm --filter @hana-id/admin gen <env>
    corepack pnpm --dir apps/admin exec wrangler deploy
    ```
@@ -1344,7 +1404,7 @@ corepack pnpm --filter @hana-id/web build
 corepack pnpm --filter @hana-id/api run deploy:pages
 # 6. The API (GET /v1/app's logoUrl needs FILES_ORIGIN, which the same gen wrote) and the console (the IMAGES binding,
 #    the logo backend). Deploy order doesn't matter for users: no app has a logo until an owner uploads one (C10's route).
-corepack pnpm --dir apps/api exec wrangler deploy
+corepack pnpm --filter @hana-id/api run deploy
 corepack pnpm --filter @hana-id/console gen <env> --d1-id <uuid>
 corepack pnpm --dir apps/console exec wrangler deploy
 ```
@@ -1440,7 +1500,7 @@ capture"). From the repo root of the main checkout.
    (`StaffRpc.recordStaffAction`), then the admin Worker:
 
    ```sh
-   corepack pnpm --dir apps/api exec wrangler deploy
+   corepack pnpm --filter @hana-id/api run deploy
    corepack pnpm --dir apps/console exec wrangler deploy
    corepack pnpm --dir apps/admin exec wrangler deploy
    ```
@@ -1524,7 +1584,7 @@ its migration 0006 applied. From the repo root of the main checkout; nothing her
    and its Neon steps still run. No new binding, var, secret or trigger: `gen` is unchanged.
 
    ```sh
-   corepack pnpm --dir apps/api exec wrangler deploy
+   corepack pnpm --filter @hana-id/api run deploy
    corepack pnpm --dir apps/console exec wrangler deploy
    corepack pnpm --dir apps/admin exec wrangler deploy
    ```
@@ -2597,8 +2657,8 @@ them as `IDENTITY_PINS` and `identityToken.iss` as `IDENTITY_ISS`; an env withou
   controls Hana's Cloudflare account can recognise the watchdog's fetches (they come from Cloudflare's network) and
   serve them a clean JWKS while partners get another, or publish a key for less than a run. The **outside probe**
   narrows the first: the GitHub Actions workflow `identity-probe` (`.github/workflows/identity-probe.yml`, every 3
-  hours at :17 since D383, no secrets; **disabled in GitHub since 2026-11-05**, D384: no probing while only testnet
-  runs, and before mainnet it moves to AWS Lambda + EventBridge in its own AWS account, or one of D384's
+  hours at :17 since D383, no secrets; **disabled in GitHub since 2026-11-05**, D387: no probing while only testnet
+  runs, and before mainnet it moves to AWS Lambda + EventBridge in its own AWS account, or one of D387's
   alternatives: Google Cloud Functions + Cloud Scheduler, a small VPS with cron) fetches each non-`local*` env's JWKS and discovery document from GitHub's network with a `jose`
   User-Agent and the same rules (`@hana-id/jwks/identity`), against `watchdog.pinnedIdentityKeys` in the repo's
   manifests, and fails on any finding (every value from Hana's answers is printed JSON-quoted, escaped to printable
@@ -2713,7 +2773,8 @@ origin. The API never forwards these requests.
    in `emailIssuer.sendgridWebhookPublicKey` (public); events of other categories are ignored.
 4. **D1 and config**: `wrangler d1 create hana-id-email-issuer-<env>`, then
    `corepack pnpm --filter @hana-id/email-issuer gen <env> --d1-id <issuer uuid> --app-d1-id <the API's D1 uuid>` and
-   `wrangler d1 migrations apply hana-id-email-issuer-<env> --remote` from `apps/email-issuer`. `gen` refuses a
+   `wrangler d1 migrations apply hana-id-email-issuer-<env> --remote` from `apps/email-issuer` (from a checkout at the
+   commit you deploy, "Checking a deploy"). `gen` refuses a
    Worker-secret signer off testnet, the `aws-kms` signer (until batch 10) and the outbox outside `local*`.
 5. **Secrets** (the user runs this): `corepack pnpm --filter @hana-id/scripts email-issuer <env> put` (plan), then
    `--yes`: sets `ISSUER_SIGNING_KEY`, `EMAIL_SUB_KEY`, `EMAIL_CODE_KEY`, `EMAIL_RL_KEY` and, when its file exists,
@@ -2727,7 +2788,7 @@ origin. The API never forwards these requests.
    (`local*`, `sandbox*`) `admin <env> scope:add-email-client --scope <id>` mints it locally instead and sends the
    owner's calls (D253; "Email login demo on sandbox-dev (batch 8a)" step 3).
 7. **Deploy**: `corepack pnpm --filter @hana-id/email-issuer run deploy` (before step 6's keys go on chain, so the
-   watchdog's JWKS check finds it). On a zone env, add the route `<api host>/v1/email/*` → `hana-id-email-issuer-<env>`
+   watchdog's JWKS check finds it), then `deploy-check <env> --d1` ("Checking a deploy"). On a zone env, add the route `<api host>/v1/email/*` → `hana-id-email-issuer-<env>`
    (Workers Routes on the API's zone; the more specific route wins over the API's); on `workers.dev` nothing more.
    `gen` turns `workers_dev` on only when `emailIssuer.url` is a `workers.dev` URL; a zone-routed issuer has no
    `workers.dev` URL (a second way in, around the zone's rules and Access). **Open for batch 8**: the staff routes'
@@ -2808,9 +2869,10 @@ corepack pnpm --filter @hana-id/email-issuer gen sandbox-dev            # keeps 
 corepack pnpm --dir apps/email-issuer exec wrangler d1 migrations list hana-id-email-issuer-sandbox-dev --remote    # 0002_user_emails.sql pending
 corepack pnpm --dir apps/email-issuer exec wrangler d1 migrations apply hana-id-email-issuer-sandbox-dev --remote
 corepack pnpm --filter @hana-id/email-issuer run deploy
+corepack pnpm --filter @hana-id/scripts run deploy-check sandbox-dev --d1
 ```
 
-Check: `migrations list` shows nothing pending; after an email login on the demo, `admin sandbox-dev user:list --remote
+Check: `deploy-check` passes (`migrations list` shows nothing pending); after an email login on the demo, `admin sandbox-dev user:list --remote
 --limit 1` shows it. Other envs: the same with `hana-id-email-issuer-<env>`.
 
 **Reading it** (Hana staff with Cloudflare access to the issuer's D1; `$A` = `corepack pnpm --filter @hana-id/scripts
@@ -3521,6 +3583,7 @@ Google token (`docs/contract-interface.md` "Gas of the email login calls" and "U
 | 4100 `raw_not_allowed_for_test_apps` / `mainnet_not_allowed` from the vault | a `pk_test_` app asked for a raw signature (whatever `raw_sign` says), or for a mainnet Stellar passphrase or an EVM chain outside the testnet allowlist (D39) | expected for test apps; use a test network |
 | `429 rate_limited` "(per IP per minute)" or "(share per minute)" on `/v1/vault/*` with `retry-after: 60` | the vault's per-location flood limits (60/min per IP per app, 10/min per share; D95), counted per Cloudflare location and approximate | wait; not visible in the dashboard, so count the 429s in the request logs |
 | `429 rate_limited` "Too many key exports" on `/v1/login` from the export window | more than 3 exports in an hour for one user path in one app (D59) | wait for `retry-after` |
+| `derive_failed` with `data.reason` `webcrypto_unsupported` / `webcrypto_failed` at the start of a login, a link or an export sign-in (the popup closes at once) | the browser couldn't make the Ed25519 session key: no Ed25519 in WebCrypto (Chrome and Edge before 137, Firefox before 129, Safari before 17), or it refused (`data.error`; WebKit Linux's `OperationError` four times in a row is about 4 in 10^9, D381). No `/v1/login` was sent (D385) | `webcrypto_unsupported`: the user updates the browser or uses another; `webcrypto_failed`: try again, report it with the browser and `data.error` if it repeats |
 | `vault_unavailable` on a partner page (`data.reason`) | `csp_frame_src`: the page's CSP; `no_answer` (after one retry): the vault page refused the frame (origin not in force, key unknown or suspended, wrong env build) or its script didn't run; `frame_timeout` / `ready_timeout`: network or cold Workers, often right after a deploy (D262) | fix the origin or CSP; for timeouts, reload, and check the `vault_page` and `/v1/vault/unlock` latencies in the request log |
 | A login's `app` stage takes seconds (`pk_test_` timings) | the `GET /v1/app` the vault asked after `ready` was still out: `appServer*` say whether the API (D1, the registry views) or the network took the time (D261) | look at the `/v1/app` request log line's `phases` and `colo`; a stalled RPC view now fails after 8 s (every view, logins included) and `/v1/app` is asked once more |
 | `409 no_google_client` on `/v1/app` | scope has no Google client and no usable shared client (or shared client still in its timelock) | add a client, or `--allow-shared` + wait `changeDelayMs` |
@@ -3537,6 +3600,57 @@ Google token (`docs/contract-interface.md` "Gas of the email login calls" and "U
 | `build:lib` / `pack:check`: "Can't build the @hana-id/web package" | an env with both origins is a `local*` env, or none has both origins | keep loopback envs out of `envs/` (apps/e2e builds its own); set the origins |
 | `build:lib` / `pack:check` / page build: "… is still an UNSET placeholder" | an included env (both origins set) has an `UNSET` value | fill it in, or leave the env's origins out until it is deployed |
 | `pack:check`: "npm install … failed" | the registry is unreachable, or a pinned peer is younger than 7 days (`--before`) | retry; check the network or the pin |
+
+## Before each release: the COOP canary
+
+The vault notices a closed login popup by reading its handle on the popup's window (`.closed`) every 250 ms (D347).
+That holds only while no page of the popup's trip *enforces* Cross-Origin-Opener-Policy: an enforcing page moves the
+popup to another browsing context group, and the handle then reads `closed: true` while the window is still open.
+Google sends COOP report-only on its authorization endpoint, identifier page and account chooser, and enforces
+`same-origin` only on its OAuth error page (2026-11-05). Google can change that without notice, so before each
+release (a pages deploy, an SDK release, `develop` into `main`) run the canary against the env being released (D386;
+it replaced D347's `curl -sI`). It is a manual check on purpose: no workflow runs it (Actions minutes, D383).
+
+```sh
+corepack pnpm --filter @hana-id/scripts run coop-canary <env>                  # about 1.5 min, exit 0 = pass
+corepack pnpm --filter @hana-id/scripts run coop-canary <env> --headers-only   # no browsers, about 10 s
+# the browsers, once per machine (apps/e2e's Playwright):
+corepack pnpm --filter @hana-id/e2e exec playwright install chromium firefox webkit
+```
+
+What it checks, signed out, on exactly the requests the product sends (the builders in
+`packages/web/src/auth/google.ts`, with the env's first `sharedGoogleClientIds` entry and `authOrigin` +
+`/login/callback`): token_first's first request, D273's interactive retry (with a `login_hint`) and the silent
+ID-token request (`prompt=none`, which ends on Hana's callback).
+
+- **Header check.** Each request followed by hand (manual redirects, cookies carried between hops but never
+  printed) under six browser User-Agents. It prints each hop's status, host and path (never the query) and its
+  `COOP`, `COOP-RO` and `CORP` (and `COEP` when present). A finding: any hop other than Google's
+  `/signin/oauth/error` with an enforcing `Cross-Origin-Opener-Policy` other than `unsafe-none`, or an enforcing
+  `Cross-Origin-Embedder-Policy`; a chain that ends on Google's error page, on a non-200, or not where it should
+  (Google's sign-in page; Hana's callback for the silent request). Report-only headers are fine.
+- **Browser check** (Chromium, Firefox, WebKit; headless). A localhost opener page `window.open`s the first request
+  and reads `.closed` every 250 ms for 10 s. A finding: `true` while the popup is open. Then it closes the popup and
+  expects `true`.
+- **Positive controls.** The first request with a redirect URI no client registers (`https://coop-canary.invalid`)
+  lands on Google's error page, which enforces COOP: the header check must read it there, and `.closed` must flip
+  (about 0.5 s after it loads) in each browser.
+
+Exit codes: **0** pass; **1** a finding; **2** inconclusive (no network, a browser missing, or a control that didn't
+flip). Only 0 is a pass. What a failure means and what to do:
+
+| Output | Meaning | Do |
+|---|---|---|
+| `FINDING: <google host/path> enforces Cross-Origin-Opener-Policy: …` (or the browser check's `popup.closed read true … while the popup was open`) | Google now enforces COOP on a sign-in page. D347's guard (a close within 8 s of leaving for Google is taken for a COOP switch, and the watch stops) covers it on Google's first page; on a later page (password, second factor, consent) logins are cancelled with `login_cancelled` `popup_closed` while the user is still at Google | Don't release. Follow the `google-enforces-coop` playbook ([docs/playbooks.md](playbooks.md#google-enforces-coop)): confirm, hold the release, change the watch with a decision entry |
+| `FINDING: <authOrigin host>/… enforces …` | A Hana page sends COOP or COEP: a regression (the auth pages send none, `docs/api.md`) | Revert it before the release |
+| `FINDING: Google answered with its OAuth error page …` | Google refuses the request itself (client id, redirect URI): Google sign-in is broken whatever COOP says | Check the shared client in "Google Cloud OAuth" against `envs/<env>.json` |
+| `CANARY BROKEN: the control did not flip …` or `… no longer enforces COOP` | The canary can't show it would see an enforcing page (Google changed its error page) | Not a pass. Fix the canary's positive control (a new page that enforces COOP) before trusting it |
+| `COULD NOT CHECK: …` / `INCONCLUSIVE` | Network, a browser missing, Playwright not installed | Fix it (the install line above) and run again |
+
+The canary holds no secret (a client id is public) and prints no cookie, query value or fragment. It never signs in
+(no script may hold a Google account's cookies), so it doesn't see the pages a signed-in user meets (the account
+chooser with accounts, the password, consent); Google has sent the same report-only policy across its sign-in pages
+so far.
 
 ## Releasing the SDK packages
 
@@ -3574,6 +3688,8 @@ Send the four files with their SHA-256 (`shasum -a 256 /tmp/hana-sdk/*.tgz`) and
 
 **A release.**
 
+0. Run the COOP canary ([Before each release](#before-each-release-the-coop-canary)) against each env whose pages
+   the release ships: it must exit 0.
 1. On a branch from `develop`: `corepack pnpm --filter @hana-id/scripts sdk-version <x.y.z>` (one version for all
    four: each `package.json` and `VERSION` constant; D72). Say what changed for partners in the PR. Merge to
    `develop`, then `develop` into `main`.
@@ -3609,7 +3725,7 @@ skips everything while the `NPM_TOKEN` secret is missing, and npm refuses `"priv
   typecheck`, `pnpm -r test` (this includes `@hana-id/react`'s suite on React 18, `packages/react/react18`); the
   Playwright suite (`apps/e2e`, three browsers); sandbox e2e (`contracts/integration-tests`); the SDK pack check
   (`pnpm run pack:check`, [Releasing the SDK packages](#releasing-the-sdk-packages)).
-- **CI is turned off** (D384, 2026-11-05): the CI and `identity-probe` workflows are disabled in GitHub (Actions
+- **CI is turned off** (D387, 2026-11-05): the CI and `identity-probe` workflows are disabled in GitHub (Actions
   minutes; testnet only). Run the checks locally before merging, from the repo root: `pnpm secrets:scan`;
   `pnpm -r typecheck && pnpm -r test`; `cd contracts/hana-signer && cargo test --locked && cargo near build
   non-reproducible-wasm`; `cd contracts/integration-tests && cargo test --locked -- --test-threads=1`;

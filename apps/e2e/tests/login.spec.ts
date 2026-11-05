@@ -81,6 +81,26 @@ test('D381: a session key WebCrypto refuses once (WebKit Linux’s Ed25519 Opera
   expect(await vaultFrame(page).evaluate(() => (window as any).__keygenRefused)).toBe(1);
 });
 
+test('D385: a browser without Ed25519 WebCrypto gets derive_failed (webcrypto_unsupported), not api_unavailable, and no login is sent', async ({ page, requests }) => {
+  // Chrome and Edge before 137, Firefox before 129 and Safari before 17 have no Ed25519 in WebCrypto: the vault frame
+  // can't make the session key. Before D385 this was api_unavailable ("Could not reach Hana's service").
+  await page.addInitScript((vault) => {
+    if (location.origin !== vault) return;
+    const subtle = crypto.subtle;
+    const real = subtle.generateKey.bind(subtle);
+    subtle.generateKey = ((algorithm: AlgorithmIdentifier, ...rest: [boolean, KeyUsage[]]) => {
+      const name = typeof algorithm === 'string' ? algorithm : algorithm.name;
+      if (name === 'Ed25519') return Promise.reject(new DOMException('Unrecognized algorithm name', 'NotSupportedError'));
+      return real(algorithm, ...rest);
+    }) as typeof subtle.generateKey;
+  }, VAULT_ORIGIN);
+  await openPartner(page, await newApp());
+  await clickAction(page, 'login', 'login');
+  const r = await settled(page, 'login');
+  expect(r).toMatchObject({ state: 'error', code: 'derive_failed', reason: 'webcrypto_unsupported', data: { reason: 'webcrypto_unsupported', error: 'NotSupportedError' } });
+  expect(requests.count(LOGIN_ENDPOINT)).toBe(0);
+});
+
 test('the same Google account gets the same addresses on another device, another account other ones', async ({ page, browser }) => {
   const app = await newApp();
   await openPartner(page, app);

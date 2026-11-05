@@ -1,8 +1,10 @@
 // "Copy diagnostics": a JSON bug report reviewers can paste. It is built field by field from values that are public by
-// design (env, the app key's prefix, addresses, timings, status, the browser) and never from an object the SDK hands
+// design (env, the app key's prefix, addresses, the Support ID, timings, status, the browser) and never from an object the SDK hands
 // over, so nothing the page doesn't name can slip in. The page never holds keys, Google tokens or relay ids (the vault
 // and the Hana windows do), but error messages are free text, so they are scrubbed of anything shaped like a secret
 // and cut short.
+
+import { isSupportId } from '@hana-id/core';
 
 export interface LoginTiming {
   at: string;
@@ -34,6 +36,8 @@ export interface DiagnosticsInput {
   warning: string | null;
   expiresAtMs: number | null;
   addresses: { stellar: string; evm: string } | null;
+  /** The user's Support ID (`hana.supportId`, batch C15): the code Hana's staff look the user up by. Null without one. */
+  supportId: string | null;
   /** createHana → ready, when the page loaded logged in (an unlock). */
   unlockMs: number | null;
   logins: readonly LoginTiming[];
@@ -101,6 +105,8 @@ export function diagnostics(input: DiagnosticsInput, nowMs: number): Record<stri
     warning: input.warning,
     sessionExpiresAt: input.expiresAtMs === null ? null : new Date(input.expiresAtMs).toISOString(),
     addresses: input.addresses ? { stellar: input.addresses.stellar, evm: input.addresses.evm } : null,
+    // Only a well-formed `HANA-XXXX-XXXX`: anything else is left out of the report.
+    supportId: isSupportId(input.supportId) ? input.supportId : null,
     unlockMs: finite(input.unlockMs),
     logins: input.logins.slice(-MAX_ENTRIES).map((l) => ({ at: l.at, method: l.method === 'email' ? 'email' : 'google', totalMs: finite(l.totalMs), stages: stages(l.stages) })),
     errors: input.errors.slice(-MAX_ENTRIES).map((e) => ({

@@ -6,7 +6,8 @@
 //
 // Built in batch C5; batch C14 adds the read-only `governance` (the `GET /v1/governance` snapshot) and `pendingUpgrades`
 // (the pending-upgrades page, D86); batch C13 the retention methods `purgeAudit`, `deletedApps` and `purgeDirectory` (the
-// admin Worker's monthly job only: a `system` actor, D360).
+// admin Worker's monthly job only: a `system` actor, D360); batch C15 the Support ID lookup's hot-DB part,
+// `supportLookup` and `userShares` (staff only; the admin Worker audits before it calls and reads the ledger itself, D384).
 import {
   adminFindUsersInput,
   adminGetUserInput,
@@ -41,9 +42,11 @@ import {
   securityEventsInput,
   setLogoInput,
   setSecurityContactsInput,
+  supportLookupInput,
   suspendOrgInput,
   turnOffInput,
   updateSettingsInput,
+  userSharesInput,
 } from '@hana-id/console-core';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { Env } from '../env.ts';
@@ -66,6 +69,7 @@ import { proposeSetting, setLogo, turnOff, updateSettings } from '../changes/set
 import { deleteApp, setSuspensionBit, suspendOrg } from '../changes/suspension.ts';
 import { governanceSnapshot } from '../governance-status.ts';
 import { adminFindUsers, adminGetUser, adminListUsers } from '../directory/read.ts';
+import { supportLookup, userShares } from '../directory/support.ts';
 import { deletedApps, purgeAudit, purgeDirectory } from '../changes/retention.ts';
 import { runRpc } from './common.ts';
 
@@ -248,5 +252,21 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
   /** By wallet address, User ID, internal id, Support ID or sub (`provider` makes it a sub search). */
   findUsers(c: unknown) {
     return runRpc(this.env, 'admin.findUsers', adminFindUsersInput, c, { actors: HANA }, ({ input, db, w }) => adminFindUsers(db, input, w.now));
+  }
+
+  // ---- the Support ID lookup (batch C15; D96, D144, D276 as amended by D346, D384): staff only, read only ----
+
+  /**
+   * Every user a Support ID (any case, `HANA-` and dashes optional), User ID or internal id names, each with its scope's
+   * apps, its vault shares that haven't expired and the apps' changes over `days` (30 by default). No ledger rows: the
+   * admin Worker and the CLI read those as usage_admin.
+   */
+  supportLookup(c: unknown) {
+    return runRpc(this.env, 'admin.supportLookup', supportLookupInput, c, { actors: HANA }, ({ input, db, w }) => supportLookup(db, input, w.now));
+  }
+
+  /** The vault shares of one path in one app that haven't expired (no share id, key or counter). */
+  userShares(c: unknown) {
+    return runRpc(this.env, 'admin.userShares', userSharesInput, c, { actors: HANA }, ({ input, db, w }) => userShares(db, input, w.now));
   }
 }

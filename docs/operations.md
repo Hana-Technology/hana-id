@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-05 (branch `fix/deploy-pages-builds`: `deploy:pages` runs the web build first; the 0011 apply note; the rebuilt page versions); 2026-11-05 (branch `chore/ci-cost`: "CI and git": which jobs run when, the nightly WebKit and Firefox run; the identity probe every 3 hours, D383); 2026-11-05 (branch `docs/sandbox-dev-state-1105`: sandbox-dev redeployed at `develop` 8aab09d with the wallet directory: `USER_ID_KEY`, the bookmark, 0011, API 6141ba3d, vault abe7cc61, auth 6b9a4bee, issuer 1542a60c); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
+Last verified against code: 2026-11-05 (branch `feat/batch-c-15`: "Support ID lookup", `admin <env> support:lookup`, the admin route's audit, D384–D387); 2026-11-05 (branch `fix/deploy-pages-builds`: `deploy:pages` runs the web build first; the 0011 apply note; the rebuilt page versions); 2026-11-05 (branch `chore/ci-cost`: "CI and git": which jobs run when, the nightly WebKit and Firefox run; the identity probe every 3 hours, D383); 2026-11-05 (branch `docs/sandbox-dev-state-1105`: sandbox-dev redeployed at `develop` 8aab09d with the wallet directory: `USER_ID_KEY`, the bookmark, 0011, API 6141ba3d, vault abe7cc61, auth 6b9a4bee, issuer 1542a60c); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
 what counts, each job's share in both crons, the `budget` log lines; settlement's reads a run; D380); 2026-11-04 (branch `feat/batch-c-13`: "Retention (batch C13, milestone M6)": the Neon
 migration 0007, the deploy order, the monthly job in the 15-minute cron, `retention_failed`, `admin retention:issuer`,
 `uid-erase` for an erasure request, statements and rates by hand, what to watch; "Usage ledger" lists 0007; D360–D369);
@@ -764,6 +764,56 @@ chain; the next one rewrites the account), `directory_unavailable` (warn, `no_us
 `invalid_signature` (a record without its session's own signature: someone naming another user's session) or
 `session_mismatch` in volume are someone probing, `stale_record` a vault with a wrong clock, `bad_request` in volume
 right after a deploy a vault and API from before and after the session signature.
+
+## Support ID lookup (batch C15)
+
+Built on `feat/batch-c-15` (D276 as amended 2026-11-05, D384–D387), not merged, not deployed. A user reads their
+Support ID `HANA-XXXX-XXXX` on the Hana approval popup's account line; a partner page has it as `hana.supportId` (SDK
+0.2.0 or later, D393; so in its diagnostics) and on the partner console's Users page beside the User ID. Partners
+escalate with the code (or the User ID, `u1_…`), the error `code`, the time and the app, and request IDs when they
+have them (`x-request-id`, `requestId` in every API error body; the SDK's errors don't carry one yet: build plan C15).
+
+**Nothing to set up of its own.** The API's part (the code in the session answers, `AdminRpc.supportLookup`) goes live
+with the next API deploy, after the wallet directory (above): no migration. The ledger part needs the usage ledger:
+`USAGE_DB` on the admin Worker, `.secrets/<env>/neon-usage-admin.url` for the CLI (`usage-setup <env> roles`). On
+sandbox-dev today usage capture is off, so both say "ledger unavailable" and show the rest.
+
+**Looking a code up** (Hana staff; `$A` as in "User directory (D269)"):
+
+```sh
+$A support:lookup HANA-XXXX-XXXX --remote                                  # any case, with or without HANA- and dashes
+$A support:lookup u1_… --remote                                            # the User ID the partner sends
+$A support:lookup hu_… --remote                                            # the internal id
+$A support:lookup HANA-XXXX-XXXX --remote --request-id <id> --request-id <id>   # the escalation's request IDs (≤ 20)
+$A support:lookup HANA-XXXX-XXXX --remote --days 90                        # a wider window (1–731, 30 by default)
+$A support:lookup - --remote                                               # the code on stdin
+$A support:lookup HANA-XXXX-XXXX --remote --json                           # the whole report as JSON
+```
+
+The report lists every user with that code (two users can share one: pick the one in the scope of the app the partner
+named), each with its User ID, internal id, accounts (provider, sub, role, address), wallets, the scope's apps, the
+vault shares not yet expired (live or not), the apps' setting and policy changes in the window, and its ok login,
+session and derive events (time, endpoint, app, latency, request ID, NEAR transaction). The request IDs' events come
+whatever their outcome, with the code (`nonce_mismatch`, `near_error`, …) and `[this user]` when the event carries the
+user's uid; a request ID with no event is an unknown one, a gate rejection (not recorded) or one from before capture.
+Errors can't be listed per user: the ledger keeps a uid on successes only. No code? The user hasn't logged in since
+the directory's deploy: ask the partner for the User ID or a wallet address (`user:find --address`). A wallet or a
+sub: `user:find` first, then `support:lookup` with the User ID it prints.
+
+It reads like `user:find` (the API's D1 privately, the issuer's D1 for the addresses) plus Neon as `usage_admin`; the
+URL and password never reach an error. Read only: nothing changes on a lookup, and a code isn't a credential. Print
+to the terminal only: never redirect the output to a file outside `.secrets/`.
+
+**In the admin console** (after C8b builds the screen): `POST /api/support/lookup {query, ticket, requestIds?, days?}`
+gives the same report as JSON (`docs/api.md` "The Support ID lookup"). The ticket (the support reference or a short
+reason, no address) is required and recorded with the staff member's identity in the console's audit log before
+anything is read (`support.lookup`, shown in the admin audit view; never in a partner's, never emailed).
+
+**An erasure request** still goes through `uid-erase` ("Retention"); afterwards the code finds nothing.
+
+**What to watch** (admin Worker logs): `audit_failed` (route `POST /api/support/lookup`: the console didn't record the
+lookup, so nothing was read: check the console Worker), `bff` lines with `code: ledger_unavailable` (no `USAGE_DB` or
+Neon down). The API's `rpc` lines name `admin.supportLookup`; none carries the query.
 
 ## Hot DB migration 0006 and the new gate (batch C3, milestone M1)
 
@@ -1627,10 +1677,11 @@ admin <env> council:replace-member --remove <old member> --add <new member> [--m
 admin <env> user:list [--app <app id>] [--provider email|google] [--search <part of the address> | -] [--limit 50] [--json] [--remote]
 admin <env> user:find [--email <address> | --sub <sub> | --address <G…|0x…> | --user <u1_…|hu_…|HANA-XXXX-XXXX>] [--provider email|google] [--json] [--remote]   # none: read from stdin
 admin <env> retention:issuer [--yes] [--remote]      # the issuer's part of the monthly retention (C13, D365)
+admin <env> support:lookup <HANA-XXXX-XXXX | u1_… | hu_… | -> [--request-id <id>]… [--days 30] [--json] [--remote]   # C15, D387
 ```
 
 The `user:*` commands read the user directory in the email issuer's own D1, read only: "User directory (D269)" under
-"Email issuer". `retention:issuer` and the erasure script `uid-erase`: "Retention" above.
+"Email issuer". `retention:issuer` and the erasure script `uid-erase`: "Retention" above. `support:lookup`: "Support ID lookup" above.
 
 The `owner:*`, `council:*` and `governance:status` commands: [Governance](#governance-owner-council-upgrades-migration)
 ("Owner actions through the council", "Replacing a council member").

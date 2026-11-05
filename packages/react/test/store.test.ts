@@ -15,6 +15,7 @@ function fakeClient() {
     addresses: null as HanaAddresses | null,
     persistence: null as 'session' | 'none' | null,
     error: null as HanaError | null,
+    supportId: null as string | null,
   };
   const ready = new Promise<void>((res, rej) => {
     resolveReady = res;
@@ -34,6 +35,9 @@ function fakeClient() {
     },
     get error() {
       return state.error;
+    },
+    get supportId() {
+      return state.supportId;
     },
     ready,
     on(event: string, cb: () => void) {
@@ -73,6 +77,8 @@ describe('createStore', () => {
       () => (f.state.addresses = { ...A }),
       () => (f.state.addresses = { ...A, evm: '0xB' }),
       () => (f.state.addresses = null),
+      () => (f.state.supportId = 'HANA-2750-G5HM'),
+      () => (f.state.supportId = null),
     ];
     for (const step of steps) {
       step();
@@ -90,17 +96,17 @@ describe('createStore', () => {
     expect(Object.isFrozen(s.addresses)).toBe(true);
   });
 
-  it('notifies subscribers on statusChanged, accountsChanged, sessionExpired, disconnect and persistenceChanged, until they unsubscribe', () => {
+  it('notifies subscribers on statusChanged, accountsChanged, sessionExpired, disconnect, persistenceChanged and supportIdChanged, until they unsubscribe', () => {
     const f = fakeClient();
     const store = createStore(f.client);
-    expect([...f.listeners.keys()].sort()).toEqual(['accountsChanged', 'disconnect', 'persistenceChanged', 'sessionExpired', 'statusChanged']);
+    expect([...f.listeners.keys()].sort()).toEqual(['accountsChanged', 'disconnect', 'persistenceChanged', 'sessionExpired', 'statusChanged', 'supportIdChanged']);
     const cb = vi.fn();
     const unsubscribe = store.subscribe(cb);
-    for (const e of ['statusChanged', 'accountsChanged', 'sessionExpired', 'disconnect', 'persistenceChanged']) f.emit(e);
-    expect(cb).toHaveBeenCalledTimes(5);
+    for (const e of ['statusChanged', 'accountsChanged', 'sessionExpired', 'disconnect', 'persistenceChanged', 'supportIdChanged']) f.emit(e);
+    expect(cb).toHaveBeenCalledTimes(6);
     unsubscribe();
     f.emit('statusChanged');
-    expect(cb).toHaveBeenCalledTimes(5);
+    expect(cb).toHaveBeenCalledTimes(6);
   });
 
   it('notifies when ready resolves', async () => {

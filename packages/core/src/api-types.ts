@@ -127,6 +127,11 @@ export interface LoginResponse {
   requestId: string | null;
   /** pk_test_ apps only: the API's own total and phases (docs/api.md "Timings"); check with isServerTimings. */
   timings?: unknown;
+  /**
+   * Batch C15: the user's Support ID (`HANA-XXXX-XXXX`, support-id.ts), absent when the API can't compute it. Checked
+   * where used (`supportIdFrom`): a malformed value is dropped, never a reason to refuse the login.
+   */
+  supportId?: unknown;
 }
 
 /** `POST /v1/login-relay/:relayId` body, and `GET` 200 (plus serverTimeMs). base64url. */

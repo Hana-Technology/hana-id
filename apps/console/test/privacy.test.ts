@@ -171,6 +171,12 @@ describe('audit details', () => {
           "kind",
           "code",
         ],
+        "support.lookup": [
+          "by",
+          "ticket",
+          "requestIds",
+          "days",
+        ],
         "user.disabled": [],
         "user.enabled": [],
       }

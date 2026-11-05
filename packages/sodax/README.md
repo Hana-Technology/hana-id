@@ -8,7 +8,7 @@ Optional Sodax wallet-provider adapters over `@hana-id/web`: an `IStellarWalletP
 The packages aren't on a registry yet. Hana sends you the tarballs; install them together:
 
 ```sh
-npm install ./hana-id-core-0.1.0.tgz ./hana-id-web-0.1.0.tgz ./hana-id-sodax-0.1.0.tgz @sodax/types@2.1.0
+npm install ./hana-id-core-0.2.0.tgz ./hana-id-web-0.2.0.tgz ./hana-id-sodax-0.2.0.tgz @sodax/types@2.1.0
 ```
 
 Peer dependency: `@sodax/types` `^2.1.0` (tested with 2.1.0). It is used for types only: nothing of it is imported at

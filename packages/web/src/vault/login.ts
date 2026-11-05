@@ -116,6 +116,7 @@ import {
   signDerive,
   signDeriveLinked,
   signRevoke,
+  supportIdFrom,
   verifyEmailIdToken,
   verifyGoogleIdToken,
   zero,
@@ -298,6 +299,12 @@ export interface LoginSuccess {
   identity: IdentityRef;
   /** The automatic link this login made, if any. */
   linked: MadeLink | null;
+  /**
+   * The user's Support ID as the API answered it with the session (batch C15, `HANA-XXXX-XXXX`), or null: an API that
+   * sent none (no key in its env), a session recovered without the API's answer (an existing session, a polled
+   * transaction), or a path that moved after the API's read (its code would be another account's).
+   */
+  supportId: string | null;
 }
 
 /**
@@ -956,6 +963,7 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
       // Step 10: decrypt with the pairing check against the pinned key, for the path the vault computed (a link that
       // activated meanwhile moved the session to the root's path: re-read once, D-spec "Sessions").
       let s: Bytes;
+      let pathMoved = false;
       try {
         s = decryptCkd(result, appKey.a, ckdAppId(env.signer, path), env.ckdNetworkKey);
       } catch {
@@ -964,6 +972,7 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
         try {
           s = decryptCkd(result, appKey.a, ckdAppId(env.signer, moved), env.ckdNetworkKey);
           path = moved;
+          pathMoved = true;
         } catch {
           throw fail('pairing_failed', 'The key failed its check against the pinned network key');
         }
@@ -980,7 +989,8 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
         // login is never recorded as a login to this app; in the background, never awaited by the login.
         if (recordOn && followKey && who.ref.provider === 'google' && relayed.payload.access === 'follow') this.recordGoogle(who, commitment, relayKey, followKey);
         this.afterword(who, path, linked);
-        return { prk, addresses, path, expiresAtMs, maxUses, sessionKey, timings, markedAt: lap, identity: { provider: who.ref.provider, sub: who.ref.sub }, linked };
+        const supportId = pathMoved ? null : chain.supportId;
+        return { prk, addresses, path, expiresAtMs, maxUses, sessionKey, timings, markedAt: lap, identity: { provider: who.ref.provider, sub: who.ref.sub }, linked, supportId };
       } catch (e) {
         prk.fill(0);
         throw e;
@@ -1841,6 +1851,8 @@ interface ChainInput {
  */
 export class LoginChain {
   private readonly nearTxs: string[] = [];
+  /** The Support ID of the API's successful session answer (/v1/login, or /v1/sessions in the split flow), if any. */
+  supportId: string | null = null;
   private resent = false;
   /** The one retry of an `issuer_key_pending` answer is spent (separate from the not-executed resend). */
   private keyPendingRetried = false;
@@ -1904,6 +1916,7 @@ export class LoginChain {
         this.timings.loginRtt = this.ctx.perfNow() - sent;
         Object.assign(this.timings, serverDetail('login', r.timings, LOGIN_SERVER_GROUPS));
         this.noteTx(r.nearTx);
+        this.supportId = supportIdFrom(r);
         return r.result;
       } catch (e) {
         this.check();
@@ -1980,6 +1993,7 @@ export class LoginChain {
       try {
         const r = await this.ctx.api.createSession({ jwt, sessionPublicKey, expiresAtMs, salt, keyIndex, maxUses, signature });
         this.noteTx(r.nearTx);
+        this.supportId = r.supportId;
         break;
       } catch (e) {
         this.check();

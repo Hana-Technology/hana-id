@@ -3,7 +3,7 @@
 // hot DB then holds the user (its User ID the `sub` of the identity token the same page gets) with both wallets and its
 // root identity (`/__e2e/wallets`). The login itself never waits for it.
 import { API_URL } from '../src/stack.ts';
-import { expect, login, newApp, okValue, openPartner, runAction, test, walletDirectory } from './fixtures.ts';
+import { expect, login, newApp, okValue, openPartner, runAction, status, test, waitReady, walletDirectory } from './fixtures.ts';
 
 /** The Support ID's 8 characters of a User ID: Crockford base32 of its first 5 bytes (an independent build). */
 function supportCodeOf(userId: string): string {
@@ -32,6 +32,14 @@ test('after a login the wallet directory lists the user with both addresses and 
   ]);
   expect(user!.identities).toEqual([expect.objectContaining({ provider: 'google', role: 'root', status: 'active' })]);
   expect(requests.count(`${API_URL}/v1/wallets/record`)).toBe(1);
+  // The Support ID the page reads (the vault's hana_status, from the API's /v1/login answer, C15) is the one the
+  // directory stores for this user, and it survives a reload (the vault's record, `ready`).
+  const supportId = `HANA-${user!.supportCode.slice(0, 4)}-${user!.supportCode.slice(4)}`;
+  expect(await page.evaluate(() => (window as any).e2e.supportId())).toBe(supportId);
+  await page.reload();
+  expect(await waitReady(page)).toBe('ok');
+  expect(await status(page)).toBe('logged_in');
+  expect(await page.evaluate(() => (window as any).e2e.supportId())).toBe(supportId);
 
   // The same account in a second login (after a logout): the same user, no new row.
   await runAction(page, 'logout', 'logout');

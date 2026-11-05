@@ -96,6 +96,17 @@ export async function precheckAutoLink(c: AutoLinkCheck): Promise<LinkRefusal | 
   return roomFor(targetAccount, rootProvider, joinerSide.provider);
 }
 
+/**
+ * The account root whose path the login's session opens once the automatic link `precheckAutoLink` passed is made: in
+ * case A (the link identity reaches a wallet) the session identity joins the link identity's account, so its root;
+ * in cases B and C the link identity joins the session identity's account, so the session identity's root (itself
+ * unless it is a member). Only meaningful after the precheck returned null (no pending side).
+ */
+export function autoLinkRoot(x: Side, e: Side): { provider: string; sub: string } {
+  const side = reaches(e.identity) ? e : x;
+  return side.identity.status === 'member' && side.identity.root ? side.identity.root : { provider: side.provider, sub: side.sub };
+}
+
 /** links.rs `assert_room`: fewer than MAX_MEMBERS members and no sign-in method of `provider` yet (the root's included). */
 export function roomFor(account: AccountView | null, rootProvider: string, provider: string): LinkRefusal | null {
   const members = account?.members ?? [];

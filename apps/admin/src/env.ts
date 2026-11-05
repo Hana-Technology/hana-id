@@ -21,6 +21,8 @@ import type {
   RpcOk,
   ScopeRow,
   SecurityEvent,
+  SupportLookupResult,
+  UserShare,
 } from '@hana-id/console-core';
 
 export type Answer<T extends object> = Promise<RpcOk<T> | RpcFail>;
@@ -84,6 +86,10 @@ export interface AdminRpcClient {
   deletedApps(c: unknown): Answer<DeletedAppsResult>;
   /** The wallet directory of scopes whose every app was deleted 30 days ago or more. */
   purgeDirectory(c: unknown): Answer<PurgeDirectoryResult>;
+  /** The Support ID lookup's hot-DB part (C15, staff only): matches, their apps, shares and the apps' changes. */
+  supportLookup(c: unknown): Answer<SupportLookupResult>;
+  /** The vault shares of one path in one app that haven't expired (C15). */
+  userShares(c: unknown): Answer<{ shares: UserShare[] }>;
 }
 
 /** The console's `StaffRpc` entrypoint (apps/console/src/staff-rpc.ts) over the `CONSOLE` service binding. */

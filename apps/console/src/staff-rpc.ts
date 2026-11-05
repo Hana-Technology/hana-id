@@ -187,13 +187,17 @@ export class StaffRpc extends WorkerEntrypoint<Env> {
 
   /**
    * The audit row of a staff act the admin Worker did on its own (a statement issued, a ledger export, a rate
-   * override; D327). Idempotent on (request id, action): a repeat is `already_applied` and writes nothing.
+   * override; D327; a Support ID lookup, org-less, C15). Idempotent on (request id, action): a repeat is
+   * `already_applied` and writes nothing.
    */
   recordStaffAction(c: unknown) {
     return runStaff('staff.recordStaffAction', recordStaffActionInput, c, HANA, async (i, w) => {
       const allowed: readonly string[] = AUDIT_DETAIL_KEYS[i.action];
       const extra = Object.keys(i.details).find((k) => !allowed.includes(k));
       if (extra) throw new RpcRefusal('bad_request', `details.${extra} is not recorded for ${i.action}`);
+      // A Support ID lookup is about an end user, not an org's act: never an org's row, so no partner's audit view or
+      // feed group can show it (C15, D386).
+      if (i.action === 'support.lookup' && i.orgId !== undefined) throw new RpcRefusal('bad_request', 'support.lookup is recorded without an org');
       try {
         await auditInsert(this.db, entry(w, i.action, { orgId: i.orgId ?? null, target: i.target ?? null, details: i.details })).run();
       } catch (err) {

@@ -222,7 +222,7 @@ describe('audit and CSV', () => {
 });
 
 describe('the route table', () => {
-  it('is the spec’s C8 routes, C12’s, C13’s and C14’s; no user export, no user or support lookup yet (D275, D276)', () => {
+  it('is the spec’s C8 routes, C12’s, C13’s, C14’s and C15’s lookup; no user export, no Users screen routes yet (D275)', () => {
     expect(ROUTE_TABLE).toMatchInlineSnapshot(`
       [
         "GET /api/me",
@@ -270,9 +270,11 @@ describe('the route table', () => {
         "GET /api/rates",
         "PUT /api/rates/:day",
         "GET /api/retention",
+        "POST /api/support/lookup",
       ]
     `);
-    // The only exports are C12's ledger CSVs (/api/exports/:org/:month): no user export.
-    expect(ROUTE_TABLE.join('\n')).not.toMatch(/users?\/export|export\/users?|users\/search|users\/get|support/u);
+    // The only exports are C12's ledger CSVs (/api/exports/:org/:month): no user export. The Support ID lookup (C15) is
+    // POST only, so no code lands in a URL; the Users screen's routes come with C8b.
+    expect(ROUTE_TABLE.join('\n')).not.toMatch(/users?\/export|export\/users?|users\/search|users\/get|GET \/api\/support/u);
   });
 });

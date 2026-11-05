@@ -41,6 +41,8 @@ describe('POST /v1/login', () => {
       // A pk_test_ app: the request's own timings (test/timings.test.ts).
       timings: { totalMs: expect.any(Number), phases: expect.any(Object) },
       requestId: expect.any(String),
+      // C15: the user's Support ID (its value: support-lookup.test.ts).
+      supportId: expect.stringMatching(/^HANA-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/u),
     });
     expect(res.headers.get('access-control-allow-origin')).toBe(VAULT);
     expect(near.sent).toHaveLength(1);

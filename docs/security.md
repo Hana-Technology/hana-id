@@ -1,7 +1,8 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-05 for the outside probe's schedule (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383; before it branch `chore/identity-probe-hourly`, hourly, D382); 2026-11-04 for retention and erasure (branch `feat/batch-c-13`: the
+known open issues. Last verified against code: 2026-11-05 for the Support ID and its lookup (branch `feat/batch-c-15`:
+what a user shows, what the staff lookup reveals and to whom, its audit, D384–D387); 2026-11-05 for the outside probe's schedule (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383; before it branch `chore/identity-probe-hourly`, hourly, D382); 2026-11-04 for retention and erasure (branch `feat/batch-c-13`: the
 admin Worker's retention invariants and residual, D360–D369); 2026-11-04 for a statement's issuer shown to partners as `hana` (branch `feat/console-reports-upgrades`, D371); 2026-11-04 for the claim allow-list's `at_hash`, a freeze pausing pending memberships and the partner console's fresh sign-in and write paths (branch `feat/batch-c-10`, D342, D343, D350–D358); 2026-11-04 for the wallet directory's ids and the wallet record's
 session signature (branch `feat/user-id-identity-sub`: Parties' partner row, `IDENTITY_SUB_KEY` and `USER_ID_KEY` in
 the compromise table, "Wallet directory" in the API's invariants with the review finding and its fix; D346, D311 and
@@ -318,6 +319,22 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   key, the page cursor carries the User ID, a search by sub or internal id is refused, and another org's user is
   `not_found` (tested by grepping the answers for the sub, the key, `hu_` and `@`). The internal id stays off partners
   because it is the usage ledger's pseudonym: with it a partner could join anything keyed by the ledger's uid. Logs carry the app, endpoint and a code only.
+- **The Support ID and its lookup are staff-only reads of one user's activity** (batch C15, D276 as amended,
+  D384–D387). *What a user shows*: `supportId` in the `/v1/login` and `/v1/sessions` answers and `hana_status`, the
+  User ID's 40-bit short form; never the User ID, a sub, the internal id or an address (the answers are tested for each),
+  and computable by anyone holding the User ID, so a partner page that reads it learns nothing new. *What a lookup
+  reveals, to staff only*: for every user sharing the code, the ids, identities with their subs (and, through the
+  issuer's directory, the addresses: the CLI now, the admin screen after C8b), wallets, the scope's apps, the user's
+  vault shares' times (no share id, key or counter), the apps' changes, the ledger's ok login, session and derive
+  events by uid, and the events of the request IDs given (errors included). *Who can*: `AdminRpc.supportLookup` and
+  `userShares` take a `hana` actor only and have no route; `ConsoleRpc` has no such method (tested); the ledger part
+  needs `usage_admin`, which the API never holds (its role only writes, D73), so a compromised API gains no read of a
+  user's activity it doesn't already compute. *Audit*: the admin console's lookup writes its `audit_log` row (the
+  staff Access identity, the query, a required ticket with no `@`, the request-ID count, the window) before reading
+  anything and reads nothing when it can't (D386); the row has no org, so no partner's audit view or feed shows it and
+  it is never emailed. The CLI's `support:lookup` is the operator's path (their own wrangler and Neon credentials, as
+  `user:find`), not audited, printed to the terminal only. A code isn't a credential: nothing changes on a lookup.
+  *Erasure*: after `uid-erase` (D361) the code resolves to nothing and the uids are gone from the ledger (tested).
 - **Usage capture fails open and carries no PII** (batch C4, `src/usage/`). The ledger event is built at the response
   and written after it (`waitUntil`); a missing binding, a refusing, slow or hanging server, a refused event or a
   missing uid key never changes a status, body or header or delays an answer (`apps/api/test/usage.test.ts`). A lost

@@ -328,7 +328,9 @@ export class MockApi {
     const result = mpcAnswer(b.pk1, session.path);
     const nearTx = this.chain.newTxHash();
     this.chain.txs.set(nearTx, result);
-    return this.api.done(ctx, 200, { result, session: { scope_id: session.scope_id, expires_at_ms: session.expires_at_ms, max_uses: session.max_uses, used: 1 }, nearTx });
+    // As the Worker's /v1/login (C15): the account root's Support ID, by the Worker's own code.
+    const supportId = await this.api.sessionSupportId(this.env, app.scope_id, pi);
+    return this.api.done(ctx, 200, { result, session: { scope_id: session.scope_id, expires_at_ms: session.expires_at_ms, max_uses: session.max_uses, used: 1 }, nearTx, ...(supportId ? { supportId } : {}) });
   }
 
   private async derive(ctx: ApiCtx, b: Body): Promise<Response> {

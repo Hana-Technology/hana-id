@@ -5,7 +5,8 @@
 //   - `search`: identities by address (a full address exactly, else a substring of ≥ 3 characters), provider, app, sub
 //     and "unverified only", keyset-paged newest first (an address search lists Google accounts' unverified claims
 //     after the verified rows); a support reference (`ticket`) is optional;
-//   - `get`: one identity and its apps; the ticket is required;
+//   - `get`: one identity and its apps; the ticket is required; audited as `user_view`, or as `support_lookup` for the
+//     Support ID lookup's email join (`purpose`, D399);
 //   - `auditSince`: the issuer's `email_admin_audit` rows (no directory value in them), for the admin's audit view.
 //
 // Every call checks the staff member itself: the request's Cloudflare Access JWT (the admin application's AUD tag and
@@ -313,6 +314,11 @@ export class DirectoryRpc extends WorkerEntrypoint<Env> {
     if (!who.ok) return who;
     const grant = await takeRows(this.env, who.email, 1, i.requestId, now);
     if (!grant.ok) return grant;
+    // The row's action says why the identity was read: the Users detail (`user_view`) or a Support ID lookup's email
+    // join (`support_lookup`, D399), whose `lookup` is the admin request's id: the console's `support.lookup` row of the
+    // same request.
+    const action = i.purpose ?? 'user_view';
+    const detail = action === 'support_lookup' ? { provider: i.provider, sub: i.sub, lookup: i.requestId } : { provider: i.provider, sub: i.sub };
     const db = this.env.DB;
     let user: UserSqlRow | undefined;
     let apps: { app_id: string; scope_id: string; first_seen_ms: number; last_seen_ms: number }[];
@@ -320,7 +326,7 @@ export class DirectoryRpc extends WorkerEntrypoint<Env> {
       const [, u, a] = await db.batch<Record<string, unknown>>([
         db
           .prepare(`${AUDIT_INSERT}json_set(?, '$.found', (SELECT COUNT(*) FROM user_emails WHERE provider = ? AND sub = ?)))`)
-          .bind(now, who.email, 'user_view', i.ticket, JSON.stringify({ provider: i.provider, sub: i.sub }), i.provider, i.sub),
+          .bind(now, who.email, action, i.ticket, JSON.stringify(detail), i.provider, i.sub),
         db.prepare(`SELECT ${USER_COLUMNS} FROM user_emails ue WHERE ue.provider = ? AND ue.sub = ?`).bind(i.provider, i.sub),
         db
           .prepare('SELECT app_id, scope_id, first_seen_ms, last_seen_ms FROM user_email_apps WHERE provider = ? AND sub = ? ORDER BY last_seen_ms DESC, app_id ASC LIMIT ?')
@@ -330,7 +336,7 @@ export class DirectoryRpc extends WorkerEntrypoint<Env> {
       apps = a!.results as unknown as typeof apps;
     } catch {
       await returnRows(this.env, who.email, grant.keys, grant.granted);
-      log({ event: 'directory_read_failed', requestId: i.requestId, outcome: 'error', code: 'user_view' }, 'error');
+      log({ event: 'directory_read_failed', requestId: i.requestId, outcome: 'error', code: action }, 'error');
       return fail('internal', 'The directory read or its audit row failed');
     }
     if (!user) {
@@ -338,7 +344,7 @@ export class DirectoryRpc extends WorkerEntrypoint<Env> {
       log({ event: 'directory_read', requestId: i.requestId, outcome: 'rejected', code: 'not_found' });
       return fail('not_found', 'No directory row for this identity');
     }
-    log({ event: 'directory_read', requestId: i.requestId, outcome: 'ok', code: 'user_view', count: 1 });
+    log({ event: 'directory_read', requestId: i.requestId, outcome: 'ok', code: action, count: 1 });
     const truncated = apps.length > DIRECTORY_APPS_MAX;
     return {
       ok: true,

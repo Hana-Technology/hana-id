@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
+Last verified against code: 2026-10-28 (commit 58edee9); D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
 user, implementation choices to confirm) on 2026-11-05; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
 flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
@@ -6383,6 +6383,8 @@ follow-up there.
 - Why: a lookup reads a person's activity; it gets a durable row naming who looked and why, as directory reads do.
   `AdminRpc`'s other staff reads are logged only (`rpc` lines), which isn't enough for this one.
 - Rejected: a hot-DB audit table (a new store for one action); logging only.
+- Amended 2026-11-05 by D399: the ticket is console-core `SUPPORT_TICKET_RE` (1–64 letters, digits or `._#:-`), the
+  issuer's rule, since the email join hands the same ticket to `DirectoryRpc.get` (recorded there as `support_lookup`).
 
 ### D397. The CLI's lookup is its own command, `admin <env> support:lookup`, not more sections of `user:find --user`
 - Date 2026-11-05 · Status: decided while building C15 (to confirm) · Built: `scripts/lib/admin-support.ts`,
@@ -6629,11 +6631,67 @@ still take them: renumber on merge.
   column**: the build plan's C8b line predates D346, which dropped it. The remote apply is the user's (docs/
   operations.md "Users screen (C8b)").
 - Why: one rebuild for every action batch C plans; the `at_ms` index serves C13's `retention:issuer` purge.
+- Amended 2026-11-05 by D399: `support_lookup` is used now, for the Support ID lookup's email join (`DirectoryRpc.get`
+  with `purpose: 'support_lookup'`); the lookup's own audit stays in the console's `audit_log`.
+
+## The Support ID lookup's admin screen (branch `feat/batch-c-15-screen`), 2026-11-05
+
+### D399. The lookup's screen: the email join inside the lookup route, audited by the issuer as `support_lookup`; one ticket rule for both audits
+- Date 2026-11-05 · Status: decided while building (the `support_lookup` action was the requester's suggestion,
+  "unless there's a reason not to"; the rest: to confirm) · Built on `feat/batch-c-15-screen`:
+  `apps/admin/src/support.ts` (`lookupEmails`, `SUPPORT_EMAILS_MAX`, `SupportLookupAnswer`), `apps/admin/public/app.js`
+  (`/support`, `openLookup`, the Users search and the wallet-directory block), console-core `directory.ts`
+  (`DIRECTORY_GET_PURPOSES`, `directoryGetInput.purpose`) and `support.ts` (`supportTicket`),
+  `apps/email-issuer/src/directory-rpc.ts` `get`; tests `apps/admin/test/support.test.ts`, `apps/admin/test-spa/
+  support.test.ts`, `apps/admin/scripts/test/gen-wrangler.test.ts`, `apps/email-issuer/test/directory-rpc.test.ts`,
+  `packages/console-core/test/{directory,support}.test.ts` · Source: build plan C15 "Screen: after C8b merges", D275,
+  D388–D392, D394–D396 · Number: the next free one on `develop` when written (D398 the highest); another branch may
+  take it first, so renumber at merge if so · Amends D396 (the ticket rule) and D392 (`support_lookup` unused)
+- Decision:
+  1. **The email join is in `POST /api/support/lookup`**, not in the browser or a second route: after the console's
+     audit row and `AdminRpc.supportLookup`, together with the ledger part, the admin Worker calls `DirectoryRpc.get`
+     for each distinct `directoryKey` of the matches' identities (at most `SUPPORT_EMAILS_MAX` = 20, in parallel),
+     with the request's Access JWT and the lookup's ticket. The answer adds `emails` (each identity's row, or why
+     not: `not_found`, `not_read`, `no_directory`, `directory_unavailable`, `directory_refused`, `rate_limited`,
+     `failed`), `emailsNote?` and `unverifiedWarning?` (the CLI's text). An issuer failure never fails the lookup;
+     a budget refusal emails the security alias (`directory_budget`, the Users routes' `budgetAlert`).
+  2. **The issuer records these reads as `support_lookup`**: `DirectoryRpc.get` takes `purpose` (`user_view`, the
+     default, or `support_lookup`), which names the `email_admin_audit` row; a `support_lookup` row's `detail` is
+     `{provider, sub, lookup, found}`, `lookup` the admin request's id, which is the console's `support.lookup` row's
+     `request_id`. The lookup's own audit stays in the console's `audit_log` (D396); the issuer's row says why each
+     address was read and points at it. Each read takes one row of the staff member's directory budget, as a view.
+  3. **One ticket rule**: the lookup's ticket is console-core `SUPPORT_TICKET_RE` (1–64 letters, digits or `._#:-`),
+     the issuer's and `POST /api/users/get`'s, instead of D396's "printable ASCII, no `@`, no edge spaces". The same
+     ticket goes into both audits; with two rules a ticket like `ZD-1 refund` would give a lookup the issuer then
+     refuses to join.
+  4. **The screen** (`/support`, in the nav): query, ticket (required), request IDs (≤ 20) and days, kept in memory only
+     (no URL, history state or storage; `go()` moves to literal paths only); nothing read until "Look up". The Users
+     search sends a `HANA-`-prefixed Support ID there (run at once when a ticket was typed, else it waits for one);
+     a User ID, internal id or wallet still goes to `POST /api/users/find`, and "Wallet directory only" on the screen
+     keeps `find` for a code. Every wallet-directory user's block (a `find` answer, a user's detail) has a "Support ID
+     lookup" button that fills in the User ID and the ticket already given, not run. It renders every part of the
+     answer: a collision's matches list and the `truncated` flag, "Ledger unavailable: <reason>" at the top and in
+     each ledger part, the request IDs' events with outcome badges and codes, the IDs with no event. No export.
+  5. **SPA tests in a DOM**: `apps/admin/test-spa` runs `public/app.js` in a fresh happy-dom window per test
+     (`happy-dom` 21.0.3, already in the lockfile for the console and the SDK, now an admin devDependency), the API
+     answered at `fetch`. The source checks stay.
+- Why: one request, and the issuer reads only the identities the audited lookup itself found (the browser can't name
+  others through this route); the issuer's audit says why each address was read and ties it to the console's row.
+- Rejected: the SPA opening each identity through `POST /api/users/get` (audited `user_view`, and each also reads the
+  wallet directory, app names and up to 8 scopes on chain: far past a request's call budget, and tied to nothing); a
+  second route taking `{provider, sub}` from the browser (any identity, not only the lookup's); keeping D396's looser
+  ticket and skipping the join when it doesn't fit (a lookup that silently lacks addresses).
+- Trade-offs: a lookup costs up to 20 rows of the staff member's directory budget even when only the activity was
+  wanted; a Support ID typed in Users without its `HANA-` prefix still goes to the address search (the lookup screen
+  itself takes every form); the issuer's `get` still reads the identity's apps for a `support_lookup`, which the admin
+  Worker drops.
 
 ## Superseded or amended
 
 | Was | Now | Source |
 |---|---|---|
+| The lookup's ticket: 1–64 printable ASCII characters, no `@`, no leading or trailing space (D396) | console-core `SUPPORT_TICKET_RE`, 1–64 letters, digits or `._#:-`: the issuer's rule, the same ticket in both audits (D399) | `packages/console-core/src/support.ts` `supportTicket` |
+| The issuer's `support_lookup` audit action unused; every `DirectoryRpc.get` audited `user_view` (D392) | `get` takes `purpose`; the Support ID lookup's email join is audited `support_lookup` with the lookup's request id (D399) | `apps/email-issuer/src/directory-rpc.ts` `get` |
 | Every DirectoryRpc call carries a required ticket (spec "Data path", D275 as proposed) | Required to open one identity (`get`); optional for a search or list page; every read audited either way (D275 as confirmed 2026-11-05) | `apps/email-issuer/src/directory-rpc.ts`, migration 0003 |
 | C8b's issuer migration 0003 adds `user_email_apps.uid` (build plan C8b) | No uid column (D346 dropped it); 0003 rebuilds `email_admin_audit` only (D392) | `apps/email-issuer/migrations/0003_directory_audit.sql` |
 | D381: a session key WebCrypto can't make ends the login `api_unavailable` (a different code rejected) | `derive_failed` with `data.reason` `webcrypto_unsupported` / `webcrypto_failed` (D385) | `packages/web/src/vault/errors.ts` |

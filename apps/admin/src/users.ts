@@ -41,7 +41,7 @@ const PROVIDERS = new Set(['email', 'google']);
 const TICKET_RE = /^[A-Za-z0-9._#:-]{1,64}$/u;
 
 /** The staff call's identity for the issuer: the Access JWT exactly as Cloudflare put it on this request. */
-const staffCall = (c: RouteCtx) => ({ requestId: c.staff.requestId, accessJwt: c.request.headers.get(ACCESS_JWT_HEADER) ?? '' });
+export const staffCall = (c: RouteCtx) => ({ requestId: c.staff.requestId, accessJwt: c.request.headers.get(ACCESS_JWT_HEADER) ?? '' });
 
 const pick = (b: Record<string, unknown>, ...keys: string[]): Record<string, unknown> => {
   const out: Record<string, unknown> = {};
@@ -73,7 +73,7 @@ async function directoryFailure(c: RouteCtx, route: string, f: DirectoryFail): P
 }
 
 /** `directory_budget` to the security alias: one message per staff member and window (the provider drops repeats). */
-async function budgetAlert(c: RouteCtx, b: NonNullable<DirectoryFail['budget']>): Promise<void> {
+export async function budgetAlert(c: RouteCtx, b: NonNullable<DirectoryFail['budget']>): Promise<void> {
   const now = Date.now();
   const opens = Math.round((now + b.retryAfterMs) / 60_000);
   const to = recipients(c.env.SECURITY_ALIAS);

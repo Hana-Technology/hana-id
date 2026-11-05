@@ -20,9 +20,10 @@
 // ok events only, by design, so errors can't be listed per user), each marked whether it carries one of the matches'
 // uids. Consents aren't shown: they live only in the vault's browser storage (D23).
 //
-// Never in any answer: a uid's bytes, an email address (the admin screen joins the issuer's directory itself through
-// DirectoryRpc, after C8b), a share id, a session key or a counter.
+// Never in any of these answers: a uid's bytes, an email address (the admin Worker's route joins the issuer's directory
+// itself through DirectoryRpc, D399: apps/admin/src/support.ts), a share id, a session key or a counter.
 import { z } from 'zod';
+import { SUPPORT_TICKET_RE } from './directory.ts';
 import { ctx, requestId } from './types.ts';
 import type { AppChange } from './types.ts';
 import { type StaffUser, parseUserSearch, uidOfInternalId } from './users.ts';
@@ -75,16 +76,14 @@ export type SupportLookupInput = z.infer<typeof supportLookupInput>;
 export const userSharesInput = ctx.extend({ appId: z.string().min(1).max(64), path: z.string().min(3).max(512) }).strict();
 export type UserSharesInput = z.infer<typeof userSharesInput>;
 
-/** The staff ticket a lookup is recorded under (the support reference or a short reason; never an address). */
-export const supportTicket = z
-  .string()
-  .min(1)
-  .max(64)
-  .regex(/^[\x20-\x7e]+$/u, 'printable ASCII')
-  .refine((t) => !t.includes('@'), 'no email address: the ticket is stored')
-  .refine((t) => t.trim() === t, 'no leading or trailing space');
+/**
+ * The staff ticket a lookup is recorded under: the support reference, in the rule of every staff read that names one
+ * (directory.ts SUPPORT_TICKET_RE: 1–64 letters, digits and `._#:-`, so never an address). The screen's email join
+ * hands the same ticket to DirectoryRpc.get, which records it in the issuer's audit too (D399).
+ */
+export const supportTicket = z.string().regex(SUPPORT_TICKET_RE, 'a support reference: 1–64 letters, digits or ._#:- (no space, no address: it is stored)');
 
-/** The admin Worker's `POST /api/support/lookup` body (the staff screen's call, after C8b). */
+/** The admin Worker's `POST /api/support/lookup` body (the staff screen's call). */
 export const supportLookupBody = z
   .object({ query, ticket: supportTicket, requestIds: z.array(requestId).max(SUPPORT_REQUEST_IDS_MAX).optional(), days: days.optional() })
   .strict();

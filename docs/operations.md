@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-05 (branch `feat/batch-c-8b`: "Admin Worker" → "Users screen (C8b)": issuer migration 0003, the deploy order issuer → API → admin, the checks and failures, D388–D392; "Retention" and "User directory (D269)" notes); 2026-11-05 (branch `chore/ci-cost`: "CI and git": CI and the identity probe turned off, the local checks, D387); 2026-11-05 (branch `feat/batch-c-15`: "Support ID lookup", `admin <env> support:lookup`, the admin route's audit, D394–D397); 2026-11-05 (branch `feat/coop-canary`: "Before each release: the COOP canary" (`coop-canary`, what a failure means, D386), step 0 of "A release."); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: "Common failures"' `derive_failed` `webcrypto_unsupported` / `webcrypto_failed`, D385); 2026-11-05 (branch `feat/deploy-build-check`: "Checking a deploy (`deploy-check`)", D384:
+Last verified against code: 2026-11-05 (branch `feat/batch-c-15-screen`: "Support ID lookup" → "In the admin console" (the screen, the email join, the ticket rule, what to watch) and "Users screen (C8b)" (a Support ID goes to the lookup; the check), D399); 2026-11-05 (branch `feat/batch-c-8b`: "Admin Worker" → "Users screen (C8b)": issuer migration 0003, the deploy order issuer → API → admin, the checks and failures, D388–D392; "Retention" and "User directory (D269)" notes); 2026-11-05 (branch `chore/ci-cost`: "CI and git": CI and the identity probe turned off, the local checks, D387); 2026-11-05 (branch `feat/batch-c-15`: "Support ID lookup", `admin <env> support:lookup`, the admin route's audit, D394–D397); 2026-11-05 (branch `feat/coop-canary`: "Before each release: the COOP canary" (`coop-canary`, what a failure means, D386), step 0 of "A release."); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: "Common failures"' `derive_failed` `webcrypto_unsupported` / `webcrypto_failed`, D385); 2026-11-05 (branch `feat/deploy-build-check`: "Checking a deploy (`deploy-check`)", D384:
 the build id in every Worker and page bundle, `deploy-check <env> [--d1]` after each deploy step, migrations applied
 from a checkout at the deployed commit, the API's raw `wrangler deploy` lines now `run deploy`); 2026-11-05 (branch `fix/deploy-pages-builds`: `deploy:pages` runs the web build first; the 0011 apply note; the rebuilt page versions); 2026-11-05 (branch `chore/ci-cost`: "CI and git": which jobs run when, the nightly WebKit and Firefox run; the identity probe every 3 hours, D383); 2026-11-05 (branch `docs/sandbox-dev-state-1105`: sandbox-dev redeployed at `develop` 8aab09d with the wallet directory: `USER_ID_KEY`, the bookmark, 0011, API 6141ba3d, vault abe7cc61, auth 6b9a4bee, issuer 1542a60c); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
 what counts, each job's share in both crons, the `budget` log lines; settlement's reads a run; D380); 2026-11-04 (branch `feat/batch-c-13`: "Retention (batch C13, milestone M6)": the Neon
@@ -823,7 +823,8 @@ right after a deploy a vault and API from before and after the session signature
 
 ## Support ID lookup (batch C15)
 
-Built on `feat/batch-c-15` (D276 as amended 2026-11-05, D394–D397), not merged, not deployed. A user reads their
+Built in C15 (D276 as amended 2026-11-05, D394–D397) and its admin screen (D399), merged into `develop`, not
+deployed. A user reads their
 Support ID `HANA-XXXX-XXXX` on the Hana approval popup's account line; a partner page has it as `hana.supportId` (SDK
 0.2.0 or later, D393; so in its diagnostics) and on the partner console's Users page beside the User ID. Partners
 escalate with the code (or the User ID, `u1_…`), the error `code`, the time and the app, and request IDs when they
@@ -860,16 +861,37 @@ It reads like `user:find` (the API's D1 privately, the issuer's D1 for the addre
 URL and password never reach an error. Read only: nothing changes on a lookup, and a code isn't a credential. Print
 to the terminal only: never redirect the output to a file outside `.secrets/`.
 
-**In the admin console** (after C8b builds the screen): `POST /api/support/lookup {query, ticket, requestIds?, days?}`
-gives the same report as JSON (`docs/api.md` "The Support ID lookup"). The ticket (the support reference or a short
-reason, no address) is required and recorded with the staff member's identity in the console's audit log before
-anything is read (`support.lookup`, shown in the admin audit view; never in a partner's, never emailed).
+**In the admin console** (the **Support ID lookup** screen, `/support`; with the admin Worker at M4): type the code,
+User ID or internal id, the support reference (required: 1–64 letters, digits or `._#:-`, e.g. `ZD-1234`; no space
+and no address, it is stored), and optionally the escalation's request IDs (≤ 20) and the window (1–731 days, 30 by
+default), then **Look up**. The Users search sends a Support ID here (with a support reference typed there it runs at
+once), and every wallet-directory user's block (a Users `find` answer, a user's detail) has a "Support ID lookup"
+button that fills in the User ID and the ticket already given; "Wallet directory only" on the screen is the old
+`find` answer (no ticket, no activity). The screen calls `POST /api/support/lookup {query, ticket, requestIds?, days?}`
+(`docs/api.md` "The Support ID lookup") and shows the CLI's report plus each identity's address: every match (a
+collision lists each and says so; past 10 it says "Truncated"), their ids, identities with the issuer directory's
+address (an unverified Google claim marked with the CLI's warning), wallets, apps, the vault shares not yet expired
+(live, or revoked), the apps' changes, the ok ledger events, and the request IDs' events with their outcome and code; without the
+ledger it says "Ledger unavailable: …" at the top and in each part, and shows the rest.
+
+The lookup is recorded with the staff member's identity in the console's audit log before anything is read
+(`support.lookup`, shown in the admin audit view; never in a partner's, never emailed). Each address is then read
+from the issuer's directory with the same ticket, as `DirectoryRpc.get` with `purpose: 'support_lookup'`: the issuer
+writes its own `support_lookup` row per identity (Audit → "Issuer directory reads", `detail.lookup` = the console
+row's request id) and takes one row of that staff member's directory budget each (at most 20 identities per lookup).
+Past the budget the addresses say "not read" with the window, and the security alias gets the same
+`directory_budget` email as for the Users screen; without an issuer (an env with no `emailIssuer`) they say "directory
+unavailable". Nothing here exports or downloads: the query and the answer stay in the page's memory (no URL, no
+storage).
 
 **An erasure request** still goes through `uid-erase` ("Retention"); afterwards the code finds nothing.
 
 **What to watch** (admin Worker logs): `audit_failed` (route `POST /api/support/lookup`: the console didn't record the
 lookup, so nothing was read: check the console Worker), `bff` lines with `code: ledger_unavailable` (no `USAGE_DB` or
-Neon down). The API's `rpc` lines name `admin.supportLookup`; none carries the query.
+Neon down) and `calls: {directoryRead, directoryMissing}` (the email join's counts), `directory_refused` (the issuer
+refused a staff identity this Worker accepted: the "Users screen (C8b)" table's `502` row), `directory_budget`. The
+API's `rpc` lines name `admin.supportLookup` and the issuer's `directory_read` lines `support_lookup`; none carries
+the query, a sub or an address.
 
 ## Hot DB migration 0006 and the new gate (batch C3, milestone M1)
 
@@ -1304,8 +1326,11 @@ prints a secret; `<env>` throughout):
 
 **Check it**: in the admin console, Users → search a known address (your own test login) → one row; open it with a
 ticket (e.g. `TEST-1`) → the directory row, the apps by name, the wallet directory's User ID, Support ID, internal id
-and wallets, and each scope's path with its block height. Audit → "Issuer directory reads" lists both reads under your
-email (the search with no ticket, the view with `TEST-1`), no address in either. `wrangler tail
+and wallets, and each scope's path with its block height. Its "Support ID lookup" button opens the lookup with the
+User ID and `TEST-1` filled in; **Look up** → the same user with your address beside the identity (and "Ledger
+unavailable" while `USAGE_DB` isn't bound). Searching Users for the Support ID with a ticket lands on the same
+lookup; a User ID or wallet still lists the wallet directory. Audit → "Issuer directory reads" lists both reads under your
+email (the search with no ticket, the view with `TEST-1`), no address in either (after the lookup, its `support_lookup` row with the same ticket too). `wrangler tail
 hana-id-email-issuer-<env>` shows `directory_read` lines with codes and counts only.
 
 | Symptom | Meaning | Action |

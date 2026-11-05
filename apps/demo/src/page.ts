@@ -180,7 +180,7 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
 
   function showError(action: DemoAction, e: unknown): void {
     const info = errorInfo(e);
-    errors.push({ at: new Date(clock()).toISOString(), action, code: info.code, reason: info.reason, message: info.message });
+    errors.push({ at: new Date(clock()).toISOString(), action, code: info.code, reason: info.reason, message: info.message, requestId: info.requestId });
     const box = el('error');
     box.textContent = plainMessage(e, action);
     box.hidden = false;

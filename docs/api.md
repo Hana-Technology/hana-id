@@ -1,6 +1,6 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
-Last verified against code: 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup's screen: the email join in `POST /api/support/lookup` (`emails`, `emailsNote`, `unverifiedWarning`), its ticket in the issuer's rule, `DirectoryRpc.get`'s `purpose` (`support_lookup`), D399); 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
+Last verified against code: 2026-11-05 (branch `feat/sdk-error-request-id`: "Conventions": an error's `requestId` passed on to the SDK as `data.requestId`, D405); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup's screen: the email join in `POST /api/support/lookup` (`emails`, `emailsNote`, `unverifiedWarning`), its ticket in the issuer's rule, `DirectoryRpc.get`'s `purpose` (`support_lookup`), D399); 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
 answers, D395; `AdminRpc.supportLookup` / `userShares`; the admin Worker's `POST /api/support/lookup`; the
 `support.lookup` staff action; D394–D396); 2026-11-05 (branch `feat/deploy-build-check`: the build id, D384: `GET /v1/health`'s
 `build`, the page Workers' `GET /.well-known/hana-build`, the issuer's `GET /v1/email/health`, the `HANA_BUILD` var
@@ -118,7 +118,9 @@ Worker (D230); here such a path is `404 not_found`.
 - Success: `{…fields, "requestId"}` — relayed calls `{"result": …, "nearTx": "<base58 tx hash>", "requestId"}`.
   Error: `{"error": "<message>", "code": "<code>", "requestId", "nearTx"?, …extra}`.
 - `x-request-id` on every non-preflight response; `requestId` is the `cf-ray` header when it matches
-  `[A-Za-z0-9-]{1,64}`, else a random UUID.
+  `[A-Za-z0-9-]{1,64}`, else a random UUID. The vault passes an error answer's `requestId` on to the partner's SDK
+  (0.2.0 or later) as `data.requestId`, only when it is 8–64 of `[A-Za-z0-9-]` (D405): nothing else of an error body
+  reaches the partner beyond what `docs/integration.md` section 13 lists.
 - `content-type: application/json; charset=utf-8`, `cache-control: no-store`.
 - Body caps (streamed, `413` with code `bad_request` past them): app endpoints and owner actions 16 KiB, vault
   endpoints and `/v1/identity/token` 4 KiB, login relay 12 KiB. Non-JSON: `400 bad_request`. JWT ≤ 7168 characters.

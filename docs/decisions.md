@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
+Last verified against code: 2026-10-28 (commit 58edee9); D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
 user, implementation choices to confirm) on 2026-11-05; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
 flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
@@ -6422,6 +6422,8 @@ follow-up there.
   approval popup); a branch that releases 0.2.0 before C15 merges must raise the constant.
 - Rejected: adding the field unconditionally (breaks deployed SDKs); a new port method (`hana_supportId`), which an old
   SDK can't call anyway and which splits the session state across two calls.
+- Extended 2026-11-05 by D405: the same gate (`API_REQUEST_ID_SDK_MIN`, also 0.2.0) adds the API answer's
+  `requestId` to a port error's `data`.
 
 ### D387. CI and the outside identity-JWKS probe are turned off while only testnet runs
 - Date 2026-11-05 · Status: **decided by the user** · Built: the `CI` and `Identity JWKS probe` workflows disabled in
@@ -6838,6 +6840,58 @@ still take them: renumber on merge.
   our size; the guard answers the card authorisation.
 - Rejected: our own staff sign-in (more exposed, more code on the most sensitive screen), two modes (throwaway work),
   Supabase Auth.
+## The API request ID in the SDK's errors (branch `feat/sdk-error-request-id`), 2026-11-05
+
+### D405. The vault puts the API answer's request ID in a port error's `data.requestId`, for an SDK of 0.2.0 or later
+- Date 2026-11-05 · Status: decided while building C15's follow-up (to confirm) · Built on
+  `feat/sdk-error-request-id`: `packages/core/src/api-request-id.ts` (`API_REQUEST_ID_RE`, `isApiRequestId`,
+  `apiRequestIdOf`, `API_REQUEST_ID_SDK_MIN`), `packages/web/src/vault/errors.ts` (`VaultError.requestId`,
+  `fromRequest`, `toProtocol(withRequestId)`, `apiErrorToVault`), `vault/login.ts` (`LoginChain.noteAnswer`, `traced`;
+  the relay read's refusal, `linkedApiError`), `vault/vault.ts` (`sdkTakesRequestId`, `replyError`,
+  `revokeOtherDevices`, `identityError`), `packages/web/src/client/errors.ts` (`HanaError.requestId`, `HanaError.from`,
+  `toProviderRpcError`, `toSwkError`), `apps/demo/src/{errors,diagnostics,page}.ts`; tests
+  `packages/core/test/api-request-id.test.ts`, `packages/web/test/vault/request-id.test.ts`,
+  `packages/web/test/vault/linking.test.ts` (the `/v1/link` refusal), `packages/web/test/client/request-id.test.ts`,
+  `packages/react/test/{hooks,identity}.test.tsx`, `apps/demo/test/{errors,diagnostics,page}.test.ts`,
+  `apps/e2e/tests/persistence.spec.ts` (the real API's 410 and its `x-request-id`), `apps/e2e/tests/login.spec.ts`
+  (`token_has_pii` has none) · Source: build plan C15's open follow-up, D393, D394 · Number: D405 because branches in
+  flight when written may take D401–D404 (D403 the highest on `develop`); renumber at merge if another branch took it.
+- Context: the usage ledger keeps a user's uid on ok events only, so a failed request is found by its request ID
+  (C15, D394), and the SDK's errors carried none: a partner had nothing to escalate with.
+- Decision:
+  1. **Which errors.** A port error that came from an API answer: the answer's own refusal (`apiErrorToVault`, and the
+     vault's own mappings of one: `revokeOtherDevices`' `share_not_fresh` and gone share, `hana_identityToken`'s
+     refusals, `/v1/link`'s `link_refused`, the login relay's 403/410), and any error the login's chain step ends with
+     after one (a resend refused again, a recovery that gave up: `session_consumed`, `derive_failed`,
+     `api_unavailable` after a timeout's poll or a re-sync). The chain keeps the latest API call's request ID when it
+     failed with an answer and clears it on a success or a network error, so what it names is the answer the failure
+     followed. Never: a check in the vault, a cancel or the login's own end (an aborted chain is not marked; the abort
+     error is a shared object), a network failure, a NEAR read, Google's or the email issuer's answers (not in the
+     ledger), the background calls (shares, touch, the wallet record), a dormant session the API won't unlock (it ends
+     as `sessionExpired`; the request that woke it fails `4100` as before). Signing calls no API; key export's errors
+     stay in the export window.
+  2. **Only a request ID.** `API_REQUEST_ID_RE`, 8–64 of `[A-Za-z0-9-]`: what apps/api sends (a cf-ray or a UUID) and
+     within what the lookup takes (`[A-Za-z0-9_-]{8,128}`). Anything else is dropped, never a reason to change the
+     error; nothing else of the API's body is added (its message and details stay out, as before). The SDK checks again
+     (`HanaError.from` drops a malformed `requestId` from `data`).
+  3. **The gate.** The vault adds `data.requestId` only when the hello's `sdk` is `API_REQUEST_ID_SDK_MIN` (`0.2.0`) or
+     later (`sdkAtLeast`, D393's mechanism; its own constant, equal to `SUPPORT_ID_SDK_MIN` because both ship in the
+     unreleased 0.2.0). An older SDK's error parser doesn't check `data`, so the field wouldn't break it; the gate keeps
+     D393's rule (an SDK gets exactly the shapes it was built against: a partner comparing `data` keeps working).
+  4. **On the SDK.** `HanaError.requestId` (null without one); the EIP-1193 provider's `data.requestId` beside
+     `data.code` for a string code (a numeric code passes `data` through, so the same key); the SWK module's `ext[1]`.
+     React needs nothing of its own (`useHana().error` and `useIdentityToken().error` are HanaErrors).
+  5. **Not in `hana_status`.** Status is session state; request IDs are per call, and a success is already found by
+     the Support ID (its ok events carry the uid). Partners keep the IDs of the errors they get; the demo's *Copy
+     diagnostics* has each error's `requestId` and `requestIds`, the latest five distinct ones.
+- Why: the partner escalation the Support ID lookup expects (Support ID plus request IDs) needs the IDs in the place a
+  partner already handles: the error.
+- Rejected: a recent-request-IDs list in `hana_status` or the SDK (more protocol and vault state for no lookup gain);
+  attaching the operation's latest API request ID to every error it ends with (a cancel or a vault check after an
+  earlier answer would name a request that didn't cause it); forwarding the API's message or its whole body (free
+  text: only codes and checked fields reach the partner page); no gate (D393's rule).
+- Trade-offs: an SDK before 0.2.0 gets none (no partner uses one yet); a failure after a network error names no request
+  even when an earlier attempt was answered.
 
 ## Superseded or amended
 

@@ -149,6 +149,30 @@ describe('useHana', () => {
     expect(m.renders.last.hana).toMatchObject({ status: 'logged_in', error: null });
   });
 
+  it('D405: a login the API refused leaves its request ID in error.requestId (only a well-formed one)', async () => {
+    const m = mount();
+    await act(() => m.vault.connect(LOGGED_OUT));
+    m.vault.handle('hana_login', () => 'manual');
+    for (const [sent, seen] of [
+      ['8d1f2c3a4b5e6f70-SIN', '8d1f2c3a4b5e6f70-SIN'],
+      ['not one!', null],
+    ] as const) {
+      act(() => {
+        m.renders.last.hana.login().catch(() => undefined);
+      });
+      await settle();
+      const req = m.vault.last('hana_login');
+      await act(async () => {
+        m.vault.emit('loginProgress', { stage: 'popup_connected' });
+        m.vault.replyError(req.id, 'no_google_client', 'This app has no usable Google client', { requestId: sent });
+      });
+      await settle();
+      expect(m.renders.last.hana.error).toBeInstanceOf(HanaError);
+      expect(m.renders.last.hana.error?.code).toBe('no_google_client');
+      expect(m.renders.last.hana.error?.requestId).toBe(seen);
+    }
+  });
+
   it('logout returns to logged_out with no addresses', async () => {
     const m = mount();
     await act(() => m.vault.connect(LOGGED_IN));

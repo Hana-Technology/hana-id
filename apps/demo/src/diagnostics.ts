@@ -1,10 +1,10 @@
 // "Copy diagnostics": a JSON bug report reviewers can paste. It is built field by field from values that are public by
-// design (env, the app key's prefix, addresses, the Support ID, timings, status, the browser) and never from an object the SDK hands
+// design (env, the app key's prefix, addresses, the Support ID, the failed requests' API request IDs, timings, status, the browser) and never from an object the SDK hands
 // over, so nothing the page doesn't name can slip in. The page never holds keys, Google tokens or relay ids (the vault
 // and the Hana windows do), but error messages are free text, so they are scrubbed of anything shaped like a secret
 // and cut short.
 
-import { isSupportId } from '@hana-id/core';
+import { isApiRequestId, isSupportId } from '@hana-id/core';
 
 export interface LoginTiming {
   at: string;
@@ -22,6 +22,8 @@ export interface ErrorRecord {
   code: string | number | null;
   reason: string | null;
   message: string;
+  /** The Hana API request the error came from (`data.requestId`, D405), or null. */
+  requestId: string | null;
 }
 
 export interface DiagnosticsInput {
@@ -47,6 +49,8 @@ export interface DiagnosticsInput {
 
 /** At most this many of each list, the latest. */
 export const MAX_ENTRIES = 20;
+/** `requestIds`: the latest this many distinct API request IDs of the errors, newest last (D405). */
+export const MAX_REQUEST_IDS = 5;
 const MAX_MESSAGE = 200;
 
 /** `pk_test_85gd…`: enough to tell apps apart. */
@@ -75,6 +79,18 @@ export function scrub(text: string): string {
   let out = text;
   for (const [re, by] of SCRUB) out = out.replace(re, by as (m: string) => string);
   return out.length > MAX_MESSAGE ? `${out.slice(0, MAX_MESSAGE)}…` : out;
+}
+
+const requestIdOrNull = (v: unknown): string | null => (isApiRequestId(v) ? v : null);
+
+/** The latest MAX_REQUEST_IDS distinct request IDs of `errors`, oldest first. */
+function latestRequestIds(errors: readonly ErrorRecord[]): string[] {
+  const out: string[] = [];
+  for (let i = errors.length - 1; i >= 0 && out.length < MAX_REQUEST_IDS; i--) {
+    const id = requestIdOrNull(errors[i]!.requestId);
+    if (id !== null && !out.includes(id)) out.unshift(id);
+  }
+  return out;
 }
 
 const finite = (n: unknown): number | null => (typeof n === 'number' && Number.isFinite(n) ? Math.round(n) : null);
@@ -107,6 +123,8 @@ export function diagnostics(input: DiagnosticsInput, nowMs: number): Record<stri
     addresses: input.addresses ? { stellar: input.addresses.stellar, evm: input.addresses.evm } : null,
     // Only a well-formed `HANA-XXXX-XXXX`: anything else is left out of the report.
     supportId: isSupportId(input.supportId) ? input.supportId : null,
+    // What Hana's staff look a failed request up by, with the Support ID (the errors below carry theirs too).
+    requestIds: latestRequestIds(input.errors),
     unlockMs: finite(input.unlockMs),
     logins: input.logins.slice(-MAX_ENTRIES).map((l) => ({ at: l.at, method: l.method === 'email' ? 'email' : 'google', totalMs: finite(l.totalMs), stages: stages(l.stages) })),
     errors: input.errors.slice(-MAX_ENTRIES).map((e) => ({
@@ -115,6 +133,7 @@ export function diagnostics(input: DiagnosticsInput, nowMs: number): Record<stri
       code: e.code,
       reason: e.reason,
       message: scrub(e.message),
+      requestId: requestIdOrNull(e.requestId),
     })),
     userAgent: scrub(input.userAgent),
   };

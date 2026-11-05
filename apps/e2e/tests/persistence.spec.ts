@@ -12,6 +12,7 @@ import {
   openPartner,
   revokeShares,
   runAction,
+  settled,
   shares,
   status,
   test,
@@ -148,6 +149,26 @@ test('a 410 from unlock leads to a full login, never a derive', async ({ page, r
   expect(await login(page, { name: 'again' })).toEqual(first);
   expect(requests.count(LOGIN_ENDPOINT, since)).toBe(1);
   expect(requests.count(`${API_URL}/v1/derive`, since)).toBe(0);
+});
+
+test('D405: a refusal of the real API reaches the partner with that answer’s request ID; a check in the vault carries none', async ({ page }) => {
+  const app = await newApp();
+  await openPartner(page, app);
+  await login(page);
+  // A share the API no longer honours: revoke-other-devices is refused there (410 share_revoked), not in the vault.
+  expect(await revokeShares(app)).toBe(1);
+  const answered = page.waitForResponse((r) => r.url() === `${API_URL}/v1/vault/revoke-all`);
+  await runAction(page, 'rod', 'revokeOtherDevices');
+  const res = await answered;
+  expect(res.status()).toBe(410);
+  const header = await res.headerValue('x-request-id');
+  expect(header).toMatch(/^[A-Za-z0-9-]{8,64}$/u);
+  expect(await settled(page, 'rod')).toMatchObject({ state: 'error', code: 4900, data: { requestId: header } });
+  // Logged out now: the vault refuses before any API call, so there is no request to name.
+  await runAction(page, 'rod2', 'revokeOtherDevices');
+  const r = await settled(page, 'rod2');
+  expect(r).toMatchObject({ state: 'error', code: 4100 });
+  expect(JSON.stringify(r)).not.toContain('requestId');
 });
 
 test("blocked storage falls back to 'none' (storage_unavailable), and a reload needs a new login", async ({ page, context, requests }) => {

@@ -4,14 +4,25 @@ import { errorInfo, plainMessage } from '../src/errors.ts';
 
 describe('errorInfo', () => {
   it('prefers the Hana code an EIP-1193 error carries in data.code', () => {
-    expect(errorInfo(new ProviderRpcError(4001, 'User rejected', { code: 'popup_blocked' }))).toEqual({ code: 'popup_blocked', reason: null, message: 'User rejected' });
-    expect(errorInfo(new HanaError(4100, 'nope', { reason: 'share_not_fresh' }))).toEqual({ code: 4100, reason: 'share_not_fresh', message: 'nope' });
-    expect(errorInfo(new TypeError('Failed to fetch'))).toEqual({ code: null, reason: null, message: 'Failed to fetch' });
-    expect(errorInfo('plain')).toEqual({ code: null, reason: null, message: 'plain' });
+    expect(errorInfo(new ProviderRpcError(4001, 'User rejected', { code: 'popup_blocked' }))).toEqual({ code: 'popup_blocked', reason: null, message: 'User rejected', requestId: null });
+    expect(errorInfo(new HanaError(4100, 'nope', { reason: 'share_not_fresh' }))).toEqual({ code: 4100, reason: 'share_not_fresh', message: 'nope', requestId: null });
+    expect(errorInfo(new TypeError('Failed to fetch'))).toEqual({ code: null, reason: null, message: 'Failed to fetch', requestId: null });
+    expect(errorInfo('plain')).toEqual({ code: null, reason: null, message: 'plain', requestId: null });
   });
 
   it('ignores codes and reasons that are not code-shaped', () => {
-    expect(errorInfo({ code: 'Not A Code', data: { reason: '<b>' }, message: 'm' })).toEqual({ code: null, reason: null, message: 'm' });
+    expect(errorInfo({ code: 'Not A Code', data: { reason: '<b>' }, message: 'm' })).toEqual({ code: null, reason: null, message: 'm', requestId: null });
+  });
+
+  it('D405: data.requestId, the Hana API request the error came from, in either error shape; only exactly a request ID', () => {
+    const RQ = '8d1f2c3a4b5e6f70-SIN';
+    expect(errorInfo(new HanaError('rate_limited', 'slow down', { requestId: RQ })).requestId).toBe(RQ);
+    // The EIP-1193 provider's: the Hana code and the request ID side by side in data (client errors.ts).
+    expect(errorInfo(new ProviderRpcError(-32005, 'slow down', { code: 'rate_limited', requestId: RQ }))).toEqual({ code: 'rate_limited', reason: null, message: 'slow down', requestId: RQ });
+    for (const bad of ['short', `${RQ} x`, 'a'.repeat(65), 'has_underscore', 42, null, { id: RQ }]) {
+      expect(errorInfo(new HanaError('api_unavailable', 'm', { requestId: bad })).requestId, String(bad)).toBeNull();
+    }
+    expect(errorInfo(new HanaError('login_cancelled', 'm')).requestId).toBeNull();
   });
 });
 

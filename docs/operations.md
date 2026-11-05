@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-05 (branch `fix/webcrypto-linux-webkit`: "Common failures"' `derive_failed` `webcrypto_unsupported` / `webcrypto_failed`, D385); 2026-11-05 (branch `feat/deploy-build-check`: "Checking a deploy (`deploy-check`)", D384:
+Last verified against code: 2026-11-05 (branch `feat/coop-canary`: "Before each release: the COOP canary" (`coop-canary`, what a failure means, D386), step 0 of "A release."); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: "Common failures"' `derive_failed` `webcrypto_unsupported` / `webcrypto_failed`, D385); 2026-11-05 (branch `feat/deploy-build-check`: "Checking a deploy (`deploy-check`)", D384:
 the build id in every Worker and page bundle, `deploy-check <env> [--d1]` after each deploy step, migrations applied
 from a checkout at the deployed commit, the API's raw `wrangler deploy` lines now `run deploy`); 2026-11-05 (branch `fix/deploy-pages-builds`: `deploy:pages` runs the web build first; the 0011 apply note; the rebuilt page versions); 2026-11-05 (branch `chore/ci-cost`: "CI and git": which jobs run when, the nightly WebKit and Firefox run; the identity probe every 3 hours, D383); 2026-11-05 (branch `docs/sandbox-dev-state-1105`: sandbox-dev redeployed at `develop` 8aab09d with the wallet directory: `USER_ID_KEY`, the bookmark, 0011, API 6141ba3d, vault abe7cc61, auth 6b9a4bee, issuer 1542a60c); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
 what counts, each job's share in both crons, the `budget` log lines; settlement's reads a run; D380); 2026-11-04 (branch `feat/batch-c-13`: "Retention (batch C13, milestone M6)": the Neon
@@ -3599,6 +3599,57 @@ Google token (`docs/contract-interface.md` "Gas of the email login calls" and "U
 | `build:lib` / `pack:check` / page build: "… is still an UNSET placeholder" | an included env (both origins set) has an `UNSET` value | fill it in, or leave the env's origins out until it is deployed |
 | `pack:check`: "npm install … failed" | the registry is unreachable, or a pinned peer is younger than 7 days (`--before`) | retry; check the network or the pin |
 
+## Before each release: the COOP canary
+
+The vault notices a closed login popup by reading its handle on the popup's window (`.closed`) every 250 ms (D347).
+That holds only while no page of the popup's trip *enforces* Cross-Origin-Opener-Policy: an enforcing page moves the
+popup to another browsing context group, and the handle then reads `closed: true` while the window is still open.
+Google sends COOP report-only on its authorization endpoint, identifier page and account chooser, and enforces
+`same-origin` only on its OAuth error page (2026-11-05). Google can change that without notice, so before each
+release (a pages deploy, an SDK release, `develop` into `main`) run the canary against the env being released (D386;
+it replaced D347's `curl -sI`). It is a manual check on purpose: no workflow runs it (Actions minutes, D383).
+
+```sh
+corepack pnpm --filter @hana-id/scripts run coop-canary <env>                  # about 1.5 min, exit 0 = pass
+corepack pnpm --filter @hana-id/scripts run coop-canary <env> --headers-only   # no browsers, about 10 s
+# the browsers, once per machine (apps/e2e's Playwright):
+corepack pnpm --filter @hana-id/e2e exec playwright install chromium firefox webkit
+```
+
+What it checks, signed out, on exactly the requests the product sends (the builders in
+`packages/web/src/auth/google.ts`, with the env's first `sharedGoogleClientIds` entry and `authOrigin` +
+`/login/callback`): token_first's first request, D273's interactive retry (with a `login_hint`) and the silent
+ID-token request (`prompt=none`, which ends on Hana's callback).
+
+- **Header check.** Each request followed by hand (manual redirects, cookies carried between hops but never
+  printed) under six browser User-Agents. It prints each hop's status, host and path (never the query) and its
+  `COOP`, `COOP-RO` and `CORP` (and `COEP` when present). A finding: any hop other than Google's
+  `/signin/oauth/error` with an enforcing `Cross-Origin-Opener-Policy` other than `unsafe-none`, or an enforcing
+  `Cross-Origin-Embedder-Policy`; a chain that ends on Google's error page, on a non-200, or not where it should
+  (Google's sign-in page; Hana's callback for the silent request). Report-only headers are fine.
+- **Browser check** (Chromium, Firefox, WebKit; headless). A localhost opener page `window.open`s the first request
+  and reads `.closed` every 250 ms for 10 s. A finding: `true` while the popup is open. Then it closes the popup and
+  expects `true`.
+- **Positive controls.** The first request with a redirect URI no client registers (`https://coop-canary.invalid`)
+  lands on Google's error page, which enforces COOP: the header check must read it there, and `.closed` must flip
+  (about 0.5 s after it loads) in each browser.
+
+Exit codes: **0** pass; **1** a finding; **2** inconclusive (no network, a browser missing, or a control that didn't
+flip). Only 0 is a pass. What a failure means and what to do:
+
+| Output | Meaning | Do |
+|---|---|---|
+| `FINDING: <google host/path> enforces Cross-Origin-Opener-Policy: …` (or the browser check's `popup.closed read true … while the popup was open`) | Google now enforces COOP on a sign-in page. D347's guard (a close within 8 s of leaving for Google is taken for a COOP switch, and the watch stops) covers it on Google's first page; on a later page (password, second factor, consent) logins are cancelled with `login_cancelled` `popup_closed` while the user is still at Google | Don't release. Follow the `google-enforces-coop` playbook ([docs/playbooks.md](playbooks.md#google-enforces-coop)): confirm, hold the release, change the watch with a decision entry |
+| `FINDING: <authOrigin host>/… enforces …` | A Hana page sends COOP or COEP: a regression (the auth pages send none, `docs/api.md`) | Revert it before the release |
+| `FINDING: Google answered with its OAuth error page …` | Google refuses the request itself (client id, redirect URI): Google sign-in is broken whatever COOP says | Check the shared client in "Google Cloud OAuth" against `envs/<env>.json` |
+| `CANARY BROKEN: the control did not flip …` or `… no longer enforces COOP` | The canary can't show it would see an enforcing page (Google changed its error page) | Not a pass. Fix the canary's positive control (a new page that enforces COOP) before trusting it |
+| `COULD NOT CHECK: …` / `INCONCLUSIVE` | Network, a browser missing, Playwright not installed | Fix it (the install line above) and run again |
+
+The canary holds no secret (a client id is public) and prints no cookie, query value or fragment. It never signs in
+(no script may hold a Google account's cookies), so it doesn't see the pages a signed-in user meets (the account
+chooser with accounts, the password, consent); Google has sent the same report-only policy across its sign-in pages
+so far.
+
 ## Releasing the SDK packages
 
 `@hana-id/core`, `@hana-id/web`, `@hana-id/react` and `@hana-id/sodax` are built for installation outside this
@@ -3635,6 +3686,8 @@ Send the four files with their SHA-256 (`shasum -a 256 /tmp/hana-sdk/*.tgz`) and
 
 **A release.**
 
+0. Run the COOP canary ([Before each release](#before-each-release-the-coop-canary)) against each env whose pages
+   the release ships: it must exit 0.
 1. On a branch from `develop`: `corepack pnpm --filter @hana-id/scripts sdk-version <x.y.z>` (one version for all
    four: each `package.json` and `VERSION` constant; D72). Say what changed for partners in the PR. Merge to
    `develop`, then `develop` into `main`.

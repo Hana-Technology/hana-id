@@ -21,7 +21,8 @@
     "console-code-flow-spike": "tsx console-code-flow-spike.ts",
     "usage-setup": "tsx usage-setup.ts",
     "uid-erase": "tsx uid-erase.ts",
-    "deploy-check": "tsx deploy-check.ts"
+    "deploy-check": "tsx deploy-check.ts",
+    "coop-canary": "tsx coop-canary.ts"
   },
   "dependencies": {
     "@hana-id/console-core": "workspace:*",

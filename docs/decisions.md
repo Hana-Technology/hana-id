@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
+Last verified against code: 2026-10-28 (commit 58edee9); D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
 user, implementation choices to confirm) on 2026-11-05; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
 flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
@@ -6286,12 +6286,50 @@ follow-up there.
 - Rejected: a new public code (`browser_unsupported`, say: older SDKs would see a malformed reply, above); a JWK
   import for the session key to avoid the PKCS#8 bug (Hana imports no private key; the session key is generated
   non-extractable); retrying the other calls (none fails).
+## The COOP canary before each release (branch `feat/coop-canary`), 2026-11-05
+
+### D386. A manual pre-release COOP canary checks D347's assumption, in place of `curl -sI`
+- Date 2026-11-05 · Status: **agreed by the user** (2026-11-05, "the canary: agreed", as a manual pre-release check;
+  the rules and the controls below: decided while building, to confirm) · Built: `scripts/coop-canary.ts`,
+  `scripts/lib/coop-canary.ts` (`coop-canary` in `scripts/package.json`); tests: `scripts/test/coop-canary.test.ts`;
+  the `google-enforces-coop` playbook (`packages/playbooks/src/incidents.ts`) · Amends D347 ("recheck (`curl -sI` on
+  the authorization URL) before each release")
+- Context: D347's popup-close watch reads the vault's handle on the popup every 250 ms; an enforcing
+  Cross-Origin-Opener-Policy on a page of the popup's trip makes the handle read `closed` while the window is open.
+  Google sends `cross-origin-opener-policy-report-only: same-origin` on its authorization endpoint, the identifier page
+  and the account chooser, nothing on consent, and enforces `same-origin` on `/signin/oauth/error` (2026-11-05: `curl`, and
+  Playwright in Chromium, Firefox and WebKit, where `.closed` flips about 0.5 s after the error page loads). A `curl
+  -sI` of one URL misses the hops after the redirect, the User-Agents Google varies on, and what browsers do.
+- Decision: `corepack pnpm --filter @hana-id/scripts run coop-canary <env>` before each release (docs/operations.md
+  "Before each release: the COOP canary"), run by hand: no GitHub Actions workflow (the org's minutes, D383). It
+  builds the requests with the product's own builders (`packages/web/src/auth/google.ts`: token_first's first
+  request, D273's interactive retry, the silent ID-token request) for the env's first shared client and
+  `authOrigin + /login/callback`, signed out, and:
+  - Header check: follows each by hand (manual redirects, a cookie jar it never prints) under six browser
+    User-Agents; any hop other than Google's OAuth error page with an enforcing COOP other than `unsafe-none`
+    (unknown and doubled values included), or an enforcing COEP other than `unsafe-none`, fails; report-only headers
+    and CORP never do. A chain that ends on the error page, on a non-200, or away from Google's sign-in page (Hana's
+    callback for the silent request) fails too: the request itself is refused.
+  - Browser check (apps/e2e's Playwright, headless): a localhost opener `window.open`s the first request and reads
+    `.closed` every 250 ms for 10 s; `true` while the popup is open fails; a real close must then read `true`.
+  - Positive controls: the same request with a redirect URI no client registers (`https://coop-canary.invalid`)
+    must reach the error page with an enforcing COOP (header check) and flip `.closed` in each browser. If a control
+    doesn't, the canary can't see an enforcing page and the run is inconclusive, never a pass.
+  - Exit 0 pass, 1 a finding, 2 inconclusive (network, browsers missing, a control). `--headers-only` skips the
+    browsers. It prints status, host and path per hop and the policy headers only: no cookie, query value or fragment.
+- Why: it checks every hop and browser the product meets, and its controls show it can see an enforcing page.
+- Rejected: a scheduled workflow (Actions minutes; a release is when it matters); following redirects with the fetch
+  default (the hops' headers would be lost); the signed-in pages (account chooser, consent): they need a Google
+  account and its cookies in the canary, which no script may hold (CLAUDE.md); report-only as a finding (Google has
+  sent it since before batch B).
+- Note: built as D385 and renumbered D386 at merge (D384 went to `deploy-check`, D385 to the WebCrypto errors).
 
 ## Superseded or amended
 
 | Was | Now | Source |
 |---|---|---|
 | D381: a session key WebCrypto can't make ends the login `api_unavailable` (a different code rejected) | `derive_failed` with `data.reason` `webcrypto_unsupported` / `webcrypto_failed` (D385) | `packages/web/src/vault/errors.ts` |
+| D347's assumption rechecked with `curl -sI` on the authorization URL before each release | `coop-canary <env>` before each release: every hop of the product's requests under six User-Agents, and Chromium, Firefox and WebKit, with positive controls (D386) | `scripts/lib/coop-canary.ts`; docs/operations.md "Before each release: the COOP canary" |
 | The outside identity-JWKS probe runs hourly (D382) | Every 3 hours, at minute 17 (D383) | `.github/workflows/identity-probe.yml` |
 | The outside identity-JWKS probe runs every 15 min (D210) | Hourly, at minute 17 (D382) | `.github/workflows/identity-probe.yml` |
 | The admin crons' budget counts emails and NEAR reads only, with room for the RPCs (D280); C12's `relayerKeys` and statement-notice reads uncharged (D360's note) | Every outbound call counts: the connection, every RPC (at most 30), every email, NEAR read and rate fetch; a unit of work starts only when it fits (D380) | `apps/admin/src/mail.ts`, `cron.ts`, `ledger-cron.ts` |
@@ -6667,7 +6705,7 @@ over D269's directory) and D276 (the Support ID made consistent with D269), belo
   `login_timeout`, not `login_cancelled`. The alternative is a false cancel of every login if Google starts enforcing
   COOP on its sign-in pages (it reports violations today). If Google switches to an enforcing policy on a later page
   (after the 8 s), a login would be cancelled while the user is still at Google: the watch's assumption to recheck
-  (`curl -sI` on the authorization URL) before each release.
+  before each release, with `coop-canary <env>` (D386; it replaced `curl -sI` on the authorization URL).
 - Alternatives: (a) the SDK polling its own handle after connect: the same handle semantics, with one more hop. Not
   done. (b) The popup reporting its own close on every page (`pagehide` with a pre-encrypted relay write, as D341's
   screen does): it can't cover Google's page, and slot writes are single use. Kept only for D341's screen. (c) A

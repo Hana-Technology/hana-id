@@ -2598,7 +2598,8 @@ them as `IDENTITY_PINS` and `identityToken.iss` as `IDENTITY_ISS`; an env withou
   serve them a clean JWKS while partners get another, or publish a key for less than a run. The **outside probe**
   narrows the first: the GitHub Actions workflow `identity-probe` (`.github/workflows/identity-probe.yml`, every 3
   hours at :17 since D383, no secrets; **disabled in GitHub since 2026-11-05**, D384: no probing while only testnet
-  runs, and before mainnet it moves to AWS Lambda + EventBridge in its own AWS account) fetches each non-`local*` env's JWKS and discovery document from GitHub's network with a `jose`
+  runs, and before mainnet it moves to AWS Lambda + EventBridge in its own AWS account, or one of D384's
+  alternatives: Google Cloud Functions + Cloud Scheduler, a small VPS with cron) fetches each non-`local*` env's JWKS and discovery document from GitHub's network with a `jose`
   User-Agent and the same rules (`@hana-id/jwks/identity`), against `watchdog.pinnedIdentityKeys` in the repo's
   manifests, and fails on any finding (every value from Hana's answers is printed JSON-quoted, escaped to printable
   ASCII with `%` too, and cut, and no line can start with `::`, so a hostile JWKS can't inject a workflow command);

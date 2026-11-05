@@ -158,7 +158,7 @@ These have the longest lead time, or other rows wait on them.
 | 5.7 | Relayer funds monitoring (balance and per-key allowance) | A used-up key stops logins | built, not deployed | founder | D150 |
 | 5.8 | `unrecorded_wallets` critical alert on every non-dev env; never true on mainnet | A pre-v3 wallet could be joined silently | built, not deployed | Claude build | D135, D139, D193 |
 | 5.9 | Watchdog alert #11 on sandbox-dev (expected updater-key change) waits for the portal's acknowledge button. Testnet note, minor | It re-pages every 15 min until acknowledged; first real test of the portal's ack flow | portal built (C14, `feat/batch-c-14`), not deployed: ack it in Security & monitoring once the admin Worker runs (`docs/operations.md` "Security & monitoring" step 5) | founder | conversation |
-| 5.10 | Outside identity-JWKS probe on AWS Lambda + EventBridge (SNS email for findings), in an AWS account of its own (not the KMS one), every 15 min or tighter; retire the GitHub workflow | The only check from outside Cloudflare against D210's cloaking; free at any interval there | not built (GitHub probe disabled 2026-11-05, D384) | Claude build, founder | D210, D382, D384; conversation |
+| 5.10 | Outside identity-JWKS probe on AWS Lambda + EventBridge (SNS email for findings), in an AWS account of its own (not the KMS one), every 15 min or tighter; retire the GitHub workflow. Alternatives: Google Cloud Functions + Cloud Scheduler (also free), a small VPS with cron (~$4–6 a month) | The only check from outside Cloudflare against D210's cloaking; free at any interval there | not built (GitHub probe disabled 2026-11-05, D384) | Claude build, founder | D210, D382, D384; conversation |
 
 ## 6. Security reviews and drills
 

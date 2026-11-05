@@ -6215,11 +6215,15 @@ follow-up there.
   AWS account of its own, not the one holding the identity token's KMS key (D215): within Lambda's always-free
   allowance at any interval, so it can run every 15 min or tighter again, and its requests come from a network
   partners' own verifiers use. Tracked as `docs/mainnet-readiness.md` rows 4.20 and 5.10.
+- Alternatives to weigh at that point (none chosen over Lambda yet): **Google Cloud Functions + Cloud Scheduler**
+  (free at this volume: 3 scheduler jobs and the functions allowance; the same shape as Lambda, if another AWS account
+  is unwelcome); **a small VPS with cron** (about $4–6 a month; a fixed IP partners don't share, and a machine to
+  patch). Either still needs its own account and a findings alert by email.
 - Trade-offs: nothing enforces the checks on a merge, and Linux-only failures (D381's WebKit one) can merge unseen;
   a key served only to partners and not to Cloudflare-origin fetches (D210's cloaking) goes unnoticed on testnet.
 - Rejected: keeping the probe every 3 hours on GitHub (no testnet need for it; about 240 billed minutes a month); a
   separate public repo for the probe (it publishes what the probe looks like, and GitHub pauses scheduled workflows
-  after 60 days without activity); a VPS (not cheaper).
+  after 60 days without activity).
 
 ## Superseded or amended
 

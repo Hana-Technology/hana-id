@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
+Last verified against code: 2026-10-28 (commit 58edee9); D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
 flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
 confirmed by the user) on 2026-11-04, amending D341; D341 (branch `fix/google-cancel-back-to-chooser`, confirmed
@@ -3293,7 +3293,7 @@ or the contract. All five are **to confirm** by the user.
   Cloudflare account can recognise the watchdog's fetches (they leave from Cloudflare's network, through the
   watchdog's own Worker) and serve them a clean JWKS while partners get another, or publish a key between two runs
   (5 min) and remove it again. So the watchdog is detection against a non-cloaking attacker only. The **outside
-  probe** narrows the cloaking: a scheduled GitHub Actions workflow (every 15 min, standard actions pinned by commit,
+  probe** narrows the cloaking: a scheduled GitHub Actions workflow (every 15 min, hourly since D382, standard actions pinned by commit,
   no secrets) runs `scripts/identity-probe.ts` from GitHub's network with jose's User-Agent and Accept and no
   `CF-Worker` header, applies the same rules against every non-`local*` env's `watchdog.pinnedIdentityKeys` in the
   repo, and fails on any finding (GitHub emails the failure). Values from Hana's answers reach the Actions log only
@@ -6161,10 +6161,28 @@ follow-up there.
   our own randomness and importing it (the key must stay non-extractable WebCrypto, and an import path in WebKit Linux
   may have the same leading-zero bug); a test-only workaround (the flake is the product failing).
 
+### D382. The outside identity-JWKS probe runs hourly, not every 15 minutes
+- Date 2026-11-05 · Status: **confirmed by the user** · Built: `.github/workflows/identity-probe.yml` (`17 * * * *`) ·
+  Amends D210
+- Context: on 2026-11-04 the Hana-Technology org's GitHub Actions stopped starting jobs ("recent account payments have
+  failed or your spending limit needs to be increased"): the org's included minutes are shared by every repo, and
+  GitHub bills each job at least a minute. The probe takes about 3 s but every 15 min is 96 jobs a day, about 2 900
+  billed minutes a month on its own, more than a whole free allowance.
+- Decision: hourly, at minute 17 (off the top of the hour, when GitHub's scheduler delays and drops the most runs):
+  about 720 billed minutes a month. The watchdog's own pin check (every run, from Cloudflare) is unchanged.
+- Trade-off: a key of an attacker's own that is served to the probe is now caught within the hour rather than 15 min
+  (the watchdog still catches one it is served within one run). Neither check closes D210's gap (an attacker can
+  single out partners' traffic), so the probe's interval narrows less than it costs.
+- Revisit at the mainnet-readiness check: 15 min again (about $17 a month at GitHub's Linux rate) or a cheaper outside
+  runner.
+- Rejected: keeping 15 min on testnet (it alone uses up the org's minutes and blocks CI); dropping the probe (the
+  watchdog's fetches can be told apart, D210).
+
 ## Superseded or amended
 
 | Was | Now | Source |
 |---|---|---|
+| The outside identity-JWKS probe runs every 15 min (D210) | Hourly, at minute 17 (D382) | `.github/workflows/identity-probe.yml` |
 | The admin crons' budget counts emails and NEAR reads only, with room for the RPCs (D280); C12's `relayerKeys` and statement-notice reads uncharged (D360's note) | Every outbound call counts: the connection, every RPC (at most 30), every email, NEAR read and rate fetch; a unit of work starts only when it fits (D380) | `apps/admin/src/mail.ts`, `cron.ts`, `ledger-cron.ts` |
 | `usage.erase_uid(app_ids text[], uid bytea)` (spec "Usage ledger" functions) | `usage.erase_uid(uid bytea)`: by uid alone, in any app (D362); the uid indexes C15 planned are in 0007 | `apps/api/migrations-usage/0007_retention.sql` |
 | `uid:erase` (ledger only) and the proposed `user:erase` (issuer only), separately (spec "CLI", D276) | One script, `uid-erase`, per scope across the ledger, the wallet directory and the issuer directory (D361) | `scripts/lib/uid-erase.ts` |

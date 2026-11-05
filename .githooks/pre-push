@@ -1,0 +1,10 @@
+#!/bin/sh
+# Runs `pnpm verify --quick` before a push to develop or main (D413; scripts/verify-hook.mjs) and stops the push if it
+# fails. On only where turned on with `pnpm verify:install-hook` (git config hana.verifyPrePush true); other branches,
+# and clones that haven't turned it on, push as before. Installed like pre-commit: `pnpm install` points git here.
+[ "$(git config --bool hana.verifyPrePush 2>/dev/null)" = "true" ] || exit 0
+if ! command -v node >/dev/null 2>&1; then
+  echo "pre-push: node is not on PATH, so pnpm verify can't run: the push to develop or main is stopped. Put Node 22+ on PATH and push again." >&2
+  exit 1
+fi
+exec node scripts/verify-hook.mjs pre-push "$@"

@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
+Last verified against code: 2026-10-28 (commit 58edee9); D413 (branch `feat/local-verify`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D387, with a row of "Superseded or amended"; D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
 user, implementation choices to confirm) on 2026-11-05; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
 flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
@@ -7028,10 +7028,60 @@ still take them: renumber on merge.
   the watchdog's `/status` read with the status token (deploy-check would hold a secret); a public route on the
   watchdog; copying `scripts/deploy.ts` into each app.
 
+## The local gate while CI is off (branch `feat/local-verify`), 2026-11-05
+
+### D413. `pnpm verify` runs CI's checks for the change locally; the default tier before every merge into develop, `--full` before a deploy; an optional pre-push hook
+- Date 2026-11-05 · Status: **asked for by the user** (implementation choices: to confirm) · Built:
+  `scripts/verify.mjs`, `scripts/verify-hook.mjs`, `.githooks/pre-push`, the root `verify` and
+  `verify:install-hook` scripts; `scripts/test/verify.test.ts` · Amends D387 ("checks run locally before a merge",
+  by a list of commands nothing ran for you) · Number note: D413 was taken with D409 the highest on `origin/develop`
+  (D404 merged the same day), D401/D402 held on an unmerged branch and D410–D412 possibly taken by branches in
+  flight; a branch racing this one may take D413 too: renumber on merge
+- Context: CI is off (D387) and merges into `develop` are done locally by an assistant, so the only gate is what is
+  run by hand; the list in docs/operations.md was easy to run partly, or against a stale tree.
+- Decision:
+  - **Three tiers, one command.** `pnpm verify --quick`: `pnpm install --frozen-lockfile`, gitleaks (history, the
+    uncommitted changes, the rule self-test), typecheck and unit tests of the affected packages, the docs checks
+    (`@hana-id/playbooks`, `examples/identity-verify`, core's `integration-doc` test). `pnpm verify` (default): plus
+    what a `develop` push ran in CI, picked by `scripts/ci-changes.mjs` `classify` (D383): contract and sandbox e2e
+    when Rust changed, the pack check and Playwright on Chromium when web code changed. `--full`: everything, all
+    three browsers.
+  - **The rule.** The assistant runs the default tier on the merged result before every push of `develop`, and
+    `--full` on the commit to be deployed before any deploy; nothing merges or deploys on a failure. Recorded in
+    docs/operations.md "CI and git".
+  - **Affected packages.** The change is merge-base(`origin/develop`, HEAD) to the working tree, untracked files
+    included. A package's change runs it, its dependents and the packages whose code names a path in it,
+    transitively, and the packages whose tests name a path in those (found by scanning tracked files for `../`
+    paths, `join(repoRoot, …)` and root-relative strings, comments ignored); a doc outside the packages runs the
+    suites that name it; any other file outside the packages, or a change to the CI or verify definitions, runs
+    every package.
+  - **Order and output.** Phases cheapest first, stopping at the first failure; gitleaks beside the typecheck, the
+    docs checks beside the unit tests, nothing beside the unit tests' 4-at-a-time run (the PGlite and workerd suites'
+    timeouts, D140); `CI=true` for vitest (no stray `.only`), `--forbid-only` for Playwright; each step's output in a
+    temp-dir log, the failing one's tail printed, and a step / result / duration table.
+  - **Pre-push hook, optional.** `pnpm verify:install-hook` sets `hana.verifyPrePush` in the clone's git config;
+    `.githooks/pre-push`, beside the gitleaks pre-commit hook and installed the same way (`core.hooksPath`), then runs
+    `--quick` on a push to `develop` (from the remote tip it replaces) or `main` (every package) and stops the push on
+    a failure. Feature branches and tags skip. It refuses a push whose commit isn't the checked-out HEAD or whose tree
+    is dirty (it would check the wrong tree), and has no skip switch.
+- Why: CI's own selection rules, reused, keep local and CI runs comparable; the tiers match how often each is
+  affordable (`--quick` in minutes, the e2e and Rust jobs only when they can be affected); a hook only on the two
+  shared branches doesn't slow feature work.
+- Trade-offs: the workspace is densely linked, so most code changes still select every package (docs-only and leaf
+  changes are the ones narrowed; the full TS suite is about a minute and a half on an idle machine anyway). The path
+  scan is a heuristic: a read built at run time from parts it can't see would be missed (over-reporting only runs
+  more tests). Local runs are macOS, not Linux (D381's WebKit bug would pass). The hook is opt-in per clone, and
+  `git push --no-verify` skips any hook: the rule above, not the hook, is the gate.
+- Rejected: husky or lefthook (a dependency for what `core.hooksPath` already does); a hook always on (every push of
+  a feature branch would pay for it); running unit tests at full parallelism or beside the typecheck (PGlite
+  timeouts); an environment variable to skip the hook (a silent bypass); always every package (docs-only branches
+  are common, D383 counted 17 of 73 commits).
+
 ## Superseded or amended
 
 | Was | Now | Source |
 |---|---|---|
+| D387: the checks run locally before a merge, from a list of commands in docs/operations.md | `pnpm verify` (CI's checks for the change, D383's rules) before every merge into `develop`, `--full` before a deploy; an optional pre-push hook runs `--quick` on pushes to `develop` and `main` (D413) | `scripts/verify.mjs`, `scripts/verify-hook.mjs`, `.githooks/pre-push`; docs/operations.md "CI and git" |
 | sandbox-dev's admin Access: the GitHub team `hana-admins` plus exact-email Google rules (D88), the workers.dev Worker-level toggle turned on in the dashboard (D284), the policy and AUD by hand | `sandbox*`: Google, exact emails only; every env's application and policies made and checked by `access-setup <env>` from the manifest, a hostname application on workers.dev (D409) | `scripts/lib/access-setup.ts`; docs/operations.md "Admin Worker" step 1 |
 | D384: the watchdog, console, console-auth, admin and files Workers unstamped; `deploy-check` reads the API, the page Workers and bundles and the issuer; each of the API and issuer has its own `scripts/deploy.ts` | Every env Worker deploys through `packages/env/src/stamped-deploy.ts`; the console, console-auth and files Workers serve `/.well-known/hana-build`, the console SPA carries the meta; the admin's and the watchdog's id is read from the deployed version with wrangler (`--only watchdog` for the watchdog); `--only`/`--skip` (D406) | `packages/env/src/stamped-deploy.ts`, `scripts/lib/deploy-check.ts`; docs/operations.md "Checking a deploy" |
 | `usage-setup roles`: a locally generated password per role, set as a SCRAM-SHA-256 verifier by `ALTER ROLE … LOGIN PASSWORD`; a re-run reuses the role files (D224) | SQL gives `LOGIN` only; Neon's API (`reset_password`) generates each password, written straight to the role file; every run resets both and replaces the files, so Hyperdrive configs from older files are re-created; the key in `.secrets/<env>/neon-api-key` (D403) | `scripts/lib/usage-setup.ts`, `scripts/lib/neon-api.ts`; docs/operations.md "Usage capture" step 2 |

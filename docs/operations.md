@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-05 (branch `feat/deploy-check-all-workers`: "Checking a deploy" (every Worker through its `run deploy`, the shared wrapper; the console, console-auth, files Workers and the console SPA read over HTTP, the admin and watchdog through wrangler, `--only`/`--skip`, the console and watchdog D1 in `--d1`), the console, admin, files and watchdog deploy lines now `run deploy`, with `deploy-check` after each, D406); 2026-11-05 (branch `fix/usage-setup-throwaway-password`: "Usage capture" step 3's throwaway password before Neon's reset, D403 amended); 2026-11-05 (branch `feat/access-setup`: "Admin Worker" step 1: the admin console's Cloudflare Access by `access-setup <env>` (the team and login methods in the dashboard, the least-privilege token, created and revoked, plan / `--yes` / `--write-manifest` / `--check`), sandbox* Google exact emails only and the free-tier guard it enforces (D408), the workers.dev hostname application against the dashboard toggle, the dashboard path; the secrets table's Cloudflare API token row; the issuer's "Open for batch 8" note; D409); 2026-11-05 (branch `feat/sdk-error-request-id`: "Support ID lookup": partners' request IDs come from the SDK's errors and the demo's diagnostics, D405); 2026-11-05 (branch `docs/zero-trust-free-guard`: "Admin Worker" step 1's Zero Trust free-tier guard, D408); 2026-11-05 (branch `fix/usage-setup-neon-api-passwords`: "Usage capture" steps 2, 3 and 8: `usage-setup <env> roles` gives LOGIN by SQL and has Neon's API reset each role's password with the new `.secrets/<env>/neon-api-key` (how to create, save and revoke it), every run replaces the role files, Hyperdrive configs from older files re-created, the step-8 gate without the SCRAM question; the secrets table's Neon API key row; D403); 2026-11-05 (branch `feat/batch-c-15-screen`: "Support ID lookup" → "In the admin console" (the screen, the email join, the ticket rule, what to watch) and "Users screen (C8b)" (a Support ID goes to the lookup; the check), D399); 2026-11-05 (branch `feat/batch-c-8b`: "Admin Worker" → "Users screen (C8b)": issuer migration 0003, the deploy order issuer → API → admin, the checks and failures, D388–D392; "Retention" and "User directory (D269)" notes); 2026-11-05 (branch `chore/ci-cost`: "CI and git": CI and the identity probe turned off, the local checks, D387); 2026-11-05 (branch `feat/batch-c-15`: "Support ID lookup", `admin <env> support:lookup`, the admin route's audit, D394–D397); 2026-11-05 (branch `feat/coop-canary`: "Before each release: the COOP canary" (`coop-canary`, what a failure means, D386), step 0 of "A release."); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: "Common failures"' `derive_failed` `webcrypto_unsupported` / `webcrypto_failed`, D385); 2026-11-05 (branch `feat/deploy-build-check`: "Checking a deploy (`deploy-check`)", D384:
+Last verified against code: 2026-11-05 (branch `feat/local-verify`: "CI and git": the local gate `pnpm verify` (`--quick`, default, `--full`; the affected packages, the order, the timings), what runs before a merge into `develop` and before a deploy, the optional pre-push hook `pnpm verify:install-hook`, D413); 2026-11-05 (branch `feat/deploy-check-all-workers`: "Checking a deploy" (every Worker through its `run deploy`, the shared wrapper; the console, console-auth, files Workers and the console SPA read over HTTP, the admin and watchdog through wrangler, `--only`/`--skip`, the console and watchdog D1 in `--d1`), the console, admin, files and watchdog deploy lines now `run deploy`, with `deploy-check` after each, D406); 2026-11-05 (branch `fix/usage-setup-throwaway-password`: "Usage capture" step 3's throwaway password before Neon's reset, D403 amended); 2026-11-05 (branch `feat/access-setup`: "Admin Worker" step 1: the admin console's Cloudflare Access by `access-setup <env>` (the team and login methods in the dashboard, the least-privilege token, created and revoked, plan / `--yes` / `--write-manifest` / `--check`), sandbox* Google exact emails only and the free-tier guard it enforces (D408), the workers.dev hostname application against the dashboard toggle, the dashboard path; the secrets table's Cloudflare API token row; the issuer's "Open for batch 8" note; D409); 2026-11-05 (branch `feat/sdk-error-request-id`: "Support ID lookup": partners' request IDs come from the SDK's errors and the demo's diagnostics, D405); 2026-11-05 (branch `docs/zero-trust-free-guard`: "Admin Worker" step 1's Zero Trust free-tier guard, D408); 2026-11-05 (branch `fix/usage-setup-neon-api-passwords`: "Usage capture" steps 2, 3 and 8: `usage-setup <env> roles` gives LOGIN by SQL and has Neon's API reset each role's password with the new `.secrets/<env>/neon-api-key` (how to create, save and revoke it), every run replaces the role files, Hyperdrive configs from older files re-created, the step-8 gate without the SCRAM question; the secrets table's Neon API key row; D403); 2026-11-05 (branch `feat/batch-c-15-screen`: "Support ID lookup" → "In the admin console" (the screen, the email join, the ticket rule, what to watch) and "Users screen (C8b)" (a Support ID goes to the lookup; the check), D399); 2026-11-05 (branch `feat/batch-c-8b`: "Admin Worker" → "Users screen (C8b)": issuer migration 0003, the deploy order issuer → API → admin, the checks and failures, D388–D392; "Retention" and "User directory (D269)" notes); 2026-11-05 (branch `chore/ci-cost`: "CI and git": CI and the identity probe turned off, the local checks, D387); 2026-11-05 (branch `feat/batch-c-15`: "Support ID lookup", `admin <env> support:lookup`, the admin route's audit, D394–D397); 2026-11-05 (branch `feat/coop-canary`: "Before each release: the COOP canary" (`coop-canary`, what a failure means, D386), step 0 of "A release."); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: "Common failures"' `derive_failed` `webcrypto_unsupported` / `webcrypto_failed`, D385); 2026-11-05 (branch `feat/deploy-build-check`: "Checking a deploy (`deploy-check`)", D384:
 the build id in every Worker and page bundle, `deploy-check <env> [--d1]` after each deploy step, migrations applied
 from a checkout at the deployed commit, the API's raw `wrangler deploy` lines now `run deploy`); 2026-11-05 (branch `fix/deploy-pages-builds`: `deploy:pages` runs the web build first; the 0011 apply note; the rebuilt page versions); 2026-11-05 (branch `chore/ci-cost`: "CI and git": which jobs run when, the nightly WebKit and Firefox run; the identity probe every 3 hours, D383); 2026-11-05 (branch `docs/sandbox-dev-state-1105`: sandbox-dev redeployed at `develop` 8aab09d with the wallet directory: `USER_ID_KEY`, the bookmark, 0011, API 6141ba3d, vault abe7cc61, auth 6b9a4bee, issuer 1542a60c); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
 what counts, each job's share in both crons, the `budget` log lines; settlement's reads a run; D380); 2026-11-04 (branch `feat/batch-c-13`: "Retention (batch C13, milestone M6)": the Neon
@@ -129,6 +129,7 @@ or others can read). Google ID tokens, CKD outputs and derived keys are never st
 corepack pnpm install          # also sets core.hooksPath=.githooks (gitleaks pre-commit)
 corepack pnpm -r typecheck
 corepack pnpm -r test
+corepack pnpm verify --quick   # or the whole local gate ("CI and git": pnpm verify, D413)
 (cd contracts/hana-signer && cargo test)
 corepack pnpm --dir apps/api exec wrangler login
 ```
@@ -4008,13 +4009,54 @@ skips everything while the `NPM_TOKEN` secret is missing, and npm refuses `"priv
   Playwright suite (`apps/e2e`, three browsers); sandbox e2e (`contracts/integration-tests`); the SDK pack check
   (`pnpm run pack:check`, [Releasing the SDK packages](#releasing-the-sdk-packages)).
 - **CI is turned off** (D387, 2026-11-05): the CI and `identity-probe` workflows are disabled in GitHub (Actions
-  minutes; testnet only). Run the checks locally before merging, from the repo root: `pnpm secrets:scan`;
-  `pnpm -r typecheck && pnpm -r test`; `cd contracts/hana-signer && cargo test --locked && cargo near build
-  non-reproducible-wasm`; `cd contracts/integration-tests && cargo test --locked -- --test-threads=1`;
-  `pnpm pack:check`; `pnpm --filter @hana-id/e2e e2e` (macOS WebKit is not Linux WebKit: D381's bug would pass
-  there). Turn back on with `gh workflow enable CI -R Hana-Technology/hana-id` (and `identity-probe.yml`); both
-  must be on, or replaced, before mainnet (`docs/mainnet-readiness.md` 4.20, 5.10). The rest of this section is how
-  CI behaves when enabled.
+  minutes; testnet only). `pnpm verify` runs CI's checks locally instead (next bullets). Turn back on with
+  `gh workflow enable CI -R Hana-Technology/hana-id` (and `identity-probe.yml`); both must be on, or replaced, before
+  mainnet (`docs/mainnet-readiness.md` 4.20, 5.10). The bullets after the pre-push hook are how CI behaves when
+  enabled.
+- **The local gate: `pnpm verify`** (D413, `scripts/verify.mjs`), from the root of the checkout being checked:
+
+  | Command | Runs | When |
+  |---|---|---|
+  | `pnpm verify --quick` | `pnpm install --frozen-lockfile` (a lockfile out of step fails, as in CI); gitleaks over the history, and over the uncommitted changes when there are any, plus the rule self-test; typecheck and unit tests of the affected packages; the docs checks (`@hana-id/playbooks`: `docs/playbooks.md` generated and the commands and decisions the playbooks cite; `examples/identity-verify` and `@hana-id/core`'s `integration-doc` test: `docs/integration.md`) | while working; the pre-push hook |
+  | `pnpm verify` | `--quick`, plus what a `develop` push ran in CI, by CI's rules (`scripts/ci-changes.mjs`, the table below): the contract (`cargo test --locked`, `cargo near build non-reproducible-wasm`) and the sandbox e2e when Rust changed; `pnpm run pack:check` and Playwright on Chromium when web code changed | **before every merge into `develop`** |
+  | `pnpm verify --full` | every package and every job whatever changed; Playwright on Chromium, Firefox and WebKit | **before every deploy**, and before a release |
+
+  - The change: from `merge-base(origin/develop, HEAD)` to the working tree, untracked files included (`--base
+    <ref>` for another base, `--all` to ignore the diff). Run `git fetch` first; a stale `origin/develop` only widens
+    the diff. A change to `ci.yml`, `scripts/ci-changes.mjs` or the verify files runs everything.
+  - Affected packages: a package's change runs it, the packages that depend on it or whose code names a path in it,
+    transitively, and the packages whose tests or test configs name a path in those (the admin's vitest config
+    bundles the API, console and issuer Workers); a doc outside the packages (`docs/`, root Markdown) runs only the
+    suites that name it; any other file outside the packages (`contracts/`, `envs/`, the lockfile, root config) runs
+    every package, since the tests read such files. The workspace is densely linked (nearly every package depends on
+    `@hana-id/env` or `@hana-id/core`, and `scripts` reads most apps), so most code changes still run every package;
+    docs-only changes and leaf packages (`examples/*`) run a few. `pnpm verify --plan` prints the selection and the
+    commands without running them.
+  - Order: phases run cheapest first and the run stops at the first failure (siblings are stopped, the failing log's
+    last 60 lines printed; every step's log is in the system temp dir). gitleaks runs beside the typecheck and the
+    docs checks beside the unit tests; everything else runs alone. The unit tests run 4 packages at a time (pnpm's
+    default, as in CI) with `CI=true` (vitest then fails a stray `.only`), and never beside another heavy step: the
+    PGlite suites start a WASM Postgres per test file (D140) and, like the workerd suites, time out on a loaded
+    machine. A test that times out while the machine is busy is the machine: rerun when it's idle and say so.
+    Playwright runs with `--forbid-only`; set `HANA_E2E_PORT_BASE` when another worktree's stack is up.
+  - Needs, for the tiers that use them: gitleaks (every tier), cargo-near 0.22.0 and Rust 1.85.1 with
+    `wasm32-unknown-unknown` (the contract and sandbox e2e), Playwright's browsers (`pnpm --filter @hana-id/e2e
+    e2e:install`), the npm registry (the pack check). macOS WebKit is not Linux WebKit: D381's bug would pass here.
+  - Timings on the dev Mac (16 cores) with this branch's diff (every package, as it changes the verify files):
+    `--quick` about TIMING_QUICK, default about TIMING_DEFAULT (the contract, sandbox e2e, pack check and Chromium
+    added).
+- **Before a merge into `develop`, and before a deploy** (D413; merges are done locally by the assistant while CI is
+  off): run `pnpm verify` on the merged result before pushing `develop` (in the `develop` checkout after the local
+  merge, or on the feature branch after merging current `origin/develop` into it), and `pnpm verify --full` on the
+  commit to be deployed before any deploy. Nothing merges or deploys on a failure: fix it on the branch and run again.
+  Report the summary table with the merge or deploy.
+- **Pre-push hook (optional, D413).** `pnpm verify:install-hook` turns on `.githooks/pre-push` for the clone and all
+  its worktrees (`git config hana.verifyPrePush true`; `--status`, `--uninstall`). A push to `develop` or `main`
+  then runs `pnpm verify --quick` first (develop: measured from the remote tip it replaces; `main`, or a tip this
+  clone doesn't have: every package) and a failure stops the push. Feature branches and tags push as before. It
+  checks the working tree, so it stops a push whose commit isn't the checked-out HEAD, or whose tree has uncommitted
+  or untracked changes. It is installed like the pre-commit hook (`pnpm install` sets `core.hooksPath=.githooks`)
+  and has no skip switch of its own. It runs the `--quick` tier only: the default tier before a merge stays the rule.
 - What runs when (D383). GitHub bills each job by the minute, rounded up, from minutes shared by every org repo, so
   CI runs only the jobs a change can affect. The `changes` job (`scripts/ci-changes.mjs`) diffs the change and sets
   the outputs the other jobs read:
@@ -4036,7 +4078,7 @@ skips everything while the `NPM_TOKEN` secret is missing, and npm refuses `"priv
   `RUST_EXTERNAL_INPUTS` in `scripts/ci-changes.mjs`; `scripts/test/ci-changes.test.ts` fails if a repo-root path read
   by the Rust tests is missing.
 - The pre-commit hook runs `gitleaks git --staged` with `.gitleaks.toml`. Never bypass it (`--no-verify`). Scan
-  locally with `corepack pnpm secrets:scan`.
+  locally with `corepack pnpm secrets:scan` (`pnpm verify` runs the same scan and the rule self-test).
 - `.gitleaks.toml` adds rules for this repo's own secrets, which gitleaks' defaults miss (security sweep OPER-2):
   NEAR ed25519 secret keys (`ed25519:` + 87-88 base58 characters; public keys are too short to match),
   `VAULT_KEK` values (`<id>:<base64 of 32 bytes>`), Worker-secret lines as in `.dev.vars` (`RELAYER_KEYS=…`,

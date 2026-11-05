@@ -15,12 +15,25 @@
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { EMAIL_ISSUER_SECRET_FILES, type Manifest, isLocalEnv, loadEnv, repoRoot, rsaJwkThumbprint } from '@hana-id/env';
+import { EMAIL_ISSUER_SECRET_FILES, type Manifest, accountIdFields, customDomainPlacement, isLocalEnv, loadEnv, repoRoot, rsaJwkThumbprint } from '@hana-id/env';
 import { assertPrivate, secretsDir } from '../../../scripts/lib/secrets.ts';
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const LOCAL_D1_ID = '00000000-0000-4000-8000-000000000000';
 export const COMPATIBILITY_DATE = '2026-10-01';
+
+/**
+ * Where the issuer is reachable (D230, D404): its own `workers.dev` URL when `emailIssuer.url` is one; a Custom Domain
+ * when `emailIssuer.url` is any other https origin (a dev env on custom domains, e.g. `https://email.id-dev.…`); with
+ * no `url`, neither: it is reached through a route `<api host>/v1/email/*` on the API's zone, added by hand
+ * (docs/operations.md "Email issuer" step 7), and a workers.dev URL beside the route would be a second way in, around
+ * Access and the zone's rules.
+ */
+export function issuerPlacement(url: string | undefined): Record<string, unknown> {
+  if (url !== undefined && /\.workers\.dev$/u.test(new URL(url).hostname)) return { workers_dev: true, preview_urls: false };
+  if (url !== undefined) return customDomainPlacement('emailIssuer.url', url);
+  return { workers_dev: false, preview_urls: false };
+}
 
 export function wranglerConfig(m: Manifest, d1Id: string, appD1Id: string): Record<string, unknown> {
   const t = m.emailIssuer;
@@ -33,6 +46,8 @@ export function wranglerConfig(m: Manifest, d1Id: string, appD1Id: string): Reco
   return {
     $schema: 'node_modules/wrangler/config-schema.json',
     name: t.cloudflare.workerName,
+    // The env's account (it binds the API's D1, so it lives beside the API), D404.
+    ...accountIdFields(m.cloudflare.accountId, 'cloudflare.accountId'),
     main: 'src/index.ts',
     compatibility_date: COMPATIBILITY_DATE,
     compatibility_flags: ['nodejs_compat'],
@@ -40,11 +55,7 @@ export function wranglerConfig(m: Manifest, d1Id: string, appD1Id: string): Reco
     observability: { enabled: true, logs: { invocation_logs: false } },
     // Next to the API, its D1 and (before mainnet) KMS in ap-east-1 (spec "Region and latency").
     placement: { region: 'aws:ap-east-1' },
-    // Its own workers.dev URL only when the manifest names one (`emailIssuer.url`, D230); without it the issuer is
-    // reached through a route `<api host>/v1/email/*` on the API's zone (docs/operations.md "Email issuer" step 7),
-    // and a workers.dev URL beside the route would be a second way in, around Access and the zone's rules.
-    workers_dev: t.url !== undefined && /\.workers\.dev$/u.test(new URL(t.url).hostname),
-    preview_urls: false,
+    ...issuerPlacement(t.url),
     vars: {
       ENV_NAME: m.name,
       NEAR_RPC: m.rpc,

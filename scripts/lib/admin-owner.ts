@@ -15,7 +15,7 @@ import { type ContractConfig, GOOGLE_PROVIDER, type GovernanceView, type KeyChan
 import { checkFunctionKey, signerFullAccessAllowed } from './deploy-plan.ts';
 import { fetchGoogleJwks, usableKeys } from './jwks.ts';
 import { type AccessKeyListEntry, describePermission, type NearRpc, TGAS } from './near.ts';
-import { castVote, describeOwnerCall, isOwnerMethod, type OwnerTxDeps, type OwnerTxOptions, sendOwnerCall } from './owner-tx.ts';
+import { castVote, describeOwnerCall, isOwnerMethod, type OwnerCall, type OwnerTxDeps, type OwnerTxOptions, sendOwnerCall } from './owner-tx.ts';
 import { approvers, type DaoProposal, decodeFunctionCall, decodeMemberChange, isOpen, policyProblems, recentProposals, type SputnikPolicy, votesNeeded } from './sputnik.ts';
 
 export const OWNER_DRY_RUN_LINE = 'Dry run: re-run with --yes to send.';
@@ -60,6 +60,65 @@ export async function ownerCallCmd(m: Manifest, method: string, args: Args, deps
   const r = await sendOwnerCall(m, call, opts, deps);
   if (r.kind === 'executed') deps.log(`Done: ${JSON.stringify(r.value)}`);
   else if (r.kind === 'approved') deps.log(`Done: proposal #${r.proposalId} approved and executed.`);
+  else deps.log(`Proposed #${r.proposalId}: waiting for ${r.needed - r.approvals.length} more approval(s).`);
+}
+
+/** The contract's limit on an issuer's iss values (contracts/hana-signer/src/issuers.rs MAX_ISS_VALUES). */
+export const MAX_ISS_VALUES = 4;
+
+/**
+ * `issuer:iss <provider> --add <iss> | --remove <iss>` (D404): one `set_issuer(provider, iss_values)` owner call that
+ * adds a value beside the ones on chain, or removes one, keeping the provider and its keys. Paths are
+ * `scope#provider#sub#key_index` with the provider the contract finds from the token's `iss` (`iss_index`), so an
+ * issuer moving to a new URL keeps every address as long as the new `iss` is added to the same provider first, and the
+ * old one is removed only after no token carries it. `set_issuer` replaces the whole list, so this reads the list on
+ * chain and sends it whole. Refused: an unknown provider, a 5th value, a value already there (nothing to do), removing
+ * a value that isn't there or the last one, removing the `iss` the manifest's email issuer signs with, or one of
+ * Google's.
+ */
+export async function issuerIssCmd(m: Manifest, provider: string, args: Args, deps: AdminOwnerDeps): Promise<void> {
+  const add = args.str('add');
+  const remove = args.str('remove');
+  if ((add === undefined) === (remove === undefined)) throw new CliError('issuer:iss takes exactly one of --add <iss> or --remove <iss>');
+  const value = (add ?? remove)!;
+  if (!value || value.length > 256 || /\s/u.test(value)) throw new CliError('An iss value is 1-256 characters with no whitespace');
+  if (provider === 'email' && add !== undefined) {
+    let url: URL | null = null;
+    try {
+      url = new URL(add);
+    } catch {
+      // reported below
+    }
+    if (!url || url.protocol !== 'https:' || url.href !== add || !add.endsWith('/v1/email')) throw new CliError(`An email iss is the issuer's https URL + /v1/email (got ${add})`);
+  }
+  const current = normaliseIssuer(await deps.rpc.view<unknown>(m.signer, 'get_issuer', { provider }));
+  if (!current) throw new CliError(`No issuer "${provider}" on ${m.signer}: create it with owner:call set_issuer first`);
+  const now = current.iss_values;
+  deps.log(`${provider} on ${m.signer}: iss ${now.map((v) => JSON.stringify(v)).join(', ')}`);
+  let next: string[];
+  if (add !== undefined) {
+    if (now.includes(add)) return void deps.log(`${add} is already an iss of ${provider}: nothing to do.`);
+    if (now.length >= MAX_ISS_VALUES) throw new CliError(`${provider} already has ${MAX_ISS_VALUES} iss values (the contract's limit): remove one first`);
+    next = [...now, add];
+    if (provider === 'email' && m.emailIssuer && m.emailIssuer.iss !== add) {
+      deps.log(`Note: envs/${m.name}.json emailIssuer.iss is ${m.emailIssuer.iss}, not ${add}: the issuer signs with the manifest's iss after its next gen and deploy.`);
+    }
+  } else {
+    if (!now.includes(remove!)) throw new CliError(`${remove} is not an iss of ${provider}`);
+    if (now.length === 1) throw new CliError(`${remove} is ${provider}'s only iss: an issuer needs at least one`);
+    if (provider === GOOGLE_PROVIDER) throw new CliError("Google's iss values are Google's tokens' own: never removed here");
+    if (provider === 'email' && m.emailIssuer?.iss === remove) throw new CliError(`${remove} is envs/${m.name}.json emailIssuer.iss: the deployed issuer signs with it (deploy the new iss first)`);
+    next = now.filter((v) => v !== remove);
+  }
+  const call: OwnerCall = { method: 'set_issuer', args: { provider, iss_values: next }, gas: BigInt(args.int('gas', 100, { min: 1, max: 250 })) * TGAS };
+  const opts = ownerTxOptions(args);
+  deps.log(`${describeOwnerCall(m, call, opts)} on ${m.signer}`);
+  deps.log('Immediate once executed (no delay): the watchdog alerts governance_change for the issuer (acknowledge it).');
+  if (!args.flag('yes')) return void deps.log(OWNER_DRY_RUN_LINE);
+  await assertTestnet(deps.rpc, m);
+  const r = await sendOwnerCall(m, call, opts, deps);
+  if (r.kind === 'executed') deps.log(`Done: ${provider} iss ${next.map((v) => JSON.stringify(v)).join(', ')}.`);
+  else if (r.kind === 'approved') deps.log(`Done: proposal #${r.proposalId} approved and executed; ${provider} iss ${next.map((v) => JSON.stringify(v)).join(', ')}.`);
   else deps.log(`Proposed #${r.proposalId}: waiting for ${r.needed - r.approvals.length} more approval(s).`);
 }
 

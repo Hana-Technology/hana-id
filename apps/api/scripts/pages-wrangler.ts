@@ -12,7 +12,7 @@
 import { writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type Manifest, emailIssuerUrl, isDevEnv, isLoopbackHost } from '@hana-id/env';
+import { type Manifest, accountIdFields, emailIssuerUrl, isDevEnv, isLoopbackHost } from '@hana-id/env';
 
 const apiDir = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -76,6 +76,8 @@ export function pagesWranglerConfig(m: Manifest, origin: PageOrigin, compatibili
   return {
     $schema: 'node_modules/wrangler/config-schema.json',
     ...placement,
+    // The API's account (the vault's service binding reaches only a Worker on the same account), D404.
+    ...accountIdFields(m.cloudflare.accountId, 'cloudflare.accountId'),
     main: `src/pages/${origin}-worker.ts`,
     compatibility_date: compatibilityDate,
     observability: { enabled: true },

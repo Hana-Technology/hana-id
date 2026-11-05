@@ -68,7 +68,7 @@ or API, rate limits, "log out other devices" after its 5 minutes, network failur
   without its CSP var.
 - `src/config.ts` refuses a `pk_live_` key, a mainnet EVM chain or the Stellar public network, and a non-https
   origin (http only on loopback). `scripts/gen-wrangler.ts` refuses envs that aren't testnet `sandbox*`/`local*`
-  envs on workers.dev.
+  envs, and an env whose API isn't on workers.dev unless `HANA_DEMO_ORIGIN` names the demo's Custom Domain.
 
 ## Configuration
 
@@ -78,13 +78,15 @@ Chosen at build time from the shell (no `.env` files, so the build and the Worke
 |---|---|
 | `HANA_DEMO_ENV` | `sandbox-dev` (`envs/<name>.json`) |
 | `HANA_DEMO_PUBLISHABLE_KEY` | the Smoke B key above, for `sandbox-dev` only; another env needs its own `pk_test_` key |
+| `HANA_DEMO_ORIGIN` | none: the API's workers.dev subdomain. A bare https origin (`https://demo.<dev domain>`) makes the demo a Custom Domain on the env's account (`cloudflare.accountId`); required when the env's API is on a custom domain (D404) |
 
 The EVM chain is Base Sepolia (84532, `https://sepolia.base.org`) and Stellar is testnet (`src/config.ts`).
 
 ## Deploy
 
 The Worker is `hana-id-demo-<env>`, on the workers.dev subdomain of the env's other Workers (the one in `apiUrl`),
-so for sandbox-dev `https://hana-id-demo-sandbox-dev.tingtc.workers.dev`.
+so for sandbox-dev `https://hana-id-demo-sandbox-dev.tingtc.workers.dev`; with `HANA_DEMO_ORIGIN`, on that Custom
+Domain instead (no workers.dev URL).
 
 1. **Allow the origin on the app** (once per app; the vault refuses to load on an origin the app doesn't list). It
    needs `apps/api/wrangler.jsonc` for the env (`corepack pnpm --filter @hana-id/api run gen sandbox-dev`):

@@ -14,7 +14,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type Manifest, hanaOwnOrigins, isDevEnv, isLoopbackHost, loadEnv } from '@hana-id/env';
+import { type Manifest, accountIdFields, hanaOwnOrigins, isDevEnv, isLoopbackHost, loadEnv } from '@hana-id/env';
 import { CONSOLE_RATE_LIMITS } from '../src/limits.ts';
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -66,6 +66,8 @@ export function wranglerConfig(m: Manifest, d1Id: string, opts: { assetsDir?: st
     main: 'src/index.ts',
     compatibility_date: COMPATIBILITY_DATE,
     compatibility_flags: ['nodejs_compat'],
+    // The env's Cloudflare account, when the manifest names it (D404).
+    ...accountIdFields(m.cloudflare.accountId, 'cloudflare.accountId'),
     ...placement(m, 'console.origin', c.origin, c.workerName),
     // The Worker's own JSON log lines (src/log.ts: no email, sub, token or cookie), not the platform's per-request
     // invocation records, which carry the URL (sign-in's handoff code `?h=`, a live capability for 60 s, and the auth

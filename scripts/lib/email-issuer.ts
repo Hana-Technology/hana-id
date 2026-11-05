@@ -99,7 +99,7 @@ export function defaultEmailIssuerDeps(): EmailIssuerDeps {
 
 const B64URL = /^[A-Za-z0-9_-]+$/u;
 const KEY32_RE = /^[A-Za-z0-9+/]{43}=$/u;
-const SENDGRID_RE = /^SG\.[A-Za-z0-9_-]{16,100}\.[A-Za-z0-9_-]{16,100}$/u;
+export const SENDGRID_RE = /^SG\.[A-Za-z0-9_-]{16,100}\.[A-Za-z0-9_-]{16,100}$/u;
 
 export const isRsaPrivateJwk = (v: unknown): v is RsaPrivateJwk => {
   const k = v as Record<string, unknown> | null;
@@ -126,7 +126,7 @@ export function readKeyFile(file: string): RsaPrivateJwk {
   return v;
 }
 
-function readKey32(file: string): string {
+export function readKey32(file: string): string {
   assertPrivate(file);
   const v = readFileSync(file, 'utf8').trim();
   if (!KEY32_RE.test(v) || Buffer.from(v, 'base64').length !== 32) throw new Error(`${file} is not base64 of 32 bytes`);

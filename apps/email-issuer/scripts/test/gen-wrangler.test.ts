@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { generateKeyPairSync, randomBytes } from 'node:crypto';
 import { type Manifest, loadEnv, rsaJwkThumbprint } from '@hana-id/env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CUSTOM_DOMAIN, customDomainManifest } from '../../../../packages/env/src/custom-domain.fixture.ts';
 import { LOCAL_D1_ID, devVarsContent, existingD1Id, main, testWranglerConfig, wranglerConfig, writeWranglerConfig } from '../gen-wrangler.ts';
 
 function rsa() {
@@ -44,6 +45,23 @@ describe('wranglerConfig', () => {
     expect((wranglerConfig(manifest({ url: own, iss: `${own}/v1/email` }), LOCAL_D1_ID, LOCAL_D1_ID) as { workers_dev: boolean }).workers_dev).toBe(true);
     expect((wranglerConfig(manifest(), LOCAL_D1_ID, LOCAL_D1_ID) as { workers_dev: boolean }).workers_dev).toBe(false);
     expect((wranglerConfig(manifest({ url: 'https://email.hana.example' }), LOCAL_D1_ID, LOCAL_D1_ID) as { workers_dev: boolean }).workers_dev).toBe(false);
+    expect(wranglerConfig(manifest(), LOCAL_D1_ID, LOCAL_D1_ID)).not.toHaveProperty('routes');
+  });
+
+  it('an emailIssuer.url on another host is a Custom Domain, on the manifest account (D404)', () => {
+    vi.stubEnv('CLOUDFLARE_ACCOUNT_ID', '');
+    const m = customDomainManifest();
+    expect(wranglerConfig(m, LOCAL_D1_ID, LOCAL_D1_ID)).toMatchObject({
+      account_id: CUSTOM_DOMAIN.accountId,
+      workers_dev: false,
+      preview_urls: false,
+      routes: [{ pattern: 'email.id-dev.hanawallet.io', custom_domain: true }],
+      vars: { EMAIL_ISS: `${CUSTOM_DOMAIN.emailIssuerUrl}/v1/email` },
+    });
+    expect(wranglerConfig(manifest(), LOCAL_D1_ID, LOCAL_D1_ID)).not.toHaveProperty('account_id');
+    vi.stubEnv('CLOUDFLARE_ACCOUNT_ID', 'ffffffffffffffffffffffffffffffff');
+    expect(() => wranglerConfig(m, LOCAL_D1_ID, LOCAL_D1_ID)).toThrow(/CLOUDFLARE_ACCOUNT_ID is f+/u);
+    vi.unstubAllEnvs();
   });
 
   it('writes the issuer’s Worker, both D1s, the Durable Objects and the public vars (no secret)', () => {

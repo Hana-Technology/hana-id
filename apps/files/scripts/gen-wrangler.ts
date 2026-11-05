@@ -13,7 +13,7 @@
 import { writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type Manifest, isDevEnv, isLoopbackHost, loadEnv } from '@hana-id/env';
+import { type Manifest, accountIdFields, isDevEnv, isLoopbackHost, loadEnv } from '@hana-id/env';
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const COMPATIBILITY_DATE = '2026-10-01';
@@ -51,6 +51,8 @@ export function wranglerConfig(m: Manifest): Record<string, unknown> {
     name: f.workerName,
     main: 'src/index.ts',
     compatibility_date: COMPATIBILITY_DATE,
+    // The env's Cloudflare account, when the manifest names it (D404).
+    ...accountIdFields(m.cloudflare.accountId, 'cloudflare.accountId'),
     ...filesPlacement(m),
     // The Worker's own log lines only (codes, never a key or an app id); the platform's per-request records would add
     // the URL, which is public anyway, so they stay on.

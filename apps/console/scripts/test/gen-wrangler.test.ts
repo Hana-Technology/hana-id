@@ -51,6 +51,13 @@ describe('the console config', () => {
     expect(c.preview_urls).toBe(false);
     expect(c.routes).toEqual([{ pattern: 'console.test', custom_domain: true }]);
     expect(c.route).toBeUndefined();
+    expect(c).not.toHaveProperty('account_id');
+  });
+
+  it("deploys to the manifest's cloudflare.accountId when it names one (D404)", () => {
+    const id = '0123456789abcdef0123456789abcdef';
+    const m = { ...TEST_MANIFEST, cloudflare: { ...TEST_MANIFEST.cloudflare, accountId: id } } as Manifest;
+    expect(wranglerConfig(m, LOCAL_D1_ID)).toMatchObject({ account_id: id });
   });
 
   it('a dev env may serve it on its own workers.dev name (D93); production may not; a wrong name or a port is refused', () => {

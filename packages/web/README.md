@@ -13,7 +13,7 @@ Approve in a Hana popup, unless it falls under an auto-approve policy you set an
 The packages aren't on a registry yet. Hana sends you the tarballs; install them together:
 
 ```sh
-npm install ./hana-id-core-0.1.0.tgz ./hana-id-web-0.1.0.tgz
+npm install ./hana-id-core-0.2.0.tgz ./hana-id-web-0.2.0.tgz
 ```
 
 ESM only, with TypeScript declarations. Use a bundler (Vite, webpack, esbuild, Next.js) or TypeScript with

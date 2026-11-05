@@ -19,8 +19,10 @@
 // session is dormant needs no PRK. They are not secret (bound to this session key and app). A format-1 record is read
 // as is and gets its proofs at its next unlock, which has PRK.
 //
+// Batch C15 adds an optional plaintext `supportId` (the API's Support ID for the session), in either format.
+//
 // SECURITY: PRK and K_s are full private-key material. Every buffer here is zeroed by its owner; nothing is logged.
-import { type Bytes, type WalletProofs, bytesEqual, concatBytes, recordAad, toBytes, utf8 } from '@hana-id/core';
+import { type Bytes, type WalletProofs, bytesEqual, concatBytes, isSupportId, recordAad, toBytes, utf8 } from '@hana-id/core';
 import { proofsMatch } from './identity.ts';
 import type { AutoApproveUsage } from '@hana-id/core/policy';
 
@@ -65,6 +67,13 @@ export interface RecordV1 {
   consent?: SealedConsent;
   /** Format 2: the identity token's wallet proofs for `addresses`, bound to `sessionPk` and `appId`. */
   walletProofs?: WalletProofs;
+  /**
+   * Batch C15: the user's Support ID as the API sent it with this session (`HANA-XXXX-XXXX`), shown in hana_status and
+   * the approval popup after a reload. Not secret and not in the AAD (only displayed: nothing is decided by it), so a
+   * record of either format may carry it or not; a malformed one is dropped on read, never a reason to delete the
+   * record.
+   */
+  supportId?: string;
 }
 
 /** The record format written now. */
@@ -168,6 +177,10 @@ export function parseRecord(v: unknown): RecordV1 | null {
   if (v.consent !== undefined && !(isObj(v.consent) && isBytes(v.consent.iv, IV_BYTES) && isBytes(v.consent.ct))) return null;
   // Format 2 always has proofs, of the record's own addresses; format 1 never has them.
   if (v.v === 2 ? !proofsMatch(v.walletProofs, v.addresses as unknown as RecordAddresses) : v.walletProofs !== undefined) return null;
+  if (v.supportId !== undefined && !isSupportId(v.supportId)) {
+    const { supportId: _dropped, ...rest } = v;
+    return rest as unknown as RecordV1;
+  }
   return v as unknown as RecordV1;
 }
 

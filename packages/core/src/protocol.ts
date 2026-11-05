@@ -14,6 +14,7 @@ import { base64Decode, from0xHex, toHex, utf8, utf8Length } from './bytes.ts';
 import { isDisplaySafeLine } from './display-safe.ts';
 import { IDENTITY_MAX_MAX_AGE_MS, IDENTITY_MIN_MAX_AGE_MS } from './identity.ts';
 import { isLogoUrl } from './logo.ts';
+import { isSupportId } from './support-id.ts';
 import { KEY_INDEX_LIMIT, MAX_USES_LIMIT, RELAY_ID_PATTERN, SALT_MAX_BYTES, SALT_MIN_BYTES, SHARE_ID_BYTES } from './layouts.ts';
 import { type FollowProve, isFollowProve } from './relay.ts';
 import { type EvmTxRequest, evmTxSigningPayload, parseEvmTxRequest } from './signers/evm.ts';
@@ -413,12 +414,20 @@ export interface StatusResult {
   addresses?: PortAddresses;
   expiresAtMs?: number;
   persistence: Persistence;
+  /**
+   * Batch C15: the logged-in user's Support ID (`HANA-XXXX-XXXX`, support-id.ts), the code to give Hana with request
+   * IDs when escalating. Only while logged in, only when the API sent one with the session, and only to an SDK of
+   * SUPPORT_ID_SDK_MIN or later (the vault reads the hello's `sdk`).
+   */
+  supportId?: string;
 }
 
 export interface LoginResult {
   addresses: PortAddresses;
   expiresAtMs: number;
   persistence: Persistence;
+  /** Batch C15: the user's Support ID, as in StatusResult. */
+  supportId?: string;
   /** Informational (`storage_unavailable`: persistence fell back to 'none'). */
   warning?: 'storage_unavailable';
   /** pk_test_ apps only: per-stage ms, no secrets (for apps/smoke; timings.ts, LOGIN_TIMING_STAGES). */
@@ -513,10 +522,10 @@ const isSig65 = (v: unknown): v is `0x${string}` => typeof v === 'string' && /^0
 const isSignedBy = (v: unknown, key: string): boolean => isPlainObject(v) && exactKeys(v, [key, 'signerAddress']) && isAddressFor('stellar', v.signerAddress);
 
 function isStatusResult(v: unknown, extra: readonly string[] = []): v is StatusResult {
-  if (!isPlainObject(v) || !exactKeys(v, ['status', 'persistence'], ['addresses', 'expiresAtMs', ...extra])) return false;
+  if (!isPlainObject(v) || !exactKeys(v, ['status', 'persistence'], ['addresses', 'expiresAtMs', 'supportId', ...extra])) return false;
   if (!isPersistence(v.persistence)) return false;
-  if (v.status === 'logged_out') return v.addresses === undefined && v.expiresAtMs === undefined;
-  return v.status === 'logged_in' && isPortAddresses(v.addresses) && isMs(v.expiresAtMs);
+  if (v.status === 'logged_out') return v.addresses === undefined && v.expiresAtMs === undefined && v.supportId === undefined;
+  return v.status === 'logged_in' && isPortAddresses(v.addresses) && isMs(v.expiresAtMs) && (v.supportId === undefined || isSupportId(v.supportId));
 }
 
 
@@ -524,12 +533,13 @@ const RESULTS: { [M in PortMethod]: (r: unknown) => boolean } = {
   hana_status: (r) => isStatusResult(r),
   hana_login: (r) =>
     isPlainObject(r) &&
-    exactKeys(r, ['addresses', 'expiresAtMs', 'persistence'], ['warning', 'timings']) &&
+    exactKeys(r, ['addresses', 'expiresAtMs', 'persistence'], ['warning', 'timings', 'supportId']) &&
     isPortAddresses(r.addresses) &&
     isMs(r.expiresAtMs) &&
     isPersistence(r.persistence) &&
     (r.warning === undefined || r.warning === 'storage_unavailable') &&
-    (r.timings === undefined || isTimings(r.timings)),
+    (r.timings === undefined || isTimings(r.timings)) &&
+    (r.supportId === undefined || isSupportId(r.supportId)),
   hana_cancelLogin: (r) => r === null,
   hana_logout: (r) => r === null,
   hana_export: (r) => r === null,
@@ -752,6 +762,11 @@ export interface WindowMessageMap {
      * the vault's build pins, so an app without a logo sends exactly the message older pages take.
      */
     logoUrl?: string;
+    /**
+     * Batch C15: the session's Support ID (`HANA-XXXX-XXXX`), shown on the account line; present only when the
+     * session has one, so a session without it sends exactly the message older pages take.
+     */
+    supportId?: string;
   };
   'hana:approve-result': { id: string; approved: boolean; digest: Uint8Array };
   'hana:approve-bye': Record<string, never>;
@@ -897,8 +912,9 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:auth-progress': (m) => exactKeys(m, ['v', 't', 'stage']) && (m.stage === 'email_code' || m.stage === 'google' || m.stage === 'relayed' || m.stage === 'back'),
   'hana:approve-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:approve-request': (m) => {
-    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove', 'testApp', 'logoUrl'])) return false;
+    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove', 'testApp', 'logoUrl', 'supportId'])) return false;
     if (m.logoUrl !== undefined && !isLogoUrl(m.logoUrl)) return false;
+    if (m.supportId !== undefined && !isSupportId(m.supportId)) return false;
     if (m.autoApprove !== undefined && !isAutoApproveNote(m.autoApprove)) return false;
     if (m.testApp !== undefined && m.testApp !== true) return false;
     if (!isRequestId(m.id) || !isAppName(m.appName) || !isOrigin(m.parentOrigin) || !isApprovalKind(m.kind) || !isChain(m.chain)) return false;

@@ -16,10 +16,12 @@ export interface HanaState {
   readonly persistence: HanaPersistence | null;
   /** The last failure (vault_unavailable, a failed login, a lost vault); cleared by a successful login. */
   readonly error: HanaError | null;
+  /** The logged-in user's Support ID (`HANA-XXXX-XXXX`, batch C15), or null (HanaClient.supportId). */
+  readonly supportId: string | null;
 }
 
 /** The state before a client exists (first render, server render): the client's own initial values. */
-export const INITIAL_STATE: HanaState = Object.freeze({ status: 'unlocking', addresses: null, persistence: null, error: null });
+export const INITIAL_STATE: HanaState = Object.freeze({ status: 'unlocking', addresses: null, persistence: null, error: null, supportId: null });
 
 export interface HanaStore {
   subscribe(onChange: () => void): () => void;
@@ -33,7 +35,7 @@ export const EMPTY_STORE: HanaStore = Object.freeze({
 });
 
 /** The client events after which a getter may read differently. */
-const EVENTS = ['statusChanged', 'accountsChanged', 'sessionExpired', 'disconnect', 'persistenceChanged'] as const;
+const EVENTS = ['statusChanged', 'accountsChanged', 'sessionExpired', 'disconnect', 'persistenceChanged', 'supportIdChanged'] as const;
 
 export function createStore(client: HanaClient): HanaStore {
   const subscribers = new Set<() => void>();
@@ -57,13 +59,15 @@ export function createStore(client: HanaClient): HanaStore {
       const addresses = client.addresses;
       const persistence = client.persistence;
       const error = client.error;
+      const supportId = client.supportId;
       if (
         snapshot.status !== status ||
         !sameAddresses(snapshot.addresses, addresses) ||
         snapshot.persistence !== persistence ||
-        snapshot.error !== error
+        snapshot.error !== error ||
+        snapshot.supportId !== supportId
       ) {
-        snapshot = Object.freeze({ status, addresses: addresses && Object.freeze(addresses), persistence, error });
+        snapshot = Object.freeze({ status, addresses: addresses && Object.freeze(addresses), persistence, error, supportId });
       }
       return snapshot;
     },

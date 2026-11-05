@@ -27,4 +27,17 @@ describe('StaffRpc.recordStaffAction', () => {
     expect(await staffRpc().recordStaffAction({ ...hana(), ...base, action: 'ledger.exported', details: { month: '2026-01', email: 'x@y.example' } })).toMatchObject({ ok: false, code: 'bad_request', error: expect.stringMatching(/details\.email/u) });
     expect(await staffRpc().recordStaffAction({ ...hana(), ...base, action: 'rate.overridden', details: { day: '2026-01-10', usdMicros: '2500000', overrideId: 3 } })).toEqual({ ok: true });
   });
+
+  it('records a Support ID lookup without an org, so no partner audit view lists it, and refuses one with an org (C15)', async () => {
+    const org = await seedOrg();
+    const c = { ...hana(), action: 'support.lookup', target: 'HANA-2750-G5HM', details: { by: 'supportId', ticket: 'T-1', requestIds: 2, days: 30 } };
+    expect(await staffRpc().recordStaffAction(c)).toEqual({ ok: true });
+    const row = await env.CONSOLE_DB.prepare("SELECT org_id, target, details_json FROM audit_log WHERE request_id = ? AND action = 'support.lookup'").bind(c.requestId).first();
+    expect(row).toEqual({ org_id: null, target: 'HANA-2750-G5HM', details_json: JSON.stringify(c.details) });
+    // The partner audit view reads `WHERE org_id = ?` (bff.ts orgAudit): an org-less row is in no org's.
+    const partner = await env.CONSOLE_DB.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE org_id = ? AND action = 'support.lookup'").bind(org).first<{ n: number }>();
+    expect(partner?.n).toBe(0);
+    expect(await staffRpc().recordStaffAction({ ...hana(), orgId: org, action: 'support.lookup', details: { by: 'supportId' } })).toMatchObject({ ok: false, code: 'bad_request' });
+    expect(await staffRpc().recordStaffAction({ ...hana(), action: 'support.lookup', details: { by: 'supportId', email: 'x@y.example' } })).toMatchObject({ ok: false, code: 'bad_request' });
+  });
 });

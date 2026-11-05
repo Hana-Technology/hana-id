@@ -63,6 +63,11 @@ export interface ApiModules {
   getAppByKey(db: D1Like, publishableKey: string): Promise<ApiApp | null>;
   /** apps/api/src/claims.ts: the ID token's first claim outside the allow-list (`token_has_pii`), or null. */
   disallowedClaim(jwt: string): string | null;
+  /**
+   * apps/api/src/directory/store.ts: the Support ID the Worker's /v1/login and /v1/sessions answer with (C15), from the
+   * same derivation as the wallet directory's `support_code`; undefined without the env's keys.
+   */
+  sessionSupportId(env: ApiEnv, scopeId: string, root: { provider: string; sub: string }): Promise<string | undefined>;
   /** apps/api/src/origins.ts: the hosts the origin rule treats as loopback (pk_test_ keys in dev envs only). */
   isLoopbackOrigin(origin: string): boolean;
   /** apps/api/src/vault/page.ts: GET {vaultOrigin}/vault?pk=… */
@@ -79,7 +84,7 @@ const load = async <T>(path: string): Promise<T> => (await import(new URL(path, 
 export async function loadApiModules(): Promise<ApiModules> {
   // The Worker's Durable Object classes extend `cloudflare:workers`' DurableObject.
   registerCloudflareModule();
-  const [index, handlers, apps, origins, page, host, claims] = await Promise.all([
+  const [index, handlers, apps, origins, page, host, claims, directory] = await Promise.all([
     load<{ default: ApiModules['worker']; LoginRelay: ApiModules['LoginRelay'] }>('index.ts'),
     load<Pick<ApiModules, 'appGate' | 'newCtx' | 'done'>>('handlers.ts'),
     load<Pick<ApiModules, 'getAppByKey'>>('apps.ts'),
@@ -87,6 +92,7 @@ export async function loadApiModules(): Promise<ApiModules> {
     load<Pick<ApiModules, 'handleVaultPage'>>('vault/page.ts'),
     load<Pick<ApiModules, 'handleVaultHost' | 'handleAuthHost'>>('pages/host.ts'),
     load<Pick<ApiModules, 'disallowedClaim'>>('claims.ts'),
+    load<Pick<ApiModules, 'sessionSupportId'>>('directory/store.ts'),
   ]);
   return {
     worker: index.default,
@@ -97,6 +103,7 @@ export async function loadApiModules(): Promise<ApiModules> {
     getAppByKey: apps.getAppByKey,
     isLoopbackOrigin: origins.isLoopbackOrigin,
     disallowedClaim: claims.disallowedClaim,
+    sessionSupportId: directory.sessionSupportId,
     handleVaultPage: page.handleVaultPage,
     handleVaultHost: host.handleVaultHost,
     handleAuthHost: host.handleAuthHost,

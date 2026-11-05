@@ -12,6 +12,7 @@ import { internalIdOf, uid } from '@hana-id/console-core';
 import { type Manifest, loadEnv, repoRoot } from '@hana-id/env';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { retentionIssuer } from '../lib/admin-retention.ts';
+import { supportDirectory, supportLedger } from '../lib/admin-support.ts';
 import { parseCli } from '../lib/cli.ts';
 import { type LedgerConn, type UidEraseDeps, checkTicket, uidErase } from '../lib/uid-erase.ts';
 import { newHotDb } from './hot-db.ts';
@@ -207,6 +208,32 @@ describe('uid-erase --yes: across the three stores', () => {
     expect(rec).toEqual([{ ticket: 'SUP-123', operator: 'cli:ops', scope_id: SCOPE, rows: out!.erased }]);
     expect(JSON.stringify(rec)).not.toMatch(new RegExp(`${EMAIL.sub}|${GOOGLE.sub}|${await uidHex(GOOGLE)}|@`, 'u'));
     expect(lines.join('\n')).toMatch(/Still to do: scope\(s\) s8/u);
+  });
+
+  it('leaves the Support ID lookup (C15) nothing to show for the account: no directory match, no ledger events by its uids', async () => {
+    const root = await userOf(GOOGLE);
+    const other = await userOf(OTHER);
+    const lookup = async (internalId: string) => {
+      const sources = { apiD1: d1(api), issuerD1: d1(issuer) };
+      const byCode = await supportDirectory({ kind: 'supportId', code: internalId.slice(3, 11).toUpperCase() }, 30, sources);
+      const byId = await supportDirectory({ kind: 'internalId', internalId }, 30, sources);
+      return { byCode, byId };
+    };
+    const before = await lookup(root);
+    expect([before.byCode.matches.length, before.byId.matches.length]).toEqual([1, 1]);
+    const ledgerPart = await supportLedger(before.byId, 30, [], { ledger: async () => asAdmin(ledger), ledgerFile: 'x' });
+    expect(ledgerPart.activity[0]).toHaveLength(2);
+    await uidErase([...ARGV, '--yes'], deps());
+    const after = await lookup(root);
+    expect([after.byCode.matches, after.byId.matches]).toEqual([[], []]);
+    // The ledger part is by the directory's internal ids, and the uids are NULLed besides: a lookup by the old uid finds nothing.
+    const stale = await supportLedger({ ...before.byId }, 30, [], { ledger: async () => asAdmin(ledger), ledgerFile: 'x' });
+    expect(stale.activity).toEqual([[]]);
+    // The request IDs' events stay (billing), but carry no uid: none is this user's any more.
+    const req = await supportLedger({ ...before.byId }, 30, ['erase-1-xxxxxxxx'], { ledger: async () => asAdmin(ledger), ledgerFile: 'x' });
+    expect(req.requests!.map((r) => r.byMatch)).toEqual([false]);
+    // Everyone else is still found.
+    expect((await lookup(other)).byId.matches).toHaveLength(1);
   });
 
   it('is re-runnable: a second run finds nothing and still answers', async () => {

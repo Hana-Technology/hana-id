@@ -9,8 +9,9 @@
 //
 // C12's reports, statements, rates and exports (report-routes.ts); C14's "Security & monitoring" (the watchdog through
 // monitoring.ts, the governance snapshot), the pending-upgrades page and the playbooks (playbooks.ts); C13's retention
-// screen (retention-routes.ts). Not here yet: the Users screen (`/api/users/search`, `/api/users/get`, proposed D275,
-// C8b) and the Support ID lookup (C15). Their paths answer 404 until those batches add them.
+// screen (retention-routes.ts); C15's Support ID lookup (`POST /api/support/lookup`, support.ts: the backend its screen
+// calls once C8b merges). Not here yet: the Users screen (`/api/users/search`, `/api/users/get`, proposed D275, C8b):
+// its paths answer 404 until that batch adds them.
 import type { AppChange, AuditRow, MemberView } from '@hana-id/console-core';
 import type { Env } from './env.ts';
 import { auditCsv } from './export.ts';
@@ -21,6 +22,7 @@ import { ackRoute, actionsRoute, alertsRoute, monitoringRoute, pendingUpgradesRo
 import { getPlaybookRoute, listPlaybooksRoute } from './playbooks.ts';
 import { retentionRoute } from './retention-routes.ts';
 import { securityView } from './security.ts';
+import { supportLookupRoute } from './support.ts';
 import { type StaffRequest, staffCtx } from './rpc.ts';
 
 export interface RouteCtx {
@@ -243,6 +245,8 @@ const ROUTES: Route[] = [
   { method: 'PUT', pattern: '/api/rates/:day', handler: rateOverrideRoute },
   // ---- retention (C13): the monthly job's runs, read only ----
   { method: 'GET', pattern: '/api/retention', handler: retentionRoute },
+  // ---- C15: the Support ID lookup (support.ts) ----
+  { method: 'POST', pattern: '/api/support/lookup', handler: supportLookupRoute },
 ];
 
 function matchRoute(path: string): { routes: { route: Route; params: Record<string, string> }[] } {

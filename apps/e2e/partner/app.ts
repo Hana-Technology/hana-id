@@ -248,6 +248,7 @@ const e2e = {
   addresses: () => hana.addresses,
   persistence: () => hana.persistence,
   warning: () => hana.warning,
+  supportId: () => hana.supportId,
   /** The next click on #act runs `action` synchronously inside the click handler (user activation). */
   arm(name: string, action: string, ...args: unknown[]) {
     outsideClick = false;

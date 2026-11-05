@@ -11,7 +11,7 @@ popup, unless it falls under an auto-approve policy you set and the user accepte
 > for mainnet chains at all ([section 12](#12-test-and-live-keys)). This guide follows the code; the original
 > specification is `docs/batch-b-spec.md`.
 
-Last verified against code: 2026-11-05 (branch `fix/webcrypto-linux-webkit`: `derive_failed`'s `webcrypto_unsupported` and `webcrypto_failed` in the error table, D385); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `feat/user-id-identity-sub`: section 15's `sub` row, the User ID and Support ID, D346); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: D347's closed popup in section 4 and the error table, D348's Google-only screen; a cancel on Google's sign-in screen goes back to the chooser, closing there is `login_cancelled`, in "Sign-in methods and links" and the error table; D341); 2026-11-04 (branch `fix/abandoned-login-freeze`: an unfinished login and `login_timeout`'s
+Last verified against code: 2026-11-05 (branch `feat/batch-c-15`: the user's Support ID in the SDK, `hana.supportId`, `supportIdChanged`, `useHana().supportId`, the approval popup, for SDK 0.2.0 or later, and the install lines' 0.2.0 tarballs; section 4 "Support ID"); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: `derive_failed`'s `webcrypto_unsupported` and `webcrypto_failed` in the error table, D385); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `feat/user-id-identity-sub`: section 15's `sub` row, the User ID and Support ID, D346); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: D347's closed popup in section 4 and the error table, D348's Google-only screen; a cancel on Google's sign-in screen goes back to the chooser, closing there is `login_cancelled`, in "Sign-in methods and links" and the error table; D341); 2026-11-04 (branch `fix/abandoned-login-freeze`: an unfinished login and `login_timeout`'s
 `data.stage`); 2026-11-04 (branch `feat/token-first-on`: "Sign-in methods and links": Google's one
 sign-in screen lists the email, cancelling it, the two-accounts screen; D270); 2026-11-03 (branch `feat/email-login-8b` review fixes: the email permission's screens and
 reasons, `api_unavailable`'s `path_unconfirmed` / `path_disputed`, `storage_unavailable` in a login, `hana.account()`'s
@@ -70,13 +70,13 @@ release, built with `pnpm pack` (`docs/operations.md` "Releasing the SDK package
 with npm, pnpm or yarn:
 
 ```sh
-npm install ./hana-id-core-0.1.0.tgz ./hana-id-web-0.1.0.tgz              # always
-npm install ./hana-id-react-0.1.0.tgz                                      # React apps
-npm install ./hana-id-sodax-0.1.0.tgz @sodax/types@2.1.0                   # Sodax adapters
+npm install ./hana-id-core-0.2.0.tgz ./hana-id-web-0.2.0.tgz              # always
+npm install ./hana-id-react-0.2.0.tgz                                      # React apps
+npm install ./hana-id-sodax-0.2.0.tgz @sodax/types@2.1.0                   # Sodax adapters
 ```
 
 Commit the tarballs to your repository (or a private artifact store) and depend on them by path
-(`"@hana-id/web": "file:vendor/hana-id-web-0.1.0.tgz"`), so every install gets the same bytes.
+(`"@hana-id/web": "file:vendor/hana-id-web-0.2.0.tgz"`), so every install gets the same bytes.
 
 | Package | What | Peer dependencies (tested) |
 |---|---|---|
@@ -145,6 +145,7 @@ const hana = createHana({
 await hana.ready; // the vault is up and the status is known (a reload has already been restored)
 hana.status;      // 'logged_out' | 'unlocking' | 'logging_in' | 'logged_in' | 'error'
 hana.addresses;   // { stellar: 'G…', evm: '0x…' } or null
+hana.supportId;   // 'HANA-XXXX-XXXX' while logged in, or null (section 4, "Support ID")
 ```
 
 Create one client per page and keep it. `hana.destroy()` removes the iframe and its listeners (for example on an SPA
@@ -175,6 +176,7 @@ hana.on('launcher', ({ visible, label }) => {}); // Hana's button is shown or hi
 hana.on('autoApproved', ({ kind, chain, contract, function: fn }) => {});
 hana.on('persistenceChanged', (persistence) => {}); // 'none': this login won't survive a reload (see "Sessions")
 hana.on('linkChanged', ({ provider, status, effectiveAtMs }) => {}); // a sign-in method added, activated or removed (section 4)
+hana.on('supportIdChanged', (supportId) => {}); // 'HANA-XXXX-XXXX' or null (section 4, "Support ID")
 ```
 
 `loginProgress: key_pending` means Google has just started signing with a new key that Hana ID hasn't activated yet
@@ -288,6 +290,18 @@ button.addEventListener('click', async () => {
     wallet's own; the link opens the wallet after 24 h (`{provider, status: 'pending', effectiveAtMs}`). It rejects
     with `link_refused` (`data.reason`: `provider_taken`, `account_full`, `already_linked`, `has_wallet` when that
     method already opened a wallet of its own, `links_unavailable`) before any transaction.
+- <a id="support-id"></a>**Support ID** (D96, D276, D346; SDK 0.2.0 or later). While a user is logged in,
+  `hana.supportId` is their Support ID, `HANA-XXXX-XXXX` (`useHana().supportId` in React; `supportIdChanged` when it
+  changes; null when logged out). It is the short form of the identity token's `sub` (section 15), so it is the same
+  in every app of your scope and for every sign-in method of the user's account, and your backend can compute it from
+  the `sub` it stores. It carries no address, email or Google account, and it isn't a credential: Hana's staff change
+  nothing on a code alone. Show it where your users look for help, put it in your diagnostics, and give it to Hana
+  when you escalate, with the error `code`, when it happened and the app; Hana's support finds the user, their logins
+  and sessions by it (errors are found by request ID, since Hana keeps no user id on failed requests). The Hana
+  approval popup also shows it under the account line, so a user can read it out. It comes from Hana's API with the
+  session: `null` for a session saved before this release (until the user's next login) and on an environment that
+  can't compute it. An SDK older than 0.2.0 never receives it (the vault gives older SDKs exactly the answers they
+  know).
 - `await hana.logout()` signs this app out on this device, in every tab. It sends no transaction.
 - `await hana.revokeOtherDevices()` signs the user out of your app everywhere else. It works only within 5 min of a
   fresh login, so offer it right after one.
@@ -663,7 +677,7 @@ import { HanaProvider, useHana, useIdentityToken, useWallet } from '@hana-id/rea
 </HanaProvider>;
 
 function SignIn() {
-  const { status, addresses, persistence, error, login, logout, exportKey } = useHana();
+  const { status, addresses, persistence, error, supportId, login, logout, exportKey } = useHana();
   return <button onClick={login}>Sign in</button>; // login must run in the onClick, with no await before it
 }
 

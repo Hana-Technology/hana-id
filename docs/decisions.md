@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
+Last verified against code: 2026-10-28 (commit 58edee9); D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
 user, implementation choices to confirm) on 2026-11-05; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
 flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
@@ -1620,7 +1620,8 @@ Made while building `docs/batch-c-build-plan.md` C1 (branch `feat/batch-c-1`), a
 - Why: a sandbox credential leak or a project-level mistake can never reach production billing data.
 
 ### D144. Support ID lookup is built from data Hana already keeps
-- Date 2026-10-30 · Status: confirmed by the user, not built · Source: batch C1 open question 4 (D96)
+- Date 2026-10-30 · Status: confirmed by the user; built in C15 on `feat/batch-c-15` (not merged; D394–D397, the uid
+  through the wallet directory's internal id since D346) · Source: batch C1 open question 4 (D96)
 - Decision: staff resolve a user's Support ID in the admin console from the usage ledger's pseudonymous user id plus
   each app's change history (`app_changes`): which apps it used, recent logins, errors and app setting changes. No
   dedicated support table and no email or name stored. A short spec section, reviewed by the user, comes before
@@ -6323,6 +6324,98 @@ follow-up there.
   account and its cookies in the canary, which no script may hold (CLAUDE.md); report-only as a finding (Google has
   sent it since before batch B).
 - Note: built as D385 and renumbered D386 at merge (D384 went to `deploy-check`, D385 to the WebCrypto errors).
+### D394. The Support ID lookup: the hot-DB part in `AdminRpc`, the ledger part read as `usage_admin` by the admin Worker and the CLI
+- Date 2026-11-05 · Status: decided while building C15 (the design confirmed by the user as D276's 2026-11-05
+  amendment; these details: to confirm) · Built: console-core `support.ts`; `apps/api/src/directory/support.ts`,
+  `AdminRpc.supportLookup` / `userShares`; `apps/admin/src/support.ts` (`POST /api/support/lookup`); tests
+  `apps/api/test/support-lookup.test.ts`, `apps/admin/test/support.test.ts`, `apps/admin/test-ops/support.test.ts`,
+  `packages/console-core/test/support.test.ts` · Source: D96, D144, D276, D346
+- Decision:
+  1. **Input**: a Support ID (any case, `HANA-` and dashes optional), a User ID (`u1_…`) or an internal id (`hu_…`).
+     A wallet address or a sub goes through the user search first (`AdminRpc.findUsers`, `user:find`), whose answer
+     carries the User ID: the lookup itself never starts from a Google account or an address.
+  2. **`AdminRpc.supportLookup({query, days?})`** (staff only, read only): the directory's matches (`StaffUser`, at
+     most 10 in full, newest first, `truncated` beyond), and for each the scope's apps, the vault shares that haven't
+     expired (the account root's path at key index 0 and at each key index its wallets show; no share id, key or
+     counter; a `live` flag) and the apps' `app_changes` over the window (30 days by default, 1–731; at most 50).
+     **`AdminRpc.userShares({appId, path})`**: the planned per-path read, built as the spec gave it.
+  3. **The ledger part** (`SUPPORT_ACTIVITY_SQL`, `SUPPORT_REQUESTS_SQL`, shared): each match's ok `login`,
+     `session` and `derive` events by uid (the internal id's 16 bytes) over the window, newest first, at most 400; and
+     for up to 20 request IDs every event whatever its outcome, each marked `byMatch` when it carries a match's uid
+     (the uid itself is never selected). Read by the admin Worker over its `USAGE_DB` binding (`usage_admin`) and by
+     the CLI over `.secrets/<env>/neon-usage-admin.url`. Without the binding or the file, or when Neon fails, the
+     answer keeps the directory part and says `ledger: {available: false, reason: "ledger unavailable…"}`
+     (sandbox-dev's usage capture is off today). No Neon migration: 0007 has `events (uid, at)` (D362) and the
+     request ID leads the primary key.
+- Why: the API's ledger role may only write (D73). Giving it a read of one user's activity by uid (a SECURITY DEFINER
+  function for `usage_writer`) would put a per-user activity read in the Worker that faces the internet; the admin
+  Worker already holds `usage_admin` behind Access, and the CLI the operator's own credentials.
+- Rejected: the whole lookup in `AdminRpc` with a new writer-role function (above); a lookup by wallet or sub directly
+  (one more way to probe the directory with a Google account); listing errors per user (D276 (d): uids on failures).
+
+### D395. `supportId` in the session answers is computed exactly as the directory stores it, from the session's own account root
+- Date 2026-11-05 · Status: decided while building C15 (to confirm) · Built: `apps/api/src/directory/store.ts`
+  `sessionSupportId`, `login.ts`, `handlers.ts`, `link-precheck.ts` `autoLinkRoot`; the vault, the approval popup and
+  the SDK (D393, `docs/integration.md`) · Source: D276 (as amended 2026-11-05), D346 ("it must come from the API")
+- Decision: the `/v1/login` and `/v1/sessions` 200 answers carry `supportId` (`HANA-XXXX-XXXX`), additive and optional,
+  computed with `directoryUser` (the function every directory write uses), so it is the `end_users.support_code` of
+  that user by construction (tested against the stored row). The account root: for `/v1/sessions` the chain's new
+  session path; for `/v1/login` the standing read (a member's root, else the identity) and, with an automatic link,
+  the root the link precheck judged (case A: the link identity's account root, which the session identity joins;
+  cases B and C: the session identity's). Left out when either key is missing or malformed (a code nothing could
+  resolve) or when the login's standing is only the fail-open guess (a member's root unknown). The vault keeps it
+  with the session and shows it; it never computes one.
+- Why: a code shown to a user that staff then can't find is worse than none.
+- Rejected: computing it in the vault (needs `IDENTITY_SUB_KEY`, D346); returning the User ID too (the partner's
+  backend already has it from the identity token; the popup needs only the short form).
+
+### D396. The admin console's lookup is audited before it reads anything, in the console's `audit_log`, never in a partner's view
+- Date 2026-11-05 · Status: decided while building C15 (to confirm) · Built: `apps/admin/src/support.ts`;
+  `StaffRpc.recordStaffAction` action `support.lookup` (console-core `staff.ts`, `apps/console/src/audit.ts`,
+  `staff-rpc.ts`); `apps/admin/src/feed.ts` · Source: D327, D275 ("audit before data"), spec "Retention" (audit 5 years)
+- Decision: `POST /api/support/lookup` requires a `ticket` (1–64 printable characters, no `@`: it is stored) and first
+  appends the `audit_log` row through `StaffRpc.recordStaffAction`: the staff Access identity, `target` = the query as
+  given (a Support ID, User ID or internal id; never an address or a sub), `details {by, ticket, requestIds, days}`
+  (`requestIds` a count). The row has no org (a lookup is about an end user, not an org's act): the console refuses
+  one with an `orgId`, so no partner's audit view or feed group can show it, and the feed never emails it. A failed
+  or refused audit write answers 503 / 500 and nothing is read. The email join the screen adds after C8b goes through
+  `DirectoryRpc`, which writes its own audit row in the issuer (`support_lookup`, D275).
+- Why: a lookup reads a person's activity; it gets a durable row naming who looked and why, as directory reads do.
+  `AdminRpc`'s other staff reads are logged only (`rpc` lines), which isn't enough for this one.
+- Rejected: a hot-DB audit table (a new store for one action); logging only.
+
+### D397. The CLI's lookup is its own command, `admin <env> support:lookup`, not more sections of `user:find --user`
+- Date 2026-11-05 · Status: decided while building C15 (to confirm) · Built: `scripts/lib/admin-support.ts`,
+  `scripts/admin.ts`; `scripts/test/admin-support.test.ts` · Source: D316, D361
+- Decision: `corepack pnpm --filter @hana-id/scripts admin <env> support:lookup <HANA-XXXX-XXXX | u1_… | hu_… | ->
+  [--request-id <id>]… [--days 30] [--json] [--remote]`: the same answer as the admin route, read like `user:find`
+  (the API's D1 privately, the issuer's D1 for the addresses, the ledger as `usage_admin` from
+  `.secrets/<env>/neon-usage-admin.url`, as `uid-erase` connects; "ledger unavailable" without it). Printed to the
+  terminal only. Not audited: like `user:find`, it is the operator's path with wrangler and Neon credentials of their
+  own, which already read everything; the admin console's path is the audited one (D396).
+- Why: `user:find` answers "who is this"; the lookup answers "what happened to them", needs the ledger and request
+  IDs, and its output is a different report. Adding them to `user:find --user` would give every user search a Neon
+  connection.
+- Rejected: extending `user:find --user`.
+
+### D393. The vault gives `supportId` only to an SDK of 0.2.0 or later; the lockstep SDK version moves to 0.2.0
+- Date 2026-11-05 · Status: decided while building C15 (to confirm; a release step under D72) · Built:
+  `packages/core/src/support-id.ts` (`SUPPORT_ID_SDK_MIN`, `sdkAtLeast`), `packages/web/src/vault/vault.ts`
+  (`sdkTakesSupportId`), the four packages at `0.2.0` (`scripts/sdk-version.ts`); tests
+  `packages/core/test/support-id.test.ts`, `packages/web/test/vault/support-id.test.ts`,
+  `packages/web/test/client/support-id.test.ts` · Source: D72, D395
+- Decision: the SDK's protocol validators refuse a key they don't know, so a vault (always Hana's latest) that added
+  `supportId` to `hana_status`, `hana_login` or `ready` would break every older SDK a partner vendors (a reply it can't
+  parse fails the call; a `ready` it can't parse never comes, so every reload would end in `vault_unavailable`). The
+  vault reads the `sdk` version of `hana:hello` and adds the field only for `SUPPORT_ID_SDK_MIN` (`0.2.0`) or later;
+  older SDKs get exactly the shapes they know. The in-repo SDK moves to `0.2.0` so it receives the field. The approval
+  popup (Hana's own page) shows the code for every SDK. On the SDK: `hana.supportId`, the `supportIdChanged` event,
+  `useHana().supportId`; the vault keeps the code in the session's IndexedDB record (plaintext, outside the AAD: it
+  is not secret), drops a malformed one and never derives one.
+- Trade-offs: partners on a 0.1.0 tarball don't get the code until they update (their users still see it in the
+  approval popup); a branch that releases 0.2.0 before C15 merges must raise the constant.
+- Rejected: adding the field unconditionally (breaks deployed SDKs); a new port method (`hana_supportId`), which an old
+  SDK can't call anyway and which splits the session state across two calls.
 
 ## Superseded or amended
 
@@ -6330,6 +6423,7 @@ follow-up there.
 |---|---|---|
 | D381: a session key WebCrypto can't make ends the login `api_unavailable` (a different code rejected) | `derive_failed` with `data.reason` `webcrypto_unsupported` / `webcrypto_failed` (D385) | `packages/web/src/vault/errors.ts` |
 | D347's assumption rechecked with `curl -sI` on the authorization URL before each release | `coop-canary <env>` before each release: every hop of the product's requests under six User-Agents, and Chromium, Firefox and WebKit, with positive controls (D386) | `scripts/lib/coop-canary.ts`; docs/operations.md "Before each release: the COOP canary" |
+| D276's code → user through the issuer's `user_email_apps.uid` (`IssuerRpc.uid`, `DirectoryRpc.byUid`) with a ledger-only fallback; the code from the uid; `user:erase` | Through the wallet directory's `end_users.support_code` / `token_sub` / `user_id` (no issuer uid, no `IssuerRpc.uid`, no `byUid`, no fallback); the code from the identity token's `sub` (D346); the lookup's hot-DB part in `AdminRpc`, its ledger part read as `usage_admin` (D394); erasure by `uid-erase` (D361) | `apps/api/src/directory/support.ts`, `apps/admin/src/support.ts`, `scripts/lib/admin-support.ts` |
 | The outside identity-JWKS probe runs hourly (D382) | Every 3 hours, at minute 17 (D383) | `.github/workflows/identity-probe.yml` |
 | The outside identity-JWKS probe runs every 15 min (D210) | Hourly, at minute 17 (D382) | `.github/workflows/identity-probe.yml` |
 | The admin crons' budget counts emails and NEAR reads only, with room for the RPCs (D280); C12's `relayerKeys` and statement-notice reads uncharged (D360's note) | Every outbound call counts: the connection, every RPC (at most 30), every email, NEAR read and rate fetch; a unit of work starts only when it fits (D380) | `apps/admin/src/mail.ts`, `cron.ts`, `ledger-cron.ts` |
@@ -6517,7 +6611,8 @@ over D269's directory) and D276 (the Support ID made consistent with D269), belo
   partners and about whom Hana contacts, consistent with D269.
 
 ### D276. Support ID: the uid's first 40 bits; staff resolve it through the directory's stored uid; errors by request ID
-- Date 2026-11-04 · Status: **proposed, to confirm by the user** · Source: build plan C15's open question (D144:
+- Date 2026-11-04 · Status: **confirmed by the user** (2026-11-05: "yes go ahead with C15"), **as amended by D346 and
+  below** (the 2026-11-05 amendment; built in C15, D394–D397) · Source: build plan C15's open question (D144:
   confirmed, built from data Hana already keeps), made consistent with D269 · Written: `docs/batch-c-spec.md`
   "Support ID lookup", Q27; build plan C15
 - Recommendation:
@@ -6574,6 +6669,26 @@ over D269's directory) and D276 (the Support ID made consistent with D269), belo
   fallback (a uid prefix) is gone: a user with no directory row since the deploy has no resolvable code.
   "Where it is shown" still stands as planned and is not built: neither `/v1/login`, `/v1/sessions`, `hana_status`
   nor the popup carries a Support ID yet.
+- **Amended 2026-11-05 (confirmed by the user, "yes go ahead with C15"; built on `feat/batch-c-15`, D394–D397):** the
+  design C15 builds, replacing the recommendation above where they differ:
+  1. **Code → user** is the wallet directory: `end_users.support_code` (indexed), or `token_sub` / `user_id` when staff
+     hold the User ID or the internal id. No `uid` column in the issuer (`user_email_apps.uid`), no `IssuerRpc.uid`,
+     no `DirectoryRpc.byUid`. Where an email is shown, the join is by provider and sub (`end_user_identities` → the
+     issuer's `user_emails`), as `user:find --user` and the C8b screen do. Every match is listed (40-bit collisions;
+     the partner's app tells them apart). The code is taken in any case, with or without `HANA-` and dashes
+     (console-core `parseSupportId`, the CLI's parser).
+  2. **What a lookup shows**: the user's ids, identities and wallets (the directory); the scope's apps; the ledger's
+     ok `login`, `session` and `derive` events by uid (Neon; the indexes are 0007's, D362, so no migration); the vault
+     shares that haven't expired (`AdminRpc.userShares`, built, and the lookup's own read); errors by the request IDs
+     the partner gives (the ledger keeps uids only on ok events, by design); the apps' `app_changes`. Not consents.
+  3. **Where users see it**: `supportId` beside the session in the `/v1/login` and `/v1/sessions` answers (additive),
+     the same derivation as the stored code (D395); the vault's `hana_status` (`hana.supportId`, for SDK 0.2.0 or
+     later, D393) and the approval popup's account line (the popup's only account view).
+  4. **Partners**: the code only (their Users page shows it, D310); no partner lookup in batch C; no address or sub.
+  5. **Erasure**: `uid-erase` (D361) removes everything the lookup reads for the account (its directory rows, so the
+     code resolves to nothing, and its uids in the ledger; `scripts/test/uid-erase.test.ts`); no `user:erase`. Vault
+     shares and app changes aren't per-user records the erasure keeps: shares expire within a day and the lookup
+     reaches them only through the directory row.
 
 ## Dev env email limits, 2026-11-04
 

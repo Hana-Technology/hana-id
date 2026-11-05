@@ -1,4 +1,5 @@
 // Request handlers: app endpoints (publishable key + origin), owner actions (OIDC proof in args), health.
+import { identityRoot } from '@hana-id/core/identity';
 import { JwksUnavailableError } from '@hana-id/oidc';
 import { type App, HOT_DB_SCHEMA, PUBLISHABLE_KEY_RE, appSuspended, getAppByKey, markSession, startFirstSession } from './apps.ts';
 import { appKeyPairs, appKeyProblem } from './bls.ts';
@@ -17,6 +18,7 @@ import type { RelayInstance, RelayResult } from './relayer-key.ts';
 import { relay } from './relayer-pool.ts';
 import { ckdPayload, createProofPayload, revokePayload, sessionNonce, verifySessionSignature } from './session-crypto.ts';
 import { countEmailUsage } from './email-usage.ts';
+import { sessionSupportId } from './directory/store.ts';
 import { type LoginTokenResult, verifyLoginToken } from './login-token.ts';
 import { signerPanic } from './panics.ts';
 import { recalledPanic, rememberPanic, requestKey } from './panic-cache.ts';
@@ -486,7 +488,11 @@ async function appEndpoint(request: Request, env: Env, endpoint: AppEndpoint, ct
     notePath(ctx, result.result.path);
     // An email session per app and day (D1 `email_usage`, copied hourly to the ledger, D233).
     if (token.email) await countEmailUsage(env, app.id, 'email_sessions', ctx, exec);
-    return done(ctx, 200, { result: result.result, nearTx: result.nearTx });
+    // The user's Support ID (C15, D276 as amended by D346), from the new session's own path (the chain's answer: its
+    // account root's, for a member), the same code the wallet directory stores for that user.
+    const root = identityRoot(result.result.path, app.scope_id);
+    const supportId = root ? await sessionSupportId(env, app.scope_id, root) : undefined;
+    return done(ctx, 200, { result: result.result, nearTx: result.nearTx, ...(supportId ? { supportId } : {}) });
   }
 
   let call;

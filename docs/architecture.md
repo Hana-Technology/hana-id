@@ -1,7 +1,8 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-05 (branch `feat/coop-canary`: "Login, one transaction" step 4's closed popup: Google's COOP rechecked before each release by `coop-canary`, D386); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: the login's step 2, the session key's failure as `derive_failed` with its reason and which keys WebKit Linux refuses, D385; "WebCrypto on the login, export and signing paths"); 2026-11-05 (branch `feat/deploy-build-check`: "Environments and manifests": the build id
+Last verified against code: 2026-11-05 (branch `feat/batch-c-15`: "Wallet directory" step 5, the Support ID in the
+session answers and the vault; the new "Support ID lookup", D394–D397); 2026-11-05 (branch `feat/coop-canary`: "Login, one transaction" step 4's closed popup: Google's COOP rechecked before each release by `coop-canary`, D386); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: the login's step 2, the session key's failure as `derive_failed` with its reason and which keys WebKit Linux refuses, D385; "WebCrypto on the login, export and signing paths"); 2026-11-05 (branch `feat/deploy-build-check`: "Environments and manifests": the build id
 in every Worker and page bundle and `deploy-check`, D384); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-05 (branch `fix/e2e-flakes`: the login's step 2, the session key's retry on WebKit Linux's
 Ed25519 `OperationError`, D381); 2026-11-04 (branch `feat/batch-c-13`: retention and the erasure path in Status, Components
 (the usage ledger and admin Worker rows) and "Data stores" (what is purged when, D360–D369)); 2026-11-04 (branch `feat/console-reports-upgrades`: the partner console's usage, statement and pending-upgrades screens, D370–D374); 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342; the partner console's fresh sign-in and write paths, D343, D350–D358); 2026-11-04 (branch `feat/user-id-identity-sub`: the wallet directory's three ids and the record's session signature, D346 and the D311/D313 amendments: Status, "Wallet directory" steps 1, 2 and 4, "Data stores"' D1 row, the Glossary); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: D347, a closed popup is
@@ -514,8 +515,45 @@ Code: `packages/core/src/wallet-record.ts`, `packages/web/src/vault/wallet-recor
    `DirectoryRpc`, joined on each identity's `directoryKey` (not built). Partners: `ConsoleRpc.listUsers` / `getUser`
    for their org's scopes only, with the User ID (`u1_…`), Support ID, times, account kinds and wallets, never the
    internal id, a sub, an identity key or an email (D315, D346). The CLI: `admin user:list` / `user:find` with each
-   identity's user (all three ids) and wallets, `user:find --address` / `--user` (D316). The vault and the popup don't
-   show a Support ID yet (D276's plan, not built).
+   identity's user (all three ids) and wallets, `user:find --address` / `--user` (D316).
+5. **The Support ID shown to the user (C15, D395).** The `/v1/login` and `/v1/sessions` answers carry `supportId`,
+   computed with the directory's own `directoryUser` from the session's account root (for `/v1/sessions` the chain's
+   session path; for `/v1/login` the standing read or, with an automatic link, the root the link precheck judged), so
+   it is the code `end_users.support_code` stores; absent without either key or without a confirmed standing. The
+   vault keeps it with the session (in its IndexedDB record, across reloads) and gives it in `hana_status`,
+   `hana_login` and `ready` to an SDK of 0.2.0 or later (`hana.supportId`; older SDKs' validators refuse an unknown
+   key, D393) and on the approval popup's account line (`docs/integration.md`); it never computes one.
+
+### Support ID lookup (staff; C15, D276 as amended, D394–D397)
+
+Code: `packages/console-core/src/support.ts`, `apps/api/src/directory/support.ts`, `apps/admin/src/support.ts`,
+`scripts/lib/admin-support.ts`. No migration of its own.
+
+```
+staff ─Access─▶ admin Worker POST /api/support/lookup {query, ticket, requestIds?, days?}
+                  1. CONSOLE StaffRpc.recordStaffAction(support.lookup)   audit_log, org-less; no row → nothing read
+                  2. API AdminRpc.supportLookup                            hot DB: end_users (support_code | token_sub |
+                                                                           user_id), identities, wallets, apps,
+                                                                           vault_shares, app_changes
+                  3. USAGE_DB (usage_admin)                                usage.events by uid (events_uid_at) and by
+                                                                           request_id; "ledger unavailable" without it
+operator ─ admin <env> support:lookup ─▶ the same reads: the API's D1 (private executor), the issuer's D1 (addresses),
+                                          Neon as usage_admin (.secrets/<env>/neon-usage-admin.url)
+```
+
+1. **Input**: a Support ID typed any way (`HANA-` and dashes optional, any case), a User ID or an internal id. A wallet
+   or a sub goes through the user search first.
+2. **Code → users**: `end_users.support_code` (or `token_sub`, `user_id`), every match listed (40 bits collide; at most
+   10 in full, `truncated` beyond); each match's internal id is its ledger uid.
+3. **Per match**: its ids, identities (with subs; the admin screen joins each `directoryKey` with `DirectoryRpc` for
+   the email after C8b, the CLI joins the issuer's D1 now), wallets; the scope's apps; the shares not past
+   `abs_expires_at` (the account root's path at each key index); the apps' `app_changes` in the window (30 days by
+   default); the ledger's ok `login`, `session` and `derive` events by uid (at most 400).
+4. **Errors** come only by the request IDs the partner's escalation gives (every outcome; `byMatch` when the event
+   carries a match's uid): the ledger keeps a uid on ok events only. Consents aren't shown (browser storage, D23).
+5. **Partners** have no lookup: they see the code beside the User ID on their Users page (D310, D346).
+6. **Erasure**: `uid-erase` (D361) deletes the account's directory rows and NULLs its uids, so the code resolves to
+   nothing afterwards.
 
 ### Login, two transactions (split path)
 

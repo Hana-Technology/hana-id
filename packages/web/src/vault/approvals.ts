@@ -101,6 +101,12 @@ export interface ApprovalDeps {
    * origin), or null; read for each message so a logo change reaches the next request.
    */
   logoUrl?: () => string | null;
+  /**
+   * Batch C15: the session's Support ID (`HANA-XXXX-XXXX`, from the API), or null; read for each message and shown on
+   * the request screen's account line. Sent only when there is one, so a session without it sends exactly the message
+   * older pages take.
+   */
+  supportId?: () => string | null;
   parentOrigin: string;
   /** A pk_test_ app: every request and consent screen says Hana signs only for test networks (D39). */
   testApp?: boolean;
@@ -412,6 +418,7 @@ export class Approvals {
     if (item.type === 'consent') {
       return { ...common, t: 'hana:consent-request', policy: structuredPolicy(item.policy), policyId: item.policyId, expiresAtMs: item.expiresAtMs };
     }
+    const supportId = this.d.supportId?.() ?? null;
     return {
       ...common,
       t: 'hana:approve-request',
@@ -421,6 +428,7 @@ export class Approvals {
       bytes: copy ? Uint8Array.from(item.subject.bytes) : item.subject.bytes,
       context: { ...item.subject.context },
       ...(item.note ? { autoApprove: { ...item.note } } : {}),
+      ...(supportId ? { supportId } : {}),
     };
   }
 

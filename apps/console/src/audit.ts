@@ -60,6 +60,8 @@ export const AUDIT_DETAIL_KEYS = {
   'statement.issued': ['month', 'csvSha256', 'pdfSha256', 'asOf', 'lines'],
   'ledger.exported': ['month', 'asOf', 'rows', 'sha256'],
   'rate.overridden': ['day', 'usdMicros', 'overrideId'],
+  // Batch C15 (D396): a staff Support ID lookup, org-less, recorded before the lookup reads anything.
+  'support.lookup': ['by', 'ticket', 'requestIds', 'days'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type AuditAction = keyof typeof AUDIT_DETAIL_KEYS;

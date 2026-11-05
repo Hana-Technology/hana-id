@@ -17,7 +17,11 @@
 // the statement in a process argument), and user:find --address / --user start from the wallet directory
 // (lib/admin-users.ts): Hana staff only; addresses and subs go to this terminal and nowhere else. retention:issuer
 // is the email issuer's part of the monthly retention (lib/admin-retention.ts, D365): the admin Worker has no binding
-// to the issuer's D1.
+// to the issuer's D1. support:lookup is the Support ID lookup (lib/admin-support.ts, C15): the wallet directory, apps,
+// shares and changes from the API's D1, addresses from the issuer's, and the ledger as usage_admin over
+// .secrets/<env>/neon-usage-admin.url ("ledger unavailable" without it).
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { loadEnv, type Manifest } from '@hana-id/env';
 import { assertCommandPositionals } from './lib/admin-args.ts';
@@ -47,6 +51,11 @@ import { tryView } from './lib/contract.ts';
 import { apiPrivateD1Execute, d1Execute, issuerD1Execute } from './lib/d1.ts';
 import { type UserCmdDeps, userFindCommand, userList } from './lib/admin-users.ts';
 import { retentionIssuer } from './lib/admin-retention.ts';
+import { type SupportLedgerConn, supportLookupCommand } from './lib/admin-support.ts';
+import { secretsDir } from './lib/secrets.ts';
+import { ROLE_FILES, readRoleUrl } from './lib/usage-setup.ts';
+import { redact } from './lib/usage-migrate.ts';
+import pg from 'pg';
 import { NearRpc } from './lib/near.ts';
 
 const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
@@ -86,6 +95,13 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
                ids and wallets; --address: every user listing that wallet, --user: a User ID, internal id or Support ID, each with
                its accounts (provider, sub, role, status, address); with no flag, any of these is read from stdin.
                Addresses are printed here only: never redirect the output to a file outside .secrets/
+  support:lookup <HANA-XXXX-XXXX | u1_… | hu_… | -> [--request-id <id>]… [--days 30] [--json]
+               the Support ID lookup (C15): every user the code (any case, dashes optional), User ID or internal id
+               names, each with its ids, accounts and addresses, wallets, the scope's apps, the vault shares not
+               expired, the apps' changes, and from the usage ledger (as usage_admin over
+               .secrets/<env>/neon-usage-admin.url; "ledger unavailable" without it) the user's ok login, session and
+               derive events by uid over --days (1–731), and the events of each --request-id (errors included; up to
+               20). -: the code on stdin. Printed here only: never redirect the output to a file outside .secrets/
   retention:issuer [--yes]
                the email issuer's part of the monthly retention (D90): user_email_apps rows of apps deleted 30 days
                ago or more, email_admin_audit rows older than 60 months; dry run without --yes. Run after each
@@ -143,6 +159,7 @@ const COMMANDS = [
   'user:list',
   'user:find',
   'retention:issuer',
+  'support:lookup',
 ] as const;
 type Command = (typeof COMMANDS)[number];
 
@@ -175,6 +192,32 @@ function userDeps(m: Manifest, remote: boolean): UserCmdDeps {
   };
 }
 
+/**
+ * The usage ledger as usage_admin (support:lookup), from `.secrets/<env>/neon-usage-admin.url` (written by `usage-setup
+ * <env> roles`, read as uid-erase reads it); null without the file. The URL and password never reach an error message.
+ */
+async function usageAdminLedger(env: string): Promise<SupportLedgerConn | null> {
+  const file = join(secretsDir(env), ROLE_FILES.usage_admin);
+  if (!existsSync(file)) return null;
+  const { url } = readRoleUrl(file, 'usage_admin', `.secrets/${env}/${ROLE_FILES.usage_admin}`);
+  const client = new pg.Client({ connectionString: url, application_name: 'hana-id support:lookup' });
+  try {
+    await client.connect();
+  } catch (e) {
+    throw new Error(redact(e instanceof Error ? e.message : String(e), url));
+  }
+  return {
+    async query(sql, params) {
+      try {
+        return (await client.query(sql, params)).rows as Record<string, unknown>[];
+      } catch (e) {
+        throw new Error(redact(e instanceof Error ? e.message : String(e), url));
+      }
+    },
+    close: () => client.end(),
+  };
+}
+
 const ownerDeps = (m: Manifest) => ({ rpc: new NearRpc(m.rpc), log: (line: string) => console.log(line) });
 
 async function scopeExists(m: Manifest, scopeId: string): Promise<boolean> {
@@ -183,8 +226,8 @@ async function scopeExists(m: Manifest, scopeId: string): Promise<boolean> {
 
 async function main(): Promise<void> {
   const args = parseCli(process.argv.slice(2), {
-    strings: ['name', 'scope', 'plan', 'app', 'org', 'environment', 'persistence', 'session-ttl', 'idle-ttl', 'raw-sign', 'google-web-client', 'auto-approve', 'args', 'gas', 'member', 'approve-with', 'limit', 'remove', 'add', 'd1-name', 'provider', 'search', 'email', 'sub', 'address', 'user'],
-    multiple: ['origin', 'client', 'owner-near', 'owner-google'],
+    strings: ['name', 'scope', 'plan', 'app', 'org', 'environment', 'persistence', 'session-ttl', 'idle-ttl', 'raw-sign', 'google-web-client', 'auto-approve', 'args', 'gas', 'member', 'approve-with', 'limit', 'remove', 'add', 'd1-name', 'provider', 'search', 'email', 'sub', 'address', 'user', 'days'],
+    multiple: ['origin', 'client', 'owner-near', 'owner-google', 'request-id'],
     booleans: ['remote', 'yes', 'allow-shared', 'json', 'reject', 'help'],
   });
   if (args.flag('help')) return void console.log(USAGE);
@@ -204,6 +247,20 @@ async function main(): Promise<void> {
     const deps = userDeps(m, remote);
     if (command === 'user:list') await userList(args, issuerWhere, deps);
     else await userFindCommand(args, { issuer: issuerWhere, api: where }, deps);
+    return;
+  }
+
+  if (command === 'support:lookup') {
+    if (args.str('d1-name') !== undefined) throw new CliError('--d1-name is for the API database’s app commands; support:lookup reads the env’s own databases');
+    const file = `.secrets/${m.name}/${ROLE_FILES.usage_admin}`;
+    await supportLookupCommand(rest[0]!, args, {
+      apiD1: (statement) => apiPrivateD1Execute(m, statement, { remote }),
+      issuerD1: m.emailIssuer ? (statement) => issuerD1Execute(m, statement, { remote }) : null,
+      ledger: () => usageAdminLedger(m.name),
+      ledgerFile: file,
+      log: (line) => console.log(line),
+      readLine: userDeps(m, remote).readLine,
+    });
     return;
   }
 
@@ -284,6 +341,7 @@ async function main(): Promise<void> {
     case 'user:list':
     case 'user:find':
     case 'retention:issuer':
+    case 'support:lookup':
       return; // handled above, before the API database's commands
   }
 }

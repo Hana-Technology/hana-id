@@ -9,7 +9,8 @@ import type { Env } from './env.ts';
 import { hex, sha256 } from './bytes.ts';
 import { type Ctx, appGate, appQuota, chainGate, chainGateResponse, checkClientScope, done, firstSession, lap, lapRelay, limiter, loginTokenRefusal, newCtx, reject, settle } from './handlers.ts';
 import { readJson } from './http.ts';
-import { type LinkRefusal, checkKey, precheckAutoLink } from './link-precheck.ts';
+import { type LinkRefusal, autoLinkRoot, checkKey, precheckAutoLink } from './link-precheck.ts';
+import { sessionSupportId } from './directory/store.ts';
 import { inBackground, syncAfterLogin } from './directory/sync.ts';
 import { getAccount, getIdentity } from './link-views.ts';
 import { type LoginToken, verifyLoginToken } from './login-token.ts';
@@ -198,10 +199,16 @@ async function login(request: Request, env: Env, ctx: Ctx, exec?: ExecutionConte
     if (!(await verifySessionSignature(req.sessionPublicKey, 1, req.signature, payload))) {
       return reject(ctx, 401, 'invalid_signature', 'Invalid session signature');
     }
-    // 6b. The link the token commits to is the one the contract would make now (link-precheck.ts, D133).
+    // 6b. The link the token commits to is the one the contract would make now (link-precheck.ts, D133). It also
+    //     says whose account root's path the session opens once linked (the Support ID's input below).
+    let linkedRoot: { provider: string; sub: string } | null = null;
     if (link) {
-      const refusal = await precheckLoginLink(env, app.scope_id, session, token, link, req.linkImmediate);
-      if (refusal) return done(ctx, refusal.status, { error: refusal.error, code: refusal.code, ...(refusal.reason ? { reason: refusal.reason } : {}) });
+      const judged = await precheckLoginLink(env, app.scope_id, session, token, link, req.linkImmediate);
+      if ('refusal' in judged) {
+        const refusal = judged.refusal;
+        return done(ctx, refusal.status, { error: refusal.error, code: refusal.code, ...(refusal.reason ? { reason: refusal.reason } : {}) });
+      }
+      linkedRoot = judged.root;
     }
     // 7–8. The app key: well-formed always; its pairing only behind BLS_PRECHECK (CPU-heavy, Workers Paid only).
     const keyProblem = appKeyProblem(req.pk1, req.pk2);
@@ -232,11 +239,17 @@ async function login(request: Request, env: Env, ctx: Ctx, exec?: ExecutionConte
     // The wallet directory (D314): the user seen now, and a member's or a new link's identity rows.
     const linkRef = link ? { provider: link.provider, sub: link.sub } : null;
     await inBackground(exec, () => syncAfterLogin(env, app.scope_id, { provider: token.provider, sub: token.sub }, linkRef, standing, { requestId, endpoint: ctx.endpoint, appId: app.id }));
+    // The user's Support ID (C15, D276 as amended by D346), from the account root whose path the session opens: the
+    // link's judged root, else the standing's (a member's root, or the identity itself). Left out when the standing is
+    // only the fail-open guess (a member's root unknown) or the env can't write the directory.
+    const root = linkedRoot ?? (standing.confirmed ? (standing.member?.root ?? { provider: token.provider, sub: token.sub }) : null);
+    const supportId = root ? await sessionSupportId(env, app.scope_id, root) : undefined;
     return done(ctx, 200, {
       result: { big_y: r.big_y, big_c: r.big_c },
       // Informational: what the session must look like now. The vault reads the chain, never this.
       session: { scope_id: app.scope_id, expires_at_ms: req.expiresAtMs, max_uses: req.maxUses, used: 1 },
       nearTx: result.nearTx,
+      ...(supportId ? { supportId } : {}),
     });
   } finally {
     release();
@@ -246,7 +259,8 @@ async function login(request: Request, env: Env, ctx: Ctx, exec?: ExecutionConte
 /**
  * The link precheck of a login with `linkJwt` (link-precheck.ts): links open on chain (contract v3, the owner accepted
  * the pre-v3 wallets, D135), then both identities and their accounts read fresh, then the contract's auto_link rules.
- * Null when the login may be relayed; otherwise the refusal (502 when the chain can't be read).
+ * `{root}` when the login may be relayed (the account root whose path the linked session opens); otherwise the
+ * refusal (502 when the chain can't be read).
  */
 async function precheckLoginLink(
   env: Env,
@@ -255,11 +269,11 @@ async function precheckLoginLink(
   token: LoginToken,
   link: LoginToken,
   immediate: boolean,
-): Promise<LinkRefusal | null> {
-  const unavailable: LinkRefusal = { status: 502, code: 'near_unavailable', error: 'Could not read the sign-in methods on chain' };
+): Promise<{ refusal: LinkRefusal } | { root: { provider: string; sub: string } }> {
+  const unavailable = { refusal: { status: 502, code: 'near_unavailable', error: 'Could not read the sign-in methods on chain' } satisfies LinkRefusal };
   try {
     const config = await getConfig(env);
-    if (!config.links_open) return { status: 409, code: 'links_unavailable', error: 'Links wait until the owner accepts the wallets opened before v3' };
+    if (!config.links_open) return { refusal: { status: 409, code: 'links_unavailable', error: 'Links wait until the owner accepts the wallets opened before v3' } };
     const [xi, ei, xa, ea] = await Promise.all([
       getIdentity(env, scopeId, token.provider, token.sub),
       getIdentity(env, scopeId, link.provider, link.sub),
@@ -269,7 +283,8 @@ async function precheckLoginLink(
     const x = { provider: token.provider, sub: token.sub, identity: xi, account: xa };
     const e = { provider: link.provider, sub: link.sub, identity: ei, account: ea };
     if (!(await checkKey(scopeId, x)) || !(await checkKey(scopeId, e))) return unavailable;
-    return await precheckAutoLink({ signer: env.SIGNER_ACCOUNT, scopeId, sessionHash: await sha256(sessionNoncePreimage(session)), session: x, link: e, linkNonce: link.nonce, immediate });
+    const refusal = await precheckAutoLink({ signer: env.SIGNER_ACCOUNT, scopeId, sessionHash: await sha256(sessionNoncePreimage(session)), session: x, link: e, linkNonce: link.nonce, immediate });
+    return refusal ? { refusal } : { root: autoLinkRoot(x, e) };
   } catch {
     return unavailable;
   }

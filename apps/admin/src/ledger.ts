@@ -7,7 +7,7 @@
 //
 // Every statement is parameterised; nothing builds SQL from input. As ops.ts, the store takes a `query` function, so
 // the same code runs over `pg` in the Worker and over PGlite in test-ops/ (as usage_admin, on the real migrations).
-import type { LedgerSqlRow, ReportSqlRow, StatementSqlRow } from '@hana-id/console-core';
+import { type LedgerSqlRow, type ReportSqlRow, type StatementSqlRow, type SupportLedgerReader, sqlSupportLedger } from '@hana-id/console-core';
 import pg from 'pg';
 import type { Query } from './ops.ts';
 import { type RetentionStore, sqlRetention } from './retention-store.ts';
@@ -140,6 +140,8 @@ export interface LedgerStore {
   markStatementNoticed(orgId: string, month: string): Promise<void>;
   /** The monthly retention job's runs, state and Neon functions (C13), over the same connection. */
   readonly retention: RetentionStore;
+  /** The Support ID lookup's reads (C15): a uid's ok events, the request IDs' events (console-core support.ts). */
+  readonly support: SupportLedgerReader;
   close(): Promise<void>;
 }
 
@@ -364,6 +366,7 @@ export function sqlLedger(query: Query, close: () => Promise<void> = async () =>
       await query('INSERT INTO ops.statement_notices (org_id, month) VALUES ($1, $2::date) ON CONFLICT DO NOTHING', [orgId, `${month}-01`]);
     },
     retention: sqlRetention(query),
+    support: sqlSupportLedger(query),
     close,
   };
 }

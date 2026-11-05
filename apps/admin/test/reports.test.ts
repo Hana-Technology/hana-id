@@ -50,6 +50,7 @@ function stubStore(over: Partial<LedgerStore> = {}, calls: string[] = []): Ledge
     markStatementNoticed: async () => {},
     // The retention job and screen are tested in retention.test.ts and test-ops/; here the month is done.
     retention: retentionStub({ done: true }),
+    support: { activity: async () => [], requests: async () => [] },
     close: async () => {},
     ...over,
   };

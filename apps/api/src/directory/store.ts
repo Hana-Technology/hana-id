@@ -15,7 +15,7 @@
 //
 // SECURITY: the rows hold subs and wallet addresses (personal data, D269's cost): nothing here logs a row, a sub, a key
 // or an address; failures log the endpoint, the app and a code.
-import { internalIdOf, supportCodeOf, uid } from '@hana-id/console-core';
+import { formatSupportId, internalIdOf, supportCodeOf, uid } from '@hana-id/console-core';
 import { identitySub } from '@hana-id/core/identity';
 import { hex } from '../bytes.ts';
 import type { Env } from '../env.ts';
@@ -49,6 +49,18 @@ export async function directoryUser(env: Pick<Env, 'USER_ID_KEY' | 'IDENTITY_SUB
   if (typeof subKey === 'string') return subKey;
   const userId = identitySub(subKey, scopeId, root);
   return { internalId: internalIdOf(await uid(key, { scopeId, provider: root.provider, sub: root.sub })), userId, supportCode: supportCodeOf(userId) };
+}
+
+/**
+ * The Support ID (`HANA-XXXX-XXXX`) the session answers (`/v1/login`, `/v1/sessions`) carry for the account rooted at
+ * `root` (C15, D276 as amended by D346): exactly `directoryUser`'s code, the value `end_users.support_code` holds for
+ * that user, so what a user reads out is what staff look up. Undefined when the env can't write the directory (either
+ * key missing or malformed): a code nobody could resolve is never shown. No log here: the directory's own sync notes
+ * the missing key (`noteDirectoryUnavailable`).
+ */
+export async function sessionSupportId(env: Pick<Env, 'USER_ID_KEY' | 'IDENTITY_SUB_KEY'>, scopeId: string, root: IdentityRef): Promise<string | undefined> {
+  const user = await directoryUser(env, scopeId, root);
+  return typeof user === 'string' ? undefined : formatSupportId(user.supportCode);
 }
 
 /** The contract's identity key of `ref` in `scopeId`, hex. */

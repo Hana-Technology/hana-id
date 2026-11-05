@@ -95,7 +95,8 @@ describe('logins never depend on the ledger', () => {
     // Same-shaped requests with no binding and with the refusing one; only per-request values may differ.
     const shape = async (r: Response) => {
       const b = await body(r);
-      const volatile = new Set(['requestId', 'nearTx', 'timings', 'session', 'shareId', 'ks', 'absExpiresAtMs', 'idleUntilMs']);
+      // supportId: each run logs in a fresh scope, so its user's code differs (support-lookup.test.ts pins the value).
+      const volatile = new Set(['requestId', 'nearTx', 'timings', 'session', 'shareId', 'ks', 'absExpiresAtMs', 'idleUntilMs', 'supportId']);
       const headers = [...r.headers].filter(([k]) => k !== 'x-request-id');
       const norm = JSON.parse(JSON.stringify(b, (k, v: unknown) => (volatile.has(k) ? typeof v : k === 'result' && v && typeof v === 'object' && 'path' in v ? 'session' : v))) as unknown;
       return { status: r.status, body: norm, headers };

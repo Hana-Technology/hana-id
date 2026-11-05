@@ -17,6 +17,7 @@ export type DemoClient = Pick<
   | 'status'
   | 'addresses'
   | 'expiresAtMs'
+  | 'supportId'
   | 'persistence'
   | 'warning'
   | 'lastLogin'
@@ -481,6 +482,7 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
         warning: c.warning,
         expiresAtMs: c.expiresAtMs,
         addresses: c.addresses,
+        supportId: c.supportId,
         unlockMs,
         logins,
         errors,

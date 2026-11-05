@@ -24,6 +24,7 @@ const input = (patch: Partial<DiagnosticsInput> = {}): DiagnosticsInput => ({
   warning: null,
   expiresAtMs: Date.UTC(2026, 9, 29, 23),
   addresses: ADDRESSES,
+  supportId: 'HANA-2750-G5HM',
   unlockMs: 212.6,
   logins: [{ at: '2026-10-29T11:00:00.000Z', method: 'google', totalMs: 7012.4, stages: { app: 120, popup: 900, google: 4000, verify: 15, chain: 6200, decrypt: 40 } }],
   errors: [],
@@ -48,6 +49,7 @@ describe('diagnostics', () => {
       warning: null,
       sessionExpiresAt: '2026-10-29T23:00:00.000Z',
       addresses: ADDRESSES,
+      supportId: 'HANA-2750-G5HM',
       unlockMs: 213,
       logins: [{ at: '2026-10-29T11:00:00.000Z', method: 'google', totalMs: 7012, stages: { app: 120, popup: 900, google: 4000, verify: 15, chain: 6200, decrypt: 40 } }],
       errors: [],
@@ -70,6 +72,11 @@ describe('diagnostics', () => {
       'sig [redacted hex] relay [redacted] [redacted]',
     ]);
     expect(parsed.errors.map((e) => e.code)).toEqual(['token_invalid', 4001, null]);
+  });
+
+  it('batch C15: the Support ID only when it is one (null without one, or for anything else)', () => {
+    expect(diagnostics(input({ supportId: null }), 0).supportId).toBeNull();
+    for (const bad of ['hana-2750-g5hm', `HANA-2750-G5HM ${JWT}`, 'u1_EcoIFjT5lAWZsk0862e8Tg', '']) expect(diagnostics(input({ supportId: bad }), 0).supportId).toBeNull();
   });
 
   it('keeps addresses in their own field and only the latest entries, with stage names and numbers re-typed', () => {

@@ -41,6 +41,7 @@ import {
   isTouchResponse,
   isUnlockResponse,
   parseApiResponse,
+  supportIdFrom,
 } from '@hana-id/core';
 
 type Fetch = typeof fetch;
@@ -105,10 +106,17 @@ export class VaultApi {
     return value;
   }
 
-  /** POST /v1/sessions (the split fallback). */
-  async createSession(payload: CreateSessionBody): Promise<Relayed<SessionView>> {
-    const { value, nearTx } = await this.post('/v1/sessions', payload, isSessionView, (b) => b.result);
-    return { result: value, nearTx };
+  /**
+   * POST /v1/sessions (the split fallback), with the user's Support ID when the API sent one (batch C15; a malformed
+   * value is dropped, supportIdFrom).
+   */
+  async createSession(payload: CreateSessionBody): Promise<Relayed<SessionView> & { supportId: string | null }> {
+    let supportId: string | null = null;
+    const { value, nearTx } = await this.post('/v1/sessions', payload, isSessionView, (b) => {
+      supportId = supportIdFrom(b);
+      return b.result;
+    });
+    return { result: value, nearTx, supportId };
   }
 
   /** POST /v1/derive. */

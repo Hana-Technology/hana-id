@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
+Last verified against code: 2026-10-28 (commit 58edee9); D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
 user, implementation choices to confirm) on 2026-11-05; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
 flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
@@ -6819,6 +6819,25 @@ still take them: renumber on merge.
   API's Hyperdrive pool reconnects; nothing is on the login path); whether Neon's API knows a role created by SQL was
   not documented: if it answers 404 the run stops before any file is written, and the roles can be checked in Neon's
   console (Branches → the branch → Roles).
+
+## Staff login: Cloudflare Access kept, on the free tier (branch `docs/zero-trust-free-guard`), 2026-11-05
+
+### D408. The admin console keeps Cloudflare Access (Zero Trust Free); sandbox never goes past the free tier
+- Date 2026-11-05 · Status: **decided by the user** ("let's stick with Zero Trust then … make sure we never hit
+  overage for Zero Trust on sandbox") · Reconfirms D75 and D88 · Written: `docs/operations.md` "Admin Worker" step 1
+- Context: Zero Trust's Free plan asks for a card authorised for usage past the free limits. Alternatives weighed the
+  same day: our own Google staff sign-in (2–4 days; the admin console then public, sessions, CSRF and login abuse
+  ours; the issuer would verify Google's own ID token to keep staff identity unforgeable by the admin Worker), a
+  two-mode build switching to Access later (no breaking change, but throwaway work), Supabase Auth (a second account
+  able to admit staff), CLI only.
+- Decision: keep Access. On sandbox it stays inside the free tier: 50 seats, 2 used; the policy names exact emails
+  only, Google is the only login method, and no other Zero Trust feature is enabled (Gateway, WARP enrolment,
+  Browser Isolation, DLP and CASB are billed or metered per seat). Seat usage and billing are checked after setup and
+  monthly; adding staff or a feature is checked against the free limits first.
+- Why: Access keeps the admin console off the public internet and signs staff identity outside our code, for $0 at
+  our size; the guard answers the card authorisation.
+- Rejected: our own staff sign-in (more exposed, more code on the most sensitive screen), two modes (throwaway work),
+  Supabase Auth.
 
 ## Superseded or amended
 

@@ -23,7 +23,7 @@ import {
   sessionMessage,
   verifyEd25519,
 } from '@hana-id/core';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { HanaEnv } from '../../src/hana-env.ts';
 import { openRecordStore } from '../../src/vault/record.ts';
 import { AFTERWORD_MS, EMAIL_CONSENT_ROUNDS, LOGIN_PENDING_MS, PIN_READ_TIMEOUT_MS } from '../../src/vault/login.ts';
@@ -540,6 +540,24 @@ describe('the wallet’s sign-in methods', () => {
     const u = await tab(emailBrowser());
     expect((await u.request('hana_linkAccount', { method: 'email' })).error?.code).toBe(4100);
     void fromHex;
+  });
+
+  it('D385: hana.linkAccount in a browser that can’t make the session key is derive_failed (webcrypto_unsupported), not api_unavailable', async () => {
+    const b = emailBrowser();
+    b.backend.opened.add(Buffer.from(ik(G)).toString('hex'));
+    const t = await tab(b);
+    await login(t, g);
+    const real = crypto.subtle.generateKey.bind(crypto.subtle);
+    const spy = vi.spyOn(crypto.subtle, 'generateKey').mockImplementation(((algorithm: AlgorithmIdentifier, ...rest: [boolean, KeyUsage[]]) =>
+      (typeof algorithm === 'string' ? algorithm : algorithm.name) === 'Ed25519'
+        ? Promise.reject(new DOMException('Unrecognized algorithm name', 'NotSupportedError'))
+        : real(algorithm, ...rest)) as typeof crypto.subtle.generateKey);
+    try {
+      expect((await t.request('hana_linkAccount', { method: 'email' })).error).toMatchObject({ code: 'derive_failed', data: { reason: 'webcrypto_unsupported', error: 'NotSupportedError' } });
+      expect(b.backend.count('/v1/link')).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

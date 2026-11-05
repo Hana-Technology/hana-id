@@ -36,6 +36,15 @@ describe('plainMessage', () => {
     expect(plainMessage(new HanaError('origin_not_allowed', 'x'), 'load')).toMatch(/allowed origins/u);
   });
 
+  it('D385: a session key the browser couldn’t make is about the browser, never the connection', () => {
+    const unsupported = plainMessage(new HanaError('derive_failed', 'x', { reason: 'webcrypto_unsupported', error: 'NotSupportedError' }), 'login');
+    expect(unsupported).toMatch(/This browser can’t create the key.*Update it, or use another browser/u);
+    const failed = plainMessage(new HanaError('derive_failed', 'x', { reason: 'webcrypto_failed', error: 'OperationError' }), 'login');
+    expect(failed).toMatch(/This browser failed to create the key.*Try again/u);
+    for (const m of [unsupported, failed]) expect(m).not.toMatch(/connection|reach/u);
+    expect(plainMessage(new HanaError('derive_failed', 'x', { reason: 'link_restart' }), 'login')).toMatch(/Sign-in failed \(derive_failed\)/u);
+  });
+
   it('explains signing and device outcomes', () => {
     expect(plainMessage(new ProviderRpcError(4001, 'x'), 'sign')).toBe('Rejected in the Hana window: nothing was signed.');
     expect(plainMessage(new HanaError(4100, 'x', { reason: 'share_not_fresh' }), 'revoke')).toMatch(/within 5 minutes/u);

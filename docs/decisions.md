@@ -6777,7 +6777,8 @@ still take them: renumber on merge.
   which takes plain text only ("Hashed passwords are not supported", Neon's "Manage roles"). No password was set.
 - Decision:
   1. **SQL gives LOGIN, Neon sets the password.** As the owner (`DATABASE_URL_DIRECT`): check `usage_writer` and
-     `usage_admin` exist (else "run usage-migrate first") and `ALTER ROLE … WITH LOGIN` (no password), one
+     `usage_admin` exist (else "run usage-migrate first") and `ALTER ROLE … WITH LOGIN` with a random throwaway password (never stored or printed; Neon's reset refuses a role without one,
+      `ROLE_PASSWORD_NOT_AVAILABLE`, seen on sandbox-dev 2026-11-05), one
      transaction; the connection is closed before the resets (a reset drops the endpoint's connections). Then, per
      role in turn, `POST https://console.neon.tech/api/v2/projects/{project_id}/branches/{branch_id}/roles/{role}/reset_password`
      with `Authorization: Bearer <key>`: Neon generates the password and answers it once (`role.password`) with the
@@ -6809,6 +6810,11 @@ still take them: renumber on merge.
   6. Role passwords are now Neon's format (`npg_` and random letters and digits), so the role files' check
      (`readRoleUrl`, also used by `admin` and `uid-erase`) takes 12–512 characters without whitespace or control
      characters instead of D224's 43 base64url characters.
+- Amended 2026-11-05 (user, "yes"): the first real run answered `422 ROLE_PASSWORD_NOT_AVAILABLE` ("cannot update
+  password for role without password"): migration 0001's roles had none. The owner now sets a random throwaway in
+  the same `ALTER ROLE … WITH LOGIN PASSWORD`, never stored or printed, which the reset replaces within seconds; a
+  SQL log can only ever hold a dead password. Rejected: re-creating the roles through Neon's API (dropping them and
+  their grants).
 - Why: the user's choice of the two ways Neon allows (plain text in SQL, or Neon generates it): no password in a SQL
   statement (statement text can end up in Postgres's and Neon's logs), none typed or pasted, and the password is
   created where it is set.

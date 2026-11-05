@@ -23,7 +23,7 @@
 // private executor (lib/d1.ts apiPrivateD1Execute: a sub or an address to look up never goes in a process argument).
 // `user:find --address <G…|0x…>` and `--user <u1_…|hu_…|HANA-XXXX-XXXX>` start from the API's D1 and join each
 // identity's address from the issuer's directory when the env has one.
-import { INTERNAL_ID_RE, USER_ID_RE, formatSupportId, parseSupportId } from '@hana-id/console-core';
+import { INTERNAL_ID_RE, UNVERIFIED_CLAIM_WARNING, USER_ID_RE, formatSupportId, parseSupportId } from '@hana-id/console-core';
 import { canonicalWalletAddress } from '@hana-id/core/identity';
 import { normalizeEmail } from '@hana-id/email';
 import { formatTime } from './admin-lead-times.ts';
@@ -128,7 +128,8 @@ export interface WalletUser {
 }
 
 /** The warning above an unverified Google row (user:find) and on its address line (both commands). */
-export const UNVERIFIED_WARNING = 'UNVERIFIED: this Google account claims the address but Google hasn’t verified it; don’t treat it as the owner';
+/** The same words as the admin console's Users screen (console-core, D275). */
+export const UNVERIFIED_WARNING = UNVERIFIED_CLAIM_WARNING;
 const UNVERIFIED_TAG = '[UNVERIFIED: claimed, not verified by Google]';
 
 export interface UserListFilter {

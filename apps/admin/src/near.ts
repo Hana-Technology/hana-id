@@ -1,6 +1,7 @@
 // The admin Worker's NEAR reads (docs/batch-c-spec.md "Hana admin console": "NEAR calls are read-only"): `get_scope`
 // on the signer, uncached, for the on-chain watcher (C8); `tx` at FINAL for settlement and `view_access_key` at final
-// for the nonce check (C12). No key, no transaction. Errors carry the method only, never the RPC's text.
+// for the nonce check (C12); `get_identity` and `get_account`, with the block height they were read at, for the Users
+// screen's on-chain path (C8b, D275). No key, no transaction. Errors carry the method only, never the RPC's text.
 
 export const VIEW_TIMEOUT_MS = 8_000;
 
@@ -21,6 +22,11 @@ export interface ChainScope {
 const b64 = (s: string): string => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
 
 async function view(rpc: string, account: string, method: string, args: unknown): Promise<unknown> {
+  return (await viewAt(rpc, account, method, args)).value;
+}
+
+/** A view call's answer and the block it was read at (final). */
+async function viewAt(rpc: string, account: string, method: string, args: unknown): Promise<{ value: unknown; blockHeight: number | null }> {
   let res: Response;
   try {
     res = await fetch(rpc, {
@@ -33,9 +39,16 @@ async function view(rpc: string, account: string, method: string, args: unknown)
     throw new NearViewError(`${method}: unreachable`);
   }
   if (!res.ok) throw new NearViewError(`${method}: HTTP ${res.status}`);
-  const body = (await res.json().catch(() => null)) as { result?: { result?: number[] }; error?: unknown } | null;
+  const body = (await res.json().catch(() => null)) as { result?: { result?: number[]; block_height?: unknown }; error?: unknown } | null;
   if (!body || body.error || !Array.isArray(body.result?.result)) throw new NearViewError(`${method}: error answer`);
-  return JSON.parse(new TextDecoder().decode(new Uint8Array(body.result.result))) as unknown;
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder().decode(new Uint8Array(body.result.result))) as unknown;
+  } catch {
+    throw new NearViewError(`${method}: not JSON`);
+  }
+  const h = body.result.block_height;
+  return { value, blockHeight: Number.isSafeInteger(h) ? (h as number) : null };
 }
 
 const isPair = (v: unknown): v is [string, string] => Array.isArray(v) && v.length === 2 && typeof v[0] === 'string' && typeof v[1] === 'string';
@@ -54,6 +67,61 @@ export async function getScope(rpc: string, signer: string, scopeId: string): Pr
       return v && Number.isSafeInteger(v.id) && typeof v.unlock_at_ms === 'number' ? [{ id: v.id as number, change: v.change, unlockAtMs: v.unlock_at_ms }] : [];
     }),
   };
+}
+
+// ---- batch C8b: an identity's standing for the Users screen ----
+
+/** `get_identity(scope, provider, sub)` (docs/contract-interface.md "Identity"). */
+export interface ChainIdentity {
+  /** The identity key, hex. */
+  key: string;
+  /** `own` opens its own path; `member` its account root's; `pending` will, from `effectiveAtMs`. */
+  status: 'own' | 'member' | 'pending';
+  /** Its own path was derived ("has a wallet"). */
+  opened: boolean;
+  /** The account root, for member and pending. */
+  root: { provider: string; sub: string } | null;
+  effectiveAtMs: number | null;
+  /** 0: in no account. */
+  accountEpoch: number;
+}
+
+/** `get_account(scope, provider, sub)`: the account the identity is in, as root or member. */
+export interface ChainAccount {
+  root: { provider: string; sub: string };
+  members: { key: string; provider: string; active: boolean; effectiveAtMs: number | null }[];
+  epoch: number;
+}
+
+const isRef = (v: unknown): v is { provider: string; sub: string } => typeof v === 'object' && v !== null && typeof (v as { provider?: unknown }).provider === 'string' && typeof (v as { sub?: unknown }).sub === 'string';
+const HEX32 = /^[0-9a-f]{64}$/u;
+const msOrNull = (v: unknown): number | null => (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null);
+
+/** The identity's standing and the block it was read at. A malformed answer throws (never a guess). */
+export async function getIdentity(rpc: string, signer: string, scopeId: string, provider: string, sub: string): Promise<{ identity: ChainIdentity; blockHeight: number | null }> {
+  const { value, blockHeight } = await viewAt(rpc, signer, 'get_identity', { scope_id: scopeId, provider, sub });
+  const raw = value as Record<string, unknown> | null;
+  if (!raw || typeof raw !== 'object' || typeof raw.key !== 'string' || !HEX32.test(raw.key) || !['own', 'member', 'pending'].includes(raw.status as string) || typeof raw.opened !== 'boolean') {
+    throw new NearViewError('get_identity: unexpected shape');
+  }
+  const root = raw.root === null || raw.root === undefined ? null : isRef(raw.root) ? { provider: raw.root.provider, sub: raw.root.sub } : undefined;
+  if (root === undefined || (raw.status !== 'own' && root === null)) throw new NearViewError('get_identity: unexpected root');
+  const epoch = Number.isSafeInteger(raw.account_epoch) ? (raw.account_epoch as number) : 0;
+  return { identity: { key: raw.key, status: raw.status as ChainIdentity['status'], opened: raw.opened, root, effectiveAtMs: msOrNull(raw.effective_at_ms), accountEpoch: epoch }, blockHeight };
+}
+
+/** The identity's account (null: in none) and the block it was read at. A malformed answer throws. */
+export async function getAccount(rpc: string, signer: string, scopeId: string, provider: string, sub: string): Promise<{ account: ChainAccount | null; blockHeight: number | null }> {
+  const { value, blockHeight } = await viewAt(rpc, signer, 'get_account', { scope_id: scopeId, provider, sub });
+  if (value === null) return { account: null, blockHeight };
+  const raw = value as Record<string, unknown>;
+  if (typeof raw !== 'object' || !isRef(raw.root) || !Array.isArray(raw.members) || !Number.isSafeInteger(raw.epoch)) throw new NearViewError('get_account: unexpected shape');
+  const members = raw.members.map((m: unknown) => {
+    const v = m as Record<string, unknown> | null;
+    if (!v || typeof v.key !== 'string' || !HEX32.test(v.key) || typeof v.provider !== 'string' || typeof v.active !== 'boolean') throw new NearViewError('get_account: unexpected member');
+    return { key: v.key, provider: v.provider, active: v.active, effectiveAtMs: msOrNull(v.effective_at_ms) };
+  });
+  return { account: { root: { provider: raw.root.provider, sub: raw.root.sub }, members, epoch: raw.epoch as number }, blockHeight };
 }
 
 // ---- batch C12: settlement and the nonce check ----

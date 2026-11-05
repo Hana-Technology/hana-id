@@ -37,8 +37,10 @@ import { eventFor, ledger } from './usage-ledger.ts';
 const GOOGLE = 'https://accounts.google.com';
 const CONSOLE = 'console.apps.googleusercontent.com';
 const NEW_CLIENT = 'new-client.apps.googleusercontent.com';
-const OWNER_SUB = '42';
-const OTHER_OWNER_SUB = '43';
+// Google-shaped subs (21 digits): the privacy checks assert a sub appears nowhere, and a short sub like '42' also
+// matches digits inside a timestamp or a base58 event id. Nothing those checks search is a run of 21 digits.
+const OWNER_SUB = '104729830516284937261';
+const OTHER_OWNER_SUB = '104729830516284937262';
 
 let google: RsaSigner;
 let seq = 0;
@@ -176,7 +178,7 @@ describe('POST /v1/owner-actions', () => {
       { method: 'propose_change', args: { scope_id: 's1', auth: await oidc(), change: { AddClient: { provider: 'google', aud: NEW_CLIENT } }, client_proof: proof } },
       {
         method: 'propose_change',
-        args: { scope_id: 's1', auth: await oidc(), change: { SetOwners: { owners: [{ Near: { account_id: 'alice.testnet' } }, { Oidc: { provider: 'google', sub: '42' } }] } } },
+        args: { scope_id: 's1', auth: await oidc(), change: { SetOwners: { owners: [{ Near: { account_id: 'alice.testnet' } }, { Oidc: { provider: 'google', sub: OWNER_SUB } }] } } },
       },
       { method: 'cancel_change', args: { scope_id: 's1', auth: await oidc(), change_id: 0 } },
       { method: 'remove_client', args: { scope_id: 's1', auth: await oidc(), provider: 'google', aud: 'old.apps.googleusercontent.com' } },

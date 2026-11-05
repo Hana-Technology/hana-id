@@ -1,4 +1,4 @@
-// The Hana admin console SPA (batch C8; reports, statements and rates in C12; retention in C13): plain JavaScript, no build step and no dependency, under the admin CSP
+// The Hana admin console SPA (batch C8; reports, statements and rates in C12; retention in C13; Users in C8b; the Support ID lookup in C15): plain JavaScript, no build step and no dependency, under the admin CSP
 // (script-src 'self', style-src 'self'). Every value from the API is put in the page as text (textContent), never as
 // HTML. Writes send the admin's CSRF headers; Cloudflare Access adds the staff identity at the edge.
 'use strict';
@@ -167,10 +167,12 @@ async function orgOptions() {
 // ---- navigation ----
 
 // The screens of the spec's admin layout. Reports, statements and rates are C12's; Security & monitoring, the
-// pending-upgrades page and the playbooks are C14's; retention is C13's. The Users screen (proposed D275, C8b) is not
-// listed until it is confirmed and built.
+// pending-upgrades page and the playbooks are C14's; retention is C13's; Users is C8b's (D275); the Support ID lookup is
+// C15's (D394–D396, D399).
 const NAV = [
   { path: '/orgs', label: 'Organisations' },
+  { path: '/users', label: 'Users' },
+  { path: '/support', label: 'Support ID lookup' },
   { path: '/audit', label: 'Audit' },
   { path: '/security', label: 'Feed and notices' },
   { path: '/security/monitoring', label: 'Security & monitoring' },
@@ -435,6 +437,28 @@ async function auditPage(main) {
     main.append(link(`/audit?${next}`, 'Older rows'));
   }
   main.append(h('h2', {}, 'App changes'), data.changes ? changesTable(data.changes) : h('p', { class: 'muted' }, 'Filter by an organisation to see its app changes.'));
+  const dirForm = h(
+    'form',
+    {
+      onsubmit: (ev) => {
+        ev.preventDefault();
+        const q = new URLSearchParams(params);
+        q.delete('dirBefore');
+        for (const k of ['dirStaff', 'dirAction']) {
+          const v = dirForm.elements[k].value.trim();
+          if (v) q.set(k, v);
+          else q.delete(k);
+        }
+        history.pushState(null, '', `/audit?${q}`);
+        render();
+      },
+    },
+    h('input', { name: 'dirStaff', placeholder: 'staff email', value: params.get('dirStaff') || '' }),
+    h('select', { name: 'dirAction' }, ['', 'user_search', 'user_view', 'support_lookup', 'client_proof', 'unlock', 'unsuppress', 'revoke_tickets'].map((a) => h('option', { value: a, selected: params.get('dirAction') === a }, a || 'any action'))),
+    h('button', { type: 'submit' }, 'Filter issuer rows'),
+  );
+  directoryAuditBlock(main, params, data.directory);
+  main.append(dirForm);
 }
 
 async function securityPage(main) {
@@ -1035,7 +1059,7 @@ async function retentionPage(main) {
     d.due && (d.due.statements || d.due.rates || d.due.rateOverrides)
       ? h('p', { class: 'warn' }, `Past 7 years: ${d.due.statements} statement(s)${d.due.oldestStatement ? ` (oldest ${d.due.oldestStatement})` : ''}, ${d.due.rates} rate(s), ${d.due.rateOverrides} rate override(s). Statements, rates and their files are deleted by hand after review (docs/operations.md "Retention").`)
       : h('p', {}, 'Nothing past 7 years waits for review.'),
-    h('p', { class: 'muted' }, 'Not done by this job: the email issuer’s user directory (rows of apps deleted 30 days ago) and its staff audit (60 months). This Worker has no binding to the issuer: run `admin <env> retention:issuer --remote` after each month’s run (docs/operations.md "Retention").'),
+    h('p', { class: 'muted' }, 'Not done by this job: the email issuer’s user directory (rows of apps deleted 30 days ago) and its staff audit (60 months). This Worker’s binding to the issuer only reads (DirectoryRpc, C8b): run `admin <env> retention:issuer --remote` after each month’s run (docs/operations.md "Retention").'),
     h('h2', {}, 'Runs'),
     table(
       ['Run', 'Month', 'Started', 'Finished', 'Status', 'Calls', 'Rows', 'Error'],
@@ -1050,9 +1074,453 @@ async function retentionPage(main) {
   );
 }
 
+// ---- users (C8b, D275): the issuer's directory, the wallet directory, the chain ----
+
+// The search and the last support reference live in memory only: never in the URL, history or storage (no address,
+// sub or code in a URL; the server's routes are POST).
+const usersState = { form: {}, result: null, kind: null, ticket: '' };
+/** Labels shared with the partner console's Users screen (apps/console/web/src/pages/Users.tsx). */
+const KIND = { google: 'Google', email: 'Email', apple: 'Apple' };
+const kindLabel = (k) => KIND[k] || k;
+const chainLabel = (c) => (c === 'stellar' ? 'Stellar' : c === 'evm' ? 'EVM' : c);
+const userPath = (provider, sub) => `/users/${encodeURIComponent(provider)}/${encodeURIComponent(sub)}`;
+/** A Support ID as the search box takes it (`HANA-XXXX-XXXX`, any case): it goes to the Support ID lookup (D399). */
+const supportIdQuery = (q) => /^hana[\s-]?[0-9a-z]{4}-?[0-9a-z]{4}$/iu.test(q.trim());
+/** What the search box names that the wallet directory answers (AdminRpc.findUsers) instead of the issuer's directory. */
+function walletQuery(q) {
+  const s = q.trim();
+  return /^G[A-Z2-7]{55}$/u.test(s) || /^0x[0-9a-fA-F]{40}$/u.test(s) || /^u1_[A-Za-z0-9_-]{22}$/u.test(s) || /^hu_[0-9a-z]{26}$/iu.test(s) || supportIdQuery(s);
+}
+
+const unverifiedBadge = () => h('span', { class: 'badge warning' }, 'UNVERIFIED claim');
+
+function directoryRows(users, warning) {
+  const claims = users.filter((u) => u.unverifiedClaim).length;
+  return [
+    claims ? h('p', { class: 'warn' }, `${warning} (${claims} row${claims === 1 ? '' : 's'} below, listed last).`) : '',
+    table(
+      ['Address', 'Account', 'Verified', 'Hosted', 'Apps', 'Last seen', ''],
+      users.map((u) =>
+        tr(
+          u.unverifiedClaim ? h('span', {}, u.email, ' ', unverifiedBadge()) : u.email,
+          kindLabel(u.provider),
+          u.emailVerified ? 'yes' : 'no',
+          u.hosted === null ? '' : u.hosted ? 'Google-hosted' : 'no',
+          String(u.appCount),
+          time(u.lastSeenMs),
+          link(userPath(u.provider, u.sub), 'Open'),
+        ),
+      ),
+    ),
+  ];
+}
+
+function walletUserBlock(u) {
+  return h(
+    'div',
+    {},
+    table(['User ID', 'Support ID', 'Internal id', 'Scope', 'Org', 'Created', 'Last seen'], [tr(h('code', {}, u.userId), h('code', {}, u.supportId), h('code', {}, u.internalId), u.scopeId, u.orgId || '', time(u.createdAt), time(u.lastSeenAt))]),
+    // The Support ID and its activity: the lookup by User ID, the ticket carried over (in memory); staff press "Look up".
+    h('p', {}, h('button', { type: 'button', onclick: () => openLookup(u.userId, usersState.ticket, false) }, 'Support ID lookup: activity, shares, emails')),
+    table(
+      ['Account', 'Sub', 'Role', 'Status', 'Effective', 'Observed'],
+      u.identities.map((i) => tr(kindLabel(i.provider), i.sub ? link(userPath(i.provider, i.sub), i.sub) : h('span', { class: 'muted' }, 'seen on chain only'), i.role, i.status, i.effectiveAt ? time(i.effectiveAt) : '', time(i.observedAt))),
+    ),
+    table(
+      ['Wallet', 'Address', 'Key index', 'First seen', 'Last used'],
+      u.wallets.map((w) => tr(chainLabel(w.chain), h('span', {}, h('code', {}, w.address), w.sharedWith ? h('span', { class: 'badge warning' }, ` also listed by ${w.sharedWith} other user(s): not proof of ownership`) : ''), String(w.keyIndex), time(w.firstSeenAt), time(w.lastUsedAt))),
+    ),
+  );
+}
+
+async function usersPage(main) {
+  const f = usersState.form;
+  const results = h('div');
+  const showResults = () => {
+    const r = usersState.result;
+    if (!r) return results.replaceChildren();
+    if (usersState.kind === 'wallet') {
+      results.replaceChildren(h('h2', {}, 'Wallet directory'), r.users.length ? h('div', {}, r.users.map(walletUserBlock)) : h('p', { class: 'muted' }, 'No user has this id or wallet (a Support ID resolves only for users who logged in since the wallet directory’s deploy).'));
+      return undefined;
+    }
+    results.replaceChildren(h('h2', {}, 'Directory'), ...directoryRows(r.users, r.unverifiedWarning), r.next ? h('button', { type: 'button', onclick: () => runSearch(r.next) }, 'Next page') : '');
+    return undefined;
+  };
+  const runSearch = async (cursor) => {
+    results.replaceChildren(h('p', { class: 'muted' }, 'Searching…'));
+    try {
+      const q = (f.q || '').trim();
+      // A Support ID goes to the lookup (activity, shares, emails; D399), run at once when a support reference is given.
+      // The wallet directory alone stays a click away there ("Wallet directory only", `/api/users/find`).
+      if (q && supportIdQuery(q)) {
+        openLookup(q, (f.ticket || '').trim(), true);
+        return;
+      }
+      if (q && walletQuery(q)) {
+        usersState.kind = 'wallet';
+        usersState.result = await api('POST', '/api/users/find', { query: q });
+      } else {
+        usersState.kind = 'directory';
+        const body = { limit: 50 };
+        if (q) body.q = q;
+        for (const k of ['provider', 'appId', 'sub', 'ticket']) if (f[k] && f[k].trim()) body[k] = f[k].trim();
+        if (f.unverifiedOnly) body.unverifiedOnly = true;
+        if (cursor) body.cursor = cursor;
+        usersState.result = await api('POST', '/api/users/search', body);
+      }
+      showResults();
+    } catch (err) {
+      results.replaceChildren(errorBox(err));
+    }
+  };
+  const input = (name, placeholder) => h('input', { name, placeholder, value: f[name] || '' });
+  const el = h(
+    'form',
+    {
+      onsubmit: async (ev) => {
+        ev.preventDefault();
+        for (const k of ['q', 'provider', 'appId', 'sub', 'ticket']) f[k] = el.elements[k].value;
+        f.unverifiedOnly = el.elements.unverifiedOnly.checked;
+        await runSearch(null);
+      },
+    },
+    input('q', 'Address (or ≥ 3 characters of one), User ID, Support ID, internal id or wallet'),
+    h('select', { name: 'provider' }, ['', 'email', 'google'].map((p) => h('option', { value: p, selected: f.provider === p }, p ? kindLabel(p) : 'Any account'))),
+    input('appId', 'App id'),
+    input('sub', 'Sub (exact)'),
+    h('label', {}, h('input', { name: 'unverifiedOnly', type: 'checkbox', checked: !!f.unverifiedOnly }), ' Unverified claims only'),
+    input('ticket', 'Support reference (optional)'),
+    h('button', { type: 'submit' }, 'Search'),
+  );
+  main.append(
+    h('h1', {}, 'Users'),
+    h('p', { class: 'muted' }, 'Hana staff only: partners never see addresses. Every search and every opened user is audited by the email issuer under your Access identity, and each staff member can read at most 500 identities an hour and 2 000 a day (past that the reads stop and Hana security is emailed). There is no export: bulk reads stay with `admin <env> user:list --json`.'),
+    h('p', { class: 'muted' }, 'A Support ID (HANA-XXXX-XXXX) opens the Support ID lookup, which needs a support reference; a User ID, internal id or wallet lists the wallet directory’s users.'),
+    el,
+    results,
+  );
+  showResults();
+}
+
+function standingBlock(s) {
+  if (!s.ok) return h('div', {}, h('h3', {}, s.scopeId), h('p', { class: 'error' }, s.reason === 'not_read' ? 'Not read (this page’s call budget)' : 'chain unavailable'));
+  const rows = [
+    ['Status', s.status === 'pending' ? `pending: takes effect ${time(s.effectiveAtMs)}` : s.status],
+    ['Path', h('code', {}, s.path)],
+    ['Opened (has a wallet)', s.opened ? 'yes' : 'no'],
+    ['Identity key', h('code', {}, s.identityKey)],
+    ['Read at block', s.blockHeight === null ? 'unknown' : String(s.blockHeight)],
+  ];
+  if (s.root) rows.splice(2, 0, ['Account root', link(userPath(s.root.provider, s.root.sub), `${kindLabel(s.root.provider)} ${s.root.sub}`)]);
+  const parts = [h('h3', {}, s.scopeId), table(['', ''], rows.map(([k, v]) => tr(k, v)))];
+  if (s.account) {
+    parts.push(
+      h('p', {}, 'Account root: ', link(userPath(s.account.root.provider, s.account.root.sub), `${kindLabel(s.account.root.provider)} ${s.account.root.sub}`), ` (epoch ${s.account.epoch})`),
+      table(['Member', 'Sub', 'Key', 'Active', 'Effective'], s.account.members.map((m) => tr(kindLabel(m.provider), m.sub ? link(userPath(m.provider, m.sub), m.sub) : h('span', { class: 'muted' }, 'unknown to the wallet directory'), h('code', {}, m.key), m.active ? 'yes' : 'no', m.effectiveAtMs ? time(m.effectiveAtMs) : ''))),
+    );
+  } else if (s.accountUnread) parts.push(h('p', { class: 'warn' }, `In an account; its members: ${s.accountUnread === 'not_read' ? 'not read (this page’s call budget)' : 'chain unavailable'}`));
+  return h('div', {}, parts);
+}
+
+function userDetail(main, d) {
+  const u = d.user;
+  if (d.warning) main.append(h('p', { class: 'warn' }, d.warning));
+  main.append(h('h2', {}, 'Directory'));
+  if (!u) main.append(h('p', { class: 'muted' }, 'No directory row: the issuer hasn’t seen this identity log in since the directory’s deploy (D269), its app is on no issuer env, or a best-effort write was lost.'));
+  else {
+    main.append(
+      table(
+        ['', ''],
+        [
+          ['Address', u.unverifiedClaim ? h('span', {}, u.email, ' ', unverifiedBadge()) : u.email],
+          ['Account', kindLabel(u.provider)],
+          ['Sub', h('code', {}, u.sub)],
+          ['Verified', u.provider === 'email' ? 'yes (a sign-in code)' : u.emailVerified ? 'yes (Google)' : 'NO: Google hasn’t verified this address; the account only claims it'],
+          ['Hosted', u.hosted === null ? '' : u.hosted ? 'Google-hosted' : 'not Google-hosted'],
+          ['First seen', time(u.firstSeenMs)],
+          ['Last seen', time(u.lastSeenMs)],
+        ].map(([k, v]) => tr(k, v)),
+      ),
+      h('p', { class: 'muted' }, 'Seen times are when the issuer saw the identity log in; writes are best effort, so a lost one leaves a gap.'),
+    );
+  }
+  main.append(
+    h('h2', {}, 'Apps'),
+    d.appNamesError ? h('p', { class: 'warn' }, `App names unavailable: ${d.appNamesError}`) : '',
+    table(['App', 'Id', 'Org', 'Environment', 'Scope', 'First seen', 'Last seen'], d.apps.map((a) => tr(a.name ? `${a.name}${a.deletedAt ? ' (deleted)' : ''}` : h('span', { class: 'muted' }, 'unknown'), h('code', {}, a.appId), a.orgId || '', a.environment || '', a.scopeId, time(a.firstSeenMs), time(a.lastSeenMs)))),
+    d.appsTruncated ? h('p', { class: 'muted' }, 'Only the 200 most recent apps are listed.') : '',
+    h('h2', {}, 'Wallets and ids'),
+  );
+  if (d.walletUsers === null) main.append(h('p', { class: 'error' }, `Wallet directory unavailable: ${d.walletError || 'error'}`));
+  else if (d.walletUsers.length === 0) main.append(h('p', { class: 'muted' }, 'No wallet-directory user holds this identity yet (a user appears at their next login).'));
+  else main.append(...d.walletUsers.map(walletUserBlock));
+  main.append(h('h2', {}, 'On chain, per scope (read live)'), d.chain.length ? h('div', {}, d.chain.map(standingBlock)) : h('p', { class: 'muted' }, 'No scope to read.'));
+}
+
+async function userPage(main, provider, sub) {
+  main.append(h('h1', {}, `${kindLabel(provider)} ${sub}`), link('/users', 'Back to the search'));
+  const out = h('div');
+  const el = h(
+    'form',
+    {
+      onsubmit: async (ev) => {
+        ev.preventDefault();
+        const ticket = el.elements.ticket.value.trim();
+        usersState.ticket = ticket;
+        out.replaceChildren(h('p', { class: 'muted' }, 'Reading…'));
+        try {
+          const d = await api('POST', '/api/users/get', { provider, sub, ticket });
+          out.replaceChildren();
+          userDetail(out, d);
+        } catch (err) {
+          out.replaceChildren(errorBox(err));
+        }
+      },
+    },
+    h('label', {}, 'Support reference (required to open a user; recorded in the issuer’s audit) ', h('input', { name: 'ticket', required: true, maxlength: 64, pattern: '[A-Za-z0-9._#:\\-]{1,64}', value: usersState.ticket })),
+    h('button', { type: 'submit' }, 'Open'),
+  );
+  main.append(el, out);
+}
+
+function directoryAuditBlock(main, params, dir) {
+  main.append(h('h2', {}, 'Issuer directory reads and staff actions'));
+  if (dir === null || dir === undefined) {
+    main.append(h('p', { class: 'muted' }, 'No email issuer in this environment.'));
+    return;
+  }
+  if (dir.error) {
+    main.append(h('p', { class: 'error' }, `Unavailable: ${dir.error}`));
+    return;
+  }
+  main.append(table(['Id', 'At', 'Staff', 'Action', 'Ticket', 'Scope', 'Subject', 'Detail'], dir.rows.map((r) => tr(String(r.id), time(r.atMs), r.staff, r.action, r.ticket || '', r.scopeId || '', r.subject || '', h('code', {}, r.detail === null ? '' : JSON.stringify(r.detail))))));
+  if (dir.next) {
+    const next = new URLSearchParams(params);
+    next.set('dirBefore', String(dir.next));
+    main.append(link(`/audit?${next}`, 'Older issuer rows'));
+  }
+}
+
+// ---- Support ID lookup (C15; D394–D396, D399) ----
+
+// The query, the ticket, the request IDs and the last answer live in memory only: never in the URL, history state or
+// storage (POST /api/support/lookup; no code, id or address in a URL). Reached from the nav, from the Users search (a
+// Support ID) and from a wallet-directory user's block (by User ID). Nothing is read until staff press "Look up" (or
+// search Users for a Support ID with a support reference): every lookup is audited first in the console's audit
+// (`support.lookup`), and each address it shows is read from the issuer's directory, audited there (`support_lookup`).
+const supportState = { form: { query: '', ticket: '', requestIds: '', days: '30' }, result: null, askedIds: 0, wallet: null, run: false };
+/** The support reference's rule (console-core SUPPORT_TICKET_RE), the same for the console's and the issuer's audits. */
+const SUPPORT_TICKET_PATTERN = '[A-Za-z0-9._#:\\-]{1,64}';
+
+/** Opens the lookup screen for `query` (the ticket carried over when known); runs it when `run` and there is a ticket. */
+function openLookup(query, ticket, run) {
+  supportState.form = { query: query || '', ticket: ticket || '', requestIds: '', days: '30' };
+  supportState.result = null;
+  supportState.wallet = null;
+  supportState.run = !!(run && ticket);
+  go('/support');
+}
+
+/** Why an identity's address isn't shown (apps/admin/src/support.ts SupportEmailMissing). */
+const EMAIL_MISSING = {
+  not_found: 'not in the directory (no login seen since its deploy, or an app on no issuer env)',
+  not_read: 'not read (this lookup’s limit of identities)',
+  no_directory: 'no directory for this account kind',
+  directory_unavailable: 'directory unavailable',
+  directory_refused: 'the directory refused your staff identity (config drift: see the log)',
+  rate_limited: 'not read: your directory row budget is used up',
+  failed: 'the directory read failed',
+};
+const emailKey = (provider, sub) => `${provider}\n${sub}`;
+
+/** The identity's address cell: `key` its directoryKey (null without a sub), `e` the email join's row for it. */
+function emailCell(key, e) {
+  if (!key) return h('span', { class: 'muted' }, 'no sub: seen on chain only');
+  if (!e) return h('span', { class: 'muted' }, 'not read');
+  if (!e.found) return h('span', { class: 'muted' }, EMAIL_MISSING[e.reason] || e.reason);
+  return e.unverifiedClaim ? h('span', {}, e.email, ' ', unverifiedBadge()) : e.email;
+}
+
+const outcomeBadge = (o) => (o === 'ok' ? badge('ok', 'info') : o === 'rejected' ? badge('rejected', 'warning') : badge(o, 'critical'));
+
+function supportMatchBlock(m, k, n, activity, ledger, emails, days) {
+  const u = m.user;
+  const appName = new Map(m.apps.map((a) => [a.appId, a.name]));
+  const appLabel = (id) => (id ? `${appName.get(id) || 'unknown app'} (${id})` : '');
+  const parts = [
+    h('h2', {}, n > 1 ? `Match ${k + 1} of ${n}: ` : '', h('code', {}, u.supportId), ' · ', h('code', {}, u.userId)),
+    table(['User ID', 'Support ID', 'Internal id', 'Scope', 'Org', 'Created', 'Last seen'], [tr(h('code', {}, u.userId), h('code', {}, u.supportId), h('code', {}, u.internalId), u.scopeId, u.orgId || '', time(u.createdAt), time(u.lastSeenAt))]),
+    h('h3', {}, 'Identities'),
+    table(
+      ['Account', 'Email (the issuer’s directory)', 'Sub', 'Role', 'Status', 'Effective', 'Observed'],
+      u.identities.map((i) =>
+        tr(
+          kindLabel(i.provider),
+          emailCell(i.directoryKey, i.directoryKey ? emails.get(emailKey(i.directoryKey.provider, i.directoryKey.sub)) : undefined),
+          i.sub ? link(userPath(i.provider, i.sub), i.sub) : h('span', { class: 'muted' }, 'seen on chain only'),
+          i.role,
+          i.status,
+          i.effectiveAt ? time(i.effectiveAt) : '',
+          time(i.observedAt),
+        ),
+      ),
+    ),
+    h('h3', {}, 'Wallets'),
+    table(
+      ['Wallet', 'Address', 'Key index', 'First seen', 'Last used'],
+      u.wallets.map((w) => tr(chainLabel(w.chain), h('span', {}, h('code', {}, w.address), w.sharedWith ? h('span', { class: 'badge warning' }, ` also listed by ${w.sharedWith} other user(s): not proof of ownership`) : ''), String(w.keyIndex), time(w.firstSeenAt), time(w.lastUsedAt))),
+    ),
+    h('h3', {}, 'Apps of the scope'),
+    table(['App', 'Id', 'Org', 'Environment', 'Persistence', 'Deleted'], m.apps.map((a) => tr(a.name, h('code', {}, a.appId), a.orgId, a.environment || 'unknown', a.persistence, a.deletedAt ? time(a.deletedAt) : ''))),
+    h('h3', {}, 'Vault shares that haven’t expired'),
+    h('p', { class: 'muted' }, 'A share keeps the wallet across reloads (persistence "session"). Live: not revoked, and before its idle and absolute limits.'),
+    table(['App', 'Key index', 'Created', 'Idle until', 'Expires', 'Revoked', 'Live'], m.shares.map((x) => tr(appLabel(x.appId), String(x.keyIndex), time(x.createdAt), time(x.idleUntil), time(x.absExpiresAt), x.revokedAt ? time(x.revokedAt) : '', x.live ? badge('live', 'info') : 'no'))),
+    h('h3', {}, `App changes (last ${days} days, at most 50)`),
+    changesTable(m.changes),
+    h('h3', {}, `Ledger events (ok logins, sessions and derives; last ${days} days, at most 400)`),
+  ];
+  if (!ledger.available || activity === null) parts.push(h('p', { class: 'warn' }, `Not shown: ${ledger.available ? 'ledger unavailable' : ledger.reason}`));
+  else {
+    parts.push(
+      table(
+        ['At', 'Request ID', 'App', 'Endpoint', 'Status', 'Latency ms', 'Relayed', 'NEAR tx'],
+        activity.map((a) => tr(time(a.at), h('code', {}, a.requestId), appLabel(a.appId), a.endpoint, String(a.status), String(a.latencyMs), a.relayed ? 'yes' : 'no', a.nearTx ? h('code', {}, a.nearTx) : '')),
+      ),
+      h('p', { class: 'muted' }, 'Failures carry no user id in the ledger, by design: look them up by the request IDs the partner gives.'),
+    );
+  }
+  return h('div', {}, parts);
+}
+
+function supportResult(out, v, askedIds) {
+  const emails = new Map((v.emails || []).map((e) => [emailKey(e.provider, e.sub), e]));
+  const by = v.query.kind === 'supportId' ? 'Support ID' : v.query.kind === 'userId' ? 'User ID' : 'internal id';
+  out.append(h('p', { class: 'muted' }, `Looked up by ${by}, since ${time(v.since)} (${v.days} days). Recorded in the audit under your Access identity.`));
+  if (!v.ledger.available) out.append(h('p', { class: 'warn' }, `Ledger unavailable: ${v.ledger.reason}. Ledger events and request-ID events are not shown; the directory part below is complete.`));
+  if (v.emailsNote) out.append(h('p', { class: 'warn' }, v.emailsNote));
+  if (v.unverifiedWarning) out.append(h('p', { class: 'warn' }, v.unverifiedWarning));
+  if (v.truncated) out.append(h('p', { class: 'warn' }, `Truncated: more users share this Support ID than are listed; only the ${v.matches.length} most recently seen are shown. Ask the partner for the User ID.`));
+  if (v.matches.length === 0) out.append(h('p', { class: 'muted' }, 'No user has this id (a Support ID resolves only for users who logged in since the wallet directory’s deploy, and an erased user is gone).'));
+  else if (v.matches.length > 1 || v.truncated) {
+    out.append(
+      h('h2', {}, 'Matches'),
+      h('p', { class: 'notice' }, `${v.matches.length}${v.truncated ? '+' : ''} users share this Support ID (40 bits collide rarely). Tell them apart by the app and the time the partner names.`),
+      table(['#', 'User ID', 'Scope', 'Org', 'Apps', 'Last seen'], v.matches.map((m, k) => tr(String(k + 1), h('code', {}, m.user.userId), m.user.scopeId, m.user.orgId || '', m.apps.map((a) => a.name).join(', '), time(m.user.lastSeenAt)))),
+    );
+  }
+  v.matches.forEach((m, k) => out.append(supportMatchBlock(m, k, v.matches.length, v.activity[k], v.ledger, emails, v.days)));
+  if (!askedIds) return;
+  out.append(h('h2', {}, 'Request IDs'));
+  if (v.requests === null) {
+    out.append(h('p', { class: 'warn' }, `Not shown: ${v.ledger.available ? 'ledger unavailable' : v.ledger.reason}`));
+    return;
+  }
+  out.append(
+    table(
+      ['At', 'Request ID', 'Outcome', 'Code', 'Status', 'Endpoint', 'Org', 'App', 'Scope', 'Latency ms', 'Relayed', 'NEAR tx', 'This user'],
+      v.requests.map((r) =>
+        tr(
+          time(r.at),
+          h('code', {}, r.requestId),
+          outcomeBadge(r.outcome),
+          r.code ? h('code', {}, r.code) : '',
+          String(r.status),
+          r.endpoint,
+          r.orgId,
+          r.appId || '',
+          r.scopeId,
+          String(r.latencyMs),
+          r.relayed ? 'yes' : 'no',
+          r.nearTx ? h('code', {}, r.nearTx) : '',
+          r.byMatch ? 'yes' : h('span', { class: 'muted' }, 'no user id on the event'),
+        ),
+      ),
+    ),
+  );
+  if (v.requestsNotFound.length) out.append(h('p', { class: 'warn' }, 'No ledger event for: ', v.requestsNotFound.flatMap((id, k) => [k ? ', ' : '', h('code', {}, id)]), ' (an unknown id, a rejection before the gate recorded it, or usage capture off then).'));
+}
+
+async function supportPage(main) {
+  const f = supportState.form;
+  const out = h('div');
+  const show = () => {
+    out.replaceChildren();
+    if (supportState.wallet) out.append(h('h2', {}, 'Wallet directory only'), supportState.wallet.users.length ? h('div', {}, supportState.wallet.users.map(walletUserBlock)) : h('p', { class: 'muted' }, 'No user has this id or wallet.'));
+    else if (supportState.result) supportResult(out, supportState.result, supportState.askedIds);
+  };
+  let el;
+  const read = () => {
+    for (const k of ['query', 'ticket', 'requestIds', 'days']) f[k] = el.elements[k].value;
+  };
+  const run = async () => {
+    supportState.wallet = null;
+    supportState.result = null;
+    out.replaceChildren(h('p', { class: 'muted' }, 'Looking up…'));
+    try {
+      const body = { query: f.query.trim(), ticket: f.ticket.trim() };
+      const ids = lines(f.requestIds);
+      if (ids.length) body.requestIds = ids;
+      if (String(f.days).trim() && Number(f.days) !== 30) body.days = Number(f.days);
+      supportState.askedIds = ids.length;
+      supportState.result = await api('POST', '/api/support/lookup', body);
+      show();
+    } catch (err) {
+      out.replaceChildren(errorBox(err));
+    }
+  };
+  const walletOnly = async () => {
+    read();
+    supportState.result = null;
+    out.replaceChildren(h('p', { class: 'muted' }, 'Searching…'));
+    try {
+      supportState.wallet = await api('POST', '/api/users/find', { query: f.query.trim() });
+      show();
+    } catch (err) {
+      out.replaceChildren(errorBox(err));
+    }
+  };
+  el = h(
+    'form',
+    {
+      onsubmit: async (ev) => {
+        ev.preventDefault();
+        read();
+        await run();
+      },
+    },
+    h('label', {}, 'Support ID, User ID or internal id ', h('input', { name: 'query', required: true, maxlength: 64, placeholder: 'HANA-XXXX-XXXX, u1_… or hu_…', value: f.query })),
+    h('label', {}, 'Support reference (required; recorded in the console’s and the issuer’s audits) ', h('input', { name: 'ticket', required: true, maxlength: 64, pattern: SUPPORT_TICKET_PATTERN, value: f.ticket })),
+    h('label', {}, 'Days ', h('input', { name: 'days', type: 'number', min: 1, max: 731, value: f.days })),
+    h('label', {}, 'Request IDs from the escalation (up to 20) ', h('textarea', { name: 'requestIds', placeholder: 'req_… one per line' }, f.requestIds)),
+    h('button', { type: 'submit' }, 'Look up'),
+    h('button', { type: 'button', onclick: walletOnly }, 'Wallet directory only (no activity)'),
+  );
+  main.append(
+    h('h1', {}, 'Support ID lookup'),
+    h(
+      'p',
+      { class: 'muted' },
+      'Hana staff only. What happened to one user: their ids, identities with the directory’s addresses, wallets, the vault shares that haven’t expired, the scope’s app changes, their ledger events, and the events of the request IDs a partner escalates (errors included). Every lookup is audited before anything is read; each address is read from the issuer’s directory under your Access identity and row budget. A wallet address or a sub: search Users first. There is no export: the operator’s path is the CLI’s `admin <env> support:lookup`.',
+    ),
+    el,
+    out,
+  );
+  show();
+  if (supportState.run) {
+    supportState.run = false;
+    await run();
+  }
+}
+
 // ---- router ----
 
 let me = null;
+
+/** Moves to `path` (no data in it) and renders it. */
+function go(path) {
+  history.pushState(null, '', path);
+  render();
+}
 
 async function render() {
   renderNav();
@@ -1078,6 +1546,9 @@ async function render() {
     else if (path === '/statements') await statementsPage(main);
     else if (path === '/rates') await ratesPage(main);
     else if (path === '/retention') await retentionPage(main);
+    else if (path === '/users') await usersPage(main);
+    else if (path === '/support') await supportPage(main);
+    else if ((m = /^\/users\/(email|google)\/([^/]+)$/u.exec(path))) await userPage(main, m[1], decodeURIComponent(m[2]));
     else main.append(h('h1', {}, 'Not found'), link('/orgs', 'Organisations'));
   } catch (err) {
     main.append(errorBox(err));

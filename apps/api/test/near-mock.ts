@@ -61,8 +61,11 @@ export class NearMock {
   sendTxTransportError?: number | 'network';
   /** The next N `tx` polls get a non-JSON HTTP 503 (a flaky RPC proxy). */
   txPollFailures = 0;
-  /** Delay before answering access key views and block reads (to time the relayer's chain reads). */
-  readDelayMs = 0;
+  /**
+   * Optional hook for access key views and block reads (to time the relayer's chain reads): the answer is computed when
+   * the call arrives, then sent once the hook settles, like a slow node.
+   */
+  onRead?: () => Promise<void> | void;
   /** `view_access_key_list` of any account: `[{public_key, access_key: {nonce, permission}}]`. */
   accessKeyList: unknown[] = [];
   jwks: unknown = { keys: [] };
@@ -104,10 +107,10 @@ export class NearMock {
     return this.akNonce.get(publicKey) ?? this.defaultNonce;
   }
 
-  /** `reply` after readDelayMs (answered as of the call's arrival, like a node that is slow to respond). */
-  private afterReadDelay(reply: RpcReply): Promise<RpcReply> {
-    if (this.readDelayMs <= 0) return Promise.resolve(reply);
-    return new Promise((r) => setTimeout(() => r(reply), this.readDelayMs));
+  /** `reply` once onRead settles (answered as of the call's arrival, like a node that is slow to respond). */
+  private afterRead(reply: RpcReply): Promise<RpcReply> {
+    const hold = this.onRead?.();
+    return hold ? hold.then(() => reply) : Promise.resolve(reply);
   }
 
   private handle(method: string, params: Record<string, unknown>): Promise<RpcReply> {
@@ -115,12 +118,12 @@ export class NearMock {
     switch (method) {
       case 'query': {
         const reply = this.query(params);
-        if (params.request_type === 'view_access_key') return this.afterReadDelay(reply);
+        if (params.request_type === 'view_access_key') return this.afterRead(reply);
         const hold = params.request_type === 'call_function' ? this.onView?.(params.method_name as string, this.viewCalls.at(-1)!.args) : undefined;
         return hold ? hold.then(() => reply) : Promise.resolve(reply);
       }
       case 'block':
-        return this.afterReadDelay({ result: { header: { hash: params.finality === 'final' ? this.finalBlockHash : this.blockHash, height: 1000 } } });
+        return this.afterRead({ result: { header: { hash: params.finality === 'final' ? this.finalBlockHash : this.blockHash, height: 1000 } } });
       case 'send_tx':
         this.waitUntil.push({ method, waitUntil: params.wait_until });
         return this.sendTx(params);

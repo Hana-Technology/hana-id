@@ -6,6 +6,7 @@
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { SUPPORT_TICKET_RE } from '@hana-id/console-core';
 import { type Manifest, manifestSchema } from '@hana-id/env';
 import { describe, expect, it } from 'vitest';
 import { wranglerConfig as apiConfig } from '../../../api/scripts/gen-wrangler.ts';
@@ -150,6 +151,17 @@ describe('the admin config', () => {
     }
   });
 
+  it('binds the email issuer’s DirectoryRpc as ISSUER when the env has an issuer, and nothing without one (C8b, D275)', () => {
+    const without = wranglerConfig(TEST_MANIFEST, { adminHyperdriveId: TEST_ADMIN_HYPERDRIVE_ID }) as Config;
+    expect(without.services!.map((x) => x.binding)).toEqual(['API', 'CONSOLE']);
+    const withIssuer = wranglerConfig({ ...TEST_MANIFEST, emailIssuer: ISSUER_MANIFEST.emailIssuer } as Manifest, { adminHyperdriveId: TEST_ADMIN_HYPERDRIVE_ID }) as Config;
+    expect(withIssuer.services).toContainEqual({ binding: 'ISSUER', service: ISSUER_MANIFEST.emailIssuer!.cloudflare.workerName, entrypoint: 'DirectoryRpc' });
+    // A service binding, never the issuer's D1 (read-write on the whole database, D275 alternative a).
+    expect(withIssuer.d1_databases).toBeUndefined();
+    expect(JSON.stringify(withIssuer)).not.toMatch(/database_name|database_id/u);
+    expect((testWranglerConfig() as Config).services!.map((x) => `${x.binding}:${x.entrypoint}`)).toEqual(['API:AdminRpc', 'CONSOLE:StaffRpc', 'ISSUER:DirectoryRpc']);
+  });
+
   it('its CSP and headers are the console’s (the spec gives both origins the same)', () => {
     expect(adminCsp('https://files.test')).toBe(consoleCsp('https://files.test'));
   });
@@ -183,6 +195,15 @@ describe('across Workers (config snapshots)', () => {
     expect(by('ConsoleRpc')).toEqual(['console']);
     // Nobody binds the admin Worker: nothing calls into it.
     expect(configs.filter(([, c]) => (c.services ?? []).some((s) => s.service === m.admin!.workerName)).map(([n]) => n)).toEqual([]);
+  });
+
+  it('only the admin binds DirectoryRpc or the issuer at all; only the issuer binds its own D1 (partners never see it)', () => {
+    const issuer = m.emailIssuer!.cloudflare;
+    const bindsIssuer = configs.filter(([, c]) => (c.services ?? []).some((s) => s.service === issuer.workerName || s.entrypoint === 'DirectoryRpc')).map(([n]) => n);
+    expect(bindsIssuer).toEqual(['admin']);
+    expect(configs.find(([n]) => n === 'admin')![1].services!.find((s) => s.binding === 'ISSUER')!.entrypoint).toBe('DirectoryRpc');
+    const issuerD1 = configs.filter(([, c]) => (c.d1_databases ?? []).some((d) => d.database_name === issuer.d1Name)).map(([n]) => n);
+    expect(issuerD1).toEqual(['email issuer']);
   });
 
   it('preview URLs are off on the console and the admin; both run first on every request', () => {
@@ -223,6 +244,20 @@ describe('source checks', () => {
     }
   });
 
+  it('the directory (ISSUER) is read only by the Users routes, the Support ID lookup and the audit view: never by a cron, the feed or a notice (C8b, D399)', () => {
+    const readers = sources.filter(({ text }) => /\.ISSUER\b/u.test(text)).map(({ f }) => f.replace(srcDir, '')).sort();
+    expect(readers).toEqual(['routes.ts', 'support.ts', 'users.ts']);
+    // The only email it causes is the security alias's directory_budget.
+    const users = sources.find(({ f }) => f.endsWith('/users.ts'))!.text;
+    expect([...users.matchAll(/recipients\(([^)]*)\)/gu)].map((m) => m[1])).toEqual(['c.env.SECURITY_ALIAS']);
+    // The lookup opens identities only (`get`), always as `support_lookup` with the lookup's ticket, and emails through
+    // the Users routes' budgetAlert only.
+    const support = sources.find(({ f }) => f.endsWith('/support.ts'))!.text;
+    expect([...support.matchAll(/\bissuer\.(\w+)\(/gu)].map((m) => m[1])).toEqual(['get']);
+    expect(support).toMatch(/issuer\.get\(\{ \.\.\.call, ticket, provider: k\.provider, sub: k\.sub, purpose: 'support_lookup' \}\)/u);
+    expect(support).not.toMatch(/recipients\(|sendToAll\(/u);
+  });
+
   it('log lines take allowlisted fields only (no email, sub, token, JWT or body field)', () => {
     const log = readFileSync(join(srcDir, 'log.ts'), 'utf8');
     const allowed = /new Set\(\[([^\]]*)\]\)/u.exec(log)![1]!;
@@ -257,6 +292,52 @@ describe('source checks', () => {
     expect(spa).not.toMatch(/\.workers\.dev|WATCHDOG_/u);
     expect(spa).not.toMatch(/bearer|authorization/iu);
     for (const m of spa.matchAll(/api\('(?:GET|POST)', [`'](\/[^`']*)/gu)) expect(m[1], m[0]).toMatch(/^\/api\//u);
+  });
+
+  it('the SPA’s Users pages (C8b): POST reads, the ticket asked to open a user, the warning shown, no export, nothing in the URL', () => {
+    const spa = readFileSync(new URL('../../public/app.js', import.meta.url), 'utf8');
+    const start = spa.indexOf('// ---- users (C8b');
+    const end = spa.indexOf('// ---- router ----');
+    expect(start).toBeGreaterThan(0);
+    const users = spa.slice(start, end);
+    expect(users).toContain("api('POST', '/api/users/search'");
+    expect(users).toContain("api('POST', '/api/users/find'");
+    expect(users).toContain("api('POST', '/api/users/get', { provider, sub, ticket })");
+    expect(users).not.toMatch(/api\('GET', '\/api\/users/u);
+    // The detail asks for the support reference (required) before any read.
+    expect(users).toMatch(/h\('input', \{ name: 'ticket', required: true/u);
+    // No export, select-all or download, and the search never goes into the URL or storage (the audit block's own
+    // paging link carries ids and the filters only).
+    const pages = users.slice(0, users.indexOf('function directoryAuditBlock'));
+    expect(pages).not.toMatch(/csv|download|select all|localStorage|sessionStorage|pushState|location\.search/iu);
+    expect(users).toContain('UNVERIFIED claim');
+    expect(spa).toContain("{ path: '/users', label: 'Users' }");
+  });
+
+  it('the SPA’s Support ID lookup (C15, D399): POST reads, the ticket required in the issuer’s rule, no export or storage, nothing in the URL; Support IDs routed there, /find kept', () => {
+    const spa = readFileSync(new URL('../../public/app.js', import.meta.url), 'utf8');
+    const start = spa.indexOf('// ---- Support ID lookup (C15');
+    const end = spa.indexOf('// ---- router ----');
+    expect(start).toBeGreaterThan(0);
+    const lookup = spa.slice(start, end);
+    expect(lookup).toContain("api('POST', '/api/support/lookup', body)");
+    expect(lookup).toContain("api('POST', '/api/users/find', { query: f.query.trim() })");
+    expect(lookup).not.toMatch(/api\('GET'/u);
+    expect(lookup).toMatch(/h\('input', \{ name: 'ticket', required: true, maxlength: 64, pattern: SUPPORT_TICKET_PATTERN/u);
+    expect(lookup).not.toMatch(/csv|download|select all|localStorage|sessionStorage|pushState|replaceState|location\.(search|hash)/iu);
+    expect(spa).toContain("{ path: '/support', label: 'Support ID lookup' }");
+    expect(spa).toContain("else if (path === '/support') await supportPage(main);");
+    // The screen moves only to literal paths: a code, id or address never lands in the URL.
+    const moves = [...spa.matchAll(/\bgo\(([^)]*)\)/gu)].map((m) => m[1]);
+    expect(moves.length).toBeGreaterThan(0);
+    for (const m of moves) expect(m === 'path' || /^'\/[a-z]+'$/u.test(m!), m).toBe(true);
+    // The input's pattern accepts exactly what console-core's SUPPORT_TICKET_RE does (the route's and the issuer's rule).
+    const raw = /const SUPPORT_TICKET_PATTERN = '([^']+)'/u.exec(lookup)![1]!.replaceAll('\\\\', '\\');
+    const html = new RegExp(`^(?:${raw})$`, 'v');
+    for (const t of ['ZD-1234', 'T', 'a.b_c#d:e-f', 'x'.repeat(64), '', 'x'.repeat(65), 'ZD 1234', 'a@b.example', 'é', ' T']) expect(html.test(t), t).toBe(SUPPORT_TICKET_RE.test(t));
+    // The Users search sends a Support ID to the lookup; User IDs, internal ids and wallets still go to /find.
+    expect(spa).toMatch(/if \(q && supportIdQuery\(q\)\) \{\s+openLookup\(q, \(f\.ticket \|\| ''\)\.trim\(\), true\);/u);
+    expect(spa).toMatch(/if \(q && walletQuery\(q\)\) \{\s+usersState\.kind = 'wallet';\s+usersState\.result = await api\('POST', '\/api\/users\/find'/u);
   });
 
   it('the SPA writes text only: no innerHTML, outerHTML, insertAdjacentHTML, document.write, eval or remote URL', () => {

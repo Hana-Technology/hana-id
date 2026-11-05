@@ -9,10 +9,10 @@
 //
 // C12's reports, statements, rates and exports (report-routes.ts); C14's "Security & monitoring" (the watchdog through
 // monitoring.ts, the governance snapshot), the pending-upgrades page and the playbooks (playbooks.ts); C13's retention
-// screen (retention-routes.ts); C15's Support ID lookup (`POST /api/support/lookup`, support.ts: the backend its screen
-// calls once C8b merges). Not here yet: the Users screen (`/api/users/search`, `/api/users/get`, proposed D275, C8b):
-// its paths answer 404 until that batch adds them.
-import type { AppChange, AuditRow, MemberView } from '@hana-id/console-core';
+// screen (retention-routes.ts); C8b's Users screen (users.ts: `/api/users/search`, `/find`, `/get`, D275); C15's
+// Support ID lookup (`POST /api/support/lookup`, support.ts).
+import { ACCESS_JWT_HEADER } from '@hana-id/oidc';
+import { type AppChange, type AuditRow, DIRECTORY_AUDIT_ACTIONS, type DirectoryAuditRow, type MemberView } from '@hana-id/console-core';
 import type { Env } from './env.ts';
 import { auditCsv } from './export.ts';
 import { errorResponse, json, readJson } from './http.ts';
@@ -22,6 +22,7 @@ import { ackRoute, actionsRoute, alertsRoute, monitoringRoute, pendingUpgradesRo
 import { getPlaybookRoute, listPlaybooksRoute } from './playbooks.ts';
 import { retentionRoute } from './retention-routes.ts';
 import { securityView } from './security.ts';
+import { usersFindRoute, usersGetRoute, usersSearchRoute } from './users.ts';
 import { supportLookupRoute } from './support.ts';
 import { type StaffRequest, staffCtx } from './rpc.ts';
 
@@ -99,6 +100,38 @@ export function auditFilters(url: URL): Record<string, unknown> {
     if (v !== undefined) f[k] = v;
   }
   return f;
+}
+
+/**
+ * The audit view's third source (D275): the email issuer's staff audit (`DirectoryRpc.auditSince`, newest first): every
+ * Users-screen read and the issuer's own staff actions, filterable by staff email (`dirStaff`) and action (`dirAction`).
+ * A failure of this source doesn't fail the page: it answers `{error}` in its place; null without an issuer.
+ */
+async function directoryAudit(c: RouteCtx): Promise<{ rows: DirectoryAuditRow[]; next?: number } | { error: string } | null> {
+  if (!c.env.ISSUER) return null;
+  const before = intParam(c.url.searchParams.get('dirBefore'));
+  const staff = c.url.searchParams.get('dirStaff')?.trim().toLowerCase();
+  const action = c.url.searchParams.get('dirAction');
+  const limit = 100;
+  try {
+    const r = await c.env.ISSUER.auditSince({
+      requestId: c.staff.requestId,
+      accessJwt: c.request.headers.get(ACCESS_JWT_HEADER) ?? '',
+      before: typeof before === 'number' ? before : Number.MAX_SAFE_INTEGER,
+      limit,
+      ...(staff ? { staff } : {}),
+      ...(action && (DIRECTORY_AUDIT_ACTIONS as readonly string[]).includes(action) ? { action } : {}),
+    });
+    if (!r.ok) {
+      log({ event: 'bff', route: 'GET /api/audit', requestId: c.staff.requestId, outcome: 'rejected', code: r.code });
+      return { error: r.code };
+    }
+    const last = r.rows[r.rows.length - 1];
+    return { rows: r.rows, ...(r.rows.length === limit && last ? { next: last.id } : {}) };
+  } catch (err) {
+    log({ event: 'bff', route: 'GET /api/audit', requestId: c.staff.requestId, outcome: 'error', code: 'directory_unavailable', error: errorName(err) }, 'error');
+    return { error: 'directory_unavailable' };
+  }
 }
 
 const ROUTES: Route[] = [
@@ -218,7 +251,7 @@ const ROUTES: Route[] = [
       }
       if (!audit.ok) return errorResponse(audit.code, audit.error);
       if (changes && !changes.ok) return errorResponse(changes.code as Parameters<typeof errorResponse>[0], changes.error);
-      return json(200, { rows: audit.rows as AuditRow[], ...(audit.next ? { next: audit.next } : {}), changes: changes?.changes ?? null });
+      return json(200, { rows: audit.rows as AuditRow[], ...(audit.next ? { next: audit.next } : {}), changes: changes?.changes ?? null, directory: await directoryAudit(c) });
     },
   },
   { method: 'GET', pattern: '/api/audit.csv', handler: (c) => auditCsv(c.env, c.staff, auditFilters(c.url)) },
@@ -245,6 +278,10 @@ const ROUTES: Route[] = [
   { method: 'PUT', pattern: '/api/rates/:day', handler: rateOverrideRoute },
   // ---- retention (C13): the monthly job's runs, read only ----
   { method: 'GET', pattern: '/api/retention', handler: retentionRoute },
+  // ---- the Users screen (C8b, D275): POST, so no address, sub or code is in a URL ----
+  { method: 'POST', pattern: '/api/users/search', handler: usersSearchRoute },
+  { method: 'POST', pattern: '/api/users/find', handler: usersFindRoute },
+  { method: 'POST', pattern: '/api/users/get', handler: usersGetRoute },
   // ---- C15: the Support ID lookup (support.ts) ----
   { method: 'POST', pattern: '/api/support/lookup', handler: supportLookupRoute },
 ];

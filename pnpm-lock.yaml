@@ -44,6 +44,9 @@ importers:
       '@types/pg':
         specifier: 8.23.1
         version: 8.23.1
+      happy-dom:
+        specifier: 21.0.3
+        version: 21.0.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)
       tsx:
         specifier: 4.23.15
         version: 4.23.15
@@ -300,6 +303,9 @@ importers:
 
   apps/email-issuer:
     dependencies:
+      '@hana-id/console-core':
+        specifier: workspace:*
+        version: link:../../packages/console-core
       '@hana-id/email':
         specifier: workspace:*
         version: link:../../packages/email
@@ -309,6 +315,9 @@ importers:
       '@hana-id/jwks':
         specifier: workspace:*
         version: link:../../packages/jwks
+      '@hana-id/oidc':
+        specifier: workspace:*
+        version: link:../../packages/oidc
       '@noble/hashes':
         specifier: 1.8.0
         version: 1.8.0

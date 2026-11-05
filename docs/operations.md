@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-05 (branch `chore/ci-cost`: "CI and git": CI and the identity probe turned off, the local checks, D387); 2026-11-05 (branch `feat/batch-c-15`: "Support ID lookup", `admin <env> support:lookup`, the admin route's audit, D394–D397); 2026-11-05 (branch `feat/coop-canary`: "Before each release: the COOP canary" (`coop-canary`, what a failure means, D386), step 0 of "A release."); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: "Common failures"' `derive_failed` `webcrypto_unsupported` / `webcrypto_failed`, D385); 2026-11-05 (branch `feat/deploy-build-check`: "Checking a deploy (`deploy-check`)", D384:
+Last verified against code: 2026-11-05 (branch `feat/batch-c-15-screen`: "Support ID lookup" → "In the admin console" (the screen, the email join, the ticket rule, what to watch) and "Users screen (C8b)" (a Support ID goes to the lookup; the check), D399); 2026-11-05 (branch `feat/batch-c-8b`: "Admin Worker" → "Users screen (C8b)": issuer migration 0003, the deploy order issuer → API → admin, the checks and failures, D388–D392; "Retention" and "User directory (D269)" notes); 2026-11-05 (branch `chore/ci-cost`: "CI and git": CI and the identity probe turned off, the local checks, D387); 2026-11-05 (branch `feat/batch-c-15`: "Support ID lookup", `admin <env> support:lookup`, the admin route's audit, D394–D397); 2026-11-05 (branch `feat/coop-canary`: "Before each release: the COOP canary" (`coop-canary`, what a failure means, D386), step 0 of "A release."); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: "Common failures"' `derive_failed` `webcrypto_unsupported` / `webcrypto_failed`, D385); 2026-11-05 (branch `feat/deploy-build-check`: "Checking a deploy (`deploy-check`)", D384:
 the build id in every Worker and page bundle, `deploy-check <env> [--d1]` after each deploy step, migrations applied
 from a checkout at the deployed commit, the API's raw `wrangler deploy` lines now `run deploy`); 2026-11-05 (branch `fix/deploy-pages-builds`: `deploy:pages` runs the web build first; the 0011 apply note; the rebuilt page versions); 2026-11-05 (branch `chore/ci-cost`: "CI and git": which jobs run when, the nightly WebKit and Firefox run; the identity probe every 3 hours, D383); 2026-11-05 (branch `docs/sandbox-dev-state-1105`: sandbox-dev redeployed at `develop` 8aab09d with the wallet directory: `USER_ID_KEY`, the bookmark, 0011, API 6141ba3d, vault abe7cc61, auth 6b9a4bee, issuer 1542a60c); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
 what counts, each job's share in both crons, the `budget` log lines; settlement's reads a run; D380); 2026-11-04 (branch `feat/batch-c-13`: "Retention (batch C13, milestone M6)": the Neon
@@ -823,7 +823,8 @@ right after a deploy a vault and API from before and after the session signature
 
 ## Support ID lookup (batch C15)
 
-Built on `feat/batch-c-15` (D276 as amended 2026-11-05, D394–D397), not merged, not deployed. A user reads their
+Built in C15 (D276 as amended 2026-11-05, D394–D397) and its admin screen (D399), merged into `develop`, not
+deployed. A user reads their
 Support ID `HANA-XXXX-XXXX` on the Hana approval popup's account line; a partner page has it as `hana.supportId` (SDK
 0.2.0 or later, D393; so in its diagnostics) and on the partner console's Users page beside the User ID. Partners
 escalate with the code (or the User ID, `u1_…`), the error `code`, the time and the app, and request IDs when they
@@ -860,16 +861,37 @@ It reads like `user:find` (the API's D1 privately, the issuer's D1 for the addre
 URL and password never reach an error. Read only: nothing changes on a lookup, and a code isn't a credential. Print
 to the terminal only: never redirect the output to a file outside `.secrets/`.
 
-**In the admin console** (after C8b builds the screen): `POST /api/support/lookup {query, ticket, requestIds?, days?}`
-gives the same report as JSON (`docs/api.md` "The Support ID lookup"). The ticket (the support reference or a short
-reason, no address) is required and recorded with the staff member's identity in the console's audit log before
-anything is read (`support.lookup`, shown in the admin audit view; never in a partner's, never emailed).
+**In the admin console** (the **Support ID lookup** screen, `/support`; with the admin Worker at M4): type the code,
+User ID or internal id, the support reference (required: 1–64 letters, digits or `._#:-`, e.g. `ZD-1234`; no space
+and no address, it is stored), and optionally the escalation's request IDs (≤ 20) and the window (1–731 days, 30 by
+default), then **Look up**. The Users search sends a Support ID here (with a support reference typed there it runs at
+once), and every wallet-directory user's block (a Users `find` answer, a user's detail) has a "Support ID lookup"
+button that fills in the User ID and the ticket already given; "Wallet directory only" on the screen is the old
+`find` answer (no ticket, no activity). The screen calls `POST /api/support/lookup {query, ticket, requestIds?, days?}`
+(`docs/api.md` "The Support ID lookup") and shows the CLI's report plus each identity's address: every match (a
+collision lists each and says so; past 10 it says "Truncated"), their ids, identities with the issuer directory's
+address (an unverified Google claim marked with the CLI's warning), wallets, apps, the vault shares not yet expired
+(live, or revoked), the apps' changes, the ok ledger events, and the request IDs' events with their outcome and code; without the
+ledger it says "Ledger unavailable: …" at the top and in each part, and shows the rest.
+
+The lookup is recorded with the staff member's identity in the console's audit log before anything is read
+(`support.lookup`, shown in the admin audit view; never in a partner's, never emailed). Each address is then read
+from the issuer's directory with the same ticket, as `DirectoryRpc.get` with `purpose: 'support_lookup'`: the issuer
+writes its own `support_lookup` row per identity (Audit → "Issuer directory reads", `detail.lookup` = the console
+row's request id) and takes one row of that staff member's directory budget each (at most 20 identities per lookup).
+Past the budget the addresses say "not read" with the window, and the security alias gets the same
+`directory_budget` email as for the Users screen; without an issuer (an env with no `emailIssuer`) they say "directory
+unavailable". Nothing here exports or downloads: the query and the answer stay in the page's memory (no URL, no
+storage).
 
 **An erasure request** still goes through `uid-erase` ("Retention"); afterwards the code finds nothing.
 
 **What to watch** (admin Worker logs): `audit_failed` (route `POST /api/support/lookup`: the console didn't record the
 lookup, so nothing was read: check the console Worker), `bff` lines with `code: ledger_unavailable` (no `USAGE_DB` or
-Neon down). The API's `rpc` lines name `admin.supportLookup`; none carries the query.
+Neon down) and `calls: {directoryRead, directoryMissing}` (the email join's counts), `directory_refused` (the issuer
+refused a staff identity this Worker accepted: the "Users screen (C8b)" table's `502` row), `directory_budget`. The
+API's `rpc` lines name `admin.supportLookup` and the issuer's `directory_read` lines `support_lookup`; none carries
+the query, a sub or an address.
 
 ## Hot DB migration 0006 and the new gate (batch C3, milestone M1)
 
@@ -1243,7 +1265,8 @@ the repo root of the main checkout, logged in to the API's Cloudflare account. N
 
    ```sh
    corepack pnpm --filter @hana-id/admin gen <env> --admin-hyperdrive-id <admin Hyperdrive id>
-   # The API and the console first (AdminRpc's watcher reads and StaffRpc's grants are C8 additions).
+   # The API and the console first (AdminRpc's watcher reads and StaffRpc's grants are C8 additions); with an email
+   # issuer, it and its migration 0003 before both ("Users screen (C8b)" below: the ISSUER binding needs DirectoryRpc).
    corepack pnpm --filter @hana-id/api run deploy
    corepack pnpm --dir apps/console exec wrangler deploy
    corepack pnpm --dir apps/admin exec wrangler deploy
@@ -1267,6 +1290,60 @@ the repo root of the main checkout, logged in to the API's Cloudflare account. N
 - **Rollback**: `wrangler rollback` in `apps/admin`. While the Worker is down or can't email, guarded changes, invites
   and owner grants stay unannounced (fail closed): nothing goes live without its notice, and the API cancels a change
   left unannounced for 7 days. `app:changes:announce` is the no-email fallback and needs Hana security's sign-off.
+
+### Users screen (C8b)
+
+The admin console's **Users** screen (D275, confirmed by the user 2026-11-05; D388–D392) reads the email issuer's user
+directory through the issuer's `DirectoryRpc` entrypoint (bound as `ISSUER`; no route, no D1 binding), and joins the
+wallet directory (`AdminRpc.findUsers`, `appNames`) and the chain (`get_identity`, `get_account`). The issuer checks
+every call's Access JWT itself against the **admin** application (the manifest's `admin` block: no new Access
+application, no new secret: the audit's keyed hash uses the issuer's `EMAIL_RL_KEY`), audits every read in
+`email_admin_audit` (issuer migration 0003) and keeps the per-staff row budget (500 identities an hour, 2 000 a day,
+provisional). A support reference is required to open a user, optional to search. Not deployed anywhere yet: with the
+admin Worker at M4.
+
+**Deploy order** (for the user, from a clean checkout at the commit being deployed, logged in to the account; nothing
+prints a secret; `<env>` throughout):
+
+1. The manifest's `admin` block is set (with the real `accessAud`, not `UNSET`; `admin.staffEmails` is the list both
+   Workers check), and the issuer's D1 has migration 0002 (`docs/operations.md` "User directory (D269)" if not).
+2. **Issuer migration 0003** (rebuilds `email_admin_audit`, every row kept; the running issuer keeps working on it, so
+   apply it first):
+
+   ```sh
+   corepack pnpm --filter @hana-id/email-issuer gen <env>        # keeps the D1 ids; now also writes ADMIN_ACCESS_* / ADMIN_STAFF_EMAILS
+   corepack pnpm --dir apps/email-issuer exec wrangler d1 migrations list hana-id-email-issuer-<env> --remote   # 0003_directory_audit.sql pending
+   corepack pnpm --dir apps/email-issuer exec wrangler d1 migrations apply hana-id-email-issuer-<env> --remote
+   ```
+
+3. **The issuer** (with `DirectoryRpc`): `corepack pnpm --filter @hana-id/email-issuer run deploy`.
+4. **The API** (`AdminRpc.appNames`): its usual deploy (`docs/operations.md` "Deploying").
+5. **The admin Worker**: `corepack pnpm --filter @hana-id/admin gen <env>` (adds the `ISSUER` service binding when the
+   manifest has `emailIssuer`), then `corepack pnpm --dir apps/admin exec wrangler deploy`. In the other order the
+   binding names a Worker or entrypoint that doesn't exist yet: wrangler refuses the deploy, or the screen answers
+   `503 directory_unavailable`.
+6. `corepack pnpm --filter @hana-id/scripts run deploy-check <env> --d1` (the issuer's D1 shows nothing pending).
+
+**Check it**: in the admin console, Users → search a known address (your own test login) → one row; open it with a
+ticket (e.g. `TEST-1`) → the directory row, the apps by name, the wallet directory's User ID, Support ID, internal id
+and wallets, and each scope's path with its block height. Its "Support ID lookup" button opens the lookup with the
+User ID and `TEST-1` filled in; **Look up** → the same user with your address beside the identity (and "Ledger
+unavailable" while `USAGE_DB` isn't bound). Searching Users for the Support ID with a ticket lands on the same
+lookup; a User ID or wallet still lists the wallet directory. Audit → "Issuer directory reads" lists both reads under your
+email (the search with no ticket, the view with `TEST-1`), no address in either (after the lookup, its `support_lookup` row with the same ticket too). `wrangler tail
+hana-id-email-issuer-<env>` shows `directory_read` lines with codes and counts only.
+
+| Symptom | Meaning | Action |
+|---|---|---|
+| `503 directory_unavailable` on every Users call | no `ISSUER` binding (the env has no `emailIssuer`, or `gen` ran before it), the issuer isn't deployed with `DirectoryRpc`, or its `ADMIN_*` vars are missing (issuer log `directory_refused`, `access_config_missing`) or the Access certs are unreachable | regenerate and redeploy in the order above |
+| `502 directory_refused` | the issuer refused a staff identity the admin Worker accepted: its `ADMIN_ACCESS_AUD` or `ADMIN_STAFF_EMAILS` differ from the admin Worker's (an issuer generated from an older manifest) | `gen <env>` and redeploy the issuer |
+| `500 internal` from search or open, issuer log `directory_read_failed` | the read or its audit insert failed: migration 0003 isn't applied (no `detail` column), or D1 is down; nothing was returned and no row counted | apply 0003; else D1 status |
+| `429 rate_limited`, an email `User directory budget reached by <staff>` to the alias | that staff member read 500 identities this hour (or 2 000 today); reads open again at the time shown | expected support work: wait; unexpected: treat the session as compromised (remove the person from the Access policy and `admin.staffEmails`, then review their rows in the audit view) |
+
+- **Rollback**: the admin Worker's `wrangler rollback` hides the screen; the issuer's leaves the binding without an
+  entrypoint (`503`). Migration 0003 stays (the older issuer code writes the same columns; `detail` stays null).
+- **Retention** is unchanged: `admin <env> retention:issuer` still purges `email_admin_audit` past 60 months (now
+  indexed on `at_ms`); `DirectoryRpc` writes nothing but its audit rows.
 
 ### The crons' call budget (D280, D380)
 
@@ -1613,8 +1690,8 @@ What isn't automatic, by design:
 
 - **Statements, NEAR/USD rates, rate overrides and the statement files** (7 years): the job only counts what is due
   (the screen's "Waiting for a person"); a person deletes them after review (below).
-- **The email issuer's directory** (D269, D365): the admin Worker has no binding to the issuer's D1, so its part of
-  the purge (the `user_email_apps` rows of apps deleted 30 days ago, `email_admin_audit` past 60 months) is
+- **The email issuer's directory** (D269, D365): the admin Worker has no binding to the issuer's D1 (its `ISSUER`
+  binding, C8b, is `DirectoryRpc`: reads only), so its part of the purge (the `user_email_apps` rows of apps deleted 30 days ago, `email_admin_audit` past 60 months) is
   `admin <env> retention:issuer`, run after each month's job. Its `user_emails` rows have no expiry (D269); an erasure
   request removes them with `uid-erase`.
 - **An end user's erasure request**: `uid-erase` (below), per scope.
@@ -2909,7 +2986,8 @@ Two limits on what a row means (D269): a Google row with `email_verified = 0` is
 the address (anyone can put any address on a Google account), never proof that it owns it; and anyone can make
 google-record or google-match write rows for their own Google account and any active app, even one it never logged
 in to, so an app listed for a Google identity is a strong hint, not proof. Matching and linking never read the
-directory (they read `email_hints`).
+directory (they read `email_hints`). Besides the CLI below, staff read it in the admin console's Users screen, through
+the issuer's `DirectoryRpc` ("Users screen (C8b)" under "Admin Worker": issuer migration 0003, the deploy order).
 
 **Applying migration 0002 on sandbox-dev** (the user runs this, from the main checkout; additive, two new tables, so
 no rollback step: an older Worker ignores them). Apply it before deploying an issuer that writes the directory (in the

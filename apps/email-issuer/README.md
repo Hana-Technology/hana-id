@@ -19,8 +19,15 @@ Reference: endpoints, limits, Durable Objects, D1 and logs in `docs/api.md` "Ema
 `user_email_apps`, migration 0002), for Hana staff only: written after the answer at every successful `verify`
 (`src/directory.ts`, best effort: a failure logs `directory_write_failed` and never fails a login; writes may land
 out of order, and a row keeps the newest write's address, `email_verified`, `hosted` and scope), read with
-`admin <env> user:list` / `user:find` (`docs/operations.md` "User directory (D269)"). No route serves it; partners
-never see it. Logs still never carry an address.
+`admin <env> user:list` / `user:find` (`docs/operations.md` "User directory (D269)") and by the admin console's Users
+screen through **`DirectoryRpc`** (C8b, D275): a named entrypoint with no route, bound only by the admin Worker as
+`ISSUER`, with three reads (`search`, `get`, `auditSince`; a `get` is audited `user_view`, or `support_lookup` for
+the admin's Support ID lookup, D399). Every call carries the staff request's Access JWT, which
+the issuer verifies itself against the admin application (`ADMIN_ACCESS_TEAM_DOMAIN`, `ADMIN_ACCESS_AUD`,
+`ADMIN_STAFF_EMAILS`, written by `gen` from the manifest's `admin` block); each read takes its rows from the staff
+member's budget (500 identities an hour, 2 000 a day) and writes its `email_admin_audit` row in the same D1 batch
+(migration 0003); the ticket is required to open one identity and optional to search. No route serves the directory;
+partners never see it. Logs still never carry an address.
 
 ## What it holds
 
@@ -42,6 +49,7 @@ nothing on chain and holds no chain key.
 | File | Role |
 |---|---|
 | `src/directory.ts` | the user directory's writer (D269): one upsert per identity and per (identity, app), after the answer, never throwing |
+| `src/directory-rpc.ts` | `DirectoryRpc` (C8b, D275, D388–D392): the admin Users screen's reads; the staff check, the row budget, the audit in the read's batch, the address term's keyed hash. A source check holds it to its SELECTs and one audit INSERT, its bindings and its imports (`scripts/test/directory-rpc-source.test.ts`) |
 | `src/handlers.ts` | the routes: `start`, `resend`, `verify`, `google-match` and `google-record` (one set of Google checks, `checkGoogleSignIn`; both write the Google identity to the directory after the answer), `admin/client-proof`, `admin/unlock`, `admin/unsuppress`, `admin/revoke-tickets`, `confirm`, JWKS, discovery, `health` (the deployed build id, D384), the SendGrid webhook |
 | `scripts/deploy.ts` | `run deploy`: `wrangler deploy --var HANA_BUILD:<build id>` (this checkout's commit, `-dirty` for uncommitted changes), which `GET /v1/email/health` reports and `deploy-check <env>` compares |
 | `src/commitment.ts`, `src/layouts.ts` | purposes, commitments and every nonce (checked against the contract's `email_fixture.json`) |
@@ -55,6 +63,7 @@ nothing on chain and holds no chain key.
 | `src/google.ts`, `src/chain.ts`, `src/apps.ts`, `src/access.ts`, `src/webhook.ts` | Google (ID token, tokeninfo, userinfo; the access token is never revoked, D265), NEAR views, the app lookup, Cloudflare Access, SendGrid's signed events |
 | `scripts/gen-contract-fixture.ts` | writes `contracts/hana-signer/src/issuer_tokens_fixture.json` (tokens from this code, for the contract's unit tests), deterministically from a public test seed; `scripts/test/gen-contract-fixture.test.ts` checks the committed file matches |
 | `migrations/0001_init.sql` | the issuer's D1: `email_issuance`, `email_hints`, `email_suppressions`, `email_admin_audit` |
+| `migrations/0003_directory_audit.sql` | `email_admin_audit` rebuilt with every row (C8b, D392): the actions `user_search`, `user_view`, `support_lookup`, the ticket optional on a search only, `detail` JSON |
 | `migrations/0002_user_emails.sql` | the user directory (D269): `user_emails`, `user_email_apps`; written after the answer, best effort (`src/directory.ts` `recordUserEmailLater`: a failure logs `directory_write_failed` with the app and scope only) |
 
 ## Commands
@@ -76,9 +85,13 @@ fetch); the RSA keys and HMAC keys are throwaway values made per run. `test/priv
 every flow for the address, the code, the `sub`, the tokens and the secrets (google-record and the directory's failure
 line included), and checks that a verified address is in `user_emails` and no other table;
 `test/directory-verify.test.ts` covers which `verify` answers record, `test/google-record.test.ts` google-record and
-google-match's directory write, `test/directory.test.ts` the upserts in both arrival orders.
+google-match's directory write, `test/directory.test.ts` the upserts in both arrival orders, `test/directory-rpc.test.ts`
+DirectoryRpc (the staff check, the searches, the ticket rule, the audit's atomicity and `detail`, the row budget, no
+address in a log line).
 
-Last verified: 2026-11-05 (branch `feat/deploy-build-check`: `GET /v1/email/health`, `scripts/deploy.ts`, D384);
+Last verified: 2026-11-05 (branch `feat/batch-c-15-screen`: `DirectoryRpc.get`'s `purpose`, D399); 2026-11-05 (branch
+`feat/batch-c-8b`: `DirectoryRpc`, migration 0003, the `ADMIN_*` vars, D388–D392);
+2026-11-05 (branch `feat/deploy-build-check`: `GET /v1/email/health`, `scripts/deploy.ts`, D384);
 2026-11-04 (branch `fix/dev-email-limits`: dev envs' limit set, D340, `test/dev-limits.test.ts`; every
 other test runs under production's, its harness env names `t-…` not being dev names); 2026-11-04 (branch `fix/user-emails-review`: the directory's order-safe upserts, D269); 2026-11-04
 (branch `feat/google-token-first`: `google-record`, google-match's directory write, D269,

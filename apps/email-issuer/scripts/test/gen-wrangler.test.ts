@@ -72,6 +72,17 @@ describe('wranglerConfig', () => {
     expect(c.durable_objects.bindings.map((b: { name: string }) => b.name)).toEqual(['EMAIL_CHALLENGE', 'RATE_LIMITER']);
   });
 
+  it('DirectoryRpc’s staff check: the admin application’s Access vars only with a dashboard block; no service binding of its own (D275)', () => {
+    const none = wranglerConfig(manifest(), LOCAL_D1_ID, LOCAL_D1_ID) as Record<string, any>;
+    expect(Object.keys(none.vars).filter((k) => k.startsWith('ADMIN_'))).toEqual([]);
+    const admin = { workerName: 'hana-id-admin-sandbox-dev', origin: 'https://admin.example.test', accessTeamDomain: 'hana.cloudflareaccess.com', accessAud: 'e'.repeat(64), staffEmails: ['a@hana.example', 'b@hana.example'] };
+    const c = wranglerConfig(manifest({}, { admin }), LOCAL_D1_ID, LOCAL_D1_ID) as Record<string, any>;
+    expect(c.vars).toMatchObject({ ADMIN_ACCESS_TEAM_DOMAIN: 'hana.cloudflareaccess.com', ADMIN_ACCESS_AUD: 'e'.repeat(64), ADMIN_STAFF_EMAILS: '["a@hana.example","b@hana.example"]' });
+    // The issuer binds nothing new: the admin Worker binds it (the entrypoint has no route here).
+    expect(c.services).toBeUndefined();
+    expect(c.routes).toBeUndefined();
+  });
+
   it('the outbox binding only in local* envs (and the test config)', () => {
     expect(() => wranglerConfig(manifest({ sender: 'outbox' }), LOCAL_D1_ID, LOCAL_D1_ID)).toThrow('local* envs only');
     const local = wranglerConfig(manifest({ sender: 'outbox' }, { name: 'local-dev' }), LOCAL_D1_ID, LOCAL_D1_ID) as Record<string, any>;

@@ -52,6 +52,31 @@ async function until(cond: () => boolean): Promise<void> {
   }
 }
 
+/**
+ * A test clock for the timing tests: `Date.now` (in this isolate, so in the object too) stands still unless the test
+ * moves it. Wall-clock timings drift under load (the runtime's clock moves with any I/O the isolate handles, the test
+ * runner's included); on this clock every part of a relay's timing is exact.
+ */
+function testClock(start = 1_800_000_000_000): { readonly now: number; advance(ms: number): void; advanceTo(t: number): void } {
+  let now = start;
+  vi.spyOn(Date, 'now').mockImplementation(() => now);
+  return {
+    get now() {
+      return now;
+    },
+    advance: (ms) => void (now += ms),
+    advanceTo: (t) => void (now = Math.max(now, t)),
+  };
+}
+
+/** Waits (in real time) until `n` relays are inside the object: dispatching, queued for it, or awaiting an outcome. */
+async function untilBusy(stub: DurableObjectStub<RelayerKey>, n: number): Promise<void> {
+  for (let i = 0; (await runInDurableObject(stub, (instance) => instance.busy)) < n; i++) {
+    if (i > 2_000) throw new Error(`Timed out waiting for ${n} relays in the object`);
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
 function expectConsecutive(nonces: bigint[], from: bigint): void {
   const sorted = [...nonces].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   expect(new Set(sorted.map(String)).size).toBe(nonces.length);
@@ -494,43 +519,70 @@ describe('RelayerKey Durable Object', () => {
   });
 
   it('reports the time spent getting a nonce and broadcasting vs waiting for the outcome', async () => {
+    const clock = testClock();
     const near = new NearMock();
-    near.onSendTx = () => new Promise((r) => setTimeout(() => r(undefined), 40));
+    // The node answers send_tx 40 ms (test clock) after the broadcast. The macrotask runs after the object has marked
+    // the broadcast (the microtasks that return from dispatch), so the 40 ms land in outcomeMs.
+    near.onSendTx = () => new Promise((r) => setTimeout(() => r(void clock.advance(40)), 0));
     near.install();
     const result = (await freshKeyStub().relay('session', 0, revokeCall(1))) as RelayResult;
     expect(result.ok).toBe(true);
-    expect(result.timing?.dispatchMs).toBeGreaterThanOrEqual(0);
-    expect(result.timing?.outcomeMs).toBeGreaterThanOrEqual(30);
+    expect(result.timing).toEqual({ dispatchMs: 0, outcomeMs: 40, queueMs: 0, chainReadMs: 0, signMs: 0, persistMs: 0 });
     const refused = (await freshKeyStub().relay('session', 0, { method: 'register_scope', args: {} })) as RelayResult;
     expect(refused.ok).toBe(false);
-    expect(refused.timing).toEqual({ dispatchMs: expect.any(Number), outcomeMs: expect.any(Number), queueMs: 0, chainReadMs: 0, signMs: 0, persistMs: 0 });
+    expect(refused.timing).toEqual({ dispatchMs: 0, outcomeMs: 0, queueMs: 0, chainReadMs: 0, signMs: 0, persistMs: 0 });
   });
 
   it('splits the dispatch time into queue, chain reads, signing and reservation', async () => {
+    const clock = testClock();
     const near = new NearMock();
-    near.readDelayMs = 40;
+    // A chain read answers 40 ms (test clock) after it arrives (reads sent together overlap); while `hold` is set, not
+    // before it settles either.
+    let hold: Promise<void> | undefined;
+    near.onRead = async () => {
+      const arrived = clock.now;
+      await hold;
+      clock.advanceTo(arrived + 40);
+    };
     near.install();
     const stub = freshKeyStub();
-    // Cold start: the first relay reads the access key and a block; the second waits for it in the queue.
-    const [cold, queued] = (await Promise.all([stub.relay('session', 0, revokeCall(1)), stub.relay('session', 0, revokeCall(2))])) as RelayResult[];
+    // A confirmed reservation write takes 5 ms (test clock).
+    let syncs = 0;
+    await runInDurableObject(stub, (_instance, state) => {
+      const sync = state.storage.sync.bind(state.storage);
+      vi.spyOn(state.storage, 'sync').mockImplementation(async () => {
+        await sync();
+        syncs++;
+        clock.advance(5);
+      });
+    });
+    // Cold start: the first relay reads the access key and a block; the second waits for it in the queue. The reads
+    // are held until both relays are in the object, so the second is queued behind the first however slow the host.
+    let release!: () => void;
+    hold = new Promise<void>((r) => (release = r));
+    const relays = Promise.all([stub.relay('session', 0, revokeCall(1)), stub.relay('session', 0, revokeCall(2))]);
+    await untilBusy(stub, 2);
+    release();
+    hold = undefined;
+    const [cold, queued] = (await relays) as RelayResult[];
     expect(cold!.ok && queued!.ok).toBe(true);
-    expect(cold!.timing!.chainReadMs).toBeGreaterThanOrEqual(30);
-    expect(cold!.timing!.queueMs).toBeLessThan(30);
-    expect(queued!.timing!.queueMs).toBeGreaterThanOrEqual(30);
-    expect(queued!.timing!.chainReadMs).toBe(0);
-    for (const t of [cold!.timing!, queued!.timing!]) {
-      expect(t.dispatchMs).toBeGreaterThanOrEqual(t.queueMs + t.chainReadMs + t.signMs + t.persistMs);
-      expect(t.signMs).toBeGreaterThanOrEqual(0);
-      expect(t.persistMs).toBeGreaterThanOrEqual(0);
-    }
+    // The first reserves a block of nonces (signing takes no test-clock time); the second waits for all of it, then
+    // signs inside that reservation.
+    expect(syncs).toBe(1);
+    expect(cold!.timing).toEqual({ dispatchMs: 45, outcomeMs: 0, queueMs: 0, chainReadMs: 40, signMs: 0, persistMs: 5 });
+    expect(queued!.timing).toEqual({ dispatchMs: 45, outcomeMs: 0, queueMs: 45, chainReadMs: 0, signMs: 0, persistMs: 0 });
     // Warm, inside the reservation: no RPC reads, no storage write.
+    const reads = near.rpcMethods.length;
     const warm = (await stub.relay('session', 0, revokeCall(3))) as RelayResult;
-    expect(warm.timing).toMatchObject({ queueMs: 0, chainReadMs: 0, persistMs: 0 });
-    // A recovery's re-read counts as chain reads.
+    expect(warm.timing).toEqual({ dispatchMs: 0, outcomeMs: 0, queueMs: 0, chainReadMs: 0, signMs: 0, persistMs: 0 });
+    expect(near.rpcMethods.slice(reads)).toEqual(['send_tx']);
+    expect(syncs).toBe(1);
+    // A recovery's re-read (access key and block, together) counts as chain reads.
     near.akNonce.set(publicKeyOf(0), near.nonceOf(publicKeyOf(0)) + 3n);
     const retried = (await stub.relay('session', 0, revokeCall(4))) as RelayResult;
     expect(retried.ok).toBe(true);
-    expect(retried.timing!.chainReadMs).toBeGreaterThanOrEqual(30);
+    expect(retried.timing).toEqual({ dispatchMs: 40, outcomeMs: 0, queueMs: 0, chainReadMs: 40, signMs: 0, persistMs: 0 });
+    expect(syncs).toBe(1);
   });
 
   it('fails cleanly for a key index outside its pool', async () => {

@@ -1,6 +1,6 @@
 # Batch C build plan
 
-Status (2026-11-04, branches `feat/batch-c-9`, `feat/batch-c-14` and `feat/batch-c-12`, on `develop`; `feat/batch-c-13`; 2026-11-05, `feat/batch-c-15`): C1–C5 merged into `develop` and running in the
+Status (2026-11-04, branches `feat/batch-c-9`, `feat/batch-c-14` and `feat/batch-c-12`, on `develop`; `feat/batch-c-13`; 2026-11-05, `feat/batch-c-15`, `feat/batch-c-8b`, `feat/batch-c-15-screen`): C1–C5 merged into `develop` and running in the
 sandbox-dev API as far as `develop` includes them (migrations 0006, 0009 and 0010 applied, usage capture off;
 `docs/operations.md`); C6 (the claim allow-list on its tokens, D277), C7 (the console Worker backend; D240–D244), C8
 (the admin Worker; D278–D285) and C11 (the files Worker and logos; D300–D308) merged into `develop`, not deployed (M3
@@ -10,8 +10,10 @@ page; D330–D338, D344) and C12 (reports and statements; D320–D329) merged, n
 D343, D350–D358) merged into `develop`, not deployed; the partner screens over C12's and C14's routes (usage,
 statements, pending upgrades; D370–D374) built on `feat/console-reports-upgrades`, not merged; C13 (retention; D360–D369) built on `feat/batch-c-13`, tests green, not merged, not deployed (its setup is
 `docs/operations.md` "Retention", at M6); C15 (the Support ID lookup's backend, the session answers' `supportId`, the vault's
-`hana.supportId` and the approval popup; D394–D397, D393, D276 confirmed and amended) built on `feat/batch-c-15`, tests green, not merged,
-not deployed, its admin screen left for after C8b; C16–C17 not built. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
+`hana.supportId` and the approval popup; D394–D397, D393, D276 confirmed and amended) and C8b (the Users screen; D275
+confirmed 2026-11-05, D388–D392) merged into `develop`, not deployed; the Support ID lookup's admin screen over C15's
+route (D399) built on `feat/batch-c-15-screen`, tests green, not merged, not deployed;
+C16–C17 not built. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
 batches that each merge into `develop` on their own: tests green, the docs they change updated, and nothing a partner,
 a user or staff can reach that is half-wired. Ordered by dependency; the spec's "Build order" steps are noted per
 batch. This is a plan, not a spec: where it and the spec disagree, the spec wins or gets amended first.
@@ -55,7 +57,7 @@ Batches merge one at a time. Deploys happen at the milestones at the end; a merg
 | C6 | Owner-verified changes and owner actions: `changeOrigins` / `proposeChange` verification, owner-action precheck, caps, allowance alert, `ConsoleRpc.ownerAction`, the console sink scope | 1 (part), 3 (part) | C2, C5 |
 | C7 | Console Worker backend: dispatch, headers, CSRF, `StaffRpc`, invites and owner grants (data path), hourly cron; no public route | 4 (part) | C1, C5 |
 | C8 | Admin Worker: Access check, screens, `EmailSender` (Resend), blocking notices, feed, watcher | 6 (part) | C5, C7 |
-| C8b | Users screen (proposed, D275): `DirectoryRpc` on the email issuer, issuer migration 0003, the admin screen | — | C8 |
+| C8b | Users screen (D275, confirmed 2026-11-05): `DirectoryRpc` on the email issuer, issuer migration 0003, the admin screen | — | C8 |
 | C9 | Partner sign-in: console-auth Worker, code flow, sessions, membership rules, read-only console | 4 (part) | C2, C7, C8 |
 | C10 | Partner management: fresh sign-in, guarded-change UI with the policy editor, settings, keys, suspend and resume, members and invites, owner actions and the client-proof helper, cancel pages | 4 (part) | C6, C9 |
 | C11 | Files Worker, R2 buckets, logos, `logoUrl` in `GET /v1/app` and the auth pages | 5, 7 (part) | C5, C10 |
@@ -404,16 +406,27 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
   DAO reads. Setup: with the admin Worker at M4, `docs/operations.md` "Admin Worker" → "Security & monitoring" (then
   acknowledge sandbox-dev's alert #11).
 
-## C8b. Users screen (proposed, D275; spec §Users and Support ID)
+## C8b. Users screen (D275, confirmed by the user 2026-11-05; spec §Users and Support ID)
 
 - **Scope**: `DirectoryRpc` (a `WorkerEntrypoint` in `apps/email-issuer`, no route: `search`, `get`, `auditSince`),
   the issuer's own check of the staff Access JWT (`ADMIN_ACCESS_AUD`), the audit row in the same batch as each read,
   the per-staff row budget on the issuer's `RateLimiter`; issuer migration `0003` (`email_admin_audit` rebuilt with
-  the new actions and `detail`; `user_email_apps.uid`, nullable, filled from C15); the admin Worker's `ISSUER`
-  binding, the `/users` screens and BFF routes, the issuer rows in the audit view, the `directory_budget` email.
-  `gen-wrangler` for both Workers.
+  the new actions and `detail`; ~~`user_email_apps.uid`, nullable, filled from C15~~ dropped by D346, D392); the admin
+  Worker's `ISSUER` binding, the `/users` screens and BFF routes, the issuer rows in the audit view, the
+  `directory_budget` email. `gen-wrangler` for both Workers.
+- **Status** (2026-11-05): merged into `develop`, not deployed (D388–D392). Built:
+  `apps/email-issuer/src/directory-rpc.ts` (the three reads, the staff check with `@hana-id/oidc` against the admin
+  application, the audit in the read's batch, the keyed hash of an address term), `RateLimiter.takeRows` /
+  `returnRows` with `DIRECTORY_ROW_LIMITS` (500 an hour, 2 000 a day, provisional), migration
+  `0003_directory_audit.sql`, the issuer vars `ADMIN_ACCESS_TEAM_DOMAIN` / `ADMIN_ACCESS_AUD` / `ADMIN_STAFF_EMAILS`;
+  console-core `directory.ts`; the admin's `POST /api/users/search`, `/find`, `/get` (`src/users.ts`), the audit
+  view's issuer rows, `directory_budget`, the SPA's Users pages, `ISSUER` in `gen`; `AdminRpc.appNames` on the API
+  (D391). The ticket is required to open a user and optional to search (the user's amendment). Not built here:
+  `DirectoryRpc.byUid` (dropped by D346); the issuer retention entrypoint D365 suggested revisiting (`retention:issuer`
+  stays the CLI's: `DirectoryRpc` stays read-only). Setup: `docs/operations.md` "Users screen (C8b)".
 - **Tests**: spec "Users and Support ID" rows except the Support ID ones.
-- **Setup / deploy**: apply issuer migration 0002 (if not yet) and 0003 on the env, deploy the issuer, then the admin
+- **Setup / deploy**: apply issuer migration 0002 (if not yet) and 0003 on the env, deploy the issuer (with the
+  manifest's `admin` block, so `gen` writes its `ADMIN_*` vars), then the API (`AdminRpc.appNames`), then the admin
   Worker.
 - **Visible after**: staff search users and see a user's apps and on-chain path in the admin console; the CLI's
   `user:*` keep working.
@@ -422,12 +435,13 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
   `directoryKey` with `DirectoryRpc` for the email.
 - **Since C15** (D276 as amended 2026-11-05, D394): nothing fills `user_email_apps.uid` (code → user is the wallet
   directory), so issuer migration 0003 needn't add it, and `DirectoryRpc` needs no `byUid`. The lookup screen is C8b's
-  follow-up over C15's `POST /api/support/lookup` (C15 "Screen: after C8b merges").
+  follow-up over C15's `POST /api/support/lookup` (C15 "Screen", built on `feat/batch-c-15-screen`, D399: the Users
+  search sends a Support ID there, and each wallet-directory user's block links to it).
 
 ## C15. Support ID lookup (D96; D276 confirmed and amended 2026-11-05, D394–D397; spec §Users and Support ID)
 
-- **Status** (2026-11-05): built on `feat/batch-c-15`, tests green, not merged, not deployed; the admin screen waits
-  for C8b. The design the user confirmed ("yes go ahead with C15") is D276's 2026-11-05 amendment: code → user through
+- **Status** (2026-11-05): merged into `develop`, not deployed; the admin screen (below) built on
+  `feat/batch-c-15-screen` after C8b merged, tests green, not merged, not deployed (D399). The design the user confirmed ("yes go ahead with C15") is D276's 2026-11-05 amendment: code → user through
   the wallet directory (`end_users.support_code`, `token_sub`, `user_id`), so `IssuerRpc.uid`, `user_email_apps.uid`
   and `DirectoryRpc.byUid` are dropped; every match listed; no Neon migration (0007's indexes, D362); erasure is
   `uid-erase` (D361); partners get the code only.
@@ -460,7 +474,11 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
 - **Setup / deploy**: none of its own. The API part goes live with the next API deploy (no migration); the admin
   route with the admin Worker (M4; its ledger part needs `USAGE_DB`, M2/M6); the CLI's ledger part needs
   `.secrets/<env>/neon-usage-admin.url` (`usage-setup <env> roles`). Until then each says "ledger unavailable".
-- **Screen: after C8b merges** (left for it; nothing in C15 builds UI in the admin SPA):
+- **Screen** (done on `feat/batch-c-15-screen`, 2026-11-05, D399: `/support` in the admin SPA; the email join in the
+  route itself, `DirectoryRpc.get` with `purpose: 'support_lookup'`; the lookup's ticket now the issuer's rule; tests
+  `apps/admin/test/support.test.ts`'s email join, `apps/admin/test-spa/support.test.ts` (the SPA in happy-dom), the
+  source checks in `apps/admin/scripts/test/gen-wrangler.test.ts`, `apps/email-issuer/test/directory-rpc.test.ts`'s
+  `purpose`; current state in `docs/operations.md` "Support ID lookup"). As planned:
   - The lookup screen calls `POST /api/support/lookup` with `{query, ticket, requestIds?, days?}` (console-core
     `supportLookupBody`) and renders `SupportLookupView` (console-core `support.ts`): the matches (each with `user`,
     `apps`, `shares`, `changes`), `activity[i]` per match (null when `ledger.available` is false: show

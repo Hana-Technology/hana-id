@@ -180,6 +180,23 @@ export const consoleListUsersInput = ctx
   .strict();
 export const consoleGetUserInput = ctx.extend({ orgId: orgIdInput, userId: userIdInput }).strict();
 
+/**
+ * The staff Users screen's app labels (C8b): the directory names apps by id only (the issuer doesn't know their org),
+ * so AdminRpc.appNames reads names, orgs, scopes and environments of up to APP_NAMES_MAX ids at once, deleted apps
+ * included. Staff only.
+ */
+export const APP_NAMES_MAX = 50;
+export const adminAppNamesInput = ctx.extend({ appIds: z.array(z.string().regex(/^[A-Za-z0-9_-]{1,128}$/u)).min(1).max(APP_NAMES_MAX) }).strict();
+export interface AppNameView {
+  id: string;
+  name: string;
+  orgId: string;
+  scopeId: string;
+  environment: 'test' | 'live' | null;
+  /** Soft-deleted (AdminRpc.deleteApp): still named, so a user's history reads. */
+  deletedAt: number | null;
+}
+
 export type AdminListUsersInput = z.infer<typeof adminListUsersInput>;
 export type AdminGetUserInput = z.infer<typeof adminGetUserInput>;
 export type AdminFindUsersInput = z.infer<typeof adminFindUsersInput>;

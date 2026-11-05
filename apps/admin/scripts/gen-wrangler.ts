@@ -24,6 +24,7 @@ import { workersDevHost } from '../../api/scripts/pages-wrangler.ts';
 import { TEST_MANIFEST as CONSOLE_TEST_MANIFEST } from '../../console/scripts/gen-wrangler.ts';
 import { CRONS, FIVE_MINUTES } from '../src/crons.ts';
 import { TEST_MANIFEST as WATCHDOG_TEST_MANIFEST } from '../../watchdog/scripts/gen-wrangler.ts';
+import { TEST_MANIFEST as ISSUER_TEST_MANIFEST } from '../../email-issuer/scripts/gen-wrangler.ts';
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const COMPATIBILITY_DATE = '2026-10-01';
@@ -98,10 +99,12 @@ export function wranglerConfig(m: Manifest, opts: { adminHyperdriveId?: string |
       NEAR_NETWORK: m.network,
       ...(watchdogUrl ? { WATCHDOG_URL: watchdogUrl } : {}),
     },
-    // AdminRpc on the API and StaffRpc on the console: the admin Worker is the only caller of each.
+    // AdminRpc on the API, StaffRpc on the console and (C8b, D275) DirectoryRpc on the email issuer: the admin Worker
+    // is the only caller of each. An env without an email issuer has no directory: no ISSUER, and the Users screen says so.
     services: [
       { binding: 'API', service: m.cloudflare.workerName, entrypoint: 'AdminRpc' },
       { binding: 'CONSOLE', service: c.workerName, entrypoint: 'StaffRpc' },
+      ...(m.emailIssuer ? [{ binding: 'ISSUER', service: m.emailIssuer.cloudflare.workerName, entrypoint: 'DirectoryRpc' }] : []),
     ],
     // The ledger's admin role (usage_admin): its own Hyperdrive config, never the API's writer one (D73).
     ...(id ? { hyperdrive: [{ binding: 'USAGE_DB', id, localConnectionString: LOCAL_ADMIN_CONNECTION_STRING }] } : {}),
@@ -132,9 +135,12 @@ export const TEST_MANIFEST: Manifest = {
 /** Fixed fake Hyperdrive ids for the config snapshots (no real config). */
 export const TEST_ADMIN_HYPERDRIVE_ID = 'a'.repeat(32);
 
-/** The workerd tests' config: no Hyperdrive (the tests swap in an in-memory ops store). */
+/**
+ * The workerd tests' config: no Hyperdrive (the tests swap in an in-memory ops store), and the email issuer test
+ * manifest's Worker as the ISSUER binding's service (the suite runs that Worker beside this one, vitest.config.ts).
+ */
 export function testWranglerConfig(): Record<string, unknown> {
-  return wranglerConfig(TEST_MANIFEST, { adminHyperdriveId: null });
+  return wranglerConfig({ ...TEST_MANIFEST, emailIssuer: ISSUER_TEST_MANIFEST.emailIssuer } as Manifest, { adminHyperdriveId: null });
 }
 
 /** The admin Hyperdrive id in an existing wrangler.jsonc, only when it was generated for the same Worker. */

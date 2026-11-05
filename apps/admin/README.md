@@ -61,7 +61,7 @@ export.
 corepack pnpm --filter @hana-id/admin test        # Worker tests over the real API, console and email issuer Workers, the config and source checks, the ops store on PGlite, the SPA in happy-dom
 corepack pnpm --filter @hana-id/admin typecheck
 corepack pnpm --filter @hana-id/admin gen <env> [--admin-hyperdrive-id <id>|off]
-corepack pnpm --dir apps/admin exec wrangler deploy   # after the API, the console and (for Users) the email issuer
+corepack pnpm --filter @hana-id/admin run deploy     # after the API, the console and (for Users) the email issuer; stamped with the build id (D406)
 ```
 
 The Worker tests reach no network: the Access certs, Resend, NEAR and the watchdog are stubbed in the test isolate,
@@ -70,5 +70,5 @@ team (`test/fake-access.js`). The SPA's tests (`test-spa/`, `vitest.spa.config.t
 does, in a fresh happy-dom window per test with the API answered at `fetch`: the Support ID lookup screen and the Users
 screen's ways into it.
 
-Last verified: 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup screen, `src/support.ts`'s email join,
+Last verified: 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy`, stamped with the build id, read by `deploy-check` from the deployed version, D406); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup screen, `src/support.ts`'s email join,
 the SPA tests, D399); 2026-11-05 (branch `feat/batch-c-8b`: written with the Users screen, D388–D392).

@@ -6,4 +6,6 @@ export interface Env {
   FILES_ORIGIN: string;
   /** The logo bucket (`files.logosBucket`). Read only by code: `get`, nothing else (a source test). */
   LOGOS: R2Bucket;
+  /** The build id (D406): set only by `run deploy` (`wrangler deploy --var HANA_BUILD:<id>`), never by `gen`. */
+  HANA_BUILD?: string;
 }

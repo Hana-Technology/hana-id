@@ -2,11 +2,14 @@
 // dist/, which the console Worker serves as its assets (`run_worker_first`, so every asset gets the console's CSP).
 // The CSP is `script-src 'self'; style-src 'self'`: the build must emit no inline script or style, so the modulepreload
 // polyfill (an inline-capable helper) is off and every asset is a file (scripts/test/spa-build.test.ts builds and checks).
+// index.html gets this checkout's build id as `<meta name="hana-build">` (scripts/build-stamp.ts, D406).
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
+import { buildStamp } from './scripts/build-stamp.ts';
 
 export default defineConfig({
   root: fileURLToPath(new URL('./web', import.meta.url)),
+  plugins: [buildStamp()],
   publicDir: false,
   esbuild: { jsx: 'automatic' },
   build: {

@@ -1,8 +1,10 @@
 // The console Worker's fetch (docs/batch-c-spec.md "Static assets", "Response headers", "Sessions" CSRF): host
 // dispatch, the security headers on every response (assets included, since the Worker runs first), the CSRF checks on
 // every non-GET request, the session-less routes only, and the per-IP limit of the link routes.
-import { exports } from 'cloudflare:workers';
+import { env, exports } from 'cloudflare:workers';
+import { BUILD_PATH } from '@hana-id/env/build-id';
 import { describe, expect, it } from 'vitest';
+import worker, { type Env } from '../src/index.ts';
 import { consoleCsp } from '../src/headers.ts';
 import { CSRF, ORIGIN, post, request } from './helpers.ts';
 
@@ -54,6 +56,42 @@ describe('headers', () => {
       expect(res.headers.get('cache-control'), path).toBe('no-store');
       expect(res.headers.get('content-type')).toMatch(/^application\/json/u);
       expect(await res.json()).toMatchObject({ error: { code: expect.any(String), message: expect.any(String) } });
+    }
+  });
+});
+
+describe('GET /.well-known/hana-build (D406)', () => {
+  const call = (init: RequestInit = {}, HANA_BUILD?: string, origin = ORIGIN, path = BUILD_PATH) =>
+    worker.fetch(new Request(`${origin}${path}`, init), { ...(env as unknown as Env), ...(HANA_BUILD === undefined ? {} : { HANA_BUILD }) });
+
+  it('answers the deployed build id as JSON with the console’s headers and no-store; null when unstamped or malformed', async () => {
+    for (const [HANA_BUILD, build] of [['0485faa1c2d3-dirty', '0485faa1c2d3-dirty'], ['0485faa1c2d3', '0485faa1c2d3'], [undefined, null], ['', null], ['latest', null]] as const) {
+      const res = await call({}, HANA_BUILD);
+      expect(res.status, String(HANA_BUILD)).toBe(200);
+      expect(res.headers.get('content-type')).toBe('application/json; charset=utf-8');
+      expect(res.headers.get('cache-control')).toBe('no-store');
+      expectSecurityHeaders(res);
+      expect(await res.json()).toEqual({ build });
+    }
+    // The test config, like a generated one, sets no HANA_BUILD (only `run deploy` does).
+    expect(await (await request(BUILD_PATH)).json()).toEqual({ build: null });
+  });
+
+  it('HEAD has no body; another method is 405 whatever its CSRF headers; another host or a near-miss path is not it', async () => {
+    const head = await call({ method: 'HEAD' }, '0485faa1c2d3');
+    expect(head.status).toBe(200);
+    expect(await head.text()).toBe('');
+    for (const init of [{ method: 'POST' }, { method: 'POST', headers: { ...CSRF, origin: ORIGIN } }, { method: 'DELETE' }]) {
+      const res = await call(init, '0485faa1c2d3');
+      expect(res.status, JSON.stringify(init)).toBe(405);
+      expect(res.headers.get('allow')).toBe('GET, HEAD');
+      expectSecurityHeaders(res);
+    }
+    expect((await call({}, '0485faa1c2d3', 'https://evil.example')).status).toBe(404);
+    // A near-miss is the SPA's fallback (index.html), never the build JSON.
+    for (const path of [`${BUILD_PATH}/`, `${BUILD_PATH}.json`, '/.well-known/hana-builds']) {
+      const res = await call({}, '0485faa1c2d3', ORIGIN, path);
+      expect(res.headers.get('content-type'), path).toMatch(/^text\/html/u);
     }
   });
 });

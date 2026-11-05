@@ -9,7 +9,7 @@
     "secrets": "tsx scripts/secrets.ts",
     "pin": "tsx scripts/pin.ts",
     "dev": "wrangler dev --test-scheduled",
-    "deploy": "wrangler deploy",
+    "deploy": "tsx ../../packages/env/src/stamped-deploy.ts",
     "test": "vitest run && vitest run -c vitest.scripts.config.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p scripts"
   },

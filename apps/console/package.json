@@ -8,13 +8,14 @@
     "gen": "tsx scripts/gen-wrangler.ts",
     "build": "vite build",
     "dev:web": "vite",
-    "deploy": "vite build && wrangler deploy",
+    "deploy": "vite build && tsx ../../packages/env/src/stamped-deploy.ts",
     "test": "vitest run && vitest run -c vitest.scripts.config.ts && vitest run -c vitest.web.config.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p scripts && tsc --noEmit -p web"
   },
   "dependencies": {
     "@hana-id/console-core": "workspace:*",
     "@hana-id/core": "workspace:*",
+    "@hana-id/env": "workspace:*",
     "@hana-id/oidc": "workspace:*",
     "react": "18.3.1",
     "react-dom": "18.3.1",
@@ -24,7 +25,6 @@
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.4.4",
     "@cloudflare/workers-types": "5.20261016.1",
-    "@hana-id/env": "workspace:*",
     "@testing-library/dom": "10.4.2",
     "@testing-library/react": "16.3.3",
     "@types/node": "^22.0.0",

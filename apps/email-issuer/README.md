@@ -52,7 +52,7 @@ nothing on chain and holds no chain key.
 | `src/directory.ts` | the user directory's writer (D269): one upsert per identity and per (identity, app), after the answer, never throwing |
 | `src/directory-rpc.ts` | `DirectoryRpc` (C8b, D275, D388–D392): the admin Users screen's reads; the staff check, the row budget, the audit in the read's batch, the address term's keyed hash. A source check holds it to its SELECTs and one audit INSERT, its bindings and its imports (`scripts/test/directory-rpc-source.test.ts`) |
 | `src/handlers.ts` | the routes: `start`, `resend`, `verify`, `google-match` and `google-record` (one set of Google checks, `checkGoogleSignIn`; both write the Google identity to the directory after the answer), `admin/client-proof`, `admin/unlock`, `admin/unsuppress`, `admin/revoke-tickets`, `confirm`, JWKS, discovery, `health` (the deployed build id, D384), the SendGrid webhook |
-| `scripts/deploy.ts` | `run deploy`: `wrangler deploy --var HANA_BUILD:<build id>` (this checkout's commit, `-dirty` for uncommitted changes), which `GET /v1/email/health` reports and `deploy-check <env>` compares |
+| `run deploy` | the shared wrapper `packages/env/src/stamped-deploy.ts` (D406): `wrangler deploy --var HANA_BUILD:<build id>` (this checkout's commit, `-dirty` for uncommitted changes), which `GET /v1/email/health` reports and `deploy-check <env>` compares |
 | `src/commitment.ts`, `src/layouts.ts` | purposes, commitments and every nonce (checked against the contract's `email_fixture.json`) |
 | `src/decide.ts` | the four cases of automatic linking, judged as the contract's `auto_link` will |
 | `src/challenge.ts`, `src/challenge-id.ts` | `Challenge` Durable Object: one challenge or link ticket, atomic attempts, single use; the challengeId's public half (the object's name) and secret half (the address's encryption key) |
@@ -90,7 +90,7 @@ google-match's directory write, `test/directory.test.ts` the upserts in both arr
 DirectoryRpc (the staff check, the searches, the ticket rule, the audit's atomicity and `detail`, the row budget, no
 address in a log line).
 
-Last verified: 2026-11-05 (branch `feat/batch-c-15-screen`: `DirectoryRpc.get`'s `purpose`, D399); 2026-11-05 (branch
+Last verified: 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy` is the shared wrapper, D406); 2026-11-05 (branch `feat/batch-c-15-screen`: `DirectoryRpc.get`'s `purpose`, D399); 2026-11-05 (branch
 `feat/batch-c-8b`: `DirectoryRpc`, migration 0003, the `ADMIN_*` vars, D388–D392);
 2026-11-05 (branch `feat/deploy-build-check`: `GET /v1/email/health`, `scripts/deploy.ts`, D384);
 2026-11-04 (branch `fix/dev-email-limits`: dev envs' limit set, D340, `test/dev-limits.test.ts`; every

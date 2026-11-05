@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D404 (branch `feat/account-migration`: testnet's move to company accounts decided by the user, the custom-domain placements, `cloudflare.accountId`, `env-secrets`, `d1-move`, `issuer:iss` and the runbook to confirm) on 2026-11-05, amending D230, with a row of "Superseded or amended"; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
+Last verified against code: 2026-10-28 (commit 58edee9); D404 (branch `feat/account-migration`: testnet's move to company accounts decided by the user, the custom-domain placements, `cloudflare.accountId`, `env-secrets`, `d1-move`, `issuer:iss` and the runbook to confirm) on 2026-11-05, amending D230, with a row of "Superseded or amended"; D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
 user, implementation choices to confirm) on 2026-11-05; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
 flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
@@ -6422,6 +6422,8 @@ follow-up there.
   approval popup); a branch that releases 0.2.0 before C15 merges must raise the constant.
 - Rejected: adding the field unconditionally (breaks deployed SDKs); a new port method (`hana_supportId`), which an old
   SDK can't call anyway and which splits the session state across two calls.
+- Extended 2026-11-05 by D405: the same gate (`API_REQUEST_ID_SDK_MIN`, also 0.2.0) adds the API answer's
+  `requestId` to a port error's `data`.
 
 ### D387. CI and the outside identity-JWKS probe are turned off while only testnet runs
 - Date 2026-11-05 · Status: **decided by the user** · Built: the `CI` and `Identity JWKS probe` workflows disabled in
@@ -6775,7 +6777,8 @@ still take them: renumber on merge.
   which takes plain text only ("Hashed passwords are not supported", Neon's "Manage roles"). No password was set.
 - Decision:
   1. **SQL gives LOGIN, Neon sets the password.** As the owner (`DATABASE_URL_DIRECT`): check `usage_writer` and
-     `usage_admin` exist (else "run usage-migrate first") and `ALTER ROLE … WITH LOGIN` (no password), one
+     `usage_admin` exist (else "run usage-migrate first") and `ALTER ROLE … WITH LOGIN` with a random throwaway password (never stored or printed; Neon's reset refuses a role without one,
+      `ROLE_PASSWORD_NOT_AVAILABLE`, seen on sandbox-dev 2026-11-05), one
      transaction; the connection is closed before the resets (a reset drops the endpoint's connections). Then, per
      role in turn, `POST https://console.neon.tech/api/v2/projects/{project_id}/branches/{branch_id}/roles/{role}/reset_password`
      with `Authorization: Bearer <key>`: Neon generates the password and answers it once (`role.password`) with the
@@ -6807,6 +6810,11 @@ still take them: renumber on merge.
   6. Role passwords are now Neon's format (`npg_` and random letters and digits), so the role files' check
      (`readRoleUrl`, also used by `admin` and `uid-erase`) takes 12–512 characters without whitespace or control
      characters instead of D224's 43 base64url characters.
+- Amended 2026-11-05 (user, "yes"): the first real run answered `422 ROLE_PASSWORD_NOT_AVAILABLE` ("cannot update
+  password for role without password"): migration 0001's roles had none. The owner now sets a random throwaway in
+  the same `ALTER ROLE … WITH LOGIN PASSWORD`, never stored or printed, which the reset replaces within seconds; a
+  SQL log can only ever hold a dead password. Rejected: re-creating the roles through Neon's API (dropping them and
+  their grants).
 - Why: the user's choice of the two ways Neon allows (plain text in SQL, or Neon generates it): no password in a SQL
   statement (statement text can end up in Postgres's and Neon's logs), none typed or pasted, and the password is
   created where it is set.
@@ -6909,11 +6917,213 @@ still take them: renumber on merge.
   new Cloudflare account, or a plan with subdomain zones); the date (the user, with the colleague); a rehearsal on a
   throwaway `sandbox-*` env before sandbox-dev.
 
+## Staff login: Cloudflare Access kept, on the free tier (branch `docs/zero-trust-free-guard`), 2026-11-05
+
+### D408. The admin console keeps Cloudflare Access (Zero Trust Free); sandbox never goes past the free tier
+- Date 2026-11-05 · Status: **decided by the user** ("let's stick with Zero Trust then … make sure we never hit
+  overage for Zero Trust on sandbox") · Reconfirms D75 and D88 · Written: `docs/operations.md` "Admin Worker" step 1
+- Context: Zero Trust's Free plan asks for a card authorised for usage past the free limits. Alternatives weighed the
+  same day: our own Google staff sign-in (2–4 days; the admin console then public, sessions, CSRF and login abuse
+  ours; the issuer would verify Google's own ID token to keep staff identity unforgeable by the admin Worker), a
+  two-mode build switching to Access later (no breaking change, but throwaway work), Supabase Auth (a second account
+  able to admit staff), CLI only.
+- Decision: keep Access. On sandbox it stays inside the free tier: 50 seats, 2 used; the policy names exact emails
+  only, Google is the only login method, and no other Zero Trust feature is enabled (Gateway, WARP enrolment,
+  Browser Isolation, DLP and CASB are billed or metered per seat). Seat usage and billing are checked after setup and
+  monthly; adding staff or a feature is checked against the free limits first.
+- Why: Access keeps the admin console off the public internet and signs staff identity outside our code, for $0 at
+  our size; the guard answers the card authorisation.
+- Rejected: our own staff sign-in (more exposed, more code on the most sensitive screen), two modes (throwaway work),
+  Supabase Auth.
+## The API request ID in the SDK's errors (branch `feat/sdk-error-request-id`), 2026-11-05
+
+### D405. The vault puts the API answer's request ID in a port error's `data.requestId`, for an SDK of 0.2.0 or later
+- Date 2026-11-05 · Status: decided while building C15's follow-up (to confirm) · Built on
+  `feat/sdk-error-request-id`: `packages/core/src/api-request-id.ts` (`API_REQUEST_ID_RE`, `isApiRequestId`,
+  `apiRequestIdOf`, `API_REQUEST_ID_SDK_MIN`), `packages/web/src/vault/errors.ts` (`VaultError.requestId`,
+  `fromRequest`, `toProtocol(withRequestId)`, `apiErrorToVault`), `vault/login.ts` (`LoginChain.noteAnswer`, `traced`;
+  the relay read's refusal, `linkedApiError`), `vault/vault.ts` (`sdkTakesRequestId`, `replyError`,
+  `revokeOtherDevices`, `identityError`), `packages/web/src/client/errors.ts` (`HanaError.requestId`, `HanaError.from`,
+  `toProviderRpcError`, `toSwkError`), `apps/demo/src/{errors,diagnostics,page}.ts`; tests
+  `packages/core/test/api-request-id.test.ts`, `packages/web/test/vault/request-id.test.ts`,
+  `packages/web/test/vault/linking.test.ts` (the `/v1/link` refusal), `packages/web/test/client/request-id.test.ts`,
+  `packages/react/test/{hooks,identity}.test.tsx`, `apps/demo/test/{errors,diagnostics,page}.test.ts`,
+  `apps/e2e/tests/persistence.spec.ts` (the real API's 410 and its `x-request-id`), `apps/e2e/tests/login.spec.ts`
+  (`token_has_pii` has none) · Source: build plan C15's open follow-up, D393, D394 · Number: D405 because branches in
+  flight when written may take D401–D404 (D403 the highest on `develop`); renumber at merge if another branch took it.
+- Context: the usage ledger keeps a user's uid on ok events only, so a failed request is found by its request ID
+  (C15, D394), and the SDK's errors carried none: a partner had nothing to escalate with.
+- Decision:
+  1. **Which errors.** A port error that came from an API answer: the answer's own refusal (`apiErrorToVault`, and the
+     vault's own mappings of one: `revokeOtherDevices`' `share_not_fresh` and gone share, `hana_identityToken`'s
+     refusals, `/v1/link`'s `link_refused`, the login relay's 403/410), and any error the login's chain step ends with
+     after one (a resend refused again, a recovery that gave up: `session_consumed`, `derive_failed`,
+     `api_unavailable` after a timeout's poll or a re-sync). The chain keeps the latest API call's request ID when it
+     failed with an answer and clears it on a success or a network error, so what it names is the answer the failure
+     followed. Never: a check in the vault, a cancel or the login's own end (an aborted chain is not marked; the abort
+     error is a shared object), a network failure, a NEAR read, Google's or the email issuer's answers (not in the
+     ledger), the background calls (shares, touch, the wallet record), a dormant session the API won't unlock (it ends
+     as `sessionExpired`; the request that woke it fails `4100` as before). Signing calls no API; key export's errors
+     stay in the export window.
+  2. **Only a request ID.** `API_REQUEST_ID_RE`, 8–64 of `[A-Za-z0-9-]`: what apps/api sends (a cf-ray or a UUID) and
+     within what the lookup takes (`[A-Za-z0-9_-]{8,128}`). Anything else is dropped, never a reason to change the
+     error; nothing else of the API's body is added (its message and details stay out, as before). The SDK checks again
+     (`HanaError.from` drops a malformed `requestId` from `data`).
+  3. **The gate.** The vault adds `data.requestId` only when the hello's `sdk` is `API_REQUEST_ID_SDK_MIN` (`0.2.0`) or
+     later (`sdkAtLeast`, D393's mechanism; its own constant, equal to `SUPPORT_ID_SDK_MIN` because both ship in the
+     unreleased 0.2.0). An older SDK's error parser doesn't check `data`, so the field wouldn't break it; the gate keeps
+     D393's rule (an SDK gets exactly the shapes it was built against: a partner comparing `data` keeps working).
+  4. **On the SDK.** `HanaError.requestId` (null without one); the EIP-1193 provider's `data.requestId` beside
+     `data.code` for a string code (a numeric code passes `data` through, so the same key); the SWK module's `ext[1]`.
+     React needs nothing of its own (`useHana().error` and `useIdentityToken().error` are HanaErrors).
+  5. **Not in `hana_status`.** Status is session state; request IDs are per call, and a success is already found by
+     the Support ID (its ok events carry the uid). Partners keep the IDs of the errors they get; the demo's *Copy
+     diagnostics* has each error's `requestId` and `requestIds`, the latest five distinct ones.
+- Why: the partner escalation the Support ID lookup expects (Support ID plus request IDs) needs the IDs in the place a
+  partner already handles: the error.
+- Rejected: a recent-request-IDs list in `hana_status` or the SDK (more protocol and vault state for no lookup gain);
+  attaching the operation's latest API request ID to every error it ends with (a cancel or a vault check after an
+  earlier answer would name a request that didn't cause it); forwarding the API's message or its whole body (free
+  text: only codes and checked fields reach the partner page); no gate (D393's rule).
+- Trade-offs: an SDK before 0.2.0 gets none (no partner uses one yet); a failure after a network error names no request
+  even when an earlier attempt was answered.
+
+## The admin console's Cloudflare Access by script (branch `feat/access-setup`), 2026-11-05
+
+### D409. `access-setup <env>` makes the admin console's Access application and staff policies through Cloudflare's API; sandbox* staff sign in with Google, exact emails only
+- Date 2026-11-05 · Status: **decided by the user** (2026-11-05: sandbox staff sign in with Google, exact emails only,
+  no GitHub team for sandbox; session 1 h; no service tokens; the Free plan; the user makes the Zero Trust team and
+  the Google login method in the dashboard); implementation choices: to confirm · Built on `feat/access-setup`:
+  `scripts/access-setup.ts`, `scripts/lib/access-setup.ts`, `scripts/lib/cloudflare-api.ts`,
+  `scripts/lib/manifest-edit.ts` `setAdminAccess`, `scripts/lib/secrets.ts` `readOneLineSecret`, `.gitleaks.toml`
+  (`cloudflare-access-token` in `hana-secret-file`); tests `scripts/test/access-setup.test.ts` (a mocked Cloudflare
+  API; the script was not run against Cloudflare), `scripts/secret-scan-selftest.mjs` · Amends D88 for `sandbox*`
+  envs and D284's "Worker-level Access to be turned on in the dashboard" · Enforces D408 (the free tier)
+  for `sandbox*` · Number: written as D407 (D403 the highest on `develop`, D401–D406 possibly taken by branches in
+  flight), renumbered D409 because D408 merged first; renumber at merge if another branch took D409 first.
+- Context: `docs/operations.md` "Admin Worker" step 1 was dashboard clicks only (the workers.dev toggle, a policy by
+  hand, the AUD copied by hand), with nothing to tell later whether the live policy still matched `admin.staffEmails`.
+- Decision:
+  1. **What Access holds, from the manifest's `admin` block.** One self-hosted application `Hana ID admin (<env>)` on
+     `admin.origin`'s host (`domain` and one `public` destination), session `1h`, `http_only_cookie_attribute: true`,
+     `same_site_cookie_attribute: lax` (the Worker's CSRF check is written for Lax), `app_launcher_visible: false`, and
+     reusable Allow policies, attached in order, none with a service-token rule:
+     - `sandbox*`: `Hana staff (<env>)` = include each `admin.staffEmails` address (`email` rules, exact), require the
+       Google login method (`login_method`); allowed IdPs = Google only, `auto_redirect_to_identity: true`.
+     - every other env (D88): `Hana staff GitHub (<env>)` = include `github-organization` `Hana-Technology` / team
+       `hana-admins` (precedence 1), then `Hana staff (<env>)` as above (the exact-email Google fallback); allowed IdPs
+       = GitHub and Google, no auto-redirect (Cloudflare skips the picker only with one IdP). Both policies' session
+       is `1h` too.
+  2. **Endpoints** (`/accounts/{account_id}` + …; Cloudflare API v4): `GET /access/organizations` (`auth_domain`, the
+     team domain), `GET /access/identity_providers` (the login method of type `google`, and `github` outside
+     `sandbox*`; none, or several without `--google-idp`/`--github-idp`, is refused with where to add it), `GET`/`POST
+     /access/policies`, `PUT /access/policies/{id}`, `GET`/`POST /access/apps`, `GET`/`PUT /access/apps/{id}`; `GET
+     /accounts` only without `--account-id`/`CLOUDFLARE_ACCOUNT_ID`. Policies are found by name, the application by
+     host, public destination or name; it refuses two matches, a non-self-hosted match, duplicate policy names and an
+     `all_workers` application (it would front the admin Worker with another AUD), and points out a Worker-level
+     (`worker`) one. It never deletes anything and never creates a login method or the team.
+  3. **The token**: `.secrets/<env>/cloudflare-access-token` (0600, one line, refused otherwise), an account API token
+     with exactly "Access: Apps and Policies Edit" and "Access: Organizations, Identity Providers, and Groups Read" on
+     the API's account, made the same day and deleted after use (`--check` needs only "Apps and Policies Read").
+     It goes only into the `Authorization` header of an in-process `fetch` (`redirect: 'error'`). No response body is
+     printed or put in an error: an error carries the HTTP status, up to three of Cloudflare's `code: message` pairs
+     (trimmed, the token removed) and, for 401/403, the permission the call needs.
+  4. **Modes**: dry run by default (reads, prints per object `create`, `update (what differs)` or `matches`); `--yes`
+     creates or updates the policies, then the application (a PUT of the whole object), and prints the application
+     id, the team domain and the AUD tag (none is secret); `--write-manifest` (with `--yes`) puts `accessTeamDomain`
+     and `accessAud` into `envs/<env>.json` in place, keeping the file's formatting; `--check` compares the emails,
+     sessions, IdPs, auto-redirect, policies attached and their order, cookie settings, the team domain and the AUD
+     with the manifest and exits 1 on any difference. Retries: 429 for any method, a 5xx or a lost answer only for GET
+     and PUT; a POST is never sent twice (a re-run finds what it made).
+  5. **workers.dev**: a hostname application, not the dashboard's Worker-level toggle. Cloudflare documents
+     self-hosted applications on a `workers.dev` hostname (developers.cloudflare.com/workers/configuration/cloudflare-access/);
+     the Worker-level kind (`destinations: [{type: "worker", worker_id}]`) is API-able but needs the Worker's id, so the
+     token would also need Workers Scripts Read, and it covers preview URLs and routes, which the admin Worker doesn't
+     have (`preview_urls: false`, no routes on workers.dev; D284). For the admin Worker the two protect the same
+     requests and both send the JWT with the application's AUD; the same script works unchanged on a production Custom
+     Domain.
+  6. **The free tier on `sandbox*`** (D408, asked for by the user the same day): before any request, more than 50
+     `admin.staffEmails` (the Free plan's seats) is refused and more than 10 warned about; `freeTierProblems` refuses
+     to write a sandbox policy with any include but an exact email (no domain, `everyone`, group or IdP-group rule), a
+     requirement but the Google login method, or an application allowing any IdP but Google; `--check` labels a live
+     non-email include or another allowed IdP as a free-tier breach (`(free tier, D408: …)`) and exits 1, and `--yes`
+     puts it back; other login methods on the account (e.g. One-time PIN) are pointed out for removal. The script
+     calls only the Access endpoints above, so it enables no other Zero Trust feature; seat usage and billing stay a
+     dashboard check (D408).
+- Why: one command per env that is repeatable and checkable, so a staff change or a stray dashboard edit shows up as
+  drift; the dashboard keeps only what isn't worth scripting (the team, the login methods, the token).
+- Rejected: the dashboard only (no drift check; the AUD copied by hand); the Worker-level toggle or `worker`
+  destination (a wider token, a different kind per env); application-only (inline) policies (the update semantics of
+  inline policies on an application's PUT aren't documented; reusable policies have their own CRUD); one policy mixing
+  the GitHub team and the emails without a Google requirement in production (an email rule would then match any
+  allowed IdP, against D88's "exact-email Google identities"); Terraform (another tool and a state file for two
+  objects); a content rule in gitleaks for Cloudflare tokens (40 characters with no prefix: too generic; the default
+  `cloudflare-api-key` rule catches one next to the word "cloudflare").
+- Trade-offs: while it exists the token can change or delete any Access application and policy of the account
+  (`docs/security.md`), so it is short-lived and deleted after use; reusable policies are account-wide, so their names
+  carry the env; a PUT resets application settings the script doesn't manage to Cloudflare's defaults; an
+  application made by the dashboard toggle isn't matched (only pointed out), so it is turned off first.
+
+## Every Worker stamped: the dashboard Workers and the watchdog in `deploy-check` (branch `feat/deploy-check-all-workers`), 2026-11-05
+
+### D406. The console, console-auth, files, admin and watchdog Workers carry the build id; the admin's and the watchdog's are read from their deployed version with wrangler
+- Date 2026-11-05 · Status: **asked for by the user** (implementation choices: to confirm) · Amends D384 (its
+  "Limits": those five Workers weren't stamped; and its rejected "Cloudflare's version metadata", see "Why") · Built:
+  `packages/env/src/stamped-deploy.ts` (the one wrapper), `build-id.ts` (`deployedBuild`, `buildBody`); each app's
+  `deploy` script; `apps/console/src/index.ts`, `apps/console-auth/src/index.ts`, `apps/files/src/index.ts`
+  (`/.well-known/hana-build`); `apps/console/scripts/build-stamp.ts`, `vite.config.ts` (the SPA's meta);
+  `scripts/lib/deploy-check.ts` (groups, `--only`/`--skip`, wrangler reads, the console's and watchdog's D1 in `--d1`)
+  · Number note: D406 was chosen with D401–D405 possibly taken by branches in flight (D403 and, by merge time, D408 on
+  `origin/develop`; D404–D407 not there); a branch racing this one may take D406 too: renumber on merge
+- Context: D384 stamped the API, both page Workers and the email issuer; the other five Workers of an env could run
+  any commit unseen.
+- Decision:
+  - **One wrapper.** Every app that deploys a Worker of an env (api, email-issuer, console, console-auth, files, admin,
+    watchdog) runs `tsx ../../packages/env/src/stamped-deploy.ts [args]` as its `deploy` (and the API's `deploy:pages`):
+    `wrangler deploy <args> --var HANA_BUILD:<id>`. The per-app copies (`apps/api`, `apps/email-issuer`
+    `scripts/deploy.ts`) are gone. The console's `deploy` stays `vite build &&` the wrapper. The watchdog's deploy, a
+    raw `wrangler deploy` until now, goes through `run deploy` too.
+  - **Public Workers: the page Workers' route.** The console, console-auth and files Workers answer `GET`/`HEAD
+    /.well-known/hana-build` with `{"build": <id> | null}` on their own origin only, under their usual headers (the
+    console's CSP and `no-store`; console-auth's allow-nothing CSP; the files Worker's sandbox CSP and `no-store`),
+    without touching the console's AuthHandler or the logo bucket. Other methods: 405 (console, files) or 404
+    (console-auth, which serves nothing else).
+  - **The console SPA is stamped too**: `vite build` writes `<meta name="hana-build">` into `dist/index.html`, read from
+    `{console.origin}/`. dist/ is gitignored and survives checkouts, so a dist/ built elsewhere is the vault's
+    2026-11-05 risk again; the meta shows it.
+  - **The admin: no route.** Its whole origin is behind Cloudflare Access, which deploy-check can't pass and which gets
+    no exception. deploy-check reads the deployed version's `HANA_BUILD` with wrangler, logged in to the API's account
+    (as for any deploy): `wrangler deployments status --name <worker> --json`, then `wrangler versions view <id>
+    --name <worker> --json`, both read-only, run from an empty directory so no generated config applies. Only that
+    var is taken from the output; nothing else (other vars, the author's email) is printed. A gradual deployment (two
+    versions, or one under 100%) is a failure. The admin's `public/` assets ship in the same version from the same
+    tree (no build step), so the var covers them.
+  - **The watchdog: the same wrangler read, on its own account**, with `CLOUDFLARE_ACCOUNT_ID` =
+    `watchdog.cloudflare.accountId`. Every watchdog route needs the status token (C14) and it has no public health
+    route; none is added (D86 keeps its surface minimal). As its account has its own login, a default run doesn't read
+    it (it says so): `deploy-check <env> --only watchdog`, logged in there, does.
+  - **Groups and flags.** Each piece is in a group (api, pages, issuer, console, console-auth, files, admin,
+    watchdog), read when the manifest has it; `--only` / `--skip` take groups. `--d1` adds the console's D1 (and the
+    watchdog's, with `--only watchdog`).
+- Why: the public Workers get the route the page Workers already have (one reader, one shape). For the admin, a hole
+  in Access is not worth a build id; the authenticated admin API can't be reached by a script either. D384 rejected
+  "Cloudflare's version metadata" for its version id and tags, which say nothing about the commit; here the metadata
+  carries the `HANA_BUILD` var itself, so the read is as good as the HTTP one, needs no binding, and needs only the
+  login the deploy already used.
+- Limits: the admin's and the watchdog's reads need wrangler credentials for their account (a login with several
+  accounts: set `CLOUDFLARE_ACCOUNT_ID` for the admin's); the hosted demo (`apps/demo`) isn't an env Worker and stays
+  unstamped. As in D384, the id is reported by whoever deploys: a hygiene check, not an attestation.
+- Rejected: a route on the admin excluded from Access (a hole in the staff console's perimeter); a `build` field on
+  the watchdog's `/status` read with the status token (deploy-check would hold a secret); a public route on the
+  watchdog; copying `scripts/deploy.ts` into each app.
+
 ## Superseded or amended
 
 | Was | Now | Source |
 |---|---|---|
 | The email issuer is reached at its own `workers.dev` URL on a `workers.dev` env, else under the API's URL by a zone route (D230); `gen` gives an `emailIssuer.url` on another host neither a route nor a `workers.dev` URL | An `emailIssuer.url` on another host is the issuer's own Custom Domain (a dev env on custom domains); the zone route stays production's way (D404) | branch `feat/account-migration` |
+| sandbox-dev's admin Access: the GitHub team `hana-admins` plus exact-email Google rules (D88), the workers.dev Worker-level toggle turned on in the dashboard (D284), the policy and AUD by hand | `sandbox*`: Google, exact emails only; every env's application and policies made and checked by `access-setup <env>` from the manifest, a hostname application on workers.dev (D409) | `scripts/lib/access-setup.ts`; docs/operations.md "Admin Worker" step 1 |
+| D384: the watchdog, console, console-auth, admin and files Workers unstamped; `deploy-check` reads the API, the page Workers and bundles and the issuer; each of the API and issuer has its own `scripts/deploy.ts` | Every env Worker deploys through `packages/env/src/stamped-deploy.ts`; the console, console-auth and files Workers serve `/.well-known/hana-build`, the console SPA carries the meta; the admin's and the watchdog's id is read from the deployed version with wrangler (`--only watchdog` for the watchdog); `--only`/`--skip` (D406) | `packages/env/src/stamped-deploy.ts`, `scripts/lib/deploy-check.ts`; docs/operations.md "Checking a deploy" |
 | `usage-setup roles`: a locally generated password per role, set as a SCRAM-SHA-256 verifier by `ALTER ROLE … LOGIN PASSWORD`; a re-run reuses the role files (D224) | SQL gives `LOGIN` only; Neon's API (`reset_password`) generates each password, written straight to the role file; every run resets both and replaces the files, so Hyperdrive configs from older files are re-created; the key in `.secrets/<env>/neon-api-key` (D403) | `scripts/lib/usage-setup.ts`, `scripts/lib/neon-api.ts`; docs/operations.md "Usage capture" step 2 |
 | D347: every Hana page posts `hana:auth-progress` (`google`, `relayed`) and then navigates or closes | The page navigates or closes once the vault acked (`hana:auth-progress-ack`), or after 150 ms: Chromium nulls the source of a message posted in the navigation's own task (D400) | `packages/web/src/auth/vault-signal.ts`; docs/architecture.md login step 4 |
 | The lookup's ticket: 1–64 printable ASCII characters, no `@`, no leading or trailing space (D396) | console-core `SUPPORT_TICKET_RE`, 1–64 letters, digits or `._#:-`: the issuer's rule, the same ticket in both audits (D399) | `packages/console-core/src/support.ts` `supportTicket` |

@@ -1,6 +1,8 @@
 // Plain-language messages for what the SDK rejects with (docs/integration.md section 13). `hana.*` rejects with a
 // HanaError (a numeric or string code), the EIP-1193 provider with a ProviderRpcError whose numeric code hides the
-// Hana code in `data.code`; a network failure inside the SDK can surface as a TypeError.
+// Hana code in `data.code`; a network failure inside the SDK can surface as a TypeError. Either carries the Hana API
+// request it came from in `data.requestId` (D405), when it came from one.
+import { isApiRequestId } from '@hana-id/core';
 
 export type DemoAction = 'load' | 'login' | 'logout' | 'revoke' | 'sign' | 'export' | 'copy' | 'identity';
 
@@ -11,6 +13,8 @@ export interface ErrorInfo {
   reason: string | null;
   /** The error's own message (may name values: diagnostics scrub it). */
   message: string;
+  /** `data.requestId`: the Hana API request the error came from (D405), only in its exact shape; else null. */
+  requestId: string | null;
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
@@ -18,12 +22,13 @@ const CODE_RE = /^[a-z][a-z0-9_]{0,63}$/u;
 
 export function errorInfo(e: unknown): ErrorInfo {
   const message = e instanceof Error ? e.message : isObj(e) && typeof e.message === 'string' ? e.message : String(e);
-  if (!isObj(e)) return { code: null, reason: null, message };
+  if (!isObj(e)) return { code: null, reason: null, message, requestId: null };
   const data = isObj(e.data) ? e.data : null;
   const inner = typeof data?.code === 'string' && CODE_RE.test(data.code) ? data.code : null;
   const own = typeof e.code === 'number' && Number.isSafeInteger(e.code) ? e.code : typeof e.code === 'string' && CODE_RE.test(e.code) ? e.code : null;
   const reason = typeof data?.reason === 'string' && CODE_RE.test(data.reason) ? data.reason : null;
-  return { code: inner ?? own, reason, message };
+  const requestId = isApiRequestId(data?.requestId) ? data.requestId : null;
+  return { code: inner ?? own, reason, message, requestId };
 }
 
 const REPORT = 'If it keeps happening, use “Copy diagnostics” and send it to the Hana team.';

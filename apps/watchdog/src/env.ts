@@ -8,6 +8,12 @@ export { isDevEnvName, PAGER_PROVIDERS, type PagerProvider, SECRET_NAMES } from 
 export interface Env {
   DB: D1Database;
   ENV_NAME: string;
+  /**
+   * The build id (D406): set only by `run deploy` (the shared wrapper's `wrangler deploy --var HANA_BUILD:<id>`), never
+   * by `gen`. No route serves it (every route needs the status token): `deploy-check <env> --only watchdog` reads it
+   * from the deployed version's metadata on the watchdog's account (`wrangler versions view`). Nothing here reads it.
+   */
+  HANA_BUILD?: string;
   /** Expected `chain_id` of the RPC (`testnet`): the watchdog sends nothing to any other chain. */
   NEAR_NETWORK: string;
   NEAR_RPC: string;

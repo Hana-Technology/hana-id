@@ -363,10 +363,25 @@ describe('demo page', () => {
     const d = JSON.parse(text) as Record<string, unknown>;
     expect(d).toMatchObject({ environment: 'sandbox-dev', appKey: 'pk_test_85gd…', status: 'logged_in', addresses: ADDRESSES, supportId: 'HANA-2750-G5HM', pageOrigin: 'https://hana-id-demo-sandbox-dev.tingtc.workers.dev' });
     expect(d.logins).toEqual([{ at: '2026-10-29T12:00:00.000Z', method: 'google', totalMs: 7000, stages: TIMINGS }]);
-    expect(d.errors).toEqual([{ at: '2026-10-29T12:00:00.000Z', action: 'sign', code: -32603, reason: null, message: 'relay [redacted] failed' }]);
+    expect(d.errors).toEqual([{ at: '2026-10-29T12:00:00.000Z', action: 'sign', code: -32603, reason: null, message: 'relay [redacted] failed', requestId: null }]);
+    expect(d.requestIds).toEqual([]);
     expect(text).not.toContain(CONFIG.publishableKey);
     expect(text).not.toContain('ab'.repeat(65));
     expect(text).not.toContain('Zm9vYmFy');
+  });
+
+  it('D405: an error from a Hana API answer puts its request ID in the diagnostics', async () => {
+    boot();
+    await loginFlow();
+    const RQ = '3f2a9c1e-7b4d-4e8f-9a6b-0c1d2e3f4a5b';
+    fake.ethereum.request.mockRejectedValueOnce(Object.assign(new Error('The Hana API could not complete the request'), { code: -32603, data: { code: 'api_unavailable', requestId: RQ } }));
+    click('sign-personal');
+    await flush();
+    click('copy-diagnostics');
+    await flush();
+    const d = JSON.parse(copied[0]!) as { requestIds: string[]; errors: { code: unknown; requestId: unknown }[] };
+    expect(d.requestIds).toEqual([RQ]);
+    expect(d.errors).toEqual([expect.objectContaining({ code: 'api_unavailable', requestId: RQ })]);
   });
 
   it("says so when the clipboard refuses, and leaves the report on the page", async () => {

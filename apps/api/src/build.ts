@@ -1,6 +1,7 @@
 // The build id this Worker was deployed with (D384): the HANA_BUILD var that `pnpm --filter @hana-id/api run deploy`
-// and `deploy:pages` set from git (scripts/deploy.ts), e.g. `0485faa1c2d3` or `0485faa1c2d3-dirty`. A Worker deployed
-// any other way (a raw `wrangler deploy`, `wrangler dev`) has none and reports null, which `deploy-check` flags.
+// and `deploy:pages` set from git (the shared wrapper packages/env/src/stamped-deploy.ts, D406), e.g. `0485faa1c2d3`
+// or `0485faa1c2d3-dirty`. A Worker deployed any other way (a raw `wrangler deploy`, `wrangler dev`) has none and
+// reports null, which `deploy-check` flags.
 // The format and paths are @hana-id/env/build-id's (test/build-id.test.ts keeps them equal; the Workers don't import
 // it, as @hana-id/env is a dev dependency here).
 

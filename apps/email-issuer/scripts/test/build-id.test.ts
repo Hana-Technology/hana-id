@@ -11,7 +11,7 @@ const scripts = (JSON.parse(readFileSync(join(appDir, 'package.json'), 'utf8')) 
 
 describe('build id (D384)', () => {
   it('deploy stamps the Worker; no script deploys it unstamped', () => {
-    expect(scripts.deploy).toBe('tsx scripts/deploy.ts');
+    expect(scripts.deploy).toBe('tsx ../../packages/env/src/stamped-deploy.ts');
     expect(Object.values(scripts).join('\n')).not.toMatch(/(^|&& )wrangler deploy/mu);
   });
 

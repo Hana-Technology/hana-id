@@ -489,10 +489,10 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
     claims marked as on the Users screen.
   - The Users detail's "Support ID and its activity" links to the lookup by User ID.
 - **Not in C15**: a partner lookup (D96, D276 (e): deferred); consents (browser-only, D23); Hana Home's display of the
-  code (later, with Hana Home). **Open follow-up:** the SDK's errors (`HanaError`) carry no API request ID, so a
-  partner has none to escalate with unless it reads the vault's network calls; carrying `requestId` in the vault's
-  errors needs the same SDK-version gate as D393. Until then staff look up by the code, the time and the app, and the
-  user's activity by uid.
+  code (later, with Hana Home). **Follow-up, done** (branch `feat/sdk-error-request-id`, 2026-11-05, D405): the
+  SDK's errors carry the API request ID they came from (`HanaError.requestId`, `data.requestId`; the vault adds it for
+  an SDK of 0.2.0 or later, the D393 gate), and the demo's *Copy diagnostics* lists the latest five; current state in
+  `docs/integration.md` section 13 "Getting help".
 
 ## C16. CLI completion
 
@@ -527,7 +527,7 @@ Run from the main checkout; every file in `.secrets/` is 0600 in a 0700 director
 3. **Roles' credentials** (C4): save a project-scoped Neon API key to `.secrets/sandbox-dev/neon-api-key` (0600;
    `docs/operations.md` "Usage capture" step 2 has the console steps), then `corepack pnpm --filter @hana-id/scripts
    usage-setup sandbox-dev roles` (dry run) then `--yes`: as the owner, `ALTER ROLE usage_writer|usage_admin WITH
-   LOGIN` (no password); then Neon's API resets each role's password (Neon generates it; Neon takes no SCRAM
+   LOGIN` with a random throwaway password (never stored; Neon's reset needs a role that has one); then Neon's API resets each role's password (Neon generates it; Neon takes no SCRAM
    verifier) and the script writes it into `.secrets/sandbox-dev/neon-usage-writer.url` and `neon-usage-admin.url`
    (the direct host: Hyperdrive pools) and checks each role logs in (D224 as amended by D403). Every run resets both
    and replaces the files, so run it before step 4 and re-create the Hyperdrive configs after any later run. Revoke the

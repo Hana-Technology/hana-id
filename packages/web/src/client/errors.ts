@@ -2,7 +2,11 @@
 // module"). The vault's replies carry a numeric (EIP-1193 style) or string code; `hana.*` methods reject with a
 // HanaError holding that code as is. The EIP-1193 provider must reject with numeric codes only, so string codes are
 // mapped there (toProviderRpcError), and the SWK module maps to SWK's `{code, message, ext}` shape (toSwkError).
-import { ErrorCode, type HanaErrorCode, type ProtocolError } from '@hana-id/core';
+//
+// D405: an error that came from a Hana API answer carries that request's ID in `data.requestId` (from a vault of this
+// SDK's version or later), which is what a partner sends Hana's support with the Support ID. It is read only in its
+// exact shape (core `isApiRequestId`); a value of any other shape is dropped here.
+import { ErrorCode, type HanaErrorCode, type ProtocolError, isApiRequestId } from '@hana-id/core';
 
 /** JSON-RPC codes the client itself uses (EIP-1474): bad arguments, an internal fault, a rate limit. */
 export const RpcCode = {
@@ -12,6 +16,18 @@ export const RpcCode = {
 } as const;
 
 export type ClientErrorCode = HanaErrorCode | (typeof RpcCode)[keyof typeof RpcCode];
+
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** `data.requestId` when it is a request ID, else null. */
+const requestIdIn = (data: unknown): string | null => (isObj(data) && isApiRequestId(data.requestId) ? data.requestId : null);
+
+/** `data` without a `requestId` that isn't one (D405); anything else as it came. */
+function checkedData(data: unknown): unknown {
+  if (!isObj(data) || !Object.hasOwn(data, 'requestId') || isApiRequestId(data.requestId)) return data;
+  const { requestId: _dropped, ...rest } = data;
+  return Object.keys(rest).length === 0 ? undefined : rest;
+}
 
 /** What `hana.*` methods reject with. `code` is the vault's code, or one of RpcCode for a client-side check. */
 export class HanaError extends Error {
@@ -25,8 +41,17 @@ export class HanaError extends Error {
     if (data !== undefined) this.data = data;
   }
 
+  /**
+   * The Hana API request this failure came from (`data.requestId`, D405), or null: an error that never reached the API
+   * (a check in the SDK or the vault, the user's cancel, a network failure), or from a vault before the field. Send it
+   * to Hana with the user's Support ID.
+   */
+  get requestId(): string | null {
+    return requestIdIn(this.data);
+  }
+
   static from(e: ProtocolError): HanaError {
-    return new HanaError(e.code, e.message, e.data);
+    return new HanaError(e.code, e.message, checkedData(e.data));
   }
 }
 
@@ -70,7 +95,8 @@ export class ProviderRpcError extends Error {
 /**
  * The numeric code an EIP-1193 caller sees for a Hana string code. A sign-in that didn't complete (cancelled, timed
  * out, blocked, closed) is 4001, which wagmi, viem and ethers treat as "user rejected"; a dead vault is 4900; a rate
- * limit is -32005; anything else is -32603. The Hana code is kept in `data.code`.
+ * limit is -32005; anything else is -32603. The Hana code is kept in `data.code`, and the API request ID (D405) in
+ * `data.requestId`, as on a HanaError with a numeric code.
  */
 const STRING_TO_NUMERIC: Partial<Record<string, number>> = {
   login_cancelled: ErrorCode.userRejected,
@@ -85,13 +111,17 @@ export function toProviderRpcError(e: unknown): ProviderRpcError {
   if (e instanceof ProviderRpcError) return e;
   const h = asHanaError(e);
   if (typeof h.code === 'number') return new ProviderRpcError(h.code, h.message, h.data);
-  const data = h.data === undefined ? { code: h.code } : { code: h.code, data: h.data };
+  const requestId = h.requestId;
+  const data = { code: h.code, ...(requestId === null ? {} : { requestId }), ...(h.data === undefined ? {} : { data: h.data }) };
   return new ProviderRpcError(STRING_TO_NUMERIC[h.code] ?? RpcCode.internal, h.message, data);
 }
 
 // ---- Stellar Wallets Kit ----
 
-/** SWK's error shape (`{code, message, ext?}`): a number code, with the Hana string code in `ext`. 4001 is a rejection. */
+/**
+ * SWK's error shape (`{code, message, ext?}`): a number code, with the Hana string code in `ext[0]` and the API request
+ * ID (D405), when there is one, in `ext[1]`. 4001 is a rejection.
+ */
 export interface SwkError {
   code: number;
   message: string;
@@ -101,5 +131,6 @@ export interface SwkError {
 export function toSwkError(e: unknown): SwkError {
   const p = toProviderRpcError(e);
   const hanaCode = (p.data as { code?: unknown } | undefined)?.code;
-  return typeof hanaCode === 'string' ? { code: p.code, message: p.message, ext: [hanaCode] } : { code: p.code, message: p.message };
+  const requestId = requestIdIn(p.data);
+  return typeof hanaCode === 'string' ? { code: p.code, message: p.message, ext: requestId === null ? [hanaCode] : [hanaCode, requestId] } : { code: p.code, message: p.message };
 }

@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-05 (branch `feat/account-migration`: "Moving an env to another Cloudflare account" (new: the order, the commands, `env-secrets`, `d1-move`, `admin issuer:iss`, what users see, Neon and Google Cloud notes, the testnet move pending), the manifest's `cloudflare.accountId` and custom-domain placements in "Accounts and services per environment", "Email issuer" step 7's Custom Domain, the hosted demo's `HANA_DEMO_ORIGIN`, the admin command list, the secrets table's D1 exports and API tokens; D404); 2026-11-05 (branch `fix/usage-setup-neon-api-passwords`: "Usage capture" steps 2, 3 and 8: `usage-setup <env> roles` gives LOGIN by SQL and has Neon's API reset each role's password with the new `.secrets/<env>/neon-api-key` (how to create, save and revoke it), every run replaces the role files, Hyperdrive configs from older files re-created, the step-8 gate without the SCRAM question; the secrets table's Neon API key row; D403); 2026-11-05 (branch `feat/batch-c-15-screen`: "Support ID lookup" → "In the admin console" (the screen, the email join, the ticket rule, what to watch) and "Users screen (C8b)" (a Support ID goes to the lookup; the check), D399); 2026-11-05 (branch `feat/batch-c-8b`: "Admin Worker" → "Users screen (C8b)": issuer migration 0003, the deploy order issuer → API → admin, the checks and failures, D388–D392; "Retention" and "User directory (D269)" notes); 2026-11-05 (branch `chore/ci-cost`: "CI and git": CI and the identity probe turned off, the local checks, D387); 2026-11-05 (branch `feat/batch-c-15`: "Support ID lookup", `admin <env> support:lookup`, the admin route's audit, D394–D397); 2026-11-05 (branch `feat/coop-canary`: "Before each release: the COOP canary" (`coop-canary`, what a failure means, D386), step 0 of "A release."); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: "Common failures"' `derive_failed` `webcrypto_unsupported` / `webcrypto_failed`, D385); 2026-11-05 (branch `feat/deploy-build-check`: "Checking a deploy (`deploy-check`)", D384:
+Last verified against code: 2026-11-05 (branch `feat/account-migration`: "Moving an env to another Cloudflare account" (new: the order, the commands, `env-secrets`, `d1-move`, `admin issuer:iss`, what users see, Neon and Google Cloud notes, the testnet move pending), the manifest's `cloudflare.accountId` and custom-domain placements in "Accounts and services per environment", "Email issuer" step 7's Custom Domain, the hosted demo's `HANA_DEMO_ORIGIN`, the admin command list, the secrets table's D1 exports and API tokens; D404); 2026-11-05 (branch `feat/deploy-check-all-workers`: "Checking a deploy" (every Worker through its `run deploy`, the shared wrapper; the console, console-auth, files Workers and the console SPA read over HTTP, the admin and watchdog through wrangler, `--only`/`--skip`, the console and watchdog D1 in `--d1`), the console, admin, files and watchdog deploy lines now `run deploy`, with `deploy-check` after each, D406); 2026-11-05 (branch `fix/usage-setup-throwaway-password`: "Usage capture" step 3's throwaway password before Neon's reset, D403 amended); 2026-11-05 (branch `feat/access-setup`: "Admin Worker" step 1: the admin console's Cloudflare Access by `access-setup <env>` (the team and login methods in the dashboard, the least-privilege token, created and revoked, plan / `--yes` / `--write-manifest` / `--check`), sandbox* Google exact emails only and the free-tier guard it enforces (D408), the workers.dev hostname application against the dashboard toggle, the dashboard path; the secrets table's Cloudflare API token row; the issuer's "Open for batch 8" note; D409); 2026-11-05 (branch `feat/sdk-error-request-id`: "Support ID lookup": partners' request IDs come from the SDK's errors and the demo's diagnostics, D405); 2026-11-05 (branch `docs/zero-trust-free-guard`: "Admin Worker" step 1's Zero Trust free-tier guard, D408); 2026-11-05 (branch `fix/usage-setup-neon-api-passwords`: "Usage capture" steps 2, 3 and 8: `usage-setup <env> roles` gives LOGIN by SQL and has Neon's API reset each role's password with the new `.secrets/<env>/neon-api-key` (how to create, save and revoke it), every run replaces the role files, Hyperdrive configs from older files re-created, the step-8 gate without the SCRAM question; the secrets table's Neon API key row; D403); 2026-11-05 (branch `feat/batch-c-15-screen`: "Support ID lookup" → "In the admin console" (the screen, the email join, the ticket rule, what to watch) and "Users screen (C8b)" (a Support ID goes to the lookup; the check), D399); 2026-11-05 (branch `feat/batch-c-8b`: "Admin Worker" → "Users screen (C8b)": issuer migration 0003, the deploy order issuer → API → admin, the checks and failures, D388–D392; "Retention" and "User directory (D269)" notes); 2026-11-05 (branch `chore/ci-cost`: "CI and git": CI and the identity probe turned off, the local checks, D387); 2026-11-05 (branch `feat/batch-c-15`: "Support ID lookup", `admin <env> support:lookup`, the admin route's audit, D394–D397); 2026-11-05 (branch `feat/coop-canary`: "Before each release: the COOP canary" (`coop-canary`, what a failure means, D386), step 0 of "A release."); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: "Common failures"' `derive_failed` `webcrypto_unsupported` / `webcrypto_failed`, D385); 2026-11-05 (branch `feat/deploy-build-check`: "Checking a deploy (`deploy-check`)", D384:
 the build id in every Worker and page bundle, `deploy-check <env> [--d1]` after each deploy step, migrations applied
 from a checkout at the deployed commit, the API's raw `wrangler deploy` lines now `run deploy`); 2026-11-05 (branch `fix/deploy-pages-builds`: `deploy:pages` runs the web build first; the 0011 apply note; the rebuilt page versions); 2026-11-05 (branch `chore/ci-cost`: "CI and git": which jobs run when, the nightly WebKit and Firefox run; the identity probe every 3 hours, D383); 2026-11-05 (branch `docs/sandbox-dev-state-1105`: sandbox-dev redeployed at `develop` 8aab09d with the wallet directory: `USER_ID_KEY`, the bookmark, 0011, API 6141ba3d, vault abe7cc61, auth 6b9a4bee, issuer 1542a60c); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
 what counts, each job's share in both crons, the `budget` log lines; settlement's reads a run; D380); 2026-11-04 (branch `feat/batch-c-13`: "Retention (batch C13, milestone M6)": the Neon
@@ -103,6 +103,7 @@ Never print, log, paste or commit any of these. The scripts never print them eit
 | Neon Postgres connection strings (batch C ledger, D73): pooled `DATABASE_URL` and `DATABASE_URL_DIRECT` of the env's Neon branch | `.secrets/<env>/neon.json` (`{project_id, org_id, branch, branch_id, region, DATABASE_URL, DATABASE_URL_DIRECT}`); role `neondb_owner`, used only by `usage-migrate` and `usage-setup` (which also reads `project_id` and `branch_id` for Neon's API, D403) | `neon connection-string <branch> --project-id <id> [--pooled]` (Neon CLI, `neon login`) |
 | Ledger role URLs (`usage_writer`, `usage_admin`, batch C4): each role's password; their copies live in the two Hyperdrive configs | `.secrets/<env>/neon-usage-writer.url`, `neon-usage-admin.url` | `usage-setup <env> roles` ("Usage capture" below) |
 | Neon API key for `usage-setup <env> roles` (D403): a project-scoped key of the env's Neon project; it can change and delete anything in that project | `.secrets/<env>/neon-api-key` (one line, 0600), only while setting up or rotating the roles: then revoke the key in Neon and delete the file | created by hand in Neon's console and saved with `umask 077; pbpaste > .secrets/<env>/neon-api-key` ("Usage capture" step 2) |
+| Cloudflare API token for `access-setup <env>` (D409): "Access: Apps and Policies Edit" and "Access: Organizations, Identity Providers, and Groups Read" on the API's account; it can change or delete any Access application and policy of that account | `.secrets/<env>/cloudflare-access-token` (one line, 0600), only while setting up or changing the admin's Access application: then delete the token in Cloudflare and the file | created by hand (My Profile → API Tokens, TTL today) and saved with `umask 077; pbpaste > .secrets/<env>/cloudflare-access-token` ("Admin Worker" step 1) |
 | `USER_ID_KEY` (the uid key, base64 of 32 bytes; API only); never rotated within a contract term, backed up offline | `.secrets/<env>/user-id-key` | `usage-setup <env> user-id-key` (generates it once, sets the Worker secret) |
 | The console's Google client secret (`CONSOLE_GOOGLE_CLIENT_SECRET`, console Worker only; batch C9) | `.secrets/<env>/console-google-client.json` (Google's downloaded client JSON, `web.client_secret`) | saved by hand from Google Cloud (setup step 11, "Partner console Worker"); `wrangler secret put` through a pipe; read by `console-code-flow-spike` |
 | Watchdog secrets (`WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, its Resend key, Slack webhook, paging-app credentials, `HEARTBEAT_URL`); the admin Worker's copy of `WATCHDOG_STATUS_TOKEN` (batch C14) comes from the same file | `.secrets/<env>/watchdog-secrets.json` (flat `{NAME: value}`) | `watchdog secrets <env> init` (the key and token); the rest by hand ("Watchdog service" below) |
@@ -334,39 +335,73 @@ the signer is part of every address. Dev-only privileges (loopback origins, part
     that logs in through Hana's pages (table above).
 11. **Register apps** (next section), then **smoke test**.
 
-### Checking a deploy (`deploy-check`, D384)
+### Checking a deploy (`deploy-check`, D384, D406)
 
 Every deployed piece of an env carries the build id of the checkout it came from: the commit's first 12 hex
 characters, `-dirty` when the tree had uncommitted changes (tracked or untracked). On 2026-11-05 sandbox-dev's page
 Workers served a vault bundle older than the API (every wallet record `400 bad_request`), and earlier that day a D1
 migration was applied from an older checkout; nothing showed either. **After every deploy step in this runbook** (the
-API, the page Workers, the email issuer), once the last Worker of the step is out, run from the checkout you deployed:
+API, the page Workers, the email issuer, the console and console-auth, the files and admin Workers, the watchdog), once
+the last Worker of the step is out, run from the checkout you deployed:
 
 ```sh
 corepack pnpm --filter @hana-id/scripts run deploy-check <env>          # every piece on this checkout's commit
 corepack pnpm --filter @hana-id/scripts run deploy-check <env> --d1     # and no D1 migration of this checkout pending
+corepack pnpm --filter @hana-id/scripts run deploy-check <env> --only watchdog [--d1]   # logged in to the watchdog's account
 ```
 
-| Piece | Read from | Stamped by |
-|---|---|---|
-| API Worker | `GET {apiUrl}/v1/health` → `build` | `pnpm --filter @hana-id/api run deploy` (`HANA_BUILD` var) |
-| vault Worker | `GET {vaultOrigin}/.well-known/hana-build` → `build` | `run deploy:pages` |
-| vault bundle | `{vaultOrigin}/vault.js`, first line `/* hana-build <id> */` | the web build (`deploy:pages` runs it first) |
-| auth Worker | `GET {authOrigin}/.well-known/hana-build` → `build` | `run deploy:pages` |
-| auth pages | `{authOrigin}/login`, `<meta name="hana-build">` | the web build |
-| email issuer | `GET {emailIssuer.url}/v1/email/health` → `build` | `pnpm --filter @hana-id/email-issuer run deploy` |
-| `--d1` | `wrangler d1 migrations list <db> --remote` from `apps/api` (`cloudflare.d1Name`) and `apps/email-issuer` (`emailIssuer.cloudflare.d1Name`) | needs both `wrangler.jsonc` generated for `<env>` (`gen`) |
+**Every Worker deploys through its `run deploy`** (`corepack pnpm --filter @hana-id/<app> run deploy`; the API's page
+Workers through `run deploy:pages`), never a raw `wrangler deploy`: each is the one shared wrapper,
+`packages/env/src/stamped-deploy.ts`, which runs `wrangler deploy <args> --var HANA_BUILD:<build id>` in the app's
+directory (D406). The console's `run deploy` builds its SPA first.
 
-Exit 1 (each reason on a `FAIL:` line) when a piece can't be read (a status, a redirect, unreachable), isn't stamped
-(`null`: deployed with a raw `wrangler deploy`; no `build` field or no stamp in a bundle: deployed before D384), runs
-another commit than this checkout's HEAD, or (`--d1`) a database lacks a migration file of this checkout. Warnings, not
-failures: a piece deployed from a dirty tree (`--strict` makes it a failure; use `--strict` outside dev envs) and a
-dirty checkout here. `--skip-head` compares the pieces with each other only, to check an env from another commit.
-An env runs one commit: when a step deploys only some pieces (only the API, say), deploy the others from the same
-checkout too (`run deploy:pages`, the issuer's `run deploy`) before the check, which otherwise fails and names each
-piece that lags (as it does between the steps of a multi-Worker deploy). It holds no secret, prints only the manifest's URLs, statuses and well-formed build ids, and changes
-nothing (`migrations list` reads the remote `d1_migrations` table; it creates that table only if it is missing, which
-it never is on a migrated database).
+| Group | Piece | Read from | Stamped by |
+|---|---|---|---|
+| `api` | API Worker | `GET {apiUrl}/v1/health` → `build` | `pnpm --filter @hana-id/api run deploy` (`HANA_BUILD` var) |
+| `pages` | vault Worker | `GET {vaultOrigin}/.well-known/hana-build` → `build` | `run deploy:pages` |
+| | vault bundle | `{vaultOrigin}/vault.js`, first line `/* hana-build <id> */` | the web build (`deploy:pages` runs it first) |
+| | auth Worker | `GET {authOrigin}/.well-known/hana-build` → `build` | `run deploy:pages` |
+| | auth pages | `{authOrigin}/login`, `<meta name="hana-build">` | the web build |
+| `issuer` | email issuer | `GET {emailIssuer.url}/v1/email/health` → `build` | `pnpm --filter @hana-id/email-issuer run deploy` |
+| `console` | console Worker | `GET {console.origin}/.well-known/hana-build` → `build` | `pnpm --filter @hana-id/console run deploy` |
+| | console SPA | `{console.origin}/` (index.html), `<meta name="hana-build">` | its `vite build` (`run deploy` runs it first) |
+| `console-auth` | console-auth Worker | `GET {console.authOrigin}/.well-known/hana-build` → `build` | `pnpm --filter @hana-id/console-auth run deploy` |
+| `files` | files Worker | `GET {files.origin}/.well-known/hana-build` → `build` | `pnpm --filter @hana-id/files run deploy` |
+| `admin` | admin Worker | the deployed version's `HANA_BUILD` var: `wrangler deployments status` + `versions view --json` (see below) | `pnpm --filter @hana-id/admin run deploy` |
+| `watchdog` | watchdog Worker | the same, on `watchdog.cloudflare.accountId`; **only with `--only watchdog`** | `pnpm --filter @hana-id/watchdog run deploy` |
+| `--d1` | each D1 of the groups read | `wrangler d1 migrations list <db> --remote` from `apps/api` (`cloudflare.d1Name`), `apps/email-issuer` (`emailIssuer.cloudflare.d1Name`), `apps/console` (`console.d1Name`), `apps/watchdog` (`watchdog.cloudflare.d1Name`) | needs each `wrangler.jsonc` generated for `<env>` (`gen`) |
+
+A group is read only when the manifest has it (the dashboard blocks, `emailIssuer`, `watchdog`). `--only <g,…>` reads
+just those groups, `--skip <g,…>` all but those (comma-separated or repeated; not both). Each run prints what it didn't
+read.
+
+- **The admin Worker** has no build route: its whole origin is behind Cloudflare Access, which `deploy-check` can't
+  pass and which gets no exception for it. So `deploy-check` asks wrangler (read-only), logged in to the API's
+  Cloudflare account as for the deploy, for the deployment serving the Worker (`wrangler deployments status --name
+  <admin.workerName> --json`) and that version's metadata (`wrangler versions view <id> --json`), and reads only the
+  `HANA_BUILD` var from it (nothing else wrangler prints is shown). It runs wrangler from an empty directory, so a
+  `wrangler.jsonc` generated for another env doesn't apply; with several accounts on one login, set
+  `CLOUDFLARE_ACCOUNT_ID`. A gradual deployment (two versions, or one under 100%) fails: finish or roll it back
+  first. The admin's `public/` files have no build step and ship in the same version, so the var covers them.
+- **The watchdog** serves nothing without its status token, and gets no public route (D86). It is read the same way,
+  with `CLOUDFLARE_ACCOUNT_ID` set to `watchdog.cloudflare.accountId`, but only by `--only watchdog`: its account has
+  its own login, so a default run (the API's login) says it isn't read. After a watchdog deploy, run `deploy-check
+  <env> --only watchdog --d1` logged in to the watchdog's account (sandbox-dev's watchdog is on the API's account,
+  D125, so the API's login reads it too).
+
+Exit 1 (each reason on a `FAIL:` line) when a piece can't be read (a status, a redirect, unreachable, a failed wrangler
+run), isn't stamped (`null`, or no `HANA_BUILD` var: deployed with a raw `wrangler deploy`; no `build` field or no stamp
+in a bundle: deployed before D384, or before D406 for the console, console-auth, files, admin and watchdog Workers and
+the console SPA), runs another commit than this checkout's HEAD, or (`--d1`) a database lacks a migration file of this
+checkout. Warnings, not failures: a piece deployed from a dirty tree (`--strict` makes it a failure; use `--strict`
+outside dev envs) and a dirty checkout here. `--skip-head` compares the pieces with each other only, to check an env
+from another commit. An env runs one commit: when a step deploys only some pieces (only the API, say), deploy the
+others from the same checkout too (`run deploy:pages`, each other app's `run deploy`) before the check, which otherwise
+fails and names each piece that lags (as it does between the steps of a multi-Worker deploy; `--only` checks just the
+groups a step deployed). It holds no secret, prints only the manifest's URLs and Worker names, statuses, well-formed
+build ids and the last lines of a failed wrangler run's own error, and changes nothing (`deployments status`, `versions
+view` and `migrations list` only read; `migrations list` creates the remote `d1_migrations` table only if it is
+missing, which it never is on a migrated database).
 
 **Migrations: apply from the deployed commit.** `wrangler d1 migrations apply` applies the `.sql` files on disk that
 the remote database hasn't recorded, by name. Apply from a checkout at the commit you then deploy, `git status` clean
@@ -375,10 +410,9 @@ pending. It can't see a file applied under the same name with other content (`d1
 hashes): 2026-11-05's draft of `0011_wallet_directory.sql` was such a case, so the checkout rule is what prevents it.
 
 After a `wrangler rollback`, the rolled-back Worker reports the id of the version it returned to (an older commit, or
-none before D384): check from a checkout at that commit, or with `--skip-head` once every piece is rolled back.
+none before D384/D406): check from a checkout at that commit, or with `--skip-head` once every piece is rolled back.
 
-Not stamped yet: the watchdog, the console, console-auth, the admin and the files Workers (`deploy-check` doesn't read
-them).
+Not stamped: the hosted demo (`apps/demo`, not an env Worker).
 
 ### Upgrading an env deployed from `develop` to batch B
 
@@ -723,7 +757,8 @@ open question 3).
       nothing is sent to Neon.
    3. **Do it**: the same with `--yes`. It checks that the owner URL's endpoint is the branch's
       (`GET …/branches/<branch_id>/endpoints`); as the owner, that both roles exist and `ALTER ROLE usage_writer|usage_admin
-      WITH LOGIN` (no password); then, per role, `POST …/branches/<branch_id>/roles/<role>/reset_password`: Neon generates
+      WITH LOGIN` with a random throwaway password (never stored or printed; Neon's reset refuses a role without one,
+      `ROLE_PASSWORD_NOT_AVAILABLE`, seen on sandbox-dev 2026-11-05); then, per role, `POST …/branches/<branch_id>/roles/<role>/reset_password`: Neon generates
       the password, which goes straight into `.secrets/sandbox-dev/neon-usage-writer.url` / `neon-usage-admin.url`
       (0600: the owner's direct endpoint and database, the role, `sslmode=require`), never printed; it waits for Neon's
       operations to finish (a busy project, HTTP 423, is retried) and last logs in as each role with its file. A reset
@@ -869,8 +904,9 @@ Built in C15 (D276 as amended 2026-11-05, D394–D397) and its admin screen (D39
 deployed. A user reads their
 Support ID `HANA-XXXX-XXXX` on the Hana approval popup's account line; a partner page has it as `hana.supportId` (SDK
 0.2.0 or later, D393; so in its diagnostics) and on the partner console's Users page beside the User ID. Partners
-escalate with the code (or the User ID, `u1_…`), the error `code`, the time and the app, and request IDs when they
-have them (`x-request-id`, `requestId` in every API error body; the SDK's errors don't carry one yet: build plan C15).
+escalate with the code (or the User ID, `u1_…`), the error `code`, the time and the app, and the failed calls'
+request IDs (`x-request-id`, `requestId` in every API error body; from SDK 0.2.0 the SDK's errors carry it as
+`error.requestId` / `data.requestId`, and the demo's *Copy diagnostics* lists the latest five as `requestIds`, D405).
 
 **Nothing to set up of its own.** The API's part (the code in the session answers, `AdminRpc.supportLookup`) goes live
 with the next API deploy, after the wallet directory (above): no migration. The ledger part needs the usage ledger:
@@ -1170,6 +1206,8 @@ corepack pnpm --dir apps/console exec wrangler d1 migrations apply <console.d1Na
 corepack pnpm --filter @hana-id/api run deploy
 corepack pnpm --filter @hana-id/console run deploy
 corepack pnpm --filter @hana-id/console-auth run deploy
+# 6. Every piece on this commit, the console's D1 migrations applied ("Checking a deploy").
+corepack pnpm --filter @hana-id/scripts run deploy-check <env> --only api,console,console-auth --d1
 ```
 
 - Check: `curl -sI <console.origin>/` is `200` with the console CSP; `curl -s <console.origin>/api/me` is `401
@@ -1270,18 +1308,96 @@ without them), the console set up ("Partner console Worker" above), and the ledg
 ("Usage capture", steps 1–3: `usage-setup <env> hyperdrive` printed the **admin** config's id beside the writer's). From
 the repo root of the main checkout, logged in to the API's Cloudflare account. Nothing below prints a secret.
 
-1. **Cloudflare Access** (build plan setup step 8, D75, D88).
-   - sandbox-dev (no Hana zone): `admin.origin` is `https://<admin.workerName>.<subdomain>.workers.dev`. Deploy once
-     (step 4), then in the dashboard: Workers & Pages → the admin Worker → Settings → Domains & Routes → `workers.dev`
-     → enable Cloudflare Access. Production: a self-hosted Access application on the Custom Domain `admin.origin` (the
-     config's `routes` creates the domain; `gen` refuses workers.dev outside `local*`/`sandbox*`).
-   - Policy: include the GitHub team `hana-admins` of `Hana-Technology` (the GitHub org requires 2FA); a second rule
-     with exact-email Google identities only (never a domain rule; open question 4). Session duration 1 h. No service
-     token: the Worker refuses tokens without a `sub`.
-   - Copy the team domain (`<team>.cloudflareaccess.com`) and the application's AUD tag (64 hex) into the manifest's
-     `admin.accessTeamDomain` and `admin.accessAud`, and list the same people, lowercased, in `admin.staffEmails`
-     (the Worker's own second check). Until `accessAud` is set (`UNSET`), every `/api/*` answers `503
-     access_unavailable`.
+1. **Cloudflare Access** (build plan setup step 8, D75, D88, D409). What it must be, whichever path makes it: one
+   **self-hosted Access application** on `admin.origin`'s host (sandbox-dev, no Hana zone:
+   `<admin.workerName>.<subdomain>.workers.dev`; production: the Custom Domain the config's `routes` creates, `gen`
+   refusing workers.dev outside `local*`/`sandbox*`), **session 1 h**, the cookie HttpOnly and SameSite=Lax (the
+   Worker's CSRF check assumes Lax), not in the App Launcher, **no service token** (the Worker refuses tokens without a
+   `sub`), and Allow policies by env:
+   - **`sandbox*`** (the user, 2026-11-05): Google only, **exact emails only**: one policy `Hana staff (<env>)`
+     including each `admin.staffEmails` address and requiring the Google login method; the application allows only
+     Google and redirects straight to it.
+   - **Every other env** (D88): `Hana staff GitHub (<env>)` including the GitHub team `hana-admins` of
+     `Hana-Technology` (the org requires 2FA), then `Hana staff (<env>)` as above (the exact-email Google fallback;
+     never a domain rule); the application allows GitHub and Google (so no auto-redirect).
+
+   `admin.staffEmails` (lowercased) is both the policy's list and the Worker's own second check. Until
+   `admin.accessAud` is set (`UNSET`), every `/api/*` answers `503 access_unavailable`.
+
+   **Zero Trust stays on the free tier** (D408; the account's card is authorised for usage past the free limits, so
+   sandbox must never get there). Free is 50 seats: a seat is a person who signs in through Access, and sandbox has 2
+   (`admin.staffEmails`). Keep the policy to exact emails (never a domain, `everyone` or group rule), Google as the
+   only login method (remove One-time PIN), and enable nothing else in Zero Trust (no Gateway, WARP enrolment, Browser
+   Isolation, DLP or CASB: each is billed or metered per seat). `access-setup` enforces the parts it owns on `sandbox*`
+   (D409): it only ever writes exact-email includes and Google as the only IdP, refuses more than 50 staff emails and
+   warns above 10, `--check` reports any non-email include or other IdP on the application as drift, it notes other
+   login methods on the account, and it touches nothing but this application and its policies. After setup and
+   monthly: Zero Trust → Settings → Account → seat usage shows only the staff emails (remove any other seat), and
+   Billing shows $0.00. Before adding staff or a Zero Trust feature, check it against the free limits first.
+
+   **Script path** (`scripts/access-setup.ts`, from the repo root of the main checkout; nothing it prints is secret):
+   1. **The Zero Trust team** (dashboard, once per Cloudflare account, on the API's account): Zero Trust → pick the
+      team name (`<team>.cloudflareaccess.com`) → the **Free** plan.
+   2. **The Google login method** (dashboard): Zero Trust → Settings → Authentication → Login methods → Add new →
+      Google, with a Google OAuth client made for it (authorised redirect URI
+      `https://<team>.cloudflareaccess.com/cdn-cgi/access/callback`), then **Test**. Other envs also need **GitHub**
+      (Add new → GitHub, an OAuth app of the `Hana-Technology` org). The script reads login methods; it never makes one.
+   3. **A short-lived, least-privilege API token** (dashboard → My Profile → API Tokens → Create Token → Create Custom
+      Token), named `access-setup <env>`:
+      - Permissions: **Account · Access: Apps and Policies · Edit** and **Account · Access: Organizations, Identity
+        Providers, and Groups · Read** (Cloudflare's API reference calls the first "Write"), nothing else;
+      - Account Resources: **Include · the API's account** only; Client IP Address Filtering: your current IP
+        (optional); TTL: ends today.
+
+      Cloudflare shows it **once**: copy it and save it from the clipboard without pasting it anywhere else:
+
+      ```sh
+      (umask 077; pbpaste > .secrets/<env>/cloudflare-access-token) && pbcopy < /dev/null && ls -l .secrets/<env>/cloudflare-access-token
+      ```
+
+      (`-rw-------`; the script refuses the file otherwise).
+   4. **Plan, apply, check** (the account id is the API's Cloudflare account; without `--account-id` or
+      `CLOUDFLARE_ACCOUNT_ID` the script uses the token's only account):
+
+      ```sh
+      corepack pnpm --filter @hana-id/scripts access-setup <env> --account-id <account id>        # the plan, changes nothing
+      corepack pnpm --filter @hana-id/scripts access-setup <env> --account-id <account id> --yes --write-manifest
+      corepack pnpm --filter @hana-id/scripts access-setup <env> --account-id <account id> --check  # exit 0: no drift
+      ```
+
+      The plan reads the team domain, the login methods (refusing without Google, or GitHub outside `sandbox*`, and
+      saying where to add it), the policies by name and the application by host or name, and says per object
+      `create`, `update (what differs)` or `matches`. `--yes` creates or updates the policies, then the application
+      (PUT of the whole object: re-running is harmless; it never deletes anything), and prints the application id, the
+      team domain and the AUD tag. `--write-manifest` puts the last two into `envs/<env>.json`'s `admin` block in place
+      (or copy them by hand); commit that, then `gen` and deploy the admin Worker (step 4) and the email issuer (its
+      `ADMIN_ACCESS_AUD` comes from the same block). `--check` compares Cloudflare with the manifest (emails, session,
+      IdPs, policies attached and their order, cookie settings, team domain, AUD) and exits 1 on any difference.
+      Errors carry the HTTP status, Cloudflare's error code and message, and for 401/403 the permission the call needs.
+      The script refuses an application on every Worker (`all_workers`, which would front the admin Worker with
+      another AUD), two applications matching the host or name, and duplicate policy names.
+   5. **Revoke the token** once it's done: My Profile → API Tokens → `access-setup <env>` → Delete; then
+      `rm .secrets/<env>/cloudflare-access-token`. Make a new one for the next change or check.
+
+   Re-run steps 3–5 whenever `admin.staffEmails` changes (the policy follows the manifest; `--check` shows the
+   difference first), and after any dashboard edit to the application, to put it back.
+
+   **workers.dev** (sandbox-dev): the dashboard's toggle (the admin Worker → Settings → Domains & Routes →
+   `workers.dev` → Enable Cloudflare Access) makes a Worker-level application (a `worker` destination, by the Worker's
+   id), which the API can make too but only with the Worker's id, so the token would also need Workers Scripts Read.
+   The script makes a **hostname** application instead, which Cloudflare documents for a `workers.dev` hostname
+   ([Workers → Cloudflare Access](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)). For
+   the admin Worker the two are equivalent: its config has `preview_urls: false` and no routes, so the workers.dev
+   hostname is all it serves (the Worker-level kind would also cover preview URLs and routes); both put a JWT with
+   the application's AUD in `Cf-Access-Jwt-Assertion`. Don't use both: if the toggle was turned on, turn it off (or
+   delete its application) first; the script points a Worker-level application out.
+
+   **Dashboard path** (no token): Zero Trust → Access → Applications → Add an application → Self-hosted, with the
+   settings above (name `Hana ID admin (<env>)`, the host, session 1 h, the login methods, Instant Auth for one IdP,
+   cookie settings HttpOnly and SameSite Lax, App Launcher off) and reusable policies as above; copy the team domain
+   (Settings → Custom Pages, or the application's Overview) and the AUD tag (Overview → Application Audience (AUD)
+   Tag) into `admin.accessTeamDomain` and `admin.accessAud`. `access-setup <env> --check` then confirms it matches;
+   `--check` only reads, so its token can have **Access: Apps and Policies · Read** instead of Edit.
 2. **Resend** (step 9, D87): verify the sending subdomain of `email.from` in Resend with SPF, DKIM and DMARC records on
    the Hana zone; create an API key with **sending access to that domain only**, for this Worker only (the watchdog
    has its own). Save it to `.secrets/<env>/admin-resend-key` (0600), never in a shell history:
@@ -1310,8 +1426,9 @@ the repo root of the main checkout, logged in to the API's Cloudflare account. N
    # The API and the console first (AdminRpc's watcher reads and StaffRpc's grants are C8 additions); with an email
    # issuer, it and its migration 0003 before both ("Users screen (C8b)" below: the ISSUER binding needs DirectoryRpc).
    corepack pnpm --filter @hana-id/api run deploy
-   corepack pnpm --dir apps/console exec wrangler deploy
-   corepack pnpm --dir apps/admin exec wrangler deploy
+   corepack pnpm --filter @hana-id/console run deploy
+   corepack pnpm --filter @hana-id/admin run deploy
+   corepack pnpm --filter @hana-id/scripts run deploy-check <env> --only api,console,admin   # the admin's id through wrangler ("Checking a deploy")
    ```
 
    `gen` keeps the Hyperdrive id on later runs; `--admin-hyperdrive-id off` (dev envs only) leaves the feed and the
@@ -1361,7 +1478,7 @@ prints a secret; `<env>` throughout):
 3. **The issuer** (with `DirectoryRpc`): `corepack pnpm --filter @hana-id/email-issuer run deploy`.
 4. **The API** (`AdminRpc.appNames`): its usual deploy (`docs/operations.md` "Deploying").
 5. **The admin Worker**: `corepack pnpm --filter @hana-id/admin gen <env>` (adds the `ISSUER` service binding when the
-   manifest has `emailIssuer`), then `corepack pnpm --dir apps/admin exec wrangler deploy`. In the other order the
+   manifest has `emailIssuer`), then `corepack pnpm --filter @hana-id/admin run deploy`. In the other order the
    binding names a Worker or entrypoint that doesn't exist yet: wrangler refuses the deploy, or the screen answers
    `503 directory_unavailable`.
 6. `corepack pnpm --filter @hana-id/scripts run deploy-check <env> --d1` (the issuer's D1 shows nothing pending).
@@ -1474,7 +1591,7 @@ main checkout; nothing below prints the token):
    corepack pnpm --filter @hana-id/api run gen <env>
    corepack pnpm --filter @hana-id/api run deploy
    corepack pnpm --filter @hana-id/admin gen <env>
-   corepack pnpm --dir apps/admin exec wrangler deploy
+   corepack pnpm --filter @hana-id/admin run deploy
    ```
 
 4. **Check it.** Open `<admin.origin>/security/monitoring`: the Watchdog table shows the last run and the heartbeat,
@@ -1565,7 +1682,7 @@ corepack pnpm --dir apps/files exec wrangler r2 bucket lifecycle list <files.exp
 #    workers.dev files origin (sandbox-dev) must be `<files.workerName>.<subdomain>.workers.dev` (D307); any other
 #    hostname becomes a Custom Domain on the Hana zone.
 corepack pnpm --filter @hana-id/files gen <env>
-corepack pnpm --dir apps/files exec wrangler deploy
+corepack pnpm --filter @hana-id/files run deploy
 # 5. The pages with the files origin: the API's gen writes FILES_ORIGIN into the auth page Worker's config, and the
 #    page build puts it into the logo pages' meta policy; deploy both page Workers (vault first, then auth).
 corepack pnpm --filter @hana-id/api run gen <env>
@@ -1575,7 +1692,9 @@ corepack pnpm --filter @hana-id/api run deploy:pages
 #    the logo backend). Deploy order doesn't matter for users: no app has a logo until an owner uploads one (C10's route).
 corepack pnpm --filter @hana-id/api run deploy
 corepack pnpm --filter @hana-id/console gen <env> --d1-id <uuid>
-corepack pnpm --dir apps/console exec wrangler deploy
+corepack pnpm --filter @hana-id/console run deploy
+# 7. Every piece on this commit ("Checking a deploy"): the files Worker answers /.well-known/hana-build.
+corepack pnpm --filter @hana-id/scripts run deploy-check <env> --only api,pages,console,files
 ```
 
 - **The Images binding.** It needs no secret, only Cloudflare Images enabled on the account: dashboard → Images. The
@@ -1670,8 +1789,8 @@ capture"). From the repo root of the main checkout.
 
    ```sh
    corepack pnpm --filter @hana-id/api run deploy
-   corepack pnpm --dir apps/console exec wrangler deploy
-   corepack pnpm --dir apps/admin exec wrangler deploy
+   corepack pnpm --filter @hana-id/console run deploy
+   corepack pnpm --filter @hana-id/admin run deploy
    ```
 
 4. **Check it**: `corepack pnpm --dir apps/admin exec wrangler tail <admin.workerName>` across a quarter hour:
@@ -1754,8 +1873,8 @@ its migration 0006 applied. From the repo root of the main checkout; nothing her
 
    ```sh
    corepack pnpm --filter @hana-id/api run deploy
-   corepack pnpm --dir apps/console exec wrangler deploy
-   corepack pnpm --dir apps/admin exec wrangler deploy
+   corepack pnpm --filter @hana-id/console run deploy
+   corepack pnpm --filter @hana-id/admin run deploy
    ```
 
 3. **Check it**: the Retention screen shows the month's state and next run. On the 1st, from 01:00 UTC,
@@ -2260,7 +2379,7 @@ there, not to the API's account; sandbox-dev's watchdog shares the API's account
 
 ```sh
 corepack pnpm --filter @hana-id/watchdog gen <env>              # IDENTITY_PINS, IDENTITY_ISS (and the rest)
-corepack pnpm --dir apps/watchdog exec wrangler deploy
+corepack pnpm --filter @hana-id/watchdog run deploy
 ```
 
 Check `/status` `identity.pinned` after the watchdog deploy and `identity.jwks` (`unpinned: 0`, `missing: []`) after
@@ -2753,7 +2872,8 @@ below logged in to the watchdog's account (`wrangler login` there, or `CLOUDFLAR
    corepack pnpm --filter @hana-id/watchdog gen <env> --d1-id <uuid>                          # apps/watchdog/wrangler.jsonc
    corepack pnpm --dir apps/watchdog exec wrangler d1 migrations apply <d1Name> --remote
    corepack pnpm --dir apps/watchdog exec wrangler secret bulk ../../.secrets/<env>/watchdog-secrets.json
-   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   corepack pnpm --filter @hana-id/watchdog run deploy                                       # stamped with the build id (D406)
+   corepack pnpm --filter @hana-id/scripts run deploy-check <env> --only watchdog --d1        # read through wrangler on this account
    ```
 
 6. Check: `curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)"
@@ -2789,7 +2909,7 @@ come only from the watchdog's own manifest, never from the chain or Hana's JWKS.
   active one. So the order on an env is: write the thumbprints of the issuer's keys (primary, standby: batch 4's
   `scripts/email-issuer.ts init` prints them; `corepack pnpm --filter @hana-id/watchdog pin <public key file>` prints
   the pin of any public JWK, JWKS or PEM with the Worker's own function, and says whether a JWKS kid matches) under `pinnedIssuerKeys.email.signers.hana` with `required: 1`, then
-  `corepack pnpm --filter @hana-id/watchdog gen <env>` and `corepack pnpm --dir apps/watchdog exec wrangler deploy`
+  `corepack pnpm --filter @hana-id/watchdog gen <env>` and `corepack pnpm --filter @hana-id/watchdog run deploy`
   (no new D1 migration), and check `/status` `email.pinned`; only then does the council run `set_issuer("email", …)`,
   `mark_self_issued("email")` and `set_issuer_key(…, signer: "hana")` (build plan batch 6). Between `set_issuer` and
   `mark_self_issued` a `signer_policy_transition` warning and the `governance_change` alerts are expected.
@@ -2964,8 +3084,9 @@ origin. The API never forwards these requests.
    `gen` turns `workers_dev` on only when `emailIssuer.url` is a `workers.dev` URL; a zone-routed issuer has no
    `workers.dev` URL (a second way in, around the zone's rules and Access). An `emailIssuer.url` on any other host (a
    dev env on custom domains, `https://email.<dev domain>`) is a Custom Domain the deploy creates (D404). **Open for batch 8**: the staff routes'
-   Cloudflare Access application on a `workers.dev` hostname (sandbox-dev) — whether Access can protect it there, or the
-   staff routes wait for a custom domain.
+   Cloudflare Access application on a `workers.dev` hostname (sandbox-dev). Cloudflare documents self-hosted
+   applications on a `workers.dev` hostname or path, which the admin console's uses (D409); `access-setup` doesn't
+   make the issuer's (`{url}/v1/email/admin/*`) yet.
 
 Local: `gen <env> --dev-vars` writes `apps/email-issuer/.dev.vars` (0600) from the files (the active key only), then
 `corepack pnpm --filter @hana-id/email-issuer dev`.
@@ -3200,7 +3321,7 @@ AUTH=https://hana-id-auth-sandbox-dev.tingtc.workers.dev
 
    ```sh
    corepack pnpm --filter @hana-id/watchdog gen $ENV
-   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   corepack pnpm --filter @hana-id/watchdog run deploy
    ```
 
    Check: the watchdog's `/status` shows `email.pinned` with both kids under `hana` and `required` 1, `email.jwks_url`
@@ -3656,9 +3777,14 @@ K_sub, `user-id-key` and `identity-sub-key` are never replaced (a new K_sub move
    export CLOUDFLARE_ACCOUNT_ID=$NEW
    corepack pnpm --dir apps/api exec wrangler d1 create hana-id-sandbox-dev --location apac
    corepack pnpm --dir apps/api exec wrangler d1 create hana-id-email-issuer-sandbox-dev --location apac
-   # dashboard envs: the console's D1, the R2 buckets with their rules ("Files Worker and logos" step 1-3), Access
-   # applications for the admin origin and the issuer's staff routes; Hyperdrive comes in step 7
+   # dashboard envs: the console's D1 and the R2 buckets with their rules ("Files Worker and logos" steps 1-3);
+   # Hyperdrive comes in step 7
    ```
+
+   Access (dashboard envs): the new account's Zero Trust team and its login methods by hand ("Admin Worker" step 1),
+   then the admin console's application with `access-setup $ENV --account-id $NEW --yes --write-manifest` (D409),
+   whose API token in `.secrets/<env>/cloudflare-access-token` must be a token of the **new** account; the issuer's
+   staff routes' application (`emailIssuer.access`) is still made by hand.
 
    Don't `migrations apply` the new databases: the export carries the schema and `d1_migrations`.
 4. **The email `iss` on chain, beside the old one** (the council; immediate, no governance delay; on a dev env one
@@ -3725,7 +3851,7 @@ K_sub, `user-id-key` and `identity-sub-key` are never replaced (a new K_sub move
    only from their offline backups. The offline standbys are never uploaded. Usage capture (when the env has it):
    `usage-setup $ENV hyperdrive --yes` creates both Hyperdrive configs on the new account from the role files, then
    `gen $ENV --usage-hyperdrive-id <writer id>` and the admin's `gen --admin-hyperdrive-id <admin id>`, and redeploy.
-   Dashboard envs: the console, console-auth, files and admin deploys, `env-secrets $ENV --worker console --yes` and
+   Dashboard envs: `corepack pnpm --filter @hana-id/<console, then console-auth, files, admin> run deploy`, `env-secrets $ENV --worker console --yes` and
    `--worker admin --yes`, the R2 objects copied (an S3-compatible copy such as rclone between the two accounts' R2
    endpoints; `STATEMENTS`' locked objects can't be deleted from the old bucket before their 7 years).
 8. **Check the deploy:** `corepack pnpm --filter @hana-id/scripts run deploy-check $ENV --d1` (every Worker on one

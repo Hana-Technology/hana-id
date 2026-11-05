@@ -44,7 +44,9 @@ Batch C fields (`docs/batch-c-spec.md` "Manifest", `packages/env/src/dashboard.t
   - `files`: `{workerName, origin, logosBucket, statementsBucket, exportsBucket}` (logos origin and the R2 buckets).
   - `admin`: `{workerName, origin, accessTeamDomain, accessAud, staffEmails}`: `accessTeamDomain` is
     `<team>.cloudflareaccess.com`, `accessAud` the Access application's 64-hex AUD tag (or `UNSET`), `staffEmails`
-    the admin Worker's own lowercased allowlist behind the Access policy (D88).
+    the admin Worker's own lowercased allowlist behind the Access policy (D88), and the exact emails that policy
+    includes: `access-setup <env>` creates the application and policies from this block, prints the team domain and
+    AUD tag (`--yes --write-manifest` writes both here) and `--check` reports drift (D409).
   - `usage`: `{neonRegion: "aws-ap-southeast-2", writerHyperdrive, adminHyperdrive}` (D73).
   - `email`: `{from, securityAlias}`: `from` is `Name <address>` or an address on the sending subdomain (D87), with no
     line break, quote or second address; `securityAlias` gets every blocking notice and direct alert.

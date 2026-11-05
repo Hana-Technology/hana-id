@@ -155,6 +155,16 @@ describe('useIdentityToken', () => {
     expect(vault.last('hana_identityToken').params).toEqual({ maxAgeMs: 60_000 });
   });
 
+  it('D405: a refresh the API refused keeps its request ID in error.requestId', async () => {
+    const { vault, out } = await mount();
+    vault.handle('hana_identityToken', () => ({ error: { code: 'rate_limited', message: 'Too many identity token requests, try again later', data: { requestId: '3f2a9c1e-7b4d-4e8f-9a6b-0c1d2e3f4a5b' } } }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(out.at(-1)!.error?.code).toBe('rate_limited');
+    expect(out.at(-1)!.error?.requestId).toBe('3f2a9c1e-7b4d-4e8f-9a6b-0c1d2e3f4a5b');
+  });
+
   it('throws outside a HanaProvider', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     expect(() => render(<Probe out={[]} />)).toThrow(/inside <HanaProvider>/u);

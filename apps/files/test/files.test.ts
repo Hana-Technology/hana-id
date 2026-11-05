@@ -2,6 +2,7 @@
 // "Settings, keys, logos" and "Host dispatch"): only GET and HEAD of the logo path on FILES_ORIGIN; an object that isn't
 // a logo the console wrote is a 404; exactly the spec's headers on a logo.
 import { SELF, env } from 'cloudflare:test';
+import { BUILD_PATH } from '@hana-id/env/build-id';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import worker, { LOGO_HEADERS, LOGO_MAX_BYTES, PNG_SIGNATURE } from '../src/index.ts';
 
@@ -162,5 +163,38 @@ describe('GET /logos/<app id>/<sha256>.png', () => {
     expect(res.status).toBe(503);
     expect(res.headers.get('cache-control')).toBe('no-store');
     expect(error).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('GET /.well-known/hana-build (D406)', () => {
+  const url = `${ORIGIN}${BUILD_PATH}`;
+
+  it('answers the deployed build id as uncached JSON that runs nothing, without reading the bucket', async () => {
+    const spy = vi.fn((k: string) => env.LOGOS.get(k));
+    for (const [HANA_BUILD, build] of [['0485faa1c2d3-dirty', '0485faa1c2d3-dirty'], ['0485faa1c2d3', '0485faa1c2d3'], [undefined, null], ['', null], ['latest', null]] as const) {
+      const res = await worker.fetch(new Request(url), { ...env, LOGOS: { get: spy } as unknown as R2Bucket, ...(HANA_BUILD === undefined ? {} : { HANA_BUILD }) });
+      expect(res.status, String(HANA_BUILD)).toBe(200);
+      expect(Object.fromEntries(res.headers)).toEqual({
+        'content-type': 'application/json; charset=utf-8',
+        'x-content-type-options': 'nosniff',
+        'content-security-policy': "default-src 'none'; sandbox",
+        'cache-control': 'no-store',
+        'referrer-policy': 'no-referrer',
+      });
+      expect(await res.json()).toEqual({ build });
+    }
+    expect(spy).not.toHaveBeenCalled();
+    // The test config, like a generated one, sets no HANA_BUILD (only `run deploy` does): unstamped.
+    expect(await (await get(BUILD_PATH)).json()).toEqual({ build: null });
+  });
+
+  it('HEAD has no body; another method is 405, another host or a near-miss path 404', async () => {
+    const stamped = { ...env, HANA_BUILD: '0485faa1c2d3' };
+    const head = await worker.fetch(new Request(url, { method: 'HEAD' }), stamped);
+    expect(head.status).toBe(200);
+    expect(await head.text()).toBe('');
+    expect((await worker.fetch(new Request(url, { method: 'POST' }), stamped)).status).toBe(405);
+    expect((await worker.fetch(new Request(`https://other.test${BUILD_PATH}`), stamped)).status).toBe(404);
+    for (const path of [`${BUILD_PATH}/`, `${BUILD_PATH}.json`, '/.well-known/hana-builds']) expect((await worker.fetch(new Request(`${ORIGIN}${path}`), stamped)).status, path).toBe(404);
   });
 });

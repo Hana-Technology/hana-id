@@ -36,8 +36,9 @@ One page: a testnet banner and a short explainer, then
   row, D260); other stages are listed after; plus the unlock time when a page load restored the session;
 - **Copy diagnostics**: a JSON report for bug reports, also shown on the page. It holds the env, the app key's
   first 12 characters, the page and vault origins, the SDK version, status, persistence, expiry, addresses, timings,
-  the user agent and the errors seen (code, `data.reason`, e.g. a `vault_unavailable`'s `no_answer` or `frame_timeout`, and the message with anything shaped like a token, key,
-  signature or relay id removed). It never holds tokens, keys, signatures or relay ids: the page never sees the
+  the user agent and the errors seen (code, `data.reason`, e.g. a `vault_unavailable`'s `no_answer` or `frame_timeout`, the API request ID
+  an error came from (`data.requestId`, D405), and the message with anything shaped like a token, key,
+  signature or relay id removed), plus `requestIds`, the latest five distinct request IDs, for Hana's Support ID lookup. It never holds tokens, keys, signatures or relay ids: the page never sees the
   first, and `src/diagnostics.ts` builds the report field by field and scrubs the free text.
 
 Errors are shown in plain words (`src/errors.ts`): a blocked popup (and the "Click *Sign in with Hana*" hint when

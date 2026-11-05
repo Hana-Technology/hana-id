@@ -46,7 +46,8 @@ const { identityToken, refresh, error } = useIdentityToken(); // a JWT for your 
 - `HanaProvider` creates one client, also under strict mode, and destroys it on unmount. It reads `config` once; to
   switch app or environment, remount it (a `key`). A config `createHana` refuses (unknown environment, malformed
   key) throws from its render, to your error boundary.
-- A failed login (`4001`, `popup_blocked`, `login_cancelled`, …) lands in `useHana().error`, and the promise
+- A failed login (`4001`, `popup_blocked`, `login_cancelled`, …) lands in `useHana().error` (a `HanaError`; one from
+  Hana's API has `error.requestId`, to send Hana with `useHana().supportId`), and the promise
   `login()` returns is already marked handled, so `onClick={login}` never raises an unhandled rejection. `logout()`
   and `exportKey()` reject as usual: handle them.
 - `useHana().client` is the underlying `HanaClient`, for what the hooks don't wrap (events, auto-approve,

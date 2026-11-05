@@ -1,6 +1,6 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
-Last verified against code: 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup's screen: the email join in `POST /api/support/lookup` (`emails`, `emailsNote`, `unverifiedWarning`), its ticket in the issuer's rule, `DirectoryRpc.get`'s `purpose` (`support_lookup`), D399); 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
+Last verified against code: 2026-11-05 (branch `feat/deploy-check-all-workers`: the build id on every Worker, D406: `GET /.well-known/hana-build` on the console, console-auth and files Workers, the console SPA's `<meta name="hana-build">`, none on the admin (read through wrangler); the shared deploy wrapper); 2026-11-05 (branch `feat/sdk-error-request-id`: "Conventions": an error's `requestId` passed on to the SDK as `data.requestId`, D405); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup's screen: the email join in `POST /api/support/lookup` (`emails`, `emailsNote`, `unverifiedWarning`), its ticket in the issuer's rule, `DirectoryRpc.get`'s `purpose` (`support_lookup`), D399); 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
 answers, D395; `AdminRpc.supportLookup` / `userShares`; the admin Worker's `POST /api/support/lookup`; the
 `support.lookup` staff action; D394–D396); 2026-11-05 (branch `feat/deploy-build-check`: the build id, D384: `GET /v1/health`'s
 `build`, the page Workers' `GET /.well-known/hana-build`, the issuer's `GET /v1/email/health`, the `HANA_BUILD` var
@@ -118,7 +118,9 @@ Worker (D230); here such a path is `404 not_found`.
 - Success: `{…fields, "requestId"}` — relayed calls `{"result": …, "nearTx": "<base58 tx hash>", "requestId"}`.
   Error: `{"error": "<message>", "code": "<code>", "requestId", "nearTx"?, …extra}`.
 - `x-request-id` on every non-preflight response; `requestId` is the `cf-ray` header when it matches
-  `[A-Za-z0-9-]{1,64}`, else a random UUID.
+  `[A-Za-z0-9-]{1,64}`, else a random UUID. The vault passes an error answer's `requestId` on to the partner's SDK
+  (0.2.0 or later) as `data.requestId`, only when it is 8–64 of `[A-Za-z0-9-]` (D405): nothing else of an error body
+  reaches the partner beyond what `docs/integration.md` section 13 lists.
 - `content-type: application/json; charset=utf-8`, `cache-control: no-store`.
 - Body caps (streamed, `413` with code `bad_request` past them): app endpoints and owner actions 16 KiB, vault
   endpoints and `/v1/identity/token` 4 KiB, login relay 12 KiB. Non-JSON: `400 bad_request`. JWT ≤ 7168 characters.
@@ -234,7 +236,7 @@ and relays create_session's proof of possession, D137). `deploy-contract --upgra
 `build` (D384, added 2026-11-05; older readers ignore it): the build id the Worker was deployed with, the commit's
 first 12 hex characters plus `-dirty` when the tree had uncommitted changes (`@hana-id/env/build-id`); `null` when
 the Worker was deployed without `pnpm --filter @hana-id/api run deploy` (the var `HANA_BUILD` is set only by that
-script, `apps/api/scripts/deploy.ts`, never by `gen`) or the var isn't an id. `deploy-check <env>` compares it with
+script, the shared wrapper `packages/env/src/stamped-deploy.ts`, D406, never by `gen`) or the var isn't an id. `deploy-check <env>` compares it with
 the page Workers', their bundles' and the issuer's (`docs/operations.md` "Checking a deploy").
 ### `GET /v1/governance` · G
 
@@ -1526,6 +1528,15 @@ response carries the console CSP, `Referrer-Policy: no-referrer`, `Cross-Origin-
 `Cache-Control: no-store`. Errors are `{error: {code, message}}` with the RpcCode → HTTP map of console-core
 (`RPC_HTTP_STATUS`, `CONSOLE_ERROR_STATUS`); the message is the console's own, never the API's text.
 
+**The build id (D406).** Both Workers answer `GET`/`HEAD /.well-known/hana-build` on their own origin with
+`{"build": "<id>" | null}\n` (`application/json; charset=utf-8`): the build id the Worker was deployed with (the
+`HANA_BUILD` var, set only by its `run deploy`, the shared wrapper `packages/env/src/stamped-deploy.ts`; `null` when
+unset or not an id). The console's carries its usual headers and `no-store`, needs no CSRF check, and answers any other
+method `405` (`allow: GET, HEAD`); console-auth's carries the auth origin's headers (the allow-nothing CSP, `no-store`)
+without reaching the console, and any other method is its usual `404`. The SPA's `index.html` (`GET /`) carries
+`<meta name="hana-build" content="<id>">`, written by its `vite build` (`apps/console/scripts/build-stamp.ts`).
+`deploy-check <env>` reads all three (`docs/operations.md` "Checking a deploy").
+
 ### Sign-in (the Google code flow with PKCE; D75, D290–D293)
 
 | Route | Request → answer | Notes |
@@ -1720,6 +1731,7 @@ preview URLs off.
 |---|---|
 | `GET`/`HEAD` `/logos/<app_…>/<64 hex>.png` on `FILES_ORIGIN` | `200` with the object, when it exists, is ≤ 128 KiB, has `contentType: image/png`, starts with the PNG signature and its sha256 is the hash in its key. Headers exactly: `Content-Type: image/png`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox`, `Cross-Origin-Resource-Policy: cross-origin`, `Content-Disposition: inline; filename="logo.png"`, `Cache-Control: public, max-age=31536000, immutable`, `Referrer-Policy: no-referrer` (plus `Content-Length`). A query string is ignored |
 | the same path, any object failing a check | `404` (logged `logo` `rejected` with a code, never the key) |
+| `GET`/`HEAD` `/.well-known/hana-build` on `FILES_ORIGIN` (D406) | `200 {"build": "<id>" \| null}`: the build id the Worker was deployed with (`HANA_BUILD`, set only by `run deploy`; `null` when unset or not an id), `application/json; charset=utf-8` with the non-`200` answers' headers below (`no-store`, the sandbox CSP); the bucket never read |
 | any other path or host | `404`, the bucket never read |
 | any other method | `405`, `allow: GET, HEAD` |
 | R2 fails | `503` |
@@ -1735,6 +1747,11 @@ Built in C8 (merged, not deployed; milestone M4, `docs/operations.md` "Admin Wor
 statements, rates, exports, settlement and the daily ledger checks in C12 (`feat/batch-c-12`, D320–D329; milestone M6,
 `docs/operations.md` "Reports and statements"); the monthly retention job and its screen in C13 (`feat/batch-c-13`,
 D360–D369; milestone M6, `docs/operations.md` "Retention").
+
+**The build id (D406): no route.** The Worker is deployed with the `HANA_BUILD` var (its `run deploy`, the shared
+wrapper), but no path serves it: the origin is behind Access, with no exception. `deploy-check` reads it from the
+deployed version's metadata with wrangler (`docs/operations.md` "Checking a deploy"). The same holds for the watchdog,
+whose every route needs its status token.
 
 **Every request.** The Worker runs first (assets with `run_worker_first`). A host other than `ADMIN_ORIGIN`: `404 Not
 found`. **`/api/*`**: first the Access check, then (non-GET) the CSRF checks, then the route:
@@ -2181,7 +2198,7 @@ contract never fetches them and the watchdog pins instead of trusting them.
 
 D384. No auth, no limits, CORS `*`, `GET` only (`405` otherwise). → `200 {"ok": true, "env": ENV_NAME, "build":
 "<id>" | null}`: the build id the issuer was deployed with (the var `HANA_BUILD`, set only by `pnpm --filter
-@hana-id/email-issuer run deploy`, `apps/email-issuer/scripts/deploy.ts`), as in the API's `GET /v1/health`.
+@hana-id/email-issuer run deploy`, the shared wrapper `packages/env/src/stamped-deploy.ts`, D406), as in the API's `GET /v1/health`.
 
 ### `POST /v1/email/webhooks/sendgrid` · E
 

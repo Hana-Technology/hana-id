@@ -131,7 +131,8 @@ Holesky, Hoodi, local 31337/1337). Anything a mainnet would accept is refused wi
 ## Errors
 
 Methods reject with `HanaError { code, message, data? }`; the EIP-1193 provider uses `ProviderRpcError` with numeric
-codes (the Hana code in `data.code`). The common ones: `4001` the user rejected or closed the popup; `4100` not
+codes (the Hana code in `data.code`). An error from Hana's API carries its request ID (`error.requestId`,
+`data.requestId`): send it to Hana with the user's Support ID (`hana.supportId`) when you report a problem. The common ones: `4001` the user rejected or closed the popup; `4100` not
 logged in or not allowed (`data.reason`); `4900` the vault is gone; `4902` chain not in `evm.chains`;
 `vault_unavailable`, `popup_blocked`, `login_timeout`, `rate_limited`.
 

@@ -6,6 +6,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Manifest } from '@hana-id/env';
+import { BUILD_PATH, BUILD_VAR } from '@hana-id/env/build-id';
 import { describe, expect, it } from 'vitest';
 import { AUTH_ORIGIN_CSP as CONSOLE_AUTH_ORIGIN_CSP } from '../../console/src/auth-flow.ts';
 import { TEST_MANIFEST } from '../../console/scripts/gen-wrangler.ts';
@@ -77,6 +78,40 @@ describe('console-auth', () => {
     expect(seen).toEqual([]);
   });
 
+  it('GET /.well-known/hana-build answers the build id (D406) as JSON under the auth origin’s headers, without the console', async () => {
+    const { env, seen } = fakeConsole();
+    for (const [HANA_BUILD, build] of [['0485faa1c2d3-dirty', '0485faa1c2d3-dirty'], ['0485faa1c2d3', '0485faa1c2d3'], [undefined, null], ['', null], ['latest', null]] as const) {
+      const res = await call({ ...env, ...(HANA_BUILD === undefined ? {} : { HANA_BUILD }) }, `${AUTH}${BUILD_PATH}`);
+      expect(res.status, String(HANA_BUILD)).toBe(200);
+      expect(res.headers.get('content-type')).toBe('application/json; charset=utf-8');
+      expectAuthHeaders(res);
+      expect(res.headers.has('set-cookie')).toBe(false);
+      expect(await res.json()).toEqual({ build });
+    }
+    const head = await call({ ...env, HANA_BUILD: '0485faa1c2d3' }, `${AUTH}${BUILD_PATH}`, { method: 'HEAD' });
+    expect(head.status).toBe(200);
+    expect(await head.text()).toBe('');
+    expectAuthHeaders(head);
+    expect(seen).toEqual([]);
+  });
+
+  it('the build path is 404 for another method, another host or a near-miss path, as everything else is', async () => {
+    const { env, seen } = fakeConsole();
+    const withBuild = { ...env, HANA_BUILD: '0485faa1c2d3' };
+    for (const [url, init] of [
+      [`${AUTH}${BUILD_PATH}`, { method: 'POST', body: '{}' }],
+      ['https://evil.example/.well-known/hana-build', {}],
+      [`${AUTH}${BUILD_PATH}/`, {}],
+      [`${AUTH}${BUILD_PATH}.json`, {}],
+    ] as [string, RequestInit][]) {
+      const res = await call(withBuild, url, init);
+      expect(res.status, `${init.method ?? 'GET'} ${url}`).toBe(404);
+      expect(await res.text()).toBe('Not found');
+      expectAuthHeaders(res);
+    }
+    expect(seen).toEqual([]);
+  });
+
   it("sets its headers over the console's answer, and answers 503 (no Location) when the binding fails", async () => {
     const { env } = fakeConsole(() => {
       throw new Error('binding down');
@@ -106,6 +141,8 @@ describe('its config', () => {
     });
     expect(Object.keys(c).sort()).toEqual(['$schema', 'compatibility_date', 'main', 'name', 'observability', 'preview_urls', 'routes', 'services', 'vars', 'workers_dev'].sort());
     expect(JSON.stringify(c)).not.toMatch(/d1_databases|hyperdrive|r2_buckets|assets|SECRET|ratelimits/iu);
+    // Only a deploy stamps the build id (D406), so a config generated before a pull can't carry an old one.
+    expect(Object.keys(c.vars as Record<string, string>)).not.toContain(BUILD_VAR);
   });
 
   it('its route: a Custom Domain on a Hana host; its own workers.dev name in a dev env; never workers.dev in production', () => {

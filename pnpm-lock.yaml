@@ -132,6 +132,9 @@ importers:
       '@hana-id/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@hana-id/env':
+        specifier: workspace:*
+        version: link:../../packages/env
       '@hana-id/oidc':
         specifier: workspace:*
         version: link:../../packages/oidc
@@ -154,9 +157,6 @@ importers:
       '@cloudflare/workers-types':
         specifier: 5.20261016.1
         version: 5.20261016.1
-      '@hana-id/env':
-        specifier: workspace:*
-        version: link:../../packages/env
       '@testing-library/dom':
         specifier: 10.4.2
         version: 10.4.2
@@ -192,13 +192,14 @@ importers:
         version: 4.151.1(@cloudflare/workers-types@5.20261016.1)(@types/node@22.20.5)(bufferutil@4.1.0)(utf-8-validate@6.0.6)
 
   apps/console-auth:
+    dependencies:
+      '@hana-id/env':
+        specifier: workspace:*
+        version: link:../../packages/env
     devDependencies:
       '@cloudflare/workers-types':
         specifier: 5.20261016.1
         version: 5.20261016.1
-      '@hana-id/env':
-        specifier: workspace:*
-        version: link:../../packages/env
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.5
@@ -351,6 +352,10 @@ importers:
         version: 4.151.1(@cloudflare/workers-types@5.20261016.1)(@types/node@22.20.5)(bufferutil@4.1.0)(utf-8-validate@6.0.6)
 
   apps/files:
+    dependencies:
+      '@hana-id/env':
+        specifier: workspace:*
+        version: link:../../packages/env
     devDependencies:
       '@cloudflare/vitest-plugin':
         specifier: 1.4.4
@@ -358,9 +363,6 @@ importers:
       '@cloudflare/workers-types':
         specifier: 5.20261016.1
         version: 5.20261016.1
-      '@hana-id/env':
-        specifier: workspace:*
-        version: link:../../packages/env
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.5

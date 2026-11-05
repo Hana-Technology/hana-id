@@ -24,7 +24,8 @@
     "deploy-check": "tsx deploy-check.ts",
     "coop-canary": "tsx coop-canary.ts",
     "env-secrets": "tsx env-secrets.ts",
-    "d1-move": "tsx d1-move.ts"
+    "d1-move": "tsx d1-move.ts",
+    "access-setup": "tsx access-setup.ts"
   },
   "dependencies": {
     "@hana-id/console-core": "workspace:*",

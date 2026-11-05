@@ -89,6 +89,7 @@ const CASES = [
     expect: ['hana-secret-file', 'hana-postgres-url'],
   },
   { name: 'Neon API key file copied out of .secrets', files: { 'copy/neon-api-key': `${neonApiKey()}\n` }, expect: ['hana-secret-file', 'hana-neon-api-key'] },
+  { name: 'Cloudflare Access token file copied out of .secrets', files: { 'copy/cloudflare-access-token': `${randomBytes(30).toString('base64url')}\n` }, expect: ['hana-secret-file'] },
   { name: 'Neon API key pasted into an innocent file', files: { 'notes/neon.sh': `curl -H "Authorization: Bearer ${neonApiKey()}" https://console.neon.tech/api/v2/projects\n` }, expect: ['hana-neon-api-key'] },
   // 10 distinct characters (random order): log2(10) ≈ 3.3 bits each, over the rule's 3.0 floor.
   { name: 'Postgres URL with a short (10-character) password', files: { 'notes/short.txt': 'postgres://app:' + shortPassword(10) + '@db.example.net/app\n' }, expect: ['hana-postgres-url'] },

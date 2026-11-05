@@ -8,11 +8,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SUPPORT_TICKET_RE } from '@hana-id/console-core';
 import { type Manifest, manifestSchema } from '@hana-id/env';
+import { BUILD_VAR } from '@hana-id/env/build-id';
 import { describe, expect, it } from 'vitest';
 import { wranglerConfig as apiConfig } from '../../../api/scripts/gen-wrangler.ts';
 import { pagesWranglerConfig } from '../../../api/scripts/pages-wrangler.ts';
 import { consoleCsp } from '../../../console/src/headers.ts';
 import { wranglerConfig as consoleConfig } from '../../../console/scripts/gen-wrangler.ts';
+import { wranglerConfig as consoleAuthConfig } from '../../../console-auth/scripts/gen-wrangler.ts';
+import { wranglerConfig as filesConfig } from '../../../files/scripts/gen-wrangler.ts';
 import { wranglerConfig as issuerConfig, TEST_MANIFEST as ISSUER_MANIFEST } from '../../../email-issuer/scripts/gen-wrangler.ts';
 import { wranglerConfig as watchdogConfig, TEST_MANIFEST as WATCHDOG_MANIFEST } from '../../../watchdog/scripts/gen-wrangler.ts';
 import { adminCsp } from '../../src/headers.ts';
@@ -183,6 +186,11 @@ describe('across Workers (config snapshots)', () => {
     ['console', consoleConfig(m, LOCAL_D1_ID) as Config],
     ['admin', wranglerConfig(m, { adminHyperdriveId: TEST_ADMIN_HYPERDRIVE_ID }) as Config],
   ];
+
+  it('no generated config carries the build id: only the deploy wrapper stamps it (D384, D406)', () => {
+    const all: [string, Config][] = [...configs, ['console-auth', consoleAuthConfig(m) as Config], ['files', filesConfig(m) as Config]];
+    for (const [name, c] of all) expect(Object.keys((c.vars as Record<string, string> | undefined) ?? {}), name).not.toContain(BUILD_VAR);
+  });
 
   it('only the API and the admin bind Hyperdrive, to different configs', () => {
     const binders = configs.filter(([, c]) => (c.hyperdrive ?? []).length > 0);

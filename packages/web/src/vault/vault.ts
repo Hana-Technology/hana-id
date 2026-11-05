@@ -58,6 +58,7 @@ import {
   signVaultMessage,
   unsupportedMethodId,
   SUPPORT_ID_SDK_MIN,
+  API_REQUEST_ID_SDK_MIN,
   sdkAtLeast,
   vaultPayload,
   walletRecordEvmDigest,
@@ -363,6 +364,11 @@ export class Vault {
    * SUPPORT_ID_SDK_MIN or later): an older SDK's validators refuse a key they don't know, so it gets the old shapes.
    */
   private sdkTakesSupportId = false;
+  /**
+   * Whether the SDK on the port takes `data.requestId` in a port error (D405; its hello's `sdk` is
+   * API_REQUEST_ID_SDK_MIN or later): an older SDK gets exactly the error shapes it was built against.
+   */
+  private sdkTakesRequestId = false;
   private port: MessagePort | null = null;
   private api: VaultApi | null = null;
   private near: NearView | null = null;
@@ -477,6 +483,7 @@ export class Vault {
     this.helloAt = this.perfNow();
     this.parentOrigin = e.origin;
     this.sdkTakesSupportId = sdkAtLeast(hello.sdk, SUPPORT_ID_SDK_MIN);
+    this.sdkTakesRequestId = sdkAtLeast(hello.sdk, API_REQUEST_ID_SDK_MIN);
     this.port = port;
     const fetchFn = this.o.fetch;
     this.api = new VaultApi({
@@ -703,7 +710,7 @@ export class Vault {
   }
 
   private replyError(id: string, e: unknown): void {
-    this.port?.postMessage({ v: 1, id, error: toProtocolError(e) });
+    this.port?.postMessage({ v: 1, id, error: toProtocolError(e, 'api_unavailable', this.sdkTakesRequestId) });
   }
 
   private async onPortMessage(data: unknown): Promise<void> {
@@ -1759,12 +1766,12 @@ export class Vault {
       const r = await this.shareAction<{ revoked: number }>('revoke-all');
       return { revoked: r.revoked };
     } catch (e) {
-      if (e instanceof ApiError && e.code === 'share_not_fresh') throw new VaultError(ErrorCode.unauthorized, 'Only within 5 minutes of a fresh sign-in', { reason: 'share_not_fresh' });
+      if (e instanceof ApiError && e.code === 'share_not_fresh') throw new VaultError(ErrorCode.unauthorized, 'Only within 5 minutes of a fresh sign-in', { reason: 'share_not_fresh' }).fromRequest(e);
       if (e instanceof ApiError && (e.status === 404 || e.status === 410)) {
         await this.deleteRecordIf(s).catch(() => undefined);
         this.broadcastRevoked(share.shareId);
         if (this.session === s) this.endSession(true);
-        throw disconnected('This session was revoked');
+        throw disconnected('This session was revoked').fromRequest(e);
       }
       throw e instanceof ApiError ? apiErrorToVault(e) : e;
     }
@@ -1949,6 +1956,10 @@ export class Vault {
    * ends on its own timers.
    */
   private identityError(e: ApiError, t: IdentityTarget): VaultError {
+    return this.identityRefusal(e, t).fromRequest(e);
+  }
+
+  private identityRefusal(e: ApiError, t: IdentityTarget): VaultError {
     if (e.code === 'session_ended') {
       this.endIdentitySession(t);
       return new VaultError('session_ended', 'The Hana session has ended');

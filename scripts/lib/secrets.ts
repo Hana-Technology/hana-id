@@ -62,6 +62,24 @@ export function assertPrivate(file: string): void {
   }
 }
 
+/**
+ * A one-line API key or token from its file (pasted by hand: the Neon API key, the Cloudflare Access token): present,
+ * a file, 0600 (no group or other permission), one printable token of 20–512 characters. Errors name the file, `how`
+ * to fix it and `what` it should hold, never the value.
+ */
+export function readOneLineSecret(file: string, shown: string, how: string, what: string): string {
+  if (!existsSync(file)) throw new Error(`${shown} is missing: ${how}`);
+  const st = statSync(file);
+  if (!st.isFile()) throw new Error(`${shown} is not a file`);
+  const mode = st.mode & 0o777;
+  if ((mode & 0o077) !== 0) throw new Error(`${shown} has mode ${mode.toString(8)}; it must be 0600 (chmod 600 ${shown})`);
+  const value = readFileSync(file, 'utf8').trim();
+  if (!value) throw new Error(`${shown} is empty: ${how}`);
+  // Printable ASCII without spaces: a paste with a second line or a space is a paste of something else.
+  if (!/^[\x21-\x7e]{20,512}$/u.test(value)) throw new Error(`${shown} doesn't hold ${what} (one line, 20–512 printable characters, no spaces)`);
+  return value;
+}
+
 /** File names inside .secrets/<env>/. */
 export const SECRET_FILES = {
   /** JSON array of `ed25519:…` secret keys: the session-pool function-call keys on manifest.relayer (the API's RELAYER_KEYS). */

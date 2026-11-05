@@ -270,6 +270,8 @@ test('a Google ID token that carries the email is refused (token_has_pii): no /v
   // The SDK's error, naming the first claim outside the allow-list (as the vault's own refusal does).
   const r = await settled(page, 'login');
   expect(r).toMatchObject({ state: 'error', code: 'token_has_pii', data: { claim: 'email' } });
+  // Refused before any API call (D405): no request ID to name.
+  expect(r.state === 'error' && r.data).not.toHaveProperty('requestId');
   expect(await status(page)).toBe('logged_out');
   // The premise: the token Google sent really carried the address.
   expect(google.issued.filter((t) => t.sub === sub).map((t) => t.claims)).toEqual([expect.arrayContaining(['email', 'email_verified'])]);

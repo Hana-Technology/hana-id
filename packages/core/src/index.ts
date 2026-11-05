@@ -6,6 +6,7 @@
 export const VERSION = '0.2.0';
 
 export * from './addresses.ts';
+export * from './api-request-id.ts';
 export * from './api-types.ts';
 export * from './bytes.ts';
 export * from './ckd.ts';

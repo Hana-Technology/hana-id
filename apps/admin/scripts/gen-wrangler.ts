@@ -11,7 +11,8 @@
 //
 // Where the Worker lives follows from `admin.origin` (D284):
 // - `https://<admin.workerName>.<subdomain>.workers.dev`: dev envs only (`local*`/`sandbox*` on a non-mainnet network),
-//   `workers_dev: true` with Worker-level Access turned on in the dashboard (D75);
+//   `workers_dev: true`, behind a self-hosted Access application on that hostname (`scripts/access-setup.ts`, D409;
+//   with preview URLs off and no routes it covers everything the Worker serves);
 // - any other https host: a Custom Domain route on the Hana zone, `workers_dev: false`, behind a self-hosted Access
 //   application;
 // - loopback (local* envs): no deployment target; `wrangler dev` listens on it.

@@ -81,3 +81,31 @@ export function setCouncilMembers(text: string, members: readonly string[]): str
   manifestSchema.parse(check);
   return out;
 }
+
+/**
+ * Sets `admin.accessTeamDomain` and `admin.accessAud` in manifest JSON text (access-setup --write-manifest, D409),
+ * keeping the rest of the file's formatting: each value is replaced in place inside the one `"admin": {…}` block
+ * (which holds no nested object); the whole file is rewritten only when that can't be done unambiguously. The result
+ * must validate.
+ */
+export function setAdminAccess(text: string, fields: { accessTeamDomain: string; accessAud: string }): string {
+  const parsed = JSON.parse(text) as { admin?: Record<string, unknown> };
+  if (!parsed.admin || typeof parsed.admin !== 'object') throw new Error('Manifest has no admin block');
+  const blocks = text.match(/"admin"\s*:\s*\{[^{}]*\}/gu) ?? [];
+  let out: string | null = null;
+  if (blocks.length === 1) {
+    let inner = blocks[0]!;
+    let ok = true;
+    for (const [key, value] of Object.entries(fields)) {
+      const field = new RegExp(`("${key}"\\s*:\\s*)"(?:[^"\\\\]|\\\\.)*"`, 'gu');
+      if ((inner.match(field) ?? []).length !== 1) ok = false;
+      else inner = inner.replace(field, (_m, head: string) => `${head}${JSON.stringify(value)}`);
+    }
+    if (ok) out = text.replace(blocks[0]!, () => inner);
+  }
+  out ??= `${JSON.stringify({ ...parsed, admin: { ...parsed.admin, ...fields } }, null, 2)}\n`;
+  const check = JSON.parse(out) as { admin?: Record<string, unknown> };
+  for (const [key, value] of Object.entries(fields)) if (check.admin?.[key] !== value) throw new Error(`Failed to set admin.${key} in the manifest`);
+  manifestSchema.parse(check);
+  return out;
+}

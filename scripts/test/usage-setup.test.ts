@@ -2,19 +2,20 @@
 // Neon API (fetch) and a fake wrangler: the --yes gate, file modes, the API key file's checks, passwords Neon generates
 // written to the role files (replaced on a re-run), the busy-retry and operation polling, a role whose reset didn't
 // happen set NOLOGIN again, the Hyperdrive configs created through a fake Cloudflare API with the password only in the
-// HTTPS body (D411), and that no password, URL or key ever reaches the output, an argument or an error (D403).
+// HTTPS body (D412), and that no password, URL or key ever reaches the output, an argument or an error (D403).
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PGlite } from '@electric-sql/pglite';
+import { PGlite, type PGliteInterface } from '@electric-sql/pglite';
 import { type Manifest, loadEnv, repoRoot } from '@hana-id/env';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CliError } from '../lib/cli.ts';
 import { NEON_API, NEON_API_KEY_FILE } from '../lib/neon-api.ts';
 import { applyMigrations, readMigrations, type SqlConn } from '../lib/usage-migrate.ts';
 import { CLOUDFLARE_API } from '../lib/cloudflare-api.ts';
 import { CLOUDFLARE_HYPERDRIVE_TOKEN_FILE, ROLE_FILES, USER_ID_KEY_FILE, type UsageSetupDeps, type WranglerResult, hyperdriveBody, hyperdriveNames, readRoleUrl, rolePasswordProblem, roleUrl, usageSetup } from '../lib/usage-setup.ts';
 import { DRY_RUN_LINE } from '../lib/vault-kek.ts';
+import { PGLITE, PGLITE_HOOK_MS } from './pglite.ts';
 
 const m: Manifest = { ...loadEnv('sandbox-dev'), name: 'usage-test', cloudflare: { workerName: 'hana-id-api-usage-test', d1Name: 'hana-id-usage-test' } };
 // Placeholders of the shapes Neon gives (not a real endpoint, id, key or password).
@@ -32,7 +33,11 @@ let dir: string;
 let out: string[];
 let calls: { args: string[]; input?: string }[];
 let wranglerReply: (args: string[]) => WranglerResult;
-let db: PGlite;
+/** The owner's ledger, migrated once (./pglite.ts). */
+let template: PGlite;
+/** This test's clone of it, made when the test first reaches the owner's database (not every test does). */
+let ownerDb: Promise<PGliteInterface> | undefined;
+const db = (): Promise<PGliteInterface> => (ownerDb ??= template.clone());
 let ownerConnects: number;
 let roleLogins: string[];
 let seed: number;
@@ -75,9 +80,9 @@ async function fakeNeon(url: string, init: RequestInit): Promise<Response> {
   return json(404, { code: '', message: `no route ${method} ${path}` });
 }
 
-const ownerConn = (): SqlConn & { close(): Promise<void> } => ({
-  exec: async (sql) => void (await db.exec(sql)),
-  query: async <T>(sql: string, params: unknown[] = []) => (await db.query<T>(sql, params)).rows,
+const pgConn = (get: () => Promise<PGliteInterface>): SqlConn & { close(): Promise<void> } => ({
+  exec: async (sql) => void (await (await get()).exec(sql)),
+  query: async <T>(sql: string, params: unknown[] = []) => (await (await get()).query<T>(sql, params)).rows,
   close: async () => undefined,
 });
 
@@ -85,7 +90,7 @@ const ownerConn = (): SqlConn & { close(): Promise<void> } => ({
 async function connect(url: string): Promise<SqlConn & { close(): Promise<void> }> {
   if (url === OWNER) {
     ownerConnects++;
-    return ownerConn();
+    return pgConn(db);
   }
   const u = new URL(url);
   const role = u.username as Role;
@@ -123,7 +128,7 @@ const writeKey = (value = API_KEY, fileMode = 0o600) => {
 };
 const fileUrl = (role: Role) => new URL(readFileSync(join(dir, ROLE_FILES[role]), 'utf8').trim());
 const filePassword = (role: Role) => decodeURIComponent(fileUrl(role).password);
-const canLogin = async (role: string) => (await db.query<{ rolcanlogin: boolean }>('SELECT rolcanlogin FROM pg_roles WHERE rolname = $1', [role])).rows[0]?.rolcanlogin;
+const canLogin = async (role: string) => (await (await db()).query<{ rolcanlogin: boolean }>('SELECT rolcanlogin FROM pg_roles WHERE rolname = $1', [role])).rows[0]?.rolcanlogin;
 /** Everything that must never be printed or thrown: the key, the owner's password, every password Neon handed out. */
 const secrets = () => [API_KEY, 'owner-pw-not-real', ...Object.values(neonPasswords)];
 const expectClean = (text: string) => {
@@ -132,6 +137,13 @@ const expectClean = (text: string) => {
 };
 
 let stdout: string[];
+beforeAll(async () => {
+  template = new PGlite();
+  await applyMigrations(pgConn(async () => template), readMigrations(join(repoRoot, 'apps', 'api', 'migrations-usage')));
+}, PGLITE_HOOK_MS);
+afterAll(async () => {
+  await template.close();
+}, PGLITE_HOOK_MS);
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'usage-setup-'));
   dir = join(root, '.secrets', m.name);
@@ -146,8 +158,6 @@ beforeEach(async () => {
   sleeps = [];
   neonOverride = () => undefined;
   wranglerReply = () => ({ status: 0, stdout: '', stderr: '' });
-  db = new PGlite();
-  await applyMigrations(ownerConn(), readMigrations(join(repoRoot, 'apps', 'api', 'migrations-usage')));
   // The process's own stdout and stderr too: nothing may bypass deps.log.
   stdout = [];
   vi.spyOn(process.stdout, 'write').mockImplementation((chunk: string | Uint8Array) => (stdout.push(String(chunk)), true));
@@ -156,10 +166,11 @@ beforeEach(async () => {
 afterEach(async () => {
   vi.restoreAllMocks();
   rmSync(root, { recursive: true, force: true });
-  await db.close();
-});
+  await (await ownerDb)?.close();
+  ownerDb = undefined;
+}, PGLITE_HOOK_MS);
 
-describe('usage-setup roles', () => {
+describe('usage-setup roles', PGLITE, () => {
   it('prints its plan (replace, the Hyperdrive warning) and changes nothing without --yes', async () => {
     writeKey();
     await run(['roles']);
@@ -204,9 +215,9 @@ describe('usage-setup roles', () => {
     }
     // SQL set only a throwaway (Neon's reset needs a role with a password, D403 amended); the files hold Neon's
     // passwords, never the throwaway, and the throwaway is printed nowhere.
-    expect((await db.query<{ n: number }>("SELECT count(*)::int AS n FROM pg_authid WHERE rolname LIKE 'usage_%' AND rolpassword IS NOT NULL")).rows[0]!.n).toBe(2);
+    expect((await (await db()).query<{ n: number }>("SELECT count(*)::int AS n FROM pg_authid WHERE rolname LIKE 'usage_%' AND rolpassword IS NOT NULL")).rows[0]!.n).toBe(2);
     for (const role of ROLE_NAMES) {
-      const stored = (await db.query<{ p: string }>('SELECT rolpassword AS p FROM pg_authid WHERE rolname = $1', [role])).rows[0]!.p;
+      const stored = (await (await db()).query<{ p: string }>('SELECT rolpassword AS p FROM pg_authid WHERE rolname = $1', [role])).rows[0]!.p;
       expect(stored).toMatch(/^(SCRAM-SHA-256\$|md5)/u); // PGlite keeps a hash of the throwaway, not Neon's password
       expect(filePassword(role)).not.toMatch(/^[0-9a-f]{64}$/u);
     }
@@ -275,7 +286,7 @@ describe('usage-setup roles', () => {
 
   it('refuses when the roles don’t exist yet (usage-migrate first), resetting nothing', async () => {
     writeKey();
-    await db.exec('DROP OWNED BY usage_admin; DROP ROLE usage_admin');
+    await (await db()).exec('DROP OWNED BY usage_admin; DROP ROLE usage_admin');
     await expect(run(['roles', '--yes'])).rejects.toThrow(/role usage_admin doesn't exist on usage-test's ledger: run usage-migrate usage-test --yes first/u);
     expect(requests.filter((r) => r.method === 'POST')).toEqual([]);
     expect(await canLogin('usage_writer')).toBe(false);
@@ -364,7 +375,7 @@ describe('usage-setup roles', () => {
     expectClean(String(second));
   });
 
-  it('a failed reset after the throwaway’s COMMIT sets the roles not reset NOLOGIN again; the reset one keeps LOGIN (D411)', async () => {
+  it('a failed reset after the throwaway’s COMMIT sets the roles not reset NOLOGIN again; the reset one keeps LOGIN (D412)', async () => {
     writeKey();
     neonOverride = (method, path) => (method === 'POST' && path.includes('usage_admin') ? json(500, { code: 'X', message: 'nope' }) : undefined);
     const err = await run(['roles', '--yes']).catch((e: Error) => e);
@@ -427,7 +438,7 @@ describe('rolePasswordProblem / readRoleUrl', () => {
   });
 });
 
-describe('usage-setup hyperdrive', () => {
+describe('usage-setup hyperdrive', PGLITE, () => {
   const ID_W = '0123456789abcdef0123456789abcdef';
   const ID_A = 'fedcba9876543210fedcba9876543210';
   const ACCOUNT = '0123456789abcdef0123456789abcdef'.split('').reverse().join('');

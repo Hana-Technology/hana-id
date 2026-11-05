@@ -5,7 +5,7 @@
 //                .secrets/<env>/neon.json), have Neon's API reset each role's password (Neon generates it; D403) and
 //                write each role's URL with it to .secrets/<env>/neon-usage-*.url, replacing the file
 //   hyperdrive   create the two Hyperdrive configs (caching disabled) from those URLs through Cloudflare's API, the
-//                password only in the HTTPS body (D411), and print their ids (not secret)
+//                password only in the HTTPS body (D412), and print their ids (not secret)
 //   user-id-key  generate USER_ID_KEY (32 random bytes, base64) into .secrets/<env>/user-id-key and set it as the
 //                API Worker's secret through wrangler's stdin
 //
@@ -16,9 +16,9 @@
 // accepts only plain-text passwords (not the SCRAM verifiers D224 first sent), so Neon generates them: no role
 // password travels in SQL, an argument or an environment variable, only in the HTTPS answer to Neon's API call and, for
 // `hyperdrive`, in the HTTPS body of Cloudflare's (never `wrangler hyperdrive create --connection-string`, whose
-// argument any local process can read; D411, mainnet-readiness 4.18). The one SQL password is `roles`' throwaway
+// argument any local process can read; D412, mainnet-readiness 4.18). The one SQL password is `roles`' throwaway
 // (random, never stored or printed, replaced by the reset within seconds); a role whose reset doesn't happen after
-// the throwaway's COMMIT is set NOLOGIN again, best effort (D411).
+// the throwaway's COMMIT is set NOLOGIN again, best effort (D412).
 import { spawnSync } from 'node:child_process';
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -53,7 +53,7 @@ export const ROLES = ['usage_writer', 'usage_admin'] as const;
 export type LedgerRole = (typeof ROLES)[number];
 export const ROLE_FILES: Record<LedgerRole, string> = { usage_writer: 'neon-usage-writer.url', usage_admin: 'neon-usage-admin.url' };
 export const USER_ID_KEY_FILE = 'user-id-key';
-/** The Cloudflare API token `hyperdrive` uses (one line, 0600): an account token with Hyperdrive Edit only (D411). */
+/** The Cloudflare API token `hyperdrive` uses (one line, 0600): an account token with Hyperdrive Edit only (D412). */
 export const CLOUDFLARE_HYPERDRIVE_TOKEN_FILE = 'cloudflare-hyperdrive-token';
 /** The permission's name in the dashboard's token form (the API reference calls it "Hyperdrive Write"). */
 export const HYPERDRIVE_PERMISSION = 'Account › Hyperdrive › Edit';
@@ -229,7 +229,7 @@ export async function usageSetup(argv: readonly string[], deps: UsageSetupDeps):
 type Conn = SqlConn & { close(): Promise<void> };
 
 /**
- * `hyperdrive` (D411): both configs through Cloudflare's API, each role's password only in the HTTPS body (Cloudflare
+ * `hyperdrive` (D412): both configs through Cloudflare's API, each role's password only in the HTTPS body (Cloudflare
  * keeps it write-only). A POST whose answer is lost isn't sent again (CloudflareApi): the next run finds the name taken.
  */
 async function hyperdriveCommand(m: Manifest, dir: string, shown: (f: string) => string, apply: boolean, accountFlag: string | undefined, deps: UsageSetupDeps): Promise<void> {
@@ -386,7 +386,7 @@ async function rolesCommand(m: Manifest, dir: string, shown: (f: string) => stri
     } catch (e) {
       const done = ROLES.slice(0, i);
       const note = done.length ? ` (${done.join(' and ')} already reset, its file written)` : '';
-      // The roles not reset still have LOGIN with the throwaway password: take LOGIN away again (D411).
+      // The roles not reset still have LOGIN with the throwaway password: take LOGIN away again (D412).
       const lock = await lockRoles(owner, ROLES.filter((r) => !reset.has(r)), deps, (x) => scrub(redact(x, owner), [key, ownerPassword, ...urls, ...passwords]));
       fail(new Error(`${e instanceof Error ? e.message : String(e)}${note}. Running roles --yes again resets both.${lock ? ` ${lock}` : ''}`));
     }

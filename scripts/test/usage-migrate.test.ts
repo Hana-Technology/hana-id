@@ -5,14 +5,14 @@ import { PGlite } from '@electric-sql/pglite';
 import { repoRoot } from '@hana-id/env';
 import { afterEach, describe, expect, it } from 'vitest';
 import { applyMigrations, ownerUrlProblem, pendingMigrations, readMigrations, redact, type SqlConn, usageMigrate } from '../lib/usage-migrate.ts';
+import { PGLITE } from './pglite.ts';
 
 const REPO_MIGRATIONS = join(repoRoot, 'apps', 'api', 'migrations-usage');
 // A placeholder of the shape Neon gives (not a real endpoint or password).
 const URL_OK = 'postgresql://neondb_owner:not-a-real-password@ep-quiet-sky-a1b2c3d4.ap-southeast-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require';
 
-// Each PGlite test boots its own Postgres (WASM): ~1 s alone, but over vitest's 5 s default when `pnpm -r test` runs
-// every package's suite at once. The PGlite describes take the budget apps/api's PGlite suite has (vitest.usage.config.ts).
-const PGLITE = { timeout: 30_000 };
+// Each PGlite test boots its own Postgres from nothing (the migrations are what's under test): the PGlite describes
+// take the PGlite budget (./pglite.ts).
 
 const conn = (db: PGlite): SqlConn & { close(): Promise<void> } => ({
   exec: async (sql) => void (await db.exec(sql)),

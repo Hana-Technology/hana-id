@@ -81,7 +81,7 @@ keywords = ["napi_"]
 # .secrets/<env>/council/<account>.json included), .dev.vars, the relayer and keys-updater key files, the watchdog's
 # secrets file, the vault KEK files, the identity token's and the email issuer's key files, the ledger's Neon files (neon.json,
 # the role URLs, the Neon API key neon-api-key, D403), the Cloudflare API tokens cloudflare-access-token (D409) and
-# cloudflare-hyperdrive-token (D411),
+# cloudflare-hyperdrive-token (D412),
 # wherever they are. All gitignored; this catches `git add -f` and copies. (A Cloudflare token's content is a plain
 # 40-character string with no prefix of its own, too generic for a content rule; gitleaks' default `cloudflare-api-key`
 # rule catches it next to the word "cloudflare".)

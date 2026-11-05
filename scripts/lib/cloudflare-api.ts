@@ -1,6 +1,6 @@
 // Cloudflare's v4 API (https://api.cloudflare.com/client/v4) with a token read from a file: the calls
 // `access-setup <env>` makes to Zero Trust Access (D409; endpoints and permissions in lib/access-setup.ts) and the
-// Hyperdrive configs `usage-setup <env> hyperdrive` creates (D411, lib/usage-setup.ts).
+// Hyperdrive configs `usage-setup <env> hyperdrive` creates (D412, lib/usage-setup.ts).
 //
 // The token is read from .secrets/<env>/<its file> (0600) and goes only into the Authorization header of
 // an in-process fetch: never an argument or environment variable of a child process, never printed. No response body

@@ -1,5 +1,5 @@
 // admin.ts support:lookup: the Support ID lookup for Hana staff at the terminal (batch C15; D96, D144, D276 as amended
-// by D346, D384, D387): the same answer as the admin console's `POST /api/support/lookup` (console-core support.ts),
+// by D346, D394, D397): the same answer as the admin console's `POST /api/support/lookup` (console-core support.ts),
 // read the way `user:find` reads (D316): the wallet directory and the app rows from the API's D1 with the private
 // executor (lib/d1.ts apiPrivateD1Execute: a code or an id never goes in a process argument), each identity's address
 // from the email issuer's D1 when the env has one, and the usage ledger as `usage_admin` over
@@ -13,7 +13,7 @@
 // in the vault's browser storage).
 //
 // Read only. Like user:find, this is the operator's path (wrangler and Neon credentials of their own), printed to this
-// terminal only: never redirect it to a file outside .secrets/. The admin console's path is the audited one (D386).
+// terminal only: never redirect it to a file outside .secrets/. The admin console's path is the audited one (D396).
 import { createHash } from 'node:crypto';
 import {
   SUPPORT_CHANGES_MAX,

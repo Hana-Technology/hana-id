@@ -196,7 +196,7 @@ export class StaffRpc extends WorkerEntrypoint<Env> {
       const extra = Object.keys(i.details).find((k) => !allowed.includes(k));
       if (extra) throw new RpcRefusal('bad_request', `details.${extra} is not recorded for ${i.action}`);
       // A Support ID lookup is about an end user, not an org's act: never an org's row, so no partner's audit view or
-      // feed group can show it (C15, D386).
+      // feed group can show it (C15, D396).
       if (i.action === 'support.lookup' && i.orgId !== undefined) throw new RpcRefusal('bad_request', 'support.lookup is recorded without an org');
       try {
         await auditInsert(this.db, entry(w, i.action, { orgId: i.orgId ?? null, target: i.target ?? null, details: i.details })).run();

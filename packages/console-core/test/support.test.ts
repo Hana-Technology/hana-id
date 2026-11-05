@@ -1,4 +1,4 @@
-// The Support ID lookup's shared pieces (support.ts; batch C15, D384–D387): what a lookup starts from, the RPC and BFF
+// The Support ID lookup's shared pieces (support.ts; batch C15, D394–D397): what a lookup starts from, the RPC and BFF
 // inputs (the ticket is stored, so never an address), the ledger rows' mapping (never a uid), and how the ledger part
 // joins the directory part, degrading to "ledger unavailable".
 import { describe, expect, it } from 'vitest';

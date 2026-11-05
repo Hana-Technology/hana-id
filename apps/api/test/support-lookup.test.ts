@@ -1,4 +1,4 @@
-// The Support ID (batch C15; D96, D144, D276 as amended by D346, D384, D385): the `supportId` the session answers
+// The Support ID (batch C15; D96, D144, D276 as amended by D346, D394, D395): the `supportId` the session answers
 // carry (/v1/login, /v1/sessions), always the code the wallet directory stores for the same user, and the staff lookup's
 // hot-DB part, AdminRpc.supportLookup / userShares. Partners get neither the lookup nor anything beyond the code.
 import { SUPPORT_MATCHES_MAX, formatSupportId, internalIdOf, supportCodeOf, supportIdOf, uid as uidOf } from '@hana-id/console-core';

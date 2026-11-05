@@ -1,4 +1,4 @@
-// The Support ID lookup (batch C15; D96, D144, D276 as amended by D346, D384–D387; docs/batch-c-spec.md "Support ID
+// The Support ID lookup (batch C15; D96, D144, D276 as amended by D346, D394–D397; docs/batch-c-spec.md "Support ID
 // lookup"): what the API's `AdminRpc.supportLookup` / `userShares`, the admin Worker's `POST /api/support/lookup` and the
 // CLI's `admin <env> support:lookup` agree on. Staff only: no partner reaches any of it (the partner console shows a
 // user's Support ID, never a lookup, D310, D346).

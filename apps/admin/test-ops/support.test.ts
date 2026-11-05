@@ -1,4 +1,4 @@
-// The Support ID lookup's ledger reads (batch C15, D384, D385; console-core support.ts) on the real migrations as
+// The Support ID lookup's ledger reads (batch C15, D394, D395; console-core support.ts) on the real migrations as
 // usage_admin: a uid's ok login, session and derive events over the window, newest first and capped; the request IDs'
 // events whatever their outcome, each marked whether it carries a match's uid; never the uid itself. The indexes they
 // read are Neon 0007's (`events_uid_at`, the primary key's request_id), so no migration of C15's own (D362).

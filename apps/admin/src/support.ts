@@ -1,5 +1,5 @@
 // The staff Support ID lookup (batch C15; docs/batch-c-spec.md "Support ID lookup"; D96, D144, D276 as amended by D346,
-// D384–D386): the backend of the admin console's lookup screen, which is built after C8b (the Users screen and
+// D394–D396): the backend of the admin console's lookup screen, which is built after C8b (the Users screen and
 // DirectoryRpc on the issuer) merges.
 //
 //   POST /api/support/lookup {query, ticket, requestIds?, days?}
@@ -12,7 +12,7 @@
 //       haven't expired, the apps' changes), each match's ok login/session/derive events, the request IDs' events,
 //       and `ledger: {available}`.
 //
-// Order (D386): (1) the audit row (`StaffRpc.recordStaffAction`, `support.lookup`, org-less: the staff email, the query
+// Order (D396): (1) the audit row (`StaffRpc.recordStaffAction`, `support.lookup`, org-less: the staff email, the query
 // as given, the ticket, the request-ID count and the window), and nothing is read when it can't be written; (2) the
 // hot-DB part (`AdminRpc.supportLookup`); (3) the ledger part as `usage_admin` over USAGE_DB. Without the binding (a dev
 // env with usage capture off, as sandbox-dev today) or when Neon doesn't answer, the answer still comes with the

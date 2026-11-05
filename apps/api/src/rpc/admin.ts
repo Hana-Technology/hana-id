@@ -7,7 +7,7 @@
 // Built in batch C5; batch C14 adds the read-only `governance` (the `GET /v1/governance` snapshot) and `pendingUpgrades`
 // (the pending-upgrades page, D86); batch C13 the retention methods `purgeAudit`, `deletedApps` and `purgeDirectory` (the
 // admin Worker's monthly job only: a `system` actor, D360); batch C15 the Support ID lookup's hot-DB part,
-// `supportLookup` and `userShares` (staff only; the admin Worker audits before it calls and reads the ledger itself, D384).
+// `supportLookup` and `userShares` (staff only; the admin Worker audits before it calls and reads the ledger itself, D394).
 import {
   adminFindUsersInput,
   adminGetUserInput,
@@ -254,7 +254,7 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
     return runRpc(this.env, 'admin.findUsers', adminFindUsersInput, c, { actors: HANA }, ({ input, db, w }) => adminFindUsers(db, input, w.now));
   }
 
-  // ---- the Support ID lookup (batch C15; D96, D144, D276 as amended by D346, D384): staff only, read only ----
+  // ---- the Support ID lookup (batch C15; D96, D144, D276 as amended by D346, D394): staff only, read only ----
 
   /**
    * Every user a Support ID (any case, `HANA-` and dashes optional), User ID or internal id names, each with its scope's

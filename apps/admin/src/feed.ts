@@ -46,7 +46,7 @@ export const FEED_INIT_PAGES = 10;
 export const initKey = (key: string): string => `${key}.init`;
 
 export const SKIPPED_CHANGE_KINDS: ReadonlySet<string> = new Set(['origin.proposed', 'policy.proposed', 'raw_sign.proposed', 'change.announced']);
-/** Never emailed: notices' own bookkeeping, emailed-link cancels, and staff Support ID lookups (C15: never mailed, D386). */
+/** Never emailed: notices' own bookkeeping, emailed-link cancels, and staff Support ID lookups (C15: never mailed, D396). */
 export const SKIPPED_AUDIT_ACTIONS: ReadonlySet<string> = new Set(['invite.notified', 'owner_grant.notified', 'change.link_cancel', 'support.lookup']);
 
 export const emailedChange = (r: AppChange): boolean => !SKIPPED_CHANGE_KINDS.has(r.kind);

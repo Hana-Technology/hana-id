@@ -1,4 +1,4 @@
-// The staff Support ID lookup (batch C15, D384–D386): POST /api/support/lookup in the admin Worker, over the real API
+// The staff Support ID lookup (batch C15, D394–D396): POST /api/support/lookup in the admin Worker, over the real API
 // (AdminRpc.supportLookup) and the real console (StaffRpc.recordStaffAction); the ledger reads themselves run on PGlite
 // (test-ops/support.test.ts). Staff only, CSRF-checked, the audit row before any read, and the ledger part degrading to
 // "ledger unavailable" without USAGE_DB (sandbox-dev's capture is off).

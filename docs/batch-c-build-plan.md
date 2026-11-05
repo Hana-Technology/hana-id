@@ -10,7 +10,7 @@ page; D330–D338, D344) and C12 (reports and statements; D320–D329) merged, n
 D343, D350–D358) merged into `develop`, not deployed; the partner screens over C12's and C14's routes (usage,
 statements, pending upgrades; D370–D374) built on `feat/console-reports-upgrades`, not merged; C13 (retention; D360–D369) built on `feat/batch-c-13`, tests green, not merged, not deployed (its setup is
 `docs/operations.md` "Retention", at M6); C15 (the Support ID lookup's backend, the session answers' `supportId`, the vault's
-`hana.supportId` and the approval popup; D384–D387, D393, D276 confirmed and amended) built on `feat/batch-c-15`, tests green, not merged,
+`hana.supportId` and the approval popup; D394–D397, D393, D276 confirmed and amended) built on `feat/batch-c-15`, tests green, not merged,
 not deployed, its admin screen left for after C8b; C16–C17 not built. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
 batches that each merge into `develop` on their own: tests green, the docs they change updated, and nothing a partner,
 a user or staff can reach that is half-wired. Ordered by dependency; the spec's "Build order" steps are noted per
@@ -62,7 +62,7 @@ Batches merge one at a time. Deploys happen at the milestones at the end; a merg
 | C12 | Reports, settlement, rates, nonce check, statements (CSV, PDF, on-screen), exports, rejection-rate alert | 6 (part) | C4, C8, C11 |
 | C13 | Retention: monthly purge job and screen, `purgeAudit` RPCs, `uid:erase`, console housekeeping purges | 6 (part) | C12 |
 | C14 | Admin "Security & monitoring" view and the pending-upgrades page (governance D83, D86) | — | C8 |
-| C15 | Support ID lookup (D96; D276 confirmed and amended, D384–D387) | — | C4 (the screen: C8b) |
+| C15 | Support ID lookup (D96; D276 confirmed and amended, D394–D397) | — | C4 (the screen: C8b) |
 | C16 | CLI completion and cleanup: `scope:register --owners-from-org`, `owner:relay`, `app:*` retirement plan | 7 | C9 |
 | C17 | Testnet smoke on sandbox-dev | 8 | all |
 
@@ -420,11 +420,11 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
 - **Already built for it** (D310–D317, `feat/wallet-directory`): `AdminRpc.listUsers` / `getUser` / `findUsers` over
   the API's wallet directory (user ids, Support IDs, identities with subs, wallets); the screen joins each identity's
   `directoryKey` with `DirectoryRpc` for the email.
-- **Since C15** (D276 as amended 2026-11-05, D384): nothing fills `user_email_apps.uid` (code → user is the wallet
+- **Since C15** (D276 as amended 2026-11-05, D394): nothing fills `user_email_apps.uid` (code → user is the wallet
   directory), so issuer migration 0003 needn't add it, and `DirectoryRpc` needs no `byUid`. The lookup screen is C8b's
   follow-up over C15's `POST /api/support/lookup` (C15 "Screen: after C8b merges").
 
-## C15. Support ID lookup (D96; D276 confirmed and amended 2026-11-05, D384–D387; spec §Users and Support ID)
+## C15. Support ID lookup (D96; D276 confirmed and amended 2026-11-05, D394–D397; spec §Users and Support ID)
 
 - **Status** (2026-11-05): built on `feat/batch-c-15`, tests green, not merged, not deployed; the admin screen waits
   for C8b. The design the user confirmed ("yes go ahead with C15") is D276's 2026-11-05 amendment: code → user through
@@ -436,18 +436,18 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
     `supportLookupInput`, `userSharesInput`, `supportLookupBody` (with the required `ticket`), the answer types, the
     two ledger reads (`SUPPORT_ACTIVITY_SQL`, `SUPPORT_REQUESTS_SQL`) and `withSupportLedger` ("ledger unavailable").
   - API: `AdminRpc.supportLookup({query, days?})` and `AdminRpc.userShares({appId, path})`
-    (`apps/api/src/directory/support.ts`, D384); `supportId` in the `/v1/login` and `/v1/sessions` answers
+    (`apps/api/src/directory/support.ts`, D394); `supportId` in the `/v1/login` and `/v1/sessions` answers
     (`directory/store.ts` `sessionSupportId`, the directory's own derivation; `link-precheck.ts` `autoLinkRoot` for a
-    linked login, D385).
+    linked login, D395).
   - Vault and SDK: the code kept with the session (its IndexedDB record) across reloads; `hana_status`,
     `hana_login` and `ready` carry it for an SDK of 0.2.0 or later (`hana.supportId`, `supportIdChanged`,
     `useHana().supportId`; the lockstep SDK version moved to 0.2.0, D393); the approval popup's account line; the
     demo's "Copy diagnostics" (`docs/integration.md`).
   - Admin Worker: `POST /api/support/lookup` (`apps/admin/src/support.ts`): the audit row first through
-    `StaffRpc.recordStaffAction` (`support.lookup`, org-less, never emailed; D386), then `AdminRpc.supportLookup`, then
+    `StaffRpc.recordStaffAction` (`support.lookup`, org-less, never emailed; D396), then `AdminRpc.supportLookup`, then
     the ledger over `USAGE_DB` (`LedgerStore.support`), degrading to `ledger: {available: false, reason}`.
   - CLI: `admin <env> support:lookup <HANA-XXXX-XXXX | u1_… | hu_… | -> [--request-id …] [--days 30] [--json]
-    [--remote]` (`scripts/lib/admin-support.ts`, D387): the same report from the API's D1, the issuer's D1 and the
+    [--remote]` (`scripts/lib/admin-support.ts`, D397): the same report from the API's D1, the issuer's D1 and the
     ledger as `usage_admin` (`.secrets/<env>/neon-usage-admin.url`).
 - **Tests**: `apps/api/test/support-lookup.test.ts` (the answers' `supportId` equals the stored code and the identity
   token sub's short form; a member's and a linked login's root; left out without a key or a confirmed standing; the
@@ -558,7 +558,7 @@ Run from the main checkout; every file in `.secrets/` is 0600 in a 0700 director
    for the app; no new store; a short spec section before C15. **Confirmed as D144; the section is written
    (2026-11-04, proposed D276, spec §Users and Support ID):** logins and sessions by uid, errors by request ID (the
    ledger has no uid on failures), live shares from `vault_shares`, and, after D269, the directory reached through
-   a `uid` column. **Built in C15 (2026-11-05, D276 as amended, D384–D387)**, through the wallet directory instead of
+   a `uid` column. **Built in C15 (2026-11-05, D276 as amended, D394–D397)**, through the wallet directory instead of
    a `uid` column (D346).
 5. **`ownerGrantDelayMs`**: kept as its own manifest field (the spec's), with `appChangeDelayMs`'s bounds and the
    same production minimum, rather than reusing `appChangeDelayMs`. Recommended as built in C1.

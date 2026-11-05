@@ -2,7 +2,7 @@
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
 Last verified against code: 2026-11-05 (branch `feat/batch-c-15`: "Wallet directory" step 5, the Support ID in the
-session answers and the vault; the new "Support ID lookup", D384–D387); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-05 (branch `fix/e2e-flakes`: the login's step 2, the session key's retry on WebKit Linux's
+session answers and the vault; the new "Support ID lookup", D394–D397); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-05 (branch `fix/e2e-flakes`: the login's step 2, the session key's retry on WebKit Linux's
 Ed25519 `OperationError`, D381); 2026-11-04 (branch `feat/batch-c-13`: retention and the erasure path in Status, Components
 (the usage ledger and admin Worker rows) and "Data stores" (what is purged when, D360–D369)); 2026-11-04 (branch `feat/console-reports-upgrades`: the partner console's usage, statement and pending-upgrades screens, D370–D374); 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342; the partner console's fresh sign-in and write paths, D343, D350–D358); 2026-11-04 (branch `feat/user-id-identity-sub`: the wallet directory's three ids and the record's session signature, D346 and the D311/D313 amendments: Status, "Wallet directory" steps 1, 2 and 4, "Data stores"' D1 row, the Glossary); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: D347, a closed popup is
 `login_cancelled`, in "Login, one transaction" after step 4; D348's Google-only screen after a cancel; a cancel on token_first's Google
@@ -512,7 +512,7 @@ Code: `packages/core/src/wallet-record.ts`, `packages/web/src/vault/wallet-recor
    for their org's scopes only, with the User ID (`u1_…`), Support ID, times, account kinds and wallets, never the
    internal id, a sub, an identity key or an email (D315, D346). The CLI: `admin user:list` / `user:find` with each
    identity's user (all three ids) and wallets, `user:find --address` / `--user` (D316).
-5. **The Support ID shown to the user (C15, D385).** The `/v1/login` and `/v1/sessions` answers carry `supportId`,
+5. **The Support ID shown to the user (C15, D395).** The `/v1/login` and `/v1/sessions` answers carry `supportId`,
    computed with the directory's own `directoryUser` from the session's account root (for `/v1/sessions` the chain's
    session path; for `/v1/login` the standing read or, with an automatic link, the root the link precheck judged), so
    it is the code `end_users.support_code` stores; absent without either key or without a confirmed standing. The
@@ -520,7 +520,7 @@ Code: `packages/core/src/wallet-record.ts`, `packages/web/src/vault/wallet-recor
    `hana_login` and `ready` to an SDK of 0.2.0 or later (`hana.supportId`; older SDKs' validators refuse an unknown
    key, D393) and on the approval popup's account line (`docs/integration.md`); it never computes one.
 
-### Support ID lookup (staff; C15, D276 as amended, D384–D387)
+### Support ID lookup (staff; C15, D276 as amended, D394–D397)
 
 Code: `packages/console-core/src/support.ts`, `apps/api/src/directory/support.ts`, `apps/admin/src/support.ts`,
 `scripts/lib/admin-support.ts`. No migration of its own.

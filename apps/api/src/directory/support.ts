@@ -1,6 +1,6 @@
 // The hot-DB part of the staff Support ID lookup (batch C15; console-core support.ts; D96, D144, D276 as amended by
-// D346, D384): `AdminRpc.supportLookup` and `AdminRpc.userShares`. Read only, staff only (a `hana` actor; the admin
-// Worker records the audit row before it calls, D386). The usage ledger's part (logins, sessions, derives by uid; errors
+// D346, D394): `AdminRpc.supportLookup` and `AdminRpc.userShares`. Read only, staff only (a `hana` actor; the admin
+// Worker records the audit row before it calls, D396). The usage ledger's part (logins, sessions, derives by uid; errors
 // by request ID) is read by the admin Worker and the CLI as `usage_admin`, never here: the API's ledger role can only
 // write (D73).
 //

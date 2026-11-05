@@ -1,8 +1,8 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
 Last verified against code: 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
-answers, D385; `AdminRpc.supportLookup` / `userShares`; the admin Worker's `POST /api/support/lookup`; the
-`support.lookup` staff action; D384–D386); 2026-11-04 (branch `fix/admin-cron-budget`: the admin Worker's two crons count every
+answers, D395; `AdminRpc.supportLookup` / `userShares`; the admin Worker's `POST /api/support/lookup`; the
+`support.lookup` staff action; D394–D396); 2026-11-04 (branch `fix/admin-cron-budget`: the admin Worker's two crons count every
 outbound call (the connection, every RPC, every email and NEAR read) in their 40, at most 30 RPCs, each job's share
 logged; D380); 2026-11-04 (branch `feat/batch-c-13`: "Usage ledger retention functions" (0007),
 `AdminRpc.purgeAudit` / `deletedApps` / `purgeDirectory`, `StaffRpc.purgeAudit`, the admin Worker's `GET /api/retention`
@@ -396,7 +396,7 @@ The scope is always the app's (D1). Checks after the gate and shape (`400 bad_re
 5. The app's relay quota (`429 rate_limited` + `retry-after`), counted only here.
 
 → `200 {"result": {"path", "scope_id", "expires_at_ms", "max_uses", "used"}, "nearTx", "requestId", "supportId"?}`.
-`supportId` (C15, D385): the user's Support ID `HANA-XXXX-XXXX`, from the account root of the new session's `path`,
+`supportId` (C15, D395): the user's Support ID `HANA-XXXX-XXXX`, from the account root of the new session's `path`,
 computed exactly as the wallet directory stores it (`directory/store.ts` `sessionSupportId`); absent when
 `USER_ID_KEY` or `IDENTITY_SUB_KEY` is missing or malformed. Never the User ID, a sub or the internal id. Usage event:
 `session` (uid from the new session's `path`).
@@ -492,7 +492,7 @@ the limiter can't be reached; nothing is relayed in either case.
 ```
 
 `session` is informational; `timings` is there for `pk_test_` apps only (see "Timings" below). `supportId` (C15,
-D385; optional, additive) is the user's Support ID from the account root whose path the session opens: a member's
+D395; optional, additive) is the user's Support ID from the account root whose path the session opens: a member's
 root, or with an automatic link the root the link precheck judged (case A: the link identity's account root; B and C:
 the session identity's); the same code `end_users.support_code` holds. Absent when either key is missing or malformed,
 or when the login's `get_identity` standing read failed (the fail-open guess). The vault keeps it with the session
@@ -1102,7 +1102,7 @@ no budget, plus:
 | `governance` (C14) | `{}` → `{governance}`: the whole `GET /v1/governance` snapshot (above; the same isolate cache, so one read serves the endpoint and the RPCs for 10 s), for the "Security & monitoring" view. `hana` only. `near_unavailable` when a view fails or has an unknown shape (nothing partial) |
 | `pendingUpgrades` (C14) | `{}` → `{pendingUpgrades}`: the same view as `ConsoleRpc.pendingUpgrades`, for the admin's page. `hana` only |
 | `listUsers`, `getUser`, `findUsers` (W) | The wallet directory for staff (D315): `listUsers({orgId?, scopeId?, cursor?, limit ≤ 200})`, `getUser({userId})` or `getUser({internalId})`, exactly one (`not_found`), `findUsers({query, provider?})` (a Stellar or EVM address: every user listing it; a User ID `u1_…`; an internal id `hu_…`, any case; a Support ID, any case, with or without `HANA-` and dashes: every user it is the short form of; else a sub, which `provider` narrows and forces), at most 50. A `StaffUser` is `{userId, supportId, internalId, scopeId, orgId, createdAt, lastSeenAt, identities: [{provider, sub, identityKey, role, status, effectiveAt, firstSeenAt, observedAt, directoryKey}], wallets: [{chain, address, keyIndex, firstSeenAt, lastUsedAt, sharedWith}]}`. `status` is read at answer time (a pending member past `effectiveAt` is `active`). The email isn't here: `directoryKey` `{provider, sub}` is the key for D275's `DirectoryRpc` (C8b) |
-| `supportLookup({query, days?})` (C15) | `hana` only, read only (D384). `query`: a Support ID (any case, `HANA-` and dashes optional), a User ID (`u1_…`) or an internal id (`hu_…`), else `bad_request` (a wallet or a sub goes through `findUsers` first); `days` 1–731, 30 by default → `{query: {kind, …}, since, truncated, matches: [{user: StaffUser, apps: [{appId, name, orgId, environment, persistence, deletedAt}], shares: [{appId, keyIndex, createdAt, idleUntil, absExpiresAt, revokedAt, live}], changes: AppChange[]}]}`: every directory user the query names (at most 10 in full, newest first by last seen; `truncated` when more share the code), the scope's apps (deleted ones too), the user's `vault_shares` not past `abs_expires_at` (the account root's path at key index 0 and each key index its wallets show; never a share id, key or counter) and the scope's apps' `app_changes` since `since` (at most 50, newest first). No ledger rows: the admin Worker and the CLI read those as `usage_admin` |
+| `supportLookup({query, days?})` (C15) | `hana` only, read only (D394). `query`: a Support ID (any case, `HANA-` and dashes optional), a User ID (`u1_…`) or an internal id (`hu_…`), else `bad_request` (a wallet or a sub goes through `findUsers` first); `days` 1–731, 30 by default → `{query: {kind, …}, since, truncated, matches: [{user: StaffUser, apps: [{appId, name, orgId, environment, persistence, deletedAt}], shares: [{appId, keyIndex, createdAt, idleUntil, absExpiresAt, revokedAt, live}], changes: AppChange[]}]}`: every directory user the query names (at most 10 in full, newest first by last seen; `truncated` when more share the code), the scope's apps (deleted ones too), the user's `vault_shares` not past `abs_expires_at` (the account root's path at key index 0 and each key index its wallets show; never a share id, key or counter) and the scope's apps' `app_changes` since `since` (at most 50, newest first). No ledger rows: the admin Worker and the CLI read those as `usage_admin` |
 | `userShares({appId, path})` (C15) | `hana` only. The `vault_shares` of `sha256(path)` in the app not past `abs_expires_at`, newest first, at most 100 → `{shares: [{createdAt, idleUntil, absExpiresAt, revokedAt}]}`; the path is hashed, never stored or logged |
 
 | `purgeAudit({before, limit ≤ 1000})` (C13) | `system` only. Deletes up to `limit` `app_changes` rows and up to `limit` `guarded_changes` rows older than `min(before, 60 months ago)` (SQLite's `unixepoch('now', '-60 months')`, the trigger's clock) → `{appChanges, guardedChanges}`. Kept whatever their age (D364): a live app's `migration.baseline` and the rows that end its values (`DRIFT_LEDGER_KINDS`, or a `parts` entry of one), while the app has a baseline, so drift detection never reports a value the baseline explains; open (`pending`, `active`) guarded changes of a live app, and closed ones an origin row still names. Every change of an app deleted 60 months ago goes |
@@ -1658,7 +1658,7 @@ Inputs are console-core's strict zod schemas (`packages/console-core/src/staff.t
 | `disableUser({userId, disabled})`, `freezeOrg({orgId, frozen})` | Revoke sessions as the spec's "Sessions" says. A freeze also pauses the org's pending memberships in the same batch (D343): open invites lose their notice (`token_hash`, `notified_at` cleared: the link stops working and must be announced again after the unfreeze), live grants still waiting lose their notice and clock (`notified_at`, `cancel_token_hash`, `owner_from` cleared: re-announced after the unfreeze, then the full delay); the hourly cron records no grant of a frozen org |
 | `auditSince({seq, limit ≤ 500})`, `queryAudit({filters, cursor?, limit ≤ 500})` | The feed (oldest first) and the staff screen's query (newest first; filters `orgId`, `appId`, `actorKind`, `actorId`, `action`, `from`, `to`); `seq`, the cursor and the times are safe integers (`bad_request` past 2^53 − 1) |
 
-| `recordStaffAction({orgId?, action, target?, details})` (C12, D327) | Hana only: the `audit_log` row of an admin act with no RPC write of its own: `statement.issued` (`month`, `csvSha256`, `pdfSha256`, `asOf`, `lines`), `ledger.exported` (`month`, `asOf`, `rows`, `sha256`), `rate.overridden` (`day`, `usdMicros`, `overrideId`), `support.lookup` (C15, D386: `by`, `ticket`, `requestIds`, `days`; org-less, an `orgId` is `bad_request`, so no partner audit view or feed shows it, and the feed never emails it); another detail key is `bad_request`; a repeat of (request id, action) is `already_applied` and writes nothing |
+| `recordStaffAction({orgId?, action, target?, details})` (C12, D327) | Hana only: the `audit_log` row of an admin act with no RPC write of its own: `statement.issued` (`month`, `csvSha256`, `pdfSha256`, `asOf`, `lines`), `ledger.exported` (`month`, `asOf`, `rows`, `sha256`), `rate.overridden` (`day`, `usdMicros`, `overrideId`), `support.lookup` (C15, D396: `by`, `ticket`, `requestIds`, `days`; org-less, an `orgId` is `bad_request`, so no partner audit view or feed shows it, and the feed never emails it); another detail key is `bad_request`; a repeat of (request id, action) is `already_applied` and writes nothing |
 
 | `purgeAudit({before, limit ≤ 1000})` (C13, D364) | `system` only (the admin Worker's monthly job). Deletes up to `limit` `audit_log` rows older than `min(before, 60 months ago)` (the table's trigger refuses a younger one anyway) and up to `limit` owner grants applied or cancelled that long ago (an open grant stays) → `{auditLog, ownerGrants}` |
 
@@ -1788,7 +1788,7 @@ ledger_unavailable`.
 Not yet: the Users screen (`/api/users/search`, `/get`: proposed D275, C8b) and the Support ID lookup's screen (it
 calls `POST /api/support/lookup`, after C8b).
 
-**The Support ID lookup (C15; D384–D386; `src/support.ts`).** `POST /api/support/lookup` `{query, ticket, requestIds?,
+**The Support ID lookup (C15; D394–D396; `src/support.ts`).** `POST /api/support/lookup` `{query, ticket, requestIds?,
 days?}` (console-core `supportLookupBody`, strict: `query` as `AdminRpc.supportLookup` takes it; `ticket` 1–64
 printable ASCII, no `@`, no leading or trailing space; up to 20 `requestIds` as the API's `x-request-id`; `days` 1–731,
 30 by default; else `400 bad_request`) → console-core `SupportLookupView`: `AdminRpc.supportLookup`'s answer plus

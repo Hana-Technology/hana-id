@@ -1,4 +1,4 @@
-// admin.ts support:lookup (lib/admin-support.ts; batch C15, D387) against the real migrations: the API's D1
+// admin.ts support:lookup (lib/admin-support.ts; batch C15, D397) against the real migrations: the API's D1
 // (node:sqlite, apps/api/migrations), the issuer's D1 (node:sqlite) and the usage ledger on PGlite as usage_admin. The
 // code typed any way, every match of a shared code, the shares, the apps' changes in the window, the ledger's events by
 // uid and by request ID, "ledger unavailable" without the ledger's file, the refusals, and the argument rules.

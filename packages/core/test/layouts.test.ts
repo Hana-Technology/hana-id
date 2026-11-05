@@ -21,7 +21,7 @@ import {
   vaultMessage,
   vaultPayload,
 } from '../src/layouts.ts';
-import { SESSION_KEYGEN_ATTEMPTS, newSessionKey, signCreate, signDerive, signRevoke, signVaultMessage, verifyEd25519 } from '../src/session.ts';
+import { SESSION_KEYGEN_ATTEMPTS, newSessionKey, sessionKeyFailure, signCreate, signDerive, signRevoke, signVaultMessage, verifyEd25519 } from '../src/session.ts';
 import { type Example, contractFixture, ed25519KeyFromSeed, readJson } from './helpers.ts';
 
 const fixture = contractFixture();
@@ -157,6 +157,33 @@ describe('session key', () => {
         .mockImplementation((() => Promise.reject(new DOMException('Unrecognized algorithm name', 'NotSupportedError'))) as typeof crypto.subtle.generateKey);
       await expect(newSessionKey()).rejects.toMatchObject({ name: 'NotSupportedError' });
       expect(spy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('D385: sessionKeyFailure classifies what newSessionKey threw', () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    it('no Ed25519 (NotSupportedError) is webcrypto_unsupported', () => {
+      expect(sessionKeyFailure(new DOMException('Unrecognized algorithm name', 'NotSupportedError'))).toEqual({ reason: 'webcrypto_unsupported', error: 'NotSupportedError' });
+    });
+
+    it('no WebCrypto at all (a TypeError, or crypto.subtle missing outside a secure context) is webcrypto_unsupported', () => {
+      expect(sessionKeyFailure(new TypeError("Cannot read properties of undefined (reading 'generateKey')"))).toEqual({ reason: 'webcrypto_unsupported', error: 'TypeError' });
+      vi.stubGlobal('crypto', { getRandomValues: crypto.getRandomValues.bind(crypto) });
+      expect(sessionKeyFailure(new Error('x'))).toEqual({ reason: 'webcrypto_unsupported', error: 'Error' });
+    });
+
+    it('D381’s OperationError (after the retries) and anything else is webcrypto_failed', () => {
+      expect(sessionKeyFailure(new DOMException('The operation failed for an operation-specific reason', 'OperationError'))).toEqual({ reason: 'webcrypto_failed', error: 'OperationError' });
+      expect(sessionKeyFailure(new DOMException('x', 'DataError'))).toEqual({ reason: 'webcrypto_failed', error: 'DataError' });
+      expect(sessionKeyFailure('a string')).toEqual({ reason: 'webcrypto_failed' });
+      expect(sessionKeyFailure(null)).toEqual({ reason: 'webcrypto_failed' });
+    });
+
+    it('passes only a plain identifier as the error name, never the message', () => {
+      const odd = Object.assign(new Error('secret-looking text'), { name: 'Not a name: <script>' });
+      expect(sessionKeyFailure(odd)).toEqual({ reason: 'webcrypto_failed' });
+      expect(JSON.stringify(sessionKeyFailure(new DOMException('secret-looking text', 'OperationError')))).not.toContain('secret');
     });
   });
 

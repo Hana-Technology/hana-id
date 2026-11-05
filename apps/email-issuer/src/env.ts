@@ -55,6 +55,11 @@ export interface Env {
   ADMIN_STAFF_EMAILS?: string;
   /** SendGrid's Event Webhook verification key (base64 SPKI, public). */
   SENDGRID_WEBHOOK_PUBLIC_KEY?: string;
+  /**
+   * The build id (D384, @hana-id/env/build-id): set only by the `deploy` script (`wrangler deploy --var
+   * HANA_BUILD:<id>`), never by `gen`; GET /v1/email/health reports it as `build`.
+   */
+  HANA_BUILD?: string;
 
   // ---- secrets ----
   /** RSA private JWK (JSON) of the active `hana` key: testnet only (D121). */

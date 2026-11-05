@@ -124,7 +124,7 @@ import { type Addresses, deriveAddresses, extractPrk } from '@hana-id/core/deriv
 import type { HanaEnv } from '../hana-env.ts';
 import type { VaultApi } from './api.ts';
 import { type Persistence, SESSION_TTL_CAP_MS, type VaultConfig } from './config.ts';
-import { VaultError, apiErrorToVault } from './errors.ts';
+import { VaultError, apiErrorToVault, sessionKeyError } from './errors.ts';
 import { type GoogleMatch, type IssuerApi, MatchBusy, type MatchRequest } from './issuer.ts';
 import { GOOGLE_CANCELLED_RELAY_ERROR, GOOGLE_EMAIL_FLOW, type GoogleEmailFlow } from '../auth/google.ts';
 import { type NearView, ckdResultOf } from './near.ts';
@@ -809,7 +809,11 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
     // while the user is at Google or types the code.
     const emailChain: Promise<EmailChain | 'unchecked'> | null = emailOn ? this.readEmailChain(emailAud).catch(() => 'unchecked' as const) : null;
 
-    const sessionKey = await newSessionKey();
+    // D385: a browser that can't make the key gets derive_failed with the reason, not api_unavailable.
+    const sessionKey = await newSessionKey().catch((e: unknown) => {
+      this.check();
+      throw sessionKeyError(e);
+    });
     this.check();
     const salt = randomBytes(32);
     const relayKey = randomBytes(32);
@@ -1510,7 +1514,11 @@ export class PendingLink extends PopupTask<MadeLink> {
     const epoch = account?.epoch ?? 0;
     const rootIk = identityKey(scopeId, root.provider, root.sub);
 
-    const sessionKey = await newSessionKey();
+    // D385: a browser that can't make the key gets derive_failed with the reason, not api_unavailable.
+    const sessionKey = await newSessionKey().catch((e: unknown) => {
+      this.check();
+      throw sessionKeyError(e);
+    });
     this.check();
     const salt = randomBytes(32);
     const relayKey = randomBytes(32);

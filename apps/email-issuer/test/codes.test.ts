@@ -350,6 +350,24 @@ describe('HTTP surface', () => {
     expect((await h.call('/v1/email/nope', {})).status).toBe(404);
   });
 
+  it('D384: GET /v1/email/health reports the env and the deployed build id (null when unstamped), open to any origin', async () => {
+    const { ISSUER_HEALTH_PATH } = await import('@hana-id/env/build-id');
+    expect(ISSUER_HEALTH_PATH).toBe('/v1/email/health');
+    const h = await harness();
+    const res = await h.call(ISSUER_HEALTH_PATH, undefined, { method: 'GET', origin: null });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('access-control-allow-origin')).toBe('*');
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual(['build', 'env', 'ok']);
+    expect(body).toMatchObject({ ok: true, build: null });
+    expect(body.env).toMatch(/^t-/u);
+    for (const [HANA_BUILD, build] of [['0485faa1c2d3-dirty', '0485faa1c2d3-dirty'], ['0485faa1c2d3', '0485faa1c2d3'], ['dev', null]] as const) {
+      const stamped = await harness({ env: { ...env, HANA_BUILD } });
+      expect(((await (await stamped.call(ISSUER_HEALTH_PATH, undefined, { method: 'GET', origin: null })).json()) as { build: unknown }).build).toBe(build);
+    }
+    expect((await h.call(ISSUER_HEALTH_PATH, {})).status).toBe(405);
+  });
+
   it('a misconfigured signer answers 503 and mints nothing', async () => {
     const { WorkerSecretSigner, SignerUnavailable } = await import('../src/signer.ts');
     await expect(WorkerSecretSigner.create(env.TEST_STANDBY_KEY, env.EMAIL_ACTIVE_KID)).rejects.toBeInstanceOf(SignerUnavailable);

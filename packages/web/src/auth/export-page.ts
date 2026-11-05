@@ -49,6 +49,8 @@ import {
   newAppKey,
   newSessionKey,
   parseWindowMessage,
+  type SessionKeyFailure,
+  sessionKeyFailure,
   randomBytes,
   relayIdFor,
   sessionNonce,
@@ -61,7 +63,7 @@ import type { AuthApi } from './api.ts';
 import { ChainLoginError, loginOnChain } from './chain-login.ts';
 import { ServerClock } from './clock.ts';
 import { type Dom, dom, errorView } from './dom.ts';
-import { PageError, apiErrorCode, errorMessage } from './errors.ts';
+import { PageError, apiErrorCode, errorMessage, sessionKeyText } from './errors.ts';
 import { appLogo } from './logo.ts';
 import type { NearReader } from './near-rpc.ts';
 import { PathCheckError, confirmPath } from '../path-check.ts';
@@ -521,8 +523,13 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
   async function prepare(opened: Window): Promise<void> {
     const ctx = context as WindowMessage<'hana:export-context'>;
     const a = app as AppConfig;
+    // D385: a browser that can't make the session key is told so, not just "could not start".
+    const keygen: { failure?: SessionKeyFailure } = {};
     try {
-      const sessionKey = await newSessionKey();
+      const sessionKey = await newSessionKey().catch((e: unknown) => {
+        keygen.failure = sessionKeyFailure(e);
+        throw e;
+      });
       const salt = randomBytes(SALT_BYTES);
       const relayKey = randomBytes(RELAY_KEY_BYTES);
       const relayReadKey = randomBytes(32);
@@ -560,7 +567,7 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
       }
       pending = { relayId, relayKey, relayReadKey, params, keyPair: sessionKey.keyPair, helloAccepted: false };
     } catch {
-      fail('derive_failed', 'The export could not start.');
+      fail('derive_failed', keygen.failure ? sessionKeyText(keygen.failure) : 'The export could not start.');
     }
   }
 

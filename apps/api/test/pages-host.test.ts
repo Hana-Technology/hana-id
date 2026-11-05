@@ -8,6 +8,7 @@ import authWorker from '../src/pages/auth-worker.ts';
 import { AUTH_PAGES, LOGO_PAGES, authPageMetaCsp } from '../../../packages/web/src/auth/pages.ts';
 import { ASSET_CSP, AUTH_LOGO_PATHS, AUTH_PAGE_PATHS, type AuthHostEnv, type VaultHostEnv } from '../src/pages/host.ts';
 import vaultWorker from '../src/pages/vault-worker.ts';
+import { BUILD_PATH } from '../src/build.ts';
 import { ORIGIN, chain, seedApp } from './helpers.ts';
 
 afterEach(() => vi.restoreAllMocks());
@@ -394,5 +395,49 @@ describe('vault origin Worker', () => {
     const unknown = await call(vaultWorker, vaultEnv({ API: api }), `${VAULT}/vault?pk=pk_test_${'1'.repeat(24)}`);
     expect(unknown.status).toBe(403);
     expect(await unknown.text()).not.toContain('hana-config');
+  });
+});
+
+describe('build id (D384)', () => {
+  const both = [
+    { name: 'vault', worker: vaultWorker, origin: VAULT, env: (o: Partial<VaultHostEnv> = {}) => vaultEnv(o) },
+    { name: 'auth', worker: authWorker, origin: AUTH, env: (o: Partial<AuthHostEnv> = {}) => authEnv(o) },
+  ] as const;
+
+  it('GET /.well-known/hana-build answers the Worker’s build id as uncached JSON that runs nothing, without the assets or the API', async () => {
+    expect(BUILD_PATH).toBe('/.well-known/hana-build');
+    for (const w of both) {
+      const env = w.env({ HANA_BUILD: '0485faa1c2d3-dirty' });
+      const res = await call(w.worker, env, `${w.origin}${BUILD_PATH}`);
+      expect(res.status, w.name).toBe(200);
+      expect(await res.json()).toEqual({ build: '0485faa1c2d3-dirty' });
+      expect(res.headers.get('content-type')).toBe('application/json; charset=utf-8');
+      expect(res.headers.get('cache-control')).toBe('no-store');
+      expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+      expect(csp(res)).toBe(`${BASE}; frame-ancestors 'none'`);
+      expect(res.headers.has('set-cookie')).toBe(false);
+      expect(env.ASSETS.paths).toEqual([]);
+      if ('API' in env) expect((env.API as Fetcher & { requests: Request[] }).requests).toEqual([]);
+    }
+  });
+
+  it('is null for a Worker deployed without the deploy script, or with a malformed var', async () => {
+    for (const w of both) {
+      for (const HANA_BUILD of [undefined, '', 'latest']) {
+        const res = await call(w.worker, w.env(HANA_BUILD === undefined ? {} : { HANA_BUILD }), `${w.origin}${BUILD_PATH}`);
+        expect(await res.json(), `${w.name} ${HANA_BUILD}`).toEqual({ build: null });
+      }
+    }
+  });
+
+  it('HEAD has no body; other methods, other hosts and near-miss paths are refused as before', async () => {
+    for (const w of both) {
+      const head = await call(w.worker, w.env({ HANA_BUILD: '0485faa1c2d3' }), `${w.origin}${BUILD_PATH}`, { method: 'HEAD' });
+      expect(head.status).toBe(200);
+      expect(await head.text()).toBe('');
+      expect((await call(w.worker, w.env(), `${w.origin}${BUILD_PATH}`, { method: 'POST' })).status).toBe(405);
+      expect((await call(w.worker, w.env(), `https://other.example${BUILD_PATH}`)).status).toBe(404);
+      for (const path of [`${BUILD_PATH}/`, `${BUILD_PATH}.json`, '/.well-known/hana-builds']) expect((await call(w.worker, w.env(), `${w.origin}${path}`)).status, path).toBe(404);
+    }
   });
 });

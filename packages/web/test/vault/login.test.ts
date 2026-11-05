@@ -1,6 +1,6 @@
 // Login, vault side (docs/batch-b-spec.md "Login", "Failure handling"; Tests → Web unit → Vault, Login (vault)).
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { addressesFromCkdSecret, ckdAppId, createProofPayload, decryptCkd, newAppKey, sessionMessage, sessionNonce, toHex, verifyEd25519 } from '@hana-id/core';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { SESSION_KEYGEN_ATTEMPTS, addressesFromCkdSecret, ckdAppId, createProofPayload, decryptCkd, newAppKey, sessionMessage, sessionNonce, toHex, verifyEd25519 } from '@hana-id/core';
 import {
   Browser,
   CLIENT_ID,
@@ -209,6 +209,44 @@ describe('login (vault side)', () => {
     const before = browser.backend.count('/v1/app');
     expect((await t.request('hana_login')).error?.code).toBe('no_google_client');
     expect(browser.backend.count('/v1/app') - before).toBe(1);
+  });
+
+  describe('D385: a session key the browser can’t make is derive_failed with its reason, not api_unavailable', () => {
+    afterEach(() => vi.restoreAllMocks());
+    /** Refuses every Ed25519 generateKey from now on with `name` (the tab is already up). */
+    function refuseEd25519(name: string) {
+      const real = crypto.subtle.generateKey.bind(crypto.subtle);
+      let refused = 0;
+      vi.spyOn(crypto.subtle, 'generateKey').mockImplementation(((algorithm: AlgorithmIdentifier, ...rest: [boolean, KeyUsage[]]) => {
+        if ((typeof algorithm === 'string' ? algorithm : algorithm.name) !== 'Ed25519') return real(algorithm, ...rest);
+        refused += 1;
+        return Promise.reject(new DOMException('a platform message the partner must not see', name));
+      }) as typeof crypto.subtle.generateKey);
+      return () => refused;
+    }
+
+    it('no Ed25519 in WebCrypto: webcrypto_unsupported, asked once, nothing opened or sent', async () => {
+      const t = await tab();
+      const refused = refuseEd25519('NotSupportedError');
+      const reply = await t.request('hana_login');
+      expect(reply.error).toEqual({
+        code: 'derive_failed',
+        message: 'This browser cannot create the sign-in key (no Ed25519 in WebCrypto)',
+        data: { reason: 'webcrypto_unsupported', error: 'NotSupportedError' },
+      });
+      expect(refused()).toBe(1);
+      expect(JSON.stringify(reply)).not.toContain('platform message');
+      expect(t.browser.backend.count('/v1/login')).toBe(0);
+    });
+
+    it(`D381’s OperationError ${SESSION_KEYGEN_ATTEMPTS} times in a row: webcrypto_failed`, async () => {
+      const t = await tab();
+      const refused = refuseEd25519('OperationError');
+      const reply = await t.request('hana_login');
+      expect(reply.error).toMatchObject({ code: 'derive_failed', data: { reason: 'webcrypto_failed', error: 'OperationError' } });
+      expect(refused()).toBe(SESSION_KEYGEN_ATTEMPTS);
+      expect(t.browser.backend.count('/v1/login')).toBe(0);
+    });
   });
 
   it('409 no_google_client gives no_google_client', async () => {

@@ -7,7 +7,8 @@
 // `ckdNetworkKey`, origins), so nothing is read at runtime. Output, per env, in `<env>/auth/`, which is the auth
 // origin's whole static-assets root (apps/api wrangler.auth.jsonc; the vault origin's is `<env>/vault`, so neither
 // origin can serve the other's files):
-//   login.html, login/email.html, login/callback.html, approve.html, export.html   static HTML: a <meta> CSP, one stylesheet, one module
+//   login.html, login/email.html, login/callback.html, approve.html, export.html   static HTML: a <meta> CSP, one stylesheet, one module,
+//                                                               and the build id (`<meta name="hana-build">`, D384)
 //   assets/*.js, assets/*.css                                   content-hashed bundles (no inline script or style),
 //                                                               served at /assets/…
 // The Worker (apps/api src/pages/host.ts) serves each page from `<path>.html` with that page's headers, which it builds
@@ -15,6 +16,8 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildMeta } from '@hana-id/env/build-id';
+import { localBuild } from '@hana-id/env/local-build';
 import { build } from 'esbuild';
 import type { HanaEnv } from '../src/hana-env.ts';
 import { AUTH_PAGES, type AuthPage, authPageMetaCsp } from '../src/auth/pages.ts';
@@ -38,8 +41,11 @@ const ENTRIES: Record<AuthPage['name'], string> = {
 
 const escapeAttr = (s: string) => s.replace(/&/gu, '&amp;').replace(/"/gu, '&quot;').replace(/</gu, '&lt;').replace(/>/gu, '&gt;');
 
-/** One page's HTML: no inline script or style, nothing from another origin. */
-export function pageHtml(env: HanaEnv, page: AuthPage, script: string, stylesheet: string): string {
+/**
+ * One page's HTML: no inline script or style, nothing from another origin. `buildId` is the build id (D384), which
+ * `deploy-check` reads from `{authOrigin}/login`; the bundles stay content-hashed by their code alone.
+ */
+export function pageHtml(env: HanaEnv, page: AuthPage, script: string, stylesheet: string, buildId: string): string {
   return [
     '<!doctype html>',
     // No auto-translation (AUTH-4): a translator could reword a signing request, and would send an exported key to
@@ -51,6 +57,7 @@ export function pageHtml(env: HanaEnv, page: AuthPage, script: string, styleshee
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
     `<meta http-equiv="Content-Security-Policy" content="${escapeAttr(authPageMetaCsp(env, page.name))}">`,
     '<meta name="referrer" content="no-referrer">',
+    buildMeta(buildId),
     `<title>${escapeAttr(page.title)}</title>`,
     `<link rel="stylesheet" href="${escapeAttr(stylesheet)}">`,
     `<script type="module" src="${escapeAttr(script)}"></script>`,
@@ -67,10 +74,14 @@ export interface BuiltEnv {
   dir: string;
   /** Page name → its script and stylesheet URL paths. */
   pages: Record<AuthPage['name'], { file: string; script: string; stylesheet: string }>;
+  /** The build id in every page's `<meta name="hana-build">`. */
+  buildId: string;
 }
 
-/** Builds one env's pages into `<outRoot>/<env.name>/auth`. */
-export async function buildAuthPages(env: HanaEnv, outRoot: string = PAGES_DIST): Promise<BuiltEnv> {
+/** Builds one env's pages into `<outRoot>/<env.name>/auth`, stamped with `buildId` (default: this checkout's). */
+export async function buildAuthPages(env: HanaEnv, outRoot: string = PAGES_DIST, buildId: string = localBuild().id): Promise<BuiltEnv> {
+  // Before anything is deleted: an id that isn't one never reaches the HTML.
+  buildMeta(buildId);
   const problem = ckdKeyProblem(env);
   if (problem) throw new Error(`Can't build the Hana pages: ${problem}`);
   // The name becomes a path that is deleted recursively: only the manifest names' charset (packages/env manifestPath).
@@ -112,10 +123,10 @@ export async function buildAuthPages(env: HanaEnv, outRoot: string = PAGES_DIST)
     const script = byEntry.get(ENTRIES[page.name]);
     if (!script) throw new Error(`esbuild produced no bundle for ${page.name}`);
     mkdirSync(dirname(join(dir, page.file)), { recursive: true });
-    writeFileSync(join(dir, page.file), pageHtml(env, page, script, stylesheet));
+    writeFileSync(join(dir, page.file), pageHtml(env, page, script, stylesheet, buildId));
     pages[page.name] = { file: page.file, script, stylesheet };
   }
-  return { env: env.name, dir, pages };
+  return { env: env.name, dir, pages, buildId };
 }
 
 /** Every env with both Hana origins, or the named ones (an unknown name, or one without origins, fails). */
@@ -133,9 +144,10 @@ export function selectEnvs(names: readonly string[]): HanaEnv[] {
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const envs = selectEnvs(process.argv.slice(2));
+  const buildId = localBuild().id;
   for (const env of envs) {
-    const built = await buildAuthPages(env);
-    console.log(`built ${relative(process.cwd(), built.dir)} (${Object.keys(built.pages).join(', ')})`);
+    const built = await buildAuthPages(env, PAGES_DIST, buildId);
+    console.log(`built ${relative(process.cwd(), built.dir)} (${Object.keys(built.pages).join(', ')}; build ${built.buildId})`);
   }
   if (envs.length === 0) console.log('no env sets vaultOrigin and authOrigin: nothing to build');
 }

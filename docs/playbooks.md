@@ -1,7 +1,7 @@
 # Recovery playbooks
 
 Generated from `packages/playbooks` (D126) by `corepack pnpm --filter @hana-id/playbooks gen-docs`: edit the package,
-not this file (a test fails when it is stale). Last verified against code: 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`).
+not this file (a test fails when it is stale). Last verified against code: 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/coop-canary`: the `google-enforces-coop` incident, D386); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`).
 
 One step-by-step guide for every watchdog alert kind and for every incident the watchdog does not raise. The admin
 portal's "Security & monitoring" view renders the same playbooks (`docs/batch-c-spec.md`), and every watchdog
@@ -58,6 +58,7 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [Unexpected owner action: upgrade, owner transfer, withdrawal or another council call](#unexpected-owner-action) | critical | — |
 | [Contract paused (by the watchdog or by mistake): unpausing safely](#contract-paused) | critical | — |
 | [Google's JWKS unreachable, or a Google rotation stuck](#google-jwks-outage) | warning | — |
+| [Google enforces COOP on its sign-in pages (the COOP canary fails)](#google-enforces-coop) | warning | — |
 | [NEAR RPC outage](#near-rpc-outage) | warning | — |
 | [NEAR MPC / CKD outage](#mpc-ckd-outage) | critical | — |
 | [The API's D1 lost or corrupted](#d1-data-loss) | critical | — |
@@ -1189,7 +1190,7 @@ The partner identity token's JWKS (`{iss}/jwks.json`) lists a key whose RFC 7638
 - Critical `identity_key_unpinned` (`details.keys`: each kid, thumbprint and `reason`: `not_pinned`, `not_p256`, `extra_members`, or `pins_unreadable` while `IDENTITY_PINS` is malformed, which also pages `pins_invalid:identity`). With nothing pinned at all, every published key is unpinned.
 - Critical `identity_private_key_published` (`details.keys[].private`: the member names, never the values) and `identity_discovery_mismatch` (`details.field`: `issuer` or `jwks_uri`, with `expected` and `published`).
 - Critical `identity_jwks_unreadable:<jwks|discovery>:answer:<reason>` (`redirect`, `too_large`, `not_json`, `duplicate_members`, `bad_shape`) at once, or `:sustained` after 3 failed fetches in a row: each can hide a key from the watchdog that partners still see.
-- `/status` `identity`: the pins in force and the last good reads, each key judged. The outside probe (GitHub Actions workflow `identity-probe`, every 3 hours, from outside Cloudflare) failing on the same env is a second view: the watchdog's own fetch comes from Cloudflare's network and can be told apart.
+- `/status` `identity`: the pins in force and the last good reads, each key judged. The outside probe (GitHub Actions workflow `identity-probe`, every 3 hours, from outside Cloudflare; turned off while only testnet runs, D387) failing on the same env is a second view: the watchdog's own fetch comes from Cloudflare's network and can be told apart.
 
 **Impact**
 
@@ -1960,6 +1961,48 @@ Google's signing keys can't be fetched, or Google's new kid isn't active on chai
 - Keep the issuer-key delay well under Google's measured lead time (`admin <env> issuer-keys:lead-times --remote`, D80).
 
 **Refs:** [`docs/operations.md#google-signing-keys-jwks`](operations.md#google-signing-keys-jwks), [`docs/operations.md#issuer-key-lead-times-d33`](operations.md#issuer-key-lead-times-d33), D80 (`docs/decisions.md`), D86 (`docs/decisions.md`) · **See also:** [key-sync-stalled](#key-sync-stalled), [confirm-failed](#confirm-failed), [watchdog-degraded](#watchdog-degraded)
+
+<a id="google-enforces-coop"></a>
+
+### Google enforces COOP on its sign-in pages (the COOP canary fails)
+
+`google-enforces-coop` · warning
+
+A page of the login popup's trip (Google's sign-in pages, or Hana's callback) sends an enforcing Cross-Origin-Opener-Policy: the vault's popup-close watch (D347) can read a popup that is still at Google as closed and cancel the login.
+
+**Signals**
+
+- `coop-canary <env>` exits 1 with `enforces Cross-Origin-Opener-Policy` (or `-Embedder-Policy`) on a page other than Google's error page, or its browser check reads `popup.closed` true while the popup is open (D386).
+- Partners or users report `login_cancelled` with `data.reason: 'popup_closed'` while the user was still signing in at Google.
+
+**Impact**
+
+- Enforcement on Google's first page: D347's 8 s rule takes the close for a COOP switch and stops the watch, so logins still finish through the relay; a user who really closes the popup waits for the 5-minute `login_timeout` instead of `login_cancelled`.
+- Enforcement on a later page (one the user reaches after 8 s: the password, a second factor, consent): the login is cancelled while the user is still at Google. Those users cannot sign in with Google until the watch is changed.
+- An enforcing policy on Hana's own callback or auth pages is a Hana regression: those pages must send none (docs/api.md), and the callback's `back` signal to the vault needs its opener.
+
+**Steps**
+
+1. **Confirm and find the page** (who: a founder). Run the canary again: the header check names each enforcing hop (status, host and path) under each User-Agent; the browser check says in which browsers `.closed` flips, and at what time. A Google change that comes and goes (an experiment) still counts. A finding on Hana's host: revert the change that added the header and redeploy the page Workers.
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run coop-canary <env>
+   ```
+
+2. **Hold the release** (who: a founder). Release nothing (pages, SDK) while the canary fails. What is live keeps working on the first page (the 8 s rule); on a later page, tell partners that Google logins may end with `login_cancelled` and that a retry does not help.
+
+3. **Change the watch for the new policy** (who: a founder). A reviewed change to `packages/web/src/vault/login.ts` (`PopupTask.watchPopup`, `POPUP_WATCH`) with a decision entry: the usual fix stops the watch from the popup's `google` signal until its `back` (the whole Google trip, not only 8 s), so a close at Google is the 5-minute `login_timeout` again. Test it with the e2e Google stub's enforcing COOP (`apps/e2e/src/google-stub.ts` `coop`) on the page that enforces, then deploy the vault page Worker.
+
+**Verify**
+
+- `coop-canary <env>` passes, or its remaining finding is on a page the changed watch tolerates and the decision says so (then update the canary's rules with it).
+- A Google login that waits longer than 8 s on the enforcing page is not cancelled; closing the popup on a Hana page still ends the login within seconds.
+
+**Follow-ups**
+
+- Update D347 and the partner guide's "A closed popup" (docs/integration.md) with what the watch now does.
+
+**Refs:** [`docs/operations.md#before-each-release-the-coop-canary`](operations.md#before-each-release-the-coop-canary), D347 (`docs/decisions.md`), D386 (`docs/decisions.md`) · **See also:** [google-jwks-outage](#google-jwks-outage)
 
 <a id="near-rpc-outage"></a>
 

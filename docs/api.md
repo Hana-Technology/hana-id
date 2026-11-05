@@ -1,6 +1,8 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
-Last verified against code: 2026-11-04 (branch `fix/admin-cron-budget`: the admin Worker's two crons count every
+Last verified against code: 2026-11-05 (branch `feat/deploy-build-check`: the build id, D384: `GET /v1/health`'s
+`build`, the page Workers' `GET /.well-known/hana-build`, the issuer's `GET /v1/email/health`, the `HANA_BUILD` var
+only the `deploy` scripts set); 2026-11-04 (branch `fix/admin-cron-budget`: the admin Worker's two crons count every
 outbound call (the connection, every RPC, every email and NEAR read) in their 40, at most 30 RPCs, each job's share
 logged; D380); 2026-11-04 (branch `feat/batch-c-13`: "Usage ledger retention functions" (0007),
 `AdminRpc.purgeAudit` / `deletedApps` / `purgeDirectory`, `StaffRpc.purgeAudit`, the admin Worker's `GET /api/retention`
@@ -219,13 +221,19 @@ Seeded plan `free`: `per_minute` 60, `per_day` 5000, `per_ip_minute` 20.
 
 ### `GET /v1/health`
 
-No auth, no limits, `access-control-allow-origin: *`. → `200 {"ok": true, "env": ENV_NAME, "signer": SIGNER_ACCOUNT, "hotDb": 9, "capabilities": {"createProof": true}, "requestId"}`.
+No auth, no limits, `access-control-allow-origin: *`. → `200 {"ok": true, "env": ENV_NAME, "signer": SIGNER_ACCOUNT, "hotDb": 9, "capabilities": {"createProof": true}, "build": "0485faa1c2d3" | null, "requestId"}`.
 `hotDb` is the hot-DB migration the build needs (`apps.ts` `HOT_DB_SCHEMA`; 6 from batch C3, 9 from batch C4 (the
 session markers it writes), absent before): the admin CLI refuses guarded proposals on `--remote` until the deployed
 API reports ≥ 6, and announcements until it reports ≥ 9.
 
 `capabilities` (L, D250): what this build does that deploy tooling checks; `createProof: true` (`/v1/sessions` requires
 and relays create_session's proof of possession, D137). `deploy-contract --upgrade` refuses without it.
+
+`build` (D384, added 2026-11-05; older readers ignore it): the build id the Worker was deployed with, the commit's
+first 12 hex characters plus `-dirty` when the tree had uncommitted changes (`@hana-id/env/build-id`); `null` when
+the Worker was deployed without `pnpm --filter @hana-id/api run deploy` (the var `HANA_BUILD` is set only by that
+script, `apps/api/scripts/deploy.ts`, never by `gen`) or the var isn't an id. `deploy-check <env>` compares it with
+the page Workers', their bundles' and the issuer's (`docs/operations.md` "Checking a deploy").
 ### `GET /v1/governance` · G
 
 No auth, no limits, `access-control-allow-origin: *`, `cache-control: public, max-age=10`. Read-only: it reads
@@ -631,10 +639,13 @@ One thin Worker per Hana origin in every env (D66; `workers.dev` in dev envs, a 
 | auth | logo pages: `/login`, `/login/email`, `/approve`, `/export` | with `FILES_ORIGIN` set (the manifest's `files.origin`, C11, D306), the base policy's `img-src 'self' data:` becomes `img-src 'self' data: <FILES_ORIGIN origin>` (in place, one `img-src`); the build's `<meta>` policy does the same from `HanaEnv.filesOrigin`. `/login/callback` never. A `FILES_ORIGIN` that isn't an origin is left out and logged (`files_origin_misconfigured`), the page still served |
 | auth | `/login/email` | `login/email.html` with `frame-ancestors 'none'; connect-src [<EMAIL_ISSUER_URL origin>] <API_URL>` (the email step, batch 8a: the issuer's `start`, `resend`, `verify` and the relay write; the auth Worker's `EMAIL_ISSUER_URL` is set by `gen` from `emailIssuer`, and a malformed one is a `503` page) |
 | auth | `/export` | `export.html` with `frame-ancestors 'none'; connect-src <API_URL> <NEAR_RPC> [<NEAR_RPC_FALLBACK>] https://www.googleapis.com` |
+| both | `/.well-known/hana-build` | `{"build": "<id>" \| null}` (D384): the build id this Worker was deployed with (`HANA_BUILD`, set only by `deploy:pages`; `null` when unset or not an id), `application/json`, `no-store`, the 404's headers (`frame-ancestors 'none'`, `nosniff`); never reaches the assets or the API |
 | both | any other path | a static asset, never HTML (`*.html` and `text/html` → `404`) |
 
 Pages carry the base policy plus their directives, `no-store`, `no-referrer`, `nosniff`, no COOP; a missing page file
-is a `503` page. Every asset carries `content-security-policy: default-src 'none'; frame-ancestors 'none'; sandbox`
+is a `503` page. The bundles carry the build id of the web build that made them (D384): `/vault.js` starts with
+`/* hana-build <id> */`, each auth page has `<meta name="hana-build" content="<id>">` (the auth scripts' content
+hashes don't depend on it). Every asset carries `content-security-policy: default-src 'none'; frame-ancestors 'none'; sandbox`
 (an SVG or XML file opened as a document runs, loads and frames nothing; not applied by browsers to the scripts and
 styles the pages load), `nosniff`, `no-referrer` and `cross-origin-resource-policy: same-origin`.
 
@@ -1373,6 +1384,10 @@ Vars are generated from `envs/<env>.json` by `apps/api/scripts/gen-wrangler.ts` 
 Worker) and `wrangler.auth.jsonc` (vars `AUTH_ORIGIN`, `API_URL`, `NEAR_RPC`, `NEAR_RPC_FALLBACK` when set; assets),
 both gitignored (`apps/api/scripts/pages-wrangler.ts`).
 
+`HANA_BUILD` (all three Workers, and the email issuer's): the build id (D384), never written by `gen`; `deploy` and
+`deploy:pages` pass it as `wrangler deploy --var HANA_BUILD:<id>`, read from the checkout's HEAD and working tree
+(`@hana-id/env/local-build`). A raw `wrangler deploy` leaves it unset.
+
 Also generated: `name` = `cloudflare.workerName`, `compatibility_date` 2026-10-01, `nodejs_compat`, alias
 `secp256k1` → `src/shims/secp256k1.ts`, `observability.enabled` with `logs.invocation_logs: false` (Workers Logs
 keeps the Worker's own log lines, not the platform's per-request records, which carry the URL and so the login
@@ -2080,6 +2095,12 @@ The JWKS: every key of `emailIssuer.publicKeys` (`kty, n, e, kid, use: "sig", al
 thumbprint, the watchdog's pin, D190). Discovery: `issuer`, `jwks_uri`, `id_token_signing_alg_values_supported:
 ["RS256"]`, `response_types_supported`, `subject_types_supported`, `claims_supported`. CORS `*`. Informational: the
 contract never fetches them and the watchdog pins instead of trusting them.
+
+### `GET /v1/email/health` · E
+
+D384. No auth, no limits, CORS `*`, `GET` only (`405` otherwise). → `200 {"ok": true, "env": ENV_NAME, "build":
+"<id>" | null}`: the build id the issuer was deployed with (the var `HANA_BUILD`, set only by `pnpm --filter
+@hana-id/email-issuer run deploy`, `apps/email-issuer/scripts/deploy.ts`), as in the API's `GET /v1/health`.
 
 ### `POST /v1/email/webhooks/sendgrid` · E
 

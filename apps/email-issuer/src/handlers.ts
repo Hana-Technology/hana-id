@@ -6,6 +6,7 @@
 // limit decision is one atomic Durable Object call, and the checks run so that a requester pays before a partner's
 // quota or the global budget is touched (D198).
 import { base64UrlDecode, base64UrlEncode, sha256, toHex, utf8 } from './bytes.ts';
+import { BUILD_ID_RE } from '@hana-id/env/build-id';
 import { emailSub, isDisposableDomain, isGoogleHosted, normalizeEmail } from '@hana-id/email';
 import { type IssuerApp, appById, appByKey, isPublishableKey, scopeHasEmailApp } from './apps.ts';
 import type { ChallengeRecord, TicketRecord } from './challenge.ts';
@@ -969,6 +970,18 @@ export function handleOpenIdConfiguration(ctx: Ctx): Response {
   });
 }
 
+// ---- Health ----
+
+/**
+ * `GET /v1/email/health` (D384): `build` is the build id this Worker was deployed with (the HANA_BUILD var that
+ * `pnpm --filter @hana-id/email-issuer run deploy` sets from git), or null, for `deploy-check` to compare with the
+ * API's and the page Workers'. Public: nothing in it is secret.
+ */
+export function handleHealth(ctx: Ctx): Response {
+  const build = ctx.deps.env.HANA_BUILD;
+  return ok(ctx, 200, { ok: true, env: ctx.deps.env.ENV_NAME, build: build !== undefined && BUILD_ID_RE.test(build) ? build : null });
+}
+
 // ---- SendGrid event webhook ----
 
 export async function handleSendgridWebhook(request: Request, ctx: Ctx): Promise<Response> {
@@ -1025,6 +1038,7 @@ export const ROUTES = {
   confirm: '/v1/email/confirm',
   jwks: '/v1/email/jwks.json',
   openid: '/v1/email/.well-known/openid-configuration',
+  health: '/v1/email/health',
   sendgridWebhook: '/v1/email/webhooks/sendgrid',
 } as const;
 
@@ -1047,10 +1061,11 @@ export async function route(request: Request, deps: Deps): Promise<Response> {
   const requestId = randomId(12);
   const base: Ctx = { deps, requestId, endpoint: path, cors: {}, limits: limitsFor(deps.env.ENV_NAME) };
   try {
-    if (path === ROUTES.jwks || path === ROUTES.openid) {
+    if (path === ROUTES.jwks || path === ROUTES.openid || path === ROUTES.health) {
       const ctx = { ...base, cors: corsHeaders('*') };
       if (request.method === 'OPTIONS') return respond(ctx, new Response(null, { status: 204 }));
       if (request.method !== 'GET') return fail(ctx, 405, 'method_not_allowed', 'GET only');
+      if (path === ROUTES.health) return handleHealth(ctx);
       return path === ROUTES.jwks ? await handleJwks(ctx) : handleOpenIdConfiguration(ctx);
     }
     const handlers: Record<string, (r: Request, c: Ctx) => Promise<Response>> = {

@@ -131,7 +131,12 @@ D347: closing the popup on the chooser, on Google's page (past the 8 s COOP wind
 follow-up screen gives `login_cancelled` (`popup_closed`) within seconds, and a slow trip to Google and back signs in.
 `tests/login.spec.ts` checks that
 another Google error (`server_error`, sent to the callback directly) still gives `google_error`. The `second_request` flow is covered by `@hana-id/web`'s unit and
-vault-harness tests only (the bundles have one flow compiled in). On the server side
+vault-harness tests only (the bundles have one flow compiled in). `tests/webcrypto.spec.ts` (D385) checks, in
+every browser, that the WebCrypto calls Hana's pages make accept keys starting with zero bytes and give Node's bytes
+(AES-GCM and HKDF raw imports, Ed25519 raw public import and verify, the session key's generate, sign and export, RS256
+JWK verify): WebKit's Linux ports refuse such keys in Ed25519 generateKey (D381) and in PKCS#8 private imports, which
+Hana doesn't make. `tests/login.spec.ts`'s D385 case gives a browser without Ed25519 `derive_failed`
+(`webcrypto_unsupported`). On the server side
 (`src/server/google-backend.ts`), the stack answers Google's JWKS, `tokeninfo`, `userinfo` and revoke (which the
 issuer must never call, D265) for the Workers in its process (the issuer's google-match and google-record), by wrapping
 that process's `fetch` for those three Google hosts; the browser's tokeninfo route gives the same answer

@@ -42,7 +42,8 @@ nothing on chain and holds no chain key.
 | File | Role |
 |---|---|
 | `src/directory.ts` | the user directory's writer (D269): one upsert per identity and per (identity, app), after the answer, never throwing |
-| `src/handlers.ts` | the routes: `start`, `resend`, `verify`, `google-match` and `google-record` (one set of Google checks, `checkGoogleSignIn`; both write the Google identity to the directory after the answer), `admin/client-proof`, `admin/unlock`, `admin/unsuppress`, `admin/revoke-tickets`, `confirm`, JWKS, discovery, the SendGrid webhook |
+| `src/handlers.ts` | the routes: `start`, `resend`, `verify`, `google-match` and `google-record` (one set of Google checks, `checkGoogleSignIn`; both write the Google identity to the directory after the answer), `admin/client-proof`, `admin/unlock`, `admin/unsuppress`, `admin/revoke-tickets`, `confirm`, JWKS, discovery, `health` (the deployed build id, D384), the SendGrid webhook |
+| `scripts/deploy.ts` | `run deploy`: `wrangler deploy --var HANA_BUILD:<build id>` (this checkout's commit, `-dirty` for uncommitted changes), which `GET /v1/email/health` reports and `deploy-check <env>` compares |
 | `src/commitment.ts`, `src/layouts.ts` | purposes, commitments and every nonce (checked against the contract's `email_fixture.json`) |
 | `src/decide.ts` | the four cases of automatic linking, judged as the contract's `auto_link` will |
 | `src/challenge.ts`, `src/challenge-id.ts` | `Challenge` Durable Object: one challenge or link ticket, atomic attempts, single use; the challengeId's public half (the object's name) and secret half (the address's encryption key) |
@@ -64,6 +65,8 @@ corepack pnpm --filter @hana-id/email-issuer typecheck
 corepack pnpm --filter @hana-id/scripts email-issuer <env> init --from "Hana <login@…>" --budget <n> [--yes]   # keys + manifest, uploads nothing
 corepack pnpm --filter @hana-id/email-issuer gen <env> [--d1-id <uuid>] [--app-d1-id <uuid>] [--dev-vars]
 corepack pnpm --filter @hana-id/scripts email-issuer <env> put [--standby] [--yes]    # the user uploads the secrets
+corepack pnpm --filter @hana-id/email-issuer run deploy                               # stamped with the build id (never a raw wrangler deploy)
+corepack pnpm --filter @hana-id/scripts run deploy-check <env> --d1                   # the issuer on the API's and the pages' commit (D384)
 corepack pnpm --filter @hana-id/email-issuer exec tsx scripts/gen-contract-fixture.ts   # after a layout or token change
 corepack pnpm --filter @hana-id/email-issuer dev
 ```
@@ -75,7 +78,8 @@ line included), and checks that a verified address is in `user_emails` and no ot
 `test/directory-verify.test.ts` covers which `verify` answers record, `test/google-record.test.ts` google-record and
 google-match's directory write, `test/directory.test.ts` the upserts in both arrival orders.
 
-Last verified: 2026-11-04 (branch `fix/dev-email-limits`: dev envs' limit set, D340, `test/dev-limits.test.ts`; every
+Last verified: 2026-11-05 (branch `feat/deploy-build-check`: `GET /v1/email/health`, `scripts/deploy.ts`, D384);
+2026-11-04 (branch `fix/dev-email-limits`: dev envs' limit set, D340, `test/dev-limits.test.ts`; every
 other test runs under production's, its harness env names `t-…` not being dev names); 2026-11-04 (branch `fix/user-emails-review`: the directory's order-safe upserts, D269); 2026-11-04
 (branch `feat/google-token-first`: `google-record`, google-match's directory write, D269,
 D270).

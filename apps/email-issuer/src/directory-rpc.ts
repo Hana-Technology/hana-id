@@ -34,7 +34,7 @@ import {
 } from '@hana-id/console-core';
 import { normalizeEmail } from '@hana-id/email';
 import { AccessJwtVerifier, JwksUnavailableError } from '@hana-id/oidc';
-import { base64Decode, base64UrlEncode, concatBytes, utf8 } from './bytes.ts';
+import { base64Decode, base64UrlEncode, concatBytes, sha256, toHex, utf8 } from './bytes.ts';
 import type { Env } from './env.ts';
 import { DIRECTORY_ROW_LIMITS } from './limits.ts';
 import { log } from './log.ts';
@@ -115,7 +115,12 @@ async function staffOf(env: Env, jwt: string, requestId: string, now: number): P
 
 // ---- the row budget ----
 
-const budgetStub = (env: Env, staff: string) => env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`${env.ENV_NAME}:staff-dir:${staff}`));
+/**
+ * The staff member's budget object: `staff-dir:` + hex sha256 of the email (a limiter key never holds an address, as the
+ * issuer's other staff bucket, `staff:<sha256 hex>`).
+ */
+export const budgetObjectName = (envName: string, staff: string): string => `${envName}:staff-dir:${toHex(sha256(utf8(staff)))}`;
+const budgetStub = (env: Env, staff: string) => env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(budgetObjectName(env.ENV_NAME, staff)));
 
 async function takeRows(env: Env, staff: string, want: number, requestId: string, now: number): Promise<{ ok: true; granted: number; keys: string[] } | Fail> {
   const g = await budgetStub(env, staff).takeRows(DIRECTORY_ROW_LIMITS, want, now);

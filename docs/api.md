@@ -1,6 +1,6 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
-Last verified against code: 2026-11-05 (branch `feat/deploy-build-check`: the build id, D384: `GET /v1/health`'s
+Last verified against code: 2026-11-05 (branch `feat/batch-c-8b`: the email issuer's `DirectoryRpc` entrypoint, issuer migration 0003 and the `staff-dir:` budget objects; `AdminRpc.appNames`; the admin Worker's Users routes `POST /api/users/search`, `/find`, `/get`, `GET /api/audit`'s `directory`; D388–D392); 2026-11-05 (branch `feat/deploy-build-check`: the build id, D384: `GET /v1/health`'s
 `build`, the page Workers' `GET /.well-known/hana-build`, the issuer's `GET /v1/email/health`, the `HANA_BUILD` var
 only the `deploy` scripts set); 2026-11-04 (branch `fix/admin-cron-budget`: the admin Worker's two crons count every
 outbound call (the connection, every RPC, every email and NEAR read) in their 40, at most 30 RPCs, each job's share
@@ -1102,6 +1102,7 @@ no budget, plus:
 | `governance` (C14) | `{}` → `{governance}`: the whole `GET /v1/governance` snapshot (above; the same isolate cache, so one read serves the endpoint and the RPCs for 10 s), for the "Security & monitoring" view. `hana` only. `near_unavailable` when a view fails or has an unknown shape (nothing partial) |
 | `pendingUpgrades` (C14) | `{}` → `{pendingUpgrades}`: the same view as `ConsoleRpc.pendingUpgrades`, for the admin's page. `hana` only |
 | `listUsers`, `getUser`, `findUsers` (W) | The wallet directory for staff (D315): `listUsers({orgId?, scopeId?, cursor?, limit ≤ 200})`, `getUser({userId})` or `getUser({internalId})`, exactly one (`not_found`), `findUsers({query, provider?})` (a Stellar or EVM address: every user listing it; a User ID `u1_…`; an internal id `hu_…`, any case; a Support ID, any case, with or without `HANA-` and dashes: every user it is the short form of; else a sub, which `provider` narrows and forces), at most 50. A `StaffUser` is `{userId, supportId, internalId, scopeId, orgId, createdAt, lastSeenAt, identities: [{provider, sub, identityKey, role, status, effectiveAt, firstSeenAt, observedAt, directoryKey}], wallets: [{chain, address, keyIndex, firstSeenAt, lastUsedAt, sharedWith}]}`. `status` is read at answer time (a pending member past `effectiveAt` is `active`). The email isn't here: `directoryKey` `{provider, sub}` is the key for D275's `DirectoryRpc` (C8b) |
+| `appNames` (C8b) | `{appIds: string[1..50]}` → `{apps: [{id, name, orgId, scopeId, environment, deletedAt}]}`: the Users screen's app labels (the issuer's directory names apps by id, and `getApp` needs the org); one SELECT, unknown ids left out, deleted apps included. `hana` only (D391) |
 
 | `purgeAudit({before, limit ≤ 1000})` (C13) | `system` only. Deletes up to `limit` `app_changes` rows and up to `limit` `guarded_changes` rows older than `min(before, 60 months ago)` (SQLite's `unixepoch('now', '-60 months')`, the trigger's clock) → `{appChanges, guardedChanges}`. Kept whatever their age (D364): a live app's `migration.baseline` and the rows that end its values (`DRIFT_LEDGER_KINDS`, or a `parts` entry of one), while the app has a baseline, so drift detection never reports a value the baseline explains; open (`pending`, `active`) guarded changes of a live app, and closed ones an origin row still names. Every change of an app deleted 60 months ago goes |
 | `deletedApps({before, after?, limit ≤ 1000})` (C13) | `system` only. Apps with `deleted_at ≤ min(before, now − 30 days)`, oldest deletion first, after the cursor `<deleted_at>:<app id>` → `{appIds, next?, more}` (`next`: the cursor after the page's last app; `more`: another page exists). For the ledger's `usage.purge_app_users` |
@@ -1761,7 +1762,7 @@ binding throws; `405` with `allow`; `413` over 64 KiB (16 KiB without a `Content
 | `POST /api/apps/:app/origins`, `/origins/remove`, `/changes`, `/off` | `{orgId, add, expectedVersion}`, `{orgId, remove, expectedVersion}`, `{orgId, kind, policy?, expectedVersion}`, `{orgId, what, expectedVersion}` | `addOrigins`, `removeOrigins`, `proposeChange`, `turnOff` |
 | `POST /api/apps/:app/keys/:key/revoke` | `{orgId}` | `revokeKey` |
 | `POST /api/changes/:id/cancel`, `/expedite` | `{orgId}`, `{reason}` (≥ 20 characters) | `cancelChange`, `expediteChange` |
-| `GET /api/audit?orgId&appId&actorKind&actorId&action&from&to&cursor&changesBefore` | → `{rows, next?, changes}` (`changes`: the org's `app_changes` when `orgId` is set, else null) | `queryAudit`, `listChanges` |
+| `GET /api/audit?orgId&appId&actorKind&actorId&action&from&to&cursor&changesBefore&dirStaff&dirAction&dirBefore` | → `{rows, next?, changes, directory}` (`changes`: the org's `app_changes` when `orgId` is set, else null; `directory` (C8b): the email issuer's `email_admin_audit` rows, newest first, 100 a page, `{rows, next?}` (`next`: the `dirBefore` of the next page), `{error}` when the issuer fails (the page stays up), null without an `ISSUER` binding) | `queryAudit`, `listChanges`, `DirectoryRpc.auditSince` |
 | `GET /api/audit.csv?…` (same filters) | CSV (`source, seq, at, org_id, app_id, scope_id, action, actor_kind, actor_id, actor_email, target, outcome, request_id, near_tx, country, detail`), newest first, ≤ 5 000 rows per source (`x-hana-truncated: 1` past it); text cells starting `=`, `+`, `-`, `@`, tab or CR get a `'` | as above |
 | `GET /api/security` | → the notice backlog, unnotified security events, each feed cursor with its lag, the watcher's cursor, the last cron run; C12's `ledger`: each relayer key's latest nonce check, rejection-rate alerts, settlement alerts, the settlement backlog (`pending`, `oldestAt`), `partitionsAhead` and `partitionsLow` (< 2) | `pendingNotices`, `pendingMemberNotices`, `securityEvents`, `changesSince`, `auditSince`, `ops.state`, the ledger |
 | `GET /api/monitoring` (C14) | → `{now, env, watchdog, governance, events, findings}` (below) | watchdog `GET /status`, `AdminRpc.governance`, `securityEvents({unnotifiedOnly: false, limit: 100})`, in parallel, each failing on its own |
@@ -1786,8 +1787,21 @@ binding throws; `405` with `allow`; `413` over 64 KiB (16 KiB without a `Content
 The C12 and C13 routes open one ledger connection per request (`USAGE_DB`, `usage_admin`); without it they answer `503
 ledger_unavailable`.
 
-Not yet: the Users screen (`/api/users/search`, `/get`: proposed D275, C8b) and the Support ID
-lookup (C15).
+**The Users screen (C8b; D275 as confirmed 2026-11-05, D388–D392).** POST only, so no address, sub or code is in a
+URL; each forwards the request's `Cf-Access-Jwt-Assertion` as it came, for the issuer's own check.
+
+| Route | Body → answer | Calls |
+|---|---|---|
+| `POST /api/users/search` | `{q?, provider?, appId?, sub?, unverifiedOnly?, cursor?, limit? (≤ 100, default 50), ticket?}` → `{users: [{provider, sub, email, emailVerified, hosted, unverifiedClaim, firstSeenMs, lastSeenMs, appCount}], next?, unverifiedWarning}`; `q` a full address (exact) or ≥ 3 characters of one (substring) | `DirectoryRpc.search` |
+| `POST /api/users/find` | `{query}` (a wallet address, User ID `u1_…`, internal id `hu_…` or Support ID) → `{users: StaffUser[]}` (no address) | `AdminRpc.findUsers` |
+| `POST /api/users/get` | `{provider, sub, ticket}` (the ticket required: `400` before any call) → `{provider, sub, user \| null, warning?, apps: [{appId, scopeId, firstSeenMs, lastSeenMs, name, orgId, environment, deletedAt}], appsTruncated?, appNamesError?, walletUsers: StaffUser[] \| null, walletError?, chain: [{scopeId, ok: true, blockHeight, status, opened, identityKey, path, root, effectiveAtMs, account, accountUnread?} \| {scopeId, ok: false, reason: 'chain_unavailable' \| 'not_read'}]}`; `user` null when the directory has no row (the miss is audited) | `DirectoryRpc.get`, `AdminRpc.findUsers({query: sub, provider})`, `AdminRpc.appNames`, `get_identity` / `get_account` per scope (at most 8) |
+
+Errors: `503 directory_unavailable` (no `ISSUER`, the issuer didn't answer, or its own Access check can't run), `502
+directory_refused` (the issuer refused a staff identity this Worker accepted: the two Access configs differ), `429
+rate_limited` with `Retry-After` past the staff member's row budget (the security alias gets `directory_budget`, one
+per staff member and window), `400` / `404` / `500` as the issuer answers. A detail's outbound calls come out of one
+budget of 40 (at most 30 RPCs, D380): what doesn't fit is `not_read`. Not yet: the Support ID lookup with a user's
+activity (`/api/support/lookup`, C15).
 
 **Security & monitoring (C14; D83, D126, D330–D338).** The watchdog is called **server-side only**
 (`src/watchdog.ts`): `Authorization: Bearer <WATCHDOG_STATUS_TOKEN>` to `WATCHDOG_URL` (an https origin exactly; else
@@ -2054,6 +2068,30 @@ directory (D269).
 - The vault calls it once per login, gives up after 30 s and never retries; any failure is dropped and never reaches
   the login (`packages/web/src/vault/login.ts` `recordGoogle`).
 
+### `DirectoryRpc` (entrypoint, no route; batch C8b) · E
+
+A named `WorkerEntrypoint` export (`src/directory-rpc.ts`, D275 as confirmed 2026-11-05, D388–D392), bound only by the
+admin Worker as `ISSUER`; the public `fetch` doesn't reach it. Every call carries `{requestId, accessJwt}` (the staff
+request's `Cf-Access-Jwt-Assertion`), which the issuer verifies itself with `@hana-id/oidc` against the admin
+application (`ADMIN_ACCESS_TEAM_DOMAIN`, `ADMIN_ACCESS_AUD`, type `app`, a `sub`, an email) and `ADMIN_STAFF_EMAILS`;
+that email is the actor. Answers `{ok: true, …}` or `{ok: false, code, error?, budget?}`: `bad_request`, `not_found`,
+`rate_limited` (`budget: {window: '1h'|'1d', limit, retryAfterMs}`), `internal`, `unauthenticated`, `not_staff`,
+`access_unavailable` (missing or unusable config, unreachable certs). Nothing is read or audited before the check.
+
+| Method | Input → answer |
+|---|---|
+| `search` | `{q?, provider?, appId?, sub?, unverifiedOnly?, cursor?, limit? ≤ 100 (50), ticket?}` → `{users: [{provider, sub, email, emailVerified, hosted, unverifiedClaim, firstSeenMs, lastSeenMs, appCount}], next?}`. `q`: a full address matches exactly (as typed lowercased and normalized), else a substring of ≥ 3 characters; newest first by last seen, an address search with Google's unverified claims after the verified rows; `next` with a full page (`<claim>:<lastSeenMs>:<provider>:<sub>`) |
+| `get` | `{provider, sub, ticket}` (the ticket required) → `{user, apps: [{appId, scopeId, firstSeenMs, lastSeenMs}] (≤ 200, newest first), appsTruncated?}`; `not_found` without a row (audited, costs no row) |
+| `auditSince` | `{id}` (after it, oldest first) or `{before}` (newest first), `staff?`, `action?`, `limit ≤ 200` → `{rows: [{id, atMs, staff, action, ticket, scopeId, actionNonce, jti, subject, detail}]}`; no row budget, no audit row |
+
+`search` and `get` take their rows first from the staff member's budget (`staff-dir:<sha256 hex of the email>`: 500 identities an hour,
+2 000 a UTC day, provisional; a page past what is left is cut to it, rows not returned are given back) and write one
+`email_admin_audit` row **in the same D1 batch** as the read (a failed insert returns no rows): `user_search` with the
+ticket if given and `detail` `{filters, q: {match, hash}, page, rows, budgetCut?}` (`hash`: 12 characters of HMAC(K_rl),
+the mailbox subject form for a full address), or `user_view` with the ticket and `{provider, sub, found}`. Never an
+address in a row or a log line (`directory_read`, `directory_refused`, `directory_budget`, `directory_read_failed`
+carry codes and counts).
+
 ### Staff routes (`/v1/email/admin/*`) · E
 
 Common to all of them (D199): a valid Cloudflare Access JWT (`Cf-Access-Jwt-Assertion`: RS256 against the team's certs,
@@ -2157,22 +2195,25 @@ D340): 365 × 100 + 37 × 2 ≈ 36,574 a year, ≈ 3.7% (testnet: no real funds)
 | Object | Holds |
 |---|---|
 | `Challenge` (binding `EMAIL_CHALLENGE`), one per `c:` + b64url(sha256(public half of the challengeId)) | `{appId, appName, scopeId, purpose, nonce \| autoLink: {googleSub, sessionHash}, silent, emailEnc (AES-256-GCM under a key from the id's secret half; '' when silent), mailboxKey, domainKey, owner (the ticket's id or the grant used, or null), budgetShare, domainRes (the domain places its mails took), codeMac = HMAC(K_code, challengeId ‖ code), attempts, createdAtMs, expiresAtMs, lastSentAtMs, resends}`; deleted at the correct code or by an alarm at expiry. Link tickets: one object per `t:` + b64url(sha256(ticket)), `{appId, scopeId, sub, googleSubs, expiresAtMs}`, deleted at first use. Unsuppress confirmations: one per `u:` + b64url(sha256(token)), `{action, emailKey, expiresAtMs}`, deleted at first use |
-| `RateLimiter`, one per subject (`mbx:<mailbox key>`, `dom:<domain key>`, `ip:<subject or prefix>`, `app:<id>`, `global`, `staff:<sha256 hex>`) | fixed-window counts; in a mailbox's object also the live challenges' expiry times, the requesters' locks, the unlock grant (sha256 of its token, 24 h), per-ticket send counts, ticket revocations (per address key, 30 days) and 30 days of staff actions; in a domain's, the per-prefix shares (hashed prefixes) and 8 days of verified-login counts; in `global`, the owner pool and per-app use; in `global` the per-app budget use; an alarm drops what ended |
+| `RateLimiter`, one per subject (`mbx:<mailbox key>`, `dom:<domain key>`, `ip:<subject or prefix>`, `app:<id>`, `global`, `staff:<sha256 hex>`, `staff-dir:<sha256 hex of the staff email>`: DirectoryRpc's row budget, C8b) | fixed-window counts; in a mailbox's object also the live challenges' expiry times, the requesters' locks, the unlock grant (sha256 of its token, 24 h), per-ticket send counts, ticket revocations (per address key, 30 days) and 30 days of staff actions; in a domain's, the per-prefix shares (hashed prefixes) and 8 days of verified-login counts; in `global`, the owner pool and per-app use; in `global` the per-app budget use; an alarm drops what ended |
 | `Outbox` (binding `OUTBOX`, `local*` envs only) | the outbox stub's last 200 messages, read by tests through the binding; no route |
 
-Issuer D1 (`apps/email-issuer/migrations/0001_init.sql`, `0002_user_emails.sql`): `email_issuance(jti, app_id, purpose, kid, iat)` (24 months,
+Issuer D1 (`apps/email-issuer/migrations/0001_init.sql`, `0002_user_emails.sql`, `0003_directory_audit.sql`): `email_issuance(jti, app_id, purpose, kid, iat)` (24 months,
 D90; the pruning job is a batch C13 follow-up), `email_hints(scope_id, email_sub, google_sub, hosted, updated_at_ms)`
 (a hosted one kept while the scope exists, D122; a non-hosted one honoured and kept 180 days after its last login,
 D199), `email_suppressions(email_key = HMAC(K_sup, exact normalized address), reason
-bounce|complaint, at_ms)` (K_sup derived from K_sub), `email_admin_audit(at_ms, staff, action
-client_proof|unlock|unsuppress|revoke_tickets, ticket, scope_id?, action_nonce?, jti?, subject?)`; the user directory
+bounce|complaint, at_ms)` (K_sup derived from K_sub), `email_admin_audit(id, at_ms, staff, action
+client_proof|unlock|unsuppress|revoke_tickets|user_search|user_view|support_lookup, ticket (1–64; null only on a
+user_search), scope_id?, action_nonce?, jti?, subject?, detail? JSON)` (rebuilt by 0003 with every row kept; indexes
+`(staff, id)`, `at_ms`); the user directory
 (0002, D269): `user_emails(provider email|google, sub, email, email_verified, hosted?, first_seen_ms, last_seen_ms)`,
 key (provider, sub), indexes on `email` and `last_seen_ms`, and `user_email_apps(provider, sub, app_id, scope_id,
 first_seen_ms, last_seen_ms)`, key (provider, sub, app_id), index (app_id, last_seen_ms); written by `src/directory.ts`
 after the answer (`waitUntil`): email rows by `verify`, Google rows by google-match and google-record (D270); upserts
 in which the write with the newest `last_seen_ms` sets `email`, `email_verified`, `hosted` (and an app row's
 `scope_id`), `first_seen_ms` is the MIN and `last_seen_ms` the MAX, so a late write never restores older values; read
-by Hana staff with `admin user:list` / `user:find` only (no route serves it). The
+by Hana staff with `admin user:list` / `user:find` and, through `DirectoryRpc` below, the admin console's Users screen
+(no route serves it). The
 verified address is stored readably there and only there: no log line, other table or Durable Object holds it
 (a live challenge's copy is encrypted, D197). SendGrid also keeps addresses: its suppression lists keep an address until it
 is removed there, whatever the activity retention below. `APP_DB` is the API's D1, read only (`apps`, `plans`).
@@ -2180,7 +2221,8 @@ is removed there, whatever the activity retention below. `APP_DB` is the API's D
 Vars (from `emailIssuer`, `scripts/gen-wrangler.ts`): `ENV_NAME`, `NEAR_RPC`, `NEAR_RPC_FALLBACK`, `SIGNER_ACCOUNT`,
 `EMAIL_ISS`, `EMAIL_PUBLIC_KEYS`, `EMAIL_ACTIVE_KID`, `EMAIL_SIGNER_KIND`, `EMAIL_SENDER`, `MAIL_FROM`, `AUTH_ORIGIN`,
 `VAULT_ORIGIN`, `DAILY_SEND_BUDGET`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `ACCESS_STAFF_EMAILS`,
-`SENDGRID_WEBHOOK_PUBLIC_KEY`. Secrets: `ISSUER_SIGNING_KEY`, `EMAIL_SUB_KEY`, `EMAIL_CODE_KEY`, `EMAIL_RL_KEY`,
+`SENDGRID_WEBHOOK_PUBLIC_KEY`; with a dashboard (`admin` block, C8b) `ADMIN_ACCESS_TEAM_DOMAIN`, `ADMIN_ACCESS_AUD`,
+`ADMIN_STAFF_EMAILS` (the admin console's Access application, for DirectoryRpc's own check). Secrets: `ISSUER_SIGNING_KEY`, `EMAIL_SUB_KEY`, `EMAIL_CODE_KEY`, `EMAIL_RL_KEY`,
 `SENDGRID_API_KEY` (`docs/security.md` "Key and secret inventory"). Placement `aws:ap-east-1`; no invocation logs.
 
 SendGrid keeps each message's recipient and events in its Email Activity (3 days on the plans without the paid Email

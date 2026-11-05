@@ -249,10 +249,10 @@ export async function usersGetRoute(c: RouteCtx): Promise<Response> {
 
   // The scopes to read: the directory's apps' and the wallet directory's users', in order, at most DETAIL_CHAIN_SCOPES_MAX.
   const scopes = [...new Set([...apps.map((a) => a.scopeId), ...(walletUsers ?? []).map((u) => u.scopeId)])].sort();
-  const chain: ChainStanding[] = [];
-  for (const [k, scopeId] of scopes.entries()) {
-    chain.push(k < DETAIL_CHAIN_SCOPES_MAX ? await standing(c.env, budget, scopeId, provider, sub, (key) => subByKey.get(key) ?? null) : { scopeId, ok: false, reason: 'not_read' });
-  }
+  // In parallel (each read's call is taken from the budget before it starts), so a slow RPC costs one timeout, not eight.
+  const chain: ChainStanding[] = await Promise.all(
+    scopes.map((scopeId, k) => (k < DETAIL_CHAIN_SCOPES_MAX ? standing(c.env, budget, scopeId, provider, sub, (key) => subByKey.get(key) ?? null) : Promise.resolve({ scopeId, ok: false as const, reason: 'not_read' as const }))),
+  );
 
   log({ event: 'bff', route, requestId: c.staff.requestId, outcome: 'ok', count: chain.length, calls: { ...budget.used } });
   return json(200, {

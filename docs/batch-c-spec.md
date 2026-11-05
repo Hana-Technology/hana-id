@@ -5,7 +5,8 @@ decisions confirmed: D28, D29 (as amended by D89), D30 (as
 amended by D73), D31, D32, D34, D51, D52, D73, D74, D75, and on 2026-10-29 D87–D93.** Everything else in this file is
 a proposal that follows from them; the open questions at the end say what still needs the user (Q1, Q3, Q4's
 fallback addresses, Q5; and, added 2026-11-04 for D269, Q26 and Q27: the Users screen and the Support ID, D275 and
-D276, to confirm; Q27's derivation answered by D346 on 2026-11-04: the Support ID is the short form of the identity
+D276; Q26 (D275) confirmed by the user on 2026-11-05 with amendments and built in C8b; Q27's derivation answered by
+D346 on 2026-11-04: the Support ID is the short form of the identity
 token's `sub`, which is also the partner's User ID). The 2026-10-27 multi-agent draft (four decision records, a
 reconciliation table, passkeys, four roles, two notice channels, a queue, rollups) is superseded by this rewrite; its
 history is in git.
@@ -1313,7 +1314,7 @@ Console-only codes: `unauthenticated` 401, `csrf` 403, `not_invited` 403, `invit
 | `POST /api/owner-grants/:id/cancel`; `GET /api/orgs/:org/members` pending invites and grants | D89 |
 | `GET /api/retention` | the monthly purge runs (D90) |
 | `GET /api/monitoring`, `POST /api/monitoring/alerts/:id/ack`, `GET /api/governance/pending-upgrades` | governance batch (D83, D86) |
-| `POST /api/users/search`, `POST /api/users/get`, `POST /api/support/lookup` | proposed (D275, D276): §Users and Support ID. POST so no address or code lands in a URL |
+| `POST /api/users/search`, `POST /api/users/find`, `POST /api/users/get`; `POST /api/support/lookup` | the first three built (C8b, D275, D391); the lookup proposed (C15, D276): §Users and Support ID. POST so no address or code lands in a URL |
 
 ## Hana admin console (D75)
 
@@ -1369,8 +1370,10 @@ Console-only codes: `unauthenticated` 401, `csrf` 403, `not_invited` 403, `invit
 
 ## Users and Support ID (staff only; D269, D96, D144)
 
-**Proposed 2026-11-04, to confirm by the user (D275, D276).** Built in build-plan batches C8b (Users) and C15
-(Support ID).
+**D275 (Users) confirmed by the user on 2026-11-05, with amendments: the support reference is required to open one
+identity and optional for a search or list page; the row budget as proposed, provisional; the detail also shows the
+wallet directory's ids and wallets. Built in build-plan batch C8b (D388–D392). D276 (the Support ID lookup, C15) is
+still proposed, as amended by D346.**
 
 D269 keeps each identity's verified address in the email issuer's own D1 (`user_emails`, `user_email_apps`, issuer
 migration 0002), for Hana staff only. This section gives staff a Users screen over it and lets the Support ID lookup
@@ -1410,9 +1413,9 @@ and `DirectoryRpc.byUid` that D276 planned are dropped.)
   member is sending it requests (within that JWT's life), and every read names a real Access identity.
 - **Audit before data.** The audit `INSERT` and the read go in one D1 batch, so a failed audit write returns no rows
   (`internal`). Issuer migration 0003 rebuilds `email_admin_audit` with the actions `user_search`, `user_view` and
-  `support_lookup` and a `detail` JSON column, keeping its rows. Each row records the staff email, the `ticket`
-  (required, 1–64 characters: the support reference or a short reason, as the issuer's staff routes already ask)
-  and `detail`. For a search, `detail` holds the filters used, the address term as a 12-character keyed hash (the
+  `support_lookup` and a `detail` JSON column, keeping its rows. Each row records the staff email, the `ticket` (1–64
+  characters: the support reference or a short reason, as the issuer's staff routes already ask; **required to open
+  one identity, optional for a search or list page**, D275 as confirmed) and `detail`. For a search, `detail` holds the filters used, the address term as a 12-character keyed hash (the
   form unlock subjects use) and the row count. For a view it holds `{provider, sub}`, and for a lookup the code.
   Never an address.
 - **Row budget.** Each staff email can get 500 identities an hour and 2 000 a day back (provisional constants),
@@ -1425,16 +1428,17 @@ and `DirectoryRpc.byUid` that D276 planned are dropped.)
 
 ```ts
 // apps/email-issuer, bound only by the admin Worker. Every method verifies accessJwt itself, reads only, audits first.
-interface StaffCall { requestId: string; accessJwt: string; ticket: string }
+interface StaffCall { requestId: string; accessJwt: string; ticket?: string /* required by get */ }
 interface DirectoryRpc {
   search(c: StaffCall & { q?: string; provider?: 'email' | 'google'; appId?: string; sub?: string;
                           unverifiedOnly?: boolean; cursor?: string; limit: number /* ≤ 100 */ })
     : Rpc<{ users: UserRow[]; next?: string }>;
-  get(c: StaffCall & { provider: 'email' | 'google'; sub: string }): Rpc<{ user: UserRow; apps: UserApp[] }>;
-  auditSince(c: StaffCall & { id: number; limit: number }): Rpc<{ rows: DirectoryAuditRow[] }>;
+  get(c: StaffCall & { ticket: string; provider: 'email' | 'google'; sub: string }): Rpc<{ user: UserRow; apps: UserApp[] }>;
+  // `id`: after it, oldest first; or `before`: newest first (the audit screen); by staff and action (D388).
+  auditSince(c: StaffCall & ({ id: number } | { before: number }) & { staff?; action?; limit: number }): Rpc<{ rows: DirectoryAuditRow[] }>;
 }
 interface UserRow { provider; sub; email; emailVerified: boolean; hosted: boolean | null; firstSeenMs; lastSeenMs;
-  appCount: number; uids?: { scopeId; uid }[] /* C15 */ }
+  appCount: number; unverifiedClaim: boolean }
 interface UserApp { appId; scopeId; firstSeenMs; lastSeenMs }
 // apps/api, bound only by the email issuer (C15; the same entrypoint D251 plans for the issuer's app lookup).
 interface IssuerRpc { uid(c: { scopeId: string; provider: string; sub: string }): Promise<{ uid: string }> }
@@ -1726,8 +1730,8 @@ and the wallet directory (D269, D275; §Users and Support ID), with all three id
   security contacts changes (to old and new contacts), refused sign-ins in bulk once per hour, statements issued. A
   cursor advances only after a row's sends are accepted; the admin console shows the lag.
 - **Watcher:** `scope_pending_change`, `scope_changed` (§On-chain owner actions).
-- **Direct:** `nonce_unexplained`, `rejection_rate` (D91), `retention_failed` (D90), and (proposed, D275)
-  `directory_budget`, to the security alias. The invite
+- **Direct:** `nonce_unexplained`, `rejection_rate` (D91), `retention_failed` (D90), and `directory_budget` (D275,
+  C8b: one per staff member and window, D390), to the security alias. The invite
   link (`<console.origin>/invite#t=…`) goes in the blocking `member_invite` send.
 - Plain text plus simple HTML, no remote images; links only to `console.origin`; never approve links.
 
@@ -2089,7 +2093,7 @@ endpoint, the JWKS, the Access JWKS, NEAR RPC, the Images binding and the email 
   the history links to its playbook's page; the search finds an incident playbook by a word of its signals; a kind
   with no playbook renders the "no playbook" error (the watchdog's `test/registry.test.ts` already forbids one).
 
-**Users and Support ID (proposed, D275, D276)**
+**Users and Support ID (D275 confirmed and built in C8b; the Support ID rows D276, proposed, C15)**
 
 - Config snapshots: only the admin Worker binds `DirectoryRpc`; only the email issuer binds `IssuerRpc`; the console
   binds neither; no Worker but the issuer binds the issuer's D1. Neither entrypoint is reachable through any
@@ -2346,7 +2350,9 @@ Answered on 2026-10-29 (`docs/decisions.md` D87–D93), applied above; the numbe
 26. **The Users screen (D275).** Recommended: the admin Worker reads the directory through `DirectoryRpc`, a read-only
     entrypoint on the issuer that verifies the staff Access JWT and audits each read itself, with a per-staff row
     budget and no CSV export. Alternatives in D275: an issuer D1 binding in the admin Worker, a separate directory D1
-    bound to both, the issuer's Access HTTP routes; a capped, audited export.
+    bound to both, the issuer's Access HTTP routes; a capped, audited export. **Confirmed by the user on 2026-11-05**
+    with amendments (the ticket required to open one identity, optional for a search; the budget provisional; the
+    wallet directory's ids and wallets on the detail); built in C8b.
 27. **The Support ID (D276).** Recommended: the uid's first 40 bits (`USER_ID_KEY`, no new secret), returned by the API
     with the session; resolved through a `uid` column the issuer fills from the API's `IssuerRpc`, with a ledger-only
     fallback; errors by request ID; no partner lookup. Alternatives in D276: a separate key, the identity token's

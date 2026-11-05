@@ -200,6 +200,28 @@ describe('POST /api/users/get (one identity, the ticket required)', () => {
     expect(d.chain[0]).toMatchObject({ ok: true, status: 'pending', path: `${app.scope}#google#8001#0`, root: { provider: 'google', sub: '8001' }, effectiveAtMs: 9_999, account: null });
   });
 
+  it('an active member: the root’s path, the account read live with its members', async () => {
+    const app = await seedHotApp();
+    const memberKey = hex64();
+    await seedDirectory({ provider: 'email', sub: 'e1.mem', email: 'mem@example.com', apps: [{ appId: app.id, scopeId: app.scope }] });
+    identityViews.set(viewKey('get_identity', app.scope, 'email', 'e1.mem'), { key: memberKey, status: 'member', opened: false, root: { provider: 'google', sub: '8100' }, effective_at_ms: 100, account_epoch: 3 });
+    identityViews.set(viewKey('get_account', app.scope, 'email', 'e1.mem'), { root: { provider: 'google', sub: '8100' }, members: [{ key: memberKey, provider: 'email', effective_at_ms: 100, active: true, auto: false }], epoch: 3, unlinked: [] });
+    const d = await json<Record<string, any>>(await adminRequest('/api/users/get', { body: { provider: 'email', sub: 'e1.mem', ticket: 'T-8' } }));
+    expect(d.chain[0]).toMatchObject({ ok: true, status: 'member', opened: false, path: `${app.scope}#google#8100#0`, root: { provider: 'google', sub: '8100' }, account: { root: { provider: 'google', sub: '8100' }, epoch: 3 } });
+    // The wallet directory doesn't know this member yet: its sub stays unknown rather than guessed.
+    expect(d.chain[0].account.members).toEqual([{ key: memberKey, provider: 'email', active: true, effectiveAtMs: 100, sub: null }]);
+  });
+
+  it('no admin log line carries the address, the sub or the ticket', async () => {
+    const lines: string[] = [];
+    for (const m of ['log', 'warn', 'error'] as const) vi.spyOn(console, m).mockImplementation((...a: unknown[]) => void lines.push(a.map(String).join(' ')));
+    await seedDirectory({ provider: 'google', sub: '66601', email: 'quiet.person@private.example' });
+    await adminRequest('/api/users/search', { body: { q: 'quiet.person@private.example', ticket: 'TCK-ADM-1' } });
+    await adminRequest('/api/users/get', { body: { provider: 'google', sub: '66601', ticket: 'TCK-ADM-2' } });
+    expect(lines.length).toBeGreaterThan(0);
+    for (const l of lines) expect(l).not.toMatch(/quiet|private\.example|66601|TCK-ADM|staff@hana/u);
+  });
+
   it('NEAR down: every scope "chain unavailable", never a guessed path', async () => {
     const app = await seedHotApp();
     await seedDirectory({ provider: 'email', sub: 'e1.n', email: 'n@example.com', apps: [{ appId: app.id, scopeId: app.scope }] });

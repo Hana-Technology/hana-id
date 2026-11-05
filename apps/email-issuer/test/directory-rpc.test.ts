@@ -8,7 +8,7 @@ import { createExecutionContext } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { DIRECTORY_ROWS_PER_DAY, DIRECTORY_ROWS_PER_HOUR, UNVERIFIED_CLAIM_WARNING } from '@hana-id/console-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DIRECTORY_APPS_MAX, DirectoryRpc, resetDirectoryAccess, termHash } from '../src/directory-rpc.ts';
+import { DIRECTORY_APPS_MAX, DirectoryRpc, budgetObjectName, resetDirectoryAccess, termHash } from '../src/directory-rpc.ts';
 import { DIRECTORY_ROW_LIMITS } from '../src/limits.ts';
 
 const TEAM = 'hana-admin-test.cloudflareaccess.com';
@@ -209,15 +209,18 @@ describe('search', () => {
       if (!r.ok) throw new Error(r.code);
       seen.push(...r.users.map((u) => u.email));
       if (r.next) expect(r.next).not.toMatch(/@/u);
+      // A login writing a newer row mid-walk doesn't shift the pages (it sorts before the cursor).
+      if (pages === 0) await seed({ email: 'new@page.example', seen: now + 5000 });
       cursor = r.next;
       if (!cursor) break;
     }
+    expect(seen).not.toContain('new@page.example');
     expect(seen).toHaveLength(9);
     expect(new Set(seen).size).toBe(9);
     expect(seen.slice(0, 3)).toEqual(['p0@page.example', 'p1@page.example', 'p2@page.example']);
     // A list without an address term walks the same way (no claim ordering).
     const all = await rpc().search(await call({ limit: 100 }));
-    expect(all.ok && all.users.length).toBe(9);
+    expect(all.ok && all.users.length).toBe(10);
   });
 
   it('every search writes one audit row first: the filters, the term as a 12-character keyed hash, the row count; never the address', async () => {
@@ -240,6 +243,20 @@ describe('search', () => {
     expect(d1.q.hash).not.toBe(d0.q.hash);
   });
 
+  it('no log line of a search or a view carries the address, the sub, the ticket, the staff email or the JWT', async () => {
+    const lines: string[] = [];
+    for (const m of ['log', 'warn', 'error'] as const) vi.spyOn(console, m).mockImplementation((...a: unknown[]) => void lines.push(a.map(String).join(' ')));
+    await seed({ provider: 'google', sub: '55501', email: 'logged.person@private.example' });
+    const jwt = await accessJwt();
+    await rpc().search({ requestId: requestId(), accessJwt: jwt, q: 'logged.person@private.example', ticket: 'TCK-LOG-1' });
+    await rpc().search({ requestId: requestId(), accessJwt: jwt, q: 'logged' });
+    await rpc().get({ requestId: requestId(), accessJwt: jwt, provider: 'google', sub: '55501', ticket: 'TCK-LOG-2' });
+    await rpc().get({ requestId: requestId(), accessJwt: jwt, provider: 'google', sub: '55501' });
+    await rpc().search({ requestId: requestId(), accessJwt: await accessJwt({ email: 'intruder@hana.example' }) });
+    expect(lines.length).toBeGreaterThan(3);
+    for (const l of lines) expect(l).not.toMatch(/logged|private\.example|55501|TCK-LOG|hana\.example|eyJ/u);
+  });
+
   it('a failed audit write returns no rows (one D1 batch) and gives the rows back to the budget', async () => {
     await seed({ email: 'atomic@example.com' });
     await env.DB.prepare("CREATE TRIGGER audit_down BEFORE INSERT ON email_admin_audit BEGIN SELECT RAISE(ABORT, 'audit down'); END").run();
@@ -249,7 +266,7 @@ describe('search', () => {
       expect(r).toEqual({ ok: false, code: 'internal', error: 'The directory read or its audit row failed' });
       expect(await rpc().get(await call({ provider: 'email', sub: 'e1.none', ticket: 'T-1' }, await accessJwt({ email: staff })))).toMatchObject({ ok: false, code: 'internal' });
       // Nothing was counted against the staff member.
-      const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`${env.ENV_NAME}:staff-dir:${staff}`));
+      const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(budgetObjectName(env.ENV_NAME, staff)));
       const left = await stub.takeRows(DIRECTORY_ROW_LIMITS, DIRECTORY_ROWS_PER_HOUR);
       expect(left).toMatchObject({ ok: true, granted: DIRECTORY_ROWS_PER_HOUR });
       await stub.returnRows((left as { keys: string[] }).keys, DIRECTORY_ROWS_PER_HOUR);
@@ -284,9 +301,9 @@ describe('get', () => {
     const staff = 'budget2@hana.example';
     expect(await rpc().get(await call({ provider: 'email', sub: 'e1.nobody', ticket: 'T-9' }, await accessJwt({ email: staff })))).toMatchObject({ ok: false, code: 'not_found' });
     expect(JSON.parse((await auditRows())[0]!.detail!)).toEqual({ provider: 'email', sub: 'e1.nobody', found: 0 });
-    const left = await env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`${env.ENV_NAME}:staff-dir:${staff}`)).takeRows(DIRECTORY_ROW_LIMITS, DIRECTORY_ROWS_PER_HOUR);
+    const left = await env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(budgetObjectName(env.ENV_NAME, staff))).takeRows(DIRECTORY_ROW_LIMITS, DIRECTORY_ROWS_PER_HOUR);
     expect(left).toMatchObject({ ok: true, granted: DIRECTORY_ROWS_PER_HOUR });
-    await env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`${env.ENV_NAME}:staff-dir:${staff}`)).returnRows((left as { keys: string[] }).keys, DIRECTORY_ROWS_PER_HOUR);
+    await env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(budgetObjectName(env.ENV_NAME, staff))).returnRows((left as { keys: string[] }).keys, DIRECTORY_ROWS_PER_HOUR);
   });
 
   it('lists at most DIRECTORY_APPS_MAX apps, flagged when cut', async () => {
@@ -319,14 +336,20 @@ describe('the row budget (per staff email: 500 identities an hour, 2 000 a day; 
     expect(await rpc().search(await call({ limit: 100 }))).toMatchObject({ ok: true });
   });
 
+  it('the budget object is named by a hash of the staff email, never the address', () => {
+    const name = budgetObjectName('local-test', 'Someone@hana.example');
+    expect(name).toMatch(/^local-test:staff-dir:[0-9a-f]{64}$/u);
+    expect(name).not.toMatch(/someone|hana/iu);
+  });
+
   it('the day window: 2 000 across hours; a page past what is left is cut to it (budgetCut in the audit)', async () => {
-    const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`${env.ENV_NAME}:staff-dir:day-test@hana.example`));
+    const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(budgetObjectName(env.ENV_NAME, 'day-test@hana.example')));
     const day = Math.floor(Date.now() / 86_400_000) * 86_400_000;
     const per = DIRECTORY_ROWS_PER_HOUR;
     for (let h = 0; h < DIRECTORY_ROWS_PER_DAY / per; h++) expect(await stub.takeRows(DIRECTORY_ROW_LIMITS, per, day + h * HOUR + 1)).toMatchObject({ ok: true, granted: per });
     expect(await stub.takeRows(DIRECTORY_ROW_LIMITS, 1, day + 5 * HOUR)).toMatchObject({ ok: false, limit: 'directory:rows:1d', max: DIRECTORY_ROWS_PER_DAY });
     // Partial grants within the hour window.
-    const p = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`${env.ENV_NAME}:staff-dir:partial@hana.example`));
+    const p = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(budgetObjectName(env.ENV_NAME, 'partial@hana.example')));
     const t = day + 10 * HOUR;
     expect(await p.takeRows(DIRECTORY_ROW_LIMITS, 450, t)).toMatchObject({ ok: true, granted: 450 });
     const g = await p.takeRows(DIRECTORY_ROW_LIMITS, 100, t);

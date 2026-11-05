@@ -133,7 +133,7 @@ export const STAFF_LIMITS: Limit[] = [{ name: 'staff:actions:1h', windowMs: HOUR
 /**
  * Identities each staff email can get back from the user directory through `DirectoryRpc` (search rows and opened
  * details, D275 as confirmed 2026-11-05; provisional numbers, console-core's constants so the admin Worker's budget
- * email quotes the same), on a `staff-dir:` object per staff member.
+ * email quotes the same), on a `staff-dir:<sha256 hex of the email>` object per staff member.
  */
 export const DIRECTORY_ROW_LIMITS: Limit[] = [
   { name: 'directory:rows:1h', windowMs: HOUR, max: DIRECTORY_ROWS_PER_HOUR },

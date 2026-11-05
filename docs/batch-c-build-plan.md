@@ -9,7 +9,8 @@ not run; their setup is steps 4, 5 and 7–10 below, at M4 and M5); C9 (partner 
 page; D330–D338, D344) and C12 (reports and statements; D320–D329) merged, not deployed; C10 (partner management, D342,
 D343, D350–D358) merged into `develop`, not deployed; the partner screens over C12's and C14's routes (usage,
 statements, pending upgrades; D370–D374) built on `feat/console-reports-upgrades`, not merged; C13 (retention; D360–D369) built on `feat/batch-c-13`, tests green, not merged, not deployed (its setup is
-`docs/operations.md` "Retention", at M6); C15–C17 not built. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
+`docs/operations.md` "Retention", at M6); C8b (the Users screen; D275 confirmed 2026-11-05, D388–D392) built on
+`feat/batch-c-8b`, tests green, not merged, not deployed; C15–C17 not built. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
 batches that each merge into `develop` on their own: tests green, the docs they change updated, and nothing a partner,
 a user or staff can reach that is half-wired. Ordered by dependency; the spec's "Build order" steps are noted per
 batch. This is a plan, not a spec: where it and the spec disagree, the spec wins or gets amended first.
@@ -53,7 +54,7 @@ Batches merge one at a time. Deploys happen at the milestones at the end; a merg
 | C6 | Owner-verified changes and owner actions: `changeOrigins` / `proposeChange` verification, owner-action precheck, caps, allowance alert, `ConsoleRpc.ownerAction`, the console sink scope | 1 (part), 3 (part) | C2, C5 |
 | C7 | Console Worker backend: dispatch, headers, CSRF, `StaffRpc`, invites and owner grants (data path), hourly cron; no public route | 4 (part) | C1, C5 |
 | C8 | Admin Worker: Access check, screens, `EmailSender` (Resend), blocking notices, feed, watcher | 6 (part) | C5, C7 |
-| C8b | Users screen (proposed, D275): `DirectoryRpc` on the email issuer, issuer migration 0003, the admin screen | — | C8 |
+| C8b | Users screen (D275, confirmed 2026-11-05): `DirectoryRpc` on the email issuer, issuer migration 0003, the admin screen | — | C8 |
 | C9 | Partner sign-in: console-auth Worker, code flow, sessions, membership rules, read-only console | 4 (part) | C2, C7, C8 |
 | C10 | Partner management: fresh sign-in, guarded-change UI with the policy editor, settings, keys, suspend and resume, members and invites, owner actions and the client-proof helper, cancel pages | 4 (part) | C6, C9 |
 | C11 | Files Worker, R2 buckets, logos, `logoUrl` in `GET /v1/app` and the auth pages | 5, 7 (part) | C5, C10 |
@@ -402,16 +403,27 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
   DAO reads. Setup: with the admin Worker at M4, `docs/operations.md` "Admin Worker" → "Security & monitoring" (then
   acknowledge sandbox-dev's alert #11).
 
-## C8b. Users screen (proposed, D275; spec §Users and Support ID)
+## C8b. Users screen (D275, confirmed by the user 2026-11-05; spec §Users and Support ID)
 
 - **Scope**: `DirectoryRpc` (a `WorkerEntrypoint` in `apps/email-issuer`, no route: `search`, `get`, `auditSince`),
   the issuer's own check of the staff Access JWT (`ADMIN_ACCESS_AUD`), the audit row in the same batch as each read,
   the per-staff row budget on the issuer's `RateLimiter`; issuer migration `0003` (`email_admin_audit` rebuilt with
-  the new actions and `detail`; `user_email_apps.uid`, nullable, filled from C15); the admin Worker's `ISSUER`
-  binding, the `/users` screens and BFF routes, the issuer rows in the audit view, the `directory_budget` email.
-  `gen-wrangler` for both Workers.
+  the new actions and `detail`; ~~`user_email_apps.uid`, nullable, filled from C15~~ dropped by D346, D392); the admin
+  Worker's `ISSUER` binding, the `/users` screens and BFF routes, the issuer rows in the audit view, the
+  `directory_budget` email. `gen-wrangler` for both Workers.
+- **Status** (2026-11-05): built on `feat/batch-c-8b`, tests green, not merged, not deployed (D388–D392). Built:
+  `apps/email-issuer/src/directory-rpc.ts` (the three reads, the staff check with `@hana-id/oidc` against the admin
+  application, the audit in the read's batch, the keyed hash of an address term), `RateLimiter.takeRows` /
+  `returnRows` with `DIRECTORY_ROW_LIMITS` (500 an hour, 2 000 a day, provisional), migration
+  `0003_directory_audit.sql`, the issuer vars `ADMIN_ACCESS_TEAM_DOMAIN` / `ADMIN_ACCESS_AUD` / `ADMIN_STAFF_EMAILS`;
+  console-core `directory.ts`; the admin's `POST /api/users/search`, `/find`, `/get` (`src/users.ts`), the audit
+  view's issuer rows, `directory_budget`, the SPA's Users pages, `ISSUER` in `gen`; `AdminRpc.appNames` on the API
+  (D391). The ticket is required to open a user and optional to search (the user's amendment). Not built here:
+  `DirectoryRpc.byUid` (dropped by D346); the issuer retention entrypoint D365 suggested revisiting (`retention:issuer`
+  stays the CLI's: `DirectoryRpc` stays read-only). Setup: `docs/operations.md` "Users screen (C8b)".
 - **Tests**: spec "Users and Support ID" rows except the Support ID ones.
-- **Setup / deploy**: apply issuer migration 0002 (if not yet) and 0003 on the env, deploy the issuer, then the admin
+- **Setup / deploy**: apply issuer migration 0002 (if not yet) and 0003 on the env, deploy the issuer (with the
+  manifest's `admin` block, so `gen` writes its `ADMIN_*` vars), then the API (`AdminRpc.appNames`), then the admin
   Worker.
 - **Visible after**: staff search users and see a user's apps and on-chain path in the admin console; the CLI's
   `user:*` keep working.

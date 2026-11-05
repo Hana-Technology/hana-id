@@ -15,6 +15,7 @@ import {
   type StaffIdentity,
   type StaffUser,
   type UserSearch,
+  type AppNameView,
   type WalletChain,
   formatSupportId,
   parseUserSearch,
@@ -201,6 +202,18 @@ export async function adminFindUsers(db: HotDb, i: { query: string; provider?: s
   const clause = searchClause(s, i.provider ? { staff: true, provider: i.provider } : { staff: true });
   const rows = await db.all<StaffRow>(q`SELECT ${STAFF_COLUMNS} FROM end_users u LEFT JOIN scopes s ON s.scope_id = u.scope_id WHERE ${clause}${ORDER} LIMIT ${USER_FIND_MAX}`);
   return { users: rows.map((r) => staffUser(r, now)) };
+}
+
+/**
+ * The Users screen's app labels (C8b): one SELECT over the ids given (unknown ids are left out), deleted apps included.
+ * Staff only (AdminRpc.appNames): the directory names apps by id, and getApp needs the org it doesn't know.
+ */
+export async function adminAppNames(db: HotDb, appIds: readonly string[]): Promise<AppNameView[]> {
+  const ids = [...new Set(appIds)];
+  const rows = await db.all<{ id: string; name: string; org_id: string; scope_id: string; environment: string | null; deleted_at: number | null }>(
+    q`SELECT a.id, a.name, a.org_id, a.scope_id, s.environment, a.deleted_at FROM apps a LEFT JOIN scopes s ON s.scope_id = a.scope_id WHERE a.id IN (${join(ids.map((id) => q`${id}`), ', ')}) ORDER BY a.id`,
+  );
+  return rows.map((r) => ({ id: r.id, name: r.name, orgId: r.org_id, scopeId: r.scope_id, environment: r.environment === 'test' || r.environment === 'live' ? r.environment : null, deletedAt: r.deleted_at ?? null }));
 }
 
 // ---- partners ----

@@ -45,6 +45,14 @@ export interface Env {
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
   ACCESS_STAFF_EMAILS?: string;
+  /**
+   * The admin console's Cloudflare Access application (manifest `admin.accessTeamDomain`, `admin.accessAud`,
+   * `admin.staffEmails` as JSON): DirectoryRpc verifies each staff call's JWT against these itself (D275). Absent or
+   * unusable: every DirectoryRpc call answers `access_unavailable`.
+   */
+  ADMIN_ACCESS_TEAM_DOMAIN?: string;
+  ADMIN_ACCESS_AUD?: string;
+  ADMIN_STAFF_EMAILS?: string;
   /** SendGrid's Event Webhook verification key (base64 SPKI, public). */
   SENDGRID_WEBHOOK_PUBLIC_KEY?: string;
 

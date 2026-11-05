@@ -8,6 +8,7 @@
 // (the pending-upgrades page, D86); batch C13 the retention methods `purgeAudit`, `deletedApps` and `purgeDirectory` (the
 // admin Worker's monthly job only: a `system` actor, D360).
 import {
+  adminAppNamesInput,
   adminFindUsersInput,
   adminGetUserInput,
   adminListUsersInput,
@@ -65,7 +66,7 @@ import { addOrigins, removeOrigins } from '../changes/origins.ts';
 import { proposeSetting, setLogo, turnOff, updateSettings } from '../changes/settings.ts';
 import { deleteApp, setSuspensionBit, suspendOrg } from '../changes/suspension.ts';
 import { governanceSnapshot } from '../governance-status.ts';
-import { adminFindUsers, adminGetUser, adminListUsers } from '../directory/read.ts';
+import { adminAppNames, adminFindUsers, adminGetUser, adminListUsers } from '../directory/read.ts';
 import { deletedApps, purgeAudit, purgeDirectory } from '../changes/retention.ts';
 import { runRpc } from './common.ts';
 
@@ -248,5 +249,10 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
   /** By wallet address, User ID, internal id, Support ID or sub (`provider` makes it a sub search). */
   findUsers(c: unknown) {
     return runRpc(this.env, 'admin.findUsers', adminFindUsersInput, c, { actors: HANA }, ({ input, db, w }) => adminFindUsers(db, input, w.now));
+  }
+
+  /** The Users screen's app labels (C8b): names, orgs, scopes and environments of up to 50 app ids, deleted ones too. */
+  appNames(c: unknown) {
+    return runRpc(this.env, 'admin.appNames', adminAppNamesInput, c, { actors: HANA }, async ({ input, db }) => ({ apps: await adminAppNames(db, input.appIds) }));
   }
 }

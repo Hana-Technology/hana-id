@@ -1,7 +1,7 @@
 // The staff screens' BFF over the real AdminRpc and StaffRpc (docs/batch-c-spec.md "Admin BFF routes", "Tests: Admin
 // and email"): the staff actor lands in `app_changes` and `audit_log`; an AdminRpc suspension works with the console
 // Worker down; createApp and assignScopeOrg get the org's owners' subs from listMembers; contacts, members, invites,
-// owner grants, apps, changes, keys; the audit view and its CSV; no user export route.
+// owner grants, apps, changes, keys; the audit view and its CSV; no user export route (the Users screen: users.test.ts).
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import worker from '../src/index.ts';
@@ -222,7 +222,7 @@ describe('audit and CSV', () => {
 });
 
 describe('the route table', () => {
-  it('is the spec’s C8 routes, C12’s, C13’s and C14’s; no user export, no user or support lookup yet (D275, D276)', () => {
+  it('is the spec’s C8 routes, C12’s, C13’s, C14’s and C8b’s Users routes (POST); no user export, no Support ID lookup yet (C15)', () => {
     expect(ROUTE_TABLE).toMatchInlineSnapshot(`
       [
         "GET /api/me",
@@ -270,9 +270,14 @@ describe('the route table', () => {
         "GET /api/rates",
         "PUT /api/rates/:day",
         "GET /api/retention",
+        "POST /api/users/search",
+        "POST /api/users/find",
+        "POST /api/users/get",
       ]
     `);
     // The only exports are C12's ledger CSVs (/api/exports/:org/:month): no user export.
-    expect(ROUTE_TABLE.join('\n')).not.toMatch(/users?\/export|export\/users?|users\/search|users\/get|support/u);
+    expect(ROUTE_TABLE.join('\n')).not.toMatch(/users?\/export|export\/users?|\.csv.*users|users.*\.csv|support/u);
+    // The Users routes are POST only: no address, sub or code in a URL.
+    expect(ROUTE_TABLE.filter((r) => /\/api\/users\/(search|find|get)$/u.test(r)).every((r) => r.startsWith('POST '))).toBe(true);
   });
 });

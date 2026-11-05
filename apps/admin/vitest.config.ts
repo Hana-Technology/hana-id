@@ -1,8 +1,10 @@
 import { execFileSync } from 'node:child_process';
+import { generateKeyPairSync, randomBytes } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { cloudflareTest, readD1Migrations } from '@cloudflare/vitest-plugin';
 import { defineConfig } from 'vitest/config';
 import { TEST_MANIFEST as CONSOLE_MANIFEST } from '../console/scripts/gen-wrangler.ts';
+import { TEST_MANIFEST as ISSUER_MANIFEST } from '../email-issuer/scripts/gen-wrangler.ts';
 import { COMPATIBILITY_DATE, TEST_MANIFEST, testWranglerConfig } from './scripts/gen-wrangler.ts';
 
 // The admin Worker under test runs from its generated config (bindings, assets, cron), without Hyperdrive: the tests
@@ -12,6 +14,11 @@ import { COMPATIBILITY_DATE, TEST_MANIFEST, testWranglerConfig } from './scripts
 // real `AdminRpc` and `StaffRpc`. The tests share both Workers' D1s (HOT_DB, CONSOLE_TEST_DB) to seed and inspect them.
 // Nothing reaches a network: the Access certs, Resend and NEAR RPC are answered by stubs of the isolate's fetch; the
 // API's own NEAR RPC is an invalid host.
+//
+// C8b: the `ISSUER` binding reaches the real email issuer Worker's DirectoryRpc (bundled the same way), on its own D1
+// (ISSUER_TEST_DB, shared for seeding the directory) and RateLimiter objects. The issuer checks each staff call's Access
+// JWT itself, so the suite's Access key is made here once (TEST_ACCESS_JWK, the private half, for the tests' signer) and
+// its public half is served to the issuer by a fake Access team (test/fake-access.js, the issuer's outbound service).
 const here = (p: string) => new URL(p, import.meta.url).pathname;
 
 const TEST_WRANGLER_CONFIG = here('./wrangler.vitest.jsonc');
@@ -27,6 +34,15 @@ function bundle(name: string, dirName: string, alias: Record<string, string> = {
   execFileSync(here('./node_modules/.bin/wrangler'), ['deploy', '--dry-run', '--outdir', `${dir}/out`, '-c', config], { cwd: app, stdio: 'pipe', env: { ...process.env, WRANGLER_SEND_METRICS: 'false' } });
   return `${dir}/out/index.js`;
 }
+
+/** The suite's Access signing key (RS256, throwaway per run): the admin's certs stub and the fake team serve its public half. */
+const accessKey = (() => {
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048, publicExponent: 65537 });
+  const jwk = privateKey.export({ format: 'jwk' }) as Record<string, string>;
+  return { private: jwk, public: { kty: 'RSA', n: jwk.n!, e: jwk.e!, kid: 'access-test-kid', alg: 'RS256', use: 'sig' } };
+})();
+const ISSUER_DB_ID = 'hana-id-test-issuer';
+const ACCESS_WORKER = 'fake-access-team';
 
 const HOT_DB_ID = 'hana-id-test-hot';
 const CONSOLE_DB_ID = 'hana-id-test-console';
@@ -44,13 +60,15 @@ export default defineConfig(async () => {
   const consoleMigrations = await readD1Migrations(here('../console/migrations'));
   const apiScript = bundle(TEST_MANIFEST.cloudflare.workerName, 'api', { secp256k1: here('../api/src/shims/secp256k1.ts') });
   const consoleScript = bundle(CONSOLE_MANIFEST.console!.workerName, 'console');
+  const issuerScript = bundle(ISSUER_MANIFEST.emailIssuer!.cloudflare.workerName, 'email-issuer');
+  const issuerMigrations = await readD1Migrations(here('../email-issuer/migrations'));
   return {
     plugins: [
       cloudflareTest({
         wrangler: { configPath: TEST_WRANGLER_CONFIG },
         miniflare: {
-          bindings: { TEST_API_MIGRATIONS: apiMigrations, TEST_CONSOLE_MIGRATIONS: consoleMigrations, ...TEST_KEYS },
-          d1Databases: { HOT_DB: HOT_DB_ID, CONSOLE_TEST_DB: CONSOLE_DB_ID },
+          bindings: { TEST_API_MIGRATIONS: apiMigrations, TEST_CONSOLE_MIGRATIONS: consoleMigrations, TEST_ISSUER_MIGRATIONS: issuerMigrations, TEST_ACCESS_JWK: JSON.stringify(accessKey.private), ...TEST_KEYS },
+          d1Databases: { HOT_DB: HOT_DB_ID, CONSOLE_TEST_DB: CONSOLE_DB_ID, ISSUER_TEST_DB: ISSUER_DB_ID },
           workers: [
             {
               name: TEST_MANIFEST.cloudflare.workerName,
@@ -93,6 +111,31 @@ export default defineConfig(async () => {
                 SIGNER_ACCOUNT: TEST_MANIFEST.signer,
                 OWNER_GRANT_DELAY_MS: String(TEST_MANIFEST.ownerGrantDelayMs),
               },
+            },
+            {
+              name: ISSUER_MANIFEST.emailIssuer!.cloudflare.workerName,
+              modules: true,
+              scriptPath: issuerScript,
+              compatibilityDate: COMPATIBILITY_DATE,
+              compatibilityFlags: ['nodejs_compat'],
+              d1Databases: { DB: ISSUER_DB_ID },
+              durableObjects: { RATE_LIMITER: { className: 'RateLimiter', useSQLite: true } },
+              outboundService: ACCESS_WORKER,
+              bindings: {
+                ENV_NAME: TEST_MANIFEST.name,
+                ADMIN_ACCESS_TEAM_DOMAIN: TEST_MANIFEST.admin!.accessTeamDomain,
+                ADMIN_ACCESS_AUD: TEST_MANIFEST.admin!.accessAud,
+                ADMIN_STAFF_EMAILS: JSON.stringify(TEST_MANIFEST.admin!.staffEmails),
+                // The audit's keyed hash of an address term (a throwaway key per run).
+                EMAIL_RL_KEY: randomBytes(32).toString('base64'),
+              },
+            },
+            {
+              name: ACCESS_WORKER,
+              modules: true,
+              scriptPath: here('./test/fake-access.js'),
+              compatibilityDate: COMPATIBILITY_DATE,
+              bindings: { CERTS_URL: `https://${TEST_MANIFEST.admin!.accessTeamDomain}/cdn-cgi/access/certs`, ACCESS_PUBLIC_JWK: JSON.stringify(accessKey.public) },
             },
           ],
         },

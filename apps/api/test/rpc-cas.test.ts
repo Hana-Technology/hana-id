@@ -544,7 +544,7 @@ describe('entrypoints', () => {
   it('ConsoleRpc has none of AdminRpc’s staff methods', () => {
     const consoleMethods = Object.getOwnPropertyNames(ConsoleRpc.prototype);
     // proposeChange is on both: a member's (with the step-up) and a staff proposal.
-    for (const m of ['createApp', 'assignScopeOrg', 'deleteApp', 'suspendOrg', 'addOrigins', 'expediteChange', 'pendingNotices', 'ackNotice', 'setSecurityContacts', 'getSecurityContacts', 'listScopes', 'changesSince', 'securityEvents', 'markSecurityEventNotified', 'relayerKeys', 'governance']) {
+    for (const m of ['createApp', 'assignScopeOrg', 'deleteApp', 'suspendOrg', 'addOrigins', 'expediteChange', 'pendingNotices', 'ackNotice', 'setSecurityContacts', 'getSecurityContacts', 'listScopes', 'changesSince', 'securityEvents', 'markSecurityEventNotified', 'relayerKeys', 'governance', 'appNames']) {
       expect(consoleMethods, m).not.toContain(m);
       expect(Object.getOwnPropertyNames(AdminRpc.prototype), m).toContain(m);
     }

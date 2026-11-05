@@ -5,6 +5,7 @@
 // The named constants below are the production values. Dev envs (`local*`, `sandbox*`: `isDevEnv`) raise the per-mailbox
 // and per-IP code limits (D340): `limitsFor(envName)` picks the set, and every caller takes its limits from it.
 import { isDevEnv } from '@hana-id/env/origins';
+import { DIRECTORY_ROWS_PER_DAY, DIRECTORY_ROWS_PER_HOUR } from '@hana-id/console-core';
 import type { Limit } from './rate-limiter.ts';
 
 const MIN = 60_000;
@@ -129,6 +130,15 @@ export const IP_RECORD_LIMITS: Limit[] = [{ name: 'ip:record:10m', windowMs: 10 
 export const IP_WEBHOOK_LIMITS: Limit[] = [{ name: 'ip:webhook:10m', windowMs: 10 * MIN, max: 120 }];
 /** Staff actions (client proofs, unlocks, unsuppressions, revocations together) per staff member. */
 export const STAFF_LIMITS: Limit[] = [{ name: 'staff:actions:1h', windowMs: HOUR, max: 20 }];
+/**
+ * Identities each staff email can get back from the user directory through `DirectoryRpc` (search rows and opened
+ * details, D275 as confirmed 2026-11-05; provisional numbers, console-core's constants so the admin Worker's budget
+ * email quotes the same), on a `staff-dir:` object per staff member.
+ */
+export const DIRECTORY_ROW_LIMITS: Limit[] = [
+  { name: 'directory:rows:1h', windowMs: HOUR, max: DIRECTORY_ROWS_PER_HOUR },
+  { name: 'directory:rows:1d', windowMs: DAY, max: DIRECTORY_ROWS_PER_DAY },
+];
 
 /**
  * Code mails per recipient registrable domain per UTC day (H1, M4), except the large consumer providers in

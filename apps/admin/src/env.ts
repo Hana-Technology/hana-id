@@ -5,6 +5,8 @@
 // leaves, the watchdog shows as not configured) instead of at start-up.
 import type {
   ApiPurgeAuditResult,
+  AppNameView,
+  DirectoryRpcClient,
   AppChange,
   AuditRow,
   ConsolePurgeAuditResult,
@@ -21,6 +23,7 @@ import type {
   RpcOk,
   ScopeRow,
   SecurityEvent,
+  StaffUser,
 } from '@hana-id/console-core';
 
 export type Answer<T extends object> = Promise<RpcOk<T> | RpcFail>;
@@ -84,6 +87,13 @@ export interface AdminRpcClient {
   deletedApps(c: unknown): Answer<DeletedAppsResult>;
   /** The wallet directory of scopes whose every app was deleted 30 days ago or more. */
   purgeDirectory(c: unknown): Answer<PurgeDirectoryResult>;
+  /** The wallet directory (D310, D315, D346): users with their three ids, identities (with subs) and wallets. */
+  listUsers(c: unknown): Answer<{ users: StaffUser[]; nextCursor: string | null }>;
+  getUser(c: unknown): Answer<{ user: StaffUser }>;
+  /** By wallet address, User ID, internal id, Support ID or sub (`provider` makes it a sub search). */
+  findUsers(c: unknown): Answer<{ users: StaffUser[] }>;
+  /** The Users screen's app labels (C8b): names, orgs, scopes, environments of up to 50 app ids. */
+  appNames(c: unknown): Answer<{ apps: AppNameView[] }>;
 }
 
 /** The console's `StaffRpc` entrypoint (apps/console/src/staff-rpc.ts) over the `CONSOLE` service binding. */
@@ -177,6 +187,12 @@ export interface Env {
   EXPORTS?: R2Bucket;
   /** CoinGecko's demo API key for the daily rate (optional; sent as a header, never logged). */
   COINGECKO_API_KEY?: string;
+  /**
+   * The email issuer's `DirectoryRpc` (D275, C8b): the user directory's read path for the Users screen. Each call
+   * carries the staff request's Access JWT, which the issuer verifies itself. Optional: an env without an email issuer
+   * has no directory, and the Users screen answers `directory_unavailable`.
+   */
+  ISSUER?: Fetcher & DirectoryRpcClient;
   /** The SPA's static files (assets with `run_worker_first`). */
   ASSETS: Fetcher;
 }

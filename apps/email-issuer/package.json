@@ -12,9 +12,11 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p scripts"
   },
   "dependencies": {
+    "@hana-id/console-core": "workspace:*",
     "@hana-id/email": "workspace:*",
     "@hana-id/env": "workspace:*",
     "@hana-id/jwks": "workspace:*",
+    "@hana-id/oidc": "workspace:*",
     "@noble/hashes": "1.8.0",
     "aws4fetch": "1.0.20",
     "tldts": "7.4.18"

@@ -51,8 +51,25 @@ export async function rsaSigner(kid: string): Promise<Signer> {
   };
 }
 
+/** A signer over an RSA private JWK (the suite's Access key, made once per run in vitest.config.ts). */
+export async function jwkSigner(privateJwk: JsonWebKey & { kid?: string }, kid: string): Promise<Signer> {
+  const key = await crypto.subtle.importKey('jwk', { ...privateJwk, alg: 'RS256', ext: true }, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign']);
+  return {
+    jwk: { kid, n: privateJwk.n!, e: privateJwk.e!, kty: 'RSA', alg: 'RS256', use: 'sig' },
+    async sign(claims) {
+      const input = `${b64url(JSON.stringify({ alg: 'RS256', kid, typ: 'JWT' }))}.${b64url(JSON.stringify(claims))}`;
+      const sig = new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, new TextEncoder().encode(input)));
+      return `${input}.${b64url(sig)}`;
+    },
+  };
+}
+
 let signer: Signer | null = null;
-export const accessSigner = async (): Promise<Signer> => (signer ??= await rsaSigner('access-test-kid'));
+/**
+ * The suite's Access signer: the same key in every test file, because the email issuer (an auxiliary Worker, C8b)
+ * verifies staff JWTs against the certs its fake Access team serves for that key.
+ */
+export const accessSigner = async (): Promise<Signer> => (signer ??= await jwkSigner(JSON.parse(env.TEST_ACCESS_JWK) as JsonWebKey, 'access-test-kid'));
 
 /** Claims shaped like a real Access application token for the staff member. */
 export function staffClaims(over: Record<string, unknown> = {}): Record<string, unknown> {
@@ -65,6 +82,12 @@ export const staffJwt = async (over: Record<string, unknown> = {}, s?: Signer): 
 // ---- the fake network: Access certs and NEAR's get_scope ----
 
 export const chain = new Map<string, unknown>();
+/**
+ * `get_identity` and `get_account` answers (C8b), keyed `<method>:<scope>:<provider>:<sub>`; a missing key answers as
+ * NEAR does for an unknown identity (`get_account`: null) or fails (`get_identity`: a 502, "chain unavailable").
+ */
+export const identityViews = new Map<string, unknown>();
+export const viewKey = (method: 'get_identity' | 'get_account', scope: string, provider: string, sub: string): string => `${method}:${scope}:${provider}:${sub}`;
 export const nearCalls: string[] = [];
 export let nearDown = false;
 export const setNearDown = (v: boolean): void => {
@@ -113,9 +136,15 @@ export async function stubNetwork(opts: { certsDown?: boolean } = {}): Promise<v
     }
     if (url === RPC) {
       const body = JSON.parse(String(init?.body ?? (input instanceof Request ? await input.text() : '{}'))) as { params: { method_name: string; args_base64: string } };
-      const args = JSON.parse(atob(body.params.args_base64)) as { scope_id: string };
+      const args = JSON.parse(atob(body.params.args_base64)) as { scope_id: string; provider?: string; sub?: string };
       nearCalls.push(`${body.params.method_name}:${args.scope_id}`);
       if (nearDown) return new Response('bad gateway', { status: 502 });
+      if (body.params.method_name === 'get_identity' || body.params.method_name === 'get_account') {
+        const key = viewKey(body.params.method_name, args.scope_id, args.provider!, args.sub!);
+        if (!identityViews.has(key) && body.params.method_name === 'get_identity') return new Response('bad gateway', { status: 502 });
+        const value = identityViews.get(key) ?? null;
+        return Response.json({ jsonrpc: '2.0', id: 'admin', result: { result: [...new TextEncoder().encode(JSON.stringify(value))], block_height: 4242 } });
+      }
       const value = chain.has(args.scope_id) ? chain.get(args.scope_id) : null;
       return Response.json({ jsonrpc: '2.0', id: 'admin', result: { result: [...new TextEncoder().encode(JSON.stringify(value))] } });
     }

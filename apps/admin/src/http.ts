@@ -32,6 +32,10 @@ export const ADMIN_ERROR_STATUS = {
   watchdog_unauthorized: 502,
   /** The alert was acknowledged already (the first ack is kept). */
   already_acknowledged: 409,
+  /** The Users screen (C8b): no ISSUER binding, the issuer didn't answer, or its own Access check can't run. */
+  directory_unavailable: 503,
+  /** The issuer refused a staff identity this Worker accepted: its ADMIN_ACCESS_AUD or staff list differs from this one's. */
+  directory_refused: 502,
 } as const;
 export type AdminErrorCode = keyof typeof ADMIN_ERROR_STATUS;
 export type ErrorCode = RpcCode | AdminErrorCode;
@@ -63,6 +67,8 @@ const MESSAGES: Partial<Record<ErrorCode, string>> = {
   watchdog_bad_answer: 'The watchdog’s answer was not what the admin Worker expects',
   watchdog_unauthorized: 'The watchdog refused the admin Worker’s status token (the two copies differ)',
   already_acknowledged: 'This alert was acknowledged already',
+  directory_unavailable: 'The user directory (the email issuer) is unavailable in this environment or did not answer',
+  directory_refused: 'The email issuer refused this staff identity: its admin Access config (ADMIN_ACCESS_AUD, ADMIN_STAFF_EMAILS) differs from the admin Worker’s',
 };
 
 /** `{error: {code, message}}`. An upstream `error` text is ours (the RPCs write their own messages, never input). */

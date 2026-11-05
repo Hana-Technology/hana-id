@@ -14,6 +14,7 @@ export * from './reports.ts';
 export * from './retention.ts';
 export * from './rpc.ts';
 export * from './staff.ts';
+export * from './support.ts';
 export * from './types.ts';
 export * from './usage-event.ts';
 export * from './users.ts';

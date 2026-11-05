@@ -24,6 +24,7 @@ type Listener = (...args: unknown[]) => void;
 class FakeClient {
   status: HanaStatus = 'unlocking';
   addresses: HanaAddresses | null = null;
+  supportId: string | null = null;
   expiresAtMs: number | null = null;
   persistence: 'session' | 'none' | null = null;
   warning: 'storage_unavailable' | null = null;
@@ -350,6 +351,7 @@ describe('demo page', () => {
   it('copies diagnostics with timings and errors, and nothing sensitive', async () => {
     boot();
     await loginFlow();
+    fake.supportId = 'HANA-2750-G5HM';
     fake.ethereum.request.mockRejectedValueOnce(Object.assign(new Error(`relay Zm9vYmFyYmF6cXV4cXV1eGNvcmdlZ3JhdWx0Z2FycGx5 failed`), { code: -32603 }));
     click('sign-personal');
     await flush();
@@ -359,7 +361,7 @@ describe('demo page', () => {
     const text = copied[0]!;
     expect($('diagnostics').textContent).toBe(text);
     const d = JSON.parse(text) as Record<string, unknown>;
-    expect(d).toMatchObject({ environment: 'sandbox-dev', appKey: 'pk_test_85gd…', status: 'logged_in', addresses: ADDRESSES, pageOrigin: 'https://hana-id-demo-sandbox-dev.tingtc.workers.dev' });
+    expect(d).toMatchObject({ environment: 'sandbox-dev', appKey: 'pk_test_85gd…', status: 'logged_in', addresses: ADDRESSES, supportId: 'HANA-2750-G5HM', pageOrigin: 'https://hana-id-demo-sandbox-dev.tingtc.workers.dev' });
     expect(d.logins).toEqual([{ at: '2026-10-29T12:00:00.000Z', method: 'google', totalMs: 7000, stages: TIMINGS }]);
     expect(d.errors).toEqual([{ at: '2026-10-29T12:00:00.000Z', action: 'sign', code: -32603, reason: null, message: 'relay [redacted] failed' }]);
     expect(text).not.toContain(CONFIG.publishableKey);

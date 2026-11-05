@@ -1,6 +1,6 @@
 # Batch C build plan
 
-Status (2026-11-04, branches `feat/batch-c-9`, `feat/batch-c-14` and `feat/batch-c-12`, on `develop`; `feat/batch-c-13`): C1–C5 merged into `develop` and running in the
+Status (2026-11-04, branches `feat/batch-c-9`, `feat/batch-c-14` and `feat/batch-c-12`, on `develop`; `feat/batch-c-13`; 2026-11-05, `feat/batch-c-15`): C1–C5 merged into `develop` and running in the
 sandbox-dev API as far as `develop` includes them (migrations 0006, 0009 and 0010 applied, usage capture off;
 `docs/operations.md`); C6 (the claim allow-list on its tokens, D277), C7 (the console Worker backend; D240–D244), C8
 (the admin Worker; D278–D285) and C11 (the files Worker and logos; D300–D308) merged into `develop`, not deployed (M3
@@ -9,8 +9,11 @@ not run; their setup is steps 4, 5 and 7–10 below, at M4 and M5); C9 (partner 
 page; D330–D338, D344) and C12 (reports and statements; D320–D329) merged, not deployed; C10 (partner management, D342,
 D343, D350–D358) merged into `develop`, not deployed; the partner screens over C12's and C14's routes (usage,
 statements, pending upgrades; D370–D374) built on `feat/console-reports-upgrades`, not merged; C13 (retention; D360–D369) built on `feat/batch-c-13`, tests green, not merged, not deployed (its setup is
-`docs/operations.md` "Retention", at M6); C8b (the Users screen; D275 confirmed 2026-11-05, D388–D392) built on
-`feat/batch-c-8b`, tests green, not merged, not deployed; C15–C17 not built. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
+`docs/operations.md` "Retention", at M6); C15 (the Support ID lookup's backend, the session answers' `supportId`, the vault's
+`hana.supportId` and the approval popup; D394–D397, D393, D276 confirmed and amended) built on `feat/batch-c-15`, tests green, not merged,
+not deployed, its admin screen left for after C8b; C8b (the Users screen; D275 confirmed 2026-11-05, D388–D392) built on
+`feat/batch-c-8b`, tests green, not merged, not deployed (the Support ID lookup's screen over C15's route is not in it);
+C16–C17 not built. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
 batches that each merge into `develop` on their own: tests green, the docs they change updated, and nothing a partner,
 a user or staff can reach that is half-wired. Ordered by dependency; the spec's "Build order" steps are noted per
 batch. This is a plan, not a spec: where it and the spec disagree, the spec wins or gets amended first.
@@ -34,8 +37,8 @@ Batches merge one at a time. Deploys happen at the milestones at the end; a merg
   hot-DB **0009** (`0009_session_markers.sql`, D220; 0007 stays C4b's) and Neon **0002**
   (`0002_identity_tokens.sql`, D223) and **0003** (`0003_writer_partitions.sql`, the writer keeps partitions
   ahead). The email work then took Neon **0004** (`0004_email_counts.sql`) and **0005** (`0005_link_events.sql`), so
-  C12's functions are **0006** (`0006_reports.sql`, D320) and C13's retention functions take **0007**; C15's indexes
-  take the next free number after whatever has merged.
+  C12's functions are **0006** (`0006_reports.sql`, D320) and C13's retention functions take **0007**; C15 needs no Neon
+  migration (0007 has its indexes, D362).
 - Setup and deploy steps are instructions for the user. No batch's agent connects to Neon, creates Hyperdrive or D1
   resources, runs wrangler against an account, deploys or sends a chain transaction.
 - Neon is Postgres only, reached through Hyperdrive. Neon Auth, Better Auth and Neon's other services are not used
@@ -61,7 +64,7 @@ Batches merge one at a time. Deploys happen at the milestones at the end; a merg
 | C12 | Reports, settlement, rates, nonce check, statements (CSV, PDF, on-screen), exports, rejection-rate alert | 6 (part) | C4, C8, C11 |
 | C13 | Retention: monthly purge job and screen, `purgeAudit` RPCs, `uid:erase`, console housekeeping purges | 6 (part) | C12 |
 | C14 | Admin "Security & monitoring" view and the pending-upgrades page (governance D83, D86) | — | C8 |
-| C15 | Support ID lookup (D96; proposed design D276) | — | C4, C8b |
+| C15 | Support ID lookup (D96; D276 confirmed and amended, D394–D397) | — | C4 (the screen: C8b) |
 | C16 | CLI completion and cleanup: `scope:register --owners-from-org`, `owner:relay`, `app:*` retirement plan | 7 | C9 |
 | C17 | Testnet smoke on sandbox-dev | 8 | all |
 
@@ -430,25 +433,61 @@ D277). Not merged into `develop`; M3 not run (the API not deployed with it, no s
 - **Already built for it** (D310–D317, `feat/wallet-directory`): `AdminRpc.listUsers` / `getUser` / `findUsers` over
   the API's wallet directory (user ids, Support IDs, identities with subs, wallets); the screen joins each identity's
   `directoryKey` with `DirectoryRpc` for the email.
+- **Since C15** (D276 as amended 2026-11-05, D394): nothing fills `user_email_apps.uid` (code → user is the wallet
+  directory), so issuer migration 0003 needn't add it, and `DirectoryRpc` needs no `byUid`. The lookup screen is C8b's
+  follow-up over C15's `POST /api/support/lookup` (C15 "Screen: after C8b merges").
 
-## C15. Support ID lookup (D96; proposed design D276, spec §Users and Support ID)
+## C15. Support ID lookup (D96; D276 confirmed and amended 2026-11-05, D394–D397; spec §Users and Support ID)
 
-- **Scope**: the code from the uid (`console-core`, with vectors); `supportId` in the `/v1/login` and `/v1/sessions`
-  answers, the vault's `hana_status.supportId` and the popup's account view (`docs/api.md`, `docs/integration.md`
-  updated); `IssuerRpc.uid` on the API (the entrypoint D251 plans), bound only by the issuer, which fills
-  `user_email_apps.uid` after its directory writes; `DirectoryRpc.byUid`; `AdminRpc.userShares`; a Neon migration
-  (the next free number: 0004 and 0005 are taken by the email work, so C12's and C13's move too) with
-  `app_users (uid)` and `events (uid, at) WHERE uid IS NOT NULL`; the lookup screen (code or address, logins and
-  sessions by uid, errors by request ID, the app's changes); `user:erase` in the CLI.
-- **Tests**: the spec's Support ID, lookup, issuer uid write and migration rows.
-- **Open (D276)**: whether `user:erase` lands here or with C13. **Answered by C13 (D361)**: it is part of
-  `uid-erase`. Since D362, Neon 0007 already has `events (uid, at) WHERE uid IS NOT NULL` and `app_users (uid)`.
-- **Since D312**: the Support code is `end_users.support_code` in the hot DB (indexed); `AdminRpc.findUsers` already
-  resolves a code to its users, so `IssuerRpc.uid` and `user_email_apps.uid` may not be needed (revisit D276 here).
-- **Since D346**: the code is the short form of the identity token's `sub` (`console-core` `supportIdOf`, built, with
-  vectors), not of the uid; code → user is the wallet directory (`findUsers`), then its internal id `hu_…` for the
-  ledger. `IssuerRpc.uid`, `user_email_apps.uid` and `DirectoryRpc.byUid` are dropped, and there is no ledger-only
-  fallback.
+- **Status** (2026-11-05): built on `feat/batch-c-15`, tests green, not merged, not deployed; the admin screen waits
+  for C8b. The design the user confirmed ("yes go ahead with C15") is D276's 2026-11-05 amendment: code → user through
+  the wallet directory (`end_users.support_code`, `token_sub`, `user_id`), so `IssuerRpc.uid`, `user_email_apps.uid`
+  and `DirectoryRpc.byUid` are dropped; every match listed; no Neon migration (0007's indexes, D362); erasure is
+  `uid-erase` (D361); partners get the code only.
+- **Built**:
+  - console-core `support.ts`: `parseSupportQuery` (a Support ID any way it is typed, a User ID, an internal id),
+    `supportLookupInput`, `userSharesInput`, `supportLookupBody` (with the required `ticket`), the answer types, the
+    two ledger reads (`SUPPORT_ACTIVITY_SQL`, `SUPPORT_REQUESTS_SQL`) and `withSupportLedger` ("ledger unavailable").
+  - API: `AdminRpc.supportLookup({query, days?})` and `AdminRpc.userShares({appId, path})`
+    (`apps/api/src/directory/support.ts`, D394); `supportId` in the `/v1/login` and `/v1/sessions` answers
+    (`directory/store.ts` `sessionSupportId`, the directory's own derivation; `link-precheck.ts` `autoLinkRoot` for a
+    linked login, D395).
+  - Vault and SDK: the code kept with the session (its IndexedDB record) across reloads; `hana_status`,
+    `hana_login` and `ready` carry it for an SDK of 0.2.0 or later (`hana.supportId`, `supportIdChanged`,
+    `useHana().supportId`; the lockstep SDK version moved to 0.2.0, D393); the approval popup's account line; the
+    demo's "Copy diagnostics" (`docs/integration.md`).
+  - Admin Worker: `POST /api/support/lookup` (`apps/admin/src/support.ts`): the audit row first through
+    `StaffRpc.recordStaffAction` (`support.lookup`, org-less, never emailed; D396), then `AdminRpc.supportLookup`, then
+    the ledger over `USAGE_DB` (`LedgerStore.support`), degrading to `ledger: {available: false, reason}`.
+  - CLI: `admin <env> support:lookup <HANA-XXXX-XXXX | u1_… | hu_… | -> [--request-id …] [--days 30] [--json]
+    [--remote]` (`scripts/lib/admin-support.ts`, D397): the same report from the API's D1, the issuer's D1 and the
+    ledger as `usage_admin` (`.secrets/<env>/neon-usage-admin.url`).
+- **Tests**: `apps/api/test/support-lookup.test.ts` (the answers' `supportId` equals the stored code and the identity
+  token sub's short form; a member's and a linked login's root; left out without a key or a confirmed standing; the
+  lookup by every query form, collisions, shares, changes, refusals, staff only, no `ConsoleRpc` method),
+  `email-login.test.ts` (cases A and B), `apps/admin/test/support.test.ts` (Access, CSRF, POST only, the body rules,
+  audit before data, the ledger part and its degradation), `apps/admin/test-ops/support.test.ts` (the two reads as
+  `usage_admin` on the real migrations, the uid index), `apps/console/test/staff-actions.test.ts` (the org-less row),
+  `packages/console-core/test/support.test.ts`, `scripts/test/admin-support.test.ts`, `scripts/test/uid-erase.test.ts`
+  (after an erasure the lookup finds nothing), and the vault's and e2e's (`docs/integration.md`).
+- **Setup / deploy**: none of its own. The API part goes live with the next API deploy (no migration); the admin
+  route with the admin Worker (M4; its ledger part needs `USAGE_DB`, M2/M6); the CLI's ledger part needs
+  `.secrets/<env>/neon-usage-admin.url` (`usage-setup <env> roles`). Until then each says "ledger unavailable".
+- **Screen: after C8b merges** (left for it; nothing in C15 builds UI in the admin SPA):
+  - The lookup screen calls `POST /api/support/lookup` with `{query, ticket, requestIds?, days?}` (console-core
+    `supportLookupBody`) and renders `SupportLookupView` (console-core `support.ts`): the matches (each with `user`,
+    `apps`, `shares`, `changes`), `activity[i]` per match (null when `ledger.available` is false: show
+    `ledger.reason`), `requests` and `requestsNotFound`, `truncated`. A code the Users search box recognises
+    (`parseSupportQuery`) goes here.
+  - Emails: for each identity's `directoryKey`, `DirectoryRpc.get({provider, sub})` with the staff JWT and the same
+    ticket, recorded by the issuer as `support_lookup` (D275), in the BFF route or a second route; unverified Google
+    claims marked as on the Users screen.
+  - The Users detail's "Support ID and its activity" links to the lookup by User ID.
+- **Not in C15**: a partner lookup (D96, D276 (e): deferred); consents (browser-only, D23); Hana Home's display of the
+  code (later, with Hana Home). **Open follow-up:** the SDK's errors (`HanaError`) carry no API request ID, so a
+  partner has none to escalate with unless it reads the vault's network calls; carrying `requestId` in the vault's
+  errors needs the same SDK-version gate as D393. Until then staff look up by the code, the time and the app, and the
+  user's activity by uid.
 
 ## C16. CLI completion
 
@@ -532,6 +571,7 @@ Run from the main checkout; every file in `.secrets/` is 0600 in a 0700 director
    for the app; no new store; a short spec section before C15. **Confirmed as D144; the section is written
    (2026-11-04, proposed D276, spec §Users and Support ID):** logins and sessions by uid, errors by request ID (the
    ledger has no uid on failures), live shares from `vault_shares`, and, after D269, the directory reached through
-   a `uid` column.
+   a `uid` column. **Built in C15 (2026-11-05, D276 as amended, D394–D397)**, through the wallet directory instead of
+   a `uid` column (D346).
 5. **`ownerGrantDelayMs`**: kept as its own manifest field (the spec's), with `appChangeDelayMs`'s bounds and the
    same production minimum, rather than reusing `appChangeDelayMs`. Recommended as built in C1.

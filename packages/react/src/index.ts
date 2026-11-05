@@ -8,7 +8,7 @@
 //   const { identityToken, refresh, error } = useIdentityToken();   // the partner identity token, kept fresh
 
 /** Package version, kept equal to package.json (test/index.test.ts). */
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';
 
 export { HanaContext, HanaProvider, type HanaContextValue, type HanaProviderProps } from './provider.tsx';
 export { useHana, useWallet, type EvmWallet, type HanaChain, type StellarWallet, type UseHanaResult } from './hooks.ts';

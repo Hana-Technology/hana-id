@@ -9,8 +9,8 @@
 //
 // C12's reports, statements, rates and exports (report-routes.ts); C14's "Security & monitoring" (the watchdog through
 // monitoring.ts, the governance snapshot), the pending-upgrades page and the playbooks (playbooks.ts); C13's retention
-// screen (retention-routes.ts); C8b's Users screen (users.ts: `/api/users/search`, `/find`, `/get`, D275). Not here
-// yet: the Support ID lookup with a user's activity (`/api/support/lookup`, C15), which answers 404 until it is built.
+// screen (retention-routes.ts); C8b's Users screen (users.ts: `/api/users/search`, `/find`, `/get`, D275); C15's
+// Support ID lookup (`POST /api/support/lookup`, support.ts).
 import { ACCESS_JWT_HEADER } from '@hana-id/oidc';
 import { type AppChange, type AuditRow, DIRECTORY_AUDIT_ACTIONS, type DirectoryAuditRow, type MemberView } from '@hana-id/console-core';
 import type { Env } from './env.ts';
@@ -23,6 +23,7 @@ import { getPlaybookRoute, listPlaybooksRoute } from './playbooks.ts';
 import { retentionRoute } from './retention-routes.ts';
 import { securityView } from './security.ts';
 import { usersFindRoute, usersGetRoute, usersSearchRoute } from './users.ts';
+import { supportLookupRoute } from './support.ts';
 import { type StaffRequest, staffCtx } from './rpc.ts';
 
 export interface RouteCtx {
@@ -281,6 +282,8 @@ const ROUTES: Route[] = [
   { method: 'POST', pattern: '/api/users/search', handler: usersSearchRoute },
   { method: 'POST', pattern: '/api/users/find', handler: usersFindRoute },
   { method: 'POST', pattern: '/api/users/get', handler: usersGetRoute },
+  // ---- C15: the Support ID lookup (support.ts) ----
+  { method: 'POST', pattern: '/api/support/lookup', handler: supportLookupRoute },
 ];
 
 function matchRoute(path: string): { routes: { route: Route; params: Record<string, string> }[] } {

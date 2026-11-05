@@ -222,7 +222,7 @@ describe('audit and CSV', () => {
 });
 
 describe('the route table', () => {
-  it('is the spec’s C8 routes, C12’s, C13’s, C14’s and C8b’s Users routes (POST); no user export, no Support ID lookup yet (C15)', () => {
+  it('is the spec’s C8 routes, C12’s, C13’s, C14’s, C8b’s Users routes and C15’s lookup (POST); no user export', () => {
     expect(ROUTE_TABLE).toMatchInlineSnapshot(`
       [
         "GET /api/me",
@@ -273,11 +273,12 @@ describe('the route table', () => {
         "POST /api/users/search",
         "POST /api/users/find",
         "POST /api/users/get",
+        "POST /api/support/lookup",
       ]
     `);
     // The only exports are C12's ledger CSVs (/api/exports/:org/:month): no user export.
-    expect(ROUTE_TABLE.join('\n')).not.toMatch(/users?\/export|export\/users?|\.csv.*users|users.*\.csv|support/u);
-    // The Users routes are POST only: no address, sub or code in a URL.
-    expect(ROUTE_TABLE.filter((r) => /\/api\/users\/(search|find|get)$/u.test(r)).every((r) => r.startsWith('POST '))).toBe(true);
+    expect(ROUTE_TABLE.join('\n')).not.toMatch(/users?\/export|export\/users?|\.csv.*users|users.*\.csv|GET \/api\/support/u);
+    // The Users routes and the Support ID lookup are POST only: no address, sub or code in a URL.
+    expect(ROUTE_TABLE.filter((x) => /\/api\/(users\/(search|find|get)|support\/lookup)$/u.test(x)).every((x) => x.startsWith('POST '))).toBe(true);
   });
 });

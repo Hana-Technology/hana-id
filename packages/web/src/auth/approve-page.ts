@@ -91,6 +91,8 @@ export const AUTO_APPROVE_REASON_TEXT: Readonly<Record<AutoApproveReason, string
  * Shown on every request and consent screen of a pk_test_ app (docs/decisions.md D39): its keys come from the testnet
  * MPC, so the vault refuses mainnet requests from it before they reach this popup.
  */
+/** Beside the Support ID on the request screen (batch C15). */
+export const SUPPORT_ID_HINT = 'Give this code to the app’s support if they ask; it doesn’t show your account or email.';
 export const TEST_APP_NOTE = 'Test app: Hana ID signs only for test networks here. Requests for Stellar or EVM mainnets are refused, so don’t keep real funds at this account.';
 
 /** The text for a reason code (an unknown code, from a newer vault, is shown generically). */
@@ -238,6 +240,11 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     return d.h('div', { class: 'actions' }, reject, enabled ? ok : null);
   }
 
+  /** The user's Support ID (batch C15), as the vault sent it: the code an app's support may ask for. Text only. */
+  function supportIdLine(supportId: string): HTMLElement {
+    return d.h('p', { class: 'support-id muted' }, 'Support ID ', d.h('code', { class: 'mono' }, supportId), ` ${SUPPORT_ID_HINT}`);
+  }
+
   function stopAutoApproveButton(label: string): HTMLElement {
     const box = d.h('div', { class: 'auto-approve' }, d.h('p', {}, 'Auto-approving under ', d.h('strong', {}, label), ' is on.'));
     const btn = d.h('button', { class: 'link', attrs: { type: 'button' } }, 'Stop auto-approving');
@@ -284,6 +291,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         { class: 'panel approve' },
         header(msg, `Request ${msg.position} of ${msg.queued}`),
         d.h('p', { class: 'account' }, `Your ${msg.chain === 'stellar' ? 'Stellar' : 'EVM'} account `, d.h('code', { class: 'mono' }, msg.address)),
+        msg.supportId ? supportIdLine(msg.supportId) : null,
         msg.testApp ? d.h('p', { class: 'note test-app' }, TEST_APP_NOTE) : null,
         auto?.reason ? d.h('p', { class: 'note' }, `Not signed automatically under “${auto.label}”: ${autoApproveReasonText(auto.reason)}.`) : null,
         decoded

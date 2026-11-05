@@ -7,7 +7,8 @@ a proposal that follows from them; the open questions at the end say what still 
 fallback addresses, Q5; and, added 2026-11-04 for D269, Q26 and Q27: the Users screen and the Support ID, D275 and
 D276; Q26 (D275) confirmed by the user on 2026-11-05 with amendments and built in C8b; Q27's derivation answered by
 D346 on 2026-11-04: the Support ID is the short form of the identity
-token's `sub`, which is also the partner's User ID). The 2026-10-27 multi-agent draft (four decision records, a
+token's `sub`, which is also the partner's User ID; Q27 itself, D276, confirmed by the user on 2026-11-05 as amended,
+built in C15, D394–D397). The 2026-10-27 multi-agent draft (four decision records, a
 reconciliation table, passkeys, four roles, two notice channels, a queue, rollups) is superseded by this rewrite; its
 history is in git.
 
@@ -1370,10 +1371,11 @@ Console-only codes: `unauthenticated` 401, `csrf` 403, `not_invited` 403, `invit
 
 ## Users and Support ID (staff only; D269, D96, D144)
 
-**D275 (Users) confirmed by the user on 2026-11-05, with amendments: the support reference is required to open one
-identity and optional for a search or list page; the row budget as proposed, provisional; the detail also shows the
-wallet directory's ids and wallets. Built in build-plan batch C8b (D388–D392). D276 (the Support ID lookup, C15) is
-still proposed, as amended by D346.**
+**Proposed 2026-11-04 (D275, D276); the Support ID part (D276) confirmed by the user on 2026-11-05 as amended
+(D394–D397) and built in C15; the Users screen (D275) confirmed by the user on 2026-11-05 with amendments (the support
+reference required to open one identity, optional for a search or list page; the row budget as proposed, provisional;
+the detail also shows the wallet directory's ids and wallets) and built in C8b (D388–D392).** Built in build-plan
+batches C8b (Users) and C15 (Support ID).
 
 D269 keeps each identity's verified address in the email issuer's own D1 (`user_emails`, `user_email_apps`, issuer
 migration 0002), for Hana staff only. This section gives staff a Users screen over it and lets the Support ID lookup
@@ -1440,11 +1442,13 @@ interface DirectoryRpc {
 interface UserRow { provider; sub; email; emailVerified: boolean; hosted: boolean | null; firstSeenMs; lastSeenMs;
   appCount: number; unverifiedClaim: boolean }
 interface UserApp { appId; scopeId; firstSeenMs; lastSeenMs }
-// apps/api, bound only by the email issuer (C15; the same entrypoint D251 plans for the issuer's app lookup).
-interface IssuerRpc { uid(c: { scopeId: string; provider: string; sub: string }): Promise<{ uid: string }> }
-// apps/api AdminRpc addition (C15): live vault shares of one path in one app (no share ids, no counters).
+// (Dropped by D276's 2026-11-05 amendment: IssuerRpc.uid and UserRow.uids; code → user is the wallet directory.)
+// apps/api AdminRpc additions (C15, built, D394): the vault shares of one path in one app that haven't expired (no
+// share ids, no counters), and the lookup's hot-DB part.
 //   userShares(c: Ctx & { appId; path })
 //     : Rpc<{ shares: { createdAt; idleUntil; absExpiresAt; revokedAt: number | null }[] }>
+//   supportLookup(c: Ctx & { query /* Support ID, User ID or internal id */; days?: number /* 1–731, 30 */ })
+//     : Rpc<SupportLookupResult /* console-core support.ts */>
 ```
 
 ### Users screen (`/users`, C8b)
@@ -1482,7 +1486,7 @@ interface IssuerRpc { uid(c: { scopeId: string; provider: string; sub: string })
   `changesSince`, filterable by staff and action. Directory reads never go into the partner feed, and they aren't
   emailed except for the budget alert.
 
-### Support ID lookup (C15, D276)
+### Support ID lookup (C15, D276 as amended 2026-11-05, D394–D397; built on `feat/batch-c-15`)
 
 - **The code (D346).** `HANA-` + `c[0..4]` + `-` + `c[4..8]`, where `c` is the Crockford base32 (alphabet
   `0123456789ABCDEFGHJKMNPQRSTVWXYZ`, most significant bit first) of the first 5 bytes (40 bits) of the identity
@@ -1492,7 +1496,7 @@ interface IssuerRpc { uid(c: { scopeId: string; provider: string; sub: string })
   holding a User ID (the partner's backend) can compute it without a key. It is per scope and per account: it comes
   from the account root, so a linked member gets its root's code, and every app of a scope shows the same code. Code
   `console-core` `supportIdOf(userId)`; stored as `end_users.support_code`.
-- **Shown to the user and the partner** (planned, not built). The API returns `supportId` next to the session in the
+- **Shown to the user and the partner** (built in C15, D395). The API returns `supportId` next to the session in the
   `/v1/login` and `/v1/sessions` answers, computed from the path's root with `supportIdOf(identitySub(…))`, the same
   code as the directory's. The vault keeps it with the session and exposes it in `hana_status` (so the partner page's
   *Copy diagnostics* carries it), the Hana popup's account view and, later, Hana Home. It carries no address and no
@@ -1508,9 +1512,10 @@ interface IssuerRpc { uid(c: { scopeId: string; provider: string; sub: string })
      in the partner's escalation tells them apart. A code isn't a credential: staff change nothing on a code alone.
 - **Staff: address → user**: the Users search, then the detail's Support ID.
 - **What the lookup shows for a uid**, all from data Hana already keeps (D144):
-  - Logins and sessions: the ledger's ok `login`, `session` and `derive` events by uid (the same migration
-    adds `events (uid, at) WHERE uid IS NOT NULL`). They show the time, app, endpoint, latency and `near_tx` (an
-    explorer link), over the last 30 days by default and at most 400.
+  - Logins and sessions: the ledger's ok `login`, `session` and `derive` events by uid (Neon 0007 has
+    `events (uid, at) WHERE uid IS NOT NULL`, D362). They show the time, app, endpoint, latency and `near_tx` (an
+    explorer link), over the last 30 days by default (up to 731) and at most 400. Read as `usage_admin` by the admin
+    Worker and the CLI, never by the API (D394); without the ledger the answer says "ledger unavailable".
   - Live sessions: `AdminRpc.userShares` over `vault_shares` by `(app_id, sha256(path))`, for persistence apps.
   - Errors: by the request IDs the escalation gives (`usage.events` by `request_id`, every outcome with its
     `code`). The ledger keeps uids only on ok events (its CHECK), so it can't list errors per user, by design.
@@ -1523,7 +1528,9 @@ interface IssuerRpc { uid(c: { scopeId: string; provider: string; sub: string })
   activity behind it while the ledger holds the uid: 24 months after the month ends, and while `app_users` keeps the
   row (D90). D269 sets no expiry for the directory itself (its `K_sub`-loss reason argues for none). An erasure request
   deletes the identity's directory rows with a CLI command (`user:erase`, beside `uid:erase`, through D1's REST API
-  as the operator), so `DirectoryRpc` stays read-only.
+  as the operator), so `DirectoryRpc` stays read-only. **As built:** one command, `uid-erase` (D361), across the
+  ledger and both directories; after it the code resolves to nothing. The admin console's lookups are recorded in the
+  console's `audit_log` (`support.lookup`, org-less, D396), with the ticket the route requires.
 
 ### What partners never see
 
@@ -2358,4 +2365,5 @@ Answered on 2026-10-29 (`docs/decisions.md` D87–D93), applied above; the numbe
     fallback; errors by request ID; no partner lookup. Alternatives in D276: a separate key, the identity token's
     `sub`, recomputing uids at lookup, uids on error events, an org-scoped partner lookup. **Answered 2026-11-04 by
     D346: the identity token's `sub`** (the partner's User ID), resolved through the wallet directory; no issuer uid
-    column, no ledger fallback.
+    column, no ledger fallback. **Confirmed by the user on 2026-11-05** ("yes go ahead with C15") as D276's 2026-11-05 amendment; built in
+    C15 (D394–D397).

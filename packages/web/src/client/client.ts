@@ -12,7 +12,7 @@
 //
 // The client holds no key material and no token: it mounts the vault iframe (vault-connection.ts), opens the login
 // popup (login.ts) and, inside the user's click, the approval popup for signing requests (approval-window.ts, D99),
-// and relays requests over the port. Everything it learns is public (addresses, expiry, status).
+// and relays requests over the port. Everything it learns is public (addresses, expiry, status, the user's Support ID).
 // Beyond the spec's list it also exposes cancelLogin() (the port's hana_cancelLogin), the auto-approve port methods,
 // destroy() (React's HanaProvider unmount), and the `loginProgress`, `autoApproved` and `launcher` events.
 import {
@@ -83,6 +83,11 @@ export interface HanaEvents {
    */
   identityTokenChanged: [string | null];
   /**
+   * `supportId` changed: the user's Support ID arrived with a login or a restored session, or went (null) with the
+   * session. Batch C15.
+   */
+  supportIdChanged: [string | null];
+  /**
    * A sign-in method of the wallet was added (`pending` until `effectiveAtMs`, or `active`), became active, or was
    * removed (docs/integration.md "Sign-in methods"). Show pending ones to the user with a way to cancel: the mailbox of
    * a pending email may not be theirs.
@@ -130,6 +135,7 @@ export class HanaClient extends Emitter<HanaEvents> {
   #status: HanaStatus = 'unlocking';
   #addresses: HanaAddresses | null = null;
   #expiresAtMs: number | null = null;
+  #supportId: string | null = null;
   #persistence: Persistence | null = null;
   #warning: 'storage_unavailable' | null = null;
   #error: HanaError | null = null;
@@ -219,6 +225,16 @@ export class HanaClient extends Emitter<HanaEvents> {
   /** When the session ends (ms since the epoch, server-corrected), while logged in. */
   get expiresAtMs(): number | null {
     return this.#expiresAtMs;
+  }
+
+  /**
+   * The logged-in user's Support ID (`HANA-XXXX-XXXX`), or null: logged out, or the session has none (an API that
+   * couldn't compute it, or a session saved by an older vault). The short form of the identity token's `sub`, the same
+   * in every app of your scope; it carries no address or email. Show it where your users look for help, put it in your
+   * diagnostics, and give it to Hana with the request IDs when you escalate (docs/integration.md "Support").
+   */
+  get supportId(): string | null {
+    return this.#supportId;
   }
 
   /** The app's persistence mode as the vault runs it ('none' after a storage fallback), once ready. */
@@ -329,6 +345,7 @@ export class HanaClient extends Emitter<HanaEvents> {
     this.#setIdentity(null);
     this.#setAddresses(null);
     this.#expiresAtMs = null;
+    this.#setSupportId(null);
     if (this.#status !== 'logging_in') this.#setStatus('logged_out');
   }
 
@@ -479,6 +496,7 @@ export class HanaClient extends Emitter<HanaEvents> {
     this.#warning = s.warning ?? null;
     if (s.status === 'logged_in' && s.addresses) {
       this.#expiresAtMs = s.expiresAtMs ?? null;
+      this.#setSupportId(s.supportId ?? null);
       this.#setAddresses(s.addresses);
     }
     if (this.#status === 'unlocking') this.#setStatus(this.#addresses ? 'logged_in' : 'logged_out');
@@ -490,9 +508,24 @@ export class HanaClient extends Emitter<HanaEvents> {
     this.#persistence = r.persistence;
     this.#warning = r.warning ?? this.#warning;
     this.#expiresAtMs = r.expiresAtMs;
+    this.#setSupportId(r.supportId ?? null);
     this.#error = null;
     this.#setAddresses(r.addresses);
     this.#setStatus('logged_in');
+  }
+
+  /**
+   * After the vault switched to another session on its own (a login in another tab of this app): the Support ID is
+   * read again with hana_status, and kept only if the vault still reports the same addresses.
+   */
+  #refreshSupportId(addresses: HanaAddresses): void {
+    this.#conn.request('hana_status').then(
+      (st) => {
+        const now = this.#addresses;
+        if (st.status === 'logged_in' && now && st.addresses?.stellar === now.stellar && st.addresses.evm === now.evm && now.stellar === addresses.stellar) this.#setSupportId(st.supportId ?? null);
+      },
+      () => {},
+    );
   }
 
   #onEvent(e: PortEvent): void {
@@ -500,11 +533,19 @@ export class HanaClient extends Emitter<HanaEvents> {
       case 'connected':
       case 'ready':
         return; // handled through conn.ready
-      case 'accountsChanged':
-        this.#setAddresses(e.data.addresses);
-        if (e.data.addresses === null) this.#expiresAtMs = null;
+      case 'accountsChanged': {
+        const prev = this.#addresses;
+        const next = e.data.addresses;
+        const changed = prev?.stellar !== next?.stellar || prev?.evm !== next?.evm;
+        // Another session's addresses: its Support ID isn't known until hana_status says (a login's own result sets
+        // it right after this event, which the refresh then confirms).
+        if (changed) this.#setSupportId(null);
+        this.#setAddresses(next);
+        if (next === null) this.#expiresAtMs = null;
+        else if (changed) this.#refreshSupportId(next);
         if (this.#status === 'logged_in' || this.#status === 'logged_out') this.#setStatus(e.data.addresses ? 'logged_in' : 'logged_out');
         return;
+      }
       case 'disconnect':
         this.#loggedOut();
         this.emit('disconnect', { code: e.data.code });
@@ -551,6 +592,7 @@ export class HanaClient extends Emitter<HanaEvents> {
     this.#setIdentity(null);
     this.#setAddresses(null);
     this.#expiresAtMs = null;
+    this.#setSupportId(null);
     if (this.#status === 'logged_in') this.#setStatus('logged_out');
   }
 
@@ -563,6 +605,7 @@ export class HanaClient extends Emitter<HanaEvents> {
     this.#setIdentity(null);
     this.#setAddresses(null);
     this.#expiresAtMs = null;
+    this.#setSupportId(null);
     if (!this.#destroyed) {
       this.#error = hanaError(ErrorCode.disconnected);
       this.#setStatus('error');
@@ -577,6 +620,12 @@ export class HanaClient extends Emitter<HanaEvents> {
     this.#addresses = next === null ? null : { stellar: next.stellar, evm: next.evm };
     this.emit('accountsChanged', next === null ? null : { ...next });
     this.ethereum.accountsChanged(next?.evm ?? null);
+  }
+
+  #setSupportId(next: string | null): void {
+    if (this.#supportId === next) return;
+    this.#supportId = next;
+    this.emit('supportIdChanged', next);
   }
 
   #setStatus(s: HanaStatus): void {

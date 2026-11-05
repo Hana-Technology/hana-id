@@ -83,10 +83,13 @@ export const queryAuditInput = ctx.extend({ filters: auditFilters, cursor: z.str
 
 /**
  * Staff actions of the admin Worker that have no StaffRpc or AdminRpc write of their own (batch C12, D327): a statement
- * issued, a ledger export, a rate override. `recordStaffAction` appends their `audit_log` row (Hana actor), so the
- * audit view and the feed show them beside every other staff act. Details are ids, months, hashes and counts.
+ * issued, a ledger export, a rate override, and (batch C15, D396) a Support ID lookup, recorded before its data is read
+ * (org-less, so no partner's audit view or feed ever shows it). `recordStaffAction` appends their `audit_log` row (Hana
+ * actor), so the audit view shows them beside every other staff act. Details are ids, months, hashes and counts; a
+ * lookup's are the query's kind, the ticket, the request-ID count and the window, and its target is the query as given
+ * (a Support ID, User ID or internal id: never an address or a sub).
  */
-export const STAFF_ACTIONS = ['statement.issued', 'ledger.exported', 'rate.overridden'] as const;
+export const STAFF_ACTIONS = ['statement.issued', 'ledger.exported', 'rate.overridden', 'support.lookup'] as const;
 export const recordStaffActionInput = ctx
   .extend({
     orgId: orgIdInput.optional(),

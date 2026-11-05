@@ -24,6 +24,8 @@ import type {
   ScopeRow,
   SecurityEvent,
   StaffUser,
+  SupportLookupResult,
+  UserShare,
 } from '@hana-id/console-core';
 
 export type Answer<T extends object> = Promise<RpcOk<T> | RpcFail>;
@@ -94,6 +96,10 @@ export interface AdminRpcClient {
   findUsers(c: unknown): Answer<{ users: StaffUser[] }>;
   /** The Users screen's app labels (C8b): names, orgs, scopes, environments of up to 50 app ids. */
   appNames(c: unknown): Answer<{ apps: AppNameView[] }>;
+  /** The Support ID lookup's hot-DB part (C15, staff only): matches, their apps, shares and the apps' changes. */
+  supportLookup(c: unknown): Answer<SupportLookupResult>;
+  /** The vault shares of one path in one app that haven't expired (C15). */
+  userShares(c: unknown): Answer<{ shares: UserShare[] }>;
 }
 
 /** The console's `StaffRpc` entrypoint (apps/console/src/staff-rpc.ts) over the `CONSOLE` service binding. */

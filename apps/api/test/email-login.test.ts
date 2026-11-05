@@ -1,6 +1,8 @@
 // Email login in the API (docs/email-login-build-plan.md batch 6, docs/email-login-spec.md "API changes"): email tokens
 // on /v1/sessions and /v1/login, the D137 proof of possession on /v1/sessions, /v1/login's link precheck (D133), the
 // email-login panics as errors, GET /v1/app's sign-in methods, and the link relays with share revocation.
+import { supportIdOf } from '@hana-id/console-core';
+import { identitySub } from '@hana-id/core/identity';
 import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { usageDay } from '../src/apps.ts';
@@ -171,6 +173,10 @@ async function linkedLogin(
 
 const login = (app: { key: string }, req: unknown, bindings: Partial<typeof env> = emailEnv()) => call('/v1/login', { headers: hanaHeaders(app), body: req, env: bindings });
 
+/** The Support ID of the account rooted at (provider, sub): the identity token's `sub`'s short form (D346). */
+const rootSupportId = (scope: string, provider: string, sub: string): string =>
+  supportIdOf(identitySub(Uint8Array.from(atob(env.IDENTITY_SUB_KEY!), (c) => c.charCodeAt(0)), scope, { provider, sub }));
+
 describe('POST /v1/login with a link (D133)', () => {
   /** Case A: the email identity E has a wallet, the Google identity G none: G joins E's account at once. */
   async function caseA() {
@@ -195,6 +201,8 @@ describe('POST /v1/login with a link (D133)', () => {
     // Read fresh: both identities and both accounts, and the session identity's standing once more (session-standing.ts);
     // then, after the answer, the wallet directory's own fresh read of the session identity and its account (D314).
     expect(near.viewCalls.filter((v) => v.method === 'get_identity' || v.method === 'get_account')).toHaveLength(7);
+    // The Support ID (C15) is the account root's the linked session opens: the email identity's, which G joined.
+    expect((await body(res)).supportId).toBe(rootSupportId(app.scope, 'email', e));
   });
 
   it('case B (the email identity joins the Google wallet), pending: relays with link_immediate false', async () => {
@@ -205,6 +213,8 @@ describe('POST /v1/login with a link (D133)', () => {
     const res = await login(app, req);
     expect(res.status).toBe(200);
     expect(near.sent[0]!.args.link_immediate).toBe(false);
+    // The email identity joins G's account: the Support ID stays G's (C15).
+    expect((await body(res)).supportId).toBe(rootSupportId(app.scope, 'google', G_SUB));
   });
 
   it('refuses a link the session key didn’t sign, a swapped or stale one, and a wrong mode, before any relay', async () => {

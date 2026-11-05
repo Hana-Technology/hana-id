@@ -26,6 +26,7 @@ function Probe() {
         addresses: hana.addresses,
         persistence: hana.persistence,
         error: hana.error,
+        supportId: hana.supportId,
         client: hana.client === null ? null : 'client',
         stellar: { address: stellar.address, signer: stellar.signer === null ? null : 'signer' },
         evm: { address: evm.address, provider: evm.provider === null ? null : 'provider' },

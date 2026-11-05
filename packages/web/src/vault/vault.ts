@@ -57,6 +57,8 @@ import {
   parseWindowMessage,
   signVaultMessage,
   unsupportedMethodId,
+  SUPPORT_ID_SDK_MIN,
+  sdkAtLeast,
   vaultPayload,
   walletRecordEvmDigest,
 } from '@hana-id/core';
@@ -225,6 +227,11 @@ interface Session {
   walletProofs: WalletProofs | null;
   /** The digest of this session's EVM wallet record (D317), once made: never signed as a raw EVM request. */
   recordDigest?: Uint8Array;
+  /**
+   * The user's Support ID as the API sent it with this session (batch C15, `HANA-XXXX-XXXX`), kept in the record so a
+   * reload still has it; null when the API sent none or the record predates it. Never derived here (D346).
+   */
+  supportId: string | null;
   lastTouchAt: number;
   /** Server-corrected time of the partner page's last request for this session (the in-memory idle limit). */
   lastActivityAt: number;
@@ -271,6 +278,8 @@ interface Dormant {
    */
   keyPair: CryptoKeyPair;
   walletProofs: WalletProofs | null;
+  /** The session's Support ID (Session.supportId), so hana_status keeps it while dormant. */
+  supportId: string | null;
   /** Ends it at expiresAtMs, as a live session's expiry timer would. */
   expiryTimer: unknown;
 }
@@ -349,6 +358,11 @@ export class Vault {
   private readonly bundleCkdKeyHash: Uint8Array;
 
   private parentOrigin: string | null = null;
+  /**
+   * Whether the SDK on the port takes `supportId` in hana_status, hana_login and `ready` (its hello's `sdk` is
+   * SUPPORT_ID_SDK_MIN or later): an older SDK's validators refuse a key they don't know, so it gets the old shapes.
+   */
+  private sdkTakesSupportId = false;
   private port: MessagePort | null = null;
   private api: VaultApi | null = null;
   private near: NearView | null = null;
@@ -449,7 +463,8 @@ export class Vault {
   }
 
   private tryHello(e: WindowMessageEvent): void {
-    if (!parseWindowMessage(e.data, ['hana:hello'])) return;
+    const hello = parseWindowMessage(e.data, ['hana:hello']);
+    if (!hello) return;
     if (e.source !== this.host.parent || e.ports.length !== 1) return;
     if (!parentAllowed(this.config, e.origin, this.env.devEnv)) return;
     const ancestor = this.host.ancestorOrigin();
@@ -461,6 +476,7 @@ export class Vault {
     const port = e.ports[0]!;
     this.helloAt = this.perfNow();
     this.parentOrigin = e.origin;
+    this.sdkTakesSupportId = sdkAtLeast(hello.sdk, SUPPORT_ID_SDK_MIN);
     this.port = port;
     const fetchFn = this.o.fetch;
     this.api = new VaultApi({
@@ -477,6 +493,7 @@ export class Vault {
       parentWindow: this.host.parent,
       appName: this.config.appName,
       logoUrl: () => this.logoUrl,
+      supportId: () => this.supportId(),
       parentOrigin: e.origin,
       open: (url, name, features) => this.host.open(url, name, features),
       launcher: this.launcher,
@@ -549,10 +566,20 @@ export class Vault {
 
   private statusResult(): StatusResult {
     const s = this.live();
-    if (s) return { status: 'logged_in', addresses: { ...s.addresses }, expiresAtMs: s.expiresAtMs, persistence: s.persistence };
+    if (s) return { status: 'logged_in', addresses: { ...s.addresses }, expiresAtMs: s.expiresAtMs, persistence: s.persistence, ...this.supportIdField(s.supportId) };
     const d = this.liveDormant();
-    if (d) return { status: 'logged_in', addresses: { ...d.addresses }, expiresAtMs: d.expiresAtMs, persistence: 'session' };
+    if (d) return { status: 'logged_in', addresses: { ...d.addresses }, expiresAtMs: d.expiresAtMs, persistence: 'session', ...this.supportIdField(d.supportId) };
     return { status: 'logged_out', persistence: this.persistence };
+  }
+
+  /** The Support ID of the session, live or dormant, or null (the approval popup's account line). */
+  private supportId(): string | null {
+    return this.live()?.supportId ?? this.liveDormant()?.supportId ?? null;
+  }
+
+  /** `{supportId}` for a port answer or event, when there is one and the SDK takes the field; else nothing. */
+  private supportIdField(supportId: string | null): { supportId?: string } {
+    return supportId && this.sdkTakesSupportId ? { supportId } : {};
   }
 
   /** The addresses of the session, live or dormant, or null. */
@@ -1055,6 +1082,7 @@ export class Vault {
       persist: null,
       consent: null,
       walletProofs: this.walletProofsFor(success.prk, success.sessionKey.publicKey, success.addresses),
+      supportId: success.supportId,
       lastTouchAt: this.clock.now(),
       lastActivityAt: this.clock.now(),
       expiryTimer: null,
@@ -1072,7 +1100,7 @@ export class Vault {
     this.freshLink = success.linked?.provider ?? null;
     this.accountCache = null;
     void this.account(true).catch(() => undefined);
-    const result: LoginResult = { addresses: { ...s.addresses }, expiresAtMs: s.expiresAtMs, persistence };
+    const result: LoginResult = { addresses: { ...s.addresses }, expiresAtMs: s.expiresAtMs, persistence, ...this.supportIdField(s.supportId) };
     if (warning) result.warning = warning;
     if (this.testApp) {
       const end = this.perfNow();
@@ -1161,6 +1189,7 @@ export class Vault {
       const record: RecordV1 = {
         v: s.walletProofs ? RECORD_VERSION : 1,
         ...(s.walletProofs ? { walletProofs: copyProofs(s.walletProofs) } : {}),
+        ...(s.supportId ? { supportId: s.supportId } : {}),
         ...binding,
         scopeId: this.config.scopeId,
         keyIndex: 0,
@@ -1357,6 +1386,7 @@ export class Vault {
       consent: s.consent ? { ...s.consent, valueWeiByChain: { ...s.consent.valueWeiByChain } } : null,
       keyPair: s.keyPair,
       walletProofs: s.walletProofs,
+      supportId: s.supportId,
       expiryTimer: null,
     };
     // The same session goes on, dormant: its identity token stays valid.
@@ -1584,6 +1614,7 @@ export class Vault {
       persist: null,
       consent: null,
       walletProofs,
+      supportId: record.supportId ?? null,
       lastTouchAt: this.clock.now(),
       lastActivityAt: this.clock.now(),
       expiryTimer: null,

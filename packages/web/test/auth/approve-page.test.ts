@@ -22,6 +22,7 @@ import {
   AUTO_APPROVE_REASON_TEXT,
   KEEP_OPEN_MS,
   LOADING_DELAY_MS,
+  SUPPORT_ID_HINT,
   TEST_APP_NOTE,
   approveOpenerMode,
   autoApproveReasonText,
@@ -210,6 +211,30 @@ describe('/approve', () => {
       expect(pageText()).toContain('from Partner App');
       expect(document.querySelector('img')).toBeNull();
     }
+  });
+
+  it('batch C15: shows the session’s Support ID under the account line, as text; none without one', () => {
+    const r = evmRequest({ supportId: 'HANA-2750-G5HM' });
+    send(r);
+    const line = document.querySelector('p.support-id');
+    expect(line?.textContent).toBe(`Support ID HANA-2750-G5HM ${SUPPORT_ID_HINT}`);
+    expect(line?.querySelector('code')?.textContent).toBe('HANA-2750-G5HM');
+    // Decoration only: the digest binds the request, not the code.
+    arm();
+    click(primary());
+    expect(results()[0]?.digest).toEqual(approvalDigest(digestInput(r)));
+    page.stop();
+    resetDom();
+    start();
+    send(evmRequest());
+    expect(pageText()).toContain(EVM);
+    expect(document.querySelector('p.support-id')).toBeNull();
+    expect(pageText()).not.toContain('Support ID');
+  });
+
+  it('batch C15: a request whose supportId is not a Support ID is ignored (schema)', () => {
+    for (const supportId of ['hana-2750-g5hm', 'HANA-ILOU-0000', '', 7]) send(evmRequest({ supportId }));
+    expect(page.state).toBe('connecting');
   });
 
   it('decodes and shows a Stellar transaction', () => {

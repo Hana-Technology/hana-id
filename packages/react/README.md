@@ -7,7 +7,7 @@ React bindings for Hana ID (`@hana-id/web`): `HanaProvider`, `useHana` and `useW
 The packages aren't on a registry yet. Hana sends you the tarballs; install them together, next to your React:
 
 ```sh
-npm install ./hana-id-core-0.1.0.tgz ./hana-id-web-0.1.0.tgz ./hana-id-react-0.1.0.tgz
+npm install ./hana-id-core-0.2.0.tgz ./hana-id-web-0.2.0.tgz ./hana-id-react-0.2.0.tgz
 ```
 
 Peer dependency: `react` `^18.0.0 || ^19.0.0` (tested with 18.3.1 and 19.3.1). ESM only, with TypeScript

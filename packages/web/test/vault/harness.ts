@@ -260,6 +260,8 @@ export class FakeBackend {
   serverTimings: { totalMs: number; phases: Record<string, number> } | null = null;
   /** The relay read's `heldMs`, or none (an older API). */
   relayHeldMs: number | null = null;
+  /** Batch C15: the `supportId` /v1/login and /v1/sessions answer with (any value, to test the vault's check), or none. */
+  supportId: unknown = undefined;
   /** What the callback adds to the relay slot for a pk_test_ login (its own and /login's stage durations), or none. */
   popupTimings: Record<string, number> | null = null;
   /** The on-chain email keys (`get_issuer_keys("email")`) and signer policy (`get_self_issued("email")`), or none. */
@@ -478,6 +480,10 @@ export class FakeBackend {
     return this.route(call, url, init?.signal ?? undefined);
   };
 
+  private supportIdField(): { supportId?: unknown } {
+    return this.supportId === undefined ? {} : { supportId: this.supportId };
+  }
+
   private async route(call: ApiCall, url: URL, signal?: AbortSignal): Promise<Response> {
     const b = call.body as Record<string, unknown>;
     if (call.path === '/v1/app') return json(200, { autoApprovePolicy: this.autoApprovePolicy, rawSign: this.rawSign, ...this.app, serverTimeMs: this.serverNow(), ...this.timingsField(), requestId: 'rq' });
@@ -489,12 +495,12 @@ export class FakeBackend {
       if (!r.ok && r.reason === 'links_unavailable') return apiError(409, 'links_unavailable');
       if (!r.ok) return apiError(422, 'link_refused', { reason: r.reason });
       this.txs.set(nearTx, r.result);
-      return json(200, { result: r.result, session: { scope_id: SCOPE, expires_at_ms: b.expiresAtMs, max_uses: b.maxUses, used: 1 }, nearTx, ...this.timingsField(), requestId: 'rq' });
+      return json(200, { result: r.result, session: { scope_id: SCOPE, expires_at_ms: b.expiresAtMs, max_uses: b.maxUses, used: 1 }, nearTx, ...this.timingsField(), ...this.supportIdField(), requestId: 'rq' });
     }
     if (call.path === '/v1/sessions') {
       const r = this.createSession(b, false);
       if (!r.ok) return apiError(409, 'session_exists');
-      return json(200, { result: r.session, nearTx: this.nextTx(), requestId: 'rq' });
+      return json(200, { result: r.session, nearTx: this.nextTx(), ...this.supportIdField(), requestId: 'rq' });
     }
     if (call.path === '/v1/derive') {
       const s = this.sessions.get(toHex(Uint8Array.from(b.sessionPublicKey as number[])));
@@ -811,7 +817,7 @@ export interface Tab {
   /** Every message the vault posted on its port (events and replies), as received. */
   portMessages: unknown[];
   dispatch(e: Partial<WindowMessageEvent> & { data: unknown }): void;
-  hello(opts?: { origin?: string; source?: unknown; ports?: MessagePort[] }): void;
+  hello(opts?: { origin?: string; source?: unknown; ports?: MessagePort[]; sdk?: string }): void;
   ready(): Promise<Record<string, unknown>>;
   /** `extra`: envelope fields beside the params (`popupOpened: true`, D99). */
   request(method: string, params?: unknown, extra?: Record<string, unknown>): Promise<Reply>;
@@ -834,6 +840,8 @@ export interface TabOptions {
   options?: Partial<VaultOptions>;
   /** The vault document's navigation timing (unlock timings' `vault*` stages). */
   navigation?: NavigationMarks;
+  /** The SDK version the tab's hello names (default '0.0.0': an SDK before every versioned field, e.g. supportId). */
+  sdk?: string;
 }
 
 export function openTab(browser: Browser, o: TabOptions = {}): Tab {
@@ -913,7 +921,7 @@ export function openTab(browser: Browser, o: TabOptions = {}): Tab {
       for (const l of listeners) l(full);
     },
     hello: (h = {}) => {
-      tab.dispatch({ data: { v: 1, t: 'hana:hello', sdk: '0.0.0' }, origin: h.origin ?? PARTNER, source: h.source ?? parent, ports: h.ports ?? [port2] });
+      tab.dispatch({ data: { v: 1, t: 'hana:hello', sdk: h.sdk ?? o.sdk ?? '0.0.0' }, origin: h.origin ?? PARTNER, source: h.source ?? parent, ports: h.ports ?? [port2] });
     },
     ready: async () => (await waitFor(() => events.find((e) => e.event === 'ready'), 'ready')).data as Record<string, unknown>,
     request: (method, params, extra) => {

@@ -38,6 +38,9 @@ describe('the files config', () => {
       r2_buckets: [{ binding: 'LOGOS', bucket_name: 'hana-id-logos-test' }],
     });
     expect(JSON.stringify(c)).not.toMatch(/d1_databases|hyperdrive|services|STATEMENTS|EXPORTS|secret|assets|triggers/iu);
+    // The manifest's account, when it names one (D404).
+    const id = '0123456789abcdef0123456789abcdef';
+    expect(wranglerConfig({ ...TEST_MANIFEST, cloudflare: { ...TEST_MANIFEST.cloudflare, accountId: id } })).toMatchObject({ account_id: id });
   });
 
   it('workers.dev only in a dev env and only under its own Worker name; a Custom Domain needs no port; loopback is wrangler dev', () => {

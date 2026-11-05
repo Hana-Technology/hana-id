@@ -8,7 +8,7 @@
 import { writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type Manifest, loadEnv } from '@hana-id/env';
+import { type Manifest, accountIdFields, loadEnv } from '@hana-id/env';
 import { COMPATIBILITY_DATE, placement } from '../../console/scripts/gen-wrangler.ts';
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -21,6 +21,8 @@ export function wranglerConfig(m: Manifest): Record<string, unknown> {
     name: c.authWorkerName,
     main: 'src/index.ts',
     compatibility_date: COMPATIBILITY_DATE,
+    // The env's Cloudflare account, when the manifest names it (D404).
+    ...accountIdFields(m.cloudflare.accountId, 'cloudflare.accountId'),
     ...placement(m, 'console.authOrigin', c.authOrigin, c.authWorkerName),
     // The Worker's own log lines only: the platform's invocation records would carry `/callback`'s `code` and `state`.
     observability: { enabled: true, logs: { invocation_logs: false } },

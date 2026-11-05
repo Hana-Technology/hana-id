@@ -12,6 +12,7 @@ import { isDevEnvName, PAGER_PROVIDERS as WORKER_PAGERS, SECRET_NAMES } from '..
 import { relayerThresholds } from '../../src/relayer.ts';
 import { CRON, LOCAL_D1_ID, TEST_MANIFEST, devVarsContent, existingD1Id, identityVars, main, testWranglerConfig, wranglerConfig, writeWranglerConfig } from '../gen-wrangler.ts';
 import { SECRET_RULES } from '../secrets.ts';
+import { CUSTOM_DOMAIN, customDomainManifest } from '../../../../packages/env/src/custom-domain.fixture.ts';
 
 const dirs: string[] = [];
 const tmp = (): string => {
@@ -67,6 +68,24 @@ describe('wranglerConfig', () => {
     expect(() => wranglerConfig(noWatchdog as Manifest, D1)).toThrow(/no watchdog block/u);
     const unset = { ...TEST_MANIFEST, watchdog: { ...TEST_MANIFEST.watchdog!, cloudflare: { ...TEST_MANIFEST.watchdog!.cloudflare, accountId: 'UNSET' } } };
     expect(() => wranglerConfig(unset, D1)).toThrow(/UNSET/u);
+  });
+
+  it('a watchdog.url off workers.dev is a Custom Domain on its own account; a shell account id must match (D404)', () => {
+    vi.stubEnv('CLOUDFLARE_ACCOUNT_ID', '');
+    const m = customDomainManifest();
+    expect(wranglerConfig(m, D1)).toMatchObject({
+      account_id: CUSTOM_DOMAIN.watchdogAccountId,
+      workers_dev: false,
+      preview_urls: false,
+      routes: [{ pattern: 'watchdog.hana-watch.example', custom_domain: true }],
+      vars: { IDENTITY_ISS: `${CUSTOM_DOMAIN.apiUrl}/v1/identity`, EMAIL_JWKS_URL: `${CUSTOM_DOMAIN.emailIssuerUrl}/v1/email/jwks.json` },
+    });
+    expect(wranglerConfig(TEST_MANIFEST, D1)).toMatchObject({ workers_dev: true });
+    expect(wranglerConfig(TEST_MANIFEST, D1)).not.toHaveProperty('routes');
+    // The main account's id in the shell (the move's other half) refuses the watchdog's config.
+    vi.stubEnv('CLOUDFLARE_ACCOUNT_ID', CUSTOM_DOMAIN.accountId);
+    expect(() => wranglerConfig(m, D1)).toThrow(/CLOUDFLARE_ACCOUNT_ID is 0123.* but watchdog.cloudflare.accountId/u);
+    vi.unstubAllEnvs();
   });
 
   it('passes the relayer funds thresholds only when the manifest overrides them, in a form the Worker reads', () => {

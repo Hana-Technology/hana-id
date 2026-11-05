@@ -27,10 +27,10 @@ import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { IDENTITY_SECRET_FILES, type Manifest, emailIssuerUrl, hanaOwnOrigins, loadEnv, p256Thumbprint, repoRoot } from '@hana-id/env';
+import { IDENTITY_SECRET_FILES, type Manifest, accountIdFields, customDomainPlacement, emailIssuerUrl, hanaOwnOrigins, isLoopbackHost, loadEnv, p256Thumbprint, repoRoot } from '@hana-id/env';
 import { IDENTITY_RATE_LIMITS } from '../src/identity/limits.ts';
 import { VAULT_RATE_LIMITS } from '../src/vault/limits.ts';
-import { writePagesWranglerConfigs } from './pages-wrangler.ts';
+import { workersDevHost, writePagesWranglerConfigs } from './pages-wrangler.ts';
 
 const apiDir = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const LOCAL_D1_ID = '00000000-0000-4000-8000-000000000000';
@@ -81,6 +81,19 @@ export const LOCAL_USAGE_CONNECTION_STRING = 'postgresql://usage_writer:local-de
 export const HYPERDRIVE_ID_RE = /^[0-9a-f]{32}$/u;
 
 /**
+ * Where the API Worker is reachable, from `apiUrl` (D404): a loopback URL (`local*` envs) or a `workers.dev` URL
+ * (`https://<cloudflare.workerName>.<subdomain>.workers.dev`) add nothing (wrangler's default
+ * `workers_dev`, as before); any other host is a Custom Domain on a zone of the env's account (`customDomainPlacement`:
+ * `apiUrl` is then a bare https origin, and the Worker has no workers.dev URL).
+ */
+export function apiPlacement(m: Pick<Manifest, 'apiUrl' | 'cloudflare'>): Record<string, unknown> {
+  const url = new URL(m.apiUrl);
+  if (isLoopbackHost(url.hostname)) return {};
+  if (workersDevHost(url.hostname)) return {};
+  return customDomainPlacement('apiUrl', m.apiUrl);
+}
+
+/**
  * `usageHyperdriveId`: the usage ledger writer's Hyperdrive config (docs/batch-c-spec.md "Bindings"), bound as
  * `USAGE_DB`. Without it the Worker has no binding and capture is off (logins are unaffected either way).
  */
@@ -91,9 +104,12 @@ export function wranglerConfig(m: Manifest, d1Id: string, opts: { usageHyperdriv
   return {
     $schema: 'node_modules/wrangler/config-schema.json',
     name: m.cloudflare.workerName,
+    // The env's Cloudflare account, when the manifest names it (D404).
+    ...accountIdFields(m.cloudflare.accountId, 'cloudflare.accountId'),
     main: 'src/index.ts',
     compatibility_date: COMPATIBILITY_DATE,
     compatibility_flags: ['nodejs_compat'],
+    ...apiPlacement(m),
     // @near-js/crypto imports secp256k1 (CJS/native, unused: relayer keys are ed25519).
     alias: { secp256k1: './src/shims/secp256k1.ts' },
     // Workers Logs keeps the Worker's own JSON log lines (src/log.ts: no tokens, keys, signatures or relay ids), but
@@ -184,7 +200,9 @@ export const TEST_MANIFEST: Manifest = {
 
 /** The API tests' wrangler config: the generator's output for TEST_MANIFEST, with the local placeholder D1 id. */
 export function testWranglerConfig(): Record<string, unknown> {
-  return wranglerConfig(TEST_MANIFEST, LOCAL_D1_ID);
+  // Local only: no Custom Domain route for the placeholder apiUrl (vitest's workers pool never deploys).
+  const { routes: _r, workers_dev: _w, preview_urls: _p, ...config } = wranglerConfig(TEST_MANIFEST, LOCAL_D1_ID);
+  return config;
 }
 
 /**

@@ -11,7 +11,7 @@
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type Manifest, emailJwksUrl, loadEnv, repoRoot } from '@hana-id/env';
+import { type Manifest, accountIdFields, customDomainPlacement, emailJwksUrl, loadEnv, repoRoot } from '@hana-id/env';
 import { readWatchdogSecrets, SECRET_FILE } from './secrets.ts';
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -43,22 +43,24 @@ export function identityVars(m: Manifest): Record<string, string> {
   return { ...(m.identityToken ? { IDENTITY_ISS: m.identityToken.iss } : {}), ...(pins ? { IDENTITY_PINS: JSON.stringify(pins) } : {}) };
 }
 
-export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknown> {
+/** `env`: where CLOUDFLARE_ACCOUNT_ID is read (the tests' config passes none). */
+export function wranglerConfig(m: Manifest, d1Id: string, env: Readonly<Record<string, string | undefined>> = process.env): Record<string, unknown> {
   const w = m.watchdog;
   if (!w) throw new Error(`envs/${m.name}.json has no watchdog block`);
   if (w.cloudflare.accountId === 'UNSET') throw new Error(`envs/${m.name}.json watchdog.cloudflare.accountId is UNSET: set the watchdog's own Cloudflare account id first`);
   return {
     $schema: 'node_modules/wrangler/config-schema.json',
     name: w.cloudflare.workerName,
-    // Its own Cloudflare account (D86): `wrangler deploy` refuses to deploy anywhere else.
-    account_id: w.cloudflare.accountId,
+    // Its own Cloudflare account (D86): `wrangler deploy` refuses to deploy anywhere else (and gen refuses a
+    // CLOUDFLARE_ACCOUNT_ID naming another account, D404).
+    ...accountIdFields(w.cloudflare.accountId, 'watchdog.cloudflare.accountId', env),
     main: 'src/index.ts',
     compatibility_date: COMPATIBILITY_DATE,
     compatibility_flags: ['nodejs_compat'],
     // @near-js/crypto imports secp256k1 (CJS/native, unused: the watchdog key is ed25519).
     alias: { secp256k1: './src/shims/secp256k1.ts' },
-    workers_dev: true,
-    preview_urls: false,
+    // Its workers.dev URL, or a Custom Domain on a zone of its own account when `watchdog.url` names another host (D404).
+    ...(w.url !== undefined && !new URL(w.url).hostname.endsWith('.workers.dev') ? customDomainPlacement('watchdog.url', w.url) : { workers_dev: true, preview_urls: false }),
     observability: { enabled: true },
     vars: {
       ENV_NAME: m.name,
@@ -112,7 +114,7 @@ export const TEST_MANIFEST: Manifest = {
 };
 
 export function testWranglerConfig(): Record<string, unknown> {
-  return wranglerConfig(TEST_MANIFEST, LOCAL_D1_ID);
+  return wranglerConfig(TEST_MANIFEST, LOCAL_D1_ID, {});
 }
 
 /** The D1 id in an existing wrangler.jsonc, only when it was generated for the same database. */

@@ -7,7 +7,8 @@ computes per purpose, answers `google-match` for automatic linking and `google-r
 directory (D269: each identity's address, for Hana staff only), publishes its JWKS and serves the staff routes (client
 proofs, unlock, unsuppress) behind Cloudflare Access. It is reached at `{emailIssuer.url}/v1/email/*` (D230): its own `workers.dev`
 URL on a `workers.dev` env (sandbox-dev), the API's URL through a zone route in production; never through the API
-Worker, so an address or a code never passes through it. `gen` turns on `workers_dev` only for a `workers.dev` `url`.
+Worker, so an address or a code never passes through it. `gen` turns on `workers_dev` only for a `workers.dev` `url`;
+a `url` on another host (a dev env on custom domains) becomes the issuer's own Custom Domain (D404).
 Its `APP_DB` binding is the API's D1, read-write as every D1 binding is; a source check holds the code to SELECTs until
 a read-only RPC on the API replaces it (D251).
 **Not deployed**; no app enables email yet (the sandbox-dev steps: `docs/operations.md` "Email login on sandbox-dev").

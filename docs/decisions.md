@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
+Last verified against code: 2026-10-28 (commit 58edee9); D404 (branch `feat/account-migration`: testnet's move to company accounts decided by the user, the custom-domain placements, `cloudflare.accountId`, `env-secrets`, `d1-move`, `issuer:iss` and the runbook to confirm) on 2026-11-05, amending D230, with a row of "Superseded or amended"; D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
 user, implementation choices to confirm) on 2026-11-05; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
 flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
@@ -6828,6 +6828,95 @@ still take them: renumber on merge.
   not documented: if it answers 404 the run stops before any file is written, and the roles can be checked in Neon's
   console (Branches → the branch → Roles).
 
+### D404. Dev envs may run on Custom Domains (one registrable domain allowed); an env moves to another Cloudflare account by a scripted procedure; testnet moves to company accounts
+- Date 2026-11-05 · Status: **testnet moves to company accounts, decided by the user** (2026-11-05: Cloudflare, Neon
+  and the Google Cloud project that owns the OAuth clients, from the personal accounts; timing to be agreed with the
+  colleague; pending in `docs/mainnet-readiness.md` row 4.21 and `docs/operations.md` "Moving an env to another
+  Cloudflare account"). Custom domains for the dev envs: recommended by the user. The tooling and the runbook as built
+  on `feat/account-migration`: **to confirm** · Built: `packages/env/src/cloudflare.ts` (`accountIdFields`,
+  `customDomainPlacement`), the manifest's `cloudflare.accountId` (`schema.ts`), `apiPlacement` in
+  `apps/api/scripts/gen-wrangler.ts`, `issuerPlacement` in `apps/email-issuer/scripts/gen-wrangler.ts`, the watchdog's
+  Custom Domain, the demo's `HANA_DEMO_ORIGIN`, `account_id` in every `gen`; `scripts/env-secrets.ts`,
+  `scripts/d1-move.ts`, `admin <env> issuer:iss` (`scripts/lib/admin-owner.ts`); tests in each package
+  (`packages/env/src/cloudflare.test.ts` with the fixture `custom-domain.fixture.ts`, the gen tests,
+  `scripts/test/env-secrets.test.ts`, `d1-move.test.ts`, `admin-owner.test.ts`) · Number: D403 was the highest on
+  `develop` when written; `feat/sandbox-dev-dashboard-blocks` may take D401–D402 and other branches started at the
+  same time: renumber at merge if another branch took D404 first.
+- Context: sandbox-dev runs on the user's personal Cloudflare account (`*.tingtc.workers.dev`), so every origin, the
+  email `iss` and the identity token's `iss` name that account's `workers.dev` subdomain; the ledger is in a personal
+  Neon organization and the OAuth clients in a personal Google Cloud project.
+- Decision:
+  1. **What a dev env may be served on.** Each Worker's placement follows from its origin in the manifest: a
+     `workers.dev` origin is the Worker's own `workers.dev` URL (dev envs only, as before); any other https origin is a
+     Cloudflare Custom Domain (`routes: [{pattern: <host>, custom_domain: true}]`, `workers_dev: false`,
+     `preview_urls: false`) on a zone of the Worker's account. Already so for the page, console, console-auth, files
+     and admin Workers; new for the API (`apiUrl`, then a bare origin; before, its config had no route at all and only
+     a `workers.dev` API could be reached), the email issuer when `emailIssuer.url` is not on `workers.dev` (before,
+     such a URL deployed with neither a route nor a `workers.dev` URL), the watchdog when `watchdog.url` is not on
+     `workers.dev`, and the demo (`HANA_DEMO_ORIGIN`, required when the API isn't on `workers.dev`). A loopback or
+     `workers.dev` API adds nothing, so sandbox-dev's generated configs are unchanged.
+  2. **Which account.** An optional `cloudflare.accountId` (32 hex) is the account of every Worker but the watchdog;
+     every `gen` writes it as `account_id`, and refuses a shell `CLOUDFLARE_ACCOUNT_ID` naming another account than the
+     manifest's for that Worker (the watchdog's `watchdog.cloudflare.accountId` included), so a shell left on the other
+     account during a move can't deploy a Worker or a secret there. The schema refuses `cloudflare.accountId` equal to
+     the watchdog's (D86). Without it nothing changes (wrangler's login or `CLOUDFLARE_ACCOUNT_ID` decide).
+  3. **Sites.** A dev env (`local*`, `sandbox*`) may put every origin under one registrable domain (`api.`, `vault.`,
+     `auth.`, `email.id-dev.hanawallet.io`): the schema's dev-env exemption (D38) is unchanged and covers it, and a
+     test pins it. There the vault is same-site with the pages that show content and with the API, so desktop
+     browsers don't guarantee it its own process (`docs/security.md` (j)), and nothing may set a domain-wide cookie on
+     that domain. Production is unchanged: `vaultOrigin` on a different site from `authOrigin`, `apiUrl` and every
+     dashboard origin (the schema refuses the same layout under a non-dev name, tested), so production needs the
+     vault's own registrable domain beside the user-visible one.
+  4. **The move** (`docs/operations.md` "Moving an env to another Cloudflare account"): the env is re-created on the
+     new account (Cloudflare moves no Worker, D1, Durable Object, Hyperdrive config or R2 bucket between accounts, as
+     far as its docs show), its origins put on Custom Domains so the next move keeps them; the watchdog stays on its
+     own account. Order: freeze and Time Travel bookmarks; the manifest in one commit (URLs, account id, both `iss`);
+     new D1s (never `migrations apply`d); the new email `iss` beside the old one on chain; `d1-move` each database
+     before any Worker runs there; `gen` with the new ids; deploys (API, pages, issuer, then the dashboard Workers);
+     `env-secrets --yes`; `deploy-check --d1`; Google redirect URIs; the watchdog's redeploy; the demo's origin; a
+     smoke test comparing two recorded test users' addresses; then the old Workers deleted and the old `iss` removed.
+  5. **Tools.** `env-secrets <env> [--worker …] [--yes]` lists every Worker secret with its source in
+     `.secrets/<env>/` (present, 0600, well-formed) and uploads them through wrangler's stdin, refusing while a
+     required one is missing (never invented) or a Worker's generated config names another Worker or account.
+     `d1-move <env> --db api|issuer|watchdog|console --from-account … [--to-account …]` exports (0600, never
+     overwritten), imports only into a database with no table (the export carries the schema and `d1_migrations`, so
+     `migrations list` stays right), and compares every table's rows in the export, the new database and the old one
+     now; wrangler runs in an empty scratch directory with each side's account and token or profile, so no generated
+     config can bind a name to the other account's id. `admin <env> issuer:iss <provider> --add|--remove <iss>` reads
+     `get_issuer` and sends the whole list in one `set_issuer`; it refuses a 5th value, the last value, Google's values
+     and the `iss` the manifest's issuer signs with.
+  6. **No derivation change, no address change.** Nothing here changes how a key or a path is derived. Evidence: the
+     path is `scope#provider#sub#key_index` (`contracts/hana-signer/src/sessions.rs`, `format!("{}#{}#{}#{}",
+     scope_id, path_provider, path_sub, key_index)`), the provider is the one `iss_index` maps the token's `iss` to
+     (`issuers.rs` `verify_token`), and `set_issuer` maps 1 to 4 `iss` values to a provider, keeps its keys and refuses
+     an `iss` another provider uses (`issuers.rs` `set_issuer`, `MAX_ISS_VALUES = 4`); identities and links key on
+     `(scope, provider, sub)` (`links.rs` `ik`); the email `sub` is HMAC(K_sub, label ‖ 0 ‖ normalized address)
+     (`packages/email/src/sub.ts` `emailSub`), with no `iss`, origin or account in it. So moving the issuer's URL keeps
+     every address as long as the new `iss` is added to provider `email` first and K_sub, `USER_ID_KEY` and
+     `IDENTITY_SUB_KEY` come from their files.
+  7. **What users see**: logged out once (sessions, vault state and device tickets live in the old origins' storage);
+     addresses unchanged; logins and codes in flight and the Durable Objects' limiter counts lost. Partners: the new
+     `vaultOrigin` in their CSP, the SDK release with the new origins, `{authOrigin}/login/callback` on their own Google
+     clients, the identity token's new `iss` and JWKS.
+  8. **Neon and Google Cloud.** The ledger's project is transferred to the company's Neon organization (connection
+     strings unchanged, per Neon's docs) rather than re-created; the OAuth clients' Google Cloud project is migrated
+     into the company's organization (project ID and number unchanged, per Google's docs; client ids to check after)
+     or given company Owners, never replaced (new client ids would need new chain registrations).
+- Why: origins that don't name an account survive the next move; the files in `.secrets/<env>/` are the only copies of
+  every secret, so the move has to start from them and list what is missing rather than generate it; a pinned
+  `account_id` and the shell check turn a wrong-account deploy into a refusal; an export imported whole keeps the
+  schema, the data and `d1_migrations` consistent; the contract's multi-`iss` issuers make the URL change a two-step,
+  address-neutral owner action.
+- Rejected: staying on `workers.dev` on the new account (every origin, both `iss` and every partner's CSP and redirect
+  URIs change again on the next move); `migrations apply` on the new database and a data-only import (two sources of
+  the schema, and `d1_migrations` from the apply rather than the old database); `wrangler secret bulk` for every Worker
+  (the per-secret `secret put` through stdin is what `vault-kek`, `identity-key` and `email-issuer` already use; one
+  bad value fails one secret); a new Neon project or a new Google Cloud project (new credentials and roles; new client
+  ids on chain); one registrable domain for production's vault (D38).
+- Open: the company accounts and the dev domain (`id-dev.hanawallet.io` assumes the `hanawallet.io` zone is on the
+  new Cloudflare account, or a plan with subdomain zones); the date (the user, with the colleague); a rehearsal on a
+  throwaway `sandbox-*` env before sandbox-dev.
+
 ## Staff login: Cloudflare Access kept, on the free tier (branch `docs/zero-trust-free-guard`), 2026-11-05
 
 ### D408. The admin console keeps Cloudflare Access (Zero Trust Free); sandbox never goes past the free tier
@@ -7032,6 +7121,7 @@ still take them: renumber on merge.
 
 | Was | Now | Source |
 |---|---|---|
+| The email issuer is reached at its own `workers.dev` URL on a `workers.dev` env, else under the API's URL by a zone route (D230); `gen` gives an `emailIssuer.url` on another host neither a route nor a `workers.dev` URL | An `emailIssuer.url` on another host is the issuer's own Custom Domain (a dev env on custom domains); the zone route stays production's way (D404) | branch `feat/account-migration` |
 | sandbox-dev's admin Access: the GitHub team `hana-admins` plus exact-email Google rules (D88), the workers.dev Worker-level toggle turned on in the dashboard (D284), the policy and AUD by hand | `sandbox*`: Google, exact emails only; every env's application and policies made and checked by `access-setup <env>` from the manifest, a hostname application on workers.dev (D409) | `scripts/lib/access-setup.ts`; docs/operations.md "Admin Worker" step 1 |
 | D384: the watchdog, console, console-auth, admin and files Workers unstamped; `deploy-check` reads the API, the page Workers and bundles and the issuer; each of the API and issuer has its own `scripts/deploy.ts` | Every env Worker deploys through `packages/env/src/stamped-deploy.ts`; the console, console-auth and files Workers serve `/.well-known/hana-build`, the console SPA carries the meta; the admin's and the watchdog's id is read from the deployed version with wrangler (`--only watchdog` for the watchdog); `--only`/`--skip` (D406) | `packages/env/src/stamped-deploy.ts`, `scripts/lib/deploy-check.ts`; docs/operations.md "Checking a deploy" |
 | `usage-setup roles`: a locally generated password per role, set as a SCRAM-SHA-256 verifier by `ALTER ROLE … LOGIN PASSWORD`; a re-run reuses the role files (D224) | SQL gives `LOGIN` only; Neon's API (`reset_password`) generates each password, written straight to the role file; every run resets both and replaces the files, so Hyperdrive configs from older files are re-created; the key in `.secrets/<env>/neon-api-key` (D403) | `scripts/lib/usage-setup.ts`, `scripts/lib/neon-api.ts`; docs/operations.md "Usage capture" step 2 |

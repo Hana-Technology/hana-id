@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-05 (branch `feat/coop-canary`: "Before each release: the COOP canary" (`coop-canary`, what a failure means, D386), step 0 of "A release."); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: "Common failures"' `derive_failed` `webcrypto_unsupported` / `webcrypto_failed`, D385); 2026-11-05 (branch `feat/deploy-build-check`: "Checking a deploy (`deploy-check`)", D384:
+Last verified against code: 2026-11-05 (branch `chore/ci-cost`: "CI and git": CI and the identity probe turned off, the local checks, D387); 2026-11-05 (branch `feat/coop-canary`: "Before each release: the COOP canary" (`coop-canary`, what a failure means, D386), step 0 of "A release."); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: "Common failures"' `derive_failed` `webcrypto_unsupported` / `webcrypto_failed`, D385); 2026-11-05 (branch `feat/deploy-build-check`: "Checking a deploy (`deploy-check`)", D384:
 the build id in every Worker and page bundle, `deploy-check <env> [--d1]` after each deploy step, migrations applied
 from a checkout at the deployed commit, the API's raw `wrangler deploy` lines now `run deploy`); 2026-11-05 (branch `fix/deploy-pages-builds`: `deploy:pages` runs the web build first; the 0011 apply note; the rebuilt page versions); 2026-11-05 (branch `chore/ci-cost`: "CI and git": which jobs run when, the nightly WebKit and Firefox run; the identity probe every 3 hours, D383); 2026-11-05 (branch `docs/sandbox-dev-state-1105`: sandbox-dev redeployed at `develop` 8aab09d with the wallet directory: `USER_ID_KEY`, the bookmark, 0011, API 6141ba3d, vault abe7cc61, auth 6b9a4bee, issuer 1542a60c); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
 what counts, each job's share in both crons, the `budget` log lines; settlement's reads a run; D380); 2026-11-04 (branch `feat/batch-c-13`: "Retention (batch C13, milestone M6)": the Neon
@@ -2657,7 +2657,9 @@ them as `IDENTITY_PINS` and `identityToken.iss` as `IDENTITY_ISS`; an env withou
   controls Hana's Cloudflare account can recognise the watchdog's fetches (they come from Cloudflare's network) and
   serve them a clean JWKS while partners get another, or publish a key for less than a run. The **outside probe**
   narrows the first: the GitHub Actions workflow `identity-probe` (`.github/workflows/identity-probe.yml`, every 3
-  hours at :17 since D383, no secrets) fetches each non-`local*` env's JWKS and discovery document from GitHub's network with a `jose`
+  hours at :17 since D383, no secrets; **disabled in GitHub since 2026-11-05**, D387: no probing while only testnet
+  runs, and before mainnet it moves to AWS Lambda + EventBridge in its own AWS account, or one of D387's
+  alternatives: Google Cloud Functions + Cloud Scheduler, a small VPS with cron) fetches each non-`local*` env's JWKS and discovery document from GitHub's network with a `jose`
   User-Agent and the same rules (`@hana-id/jwks/identity`), against `watchdog.pinnedIdentityKeys` in the repo's
   manifests, and fails on any finding (every value from Hana's answers is printed JSON-quoted, escaped to printable
   ASCII with `%` too, and cut, and no line can start with `::`, so a hostile JWKS can't inject a workflow command);
@@ -3723,6 +3725,14 @@ skips everything while the `NPM_TOKEN` secret is missing, and npm refuses `"priv
   typecheck`, `pnpm -r test` (this includes `@hana-id/react`'s suite on React 18, `packages/react/react18`); the
   Playwright suite (`apps/e2e`, three browsers); sandbox e2e (`contracts/integration-tests`); the SDK pack check
   (`pnpm run pack:check`, [Releasing the SDK packages](#releasing-the-sdk-packages)).
+- **CI is turned off** (D387, 2026-11-05): the CI and `identity-probe` workflows are disabled in GitHub (Actions
+  minutes; testnet only). Run the checks locally before merging, from the repo root: `pnpm secrets:scan`;
+  `pnpm -r typecheck && pnpm -r test`; `cd contracts/hana-signer && cargo test --locked && cargo near build
+  non-reproducible-wasm`; `cd contracts/integration-tests && cargo test --locked -- --test-threads=1`;
+  `pnpm pack:check`; `pnpm --filter @hana-id/e2e e2e` (macOS WebKit is not Linux WebKit: D381's bug would pass
+  there). Turn back on with `gh workflow enable CI -R Hana-Technology/hana-id` (and `identity-probe.yml`); both
+  must be on, or replaced, before mainnet (`docs/mainnet-readiness.md` 4.20, 5.10). The rest of this section is how
+  CI behaves when enabled.
 - What runs when (D383). GitHub bills each job by the minute, rounded up, from minutes shared by every org repo, so
   CI runs only the jobs a change can affect. The `changes` job (`scripts/ci-changes.mjs`) diffs the change and sets
   the outputs the other jobs read:

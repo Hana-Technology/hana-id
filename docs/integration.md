@@ -11,7 +11,7 @@ popup, unless it falls under an auto-approve policy you set and the user accepte
 > for mainnet chains at all ([section 12](#12-test-and-live-keys)). This guide follows the code; the original
 > specification is `docs/batch-b-spec.md`.
 
-Last verified against code: 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/batch-c-15`: the user's Support ID in the SDK, `hana.supportId`, `supportIdChanged`, `useHana().supportId`, the approval popup, for SDK 0.2.0 or later, and the install lines' 0.2.0 tarballs; section 4 "Support ID"); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: `derive_failed`'s `webcrypto_unsupported` and `webcrypto_failed` in the error table, D385); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `feat/user-id-identity-sub`: section 15's `sub` row, the User ID and Support ID, D346); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: D347's closed popup in section 4 and the error table, D348's Google-only screen; a cancel on Google's sign-in screen goes back to the chooser, closing there is `login_cancelled`, in "Sign-in methods and links" and the error table; D341); 2026-11-04 (branch `fix/abandoned-login-freeze`: an unfinished login and `login_timeout`'s
+Last verified against code: 2026-11-05 (branch `fix/popup-early-close-deadline`: a popup closed within seconds of reaching Google's page ends in about 90 s with `login_cancelled`, in section 4 and the error table, D398); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/batch-c-15`: the user's Support ID in the SDK, `hana.supportId`, `supportIdChanged`, `useHana().supportId`, the approval popup, for SDK 0.2.0 or later, and the install lines' 0.2.0 tarballs; section 4 "Support ID"); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: `derive_failed`'s `webcrypto_unsupported` and `webcrypto_failed` in the error table, D385); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `feat/user-id-identity-sub`: section 15's `sub` row, the User ID and Support ID, D346); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: D347's closed popup in section 4 and the error table, D348's Google-only screen; a cancel on Google's sign-in screen goes back to the chooser, closing there is `login_cancelled`, in "Sign-in methods and links" and the error table; D341); 2026-11-04 (branch `fix/abandoned-login-freeze`: an unfinished login and `login_timeout`'s
 `data.stage`); 2026-11-04 (branch `feat/token-first-on`: "Sign-in methods and links": Google's one
 sign-in screen lists the email, cancelling it, the two-accounts screen; D270); 2026-11-03 (branch `feat/email-login-8b` review fixes: the email permission's screens and
 reasons, `api_unavailable`'s `path_unconfirmed` / `path_disputed`, `storage_unavailable` in a login, `hana.account()`'s
@@ -223,14 +223,17 @@ button.addEventListener('click', async () => {
 - **A closed popup** (D347). A user who closes the Hana popup while it waits for them (the method chooser, Google's
   page, the email step, a linking screen) ends the sign-in: within about 2 seconds `login()` rejects with
   `login_cancelled` and `data.reason: 'popup_closed'`, and the status is `logged_out` again. Going to Google and back
-  is never a close, and a slow popup is never cancelled. A popup closed while Hana finishes on its own (the NEAR
-  transaction after Google) doesn't stop the sign-in: `login()` resolves as usual. A popup closed before it connected
+  is never a close, and a slow popup is never cancelled. One exception to "within about 2 seconds": a popup closed
+  within a few seconds of reaching Google's page (D398). Hana can't tell that close from an identity provider's
+  Cross-Origin-Opener-Policy switching the window, so it waits up to about 90 seconds for the sign-in to finish
+  there; if it doesn't, `login()` rejects with the same `login_cancelled` and `data.reason: 'popup_closed'`. A popup
+  closed while Hana finishes on its own (the NEAR transaction after Google) doesn't stop the sign-in: `login()`
+  resolves as usual. A popup closed before it connected
   is `coop_blocks_popup` at once; one that never connects is `login_timeout` with `data.stage: 'connect'` after 15 s.
 - **An unfinished login.** A user who leaves the popup open without finishing leaves `login()` pending. Keep the page
   usable meanwhile (`status` is `logging_in`; offer a Cancel that calls `cancelLogin()`). After 5 minutes the vault
-  ends it: `login()` rejects with `login_timeout` and `data.stage: 'pending'`. The same happens to a popup closed within
-  a few seconds of reaching Google's page: Hana can't tell that from an identity provider's
-  Cross-Origin-Opener-Policy switching the window, so it doesn't cancel there.
+  ends it: `login()` rejects with `login_timeout` and `data.stage: 'pending'`. (A popup closed within a few seconds of
+  reaching Google's page ends sooner, in about 90 seconds, with `login_cancelled`: "A closed popup" above.)
 - A first login takes several seconds after the Google account choice (one NEAR transaction plus the MPC; estimated
   6.5–7 s, to be measured on testnet). Show progress with `loginProgress`. A reload needs one API call (estimated
   0.1–0.3 s).
@@ -786,7 +789,7 @@ code request), `emailCode` (waiting for the mail and typing the code), `emailVer
 | `popup_blocked` | The browser blocked the popup and the sign-in was cancelled | call `login()` in a click |
 | `coop_blocks_popup` | The popup closed before it connected (COOP `same-origin`, or the user closed it at once) | fix COOP |
 | `login_timeout` | The popup never connected (15 s, `data.stage: 'connect'`), or the sign-in was left unfinished for 5 min (`data.stage: 'pending'`: the popup left open, or closed within a few seconds of reaching Google's page) | retry |
-| `login_cancelled` | `cancelLogin()`, or a newer `login()`, or the user closed the Hana popup (`data.reason: 'popup_closed'`, D347), or the user cancelled the email step, or cancelled Google's sign-in screen and then closed the Hana popup on the screen it went back to (D341); `data.reason: 'email_consent_declined'` or `'google_account_mismatch'`: a new Google user refused Google's email permission (or chose another Google account there) and cancelled Hana's explanation | offer email sign-in |
+| `login_cancelled` | `cancelLogin()`, or a newer `login()`, or the user closed the Hana popup (`data.reason: 'popup_closed'`, D347: within about 2 s; about 90 s for a close within a few seconds of reaching Google's page, D398), or the user cancelled the email step, or cancelled Google's sign-in screen and then closed the Hana popup on the screen it went back to (D341); `data.reason: 'email_consent_declined'` or `'google_account_mismatch'`: a new Google user refused Google's email permission (or chose another Google account there) and cancelled Hana's explanation | offer email sign-in |
 | `login_method_unavailable` | `login({method})` named a method your app doesn't offer (email not turned on) | offer the other method |
 | `code_invalid`, `challenge_expired` | Email login: the user cancelled after a wrong or expired code | let them retry |
 | `link_pending` | This sign-in method is waiting to join a wallet (`data.effectiveAtMs`: when it can open it) | show when; sign in with the wallet's other method meanwhile |

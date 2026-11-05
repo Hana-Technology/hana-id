@@ -53,9 +53,10 @@
 //     while the vault works alone (google-match, the chain) lets the login finish, and any later wait on the popup ends
 //     at once. The popup announces each navigation to Google (`hana:auth-progress` `google`), its return to the
 //     callback with its opener (`back`) and closing itself after a relay (`relayed`). An IdP that enforces COOP would switch the popup's browsing context group, which the handle
-//     can't tell from a close: a `closed` within 8 s of a `google` announcement is taken as that switch, and the watch
-//     stops for the rest of the login (the login's 5-minute limit, and the post-cancel screen's own close report, D341,
-//     remain).
+//     can't tell from a close: a `closed` within 8 s of a `google` announcement may be that switch, so the watch stops
+//     and gives the popup 90 s to answer (D398). An answer in time shows the window was open: the login goes on, with
+//     no watch for the rest of it (the 5-minute limit, and the post-cancel screen's own close report, D341, remain).
+//     No answer in time is taken as the close it most likely was: `login_cancelled` (`popup_closed`) as above.
 // 11. With the follow-up channel, the vault's last word to the popup: `done` (close, or link banners first: a pending
 //     method with Cancel, a method this login added, recent ones, from `get_account`), or `stop` with the error.
 //     A banner's Cancel or Remove is a fresh sign-in of this login's method over a `link_change` nonce, relayed as
@@ -142,13 +143,18 @@ export interface PopupWatch {
   /**
    * A `closed` this soon after the popup announced a navigation to Google (and before it said it was back) may be an
    * IdP's COOP switching the popup's browsing context group (the opener's handle then reads closed while the window is
-   * open): the watch stops.
+   * open): the watch stops, and the popup has `earlyCloseDeadlineMs` to answer.
    */
   severWindowMs: number;
+  /**
+   * D398: after such a `closed`, how long the login waits for the popup's answer (a window that was open behind the
+   * switch) before taking it for the close it most likely was (`login_cancelled`, `popup_closed`, after `graceMs`).
+   */
+  earlyCloseDeadlineMs: number;
   /** After a close, how long a wait on the popup may still get the answer the popup wrote just before it closed. */
   graceMs: number;
 }
-export const POPUP_WATCH: Readonly<PopupWatch> = Object.freeze({ pollMs: 250, severWindowMs: 8_000, graceMs: 1_000 });
+export const POPUP_WATCH: Readonly<PopupWatch> = Object.freeze({ pollMs: 250, severWindowMs: 8_000, earlyCloseDeadlineMs: 90_000, graceMs: 1_000 });
 export const KEY_INDEX = 0;
 /** The relay long-poll's wait, in seconds (the API's maximum). */
 export const RELAY_WAIT_S = 25;
@@ -544,6 +550,8 @@ abstract class PopupTask<T> {
   private readonly watch: PopupWatch;
   private watchTimer: unknown = null;
   private closeTimer: unknown = null;
+  /** D398: armed by a `closed` inside the COOP window; an answer from the popup clears it, its end is a close. */
+  private earlyCloseTimer: unknown = null;
   /** The popup's window closed (a user's close, not a navigation or the popup closing itself after a relay). */
   private popupGone = false;
   /** Waits on the popup in progress (its first slot, a screen's answer). */
@@ -613,8 +621,16 @@ abstract class PopupTask<T> {
       // The popup closed itself after relaying (the callback, the email step): nothing to cancel.
       if (this.selfClosing) return;
       // An IdP's COOP may have moved the popup to another browsing context group as it reached Google: the handle
-      // reads closed while the window is open. Stop watching; the login's own limit still applies.
-      if (this.ctx.perfNow() - this.leftForGoogleAt < this.watch.severWindowMs) return;
+      // reads closed while the window is open, and stays so. Stop watching; the popup's answer within the deadline
+      // shows the window was open (D398).
+      if (this.ctx.perfNow() - this.leftForGoogleAt < this.watch.severWindowMs) {
+        this.earlyCloseTimer = this.ctx.timers.setTimeout(() => {
+          this.earlyCloseTimer = null;
+          this.popupGone = true;
+          this.armClose();
+        }, this.watch.earlyCloseDeadlineMs);
+        return;
+      }
       this.popupGone = true;
       this.armClose();
     };
@@ -624,8 +640,10 @@ abstract class PopupTask<T> {
   private stopWatch(): void {
     if (this.watchTimer !== null) this.ctx.timers.clearTimeout(this.watchTimer);
     if (this.closeTimer !== null) this.ctx.timers.clearTimeout(this.closeTimer);
+    if (this.earlyCloseTimer !== null) this.ctx.timers.clearTimeout(this.earlyCloseTimer);
     this.watchTimer = null;
     this.closeTimer = null;
+    this.earlyCloseTimer = null;
   }
 
   /** The popup is gone and the login waits on it: after the grace, the login ends (`login_cancelled`). */
@@ -642,7 +660,14 @@ abstract class PopupTask<T> {
     this.popupWaits += 1;
     this.armClose();
     try {
-      return await wait();
+      const answer = await wait();
+      // D398: only an open window writes an answer, so the `closed` inside the COOP window was the switch. The handle
+      // can't be read again: the rest of the login has its own limit only.
+      if (this.earlyCloseTimer !== null) {
+        this.ctx.timers.clearTimeout(this.earlyCloseTimer);
+        this.earlyCloseTimer = null;
+      }
+      return answer;
     } finally {
       this.popupWaits -= 1;
     }

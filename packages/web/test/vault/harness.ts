@@ -133,6 +133,11 @@ export class TestTimers implements Timers {
     }
   }
 
+  /** When each long timer still pending is due (a test checks one was armed, or cleared). */
+  dueAt(): number[] {
+    return [...this.manual.values()].map((t) => t.at).sort((x, y) => x - y);
+  }
+
   dispose(): void {
     for (const r of this.real.values()) clearTimeout(r);
     this.real.clear();

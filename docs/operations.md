@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-05 (branch `feat/local-verify`: "CI and git": the local gate `pnpm verify` (`--quick`, default, `--full`; the affected packages, the order, the timings), what runs before a merge into `develop` and before a deploy, the optional pre-push hook `pnpm verify:install-hook`, D413); 2026-11-05 (branch `fix/security-review-1105`: "Users screen (C8b)": the ticket for a search by sub or full address and for a wallet-directory find (audited first, `users.find`), the detail at `/users/open` from memory, the check updated; "Support ID lookup": the audit's request IDs, "Wallet directory only" with the ticket; "Usage capture" step 2's NOLOGIN after a failed reset and step 3's Hyperdrive configs through Cloudflare's API with `.secrets/<env>/cloudflare-hyperdrive-token`; the secrets table's row; D410, D412); 2026-11-05 (branch `feat/account-migration`: "Moving an env to another Cloudflare account" (new: the order, the commands, `env-secrets`, `d1-move`, `admin issuer:iss`, what users see, Neon and Google Cloud notes, the testnet move pending), the manifest's `cloudflare.accountId` and custom-domain placements in "Accounts and services per environment", "Email issuer" step 7's Custom Domain, the hosted demo's `HANA_DEMO_ORIGIN`, the admin command list, the secrets table's D1 exports and API tokens; D404); 2026-11-05 (branch `feat/deploy-check-all-workers`: "Checking a deploy" (every Worker through its `run deploy`, the shared wrapper; the console, console-auth, files Workers and the console SPA read over HTTP, the admin and watchdog through wrangler, `--only`/`--skip`, the console and watchdog D1 in `--d1`), the console, admin, files and watchdog deploy lines now `run deploy`, with `deploy-check` after each, D406); 2026-11-05 (branch `fix/usage-setup-throwaway-password`: "Usage capture" step 3's throwaway password before Neon's reset, D403 amended); 2026-11-05 (branch `feat/access-setup`: "Admin Worker" step 1: the admin console's Cloudflare Access by `access-setup <env>` (the team and login methods in the dashboard, the least-privilege token, created and revoked, plan / `--yes` / `--write-manifest` / `--check`), sandbox* Google exact emails only and the free-tier guard it enforces (D408), the workers.dev hostname application against the dashboard toggle, the dashboard path; the secrets table's Cloudflare API token row; the issuer's "Open for batch 8" note; D409); 2026-11-05 (branch `feat/sdk-error-request-id`: "Support ID lookup": partners' request IDs come from the SDK's errors and the demo's diagnostics, D405); 2026-11-05 (branch `docs/zero-trust-free-guard`: "Admin Worker" step 1's Zero Trust free-tier guard, D408); 2026-11-05 (branch `fix/usage-setup-neon-api-passwords`: "Usage capture" steps 2, 3 and 8: `usage-setup <env> roles` gives LOGIN by SQL and has Neon's API reset each role's password with the new `.secrets/<env>/neon-api-key` (how to create, save and revoke it), every run replaces the role files, Hyperdrive configs from older files re-created, the step-8 gate without the SCRAM question; the secrets table's Neon API key row; D403); 2026-11-05 (branch `feat/batch-c-15-screen`: "Support ID lookup" → "In the admin console" (the screen, the email join, the ticket rule, what to watch) and "Users screen (C8b)" (a Support ID goes to the lookup; the check), D399); 2026-11-05 (branch `feat/batch-c-8b`: "Admin Worker" → "Users screen (C8b)": issuer migration 0003, the deploy order issuer → API → admin, the checks and failures, D388–D392; "Retention" and "User directory (D269)" notes); 2026-11-05 (branch `chore/ci-cost`: "CI and git": CI and the identity probe turned off, the local checks, D387); 2026-11-05 (branch `feat/batch-c-15`: "Support ID lookup", `admin <env> support:lookup`, the admin route's audit, D394–D397); 2026-11-05 (branch `feat/coop-canary`: "Before each release: the COOP canary" (`coop-canary`, what a failure means, D386), step 0 of "A release."); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: "Common failures"' `derive_failed` `webcrypto_unsupported` / `webcrypto_failed`, D385); 2026-11-05 (branch `feat/deploy-build-check`: "Checking a deploy (`deploy-check`)", D384:
+Last verified against code: 2026-11-05 (branch `feat/m4-personal-account`: sandbox-dev's M4 on the personal account until the move, in "Admin Worker" (its intro and step 1's sandbox-dev team `bitter-hill-fe6f`, the placeholders `access-setup --write-manifest` replaces), "Users screen (C8b)" and "Moving an env to another Cloudflare account"; `env-secrets` uploads the SendGrid keys (`admin-sendgrid-key`, the watchdog's `SENDGRID_API_KEY`); D414); 2026-11-05 (branch `fix/sendgrid-suppression`: "Admin Worker" step 2 and "Watchdog service" step 3: 202 is not delivery, alerts and blocking notices bypass SendGrid's suppression lists, check the first in Activity; D401 as amended); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: SendGrid for every Hana email, D401: "Admin Worker" steps 1–3 (sandbox-dev's Access policy, the admin's SendGrid key, its secret), its "What to watch" rows, "Watchdog service" step 3 and its key's rotation (`SENDGRID_API_KEY`), the secrets table; "Files Worker and logos" step 2's lock per env, D402; "Plan limits on sandbox-dev" under "Admin Worker"); 2026-11-05 (branch `feat/local-verify`: "CI and git": the local gate `pnpm verify` (`--quick`, default, `--full`; the affected packages, the order, the timings), what runs before a merge into `develop` and before a deploy, the optional pre-push hook `pnpm verify:install-hook`, D413); 2026-11-05 (branch `fix/security-review-1105`: "Users screen (C8b)": the ticket for a search by sub or full address and for a wallet-directory find (audited first, `users.find`), the detail at `/users/open` from memory, the check updated; "Support ID lookup": the audit's request IDs, "Wallet directory only" with the ticket; "Usage capture" step 2's NOLOGIN after a failed reset and step 3's Hyperdrive configs through Cloudflare's API with `.secrets/<env>/cloudflare-hyperdrive-token`; the secrets table's row; D410, D412); 2026-11-05 (branch `feat/account-migration`: "Moving an env to another Cloudflare account" (new: the order, the commands, `env-secrets`, `d1-move`, `admin issuer:iss`, what users see, Neon and Google Cloud notes, the testnet move pending), the manifest's `cloudflare.accountId` and custom-domain placements in "Accounts and services per environment", "Email issuer" step 7's Custom Domain, the hosted demo's `HANA_DEMO_ORIGIN`, the admin command list, the secrets table's D1 exports and API tokens; D404); 2026-11-05 (branch `feat/deploy-check-all-workers`: "Checking a deploy" (every Worker through its `run deploy`, the shared wrapper; the console, console-auth, files Workers and the console SPA read over HTTP, the admin and watchdog through wrangler, `--only`/`--skip`, the console and watchdog D1 in `--d1`), the console, admin, files and watchdog deploy lines now `run deploy`, with `deploy-check` after each, D406); 2026-11-05 (branch `fix/usage-setup-throwaway-password`: "Usage capture" step 3's throwaway password before Neon's reset, D403 amended); 2026-11-05 (branch `feat/access-setup`: "Admin Worker" step 1: the admin console's Cloudflare Access by `access-setup <env>` (the team and login methods in the dashboard, the least-privilege token, created and revoked, plan / `--yes` / `--write-manifest` / `--check`), sandbox* Google exact emails only and the free-tier guard it enforces (D408), the workers.dev hostname application against the dashboard toggle, the dashboard path; the secrets table's Cloudflare API token row; the issuer's "Open for batch 8" note; D409); 2026-11-05 (branch `feat/sdk-error-request-id`: "Support ID lookup": partners' request IDs come from the SDK's errors and the demo's diagnostics, D405); 2026-11-05 (branch `docs/zero-trust-free-guard`: "Admin Worker" step 1's Zero Trust free-tier guard, D408); 2026-11-05 (branch `fix/usage-setup-neon-api-passwords`: "Usage capture" steps 2, 3 and 8: `usage-setup <env> roles` gives LOGIN by SQL and has Neon's API reset each role's password with the new `.secrets/<env>/neon-api-key` (how to create, save and revoke it), every run replaces the role files, Hyperdrive configs from older files re-created, the step-8 gate without the SCRAM question; the secrets table's Neon API key row; D403); 2026-11-05 (branch `feat/batch-c-15-screen`: "Support ID lookup" → "In the admin console" (the screen, the email join, the ticket rule, what to watch) and "Users screen (C8b)" (a Support ID goes to the lookup; the check), D399); 2026-11-05 (branch `feat/batch-c-8b`: "Admin Worker" → "Users screen (C8b)": issuer migration 0003, the deploy order issuer → API → admin, the checks and failures, D388–D392; "Retention" and "User directory (D269)" notes); 2026-11-05 (branch `chore/ci-cost`: "CI and git": CI and the identity probe turned off, the local checks, D387); 2026-11-05 (branch `feat/batch-c-15`: "Support ID lookup", `admin <env> support:lookup`, the admin route's audit, D394–D397); 2026-11-05 (branch `feat/coop-canary`: "Before each release: the COOP canary" (`coop-canary`, what a failure means, D386), step 0 of "A release."); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: "Common failures"' `derive_failed` `webcrypto_unsupported` / `webcrypto_failed`, D385); 2026-11-05 (branch `feat/deploy-build-check`: "Checking a deploy (`deploy-check`)", D384:
 the build id in every Worker and page bundle, `deploy-check <env> [--d1]` after each deploy step, migrations applied
 from a checkout at the deployed commit, the API's raw `wrangler deploy` lines now `run deploy`); 2026-11-05 (branch `fix/deploy-pages-builds`: `deploy:pages` runs the web build first; the 0011 apply note; the rebuilt page versions); 2026-11-05 (branch `chore/ci-cost`: "CI and git": which jobs run when, the nightly WebKit and Firefox run; the identity probe every 3 hours, D383); 2026-11-05 (branch `docs/sandbox-dev-state-1105`: sandbox-dev redeployed at `develop` 8aab09d with the wallet directory: `USER_ID_KEY`, the bookmark, 0011, API 6141ba3d, vault abe7cc61, auth 6b9a4bee, issuer 1542a60c); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
 what counts, each job's share in both crons, the `budget` log lines; settlement's reads a run; D380); 2026-11-04 (branch `feat/batch-c-13`: "Retention (batch C13, milestone M6)": the Neon
@@ -100,6 +100,7 @@ Never print, log, paste or commit any of these. The scripts never print them eit
 | Email issuer signing key (`ISSUER_SIGNING_KEY`; testnet and `local*` only) | `.secrets/<env>/email-issuer-signing-key.json` (active), `email-issuer-signing-key-standby.json` (published and on chain, **never uploaded**: keep it offline); RSA-2048 private JWKs, the only copies | `email-issuer <env> init`; upload with `email-issuer <env> put --yes` ("Email issuer" below) |
 | Email issuer HMAC keys (`EMAIL_SUB_KEY` = K_sub, `EMAIL_CODE_KEY`, `EMAIL_RL_KEY`) | `.secrets/<env>/email-sub-key`, `email-code-key`, `email-rl-key` (base64 of 32 bytes); K_sub is never rotated and is backed up offline twice (D81) | `email-issuer <env> init`; `put --yes` |
 | SendGrid key for user mail (`SENDGRID_API_KEY`, Mail Send only, D194) | `.secrets/<env>/email-issuer-sendgrid-key` | pasted by hand; `email-issuer <env> put --yes` |
+| The admin Worker's SendGrid key (`EMAIL_API_KEY`, Mail Send only, its own, D401) | `.secrets/<env>/admin-sendgrid-key` | pasted by hand; `wrangler secret put` from the file ("Admin Worker" steps 2–3) |
 | Neon Postgres connection strings (batch C ledger, D73): pooled `DATABASE_URL` and `DATABASE_URL_DIRECT` of the env's Neon branch | `.secrets/<env>/neon.json` (`{project_id, org_id, branch, branch_id, region, DATABASE_URL, DATABASE_URL_DIRECT}`); role `neondb_owner`, used only by `usage-migrate` and `usage-setup` (which also reads `project_id` and `branch_id` for Neon's API, D403) | `neon connection-string <branch> --project-id <id> [--pooled]` (Neon CLI, `neon login`) |
 | Ledger role URLs (`usage_writer`, `usage_admin`, batch C4): each role's password; their copies live in the two Hyperdrive configs | `.secrets/<env>/neon-usage-writer.url`, `neon-usage-admin.url` | `usage-setup <env> roles` ("Usage capture" below) |
 | Neon API key for `usage-setup <env> roles` (D403): a project-scoped key of the env's Neon project; it can change and delete anything in that project | `.secrets/<env>/neon-api-key` (one line, 0600), only while setting up or rotating the roles: then revoke the key in Neon and delete the file | created by hand in Neon's console and saved with `umask 077; pbpaste > .secrets/<env>/neon-api-key` ("Usage capture" step 2) |
@@ -107,7 +108,7 @@ Never print, log, paste or commit any of these. The scripts never print them eit
 | Cloudflare API token for `usage-setup <env> hyperdrive` (D412): "Account › Hyperdrive › Edit" on the env's account; it can create, change or delete that account's Hyperdrive configs | `.secrets/<env>/cloudflare-hyperdrive-token` (one line, 0600), only while creating the ledger's Hyperdrive configs: then delete the token in Cloudflare and the file | created by hand (My Profile → API Tokens, TTL today) and saved with `umask 077; pbpaste > .secrets/<env>/cloudflare-hyperdrive-token` ("Usage capture" step 3) |
 | `USER_ID_KEY` (the uid key, base64 of 32 bytes; API only); never rotated within a contract term, backed up offline | `.secrets/<env>/user-id-key` | `usage-setup <env> user-id-key` (generates it once, sets the Worker secret) |
 | The console's Google client secret (`CONSOLE_GOOGLE_CLIENT_SECRET`, console Worker only; batch C9) | `.secrets/<env>/console-google-client.json` (Google's downloaded client JSON, `web.client_secret`) | saved by hand from Google Cloud (setup step 11, "Partner console Worker"); `wrangler secret put` through a pipe; read by `console-code-flow-spike` |
-| Watchdog secrets (`WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, its Resend key, Slack webhook, paging-app credentials, `HEARTBEAT_URL`); the admin Worker's copy of `WATCHDOG_STATUS_TOKEN` (batch C14) comes from the same file | `.secrets/<env>/watchdog-secrets.json` (flat `{NAME: value}`) | `watchdog secrets <env> init` (the key and token); the rest by hand ("Watchdog service" below) |
+| Watchdog secrets (`WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, its own SendGrid key `SENDGRID_API_KEY` (Mail Send only, D401), Slack webhook, paging-app credentials, `HEARTBEAT_URL`); the admin Worker's copy of `WATCHDOG_STATUS_TOKEN` (batch C14) comes from the same file | `.secrets/<env>/watchdog-secrets.json` (flat `{NAME: value}`) | `watchdog secrets <env> init` (the key and token); the rest by hand ("Watchdog service" below) |
 | Worker copies of the above | Cloudflare Worker secrets (the watchdog's on its own Cloudflare account) | `wrangler secret put` (watchdog: `wrangler secret bulk`) |
 | Local dev copies | `apps/api/.dev.vars`, `apps/watchdog/.dev.vars`, `apps/email-issuer/.dev.vars` (0600) | `gen --dev-vars` |
 | D1 exports of an account move (every row of a database: the API's holds the wallet directory and the wrapped vault shares, the issuer's users' email addresses) | `.secrets/<env>/d1-export-<db>-<yyyymmdd>.sql` (0600); delete once the move is checked | `d1-move <env> --db <db>` ("Moving an env to another Cloudflare account") |
@@ -1306,13 +1307,16 @@ matured after the point mature again on the next cron run.
 The Hana staff console (`hana-id-admin-<env>`, manifest `admin.workerName`) on `admin.origin`, behind Cloudflare
 Access. It holds no D1: it calls the API's `AdminRpc` (`API`) and the console's `StaffRpc` (`CONSOLE`), keeps its
 feed cursors and watcher state in the ledger's `ops` schema (`USAGE_DB`, Hyperdrive, role `usage_admin`), and sends
-every email (Resend, D87). Its 5-minute cron sends the **blocking notices** (a guarded change's clock, an invite link
+every email (SendGrid, its own key, D87, D401). Its 5-minute cron sends the **blocking notices** (a guarded change's clock, an invite link
 and an owner grant's wait start only once every send was accepted), the **security feed** (app changes, console audit
 rows, security events, after the fact) and the **on-chain watcher**'s emails (`docs/api.md` "Admin Worker"; D278–D285).
-Not deployed anywhere yet: it goes live at milestone M4 with the console (C7, C9).
+Not deployed anywhere yet: it goes live at milestone M4 with the console (C7, C9); sandbox-dev's is set up on the
+personal Cloudflare account until the account move (D414).
 
 **Once it runs in an env, stop using `admin <env> app:changes:announce`**: that announces a change without any email.
-The admin Worker announces every staff proposal by email within 5 minutes.
+The admin Worker announces every staff proposal by email within 5 minutes. The CLI refuses it as soon as the
+manifest has an `admin` block, deployed or not: sandbox-dev's has one since 2026-11-05, so its staff proposals wait for
+the admin Worker (M4).
 
 ### Setting it up (once per env, milestone M4, for the user to run)
 
@@ -1336,6 +1340,15 @@ the repo root of the main checkout, logged in to the API's Cloudflare account. N
 
    `admin.staffEmails` (lowercased) is both the policy's list and the Worker's own second check. Until
    `admin.accessAud` is set (`UNSET`), every `/api/*` answers `503 access_unavailable`.
+
+   **sandbox-dev** (the user, 2026-11-05; on the personal Cloudflare account until the account move, D414): team
+   `bitter-hill-fe6f.cloudflareaccess.com` on the **Free plan**, the **Google** login method only, the staff
+   `hello@ting.rocks` and `mark@hanawallet.io` (both Google Workspace accounts). The manifest's
+   `admin.accessTeamDomain` (`hana-id-team-unset.cloudflareaccess.com`) and `admin.accessAud` (`UNSET`) are
+   placeholders until `access-setup sandbox-dev --yes --write-manifest` replaces them: with them the admin Worker
+   answers every `/api/*` `503 access_unavailable` and the email issuer's `DirectoryRpc` refuses every staff call
+   (`access_unavailable`), both tested. After replacing them, `gen` and redeploy the issuer and the admin Worker (the
+   issuer carries the same values as `ADMIN_ACCESS_*`).
 
    **Zero Trust stays on the free tier** (D408; the account's card is authorised for usage past the free limits, so
    sandbox must never get there). Free is 50 seats: a seat is a person who signs in through Access, and sandbox has 2
@@ -1411,10 +1424,24 @@ the repo root of the main checkout, logged in to the API's Cloudflare account. N
    (Settings → Custom Pages, or the application's Overview) and the AUD tag (Overview → Application Audience (AUD)
    Tag) into `admin.accessTeamDomain` and `admin.accessAud`. `access-setup <env> --check` then confirms it matches;
    `--check` only reads, so its token can have **Access: Apps and Policies · Read** instead of Edit.
-2. **Resend** (step 9, D87): verify the sending subdomain of `email.from` in Resend with SPF, DKIM and DMARC records on
-   the Hana zone; create an API key with **sending access to that domain only**, for this Worker only (the watchdog
-   has its own). Save it to `.secrets/<env>/admin-resend-key` (0600), never in a shell history:
-   `umask 077; pbpaste > .secrets/<env>/admin-resend-key` after copying it from Resend.
+2. **SendGrid** (step 9, D87, D401): `email.from`'s domain authenticated in SendGrid (SPF, DKIM, DMARC on the Hana
+   zone; production: the dedicated notice subdomain), in the SendGrid account or subuser this Worker sends from, which
+   is **never the email issuer's subuser** (its suppression list must stay the issuer's, D194). Production: a subuser
+   for the admin Worker's mail (Pro plan and up). Then create a **restricted API key, Mail Send only** (Settings → API
+   Keys → Create API Key → Restricted Access → Mail Send: Full Access, every other category No Access), for this Worker
+   only (the issuer and the watchdog have their own). SendGrid shows it once. Save it to
+   `.secrets/<env>/admin-sendgrid-key` (0600), never in a shell history or a chat:
+   `umask 077; pbpaste > .secrets/<env>/admin-sendgrid-key` after copying it from SendGrid. A SendGrid key can't be
+   limited to one sending domain (`docs/security.md` "Email keys"): keep it in this file and the Worker only.
+   - sandbox-dev (2026-11-05): `email.from` is `Hana ID <team@hanawallet.io>`, the address the issuer already sends
+     from. Create the admin key outside the issuer's subuser, in an account or subuser where `team@hanawallet.io` is
+     verified (its authenticated domain, or a Single Sender verification of the address). Testnet only; a bounce
+     there suppresses the address for that account's mail, not the issuer's.
+   - SendGrid's 202 means accepted, not delivered. The admin Worker's alerts and blocking notices bypass the
+     account's bounce, spam-report and unsubscribe lists (`docs/security.md` "Email keys"; invitee links, statement
+     notices and the audit digest don't). After setup, send one notice to the alias and check it in SendGrid's
+     **Activity** (Delivered, not Bounced or Blocked); an address on **Suppressions** that should get routine mail is
+     removed there by hand.
 3. **The link keys and the email key as secrets** (step 10). Each link key is 32 random bytes, base64, generated into
    `.secrets/<env>/` and sent through wrangler's stdin (never an argument, never printed). The admin Worker must exist
    first (step 4's first deploy, or `wrangler secret put` creates it):
@@ -1425,8 +1452,13 @@ the repo root of the main checkout, logged in to the API's Cloudflare account. N
    openssl rand -base64 32 > .secrets/<env>/invite-link-key
    corepack pnpm --dir apps/admin exec wrangler secret put CANCEL_LINK_KEY < .secrets/<env>/cancel-link-key
    corepack pnpm --dir apps/admin exec wrangler secret put INVITE_LINK_KEY < .secrets/<env>/invite-link-key
-   corepack pnpm --dir apps/admin exec wrangler secret put EMAIL_API_KEY < .secrets/<env>/admin-resend-key
+   corepack pnpm --dir apps/admin exec wrangler secret put EMAIL_API_KEY < .secrets/<env>/admin-sendgrid-key
    ```
+
+   Rotating the email key: create the new restricted key, overwrite `.secrets/<env>/admin-sendgrid-key`, `wrangler
+   secret put EMAIL_API_KEY` from it as above, check one notice goes out (`notice` lines with `sent`), then delete the
+   old key in SendGrid (it is refused from then on). On a suspected leak, delete the old key first: notices wait (fail
+   closed) until the new one is set.
 
    Keep `cancel-link-key` and `invite-link-key`: the tokens are deterministic per change, invite and grant, so a
    replaced key breaks every link already emailed and not yet used (cancel links until the change is in force, invite
@@ -1459,6 +1491,20 @@ the repo root of the main checkout, logged in to the API's Cloudflare account. N
   ledger work, D329); the free plan allows 5 per account (the API, the watchdog and the console have one each per env),
   so two envs on one free account don't fit: the plan question (build plan open question 3). Each run makes at most 40
   outbound calls, every kind counted ("The crons' call budget" below); a backlog drains over the next runs.
+- **Plan limits on sandbox-dev** (Workers Free plan, the user 2026-11-05; checked 2026-11-05 against Cloudflare's
+  docs): sandbox-dev's API, console, admin and watchdog all run on the one account `f0b1e2c42c3e5bd63992958a19d4abca`
+  (`watchdog.cloudflare.accountId`, the only account the operator's `wrangler whoami` lists; D125), so M4 puts it at
+  exactly **5 cron triggers** (API `*/15`, console `0 * * * *`, admin `*/5` and `*/15`, watchdog `*/5`), the Free
+  plan's limit ([Workers limits](https://developers.cloudflare.com/workers/platform/limits/): 5 per account): any other
+  cron Worker on that account (another project's included) must go first. Also on Free: 10 ms CPU per request and per
+  cron run, 50 subrequests (the crons' budget of 40 is under it); Hyperdrive, with 100 000 queries a day
+  ([Hyperdrive pricing](https://developers.cloudflare.com/hyperdrive/platform/pricing/)); R2 after its checkout (an
+  "R2 subscription", with a free monthly tier, [R2 get started](https://developers.cloudflare.com/r2/get-started/));
+  bucket locks (no plan restriction in [their docs](https://developers.cloudflare.com/r2/buckets/bucket-locks/)); the
+  Images binding, 5 000 unique transformations a month, after which new ones fail with error 9422 and nothing is
+  billed ([Images pricing](https://developers.cloudflare.com/images/pricing/)); Zero Trust Free, up to 50 users
+  ([plans](https://www.cloudflare.com/plans/sase-zero-trust.md)). The 10 ms CPU limit is the one to watch: a
+  statement's PDF or a large export may exceed it (`docs/mainnet-readiness.md` 7.15).
 - **Rollback**: `wrangler rollback` in `apps/admin`. While the Worker is down or can't email, guarded changes, invites
   and owner grants stay unannounced (fail closed): nothing goes live without its notice, and the API cancels a change
   left unannounced for 7 days. `app:changes:announce` is the no-email fallback and needs Hana security's sign-off.
@@ -1476,7 +1522,7 @@ user in the wallet directory (a User ID, internal id or wallet: `POST /api/users
 console's audit log as `users.find`, org-less, never emailed); browsing (a part of an address, the account kind, an
 app, unverified claims) needs none (D410). An opened user's page is `/users/open`, opened from the tab's memory: no
 sub in any URL, back and forward move between the users opened, and a reload or a copied link shows "No user open".
-Not deployed anywhere yet: with the admin Worker at M4.
+Not deployed anywhere yet: with the admin Worker at M4 (sandbox-dev: on the personal account, D414).
 
 **Deploy order** (for the user, from a clean checkout at the commit being deployed, logged in to the account; nothing
 prints a secret; `<env>` throughout):
@@ -1565,7 +1611,8 @@ feed and the watcher get their shares. Each run's shares are in its `budget` log
 | Line | Meaning | Action |
 |---|---|---|
 | `cron` `email_api_key_missing`, `notice` `cancel_link_key_missing` / `invite_link_key_missing` (error) | A secret is missing or not 32 bytes of base64: nothing is acked | Set it (step 3) |
-| `notice` `send_failed` (warn), with `target` | A recipient's send wasn't accepted (Resend refused or timed out); retried every run | Check Resend's dashboard and the domain's DNS |
+| `notice` `send_failed` (warn), with `target` | A recipient's send wasn't accepted (SendGrid refused it, answered other than `202`, or timed out); retried every run | Check SendGrid's status, the key (a 401/403 is a wrong, revoked or non-Mail-Send key) and the domain's DNS |
+| A recipient got the same notice or digest twice | SendGrid has no idempotency key: a send whose answer was lost was sent again, or a retry ran in a fresh isolate (D401). Never a missing notice | None; expected rarely |
 | `notice` `contacts_unavailable` | The org's security contacts couldn't be read (the API) | Check the API |
 | `cron` `usage_db_missing` / `ops_unavailable` (error) | No `USAGE_DB` binding, or Neon/Hyperdrive down: the feed and the watcher don't run; notices still go out | `gen --admin-hyperdrive-id <id>`; Neon status |
 | `feed` with `failed` > 0 | A digest wasn't accepted; its cursor waits | As `send_failed` |
@@ -1689,9 +1736,13 @@ are the manifest's `files` block.
 corepack pnpm --dir apps/files exec wrangler r2 bucket create <files.logosBucket>
 corepack pnpm --dir apps/files exec wrangler r2 bucket create <files.statementsBucket>
 corepack pnpm --dir apps/files exec wrangler r2 bucket create <files.exportsBucket>
-# 2. STATEMENTS: one bucket-lock rule on every object, 7 years (2557 days with the leap days; D90, D308). Objects can't
-#    be overwritten or deleted until then, by anyone, the admin Worker included. Check it: `lock list`.
+# 2. STATEMENTS: one bucket-lock rule on every object. Objects can't be overwritten or deleted until it ends, by
+#    anyone, the admin Worker included. Check it: `lock list`. The retention is per env (D402):
+#    production: 7 years (2557 days with the leap days; D90, D308)
 corepack pnpm --dir apps/files exec wrangler r2 bucket lock add <files.statementsBucket> statements-7y "" --retention-days 2557
+#    sandbox-dev (and other sandbox* envs): 1 day, so testnet drill statements don't stay locked for 7 years (agreed
+#    by the user 2026-11-05)
+corepack pnpm --dir apps/files exec wrangler r2 bucket lock add hana-id-statements-sandbox-dev statements-1d "" --retention-days 1
 corepack pnpm --dir apps/files exec wrangler r2 bucket lock list <files.statementsBucket>
 # 3. EXPORTS: on-demand exports expire after 30 days. R2's lifecycle rules take a prefix to include, not one to exclude,
 #    so the rule is on `exports/` (where C12 writes them) and the legacy export at `legacy/usage-<env>.csv` (C4b) is
@@ -2880,10 +2931,28 @@ below logged in to the watchdog's account (`wrangler login` there, or `CLOUDFLAR
    `WATCHDOG_STATUS_TOKEN` to `.secrets/<env>/watchdog-secrets.json` (0600) and prints the public key with the near
    CLI command that installs it (function-call key on `watchdog.account`, receiver `signer`, methods
    `cancel_issuer_key_change, confirm_issuer_key_change, pause, delete_updater_key`, 1 NEAR allowance). Run that
-   command. Then paste into the same file the watchdog's own `RESEND_API_KEY` (D87), `SLACK_WEBHOOK_URL`, the paging
+   command. Then paste into the same file the watchdog's own `SENDGRID_API_KEY` (a restricted key, Mail Send only, its
+   own, never the admin Worker's or the issuer's; D87, D401: below), `SLACK_WEBHOOK_URL`, the paging
    app's credentials (`NTFY_TOPIC_URL` [+ `NTFY_TOKEN`], or `PUSHOVER_TOKEN` + `PUSHOVER_USER` for a group of both
    founders, or `PAGERDUTY_ROUTING_KEY`) and `HEARTBEAT_URL`; `secrets <env> check` lists what is missing (names
-   only).
+   only) and names a leftover `RESEND_API_KEY` as retired (delete it from the file).
+   - The SendGrid key: `watchdog.alertFrom` must be a sender SendGrid has verified in the account or subuser the key
+     belongs to (production: its own subuser, apart from the admin Worker's and the issuer's; every alert bypasses its
+     bounce, spam-report and unsubscribe lists, so check the first one as Delivered in SendGrid's Activity), and
+     `watchdog.alertEmails` the founders. sandbox-dev's are still placeholders (`watchdog@example.com`,
+     `alerts@example.com`), so its email channel can't deliver until both are real (e.g. `team@hanawallet.io`, the
+     verified sandbox sender) and the watchdog is regenerated and redeployed. Create the restricted key in SendGrid
+     (Settings → API Keys → Restricted Access → Mail Send only), copy it, and merge it into the file without a shell
+     history (`jq` reads the clipboard on stdin; the new file is 0600 under `umask 077`):
+
+     ```sh
+     umask 077
+     f=.secrets/<env>/watchdog-secrets.json
+     pbpaste | jq -Rs --slurpfile cur "$f" '$cur[0] + {SENDGRID_API_KEY: rtrimstr("\n")}' > "$f.new" && mv "$f.new" "$f"
+     corepack pnpm --filter @hana-id/watchdog secrets <env> check
+     # A watchdog already deployed: set just this secret (else step 5's `secret bulk` uploads it with the rest).
+     jq -r .SENDGRID_API_KEY "$f" | corepack pnpm --dir apps/watchdog exec wrangler secret put SENDGRID_API_KEY
+     ```
 4. Dead-man's switch: a check on a third provider (healthchecks.io, Better Stack, Cronitor) with a 5-min period and
    ~10-min grace, alerting both founders on its own; its ping URL is `HEARTBEAT_URL`.
 5. D1 and deploy (from `apps/watchdog`, logged in to the watchdog's account):
@@ -2917,8 +2986,9 @@ transactions.
 
 Rotating its secrets: `WATCHDOG_KEY`: add a new function-call key (as in step 3), put it in the file, `wrangler secret
 put WATCHDOG_KEY`, then delete the old key on chain. `WATCHDOG_STATUS_TOKEN`: change it on both Workers (the admin's:
-"Security & monitoring" step 2; until both match the portal shows `watchdog_unauthorized`). The others:
-replace in the file and `wrangler secret put`.
+"Security & monitoring" step 2; until both match the portal shows `watchdog_unauthorized`). `SENDGRID_API_KEY`: a new
+restricted key merged into the file as in step 3, `wrangler secret put` from it, then delete the old key in SendGrid.
+The others: replace in the file and `wrangler secret put`.
 
 ### Email login: pins, link alarms, unrecorded wallets
 
@@ -3714,7 +3784,10 @@ D404. **Pending for sandbox-dev:** the user decided on 2026-11-05 that testnet t
 company accounts: Cloudflare (`*.tingtc.workers.dev` today), Neon (the usage ledger's project) and the Google Cloud
 project that owns the OAuth clients. Timing is open (with the colleague); `docs/mainnet-readiness.md` row 4.21 tracks
 it. Nothing below has been run on sandbox-dev yet. The tools (`env-secrets`, `d1-move`, `admin issuer:iss`) are tested
-against mocks only.
+against mocks only. Until then (D414, 2026-11-05) sandbox-dev's M4 pieces (the admin console's Access application on
+team `bitter-hill-fe6f`, the console D1, the R2 buckets, Images, the usage Hyperdrive configs, the SendGrid keys, the
+console's Google client, the admin, console, console-auth and files Workers) are set up on the personal account; the
+move re-creates them on the company account like everything else.
 
 Cloudflare doesn't move Workers, D1 databases, Durable Objects, Hyperdrive configs or R2 buckets from one account to
 another (we found no such feature documented), so the env is re-created on the new account and its data copied. Put it

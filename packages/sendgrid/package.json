@@ -1,0 +1,14 @@
+{
+  "name": "@hana-id/sendgrid",
+  "version": "0.0.0",
+  "private": true,
+  "description": "SendGrid v3 Mail Send for Hana's Workers (D194, D401): the email issuer's user mail, the admin Worker's notices and the watchdog's alerts. One message per request, accepted only on 202, tracking off, errors by status only.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": { "@types/node": "^22.0.0", "typescript": "^5.7.0", "vitest": "4.1.12" }
+}

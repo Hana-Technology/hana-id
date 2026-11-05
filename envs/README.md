@@ -38,7 +38,10 @@ Batch C fields (`docs/batch-c-spec.md` "Manifest", `packages/env/src/dashboard.t
   shorter. sandbox-dev: 60 000 (its `changeDelayMs`). `gen` passes it to the API as `APP_CHANGE_DELAY_MS`; nothing
   reads it until batch C3.
 - `console`, `files`, `admin`, `usage`, `email`, `ownerGrantDelayMs` (optional, all or none): the dashboard. Without
-  them the env runs the API only (sandbox-dev today, until its console, files and admin origins exist).
+  them the env runs the API only. sandbox-dev has them since 2026-11-05 (milestone M4; its Workers named
+  `hana-id-<x>-sandbox-dev` on `tingtc.workers.dev`, `admin.accessAud` still `UNSET`, `admin.accessTeamDomain` a
+  placeholder until the Zero Trust team exists). With them, `admin.ts app:changes:announce` refuses the env (its admin
+  Worker announces), and the API's `gen` passes `FILES_ORIGIN` and the longer `REFUSED_ORIGINS` (below).
   - `console`: `{workerName, d1Name, origin, authWorkerName, authOrigin}` (the partner console and its script-free
     Google sign-in origin; the console client's only redirect URI is `authOrigin + "/callback"`).
   - `files`: `{workerName, origin, logosBucket, statementsBucket, exportsBucket}` (logos origin and the R2 buckets).
@@ -48,7 +51,8 @@ Batch C fields (`docs/batch-c-spec.md` "Manifest", `packages/env/src/dashboard.t
     includes: `access-setup <env>` creates the application and policies from this block, prints the team domain and
     AUD tag (`--yes --write-manifest` writes both here) and `--check` reports drift (D409).
   - `usage`: `{neonRegion: "aws-ap-southeast-2", writerHyperdrive, adminHyperdrive}` (D73).
-  - `email`: `{from, securityAlias}`: `from` is `Name <address>` or an address on the sending subdomain (D87), with no
+  - `email`: `{from, securityAlias}`: `from` is `Name <address>` or an address on the sending subdomain (D87), a sender
+    SendGrid has verified for the admin Worker's key (D401), with no
     line break, quote or second address; `securityAlias` gets every blocking notice and direct alert.
   - `ownerGrantDelayMs`: how long a new owner stays a viewer (D89); the bounds of `appChangeDelayMs`.
   - Every dashboard origin is a Hana origin by the `vaultOrigin` rules, distinct from every other Hana origin (the
@@ -98,7 +102,9 @@ D1 database). Per-IP limiters always stay near their client. Changing it creates
   host must name `cloudflare.workerName`. The admin Worker reads `/status`, `/alerts`, `/actions` and posts acks there
   (`WATCHDOG_URL`, with the `WATCHDOG_STATUS_TOKEN` secret). Not a secret. A production manifest's admin `gen` refuses
   without it (`docs/operations.md` "Admin Worker" → "Security & monitoring").
-- `alertEmails`: both founders (D85); `alertFrom`: an address on the dedicated sending subdomain (D87).
+- `alertEmails`: both founders (D85); `alertFrom`: an address on the dedicated sending subdomain (D87), verified in
+  SendGrid for the watchdog's own key (`SENDGRID_API_KEY`, D401). sandbox-dev's are still placeholders
+  (`alerts@example.com`, `watchdog@example.com`): its email channel can't deliver until both are real.
 - `pager`: `ntfy`, `pushover` or `pagerduty` (D85, chosen at setup); its credentials are Worker secrets.
 - `digestHourUtc` (0–23, default 0): the daily digest goes out on the first run after this hour (UTC).
 - `relayerFunds` (optional, D150): thresholds in NEAR of the watchdog's read-only relayer funds check, each pair

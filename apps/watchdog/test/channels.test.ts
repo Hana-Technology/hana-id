@@ -1,4 +1,5 @@
 // The channel adapters' requests, against a stubbed fetch (no real send). Credentials here are throwaway strings.
+import { SENDGRID_URL } from '@hana-id/sendgrid';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   type AlertMessage,
@@ -11,9 +12,9 @@ import {
   PUSHOVER_MESSAGES_URL,
   PUSHOVER_RETRY_S,
   pushoverPager,
-  RESEND_URL,
-  resendEmail,
+  WATCHDOG_CATEGORY,
   emailSender,
+  sendgridEmail,
   slackSender,
 } from '../src/channels.ts';
 import type { Env } from '../src/env.ts';
@@ -71,27 +72,49 @@ describe('Slack', () => {
   });
 });
 
-describe('Email (Resend)', () => {
-  it('sends with the watchdog’s own key and counts it only when Resend returns an id', async () => {
-    const calls = stubFetch(() => Response.json({ id: 'msg_1' }));
-    const email = emailSender(resendEmail('re_throwaway_key', 'alerts@notify.example.com'), ['a@example.com', 'b@example.com'], 'sandbox-test');
+describe('Email (SendGrid, D401)', () => {
+  const KEY = 'SG.throwaway-watchdog-key.throwaway-secret-not-real-0123456789';
+
+  it('sends with the watchdog’s own key, one copy per founder, tracking off; counts it only on a 202', async () => {
+    const calls = stubFetch(() => new Response(null, { status: 202, headers: { 'x-message-id': 'msg_1' } }));
+    const email = emailSender(sendgridEmail(KEY, 'Hana ID watchdog <alerts@notify.example.com>'), ['a@example.com', 'b@example.com'], 'sandbox-test');
     expect(await email.send(msg({ resend: true }))).toEqual({ ok: true, ref: 'msg_1' });
-    expect(calls[0]?.url).toBe(RESEND_URL);
-    expect(calls[0]?.headers.authorization).toBe('Bearer re_throwaway_key');
-    expect(JSON.parse(calls[0]!.body)).toEqual({ from: 'alerts@notify.example.com', to: ['a@example.com', 'b@example.com'], subject: 'CRITICAL (re-sent): Forged key k9 [Hana ID sandbox-test]', text: 'kid: k9' });
-  });
-
-  it('fails on a 2xx without an id, and on an error status', async () => {
-    stubFetch(() => Response.json({}));
-    expect(await resendEmail('re_k', 'a@b.co').send({ to: ['x@y.co'], subject: 's', text: 't' })).toEqual({ ok: false, error: 'no message id in the answer' });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe(SENDGRID_URL);
+    expect(calls[0]?.headers.authorization).toBe(`Bearer ${KEY}`);
+    const body = JSON.parse(calls[0]!.body) as Record<string, any>;
+    expect(body.personalizations).toEqual([{ to: [{ email: 'a@example.com' }] }, { to: [{ email: 'b@example.com' }] }]);
+    expect(body.from).toEqual({ email: 'alerts@notify.example.com', name: 'Hana ID watchdog' });
+    expect(body.subject).toBe('CRITICAL (re-sent): Forged key k9 [Hana ID sandbox-test]');
+    expect(body.content).toEqual([{ type: 'text/plain', value: 'kid: k9' }]);
+    expect(body.categories).toEqual([WATCHDOG_CATEGORY]);
+    expect(body.tracking_settings.click_tracking).toEqual({ enable: false, enable_text: false });
+    // Every alert bypasses the bounce, spam-report and unsubscribe lists: SendGrid would otherwise answer 202 and drop it.
+    expect(body.mail_settings).toEqual({ bypass_bounce_management: { enable: true }, bypass_spam_management: { enable: true }, bypass_unsubscribe_management: { enable: true } });
+    // A 202 without the message id header is accepted too (SendGrid queued it).
     vi.restoreAllMocks();
-    stubFetch(() => new Response('', { status: 422 }));
-    expect(await resendEmail('re_k', 'a@b.co').send({ to: ['x@y.co'], subject: 's', text: 't' })).toEqual({ ok: false, error: 'HTTP 422' });
+    stubFetch(() => new Response(null, { status: 202 }));
+    expect(await sendgridEmail(KEY, 'a@b.co').send({ to: ['x@y.co'], subject: 's', text: 't' })).toEqual({ ok: true });
   });
 
-  it('is unconfigured without a key or without recipients', () => {
-    expect(emailSender(resendEmail(undefined, 'a@b.co'), ['x@y.co'], 'e').configured).toBe(false);
-    expect(emailSender(resendEmail('re_k', 'a@b.co'), [], 'e').configured).toBe(false);
+  it('fails on any other status or a network error, naming the status only', async () => {
+    for (const [status, body] of [[200, '{}'], [400, '{"errors":[{"message":"x@y.co is bad"}]}'], [401, ''], [429, ''], [500, 'oops']] as const) {
+      stubFetch(() => new Response(body || null, { status }));
+      const r = await sendgridEmail(KEY, 'a@b.co').send({ to: ['x@y.co'], subject: 's', text: 't' });
+      expect(r).toEqual({ ok: false, error: `HTTP ${status}` });
+      vi.restoreAllMocks();
+    }
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError(`fetch failed ${KEY}`));
+    expect(await sendgridEmail(KEY, 'a@b.co').send({ to: ['x@y.co'], subject: 's', text: 't' })).toEqual({ ok: false, error: 'network error or timeout' });
+  });
+
+  it('is unconfigured without a key or without recipients, and then fetches nothing', async () => {
+    const calls = stubFetch();
+    expect(emailSender(sendgridEmail(undefined, 'a@b.co'), ['x@y.co'], 'e').configured).toBe(false);
+    expect(emailSender(sendgridEmail(KEY, 'a@b.co'), [], 'e').configured).toBe(false);
+    expect(await sendgridEmail(undefined, 'a@b.co').send({ to: ['x@y.co'], subject: 's', text: 't' })).toEqual({ ok: false, error: 'not configured' });
+    expect(await sendgridEmail(KEY, 'a@b.co').send({ to: [], subject: 's', text: 't' })).toEqual({ ok: false, error: 'no recipients' });
+    expect(calls).toEqual([]);
   });
 });
 
@@ -156,10 +179,11 @@ describe('notifierFromEnv', () => {
   });
 
   it('sends email to every recipient', async () => {
-    const calls = stubFetch(() => Response.json({ id: 'm' }));
-    const n = notifierFromEnv({ ...base, PAGER_PROVIDER: 'ntfy', RESEND_API_KEY: 're_k' });
+    const calls = stubFetch(() => new Response(null, { status: 202 }));
+    const n = notifierFromEnv({ ...base, PAGER_PROVIDER: 'ntfy', SENDGRID_API_KEY: 'SG.k' });
     expect(n.email.configured).toBe(true);
-    await n.digest.send('digest', 'body');
-    expect(JSON.parse(calls[0]!.body).to).toEqual(['a@example.com', 'b@example.com']);
+    expect(await n.digest.send('digest', 'body')).toEqual({ ok: true });
+    expect(calls[0]?.url).toBe(SENDGRID_URL);
+    expect(JSON.parse(calls[0]!.body).personalizations).toEqual([{ to: [{ email: 'a@example.com' }] }, { to: [{ email: 'b@example.com' }] }]);
   });
 });

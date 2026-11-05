@@ -2,7 +2,7 @@
   "name": "@hana-id/admin",
   "version": "0.0.0",
   "private": true,
-  "description": "The Hana admin console Worker (docs/batch-c-spec.md \"Hana admin console\"): the staff SPA and its /api/* backend behind Cloudflare Access, the blocking notices, the security feed and the on-chain watcher (5-minute cron), email through Resend (batch C8); gas settlement, the ledger checks, the NEAR/USD rate, reports, statements and exports (15-minute cron and staff routes, batch C12); the monthly retention job and its screen (batch C13); the Users screen (C8b) and the Support ID lookup screen (C15).",
+  "description": "The Hana admin console Worker (docs/batch-c-spec.md \"Hana admin console\"): the staff SPA and its /api/* backend behind Cloudflare Access, the blocking notices, the security feed and the on-chain watcher (5-minute cron), email through SendGrid (batch C8; D401); gas settlement, the ledger checks, the NEAR/USD rate, reports, statements and exports (15-minute cron and staff routes, batch C12); the monthly retention job and its screen (batch C13); the Users screen (C8b) and the Support ID lookup screen (C15).",
   "type": "module",
   "scripts": {
     "gen": "tsx scripts/gen-wrangler.ts",
@@ -15,6 +15,7 @@
     "@hana-id/env": "workspace:*",
     "@hana-id/oidc": "workspace:*",
     "@hana-id/playbooks": "workspace:*",
+    "@hana-id/sendgrid": "workspace:*",
     "pdf-lib": "1.17.1",
     "pg": "8.23.1"
   },

@@ -296,7 +296,7 @@ const watchdogCompromised: Playbook = {
   impact: [
     "`WATCHDOG_KEY`: cancel every key change (Google's next key never activates: logins with it fail), pause, delete updater keys, confirm early only a change someone already proposed. It can't post a key; forging needs the updater key or the owner as well.",
     '`WATCHDOG_STATUS_TOKEN`: read the status and ack alerts, which stops only re-sends of alerts already paged (never a first alert or a check).',
-    'The account: the key, the token, its Resend, Slack and paging credentials, and its D1 (its history: an emptied D1 means a first run that never pauses).',
+    'The account: the key, the token, its SendGrid, Slack and paging credentials, and its D1 (its history: an emptied D1 means a first run that never pauses).',
   ],
   steps: [
     {
@@ -328,7 +328,7 @@ const watchdogCompromised: Playbook = {
       title: 'Rotate the status token and the alert credentials',
       who: 'a founder',
       detail:
-        "The token the same way (remove it from the file, `init` makes a new one), then on both Workers (the admin Worker's copy too, once batch C exists). Resend, Slack, the paging app and the heartbeat URL: replace each in its provider and in the file, then upload.",
+        "The token the same way (remove it from the file, `init` makes a new one), then on both Workers (the admin Worker's copy too, once batch C exists). SendGrid, Slack, the paging app and the heartbeat URL: replace each in its provider and in the file, then upload.",
       commands: [c.watchdogSecretsInit, c.watchdogSecretsCheck, c.watchdogSecretBulk],
     },
     {

@@ -105,8 +105,16 @@ const CASES = [
   { name: 'RSA private JWK pasted into an innocent file', files: { 'src/rsa.ts': `export const KEY = ${rsaPrivateJwk()};\n` }, expect: ['hana-private-jwk'] },
   { name: 'EC private JWK as a JS object literal (unquoted d)', files: { 'src/ec.ts': `export const KEY = { kty: 'EC', crv: 'P-256', d: '${randomBytes(32).toString('base64url')}' };\n` }, expect: ['hana-private-jwk'] },
   { name: 'RSA private JWK as a JS object literal (unquoted d, backticks)', files: { 'src/rsa2.ts': `export const KEY = { kty: 'RSA', d: \`${randomBytes(256).toString('base64url')}\` };\n` }, expect: ['hana-private-jwk'] },
+  // A SendGrid key's shape (SG.<22>.<43>), random at run time: the issuer's and the admin Worker's key files (D401).
+  { name: 'SendGrid key files copied out of .secrets', files: { 'copy/admin-sendgrid-key': `${sendgridKey()}\n`, 'copy/email-issuer-sendgrid-key': `${sendgridKey()}\n` }, expect: ['hana-secret-file', 'sendgrid-api-token'] },
+  { name: 'admin EMAIL_API_KEY line pasted into a doc', files: { 'docs/admin.md': `EMAIL_API_KEY=${sendgridKey()}\n` }, expect: ['hana-worker-secret-assignment', 'sendgrid-api-token'] },
   { name: 'watchdog secrets file', files: { '.secrets/sandbox-dev/watchdog-secrets.json': `{"WATCHDOG_STATUS_TOKEN":"${randomBytes(32).toString('base64url')}"}\n` }, expect: ['hana-secret-file'] },
 ];
+
+/** A random value of a SendGrid API key's shape: `SG.` + 22 + `.` + 43 base64url characters. */
+function sendgridKey() {
+  return `SG.${randomBytes(17).toString('base64url').slice(0, 22)}.${randomBytes(33).toString('base64url').slice(0, 43)}`;
+}
 
 /** `n` distinct letters and digits in a random order (a short password whose entropy is log2(n) bits a character). */
 function shortPassword(n) {

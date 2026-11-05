@@ -56,8 +56,8 @@ export interface Env {
   WATCHDOG_KEY?: string;
   /** Bearer token of the status/ack endpoints; the admin Worker holds the other copy. */
   WATCHDOG_STATUS_TOKEN?: string;
-  /** The watchdog's own Resend key (D87), not the admin Worker's. */
-  RESEND_API_KEY?: string;
+  /** The watchdog's own SendGrid API key, restricted to Mail Send (D87, D401), not the admin Worker's. */
+  SENDGRID_API_KEY?: string;
   SLACK_WEBHOOK_URL?: string;
   /** ntfy: full topic URL (e.g. https://ntfy.sh/<unguessable-topic>) and an optional access token. */
   NTFY_TOPIC_URL?: string;

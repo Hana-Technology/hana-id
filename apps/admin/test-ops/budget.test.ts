@@ -12,7 +12,7 @@ import { outbound } from '../src/email/sender.ts';
 import { FEED_CURSORS, feedChanges } from '../src/feed.ts';
 import { type LedgerStore, ledgerSource } from '../src/ledger.ts';
 import { everyFifteenMinutes } from '../src/ledger-cron.ts';
-import { Budget, OutOfBudget, RPC_BUDGET, RUN_BUDGET, metered, meteredEnv } from '../src/mail.ts';
+import { Budget, OutOfBudget, RPC_BUDGET, RUN_BUDGET, forgetAccepted, metered, meteredEnv } from '../src/mail.ts';
 import { NOTICE_PAGE, runChangeNotices } from '../src/notices.ts';
 import { type OpsStore, opsSource, sqlOps } from '../src/ops.ts';
 import { RETENTION_MAX_CALLS } from '../src/retention.ts';
@@ -368,6 +368,8 @@ describe('a worst-case 5-minute tick (D380): pages of blocking notices, a securi
     }) as unknown as Env;
 
   async function tick() {
+    // Each run in a fresh isolate (the worst case for repeats): nothing remembered from the last one (D401).
+    forgetAccepted();
     const before = { rpc: rpc.length, attempts: email.sent.length, scope: net.scope, opens, acked: new Set(acked) };
     const sum = await everyFiveMinutes(env(), Date.UTC(2031, 2, 2, 12, 0));
     const mine = rpc.slice(before.rpc);
@@ -421,9 +423,11 @@ describe('a worst-case 5-minute tick (D380): pages of blocking notices, a securi
     expect(runs).toBeLessThan(60);
     // Every job had its share in some run: the feed and the watcher once the notices left room.
     for (const job of ['ops', 'notices', 'feed', 'watcher']) expect(shares.some((s) => (s[job] ?? 0) > 0), job).toBe(true);
-    // Each invite's notice and link went out once, each pending scope change once (the provider's keys never repeat).
+    // Each invite's notice and link went out once, each pending scope change once: no message (purpose and recipient)
+    // was sent twice, though every run started with an empty memo (as a fresh isolate does; D401).
     for (const n of invites) expect(email.sent.filter((m) => m.to === n.invite.email), n.invite.id).toHaveLength(1);
-    expect(new Set(email.sent.map((m) => m.idempotencyKey)).size).toBe(email.sent.length);  });
+    expect(new Set(email.sent.map((m) => m.messageKey)).size).toBe(email.sent.length);
+  });
 
   it('a job given too little for a page reads nothing and moves no cursor', async () => {
     const b = new Budget(2);

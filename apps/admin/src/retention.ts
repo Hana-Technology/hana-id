@@ -296,8 +296,8 @@ export async function runRetentionAlerts(
 
 /**
  * The due run found no ledger (USAGE_DB missing, or Neon unreachable): nothing can be recorded, so `retention_failed`
- * goes out from the due tick only (the provider's idempotency key drops a repeat). Later runs retry silently; the
- * overdue alert covers a month that still has no complete run a day later.
+ * goes out from the due tick only (a repeat in the same isolate is skipped, mail.ts sendToAll). Later runs retry
+ * silently; the overdue alert covers a month that still has no complete run a day later.
  */
 export async function sendRetentionSkipped(env: Pick<Env, 'ENV_NAME' | 'CONSOLE_ORIGIN' | 'SECURITY_ALIAS'>, sender: EmailSender, budget: Budget, now: number, reason: string): Promise<boolean> {
   const r = await sendToAll(sender, budget, recipients(env.SECURITY_ALIAS), retentionFailed(mail(env), { kind: 'skipped', month: monthKey(now), reason }), `retention_skipped:${monthKey(now)}`);

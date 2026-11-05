@@ -91,8 +91,13 @@ describe('wranglerConfig', () => {
   });
 
   it('DirectoryRpc’s staff check: the admin application’s Access vars only with a dashboard block; no service binding of its own (D275)', () => {
-    const none = wranglerConfig(manifest(), LOCAL_D1_ID, LOCAL_D1_ID) as Record<string, any>;
+    // An env without a dashboard (sandbox-dev's manifest has one since M4: dropped here).
+    const none = wranglerConfig({ ...manifest(), admin: undefined } as Manifest, LOCAL_D1_ID, LOCAL_D1_ID) as Record<string, any>;
     expect(Object.keys(none.vars).filter((k) => k.startsWith('ADMIN_'))).toEqual([]);
+    // sandbox-dev's own block passes its placeholder AUD through as is: the issuer's staffConfig refuses `UNSET`, so
+    // every staff call fails closed until the Access application exists (test/directory-rpc.test.ts, "fails closed").
+    const sandbox = wranglerConfig(manifest(), LOCAL_D1_ID, LOCAL_D1_ID) as Record<string, any>;
+    expect(sandbox.vars).toMatchObject({ ADMIN_ACCESS_AUD: 'UNSET', ADMIN_STAFF_EMAILS: JSON.stringify(base.admin!.staffEmails) });
     const admin = { workerName: 'hana-id-admin-sandbox-dev', origin: 'https://admin.example.test', accessTeamDomain: 'hana.cloudflareaccess.com', accessAud: 'e'.repeat(64), staffEmails: ['a@hana.example', 'b@hana.example'] };
     const c = wranglerConfig(manifest({}, { admin }), LOCAL_D1_ID, LOCAL_D1_ID) as Record<string, any>;
     expect(c.vars).toMatchObject({ ADMIN_ACCESS_TEAM_DOMAIN: 'hana.cloudflareaccess.com', ADMIN_ACCESS_AUD: 'e'.repeat(64), ADMIN_STAFF_EMAILS: '["a@hana.example","b@hana.example"]' });

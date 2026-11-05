@@ -535,7 +535,8 @@ describe('refusals', () => {
   it('a mainnet manifest, a manifest without admin, an http origin', async () => {
     manifest = { ...sandbox(), network: 'mainnet' } as unknown as Manifest;
     await expect(run([])).rejects.toThrow('not a testnet env');
-    manifest = { ...loadEnv('sandbox-dev') };
+    const { admin: _admin, ...noAdmin } = loadEnv('sandbox-dev');
+    manifest = noAdmin as Manifest;
     await expect(run([])).rejects.toThrow('has no admin block');
     manifest = sandbox({ origin: 'http://127.0.0.1:8789' });
     await expect(run([])).rejects.toThrow(/must be an https origin/u);
@@ -642,7 +643,12 @@ describe('--write-manifest', () => {
 
   it('setAdminAccess refuses a manifest without admin and a value the schema refuses', () => {
     const text = readFileSync(manifestPath('sandbox-dev'), 'utf8');
-    expect(() => setAdminAccess(text, { accessTeamDomain: TEAM, accessAud: 'a'.repeat(64) })).toThrow('no admin block');
+    const { admin: _admin, ...noAdmin } = JSON.parse(text) as Record<string, unknown>;
+    expect(() => setAdminAccess(`${JSON.stringify(noAdmin, null, 2)}\n`, { accessTeamDomain: TEAM, accessAud: 'a'.repeat(64) })).toThrow('no admin block');
+    // sandbox-dev's own admin block (D414): its two placeholders replaced in place, nothing else in the file touched.
+    const real = setAdminAccess(text, { accessTeamDomain: TEAM, accessAud: 'a'.repeat(64) });
+    expect(JSON.parse(real)).toEqual({ ...JSON.parse(text), admin: { ...JSON.parse(text).admin, accessTeamDomain: TEAM, accessAud: 'a'.repeat(64) } });
+    expect(real.split('\n').filter((l, i) => l !== text.split('\n')[i])).toHaveLength(2);
     const f = manifestFile();
     expect(() => setAdminAccess(readFileSync(f, 'utf8'), { accessTeamDomain: TEAM, accessAud: 'XYZ' })).toThrow();
   });

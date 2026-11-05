@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D413 (branch `feat/local-verify`, asked for by the user, confirmed by the user) on 2026-11-05, amending D387, with a row of "Superseded or amended"; D410 and D412 (branch `fix/security-review-1105`: a security review's fixes, to confirm) on 2026-11-05, amending D224, D391, D392, D396, D399 and D403, with two rows of "Superseded or amended"; D411 (branch `docs/email-sharing-decisions`, decided by the user, not built) on 2026-11-05, amending D127's email questions, with a row of "Superseded or amended"; D404 (branch `feat/account-migration`: testnet's move to company accounts decided by the user, the custom-domain placements, `cloudflare.accountId`, `env-secrets`, `d1-move`, `issuer:iss` and the runbook to confirm) on 2026-11-05, amending D230, with a row of "Superseded or amended"; D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
+Last verified against code: 2026-10-28 (commit 58edee9); D414 (branch `feat/m4-personal-account`, decided by the user) on 2026-11-05, amending D404, with a row of "Superseded or amended"; D401 amended (branch `fix/sendgrid-suppression`: alerts and blocking notices bypass SendGrid's suppression lists, a security review fix) on 2026-11-05; D401 (branch `feat/sandbox-dev-dashboard-blocks`, asked for by the user: SendGrid for every Hana email; the isolate memo to confirm) and D402 (same branch, agreed by the user: sandbox-dev's 1-day statement lock) on 2026-11-05, amending D87, D279, D308 and settling D194's open point, with rows of "Superseded or amended"; D413 (branch `feat/local-verify`, asked for by the user, confirmed by the user) on 2026-11-05, amending D387, with a row of "Superseded or amended"; D410 and D412 (branch `fix/security-review-1105`: a security review's fixes, to confirm) on 2026-11-05, amending D224, D391, D392, D396, D399 and D403, with two rows of "Superseded or amended"; D411 (branch `docs/email-sharing-decisions`, decided by the user, not built) on 2026-11-05, amending D127's email questions, with a row of "Superseded or amended"; D404 (branch `feat/account-migration`: testnet's move to company accounts decided by the user, the custom-domain placements, `cloudflare.accountId`, `env-secrets`, `d1-move`, `issuer:iss` and the runbook to confirm) on 2026-11-05, amending D230, with a row of "Superseded or amended"; D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
 user, implementation choices to confirm) on 2026-11-05; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
 flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
@@ -914,7 +914,8 @@ answered question there points here.
 
 ### D87. Email: Resend, from a dedicated sending subdomain
 - Date 2026-10-29 · Status: confirmed by the user, provisional: to re-confirm with the colleague (2026-10-29); user mail
-  superseded by D194; the watchdog's Resend adapter built, the admin Worker's notices not built (batch C) · Source: `docs/batch-c-spec.md` "Email", open question 2
+  superseded by D194; **the provider superseded by D401 (2026-11-05): SendGrid for the admin Worker's notices and the
+  watchdog's alerts too, the Resend adapters removed**; the subdomain, the sender interface and "accepted only" stand · Source: `docs/batch-c-spec.md` "Email", open question 2
 - Decision (user mail superseded by D194: SendGrid): Resend, sending from a dedicated subdomain of the Hana domain with SPF, DKIM and DMARC, behind a small
   sender interface (send one message → accepted or an error) so switching (e.g. to Postmark) is one adapter. The
   admin Worker's fail-closed notices count a send as done only when Resend accepts it. The watchdog sends its alert
@@ -2673,7 +2674,8 @@ Decided in conversation before email login batch 4 (D194), and after the batch 5
   restricted to Mail Send, used only by the email issuer (not shared with Hana Wallet or Wend; a separate SendGrid
   subuser if the account allows it, so reputation and suppression lists stay apart).
 - Not changed yet: the watchdog's alert email and the admin Worker's notices still name Resend (D87); whether they
-  move to SendGrid too is decided separately.
+  move to SendGrid too is decided separately. **Settled by D401 (2026-11-05): they do, each with its own key, never
+  through the issuer's subuser.**
 - Why: one provider the team already operates and pays for; the adapter keeps the choice reversible.
 - **Amended (2026-11-02, independent review M3; to confirm):** a SendGrid **subuser for the issuer is required**, not
   "if the account allows it": the issuer's suppression handling trusts only events of its own categories, and a shared
@@ -4552,7 +4554,8 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   - Every email is **one message per recipient** (no contact sees another's address), each with a Resend
     `Idempotency-Key` of sha256(purpose ‖ recipient), so the retry of a notice after one failed send doesn't deliver
     the accepted ones twice (within Resend's 24 h). "Every send accepted" means every recipient's message got a 2xx
-    with a message id.
+    with a message id. **Amended by D401 (2026-11-05):** SendGrid, accepted = `202`; no idempotency key, so the same
+    sha256 keys a per-isolate memo of accepted messages (24 h) instead, and a repeat is possible, a skip never.
   - `change_pending`: the alias and every contact of the org (from `pendingNotices`), link
     `<console.origin>/cancel/<id>#t=<T>`; then `ackNotice` with b64url(sha256(T)).
   - `member_invite`: the notice to every current owner (`pendingMemberNotices.owners`), the org's contacts
@@ -5078,6 +5081,8 @@ made while building C11, where the spec is silent or loose. Each took the safer 
   - No rule on `LOGOS`: the console's cron deletes replaced logos (D301).
 - Rejected: one lifecycle rule on every prefix (it would delete the legacy export after 30 days); per-object
   expiry set by the admin Worker (R2 has none; a cron job would be one more thing to fail).
+- **Amended by D402 (2026-11-05, agreed by the user):** the lock's retention is per env: 1 day on sandbox-dev, 2557
+  days in production.
 ## Batch C9: partner sign-in (branch `feat/batch-c-9`), 2026-11-04
 
 Readings of `docs/batch-c-spec.md` "Partner sign-in" taken while building C9, each the safest one found. All: Status
@@ -6594,7 +6599,9 @@ still take them: renumber on merge.
     `sendToAll` and Resend sender as its other alerts, from a one-call `Budget` (D380's accounting), before answering
     `429` with `Retry-After`. The idempotency key is sha256 of `directory_budget:<env>:<staff>:<window>:<when it
     opens, in minutes>`, so the provider drops the repeats of one window (Resend: 24 h). The email names the staff
-    address (Hana's own), the window and the times; never a term, sub or row.
+    address (Hana's own), the window and the times; never a term, sub or row. **Amended by D401 (2026-11-05):**
+    SendGrid has no idempotency key; the same sha256 keys `sendToAll`'s per-isolate memo, so a hammering session gets
+    one email per window per isolate (a few at worst, across isolates).
   - A detail page's own outbound calls (the issuer, the API, NEAR) come out of one `Budget` of 40, at most 30 RPCs
     (D380's numbers for one invocation): what doesn't fit is marked `not_read`.
 - Why: counting what is returned (not what is asked) is what the budget bounds; a refusal-time email from the request
@@ -6773,6 +6780,82 @@ still take them: renumber on merge.
   vault's 250 ms watch hadn't read the close before the first fast-forward; when it had (WebKit, once), the grace fired
   on that first jump and the test failed. The code was right: the test now expects `login_cancelled` (`popup_closed`)
   in real time, and nothing frozen.
+
+## SendGrid for every Hana email, and sandbox-dev's statement lock (branch `feat/sandbox-dev-dashboard-blocks`), 2026-11-05
+
+Numbered D401 and D402: D400 was taken on `develop` (merged into this branch before writing) by
+`fix/popup-signal-before-navigate`, and D403 by `fix/usage-setup-neon-api-passwords`, which left D401–D402 for this
+branch.
+
+### D401. The admin Worker's notices and the watchdog's alerts go through SendGrid too; Resend is gone (amends D87, settles D194's open point)
+- Date 2026-11-05 · Status: asked for by the user ("can we replace Resend with Sendgrid?", 2026-11-05), recommended and
+  accepted; the isolate memo below decided while building, to confirm · Built on `feat/sandbox-dev-dashboard-blocks`
+  (`packages/sendgrid` `sendgridSend`; `apps/admin/src/email/sender.ts` `sendgridSender`, `mail.ts` `sendToAll`,
+  `messageKey`; `apps/watchdog/src/channels.ts` `sendgridEmail`; `apps/email-issuer/src/sendgrid.ts` on the shared
+  adapter) · Amends D87 (the provider of the admin Worker's notices and the watchdog's alerts) and D279 (the
+  `Idempotency-Key`); settles D194's "whether they move to SendGrid too is decided separately".
+- Decision:
+  - One provider for every email Hana sends: SendGrid's v3 Mail Send, through one shared adapter
+    (`@hana-id/sendgrid`) used by the email issuer, the admin Worker and the watchdog. Each sender keeps its interface
+    (one message → accepted or an error). Accepted = SendGrid's `202`; anything else (a network error, the 10 s
+    timeout, a 4xx, a 5xx, any other 2xx) is a failure. A result carries the HTTP status at most, never the key, a body
+    or an address. Click, open and subscription tracking are off on every message (a notice's cancel link must stay a
+    console link). Each Worker's mail has its own category (`hana-id-admin`, `hana-id-watchdog`; the issuer's are
+    `hana-id-<kind>`), so the issuer's event webhook never acts on another Worker's bounces (D194 M3).
+  - Each Worker has **its own restricted API key, Mail Send only**: the admin Worker's is still the secret
+    `EMAIL_API_KEY` (provider-neutral, unchanged; file `.secrets/<env>/admin-sendgrid-key`); the watchdog's secret is
+    renamed `RESEND_API_KEY` → `SENDGRID_API_KEY` (in `watchdog-secrets.json`; `secrets check` names the old name as
+    retired); the issuer's stays `SENDGRID_API_KEY`. None of the three is ever used by another Worker. Not the
+    issuer's subuser (D194 M3): SendGrid applies a subuser's suppression list to everything it sends, so an admin
+    notice's bounce must not suppress a login address. Where the plan has subusers (Pro and up, up to 15), the admin
+    Worker and the watchdog get their own, each with its own authenticated sending domain.
+  - The Resend adapters are deleted (admin `resendSender`, watchdog `resendEmail`); nothing calls Resend.
+- Idempotency, the trade-off: Resend's `Idempotency-Key` dropped a retried message for 24 h; SendGrid's Mail Send has
+  none. A retry after a lost answer (a timeout after SendGrid queued the message) therefore sends it **again**: a
+  duplicate at worst, never a skip, because a send counts only when its own `202` came back. The fail-closed rule is
+  unchanged: a blocking notice is acked only when every recipient's message was accepted. To keep repeats rare,
+  `sendToAll` remembers, per isolate and for 24 h (at most 5 000 entries), each message (sha256 of purpose and
+  recipient) SendGrid accepted, and doesn't send it again: the retry of a notice that failed for one recipient goes to
+  that recipient only, and the Users screen's `directory_budget` alert goes out once per window per isolate. The memo
+  is lost when the isolate is evicted (a cron run may well start in a new one), so a recipient can get a notice, a
+  digest or that alert twice; never zero times.
+- Blast radius (`docs/security.md`): a SendGrid key can be limited to Mail Send but not to one sending domain or
+  sender identity: a leaked key can send as any verified sender of its account or subuser. Resend's keys could be
+  limited to one domain. Hence one key per Worker, separate subusers where the plan allows, and the rotation in
+  `docs/operations.md`.
+- Why: one provider the team already runs (the issuer, Hana Wallet, Wend), one adapter to maintain and test, one set
+  of DNS records per sending domain; the interface keeps a later switch to one new adapter.
+- Main trade-off: the lost 24 h deduplication (a rare duplicate email) and keys that can't be limited to a domain.
+- Rejected: keeping Resend for the admin Worker and the watchdog (two providers, two sets of DNS records and keys for
+  low volume); the same key for the admin Worker and the watchdog (one leak silences or forges both); sending SendGrid
+  a `custom_args` idempotency value (SendGrid doesn't deduplicate on it); persisting accepted messages in the ledger
+  (a write per email on every cron run, to save a rare duplicate).
+- Tests: `packages/sendgrid/test/sendgrid.test.ts` (the request, 202 only, every status, a timeout, no key, the capped
+  drain); `apps/admin/test/email.test.ts` (the adapter, the memo, a timeout retried), `notices.test.ts`,
+  `feed.test.ts`, `users.test.ts`, `test-ops/budget.test.ts` (every run with an empty memo: no message twice);
+  `apps/watchdog/test/channels.test.ts`, `worker.test.ts`, `scripts/test/secrets.test.ts`;
+  `apps/email-issuer/test/adapters.test.ts` (its categories); `scripts/secret-scan-selftest.mjs` (the key files and
+  an `EMAIL_API_KEY` line).
+- Amended 2026-11-05 (security review, branch `fix/sendgrid-suppression`): 202 is accepted, not delivered (SendGrid
+  then drops mail to a suppressed address silently), so every watchdog alert and the admin Worker's alerts and blocking
+  notices (`apps/admin/src/mail.ts` `BYPASS_PURPOSES`; invitee links, statement notices and the org audit digest keep
+  the lists) set `mail_settings.bypass_bounce_management`, `bypass_spam_management` and
+  `bypass_unsubscribe_management` (the granular filters; `bypass_list_management` is "for emergencies" and can't be
+  combined with them, [Mail Send](https://www.twilio.com/docs/sendgrid/api-reference/mail-send/mail-send)); the
+  issuer's login mail never does (D194's suppression handling). Tests: `packages/sendgrid/test/sendgrid.test.ts`,
+  `apps/admin/test/email.test.ts`, `apps/admin/scripts/test/mail-purposes.test.ts`,
+  `apps/watchdog/test/channels.test.ts`, `apps/email-issuer/test/adapters.test.ts`.
+
+### D402. sandbox-dev's `STATEMENTS` bucket lock is 1 day; production keeps 2557 days (amends D308)
+- Date 2026-11-05 · Status: agreed by the user (2026-11-05) · Written: `docs/operations.md` "Files Worker and logos"
+  step 2 · Amends D308 (one rule of 2557 days in every env).
+- Decision: the lock rule's retention is per env: 1 day on sandbox-dev (rule `statements-1d`, `--retention-days 1`),
+  2557 days (7 years with the leap days, D90) on every production env. A sandbox* env other than sandbox-dev takes 1 day
+  too unless its operator chooses longer.
+- Why: sandbox-dev's statements are testnet drills; a 7-year lock would keep every test statement (and the bucket,
+  which can't be deleted while it holds locked objects) for 7 years. One day still exercises the lock (the admin
+  Worker can't overwrite a statement it just wrote).
+- Main trade-off: sandbox-dev doesn't test the real retention period; nothing reads it but R2.
 
 ## Ledger role passwords from Neon's API (branch `fix/usage-setup-neon-api-passwords`), 2026-11-05
 
@@ -7317,6 +7400,37 @@ still take them: renumber on merge.
   timeouts); an environment variable to skip the hook (a silent bypass); always every package (docs-only branches
   are common, D383 counted 17 of 73 commits).
 
+## M4 on the personal account (branch `feat/m4-personal-account`), 2026-11-05
+
+### D414. sandbox-dev's milestone M4 is set up on the personal Cloudflare account now; the company account move redoes it later
+- Date 2026-11-05 · Status: **decided by the user** · Built: the held branches `feat/sandbox-dev-dashboard-blocks`
+  (D401, D402) and `fix/sendgrid-suppression` merged into `develop` with this entry; `scripts/lib/env-secrets.ts` (D404)
+  moved to the SendGrid keys (`admin-sendgrid-key`, the watchdog's `SENDGRID_API_KEY`) · Amends D404 ("testnet moves to
+  company accounts", timing open, and the hold of the dashboard-blocks branch until the company account exists) ·
+  Number note: D414 was taken with D413 the highest on `origin/develop`
+- Context: the move to company accounts (D404) won't happen soon, and the admin console, the partner console, the files
+  Worker, usage capture and SendGrid had nowhere to be tested: their manifest blocks were held so as not to build
+  sandbox-dev's M4 on an account it will leave.
+- Decision:
+  - **Now, on the personal account** (`*.tingtc.workers.dev`): every M4 resource for sandbox-dev, by the manifest's
+    blocks as merged: the admin console's Cloudflare Access application on Zero Trust team `bitter-hill-fe6f` (made by
+    `access-setup`, D409), the console D1, the three R2 buckets, the Images binding, the usage Hyperdrive configs, the
+    admin's and the watchdog's SendGrid keys, the console's Google OAuth client, and the admin, console, console-auth
+    and files Workers.
+  - **Later, on the company account**: the D404 runbook ("Moving an env to another Cloudflare account") re-creates all
+    of it there, with the same manifest blocks under new origins; nothing here is reused across accounts except data
+    the runbook copies.
+  - **The free-tier guard stays** (D408): exact staff emails only, 2 seats, no Zero Trust add-ons, seats and billing
+    checked after setup and monthly.
+- Why: testing the M4 surfaces can't wait for the account move; redoing the setup once is cheaper than holding the work.
+- Trade-offs: the setup is done twice (Access application, OAuth client, R2, D1, Hyperdrive, SendGrid keys); the console
+  Google client's redirect URIs and the Access application's host are `tingtc` workers.dev hosts that change at the move. With the admin
+  block in the manifest, `admin app:changes:announce` refuses sandbox-dev (staff proposals wait for the admin Worker's
+  notices), and until `access-setup` writes the real team domain and AUD the admin Worker and the issuer's
+  `DirectoryRpc` refuse every staff call.
+- Rejected: waiting for the company account (no date); a separate throwaway env for M4 (another set of NEAR accounts,
+  issuers and OAuth clients for no gain over redoing sandbox-dev's setup).
+
 ## Superseded or amended
 
 | Was | Now | Source |
@@ -7326,6 +7440,8 @@ still take them: renumber on merge.
 | The email issuer is reached at its own `workers.dev` URL on a `workers.dev` env, else under the API's URL by a zone route (D230); `gen` gives an `emailIssuer.url` on another host neither a route nor a `workers.dev` URL | An `emailIssuer.url` on another host is the issuer's own Custom Domain (a dev env on custom domains); the zone route stays production's way (D404) | branch `feat/account-migration` |
 | sandbox-dev's admin Access: the GitHub team `hana-admins` plus exact-email Google rules (D88), the workers.dev Worker-level toggle turned on in the dashboard (D284), the policy and AUD by hand | `sandbox*`: Google, exact emails only; every env's application and policies made and checked by `access-setup <env>` from the manifest, a hostname application on workers.dev (D409) | `scripts/lib/access-setup.ts`; docs/operations.md "Admin Worker" step 1 |
 | D384: the watchdog, console, console-auth, admin and files Workers unstamped; `deploy-check` reads the API, the page Workers and bundles and the issuer; each of the API and issuer has its own `scripts/deploy.ts` | Every env Worker deploys through `packages/env/src/stamped-deploy.ts`; the console, console-auth and files Workers serve `/.well-known/hana-build`, the console SPA carries the meta; the admin's and the watchdog's id is read from the deployed version with wrangler (`--only watchdog` for the watchdog); `--only`/`--skip` (D406) | `packages/env/src/stamped-deploy.ts`, `scripts/lib/deploy-check.ts`; docs/operations.md "Checking a deploy" |
+| D87: the admin Worker's notices and the watchdog's alerts through Resend, each with its own Resend key; D279: a Resend `Idempotency-Key` per message, so a retry within 24 h isn't delivered twice | SendGrid for every Hana email through one shared adapter, each Worker its own Mail-Send-only key (admin `EMAIL_API_KEY`, watchdog `SENDGRID_API_KEY`); no provider idempotency: a per-isolate memo of accepted messages, a repeat possible, a skip never (D401) | `packages/sendgrid`; `docs/operations.md` "Admin Worker" step 2, "Watchdog service" |
+| D308: the `STATEMENTS` lock is 2557 days in every env | 1 day on sandbox-dev, 2557 days in production (D402) | `docs/operations.md` "Files Worker and logos" step 2 |
 | `usage-setup roles`: a locally generated password per role, set as a SCRAM-SHA-256 verifier by `ALTER ROLE … LOGIN PASSWORD`; a re-run reuses the role files (D224) | SQL gives `LOGIN` only; Neon's API (`reset_password`) generates each password, written straight to the role file; every run resets both and replaces the files, so Hyperdrive configs from older files are re-created; the key in `.secrets/<env>/neon-api-key` (D403) | `scripts/lib/usage-setup.ts`, `scripts/lib/neon-api.ts`; docs/operations.md "Usage capture" step 2 |
 | D347: every Hana page posts `hana:auth-progress` (`google`, `relayed`) and then navigates or closes | The page navigates or closes once the vault acked (`hana:auth-progress-ack`), or after 150 ms: Chromium nulls the source of a message posted in the navigation's own task (D400) | `packages/web/src/auth/vault-signal.ts`; docs/architecture.md login step 4 |
 | The lookup's ticket: 1–64 printable ASCII characters, no `@`, no leading or trailing space (D396) | console-core `SUPPORT_TICKET_RE`, 1–64 letters, digits or `._#:-`: the issuer's rule, the same ticket in both audits (D399) | `packages/console-core/src/support.ts` `supportTicket` |
@@ -7401,6 +7517,7 @@ still take them: renumber on merge.
 | Hana stores no end-user email address; the Google email is handled transiently, only its HMAC kept (D25 and D96 amended, D119, D230); the screens say "it isn't kept" (D264) | The issuer keeps each identity's verified address in its own D1 (`user_emails`, `user_email_apps`), for Hana staff only (`admin user:list` / `user:find`); partners never see it; the screens say Hana keeps it with the account and doesn't share it with the app (D269) | conversation 2026-11-04 |
 | D392: the directory search's ticket optional on every search; D391: `POST /api/users/find` unticketed, unaudited; the SPA's detail at `/users/<provider>/<sub>` | A search by `sub` or a full address needs the ticket; `find` ticketed and audited first (`users.find`); the detail at `/users/open` from memory (D410) | security review 2026-11-05 |
 | D224: Hyperdrive configs by `wrangler hyperdrive create --connection-string` (the password a process argument) | Cloudflare's REST API, the password in the HTTPS body (D412) | security review 2026-11-05 |
+| D404: testnet moves to company accounts, timing open; the dashboard blocks held until the company account exists | sandbox-dev's M4 is set up on the personal Cloudflare account now; the move redoes it with the D404 runbook (D414) | branch `feat/m4-personal-account`; docs/operations.md "Moving an env to another Cloudflare account" |
 
 ## Proposed, not yet confirmed
 
@@ -7418,8 +7535,8 @@ paging app (D85, at setup), and open question 17 (cancel by a compromised OIDC o
 is a proposal there.
 
 Still open from `docs/email-login-spec.md`: the user-mail provider. D194 names SendGrid, provisional until the
-colleague agrees; whether the watchdog's alert email and the admin Worker's notices move from Resend (D87) too is
-decided separately. The contract readings
+colleague agrees; the watchdog's alert email and the admin Worker's notices moved to SendGrid too (D401, asked for
+by the user 2026-11-05). The contract readings
 D130 and D131, batch 2's D154 and D155, and the `packages/email` readings D156–D159 are confirmed (2026-11-02).
 The watchdog's D190, D191 and D193 (batch 5) are confirmed (2026-11-02); D192 is superseded by D200. The email
 issuer's D195–D199 (batch 4) wait for the user's confirmation.

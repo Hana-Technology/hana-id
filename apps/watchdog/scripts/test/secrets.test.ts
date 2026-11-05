@@ -47,10 +47,16 @@ describe('validation', () => {
     expect(problems).toEqual(['WATCHDOG_KEY has an invalid value', 'SLACK_WEBHOOK_URL has an invalid value', 'OTHER is not a watchdog secret']);
     expect(problems.join(' ')).not.toContain('evil');
     expect(secretProblems([])).toEqual(['watchdog-secrets.json must be a JSON object']);
+    // The email key is a SendGrid key (D401); the old Resend name is named as retired, its value never shown.
+    expect(secretProblems({ SENDGRID_API_KEY: 'SG.fixture-not-real-key.fixture-secret-not-real-0123456789ab' })).toEqual([]);
+    expect(secretProblems({ SENDGRID_API_KEY: 're_oldresendkey123' })).toEqual(['SENDGRID_API_KEY has an invalid value']);
+    const retired = secretProblems({ RESEND_API_KEY: 're_oldresendkey123' });
+    expect(retired).toEqual(['RESEND_API_KEY is no longer used: the watchdog emails through SendGrid (SENDGRID_API_KEY, D401)']);
+    expect(retired.join(' ')).not.toContain('oldresendkey');
   });
 
   it('lists what the env still needs, by its paging app', () => {
-    expect(missingSecrets(TEST_MANIFEST, {})).toEqual(['WATCHDOG_KEY', 'WATCHDOG_STATUS_TOKEN', 'RESEND_API_KEY', 'SLACK_WEBHOOK_URL', 'NTFY_TOPIC_URL', 'HEARTBEAT_URL']);
+    expect(missingSecrets(TEST_MANIFEST, {})).toEqual(['WATCHDOG_KEY', 'WATCHDOG_STATUS_TOKEN', 'SENDGRID_API_KEY', 'SLACK_WEBHOOK_URL', 'NTFY_TOPIC_URL', 'HEARTBEAT_URL']);
     const pushover = { ...TEST_MANIFEST, watchdog: { ...TEST_MANIFEST.watchdog!, pager: 'pushover' as const } };
     expect(missingSecrets(pushover, { WATCHDOG_KEY: 'x' })).toContain('PUSHOVER_USER');
   });
@@ -77,7 +83,7 @@ describe('main', () => {
     const text = out.join('\n');
     expect(text).toContain('watchdog public key: ed25519:');
     expect(text).toContain('set: WATCHDOG_KEY, WATCHDOG_STATUS_TOKEN');
-    expect(text).toContain('missing: RESEND_API_KEY');
+    expect(text).toContain('missing: SENDGRID_API_KEY');
     expect(text).not.toContain(saved.WATCHDOG_KEY!.slice(8));
     expect(text).not.toContain(saved.WATCHDOG_STATUS_TOKEN!);
   });

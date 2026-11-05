@@ -3,14 +3,14 @@
 The independent watchdog for `hana-signer`'s issuer keys and governance (`docs/governance-spec.md` "Watchdog
 service", `docs/decisions.md` D33, D82–D86; the email issuer's rules: `docs/email-login-spec.md` "Watchdog",
 D190–D193; the partner identity token's JWKS: `docs/identity-token-spec.md` "JWKS and discovery", D210–D214). A Cloudflare Worker on **its own Cloudflare account** (separate login and
-MFA from the API's, D86), its own NEAR account and key, its own D1, its own Resend key, Slack webhook and paging-app
+MFA from the API's, D86), its own NEAR account and key, its own D1, its own SendGrid key (D401), Slack webhook and paging-app
 credentials. It reads the chain through its own RPC (manifest `rpc`, then `rpcFallback`), never through the API.
 
 Deployed on sandbox-dev (2026-10-30, on the API's Cloudflare account for the drills only, D125; redeployed 2026-11-02
 with email-login batch 5; `docs/operations.md` "Watchdog service"); no other env yet. Testnet only: it checks the RPC's `chain_id` against the manifest's `network`
 every run and sends nothing on a mismatch.
 
-Last verified: 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy` stamps the build id, `deploy-check --only watchdog`, D406); 2026-11-04 (branch `feat/batch-c-14`: the admin portal's registry test and client, `watchdog.url`); 2026-11-02 (branch `feat/email-login-6`: the email JWKS URL's default under `emailIssuer.url`, D230); 2026-11-02 (branch `feat/identity-token-8`: the identity JWKS and discovery check, step 5b, the
+Last verified: 2026-11-05 (branch `fix/sendgrid-suppression`: every alert email bypasses SendGrid's suppression lists, D401 as amended); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: alert email through SendGrid, `SENDGRID_API_KEY`, D401); 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy` stamps the build id, `deploy-check --only watchdog`, D406); 2026-11-04 (branch `feat/batch-c-14`: the admin portal's registry test and client, `watchdog.url`); 2026-11-02 (branch `feat/email-login-6`: the email JWKS URL's default under `emailIssuer.url`, D230); 2026-11-02 (branch `feat/identity-token-8`: the identity JWKS and discovery check, step 5b, the
 `identity` status and `pinnedIdentityKeys`, D210–D214); 2026-11-02 (branch `docs/consistency-pass`: the deploy line, against `docs/operations.md`).
 
 ## What a run does (every 5 min)
@@ -282,7 +282,7 @@ Worker secrets, all in `.secrets/<env>/watchdog-secrets.json` (0600, a flat `{NA
 |---|---|
 | `WATCHDOG_KEY` | ed25519 function-call key on `watchdog.account`, receiver `signer`, the four methods, 1 NEAR allowance |
 | `WATCHDOG_STATUS_TOKEN` | bearer token of the status endpoint (the admin Worker's copy comes from the same file) |
-| `RESEND_API_KEY` | the watchdog's own Resend key (D87) |
+| `SENDGRID_API_KEY` | the watchdog's own SendGrid key, Mail Send only (D87, D401; was `RESEND_API_KEY`, which `secrets check` now names as retired) |
 | `SLACK_WEBHOOK_URL` | Slack incoming webhook |
 | `NTFY_TOPIC_URL` (+ optional `NTFY_TOKEN`) / `PUSHOVER_TOKEN` + `PUSHOVER_USER` / `PAGERDUTY_ROUTING_KEY` | the paging app's credentials |
 | `HEARTBEAT_URL` | the dead-man's switch ping URL |

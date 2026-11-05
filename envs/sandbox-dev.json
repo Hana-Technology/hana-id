@@ -97,5 +97,33 @@
   "googleClientIds": ["875896396522-g5q9419kksfvn7gdshlgae7t3buab12a.apps.googleusercontent.com"],
   "sharedGoogleClientIds": ["875896396522-f86rqsi6hbfr6nluld75nc03ugehbhit.apps.googleusercontent.com"],
   "consoleAudiences": [["google", "875896396522-j6l32ua011ki8siv5h2k7nb2g2thggm1.apps.googleusercontent.com"]],
-  "cloudflare": { "workerName": "hana-id-api-sandbox-dev", "d1Name": "hana-id-sandbox-dev", "durableObjectLocation": "apac" }
+  "cloudflare": { "workerName": "hana-id-api-sandbox-dev", "d1Name": "hana-id-sandbox-dev", "durableObjectLocation": "apac" },
+  "console": {
+    "workerName": "hana-id-console-sandbox-dev",
+    "d1Name": "hana-id-console-sandbox-dev",
+    "origin": "https://hana-id-console-sandbox-dev.tingtc.workers.dev",
+    "authWorkerName": "hana-id-console-auth-sandbox-dev",
+    "authOrigin": "https://hana-id-console-auth-sandbox-dev.tingtc.workers.dev"
+  },
+  "files": {
+    "workerName": "hana-id-files-sandbox-dev",
+    "origin": "https://hana-id-files-sandbox-dev.tingtc.workers.dev",
+    "logosBucket": "hana-id-logos-sandbox-dev",
+    "statementsBucket": "hana-id-statements-sandbox-dev",
+    "exportsBucket": "hana-id-exports-sandbox-dev"
+  },
+  "admin": {
+    "workerName": "hana-id-admin-sandbox-dev",
+    "origin": "https://hana-id-admin-sandbox-dev.tingtc.workers.dev",
+    "accessTeamDomain": "hana-id-team-unset.cloudflareaccess.com",
+    "accessAud": "UNSET",
+    "staffEmails": ["hello@ting.rocks", "mark@hanawallet.io"]
+  },
+  "usage": {
+    "neonRegion": "aws-ap-southeast-2",
+    "writerHyperdrive": "hana-id-usage-writer-sandbox-dev",
+    "adminHyperdrive": "hana-id-usage-admin-sandbox-dev"
+  },
+  "email": { "from": "Hana ID <team@hanawallet.io>", "securityAlias": "hello@ting.rocks" },
+  "ownerGrantDelayMs": 60000
 }

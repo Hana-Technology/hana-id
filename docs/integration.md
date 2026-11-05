@@ -11,7 +11,7 @@ popup, unless it falls under an auto-approve policy you set and the user accepte
 > for mainnet chains at all ([section 12](#12-test-and-live-keys)). This guide follows the code; the original
 > specification is `docs/batch-b-spec.md`.
 
-Last verified against code: 2026-11-05 (branch `fix/popup-early-close-deadline`: a popup closed within seconds of reaching Google's page ends in about 90 s with `login_cancelled`, in section 4 and the error table, D398); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/batch-c-15`: the user's Support ID in the SDK, `hana.supportId`, `supportIdChanged`, `useHana().supportId`, the approval popup, for SDK 0.2.0 or later, and the install lines' 0.2.0 tarballs; section 4 "Support ID"); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: `derive_failed`'s `webcrypto_unsupported` and `webcrypto_failed` in the error table, D385); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `feat/user-id-identity-sub`: section 15's `sub` row, the User ID and Support ID, D346); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: D347's closed popup in section 4 and the error table, D348's Google-only screen; a cancel on Google's sign-in screen goes back to the chooser, closing there is `login_cancelled`, in "Sign-in methods and links" and the error table; D341); 2026-11-04 (branch `fix/abandoned-login-freeze`: an unfinished login and `login_timeout`'s
+Last verified against code: 2026-11-05 (branch `feat/sdk-error-request-id`: the API request ID in the SDK's errors, `error.requestId` / `data.requestId`, SDK 0.2.0 or later, in section 4's "Support ID", section 13's intro and its new "Getting help", D405); 2026-11-05 (branch `fix/popup-early-close-deadline`: a popup closed within seconds of reaching Google's page ends in about 90 s with `login_cancelled`, in section 4 and the error table, D398); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/batch-c-15`: the user's Support ID in the SDK, `hana.supportId`, `supportIdChanged`, `useHana().supportId`, the approval popup, for SDK 0.2.0 or later, and the install lines' 0.2.0 tarballs; section 4 "Support ID"); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: `derive_failed`'s `webcrypto_unsupported` and `webcrypto_failed` in the error table, D385); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `feat/user-id-identity-sub`: section 15's `sub` row, the User ID and Support ID, D346); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: D347's closed popup in section 4 and the error table, D348's Google-only screen; a cancel on Google's sign-in screen goes back to the chooser, closing there is `login_cancelled`, in "Sign-in methods and links" and the error table; D341); 2026-11-04 (branch `fix/abandoned-login-freeze`: an unfinished login and `login_timeout`'s
 `data.stage`); 2026-11-04 (branch `feat/token-first-on`: "Sign-in methods and links": Google's one
 sign-in screen lists the email, cancelling it, the two-accounts screen; D270); 2026-11-03 (branch `feat/email-login-8b` review fixes: the email permission's screens and
 reasons, `api_unavailable`'s `path_unconfirmed` / `path_disputed`, `storage_unavailable` in a login, `hana.account()`'s
@@ -299,8 +299,9 @@ button.addEventListener('click', async () => {
   in every app of your scope and for every sign-in method of the user's account, and your backend can compute it from
   the `sub` it stores. It carries no address, email or Google account, and it isn't a credential: Hana's staff change
   nothing on a code alone. Show it where your users look for help, put it in your diagnostics, and give it to Hana
-  when you escalate, with the error `code`, when it happened and the app; Hana's support finds the user, their logins
-  and sessions by it (errors are found by request ID, since Hana keeps no user id on failed requests). The Hana
+  when you escalate, with the error `code`, its request ID (`error.requestId`, section 13), when it happened and the
+  app; Hana's support finds the user, their logins and sessions by it, and a failed request by its request ID (Hana
+  keeps no user id on failed requests). The Hana
   approval popup also shows it under the account line, so a user can read it out. It comes from Hana's API with the
   session: `null` for a session saved before this release (until the user's next login) and on an environment that
   can't compute it. An SDK older than 0.2.0 never receives it (the vault gives older SDKs exactly the answers they
@@ -778,6 +779,16 @@ code request), `emailCode` (waiting for the mail and typing the code), `emailVer
 `hana.*` methods reject with a `HanaError {code, message, data?}`. The EIP-1193 provider maps string codes to numbers
 (the Hana code stays in `data.code`), and the SWK module maps them to SWK's shape.
 
+An error that came from an answer of Hana's API (a refusal, or a sign-in that gave up after one: `rate_limited`,
+`api_unavailable`, `token_invalid`, `link_refused`, `identity_unavailable`, `session_ended`, `4900` from
+`revokeOtherDevices()`, …) carries that request's ID in `data.requestId` (D405; SDK 0.2.0 or later):
+`error.requestId` on a `HanaError` (null without one), `data.requestId` on the EIP-1193 provider's errors too, and
+`ext[1]` on the SWK module's. It is 8–64 letters, digits and `-` (e.g. `8d1f2c3a4b5e6f70-SIN` or a UUID), names one
+request and nothing else, and is not secret. An error that never reached the API has none: a check in the SDK or the
+vault (not logged in, a wrong address, a mainnet for a test app), the user's cancel or rejection, a network failure,
+a refusal of Google's. Signing has none either (it never calls the API); key export's errors are shown in the export
+window, not returned.
+
 | Code | Meaning | What to do |
 |---|---|---|
 | `4001` | The user rejected, closed the popup, or let it time out | nothing; let them retry |
@@ -805,6 +816,13 @@ code request), `emailCode` (waiting for the mail and typing the code), `emailVer
 | `busy` | An export is already running | wait |
 | `identity_unavailable` | `getIdentityToken()`: Hana's API or signer is unavailable, or this browser couldn't keep the session (`data.reason: 'no_share'`) | retry later |
 | `session_ended` | `getIdentityToken()`: the Hana session is over (`sessionExpired` fires too), or ends within 30 s (`data.reason: 'session_ending'`) | treat as logged out |
+
+<a id="getting-help"></a>**Getting help.** When a user reports a problem, send Hana the user's Support ID
+(`hana.supportId`, section 4) and the failed call's request ID (`error.requestId`; keep the last few in your
+diagnostics, as the hosted demo's "Copy diagnostics" does), with the error `code`, when it happened (with the time
+zone) and the app. The Support ID finds the user, their logins and sessions; the request ID finds the failed request
+itself, which Hana can't find from the user alone. Neither is a credential: no one can act on the user's wallet with
+them.
 
 ## 14. Security notes for integrators
 

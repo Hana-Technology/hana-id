@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type DiagnosticsInput, MAX_ENTRIES, diagnostics, diagnosticsJson, keyPrefix, scrub } from '../src/diagnostics.ts';
+import { type DiagnosticsInput, MAX_ENTRIES, MAX_REQUEST_IDS, type ErrorRecord, diagnostics, diagnosticsJson, keyPrefix, scrub } from '../src/diagnostics.ts';
 import { ADDRESSES } from './fixtures.ts';
 
 // Secret-shaped values, as they could appear in an error message. None of them is a real secret.
@@ -50,6 +50,7 @@ describe('diagnostics', () => {
       sessionExpiresAt: '2026-10-29T23:00:00.000Z',
       addresses: ADDRESSES,
       supportId: 'HANA-2750-G5HM',
+      requestIds: [],
       unlockMs: 213,
       logins: [{ at: '2026-10-29T11:00:00.000Z', method: 'google', totalMs: 7012, stages: { app: 120, popup: 900, google: 4000, verify: 15, chain: 6200, decrypt: 40 } }],
       errors: [],
@@ -59,9 +60,9 @@ describe('diagnostics', () => {
 
   it('never carries the full app key, a token, a key, a signature or a relay id, even inside error messages', () => {
     const errors = [
-      { at: 'a', action: 'login', code: 'token_invalid', reason: null, message: `bad token ${JWT} for ${PK}` },
-      { at: 'b', action: 'export', code: 4001, reason: null, message: `key ${STELLAR_SECRET} / ${HEX_KEY}` },
-      { at: 'c', action: 'sign', code: null, reason: null, message: `sig ${SIGNATURE} relay ${RELAY_ID} sk_abcdefghijkl` },
+      { at: 'a', action: 'login', code: 'token_invalid', reason: null, message: `bad token ${JWT} for ${PK}`, requestId: null },
+      { at: 'b', action: 'export', code: 4001, reason: null, message: `key ${STELLAR_SECRET} / ${HEX_KEY}`, requestId: null },
+      { at: 'c', action: 'sign', code: null, reason: null, message: `sig ${SIGNATURE} relay ${RELAY_ID} sk_abcdefghijkl`, requestId: null },
     ];
     const json = diagnosticsJson(input({ errors }), 0);
     for (const secret of [JWT, STELLAR_SECRET, HEX_KEY, 'ab'.repeat(32), SIGNATURE, RELAY_ID, PK, 'sk_abcdefghijkl', 'eyJ']) expect(json).not.toContain(secret);
@@ -77,6 +78,17 @@ describe('diagnostics', () => {
   it('batch C15: the Support ID only when it is one (null without one, or for anything else)', () => {
     expect(diagnostics(input({ supportId: null }), 0).supportId).toBeNull();
     for (const bad of ['hana-2750-g5hm', `HANA-2750-G5HM ${JWT}`, 'u1_EcoIFjT5lAWZsk0862e8Tg', '']) expect(diagnostics(input({ supportId: bad }), 0).supportId).toBeNull();
+  });
+
+  it('D405: each error’s API request ID, and the latest few in requestIds (distinct, newest last); only request IDs', () => {
+    const err = (i: number, requestId: string | null): ErrorRecord => ({ at: String(i), action: 'login', code: 'api_unavailable', reason: null, message: 'm', requestId });
+    const id = (i: number) => `0000000${i}-aaaa-4bbb-8ccc-dddddddddddd`;
+    const errors = [err(0, id(0)), err(1, id(1)), err(2, null), err(3, id(2)), err(4, id(3)), err(5, id(4)), err(6, id(5)), err(7, id(4)), err(8, `${id(6)} ${JWT}`)];
+    const d = diagnostics(input({ errors }), 0) as { requestIds: string[]; errors: { requestId: unknown }[] };
+    expect(d.requestIds).toHaveLength(MAX_REQUEST_IDS);
+    expect(d.requestIds).toEqual([id(1), id(2), id(3), id(5), id(4)]);
+    expect(d.errors.map((e) => e.requestId)).toEqual([id(0), id(1), null, id(2), id(3), id(4), id(5), id(4), null]);
+    expect(diagnosticsJson(input({ errors }), 0)).not.toContain(JWT);
   });
 
   it('keeps addresses in their own field and only the latest entries, with stage names and numbers re-typed', () => {

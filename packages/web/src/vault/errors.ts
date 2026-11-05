@@ -1,8 +1,15 @@
 // Errors the vault answers on the port (docs/batch-b-spec.md "Envelope" error table), and the mapping from API errors.
 // A VaultError's message and data never carry key material, tokens or session secrets: they go to the partner page.
-import { ApiError, ErrorCode, type HanaErrorCode, type ProtocolError, sessionKeyFailure } from '@hana-id/core';
+//
+// D405: an error that came from a Hana API answer keeps that answer's request ID (`requestId`, the ApiError's, checked
+// against API_REQUEST_ID_RE), and the port reply adds it as `data.requestId` for an SDK of API_REQUEST_ID_SDK_MIN or
+// later. An error that never reached the API (a check in the vault, the user's cancel, a network failure) has none.
+import { ApiError, ErrorCode, type HanaErrorCode, type ProtocolError, apiRequestIdOf, sessionKeyFailure } from '@hana-id/core';
 
 export class VaultError extends Error {
+  /** The API request this failure came from (D405), or null: only ever a well-formed request ID. */
+  private apiRequestId: string | null = null;
+
   constructor(
     readonly code: HanaErrorCode,
     message: string,
@@ -12,8 +19,23 @@ export class VaultError extends Error {
     this.name = 'VaultError';
   }
 
-  toProtocol(): ProtocolError {
-    return this.data === undefined ? { code: this.code, message: this.message } : { code: this.code, message: this.message, data: this.data };
+  get requestId(): string | null {
+    return this.apiRequestId;
+  }
+
+  /**
+   * Marks this error as the outcome of the API answer `from` (an ApiError, or its request ID) and returns it. The first
+   * mark stays (the answer closest to the failure); a value that isn't a request ID marks nothing.
+   */
+  fromRequest(from: ApiError | string | null | undefined): this {
+    if (this.apiRequestId === null) this.apiRequestId = apiRequestIdOf(from instanceof ApiError ? from.requestId : from);
+    return this;
+  }
+
+  /** The port error; `withRequestId` (the SDK takes the field, D405) adds `data.requestId` when there is one. */
+  toProtocol(withRequestId = false): ProtocolError {
+    const data = withRequestId && this.apiRequestId !== null ? { ...this.data, requestId: this.apiRequestId } : this.data;
+    return data === undefined ? { code: this.code, message: this.message } : { code: this.code, message: this.message, data };
   }
 }
 
@@ -33,18 +55,26 @@ export function sessionKeyError(e: unknown): VaultError {
   return new VaultError('derive_failed', message, { ...f });
 }
 
-/** Any thrown value as a port error. Unknown errors get a generic message (their text may come from a dependency). */
-export function toProtocolError(e: unknown, fallback: HanaErrorCode = 'api_unavailable'): ProtocolError {
-  if (e instanceof VaultError) return e.toProtocol();
-  if (e instanceof ApiError) return apiErrorToVault(e).toProtocol();
+/**
+ * Any thrown value as a port error. Unknown errors get a generic message (their text may come from a dependency).
+ * `withRequestId`: the SDK on the port takes `data.requestId` (D405); an API error's own request ID is then added.
+ */
+export function toProtocolError(e: unknown, fallback: HanaErrorCode = 'api_unavailable', withRequestId = false): ProtocolError {
+  if (e instanceof VaultError) return e.toProtocol(withRequestId);
+  if (e instanceof ApiError) return apiErrorToVault(e).toProtocol(withRequestId);
   return { code: fallback, message: 'The request failed' };
 }
 
 /**
  * An API error that ends a flow, as a port error: gate and token problems keep their meaning, anything else is
- * `api_unavailable`. The API's own message is not forwarded; only its code (and, for token_has_pii, the claim name).
+ * `api_unavailable`. The API's own message is not forwarded; only its code (and, for token_has_pii, the claim name),
+ * and its request ID (D405).
  */
 export function apiErrorToVault(e: ApiError): VaultError {
+  return apiErrorAsVault(e).fromRequest(e);
+}
+
+function apiErrorAsVault(e: ApiError): VaultError {
   const status = `${e.status} ${e.code}`;
   switch (e.code) {
     case 'token_has_pii': {

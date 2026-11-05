@@ -69,6 +69,7 @@
 // the BLS scalar `a` live only in this module's scope. Nothing is logged.
 import {
   ApiError,
+  apiRequestIdOf,
   type AppConfig,
   type Bytes,
   logoUrlOn,
@@ -496,7 +497,7 @@ async function readSlot(
     } catch (e) {
       const again = stopped();
       if (again) throw again;
-      if (e instanceof ApiError && (e.status === 403 || e.status === 410)) throw fail('token_invalid', 'The sign-in answer is gone');
+      if (e instanceof ApiError && (e.status === 403 || e.status === 410)) throw fail('token_invalid', 'The sign-in answer is gone').fromRequest(e);
       // Rate limit, network or 5xx: try again until the pending limit.
       await sleep(timers, backoff, signal);
       backoff = Math.min(backoff * 2, 5_000);
@@ -1905,6 +1906,11 @@ export class LoginChain {
   private resent = false;
   /** The one retry of an `issuer_key_pending` answer is spent (separate from the not-executed resend). */
   private keyPendingRetried = false;
+  /**
+   * D405: the request ID of the chain's latest API call when it failed with an API answer, else null (it succeeded,
+   * or failed without one: a network error). The chain's own failures carry it (`traced`), as `data.requestId`.
+   */
+  private apiRequestId: string | null = null;
 
   constructor(
     private readonly ctx: LoginContext,
@@ -1917,6 +1923,26 @@ export class LoginChain {
 
   private noteTx(tx: string | null | undefined): void {
     if (tx && !this.nearTxs.includes(tx)) this.nearTxs.push(tx);
+  }
+
+  /** D405: an API call's outcome; `e` is what it threw, or null when it succeeded. */
+  private noteAnswer(e: unknown): void {
+    this.apiRequestId = e instanceof ApiError ? apiRequestIdOf(e.requestId) : null;
+  }
+
+  /**
+   * Runs the chain step; an error it ends with is marked with the latest failed API answer's request ID (D405), so a
+   * partner has one to escalate with: a refusal, a recovery that gave up after one (a timeout's poll, a re-sync), a
+   * resend that was refused again. Not the login's own end (a cancel, a newer login, its deadline: the signal aborted),
+   * and nothing after a network error, which never got an answer.
+   */
+  private async traced<R>(run: () => Promise<R>): Promise<R> {
+    try {
+      return await run();
+    } catch (e) {
+      if (e instanceof VaultError && !this.signal.aborted) e.fromRequest(this.apiRequestId);
+      throw e;
+    }
   }
 
   /** True while the token and the session expiry stay valid long enough for a resend (after waiting `afterMs`). */
@@ -1954,7 +1980,11 @@ export class LoginChain {
   }
 
   /** POST /v1/login with recovery. */
-  async combined(): Promise<CkdResult> {
+  combined(): Promise<CkdResult> {
+    return this.traced(() => this.runCombined());
+  }
+
+  private async runCombined(): Promise<CkdResult> {
     const body = await this.body();
     for (;;) {
       this.check();
@@ -1969,6 +1999,7 @@ export class LoginChain {
         return r.result;
       } catch (e) {
         this.check();
+        this.noteAnswer(e);
         const outcome = this.i.link ? await this.onLinkedError(e) : await this.onRelayError(e, 'login');
         if (outcome === 'resend') continue;
         return outcome;
@@ -2025,7 +2056,11 @@ export class LoginChain {
    * The split fallback: POST /v1/sessions, then /v1/derive with counter 1, with the same path rule and re-sync. The
    * create_session carries the session key's proof of possession (D137: required by contract v3, ignored by v2).
    */
-  async split(): Promise<CkdResult> {
+  split(): Promise<CkdResult> {
+    return this.traced(() => this.runSplit());
+  }
+
+  private async runSplit(): Promise<CkdResult> {
     const { jwt, sessionPublicKey, expiresAtMs, salt, keyIndex, maxUses } = this.i.body;
     const proof = await signCreate(this.i.sessionKey.keyPair.privateKey, {
       signer: this.ctx.env.signer,
@@ -2041,11 +2076,13 @@ export class LoginChain {
       this.check();
       try {
         const r = await this.ctx.api.createSession({ jwt, sessionPublicKey, expiresAtMs, salt, keyIndex, maxUses, signature });
+        this.noteAnswer(null);
         this.noteTx(r.nearTx);
         this.supportId = r.supportId;
         break;
       } catch (e) {
         this.check();
+        this.noteAnswer(e);
         const outcome = await this.onRelayError(e, 'session');
         if (outcome === 'resend') continue;
         return outcome;
@@ -2181,10 +2218,12 @@ export class LoginChain {
       this.check();
       try {
         const r = await this.ctx.api.derive(body);
+        this.noteAnswer(null);
         this.noteTx(r.nearTx);
         return r.result;
       } catch (e) {
         this.check();
+        this.noteAnswer(e);
         if (!(e instanceof ApiError)) throw fail('api_unavailable', 'The key derivation could not be sent');
         this.noteTx(e.nearTx);
         if (NOT_EXECUTED.has(e.code) && !resent && this.resendable()) {
@@ -2212,8 +2251,8 @@ export class LoginChain {
 function linkedApiError(e: ApiError): VaultError {
   if (e.code === 'link_refused') {
     const reason = typeof e.details.reason === 'string' && /^[a-z_]{1,32}$/u.test(e.details.reason) ? e.details.reason : 'link_mismatch';
-    return fail('link_refused', 'The sign-in methods can’t be linked', { reason });
+    return fail('link_refused', 'The sign-in methods can’t be linked', { reason }).fromRequest(e);
   }
-  if (e.code === 'links_unavailable') return fail('link_refused', 'Linking is not open on this network yet', { reason: 'links_unavailable' });
+  if (e.code === 'links_unavailable') return fail('link_refused', 'Linking is not open on this network yet', { reason: 'links_unavailable' }).fromRequest(e);
   return apiErrorToVault(e);
 }

@@ -3,6 +3,7 @@
 // the four cases, the D133 checks before the linked CKD payload is signed, D139 (case B only after this popup's email
 // step), D137's recovery, the follow-up notices, hana.account(), linkChanged, hana.linkAccount() and a banner's Cancel.
 import {
+  API_REQUEST_ID_SDK_MIN,
   type FollowNotice,
   type RelayPayload,
   addressesFromCkdSecret,
@@ -528,6 +529,28 @@ describe('the wallet’s sign-in methods', () => {
     expect(b.backend.calls.find((c) => c.path === '/v1/link')?.body).toMatchObject({ epoch: 0, salt: Array.from(salt) });
     expect(await notice(t, run, 4)).toMatchObject({ t: 'done', banners: [{ provider: 'email', status: 'pending', fresh: true }] });
     expect(linkEvents(t)).toContainEqual({ provider: 'email', status: 'pending', effectiveAtMs: expect.any(Number) });
+  });
+
+  it('D405: /v1/link refused: link_refused with its reason and the API request ID (an SDK that takes it), the old shape for an older SDK', async () => {
+    for (const [sdk, data] of [
+      [API_REQUEST_ID_SDK_MIN, { reason: 'account_full', requestId: '3f2a9c1e-7b4d-4e8f-9a6b-0c1d2e3f4a5b' }],
+      ['0.1.0', { reason: 'account_full' }],
+    ] as const) {
+      const b = emailBrowser();
+      b.backend.opened.add(Buffer.from(ik(G)).toString('hex'));
+      b.backend.overrides.set('/v1/link', () => apiError(422, 'link_refused', { reason: 'account_full', requestId: '3f2a9c1e-7b4d-4e8f-9a6b-0c1d2e3f4a5b' }));
+      const t = await readyTab(b, { googleJwk: g.jwk, env: EMAIL_ENV2, sdk });
+      tabs.push(t);
+      await login(t, g);
+      const pending = t.request('hana_linkAccount', { method: 'email' });
+      const run = await popupHello(t);
+      const task = run.params.task as { prove: { commitment: { salt: number[] } } };
+      const newNonce = linkNewNonce(ENV.signer, SCOPE, ik(G), 'email', 0, Uint8Array.from(task.prove.commitment.salt));
+      await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: await issuer.token(emailClaims(run.params, { nonce: newNonce }, t.browser.timers.now)) });
+      const n2 = await notice(t, run, 2);
+      await answer(t, run, 2, { idToken: await g.token(tokenClaims({ nonce: (n2 as { prove: { nonce: string } }).prove.nonce }, {}, t.browser.timers.now)), as: 'proof' });
+      expect((await pending).error).toEqual({ code: 'link_refused', message: 'The sign-in methods can’t be linked', data });
+    }
   });
 
   it('hana.linkAccount refuses a method the wallet already has, before any popup params', async () => {

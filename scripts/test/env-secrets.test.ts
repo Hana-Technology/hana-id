@@ -27,7 +27,9 @@ function p256() {
 
 const issuerKey = rsa();
 const identity = p256();
-const base = loadEnv('sandbox-dev');
+// sandbox-dev without its dashboard blocks (it has them since M4, D414): these tests are about an env without a dashboard.
+const { console: _console, files: _files, admin: _admin, usage: _usage, email: _email, ownerGrantDelayMs: _ownerGrant, ...sandboxBare } = loadEnv('sandbox-dev');
+const base = sandboxBare as Manifest;
 /** sandbox-dev on a new main account, its watchdog on its own, with keys this test generates. */
 const m: Manifest = {
   ...base,

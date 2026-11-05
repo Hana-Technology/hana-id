@@ -33,8 +33,10 @@ const ID = '0485faa1c2d3';
 const OLD = '6426908aaaaa';
 const head = (dirty = false): LocalBuild => ({ id: dirty ? `${ID}-dirty` : ID, commit: ID, dirty, head: HEAD });
 
+// sandbox-dev without its dashboard blocks (it has them since M4, D414): these tests are about an env without a dashboard.
+const { console: _console, files: _files, admin: _admin, usage: _usage, email: _email, ownerGrantDelayMs: _ownerGrant, ...sandboxBare } = loadEnv('sandbox-dev');
 const m: Manifest = {
-  ...loadEnv('sandbox-dev'),
+  ...(sandboxBare as Manifest),
   apiUrl: 'https://api.example.test',
   vaultOrigin: 'https://vault.example.test',
   authOrigin: 'https://auth.example.test',
@@ -103,6 +105,16 @@ describe('checkTargets', () => {
     const shared = { ...m, apiUrl: 'https://api.example.test/', emailIssuer: { ...m.emailIssuer!, url: undefined } } as Manifest;
     expect(checkTargets(shared).find((t) => t.name === 'email issuer')?.url).toBe('https://api.example.test/v1/email/health');
     expect(checkTargets(shared)[0]!.url).toBe(URLS.api);
+  });
+
+  it('sandbox-dev’s own manifest (its dashboard blocks since D414): the console, console-auth, files and admin pieces too', () => {
+    const real = loadEnv('sandbox-dev');
+    expect(checkTargets(real).map((t) => t.name)).toEqual([
+      'api', 'vault worker', 'vault bundle', 'auth worker', 'auth pages', 'email issuer',
+      'console worker', 'console spa', 'console-auth worker', 'files worker', 'admin worker', 'watchdog worker',
+    ]);
+    expect(checkTargets(real).find((t) => t.name === 'console spa')?.url).toBe(`${real.console!.origin}/`);
+    expect(checkTargets(real).find((t) => t.name === 'files worker')?.url).toBe(`${real.files!.origin}/.well-known/hana-build`);
   });
 });
 

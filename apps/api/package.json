@@ -6,8 +6,8 @@
   "scripts": {
     "gen": "tsx scripts/gen-wrangler.ts",
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "deploy:pages": "pnpm --filter @hana-id/web build && wrangler deploy -c wrangler.vault.jsonc && wrangler deploy -c wrangler.auth.jsonc",
+    "deploy": "tsx scripts/deploy.ts",
+    "deploy:pages": "pnpm --filter @hana-id/web build && tsx scripts/deploy.ts -c wrangler.vault.jsonc && tsx scripts/deploy.ts -c wrangler.auth.jsonc",
     "cf-typegen": "wrangler types --env-interface Env src/worker-configuration.d.ts",
     "test": "vitest run && vitest run -c vitest.scripts.config.ts && vitest run -c vitest.usage.config.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p scripts && tsc --noEmit -p test-usage"

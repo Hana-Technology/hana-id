@@ -7,11 +7,14 @@
 // nothing is read at runtime. Output, per env, in `<env>/vault/`, which is the vault origin's whole static-assets root
 // (apps/api wrangler.vault.jsonc; the auth origin's is `<env>/auth`, so neither origin can serve the other's files):
 //   vault.js   one self-contained module, no chunks: the vault page (apps/api src/vault/page.ts, rendered per request
-//              by the API Worker) loads it as `/vault.js` and nothing else
+//              by the API Worker) loads it as `/vault.js` and nothing else. Its first line is the build id
+//              (`/* hana-build <id> */`, @hana-id/env/build-id, D384), which `deploy-check` reads from the vault origin.
 // A rebuild replaces the whole `<env>/vault` root and nothing outside it.
 import { mkdirSync, rmSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { vaultBanner } from '@hana-id/env/build-id';
+import { localBuild } from '@hana-id/env/local-build';
 import { build } from 'esbuild';
 import type { HanaEnv } from '../src/hana-env.ts';
 import { PAGES_DIST, selectEnvs } from './build-auth-pages.ts';
@@ -29,10 +32,14 @@ export interface BuiltVault {
   dir: string;
   /** The bundle, `<dir>/vault.js`. */
   script: string;
+  /** The build id in its first line. */
+  buildId: string;
 }
 
-/** Builds one env's vault bundle into `<outRoot>/<env.name>/vault/vault.js`. */
-export async function buildVault(env: HanaEnv, outRoot: string = PAGES_DIST): Promise<BuiltVault> {
+/** Builds one env's vault bundle into `<outRoot>/<env.name>/vault/vault.js`, stamped with `buildId` (default: this checkout's). */
+export async function buildVault(env: HanaEnv, outRoot: string = PAGES_DIST, buildId: string = localBuild().id): Promise<BuiltVault> {
+  // Before anything is deleted: an id that isn't one never reaches the bundle (it is written into a JS comment).
+  const banner = vaultBanner(buildId);
   const problem = ckdKeyProblem(env);
   if (problem) throw new Error(`Can't build the vault: ${problem}`);
   // The name becomes a path that is deleted recursively: only the manifest names' charset (packages/env manifestPath).
@@ -54,6 +61,7 @@ export async function buildVault(env: HanaEnv, outRoot: string = PAGES_DIST): Pr
     minify: true,
     sourcemap: false,
     legalComments: 'none',
+    banner: { js: banner },
     outfile: script,
     define: { __HANA_ENV__: JSON.stringify(env), global: 'globalThis' },
     metafile: true,
@@ -62,14 +70,15 @@ export async function buildVault(env: HanaEnv, outRoot: string = PAGES_DIST): Pr
   });
   const outputs = Object.keys(result.metafile.outputs);
   if (outputs.length !== 1) throw new Error(`esbuild produced ${outputs.length} vault outputs, expected only ${VAULT_SCRIPT}`);
-  return { env: env.name, dir, script };
+  return { env: env.name, dir, script, buildId };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const envs = selectEnvs(process.argv.slice(2));
+  const buildId = localBuild().id;
   for (const env of envs) {
-    const built = await buildVault(env);
-    console.log(`built ${relative(process.cwd(), built.script)}`);
+    const built = await buildVault(env, PAGES_DIST, buildId);
+    console.log(`built ${relative(process.cwd(), built.script)} (build ${built.buildId})`);
   }
   if (envs.length === 0) console.log('no env sets vaultOrigin and authOrigin: nothing to build');
 }

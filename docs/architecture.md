@@ -1,7 +1,8 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-05 (branch `fix/e2e-flakes`: the login's step 2, the session key's retry on WebKit Linux's
+Last verified against code: 2026-11-05 (branch `feat/deploy-build-check`: "Environments and manifests": the build id
+in every Worker and page bundle and `deploy-check`, D384); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-05 (branch `fix/e2e-flakes`: the login's step 2, the session key's retry on WebKit Linux's
 Ed25519 `OperationError`, D381); 2026-11-04 (branch `feat/batch-c-13`: retention and the erasure path in Status, Components
 (the usage ledger and admin Worker rows) and "Data stores" (what is purged when, D360–D369)); 2026-11-04 (branch `feat/console-reports-upgrades`: the partner console's usage, statement and pending-upgrades screens, D370–D374); 2026-11-04 (branch `feat/batch-c-10`: `at_hash` in the claim allow-list everywhere, D342; the partner console's fresh sign-in and write paths, D343, D350–D358); 2026-11-04 (branch `feat/user-id-identity-sub`: the wallet directory's three ids and the record's session signature, D346 and the D311/D313 amendments: Status, "Wallet directory" steps 1, 2 and 4, "Data stores"' D1 row, the Glossary); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: D347, a closed popup is
 `login_cancelled`, in "Login, one transaction" after step 4; D348's Google-only screen after a cancel; a cancel on token_first's Google
@@ -898,6 +899,12 @@ would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
   `.secrets/<env>/`, plus the page Workers' `wrangler.vault.jsonc` / `wrangler.auth.jsonc`. It refuses an env without
   both Hana origins. All three are per env and gitignored (the deployed D1 id is passed with `--d1-id` and never
   committed); the API tests generate their own `wrangler.vitest.jsonc` from a fixed test manifest.
+- The build id (D384, `packages/env/src/build-id.ts`): each Worker's `deploy` script (API, page Workers, email issuer)
+  passes `HANA_BUILD` = the commit's first 12 hex characters (`-dirty` for a tree with uncommitted changes), never
+  `gen`; the web build writes the same id into `/vault.js`'s first line and each auth page's `<meta name="hana-build">`.
+  They are read back from `GET /v1/health`, `GET /v1/email/health`, each page origin's `/.well-known/hana-build` and
+  the bundles by `scripts/deploy-check.ts`, which fails unless every piece (and, with `--d1`, every D1 migration) is
+  this checkout's (`docs/operations.md` "Checking a deploy").
 - `packages/web/scripts/gen-envs.ts` writes the gitignored `packages/web/src/envs.generated.ts` with the pinned
   per-env constants (`signer`, `relayer`, `rpc`, `rpcFallback` when set, `ckdNetworkKey`, origins, `devEnv`) for every
   manifest with both origins; it fails on an unusable CKD key.

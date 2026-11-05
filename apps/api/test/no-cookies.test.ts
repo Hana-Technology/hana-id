@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import worker from '../src/index.ts';
 import authWorker from '../src/pages/auth-worker.ts';
 import { AUTH_PAGE_PATHS, type AuthHostEnv, type VaultHostEnv } from '../src/pages/host.ts';
+import { BUILD_PATH } from '../src/build.ts';
 import vaultWorker from '../src/pages/vault-worker.ts';
 import { ORIGIN, appHeaders, call, chain, seedApp, sessionBody, uid } from './helpers.ts';
 import { AUTH, VAULT, hanaHeaders, loginBody, withCombinedCall } from './login-helpers.ts';
@@ -109,8 +110,8 @@ describe('no Set-Cookie', () => {
     const authEnv: AuthHostEnv = { AUTH_ORIGIN: AUTH, API_URL: 'https://api.test', NEAR_RPC: 'https://rpc.test', ASSETS: assets };
     const vaultEnv: VaultHostEnv = { VAULT_ORIGIN: VAULT, ASSETS: assets, API: api };
     type W<E> = { fetch: (r: Request, e: E) => Response | Promise<Response> };
-    for (const path of [...AUTH_PAGE_PATHS, '/vault.js', '/missing']) noCookie(await (authWorker as unknown as W<AuthHostEnv>).fetch(new Request(`${AUTH}${path}`), authEnv), `auth ${path}`);
+    for (const path of [...AUTH_PAGE_PATHS, '/vault.js', '/missing', BUILD_PATH]) noCookie(await (authWorker as unknown as W<AuthHostEnv>).fetch(new Request(`${AUTH}${path}`), authEnv), `auth ${path}`);
     noCookie(await (authWorker as unknown as W<AuthHostEnv>).fetch(new Request(`${AUTH}/login`, { method: 'POST' }), authEnv), 'auth POST');
-    for (const path of ['/vault?pk=pk_test_1111111111111111111111', '/vault.js', '/missing']) noCookie(await (vaultWorker as unknown as W<VaultHostEnv>).fetch(new Request(`${VAULT}${path}`), vaultEnv), `vault ${path}`);
+    for (const path of ['/vault?pk=pk_test_1111111111111111111111', '/vault.js', '/missing', BUILD_PATH]) noCookie(await (vaultWorker as unknown as W<VaultHostEnv>).fetch(new Request(`${VAULT}${path}`), vaultEnv), `vault ${path}`);
   });
 });

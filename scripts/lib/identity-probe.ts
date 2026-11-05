@@ -1,7 +1,7 @@
 // identity-probe.ts's body: the outside probe of the partner identity token's published keys (D210). The watchdog
 // reads Hana's identity JWKS from its own Cloudflare account, so its fetches come from Cloudflare's network (and a
 // Worker's subrequests can be told apart); someone who controls Hana's Cloudflare account could serve it a clean JWKS
-// and partners another. This probe runs from GitHub Actions (`.github/workflows/identity-probe.yml`, every 15 min),
+// and partners another. This probe runs from GitHub Actions (`.github/workflows/identity-probe.yml`, hourly, D382),
 // outside Cloudflare, looking like a partner's verifier (jose's User-Agent and Accept, no `CF-Worker` header), and
 // applies the watchdog's rules (`@hana-id/jwks/identity`): every key pinned in `watchdog.pinnedIdentityKeys` and
 // public members only, no private member, no duplicate member, the right shape, `issuer` and `jwks_uri` exact, a 200

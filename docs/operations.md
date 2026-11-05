@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
+Last verified against code: 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `fix/admin-cron-budget`: "Admin Worker" → "The crons' call budget":
 what counts, each job's share in both crons, the `budget` log lines; settlement's reads a run; D380); 2026-11-04 (branch `feat/batch-c-13`: "Retention (batch C13, milestone M6)": the Neon
 migration 0007, the deploy order, the monthly job in the 15-minute cron, `retention_failed`, `admin retention:issuer`,
 `uid-erase` for an erasure request, statements and rates by hand, what to watch; "Usage ledger" lists 0007; D360–D369);
@@ -2595,8 +2595,8 @@ them as `IDENTITY_PINS` and `identityToken.iss` as `IDENTITY_ISS`; an env withou
 - **What that catches, and what it doesn't** (D210): an attacker who publishes the same JWKS to everyone. Someone who
   controls Hana's Cloudflare account can recognise the watchdog's fetches (they come from Cloudflare's network) and
   serve them a clean JWKS while partners get another, or publish a key for less than a run. The **outside probe**
-  narrows the first: the GitHub Actions workflow `identity-probe` (`.github/workflows/identity-probe.yml`, every
-  15 min, no secrets) fetches each non-`local*` env's JWKS and discovery document from GitHub's network with a `jose`
+  narrows the first: the GitHub Actions workflow `identity-probe` (`.github/workflows/identity-probe.yml`, hourly
+  at :17 since D382, no secrets) fetches each non-`local*` env's JWKS and discovery document from GitHub's network with a `jose`
   User-Agent and the same rules (`@hana-id/jwks/identity`), against `watchdog.pinnedIdentityKeys` in the repo's
   manifests, and fails on any finding (every value from Hana's answers is printed JSON-quoted, escaped to printable
   ASCII with `%` too, and cut, and no line can start with `::`, so a hostile JWKS can't inject a workflow command);

@@ -19,6 +19,13 @@ partner page, the vault frame and the popup) and fast-forward past the vault's 5
 (`tests/fixtures.ts`) checks the vault frame and the partner page still run a script. In all three browsers the
 partner page shares the vault frame's renderer here, so a loop in the vault freezes it too.
 
+Popups that close themselves (a banner's Done or Cancel, the email step's Cancel, the callback after its relay): click
+them with `clickClosing(popup, selector)` (or `clickMayClose` when the click only sometimes closes the window), and
+wait with `closeOf(popup)`, never a bare `popup.waitForEvent('close')` (`tests/fixtures.ts`). A window that closes
+while Playwright still performs the click makes the click reject with "Target page, context or browser has been
+closed"; the helpers drop that error only when the window is in fact closed. `waitForEvent('close')` on a window that
+has already closed waits for its whole timeout.
+
 ## What runs
 
 Ports are `HANA_E2E_PORT_BASE` (default 4410) plus the offsets below: the table shows the default.

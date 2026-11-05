@@ -80,11 +80,14 @@ keywords = ["napi_"]
 # Hana's secret files, whatever they contain: anything under a .secrets/ directory (the council key files
 # .secrets/<env>/council/<account>.json included), .dev.vars, the relayer and keys-updater key files, the watchdog's
 # secrets file, the vault KEK files, the identity token's and the email issuer's key files, the ledger's Neon files (neon.json,
-# the role URLs, the Neon API key neon-api-key, D403), wherever they are. All gitignored; this catches `git add -f` and copies.
+# the role URLs, the Neon API key neon-api-key, D403), the Cloudflare Access API token cloudflare-access-token (D409),
+# wherever they are. All gitignored; this catches `git add -f` and copies. (A Cloudflare token's content is a plain
+# 40-character string with no prefix of its own, too generic for a content rule; gitleaks' default `cloudflare-api-key`
+# rule catches it next to the word "cloudflare".)
 [[rules]]
 id = "hana-secret-file"
 description = "Hana secret file (.secrets/, .dev.vars, key files, vault KEK)"
-path = '''(^|/)(\.secrets/|\.dev\.vars$|(owner-)?relayer-keys\.json$|keys-updater\.json$|watchdog-secrets\.json$|vault-kek(\.previous|\.next)?$|identity-signing-key(-standby)?\.json$|identity-sub-key$|email-issuer-signing-key(-standby)?\.json$|email-(sub|code|rl)-key$|email-issuer-sendgrid-key$|user-id-key$|neon(-usage-(writer|admin)\.url|\.json|-api-key)$)'''
+path = '''(^|/)(\.secrets/|\.dev\.vars$|(owner-)?relayer-keys\.json$|keys-updater\.json$|watchdog-secrets\.json$|vault-kek(\.previous|\.next)?$|identity-signing-key(-standby)?\.json$|identity-sub-key$|email-issuer-signing-key(-standby)?\.json$|email-(sub|code|rl)-key$|email-issuer-sendgrid-key$|user-id-key$|neon(-usage-(writer|admin)\.url|\.json|-api-key)$|cloudflare-access-token$)'''
 
 # Contract test fixtures: Google-style ID tokens signed by a throwaway RSA key whose private half is discarded
 # (contracts/hana-signer/scripts/gen-fixtures.mjs). Only the `jwt` rule is waived here; any other secret in the

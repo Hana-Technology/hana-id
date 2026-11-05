@@ -22,7 +22,8 @@
     "usage-setup": "tsx usage-setup.ts",
     "uid-erase": "tsx uid-erase.ts",
     "deploy-check": "tsx deploy-check.ts",
-    "coop-canary": "tsx coop-canary.ts"
+    "coop-canary": "tsx coop-canary.ts",
+    "access-setup": "tsx access-setup.ts"
   },
   "dependencies": {
     "@hana-id/console-core": "workspace:*",

@@ -6,7 +6,7 @@
 // body holds the new password, so no response body is ever printed or put in an error: an error carries the HTTP
 // status and, for a non-2xx answer, Neon's `code` and `message` (an error answer has no password: none was set),
 // trimmed and with every secret the caller names removed.
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { readOneLineSecret } from './secrets.ts';
 
 export const NEON_API = 'https://console.neon.tech/api/v2';
 export const NEON_API_KEY_FILE = 'neon-api-key';
@@ -45,16 +45,7 @@ export class NeonApiError extends Error {
  */
 export function readNeonApiKey(file: string, shown: string): string {
   const how = `create a project-scoped API key in Neon's console and save it with \`umask 077; pbpaste > ${shown}\` (docs/operations.md "Usage capture" step 2)`;
-  if (!existsSync(file)) throw new Error(`${shown} is missing: ${how}`);
-  const st = statSync(file);
-  if (!st.isFile()) throw new Error(`${shown} is not a file`);
-  const mode = st.mode & 0o777;
-  if ((mode & 0o077) !== 0) throw new Error(`${shown} has mode ${mode.toString(8)}; it must be 0600 (chmod 600 ${shown})`);
-  const key = readFileSync(file, 'utf8').trim();
-  if (!key) throw new Error(`${shown} is empty: ${how}`);
-  // Printable ASCII without spaces: a pasted key with a second line or a space is a paste of something else.
-  if (!/^[\x21-\x7e]{20,512}$/u.test(key)) throw new Error(`${shown} doesn't hold one API key (one line, 20–512 printable characters, no spaces)`);
-  return key;
+  return readOneLineSecret(file, shown, how, 'one API key');
 }
 
 /** Removes each secret (and its URL-encoded form) from a message. */

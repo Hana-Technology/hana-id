@@ -97,7 +97,7 @@ describe('POST /api/support/lookup', () => {
     expect([v.activity, v.requests, v.requestsNotFound, v.days]).toEqual([[null], null, [], 30]);
     // The audit row names the query as a Support ID (whatever the case typed), never an address or a sub.
     expect(await auditRows(u.supportId)).toEqual([
-      { org_id: null, actor_kind: 'hana', actor_id: STAFF_SUB, actor_email: STAFF_EMAIL, target: u.supportId, details_json: JSON.stringify({ by: 'supportId', ticket: 'ZD-1234', requestIds: 1, days: 30 }) },
+      { org_id: null, actor_kind: 'hana', actor_id: STAFF_SUB, actor_email: STAFF_EMAIL, target: u.supportId, details_json: JSON.stringify({ by: 'supportId', ticket: 'ZD-1234', requestIds: 1, requestIdList: ['req_aaaaaaaa'], days: 30 }) },
     ]);
   });
 
@@ -131,6 +131,9 @@ describe('POST /api/support/lookup', () => {
       ['requests', ['req_failed01', 'req_missing1'], [uidHex], 100],
     ]);
     expect(v.since).toBeLessThanOrEqual(Date.now() - 7 * 86_400_000 + 60_000);
+    // The audit row names the request IDs themselves (D410), deduplicated, beside their count.
+    const [row] = await auditRows(u.userId);
+    expect(JSON.parse(String(row!.details_json))).toEqual({ by: 'userId', ticket: 'ZD-9', requestIds: 2, requestIdList: ['req_failed01', 'req_missing1'], days: 7 });
   });
 
   it('still answers the directory part when the ledger read fails or the connection does', async () => {
@@ -167,8 +170,9 @@ describe('POST /api/support/lookup', () => {
     expect(apiCalls).toEqual([]);
   });
 
-  it('a lookup’s audit row is never emailed by the feed', () => {
+  it('a lookup’s audit row is never emailed by the feed, nor a Users find’s', () => {
     expect(emailedAudit({ action: 'support.lookup' } as Parameters<typeof emailedAudit>[0])).toBe(false);
+    expect(emailedAudit({ action: 'users.find' } as Parameters<typeof emailedAudit>[0])).toBe(false);
   });
 });
 

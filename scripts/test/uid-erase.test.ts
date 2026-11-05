@@ -7,15 +7,16 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite, PGliteInterface } from '@electric-sql/pglite';
 import { internalIdOf, uid } from '@hana-id/console-core';
 import { type Manifest, loadEnv, repoRoot } from '@hana-id/env';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { retentionIssuer } from '../lib/admin-retention.ts';
 import { supportDirectory, supportLedger } from '../lib/admin-support.ts';
 import { parseCli } from '../lib/cli.ts';
 import { type LedgerConn, type UidEraseDeps, checkTicket, uidErase } from '../lib/uid-erase.ts';
 import { newHotDb } from './hot-db.ts';
+import { PGLITE, PGLITE_HOOK_MS, migratedLedger } from './pglite.ts';
 
 const KEY = new Uint8Array(32).fill(9);
 const SCOPE = 's7';
@@ -40,13 +41,7 @@ function issuerDb(): DatabaseSync {
 /** D1 as the private executor answers: every statement's rows, concatenated (RETURNING included). */
 const d1 = (db: DatabaseSync) => async (statement: string) => statement.split(';\n').flatMap((s) => db.prepare(s).all() as Record<string, unknown>[]);
 
-async function ledgerDb(): Promise<PGlite> {
-  const db = new PGlite();
-  const dir = join(repoRoot, 'apps', 'api', 'migrations-usage');
-  for (const f of readdirSync(dir).filter((n) => n.endsWith('.sql')).sort()) await db.exec(readFileSync(join(dir, f), 'utf8'));
-  return db;
-}
-const asAdmin = (db: PGlite): LedgerConn => ({
+const asAdmin = (db: PGliteInterface): LedgerConn => ({
   async query<T>(sql: string, params: unknown[] = []) {
     await db.exec('SET ROLE usage_admin');
     try {
@@ -63,7 +58,9 @@ const userOf = async (i: { provider: string; sub: string }) => internalIdOf(awai
 
 let api: DatabaseSync;
 let issuer: DatabaseSync;
-let ledger: PGlite;
+/** The migrated ledger, built once (./pglite.ts); each test gets a clone. */
+let template: PGlite;
+let ledger: PGliteInterface;
 let lines: string[];
 let views: string[];
 
@@ -143,21 +140,27 @@ const ledgerCount = async (who: { provider: string; sub: string }) => {
 };
 const one = (db: DatabaseSync, s: string, ...p: (string | number)[]) => Number((db.prepare(s).get(...p) as { n: number }).n);
 
+beforeAll(async () => {
+  template = await migratedLedger();
+}, PGLITE_HOOK_MS);
+afterAll(async () => {
+  await template.close();
+}, PGLITE_HOOK_MS);
 beforeEach(async () => {
   api = newHotDb();
   issuer = issuerDb();
-  ledger = await ledgerDb();
+  ledger = await template.clone();
   lines = [];
   views = [];
   await seed();
-});
+}, PGLITE_HOOK_MS);
 afterEach(async () => {
   await ledger.close();
-});
+}, PGLITE_HOOK_MS);
 
 const ARGV = ['sandbox-dev', '--scope', SCOPE, '--provider', EMAIL.provider, '--sub', EMAIL.sub, '--ticket', 'SUP-123'];
 
-describe('uid-erase: the plan (dry run)', () => {
+describe('uid-erase: the plan (dry run)', PGLITE, () => {
   it('reads the account from the chain and counts every store; changes nothing', async () => {
     const out = await uidErase(ARGV, deps());
     expect(views).toEqual([`get_identity:${EMAIL.provider}:${EMAIL.sub}`, `get_identity:${GOOGLE.provider}:${GOOGLE.sub}`, `get_account:${GOOGLE.provider}:${GOOGLE.sub}`]);
@@ -182,7 +185,7 @@ describe('uid-erase: the plan (dry run)', () => {
   });
 });
 
-describe('uid-erase --yes: across the three stores', () => {
+describe('uid-erase --yes: across the three stores', PGLITE, () => {
   it('erases the account’s rows in the ledger, the wallet directory and the issuer, records it, and leaves everyone else alone', async () => {
     const out = await uidErase([...ARGV, '--yes'], deps());
     expect(out!.erased).toEqual({ ledgerEvents: 3, ledgerAppUsers: 3, directoryWallets: 3, directoryIdentities: 2, directoryUsers: 2, issuerApps: 2, issuerEmails: 1 });
@@ -258,7 +261,7 @@ describe('uid-erase --yes: across the three stores', () => {
   });
 });
 
-describe('uid-erase refusals', () => {
+describe('uid-erase refusals', PGLITE, () => {
   it('needs a ticket without an address, a scope, a provider and a sub; testnet only; the ledger’s file unless --no-ledger', async () => {
     await expect(uidErase(ARGV.filter((a) => a !== '--ticket' && a !== 'SUP-123'), deps())).rejects.toThrow(/--ticket is required/u);
     expect(() => checkTicket('alice@example.com')).toThrow(/email address/u);
@@ -283,7 +286,7 @@ describe('uid-erase refusals', () => {
   });
 });
 
-describe('admin retention:issuer (the issuer’s part of the monthly job)', () => {
+describe('admin retention:issuer (the issuer’s part of the monthly job)', PGLITE, () => {
   it('deletes the user_email_apps rows of apps deleted 30 days ago and staff audit older than 60 months; dry run by default', async () => {
     const now = Date.UTC(2031, 0, 15);
     api.exec("INSERT INTO scopes (scope_id, org_id, environment, created_at, assigned_at) VALUES ('s9', 'org_legacy', 'test', 0, 0)");

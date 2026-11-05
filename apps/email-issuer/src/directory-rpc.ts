@@ -4,7 +4,8 @@
 //
 //   - `search`: identities by address (a full address exactly, else a substring of ≥ 3 characters), provider, app, sub
 //     and "unverified only", keyset-paged newest first (an address search lists Google accounts' unverified claims
-//     after the verified rows); a support reference (`ticket`) is optional;
+//     after the verified rows); a support reference (`ticket`) is required when the search names one identity (a sub
+//     or a full address, console-core `searchNamesIdentity`, D410) and optional when it browses;
 //   - `get`: one identity and its apps; the ticket is required; audited as `user_view`, or as `support_lookup` for the
 //     Support ID lookup's email join (`purpose`, D399);
 //   - `auditSince`: the issuer's `email_admin_audit` rows (no directory value in them), for the admin's audit view.
@@ -22,6 +23,7 @@ import { WorkerEntrypoint } from 'cloudflare:workers';
 import {
   DIRECTORY_PAGE_DEFAULT,
   DIRECTORY_SUBSTRING_MIN,
+  SEARCH_TICKET_REQUIRED,
   type DirectoryAuditRow,
   type DirectoryBudgetRefusal,
   type DirectoryCode,
@@ -209,7 +211,8 @@ export class DirectoryRpc extends WorkerEntrypoint<Env> {
   /** Identities matching the filters, newest first (an address search: verified rows first), at most `limit` (≤ 100). */
   async search(c: unknown): Promise<({ ok: true; users: DirectoryUserRow[]; next?: string }) | Fail> {
     const parsed = directorySearchInput.safeParse(c);
-    if (!parsed.success) return fail('bad_request', 'Malformed search');
+    // A search naming one identity without a ticket (D410) says so; anything else malformed is just that.
+    if (!parsed.success) return fail('bad_request', parsed.error.issues.some((x) => x.message === SEARCH_TICKET_REQUIRED) ? SEARCH_TICKET_REQUIRED : 'Malformed search');
     const i = parsed.data;
     const now = Date.now();
     const who = await staffOf(this.env, i.accessJwt, i.requestId, now);

@@ -11,6 +11,7 @@
 // Built in C7; `recordStaffAction` added in C12 (D327); `purgeAudit` in C13 (the admin's monthly retention job only, a
 // `system` actor, D360).
 import {
+  ORGLESS_STAFF_ACTIONS,
   type Actor,
   type RpcCode,
   type RpcFail,
@@ -195,9 +196,9 @@ export class StaffRpc extends WorkerEntrypoint<Env> {
       const allowed: readonly string[] = AUDIT_DETAIL_KEYS[i.action];
       const extra = Object.keys(i.details).find((k) => !allowed.includes(k));
       if (extra) throw new RpcRefusal('bad_request', `details.${extra} is not recorded for ${i.action}`);
-      // A Support ID lookup is about an end user, not an org's act: never an org's row, so no partner's audit view or
-      // feed group can show it (C15, D396).
-      if (i.action === 'support.lookup' && i.orgId !== undefined) throw new RpcRefusal('bad_request', 'support.lookup is recorded without an org');
+      // A Support ID lookup or a Users find is about an end user, not an org's act: never an org's row, so no partner's
+      // audit view or feed group can show it (C15, D396, D410).
+      if (ORGLESS_STAFF_ACTIONS.has(i.action) && i.orgId !== undefined) throw new RpcRefusal('bad_request', `${i.action} is recorded without an org`);
       try {
         await auditInsert(this.db, entry(w, i.action, { orgId: i.orgId ?? null, target: i.target ?? null, details: i.details })).run();
       } catch (err) {

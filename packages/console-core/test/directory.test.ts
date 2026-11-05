@@ -13,6 +13,7 @@ import {
   directoryGetInput,
   directorySearchInput,
   isFullAddress,
+  searchNamesIdentity,
 } from '../src/index.ts';
 
 const call = { requestId: 'req_12345678', accessJwt: 'x'.repeat(40) };
@@ -63,6 +64,20 @@ describe('DirectoryRpc inputs', () => {
   it('the budget and the warning are the confirmed (provisional) numbers and the CLI’s words', () => {
     expect([DIRECTORY_ROWS_PER_HOUR, DIRECTORY_ROWS_PER_DAY]).toEqual([500, 2000]);
     expect(UNVERIFIED_CLAIM_WARNING).toBe('UNVERIFIED: this Google account claims the address but Google hasn’t verified it; don’t treat it as the owner');
+  });
+
+  it('a search naming one identity (a sub, a full address) needs the ticket; a browsing search doesn’t (D410)', () => {
+    for (const s of [{ sub: '1' }, { sub: 'e1.x', provider: 'email' }, { q: 'a@b.example' }, { q: ' A@B.example ' }, { q: 'corp', sub: '1' }]) {
+      expect(searchNamesIdentity(s), JSON.stringify(s)).toBe(true);
+      expect(directorySearchInput.safeParse({ ...call, ...s }).success, JSON.stringify(s)).toBe(false);
+      expect(directorySearchInput.safeParse({ ...call, ...s, ticket: 'ZD-1' }).success, JSON.stringify(s)).toBe(true);
+    }
+    for (const s of [{}, { q: 'corp' }, { q: 'a@b' }, { provider: 'google' }, { appId: 'app_1' }, { unverifiedOnly: true }]) {
+      expect(searchNamesIdentity(s as { q?: string }), JSON.stringify(s)).toBe(false);
+      expect(directorySearchInput.safeParse({ ...call, ...s }).success, JSON.stringify(s)).toBe(true);
+    }
+    const refused = directorySearchInput.safeParse({ ...call, sub: '1' });
+    expect(refused.success ? null : refused.error.issues[0]!.message).toMatch(/required to search by sub or by a full address/u);
   });
 
   it('a full address is an exact search; anything else a substring', () => {

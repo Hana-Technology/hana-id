@@ -20,8 +20,11 @@ upgrades, Playbooks (C14), Reports, Statements, Rates (C12), Retention (C13).
 
 **Users (C8b; D275 as confirmed 2026-11-05).** Search the email issuer's user directory by address (a full address
 exactly, else ≥ 3 characters of one), account kind, app, sub or "unverified only" (`POST /api/users/search`; a support
-reference optional), or the wallet directory by wallet address, User ID or internal id (`POST /api/users/find`); a
-Support ID goes to the Support ID lookup. Opening a user needs a support reference (`POST /api/users/get`): the directory row and its apps,
+reference required for a sub or a full address, optional to browse; D410), or the wallet directory by wallet address,
+User ID or internal id (`POST /api/users/find`; a support reference required, audited first as `users.find`); a
+Support ID goes to the Support ID lookup. An opened user stays in the tab's memory at the fixed path `/users/open` (no
+sub in a URL; back and forward move between the users opened, a reload opens nobody). Opening a user needs a support
+reference (`POST /api/users/get`): the directory row and its apps,
 the wallet directory's users holding the identity (User ID, Support ID, internal id, wallets), and each scope's
 on-chain path read live (`get_identity`, `get_account`). The issuer verifies the staff JWT itself, audits every read
 and caps each staff member at 500 identities an hour and 2 000 a day; past that the read is refused and the security
@@ -34,7 +37,7 @@ directory (read as `support_lookup` under the same ticket; unverified Google cla
 the vault shares not yet expired, the apps' changes, the ok ledger events, and the request IDs' events with their
 errors; "ledger unavailable" with its reason when the ledger can't be read. Reached from the nav, from the Users search
 (a Support ID, run at once with a support reference) and from any wallet-directory user's block (by User ID). Audited
-first in the console's audit log (`support.lookup`). The query and the answer stay in memory: no URL, no storage, no
+first in the console's audit log (`support.lookup`, with the request IDs). The query and the answer stay in memory: no URL, no storage, no
 export.
 
 ## Layout

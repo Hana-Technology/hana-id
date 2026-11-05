@@ -60,8 +60,12 @@ export const AUDIT_DETAIL_KEYS = {
   'statement.issued': ['month', 'csvSha256', 'pdfSha256', 'asOf', 'lines'],
   'ledger.exported': ['month', 'asOf', 'rows', 'sha256'],
   'rate.overridden': ['day', 'usdMicros', 'overrideId'],
-  // Batch C15 (D396): a staff Support ID lookup, org-less, recorded before the lookup reads anything.
-  'support.lookup': ['by', 'ticket', 'requestIds', 'days'],
+  // Batch C15 (D396): a staff Support ID lookup, org-less, recorded before the lookup reads anything; `requestIdList`
+  // the escalation's request IDs themselves (D410; `requestIds` their count, as before).
+  'support.lookup': ['by', 'ticket', 'requestIds', 'requestIdList', 'days'],
+  // D410: the Users screen's wallet-directory find (a wallet, User ID, internal id or Support ID), org-less, recorded
+  // before it reads: the query's kind and the ticket.
+  'users.find': ['by', 'ticket'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type AuditAction = keyof typeof AUDIT_DETAIL_KEYS;
@@ -73,7 +77,8 @@ export interface AuditEntry {
   appId?: string | null;
   action: AuditAction;
   target?: string | null;
-  details?: Record<string, string | number | boolean | null>;
+  /** Scalars; a list only for the one key staff-rpc allows it on (support.lookup's request IDs). */
+  details?: Record<string, string | number | boolean | null | readonly string[]>;
   stepUpId?: string | null;
   requestId: string;
   nearTx?: string | null;

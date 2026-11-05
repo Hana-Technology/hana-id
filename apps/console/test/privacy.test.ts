@@ -175,10 +175,15 @@ describe('audit details', () => {
           "by",
           "ticket",
           "requestIds",
+          "requestIdList",
           "days",
         ],
         "user.disabled": [],
         "user.enabled": [],
+        "users.find": [
+          "by",
+          "ticket",
+        ],
       }
     `);
     // The one exception: a refused sign-in names the person only by the sha256 of the address Google verified, as the

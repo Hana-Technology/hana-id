@@ -1,8 +1,9 @@
-// usage-setup.ts <env> <roles | hyperdrive | user-id-key> [--yes]
+// usage-setup.ts <env> <roles | hyperdrive | user-id-key> [--yes] [--account-id <id>]
 //
 // The usage ledger's credentials and the API's uid key (batch C4): role passwords (LOGIN as the Neon owner over the
 // direct URL in .secrets/<env>/neon.json, the passwords reset through Neon's API with .secrets/<env>/neon-api-key,
-// D403), the two Hyperdrive configs, USER_ID_KEY. Dry run by default. Never prints a password, a URL or a key. See
+// D403), the two Hyperdrive configs (through Cloudflare's API with .secrets/<env>/cloudflare-hyperdrive-token, D412),
+// USER_ID_KEY. Dry run by default. Never prints a password, a URL or a key. See
 // lib/usage-setup.ts and docs/operations.md "Usage capture (batch C4)".
 import { join } from 'node:path';
 import pg from 'pg';

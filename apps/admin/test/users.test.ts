@@ -1,7 +1,8 @@
 // The staff Users screen (C8b; D275 as confirmed 2026-11-05; spec "Users and Support ID" → "Users screen", "Tests"):
 // the BFF over the real email issuer's DirectoryRpc (which checks the staff JWT itself and audits every read in its own
 // D1), the real API's wallet directory (AdminRpc.findUsers, appNames) and the chain's get_identity / get_account (the
-// suite's fake RPC). The ticket is required to open a user and optional to search; budget refusals email the alias;
+// suite's fake RPC). The ticket is required to open a user, to search by sub or a full address and to find a user in
+// the wallet directory (audited first in the console, D410), and optional to browse; budget refusals email the alias;
 // a failed chain read is "chain unavailable", never a guessed path; unverified Google claims carry the CLI's warning.
 import { UNVERIFIED_CLAIM_WARNING, internalIdOf, supportIdOf } from '@hana-id/console-core';
 import { env } from 'cloudflare:workers';
@@ -86,7 +87,12 @@ describe('POST /api/users/search (the issuer’s directory)', () => {
       { provider: 'google', sub: '9002', email: 'pat@example.com', verified: true, hosted: true, seen: now - 50 },
       { provider: 'email', sub: 'e1.pat', email: 'pat@example.com', seen: now - 100 },
     );
-    const res = await adminRequest('/api/users/search', { body: { q: 'Pat@Example.com' } });
+    // A full address names one person: without a ticket it is refused before the issuer is called (D410).
+    const bare = await adminRequest('/api/users/search', { body: { q: 'Pat@Example.com' } });
+    expect(bare.status).toBe(400);
+    expect((await json<{ error: { message: string } }>(bare)).error.message).toMatch(/support reference \(ticket\) is required to search by sub or by a full address/u);
+    expect(await issuerAudit()).toEqual([]);
+    const res = await adminRequest('/api/users/search', { body: { q: 'Pat@Example.com', ticket: 'ZD-1' } });
     expect(res.status).toBe(200);
     const body = await json<{ users: { sub: string; unverifiedClaim: boolean; email: string }[]; unverifiedWarning: string }>(res);
     expect(body.users.map((u) => [u.sub, u.unverifiedClaim])).toEqual([
@@ -97,7 +103,7 @@ describe('POST /api/users/search (the issuer’s directory)', () => {
     expect(body.unverifiedWarning).toBe(UNVERIFIED_CLAIM_WARNING);
     const audit = await issuerAudit();
     expect(audit).toHaveLength(1);
-    expect(audit[0]).toMatchObject({ staff: STAFF_EMAIL, action: 'user_search', ticket: null });
+    expect(audit[0]).toMatchObject({ staff: STAFF_EMAIL, action: 'user_search', ticket: 'ZD-1' });
     expect(audit[0]!.detail).not.toMatch(/pat|example/u);
     expect(JSON.parse(audit[0]!.detail)).toMatchObject({ q: { match: 'exact' }, rows: 3 });
   });
@@ -112,6 +118,24 @@ describe('POST /api/users/search (the issuer’s directory)', () => {
     expect((await json<{ error: { code: string } }>(short)).error.code).toBe('bad_request');
   });
 
+  it('a sub filter names one identity: refused without a ticket (any other filters too), before the issuer reads; a substring browses without one (D410)', async () => {
+    await seedDirectory({ provider: 'google', sub: '9300', email: 'sam@corp.example' });
+    for (const body of [{ sub: '9300' }, { sub: '9300', provider: 'google' }, { q: 'corp', sub: '9300' }, { sub: '9300', ticket: 'has space' }]) {
+      const r = await adminRequest('/api/users/search', { body });
+      expect(r.status, JSON.stringify(body)).toBe(400);
+      expect(JSON.stringify(await json(r))).not.toContain('sam@');
+    }
+    expect(await issuerAudit()).toEqual([]);
+    const ok = await json<{ users: { sub: string; email: string }[] }>(await adminRequest('/api/users/search', { body: { sub: '9300', ticket: 'ZD-93' } }));
+    expect(ok.users.map((u) => u.email)).toEqual(['sam@corp.example']);
+    const browse = await json<{ users: { sub: string }[] }>(await adminRequest('/api/users/search', { body: { q: 'corp' } }));
+    expect(browse.users.map((u) => u.sub)).toEqual(['9300']);
+    expect((await issuerAudit()).map((a) => a.ticket)).toEqual(['ZD-93', null]);
+    // The issuer holds the same rule on its own, for a caller that skips the BFF's check.
+    const direct = await env.ISSUER!.search({ requestId: 'req_direct01', accessJwt: await staffJwt(), sub: '9300' });
+    expect(direct).toMatchObject({ ok: false, code: 'bad_request', error: expect.stringMatching(/required to search by sub/u) });
+  });
+
   it('is POST only with the CSRF checks; no address goes in a URL', async () => {
     expect((await adminRequest('/api/users/search?q=a@b.example')).status).toBe(405);
     expect((await adminRequest('/api/users/search', { body: {}, csrf: false })).status).toBe(403);
@@ -119,7 +143,7 @@ describe('POST /api/users/search (the issuer’s directory)', () => {
 
   it('without an ISSUER binding, or with the issuer down: 503 directory_unavailable', async () => {
     for (const e of [envWith({ ISSUER: undefined }), envWith({ ISSUER: downBinding() })]) {
-      const res = await requestWith(e, '/api/users/search', { q: 'someone@example.com' });
+      const res = await requestWith(e, '/api/users/search', { q: 'someone@example.com', ticket: 'T-0' });
       expect(res.status).toBe(503);
       expect((await json<{ error: { code: string } }>(res)).error.code).toBe('directory_unavailable');
     }
@@ -260,25 +284,62 @@ describe('POST /api/users/get (one identity, the ticket required)', () => {
   });
 });
 
+const findAudit = () =>
+  env.CONSOLE_TEST_DB.prepare("SELECT org_id, actor_email, target, details_json FROM audit_log WHERE action = 'users.find' ORDER BY seq").all<Record<string, unknown>>().then((r) => r.results);
+
 describe('POST /api/users/find (the wallet directory)', () => {
-  it('by Support ID, User ID or internal id: the users with their identities, no address', async () => {
+  it('by Support ID, User ID or internal id: the users with their identities, no address; each find audited first, org-less, with the ticket (D410)', async () => {
     const app = await seedHotApp();
     const w = await seedWalletUser(app.scope, [{ provider: 'google', sub: '7300' }]);
+    const before = (await findAudit()).length;
     // (A wallet address search is the API's, tested there with real StrKey and EIP-55 addresses.)
     for (const query of [w.supportId, w.supportId.toLowerCase(), w.userId, w.internalId]) {
-      const r = await json<{ users: { userId: string; identities: { sub: string; directoryKey: unknown }[] }[] }>(await adminRequest('/api/users/find', { body: { query } }));
+      const r = await json<{ users: { userId: string; identities: { sub: string; directoryKey: unknown }[] }[] }>(await adminRequest('/api/users/find', { body: { query, ticket: 'ZD-73' } }));
       expect(r.users.map((u) => u.userId), query).toEqual([w.userId]);
       expect(r.users[0]!.identities[0]).toMatchObject({ sub: '7300', directoryKey: { provider: 'google', sub: '7300' } });
       expect(JSON.stringify(r)).not.toMatch(/email/u);
     }
     expect(await issuerAudit()).toEqual([]);
+    const rows = (await findAudit()).slice(before);
+    expect(rows.map((r) => [r.org_id, r.actor_email, r.target, JSON.parse(String(r.details_json))])).toEqual([
+      [null, STAFF_EMAIL, w.supportId, { by: 'supportId', ticket: 'ZD-73' }],
+      [null, STAFF_EMAIL, w.supportId, { by: 'supportId', ticket: 'ZD-73' }],
+      [null, STAFF_EMAIL, w.userId, { by: 'userId', ticket: 'ZD-73' }],
+      [null, STAFF_EMAIL, w.internalId, { by: 'internalId', ticket: 'ZD-73' }],
+    ]);
+    // No row names the identity's sub.
+    expect(JSON.stringify(rows)).not.toContain('7300');
+  });
+
+  it('refuses without a ticket, and a sub (the directory search’s, ticketed there), before any audit or read', async () => {
+    const app = await seedHotApp();
+    const w = await seedWalletUser(app.scope, [{ provider: 'google', sub: '7400' }]);
+    const before = (await findAudit()).length;
+    for (const body of [{ query: w.userId }, { query: w.userId, ticket: '' }, { query: w.userId, ticket: 'a@b.example' }, { query: '7400', ticket: 'T-1' }, { query: 'two words', ticket: 'T-1' }, { ticket: 'T-1' }]) {
+      const r = await adminRequest('/api/users/find', { body });
+      expect(r.status, JSON.stringify(body)).toBe(400);
+      expect(JSON.stringify(await json(r))).not.toContain(w.internalId);
+    }
+    expect((await findAudit()).length).toBe(before);
+  });
+
+  it('reads nothing when the audit row can’t be written', async () => {
+    const app = await seedHotApp();
+    const w = await seedWalletUser(app.scope, [{ provider: 'google', sub: '7500' }]);
+    let apiCalls = 0;
+    const api = overrideBinding(env.API, { findUsers: async () => (apiCalls++, { ok: true, users: [] }) });
+    const down = await requestWith(envWith({ API: api, CONSOLE: downBinding() }), '/api/users/find', { query: w.userId, ticket: 'T-1' });
+    expect(down.status).toBe(503);
+    const refusing = await requestWith(envWith({ API: api, CONSOLE: overrideBinding(env.CONSOLE, { recordStaffAction: async () => ({ ok: false, code: 'internal' }) }) }), '/api/users/find', { query: w.userId, ticket: 'T-1' });
+    expect(refusing.status).toBe(500);
+    expect(apiCalls).toBe(0);
   });
 });
 
 describe('GET /api/audit: the issuer’s rows as a third source', () => {
   it('lists the directory reads newest first, by staff and action; a failure there leaves the page up', async () => {
     await seedDirectory({ provider: 'email', sub: 'e1.a1', email: 'a1@example.com' });
-    await adminRequest('/api/users/search', { body: { q: 'a1@example.com' } });
+    await adminRequest('/api/users/search', { body: { q: 'a1@example.com', ticket: 'T-6' } });
     await adminRequest('/api/users/get', { body: { provider: 'email', sub: 'e1.a1', ticket: 'T-7' } });
     const r = await json<{ directory: { rows: { action: string; staff: string; ticket: string | null }[] } }>(await adminRequest('/api/audit'));
     expect(r.directory.rows.map((x) => x.action)).toEqual(['user_view', 'user_search']);

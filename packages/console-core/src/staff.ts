@@ -3,7 +3,7 @@
 // console validates every call with them before it reads anything, and the admin Worker (batch C8) builds its calls
 // from the same types. Strict like rpc.ts: an unknown field is `bad_request`.
 import { z } from 'zod';
-import { ACTOR_KINDS, ORG_KINDS, ctx, inviteView, ownerGrantView, role } from './types.ts';
+import { ACTOR_KINDS, ORG_KINDS, ctx, inviteView, ownerGrantView, requestId, role } from './types.ts';
 import { orgIdInput } from './rpc.ts';
 
 export const userIdInput = z.string().regex(/^usr_[A-Za-z0-9]{1,64}$/u);
@@ -86,18 +86,32 @@ export const queryAuditInput = ctx.extend({ filters: auditFilters, cursor: z.str
  * issued, a ledger export, a rate override, and (batch C15, D396) a Support ID lookup, recorded before its data is read
  * (org-less, so no partner's audit view or feed ever shows it). `recordStaffAction` appends their `audit_log` row (Hana
  * actor), so the audit view shows them beside every other staff act. Details are ids, months, hashes and counts; a
- * lookup's are the query's kind, the ticket, the request-ID count and the window, and its target is the query as given
- * (a Support ID, User ID or internal id: never an address or a sub).
+ * lookup's are the query's kind, the ticket, the request-ID count, the request IDs themselves (`requestIdList`, at most
+ * SUPPORT_REQUEST_IDS_MAX in the request-ID form: the only list a detail may hold, D410) and the window, and its target
+ * is the query as given (a Support ID, User ID or internal id: never an address or a sub). A `users.find` (the Users
+ * screen's wallet-directory find, D410) is org-less too: the query's kind and the ticket, the target the id or wallet
+ * address looked up (never a sub).
  */
-export const STAFF_ACTIONS = ['statement.issued', 'ledger.exported', 'rate.overridden', 'support.lookup'] as const;
+export const STAFF_ACTIONS = ['statement.issued', 'ledger.exported', 'rate.overridden', 'support.lookup', 'users.find'] as const;
+/** Staff actions about an end user, not an org's act: recorded without an org, so no partner's view or feed shows them. */
+export const ORGLESS_STAFF_ACTIONS: ReadonlySet<string> = new Set(['support.lookup', 'users.find']);
+/** The one detail that is a list: a lookup's request IDs (at most 20, each in the request-ID form). */
+export const STAFF_DETAIL_LIST_MAX = 20;
+const isListDetail = (action: string, key: string) => action === 'support.lookup' && key === 'requestIdList';
 export const recordStaffActionInput = ctx
   .extend({
     orgId: orgIdInput.optional(),
     action: z.enum(STAFF_ACTIONS),
     target: z.string().min(1).max(128).optional(),
-    details: z.record(z.string().max(32), z.union([z.string().max(128), z.number(), z.boolean(), z.null()])).refine((d) => Object.keys(d).length <= 16, 'At most 16 details'),
+    details: z
+      .record(z.string().max(32), z.union([z.string().max(128), z.number(), z.boolean(), z.null(), z.array(requestId).max(STAFF_DETAIL_LIST_MAX)]))
+      .refine((d) => Object.keys(d).length <= 16, 'At most 16 details'),
   })
-  .strict();
+  .strict()
+  .refine((v) => Object.entries(v.details).every(([k, x]) => Array.isArray(x) === isListDetail(v.action, k)), {
+    message: 'Only support.lookup’s requestIdList is a list (of request IDs), and it is always one',
+    path: ['details'],
+  });
 export type RecordStaffActionInput = z.infer<typeof recordStaffActionInput>;
 
 // The console's emailed-link confirms (no session; the token is the proof; CSRF rules apply).

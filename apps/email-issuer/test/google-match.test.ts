@@ -92,7 +92,7 @@ describe('Google checks', () => {
     expect((await match(h, shared, gAccount('s@gmail.com'), { aud: SHARED_CLIENT })).res.status).toBe(200);
     const own = await seedApp(h);
     expect((await match(h, own, gAccount('s@gmail.com'), { aud: SHARED_CLIENT })).body.code).toBe('google_token_invalid');
-    await env.APP_DB.prepare('UPDATE apps SET google_web_client_id = ?1 WHERE id = ?2').bind('web.apps.googleusercontent.com', own.id).run();
+    await env.API_TEST_DB.prepare('UPDATE apps SET google_web_client_id = ?1 WHERE id = ?2').bind('web.apps.googleusercontent.com', own.id).run();
     h.chain.addScope(own.scope, { google: [GOOGLE_CLIENT, 'web.apps.googleusercontent.com'] });
     expect((await match(h, own, gAccount('s@gmail.com'))).body.code).toBe('google_token_invalid');
     expect((await match(h, own, gAccount('s@gmail.com'), { aud: 'web.apps.googleusercontent.com' })).res.status).toBe(200);

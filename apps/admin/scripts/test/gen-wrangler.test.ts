@@ -205,7 +205,7 @@ describe('across Workers (config snapshots)', () => {
     ['vault page', pagesWranglerConfig(m, 'vault', '2026-10-01') as Config],
     ['auth page', pagesWranglerConfig(m, 'auth', '2026-10-01') as Config],
     ['watchdog', watchdogConfig(m, LOCAL_D1_ID) as Config],
-    ['email issuer', issuerConfig({ ...m, name: 'local-test' }, LOCAL_D1_ID, LOCAL_D1_ID) as Config],
+    ['email issuer', issuerConfig({ ...m, name: 'local-test' }, LOCAL_D1_ID) as Config],
     ['console', consoleConfig(m, LOCAL_D1_ID) as Config],
     ['admin', wranglerConfig(m, { adminHyperdriveId: TEST_ADMIN_HYPERDRIVE_ID }) as Config],
   ];
@@ -240,6 +240,15 @@ describe('across Workers (config snapshots)', () => {
     expect(by('ConsoleRpc')).toEqual(['console']);
     // Nobody binds the admin Worker: nothing calls into it.
     expect(configs.filter(([, c]) => (c.services ?? []).some((s) => s.service === m.admin!.workerName)).map(([n]) => n)).toEqual([]);
+  });
+
+  it('only the email issuer binds IssuerRpc; it binds the API at that entrypoint only, and no Worker but the API binds the API’s D1 (D432)', () => {
+    const by = (entrypoint: string) => configs.filter(([, c]) => (c.services ?? []).some((s) => s.entrypoint === entrypoint)).map(([n]) => n);
+    expect(by('IssuerRpc')).toEqual(['email issuer']);
+    const issuer = configs.find(([n]) => n === 'email issuer')![1];
+    expect((issuer.services ?? []).filter((s) => s.service === m.cloudflare.workerName)).toEqual([{ binding: 'API', service: m.cloudflare.workerName, entrypoint: 'IssuerRpc' }]);
+    const apiD1 = configs.filter(([, c]) => (c.d1_databases ?? []).some((d) => d.database_name === m.cloudflare.d1Name)).map(([n]) => n);
+    expect(apiD1).toEqual(['api']);
   });
 
   it('only the admin binds DirectoryRpc or the issuer at all; only the issuer binds its own D1 (partners never see it)', () => {

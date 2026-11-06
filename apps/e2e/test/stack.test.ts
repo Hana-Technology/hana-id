@@ -31,6 +31,7 @@ import { MockApi } from '../src/server/api.ts';
 import { type ApiModules, loadApiModules } from '../src/server/api-modules.ts';
 import { Chain, mpcAnswer } from '../src/server/chain.ts';
 import { D1Shim } from '../src/server/d1.ts';
+import { LocalIssuer, newIssuerKey } from '../src/server/issuer.ts';
 import { serve, servedAt } from '../src/server/http.ts';
 import { MemoryNamespace, type MemoryStorage } from '../src/server/workers.ts';
 import {
@@ -40,6 +41,7 @@ import {
   DEMO_ORIGIN,
   E2E_ENV,
   GOOGLE_CLIENT_ID,
+  ISSUER_URL,
   LIVE_API_URL,
   LIVE_AUTH_ORIGIN,
   LIVE_ENV,
@@ -518,5 +520,27 @@ describe('in-memory Durable Objects', () => {
     expect(a.alarms).toBe(1);
     await a.state.storage.deleteAll();
     expect(a.state.storage.kv.get('k')).toBeUndefined();
+  });
+});
+
+describe('the email issuer: apps/email-issuer’s Worker, its app lookups through the API’s IssuerRpc (D432)', () => {
+  it('finds the stack’s apps on the API’s D1: an unknown key is invalid_key, a suspended app app_suspended', async () => {
+    const d1 = new D1Shim();
+    const api = new MockApi(d1, new Chain(), modules);
+    const issuer = await LocalIssuer.start(d1, newIssuerKey());
+    const start = async (pk: string) => {
+      const res = await issuer.handler()(
+        new Request(`${ISSUER_URL}/v1/email/start`, {
+          method: 'POST',
+          headers: { origin: AUTH_ORIGIN, 'content-type': 'application/json' },
+          body: JSON.stringify({ pk, email: 'stack@example.com', purpose: 'session', commitment: {} }),
+        }),
+        new AbortController().signal,
+      );
+      return [res.status, ((await res.json()) as { code?: string }).code];
+    };
+    expect(await start('pk_test_1111111111111111111111111111111z')).toEqual([401, 'invalid_key']);
+    const suspended = api.createApp({ origins: [PARTNER_ORIGIN], status: 'suspended', loginMethods: 'google,email' });
+    expect(await start(suspended.pk)).toEqual([403, 'app_suspended']);
   });
 });

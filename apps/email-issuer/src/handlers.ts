@@ -8,7 +8,7 @@
 import { base64UrlDecode, base64UrlEncode, sha256, toHex, utf8 } from './bytes.ts';
 import { BUILD_ID_RE } from '@hana-id/env/build-id';
 import { emailSub, isDisposableDomain, isGoogleHosted, normalizeEmail } from '@hana-id/email';
-import { type IssuerApp, appById, appByKey, isPublishableKey, scopeHasEmailApp } from './apps.ts';
+import { ApiUnavailable, type IssuerApp, appById, appByKey, isPublishableKey, scopeHasEmailApp } from './apps.ts';
 import type { ChallengeRecord, TicketRecord } from './challenge.ts';
 import { type ChallengeId, decryptEmail, encryptEmail, newChallengeId, parseChallengeId } from './challenge-id.ts';
 import { ChainUnavailable } from './chain.ts';
@@ -129,7 +129,7 @@ const tryLater = (ctx: Ctx, why: string): Response => {
  */
 async function emailApp(ctx: Ctx, pk: unknown): Promise<{ ok: true; app: IssuerApp } | { ok: false; response: Response }> {
   if (!isPublishableKey(pk)) return { ok: false, response: fail(ctx, 401, 'invalid_key', 'Unknown publishable key') };
-  const app = await appByKey(ctx.deps.env.APP_DB, pk, ctx.deps.now());
+  const app = await appByKey(ctx.deps.env.API, pk);
   if (!app) return { ok: false, response: fail(ctx, 401, 'invalid_key', 'Unknown publishable key') };
   if (!app.active) return { ok: false, response: fail(ctx, 403, 'app_suspended', 'The app is suspended') };
   if (!app.emailOn) return { ok: false, response: fail(ctx, 403, 'email_not_enabled', 'Email login is not enabled for this app') };
@@ -513,7 +513,7 @@ export async function handleVerify(request: Request, ctx: Ctx): Promise<Response
   const rec = v.record;
   // A verified login at a capped domain gives its mails' places back and raises the domain's cap (abuse review M1).
   if (rec.domainKey) await limiter(deps, `dom:${rec.domainKey}`).domainVerified(rec.domainRes, rec.mailboxKey, now);
-  const app = await appById(deps.env.APP_DB, rec.appId);
+  const app = await appById(deps.env.API, rec.appId);
   if (!app?.active || !app.emailOn || app.scopeId !== rec.scopeId) return fail(ctx, 403, 'email_not_enabled', 'Email login is not enabled for this app');
   const email = await decryptEmail(cid, rec.emailEnc);
   if (email === null) return gone();
@@ -787,7 +787,7 @@ const sessionNonceOf = (deps: Deps, c: SessionCommitment): string => nonceOf(ses
 /** google-record's gate: any active app (email login need not be on: D270 asks every Google login for the email). */
 async function activeApp(ctx: Ctx, pk: unknown): Promise<{ ok: true; app: IssuerApp } | { ok: false; response: Response }> {
   if (!isPublishableKey(pk)) return { ok: false, response: fail(ctx, 401, 'invalid_key', 'Unknown publishable key') };
-  const app = await appByKey(ctx.deps.env.APP_DB, pk, ctx.deps.now());
+  const app = await appByKey(ctx.deps.env.API, pk);
   if (!app) return { ok: false, response: fail(ctx, 401, 'invalid_key', 'Unknown publishable key') };
   if (!app.active) return { ok: false, response: fail(ctx, 403, 'app_suspended', 'The app is suspended') };
   return { ok: true, app };
@@ -857,7 +857,7 @@ export async function handleClientProof(request: Request, ctx: Ctx): Promise<Res
   const scope = await deps.chain.scope(scopeId, true);
   if (!scope) return fail(ctx, 404, 'unknown_scope', 'The scope is not registered on chain');
   if (scope.actionNonce !== actionNonce) return fail(ctx, 409, 'stale_action_nonce', 'actionNonce is not the scope’s current action_nonce', { actionNonce: scope.actionNonce });
-  if (!(await scopeHasEmailApp(deps.env.APP_DB, scopeId))) return fail(ctx, 409, 'email_not_enabled', 'No active app of this scope has email on');
+  if (!(await scopeHasEmailApp(deps.env.API, scopeId))) return fail(ctx, 409, 'email_not_enabled', 'No active app of this scope has email on');
   const jti = randomId(16);
   await audit(deps, { staff: gate.staff, action: 'client_proof', ticket, scopeId, actionNonce: actionNonce as number, jti });
   const { token } = await mint(ctx, null, scopeId, CLIENT_PROOF_SUB, clientProofNonce(deps.env.SIGNER_ACCOUNT, scopeId, actionNonce as number), 'client_proof', jti);
@@ -1107,6 +1107,7 @@ export async function route(request: Request, deps: Deps): Promise<Response> {
     if (err instanceof KeysUnavailable) return failSafe(base, 503, 'issuer_unavailable', 'The email issuer is not configured', 'keys');
     if (err instanceof ChainUnavailable) return failSafe(base, 502, 'near_unavailable', 'Could not read the chain, try again', 'chain');
     if (err instanceof GoogleUnavailable) return failSafe(base, 502, 'google_unavailable', 'Could not reach Google, try again', 'google');
+    if (err instanceof ApiUnavailable) return failSafe(base, 503, 'api_unavailable', 'Could not read the app, try again', err.reason);
     return failSafe(base, 500, 'internal', 'Internal error', 'internal');
   }
 }

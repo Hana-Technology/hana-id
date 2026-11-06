@@ -1,6 +1,7 @@
 // The email issuer of the local stack (build plan batch 8a): apps/email-issuer's own Worker, run in Node like the API
 // (api-modules.ts), on its own origin (ISSUER_URL, as on sandbox-dev, D230), with its real handlers, Durable Objects
-// (Challenge, RateLimiter, Outbox on in-memory storage), its D1 migrations (node:sqlite) and the API's D1 as APP_DB.
+// (Challenge, RateLimiter, Outbox on in-memory storage), its D1 migrations (node:sqlite), and as its `API` binding the
+// API's real read-only IssuerRpc entrypoint (apps/api/src/rpc/issuer.ts, D432) on the stack's API D1.
 // Mail goes to the `outbox` stub (`EMAIL_SENDER=outbox`, a `local*` env: the manifest and gen refuse it anywhere
 // else); the tests read it through `GET /__e2e/outbox` (no CORS, refused with an Origin, so no page can read a code).
 //
@@ -20,6 +21,8 @@ import { type Handler, json } from './http.ts';
 import { ExecContext, MemoryNamespace, registerCloudflareModule } from './workers.ts';
 
 const ISSUER_SRC = new URL('../../../email-issuer/src/', import.meta.url);
+/** apps/api's IssuerRpc, loaded at runtime like api-modules.ts (so this package's typecheck doesn't pull the Worker in). */
+const ISSUER_RPC = new URL('../../../api/src/rpc/issuer.ts', import.meta.url);
 const ISSUER_MIGRATIONS = fileURLToPath(new URL('../../../email-issuer/migrations/', import.meta.url));
 
 interface IssuerModules {
@@ -28,6 +31,9 @@ interface IssuerModules {
   RateLimiter: new (state: unknown, env: unknown) => object;
   Outbox: new (state: unknown, env: unknown) => { list(): OutboxMessage[]; clear(): Promise<void> };
 }
+
+/** apps/api/src/rpc/issuer.ts: the entrypoint class (constructed with a context and the API's env, as workerd does). */
+type IssuerRpcClass = new (ctx: unknown, env: { DB: D1Shim }) => object;
 
 /** What the outbox stub keeps per mail (apps/email-issuer src/sender.ts MailMessage, plus its time). */
 export interface OutboxMessage {
@@ -69,12 +75,12 @@ export class LocalIssuer {
 
   private constructor(
     private readonly modules: IssuerModules,
-    appDb: D1Shim,
+    api: object,
     key: ReturnType<typeof newIssuerKey>,
   ) {
     const env: Record<string, unknown> = {
       DB: new D1Shim(ISSUER_MIGRATIONS),
-      APP_DB: appDb,
+      API: api,
       ENV_NAME,
       NEAR_RPC,
       SIGNER_ACCOUNT: E2E_ENV.signer,
@@ -102,7 +108,8 @@ export class LocalIssuer {
   static async start(appDb: D1Shim, key: ReturnType<typeof newIssuerKey>): Promise<LocalIssuer> {
     registerCloudflareModule();
     const modules = (await import(new URL('index.ts', ISSUER_SRC).href)) as IssuerModules;
-    return new LocalIssuer(modules, appDb, key);
+    const { IssuerRpc } = (await import(ISSUER_RPC.href)) as { IssuerRpc: IssuerRpcClass };
+    return new LocalIssuer(modules, new IssuerRpc(new ExecContext(), { DB: appDb }), key);
   }
 
   /** Every mail the outbox holds, oldest first. */

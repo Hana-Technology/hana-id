@@ -234,51 +234,35 @@ describe('purpose-bound nonces and the app gate', () => {
     expect(h.sender.sent).toHaveLength(0);
   });
 
-  it('before the API’s login_methods migration, no app has email on', async () => {
-    const { appByKey } = await import('../src/apps.ts');
-    await env.APP_DB_OLD.prepare("INSERT OR IGNORE INTO scopes (scope_id, org_id, environment, created_at, assigned_at) VALUES ('s9', 'org_legacy', 'test', 0, 0)").run();
-    await env.APP_DB_OLD.prepare("INSERT INTO apps (id, name, scope_id, publishable_key) VALUES ('old1', 'Old', 's9', 'pk_test_1111111111111111111111111111111a')").run();
-    await env.APP_DB_OLD.prepare("INSERT INTO app_keys (id, app_id, key, created_by, created_at) VALUES ('key_old1', 'old1', 'pk_test_1111111111111111111111111111111a', 'test', 0)").run();
-    const app = await appByKey(env.APP_DB_OLD, 'pk_test_1111111111111111111111111111111a');
-    expect(app).toMatchObject({ id: 'old1', emailOn: false, active: true });
-  });
-
-  it('finds apps by the gate’s model: app_keys (revoked, or in its grace), deleted_at, suspended_by; never the legacy column', async () => {
-    const { appByKey, appById, scopeHasEmailApp } = await import('../src/apps.ts');
+  it('finds apps through the API’s IssuerRpc, by the gate’s model: a suspension bit, a revoked key, a deleted app (D432)', async () => {
+    // The lookups' own rules (key grace, the legacy column, scope_conflict, before migration 0010) are the API's tests
+    // (apps/api/test/rpc-issuer.test.ts); here each answer crosses the real service binding into the handlers.
     const h = await harness();
     const app = await seedApp(h);
-    const now = Date.now();
-    expect(await appByKey(env.APP_DB, app.pk, now)).toMatchObject({ id: app.id, active: true, emailOn: true });
-    // A rotated key: the new one works, the old one through its grace only.
-    const next = 'pk_test_2222222222222222222222222222222b';
-    await env.APP_DB.prepare("INSERT INTO app_keys (id, app_id, key, created_by, created_at) VALUES (?1, ?2, ?3, 'test', 0)").bind(`key2_${app.id}`, app.id, next).run();
-    await env.APP_DB.prepare('UPDATE app_keys SET revoked_at = ?2 WHERE key = ?1').bind(app.pk, now + 60_000).run();
-    expect((await appByKey(env.APP_DB, next, now))?.id).toBe(app.id);
-    expect((await appByKey(env.APP_DB, app.pk, now))?.id).toBe(app.id);
-    expect(await appByKey(env.APP_DB, app.pk, now + 60_000)).toBeNull();
-    // The legacy column is never read: a key only it holds finds nothing.
-    await env.APP_DB.prepare('UPDATE app_keys SET key = ?2 WHERE key = ?1').bind(next, 'pk_test_3333333333333333333333333333333c').run();
-    expect(await appByKey(env.APP_DB, next, now)).toBeNull();
-    // A key whose prefix names the other environment than its scope: inactive, as the gate's scope_conflict (review L6).
-    const live = 'pk_live_4444444444444444444444444444444d';
-    await env.APP_DB.prepare("INSERT INTO app_keys (id, app_id, key, created_by, created_at) VALUES (?1, ?2, ?3, 'test', 0)").bind(`key3_${app.id}`, app.id, live).run().catch(() => undefined);
-    const conflict = await appByKey(env.APP_DB, live, now);
-    expect(conflict === null || conflict.active === false).toBe(true);
-    // Nor does batch C5's tombstone in the legacy column (D225): it is in no app_keys row.
-    const tombstone = 'pk_test_0revoked1111111111111111';
-    await env.APP_DB.prepare('UPDATE apps SET publishable_key = ?2 WHERE id = ?1').bind(app.id, tombstone).run();
-    expect(await appByKey(env.APP_DB, tombstone, now)).toBeNull();
-    // Any suspension bit makes it inactive (start then answers app_suspended); a deleted app is unknown everywhere.
-    await env.APP_DB.prepare('UPDATE apps SET suspended_by = 4 WHERE id = ?1').bind(app.id).run();
-    expect(await appByKey(env.APP_DB, 'pk_test_3333333333333333333333333333333c', now)).toMatchObject({ active: false });
-    expect(await appById(env.APP_DB, app.id)).toMatchObject({ active: false });
-    expect(await scopeHasEmailApp(env.APP_DB, app.scope)).toBe(false);
-    await env.APP_DB.prepare('UPDATE apps SET suspended_by = 0 WHERE id = ?1').bind(app.id).run();
-    expect(await scopeHasEmailApp(env.APP_DB, app.scope)).toBe(true);
-    await env.APP_DB.prepare('UPDATE apps SET deleted_at = ?2 WHERE id = ?1').bind(app.id, now).run();
-    expect(await appByKey(env.APP_DB, 'pk_test_3333333333333333333333333333333c', now)).toBeNull();
-    expect(await appById(env.APP_DB, app.id)).toBeNull();
-    expect(await scopeHasEmailApp(env.APP_DB, app.scope)).toBe(false);
+    const body = (a = app) => ({ pk: a.pk, email: 'gate@example.com', purpose: 'session', commitment: sessionCommitment(a.scope, h.clock.now).json });
+    const code = async (b: Record<string, unknown>) => ((await (await start(h, b)).json()) as { code?: string }).code;
+    expect((await start(h, body())).status).toBe(202);
+    await env.API_TEST_DB.prepare('UPDATE apps SET suspended_by = 4 WHERE id = ?1').bind(app.id).run();
+    expect(await code(body())).toBe('app_suspended');
+    await env.API_TEST_DB.prepare('UPDATE apps SET suspended_by = 0 WHERE id = ?1').bind(app.id).run();
+    await env.API_TEST_DB.prepare('UPDATE app_keys SET revoked_at = ?2 WHERE key = ?1').bind(app.pk, Date.now() - 1).run();
+    expect(await code(body())).toBe('invalid_key');
+    const other = await seedApp(h);
+    await env.API_TEST_DB.prepare('UPDATE apps SET deleted_at = ?2 WHERE id = ?1').bind(other.id, Date.now()).run();
+    expect(await code(body(other))).toBe('invalid_key');
+  });
+
+  it('an API that can’t answer fails the request closed: 503 api_unavailable, no mail, nothing minted (D432)', async () => {
+    const refuse = async () => ({ ok: false as const, code: 'internal' as const });
+    for (const API of [undefined, { appByKey: refuse, appById: refuse, scopeHasEmailApp: refuse }, { appByKey: () => Promise.reject(new Error('no such entrypoint')), appById: refuse, scopeHasEmailApp: refuse }]) {
+      const h = await harness({ env: { ...env, ENV_NAME: `t-${crypto.randomUUID().slice(0, 8)}`, API } });
+      const app = await seedApp(h);
+      const r = await start(h, { pk: app.pk, email: 'down@example.com', purpose: 'session', commitment: sessionCommitment(app.scope, h.clock.now).json });
+      expect(r.status).toBe(503);
+      expect(((await r.json()) as { code: string }).code).toBe('api_unavailable');
+      expect(h.sender.sent).toHaveLength(0);
+    }
+    expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM email_issuance').first('n')).toBe(0);
   });
 
   it('invalid and disposable addresses', async () => {
@@ -298,7 +282,7 @@ describe('purpose-bound nonces and the app gate', () => {
     const app = await seedApp(h);
     const s = await start(h, { pk: app.pk, email: 'z@example.com', purpose: 'session', commitment: sessionCommitment(app.scope, h.clock.now).json });
     const { challengeId } = (await s.json()) as { challengeId: string };
-    await env.APP_DB.prepare("UPDATE apps SET status = 'suspended' WHERE id = ?1").bind(app.id).run();
+    await env.API_TEST_DB.prepare("UPDATE apps SET status = 'suspended' WHERE id = ?1").bind(app.id).run();
     const v = await h.call('/v1/email/verify', { challengeId, code: h.sender.codeFor('z@example.com') });
     expect(v.status).toBe(403);
     expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM email_issuance').first('n')).toBe(0);

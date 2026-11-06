@@ -30,12 +30,14 @@ import {
 import { type DecodedApproval, decodeApprovalRequest } from '@hana-id/core/decode';
 import { type AutoApprovePolicyV1, type AutoApproveReason, policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import type { HanaEnv } from '../hana-env.ts';
-import { ApproveGuard, type Coords, type GuardInput } from './approve-guard.ts';
+import { ApproveGuard, type GuardInput, guardInputOf } from './approve-guard.ts';
 import { type Dom, dom, errorView } from './dom.ts';
 import { appLogo } from './logo.ts';
 import { type GestureCheck, type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed, isUserGesture } from './page-window.ts';
 import { renderApproval } from './render-approval.ts';
 import { renderConsent } from './render-consent.ts';
+import { type BalanceFetch, readDemoBalance } from './demo-balance.ts';
+import { type DemoNetwork, MAINNET_DEMO, assessMainnetDemo, demoNetworkOf, formatUsd } from '@hana-id/core/mainnet-demo';
 
 /** How long the popup waits for a follow-up request after an answer before it closes. */
 export const KEEP_OPEN_MS = 15_000;
@@ -93,6 +95,11 @@ export const AUTO_APPROVE_REASON_TEXT: Readonly<Record<AutoApproveReason, string
  */
 /** Beside the Support ID on the request screen (batch C15). */
 export const SUPPORT_ID_HINT = 'Give this code to the app’s support if they ask; it doesn’t show your account or email.';
+/** The mainnet demo's banner headline (D428): every approval of a request for Base or Stellar's public network. */
+export const MAINNET_DEMO_BANNER = 'Real funds, test custody: these funds may be lost';
+/** Under the headline: why (the keys come from the testnet MPC). */
+export const MAINNET_DEMO_WHY = 'This test app signs on a real network with keys from Hana’s test infrastructure, which can be reset or broken. Use small amounts only.';
+
 export const TEST_APP_NOTE = 'Test app: Hana ID signs only for test networks here. Requests for Stellar or EVM mainnets are refused, so don’t keep real funds at this account.';
 
 /** The text for a reason code (an unknown code, from a newer vault, is shown generically). */
@@ -106,6 +113,8 @@ export interface ApprovePageDeps {
   now?: () => number;
   /** Whether a click is a real user gesture (event.isTrusted; tests inject one). */
   isGesture?: GestureCheck;
+  /** The mainnet demo's balance reads (default: the browser's fetch); only Hana's pinned public endpoints. */
+  fetch?: BalanceFetch;
 }
 
 type Current =
@@ -124,6 +133,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   const { win, env } = deps;
   const now = deps.now ?? (() => Date.now());
   const isGesture = deps.isGesture ?? isUserGesture;
+  const balanceFetch: BalanceFetch = deps.fetch ?? ((url, init) => fetch(url, init));
   const d: Dom = dom(win.document);
   const opener = win.opener;
   const opened = approveOpenerMode(win.location.search);
@@ -160,7 +170,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   };
 
   const onGesture = (type: GuardInput['type']) => (e: Event) => {
-    if (isGesture(e)) guard.gesture(guardInput(type, e));
+    if (isGesture(e)) guard.gesture(guardInputOf(type, e));
   };
   const listeners: [string, (e: Event) => void][] = [
     ['message', onMessage],
@@ -257,6 +267,40 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     return box;
   }
 
+  /**
+   * The mainnet demo's red banner (D428): the request's value, from this popup's own decoding (never a number the vault
+   * sends), Hana's per-transaction limit, and the wallet's balance once read. A warning, never a block: the vault has
+   * already refused anything over the limit.
+   */
+  function demoBanner(input: ApprovalDigestInput, network: DemoNetwork, id: string): HTMLElement {
+    const cap = formatUsd(MAINNET_DEMO.txCapUsdMicros);
+    const assessed = assessMainnetDemo(input, now());
+    const value = assessed.ok
+      ? `This request can move about ${formatUsd(assessed.usdMicros)}, fee included. Hana’s limit is ${cap} per transaction.`
+      : `Hana’s limit is ${cap} per transaction.`;
+    const balance = d.h('p', { class: 'muted demo-balance', attrs: { role: 'status' } }, 'Reading this wallet’s balance…');
+    void readDemoBalance(network, input.address, balanceFetch).then((b) => {
+      if (current?.kind !== 'request' || current.msg.id !== id) return;
+      if (b.kind === 'unknown') {
+        balance.textContent = 'Balance unknown.';
+        return;
+      }
+      const held = formatUsd(b.usdMicros);
+      if (b.usdMicros > MAINNET_DEMO.balanceWarnUsdMicros) {
+        balance.className = 'danger demo-balance';
+        balance.textContent = `This wallet holds about ${held}: keep test funds under ${formatUsd(MAINNET_DEMO.balanceWarnUsdMicros)} — move the rest out.`;
+      } else balance.textContent = `This wallet holds about ${held}.`;
+    });
+    return d.h(
+      'div',
+      { class: 'mainnet-demo', attrs: { role: 'alert' } },
+      d.h('p', { class: 'danger takeover' }, MAINNET_DEMO_BANNER),
+      d.h('p', { class: 'danger' }, value),
+      d.h('p', { class: 'muted' }, MAINNET_DEMO_WHY),
+      balance,
+    );
+  }
+
   /** A new request replaces the one on screen: the unanswered one is rejected first. */
   function replaceCurrent(id: string): void {
     if (current && current.msg.id !== id) post(result(current, false));
@@ -285,6 +329,8 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     current = { kind: 'request', msg, input, decodable: decoded !== null };
     state = 'request';
     const auto = msg.autoApprove;
+    // A test app's request the popup itself reads as for a demo mainnet (the vault signs those only under the demo).
+    const demo = msg.testApp && decoded ? demoNetworkOf(decoded) : null;
     d.show(
       d.h(
         'section',
@@ -292,7 +338,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         header(msg, `Request ${msg.position} of ${msg.queued}`),
         d.h('p', { class: 'account' }, `Your ${msg.chain === 'stellar' ? 'Stellar' : 'EVM'} account `, d.h('code', { class: 'mono' }, msg.address)),
         msg.supportId ? supportIdLine(msg.supportId) : null,
-        msg.testApp ? d.h('p', { class: 'note test-app' }, TEST_APP_NOTE) : null,
+        demo ? demoBanner(input, demo, msg.id) : msg.testApp ? d.h('p', { class: 'note test-app' }, TEST_APP_NOTE) : null,
         auto?.reason ? d.h('p', { class: 'note' }, `Not signed automatically under “${auto.label}”: ${autoApproveReasonText(auto.reason)}.`) : null,
         decoded
           ? renderApproval(d, decoded, msg.appName)
@@ -398,32 +444,4 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     guard,
     stop,
   };
-}
-
-/** The client coordinates of a pointer event (each only when it is a number). */
-function position(o: Partial<PointerEvent>): Coords {
-  const out: Coords = {};
-  for (const k of ['clientX', 'clientY'] as const) if (typeof o[k] === 'number') out[k] = o[k];
-  return out;
-}
-
-/** The fields of a pointer or keyboard event the guard reads (approve-guard.ts). */
-function guardInput(type: GuardInput['type'], e: Event): GuardInput {
-  const o = e as Partial<PointerEvent & KeyboardEvent>;
-  const num = (v: unknown) => (typeof v === 'number' ? v : undefined);
-  const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
-  const pointerType = str(o.pointerType);
-  switch (type) {
-    case 'pointermove': {
-      const movementX = num(o.movementX);
-      const movementY = num(o.movementY);
-      return { type, ...(pointerType !== undefined ? { pointerType } : {}), ...(movementX !== undefined ? { movementX } : {}), ...(movementY !== undefined ? { movementY } : {}), ...position(o) };
-    }
-    case 'pointerdown':
-      return { type, ...(pointerType !== undefined ? { pointerType } : {}), ...position(o) };
-    case 'keydown': {
-      const key = str(o.key);
-      return { type, ...(key !== undefined ? { key } : {}), repeat: o.repeat === true };
-    }
-  }
 }

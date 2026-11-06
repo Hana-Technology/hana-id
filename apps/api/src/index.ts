@@ -5,6 +5,7 @@ import { GOVERNANCE_ENDPOINT, handleGovernance } from './governance-status.ts';
 import { json } from './http.ts';
 import { detectDrift } from './changes/drift.ts';
 import { WALLET_RECORD_ENDPOINT, handleWalletRecord } from './directory/record.ts';
+import { MAINNET_DEMO_EVENTS_ENDPOINT, handleMainnetDemoEvent } from './mainnet-demo.ts';
 import { guardedChangesMaintenance } from './guarded/cron.ts';
 import { syncIssuerKeys } from './issuer-keys.ts';
 import { identityMaintenance } from './identity/maintenance.ts';
@@ -137,6 +138,12 @@ export default {
         // Vault only, like /v1/vault/* (the wallet directory, D310).
         if (request.method === 'OPTIONS') return vaultPreflight(request, env);
         if (request.method === 'POST') return await handleWalletRecord(request, env, requestId);
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
+      }
+      if (pathname === MAINNET_DEMO_EVENTS_ENDPOINT) {
+        // Vault only (D428): one mainnet demo signature, reported after it is made.
+        if (request.method === 'OPTIONS') return vaultPreflight(request, env);
+        if (request.method === 'POST') return await handleMainnetDemoEvent(request, env, requestId);
         return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
       }
       if (IDENTITY_PUBLIC_ENDPOINTS.includes(pathname)) {

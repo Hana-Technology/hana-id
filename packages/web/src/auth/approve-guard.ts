@@ -200,3 +200,31 @@ export class ApproveGuard {
     }
   }
 }
+
+/** The client coordinates of a pointer event (each only when it is a number). */
+function position(o: Partial<PointerEvent>): Coords {
+  const out: Coords = {};
+  for (const k of ['clientX', 'clientY'] as const) if (typeof o[k] === 'number') out[k] = o[k];
+  return out;
+}
+
+/** The fields of a pointer or keyboard event the guard reads (the approval popup's and the export window's). */
+export function guardInputOf(type: GuardInput['type'], e: Event): GuardInput {
+  const o = e as Partial<PointerEvent & KeyboardEvent>;
+  const num = (v: unknown) => (typeof v === 'number' ? v : undefined);
+  const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
+  const pointerType = str(o.pointerType);
+  switch (type) {
+    case 'pointermove': {
+      const movementX = num(o.movementX);
+      const movementY = num(o.movementY);
+      return { type, ...(pointerType !== undefined ? { pointerType } : {}), ...(movementX !== undefined ? { movementX } : {}), ...(movementY !== undefined ? { movementY } : {}), ...position(o) };
+    }
+    case 'pointerdown':
+      return { type, ...(pointerType !== undefined ? { pointerType } : {}), ...position(o) };
+    case 'keydown': {
+      const key = str(o.key);
+      return { type, ...(key !== undefined ? { key } : {}), repeat: o.repeat === true };
+    }
+  }
+}

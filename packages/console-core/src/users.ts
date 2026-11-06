@@ -226,6 +226,30 @@ export interface StaffUser {
   lastSeenAt: number;
   identities: StaffIdentity[];
   wallets: StaffWallet[];
+  /**
+   * What happened to the user's keys (D428, D430; `user_events`, newest first, at most STAFF_USER_EVENTS_MAX of each
+   * kind, so signatures can't push exports out): key exports (the API's own record) and mainnet demo signatures (the
+   * vault's report, bound to the user's session). Set on a detail or a search answer (AdminRpc.getUser, findUsers,
+   * supportLookup); never in a list or a partner's view.
+   */
+  events?: StaffUserEvent[];
+}
+
+/** The most `events` of each kind a staff user answer carries. */
+export const STAFF_USER_EVENTS_MAX = 20;
+
+export interface StaffUserEvent {
+  kind: 'key_exported' | 'mainnet_signature';
+  appId: string;
+  /** Which chain's key was exported, or null (an older export window); the signature's chain. */
+  chain: WalletChain | null;
+  /** A mainnet signature's network: the EVM chain ID or `pubnet`. */
+  network: string | null;
+  /** A mainnet signature's wallet. */
+  address: string | null;
+  /** A mainnet signature's value as the vault assessed it, USD micros. */
+  usdMicros: number | null;
+  at: number;
 }
 
 /** A partner's view of a user: never the internal id (`hu_…`), a sub, an identity key or an email. */

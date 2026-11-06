@@ -415,6 +415,10 @@ button.addEventListener('click', async () => {
   shared key, whichever method the user signs in with; a pending method exports nothing. That window keeps the key for 5 minutes at most, and erases it as soon as the user's session in your
   app ends (`logout()`, revoke, expiry); exporting again starts over with a new sign-in. Stellar keys export as `S…`, EVM keys as `0x…` hex. There is no recovery phrase. Each export is a NEAR
   transaction Hana pays for, so one account can export at most 3 times an hour per app (`rate_limited` after that).
+  A shown key hides again after 60 seconds, and Continue and Show key need the user's own deliberate click (the
+  approval window's guard). Hana records each export (user, app, chain, time; never the key) for its support staff.
+  Offer an "Export private key" entry in your account screen that calls `exportKey`: export is how users keep their
+  funds if Hana's key service ever can't derive their key, so don't hide it. No SDK method returns a key.
 
 ## 5. Your page: origins, CSP, popups
 
@@ -884,6 +888,22 @@ EVM chains a test app may use: Sepolia (11155111), Holesky (17000), Hoodi (56004
 Sepolia (421614), OP Sepolia (11155420), Sonic testnet (14601), Sonic Blaze testnet (57054), BNB Smart Chain testnet
 (97), Polygon Amoy (80002), Avalanche Fuji (43113), and local chains 31337 and 1337 (`TEST_EVM_CHAINS` in
 `@hana-id/core`). Ask Hana to add another testnet.
+
+**Hana's sandbox mainnet demo (not for partner apps).** Hana runs its own Sodax demo on sandbox under an internal
+exception: one Hana test app may sign on Base (8453) and Stellar's public network, at most $9.99 per transaction (fee
+included), every request through Hana's window with a red "Real funds, test custody" banner, the request's value and
+the wallet's balance. Partner apps can't get it, and in production it doesn't exist. What the SDK shows of it (SDK
+releases after 0.2.0), so a page built on it knows where it stands:
+
+- `hana.mainnetDemo`: `null` for every partner app; for the demo app `{evmChains: [8453], stellarNetworkPassphrase,
+  txCapUsd: '9.99', txCapUsdMicros, pricesReviewedAt, pricesValidUntilMs}`, from the vault (`mainnetDemoChanged` when
+  it changes). Only then does `hana.ethereum` let Base through.
+- Hana values each request with its own, deliberately high prices (not the page's price source): ETH, XLM, USDC and
+  EURC. A refusal is `4100` before any window: `mainnet_demo_over_cap` (`data.usd`, `data.capUsd`),
+  `mainnet_demo_unknown_call`, `mainnet_demo_unpriced`, `mainnet_demo_prices_stale`; any other mainnet stays
+  `mainnet_not_allowed`.
+- Stellar's network is per call: the passphrase passed to `hana.stellar.signTransaction` (the Sodax Stellar provider's)
+  wins, the approval window shows it, and `hana.stellar.getNetwork()` still reports `createHana`'s.
 
 A test app and a live app never share a scope. Your staging and production apps therefore give the same Google
 account **different addresses**. Wallets made with test keys are disposable.

@@ -249,6 +249,7 @@ describe('the route table', () => {
         "POST /api/apps/:app/origins/remove",
         "POST /api/apps/:app/changes",
         "POST /api/apps/:app/off",
+        "POST /api/apps/:app/mainnet-demo",
         "POST /api/apps/:app/keys/:key/revoke",
         "POST /api/changes/:id/cancel",
         "POST /api/changes/:id/expedite",

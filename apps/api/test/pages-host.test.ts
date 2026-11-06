@@ -126,6 +126,13 @@ describe('auth origin Worker', () => {
     }
   });
 
+  it('the approval popup reaches the mainnet demo’s two balance endpoints only in a dev testnet env (D429)', async () => {
+    expect(csp(await call(authWorker, authEnv({ MAINNET_DEMO_BALANCE: '1' }), `${AUTH}/approve`))).toBe(`${BASE}; frame-ancestors 'none'; connect-src https://mainnet.base.org https://horizon.stellar.org`);
+    expect(csp(await call(authWorker, authEnv(), `${AUTH}/approve`))).toBe(`${BASE}; frame-ancestors 'none'`);
+    // No other page gets them.
+    for (const path of ['/login', '/login/callback', '/export']) expect(csp(await call(authWorker, authEnv({ MAINNET_DEMO_BALANCE: '1' }), `${AUTH}${path}`)), path).not.toContain('mainnet.base.org');
+  });
+
   it('the email step reaches the issuer’s origin and the API, nothing else (batch 8a)', async () => {
     const res = await call(authWorker, authEnv({ EMAIL_ISSUER_URL: 'https://issuer.test/' }), `${AUTH}/login/email`);
     expect(res.status).toBe(200);

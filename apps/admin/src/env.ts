@@ -61,6 +61,8 @@ export interface AdminRpcClient {
   listChanges(c: unknown): Answer<{ changes: AppChange[] }>;
   removeOrigins(c: unknown): Loose;
   turnOff(c: unknown): Loose;
+  /** The mainnet demo exception to D39 (D428): a test app in a dev testnet env only. */
+  setMainnetDemo(c: unknown): Loose;
   cancelChange(c: unknown): Loose;
   revokeKey(c: unknown): Loose;
   createApp(c: unknown): Loose;

@@ -4,7 +4,7 @@
 // |---|---|
 // | eth_requestAccounts | [address]. Logged out: opens the login popup synchronously (call it from a click); if the browser blocks it, the vault's launcher appears and the call resolves after the user clicks it and logs in |
 // | eth_accounts | [address] or [] (the vault answers) |
-// | eth_chainId, wallet_switchEthereumChain | among `evm.chains`, answered here; an unknown chain is 4902; a test app (pk_test_) switching to a chain outside the testnet list is 4100 `mainnet_not_allowed` (D39) |
+// | eth_chainId, wallet_switchEthereumChain | among `evm.chains`, answered here; an unknown chain is 4902; a test app (pk_test_) switching to a chain outside the testnet list (except a mainnet its vault said the app's demo allows, D428) is 4100 `mainnet_not_allowed` (D39) |
 // | eth_sendTransaction | fill (evm-tx.ts) from the current chain's RPC → vault eth_signTransaction (approval) → eth_sendRawTransaction, one at a time per chain; a filled nonce is never below one past the last one broadcast here. A test app on a mainnet chain is refused before anything is filled (4100 `mainnet_not_allowed`; the vault refuses it too) |
 // | eth_signTransaction, personal_sign, eth_signTypedData_v4 | the vault, with approval (the transaction is filled first) |
 // | eth_sign and other signing or wallet methods | 4200 |
@@ -67,6 +67,11 @@ export interface EthereumHost {
   fetch: FetchLike;
   /** A pk_test_ app: only the testnet chains of @hana-id/core TEST_EVM_CHAINS can be switched to or sent on (D39). */
   testApp?: boolean;
+  /**
+   * The mainnet demo (D428): the EVM mainnets this test app's vault said it may use (its `mainnetDemo` event), let
+   * through the early check too; the vault still decides each request.
+   */
+  demoEvmChains?: () => readonly number[];
 }
 
 /** Methods with no side effect on the user's account, forwarded to the chain RPC as they are. */
@@ -264,9 +269,12 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
     return chain;
   }
 
-  /** A test app's keys come from the testnet MPC: a chain outside the testnet list is refused (D39). */
+  /**
+   * A test app's keys come from the testnet MPC: a chain outside the testnet list is refused (D39), unless the app's
+   * vault said the mainnet demo lets it use that chain (D428); the vault still decides every request.
+   */
   #testnetOnly(id: number, chainId: string = chainHex(id)): void {
-    if (this.#host.testApp && !isTestEvmChain(id)) throw err(ErrorCode.unauthorized, TEST_APP_NETWORK_RULE, { reason: 'mainnet_not_allowed', chainId });
+    if (this.#host.testApp && !isTestEvmChain(id) && !(this.#host.demoEvmChains?.() ?? []).includes(id)) throw err(ErrorCode.unauthorized, TEST_APP_NETWORK_RULE, { reason: 'mainnet_not_allowed', chainId });
   }
 
   #switchChain(params: unknown): null {

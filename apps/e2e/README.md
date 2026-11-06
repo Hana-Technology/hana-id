@@ -12,6 +12,11 @@ HANA_E2E_PORT_BASE=4510 corepack pnpm --filter @hana-id/e2e e2e   # another work
 corepack pnpm --filter @hana-id/e2e test          # unit tests of the stack's mocks (part of `pnpm -r test`)
 ```
 
+The mainnet demo (D428) and the export's guarded reveal (D430): `tests/mainnet-demo.spec.ts` (Horizon and Base's RPC
+routed, never the real network). With `HANA_SHOTS_DIR=<dir>` it also saves its screens there (Chromium only; a shown
+key is masked). Buttons behind the guard (Approve, the export's Continue and Show key) take `approve()` or
+`guardedClick()` (`tests/fixtures.ts`): wait 1 s, move the pointer, then click.
+
 An unfinished login (`tests/abandoned-login.spec.ts`; the follow-up screens in `tests/linking.spec.ts`, the demo's in
 `tests/demo.spec.ts`): the popup left on the method chooser, Google's page, the email address or code step, a link
 code screen or a banner, or closed (on the chooser: `login_cancelled` within seconds, D347, in real time). The tests install Playwright's clock (`page.clock`, for the whole context: the

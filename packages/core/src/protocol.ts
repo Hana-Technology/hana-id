@@ -19,6 +19,7 @@ import { KEY_INDEX_LIMIT, MAX_USES_LIMIT, RELAY_ID_PATTERN, SALT_MAX_BYTES, SALT
 import { type FollowProve, isFollowProve } from './relay.ts';
 import { type EvmTxRequest, evmTxSigningPayload, parseEvmTxRequest } from './signers/evm.ts';
 import { isTimings } from './timings.ts';
+import { MAINNET_DEMO_EVM_CHAINS, MAINNET_DEMO_STELLAR_PASSPHRASE } from './demo-config.ts';
 
 export const PROTOCOL_VERSION = 1;
 /** Cap for sign requests (port). */
@@ -583,6 +584,36 @@ function isProtocolError(v: unknown): v is ProtocolError {
   return isPlainObject(v) && exactKeys(v, ['code', 'message'], ['data']) && isHanaErrorCode(v.code) && isStr(v.message, 0, 1024);
 }
 
+/** The mainnet demo's rules as the vault states them (core mainnet-demo.ts `mainnetDemoState`). */
+export interface MainnetDemoState {
+  /** The EVM mainnets the app may sign for: a subset of MAINNET_DEMO_EVM_CHAINS (Base). */
+  evmChains: number[];
+  /** Stellar's public network passphrase: the one Stellar mainnet the demo signs for. */
+  stellarNetworkPassphrase: string;
+  /** The per-transaction cap, fee included, USD micros in decimal ("9990000" = $9.99). */
+  txCapUsdMicros: string;
+  /** When Hana's price table was reviewed (YYYY-MM-DD), and until when it is used (ms): the vault's own prices decide. */
+  pricesReviewedAt: string;
+  pricesValidUntilMs: number;
+}
+
+function isMainnetDemoState(d: unknown): d is MainnetDemoState {
+  if (!isPlainObject(d) || !exactKeys(d, ['evmChains', 'stellarNetworkPassphrase', 'txCapUsdMicros', 'pricesReviewedAt', 'pricesValidUntilMs'])) return false;
+  const chains = d.evmChains;
+  return (
+    Array.isArray(chains) &&
+    chains.length <= MAINNET_DEMO_EVM_CHAINS.length &&
+    new Set(chains).size === chains.length &&
+    chains.every((c) => typeof c === 'number' && MAINNET_DEMO_EVM_CHAINS.includes(c)) &&
+    d.stellarNetworkPassphrase === MAINNET_DEMO_STELLAR_PASSPHRASE &&
+    typeof d.txCapUsdMicros === 'string' &&
+    /^\d{1,12}$/u.test(d.txCapUsdMicros) &&
+    typeof d.pricesReviewedAt === 'string' &&
+    /^\d{4}-\d{2}-\d{2}$/u.test(d.pricesReviewedAt) &&
+    isMs(d.pricesValidUntilMs)
+  );
+}
+
 /** Validates a reply (SDK side) to a request it sent with `method`, or null. */
 export function parsePortReply<M extends PortMethod>(data: unknown, method: M): PortReply<M> | null {
   const cap = isSignMethod(method) ? APPROVAL_MESSAGE_MAX_BYTES : MESSAGE_MAX_BYTES;
@@ -609,6 +640,13 @@ export interface PortEventMap {
   connected: null;
   /** `timings`: pk_test_ apps only, the vault's boot and unlock stages (timings.ts, UNLOCK_TIMING_STAGES). */
   ready: StatusResult & { warning?: 'storage_unavailable'; timings?: Record<string, number> };
+  /**
+   * The mainnet demo (D428): the vault of an app Hana staff switched to it says so, with its rules (sent by a dev
+   * testnet build only, after the hello and whenever GET /v1/app changes it; null once off). The SDK's EVM provider
+   * then lets exactly `evmChains` through its early D39 check; the vault still decides every request. An SDK that
+   * predates it drops it.
+   */
+  mainnetDemo: MainnetDemoState | null;
   accountsChanged: { addresses: PortAddresses | null };
   disconnect: { code: number };
   sessionExpired: null;
@@ -642,6 +680,7 @@ export type PortEvent = { [E in PortEventName]: { v: 1; event: E; data: PortEven
 
 const EVENTS: { [E in PortEventName]: (d: unknown) => boolean } = {
   connected: (d) => d === null,
+  mainnetDemo: (d) => d === null || isMainnetDemoState(d),
   ready: (d) =>
     isPlainObject(d) && (d.warning === undefined || d.warning === 'storage_unavailable') && (d.timings === undefined || isTimings(d.timings)) && isStatusResult(d, ['warning', 'timings']),
   accountsChanged: (d) => isPlainObject(d) && exactKeys(d, ['addresses']) && (d.addresses === null || isPortAddresses(d.addresses)),

@@ -11,7 +11,8 @@
 import { LOGO_KEY_RE, newId, nonceOf, normaliseAppName, settingsChangeDigest } from '@hana-id/console-core';
 import type { Env } from '../env.ts';
 import { IDLE_TTL_MIN_MS, SESSION_TTL_MAX_MS, SESSION_TTL_MIN_MS } from '../vault/settings.ts';
-import { expectVersion, planApp } from './apps.ts';
+import { mainnetDemoEnv } from '../mainnet-demo-setting.ts';
+import { expectVersion, planApp, storedMainnetDemo } from './apps.ts';
 import { type Writer, actorId, closeChanges, commitOnApp, committed, NOT_YET, refuse, runWrite, expectReplay } from './cas.ts';
 import { scopeGoogleClients } from './chain.ts';
 import type { HotDb } from './db.ts';
@@ -120,6 +121,26 @@ export async function turnOff(db: HotDb, w: Writer, i: { orgId: string | null; a
     commitOnApp(w, { kind: i.what === 'policy' ? 'policy.removed' : 'raw_sign.off', detail: { cancelled } }, i.appId, i.orgId, q`a.settings_version = ${i.expectedVersion} AND a.deleted_at IS NULL`),
     q`UPDATE apps SET settings_version = settings_version + 1, ${clear} WHERE id = ${i.appId} AND ${committed(w.requestId)}`,
     closeChanges(q`app_id = ${i.appId} AND kind = ${kind}`, w),
+  ]);
+  return { version: i.expectedVersion + 1 };
+}
+
+/**
+ * AdminRpc.setMainnetDemo (D428): Hana staff switch the mainnet demo exception to D39 on or off, at once (a test app
+ * in a dev env on testnet only; migration 0013's triggers refuse it for a live scope whatever writes it). ConsoleRpc
+ * has no such method: a partner can't set it. Answers the current version unchanged when it is already so.
+ */
+export async function setMainnetDemo(db: HotDb, env: Env, w: Writer, i: { orgId: string | null; appId: string; on: boolean; expectedVersion: number }): Promise<{ version: number }> {
+  expectReplay(w, ['mainnet_demo.on', 'mainnet_demo.off']);
+  if (!mainnetDemoEnv(env)) refuse('env_mismatch', 'The mainnet demo exists only in a dev env on testnet');
+  const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, w });
+  const a = plan.app;
+  expectVersion(a.settings_version, i.expectedVersion);
+  if (a.environment !== 'test') refuse('env_mismatch', 'The mainnet demo is for test apps (pk_test_) only');
+  if ((await storedMainnetDemo(db, i.appId)) === i.on) return { version: a.settings_version };
+  await runWrite(db, w, [
+    commitOnApp(w, { kind: i.on ? 'mainnet_demo.on' : 'mainnet_demo.off', detail: { mainnetDemo: i.on } }, i.appId, i.orgId, q`a.settings_version = ${i.expectedVersion} AND a.deleted_at IS NULL`),
+    q`UPDATE apps SET settings_version = settings_version + 1, mainnet_demo = ${i.on ? 1 : 0} WHERE id = ${i.appId} AND ${committed(w.requestId)}`,
   ]);
   return { version: i.expectedVersion + 1 };
 }

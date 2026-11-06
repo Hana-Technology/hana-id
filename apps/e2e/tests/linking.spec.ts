@@ -8,7 +8,7 @@ import type { Page, TestInfo } from '@playwright/test';
 import type { GoogleStub } from '../src/google-stub.ts';
 import { ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK } from '../src/stack.ts';
 import { addressOfExport, base64Decode, fromUtf8 } from '@hana-id/core';
-import { AFTERWORD_MS, type App, LOGIN_PENDING_MS, chooseAccount, clickAction, clickClosing, clickLauncher, clickMayClose, closeOf, errorOf, expect, newApp, okValue, openPartner, peek, responsive, runAction, status, test, vaultFrame, waitPersisted } from './fixtures.ts';
+import { AFTERWORD_MS, type App, LOGIN_PENDING_MS, chooseAccount, clickAction, clickClosing, clickLauncher, clickMayClose, closeOf, errorOf, expect, guardedClick, newApp, okValue, openPartner, peek, responsive, runAction, status, test, vaultFrame, waitPersisted } from './fixtures.ts';
 
 const MATCH = `${ISSUER_URL}/v1/email/google-match`;
 const RECORD = `${ISSUER_URL}/v1/email/google-record`;
@@ -277,9 +277,9 @@ test('an email wallet’s key export: the export window’s child popup takes an
   await closed;
 
   await exportWindow.getByRole('textbox').fill('EXPORT');
-  await exportWindow.getByRole('button', { name: 'Continue' }).click();
+  await guardedClick(exportWindow, 'Continue');
   const secret = exportWindow.locator('code.secret');
-  await exportWindow.getByRole('button', { name: 'Show key' }).click();
+  await guardedClick(exportWindow, 'Show key');
   await expect(secret).toHaveText(/^0x[0-9a-f]{64}$/u);
   const shown = (await secret.textContent()) ?? '';
   expect(addressOfExport('evm', shown)).toBe(wallet.evm);
@@ -333,9 +333,9 @@ test('a linked identity’s key export: Google, a member of an email wallet, exp
   expect(google.requests.at(-1)).toMatchObject({ ok: true, request: { kind: 'login', maxAge: '0' } });
 
   await exportWindow.getByRole('textbox').fill('EXPORT');
-  await exportWindow.getByRole('button', { name: 'Continue' }).click();
+  await guardedClick(exportWindow, 'Continue');
   const secret = exportWindow.locator('code.secret');
-  await exportWindow.getByRole('button', { name: 'Show key' }).click();
+  await guardedClick(exportWindow, 'Show key');
   await expect(secret).toHaveText(/^0x[0-9a-f]{64}$/u);
   // The key is the email wallet's: the root's path, not Google's own.
   expect(addressOfExport('evm', (await secret.textContent()) ?? '')).toBe(wallet.evm);

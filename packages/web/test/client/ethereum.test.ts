@@ -123,8 +123,9 @@ describe('chains', () => {
       expect(e.message).toMatch(/test networks/u);
       expect(e.data).toEqual({ reason: 'mainnet_not_allowed', chainId: '0x1' });
     }
-    // A chain nobody listed counts as a mainnet too, configured or not.
-    expect((await refused(p.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x2105' }] }), 4100)).data).toMatchObject({ reason: 'mainnet_not_allowed' });
+    // A chain nobody listed counts as a mainnet too, configured or not (Sonic 146 included: not a demo chain).
+    expect((await refused(p.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0xa' }] }), 4100)).data).toMatchObject({ reason: 'mainnet_not_allowed' });
+    expect((await refused(p.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x92' }] }), 4100)).data).toMatchObject({ reason: 'mainnet_not_allowed' });
     // The default chain is mainnet here: sending and signing are refused before anything is filled or asked.
     const calls = rpc.calls.length;
     for (const method of ['eth_sendTransaction', 'eth_signTransaction']) {
@@ -135,6 +136,38 @@ describe('chains', () => {
     expect(s.vault.requests.filter((r) => r.method === 'eth_signTransaction')).toHaveLength(0);
     // A test network still works.
     await expect(p.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0xaa36a7' }] })).resolves.toBeNull();
+  });
+
+  it('a test app uses Base only while its vault says the mainnet demo is on (D428): exactly the chains it names', async () => {
+    const rpc = rpcFetch(CHAIN);
+    s = setup({ config: { evm: { chains: [{ id: 8453, rpcUrl: 'https://base.rpc.test' }, { id: 10, rpcUrl: 'https://op.rpc.test' }, ...EVM_CONFIG.chains], defaultChainId: SEPOLIA } }, fetch: rpc });
+    await s.vault.connect(LOGGED_IN);
+    const p = s.client.ethereum;
+    const switchTo = (chainId: string) => p.request({ method: 'wallet_switchEthereumChain', params: [{ chainId }] });
+    // Before the vault says anything: refused, as D39 says.
+    expect((await refused(switchTo('0x2105'), 4100)).data).toMatchObject({ reason: 'mainnet_not_allowed' });
+    expect(s.client.mainnetDemo).toBeNull();
+    const seen: unknown[] = [];
+    s.client.on('mainnetDemoChanged', (d) => seen.push(d));
+    const state = { evmChains: [8453], stellarNetworkPassphrase: 'Public Global Stellar Network ; September 2015', txCapUsdMicros: '9990000', pricesReviewedAt: '2026-11-06', pricesValidUntilMs: Date.UTC(2026, 11, 21) };
+    s.vault.emit('mainnetDemo', state);
+    await vi.waitFor(() => expect(s.client.mainnetDemo).not.toBeNull());
+    expect(s.client.mainnetDemo).toEqual({ ...state, txCapUsd: '9.99' });
+    expect(seen).toEqual([{ ...state, txCapUsd: '9.99' }]);
+    await expect(switchTo('0x2105')).resolves.toBeNull();
+    expect(await p.request({ method: 'eth_chainId' })).toBe('0x2105');
+    // Another mainnet stays refused, configured or not.
+    expect((await refused(switchTo('0xa'), 4100)).data).toMatchObject({ reason: 'mainnet_not_allowed' });
+    // A vault naming a chain outside the demo's list is dropped (the event doesn't validate).
+    s.vault.emit('mainnetDemo', { ...state, evmChains: [8453, 10] });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(s.client.mainnetDemo?.evmChains).toEqual([8453]);
+    // Off again: refused again.
+    await switchTo('0xaa36a7');
+    s.vault.emit('mainnetDemo', null);
+    await vi.waitFor(() => expect(s.client.mainnetDemo).toBeNull());
+    expect((await refused(switchTo('0x2105'), 4100)).data).toMatchObject({ reason: 'mainnet_not_allowed' });
+    expect(seen.at(-1)).toBeNull();
   });
 
   it('a live app (pk_live_) may switch to mainnet chains', async () => {

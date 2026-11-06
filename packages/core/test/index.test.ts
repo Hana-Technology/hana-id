@@ -45,7 +45,7 @@ describe('@hana-id/core', () => {
     expect(VERSION).toBe(pkg.version);
   });
 
-  it('publishes the derivation, identity, wallet record, Stellar signer, decode, policy and Support ID subpaths, and they exist', () => {
+  it('publishes the derivation, identity, wallet record, Stellar signer, decode, policy, Support ID, mainnet demo and demo constants subpaths, and they exist', () => {
     expect(pkg.exports).toEqual({
       '.': './src/index.ts',
       './derivation': './src/derivation.ts',
@@ -55,6 +55,8 @@ describe('@hana-id/core', () => {
       './decode': './src/decode/index.ts',
       './policy': './src/policy/index.ts',
       './support-id': './src/support-id.ts',
+      './mainnet-demo': './src/mainnet-demo.ts',
+      './demo-config': './src/demo-config.ts',
     });
     for (const path of Object.values(pkg.exports)) expect(existsSync(new URL(`../${path}`, import.meta.url))).toBe(true);
   });
@@ -70,6 +72,7 @@ describe('@hana-id/core', () => {
     expect(packagesReachedFrom(pkg.exports['./decode'] as string)).toContain('@stellar/stellar-base');
     expect(packagesReachedFrom(pkg.exports['./policy'] as string)).toContain('@stellar/stellar-base');
     expect(packagesReachedFrom(pkg.exports['./signers/stellar'] as string)).toContain('@stellar/stellar-base');
+    expect(packagesReachedFrom(pkg.exports['./mainnet-demo'] as string)).toContain('@stellar/stellar-base');
   });
 
   it('drops no name of an `export *` module from the root entry (ambiguous star exports vanish silently)', async () => {

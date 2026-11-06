@@ -10,8 +10,11 @@ import {
   IDENTITY_REFRESH_MARGIN_MS,
   type IdentityChain,
   type IdentityTokenBody,
+  type MainnetDemoEventBody,
+  type WalletProof,
   type WalletProofs,
   identityMessage,
+  mainnetDemoEventPayload,
   identityTokenPayload,
   signWalletProof,
   walletProofMessage,
@@ -73,6 +76,28 @@ export async function mintBody(
       stellar: { address: i.proofs.stellar.address, signature: Array.from(i.proofs.stellar.signature) },
       evm: { address: i.proofs.evm.address, signature: Array.from(i.proofs.evm.signature) },
     },
+  };
+}
+
+/**
+ * The POST /v1/mainnet-demo/events body (D428): the event signed by the session key over the identity message, with the
+ * session's wallet proof of the signing address. No key, no signature of the signed request, no bytes.
+ */
+export async function demoEventBody(
+  privateKey: CryptoKey,
+  i: ProofContext & { issuedAtMs: number; event: { chain: IdentityChain; network: string; kind: string; usdMicros: string }; proof: WalletProof },
+): Promise<MainnetDemoEventBody> {
+  const nonce = crypto.getRandomValues(new Uint8Array(IDENTITY_NONCE_BYTES));
+  const payload = mainnetDemoEventPayload({ ...i.event, walletProof: i.proof });
+  const message = identityMessage({ signer: i.signer, appId: i.appId, sessionPublicKey: i.sessionPublicKey, issuedAtMs: i.issuedAtMs, nonce, payload });
+  const signature = new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, privateKey, message));
+  return {
+    sessionPublicKey: Array.from(i.sessionPublicKey),
+    issuedAtMs: i.issuedAtMs,
+    nonce: Array.from(nonce),
+    signature: Array.from(signature),
+    walletProof: { address: i.proof.address, signature: Array.from(i.proof.signature) },
+    ...i.event,
   };
 }
 

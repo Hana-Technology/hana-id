@@ -3,6 +3,7 @@
 // serves them; the Worker (apps/api src/pages/host.ts) sends the full policy and the other headers itself
 // (frame-ancestors only works as a header).
 import type { HanaEnv } from '../hana-env.ts';
+import { MAINNET_DEMO_BALANCE_ORIGINS } from '@hana-id/core/demo-config';
 import { GOOGLE_TOKENINFO_ORIGIN } from './google-origins.ts';
 
 export type AuthPageName = 'login' | 'email' | 'callback' | 'approve' | 'export';
@@ -40,7 +41,10 @@ export const BASE_CSP: readonly string[] = Object.freeze([
 
 const originOf = (url: string): string => new URL(url).origin;
 
-type CspEnv = Pick<HanaEnv, 'apiUrl' | 'rpc' | 'rpcFallback' | 'emailIssuerUrl' | 'filesOrigin'>;
+type CspEnv = Pick<HanaEnv, 'apiUrl' | 'rpc' | 'rpcFallback' | 'emailIssuerUrl' | 'filesOrigin'> & Partial<Pick<HanaEnv, 'devEnv' | 'network'>>;
+
+/** Whether this build may show the mainnet demo's balance line (D428): a dev env on testnet only. */
+export const demoBalanceBuild = (env: CspEnv): boolean => env.devEnv === true && env.network === 'testnet';
 
 /**
  * The pages that show the app's name, and so its logo beside it (batch C11): the sign-in chooser, the email step, the
@@ -88,8 +92,9 @@ export function connectSources(env: CspEnv, page: AuthPageName): string[] {
         GOOGLE_CERTS_ORIGIN,
       ];
     case 'approve':
-      // The popup decodes and renders what the vault sent; it fetches nothing.
-      return [];
+      // The popup decodes and renders what the vault sent. In a dev testnet build it also reads a mainnet demo wallet's
+      // balance from Hana's two pinned public endpoints (D429); a production build fetches nothing.
+      return demoBalanceBuild(env) ? [...MAINNET_DEMO_BALANCE_ORIGINS] : [];
   }
 }
 

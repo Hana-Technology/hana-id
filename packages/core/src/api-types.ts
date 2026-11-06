@@ -24,6 +24,12 @@ export interface AppConfig {
    */
   rawSign?: 'off' | 'approval';
   /**
+   * Hana's mainnet demo exception to D39 (D428): true only for a `pk_test_` app Hana staff switched on, in a dev testnet
+   * env. The vault re-reads it before every mainnet request (within 10 s, as `rawSign`) and treats a missing value as
+   * false; its own build must also be a dev testnet build.
+   */
+  mainnetDemo?: boolean;
+  /**
    * Email login (D231): the sign-in methods the app offers and its scope can serve, in the order google, email. Older
    * APIs omit it (Google only). An app with email but no Google (`google: null`) is refused by isAppConfig until the
    * vault supports it (D247).
@@ -101,6 +107,32 @@ export interface LoginBody extends CreateSessionBody {
    */
   linkJwt?: string;
   linkImmediate?: boolean;
+  /**
+   * The export window only (D430): which chain's key it is exporting, a label for the API's `key_exported` event. Not in
+   * the session nonce, the contract call or the CKD payload; the API refuses it from any other page.
+   */
+  exportChain?: 'stellar' | 'evm';
+}
+
+export { MAINNET_DEMO_EVENTS_ENDPOINT } from './demo-config.ts';
+
+/**
+ * One mainnet demo signature, as the vault reports it after signing: never a key or the signed bytes. `network` is the
+ * EVM chain ID in decimal or `pubnet`; `usdMicros` the value the vault assessed, in decimal. Bound to the session (D428,
+ * the security review of 2026-11-06): `signature` is the session key's over identityMessage with
+ * `mainnetDemoEventPayload`, `walletProof` the session's proof of the signing address (the address's own key over
+ * this session and app), as the identity token's.
+ */
+export interface MainnetDemoEventBody {
+  sessionPublicKey: number[];
+  issuedAtMs: number;
+  nonce: number[];
+  signature: number[];
+  walletProof: { address: string; signature: number[] };
+  chain: 'stellar' | 'evm';
+  network: string;
+  kind: string;
+  usdMicros: string;
 }
 
 /** `POST /v1/link` (link_identity). */
@@ -277,6 +309,7 @@ export function isAppConfig(v: unknown): v is AppConfig {
     (v.serverTimeMs === undefined || isMs(v.serverTimeMs)) &&
     (v.autoApprovePolicy === undefined || v.autoApprovePolicy === null || isObj(v.autoApprovePolicy)) &&
     (v.rawSign === undefined || v.rawSign === 'off' || v.rawSign === 'approval') &&
+    (v.mainnetDemo === undefined || typeof v.mainnetDemo === 'boolean') &&
     (v.loginMethods === undefined || isLoginMethodList(v.loginMethods)) &&
     // `email` comes exactly with the email method, and names this scope's client.
     (Array.isArray(v.loginMethods) && v.loginMethods.includes('email')

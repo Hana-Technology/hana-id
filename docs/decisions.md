@@ -442,6 +442,7 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
   address), and testnet-derived addresses differ from production ones.
 - Rejected: allowing mainnet with warnings and small amounts.
 - Open: the mainnet launch date (not set).
+- Amended 2026-11-06 by D428 (decided by the user): the mainnet demo exception for the Sodax demo.
 
 ### D40. Leaving Hana: per-chain key export and Hana Home, no seed phrase
 - Date 2026-10-28 · Status: confirmed by the user; Hana Home to build before mainnet · Source: `docs/batch-b-spec.md`
@@ -7920,12 +7921,129 @@ branch.
   (D262's reason holds for test apps too, and the SDK's message covers the case without the vault); dropping the
   frame retry (it covers a transient 503 vault page); a shorter answer deadline for frames still loading (a slow
   network is not a refusal).
+## Mainnet demo and key export (branch `feat/mainnet-demo-key-export`), 2026-11-06
+
+Spec: `docs/mainnet-demo-and-key-export-spec.md` (with its security self-review). Number note: D428–D431 were the next
+free numbers on `origin/develop` (D427 the highest: D426 the Hana brand, D427 the partner friction fixes; first built as D426–D429 and renumbered when develop was merged in); renumber at the merge if another branch took them.
+
+### D428. The mainnet demo: an exception to D39 for the Sodax demo, a per-transaction cap under $10, Base and Stellar only
+- Date 2026-11-06 · Status: **decided by the user 2026-11-06** ("exception for the Sodax demo, also we should limit
+  funds to <$10. warnings are good"; then "per-transaction cap only; balance above $10 warns, doesn't block"; then
+  "the Sodax demo will swap between Base (8453, cheap gas) and Stellar pubnet only") · Built: `packages/core/src/
+  mainnet-demo.ts`, `demo-config.ts`, `networks.ts`; `packages/web/src/vault/signing.ts`, `vault.ts`
+  (`freshMainnetDemo`, `subjectOf`, `reportDemoSignature`), `client/ethereum.ts`, `auth/approve-page.ts`,
+  `auth/demo-balance.ts`, `auth/pages.ts`; `apps/api/migrations/0013_mainnet_demo_events.sql`, `src/mainnet-demo.ts`,
+  `src/mainnet-demo-setting.ts`, `src/handlers.ts` (`GET /v1/app` `mainnetDemo`), `src/changes/settings.ts`
+  (`setMainnetDemo`), `src/pages/host.ts`; `scripts/lib/admin-settings.ts` (`--mainnet-demo`); `apps/admin`
+  (the switch, the events table) · Amends D39
+- Decision:
+  1. **What it allows.** A `pk_test_` app whose `apps.mainnet_demo` Hana staff switched on may sign on Base (8453)
+     and Stellar's public network, and no other mainnet (Sonic isn't needed: the user signs only on the spoke chain,
+     Sodax's relayer runs the hub's call; `needsRelay` in `@sodax/sdk` 2.2.0). Everything else of D39 stays.
+  2. **Only Hana staff, only in a dev testnet env.** `admin <env> app:settings <app> --mainnet-demo on|off` and the
+     admin console's app page (`AdminRpc.setMainnetDemo`), both refused unless the manifest is a dev env (`isDevEnv`)
+     on testnet and the app is a test app; a D1 trigger refuses it for a live scope. The API serves `mainnetDemo: true`
+     only in such an env for a test scope; the vault honours it only when its own build is a dev testnet build. No
+     partner method or control; partners don't see it (ConsoleRpc's view leaves it out), only its `app_changes` row.
+  3. **A per-transaction cap, fail closed.** At most $9.99 per transaction, its maximum fee included, valued by a
+     reviewed price table (D429); a request whose movements Hana can't value (an unknown call, token, operation or
+     Soroban call; typed data; auth entries) is refused. No daily cap (the user: repeated swap tests are needed).
+  4. **Warnings.** Every demo approval shows the red banner "Real funds, test custody: these funds may be lost", the
+     value and the cap, and the wallet's balance; above $10: "This wallet holds about $N: keep test funds under $10 —
+     move the rest out" (a warning, never a block); unreadable: "Balance unknown". A refusal is said to the page (4100
+     with the reason) and in Hana's launcher.
+  5. **Never auto-approved**, whatever policy the app has. Each signature is reported to the API (no key, signature
+     or bytes) as a `mainnet_signature` event staff see.
+- Why: Sodax has no testnet, and the partner demo needs real swaps; testnet MPC keys can be lost or stolen (D39's
+  reason), so the exposure is bounded per transaction, said loudly, and confined to dev envs and staff.
+- Rejected: a per-user daily cap kept in the vault (the user, 2026-11-06: repeated tests); allowing every mainnet;
+  letting partners set it; trusting the partner's RPC for the balance.
+
+### D429. The mainnet demo's mechanics: the price table, what can be valued, the freshness and the reads
+- Date 2026-11-06 · Status: **to confirm** (implementation choices while building D428) · Built: as D428
+- Decision:
+  1. **Prices** (`MAINNET_DEMO`, reviewed 2026-11-06): ETH $8,000, USDC $1.05 and EURC $1.35 on Base and on Stellar, XLM $1.00, all
+     deliberately above the market (a live price couldn't be confirmed; a higher price makes the cap stricter and the
+     balance warning earlier). The table is valid 45 days (until 2026-12-21): after that every demo request is refused
+     (`mainnet_demo_prices_stale`) until someone reviews it and rebuilds. Values are rounded up.
+  2. **Identifiers**: USDC `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` (Base) and
+     `USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN` (Stellar), EURC
+     `0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42` (Base) and `EURC:GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2`
+     (Stellar), from Circle's USDC and EURC contract addresses pages (the tokens the sample's Sodax swap lists); the
+     Stellar asset contracts checked against `Asset.contractId(pubnet)` in a test; Sodax's asset managers,
+     intents contract and hub assets from `@sodax/sdk` 2.2.0's packaged config, pinned in a test.
+  3. **What is valued**: the maximum fee always; EVM plain sends, USDC `transfer`/`transferFrom`/`approve` (an
+     approval valued as what it lets the spender take), and Sodax's spoke `transfer(address,bytes,uint256,bytes)` with
+     its `data` either empty or exactly `[approve(intents, g ≤ amount), createIntent(inputToken = the hub asset,
+     inputAmount ≤ g)]`, so the relayed hub calls can spend at most the deposit; Stellar payments and account creation
+     in XLM or USDC, a USDC `changeTrust`, and Sodax's Stellar `transfer(from, token, amount, to, data)` from the signing
+     account with auth entries for exactly that call and the token's own transfer (USDC and EURC as well as XLM and
+     ETH). Everything else is refused.
+  4. **Freshness**: the vault re-reads `GET /v1/app` when its `mainnetDemo` answer is older than 10 s (as raw
+     signing); a failed re-read refuses (`mainnet_demo_unconfirmed`). The early refusal check (D112) leaves a demo
+     build's mainnet request to `sign()`, so a stale "off" never refuses a request the API would allow.
+  5. **On and off are immediate** (an `app_changes` row and a `settings_version` bump each), not a guarded change:
+     staff only, dev envs only, test apps only.
+  6. **The balance** is read by the approval popup (not the vault, which holds PRK) from Hana's pinned public
+     endpoints (`https://mainnet.base.org`, `https://horizon.stellar.org`), listed in `/approve`'s CSP only in a dev
+     testnet build; each read has a 4 s limit.
+  7. **The partner client learns it from the vault** (the sample's FRICTION 18, 19, 21): the vault page inlines
+     `mainnetDemo: true` for such an app (only then, so an older vault bundle never sees the key), and the vault
+     sends the SDK a `mainnetDemo` port event with the rules (`evmChains`, the Stellar passphrase, the cap in USD
+     micros, the price table's review and expiry) after the hello, before `ready`, and again when `GET /v1/app`
+     changes it (`null` after "on"; never from a production build). The SDK's EVM provider opens its early D39 check
+     for exactly those chains (the event's validator accepts only Base), `hana.mainnetDemo` holds the rules and
+     `mainnetDemoChanged` says when they change. The vault still decides every request. Older SDKs drop the unknown
+     event (no D393 version gate needed). A cap refusal is its own reason, `mainnet_demo_over_cap`, with `data.usd`
+     and `data.capUsd`. The Stellar passphrase is per call (the Sodax provider's wins; the approval shows the
+     network); `hana.stellar.getNetwork()` still reports `createHana`'s.
+  8. **Usage events** are the vault's report, bound to the session (amended after the security review of 2026-11-06, two
+     MEDIUM findings): the session key signs the event over the identity message with the session's wallet proof of
+     the address; the API checks both, the session on chain and a single-use marker, and stores the session's user
+     (never a bare address). Rate-limited to 120 per app per hour, labelled "reported by the vault". The staff view
+     caps each kind per user on its own, so reports can't push a key export out of view.
+- Why: each is the narrowest rule that lets the sample's swap (Base ETH → Stellar XLM) and its reverse work while
+  failing closed on anything else.
+- Open: whether the prices should come from a live source with a sanity band (more moving parts in the vault).
+
+### D430. Key export additions: auto-hide after 60 s, the guarded click, plain warnings, a `key_exported` event
+- Date 2026-11-06 · Status: the feature **decided by the user 2026-11-06** ("an option to let the user export their
+  private key just in case anything goes wrong i.e. testnet MPC issues etc that causes fund lost cause derivation was
+  no longer possible"); the mechanics **to confirm** · Built: `packages/web/src/auth/export-page.ts`
+  (`EXPORT_SHOW_MS`, `EXPORT_WARNING`, the guard), `auth/approve-guard.ts` (`guardInputOf`), `apps/api/src/login.ts`
+  (`exportChain`), `src/mainnet-demo.ts` (`recordKeyExport`), `src/directory/read.ts` (`withEvents`), the admin
+  console's events table · Extends D40, D41, D59, D111, D268
+- Decision:
+  1. Export already existed (D40, D59, D111, D258, D268): the launcher inside the vault frame opens a top-level window
+     on the auth origin that signs in again (Google `max_age=0`, or an email code), derives one chain key itself and
+     shows it behind a typed confirmation. No SDK method returns a key; no message carries one.
+  2. **Auto-hide**: a shown key hides again 60 s after Show (besides blur, a hidden tab and pagehide); the 5-minute
+     erase (D111) is unchanged.
+  3. **The guarded click**: Continue, Show key and Copy key are behind the approval popup's guard (1 s after the
+     screen and the window's focus, an arming move or Tab, a click that starts after it, D113's keyboard dwell).
+  4. **Warnings**: "Anyone with this key controls your funds … Hana can't recover it … Never paste it into a
+     website", on the first and the confirm screens.
+  5. **`key_exported`**: recorded by the API when the export window's `/v1/login` succeeds (server-side, so no page can
+     skip it), with the user's internal id, the app, the chain (`exportChain`, the window's label; null from an older
+     window) and the time; no key, token or path. Staff see it on the Users detail and the Support ID lookup.
+- Not done: an "account view" in Hana's own UI (Hana has none; the launcher is the entry, D59; a Hana account page is
+  Hana Home's, D40).
+
+### D431. Key export on non-testnet manifests: D41 stands until a decision before mainnet
+- Date 2026-11-06 · Status: **to confirm** · Source: the 2026-11-06 brief asked to leave export off for non-testnet
+  manifests and decide production behaviour before mainnet
+- Decision: no gate was added. D41 (confirmed by the user) already says export is mandatory and partners can't
+  disable it, and the manifest schema accepts only `network: testnet`, so no non-testnet manifest can exist today.
+  Whether D41 stands for mainnet, or a Privy-style partner switch is wanted, is `docs/mainnet-readiness.md` 1.18.
+- Why: a gate would contradict a confirmed decision and be dead code today.
 
 ## Superseded or amended
 
 | Was | Now | Source |
 |---|---|---|
 | D262: each vault frame has 5 s from its insertion to answer, a loaded one included; a wrong origin fails `no_answer` after about 10 s with a generic message | A loaded frame has 1.5 s after its `load`; `no_answer` in about 3 s, its message and `data.origin` naming the page's origin (D427) | `docs/integration.md` section 3 |
+| D39: a `pk_test_` app never signs for a mainnet; the partner client refuses a test app's switch to any chain outside the testnet list | A test app Hana staff switched to the mainnet demo, in a dev testnet env, signs on Base and Stellar's public network up to $9.99 per transaction through the popup (D428, D429); the client lets a test app through on Base, the vault decides | `packages/core/src/mainnet-demo.ts`, `packages/web/src/vault/signing.ts` |
+| D111, D268: a shown key stays shown until Hide, blur, a hidden tab or pagehide; Continue and Show act on any real click | A shown key also hides 60 s after Show; Continue, Show key and Copy key are behind the approval popup's guard (D430) | `packages/web/src/auth/export-page.ts` |
 | D413: verify's phases ran one step at a time except gitleaks beside the typecheck and the docs checks beside the unit tests; the sandbox e2e one test at a time (`--test-threads=1`, also CI's) | Lanes side by side in four phases (sandbox e2e beside the pack check then Playwright; the contract beside the typecheck; the unit tests still alone but for the docs checks); the sandbox e2e 8 tests at a time, in verify and CI | D423 |
 | D153 (an updater Add of a kid Google listed with the same material within 24 h is retired: cancelled), the JWKS cron's 55-min removal grace, the watchdog's Remove confirmed on two fetches 60 s apart | Retired only when known > 7 days, unlisted > 6 h and missed by 3+ fetches over 30+ min (else left pending); removal after 24 h missing from every fetch of 3 a run, never with a token in the last 24 h; a Remove confirmed early only after 3+ fetches over 10+ min and no listing for 24 h; `stale_active_key` after 27 h (D422) | `apps/api/src/issuer-keys.ts`, `apps/watchdog/src/run.ts`, migrations API 0012 and watchdog 0002 |
 | D387: the checks run locally before a merge, from a list of commands in docs/operations.md | `pnpm verify` (CI's checks for the change, D383's rules) before every merge into `develop`, `--full` before a deploy; an optional pre-push hook runs `--quick` on pushes to `develop` and `main` (D413) | `scripts/verify.mjs`, `scripts/verify-hook.mjs`, `.githooks/pre-push`; docs/operations.md "CI and git" |

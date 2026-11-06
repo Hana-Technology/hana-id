@@ -227,6 +227,8 @@ const ROUTES: Route[] = [
   { method: 'POST', pattern: '/api/apps/:app/origins/remove', handler: (c) => answer('POST /api/apps/:app/origins/remove', c.staff, () => c.env.API.removeOrigins({ ...staffCtx(c.staff), appId: c.params.app, ...pick(c.body, 'orgId', 'remove', 'expectedVersion') })) },
   { method: 'POST', pattern: '/api/apps/:app/changes', handler: (c) => answer('POST /api/apps/:app/changes', c.staff, () => c.env.API.proposeChange({ ...staffCtx(c.staff), appId: c.params.app, ...pick(c.body, 'orgId', 'kind', 'policy', 'expectedVersion') })) },
   { method: 'POST', pattern: '/api/apps/:app/off', handler: (c) => answer('POST /api/apps/:app/off', c.staff, () => c.env.API.turnOff({ ...staffCtx(c.staff), appId: c.params.app, ...pick(c.body, 'orgId', 'what', 'expectedVersion') })) },
+  // The mainnet demo exception to D39 (D428): the API refuses it outside a dev testnet env and for a live app.
+  { method: 'POST', pattern: '/api/apps/:app/mainnet-demo', handler: (c) => answer('POST /api/apps/:app/mainnet-demo', c.staff, () => c.env.API.setMainnetDemo({ ...staffCtx(c.staff), appId: c.params.app, ...pick(c.body, 'orgId', 'on', 'expectedVersion') })) },
   { method: 'POST', pattern: '/api/apps/:app/keys/:key/revoke', handler: (c) => answer('POST /api/apps/:app/keys/:key/revoke', c.staff, () => c.env.API.revokeKey({ ...staffCtx(c.staff), appId: c.params.app, keyId: c.params.key, ...pick(c.body, 'orgId') })) },
 
   // ---- guarded changes ----

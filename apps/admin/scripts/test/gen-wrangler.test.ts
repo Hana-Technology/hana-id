@@ -18,7 +18,7 @@ import { wranglerConfig as consoleAuthConfig } from '../../../console-auth/scrip
 import { wranglerConfig as filesConfig } from '../../../files/scripts/gen-wrangler.ts';
 import { wranglerConfig as issuerConfig, TEST_MANIFEST as ISSUER_MANIFEST } from '../../../email-issuer/scripts/gen-wrangler.ts';
 import { wranglerConfig as watchdogConfig, TEST_MANIFEST as WATCHDOG_MANIFEST } from '../../../watchdog/scripts/gen-wrangler.ts';
-import { MAIL_LABELS } from '../../src/env.ts';
+import { MAIL_LABELS } from '../../src/labels.ts';
 import { adminCsp } from '../../src/headers.ts';
 import { CRON, LOCAL_ADMIN_CONNECTION_STRING, TEST_ADMIN_HYPERDRIVE_ID, TEST_MANIFEST, TEST_WATCHDOG_URL, existingAdminHyperdriveId, main, testWranglerConfig, wranglerConfig } from '../gen-wrangler.ts';
 

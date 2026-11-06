@@ -123,6 +123,8 @@ export interface StaffRpcClient {
   purgeAudit(c: unknown): Answer<ConsolePurgeAuditResult>;
 }
 
+import { MAIL_LABELS as LABELS } from './labels.ts';
+
 export interface Env {
   /** The manifest's `name` (in subjects and log lines). */
   ENV_NAME: string;
@@ -218,13 +220,12 @@ export interface Env {
   ASSETS: Fetcher;
 }
 
-/** The labels `ENV_LABEL` may hold (D419); the same list as `@hana-id/env` `ENV_ALERT_LABELS` (a scripts test keeps them equal). */
-export const MAIL_LABELS = ['[SANDBOX]', '[STAGING]', '[LOCAL]', '[TESTNET]'] as const;
+export { MAIL_LABELS } from './labels.ts';
 
 /**
  * The label of this env's email subjects (D419): `ENV_LABEL` when it is one of the labels and the network is testnet;
  * none otherwise, so production mail never carries one, whatever a config says.
  */
 export function mailLabel(env: Pick<Env, 'ENV_LABEL' | 'NEAR_NETWORK'>): string {
-  return env.NEAR_NETWORK === 'testnet' && env.ENV_LABEL !== undefined && (MAIL_LABELS as readonly string[]).includes(env.ENV_LABEL) ? env.ENV_LABEL : '';
+  return env.NEAR_NETWORK === 'testnet' && env.ENV_LABEL !== undefined && (LABELS as readonly string[]).includes(env.ENV_LABEL) ? env.ENV_LABEL : '';
 }

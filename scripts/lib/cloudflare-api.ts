@@ -52,7 +52,7 @@ export async function resolveAccount(api: CloudflareApi, given: string | undefin
   const list = await api.list('/accounts', "listing the token's accounts", 'access to one account', 50);
   const ids = list.map((a) => (a as { id?: unknown })?.id).filter((id): id is string => typeof id === 'string' && ACCOUNT_ID_RE.test(id));
   if (ids.length === 1) return ids[0]!;
-  throw new Error(ids.length === 0 ? 'The token reaches no account: pass --account-id (or set CLOUDFLARE_ACCOUNT_ID)' : `The token reaches ${ids.length} accounts: pass --account-id (or set CLOUDFLARE_ACCOUNT_ID)`);
+  throw new Error(ids.length === 0 ? "The token lists no account (a token without an account-read permission can't, e.g. one with only Hyperdrive Edit): pass --account-id <id> (the dashboard's Workers & Pages overview shows it) or set CLOUDFLARE_ACCOUNT_ID" : `The token reaches ${ids.length} accounts: pass --account-id (or set CLOUDFLARE_ACCOUNT_ID)`);
 }
 
 type Envelope = { success?: unknown; result?: unknown; result_info?: unknown; errors?: unknown };

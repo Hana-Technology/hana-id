@@ -370,7 +370,7 @@ function workerTiles(r: Report, env: Env, s: Sources): void {
   const w = s.watchdog;
   const wd: TileInput = { id: 'watchdog-worker', group: 'workers', name: 'Watchdog', affects: 'Alerts: the watchdog pages and emails on its own, and pauses the contract on a forged key', detail: '', link: L.monitoring };
   if (!w.ok) {
-    const why = w.code === 'watchdog_unconfigured' ? 'isn’t configured for this console (WATCHDOG_URL or its status token missing)' : w.code === 'watchdog_unauthorized' ? 'refused this console’s status token (the two copies differ)' : w.code === 'watchdog_timeout' ? 'didn’t answer within 8 s' : 'didn’t answer as expected';
+    const why = w.code === 'watchdog_unconfigured' ? 'isn’t configured for this console (WATCHDOG_URL or its status token missing)' : w.code === 'watchdog_unauthorized' ? 'refused this console’s status token (the two copies differ)' : w.code === 'watchdog_timeout' ? 'didn’t answer within 8 s' : w.code === 'watchdog_unavailable' ? 'didn’t answer (a network error or a server error)' : 'didn’t answer as expected';
     r.add({ ...wd, detail: `Can’t be read: ${w.code}` }, [{ severity: 'critical', title: `The watchdog ${why}: its heartbeat, checks and alerts are unknown here`, action: 'Its own alerts don’t depend on this console. Follow the playbook; the table in docs/operations.md "Security & monitoring" maps each code to a fix.', playbook: 'watchdog-down', key: 'down' }]);
   } else {
     const problems: Problem[] = [];

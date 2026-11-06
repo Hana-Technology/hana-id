@@ -19,6 +19,7 @@ The left nav groups the screens by task (D420):
 
 | Group | Screens |
 |---|---|
+| Overview | **Status** (D425): the landing page (`/`), every part of the env at a glance, below |
 | Partners | **Organisations**: the list and "Invite a new partner" (a new organisation's first owner); an organisation's members, invites, owner grants, apps ("Create an app", "Move a legacy scope here"), security contacts, recent app changes and its danger zone (freeze, suspend every app); an app's suspension switches, allowed origins, guarded changes, signing settings, publishable keys and danger zone. **Legacy apps** (`org_legacy`) has its own page: its scopes, each with "Move to an organisation" |
 | Support | **Users** (C8b), **Support ID lookup** (C15) |
 | Security | **Security & monitoring**, **Feed and notices**, **Pending upgrades**, **Playbooks** (C14), **Audit log** (the console's rows, an org's app changes, the issuer's directory reads) |
@@ -49,55 +50,67 @@ export.
 
 ## System status (D425)
 
-The landing page (`/`, nav **Status** at the top; asked for by the user 2026-11-06): one look says whether every part
-of the env is up and working, and what to do when it isn't. Read-only: nothing on it acts, it only links.
+The landing page (`/`, nav **Overview → Status** at the top; asked for by the user 2026-11-06): one look says whether
+every part of the env is up and working, and what to do when it isn't. Read-only: its one button, **Check again**,
+reads again; everything else is a link.
 
 **What it shows.** A verdict banner: **All systems operational** (green) only when every check answered and passed;
-otherwise **N issues** (amber with warnings only, red with a critical one), with when it was checked. Then the issues,
-critical first: what is wrong in plain words, what it affects (logins, the partner console, alerts, billing…), since
-when (known from the source, e.g. an alert's or a proposal's time, a cron's last run; else "first seen" by this
-isolate), and the screen or playbook that resolves it. Then one tile per component, grouped (Workers, contract and
-watchdog, relayer funds, data, scheduled jobs, external services, free-tier headroom): green, amber, red, grey
-**unknown** (a check that should have answered and didn't: always an issue, never green) or grey **not measured**
-(nothing can measure it yet: listed under the tiles as a follow-up, not an issue), with "checked N s ago" and a line of
-detail (latency, build id, counts, ages).
+otherwise **N issues** (amber with warnings only, red with a critical one), with when it was checked ("N s ago",
+refreshed in place) and how many checks passed. Then the **issues**, critical first: what is wrong in plain words,
+what it affects (logins, the partner console, alerts, billing…), since when (from the source when it has a time: an
+alert's, a proposal's, a cron's last run plus one interval, the oldest waiting notice; else **first seen** by this
+isolate), which component, what to do, and the screen or playbook that resolves it. Then one **tile** per component,
+grouped (Workers; Contract and watchdog; Relayer funds; Data; Scheduled jobs; External services; Free-tier
+headroom): **OK** (green), **Warning** (amber), **Critical** (red), **Unknown** (grey, dashed: a check that should have
+answered and didn't; always behind an issue, never green) or **Not measured** (outlined: nothing measures it yet, or the
+piece isn't part of this env; not an issue), each with a line of detail (latency, build id, counts, ages) and "checked
+N s ago". Last, **Not measured yet**: what the page can't see and how to check it meanwhile.
 
-**Where each check comes from** (`GET /api/status`, `src/status.ts`; every source in parallel, each failing on its own):
+**The checks** (`GET /api/status`, `src/status.ts` and `src/status-probes.ts`; every source in parallel, each failing on
+its own; when a source fails, the tiles it feeds are Unknown and the failure is said once, as one issue):
 
-| Group | Tile | Source | Green | Amber | Red |
-|---|---|---|---|---|---|
-| Workers | API, vault Worker, vault bundle, auth Worker, auth pages, email issuer, console Worker, console SPA, console-auth, files | the public build reads `deploy-check` uses (`/v1/health`, `/.well-known/hana-build`, `/vault.js`'s banner, `/login`'s and the console's `<meta name="hana-build">`, `/v1/email/health`): 5 s timeout, no redirect followed, 16 KiB read (256 B of `vault.js`) | 2xx with a build id, < 2 s | slower than 2 s; no build id (unstamped) | no answer, timeout, non-2xx, redirect |
-| | Admin (this Worker) | `HANA_BUILD`; its secrets present (names only, never values) | stamped, every secret set | unstamped; `COINGECKO_API_KEY`… optional ones aren't checked | `EMAIL_API_KEY`, `CANCEL_LINK_KEY` or `INVITE_LINK_KEY` missing (no notice can go out) |
-| | Watchdog | its `GET /status` (bearer, as Security & monitoring) | answered, `build` stamped | unstamped (a watchdog before D425 has no `build`) | unreachable, refused, unconfigured |
-| | (all) | the build ids above | one build everywhere | **mixed builds**: the Workers not on the majority's build named (a deploy half done; `docs/operations.md` "Checking a deploy") | — |
-| Contract and watchdog | Contract | `AdminRpc.systemStatus` → the governance snapshot, judged by Security & monitoring's own rules (`findingsOf`, governance part) | no finding | its warnings (a delay decrease, a due key change, …) | paused, a pending upgrade, owner transfer or withdrawal, a forged or published-key change, an untracked signer key |
-| | Watchdog | its `GET /status` | last run < 2 intervals ago, heartbeat ok, every channel on, no open alert | heartbeat failing or off, a channel off, an open warning alert, a check `error` | silent (no run in 2 intervals), an open critical alert (unacknowledged: re-paging) |
-| Relayer funds | Session pool, owner pool, relayer balance | the watchdog's last relayer reading (`relayer_funds`, its own thresholds) and the API's pool keys (`systemStatus`) | above `warn` | below `warn`; reading older than 30 min | below `critical`; account missing; an API pool key not on the account (its relays fail) |
-| Data | Hot D1 (API), console D1, email issuer D1 | `AdminRpc.systemStatus`, `StaffRpc.health`, `DirectoryRpc.health`: one `SELECT 1` each, timed | answered < 1 s | slower | failed, or the RPC didn't answer |
-| | Usage ledger | one Hyperdrive connection: `ops.state` reads, `partitionsAhead`, the settlement backlog | reachable, ≥ 2 partitions ahead | < 2 partitions ahead; settlement backlog older than 2 h | unreachable or unbound (reports, statements, settlement, the feed and the watcher stop; logins don't); 0 partitions ahead |
-| | R2: statements, exports (admin), logos (console) | `head` of a key that never exists (a Class B read; `StaffRpc.health` heads `LOGOS`) | answered | — | threw |
-| Scheduled jobs | API `*/15` (Google key sync), admin `*/5` (notices, feed, watcher), admin `*/15` (ledger), console hourly, watchdog `*/5` | the last run each records: `issuer_key_sync_runs`, `ops.state` `cron.last_run` and `ledger_cron.last_run` (new, D425), the console's `cron_runs` (migration 0003, D425), the watchdog's `last_run` | ran within 2 intervals + 5 min | later than that; last outcome `error`/`skipped`; a run's call budget ≥ 38 of 40 | later than 6 intervals (2 h for the 15-minute ones, 6 h hourly; the watchdog: 2 intervals, as its silence rule) |
-| External | Google JWKS | the API's governance snapshot (`issuers[].jwksKids`, the API's own fetch) and the watchdog's `jwks_fetch` check | listed | the watchdog's check failed | the API can't read it (Google logins fail when its cache runs out) |
-| | NEAR RPC primary, fallback | one `block` (`finality: final`) on each of the manifest's `rpc` and `rpcFallback` | answered, block < 2 min old | slow (> 2 s), or block 2–10 min old; the fallback down | the primary down (the API relays and reads through it) or > 10 min behind |
-| | Email (SendGrid) | `systemStatus` and `StaffRpc.health`: the blocking-notice backlog; `cron.last_run`: the last run's failed sends; `EMAIL_API_KEY` set | no backlog older than 15 min, no failed send | a failed send; backlog older than 15 min | backlog older than 1 h; no key |
-| Free-tier headroom (D417) | Cron triggers on the account | the manifest's cron Workers on this account (`gen`'s `ACCOUNT_CRONS`) against the Free plan's 5 | under 5 | at 5: full by design ("nothing else with a cron may be added") is green with that note | over 5 |
-| | Admin crons' call budget | each last run's `calls` against its 40 | < 38 | ≥ 38 (a backlog, D380) | — |
-| | Workers requests, D1, Hyperdrive queries, R2 storage and operations, SendGrid's 100 a day | — | not measured: the admin Worker holds no Cloudflare API token (Cloudflare's GraphQL/billing APIs) and SendGrid's stats need a key with more than Mail Send; follow-up in `docs/mainnet-readiness.md` | | |
+| Group | Tile | Source | Amber | Red |
+|---|---|---|---|---|
+| Workers | API, vault Worker, vault bundle, auth Worker, auth pages, email issuer, console Worker, console SPA, console-auth, files | the public build reads `deploy-check` makes (`/v1/health`, `/.well-known/hana-build`, `/vault.js`'s first line, the `<meta name="hana-build">` of `/login` and the console's `/`, `/v1/email/health`): 5 s deadline with the body, 16 KiB read (256 B of `vault.js`), no redirect followed, no credential | slower than 2 s; no build id (deployed without its `run deploy`) | no answer in 5 s, unreachable, non-2xx, a redirect, an answer that isn't the build endpoint |
+| | Admin console (this Worker) | its `HANA_BUILD`; `EMAIL_API_KEY`, `CANCEL_LINK_KEY`, `INVITE_LINK_KEY` present and usable (named, never shown) | no build id | a key missing: no blocking notice can go out |
+| | Watchdog | its `GET /status` (the bearer, server-side, as Security & monitoring) and its `build` (D425) | no `build` (a watchdog before D425) or none stamped | unconfigured, unreachable, refused, timed out |
+| | Same build everywhere | the build ids above, by commit (a `-dirty` build of the same commit is the same) | **mixed builds**: the pieces off the majority's build named (a half-done deploy) | — |
+| Contract and watchdog | Contract (hana-signer) | `AdminRpc.systemStatus`'s governance snapshot, judged by Security & monitoring's own rules (`findingsOf`, its governance part, info dropped) | its warnings (a delay decrease, a due key change, a cancelled proposal of the API's cron…); unreadable (Unknown, with an issue) | paused, a pending upgrade, owner transfer or withdrawal, a forged or published-key change, an untracked signer key |
+| | Watchdog checks | its `GET /status` | heartbeat off or failing; a channel off; an open warning alert; a check `error` | an open critical alert (marked "not acknowledged: re-sent every 15 min" until it is) |
+| Relayer funds | Relayer balance, session pool keys, owner pool keys | the watchdog's last relayer reading (`relayer_funds`, its own warn/critical lines) and the API's pool keys (`systemStatus`) | below warn; the reading older than 30 min; no owner-pool key; an API owner-pool key not on the account | below critical; the account missing; no session-pool key; an API session-pool key not on the account (its relays fail) |
+| Data | Hot D1 (API), console D1, email issuer D1 | `AdminRpc.systemStatus`, `StaffRpc.health`, `DirectoryRpc.health`: one timed `SELECT 1` each | slower than 1 s; the Worker didn't answer its status call (Unknown, with an issue: often a Worker deployed before D425) | the query failed |
+| | Usage ledger (Neon) | one Hyperdrive connection: `ops.state`, `partitionsAhead`, the settlement backlog | not bound; fewer than 2 partitions ahead; settlement's oldest event older than 2 h | unreachable; 0 partitions ahead |
+| | R2: statements, exports, logos | a `get` of a key nothing writes (Class B; the console's `StaffRpc.health` reads LOGOS) | the read threw | — |
+| Scheduled jobs | API every 15 min (Google key sync), admin every 5 min, admin every 15 min, console hourly, watchdog every 5 min | the run each records: `issuer_key_sync_runs`, `ops.state` `cron.last_run` and `ledger_cron.last_run` (new, D425), the console's `cron_runs` (console migration 0003, D425), the watchdog's `last_run` and silence rule | later than 2 intervals + 5 min; the last run `skipped`/`error` or a step failed; the console's table missing (migration 0003 not applied); no run recorded (Unknown) | later than 6 intervals (30 min for the 5-minute admin cron, 90 min for the 15-minute ones, 6 h hourly); the watchdog silent (no run in 2 intervals) |
+| External services | Google signing keys (JWKS) | the API's own fetch (`issuers[].jwksKids` in the snapshot) and the watchdog's `jwks_fetch` check | the watchdog's check failed | the API can't fetch them |
+| | NEAR RPC primary, fallback | one `block` (`finality: final`) on the manifest's `rpc` and `rpcFallback` | slower than 2 s; the final block 2–10 min old; the fallback down or stuck | the primary down, or its block over 10 min old |
+| | Email (SendGrid) | the blocking notices waiting (`systemStatus`, `StaffRpc.health`), the last 5-minute run's failed sends, `EMAIL_API_KEY` | a send not accepted; the oldest notice waiting over 15 min | over 1 h; no key (said once, on this Worker's tile) |
+| Free-tier headroom (D417) | Cron triggers on this account | `ACCOUNT_CRONS` (`gen` counts the manifest's cron Workers on the API's account) against the Free plan's 5 | not counted (an older config: Unknown) | over 5 (at 5 it is green: "full: nothing else with a cron may be added") |
+| | Admin crons' call budget | each last run's `calls` against its 40 (D380) | 38 or more | — |
+| | Requests, D1, Hyperdrive, R2 and SendGrid against free limits | — | Not measured: Cloudflare's GraphQL Analytics needs an API token this Worker doesn't hold, SendGrid's stats a key beyond Mail Send (`docs/mainnet-readiness.md` 5.12) | |
 
-**Budget per page load** (Workers Free: 50 subrequests, 10 ms CPU): at most **22** outbound calls on a cache miss
-(1 watchdog `/status`, 3 RPCs: `AdminRpc.systemStatus`, `StaffRpc.health`, `DirectoryRpc.health`; 10 public build
-reads; 2 NEAR RPC; 1 Hyperdrive connection; 2 R2 heads; 1 Access certs fetch on a cold isolate, cached ≤ 10 min,
-the Access check's), 3 Worker invocations of the 32 a request may make. The answer is cached in the isolate for
-**30 s**, and concurrent misses share one read, so a refresh, a second tab or the other staff member costs 0 calls
-within that window; `test/status.test.ts` counts the calls of a cold and a warm load. Nothing is added to the admin's
-crons but one `ops.state` write in the `*/15` run, on the run's open connection (a query, not a call, D380).
+**Budget per page load** (Workers Free: 50 subrequests, 10 ms CPU): a cold read makes **19** outbound calls (1 watchdog
+`/status`; 3 RPCs: `AdminRpc.systemStatus`, `StaffRpc.health`, `DirectoryRpc.health`; 10 public build reads; 2 NEAR
+RPC; 1 Hyperdrive connection; 2 R2 reads), plus the Access check's certs fetch on a cold isolate (cached ≤ 10 min):
+**20** at most, and 3 of the 32 Worker invocations a request may make. The answer is kept in the isolate for **30 s**
+and concurrent misses share one read, so a refresh, a second tab or the other staff member costs **0** calls within that
+window (the page says when it shows a kept read). `test/status.test.ts` counts a cold and a warm load from outside (the
+stubs) and inside (the answer's `calls`). The admin's crons gain no call: the 15-minute run writes its record on its
+open connection (a query, D380; `test-ops/budget.test.ts`).
 
-**Security.** Staff only behind Access and the Worker's own staff check like every `/api/*` route; GET only. The three
-health methods are authenticated as their entrypoints' other methods are (`AdminRpc` and `StaffRpc`: a `hana`
-actor; `DirectoryRpc`: the staff request's Access JWT, verified by the issuer) and answer no user data: build ids,
-timings, counts and timestamps. No secret, token or key is in the answer: the admin's secrets are named with
-present/missing only; the watchdog's bearer stays server-side. The page writes text only, links are the console's own
-paths, and nothing is stored in the browser.
+**Security.** Staff only behind Access and the Worker's own staff check like every `/api/*` route; GET only; `no-store`.
+The three health methods are authenticated as their entrypoints' other methods are (`AdminRpc` and `StaffRpc`: a
+`hana` actor; `DirectoryRpc`: the staff request's Access JWT, verified by the issuer before anything is read; no audit
+row, no row budget) and answer no user data: build ids, timings, counts and timestamps. No secret, token or key is in
+the answer (a test checks): the admin's keys are named present or missing only, the pool keys are public keys, the
+watchdog's bearer stays server-side. The page writes text only; an issue's link becomes a link only when it is one of
+the console's own paths.
+
+**Preview scenarios** (`corepack pnpm --filter @hana-id/admin preview`; `test-spa/preview-status.ts`): the real
+`buildStatus` over fake sources, `PREVIEW_STATUS=<scenario>` at start or `/preview/status/<scenario>` to switch:
+`green`, `warnings` (the relayer under its warn line, a watchdog channel off, notices waiting 22 min, the console's
+migration 0003 missing), `critical` (the API answering 503, NEAR's primary down, an unacknowledged critical alert),
+`mixed-build` (the page Workers and bundles on the previous build), `watchdog-down`.
 
 ## UI principles
 
@@ -191,10 +204,11 @@ of the Worker (wrangler serves `public/` alone; a source check keeps `public/` t
 | `src/notices.ts`, `src/feed.ts`, `src/watcher.ts`, `src/cron.ts`, `src/mail.ts` | the 5-minute cron's jobs and the call budget (D380) |
 | `src/ledger*.ts`, `src/settlement.ts`, `src/statement*.ts`, `src/rates.ts`, `src/report-routes.ts`, `src/alerts.ts` | C12's ledger work and routes |
 | `src/monitoring*.ts`, `src/watchdog.ts`, `src/playbooks.ts`, `src/plain.ts` | C14's Security & monitoring |
+| `src/status.ts`, `src/status-probes.ts` | the System status page (D425): the sources, every check, the verdict, the 30 s cache; the counted build and NEAR reads |
 | `src/retention*.ts` | C13's monthly job and screen |
 | `src/email/` | the `EmailSender` (SendGrid, `sendgridSender`) and every message; `src/mail.ts` `sendToAll` skips a message this isolate saw accepted (SendGrid has no idempotency key, D401) |
 | `public/` | the SPA (no build, text only: a source check forbids HTML sinks and browser dialogs) |
-| `test-spa/` | the SPA's DOM tests (`boot.ts` runs `public/app.js` in happy-dom) and the local preview (`preview.ts`, `preview-data.ts`) |
+| `test-spa/` | the SPA's DOM tests (`boot.ts` runs `public/app.js` in happy-dom) and the local preview (`preview.ts`, `preview-data.ts`, `preview-status.ts`: the status page's scenarios over the real `buildStatus`, typechecked with `test-ops/`) |
 | `scripts/gen-wrangler.ts` | `wrangler.jsonc` from the manifest's dashboard blocks (`ISSUER` when the env has an email issuer) |
 
 ## Commands
@@ -212,9 +226,10 @@ and the email issuer (an auxiliary Worker, so `DirectoryRpc` runs for real) gets
 team (`test/fake-access.js`). The SPA's tests (`test-spa/`, `vitest.spa.config.ts`) run `public/app.js` as the browser
 does, in a fresh happy-dom window per test with the API answered at `fetch` (`test-spa/boot.ts`): the Support ID
 lookup screen and the Users screen's ways into it (`support.test.ts`), the UI principles above (`ux.test.ts`), and
-the sign-in's end: the Access redirect, Try again, the warning (`session.test.ts`).
+the sign-in's end: the Access redirect, Try again, the warning (`session.test.ts`), and the System status page over each
+preview scenario's real answer (`status.test.ts`); the status route's checks, call count and cache are `test/status.test.ts`.
 
-Last verified: 2026-11-06 (branch `fix/session-expiry-ux`: the sign-in's end said as such, Try again, the warning
+Last verified: 2026-11-06 (branch `feat/admin-system-status`: the System status page, its checks, budget and preview scenarios, D425); 2026-11-06 (branch `fix/session-expiry-ux`: the sign-in's end said as such, Try again, the warning
 before `exp`, `GET /api/me` `accessExp`, `/signed-in`, the preview's `PREVIEW_SESSION_MIN`, `session.test.ts`, D424);
 2026-11-06 (branch `feat/admin-ux-redesign`: the grouped nav and screens, "UI principles", the local preview, `ux.test.ts`, D420); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: email through SendGrid, D401); 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy`, stamped with the build id, read by `deploy-check` from the deployed version, D406); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup screen, `src/support.ts`'s email join,
 the SPA tests, D399); 2026-11-05 (branch `feat/batch-c-8b`: written with the Users screen, D388–D392).

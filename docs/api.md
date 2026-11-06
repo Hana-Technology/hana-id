@@ -1,6 +1,6 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
-Last verified against code: 2026-11-06 (branch `fix/session-expiry-ux`: the admin's `GET /api/me` `accessExp`, the console's `GET /api/me` `sessionExpiresAt`, D424; no route or request changed); 2026-11-06 (branch `fix/google-key-hysteresis`: "Cron" step 3: three JWKS fetches a run, removal after 24 h missing from every fetch, never a kid with a token in the last 24 h, migration 0012, D422); 2026-11-06 (branch `feat/console-ux-redesign`: the console SPA's pages and error display, D421; no route or request changed); 2026-11-06 (branch `feat/env-alert-label`: the admin Worker's `ENV_LABEL` var, D419); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: the admin Worker's "Email" through SendGrid, accepted on `202`, no idempotency key, the per-isolate memo; D401); 2026-11-05 (branch `fix/security-review-1105`: the admin's `POST /api/users/search` ticket for a sub or full address, `POST /api/users/find` `{query, ticket}` audited first as `users.find`, `support.lookup`'s `requestIdList`, `recordStaffAction`'s two org-less actions, D410); 2026-11-05 (branch `feat/deploy-check-all-workers`: the build id on every Worker, D406: `GET /.well-known/hana-build` on the console, console-auth and files Workers, the console SPA's `<meta name="hana-build">`, none on the admin (read through wrangler); the shared deploy wrapper); 2026-11-05 (branch `feat/sdk-error-request-id`: "Conventions": an error's `requestId` passed on to the SDK as `data.requestId`, D405); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup's screen: the email join in `POST /api/support/lookup` (`emails`, `emailsNote`, `unverifiedWarning`), its ticket in the issuer's rule, `DirectoryRpc.get`'s `purpose` (`support_lookup`), D399); 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
+Last verified against code: 2026-11-06 (branch `feat/admin-system-status`: the admin's `GET /api/status`, `AdminRpc.systemStatus`, `StaffRpc.health`, `DirectoryRpc.health`, the console's `cron_runs` (migration 0003), the admin's `ledger_cron.last_run` and its new vars, D425); 2026-11-06 (branch `fix/session-expiry-ux`: the admin's `GET /api/me` `accessExp`, the console's `GET /api/me` `sessionExpiresAt`, D424; no route or request changed); 2026-11-06 (branch `fix/google-key-hysteresis`: "Cron" step 3: three JWKS fetches a run, removal after 24 h missing from every fetch, never a kid with a token in the last 24 h, migration 0012, D422); 2026-11-06 (branch `feat/console-ux-redesign`: the console SPA's pages and error display, D421; no route or request changed); 2026-11-06 (branch `feat/env-alert-label`: the admin Worker's `ENV_LABEL` var, D419); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: the admin Worker's "Email" through SendGrid, accepted on `202`, no idempotency key, the per-isolate memo; D401); 2026-11-05 (branch `fix/security-review-1105`: the admin's `POST /api/users/search` ticket for a sub or full address, `POST /api/users/find` `{query, ticket}` audited first as `users.find`, `support.lookup`'s `requestIdList`, `recordStaffAction`'s two org-less actions, D410); 2026-11-05 (branch `feat/deploy-check-all-workers`: the build id on every Worker, D406: `GET /.well-known/hana-build` on the console, console-auth and files Workers, the console SPA's `<meta name="hana-build">`, none on the admin (read through wrangler); the shared deploy wrapper); 2026-11-05 (branch `feat/sdk-error-request-id`: "Conventions": an error's `requestId` passed on to the SDK as `data.requestId`, D405); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup's screen: the email join in `POST /api/support/lookup` (`emails`, `emailsNote`, `unverifiedWarning`), its ticket in the issuer's rule, `DirectoryRpc.get`'s `purpose` (`support_lookup`), D399); 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
 answers, D395; `AdminRpc.supportLookup` / `userShares`; the admin Worker's `POST /api/support/lookup`; the
 `support.lookup` staff action; D394–D396); 2026-11-05 (branch `feat/deploy-build-check`: the build id, D384: `GET /v1/health`'s
 `build`, the page Workers' `GET /.well-known/hana-build`, the issuer's `GET /v1/email/health`, the `HANA_BUILD` var
@@ -1114,6 +1114,7 @@ no budget, plus:
 | `relayerKeys` | The public keys of both pools; never a secret |
 | `governance` (C14) | `{}` → `{governance}`: the whole `GET /v1/governance` snapshot (above; the same isolate cache, so one read serves the endpoint and the RPCs for 10 s), for the "Security & monitoring" view. `hana` only. `near_unavailable` when a view fails or has an unknown shape (nothing partial) |
 | `pendingUpgrades` (C14) | `{}` → `{pendingUpgrades}`: the same view as `ConsoleRpc.pendingUpgrades`, for the admin's page. `hana` only |
+| `systemStatus` (D425) | `{}` → `{build, hotDb: {ok, latencyMs}, jwksSync: [{job, atMs, outcome, detail}] \| null, notices: {pending, oldestAt, truncated} \| null, relayerKeys: [{pool, publicKey}] \| null, governance: {ok: true, snapshot} \| {ok: false, code}}`: the admin's System status page in one call. `build` the deployed `HANA_BUILD` (null unstamped); `hotDb` a timed `SELECT 1`; `jwksSync` the Google-key sync's last run per provider (`issuer_key_sync_runs`, written by every 15-minute cron run); `notices` the guarded changes pending and unannounced (at most 100 counted); `relayerKeys` public keys only; `governance` the `GET /v1/governance` snapshot (its 10 s isolate cache) or why not. Each part fails on its own (a D1 failure is `ok: false` / null, never a thrown call). `hana` only, read-only, no user data (`apps/api/src/system-status.ts`) |
 | `listUsers`, `getUser`, `findUsers` (W) | The wallet directory for staff (D315): `listUsers({orgId?, scopeId?, cursor?, limit ≤ 200})`, `getUser({userId})` or `getUser({internalId})`, exactly one (`not_found`), `findUsers({query, provider?})` (a Stellar or EVM address: every user listing it; a User ID `u1_…`; an internal id `hu_…`, any case; a Support ID, any case, with or without `HANA-` and dashes: every user it is the short form of; else a sub, which `provider` narrows and forces), at most 50. A `StaffUser` is `{userId, supportId, internalId, scopeId, orgId, createdAt, lastSeenAt, identities: [{provider, sub, identityKey, role, status, effectiveAt, firstSeenAt, observedAt, directoryKey}], wallets: [{chain, address, keyIndex, firstSeenAt, lastUsedAt, sharedWith}]}`. `status` is read at answer time (a pending member past `effectiveAt` is `active`). The email isn't here: `directoryKey` `{provider, sub}` is the key for D275's `DirectoryRpc` (C8b) |
 | `appNames` (C8b) | `{appIds: string[1..50]}` → `{apps: [{id, name, orgId, scopeId, environment, deletedAt}]}`: the Users screen's app labels (the issuer's directory names apps by id, and `getApp` needs the org); one SELECT, unknown ids left out, deleted apps included. `hana` only (D391) |
 | `supportLookup({query, days?})` (C15) | `hana` only, read only (D394). `query`: a Support ID (any case, `HANA-` and dashes optional), a User ID (`u1_…`) or an internal id (`hu_…`), else `bad_request` (a wallet or a sub goes through `findUsers` first); `days` 1–731, 30 by default → `{query: {kind, …}, since, truncated, matches: [{user: StaffUser, apps: [{appId, name, orgId, environment, persistence, deletedAt}], shares: [{appId, keyIndex, createdAt, idleUntil, absExpiresAt, revokedAt, live}], changes: AppChange[]}]}`: every directory user the query names (at most 10 in full, newest first by last seen; `truncated` when more share the code), the scope's apps (deleted ones too), the user's `vault_shares` not past `abs_expires_at` (the account root's path at key index 0 and each key index its wallets show; never a share id, key or counter) and the scope's apps' `app_changes` since `since` (at most 50, newest first). No ledger rows: the admin Worker and the CLI read those as `usage_admin` |
@@ -1704,6 +1705,7 @@ Inputs are console-core's strict zod schemas (`packages/console-core/src/staff.t
 
 | `recordStaffAction({orgId?, action, target?, details})` (C12, D327) | Hana only: the `audit_log` row of an admin act with no RPC write of its own: `statement.issued` (`month`, `csvSha256`, `pdfSha256`, `asOf`, `lines`), `ledger.exported` (`month`, `asOf`, `rows`, `sha256`), `rate.overridden` (`day`, `usdMicros`, `overrideId`), `support.lookup` (C15, D396: `by`, `ticket`, `requestIds`, `requestIdList` (the request IDs, ≤ 20 in the request-ID form: the only list a detail may be, D410), `days`) and `users.find` (D410: `by`, `ticket`), both org-less (an `orgId` is `bad_request`, so no partner audit view or feed shows them, and the feed never emails them); another detail key, or a list on another key, is `bad_request`; a repeat of (request id, action) is `already_applied` and writes nothing |
 
+| `health({})` (D425) | Hana only, read-only: `{build, db: {ok, latencyMs}, cron: {job, atMs, outcome, detail} \| null \| 'missing', notices: {pending, oldestAt, truncated} \| null, logos: 'ok' \| 'error' \| null}` for the admin's System status page: the deployed `HANA_BUILD`, a timed `SELECT 1` on `CONSOLE_DB`, the hourly cron's last run (`cron_runs`; `missing` without migration 0003), the invite and owner-grant notices `pendingMemberNotices` would send (at most 100 counted), a `head` of a LOGOS key nothing writes (null without the binding). No email, sub or name |
 | `purgeAudit({before, limit ≤ 1000})` (C13, D364) | `system` only (the admin Worker's monthly job). Deletes up to `limit` `audit_log` rows older than `min(before, 60 months ago)` (the table's trigger refuses a younger one anyway) and up to `limit` owner grants applied or cancelled that long ago (an open grant stays) → `{auditLog, ownerGrants}` |
 
 A replayed request id is `already_applied` (same actor and
@@ -1719,7 +1721,7 @@ sha256 equals the statement's, with `x-hana-sha256`), `ledgerCsvRoute` (`/ledger
 streamed page by page at one as_of, `x-hana-as-of`; a page failing after the first ends the file with an `# incomplete`
 line; at most 200 pages).
 
-**Bindings** (`apps/console/scripts/gen-wrangler.ts`): `CONSOLE_DB` (D1, `migrations/` 0001–0002), `API` → the API
+**Bindings** (`apps/console/scripts/gen-wrangler.ts`): `CONSOLE_DB` (D1, `migrations/` 0001–0003; 0003 the hourly cron's `cron_runs`, D425: one row per job, `at_ms`, `outcome` `ok`/`error`, `failed_steps`, written after each run, a failed write logged as `console_cron` `record`), `API` → the API
 Worker's `ConsoleRpc` (every method but `usage`, `statements` and `ledger`, which C12 adds; `listUsers` and `getUser`
 once the wallet directory lands), `LOGOS` and `STATEMENTS` (R2; `STATEMENTS` read only by code), `IMAGES` (the Images binding,
 C11), `ASSETS` (`./dist`, the SPA build), `CONSOLE_IP_LIMIT`; vars `ENV_NAME`, `CONSOLE_ORIGIN`, `CONSOLE_AUTH_ORIGIN`,
@@ -1793,6 +1795,7 @@ binding throws; `405` with `allow`; `413` over 64 KiB (16 KiB without a `Content
 | Route | Body or query → answer | Calls |
 |---|---|---|
 | `GET /api/me` | → `{email, sub, env, consoleOrigin, accessExp}`: `accessExp` is the verified Access token's `exp` (seconds), when this sign-in ends, for the SPA's warning before it (D424); the token itself is never answered | — |
+| `GET /api/status` (D425) | → the System status answer (below) | watchdog `GET /status`, `AdminRpc.systemStatus`, `StaffRpc.health`, `DirectoryRpc.health`, the public build reads, NEAR `block` on `NEAR_RPC` and `NEAR_RPC_FALLBACK`, one ledger connection, a `get` on `STATEMENTS` and `EXPORTS`; kept 30 s in the isolate |
 | `GET /api/orgs?cursor` | → `{orgs, next?}` (100 a page) | `StaffRpc.listOrgs` |
 | `GET /api/orgs/:org` | → `{org, members, invites, grants, securityContacts, apps, flags: {noSecurityContacts, ownersNotContacts}}` | `getOrg`, `getSecurityContacts`, `AdminRpc.listApps` |
 | `POST /api/orgs/:org/freeze`, `/suspend` | `{frozen}`, `{suspended}` | `StaffRpc.freezeOrg`, `AdminRpc.suspendOrg` |
@@ -1878,6 +1881,21 @@ security alias is emailed `directory_budget` as the Users routes do; identities 
 never fails the lookup: each identity says why. POST only (`405` otherwise), CSRF rules as every write. Logs carry
 counts only (`calls: {directoryRead, directoryMissing}`), never the query, a sub or an address.
 
+**System status (D425; `src/status.ts`, `src/status-probes.ts`; apps/admin/README.md "System status" has every
+check and threshold).** `GET /api/status` → `{checkedAt, env, verdict: {state: 'ok' | 'warning' | 'critical', title,
+critical, warning}, issues: [{id, severity: 'critical' | 'warning', component, componentName, title, affects, action,
+since, sinceSource: 'source' | 'first_seen', link: {path, label} | null, playbook: {id, title} | null}] (critical
+first), groups: [{id, title, tiles: [{id, group, name, state: 'ok' | 'warning' | 'critical' | 'unknown' |
+'not_measured', detail, affects, latencyMs, build, link}]}], builds: {majority, mixed, pieces: [{component, build}]},
+notMeasured: [{what, why}], calls: {total, byKind}, cacheMs, cached, ageMs}`. `verdict.title` is "All systems
+operational" only with no issue; a tile that couldn't be checked is `unknown`, and every unknown tile is behind an
+issue (its own, or the one failure that hid it). A cold read makes at most 19 outbound calls (`calls`; the Access
+certs fetch before the route adds one on a cold isolate), every source in parallel with its own deadline (the public
+build and NEAR reads 5 s with the body, at most 16 KiB read, 256 B of `vault.js`, no redirect followed, no
+credential); the answer is kept in the isolate for 30 s (`cached: true`, `ageMs`) and concurrent misses share one
+read. No secret is in it: the admin's own keys are named present or missing, never shown. `500 internal` only if the
+mapping itself throws (not cached).
+
 **Security & monitoring (C14; D83, D126, D330–D338).** The watchdog is called **server-side only**
 (`src/watchdog.ts`): `Authorization: Bearer <WATCHDOG_STATUS_TOKEN>` to `WATCHDOG_URL` (an https origin exactly; else
 nothing is called), `redirect: 'manual'` (a 3xx is refused, never followed), an 8 s deadline that covers the body, and
@@ -1931,7 +1949,8 @@ Steps 2 and 3 need `USAGE_DB`; without it (or with Neon down) they are skipped a
 **Cron** `*/15 * * * *` (C12, `src/ledger-cron.ts`; D322, D380), one ledger connection and its own 40 outbound calls,
 every kind counted: the connection, `AdminRpc.relayerKeys`, the retention RPCs, each statement notice's
 `getSecurityContacts` and `StaffRpc.getOrg`, every email, `tx`, `view_access_key` and rate fetch. Each job's share is in
-the run's `ledger_cron` `budget` log line (`calls`):
+the run's `ledger_cron` `budget` log line (`calls`), and from D425 the run is recorded in `ops.state` `ledger_cron.last_run`
+(`{at, budgetLeft, calls, failed}`, the failed steps' names) on the run's open connection, a query, not a call:
 1. **Alerts** (`src/alerts.ts`): one digest each to the security alias of the unexplained nonce checks
    (`nonce_unexplained`), the rejection-rate alerts (`rejection_rate`) and the settlement alerts not yet sent,
    `alerted_at` set only after the send was accepted.
@@ -1979,7 +1998,9 @@ that failed; across isolates a message can arrive twice, never zero times. One m
 **Bindings** (`apps/admin/scripts/gen-wrangler.ts`; D284): `API` → `AdminRpc`, `CONSOLE` → `StaffRpc`, `USAGE_DB`
 (Hyperdrive, the admin config, `--admin-hyperdrive-id`), `ASSETS`; vars `ENV_NAME`, `ENV_LABEL` (a non-production env's subject label, `[SANDBOX]` etc., D419; absent on production), `ADMIN_ORIGIN`, `CONSOLE_ORIGIN`,
 `FILES_ORIGIN`, `NEAR_RPC`, `SIGNER_ACCOUNT`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `STAFF_EMAILS` (JSON),
-`EMAIL_FROM`, `SECURITY_ALIAS`, `APP_CHANGE_DELAY_MS`, `OWNER_GRANT_DELAY_MS`, and from C14 `NEAR_NETWORK` and
+`EMAIL_FROM`, `SECURITY_ALIAS`, `APP_CHANGE_DELAY_MS`, `OWNER_GRANT_DELAY_MS`, from D425 `API_URL`, `VAULT_ORIGIN`, `AUTH_ORIGIN`, `EMAIL_ISSUER_URL`, `CONSOLE_AUTH_ORIGIN`,
+`NEAR_RPC_FALLBACK` (each only when the manifest has it) and `ACCOUNT_CRONS` (JSON `[{worker, crons}]`: the manifest's cron
+Workers on the API's account), and from C14 `NEAR_NETWORK` and
 `WATCHDOG_URL` (manifest `watchdog.url`; absent in a dev env without it, required on a production manifest); secrets
 `EMAIL_API_KEY`, `CANCEL_LINK_KEY`, `INVITE_LINK_KEY` and from C14 `WATCHDOG_STATUS_TOKEN` (never in the config).
 `preview_urls: false`; `workers_dev: true` only for a workers.dev `admin.origin` in a dev env, else a Custom Domain
@@ -2161,6 +2182,7 @@ that email is the actor. Answers `{ok: true, …}` or `{ok: false, code, error?,
 | `search` | `{q?, provider?, appId?, sub?, unverifiedOnly?, cursor?, limit? ≤ 100 (50), ticket?}` → `{users: [{provider, sub, email, emailVerified, hosted, unverifiedClaim, firstSeenMs, lastSeenMs, appCount}], next?}`. `q`: a full address matches exactly (as typed lowercased and normalized), else a substring of ≥ 3 characters; newest first by last seen, an address search with Google's unverified claims after the verified rows; `next` with a full page (`<claim>:<lastSeenMs>:<provider>:<sub>`) |
 | `get` | `{provider, sub, ticket, purpose?}` (the ticket required; `purpose` `user_view`, the default, or `support_lookup`, D399) → `{user, apps: [{appId, scopeId, firstSeenMs, lastSeenMs}] (≤ 200, newest first), appsTruncated?}`; `not_found` without a row (audited, costs no row) |
 | `auditSince` | `{id}` (after it, oldest first) or `{before}` (newest first), `staff?`, `action?`, `limit ≤ 200` → `{rows: [{id, atMs, staff, action, ticket, scopeId, actionNonce, jti, subject, detail}]}`; no row budget, no audit row |
+| `health` (D425) | `{}` (beyond `requestId`, `accessJwt`) → `{build, db: {ok, latencyMs}}`: the deployed `HANA_BUILD` (null unstamped) and a timed `SELECT 1`, for the admin's System status page; the staff check first, then no directory read, no row budget, no audit row |
 
 `search` and `get` take their rows first from the staff member's budget (`staff-dir:<email>`: 500 identities an hour,
 2 000 a UTC day, provisional; a page past what is left is cut to it, rows not returned are given back) and write one

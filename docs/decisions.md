@@ -7428,6 +7428,9 @@ branch.
   block in the manifest, `admin app:changes:announce` refuses sandbox-dev (staff proposals wait for the admin Worker's
   notices), and until `access-setup` writes the real team domain and AUD the admin Worker and the issuer's
   `DirectoryRpc` refuse every staff call.
+- Amended 2026-11-06 (the user): the SendGrid plan has no subusers, so sandbox-dev's issuer, admin Worker and watchdog
+  keys (each Mail Send only) sit in one account and share its suppression lists; accepted for testnet, D194's own
+  issuer subuser stays required for production (docs/operations.md "Admin Worker" step 2).
 - Rejected: waiting for the company account (no date); a separate throwaway env for M4 (another set of NEAR accounts,
   issuers and OAuth clients for no gain over redoing sandbox-dev's setup).
 

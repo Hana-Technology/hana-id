@@ -45,6 +45,7 @@ import { appSettings, defaultAppSettingsDeps, settingsAppArg } from './lib/admin
 import { CliError, parseCli, run } from './lib/cli.ts';
 import { scopeRegister } from './lib/admin-scope.ts';
 import { scopeAddEmailClient } from './lib/admin-email-client.ts';
+import { consoleRemoveAudienceCmd } from './lib/admin-console-sink.ts';
 import { governanceStatusCmd, issuerIssCmd, ownerCallCmd, ownerProposalsCmd, ownerVoteCmd } from './lib/admin-owner.ts';
 import { councilReplaceMemberCmd } from './lib/council-members.ts';
 import { tryView } from './lib/contract.ts';
@@ -113,6 +114,10 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
   issuer:iss <provider> --add <iss> | --remove <iss> [--member <m>] [--approve-with <m>] [--yes]
                one set_issuer owner call that adds an iss beside the provider's values on chain, or removes one
                (keys and addresses unchanged: paths name the provider, not the iss); moving an issuer's URL (D404)
+  console:remove-audience <aud> [--provider google] [--member <m>] [--approve-with <m>] [--yes]
+               retire a console client from its console sink scope (D416): one remove_client through the manifest's
+               owner, only once the audience is out of consoleAudiences, its scope is a Hana console sink owned by
+               the manifest's owner, and another client stays; then deploy-contract sets console_audiences
   owner:vote <proposal id> --member <m> [--reject] [--yes]
                approve (or with --reject, reject) a council proposal (dev envs: key from .secrets)
   owner:proposals [--limit 20] [--json]           the council's recent proposals, decoded
@@ -126,7 +131,7 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
   --remote   act on the deployed D1 database (default: local, apps/api/.wrangler/state; user:*: the issuer's,
              apps/email-issuer/.wrangler/state, and the API's for the wallet directory)
   --d1-name <name>  act on a rehearsal database (name containing "rehearsal") instead of the env's
-  --yes      scope:register, scope:add-email-client, owner:call, issuer:iss, owner:vote, council:replace-member: send the transaction (without it, only
+  --yes      scope:register, scope:add-email-client, owner:call, issuer:iss, console:remove-audience, owner:vote, council:replace-member: send the transaction (without it, only
              print it); app:origins:park, app:origins:unpark, retention:issuer: write (without it, only list)
   --allow-shared  scope:register only: the app may log in through Hana's shared Google client; with it, --client is
                   optional (an app with no Google client of its own)
@@ -156,6 +161,7 @@ const COMMANDS = [
   'issuer-keys:lead-times',
   'owner:call',
   'issuer:iss',
+  'console:remove-audience',
   'owner:vote',
   'owner:proposals',
   'governance:status',
@@ -332,6 +338,9 @@ async function main(): Promise<void> {
       return;
     case 'issuer:iss':
       await issuerIssCmd(m, rest[0]!, args, ownerDeps(m));
+      return;
+    case 'console:remove-audience':
+      await consoleRemoveAudienceCmd(m, rest[0]!, args, ownerDeps(m));
       return;
     case 'owner:vote':
       await ownerVoteCmd(m, rest[0]!, args, ownerDeps(m));

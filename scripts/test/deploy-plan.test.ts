@@ -862,7 +862,7 @@ describe('buildDeployPlan', () => {
   it('a console audience claimed by another scope (an OIDC owner, other clients or shared login) is a blocker', () => {
     const claimed = [
       { id: 's5', owners: [{ Oidc: { provider: 'google', sub: '1' } }], clients: [CONSOLE_AUD], allow_shared: false },
-      { id: 's5', owners: [{ Near: { account_id: m.owner } }], clients: [CONSOLE_AUD, ['google', 'partner.apps.googleusercontent.com']], allow_shared: false },
+      { id: 's5', owners: [{ Near: { account_id: 'mallory.testnet' } }], clients: [CONSOLE_AUD, ['google', 'partner.apps.googleusercontent.com']], allow_shared: false },
       { id: 's5', owners: [{ Near: { account_id: m.owner } }], clients: [CONSOLE_AUD], allow_shared: true },
     ];
     for (const view of claimed) {
@@ -871,6 +871,30 @@ describe('buildDeployPlan', () => {
     }
     // A console audience that is also one of Hana's own clients can't be kept out of "global".
     expect(buildDeployPlan({ ...m, consoleAudiences: [HANA] }, fresh(), opts).blockers.join()).toContain('both a console audience and one of googleClientIds');
+  });
+
+  it('a console client retired from consoleAudiences but still in the sink: a blocker naming console:remove-audience; done once removed (D416)', () => {
+    const OLD: [string, string] = ['google', 'old-console.apps.googleusercontent.com'];
+    const sink = (clients: [string, string][]) => ({ s3: { id: 's3', owners: [{ Near: { account_id: m.owner } }], clients, allow_shared: false } });
+    const scopes = (keys: [string, string][]) => Object.fromEntries(keys.map((c) => [`${c[0]}/${c[1]}`, 's3']));
+    // Both in the manifest and the sink: done.
+    const both = { ...withAud, consoleAudiences: [CONSOLE_AUD, OLD] };
+    const kept = buildDeployPlan(both, deployed({ consoleAudienceScopes: scopes([CONSOLE_AUD, OLD]), consoleSinkScopes: sink([CONSOLE_AUD, OLD]) }), opts);
+    expect(kept.blockers).toEqual([]);
+    expect(kept.done.join()).toContain('Console sink scope "s3" holds');
+    // The old one dropped from the manifest while the sink still holds it: refused, with the way out.
+    const stale = buildDeployPlan(withAud, deployed({ consoleAudienceScopes: scopes([CONSOLE_AUD]), consoleSinkScopes: sink([CONSOLE_AUD, OLD]) }), opts);
+    expect(stale.blockers.join()).toContain(`still holds google/${OLD[1]}, no longer in consoleAudiences`);
+    expect(stale.blockers.join()).toContain(`admin ${m.name} console:remove-audience <aud>`);
+    // After console:remove-audience: the sink holds only the manifest's audience.
+    const after = buildDeployPlan(withAud, deployed({ consoleAudienceScopes: scopes([CONSOLE_AUD]), consoleSinkScopes: sink([CONSOLE_AUD]) }), opts);
+    expect(after.blockers).toEqual([]);
+    expect(after.steps.filter((s) => s.kind === 'register-console-sink' || s.kind === 'remove-console-client')).toEqual([]);
+    // A new audience beside the sink's (a superset in the manifest): registered in a new sink, the old sink done.
+    const NEW2: [string, string] = ['google', 'console-2.apps.googleusercontent.com'];
+    const more = buildDeployPlan({ ...withAud, consoleAudiences: [CONSOLE_AUD, NEW2] }, deployed({ consoleAudienceScopes: { ...scopes([CONSOLE_AUD]), [`${NEW2[0]}/${NEW2[1]}`]: null }, consoleSinkScopes: sink([CONSOLE_AUD]) }), opts);
+    expect(more.blockers).toEqual([]);
+    expect(more.steps).toContainEqual({ kind: 'register-console-sink', owners: [{ Near: { account_id: m.owner } }], clients: [NEW2], quarantineMs: 0 });
   });
 
   it('warns when the signer balance looks too low for the wasm', () => {

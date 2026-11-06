@@ -33,7 +33,7 @@ const SESSION_MIN = Number(process.env.PREVIEW_SESSION_MIN ?? 60);
 let sessionEndsAt = Date.now() + SESSION_MIN * 60_000;
 const FAKE_ACCESS_LOGIN = 'https://preview-team.cloudflareaccess.invalid/cdn-cgi/access/login/127.0.0.1';
 let statusScenario: Scenario = (SCENARIOS as readonly string[]).includes(process.env.PREVIEW_STATUS ?? '') ? (process.env.PREVIEW_STATUS as Scenario) : 'green';
-const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
+const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8' };
 
 type Answer = { status: number; body: unknown };
 const ok = (body: unknown): Answer => ({ status: 200, body });
@@ -132,7 +132,8 @@ const server = createServer((req, res) => {
       return;
     }
     // Static files from public/, everything else the SPA's index (the Worker's single-page-application fallback).
-    const file = /^\/[a-z0-9-]+\.(js|css|svg|ico)$/u.test(url.pathname) ? url.pathname.slice(1) : 'index.html';
+    // The brand fonts and their licence (public/fonts, D426) too, as the assets binding serves them.
+    const file = /^\/(?:[a-z0-9-]+\.(js|css|svg|ico)|fonts\/[A-Za-z0-9-]+\.woff2|fonts\/OFL\.txt)$/u.test(url.pathname) ? url.pathname.slice(1) : 'index.html';
     try {
       send(res, 200, TYPES[extname(file)] ?? 'application/octet-stream', readFileSync(new URL(file, PUBLIC)), false);
     } catch {

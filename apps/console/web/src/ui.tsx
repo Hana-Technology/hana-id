@@ -1,6 +1,7 @@
 // The SPA's UI kit: notes and errors, panels, empty states, badges, copy buttons, the in-page confirm, the fresh
 // sign-in hint and the guarded-change timeline. Styles are classes in styles.css only (the CSP has no
 // 'unsafe-inline': no style prop anywhere), and text is always text (no HTML is ever injected).
+import { MARK_PATHS, MARK_RADIUS, MARK_VIEWBOX } from '@hana-id/brand';
 import type { GuardedChange } from '@hana-id/console-core';
 import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -22,14 +23,14 @@ export const IconBack = () => svg(<path d="M15 18 9 12l6-6" />);
 export const IconInfo = () => svg(<><circle cx="12" cy="12" r="8.5" /><path d="M12 11v5M12 8h.01" /></>);
 export const IconClock = () => svg(<><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></>);
 
-/** Hana's mark: five petals (hana, a flower). */
+/** Hana's mark (packages/brand, from Hana's own apps), drawn inline; its colours are the stylesheet's (.mark-bg, .mark-fg). */
 export function Mark() {
   return (
-    <svg className="mark" viewBox="0 0 32 32" width="24" height="24" aria-hidden="true" focusable="false">
-      {[0, 72, 144, 216, 288].map((r) => (
-        <ellipse key={r} cx="16" cy="9.5" rx="4.6" ry="6.5" transform={`rotate(${r} 16 16)`} />
+    <svg className="mark" viewBox={MARK_VIEWBOX} width="28" height="28" aria-hidden="true" focusable="false">
+      <rect className="mark-bg" width="50" height="50" rx={MARK_RADIUS} />
+      {MARK_PATHS.map((d) => (
+        <path key={d} className="mark-fg" d={d} />
       ))}
-      <circle cx="16" cy="16" r="3" className="mark-core" />
     </svg>
   );
 }

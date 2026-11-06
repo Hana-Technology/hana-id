@@ -159,6 +159,7 @@ describe('response headers', () => {
   it('are on assets, JSON answers, refusals and errors; /api/* is no-store; nothing sets a cookie', async () => {
     const cases: [string, Response, boolean][] = [
       ['asset', await adminRequest('/app.css', { jwt: null }), false],
+      ['font', await adminRequest('/fonts/Montserrat-400.woff2', { jwt: null }), false],
       ['page', await adminRequest('/', { jwt: null }), false],
       ['json', await adminRequest('/api/me'), true],
       ['401', await adminRequest('/api/me', { jwt: null }), true],
@@ -170,6 +171,16 @@ describe('response headers', () => {
       expect(res.headers.get('set-cookie'), name).toBeNull();
       if (api) expect(res.headers.get('cache-control'), name).toBe('no-store');
     }
+  });
+
+  it('serves the brand fonts from its own assets as fonts (D426), with no Access sign-in needed, like the SPA', async () => {
+    const font = await adminRequest('/fonts/Montserrat-400.woff2', { jwt: null });
+    expect(font.status).toBe(200);
+    expect(font.headers.get('content-type')).toBe('font/woff2');
+    expect(new TextDecoder().decode(new Uint8Array(await font.arrayBuffer()).slice(0, 4))).toBe('wOF2');
+    const licence = await adminRequest('/fonts/OFL.txt', { jwt: null });
+    expect(licence.status).toBe(200);
+    expect(await licence.text()).toContain('SIL OPEN FONT LICENSE Version 1.1');
   });
 
   it('a thrown error is a 500 with the headers', async () => {

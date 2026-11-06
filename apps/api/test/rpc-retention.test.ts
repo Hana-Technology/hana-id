@@ -169,7 +169,7 @@ describe('AdminRpc.purgeDirectory (the wallet directory of a scope left without 
     const deadUsers = [await user(dead.scope, 1001), await user(dead.scope, 1002), await user(dead.scope, 1003)];
     const kept = [await user(recent.scope, 1004), await user(mixedLive.scope, 1005)];
     const first = (await adminRpc().purgeDirectory({ ...system(), before: t, limit: 2 })) as { ok: boolean; scopes: number; users: number; wallets: number; identities: number };
-    expect(first).toEqual({ ok: true, scopes: 1, users: 2, wallets: 2, identities: 2 });
+    expect(first).toEqual({ ok: true, scopes: 1, users: 2, wallets: 2, identities: 2, emailConsents: 0 });
     const second = (await adminRpc().purgeDirectory({ ...system(), before: t, limit: 2 })) as { users: number };
     expect(second.users).toBe(1);
     for (const u of deadUsers) expect(await userExists(u)).toBe(0);

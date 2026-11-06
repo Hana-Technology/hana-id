@@ -75,6 +75,16 @@ export interface Env {
   IDENTITY_AWS_SECRET_ACCESS_KEY?: string;
   /** Secret: the `sub`/`sid` HMAC key, base64 of 32 bytes. Never rotated (a new key changes every user's `sub`). */
   IDENTITY_SUB_KEY?: string;
+  /**
+   * Email sharing with partners (D411, D418, D419; identity/email.ts; scripts/identity-key.ts `email-keys`). Secrets:
+   * IDENTITY_SEAL_KEY (`<id>:<base64 of 32 bytes>`, shared with the email issuer, which seals the verified address for
+   * the API), IDENTITY_SEAL_KEY_PREVIOUS during a rotation only (still opened), and EMAIL_CONSENT_KEY (base64 of 32
+   * bytes, API only: the consent rows' address MAC). Without them the consent endpoints answer 503
+   * email_sharing_unavailable and tokens carry no email. Never logged.
+   */
+  IDENTITY_SEAL_KEY?: string;
+  IDENTITY_SEAL_KEY_PREVIOUS?: string;
+  EMAIL_CONSENT_KEY?: string;
   /** Optional var: the global hourly mint ceiling (identity/limits.ts IDENTITY_GLOBAL_PER_HOUR by default). */
   IDENTITY_GLOBAL_HOURLY_MAX?: string;
   /**

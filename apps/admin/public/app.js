@@ -1024,6 +1024,7 @@ const RETENTION_LABELS = {
   directoryUsers: 'wallet directory users',
   directoryWallets: 'wallet directory wallets',
   directoryIdentities: 'wallet directory identities',
+  emailConsentsPurged: 'email consents of deleted apps',
   appChangesDeleted: 'app_changes (60 months)',
   guardedChangesDeleted: 'guarded_changes (60 months)',
   auditLogDeleted: 'console audit_log (60 months)',

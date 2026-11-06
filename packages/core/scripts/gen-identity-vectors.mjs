@@ -133,6 +133,19 @@ const message = (title, sealedEmail) => {
   return example(title, parts, { sealed_email: sealedEmail, payload_hex: hex(payload), signature_seed7_hex: hex(sign(null, concat(parts), seedKey(SEED7))) });
 };
 
+// ---- email consent proof (D411): the same message, its own payload ----
+const consentMessage = (title, action, sealedEmail) => {
+  const payloadPartsC = [
+    ['"email-consent"', ascii('email-consent')],
+    [`borsh(action "${action}")`, str(action)],
+    [`borsh(parentOrigin "${PARENT}")`, str(PARENT)],
+    [`sha256(utf8(sealedEmail "${sealedEmail}"))`, sha256(ascii(sealedEmail))],
+  ];
+  const payload = concat(payloadPartsC);
+  const parts = messageParts(payload);
+  return example(title, parts, { action, sealed_email: sealedEmail, payload_hex: hex(payload), signature_seed7_hex: hex(sign(null, concat(parts), seedKey(SEED7))) });
+};
+
 // ---- sub, sid ----
 const subParts = (scope, provider, sub) => [
   ['"hana-id/idt-sub/v1"', ascii('hana-id/idt-sub/v1')],
@@ -230,6 +243,8 @@ const fixture = {
     identity_message: message('Session proof: no sealed email', ''),
     identity_message_sealed: message('Session proof: with a sealed email blob', 'se1.AAAA'),
     sealed_email_aad: sealedAad,
+    email_consent_granted: consentMessage('Email consent proof: a grant of a sealed address', 'granted', 'se1.AAAA'),
+    email_consent_revoke: consentMessage('Email consent proof: a revoke (no sealed address)', 'revoke', ''),
   },
   subs: {
     google_k0: subExample('sub: Google root, key_index 0', `${SCOPE}#google#${GOOGLE_SUB}#0`, SCOPE, 'google', GOOGLE_SUB),

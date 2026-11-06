@@ -3,7 +3,8 @@
 //
 //   purgeAudit      app_changes and guarded_changes rows older than 60 months, in batches
 //   deletedApps     the apps deleted 30 days ago or more (the ledger's app_users purge, usage.purge_app_users)
-//   purgeDirectory  the wallet directory (migration 0011) of every scope whose apps were all deleted 30 days ago or more
+//   purgeDirectory  the wallet directory (migration 0011) of every scope whose apps were all deleted 30 days ago or more,
+//                   and the email consents (migration 0012, D411) of every app deleted 30 days ago or more
 //
 // Each clamps the caller's `before` to its own period in SQL (`unixepoch('now', …)`: the same clock as the
 // app_changes trigger), so even a compromised admin Worker can't purge rows D90 still keeps. Nothing here reads or
@@ -87,12 +88,22 @@ export async function purgeDirectory(db: HotDb, i: { before: number; limit: numb
   const cutoff = deletedCutoff(i.before, now);
   // The same page of users in every statement: one D1 batch is one transaction, and the order is total.
   const page = q`SELECT u.user_id FROM end_users u WHERE ${deadScope(raw('u.scope_id'), cutoff)} ORDER BY u.user_id LIMIT ${i.limit}`;
-  const [scopes, wallets, identities, users] = await db.batch([
+  // D411: a deleted app's consents (and the shared copies in them) go with its other per-user rows, 30 days on, in pages
+  // of the same size; a live app's consents stay (a decline must be remembered).
+  const consents = q`SELECT c.rowid FROM email_consents c JOIN apps a ON a.id = c.app_id WHERE a.deleted_at IS NOT NULL AND a.deleted_at <= ${cutoff} LIMIT ${i.limit}`;
+  const [scopes, wallets, identities, users, emailConsents] = await db.batch([
     q`SELECT COUNT(DISTINCT scope_id) AS n FROM end_users WHERE user_id IN (${page})`,
     q`DELETE FROM end_user_wallets WHERE user_id IN (${page})`,
     q`DELETE FROM end_user_identities WHERE user_id IN (${page})`,
     q`DELETE FROM end_users WHERE user_id IN (${page})`,
+    q`DELETE FROM email_consents WHERE rowid IN (${consents})`,
   ]);
   const n = (scopes!.results as { n: number }[] | undefined)?.[0]?.n ?? 0;
-  return { scopes: n, users: users!.meta.changes ?? 0, wallets: wallets!.meta.changes ?? 0, identities: identities!.meta.changes ?? 0 };
+  return {
+    scopes: n,
+    users: users!.meta.changes ?? 0,
+    wallets: wallets!.meta.changes ?? 0,
+    identities: identities!.meta.changes ?? 0,
+    emailConsents: emailConsents!.meta.changes ?? 0,
+  };
 }

@@ -47,6 +47,7 @@ import { SAFETY_METHODS, newCtx, runOwnerAction } from '../handlers.ts';
 import { finishUsageOnThrow } from '../usage/event.ts';
 import { orgLedger, orgStatements, orgUsage } from '../usage/reports.ts';
 import { consoleGetUser, consoleListUsers } from '../directory/read.ts';
+import { emailSearchMac } from '../identity/email.ts';
 import { runRpc } from './common.ts';
 
 const MEMBER = ['member'] as const;
@@ -277,7 +278,7 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
   // `sub` (`u1_…`); never the internal id (`hu_…`), a sub, an identity key or an email ----
 
   listUsers(c: unknown) {
-    return runRpc(this.env, 'listUsers', consoleListUsersInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.listUsers }, ({ input, db, w }) => consoleListUsers(db, input, w.now));
+    return runRpc(this.env, 'listUsers', consoleListUsersInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.listUsers }, ({ input, db, w }) => consoleListUsers(db, input, w.now, (term) => emailSearchMac(this.env, term)));
   }
 
   getUser(c: unknown) {

@@ -199,13 +199,17 @@ export async function runRetention(d: RetentionDeps): Promise<RetentionSummary> 
   });
   await step('directory', async () => {
     for (;;) {
-      const r = await rpc<{ scopes: number; users: number; wallets: number; identities: number }>('directory', () => api.purgeDirectory({ ...systemCtx(), before: deletedAppCutoff(d.now), limit: RETENTION_BATCH }));
+      const r = await rpc<{ scopes: number; users: number; wallets: number; identities: number; emailConsents?: number }>('directory', () =>
+        api.purgeDirectory({ ...systemCtx(), before: deletedAppCutoff(d.now), limit: RETENTION_BATCH }),
+      );
       if (!r) return;
       add('directoryScopes', r.scopes);
       add('directoryUsers', r.users);
       add('directoryWallets', r.wallets);
       add('directoryIdentities', r.identities);
-      if (r.users < RETENTION_BATCH) return;
+      // D411: a deleted app's email consents, in pages of the same size (an API before 0012's build answers none).
+      add('emailConsentsPurged', r.emailConsents ?? 0);
+      if (r.users < RETENTION_BATCH && (r.emailConsents ?? 0) < RETENTION_BATCH) return;
     }
   });
   await step('api_audit', async () => {

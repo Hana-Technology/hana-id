@@ -8,7 +8,9 @@
 //   D275's DirectoryRpc (the API never reads the issuer).
 // - Partners (`PartnerUser`): only users of the org's own scopes (`scopes.org_id`, the same filter every ConsoleRpc
 //   query has); the User ID (the identity token's `sub`), Support ID, times, the connected account kinds that are
-//   active or pending, and the wallet addresses. The SELECT never names `u.user_id` (the internal id), `sub` or
+//   active or pending, the wallet addresses, and the email the user shared with one of the org's live apps (D411:
+//   the `granted` rows of migration 0012's `email_consents`, the API's own copy; null when none). An email search is a
+//   full address, matched by its MAC among those shared rows only (D315: nothing else can be probed). The SELECT never names `u.user_id` (the internal id), `sub` or
 //   `identity_key` as an output column, so no bug in the mapping can hand one out; a page cursor is `lastSeenAt:u1_…`.
 import {
   type PartnerUser,
@@ -39,7 +41,11 @@ const STAFF_COLUMNS = raw(`u.user_id, u.token_sub, u.support_code, u.scope_id, s
 
 // Partners: no internal id (`u.user_id` is only ever joined on, never selected), no sub, no identity key, no key index;
 // only active or pending identities.
+// D411: the shared copies, only of the org's live apps in the user's scope (`s` is the org's scope row).
+const SHARED = `FROM email_consents c JOIN apps a ON a.id = c.app_id AND a.org_id = s.org_id AND a.scope_id = u.scope_id AND a.deleted_at IS NULL
+     WHERE c.user_sub = u.token_sub AND c.state = 'granted'`;
 const PARTNER_COLUMNS = raw(`u.token_sub, u.support_code, u.scope_id, u.created_at, u.last_seen_at,
+  (SELECT c.email ${SHARED} ORDER BY c.decided_at DESC, c.app_id LIMIT 1) AS email,
   (SELECT json_group_array(json_object('provider', i.provider, 'status', i.status, 'effective_at', i.effective_at, 'role', i.role))
      FROM end_user_identities i WHERE i.user_id = u.user_id AND i.status IN ('active', 'pending')) AS identities_json,
   (SELECT json_group_array(json_object('chain', w.chain, 'address', w.address, 'first_seen_at', w.first_seen_at, 'last_used_at', w.last_used_at))
@@ -49,6 +55,10 @@ const PARTNER_COLUMNS = raw(`u.token_sub, u.support_code, u.scope_id, u.created_
 const ORDER = raw(' ORDER BY u.last_seen_at DESC, u.token_sub DESC');
 
 interface Row {
+  /** Partner rows: the latest shared address (D411), or null. */
+  email?: string | null;
+  /** getUser only: every shared address, per app. */
+  emails_json?: string;
   token_sub: string;
   support_code: string;
   scope_id: string;
@@ -121,7 +131,13 @@ export function partnerUser(r: Row, now: number): PartnerUser {
   const wallets = list(r.wallets_json)
     .map((w) => ({ chain: w.chain as WalletChain, address: String(w.address), firstSeenAt: n(w.first_seen_at), lastUsedAt: n(w.last_used_at) }))
     .sort(byWallet);
-  return { userId: r.token_sub, supportId: formatSupportId(r.support_code), scopeId: r.scope_id, createdAt: r.created_at, lastSeenAt: r.last_seen_at, accounts, wallets };
+  const user: PartnerUser = { userId: r.token_sub, supportId: formatSupportId(r.support_code), scopeId: r.scope_id, createdAt: r.created_at, lastSeenAt: r.last_seen_at, accounts, wallets, email: typeof r.email === 'string' ? r.email : null };
+  if (r.emails_json !== undefined) {
+    user.emails = list(r.emails_json)
+      .map((e) => ({ appId: String(e.app_id), appName: String(e.app_name), email: String(e.email), sharedAt: n(e.decided_at) }))
+      .sort((a, b) => b.sharedAt - a.sharedAt || (a.appId < b.appId ? -1 : 1));
+  }
+  return user;
 }
 
 /** `lastSeenAt:userId` (the User ID, `u1_…`) of the page's last row, when the page is full. */
@@ -144,7 +160,7 @@ const NOT_A_SEARCH = 'search: not a wallet address, user id or Support ID';
  * The search's WHERE clause; refused (`bad_request`) when the string names nothing or an address that isn't one, and,
  * unless `staff`, for an internal id or a sub (parseUserSearch gives a partner neither; this is the second lock).
  */
-function searchClause(s: UserSearch | null, opts: { staff: boolean; provider?: string }): Q {
+function searchClause(s: UserSearch | null, opts: { staff: boolean; provider?: string; emailMac?: Uint8Array | null }): Q {
   if (!s) return refuse('bad_request', NOT_A_SEARCH);
   switch (s.kind) {
     case 'address': {
@@ -158,6 +174,12 @@ function searchClause(s: UserSearch | null, opts: { staff: boolean; provider?: s
       return q`u.support_code = ${s.code}`;
     case 'internalId':
       return opts.staff ? q`u.user_id = ${s.internalId}` : refuse('bad_request', NOT_A_SEARCH);
+    case 'email':
+      // Partners only, and only an address shared with one of the org's live apps (the MAC of the full address).
+      if (opts.staff) return refuse('bad_request', NOT_A_SEARCH);
+      if (!opts.emailMac) return refuse('bad_request', 'search: email search is unavailable');
+      return q`EXISTS (SELECT 1 FROM email_consents c JOIN apps a ON a.id = c.app_id AND a.org_id = s.org_id AND a.scope_id = u.scope_id AND a.deleted_at IS NULL
+        WHERE c.user_sub = u.token_sub AND c.state = 'granted' AND c.email_mac = ${opts.emailMac.slice().buffer as ArrayBuffer})`;
     case 'sub':
       if (!opts.staff) return refuse('bad_request', NOT_A_SEARCH);
       return opts.provider
@@ -220,17 +242,23 @@ export async function adminAppNames(db: HotDb, appIds: readonly string[]): Promi
 
 const ORG_USERS = (orgId: string): Q => q`FROM end_users u JOIN scopes s ON s.scope_id = u.scope_id AND s.org_id = ${orgId}`;
 
+/** The MAC of a partner's email search (identity/email.ts searchMac), or null when the env has no consent key. */
+export type EmailSearchMac = (term: string) => Promise<Uint8Array | null>;
+
 export async function consoleListUsers(
   db: HotDb,
   i: { orgId: string; scopeId?: string; search?: string; cursor?: string; limit?: number },
   now: number,
+  macOf: EmailSearchMac = async () => null,
 ): Promise<{ users: PartnerUser[]; nextCursor: string | null }> {
   const limit = i.limit ?? USER_PAGE_DEFAULT;
+  const search = i.search !== undefined ? parseUserSearch(i.search, { staff: false }) : null;
+  const emailMac = search?.kind === 'email' ? await macOf(search.email) : null;
   const rows = await db.all<Row>(
     q`SELECT ${PARTNER_COLUMNS} ${ORG_USERS(i.orgId)}${where([
       i.scopeId ? q`u.scope_id = ${i.scopeId}` : null,
-      // A wallet address, a User ID or a Support ID; an internal id or a sub is `bad_request`.
-      i.search !== undefined ? searchClause(parseUserSearch(i.search, { staff: false }), { staff: false }) : null,
+      // A wallet address, a User ID, a Support ID or a shared address; an internal id or a sub is `bad_request`.
+      i.search !== undefined ? searchClause(search, { staff: false, emailMac }) : null,
       afterCursor(i.cursor),
     ])}${ORDER} LIMIT ${limit}`,
   );
@@ -238,7 +266,8 @@ export async function consoleListUsers(
 }
 
 export async function consoleGetUser(db: HotDb, i: { orgId: string; userId: string }, now: number): Promise<PartnerUser> {
-  const row = await db.first<Row>(q`SELECT ${PARTNER_COLUMNS} ${ORG_USERS(i.orgId)} WHERE u.token_sub = ${i.userId}`);
+  const emails = raw(`(SELECT json_group_array(json_object('app_id', c.app_id, 'app_name', a.name, 'email', c.email, 'decided_at', c.decided_at)) ${SHARED}) AS emails_json`);
+  const row = await db.first<Row>(q`SELECT ${PARTNER_COLUMNS}, ${emails} ${ORG_USERS(i.orgId)} WHERE u.token_sub = ${i.userId}`);
   // Another org's user is the same `not_found` as no user: a partner learns nothing about other orgs' users.
   return row ? partnerUser(row, now) : refuse('not_found', 'No such user');
 }

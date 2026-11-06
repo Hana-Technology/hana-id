@@ -71,6 +71,9 @@ importers:
       '@hana-id/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@hana-id/email':
+        specifier: workspace:*
+        version: link:../../packages/email
       '@hana-id/jwks':
         specifier: workspace:*
         version: link:../../packages/jwks

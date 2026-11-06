@@ -59,6 +59,8 @@ export const updateSettingsInput = ctx
     idleTtlMs: z.number().int().optional(),
     googleWebClientId: z.string().min(1).max(255).nullable().optional(),
     name: appName.optional(),
+    /** D411: when Hana asks users to share their email with the app (immediate, like the other settings). */
+    identityEmail: z.enum(['off', 'on_request', 'at_login']).optional(),
   })
   .strict();
 export const setLogoInput = ctx.extend({ ...app, logoKey: z.string().regex(LOGO_KEY_RE).nullable(), expectedVersion: version }).strict();

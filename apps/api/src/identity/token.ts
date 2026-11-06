@@ -3,8 +3,9 @@
 // (the vault gate). No step writes a share, moves a counter or slides `idle_until`: a mint is never activity (D55, D112),
 // so a background tab refreshing tokens can't keep a session alive.
 //
-// Steps 1–4 of the spec's build order: no `email` claim yet (`emailStatus` is always 'off'; a `sealedEmail` in the body
-// is covered by the session proof but not opened).
+// The `email` claim (D411, D421; identity/email.ts mintEmail): the address the user shared with this app, when the app's
+// `identity_email` isn't 'off' (`emailStatus` says why a token has none). A `sealedEmail` in the body is covered by the
+// session proof and opened only for that.
 //
 // SECURITY: the response carries a bearer credential for the partner's backend. Nothing here logs the token, `sub`,
 // `sid`, an address or the body; the request log has the app id, outcome, code, kid and timings.
@@ -55,6 +56,7 @@ import {
   identitySessionKey,
 } from './limits.ts';
 import { type IdentityConfig, IdentitySignerError, identityConfig } from './signer.ts';
+import { type MintEmail, mintEmail } from './email.ts';
 import { identitySigner } from './signers.ts';
 
 export const IDENTITY_TOKEN_ENDPOINT = '/v1/identity/token';
@@ -104,7 +106,7 @@ export function toMintRequest(body: unknown): MintRequest | null {
 }
 
 /** Ed25519 (WebCrypto) check of the session proof; false for any malformed key or signature. */
-async function verifyEd25519(publicKey: Uint8Array, signature: Uint8Array, message: Uint8Array): Promise<boolean> {
+export async function verifyEd25519(publicKey: Uint8Array, signature: Uint8Array, message: Uint8Array): Promise<boolean> {
   try {
     const key = await crypto.subtle.importKey('raw', publicKey, { name: 'Ed25519' }, false, ['verify']);
     return await crypto.subtle.verify({ name: 'Ed25519' }, key, signature, message);
@@ -128,7 +130,7 @@ const sessionEnded = (ctx: Ctx, reason: string): Response => done(ctx, 410, { er
  * key with no share anywhere passes only while the app's persistence is 'none' (the session lives in the vault's memory
  * alone, and the chain check decides).
  */
-async function checkShare(env: Env, ctx: Ctx, app: App, parentOrigin: string, sessionPk: Uint8Array, now: number): Promise<ShareCheck> {
+export async function checkShare(env: Env, ctx: Ctx, app: App, parentOrigin: string, sessionPk: Uint8Array, now: number): Promise<ShareCheck> {
   let settings;
   let row;
   try {
@@ -361,7 +363,11 @@ export async function handleIdentityToken(request: Request, env: Env, requestId:
   if (quota) return quota;
   lap(ctx, 'limits');
 
-  return sign(env, ctx, config, app, { ...lifetime, root, sessionPk: req.sessionPk, wallets: wallets as Record<IdentityChain, string> }, exec);
+  // The email (never an error: `emailStatus` says why a token has none).
+  const email = await mintEmail(env, ctx, { app, userSub: identitySub(config.subKey, app.scope_id, root), sessionPk: req.sessionPk, sealedEmail: req.sealedEmail, now });
+  lap(ctx, 'email');
+
+  return sign(env, ctx, config, app, { ...lifetime, root, sessionPk: req.sessionPk, wallets: wallets as Record<IdentityChain, string>, email }, exec);
 }
 
 async function sign(
@@ -369,7 +375,7 @@ async function sign(
   ctx: Ctx,
   config: IdentityConfig,
   app: App,
-  t: { iat: number; exp: number; root: { provider: string; sub: string }; sessionPk: Uint8Array; wallets: Record<IdentityChain, string> },
+  t: { iat: number; exp: number; root: { provider: string; sub: string }; sessionPk: Uint8Array; wallets: Record<IdentityChain, string>; email: MintEmail },
   exec?: ExecutionContext,
 ): Promise<Response> {
   let token: string;
@@ -389,6 +395,7 @@ async function sign(
       wallets: t.wallets,
       // Without account linking (email login, D119) an account has one method: its root's provider.
       loginMethods: [t.root.provider],
+      email: t.email.email,
     });
     const input = identitySigningInput(identityTokenHeader(kid), claims);
     token = `${input.text}.${base64UrlEncode(await signer.sign(input.bytes))}`;
@@ -398,5 +405,5 @@ async function sign(
   }
   lap(ctx, 'sign');
   await countIssuance(env, ctx, app.id, kid, Date.now(), exec);
-  return done(ctx, 200, { identityToken: token, expiresAtMs: t.exp * 1000, emailStatus: 'off' });
+  return done(ctx, 200, { identityToken: token, expiresAtMs: t.exp * 1000, emailStatus: t.email.status });
 }

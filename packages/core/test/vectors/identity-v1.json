@@ -256,6 +256,82 @@
       ],
       "preimage_hex": "68616e612d69642f7365616c65642d656d61696c2f763100140000006170705f30313233343536373839616263646566ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c007eef1aa3010000",
       "not_after_ms": 1800043200000
+    },
+    "email_consent_granted": {
+      "title": "Email consent proof: a grant of a sealed address",
+      "parts": [
+        [
+          "\"hana-id-identity-v1:\"",
+          "68616e612d69642d6964656e746974792d76313a"
+        ],
+        [
+          "borsh(signer \"hana-signer.testnet\")",
+          "1300000068616e612d7369676e65722e746573746e6574"
+        ],
+        [
+          "borsh(appId \"app_0123456789abcdef\")",
+          "140000006170705f30313233343536373839616263646566"
+        ],
+        [
+          "sessionPk (32), seed [7; 32]",
+          "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c"
+        ],
+        [
+          "issuedAtMs 1800000000000 (u64 LE)",
+          "00505c18a3010000"
+        ],
+        [
+          "nonce (16) a0..af",
+          "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf"
+        ],
+        [
+          "sha256(payload)",
+          "9f2b73e620425a65e34f6dd5107a1a7e0b013d796f70d65f7a350c0dec332264"
+        ]
+      ],
+      "preimage_hex": "68616e612d69642d6964656e746974792d76313a1300000068616e612d7369676e65722e746573746e6574140000006170705f30313233343536373839616263646566ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c00505c18a3010000a0a1a2a3a4a5a6a7a8a9aaabacadaeaf9f2b73e620425a65e34f6dd5107a1a7e0b013d796f70d65f7a350c0dec332264",
+      "action": "granted",
+      "sealed_email": "se1.AAAA",
+      "payload_hex": "656d61696c2d636f6e73656e74070000006772616e7465641700000068747470733a2f2f706172746e65722e6578616d706c65f351c6b3f616f47015e10b4962089a809c1c96321512ad4def4df268bcd8d81e",
+      "signature_seed7_hex": "c19e4018d22444c8bfca220d406f76940459a10f6f87b7c4f6e2e6fe3d84df19d04c0204923450afc243425eb2dd995d8f0aec887fdef81edb5547ac7c2b8d03"
+    },
+    "email_consent_revoke": {
+      "title": "Email consent proof: a revoke (no sealed address)",
+      "parts": [
+        [
+          "\"hana-id-identity-v1:\"",
+          "68616e612d69642d6964656e746974792d76313a"
+        ],
+        [
+          "borsh(signer \"hana-signer.testnet\")",
+          "1300000068616e612d7369676e65722e746573746e6574"
+        ],
+        [
+          "borsh(appId \"app_0123456789abcdef\")",
+          "140000006170705f30313233343536373839616263646566"
+        ],
+        [
+          "sessionPk (32), seed [7; 32]",
+          "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c"
+        ],
+        [
+          "issuedAtMs 1800000000000 (u64 LE)",
+          "00505c18a3010000"
+        ],
+        [
+          "nonce (16) a0..af",
+          "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf"
+        ],
+        [
+          "sha256(payload)",
+          "aac815e4d429827a578ef261cc4a3cbe0348efce43d049f8242031261b35ef00"
+        ]
+      ],
+      "preimage_hex": "68616e612d69642d6964656e746974792d76313a1300000068616e612d7369676e65722e746573746e6574140000006170705f30313233343536373839616263646566ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c00505c18a3010000a0a1a2a3a4a5a6a7a8a9aaabacadaeafaac815e4d429827a578ef261cc4a3cbe0348efce43d049f8242031261b35ef00",
+      "action": "revoke",
+      "sealed_email": "",
+      "payload_hex": "656d61696c2d636f6e73656e74060000007265766f6b651700000068747470733a2f2f706172746e65722e6578616d706c65e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signature_seed7_hex": "a8f56d36b2dd0c6544ba9639263e8a6fad4ecb8f119c8854ccbd72c55a37bd074f5d783e9941567448322e9ac21a070385c09a038d6256e94b00091979b3040e"
     }
   },
   "subs": {

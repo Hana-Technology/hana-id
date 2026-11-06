@@ -37,6 +37,11 @@ export interface AppConfig {
    * another shape is dropped, never a reason to refuse the config (a logo is decoration).
    */
   logoUrl?: unknown;
+  /**
+   * D411: the app's `identity_email` setting (when Hana asks the user to share their address with the app). Older
+   * APIs omit it; a vault treats a missing value as 'off'.
+   */
+  identityEmail?: 'off' | 'on_request' | 'at_login';
   /** pk_test_ apps: the API's own total and phases (docs/api.md "Timings"); checked where used (isServerTimings). */
   timings?: unknown;
   requestId: string;
@@ -277,6 +282,7 @@ export function isAppConfig(v: unknown): v is AppConfig {
     (v.serverTimeMs === undefined || isMs(v.serverTimeMs)) &&
     (v.autoApprovePolicy === undefined || v.autoApprovePolicy === null || isObj(v.autoApprovePolicy)) &&
     (v.rawSign === undefined || v.rawSign === 'off' || v.rawSign === 'approval') &&
+    (v.identityEmail === undefined || v.identityEmail === 'off' || v.identityEmail === 'on_request' || v.identityEmail === 'at_login') &&
     (v.loginMethods === undefined || isLoginMethodList(v.loginMethods)) &&
     // `email` comes exactly with the email method, and names this scope's client.
     (Array.isArray(v.loginMethods) && v.loginMethods.includes('email')

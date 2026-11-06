@@ -26,6 +26,8 @@ import {
   isP256PublicJwk,
   jwkThumbprint,
   sealedEmailAad,
+  type EmailConsentAction,
+  emailConsentPayload,
   signWalletProof,
   verifyWalletProof,
   walletProofMessage,
@@ -113,6 +115,21 @@ describe('identity layouts (vectors)', () => {
     expect(() => identityMessage({ ...CTX, issuedAtMs: -1, nonce: new Uint8Array(16), payload: new Uint8Array() })).toThrow(RangeError);
     expect(() => identityTokenPayload({ parentOrigin: 'o', walletProofsHash: new Uint8Array(31) })).toThrow('32 bytes');
     expect(() => walletProofMessage({ ...CTX, sessionPublicKey: new Uint8Array(33) }, 'evm', V.evm_address)).toThrow('32 bytes');
+  });
+
+  it('the email consent proof (D411) matches, and its payload is no mint payload', () => {
+    for (const name of ['email_consent_granted', 'email_consent_revoke']) {
+      const ex = L[name]!;
+      const payload = emailConsentPayload({ action: ex.action as EmailConsentAction, parentOrigin: V.parent_origin, sealedEmail: (ex.sealed_email as string) || null });
+      expect(toHex(payload)).toBe(ex.payload_hex);
+      const msg = identityMessage({ ...CTX, issuedAtMs: V.issued_at_ms, nonce: fromHex(V.nonce_hex), payload });
+      expect(toHex(msg)).toBe(ex.preimage_hex);
+      expect(ed25519.verify(fromHex(ex.signature_seed7_hex as string), msg, PK7)).toBe(true);
+    }
+    expect(() => emailConsentPayload({ action: 'grant' as EmailConsentAction, parentOrigin: 'o' })).toThrow('Unknown');
+    const a = toHex(emailConsentPayload({ action: 'granted', parentOrigin: 'o', sealedEmail: 'x' }));
+    expect(a).not.toBe(toHex(emailConsentPayload({ action: 'declined', parentOrigin: 'o', sealedEmail: 'x' })));
+    expect(a).not.toBe(toHex(identityTokenPayload({ parentOrigin: 'o', walletProofsHash: new Uint8Array(32), sealedEmail: 'x' })));
   });
 
   it('sealed-email AAD', () => {

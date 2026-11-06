@@ -14,7 +14,8 @@
 //   ledger's events; staff only, never in a partner answer.
 //
 // Partners get the User ID, the Support ID, times, connected account kinds and wallet addresses (`PartnerUser`), never
-// the internal id, a sub, an identity key or an email. Staff get all three ids and the identities with their subs
+// the internal id, a sub or an identity key; an email only once the user shared it with one of the org's apps (D411:
+// the API's own copy, never the issuer's directory). Staff get all three ids and the identities with their subs
 // (`StaffUser`); the email comes from the issuer's directory through D275's DirectoryRpc, keyed by `directoryKey` (the
 // join point; this package and the API never read the issuer).
 import { z } from 'zod';
@@ -129,7 +130,9 @@ export type UserSearch =
   | { kind: 'userId'; userId: string }
   | { kind: 'internalId'; internalId: string }
   | { kind: 'supportId'; code: string }
-  | { kind: 'sub'; sub: string };
+  | { kind: 'sub'; sub: string }
+  /** Partners only (D411, D315): a full address, looked up exactly among the addresses shared with the org's apps. */
+  | { kind: 'email'; email: string };
 
 const STELLAR_RE = /^G[A-Z2-7]{55}$/u;
 const EVM_RE = /^0x[0-9a-fA-F]{40}$/u;
@@ -150,7 +153,9 @@ export function parseUserSearch(input: string, opts: { staff: boolean }): UserSe
   if (INTERNAL_ID_RE.test(q.toLowerCase())) return opts.staff ? { kind: 'internalId', internalId: q.toLowerCase() } : null;
   const code = /^hana[\s-]?/iu.test(q) || /^[0-9a-z]{4}-?[0-9a-z]{4}$/iu.test(q) ? parseSupportId(q) : null;
   if (code) return { kind: 'supportId', code };
-  if (!opts.staff || /\s/u.test(q)) return null;
+  // A partner's email search is a full address only (no prefix, so an unshared address can't be probed, D315).
+  if (!opts.staff) return /^[^\s@]+@[^\s@]+$/u.test(q) ? { kind: 'email', email: q } : null;
+  if (/\s/u.test(q)) return null;
   return { kind: 'sub', sub: q };
 }
 
@@ -264,7 +269,19 @@ export interface StaffUser {
   wallets: StaffWallet[];
 }
 
-/** A partner's view of a user: never the internal id (`hu_…`), a sub, an identity key or an email. */
+/** One address a user shared with one of the org's apps (D411), in a user's detail. */
+export interface PartnerEmailShare {
+  appId: string;
+  appName: string;
+  email: string;
+  /** When the user shared it. */
+  sharedAt: number;
+}
+
+/**
+ * A partner's view of a user: never the internal id (`hu_…`), a sub or an identity key; an email only as shared with
+ * one of the org's apps (D411).
+ */
 export interface PartnerUser {
   /** The User ID: the identity token's `sub`, `u1_…`, the same value the partner's backend stores. */
   userId: string;
@@ -276,4 +293,8 @@ export interface PartnerUser {
   /** Connected account kinds ("google", "email"), active or pending; never a sub, key or address. */
   accounts: { kind: string; status: 'active' | 'pending' }[];
   wallets: WalletView[];
+  /** The address most recently shared with one of the org's apps in this scope, or null ("Not shared"). */
+  email: string | null;
+  /** getUser only: every address shared with the org's apps, per app, newest first. */
+  emails?: PartnerEmailShare[];
 }

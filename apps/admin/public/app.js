@@ -106,6 +106,8 @@ const SIGNED_IN_PATH = '/signed-in';
 const session = {
   /** The Access token's expiry (ms), from GET /api/me; null when unknown. */
   expMs: null,
+  /** GET /api/me's `renewUrl`: the Access team login for this app (a fresh token before the end); null: `/signed-in`. */
+  renewUrl: null,
   /** The sign-in has ended: a request was redirected to Access or answered 401, or a check past `exp` found it so. */
   expired: false,
   /** A retry or a check still found no sign-in: the banner says so. */
@@ -193,6 +195,8 @@ function noteExp(answer) {
   const exp = answer && typeof answer.accessExp === 'number' && Number.isFinite(answer.accessExp) ? answer.accessExp * 1000 : null;
   const before = session.expMs;
   session.expMs = exp;
+  const renew = answer && typeof answer.renewUrl === 'string' && /^https:\/\/[a-z0-9-]+\.cloudflareaccess\.com\/cdn-cgi\/access\/login\//u.test(answer.renewUrl) ? answer.renewUrl : null;
+  if (renew) session.renewUrl = renew;
   if (!session.timer && exp !== null) session.timer = setInterval(tickSession, SESSION_TICK_MS);
   return before;
 }
@@ -237,7 +241,7 @@ window.addEventListener('focus', onTabBack);
 document.addEventListener('visibilitychange', onTabBack);
 
 /** "Sign in again" / "Renew": a link that opens this console in a new tab, where Access signs the staff member in. */
-const signInLink = (label, onOpen) => h('a', { href: SIGNED_IN_PATH, target: '_blank', rel: 'noopener', class: 'button primary', onclick: onOpen }, label);
+const signInLink = (label, onOpen, href = SIGNED_IN_PATH) => h('a', { href, target: '_blank', rel: 'noopener', class: 'button primary', onclick: onOpen }, label);
 
 /** The banner above every page: the sign-in's end coming (a warning), or come (an alert). Empty otherwise. */
 function renderSession(announce) {
@@ -292,10 +296,15 @@ function renderSession(announce) {
       h(
         'div',
         { class: 'form-actions' },
-        signInLink('Renew', () => {
-          session.renewing = true;
-          session.renewKept = false;
-        }),
+        signInLink(
+          'Renew',
+          () => {
+            session.renewing = true;
+            session.renewKept = false;
+          },
+          // The team login issues a fresh token now; a plain visit wouldn't (Access keeps an unexpired one).
+          session.renewUrl ?? SIGNED_IN_PATH,
+        ),
       ),
     );
     // Redrawn only when its words change (a live region reads out each change).

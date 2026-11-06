@@ -782,6 +782,24 @@ export function hanaOwnerAccounts(m: Manifest, knownOwners: readonly string[] = 
 }
 
 /**
+ * Whether a `get_scope` view is a Hana console sink (D238): every owner an Owner::Near that is one of `trusted` (the
+ * manifest's owner, its council DAO, or one named with --known-owner, e.g. the owner before a transfer), every client
+ * one of `allowedClients` (`clientKey`s: the console audiences), no shared login. Shared by deploy-contract's plan and
+ * `admin console:remove-audience` (D416).
+ */
+export function isConsoleSinkView(view: unknown, trusted: ReadonlySet<string>, allowedClients: ReadonlySet<string>): boolean {
+  const v = view as { owners?: unknown; clients?: unknown; allow_shared?: unknown } | null | undefined;
+  if (!v || !Array.isArray(v.owners) || !Array.isArray(v.clients)) return false;
+  const nearOwners = v.owners.map((x) => (x as { Near?: { account_id?: unknown } } | null)?.Near?.account_id);
+  return (
+    nearOwners.length > 0 &&
+    nearOwners.every((x) => typeof x === 'string' && trusted.has(x)) &&
+    v.clients.every((c) => Array.isArray(c) && c.length === 2 && typeof c[0] === 'string' && typeof c[1] === 'string' && allowedClients.has(clientKey(c as [string, string]))) &&
+    v.allow_shared === false
+  );
+}
+
+/**
  * The console sink steps (see buildDeployPlan): which console audiences to remove from "global", which to register in a
  * new sink, and whether every one already sits in a sink. A console audience in any other scope is a blocker: someone
  * claimed it, and only its scope's owners can give it back. So is a removal from "global" this run could not follow
@@ -811,19 +829,18 @@ export function consoleSinkPlan(
   for (const a of audiences) {
     const id = scopes[clientKey(a)];
     if (id === undefined || id === null || id === GLOBAL_SCOPE) continue;
-    const view = (o.consoleSinkScopes ?? {})[id] as { owners?: unknown[]; clients?: [string, string][]; allow_shared?: boolean } | null | undefined;
-    const audienceSet = new Set(audiences.map(clientKey));
-    // A sink: every owner an Owner::Near that is a known Hana owner account (the manifest's owner, its council DAO, or
-    // one named with --known-owner, e.g. the owner before a transfer), console audiences only, no shared login.
-    const nearOwners = Array.isArray(view?.owners) ? view.owners.map((x) => (x as { Near?: { account_id?: unknown } } | null)?.Near?.account_id) : [];
-    const isSink =
-      !!view &&
-      nearOwners.length > 0 &&
-      nearOwners.every((x) => typeof x === 'string' && trusted.has(x)) &&
-      Array.isArray(view.clients) &&
-      view.clients.every((c) => audienceSet.has(clientKey(c))) &&
-      view.allow_shared === false;
-    if (!isSink) {
+    const view = (o.consoleSinkScopes ?? {})[id];
+    const audienceKeys = new Set(audiences.map(clientKey));
+    if (!isConsoleSinkView(view, trusted, audienceKeys)) {
+      // A Hana sink but for clients no longer in consoleAudiences: a retired console client still registered (D416).
+      const stale = ((view as { clients?: unknown } | null)?.clients as [string, string][] | undefined)?.filter((c) => Array.isArray(c) && !audienceKeys.has(clientKey(c))) ?? [];
+      if (stale.length && isConsoleSinkView(view, trusted, new Set([...audienceKeys, ...stale.map(clientKey)]))) {
+        blockers.push(
+          `Console sink scope "${id}" still holds ${pairText(stale)}, no longer in consoleAudiences: retire ${stale.length === 1 ? 'it' : 'each'} first with ` +
+            `admin ${m.name} console:remove-audience <aud> (a remove_client through the owner, D416), then re-run.`,
+        );
+        continue;
+      }
       blockers.push(
         `Console audience ${pairText([a])} is a client of scope "${id}", which is not a Hana console sink (owners only known Hana accounts: ${[...trusted].join(', ')}; console audiences only; no shared login). ` +
           `If its owner is a former Hana owner account, name it with --known-owner; otherwise find out who registered it there: only that scope's owners can remove it (D238).`,

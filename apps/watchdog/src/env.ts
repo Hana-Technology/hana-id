@@ -1,7 +1,7 @@
 // The watchdog Worker's bindings. Vars come from envs/<env>.json through scripts/gen-wrangler.ts; secrets are set
 // with `wrangler secret put` (or `secret bulk`) from .secrets/<env>/watchdog-secrets.json and never logged.
 
-import { PAGER_PROVIDERS, type PagerProvider, SECRET_NAMES } from './names.ts';
+import { ALERT_LABELS, alertLabelFor, PAGER_PROVIDERS, type PagerProvider, SECRET_NAMES } from './names.ts';
 
 export { isDevEnvName, PAGER_PROVIDERS, type PagerProvider, SECRET_NAMES } from './names.ts';
 
@@ -14,6 +14,12 @@ export interface Env {
    * from the deployed version's metadata on the watchdog's account (`wrangler versions view`). Nothing here reads it.
    */
   HANA_BUILD?: string;
+  /**
+   * The label every alert title and digest subject starts with (`[SANDBOX]`, `[STAGING]`, `[LOCAL]`, `[TESTNET]`;
+   * D419), written by `gen` from the manifest (`@hana-id/env` `envAlertLabel`). `alertLabel` ignores it on any network
+   * but testnet, and derives it from ENV_NAME when a config from before D419 has none.
+   */
+  ENV_LABEL?: string;
   /** Expected `chain_id` of the RPC (`testnet`): the watchdog sends nothing to any other chain. */
   NEAR_NETWORK: string;
   NEAR_RPC: string;
@@ -88,4 +94,15 @@ export function alertEmails(env: Env): string[] {
 export function digestHourUtc(env: Env): number {
   const h = Number(env.DIGEST_HOUR_UTC ?? '0');
   return Number.isInteger(h) && h >= 0 && h <= 23 ? h : 0;
+}
+
+/**
+ * The label of this env's alert titles (D419): ENV_LABEL when it is one of the labels, else the one ENV_NAME gives
+ * (a config written before D419); never any on a network but testnet, so production alerts carry none whatever a
+ * config says.
+ */
+export function alertLabel(env: Pick<Env, 'ENV_LABEL' | 'ENV_NAME' | 'NEAR_NETWORK'>): string {
+  if (env.NEAR_NETWORK !== 'testnet') return '';
+  if (env.ENV_LABEL !== undefined && (ALERT_LABELS as readonly string[]).includes(env.ENV_LABEL)) return env.ENV_LABEL;
+  return alertLabelFor(env.ENV_NAME, env.NEAR_NETWORK);
 }

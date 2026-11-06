@@ -7,7 +7,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SUPPORT_TICKET_RE } from '@hana-id/console-core';
-import { type Manifest, manifestSchema } from '@hana-id/env';
+import { ENV_ALERT_LABELS, envAlertLabel, type Manifest, manifestSchema } from '@hana-id/env';
 import { BUILD_VAR } from '@hana-id/env/build-id';
 import { describe, expect, it } from 'vitest';
 import { wranglerConfig as apiConfig } from '../../../api/scripts/gen-wrangler.ts';
@@ -18,6 +18,7 @@ import { wranglerConfig as consoleAuthConfig } from '../../../console-auth/scrip
 import { wranglerConfig as filesConfig } from '../../../files/scripts/gen-wrangler.ts';
 import { wranglerConfig as issuerConfig, TEST_MANIFEST as ISSUER_MANIFEST } from '../../../email-issuer/scripts/gen-wrangler.ts';
 import { wranglerConfig as watchdogConfig, TEST_MANIFEST as WATCHDOG_MANIFEST } from '../../../watchdog/scripts/gen-wrangler.ts';
+import { MAIL_LABELS } from '../../src/env.ts';
 import { adminCsp } from '../../src/headers.ts';
 import { CRON, LOCAL_ADMIN_CONNECTION_STRING, TEST_ADMIN_HYPERDRIVE_ID, TEST_MANIFEST, TEST_WATCHDOG_URL, existingAdminHyperdriveId, main, testWranglerConfig, wranglerConfig } from '../gen-wrangler.ts';
 
@@ -89,9 +90,16 @@ describe('the admin config', () => {
     expect(JSON.stringify(c.r2_buckets)).not.toContain('LOGOS');
     expect(JSON.stringify(c)).not.toMatch(/ConsoleRpc|EMAIL_API_KEY|CANCEL_LINK_KEY|INVITE_LINK_KEY|WATCHDOG_STATUS_TOKEN|COINGECKO_API_KEY/u);
     expect(Object.keys(c.vars!).sort()).toEqual(
-      ['ACCESS_AUD', 'ACCESS_TEAM_DOMAIN', 'ADMIN_ORIGIN', 'APP_CHANGE_DELAY_MS', 'CONSOLE_ORIGIN', 'EMAIL_FROM', 'ENV_NAME', 'FILES_ORIGIN', 'NEAR_NETWORK', 'NEAR_RPC', 'OWNER_GRANT_DELAY_MS', 'RELAYER_ACCOUNT', 'SECURITY_ALIAS', 'SIGNER_ACCOUNT', 'STAFF_EMAILS', 'WATCHDOG_URL'].sort(),
+      ['ACCESS_AUD', 'ACCESS_TEAM_DOMAIN', 'ADMIN_ORIGIN', 'APP_CHANGE_DELAY_MS', 'CONSOLE_ORIGIN', 'EMAIL_FROM', 'ENV_LABEL', 'ENV_NAME', 'FILES_ORIGIN', 'NEAR_NETWORK', 'NEAR_RPC', 'OWNER_GRANT_DELAY_MS', 'RELAYER_ACCOUNT', 'SECURITY_ALIAS', 'SIGNER_ACCOUNT', 'STAFF_EMAILS', 'WATCHDOG_URL'].sort(),
     );
     expect(LOCAL_ADMIN_CONNECTION_STRING).toMatch(/\.invalid:/u);
+  });
+
+  it('writes the subjects\' env label from the manifest (D419), the same labels as @hana-id/env', () => {
+    expect((wranglerConfig(TEST_MANIFEST, { adminHyperdriveId: TEST_ADMIN_HYPERDRIVE_ID }).vars as Record<string, string>).ENV_LABEL).toBe(envAlertLabel(TEST_MANIFEST));
+    expect(envAlertLabel(TEST_MANIFEST)).not.toBe('');
+    expect((wranglerConfig({ ...TEST_MANIFEST, network: 'mainnet' } as unknown as Manifest, { adminHyperdriveId: TEST_ADMIN_HYPERDRIVE_ID }).vars as Record<string, string>).ENV_LABEL).toBeUndefined();
+    expect([...MAIL_LABELS]).toEqual([...ENV_ALERT_LABELS]);
   });
 
   it('workers.dev only in a dev env and only under the admin Worker’s own name; production needs a Custom Domain', () => {

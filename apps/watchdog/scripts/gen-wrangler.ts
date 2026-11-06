@@ -11,7 +11,7 @@
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type Manifest, accountIdFields, customDomainPlacement, emailJwksUrl, loadEnv, repoRoot } from '@hana-id/env';
+import { type Manifest, accountIdFields, customDomainPlacement, emailJwksUrl, envAlertLabel, loadEnv, repoRoot } from '@hana-id/env';
 import { readWatchdogSecrets, SECRET_FILE } from './secrets.ts';
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -64,6 +64,8 @@ export function wranglerConfig(m: Manifest, d1Id: string, env: Readonly<Record<s
     observability: { enabled: true },
     vars: {
       ENV_NAME: m.name,
+      // The alert titles' label (D419): `[SANDBOX]` etc. on testnet, none on a production network (then no var at all).
+      ...(envAlertLabel(m) ? { ENV_LABEL: envAlertLabel(m) } : {}),
       NEAR_NETWORK: m.network,
       NEAR_RPC: m.rpc,
       ...(m.rpcFallback ? { NEAR_RPC_FALLBACK: m.rpcFallback } : {}),

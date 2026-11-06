@@ -5,7 +5,8 @@
 // suppression lists (alerts and blocking notices) and which keeps them (D401 as amended).
 import { SENDGRID_URL } from '@hana-id/sendgrid';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { changePending } from '../src/email/messages.ts';
+import { mailLabel } from '../src/env.ts';
+import { changePending, inviteLink } from '../src/email/messages.ts';
 import { consoleLink, oneLine, render } from '../src/email/render.ts';
 import { ADMIN_CATEGORY, outbound, sendgridSender } from '../src/email/sender.ts';
 import { ACCEPTED_MEMO_MS, Budget, bypassesSuppressions, forgetAccepted, linkKey, messageKey, recipients, sendToAll } from '../src/mail.ts';
@@ -187,5 +188,26 @@ describe('rendering', () => {
     expect(() => consoleLink('https://console.test', '//evil.example/x')).toThrow();
     expect(() => render('e', 's', [{ kind: 'link', label: 'x', url: 'https://evil.example/' }], 'https://console.test')).toThrow();
     expect(oneLine(`a${String.fromCharCode(0x2028)}b${String.fromCharCode(0x202e)}c${String.fromCharCode(7)}d`)).toBe('abcd');
+  });
+  it('a non-production env labels every subject and opens every body with it (D419); production carries none', () => {
+    const r = render('sandbox-dev', 'Retention job failed (1 run)', [{ kind: 'p', text: 'body' }], 'https://console.test', '[SANDBOX]');
+    expect(r.subject).toBe('[SANDBOX] [Hana ID sandbox-dev] Retention job failed (1 run)');
+    expect(r.text.startsWith('[SANDBOX] Not production: this email is from Hana ID sandbox-dev (testnet), for testing.\n\nbody')).toBe(true);
+    expect(r.html).toContain('<p><strong>[SANDBOX] Not production:');
+    const prod = render('prod', 'Retention job failed (1 run)', [{ kind: 'p', text: 'body' }], 'https://console.test');
+    expect(prod.subject).toBe('[Hana ID prod] Retention job failed (1 run)');
+    expect(prod.text.startsWith('body')).toBe(true);
+    // Partner mail too: an invitation from a sandbox says it is a test.
+    const invite = inviteLink({ ...ctx, label: '[SANDBOX]' }, { id: 'inv_1', role: 'owner', newOrgName: 'Acme', expiresAt: 0 } as never, { inviteUrl: 'https://console.test/invite#t=x' });
+    expect(invite.subject.startsWith('[SANDBOX] [Hana ID sandbox-test] You')).toBe(true);
+  });
+
+  it('mailLabel: ENV_LABEL only when it is a label and the network is testnet', () => {
+    expect(mailLabel({ ENV_LABEL: '[SANDBOX]', NEAR_NETWORK: 'testnet' })).toBe('[SANDBOX]');
+    expect(mailLabel({ ENV_LABEL: '[STAGING]', NEAR_NETWORK: 'testnet' })).toBe('[STAGING]');
+    expect(mailLabel({ ENV_LABEL: 'PROD', NEAR_NETWORK: 'testnet' })).toBe('');
+    expect(mailLabel({ ENV_LABEL: '[SANDBOX]', NEAR_NETWORK: 'mainnet' })).toBe('');
+    expect(mailLabel({ ENV_LABEL: '[SANDBOX]' })).toBe('');
+    expect(mailLabel({ NEAR_NETWORK: 'testnet' })).toBe('');
   });
 });

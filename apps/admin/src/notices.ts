@@ -19,6 +19,7 @@
 import { b64url, linkToken, linkTokenHash } from '@hana-id/console-core';
 import type { MemberNotice } from '@hana-id/console-core';
 import type { ChangeNotice, Env } from './env.ts';
+import { mailLabel } from './env.ts';
 import { changePending, inviteLink, inviteNotice, ownerGrantNotice, type MailContext } from './email/messages.ts';
 import { consoleLink } from './email/render.ts';
 import type { EmailSender } from './email/sender.ts';
@@ -40,7 +41,7 @@ const delay = (raw: string | undefined, fallback: number): number => {
   return Number.isSafeInteger(v) && v > 0 ? v : fallback;
 };
 
-const mailContext = (env: Env): MailContext => ({ env: env.ENV_NAME, consoleOrigin: env.CONSOLE_ORIGIN });
+const mailContext = (env: Env): MailContext => ({ env: env.ENV_NAME, consoleOrigin: env.CONSOLE_ORIGIN, label: mailLabel(env) });
 
 /** A page read is worth it only with room for one notice after it: the page (RPC), one email and the ack (RPC). */
 const PAGE_AND_ONE = 3;

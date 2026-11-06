@@ -126,6 +126,12 @@ export interface StaffRpcClient {
 export interface Env {
   /** The manifest's `name` (in subjects and log lines). */
   ENV_NAME: string;
+  /**
+   * The label every email subject starts with on a non-production env (`[SANDBOX]`, `[STAGING]`, `[LOCAL]`,
+   * `[TESTNET]`; D419), written by `gen` from the manifest (`@hana-id/env` `envAlertLabel`). `mailLabel` uses it only
+   * with `NEAR_NETWORK` `testnet`.
+   */
+  ENV_LABEL?: string;
   /** `admin.origin`: the only host this Worker serves, and the `Origin` every non-GET request must carry. */
   ADMIN_ORIGIN: string;
   /** `console.origin`: the only origin an email links to (cancel pages, invite links). */
@@ -210,4 +216,15 @@ export interface Env {
   ISSUER?: Fetcher & DirectoryRpcClient;
   /** The SPA's static files (assets with `run_worker_first`). */
   ASSETS: Fetcher;
+}
+
+/** The labels `ENV_LABEL` may hold (D419); the same list as `@hana-id/env` `ENV_ALERT_LABELS` (a scripts test keeps them equal). */
+export const MAIL_LABELS = ['[SANDBOX]', '[STAGING]', '[LOCAL]', '[TESTNET]'] as const;
+
+/**
+ * The label of this env's email subjects (D419): `ENV_LABEL` when it is one of the labels and the network is testnet;
+ * none otherwise, so production mail never carries one, whatever a config says.
+ */
+export function mailLabel(env: Pick<Env, 'ENV_LABEL' | 'NEAR_NETWORK'>): string {
+  return env.NEAR_NETWORK === 'testnet' && env.ENV_LABEL !== undefined && (MAIL_LABELS as readonly string[]).includes(env.ENV_LABEL) ? env.ENV_LABEL : '';
 }

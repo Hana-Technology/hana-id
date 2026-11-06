@@ -17,7 +17,7 @@ import {
   sendgridEmail,
   slackSender,
 } from '../src/channels.ts';
-import type { Env } from '../src/env.ts';
+import { alertLabel, type Env } from '../src/env.ts';
 
 interface Call {
   url: string;
@@ -185,5 +185,56 @@ describe('notifierFromEnv', () => {
     expect(await n.digest.send('digest', 'body')).toEqual({ ok: true });
     expect(calls[0]?.url).toBe(SENDGRID_URL);
     expect(JSON.parse(calls[0]!.body).personalizations).toEqual([{ to: [{ email: 'a@example.com' }] }, { to: [{ email: 'b@example.com' }] }]);
+  });
+});
+
+describe('the env label in every title (D419)', () => {
+  const KEY = 'SG.throwaway-watchdog-key.throwaway-secret-not-real-0123456789';
+  const base = { ENV_NAME: 'sandbox-dev', NEAR_NETWORK: 'testnet', ALERT_EMAILS: 'a@example.com', ALERT_FROM: 'alerts@notify.example.com', SENDGRID_API_KEY: KEY } as unknown as Env;
+
+  it('alertLabel: the config var when it is a label, else the env name’s; never on another network', () => {
+    expect(alertLabel({ ENV_NAME: 'sandbox-dev', NEAR_NETWORK: 'testnet', ENV_LABEL: '[SANDBOX]' })).toBe('[SANDBOX]');
+    expect(alertLabel({ ENV_NAME: 'sandbox-dev', NEAR_NETWORK: 'testnet' })).toBe('[SANDBOX]');
+    expect(alertLabel({ ENV_NAME: 'staging', NEAR_NETWORK: 'testnet' })).toBe('[STAGING]');
+    expect(alertLabel({ ENV_NAME: 'local', NEAR_NETWORK: 'testnet' })).toBe('[LOCAL]');
+    expect(alertLabel({ ENV_NAME: 'prod', NEAR_NETWORK: 'testnet', ENV_LABEL: 'oops' })).toBe('[TESTNET]');
+    expect(alertLabel({ ENV_NAME: 'sandbox-dev', NEAR_NETWORK: 'mainnet', ENV_LABEL: '[SANDBOX]' })).toBe('');
+    expect(alertLabel({ ENV_NAME: 'prod', NEAR_NETWORK: 'mainnet' })).toBe('');
+  });
+
+  it('email: the label first in the subject and the body says it isn’t production', async () => {
+    const calls = stubFetch(() => new Response(null, { status: 202 }));
+    expect(await notifierFromEnv({ ...base, PAGER_PROVIDER: 'ntfy' }).email.send(msg({ resend: true }))).toEqual({ ok: true });
+    const body = JSON.parse(calls[0]!.body) as Record<string, any>;
+    expect(body.subject).toBe('[SANDBOX] CRITICAL (re-sent): Forged key k9 [Hana ID sandbox-dev]');
+    expect(body.content[0].value).toBe('[SANDBOX] Not production: Hana ID sandbox-dev (testnet).\n\nkid: k9');
+  });
+
+  it('the digest: the label first in its subject and body', async () => {
+    const calls = stubFetch(() => new Response(null, { status: 202 }));
+    await notifierFromEnv({ ...base, PAGER_PROVIDER: 'ntfy' }).digest.send('[Hana ID sandbox-dev] Watchdog daily digest 2026-11-06', 'Runs: 1');
+    const body = JSON.parse(calls[0]!.body) as Record<string, any>;
+    expect(body.subject).toBe('[SANDBOX] [Hana ID sandbox-dev] Watchdog daily digest 2026-11-06');
+    expect(body.content[0].value.startsWith('[SANDBOX] Not production:')).toBe(true);
+  });
+
+  it('ntfy, Pushover, PagerDuty and Slack: the label first in the title', async () => {
+    const calls = stubFetch((c) => (c.url === PUSHOVER_MESSAGES_URL ? Response.json({ status: 1 }) : new Response('ok')));
+    await notifierFromEnv({ ...base, PAGER_PROVIDER: 'ntfy', NTFY_TOPIC_URL: 'https://ntfy.example.com/topic-abcdefghijklmnop' }).pager.send(msg());
+    expect(calls.at(-1)?.headers.title).toBe('[SANDBOX] CRITICAL: Forged key k9 [Hana ID sandbox-dev]');
+    await notifierFromEnv({ ...base, PAGER_PROVIDER: 'pushover', PUSHOVER_TOKEN: 'x', PUSHOVER_USER: 'y' }).pager.send(msg());
+    expect(new URLSearchParams(calls.at(-1)!.body).get('title')).toBe('[SANDBOX] CRITICAL: Forged key k9 [Hana ID sandbox-dev]');
+    await notifierFromEnv({ ...base, PAGER_PROVIDER: 'pagerduty', PAGERDUTY_ROUTING_KEY: 'rk' }).pager.send(msg());
+    expect(JSON.parse(calls.at(-1)!.body).payload.summary).toBe('[SANDBOX] CRITICAL: Forged key k9 [Hana ID sandbox-dev]');
+    await notifierFromEnv({ ...base, PAGER_PROVIDER: 'ntfy', SLACK_WEBHOOK_URL: 'https://hooks.slack.com/services/T/B/secret1' }).slack.send(msg());
+    expect(JSON.parse(calls.at(-1)!.body).text).toBe('*[SANDBOX] CRITICAL: Forged key k9 [Hana ID sandbox-dev]*\nkid: k9');
+  });
+
+  it('no label on a production network: titles and bodies as before', async () => {
+    const calls = stubFetch(() => new Response(null, { status: 202 }));
+    await notifierFromEnv({ ...base, ENV_NAME: 'prod', NEAR_NETWORK: 'mainnet', ENV_LABEL: '[SANDBOX]', PAGER_PROVIDER: 'ntfy' }).email.send(msg());
+    const body = JSON.parse(calls[0]!.body) as Record<string, any>;
+    expect(body.subject).toBe('CRITICAL: Forged key k9 [Hana ID prod]');
+    expect(body.content[0].value).toBe('kid: k9');
   });
 });

@@ -7,7 +7,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SUPPORT_TICKET_RE } from '@hana-id/console-core';
-import { ENV_ALERT_LABELS, envAlertLabel, type Manifest, manifestSchema } from '@hana-id/env';
+import { ENV_ALERT_LABELS, envAlertLabel, loadEnv, type Manifest, manifestSchema } from '@hana-id/env';
 import { BUILD_VAR } from '@hana-id/env/build-id';
 import { describe, expect, it } from 'vitest';
 import { wranglerConfig as apiConfig } from '../../../api/scripts/gen-wrangler.ts';
@@ -20,7 +20,7 @@ import { wranglerConfig as issuerConfig, TEST_MANIFEST as ISSUER_MANIFEST } from
 import { wranglerConfig as watchdogConfig, TEST_MANIFEST as WATCHDOG_MANIFEST } from '../../../watchdog/scripts/gen-wrangler.ts';
 import { MAIL_LABELS } from '../../src/labels.ts';
 import { adminCsp } from '../../src/headers.ts';
-import { CRON, LOCAL_ADMIN_CONNECTION_STRING, TEST_ADMIN_HYPERDRIVE_ID, TEST_MANIFEST, TEST_WATCHDOG_URL, existingAdminHyperdriveId, main, testWranglerConfig, wranglerConfig } from '../gen-wrangler.ts';
+import { CRON, LOCAL_ADMIN_CONNECTION_STRING, TEST_ADMIN_HYPERDRIVE_ID, accountCrons, TEST_MANIFEST, TEST_WATCHDOG_URL, existingAdminHyperdriveId, main, testWranglerConfig, wranglerConfig } from '../gen-wrangler.ts';
 
 const LOCAL_D1_ID = '00000000-0000-4000-8000-000000000000';
 const WRITER_ID = 'b'.repeat(32);
@@ -60,6 +60,16 @@ describe('the admin config', () => {
         CONSOLE_ORIGIN: 'https://console.test',
         FILES_ORIGIN: 'https://files.test',
         NEAR_RPC: 'https://rpc.test.invalid',
+        API_URL: 'https://api.test',
+        VAULT_ORIGIN: 'https://vault.test',
+        AUTH_ORIGIN: 'https://auth.test',
+        CONSOLE_AUTH_ORIGIN: 'https://console-auth.test',
+        ACCOUNT_CRONS: JSON.stringify([
+          { worker: 'hana-id-api-test', crons: 1 },
+          { worker: 'hana-id-console-test', crons: 1 },
+          { worker: 'hana-id-admin-test', crons: 2 },
+          { worker: 'hana-id-watchdog-test', crons: 1 },
+        ]),
         SIGNER_ACCOUNT: 'signer.test.near',
         RELAYER_ACCOUNT: TEST_MANIFEST.relayer,
         ACCESS_TEAM_DOMAIN: 'hana-test.cloudflareaccess.com',
@@ -91,7 +101,7 @@ describe('the admin config', () => {
     expect(JSON.stringify(c.r2_buckets)).not.toContain('LOGOS');
     expect(JSON.stringify(c)).not.toMatch(/ConsoleRpc|EMAIL_API_KEY|CANCEL_LINK_KEY|INVITE_LINK_KEY|WATCHDOG_STATUS_TOKEN|COINGECKO_API_KEY/u);
     expect(Object.keys(c.vars!).sort()).toEqual(
-      ['ACCESS_AUD', 'ACCESS_TEAM_DOMAIN', 'ADMIN_ORIGIN', 'APP_CHANGE_DELAY_MS', 'CONSOLE_ORIGIN', 'EMAIL_FROM', 'ENV_LABEL', 'ENV_NAME', 'FILES_ORIGIN', 'NEAR_NETWORK', 'NEAR_RPC', 'OWNER_GRANT_DELAY_MS', 'RELAYER_ACCOUNT', 'SECURITY_ALIAS', 'SIGNER_ACCOUNT', 'STAFF_EMAILS', 'WATCHDOG_URL'].sort(),
+      ['ACCESS_AUD', 'ACCESS_TEAM_DOMAIN', 'ACCOUNT_CRONS', 'ADMIN_ORIGIN', 'API_URL', 'AUTH_ORIGIN', 'CONSOLE_AUTH_ORIGIN', 'VAULT_ORIGIN', 'APP_CHANGE_DELAY_MS', 'CONSOLE_ORIGIN', 'EMAIL_FROM', 'ENV_LABEL', 'ENV_NAME', 'FILES_ORIGIN', 'NEAR_NETWORK', 'NEAR_RPC', 'OWNER_GRANT_DELAY_MS', 'RELAYER_ACCOUNT', 'SECURITY_ALIAS', 'SIGNER_ACCOUNT', 'STAFF_EMAILS', 'WATCHDOG_URL'].sort(),
     );
     expect(LOCAL_ADMIN_CONNECTION_STRING).toMatch(/\.invalid:/u);
   });
@@ -196,6 +206,15 @@ describe('across Workers (config snapshots)', () => {
     ['admin', wranglerConfig(m, { adminHyperdriveId: TEST_ADMIN_HYPERDRIVE_ID }) as Config],
   ];
 
+  it('ACCOUNT_CRONS counts each cron Worker’s own triggers (the System status headroom tile, D425)', () => {
+    const triggers = (name: string) => ((configs.find(([n]) => n === name)![1] as { triggers?: { crons?: string[] } }).triggers?.crons ?? []).length;
+    const counted = Object.fromEntries(accountCrons(m).map((c) => [c.worker, c.crons]));
+    expect(counted).toEqual({ [m.cloudflare.workerName]: triggers('api'), [m.console!.workerName]: triggers('console'), [m.admin!.workerName]: triggers('admin'), [m.watchdog!.cloudflare.workerName]: triggers('watchdog') });
+    // A watchdog on another account than the API's (its own, D86) isn't counted; sandbox-dev's (no API account id) is.
+    expect(accountCrons({ ...m, cloudflare: { ...m.cloudflare, accountId: 'f'.repeat(32) } } as Manifest).map((c) => c.worker)).not.toContain(m.watchdog!.cloudflare.workerName);
+    expect(accountCrons(loadEnv('sandbox-dev')).reduce((a, c) => a + c.crons, 0)).toBe(5);
+  });
+
   it('no generated config carries the build id: only the deploy wrapper stamps it (D384, D406)', () => {
     const all: [string, Config][] = [...configs, ['console-auth', consoleAuthConfig(m) as Config], ['files', filesConfig(m) as Config]];
     for (const [name, c] of all) expect(Object.keys((c.vars as Record<string, string> | undefined) ?? {}), name).not.toContain(BUILD_VAR);
@@ -266,9 +285,11 @@ describe('source checks', () => {
     }
   });
 
-  it('the directory (ISSUER) is read only by the Users routes, the Support ID lookup and the audit view: never by a cron, the feed or a notice (C8b, D399)', () => {
+  it('the directory (ISSUER) is read only by the Users routes, the Support ID lookup and the audit view: never by a cron, the feed or a notice (C8b, D399); the System status page calls its health method only (D425)', () => {
     const readers = sources.filter(({ text }) => /\.ISSUER\b/u.test(text)).map(({ f }) => f.replace(srcDir, '')).sort();
-    expect(readers).toEqual(['routes.ts', 'support.ts', 'users.ts']);
+    expect(readers).toEqual(['routes.ts', 'status.ts', 'support.ts', 'users.ts']);
+    const status = sources.find(({ f }) => f.endsWith('/status.ts'))!.text;
+    expect([...status.matchAll(/ISSUER!?\.(\w+)\(/gu)].map((m) => m[1])).toEqual(['health']);
     // The only email it causes is the security alias's directory_budget.
     const users = sources.find(({ f }) => f.endsWith('/users.ts'))!.text;
     expect([...users.matchAll(/recipients\(([^)]*)\)/gu)].map((m) => m[1])).toEqual(['c.env.SECURITY_ALIAS']);

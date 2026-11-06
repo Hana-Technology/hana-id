@@ -47,6 +47,58 @@ errors; "ledger unavailable" with its reason when the ledger can't be read. Reac
 first in the console's audit log (`support.lookup`, with the request IDs). The query and the answer stay in memory: no URL, no storage, no
 export.
 
+## System status (D425)
+
+The landing page (`/`, nav **Status** at the top; asked for by the user 2026-11-06): one look says whether every part
+of the env is up and working, and what to do when it isn't. Read-only: nothing on it acts, it only links.
+
+**What it shows.** A verdict banner: **All systems operational** (green) only when every check answered and passed;
+otherwise **N issues** (amber with warnings only, red with a critical one), with when it was checked. Then the issues,
+critical first: what is wrong in plain words, what it affects (logins, the partner console, alerts, billing…), since
+when (known from the source, e.g. an alert's or a proposal's time, a cron's last run; else "first seen" by this
+isolate), and the screen or playbook that resolves it. Then one tile per component, grouped (Workers, contract and
+watchdog, relayer funds, data, scheduled jobs, external services, free-tier headroom): green, amber, red, grey
+**unknown** (a check that should have answered and didn't: always an issue, never green) or grey **not measured**
+(nothing can measure it yet: listed under the tiles as a follow-up, not an issue), with "checked N s ago" and a line of
+detail (latency, build id, counts, ages).
+
+**Where each check comes from** (`GET /api/status`, `src/status.ts`; every source in parallel, each failing on its own):
+
+| Group | Tile | Source | Green | Amber | Red |
+|---|---|---|---|---|---|
+| Workers | API, vault Worker, vault bundle, auth Worker, auth pages, email issuer, console Worker, console SPA, console-auth, files | the public build reads `deploy-check` uses (`/v1/health`, `/.well-known/hana-build`, `/vault.js`'s banner, `/login`'s and the console's `<meta name="hana-build">`, `/v1/email/health`): 5 s timeout, no redirect followed, 16 KiB read (256 B of `vault.js`) | 2xx with a build id, < 2 s | slower than 2 s; no build id (unstamped) | no answer, timeout, non-2xx, redirect |
+| | Admin (this Worker) | `HANA_BUILD`; its secrets present (names only, never values) | stamped, every secret set | unstamped; `COINGECKO_API_KEY`… optional ones aren't checked | `EMAIL_API_KEY`, `CANCEL_LINK_KEY` or `INVITE_LINK_KEY` missing (no notice can go out) |
+| | Watchdog | its `GET /status` (bearer, as Security & monitoring) | answered, `build` stamped | unstamped (a watchdog before D425 has no `build`) | unreachable, refused, unconfigured |
+| | (all) | the build ids above | one build everywhere | **mixed builds**: the Workers not on the majority's build named (a deploy half done; `docs/operations.md` "Checking a deploy") | — |
+| Contract and watchdog | Contract | `AdminRpc.systemStatus` → the governance snapshot, judged by Security & monitoring's own rules (`findingsOf`, governance part) | no finding | its warnings (a delay decrease, a due key change, …) | paused, a pending upgrade, owner transfer or withdrawal, a forged or published-key change, an untracked signer key |
+| | Watchdog | its `GET /status` | last run < 2 intervals ago, heartbeat ok, every channel on, no open alert | heartbeat failing or off, a channel off, an open warning alert, a check `error` | silent (no run in 2 intervals), an open critical alert (unacknowledged: re-paging) |
+| Relayer funds | Session pool, owner pool, relayer balance | the watchdog's last relayer reading (`relayer_funds`, its own thresholds) and the API's pool keys (`systemStatus`) | above `warn` | below `warn`; reading older than 30 min | below `critical`; account missing; an API pool key not on the account (its relays fail) |
+| Data | Hot D1 (API), console D1, email issuer D1 | `AdminRpc.systemStatus`, `StaffRpc.health`, `DirectoryRpc.health`: one `SELECT 1` each, timed | answered < 1 s | slower | failed, or the RPC didn't answer |
+| | Usage ledger | one Hyperdrive connection: `ops.state` reads, `partitionsAhead`, the settlement backlog | reachable, ≥ 2 partitions ahead | < 2 partitions ahead; settlement backlog older than 2 h | unreachable or unbound (reports, statements, settlement, the feed and the watcher stop; logins don't); 0 partitions ahead |
+| | R2: statements, exports (admin), logos (console) | `head` of a key that never exists (a Class B read; `StaffRpc.health` heads `LOGOS`) | answered | — | threw |
+| Scheduled jobs | API `*/15` (Google key sync), admin `*/5` (notices, feed, watcher), admin `*/15` (ledger), console hourly, watchdog `*/5` | the last run each records: `issuer_key_sync_runs`, `ops.state` `cron.last_run` and `ledger_cron.last_run` (new, D425), the console's `cron_runs` (migration 0003, D425), the watchdog's `last_run` | ran within 2 intervals + 5 min | later than that; last outcome `error`/`skipped`; a run's call budget ≥ 38 of 40 | later than 6 intervals (2 h for the 15-minute ones, 6 h hourly; the watchdog: 2 intervals, as its silence rule) |
+| External | Google JWKS | the API's governance snapshot (`issuers[].jwksKids`, the API's own fetch) and the watchdog's `jwks_fetch` check | listed | the watchdog's check failed | the API can't read it (Google logins fail when its cache runs out) |
+| | NEAR RPC primary, fallback | one `block` (`finality: final`) on each of the manifest's `rpc` and `rpcFallback` | answered, block < 2 min old | slow (> 2 s), or block 2–10 min old; the fallback down | the primary down (the API relays and reads through it) or > 10 min behind |
+| | Email (SendGrid) | `systemStatus` and `StaffRpc.health`: the blocking-notice backlog; `cron.last_run`: the last run's failed sends; `EMAIL_API_KEY` set | no backlog older than 15 min, no failed send | a failed send; backlog older than 15 min | backlog older than 1 h; no key |
+| Free-tier headroom (D417) | Cron triggers on the account | the manifest's cron Workers on this account (`gen`'s `ACCOUNT_CRONS`) against the Free plan's 5 | under 5 | at 5: full by design ("nothing else with a cron may be added") is green with that note | over 5 |
+| | Admin crons' call budget | each last run's `calls` against its 40 | < 38 | ≥ 38 (a backlog, D380) | — |
+| | Workers requests, D1, Hyperdrive queries, R2 storage and operations, SendGrid's 100 a day | — | not measured: the admin Worker holds no Cloudflare API token (Cloudflare's GraphQL/billing APIs) and SendGrid's stats need a key with more than Mail Send; follow-up in `docs/mainnet-readiness.md` | | |
+
+**Budget per page load** (Workers Free: 50 subrequests, 10 ms CPU): at most **22** outbound calls on a cache miss
+(1 watchdog `/status`, 3 RPCs: `AdminRpc.systemStatus`, `StaffRpc.health`, `DirectoryRpc.health`; 10 public build
+reads; 2 NEAR RPC; 1 Hyperdrive connection; 2 R2 heads; 1 Access certs fetch on a cold isolate, cached ≤ 10 min,
+the Access check's), 3 Worker invocations of the 32 a request may make. The answer is cached in the isolate for
+**30 s**, and concurrent misses share one read, so a refresh, a second tab or the other staff member costs 0 calls
+within that window; `test/status.test.ts` counts the calls of a cold and a warm load. Nothing is added to the admin's
+crons but one `ops.state` write in the `*/15` run, on the run's open connection (a query, not a call, D380).
+
+**Security.** Staff only behind Access and the Worker's own staff check like every `/api/*` route; GET only. The three
+health methods are authenticated as their entrypoints' other methods are (`AdminRpc` and `StaffRpc`: a `hana`
+actor; `DirectoryRpc`: the staff request's Access JWT, verified by the issuer) and answer no user data: build ids,
+timings, counts and timestamps. No secret, token or key is in the answer: the admin's secrets are named with
+present/missing only; the watchdog's bearer stays server-side. The page writes text only, links are the console's own
+paths, and nothing is stored in the browser.
+
 ## UI principles
 
 The staff SPA is a working tool for two people doing onboarding, support and security; these rules hold on every

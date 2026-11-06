@@ -222,10 +222,11 @@ describe('audit and CSV', () => {
 });
 
 describe('the route table', () => {
-  it('is the spec’s C8 routes, C12’s, C13’s, C14’s, C8b’s Users routes and C15’s lookup (POST); no user export', () => {
+  it('is the spec’s C8 routes, C12’s, C13’s, C14’s, C8b’s Users routes, C15’s lookup (POST) and the System status (D425); no user export', () => {
     expect(ROUTE_TABLE).toMatchInlineSnapshot(`
       [
         "GET /api/me",
+        "GET /api/status",
         "GET /api/orgs",
         "GET /api/orgs/:org",
         "POST /api/orgs/:org/freeze",

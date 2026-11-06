@@ -20,7 +20,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type Manifest, accountIdFields, envAlertLabel, isDevEnv, isLoopbackHost, loadEnv } from '@hana-id/env';
+import { type Manifest, accountIdFields, emailIssuerUrl, envAlertLabel, isDevEnv, isLoopbackHost, loadEnv } from '@hana-id/env';
 import { workersDevHost } from '../../api/scripts/pages-wrangler.ts';
 import { TEST_MANIFEST as CONSOLE_TEST_MANIFEST } from '../../console/scripts/gen-wrangler.ts';
 import { CRONS, FIVE_MINUTES } from '../src/crons.ts';
@@ -38,6 +38,23 @@ export const HYPERDRIVE_ID_RE = /^[0-9a-f]{32}$/u;
  * watcher fail at connect and are logged. No credential: the password is a placeholder.
  */
 export const LOCAL_ADMIN_CONNECTION_STRING = 'postgresql://usage_admin:local-dev@usage-ledger.local.invalid:5432/usage';
+
+/**
+ * The cron triggers the manifest puts on the API's Cloudflare account (the System status page's headroom tile, D417,
+ * D425): the API's one, the console's one, this Worker's two and the watchdog's one when it shares the account. A
+ * watchdog whose account can't be compared (no `cloudflare.accountId` for the API) is counted as sharing it: the
+ * cautious reading (sandbox-dev's does, D125). Each app's own gen sets its triggers; scripts/test/gen-wrangler.test.ts
+ * keeps these counts equal to them.
+ */
+export function accountCrons(m: Manifest): { worker: string; crons: number }[] {
+  const out = [{ worker: m.cloudflare.workerName, crons: 1 }];
+  if (m.console) out.push({ worker: m.console.workerName, crons: 1 });
+  if (m.admin) out.push({ worker: m.admin.workerName, crons: CRONS.length });
+  const w = m.watchdog;
+  const apiAccount = m.cloudflare.accountId;
+  if (w && (apiAccount === undefined || w.cloudflare.accountId === apiAccount)) out.push({ worker: w.cloudflare.workerName, crons: 1 });
+  return out;
+}
 
 /** A production manifest: not a dev env, or on mainnet. No workers.dev and a Hyperdrive id required. */
 export const isProductionManifest = (m: Pick<Manifest, 'name' | 'network'>): boolean => !isDevEnv(m.name) || (m.network as string) === 'mainnet';
@@ -94,6 +111,15 @@ export function wranglerConfig(m: Manifest, opts: { adminHyperdriveId?: string |
       CONSOLE_ORIGIN: c.origin,
       FILES_ORIGIN: f.origin,
       NEAR_RPC: m.rpc,
+      // The System status page (D425): the public endpoints it reads (deploy-check's), the RPC fallback, the account's
+      // cron triggers. All public; an absent piece's var is absent too (its tile says "not configured").
+      ...(m.rpcFallback ? { NEAR_RPC_FALLBACK: m.rpcFallback } : {}),
+      API_URL: m.apiUrl.replace(/\/+$/u, ''),
+      ...(m.vaultOrigin ? { VAULT_ORIGIN: m.vaultOrigin } : {}),
+      ...(m.authOrigin ? { AUTH_ORIGIN: m.authOrigin } : {}),
+      ...(m.emailIssuer ? { EMAIL_ISSUER_URL: emailIssuerUrl(m) } : {}),
+      CONSOLE_AUTH_ORIGIN: c.authOrigin,
+      ACCOUNT_CRONS: JSON.stringify(accountCrons(m)),
       SIGNER_ACCOUNT: m.signer,
       // C12: settlement checks each transaction's signer against the relayer account; the nonce check reads its keys.
       RELAYER_ACCOUNT: m.relayer,

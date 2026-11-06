@@ -7,7 +7,8 @@
 // Built in batch C5; batch C14 adds the read-only `governance` (the `GET /v1/governance` snapshot) and `pendingUpgrades`
 // (the pending-upgrades page, D86); batch C13 the retention methods `purgeAudit`, `deletedApps` and `purgeDirectory` (the
 // admin Worker's monthly job only: a `system` actor, D360); batch C15 the Support ID lookup's hot-DB part,
-// `supportLookup` and `userShares` (staff only; the admin Worker audits before it calls and reads the ledger itself, D394).
+// `supportLookup` and `userShares` (staff only; the admin Worker audits before it calls and reads the ledger itself, D394);
+// the System status page (D425) `systemStatus` (staff only, read-only, no user data).
 import {
   adminAppNamesInput,
   adminFindUsersInput,
@@ -44,6 +45,7 @@ import {
   setLogoInput,
   setSecurityContactsInput,
   supportLookupInput,
+  systemStatusInput,
   suspendOrgInput,
   turnOffInput,
   updateSettingsInput,
@@ -69,6 +71,7 @@ import { addOrigins, removeOrigins } from '../changes/origins.ts';
 import { proposeSetting, setLogo, turnOff, updateSettings } from '../changes/settings.ts';
 import { deleteApp, setSuspensionBit, suspendOrg } from '../changes/suspension.ts';
 import { governanceSnapshot } from '../governance-status.ts';
+import { systemStatus } from '../system-status.ts';
 import { adminAppNames, adminFindUsers, adminGetUser, adminListUsers } from '../directory/read.ts';
 import { supportLookup, userShares } from '../directory/support.ts';
 import { deletedApps, purgeAudit, purgeDirectory } from '../changes/retention.ts';
@@ -218,6 +221,15 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
   /** The pending-upgrades page's view (the same one ConsoleRpc.pendingUpgrades gives partners). */
   pendingUpgrades(c: unknown) {
     return runRpc(this.env, 'admin.pendingUpgrades', governanceInput, c, { actors: HANA }, async () => ({ pendingUpgrades: pendingUpgradesView(await governanceSnapshot(this.env)) }));
+  }
+
+  /**
+   * The admin console's System status page (D425): the build, a timed hot-DB probe, the Google-key sync's last runs,
+   * the blocking-notice backlog, the pools' public keys and the governance snapshot, in one call. Staff only, read-only,
+   * no user data.
+   */
+  systemStatus(c: unknown) {
+    return runRpc(this.env, 'admin.systemStatus', systemStatusInput, c, { actors: HANA }, ({ db }) => systemStatus(this.env, db));
   }
 
   // ---- retention (batch C13, D90): the admin Worker's monthly job only ----

@@ -43,8 +43,8 @@ describe('src/directory-rpc.ts (DirectoryRpc) reads only, and only the directory
     for (const banned of ['signer', 'keys', 'kms', 'challenge', 'challenge-id', 'mail', 'sendgrid', 'sender', 'outbox', 'handlers', 'deps', 'apps', 'jws', 'google']) {
       expect(local, banned).not.toContain(`${banned}.ts`);
     }
-    // Packages: the entrypoint base, the shared schemas, normalization (no key) and the Access check.
-    expect(valueImports(readFileSync(MODULE, 'utf8')).filter((s) => !s.startsWith('.')).sort()).toEqual(['@hana-id/console-core', '@hana-id/email', '@hana-id/oidc', 'cloudflare:workers']);
+    // Packages: the entrypoint base, the shared schemas, normalization (no key), the build-id format (health) and the Access check.
+    expect(valueImports(readFileSync(MODULE, 'utf8')).filter((s) => !s.startsWith('.')).sort()).toEqual(['@hana-id/console-core', '@hana-id/email', '@hana-id/env/build-id', '@hana-id/oidc', 'cloudflare:workers']);
   });
 
   it('its statements: SELECTs on user_emails, user_email_apps and email_admin_audit, one INSERT into email_admin_audit', () => {
@@ -59,9 +59,9 @@ describe('src/directory-rpc.ts (DirectoryRpc) reads only, and only the directory
     for (const m of text.matchAll(/\.prepare\(\s*(`[^`]*`|'[^']*')/gu)) expect(m[1]!.slice(1).trimStart(), m[0]).toMatch(/^(SELECT\b|\$\{AUDIT_INSERT\})/u);
   });
 
-  it('touches DB, RATE_LIMITER, its Access vars, ENV_NAME and EMAIL_RL_KEY only: never APP_DB or another secret', () => {
+  it('touches DB, RATE_LIMITER, its Access vars, ENV_NAME, EMAIL_RL_KEY and HANA_BUILD (health, D425) only: never APP_DB or another secret', () => {
     const used = new Set([...text.matchAll(/\benv\??\.([A-Z][A-Z0-9_]*)/gu)].map((m) => m[1]!));
-    for (const name of used) expect(['DB', 'RATE_LIMITER', 'ENV_NAME', 'EMAIL_RL_KEY', 'ADMIN_ACCESS_TEAM_DOMAIN', 'ADMIN_ACCESS_AUD', 'ADMIN_STAFF_EMAILS'], name).toContain(name);
+    for (const name of used) expect(['DB', 'RATE_LIMITER', 'ENV_NAME', 'EMAIL_RL_KEY', 'HANA_BUILD', 'ADMIN_ACCESS_TEAM_DOMAIN', 'ADMIN_ACCESS_AUD', 'ADMIN_STAFF_EMAILS'], name).toContain(name);
     for (const name of ['APP_DB', 'ISSUER_SIGNING_KEY', 'EMAIL_SUB_KEY', 'EMAIL_CODE_KEY', 'SENDGRID_API_KEY', 'EMAIL_CHALLENGE', 'OUTBOX']) expect(text, name).not.toContain(name);
   });
 

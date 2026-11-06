@@ -32,10 +32,12 @@ import {
   type DirectoryUserRow,
   directoryAuditInput,
   directoryGetInput,
+  directoryHealthInput,
   directorySearchInput,
   isFullAddress,
 } from '@hana-id/console-core';
 import { normalizeEmail } from '@hana-id/email';
+import { BUILD_ID_RE } from '@hana-id/env/build-id';
 import { AccessJwtVerifier, JwksUnavailableError } from '@hana-id/oidc';
 import { base64Decode, base64UrlEncode, concatBytes, sha256, toHex, utf8 } from './bytes.ts';
 import type { Env } from './env.ts';
@@ -413,6 +415,28 @@ export class DirectoryRpc extends WorkerEntrypoint<Env> {
         detail: parseDetail(r.detail),
       })),
     };
+  }
+
+  /**
+   * The admin console's System status page (D425): the build this issuer runs and a timed `SELECT 1` on its D1. The
+   * same staff check as every other method first (nothing is read before it); it reads no directory row, writes no
+   * audit row, takes nothing from the row budget and answers no user data.
+   */
+  async health(c: unknown): Promise<{ ok: true; build: string | null; db: { ok: boolean; latencyMs: number } } | Fail> {
+    const parsed = directoryHealthInput.safeParse(c);
+    if (!parsed.success) return fail('bad_request', 'Malformed health call');
+    const who = await staffOf(this.env, parsed.data.accessJwt, parsed.data.requestId, Date.now());
+    if (!who.ok) return who;
+    const build = this.env.HANA_BUILD;
+    const start = Date.now();
+    let dbOk = true;
+    try {
+      await this.env.DB.prepare('SELECT 1 AS one').first();
+    } catch {
+      dbOk = false;
+      log({ event: 'directory_health', requestId: parsed.data.requestId, outcome: 'error', code: 'd1' }, 'error');
+    }
+    return { ok: true, build: build !== undefined && BUILD_ID_RE.test(build) ? build : null, db: { ok: dbOk, latencyMs: Date.now() - start } };
   }
 }
 

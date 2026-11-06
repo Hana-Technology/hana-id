@@ -19,6 +19,9 @@ import type { AlertRow, Store } from './store.ts';
 
 /** The portal warns when the last run is older than two intervals (spec "Monitoring in the admin portal"). */
 export const SILENT_AFTER_MS = 2 * RUN_INTERVAL_MS;
+
+/** A build id (`@hana-id/env/build-id` BUILD_ID_RE; a test keeps them equal): `build` is null for anything else. */
+export const BUILD_ID_RE = /^[0-9a-f]{12}(?:-dirty)?$/u;
 const MIN_TOKEN_LENGTH = 32;
 const MAX_BODY_BYTES = 1024;
 const BY_RE = /^[\p{L}\p{N} ._@+:()-]{1,200}$/u;
@@ -150,6 +153,8 @@ async function status(d: StatusDeps) {
   return {
     service: 'hana-id-watchdog',
     env: d.env.ENV_NAME,
+    // The build id this Worker was deployed with (D406), for the admin console's System status page (D425).
+    build: d.env.HANA_BUILD !== undefined && BUILD_ID_RE.test(d.env.HANA_BUILD) ? d.env.HANA_BUILD : null,
     network: d.env.NEAR_NETWORK,
     signer: d.env.SIGNER_ACCOUNT,
     watchdog_account: d.env.WATCHDOG_ACCOUNT,

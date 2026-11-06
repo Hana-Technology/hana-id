@@ -45,7 +45,7 @@ describe('@hana-id/core', () => {
     expect(VERSION).toBe(pkg.version);
   });
 
-  it('publishes the derivation, identity, wallet record, Stellar signer, decode and policy subpaths, and they exist', () => {
+  it('publishes the derivation, identity, wallet record, Stellar signer, decode, policy and Support ID subpaths, and they exist', () => {
     expect(pkg.exports).toEqual({
       '.': './src/index.ts',
       './derivation': './src/derivation.ts',
@@ -54,6 +54,7 @@ describe('@hana-id/core', () => {
       './signers/stellar': './src/signers/stellar.ts',
       './decode': './src/decode/index.ts',
       './policy': './src/policy/index.ts',
+      './support-id': './src/support-id.ts',
     });
     for (const path of Object.values(pkg.exports)) expect(existsSync(new URL(`../${path}`, import.meta.url))).toBe(true);
   });

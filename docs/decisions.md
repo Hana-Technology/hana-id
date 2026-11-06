@@ -7804,10 +7804,75 @@ branch.
   stay independent, D86, and alerts, where this page only shows); auto-refresh (a page that redraws while read; Check
   again reads on demand).
 
+## Partner integration friction fixes (branch `feat/partner-friction-fixes`), 2026-11-06
+
+### D427. Partner-integration friction fixes: a verifier that refuses to start, a fast `no_answer` naming the origin, the portal in the guide
+- Date 2026-11-06 · Status: approved by the user 2026-11-06 (friction fixes) · Source: a "new partner" dry run that
+  built a sample partner app from the partner guide, the four SDK READMEs and the public sandbox-dev endpoints
+  (its friction log, items 1–6, 8–12 and 14; items 7, 15 and 16 deferred by the user) · Built:
+  `examples/identity-verify/src/verify.ts` (and the guide's copy), `packages/web/src/client/vault-connection.ts`,
+  `packages/react/src/hooks.ts`, `packages/core/src/support-id.ts` (subpath `@hana-id/core/support-id`),
+  `packages/console-core/src/users.ts`, `packages/sodax/src/evm.ts`, `packages/core/src/verified-contracts.ts` (the
+  cited `@sodax/types` version), `docs/integration.md`, the four SDK READMEs, `packages/core/test/integration-doc.test.ts`
+  · Amends D262 (the answer deadline of a loaded frame) · Number note: D427 was the next free number on
+  `origin/develop` (D426 the highest); renumber at the merge if another branch took it
+- Decision:
+  1. **The guide's verifier refuses to start without its settings.** `HANA_APP_ID`, `HANA_IDENTITY_ISSUER` and
+     `HANA_IDENTITY_PINS` are read once at load; an unset or blank one throws with its name, as do an app id that
+     isn't `app_…` (a publishable key pasted by mistake), a non-`https` issuer (loopback excepted, for local tests)
+     and pins that aren't 43-character thumbprints. Why: with `audience: undefined`, jose skips the audience check
+     and a valid Hana token minted for any other app verifies (confirmed by the dry run with jose 6.2.13), while the
+     comment next to it said the check was mandatory. Pinning is required the same way: `jwks-only` is the explicit
+     opt-out, so a forgotten variable can't silently drop it either (the old code read unset as "no pins"). The guide
+     lists sandbox-dev's issuer and its two thumbprints (the active key and the standby: the watchdog's
+     `pinnedIdentityKeys`), and a test keeps them equal to the manifest; rule 1 adds "refuse to start when the app id
+     or issuer is missing".
+  2. **`no_answer` is fast and names the origin.** The vault answers the hello with `connected` in the same task it
+     arrives in, and the frame's `load` waits for the vault's script, so a loaded frame silent for 1.5 s
+     (`POST_LOAD_ANSWER_MS`) was refused (frame-ancestors, the vault's own origin check, or an error page). The SDK now
+     gives a loaded frame 1.5 s after its `load`, instead of the rest of 5 s from its insertion; the one retry stays
+     (a transient 503 page). A wrong origin fails in about 3 s instead of about 10 s, and `no_answer`'s message and
+     `data.origin` name the page's `location.origin`, with "scheme, host and port must match" and the dev-server port
+     case. A frame still loading keeps 5 s plus 5 s, and `ready` 20 s after `connected`, as D262 set them.
+  3. **No distinct `origin_not_allowed` reason.** The SDK can't tell an origin refusal from an unknown or suspended
+     key: the browser's frame-ancestors block happens in the vault frame's context (no event in the page), and D262
+     rejected the vault saying why it refused (it would tell any framing page whether a key or an origin is valid).
+     The origin the SDK names is the page's own, which the page already knows, so nothing new is disclosed. No new
+     code crosses the port, so D393's `sdkAtLeast` gating doesn't apply.
+  4. **The partner portal in the guide.** Section 1 becomes "Your app and the partner portal": what Hana still does
+     during the pilot (creates the org and apps, sets the security contacts, turns email login on), where the
+     publishable key, the app id and the identity issuer with its pins come from, signing in by invite, the app page's
+     tabs, allowed origins as guarded changes (announced to the security contacts, then 60 s on sandbox-dev or 24 h;
+     loopback on a test app and any origin before a first login at once once announced; cancel from the page or the
+     email; removal immediate), members, reports and a frozen org. "Send Hana" and "the dashboard in batch C" are gone
+     from sections 6, 7 and 9 (the Signing tab, Login & sessions, the scope page's own-client steps).
+  5. **Partner-facing text points at nothing a partner can't open.** No repo paths, decision numbers, batch or
+     build-plan names or admin CLI commands in `docs/integration.md` or the four SDK READMEs; a test bans them. The
+     guide's "Last verified" header is one short line (its history is in git and here).
+  6. **Smaller fixes.** `useHana().login(options)` passes `hana.login()`'s options and drops an event argument
+     (`onClick={login}` still works). `supportIdFromSub` (the one implementation; console-core re-exports it as
+     `supportIdOf` and moved its Crockford code to core) is exported from `@hana-id/core` and the leaf subpath
+     `@hana-id/core/support-id`, with the exact format and a test vector in the guide. `@hana-id/sodax` is typed and
+     tested against `@sodax/types` 2.2.0 (peer `^2.2.0`, what `@sodax/sdk` 2.2.0 pins), and honours 2.2.0's
+     `expectedChainId` (another chain is `4902` `expected_chain_mismatch` before any popup); the verified-contracts
+     list cites 2.2.0, whose addresses its test confirms unchanged. The guide states that `eth_signTransaction` fills
+     a missing nonce, gas and fees as `eth_sendTransaction` does but neither queues nor broadcasts, that Sodax has no
+     testnet (quotes and intent building work read-only; signing waits for live keys; Hana's own sandbox mainnet demo
+     exception is Hana-internal only), and that "NEAR testnet" is Hana's chain, not the user's wallet chain.
+  7. **No version bump.** `docs/operations.md` "Releasing the SDK packages" bumps the four packages' version at a
+     release, not per change; the guide marks the new behaviour "SDK releases after 0.2.0".
+- No change to any key or path derivation.
+- Rejected: exporting a ready-made verifier package now (a fourth published surface to version; the guide's code is
+  tested and the startup checks close the hole); a test-app-only `data.hint` from the vault for loopback parents
+  (D262's reason holds for test apps too, and the SDK's message covers the case without the vault); dropping the
+  frame retry (it covers a transient 503 vault page); a shorter answer deadline for frames still loading (a slow
+  network is not a refusal).
+
 ## Superseded or amended
 
 | Was | Now | Source |
 |---|---|---|
+| D262: each vault frame has 5 s from its insertion to answer, a loaded one included; a wrong origin fails `no_answer` after about 10 s with a generic message | A loaded frame has 1.5 s after its `load`; `no_answer` in about 3 s, its message and `data.origin` naming the page's origin (D427) | `docs/integration.md` section 3 |
 | D413: verify's phases ran one step at a time except gitleaks beside the typecheck and the docs checks beside the unit tests; the sandbox e2e one test at a time (`--test-threads=1`, also CI's) | Lanes side by side in four phases (sandbox e2e beside the pack check then Playwright; the contract beside the typecheck; the unit tests still alone but for the docs checks); the sandbox e2e 8 tests at a time, in verify and CI | D423 |
 | D153 (an updater Add of a kid Google listed with the same material within 24 h is retired: cancelled), the JWKS cron's 55-min removal grace, the watchdog's Remove confirmed on two fetches 60 s apart | Retired only when known > 7 days, unlisted > 6 h and missed by 3+ fetches over 30+ min (else left pending); removal after 24 h missing from every fetch of 3 a run, never with a token in the last 24 h; a Remove confirmed early only after 3+ fetches over 10+ min and no listing for 24 h; `stale_active_key` after 27 h (D422) | `apps/api/src/issuer-keys.ts`, `apps/watchdog/src/run.ts`, migrations API 0012 and watchdog 0002 |
 | D387: the checks run locally before a merge, from a list of commands in docs/operations.md | `pnpm verify` (CI's checks for the change, D383's rules) before every merge into `develop`, `--full` before a deploy; an optional pre-push hook runs `--quick` on pushes to `develop` and `main` (D413) | `scripts/verify.mjs`, `scripts/verify-hook.mjs`, `.githooks/pre-push`; docs/operations.md "CI and git" |

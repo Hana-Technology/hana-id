@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { type Server, createServer } from 'node:http';
 import { type AddressInfo } from 'node:net';
 import { type JWK, SignJWT, calculateJwkThumbprint, exportJWK, generateKeyPair } from 'jose';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const APP_ID = 'app_partner1';
 const STELLAR = 'GBXGQJWVLWOYHFLVTKWV5FGHA3LNYY2JQKM7OAJAUEQFU6LPCSEFVXON';
@@ -46,6 +46,7 @@ beforeAll(async () => {
   issuer = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/identity`;
   process.env.HANA_IDENTITY_ISSUER = issuer;
   process.env.HANA_APP_ID = APP_ID;
+  process.env.HANA_IDENTITY_PINS = 'jwks-only';
   verify = await import('../src/verify.ts');
 });
 afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
@@ -153,13 +154,12 @@ describe('verifyHanaIdentityToken', () => {
 
 describe('thumbprint pinning (HANA_IDENTITY_PINS, recommended for anything of value)', () => {
   afterEach(() => {
-    delete process.env.HANA_IDENTITY_PINS;
+    process.env.HANA_IDENTITY_PINS = 'jwks-only';
     vi.resetModules();
   });
-  const fresh = async (pins: string | undefined) => {
+  const fresh = async (pins: string) => {
     vi.resetModules();
-    if (pins === undefined) delete process.env.HANA_IDENTITY_PINS;
-    else process.env.HANA_IDENTITY_PINS = pins;
+    process.env.HANA_IDENTITY_PINS = pins;
     return import('../src/verify.ts');
   };
   const rogueToken = async () =>
@@ -169,8 +169,8 @@ describe('thumbprint pinning (HANA_IDENTITY_PINS, recommended for anything of va
       .setExpirationTime('1h')
       .sign(rogue);
 
-  it("without pins, a key published in Hana's JWKS by someone else verifies (the risk pinning removes)", async () => {
-    const v = await fresh(undefined);
+  it("with jwks-only (no pins), a key published in Hana's JWKS by someone else verifies (the risk pinning removes)", async () => {
+    const v = await fresh('jwks-only');
     expect((await v.verifyHanaIdentityToken(await rogueToken())).userId).toBe('u1_victim');
   });
 
@@ -195,6 +195,64 @@ describe('thumbprint pinning (HANA_IDENTITY_PINS, recommended for anything of va
       jwks.keys.reverse();
       jwks.keys[1] = { ...jwks.keys[1]!, kid: rogueKid };
     }
+  });
+});
+
+describe('startup: the verifier refuses to start without its settings', () => {
+  const SETTINGS = ['HANA_IDENTITY_ISSUER', 'HANA_APP_ID', 'HANA_IDENTITY_PINS'] as const;
+  let saved: Record<string, string | undefined>;
+  beforeEach(() => {
+    saved = Object.fromEntries(SETTINGS.map((k) => [k, process.env[k]]));
+    vi.resetModules();
+  });
+  afterEach(() => {
+    for (const k of SETTINGS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+    vi.resetModules();
+  });
+  const load = () => import('../src/verify.ts');
+
+  it.each(SETTINGS)('%s unset or empty: the module throws at import, naming it', async (name) => {
+    delete process.env[name];
+    await expect(load()).rejects.toThrow(`${name} is not set`);
+    vi.resetModules();
+    process.env[name] = '  ';
+    await expect(load()).rejects.toThrow(`${name} is not set`);
+  });
+
+  it('refuses a publishable key in place of the app id', async () => {
+    process.env.HANA_APP_ID = 'pk_test_abc';
+    await expect(load()).rejects.toThrow('HANA_APP_ID must be your app id');
+  });
+
+  it('refuses a plaintext issuer that is not loopback, and a malformed one', async () => {
+    process.env.HANA_IDENTITY_ISSUER = 'http://hana.example/v1/identity';
+    await expect(load()).rejects.toThrow('must be an https:// URL');
+    vi.resetModules();
+    process.env.HANA_IDENTITY_ISSUER = 'not a url';
+    await expect(load()).rejects.toThrow();
+  });
+
+  it('refuses pins that are not thumbprints (a typo, a stray separator only)', async () => {
+    for (const pins of ['abc', ',', `${kid},not-a-thumbprint`]) {
+      vi.resetModules();
+      process.env.HANA_IDENTITY_PINS = pins;
+      await expect(load()).rejects.toThrow('HANA_IDENTITY_PINS must be key thumbprints');
+    }
+  });
+
+  it("started with every setting, it rejects a valid Hana token minted for another app", async () => {
+    process.env.HANA_IDENTITY_PINS = kid;
+    const v = await load();
+    const other = await new SignJWT({ iss: issuer, aud: 'app_OTHER', sub: 'u1_8pQm3yR0tZ1vW5xA7cB2dE', sid: 's1_x', wallets: [] })
+      .setProtectedHeader({ alg: 'ES256', kid, typ: 'hana-identity+jwt' })
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .sign(key);
+    await expect(v.verifyHanaIdentityToken(other)).rejects.toMatchObject({ code: 'invalid' });
+    expect((await v.verifyHanaIdentityToken(await token())).userId).toBe('u1_8pQm3yR0tZ1vW5xA7cB2dE');
   });
 });
 

@@ -1,4 +1,4 @@
-// createSodaxStellarProvider: a Sodax `IStellarWalletProvider` (@sodax/types 2.1.0) over `hana.stellar`
+// createSodaxStellarProvider: a Sodax `IStellarWalletProvider` (@sodax/types 2.2.0) over `hana.stellar`
 // (docs/batch-b-spec.md "Sodax adapter"):
 //
 //   const stellar = createSodaxStellarProvider(hana, { networkPassphrase: Networks.PUBLIC, horizonUrl, sorobanRpcUrl });

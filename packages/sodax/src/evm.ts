@@ -1,4 +1,4 @@
-// createSodaxEvmProvider: a Sodax `IEvmWalletProvider` (@sodax/types 2.1.0) over `hana.ethereum`, one per spoke chain
+// createSodaxEvmProvider: a Sodax `IEvmWalletProvider` (@sodax/types 2.2.0) over `hana.ethereum`, one per spoke chain
 // (docs/batch-b-spec.md "Sodax adapter"):
 //
 //   const base = createSodaxEvmProvider(hana, { chainId: 8453, rpcUrl });   // 8453 must be in createHana's evm.chains
@@ -9,7 +9,7 @@
 // | chainType | 'EVM' |
 // | (creation) | throws 4902 if `chainId` isn't in the client's `evm.chains` |
 // | getWalletAddress() | eth_requestAccounts: logs in if needed (call it from a click; the launcher is the fallback) |
-// | sendTransaction(rawTx) | the SDK's one-argument call `{from, to, value: bigint, data}`, no chain ID: `from` must be the vault's address (4100); pins hana.ethereum to the bound chain, then eth_sendTransaction (fill from the chain's RPC, sign with approval, broadcast) |
+// | sendTransaction(rawTx, options?) | `options.expectedChainId` (@sodax/types 2.2.0), when given, must be the bound chain (4902 `expected_chain_mismatch` before any popup otherwise); the SDK's call `{from, to, value: bigint, data}`, no chain ID: `from` must be the vault's address (4100); pins hana.ethereum to the bound chain, then eth_sendTransaction (fill from the chain's RPC, sign with approval, broadcast) |
 // | waitForTransactionReceipt(hash) | polls this provider's `rpcUrl` (eth_getTransactionReceipt) every 2 s for up to 180 s; number fields stringified |
 //
 // `rpcUrl` must be the bound chain's: the provider checks its eth_chainId once, before its first transaction is signed
@@ -30,7 +30,7 @@
 import { ErrorCode, isEvmAddress } from '@hana-id/core';
 import type { HanaClient } from '@hana-id/web';
 import { HanaError, RpcCode } from '@hana-id/web';
-import type { Address, EvmRawLog, EvmRawTransaction, EvmRawTransactionReceipt, Hash, IEvmWalletProvider } from '@sodax/types';
+import type { Address, EvmRawLog, EvmRawTransaction, EvmRawTransactionReceipt, EvmSendTransactionOptions, Hash, IEvmWalletProvider } from '@sodax/types';
 import { REQUEST_TIMEOUT_MS, httpUrl, invalid, isObject, jsonRpc, sleep } from './http.ts';
 
 export const EVM_RECEIPT_POLL_MS = 2_000;
@@ -78,9 +78,16 @@ export function createSodaxEvmProvider(hana: SodaxEvmHana, config: SodaxEvmConfi
     return (await eth.request({ method: 'eth_sendTransaction', params: [tx] })) as Hash;
   };
 
-  const sendTransaction = (evmRawTx: EvmRawTransaction): Promise<Hash> => {
+  const sendTransaction = (evmRawTx: EvmRawTransaction, options?: EvmSendTransactionOptions): Promise<Hash> => {
     let tx: { from: string; to: string; value: string; data: string };
     try {
+      const expected = isObject(options) ? options.expectedChainId : undefined;
+      if (expected !== undefined && expected !== chainId) {
+        throw new HanaError(ErrorCode.chainNotConfigured, `Sodax expects chain ${String(expected)}, but this provider signs for chain ${chainId}`, {
+          chainId: target,
+          reason: 'expected_chain_mismatch',
+        });
+      }
       tx = checkRawTx(evmRawTx, hana.addresses?.evm ?? null);
     } catch (e) {
       return Promise.reject(e);

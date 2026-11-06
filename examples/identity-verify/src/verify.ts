@@ -1,13 +1,30 @@
 import { calculateJwkThumbprint, createRemoteJWKSet, errors, exportJWK, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
 
-// From Hana's partner console / your Hana app page. Not secrets.
-const HANA_ISSUER = process.env.HANA_IDENTITY_ISSUER!; // e.g. https://<hana api>/v1/identity
-const HANA_APP_ID = process.env.HANA_APP_ID!; // app_…
+// Not secrets: the app id is on your app's page in the partner portal, the issuer and its key thumbprints in the
+// partner guide. All three are required, and the verifier refuses to start without them: with no app id, jose would
+// skip the audience check and accept a token minted for any other app.
+function setting(name: string): string {
+  const value = (process.env[name] ?? '').trim();
+  if (!value) throw new Error(`${name} is not set: the Hana identity-token verifier refuses to start without it`);
+  return value;
+}
+const HANA_ISSUER = setting('HANA_IDENTITY_ISSUER'); // e.g. https://<hana api>/v1/identity
+const HANA_APP_ID = setting('HANA_APP_ID'); // app_…
+if (!/^app_[A-Za-z0-9]{1,64}$/u.test(HANA_APP_ID)) throw new Error('HANA_APP_ID must be your app id (app_…), not a publishable key');
+const issuerUrl = new URL(HANA_ISSUER); // throws on a malformed URL
+if (issuerUrl.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(issuerUrl.hostname)) {
+  throw new Error('HANA_IDENTITY_ISSUER must be an https:// URL');
+}
 
-// Recommended for anything of value: the key thumbprints Hana gives you (comma-separated; each is also its kid). A key
-// that isn't one of them is refused even if Hana's JWKS lists it, so a key published by whoever controls Hana's
-// servers never verifies here. Hana announces scheduled rotations 14 days ahead. Unset: the JWKS URL alone is trusted.
-const HANA_PINS = (process.env.HANA_IDENTITY_PINS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+// The issuer's key thumbprints (comma-separated; each is also its kid). A key that isn't one of them is refused even
+// if Hana's JWKS lists it, so a key published by whoever controls Hana's servers never verifies here. Hana announces
+// scheduled rotations 14 days ahead. `jwks-only` trusts the JWKS URL alone (not for anything of value); a missing
+// value is refused rather than read as "no pins", so pinning can't be dropped by a forgotten variable.
+const PINS = setting('HANA_IDENTITY_PINS');
+const HANA_PINS = PINS === 'jwks-only' ? [] : PINS.split(',').map((s) => s.trim()).filter(Boolean);
+if (PINS !== 'jwks-only' && (HANA_PINS.length === 0 || !HANA_PINS.every((p) => /^[A-Za-z0-9_-]{43}$/u.test(p)))) {
+  throw new Error('HANA_IDENTITY_PINS must be key thumbprints (43 base64url characters each, comma-separated) or jwks-only');
+}
 
 // Caches the keys for 10 minutes and refetches on an unknown kid (at most every 30 s).
 const remoteKeys = createRemoteJWKSet(new URL(`${HANA_ISSUER}/jwks.json`));

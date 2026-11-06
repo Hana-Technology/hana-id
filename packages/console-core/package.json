@@ -11,6 +11,6 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p test",
     "gen-vectors": "node scripts/gen-vectors.mjs"
   },
-  "dependencies": { "@hana-id/env": "workspace:*", "zod": "^3.24.0" },
-  "devDependencies": { "@hana-id/core": "workspace:*", "typescript": "^5.7.0", "vitest": "^3.2.0", "@types/node": "^22.0.0" }
+  "dependencies": { "@hana-id/core": "workspace:*", "@hana-id/env": "workspace:*", "zod": "^3.24.0" },
+  "devDependencies": { "typescript": "^5.7.0", "vitest": "^3.2.0", "@types/node": "^22.0.0" }
 }

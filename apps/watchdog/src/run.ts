@@ -47,11 +47,11 @@ export const ABSENCE_RECHECK_MS = 60_000;
 /**
  * A pending Add of a kid Google doesn't publish now, but did publish with the same key material within this window,
  * is not a forgery (D153): either Google retired it (the API cron's fetch still listed it) or Google is rolling it out
- * and this fetch came from an edge that doesn't list it yet (D420).
+ * and this fetch came from an edge that doesn't list it yet (D422).
  */
 export const RETIRED_KEY_GRACE_MS = 24 * 60 * 60_000;
 /**
- * Rollout hysteresis (D420): Google's edges serve different key sets for a day or two around a rotation, so absence
+ * Rollout hysteresis (D422): Google's edges serve different key sets for a day or two around a rotation, so absence
  * is weak evidence. Acting on it (cancelling an Add as retired, confirming a Remove early) takes at least this many
  * successful fetches in a row that missed the kid,
  */
@@ -68,7 +68,7 @@ export const REMOVAL_ABSENT_SPAN_MS = 10 * 60_000;
 export const REMOVAL_UNSEEN_MS = 24 * 60 * 60_000;
 /**
  * An active kid Google stopped publishing longer ago than this is stale (warning): the API cron proposes its removal
- * only after 24 h missing from every fetch (D420), so stale means the removal is over 3 h late (was 3 h, before D420).
+ * only after 24 h missing from every fetch (D422), so stale means the removal is over 3 h late (was 3 h, before D422).
  */
 export const STALE_ACTIVE_KID_MS = 27 * 60 * 60_000;
 /** A change executable for longer than this that nobody executed (warning). */
@@ -465,7 +465,7 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
       }
       const runs = tracked.runs;
 
-      // Read for D153 and D420. A failed read must not hold back a cancel (without it every unpublished Add is
+      // Read for D153 and D422. A failed read must not hold back a cancel (without it every unpublished Add is
       // forged), and holds back every early removal (it can't tell how recently Google listed the kid).
       let seenRead = true;
       const seen = await store.seenKids(GOOGLE_PROVIDER).catch(() => {
@@ -489,8 +489,8 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
           if (lastSeen !== null) {
             if (retiredAddDue(seen.get(c.kid)!, runs.get(c.kid), d.now())) await retiredPending(run, c, lastSeen, canAct, settled);
             // Known to Google within a day and not yet provably retired: a rollout seen through an edge that doesn't
-            // list it. Left pending: confirmed once a fetch lists it, executed by the API if its own fetches do (D420).
-            else run.check('pending_key_changes', 'ok', `${ident(c.kid)} missing from this fetch but listed by Google at ${iso(lastSeen)}: waiting (rollout, D420)`);
+            // list it. Left pending: confirmed once a fetch lists it, executed by the API if its own fetches do (D422).
+            else run.check('pending_key_changes', 'ok', `${ident(c.kid)} missing from this fetch but listed by Google at ${iso(lastSeen)}: waiting (rollout, D422)`);
             continue;
           }
           await forgedPending(run, s, c, reason, jwk ?? null, canAct, settled, deleted, self);
@@ -498,7 +498,7 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
           await run.condition('published_key_removal', `published_key_removal:${c.id}`, `Pending removal of ${ident(c.kid)}, which Google still publishes (alert only: the owner decides)`, changeDetails(c));
         } else if (absent.has(c.kid) && canConfirm) {
           if (seenRead && removalConfirmable(seen.get(c.kid), runs.get(c.kid), d.now())) await confirm(run, c, settled);
-          else run.check('pending_key_changes', 'ok', `${ident(c.kid)} absent, not yet long enough to confirm its removal early (D420)`);
+          else run.check('pending_key_changes', 'ok', `${ident(c.kid)} absent, not yet long enough to confirm its removal early (D422)`);
         }
       }
 
@@ -671,7 +671,7 @@ function changeDetails(c: KeyChange): Record<string, unknown> {
 /**
  * Records this fetch's absences of pending kids (the first absence per kid is kept, every absent fetch counted),
  * clears kids that are listed or no longer pending, and returns the kids absent now and also at a fetch at least
- * ABSENCE_RECHECK_MS earlier, with each absent kid's run of absences including this fetch (D420).
+ * ABSENCE_RECHECK_MS earlier, with each absent kid's run of absences including this fetch (D422).
  */
 async function trackAbsences(store: Store, pending: KeyChange[], jwks: Map<string, Jwk>, fetchAt: number): Promise<{ absent: Set<string>; runs: Map<string, Absence> }> {
   const pendingKids = new Set(pending.map((c) => c.kid));
@@ -690,7 +690,7 @@ async function trackAbsences(store: Store, pending: KeyChange[], jwks: Map<strin
 }
 
 /**
- * D420: whether an updater Add of a kid Google listed with this material within RETIRED_KEY_GRACE_MS (`retiredAt`)
+ * D422: whether an updater Add of a kid Google listed with this material within RETIRED_KEY_GRACE_MS (`retiredAt`)
  * is provably retired: Google's last listing is at least RETIRED_UNSEEN_MS old, the kid was first seen at least
  * RETIRED_MIN_KEY_AGE_MS ago, and ABSENT_FETCHES_TO_ACT fetches in a row over RETIRED_ABSENT_SPAN_MS missed it.
  */
@@ -701,7 +701,7 @@ export function retiredAddDue(s: SeenKid, absence: Absence | undefined, now: num
 }
 
 /**
- * D420: whether a pending Remove may be confirmed early: ABSENT_FETCHES_TO_ACT fetches in a row over
+ * D422: whether a pending Remove may be confirmed early: ABSENT_FETCHES_TO_ACT fetches in a row over
  * REMOVAL_ABSENT_SPAN_MS missed the kid, and no fetch of the watchdog's listed it for REMOVAL_UNSEEN_MS. Otherwise the
  * change waits out the contract's delay (the API executes it only if its own fetches miss the kid and no token was
  * signed with it for a day).

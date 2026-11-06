@@ -733,7 +733,7 @@ describe('Google rules unchanged beside a live email issuer', () => {
     const hana = await emailJwk(201);
     const k2 = jwk('k2', 2);
     const w = await initialized({ jwks: [jwk('k1', 1), k2], pins: pinsOf({ hana: [hana] }), before: (x) => void x.chain.emailIssuer([hana]) });
-    // Provably retired (D420): known for over a week, unlisted for over 6 h, missed by fetches in a row over 30 min.
+    // Provably retired (D422): known for over a week, unlisted for over 6 h, missed by fetches in a row over 30 min.
     await retiredLongAgo(w, [jwk('k1', 1)]);
     const c = w.chain.propose('Add', 'k2', { key: k2 });
     await runsOverRetiredSpan(w);

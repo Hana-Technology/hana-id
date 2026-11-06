@@ -3,14 +3,14 @@
 // key, a function-call key on SIGNER_ACCOUNT limited to UPDATER_METHODS, and only ever:
 //   - proposes an Add (`set_issuer_key`) for a kid Google publishes that is neither active nor pending on chain;
 //   - proposes a Remove (`propose_issuer_key_removal`) for an active kid missing from every fetch for ≥ 24 h, never
-//     one that signed a verified token in the last 24 h and never the issuer's last key (rollout hysteresis, D420);
+//     one that signed a verified token in the last 24 h and never the issuer's last key (rollout hysteresis, D422);
 //   - executes (`execute_issuer_key_change`) a matured change that agrees with the JWKS it just fetched: an Add whose
 //     n and e equal Google's key for that kid, a Remove of a kid Google no longer publishes. Anything else is left for
 //     the watchdog and the owner (the cron can't cancel, by design).
 // It never calls `remove_issuer_key` (owner-only). A change of ours that disappears without being applied was
 // cancelled (owner or watchdog): it is logged once and not proposed again for REPROPOSE_AFTER_CANCEL_MS. Each run
 // fetches the JWKS JWKS_FETCHES_PER_RUN times: Google's edges serve different key sets during a rollout (seen
-// 2026-11-03..05, D420), so a kid any fetch lists counts as published, and a kid counts as missing only when every
+// 2026-11-03..05, D422), so a kid any fetch lists counts as published, and a kid counts as missing only when every
 // fetch succeeded and none listed it. The union is recorded for the key lead-time measurement (key-observations.ts).
 import { type Jwk, GOOGLE_JWKS_URL, GOOGLE_PROVIDER, usableJwks } from '@hana-id/jwks';
 import { base64UrlDecode } from './bytes.ts';
@@ -26,16 +26,16 @@ export { GOOGLE_JWKS_URL, GOOGLE_PROVIDER, type Jwk, usableJwks } from '@hana-id
 
 /**
  * JWKS fetches per run. Google's frontends answer from different caches (each up to ~6 h old): during a rollout some
- * list a new kid and some don't, so one fetch is weak evidence of absence (D420).
+ * list a new kid and some don't, so one fetch is weak evidence of absence (D422).
  */
 export const JWKS_FETCHES_PER_RUN = 3;
 /**
  * A kid is proposed for removal only once every run's every fetch has missed it for this long (first seen missing by
  * a complete run, missing from every complete run since): a key left on chain a day longer is harmless (Google stops
- * signing with a key before it stops publishing it), a key removed early breaks logins (D420, was 55 min).
+ * signing with a key before it stops publishing it), a key removed early breaks logins (D422, was 55 min).
  */
 export const REMOVE_AFTER_MISSING_MS = 24 * 60 * 60_000;
-/** Never propose or execute the removal of a kid that signed a verified token within this window (D420). */
+/** Never propose or execute the removal of a kid that signed a verified token within this window (D422). */
 export const KEEP_AFTER_LAST_TOKEN_MS = 24 * 60 * 60_000;
 /** After a proposal of ours was cancelled on chain, the same kid and op is not proposed again for this long. */
 export const REPROPOSE_AFTER_CANCEL_MS = 60 * 60_000;
@@ -414,7 +414,7 @@ async function runSync(env: Env, provider: string, jwksUrl: string, now: number)
     return { ...result, skipped: code };
   };
 
-  // JWKS_FETCHES_PER_RUN fetches, one after another: a kid any of them lists is published (D420).
+  // JWKS_FETCHES_PER_RUN fetches, one after another: a kid any of them lists is published (D422).
   const fetches: PromiseSettledResult<{ keys: Jwk[]; maxAgeS: number | null }>[] = [];
   for (let i = 0; i < JWKS_FETCHES_PER_RUN; i++) fetches.push(...(await Promise.allSettled([fetchUsableJwks(jwksUrl)])));
   const succeeded = fetches.flatMap((f) => (f.status === 'fulfilled' ? [f.value] : []));

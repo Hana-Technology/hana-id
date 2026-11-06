@@ -121,7 +121,7 @@ describe('first token per kid', () => {
     expect((await rows()).early).toEqual(seen(T + 900_000, T + 900_000, 60, { first_token_ms: T }));
   });
 
-  it('keeps the latest token time in last_token_ms, whatever order the writes arrive in (D420)', async () => {
+  it('keeps the latest token time in last_token_ms, whatever order the writes arrive in (D422)', async () => {
     await recordTokenKid(env.DB, 'google', 'a', T + 5000);
     await recordTokenKid(env.DB, 'google', 'a', T + 9000);
     await recordTokenKid(env.DB, 'google', 'a', T + 3000);
@@ -175,7 +175,7 @@ describe('cron', () => {
     const ctx = createExecutionContext();
     await worker.scheduled(createScheduledController({ cron: '*/15 * * * *', scheduledTime: T + 15 * 60_000 }), { ...env, KEYS_UPDATER_KEY: undefined }, ctx);
     await waitOnExecutionContext(ctx);
-    // JWKS_FETCHES_PER_RUN fetches a run (D420).
+    // JWKS_FETCHES_PER_RUN fetches a run (D422).
     expect(near.jwksFetches).toBe(JWKS_FETCHES_PER_RUN);
     expect(near.rpcMethods).toEqual([]);
     const r = await rows();

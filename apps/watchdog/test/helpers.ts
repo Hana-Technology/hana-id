@@ -543,7 +543,7 @@ export async function initialized(opts: Omit<WorldOpts, 'at'> & { before?: (w: W
 }
 
 /**
- * D420: Google listed every kid of the world's JWKS for over RETIRED_MIN_KEY_AGE_MS, then only `keep` for over
+ * D422: Google listed every kid of the world's JWKS for over RETIRED_MIN_KEY_AGE_MS, then only `keep` for over
  * RETIRED_UNSEEN_MS: a kid dropped here is old and long unlisted, provably retired once fetches in a row over
  * RETIRED_ABSENT_SPAN_MS miss it (`runsOverRetiredSpan`).
  */

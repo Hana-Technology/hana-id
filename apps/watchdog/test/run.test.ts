@@ -237,7 +237,7 @@ describe("a key Google just retired (D153)", () => {
     return { w, k2 };
   }
 
-  it("cancels the updater's Add of a provably retired kid (D420: known > 7 days, unlisted > 6 h, missed by fetches over 30 min), keeps the updater keys, warns", async () => {
+  it("cancels the updater's Add of a provably retired kid (D422: known > 7 days, unlisted > 6 h, missed by fetches over 30 min), keeps the updater keys, warns", async () => {
     const k2 = jwk('k2', 2);
     const w = await initialized({ jwks: [jwk('k1', 1), k2] });
     await retiredLongAgo(w, [jwk('k1', 1)]);
@@ -257,7 +257,7 @@ describe("a key Google just retired (D153)", () => {
     expect(channelsOf(w, 'retired_key_change')).toEqual(['email', 'slack']);
   });
 
-  it("doesn't cancel a new kid that flickers in Google's JWKS (seen 30 min ago, missing from both fetches), and confirms it once a fetch lists it (D420)", async () => {
+  it("doesn't cancel a new kid that flickers in Google's JWKS (seen 30 min ago, missing from both fetches), and confirms it once a fetch lists it (D422)", async () => {
     const k2 = jwk('k2', 2);
     const w = await initialized({ jwks: [jwk('k1', 1)] });
     // Google's edges mid-rollout: one fetch lists k2, the next ones don't.
@@ -392,7 +392,7 @@ describe('pending removals (step 4)', () => {
     expect(channelsOf(w, 'published_key_removal')).toEqual(['email', 'pager', 'slack']);
   });
 
-  it('confirms a removal early only once fetches in a row over 10 min miss the kid and none listed it for 24 h (D420)', async () => {
+  it('confirms a removal early only once fetches in a row over 10 min miss the kid and none listed it for 24 h (D422)', async () => {
     const w = await initialized({ active: [jwk('k1', 1), jwk('k2', 2)] });
     w.jwks.keys = [jwk('k1', 1)];
     w.clock.t += REMOVAL_UNSEEN_MS;
@@ -407,7 +407,7 @@ describe('pending removals (step 4)', () => {
     expect(w.chain.active.has('k2')).toBe(false);
   });
 
-  it('never confirms a removal of a kid Google listed within 24 h, however long it has been missing since; a fetch that lists it alerts critical (D420)', async () => {
+  it('never confirms a removal of a kid Google listed within 24 h, however long it has been missing since; a fetch that lists it alerts critical (D422)', async () => {
     const w = await initialized({ active: [jwk('k1', 1), jwk('k2', 2)] });
     w.clock.t += 2 * HOUR;
     await w.run(); // k2 listed at this run
@@ -499,7 +499,7 @@ describe('active keys (step 5)', () => {
     expect((await alertsOf(w.store, 'automatic_action')).map((a) => a.title)).toEqual([expect.stringContaining('delete_updater_key')]);
   });
 
-  it('only warns (Slack + email) on a kid Google dropped more than 27 h ago (the cron removes after 24 h, D420), and never pauses on it', async () => {
+  it('only warns (Slack + email) on a kid Google dropped more than 27 h ago (the cron removes after 24 h, D422), and never pauses on it', async () => {
     const w = await initialized({ active: [jwk('k1', 1), jwk('k2', 2)] });
     w.jwks.keys = [jwk('k1', 1)];
     await w.run();

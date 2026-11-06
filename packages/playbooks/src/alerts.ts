@@ -179,7 +179,7 @@ const publishedKeyRemoval: Playbook = {
   signals: ['Critical `published_key_removal` page: "Pending removal of <kid>, which Google still publishes".', 'The API cron logs `jwks_sync_note` `removal_of_published_kid`.'],
   impact: [
     'If it executes, logins with tokens signed by that kid fail until the updater re-proposes it and it waits out the issuer-key delay. It can never remove the last key.',
-    "A removal the updater (the signer account) proposed means `KEYS_UPDATER_KEY` is stolen (the API cron only proposes removals of kids missing from every fetch of Google's JWKS for ≥ 24 h that signed no token in the last 24 h, D420).",
+    "A removal the updater (the signer account) proposed means `KEYS_UPDATER_KEY` is stolen (the API cron only proposes removals of kids missing from every fetch of Google's JWKS for ≥ 24 h that signed no token in the last 24 h, D422).",
   ],
   steps: [
     {
@@ -503,7 +503,7 @@ const retiredKeyChange: Playbook = {
   severity: 'warning',
   status: 'live',
   summary:
-    "The updater proposed a key Google stopped publishing but did publish, with the same key material, within the last 24 h, and it is provably retired: known for over 7 days, unlisted for over 6 h, missed by 3+ fetches in a row over 30+ min (D153, D420). The API cron's fetch raced Google's retirement of the kid. The watchdog cancelled it and kept the updater keys. A kid that doesn't meet all three (a new key mid-rollout) is left pending, not cancelled.",
+    "The updater proposed a key Google stopped publishing but did publish, with the same key material, within the last 24 h, and it is provably retired: known for over 7 days, unlisted for over 6 h, missed by 3+ fetches in a row over 30+ min (D153, D422). The API cron's fetch raced Google's retirement of the kid. The watchdog cancelled it and kept the updater keys. A kid that doesn't meet all three (a new key mid-rollout) is left pending, not cancelled.",
   signals: [
     'Warning `retired_key_change` (Slack, email): "Retired Google key <kid> proposed (change <id>): Google stopped publishing it after <time>; cancelled, updater key kept".',
     "`details.last_seen_jwks_at` is the watchdog's last fetch that listed the kid; `details.outcome` is `cancelled`, `gone`, `failed` (retried next run) or `not_sent`.",
@@ -514,7 +514,7 @@ const retiredKeyChange: Playbook = {
       title: 'Check it was a retirement',
       who: 'a founder',
       detail:
-        "Google's JWKS no longer lists the kid, and `details.n` matches what the watchdog recorded for it (`/status` `seen_kids`). Repeats for the same kid more than an hour apart, or any `forged_key_change`, are not a race: see forged-key-change. Before D420 a new key mid-rollout could land here repeatedly (sandbox-dev, 2026-11-04/05): that no longer happens.",
+        "Google's JWKS no longer lists the kid, and `details.n` matches what the watchdog recorded for it (`/status` `seen_kids`). Repeats for the same kid more than an hour apart, or any `forged_key_change`, are not a race: see forged-key-change. Before D422 a new key mid-rollout could land here repeatedly (sandbox-dev, 2026-11-04/05): that no longer happens.",
       commands: [c.watchdogAlerts, c.apiGovernance],
     },
   ],
@@ -531,7 +531,7 @@ const keySyncStalled: Playbook = {
   alertKinds: ['unexecuted_key_change', 'stale_active_key'],
   severity: 'warning',
   status: 'live',
-  summary: 'A matured key change nobody executed for over 1 h, or an active kid Google dropped more than 27 h ago that nobody proposed to remove (the cron removes after 24 h missing, D420).',
+  summary: 'A matured key change nobody executed for over 1 h, or an active kid Google dropped more than 27 h ago that nobody proposed to remove (the cron removes after 24 h missing, D422).',
   signals: ['Warning `unexecuted_key_change` or `stale_active_key`.', 'API cron logs: `jwks_sync_skipped`, `jwks_tx` `send_failed`, `jwks_sync_note` `last_key_kept` / `queue_full`.'],
   impact: ["Google's new key isn't active (its tokens get `503 issuer_key_pending`), or a key Google retired stays active longer than needed."],
   steps: [
@@ -550,7 +550,7 @@ const keySyncStalled: Playbook = {
     {
       title: 'Propose the stale removal',
       who: 'the API cron',
-      detail: 'The cron proposes removing a kid missing from every fetch for ≥ 24 h (never one that signed a token in the last 24 h, never the last key; D420); a founder can run the same sync at once.',
+      detail: 'The cron proposes removing a kid missing from every fetch for ≥ 24 h (never one that signed a token in the last 24 h, never the last key; D422); a founder can run the same sync at once.',
       commands: [c.postGoogleKeys],
     },
   ],

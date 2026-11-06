@@ -1,4 +1,4 @@
--- Issuer key rollout hysteresis (D420): when a verified token signed with each kid last reached the API, beside
+-- Issuer key rollout hysteresis (D422): when a verified token signed with each kid last reached the API, beside
 -- first_token_ms (0004). The JWKS cron never proposes or executes the removal of a kid that signed a token in the last
 -- 24 h, whatever Google's JWKS says. Written at most once per kid per isolate every few minutes (key-observations.ts).
 -- Public data only: a kid and a timestamp. Existing rows start from their first token (a lower bound).

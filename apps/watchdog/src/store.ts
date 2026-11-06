@@ -3,7 +3,7 @@
 import type { Jwk } from '@hana-id/jwks';
 import { ALERT_KINDS, type AlertKind, type Channel, type CheckId, type Severity } from './checks.ts';
 
-/** A pending kid's run of absences: the first fetch that missed it, and how many successful fetches have since (D420). */
+/** A pending kid's run of absences: the first fetch that missed it, and how many successful fetches have since (D422). */
 export interface Absence {
   first: number;
   fetches: number;
@@ -144,7 +144,7 @@ export class Store {
       .run();
   }
 
-  /** Each pending kid's first absence and how many successful fetches in a row have missed it since (D420). */
+  /** Each pending kid's first absence and how many successful fetches in a row have missed it since (D422). */
   async absences(provider: string): Promise<Map<string, Absence>> {
     const rows = await this.db.prepare('SELECT kid, first_absent_at, absent_fetches FROM absences WHERE provider = ?1').bind(provider).all<{ kid: string; first_absent_at: number; absent_fetches: number }>();
     return new Map(rows.results.map((r) => [r.kid, { first: r.first_absent_at, fetches: r.absent_fetches }]));

@@ -7,7 +7,7 @@ mainnet. The user's decisions of 2026-10-29 (D80–D86) are applied below.** Imp
 issuer-key delay (provisional until the lead-time measurement is in), where the backup council key is held, the
 paging app, and open question 17. The current state is in the reference docs (`docs/README.md`).
 
-**Amended 2026-11-06 (D420, the rollout hysteresis; the current rules are in `docs/api.md` "Cron" and
+**Amended 2026-11-06 (D422, the rollout hysteresis; the current rules are in `docs/api.md` "Cron" and
 `docs/operations.md` "Google signing keys (JWKS)"):** the API cron fetches the JWKS 3 times a run and proposes a removal
 only after 24 h missing from every fetch (not 55 min), never for a kid that signed a token in the last 24 h; the
 watchdog cancels an updater's Add as retired (D153) only for a kid known over 7 days and unlisted over 6 h after 3+

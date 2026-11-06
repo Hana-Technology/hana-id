@@ -1,6 +1,6 @@
 // Issuer signing-key lead time (D33 "Open", docs/security.md open issue (e)): when each kid first and last appears in
 // the issuer's JWKS, when it leaves it, and when a token signed with it first and last reaches the API (the last one
-// also keeps the JWKS cron from removing a key in use, D420). D1 table `issuer_key_observations` (migrations 0004,
+// also keeps the JWKS cron from removing a key in use, D422). D1 table `issuer_key_observations` (migrations 0004,
 // 0012); read with `admin.ts <env> issuer-keys:lead-times`. Public data only:
 // kids, timestamps and the JWKS max-age, never a token, `sub` or anything about a user. Writes never fail a caller.
 import type { KeyObserver } from '@hana-id/oidc';

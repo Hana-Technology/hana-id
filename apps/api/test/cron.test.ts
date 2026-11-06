@@ -1,6 +1,6 @@
 // The JWKS cron against hana-signer's delayed issuer-key changes (docs/governance-spec.md "Rotation and logins"):
 // proposals, executions of matured changes, removals after 24 h missing from every fetch (never a key that signed a
-// token in the last 24 h, never the last key; D420), cancelled proposals, and the updater key's method list.
+// token in the last 24 h, never the last key; D422), cancelled proposals, and the updater key's method list.
 import { KeyPair, type KeyPairString } from '@near-js/crypto';
 import { createExecutionContext, createScheduledController, waitOnExecutionContext } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
@@ -328,7 +328,7 @@ describe('scheduled JWKS sync', () => {
     expect(KEEP_AFTER_LAST_TOKEN_MS).toBe(24 * 60 * 60_000);
   });
 
-  it('a kid one fetch of three lists is published: no missing row, no removal, and a new kid one fetch lists is proposed (D420)', async () => {
+  it('a kid one fetch of three lists is published: no missing row, no removal, and a new kid one fetch lists is proposed (D422)', async () => {
     const near = govChain(['k1', 'k2', 'k3'], { jwks: ['k1', 'k2'] });
     const all = { keys: [jwk('k1'), jwk('k2'), jwk('k3'), jwk('new')] };
     for (let i = 0; i < 8; i++) {
@@ -343,7 +343,7 @@ describe('scheduled JWKS sync', () => {
     expect(near.sent.map((t) => t.method)).not.toContain('propose_issuer_key_removal');
   });
 
-  it('a kid that comes and goes between runs is never removed: each run that lists it restarts its 24 h (D420)', async () => {
+  it('a kid that comes and goes between runs is never removed: each run that lists it restarts its 24 h (D422)', async () => {
     const near = govChain(['k1', 'k2', 'k3'], { jwks: ['k1', 'k2'] });
     for (let i = 0; i < 10; i++) {
       // 20 h missing from every fetch, then one run that lists it, again and again.
@@ -359,7 +359,7 @@ describe('scheduled JWKS sync', () => {
     expect(near.sent).toHaveLength(0);
   });
 
-  it('a run with a failed or empty fetch neither starts, resets nor completes a removal (D420)', async () => {
+  it('a run with a failed or empty fetch neither starts, resets nor completes a removal (D422)', async () => {
     const near = govChain(['old', 'kept'], { jwks: ['kept'] });
     expect(await run(near)).toEqual(empty);
     // Past the 24 h, but this run's second fetch failed and its third was empty: no proposal, the clock kept.
@@ -378,7 +378,7 @@ describe('scheduled JWKS sync', () => {
     expect(await run(near)).toMatchObject({ executed: [1] });
   });
 
-  it('never proposes or executes the removal of a kid that signed a verified token in the last 24 h (D420)', async () => {
+  it('never proposes or executes the removal of a kid that signed a verified token in the last 24 h (D422)', async () => {
     const near = govChain(['old', 'kept'], { jwks: ['kept'] });
     const sawToken = (at: number) =>
       env.DB.prepare(

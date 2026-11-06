@@ -215,6 +215,24 @@ describe('sendTransaction', () => {
     expect(callsAtPrepare[1]).toBe(net.calls.length - 1); // before the second provider's own chain check
   });
 
+  it("@sodax/sdk 2.2.0's expectedChainId: the bound chain sends; another chain is 4902 before any popup or request", async () => {
+    const { hana } = setup();
+    const prepareApproval = vi.fn(() => ({ cancel: vi.fn() }));
+    const base = createSodaxEvmProvider({ ethereum: hana.ethereum, addresses: hana.addresses, prepareApproval }, { chainId: BASE, rpcUrl: RECEIPTS });
+    await expect(base.sendTransaction({ from: EVM, to: USDC, value: 0n, data: APPROVE }, { expectedChainId: BASE })).resolves.toBe(HASH);
+    expect(prepareApproval).toHaveBeenCalledTimes(1);
+    const calls = net.calls.length;
+    expect(await rejection(base.sendTransaction({ from: EVM, to: USDC, value: 0n, data: APPROVE }, { expectedChainId: ARB }))).toMatchObject({
+      code: 4902,
+      data: { reason: 'expected_chain_mismatch', chainId: '0x2105' },
+    });
+    expect(prepareApproval).toHaveBeenCalledTimes(1);
+    expect(net.calls).toHaveLength(calls);
+    expect(signed).toHaveLength(1);
+    // An empty options object is the one-argument call.
+    await expect(base.sendTransaction({ from: EVM, to: SPOKE, value: 0n, data: DEPOSIT }, {})).resolves.toBe(HASH);
+  });
+
   it('passes a native value as a 0x quantity, and accepts `from` in any case', async () => {
     const { base } = setup();
     await base.sendTransaction({ from: EVM.toLowerCase() as `0x${string}`, to: SPOKE, value: 10n ** 18n, data: '0x' });

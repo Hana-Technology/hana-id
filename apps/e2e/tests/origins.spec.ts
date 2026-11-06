@@ -42,6 +42,10 @@ test.describe('embedding', () => {
     expect(requests.count(`${VAULT_ORIGIN}/vault?`)).toBe(2);
     expect(await page.evaluate(() => (window as any).e2e.readyErrorReason)).toBe('no_answer');
     expect(requests.count(`${VAULT_ORIGIN}/vault.js`)).toBe(0);
+    // The SDK names the origin it was refused on, and says so within seconds (each loaded, silent frame gets 1.5 s
+    // after its load), not after two full 5 s deadlines.
+    expect(await page.evaluate(() => (window as any).e2e.readyErrorOrigin)).toBe(new URL(page.url()).origin);
+    expect(await page.evaluate(() => (window as any).e2e.readyMs)).toBeLessThan(7_000);
   });
 
   test('a suspended app gets no vault: vault_unavailable', async ({ page, requests }) => {

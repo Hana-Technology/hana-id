@@ -8,19 +8,13 @@ popup, unless it falls under an auto-approve policy you set and the user accepte
 
 > **Testnet pilot.** Keys come from the NEAR **testnet** MPC and stay disposable until the address freeze (final
 > accounts, audit, mainnet). Don't keep real funds in pilot wallets, on any chain. A test app (`pk_test_…`) can't sign
-> for mainnet chains at all ([section 12](#12-test-and-live-keys)). This guide follows the code; the original
-> specification is `docs/batch-b-spec.md`.
+> for mainnet chains at all ([section 12](#12-test-and-live-keys)).
 
-Last verified against code: 2026-11-05 (branch `feat/sdk-error-request-id`: the API request ID in the SDK's errors, `error.requestId` / `data.requestId`, SDK 0.2.0 or later, in section 4's "Support ID", section 13's intro and its new "Getting help", D405); 2026-11-05 (branch `fix/popup-early-close-deadline`: a popup closed within seconds of reaching Google's page ends in about 90 s with `login_cancelled`, in section 4 and the error table, D398); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/batch-c-15`: the user's Support ID in the SDK, `hana.supportId`, `supportIdChanged`, `useHana().supportId`, the approval popup, for SDK 0.2.0 or later, and the install lines' 0.2.0 tarballs; section 4 "Support ID"); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: `derive_failed`'s `webcrypto_unsupported` and `webcrypto_failed` in the error table, D385); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `feat/user-id-identity-sub`: section 15's `sub` row, the User ID and Support ID, D346); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: D347's closed popup in section 4 and the error table, D348's Google-only screen; a cancel on Google's sign-in screen goes back to the chooser, closing there is `login_cancelled`, in "Sign-in methods and links" and the error table; D341); 2026-11-04 (branch `fix/abandoned-login-freeze`: an unfinished login and `login_timeout`'s
-`data.stage`); 2026-11-04 (branch `feat/token-first-on`: "Sign-in methods and links": Google's one
-sign-in screen lists the email, cancelling it, the two-accounts screen; D270); 2026-11-03 (branch `feat/email-login-8b` review fixes: the email permission's screens and
-reasons, `api_unavailable`'s `path_unconfirmed` / `path_disputed`, `storage_unavailable` in a login, `hana.account()`'s
-5 s cache, D263–D265); 2026-11-03 (branch `feat/email-login-8b`: one wallet per person, "Sign-in methods and
-links" in section 4 (`hana.account()`, `linkChanged`, `hana.linkAccount()`, what users see in each case), key export
-for email wallets, `link_refused`, `link_pending`'s `effectiveAtMs`, the `linking` progress stage); 2026-11-03 (branch
-`fix/demo-polish`: the vault load's one retry and `vault_unavailable`'s `data.reason` in section 3 and 13, the login
-timings' stages in section 12); 2026-11-02 (branch `feat/email-login-8a`: email login, "Email login" in section 4, the
-new error codes and the `email_code` progress stage).
+> **NEAR is Hana's chain, not your users'.** Hana derives every key through NEAR's MPC network and records each login
+> on NEAR; that is what "NEAR testnet" means wherever an environment's network is named. Your users get a Stellar and
+> an EVM wallet. The SDK has no NEAR account or NEAR signer, and your app never talks to NEAR.
+
+Last verified against code: 2026-11-06, SDK 0.2.0. "SDK releases after 0.2.0" marks what is in Hana's next tarballs.
 
 ## How it works
 
@@ -47,32 +41,107 @@ your page ──iframe──▶ vaultOrigin/vault      holds the key (in memory;
 The address depends on your app's **scope** and the user's Google account, never on the browser. The same user
 gets the same addresses on every device, and different addresses in another partner's app.
 
-## 1. Get an app
+## 1. Your app and the partner portal
 
-Hana registers apps during the pilot (the self-serve dashboard comes with batch C). Send Hana:
+During the pilot Hana creates your organisation and your apps, and you manage them in Hana's **partner portal**
+(sandbox-dev: `https://hana-id-console-sandbox-dev.tingtc.workers.dev`). To get a test app, send Hana:
 
 - the app name your users will see ("Signing in to {name} at {origin}");
-- every origin your app runs on, as exact origins (`https://app.example.com`, no path). At most 20. Add
-  `http://localhost:<port>` (or `http://localhost:*`) for local development; loopback works only for test keys in
-  `local*`/`sandbox*` envs;
+- the origins your app runs on to start with (you can add more in the portal; [Allowed origins](#allowed-origins));
 - whether you use Hana's shared Google client or your own ([section 6](#6-google-client-shared-or-your-own));
-- any [settings](#7-app-settings) other than the defaults.
+- the Google address of the first person who manages it (they become an owner), and at least one **security
+  contact**: an address that gets the announcement of every change to your apps' origins and signing settings.
 
-You get a **publishable key** (`pk_test_…` for a test app, `pk_live_…` for a live one; a scope is test or live for
-good, so test and live apps never share addresses). It is public: ship it in your page. Your origins are what protect
-it. A new origin takes effect after the same delay as a policy (24 h in production; 60 s on sandbox-dev) once Hana
-has announced it (on a new app, before anyone has logged in to it, at once); removing one takes effect at once.
+What you get, and where to find it again:
+
+| What | Looks like | Where | Used by |
+|---|---|---|---|
+| Publishable key | `pk_test_…` (test app), `pk_live_…` (live app) | the app page's header, **Publishable key**, with a Copy button; all keys on its **Keys** tab | your page: `createHana({ publishableKey })` |
+| App id | `app_…` | the app page's header, **App ID**, with a Copy button | your backend: the identity token's `aud` ([section 15](#15-identity-token-your-backend)) |
+| Identity issuer and its key thumbprints | an `https://` URL; 43-character thumbprints | this guide, per environment ([section 15](#verify-it-node-jose)) | your backend: `iss` and the pins |
+
+The publishable key is public: ship it in your page. Your origins are what protect it. The app id is not secret
+either, but your page never sees it (the SDK takes only the publishable key), so copy it from the portal into your
+backend's configuration; never take it from a token you are about to verify. A scope is test or live for good, so
+test and live apps never share addresses.
+
+### Signing in to the portal
+
+There is no self sign-up. An owner of your organisation (or Hana, for the first one) invites your Google address as
+an **Owner** or a **Viewer**. The invite email ("You're invited to {org} on Hana ID") holds the link: open it and click
+**Sign in with Google to accept**, with the Google account of the address it was sent to. A link works once, for that
+address only, and expires after 7 days. After that, sign in at `{portal}/signin` with **Sign in with Google**.
+
+A portal session lasts 12 hours, and ends after 2 hours without activity. Five minutes before the 12 hours are up a
+banner offers **Sign in again**. If the session ends mid-task, the page keeps what you typed: sign in again in the new
+tab the banner opens, come back and click **Try again**.
+
+Owners change apps, keys and members; viewers see everything and change nothing (where a viewer can't act, the page
+says why instead of showing the control). The changes that matter for security ask you to **Confirm with Google**: a
+fresh Google sign-in, as the account you are signed in with, valid for 5 minutes.
+
+### Your app's page
+
+**Apps** lists your organisation's apps with their id, a **Test** or **Live** badge, their status and how many
+changes are waiting. An app's page shows the **App ID** and the **Publishable key** in its header, each with a
+**Copy** button, and has these tabs:
+
+| Tab | What you do there |
+|---|---|
+| **Overview** | a getting-started checklist, and every change waiting to take effect, with **Cancel** |
+| **Origins** | the allowed origins ([below](#allowed-origins)) |
+| **Keys** | **Create a key** (at most 5 active), **Rotate** (you get a new key now; the old one keeps working 24 hours), **Revoke** (at once; a page already open notices within 30 s) |
+| **Login & sessions** | persistence, the session and idle limits and the Google web client ([section 7](#7-app-settings)), confirmed with Google and in force at once; a link to your scope's page ("Google clients and on-chain owners") for your own Google client ([section 6](#6-google-client-shared-or-your-own)) |
+| **Signing** | the auto-approve policy ([section 9](#9-auto-approve-policies)) and raw signing ([Raw signing](#raw-signing)) |
+| **Branding** | the name users see in Hana's popups (up to 64 characters), and your logo: PNG, JPEG or WebP, at most 512 KiB, 128 to 2048 px a side, nearly square, not animated; Hana re-encodes it to a 256 × 256 PNG and shows it next to the name in its popups |
+| **Suspend** | **Suspend the app** stops logins at once; **Resume** (confirmed with Google). A suspension by Hana only Hana can lift |
+
+Email login can't be switched on in the portal yet: ask Hana ([section 4](#4-log-in-log-out), "Email login").
+
+<a id="allowed-origins"></a>**Allowed origins.** The vault loads only on pages served from one of your app's origins,
+compared exactly: scheme, host and port, no path (`http://localhost:5173` and `http://localhost:5174` are two origins,
+and so are `http://localhost:5173` and `http://127.0.0.1:5173`). At most 20 per app. On the **Origins** tab:
+
+- **Add**: owners type one origin per line, then **Review and confirm with Google**, review the change and
+  **Confirm with Google**. Hana then announces the change by email to your security contacts and to Hana (the notices
+  go out within about 5 minutes), and the origin takes effect a fixed delay after that announcement: 60 s on
+  sandbox-dev, 24 hours on a production network. The page shows each step ("Requested", "Announced by email", "Takes
+  effect"). Two kinds of addition take effect as soon as they are announced, without the delay: a loopback origin
+  (`http://localhost:<port>`, `http://127.0.0.1:<port>`, or the `http://localhost:*` wildcard, which allows every
+  port) on a test app in a sandbox environment, and any origin while nobody has yet signed in to your app's scope.
+- **Cancel** a waiting addition from **Origins waiting to take effect** (or the Overview), or with the cancel link in
+  the announcement email (no sign-in needed). Cancelling is immediate, and Hana and your owners keep a record of it.
+- **Remove** takes effect at once and signs out the users who signed in on that origin.
+- Live apps must use `https://` and can't use loopback origins. Wildcard hosts, IP addresses (other than loopback for
+  test apps) and Hana's own origins are refused.
+
+**Members.** On **Members**, owners **Invite** an address as viewer or owner (**Review and confirm with Google**); the
+invite email goes out after Hana has notified every owner and your security contacts, and a new owner in an
+organisation that has one already stays a viewer for a delay first (60 s on sandbox-dev, 24 hours on a production
+network; **Cancel** under "Pending owners" keeps them a viewer). There is no link to copy: invites travel by email
+only. At most 10 open invites; **Revoke** stops one at once. **Make owner**, **Make viewer** and **Remove** need a
+Google confirmation, and the last owner can't be removed. An owner can also require every member to sign in with an
+address of your Google Workspace domain. Your security contacts are set by Hana: ask Hana to change them.
+
+**Reports.** **Usage** shows logins, unlocks, identity tokens, active and new users, failures by code and costs, by
+day or month. **Statements** are monthly (from the 3rd of the next month), as CSV, PDF and the ledger CSV, with their
+SHA-256. **Users** (where Hana has turned it on) finds a user by wallet address, User ID (`u1_…`) or Support ID
+(`HANA-…`); it never shows email addresses. **Audit** lists everything done in your organisation, with a request ID to
+quote to Hana. **Pending upgrades** shows changes queued on Hana's contract that affect you.
+
+If Hana freezes your organisation (a security response), only cancels and kill switches still work: removing an
+origin, removing the policy, turning raw signing off, suspending, revoking a key or an invite.
 
 ## 2. Install
 
-The packages are not on a registry yet (`@hana-id/*` is the reserved scope). Hana sends you the tarballs of one
-release, built with `pnpm pack` (`docs/operations.md` "Releasing the SDK packages"), and you install them together
-with npm, pnpm or yarn:
+The packages are not on a registry yet (`@hana-id/*` is the reserved scope). Hana sends you the four tarballs of one
+release with their SHA-256 checksums: check them (`shasum -a 256 *.tgz`), then install them together with npm, pnpm
+or yarn. Install every package you use, `@hana-id/core` included, from its tarball, never from a registry:
 
 ```sh
 npm install ./hana-id-core-0.2.0.tgz ./hana-id-web-0.2.0.tgz              # always
 npm install ./hana-id-react-0.2.0.tgz                                      # React apps
-npm install ./hana-id-sodax-0.2.0.tgz @sodax/types@2.1.0                   # Sodax adapters
+npm install ./hana-id-sodax-0.2.0.tgz @sodax/types@2.2.0                   # Sodax adapters
 ```
 
 Commit the tarballs to your repository (or a private artifact store) and depend on them by path
@@ -80,10 +149,10 @@ Commit the tarballs to your repository (or a private artifact store) and depend 
 
 | Package | What | Peer dependencies (tested) |
 |---|---|---|
-| `@hana-id/core` | Shared core; a dependency of the others. `@hana-id/core/policy` validates auto-approve policies | |
+| `@hana-id/core` | Shared core; a dependency of the others. `@hana-id/core/policy` validates auto-approve policies; `supportIdFromSub` (SDK releases after 0.2.0, section 15) | |
 | `@hana-id/web` | `createHana`, the EIP-1193 provider, the Stellar signer; `@hana-id/web/stellar-wallets-kit` for SWK | |
 | `@hana-id/react` | `HanaProvider`, `useHana`, `useWallet` | `react` `^18 \|\| ^19` (18.3.1, 19.3.1) |
-| `@hana-id/sodax` | Optional Sodax wallet-provider adapters | `@sodax/types` `^2.1.0` (2.1.0, types only) |
+| `@hana-id/sodax` | Optional Sodax wallet-provider adapters | `@sodax/types`: the version your `@sodax/sdk` depends on (`@sodax/sdk` 2.2.0 pins 2.2.0), so there is one copy; types only. Tested with 2.2.0 (SDK releases after 0.2.0; 0.2.0 was typed against 2.1.0) |
 
 They are ESM with TypeScript declarations and source maps. Use a bundler (Vite, webpack, esbuild, Next.js) or
 TypeScript `moduleResolution` `bundler`, `node16` or `nodenext`. The `@hana-id/core/signers/stellar` and
@@ -94,19 +163,33 @@ installing the tarballs into a fresh project outside Hana's repository, type-che
 **Environments are built in.** `@hana-id/web` contains the configuration of every Hana deployment it was released
 for (Hana origins, NEAR accounts, RPC, pinned MPC key; all public values), and you pick one by name with
 `createHana({ environment })`. `HANA_ENVIRONMENTS` lists the names. A release ships exactly the deployed envs; this
-pilot ships `sandbox-dev` (NEAR testnet). A new environment means a new release.
+pilot ships `sandbox-dev`, whose Hana side runs on NEAR testnet (your users' wallets are Stellar and EVM; see the note
+at the top). A new environment means a new release.
 
 ### Testnet quick start (Sodax)
 
-1. Ask Hana for a **test app** on `sandbox-dev`, with the **shared Google client** (nothing to set up in Google
-   Cloud), your app's name, and its **allowed origins**: each exact origin your app runs on (`https://app.example.com`,
-   staging, previews) plus `http://localhost:<port>` for development. You get a publishable key `pk_test_…`.
-2. Install the tarballs above (web, core, react if you use React, sodax and `@sodax/types@2.1.0`).
+**Sodax has no testnet.** Its hub is Sonic mainnet and every Sodax chain is a mainnet, while a test app signs for test
+networks only. So with a test key you can integrate everything around the swap, but no Sodax swap, deposit or bridge
+completes until Hana's mainnet launch (live keys). What works today:
+
+| | With a test key (`pk_test_…`) |
+|---|---|
+| Sodax quotes, and building an intent with `createIntent({ raw: true })` | yes: read-only calls against mainnet, nothing signed |
+| The adapters' signing, sending and receipts | yes, with ordinary testnet transactions (Base Sepolia, Stellar testnet, …) |
+| Signing a Sodax transaction (any mainnet chain) | no: `4100` `mainnet_not_allowed` ([section 12](#12-test-and-live-keys)) |
+
+(Hana runs a mainnet demo of its own on sandbox under an internal exception; it is Hana-internal demo only, not
+available to partner apps.)
+
+1. Get a **test app** on `sandbox-dev` ([section 1](#1-your-app-and-the-partner-portal)), with the **shared Google
+   client** (nothing to set up in Google Cloud), and add your origins in the portal: each exact origin your app runs on
+   (`https://app.example.com`, staging, previews) plus `http://localhost:<port>` for development. Copy the publishable
+   key `pk_test_…` from the app's page.
+2. Install the tarballs above (web, core, react if you use React, sodax and the `@sodax/types` your `@sodax/sdk` uses).
 3. Allow `https://hana-id-vault-sandbox-dev.tingtc.workers.dev` in your CSP `frame-src`, and your RPCs in
    `connect-src` ([section 5](#5-your-page-origins-csp-popups)).
-4. Create the client with `environment: 'sandbox-dev'` and **test networks only**: a test app's vault refuses
-   anything a mainnet would accept (D39, [section 12](#12-test-and-live-keys)), so use the Stellar testnet and EVM
-   testnets such as Base Sepolia (84532) or Sonic testnet (14601):
+4. Create the client with `environment: 'sandbox-dev'`, and bind the adapters to test networks for the parts you can
+   test end to end (the Stellar testnet, EVM testnets such as Base Sepolia (84532) or Sonic testnet (14601)):
 
    ```ts
    const hana = createHana({
@@ -123,8 +206,10 @@ pilot ships `sandbox-dev` (NEAR testnet). A new environment means a new release.
    const evmProvider = createSodaxEvmProvider(hana, { chainId: 84532, rpcUrl: 'https://sepolia.base.org' });
    ```
 
-5. Call `hana.login()` from a click and sign. Sodax's own mainnet swaps through Hana wait for live keys
-   ([section 11](#11-sodax-adapter)).
+   A test app may list mainnet chains in `evm.chains` too (`createHana` accepts them, and reads such as `eth_call`
+   work there); only signing and switching to them are refused ([section 11](#11-sodax-adapter)).
+5. Call `hana.login()` from a click; quote and build intents with Sodax; send testnet transactions through the
+   adapters. Sodax's own mainnet swaps through Hana wait for live keys.
 
 ## 3. Create the client
 
@@ -154,7 +239,7 @@ unmount).
 RPC, Horizon and Soroban RPC URLs (`evm.chains[].rpcUrl`, `stellar.horizonUrl`, `stellar.sorobanRpcUrl`, and the
 Sodax adapters' `rpcUrl`, `horizonUrl`, `sorobanRpcUrl`) must be `https://` for a `pk_live_` key; plaintext `http://`
 is accepted only on `localhost` and other loopback hosts (a local node), and for `pk_test_` keys anywhere. URLs with
-credentials (`https://user:key@…`) are refused for every key (D115). `hana.testApp` says which rule applies.
+credentials (`https://user:key@…`) are refused for every key. `hana.testApp` says which rule applies.
 
 `environment` names the Hana deployment. The client takes the Hana origins from its own build, so no configuration
 can point it at another vault. `sandbox-dev` (testnet) uses:
@@ -186,22 +271,36 @@ login rejects with `api_unavailable`; ask the user to sign in again in a few min
 
 `hana.ready` rejects with `vault_unavailable` when the vault doesn't load. The SDK gives the vault frame 5 s to answer
 (the vault says `connected` as soon as it has checked your page). A frame still loading at 5 s gets 5 s more; a frame
-that loaded but didn't answer is replaced once. A vault that answered then has 20 s to finish starting (restoring a
-session waits on one Hana API call). On any failure the SDK removes the frame. `error.data.reason` says which part
-failed (D262):
+that loaded but didn't answer within 1.5 s of loading is replaced once (SDK releases after 0.2.0; 0.2.0 waits the full
+5 s). A vault that answered then has 20 s to finish starting (restoring a session waits on one Hana API call). On any
+failure the SDK removes the frame. `error.data.reason` says which part failed:
 
 | `data.reason` | What happened | Usually |
 |---|---|---|
 | `csp_frame_src` | your page's CSP blocked the frame (detected at once, no retry) | `frame-src` ([section 5](#5-your-page-origins-csp-popups)) |
-| `no_answer` | the frame loaded but the vault never answered, in either of two frames | your page's origin (or a page framing it) isn't one of your app's origins, or the key is unknown or suspended: the vault page refuses to be framed and says nothing, by design |
+| `no_answer` | the frame loaded but the vault never answered, in either of two frames; `data.origin` and the message name the page origin that was checked (SDK releases after 0.2.0) | your page's origin (or a page framing it) isn't exactly one of your app's allowed origins (often a dev server that moved to another port), or the key is unknown or suspended: the vault page refuses to be framed and says nothing, by design |
 | `frame_timeout` | the frame didn't load within 10 s | the network, or Hana's page Workers slow to answer |
 | `ready_timeout` | the vault answered but didn't finish starting within 20 s | the Hana API slow or unreachable |
 | `frame_replaced` | something navigated the vault frame before it was ready | another script on your page |
 
 `data.attempts` is how many frames were tried. `hana.readyTimings` (test apps) has a `retry` stage when the second
-frame was used. **A misconfiguration is slower to show than it used to be:** a page whose origin isn't one of your
-app's origins, or an unknown or suspended key, now fails with `no_answer` after about 10 s (two frames of 5 s), not 5 s.
-While you set up a page, check `data.reason` rather than waiting for it.
+frame was used. A page whose origin isn't one of your app's origins, or an unknown or suspended key, fails with
+`no_answer` about 3 s after the client is created (two frames, each given 1.5 s after it loads; about 10 s with SDK
+0.2.0). Hana can't tell your page which of these it was (the vault refuses without saying why, so that a framing page
+learns nothing about a key or an origin), so check the origin first: `data.origin` against the app's **Origins** tab.
+
+**Dev servers that change port.** Vite (and most dev servers) moves to the next free port when its own is taken, and
+`http://localhost:5174` is not `http://localhost:5173`: the page then runs on an origin your app doesn't allow. Pin the
+port so a busy one fails loudly instead, and allow exactly that origin (or, for a test app, the `http://localhost:*`
+wildcard):
+
+```ts
+// vite.config.ts
+export default defineConfig({ server: { port: 5173, strictPort: true } });
+```
+
+Also check that `localhost` reaches your server: a server listening on IPv6 only (`[::1]:5173`) answers a browser's
+`localhost:5173` before one on `127.0.0.1:5173`, so another process can hold "your" origin.
 
 ## 4. Log in, log out
 
@@ -220,11 +319,11 @@ button.addEventListener('click', async () => {
   and the call resolves once the user clicks it and signs in. That costs the user one more click.
 - Already logged in: `login()` resolves at once. A second `login()` while one is pending replaces it (the first
   rejects with `login_cancelled`). `hana.cancelLogin()` ends a pending one.
-- **A closed popup** (D347). A user who closes the Hana popup while it waits for them (the method chooser, Google's
+- **A closed popup**. A user who closes the Hana popup while it waits for them (the method chooser, Google's
   page, the email step, a linking screen) ends the sign-in: within about 2 seconds `login()` rejects with
   `login_cancelled` and `data.reason: 'popup_closed'`, and the status is `logged_out` again. Going to Google and back
   is never a close, and a slow popup is never cancelled. One exception to "within about 2 seconds": a popup closed
-  within a few seconds of reaching Google's page (D398). Hana can't tell that close from an identity provider's
+  within a few seconds of reaching Google's page. Hana can't tell that close from an identity provider's
   Cross-Origin-Opener-Policy switching the window, so it waits up to about 90 seconds for the sign-in to finish
   there; if it doesn't, `login()` rejects with the same `login_cancelled` and `data.reason: 'popup_closed'`. A popup
   closed while Hana finishes on its own (the NEAR transaction after Google) doesn't stop the sign-in: `login()`
@@ -248,7 +347,7 @@ button.addEventListener('click', async () => {
   the session for reloads in the background (one API call). If that fails, the wallet keeps working in this tab,
   `hana.persistence` becomes `'none'` (with a `persistenceChanged` event; `useHana()` re-renders), and the next page
   load needs a new login; a reload within that moment after `login()` resolved is a new login too.
-- **Email login** (build plan batch 8a; off until Hana turns it on for your app, `login_methods`). With email on,
+- **Email login** (off until Hana turns it on for your app; ask Hana). With email on,
   `hana.login()` shows a chooser in the Hana popup: "Continue with Google" or "Continue with email". The email path
   asks for the address, mails a 6-digit code, and the user types it into the same Hana popup (never into your page).
   To skip the chooser, pass the method; to prefill the address you already know, pass `emailHint`:
@@ -258,7 +357,8 @@ button.addEventListener('click', async () => {
   ```
 
   One person, one wallet: Google and email with the same verified address open the **same** wallet (automatic
-  linking, build plan batch 8b; [Sign-in methods](#sign-in-methods-and-links) below). A method your app doesn't
+  linking; [Sign-in methods](#sign-in-methods-and-links) below). In React, `useHana().login({ method: 'email' })` takes
+  the same options (SDK releases after 0.2.0, [section 10](#10-react)). A method your app doesn't
   offer rejects with `login_method_unavailable`; bad options reject with `-32602` before any popup opens.
   `loginProgress` adds `email_code` (the code was sent) and `linking` (this login joins two sign-in methods); with
   email on, `google` fires only when the user goes to Google. The popup handles wrong and expired codes, "Resend code"
@@ -273,8 +373,8 @@ button.addEventListener('click', async () => {
   | signs in with Google, and an email wallet exists for an address Google doesn't host | "This email already has a wallet": **Link and continue** (a code to `a…@domain`) or **Sign in with email** | the email wallet either way; linked only after the code |
   | signs in with email, and a Google wallet exists for that address | "This email belongs to a wallet you created by signing in with Google": **Link and continue** or **Sign in with Google**, then Google | the Google wallet's addresses; the email joins it at once (Google-hosted) or after 24 h (other addresses: a pending banner with **Cancel this link**) |
   | has neither wallet | the usual sign-in | a new wallet for that method |
-  | signs in with Google for the first time with this Google client | Google's one sign-in screen, which also lists "Email address" (Hana asks for it there, D270); a returning user sees only Google's account chooser | as above |
-  | cancels that Google screen | the Hana popup goes back to its chooser: "Google sign-in was cancelled.", with **Continue with Google** and **Continue with email** (only **Continue with Google** when you called `hana.login({ method: 'google' })`, D348; or, if the Google step started from "This email belongs to a wallet you created by signing in with Google", that screen's choices again) | `login()` keeps waiting: Google again or email signs in as usual; closing the popup there rejects with `login_cancelled`, never `google_error` (D341) |
+  | signs in with Google for the first time with this Google client | Google's one sign-in screen, which also lists "Email address" (Hana asks for it there); a returning user sees only Google's account chooser | as above |
+  | cancels that Google screen | the Hana popup goes back to its chooser: "Google sign-in was cancelled.", with **Continue with Google** and **Continue with email** (only **Continue with Google** when you called `hana.login({ method: 'google' })`; or, if the Google step started from "This email belongs to a wallet you created by signing in with Google", that screen's choices again) | `login()` keeps waiting: Google again or email signs in as usual; closing the popup there rejects with `login_cancelled`, never `google_error` |
   | signs in with Google, has no wallet yet, and Google's answers name two different Google accounts | **Sign in with email instead** or **Try Google again** (Google's "share your email address" for the account they signed in with) | an email wallet, or Google again; Cancel rejects with `login_cancelled` (`data.reason: 'google_account_mismatch'`, or `'email_consent_declined'` after declining that screen) |
 
   Nobody ever gets a second wallet for the same verified address. While a link is pending, signing in with the
@@ -293,11 +393,11 @@ button.addEventListener('click', async () => {
     wallet's own; the link opens the wallet after 24 h (`{provider, status: 'pending', effectiveAtMs}`). It rejects
     with `link_refused` (`data.reason`: `provider_taken`, `account_full`, `already_linked`, `has_wallet` when that
     method already opened a wallet of its own, `links_unavailable`) before any transaction.
-- <a id="support-id"></a>**Support ID** (D96, D276, D346; SDK 0.2.0 or later). While a user is logged in,
+- <a id="support-id"></a>**Support ID** (SDK 0.2.0 or later). While a user is logged in,
   `hana.supportId` is their Support ID, `HANA-XXXX-XXXX` (`useHana().supportId` in React; `supportIdChanged` when it
   changes; null when logged out). It is the short form of the identity token's `sub` (section 15), so it is the same
   in every app of your scope and for every sign-in method of the user's account, and your backend can compute it from
-  the `sub` it stores. It carries no address, email or Google account, and it isn't a credential: Hana's staff change
+  the `sub` it stores (`supportIdFromSub`, [section 15](#15-identity-token-your-backend)). It carries no address, email or Google account, and it isn't a credential: Hana's staff change
   nothing on a code alone. Show it where your users look for help, put it in your diagnostics, and give it to Hana
   when you escalate, with the error `code`, its request ID (`error.requestId`, section 13), when it happened and the
   app; Hana's support finds the user, their logins and sessions by it, and a failed request by its request ID (Hana
@@ -320,7 +420,7 @@ button.addEventListener('click', async () => {
 
 | Requirement | If not met |
 |---|---|
-| The page's origin is one of your app's origins, exactly | the vault doesn't load (`vault_unavailable`) |
+| The page's origin is one of your app's origins, exactly (scheme, host and port; pin your dev server's port, [section 3](#3-create-the-client)) | the vault doesn't load (`vault_unavailable`, `no_answer`) |
 | CSP `frame-src` (or `child-src`/`default-src`) allows `vaultOrigin` | `vault_unavailable` at once (an enforced violation is detected; report-only is fine) |
 | CSP `connect-src` allows your own EVM RPC (and Horizon / Soroban RPC for Sodax) | your RPC calls fail; the SDK calls them from your page |
 | Popups allowed for your site | the "Sign in with Hana" button fallback (`popup_blocked` if you cancel) |
@@ -353,7 +453,7 @@ Removing an origin from your app signs out the users who signed in there.
 Both modes put users in your app's own scope, so another app never gets your users' keys. The path holds no client
 ID, so you can start shared and move to your own client later without changing anyone's address. Google gives one
 account the same `sub` across clients, both within one Google Cloud project and across two projects (tested with a
-personal and a Workspace account, D42).
+personal and a Workspace account).
 
 **Your own client.** In Google Cloud console → APIs & Services → Credentials, create an OAuth client ID of type "Web
 application":
@@ -363,9 +463,13 @@ application":
 - **Authorized JavaScript origins**: none.
 - On the OAuth consent screen, add Hana's domain as an authorized domain.
 
-Send Hana the client ID. Hana registers it as your scope's client; the token's audience then picks your scope.
-If your scope also holds iOS or Android clients, which can't run Hana's web flow, Hana pins the web one for you
-(`--google-web-client`). A scope with a client of its own always signs in through it.
+Then add it to your scope: in the portal, an app's **Login & sessions** tab links to your scope's page ("Google
+clients and on-chain owners"), whose **Add your own Google client** steps take a client proof: a helper page you
+download, host on one of the client's origins and sign in on once, whose token becomes public on chain (use a team
+account). The addition is timelocked by Hana's contract. Return the client to the settings above (remove the helper's
+redirect URI and origin) once the change is proposed. Or send Hana the client ID. The token's audience then picks your
+scope. If your scope also holds iOS or Android clients, which can't run Hana's web flow, set the web one as the
+app's **Google web client** on **Login & sessions**. A scope with a client of its own always signs in through it.
 
 Hana can't see your Google client's settings. Any JavaScript origin, extra redirect URI or native app on your client
 can obtain tokens for it with any nonce, and so derive your users' keys, so an XSS on one of those origins puts your
@@ -373,7 +477,7 @@ users' wallets at risk. Keep the client exactly as above, or use the shared clie
 
 ## 7. App settings
 
-Hana sets these per app on request (`admin app:settings` now, the dashboard in batch C):
+You set these per app in the partner portal: **Login & sessions** for the first three and the Google web client, **Signing** for raw signing and the policy ([section 1](#your-apps-page)):
 
 | Setting | Values | Default |
 |---|---|---|
@@ -384,9 +488,10 @@ Hana sets these per app on request (`admin app:settings` now, the dashboard in b
 | Auto-approve policy | none, or a policy ([section 9](#9-auto-approve-policies)) | none |
 | Google web client | your scope's web client, when it has several | the first one |
 
-Loosening takes effect after a delay (24 h in production; 60 s on sandbox-dev), counted from when the change is
-announced (by Hana by hand during the pilot; by email to your security contacts once the admin console runs): raw signing `'approval'` (live apps only: a test app never signs raw), and setting
-or changing a policy. Tightening takes effect at once for new page loads: raw signing `'off'`, and removing a policy.
+Persistence, the limits and the Google web client take effect when you confirm them with Google. Loosening a signing
+setting takes effect after a delay (24 h in production; 60 s on sandbox-dev), counted from when the change is
+announced by email to your security contacts, as for an origin ([Allowed origins](#allowed-origins); you can cancel it
+until then): raw signing `'approval'` (live apps only: a test app never signs raw), and setting or changing a policy. Tightening takes effect at once for new page loads: raw signing `'off'`, and removing a policy.
 In a tab that is already open, a removed policy stops auto-signing within 10 s ([section 9](#9-auto-approve-policies)),
 and raw signing `'off'` refuses raw requests within 10 s too (the vault re-reads the setting before each one).
 
@@ -397,7 +502,7 @@ misdescribe them. The popup stays open for 15 s after an answer, so a follow-up 
 re-sign, a trustline) appears there without another click. Each one still needs its own Approve. Reject, closing the
 popup, or 5 min without an answer gives `4001`.
 
-**Call the SDK directly in your click handler** (D99). Every signing method (`hana.stellar.sign*`, the Stellar
+**Call the SDK directly in your click handler**. Every signing method (`hana.stellar.sign*`, the Stellar
 Wallets Kit module, `personal_sign`, `eth_signTypedData_v4`, `eth_signTransaction`, `eth_sendTransaction`,
 `hana.signRaw`, `hana.requestAutoApprove`, the Sodax adapters) opens the approval popup synchronously, the moment you
 call it, while the browser still treats the click as a user gesture:
@@ -451,7 +556,7 @@ const { signedTxXdr, signerAddress } = await hana.stellar.signTransaction(xdr, {
   address,           // optional: must be the user's address (4100 otherwise)
 });
 const { signedAuthEntry } = await hana.stellar.signAuthEntry(preimageXdr); // base64, 64 bytes
-const { signedMessage } = await hana.stellar.signMessage('hello');        // SEP-53, approval every time
+const { signedMessage, signerAddress } = await hana.stellar.signMessage('hello'); // SEP-53, approval every time
 await hana.stellar.getNetwork();                                          // from createHana({ stellar })
 ```
 
@@ -490,7 +595,8 @@ const provider = new BrowserProvider(hana.ethereum);
 | `eth_accounts` | `[address]` or `[]` |
 | `eth_chainId`, `wallet_switchEthereumChain`, `wallet_addEthereumChain` | among `evm.chains`; another chain is `4902`. A test app switching to or adding a mainnet chain gets `4100` (`data.reason: 'mainnet_not_allowed'`) |
 | `eth_sendTransaction` | the SDK fills nonce, gas and fees from your RPC, the user approves, and the SDK broadcasts through the RPC of the chain it was filled on (even if the chain is switched during the approval). Sends run one at a time per chain, and a filled nonce is never below one past the last one this page broadcast, so back-to-back sends get consecutive nonces |
-| `eth_signTransaction`, `personal_sign`, `eth_signTypedData_v4` | approval |
+| `eth_signTransaction` | the SDK fills a missing nonce, gas and fees from your RPC as for `eth_sendTransaction` (fields you set are kept as given; a `chainId` must be the current chain), the user approves, and you get the signed raw transaction; nothing is broadcast. It isn't queued with sends, and its nonce comes from the RPC's `pending` count (never below one past this page's last `eth_sendTransaction`), so set `nonce` yourself when you sign several before broadcasting them |
+| `personal_sign`, `eth_signTypedData_v4` | approval |
 | `eth_sign` and other signing or wallet methods | `4200` |
 | read-only methods (`eth_call`, `eth_getBalance`, …) | forwarded to the current chain's `rpcUrl` |
 | `eth_sendRawTransaction` | forwarded to the current chain's `rpcUrl` (it broadcasts a transaction you already hold signed; Hana signs nothing) |
@@ -518,7 +624,7 @@ The user always approves raw requests, under a red warning that raw signing can 
 chain. No policy ever covers them. Ask for it only if a standard method can't do the job. With raw signing off,
 `signRaw` is `4100` (`data.reason: 'raw_sign_off'`), also in a tab opened before it was turned off. Bytes in Hana's
 own signing domains are never raw-signed: Stellar bytes starting with `hana-id`, and the session's identity
-wallet-proof digest on EVM, are `4100` (`data.reason: 'raw_reserved_domain'`) before any popup (D179). If the vault can't
+wallet-proof digest on EVM, are `4100` (`data.reason: 'raw_reserved_domain'`) before any popup. If the vault can't
 confirm the setting with Hana's API (it re-reads it at most every 10 s), the request fails with `api_unavailable`
 rather than going ahead.
 
@@ -535,16 +641,17 @@ example repeated deposits into your contract. It needs two opt-ins:
 Until both happen, matching requests simply get the normal popup. The vault, not your page, checks every request
 against the policy, so an injected script on your page can do no more than the policy allows.
 
-**How to request one.** Write the policy as JSON (below) and send it to Hana with your app's id or key. Hana runs it
-through the same validator the vault uses (`admin app:settings <app> --auto-approve policy.json`), which lists any
-problem and prints the `policyId` your users will accept. You can run the validator yourself first:
+**How to set one.** Write the policy as JSON (below) and paste it on your app's **Signing** tab in the portal:
+**Check and preview** runs the same validator the vault uses, lists any problem and shows the consent screen your users
+will see; **Propose this policy (confirm with Google)** then announces it, and it takes effect after the delay. One
+policy change can wait at a time. You can run the validator yourself first:
 
 ```ts
 import { validateAutoApprovePolicy } from '@hana-id/core/policy';
 const r = validateAutoApprovePolicy(JSON.parse(text), { sessionTtlMs: 12 * 3_600_000 }); // { ok, policy } or { ok: false, problems }
 ```
 
-Removing a policy (`--auto-approve off`) is immediate for new page loads. A tab that is already open re-reads the
+Removing a policy (**Remove the policy** on the Signing tab) is immediate for new page loads. A tab that is already open re-reads the
 policy in force (`GET /v1/app`) before an auto-sign whenever its last check is 10 s old or more, and every 60 s in the
 background, so a removed or changed policy auto-signs nothing more within 10 s; if that re-read fails, the request
 gets the popup. A changed policy is treated as no policy until the page reloads, and then needs the users' consent.
@@ -633,10 +740,10 @@ and calls with a `uint160` argument (Uniswap v3's `sqrtPriceLimitX96`) always ge
 `eth_sign`, Stellar classic operations other than a listed `changeTrust`, fee-bump envelopes, and anything the
 vault can't fully decode. Operations that change who controls a Stellar account (a `setOptions` that adds,
 re-weights or removes a signer or changes a threshold or the master weight, and `accountMerge`) are refused first
-(`account_control`), and the popup shows them under a red "changes who controls a Stellar account" warning (D110):
+(`account_control`), and the popup shows them under a red "changes who controls a Stellar account" warning:
 don't build flows that need them. **Not covered in the pilot:** calls whose instructions travel in opaque bytes, such as
 routers, multicall, bridges and Sodax swaps (`AssetManager.transfer`, `sendMessage`). Those always get the popup until
-a protocol decoder for them ships. Token amounts other than native value are not capped in the pilot (D46), so keep
+a protocol decoder for them ships. Token amounts other than native value are not capped in the pilot, so keep
 `perDayCount` small.
 
 **Contract names on the consent screen.** The `name` you give a contract is shown as yours: "{name} · named by
@@ -648,7 +755,7 @@ names. Every contract also shows its short address (`0x348B…7Bc3`) and a "View
 (Etherscan, Basescan, SonicScan, StellarExpert and others, test networks included; a chain Hana has no explorer for
 shows the address alone). The verified list starts with Sodax's mainnet contracts (its Sonic hub contracts; asset
 managers and bnUSD on the EVM spokes and Stellar; Connection contracts on Hedera, Kaia and Robinhood Chain), each
-confirmed by two Sodax sources that agree (D44).
+confirmed by two Sodax sources that agree.
 
 **Getting a contract verified.** Ask Hana, with the chain, the address and the protocol's own official sources for
 it: a page of the protocol's documentation that lists the address, and/or a published, version-pinned package of the
@@ -682,7 +789,13 @@ import { HanaProvider, useHana, useIdentityToken, useWallet } from '@hana-id/rea
 
 function SignIn() {
   const { status, addresses, persistence, error, supportId, login, logout, exportKey } = useHana();
-  return <button onClick={login}>Sign in</button>; // login must run in the onClick, with no await before it
+  return (
+    <>
+      <button onClick={login}>Sign in</button> {/* login must run in the onClick, with no await before it */}
+      <button onClick={() => login({ method: 'google' })}>Continue with Google</button>
+      <button onClick={() => login({ method: 'email' })}>Continue with email</button>
+    </>
+  );
 }
 
 const { address, signer } = useWallet('stellar'); // signer is hana.stellar
@@ -692,6 +805,9 @@ const { identityToken, refresh, error } = useIdentityToken(); // for your backen
 
 - `HanaProvider` creates one client, also under strict mode, and destroys it on unmount. It reads `config` once; to
   switch app or environment, remount it (a `key`).
+- `login(options)` takes `hana.login()`'s options (`{ method, emailHint }`, [section 4](#4-log-in-log-out)); the event
+  `onClick={login}` passes is ignored (SDK releases after 0.2.0; with 0.2.0, `login` ignores every argument: use
+  `useHana().client.login({ method })`). Bad options reject with `-32602` before any popup.
 - A failed login (popup closed, `4001`, `popup_blocked`, `login_cancelled`) is in `useHana().error`. The promise
   `login()` returns is already marked handled, so `onClick={login}` never raises an unhandled rejection; if you
   `await` or `.catch` it, you still get the rejection. `logout()` and `exportKey()` reject as usual and their
@@ -704,7 +820,7 @@ const { identityToken, refresh, error } = useIdentityToken(); // for your backen
 
 ## 11. Sodax adapter
 
-`@hana-id/sodax` (optional), typed against `@sodax/types` 2.1.0:
+`@hana-id/sodax` (optional), typed against `@sodax/types` 2.2.0 (SDK releases after 0.2.0; 0.2.0 against 2.1.0):
 
 ```ts
 import { createSodaxEvmProvider, createSodaxStellarProvider } from '@hana-id/sodax';
@@ -717,7 +833,9 @@ const evmProvider = createSodaxEvmProvider(hana, { chainId: 8453, rpcUrl });    
   `signAndSendTransaction(rawTx)` signs as `rawTx.from`: a transaction built for another account is refused (4100)
   before any popup. `waitForTransactionReceipt` polls Horizon every 2 s for 60 s.
 - The EVM provider is bound to one chain, which must be in your `evm.chains` (it throws otherwise). It refuses a
-  `from` other than the user's address, fills, gets the user's approval and broadcasts. Filling and broadcasting use
+  `from` other than the user's address, and an `expectedChainId` (`@sodax/sdk` 2.2.0's second argument) other than its
+  chain (`4902`, `data.reason: 'expected_chain_mismatch'`, before any popup; SDK releases after 0.2.0), then fills, gets
+  the user's approval and broadcasts. Filling and broadcasting use
   the `evm.chains` RPC; `rpcUrl` is for receipts and must be the same chain: the provider checks its `eth_chainId`
   once, before the first transaction is signed, and refuses another chain with `4902` (`data.reason:
   'receipt_rpc_wrong_chain'`). If that RPC can't be reached for the check, the send fails with nothing signed
@@ -732,10 +850,17 @@ const evmProvider = createSodaxEvmProvider(hana, { chainId: 8453, rpcUrl });    
   ([section 8](#8-signing)).
 - A Sodax swap can need several signatures (`restoreFootprint`, a re-sign, a trustline). The approval popup's 15 s
   keep-open covers them in one session of clicks. Sodax swaps can't be auto-approved yet (see section 9).
-- Sodax runs on mainnet only, while pilot keys are testnet-MPC keys: the adapter is tested against mocks of the
-  `@sodax/sdk` 2.1.0 call patterns, not end to end. A test app's vault refuses Sodax's mainnet transactions
-  (`mainnet_not_allowed`, [section 12](#12-test-and-live-keys)): integrate and test on chain testnets; real Sodax swaps
-  through Hana wait for live keys (D39).
+- **What you can test with a test key.** Sodax runs on mainnet only (it has no testnet), while pilot keys are
+  testnet-MPC keys, so no Sodax transaction can be signed with a test app: the vault and the SDK refuse it with `4100`
+  (`data.reason: 'mainnet_not_allowed'`, [section 12](#12-test-and-live-keys)). Through the EVM adapter the approval
+  popup opens in the click and closes again at once when the refusal comes (the adapter opens it before switching
+  chains). You can test Sodax quotes and intent building (`createIntent({ raw: true })`, read-only against mainnet), and
+  the adapters with ordinary testnet transactions. Real Sodax swaps through Hana wait for Hana's mainnet launch (live
+  keys); Hana's own sandbox mainnet demo runs under a Hana-internal exception that partner apps can't use. The adapter
+  is tested against mocks of `@sodax/sdk`'s call patterns, not end to end.
+- **Build before the click.** `sodax.swaps.swap()` awaits allowance checks and a simulation before it signs, which
+  costs the click its popup. Build the intent's transaction when the user enters the amount (`createIntent({ raw: true
+  })`), then hand it to the provider in the click: `evmProvider.sendTransaction(tx)` opens the approval popup at once.
 
 ## 12. Test and live keys
 
@@ -744,7 +869,7 @@ const evmProvider = createSodaxEvmProvider(hana, { chainId: 8453, rpcUrl });    
 | Where | sandbox envs (testnet), the pilot | the production MVP (mainnet), after the audit; not issued yet |
 | Loopback origins (`http://localhost:…`) | allowed, in `local*`/`sandbox*` envs only | never |
 | Login result | carries per-stage `timings` (`hana.lastLogin.timings`, below); the handshake and unlock's are `hana.readyTimings` | no timings (`hana.readyTimings` is null) |
-| Direct API calls from your page (`/v1/sessions`, `/v1/derive`) | only in sandbox envs, for test tooling such as `apps/smoke` | never |
+| Direct API calls from your page (`/v1/sessions`, `/v1/derive`) | only in sandbox envs, for Hana's test tooling | never |
 | Networks | test networks only: any Stellar network but the public one, and the EVM chains below | any |
 
 A test app's keys come from the testnet MPC, which can lose or leak them, so its vault refuses anything a mainnet would
@@ -761,12 +886,12 @@ Sepolia (421614), OP Sepolia (11155420), Sonic testnet (14601), Sonic Blaze test
 `@hana-id/core`). Ask Hana to add another testnet.
 
 A test app and a live app never share a scope. Your staging and production apps therefore give the same Google
-account **different addresses** (D51). Wallets made with test keys are disposable.
+account **different addresses**. Wallets made with test keys are disposable.
 
 **Login timings (test apps).** `hana.lastLogin.timings` holds consecutive stages, in ms, that add up to the login's
-time (the full table: `apps/smoke/README.md` "Timings"): `open`, `wait`, `app` (`GET /v1/app`), `keygen`, `popup`,
+time: `open`, `wait`, `app` (`GET /v1/app`), `keygen`, `popup`,
 `authCheck`, then the sign-in step, then `relayHeld`, `verify`, `scopeWait`, `chain`, `decrypt`, `finish`, `port`. The
-sign-in step depends on the method (D260): `choose` when the popup showed its method chooser; for Google, `google`
+sign-in step depends on the method: `choose` when the popup showed its method chooser; for Google, `google`
 (the user and Google's pages, plus the relay's network legs) and `callbackRedirect`, `callbackFetch`, `callbackBoot`,
 `callbackPrep`; for email, `emailLoad` (the email screen's load), `emailEntry` (typing the address), `emailStart` (the
 code request), `emailCode` (waiting for the mail and typing the code), `emailVerify` (checking the code) and
@@ -781,7 +906,7 @@ code request), `emailCode` (waiting for the mail and typing the code), `emailVer
 
 An error that came from an answer of Hana's API (a refusal, or a sign-in that gave up after one: `rate_limited`,
 `api_unavailable`, `token_invalid`, `link_refused`, `identity_unavailable`, `session_ended`, `4900` from
-`revokeOtherDevices()`, …) carries that request's ID in `data.requestId` (D405; SDK 0.2.0 or later):
+`revokeOtherDevices()`, …) carries that request's ID in `data.requestId` (SDK 0.2.0 or later):
 `error.requestId` on a `HanaError` (null without one), `data.requestId` on the EIP-1193 provider's errors too, and
 `ext[1]` on the SWK module's. It is 8–64 letters, digits and `-` (e.g. `8d1f2c3a4b5e6f70-SIN` or a UUID), names one
 request and nothing else, and is not secret. An error that never reached the API has none: a check in the SDK or the
@@ -796,20 +921,20 @@ window, not returned.
 | `4200` | Unsupported method (`eth_sign`, …) | use a supported method |
 | `4900` | The vault is gone (logged out, session ended, frame replaced) | create the client again, or log in |
 | `4902` | EVM chain not in `evm.chains` | add it to `createHana` |
-| `vault_unavailable` | The vault didn't load (one automatic retry; `data.reason`: `csp_frame_src`, `no_answer`, `frame_timeout`, `ready_timeout`, `frame_replaced`, [section 3](#3-create-the-client)) | check `frame-src`, your origins, the network. A wrong origin or key takes about 10 s to report (`no_answer`) |
+| `vault_unavailable` | The vault didn't load (one automatic retry; `data.reason`: `csp_frame_src`, `no_answer`, `frame_timeout`, `ready_timeout`, `frame_replaced`, [section 3](#3-create-the-client)) | check `frame-src`, your origins (`no_answer`'s `data.origin` against the portal's **Origins** tab), the network. A wrong origin or key takes about 3 s to report (`no_answer`; about 10 s with SDK 0.2.0) |
 | `popup_blocked` | The browser blocked the popup and the sign-in was cancelled | call `login()` in a click |
 | `coop_blocks_popup` | The popup closed before it connected (COOP `same-origin`, or the user closed it at once) | fix COOP |
 | `login_timeout` | The popup never connected (15 s, `data.stage: 'connect'`), or the sign-in was left unfinished for 5 min (`data.stage: 'pending'`: the popup left open, or closed within a few seconds of reaching Google's page) | retry |
-| `login_cancelled` | `cancelLogin()`, or a newer `login()`, or the user closed the Hana popup (`data.reason: 'popup_closed'`, D347: within about 2 s; about 90 s for a close within a few seconds of reaching Google's page, D398), or the user cancelled the email step, or cancelled Google's sign-in screen and then closed the Hana popup on the screen it went back to (D341); `data.reason: 'email_consent_declined'` or `'google_account_mismatch'`: a new Google user refused Google's email permission (or chose another Google account there) and cancelled Hana's explanation | offer email sign-in |
+| `login_cancelled` | `cancelLogin()`, or a newer `login()`, or the user closed the Hana popup (`data.reason: 'popup_closed'`: within about 2 s; about 90 s for a close within a few seconds of reaching Google's page), or the user cancelled the email step, or cancelled Google's sign-in screen and then closed the Hana popup on the screen it went back to; `data.reason: 'email_consent_declined'` or `'google_account_mismatch'`: a new Google user refused Google's email permission (or chose another Google account there) and cancelled Hana's explanation | offer email sign-in |
 | `login_method_unavailable` | `login({method})` named a method your app doesn't offer (email not turned on) | offer the other method |
 | `code_invalid`, `challenge_expired` | Email login: the user cancelled after a wrong or expired code | let them retry |
 | `link_pending` | This sign-in method is waiting to join a wallet (`data.effectiveAtMs`: when it can open it) | show when; sign in with the wallet's other method meanwhile |
 | `link_refused` | The sign-in methods can't be linked (`data.reason`); `login()` with the wallet's own method still works | offer the other method |
-| `google_error` | Google returned an error (`data.error`), or Hana couldn't check Google's answer (`tokeninfo_unavailable`, `tokeninfo_client_mismatch`, `tokeninfo_invalid`, `google_account_mismatch`, `invalid_response`). The user cancelling Google's sign-in screen is not one: the popup goes back to its chooser, and closing it there is `login_cancelled` (D341). `access_denied` remains only where Hana has no screen to go back to (a login in an environment without Hana's email service, or the fallback Google request a Google-only app makes when Google's tokeninfo can't be reached) | retry; with `access_denied`, the user declined |
+| `google_error` | Google returned an error (`data.error`), or Hana couldn't check Google's answer (`tokeninfo_unavailable`, `tokeninfo_client_mismatch`, `tokeninfo_invalid`, `google_account_mismatch`, `invalid_response`). The user cancelling Google's sign-in screen is not one: the popup goes back to its chooser, and closing it there is `login_cancelled`. `access_denied` remains only where Hana has no screen to go back to (a login in an environment without Hana's email service, or the fallback Google request a Google-only app makes when Google's tokeninfo can't be reached) | retry; with `access_denied`, the user declined |
 | `no_google_client` | Your scope has no usable Google client | ask Hana |
 | `token_invalid`, `token_has_pii` | The Google token failed Hana's checks | retry; report it if it persists |
 | `config_mismatch` | Hana's pages disagree about the signer, scope or client, or the scope doesn't match the on-chain registry (`data.reason: 'scope_mismatch'`) | report it to Hana; never retry around it |
-| `ckd_failed`, `derive_failed`, `pairing_failed`, `address_mismatch` | The key couldn't be produced (`derive_failed` with `data.reason: 'link_restart'`: a linking login was interrupted and its session revoked; `'webcrypto_unsupported'`: the browser has no Ed25519 in WebCrypto, so Hana can't make the sign-in's session key: Chrome and Edge before 137, Firefox before 129, Safari before 17; `'webcrypto_failed'`: the browser refused to make the key, `data.error` the platform error's name; both in a login, `linkAccount()` and the export window's sign-in, D385) | the user logs in again; with `webcrypto_unsupported`, ask them to update the browser or use another |
+| `ckd_failed`, `derive_failed`, `pairing_failed`, `address_mismatch` | The key couldn't be produced (`derive_failed` with `data.reason: 'link_restart'`: a linking login was interrupted and its session revoked; `'webcrypto_unsupported'`: the browser has no Ed25519 in WebCrypto, so Hana can't make the sign-in's session key: Chrome and Edge before 137, Firefox before 129, Safari before 17; `'webcrypto_failed'`: the browser refused to make the key, `data.error` the platform error's name; both in a login, `linkAccount()` and the export window's sign-in) | the user logs in again; with `webcrypto_unsupported`, ask them to update the browser or use another |
 | `session_consumed` | Someone replayed the login transaction first | the vault offers "Continue signing in" |
 | `rate_limited`, `app_suspended`, `origin_not_allowed`, `api_unavailable` | From Hana's API (`rate_limited` also after 3 key exports of one account in an hour), or NEAR's RPC couldn't be read. `api_unavailable` with `data.reason`: `email_match_unavailable` (Hana's email service didn't answer for a new Google user), `path_unconfirmed` (a linked sign-in method's wallet couldn't be confirmed on both of Hana's NEAR providers), `path_disputed` (they disagree: report it) | back off, or contact Hana |
 | `storage_unavailable` | The Hana popup couldn't store what its next step needs (blocked or full browser storage) | ask the user to allow site data, or try another browser |
@@ -848,7 +973,7 @@ them.
 
 Your backend can learn **who** the user is in your app, **which wallets** they hold and **which Hana session** a
 request belongs to, without calling Hana and without a wallet signature: ask the page for an identity token and verify
-it on your server against Hana's published keys (`docs/identity-token-spec.md`, D120, D127). It is the Hana
+it on your server against Hana's published keys. It is the Hana
 counterpart of Privy's identity token (see "Migrating from Privy" below).
 
 ```ts
@@ -868,7 +993,7 @@ await fetch('/api/session', { method: 'POST', headers: { authorization: `Bearer 
   retry later), `session_ended` (the session is over: `sessionExpired` fires too; `data.reason: 'session_ending'` when
   less than 30 s remain) or `rate_limited` (more than 10 mints a minute for one session or 30 for one user, or your
   app's own identity-token quota: 10 × your plan's per-minute rate a minute and your plan's daily rate an hour, apart
-  from the quota your logins and unlocks use; D176).
+  from the quota your logins and unlocks use).
 - **React.** `const { identityToken, refresh, error } = useIdentityToken();` mints on first use while logged in, keeps
   the token fresh (a timer at `exp` − 5 min, only while the page is visible) and re-renders on `identityTokenChanged`.
   `refresh({ maxAgeMs })` gets one now.
@@ -880,9 +1005,9 @@ past the Hana session:
 
 | Claim | Value |
 |---|---|
-| `iss` | `{Hana API}/v1/identity` (sandbox-dev: `https://hana-id-api-sandbox-dev.tingtc.workers.dev/v1/identity`; a stable Hana hostname replaces it before any partner goes live, D127) |
+| `iss` | `{Hana API}/v1/identity` (sandbox-dev: `https://hana-id-api-sandbox-dev.tingtc.workers.dev/v1/identity`; a stable Hana hostname replaces it before any partner goes live) |
 | `aud` | your app id (`app_…`), not your publishable key |
-| `sub` | `u1_…` (25 characters): stable per user in your app's scope, the same for every login method of their account and after a key rotation; different at every other partner; never the Google `sub`. It is also the user's User ID in the partner console (when it ships), and their Support ID `HANA-XXXX-XXXX` is its short form: Crockford base32 of the first 5 bytes of the 16 the `sub`'s base64url encodes, so you can compute it yourself to show beside your own records |
+| `sub` | `u1_…` (25 characters): stable per user in your app's scope, the same for every login method of their account and after a key rotation; different at every other partner; never the Google `sub`. It is also the user's User ID on the partner portal's **Users** page, and their Support ID `HANA-XXXX-XXXX` is its short form, which you can compute yourself to show beside your own records ([Support ID from the `sub`](#support-id-from-sub)) |
 | `sid` | `s1_…`: one per Hana session, shared by its tabs and reloads, new at every interactive login, never repeated |
 | `iat`, `exp`, `jti` | seconds; `exp` ≤ `iat` + 3600 and never past the session's end; `jti` is random |
 | `wallets` | `[{chain: 'stellar', address: 'G…'}, {chain: 'evm', address: '0x…'}]`, a real JSON array; the holder of this Hana session proved control of each address's key (a signature bound to this session and app) |
@@ -900,23 +1025,54 @@ wallet, keep checking that the wallet that authenticated it is in `wallets` (`as
 
 The JWKS is at `{iss}/jwks.json` (cached 10 minutes; `jose` refetches on an unknown `kid`), the discovery document at
 `{iss}/.well-known/openid-configuration`. **For anything of value, pin the key thumbprints** (`HANA_IDENTITY_PINS`
-below: each key's thumbprint is also its `kid` in the JWKS; confirm the list with Hana out of band, e.g. with your
-security contact, rather than trusting one fetch): the JWKS is served by Hana's
-infrastructure, and a pinned verifier refuses a key whoever controls it publishes, where a verifier that only trusts
-the URL accepts it until Hana notices and removes it. This is `examples/identity-verify/src/verify.ts`, tested against a
-local issuer on every run:
+below: each key's thumbprint is also its `kid` in the JWKS): the JWKS is served by Hana's infrastructure, and a pinned
+verifier refuses a key whoever controls it publishes, where a verifier that only trusts the URL accepts it until Hana
+notices and removes it.
+
+The verifier's three settings, per environment. None is a secret; take the pins from this guide (or from Hana, out of
+band), never from the JWKS itself:
+
+| Setting | sandbox-dev |
+|---|---|
+| `HANA_APP_ID` | your app's id, from the app's page in the partner portal (**App ID**) |
+| `HANA_IDENTITY_ISSUER` | `https://hana-id-api-sandbox-dev.tingtc.workers.dev/v1/identity` |
+| `HANA_IDENTITY_PINS` | `17xAVaTfgwnOkdwq1uOmwHR31pPKB90xw5oGN5HcBgY,_MjNZC3lmy9Xk6LI1mbGVbvtoIfDN557VBZG7DXVQ-g` (the active key and its standby) |
+
+**The verifier refuses to start without all three.** If `audience` were `undefined` (an unset `HANA_APP_ID` on a new
+deploy, a typo), `jose` would skip the audience check entirely and accept a valid Hana token minted for any other
+partner's app. The code below checks every setting when it loads and throws with the setting's name: an app id that
+isn't `app_…` (a publishable key pasted by mistake), a non-`https` issuer, and pins that aren't thumbprints. Pinning is
+required the same way: set `HANA_IDENTITY_PINS=jwks-only` to trust the JWKS URL alone, so that a missing variable
+never silently drops it. Hana tests this exact code against a local issuer on every change:
 
 ```ts
 import { calculateJwkThumbprint, createRemoteJWKSet, errors, exportJWK, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
 
-// From Hana's partner console / your Hana app page. Not secrets.
-const HANA_ISSUER = process.env.HANA_IDENTITY_ISSUER!; // e.g. https://<hana api>/v1/identity
-const HANA_APP_ID = process.env.HANA_APP_ID!; // app_…
+// Not secrets: the app id is on your app's page in the partner portal, the issuer and its key thumbprints in the
+// partner guide. All three are required, and the verifier refuses to start without them: with no app id, jose would
+// skip the audience check and accept a token minted for any other app.
+function setting(name: string): string {
+  const value = (process.env[name] ?? '').trim();
+  if (!value) throw new Error(`${name} is not set: the Hana identity-token verifier refuses to start without it`);
+  return value;
+}
+const HANA_ISSUER = setting('HANA_IDENTITY_ISSUER'); // e.g. https://<hana api>/v1/identity
+const HANA_APP_ID = setting('HANA_APP_ID'); // app_…
+if (!/^app_[A-Za-z0-9]{1,64}$/u.test(HANA_APP_ID)) throw new Error('HANA_APP_ID must be your app id (app_…), not a publishable key');
+const issuerUrl = new URL(HANA_ISSUER); // throws on a malformed URL
+if (issuerUrl.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(issuerUrl.hostname)) {
+  throw new Error('HANA_IDENTITY_ISSUER must be an https:// URL');
+}
 
-// Recommended for anything of value: the key thumbprints Hana gives you (comma-separated; each is also its kid). A key
-// that isn't one of them is refused even if Hana's JWKS lists it, so a key published by whoever controls Hana's
-// servers never verifies here. Hana announces scheduled rotations 14 days ahead. Unset: the JWKS URL alone is trusted.
-const HANA_PINS = (process.env.HANA_IDENTITY_PINS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+// The issuer's key thumbprints (comma-separated; each is also its kid). A key that isn't one of them is refused even
+// if Hana's JWKS lists it, so a key published by whoever controls Hana's servers never verifies here. Hana announces
+// scheduled rotations 14 days ahead. `jwks-only` trusts the JWKS URL alone (not for anything of value); a missing
+// value is refused rather than read as "no pins", so pinning can't be dropped by a forgotten variable.
+const PINS = setting('HANA_IDENTITY_PINS');
+const HANA_PINS = PINS === 'jwks-only' ? [] : PINS.split(',').map((s) => s.trim()).filter(Boolean);
+if (PINS !== 'jwks-only' && (HANA_PINS.length === 0 || !HANA_PINS.every((p) => /^[A-Za-z0-9_-]{43}$/u.test(p)))) {
+  throw new Error('HANA_IDENTITY_PINS must be key thumbprints (43 base64url characters each, comma-separated) or jwks-only');
+}
 
 // Caches the keys for 10 minutes and refetches on an unknown kid (at most every 30 s).
 const remoteKeys = createRemoteJWKSet(new URL(`${HANA_ISSUER}/jwks.json`));
@@ -980,7 +1136,8 @@ Rules:
 
 1. Always check `aud` (your app id), `iss`, `typ` and `alg` (pinned to ES256); take keys from the JWKS URL, never a key
    named in the token's header; and for anything of value (credits, payouts, account access) pin the thumbprints,
-   judged on the key itself (`calculateJwkThumbprint`), never on its `kid`.
+   judged on the key itself (`calculateJwkThumbprint`), never on its `kid`. Refuse to start when the app id or the
+   issuer is missing or empty: most JWT libraries, `jose` included, skip a check whose expected value is undefined.
 2. Key users by `sub`, not by email or address. Store `sid` to run one session per device and to block a signed-out
    `sid`; a new interactive login always brings a new `sid`. Unlinking a login method later gives a different wallet
    and so a different `sub`: to you that is a different user.
@@ -994,6 +1151,23 @@ Rules:
 
 Other languages: any JOSE/OIDC library works with the same checks: compact JWS, `alg` ES256 only, a key from the JWKS
 by `kid`, `typ` `hana-identity+jwt`, `iss`, `aud`, `exp` (and `iat` for freshness), with up to 30 s of clock skew.
+
+<a id="support-id-from-sub"></a>**The Support ID from the `sub`.** The Support ID `HANA-XXXX-XXXX` the SDK shows
+(`hana.supportId`) is computed from the `sub` alone, with no key:
+
+1. Take the 22 characters after `u1_` and decode them as unpadded base64url (RFC 4648 section 5): 16 bytes.
+2. Take the first 5 bytes (40 bits) and write them in Crockford base32, most significant bit first, 5 bits per
+   character: exactly 8 characters from `0123456789ABCDEFGHJKMNPQRSTVWXYZ` (uppercase; no I, L, O or U; no padding).
+3. Write `HANA-`, the first 4 characters, `-`, the last 4.
+
+Test vector: the `sub` `u1_ASNFZ4mrze8BI0VniavN7w` encodes the bytes `0123456789abcdef0123456789abcdef`; its first 5
+bytes `01 23 45 67 89` give `04HMASW9`, so its Support ID is `HANA-04HM-ASW9`. In JavaScript, `@hana-id/core` exports
+the same function the SDK and Hana use (SDK releases after 0.2.0):
+
+```ts
+import { supportIdFromSub } from '@hana-id/core'; // or '@hana-id/core/support-id', which pulls in nothing else
+supportIdFromSub('u1_ASNFZ4mrze8BI0VniavN7w'); // 'HANA-04HM-ASW9'; a TypeError for anything that isn't a sub
+```
 
 **Key rotation.** Hana publishes a standby key next to the active one, and both are pinned from the start: an
 emergency switch to the standby needs nothing from you either way. A scheduled rotation adds a key 14 days ahead of
@@ -1017,7 +1191,7 @@ cache expires, ≤ 10 min). Pinned thumbprints are the only defence that doesn't
 | `sub` (`did:privy:…`) | `sub` (`u1_…`, per scope). Users get new wallets with Hana; map existing users to new `sub`s yourself |
 | `iss: "privy.io"` | `iss: "{Hana API}/v1/identity"` |
 | `aud: <Privy app id>` | `aud: app_…` |
-| access + identity token, one key pasted from the dashboard | one identity token, keys from the JWKS URL |
+| access + identity token, one key pasted from Privy's dashboard | one identity token, keys from the JWKS URL (and thumbprints pinned from this guide) |
 | `linked_accounts` (stringified JSON) | `wallets` (a JSON array), `login_methods` |
 | `linked_accounts[type=wallet, chain_type=stellar / ethereum].address` | `wallets[chain=stellar / evm].address` |
 | `getAccessToken()`, `getIdentityToken()`, `useIdentityToken()` | `hana.getIdentityToken()`, `useIdentityToken()` |

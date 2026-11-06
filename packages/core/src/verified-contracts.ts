@@ -39,7 +39,7 @@ export interface VerifiedContract {
 export const STELLAR_TESTNET_PASSPHRASE = 'Test SDF Network ; September 2015';
 
 const SODAX_DOCS = 'https://docs.sodax.com/developers/deployments/mainnet';
-const SODAX_TYPES = 'https://unpkg.com/@sodax/types@2.1.0/dist';
+const SODAX_TYPES = 'https://unpkg.com/@sodax/types@2.2.0/dist';
 /** chains.js: spokeChainConfig (per spoke chain) and hubConfig (Sonic). */
 const SODAX_CHAINS = `${SODAX_TYPES}/chains/chains.js`;
 const SODAX_SOLVER = `${SODAX_TYPES}/common/constants.js`;

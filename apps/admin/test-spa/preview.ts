@@ -4,6 +4,12 @@
 // part of the Worker (wrangler serves public/ alone), binds to the loopback address, and keeps nothing between runs.
 // Writes answer as the real routes do on success, except the refusals the real services give for org_legacy, so the
 // guarded paths can be seen too.
+//
+// The Access sign-in (the session-expiry banners): GET /api/me answers `accessExp`, PREVIEW_SESSION_MIN minutes after
+// the start (default 60). Past it, every /api/* request is a 302 to a fake Access login on another origin, as Access
+// answers an ended session (the SPA, with `redirect: 'manual'`, sees an opaqueredirect). Opening /signed-in (the tab
+// "Sign in again" and "Renew" open) stands for a new sign-in: the session runs 60 more minutes. So
+// `PREVIEW_SESSION_MIN=4` shows the warning at once and the expired banner 4 minutes later; `0.2` after 12 s.
 import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { extname } from 'node:path';
@@ -13,6 +19,10 @@ import * as data from './preview-data.ts';
 
 const PUBLIC = new URL('../public/', import.meta.url);
 const PORT = Number(process.env.PORT ?? 8788);
+const SESSION_MIN = Number(process.env.PREVIEW_SESSION_MIN ?? 60);
+/** When the fake Access sign-in ends (ms); a load of /signed-in signs in again for 60 minutes. */
+let sessionEndsAt = Date.now() + SESSION_MIN * 60_000;
+const FAKE_ACCESS_LOGIN = 'https://preview-team.cloudflareaccess.invalid/cdn-cgi/access/login/127.0.0.1';
 const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
 
 type Answer = { status: number; body: unknown };
@@ -35,7 +45,7 @@ async function apiAnswer(method: string, url: URL, body: Record<string, unknown>
   const q = url.searchParams;
   let m: RegExpExecArray | null;
   if (method === 'GET') {
-    if (p === '/api/me') return ok(data.me);
+    if (p === '/api/me') return ok({ ...data.me, accessExp: Math.floor(sessionEndsAt / 1000) });
     if (p === '/api/orgs') return ok({ orgs: data.orgs });
     if ((m = /^\/api\/orgs\/([^/]+)\/changes$/u.exec(p))) return ok(data.orgChanges(decodeURIComponent(m[1]!)));
     if ((m = /^\/api\/orgs\/([^/]+)$/u.exec(p))) {
@@ -88,6 +98,13 @@ const server = createServer((req, res) => {
   void (async () => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
     const method = req.method ?? 'GET';
+    if (url.pathname.startsWith('/api/') && Date.now() >= sessionEndsAt) {
+      // Access's answer to a request without a live sign-in: a redirect to its login page, cross-origin.
+      res.writeHead(302, { ...securityHeaders('https://files.preview.invalid'), location: `${FAKE_ACCESS_LOGIN}?redirect_url=${encodeURIComponent(url.pathname)}` });
+      res.end();
+      return;
+    }
+    if (url.pathname === '/signed-in') sessionEndsAt = Date.now() + 60 * 60_000;
     if (url.pathname.startsWith('/api/')) {
       const body = method === 'GET' ? {} : await readBody(req);
       // A short delay, so the loading states can be seen.

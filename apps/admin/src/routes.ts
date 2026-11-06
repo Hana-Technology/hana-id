@@ -135,7 +135,7 @@ async function directoryAudit(c: RouteCtx): Promise<{ rows: DirectoryAuditRow[];
 }
 
 const ROUTES: Route[] = [
-  { method: 'GET', pattern: '/api/me', handler: async (c) => json(200, { email: c.staff.actor.email, sub: c.staff.actor.id, env: c.env.ENV_NAME, consoleOrigin: c.env.CONSOLE_ORIGIN }) },
+  { method: 'GET', pattern: '/api/me', handler: async (c) => json(200, { email: c.staff.actor.email, sub: c.staff.actor.id, env: c.env.ENV_NAME, consoleOrigin: c.env.CONSOLE_ORIGIN, accessExp: c.staff.accessExp }) },
 
   // ---- orgs ----
   {

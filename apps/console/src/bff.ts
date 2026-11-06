@@ -56,7 +56,7 @@ export async function memberships(env: Env, s: Session, now: number, orgId?: str
 
 /** `GET /api/me` → `{user, memberships}`. */
 export async function me(env: Env, s: Session, now: number): Promise<Response> {
-  const body: MeAnswer = { user: { id: s.userId, email: s.email }, memberships: await memberships(env, s, now), features: { users: usersScreenOn(env) } };
+  const body: MeAnswer = { user: { id: s.userId, email: s.email }, memberships: await memberships(env, s, now), features: { users: usersScreenOn(env) }, sessionExpiresAt: s.absoluteExpiresAt };
   return json(200, body);
 }
 

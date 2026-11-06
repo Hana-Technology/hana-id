@@ -41,6 +41,11 @@ export const meAnswer = z
     memberships: z.array(membership),
     /** Screens the server has on (C10: the Users screen, D310, behind USERS_SCREEN). */
     features: z.object({ users: z.boolean() }).strict().optional(),
+    /**
+     * When this session ends at the latest (ms): its 12 h absolute limit, so the SPA can warn before it. The 2 h idle
+     * limit isn't a fixed time (each request moves it) and isn't answered.
+     */
+    sessionExpiresAt: ms.optional(),
   })
   .strict();
 export type MeAnswer = z.infer<typeof meAnswer>;

@@ -12,19 +12,31 @@ export interface Call {
   path: string;
   body?: Record<string, unknown>;
   headers: Record<string, string>;
+  /** The body as sent (a retry must send the same bytes); not enumerable. */
+  raw?: string;
+  /** The fetch's `redirect` mode (the SPA sends `manual`, so an Access redirect is seen, not followed); not enumerable. */
+  redirect?: string;
 }
-/** An API answer; `network: true` makes fetch fail as a dropped connection does. */
-export type Answer = { status?: number; body?: unknown; network?: true };
+/**
+ * An API answer; `network: true` makes fetch fail as a dropped connection does; `redirect: true` answers as the
+ * browser does for `redirect: 'manual'` when Cloudflare Access redirects an ended session to its login page (an
+ * `opaqueredirect` response: status 0, no headers, no body).
+ */
+export type Answer = { status?: number; body?: unknown; network?: true; redirect?: true };
 
 let open: Window | null = null;
+/** The page's intervals (the sign-in countdown): stopped with its window, so none outlives its test. */
+let intervals: ReturnType<typeof setInterval>[] = [];
 /** Closes the last window (each test file's afterEach). */
 export async function closeWindow() {
+  for (const t of intervals) clearInterval(t);
+  intervals = [];
   await open?.happyDOM.close();
   open = null;
 }
 
-/** The SPA at `path`, answering each API call with `answer`. */
-export function boot(path: string, answer: (c: Call) => Answer) {
+/** The SPA at `path`, answering each API call with `answer`; GET /api/me with `opts.me` when given. */
+export function boot(path: string, answer: (c: Call) => Answer, opts: { me?: (c: Call) => Answer } = {}) {
   const w = new Window({ url: `https://admin.test${path}` });
   open = w;
   w.document.body.innerHTML = BODY.replace(/<script[^>]*><\/script>/gu, '');
@@ -36,15 +48,24 @@ export function boot(path: string, answer: (c: Call) => Answer) {
     };
   }
   const calls: Call[] = [];
-  const fetch = async (p: string, init: { method: string; headers: Record<string, string>; body?: string }) => {
+  const fetch = async (p: string, init: { method: string; headers: Record<string, string>; body?: string; redirect?: string }) => {
     const c: Call = { method: init.method, path: p, headers: init.headers, ...(init.body !== undefined ? { body: JSON.parse(init.body) as Record<string, unknown> } : {}) };
+    // Not enumerable: the tests' `toEqual` on a call compares method, path, headers and body only.
+    Object.defineProperties(c, { raw: { value: init.body }, redirect: { value: init.redirect } });
     calls.push(c);
-    const a = p === '/api/me' ? { body: { email: 'staff@hana.example', env: 'sandbox-dev' } } : answer(c);
+    const a = p === '/api/me' ? (opts.me ? opts.me(c) : { body: { email: 'staff@hana.example', env: 'sandbox-dev' } }) : answer(c);
     if (a.network) throw new TypeError('Failed to fetch');
+    if (a.redirect) return { type: 'opaqueredirect', status: 0, ok: false, headers: new w.Headers(), json: () => Promise.reject(new TypeError('opaque')) };
     return new Response(JSON.stringify(a.body ?? {}), { status: a.status ?? 200, headers: { 'content-type': 'application/json' } });
   };
   // The page's globals, from this window (the script is the same text the browser runs).
-  const globals = { window: w, document: w.document, history: w.history, location: w.location, navigator: w.navigator, Node: w.Node, fetch, URL: w.URL, URLSearchParams: w.URLSearchParams, Event: w.Event };
+  const globals = { window: w, document: w.document, history: w.history, location: w.location, navigator: w.navigator, Node: w.Node, fetch, URL: w.URL, URLSearchParams: w.URLSearchParams, Event: w.Event,
+    setInterval: (fn: () => void, ms: number) => {
+      const t = setInterval(fn, ms);
+      intervals.push(t);
+      return t;
+    },
+  };
   new Function(...Object.keys(globals), SRC)(...Object.values(globals));
   const doc = w.document;
   const main = () => doc.getElementById('app')!;

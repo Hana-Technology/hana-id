@@ -9,7 +9,7 @@ import { StrictMode } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, nav } from '../src/api.ts';
+import { ApiError, nav, resetSession } from '../src/api.ts';
 import { App } from '../src/App.tsx';
 import { explain } from '../src/messages.ts';
 import { actionLabel } from '../src/pages/Audit.tsx';
@@ -21,6 +21,7 @@ let routes: Record<string, Answer | ((init?: RequestInit) => Answer)>;
 let calls: { url: string; init?: RequestInit }[];
 
 beforeEach(() => {
+  resetSession();
   routes = {};
   calls = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {

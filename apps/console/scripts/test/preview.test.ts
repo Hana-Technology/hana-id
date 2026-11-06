@@ -32,6 +32,14 @@ describe('the fixtures have the console’s shapes', () => {
 });
 
 describe('the scenarios', () => {
+  it('the session scenarios: the warning’s end time, and a session that ended under the page’s writes', () => {
+    expect((get('session-ending', '/api/me').body as { sessionExpiresAt: number }).sessionExpiresAt).toBe(now + 4 * 60_000);
+    expect(meAnswer.safeParse(get('session-ending', '/api/me').body).success).toBe(true);
+    expect(get('session-ended', '/api/me').status).toBe(200);
+    expect(answer('session-ended', 'POST', new URL(`http://127.0.0.1/api/orgs/${F.ORG_ID}/actions`), { kind: 'member.invite', params: {} }, new PreviewState(), now).status).toBe(401);
+    expect(answer('session-ended', 'POST', new URL('http://127.0.0.1/api/auth/start'), {}, new PreviewState(), now).status).toBe(200);
+  });
+
   it('signed out answers 401 everywhere but the sign-in start', () => {
     expect(get('signed-out', '/api/me').status).toBe(401);
     expect(answer('signed-out', 'POST', new URL('http://127.0.0.1/api/auth/start'), {}, new PreviewState(), now).status).toBe(200);

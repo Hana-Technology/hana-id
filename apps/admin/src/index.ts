@@ -47,7 +47,7 @@ async function route(request: Request, env: Env): Promise<{ res: Response; api: 
       log({ event: 'csrf_refused', requestId, code: problem });
       return { res: errorResponse('csrf'), api };
     }
-    return { res: await handleApi(request, env, { actor: staff.actor, requestId, clientIp: clientIpOf(request) }), api };
+    return { res: await handleApi(request, env, { actor: staff.actor, requestId, clientIp: clientIpOf(request), accessExp: staff.exp }), api };
   }
   const problem = csrfProblem(request, env.ADMIN_ORIGIN);
   if (problem) {

@@ -22,6 +22,18 @@ describe('the Access check on /api/*', () => {
     expect(await json(res)).toMatchObject({ email: STAFF_EMAIL, sub: STAFF_SUB, env: 'sandbox-test' });
   });
 
+  it('answers the Access token’s exp in GET /api/me (the SPA’s expiry warning), never the token itself', async () => {
+    const exp = Math.floor(Date.now() / 1000) + 1234;
+    const jwt = await staffJwt({ exp });
+    const res = await adminRequest('/api/me', { jwt });
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    expect(body.accessExp).toBe(exp);
+    expect(Object.keys(body).sort()).toEqual(['accessExp', 'consoleOrigin', 'email', 'env', 'sub']);
+    const text = JSON.stringify(body);
+    for (const part of jwt.split('.')) expect(text).not.toContain(part);
+  });
+
   it('refuses a missing, malformed or tampered token with 401', async () => {
     expect((await adminRequest('/api/me', { jwt: null })).status).toBe(401);
     const bad = await adminRequest('/api/me', { jwt: 'not.a.jwt' });

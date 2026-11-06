@@ -9,6 +9,7 @@ import { formatNear, formatUsd } from '@hana-id/console-core';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetSession } from '../src/api.ts';
 import { App } from '../src/App.tsx';
 import { countdown } from '../src/lib.tsx';
 import { usagePath } from '../src/pages/Usage.tsx';
@@ -19,6 +20,7 @@ let routes: Record<string, Answer | ((init?: RequestInit) => Answer)>;
 let calls: { url: string; init?: RequestInit }[];
 
 beforeEach(() => {
+  resetSession();
   routes = {};
   calls = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {

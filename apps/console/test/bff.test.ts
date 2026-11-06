@@ -187,4 +187,15 @@ describe('/api/me', () => {
     expect(me.body.memberships.find((m) => m.orgId === orgB)).toMatchObject({ status: 'frozen' });
     expect((await getWith(a.cs, `/api/orgs/${orgB}/apps`)).status).toBe(200);
   });
+
+  it('answers the session’s 12 h absolute end as sessionExpiresAt (the SPA warns before it), and nothing else of the session', async () => {
+    const a = await signedIn();
+    const me = await getJson<Record<string, unknown>>(a.cs, '/api/me');
+    expect(me.status).toBe(200);
+    const row = await db.prepare('SELECT auth_at, absolute_expires_at FROM console_sessions WHERE user_id = ? AND revoked_at IS NULL ORDER BY auth_at DESC LIMIT 1').bind(a.userId).first<{ auth_at: number; absolute_expires_at: number }>();
+    expect(me.body.sessionExpiresAt).toBe(row!.absolute_expires_at);
+    expect(row!.absolute_expires_at - row!.auth_at).toBe(12 * 3_600_000);
+    expect(Object.keys(me.body).sort()).toEqual(['features', 'memberships', 'sessionExpiresAt', 'user']);
+    expect(JSON.stringify(me.body)).not.toContain(a.cs);
+  });
 });

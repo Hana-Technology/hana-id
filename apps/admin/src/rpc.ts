@@ -15,6 +15,8 @@ export interface StaffRequest {
   actor: StaffActor;
   requestId: string;
   clientIp: string;
+  /** The Access token's `exp` (seconds): answered by `GET /api/me` only, never passed to an RPC (`staffCtx`). */
+  accessExp?: number;
 }
 
 export const staffCtx = (s: StaffRequest) => ({ actor: s.actor, requestId: s.requestId, clientIp: s.clientIp });

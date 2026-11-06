@@ -82,10 +82,12 @@ describe('dashboard blocks', () => {
     for (const k of DASHBOARD_BLOCKS) expect(r.data![k]).toBeUndefined();
   });
 
-  it('sandbox-dev sets the complete set (M4), its Access application still a placeholder', () => {
+  it('sandbox-dev sets the complete set (M4), its Access application set by access-setup (D409)', () => {
     const env = loadEnv('sandbox-dev');
     for (const k of DASHBOARD_BLOCKS) expect(env[k], k).toBeDefined();
-    expect(env.admin!.accessAud).toBe('UNSET');
+    expect(env.admin!.accessAud).toMatch(/^[0-9a-f]{64}$/u);
+    expect(env.admin!.accessTeamDomain).toMatch(/^[a-z0-9-]+\.cloudflareaccess\.com$/u);
+    expect(env.admin!.accessTeamDomain).not.toContain('unset');
     expect(env.ownerGrantDelayMs).toBe(60_000);
   });
 

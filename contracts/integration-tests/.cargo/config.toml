@@ -1,0 +1,9 @@
+# The sandbox tests run several at a time (D423), each starting its own sandbox node. On every start near-workspaces
+# and near-sandbox set NEAR_SANDBOX_LOG with std::env::set_var unless NEAR_ENABLE_SANDBOX_LOG is set: a setenv while
+# other test threads may be reading the environment from C (getaddrinfo, the time zone), which is undefined behaviour
+# on glibc. Setting both here, before the test binary starts, skips that and keeps their default: the node's logs
+# at error level. To see more, set NEAR_SANDBOX_LOG in the shell (e.g. NEAR_SANDBOX_LOG=info): it wins over this.
+# Only this crate's commands read this file; the contract builds run in their own directories.
+[env]
+NEAR_ENABLE_SANDBOX_LOG = "1"
+NEAR_SANDBOX_LOG = "near=error,stats=error,network=error"

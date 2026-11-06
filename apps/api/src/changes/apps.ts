@@ -61,7 +61,7 @@ export async function getApp(db: HotDb, appId: string, orgId: string | null, now
 }
 
 /**
- * The app's mainnet demo switch as D1 holds it (D426, migration 0013), shown read-only; false when the column isn't
+ * The app's mainnet demo switch as D1 holds it (D428, migration 0013), shown read-only; false when the column isn't
  * there yet (the migration not applied) or the read fails, so an app page never breaks on it.
  */
 export async function storedMainnetDemo(db: HotDb, appId: string): Promise<boolean> {

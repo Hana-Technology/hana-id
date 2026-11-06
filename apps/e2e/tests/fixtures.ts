@@ -484,7 +484,7 @@ export async function approve(popup: Page, label: 'Approve' | 'Allow' = 'Approve
 }
 
 /**
- * A click on a button behind the guard (approve-guard.ts): the export window's Continue, Show key and Copy key (D428)
+ * A click on a button behind the guard (approve-guard.ts): the export window's Continue, Show key and Copy key (D430)
  * wait 1 s after their screen and a moving pointer, as Approve does.
  */
 export async function guardedClick(page: Page, name: string): Promise<void> {

@@ -1,4 +1,4 @@
-// Whether an app has the mainnet demo on (D426), as GET /v1/app serves it and the events endpoint checks it. Its own
+// Whether an app has the mainnet demo on (D428), as GET /v1/app serves it and the events endpoint checks it. Its own
 // module so handlers.ts can read it without importing mainnet-demo.ts (which imports handlers.ts).
 import type { App } from './apps.ts';
 import type { Env } from './env.ts';

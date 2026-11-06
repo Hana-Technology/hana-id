@@ -1,4 +1,4 @@
-// The mainnet demo's valuation (D426, D427; docs/mainnet-demo-and-key-export-spec.md): every shape it signs, every
+// The mainnet demo's valuation (D428, D429; docs/mainnet-demo-and-key-export-spec.md): every shape it signs, every
 // shape it refuses, the cap's edges, the price table's expiry and the pinned identifiers. The Sodax calls are built
 // the way @sodax/sdk 2.2.0 builds them (EvmSpokeService.deposit, EvmSolverService.constructCreateIntentData,
 // StellarSpokeService.buildDepositCall), with viem and @stellar/stellar-base.

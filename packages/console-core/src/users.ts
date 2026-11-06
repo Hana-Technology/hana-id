@@ -263,7 +263,7 @@ export interface StaffUser {
   identities: StaffIdentity[];
   wallets: StaffWallet[];
   /**
-   * What happened to the user's keys (D426, D428; `user_events`, newest first, at most STAFF_USER_EVENTS_MAX): key
+   * What happened to the user's keys (D428, D430; `user_events`, newest first, at most STAFF_USER_EVENTS_MAX): key
    * exports (the account's), and mainnet demo signatures from the user's wallets (the vault's report). Set on a
    * detail or a search answer (AdminRpc.getUser, findUsers, supportLookup); never in a list or a partner's view.
    */

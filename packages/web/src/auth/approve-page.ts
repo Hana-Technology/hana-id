@@ -95,7 +95,7 @@ export const AUTO_APPROVE_REASON_TEXT: Readonly<Record<AutoApproveReason, string
  */
 /** Beside the Support ID on the request screen (batch C15). */
 export const SUPPORT_ID_HINT = 'Give this code to the app’s support if they ask; it doesn’t show your account or email.';
-/** The mainnet demo's banner headline (D426): every approval of a request for Base or Stellar's public network. */
+/** The mainnet demo's banner headline (D428): every approval of a request for Base or Stellar's public network. */
 export const MAINNET_DEMO_BANNER = 'Real funds, test custody: these funds may be lost';
 /** Under the headline: why (the keys come from the testnet MPC). */
 export const MAINNET_DEMO_WHY = 'This test app signs on a real network with keys from Hana’s test infrastructure, which can be reset or broken. Use small amounts only.';
@@ -268,7 +268,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   }
 
   /**
-   * The mainnet demo's red banner (D426): the request's value, from this popup's own decoding (never a number the vault
+   * The mainnet demo's red banner (D428): the request's value, from this popup's own decoding (never a number the vault
    * sends), Hana's per-transaction limit, and the wallet's balance once read. A warning, never a block: the vault has
    * already refused anything over the limit.
    */

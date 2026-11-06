@@ -3,7 +3,7 @@
 **Status: built on branch `feat/mainnet-demo-key-export`, not merged, not deployed (2026-11-06); self-reviewed (below).** Two security-sensitive features
 asked for by the user on 2026-11-06: an exception to D39 for the Sodax demo (a test app may sign small amounts on
 Base and Stellar's public network), and additions to key export (D40, D41, D59, D111, D258, D268), already built,
-so a user can always take their keys out if the testnet MPC fails. Decisions: D426–D429 (`docs/decisions.md`). This
+so a user can always take their keys out if the testnet MPC fails. Decisions: D428–D431 (`docs/decisions.md`). This
 is a batch spec: once the branch merges it is history, and the reference docs (`architecture.md`, `security.md`,
 `api.md`, `integration.md`, `operations.md`, `mainnet-readiness.md`) are the current state.
 
@@ -106,7 +106,7 @@ and the contract read the same values.
 | `invokeHostFunction` calling the Sodax asset manager's `transfer(from, token, amount, to, data)` with `from` the signing account and `token` the XLM or USDC asset contract | the amount; `data` as for EVM (the token's hub asset); every auth entry must be for exactly that call, with at most one sub-invocation, the token contract's `transfer(from, assetManager, amount)` |
 | a fee-bump envelope, any other operation (path payments, offers, `setOptions`, `accountMerge`, other contracts, …) | refused |
 
-### Prices and caps (reviewed config, to confirm: D427)
+### Prices and caps (reviewed config, to confirm: D429)
 
 `packages/core/src/mainnet-demo.ts` `MAINNET_DEMO`, reviewed 2026-11-06, valid until 2026-12-21. Prices are
 deliberately **above** the market (a live price couldn't be confirmed on 2026-11-06; ETH was about $3,050 a year
@@ -222,7 +222,7 @@ or logged.
 On for every app in testnet envs, as it is today. For production, D41 (confirmed by the user) already says export is
 mandatory and partners can't switch it off; the manifest schema accepts only `testnet`, so no non-testnet manifest
 can exist yet and no gate was added. Whether D41 stands for mainnet (or a Privy-style partner switch is wanted) is
-row 1.18 of `docs/mainnet-readiness.md` (D429).
+row 1.18 of `docs/mainnet-readiness.md` (D431).
 
 ### Not added
 
@@ -274,7 +274,7 @@ place the demo exists); "fixed" means changed in this branch.
 |---|---|---|---|
 | R1 | The first client change let Base through the SDK's early D39 check for **every** test app (the vault still refused without the demo), and it never learnt whether the app had the demo (the sample's FRICTION 18, 19) | medium (wrong behaviour, not a bypass) | **fixed**: the vault announces the demo (`mainnetDemo` event) and the provider opens exactly the chains it names; a test without the event refuses Base as before |
 | R2 | The early refusal check (D112) assumed the demo on, so an app without it would have got demo reasons ("over the cap") and a stale cached "off" would have refused a request the API allows, with no re-read | medium | **fixed**: in a demo build the mainnet part waits for `sign()`, which reads the setting fresh; consequence accepted: such a request may wake a dormant session before it is refused (dev envs only) |
-| R3 | `personal_sign` and `stellar_signMessage` stay allowed for a demo app (they name no network, D35). Most token-moving signatures are EIP-712 (refused on Base), but some protocols accept EIP-191 messages as orders; such a message is not valued or capped | medium | **open, to confirm** (D427): the popup shows the message in full; the option is to refuse messages for a demo app, which would break SIWE-style logins |
+| R3 | `personal_sign` and `stellar_signMessage` stay allowed for a demo app (they name no network, D35). Most token-moving signatures are EIP-712 (refused on Base), but some protocols accept EIP-191 messages as orders; such a message is not valued or capped | medium | **open, to confirm** (D429): the popup shows the message in full; the option is to refuse messages for a demo app, which would break SIWE-style logins |
 | R4 | A signature approved while the demo was on is made even if staff turn it off while the popup is open (the setting is read before the popup, as for raw signing) | low | accepted: at most the one request on screen, still under the cap |
 | R5 | A deposit's recipient (the hub wallet in `to`) and the intent's destination aren't checked: a page can send the deposit to anyone | low | accepted by design: the cap bounds what leaves the wallet, whoever receives it; the hub calls are bounded to the deposit (`checkSodaxHubCalls`) |
 | R6 | The price table can go stale or be wrong (a live price couldn't be confirmed on 2026-11-06) | medium | mitigated: prices ≈2–3× the market where it was last known, rounded up, a 45-day expiry that refuses everything after; open: review before each demo (security.md (q)) |
@@ -295,9 +295,9 @@ which this branch doesn't replace.
 
 ## Open items for the user
 
-1. Confirm D427 (prices, the 45-day expiry, the valued shapes, immediate on/off, the balance endpoints) and D428's
+1. Confirm D429 (prices, the 45-day expiry, the valued shapes, immediate on/off, the balance endpoints) and D430's
    mechanics; decide R3 (messages for a demo app).
-2. D429 / `mainnet-readiness.md` 1.18: does D41 (export mandatory, no partner switch) stand for mainnet?
+2. D431 / `mainnet-readiness.md` 1.18: does D41 (export mandatory, no partner switch) stand for mainnet?
 3. Apply migration 0013 on sandbox-dev, deploy (`docs/operations.md` "Mainnet demo and key export events"), then turn
    the demo on for the Sodax demo app only, and off when the demo ends.
 4. Review the price table against a live source before the demo, and before 2026-12-21.

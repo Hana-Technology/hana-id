@@ -21,7 +21,7 @@ export interface VaultSettings {
   /** The policy JSON in force, unvalidated (see VaultConfig.policy). */
   autoApprovePolicy: Record<string, unknown> | null;
   /**
-   * The mainnet demo (D426): present (true) only when the API rendered this page for an app with the demo on in a dev
+   * The mainnet demo (D428): present (true) only when the API rendered this page for an app with the demo on in a dev
    * testnet env. The vault re-reads it from GET /v1/app before any mainnet request; it only tells the SDK early.
    */
   mainnetDemo?: true;

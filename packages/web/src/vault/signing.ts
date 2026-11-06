@@ -49,7 +49,7 @@ export interface SubjectRules {
   /** A pk_test_ app: mainnet chains are refused (docs/decisions.md D39, @hana-id/core networks.ts). */
   testApp: boolean;
   /**
-   * The mainnet demo exception (D426): set only when this vault's build is a dev testnet build and the app's
+   * The mainnet demo exception (D428): set only when this vault's build is a dev testnet build and the app's
    * `mainnetDemo` was confirmed on (vault.ts freshMainnetDemo); `nowMs` is the server-corrected time the price table is
    * checked against. Null: every mainnet is refused for a test app, as D39 says.
    */
@@ -123,7 +123,7 @@ export function approvalSubject(request: SignRequest, addresses: RecordAddresses
   }
   const subject: ApprovalSubject = { kind: APPROVAL_KIND[request.method], chain, address, ...content };
   // Before any popup or policy: a test app's keys come from the testnet MPC and must never sign for a mainnet, except
-  // under the mainnet demo (D426), which signs only what it can value under its cap.
+  // under the mainnet demo (D428), which signs only what it can value under its cap.
   if (rules.testApp) {
     const mainnet = mainnetOfRequest(request);
     if (mainnet) {

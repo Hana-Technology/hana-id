@@ -213,7 +213,7 @@ export class VaultApi {
   }
 
   /**
-   * POST /v1/mainnet-demo/events (D426): one mainnet demo signature, reported after it is made. No key, signature or
+   * POST /v1/mainnet-demo/events (D428): one mainnet demo signature, reported after it is made. No key, signature or
    * transaction bytes. Throws ApiError or a network error (the caller drops both).
    */
   async mainnetDemoEvent(body: MainnetDemoEventBody): Promise<void> {

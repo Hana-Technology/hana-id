@@ -138,7 +138,7 @@ describe('chains', () => {
     await expect(p.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0xaa36a7' }] })).resolves.toBeNull();
   });
 
-  it('a test app uses Base only while its vault says the mainnet demo is on (D426): exactly the chains it names', async () => {
+  it('a test app uses Base only while its vault says the mainnet demo is on (D428): exactly the chains it names', async () => {
     const rpc = rpcFetch(CHAIN);
     s = setup({ config: { evm: { chains: [{ id: 8453, rpcUrl: 'https://base.rpc.test' }, { id: 10, rpcUrl: 'https://op.rpc.test' }, ...EVM_CONFIG.chains], defaultChainId: SEPOLIA } }, fetch: rpc });
     await s.vault.connect(LOGGED_IN);

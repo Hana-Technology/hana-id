@@ -442,7 +442,7 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
   address), and testnet-derived addresses differ from production ones.
 - Rejected: allowing mainnet with warnings and small amounts.
 - Open: the mainnet launch date (not set).
-- Amended 2026-11-06 by D426 (decided by the user): the mainnet demo exception for the Sodax demo.
+- Amended 2026-11-06 by D428 (decided by the user): the mainnet demo exception for the Sodax demo.
 
 ### D40. Leaving Hana: per-chain key export and Hana Home, no seed phrase
 - Date 2026-10-28 · Status: confirmed by the user; Hana Home to build before mainnet · Source: `docs/batch-b-spec.md`
@@ -7807,10 +7807,10 @@ branch.
 
 ## Mainnet demo and key export (branch `feat/mainnet-demo-key-export`), 2026-11-06
 
-Spec: `docs/mainnet-demo-and-key-export-spec.md` (with its security self-review). Number note: D426–D429 were the next
-free numbers on `origin/develop` (D425 the highest); renumber at the merge if another branch took them.
+Spec: `docs/mainnet-demo-and-key-export-spec.md` (with its security self-review). Number note: D428–D431 were the next
+free numbers on `origin/develop` (D427 the highest: D426 the Hana brand, D427 the partner friction fixes; first built as D426–D429 and renumbered when develop was merged in); renumber at the merge if another branch took them.
 
-### D426. The mainnet demo: an exception to D39 for the Sodax demo, a per-transaction cap under $10, Base and Stellar only
+### D428. The mainnet demo: an exception to D39 for the Sodax demo, a per-transaction cap under $10, Base and Stellar only
 - Date 2026-11-06 · Status: **decided by the user 2026-11-06** ("exception for the Sodax demo, also we should limit
   funds to <$10. warnings are good"; then "per-transaction cap only; balance above $10 warns, doesn't block"; then
   "the Sodax demo will swap between Base (8453, cheap gas) and Stellar pubnet only") · Built: `packages/core/src/
@@ -7830,7 +7830,7 @@ free numbers on `origin/develop` (D425 the highest); renumber at the merge if an
      only in such an env for a test scope; the vault honours it only when its own build is a dev testnet build. No
      partner method or control; partners don't see it (ConsoleRpc's view leaves it out), only its `app_changes` row.
   3. **A per-transaction cap, fail closed.** At most $9.99 per transaction, its maximum fee included, valued by a
-     reviewed price table (D427); a request whose movements Hana can't value (an unknown call, token, operation or
+     reviewed price table (D429); a request whose movements Hana can't value (an unknown call, token, operation or
      Soroban call; typed data; auth entries) is refused. No daily cap (the user: repeated swap tests are needed).
   4. **Warnings.** Every demo approval shows the red banner "Real funds, test custody: these funds may be lost", the
      value and the cap, and the wallet's balance; above $10: "This wallet holds about $N: keep test funds under $10 —
@@ -7843,8 +7843,8 @@ free numbers on `origin/develop` (D425 the highest); renumber at the merge if an
 - Rejected: a per-user daily cap kept in the vault (the user, 2026-11-06: repeated tests); allowing every mainnet;
   letting partners set it; trusting the partner's RPC for the balance.
 
-### D427. The mainnet demo's mechanics: the price table, what can be valued, the freshness and the reads
-- Date 2026-11-06 · Status: **to confirm** (implementation choices while building D426) · Built: as D426
+### D429. The mainnet demo's mechanics: the price table, what can be valued, the freshness and the reads
+- Date 2026-11-06 · Status: **to confirm** (implementation choices while building D428) · Built: as D428
 - Decision:
   1. **Prices** (`MAINNET_DEMO`, reviewed 2026-11-06): ETH $8,000, USDC $1.05 and EURC $1.35 on Base and on Stellar, XLM $1.00, all
      deliberately above the market (a live price couldn't be confirmed; a higher price makes the cap stricter and the
@@ -7887,7 +7887,7 @@ free numbers on `origin/develop` (D425 the highest); renumber at the merge if an
   failing closed on anything else.
 - Open: whether the prices should come from a live source with a sanity band (more moving parts in the vault).
 
-### D428. Key export additions: auto-hide after 60 s, the guarded click, plain warnings, a `key_exported` event
+### D430. Key export additions: auto-hide after 60 s, the guarded click, plain warnings, a `key_exported` event
 - Date 2026-11-06 · Status: the feature **decided by the user 2026-11-06** ("an option to let the user export their
   private key just in case anything goes wrong i.e. testnet MPC issues etc that causes fund lost cause derivation was
   no longer possible"); the mechanics **to confirm** · Built: `packages/web/src/auth/export-page.ts`
@@ -7910,7 +7910,7 @@ free numbers on `origin/develop` (D425 the highest); renumber at the merge if an
 - Not done: an "account view" in Hana's own UI (Hana has none; the launcher is the entry, D59; a Hana account page is
   Hana Home's, D40).
 
-### D429. Key export on non-testnet manifests: D41 stands until a decision before mainnet
+### D431. Key export on non-testnet manifests: D41 stands until a decision before mainnet
 - Date 2026-11-06 · Status: **to confirm** · Source: the 2026-11-06 brief asked to leave export off for non-testnet
   manifests and decide production behaviour before mainnet
 - Decision: no gate was added. D41 (confirmed by the user) already says export is mandatory and partners can't
@@ -7922,8 +7922,8 @@ free numbers on `origin/develop` (D425 the highest); renumber at the merge if an
 
 | Was | Now | Source |
 |---|---|---|
-| D39: a `pk_test_` app never signs for a mainnet; the partner client refuses a test app's switch to any chain outside the testnet list | A test app Hana staff switched to the mainnet demo, in a dev testnet env, signs on Base and Stellar's public network up to $9.99 per transaction through the popup (D426, D427); the client lets a test app through on Base, the vault decides | `packages/core/src/mainnet-demo.ts`, `packages/web/src/vault/signing.ts` |
-| D111, D268: a shown key stays shown until Hide, blur, a hidden tab or pagehide; Continue and Show act on any real click | A shown key also hides 60 s after Show; Continue, Show key and Copy key are behind the approval popup's guard (D428) | `packages/web/src/auth/export-page.ts` |
+| D39: a `pk_test_` app never signs for a mainnet; the partner client refuses a test app's switch to any chain outside the testnet list | A test app Hana staff switched to the mainnet demo, in a dev testnet env, signs on Base and Stellar's public network up to $9.99 per transaction through the popup (D428, D429); the client lets a test app through on Base, the vault decides | `packages/core/src/mainnet-demo.ts`, `packages/web/src/vault/signing.ts` |
+| D111, D268: a shown key stays shown until Hide, blur, a hidden tab or pagehide; Continue and Show act on any real click | A shown key also hides 60 s after Show; Continue, Show key and Copy key are behind the approval popup's guard (D430) | `packages/web/src/auth/export-page.ts` |
 | D413: verify's phases ran one step at a time except gitleaks beside the typecheck and the docs checks beside the unit tests; the sandbox e2e one test at a time (`--test-threads=1`, also CI's) | Lanes side by side in four phases (sandbox e2e beside the pack check then Playwright; the contract beside the typecheck; the unit tests still alone but for the docs checks); the sandbox e2e 8 tests at a time, in verify and CI | D423 |
 | D153 (an updater Add of a kid Google listed with the same material within 24 h is retired: cancelled), the JWKS cron's 55-min removal grace, the watchdog's Remove confirmed on two fetches 60 s apart | Retired only when known > 7 days, unlisted > 6 h and missed by 3+ fetches over 30+ min (else left pending); removal after 24 h missing from every fetch of 3 a run, never with a token in the last 24 h; a Remove confirmed early only after 3+ fetches over 10+ min and no listing for 24 h; `stale_active_key` after 27 h (D422) | `apps/api/src/issuer-keys.ts`, `apps/watchdog/src/run.ts`, migrations API 0012 and watchdog 0002 |
 | D387: the checks run locally before a merge, from a list of commands in docs/operations.md | `pnpm verify` (CI's checks for the change, D383's rules) before every merge into `develop`, `--full` before a deploy; an optional pre-push hook runs `--quick` on pushes to `develop` and `main` (D413) | `scripts/verify.mjs`, `scripts/verify-hook.mjs`, `.githooks/pre-push`; docs/operations.md "CI and git" |

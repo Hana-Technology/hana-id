@@ -425,7 +425,7 @@ export function unchangedSince(row: SettingsRow): string {
 /** The error when the guarded UPDATE matched no row. */
 export const SETTINGS_CHANGED = "The app's settings changed since they were read (another admin:settings or a D1 edit): nothing was written. Run the command again to see and change the current settings.";
 
-// ---- the mainnet demo (D426): `--mainnet-demo on|off`, alone ----
+// ---- the mainnet demo (D428): `--mainnet-demo on|off`, alone ----
 
 /** The flag's value, or undefined when it isn't given. */
 export function parseMainnetDemoArg(args: Args): boolean | undefined {
@@ -444,7 +444,7 @@ export const MAINNET_DEMO_WARNING =
   'WARNING: the mainnet demo lets this test app’s users sign real-funds transactions on Base and Stellar’s public network (up to $9.99 each, every one through the approval popup) with keys from the testnet MPC, which can be lost or stolen. Keep it to the Sodax demo.';
 
 /**
- * Plans `--mainnet-demo on|off` (D426): refused unless the manifest is a dev env on testnet and the app is a test app;
+ * Plans `--mainnet-demo on|off` (D428): refused unless the manifest is a dev env on testnet and the app is a test app;
  * one guarded write (the version and the switch as read) with its `app_changes` row. Null write when already so.
  */
 export function planMainnetDemo(
@@ -454,8 +454,8 @@ export function planMainnetDemo(
   on: boolean,
   ctx: { now: number; actor?: CliActor; requestId?: string },
 ): SettingsPlan {
-  if (!(isDevEnv(m.name) && m.network === 'testnet')) throw new CliError(`--mainnet-demo is refused in ${m.name}: the mainnet demo exists only in a dev env (local*, sandbox*) on testnet (D426)`);
-  if (row.environment !== 'test') throw new CliError('--mainnet-demo is for test apps (pk_test_) only (D426)');
+  if (!(isDevEnv(m.name) && m.network === 'testnet')) throw new CliError(`--mainnet-demo is refused in ${m.name}: the mainnet demo exists only in a dev env (local*, sandbox*) on testnet (D428)`);
+  if (row.environment !== 'test') throw new CliError('--mainnet-demo is for test apps (pk_test_) only (D428)');
   const warnings = on ? [MAINNET_DEMO_WARNING] : [];
   if (current === on) return { write: null, lines: [`mainnet demo: already ${on ? 'on' : 'off'}`], warnings };
   const actor = ctx.actor ?? { id: 'cli' };

@@ -76,7 +76,7 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
   app:settings <app id | publishable key> [--persistence session|none] [--session-ttl <1h..23h50m>]
                [--idle-ttl <15m..session TTL>] [--raw-sign off|approval] [--google-web-client <client id>|default]
                [--auto-approve <policy.json>|off]   (no setting flags: show the settings)
-               [--mainnet-demo on|off]   (alone; a test app in a dev env on testnet only: D426)
+               [--mainnet-demo on|off]   (alone; a test app in a dev env on testnet only: D428)
   scope:register [--client <google client id> …] [--allow-shared] (--owner-near <account> | --owner-google <sub>) […]
                  [--member <council member>] [--approve-with <council member>] [--yes]
   scope:add-email-client --scope <scope id> [--yes]
@@ -145,7 +145,7 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
   appChangeDelayMs after their announcement; --raw-sign off, --auto-approve off and the other settings are immediate.
   Durations: 12h, 23h50m, 15m, 3600000ms. --google-web-client must be one of the scope's Google clients on chain
   (default: the first one). --mainnet-demo on lets a pk_test_ app sign on Base and Stellar's public network, up to
-  $9.99 per transaction through the approval popup (the D39 exception for the Sodax demo, D426); immediate, and refused
+  $9.99 per transaction through the approval popup (the D39 exception for the Sodax demo, D428); immediate, and refused
   unless the manifest is a dev env (local*, sandbox*) on testnet and the app is a test app. Needs migration 0013.`;
 
 const COMMANDS = [

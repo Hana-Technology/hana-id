@@ -1,4 +1,4 @@
--- The mainnet demo exception to D39 and key export events (D426, D428; docs/mainnet-demo-and-key-export-spec.md).
+-- The mainnet demo exception to D39 and key export events (D428, D430; docs/mainnet-demo-and-key-export-spec.md).
 -- Numbered 0013, the next free number on develop (feat/email-sharing's unmerged 0012 takes a later number at its
 -- merge). Applying it is a manual step (docs/operations.md "Migrations"); until then the API serves
 -- `mainnetDemo: false` and records no event (it reads and writes these with a fallback).

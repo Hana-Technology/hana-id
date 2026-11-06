@@ -240,7 +240,7 @@ describe('app:settings ranges', () => {
   });
 });
 
-describe('app:settings --mainnet-demo (D426)', () => {
+describe('app:settings --mainnet-demo (D428)', () => {
   const demo = (id = APP) => Number((h.db.prepare('SELECT mainnet_demo AS m FROM apps WHERE id = ?').get(id) as { m: number }).m);
 
   it('on and off for a test app in a dev testnet env: immediate, a version bump and an app_changes row each, with the warning', async () => {

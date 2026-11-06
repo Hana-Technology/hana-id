@@ -26,7 +26,7 @@ describe('auth page policies', () => {
     // The callback reaches Google's tokeninfo too when the env has an email issuer (token_first, D270; below).
     const tokeninfo = sandbox.emailIssuerUrl ? ' https://oauth2.googleapis.com' : '';
     expect(authPageCsp(sandbox, 'callback')).toBe(`${BASE}; connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev${tokeninfo}; frame-ancestors 'none'`);
-    // sandbox-dev is a dev env on testnet: the approval popup may read a mainnet demo wallet's balance (D427) from
+    // sandbox-dev is a dev env on testnet: the approval popup may read a mainnet demo wallet's balance (D429) from
     // Hana's two pinned endpoints, and nothing else.
     expect(authPageCsp(sandbox, 'approve')).toBe(`${BASE}; connect-src https://mainnet.base.org https://horizon.stellar.org; frame-ancestors 'none'`);
     const { rpcFallback: _fallback, ...oneRpc } = sandbox;
@@ -35,7 +35,7 @@ describe('auth page policies', () => {
     );
   });
 
-  it('a production build’s approval popup fetches nothing: the mainnet demo’s balance reads are dev-env only (D427)', () => {
+  it('a production build’s approval popup fetches nothing: the mainnet demo’s balance reads are dev-env only (D429)', () => {
     expect(authPageCsp({ ...sandbox, devEnv: false }, 'approve')).toBe(`${BASE}; frame-ancestors 'none'`);
     for (const p of AUTH_PAGES.filter((x) => x.name !== 'approve')) {
       expect(authPageCsp(sandbox, p.name)).not.toContain('mainnet.base.org');

@@ -148,7 +148,7 @@ describe('the Support ID lookup screen', () => {
     expect(badges).toEqual(['error']);
   });
 
-  it('lists the user’s key exports and mainnet demo signatures (D426, D428), as text', async () => {
+  it('lists the user’s key exports and mainnet demo signatures (D428, D430), as text', async () => {
     const view = unboundView();
     const user = view.matches[0]!.user as Record<string, unknown>;
     user.events = [

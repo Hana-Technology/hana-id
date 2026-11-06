@@ -641,7 +641,7 @@ export interface PortEventMap {
   /** `timings`: pk_test_ apps only, the vault's boot and unlock stages (timings.ts, UNLOCK_TIMING_STAGES). */
   ready: StatusResult & { warning?: 'storage_unavailable'; timings?: Record<string, number> };
   /**
-   * The mainnet demo (D426): the vault of an app Hana staff switched to it says so, with its rules (sent by a dev
+   * The mainnet demo (D428): the vault of an app Hana staff switched to it says so, with its rules (sent by a dev
    * testnet build only, after the hello and whenever GET /v1/app changes it; null once off). The SDK's EVM provider
    * then lets exactly `evmChains` through its early D39 check; the vault still decides every request. An SDK that
    * predates it drops it.

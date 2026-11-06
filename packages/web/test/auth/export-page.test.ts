@@ -161,7 +161,7 @@ function run(
     isGesture: () => gesture,
     clipboard,
     hasFocus: () => focus,
-    // The guard's clock (D428): 2 s on per read, so its 1 s waits are always over; the arming gesture is still needed.
+    // The guard's clock (D430): 2 s on per read, so its 1 s waits are always over; the arming gesture is still needed.
     guardNow: () => (guardTime += 2000),
   });
   current = win;
@@ -215,7 +215,7 @@ function run(
 }
 
 const button = (label: RegExp) => [...document.querySelectorAll('button')].find((b) => label.test(b.textContent ?? '')) ?? null;
-/** The guard's clock and the window of the run in progress (the guarded buttons need a moving pointer first, D428). */
+/** The guard's clock and the window of the run in progress (the guarded buttons need a moving pointer first, D430). */
 let guardTime = 0;
 let current: { dispatch(type: string, event?: Record<string, unknown>): void } | null = null;
 let pointerX = 0;
@@ -403,7 +403,7 @@ describe('/export resolves the path through get_identity (batch 7) and takes an 
   });
 });
 
-describe('/export: what the user is told and what the API hears (D428)', () => {
+describe('/export: what the user is told and what the API hears (D430)', () => {
   it('warns plainly on the first and the confirm screen: funds, no recovery, never into a website', async () => {
     expect(EXPORT_WARNING).toContain('Anyone with this key controls your funds');
     expect(EXPORT_WARNING).toContain('Hana can’t recover it');
@@ -430,7 +430,7 @@ describe('/export: what the user is told and what the API hears (D428)', () => {
   });
 });
 
-describe('/export: the key never leaves this window (source check, D428)', () => {
+describe('/export: the key never leaves this window (source check, D430)', () => {
   // The page's own source (vitest runs from packages/web; this file's URL isn't a file: one under happy-dom).
   const source = readFileSync(join(process.cwd(), 'src', 'auth', 'export-page.ts'), 'utf8')
     // Comments say what the code must not do; only the code counts here.
@@ -513,7 +513,7 @@ describe('/export', () => {
     expect(cont.disabled).toBe(true);
     input.value = EXPORT_CONFIRMATION;
     input.dispatchEvent(new Event('input'));
-    // Typed, but the guard (D428) waits for the pointer to move in this window first.
+    // Typed, but the guard (D430) waits for the pointer to move in this window first.
     expect(cont.disabled).toBe(true);
     stillClick(cont);
     expect(r.page.state).toBe('confirm');
@@ -892,7 +892,7 @@ describe('/export', () => {
       expect(secret.textContent).toBe('••••••••');
       expect(secret.hasAttribute('data-shown')).toBe(false);
       expect(toggle.textContent).toBe('Show key');
-      // Showing it again needs the window back in focus, then the guard re-armed (D428).
+      // Showing it again needs the window back in focus, then the guard re-armed (D430).
       click(toggle);
       expect(secret.textContent).toBe('••••••••');
       r.win.dispatch('focus');
@@ -914,7 +914,7 @@ describe('/export', () => {
       expect(r.page.state).toBe('closed');
     });
 
-    it('hides a shown key again 60 s after Show (D428); Show shows it again, until the 5 min erase', async () => {
+    it('hides a shown key again 60 s after Show (D430); Show shows it again, until the 5 min erase', async () => {
       expect(EXPORT_SHOW_MS).toBe(60_000);
       const { r, toggle, secret } = await toReveal();
       click(toggle);
@@ -937,7 +937,7 @@ describe('/export', () => {
       expect(secret.textContent).toBe('••••••••');
     });
 
-    it('Continue, Show key and Copy key act only once the guard is armed: a click with no pointer movement first does nothing (D428)', async () => {
+    it('Continue, Show key and Copy key act only once the guard is armed: a click with no pointer movement first does nothing (D430)', async () => {
       const r = run();
       await signIn(r);
       await r.deliver();

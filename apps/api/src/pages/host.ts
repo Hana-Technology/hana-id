@@ -52,7 +52,7 @@ export interface AuthHostEnv {
    */
   FILES_ORIGIN?: string;
   /**
-   * The mainnet demo (D426, D427): '1' in a dev env on testnet only (scripts/pages-wrangler.ts), where `/approve` may
+   * The mainnet demo (D428, D429): '1' in a dev env on testnet only (scripts/pages-wrangler.ts), where `/approve` may
    * read a demo wallet's balance from Hana's two pinned public endpoints (core MAINNET_DEMO_BALANCE_ORIGINS), as the
    * build's meta policy says. Unset: `/approve` fetches nothing.
    */

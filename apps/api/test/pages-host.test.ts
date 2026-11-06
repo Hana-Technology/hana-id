@@ -126,7 +126,7 @@ describe('auth origin Worker', () => {
     }
   });
 
-  it('the approval popup reaches the mainnet demo’s two balance endpoints only in a dev testnet env (D427)', async () => {
+  it('the approval popup reaches the mainnet demo’s two balance endpoints only in a dev testnet env (D429)', async () => {
     expect(csp(await call(authWorker, authEnv({ MAINNET_DEMO_BALANCE: '1' }), `${AUTH}/approve`))).toBe(`${BASE}; frame-ancestors 'none'; connect-src https://mainnet.base.org https://horizon.stellar.org`);
     expect(csp(await call(authWorker, authEnv(), `${AUTH}/approve`))).toBe(`${BASE}; frame-ancestors 'none'`);
     // No other page gets them.

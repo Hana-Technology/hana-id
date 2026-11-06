@@ -58,7 +58,7 @@ export function vaultHost(api: ApiModules, d1: D1Shim, pages: PagesEnv = E2E_PAG
   const apiEnv = {
     DB: d1,
     ENV_NAME: pages.envName,
-    // The manifest's network: the vault page inlines the mainnet demo (D426) only on testnet.
+    // The manifest's network: the vault page inlines the mainnet demo (D428) only on testnet.
     NETWORK: 'testnet',
     API_URL: pages.apiUrl,
     NEAR_RPC: pages.nearRpc,

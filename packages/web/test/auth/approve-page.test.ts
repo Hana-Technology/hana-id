@@ -1158,7 +1158,7 @@ describe('/approve opened by the vault: hana:approve-close', () => {
   });
 });
 
-describe('/approve: the mainnet demo banner (D426, D427)', () => {
+describe('/approve: the mainnet demo banner (D428, D429)', () => {
   const DEMO_NOW = Date.UTC(2026, 10, 10);
   const BASE_TX = { ...TX, chainId: '0x2105', value: '0x38d7ea4c68000' }; // 0.001 ETH: $8 at the table's $8,000
   const baseRequest = (over: Record<string, unknown> = {}) => evmRequest({ bytes: evmTxSigningPayload(parseEvmTxRequest(BASE_TX)), context: { chainId: 8453 }, testApp: true, ...over });

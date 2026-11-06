@@ -141,7 +141,7 @@ export default {
         return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
       }
       if (pathname === MAINNET_DEMO_EVENTS_ENDPOINT) {
-        // Vault only (D426): one mainnet demo signature, reported after it is made.
+        // Vault only (D428): one mainnet demo signature, reported after it is made.
         if (request.method === 'OPTIONS') return vaultPreflight(request, env);
         if (request.method === 'POST') return await handleMainnetDemoEvent(request, env, requestId);
         return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });

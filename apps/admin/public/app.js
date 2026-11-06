@@ -628,7 +628,7 @@ function form(fields, label, action, opts = {}) {
 const usdMicros = (n) => `$${(Math.ceil(n / 10_000) / 100).toFixed(2)}`;
 
 /**
- * The user's key exports and mainnet demo signatures (D426, D428; StaffUser.events), newest first; nothing when the
+ * The user's key exports and mainnet demo signatures (D428, D430; StaffUser.events), newest first; nothing when the
  * answer carries no `events` (a list row, or an older API).
  */
 function userEventsBlock(u) {
@@ -1338,7 +1338,7 @@ async function appPage(main, orgId, appId) {
       {},
       facts([
         ['Raw signing', app.settings.rawSign === 'off' ? 'Off' : `On (${app.settings.rawSign})`],
-        // D426: only in an env where it can be set (a dev env on testnet): the API leaves it out elsewhere.
+        // D428: only in an env where it can be set (a dev env on testnet): the API leaves it out elsewhere.
         ...(app.settings.mainnetDemo === undefined
           ? []
           : [['Mainnet demo', app.settings.mainnetDemo ? 'On: signs on Base and Stellar’s public network, up to $9.99 per transaction, every request through the approval popup' : 'Off: mainnets refused (D39)']]),

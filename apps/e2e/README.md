@@ -12,7 +12,7 @@ HANA_E2E_PORT_BASE=4510 corepack pnpm --filter @hana-id/e2e e2e   # another work
 corepack pnpm --filter @hana-id/e2e test          # unit tests of the stack's mocks (part of `pnpm -r test`)
 ```
 
-The mainnet demo (D426) and the export's guarded reveal (D428): `tests/mainnet-demo.spec.ts` (Horizon and Base's RPC
+The mainnet demo (D428) and the export's guarded reveal (D430): `tests/mainnet-demo.spec.ts` (Horizon and Base's RPC
 routed, never the real network). With `HANA_SHOTS_DIR=<dir>` it also saves its screens there (Chromium only; a shown
 key is masked). Buttons behind the guard (Approve, the export's Continue and Show key) take `approve()` or
 `guardedClick()` (`tests/fixtures.ts`): wait 1 s, move the pointer, then click.

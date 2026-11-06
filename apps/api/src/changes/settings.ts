@@ -126,7 +126,7 @@ export async function turnOff(db: HotDb, w: Writer, i: { orgId: string | null; a
 }
 
 /**
- * AdminRpc.setMainnetDemo (D426): Hana staff switch the mainnet demo exception to D39 on or off, at once (a test app
+ * AdminRpc.setMainnetDemo (D428): Hana staff switch the mainnet demo exception to D39 on or off, at once (a test app
  * in a dev env on testnet only; migration 0013's triggers refuse it for a live scope whatever writes it). ConsoleRpc
  * has no such method: a partner can't set it. Answers the current version unchanged when it is already so.
  */

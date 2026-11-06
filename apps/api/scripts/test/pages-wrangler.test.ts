@@ -74,7 +74,7 @@ describe('page Worker configs', () => {
   it('auth: AUTH_ORIGIN plus apiUrl and rpc for the CSP, and no service binding', () => {
     const config = pagesWranglerConfig(manifest, 'auth', COMPATIBILITY_DATE);
     // sandbox-dev sets rpcFallback, which joins the export page's connect-src.
-    // A dev env on testnet: /approve may read a mainnet demo wallet's balance (D427).
+    // A dev env on testnet: /approve may read a mainnet demo wallet's balance (D429).
     const demo = { MAINNET_DEMO_BALANCE: '1' };
     expect(config.vars).toEqual({ AUTH_ORIGIN: manifest.authOrigin, API_URL: manifest.apiUrl, NEAR_RPC: manifest.rpc, NEAR_RPC_FALLBACK: manifest.rpcFallback, ...demo });
     expect(config).not.toHaveProperty('services');

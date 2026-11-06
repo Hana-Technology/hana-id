@@ -318,7 +318,7 @@ export const EXPORT_START_MS = 5 * 60_000;
 export const EXPORT_MAX_MS = 15 * 60_000;
 /** "Signed by Hana under {label}" shows this long. */
 export const AUTO_APPROVED_FLASH_MS = 3_000;
-/** How long the launcher says why the mainnet demo refused a request (D426). */
+/** How long the launcher says why the mainnet demo refused a request (D428). */
 export const DEMO_REFUSAL_FLASH_MS = 6_000;
 /** While logged in with a policy in force, GET /v1/app is re-read this often (keeps hana_autoApproveStatus current). */
 export const POLICY_REFRESH_MS = 60_000;
@@ -357,7 +357,7 @@ export class Vault {
   /** Server-corrected time of the last GET /v1/app (or page render) that confirmed `rawSign`. */
   private rawSignCheckedAt: number;
   /**
-   * The mainnet demo (D426): whether the last GET /v1/app said `mainnetDemo: true`, and when (server-corrected). Read
+   * The mainnet demo (D428): whether the last GET /v1/app said `mainnetDemo: true`, and when (server-corrected). Read
    * only for a mainnet request of a test app in a dev testnet build; unknown until then.
    */
   private mainnetDemo = false;
@@ -526,7 +526,7 @@ export class Vault {
     port.onmessage = (m) => void this.onPortMessage(m.data);
     // Before storage and the unlock: the SDK's answer deadline only covers the frame's load and this hello.
     this.emit('connected', null);
-    // The mainnet demo's state (D426), before `ready`, so the SDK's provider knows it before a page switches chains.
+    // The mainnet demo's state (D428), before `ready`, so the SDK's provider knows it before a page switches chains.
     this.announceMainnetDemo();
     this.started = this.start();
   }
@@ -673,7 +673,7 @@ export class Vault {
   }
 
   /**
-   * Whether this build may sign under the mainnet demo at all (D426): a dev env on testnet, from the build's own
+   * Whether this build may sign under the mainnet demo at all (D428): a dev env on testnet, from the build's own
    * constants. A production build never reads the app's setting.
    */
   private get demoBuild(): boolean {
@@ -697,7 +697,7 @@ export class Vault {
   private announcedDemo = false;
 
   /**
-   * Tells the SDK whether this app has the mainnet demo on, with its rules (the `mainnetDemo` port event, D426), when
+   * Tells the SDK whether this app has the mainnet demo on, with its rules (the `mainnetDemo` port event, D428), when
    * it changes: once after the hello, then whenever GET /v1/app changes it. A dev testnet build only: a production
    * build never sends it. The SDK's EVM provider opens its early check for exactly these chains; this vault still
    * decides every request.
@@ -1401,7 +1401,7 @@ export class Vault {
     const addresses = this.addresses();
     if (!addresses) return;
     if (isSignMethod(r.method)) {
-      // In a build that may sign under the mainnet demo (D426), a mainnet request's network check waits for sign(),
+      // In a build that may sign under the mainnet demo (D428), a mainnet request's network check waits for sign(),
       // which reads whether the app has the demo on (fresh) before deciding; every other check runs here.
       const deferMainnet = this.demoBuild && Vault.namesMainnet(r as SignRequest);
       approvalSubject(r as SignRequest, addresses, { rawSign: 'approval', testApp: this.testApp && !deferMainnet, reservedEvmDigests: this.reservedEvmDigests(addresses.evm) });
@@ -2077,7 +2077,7 @@ export class Vault {
     // A test app's raw request is refused outright (approvalSubject), with no API read.
     const rawSign: RawSign = request.method === 'hana_signRaw' && !this.testApp ? await this.freshRawSign() : 'off';
     if (this.live() !== s) throw disconnected();
-    // A test app's mainnet request (D39) is signed only under the mainnet demo (D426), confirmed fresh.
+    // A test app's mainnet request (D39) is signed only under the mainnet demo (D428), confirmed fresh.
     const demo = this.testApp && Vault.namesMainnet(request);
     const mainnetDemo = demo ? await this.freshMainnetDemo() : null;
     if (this.live() !== s) throw disconnected();
@@ -2116,7 +2116,7 @@ export class Vault {
   }
 
   /**
-   * The mainnet demo's usage event (D426): what was signed, on which network, for how much, from which address; never
+   * The mainnet demo's usage event (D428): what was signed, on which network, for how much, from which address; never
    * a key, a signature or the transaction's bytes. Best effort: a failure never touches the signature.
    */
   private reportDemoSignature(subject: ReturnType<typeof approvalSubject>): void {

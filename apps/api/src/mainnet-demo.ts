@@ -1,4 +1,4 @@
-// The mainnet demo exception to D39 and the user events staff see (D426, D428; docs/mainnet-demo-and-key-export-spec.md):
+// The mainnet demo exception to D39 and the user events staff see (D428, D430; docs/mainnet-demo-and-key-export-spec.md):
 // - whether an app has the demo on, as GET /v1/app serves it: only in a dev env on testnet, only for a test scope, only
 //   when Hana staff set `apps.mainnet_demo` (migration 0013); anything unreadable is off;
 // - POST /v1/mainnet-demo/events: the vault's report of one demo signature (no key, signature or signed bytes), stored

@@ -14,7 +14,7 @@
 // window's control (D268): the page only tries to blank the clipboard (60 s after the last copy, at the erase and at
 // pagehide, while it has focus), and never reads it.
 //
-// Added for D428 (the user, 2026-11-06: "an option to let the user export their private key just in case anything goes
+// Added for D430 (the user, 2026-11-06: "an option to let the user export their private key just in case anything goes
 // wrong"): a shown key hides again EXPORT_SHOW_MS (60 s) after Show; Continue, Show key and Copy key are armed by the
 // approval popup's guard (approve-guard.ts: 1 s after the screen and the window's focus, then a moving pointer or Tab,
 // and a click that starts after it), so a click carried from the launcher or a coached Enter reveals nothing; the
@@ -87,9 +87,9 @@ export const EXPORT_CONFIRMATION = 'EXPORT';
 export const EXPORT_KEY_LIFETIME_MS = 5 * 60_000;
 /** How long after the last copy the window tries to blank the clipboard (D268). */
 export const EXPORT_CLIPBOARD_CLEAR_MS = 60_000;
-/** How long a shown key stays on screen before it hides again (D428); Show key shows it again. */
+/** How long a shown key stays on screen before it hides again (D430); Show key shows it again. */
 export const EXPORT_SHOW_MS = 60_000;
-/** The first screen's warning (D428): what the key is, in plain words. */
+/** The first screen's warning (D430): what the key is, in plain words. */
 export const EXPORT_WARNING =
   'Anyone with this key controls your funds at this address, in every app and wallet. Hana can’t recover it for you or undo what someone does with it. Never paste it into a website, and never share it with anyone, including Hana.';
 /** How long "Copy key" says "Copied". */
@@ -126,7 +126,7 @@ export interface ExportPageDeps {
   clipboard?: ExportClipboard | null;
   /** Whether this window has focus (default: `document.hasFocus()`); a clipboard write without it is refused. */
   hasFocus?: () => boolean;
-  /** The guard's clock (default: Date.now; tests inject one): Continue, Show key and Copy key wait for it (D428). */
+  /** The guard's clock (default: Date.now; tests inject one): Continue, Show key and Copy key wait for it (D430). */
   guardNow?: () => number;
 }
 
@@ -187,7 +187,7 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
   const hasFocus = deps.hasFocus ?? (() => win.document.hasFocus());
   const d: Dom = dom(win.document);
   const opener = win.opener;
-  // The buttons that reveal or copy the key, armed by the approval popup's guard (D428); each may add a condition of
+  // The buttons that reveal or copy the key, armed by the approval popup's guard (D430); each may add a condition of
   // its own (Continue: the typed confirmation).
   let guarded: { el: HTMLButtonElement; ready: () => boolean }[] = [];
   const visibleNow = () => win.document.visibilityState !== 'hidden';
@@ -693,7 +693,7 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
         signature: jsonBytes(signature),
         pk1,
         pk2,
-        // The API's key_exported event names the chain (D428): a label only, never relayed or in the nonce.
+        // The API's key_exported event names the chain (D430): a label only, never relayed or in the nonce.
         exportChain: ctx.chain,
       };
       idToken = null;
@@ -801,7 +801,7 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
     const status = d.h('p', { class: 'copy-status', attrs: { role: 'status' } });
     let shown = false;
     let copiedLabel: ReturnType<typeof setTimeout> | null = null;
-    /** Hides a shown key again EXPORT_SHOW_MS after Show (D428). */
+    /** Hides a shown key again EXPORT_SHOW_MS after Show (D430). */
     let showTimer: ReturnType<typeof setTimeout> | null = null;
     newScreen();
     // Show needs the guard; Hide never does (the toggle is ready while the key is shown).

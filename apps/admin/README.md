@@ -38,7 +38,7 @@ on-chain path read live (`get_identity`, `get_account`). The issuer verifies the
 and caps each staff member at 500 identities an hour and 2 000 a day; past that the read is refused and the security
 alias is emailed. No export.
 
-**Key exports and mainnet demo signatures (D426, D428).** The Users detail and each Support ID lookup match list the
+**Key exports and mainnet demo signatures (D428, D430).** The Users detail and each Support ID lookup match list the
 user's key exports (`key_exported`, recorded by the API at the export window's sign-in) and the mainnet demo signatures
 from their wallets (as the vault reported them), from `user_events`. The app page's **Signing settings** card has the
 mainnet demo switch in a dev testnet env, for a test app only (`POST /api/apps/:app/mainnet-demo`).

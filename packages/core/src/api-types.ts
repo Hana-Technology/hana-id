@@ -24,7 +24,7 @@ export interface AppConfig {
    */
   rawSign?: 'off' | 'approval';
   /**
-   * Hana's mainnet demo exception to D39 (D426): true only for a `pk_test_` app Hana staff switched on, in a dev testnet
+   * Hana's mainnet demo exception to D39 (D428): true only for a `pk_test_` app Hana staff switched on, in a dev testnet
    * env. The vault re-reads it before every mainnet request (within 10 s, as `rawSign`) and treats a missing value as
    * false; its own build must also be a dev testnet build.
    */
@@ -108,7 +108,7 @@ export interface LoginBody extends CreateSessionBody {
   linkJwt?: string;
   linkImmediate?: boolean;
   /**
-   * The export window only (D428): which chain's key it is exporting, a label for the API's `key_exported` event. Not in
+   * The export window only (D430): which chain's key it is exporting, a label for the API's `key_exported` event. Not in
    * the session nonce, the contract call or the CKD payload; the API refuses it from any other page.
    */
   exportChain?: 'stellar' | 'evm';

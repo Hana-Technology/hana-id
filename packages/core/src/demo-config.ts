@@ -1,4 +1,4 @@
-// The mainnet demo's constants (D426, D427) that the API Worker and the auth host need without the rest of core (no
+// The mainnet demo's constants (D428, D429) that the API Worker and the auth host need without the rest of core (no
 // imports, so `@hana-id/core/demo-config` adds nothing else to a bundle). The valuation that uses them is
 // `@hana-id/core/mainnet-demo`; the partner client's chain check is networks.ts.
 
@@ -12,7 +12,7 @@ export const MAINNET_DEMO_EVM_CHAINS: readonly number[] = Object.freeze([8453]);
 export const MAINNET_DEMO_TX_CAP_USD_MICROS = 9_990_000n;
 
 /**
- * Where the approval popup reads a mainnet demo wallet's balance (D427): public endpoints Hana pins, never the
+ * Where the approval popup reads a mainnet demo wallet's balance (D429): public endpoints Hana pins, never the
  * partner's RPC (which could say anything). Listed in `/approve`'s CSP `connect-src` in dev-env builds only.
  */
 export const MAINNET_DEMO_BALANCE_ENDPOINTS = Object.freeze({

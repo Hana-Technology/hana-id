@@ -24,7 +24,7 @@ export interface VaultConfig {
   appName: string;
   scopeId: string;
   origins: string[];
-  /** `mainnetDemo: true` only for an app with the demo on, in a dev testnet env (D426); absent otherwise. */
+  /** `mainnetDemo: true` only for an app with the demo on, in a dev testnet env (D428); absent otherwise. */
   settings: AppSettings & { mainnetDemo?: true };
   publishableKey: string;
   serverTimeMs: number;
@@ -120,7 +120,7 @@ export async function handleVaultPage(request: Request, env: Env, requestId: str
     const row = await getSettingsRow(env.DB, app.id);
     if (!row) return errorPage(403, requestId, app.id, 'unknown_app', head);
     settings = await effectiveSettings(row, app.id, Date.now());
-    // The mainnet demo (D426): the vault tells the SDK early; only when on (a vault bundle older than the field
+    // The mainnet demo (D428): the vault tells the SDK early; only when on (a vault bundle older than the field
     // would refuse an unknown key, and only demo apps in dev envs ever get it). Off on any read failure.
     mainnetDemo = await mainnetDemoOn(env, app);
   } catch {

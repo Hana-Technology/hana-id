@@ -93,7 +93,7 @@ export function pagesWranglerConfig(m: Manifest, origin: PageOrigin, compatibili
             ...(m.emailIssuer ? { EMAIL_ISSUER_URL: emailIssuerUrl(m) } : {}),
             // Batch C11: the logo pages' img-src names the files origin (the build's meta policy does too).
             ...(m.files ? { FILES_ORIGIN: m.files.origin } : {}),
-            // The mainnet demo (D426): /approve reads a demo wallet's balance, in a dev env on testnet only.
+            // The mainnet demo (D428): /approve reads a demo wallet's balance, in a dev env on testnet only.
             ...(isDevEnv(m.name) && m.network === 'testnet' ? { MAINNET_DEMO_BALANCE: '1' } : {}),
           },
     // The Worker runs first on every request: it alone decides which paths exist and sets the pages' headers.

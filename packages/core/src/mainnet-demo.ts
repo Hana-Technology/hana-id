@@ -1,4 +1,4 @@
-// The mainnet demo exception to D39 (docs/mainnet-demo-and-key-export-spec.md, D426, D427): a `pk_test_` app that Hana
+// The mainnet demo exception to D39 (docs/mainnet-demo-and-key-export-spec.md, D428, D429): a `pk_test_` app that Hana
 // staff switched to `mainnet_demo` in a dev testnet env may sign on Base (8453) and Stellar's public network, one
 // transaction at a time, only when Hana can value everything the transaction can move out and the total, fee
 // included, is at most MAINNET_DEMO.txCapUsdMicros. The vault enforces it (vault/signing.ts) before any popup; the
@@ -56,7 +56,7 @@ export interface DemoStellar {
 
 /**
  * The reviewed config (2026-11-06; identifiers from Circle's USDC contract addresses page and @sodax/sdk 2.2.0's
- * packaged config, pinned by test/mainnet-demo.test.ts). Prices are above the market on purpose (D427, to confirm).
+ * packaged config, pinned by test/mainnet-demo.test.ts). Prices are above the market on purpose (D429, to confirm).
  */
 export const MAINNET_DEMO = Object.freeze({
   reviewedAt: '2026-11-06',

@@ -197,7 +197,7 @@ export async function adminGetUser(db: HotDb, id: { userId?: string | undefined;
 }
 
 /**
- * The users with their `events` (D426, D428): key exports by internal id, mainnet demo signatures by the users'
+ * The users with their `events` (D428, D430): key exports by internal id, mainnet demo signatures by the users'
  * wallet addresses, newest first, at most STAFF_USER_EVENTS_MAX each. One read for all of them. A missing table
  * (migration 0013 not applied) or a failed read leaves `events` empty, so the Users screen never breaks on it.
  */

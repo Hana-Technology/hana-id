@@ -229,7 +229,7 @@ describe('GET {vaultOrigin}/vault', () => {
   });
 });
 
-describe('the mainnet demo on the vault page (D426)', () => {
+describe('the mainnet demo on the vault page (D428)', () => {
   it('inlines mainnetDemo: true only for an app with the demo on, in a dev testnet env; absent otherwise', async () => {
     const app = await seedApp();
     const settingsOf = async (bindings?: Partial<typeof env>) => inlinedConfig(await (await vaultPage(app.key, bindings ? { env: bindings } : {})).text())!.settings as Record<string, unknown>;

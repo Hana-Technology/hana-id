@@ -43,7 +43,7 @@ const originOf = (url: string): string => new URL(url).origin;
 
 type CspEnv = Pick<HanaEnv, 'apiUrl' | 'rpc' | 'rpcFallback' | 'emailIssuerUrl' | 'filesOrigin'> & Partial<Pick<HanaEnv, 'devEnv' | 'network'>>;
 
-/** Whether this build may show the mainnet demo's balance line (D426): a dev env on testnet only. */
+/** Whether this build may show the mainnet demo's balance line (D428): a dev env on testnet only. */
 export const demoBalanceBuild = (env: CspEnv): boolean => env.devEnv === true && env.network === 'testnet';
 
 /**
@@ -93,7 +93,7 @@ export function connectSources(env: CspEnv, page: AuthPageName): string[] {
       ];
     case 'approve':
       // The popup decodes and renders what the vault sent. In a dev testnet build it also reads a mainnet demo wallet's
-      // balance from Hana's two pinned public endpoints (D427); a production build fetches nothing.
+      // balance from Hana's two pinned public endpoints (D429); a production build fetches nothing.
       return demoBalanceBuild(env) ? [...MAINNET_DEMO_BALANCE_ORIGINS] : [];
   }
 }

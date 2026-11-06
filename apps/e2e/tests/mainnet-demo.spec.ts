@@ -1,4 +1,4 @@
-// The mainnet demo exception to D39 (D426, D427) and the key export additions (D428), in the real pages: a test app
+// The mainnet demo exception to D39 (D428, D429) and the key export additions (D430), in the real pages: a test app
 // with Hana's demo switch on signs a small Stellar public-network payment through the approval popup, which shows the
 // red banner, the request's value and the wallet's balance (read from Hana's pinned Horizon, routed here); a payment
 // over the $9.99 cap is refused before any popup, with the launcher saying why; an app without the switch is refused

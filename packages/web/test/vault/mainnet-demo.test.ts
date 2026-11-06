@@ -1,4 +1,4 @@
-// The mainnet demo exception to D39 in the vault (D426, D427; docs/mainnet-demo-and-key-export-spec.md): a pk_test_
+// The mainnet demo exception to D39 in the vault (D428, D429; docs/mainnet-demo-and-key-export-spec.md): a pk_test_
 // app with `mainnetDemo` on, in a dev testnet build, signs on Base and Stellar's public network through the approval
 // popup, under the per-transaction cap; everything else stays refused before any popup. The valuation's own cases
 // are in packages/core/test/mainnet-demo.test.ts.

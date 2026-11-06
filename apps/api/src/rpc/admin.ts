@@ -109,7 +109,7 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
     return runRpc(this.env, 'admin.turnOff', turnOffInput, c, { actors: HANA }, ({ input, db, w }) => turnOff(db, w, input));
   }
 
-  /** The mainnet demo exception to D39 (D426): Hana staff only, a test app in a dev testnet env only. */
+  /** The mainnet demo exception to D39 (D428): Hana staff only, a test app in a dev testnet env only. */
   setMainnetDemo(c: unknown) {
     return runRpc(this.env, 'admin.setMainnetDemo', setMainnetDemoInput, c, { actors: HANA }, ({ input, db, w }) => setMainnetDemo(db, this.env, w, input));
   }

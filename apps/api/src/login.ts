@@ -70,7 +70,7 @@ export function toLogin(body: unknown, scopeId: string, now = Date.now()): Check
   if (linkJwt !== undefined && !(isToken(linkJwt) && isJsonForm(linkJwt))) return { error: 'linkJwt must be an email token' };
   if (linkImmediate !== undefined && typeof linkImmediate !== 'boolean') return { error: 'linkImmediate must be a boolean' };
   if (linkImmediate !== undefined && linkJwt === undefined) return { error: 'linkImmediate needs a linkJwt' };
-  // The export window's label for the key_exported event (D428): never relayed, never in the nonce or the CKD payload.
+  // The export window's label for the key_exported event (D430): never relayed, never in the nonce or the CKD payload.
   if (exportChain !== undefined && exportChain !== 'stellar' && exportChain !== 'evm') return { error: "exportChain must be 'stellar' or 'evm'" };
   const link = linkJwt === undefined ? null : { link_jwt: linkJwt, link_immediate: linkImmediate === true };
   return {
@@ -150,7 +150,7 @@ async function login(request: Request, env: Env, ctx: Ctx, exec?: ExecutionConte
   const session = { signer: env.SIGNER_ACCOUNT, scopeId: app.scope_id, ...req };
   const expected = await sessionNonce(session);
   if (token.nonce !== expected) return reject(ctx, 400, 'nonce_mismatch', 'The ID token nonce does not commit to this session');
-  // Only the export window labels its login (D428).
+  // Only the export window labels its login (D430).
   if (req.exportChain !== null && gate.caller.page !== 'auth') return reject(ctx, 400, 'bad_request', 'Only an export carries exportChain');
   let link: LoginToken | null = null;
   if (req.linkJwt !== null) {
@@ -257,7 +257,7 @@ async function login(request: Request, env: Env, ctx: Ctx, exec?: ExecutionConte
     // only the fail-open guess (a member's root unknown) or the env can't write the directory.
     const root = linkedRoot ?? (standing.confirmed ? (standing.member?.root ?? { provider: token.provider, sub: token.sub }) : null);
     const supportId = root ? await sessionSupportId(env, app.scope_id, root) : undefined;
-    // An export (D428): the key can now reach the export window, so staff see a key_exported event for the account's
+    // An export (D430): the key can now reach the export window, so staff see a key_exported event for the account's
     // user (the root whose path the session opened; a member's root when it isn't confirmed yet). No key, token or path.
     if (gate.caller.page === 'auth') {
       const exportRoot = root ?? standing.member?.root ?? { provider: token.provider, sub: token.sub };

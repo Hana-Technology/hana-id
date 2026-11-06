@@ -1,4 +1,4 @@
-// The mainnet demo's balance line in the approval popup (D426, D427): how much the wallet holds on the request's
+// The mainnet demo's balance line in the approval popup (D428, D429): how much the wallet holds on the request's
 // network, in USD at the reviewed (deliberately high) prices, native asset plus the priced tokens. Read from the
 // public endpoints Hana pins (core networks.ts MAINNET_DEMO_BALANCE_ENDPOINTS), never the partner's RPC; only public
 // data goes out (the address), nothing comes back that the popup acts on except to show a number. Anything that fails,

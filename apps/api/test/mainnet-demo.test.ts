@@ -1,4 +1,4 @@
-// The mainnet demo's API side and the key export event (D426, D428; docs/mainnet-demo-and-key-export-spec.md): GET
+// The mainnet demo's API side and the key export event (D428, D430; docs/mainnet-demo-and-key-export-spec.md): GET
 // /v1/app serves `mainnetDemo` only for a test app with the switch on in a dev testnet env; migration 0013's triggers
 // refuse the switch on a live app; POST /v1/mainnet-demo/events stores the vault's report (vault page only, the demo
 // on, exact fields, within the cap); the export window's /v1/login records `key_exported` without key material.
@@ -30,7 +30,7 @@ async function demoApp(on = true) {
   return { app, aud };
 }
 
-describe('GET /v1/app: mainnetDemo (D426)', () => {
+describe('GET /v1/app: mainnetDemo (D428)', () => {
   const get = (app: { key: string }, bindings?: Partial<typeof env>) => call('/v1/app', { headers: appHeaders(app), env: bindings });
 
   it('is false by default and true once Hana staff set the switch, for a test app in a dev testnet env', async () => {
@@ -69,7 +69,7 @@ describe('migration 0013', () => {
   });
 });
 
-describe('POST /v1/mainnet-demo/events (D426)', () => {
+describe('POST /v1/mainnet-demo/events (D428)', () => {
   it('stores the vault’s report of a demo signature, and nothing else', async () => {
     const { app } = await demoApp();
     const res = await report(app, event());
@@ -121,7 +121,7 @@ describe('POST /v1/mainnet-demo/events (D426)', () => {
   });
 });
 
-describe('AdminRpc.setMainnetDemo (D426)', () => {
+describe('AdminRpc.setMainnetDemo (D428)', () => {
   const staffRpc = (bindings: Partial<typeof env> = {}) => new AdminRpc(createExecutionContext(), { ...env, ...bindings });
   const version = async (appId: string) => (await env.DB.prepare('SELECT settings_version AS v FROM apps WHERE id = ?1').bind(appId).first<{ v: number }>())!.v;
   const stored = async (appId: string) => (await env.DB.prepare('SELECT mainnet_demo AS m FROM apps WHERE id = ?1').bind(appId).first<{ m: number }>())!.m;
@@ -166,7 +166,7 @@ describe('AdminRpc.setMainnetDemo (D426)', () => {
   });
 });
 
-describe('key_exported (D428)', () => {
+describe('key_exported (D430)', () => {
   it('the export window’s login records the event for the account’s user, with its chain, and no key, token or path', async () => {
     const { app, aud } = await demoApp(false);
     withCombinedCall(chain({ [aud]: app.scope }));

@@ -389,7 +389,7 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
       serverTimeMs: Date.now(),
       autoApprovePolicy,
       rawSign,
-      // D426: the mainnet demo, on only for a test app Hana staff switched on, in a dev testnet env.
+      // D428: the mainnet demo, on only for a test app Hana staff switched on, in a dev testnet env.
       mainnetDemo,
       // Batch C11: the app's logo on the files origin (`<FILES_ORIGIN>/<logo_key>`), or null (no logo, or no files
       // origin in this env). The auth pages show it beside the name; older clients ignore the field.

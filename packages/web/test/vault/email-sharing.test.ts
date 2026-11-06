@@ -23,6 +23,10 @@ import {
   readyTab,
   tokenClaims,
   waitLauncher,
+  emailClaims,
+  emailIssuer,
+  enableEmail,
+  deliverToken,
 } from './harness.ts';
 
 const SEALED = `se1.${'A'.repeat(60)}`;
@@ -99,6 +103,37 @@ describe('the sealed address', () => {
     t.browser.backend.identityEmailStatus = 'included';
     expect((await t.request('hana_identityToken')).error).toBeUndefined();
     expect(session(t).emailState).toBe('granted');
+  });
+});
+
+describe('where the session’s sealed address comes from (D419)', () => {
+  it('an email login: beside the email token in the relay (a malformed one is dropped); kept in the record', async () => {
+    const issuer = await emailIssuer();
+    for (const [sent, kept] of [[SEALED, SEALED], ['not a blob', null]] as const) {
+      const b = new Browser();
+      enableEmail(b.backend, issuer);
+      const t = await tab(b, { env: EMAIL_ENV });
+      const pending = t.request('hana_login');
+      const run = await popupHello(t);
+      const token = await issuer.token(emailClaims(run.params, {}, b.timers.now));
+      if (kept) await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: token, sealedEmail: sent } as RelayPayload);
+      else await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: token });
+      expect((await pending).error).toBeUndefined();
+      expect(session(t).sealedEmail).toBe(kept);
+    }
+  });
+
+  it('a Google login of an app with email: google-match’s answer', async () => {
+    const issuer = await emailIssuer();
+    const b = new Browser();
+    enableEmail(b.backend, issuer);
+    b.backend.googleMatch = () => ({ decision: 'none', googleHosted: true, linkable: true, sealedEmail: SEALED });
+    const t = await tab(b, { env: EMAIL_ENV, options: { googleEmailFlow: 'second_request' } });
+    const pending = t.request('hana_login', { method: 'google' });
+    const run = await popupHello(t);
+    await deliverToken(t, g, run);
+    expect((await pending).error).toBeUndefined();
+    expect(session(t).sealedEmail).toBe(SEALED);
   });
 });
 

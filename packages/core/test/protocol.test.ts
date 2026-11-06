@@ -338,6 +338,23 @@ const VALID_WINDOW: Record<WindowMessageType, Record<string, unknown>> = {
   },
   'hana:consent-result': { v: 1, t: 'hana:consent-result', id: newRequestId(), allowed: true, digest: new Uint8Array(32) },
   'hana:auto-approve-stop': { v: 1, t: 'hana:auto-approve-stop' },
+  'hana:email-share-hello': { v: 1, t: 'hana:email-share-hello' },
+  'hana:email-share-request': {
+    v: 1,
+    t: 'hana:email-share-request',
+    pk: 'pk_test_1111111111111111',
+    appName: 'Partner',
+    parentOrigin: 'https://partner.example',
+    ownGoogleClient: false,
+    state: 'not_asked',
+    sealedEmail: `se1.${'A'.repeat(40)}`,
+    proof: { sessionPublicKey: new Uint8Array(32), issuedAtMs: 1, nonce: new Uint8Array(16), signature: new Uint8Array(64) },
+  },
+  'hana:email-share-close': { v: 1, t: 'hana:email-share-close' },
+  'hana:email-share-answer': { v: 1, t: 'hana:email-share-answer', answer: 'declined' },
+  'hana:email-share-done': { v: 1, t: 'hana:email-share-done', state: 'granted' },
+  'hana:email-revoke': { v: 1, t: 'hana:email-revoke' },
+  'hana:email-revoked': { v: 1, t: 'hana:email-revoked', ok: true },
 };
 const TYPES = Object.keys(VALID_WINDOW) as WindowMessageType[];
 

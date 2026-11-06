@@ -4,7 +4,7 @@
 //
 // SECURITY: `start` carries the address, `verify` the code, and `verify` answers the email token and a device ticket.
 // Nothing here logs a body or puts one in an error message; errors carry the issuer's code only.
-import { ApiError, type CaseBProof, parseApiResponse } from '@hana-id/core';
+import { ApiError, type CaseBProof, isSealedEmailText, parseApiResponse } from '@hana-id/core';
 import { CHALLENGE_ID_RE, DEVICE_TICKET_RE } from './email-storage.ts';
 
 export type Fetch = typeof fetch;
@@ -26,8 +26,11 @@ export interface Challenge {
 }
 
 export type Verified =
-  /** The address's email token (JWS JSON) and this device's ticket for it. */
-  | { kind: 'token'; idToken: string; deviceTicket: string | null }
+  /**
+   * The address's email token (JWS JSON) and this device's ticket for it; `sealedEmail` (D419), a `session` token's
+   * sealed address for the API, relayed beside the token (opaque here), when the issuer sent one.
+   */
+  | { kind: 'token'; idToken: string; deviceTicket: string | null; sealedEmail?: string }
   /**
    * Case B (D119): a Google identity that reported this address has the wallet in this scope, the email identity has
    * none, so no token is minted: the popup continues with Google (batch 8a: a plain Google login, no link).
@@ -101,7 +104,7 @@ export function emailApi(issuerUrl: string, fetchFn: Fetch = (...args) => fetch(
         return link ? { kind: 'google_wallet', deviceTicket, link } : { kind: 'google_wallet', deviceTicket };
       }
       if (body.googleWallet !== false || typeof body.idToken !== 'string' || !body.idToken.startsWith('{')) throw bad('verify');
-      return { kind: 'token', idToken: body.idToken, deviceTicket };
+      return { kind: 'token', idToken: body.idToken, deviceTicket, ...(isSealedEmailText(body.sealedEmail) ? { sealedEmail: body.sealedEmail } : {}) };
     },
   };
 }

@@ -53,12 +53,19 @@ class ApiError extends Error {
   }
 }
 
-async function api(method, path, body) {
-  const init = { method, headers: { accept: 'application/json' }, credentials: 'same-origin' };
-  if (method !== 'GET') {
+/**
+ * One `/api/*` request, as sent. `redirect: 'manual'`: when the Access session has ended, Cloudflare Access answers
+ * with a redirect to its login page on another origin; followed, the browser blocks it (CORS) and the page would see
+ * a network error. Not followed, it is an `opaqueredirect` (status 0), told apart from a real network failure (which
+ * rejects). Returns the Response, or EXPIRED for that redirect or the Worker's own 401 (no valid Access token).
+ */
+const EXPIRED = Symbol('expired');
+async function send(method, path, bodyText) {
+  const init = { method, headers: { accept: 'application/json' }, credentials: 'same-origin', redirect: 'manual' };
+  if (bodyText !== undefined) {
     init.headers['content-type'] = 'application/json';
     init.headers['x-hana-admin'] = '1';
-    init.body = JSON.stringify(body || {});
+    init.body = bodyText;
   }
   let res;
   try {
@@ -66,9 +73,238 @@ async function api(method, path, body) {
   } catch {
     throw new ApiError(0, 'network', 'The browser could not reach the admin console');
   }
-  const data = await res.json().catch(() => null);
-  if (!res.ok) throw new ApiError(res.status, data?.error?.code || 'error', data?.error?.message || `HTTP ${res.status}`);
-  return data;
+  if (res.type === 'opaqueredirect' || res.status === 0 || (res.status >= 300 && res.status < 400) || res.status === 401) return EXPIRED;
+  return res;
+}
+
+async function api(method, path, body) {
+  // The body is serialised once: a retry after a new sign-in sends exactly these bytes again.
+  const bodyText = method !== 'GET' ? JSON.stringify(body || {}) : undefined;
+  for (;;) {
+    const res = await send(method, path, bodyText);
+    if (res === EXPIRED) {
+      // Nothing was done: the request waits here (its page and the typed values untouched) until "Try again".
+      await session.waitForSignIn();
+      continue;
+    }
+    session.answered();
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new ApiError(res.status, data?.error?.code || 'error', data?.error?.message || `HTTP ${res.status}`);
+    return data;
+  }
+}
+
+// ---- the Access sign-in: its end, said before and when it happens ----
+
+/** The warning shows this long before the Access token's `exp` (GET /api/me `accessExp`). */
+const WARN_BEFORE_MS = 5 * 60_000;
+/** How often the countdown is redrawn (and, past `exp`, the sign-in checked). */
+const SESSION_TICK_MS = 15_000;
+/** The page "Sign in again" and "Renew" open in a new tab: Access signs the staff member in there; it says what next. */
+const SIGNED_IN_PATH = '/signed-in';
+
+const session = {
+  /** The Access token's expiry (ms), from GET /api/me; null when unknown. */
+  expMs: null,
+  /** The sign-in has ended: a request was redirected to Access or answered 401, or a check past `exp` found it so. */
+  expired: false,
+  /** A retry or a check still found no sign-in: the banner says so. */
+  stillOut: false,
+  /** A check found a new sign-in while requests still wait: the banner asks for Try again to send them. */
+  back: false,
+  /** Set by Renew: the next look at this tab re-reads `exp`, and the banner says what that found. */
+  renewing: false,
+  /** A Renew didn't move `exp` (Access renews a sign-in only once it has ended). */
+  renewKept: false,
+  /** "Try again" was pressed: a redirect that follows it means the sign-in still hasn't happened. */
+  retried: false,
+  /** Requests waiting for a new sign-in: {page, resume, drop}. */
+  waiting: [],
+  timer: null,
+  checking: false,
+
+  /** The sign-in has ended (again): `announce` when this is news (a new alert, read out once). */
+  ended() {
+    if (this.retried) this.stillOut = true;
+    this.retried = false;
+    const announce = !this.expired || this.back;
+    this.expired = true;
+    this.back = false;
+    renderSession(announce);
+  },
+
+  /** A request found the sign-in ended: it waits until "Try again" (resolves) or a move to another page (rejects). */
+  waitForSignIn() {
+    return new Promise((resume, drop) => {
+      this.waiting.push({ page: location.pathname, resume, drop });
+      this.ended();
+    });
+  },
+
+  /**
+   * An answer that isn't a redirect: the sign-in works (again). The banner goes, unless requests still wait: then it
+   * says so, and Try again sends them (nothing is sent without it).
+   */
+  answered() {
+    if (!this.expired) return;
+    this.stillOut = false;
+    this.retried = false;
+    if (this.waiting.length) {
+      this.back = true;
+      renderSession(true);
+      return;
+    }
+    this.expired = false;
+    this.back = false;
+    renderSession();
+    void refreshExp();
+  },
+
+  /** "Try again": every waiting request is sent again, exactly as it was; with none waiting, the sign-in is checked. */
+  retry() {
+    const waiting = this.waiting;
+    this.waiting = [];
+    this.retried = true;
+    if (!waiting.length) return void refreshExp();
+    for (const w of waiting) w.resume();
+    return undefined;
+  },
+
+  /** A move to another page: what was waiting on the old one is never sent later (its form is gone). */
+  dropOtherPages(page) {
+    if (!this.waiting.some((w) => w.page !== page)) return;
+    const keep = [];
+    for (const w of this.waiting) {
+      if (w.page === page) keep.push(w);
+      else w.drop(new ApiError(0, 'session_expired', 'Not sent: the Access sign-in had ended'));
+    }
+    this.waiting = keep;
+    if (this.back && !keep.length) {
+      // Signed in again and nothing left to send: the banner goes.
+      this.back = false;
+      this.expired = false;
+    }
+    renderSession();
+  },
+};
+
+/** GET /api/me's `accessExp` (seconds) into the session; returns the `exp` it had before. */
+function noteExp(answer) {
+  const exp = answer && typeof answer.accessExp === 'number' && Number.isFinite(answer.accessExp) ? answer.accessExp * 1000 : null;
+  const before = session.expMs;
+  session.expMs = exp;
+  if (!session.timer && exp !== null) session.timer = setInterval(tickSession, SESSION_TICK_MS);
+  return before;
+}
+
+/** Re-reads `exp` (after a new sign-in, a Renew, or `exp` passing on this clock). Never waits for a sign-in. */
+async function refreshExp() {
+  if (session.checking) return;
+  session.checking = true;
+  try {
+    const res = await send('GET', '/api/me');
+    if (res === EXPIRED) {
+      session.ended();
+      return;
+    }
+    const before = noteExp(await res.json().catch(() => null));
+    if (session.renewing) {
+      session.renewing = false;
+      session.renewKept = before !== null && session.expMs === before;
+    }
+    if (session.expired) session.answered();
+    else renderSession();
+  } catch {
+    // Offline: the next tick, or the next look at this tab, checks again.
+  } finally {
+    session.checking = false;
+  }
+}
+
+function tickSession() {
+  if (session.expMs === null || session.expired) return;
+  // At `exp` on this clock the Worker is asked (this clock may be off): Access redirects, or a new `exp` comes back.
+  if (Date.now() >= session.expMs) void refreshExp();
+  else renderSession();
+}
+
+/** Back on this tab (from the sign-in tab): find the new sign-in, or re-read `exp` near its end. */
+function onTabBack() {
+  if (document.visibilityState === 'hidden') return;
+  if (session.expired || session.renewing || (session.expMs !== null && Date.now() >= session.expMs - WARN_BEFORE_MS)) void refreshExp();
+}
+window.addEventListener('focus', onTabBack);
+document.addEventListener('visibilitychange', onTabBack);
+
+/** "Sign in again" / "Renew": a link that opens this console in a new tab, where Access signs the staff member in. */
+const signInLink = (label, onOpen) => h('a', { href: SIGNED_IN_PATH, target: '_blank', rel: 'noopener', class: 'button primary', onclick: onOpen }, label);
+
+/** The banner above every page: the sign-in's end coming (a warning), or come (an alert). Empty otherwise. */
+function renderSession(announce) {
+  const host = document.getElementById('session');
+  if (!host) return;
+  const now = Date.now();
+  if (session.back) {
+    host.replaceChildren(
+      h(
+        'div',
+        { class: 'session-banner signed-in', role: 'status' },
+        h('strong', {}, 'You’re signed in again'),
+        h('p', {}, 'Press Try again to send what was waiting: nothing was sent while you were signed out.'),
+        h('div', { class: 'form-actions' }, h('button', { type: 'button', class: 'primary', onclick: () => session.retry() }, 'Try again')),
+      ),
+    );
+    return;
+  }
+  if (session.expired) {
+    const box = h(
+      'div',
+      { class: 'session-banner expired', role: 'alert' },
+      h('strong', {}, 'Your sign-in has expired'),
+      h(
+        'p',
+        {},
+        session.waiting.length
+          ? 'Nothing was sent, and everything you typed is still here. Sign in again in the new tab, come back to this tab, then press Try again to send it.'
+          : 'Nothing on this page is lost. Sign in again in the new tab, then come back to this tab and press Try again.',
+      ),
+      session.stillOut ? h('p', { class: 'still' }, 'Still signed out: finish signing in in the other tab (Sign in again opens it), then press Try again.') : '',
+      h('div', { class: 'form-actions' }, signInLink('Sign in again'), h('button', { type: 'button', onclick: () => session.retry() }, 'Try again')),
+    );
+    // A new alert is announced; a changed one replaces its text in place (no second announcement for the same end).
+    if (announce || !host.firstChild || !host.firstChild.classList.contains('expired')) host.replaceChildren(box);
+    else if (host.firstChild.textContent !== box.textContent) host.firstChild.replaceChildren(...box.childNodes);
+    return;
+  }
+  if (session.expMs !== null && session.expMs - now <= WARN_BEFORE_MS) {
+    const mins = Math.max(1, Math.ceil((session.expMs - now) / 60_000));
+    const box = h(
+      'div',
+      { class: 'session-banner ending', role: 'status' },
+      h('strong', {}, `Your sign-in ends in ${mins} min`),
+      h(
+        'p',
+        {},
+        session.renewKept
+          ? `Cloudflare Access kept your current sign-in: it still ends at ${time(session.expMs)}. Access renews a sign-in only once it has ended; when it does, sign in again from here, and nothing you typed is lost.`
+          : `At ${time(session.expMs)}. Renew opens the console in a new tab to sign in again; this tab and what you typed stay as they are.`,
+      ),
+      h(
+        'div',
+        { class: 'form-actions' },
+        signInLink('Renew', () => {
+          session.renewing = true;
+          session.renewKept = false;
+        }),
+      ),
+    );
+    // Redrawn only when its words change (a live region reads out each change).
+    if (!host.firstChild || !host.firstChild.classList.contains('ending')) host.replaceChildren(box);
+    else if (host.firstChild.textContent !== box.textContent) host.firstChild.replaceChildren(...box.childNodes);
+    return;
+  }
+  session.renewKept = false;
+  host.replaceChildren();
 }
 
 // ---- errors in plain words ----
@@ -79,6 +315,7 @@ const LEGACY_HINT = 'Legacy apps holds the scopes from before organisations exis
 /** Every code the admin API answers (docs/api.md "Admin Worker"): what happened, and what to do next. */
 const ERRORS = {
   network: ['Can’t reach the admin console', 'Check your connection and try again. If your Access session expired, reload the page to sign in again.'],
+  session_expired: ['Not sent: your sign-in had expired', 'Nothing was changed. Sign in again (the banner at the top), then do it again.'],
   unauthenticated: ['Your sign-in has expired', 'Reload the page to sign in through Cloudflare Access again.'],
   not_staff: ['This account isn’t on the Hana staff list', 'Sign in with your Hana staff account. A founder adds staff to the environment’s staff list.'],
   csrf: ['The browser’s same-origin check failed', 'Reload the page and try again. If it keeps happening, turn off browser extensions that change requests.'],
@@ -2440,6 +2677,14 @@ function go(path, state = null) {
   render();
 }
 
+/** The tab "Sign in again" and "Renew" open: Access signed the staff member in to reach it; the work is in the other tab. */
+async function signedInPage(main) {
+  main.append(
+    pageHead('You’re signed in', { subtitle: 'Go back to the tab you were working in and press Try again there: what you typed is still in that tab, and nothing was sent while you were signed out. You can close this tab.' }),
+    h('p', {}, link('/orgs', 'Organisations')),
+  );
+}
+
 async function notFoundPage(main) {
   main.append(pageHead('Page not found', { subtitle: 'This address isn’t a page of the admin console. Use the menu, or go to the organisations.' }), h('p', {}, link('/orgs', 'Organisations')));
 }
@@ -2457,9 +2702,12 @@ async function render() {
     if (seq === renderSeq && !root.contains(main)) root.replaceChildren(loading());
   }, 150);
   const path = location.pathname;
+  session.dropOtherPages(path);
   try {
     if (!me) {
       me = await api('GET', '/api/me');
+      noteExp(me);
+      renderSession();
       document.getElementById('who').textContent = `Signed in as ${me.email}`;
       document.getElementById('env').textContent = me.env;
       document.title = `Hana ID admin (${me.env})`;
@@ -2481,6 +2729,7 @@ async function render() {
     else if (path === '/users') await usersPage(main);
     else if (path === '/support') await supportPage(main);
     else if (path === USER_OPEN_PATH) await userPage(main);
+    else if (path === SIGNED_IN_PATH) await signedInPage(main);
     else if (/^\/users\/(email|google)\//u.test(path)) {
       // The old detail path held the sub (before D410): this entry is rewritten to the search, and nothing is read.
       history.replaceState(null, '', '/users');

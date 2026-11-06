@@ -7,7 +7,7 @@
 import { canonicalJson, policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import * as F from './fixtures.ts';
 
-export const SCENARIOS = ['owner', 'viewer', 'frozen', 'multi', 'new-org', 'signed-out', 'errors'] as const;
+export const SCENARIOS = ['owner', 'viewer', 'frozen', 'multi', 'new-org', 'signed-out', 'errors', 'session-ending', 'session-ended'] as const;
 export type Scenario = (typeof SCENARIOS)[number];
 
 export interface Answer {
@@ -127,7 +127,11 @@ export function answer(scenario: Scenario, method: string, url: URL, body: unkno
   if (path === '/api/auth/start' && method === 'POST') return ok({ startUrl: '/__preview/owner?to=/' });
   if (scenario === 'signed-out') return fail(401, 'unauthenticated', 'Sign in again');
   if (path === '/api/auth/logout' && method === 'POST') return ok({});
-  if (path === '/api/me') return ok(F.me({ multi: scenario === 'multi', users: scenario !== 'new-org', role, frozen }));
+  // The session's end: `session-ending` is 4 min from its 12 h absolute end (the warning; inside a demo action's
+  // 4 min 20 s, so the fresh sign-in page says the session ends first); in `session-ended` the reads work but every
+  // write answers 401, as a session that ended mid-task does (the banner, Try again).
+  if (scenario === 'session-ended' && method === 'POST') return fail(401, 'unauthenticated', 'Sign in again');
+  if (path === '/api/me') return ok({ ...F.me({ multi: scenario === 'multi', users: scenario !== 'new-org', role, frozen }), sessionExpiresAt: now + (scenario === 'session-ending' ? 4 * 60_000 : 9 * 3_600_000) });
 
   const act = /^\/api\/actions\/([^/]+)(\/google)?$/u.exec(path);
   if (act) {

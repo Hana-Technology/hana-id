@@ -49,10 +49,13 @@ or API, rate limits, "log out other devices" after its 5 minutes, network failur
 
 - No analytics, no third-party script, no inline script or style (the build sets no preload polyfill and inlines no
   asset).
+- Hana's brand (D426): the stylesheet imports `@hana-id/brand`'s tokens and fonts; Vite emits the Montserrat files
+  into `assets/` (hashed, served immutable like the bundles) with the fonts' `OFL.txt` beside them, so the page loads
+  fonts from its own origin only (`font-src 'self'`, no font CDN). The favicon is the Hana mark.
 - Every response carries the headers of `src/csp.ts`. The page's CSP:
 
   ```text
-  default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self';
+  default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self';
   connect-src <EVM RPC origin>; frame-src <vaultOrigin>; base-uri 'none'; form-action 'none';
   frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types 'none'
   ```

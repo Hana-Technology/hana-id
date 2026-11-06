@@ -20,6 +20,8 @@ export function pageCsp(c: Pick<DemoConfig, 'vaultOrigin' | 'evm'>): string {
     "script-src 'self'",
     "style-src 'self'",
     "img-src 'self'",
+    // Hana's fonts (D426), from this origin only.
+    "font-src 'self'",
     `connect-src ${rpc}`,
     `frame-src ${vault}`,
     "base-uri 'none'",

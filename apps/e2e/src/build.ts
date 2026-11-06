@@ -90,8 +90,11 @@ export async function buildDemo(): Promise<void> {
     platform: 'browser',
     target: 'es2022',
     sourcemap: false,
-    // src/main.ts imports its stylesheet: esbuild writes it next to app.js as app.css.
+    // src/main.ts imports its stylesheet: esbuild writes it next to app.js as app.css, and the brand's fonts it names
+    // as files beside them (D426; Vite does the same for the deployed page, under assets/).
     outfile: `${DEMO_DIR}app.js`,
+    loader: { '.woff2': 'file' },
+    assetNames: 'assets/[name]-[hash]',
     define: { __HANA_DEMO_CONFIG__: JSON.stringify(DEMO_CONFIG) },
     plugins: [e2eEnvs([E2E_ENV])],
     logLevel: 'warning',

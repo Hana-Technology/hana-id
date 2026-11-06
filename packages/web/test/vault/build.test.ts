@@ -53,6 +53,12 @@ describe('vault build', () => {
     expect(src).not.toMatch(/accounts\.google\.com\/gsi/u);
   });
 
+  it('D426: loads no font: the launcher takes Hana’s colours with the system font, so vault.js stays one request', () => {
+    const src = readFileSync(built.script, 'utf8');
+    expect(src).not.toMatch(/woff2?|@font-face|FontFace|Montserrat|url\(/u);
+    expect(src).toContain('#16073a');
+  });
+
   it('inlines each env’s own pinned constants', () => {
     const sandboxJs = readFileSync(built.script, 'utf8');
     const prodJs = readFileSync(builtProd.script, 'utf8');

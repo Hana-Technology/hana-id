@@ -10,7 +10,7 @@ describe('pageCsp', () => {
 
   it('is the exact policy for sandbox-dev', () => {
     expect(csp).toBe(
-      "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src https://sepolia.base.org; " +
+      "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src https://sepolia.base.org; " +
         "frame-src https://hana-id-vault-sandbox-dev.tingtc.workers.dev; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; " +
         "require-trusted-types-for 'script'; trusted-types 'none'",
     );

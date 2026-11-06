@@ -7804,6 +7804,57 @@ branch.
   stay independent, D86, and alerts, where this page only shows); auto-refresh (a page that redraws while read; Check
   again reads on demand).
 
+## Hana's brand on Hana ID's own pages (branch `feat/hana-brand`), 2026-11-06
+
+### D426. Hana ID's pages wear Hana's brand: one token set, Hana's own OFL Montserrat self-hosted, the mark inline
+- Date 2026-11-06 · Status: **asked for by the user 2026-11-06** ("style both admin and partner portal to use Hana
+  fonts, styling and color schemes … look at hanawallet.io website as well as hana-app and hana-extension repos for
+  inspiration"; extended the same day to the approval popups and everything user-facing); the palette, type and
+  shapes chosen while building, to confirm with the before/after gallery · Built: `packages/brand` (new),
+  `apps/admin/public` (`app.css`, `index.html`, `fonts/`), `apps/admin/scripts/sync-brand.ts`, `apps/console/web`
+  (`styles.css`, `ui.tsx`), `apps/console/vite.config.ts`, `packages/web/src/auth` (the sign-in, approval and export
+  pages), `packages/web/src/vault/launcher.ts`, `packages/web/scripts/build-auth-pages.ts` · Extends D420 and D421 (their
+  information architecture, copy and tests unchanged) · Number note: D426 was the next free number on `origin/develop`
+  (D425 the highest); `feat/email-sharing` holds unmerged numbers: renumber at the merge if another branch took it
+- Decision:
+  1. **One token set.** `packages/brand/tokens.css`: CSS variables only (`--hana-*`), light by default and dark with
+     `prefers-color-scheme` (no toggle, nothing stored), taken from hana-app's and hana-extension's `designTokens.ts`
+     and hanawallet.io's stylesheet: Hana ink `#16073a` on a lilac-white `#faf9fe`, Hana indigo `#3308a8` as the one
+     accent (light purple `#bba8f6` in dark), the gradient `#6256e9 → #d772d3` as decoration only, never behind text.
+     State colours (ok, warn, danger) are deliberately not purples. Every text and focus pair is checked for WCAG AA
+     in both themes (`packages/brand/test`), and the state hues are checked to stay out of the purple range.
+  2. **Fonts: Hana's own Montserrat, self-hosted.** Montserrat v8.000 (400, 500, 600, 700) and Montserrat Alternates
+     v7.200 (700), the files Hana's extension ships, under the SIL Open Font License 1.1 (no Reserved Font Name),
+     subset to Latin WOFF2 (16.8–17.4 KB each) with `fonts/OFL.txt` beside them; a test reads each file's own name
+     table for the licence. Each page loads them from its own origin (`font-src 'self'`, unchanged everywhere): the
+     admin from `public/fonts` (copied by `sync-brand`, the SPA has no build), the console and the auth pages from
+     their bundles' `/assets`. The consoles use `font-display: swap`; the security popups `optional`, so a late font
+     never moves a button under the pointer. Hana's apps also use Proxima Nova and PP Agrandir: commercial licences
+     that don't cover web embedding by Hana ID, so they are not shipped (Montserrat is what hanawallet.io uses anyway).
+  3. **The mark inline, not an image.** The Hana mark (hana-extension `hana.svg`) is drawn as inline SVG from
+     `MARK_PATHS` with its colours from the page's CSS: no image request, nothing new in any `img-src`.
+  4. **Who is asking stays clear.** Every auth page (sign-in chooser, email step, callback, approval and consent,
+     export) gets a static Hana bar above the page: the mark and wordmark as inline SVG, with no text, no URL and
+     nothing that runs. The app's logo, name and origin stay inside the page in a neutral box (`.asker`, the approval's
+     `header.app`), so Hana's chrome never names the app and a partner can't look like Hana. The auth pages load only
+     Montserrat 400 and 600 and Montserrat Alternates 700 (49.9 KiB, once per origin, cached across the five pages)
+     from `/assets/files/` with `OFL.txt` beside them. The approve guard, every message flow, COOP and popup behaviour
+     (D347, D398, D400), the meta and header CSPs and all security copy are unchanged. The vault (D38) loads no font:
+     its launcher takes Hana's ink and gradient on the system font (`vault.js` +~90 B). The hosted demo's CSP gains
+     `font-src 'self'` (its only CSP change) and its fonts are served immutable; the issuer's code email uses Hana ink
+     and indigo inline with a Montserrat/Arial stack.
+  5. **Each console keeps a cue of its own.** The staff admin's nav is Hana ink in both themes (the partner console's
+     is light), with the env badge solid amber on it, so staff never mistake one console or env for another.
+- Why: Hana ID is Hana's product; its pages looked like a generic tool (system fonts, petrol blue, an invented flower
+  mark) rather than Hana's wallet and site.
+- Rejected: Proxima Nova or PP Agrandir (licences); a font CDN (CSP and privacy: every page loads only its own origin);
+  a build step for the admin SPA (D420: no build; a copy with a drift test instead); a theme toggle (it would need
+  storage, which the SPAs don't use); the gradient as a page or button background (contrast, and it competes with
+  state colours); fonts in the vault (one more request and file in the isolated origin for a 16 px label); `swap` on
+  the auth pages (a late swap moves Approve and Reject while the user reads them).
+- Test note: the callback page's fonts count toward its `load`, and it closes itself before `load` on a Google
+  `#error`, so `apps/e2e/tests/login.spec.ts`'s one `goto` there waits for `commit` (no assertion changed).
+
 ## Partner integration friction fixes (branch `feat/partner-friction-fixes`), 2026-11-06
 
 ### D427. Partner-integration friction fixes: a verifier that refuses to start, a fast `no_answer` naming the origin, the portal in the guide

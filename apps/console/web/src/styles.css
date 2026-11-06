@@ -1,63 +1,47 @@
-/* The partner console's one stylesheet (served from 'self': the CSP allows no inline style). System fonts only.
-   Tokens first (light, then dark through prefers-color-scheme), then the frame, components and pages. One accent
-   (Hana's indigo, the same as the sign-in and approval popups), one cool grey family, status colours for state only. */
+/* The partner console's one stylesheet (served from 'self': the CSP allows no inline style or remote font). Hana's
+   brand (packages/brand, D426): its tokens (light, and dark through prefers-color-scheme) and its self-hosted fonts,
+   Montserrat for text and Montserrat Alternates for titles, bundled by Vite as /assets/*.woff2. The console's own
+   names below map onto the --hana-* tokens. One accent (Hana indigo), status colours for state only; the Hana gradient
+   is a thin rule under the brand, never behind text. Then the frame, components and pages. */
+@import '@hana-id/brand/fonts.css';
+@import '@hana-id/brand/tokens.css';
+
 :root {
-  --ink: #171a21;
-  --ink-2: #3b404c;
-  --muted: #5b6170;
-  --canvas: #f3f4f6;
-  --surface: #ffffff;
-  --sunken: #f7f8fa;
-  --line: #e1e4ea;
-  --line-strong: #c9ced8;
-  --accent: #3047d9;
-  --accent-hover: #2538b8;
-  --accent-ink: #ffffff;
-  --accent-soft: #eceffd;
-  --accent-line: #c6cdf6;
-  --ok: #12652f;
-  --ok-soft: #e5f4ea;
-  --ok-line: #b9dfc6;
-  --warn: #6a4700;
-  --warn-soft: #fff4d6;
-  --warn-line: #efd38b;
-  --danger: #ad1f16;
-  --danger-soft: #fdecea;
-  --danger-line: #f3c0bb;
-  --shadow: 0 1px 2px rgba(23, 26, 33, 0.05), 0 1px 1px rgba(23, 26, 33, 0.03);
-  --focus: 0 0 0 3px rgba(48, 71, 217, 0.35);
-  --r-s: 6px;
-  --r: 10px;
-  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --ink: var(--hana-ink);
+  --ink-2: var(--hana-ink-2);
+  --muted: var(--hana-muted);
+  --canvas: var(--hana-bg);
+  --surface: var(--hana-surface);
+  --sunken: var(--hana-surface-2);
+  --line: var(--hana-line);
+  --line-strong: var(--hana-line-strong);
+  --accent: var(--hana-accent);
+  --accent-hover: var(--hana-accent-hover);
+  --accent-ink: var(--hana-accent-ink);
+  --accent-soft: var(--hana-accent-soft);
+  --accent-line: color-mix(in srgb, var(--hana-accent) 32%, var(--hana-surface));
+  --ok: var(--hana-ok);
+  --ok-soft: var(--hana-ok-soft);
+  --ok-line: var(--hana-ok-line);
+  --warn: var(--hana-warn);
+  --warn-soft: var(--hana-warn-soft);
+  --warn-line: var(--hana-warn-line);
+  --danger: var(--hana-danger);
+  --danger-soft: var(--hana-danger-soft);
+  --danger-line: var(--hana-danger-line);
+  --on-danger: var(--hana-on-danger);
+  /* A pending step's dot: amber, a state (never a brand colour). */
+  --pending: #d89a00;
+  --shadow: var(--hana-shadow);
+  /* A solid two-ring focus (a surface gap, then Hana's focus violet): 3:1 on every surface, light and dark. */
+  --focus: 0 0 0 2px var(--hana-surface), 0 0 0 4px var(--hana-focus);
+  --r-s: 8px;
+  --r: var(--hana-radius-lg);
+  --pill: var(--hana-radius-pill);
+  --font: var(--hana-font);
+  --display: var(--hana-font-display);
+  --mono: var(--hana-mono);
   color-scheme: light dark;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --ink: #e9ebf0;
-    --ink-2: #c6cad3;
-    --muted: #9aa1af;
-    --canvas: #121419;
-    --surface: #1a1d24;
-    --sunken: #16191f;
-    --line: #2b303a;
-    --line-strong: #3b414d;
-    --accent: #8a98ff;
-    --accent-hover: #a5b0ff;
-    --accent-ink: #0d0f17;
-    --accent-soft: #23284a;
-    --accent-line: #3a4278;
-    --ok: #7fd59d;
-    --ok-soft: #15291d;
-    --ok-line: #24492f;
-    --warn: #f2cf7c;
-    --warn-soft: #2d2510;
-    --warn-line: #5a4719;
-    --danger: #ff9f97;
-    --danger-soft: #331816;
-    --danger-line: #5e2a25;
-    --shadow: none;
-    --focus: 0 0 0 3px rgba(138, 152, 255, 0.45);
-  }
 }
 
 * {
@@ -68,7 +52,8 @@ html {
 }
 body {
   margin: 0;
-  font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  font: 14.5px/1.6 var(--font);
+  font-feature-settings: "kern", "tnum";
   color: var(--ink);
   background: var(--canvas);
   font-variant-numeric: tabular-nums;
@@ -87,19 +72,21 @@ h3 {
   text-wrap: balance;
 }
 h1 {
-  font-size: 1.6rem;
-  font-weight: 650;
-  letter-spacing: -0.015em;
+  font-family: var(--display);
+  font-size: 1.65rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
   margin: 0;
 }
 h2 {
-  font-size: 1.05rem;
-  font-weight: 620;
+  font-size: 1.04rem;
+  font-weight: 600;
+  letter-spacing: -0.005em;
   margin: 0;
 }
 h3 {
   font-size: 0.95rem;
-  font-weight: 620;
+  font-weight: 600;
   margin: 0 0 8px;
 }
 p {
@@ -109,7 +96,7 @@ p {
 code,
 .mono {
   font-family: var(--mono);
-  font-size: 0.86em;
+  font-size: 0.9em;
   overflow-wrap: anywhere;
 }
 :focus-visible {
@@ -145,7 +132,7 @@ code,
   font-size: 0.84rem;
 }
 .strong {
-  font-weight: 620;
+  font-weight: 600;
 }
 .icon {
   flex: none;
@@ -172,33 +159,52 @@ code,
   overflow-y: auto;
 }
 .brand {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 2px 8px 14px;
-  font-weight: 650;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 2px 8px 16px;
+  font-family: var(--display);
+  font-size: 1.02rem;
+  font-weight: 700;
   color: var(--ink);
   text-decoration: none;
   letter-spacing: -0.01em;
+}
+/* Hana's gradient: a thin rule under the brand, the one decorative use of it. */
+.brand::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--hana-gradient);
 }
 .brand:hover {
   color: var(--ink);
 }
 .brand-sub {
-  font-weight: 450;
+  font-family: var(--font);
+  font-weight: 500;
   color: var(--muted);
 }
-.mark ellipse {
-  fill: var(--accent);
-  opacity: 0.85;
+/* Hana's mark (packages/brand logo/hana-mark.svg), drawn inline: ink square, light-purple glyph (inverted in dark). */
+.mark {
+  flex: none;
 }
-.mark .mark-core {
-  fill: var(--surface);
+.mark .mark-bg {
+  fill: var(--hana-mark-bg);
+}
+.mark .mark-fg {
+  fill: var(--hana-mark-fg);
 }
 .org-name {
   margin: 0;
   padding: 4px 8px 0;
-  font-weight: 620;
+  font-weight: 600;
 }
 .org-switch select {
   width: 100%;
@@ -217,8 +223,8 @@ code,
 }
 .side-nav a {
   display: block;
-  padding: 7px 10px;
-  border-radius: var(--r-s);
+  padding: 7px 12px;
+  border-radius: var(--pill);
   color: var(--ink-2);
   text-decoration: none;
   transition: background-color 120ms ease;
@@ -233,7 +239,7 @@ code,
   font-weight: 600;
 }
 .side-nav-group {
-  margin: 14px 10px 4px;
+  margin: 16px 12px 4px;
   font-size: 0.76rem;
   font-weight: 600;
   color: var(--muted);
@@ -277,7 +283,7 @@ code,
   margin: -28px -40px 24px;
   padding: 14px 40px;
   border-bottom: 1px solid var(--line);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 1px 2px rgb(22 7 58 / 0.06);
 }
 .session-banner > p {
   margin: 0;
@@ -285,7 +291,7 @@ code,
 }
 .session-banner > .session-title {
   flex: 0 1 auto;
-  font-weight: 650;
+  font-weight: 700;
   font-size: 1rem;
 }
 .session-banner > .form-actions {
@@ -378,14 +384,14 @@ code,
   white-space: nowrap;
   color: var(--muted);
   text-decoration: none;
-  border-bottom: 2px solid transparent;
+  border-bottom: 3px solid transparent;
   margin-bottom: -1px;
 }
 .tabs a:hover {
   color: var(--ink);
 }
 .tabs a.active {
-  color: var(--ink);
+  color: var(--accent);
   font-weight: 600;
   border-bottom-color: var(--accent);
 }
@@ -395,7 +401,7 @@ code,
   height: 7px;
   margin-left: 6px;
   border-radius: 50%;
-  background: #d89a00;
+  background: var(--pending);
   vertical-align: 2px;
 }
 
@@ -414,7 +420,7 @@ code,
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r);
-  padding: 18px 20px 20px;
+  padding: 20px 22px 22px;
   box-shadow: var(--shadow);
 }
 .panel + .panel {
@@ -464,20 +470,20 @@ button:not([class]) {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 34px;
-  padding: 6px 14px;
-  border-radius: var(--r-s);
+  min-height: 36px;
+  padding: 6px 16px;
+  border-radius: var(--pill);
   border: 1px solid var(--line-strong);
   background: var(--surface);
   color: var(--ink);
-  font-weight: 550;
+  font-weight: 600;
   cursor: pointer;
   text-decoration: none;
   transition: background-color 120ms ease, border-color 120ms ease, transform 60ms ease;
 }
 .btn:hover:not(:disabled) {
   background: var(--sunken);
-  border-color: var(--muted);
+  border-color: var(--accent-line);
   color: var(--ink);
 }
 .btn:active:not(:disabled) {
@@ -502,30 +508,23 @@ button:not([class]) {
 .btn-danger {
   background: var(--danger);
   border-color: var(--danger);
-  color: #fff;
+  color: var(--on-danger);
 }
 .btn-danger:hover:not(:disabled) {
-  background: var(--danger);
-  border-color: var(--danger);
-  color: #fff;
-  filter: brightness(0.92);
-}
-@media (prefers-color-scheme: dark) {
-  .btn-danger,
-  .btn-danger:hover:not(:disabled) {
-    color: #1a0d0c;
-  }
+  background: var(--hana-danger-hover);
+  border-color: var(--hana-danger-hover);
+  color: var(--on-danger);
 }
 .btn-danger-quiet {
   display: inline-flex;
   align-items: center;
-  min-height: 34px;
-  padding: 6px 14px;
-  border-radius: var(--r-s);
+  min-height: 36px;
+  padding: 6px 16px;
+  border-radius: var(--pill);
   border: 1px solid var(--danger-line);
   background: var(--danger-soft);
   color: var(--danger);
-  font-weight: 550;
+  font-weight: 500;
   cursor: pointer;
 }
 .btn-quiet {
@@ -534,13 +533,13 @@ button:not([class]) {
   color: var(--ink-2);
 }
 .btn-small {
-  min-height: 28px;
-  padding: 3px 10px;
+  min-height: 30px;
+  padding: 3px 12px;
   font-size: 0.86rem;
 }
 .btn-large {
-  min-height: 44px;
-  padding: 10px 18px;
+  min-height: 46px;
+  padding: 10px 22px;
 }
 .btn-block {
   width: 100%;
@@ -560,12 +559,12 @@ button:not([class]) {
   gap: 4px;
   padding: 2px 8px;
   min-height: 26px;
-  border-radius: var(--r-s);
+  border-radius: var(--pill);
   border: 1px solid var(--line);
   background: var(--surface);
   color: var(--ink-2);
   font-size: 0.8rem;
-  font-weight: 550;
+  font-weight: 500;
   cursor: pointer;
   vertical-align: middle;
 }
@@ -683,7 +682,7 @@ textarea {
 }
 .field-label {
   font-size: 0.88rem;
-  font-weight: 560;
+  font-weight: 600;
   color: var(--ink-2);
 }
 .field-hint {
@@ -724,7 +723,7 @@ textarea {
 }
 .apps-filter legend {
   font-size: 0.84rem;
-  font-weight: 560;
+  font-weight: 600;
   padding: 0 4px;
   color: var(--ink-2);
 }
@@ -823,8 +822,8 @@ textarea {
   display: inline-flex;
   align-items: center;
   margin-left: 6px;
-  padding: 1px 8px;
-  border-radius: 4px;
+  padding: 1px 9px;
+  border-radius: var(--pill);
   border: 1px solid var(--line);
   background: var(--sunken);
   font-size: 0.75rem;
@@ -877,7 +876,7 @@ p > .badge:first-child {
 }
 .empty-title {
   font-size: 1.05rem;
-  font-weight: 620;
+  font-weight: 600;
   margin: 0 0 8px;
 }
 .empty > :last-child {
@@ -930,7 +929,7 @@ p > .badge:first-child {
 .table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.92rem;
+  font-size: 0.89rem;
 }
 .table th,
 .table td {
@@ -1147,7 +1146,7 @@ table.report thead th:first-child {
 }
 .org-card-name,
 .app-row-name {
-  font-weight: 620;
+  font-weight: 600;
 }
 .app-row-main {
   display: flex;
@@ -1193,11 +1192,13 @@ table.report thead th:first-child {
   height: 48px;
   border-radius: 12px;
 }
+/* A partner app without a logo: a neutral tile (never Hana's purples or the mark's square), so the partner's
+   identity never reads as Hana chrome. */
 .app-tile-initial {
-  background: var(--accent-soft);
-  border-color: var(--accent-line);
-  color: var(--accent);
-  font-weight: 700;
+  background: var(--sunken);
+  border-color: var(--line-strong);
+  color: var(--ink-2);
+  font-weight: 600;
 }
 .app-tile-lg.app-tile-initial {
   font-size: 1.3rem;
@@ -1231,7 +1232,7 @@ table.report thead th:first-child {
   border-radius: 50%;
   border: 1.5px solid var(--line-strong);
   font-size: 0.8rem;
-  font-weight: 650;
+  font-weight: 700;
   color: var(--muted);
 }
 .step-done .check-n {
@@ -1240,7 +1241,7 @@ table.report thead th:first-child {
   color: var(--surface);
 }
 .step-partly .check-n {
-  border-color: #d89a00;
+  border-color: var(--pending);
   color: var(--warn);
 }
 .check-body p {
@@ -1343,8 +1344,8 @@ table.report thead th:first-child {
   border-color: var(--ok);
 }
 .track li.current .track-dot {
-  border-color: #d89a00;
-  box-shadow: 0 0 0 3px rgba(216, 154, 0, 0.2);
+  border-color: var(--pending);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pending) 22%, transparent);
 }
 .track-label {
   font-size: 0.8rem;
@@ -1458,7 +1459,7 @@ table.report thead th:first-child {
   padding: 28px 28px 24px;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 20px;
   box-shadow: var(--shadow);
 }
 .auth-card h1 {
@@ -1471,11 +1472,25 @@ table.report thead th:first-child {
   margin-top: 12px;
 }
 .auth-brand {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 22px;
-  font-weight: 650;
+  gap: 10px;
+  margin: 0 0 24px;
+  padding-bottom: 16px;
+  font-family: var(--display);
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+.auth-brand::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  width: 56px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--hana-gradient);
 }
 .auth-foot {
   margin: 16px 0 0;
@@ -1530,7 +1545,7 @@ table.report thead th:first-child {
   gap: 6px;
 }
 .audit-what {
-  font-weight: 560;
+  font-weight: 600;
 }
 
 /* ---- narrower screens ---- */

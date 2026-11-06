@@ -7,7 +7,10 @@ import { loadEnv } from '@hana-id/env';
 import { parseBuildMeta } from '@hana-id/env/build-id';
 import { localBuild } from '@hana-id/env/local-build';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { ASSET_DIR, type BuiltEnv, ORIGIN_DIR, buildAuthPages, pageHtml, selectEnvs } from '../../scripts/build-auth-pages.ts';
+import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { FONT_FILES } from '@hana-id/brand';
+import { ASSET_DIR, type BuiltEnv, FILES_DIR, FONT_LICENCE, HANA_BAR, ORIGIN_DIR, buildAuthPages, pageHtml, selectEnvs } from '../../scripts/build-auth-pages.ts';
 import { hanaEnv } from '../../scripts/gen-envs.ts';
 import { GOOGLE_TOKENINFO_ORIGIN, GOOGLE_TOKENINFO_URL } from '../../src/auth/google.ts';
 import { AUTH_PAGES, LOGO_PAGES, authPageCsp, authPageMetaCsp, imgSources } from '../../src/auth/pages.ts';
@@ -178,6 +181,60 @@ describe('per-env build', () => {
       expect(existsSync(join(built.dir, built.pages[page.name].script.slice(1)))).toBe(true);
       expect(existsSync(join(built.dir, built.pages[page.name].stylesheet.slice(1)))).toBe(true);
     }
+  });
+
+  it('D426: the brand’s fonts are files on this origin, under /assets/files/, with their OFL licence beside them', () => {
+    const filesDir = join(built.dir, ASSET_DIR, FILES_DIR);
+    const shipped = readdirSync(filesDir).sort();
+    // The three faces the pages use (fonts.css), content-hashed, and the licence.
+    expect(shipped.filter((f) => f.endsWith('.woff2'))).toHaveLength(3);
+    expect(shipped).toContain(FONT_LICENCE);
+    expect(shipped.every((f) => f === FONT_LICENCE || /^(Montserrat|MontserratAlternates)-(400|600|700)-[A-Z0-9]+\.woff2$/u.test(f))).toBe(true);
+    const brandOfl = readFileSync(fileURLToPath(import.meta.resolve('@hana-id/brand/fonts/OFL.txt')));
+    expect(readFileSync(join(filesDir, FONT_LICENCE)).equals(brandOfl)).toBe(true);
+    // Each is the brand's own file, byte for byte (its sha256 in @hana-id/brand's manifest).
+    const hashes = new Set(FONT_FILES.map((f) => f.sha256));
+    for (const f of shipped.filter((x) => x.endsWith('.woff2'))) expect(hashes.has(createHash('sha256').update(readFileSync(join(filesDir, f))).digest('hex')), f).toBe(true);
+  });
+
+  it('D426: the stylesheet loads only those files, relatively from this origin, with font-display optional', () => {
+    const css = readFileSync(join(built.dir, built.pages.login.stylesheet.slice(1)), 'utf8');
+    const urls = [...css.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/gu)].map((m) => m[1]!);
+    expect(urls).toHaveLength(3);
+    for (const u of urls) {
+      expect(u).toMatch(/^\.\/files\/[\w-]+\.woff2$/u);
+      expect(existsSync(join(built.dir, ASSET_DIR, u))).toBe(true);
+    }
+    expect(css).not.toMatch(/@import|https?:|data:|\/\//u);
+    const faces = [...css.matchAll(/@font-face\{([^}]*)\}/gu)].map((m) => m[1]!);
+    expect(faces).toHaveLength(3);
+    for (const f of faces) expect(f).toContain('font-display:optional');
+    // The brand's tokens are in, and every page shares this one stylesheet.
+    expect(css).toContain('--hana-ink:');
+    for (const page of AUTH_PAGES) expect(built.pages[page.name].stylesheet).toBe(built.pages.login.stylesheet);
+  });
+
+  it('D426: the faces in src/auth/fonts.css are the brand’s files with the brand’s unicode-range', () => {
+    const own = readFileSync(new URL('../../src/auth/fonts.css', import.meta.url), 'utf8');
+    const brand = readFileSync(fileURLToPath(import.meta.resolve('@hana-id/brand/fonts.css')), 'utf8');
+    const faces = (css: string) =>
+      new Map([...css.matchAll(/@font-face\s*\{([^}]*)\}/gu)].map((m) => [/url\('[^']*\/(\w[\w-]*\.woff2)'\)/u.exec(m[1]!)![1]!, /unicode-range:([^;]*);/u.exec(m[1]!)![1]!.trim()]));
+    const mine = faces(own);
+    const theirs = faces(brand);
+    expect([...mine.keys()].sort()).toEqual(['Montserrat-400.woff2', 'Montserrat-600.woff2', 'MontserratAlternates-700.woff2']);
+    for (const [file, range] of mine) expect(range, file).toBe(theirs.get(file));
+  });
+
+  it('D426: every page has the one Hana bar before its content: the mark and wordmark inline, no text, no URL', () => {
+    for (const page of AUTH_PAGES) {
+      const html = readFileSync(join(built.dir, page.file), 'utf8');
+      expect(html.split(HANA_BAR)).toHaveLength(2);
+      expect(html).toContain(`<body>${HANA_BAR}<main id="app">`);
+    }
+    expect(HANA_BAR).toContain('role="img" aria-label="Hana"');
+    expect(HANA_BAR).not.toMatch(/https?:|href|<image|<use|style=|\son[a-z]+=|<script/iu);
+    // Only tags between tags: the bar adds no text node a test or a reader could take for the app's name.
+    expect(HANA_BAR.replace(/<[^>]+>/gu, '')).toBe('');
   });
 
   it('batch C11: an env with a files origin builds it into the logo pages’ meta img-src, and not the callback’s', () => {

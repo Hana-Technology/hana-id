@@ -1,0 +1,20 @@
+{
+  "name": "@hana-id/brand",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Hana's brand for Hana ID's own pages (D426): the shared colour and type tokens (tokens.css), the self-hosted Montserrat fonts with their OFL licence (fonts.css, fonts/), and the Hana mark and wordmark (logo/), taken from Hana's own apps and hanawallet.io.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./check": "./src/check.ts",
+    "./tokens.css": "./tokens.css",
+    "./fonts.css": "./fonts.css",
+    "./fonts/*": "./fonts/*",
+    "./logo/*": "./logo/*"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": { "@types/node": "^22.0.0", "typescript": "^5.7.0", "vitest": "4.1.12" }
+}

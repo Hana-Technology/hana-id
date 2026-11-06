@@ -1,36 +1,36 @@
-/* The auth pages' only stylesheet (served from 'self'; no inline style, no web fonts). */
+/*
+ * The auth pages' only stylesheet (served from 'self'; no inline style). Hana's brand (D426): packages/brand's tokens
+ * and its Montserrat files from this origin (fonts.css), the Hana bar above every page (pageHtml), Hana's ink, indigo
+ * and lilac. Who is asking (the app's logo, name and origin) sits in its own neutral box inside the panel, never in the
+ * Hana bar, so Hana's chrome and the partner's name can't be mistaken for each other. State colours are the brand's
+ * ok, warn and danger, which are not Hana purples.
+ */
+@import '@hana-id/brand/tokens.css';
+@import './fonts.css';
+
 :root {
   color-scheme: light dark;
-  --bg: #f7f7f8;
-  --panel: #ffffff;
-  --text: #1b1b1f;
-  --muted: #5d5d66;
-  --line: #dcdce2;
-  --accent: #3047d9;
-  --accent-text: #ffffff;
-  --warn-bg: #fff6dc;
-  --warn-text: #5c4400;
-  --danger-bg: #fde8e8;
-  --danger-text: #8a1c1c;
-  --ok-text: #12652f;
-  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #111114;
-    --panel: #1b1b20;
-    --text: #ececf1;
-    --muted: #a3a3ad;
-    --line: #34343c;
-    --accent: #7d8cff;
-    --accent-text: #0d0d12;
-    --warn-bg: #3a2f0b;
-    --warn-text: #f5dd9b;
-    --danger-bg: #43161a;
-    --danger-text: #ffb4b4;
-    --ok-text: #8fe0a8;
-  }
+  --bg: var(--hana-bg);
+  --panel: var(--hana-surface);
+  --panel-2: var(--hana-surface-2);
+  --text: var(--hana-ink);
+  --text-2: var(--hana-ink-2);
+  --muted: var(--hana-muted);
+  --line: var(--hana-line);
+  --line-strong: var(--hana-line-strong);
+  --accent: var(--hana-accent);
+  --accent-hover: var(--hana-accent-hover);
+  --accent-text: var(--hana-accent-ink);
+  --accent-soft: var(--hana-accent-soft);
+  --focus: var(--hana-focus);
+  --warn-bg: var(--hana-warn-soft);
+  --warn-line: var(--hana-warn-line);
+  --warn-text: var(--hana-ink);
+  --danger-bg: var(--hana-danger-soft);
+  --danger-line: var(--hana-danger-line);
+  --danger-text: var(--hana-danger);
+  --ok-text: var(--hana-ok);
+  --mono: var(--hana-mono);
 }
 
 * {
@@ -39,36 +39,78 @@
 
 body {
   margin: 0;
-  background: var(--bg);
+  min-height: 100vh;
+  /* Hana's gradient as a 3 px line along the top of the window: decoration, never behind text. */
+  background: var(--hana-gradient) top / 100% 3px no-repeat, var(--bg);
   color: var(--text);
-  font: 15px/1.45 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font: 15px/1.5 var(--hana-font);
+  -webkit-text-size-adjust: 100%;
+}
+
+/* ---- the Hana bar (pageHtml): Hana's mark and wordmark, the same on every page; the app is never named here ---- */
+.hana-bar {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 18px 16px 2px;
+  color: var(--text);
+}
+
+.hana-bar .hana-mark {
+  width: 28px;
+  height: 28px;
+  flex: none;
+}
+
+.hana-mark .bg {
+  fill: var(--hana-mark-bg);
+}
+
+.hana-mark .fg {
+  fill: var(--hana-mark-fg);
+}
+
+.hana-bar .hana-wordmark {
+  width: 66px;
+  height: 13px;
+  fill: currentColor;
 }
 
 main {
   max-width: 560px;
   margin: 0 auto;
-  padding: 16px;
+  padding: 12px 16px 24px;
 }
 
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 20px;
+  border-radius: var(--hana-radius-lg);
+  padding: 22px 22px 20px;
+  box-shadow: var(--hana-shadow);
 }
 
 h1 {
-  font-size: 1.25rem;
-  margin: 0 0 12px;
+  font-family: var(--hana-font-display);
+  font-weight: 700;
+  font-size: 1.35rem;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  margin: 0 0 14px;
+  text-wrap: balance;
 }
 
 h2 {
-  font-size: 1.05rem;
+  font-size: 1.02rem;
+  font-weight: 600;
   margin: 20px 0 8px;
 }
 
 h3 {
   font-size: 0.95rem;
+  font-weight: 600;
   margin: 12px 0 6px;
 }
 
@@ -76,8 +118,25 @@ p {
   margin: 0 0 10px;
 }
 
+strong,
+b,
+dt,
+summary {
+  font-weight: 600;
+}
+
 .muted {
   color: var(--muted);
+}
+
+a {
+  color: var(--accent);
+  text-underline-offset: 2px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 /* Partner-chosen values (app names in <strong>, origins, addresses, decoded values) are bidi-isolated, so right-to-left
@@ -93,7 +152,7 @@ strong,
 .mono,
 .code {
   font-family: var(--mono);
-  font-size: 0.85rem;
+  font-size: 0.84rem;
   overflow-wrap: anywhere;
   word-break: break-all;
 }
@@ -102,8 +161,9 @@ strong,
 .note {
   background: var(--warn-bg);
   color: var(--warn-text);
-  border-radius: 8px;
-  padding: 8px 10px;
+  border: 1px solid var(--warn-line);
+  border-radius: var(--hana-radius);
+  padding: 9px 12px;
 }
 
 .danger,
@@ -113,8 +173,9 @@ strong,
 
 p.danger {
   background: var(--danger-bg);
-  border-radius: 8px;
-  padding: 8px 10px;
+  border: 1px solid var(--danger-line);
+  border-radius: var(--hana-radius);
+  padding: 9px 12px;
   font-weight: 600;
 }
 
@@ -132,6 +193,30 @@ p.takeover.banner {
   border-width: 2px;
 }
 
+/* ---- who is asking: the app's logo, name and origin, in a neutral box of their own (not Hana's colours) ---- */
+.asker,
+header.app {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--hana-radius);
+  padding: 10px 12px;
+  margin: 0 0 14px;
+  color: var(--text);
+}
+
+/* The origin wraps as a whole onto its own line when it fits there, and breaks inside only when it doesn't. */
+.asker .origin {
+  word-break: normal;
+}
+
+header.app > p {
+  margin: 0;
+}
+
+header.app > p + p {
+  margin-top: 4px;
+}
+
 /* The app's logo beside its name (batch C11): a 256 × 256 PNG from the files origin, shown small and never stretched. */
 img.app-logo {
   width: 32px;
@@ -142,21 +227,18 @@ img.app-logo {
   border-radius: 6px;
 }
 
-header.app {
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 12px;
-  padding-bottom: 8px;
-}
-
 dl {
   display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 4px 12px;
+  /* A long label wraps before it can squeeze the value (Montserrat is wider than the system font). */
+  grid-template-columns: fit-content(50%) minmax(0, 1fr);
+  gap: 5px 14px;
   margin: 0 0 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 dt {
   color: var(--muted);
+  font-weight: 500;
 }
 
 dd {
@@ -179,6 +261,7 @@ ul {
 /* Consent screen contract lines (docs/decisions.md D44): Hana's verified mark, partner names, explorer links. */
 .contract .verified {
   color: var(--ok-text);
+  font-weight: 600;
 }
 
 .contract a.explorer {
@@ -187,7 +270,7 @@ ul {
 }
 
 .sub {
-  border-left: 3px solid var(--line);
+  border-left: 3px solid var(--line-strong);
   margin-left: 4px;
   padding-left: 10px;
 }
@@ -195,9 +278,12 @@ ul {
 pre.message {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  background: var(--bg);
-  border-radius: 8px;
-  padding: 10px;
+  font-family: var(--mono);
+  font-size: 0.86rem;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--hana-radius);
+  padding: 10px 12px;
   max-height: 320px;
   overflow: auto;
 }
@@ -206,23 +292,36 @@ pre.message {
   display: flex;
   gap: 10px;
   justify-content: flex-end;
-  margin-top: 16px;
+  margin-top: 18px;
 }
 
+/* Buttons: Hana's pills (hanawallet.io). */
 button {
   font: inherit;
-  border-radius: 8px;
-  padding: 9px 16px;
-  border: 1px solid var(--line);
+  font-weight: 600;
+  min-height: 42px;
+  border-radius: var(--hana-radius-pill);
+  padding: 9px 20px;
+  border: 1px solid var(--line-strong);
   background: var(--panel);
   color: var(--text);
   cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
 }
 
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-text);
+}
+
+button.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 
 button:disabled {
@@ -234,8 +333,18 @@ button.link {
   border: none;
   background: none;
   color: var(--accent);
+  min-height: 0;
   padding: 0;
+  border-radius: 3px;
+  font-weight: 500;
   text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button {
+    transition: none;
+  }
 }
 
 .auto-approve {
@@ -247,6 +356,8 @@ button.link {
 label {
   display: block;
   margin: 12px 0;
+  font-weight: 600;
+  font-size: 0.92rem;
 }
 
 input {
@@ -254,11 +365,18 @@ input {
   width: 100%;
   margin-top: 6px;
   font: inherit;
-  padding: 8px;
-  border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--bg);
+  font-weight: 400;
+  padding: 10px 12px;
+  border-radius: var(--hana-radius);
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
   color: var(--text);
+}
+
+input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 0;
+  border-color: var(--focus);
 }
 
 .secret {
@@ -266,8 +384,9 @@ input {
   min-height: 3em;
   margin: 12px 0;
   padding: 12px;
-  border-radius: 8px;
-  background: var(--bg);
+  border-radius: var(--hana-radius);
+  border: 1px solid var(--line);
+  background: var(--panel-2);
   -webkit-user-select: none;
   user-select: none;
 }

@@ -33,10 +33,21 @@ export const TEST_EVM_CHAINS: Readonly<Record<number, string>> = Object.freeze({
   1337: 'Local (Ganache, Geth dev)',
 });
 
+/**
+ * The mainnets a `pk_test_` app with Hana's mainnet demo on may sign for (D426: the user, 2026-11-06, "Base and Stellar
+ * only"): Base by chain ID here, and Stellar's public network. The vault decides with the app's setting and the
+ * per-transaction cap (`@hana-id/core/mainnet-demo`); the partner client only lets these chains through its own
+ * early check, so the vault's answer (4100 `mainnet_not_allowed` when the demo is off) is the one that counts.
+ */
+export const MAINNET_DEMO_EVM_CHAINS: readonly number[] = Object.freeze([8453]);
+
 export const isTestPublishableKey = (pk: string): boolean => pk.startsWith('pk_test_');
 
 /** Whether a test app may use this EVM chain (it is on the testnet allowlist). */
 export const isTestEvmChain = (chainId: number): boolean => Number.isSafeInteger(chainId) && Object.hasOwn(TEST_EVM_CHAINS, chainId);
+
+/** Whether the partner client's early D39 check lets a test app use this EVM chain (a testnet, or a demo mainnet). */
+export const isTestOrDemoEvmChain = (chainId: number): boolean => isTestEvmChain(chainId) || MAINNET_DEMO_EVM_CHAINS.includes(chainId);
 
 /** Whether a test app may sign for this Stellar network. */
 export const isTestStellarNetwork = (passphrase: string): boolean => passphrase !== STELLAR_MAINNET_PASSPHRASE;

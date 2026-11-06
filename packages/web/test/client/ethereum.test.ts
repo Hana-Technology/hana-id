@@ -123,8 +123,9 @@ describe('chains', () => {
       expect(e.message).toMatch(/test networks/u);
       expect(e.data).toEqual({ reason: 'mainnet_not_allowed', chainId: '0x1' });
     }
-    // A chain nobody listed counts as a mainnet too, configured or not.
-    expect((await refused(p.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x2105' }] }), 4100)).data).toMatchObject({ reason: 'mainnet_not_allowed' });
+    // A chain nobody listed counts as a mainnet too, configured or not (Sonic 146 included: not a demo chain).
+    expect((await refused(p.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0xa' }] }), 4100)).data).toMatchObject({ reason: 'mainnet_not_allowed' });
+    expect((await refused(p.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x92' }] }), 4100)).data).toMatchObject({ reason: 'mainnet_not_allowed' });
     // The default chain is mainnet here: sending and signing are refused before anything is filled or asked.
     const calls = rpc.calls.length;
     for (const method of ['eth_sendTransaction', 'eth_signTransaction']) {
@@ -135,6 +136,15 @@ describe('chains', () => {
     expect(s.vault.requests.filter((r) => r.method === 'eth_signTransaction')).toHaveLength(0);
     // A test network still works.
     await expect(p.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0xaa36a7' }] })).resolves.toBeNull();
+  });
+
+  it('a test app reaches the vault on Base, the mainnet demo’s chain (D426): the vault decides', async () => {
+    const rpc = rpcFetch(8453);
+    s = setup({ config: { evm: { chains: [{ id: 8453, rpcUrl: 'https://base.rpc.test' }, ...EVM_CONFIG.chains], defaultChainId: 8453 } }, fetch: rpc });
+    await s.vault.connect(LOGGED_IN);
+    const p = s.client.ethereum;
+    await expect(p.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x2105' }] })).resolves.toBeNull();
+    expect(await p.request({ method: 'eth_chainId' })).toBe('0x2105');
   });
 
   it('a live app (pk_live_) may switch to mainnet chains', async () => {

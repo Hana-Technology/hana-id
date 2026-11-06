@@ -20,7 +20,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type Manifest, accountIdFields, isDevEnv, isLoopbackHost, loadEnv } from '@hana-id/env';
+import { type Manifest, accountIdFields, envAlertLabel, isDevEnv, isLoopbackHost, loadEnv } from '@hana-id/env';
 import { workersDevHost } from '../../api/scripts/pages-wrangler.ts';
 import { TEST_MANIFEST as CONSOLE_TEST_MANIFEST } from '../../console/scripts/gen-wrangler.ts';
 import { CRONS, FIVE_MINUTES } from '../src/crons.ts';
@@ -78,13 +78,18 @@ export function wranglerConfig(m: Manifest, opts: { adminHyperdriveId?: string |
     ...adminPlacement(m),
     main: 'src/index.ts',
     compatibility_date: COMPATIBILITY_DATE,
-    // pg (the ops store over Hyperdrive) needs the Node built-ins.
-    compatibility_flags: ['nodejs_compat'],
+    // pg (the ops store over Hyperdrive) needs the Node built-ins. global_fetch_strictly_public: every outbound fetch
+    // goes over the public internet (all of them are to public services: Access certs, SendGrid, NEAR RPC, the
+    // watchdog), so a watchdog on the same Cloudflare account's workers.dev answers instead of Cloudflare's error 1042
+    // page (sandbox-dev until the account move, D404/D414; seen 2026-11-06 as `watchdog_bad_answer`).
+    compatibility_flags: ['nodejs_compat', 'global_fetch_strictly_public'],
     // The Worker's own JSON log lines (src/log.ts: no email, sub, JWT or token), not the per-request invocation records
     // (their URLs can carry an audit filter with a staff or member id).
     observability: { enabled: true, logs: { invocation_logs: false } },
     vars: {
       ENV_NAME: m.name,
+      // Every email subject's label on a non-production env (D419); none on a production network (no var at all).
+      ...(envAlertLabel(m) ? { ENV_LABEL: envAlertLabel(m) } : {}),
       ADMIN_ORIGIN: a.origin,
       CONSOLE_ORIGIN: c.origin,
       FILES_ORIGIN: f.origin,

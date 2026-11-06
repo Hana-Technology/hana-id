@@ -2,13 +2,13 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { KeyPair } from '@near-js/crypto';
-import { isDevEnv, loadEnv, type Manifest, PAGER_PROVIDERS, manifestSchema, WATCHDOG_INTERVAL_MS } from '@hana-id/env';
+import { ENV_ALERT_LABELS, envAlertLabel, isDevEnv, loadEnv, type Manifest, PAGER_PROVIDERS, manifestSchema, WATCHDOG_INTERVAL_MS } from '@hana-id/env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RUN_INTERVAL_MS } from '../../src/checks.ts';
 
 import { identityDiscoveryUrl, parseIdentityPins } from '../../src/identity.ts';
 import { parsePins } from '../../src/pins.ts';
-import { isDevEnvName, PAGER_PROVIDERS as WORKER_PAGERS, SECRET_NAMES } from '../../src/names.ts';
+import { ALERT_LABELS, alertLabelFor, isDevEnvName, PAGER_PROVIDERS as WORKER_PAGERS, SECRET_NAMES } from '../../src/names.ts';
 import { relayerThresholds } from '../../src/relayer.ts';
 import { CRON, LOCAL_D1_ID, TEST_MANIFEST, devVarsContent, existingD1Id, identityVars, main, testWranglerConfig, wranglerConfig, writeWranglerConfig } from '../gen-wrangler.ts';
 import { SECRET_RULES } from '../secrets.ts';
@@ -40,6 +40,7 @@ describe('wranglerConfig', () => {
       d1_databases: [{ binding: 'DB', database_name: 'hana-id-watchdog-test', database_id: D1, migrations_dir: 'migrations' }],
       vars: {
         ENV_NAME: 'sandbox-test',
+        ENV_LABEL: '[SANDBOX]',
         NEAR_NETWORK: 'testnet',
         NEAR_RPC: 'https://rpc.test.invalid',
         NEAR_RPC_FALLBACK: 'https://rpc.fallback-provider.invalid',
@@ -137,6 +138,16 @@ describe('wranglerConfig', () => {
 
   it("decides a dev env as @hana-id/env does (D139's unrecorded_wallets alert is for other envs)", () => {
     for (const name of ['sandbox-dev', 'sandbox-test', 'local', 'local-2', 'staging', 'prod', 'mainnet', 'x-sandbox']) expect(isDevEnvName(name), name).toBe(isDevEnv(name));
+  });
+
+  it('writes the alert label from the manifest (D419), and labels as @hana-id/env does', () => {
+    expect((wranglerConfig(TEST_MANIFEST, D1).vars as Record<string, string>).ENV_LABEL).toBe('[SANDBOX]');
+    expect((wranglerConfig({ ...TEST_MANIFEST, name: 'staging' }, D1).vars as Record<string, string>).ENV_LABEL).toBe('[STAGING]');
+    // A production network (the schema refuses it today; the generator still never writes a label for one).
+    expect((wranglerConfig({ ...TEST_MANIFEST, network: 'mainnet' } as unknown as Manifest, D1).vars as Record<string, string>).ENV_LABEL).toBeUndefined();
+    expect([...ALERT_LABELS]).toEqual([...ENV_ALERT_LABELS]);
+    for (const name of ['sandbox-dev', 'sandbox-test', 'local', 'staging', 'staging-2', 'prod', 'mainnet', 'x-sandbox'])
+      for (const network of ['testnet', 'mainnet']) expect(alertLabelFor(name, network), `${name} ${network}`).toBe(envAlertLabel({ name, network }));
   });
 
   it('omits the fallback RPC when the manifest has none', () => {

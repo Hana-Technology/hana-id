@@ -48,9 +48,19 @@ export function consoleLink(consoleOrigin: string, path: string): string {
   return url.toString();
 }
 
-export function render(env: string, subject: string, blocks: Block[], consoleOrigin: string): Rendered {
+/**
+ * `label` (D419): a non-production env's label (`[SANDBOX]`, `[STAGING]`, …), first in the subject and the body's
+ * first line, on staff and partner mail alike, so test mail never reads as production; empty on production.
+ */
+export function render(env: string, subject: string, blocks: Block[], consoleOrigin: string, label = ''): Rendered {
   const text: string[] = [];
   const html: string[] = [];
+  const tag = oneLine(label, 20);
+  if (tag) {
+    const notice = `${tag} Not production: this email is from Hana ID ${oneLine(env, 60)} (testnet), for testing.`;
+    text.push(notice);
+    html.push(`<p><strong>${escapeHtml(notice)}</strong></p>`);
+  }
   for (const b of blocks) {
     switch (b.kind) {
       case 'p':
@@ -87,7 +97,7 @@ export function render(env: string, subject: string, blocks: Block[], consoleOri
   text.push(footer);
   html.push(`<p><small>${escapeHtml(footer)}</small></p>`);
   return {
-    subject: oneLine(`[Hana ID ${env}] ${subject}`, 200),
+    subject: oneLine(`${tag ? `${tag} ` : ''}[Hana ID ${env}] ${subject}`, 200),
     text: `${text.join('\n\n')}\n`,
     html: `<!doctype html><html><body>${html.join('\n')}</body></html>`,
   };

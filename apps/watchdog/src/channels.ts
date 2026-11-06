@@ -6,7 +6,7 @@
 // and Slack's `&`, `<`, `>` as entities.
 import { sendgridSend } from '@hana-id/sendgrid';
 import type { Channel, Severity } from './checks.ts';
-import { type Env, alertEmails, pagerProvider } from './env.ts';
+import { type Env, alertEmails, alertLabel, pagerProvider } from './env.ts';
 import { headerValue, slackEscape } from './sanitize.ts';
 
 export type SendResult = { ok: true; ref?: string } | { ok: false; error: string };
@@ -71,15 +71,19 @@ const failed = (r: Response | { error: string }): SendResult | null => ('error' 
 const notConfigured: SendResult = { ok: false, error: 'not configured' };
 
 /**
- * One alert's subject: the severity and title first, so a phone's lock screen (which shows ~30 characters) says what
- * happened, and the env last.
+ * One alert's subject: a non-production env's label first (`[SANDBOX]`, D419), so test mail never reads as
+ * production, then the severity and title, so a phone's lock screen (which shows ~30 characters) says what happened,
+ * and the env last.
  */
-const subjectLine = (env: string, severity: Severity, title: string, resend = false) =>
-  `${severity.toUpperCase()}${resend ? ' (re-sent)' : ''}: ${title} [Hana ID ${env}]`;
+export const subjectLine = (env: string, severity: Severity, title: string, resend = false, label = '') =>
+  `${label ? `${label} ` : ''}${severity.toUpperCase()}${resend ? ' (re-sent)' : ''}: ${title} [Hana ID ${env}]`;
+
+/** An email body's first line on a labelled env (D419): says plainly that it isn't production. */
+export const labelLine = (label: string, env: string) => (label ? `${label} Not production: Hana ID ${env} (testnet).\n\n` : '');
 
 // ---- Slack ----
 
-export function slackSender(webhookUrl: string | undefined, envName: string): Sender {
+export function slackSender(webhookUrl: string | undefined, envName: string, label = ''): Sender {
   return {
     channel: 'slack',
     configured: !!webhookUrl,
@@ -88,7 +92,7 @@ export function slackSender(webhookUrl: string | undefined, envName: string): Se
       const res = await post(webhookUrl, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text: `*${slackEscape(headerValue(subjectLine(envName, msg.severity, msg.title, msg.resend), 550))}*\n${slackEscape(msg.text)}` }),
+        body: JSON.stringify({ text: `*${slackEscape(headerValue(subjectLine(envName, msg.severity, msg.title, msg.resend, label), 550))}*\n${slackEscape(msg.text)}` }),
       });
       const f = failed(res);
       if (f) return f;
@@ -124,18 +128,26 @@ export function sendgridEmail(apiKey: string | undefined, from: string): Email &
   };
 }
 
-export function emailSender(email: Email & { configured: boolean }, to: string[], envName: string): Sender {
+export function emailSender(email: Email & { configured: boolean }, to: string[], envName: string, label = ''): Sender {
   return {
     channel: 'email',
     configured: email.configured && to.length > 0,
     send: (msg) =>
-      email.send({ to, subject: headerValue(subjectLine(envName, msg.severity, msg.title, msg.resend), 250), text: msg.text }),
+      email.send({ to, subject: headerValue(subjectLine(envName, msg.severity, msg.title, msg.resend, label), 250), text: `${labelLine(label, envName)}${msg.text}` }),
+  };
+}
+
+/** The daily digest's sender (D419): the label first in its subject and its body's first line on a labelled env. */
+export function digestSender(email: Email & { configured: boolean }, to: string[], envName: string, label = ''): Notifier['digest'] {
+  return {
+    configured: email.configured && to.length > 0,
+    send: (subject, text) => email.send({ to, subject: headerValue(`${label ? `${label} ` : ''}${subject}`, 250), text: `${labelLine(label, envName)}${text}` }),
   };
 }
 
 // ---- Paging apps ----
 
-export function ntfyPager(topicUrl: string | undefined, token: string | undefined, envName: string): Pager {
+export function ntfyPager(topicUrl: string | undefined, token: string | undefined, envName: string, label = ''): Pager {
   return {
     channel: 'pager',
     provider: 'ntfy',
@@ -144,7 +156,7 @@ export function ntfyPager(topicUrl: string | undefined, token: string | undefine
       if (!topicUrl) return notConfigured;
       const headers: Record<string, string> = {
         // An HTTP header: CR/LF and non-ASCII removed (fetch would throw on them, and the page would never go out).
-        title: headerValue(subjectLine(envName, msg.severity, msg.title), 250),
+        title: headerValue(subjectLine(envName, msg.severity, msg.title, false, label), 250),
         priority: msg.severity === 'critical' ? 'urgent' : 'default',
         tags: 'rotating_light',
       };
@@ -164,7 +176,7 @@ export const pushoverReceiptUrl = (receipt: string, token: string) => `https://a
 export const PUSHOVER_RETRY_S = 300;
 export const PUSHOVER_EXPIRE_S = 900;
 
-export function pushoverPager(token: string | undefined, user: string | undefined, envName: string): Pager {
+export function pushoverPager(token: string | undefined, user: string | undefined, envName: string, label = ''): Pager {
   const configured = !!token && !!user;
   return {
     channel: 'pager',
@@ -175,7 +187,7 @@ export function pushoverPager(token: string | undefined, user: string | undefine
       const form = new URLSearchParams({
         token,
         user,
-        title: headerValue(subjectLine(envName, msg.severity, msg.title), 250),
+        title: headerValue(subjectLine(envName, msg.severity, msg.title, false, label), 250),
         message: msg.text.slice(0, 1024),
         priority: msg.severity === 'critical' ? '2' : '0',
       });
@@ -207,7 +219,7 @@ export function pushoverPager(token: string | undefined, user: string | undefine
 export const PAGERDUTY_EVENTS_URL = 'https://events.pagerduty.com/v2/enqueue';
 
 /** PagerDuty Events API v2. Re-sends use the same dedup key, so they fold into one incident. Acks happen in PagerDuty. */
-export function pagerDutyPager(routingKey: string | undefined, envName: string): Pager {
+export function pagerDutyPager(routingKey: string | undefined, envName: string, label = ''): Pager {
   return {
     channel: 'pager',
     provider: 'pagerduty',
@@ -222,7 +234,7 @@ export function pagerDutyPager(routingKey: string | undefined, envName: string):
           routing_key: routingKey,
           event_action: 'trigger',
           dedup_key: dedupKey,
-          payload: { summary: headerValue(subjectLine(envName, msg.severity, msg.title), 1024), source: `hana-id-watchdog-${envName}`, severity: msg.severity === 'critical' ? 'critical' : 'warning', custom_details: { text: msg.text } },
+          payload: { summary: headerValue(subjectLine(envName, msg.severity, msg.title, false, label), 1024), source: `hana-id-watchdog-${envName}`, severity: msg.severity === 'critical' ? 'critical' : 'warning', custom_details: { text: msg.text } },
         }),
       });
       const f = failed(res);
@@ -252,21 +264,22 @@ export function heartbeatPinger(url: string | undefined): Heartbeat {
 /** The real channels from the Worker's secrets. An unknown PAGER_PROVIDER yields an unconfigured pager. */
 export function notifierFromEnv(env: Env): Notifier {
   const provider = pagerProvider(env);
+  const label = alertLabel(env);
   const pager =
     provider === 'pushover'
-      ? pushoverPager(env.PUSHOVER_TOKEN, env.PUSHOVER_USER, env.ENV_NAME)
+      ? pushoverPager(env.PUSHOVER_TOKEN, env.PUSHOVER_USER, env.ENV_NAME, label)
       : provider === 'pagerduty'
-        ? pagerDutyPager(env.PAGERDUTY_ROUTING_KEY, env.ENV_NAME)
+        ? pagerDutyPager(env.PAGERDUTY_ROUTING_KEY, env.ENV_NAME, label)
         : provider === 'ntfy'
-          ? ntfyPager(env.NTFY_TOPIC_URL, env.NTFY_TOKEN, env.ENV_NAME)
-          : { ...ntfyPager(undefined, undefined, env.ENV_NAME), provider: env.PAGER_PROVIDER || 'none' };
+          ? ntfyPager(env.NTFY_TOPIC_URL, env.NTFY_TOKEN, env.ENV_NAME, label)
+          : { ...ntfyPager(undefined, undefined, env.ENV_NAME, label), provider: env.PAGER_PROVIDER || 'none' };
   const to = alertEmails(env);
   const email = sendgridEmail(env.SENDGRID_API_KEY, env.ALERT_FROM);
   return {
     pager,
-    slack: slackSender(env.SLACK_WEBHOOK_URL, env.ENV_NAME),
-    email: emailSender(email, to, env.ENV_NAME),
-    digest: { configured: email.configured && to.length > 0, send: (subject, text) => email.send({ to, subject, text }) },
+    slack: slackSender(env.SLACK_WEBHOOK_URL, env.ENV_NAME, label),
+    email: emailSender(email, to, env.ENV_NAME, label),
+    digest: digestSender(email, to, env.ENV_NAME, label),
     heartbeat: heartbeatPinger(env.HEARTBEAT_URL),
   };
 }

@@ -4504,10 +4504,12 @@ skips everything while the `NPM_TOKEN` secret is missing, and npm refuses `"priv
     e2e:install`), the npm registry (the pack check). macOS WebKit is not Linux WebKit: D381's bug would pass here.
   - Timings on the dev Mac (16 cores, idle, warm caches), every package and job selected (as for a change to the
     verify files): `--quick` about 1 min (55–70 s: typecheck 12 s, unit tests 43–50 s, gitleaks and the docs checks a
-    few seconds); the default tier about 22 min, of which the sandbox e2e is 18–20 min (it runs its tests one at a time),
-    Playwright on Chromium 32 s, the pack check 10 s, the contract a few seconds once built (about 2.5 min for
-    `cargo test` and 1.5 min for the wasm from cold). Without a Rust change the default tier is about 2 min. On a
-    machine under heavy load `--quick` took 4 min, and workerd tests timed out.
+    few seconds); `--full` about 6 min (5m53s and 6m18s on 2026-11-06, D423; 21–22 min before it): phases 0–2 about
+    1 min, then the sandbox e2e 5 min (4m59s–5m05s; 18–19 min one test at a time) beside the pack check (10 s) then
+    Playwright on all three browsers (1m43s). The default tier with a Rust change is bound by the sandbox e2e the
+    same way (about 6 min); without one it is about 2 min (Playwright on Chromium 32 s). The contract takes a few
+    seconds once built (about 2.5 min for `cargo test` and 1.5 min for the wasm from cold, beside the typecheck). On
+    a machine under heavy load `--quick` took 4 min, and workerd tests timed out.
 - **Before a merge into `develop`, and before a deploy** (D413; merges are done locally by the assistant while CI is
   off): run `pnpm verify` on the merged result before pushing `develop` (in the `develop` checkout after the local
   merge, or on the feature branch after merging current `origin/develop` into it), and `pnpm verify --full` on the

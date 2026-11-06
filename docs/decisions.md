@@ -7684,7 +7684,8 @@ branch.
 - Measured (dev Mac, 16 cores, idle, warm caches): the suite at 4 threads 443 s, at 8 threads 299 s, then five runs
   in a row at 8 with no failure: 310, 303, 300, 303, 306 s (e2e 131–142 s, email 32–35 s, governance 133–136 s;
   8 nodes, ~3.2 GB, 1-min load ≤ 8.6). Both long binaries are now bound by their longest test, so more threads
-  barely help.
+  barely help. `pnpm verify --full` twice on the branch: 6m18s and 5m53s (from 21–22 min), the sandbox e2e 5m05s and
+  4m59s beside Playwright's 1m43s.
 - Trade-offs: 8 nodes need ~3.3 GB and load a small machine; CI's 4-vCPU runner is untested at 8 (CI is off,
   D387): on its first run there, watch for sandbox start or RPC timeouts and lower the number rather than retry.
   Playwright now runs beside 8 sandbox nodes.

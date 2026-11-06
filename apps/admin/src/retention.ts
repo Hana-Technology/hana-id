@@ -15,12 +15,14 @@
 //   RPC (each call one of the run's outbound calls, D280; at most RETENTION_MAX_CALLS a run)
 //     AdminRpc.deletedApps → usage.purge_app_users   apps deleted 30 days ago (a cursor in ops.state)
 //     AdminRpc.purgeDirectory                        the wallet directory of scopes left without apps (D363)
+//     AdminRpc.purgeUserEvents                       key exports and mainnet demo signatures past 24 months, and
+//                                                    those of scopes left without apps (readiness 7.17)
 //     AdminRpc.purgeAudit, StaffRpc.purgeAudit       audit rows past 60 months, in batches (D364)
 //
 // Not here: the email issuer's directory and its staff audit, which this Worker has no binding to. They are the
 // operator's `admin <env> retention:issuer` (D365); the screen says so. Every number is a count; nothing here reads
 // a uid, a sub, an address or a wallet.
-import { RETENTION_BATCH, auditCutoff, deletedAppCutoff } from '@hana-id/console-core';
+import { RETENTION_BATCH, auditCutoff, deletedAppCutoff, userEventsCutoff } from '@hana-id/console-core';
 import type { AdminRpcClient, Env, StaffRpcClient } from './env.ts';
 import { mailLabel } from './env.ts';
 import { retentionFailed } from './email/ledger-messages.ts';
@@ -89,7 +91,7 @@ export async function dueState(store: RetentionStore, now: number): Promise<DueS
 
 export interface RetentionDeps {
   store: RetentionStore;
-  api: Pick<AdminRpcClient, 'purgeAudit' | 'deletedApps' | 'purgeDirectory'>;
+  api: Pick<AdminRpcClient, 'purgeAudit' | 'deletedApps' | 'purgeDirectory' | 'purgeUserEvents'>;
   console: Pick<StaffRpcClient, 'purgeAudit'>;
   budget: Budget;
   now: number;
@@ -207,6 +209,17 @@ export async function runRetention(d: RetentionDeps): Promise<RetentionSummary> 
       add('directoryWallets', r.wallets);
       add('directoryIdentities', r.identities);
       if (r.users < RETENTION_BATCH) return;
+    }
+  });
+  await step('user_events', async () => {
+    for (;;) {
+      const r = await rpc<{ expired: number; deadScopes: number }>('user_events', () =>
+        api.purgeUserEvents({ ...systemCtx(), before: userEventsCutoff(d.now), deletedBefore: deletedAppCutoff(d.now), limit: RETENTION_BATCH }),
+      );
+      if (!r) return;
+      add('userEventsExpired', r.expired);
+      add('userEventsDeadScopes', r.deadScopes);
+      if (r.expired < RETENTION_BATCH && r.deadScopes < RETENTION_BATCH) return;
     }
   });
   await step('api_audit', async () => {

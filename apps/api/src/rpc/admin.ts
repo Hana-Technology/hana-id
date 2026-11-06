@@ -6,7 +6,8 @@
 //
 // Built in batch C5; batch C14 adds the read-only `governance` (the `GET /v1/governance` snapshot) and `pendingUpgrades`
 // (the pending-upgrades page, D86); batch C13 the retention methods `purgeAudit`, `deletedApps` and `purgeDirectory` (the
-// admin Worker's monthly job only: a `system` actor, D360); batch C15 the Support ID lookup's hot-DB part,
+// admin Worker's monthly job only: a `system` actor, D360), with `purgeUserEvents` for migration 0013's events (readiness
+// 7.17); batch C15 the Support ID lookup's hot-DB part,
 // `supportLookup` and `userShares` (staff only; the admin Worker audits before it calls and reads the ledger itself, D394);
 // the System status page (D425) `systemStatus` (staff only, read-only, no user data).
 import {
@@ -37,6 +38,7 @@ import {
   pendingUpgradesView,
   purgeAuditInput,
   purgeDirectoryInput,
+  purgeUserEventsInput,
   relayerKeysInput,
   removeOriginsInput,
   revokeKeyInput,
@@ -75,7 +77,7 @@ import { governanceSnapshot } from '../governance-status.ts';
 import { systemStatus } from '../system-status.ts';
 import { adminAppNames, adminFindUsers, adminGetUser, adminListUsers } from '../directory/read.ts';
 import { supportLookup, userShares } from '../directory/support.ts';
-import { deletedApps, purgeAudit, purgeDirectory } from '../changes/retention.ts';
+import { deletedApps, purgeAudit, purgeDirectory, purgeUserEvents } from '../changes/retention.ts';
 import { runRpc } from './common.ts';
 import { mainnetDemoEnv } from '../mainnet-demo-setting.ts';
 
@@ -254,6 +256,11 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
   /** The wallet directory of scopes whose every app was deleted 30 days ago or more (D363). */
   purgeDirectory(c: unknown) {
     return runRpc(this.env, 'admin.purgeDirectory', purgeDirectoryInput, c, { actors: SYSTEM }, ({ input, db, w }) => purgeDirectory(db, input, w.now));
+  }
+
+  /** user_events past min(before, 24 months ago), and those of scopes left without apps (purgeDirectory's rule). */
+  purgeUserEvents(c: unknown) {
+    return runRpc(this.env, 'admin.purgeUserEvents', purgeUserEventsInput, c, { actors: SYSTEM }, ({ input, db, w }) => purgeUserEvents(db, input, w.now));
   }
 
   // ---- end users and their wallets (D310, D315, D346; staff only: the internal id, subs and identity keys included,

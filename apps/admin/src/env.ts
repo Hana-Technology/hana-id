@@ -21,6 +21,7 @@ import type {
   OwnerGrantView,
   PendingUpgradesView,
   PurgeDirectoryResult,
+  PurgeUserEventsResult,
   RpcFail,
   RpcOk,
   ScopeRow,
@@ -95,6 +96,8 @@ export interface AdminRpcClient {
   deletedApps(c: unknown): Answer<DeletedAppsResult>;
   /** The wallet directory of scopes whose every app was deleted 30 days ago or more. */
   purgeDirectory(c: unknown): Answer<PurgeDirectoryResult>;
+  /** user_events (migration 0013) past 24 months, and those of scopes left without apps (readiness 7.17). */
+  purgeUserEvents(c: unknown): Answer<PurgeUserEventsResult>;
   /** The wallet directory (D310, D315, D346): users with their three ids, identities (with subs) and wallets. */
   listUsers(c: unknown): Answer<{ users: StaffUser[]; nextCursor: string | null }>;
   getUser(c: unknown): Answer<{ user: StaffUser }>;

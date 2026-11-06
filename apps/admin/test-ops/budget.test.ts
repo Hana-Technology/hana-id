@@ -166,6 +166,7 @@ describe('a worst-case 15-minute tick (D380): the 00:30 daily work, a due retent
         // 14 pages of deleted apps before the job's other RPCs: more than one run's RETENTION_MAX_CALLS.
         deletedApps: async () => ({ ok: true as const, appIds: [], next: `1:app_${++deletedPages}`, more: deletedPages < 14 }),
         purgeDirectory: async () => ({ ok: true as const, scopes: 0, users: 0, wallets: 0, identities: 0 }),
+        purgeUserEvents: async () => ({ ok: true as const, expired: 0, deadScopes: 0 }),
         purgeAudit: async () => ({ ok: true as const, appChanges: 0, guardedChanges: 0 }),
       },
       rpc,
@@ -207,7 +208,7 @@ describe('a worst-case 15-minute tick (D380): the 00:30 daily work, a due retent
       ledger: opens - before.opens,
       relayer_keys: countOf(mine, 'api.relayerKeys'),
       nonce_check: net.key - before.key,
-      retention: countOf(mine, 'api.deletedApps', 'api.purgeDirectory', 'api.purgeAudit', 'console.purgeAudit'),
+      retention: countOf(mine, 'api.deletedApps', 'api.purgeDirectory', 'api.purgeUserEvents', 'api.purgeAudit', 'console.purgeAudit'),
       alerts: sent.filter((m) => ALERT_SUBJECT.test(m.subject)).length,
       statement_notices: countOf(mine, 'api.getSecurityContacts', 'console.getOrg') + sent.filter((m) => !ALERT_SUBJECT.test(m.subject) && !/\] Retention/u.test(m.subject)).length,
       rates: net.rate - before.rate,
@@ -257,14 +258,14 @@ describe('a worst-case 15-minute tick (D380): the 00:30 daily work, a due retent
 
     // 15 minutes later: retention finishes, the last statement notices go out, settlement takes the rest.
     const second = await tick(T0 + 15 * MIN);
-    expect(second.sum.calls).toEqual({ ledger: 1, relayer_keys: 1, retention: 5, statement_notices: 2 * 5, settlement: RUN_BUDGET - 17 });
+    expect(second.sum.calls).toEqual({ ledger: 1, relayer_keys: 1, retention: 6, statement_notices: 2 * 5, settlement: RUN_BUDGET - 18 });
     expect(second.sum.retention).toMatchObject({ ran: true, status: 'ok' });
     expect(await store.unnoticedStatements(100)).toEqual([]);
-    expect(second.sum.settlement).toMatchObject({ read: RUN_BUDGET - 17, final: RUN_BUDGET - 17 });
+    expect(second.sum.settlement).toMatchObject({ read: RUN_BUDGET - 18, final: RUN_BUDGET - 18 });
 
     // Then settlement drains the backlog; the month's retention is done and takes nothing.
     const third = await tick(T0 + 30 * MIN);
-    expect(third.sum.calls).toEqual({ ledger: 1, relayer_keys: 1, settlement: SETTLE - (RUN_BUDGET - 17) });
+    expect(third.sum.calls).toEqual({ ledger: 1, relayer_keys: 1, settlement: SETTLE - (RUN_BUDGET - 18) });
     expect(third.sum.retention).toMatchObject({ ran: false, why: 'done' });
     expect(await store.settlementBacklog()).toMatchObject({ pending: 0 });
 

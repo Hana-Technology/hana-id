@@ -40,7 +40,9 @@ alias is emailed. No export.
 
 **Key exports and mainnet demo signatures (D428, D430).** The Users detail and each Support ID lookup match list the
 user's key exports (`key_exported`, recorded by the API at the export window's sign-in) and their mainnet demo
-signatures (reported by the vault, bound to the user's session), from `user_events`, at most 20 of each kind. The app page's **Signing settings** card has the
+signatures (reported by the vault, bound to the user's session), from `user_events`, at most 20 of each kind, kept 24
+months (the Retention screen's monthly job; an erasure removes them at once; D432), so an empty list says "in the last 24
+months". The app page's **Signing settings** card has the
 mainnet demo switch in a dev testnet env, for a test app only (`POST /api/apps/:app/mainnet-demo`).
 
 **Support ID lookup (C15; D394–D396, D399).** A Support ID, User ID or internal id, a support reference (required),
@@ -275,7 +277,7 @@ lookup screen and the Users screen's ways into it (`support.test.ts`), the UI pr
 the sign-in's end: the Access redirect, Try again, the warning (`session.test.ts`), and the System status page over each
 preview scenario's real answer (`status.test.ts`); the status route's checks, call count and cache are `test/status.test.ts`.
 
-Last verified: 2026-11-06 (branch `feat/hana-brand`: "Brand", the SPA in Hana's brand, `public/fonts`, `sync-brand`, the amended source check, D426); 2026-11-06 (branch `feat/admin-system-status`: the System status page, its checks, budget and preview scenarios, D425); 2026-11-06 (branch `fix/session-expiry-ux`: the sign-in's end said as such, Try again, the warning
+Last verified: 2026-11-06 (branch `feat/user-events-retention`: the Users detail and Support ID lookup's events kept 24 months and their empty state, the Retention screen's user events rows, D432); 2026-11-06 (branch `feat/hana-brand`: "Brand", the SPA in Hana's brand, `public/fonts`, `sync-brand`, the amended source check, D426); 2026-11-06 (branch `feat/admin-system-status`: the System status page, its checks, budget and preview scenarios, D425); 2026-11-06 (branch `fix/session-expiry-ux`: the sign-in's end said as such, Try again, the warning
 before `exp`, `GET /api/me` `accessExp`, `/signed-in`, the preview's `PREVIEW_SESSION_MIN`, `session.test.ts`, D424);
 2026-11-06 (branch `feat/admin-ux-redesign`: the grouped nav and screens, "UI principles", the local preview, `ux.test.ts`, D420); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: email through SendGrid, D401); 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy`, stamped with the build id, read by `deploy-check` from the deployed version, D406); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup screen, `src/support.ts`'s email join,
 the SPA tests, D399); 2026-11-05 (branch `feat/batch-c-8b`: written with the Users screen, D388–D392).

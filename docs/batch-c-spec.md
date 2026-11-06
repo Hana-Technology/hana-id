@@ -1944,6 +1944,7 @@ longer needed). The service contract names the same periods.
 | Issuer `user_emails`, `user_email_apps` (D269), with the proposed `uid` column (D276) | No expiry set by D269; deleted on an erasure request. As built (C13): an app's `user_email_apps` rows 30 days after its deletion (D363) | `uid-erase` (D361; D276's `user:erase` folded in), by the operator; `admin retention:issuer` monthly for deleted apps (D365) |
 | Issuer `email_admin_audit`, directory reads included (proposed, D275) | 5 years, as the other audit logs (D90; not set for this table until now) | As built (C13): `admin retention:issuer`, by the operator after each month's job (D365) |
 | Wallet directory (`end_users`, `end_user_wallets`, `end_user_identities`, hot-DB 0011, D310) | Added in C13: until every app of the scope has been deleted 30 days; deleted on an erasure request (D361, D363) | Monthly job: `AdminRpc.purgeDirectory`; `uid-erase` |
+| Hot-DB `user_events` (key exports, mainnet demo signatures; 0013, D430) | Added after C13 (D432): 24 months from the event, and no longer than the scope's wallet directory; deleted on an erasure request, by internal id and by the user's wallet addresses | Monthly job: `AdminRpc.purgeUserEvents`; `uid-erase` |
 | D1 Time Travel / Neon PITR | 30 days / the plan's window | — |
 
 - **Monthly purge job (D90).** The admin Worker's monthly cron runs the Neon functions above and calls

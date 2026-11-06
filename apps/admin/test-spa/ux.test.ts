@@ -297,3 +297,25 @@ describe('navigation', () => {
     expect(s.doc.activeElement?.textContent).toBe('Users');
   });
 });
+
+describe('the Retention screen (C13; readiness 7.17)', () => {
+  it('names the user events period and labels their rows in a run', async () => {
+    const t = Date.UTC(2026, 10, 1, 1);
+    const body = {
+      warning: null,
+      month: '2026-11',
+      state: 'done',
+      dueAt: t,
+      nextRunAt: Date.UTC(2026, 11, 1, 1),
+      due: { statements: 0, rates: 0, rateOverrides: 0, oldestStatement: null },
+      runs: [{ id: 3, month: '2026-11', startedAt: t, finishedAt: t + 30_000, status: 'ok', rows: { calls: 5, userEventsExpired: 12, userEventsDeadScopes: 2 }, error: null }],
+      erasures: [],
+    };
+    const s = boot('/retention', () => ({ body }));
+    await vi.waitFor(() => expect(s.text()).toContain('Rows deleted'));
+    const text = s.text();
+    expect(text).toContain('key exports and mainnet demo signatures 24 months');
+    expect(text).toContain('key exports and mainnet demo signatures (24 months): 12');
+    expect(text).toContain('key exports and mainnet demo signatures of scopes left without apps: 2');
+  });
+});

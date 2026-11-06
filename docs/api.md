@@ -730,19 +730,32 @@ changes nothing and a replay revokes nothing.
 ### `POST /v1/mainnet-demo/events` — a mainnet demo signature (D428)
 
 From the vault page only (`Origin: VAULT_ORIGIN`, `x-hana-key`, `x-hana-parent-origin`, as `/v1/vault/*`; the vault
-limits apply). Body, exactly: `{chain: "evm" | "stellar", network: "8453" | "pubnet", kind: "evm_tx" | "stellar_tx",
-address, usdMicros}` (an EVM address or a `G…` account for that chain; `usdMicros` a decimal string, at most the cap
-9990000). No key, signature or signed bytes. Stores a `mainnet_signature` row in `user_events`. It is the vault's word
-(the API can't check that the signature happened); staff see it as such.
+limits apply), and proven by the session that signed (as `/v1/identity/token`, after the security review of 2026-11-06). Body, exactly:
+`{chain: "evm" | "stellar", network: "8453" | "pubnet", kind: "evm_tx" | "stellar_tx", usdMicros, sessionPublicKey:
+number[32], issuedAtMs, nonce: number[16], signature: number[64], walletProof: {address, signature}}` (`usdMicros` a
+decimal string, at most the cap 9990000). Checks, in order: the shape; `issuedAtMs` within ±60 s (`400 stale_proof`);
+the session key's Ed25519 signature over `identityMessage` with `mainnetDemoEventPayload` (the event and the wallet
+proof; `401 invalid_signature`); the demo on (`409 mainnet_demo_off`); the wallet proof by the address's own key for
+this session key and app (`400 bad_wallet_proof`: another user's address can't be named); the session live on chain in
+the app's scope (`410 session_ended`, `403 scope_mismatch`); the proof unused (`409 proof_replayed`, a single-use
+marker per session key); the app's hourly cap. Stores a `mainnet_signature` row with the session's user (its account
+root's internal id), the address, chain, network and value; no key or signed bytes. That the signature was made is
+still the vault's word (the API never sees it); staff see the rows as "reported by the vault".
 
 | Status | Code | When |
 |---|---|---|
 | 200 | — | `{recorded: true}` |
 | 400 | `bad_request` | any other body |
-| 403 | `origin_not_allowed` | not the vault page, or a parent origin the app doesn't allow |
+| 400 | `stale_proof` | `issuedAtMs` more than 60 s from the API's clock (with `serverTimeMs`) |
+| 400 | `bad_wallet_proof` | the wallet proof isn't the address's own for this session key and app |
+| 401 | `invalid_signature` | the session key didn't sign this event |
+| 403 | `origin_not_allowed`, `scope_mismatch` | not the vault page, a parent origin the app doesn't allow, or a session of another scope |
 | 409 | `mainnet_demo_off` | the app doesn't have the demo on (or the env can't have it) |
+| 409 | `proof_replayed` | this session proof was already used |
+| 410 | `session_ended` | no live session for the key on chain |
 | 429 | `rate_limited` | more than 120 reports for the app this hour (`mainnet_demo:hour`) |
-| 503 | `event_unavailable`, `rate_limiter_unavailable` | the write or the limiter failed |
+| 502 | `near_unavailable` | the session couldn't be read |
+| 503 | `event_unavailable`, `rate_limiter_unavailable` | the write, the directory keys or the limiter failed |
 
 ### `POST /v1/wallets/record` — the wallet directory · W
 
@@ -1147,7 +1160,7 @@ no budget, plus:
 | `governance` (C14) | `{}` → `{governance}`: the whole `GET /v1/governance` snapshot (above; the same isolate cache, so one read serves the endpoint and the RPCs for 10 s), for the "Security & monitoring" view. `hana` only. `near_unavailable` when a view fails or has an unknown shape (nothing partial) |
 | `pendingUpgrades` (C14) | `{}` → `{pendingUpgrades}`: the same view as `ConsoleRpc.pendingUpgrades`, for the admin's page. `hana` only |
 | `systemStatus` (D425) | `{}` → `{build, hotDb: {ok, latencyMs}, jwksSync: [{job, atMs, outcome, detail}] \| null, notices: {pending, oldestAt, truncated} \| null, relayerKeys: [{pool, publicKey}] \| null, governance: {ok: true, snapshot} \| {ok: false, code}}`: the admin's System status page in one call. `build` the deployed `HANA_BUILD` (null unstamped); `hotDb` a timed `SELECT 1`; `jwksSync` the Google-key sync's last run per provider (`issuer_key_sync_runs`, written by every 15-minute cron run); `notices` the guarded changes pending and unannounced (at most 100 counted); `relayerKeys` public keys only; `governance` the `GET /v1/governance` snapshot (its 10 s isolate cache) or why not. Each part fails on its own (a D1 failure is `ok: false` / null, never a thrown call). `hana` only, read-only, no user data (`apps/api/src/system-status.ts`) |
-| `listUsers`, `getUser`, `findUsers` (W) | The wallet directory for staff (D315): `listUsers({orgId?, scopeId?, cursor?, limit ≤ 200})`, `getUser({userId})` or `getUser({internalId})`, exactly one (`not_found`), `findUsers({query, provider?})` (a Stellar or EVM address: every user listing it; a User ID `u1_…`; an internal id `hu_…`, any case; a Support ID, any case, with or without `HANA-` and dashes: every user it is the short form of; else a sub, which `provider` narrows and forces), at most 50. A `StaffUser` is `{userId, supportId, internalId, scopeId, orgId, createdAt, lastSeenAt, identities: [{provider, sub, identityKey, role, status, effectiveAt, firstSeenAt, observedAt, directoryKey}], wallets: [{chain, address, keyIndex, firstSeenAt, lastUsedAt, sharedWith}]}`. `status` is read at answer time (a pending member past `effectiveAt` is `active`). `getUser` and `findUsers` (and so `supportLookup`) add `events` (D428, D430): up to 20 of `{kind: 'key_exported' \| 'mainnet_signature', appId, chain, network, address, usdMicros, at}` from `user_events`, newest first (exports by the internal id, signatures by the user's wallet addresses; empty before migration 0013); `listUsers` doesn't. The email isn't here: `directoryKey` `{provider, sub}` is the key for D275's `DirectoryRpc` (C8b) |
+| `listUsers`, `getUser`, `findUsers` (W) | The wallet directory for staff (D315): `listUsers({orgId?, scopeId?, cursor?, limit ≤ 200})`, `getUser({userId})` or `getUser({internalId})`, exactly one (`not_found`), `findUsers({query, provider?})` (a Stellar or EVM address: every user listing it; a User ID `u1_…`; an internal id `hu_…`, any case; a Support ID, any case, with or without `HANA-` and dashes: every user it is the short form of; else a sub, which `provider` narrows and forces), at most 50. A `StaffUser` is `{userId, supportId, internalId, scopeId, orgId, createdAt, lastSeenAt, identities: [{provider, sub, identityKey, role, status, effectiveAt, firstSeenAt, observedAt, directoryKey}], wallets: [{chain, address, keyIndex, firstSeenAt, lastUsedAt, sharedWith}]}`. `status` is read at answer time (a pending member past `effectiveAt` is `active`). `getUser` and `findUsers` (and so `supportLookup`) add `events` (D428, D430): the user's own rows of `user_events` by internal id, `{kind: 'key_exported' \| 'mainnet_signature', appId, chain, network, address, usdMicros, at}`, newest first, up to 20 **of each kind** (one `ROW_NUMBER()` per user and kind, so reported signatures never push an export out; empty before migration 0013); `listUsers` doesn't. The email isn't here: `directoryKey` `{provider, sub}` is the key for D275's `DirectoryRpc` (C8b) |
 | `appNames` (C8b) | `{appIds: string[1..50]}` → `{apps: [{id, name, orgId, scopeId, environment, deletedAt}]}`: the Users screen's app labels (the issuer's directory names apps by id, and `getApp` needs the org); one SELECT, unknown ids left out, deleted apps included. `hana` only (D391) |
 | `supportLookup({query, days?})` (C15) | `hana` only, read only (D394). `query`: a Support ID (any case, `HANA-` and dashes optional), a User ID (`u1_…`) or an internal id (`hu_…`), else `bad_request` (a wallet or a sub goes through `findUsers` first); `days` 1–731, 30 by default → `{query: {kind, …}, since, truncated, matches: [{user: StaffUser, apps: [{appId, name, orgId, environment, persistence, deletedAt}], shares: [{appId, keyIndex, createdAt, idleUntil, absExpiresAt, revokedAt, live}], changes: AppChange[]}]}`: every directory user the query names (at most 10 in full, newest first by last seen; `truncated` when more share the code), the scope's apps (deleted ones too), the user's `vault_shares` not past `abs_expires_at` (the account root's path at key index 0 and each key index its wallets show; never a share id, key or counter) and the scope's apps' `app_changes` since `since` (at most 50, newest first). No ledger rows: the admin Worker and the CLI read those as `usage_admin` |
 | `userShares({appId, path})` (C15) | `hana` only. The `vault_shares` of `sha256(path)` in the app not past `abs_expires_at`, newest first, at most 100 → `{shares: [{createdAt, idleUntil, absExpiresAt, revokedAt}]}`; the path is hashed, never stored or logged |
@@ -1307,7 +1320,7 @@ this key's public key, start at R with no chain read (skips up to 99 nonces) and
 | `end_user_wallets` (W) | (`user_id` → end_users, `chain` `stellar`/`evm`, `address`) PK, `key_index`, `first_seen_at` (MIN), `last_used_at` (MAX: the last login that recorded it); index on `address` (an address may be under several users: a reused key) | 0011 |
 | `end_user_identities` (W) | (`scope_id`, `identity_key` hex) PK, `user_id` → end_users (indexed), `provider`, `sub` (NULL for a member seen only on chain; indexed), `role` `root`/`member`, `status` `active`/`pending`/`unlinked`/`cancelled`, `effective_at` (a member's link; pending reads as active once passed), `first_seen_at`, `observed_at` (a write lands only when no older than the row's). Holds Google and email `sub`s: staff only; `ConsoleRpc` never selects `sub` or `identity_key` | 0011 |
 | `apps.mainnet_demo` (D428) | 0/1, default 0: Hana staff's switch for the mainnet demo exception to D39 (`AdminRpc.setMainnetDemo`, `admin app:settings --mainnet-demo`); triggers `apps_mainnet_demo_test_only_insert`/`_update` refuse 1 for an app whose scope isn't `test` | 0013 |
-| `user_events` (D428, D430) | `id` PK, `kind` `key_exported`/`mainnet_signature`, `app_id`, `scope_id`, `user_id` (`hu_…`; required for `key_exported`), `chain`, `network` (EVM chain ID or `pubnet`), `address` (a signature's wallet), `usd_micros`, `request_id`, `at`; indexed by user, by address and by app. No key, token, signature, bytes or path. Personal data (an internal id or an address with times); not in C13's purge yet (`mainnet-readiness.md` 7.17) | 0013 |
+| `user_events` (D428, D430) | `id` PK, `kind` `key_exported`/`mainnet_signature`, `app_id`, `scope_id`, `user_id` (`hu_…`; required for both kinds), `chain`, `network` (EVM chain ID or `pubnet`), `address` (a signature's wallet), `usd_micros`, `request_id`, `at`; indexed by user, by address and by app. No key, token, signature, bytes or path. Personal data (an internal id or an address with times); not in C13's purge yet (`mainnet-readiness.md` 7.17) | 0013 |
 | `vault_shares` | `share_id` BLOB(16) PK, `app_id`, `session_pk` BLOB(32) UNIQUE, `path_hash` = sha256(path), `partner_origin`, `share_enc` = iv ‖ AES-GCM(KEK, K_s, aad = share_id ‖ app_id ‖ session_pk), `kek_id`, `counter`, `created_at`, `idle_until`, `abs_expires_at`, `revoked_at`; indexes (`app_id`, `path_hash`), `abs_expires_at`, `kek_id` | 0003 |
 
 ## Cron (`*/15 * * * *`)

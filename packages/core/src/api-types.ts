@@ -117,14 +117,21 @@ export interface LoginBody extends CreateSessionBody {
 export { MAINNET_DEMO_EVENTS_ENDPOINT } from './demo-config.ts';
 
 /**
- * One mainnet demo signature, as the vault reports it after signing: never a key, a signature or the signed bytes.
- * `network` is the EVM chain ID in decimal or `pubnet`; `usdMicros` the value the vault assessed, in decimal.
+ * One mainnet demo signature, as the vault reports it after signing: never a key or the signed bytes. `network` is the
+ * EVM chain ID in decimal or `pubnet`; `usdMicros` the value the vault assessed, in decimal. Bound to the session (D428,
+ * the security review of 2026-11-06): `signature` is the session key's over identityMessage with
+ * `mainnetDemoEventPayload`, `walletProof` the session's proof of the signing address (the address's own key over
+ * this session and app), as the identity token's.
  */
 export interface MainnetDemoEventBody {
+  sessionPublicKey: number[];
+  issuedAtMs: number;
+  nonce: number[];
+  signature: number[];
+  walletProof: { address: string; signature: number[] };
   chain: 'stellar' | 'evm';
   network: string;
   kind: string;
-  address: string;
   usdMicros: string;
 }
 

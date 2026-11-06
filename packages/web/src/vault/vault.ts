@@ -68,7 +68,7 @@ import { deriveAddresses } from '@hana-id/core/derivation';
 import { type AutoApproveResult, matchAutoApprovePolicy, recordAutoApproveUse } from '@hana-id/core/policy';
 import type { HanaEnv } from '../hana-env.ts';
 import { VaultApi } from './api.ts';
-import { type CachedIdentity, cacheUsable, copyProofs, makeWalletProofs, mintBody, tokenIatMs } from './identity.ts';
+import { type CachedIdentity, cacheUsable, copyProofs, demoEventBody, makeWalletProofs, mintBody, tokenIatMs } from './identity.ts';
 import { reportWallets, signWalletRecords } from './wallet-record.ts';
 import { type ApprovalOutcome, Approvals } from './approvals.ts';
 import { autoApproveStatus, consentActive, consentEnd, newConsent, withUsage } from './auto-approve.ts';
@@ -2111,7 +2111,7 @@ export class Vault {
     if (this.live() !== s) throw disconnected();
     const result = signRequest(s.prk, request, subject);
     this.maybeTouch();
-    if (demo) this.reportDemoSignature(subject);
+    if (demo) this.reportDemoSignature(s, subject);
     return result;
   }
 
@@ -2119,11 +2119,23 @@ export class Vault {
    * The mainnet demo's usage event (D428): what was signed, on which network, for how much, from which address; never
    * a key, a signature or the transaction's bytes. Best effort: a failure never touches the signature.
    */
-  private reportDemoSignature(subject: ReturnType<typeof approvalSubject>): void {
+  private reportDemoSignature(s: Session, subject: ReturnType<typeof approvalSubject>): void {
     const assessed = assessMainnetDemo(subject, this.clock.now());
-    if (!assessed.ok || !this.api) return;
+    const api = this.api;
+    // The session's proof of the signing address (the identity token's): without one there is nothing to report with.
+    const proof = subject.chain === 'stellar' || subject.chain === 'evm' ? s.walletProofs?.[subject.chain] : undefined;
+    if (!assessed.ok || !api || !proof || proof.address !== subject.address) return;
     const network = assessed.network.chain === 'evm' ? String(assessed.network.chainId) : assessed.network.network;
-    void this.api.mainnetDemoEvent({ chain: subject.chain, network, kind: subject.kind, address: subject.address, usdMicros: assessed.usdMicros.toString() }).catch(() => undefined);
+    void demoEventBody(s.keyPair.privateKey, {
+      signer: this.env.signer,
+      appId: this.config.appId,
+      sessionPublicKey: Uint8Array.from(s.sessionPk),
+      issuedAtMs: this.clock.now(),
+      event: { chain: subject.chain, network, kind: subject.kind, usdMicros: assessed.usdMicros.toString() },
+      proof,
+    })
+      .then((body) => api.mainnetDemoEvent(body))
+      .catch(() => undefined);
   }
 
   /**

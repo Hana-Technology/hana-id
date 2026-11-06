@@ -7,20 +7,49 @@ import { createExecutionContext } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import { AdminRpc } from '../src/rpc/admin.ts';
 import { consoleRpc, hana, member, orgApp } from './rpc-helpers.ts';
-import { MAINNET_DEMO_EVENTS_PER_HOUR, toMainnetDemoEvent } from '../src/mainnet-demo.ts';
-import { appHeaders, call, chain, newKey, seedApp, uid } from './helpers.ts';
+import { STAFF_USER_EVENTS_MAX } from '@hana-id/console-core';
+import { identityMessage, mainnetDemoEventPayload } from '@hana-id/core/identity';
+import { MAINNET_DEMO_EVENTS_PER_HOUR, toMainnetDemoEvent, toMainnetDemoReport } from '../src/mainnet-demo.ts';
+import { appHeaders, call, chain, newKey, newSessionKey, seedApp, sessionKeyPair, uid } from './helpers.ts';
+import { randomPrk, walletProofs } from './identity-helpers.ts';
+import { spentSession, vaultSetup } from './vault-helpers.ts';
 import { AUTH, hanaHeaders, loginBody, withCombinedCall } from './login-helpers.ts';
 
 const body = async (res: Response): Promise<Record<string, unknown>> => (await res.json()) as Record<string, unknown>;
 const newAud = (): string => `${uid()}.apps.googleusercontent.com`;
 const setDemo = (appId: string, on: boolean) => env.DB.prepare('UPDATE apps SET mainnet_demo = ?2 WHERE id = ?1').bind(appId, on ? 1 : 0).run();
 const EVM = '0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826';
-const G = 'GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H';
-const event = (over: Record<string, unknown> = {}) => ({ chain: 'evm', network: '8453', kind: 'evm_tx', address: EVM, usdMicros: '8000001', ...over });
+
+/** A report as the vault signs it: the session key over the event, with the session's wallet proof of the address. */
+async function reportBody(
+  app: { id: string },
+  spk: number[],
+  o: { event?: Record<string, string>; signWith?: number[]; proofSpk?: number[]; proofApp?: string; issuedAtMs?: number; mutate?: (b: Record<string, unknown>) => void } = {},
+): Promise<{ body: Record<string, unknown>; address: string }> {
+  const prk = randomPrk();
+  const proofs = walletProofs(prk, { signer: env.SIGNER_ACCOUNT, appId: o.proofApp ?? app.id, sessionPublicKey: Uint8Array.from(o.proofSpk ?? spk) });
+  const ev = { chain: 'evm', network: '8453', kind: 'evm_tx', usdMicros: '8000001', ...o.event } as { chain: 'evm' | 'stellar'; network: string; kind: string; usdMicros: string };
+  const proof = proofs[ev.chain];
+  const nonce = crypto.getRandomValues(new Uint8Array(16));
+  const issuedAtMs = o.issuedAtMs ?? Date.now();
+  const payload = mainnetDemoEventPayload({ ...ev, walletProof: { address: proof.address, signature: Uint8Array.from(proof.signature) } });
+  const message = identityMessage({ signer: env.SIGNER_ACCOUNT, appId: app.id, sessionPublicKey: Uint8Array.from(spk), issuedAtMs, nonce, payload });
+  const signature = [...sessionKeyPair(o.signWith ?? spk).sign(message).signature];
+  const b: Record<string, unknown> = { sessionPublicKey: spk, issuedAtMs, nonce: [...nonce], signature, walletProof: proof, ...ev };
+  o.mutate?.(b);
+  return { body: b, address: proof.address };
+}
 const report = (app: { key: string }, b: unknown, headers: Record<string, string> = hanaHeaders(app), bindings?: Partial<typeof env>) =>
   call('/v1/mainnet-demo/events', { headers, body: b, env: bindings });
 const rows = (appId: string) =>
   env.DB.prepare('SELECT kind, app_id, scope_id, user_id, chain, network, address, usd_micros FROM user_events WHERE app_id = ?1 ORDER BY id').bind(appId).all().then((r) => r.results);
+
+/** A demo app on a mock chain whose sessions the test makes (spentSession). */
+async function demoSession(on = true) {
+  const { app, near } = await vaultSetup();
+  if (on) await setDemo(app.id, true);
+  return { app, near };
+}
 
 async function demoApp(on = true) {
   const app = await seedApp();
@@ -69,54 +98,82 @@ describe('migration 0013', () => {
   });
 });
 
-describe('POST /v1/mainnet-demo/events (D428)', () => {
-  it('stores the vault’s report of a demo signature, and nothing else', async () => {
-    const { app } = await demoApp();
-    const res = await report(app, event());
+describe('POST /v1/mainnet-demo/events (D428, as reviewed)', () => {
+  it('stores a report proven by a live session and the address’s own wallet proof, naming the session’s user', async () => {
+    const { app, near } = await demoSession();
+    const spk = spentSession(near, app.scope, { sub: 'demo-user-1' });
+    const { body: b, address } = await reportBody(app, spk);
+    const res = await report(app, b);
     expect([res.status, (await body(res)).recorded]).toEqual([200, true]);
-    const stellar = await report(app, event({ chain: 'stellar', network: 'pubnet', kind: 'stellar_tx', address: G, usdMicros: '5010500' }));
-    expect(stellar.status).toBe(200);
-    expect(await rows(app.id)).toEqual([
-      { kind: 'mainnet_signature', app_id: app.id, scope_id: app.scope, user_id: null, chain: 'evm', network: '8453', address: EVM, usd_micros: 8000001 },
-      { kind: 'mainnet_signature', app_id: app.id, scope_id: app.scope, user_id: null, chain: 'stellar', network: 'pubnet', address: G, usd_micros: 5010500 },
+    const stellar = await reportBody(app, spk, { event: { chain: 'stellar', network: 'pubnet', kind: 'stellar_tx', usdMicros: '5010500' } });
+    expect((await report(app, stellar.body)).status).toBe(200);
+    const stored = (await rows(app.id)) as Record<string, unknown>[];
+    expect(stored).toEqual([
+      { kind: 'mainnet_signature', app_id: app.id, scope_id: app.scope, user_id: expect.stringMatching(/^hu_[0-9a-hjkmnp-tv-z]{26}$/u), chain: 'evm', network: '8453', address, usd_micros: 8000001 },
+      { kind: 'mainnet_signature', app_id: app.id, scope_id: app.scope, user_id: stored[0]!.user_id, chain: 'stellar', network: 'pubnet', address: stellar.address, usd_micros: 5010500 },
     ]);
   });
 
-  it('is refused when the demo is off, outside a dev testnet env, or from anything but the vault page', async () => {
-    const { app } = await demoApp(false);
-    expect([(await report(app, event())).status]).toEqual([409]);
-    await setDemo(app.id, true);
-    expect((await report(app, event(), hanaHeaders(app), { ENV_NAME: 'production' })).status).toBe(409);
-    // The partner page (its own origin) and the auth origin are refused.
-    expect((await report(app, event(), appHeaders(app))).status).toBe(403);
-    expect((await report(app, event(), hanaHeaders(app, AUTH))).status).toBe(403);
+  it('refuses a forged report: no or a wrong session signature, a session not on chain, a replayed proof', async () => {
+    const { app, near } = await demoSession();
+    const spk = spentSession(near, app.scope);
+    // Not signed by the session key (another key signed it), or the signature altered.
+    const other = newSessionKey();
+    expect((await report(app, (await reportBody(app, spk, { signWith: other })).body)).status).toBe(401);
+    expect((await report(app, (await reportBody(app, spk, { mutate: (b) => { const sig = b.signature as number[]; sig[0] = (sig[0] ?? 0) ^ 1; } })).body)).status).toBe(401);
+    // The event changed after signing (a bigger value): the session signature covers every field.
+    expect((await report(app, (await reportBody(app, spk, { mutate: (b) => (b.usdMicros = '9000000') })).body)).status).toBe(401);
+    // A key with no session on chain (anyone can make a key pair).
+    const res = await report(app, (await reportBody(app, other)).body);
+    expect([res.status, (await body(res)).code]).toEqual([410, 'session_ended']);
+    // The same proof twice.
+    const once = (await reportBody(app, spk)).body;
+    expect((await report(app, once)).status).toBe(200);
+    expect([(await report(app, once)).status]).toEqual([409]);
+    // Too old.
+    expect((await report(app, (await reportBody(app, spk, { issuedAtMs: Date.now() - 120_000 })).body)).status).toBe(400);
+    expect((await rows(app.id)).length).toBe(1);
+  });
+
+  it('refuses another user’s address: a wallet proof made for another session, or for another app', async () => {
+    const { app, near } = await demoSession();
+    const mine = spentSession(near, app.scope, { sub: 'attacker' });
+    const victim = spentSession(near, app.scope, { sub: 'victim' });
+    // The victim's wallet proof (bound to the victim's session key), sent with the attacker's session.
+    let res = await report(app, (await reportBody(app, mine, { proofSpk: victim })).body);
+    expect([res.status, (await body(res)).code]).toEqual([400, 'bad_wallet_proof']);
+    const otherApp = await seedApp({ scope: app.scope });
+    res = await report(app, (await reportBody(app, mine, { proofApp: otherApp.id })).body);
+    expect([res.status, (await body(res)).code]).toEqual([400, 'bad_wallet_proof']);
     expect(await rows(app.id)).toEqual([]);
   });
 
-  it('accepts exactly the five fields, a demo network, the chain’s address form and a value within the cap', async () => {
-    expect(toMainnetDemoEvent(event())).toEqual({ chain: 'evm', network: '8453', kind: 'evm_tx', address: EVM, usdMicros: 8000001 });
-    for (const bad of [
-      event({ signature: '0x00' }),
-      event({ rawTx: '0x02' }),
-      event({ network: '146' }),
-      event({ network: '1' }),
-      event({ usdMicros: '9990001' }),
-      event({ usdMicros: '-1' }),
-      event({ usdMicros: 1 }),
-      event({ address: G }),
-      event({ chain: 'stellar', network: 'testnet', kind: 'stellar_tx', address: G }),
-      event({ chain: 'stellar', network: 'pubnet', kind: 'stellar_tx', address: EVM }),
-      event({ kind: 'eip712' }),
-      [],
-      null,
-    ]) {
-      expect(toMainnetDemoEvent(bad), JSON.stringify(bad)).toBeNull();
-    }
-    const { app } = await demoApp();
-    expect((await report(app, event({ network: '146' }))).status).toBe(400);
+  it('is refused when the demo is off, outside a dev testnet env, or from anything but the vault page', async () => {
+    const { app, near } = await demoSession(false);
+    const spk = spentSession(near, app.scope);
+    expect((await report(app, (await reportBody(app, spk)).body)).status).toBe(409);
+    await setDemo(app.id, true);
+    expect((await report(app, (await reportBody(app, spk)).body, hanaHeaders(app), { ENV_NAME: 'production' })).status).toBe(409);
+    expect((await report(app, (await reportBody(app, spk)).body, appHeaders(app))).status).toBe(403);
+    expect((await report(app, (await reportBody(app, spk)).body, hanaHeaders(app, AUTH))).status).toBe(403);
+    expect(await rows(app.id)).toEqual([]);
   });
 
-  it(`is limited to ${MAINNET_DEMO_EVENTS_PER_HOUR} reports per app per hour`, async () => {
+  it('accepts exactly its fields, a demo network and a value within the cap', async () => {
+    const ev = { chain: 'evm', network: '8453', kind: 'evm_tx', usdMicros: '8000001' };
+    expect(toMainnetDemoEvent(ev)).toEqual({ chain: 'evm', network: '8453', kind: 'evm_tx', usdMicros: 8000001 });
+    for (const bad of [{ ...ev, network: '146' }, { ...ev, network: '1' }, { ...ev, usdMicros: '9990001' }, { ...ev, usdMicros: '-1' }, { ...ev, usdMicros: 1 }, { ...ev, kind: 'eip712' }, { ...ev, chain: 'stellar', network: 'testnet', kind: 'stellar_tx' }]) {
+      expect(toMainnetDemoEvent(bad), JSON.stringify(bad)).toBeNull();
+    }
+    const { app, near } = await demoSession();
+    const spk = spentSession(near, app.scope);
+    const good = (await reportBody(app, spk)).body;
+    expect(toMainnetDemoReport(good)).not.toBeNull();
+    for (const mutate of [(b: Record<string, unknown>) => (b.rawTx = '0x02'), (b: Record<string, unknown>) => (b.address = '0x1'), (b: Record<string, unknown>) => delete b.walletProof, (b: Record<string, unknown>) => (b.nonce = [1, 2])]) {
+      const b = structuredClone(good);
+      mutate(b);
+      expect(toMainnetDemoReport(b)).toBeNull();
+    }
     expect(MAINNET_DEMO_EVENTS_PER_HOUR).toBe(120);
   });
 });
@@ -180,28 +237,41 @@ describe('key_exported (D430)', () => {
     expect(all).not.toMatch(/eyJ|#google#|bls12381/u);
   });
 
-  it('staff see the export and the user’s wallets’ demo signatures on the user’s detail and in a Support ID lookup', async () => {
+  it('staff see the export and the user’s demo signatures on the user’s detail and in a Support ID lookup', async () => {
     const { app, aud } = await demoApp();
-    withCombinedCall(chain({ [aud]: app.scope }));
-    const login = await call('/v1/login', { headers: hanaHeaders(app, AUTH), body: { ...(await loginBody(app.scope, aud)), exportChain: 'evm' } });
+    const near = withCombinedCall(chain({ [aud]: app.scope }));
+    const login = await call('/v1/login', { headers: hanaHeaders(app, AUTH), body: { ...(await loginBody(app.scope, aud, {}, { sub: 'staff-view-1' })), exportChain: 'evm' } });
     expect(login.status).toBe(200);
     const supportId = (await body(login)).supportId as string;
     const internalId = ((await rows(app.id)) as { user_id: string }[])[0]!.user_id;
-    const now = Date.now();
-    // This user's own wallet (the directory matches demo signatures by address, across apps).
-    const mine = `0x${[...crypto.getRandomValues(new Uint8Array(20))].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
-    await env.DB.prepare("INSERT INTO end_user_wallets (user_id, chain, address, key_index, first_seen_at, last_used_at) VALUES (?1, 'evm', ?2, 0, ?3, ?3)").bind(internalId, mine, now).run();
-    expect((await report(app, event({ address: mine }))).status).toBe(200);
-    // Another user's wallet: not this user's event.
-    expect((await report(app, event({ address: '0x1111111111111111111111111111111111111111' }))).status).toBe(200);
+    // A demo signature from this user's session (the same account root), and one from another user's.
+    const { body: mineBody, address } = await reportBody(app, spentSession(near, app.scope, { sub: 'staff-view-1' }));
+    expect((await report(app, mineBody)).status).toBe(200);
+    expect((await report(app, (await reportBody(app, spentSession(near, app.scope, { sub: 'someone-else' }))).body)).status).toBe(200);
     const staff = new AdminRpc(createExecutionContext(), env);
     const got = (await staff.getUser({ ...hana(), internalId })) as unknown as { ok: true; user: { events: Record<string, unknown>[] } };
     expect(got.user.events).toEqual([
-      { kind: 'mainnet_signature', appId: app.id, chain: 'evm', network: '8453', address: mine, usdMicros: 8000001, at: expect.any(Number) },
+      { kind: 'mainnet_signature', appId: app.id, chain: 'evm', network: '8453', address, usdMicros: 8000001, at: expect.any(Number) },
       { kind: 'key_exported', appId: app.id, chain: 'evm', network: null, address: null, usdMicros: null, at: expect.any(Number) },
     ]);
     const lookup = (await staff.supportLookup({ ...hana(), query: supportId })) as { ok: true; matches: { user: { events: unknown[] } }[] };
     expect(lookup.matches[0]!.user.events).toHaveLength(2);
+  });
+
+  it('a flood of signature rows never pushes a key export out of the staff view (each kind capped on its own)', async () => {
+    const { app, aud } = await demoApp();
+    withCombinedCall(chain({ [aud]: app.scope }));
+    expect((await call('/v1/login', { headers: hanaHeaders(app, AUTH), body: { ...(await loginBody(app.scope, aud, {}, { sub: 'flooded-1' })), exportChain: 'stellar' } })).status).toBe(200);
+    const internalId = ((await rows(app.id)) as { user_id: string }[])[0]!.user_id;
+    const now = Date.now();
+    const insert = env.DB.prepare(
+      "INSERT INTO user_events (kind, app_id, scope_id, user_id, chain, network, address, usd_micros, request_id, at) VALUES ('mainnet_signature', ?1, ?2, ?3, 'evm', '8453', ?4, 1, ?5, ?6)",
+    );
+    await env.DB.batch(Array.from({ length: 60 }, (_, i) => insert.bind(app.id, app.scope, internalId, EVM, `rq_flood_${uid()}_${i}`, now + 1000 + i)));
+    const got = (await new AdminRpc(createExecutionContext(), env).getUser({ ...hana(), internalId })) as unknown as { ok: true; user: { events: { kind: string }[] } };
+    const kinds = got.user.events.map((e) => e.kind);
+    expect(kinds.filter((k) => k === 'mainnet_signature')).toHaveLength(STAFF_USER_EVENTS_MAX);
+    expect(kinds.filter((k) => k === 'key_exported')).toHaveLength(1);
   });
 
   it('a plain login records nothing, and only the export window may label its login', async () => {

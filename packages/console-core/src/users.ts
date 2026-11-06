@@ -227,14 +227,15 @@ export interface StaffUser {
   identities: StaffIdentity[];
   wallets: StaffWallet[];
   /**
-   * What happened to the user's keys (D428, D430; `user_events`, newest first, at most STAFF_USER_EVENTS_MAX): key
-   * exports (the account's), and mainnet demo signatures from the user's wallets (the vault's report). Set on a
-   * detail or a search answer (AdminRpc.getUser, findUsers, supportLookup); never in a list or a partner's view.
+   * What happened to the user's keys (D428, D430; `user_events`, newest first, at most STAFF_USER_EVENTS_MAX of each
+   * kind, so signatures can't push exports out): key exports (the API's own record) and mainnet demo signatures (the
+   * vault's report, bound to the user's session). Set on a detail or a search answer (AdminRpc.getUser, findUsers,
+   * supportLookup); never in a list or a partner's view.
    */
   events?: StaffUserEvent[];
 }
 
-/** The most `events` a staff user answer carries. */
+/** The most `events` of each kind a staff user answer carries. */
 export const STAFF_USER_EVENTS_MAX = 20;
 
 export interface StaffUserEvent {

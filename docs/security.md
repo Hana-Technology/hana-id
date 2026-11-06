@@ -1295,7 +1295,8 @@ sign on Base (8453) and Stellar's public network, at most $9.99 per transaction,
 | The price table goes stale (the market rises above it) | Prices set well above the market; the table expires 45 days after review and every demo request is refused after that | `MAINNET_DEMO.validUntilMs` |
 | The vault reads a stale "on" | `mainnetDemo` is re-read when older than 10 s; a failed read refuses | `freshMainnetDemo` |
 | A lying balance | The balance is read by the popup (no key there) from Hana's pinned endpoints, never the partner's RPC; it only changes a warning, never what is signed. It tells Base's public RPC and Horizon the user's IP and address (public data; partners' pages already do this) | `auth/demo-balance.ts`, `/approve` CSP |
-| Fake usage reports | The events are the vault's word, rate-limited per app, labelled as reported; nothing acts on them | `src/mainnet-demo.ts` |
+| Fake usage reports | Each report is proven by a live session (its key's signature over the event, single use) and by the address's own wallet proof for that session and app, so no one can report for another user or address; the row names the session's user. That the signature happened is still the vault's word: rate-limited per app, labelled "reported by the vault", nothing acts on them | `src/mainnet-demo.ts` |
+| Hiding a key export from staff | Each user's events are capped per kind in the staff view, so no number of signature reports can push an export out; exports are written by the API itself | `src/directory/read.ts` `withEvents` |
 
 Not bounded by any of this: the testnet MPC itself (D39's reason). Whoever can make the testnet MPC derive a user's key
 (its operators, a compromise of it) can take everything at the address, cap or not. That is why the balance warning is
@@ -1631,10 +1632,12 @@ users hold real funds on Base and Stellar at addresses whose keys the testnet MP
 testnet MPC) can take, which is everything at the address. Mitigations: the balance warning above $10, the demo only
 in dev envs and only by staff, and key export. Remove the switch from every app when the Sodax demo ends.
 
-**(p) Mainnet demo usage events are the vault's word. Accepted** (D429). `POST /v1/mainnet-demo/events` can't check
-that a signature happened, so a script with the app's key and an allowed parent origin can't reach it (vault origin
-only), but a compromised vault page could write false rows; they are rate-limited (120 per app per hour), labelled
-"as the vault reported it" and acted on by nothing.
+**(p) Mainnet demo usage events are the vault's word. Accepted** (D429, as fixed after the security review of 2026-11-06).
+`POST /v1/mainnet-demo/events` takes a report only with the session key's signature over it, the address's own wallet
+proof for that session and app, a live session on chain and a fresh single-use proof, and stores the session's user;
+so nobody can forge a report for another user or address. It still can't check that the signature itself happened:
+a user's own vault (or devtools on it) could report signatures that weren't made, for their own wallet only; the rows
+are rate-limited (120 per app per hour), labelled "reported by the vault" and acted on by nothing.
 
 **(q) The mainnet demo's price table can be wrong. Open (to confirm, D429).** The prices are set well above the
 market on 2026-11-06 and expire on 2026-12-21; if the market rose past them before then, the cap would let more than

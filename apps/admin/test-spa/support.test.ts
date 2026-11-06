@@ -165,7 +165,8 @@ describe('the Support ID lookup screen', () => {
     const t = s.text();
     expect(t).toContain('Key exported');
     expect(t).toContain('Mainnet demo signature');
-    expect(t).toContain('EVM chain 8453, about $8.01 from 0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826 as the vault reported it');
+    expect(t).toContain('EVM chain 8453, about $8.01 from 0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826 reported by the vault');
+    expect(t).toContain('Mainnet demo signature (reported by the vault)');
     expect(t).toContain('unknown (older export window)');
   });
 

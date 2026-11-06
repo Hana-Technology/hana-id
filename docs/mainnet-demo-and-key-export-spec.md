@@ -180,11 +180,14 @@ A hot D1 column `apps.mainnet_demo` (migration 0013), only by Hana staff:
 
 ### Usage events
 
-After each demo signature the vault posts `POST /v1/mainnet-demo/events` (`{chain, network, kind, address, usdMicros}`,
-no key, no signature, no transaction bytes); the API stores a `mainnet_signature` row in `user_events` when the app
-has the demo on. The report is the vault's word (the API can't prove the signature happened), rate-limited per app
-(120 per hour), and best effort: a failure never fails the signature. Staff see the rows on the admin's Users detail
-and Support ID lookup (matched by wallet address) and in `app:settings <app>` (count over 7 days).
+After each demo signature the vault posts `POST /v1/mainnet-demo/events`: the event (`chain, network, kind,
+usdMicros`) signed by the session key over the identity message, with the session's wallet proof of the signing
+address (the address's own key over this session and app, made at login for the identity token). No key, no
+transaction bytes. The API checks the session proof, the wallet proof, the session on chain and single use (as for
+identity tokens), then stores a `mainnet_signature` row naming the session's user, when the app has the demo on.
+That the signature was made is still the vault's word; rate-limited per app (120 per hour) and best effort: a
+failure never fails the signature. Staff see the rows on the admin's Users detail and Support ID lookup, labelled
+"reported by the vault", each kind capped on its own so signatures never push an export out of view.
 
 ## Feature 2: key export additions
 
@@ -278,7 +281,9 @@ place the demo exists); "fixed" means changed in this branch.
 | R4 | A signature approved while the demo was on is made even if staff turn it off while the popup is open (the setting is read before the popup, as for raw signing) | low | accepted: at most the one request on screen, still under the cap |
 | R5 | A deposit's recipient (the hub wallet in `to`) and the intent's destination aren't checked: a page can send the deposit to anyone | low | accepted by design: the cap bounds what leaves the wallet, whoever receives it; the hub calls are bounded to the deposit (`checkSodaxHubCalls`) |
 | R6 | The price table can go stale or be wrong (a live price couldn't be confirmed on 2026-11-06) | medium | mitigated: prices ≈2–3× the market where it was last known, rounded up, a 45-day expiry that refuses everything after; open: review before each demo (security.md (q)) |
-| R7 | Usage events are the vault's word; a compromised vault page could write false rows | low | accepted (security.md (p)): vault origin only, ≤ 120 per app per hour, labelled, nothing acts on them |
+| R7 | Usage events are the vault's word that a signature happened | low | accepted (security.md (p)): bound to a live session and the address's own proof (R18), single use, ≤ 120 per app per hour, labelled "reported by the vault", nothing acts on them |
+| R18 | (the security review of 2026-11-06, MEDIUM) The report endpoint checked only the app: anyone with an app's key and an allowed parent origin could forge `mainnet_signature` rows for any address | medium | **fixed**: the session key's signature over the event, the wallet proof of the address by its own key for that session and app (another user's address can't be named), the session live on chain in the app's scope, a single-use marker; the row stores the session's user. Tests: forged, wrong key, altered event, no session, replay, stale, another session's or app's wallet proof |
+| R19 | (the security review of 2026-11-06, MEDIUM) Key exports and reported signatures shared one LIMIT in the staff view, so a flood of signature rows could hide an export (audit evasion) | medium | **fixed**: each user's rows are capped per kind (`ROW_NUMBER() OVER (PARTITION BY user_id, kind)`), signatures matched by the verified user, never a bare address; the admin labels them "reported by the vault". Test: 60 signature rows leave the export in view |
 | R8 | The approval popup now has `connect-src` to two public endpoints (dev builds only); it holds no key, only the request and the address | low | accepted: fixed origins in the build's meta policy and the Worker's header, which must agree (tested); production builds fetch nothing |
 | R9 | The balance read tells Base's public RPC and Horizon the user's IP and address | low | accepted: public data, the partner page reads the same; never the partner's RPC (it could lie) |
 | R10 | `user_events` holds an internal id or an address with times and isn't in C13's purge or `uid-erase` | medium (privacy) | **open**: `mainnet-readiness.md` 7.17; by hand meanwhile (`operations.md`) |

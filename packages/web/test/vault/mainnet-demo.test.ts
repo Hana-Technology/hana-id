@@ -3,10 +3,10 @@
 // popup, under the per-transaction cap; everything else stays refused before any popup. The valuation's own cases
 // are in packages/core/test/mainnet-demo.test.ts.
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { STELLAR_MAINNET_PASSPHRASE, TEST_APP_NETWORK_RULE } from '@hana-id/core';
+import { STELLAR_MAINNET_PASSPHRASE, TEST_APP_NETWORK_RULE, identityMessage, mainnetDemoEventPayload } from '@hana-id/core';
 import { functionSelector } from '@hana-id/core/decode';
 import { Asset, Operation } from '@stellar/stellar-base';
-import { Browser, ENV, type Google, HOUR, type Tab, answer, answerConsent, google, login, makeConfig, openApproval, readyTab, sleepReal, waitLauncher } from './harness.ts';
+import { APP_ID, Browser, ENV, type Google, HOUR, type Tab, answer, answerConsent, google, login, makeConfig, openApproval, readyTab, sleepReal, waitLauncher } from './harness.ts';
 import { EVM_VAULT, OTHER, evmTx, evmTxSigner, stellarTx } from './chains.ts';
 
 let g: Google;
@@ -70,8 +70,18 @@ describe('the mainnet demo in the vault', () => {
     await sleepReal(20);
     const events = demoEvents(s.t);
     expect(events).toHaveLength(1);
-    // Exactly the five public fields: no key, signature or transaction bytes.
-    expect(events[0]!.body).toEqual({ chain: 'evm', network: '8453', kind: 'evm_tx', address: s.evm, usdMicros: '8000001' });
+    // The event, signed by the session key with the session's wallet proof of the address (D428 as reviewed): no key,
+    // no signature of the signed transaction, no transaction bytes.
+    const b = events[0]!.body as Record<string, unknown>;
+    expect(Object.keys(b).sort()).toEqual(['chain', 'issuedAtMs', 'kind', 'network', 'nonce', 'sessionPublicKey', 'signature', 'usdMicros', 'walletProof']);
+    expect(b).toMatchObject({ chain: 'evm', network: '8453', kind: 'evm_tx', usdMicros: '8000001', walletProof: { address: s.evm } });
+    const signedTx = ((await reply).result as string).toLowerCase();
+    expect(JSON.stringify(b).toLowerCase()).not.toContain(signedTx.slice(2, 66));
+    // It verifies as the API checks it: the session key over identityMessage(mainnetDemoEventPayload).
+    const payload = mainnetDemoEventPayload({ chain: 'evm', network: '8453', kind: 'evm_tx', usdMicros: '8000001', walletProof: { address: s.evm, signature: Uint8Array.from((b.walletProof as { signature: number[] }).signature) } });
+    const message = identityMessage({ signer: ENV.signer, appId: APP_ID, sessionPublicKey: Uint8Array.from(b.sessionPublicKey as number[]), issuedAtMs: b.issuedAtMs as number, nonce: Uint8Array.from(b.nonce as number[]), payload });
+    const key = await crypto.subtle.importKey('raw', Uint8Array.from(b.sessionPublicKey as number[]), { name: 'Ed25519' }, false, ['verify']);
+    expect(await crypto.subtle.verify({ name: 'Ed25519' }, key, Uint8Array.from(b.signature as number[]), message)).toBe(true);
   });
 
   it('on: a Stellar public-network payment under the cap is signed through the popup', async () => {
@@ -85,7 +95,7 @@ describe('the mainnet demo in the vault', () => {
     answer(s.t, popup, m, true);
     expect((await reply).error).toBeUndefined();
     await sleepReal(20);
-    expect(demoEvents(s.t)[0]!.body).toMatchObject({ chain: 'stellar', network: 'pubnet', kind: 'stellar_tx', address: s.stellar });
+    expect(demoEvents(s.t)[0]!.body).toMatchObject({ chain: 'stellar', network: 'pubnet', kind: 'stellar_tx', walletProof: { address: s.stellar } });
   });
 
   it.each([

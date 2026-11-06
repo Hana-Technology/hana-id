@@ -1052,8 +1052,9 @@ same call).
 
 **Seeing the usage.** Each demo signature and each key export is a row in `user_events` (no key, token, signature or
 path): the admin console's **Users** detail and **Support ID lookup** list them under "Key exports and mainnet demo
-signatures" (signatures matched by the user's wallet addresses, marked "as the vault reported it"; exports by the
-user's internal id). By hand:
+signatures" (both by the user's internal id: exports recorded by the API, signatures reported by the user's own vault
+session with its wallet proof, marked "reported by the vault"; at most 20 of each kind, so reports never hide an
+export). By hand:
 
 ```sh
 corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev --remote --command \

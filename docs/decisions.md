@@ -7997,8 +7997,11 @@ free numbers on `origin/develop` (D427 the highest: D426 the Hana brand, D427 th
      event (no D393 version gate needed). A cap refusal is its own reason, `mainnet_demo_over_cap`, with `data.usd`
      and `data.capUsd`. The Stellar passphrase is per call (the Sodax provider's wins; the approval shows the
      network); `hana.stellar.getNetwork()` still reports `createHana`'s.
-  8. **Usage events** are the vault's report (the API can't check it), rate-limited to 120 per app per hour, labelled
-     "as the vault reported it" in the admin console.
+  8. **Usage events** are the vault's report, bound to the session (amended after the security review of 2026-11-06, two
+     MEDIUM findings): the session key signs the event over the identity message with the session's wallet proof of
+     the address; the API checks both, the session on chain and a single-use marker, and stores the session's user
+     (never a bare address). Rate-limited to 120 per app per hour, labelled "reported by the vault". The staff view
+     caps each kind per user on its own, so reports can't push a key export out of view.
 - Why: each is the narrowest rule that lets the sample's swap (Base ETH → Stellar XLM) and its reverse work while
   failing closed on anything else.
 - Open: whether the prices should come from a live source with a sanity band (more moving parts in the vault).

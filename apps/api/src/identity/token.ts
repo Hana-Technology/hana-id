@@ -104,7 +104,7 @@ export function toMintRequest(body: unknown): MintRequest | null {
 }
 
 /** Ed25519 (WebCrypto) check of the session proof; false for any malformed key or signature. */
-async function verifyEd25519(publicKey: Uint8Array, signature: Uint8Array, message: Uint8Array): Promise<boolean> {
+export async function verifyEd25519(publicKey: Uint8Array, signature: Uint8Array, message: Uint8Array): Promise<boolean> {
   try {
     const key = await crypto.subtle.importKey('raw', publicKey, { name: 'Ed25519' }, false, ['verify']);
     return await crypto.subtle.verify({ name: 'Ed25519' }, key, signature, message);

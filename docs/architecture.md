@@ -756,8 +756,10 @@ An exception to D39 for the Sodax demo; spec `docs/mainnet-demo-and-key-export-s
 3. The approval popup decodes the bytes itself, shows the red banner with its own valuation and the cap, and reads the
    wallet's balance from Hana's pinned endpoints (`auth/demo-balance.ts`; `/approve`'s CSP lists them in dev builds).
    Never auto-approved.
-4. After signing, the vault reports `POST /v1/mainnet-demo/events` (chain, network, kind, address, USD value; no
-   key or bytes); the API stores a `mainnet_signature` row in `user_events`, shown to staff.
+4. After signing, the vault reports `POST /v1/mainnet-demo/events` (chain, network, kind, USD value), signed by the
+   session key with the session's wallet proof of the address; no key or bytes. The API checks the proofs, the
+   session on chain and single use, and stores a `mainnet_signature` row naming the session's user, shown to staff
+   as "reported by the vault".
 
 ### Revoke and logout
 

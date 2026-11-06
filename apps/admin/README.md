@@ -39,8 +39,8 @@ and caps each staff member at 500 identities an hour and 2 000 a day; past that 
 alias is emailed. No export.
 
 **Key exports and mainnet demo signatures (D428, D430).** The Users detail and each Support ID lookup match list the
-user's key exports (`key_exported`, recorded by the API at the export window's sign-in) and the mainnet demo signatures
-from their wallets (as the vault reported them), from `user_events`. The app page's **Signing settings** card has the
+user's key exports (`key_exported`, recorded by the API at the export window's sign-in) and their mainnet demo
+signatures (reported by the vault, bound to the user's session), from `user_events`, at most 20 of each kind. The app page's **Signing settings** card has the
 mainnet demo switch in a dev testnet env, for a test app only (`POST /api/apps/:app/mainnet-demo`).
 
 **Support ID lookup (C15; D394–D396, D399).** A Support ID, User ID or internal id, a support reference (required),

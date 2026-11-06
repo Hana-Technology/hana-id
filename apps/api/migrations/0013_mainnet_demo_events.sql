@@ -25,8 +25,10 @@ END;
 -- What happened to a user's keys that staff should see (the admin's Users detail and Support ID lookup):
 --   key_exported       the export window's /v1/login succeeded (the key could reach that window), written by the API;
 --                      user_id is the account's internal id (hu_…), chain from the export window's label (or NULL).
---   mainnet_signature  a mainnet demo signature, as the vault reported it after signing (its word, not a proof);
---                      address is the signing wallet, network the EVM chain ID or 'pubnet', usd_micros the value.
+--   mainnet_signature  a mainnet demo signature, as the vault reported it after signing, proven by the session that
+--                      signed and the address's own wallet proof (the report itself is still the vault's word);
+--                      user_id is that session's user, address the signing wallet, network the EVM chain ID or
+--                      'pubnet', usd_micros the value.
 -- Never a key, a token, a signature, the signed bytes or a path. Times are unix ms.
 CREATE TABLE user_events (
   id         INTEGER PRIMARY KEY,
@@ -41,8 +43,8 @@ CREATE TABLE user_events (
   request_id TEXT NOT NULL,
   at         INTEGER NOT NULL CHECK (at >= 0),
   CHECK (kind <> 'key_exported' OR user_id IS NOT NULL),
-  CHECK (kind <> 'mainnet_signature' OR (address IS NOT NULL AND chain IS NOT NULL AND network IS NOT NULL))
+  CHECK (kind <> 'mainnet_signature' OR (user_id IS NOT NULL AND address IS NOT NULL AND chain IS NOT NULL AND network IS NOT NULL))
 );
-CREATE INDEX user_events_user ON user_events (user_id, at DESC);
+CREATE INDEX user_events_user ON user_events (user_id, kind, at DESC);
 CREATE INDEX user_events_address ON user_events (address, at DESC);
 CREATE INDEX user_events_app ON user_events (app_id, kind, at DESC);

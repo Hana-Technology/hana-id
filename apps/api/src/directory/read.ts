@@ -197,30 +197,28 @@ export async function adminGetUser(db: HotDb, id: { userId?: string | undefined;
 }
 
 /**
- * The users with their `events` (D428, D430): key exports by internal id, mainnet demo signatures by the users'
- * wallet addresses, newest first, at most STAFF_USER_EVENTS_MAX each. One read for all of them. A missing table
+ * The users with their `events` (D428, D430): each user's own rows (by internal id), newest first, at most
+ * STAFF_USER_EVENTS_MAX **of each kind**, so no number of reported signatures can push a key export out of the staff
+ * view (the security review of 2026-11-06). One read for all of them (ROW_NUMBER per user and kind). A missing table
  * (migration 0013 not applied) or a failed read leaves `events` empty, so the Users screen never breaks on it.
  */
 export async function withEvents(db: HotDb, users: StaffUser[]): Promise<StaffUser[]> {
   if (users.length === 0) return users;
   const ids = users.map((u) => q`${u.internalId}`);
-  const addresses = [...new Set(users.flatMap((u) => u.wallets.map((w) => w.address)))];
-  const byAddress = addresses.length ? q` OR (e.kind = 'mainnet_signature' AND e.address IN (${join(addresses.map((a) => q`${a}`), ', ')}))` : raw('');
-  let rows: { kind: string; app_id: string; user_id: string | null; chain: string | null; network: string | null; address: string | null; usd_micros: number | null; at: number }[];
+  let rows: { kind: string; app_id: string; user_id: string; chain: string | null; network: string | null; address: string | null; usd_micros: number | null; at: number }[];
   try {
     rows = await db.all(
-      q`SELECT kind, app_id, user_id, chain, network, address, usd_micros, at FROM user_events e
-         WHERE (e.kind = 'key_exported' AND e.user_id IN (${join(ids, ', ')}))${byAddress}
-         ORDER BY at DESC, id DESC LIMIT ${STAFF_USER_EVENTS_MAX * users.length}`,
+      q`SELECT kind, app_id, user_id, chain, network, address, usd_micros, at FROM (
+          SELECT e.*, ROW_NUMBER() OVER (PARTITION BY e.user_id, e.kind ORDER BY e.at DESC, e.id DESC) AS rn
+            FROM user_events e WHERE e.user_id IN (${join(ids, ', ')})
+        ) WHERE rn <= ${STAFF_USER_EVENTS_MAX} ORDER BY at DESC`,
     );
   } catch {
     return users.map((u) => ({ ...u, events: [] }));
   }
   return users.map((u) => {
-    const mine = new Set(u.wallets.map((w) => w.address));
     const events: StaffUserEvent[] = rows
-      .filter((r) => (r.kind === 'key_exported' ? r.user_id === u.internalId : r.address !== null && mine.has(r.address)))
-      .slice(0, STAFF_USER_EVENTS_MAX)
+      .filter((r) => r.user_id === u.internalId)
       .map((r) => ({
         kind: r.kind === 'key_exported' ? 'key_exported' : 'mainnet_signature',
         appId: r.app_id,

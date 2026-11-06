@@ -569,25 +569,36 @@ const nearRpcOutage: Playbook = {
   kind: 'incident',
   severity: 'warning',
   status: 'live',
-  summary: "The manifest's `rpc` provider is down or wrong. The API reads only `rpc`; the vault, the export window and the watchdog fall back to `rpcFallback`.",
-  signals: ['`502 near_unavailable` on API endpoints; `rpc_failing` from the watchdog (both its RPCs failed 3 runs).'],
+  summary:
+    "The manifest's `rpc` provider is down or wrong. The API fails over to its `apiRpcFallbacks` in order (or `rpcFallback` when unset, D432); the vault, the export window and the watchdog fall back to `rpcFallback`.",
+  signals: [
+    '`near_rpc_failover` warnings in the API\'s logs (the endpoint index passed over and why: `network`, `timeout`, `http_5xx`, `http_429`, `not_jsonrpc`, `not_synced`).',
+    '`502 near_unavailable` on API endpoints once every API endpoint fails; `rpc_failing` from the watchdog (both its RPCs failed 3 runs).',
+  ],
   impact: [
-    "Logins, derives and owner actions through the API fail while `rpc` is down. Users with an unlocked or persisted vault keep signing (no chain call needed for the key). Logins of a linked identity (a member's path, through its account root) also need `rpcFallback` to answer: the vault confirms that path on both providers and refuses when either is down (D263).",
-    "A lying RPC can fail derives or refuse logins. It can't forge a CKD result for a user's own path (pinned key, pairing check), but it could forge one for a path whose secret it knows if the vault took its word that the user is a member of that account: the vault and the export window therefore confirm every member path on `rpc` and `rpcFallback` separately (D263). Keep the two on independent providers (the manifest schema refuses one registrable domain for both).",
+    "While only `rpc` is down the API keeps working through its fallbacks: each isolate pays one failed attempt (up to 8 s for a read, 20 s for a transaction when the node hangs) and then asks the fallbacks first for 30 s, so logins are slower, not broken. A fallback answers only when the endpoints before it gave no JSON-RPC answer; a node's answer, an error answer included, is never retried elsewhere.",
+    "Logins, derives and owner actions through the API fail only when every API endpoint is down. Users with an unlocked or persisted vault keep signing (no chain call needed for the key). Logins of a linked identity (a member's path, through its account root) also need `rpcFallback` to answer: the vault confirms that path on both providers and refuses when either is down (D263).",
+    "A broadcast that fails over sends the same signed transaction again (one hash, one nonce: it executes at most once). The API then polls its hash instead of trusting the second node's InvalidNonce or Expired, so a relay whose transaction never reached any node can wait out its 60 s and answer `504 timeout`; the user retries.",
+    "A lying RPC can fail derives or refuse logins. It can't forge a CKD result for a user's own path (pinned key, pairing check), but it could forge one for a path whose secret it knows if the vault took its word that the user is a member of that account: the vault and the export window therefore confirm every member path on `rpc` and `rpcFallback` separately (D263). Keep the two on independent providers (the manifest schema refuses one registrable domain for both). Every `apiRpcFallbacks` provider is trusted like `rpc` for the API's views whenever the ones before it fail.",
   ],
   steps: [
-    { title: 'Confirm it is the provider', who: 'a founder', detail: 'Check the provider\'s status and another provider.', commands: [c.apiHealth, c.apiTailErrors] },
     {
-      title: 'Switch the API to another provider',
+      title: 'Confirm it is the provider',
+      who: 'a founder',
+      detail: "Check the provider's status and another provider. The API's failover lines say which endpoint (0 is `rpc`, then `apiRpcFallbacks` in order) failed and how.",
+      commands: [c.apiHealth, c.apiTailRpcFailover, c.apiTailErrors],
+    },
+    {
+      title: 'If every API endpoint fails, or the outage lasts',
       who: 'a founder',
       detail:
-        "Change `rpc` (and keep `rpcFallback` a different provider) in `envs/<env>.json` (code-owner review; https; testnet only: every script and the watchdog refuse another `chain_id`). The value is built into the vault and auth bundles and their CSP: regenerate, rebuild and redeploy the API and both page Workers, and the watchdog.",
+        "Change `rpc` (and keep `rpcFallback` a different provider), or reorder or replace `apiRpcFallbacks` (1–3 https URLs, none of them `rpc`), in `envs/<env>.json` (code-owner review; testnet only: every script and the watchdog refuse another `chain_id`). An `apiRpcFallbacks` change is the API's alone: `gen` and redeploy the API. `rpc` and `rpcFallback` are built into the vault and auth bundles and their CSP: regenerate, rebuild and redeploy the API and both page Workers, and the watchdog.",
       commands: [c.apiGen, c.apiDeploy, c.webBuild, c.pagesDeploy, c.watchdogGen, c.watchdogDeploy],
     },
   ],
-  verify: ['`GET /v1/health` and a smoke login work; the watchdog\'s `rpc_failing` resolves.'],
-  followUps: ['Not built yet: an API-side RPC fallback (the API reads only `NEAR_RPC`).'],
-  refs: ['docs/operations.md#accounts-and-services-per-environment', 'docs/security.md#parties', 'D65'],
+  verify: ["`GET /v1/health` and a smoke login work; `near_rpc_failover` lines stop (or name only the endpoint you replaced); the watchdog's `rpc_failing` resolves."],
+  followUps: ["If the primary stays bad, make a healthy fallback `rpc` rather than living on failover: every isolate still tries `rpc` again every 30 s."],
+  refs: ['docs/operations.md#accounts-and-services-per-environment', 'docs/architecture.md#components', 'docs/security.md#parties', 'D65', 'D432'],
   related: ['watchdog-degraded'],
 };
 

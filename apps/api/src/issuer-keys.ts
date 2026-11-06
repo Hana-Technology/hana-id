@@ -17,7 +17,7 @@ import { base64UrlDecode } from './bytes.ts';
 import type { Env } from './env.ts';
 import { cacheMaxAgeS, recordJwksObservation } from './key-observations.ts';
 import { log } from './log.ts';
-import { Rpc, invalidNonce, isDefiniteRejection, type SendTxResult } from './near/rpc.ts';
+import { type Rpc, invalidNonce, isDefiniteRejection, nearRpc, type SendTxResult } from './near/rpc.ts';
 import { type ContractCall, parseKeyPair, signFunctionCall, waitForOutcome } from './near/tx.ts';
 import { type UpdaterMethod, updaterAllows } from './relayer-config.ts';
 
@@ -429,7 +429,7 @@ async function runSync(env: Env, provider: string, jwksUrl: string, now: number)
   const completeFetches = answers.length === JWKS_FETCHES_PER_RUN;
   if (!env.KEYS_UPDATER_KEY) return skip('no_keys_updater_key', 'warn');
   if (jwks.length === 0) return skip('jwks_empty');
-  const rpc = new Rpc(env.NEAR_RPC);
+  const rpc = nearRpc(env);
 
   const [issuerView, changesView, configView] = await Promise.allSettled([
     rpc.view<unknown>(env.SIGNER_ACCOUNT, 'get_issuer', { provider }),
@@ -565,7 +565,8 @@ class KeySender {
             this.nonce = null;
             continue;
           }
-          // Not a definite rejection: the tx may have been forwarded, so poll its outcome.
+          // Not a definite rejection (nor is any answer after an RPC failover, D432): the tx may have been forwarded,
+          // so poll its outcome.
           if (isDefiniteRejection(err)) throw err;
         }
         const outcome = await waitForOutcome(this.rpc, signed.hash, this.env.SIGNER_ACCOUNT, initial);

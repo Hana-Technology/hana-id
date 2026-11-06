@@ -4,13 +4,19 @@ import type { RelayerKey } from './relayer-key.ts';
 
 /** Worker bindings. Vars come from the manifest (scripts/gen-wrangler.ts); secrets via `wrangler secret put`. */
 export interface Env {
-  /** NEAR JSON-RPC endpoint. */
+  /** NEAR JSON-RPC endpoint: the first the API asks (near/rpc.ts rpcEndpoints). */
   NEAR_RPC: string;
   /**
    * Manifest `rpcFallback`, when set: the vault reads from it when NEAR_RPC fails, so the vault page's CSP
-   * `connect-src` lists it too. The API itself reads only NEAR_RPC.
+   * `connect-src` lists it too. The API's own fallbacks are NEAR_RPC_FALLBACKS.
    */
   NEAR_RPC_FALLBACK?: string;
+  /**
+   * The API's own NEAR RPC fallbacks, in order after NEAR_RPC (D432): a JSON array of URLs, from the manifest's
+   * `apiRpcFallbacks`, or `[rpcFallback]` when that is unset; written only when non-empty. A call moves to the next
+   * one only when an endpoint gives no JSON-RPC answer (near/rpc.ts Rpc).
+   */
+  NEAR_RPC_FALLBACKS?: string;
   /** hana-signer contract account: the only receiver the relayer ever calls. */
   SIGNER_ACCOUNT: string;
   /** Account whose function-call keys (RELAYER_KEYS, OWNER_RELAYER_KEYS) pay gas. */

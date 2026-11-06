@@ -12,7 +12,7 @@ import { RpcRefusal } from './changes/cas.ts';
 import type { Env } from './env.ts';
 import { done, newCtx } from './handlers.ts';
 import { GOOGLE_PROVIDER, type KeyChange, parseKeyChanges, sameKeyMaterial, issuerKids } from './issuer-keys.ts';
-import { type AccessKeyListEntry, Rpc } from './near/rpc.ts';
+import { type AccessKeyListEntry, nearRpc } from './near/rpc.ts';
 import { UPDATER_METHODS } from './relayer-config.ts';
 
 export const GOVERNANCE_ENDPOINT = '/v1/governance';
@@ -193,7 +193,7 @@ async function readUpdater(db: D1Database): Promise<GovernanceStatus['updater']>
 
 /** Reads and assembles the status. Throws when a contract view fails or answers in an unknown shape. */
 export async function readGovernanceStatus(env: Env, now: number = Date.now()): Promise<GovernanceStatus> {
-  const rpc = new Rpc(env.NEAR_RPC);
+  const rpc = nearRpc(env);
   const signer = env.SIGNER_ACCOUNT;
   const [configRaw, governanceRaw, changesRaw, issuersRaw, accessKeys, jwksList, updater] = await Promise.all([
     rpc.view<unknown>(signer, 'get_config', {}),

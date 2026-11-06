@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { loadEnv, manifestPath, manifestSchema } from './index.ts';
+import { apiRpcFallbacksOf, loadEnv, MAX_API_RPC_FALLBACKS, manifestPath, manifestSchema } from './index.ts';
 
 const raw = () => JSON.parse(readFileSync(manifestPath('sandbox-dev'), 'utf8')) as Record<string, unknown>;
 
@@ -83,6 +83,43 @@ describe('manifestSchema: rpcFallback', () => {
     expect(sameProvider.success).toBe(false);
     expect(sameProvider.error?.issues.map((i) => i.message).join()).toContain('another provider');
     expect(manifestSchema.safeParse({ ...base, rpcFallback: 'https://rpc.testnet.near.org' }).success).toBe(true);
+  });
+});
+
+describe('manifestSchema: apiRpcFallbacks (D432)', () => {
+  const messages = (m: Record<string, unknown>): string[] => manifestSchema.safeParse(m).error?.issues.map((i) => i.message) ?? [];
+
+  it('is optional; when set, 1 to MAX_API_RPC_FALLBACKS https URLs, kept in order', () => {
+    const { apiRpcFallbacks: _, ...base } = raw();
+    expect(manifestSchema.safeParse(base).success).toBe(true);
+    const list = ['https://rpc.two.example', 'https://rpc.one.example'];
+    expect(manifestSchema.parse({ ...base, apiRpcFallbacks: list }).apiRpcFallbacks).toEqual(list);
+    expect(manifestSchema.safeParse({ ...base, apiRpcFallbacks: [] }).success).toBe(false);
+    const many = Array.from({ length: MAX_API_RPC_FALLBACKS + 1 }, (_, i) => `https://rpc-${i}.example`);
+    expect(manifestSchema.safeParse({ ...base, apiRpcFallbacks: many }).success).toBe(false);
+    expect(manifestSchema.safeParse({ ...base, apiRpcFallbacks: many.slice(0, MAX_API_RPC_FALLBACKS) }).success).toBe(true);
+    expect(manifestSchema.safeParse({ ...base, apiRpcFallbacks: ['not a url'] }).success).toBe(false);
+  });
+
+  it('refuses http outside a local* loopback, rpc itself and repeats', () => {
+    const { apiRpcFallbacks: _, ...base } = raw();
+    expect(messages({ ...base, apiRpcFallbacks: ['https://ok.example', 'http://rpc.example.com'] })).toEqual(['apiRpcFallbacks[1] must be an https URL (http only for a loopback host in local* envs)']);
+    expect(messages({ ...base, apiRpcFallbacks: [base.rpc] })).toEqual(['apiRpcFallbacks must not repeat rpc (it is always asked first)']);
+    expect(messages({ ...base, apiRpcFallbacks: ['https://a.example', 'https://a.example'] })).toEqual(['apiRpcFallbacks lists https://a.example twice']);
+  });
+
+  it('apiRpcFallbacksOf: the list, else rpcFallback alone, else none', () => {
+    expect(apiRpcFallbacksOf({ apiRpcFallbacks: ['https://b.example', 'https://c.example'], rpcFallback: 'https://f.example' })).toEqual(['https://b.example', 'https://c.example']);
+    expect(apiRpcFallbacksOf({ rpcFallback: 'https://f.example' })).toEqual(['https://f.example']);
+    expect(apiRpcFallbacksOf({})).toEqual([]);
+  });
+
+  it('sandbox-dev: two testnet providers other than rpc, its rpcFallback first', () => {
+    const m = loadEnv('sandbox-dev');
+    expect(m.network).toBe('testnet');
+    expect(m.apiRpcFallbacks).toEqual(['https://rpc.testnet.near.org', 'https://near-testnet.drpc.org']);
+    expect(m.apiRpcFallbacks?.[0]).toBe(m.rpcFallback);
+    expect(m.apiRpcFallbacks).not.toContain(m.rpc);
   });
 });
 

@@ -173,6 +173,7 @@ describe('wrangler.jsonc', () => {
     expect(config.vars).toEqual({
       NEAR_RPC: manifest.rpc,
       ...(manifest.rpcFallback ? { NEAR_RPC_FALLBACK: manifest.rpcFallback } : {}),
+      NEAR_RPC_FALLBACKS: JSON.stringify(manifest.apiRpcFallbacks),
       SIGNER_ACCOUNT: manifest.signer,
       RELAYER_ACCOUNT: manifest.relayer,
       ENV_NAME: manifest.name,
@@ -204,6 +205,16 @@ describe('wrangler.jsonc', () => {
     expect((wranglerConfig(manifestSchema.parse(noFallback), LOCAL_D1_ID) as { vars: Record<string, string> }).vars).not.toHaveProperty('NEAR_RPC_FALLBACK');
     const withFallback = manifestSchema.parse({ ...manifest, rpcFallback: 'https://rpc.fallback.example' });
     expect((wranglerConfig(withFallback, LOCAL_D1_ID) as { vars: Record<string, string> }).vars.NEAR_RPC_FALLBACK).toBe('https://rpc.fallback.example');
+  });
+
+  it('writes the API’s failover list as NEAR_RPC_FALLBACKS: apiRpcFallbacks in order, else rpcFallback, else nothing (D432)', () => {
+    const vars = (m: unknown) => (wranglerConfig(manifestSchema.parse(m), LOCAL_D1_ID) as { vars: Record<string, string> }).vars;
+    const { apiRpcFallbacks: _a, rpcFallback: _f, ...neither } = manifest;
+    expect(vars({ ...neither, apiRpcFallbacks: ['https://rpc.two.example', 'https://rpc.one.example'] }).NEAR_RPC_FALLBACKS).toBe(JSON.stringify(['https://rpc.two.example', 'https://rpc.one.example']));
+    expect(vars({ ...neither, rpcFallback: 'https://rpc.fallback.example' }).NEAR_RPC_FALLBACKS).toBe(JSON.stringify(['https://rpc.fallback.example']));
+    expect(vars(neither)).not.toHaveProperty('NEAR_RPC_FALLBACKS');
+    // sandbox-dev's own: its rpcFallback first, then a third provider; all testnet.
+    expect(JSON.parse(vars(manifest).NEAR_RPC_FALLBACKS!)).toEqual(['https://rpc.testnet.near.org', 'https://near-testnet.drpc.org']);
   });
 
   it('binds the LoginRelay Durable Object, created by a v2 migration after v1', () => {

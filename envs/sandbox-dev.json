@@ -28,6 +28,7 @@
   "ckdNetworkKeySource": { "blockHeight": 275289946, "blockHash": "4AxqjyDe8oE7QEapoe8jmjdXHKDS7utPzCJgkfoFvWmk", "rpcs": ["test.rpc.fastnear.com", "rpc.testnet.near.org", "near-testnet.drpc.org"] },
   "rpc": "https://test.rpc.fastnear.com",
   "rpcFallback": "https://rpc.testnet.near.org",
+  "apiRpcFallbacks": ["https://rpc.testnet.near.org", "https://near-testnet.drpc.org"],
   "apiUrl": "https://hana-id-api-sandbox-dev.tingtc.workers.dev",
   "emailIssuer": {
     "url": "https://hana-id-email-issuer-sandbox-dev.tingtc.workers.dev",

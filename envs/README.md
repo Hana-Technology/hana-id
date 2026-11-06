@@ -150,6 +150,16 @@ into the pages and joins `rpc` in their CSP (`NEAR_RPC_FALLBACK` in the generate
 `https://rpc.testnet.near.org` (primary `test.rpc.fastnear.com`; the fallback answered in ~3.5 s when probed, slow but
 fine for a fallback).
 
+`apiRpcFallbacks` (optional, D432): the API's own NEAR RPC fallbacks, 1 to 3 `https` URLs (http only for a loopback
+host in `local*` envs), distinct and none of them `rpc`. The API asks them in this order after `rpc` when an endpoint
+gives no JSON-RPC answer (a network error, a timeout, HTTP 5xx or 429, a body that isn't JSON-RPC, a node with no
+synced block), never for an answer, a JSON-RPC error included. Unset, the API falls back to `rpcFallback` alone. Only
+the API reads it (`NEAR_RPC_FALLBACKS` in its generated config): a change needs the API's `gen` and a redeploy, no page
+build. Every provider listed is trusted like `rpc` for the API's views whenever the ones before it fail, so list only
+providers you would accept as `rpc`; keep provider API keys out of these URLs (the manifest is committed). sandbox-dev:
+`https://rpc.testnet.near.org`, then `https://near-testnet.drpc.org` (both answered `status` with `chain_id` testnet and
+the signer's `view_account` when added, 2026-11-06).
+
 `vaultOrigin` and `authOrigin` (optional in the schema until every deployed env has them; `gen` refuses an env
 without them and the page build skips it): the origins of Hana's key vault page and of its login, approval and export pages. Set both or neither. Each is a bare origin
 (`https://host[:port]`, no path or trailing slash); `https` is required, and loopback (`localhost`, `*.localhost`,

@@ -8,7 +8,7 @@ import { KeyPair, type KeyPairString } from '@near-js/crypto';
 import { eventId } from './changes/guard.ts';
 import type { Env } from './env.ts';
 import { log } from './log.ts';
-import { Rpc } from './near/rpc.ts';
+import { nearRpc } from './near/rpc.ts';
 import { OWNER_POOL_ALLOWANCE_YOCTO, parseRelayerKeys } from './relayer-config.ts';
 
 /** Below this share of its initial allowance a key is reported. */
@@ -32,7 +32,7 @@ export async function lowOwnerAllowances(env: Env): Promise<AllowanceFinding[]> 
   const keys = parseRelayerKeys(env.OWNER_RELAYER_KEYS, 'OWNER_RELAYER_KEYS').map((k) => KeyPair.fromString(k as KeyPairString).getPublicKey().toString());
   if (!keys.length) return [];
   const threshold = (initialOwnerAllowance(env) * OWNER_ALLOWANCE_LOW_PCT) / 100n;
-  const { keys: onChain } = await new Rpc(env.NEAR_RPC).viewAccessKeyList(env.RELAYER_ACCOUNT);
+  const { keys: onChain } = await nearRpc(env).viewAccessKeyList(env.RELAYER_ACCOUNT);
   const out: AllowanceFinding[] = [];
   for (const publicKey of keys) {
     const entry = onChain.find((k) => k.public_key === publicKey);

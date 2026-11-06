@@ -9,7 +9,7 @@ import type { Env } from './env.ts';
 import { gasFor } from './gas.ts';
 import { log } from './log.ts';
 import { POOL_SECRET, type Pool, isPool, parseRelayerKeys, poolAllows } from './relayer-config.ts';
-import { RELAY_WAIT_UNTIL, Rpc, type RpcError, invalidNonce, isDefiniteRejection, isExpired, type SendTxResult } from './near/rpc.ts';
+import { RELAY_WAIT_UNTIL, type Rpc, type RpcError, nearRpc, invalidNonce, isDefiniteRejection, isExpired, type SendTxResult } from './near/rpc.ts';
 import { type ContractCall, parseKeyPair, signFunctionCall, waitForOutcome } from './near/tx.ts';
 
 export { parseRelayerKeys };
@@ -158,7 +158,7 @@ export class RelayerKey extends DurableObject<Env> {
     }
     // Gas always comes from gas.ts (per method, env-overridable), never from the caller.
     const call: ContractCall = { method, args: request.args, gas: gasFor(method, this.env, request.args) };
-    const rpc = new Rpc(this.env.NEAR_RPC);
+    const rpc = nearRpc(this.env);
     this.inflight++;
     try {
       this.loadKey(pool, keyIndex);
@@ -190,7 +190,8 @@ export class RelayerKey extends DurableObject<Env> {
           }
           if (bad) return { ok: false, status: 503, code: 'relayer_busy', error: 'The relayer could not get a valid nonce, try again', nearTx: sent.hash, ...signer };
           // Only a validation error is a definite "not accepted". Anything else (timeout, dropped connection, a
-          // non-JSON 5xx from a proxy) may have been forwarded and may still execute: poll its hash.
+          // non-JSON 5xx from a proxy, any answer after an RPC failover, D432) may have been forwarded and may still
+          // execute: poll its hash.
           if (isDefiniteRejection(err)) {
             log({ event: 'relay_rejected', requestId, pool, keyIndex, method: call.method, code: rejectionName(err), nearTx: sent.hash }, 'error');
             return { ok: false, status: 502, code: 'near_rejected', error: 'NEAR rejected the transaction', nearTx: sent.hash, ...signer };

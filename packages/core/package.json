@@ -22,7 +22,8 @@
     "./signers/stellar": "./src/signers/stellar.ts",
     "./decode": "./src/decode/index.ts",
     "./policy": "./src/policy/index.ts",
-    "./mainnet-demo": "./src/mainnet-demo.ts"
+    "./mainnet-demo": "./src/mainnet-demo.ts",
+    "./demo-config": "./src/demo-config.ts"
   },
   "files": [
     "dist",
@@ -61,6 +62,10 @@
       "./mainnet-demo": {
         "types": "./dist/mainnet-demo.d.ts",
         "import": "./dist/mainnet-demo.js"
+      },
+      "./demo-config": {
+        "types": "./dist/demo-config.d.ts",
+        "import": "./dist/demo-config.js"
       },
       "./package.json": "./package.json"
     },

@@ -18,7 +18,7 @@ import type { DecodedEvmTx } from './decode/evm.ts';
 import { type DecodedApproval, decodeApprovalRequest } from './decode/request.ts';
 import type { StellarAuthEntry, StellarContractCall, StellarInvocation, StellarScVal, StellarTransaction } from './decode/stellar.ts';
 import { from0xHex } from './bytes.ts';
-import { MAINNET_DEMO_BALANCE_ENDPOINTS, MAINNET_DEMO_EVM_CHAINS, STELLAR_MAINNET_PASSPHRASE } from './networks.ts';
+import { MAINNET_DEMO_BALANCE_ENDPOINTS, MAINNET_DEMO_EVM_CHAINS, MAINNET_DEMO_TX_CAP_USD_MICROS, STELLAR_MAINNET_PASSPHRASE } from './networks.ts';
 
 /** USD in millionths of a dollar. */
 export type UsdMicros = bigint;
@@ -63,7 +63,7 @@ export const MAINNET_DEMO = Object.freeze({
   /** 45 days after the review: then every demo request is refused (`mainnet_demo_prices_stale`). */
   validUntilMs: Date.UTC(2026, 11, 21),
   /** At most $9.99 per transaction, fee included (the user: "limit funds to <$10"). */
-  txCapUsdMicros: 9_990_000n,
+  txCapUsdMicros: MAINNET_DEMO_TX_CAP_USD_MICROS,
   /** The approval popup warns when the wallet holds more than this (a warning, never a block). */
   balanceWarnUsdMicros: 10_000_000n,
   /** Sodax's intents contract on the hub (Sonic). */

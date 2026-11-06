@@ -12,6 +12,7 @@ import { readJson } from './http.ts';
 import { type LinkRefusal, autoLinkRoot, checkKey, precheckAutoLink } from './link-precheck.ts';
 import { sessionSupportId } from './directory/store.ts';
 import { inBackground, syncAfterLogin } from './directory/sync.ts';
+import { recordKeyExport } from './mainnet-demo.ts';
 import { getAccount, getIdentity } from './link-views.ts';
 import { type LoginToken, verifyLoginToken } from './login-token.ts';
 import { log } from './log.ts';
@@ -46,7 +47,7 @@ export const SESSION_KEY_IN_USE_PANIC = 'Session key already in use';
 const CREATE_FIELDS: ReadonlySet<string> = new Set(['jwt', 'sessionPublicKey', 'expiresAtMs', 'salt', 'keyIndex', 'maxUses']);
 
 export interface LoginCall {
-  request: CreateSessionRequest & { signature: number[]; pk1: string; pk2: string; linkJwt: string | null; linkImmediate: boolean };
+  request: CreateSessionRequest & { signature: number[]; pk1: string; pk2: string; linkJwt: string | null; linkImmediate: boolean; exportChain: 'stellar' | 'evm' | null };
   method: 'create_session_and_derive';
   args: Record<string, unknown>;
 }
@@ -59,7 +60,7 @@ export interface LoginCall {
  */
 export function toLogin(body: unknown, scopeId: string, now = Date.now()): Checked<LoginCall> {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return { error: 'Body must be a JSON object' };
-  const { signature, pk1, pk2, linkJwt, linkImmediate, ...rest } = body as Record<string, unknown>;
+  const { signature, pk1, pk2, linkJwt, linkImmediate, exportChain, ...rest } = body as Record<string, unknown>;
   const create = toCreateSession(rest, scopeId, now);
   if (isError(create)) return create;
   const extra = Object.keys(rest).find((k) => !CREATE_FIELDS.has(k));
@@ -69,9 +70,19 @@ export function toLogin(body: unknown, scopeId: string, now = Date.now()): Check
   if (linkJwt !== undefined && !(isToken(linkJwt) && isJsonForm(linkJwt))) return { error: 'linkJwt must be an email token' };
   if (linkImmediate !== undefined && typeof linkImmediate !== 'boolean') return { error: 'linkImmediate must be a boolean' };
   if (linkImmediate !== undefined && linkJwt === undefined) return { error: 'linkImmediate needs a linkJwt' };
+  // The export window's label for the key_exported event (D428): never relayed, never in the nonce or the CKD payload.
+  if (exportChain !== undefined && exportChain !== 'stellar' && exportChain !== 'evm') return { error: "exportChain must be 'stellar' or 'evm'" };
   const link = linkJwt === undefined ? null : { link_jwt: linkJwt, link_immediate: linkImmediate === true };
   return {
-    request: { ...create.request, signature: derive.signature, pk1: derive.pk1, pk2: derive.pk2, linkJwt: link?.link_jwt ?? null, linkImmediate: link?.link_immediate ?? false },
+    request: {
+      ...create.request,
+      signature: derive.signature,
+      pk1: derive.pk1,
+      pk2: derive.pk2,
+      linkJwt: link?.link_jwt ?? null,
+      linkImmediate: link?.link_immediate ?? false,
+      exportChain: exportChain === undefined ? null : (exportChain as 'stellar' | 'evm'),
+    },
     method: 'create_session_and_derive',
     args: { ...create.args, signature: derive.signature, pk1: derive.pk1, pk2: derive.pk2, ...(link ?? {}) },
   };
@@ -139,6 +150,8 @@ async function login(request: Request, env: Env, ctx: Ctx, exec?: ExecutionConte
   const session = { signer: env.SIGNER_ACCOUNT, scopeId: app.scope_id, ...req };
   const expected = await sessionNonce(session);
   if (token.nonce !== expected) return reject(ctx, 400, 'nonce_mismatch', 'The ID token nonce does not commit to this session');
+  // Only the export window labels its login (D428).
+  if (req.exportChain !== null && gate.caller.page !== 'auth') return reject(ctx, 400, 'bad_request', 'Only an export carries exportChain');
   let link: LoginToken | null = null;
   if (req.linkJwt !== null) {
     // An export window never links (it opens an existing path), and a link comes only from the email issuer.
@@ -244,6 +257,12 @@ async function login(request: Request, env: Env, ctx: Ctx, exec?: ExecutionConte
     // only the fail-open guess (a member's root unknown) or the env can't write the directory.
     const root = linkedRoot ?? (standing.confirmed ? (standing.member?.root ?? { provider: token.provider, sub: token.sub }) : null);
     const supportId = root ? await sessionSupportId(env, app.scope_id, root) : undefined;
+    // An export (D428): the key can now reach the export window, so staff see a key_exported event for the account's
+    // user (the root whose path the session opened; a member's root when it isn't confirmed yet). No key, token or path.
+    if (gate.caller.page === 'auth') {
+      const exportRoot = root ?? standing.member?.root ?? { provider: token.provider, sub: token.sub };
+      await inBackground(exec, () => recordKeyExport(env, { appId: app.id, scopeId: app.scope_id, root: exportRoot, chain: req.exportChain, requestId }));
+    }
     return done(ctx, 200, {
       result: { big_y: r.big_y, big_c: r.big_c },
       // Informational: what the session must look like now. The vault reads the chain, never this.

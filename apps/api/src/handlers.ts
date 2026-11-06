@@ -28,6 +28,7 @@ import { type UsageDraft, beginUsage, finishUsage, finishUsageOnThrow, notePath,
 import { MAX_BODY, isError, toCreateSession, toDeriveKey, toOwnerAction, toRevokeSession } from './validate.ts';
 import { type AppSettings, effectiveSettings, getSettingsRow } from './vault/settings.ts';
 import { type LoginMethod, appLoginMethods } from './login-methods.ts';
+import { mainnetDemoOn } from './mainnet-demo-setting.ts';
 import { LINK_ADDS_PER_IP_MINUTE, LINK_CHANGES_PER_IP_MINUTE } from './links.ts';
 import { TtlCache, effectiveSharedClients, forgetScope, forgetSession, getConfig, getScope, isIssuerKeyActive, isSessionView, isSharedClient, recordSessionUse, rememberSession, scopeForClient, sessionKeyInUse } from './views.ts';
 
@@ -340,7 +341,7 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
     });
   const settingsRead = timed(
     'settings',
-    Promise.all([getSettingsRow(env.DB, app.id).then((row) => (row ? effectiveSettings(row, app.id, Date.now()) : null)), appLoginMethods(env.DB, app.id)]),
+    Promise.all([getSettingsRow(env.DB, app.id).then((row) => (row ? effectiveSettings(row, app.id, Date.now()) : null)), appLoginMethods(env.DB, app.id), mainnetDemoOn(env, app)]),
   );
   const web = app.google_web_client_id;
   const chainRead = timed(
@@ -353,7 +354,7 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
   );
   const [settingsDone, chainDone] = await Promise.all([settingsRead, chainRead]);
   if (!settingsDone.ok) return reject(ctx, 503, 'config_unavailable', 'App config is unavailable, try again');
-  const [settings, methods] = settingsDone.value;
+  const [settings, methods, mainnetDemo] = settingsDone.value;
   const autoApprovePolicy: AppSettings['autoApprovePolicy'] = settings?.autoApprovePolicy ?? null;
   const rawSign: AppSettings['rawSign'] = settings?.rawSign ?? 'off';
   // A Google-only app keeps batch B's answers and errors exactly.
@@ -388,6 +389,8 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
       serverTimeMs: Date.now(),
       autoApprovePolicy,
       rawSign,
+      // D426: the mainnet demo, on only for a test app Hana staff switched on, in a dev testnet env.
+      mainnetDemo,
       // Batch C11: the app's logo on the files origin (`<FILES_ORIGIN>/<logo_key>`), or null (no logo, or no files
       // origin in this env). The auth pages show it beside the name; older clients ignore the field.
       logoUrl: logoUrl(env.FILES_ORIGIN, app.logo_key) ?? null,

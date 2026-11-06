@@ -114,8 +114,7 @@ export interface LoginBody extends CreateSessionBody {
   exportChain?: 'stellar' | 'evm';
 }
 
-/** `POST /v1/mainnet-demo/events` (D426): the vault's report of one mainnet demo signature. */
-export const MAINNET_DEMO_EVENTS_ENDPOINT = '/v1/mainnet-demo/events';
+export { MAINNET_DEMO_EVENTS_ENDPOINT } from './demo-config.ts';
 
 /**
  * One mainnet demo signature, as the vault reports it after signing: never a key, a signature or the signed bytes.

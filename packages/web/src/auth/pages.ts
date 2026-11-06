@@ -3,7 +3,7 @@
 // serves them; the Worker (apps/api src/pages/host.ts) sends the full policy and the other headers itself
 // (frame-ancestors only works as a header).
 import type { HanaEnv } from '../hana-env.ts';
-import { MAINNET_DEMO_BALANCE_ORIGINS } from '@hana-id/core';
+import { MAINNET_DEMO_BALANCE_ORIGINS } from '@hana-id/core/demo-config';
 import { GOOGLE_TOKENINFO_ORIGIN } from './google-origins.ts';
 
 export type AuthPageName = 'login' | 'email' | 'callback' | 'approve' | 'export';

@@ -33,28 +33,12 @@ export const TEST_EVM_CHAINS: Readonly<Record<number, string>> = Object.freeze({
   1337: 'Local (Ganache, Geth dev)',
 });
 
-/**
- * The mainnets a `pk_test_` app with Hana's mainnet demo on may sign for (D426: the user, 2026-11-06, "Base and Stellar
- * only"): Base by chain ID here, and Stellar's public network. The vault decides with the app's setting and the
- * per-transaction cap (`@hana-id/core/mainnet-demo`); the partner client only lets these chains through its own
- * early check, so the vault's answer (4100 `mainnet_not_allowed` when the demo is off) is the one that counts.
- */
-export const MAINNET_DEMO_EVM_CHAINS: readonly number[] = Object.freeze([8453]);
-
-/**
- * Where the approval popup reads a mainnet demo wallet's balance (D427): public endpoints Hana pins, never the
- * partner's RPC (which could say anything). Listed in `/approve`'s CSP `connect-src` in dev-env builds only.
- */
-export const MAINNET_DEMO_BALANCE_ENDPOINTS = Object.freeze({
-  evm: Object.freeze({ 8453: 'https://mainnet.base.org' }) as Readonly<Record<number, string>>,
-  stellar: 'https://horizon.stellar.org',
-});
-
-/** The origins of MAINNET_DEMO_BALANCE_ENDPOINTS, in a fixed order. */
-export const MAINNET_DEMO_BALANCE_ORIGINS: readonly string[] = Object.freeze([
-  ...Object.values(MAINNET_DEMO_BALANCE_ENDPOINTS.evm).map((u) => new URL(u).origin),
-  new URL(MAINNET_DEMO_BALANCE_ENDPOINTS.stellar).origin,
-]);
+// The mainnet demo (D426): the mainnets a `pk_test_` app with Hana's demo on may sign for are Base (8453) and Stellar's
+// public network. The vault decides with the app's setting and the per-transaction cap (`@hana-id/core/mainnet-demo`);
+// the partner client only lets Base through its own early check, so the vault's answer (4100 `mainnet_not_allowed`
+// when the demo is off) is the one that counts. The constants live in demo-config.ts (no imports) for the API Worker.
+export { MAINNET_DEMO_BALANCE_ENDPOINTS, MAINNET_DEMO_BALANCE_ORIGINS, MAINNET_DEMO_EVM_CHAINS, MAINNET_DEMO_TX_CAP_USD_MICROS } from './demo-config.ts';
+import { MAINNET_DEMO_EVM_CHAINS } from './demo-config.ts';
 
 export const isTestPublishableKey = (pk: string): boolean => pk.startsWith('pk_test_');
 

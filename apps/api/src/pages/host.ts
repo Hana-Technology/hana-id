@@ -16,7 +16,7 @@
 // Nothing else is served: no other path reaches the API (so `{vaultOrigin}/v1/*` is not the API), HTML files are never
 // served under their own names (only on their page route, with its headers), a request on any other host (a preview
 // URL) gets 404, and only GET and HEAD are allowed.
-import { MAINNET_DEMO_BALANCE_ORIGINS } from '@hana-id/core';
+import { MAINNET_DEMO_BALANCE_ORIGINS } from '@hana-id/core/demo-config';
 import { BUILD_PATH, deployedBuild } from '../build.ts';
 import { log } from '../log.ts';
 import { BASE_CSP, GOOGLE_CERTS_ORIGIN, VAULT_PAGE_PATH, originOf, pageHeaders } from '../vault/page.ts';

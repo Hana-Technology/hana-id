@@ -120,31 +120,11 @@ async fn derive_key_paths_are_per_scope_and_key_index() -> Result<()> {
     Ok(())
 }
 
-/// The relayer's two key pools reach only their own methods (the session pool can't call owner methods and vice
-/// versa); the updater key the contract installed on the signer account reaches only UPDATER_METHODS (propose keys
-/// and removals, execute matured changes); nobody but the owner reaches admin and governance methods.
-#[tokio::test]
-async fn access_keys_are_limited() -> Result<()> {
-    let env = Env::setup().await?;
-    let signer = env.signer.id();
-
-    // The session pool can open sessions (see also the test above) and prune.
-    let (s, jwt) = env.new_session(APP_A, USER_SUB, &env.scope_a, 0, 600_000).await?;
-    env.create_session(&env.relayer_fc, &s, &jwt).await?.into_result()?;
-    env.relayer_fc.call(signer, "prune_sessions").args_json(json!({"limit": 10})).gas(api_gas("prune_sessions")).transact().await?.into_result()?;
-    // The owner pool can run owner-pool methods (apply_pending_config takes no arguments)...
-    env.relayer_owner_fc.call(signer, "apply_pending_config").args_json(json!({})).gas(PROBE_GAS).transact().await?.into_result()?;
-    // ...but can't open sessions: abuse of the owner endpoint can never use up the login keys, and vice versa.
-    let (s2, jwt2) = env.new_session(APP_A, USER_SUB, &env.scope_a, 0, 600_000).await?;
-    let text = expect_failure(env.create_session(&env.relayer_owner_fc, &s2, &jwt2).await, "");
-    assert!(text.contains("MethodNameMismatch"), "owner pool create_session: expected an access-key rejection, got {text}");
-    let text = expect_failure(tx(env.relayer_fc.call(signer, "apply_pending_config").args_json(json!({})).gas(PROBE_GAS).transact().await), "");
-    assert!(text.contains("MethodNameMismatch"), "session pool apply_pending_config: expected an access-key rejection, got {text}");
-
-    // Neither pool reaches admin or issuer methods: the access key rejects the transaction before it runs.
-    let issuer_key = json!({"provider": PROVIDER, "kid": "evil", "n": env.issuer.n, "e": env.issuer.e});
-    let admin_calls: Vec<(&str, Value)> = vec![
-        ("set_issuer_key", issuer_key.clone()),
+/// The calls only the owner may make (admin, issuer and governance methods), with plausible arguments: the access-key
+/// tests below send each one with every key that isn't the owner's.
+fn admin_calls(env: &Env) -> Vec<(&'static str, Value)> {
+    vec![
+        ("set_issuer_key", evil_issuer_key(env)),
         ("set_issuer", json!({"provider": "evil", "iss_values": ["https://evil.example"]})),
         ("admin_register_scope", json!({"owners": [near_owner(env.relayer.id())], "clients": [[PROVIDER, APP_X]], "scope_id": null, "allow_shared": false})),
         ("enable_public_registration", json!({})),
@@ -167,17 +147,39 @@ async fn access_keys_are_limited() -> Result<()> {
         ("propose_withdrawal", json!({"receiver": env.relayer.id(), "amount": "1"})),
         ("cancel_withdrawal", json!({})),
         ("set_link_thresholds", json!({"per_scope_per_hour": 100_000, "total_per_hour": 100_000})),
-    ];
-    for key in [&env.relayer_fc, &env.relayer_owner_fc] {
-        for (method, args) in &admin_calls {
-            let text = expect_failure(tx(key.call(signer, method).args_json(args.clone()).gas(PROBE_GAS).transact().await), "");
-            assert!(text.contains("MethodNameMismatch"), "{method}: expected an access-key rejection, got {text}");
-        }
-    }
-    // Every change method outside a pool's allowlist is refused by the access key; every allowlisted name exists in
-    // the wasm (it runs, or fails inside the contract, not with MethodNameMismatch / MethodNotFound).
-    assert_key_reaches_only(&env.relayer_fc, signer, SESSION_RELAYER_METHODS, PROBE_GAS).await?;
-    assert_key_reaches_only(&env.relayer_owner_fc, signer, OWNER_RELAYER_METHODS, PROBE_GAS).await?;
+    ]
+}
+
+fn evil_issuer_key(env: &Env) -> Value {
+    json!({"provider": PROVIDER, "kid": "evil", "n": env.issuer.n, "e": env.issuer.e})
+}
+
+// The access-key tests: the relayer's two key pools reach only their own methods (the session pool can't call owner
+// methods and vice versa); the updater key the contract installed on the signer account reaches only UPDATER_METHODS
+// (propose keys and removals, execute matured changes); nobody but the owner reaches admin and governance methods.
+// One test per key and check, each on its own sandbox, so they run side by side (D423): as one test they took
+// about 9 minutes, half the suite run one test at a time.
+
+/// The session pool opens sessions and prunes, the owner pool runs owner-pool methods, neither runs the other's, the
+/// two allowlists don't overlap, and neither key reaches another receiver.
+#[tokio::test]
+async fn access_keys_each_pool_runs_only_its_own_methods() -> Result<()> {
+    let env = Env::setup().await?;
+    let signer = env.signer.id();
+
+    // The session pool can open sessions (see also the test above) and prune.
+    let (s, jwt) = env.new_session(APP_A, USER_SUB, &env.scope_a, 0, 600_000).await?;
+    env.create_session(&env.relayer_fc, &s, &jwt).await?.into_result()?;
+    env.relayer_fc.call(signer, "prune_sessions").args_json(json!({"limit": 10})).gas(api_gas("prune_sessions")).transact().await?.into_result()?;
+    // The owner pool can run owner-pool methods (apply_pending_config takes no arguments)...
+    env.relayer_owner_fc.call(signer, "apply_pending_config").args_json(json!({})).gas(PROBE_GAS).transact().await?.into_result()?;
+    // ...but can't open sessions: abuse of the owner endpoint can never use up the login keys, and vice versa.
+    let (s2, jwt2) = env.new_session(APP_A, USER_SUB, &env.scope_a, 0, 600_000).await?;
+    let text = expect_failure(env.create_session(&env.relayer_owner_fc, &s2, &jwt2).await, "");
+    assert!(text.contains("MethodNameMismatch"), "owner pool create_session: expected an access-key rejection, got {text}");
+    let text = expect_failure(tx(env.relayer_fc.call(signer, "apply_pending_config").args_json(json!({})).gas(PROBE_GAS).transact().await), "");
+    assert!(text.contains("MethodNameMismatch"), "session pool apply_pending_config: expected an access-key rejection, got {text}");
+
     // The two pools don't overlap.
     for m in SESSION_RELAYER_METHODS {
         assert!(!OWNER_RELAYER_METHODS.contains(m), "{m} is in both pools");
@@ -187,16 +189,58 @@ async fn access_keys_are_limited() -> Result<()> {
         let text = expect_failure(tx(key.call(env.mpc.id(), "request_app_private_key").args_json(json!({})).gas(PROBE_GAS).transact().await), "");
         assert!(text.contains("ReceiverMismatch"), "expected a receiver rejection, got {text}");
     }
+    Ok(())
+}
 
-    // Even with its full-access key, the relayer account is not the owner.
-    for (method, args) in &admin_calls {
-        expect_failure(tx(env.relayer.call(signer, method).args_json(args.clone()).gas(GAS).transact().await), "Only the owner");
+/// Neither pool reaches admin or issuer methods: the access key rejects the transaction before it runs.
+#[tokio::test]
+async fn access_keys_neither_pool_reaches_admin_methods() -> Result<()> {
+    let env = Env::setup().await?;
+    let signer = env.signer.id();
+    for key in [&env.relayer_fc, &env.relayer_owner_fc] {
+        for (method, args) in &admin_calls(&env) {
+            let text = expect_failure(tx(key.call(signer, method).args_json(args.clone()).gas(PROBE_GAS).transact().await), "");
+            assert!(text.contains("MethodNameMismatch"), "{method}: expected an access-key rejection, got {text}");
+        }
     }
+    Ok(())
+}
 
-    // The updater key (on the signer account itself) proposes issuer keys and removals and executes matured
-    // changes. Its allowance (1 NEAR) must cover the prepaid gas of each call (gas × gas price), so it sends 30 Tgas,
-    // not the 300 Tgas wallet calls here attach.
-    const UPDATER_GAS: near_workspaces::types::Gas = near_workspaces::types::Gas::from_tgas(30);
+/// Every change method outside the session pool's allowlist is refused by its access key; every allowlisted name
+/// exists in the wasm (it runs, or fails inside the contract, not with MethodNameMismatch / MethodNotFound).
+#[tokio::test]
+async fn access_keys_session_pool_reaches_exactly_its_allowlist() -> Result<()> {
+    let env = Env::setup().await?;
+    assert_key_reaches_only(&env.relayer_fc, env.signer.id(), SESSION_RELAYER_METHODS, PROBE_GAS).await
+}
+
+/// The same for the owner pool.
+#[tokio::test]
+async fn access_keys_owner_pool_reaches_exactly_its_allowlist() -> Result<()> {
+    let env = Env::setup().await?;
+    assert_key_reaches_only(&env.relayer_owner_fc, env.signer.id(), OWNER_RELAYER_METHODS, PROBE_GAS).await
+}
+
+/// Even with its full-access key, the relayer account is not the owner.
+#[tokio::test]
+async fn access_keys_the_relayer_full_access_key_is_not_the_owner() -> Result<()> {
+    let env = Env::setup().await?;
+    for (method, args) in &admin_calls(&env) {
+        expect_failure(tx(env.relayer.call(env.signer.id(), method).args_json(args.clone()).gas(GAS).transact().await), "Only the owner");
+    }
+    Ok(())
+}
+
+/// The updater key's gas. Its allowance (1 NEAR) must cover the prepaid gas of each call (gas × gas price), so it
+/// sends 30 Tgas, not the 300 Tgas wallet calls here attach.
+const UPDATER_GAS: near_workspaces::types::Gas = near_workspaces::types::Gas::from_tgas(30);
+
+/// The updater key (on the signer account itself) proposes issuer keys and removals and executes matured changes,
+/// and nothing else (remove_issuer_key, the immediate path, is the owner's only).
+#[tokio::test]
+async fn access_keys_the_updater_key_proposes_and_executes_issuer_key_changes_only() -> Result<()> {
+    let env = Env::setup().await?;
+    let signer = env.signer.id();
     let id: u64 = env
         .keys_updater
         .call(signer, "set_issuer_key")
@@ -214,17 +258,33 @@ async fn access_keys_are_limited() -> Result<()> {
     env.advance_to(due).await?;
     env.keys_updater.call(signer, "execute_issuer_key_change").args_json(json!({"id": id})).gas(UPDATER_GAS).transact().await?.into_result()?;
     assert_eq!(env.kids().await?, vec![KID.to_string()]);
-    // ...but nothing else (remove_issuer_key, the immediate path, is the owner's only).
-    for (method, args) in &admin_calls {
+    // ...but nothing else.
+    for (method, args) in &admin_calls(&env) {
         if *method == "set_issuer_key" {
             continue;
         }
         let text = expect_failure(tx(env.keys_updater.call(signer, method).args_json(args.clone()).gas(UPDATER_GAS).transact().await), "");
         assert!(text.contains("MethodNameMismatch"), "{method}: expected an access-key rejection, got {text}");
     }
-    assert_key_reaches_only(&env.keys_updater, signer, UPDATER_METHODS, UPDATER_GAS).await?;
+    Ok(())
+}
+
+/// Every change method outside UPDATER_METHODS is refused by the updater key; each of those reaches the contract.
+#[tokio::test]
+async fn access_keys_the_updater_key_reaches_exactly_its_allowlist() -> Result<()> {
+    let env = Env::setup().await?;
+    assert_key_reaches_only(&env.keys_updater, env.signer.id(), UPDATER_METHODS, UPDATER_GAS).await
+}
+
+/// Other accounts can't touch issuer keys, the owner is the admin, and a keys-updater key re-added by hand with any
+/// method allowed fails the on-chain allowlist check and, signing as the contract account, still gets no owner or
+/// watchdog powers.
+#[tokio::test]
+async fn access_keys_only_the_owner_sets_issuer_keys_and_a_wide_updater_key_gets_no_powers() -> Result<()> {
+    let env = Env::setup().await?;
+    let signer = env.signer.id();
     // Other accounts can't touch issuer keys.
-    expect_failure(tx(env.alice.call(signer, "set_issuer_key").args_json(issuer_key).gas(GAS).transact().await), "Only the owner or the contract account");
+    expect_failure(tx(env.alice.call(signer, "set_issuer_key").args_json(evil_issuer_key(&env)).gas(GAS).transact().await), "Only the owner or the contract account");
 
     // The owner can.
     let config = env.get_config().await?;
@@ -247,7 +307,7 @@ async fn access_keys_are_limited() -> Result<()> {
     // ...and, signing as the contract account, it still gets no owner or watchdog powers: the contract privileges
     // its own account only for proposing key changes (set_issuer_key, propose_issuer_key_removal).
     let wide = near_workspaces::Account::from_secret_key(signer.clone(), wide_sk, &env.worker);
-    for (method, args) in &admin_calls {
+    for (method, args) in &admin_calls(&env) {
         if *method == "set_issuer_key" {
             continue;
         }
@@ -284,10 +344,20 @@ async fn assert_key_reaches_only(key: &near_workspaces::Account, signer: &near_w
     Ok(())
 }
 
+/// The tests start sandboxes on several threads at once (D423), so nothing may set an env var while they run:
+/// .cargo/config.toml sets NEAR_ENABLE_SANDBOX_LOG (and NEAR_SANDBOX_LOG) before the binary starts, which turns
+/// off the `set_var("NEAR_SANDBOX_LOG", …)` near-workspaces and near-sandbox otherwise make at each sandbox start.
+#[test]
+fn sandbox_starts_set_no_env_vars() {
+    let on = std::env::var("NEAR_ENABLE_SANDBOX_LOG").unwrap_or_default();
+    assert!(!on.is_empty() && on != "0", "NEAR_ENABLE_SANDBOX_LOG must be set and not 0 (contracts/integration-tests/.cargo/config.toml), got {on:?}");
+    assert!(std::env::var("NEAR_SANDBOX_LOG").is_ok(), "NEAR_SANDBOX_LOG must be set (contracts/integration-tests/.cargo/config.toml)");
+}
+
 /// The sandbox relayer keys use the same allowlists deploy-contract.ts installs (scripts/lib/contract.ts), so the
-/// access-key test above checks the deployed restrictions, not a copy that could drift. The updater key is no
+/// access-key tests above check the deployed restrictions, not a copy that could drift. The updater key is no
 /// longer one deploy-contract adds by hand: the contract installs it with its own constant method list
-/// (`add_updater_key`), which the sandbox checks on chain against UPDATER_METHODS (Env::setup, access_keys_are_limited,
+/// (`add_updater_key`), which the sandbox checks on chain against UPDATER_METHODS (Env::setup, the access_keys_* tests,
 /// tests/governance.rs); scripts/lib/contract.ts UPDATER_METHODS, which deploy-plan checks the signer's keys against,
 /// must be that same list.
 #[test]

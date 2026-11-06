@@ -48,7 +48,8 @@ describe('the admin config', () => {
     expect(c).toMatchObject({
       name: 'hana-id-admin-test',
       main: 'src/index.ts',
-      compatibility_flags: ['nodejs_compat'],
+      // global_fetch_strictly_public: the watchdog on the same account's workers.dev is reachable (error 1042 otherwise).
+      compatibility_flags: ['nodejs_compat', 'global_fetch_strictly_public'],
       workers_dev: false,
       preview_urls: false,
       routes: [{ pattern: 'admin.test', custom_domain: true }],

@@ -14,6 +14,7 @@
   "watchdog": {
     "account": "hana-id-watchdog-dev1.testnet",
     "cloudflare": { "accountId": "f0b1e2c42c3e5bd63992958a19d4abca", "workerName": "hana-id-watchdog-sandbox-dev", "d1Name": "hana-id-watchdog-sandbox-dev" },
+    "url": "https://hana-id-watchdog-sandbox-dev.tingtc.workers.dev",
     "alertEmails": ["hello@ting.rocks"],
     "alertFrom": "team@hanawallet.io",
     "pager": "ntfy",

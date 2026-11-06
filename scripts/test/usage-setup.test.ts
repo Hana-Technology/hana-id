@@ -523,6 +523,11 @@ describe('usage-setup hyperdrive', PGLITE, () => {
     await expect(run(['roles', '--account-id', ACCOUNT], cfDeps)).rejects.toThrow(/--account-id is for hyperdrive only/u);
     cfOverride = (method) => (method === 'GET' ? envelope([{ id: ACCOUNT }, { id: ID_W }]) : undefined);
     await expect(run(['hyperdrive', '--yes'], cfDeps)).rejects.toThrow(/The token reaches 2 accounts: pass --account-id/u);
+    // A Hyperdrive-only token lists no account: the error says why and what to pass; nothing is created.
+    cfCalls = [];
+    cfOverride = (method) => (method === 'GET' ? envelope([]) : undefined);
+    await expect(run(['hyperdrive', '--yes'], cfDeps)).rejects.toThrow(/The token lists no account \(.*only Hyperdrive Edit\): pass --account-id/u);
+    expect(cfCalls.filter((c) => c.method === 'POST')).toEqual([]);
   });
 
   it('a refusal gives Cloudflare’s code and message with the password, URL and token removed; a taken name says how to re-create; a lost answer isn’t sent again', async () => {

@@ -96,7 +96,7 @@
   "governanceDelayMs": 60000,
   "googleClientIds": ["875896396522-g5q9419kksfvn7gdshlgae7t3buab12a.apps.googleusercontent.com"],
   "sharedGoogleClientIds": ["875896396522-f86rqsi6hbfr6nluld75nc03ugehbhit.apps.googleusercontent.com"],
-  "consoleAudiences": [["google", "875896396522-j6l32ua011ki8siv5h2k7nb2g2thggm1.apps.googleusercontent.com"]],
+  "consoleAudiences": [["google", "875896396522-rs47huh97fq46l19gvl991d1kkua76op.apps.googleusercontent.com"], ["google", "875896396522-j6l32ua011ki8siv5h2k7nb2g2thggm1.apps.googleusercontent.com"]],
   "cloudflare": { "workerName": "hana-id-api-sandbox-dev", "d1Name": "hana-id-sandbox-dev", "durableObjectLocation": "apac" },
   "console": {
     "workerName": "hana-id-console-sandbox-dev",

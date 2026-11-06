@@ -10,12 +10,21 @@
 // answers an ended session (the SPA, with `redirect: 'manual'`, sees an opaqueredirect). Opening /signed-in (the tab
 // "Sign in again" and "Renew" open) stands for a new sign-in: the session runs 60 more minutes. So
 // `PREVIEW_SESSION_MIN=4` shows the warning at once and the expired banner 4 minutes later; `0.2` after 12 s.
+//
+// The System status page (D425): `/api/status` is the real `buildStatus` over the fake sources of one scenario
+// (test-spa/preview-status.ts: green, warnings, critical, mixed-build, watchdog-down). `PREVIEW_STATUS=<scenario>` picks
+// it at start (green by default); opening /preview/status/<scenario> switches it and goes to the page.
 import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { extname } from 'node:path';
 import { securityHeaders } from '../src/headers.ts';
 import { getPlaybookRoute, listPlaybooksRoute } from '../src/playbooks.ts';
 import * as data from './preview-data.ts';
+// The status scenarios run the Worker's own src/status.ts (Workers types): loaded by a specifier TypeScript doesn't follow
+// here, typechecked with test-ops/ instead (its tsconfig has the Workers types; this one has the DOM's).
+const STATUS_MODULE = './preview-status.ts';
+type Scenario = 'green' | 'warnings' | 'critical' | 'mixed-build' | 'watchdog-down';
+const { SCENARIOS, previewStatus } = (await import(STATUS_MODULE)) as { SCENARIOS: readonly Scenario[]; previewStatus: (s: Scenario) => Promise<unknown> };
 
 const PUBLIC = new URL('../public/', import.meta.url);
 const PORT = Number(process.env.PORT ?? 8788);
@@ -23,6 +32,7 @@ const SESSION_MIN = Number(process.env.PREVIEW_SESSION_MIN ?? 60);
 /** When the fake Access sign-in ends (ms); a load of /signed-in signs in again for 60 minutes. */
 let sessionEndsAt = Date.now() + SESSION_MIN * 60_000;
 const FAKE_ACCESS_LOGIN = 'https://preview-team.cloudflareaccess.invalid/cdn-cgi/access/login/127.0.0.1';
+let statusScenario: Scenario = (SCENARIOS as readonly string[]).includes(process.env.PREVIEW_STATUS ?? '') ? (process.env.PREVIEW_STATUS as Scenario) : 'green';
 const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
 
 type Answer = { status: number; body: unknown };
@@ -46,6 +56,7 @@ async function apiAnswer(method: string, url: URL, body: Record<string, unknown>
   let m: RegExpExecArray | null;
   if (method === 'GET') {
     if (p === '/api/me') return ok({ ...data.me, accessExp: Math.floor(sessionEndsAt / 1000) });
+    if (p === '/api/status') return ok(await previewStatus(statusScenario));
     if (p === '/api/orgs') return ok({ orgs: data.orgs });
     if ((m = /^\/api\/orgs\/([^/]+)\/changes$/u.exec(p))) return ok(data.orgChanges(decodeURIComponent(m[1]!)));
     if ((m = /^\/api\/orgs\/([^/]+)$/u.exec(p))) {
@@ -105,6 +116,13 @@ const server = createServer((req, res) => {
       return;
     }
     if (url.pathname === '/signed-in') sessionEndsAt = Date.now() + 60 * 60_000;
+    const pick = /^\/preview\/status\/([a-z-]+)$/u.exec(url.pathname);
+    if (pick && (SCENARIOS as readonly string[]).includes(pick[1]!)) {
+      statusScenario = pick[1] as Scenario;
+      res.writeHead(302, { ...securityHeaders('https://files.preview.invalid'), location: '/' });
+      res.end();
+      return;
+    }
     if (url.pathname.startsWith('/api/')) {
       const body = method === 'GET' ? {} : await readBody(req);
       // A short delay, so the loading states can be seen.
@@ -125,4 +143,5 @@ const server = createServer((req, res) => {
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`admin SPA preview (fake data): http://127.0.0.1:${PORT}/`);
+  console.log(`System status scenario: ${statusScenario} (switch: /preview/status/<${SCENARIOS.join('|')}>)`);
 });

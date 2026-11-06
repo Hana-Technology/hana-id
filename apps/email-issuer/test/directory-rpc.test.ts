@@ -411,3 +411,27 @@ describe('auditSince', () => {
     expect((await auditRows()).length).toBe(3);
   });
 });
+
+describe('health (the admin console’s System status page, D425)', () => {
+  it('answers the build and a timed D1 probe after the staff check, with no audit row written', async () => {
+    const before = (await auditRows()).length;
+    const r = await rpc({ HANA_BUILD: '0485faa1c2d3' }).health(await call());
+    expect(r).toMatchObject({ ok: true, build: '0485faa1c2d3', db: { ok: true } });
+    if (r.ok) expect(r.db.latencyMs).toBeGreaterThanOrEqual(0);
+    expect((await auditRows()).length).toBe(before);
+    // Unstamped or malformed: null, never the raw var.
+    expect(await rpc({ HANA_BUILD: 'x<y' }).health(await call())).toMatchObject({ ok: true, build: null });
+  });
+
+  it('refuses a call without a staff identity before reading anything', async () => {
+    expect(await rpc().health(await call({}, await accessJwt({ email: 'intruder@hana.example' })))).toMatchObject({ ok: false, code: 'not_staff' });
+    expect(await rpc().health(await call({}, await accessJwt({ aud: ['ef'.repeat(32)] })))).toMatchObject({ ok: false, code: 'unauthenticated' });
+    expect(await rpc().health({ requestId: requestId() })).toMatchObject({ ok: false, code: 'bad_request' });
+    expect(await rpc().health({ ...(await call()), extra: 1 })).toMatchObject({ ok: false, code: 'bad_request' });
+  });
+
+  it('a failed D1 is db.ok false, not a thrown call', async () => {
+    const broken = { prepare: () => ({ first: () => Promise.reject(new Error('D1 down')) }) } as unknown as D1Database;
+    expect(await rpc({ DB: broken }).health(await call())).toMatchObject({ ok: true, db: { ok: false } });
+  });
+});

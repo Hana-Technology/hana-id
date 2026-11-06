@@ -5,6 +5,8 @@
 // leaves, the watchdog shows as not configured) instead of at start-up.
 import type {
   ApiPurgeAuditResult,
+  ApiSystemStatus,
+  ConsoleHealth,
   AppNameView,
   DirectoryRpcClient,
   AppChange,
@@ -85,6 +87,8 @@ export interface AdminRpcClient {
   pendingUpgrades(c: unknown): Answer<{ pendingUpgrades: PendingUpgradesView }>;
   /** Retention (C13, the monthly job, a system actor): app_changes and guarded_changes past 60 months. */
   purgeAudit(c: unknown): Answer<ApiPurgeAuditResult>;
+  /** The System status page (D425): the API's build, hot DB, crons, notice backlog, pool keys and governance. */
+  systemStatus(c: unknown): Answer<ApiSystemStatus>;
   /** Apps deleted 30 days ago or more, for the ledger's app_users purge. */
   deletedApps(c: unknown): Answer<DeletedAppsResult>;
   /** The wallet directory of scopes whose every app was deleted 30 days ago or more. */
@@ -121,6 +125,8 @@ export interface StaffRpcClient {
   recordStaffAction(c: unknown): Answer<Record<string, never>>;
   /** Retention (C13, the monthly job, a system actor): audit_log rows and closed owner grants past 60 months. */
   purgeAudit(c: unknown): Answer<ConsolePurgeAuditResult>;
+  /** The System status page (D425): the console's build, D1, hourly cron, member-notice backlog and LOGOS. */
+  health(c: unknown): Answer<ConsoleHealth>;
 }
 
 import { MAIL_LABELS as LABELS } from './labels.ts';
@@ -148,6 +154,23 @@ export interface Env {
   HANA_BUILD?: string;
   /** Read-only NEAR RPC and the signer account: `get_scope` for the on-chain watcher. */
   NEAR_RPC: string;
+  /**
+   * The System status page (D425; all public, written by `gen` from the manifest; each absent one's tile is "not
+   * configured"): the manifest's `rpcFallback` (probed beside NEAR_RPC), `apiUrl`, `vaultOrigin`, `authOrigin`, the
+   * email issuer's URL and `console.authOrigin`, whose public build reads the page makes (as `deploy-check` does).
+   */
+  NEAR_RPC_FALLBACK?: string;
+  API_URL?: string;
+  VAULT_ORIGIN?: string;
+  AUTH_ORIGIN?: string;
+  EMAIL_ISSUER_URL?: string;
+  CONSOLE_AUTH_ORIGIN?: string;
+  /**
+   * JSON `[{worker, crons}]`: the cron triggers the manifest puts on this Worker's Cloudflare account (the API, the
+   * console, this Worker and, when it shares the account, the watchdog; D417), against the Free plan's 5 per account.
+   * Counted by `gen`, not read from Cloudflare.
+   */
+  ACCOUNT_CRONS?: string;
   SIGNER_ACCOUNT: string;
   /**
    * The relayer account whose pool keys sign every relay (C12): settlement checks each transaction's signer against it

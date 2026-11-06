@@ -11,7 +11,7 @@ import type { Env } from '../src/env.ts';
 import { outbound } from '../src/email/sender.ts';
 import { FEED_CURSORS, feedChanges } from '../src/feed.ts';
 import { type LedgerStore, ledgerSource } from '../src/ledger.ts';
-import { everyFifteenMinutes } from '../src/ledger-cron.ts';
+import { LEDGER_LAST_RUN, everyFifteenMinutes } from '../src/ledger-cron.ts';
 import { Budget, OutOfBudget, RPC_BUDGET, RUN_BUDGET, forgetAccepted, metered, meteredEnv } from '../src/mail.ts';
 import { NOTICE_PAGE, runChangeNotices } from '../src/notices.ts';
 import { type OpsStore, opsSource, sqlOps } from '../src/ops.ts';
@@ -246,6 +246,10 @@ describe('a worst-case 15-minute tick (D380): the 00:30 daily work, a due retent
     // far as they fit; the rates get what is left and settlement nothing this run.
     expect(first.sum.calls).toEqual({ ledger: 1, relayer_keys: 1, nonce_check: 2, retention: RETENTION_MAX_CALLS, alerts: 2, statement_notices: 4 * 5, rates: 2 });
     expect(first.total).toBe(RUN_BUDGET);
+    // D425: the run's record in ops.state, written on the run's own connection: a query, not a call (the counts above
+    // are unchanged), read by the System status page.
+    const rec = (await store.state.getState([LEDGER_LAST_RUN])).get(LEDGER_LAST_RUN);
+    expect(JSON.parse(rec!.value)).toEqual({ at: T0, budgetLeft: 0, calls: first.sum.calls, failed: [] });
     expect(first.sum.retention).toMatchObject({ ran: true, status: 'partial', calls: RETENTION_MAX_CALLS });
     expect(first.sum.notices).toEqual({ sent: 4, failed: 0 });
     expect(first.sum.daily!.rates).toMatchObject({ missing: 10, fetched: 2 });

@@ -100,7 +100,14 @@ export async function purgeLogos(env: Pick<Env, 'CONSOLE_DB' | 'LOGOS'>, now: nu
   return results.length;
 }
 
-/** The hourly run: every step, each on its own, logged with counts only. */
+/** The job name of the hourly run in `cron_runs` (migration 0003, D425). */
+export const HOURLY_JOB = 'hourly';
+
+/**
+ * The hourly run: every step, each on its own, logged with counts only. Then the run is recorded in `cron_runs` (the
+ * admin console's System status page reads it through `StaffRpc.health`, D425): its start, `ok` or `error`, and the
+ * names of the failed steps. A failed record (migration 0003 not applied, D1 down) is logged and changes nothing else.
+ */
 export async function hourly(env: Env, now: number): Promise<void> {
   const db = env.CONSOLE_DB;
   const steps: [string, () => Promise<number>][] = [
@@ -109,12 +116,22 @@ export async function hourly(env: Env, now: number): Promise<void> {
     ['purge', async () => Object.values(await purgeShortLived(db, now)).reduce((a, b) => a + b, 0)],
     ['logos', () => purgeLogos(env, now)],
   ];
+  const failed: string[] = [];
   for (const [step, run] of steps) {
     try {
       const count = await run();
       log({ event: 'console_cron', step, count, outcome: 'ok' });
     } catch (err) {
+      failed.push(step);
       log({ event: 'console_cron', step, outcome: 'error', error: err instanceof Error ? err.name : 'unknown' }, 'error');
     }
+  }
+  try {
+    await db
+      .prepare('INSERT INTO cron_runs (job, at_ms, outcome, failed_steps) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (job) DO UPDATE SET at_ms = excluded.at_ms, outcome = excluded.outcome, failed_steps = excluded.failed_steps')
+      .bind(HOURLY_JOB, now, failed.length ? 'error' : 'ok', failed.length ? failed.join(',') : null)
+      .run();
+  } catch (err) {
+    log({ event: 'console_cron', step: 'record', outcome: 'error', error: err instanceof Error ? err.name : 'unknown' }, 'warn');
   }
 }

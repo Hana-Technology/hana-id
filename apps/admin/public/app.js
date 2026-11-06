@@ -749,10 +749,11 @@ const logKind = (k) => h('span', {}, LOG_KIND[k] || k, LOG_KIND[k] ? h('span', {
 
 // ---- navigation ----
 
-// The screens, grouped by the task staff come for. Reports, statements and rates are C12's; Security & monitoring, the
+// The screens, grouped by the task staff come for; System status (D425) first, the landing page. Reports, statements and rates are C12's; Security & monitoring, the
 // pending-upgrades page and the playbooks are C14's; retention is C13's; Users is C8b's (D275); the Support ID lookup is
 // C15's (D394–D396, D399).
 const NAV_GROUPS = [
+  { title: 'Overview', items: [{ path: '/status', label: 'Status' }] },
   { title: 'Partners', items: [{ path: '/orgs', label: 'Organisations' }] },
   { title: 'Support', items: [{ path: '/users', label: 'Users' }, { path: '/support', label: 'Support ID lookup' }] },
   {
@@ -773,7 +774,7 @@ const NAV = NAV_GROUPS.flatMap((g) => g.items);
 function renderNav() {
   const nav = document.getElementById('nav');
   // The longest nav path the current path is under is the active one (/security/playbooks/x → Playbooks).
-  const under = (p) => location.pathname === p || location.pathname.startsWith(`${p}/`) || (p === '/orgs' && location.pathname === '/');
+  const under = (p) => location.pathname === p || location.pathname.startsWith(`${p}/`) || (p === '/status' && location.pathname === '/');
   const active = NAV.filter((n) => under(n.path)).sort((a, b) => b.path.length - a.path.length)[0];
   nav.replaceChildren(
     ...NAV_GROUPS.map((g) => {
@@ -1744,6 +1745,120 @@ async function monitoringPage(main) {
 
 const stat = (label, value) => h('div', { class: 'stat' }, h('span', { class: 'label' }, label), h('span', { class: 'value' }, value));
 
+// ---- System status (D425): the landing page, a bird's-eye view of the whole env ----
+//
+// One verdict ("All systems operational" only when every check answered and passed), the issues critical first with
+// what each affects, since when, what to do and where, then one tile per component. Read-only: its one button reads
+// again. Unknown is grey and never green; "Not measured" is listed as a follow-up, not as an issue.
+
+const TILE_STATE = {
+  ok: { label: 'OK', cls: 'ok' },
+  warning: { label: 'Warning', cls: 'warning' },
+  critical: { label: 'Critical', cls: 'critical' },
+  unknown: { label: 'Unknown', cls: 'unknown' },
+  not_measured: { label: 'Not measured', cls: 'off' },
+};
+const tileState = (s) => TILE_STATE[s] || TILE_STATE.unknown;
+
+/** "12 s ago" from the reader's clock; refreshed in place every few seconds while the page is open. */
+const agoText = (ms) => {
+  const d = Math.max(0, Date.now() - ms);
+  return d < 90_000 ? `${Math.round(d / 1000)} s ago` : `${roughly(d)} ago`;
+};
+const liveAgo = (ms, prefix) => h('span', { class: 'ago', 'data-at': String(ms), 'data-prefix': prefix || '' }, `${prefix || ''}${agoText(ms)}`);
+let statusTicker = null;
+function stopStatusTicker() {
+  if (statusTicker !== null) clearInterval(statusTicker);
+  statusTicker = null;
+}
+function startStatusTicker() {
+  stopStatusTicker();
+  statusTicker = setInterval(() => {
+    const spans = document.querySelectorAll('#app .ago[data-at]');
+    if (!spans.length) return stopStatusTicker();
+    for (const el of spans) el.textContent = `${el.getAttribute('data-prefix') || ''}${agoText(Number(el.getAttribute('data-at')))}`;
+  }, 5_000);
+}
+
+/** Only the console's own paths are links (the answer is ours, but a path is checked before it becomes an href). */
+const pathLink = (l) => (l && typeof l.path === 'string' && /^\/[a-z0-9/_-]*$/u.test(l.path) ? link(l.path, l.label) : '');
+
+function verdictBanner(d) {
+  const v = d.verdict;
+  const tiles = d.groups.flatMap((g) => g.tiles);
+  const passed = tiles.filter((t) => t.state === 'ok').length;
+  const off = tiles.filter((t) => t.state === 'not_measured').length;
+  const unknown = tiles.filter((t) => t.state === 'unknown').length;
+  const parts = [`${passed} of ${tiles.length - off} checks passed`];
+  if (unknown) parts.push(`${unknown} unknown`);
+  if (off) parts.push(`${off} not measured or not part of this env`);
+  const counts = v.state === 'ok' ? '' : [v.critical ? `${v.critical} critical` : '', v.warning ? `${v.warning} warning${v.warning === 1 ? '' : 's'}` : ''].filter(Boolean).join(', ');
+  return h(
+    'section',
+    { class: `verdict ${v.state}`, role: 'status', 'aria-live': 'polite', 'aria-labelledby': 'verdict-title' },
+    h('span', { class: 'verdict-mark', 'aria-hidden': 'true' }),
+    h(
+      'div',
+      { class: 'verdict-text' },
+      h('h2', { id: 'verdict-title' }, v.state === 'ok' ? 'All systems operational' : `${d.issues.length} issue${d.issues.length === 1 ? '' : 's'}`),
+      h('p', {}, v.state === 'ok' ? 'Every check answered and passed.' : `${counts}. ${v.critical ? 'Critical first below' : 'Listed below'}, each with what to do.`),
+      h('p', { class: 'verdict-meta' }, `Checked ${time(d.checkedAt)} · `, liveAgo(d.checkedAt), ` · ${parts.join(' · ')}`),
+    ),
+  );
+}
+
+function issueItem(i) {
+  return h(
+    'li',
+    { class: `issue ${i.severity}` },
+    h('div', { class: 'issue-head' }, sev(i.severity), h('strong', {}, i.title)),
+    h(
+      'dl',
+      { class: 'issue-facts' },
+      h('div', {}, h('dt', {}, 'Affects'), h('dd', {}, i.affects)),
+      h('div', {}, h('dt', {}, i.sinceSource === 'source' ? 'Since' : 'First seen'), h('dd', {}, h('time', { datetime: new Date(i.since).toISOString() }, time(i.since)), ' ', h('span', { class: 'muted' }, `(${relative(i.since)}${i.sinceSource === 'source' ? '' : ', by this console'})`))),
+      h('div', {}, h('dt', {}, 'Where'), h('dd', {}, i.componentName)),
+    ),
+    i.action ? h('p', { class: 'issue-action' }, richText(i.action)) : '',
+    i.link || i.playbook ? h('p', { class: 'issue-links' }, pathLink(i.link), i.link && i.playbook ? ' · ' : '', i.playbook ? h('span', {}, 'Playbook: ', playbookLink(i.playbook)) : '') : '',
+  );
+}
+
+function tileItem(t, checkedAt) {
+  const s = tileState(t.state);
+  return h(
+    'li',
+    { class: `tile ${s.cls}` },
+    h('div', { class: 'tile-head' }, h('span', { class: `state-chip ${s.cls}` }, s.label), h('h3', {}, t.name)),
+    h('p', { class: 'tile-detail' }, t.detail),
+    h('p', { class: 'tile-meta' }, liveAgo(checkedAt, 'checked '), t.link ? h('span', {}, ' · ', pathLink(t.link)) : ''),
+  );
+}
+
+async function statusPage(main) {
+  const d = await api('GET', '/api/status');
+  main.append(
+    pageHead('System status', {
+      subtitle: `Every part of ${d.env}: its Workers, the contract and the watchdog, funds, data, scheduled jobs and outside services. Read only; nothing here changes anything.`,
+      actions: [h('button', { type: 'button', class: 'primary', onclick: () => render() }, 'Check again')],
+    }),
+    verdictBanner(d),
+  );
+  if (d.cached) main.append(h('p', { class: 'hint' }, `This is the read from ${agoText(d.checkedAt)}: the console reads every part at most every ${Math.round(d.cacheMs / 1000)} s, so a refresh costs nothing. Check again after that for a fresh read.`));
+  if (d.issues.length) {
+    main.append(panel('Issues', { hint: 'Critical first. Each says what it affects, since when, and what to do.' }, h('ol', { class: 'issues' }, d.issues.map(issueItem))));
+  }
+  for (const g of d.groups) {
+    if (!g.tiles.length) continue;
+    const bad = g.tiles.filter((t) => t.state === 'critical' || t.state === 'warning' || t.state === 'unknown').length;
+    main.append(panel(g.title, { hint: bad ? `${bad} of ${g.tiles.length} need${bad === 1 ? 's' : ''} a look.` : undefined }, h('ul', { class: 'tiles' }, g.tiles.map((t) => tileItem(t, d.checkedAt)))));
+  }
+  if (d.notMeasured && d.notMeasured.length) {
+    main.append(panel('Not measured yet', { hint: 'Nothing on this page measures these yet; they aren’t counted as issues. Each says why and how to check it meanwhile.' }, h('ul', { class: 'not-measured' }, d.notMeasured.map((n) => h('li', {}, h('strong', {}, n.what), h('span', {}, richText(n.why)))))));
+  }
+  startStatusTicker();
+}
+
 async function upgradesPage(main) {
   const { pendingUpgrades: p } = await api('GET', '/api/governance/pending-upgrades');
   main.append(pageHead('Pending upgrades', { subtitle: `What the contract owner has queued for ${p.signer} (${p.env}), read ${time(p.readAtMs)}. Partners see the same page. Each waits the governance delay (${span(p.governanceDelayMs)}) so partners and users can react, for example by exporting keys.` }));
@@ -2703,6 +2818,8 @@ let renderSeq = 0;
 
 async function render() {
   const seq = (renderSeq += 1);
+  // The status page's "checked N s ago" ticker belongs to that page only.
+  stopStatusTicker();
   renderNav();
   const root = document.getElementById('app');
   // The page is built off-screen in `main`, then swapped in whole (no half-drawn page, no flicker of an old one).
@@ -2722,7 +2839,8 @@ async function render() {
       document.title = `Hana ID admin (${me.env})`;
     }
     let m;
-    if (path === '/' || path === '/orgs') await orgsPage(main);
+    if (path === '/' || path === '/status') await statusPage(main);
+    else if (path === '/orgs') await orgsPage(main);
     else if ((m = /^\/orgs\/([^/]+)\/apps\/([^/]+)$/u.exec(path))) await appPage(main, decodeURIComponent(m[1]), decodeURIComponent(m[2]));
     else if ((m = /^\/orgs\/([^/]+)$/u.exec(path))) await orgPage(main, decodeURIComponent(m[1]));
     else if (path === '/audit') await auditPage(main);

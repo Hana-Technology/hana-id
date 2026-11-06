@@ -3,7 +3,7 @@
 Everything that must be true before Hana ID runs on mainnet with real funds. This is a current-state doc for the
 two founders to track. Update a row in the same branch as the change that moves it (rule in `CLAUDE.md`).
 
-Last verified: 2026-11-06 for row 7.16 (branch `fix/google-key-hysteresis`: the Google key rollout hysteresis, D422; the summary's group 7 counts it); 2026-11-06 for every row, the summary, the top blockers and the inconsistencies (branch
+Last verified: 2026-11-06 for rows 5.11 and 5.12 (branch `feat/admin-system-status`: the System status page and what it can't measure yet, D425; the summary's group 5 counts them); 2026-11-06 for row 7.16 (branch `fix/google-key-hysteresis`: the Google key rollout hysteresis, D422; the summary's group 7 counts it); 2026-11-06 for every row, the summary, the top blockers and the inconsistencies (branch
 `docs/readiness-refresh-1106`: each row rechecked against `origin/develop` @ f920f8a (C1–C15 merged, email login
 batches 1–8b merged and live on sandbox-dev), `docs/decisions.md` D1–D417, `docs/operations.md`'s sandbox-dev state,
 git history and the testnet chain (the signer's `view_account` code hash `DVXqka2…` and `get_governance`
@@ -47,12 +47,12 @@ with what became of each.
 | 2. Keys and custody | 13 | 0 | 1 | 11 | 1 | 0 |
 | 3. Governance | 8 | 2 | 4 | 2 | 0 | 0 |
 | 4. Infrastructure and accounts | 23 | 0 | 3 | 15 | 3 | 2 |
-| 5. Monitoring and paging | 10 | 0 | 4 | 5 | 1 | 0 |
+| 5. Monitoring and paging | 12 | 0 | 5 | 6 | 1 | 0 |
 | 6. Security reviews and drills | 9 | 2 | 0 | 6 | 0 | 1 |
 | 7. Builds not done | 24 | 1 | 9 | 8 | 6 | 0 |
 | 8. Address freeze | 7 | 1 | 1 | 2 | 2 | 1 |
 | 9. Legal and product | 8 | 0 | 0 | 4 | 3 | 1 |
-| **Total** | **119** | **7** | **22** | **53** | **32** | **5** |
+| **Total** | **121** | **7** | **23** | **54** | **32** | **5** |
 
 Counted from each row's Status (its first words). Group 7 counts every row, 7.1b–7.1i included.
 
@@ -177,6 +177,8 @@ the readings to confirm are new on the list.
 | 5.8 | `unrecorded_wallets` critical alert on every non-dev env; never true on mainnet | A pre-v3 wallet could be joined silently | built, not deployed | Claude build | D135, D139, D193 |
 | 5.9 | Watchdog alert #11 on sandbox-dev (expected updater-key change) waits for the portal's acknowledge button. Testnet note, minor | It re-pages every 15 min until acknowledged; first real test of the portal's ack flow | not built (the ack not done: the portal is merged, C14 `046a674`; ack it in Security & monitoring once sandbox-dev's admin Worker runs, M4 on the personal account, D414; `docs/operations.md` "Security & monitoring" step 5) | founder | conversation; D332 |
 | 5.10 | Outside identity-JWKS probe on AWS Lambda + EventBridge (SNS email for findings), in an AWS account of its own (not the KMS one), every 15 min or tighter; retire the GitHub workflow. Alternatives: Google Cloud Functions + Cloud Scheduler (also free), a small VPS with cron (~$4–6 a month) | The only check from outside Cloudflare against D210's cloaking; free at any interval there | not built (GitHub probe disabled 2026-11-05, D387) | Claude build, founder | D210, D382, D387; conversation |
+| 5.11 | Admin console System status page (the landing page: every Worker up and on one build, the contract, the watchdog, relayer funds, data, crons, NEAR, Google's JWKS, email, cron headroom) | A bird's-eye "all systems operational" or what's wrong, what it affects and what to do | built, not deployed (branch `feat/admin-system-status`; needs the API, console (migration 0003), issuer, watchdog and admin deployed together, `docs/operations.md` "System status (D425)") | Claude build | D425; apps/admin/README.md "System status" |
+| 5.12 | Free-tier usage on the status page: Workers requests, D1, Durable Objects, Hyperdrive, R2 usage (Cloudflare GraphQL Analytics with a read-only token in the admin Worker) and SendGrid's daily sends (a stats-scoped key); the email issuer's send outcomes and the API's hourly jobs' outcomes recorded | The page shows these as "Not measured"; D417's monthly check by hand is the check until then | not built (needs the user's choice: a Cloudflare token with Analytics Read in the admin Worker is a new secret) | founder, Claude build | D417, D425 |
 
 ## 6. Security reviews and drills
 

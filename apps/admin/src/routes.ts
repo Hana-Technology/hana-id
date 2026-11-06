@@ -22,6 +22,7 @@ import { ackRoute, actionsRoute, alertsRoute, monitoringRoute, pendingUpgradesRo
 import { getPlaybookRoute, listPlaybooksRoute } from './playbooks.ts';
 import { retentionRoute } from './retention-routes.ts';
 import { securityView } from './security.ts';
+import { statusRoute } from './status.ts';
 import { usersFindRoute, usersGetRoute, usersSearchRoute } from './users.ts';
 import { supportLookupRoute } from './support.ts';
 import { type StaffRequest, staffCtx } from './rpc.ts';
@@ -136,6 +137,8 @@ async function directoryAudit(c: RouteCtx): Promise<{ rows: DirectoryAuditRow[];
 
 const ROUTES: Route[] = [
   { method: 'GET', pattern: '/api/me', handler: async (c) => json(200, { email: c.staff.actor.email, sub: c.staff.actor.id, env: c.env.ENV_NAME, consoleOrigin: c.env.CONSOLE_ORIGIN, accessExp: c.staff.accessExp, ...renewField(c.env) }) },
+  // ---- the System status page (D425): read-only, cached 30 s in the isolate ----
+  { method: 'GET', pattern: '/api/status', handler: (c) => statusRoute(c.env, c.staff, c.request) },
 
   // ---- orgs ----
   {

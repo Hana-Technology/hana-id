@@ -39,7 +39,7 @@ async function checkList(table: string, column: string): Promise<string[]> {
 }
 
 beforeAll(async () => {
-  expect(env.TEST_MIGRATIONS.map((m) => m.name)).toEqual(['0001_init.sql', '0002_invites_kind_audit_request.sql']);
+  expect(env.TEST_MIGRATIONS.map((m) => m.name)).toEqual(['0001_init.sql', '0002_invites_kind_audit_request.sql', '0003_cron_runs.sql']);
   await applyD1Migrations(db, env.TEST_MIGRATIONS);
 });
 
@@ -50,7 +50,7 @@ const rid = () => `req-${String(++ridSeq).padStart(8, '0')}-${Math.random().toSt
 describe('CONSOLE_DB 0001', () => {
   it('creates every table of the spec', async () => {
     const { results } = await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'd1_%' AND name NOT LIKE '_cf_%' ORDER BY name").all<{ name: string }>();
-    expect(results.map((r) => r.name)).toEqual(['audit_log', 'auth_flows', 'console_sessions', 'console_users', 'handoff_codes', 'invites', 'logo_objects', 'members', 'orgs', 'owner_grants', 'pending_actions']);
+    expect(results.map((r) => r.name)).toEqual(['audit_log', 'auth_flows', 'console_sessions', 'console_users', 'cron_runs', 'handoff_codes', 'invites', 'logo_objects', 'members', 'orgs', 'owner_grants', 'pending_actions']);
   });
 
   it('creates org_legacy (internal, active)', async () => {

@@ -278,6 +278,7 @@ describe('navigation', () => {
     await vi.waitFor(() => expect(s.text()).toContain('No playbook matches'));
     const groups = [...s.doc.querySelectorAll('#nav .nav-group')].map((g) => [g.querySelector('h2')!.textContent, [...g.querySelectorAll('a')].map((a) => a.textContent)]);
     expect(groups).toEqual([
+      ['Overview', ['Status']],
       ['Partners', ['Organisations']],
       ['Support', ['Users', 'Support ID lookup']],
       ['Security', ['Security & monitoring', 'Feed and notices', 'Pending upgrades', 'Playbooks', 'Audit log']],

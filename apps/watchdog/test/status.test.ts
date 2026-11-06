@@ -4,7 +4,8 @@ import { describe, expect, it } from 'vitest';
 import { CHECK_IDS } from '../src/checks.ts';
 import type { Env } from '../src/env.ts';
 import worker from '../src/index.ts';
-import { handleRequest, SILENT_AFTER_MS } from '../src/status.ts';
+import { BUILD_ID_RE as ENV_BUILD_ID_RE } from '@hana-id/env/build-id';
+import { BUILD_ID_RE, handleRequest, SILENT_AFTER_MS } from '../src/status.ts';
 import { Store } from '../src/store.ts';
 import { alertsOf, emailJwk, IDENTITY_ISS, identityKey, initialized, jwk, linkStats, linkWindow, MIN, pinsOf, RecordingNotifier } from './helpers.ts';
 
@@ -84,6 +85,15 @@ describe('GET /status', () => {
     expect((body.open_alerts as { kind: string }[]).map((a) => a.kind)).toContain('forged_key_change');
     expect(Object.keys(body.checks as object)).toEqual(CHECK_IDS);
     expect((body.alert_kinds as Record<string, { playbook: string }>).forged_active_key).toMatchObject({ severity: 'critical', playbook: 'forged-active-key' });
+  });
+
+  it('serves its build id (D425): null unstamped or malformed, the format @hana-id/env checks', async () => {
+    const { body } = await call('/status');
+    expect(body.build).toBeNull();
+    expect((await call('/status', {}, Date.now(), testEnv({ HANA_BUILD: '0485faa1c2d3' }))).body.build).toBe('0485faa1c2d3');
+    expect((await call('/status', {}, Date.now(), testEnv({ HANA_BUILD: 'main; rm' }))).body.build).toBeNull();
+    expect(BUILD_ID_RE.source).toBe(ENV_BUILD_ID_RE.source);
+    expect(BUILD_ID_RE.flags).toBe(ENV_BUILD_ID_RE.flags);
   });
 
   it('serves the last relayer reading with its thresholds, and the relayer alert kinds with their playbook', async () => {

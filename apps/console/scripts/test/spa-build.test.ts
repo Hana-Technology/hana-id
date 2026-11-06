@@ -56,6 +56,11 @@ describe('the SPA build', () => {
     const js = readdirSync(join(out, 'assets')).filter((f) => f.endsWith('.js')).map((f) => readFileSync(join(out, 'assets', f), 'utf8')).join('\n');
     expect(js).not.toMatch(/ZodError|hana-console\/login\/v1/u);
   });
+
+  it('builds nothing of the local preview harness (preview/: its plugin, scenarios or fake data)', () => {
+    const all = readdirSync(join(out, 'assets')).map((f) => readFileSync(join(out, 'assets', f), 'utf8')).join('\n') + readFileSync(join(out, 'index.html'), 'utf8');
+    expect(all).not.toMatch(/hana-console-preview-api|__preview|hana_preview|Sora Labs|lumenpay/u);
+  });
 });
 
 describe('the build stamp (scripts/build-stamp.ts)', () => {

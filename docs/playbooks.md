@@ -1,7 +1,7 @@
 # Recovery playbooks
 
 Generated from `packages/playbooks` (D126) by `corepack pnpm --filter @hana-id/playbooks gen-docs`: edit the package,
-not this file (a test fails when it is stale). Last verified against code: 2026-11-06 (branch `fix/google-key-hysteresis`: `retired-key-change`, `key-sync-stalled` and `updater-key-stolen` with the rollout hysteresis, D422); 2026-11-05 (branch `feat/deploy-check-all-workers`: the watchdog deploys through `run deploy`, stamped with the build id, D406); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/coop-canary`: the `google-enforces-coop` incident, D386); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`).
+not this file (a test fails when it is stale). Last verified against code: 2026-11-06 (branch `fix/watchdog-new-key-grace`: `unseen-key-change`, and `forged-key-change` with the new-kid grace, D432); 2026-11-06 (branch `fix/google-key-hysteresis`: `retired-key-change`, `key-sync-stalled` and `updater-key-stolen` with the rollout hysteresis, D422); 2026-11-05 (branch `feat/deploy-check-all-workers`: the watchdog deploys through `run deploy`, stamped with the build id, D406); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/coop-canary`: the `google-enforces-coop` incident, D386); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`).
 
 One step-by-step guide for every watchdog alert kind and for every incident the watchdog does not raise. The admin
 portal's "Security & monitoring" view renders the same playbooks (`docs/batch-c-spec.md`), and every watchdog
@@ -32,6 +32,7 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [The watchdog is partly blind or mute](#watchdog-degraded) | warning | `rpc_failing`, `jwks_failing`, `heartbeat_failing`, `channel_not_configured` |
 | [Google key sync stalled](#key-sync-stalled) | warning | `unexecuted_key_change`, `stale_active_key` |
 | [Retired Google key proposed and cancelled](#retired-key-change) | warning | `retired_key_change` |
+| [New Google key the watchdog has not seen yet](#unseen-key-change) | warning | `unseen_key_change` |
 | [Active keys checked by kid only](#active-key-material-unavailable) | warning | `active_key_material_unavailable` |
 | [Shared clients, sponsors or public registration changed](#config-change) | warning | `config_change` |
 | [The watchdog's confirmation of a Google key failed](#confirm-failed) | warning | `confirm_failed` |
@@ -152,7 +153,7 @@ A key Google doesn't publish, or an email key that isn't pinned, is active on ch
 
 `forged-key-change` · critical · alert kinds: `forged_key_change`
 
-A pending issuer key Google doesn't publish (or with other key material), an email key that isn't pinned for its signer, or a non-Google key the updater proposed: the watchdog cancelled it and, when the updater proposed it, deleted every updater key. A key Google published with the same material in the last 24 h is a [retired-key-change](#retired-key-change) instead (D153).
+A pending issuer key Google doesn't publish (or with other key material), an email key that isn't pinned for its signer, or a non-Google key the updater proposed: the watchdog cancelled it and, when the updater proposed it, deleted every updater key. A key Google published with the same material in the last 24 h is a [retired-key-change](#retired-key-change) instead (D153); an updater Add of a kid the watchdog never saw listed waits until its deadline first, as an [unseen-key-change](#unseen-key-change) (D432): `details.new_kid_deadline_ms` says it was judged then.
 
 **Signals**
 
@@ -674,7 +675,54 @@ The updater proposed a key Google stopped publishing but did publish, with the s
 
 - `keyChanges` no longer lists the change; `issuers` matches Google's JWKS.
 
-**Refs:** [`docs/operations.md#watchdog-alerts-runbook`](operations.md#watchdog-alerts-runbook), D153 (`docs/decisions.md`) · **See also:** [forged-key-change](#forged-key-change), [key-sync-stalled](#key-sync-stalled)
+**Refs:** [`docs/operations.md#watchdog-alerts-runbook`](operations.md#watchdog-alerts-runbook), D153 (`docs/decisions.md`) · **See also:** [forged-key-change](#forged-key-change), [key-sync-stalled](#key-sync-stalled), [unseen-key-change](#unseen-key-change)
+
+<a id="unseen-key-change"></a>
+
+### New Google key the watchdog has not seen yet
+
+`unseen-key-change` · warning · alert kinds: `unseen_key_change`
+
+The updater proposed a Google kid that no fetch of the watchdog has ever listed (D432). Usually Google's new key mid-rollout: the API cron's fetch reached an edge that already serves it. The watchdog leaves it pending until its deadline (6 h after the proposal at most, and at least 18 min before it is executable): confirmed as soon as one of its fetches lists it with the same material, otherwise cancelled as forged and the updater keys deleted.
+
+**Signals**
+
+- Warning `unseen_key_change` (Slack, email): "New Google key <kid> proposed by the updater (change <id>) isn't in Google's JWKS as the watchdog fetches it: cancelled as forged, and the updater keys deleted, at <time> unless a fetch lists it".
+- `details.new_kid_deadline_ms` is the deadline; `details.n`/`details.e` the proposed key material; `details.absent_since` and `details.absent_fetches` the watchdog's misses so far.
+- It ends one of two ways: info `key_change_confirmed` (a fetch listed the kid with the same material), or critical `forged_key_change` with `details.new_kid_deadline_ms` (the deadline passed, or the same run found the updater forging another change: `grace_ended: updater_forged`).
+
+**Impact**
+
+- None while it waits: the key isn't active, and the contract only accepts it after its delay. If it is Google's, logins signed with it get `503 issuer_key_pending` until it is confirmed or executed (as for any new Google key).
+- If it is a forgery, the updater key is stolen and keeps working until the deadline (it can propose more keys, which wait the same way, and removals, which page `published-key-removal`).
+
+**Steps**
+
+1. **Check whether Google publishes it** (who: a founder). Fetch Google's JWKS (https://www.googleapis.com/oauth2/v3/certs) a few times, from more than one network if you can: during a rotation its edges serve different key sets. If one of them lists the kid with `n` and `e` equal to `details.n`/`details.e`, it is Google's key: nothing to do, the watchdog confirms it once its own fetch lists it (or the API cron executes it after the delay).
+
+   ```sh
+   curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)" https://<workerName>.<subdomain>.workers.dev/status
+   curl -s <apiUrl>/v1/governance | jq '{paused, keyChanges, issuers, updater}'
+   ```
+
+2. **Not listed anywhere, or listed with other material** (who: a founder). Treat it as forged now rather than waiting for the deadline: go to [forged-key-change](#forged-key-change) and [updater-key-stolen](#updater-key-stolen). Other key material for the same kid is forged for certain (the watchdog cancels it at its next fetch that lists the kid). Not listed anywhere 1 h after the proposal is very unlikely for a real rotation.
+
+3. **Cancel early if it is forged** (who: council (2 of 3)). The owner cancels the change and deletes every updater key before the deadline when a founder judged it forged (the watchdog does both at the deadline, and at once if it sees the updater forge anything else). Never cancel it on a hunch alone: the updater keys of a real rotation are then gone too.
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run admin <env> owner:call cancel_issuer_key_change --args '{"id":<id>}' --yes
+   corepack pnpm --filter @hana-id/scripts run admin <env> owner:call delete_updater_key --args '{"public_key":"<ed25519:…>"}' --yes
+   ```
+
+**Verify**
+
+- `keyChanges` no longer lists the change: it was confirmed (`issuers` lists the kid and Google's JWKS has it) or cancelled (`forged_key_change`).
+
+**Follow-ups**
+
+- Repeated warnings that end in a confirmation mean the watchdog's fetches lag the API cron's edges: note the lag (proposal to confirmation) for the issuer-key delay's review (D432).
+
+**Refs:** [`docs/operations.md#watchdog-alerts-runbook`](operations.md#watchdog-alerts-runbook), D432 (`docs/decisions.md`) · **See also:** [forged-key-change](#forged-key-change), [updater-key-stolen](#updater-key-stolen), [retired-key-change](#retired-key-change)
 
 <a id="active-key-material-unavailable"></a>
 

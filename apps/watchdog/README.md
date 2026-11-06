@@ -32,14 +32,24 @@ Last verified: 2026-11-06 (branch `feat/admin-system-status`: `GET /status` serv
    (once this watchdog's `confirm_from_ms` has passed). A kid with other key material, or absent from two fetches at
    least 60 s apart (the run re-fetches after 60 s; or the absence recorded by an earlier run counts) →
    `cancel_issuer_key_change`, then `delete_updater_key` for every updater key when the signer account (the updater)
-   proposed it, then one critical alert with the results. Except (D153): an Add by the updater whose `n`/`e` equal what
-   this watchdog fetched from Google within the last 24 h (`seen_kids`, not a baseline kid) is Google retiring the kid
-   while the API cron still saw it: cancelled, the updater keys kept, one `retired_key_change` warning. A cancel that panics `No such key change` re-reads the
+   proposed it, then one critical alert with the results. Except, for an Add by the updater:
+   - (D153, D422) its `n`/`e` equal what this watchdog fetched from Google within the last 24 h (`seen_kids`, not a
+     baseline kid): a retirement race or a rollout. Cancelled as retired (updater keys kept, one `retired_key_change`
+     warning) only when the kid was first seen over 7 days ago, last listed over 6 h ago and missed by 3+ fetches in a
+     row over 30+ min; otherwise left pending (confirmed once a fetch lists it, executed by the API cron otherwise).
+   - (D432) no fetch of this watchdog ever listed the kid: Google's new key seen first by the API cron's edge, or a
+     forgery. Left pending, with one `unseen_key_change` warning, until its deadline min(proposed + 6 h, executable −
+     18 min) (`newKidDeadline`; 18 min = 3·(W + T), the delay's security bound); confirmed if a fetch lists it with the
+     same material; at the deadline the forged path above. No grace when the watchdog can't act, `seen_kids` can't be
+     read, or the run already judged an updater change forged (or a forged key active), which also ends every waiting
+     Add's grace; none either with a delay ≤ 18 min. A run whose JWKS fetch fails still cancels an Add past its
+     deadline that 2+ earlier fetches missed and none listed (`judged_without_fetch`). A cancel that panics `No such key change` re-reads the
    chain: gone without effect (someone else cancelled it) is fine; **executed** (an Add's kid is now active) raises
    `protective_action_failed` and step 6 judges the re-read active set, so it pauses in the same run. The alert's
    title and `details.outcome` (`cancelled`, `gone`, `executed`, `unknown`, `failed`, `not_sent`) never claim a cancel
    that didn't happen.
-5. **Pending removals**: kid absent from two fetches → confirm. Kid still published → critical alert, nothing called.
+5. **Pending removals**: confirmed early only once 3+ fetches in a row over 10+ min missed the kid and none listed it
+   for 24 h (D422); otherwise the change waits out its delay. Kid still published → critical alert, nothing called.
 5a. **The email issuer** (`src/pins.ts`; judged against the manifest's pins, so it runs even when Google's JWKS
    can't be fetched). Pins: `watchdog.pinnedIssuerKeys.email` = `{required, signers: {<id>: [thumbprint, …]}}`, each
    key by its RFC 7638 JWK thumbprint (`rsaThumbprint`, `packages/jwks`), which is also the kid Hana's issuer gives

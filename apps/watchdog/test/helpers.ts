@@ -8,7 +8,7 @@ import type { Channel } from '../src/checks.ts';
 import { type IdentityResponse, p256Thumbprint } from '../src/identity.ts';
 import type { SignerPins } from '../src/pins.ts';
 import { type AccessKeyEntry, nearToYocto, type RelayerFunds, relayerFundsFrom, relayerThresholds } from '../src/relayer.ts';
-import { RETIRED_ABSENT_SPAN_MS, RETIRED_MIN_KEY_AGE_MS, RETIRED_UNSEEN_MS, type RunDeps, type RunReport, runWatchdog } from '../src/run.ts';
+import { NEW_KID_CANCEL_LEAD_MS, RETIRED_ABSENT_SPAN_MS, RETIRED_MIN_KEY_AGE_MS, RETIRED_UNSEEN_MS, type RunDeps, type RunReport, runWatchdog } from '../src/run.ts';
 import { Store } from '../src/store.ts';
 
 export const SIGNER = 'signer.test.near';
@@ -42,6 +42,11 @@ export const UPDATER_KEYS = ['ed25519:7mEBxCsWzXSq3Rpy2RwEGWb7ux5YX4tdTnRvAYfGHu
 export const T0 = Date.UTC(2026, 9, 29, 12, 0);
 export const MIN = 60_000;
 export const HOUR = 60 * MIN;
+/**
+ * D432: proposal options for an issuer-key delay at its security bound, which leaves an updater Add of a kid the
+ * watchdog never saw no grace: judged forged at once, as before D432.
+ */
+export const NO_GRACE = { delay: NEW_KID_CANCEL_LEAD_MS } as const;
 
 const b64url = (bytes: Uint8Array): string => btoa(String.fromCharCode(...bytes)).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '');
 

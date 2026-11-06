@@ -47,7 +47,7 @@ export const ALERT_KINDS = {
     severity: 'critical',
     check: 'pending_key_changes',
     description:
-      "A pending key Google doesn't publish (absent from two fetches ≥ 60 s apart; not one it published with the same material within 24 h, see retired_key_change) or with other key material, an email key whose thumbprint isn't pinned for its signer (or whose kid isn't its thumbprint), or any change the updater proposed for a provider other than Google: cancelled, and the updater keys deleted when the updater proposed it",
+      "A pending key Google doesn't publish (absent from two fetches ≥ 60 s apart; not one it published with the same material within 24 h, see retired_key_change; an updater Add of a kid no fetch ever listed only at its deadline, see unseen_key_change) or with other key material, an email key whose thumbprint isn't pinned for its signer (or whose kid isn't its thumbprint), or any change the updater proposed for a provider other than Google: cancelled, and the updater keys deleted when the updater proposed it",
   },
   published_key_removal: { severity: 'critical', check: 'pending_key_changes', description: 'A pending removal of a kid Google still publishes (alert only: the owner decides and cancels)' },
   unverifiable_key_change: { severity: 'critical', check: 'pending_key_changes', description: 'A pending key change the owner proposed for a provider other than Google and email: no JWKS or pins known for it (alert only)' },
@@ -122,13 +122,19 @@ export const ALERT_KINDS = {
   rpc_failing: { severity: 'warning', check: 'chain_read', description: 'Chain reads failed for 3 runs in a row' },
   jwks_failing: { severity: 'warning', check: 'jwks_fetch', description: "Google's JWKS fetch failed for 3 runs in a row" },
   unexecuted_key_change: { severity: 'warning', check: 'unexecuted_changes', description: 'A key change executable for more than 1 h that nobody executed' },
-  stale_active_key: { severity: 'warning', check: 'active_keys', description: 'An active kid Google stopped publishing more than 3 h ago (the updater should have proposed its removal)' },
+  stale_active_key: { severity: 'warning', check: 'active_keys', description: 'An active kid Google stopped publishing more than 27 h ago (the updater should have proposed its removal after 24 h, D422)' },
   active_key_material_unavailable: { severity: 'warning', check: 'active_keys', description: 'The contract has no get_issuer_keys: active keys are checked by kid only' },
   config_change: { severity: 'warning', check: 'governance_diff', description: 'Shared clients, sponsors or public registration changed' },
   retired_key_change: {
     severity: 'warning',
     check: 'pending_key_changes',
     description: "A pending Add by the updater of a key Google no longer publishes but published with the same material within 24 h (a race with Google's key retirement): cancelled, the updater keys kept",
+  },
+  unseen_key_change: {
+    severity: 'warning',
+    check: 'pending_key_changes',
+    description:
+      "A pending Add by the updater of a kid no fetch of the watchdog has ever listed (D432): usually Google's new key, seen first by the API cron from an edge that already serves it. Left pending: confirmed once a fetch lists it with the same material; otherwise cancelled as forged_key_change, and the updater keys deleted, at its deadline (6 h after the proposal at most, and at least 18 min before it is executable)",
   },
   confirm_failed: { severity: 'warning', check: 'pending_key_changes', description: 'A confirmation the watchdog sent failed' },
   email_jwks_mismatch: {
@@ -189,3 +195,10 @@ export const CHANNELS: Record<Severity, Channel[]> = {
 export const RESEND_MS = 15 * 60_000;
 /** The cron interval (W). The portal warns after two silent intervals. */
 export const RUN_INTERVAL_MS = 5 * 60_000;
+/**
+ * D432: an updater Add of a kid the watchdog never saw Google list is judged forged no later than this before anyone
+ * may execute it: 3·(W + T), the issuer-key delay's security bound (`MIN_ISSUER_KEY_DELAY_MS` in packages/env; a test
+ * keeps them equal), so a forged key still gets three runs, two of which may be missed, to be cancelled. A delay at or
+ * below the bound leaves no grace (the rule before D432).
+ */
+export const NEW_KID_CANCEL_LEAD_MS = 3 * (RUN_INTERVAL_MS + 60_000);

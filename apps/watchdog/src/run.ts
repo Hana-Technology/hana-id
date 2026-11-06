@@ -1,7 +1,8 @@
 // One watchdog run (every 5 min): docs/governance-spec.md "Watchdog service" steps 1–8, with the actions exactly as
 // D82 allows them. On its own the watchdog only:
-//   - cancels a pending issuer key Google doesn't publish (absent from two fetches ≥ 60 s apart) or publishes with
-//     other key material, and then deletes every updater key if the updater (the signer account) proposed it;
+//   - cancels a pending issuer key Google doesn't publish (absent from two fetches ≥ 60 s apart; an updater Add of a kid
+//     this watchdog never saw listed only at its deadline, D432) or publishes with other key material, and then deletes
+//     every updater key if the updater (the signer account) proposed it;
 //   - cancels any pending change the updater proposed for a provider other than Google (the updater only serves
 //     Google, so its key is stolen), and deletes every updater key;
 //   - pauses the contract, and only when a key Google doesn't publish is ACTIVE on chain (never at its first run),
@@ -19,7 +20,7 @@ import { GOOGLE_PROVIDER, type Jwk, rsaThumbprint, sameRsaKey } from '@hana-id/j
 import { type DeliveryReport, deliverAlerts } from './alerts.ts';
 import type { ChainReader, ChainSnapshot, ChainWriter, KeyChange, WatchdogMethod } from './chain.ts';
 import type { Notifier } from './channels.ts';
-import { ALERT_KINDS, type AlertKind, CHANNELS, CHECK_IDS, type CheckId } from './checks.ts';
+import { ALERT_KINDS, type AlertKind, CHANNELS, CHECK_IDS, type CheckId, NEW_KID_CANCEL_LEAD_MS } from './checks.ts';
 import { maybeSendDigest } from './digest.ts';
 import { diffChain, linkThresholdsOf, type StoredSnapshot } from './diff.ts';
 import {
@@ -71,6 +72,15 @@ export const REMOVAL_UNSEEN_MS = 24 * 60 * 60_000;
  * only after 24 h missing from every fetch (D422), so stale means the removal is over 3 h late (was 3 h, before D422).
  */
 export const STALE_ACTIVE_KID_MS = 27 * 60 * 60_000;
+/**
+ * New-kid grace (D432): during a rotation the API cron can see Google's new kid from an edge that serves it before any
+ * fetch of this watchdog does. An updater Add of a kid the watchdog has never seen Google list is therefore judged
+ * forged only at its deadline (`newKidDeadline`): this long after the proposal at most (Google's edges serve key sets
+ * up to ~6 h old),
+ */
+export const NEW_KID_GRACE_MS = 6 * 60 * 60_000;
+/** and never later than NEW_KID_CANCEL_LEAD_MS (checks.ts: 3·(W + T), 18 min) before anyone may execute it. */
+export { NEW_KID_CANCEL_LEAD_MS };
 /** A change executable for longer than this that nobody executed (warning). */
 export const UNEXECUTED_AFTER_MS = 60 * 60_000;
 /** RPC or JWKS failures in a row before a warning. */
@@ -231,6 +241,8 @@ class Run {
   readonly raisedKeys = new Set<string>();
   readonly actions: ActionSummary[] = [];
   readonly alerts: { id: number; kind: AlertKind; key: string }[] = [];
+  /** This run judged a change of the updater forged, or a key active that shouldn't be: no new-kid grace holds (D432). */
+  updaterForged = false;
 
   constructor(
     readonly d: RunDeps,
@@ -473,6 +485,8 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
         seenRead = false;
         return new Map<string, SeenKid>();
       });
+      // Updater Adds of never-seen kids left pending in their grace this run (D432).
+      const graced: KeyChange[] = [];
       for (const c of pending) {
         const jwk = jwksNow.get(c.kid);
         if (c.op === 'Add') {
@@ -493,7 +507,17 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
             else run.check('pending_key_changes', 'ok', `${ident(c.kid)} missing from this fetch but listed by Google at ${iso(lastSeen)}: waiting (rollout, D422)`);
             continue;
           }
-          await forgedPending(run, s, c, reason, jwk ?? null, canAct, settled, deleted, self);
+          // D432: a kid no fetch of this watchdog ever listed, proposed by the updater: Google's new key seen first by
+          // the API cron's edge, or a forgery. Waits until its deadline, unless the watchdog can't act (people then
+          // need the whole delay to cancel), it can't read what it has seen (fail safe), or this run already found
+          // the updater forging.
+          const newKid = reason === 'not_published' && c.by === cfg.signer && canAct && seenRead && !seen.has(c.kid);
+          if (newKid && !run.updaterForged && d.now() < newKidDeadline(c)) {
+            graced.push(c);
+            await unseenPending(run, c, runs.get(c.kid));
+            continue;
+          }
+          await forgedPending(run, s, c, reason, jwk ?? null, canAct, settled, deleted, self, newKid ? { new_kid_deadline_ms: newKidDeadline(c) } : {});
         } else if (jwk) {
           await run.condition('published_key_removal', `published_key_removal:${c.id}`, `Pending removal of ${ident(c.kid)}, which Google still publishes (alert only: the owner decides)`, changeDetails(c));
         } else if (absent.has(c.kid) && canConfirm) {
@@ -505,12 +529,21 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
       // ---- step 5: active keys ----
       run.evaluate('forged_active_key', 'stale_active_key', 'active_key_material_unavailable');
       await checkActiveKeys(run, s, jwksNow, firstRun, canAct, self, deleted);
+      // Once this run found the updater forging (or a forged key active), its other unseen Adds get no more time.
+      if (run.updaterForged) {
+        for (const c of graced) {
+          if (!settled.has(c.id)) await forgedPending(run, s, c, 'not_published', null, canAct, settled, deleted, self, { new_kid_deadline_ms: newKidDeadline(c), grace_ended: 'updater_forged' });
+        }
+      }
       if (firstRun) {
         await run.event('first_run', 'first_run', 'First run: the current JWKS is recorded as known', { kids: [...jwksNow.keys()], active: s.issuer?.kids ?? [] });
         await store.setMeta(META.initializedAt, d.now());
       }
       run.evaluate('protective_action_failed');
     } else {
+      // D432: an unseen Add past its deadline is judged on what earlier fetches recorded, so a JWKS outage in its last
+      // runs can't let it reach its executable time.
+      if (snap) await newKidsDueWithoutFetch(run, snap, canAct, settled, deleted, self);
       for (const id of ['pending_key_changes', 'active_keys'] as const) {
         // The email half may have been judged already (it needs no Google JWKS): keep its outcome.
         const judged = run.checks.get(id);
@@ -711,6 +744,63 @@ export function removalConfirmable(s: SeenKid | undefined, absence: Absence | un
   return !s || s.last_seen_at === null || now - s.last_seen_at >= REMOVAL_UNSEEN_MS;
 }
 
+/**
+ * D432: when an updater Add of a kid this watchdog never saw Google list stops waiting and is judged forged:
+ * NEW_KID_GRACE_MS after its proposal, but no later than NEW_KID_CANCEL_LEAD_MS before its executable time (at or
+ * before the proposal when the delay is that short: no grace).
+ */
+export function newKidDeadline(c: KeyChange): number {
+  return Math.min(c.proposed_at_ms + NEW_KID_GRACE_MS, c.executable_at_ms - NEW_KID_CANCEL_LEAD_MS);
+}
+
+/**
+ * D432: an updater Add of a kid no fetch has listed, before its deadline. Left pending (confirmed once a fetch lists it
+ * with the same material, cancelled as forged at the deadline otherwise), with one warning so people know a possible
+ * forgery is waiting.
+ */
+async function unseenPending(run: Run, c: KeyChange, absence: Absence | undefined): Promise<void> {
+  const deadline = newKidDeadline(c);
+  run.check('pending_key_changes', 'ok', `${ident(c.kid)} never listed by Google's JWKS as fetched here: judged forged at ${iso(deadline)} unless a fetch lists it (D432)`);
+  await run.event(
+    'unseen_key_change',
+    `unseen_key_change:${c.id}`,
+    `New Google key ${ident(c.kid)} proposed by the updater (change ${c.id}) isn't in Google's JWKS as the watchdog fetches it: cancelled as forged, and the updater keys deleted, at ${iso(deadline)} unless a fetch lists it`,
+    { ...changeDetails(c), new_kid_deadline_ms: deadline, absent_since: absence?.first ?? null, absent_fetches: absence?.fetches ?? null },
+  );
+}
+
+/**
+ * D432, in a run whose JWKS fetch failed: an updater Add past its deadline (or any, once this run found the updater
+ * forging) whose kid no fetch ever listed, and at least two earlier fetches missed, is forged. A failed read of the
+ * watchdog's records judges nothing (no evidence either way; the next run with a fetch judges it).
+ */
+async function newKidsDueWithoutFetch(run: Run, s: ChainSnapshot, canAct: boolean, settled: Set<number>, deleted: Set<string>, self: SelfChanges): Promise<void> {
+  const { store, config } = run.d;
+  const now = run.d.now();
+  const due = s.keyChanges.filter((c) => c.provider === GOOGLE_PROVIDER && c.op === 'Add' && c.by === config.signer && (run.updaterForged || now >= newKidDeadline(c)));
+  if (due.length === 0) return;
+  let seen: Map<string, SeenKid>;
+  let absences: Map<string, Absence>;
+  try {
+    seen = await store.seenKids(GOOGLE_PROVIDER);
+    absences = await store.absences(GOOGLE_PROVIDER);
+  } catch {
+    log({ event: 'seen_kids_read_failed', runId: run.id }, 'error');
+    return;
+  }
+  for (const c of due) {
+    const absence = absences.get(c.kid);
+    if (seen.has(c.kid) || !absence || absence.fetches < 2) continue;
+    await forgedPending(run, s, c, 'not_published', null, canAct, settled, deleted, self, {
+      new_kid_deadline_ms: newKidDeadline(c),
+      ...(now < newKidDeadline(c) ? { grace_ended: 'updater_forged' } : {}),
+      judged_without_fetch: true,
+      absent_since: absence.first,
+      absent_fetches: absence.fetches,
+    });
+  }
+}
+
 async function confirm(run: Run, c: KeyChange, settled: Set<number>): Promise<void> {
   const a = await run.act('confirm_issuer_key_change', { id: c.id }, c.op === 'Add' ? `${ident(c.kid)} matches Google's JWKS` : `${ident(c.kid)} is no longer in Google's JWKS`);
   if (a.ok) {
@@ -814,6 +904,7 @@ async function forgedPending(
   extra: Record<string, unknown> = {},
 ): Promise<void> {
   const signer = run.d.config.signer;
+  if (c.by === signer) run.updaterForged = true;
   const actions: ActionSummary[] = [];
   let outcome: CancelOutcome = 'not_sent';
   if (canAct) {
@@ -950,6 +1041,7 @@ async function forgedActive(
   deleted: Set<string>,
   extra: Record<string, unknown>,
 ): Promise<void> {
+  run.updaterForged = true;
   let action: ActionSummary | null = null;
   if (canAct && !s.config.paused && !self.paused) {
     action = await run.act('pause', {}, `active ${provider === GOOGLE_PROVIDER ? '' : `${ident(provider)} `}key ${ident(kid)}: ${reason}`);

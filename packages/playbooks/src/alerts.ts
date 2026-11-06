@@ -12,7 +12,7 @@ const forgedKeyChange: Playbook = {
   severity: 'critical',
   status: 'live',
   summary:
-    "A pending issuer key Google doesn't publish (or with other key material), an email key that isn't pinned for its signer, or a non-Google key the updater proposed: the watchdog cancelled it and, when the updater proposed it, deleted every updater key. A key Google published with the same material in the last 24 h is a retired-key-change instead (D153).",
+    "A pending issuer key Google doesn't publish (or with other key material), an email key that isn't pinned for its signer, or a non-Google key the updater proposed: the watchdog cancelled it and, when the updater proposed it, deleted every updater key. A key Google published with the same material in the last 24 h is a retired-key-change instead (D153); an updater Add of a kid the watchdog never saw listed waits until its deadline first, as an unseen-key-change (D432): `details.new_kid_deadline_ms` says it was judged then.",
   signals: [
     'Critical `forged_key_change` page (paging app, Slack, email), re-sent every 15 min until acknowledged. The title and `details.outcome` say what happened: `cancelled`, `gone` (someone else cancelled it first), `executed` (it took effect before the cancel), `unknown`, `failed` or `not_sent`.',
     "`details.by` is the proposer: the signer account means `KEYS_UPDATER_KEY`; the owner means the council. `reason: updater_other_provider`: the updater proposed a key for a provider other than Google (it only serves Google).",
@@ -521,7 +521,53 @@ const retiredKeyChange: Playbook = {
   verify: ['`keyChanges` no longer lists the change; `issuers` matches Google\'s JWKS.'],
   followUps: [],
   refs: ['docs/operations.md#watchdog-alerts-runbook', 'D153'],
-  related: ['forged-key-change', 'key-sync-stalled'],
+  related: ['forged-key-change', 'key-sync-stalled', 'unseen-key-change'],
+};
+
+const unseenKeyChange: Playbook = {
+  id: 'unseen-key-change',
+  title: 'New Google key the watchdog has not seen yet',
+  kind: 'alert',
+  alertKinds: ['unseen_key_change'],
+  severity: 'warning',
+  status: 'live',
+  summary:
+    "The updater proposed a Google kid that no fetch of the watchdog has ever listed (D432). Usually Google's new key mid-rollout: the API cron's fetch reached an edge that already serves it. The watchdog leaves it pending until its deadline (6 h after the proposal at most, and at least 18 min before it is executable): confirmed as soon as one of its fetches lists it with the same material, otherwise cancelled as forged and the updater keys deleted.",
+  signals: [
+    'Warning `unseen_key_change` (Slack, email): "New Google key <kid> proposed by the updater (change <id>) isn\'t in Google\'s JWKS as the watchdog fetches it: cancelled as forged, and the updater keys deleted, at <time> unless a fetch lists it".',
+    "`details.new_kid_deadline_ms` is the deadline; `details.n`/`details.e` the proposed key material; `details.absent_since` and `details.absent_fetches` the watchdog's misses so far.",
+    'It ends one of two ways: info `key_change_confirmed` (a fetch listed the kid with the same material), or critical `forged_key_change` with `details.new_kid_deadline_ms` (the deadline passed, or the same run found the updater forging another change: `grace_ended: updater_forged`).',
+  ],
+  impact: [
+    "None while it waits: the key isn't active, and the contract only accepts it after its delay. If it is Google's, logins signed with it get `503 issuer_key_pending` until it is confirmed or executed (as for any new Google key).",
+    'If it is a forgery, the updater key is stolen and keeps working until the deadline (it can propose more keys, which wait the same way, and removals, which page `published-key-removal`).',
+  ],
+  steps: [
+    {
+      title: "Check whether Google publishes it",
+      who: 'a founder',
+      detail:
+        "Fetch Google's JWKS (https://www.googleapis.com/oauth2/v3/certs) a few times, from more than one network if you can: during a rotation its edges serve different key sets. If one of them lists the kid with `n` and `e` equal to `details.n`/`details.e`, it is Google's key: nothing to do, the watchdog confirms it once its own fetch lists it (or the API cron executes it after the delay).",
+      commands: [c.watchdogStatus, c.apiGovernance],
+    },
+    {
+      title: 'Not listed anywhere, or listed with other material',
+      who: 'a founder',
+      detail:
+        "Treat it as forged now rather than waiting for the deadline: go to forged-key-change and updater-key-stolen. Other key material for the same kid is forged for certain (the watchdog cancels it at its next fetch that lists the kid). Not listed anywhere 1 h after the proposal is very unlikely for a real rotation.",
+    },
+    {
+      title: 'Cancel early if it is forged',
+      who: 'council (2 of 3)',
+      detail:
+        'The owner cancels the change and deletes every updater key before the deadline when a founder judged it forged (the watchdog does both at the deadline, and at once if it sees the updater forge anything else). Never cancel it on a hunch alone: the updater keys of a real rotation are then gone too.',
+      commands: [c.ownerCall('cancel_issuer_key_change', '{"id":<id>}'), c.ownerCall('delete_updater_key', '{"public_key":"<ed25519:…>"}')],
+    },
+  ],
+  verify: ["`keyChanges` no longer lists the change: it was confirmed (`issuers` lists the kid and Google's JWKS has it) or cancelled (`forged_key_change`)."],
+  followUps: ["Repeated warnings that end in a confirmation mean the watchdog's fetches lag the API cron's edges: note the lag (proposal to confirmation) for the issuer-key delay's review (D432)."],
+  refs: ['docs/operations.md#watchdog-alerts-runbook', 'D432'],
+  related: ['forged-key-change', 'updater-key-stolen', 'retired-key-change'],
 };
 
 const keySyncStalled: Playbook = {
@@ -1135,6 +1181,7 @@ export const ALERT_PLAYBOOKS: readonly Playbook[] = [
   watchdogDegraded,
   keySyncStalled,
   retiredKeyChange,
+  unseenKeyChange,
   activeKeyMaterialUnavailable,
   configChange,
   confirmFailed,

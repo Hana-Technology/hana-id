@@ -7,7 +7,7 @@ import worker from '../src/index.ts';
 import { BUILD_ID_RE as ENV_BUILD_ID_RE } from '@hana-id/env/build-id';
 import { BUILD_ID_RE, handleRequest, SILENT_AFTER_MS } from '../src/status.ts';
 import { Store } from '../src/store.ts';
-import { alertsOf, emailJwk, IDENTITY_ISS, identityKey, initialized, jwk, linkStats, linkWindow, MIN, pinsOf, RecordingNotifier } from './helpers.ts';
+import { alertsOf, emailJwk, IDENTITY_ISS, identityKey, initialized, jwk, linkStats, linkWindow, MIN, NO_GRACE, pinsOf, RecordingNotifier } from './helpers.ts';
 
 const TOKEN = 'status-token-for-tests-only-0123456789abcdef';
 const testEnv = (over: Partial<Env> = {}): Env => ({ ...(env as unknown as Env), WATCHDOG_STATUS_TOKEN: TOKEN, ...over });
@@ -147,7 +147,7 @@ describe('GET /status', () => {
 describe('GET /alerts and /actions', () => {
   it('pages the alert history newest first, with deliveries, and filters by severity', async () => {
     const w = await initialized();
-    w.chain.propose('Add', 'ghost');
+    w.chain.propose('Add', 'ghost', NO_GRACE);
     w.chain.config.sponsors = [];
     await w.run();
     const all = await call('/alerts?limit=2', {}, w.clock.t);
@@ -175,7 +175,7 @@ describe('POST /alerts/:id/ack', () => {
 
   it('records who acknowledged from the portal; stops re-sends, changes nothing else', async () => {
     const w = await initialized();
-    w.chain.propose('Add', 'ghost');
+    w.chain.propose('Add', 'ghost', NO_GRACE);
     await w.run();
     const [forged] = await alertsOf(w.store, 'forged_key_change');
     const before = await w.store.getAlert(forged!.id);
@@ -197,7 +197,7 @@ describe('POST /alerts/:id/ack', () => {
 
   it('validates the request', async () => {
     const w = await initialized();
-    w.chain.propose('Add', 'ghost');
+    w.chain.propose('Add', 'ghost', NO_GRACE);
     await w.run();
     const [forged] = await alertsOf(w.store, 'forged_key_change');
     expect((await ack(999999, { by: 'x' })).status).toBe(404);

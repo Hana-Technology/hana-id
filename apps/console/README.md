@@ -4,8 +4,9 @@ The partner console: one Worker (`hana-id-console-<env>`) on `console.origin` th
 `/api/*` backend, with partner sign-in through console-auth. Routes, sessions, CSRF, fresh sign-in and the write paths
 are in `docs/api.md` ("Console Worker"); the security properties in `docs/security.md` ("Console Worker").
 
-Last verified: 2026-11-06 (branch `feat/console-ux-redesign`: the SPA's layout, error display and the local preview,
-D421).
+Last verified: 2026-11-06 (branch `fix/session-expiry-ux`: the session's end mid-task, the banner, the warning before
+the 12 h end, `GET /api/me` `sessionExpiresAt`, the preview's two session scenarios, D424); 2026-11-06 (branch
+`feat/console-ux-redesign`: the SPA's layout, error display and the local preview, D421).
 
 ## Layout
 
@@ -17,6 +18,7 @@ D421).
 | `web/src/ui.tsx` | The UI kit: errors and notes, panels, badges, copy buttons, the in-page confirm, the fresh sign-in hint, the guarded-change timeline |
 | `web/src/messages.ts` | Every API error code in plain language, with what to do next |
 | `web/src/lib.tsx` | The data, write and fresh-sign-in hooks, the fragment-token reader, formatting |
+| `web/src/api.ts`, `web/src/session.tsx` | The requests (CSRF header, the wait for a new sign-in) and the session banner above every signed-in page |
 | `preview/` | The local preview harness (dev only, below) |
 | `test/`, `web/test/`, `scripts/test/` | Worker tests (workerd), SPA tests (happy-dom), build, source and harness checks (Node) |
 
@@ -32,6 +34,22 @@ D421).
 - **No control that can't work**: where the console would refuse (a viewer, a frozen org, a limit), the page shows one
   line saying why (`Why`) instead of the control. Destructive immediate writes use `ConfirmButton` (a second click in
   the page, never a browser dialog).
+- **When the session ends mid-task** (2 h idle, 12 h absolute, or revoked: `docs/security.md` "Console Worker"; D424).
+  A request answered 401 after this page has had a session isn't an error under the button and doesn't jump to
+  `/signin`: it waits, the page and what was typed stay, and a banner at the top (`role=alert`) says "Your session has
+  ended" with **Sign in again** (`/signin` in a new tab: the sign-in there sets the session cookie this tab uses too)
+  and **Try again** (sends exactly the waiting request again; still signed out, it says so). Back on this tab after
+  signing in elsewhere, the session is checked and the banner turns to "You're signed in again" until Try again sends
+  what waited; nothing is sent without it, and nothing is said to have worked before the server answers. Moving to
+  another page drops what waited on the old one (never sent later). It lives in the tab's memory only: no browser
+  storage, so a reload or a closed tab loses unsent input, as before. A visitor who never had a session in this tab
+  still goes to `/signin`; a real network failure keeps "The console couldn't be reached".
+- **The warning before the 12 h end**: `GET /api/me` answers `sessionExpiresAt`; 5 minutes before it the banner says
+  "Your session ends in N min" with Sign in again (a new session in the new tab; back here the new end is read and the
+  warning goes), and at the end the server is asked once (the reader's clock may be off), so the ended banner shows
+  before the next click. The 2 h idle end isn't warned of: each request moves it, and a check to find it would itself
+  count as activity. The fresh sign-in page says when the session ends inside the confirmation's 5 minutes (the
+  confirmation counts only with the session that started it, `session_ended`).
 
 ## Commands
 
@@ -54,7 +72,9 @@ corepack pnpm --filter @hana-id/console preview:web   # http://127.0.0.1:5178
 ```
 
 Pick a scenario, then a page: `http://127.0.0.1:5178/__preview/<scenario>?to=<path>`. Scenarios: `owner` (the
-default), `viewer`, `frozen`, `multi` (two organisations), `new-org` (no apps), `signed-out`, `errors`. The org is
+default), `viewer`, `frozen`, `multi` (two organisations), `new-org` (no apps), `signed-out`, `errors`,
+`session-ending` (4 min before the session's 12 h end: the warning) and `session-ended` (reads work, every write
+answers 401: the "Your session has ended" banner; switch to `owner` in another tab, then Try again). The org is
 `org_7Hq2Lm9Xc4`; its apps `app_Lm4Pq9Zs2v` (live, with changes waiting), `app_Ts6Ry1Hn8b` (test), `app_Rw2Bt7Kd5c`
 (new, no origins), `app_Lg5Yn3Wq8d` (suspended). The fresh sign-in page's states: `/actions/act_demo_origin`,
 `act_demo_policy`, `act_demo_settings`, `act_demo_invite`, `act_demo_owner`, `act_demo_ok`, `act_demo_failed`,

@@ -234,6 +234,9 @@ export function ActionPage({ me }: { me?: MeAnswer | undefined }) {
   const a = r.data;
   const back = backTo(a, me);
   const lapsed = a.status === 'pending' && a.expiresAt <= now;
+  // The confirmation works only while the session that started it lives: one that ends inside the 5 minutes is said.
+  const sessionEnd = me?.sessionExpiresAt;
+  const sessionFirst = a.status === 'pending' && !lapsed && sessionEnd !== undefined && sessionEnd > now && sessionEnd < a.expiresAt;
   const failedCode = a.outcome?.code ?? 'internal';
   return (
     <div className="action">
@@ -256,6 +259,11 @@ export function ActionPage({ me }: { me?: MeAnswer | undefined }) {
             ) : (
               <>
                 <p className="muted">Confirm with a fresh Google sign-in (your console account). The confirmation is good for this change only, until {when(a.expiresAt)} ({relative(a.expiresAt, now)}).</p>
+                {sessionFirst && (
+                  <Callout tone="warn" title={`Your console session ends ${relative(sessionEnd, now)}, before this confirmation’s time is up`}>
+                    <p>Confirm before then: a confirmation counts only with the session that started it. If the session ends first, nothing is changed; sign in again and start the change again.</p>
+                  </Callout>
+                )}
                 <div className="form-actions">
                   <button type="button" className="btn btn-primary btn-large" disabled={w.busy} onClick={() => void w.run(() => confirmWithGoogle(a.id))}>
                     <IconLock /> Confirm with Google

@@ -403,6 +403,11 @@ describe('source checks', () => {
     expect(html).not.toMatch(/https?:\/\//u);
     expect(html).not.toMatch(/<script>|style=/u);
     expect(spa).not.toMatch(/style=|\.style\./u);
+    // Nothing in browser storage (a form waiting for a new sign-in stays in the tab's memory), and every API call is
+    // sent with `redirect: 'manual'`, one fetch call only (an Access redirect is seen, never followed: D424).
+    expect(spa).not.toMatch(/localStorage|sessionStorage|indexedDB|document\.cookie/u);
+    expect([...spa.matchAll(/\bfetch\(/gu)]).toHaveLength(1);
+    expect(spa).toContain("redirect: 'manual'");
   });
 
   it('public/ is the SPA alone: the local preview harness and its fake data stay in test-spa/, never served', () => {

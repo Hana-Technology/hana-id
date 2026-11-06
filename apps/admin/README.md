@@ -131,6 +131,24 @@ screen (D420; tests `test-spa/ux.test.ts`).
 - **Security unchanged**: same routes, bodies, CSRF headers and Access flow; text-only DOM (no HTML sink), no inline
   script or style, no external font or file; the Users detail and the Support ID lookup stay in memory; nothing in
   `localStorage`.
+- **Sign-in expiry is said, never a network error** (D424; tests `test-spa/session.test.ts`). The Access session lasts
+  1 h (D409) and ends silently: Access then answers every `/api/*` request with a redirect to its login page on the
+  team's origin, which a followed `fetch` reports as a network error (CORS). Every request is sent with `redirect:
+  'manual'` (one `fetch` in `public/app.js`, a source check): that redirect, or the Worker's own 401 `unauthenticated`,
+  is the expired sign-in. The request waits, the page and every typed value stay, and the banner at the top
+  (`role=alert`) says "Your sign-in has expired" with **Sign in again** (a link opening `/signed-in` in a new tab:
+  Access signs in there, its `CF_Authorization` cookie is this tab's too, and the page says to come back) and **Try
+  again** (sends exactly the waiting request again, the same bytes; still signed out, it says so). Back on this tab
+  after signing in, the sign-in is checked and the banner turns to "You're signed in again" until Try again sends
+  what waited; nothing is sent without it, and no success line shows before the server answers. Moving to another
+  page drops what waited on the old one (never sent later). A real network failure keeps "Can't reach the admin
+  console". Nothing of it is stored: a reload loses unsent input, as before.
+- **The warning before it ends**: `GET /api/me` answers the Access token's `accessExp` (seconds; never the token).
+  5 minutes before, the banner says "Your sign-in ends in N min" with **Renew** (the same new-tab sign-in; back here
+  `exp` is read again). Cloudflare Access issues a new token only once the old session has ended, so a Renew while
+  the session still runs usually changes nothing, and the banner then says so plainly ("Access kept your current
+  sign-in: it still ends at …"). At `exp` the Worker is asked once (the reader's clock may be off), so the expired
+  banner shows before the next click.
 
 What the redesign fixed (the audit of 2026-11-06, before → after screenshots taken with the preview below): a
 one-line header of 12 links → a grouped left nav with the current page marked; every action on one long page with
@@ -147,6 +165,11 @@ labels with help; a 19-column report → the main columns with "Show every colum
 ```sh
 corepack pnpm --filter @hana-id/admin preview     # http://127.0.0.1:8788 (PORT to change it)
 ```
+
+`PREVIEW_SESSION_MIN` (default 60) sets when the fake Access sign-in ends: `GET /api/me` answers that `accessExp`, and
+past it every `/api/*` request is a 302 to a fake Access login on another origin, as Access answers; opening
+`/signed-in` (the tab "Sign in again" and "Renew" open) signs in again for 60 minutes. `PREVIEW_SESSION_MIN=4` shows
+the warning at once and the expired banner 4 minutes later; `0.4` the expired banner after 24 s.
 
 `test-spa/preview.ts` serves `public/` with the Worker's own headers and CSP and answers `/api/*` from
 `test-spa/preview-data.ts`: fake organisations (Legacy apps with its scopes, partners with members, invites and
@@ -188,7 +211,10 @@ The Worker tests reach no network: the Access certs, SendGrid, NEAR and the watc
 and the email issuer (an auxiliary Worker, so `DirectoryRpc` runs for real) gets the suite's Access certs from a fake
 team (`test/fake-access.js`). The SPA's tests (`test-spa/`, `vitest.spa.config.ts`) run `public/app.js` as the browser
 does, in a fresh happy-dom window per test with the API answered at `fetch` (`test-spa/boot.ts`): the Support ID
-lookup screen and the Users screen's ways into it (`support.test.ts`), and the UI principles above (`ux.test.ts`).
+lookup screen and the Users screen's ways into it (`support.test.ts`), the UI principles above (`ux.test.ts`), and
+the sign-in's end: the Access redirect, Try again, the warning (`session.test.ts`).
 
-Last verified: 2026-11-06 (branch `feat/admin-ux-redesign`: the grouped nav and screens, "UI principles", the local preview, `ux.test.ts`, D420); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: email through SendGrid, D401); 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy`, stamped with the build id, read by `deploy-check` from the deployed version, D406); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup screen, `src/support.ts`'s email join,
+Last verified: 2026-11-06 (branch `fix/session-expiry-ux`: the sign-in's end said as such, Try again, the warning
+before `exp`, `GET /api/me` `accessExp`, `/signed-in`, the preview's `PREVIEW_SESSION_MIN`, `session.test.ts`, D424);
+2026-11-06 (branch `feat/admin-ux-redesign`: the grouped nav and screens, "UI principles", the local preview, `ux.test.ts`, D420); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: email through SendGrid, D401); 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy`, stamped with the build id, read by `deploy-check` from the deployed version, D406); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup screen, `src/support.ts`'s email join,
 the SPA tests, D399); 2026-11-05 (branch `feat/batch-c-8b`: written with the Users screen, D388–D392).

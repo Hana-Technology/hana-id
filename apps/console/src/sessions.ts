@@ -75,6 +75,8 @@ export interface Session {
   userId: string;
   hd: string | null;
   authAt: number;
+  /** The 12 h absolute end (ms): `GET /api/me` answers it as `sessionExpiresAt` (the SPA's warning before it). */
+  absoluteExpiresAt: number;
   /** The member's own address and Google `sub` (the ConsoleRpc member actor; never logged). */
   email: string;
   sub: string;
@@ -89,16 +91,16 @@ export async function readSession(db: D1Database, cookieHeader: string | null, n
   if (!idHash) return null;
   const row = await db
     .prepare(
-      `SELECT s.user_id, s.hd, s.auth_at, s.last_seen_at, u.email, u.sub FROM console_sessions s JOIN console_users u ON u.id = s.user_id
+      `SELECT s.user_id, s.hd, s.auth_at, s.last_seen_at, s.absolute_expires_at, u.email, u.sub FROM console_sessions s JOIN console_users u ON u.id = s.user_id
         WHERE s.id_hash = ? AND s.revoked_at IS NULL AND s.absolute_expires_at > ${lit(now)} AND s.last_seen_at > ${lit(now - SESSION_IDLE_MS)} AND u.disabled_at IS NULL`,
     )
     .bind(idHash)
-    .first<{ user_id: string; hd: string | null; auth_at: number; last_seen_at: number; email: string; sub: string }>();
+    .first<{ user_id: string; hd: string | null; auth_at: number; last_seen_at: number; absolute_expires_at: number; email: string; sub: string }>();
   if (!row) return null;
   if (now - row.last_seen_at >= SESSION_TOUCH_MS) {
     await db.prepare(`UPDATE console_sessions SET last_seen_at = ? WHERE id_hash = ? AND last_seen_at <= ${lit(now - SESSION_TOUCH_MS)}`).bind(now, idHash).run();
   }
-  return { idHash, userId: row.user_id, hd: row.hd, authAt: row.auth_at, email: row.email, sub: row.sub };
+  return { idHash, userId: row.user_id, hd: row.hd, authAt: row.auth_at, absoluteExpiresAt: row.absolute_expires_at, email: row.email, sub: row.sub };
 }
 
 /** Logout: revokes this one session. */

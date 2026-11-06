@@ -8,7 +8,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { BrowserRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { policyJson } from '../../../../packages/core/test/policy-fixtures.ts';
-import { nav } from '../src/api.ts';
+import { nav, resetSession } from '../src/api.ts';
 import { App } from '../src/App.tsx';
 
 type Answer = { status?: number; body: unknown };
@@ -16,6 +16,7 @@ let routes: Record<string, Answer | ((init?: RequestInit) => Answer)>;
 let calls: { url: string; init?: RequestInit }[];
 
 beforeEach(() => {
+  resetSession();
   routes = {};
   calls = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {

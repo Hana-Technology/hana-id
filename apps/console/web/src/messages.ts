@@ -6,6 +6,7 @@
 export const ERROR_TEXT: Record<string, string> = {
   // The session and the request
   unauthenticated: 'Your session ended. Sign in again to continue.',
+  session_ended: 'Not sent: your session had ended. Sign in again (the banner at the top), then do it again.',
   csrf: 'The console refused this request because it didn’t come from this page. Reload the page and try again.',
   network: 'The console couldn’t be reached. Check your connection, then try again.',
   rate_limited: 'Too many requests in a short time. Wait a minute, then try again.',

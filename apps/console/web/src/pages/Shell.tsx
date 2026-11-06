@@ -8,6 +8,7 @@ import { type ReactNode, useEffect } from 'react';
 import { Link, NavLink, Outlet, useNavigate, useParams } from 'react-router-dom';
 import { postJson } from '../api.ts';
 import { type OrgContext, useApi } from '../lib.tsx';
+import { SessionBanner } from '../session.tsx';
 import { Badge, Callout, Empty, ErrorNote, Loading, Mark } from '../ui.tsx';
 
 function SkipLink() {
@@ -80,6 +81,7 @@ function Layout({ me, side, children }: { me: MeAnswer | undefined; side?: React
         <Account me={me} />
       </aside>
       <main id="main" className="content" tabIndex={-1}>
+        <SessionBanner />
         {children}
       </main>
     </div>

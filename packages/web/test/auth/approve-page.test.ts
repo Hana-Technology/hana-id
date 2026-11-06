@@ -22,6 +22,7 @@ import {
   AUTO_APPROVE_REASON_TEXT,
   KEEP_OPEN_MS,
   LOADING_DELAY_MS,
+  MAINNET_DEMO_BANNER,
   SUPPORT_ID_HINT,
   TEST_APP_NOTE,
   approveOpenerMode,
@@ -1154,5 +1155,102 @@ describe('/approve opened by the vault: hana:approve-close', () => {
     send({ v: 1, t: 'hana:approve-close' });
     expect(win.closed).toBe(true);
     expect(results()).toEqual([]);
+  });
+});
+
+describe('/approve: the mainnet demo banner (D426, D427)', () => {
+  const DEMO_NOW = Date.UTC(2026, 10, 10);
+  const BASE_TX = { ...TX, chainId: '0x2105', value: '0x38d7ea4c68000' }; // 0.001 ETH: $8 at the table's $8,000
+  const baseRequest = (over: Record<string, unknown> = {}) => evmRequest({ bytes: evmTxSigningPayload(parseEvmTxRequest(BASE_TX)), context: { chainId: 8453 }, testApp: true, ...over });
+  const pubnetRequest = (over: Record<string, unknown> = {}) => stellarRequest({ context: { networkPassphrase: STELLAR_MAINNET_PASSPHRASE }, testApp: true, ...over });
+  const rpcAnswer = (result: string) => new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result }), { status: 200 });
+  let calls: string[];
+
+  function startDemo(fetchFn: (url: string, init: RequestInit) => Promise<Response>): void {
+    page.stop();
+    resetDom();
+    calls = [];
+    win = new FakeWindow('/approve');
+    vault = remoteWindow();
+    win.opener = asWindow(vault);
+    page = startApprovePage({
+      win,
+      env: ENV,
+      isGesture: () => true,
+      now: () => Date.now() - T0 + DEMO_NOW,
+      fetch: (url, init) => {
+        calls.push(url);
+        return fetchFn(url, init);
+      },
+    });
+    win.dispatch('focus');
+  }
+  const settle = async () => {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+  };
+
+  it('shows the red banner with the value and the cap, then the balance, read only from Hana’s pinned Base endpoint', async () => {
+    // 0.0005 ETH and 3 USDC: $4 + $3.15.
+    startDemo(async (_url, init) => {
+      const body = JSON.parse(init.body as string) as { method: string };
+      return rpcAnswer(body.method === 'eth_getBalance' ? '0x1c6bf52634000' : '0x2dc6c0');
+    });
+    send(baseRequest());
+    expect(pageText()).toContain(MAINNET_DEMO_BANNER);
+    expect(pageText()).toContain('This request can move about $8.01, fee included. Hana’s limit is $9.99 per transaction.');
+    expect(pageText()).not.toContain(TEST_APP_NOTE);
+    expect(document.querySelector('.mainnet-demo')?.getAttribute('role')).toBe('alert');
+    await settle();
+    expect(pageText()).toContain('This wallet holds about $7.15.');
+    expect(new Set(calls)).toEqual(new Set(['https://mainnet.base.org']));
+    // The request is still approvable as usual: the banner warns, it never blocks.
+    arm();
+    click(primary());
+    expect(results().at(-1)).toMatchObject({ t: 'hana:approve-result', approved: true });
+  });
+
+  it('warns strongly when the wallet holds more than $10, and says “Balance unknown” when it can’t read it', async () => {
+    startDemo(async () => rpcAnswer('0x2386f26fc10000')); // 0.01 ETH = $80 (and the same for "USDC")
+    send(baseRequest());
+    await settle();
+    const warning = document.querySelector('.demo-balance');
+    expect(warning?.textContent).toMatch(/^This wallet holds about \$\d+\.\d\d: keep test funds under \$10\.00 — move the rest out\.$/u);
+    expect(warning?.className).toContain('danger');
+
+    startDemo(async () => new Response('nope', { status: 500 }));
+    send(baseRequest());
+    await settle();
+    expect(pageText()).toContain('Balance unknown.');
+  });
+
+  it('reads a Stellar balance from Horizon, counting XLM and Circle’s USDC only', async () => {
+    startDemo(
+      async () =>
+        new Response(
+          JSON.stringify({
+            balances: [
+              { asset_type: 'native', balance: '3.5000000' },
+              { asset_type: 'credit_alphanum4', asset_code: 'USDC', asset_issuer: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN', balance: '2.0000000' },
+              { asset_type: 'credit_alphanum4', asset_code: 'USDC', asset_issuer: USER, balance: '1000.0000000' },
+            ],
+          }),
+          { status: 200 },
+        ),
+    );
+    send(pubnetRequest());
+    expect(pageText()).toContain(MAINNET_DEMO_BANNER);
+    await settle();
+    expect(pageText()).toContain('This wallet holds about $5.60.');
+    expect(calls).toEqual([`https://horizon.stellar.org/accounts/${USER}`]);
+  });
+
+  it('shows no banner (and reads nothing) for a test network or a live app', async () => {
+    startDemo(async () => rpcAnswer('0x0'));
+    send(evmRequest({ testApp: true }));
+    send(baseRequest({ testApp: undefined }));
+    await settle();
+    expect(pageText()).not.toContain(MAINNET_DEMO_BANNER);
+    expect(calls).toEqual([]);
   });
 });

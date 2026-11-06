@@ -41,6 +41,21 @@ export const TEST_EVM_CHAINS: Readonly<Record<number, string>> = Object.freeze({
  */
 export const MAINNET_DEMO_EVM_CHAINS: readonly number[] = Object.freeze([8453]);
 
+/**
+ * Where the approval popup reads a mainnet demo wallet's balance (D427): public endpoints Hana pins, never the
+ * partner's RPC (which could say anything). Listed in `/approve`'s CSP `connect-src` in dev-env builds only.
+ */
+export const MAINNET_DEMO_BALANCE_ENDPOINTS = Object.freeze({
+  evm: Object.freeze({ 8453: 'https://mainnet.base.org' }) as Readonly<Record<number, string>>,
+  stellar: 'https://horizon.stellar.org',
+});
+
+/** The origins of MAINNET_DEMO_BALANCE_ENDPOINTS, in a fixed order. */
+export const MAINNET_DEMO_BALANCE_ORIGINS: readonly string[] = Object.freeze([
+  ...Object.values(MAINNET_DEMO_BALANCE_ENDPOINTS.evm).map((u) => new URL(u).origin),
+  new URL(MAINNET_DEMO_BALANCE_ENDPOINTS.stellar).origin,
+]);
+
 export const isTestPublishableKey = (pk: string): boolean => pk.startsWith('pk_test_');
 
 /** Whether a test app may use this EVM chain (it is on the testnet allowlist). */

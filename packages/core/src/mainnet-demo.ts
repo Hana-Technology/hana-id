@@ -18,7 +18,7 @@ import type { DecodedEvmTx } from './decode/evm.ts';
 import { type DecodedApproval, decodeApprovalRequest } from './decode/request.ts';
 import type { StellarAuthEntry, StellarContractCall, StellarInvocation, StellarScVal, StellarTransaction } from './decode/stellar.ts';
 import { from0xHex } from './bytes.ts';
-import { MAINNET_DEMO_EVM_CHAINS, STELLAR_MAINNET_PASSPHRASE } from './networks.ts';
+import { MAINNET_DEMO_BALANCE_ENDPOINTS, MAINNET_DEMO_EVM_CHAINS, STELLAR_MAINNET_PASSPHRASE } from './networks.ts';
 
 /** USD in millionths of a dollar. */
 export type UsdMicros = bigint;
@@ -77,7 +77,7 @@ export const MAINNET_DEMO = Object.freeze({
         '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913': Object.freeze({ symbol: 'USDC', decimals: 6, priceUsdMicros: 1_050_000n, sodaxHubAsset: '0x72E852545B024ddCbc5b70C1bCBDAA025164259C' }),
       }),
       sodaxAssetManager: '0x348BE44F63A458be9C1b13D6fD8e99048F297Bc3',
-      balanceRpc: 'https://mainnet.base.org',
+      balanceRpc: MAINNET_DEMO_BALANCE_ENDPOINTS.evm[8453] as string,
     }),
   }) as Readonly<Record<number, DemoEvmChain>>,
   stellar: Object.freeze({
@@ -93,15 +93,11 @@ export const MAINNET_DEMO = Object.freeze({
       }),
     }),
     sodaxAssetManager: 'CCGF33A4CO6D3BXFEKPXVCFCZBK76I3AQOZK6KIKRPAWAZR3632WHCJ3',
-    horizon: 'https://horizon.stellar.org',
+    horizon: MAINNET_DEMO_BALANCE_ENDPOINTS.stellar,
   }) as DemoStellar,
 });
 
-/** The origins the approval popup may read balances from (its CSP `connect-src` in dev-env builds). */
-export const MAINNET_DEMO_BALANCE_ORIGINS: readonly string[] = Object.freeze([
-  ...Object.values(MAINNET_DEMO.evm).map((c) => new URL(c.balanceRpc).origin),
-  new URL(MAINNET_DEMO.stellar.horizon).origin,
-]);
+export { MAINNET_DEMO_BALANCE_ORIGINS } from './networks.ts';
 
 /** One thing a request can move out, valued. */
 export interface DemoMovement {

@@ -80,6 +80,8 @@ export function authHost(api: ApiModules, pages: PagesEnv = E2E_PAGES): Handler 
     NEAR_RPC: pages.nearRpc,
     ...(pages.nearRpcFallback ? { NEAR_RPC_FALLBACK: pages.nearRpcFallback } : {}),
     ...(pages.emailIssuerUrl ? { EMAIL_ISSUER_URL: pages.emailIssuerUrl } : {}),
+    // As scripts/pages-wrangler.ts sets it: the e2e env is a dev env on testnet.
+    MAINNET_DEMO_BALANCE: '1',
     ASSETS: assetsFetcher(join(PAGES_DIR, pages.envName, 'auth')),
   };
   return (request) => api.handleAuthHost(request, env);

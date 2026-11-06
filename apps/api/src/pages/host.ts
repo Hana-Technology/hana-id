@@ -16,6 +16,7 @@
 // Nothing else is served: no other path reaches the API (so `{vaultOrigin}/v1/*` is not the API), HTML files are never
 // served under their own names (only on their page route, with its headers), a request on any other host (a preview
 // URL) gets 404, and only GET and HEAD are allowed.
+import { MAINNET_DEMO_BALANCE_ORIGINS } from '@hana-id/core';
 import { BUILD_PATH, deployedBuild } from '../build.ts';
 import { log } from '../log.ts';
 import { BASE_CSP, GOOGLE_CERTS_ORIGIN, VAULT_PAGE_PATH, originOf, pageHeaders } from '../vault/page.ts';
@@ -50,6 +51,12 @@ export interface AuthHostEnv {
    * 'self' and data:. Unset in an env without the dashboard blocks.
    */
   FILES_ORIGIN?: string;
+  /**
+   * The mainnet demo (D426, D427): '1' in a dev env on testnet only (scripts/pages-wrangler.ts), where `/approve` may
+   * read a demo wallet's balance from Hana's two pinned public endpoints (core MAINNET_DEMO_BALANCE_ORIGINS), as the
+   * build's meta policy says. Unset: `/approve` fetches nothing.
+   */
+  MAINNET_DEMO_BALANCE?: string;
   /** Static assets: packages/web/dist/pages/<env>/auth. */
   ASSETS: Fetcher;
   /** The build id, set only by the `deploy:pages` script (../build.ts); served at BUILD_PATH. */
@@ -61,7 +68,7 @@ export const GOOGLE_TOKENINFO_ORIGIN = 'https://oauth2.googleapis.com';
 
 /** Each auth page's directives on top of the base policy (docs/batch-b-spec.md "Origins and pages"). */
 /** `origins.rpc` is the NEAR RPC origin, or the primary and fallback origins separated by a space. */
-export function authPageDirectives(pathname: string, origins: { api: string; rpc: string; emailIssuer?: string | null }): string[] | null {
+export function authPageDirectives(pathname: string, origins: { api: string; rpc: string; emailIssuer?: string | null; demoBalance?: boolean }): string[] | null {
   switch (pathname) {
     case '/login/callback':
       // token_first (D270): the callback asks Google's tokeninfo for the access token's `sub`, in an env with an email
@@ -70,10 +77,13 @@ export function authPageDirectives(pathname: string, origins: { api: string; rpc
     case '/login/email':
       // The email step (build plan batch 8a): the issuer's start, resend and verify, and the relay write to the API.
       return ["frame-ancestors 'none'", `connect-src ${origins.emailIssuer ? `${origins.emailIssuer} ` : ''}${origins.api}`];
+    // The login popup fetches nothing (D77).
     case '/login':
-    // The login popup fetches nothing (D77); the approval popup decodes and renders what the vault sent.
-    case '/approve':
       return ["frame-ancestors 'none'"];
+    // The approval popup decodes and renders what the vault sent; in a dev testnet env it may also read a mainnet demo
+    // wallet's balance from Hana's two pinned endpoints (packages/web src/auth/pages.ts lists the same).
+    case '/approve':
+      return origins.demoBalance ? ["frame-ancestors 'none'", `connect-src ${MAINNET_DEMO_BALANCE_ORIGINS.join(' ')}`] : ["frame-ancestors 'none'"];
     case '/export':
       return ["frame-ancestors 'none'", `connect-src ${origins.api} ${origins.rpc} ${GOOGLE_CERTS_ORIGIN}`];
     default:
@@ -204,7 +214,7 @@ export async function handleAuthHost(request: Request, env: AuthHostEnv): Promis
   // A malformed EMAIL_ISSUER_URL breaks only the email step's page (never a looser policy there); the other pages don't
   // use it.
   const issuerBroken = url.pathname === '/login/email' && !!env.EMAIL_ISSUER_URL && !emailIssuer;
-  const directives = api && rpc && !issuerBroken ? authPageDirectives(url.pathname, { api, rpc, emailIssuer }) : null;
+  const directives = api && rpc && !issuerBroken ? authPageDirectives(url.pathname, { api, rpc, emailIssuer, demoBalance: env.MAINNET_DEMO_BALANCE === '1' }) : null;
   if (!directives) {
     log({ event: 'auth_page', endpoint: url.pathname, outcome: 'error', status: 503, code: 'misconfigured' }, 'error');
     return unavailable(head);

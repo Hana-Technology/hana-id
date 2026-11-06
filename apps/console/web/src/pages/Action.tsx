@@ -6,6 +6,7 @@ import { Link } from 'react-router-dom';
 import { useParams } from 'react-router-dom';
 import { confirmWithGoogle } from '../api.ts';
 import { ErrorNote, OriginText, Section, WriteNote, duration, useApi, useWrite, when } from '../lib.tsx';
+import { identityEmailLabel } from './Apps.tsx';
 import { ConsentPreview } from './Consent.tsx';
 
 interface ActionAnswer {
@@ -107,6 +108,7 @@ export function Decoded({ kind, d }: { kind: string; d: Record<string, unknown> 
           {'sessionTtlMs' in c && <li>Session length: {duration(Number(c.sessionTtlMs))}</li>}
           {'idleTtlMs' in c && <li>Idle timeout: {duration(Number(c.idleTtlMs))}</li>}
           {'googleWebClientId' in c && <li>Google web client: {c.googleWebClientId === null ? 'Hana’s shared client' : str(c.googleWebClientId)}</li>}
+          {'identityEmail' in c && <li>Email sharing: {identityEmailLabel(c.identityEmail).toLowerCase()}</li>}
         </ul>
       );
     }

@@ -227,6 +227,25 @@ describe('name, suspend and resume, settings', () => {
     expect((await appRow(app.id))!.session_ttl_ms).toBe(2 * 3600_000);
   });
 
+  it('app.settings: email sharing (D411) through a fresh sign-in, recorded in app_changes; an unknown value refused before it', async () => {
+    const m = await member('owner');
+    const app = await seedHotApp(m.org);
+    const shareOf = () => hot.prepare('SELECT identity_email FROM apps WHERE id = ?').bind(app.id).first<string>('identity_email');
+    expect(await shareOf()).toBe('off');
+    expect((await getAs(m, `/api/orgs/${m.org}/apps/${app.id}`)).body).toMatchObject({ app: { settings: { identityEmail: 'off' } } });
+    expect((await postAs(m, `/api/orgs/${m.org}/actions`, { kind: 'app.settings', params: { appId: app.id, identityEmail: 'always' } })).status).toBe(400);
+    const a = await createAction(m, 'app.settings', { appId: app.id, identityEmail: 'at_login' });
+    expect(a.decoded).toMatchObject({ appId: app.id, changes: { identityEmail: 'at_login' }, from: { identityEmail: 'off' } });
+    await stepUp(google, m, a.id);
+    expect((await actionOf(m, a.id)).body).toMatchObject({ status: 'ok' });
+    expect(await shareOf()).toBe('at_login');
+    const change = await hot.prepare("SELECT detail_json FROM app_changes WHERE app_id = ? AND kind = 'settings.changed' ORDER BY seq DESC LIMIT 1").bind(app.id).first<string>('detail_json');
+    expect(JSON.parse(change!)).toEqual({ identityEmail: 'at_login' });
+    const audit = await auditRows("org_id = ? AND action = 'app.settings_changed'", m.org);
+    expect(audit).toHaveLength(1);
+    expect(JSON.parse(audit[0]!.details_json)).toMatchObject({ fields: 'identityEmail' });
+  });
+
   it('raw_sign.on is refused for a test app before any sign-in (D39)', async () => {
     const m = await member('owner');
     const app = await seedHotApp(m.org);

@@ -2,10 +2,10 @@
 // fake wrangler: the --yes gate, file modes, never overwriting a key or published keys, the offline standby (never
 // uploaded until a switch), a rotation from start to end with the Worker always holding the active kid, and that no
 // private value is ever printed.
-import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { IDENTITY_SECRET_FILES, type Manifest, loadEnv, manifestPath, manifestSchema, p256Thumbprint } from '@hana-id/env';
+import { IDENTITY_SECRET_FILES, type Manifest, identitySealKeyId, loadEnv, manifestPath, manifestSchema, p256Thumbprint } from '@hana-id/env';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CliError } from '../lib/cli.ts';
 import {
@@ -17,6 +17,7 @@ import {
   newP256,
   replaceManifestBlock,
   withIdentityPins,
+  wranglerIssuerSecretArgv,
   wranglerSecretArgv,
   wranglerSecretDeleteArgv,
 } from '../lib/identity-key.ts';
@@ -423,5 +424,151 @@ describe('manifest blocks', () => {
     expect(changed.slice(0, changed.indexOf('"identityToken"'))).toBe(text.slice(0, text.indexOf('"identityToken"')));
     expect(() => replaceManifestBlock(text, 'identityToken', { ...t, publicKeys: [] })).toThrow();
     expect(() => replaceManifestBlock(baseText(), 'identityToken', t)).toThrow(/has no/u);
+  });
+});
+
+describe('identity-key email-keys (D418, D419)', () => {
+  let issuerPuts: { worker: string; name: string; value: string }[];
+  /** A random source that never repeats (the shared one is deterministic: both keys would be the same bytes). */
+  let counter: number;
+  const emailDeps = (over: Partial<IdentityKeyDeps> = {}): IdentityKeyDeps => ({
+    ...deps(),
+    randomBytes: (n) => Uint8Array.from({ length: n }, (_, i) => (i * 13 + counter++ * 31) % 256),
+    putIssuerSecret: (m, name, value) => void issuerPuts.push({ worker: m.emailIssuer!.cloudflare.workerName, name, value }),
+    ...over,
+  });
+  const runEmail = (...argv: string[]) => identityKey([base.name, 'email-keys', ...argv], emailDeps());
+  const seal = () => readFileSync(file('sealKey'), 'utf8');
+  const consent = () => readFileSync(file('emailConsentKey'), 'utf8');
+  const expectNothingPrinted = () => {
+    const printed = out.join('\n');
+    for (const v of [...puts.map((p) => p.value), ...issuerPuts.map((p) => p.value)]) {
+      expect(printed).not.toContain(v);
+      expect(printed).not.toContain(v.slice(v.indexOf(':') + 1));
+    }
+    for (const k of ['sealKey', 'emailConsentKey'] as const) if (existsSync(file(k))) expect(printed).not.toContain(readFileSync(file(k), 'utf8').trim().replace(/^\d+:/u, ''));
+  };
+  beforeEach(() => {
+    issuerPuts = [];
+    counter = 1;
+  });
+
+  it('the file names and the seal key form (identitySealKeyId)', () => {
+    expect([IDENTITY_SECRET_FILES.sealKey, IDENTITY_SECRET_FILES.emailConsentKey]).toEqual(['identity-seal-key', 'email-consent-key']);
+    const b = Buffer.alloc(32, 7).toString('base64');
+    expect(identitySealKeyId(`1:${b}`)).toBe(1);
+    expect(identitySealKeyId(`4294967295:${b}`)).toBe(4294967295);
+    for (const bad of [`0:${b}`, `4294967296:${b}`, b, `1:${Buffer.alloc(31, 7).toString('base64')}`, `1:${b} `, `01:${b}`]) expect(identitySealKeyId(bad), bad).toBeNull();
+  });
+
+  it('without --yes: a plan naming the files and both Workers; nothing written or set', () => {
+    runEmail();
+    expect(out.at(-1)).toBe(DRY_RUN_LINE);
+    expect(out[0]).toContain('.secrets/sandbox-idk-test/identity-seal-key');
+    expect(out[0]).toContain('.secrets/sandbox-idk-test/email-consent-key');
+    expect(out[0]).toContain(`API Worker ${base.cloudflare.workerName}`);
+    expect(out[0]).toContain(`email issuer Worker ${base.emailIssuer!.cloudflare.workerName}`);
+    expect(existsSync(dir)).toBe(false);
+    expect([puts, issuerPuts]).toEqual([[], []]);
+  });
+
+  it('--yes: two 0600 files in their forms, the API gets both secrets, the issuer the seal key only; no value printed', () => {
+    runEmail('--yes');
+    expect(mode(file('sealKey'))).toBe(0o600);
+    expect(mode(file('emailConsentKey'))).toBe(0o600);
+    const s = seal().trim();
+    const c = consent().trim();
+    expect(s).toMatch(/^1:[A-Za-z0-9+/]{43}=$/u);
+    expect(identitySealKeyId(s)).toBe(1);
+    expect(Buffer.from(c, 'base64')).toHaveLength(32);
+    expect(c).toMatch(/^[A-Za-z0-9+/]{43}=$/u);
+    expect(s.slice(2)).not.toBe(c);
+    // The API first (so a blob the issuer seals always opens there), then the issuer.
+    expect(puts).toEqual([
+      { name: 'IDENTITY_SEAL_KEY', value: s },
+      { name: 'EMAIL_CONSENT_KEY', value: c },
+    ]);
+    expect(issuerPuts).toEqual([{ worker: base.emailIssuer!.cloudflare.workerName, name: 'IDENTITY_SEAL_KEY', value: s }]);
+    // Nothing else of the identity token is touched.
+    expect(manifest().identityToken).toBeUndefined();
+    expect(text).toBe(baseText());
+    expectNothingPrinted();
+  });
+
+  it('never overwrites a file: an existing one is reused (and a missing one written), a malformed one stops it', () => {
+    runEmail('--local', '--yes');
+    const [s, c] = [seal(), consent()];
+    runEmail('--yes');
+    expect([seal(), consent()]).toEqual([s, c]);
+    expect(puts.map((p) => p.value)).toEqual([s.trim(), c.trim()]);
+    // Only the consent key missing: the seal key is reused, a new consent key written.
+    rmSync(file('emailConsentKey'));
+    out = [];
+    runEmail('--yes');
+    expect(out[0]).toContain('reuse .secrets/sandbox-idk-test/identity-seal-key');
+    expect(seal()).toBe(s);
+    expect(consent()).not.toBe(c);
+    // A file others can read, or a malformed one, is refused and never replaced.
+    chmodSync(file('sealKey'), 0o644);
+    expect(() => runEmail('--yes')).toThrow(/0600|mode/u);
+    chmodSync(file('sealKey'), 0o600);
+    rmSync(file('sealKey'));
+    writeFileSync(file('sealKey'), 'nope\n', { mode: 0o600 });
+    expect(() => runEmail('--yes')).toThrow(/is not an IDENTITY_SEAL_KEY value/u);
+    expect(seal()).toBe('nope\n');
+    expect(out.join('\n')).not.toContain('nope');
+    expectNothingPrinted();
+  });
+
+  it('--local writes the files and uploads nothing', () => {
+    runEmail('--local', '--yes');
+    expect(existsSync(file('sealKey')) && existsSync(file('emailConsentKey'))).toBe(true);
+    expect([puts, issuerPuts]).toEqual([[], []]);
+    expect(out.join('\n')).toContain('--local');
+    expectNothingPrinted();
+  });
+
+  it('put: uploads from the files only (refused when one is missing; no --local)', () => {
+    expect(() => runEmail('put', '--yes')).toThrow(/don't exist: run `identity-key sandbox-idk-test email-keys --yes` first/u);
+    runEmail('--local', '--yes');
+    const [s, c] = [seal().trim(), consent().trim()];
+    out = [];
+    runEmail('put');
+    expect(out.at(-1)).toBe(DRY_RUN_LINE);
+    expect(puts).toEqual([]);
+    runEmail('put', '--yes');
+    expect([seal().trim(), consent().trim()]).toEqual([s, c]);
+    expect(puts).toEqual([
+      { name: 'IDENTITY_SEAL_KEY', value: s },
+      { name: 'EMAIL_CONSENT_KEY', value: c },
+    ]);
+    expect(issuerPuts.map((p) => [p.name, p.value])).toEqual([['IDENTITY_SEAL_KEY', s]]);
+    expect(() => runEmail('put', '--local', '--yes')).toThrow(CliError);
+    expect(() => runEmail('get', '--yes')).toThrow(/Unexpected argument get/u);
+    expectNothingPrinted();
+  });
+
+  it('an env without an email issuer: the API only, the issuer skipped with a line', () => {
+    const raw = JSON.parse(baseText()) as Record<string, unknown>;
+    delete raw.emailIssuer;
+    text = `${JSON.stringify(raw, null, 2)}\n`;
+    runEmail('--yes');
+    expect(puts.map((p) => p.name)).toEqual(['IDENTITY_SEAL_KEY', 'EMAIL_CONSENT_KEY']);
+    expect(issuerPuts).toEqual([]);
+    expect(out.join('\n')).toContain('has no emailIssuer');
+    expectNothingPrinted();
+  });
+
+  it('refuses the same bytes in both keys (nothing written), and a non-testnet env', () => {
+    expect(() => identityKey([base.name, 'email-keys', '--yes'], emailDeps({ randomBytes: (n) => new Uint8Array(n).fill(9) }))).toThrow(/must differ/u);
+    expect(existsSync(file('sealKey'))).toBe(false);
+    const m = { ...manifest(), network: 'mainnet' } as unknown as Manifest;
+    expect(() => identityKey([base.name, 'email-keys', '--yes'], emailDeps({ loadManifest: () => m }))).toThrow(/not a testnet env/u);
+    expect(puts).toEqual([]);
+  });
+
+  it('the issuer upload goes to the manifest’s issuer Worker, the API’s to the API Worker', () => {
+    expect(wranglerIssuerSecretArgv(base, 'IDENTITY_SEAL_KEY')).toEqual(['exec', 'wrangler', 'secret', 'put', 'IDENTITY_SEAL_KEY', '--name', base.emailIssuer!.cloudflare.workerName]);
+    expect(wranglerSecretArgv(base, 'EMAIL_CONSENT_KEY')).toEqual(['exec', 'wrangler', 'secret', 'put', 'EMAIL_CONSENT_KEY', '--name', base.cloudflare.workerName]);
   });
 });

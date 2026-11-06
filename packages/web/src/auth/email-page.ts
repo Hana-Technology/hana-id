@@ -87,6 +87,7 @@ import { EMAIL_STEP_LIMIT_MS, type EmailContext, deviceTicketFor, dropEmailConte
 import { GOOGLE_CANCELLED_RELAY_ERROR, GOOGLE_EMAIL_FLOW, type GoogleEmailFlow, googleAccessUrl, googleAuthUrl, googleTokenFirstUrl, loginGoogleRequest } from './google.ts';
 import { type TakenLogin, peekLogin, storeLoginEntry, takeLogin, zeroTaken } from './login-storage.ts';
 import { type PageWindow, childFrame, isFramed } from './page-window.ts';
+import { closeOrShare } from './share-handoff.ts';
 import { vaultSignals } from './vault-signal.ts';
 
 export interface EmailPageDeps {
@@ -1175,7 +1176,8 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       endFollow();
       d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Signed in'), d.h('p', { class: 'muted' }, 'You can close this window.')));
       settle('done');
-      win.close();
+      // D411: an `at_login` app's popup goes on to the email sharing sheet instead of closing (share-handoff.ts).
+      closeOrShare(win, rid, now());
       return;
     }
     showBanners('Signed in', banners, slot, null);
@@ -1214,7 +1216,8 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     done.addEventListener('click', () => {
       endFollow();
       settle('done');
-      win.close();
+      if (title === 'Signed in') closeOrShare(win, rid, now());
+      else win.close();
     });
     d.show(
       d.h(

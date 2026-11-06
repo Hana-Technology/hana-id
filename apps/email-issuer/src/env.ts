@@ -72,10 +72,16 @@ export interface Env {
   EMAIL_RL_KEY?: string;
   /** SendGrid API key restricted to Mail Send, used only by this Worker (D194). */
   SENDGRID_API_KEY?: string;
+  /**
+   * The sealed email's key (D418, docs/email-sharing-spec.md): `<id>:<base64 of 32 bytes>`, id 1..2^32-1, the same value
+   * as the API's. google-match, google-record and a `session` verify seal the verified address with it for the API
+   * (`sealedEmail`). Absent or malformed: no answer carries `sealedEmail` (logged once as a code), nothing else changes.
+   */
+  IDENTITY_SEAL_KEY?: string;
 }
 
 /** Every secret binding: log lines must never contain their values (tested). */
-export const SECRET_NAMES = ['ISSUER_SIGNING_KEY', 'EMAIL_SUB_KEY', 'EMAIL_CODE_KEY', 'EMAIL_RL_KEY', 'SENDGRID_API_KEY'] as const satisfies readonly (keyof Env)[];
+export const SECRET_NAMES = ['ISSUER_SIGNING_KEY', 'EMAIL_SUB_KEY', 'EMAIL_CODE_KEY', 'EMAIL_RL_KEY', 'SENDGRID_API_KEY', 'IDENTITY_SEAL_KEY'] as const satisfies readonly (keyof Env)[];
 
 /** The daily send budget of a `local*` env whose manifest sets none (every other env must set it, abuse review H1). */
 export const DEFAULT_DAILY_SEND_BUDGET = 1000;

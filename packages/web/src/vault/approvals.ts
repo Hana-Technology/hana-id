@@ -19,6 +19,7 @@
 //   hana:consent-result  → {id, allowed, digest} for the consent screen on show (consentDigest)
 //   hana:approve-bye     → the popup closes itself after 15 s idle
 //   hana:auto-approve-stop → "Stop auto-approving"
+//   hana:email-revoke      → "Stop sharing" on the account line (D411, D422), answered hana:email-revoked
 // Reject, a popup closed while a request is on show, or a request older than 5 min resolves 'rejected' (4001).
 // A request is refused at once (4100) when MAX_PENDING_APPROVALS are already waiting or on show, or when the message
 // the popup would get fails the popup's own validator (parseWindowMessage), which would otherwise drop it silently and
@@ -107,6 +108,13 @@ export interface ApprovalDeps {
    * older pages take.
    */
   supportId?: () => string | null;
+  /**
+   * D411, D422: whether the session's address is shared with this app (the vault's last known state), read for each
+   * request: the account line then offers "Stop sharing". Absent or false: the message is exactly the older one.
+   */
+  emailShared?: () => boolean;
+  /** "Stop sharing" was clicked: revoke every address of this app and account; resolves whether it worked. */
+  onEmailRevoke?(): Promise<boolean>;
   parentOrigin: string;
   /** A pk_test_ app: every request and consent screen says Hana signs only for test networks (D39). */
   testApp?: boolean;
@@ -429,12 +437,13 @@ export class Approvals {
       context: { ...item.subject.context },
       ...(item.note ? { autoApprove: { ...item.note } } : {}),
       ...(supportId ? { supportId } : {}),
+      ...(this.d.emailShared?.() ? { emailShared: true } : {}),
     };
   }
 
   /** Handles a window message meant for the approval popup protocol; true if it was one (accepted or not). */
   handleMessage(e: WindowMessageEvent): boolean {
-    const m = parseWindowMessage(e.data, ['hana:approve-hello', 'hana:approve-result', 'hana:consent-result', 'hana:approve-bye', 'hana:auto-approve-stop']);
+    const m = parseWindowMessage(e.data, ['hana:approve-hello', 'hana:approve-result', 'hana:consent-result', 'hana:approve-bye', 'hana:auto-approve-stop', 'hana:email-revoke']);
     if (!m) return false;
     if (e.origin !== this.d.authOrigin) return true;
     if (m.t === 'hana:approve-hello' && e.source !== this.popup) {
@@ -481,6 +490,21 @@ export class Approvals {
       case 'hana:auto-approve-stop':
         this.d.onStop();
         break;
+      case 'hana:email-revoke': {
+        const popup = this.popup;
+        const revoke = this.d.onEmailRevoke;
+        if (!revoke) break;
+        void revoke()
+          .catch(() => false)
+          .then((ok) => {
+            try {
+              popup.postMessage({ v: 1, t: 'hana:email-revoked', ok }, this.d.authOrigin);
+            } catch {
+              // The popup is gone: nothing to tell.
+            }
+          });
+        break;
+      }
     }
     return true;
   }

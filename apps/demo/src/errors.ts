@@ -76,6 +76,11 @@ export function plainMessage(e: unknown, action: DemoAction): string {
       return 'The demo app has no Google sign-in configured. Tell the Hana team.';
     case 'busy':
       return 'A key export is already open. Finish or close it first.';
+    case 'email_sharing_unavailable':
+      // D411: data.reason off (the app's identity_email setting), no_address (none for this session), unavailable.
+      if (reason === 'off') return 'Email sharing is off for the demo app. The Hana team turns it on with app:settings --identity-email on_request.';
+      if (reason === 'no_address') return 'Hana has no email address for this session. Log out and log in again, then try again.';
+      return 'Hana couldn’t open email sharing right now. Try again in a minute.';
     case 'identity_unavailable':
       return 'Hana could not issue an identity token right now. Try again in a minute.';
     case 'session_ended':

@@ -29,7 +29,7 @@ export {
   type EmailIssuerConfig,
   type EmailPublicKey,
 } from './email-issuer.ts';
-export { IDENTITY_SECRET_FILES, KMS_KEY_ARN_RE, KMS_KEY_ROLES, identityIssuerFor, identityPublicKeySchema, identityTokenSchema, kmsArnParts, p256Thumbprint, type AwsKmsSignerConfig, type IdentityPublicKey, type IdentityTokenConfig, type KmsKeyRole } from './identity.ts';
+export { IDENTITY_SECRET_FILES, identitySealKeyId, KMS_KEY_ARN_RE, KMS_KEY_ROLES, identityIssuerFor, identityPublicKeySchema, identityTokenSchema, kmsArnParts, p256Thumbprint, type AwsKmsSignerConfig, type IdentityPublicKey, type IdentityTokenConfig, type KmsKeyRole } from './identity.ts';
 export { accountIdFields, CLOUDFLARE_ACCOUNT_ID_RE, customDomainPlacement } from './cloudflare.ts';
 export { dnsNameProblem, hanaOriginProblem, isDevEnv, isLocalEnv, isLoopbackHost, LOCALHOST_WILDCARD, partnerOriginProblem, siteOf } from './origins.ts';
 export {

@@ -12,6 +12,7 @@ import {
   RELAY_ID_PATTERN,
   type RelayCiphertext,
   type RelayReadResponse,
+  type EmailConsentProof,
   isAppConfig,
   isLoginResponse,
   isRelayReadResponse,
@@ -29,6 +30,11 @@ export interface AuthApi {
   readRelay(relayId: string, readKey: string, waitS: number): Promise<RelayReadResponse | null>;
   /** `POST /v1/login` (export window). */
   login(pk: string, parentOrigin: string, body: LoginBody): Promise<LoginResponse>;
+  /**
+   * D411: `POST /v1/identity/email-consent/preview` (the email sharing sheet): the sealed address, opened by the API
+   * with the vault's single-use preview proof. Never logged; the caller shows it and drops it.
+   */
+  emailPreview(pk: string, parentOrigin: string, body: EmailConsentProof & { sealedEmail: string }): Promise<string>;
 }
 
 const bad = (what: string): ApiError => new ApiError(502, 'bad_response', `Unexpected ${what} response`, null, null);
@@ -67,6 +73,17 @@ export function authApi(apiUrl: string, fetchFn: Fetch = (...args) => fetch(...a
       const body = await parseApiResponse(res);
       if (!isRelayReadResponse(body)) throw bad('relay read');
       return body;
+    },
+
+    async emailPreview(pk, parentOrigin, body) {
+      const res = await fetchFn(
+        `${base}/v1/identity/email-consent/preview`,
+        init({ method: 'POST', headers: { 'content-type': 'application/json', ...appHeaders(pk, parentOrigin) }, body: JSON.stringify(body) }),
+      );
+      const out = await parseApiResponse(res);
+      const email = out.email;
+      if (typeof email !== 'string' || email.length < 3 || email.length > 254 || !email.includes('@')) throw bad('email preview');
+      return email;
     },
 
     async login(pk, parentOrigin, body) {

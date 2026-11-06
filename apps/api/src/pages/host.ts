@@ -76,6 +76,9 @@ export function authPageDirectives(pathname: string, origins: { api: string; rpc
       return ["frame-ancestors 'none'"];
     case '/export':
       return ["frame-ancestors 'none'", `connect-src ${origins.api} ${origins.rpc} ${GOOGLE_CERTS_ORIGIN}`];
+    case '/share-email':
+      // D411: the email sharing sheet reads the sealed address from the API's preview endpoint; nothing else.
+      return ["frame-ancestors 'none'", `connect-src ${origins.api}`];
     default:
       return null;
   }
@@ -86,10 +89,10 @@ export function authPageDirectives(pathname: string, origins: { api: string; rpc
  * src/auth/pages.ts LOGO_PAGES lists the same pages for the meta policy: a browser enforces both, so they must agree.
  * The callback shows no app and loads no image from elsewhere.
  */
-export const AUTH_LOGO_PATHS: readonly string[] = ['/login', '/login/email', '/approve', '/export'];
+export const AUTH_LOGO_PATHS: readonly string[] = ['/login', '/login/email', '/approve', '/export', '/share-email'];
 
 /** The auth pages' routes; each is served from the built file `<route>.html`. */
-export const AUTH_PAGE_PATHS = ['/login', '/login/email', '/login/callback', '/approve', '/export'] as const;
+export const AUTH_PAGE_PATHS = ['/login', '/login/email', '/login/callback', '/approve', '/export', '/share-email'] as const;
 
 const ERROR_HTML = '<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>Hana ID</title></head><body></body></html>\n';
 

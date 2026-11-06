@@ -55,13 +55,18 @@ export function proofsMatch(p: unknown, addresses: { stellar: string; evm: strin
   );
 }
 
-/** The POST /v1/identity/token body, signed by the session key over the identity message. */
+/**
+ * The POST /v1/identity/token body, signed by the session key over the identity message. `sealedEmail` (D418): the
+ * session's sealed address, sent (and covered by the proof) when it has one, so the API can put the shared address in
+ * the token.
+ */
 export async function mintBody(
   privateKey: CryptoKey,
-  i: ProofContext & { parentOrigin: string; issuedAtMs: number; proofs: WalletProofs },
+  i: ProofContext & { parentOrigin: string; issuedAtMs: number; proofs: WalletProofs; sealedEmail?: string | null },
 ): Promise<IdentityTokenBody> {
   const nonce = crypto.getRandomValues(new Uint8Array(IDENTITY_NONCE_BYTES));
-  const payload = identityTokenPayload({ parentOrigin: i.parentOrigin, walletProofsHash: walletProofsHash(i.proofs), sealedEmail: null });
+  const sealedEmail = i.sealedEmail ?? null;
+  const payload = identityTokenPayload({ parentOrigin: i.parentOrigin, walletProofsHash: walletProofsHash(i.proofs), sealedEmail });
   const message = identityMessage({ signer: i.signer, appId: i.appId, sessionPublicKey: i.sessionPublicKey, issuedAtMs: i.issuedAtMs, nonce, payload });
   const signature = new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, privateKey, message));
   return {
@@ -73,6 +78,7 @@ export async function mintBody(
       stellar: { address: i.proofs.stellar.address, signature: Array.from(i.proofs.stellar.signature) },
       evm: { address: i.proofs.evm.address, signature: Array.from(i.proofs.evm.signature) },
     },
+    ...(sealedEmail ? { sealedEmail } : {}),
   };
 }
 

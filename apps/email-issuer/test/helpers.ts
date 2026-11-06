@@ -11,7 +11,7 @@ import { GOOGLE_TOKENINFO_URL, GOOGLE_USERINFO_URL, Google } from '../src/google
 /** Google's revocation endpoint: the issuer must never call it (D265); the fake records any call. */
 const GOOGLE_REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 import { route } from '../src/handlers.ts';
-import { importKeys, mailboxKey } from '../src/keys.ts';
+import { importKeys, importSealKey, mailboxKey } from '../src/keys.ts';
 import { parseChallengeId } from '../src/challenge-id.ts';
 import { normalizeEmail } from '@hana-id/email';
 import { identityKey, sessionNonceOf, type SessionCommitment } from '../src/layouts.ts';
@@ -248,6 +248,8 @@ export async function harness(over: Partial<Deps> = {}): Promise<Harness> {
     signers: async () => [signer as IssuerSigner],
     publicKeys: async () => publicKeys,
     keys: async () => keys,
+    // The env's IDENTITY_SEAL_KEY (vitest.config.ts binds one), as the Worker loads it.
+    sealKey: () => importSealKey(env.IDENTITY_SEAL_KEY),
     access: null,
     waitUntil: (p) => void pending.push(p),
     ...over,
@@ -347,14 +349,14 @@ export const sha256Hex = (s: string): string => toHex(sha256(utf8(s)));
 
 
 /** Runs a full email session login: start, code from the mail, verify. */
-export async function emailLogin(h: Harness, app: TestApp, email: string, normalized = email): Promise<{ idToken?: string; googleWallet: boolean; linkTicket?: string; deviceTicket: string; commitment: ReturnType<typeof sessionCommitment> }> {
+export async function emailLogin(h: Harness, app: TestApp, email: string, normalized = email): Promise<{ idToken?: string; googleWallet: boolean; linkTicket?: string; deviceTicket: string; sealedEmail?: string; commitment: ReturnType<typeof sessionCommitment> }> {
   const commitment = sessionCommitment(app.scope, h.clock.now);
   const s = await h.call('/v1/email/start', { pk: app.pk, email, purpose: 'session', commitment: commitment.json });
   expect(s.status).toBe(202);
   const { challengeId } = (await s.json()) as { challengeId: string };
   const v = await h.call('/v1/email/verify', { challengeId, code: h.sender.codeFor(normalized) });
   expect(v.status).toBe(200);
-  return { ...((await v.json()) as { idToken?: string; googleWallet: boolean; linkTicket?: string; deviceTicket: string }), commitment };
+  return { ...((await v.json()) as { idToken?: string; googleWallet: boolean; linkTicket?: string; deviceTicket: string; sealedEmail?: string }), commitment };
 }
 
 export { env };

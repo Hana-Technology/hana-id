@@ -2,8 +2,8 @@
 // sha256 of its id's public half, challenge-id.ts) or per link ticket (named `t:` + sha256 of the ticket). It holds the
 // normalized address only encrypted under a key only the client holds (the id's secret half), only for resends and
 // only until the challenge ends (≤ 10 min, D197), the code only as HMAC-SHA256(K_code, challengeId ‖ code)
-// (compared in constant time), the purpose and its nonce (or, for auto_link, what the nonce needs at minting), and the
-// attempts. Each method's checks and writes run synchronously before any await, so concurrent calls are serialized:
+// (compared in constant time), the purpose and its nonce (or, for auto_link, what the nonce needs at minting), for a
+// `session` challenge the session's public key and expiry (what the address is sealed for, D418), and the attempts. Each method's checks and writes run synchronously before any await, so concurrent calls are serialized:
 // at most MAX_ATTEMPTS codes are ever compared per challenge, and a correct code is used once (the record is deleted
 // before the worker mints the token). An alarm at expiry deletes whatever is left.
 import { DurableObject } from 'cloudflare:workers';
@@ -22,6 +22,12 @@ export interface ChallengeRecord {
   nonce: string | null;
   /** auto_link (created by google-match, D195): the Google identity and sha256(session nonce preimage), b64url. */
   autoLink: { googleSub: string; sessionHash: string } | null;
+  /**
+   * `session` purpose only (D418): the session commitment's public key and expiry, which the verified address is sealed
+   * for (`sealedEmail`); null for every other purpose. Absent in a record created before it existed: read as null (that
+   * login's answer carries no `sealedEmail`).
+   */
+  seal?: { sessionPublicKey: number[]; expiresAtMs: number } | null;
   /**
    * A suppressed address's challenge (D198): no address and no code are stored, nothing is ever sent, every code is
    * wrong. It exists so `start` answers alike for every valid address.

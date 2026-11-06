@@ -9,6 +9,10 @@
 // `app:changes:announce <id>`, which writes the pending column and its `*_effective_at`. `--raw-sign off` and
 // `--auto-approve off` take effect at once, drop any pending value and end or cancel the guarded changes. Every write
 // bumps `settings_version` and records an `app_changes` row.
+//
+// `--identity-email off|on_request|at_login` (D411, migration 0012's `apps.identity_email`): when Hana asks users to
+// share their email with the app; immediate, like the persistence (turning it on shares nothing until a user agrees).
+// On a hot D1 without migration 0012 the display says so and the flag is refused before anything is written.
 import { readFileSync, statSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { canonicalJson, parseAutoApprovePolicy, policyId } from '@hana-id/core/policy';
@@ -47,6 +51,13 @@ export const RAW_SIGN_WARNING =
 
 export type Persistence = 'session' | 'none';
 export type RawSign = 'off' | 'approval';
+/** D411: when Hana asks users to share their email with the app (migration 0012's CHECK). */
+export type IdentityEmail = 'off' | 'on_request' | 'at_login';
+export const IDENTITY_EMAIL_VALUES: readonly IdentityEmail[] = ['off', 'on_request', 'at_login'];
+/** How the display names each value. */
+export const IDENTITY_EMAIL_LABEL: Record<IdentityEmail, string> = { off: 'off', on_request: 'when the app asks', at_login: 'at first login' };
+/** The refusal of `--identity-email` on a hot D1 without the column. */
+export const IDENTITY_EMAIL_NEEDS_0012 = "--identity-email needs apps.identity_email, which this env's hot D1 doesn't have: apply migration 0012 (0012_email_sharing.sql) first";
 
 export interface SettingsRow {
   id: string;
@@ -67,6 +78,8 @@ export interface SettingsRow {
   auto_approve_pending: string | null;
   auto_approve_effective_at: number | null;
   google_web_client_id: string | null;
+  /** Migration 0012 (D411); absent when the hot D1 doesn't have the column yet. */
+  identity_email?: string;
 }
 
 /** A validated policy as it is stored: its canonical JSON (normalized by the validator) and its policyId. */
@@ -86,6 +99,7 @@ export interface SettingsChange {
   googleWebClient?: string | null;
   /** The policy file's text, or 'off'. Validated in planSettings, against the session TTL that will be in force. */
   autoApprove?: { text: string; file: string } | 'off';
+  identityEmail?: IdentityEmail;
 }
 
 /** The write to run (null when nothing changes) and what to print. */
@@ -98,9 +112,18 @@ export interface SettingsPlan {
 const SETTINGS_COLUMNS =
   'persistence, session_ttl_ms, idle_ttl_ms, raw_sign, raw_sign_pending, raw_sign_effective_at, auto_approve_policy, auto_approve_pending, auto_approve_effective_at, google_web_client_id';
 
-/** The app (by id or any of its publishable keys) with its settings columns, version and scope environment. */
-export function settingsSql(idOrKey: string): string {
-  const columns = SETTINGS_COLUMNS.split(', ').map((c) => `a.${c}`).join(', ');
+/** 1 when the hot D1's `apps` has migration 0012's `identity_email` column, else 0 (the table's stored definition). */
+export const IDENTITY_EMAIL_COLUMN_SQL = "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'apps' AND instr(sql, 'identity_email') > 0";
+
+/** The settings columns this database has: migration 0012's `identity_email` only once applied. */
+const settingsColumns = (identityEmail: boolean): string[] => [...SETTINGS_COLUMNS.split(', '), ...(identityEmail ? ['identity_email'] : [])];
+
+/**
+ * The app (by id or any of its publishable keys) with its settings columns, version and scope environment;
+ * `identity_email` too when the database has it (`{identityEmail: true}`, the default: every database the tests build).
+ */
+export function settingsSql(idOrKey: string, opts: { identityEmail?: boolean } = {}): string {
+  const columns = settingsColumns(opts.identityEmail ?? true).map((c) => `a.${c}`).join(', ');
   return `SELECT a.id, a.name, a.scope_id, a.org_id, a.settings_version, a.deleted_at, s.environment, ${columns} FROM apps a JOIN scopes s ON s.scope_id = a.scope_id WHERE ${sql`a.id = ${idOrKey} OR a.id IN (SELECT app_id FROM app_keys WHERE key = ${idOrKey})`}`;
 }
 
@@ -161,6 +184,11 @@ export function parseSettingsArgs(args: Args, readFile: (path: string) => string
     if (client === DEFAULT_WEB_CLIENT) change.googleWebClient = null;
     else if (!client || client.length > 255 || /\s/u.test(client)) throw new CliError(`Invalid --google-web-client: ${JSON.stringify(client)}`);
     else change.googleWebClient = client;
+  }
+  const share = args.str('identity-email');
+  if (share !== undefined) {
+    if (!(IDENTITY_EMAIL_VALUES as readonly string[]).includes(share)) throw new CliError("--identity-email must be 'off', 'on_request' or 'at_login'");
+    change.identityEmail = share as IdentityEmail;
   }
   const policy = args.str('auto-approve');
   if (policy !== undefined) {
@@ -334,6 +362,23 @@ export function planSettings(row: SettingsRow, change: SettingsChange, ctx: Plan
     }
   }
 
+  if (change.identityEmail !== undefined) {
+    if (row.identity_email === undefined) throw new CliError(IDENTITY_EMAIL_NEEDS_0012);
+    const before = identityEmailOf(row);
+    if (change.identityEmail === row.identity_email) lines.push(`email sharing: already ${IDENTITY_EMAIL_LABEL[before]}`);
+    else {
+      set.push(sql`identity_email = ${change.identityEmail}`);
+      changed.identityEmail = change.identityEmail;
+      lines.push(
+        `email sharing: ${IDENTITY_EMAIL_LABEL[before]} → ${IDENTITY_EMAIL_LABEL[change.identityEmail]} (immediate; ${
+          change.identityEmail === 'off'
+            ? 'Hana stops asking and new identity tokens carry no email, the vault’s 30 s app cache aside'
+            : 'nothing is shared until a user agrees on Hana’s sheet'
+        })`,
+      );
+    }
+  }
+
   // A new policy is validated against the session TTL in force after this change (maxConsentMs ≤ session_ttl_ms).
   const inForce = policyInForce(row, now);
   const policyPending = pendingOf('policy_set');
@@ -417,12 +462,15 @@ export function planSettings(row: SettingsRow, change: SettingsChange, ctx: Plan
  * delay. With the guard such a write changes nothing, and appSettings reports it.
  */
 export function unchangedSince(row: SettingsRow): string {
-  const columns = SETTINGS_COLUMNS.split(', ') as (keyof SettingsRow)[];
+  const columns = settingsColumns(row.identity_email !== undefined) as (keyof SettingsRow)[];
   return [`id = ${sqlValue(row.id)}`, ...columns.map((c) => `${c} IS ${sqlValue(row[c] as string | number | null)}`)].join(' AND ');
 }
 
 /** The error when the guarded UPDATE matched no row. */
 export const SETTINGS_CHANGED = "The app's settings changed since they were read (another admin:settings or a D1 edit): nothing was written. Run the command again to see and change the current settings.";
+
+/** The row's email sharing setting; anything but the two others reads as off (as the API reads it). */
+const identityEmailOf = (row: SettingsRow): IdentityEmail => (row.identity_email === 'on_request' || row.identity_email === 'at_login' ? row.identity_email : 'off');
 
 /** The settings as stored and in force, for `app:settings <app>` with no setting flags. */
 export function describeSettings(row: SettingsRow, now: number, openChanges: readonly ChangeRow[] = []): string[] {
@@ -432,6 +480,7 @@ export function describeSettings(row: SettingsRow, now: number, openChanges: rea
     `idle TTL: ${formatDuration(row.idle_ttl_ms)}`,
     `raw signing: ${rawSignInForce(row, now)}${row.raw_sign_pending !== null && row.raw_sign_effective_at !== null && !matured(row.raw_sign_pending, row.raw_sign_effective_at, now) ? ` (approval pending until ${at(row.raw_sign_effective_at)})` : ''}`,
     `Google web client: ${row.google_web_client_id ?? 'the scope’s first Google client'}`,
+    `Email sharing: ${row.identity_email === undefined ? 'not available (migration 0012 not applied to this hot D1)' : IDENTITY_EMAIL_LABEL[identityEmailOf(row)]}`,
   ];
   const inForce = policyInForce(row, now);
   const policyText = (text: string) => {
@@ -510,7 +559,8 @@ export function defaultAppSettingsDeps(m: Manifest, remote: boolean): AppSetting
 
 /** app:settings <app> [flags]: shows the settings, or checks and applies the flags given and prints what changed. */
 export async function appSettings(m: Manifest, idOrKey: string, args: Args, where: string, deps: AppSettingsDeps): Promise<void> {
-  const rows = deps.d1(settingsSql(idOrKey)) as unknown as SettingsRow[];
+  const identityEmail = Number(deps.d1(IDENTITY_EMAIL_COLUMN_SQL)[0]?.n ?? 0) > 0;
+  const rows = deps.d1(settingsSql(idOrKey, { identityEmail })) as unknown as SettingsRow[];
   if (rows.length !== 1 || !rows[0]) throw new Error(`No app ${idOrKey}`);
   const row = rows[0];
   const change = parseSettingsArgs(args, deps.readFile, deps.baseDir ?? invocationDir());

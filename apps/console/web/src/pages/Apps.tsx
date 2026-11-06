@@ -314,13 +314,27 @@ function RawSigning({ org, app, owner, frozen, reload }: AppCtl) {
   );
 }
 
+type IdentityEmail = 'off' | 'on_request' | 'at_login';
+
+/** D411's `identity_email`: when Hana asks users to share their email with the app (the select's options, in order). */
+export const IDENTITY_EMAIL: readonly (readonly [IdentityEmail, string, string])[] = [
+  ['off', 'Off', 'Off: never asked (default)'],
+  ['on_request', 'When the app asks', 'When the app asks: requestEmailSharing()'],
+  ['at_login', 'At first login', 'At first login'],
+];
+
+export const identityEmailLabel = (v: unknown): string => IDENTITY_EMAIL.find(([k]) => k === v)?.[1] ?? 'Off';
+
 function Settings({ org, app, owner, frozen }: AppCtl) {
   const s = app.settings;
+  // An API before migration 0012's build omits the setting: it is off there.
+  const shareNow: IdentityEmail = s.identityEmail ?? 'off';
   const step = useStepUp(org);
   const [persistence, setPersistence] = useState(s.persistence);
   const [hours, setHours] = useState(String(s.sessionTtlMs / 3_600_000));
   const [idle, setIdle] = useState(String(s.idleTtlMs / 60_000));
   const [client, setClient] = useState(s.googleWebClientId ?? '');
+  const [share, setShare] = useState<IdentityEmail>(shareNow);
   const params = () => {
     const out: Record<string, unknown> = { appId: app.id };
     if (persistence !== s.persistence) out.persistence = persistence;
@@ -330,6 +344,7 @@ function Settings({ org, app, owner, frozen }: AppCtl) {
     if (idl !== s.idleTtlMs) out.idleTtlMs = idl;
     const c = client.trim() || null;
     if (c !== s.googleWebClientId) out.googleWebClientId = c;
+    if (share !== shareNow) out.identityEmail = share;
     return out;
   };
   return (
@@ -343,6 +358,8 @@ function Settings({ org, app, owner, frozen }: AppCtl) {
         <dd>{duration(s.idleTtlMs)}</dd>
         <dt>Google web client</dt>
         <dd className="mono">{s.googleWebClientId ?? 'Hana’s shared client'}</dd>
+        <dt>Email sharing</dt>
+        <dd>{identityEmailLabel(shareNow)}</dd>
       </dl>
       {owner && !frozen && (
         <form
@@ -368,6 +385,17 @@ function Settings({ org, app, owner, frozen }: AppCtl) {
           <label>
             Google web client (empty: Hana’s shared client) <input value={client} onChange={(e) => setClient(e.target.value)} />
           </label>
+          <label>
+            Email sharing{' '}
+            <select value={share} onChange={(e) => setShare(e.target.value as IdentityEmail)}>
+              {IDENTITY_EMAIL.map(([k, , help]) => (
+                <option key={k} value={k}>
+                  {help}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="muted small">Users see their email address and choose Share email or Not now; you see it only once they share it, and they can stop sharing at any time.</p>
           <button type="submit" disabled={step.busy || Object.keys(params()).length === 1}>
             Review and confirm with Google
           </button>

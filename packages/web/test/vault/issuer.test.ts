@@ -30,7 +30,7 @@ const EXPOSE = { 'access-control-expose-headers': 'retry-after' };
 describe('issuerApi.googleMatch', () => {
   it('posts to the issuer’s google-match with no cookies, no referrer and a timeout', async () => {
     const f = fetchAnswering(() => json(200, { decision: 'none', googleHosted: false, linkable: false, requestId: 'r' }));
-    expect(await issuerApi('https://issuer.test/anything', f.fetchFn).googleMatch(REQUEST)).toEqual({ decision: 'none', googleHosted: false, linkable: false, emailToken: null, linkImmediate: null, challenge: null });
+    expect(await issuerApi('https://issuer.test/anything', f.fetchFn).googleMatch(REQUEST)).toEqual({ decision: 'none', googleHosted: false, linkable: false, emailToken: null, linkImmediate: null, challenge: null, sealedEmail: null });
     const { url, init } = f.seen[0]!;
     expect(url).toBe('https://issuer.test/v1/email/google-match');
     expect(init).toMatchObject({ method: 'POST', credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store' });

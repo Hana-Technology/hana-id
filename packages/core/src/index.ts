@@ -3,7 +3,7 @@
 // (`@hana-id/core/derivation`), signers, approval decoders, the ID-token check and the protocol message schemas.
 
 /** Package version, kept equal to package.json (test/index.test.ts). */
-export const VERSION = '0.2.0';
+export const VERSION = '0.3.0';
 
 export * from './addresses.ts';
 export * from './api-request-id.ts';

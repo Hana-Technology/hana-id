@@ -36,7 +36,8 @@ import {
   isTestPublishableKey,
 } from '@hana-id/core';
 import { VERSION } from '../version.ts';
-import { type ApprovalTicket, ApprovalWindows } from './approval-window.ts';
+import { APPROVE_POPUP_FEATURES, type ApprovalTicket, ApprovalWindows } from './approval-window.ts';
+import { randomHex } from './random.ts';
 import { Emitter } from './emitter.ts';
 import { HanaError, RpcCode, asHanaError, hanaError } from './errors.ts';
 import { type EvmConfig, HanaEthereumProvider, announceEip6963, rdnsFor, validateEvmConfig } from './ethereum.ts';
@@ -93,6 +94,12 @@ export interface HanaEvents {
    * a pending email may not be theirs.
    */
   linkChanged: [LinkChange];
+  /**
+   * D411: the user shared their email with this app (`'granted'`) or stopped sharing it (`'declined'`) on this device
+   * (the sheet requestEmailSharing() opens, the approval popup's "Stop sharing", the sheet at login). The next
+   * getIdentityToken() has the `email` claim, or not.
+   */
+  emailSharingChanged: ['granted' | 'declined'];
 }
 
 export interface IdentityTokenOptions {
@@ -379,6 +386,37 @@ export class HanaClient extends Emitter<HanaEvents> {
     });
   }
 
+  /**
+   * D411: asks the user to share their email with this app, on Hana's sheet (the app's name and the exact address,
+   * "Share email" / "Not now"); when it is already shared, the sheet offers "Stop sharing". Call it synchronously in a
+   * click handler, like login(): the sheet opens in a Hana popup (the vault's launcher when the browser blocks it). Resolves
+   * `'granted'`, `'declined'` (Not now, or stopped) or `'dismissed'` (the window was closed: nothing changed). Rejects
+   * with `email_sharing_unavailable` (`data.reason`: `off` when the app's `identity_email` setting is off, `no_address`
+   * when Hana has no address for this session, `unavailable`) or 4100 when logged out. Once granted, identity tokens
+   * carry `email` and `email_verified: true`.
+   */
+  requestEmailSharing(): Promise<'granted' | 'declined' | 'dismissed'> {
+    if (this.#destroyed) return Promise.reject(hanaError(ErrorCode.disconnected));
+    if (this.#status !== 'logged_in') return Promise.reject(hanaError(ErrorCode.unauthorized));
+    let popup: Window | null = null;
+    try {
+      popup = this.#win.open(`${this.authOrigin}/share-email?from=partner&v=${encodeURIComponent(this.#conn.frameName)}`, `hana-share-${randomHex(16)}`, APPROVE_POPUP_FEATURES) ?? null;
+    } catch {
+      popup = null;
+    }
+    return this.#request('hana_requestEmailSharing', popup ? undefined : { popupBlocked: true }).then(
+      (r) => r.state,
+      (e: unknown) => {
+        try {
+          popup?.close();
+        } catch {
+          // A COOP-severed handle: nothing to do.
+        }
+        throw e;
+      },
+    );
+  }
+
   /** Starts a key export: the vault shows its launcher, and the key is shown only in a Hana window. */
   exportKey(chain: 'stellar' | 'evm'): Promise<null> {
     return this.#request('hana_export', { chain });
@@ -577,6 +615,9 @@ export class HanaClient extends Emitter<HanaEvents> {
         return;
       case 'linkChanged':
         this.emit('linkChanged', e.data);
+        return;
+      case 'emailSharingChanged':
+        this.emit('emailSharingChanged', e.data.state);
         return;
     }
   }

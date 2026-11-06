@@ -59,6 +59,7 @@ import {
   unsupportedMethodId,
   SUPPORT_ID_SDK_MIN,
   API_REQUEST_ID_SDK_MIN,
+  EMAIL_SHARING_SDK_MIN,
   sdkAtLeast,
   vaultPayload,
   walletRecordEvmDigest,
@@ -68,6 +69,7 @@ import { type AutoApproveResult, matchAutoApprovePolicy, recordAutoApproveUse } 
 import type { HanaEnv } from '../hana-env.ts';
 import { VaultApi } from './api.ts';
 import { type CachedIdentity, cacheUsable, copyProofs, makeWalletProofs, mintBody, tokenIatMs } from './identity.ts';
+import { SHARE_LAUNCHER_HELLO_MS, type ConsentSigner, type SheetOutcome, ShareSheet, consentProof } from './email-share.ts';
 import { reportWallets, signWalletRecords } from './wallet-record.ts';
 import { type ApprovalOutcome, Approvals } from './approvals.ts';
 import { autoApproveStatus, consentActive, consentEnd, newConsent, withUsage } from './auto-approve.ts';
@@ -233,6 +235,13 @@ interface Session {
    * reload still has it; null when the API sent none or the record predates it. Never derived here (D346).
    */
   supportId: string | null;
+  /**
+   * D418: the issuer's sealed address of the identity that signed in, for this session (the vault can't open it; the
+   * API puts it in identity tokens once the user shared it, D411), or null.
+   */
+  sealedEmail: string | null;
+  /** D411: the session's consent state as the API last said it (a mint's emailStatus, a state read, a decision), or null. */
+  emailState: 'granted' | 'declined' | 'not_asked' | null;
   lastTouchAt: number;
   /** Server-corrected time of the partner page's last request for this session (the in-memory idle limit). */
   lastActivityAt: number;
@@ -281,6 +290,9 @@ interface Dormant {
   walletProofs: WalletProofs | null;
   /** The session's Support ID (Session.supportId), so hana_status keeps it while dormant. */
   supportId: string | null;
+  /** Session.sealedEmail and Session.emailState (D411): identity tokens and the sheet need no PRK. */
+  sealedEmail: string | null;
+  emailState: 'granted' | 'declined' | 'not_asked' | null;
   /** Ends it at expiresAtMs, as a live session's expiry timer would. */
   expiryTimer: unknown;
 }
@@ -369,6 +381,10 @@ export class Vault {
    * API_REQUEST_ID_SDK_MIN or later): an older SDK gets exactly the error shapes it was built against.
    */
   private sdkTakesRequestId = false;
+  /** D411: whether the SDK on the port knows `emailSharingChanged` (EMAIL_SHARING_SDK_MIN or later). */
+  private sdkTakesEmailSharing = false;
+  /** D411: the email sharing sheet in progress (one at a time: an `at_login` sign-in's, or requestEmailSharing's). */
+  private shareSheet: ShareSheet | null = null;
   private port: MessagePort | null = null;
   private api: VaultApi | null = null;
   private near: NearView | null = null;
@@ -465,6 +481,10 @@ export class Vault {
       if (parseWindowMessage(e.data, ['hana:export-hello'])) this.onExportHello(e);
       return;
     }
+    if (t === 'hana:email-share-hello' || t === 'hana:email-share-answer') {
+      this.shareSheet?.handleMessage(e);
+      return;
+    }
     this.approvals?.handleMessage(e);
   }
 
@@ -484,6 +504,7 @@ export class Vault {
     this.parentOrigin = e.origin;
     this.sdkTakesSupportId = sdkAtLeast(hello.sdk, SUPPORT_ID_SDK_MIN);
     this.sdkTakesRequestId = sdkAtLeast(hello.sdk, API_REQUEST_ID_SDK_MIN);
+    this.sdkTakesEmailSharing = sdkAtLeast(hello.sdk, EMAIL_SHARING_SDK_MIN);
     this.port = port;
     const fetchFn = this.o.fetch;
     this.api = new VaultApi({
@@ -501,6 +522,8 @@ export class Vault {
       appName: this.config.appName,
       logoUrl: () => this.logoUrl,
       supportId: () => this.supportId(),
+      emailShared: () => (this.live()?.emailState ?? this.liveDormant()?.emailState) === 'granted',
+      onEmailRevoke: () => this.revokeEmailSharing(),
       parentOrigin: e.origin,
       open: (url, name, features) => this.host.open(url, name, features),
       launcher: this.launcher,
@@ -810,6 +833,8 @@ export class Vault {
         return this.account();
       case 'hana_linkAccount':
         return this.linkAccount(r.params.method, r.params.popupBlocked === true);
+      case 'hana_requestEmailSharing':
+        return this.requestEmailSharing(r.params?.popupBlocked === true);
       default:
         throw new VaultError(ErrorCode.unsupportedMethod, 'Unsupported method');
     }
@@ -819,6 +844,7 @@ export class Vault {
 
   private newPending(mode: LoginMode, popupBlocked: boolean, request: LoginRequest = {}): PendingLogin {
     this.pending?.abort(new VaultError('login_cancelled', 'A newer sign-in replaced this one'));
+    this.shareSheet?.cancel();
     this.continueIntent?.remove();
     this.continueIntent = null;
     this.pendingLink?.abort(new VaultError('login_cancelled', 'A sign-in replaced this one'));
@@ -1090,6 +1116,8 @@ export class Vault {
       consent: null,
       walletProofs: this.walletProofsFor(success.prk, success.sessionKey.publicKey, success.addresses),
       supportId: success.supportId,
+      sealedEmail: success.sealedEmail,
+      emailState: null,
       lastTouchAt: this.clock.now(),
       lastActivityAt: this.clock.now(),
       expiryTimer: null,
@@ -1099,6 +1127,12 @@ export class Vault {
     if (persistence === 'session') s.persist = this.startPersist(s, success, revoked);
     // The wallet directory (D310, D317): the active path's addresses, in the background, never awaited.
     this.recordWallets(s);
+    // D418: token_first's google-record answers the sealed address after the login: the session (and its record) get
+    // it when it comes. An `at_login` app waits for it below, before the sheet.
+    if (!s.sealedEmail && success.sealedEmailLater) void success.sealedEmailLater.then((blob) => this.attachSealedEmail(s, blob));
+    // D411: an `at_login` app asks once per user and app, before the wallet opens. Never fails the login.
+    if (success.emailShare) await this.loginEmailShare(s, success);
+    if (this.session !== s) throw new VaultError('login_cancelled', 'The sign-in ended');
     if (this.pending === pending) this.emit('loginProgress', { stage: 'done' });
     this.emit('accountsChanged', { addresses: { ...s.addresses } });
     // The link this login made (spec "Notices"); the first read of the wallet's methods then reports pending ones.
@@ -1197,6 +1231,7 @@ export class Vault {
         v: s.walletProofs ? RECORD_VERSION : 1,
         ...(s.walletProofs ? { walletProofs: copyProofs(s.walletProofs) } : {}),
         ...(s.supportId ? { supportId: s.supportId } : {}),
+        ...(s.sealedEmail ? { sealedEmail: s.sealedEmail } : {}),
         ...binding,
         scopeId: this.config.scopeId,
         keyIndex: 0,
@@ -1394,6 +1429,8 @@ export class Vault {
       keyPair: s.keyPair,
       walletProofs: s.walletProofs,
       supportId: s.supportId,
+      sealedEmail: s.sealedEmail,
+      emailState: s.emailState,
       expiryTimer: null,
     };
     // The same session goes on, dormant: its identity token stays valid.
@@ -1622,6 +1659,8 @@ export class Vault {
       consent: null,
       walletProofs,
       supportId: record.supportId ?? null,
+      sealedEmail: record.sealedEmail ?? null,
+      emailState: null,
       lastTouchAt: this.clock.now(),
       lastActivityAt: this.clock.now(),
       expiryTimer: null,
@@ -1726,6 +1765,7 @@ export class Vault {
     if (s?.persist) s.persist.cancelled = true;
     this.pending?.abort(new VaultError('login_cancelled', 'Logged out'));
     this.pendingLink?.abort(new VaultError('login_cancelled', 'Logged out'));
+    this.shareSheet?.cancel();
     this.methodsSeen = null;
     const store = this.store;
     const own = s?.share ? { keyPair: s.keyPair, sessionPk: s.sessionPk, share: s.share } : null;
@@ -1855,6 +1895,184 @@ export class Vault {
     });
   }
 
+  // ---- email sharing (D411, D418–D423; email-share.ts) ----
+
+  /** The live or dormant session's consent signer and its sealed address. */
+  private consentTarget(): { signer: ConsentSigner; held: { sealedEmail: string | null; emailState: Session['emailState'] }; sessionPk: Uint8Array } | null {
+    const s = this.live() ?? this.liveDormant();
+    if (!s || !this.parentOrigin) return null;
+    return {
+      signer: { signer: this.env.signer, appId: this.config.appId, parentOrigin: this.parentOrigin, sessionPublicKey: Uint8Array.from(s.sessionPk), privateKey: s.keyPair.privateKey },
+      held: s,
+      sessionPk: s.sessionPk,
+    };
+  }
+
+  /** One consent call, signed now; a stale clock is corrected and the call tried once more (as a mint). */
+  private async consentCall<T>(signer: ConsentSigner, action: 'state' | 'granted' | 'declined' | 'revoke', sealedEmail: string | null, call: (proof: Awaited<ReturnType<typeof consentProof>>) => Promise<T>): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+      const proof = await consentProof(signer, action, sealedEmail, this.clock.now());
+      try {
+        return await call(proof);
+      } catch (e) {
+        if (attempt === 0 && e instanceof ApiError && e.code === 'stale_proof') {
+          this.clock.refresh(e.details.serverTimeMs);
+          continue;
+        }
+        if (attempt === 0 && e instanceof ApiError && e.code === 'proof_replayed') continue;
+        throw e;
+      }
+    }
+  }
+
+  /** The API's setting and state for the session's address (null sealedEmail: the account's, D421). */
+  private consentState(signer: ConsentSigner, sealedEmail: string | null) {
+    return this.consentCall(signer, 'state', sealedEmail, (proof) => this.api!.emailConsentState({ ...proof, ...(sealedEmail ? { sealedEmail } : {}) }));
+  }
+
+  /** Records an answer and tells the partner (`emailSharingChanged`); the cached identity token is dropped silently. */
+  private async recordConsent(signer: ConsentSigner, held: { sealedEmail: string | null; emailState: Session['emailState'] }, answer: 'granted' | 'declined' | 'revoke'): Promise<'granted' | 'declined'> {
+    let state: 'granted' | 'declined';
+    if (answer === 'revoke') {
+      await this.consentCall(signer, 'revoke', null, (proof) => this.api!.emailConsentRevoke(proof));
+      state = 'declined';
+    } else {
+      const sealedEmail = held.sealedEmail;
+      if (!sealedEmail) throw new VaultError('email_sharing_unavailable', 'Hana has no address for this session', { reason: 'no_address' });
+      state = await this.consentCall(signer, answer, sealedEmail, (proof) => this.api!.emailConsentDecide({ ...proof, sealedEmail, decision: answer }));
+    }
+    held.emailState = state;
+    // The next getIdentityToken() mints with the email or without it. Not identityTokenChanged(null): that means logged out.
+    if (this.identity && bytesEqual(this.identity.sessionPk, signer.sessionPublicKey)) this.identity = null;
+    if (this.sdkTakesEmailSharing) this.emit('emailSharingChanged', { state });
+    return state;
+  }
+
+  /** The approval popup's "Stop sharing" (D422): every address of this app and account. */
+  private async revokeEmailSharing(): Promise<boolean> {
+    const t = this.consentTarget();
+    if (!t) return false;
+    try {
+      await this.recordConsent(t.signer, t.held, 'revoke');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** D418: a sealed address that arrived after the login (google-record): kept with the session and in its record. */
+  private attachSealedEmail(s: Session, blob: string | null): void {
+    if (!blob || this.session !== s || s.sealedEmail) return;
+    s.sealedEmail = blob;
+    if (s.persistence !== 'session') return;
+    void this.persisted(s)
+      .then(() =>
+        this.o.locks.request(this.lockName, async () => {
+          const store = this.store;
+          if (!store || this.session !== s) return;
+          const r = await this.readRecord().catch(() => null);
+          if (r === null || r === 'invalid' || !bytesEqual(r.sessionPk, s.sessionPk) || r.sealedEmail) return;
+          await store.put(this.recordId, { ...r, sealedEmail: blob });
+        }),
+      )
+      .catch(() => undefined);
+  }
+
+  private shareRequest(blob: string, state: 'not_asked' | 'declined' | 'granted', signer: ConsentSigner, ownGoogleClient: boolean) {
+    return {
+      pk: this.config.publishableKey,
+      appName: this.config.appName,
+      parentOrigin: signer.parentOrigin,
+      logoUrl: this.logoUrl,
+      ownGoogleClient,
+      state,
+      sealedEmail: blob,
+      previewProof: () => consentProof(signer, 'preview', blob, this.clock.now()),
+    };
+  }
+
+  private newSheet(expect: WindowRef | 'partner' | null, signer: ConsentSigner, held: { sealedEmail: string | null; emailState: Session['emailState'] }): ShareSheet {
+    this.shareSheet?.cancel();
+    const sheet = new ShareSheet(
+      { authOrigin: this.env.authOrigin, parentWindow: this.host.parent, timers: this.timers, clock: this.clock, record: (answer) => this.recordConsent(signer, held, answer) },
+      expect,
+    );
+    this.shareSheet = sheet;
+    return sheet;
+  }
+
+  /**
+   * D411's `at_login`: after the key passed its check and before the login is answered, the sheet in the login popup
+   * (which went to `/share-email?from=login` instead of closing) when this user hasn't answered it for this address. A
+   * closed popup, no address, the API's refusal or any failure: the login goes on, asked again next time.
+   */
+  private async loginEmailShare(s: Session, success: LoginSuccess): Promise<void> {
+    const sheet = this.newSheet(success.popup, { signer: this.env.signer, appId: this.config.appId, parentOrigin: this.parentOrigin!, sessionPublicKey: Uint8Array.from(s.sessionPk), privateKey: s.keyPair.privateKey }, s);
+    try {
+      if (!s.sealedEmail && success.sealedEmailLater) this.attachSealedEmail(s, await success.sealedEmailLater);
+      const blob = s.sealedEmail;
+      if (!blob || !success.popup || this.session !== s) return sheet.dismiss();
+      await this.persisted(s);
+      if (this.session !== s) return sheet.dismiss();
+      const signer = { signer: this.env.signer, appId: this.config.appId, parentOrigin: this.parentOrigin!, sessionPublicKey: Uint8Array.from(s.sessionPk), privateKey: s.keyPair.privateKey };
+      const st = await this.consentState(signer, blob);
+      s.emailState = st.state === 'unavailable' ? null : st.state;
+      if (st.setting !== 'at_login' || st.state !== 'not_asked' || this.session !== s) return sheet.dismiss();
+      const app = await this.appConfig().catch(() => null);
+      await sheet.run(this.shareRequest(blob, 'not_asked', signer, app?.google.mode === 'own'));
+    } catch {
+      sheet.dismiss();
+    } finally {
+      if (this.shareSheet === sheet) this.shareSheet = null;
+    }
+  }
+
+  /**
+   * hana_requestEmailSharing (D411): the sheet in the window the SDK opened in the partner's click (or, blocked, the
+   * one the vault's launcher opens), for the session's address. Already shared: the sheet offers "Stop sharing".
+   */
+  private async requestEmailSharing(popupBlocked: boolean): Promise<PortResultMap['hana_requestEmailSharing']> {
+    const t = this.consentTarget();
+    if (!t) throw notLoggedIn();
+    if (this.pending || this.pendingLink) throw new VaultError('busy', 'A sign-in is already running');
+    const sheet = this.newSheet(popupBlocked ? null : 'partner', t.signer, t.held);
+    let intent: LauncherHandle | null = null;
+    try {
+      if (t.held === this.session) await this.persisted(this.session);
+      const blob = t.held.sealedEmail;
+      let st;
+      try {
+        st = await this.consentState(t.signer, blob);
+      } catch (e) {
+        throw e instanceof ApiError && (e.code === 'session_ended' || e.status === 410)
+          ? new VaultError('session_ended', 'The Hana session has ended')
+          : new VaultError('email_sharing_unavailable', 'Email sharing is unavailable, try again later', { reason: 'unavailable' });
+      }
+      t.held.emailState = st.state === 'unavailable' ? null : st.state;
+      if (st.setting === 'off') throw new VaultError('email_sharing_unavailable', 'Email sharing is off for this app', { reason: 'off' });
+      if (!blob || st.state === 'unavailable') throw new VaultError('email_sharing_unavailable', 'Hana has no address for this session; sign in again', { reason: 'no_address' });
+      if (popupBlocked) {
+        intent = this.launcher.push('Share your email in Hana', () => {
+          const w = this.host.open(`${this.env.authOrigin}/share-email?from=vault`, `hana-share-${randomHex128()}`, LOGIN_FEATURES);
+          if (!w) return;
+          sheet.adopt(w);
+          intent?.remove();
+          intent = null;
+        });
+      }
+      const app = await this.appConfig().catch(() => null);
+      const outcome: SheetOutcome = await sheet.run(this.shareRequest(blob, st.state, t.signer, app?.google.mode === 'own'), popupBlocked ? SHARE_LAUNCHER_HELLO_MS : undefined);
+      if (outcome === 'failed') throw new VaultError('email_sharing_unavailable', 'Hana could not record the answer, try again', { reason: 'unavailable' });
+      return { state: outcome === 'kept' ? 'granted' : outcome };
+    } catch (e) {
+      sheet.dismiss();
+      throw e;
+    } finally {
+      intent?.remove();
+      if (this.shareSheet === sheet) this.shareSheet = null;
+    }
+  }
+
   /** The session an identity token is for: the live one, or the dormant one (no PRK needed), with its key and proofs. */
   private identityTarget(): IdentityTarget | null {
     const s = this.live();
@@ -1924,6 +2142,7 @@ export class Vault {
         parentOrigin: this.parentOrigin!,
         issuedAtMs: this.clock.now(),
         proofs,
+        sealedEmail: (t.live ?? t.dormant)?.sealedEmail ?? null,
       });
       let res;
       try {
@@ -1942,6 +2161,9 @@ export class Vault {
       // The session ended or changed while the request was in flight: its token is no longer anyone's.
       if (!now || !bytesEqual(now.sessionPk, sessionPk)) return { identityToken: null, expiresAtMs: null };
       const iatMs = tokenIatMs(res.identityToken) ?? this.clock.now();
+      // D411: the token says where sharing stands for this session (the approval popup's "Stop sharing" reads it).
+      const held = now.live ?? now.dormant;
+      if (held) held.emailState = res.emailStatus === 'included' ? 'granted' : res.emailStatus === 'declined' ? 'declined' : res.emailStatus === 'not_asked' ? 'not_asked' : held.emailState;
       this.identity = { sessionPk, token: res.identityToken, iatMs, expiresAtMs: res.expiresAtMs };
       this.channel?.postMessage({ v: 1, t: 'identity', sessionPk: Uint8Array.from(sessionPk), identityToken: res.identityToken, iatMs, expiresAtMs: res.expiresAtMs });
       const state = { identityToken: res.identityToken, expiresAtMs: res.expiresAtMs };

@@ -34,6 +34,8 @@ const GOOGLE_ERROR = /^[a-z_]{1,64}$/u;
  *   `sub`), and the user chose "Link and continue" before going to Google (D139);
  * - `as`: what a token answering the vault's follow-up is (`link`: case A's `auto_link` token after the code step;
  *   `session`: an email login's token; `proof`: a link method's proof).
+ * - `sealedEmail` (D418): beside an email login's token, the issuer's `verify` answer's sealed address (opaque to the
+ *   popup's relay and the vault; only the API opens it).
  */
 export type RelayPayload = RelayTokenPayload | (({ accessToken: string } | { error: string; claim?: string }) & { timings?: Record<string, number> });
 
@@ -47,6 +49,7 @@ export interface RelayTokenPayload {
   access?: 'follow';
   caseB?: CaseBProof;
   as?: 'link' | 'session' | 'proof';
+  sealedEmail?: string;
   timings?: Record<string, number>;
 }
 
@@ -78,7 +81,9 @@ const isCaseB = (v: unknown): v is CaseBProof =>
   /^[A-Za-z0-9_-]{22,64}$/u.test(v.linkTicket) &&
   typeof v.emailSub === 'string' &&
   /^e1\.[A-Za-z0-9_-]{43}$/u.test(v.emailSub);
-const TOKEN_EXTRAS: readonly string[] = ['accessToken', 'access', 'caseB', 'as'];
+const TOKEN_EXTRAS: readonly string[] = ['accessToken', 'access', 'caseB', 'as', 'sealedEmail'];
+/** The issuer's sealed address (@hana-id/email sealed.ts): `se1.` and base64url, at most 1024 characters. */
+export const isSealedEmailText = (v: unknown): v is string => typeof v === 'string' && v.length > 4 && v.length <= 1024 && /^se1\.[A-Za-z0-9_-]+$/u.test(v);
 
 /**
  * True for `{idToken[, accessToken | access, caseB, as]}`, `{accessToken}` or `{error: ^[a-z_]{1,64}$}` (with
@@ -95,6 +100,7 @@ export function isRelayPayload(v: unknown): v is RelayPayload {
     if (v.accessToken !== undefined && (!isAccessToken(v.accessToken) || v.access !== undefined)) return false;
     if (v.access !== undefined && v.access !== 'follow') return false;
     if (v.caseB !== undefined && !isCaseB(v.caseB)) return false;
+    if (v.sealedEmail !== undefined && !isSealedEmailText(v.sealedEmail)) return false;
     return v.as === undefined || v.as === 'link' || v.as === 'session' || v.as === 'proof';
   }
   if (keys.length === 2 && keys.includes('error') && keys.includes('claim')) {

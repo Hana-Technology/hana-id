@@ -19,10 +19,12 @@
 // session is dormant needs no PRK. They are not secret (bound to this session key and app). A format-1 record is read
 // as is and gets its proofs at its next unlock, which has PRK.
 //
-// Batch C15 adds an optional plaintext `supportId` (the API's Support ID for the session), in either format.
+// Batch C15 adds an optional plaintext `supportId` (the API's Support ID for the session), in either format. D418 adds
+// an optional `sealedEmail`: the issuer's sealed address for this session, which the vault can't open (only the API
+// can), kept so a reload still has it for identity tokens and the email sharing sheet; not in the AAD either.
 //
 // SECURITY: PRK and K_s are full private-key material. Every buffer here is zeroed by its owner; nothing is logged.
-import { type Bytes, type WalletProofs, bytesEqual, concatBytes, isSupportId, recordAad, toBytes, utf8 } from '@hana-id/core';
+import { type Bytes, type WalletProofs, bytesEqual, concatBytes, isSealedEmailText, isSupportId, recordAad, toBytes, utf8 } from '@hana-id/core';
 import { proofsMatch } from './identity.ts';
 import type { AutoApproveUsage } from '@hana-id/core/policy';
 
@@ -74,6 +76,11 @@ export interface RecordV1 {
    * record.
    */
   supportId?: string;
+  /**
+   * D418: the session's sealed address (`se1.…`, the email issuer's, opened only by the API). Optional in either
+   * format; a malformed one is dropped on read, never a reason to delete the record.
+   */
+  sealedEmail?: string;
 }
 
 /** The record format written now. */
@@ -177,11 +184,16 @@ export function parseRecord(v: unknown): RecordV1 | null {
   if (v.consent !== undefined && !(isObj(v.consent) && isBytes(v.consent.iv, IV_BYTES) && isBytes(v.consent.ct))) return null;
   // Format 2 always has proofs, of the record's own addresses; format 1 never has them.
   if (v.v === 2 ? !proofsMatch(v.walletProofs, v.addresses as unknown as RecordAddresses) : v.walletProofs !== undefined) return null;
-  if (v.supportId !== undefined && !isSupportId(v.supportId)) {
-    const { supportId: _dropped, ...rest } = v;
-    return rest as unknown as RecordV1;
+  let r: Record<string, unknown> = v;
+  if (r.supportId !== undefined && !isSupportId(r.supportId)) {
+    const { supportId: _dropped, ...rest } = r;
+    r = rest;
   }
-  return v as unknown as RecordV1;
+  if (r.sealedEmail !== undefined && !isSealedEmailText(r.sealedEmail)) {
+    const { sealedEmail: _dropped, ...rest } = r;
+    r = rest;
+  }
+  return r as unknown as RecordV1;
 }
 
 // ---- PRK under K_s ----

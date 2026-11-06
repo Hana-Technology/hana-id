@@ -34,17 +34,17 @@ export interface SealKey {
 const enc = new TextEncoder();
 const dec = new TextDecoder('utf-8', { fatal: true, ignoreBOM: false });
 
-const u32le = (n: number): Uint8Array => {
+const u32le = (n: number): Uint8Array<ArrayBuffer> => {
   const b = new Uint8Array(4);
   new DataView(b.buffer).setUint32(0, n, true);
   return b;
 };
-const u64le = (n: number): Uint8Array => {
+const u64le = (n: number): Uint8Array<ArrayBuffer> => {
   const b = new Uint8Array(8);
   new DataView(b.buffer).setBigUint64(0, BigInt(n), true);
   return b;
 };
-const concat = (...parts: Uint8Array[]): Uint8Array => {
+const concat = (...parts: Uint8Array[]): Uint8Array<ArrayBuffer> => {
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
   let o = 0;
   for (const p of parts) {
@@ -53,7 +53,7 @@ const concat = (...parts: Uint8Array[]): Uint8Array => {
   }
   return out;
 };
-const borsh = (s: string): Uint8Array => {
+const borsh = (s: string): Uint8Array<ArrayBuffer> => {
   const b = enc.encode(s);
   return concat(u32le(b.length), b);
 };
@@ -64,7 +64,7 @@ function b64urlEncode(bytes: Uint8Array): string {
   return btoa(s).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '');
 }
 
-function b64urlDecode(text: string): Uint8Array | null {
+function b64urlDecode(text: string): Uint8Array<ArrayBuffer> | null {
   if (!/^[A-Za-z0-9_-]*$/u.test(text) || text.length % 4 === 1) return null;
   const bin = atob(text.replace(/-/gu, '+').replace(/_/gu, '/') + '='.repeat((4 - (text.length % 4)) % 4));
   const out = new Uint8Array(bin.length);
@@ -72,7 +72,7 @@ function b64urlDecode(text: string): Uint8Array | null {
   return out;
 }
 
-function b64Decode(text: string): Uint8Array | null {
+function b64Decode(text: string): Uint8Array<ArrayBuffer> | null {
   try {
     const bin = atob(text);
     const out = new Uint8Array(bin.length);
@@ -84,7 +84,7 @@ function b64Decode(text: string): Uint8Array | null {
 }
 
 /** The AAD: exactly @hana-id/core's sealedEmailAad (core's vectors pin it). */
-export function sealedEmailAad(appId: string, sessionPublicKey: Uint8Array, notAfterMs: number): Uint8Array {
+export function sealedEmailAad(appId: string, sessionPublicKey: Uint8Array, notAfterMs: number): Uint8Array<ArrayBuffer> {
   if (sessionPublicKey.length !== 32) throw new Error('Session public key must be 32 bytes');
   if (!Number.isSafeInteger(notAfterMs) || notAfterMs < 0) throw new Error('notAfterMs must be a non-negative integer');
   return concat(enc.encode(SEALED_EMAIL_AAD_DOMAIN), Uint8Array.of(0), borsh(appId), sessionPublicKey, u64le(notAfterMs));
@@ -151,7 +151,7 @@ export async function openSealedEmail(keys: readonly SealKey[], blob: unknown, i
   const key = keys.find((k) => k.id === header.keyId);
   if (!key) return { ok: false, reason: 'unknown_key' };
   if (header.notAfterMs <= i.nowMs) return { ok: false, reason: 'expired' };
-  const bytes = b64urlDecode((blob as string).slice(SEALED_EMAIL_PREFIX.length)) as Uint8Array;
+  const bytes = b64urlDecode((blob as string).slice(SEALED_EMAIL_PREFIX.length)) as Uint8Array<ArrayBuffer>;
   const iv = bytes.subarray(HEADER_BYTES, HEADER_BYTES + IV_BYTES);
   const ct = bytes.subarray(HEADER_BYTES + IV_BYTES);
   let pt: Uint8Array;

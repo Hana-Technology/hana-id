@@ -129,7 +129,7 @@ describe('the four cases', () => {
     const app = await seedApp(h);
     const acc = gAccount(`c${uid()}@gmail.com`);
     const { body } = await match(h, app, acc);
-    expect(body).toEqual({ decision: 'none', googleHosted: true, linkable: false });
+    expect(body).toEqual({ decision: 'none', googleHosted: true, linkable: false, sealedEmail: expect.stringMatching(/^se1\./u) });
     const row = await env.DB.prepare('SELECT google_sub FROM email_hints WHERE scope_id = ?1 AND email_sub = ?2').bind(app.scope, await sub(h, acc.email)).first<{ google_sub: string }>();
     expect(row?.google_sub).toBe(acc.sub);
   });
@@ -142,7 +142,7 @@ describe('the four cases', () => {
     h.chain.open(app.scope, 'email', eSub);
     const acc = gAccount(email);
     const none = await match(h, app, acc, { link: false });
-    expect(none.body).toEqual({ decision: 'case_a', googleHosted: true, linkable: true });
+    expect(none.body).toEqual({ decision: 'case_a', googleHosted: true, linkable: true, sealedEmail: expect.stringMatching(/^se1\./u) });
     const sentBefore = h.sender.sent.length;
     const { body, commitment } = await match(h, app, acc, { link: true });
     expect(body.decision).toBe('case_a');
@@ -226,7 +226,7 @@ describe('the four cases', () => {
       expect((await h.call('/v1/email/start', { pk: app.pk, email, purpose: 'session', commitment: c.json })).status).toBe(202);
     }
     const { body } = await match(h, app, gAccount(email));
-    expect(body).toEqual({ decision: 'case_a', googleHosted: false, linkable: true });
+    expect(body).toEqual({ decision: 'case_a', googleHosted: false, linkable: true, sealedEmail: expect.stringMatching(/^se1\./u) });
   });
 
   it('case A, not Google-hosted: if G got a wallet before the code, verify refuses (no second wallet, no wrong join)', async () => {

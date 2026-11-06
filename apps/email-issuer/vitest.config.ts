@@ -4,7 +4,8 @@ import { cloudflareTest, readD1Migrations } from '@cloudflare/vitest-plugin';
 import { defineConfig } from 'vitest/config';
 import { testWranglerConfig } from './scripts/gen-wrangler.ts';
 
-// Throwaway keys per run: the signing key (primary) and a standby that stays off the Worker, and the three HMAC keys.
+// Throwaway keys per run: the signing key (primary) and a standby that stays off the Worker, the three HMAC keys and
+// the seal key.
 // Tests never reach SendGrid, Google, an RPC or KMS: every outbound call goes to an injected fake.
 function rsaKey(): { private: Record<string, string>; public: Record<string, string> } {
   const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048, publicExponent: 65537 });
@@ -37,6 +38,8 @@ export default defineConfig(async () => {
             EMAIL_SUB_KEY: randomBytes(32).toString('base64'),
             EMAIL_CODE_KEY: randomBytes(32).toString('base64'),
             EMAIL_RL_KEY: randomBytes(32).toString('base64'),
+            // The sealed email's key (D418): `<id>:<base64 of 32 bytes>`, an id other than 1 so the tests see it carried.
+            IDENTITY_SEAL_KEY: `7:${randomBytes(32).toString('base64')}`,
             SENDGRID_API_KEY: `SG.${randomBytes(16).toString('base64url')}.${randomBytes(24).toString('base64url')}`,
             // DirectoryRpc's staff check (D275): the admin application the tests' Access JWTs are minted for.
             ADMIN_ACCESS_TEAM_DOMAIN: 'hana-admin-test.cloudflareaccess.com',

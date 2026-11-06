@@ -148,7 +148,7 @@ describe('email logins write the user directory (D269)', () => {
     const email = `down${uid()}@example.com`;
     const { result: login, lines } = await captureLogs(() => emailLogin(h, app, email));
     expect(login.googleWallet).toBe(false);
-    expect(Object.keys(login).sort()).toEqual(['commitment', 'deviceTicket', 'googleWallet', 'idToken']);
+    expect(Object.keys(login).sort()).toEqual(['commitment', 'deviceTicket', 'googleWallet', 'idToken', 'sealedEmail']);
     expect(await emailRows()).toEqual([]);
     const failed = lines.filter((l) => l.includes('"directory_write_failed"'));
     expect(failed).toHaveLength(1);

@@ -26,6 +26,9 @@ import {
   type UnlockResponse,
   type IdentityTokenBody,
   type IdentityTokenResponse,
+  type EmailConsentProof,
+  type EmailConsentStateResponse,
+  isEmailConsentStateResponse,
   type WalletRecordBody,
   base64UrlEncode,
   isIdentityTokenResponse,
@@ -45,6 +48,7 @@ import {
 } from '@hana-id/core';
 
 type Fetch = typeof fetch;
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 export interface Relayed<T> {
   result: T;
@@ -213,5 +217,22 @@ export class VaultApi {
   /** POST /v1/identity/token: a partner identity token for the session that signed `body` (identity.ts). */
   async identityToken(body: IdentityTokenBody): Promise<IdentityTokenResponse> {
     return (await this.post('/v1/identity/token', body, isIdentityTokenResponse)).value;
+  }
+
+  /** D411: POST /v1/identity/email-consent/state: the app's setting and the session's consent state. */
+  async emailConsentState(body: EmailConsentProof & { sealedEmail?: string }): Promise<EmailConsentStateResponse> {
+    return (await this.post('/v1/identity/email-consent/state', body, isEmailConsentStateResponse)).value;
+  }
+
+  /** D411: POST /v1/identity/email-consent: records a decision for the session's sealed address. */
+  async emailConsentDecide(body: EmailConsentProof & { sealedEmail: string; decision: 'granted' | 'declined' }): Promise<'granted' | 'declined'> {
+    const isState = (v: unknown): v is { state: 'granted' | 'declined' } => isObj(v) && (v.state === 'granted' || v.state === 'declined');
+    return (await this.post('/v1/identity/email-consent', body, isState)).value.state;
+  }
+
+  /** D411: POST /v1/identity/email-consent/revoke: every address of this app and account stops being shared. */
+  async emailConsentRevoke(body: EmailConsentProof): Promise<void> {
+    const isRevoked = (v: unknown): v is { state: 'declined' } => isObj(v) && v.state === 'declined';
+    await this.post('/v1/identity/email-consent/revoke', body, isRevoked);
   }
 }

@@ -1,7 +1,8 @@
 // admin.ts app:settings (docs/batch-b-spec.md "Tests → Scripts", docs/batch-c-spec.md §CLI), against a real SQLite
 // database with apps/api's migrations applied (0006 included), so every write also passes (or is refused by) the
 // migrations' CHECKs and triggers. Raw signing and new policies are staff proposals, announced here with
-// app:changes:announce (on sandbox-dev without its dashboard blocks: an env with no admin Worker).
+// app:changes:announce (on sandbox-dev without its dashboard blocks: an env with no admin Worker). `--identity-email`
+// (D411) against migration 0012's column, and against a database still at 0011 (no column: shown so, a write refused).
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,6 +24,8 @@ import {
   settingsAppArg,
   describeSettings,
   formatDuration,
+  IDENTITY_EMAIL_COLUMN_SQL,
+  IDENTITY_EMAIL_NEEDS_0012,
   IDLE_TTL_MIN_MS,
   parseDuration,
   parseSettingsArgs,
@@ -127,11 +130,12 @@ beforeEach(() => {
     ids: testIds(),
     run: async (argv, m = sandbox) => {
       const args = parseCli(argv, {
-        strings: ['app', 'persistence', 'session-ttl', 'idle-ttl', 'raw-sign', 'google-web-client', 'auto-approve'],
+        strings: ['app', 'persistence', 'session-ttl', 'idle-ttl', 'raw-sign', 'google-web-client', 'auto-approve', 'identity-email'],
         booleans: ['remote'],
       });
       const deps: AppSettingsDeps = {
-        d1: d1Of(db),
+        // The harness's database as it is now (a test may swap in one at an older migration).
+        d1: (statement) => d1Of(state.db)(statement),
         scopeClients: async (scopeId) => {
           state.chainReads.push(scopeId);
           return state.clients;
@@ -235,6 +239,95 @@ describe('app:settings ranges', () => {
     await expect(h.run(['--persistence', 'none', '--session-ttl', '30m'])).rejects.toThrow('--session-ttl');
     expect(row(h.db)).toMatchObject({ persistence: 'session', settings_version: 0 });
     expect(ledger(h.db)).toEqual([]);
+  });
+});
+
+describe('app:settings --identity-email (D411)', () => {
+  it('sets it (immediate, version bumped, one app_changes row as the API writes it), and says when it is already set', async () => {
+    expect(row(h.db).identity_email).toBe('off');
+    await h.run(['--identity-email', 'at_login']);
+    expect(row(h.db)).toMatchObject({ identity_email: 'at_login', settings_version: 1 });
+    expect(output()).toContain('email sharing: off → at first login (immediate; nothing is shared until a user agrees on Hana’s sheet)');
+    expect(ledger(h.db)).toEqual([{ kind: 'settings.changed', detail_json: '{"identityEmail":"at_login"}', actor_kind: 'hana', actor_id: 'cli:tester' }]);
+    await h.run(['--identity-email', 'on_request']);
+    expect(row(h.db)).toMatchObject({ identity_email: 'on_request', settings_version: 2 });
+    expect(output()).toContain('email sharing: at first login → when the app asks (immediate;');
+    await h.run(['--identity-email', 'off']);
+    expect(row(h.db)).toMatchObject({ identity_email: 'off', settings_version: 3 });
+    expect(output()).toContain('email sharing: when the app asks → off (immediate; Hana stops asking and new identity tokens carry no email');
+    h.out.length = 0;
+    await h.run(['--identity-email', 'off']);
+    expect(output()).toContain('email sharing: already off');
+    expect(output()).toContain(': no change');
+    expect(row(h.db).settings_version).toBe(3);
+  });
+
+  it('refuses any other value before reading anything, and a bad value elsewhere writes nothing', async () => {
+    for (const v of ['', 'on', 'ON_REQUEST', 'at-login', 'always']) {
+      await expect(h.run(['--identity-email', v])).rejects.toThrow("--identity-email must be 'off', 'on_request' or 'at_login'");
+    }
+    await expect(h.run(['--identity-email', 'at_login', '--session-ttl', '30m'])).rejects.toThrow('--session-ttl');
+    expect(row(h.db)).toMatchObject({ identity_email: 'off', settings_version: 0 });
+    expect(ledger(h.db)).toEqual([]);
+    // Migration 0012's CHECK refuses anything else too.
+    expect(() => set({ identity_email: 'always' })).toThrow(/CHECK/u);
+  });
+
+  it('goes with other immediate settings in one write and one app_changes row', async () => {
+    await h.run(['--persistence', 'none', '--identity-email', 'on_request']);
+    expect(row(h.db)).toMatchObject({ persistence: 'none', identity_email: 'on_request', settings_version: 1 });
+    expect(ledger(h.db)).toEqual([{ kind: 'settings.changed', detail_json: '{"persistence":"none","identityEmail":"on_request"}', actor_kind: 'hana', actor_id: 'cli:tester' }]);
+  });
+
+  it('the display names it: off, when the app asks, at first login', async () => {
+    await h.run([]);
+    expect(output()).toContain('Email sharing: off');
+    for (const [v, label] of [
+      ['on_request', 'when the app asks'],
+      ['at_login', 'at first login'],
+    ] as const) {
+      set({ identity_email: v });
+      h.out.length = 0;
+      await h.run([]);
+      expect(output()).toContain(`Email sharing: ${label}`);
+    }
+  });
+
+  it('is in the write guard: a concurrent change to it makes a stale plan commit nothing', async () => {
+    const before = row(h.db);
+    h.db.exec(`UPDATE apps SET identity_email = 'at_login' WHERE id = '${APP}'`);
+    const plan = planSettings(before, { persistence: 'none' }, { now: NOW, requestId: 'stale' });
+    const rows = d1Of(h.db)(`${[...plan.write!.statements, "SELECT COUNT(*) AS committed FROM app_changes WHERE request_id = 'stale'"].join(';\n')};`);
+    expect(Number(rows[0]!.committed)).toBe(0);
+    expect(row(h.db)).toMatchObject({ persistence: 'session', identity_email: 'at_login' });
+  });
+
+  describe('on a hot D1 without migration 0012', () => {
+    beforeEach(() => {
+      const old = newHotDb({ before: '0012' });
+      seedHotApp(old, { id: APP, key: KEY, scope: SCOPE });
+      h.db = old;
+    });
+
+    it('has no column (the check reads 0), the display says so, and other settings still work', async () => {
+      expect(d1Of(h.db)(IDENTITY_EMAIL_COLUMN_SQL)).toEqual([{ n: 0 }]);
+      await h.run([]);
+      expect(output()).toContain('Email sharing: not available (migration 0012 not applied to this hot D1)');
+      await h.run(['--persistence', 'none']);
+      expect(h.db.prepare('SELECT persistence, settings_version FROM apps WHERE id = ?').get(APP)).toEqual({ persistence: 'none', settings_version: 1 });
+    });
+
+    it('refuses --identity-email with "apply migration 0012 first", writing nothing', async () => {
+      await expect(h.run(['--identity-email', 'at_login'])).rejects.toThrow(IDENTITY_EMAIL_NEEDS_0012);
+      expect(IDENTITY_EMAIL_NEEDS_0012).toContain('apply migration 0012');
+      await expect(h.run(['--persistence', 'none', '--identity-email', 'off'])).rejects.toThrow(IDENTITY_EMAIL_NEEDS_0012);
+      expect(h.db.prepare('SELECT persistence, settings_version FROM apps WHERE id = ?').get(APP)).toEqual({ persistence: 'session', settings_version: 0 });
+      expect(h.db.prepare("SELECT COUNT(*) AS n FROM app_changes WHERE kind != 'migration.baseline'").get()).toEqual({ n: 0 });
+    });
+  });
+
+  it('the column check reads 1 once migration 0012 is applied', () => {
+    expect(d1Of(h.db)(IDENTITY_EMAIL_COLUMN_SQL)).toEqual([{ n: 1 }]);
   });
 });
 
@@ -525,7 +618,8 @@ describe('app:settings writes only over the row it read', () => {
     const deps: AppSettingsDeps = {
       d1: (statement) => {
         const rows = real(statement);
-        if (/^\s*SELECT/iu.test(statement) && !interleaved) {
+        // Right after the settings read (not the identity_email column check before it).
+        if (/^\s*SELECT a\.id/iu.test(statement) && !interleaved) {
           interleaved = true;
           h.db.exec(`UPDATE apps SET auto_approve_policy = NULL, auto_approve_pending = NULL, auto_approve_effective_at = NULL WHERE id = '${APP}'`);
         }

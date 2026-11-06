@@ -482,6 +482,29 @@ describe('the identity token', () => {
     chmodSync(join(dir, IDENTITY_SECRET_FILES.subKey), 0o644);
     expect(() => writeDevVars(manifest.name, root, tmp(), withIdentity())).toThrow(/mode 644/u);
   });
+
+  it('.dev.vars: email sharing’s IDENTITY_SEAL_KEY and EMAIL_CONSENT_KEY when their files exist (D418, D419), checked', () => {
+    const seal = `1:${randomBytes(32).toString('base64')}`;
+    const consent = randomBytes(32).toString('base64');
+    const parsed = dotenvParse(devVarsContent({ identity: identityDevVarsLines(withIdentity(), { sealKey: `${seal}\n`, consentKey: `${consent}\n` }) }));
+    expect([parsed.IDENTITY_SEAL_KEY, parsed.EMAIL_CONSENT_KEY]).toEqual([seal, consent]);
+    expect(() => identityDevVarsLines(withIdentity(), { sealKey: consent })).toThrow(/identity-seal-key must be <id>:<base64 of 32 bytes>/u);
+    expect(() => identityDevVarsLines(withIdentity(), { sealKey: `0:${consent}` })).toThrow(/identity-seal-key/u);
+    expect(() => identityDevVarsLines(withIdentity(), { consentKey: 'c2hvcnQ=' })).toThrow(/email-consent-key must be base64 of 32 bytes/u);
+    // From the files: counted, 0600 enforced; absent files add nothing.
+    const root = tmp();
+    seedSecrets(root);
+    const dir = join(root, '.secrets', manifest.name);
+    const before = writeDevVars(manifest.name, root, tmp(), withIdentity());
+    expect(dotenvParse(readFileSync(before.path, 'utf8')).IDENTITY_SEAL_KEY).toBeUndefined();
+    writeFileSync(join(dir, IDENTITY_SECRET_FILES.sealKey), `${seal}\n`, { mode: 0o600 });
+    writeFileSync(join(dir, IDENTITY_SECRET_FILES.emailConsentKey), `${consent}\n`, { mode: 0o600 });
+    const after = writeDevVars(manifest.name, root, tmp(), withIdentity());
+    expect(after.count).toBe(before.count + 2);
+    expect(dotenvParse(readFileSync(after.path, 'utf8'))).toMatchObject({ IDENTITY_SEAL_KEY: seal, EMAIL_CONSENT_KEY: consent });
+    chmodSync(join(dir, IDENTITY_SECRET_FILES.sealKey), 0o644);
+    expect(() => writeDevVars(manifest.name, root, tmp(), withIdentity())).toThrow(/mode 644/u);
+  });
 });
 
 describe('email login', () => {

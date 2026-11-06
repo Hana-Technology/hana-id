@@ -5,7 +5,7 @@
 import type { HanaEnv } from '../hana-env.ts';
 import { GOOGLE_TOKENINFO_ORIGIN } from './google-origins.ts';
 
-export type AuthPageName = 'login' | 'email' | 'callback' | 'approve' | 'export';
+export type AuthPageName = 'login' | 'email' | 'callback' | 'approve' | 'export' | 'share';
 
 export interface AuthPage {
   readonly name: AuthPageName;
@@ -22,6 +22,8 @@ export const AUTH_PAGES: readonly AuthPage[] = Object.freeze([
   { name: 'callback', path: '/login/callback', file: 'login/callback.html', title: 'Signing in to Hana' },
   { name: 'approve', path: '/approve', file: 'approve.html', title: 'Review in Hana' },
   { name: 'export', path: '/export', file: 'export.html', title: 'Export your key' },
+  // D411: the email sharing sheet (share-page.ts).
+  { name: 'share', path: '/share-email', file: 'share-email.html', title: 'Share your email' },
 ]);
 
 /** Google's JWKS host, which the export window reads (as the vault does). */
@@ -47,7 +49,7 @@ type CspEnv = Pick<HanaEnv, 'apiUrl' | 'rpc' | 'rpcFallback' | 'emailIssuerUrl' 
  * approval and consent popup and the export window. The callback shows no app, so it loads no image from elsewhere.
  * apps/api src/pages/host.ts AUTH_LOGO_PATHS lists the same pages for the header policy.
  */
-export const LOGO_PAGES: readonly AuthPageName[] = Object.freeze(['login', 'email', 'approve', 'export']);
+export const LOGO_PAGES: readonly AuthPageName[] = Object.freeze(['login', 'email', 'approve', 'export', 'share']);
 
 /**
  * The page's `img-src`: the base policy's 'self' data:, plus the files origin on a logo page of an env that has one.
@@ -90,6 +92,9 @@ export function connectSources(env: CspEnv, page: AuthPageName): string[] {
     case 'approve':
       // The popup decodes and renders what the vault sent; it fetches nothing.
       return [];
+    case 'share':
+      // D411: the sheet reads the sealed address from the API (`/v1/identity/email-consent/preview`); nothing else.
+      return [originOf(env.apiUrl)];
   }
 }
 

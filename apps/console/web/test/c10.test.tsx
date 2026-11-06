@@ -2,7 +2,8 @@
 // built on the server, reviewed on `/actions/:id` (an IDN origin flagged, the policy's consent preview as users see it)
 // and confirmed with Google; immediate writes behind a second click; a frozen org's controls; the emailed cancel pages
 // (the token from the fragment, gone from the address bar, sent only in a POST after a click; a second confirm told
-// it's no longer pending); the AddClient PII warning; the Users tab only when the server has it on, and no email shown.
+// it's no longer pending); the AddClient PII warning; the email sharing setting (D411) through the settings action; the
+// Users tab only when the server has it on, an email only as shared ("Not shared" otherwise), each app's in a detail.
 import { validateAutoApprovePolicy } from '@hana-id/core/policy';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
@@ -78,6 +79,38 @@ describe('a fresh sign-in, end to end in the SPA', () => {
     expect(screen.getByText(/internationalised \(punycode\) name/u)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Confirm with Google' }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith('https://console-auth.test/start?f=xyz'));
+  });
+
+  it('email sharing (D411): shown as off when the API omits it; the select sends identityEmail in the settings action, and only when changed', async () => {
+    signedIn();
+    vi.spyOn(nav, 'assign').mockImplementation(() => {});
+    routes['/api/orgs/org_a/actions'] = { body: { id: 'act_5', kind: 'app.settings', decoded: {}, expiresAt: Date.now() + 300_000 } };
+    at('/orgs/org_a/apps/app_1');
+    const select = (await screen.findByLabelText(/^Email sharing/u)) as HTMLSelectElement;
+    expect(select.value).toBe('off');
+    expect([...select.options].map((o) => [o.value, o.textContent])).toEqual([
+      ['off', 'Off: never asked (default)'],
+      ['on_request', 'When the app asks: requestEmailSharing()'],
+      ['at_login', 'At first login'],
+    ]);
+    const submit = screen.getAllByRole('button', { name: 'Review and confirm with Google' }).at(-1)! as HTMLButtonElement;
+    expect(submit.disabled).toBe(true); // nothing changed yet
+    fireEvent.change(select, { target: { value: 'at_login' } });
+    fireEvent.click(submit);
+    await waitFor(() => expect(window.location.pathname).toBe('/actions/act_5'));
+    expect(bodyOf('/api/orgs/org_a/actions')).toEqual({ kind: 'app.settings', params: { appId: 'app_1', identityEmail: 'at_login' } });
+  });
+
+  it('email sharing: the current value comes from settings.identityEmail; the review page names the change', async () => {
+    signedIn();
+    routes['/api/orgs/org_a/apps/app_1'] = { body: { app: { ...APP, settings: { ...APP.settings, identityEmail: 'on_request' } } } };
+    at('/orgs/org_a/apps/app_1');
+    expect(((await screen.findByLabelText(/^Email sharing/u)) as HTMLSelectElement).value).toBe('on_request');
+    expect(screen.getByText('When the app asks')).toBeTruthy();
+    cleanup();
+    routes['/api/actions/act_6'] = { body: { id: 'act_6', kind: 'app.settings', status: 'pending', decoded: { appId: 'app_1', appName: 'Wallet', changes: { identityEmail: 'off' } }, expiresAt: Date.now() + 300_000 } };
+    at('/actions/act_6');
+    expect(await screen.findByText('Email sharing: off')).toBeTruthy();
   });
 
   it('the outcome page: a refused confirmation says why, and no confirm button is left', async () => {
@@ -242,17 +275,55 @@ describe('the Users screen (D310, D346)', () => {
     expect(await screen.findByRole('link', { name: 'Users' })).toBeTruthy();
   });
 
-  it('shows the User ID, the Support ID, account kinds and wallets; nothing else', async () => {
+  const USER = { userId: 'u1_AbCdEfGhIjKlMnOpQrStUv', supportId: 'HANA-ABCD-EFGH', scopeId: 's1', createdAt: 0, lastSeenAt: 0, accounts: [{ kind: 'google', status: 'active' }, { kind: 'email', status: 'pending' }], wallets: [{ chain: 'evm', address: '0x52908400098527886E0F7030069857D2E4169EE7', firstSeenAt: 0, lastUsedAt: 0 }], email: null };
+  const usersOn = () => {
     routes['/api/me'] = { body: { ...ME, features: { users: true } } };
     routes['/api/orgs/org_a'] = { body: org('viewer') };
-    routes['/api/orgs/org_a/users'] = {
-      body: { users: [{ userId: 'u1_AbCdEfGhIjKlMnOpQrStUv', supportId: 'HANA-ABCD-EFGH', scopeId: 's1', createdAt: 0, lastSeenAt: 0, accounts: [{ kind: 'google', status: 'active' }, { kind: 'email', status: 'pending' }], wallets: [{ chain: 'evm', address: '0x52908400098527886E0F7030069857D2E4169EE7', firstSeenAt: 0, lastUsedAt: 0 }] }] },
-    };
+  };
+
+  it('shows the User ID, the Support ID, account kinds and wallets; an unshared email as "Not shared"; nothing else', async () => {
+    usersOn();
+    routes['/api/orgs/org_a/users'] = { body: { users: [USER] } };
     at('/orgs/org_a/users');
     expect(await screen.findByText('u1_AbCdEfGhIjKlMnOpQrStUv')).toBeTruthy();
     expect(screen.getByText('HANA-ABCD-EFGH')).toBeTruthy();
     expect(screen.getByText('Google, Email (pending)')).toBeTruthy();
     expect(screen.getByText(/0x52908400098527886E0F7030069857D2E4169EE7/u)).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Email' })).toBeTruthy();
+    expect(screen.getByText('Not shared')).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/@(?!partner\.example)/u);
+  });
+
+  it('a shared address in the Email column; the search hint names a full email address (exact match among shared ones)', async () => {
+    usersOn();
+    routes['/api/orgs/org_a/users'] = { body: { users: [{ ...USER, email: 'ada@user.example' }] } };
+    routes['/api/orgs/org_a/users?search=ada%40user.example'] = { body: { users: [{ ...USER, email: 'ada@user.example' }] } };
+    at('/orgs/org_a/users');
+    expect(await screen.findByText('ada@user.example')).toBeTruthy();
+    expect(screen.queryByText('Not shared')).toBeNull();
+    const box = screen.getByLabelText(/full email address/u);
+    expect(screen.getByText(/matches exactly, and only among the addresses users shared with your apps/u)).toBeTruthy();
+    fireEvent.change(box, { target: { value: ' ada@user.example ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await waitFor(() => expect(calls.some((c) => c.url === '/api/orgs/org_a/users?search=ada%40user.example')).toBe(true));
+  });
+
+  it('a user’s detail lists each app’s shared address with its date, or "Not shared"', async () => {
+    usersOn();
+    const sharedAt = Date.UTC(2026, 10, 2, 12);
+    routes['/api/orgs/org_a/users'] = { body: { users: [{ ...USER, email: 'ada@user.example' }, { ...USER, userId: 'u1_ZyXwVuTsRqPoNmLkJiHgFA', supportId: 'HANA-ZZZZ-ZZZZ' }] } };
+    routes['/api/orgs/org_a/users/u1_AbCdEfGhIjKlMnOpQrStUv'] = {
+      body: { user: { ...USER, email: 'ada@user.example', emails: [{ appId: 'app_1', appName: 'Wallet', email: 'ada@user.example', sharedAt }, { appId: 'app_2', appName: 'Shop', email: 'ada@work.example', sharedAt }] } },
+    };
+    routes['/api/orgs/org_a/users/u1_ZyXwVuTsRqPoNmLkJiHgFA'] = { body: { user: { ...USER, userId: 'u1_ZyXwVuTsRqPoNmLkJiHgFA', supportId: 'HANA-ZZZZ-ZZZZ', emails: [] } } };
+    at('/orgs/org_a/users');
+    fireEvent.click(await screen.findByRole('button', { name: 'Open u1_AbCdEfGhIjKlMnOpQrStUv' }));
+    const day = new Date(sharedAt).toLocaleDateString(undefined, { dateStyle: 'medium' });
+    expect(await screen.findByText(`Shared with Wallet on ${day}`)).toBeTruthy();
+    expect(screen.getByText(`Shared with Shop on ${day}`)).toBeTruthy();
+    expect(screen.getByText('ada@work.example')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Open u1_ZyXwVuTsRqPoNmLkJiHgFA' }));
+    await waitFor(() => expect(screen.queryByText(/Shared with Wallet/u)).toBeNull());
+    await waitFor(() => expect(screen.getAllByText('Not shared')).toHaveLength(2)); // the list row and the detail
   });
 });

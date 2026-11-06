@@ -76,11 +76,17 @@ const CASES = [
   { name: 'council key file copied elsewhere', files: { 'council-member.json': keyFile('hana-id-council-b-dev1.testnet') }, expect: ['near-ed25519-secret-key'] },
   { name: 'identity signing key file copied out of .secrets', files: { 'backup/identity-signing-key.json': `${privateJwk()}\n`, 'backup/identity-signing-key-standby.json': `${privateJwk()}\n` }, expect: ['hana-secret-file', 'hana-private-jwk'] },
   { name: 'identity sub key file', files: { 'copy/identity-sub-key': `${randomBytes(32).toString('base64')}\n` }, expect: ['hana-secret-file'] },
+  { name: 'email sharing key files (D418, D419)', files: { 'copy/identity-seal-key': `1:${randomBytes(32).toString('base64')}\n`, 'copy/email-consent-key': `${randomBytes(32).toString('base64')}\n` }, expect: ['hana-secret-file'] },
   { name: 'private JWK pasted into an innocent file', files: { 'src/key.ts': `export const KEY = ${privateJwk()};\n` }, expect: ['hana-private-jwk'] },
   {
     name: 'identity secrets as gen-wrangler --dev-vars writes them, pasted into a doc',
     files: { 'docs/dev.md': `IDENTITY_SIGNING_KEY='${privateJwk()}'\nIDENTITY_SUB_KEY='${randomBytes(32).toString('base64')}'\n` },
     expect: ['hana-worker-secret-assignment', 'hana-private-jwk'],
+  },
+  {
+    name: 'email sharing secrets as gen-wrangler --dev-vars writes them, pasted into a doc',
+    files: { 'docs/share.md': `EMAIL_CONSENT_KEY='${randomBytes(32).toString('base64')}'\n` },
+    expect: ['hana-worker-secret-assignment'],
   },
   { name: 'uid key file copied out of .secrets', files: { 'copy/user-id-key': `${randomBytes(32).toString('base64')}\n` }, expect: ['hana-secret-file'] },
   { name: 'USER_ID_KEY line pasted into a doc', files: { 'docs/usage.md': `USER_ID_KEY=${randomBytes(32).toString('base64')}\n` }, expect: ['hana-worker-secret-assignment'] },

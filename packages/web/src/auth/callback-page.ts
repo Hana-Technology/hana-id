@@ -55,6 +55,7 @@ import {
 } from './google.ts';
 import { type TakenLogin, storeLoginEntry, takeLogin, zeroTaken } from './login-storage.ts';
 import { type PageWindow, isFramed } from './page-window.ts';
+import { closeOrShare } from './share-handoff.ts';
 import { type SignalTimers, type VaultSignals, vaultSignals } from './vault-signal.ts';
 
 export interface CallbackPageDeps {
@@ -532,7 +533,8 @@ async function relayLeg(deps: CallbackRun, fragment: Exclude<CallbackFragment, {
   }
   zeroTaken(taken);
   d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Signed in'), d.h('p', { class: 'muted' }, 'You can close this window.')));
-  await deps.signals.postThenLeave('relayed', () => win.close());
+  // D411: an `at_login` app's popup goes on to the email sharing sheet instead of closing (share-handoff.ts).
+  await deps.signals.postThenLeave('relayed', () => closeOrShare(win, home, now()));
   return 'relayed';
 }
 

@@ -631,11 +631,14 @@ RPC. HEAD gives the same status and headers without a body.
 ```json
 { "v": 1, "appId": "string", "appName": "string", "scopeId": "string", "origins": ["string"],
   "settings": { "persistence": "session" | "none", "sessionTtlMs": 0, "idleTtlMs": 0,
-                "rawSign": "off" | "approval", "autoApprovePolicy": {} | null },
+                "rawSign": "off" | "approval", "autoApprovePolicy": {} | null, "mainnetDemo": true },
   "publishableKey": "string", "serverTimeMs": 0 }
 ```
 
-(`<`, `>`, `&`, U+2028, U+2029 escaped; no `signer`), then `<script type="module" src="/vault.js">`. Pending
+(`<`, `>`, `&`, U+2028, U+2029 escaped; no `signer`), then `<script type="module" src="/vault.js">`.
+`settings.mainnetDemo` (D426) is present, `true`, only when `GET /v1/app` would serve `mainnetDemo: true` (a dev
+testnet env, a test scope, the switch on); otherwise the key is absent, so a vault bundle older than the field never
+sees it. The vault tells the SDK early (its `mainnetDemo` port event) and re-reads `GET /v1/app` before signing. Pending
 `raw_sign` / auto-approve values apply from their `*_effective_at`. `origins`: the app's origins that are bare
 lowercase http(s) origins, loopback ones only for `pk_test_` in dev envs, sorted.
 

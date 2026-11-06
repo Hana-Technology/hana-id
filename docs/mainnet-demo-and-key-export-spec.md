@@ -1,6 +1,6 @@
 # Mainnet demo exception and key export additions: spec
 
-**Status: built on branch `feat/mainnet-demo-key-export`, not merged (2026-11-06).** Two security-sensitive features
+**Status: built on branch `feat/mainnet-demo-key-export`, not merged, not deployed (2026-11-06); self-reviewed (below).** Two security-sensitive features
 asked for by the user on 2026-11-06: an exception to D39 for the Sodax demo (a test app may sign small amounts on
 Base and Stellar's public network), and additions to key export (D40, D41, D59, D111, D258, D268), already built,
 so a user can always take their keys out if the testnet MPC fails. Decisions: D426–D429 (`docs/decisions.md`). This
@@ -35,7 +35,8 @@ contract call or the CKD payload; the API strips it before the relay.
   wallet's balance can be read and it is above $10, the approval says so strongly ("keep test funds under $10 — move
   the rest out"); a warning, never a block. Balance unknown is said as such.
 - Then: **exactly two mainnets**, Base (8453) and Stellar's public network; Sonic only if the swap needs the user to
-  sign on Sonic (it doesn't, below). Prices for ETH, XLM, USDC on Base and USDC on Stellar, identifiers verified from
+  sign on Sonic (it doesn't, below). Prices for ETH, XLM, USDC and EURC on Base and on Stellar (the tokens the sample's
+  swap lists), identifiers verified from
   official sources; anything unpriced fails closed.
 
 ### What the Sodax swap signs (checked against `@sodax/sdk` 2.2.0, the sample partner's version)
@@ -117,6 +118,8 @@ earlier): a higher price makes the cap stricter and the balance warning earlier,
 | USDC on Base | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` (Circle's USDC contract addresses page, 2026-11-06; Sodax's `baseSupportedTokens.USDC`) | 6 | $1.05 |
 | XLM | native; asset contract `CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA` | 7 | $1.00 |
 | USDC on Stellar | `USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN` (Circle's page); asset contract `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75` | 7 | $1.05 |
+| EURC on Base | `0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42` (Circle's EURC contract addresses page, 2026-11-06; Sodax's `baseSupportedTokens.EURC`) | 6 | $1.35 |
+| EURC on Stellar | `EURC:GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2` (Circle's page); asset contract `CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV` | 7 | $1.35 |
 
 The two Stellar asset contract ids are checked in a unit test against `Asset.contractId(pubnet passphrase)`, so they
 can't drift from the classic assets they wrap. Sodax addresses (asset managers, intents contract
@@ -125,6 +128,25 @@ pinned in a test.
 
 - **Per-transaction cap:** $9.99, fee included, values rounded up to the micro-dollar.
 - **Balance warning:** above $10.00 (`balanceWarnUsdMicros`).
+
+### What the page learns (the sample's FRICTION 18, 19, 21)
+
+The SDK's EVM provider used to refuse `wallet_switchEthereumChain` to Base and every transaction on it for a
+`pk_test_` key before the vault was asked, and Sodax's EVM adapter switches to 8453 first. Now:
+
+- The vault page inlines `mainnetDemo: true` for an app with the demo on (only then). The vault sends the SDK a
+  `mainnetDemo` port event with the rules, `{evmChains: [8453], stellarNetworkPassphrase, txCapUsdMicros: "9990000",
+  pricesReviewedAt, pricesValidUntilMs}`, right after the hello (before `ready`), and again when `GET /v1/app` changes it
+  (`null` after it was on). A production build never sends it. Older SDKs drop the unknown event.
+- The SDK validates it (only Base, only Stellar's public passphrase), keeps it as `hana.mainnetDemo` (with `txCapUsd:
+  "9.99"`), emits `mainnetDemoChanged`, and its EVM provider lets exactly `evmChains` through the early check. Nothing
+  else in the page relaxes; the vault still decides every request.
+- A cap refusal has its own reason, `mainnet_demo_over_cap`, with `data.usd` (the request's value) and `data.capUsd`.
+- The Stellar network is per call: the passphrase a signature request names wins (the Sodax Stellar provider's); the
+  vault doesn't compare it with `createHana`'s, the approval shows it, and `hana.stellar.getNetwork()` still reports
+  `createHana`'s own.
+- Valuation is the vault's own reviewed table, not the page's price source: a page that pre-checks with another
+  oracle should aim below the cap.
 
 ### The approval popup
 
@@ -150,8 +172,10 @@ A hot D1 column `apps.mainnet_demo` (migration 0013), only by Hana staff:
   on its Signing settings card), through `AdminRpc.setMainnetDemo`.
 - Refused unless the manifest's network is testnet **and** the env is a dev env (`isDevEnv`), and the app's scope is
   a test scope; a D1 trigger refuses `mainnet_demo = 1` for an app in a live scope whatever writes it.
-- Partners have no way to set it (no ConsoleRpc method, no console control); the console's app settings carry it as a
-  read-only flag, and the app's changes feed shows `mainnet_demo.on`/`.off`.
+- Partners have no way to set it (no ConsoleRpc method, no console control) and their console doesn't show it
+  (ConsoleRpc's app view leaves it out, which also keeps its read budget); the app's changes feed shows
+  `mainnet_demo.on`/`.off`, and the SDK's `hana.mainnetDemo` tells the partner's page (below). The staff view carries
+  it only in an env where it can be set (D420: no control that can't work).
 - On and off are immediate, each an `app_changes` row and a `settings_version` bump.
 
 ### Usage events
@@ -242,10 +266,38 @@ row 1.18 of `docs/mainnet-readiness.md` (D429).
 
 ## Security self-review
 
-Written after the build; findings and what was done about each.
+Written after the build (2026-11-06), reading the diff of `feat/mainnet-demo-key-export` against `develop` @ ad5f216
+for each threat in `docs/security.md` "The mainnet demo and key export". Severity is for a dev testnet env (the only
+place the demo exists); "fixed" means changed in this branch.
 
-(See the end of this file once the build is complete.)
+| # | Finding | Severity | Outcome |
+|---|---|---|---|
+| R1 | The first client change let Base through the SDK's early D39 check for **every** test app (the vault still refused without the demo), and it never learnt whether the app had the demo (the sample's FRICTION 18, 19) | medium (wrong behaviour, not a bypass) | **fixed**: the vault announces the demo (`mainnetDemo` event) and the provider opens exactly the chains it names; a test without the event refuses Base as before |
+| R2 | The early refusal check (D112) assumed the demo on, so an app without it would have got demo reasons ("over the cap") and a stale cached "off" would have refused a request the API allows, with no re-read | medium | **fixed**: in a demo build the mainnet part waits for `sign()`, which reads the setting fresh; consequence accepted: such a request may wake a dormant session before it is refused (dev envs only) |
+| R3 | `personal_sign` and `stellar_signMessage` stay allowed for a demo app (they name no network, D35). Most token-moving signatures are EIP-712 (refused on Base), but some protocols accept EIP-191 messages as orders; such a message is not valued or capped | medium | **open, to confirm** (D427): the popup shows the message in full; the option is to refuse messages for a demo app, which would break SIWE-style logins |
+| R4 | A signature approved while the demo was on is made even if staff turn it off while the popup is open (the setting is read before the popup, as for raw signing) | low | accepted: at most the one request on screen, still under the cap |
+| R5 | A deposit's recipient (the hub wallet in `to`) and the intent's destination aren't checked: a page can send the deposit to anyone | low | accepted by design: the cap bounds what leaves the wallet, whoever receives it; the hub calls are bounded to the deposit (`checkSodaxHubCalls`) |
+| R6 | The price table can go stale or be wrong (a live price couldn't be confirmed on 2026-11-06) | medium | mitigated: prices ≈2–3× the market where it was last known, rounded up, a 45-day expiry that refuses everything after; open: review before each demo (security.md (q)) |
+| R7 | Usage events are the vault's word; a compromised vault page could write false rows | low | accepted (security.md (p)): vault origin only, ≤ 120 per app per hour, labelled, nothing acts on them |
+| R8 | The approval popup now has `connect-src` to two public endpoints (dev builds only); it holds no key, only the request and the address | low | accepted: fixed origins in the build's meta policy and the Worker's header, which must agree (tested); production builds fetch nothing |
+| R9 | The balance read tells Base's public RPC and Horizon the user's IP and address | low | accepted: public data, the partner page reads the same; never the partner's RPC (it could lie) |
+| R10 | `user_events` holds an internal id or an address with times and isn't in C13's purge or `uid-erase` | medium (privacy) | **open**: `mainnet-readiness.md` 7.17; by hand meanwhile (`operations.md`) |
+| R11 | Deploy order: an API with the new reads before migration 0013, or a vault page inlining `mainnetDemo` to an older vault bundle | low | handled: every read of the new column or table falls back to off/empty; the page inlines the key only when on (demo apps in dev envs) |
+| R12 | Key material in the export window: the key string reaches only the screen (`textContent`), the clipboard (`writeText`) and the address check; no `fetch`, `postMessage`, storage, console or URL use in the module; the protocol's `hana_export` answers `null` and the export messages refuse any extra field | — | verified by tests (`export-page.test.ts` "the key never leaves this window"); the login body is built from public values and the token only |
+| R13 | A click carried from the launcher, a double click or a coached Enter could have revealed the key at once | low | **fixed**: the approval popup's guard on Continue, Show key and Copy key; the reveal screen starts the guard over |
+| R14 | A shown key could stay on an unattended screen until the 5 min erase | low | **fixed**: hidden again 60 s after Show |
+| R15 | `key_exported` could be skipped by a page | — | not possible: the API writes it at the export login, server-side; it over-reports (a sign-in that never showed the key), which is the safe side |
+| R16 | Production reachability of the demo | — | verified: four layers key on the env's own facts (vault build constants, API env, the writers, a D1 trigger for live scopes); tests for each (a production build ignores the inlined flag and sends no event; the API serves false in a production env; the CLI and AdminRpc refuse; the trigger refuses) |
+| R17 | Anything that changes a path or a derived key | — | none: no derivation, path, `app_id` or golden-vector change; `exportChain` is a label outside the nonce and the relayed call |
+
+Not reviewed here: the testnet MPC's own custody (D39's reason, unchanged; security.md (o)), and an external review,
+which this branch doesn't replace.
 
 ## Open items for the user
 
-See [the end of the self-review](#security-self-review).
+1. Confirm D427 (prices, the 45-day expiry, the valued shapes, immediate on/off, the balance endpoints) and D428's
+   mechanics; decide R3 (messages for a demo app).
+2. D429 / `mainnet-readiness.md` 1.18: does D41 (export mandatory, no partner switch) stand for mainnet?
+3. Apply migration 0013 on sandbox-dev, deploy (`docs/operations.md` "Mainnet demo and key export events"), then turn
+   the demo on for the Sodax demo app only, and off when the demo ends.
+4. Review the price table against a live source before the demo, and before 2026-12-21.

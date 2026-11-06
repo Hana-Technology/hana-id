@@ -7846,20 +7846,23 @@ free numbers on `origin/develop` (D425 the highest); renumber at the merge if an
 ### D427. The mainnet demo's mechanics: the price table, what can be valued, the freshness and the reads
 - Date 2026-11-06 · Status: **to confirm** (implementation choices while building D426) · Built: as D426
 - Decision:
-  1. **Prices** (`MAINNET_DEMO`, reviewed 2026-11-06): ETH $8,000, USDC $1.05 on Base and on Stellar, XLM $1.00, all
+  1. **Prices** (`MAINNET_DEMO`, reviewed 2026-11-06): ETH $8,000, USDC $1.05 and EURC $1.35 on Base and on Stellar, XLM $1.00, all
      deliberately above the market (a live price couldn't be confirmed; a higher price makes the cap stricter and the
      balance warning earlier). The table is valid 45 days (until 2026-12-21): after that every demo request is refused
      (`mainnet_demo_prices_stale`) until someone reviews it and rebuilds. Values are rounded up.
   2. **Identifiers**: USDC `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` (Base) and
-     `USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN` (Stellar) from Circle's USDC contract addresses
-     page; the Stellar asset contracts checked against `Asset.contractId(pubnet)` in a test; Sodax's asset managers,
+     `USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN` (Stellar), EURC
+     `0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42` (Base) and `EURC:GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2`
+     (Stellar), from Circle's USDC and EURC contract addresses pages (the tokens the sample's Sodax swap lists); the
+     Stellar asset contracts checked against `Asset.contractId(pubnet)` in a test; Sodax's asset managers,
      intents contract and hub assets from `@sodax/sdk` 2.2.0's packaged config, pinned in a test.
   3. **What is valued**: the maximum fee always; EVM plain sends, USDC `transfer`/`transferFrom`/`approve` (an
      approval valued as what it lets the spender take), and Sodax's spoke `transfer(address,bytes,uint256,bytes)` with
      its `data` either empty or exactly `[approve(intents, g ≤ amount), createIntent(inputToken = the hub asset,
      inputAmount ≤ g)]`, so the relayed hub calls can spend at most the deposit; Stellar payments and account creation
      in XLM or USDC, a USDC `changeTrust`, and Sodax's Stellar `transfer(from, token, amount, to, data)` from the signing
-     account with auth entries for exactly that call and the token's own transfer. Everything else is refused.
+     account with auth entries for exactly that call and the token's own transfer (USDC and EURC as well as XLM and
+     ETH). Everything else is refused.
   4. **Freshness**: the vault re-reads `GET /v1/app` when its `mainnetDemo` answer is older than 10 s (as raw
      signing); a failed re-read refuses (`mainnet_demo_unconfirmed`). The early refusal check (D112) leaves a demo
      build's mainnet request to `sign()`, so a stale "off" never refuses a request the API would allow.
@@ -7868,9 +7871,16 @@ free numbers on `origin/develop` (D425 the highest); renumber at the merge if an
   6. **The balance** is read by the approval popup (not the vault, which holds PRK) from Hana's pinned public
      endpoints (`https://mainnet.base.org`, `https://horizon.stellar.org`), listed in `/approve`'s CSP only in a dev
      testnet build; each read has a 4 s limit.
-  7. **The partner client's early check** lets a test app through on Base only; the vault's refusal (4100
-     `mainnet_not_allowed` when the demo is off) is the one that counts. For a test app without the demo,
-     `wallet_switchEthereumChain` to Base now succeeds and signing is refused by the vault (it was refused at switch).
+  7. **The partner client learns it from the vault** (the sample's FRICTION 18, 19, 21): the vault page inlines
+     `mainnetDemo: true` for such an app (only then, so an older vault bundle never sees the key), and the vault
+     sends the SDK a `mainnetDemo` port event with the rules (`evmChains`, the Stellar passphrase, the cap in USD
+     micros, the price table's review and expiry) after the hello, before `ready`, and again when `GET /v1/app`
+     changes it (`null` after "on"; never from a production build). The SDK's EVM provider opens its early D39 check
+     for exactly those chains (the event's validator accepts only Base), `hana.mainnetDemo` holds the rules and
+     `mainnetDemoChanged` says when they change. The vault still decides every request. Older SDKs drop the unknown
+     event (no D393 version gate needed). A cap refusal is its own reason, `mainnet_demo_over_cap`, with `data.usd`
+     and `data.capUsd`. The Stellar passphrase is per call (the Sodax provider's wins; the approval shows the
+     network); `hana.stellar.getNetwork()` still reports `createHana`'s.
   8. **Usage events** are the vault's report (the API can't check it), rate-limited to 120 per app per hour, labelled
      "as the vault reported it" in the admin console.
 - Why: each is the narrowest rule that lets the sample's swap (Base ETH → Stellar XLM) and its reverse work while

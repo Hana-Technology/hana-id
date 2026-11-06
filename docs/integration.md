@@ -11,7 +11,7 @@ popup, unless it falls under an auto-approve policy you set and the user accepte
 > for mainnet chains at all ([section 12](#12-test-and-live-keys)). This guide follows the code; the original
 > specification is `docs/batch-b-spec.md`.
 
-Last verified against code: 2026-11-05 (branch `feat/sdk-error-request-id`: the API request ID in the SDK's errors, `error.requestId` / `data.requestId`, SDK 0.2.0 or later, in section 4's "Support ID", section 13's intro and its new "Getting help", D405); 2026-11-05 (branch `fix/popup-early-close-deadline`: a popup closed within seconds of reaching Google's page ends in about 90 s with `login_cancelled`, in section 4 and the error table, D398); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/batch-c-15`: the user's Support ID in the SDK, `hana.supportId`, `supportIdChanged`, `useHana().supportId`, the approval popup, for SDK 0.2.0 or later, and the install lines' 0.2.0 tarballs; section 4 "Support ID"); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: `derive_failed`'s `webcrypto_unsupported` and `webcrypto_failed` in the error table, D385); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `feat/user-id-identity-sub`: section 15's `sub` row, the User ID and Support ID, D346); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: D347's closed popup in section 4 and the error table, D348's Google-only screen; a cancel on Google's sign-in screen goes back to the chooser, closing there is `login_cancelled`, in "Sign-in methods and links" and the error table; D341); 2026-11-04 (branch `fix/abandoned-login-freeze`: an unfinished login and `login_timeout`'s
+Last verified against code: 2026-11-06 (branch `feat/mainnet-demo-key-export`: section 12's "The mainnet demo" (Hana staff only, sandbox only: `hana.mainnetDemo`, `mainnetDemoChanged`, the cap and its refusal codes, the Stellar network per call), section 4's key export (60 s auto-hide, the guarded reveal, staff see each export), D426–D428); 2026-11-05 (branch `feat/sdk-error-request-id`: the API request ID in the SDK's errors, `error.requestId` / `data.requestId`, SDK 0.2.0 or later, in section 4's "Support ID", section 13's intro and its new "Getting help", D405); 2026-11-05 (branch `fix/popup-early-close-deadline`: a popup closed within seconds of reaching Google's page ends in about 90 s with `login_cancelled`, in section 4 and the error table, D398); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/batch-c-15`: the user's Support ID in the SDK, `hana.supportId`, `supportIdChanged`, `useHana().supportId`, the approval popup, for SDK 0.2.0 or later, and the install lines' 0.2.0 tarballs; section 4 "Support ID"); 2026-11-05 (branch `fix/webcrypto-linux-webkit`: `derive_failed`'s `webcrypto_unsupported` and `webcrypto_failed` in the error table, D385); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-04 (branch `feat/user-id-identity-sub`: section 15's `sub` row, the User ID and Support ID, D346); 2026-11-04 (branch `fix/google-cancel-back-to-chooser`: D347's closed popup in section 4 and the error table, D348's Google-only screen; a cancel on Google's sign-in screen goes back to the chooser, closing there is `login_cancelled`, in "Sign-in methods and links" and the error table; D341); 2026-11-04 (branch `fix/abandoned-login-freeze`: an unfinished login and `login_timeout`'s
 `data.stage`); 2026-11-04 (branch `feat/token-first-on`: "Sign-in methods and links": Google's one
 sign-in screen lists the email, cancelling it, the two-accounts screen; D270); 2026-11-03 (branch `feat/email-login-8b` review fixes: the email permission's screens and
 reasons, `api_unavailable`'s `path_unconfirmed` / `path_disputed`, `storage_unavailable` in a login, `hana.account()`'s
@@ -315,6 +315,10 @@ button.addEventListener('click', async () => {
   shared key, whichever method the user signs in with; a pending method exports nothing. That window keeps the key for 5 minutes at most, and erases it as soon as the user's session in your
   app ends (`logout()`, revoke, expiry); exporting again starts over with a new sign-in. Stellar keys export as `S…`, EVM keys as `0x…` hex. There is no recovery phrase. Each export is a NEAR
   transaction Hana pays for, so one account can export at most 3 times an hour per app (`rate_limited` after that).
+  A shown key hides again after 60 seconds, and Continue and Show key need the user's own deliberate click (the
+  approval window's guard). Hana records each export (user, app, chain, time; never the key) for its support staff.
+  Offer an "Export private key" entry in your account screen that calls `exportKey`: export is how users keep their
+  funds if Hana's key service ever can't derive their key, so don't hide it. No SDK method returns a key.
 
 ## 5. Your page: origins, CSP, popups
 
@@ -745,7 +749,7 @@ const evmProvider = createSodaxEvmProvider(hana, { chainId: 8453, rpcUrl });    
 | Loopback origins (`http://localhost:…`) | allowed, in `local*`/`sandbox*` envs only | never |
 | Login result | carries per-stage `timings` (`hana.lastLogin.timings`, below); the handshake and unlock's are `hana.readyTimings` | no timings (`hana.readyTimings` is null) |
 | Direct API calls from your page (`/v1/sessions`, `/v1/derive`) | only in sandbox envs, for test tooling such as `apps/smoke` | never |
-| Networks | test networks only: any Stellar network but the public one, and the EVM chains below | any |
+| Networks | test networks only: any Stellar network but the public one, and the EVM chains below (the mainnet demo excepted, below) | any |
 
 A test app's keys come from the testnet MPC, which can lose or leak them, so its vault refuses anything a mainnet would
 accept (`4100`, `data.reason: 'mainnet_not_allowed'`, before any popup or policy): a Stellar transaction or auth entry
@@ -759,6 +763,28 @@ EVM chains a test app may use: Sepolia (11155111), Holesky (17000), Hoodi (56004
 Sepolia (421614), OP Sepolia (11155420), Sonic testnet (14601), Sonic Blaze testnet (57054), BNB Smart Chain testnet
 (97), Polygon Amoy (80002), Avalanche Fuji (43113), and local chains 31337 and 1337 (`TEST_EVM_CHAINS` in
 `@hana-id/core`). Ask Hana to add another testnet.
+
+**The mainnet demo (Hana staff only, sandbox envs only).** For a partner demo on a protocol with no testnet (Sodax),
+Hana can switch one test app to a narrow exception: it may sign on **Base (8453)** and **Stellar's public network**, at
+most **$9.99 per transaction** (its maximum fee included), every request through Hana's approval window with a red
+"Real funds, test custody: these funds may be lost" banner, the request's value and the wallet's balance (with a
+warning above $10). You can't turn it on or see the switch in the console; ask Hana. It never exists in production.
+
+- `hana.mainnetDemo` is `null`, or `{evmChains: [8453], stellarNetworkPassphrase, txCapUsd: '9.99', txCapUsdMicros,
+  pricesReviewedAt, pricesValidUntilMs}` once the vault says the app has it (`mainnetDemoChanged` fires when it
+  changes). Only then does `hana.ethereum` let `wallet_switchEthereumChain` and transactions on Base through (needs
+  this SDK; an older one refuses Base in the page). Show the exception to your users from it, not from a guess.
+- Hana values each request itself, with its own reviewed, deliberately high prices (not your price source): native ETH
+  and XLM, USDC and EURC on Base and Stellar; a plain send, an ERC-20 `transfer`/`transferFrom`/`approve` (an approval
+  counts as what it allows), Sodax's asset-manager deposit with Sodax's own hub calls, Stellar payments, account
+  creation, a USDC or EURC trustline, and Sodax's Stellar deposit. If you pre-check, aim well under the cap.
+- Refusals (`4100`, before any window): `mainnet_demo_over_cap` (`data.usd`, the request's value, and `data.capUsd`),
+  `mainnet_demo_unknown_call` (a call, operation or typed data Hana can't value), `mainnet_demo_unpriced` (an asset
+  with no price), `mainnet_demo_prices_stale` (Hana's price table expired), and `mainnet_not_allowed` for any other
+  mainnet. Hana's own launcher says why, too. Nothing on a demo network is ever auto-approved.
+- Stellar's network is per call: pass `{networkPassphrase: Networks.PUBLIC}` to `hana.stellar.signTransaction` (the
+  Sodax Stellar provider does); it wins over `createHana`'s, and the approval window shows it. `hana.stellar.getNetwork()`
+  still reports `createHana`'s network.
 
 A test app and a live app never share a scope. Your staging and production apps therefore give the same Google
 account **different addresses** (D51). Wallets made with test keys are disposable.

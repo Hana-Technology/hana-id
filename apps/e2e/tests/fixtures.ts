@@ -483,6 +483,20 @@ export async function approve(popup: Page, label: 'Approve' | 'Allow' = 'Approve
   await button.click();
 }
 
+/**
+ * A click on a button behind the guard (approve-guard.ts): the export window's Continue, Show key and Copy key (D428)
+ * wait 1 s after their screen and a moving pointer, as Approve does.
+ */
+export async function guardedClick(page: Page, name: string): Promise<void> {
+  const button = page.getByRole('button', { name, exact: true });
+  await expect(button).toBeVisible();
+  await page.waitForTimeout(1_100);
+  await page.mouse.move(5, 5);
+  await page.mouse.move(40, 40, { steps: 3 });
+  await expect(button).toBeEnabled();
+  await button.click();
+}
+
 export async function reject(popup: Page): Promise<void> {
   await popup.getByRole('button', { name: 'Reject', exact: true }).click();
 }

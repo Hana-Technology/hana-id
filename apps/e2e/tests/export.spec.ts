@@ -5,7 +5,7 @@
 import { addressOfExport } from '@hana-id/core';
 import type { Page } from '@playwright/test';
 import { AUTH_ORIGIN } from '../src/stack.ts';
-import { LOGIN_ENDPOINT, chooseAccount, clickLauncher, expect, login, newApp, okValue, openPartner, runAction, test } from './fixtures.ts';
+import { LOGIN_ENDPOINT, chooseAccount, clickLauncher, expect, guardedClick, login, newApp, okValue, openPartner, runAction, test } from './fixtures.ts';
 
 for (const chain of ['stellar', 'evm'] as const) {
   test(`export completes for ${chain} through the export-mode child popup`, async ({ page, google, requests, browserName }) => {
@@ -30,11 +30,11 @@ for (const chain of ['stellar', 'evm'] as const) {
     expect(google.requests.at(-1)).toMatchObject({ ok: true, request: { maxAge: '0' } });
 
     await exportWindow.getByRole('textbox').fill('EXPORT');
-    await exportWindow.getByRole('button', { name: 'Continue' }).click();
+    await guardedClick(exportWindow, 'Continue');
     // Show key / Hide key (D268): one click shows it, and it stays shown (and selectable) until the next click.
     const secret = exportWindow.locator('code.secret');
     await expect(secret).toHaveText('••••••••');
-    await exportWindow.getByRole('button', { name: 'Show key' }).click();
+    await guardedClick(exportWindow, 'Show key');
     const keyText = chain === 'stellar' ? /^S[A-Z2-7]{55}$/u : /^0x[0-9a-f]{64}$/u;
     await expect(secret).toHaveText(keyText);
     const shown = (await secret.textContent()) ?? '';

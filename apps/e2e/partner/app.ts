@@ -176,6 +176,17 @@ const actions: Record<string, (...args: never[]) => Promise<unknown>> = {
   requestAutoApprove: () => hana.requestAutoApprove(),
   signRaw: (params: Parameters<typeof hana.signRaw>[0]) => hana.signRaw(params),
   stellarSignMessage: (message: string) => hana.stellar.signMessage(message),
+  // The mainnet demo (D426): a payment of `amount` XLM on Stellar's public network, which only a demo app may sign.
+  stellarSignPubnet: async (amount: string) => {
+    const address = stellarAddress();
+    const xdr = new TransactionBuilder(new Account(address, '100'), { fee: '100', networkPassphrase: Networks.PUBLIC })
+      .addOperation(Operation.payment({ destination: OTHER_STELLAR, asset: Asset.native(), amount }))
+      .setTimeout(300)
+      .build()
+      .toXDR();
+    const r = await hana.stellar.signTransaction(xdr, { networkPassphrase: Networks.PUBLIC });
+    return { signerAddress: r.signerAddress };
+  },
   stellarSignTx: async () => {
     const address = stellarAddress();
     const r = await hana.stellar.signTransaction(paymentXdr(address));

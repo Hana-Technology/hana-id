@@ -61,6 +61,11 @@ let ready: 'pending' | 'ok' | 'error' = 'pending';
 let readyError: unknown = null;
 /** `data.reason` of a vault_unavailable (the SDK's vault-connection.ts), or null. */
 let readyErrorReason: unknown = null;
+/** `data.origin` of a `no_answer` (the page origin the SDK names), or null. */
+let readyErrorOrigin: unknown = null;
+/** ms from the client's creation to `ready` settling. */
+const createdAt = performance.now();
+let readyMs: number | null = null;
 
 hana.ready.then(
   () => {
@@ -70,6 +75,8 @@ hana.ready.then(
     ready = 'error';
     readyError = e instanceof HanaError ? e.code : String(e);
     readyErrorReason = e instanceof HanaError ? ((e.data as { reason?: unknown } | undefined)?.reason ?? null) : null;
+    readyErrorOrigin = e instanceof HanaError ? ((e.data as { origin?: unknown } | undefined)?.origin ?? null) : null;
+    readyMs = performance.now() - createdAt;
   },
 );
 for (const name of ['statusChanged', 'accountsChanged', 'sessionExpired', 'disconnect', 'launcher', 'loginProgress', 'autoApproved', 'identityTokenChanged', 'linkChanged'] as const) {
@@ -254,6 +261,12 @@ const e2e = {
   },
   get readyErrorReason() {
     return readyErrorReason;
+  },
+  get readyErrorOrigin() {
+    return readyErrorOrigin;
+  },
+  get readyMs() {
+    return readyMs;
   },
   status: () => hana.status,
   addresses: () => hana.addresses,

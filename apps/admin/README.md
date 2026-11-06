@@ -147,8 +147,8 @@ screen (D420; tests `test-spa/ux.test.ts`).
   the new page's heading after a navigation, a visible focus ring, keyboard-only flows, AA contrast in the light and
   the dark theme (`prefers-color-scheme`), layouts that hold at 1024 px (wide tables scroll inside their panel).
 - **Security unchanged**: same routes, bodies, CSRF headers and Access flow; text-only DOM (no HTML sink), no inline
-  script or style, no external font or file; the Users detail and the Support ID lookup stay in memory; nothing in
-  `localStorage`.
+  script or style, no external font or file (the brand fonts are this Worker's own assets, D426); the Users detail and
+  the Support ID lookup stay in memory; nothing in `localStorage`.
 - **Sign-in expiry is said, never a network error** (D424; tests `test-spa/session.test.ts`). The Access session lasts
   1 h (D409) and ends silently: Access then answers every `/api/*` request with a redirect to its login page on the
   team's origin, which a followed `fetch` reports as a network error (CORS). Every request is sent with `redirect:
@@ -180,6 +180,42 @@ dialogs → in-page confirmations; "bits 2", "Clear bit 4", "Seen kids", D-numbe
 `key: value` pairs; empty tables reading "None" → what is missing or what to do; unlabeled placeholder-only inputs →
 labels with help; a 19-column report → the main columns with "Show every column".
 
+## Brand (D426)
+
+The SPA wears Hana's brand, shared with the partner console and the sign-in pages through `packages/brand` (asked for
+by the user 2026-11-06). The staff console's own cue: the left nav is Hana ink in both themes (the partner console's
+is light), so the two consoles never look alike; the env badge is solid amber on it, in both themes.
+
+| Token | Light | Dark | Source |
+|---|---|---|---|
+| Page, cards, card grey | `#faf9fe`, `#ffffff`, `#f4f2f9` | `#0d0229`, `#170b36`, `#1f133f` | hanawallet.io `bg-[#FAF9FE]`; hana-app `palette.gray.cards`, `paletteDark.blacker`, `paletteDark.cards` |
+| Ink, purple text, meta | `#16073a`, `#4c3d7f`, `#665d80` | `#f1edfc`, `#d4c5f9`, `#a99cc9` | hana-app `palette.black`, `newColors.lightPurple`; hanawallet.io `hana-purple`; `palette.gray.meta` darkened for AA |
+| Lines | `#e6e0f7`, `#c9bfe6` | `#2c1b57`, `#4a3683` | hana-app `newColors.whitePurple`, `paletteDark.divider` |
+| Accent (one) | `#3308a8` | `#bba8f6` | hana-app `palette.primary`, `paletteDark.offPurple` lifted |
+| Focus | `#6256e9` | `#c9a3f0` | hana-app `gradientColors[0]` |
+| Gradient (decoration only) | `#6256e9 → #7e5deb → #d772d3` | same | hana-app `gradientColors`, hanawallet.io `bg-custom-gradient` |
+| Left nav | `#16073a`, text `#d4c5f9`, active `#d4c5f9` on ink | `#150931` | hana-app `logo-hana-new.svg` |
+| State | ok `#146c3d`, warn `#7a4f00`, danger `#b3261e` | `#7dd3a3`, `#f0c565`, `#f4908a` | not Hana purples, on purpose (a test checks their hue) |
+
+**Type.** Montserrat (400, 500, 600, 700) for text and Montserrat Alternates (700) for page titles, the verdict and the
+brand: the faces hanawallet.io and Hana's apps use (`font-montserrat`, `font-montserratalt`). Hana's own files
+(hana-extension `src/static/fonts`, Montserrat v8.000, Montserrat Alternates v7.200), SIL Open Font License 1.1,
+subset to Latin and WOFF2 (16.8–17.4 KB each), served from this Worker's own assets (`public/fonts/`, beside their
+`OFL.txt`) through same-origin `@font-face` (CSP `font-src 'self'`, unchanged); a character outside Latin falls back to
+the system font. Ids and keys stay in the system monospace with tabular figures. Hana's apps also use Proxima Nova and
+PP Agrandir: both are commercial licences that don't cover this use, so neither is shipped.
+
+**Shape.** Pill buttons and nav items (hanawallet.io `rounded-full`), 16 px panels with a purple-tinted shadow, 10 px
+inputs and tables, square-cornered state badges (so a badge never reads as a button), Hana's gradient as a 3 px rule
+on top of the nav only. The mark is drawn inline in `index.html` from `packages/brand` (`MARK_PATHS`; hana-extension's
+`hana.svg`): no image request.
+
+**Keeping it in step.** The SPA has no build: `public/fonts/` and the block at the top of `public/app.css` are copies of
+`packages/brand` (`fonts.css`, `tokens.css`), made by `corepack pnpm --filter @hana-id/admin sync-brand`. A source
+check fails when either drifts, when `public/fonts/` holds anything else, when the stylesheet loads anything but those
+fonts, and when the nav's own colours miss AA (`scripts/test/gen-wrangler.test.ts`); `packages/brand`'s tests check the
+fonts' own licence strings and every token pair in both themes.
+
 ## Local preview (design work and screenshots only)
 
 ```sh
@@ -196,7 +232,8 @@ the warning at once and the expired banner 4 minutes later; `0.4` the expired ba
 grants, a frozen one, one without a security contact), apps, users, a Support ID lookup, the feed, monitoring,
 upgrades, the real playbooks, reports, statements, rates and retention. Writes succeed, except the refusals the real
 services give for `org_legacy`. It binds to the loopback address, has no Access, secret or network, and is not part
-of the Worker (wrangler serves `public/` alone; a source check keeps `public/` to the SPA's three files).
+of the Worker (wrangler serves `public/` alone; a source check keeps `public/` to the SPA's three files and the brand
+fonts, D426).
 
 ## Layout
 
@@ -214,7 +251,8 @@ of the Worker (wrangler serves `public/` alone; a source check keeps `public/` t
 | `src/status.ts`, `src/status-probes.ts` | the System status page (D425): the sources, every check, the verdict, the 30 s cache; the counted build and NEAR reads |
 | `src/retention*.ts` | C13's monthly job and screen |
 | `src/email/` | the `EmailSender` (SendGrid, `sendgridSender`) and every message; `src/mail.ts` `sendToAll` skips a message this isolate saw accepted (SendGrid has no idempotency key, D401) |
-| `public/` | the SPA (no build, text only: a source check forbids HTML sinks and browser dialogs) |
+| `public/` | the SPA (no build, text only: a source check forbids HTML sinks and browser dialogs) and `fonts/`, the brand's fonts (copied from `packages/brand`, D426) |
+| `scripts/sync-brand.ts` | copies `packages/brand`'s fonts and tokens into `public/` (`sync-brand`) |
 | `test-spa/` | the SPA's DOM tests (`boot.ts` runs `public/app.js` in happy-dom) and the local preview (`preview.ts`, `preview-data.ts`, `preview-status.ts`: the status page's scenarios over the real `buildStatus`, typechecked with `test-ops/`) |
 | `scripts/gen-wrangler.ts` | `wrangler.jsonc` from the manifest's dashboard blocks (`ISSUER` when the env has an email issuer) |
 
@@ -224,6 +262,7 @@ of the Worker (wrangler serves `public/` alone; a source check keeps `public/` t
 corepack pnpm --filter @hana-id/admin test        # Worker tests over the real API, console and email issuer Workers, the config and source checks, the ops store on PGlite, the SPA in happy-dom
 corepack pnpm --filter @hana-id/admin typecheck
 corepack pnpm --filter @hana-id/admin preview     # the SPA on 127.0.0.1:8788 with fake data (above)
+corepack pnpm --filter @hana-id/admin sync-brand  # after a change to packages/brand: its fonts and tokens into public/ (D426)
 corepack pnpm --filter @hana-id/admin gen <env> [--admin-hyperdrive-id <id>|off]
 corepack pnpm --filter @hana-id/admin run deploy     # after the API, the console and (for Users) the email issuer; stamped with the build id (D406)
 ```
@@ -236,7 +275,7 @@ lookup screen and the Users screen's ways into it (`support.test.ts`), the UI pr
 the sign-in's end: the Access redirect, Try again, the warning (`session.test.ts`), and the System status page over each
 preview scenario's real answer (`status.test.ts`); the status route's checks, call count and cache are `test/status.test.ts`.
 
-Last verified: 2026-11-06 (branch `feat/admin-system-status`: the System status page, its checks, budget and preview scenarios, D425); 2026-11-06 (branch `fix/session-expiry-ux`: the sign-in's end said as such, Try again, the warning
+Last verified: 2026-11-06 (branch `feat/hana-brand`: "Brand", the SPA in Hana's brand, `public/fonts`, `sync-brand`, the amended source check, D426); 2026-11-06 (branch `feat/admin-system-status`: the System status page, its checks, budget and preview scenarios, D425); 2026-11-06 (branch `fix/session-expiry-ux`: the sign-in's end said as such, Try again, the warning
 before `exp`, `GET /api/me` `accessExp`, `/signed-in`, the preview's `PREVIEW_SESSION_MIN`, `session.test.ts`, D424);
 2026-11-06 (branch `feat/admin-ux-redesign`: the grouped nav and screens, "UI principles", the local preview, `ux.test.ts`, D420); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: email through SendGrid, D401); 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy`, stamped with the build id, read by `deploy-check` from the deployed version, D406); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup screen, `src/support.ts`'s email join,
 the SPA tests, D399); 2026-11-05 (branch `feat/batch-c-8b`: written with the Users screen, D388–D392).

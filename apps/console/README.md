@@ -4,7 +4,8 @@ The partner console: one Worker (`hana-id-console-<env>`) on `console.origin` th
 `/api/*` backend, with partner sign-in through console-auth. Routes, sessions, CSRF, fresh sign-in and the write paths
 are in `docs/api.md` ("Console Worker"); the security properties in `docs/security.md` ("Console Worker").
 
-Last verified: 2026-11-06 (branch `fix/session-expiry-ux`: the session's end mid-task, the banner, the warning before
+Last verified: 2026-11-06 (branch `feat/hana-brand`: Hana's brand, its tokens, fonts and mark, "Brand" below, D426);
+2026-11-06 (branch `fix/session-expiry-ux`: the session's end mid-task, the banner, the warning before
 the 12 h end, `GET /api/me` `sessionExpiresAt`, the preview's two session scenarios, D424); 2026-11-06 (branch
 `feat/console-ux-redesign`: the SPA's layout, error display and the local preview, D421).
 
@@ -24,8 +25,9 @@ the 12 h end, `GET /api/me` `sessionExpiresAt`, the preview's two session scenar
 
 ## The SPA's rules
 
-- **CSP** `script-src 'self'; style-src 'self'`: no inline script or style anywhere, no `style` prop, no external URL,
-  no font file; every style is a class in `web/src/styles.css` (light, and dark through `prefers-color-scheme`).
+- **CSP** `script-src 'self'; style-src 'self'; font-src 'self'`: no inline script or style anywhere, no `style` prop,
+  no external URL; the only font files are Hana's own, bundled from `packages/brand` ("Brand" below); every style is a
+  class in `web/src/styles.css` (light, and dark through `prefers-color-scheme`).
 - **No HTML injection, no browser storage, same origin only**: checked over `web/src` by `scripts/test/spa-build.test.ts`.
 - **Requests**: every write is `postJson`/`postBytes` (`web/src/api.ts`) with the CSRF header; a change marked
   "fresh sign-in" is built by `POST /api/orgs/:org/actions` and confirmed on `/actions/:id`.
@@ -50,6 +52,32 @@ the 12 h end, `GET /api/me` `sessionExpiresAt`, the preview's two session scenar
   before the next click. The 2 h idle end isn't warned of: each request moves it, and a check to find it would itself
   count as activity. The fresh sign-in page says when the session ends inside the confirmation's 5 minutes (the
   confirmation counts only with the session that started it, `session_ended`).
+
+## Brand
+
+The SPA wears Hana's brand (D426) from `packages/brand`, the set the staff admin console and the sign-in and approval
+pages share: `web/src/styles.css` starts with `@import '@hana-id/brand/fonts.css'` and `'@hana-id/brand/tokens.css'`
+and maps its own variables (`--ink`, `--accent`, `--ok`…) onto the `--hana-*` tokens.
+
+- **Colours** (light / dark): ink `#16073a` / `#f1edfc`, page `#faf9fe` / `#0d0229`, cards `#ffffff` and `#f4f2f9` /
+  `#170b36` and `#1f133f`, lines `#e6e0f7` / `#2c1b57`; the one accent Hana indigo `#3308a8` (dark: light purple
+  `#bba8f6` with ink on it); focus `#6256e9` / `#c9a3f0`, as a two-ring outline; the gradient `#6256e9 → #7e5deb →
+  #d772d3` only as the thin rule under the brand. State keeps its own non-purple colours (green, amber, red), so a
+  state never reads as an accent; every text pair is WCAG AA in both schemes (`packages/brand` test).
+- **Type**: Montserrat (400–700) for text, Montserrat Alternates (700) for page titles and the brand; tabular figures
+  for numbers; ids and keys in the system monospace stack.
+- **Shape**: pill buttons, badges and nav items (as hanawallet.io's), 16 px cards with a purple-tinted shadow.
+- **Mark**: the Hana mark (`MARK_PATHS` from `@hana-id/brand`, Hana's own `hana.svg`) drawn inline in the sidebar and on
+  the sign-in card; a partner app without a logo gets a neutral initial tile, never Hana's colours.
+- **Sources**: Hana's apps' design tokens (`hana-app` `src/utils/designTokens.ts`, `hana-extension`
+  `src/common/utils/designTokens.ts`) and hanawallet.io's stylesheet (`--lf-ink`, `--lf-line`, `--lf-accent-from/-to`,
+  the `hana-*-purple` colours).
+- **Fonts**: Montserrat Version 8.000 and Montserrat Alternates Version 7.200, the files Hana's extension ships, under
+  the SIL Open Font License 1.1, subset to Latin as WOFF2 (about 17 KB each). Vite bundles them as
+  `/assets/<name>-<hash>.woff2` (never a `data:` URL: `assetsInlineLimit: 0`) and `vite.config.ts` emits the licence
+  beside them as `/assets/OFL.txt`; `scripts/test/spa-build.test.ts` checks each built font is the brand package's file
+  byte for byte, the licence is there and the stylesheet loads nothing else. Hana's apps also use Proxima Nova and PP
+  Agrandir: both are commercial and not shipped here.
 
 ## Commands
 

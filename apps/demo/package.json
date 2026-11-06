@@ -19,6 +19,7 @@
     "@hana-id/web": "workspace:*"
   },
   "devDependencies": {
+    "@hana-id/brand": "workspace:*",
     "@hana-id/env": "workspace:*",
     "@types/node": "22.20.5",
     "happy-dom": "21.0.3",

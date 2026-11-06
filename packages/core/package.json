@@ -23,7 +23,8 @@
     "./decode": "./src/decode/index.ts",
     "./policy": "./src/policy/index.ts",
     "./mainnet-demo": "./src/mainnet-demo.ts",
-    "./demo-config": "./src/demo-config.ts"
+    "./demo-config": "./src/demo-config.ts",
+    "./support-id": "./src/support-id.ts"
   },
   "files": [
     "dist",
@@ -66,6 +67,10 @@
       "./demo-config": {
         "types": "./dist/demo-config.d.ts",
         "import": "./dist/demo-config.js"
+      },
+      "./support-id": {
+        "types": "./dist/support-id.d.ts",
+        "import": "./dist/support-id.js"
       },
       "./package.json": "./package.json"
     },

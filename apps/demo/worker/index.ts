@@ -22,7 +22,7 @@ export interface DemoWorkerEnv {
 }
 
 /** Hashed bundle files (Vite's `assets/<name>-<hash>.<ext>`) never change under one name. */
-const IMMUTABLE = /^\/assets\/[\w.-]+-[\w-]{8,}\.(?:js|css)$/u;
+const IMMUTABLE = /^\/assets\/[\w.-]+-[\w-]{8,}\.(?:js|css|woff2)$/u;
 
 function plain(status: number, text: string, head: boolean, extra: Record<string, string> = {}): Response {
   return new Response(head ? null : `${text}\n`, {

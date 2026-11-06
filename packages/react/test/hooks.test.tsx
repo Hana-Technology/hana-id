@@ -123,6 +123,47 @@ describe('useHana', () => {
     expect(m.renders.last.hana).toMatchObject({ status: 'logged_in', addresses: { stellar: STELLAR, evm: EVM }, persistence: 'none', error: null });
   });
 
+  it("login(options) passes hana.login()'s options (method, emailHint); onClick={login} passes none", async () => {
+    const m = mount();
+    await act(() => m.vault.connect(LOGGED_OUT));
+    m.vault.handle('hana_login', () => 'manual');
+    // The click handler's event is not an option.
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    await settle();
+    const fromClick = m.vault.last('hana_login');
+    expect(fromClick.params ?? {}).toEqual({});
+    act(() => {
+      void m.renders.last.hana.login({ method: 'email', emailHint: 'ada@example.com' });
+    });
+    await settle();
+    const withOptions = m.vault.last('hana_login');
+    expect(withOptions.id).not.toBe(fromClick.id);
+    expect(withOptions.params).toEqual({ method: 'email', emailHint: 'ada@example.com' });
+    await act(async () => {
+      m.vault.emit('loginProgress', { stage: 'popup_connected' });
+      m.vault.reply(withOptions.id, LOGIN_RESULT);
+    });
+    await settle();
+    expect(m.renders.last.hana).toMatchObject({ status: 'logged_in', addresses: { stellar: STELLAR, evm: EVM }, error: null });
+  });
+
+  it('login with bad options rejects with -32602 before any popup (a call error, not a failed login)', async () => {
+    const m = mount();
+    await act(() => m.vault.connect(LOGGED_OUT));
+    const open = vi.spyOn(window, 'open');
+    let outcome: unknown;
+    act(() => {
+      m.renders.last.hana.login({ method: 'phone' } as never).catch((e: unknown) => {
+        outcome = e;
+      });
+    });
+    await settle();
+    expect(outcome).toBeInstanceOf(HanaError);
+    expect((outcome as HanaError).code).toBe(-32602);
+    expect(open).not.toHaveBeenCalled();
+    expect(m.renders.last.hana.status).toBe('logged_out');
+  });
+
   it('a failed login sets error and returns to logged_out; the next login clears the error', async () => {
     const m = mount();
     await act(() => m.vault.connect(LOGGED_OUT));

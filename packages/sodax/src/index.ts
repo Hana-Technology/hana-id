@@ -1,5 +1,5 @@
 // @hana-id/sodax (optional): `IStellarWalletProvider` and `IEvmWalletProvider` adapters over @hana-id/web, typed
-// against @sodax/types 2.1.0 (docs/batch-b-spec.md, Sodax adapter):
+// against @sodax/types 2.2.0 (docs/batch-b-spec.md, Sodax adapter):
 //
 //   const hana = createHana({ publishableKey, environment, stellar: {...}, evm: { chains: [{ id: 8453, rpcUrl }], ... } });
 //   const stellar = createSodaxStellarProvider(hana, { networkPassphrase, horizonUrl, sorobanRpcUrl });

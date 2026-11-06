@@ -11,11 +11,14 @@
 //                                                               and the build id (`<meta name="hana-build">`, D384)
 //   assets/*.js, assets/*.css                                   content-hashed bundles (no inline script or style),
 //                                                               served at /assets/…
+//   assets/files/*.woff2, assets/files/OFL.txt                  the brand's fonts the stylesheet names (D426),
+//                                                               content-hashed, and their licence beside them
 // The Worker (apps/api src/pages/host.ts) serves each page from `<path>.html` with that page's headers, which it builds
 // itself. A rebuild replaces the whole `<env>/auth` root and nothing outside it.
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { MARK_PATHS, MARK_RADIUS, MARK_VIEWBOX } from '@hana-id/brand';
 import { buildMeta } from '@hana-id/env/build-id';
 import { localBuild } from '@hana-id/env/local-build';
 import { build } from 'esbuild';
@@ -30,6 +33,9 @@ export const PAGES_DIST = join(webRoot, 'dist', 'pages');
 export const ORIGIN_DIR = 'auth';
 /** Where the bundles go inside that root (and the URL path they are served under). */
 export const ASSET_DIR = 'assets';
+/** Where esbuild writes the files the stylesheet names (the brand's fonts), inside ASSET_DIR, with their licence. */
+export const FILES_DIR = 'files';
+export const FONT_LICENCE = 'OFL.txt';
 
 const ENTRIES: Record<AuthPage['name'], string> = {
   login: 'src/auth/entries/login.ts',
@@ -40,6 +46,26 @@ const ENTRIES: Record<AuthPage['name'], string> = {
 };
 
 const escapeAttr = (s: string) => s.replace(/&/gu, '&amp;').replace(/"/gu, '&quot;').replace(/</gu, '&lt;').replace(/>/gu, '&gt;');
+
+const brandFile = (path: string): string => fileURLToPath(import.meta.resolve(`@hana-id/brand/${path}`));
+/** The wordmark's paths, from the brand's SVG (hana-extension hana-word.svg). */
+const WORDMARK_PATHS = [...readFileSync(brandFile('logo/hana-wordmark.svg'), 'utf8').matchAll(/<path d="([^"]+)"/gu)].map((m) => m[1] as string);
+const svgPath = (d: string, cls?: string): string => {
+  if (!/^[MLHVCSQTAZmlhvcsqtaz0-9., -]+$/u.test(d)) throw new Error('Not an SVG path');
+  return `<path${cls ? ` class="${cls}"` : ''} d="${d}"></path>`;
+};
+
+/**
+ * The Hana bar above every page (D426): the mark and the wordmark, inline (no image request; colours from the
+ * stylesheet), the same on every page and for every app. It names Hana only: the app is named inside the page, in its
+ * own box. Static markup: no text node, nothing that runs, no URL.
+ */
+export const HANA_BAR = [
+  '<header class="hana-bar">',
+  `<svg class="hana-mark" viewBox="${MARK_VIEWBOX}" role="img" aria-label="Hana" focusable="false"><rect class="bg" width="50" height="50" rx="${MARK_RADIUS}"></rect>${MARK_PATHS.map((d) => svgPath(d, 'fg')).join('')}</svg>`,
+  `<svg class="hana-wordmark" viewBox="0 0 74 15" aria-hidden="true" focusable="false">${WORDMARK_PATHS.map((d) => svgPath(d)).join('')}</svg>`,
+  '</header>',
+].join('');
 
 /**
  * One page's HTML: no inline script or style, nothing from another origin. `buildId` is the build id (D384), which
@@ -62,7 +88,7 @@ export function pageHtml(env: HanaEnv, page: AuthPage, script: string, styleshee
     `<link rel="stylesheet" href="${escapeAttr(stylesheet)}">`,
     `<script type="module" src="${escapeAttr(script)}"></script>`,
     '</head>',
-    '<body><main id="app"><noscript>Hana needs JavaScript to continue.</noscript></main></body>',
+    `<body>${HANA_BAR}<main id="app"><noscript>Hana needs JavaScript to continue.</noscript></main></body>`,
     '</html>',
     '',
   ].join('\n');
@@ -104,9 +130,10 @@ export async function buildAuthPages(env: HanaEnv, outRoot: string = PAGES_DIST,
     outdir: join(dir, ASSET_DIR),
     entryNames: '[name]-[hash]',
     chunkNames: 'chunks/[name]-[hash]',
-    assetNames: 'files/[name]-[hash]',
-    // Assets are never inlined as data: URIs into scripts or styles (img-src allows data:, nothing else does).
-    loader: { '.css': 'css' },
+    assetNames: `${FILES_DIR}/[name]-[hash]`,
+    // Assets are never inlined as data: URIs into scripts or styles (img-src allows data:, nothing else does): the
+    // brand's fonts (src/auth/fonts.css) are files on this origin, loaded under font-src 'self'.
+    loader: { '.css': 'css', '.woff2': 'file' },
     define: { __HANA_ENV__: JSON.stringify(env), global: 'globalThis' },
     metafile: true,
     write: true,
@@ -117,6 +144,9 @@ export async function buildAuthPages(env: HanaEnv, outRoot: string = PAGES_DIST,
   for (const [out, meta] of Object.entries(result.metafile.outputs)) if (meta.entryPoint) byEntry.set(meta.entryPoint, url(out));
   const stylesheet = byEntry.get('src/auth/auth.css');
   if (!stylesheet) throw new Error('esbuild produced no stylesheet');
+  // The fonts' licence (SIL OFL 1.1) beside them, as the licence asks of a copy.
+  mkdirSync(join(dir, ASSET_DIR, FILES_DIR), { recursive: true });
+  copyFileSync(brandFile(`fonts/${FONT_LICENCE}`), join(dir, ASSET_DIR, FILES_DIR, FONT_LICENCE));
 
   const pages = {} as BuiltEnv['pages'];
   for (const page of AUTH_PAGES) {

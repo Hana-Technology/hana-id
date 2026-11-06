@@ -7694,7 +7694,9 @@ branch.
   processes would build the same wasm into the same target dirs and race on `target/near/*.wasm`, `target/v2-src`
   and the Sputnik download: it needs a cross-process lock in the harness first); unit tests beside anything heavy
   (D140); faster sandbox blocks (changes the timing the delay tests rely on).
-
+- Amended 2026-11-06: Playwright moved to a phase of its own after the sandbox e2e. Beside the 8 sandbox nodes,
+  Firefox's `linking.spec.ts:234` (case B, link pending) timed out at 13.2 s in a `--full` run (it passes in 4–5 s alone,
+  3/3); the risk was named above. `--full` gains about 1.7 min (Playwright no longer overlaps the sandbox suite).
 ## Session expiry in both consoles (branch `fix/session-expiry-ux`), 2026-11-06
 
 ### D424. A console session that ends is said as such: the request waits, nothing typed is lost, Try again sends it
@@ -7805,6 +7807,120 @@ branch.
   stay independent, D86, and alerts, where this page only shows); auto-refresh (a page that redraws while read; Check
   again reads on demand).
 
+## Hana's brand on Hana ID's own pages (branch `feat/hana-brand`), 2026-11-06
+
+### D426. Hana ID's pages wear Hana's brand: one token set, Hana's own OFL Montserrat self-hosted, the mark inline
+- Date 2026-11-06 · Status: **asked for by the user 2026-11-06** ("style both admin and partner portal to use Hana
+  fonts, styling and color schemes … look at hanawallet.io website as well as hana-app and hana-extension repos for
+  inspiration"; extended the same day to the approval popups and everything user-facing); the palette, type and
+  shapes chosen while building, to confirm with the before/after gallery · Built: `packages/brand` (new),
+  `apps/admin/public` (`app.css`, `index.html`, `fonts/`), `apps/admin/scripts/sync-brand.ts`, `apps/console/web`
+  (`styles.css`, `ui.tsx`), `apps/console/vite.config.ts`, `packages/web/src/auth` (the sign-in, approval and export
+  pages), `packages/web/src/vault/launcher.ts`, `packages/web/scripts/build-auth-pages.ts` · Extends D420 and D421 (their
+  information architecture, copy and tests unchanged) · Number note: D426 was the next free number on `origin/develop`
+  (D425 the highest); `feat/email-sharing` holds unmerged numbers: renumber at the merge if another branch took it
+- Decision:
+  1. **One token set.** `packages/brand/tokens.css`: CSS variables only (`--hana-*`), light by default and dark with
+     `prefers-color-scheme` (no toggle, nothing stored), taken from hana-app's and hana-extension's `designTokens.ts`
+     and hanawallet.io's stylesheet: Hana ink `#16073a` on a lilac-white `#faf9fe`, Hana indigo `#3308a8` as the one
+     accent (light purple `#bba8f6` in dark), the gradient `#6256e9 → #d772d3` as decoration only, never behind text.
+     State colours (ok, warn, danger) are deliberately not purples. Every text and focus pair is checked for WCAG AA
+     in both themes (`packages/brand/test`), and the state hues are checked to stay out of the purple range.
+  2. **Fonts: Hana's own Montserrat, self-hosted.** Montserrat v8.000 (400, 500, 600, 700) and Montserrat Alternates
+     v7.200 (700), the files Hana's extension ships, under the SIL Open Font License 1.1 (no Reserved Font Name),
+     subset to Latin WOFF2 (16.8–17.4 KB each) with `fonts/OFL.txt` beside them; a test reads each file's own name
+     table for the licence. Each page loads them from its own origin (`font-src 'self'`, unchanged everywhere): the
+     admin from `public/fonts` (copied by `sync-brand`, the SPA has no build), the console and the auth pages from
+     their bundles' `/assets`. The consoles use `font-display: swap`; the security popups `optional`, so a late font
+     never moves a button under the pointer. Hana's apps also use Proxima Nova and PP Agrandir: commercial licences
+     that don't cover web embedding by Hana ID, so they are not shipped (Montserrat is what hanawallet.io uses anyway).
+  3. **The mark inline, not an image.** The Hana mark (hana-extension `hana.svg`) is drawn as inline SVG from
+     `MARK_PATHS` with its colours from the page's CSS: no image request, nothing new in any `img-src`.
+  4. **Who is asking stays clear.** Every auth page (sign-in chooser, email step, callback, approval and consent,
+     export) gets a static Hana bar above the page: the mark and wordmark as inline SVG, with no text, no URL and
+     nothing that runs. The app's logo, name and origin stay inside the page in a neutral box (`.asker`, the approval's
+     `header.app`), so Hana's chrome never names the app and a partner can't look like Hana. The auth pages load only
+     Montserrat 400 and 600 and Montserrat Alternates 700 (49.9 KiB, once per origin, cached across the five pages)
+     from `/assets/files/` with `OFL.txt` beside them. The approve guard, every message flow, COOP and popup behaviour
+     (D347, D398, D400), the meta and header CSPs and all security copy are unchanged. The vault (D38) loads no font:
+     its launcher takes Hana's ink and gradient on the system font (`vault.js` +~90 B). The hosted demo's CSP gains
+     `font-src 'self'` (its only CSP change) and its fonts are served immutable; the issuer's code email uses Hana ink
+     and indigo inline with a Montserrat/Arial stack.
+  5. **Each console keeps a cue of its own.** The staff admin's nav is Hana ink in both themes (the partner console's
+     is light), with the env badge solid amber on it, so staff never mistake one console or env for another.
+- Why: Hana ID is Hana's product; its pages looked like a generic tool (system fonts, petrol blue, an invented flower
+  mark) rather than Hana's wallet and site.
+- Rejected: Proxima Nova or PP Agrandir (licences); a font CDN (CSP and privacy: every page loads only its own origin);
+  a build step for the admin SPA (D420: no build; a copy with a drift test instead); a theme toggle (it would need
+  storage, which the SPAs don't use); the gradient as a page or button background (contrast, and it competes with
+  state colours); fonts in the vault (one more request and file in the isolated origin for a 16 px label); `swap` on
+  the auth pages (a late swap moves Approve and Reject while the user reads them).
+- Test note: the callback page's fonts count toward its `load`, and it closes itself before `load` on a Google
+  `#error`, so `apps/e2e/tests/login.spec.ts`'s one `goto` there waits for `commit` (no assertion changed).
+
+## Partner integration friction fixes (branch `feat/partner-friction-fixes`), 2026-11-06
+
+### D427. Partner-integration friction fixes: a verifier that refuses to start, a fast `no_answer` naming the origin, the portal in the guide
+- Date 2026-11-06 · Status: approved by the user 2026-11-06 (friction fixes) · Source: a "new partner" dry run that
+  built a sample partner app from the partner guide, the four SDK READMEs and the public sandbox-dev endpoints
+  (its friction log, items 1–6, 8–12 and 14; items 7, 15 and 16 deferred by the user) · Built:
+  `examples/identity-verify/src/verify.ts` (and the guide's copy), `packages/web/src/client/vault-connection.ts`,
+  `packages/react/src/hooks.ts`, `packages/core/src/support-id.ts` (subpath `@hana-id/core/support-id`),
+  `packages/console-core/src/users.ts`, `packages/sodax/src/evm.ts`, `packages/core/src/verified-contracts.ts` (the
+  cited `@sodax/types` version), `docs/integration.md`, the four SDK READMEs, `packages/core/test/integration-doc.test.ts`
+  · Amends D262 (the answer deadline of a loaded frame) · Number note: D427 was the next free number on
+  `origin/develop` (D426 the highest); renumber at the merge if another branch took it
+- Decision:
+  1. **The guide's verifier refuses to start without its settings.** `HANA_APP_ID`, `HANA_IDENTITY_ISSUER` and
+     `HANA_IDENTITY_PINS` are read once at load; an unset or blank one throws with its name, as do an app id that
+     isn't `app_…` (a publishable key pasted by mistake), a non-`https` issuer (loopback excepted, for local tests)
+     and pins that aren't 43-character thumbprints. Why: with `audience: undefined`, jose skips the audience check
+     and a valid Hana token minted for any other app verifies (confirmed by the dry run with jose 6.2.13), while the
+     comment next to it said the check was mandatory. Pinning is required the same way: `jwks-only` is the explicit
+     opt-out, so a forgotten variable can't silently drop it either (the old code read unset as "no pins"). The guide
+     lists sandbox-dev's issuer and its two thumbprints (the active key and the standby: the watchdog's
+     `pinnedIdentityKeys`), and a test keeps them equal to the manifest; rule 1 adds "refuse to start when the app id
+     or issuer is missing".
+  2. **`no_answer` is fast and names the origin.** The vault answers the hello with `connected` in the same task it
+     arrives in, and the frame's `load` waits for the vault's script, so a loaded frame silent for 1.5 s
+     (`POST_LOAD_ANSWER_MS`) was refused (frame-ancestors, the vault's own origin check, or an error page). The SDK now
+     gives a loaded frame 1.5 s after its `load`, instead of the rest of 5 s from its insertion; the one retry stays
+     (a transient 503 page). A wrong origin fails in about 3 s instead of about 10 s, and `no_answer`'s message and
+     `data.origin` name the page's `location.origin`, with "scheme, host and port must match" and the dev-server port
+     case. A frame still loading keeps 5 s plus 5 s, and `ready` 20 s after `connected`, as D262 set them.
+  3. **No distinct `origin_not_allowed` reason.** The SDK can't tell an origin refusal from an unknown or suspended
+     key: the browser's frame-ancestors block happens in the vault frame's context (no event in the page), and D262
+     rejected the vault saying why it refused (it would tell any framing page whether a key or an origin is valid).
+     The origin the SDK names is the page's own, which the page already knows, so nothing new is disclosed. No new
+     code crosses the port, so D393's `sdkAtLeast` gating doesn't apply.
+  4. **The partner portal in the guide.** Section 1 becomes "Your app and the partner portal": what Hana still does
+     during the pilot (creates the org and apps, sets the security contacts, turns email login on), where the
+     publishable key, the app id and the identity issuer with its pins come from, signing in by invite, the app page's
+     tabs, allowed origins as guarded changes (announced to the security contacts, then 60 s on sandbox-dev or 24 h;
+     loopback on a test app and any origin before a first login at once once announced; cancel from the page or the
+     email; removal immediate), members, reports and a frozen org. "Send Hana" and "the dashboard in batch C" are gone
+     from sections 6, 7 and 9 (the Signing tab, Login & sessions, the scope page's own-client steps).
+  5. **Partner-facing text points at nothing a partner can't open.** No repo paths, decision numbers, batch or
+     build-plan names or admin CLI commands in `docs/integration.md` or the four SDK READMEs; a test bans them. The
+     guide's "Last verified" header is one short line (its history is in git and here).
+  6. **Smaller fixes.** `useHana().login(options)` passes `hana.login()`'s options and drops an event argument
+     (`onClick={login}` still works). `supportIdFromSub` (the one implementation; console-core re-exports it as
+     `supportIdOf` and moved its Crockford code to core) is exported from `@hana-id/core` and the leaf subpath
+     `@hana-id/core/support-id`, with the exact format and a test vector in the guide. `@hana-id/sodax` is typed and
+     tested against `@sodax/types` 2.2.0 (peer `^2.2.0`, what `@sodax/sdk` 2.2.0 pins), and honours 2.2.0's
+     `expectedChainId` (another chain is `4902` `expected_chain_mismatch` before any popup); the verified-contracts
+     list cites 2.2.0, whose addresses its test confirms unchanged. The guide states that `eth_signTransaction` fills
+     a missing nonce, gas and fees as `eth_sendTransaction` does but neither queues nor broadcasts, that Sodax has no
+     testnet (quotes and intent building work read-only; signing waits for live keys; Hana's own sandbox mainnet demo
+     exception is Hana-internal only), and that "NEAR testnet" is Hana's chain, not the user's wallet chain.
+  7. **No version bump.** `docs/operations.md` "Releasing the SDK packages" bumps the four packages' version at a
+     release, not per change; the guide marks the new behaviour "SDK releases after 0.2.0".
+- No change to any key or path derivation.
+- Rejected: exporting a ready-made verifier package now (a fourth published surface to version; the guide's code is
+  tested and the startup checks close the hole); a test-app-only `data.hint` from the vault for loopback parents
+  (D262's reason holds for test apps too, and the SDK's message covers the case without the vault); dropping the
+  frame retry (it covers a transient 503 vault page); a shorter answer deadline for frames still loading (a slow
+  network is not a refusal).
 ## Mainnet demo and key export (branch `feat/mainnet-demo-key-export`), 2026-11-06
 
 Spec: `docs/mainnet-demo-and-key-export-spec.md` (with its security self-review). Number note: D428–D431 were the next
@@ -7922,6 +8038,7 @@ free numbers on `origin/develop` (D427 the highest: D426 the Hana brand, D427 th
 
 | Was | Now | Source |
 |---|---|---|
+| D262: each vault frame has 5 s from its insertion to answer, a loaded one included; a wrong origin fails `no_answer` after about 10 s with a generic message | A loaded frame has 1.5 s after its `load`; `no_answer` in about 3 s, its message and `data.origin` naming the page's origin (D427) | `docs/integration.md` section 3 |
 | D39: a `pk_test_` app never signs for a mainnet; the partner client refuses a test app's switch to any chain outside the testnet list | A test app Hana staff switched to the mainnet demo, in a dev testnet env, signs on Base and Stellar's public network up to $9.99 per transaction through the popup (D428, D429); the client lets a test app through on Base, the vault decides | `packages/core/src/mainnet-demo.ts`, `packages/web/src/vault/signing.ts` |
 | D111, D268: a shown key stays shown until Hide, blur, a hidden tab or pagehide; Continue and Show act on any real click | A shown key also hides 60 s after Show; Continue, Show key and Copy key are behind the approval popup's guard (D430) | `packages/web/src/auth/export-page.ts` |
 | D413: verify's phases ran one step at a time except gitleaks beside the typecheck and the docs checks beside the unit tests; the sandbox e2e one test at a time (`--test-threads=1`, also CI's) | Lanes side by side in four phases (sandbox e2e beside the pack check then Playwright; the contract beside the typecheck; the unit tests still alone but for the docs checks); the sandbox e2e 8 tests at a time, in verify and CI | D423 |

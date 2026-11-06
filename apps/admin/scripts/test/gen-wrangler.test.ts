@@ -3,9 +3,12 @@
 // StaffRpc; `preview_urls: false` everywhere, `workers_dev: false` on production manifests; the Worker runs first on
 // every request. Plus the source checks: no secret in a log line, no SQL on the hot or console DBs, no HTML sink in
 // the SPA, the CSP equal to the console's.
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { FONT_FILES, MARK_PATHS } from '@hana-id/brand';
+import { contrast, hexVars, woff2Names } from '@hana-id/brand/check';
 import { SUPPORT_TICKET_RE } from '@hana-id/console-core';
 import { ENV_ALERT_LABELS, envAlertLabel, loadEnv, type Manifest, manifestSchema } from '@hana-id/env';
 import { BUILD_VAR } from '@hana-id/env/build-id';
@@ -20,6 +23,7 @@ import { wranglerConfig as issuerConfig, TEST_MANIFEST as ISSUER_MANIFEST } from
 import { wranglerConfig as watchdogConfig, TEST_MANIFEST as WATCHDOG_MANIFEST } from '../../../watchdog/scripts/gen-wrangler.ts';
 import { MAIL_LABELS } from '../../src/labels.ts';
 import { adminCsp } from '../../src/headers.ts';
+import { BRAND_END, BRAND_FONT_FILES, BRAND_START, brandBlock } from '../sync-brand.ts';
 import { CRON, LOCAL_ADMIN_CONNECTION_STRING, TEST_ADMIN_HYPERDRIVE_ID, accountCrons, TEST_MANIFEST, TEST_WATCHDOG_URL, existingAdminHyperdriveId, main, testWranglerConfig, wranglerConfig } from '../gen-wrangler.ts';
 
 const LOCAL_D1_ID = '00000000-0000-4000-8000-000000000000';
@@ -410,10 +414,64 @@ describe('source checks', () => {
     expect(spa).toContain("redirect: 'manual'");
   });
 
-  it('public/ is the SPA alone: the local preview harness and its fake data stay in test-spa/, never served', () => {
-    expect(readdirSync(new URL('../../public/', import.meta.url)).sort()).toEqual(['app.css', 'app.js', 'index.html']);
+  it('public/ is the SPA alone, plus the brand fonts: the local preview harness and its fake data stay in test-spa/, never served', () => {
+    expect(readdirSync(new URL('../../public/', import.meta.url)).sort()).toEqual(['app.css', 'app.js', 'fonts', 'index.html']);
+    // public/fonts holds packages/brand's WOFF2 files and their OFL licence, byte for byte, and nothing else (D426).
+    expect(readdirSync(new URL('../../public/fonts/', import.meta.url)).sort()).toEqual(BRAND_FONT_FILES);
+    for (const f of BRAND_FONT_FILES) {
+      const shipped = readFileSync(new URL(`../../public/fonts/${f}`, import.meta.url));
+      expect(shipped.equals(readFileSync(new URL(`../../../../packages/brand/fonts/${f}`, import.meta.url))), `${f}: run sync-brand`).toBe(true);
+    }
+    for (const f of FONT_FILES) {
+      const buf = readFileSync(new URL(`../../public/fonts/${f.file}`, import.meta.url));
+      expect(createHash('sha256').update(buf).digest('hex'), f.file).toBe(f.sha256);
+      expect(woff2Names(buf).get(13), f.file).toContain('SIL Open Font License, Version 1.1');
+    }
+    expect(readFileSync(new URL('../../public/fonts/OFL.txt', import.meta.url), 'utf8')).toContain('SIL OPEN FONT LICENSE Version 1.1');
+  });
+
+  it("the stylesheet loads only the brand fonts, from this origin: no import, image or other URL (CSP font-src and img-src 'self')", () => {
     const css = readFileSync(new URL('../../public/app.css', import.meta.url), 'utf8');
-    // The stylesheet loads nothing: no font, image or import from anywhere (CSP font-src and img-src 'self').
-    expect(css).not.toMatch(/@import|url\(|@font-face/u);
+    // The brand block is packages/brand's fonts.css and tokens.css as they are (scripts/sync-brand.ts).
+    expect(css.includes(brandBlock()), 'public/app.css: run sync-brand').toBe(true);
+    expect(css.split(BRAND_START)).toHaveLength(2);
+    // Every url() is one of the font files, relative to /app.css (so /fonts/…); nothing else is loaded.
+    const urls = [...css.matchAll(/url\(([^)]*)\)/gu)].map((m) => m[1]);
+    expect(urls.sort()).toEqual(FONT_FILES.map((f) => `'./fonts/${f.file}'`).sort());
+    expect([...css.matchAll(/@font-face\s*\{/gu)]).toHaveLength(FONT_FILES.length);
+    expect(css).not.toMatch(/@import|https?:|data:|\/\/[a-z]/iu);
+    expect(css).not.toMatch(/proxima|agrandir/iu);
+  });
+
+  it('the shell draws the Hana mark inline from packages/brand (no image request, no script, colours from the stylesheet)', () => {
+    const html = readFileSync(new URL('../../public/index.html', import.meta.url), 'utf8');
+    const svg = /<svg class="mark"[^>]*>([\s\S]*?)<\/svg>/u.exec(html);
+    expect(svg).not.toBeNull();
+    expect(svg![0]).toContain('aria-hidden="true"');
+    expect([...svg![1]!.matchAll(/ d="([^"]+)"/gu)].map((m) => m[1])).toEqual([...MARK_PATHS]);
+    expect(svg![0]).not.toMatch(/href|fill=|style|<script|<image|on\w+=/u);
+    expect(html).not.toMatch(/<img\b/u);
+  });
+
+  it('the left nav and the env badge keep their own colours at WCAG AA in light and dark', () => {
+    const css = readFileSync(new URL('../../public/app.css', import.meta.url), 'utf8');
+    const own = css.slice(css.indexOf(BRAND_END));
+    const darkAt = own.indexOf('@media (prefers-color-scheme: dark)');
+    const light = hexVars(own.slice(0, darkAt));
+    const dark = new Map([...light, ...hexVars(own.slice(darkAt, own.indexOf('* { box-sizing')))]);
+    const pairs: [string, string, number][] = [
+      ['--side-ink', '--side-bg', 7],
+      ['--side-ink-2', '--side-bg', 4.5],
+      ['--side-ink-2', '--side-hover', 4.5],
+      ['--side-muted', '--side-bg', 4.5],
+      ['--side-active-ink', '--side-active-bg', 4.5],
+      ['--side-focus', '--side-bg', 3],
+      ['--side-active-bg', '--side-bg', 3],
+      ['--env-ink', '--env-bg', 7],
+      ['--env-bg', '--side-bg', 3],
+    ];
+    for (const [name, v] of [['light', light], ['dark', dark]] as const) {
+      for (const [fg, bg, min] of pairs) expect(contrast(v.get(fg)!, v.get(bg)!), `${name} ${fg} on ${bg}`).toBeGreaterThanOrEqual(min);
+    }
   });
 });

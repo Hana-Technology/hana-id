@@ -4,7 +4,15 @@ import { ErrorCode } from '@hana-id/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HanaClient } from '../../src/client/client.ts';
 import { HanaError } from '../../src/client/errors.ts';
-import { ANSWER_TIMEOUT_MS, LAUNCHER_HEIGHT_PX, LAUNCHER_WIDTH_PX, READY_AFTER_CONNECT_MS, VAULT_UNAVAILABLE_MESSAGES } from '../../src/client/vault-connection.ts';
+import {
+  ANSWER_TIMEOUT_MS,
+  LAUNCHER_HEIGHT_PX,
+  LAUNCHER_WIDTH_PX,
+  POST_LOAD_ANSWER_MS,
+  READY_AFTER_CONNECT_MS,
+  VAULT_UNAVAILABLE_MESSAGES,
+  noAnswerMessage,
+} from '../../src/client/vault-connection.ts';
 import { VERSION } from '../../src/version.ts';
 import { EVM, FakeVault, LOGGED_IN, LOGGED_OUT, ORIGINS, PK, STELLAR, type Setup, flush, setup } from './harness.ts';
 
@@ -122,10 +130,10 @@ describe('handshake', () => {
   const DEADLINE = ANSWER_TIMEOUT_MS + 1;
   const frames = () => [...document.querySelectorAll('iframe[name^="hana-vault-"]')] as HTMLIFrameElement[];
 
-  it('replaces a frame that loaded but did not answer within 5 s once, then rejects with vault_unavailable (no_answer)', async () => {
+  it('replaces a frame that loaded but did not answer within 1.5 s of its load once, then rejects fast with vault_unavailable (no_answer) naming the page origin', async () => {
     s = setup();
     s.vault.load();
-    await vi.advanceTimersByTimeAsync(ANSWER_TIMEOUT_MS - 1);
+    await vi.advanceTimersByTimeAsync(POST_LOAD_ANSWER_MS - 1);
     expect(s.client.status).toBe('unlocking');
     await vi.advanceTimersByTimeAsync(2); // the deadline, then the drained task
     // The retry: the first frame is gone, a new one with the same name and src is in.
@@ -137,15 +145,37 @@ describe('handshake', () => {
     expect(second.getAttribute('src')).toBe(`${ORIGINS.vaultOrigin}/vault?pk=${PK}`);
     expect(s.client.status).toBe('unlocking');
     new FakeVault(second).load();
-    await vi.advanceTimersByTimeAsync(DEADLINE);
+    await vi.advanceTimersByTimeAsync(POST_LOAD_ANSWER_MS + 1);
+    // Two loaded, silent frames: about 3 s in all (it was two full 5 s deadlines, about 10 s).
     const e = await rejection(s.client.ready);
     expect(e.code).toBe('vault_unavailable');
-    expect(e.data).toEqual({ reason: 'no_answer', attempts: 2 });
-    expect(e.message).toBe(VAULT_UNAVAILABLE_MESSAGES.no_answer);
+    expect(e.data).toEqual({ reason: 'no_answer', attempts: 2, origin: window.location.origin });
+    expect(e.message).toBe(noAnswerMessage(window.location.origin));
+    expect(e.message).toContain(`(${window.location.origin})`);
+    expect(e.message).toMatch(/allowed origins \(scheme, host and port/u);
     expect(s.client.status).toBe('error');
     expect(s.client.error?.code).toBe('vault_unavailable');
     // A failed handshake leaves no frame behind.
     expect(frames()).toHaveLength(0);
+  });
+
+  it('a vault that answers soon after its load connects; the short deadline counts from the load, not from the insertion', async () => {
+    s = setup();
+    // A slow page: the frame loads at 4.9 s, and its vault answers 1 s later (past the 5 s insertion deadline).
+    await vi.advanceTimersByTimeAsync(ANSWER_TIMEOUT_MS - 100);
+    s.vault.load();
+    await vi.advanceTimersByTimeAsync(POST_LOAD_ANSWER_MS - 500);
+    expect(frames()).toEqual([s.frame]);
+    s.vault.emit('connected', null);
+    s.vault.emit('ready', LOGGED_OUT);
+    await flush();
+    await expect(s.client.ready).resolves.toBeUndefined();
+    expect(frames()).toEqual([s.frame]);
+  });
+
+  it('the no_answer message points at the exact-origin check, with the origin it names', () => {
+    expect(VAULT_UNAVAILABLE_MESSAGES.no_answer).toMatch(/allowed origins/u);
+    expect(noAnswerMessage('http://localhost:5174')).toContain('http://localhost:5174 is exactly one of');
   });
 
   it('a frame still loading gets one more deadline, not a replacement; then frame_timeout', async () => {
@@ -197,7 +227,7 @@ describe('handshake', () => {
     s = setup();
     s.vault.load();
     await flush();
-    await vi.advanceTimersByTimeAsync(ANSWER_TIMEOUT_MS - 100);
+    await vi.advanceTimersByTimeAsync(POST_LOAD_ANSWER_MS - 100);
     s.vault.emit('connected', null);
     await flush();
     await vi.advanceTimersByTimeAsync(READY_AFTER_CONNECT_MS - 1);

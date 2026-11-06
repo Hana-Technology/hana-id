@@ -118,7 +118,9 @@ export function domLauncherView(doc: Document): LauncherView {
   s.margin = '0';
   s.border = '0';
   s.borderRadius = '12px';
-  s.background = '#14161a';
+  // Hana's ink with its gradient as a 3 px line along the bottom (packages/brand tokens.css, D426). The system font on
+  // purpose: the vault loads no font file (its bundle and its one request stay as they are).
+  s.background = 'linear-gradient(90deg, #6256e9, #7e5deb 45%, #d772d3) bottom / 100% 3px no-repeat, #16073a';
   s.color = '#ffffff';
   s.font = '600 16px system-ui, -apple-system, "Segoe UI", sans-serif';
   s.cursor = 'pointer';

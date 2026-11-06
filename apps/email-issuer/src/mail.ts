@@ -23,8 +23,10 @@ const hostOf = (origin: string): string => {
   }
 };
 
+// Hana's ink and indigo and its typeface's name (packages/brand, D426): a mail loads no font, so a reader without
+// Montserrat sees Arial. Inline styles only (mail clients drop stylesheets); nothing remote.
 function html(paragraphs: string[]): string {
-  return `<!doctype html><html><body style="font-family:sans-serif;font-size:15px;line-height:1.5;color:#111">${paragraphs.map((p) => `<p>${p}</p>`).join('')}</body></html>`;
+  return `<!doctype html><html><body style="font-family:Montserrat,Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#16073a">${paragraphs.map((p) => `<p>${p}</p>`).join('')}</body></html>`;
 }
 
 /**
@@ -77,7 +79,7 @@ export function codeMail(input: { to: string; code: string; appName: string; aut
     text,
     html: html([
       `Your code to ${escapeHtml(t.what)} with Hana:`,
-      `<strong style="font-size:24px;letter-spacing:4px">${escapeHtml(input.code)}</strong>`,
+      `<strong style="font-size:24px;letter-spacing:4px;color:#3308a8">${escapeHtml(input.code)}</strong>`,
       'It expires in 10 minutes.',
       escapeHtml(warning),
       escapeHtml(t.ignore),

@@ -2,8 +2,20 @@
 // chain, a scripted JWKS and recording channels.
 import { describe, expect, it } from 'vitest';
 import type { KeyChange } from '../src/chain.ts';
-import { ABSENCE_RECHECK_MS, RETIRED_KEY_GRACE_MS, retiredAt } from '../src/run.ts';
-import { alertsOf, councilPolicy, HOUR, initialized, jwk, MIN, OWNER, SIGNER, T0, UPDATER_KEYS, WATCHDOG, world } from './helpers.ts';
+import {
+  ABSENCE_RECHECK_MS,
+  ABSENT_FETCHES_TO_ACT,
+  REMOVAL_ABSENT_SPAN_MS,
+  REMOVAL_UNSEEN_MS,
+  RETIRED_ABSENT_SPAN_MS,
+  RETIRED_KEY_GRACE_MS,
+  RETIRED_MIN_KEY_AGE_MS,
+  RETIRED_UNSEEN_MS,
+  removalConfirmable,
+  retiredAddDue,
+  retiredAt,
+} from '../src/run.ts';
+import { alertsOf, councilPolicy, HOUR, initialized, jwk, MIN, OWNER, retiredLongAgo, runsOverRetiredSpan, SIGNER, T0, UPDATER_KEYS, WATCHDOG, world } from './helpers.ts';
 
 const channelsOf = (w: { notifier: { sent: { channel: string; msg: { kind: string } }[] } }, kind: string) =>
   w.notifier.sent.filter((s) => s.msg.kind === kind).map((s) => s.channel).sort();
@@ -225,18 +237,55 @@ describe("a key Google just retired (D153)", () => {
     return { w, k2 };
   }
 
-  it("cancels the updater's Add of a kid Google published with the same material, keeps the updater keys, warns", async () => {
-    const { w, k2 } = await retiring();
+  it("cancels the updater's Add of a provably retired kid (D420: known > 7 days, unlisted > 6 h, missed by fetches over 30 min), keeps the updater keys, warns", async () => {
+    const k2 = jwk('k2', 2);
+    const w = await initialized({ jwks: [jwk('k1', 1), k2] });
+    await retiredLongAgo(w, [jwk('k1', 1)]);
+    const lastListed = w.clock.t - RETIRED_UNSEEN_MS - 5 * MIN;
     const c = w.chain.propose('Add', 'k2', { key: k2 });
+    // The first run (two fetches 60 s apart) and the ones before 30 min of absences only wait.
     await w.run();
+    expect(w.writer.calls).toEqual([]);
+    await runsOverRetiredSpan(w);
     expect(w.writer.methods()).toEqual(['cancel_issuer_key_change']);
     expect(w.writer.calls[0]?.args).toEqual({ id: c.id });
     expect(await alertsOf(w.store, 'forged_key_change')).toEqual([]);
     const [alert] = await alertsOf(w.store, 'retired_key_change');
     expect(alert?.severity).toBe('warning');
     expect(alert?.title).toContain('updater key kept');
-    expect(alert?.details).toMatchObject({ id: c.id, kid: 'k2', outcome: 'cancelled', last_seen_jwks_at: T0 });
+    expect(alert?.details).toMatchObject({ id: c.id, kid: 'k2', outcome: 'cancelled', last_seen_jwks_at: lastListed });
     expect(channelsOf(w, 'retired_key_change')).toEqual(['email', 'slack']);
+  });
+
+  it("doesn't cancel a new kid that flickers in Google's JWKS (seen 30 min ago, missing from both fetches), and confirms it once a fetch lists it (D420)", async () => {
+    const k2 = jwk('k2', 2);
+    const w = await initialized({ jwks: [jwk('k1', 1)] });
+    // Google's edges mid-rollout: one fetch lists k2, the next ones don't.
+    w.jwks.keys = [jwk('k1', 1), k2];
+    await w.run();
+    w.jwks.keys = [jwk('k1', 1)];
+    w.clock.t += 25 * MIN;
+    const c = w.chain.propose('Add', 'k2', { key: k2 });
+    for (let i = 0; i < 6; i++) await w.run();
+    expect(w.writer.calls).toEqual([]);
+    expect(await alertsOf(w.store, 'retired_key_change')).toEqual([]);
+    expect(await alertsOf(w.store, 'forged_key_change')).toEqual([]);
+    expect(w.chain.governance.updater_keys).toEqual(UPDATER_KEYS);
+    w.jwks.queue = [[jwk('k1', 1), k2]];
+    await w.run();
+    expect(w.writer.calls).toEqual([{ method: 'confirm_issuer_key_change', args: { id: c.id } }]);
+  });
+
+  it('retiredAddDue needs all three: unlisted ≥ 6 h, known ≥ 7 days, ≥ 3 absent fetches over ≥ 30 min', () => {
+    const now = T0 + 30 * 24 * HOUR;
+    const seen = { provider: 'google', kid: 'k2', n: 'n', e: 'AQAB', source: 'jwks' as const, first_seen_at: now - RETIRED_MIN_KEY_AGE_MS, last_seen_at: now - RETIRED_UNSEEN_MS };
+    const absence = { first: now - RETIRED_ABSENT_SPAN_MS, fetches: ABSENT_FETCHES_TO_ACT };
+    expect(retiredAddDue(seen, absence, now)).toBe(true);
+    expect(retiredAddDue({ ...seen, last_seen_at: now - RETIRED_UNSEEN_MS + 1 }, absence, now)).toBe(false);
+    expect(retiredAddDue({ ...seen, first_seen_at: now - RETIRED_MIN_KEY_AGE_MS + 1 }, absence, now)).toBe(false);
+    expect(retiredAddDue(seen, { ...absence, fetches: ABSENT_FETCHES_TO_ACT - 1 }, now)).toBe(false);
+    expect(retiredAddDue(seen, { ...absence, first: now - RETIRED_ABSENT_SPAN_MS + 1 }, now)).toBe(false);
+    expect(retiredAddDue(seen, undefined, now)).toBe(false);
   });
 
   it('treats the same kid with other key material as forged', async () => {
@@ -343,13 +392,47 @@ describe('pending removals (step 4)', () => {
     expect(channelsOf(w, 'published_key_removal')).toEqual(['email', 'pager', 'slack']);
   });
 
-  it('confirms a removal of a kid absent from two fetches', async () => {
+  it('confirms a removal early only once fetches in a row over 10 min miss the kid and none listed it for 24 h (D420)', async () => {
     const w = await initialized({ active: [jwk('k1', 1), jwk('k2', 2)] });
     w.jwks.keys = [jwk('k1', 1)];
+    w.clock.t += REMOVAL_UNSEEN_MS;
     const c = w.chain.propose('Remove', 'k2');
+    // Two fetches 60 s apart: absent, not yet enough.
+    await w.run();
+    expect(w.writer.calls).toEqual([]);
+    await w.run();
+    expect(w.writer.calls).toEqual([]);
     await w.run();
     expect(w.writer.calls).toEqual([{ method: 'confirm_issuer_key_change', args: { id: c.id } }]);
     expect(w.chain.active.has('k2')).toBe(false);
+  });
+
+  it('never confirms a removal of a kid Google listed within 24 h, however long it has been missing since; a fetch that lists it alerts critical (D420)', async () => {
+    const w = await initialized({ active: [jwk('k1', 1), jwk('k2', 2)] });
+    w.clock.t += 2 * HOUR;
+    await w.run(); // k2 listed at this run
+    w.jwks.keys = [jwk('k1', 1)];
+    w.chain.propose('Remove', 'k2');
+    for (let i = 0; i < 12; i++) await w.run();
+    expect(w.writer.calls).toEqual([]);
+    expect(w.chain.active.has('k2')).toBe(true);
+    expect(await alertsOf(w.store, 'published_key_removal')).toEqual([]);
+    w.jwks.queue = [[jwk('k1', 1), jwk('k2', 2)]];
+    await w.run();
+    expect(w.writer.calls).toEqual([]);
+    expect((await alertsOf(w.store, 'published_key_removal')).map((a) => a.severity)).toEqual(['critical']);
+  });
+
+  it('removalConfirmable needs ≥ 3 absent fetches over ≥ 10 min and no listing for 24 h', () => {
+    const now = T0 + 30 * 24 * HOUR;
+    const seen = { provider: 'google', kid: 'k2', n: 'n', e: 'AQAB', source: 'jwks' as const, first_seen_at: T0, last_seen_at: now - REMOVAL_UNSEEN_MS };
+    const absence = { first: now - REMOVAL_ABSENT_SPAN_MS, fetches: ABSENT_FETCHES_TO_ACT };
+    expect(removalConfirmable(seen, absence, now)).toBe(true);
+    expect(removalConfirmable(undefined, absence, now)).toBe(true);
+    expect(removalConfirmable({ ...seen, last_seen_at: now - REMOVAL_UNSEEN_MS + 1 }, absence, now)).toBe(false);
+    expect(removalConfirmable(seen, { ...absence, fetches: 2 }, now)).toBe(false);
+    expect(removalConfirmable(seen, { ...absence, first: now - REMOVAL_ABSENT_SPAN_MS + 1 }, now)).toBe(false);
+    expect(removalConfirmable(seen, undefined, now)).toBe(false);
   });
 });
 
@@ -416,9 +499,12 @@ describe('active keys (step 5)', () => {
     expect((await alertsOf(w.store, 'automatic_action')).map((a) => a.title)).toEqual([expect.stringContaining('delete_updater_key')]);
   });
 
-  it('only warns (Slack + email) on a kid Google dropped more than 3 h ago, and never pauses on it', async () => {
+  it('only warns (Slack + email) on a kid Google dropped more than 27 h ago (the cron removes after 24 h, D420), and never pauses on it', async () => {
     const w = await initialized({ active: [jwk('k1', 1), jwk('k2', 2)] });
     w.jwks.keys = [jwk('k1', 1)];
+    await w.run();
+    expect(await alertsOf(w.store, 'stale_active_key')).toEqual([]);
+    w.clock.t += 24 * HOUR;
     await w.run();
     expect(await alertsOf(w.store, 'stale_active_key')).toEqual([]);
     w.clock.t += 3 * HOUR;

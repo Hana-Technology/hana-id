@@ -1,6 +1,6 @@
 // The JWKS cron against hana-signer's delayed issuer-key changes (docs/governance-spec.md "Rotation and logins"):
-// proposals, executions of matured changes, removals after 55 min missing, never the last key, cancelled proposals,
-// and the updater key's method list.
+// proposals, executions of matured changes, removals after 24 h missing from every fetch (never a key that signed a
+// token in the last 24 h, never the last key; D420), cancelled proposals, and the updater key's method list.
 import { KeyPair, type KeyPairString } from '@near-js/crypto';
 import { createExecutionContext, createScheduledController, waitOnExecutionContext } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
@@ -11,6 +11,8 @@ import {
   GOOGLE_JWKS_URL,
   type Jwk,
   type KeyChange,
+  JWKS_FETCHES_PER_RUN,
+  KEEP_AFTER_LAST_TOKEN_MS,
   MAX_PENDING_KEY_CHANGES,
   REMOVE_AFTER_MISSING_MS,
   REPROPOSE_AFTER_CANCEL_MS,
@@ -26,7 +28,12 @@ import { NearMock, panic } from './near-mock.ts';
 
 afterEach(() => vi.restoreAllMocks());
 beforeEach(async () => {
-  await env.DB.batch([env.DB.prepare('DELETE FROM issuer_key_missing'), env.DB.prepare('DELETE FROM issuer_key_proposals'), env.DB.prepare('DELETE FROM issuer_key_sync_runs')]);
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM issuer_key_missing'),
+    env.DB.prepare('DELETE FROM issuer_key_proposals'),
+    env.DB.prepare('DELETE FROM issuer_key_sync_runs'),
+    env.DB.prepare('DELETE FROM issuer_key_observations'),
+  ]);
 });
 
 /** A 2048-bit-sized modulus, distinct per seed, canonical base64url. */
@@ -287,7 +294,7 @@ describe('scheduled JWKS sync', () => {
     expect(methods(near)).toEqual([['set_issuer_key', 'c']]);
   });
 
-  it('proposes a removal only after 55 min missing, executes it after the delay, and never the last key', async () => {
+  it('proposes a removal only after 24 h missing from every fetch, executes it after the delay, and never the last key', async () => {
     const near = govChain(['old', 'kept'], { jwks: ['kept'] });
     expect(await run(near)).toEqual(empty);
     near.clock += REMOVE_AFTER_MISSING_MS - 1;
@@ -302,14 +309,95 @@ describe('scheduled JWKS sync', () => {
     near.jwks = { keys: [jwk('next')] };
     near.clock += 15 * 60_000;
     expect(await run(near)).toEqual({ ...empty, proposed: ['next'] });
+    // 24 h on, 'next' (matured long ago) is executed in the same run that finds 'kept' due: removals are judged on the
+    // state before the run's executions, so 'kept' is still the last key there.
     near.clock += REMOVE_AFTER_MISSING_MS;
-    expect(await run(near)).toMatchObject({ removalsProposed: [], notes: [{ code: 'last_key_kept', kid: 'kept' }] });
+    expect(await run(near)).toMatchObject({ executed: [2], removalsProposed: [], notes: [{ code: 'last_key_kept', kid: 'kept' }] });
     // Once 'next' is active, 'kept' can go.
-    near.clock = near.changes[0]!.executable_at_ms;
-    expect(await run(near)).toMatchObject({ executed: [2], removalsProposed: [] });
     near.clock += 15 * 60_000;
     expect(await run(near)).toMatchObject({ removalsProposed: ['kept'] });
     expect(near.sent.map((t) => t.method)).not.toContain('remove_issuer_key');
+  });
+
+  it('a run fetches the JWKS JWKS_FETCHES_PER_RUN times', async () => {
+    const near = govChain(['a', 'b']);
+    await run(near);
+    expect(near.jwksFetches).toBe(JWKS_FETCHES_PER_RUN);
+    expect(JWKS_FETCHES_PER_RUN).toBe(3);
+    expect(REMOVE_AFTER_MISSING_MS).toBe(24 * 60 * 60_000);
+    expect(KEEP_AFTER_LAST_TOKEN_MS).toBe(24 * 60 * 60_000);
+  });
+
+  it('a kid one fetch of three lists is published: no missing row, no removal, and a new kid one fetch lists is proposed (D420)', async () => {
+    const near = govChain(['k1', 'k2', 'k3'], { jwks: ['k1', 'k2'] });
+    const all = { keys: [jwk('k1'), jwk('k2'), jwk('k3'), jwk('new')] };
+    for (let i = 0; i < 8; i++) {
+      // Every run: two stale answers without k3 and new, one fresh answer with both (Google's edges mid-rollout).
+      near.jwksSequence = [{ keys: [jwk('k1'), jwk('k2')] }, all, { keys: [jwk('k1'), jwk('k2')] }];
+      const r = await run(near);
+      if (i === 0) expect(r.proposed).toEqual(['new']);
+      else expect(r).toMatchObject({ proposed: [], removalsProposed: [] });
+      near.clock += 6 * 60 * 60_000;
+    }
+    expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM issuer_key_missing').first()).toEqual({ n: 0 });
+    expect(near.sent.map((t) => t.method)).not.toContain('propose_issuer_key_removal');
+  });
+
+  it('a kid that comes and goes between runs is never removed: each run that lists it restarts its 24 h (D420)', async () => {
+    const near = govChain(['k1', 'k2', 'k3'], { jwks: ['k1', 'k2'] });
+    for (let i = 0; i < 10; i++) {
+      // 20 h missing from every fetch, then one run that lists it, again and again.
+      near.jwks = { keys: [jwk('k1'), jwk('k2')] };
+      for (let h = 0; h < 20; h += 5) {
+        expect((await run(near)).removalsProposed).toEqual([]);
+        near.clock += 5 * 60 * 60_000;
+      }
+      near.jwks = { keys: [jwk('k1'), jwk('k2'), jwk('k3')] };
+      expect((await run(near)).removalsProposed).toEqual([]);
+      near.clock += 15 * 60_000;
+    }
+    expect(near.sent).toHaveLength(0);
+  });
+
+  it('a run with a failed or empty fetch neither starts, resets nor completes a removal (D420)', async () => {
+    const near = govChain(['old', 'kept'], { jwks: ['kept'] });
+    expect(await run(near)).toEqual(empty);
+    // Past the 24 h, but this run's second fetch failed and its third was empty: no proposal, the clock kept.
+    near.clock += REMOVE_AFTER_MISSING_MS;
+    near.jwksSequence = [{ keys: [jwk('kept')] }, 503, { keys: [] }];
+    expect(await run(near)).toMatchObject({ removalsProposed: [] });
+    expect(await env.DB.prepare("SELECT first_missing_at FROM issuer_key_missing WHERE kid = 'old'").first()).toEqual({ first_missing_at: T0 });
+    // The next complete run proposes it.
+    near.clock += 15 * 60_000;
+    expect(await run(near)).toMatchObject({ removalsProposed: ['old'] });
+    // A matured Remove isn't executed by an incomplete run either.
+    near.clock += DELAY;
+    near.jwksSequence = [503];
+    expect(await run(near)).toMatchObject({ executed: [], notes: [{ code: 'removal_evidence_incomplete', kid: 'old', id: 1 }] });
+    near.clock += 15 * 60_000;
+    expect(await run(near)).toMatchObject({ executed: [1] });
+  });
+
+  it('never proposes or executes the removal of a kid that signed a verified token in the last 24 h (D420)', async () => {
+    const near = govChain(['old', 'kept'], { jwks: ['kept'] });
+    const sawToken = (at: number) =>
+      env.DB.prepare(
+        `INSERT INTO issuer_key_observations (provider, kid, first_token_ms, last_token_ms) VALUES ('google', 'old', ?1, ?1)
+         ON CONFLICT (provider, kid) DO UPDATE SET last_token_ms = excluded.last_token_ms`,
+      )
+        .bind(at)
+        .run();
+    expect(await run(near)).toEqual(empty);
+    near.clock += REMOVE_AFTER_MISSING_MS;
+    await sawToken(near.clock - KEEP_AFTER_LAST_TOKEN_MS + 60_000);
+    expect(await run(near)).toMatchObject({ removalsProposed: [], notes: [{ code: 'recent_token_kept', kid: 'old' }] });
+    near.clock += 60_001;
+    expect(await run(near)).toMatchObject({ removalsProposed: ['old'] });
+    // A token signed with it while the removal waits keeps the matured Remove from executing.
+    near.clock += DELAY;
+    await sawToken(near.clock - 1);
+    expect(await run(near)).toMatchObject({ executed: [], notes: [{ code: 'recent_token_kept', kid: 'old', id: 1 }] });
+    expect([...near.active.keys()].sort()).toEqual(['kept', 'old']);
   });
 
   it('does not start a removal that one JWKS fetch omitted but the next one lists again', async () => {

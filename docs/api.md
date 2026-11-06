@@ -1,6 +1,6 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
-Last verified against code: 2026-11-06 (branch `feat/env-alert-label`: the admin Worker's `ENV_LABEL` var, D419); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: the admin Worker's "Email" through SendGrid, accepted on `202`, no idempotency key, the per-isolate memo; D401); 2026-11-05 (branch `fix/security-review-1105`: the admin's `POST /api/users/search` ticket for a sub or full address, `POST /api/users/find` `{query, ticket}` audited first as `users.find`, `support.lookup`'s `requestIdList`, `recordStaffAction`'s two org-less actions, D410); 2026-11-05 (branch `feat/deploy-check-all-workers`: the build id on every Worker, D406: `GET /.well-known/hana-build` on the console, console-auth and files Workers, the console SPA's `<meta name="hana-build">`, none on the admin (read through wrangler); the shared deploy wrapper); 2026-11-05 (branch `feat/sdk-error-request-id`: "Conventions": an error's `requestId` passed on to the SDK as `data.requestId`, D405); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup's screen: the email join in `POST /api/support/lookup` (`emails`, `emailsNote`, `unverifiedWarning`), its ticket in the issuer's rule, `DirectoryRpc.get`'s `purpose` (`support_lookup`), D399); 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
+Last verified against code: 2026-11-06 (branch `fix/google-key-hysteresis`: "Cron" step 3: three JWKS fetches a run, removal after 24 h missing from every fetch, never a kid with a token in the last 24 h, migration 0012, D420); 2026-11-06 (branch `feat/env-alert-label`: the admin Worker's `ENV_LABEL` var, D419); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: the admin Worker's "Email" through SendGrid, accepted on `202`, no idempotency key, the per-isolate memo; D401); 2026-11-05 (branch `fix/security-review-1105`: the admin's `POST /api/users/search` ticket for a sub or full address, `POST /api/users/find` `{query, ticket}` audited first as `users.find`, `support.lookup`'s `requestIdList`, `recordStaffAction`'s two org-less actions, D410); 2026-11-05 (branch `feat/deploy-check-all-workers`: the build id on every Worker, D406: `GET /.well-known/hana-build` on the console, console-auth and files Workers, the console SPA's `<meta name="hana-build">`, none on the admin (read through wrangler); the shared deploy wrapper); 2026-11-05 (branch `feat/sdk-error-request-id`: "Conventions": an error's `requestId` passed on to the SDK as `data.requestId`, D405); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup's screen: the email join in `POST /api/support/lookup` (`emails`, `emailsNote`, `unverifiedWarning`), its ticket in the issuer's rule, `DirectoryRpc.get`'s `purpose` (`support_lookup`), D399); 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
 answers, D395; `AdminRpc.supportLookup` / `userShares`; the admin Worker's `POST /api/support/lookup`; the
 `support.lookup` staff action; D394–D396); 2026-11-05 (branch `feat/deploy-build-check`: the build id, D384: `GET /v1/health`'s
 `build`, the page Workers' `GET /.well-known/hana-build`, the issuer's `GET /v1/email/health`, the `HANA_BUILD` var
@@ -1291,9 +1291,15 @@ jobs (one failing doesn't skip the others):
      cancel). A change someone else applied or cancelled meanwhile is a race (`execute_raced`), not a failure;
   2. **proposes** an Add (`set_issuer_key`) for each JWKS kid that is neither active nor pending, within the
      contract's caps (≤ 6 pending changes over all issuers, active + pending adds ≤ 10);
-  3. **proposes** a Remove (`propose_issuer_key_removal`) for each active kid missing from the JWKS for ≥ 55 min
-     (`issuer_key_missing`), unless it already has a pending change, would leave the issuer without an active key
-     (active − pending removals ≥ 1 always), or an Add proposal of this run failed.
+  3. **proposes** a Remove (`propose_issuer_key_removal`) for each active kid missing from every fetch for ≥ 24 h
+     (`issuer_key_missing`), unless it signed a verified token in the last 24 h (`issuer_key_observations.last_token_ms`,
+     migration 0012; note `recent_token_kept`), already has a pending change, would leave the issuer without an active
+     key (active − pending removals ≥ 1 always), or an Add proposal of this run failed.
+  Each run fetches the JWKS 3 times (`JWKS_FETCHES_PER_RUN`): a kid any fetch lists is published, a kid is missing only
+  when all 3 succeeded and none listed it. A run with a failed or empty fetch neither starts, resets nor completes a
+  removal, and executes no matured Remove (note `removal_evidence_incomplete`); a matured Remove of a kid that signed a
+  token in the last 24 h isn't executed either (rollout hysteresis, D420: Google's edges serve different key sets
+  during a rotation).
   It never calls `remove_issuer_key`. Proposals and executions are judged against the state read at the start of the
   run (a kid with any pending change gets no new proposal; the caps count every pending change), so what an
   execution frees is used by the next run. Each proposal is remembered in `issuer_key_proposals` with its change id

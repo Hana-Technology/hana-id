@@ -1,7 +1,7 @@
 # Recovery playbooks
 
 Generated from `packages/playbooks` (D126) by `corepack pnpm --filter @hana-id/playbooks gen-docs`: edit the package,
-not this file (a test fails when it is stale). Last verified against code: 2026-11-05 (branch `feat/deploy-check-all-workers`: the watchdog deploys through `run deploy`, stamped with the build id, D406); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/coop-canary`: the `google-enforces-coop` incident, D386); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`).
+not this file (a test fails when it is stale). Last verified against code: 2026-11-06 (branch `fix/google-key-hysteresis`: `retired-key-change`, `key-sync-stalled` and `updater-key-stolen` with the rollout hysteresis, D420); 2026-11-05 (branch `feat/deploy-check-all-workers`: the watchdog deploys through `run deploy`, stamped with the build id, D406); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/coop-canary`: the `google-enforces-coop` incident, D386); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`).
 
 One step-by-step guide for every watchdog alert kind and for every incident the watchdog does not raise. The admin
 portal's "Security & monitoring" view renders the same playbooks (`docs/batch-c-spec.md`), and every watchdog
@@ -243,7 +243,7 @@ Someone proposed removing an issuer kid Google still publishes. The watchdog onl
 **Impact**
 
 - If it executes, logins with tokens signed by that kid fail until the updater re-proposes it and it waits out the issuer-key delay. It can never remove the last key.
-- A removal the updater (the signer account) proposed means `KEYS_UPDATER_KEY` is stolen (the API cron only proposes removals of kids missing from Google's JWKS for ≥ 55 min).
+- A removal the updater (the signer account) proposed means `KEYS_UPDATER_KEY` is stolen (the API cron only proposes removals of kids missing from every fetch of Google's JWKS for ≥ 24 h that signed no token in the last 24 h, D420).
 
 **Steps**
 
@@ -605,7 +605,7 @@ Chain reads or Google's JWKS fetch failed 3 runs in a row, the dead-man's switch
 
 `key-sync-stalled` · warning · alert kinds: `unexecuted_key_change`, `stale_active_key`
 
-A matured key change nobody executed for over 1 h, or an active kid Google dropped more than 3 h ago that nobody proposed to remove.
+A matured key change nobody executed for over 1 h, or an active kid Google dropped more than 27 h ago that nobody proposed to remove (the cron removes after 24 h missing, D420).
 
 **Signals**
 
@@ -632,7 +632,7 @@ A matured key change nobody executed for over 1 h, or an active kid Google dropp
    corepack pnpm --filter @hana-id/scripts run post-google-keys <env> --execute
    ```
 
-3. **Propose the stale removal** (who: the API cron). The cron proposes removing a kid missing for ≥ 55 min (never the last key); a founder can run the same sync at once.
+3. **Propose the stale removal** (who: the API cron). The cron proposes removing a kid missing from every fetch for ≥ 24 h (never one that signed a token in the last 24 h, never the last key; D420); a founder can run the same sync at once.
 
    ```sh
    corepack pnpm --filter @hana-id/scripts run post-google-keys <env>
@@ -650,7 +650,7 @@ A matured key change nobody executed for over 1 h, or an active kid Google dropp
 
 `retired-key-change` · warning · alert kinds: `retired_key_change`
 
-The updater proposed a key Google stopped publishing but did publish, with the same key material, within the last 24 h: the API cron's fetch raced Google's retirement of the kid (D153). The watchdog cancelled it and kept the updater keys.
+The updater proposed a key Google stopped publishing but did publish, with the same key material, within the last 24 h, and it is provably retired: known for over 7 days, unlisted for over 6 h, missed by 3+ fetches in a row over 30+ min (D153, D420). The API cron's fetch raced Google's retirement of the kid. The watchdog cancelled it and kept the updater keys. A kid that doesn't meet all three (a new key mid-rollout) is left pending, not cancelled.
 
 **Signals**
 
@@ -663,7 +663,7 @@ The updater proposed a key Google stopped publishing but did publish, with the s
 
 **Steps**
 
-1. **Check it was a retirement** (who: a founder). Google's JWKS no longer lists the kid, and `details.n` matches what the watchdog recorded for it (`/status` `seen_kids`). Repeats for the same kid more than an hour apart, or any `forged_key_change`, are not a race: see [forged-key-change](#forged-key-change).
+1. **Check it was a retirement** (who: a founder). Google's JWKS no longer lists the kid, and `details.n` matches what the watchdog recorded for it (`/status` `seen_kids`). Repeats for the same kid more than an hour apart, or any `forged_key_change`, are not a race: see [forged-key-change](#forged-key-change). Before D420 a new key mid-rollout could land here repeatedly (sandbox-dev, 2026-11-04/05): that no longer happens.
 
    ```sh
    curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)" 'https://<workerName>.<subdomain>.workers.dev/alerts?severity=critical'

@@ -1,6 +1,7 @@
 // Issuer signing-key lead time (D33 "Open", docs/security.md open issue (e)): when each kid first and last appears in
-// the issuer's JWKS, when it leaves it, and when a token signed with it first reaches the API. D1 table
-// `issuer_key_observations` (migration 0004); read with `admin.ts <env> issuer-keys:lead-times`. Public data only:
+// the issuer's JWKS, when it leaves it, and when a token signed with it first and last reaches the API (the last one
+// also keeps the JWKS cron from removing a key in use, D420). D1 table `issuer_key_observations` (migrations 0004,
+// 0012); read with `admin.ts <env> issuer-keys:lead-times`. Public data only:
 // kids, timestamps and the JWKS max-age, never a token, `sub` or anything about a user. Writes never fail a caller.
 import type { KeyObserver } from '@hana-id/oidc';
 import type { Env } from './env.ts';
@@ -9,8 +10,10 @@ import { log } from './log.ts';
 // Parsed in @hana-id/oidc (the token check reports each fetch's max-age to the observer); the JWKS cron uses it too.
 export { cacheMaxAgeS } from '@hana-id/oidc';
 
-/** Bound on the per-isolate set of kids whose first token was already written (only verified kids reach it). */
+/** Bound on the per-isolate map of kids whose token sighting was written (only verified kids reach it). */
 const NOTED_CAP = 256;
+/** A kid's token sighting is written at most once per isolate this often (`last_token_ms` is minutes-accurate). */
+export const TOKEN_SIGHTING_EVERY_MS = 10 * 60_000;
 
 /**
  * Records one successful JWKS fetch at `now`: every listed kid gets `first_seen_jwks_ms` (kept if earlier),
@@ -49,16 +52,17 @@ export async function recordJwksObservation(db: D1Database, provider: string, ki
 }
 
 /**
- * Records the first verified token signed with `kid` (the earliest wins across isolates; a later one writes
- * nothing). Never throws.
+ * Records a verified token signed with `kid`: `first_token_ms` keeps the earliest across isolates, `last_token_ms` the
+ * latest. Never throws.
  */
 export async function recordTokenKid(db: D1Database, provider: string, kid: string, now: number): Promise<boolean> {
   try {
     await db
       .prepare(
-        `INSERT INTO issuer_key_observations (provider, kid, first_token_ms) VALUES (?1, ?2, ?3)
-         ON CONFLICT (provider, kid) DO UPDATE SET first_token_ms = excluded.first_token_ms
-         WHERE first_token_ms IS NULL OR first_token_ms > excluded.first_token_ms`,
+        `INSERT INTO issuer_key_observations (provider, kid, first_token_ms, last_token_ms) VALUES (?1, ?2, ?3, ?3)
+         ON CONFLICT (provider, kid) DO UPDATE SET
+           first_token_ms = COALESCE(MIN(first_token_ms, excluded.first_token_ms), excluded.first_token_ms),
+           last_token_ms  = COALESCE(MAX(last_token_ms, excluded.last_token_ms), excluded.last_token_ms)`,
       )
       .bind(provider, kid, now)
       .run();
@@ -69,12 +73,13 @@ export async function recordTokenKid(db: D1Database, provider: string, kid: stri
   }
 }
 
-/** provider + kid pairs whose first token this isolate has already written (or tried to). */
-const notedTokenKids = new Set<string>();
+/** provider + kid → when this isolate last wrote (or tried to write) its token sighting. */
+const notedTokenKids = new Map<string, number>();
 
 /**
  * Observer (@hana-id/oidc `KeyObserver`) for a request's token verification: the D1 writes run after the response
- * (`exec.waitUntil`), and a kid's first token is written at most once per isolate. Without an execution context
+ * (`exec.waitUntil`), and a kid's token sighting is written at most once per isolate every TOKEN_SIGHTING_EVERY_MS.
+ * Without an execution context
  * nothing is recorded (the write would be cut off with the response, and the request must not wait for it).
  */
 export function keyObserver(env: Env, exec?: ExecutionContext): KeyObserver | undefined {
@@ -85,9 +90,10 @@ export function keyObserver(env: Env, exec?: ExecutionContext): KeyObserver | un
     },
     token(provider, kid, now) {
       const key = `${provider}\u0000${kid}`;
-      if (notedTokenKids.has(key)) return;
-      if (notedTokenKids.size >= NOTED_CAP) notedTokenKids.clear();
-      notedTokenKids.add(key);
+      const last = notedTokenKids.get(key);
+      if (last !== undefined && now - last < TOKEN_SIGHTING_EVERY_MS) return;
+      if (notedTokenKids.size >= NOTED_CAP && last === undefined) notedTokenKids.clear();
+      notedTokenKids.set(key, now);
       exec.waitUntil(recordTokenKid(env.DB, provider, kid, now));
     },
   };

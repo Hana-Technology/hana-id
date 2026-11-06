@@ -3,7 +3,7 @@
 // email JWKS, the link alarm thresholds (get_link_stats, D200), D139's unrecorded_wallets, and a v2 contract read as "no email issuer".
 import { describe, expect, it } from 'vitest';
 import { runWatchdog } from '../src/run.ts';
-import { alertsOf, emailJwk, HOUR, initialized, jwk, linkStats, linkWindow, MIN, OWNER, pinsOf, SIGNER, T0, UPDATER_KEYS, world } from './helpers.ts';
+import { alertsOf, emailJwk, HOUR, initialized, jwk, linkStats, linkWindow, MIN, OWNER, pinsOf, retiredLongAgo, runsOverRetiredSpan, SIGNER, T0, UPDATER_KEYS, world } from './helpers.ts';
 
 const severityOf = async (w: Awaited<ReturnType<typeof initialized>>, kind: string) => (await alertsOf(w.store, kind)).map((a) => a.severity);
 const openKinds = async (w: Awaited<ReturnType<typeof initialized>>) => (await w.store.openAlerts()).map((a) => a.kind).sort();
@@ -733,9 +733,10 @@ describe('Google rules unchanged beside a live email issuer', () => {
     const hana = await emailJwk(201);
     const k2 = jwk('k2', 2);
     const w = await initialized({ jwks: [jwk('k1', 1), k2], pins: pinsOf({ hana: [hana] }), before: (x) => void x.chain.emailIssuer([hana]) });
-    w.jwks.keys = [jwk('k1', 1)];
+    // Provably retired (D420): known for over a week, unlisted for over 6 h, missed by fetches in a row over 30 min.
+    await retiredLongAgo(w, [jwk('k1', 1)]);
     const c = w.chain.propose('Add', 'k2', { key: k2 });
-    await w.run();
+    await runsOverRetiredSpan(w);
     expect(w.writer.calls).toEqual([{ method: 'cancel_issuer_key_change', args: { id: c.id } }]);
     expect(await severityOf(w, 'retired_key_change')).toEqual(['warning']);
     expect(await alertsOf(w.store, 'forged_key_change')).toEqual([]);

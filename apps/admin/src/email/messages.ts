@@ -8,6 +8,8 @@ import { type Block, type Rendered, duration, isoTime, oneLine, render } from '.
 export interface MailContext {
   env: string;
   consoleOrigin: string;
+  /** A non-production env's label (`[SANDBOX]`, D419), first in every subject; absent or empty on production. */
+  label?: string;
 }
 
 const KIND_LABEL: Record<string, string> = { origin_add: 'a new allowed origin', policy_set: 'an auto-approve policy', raw_sign_on: 'raw signing (with approval)' };
@@ -63,7 +65,7 @@ export function changePending(c: MailContext, n: ChangeNotice, o: { cancelUrl: s
     { kind: 'link', label: 'Cancel this change', url: o.cancelUrl },
     { kind: 'p', text: 'An owner can also cancel it in the console, and Hana security can cancel it from the admin console.' },
   );
-  return render(c.env, `Pending change for ${oneLine(n.app.name, 60)}: ${ch.kind}`, blocks, c.consoleOrigin);
+  return render(c.env, `Pending change for ${oneLine(n.app.name, 60)}: ${ch.kind}`, blocks, c.consoleOrigin, c.label);
 }
 
 const orgLabel = (invite: InviteView, orgName: string | undefined): string => (invite.newOrgName ? `${invite.newOrgName} (new organisation)` : orgName ? `${orgName} (${invite.orgId})` : (invite.orgId ?? 'an organisation'));
@@ -82,6 +84,7 @@ export function inviteLink(c: MailContext, invite: InviteView, o: { orgName?: st
       { kind: 'p', text: 'If you were not expecting this, ignore this email.' },
     ],
     c.consoleOrigin,
+    c.label,
   );
 }
 
@@ -106,6 +109,7 @@ export function inviteNotice(c: MailContext, invite: InviteView, o: { orgName?: 
       { kind: 'p', text: 'If this is unexpected, an owner can revoke the invite in the console (Members), or ask Hana security to revoke it.' },
     ],
     c.consoleOrigin,
+    c.label,
   );
 }
 
@@ -133,6 +137,7 @@ export function ownerGrantNotice(c: MailContext, n: MemberNotice, o: { orgName?:
       { kind: 'p', text: 'Any owner can also cancel it in the console, and Hana security from the admin console.' },
     ],
     c.consoleOrigin,
+    c.label,
   );
 }
 
@@ -154,6 +159,7 @@ export function changesDigest(c: MailContext, orgId: string, rows: AppChange[]):
       { kind: 'p', text: 'If one is unexpected, an owner can undo it in the console, or ask Hana security.' },
     ],
     c.consoleOrigin,
+    c.label,
   );
 }
 
@@ -166,6 +172,7 @@ export function auditDigest(c: MailContext, orgId: string | null, rows: AuditRow
       { kind: 'list', items: rows.map((r) => `${isoTime(r.at)} ${r.action}${r.target ? ` ${r.target}` : ''} by ${r.actorKind} ${r.actorId} (${r.outcome})${detailText(r.details) ? ` ${detailText(r.details)}` : ''}`) },
     ],
     c.consoleOrigin,
+    c.label,
   );
 }
 
@@ -179,6 +186,7 @@ export function securityDigest(c: MailContext, orgId: string | null, events: Sec
       { kind: 'p', text: 'docs/playbooks.md has the recovery steps for each kind.' },
     ],
     c.consoleOrigin,
+    c.label,
   );
 }
 
@@ -225,7 +233,7 @@ export function onChainPending(c: MailContext, p: PendingOnChain): Rendered {
   }
   blocks.unshift({ kind: 'kv', rows: [['Scope', `${p.scopeId} (${p.orgId})`], ['Change', String(p.changeId)], ['Can execute from', isoTime(p.unlockAtMs)]] });
   blocks.push({ kind: 'p', text: `Any owner of the scope can cancel it before then (cancel_change, in the console's scope page), or ask Hana security. If you made this proposal, no action is needed.` });
-  return render(c.env, `On-chain proposal for ${p.scopeId}: ${what}`, blocks, c.consoleOrigin);
+  return render(c.env, `On-chain proposal for ${p.scopeId}: ${what}`, blocks, c.consoleOrigin, c.label);
 }
 
 export interface ScopeState {
@@ -259,5 +267,6 @@ export function onChainChanged(c: MailContext, scopeId: string, orgId: string, b
       { kind: 'p', text: 'This covers executed proposals and immediate owner actions (remove_client, disable_shared_login), whether or not they were sent through the console. If one is unexpected, contact Hana security.' },
     ],
     c.consoleOrigin,
+    c.label,
   );
 }

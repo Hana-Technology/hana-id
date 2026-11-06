@@ -27,6 +27,7 @@
 // for the hourly bulk refusal digest of C9, not this feed. Everything else is emailed, so a new kind is never silent.
 import type { AppChange, AuditRow, SecurityEvent } from '@hana-id/console-core';
 import type { Env } from './env.ts';
+import { mailLabel } from './env.ts';
 import { auditDigest, changesDigest, type MailContext, securityDigest } from './email/messages.ts';
 import type { Rendered } from './email/render.ts';
 import type { EmailSender } from './email/sender.ts';
@@ -195,7 +196,7 @@ async function sendGroup(env: Env, sender: EmailSender, budget: Budget, contacts
   return r.outOfBudget ? 'budget' : r.allAccepted ? 'sent' : 'failed';
 }
 
-const mail = (env: Env): MailContext => ({ env: env.ENV_NAME, consoleOrigin: env.CONSOLE_ORIGIN });
+const mail = (env: Env): MailContext => ({ env: env.ENV_NAME, consoleOrigin: env.CONSOLE_ORIGIN, label: mailLabel(env) });
 
 export function feedChanges(rawEnv: Env, ops: OpsStore, sender: EmailSender, budget: Budget): Promise<FeedStepResult> {
   const env = meteredEnv(rawEnv, budget);

@@ -7,6 +7,7 @@
 // to the org's security contacts, its billing email and the alias with the CSV's sha256, and recorded in
 // `ops.statement_notices` once every send was accepted.
 import type { Env } from './env.ts';
+import { mailLabel } from './env.ts';
 import { nonceUnexplained, rejectionRate, settlementMismatch, statementIssued } from './email/ledger-messages.ts';
 import type { MailContext } from './email/messages.ts';
 import type { EmailSender } from './email/sender.ts';
@@ -28,7 +29,7 @@ export interface AlertsSummary {
   failed: number;
 }
 
-const mail = (env: Pick<Env, 'ENV_NAME' | 'CONSOLE_ORIGIN'>): MailContext => ({ env: env.ENV_NAME, consoleOrigin: env.CONSOLE_ORIGIN });
+const mail = (env: Pick<Env, 'ENV_NAME' | 'CONSOLE_ORIGIN' | 'ENV_LABEL' | 'NEAR_NETWORK'>): MailContext => ({ env: env.ENV_NAME, consoleOrigin: env.CONSOLE_ORIGIN, label: mailLabel(env) });
 
 export async function runAlerts(env: Pick<Env, 'ENV_NAME' | 'CONSOLE_ORIGIN' | 'SECURITY_ALIAS'>, store: LedgerStore, sender: EmailSender, budget: Budget, now: number): Promise<AlertsSummary> {
   const sum: AlertsSummary = { nonce: 0, rejection: 0, settlement: 0, failed: 0 };

@@ -15,7 +15,7 @@ decisions D278–D285 (C8), D320–D329 (C12), D330–D338 (C14), D360–D369 (C
 
 ## Screens
 
-The left nav groups the screens by task (D419):
+The left nav groups the screens by task (D420):
 
 | Group | Screens |
 |---|---|
@@ -50,7 +50,7 @@ export.
 ## UI principles
 
 The staff SPA is a working tool for two people doing onboarding, support and security; these rules hold on every
-screen (D419; tests `test-spa/ux.test.ts`).
+screen (D420; tests `test-spa/ux.test.ts`).
 
 - **Never offer an action that can't work.** What the API would refuse for a reason the page already knows is hidden
   or disabled with one line saying why: Legacy apps (`org_legacy`) has no members, so it shows no invite, member,
@@ -136,5 +136,5 @@ team (`test/fake-access.js`). The SPA's tests (`test-spa/`, `vitest.spa.config.t
 does, in a fresh happy-dom window per test with the API answered at `fetch` (`test-spa/boot.ts`): the Support ID
 lookup screen and the Users screen's ways into it (`support.test.ts`), and the UI principles above (`ux.test.ts`).
 
-Last verified: 2026-11-06 (branch `feat/admin-ux-redesign`: the grouped nav and screens, "UI principles", the local preview, `ux.test.ts`, D419); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: email through SendGrid, D401); 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy`, stamped with the build id, read by `deploy-check` from the deployed version, D406); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup screen, `src/support.ts`'s email join,
+Last verified: 2026-11-06 (branch `feat/admin-ux-redesign`: the grouped nav and screens, "UI principles", the local preview, `ux.test.ts`, D420); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: email through SendGrid, D401); 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy`, stamped with the build id, read by `deploy-check` from the deployed version, D406); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup screen, `src/support.ts`'s email join,
 the SPA tests, D399); 2026-11-05 (branch `feat/batch-c-8b`: written with the Users screen, D388–D392).

@@ -1,0 +1,94 @@
+/*
+ * Hana's brand tokens for Hana ID's own pages (packages/brand, D426): the colours, type and shape every Hana-run page
+ * shares (the staff admin console, the partner console, the sign-in, approval and export pages). Variables only: no
+ * selector but :root, nothing loaded. Fonts are in fonts.css. Light by default, dark with prefers-color-scheme (no
+ * toggle, nothing stored). Every text/background pair a page uses is checked for WCAG AA in test/brand.test.ts.
+ *
+ * Sources: hana-app src/utils/designTokens.ts (palette, paletteDark, newColors, gradientColors), hana-extension
+ * src/common/utils/designTokens.ts, and hanawallet.io's stylesheet (--lf-ink, --lf-line, --lf-accent-from/-to, the
+ * hana-*-purple colours). Status colours (ok, warn, danger) are not Hana purples on purpose: a state must never read as
+ * a brand accent.
+ */
+:root {
+  /* Surfaces: Hana's lilac-white page, white cards, its card grey (palette.gray.cards). */
+  --hana-bg: #faf9fe;
+  --hana-surface: #ffffff;
+  --hana-surface-2: #f4f2f9;
+  --hana-surface-3: #ece8f6;
+  /* Text: Hana ink (palette.black), Hana purple (hanawallet.io hana-purple), the meta grey darkened for AA on cards. */
+  --hana-ink: #16073a;
+  --hana-ink-2: #4c3d7f;
+  --hana-muted: #665d80;
+  /* Lines: Hana stroke purple and white purple. */
+  --hana-line: #e6e0f7;
+  --hana-line-strong: #c9bfe6;
+  /* The one accent: Hana primary (palette.primary). */
+  --hana-accent: #3308a8;
+  --hana-accent-hover: #26067f;
+  --hana-accent-ink: #ffffff;
+  --hana-accent-soft: #ebe5fb;
+  /* Focus: the gradient's violet start (gradientColors[0]), distinct from the accent fill. */
+  --hana-focus: #6256e9;
+  /* Hana's gradient (gradientColors, hanawallet.io bg-custom-gradient): decoration only, never behind text. */
+  --hana-gradient: linear-gradient(90deg, #6256e9, #7e5deb 45%, #d772d3);
+  /* The mark: Hana ink with light purple (logo-hana-new.svg). */
+  --hana-mark-bg: #16073a;
+  --hana-mark-fg: #d4c5f9;
+  /* State. */
+  --hana-ok: #146c3d;
+  --hana-ok-soft: #e2f6ec;
+  --hana-ok-line: #a6dcbf;
+  --hana-warn: #7a4f00;
+  --hana-warn-soft: #fff3d1;
+  --hana-warn-line: #e8c977;
+  --hana-danger: #b3261e;
+  --hana-danger-hover: #93201a;
+  --hana-danger-soft: #fdecea;
+  --hana-danger-line: #f1b8b3;
+  --hana-on-danger: #ffffff;
+  /* Type. */
+  --hana-font: 'Montserrat', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --hana-font-display: 'Montserrat Alternates', 'Montserrat', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --hana-mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  /* Shape: pills for buttons (hanawallet.io rounded-full), soft cards (rounded-[14px]), tinted shadows. */
+  --hana-radius-sm: 6px;
+  --hana-radius: 10px;
+  --hana-radius-lg: 16px;
+  --hana-radius-pill: 999px;
+  --hana-shadow: 0 1px 2px rgb(22 7 58 / 0.05), 0 6px 20px -8px rgb(98 86 233 / 0.14);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Hana's dark: paletteDark.blacker, the dark cards and divider. */
+    --hana-bg: #0d0229;
+    --hana-surface: #170b36;
+    --hana-surface-2: #1f133f;
+    --hana-surface-3: #2a1c52;
+    --hana-ink: #f1edfc;
+    --hana-ink-2: #d4c5f9;
+    --hana-muted: #a99cc9;
+    --hana-line: #2c1b57;
+    --hana-line-strong: #4a3683;
+    /* Light purple (paletteDark.offPurple, lifted) as the accent; ink on it. */
+    --hana-accent: #bba8f6;
+    --hana-accent-hover: #d0c2fa;
+    --hana-accent-ink: #0d0229;
+    --hana-accent-soft: #2b1c5e;
+    --hana-focus: #c9a3f0;
+    --hana-mark-bg: #d4c5f9;
+    --hana-mark-fg: #16073a;
+    --hana-ok: #7dd3a3;
+    --hana-ok-soft: #10301f;
+    --hana-ok-line: #2c6446;
+    --hana-warn: #f0c565;
+    --hana-warn-soft: #33290f;
+    --hana-warn-line: #6b551d;
+    --hana-danger: #f4908a;
+    --hana-danger-hover: #f7aba6;
+    --hana-danger-soft: #3d1620;
+    --hana-danger-line: #74333a;
+    --hana-on-danger: #1d0b0a;
+    --hana-shadow: none;
+  }
+}

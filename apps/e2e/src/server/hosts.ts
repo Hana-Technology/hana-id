@@ -16,6 +16,9 @@ const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  // The brand's fonts and their licence (D426), as Cloudflare's assets binding types them.
+  '.woff2': 'font/woff2',
+  '.txt': 'text/plain; charset=utf-8',
 };
 
 /** A Workers static-assets binding over one directory: 200 with the file, or 404. */

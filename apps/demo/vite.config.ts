@@ -1,6 +1,17 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { loadEnv as loadManifest } from '@hana-id/env';
 import { tsImport } from 'tsx/esm/api';
-import { defineConfig } from 'vite';
+import { type Plugin, defineConfig } from 'vite';
+
+/** The brand fonts' licence (SIL OFL 1.1) next to the font files Vite emits into assets/ (D426). */
+const fontLicence = (): Plugin => ({
+  name: 'hana-font-licence',
+  apply: 'build',
+  generateBundle() {
+    this.emitFile({ type: 'asset', fileName: 'assets/OFL.txt', source: readFileSync(fileURLToPath(import.meta.resolve('@hana-id/brand/fonts/OFL.txt'))) });
+  },
+});
 
 type ConfigModule = typeof import('./src/config.ts');
 type CspModule = typeof import('./src/csp.ts');
@@ -16,6 +27,7 @@ export default defineConfig(async () => {
   const { pageCsp, securityHeaders } = (await tsImport('./src/csp.ts', import.meta.url)) as CspModule;
   const config = demoConfigFromVars(process.env, loadManifest);
   return {
+    plugins: [fontLicence()],
     define: { __HANA_DEMO_CONFIG__: JSON.stringify(config) },
     // Local runs need http://localhost:5174 on the app's origins (README). The dev server injects inline styles, so
     // only `vite preview` (the built page) carries the page's CSP and headers.

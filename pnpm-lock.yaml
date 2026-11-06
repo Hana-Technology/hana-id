@@ -41,6 +41,9 @@ importers:
       '@electric-sql/pglite':
         specifier: 0.5.11
         version: 0.5.11
+      '@hana-id/brand':
+        specifier: workspace:*
+        version: link:../../packages/brand
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.5
@@ -160,6 +163,9 @@ importers:
       '@cloudflare/workers-types':
         specifier: 5.20261016.1
         version: 5.20261016.1
+      '@hana-id/brand':
+        specifier: workspace:*
+        version: link:../../packages/brand
       '@testing-library/dom':
         specifier: 10.4.2
         version: 10.4.2
@@ -228,6 +234,9 @@ importers:
         specifier: workspace:*
         version: link:../../packages/web
     devDependencies:
+      '@hana-id/brand':
+        specifier: workspace:*
+        version: link:../../packages/brand
       '@hana-id/env':
         specifier: workspace:*
         version: link:../../packages/env
@@ -482,6 +491,18 @@ importers:
         version: 22.20.5
       typescript:
         specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.12
+        version: 4.1.12(@types/node@22.20.5)(happy-dom@21.0.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(vite@7.3.7(@types/node@22.20.5)(tsx@4.23.15))
+
+  packages/brand:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.5
+      typescript:
+        specifier: ^5.7.0
         version: 5.9.3
       vitest:
         specifier: 4.1.12
@@ -755,6 +776,9 @@ importers:
         specifier: workspace:^
         version: link:../core
     devDependencies:
+      '@hana-id/brand':
+        specifier: workspace:*
+        version: link:../brand
       '@hana-id/env':
         specifier: workspace:*
         version: link:../env

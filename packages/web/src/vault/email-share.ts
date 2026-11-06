@@ -98,6 +98,11 @@ export class ShareSheet {
     });
   }
 
+  /** Whether the sheet is over (a dismissed one stays routable until its window's late hello, or SHARE_HELLO_MS). */
+  get ended(): boolean {
+    return this.closed;
+  }
+
   /** The window the vault's launcher opened (popup-blocked `requestEmailSharing`). */
   adopt(w: WindowRef): void {
     if (this.said || this.closed) return;

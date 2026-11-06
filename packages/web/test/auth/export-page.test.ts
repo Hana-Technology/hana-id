@@ -99,6 +99,7 @@ function run(
   const loginBodies: LoginBody[] = [];
   const api = {
     getApp: vi.fn(async () => o.config ?? appConfig()),
+    emailPreview: vi.fn(async () => 'unused@example.com'),
     writeRelay: vi.fn(),
     readRelay: vi.fn(
       () =>

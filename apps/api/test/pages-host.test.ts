@@ -47,6 +47,7 @@ const PAGE_FILES = {
   // A build's own header (here COOP) must not reach the page: the auth pages send no COOP.
   '/approve.html': { body: '<!doctype html><title>approve</title>', type: 'text/html; charset=utf-8', headers: { 'cross-origin-opener-policy': 'same-origin' } },
   '/export.html': { body: '<!doctype html><title>export</title>', type: 'text/html; charset=utf-8' },
+  '/share-email.html': { body: '<!doctype html><title>share</title>', type: 'text/html; charset=utf-8' },
   '/login.js': { body: 'export {}', type: 'text/javascript' },
   '/style.css': { body: 'body{}', type: 'text/css' },
 };
@@ -109,6 +110,8 @@ describe('auth origin Worker', () => {
       '/login/callback': `${BASE}; frame-ancestors 'none'; connect-src https://api.test`,
       '/approve': `${BASE}; frame-ancestors 'none'`,
       '/export': `${BASE}; frame-ancestors 'none'; connect-src https://api.test https://rpc.test https://www.googleapis.com`,
+      // D411: the email sharing sheet reads the sealed address from the API's preview, nothing else.
+      '/share-email': `${BASE}; frame-ancestors 'none'; connect-src https://api.test`,
     };
     expect(Object.keys(expected)).toEqual([...AUTH_PAGE_PATHS]);
     for (const path of AUTH_PAGE_PATHS) {

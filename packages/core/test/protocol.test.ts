@@ -57,6 +57,7 @@ const VALID_PARAMS: Record<(typeof PORT_METHODS)[number], unknown> = {
   hana_identityToken: { maxAgeMs: 60_000 },
   hana_account: undefined,
   hana_linkAccount: { method: 'email' },
+  hana_requestEmailSharing: { popupBlocked: true },
 };
 
 describe('port requests', () => {

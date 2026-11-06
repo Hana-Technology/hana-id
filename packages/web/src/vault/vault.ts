@@ -2023,7 +2023,8 @@ export class Vault {
     } catch {
       sheet.dismiss();
     } finally {
-      if (this.shareSheet === sheet) this.shareSheet = null;
+      // A dismissed sheet stays routed until it answered its window's late hello (ShareSheet.dismiss).
+      if (this.shareSheet === sheet && sheet.ended) this.shareSheet = null;
     }
   }
 
@@ -2069,7 +2070,8 @@ export class Vault {
       throw e;
     } finally {
       intent?.remove();
-      if (this.shareSheet === sheet) this.shareSheet = null;
+      // A dismissed sheet stays routed until it answered its window's late hello (ShareSheet.dismiss).
+      if (this.shareSheet === sheet && sheet.ended) this.shareSheet = null;
     }
   }
 

@@ -1,11 +1,12 @@
 // The staff SPA's UI rules (apps/admin/README.md "UI principles"), run as the browser runs public/app.js (boot.ts): an
 // action that can't work isn't offered (Legacy apps has no members: no invite, no freeze; its scopes are moved from its
-// own page; an organisation without a security contact or an owner gets no app form; a statement with blockers can't
+// own page, with the on-chain owner rule said in words; an organisation without a security contact gets no "Create an
+// app"; a statement with blockers can't
 // be issued), every API error is said in plain words with the code kept small, and destructive or guarded actions are
 // confirmed in the page, never with a browser dialog. The request each action sends is the one the routes take
 // (docs/api.md "Admin Worker").
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { type Answer, type Call, boot, closeWindow } from './boot.ts';
+import { type Answer, type Call, SRC, boot, closeWindow } from './boot.ts';
 
 afterEach(closeWindow);
 
@@ -39,7 +40,8 @@ describe('Legacy apps (org_legacy): only what can work there', () => {
     await vi.waitFor(() => expect(s.text()).toContain('Scopes waiting for an organisation'));
     const t = s.text();
     expect(t).toContain('Nobody can be invited to Legacy apps, and it can’t be frozen');
-    expect(t).toContain('invite their first owner to a new organisation');
+    expect(t).toContain('To onboard a partner whose app is here: invite their first owner to a new organisation, then use “Move to an organisation” on the scope. If the scope has Google-account owners on chain, each must be an owner of that organisation first, or the move is refused (scope_conflict).');
+    expect(SRC).not.toMatch(/scope:register|owners-from-org/u);
     for (const absent of ['Send invite', 'Invite someone', 'Freeze', 'Unfreeze', 'Make owner', 'Create an app', 'Move a legacy scope here']) expect(s.buttons(absent), absent).toHaveLength(0);
     for (const absent of ['Members', 'Invites', 'Pending owner grants']) expect([...s.main().querySelectorAll('h2')].map((x) => x.textContent), absent).not.toContain(absent);
     expect(s.main().querySelector('input[name=email]')).toBeNull();
@@ -60,7 +62,7 @@ describe('Legacy apps (org_legacy): only what can work there', () => {
     s.submit(select.closest('form') as unknown as HTMLFormElement);
     // The confirmation names the scope, its live apps and the target; nothing is sent before "Move scope".
     await vi.waitFor(() => expect(s.main().querySelector('.confirm')).toBeTruthy());
-    expect(s.main().querySelector('.confirm')!.textContent).toContain('Move scope s_wend (2 apps) to Lumen Pay (org_lumen)?');
+    expect(s.main().querySelector('.confirm')!.textContent).toContain('Move scope s_wend (2 apps) to Lumen Pay (org_lumen)? If the scope has Google-account owners on chain, each must be an owner of that organisation first, or the move is refused (scope_conflict).');
     expect(writes(s)).toEqual([]);
     s.button('Cancel').click();
     expect(s.main().querySelector('.confirm')).toBeNull();
@@ -192,23 +194,40 @@ describe('destructive and guarded actions are confirmed in the page', () => {
   });
 
   it('the source opens no browser dialog', async () => {
-    const { SRC } = await import('./boot.ts');
     expect(SRC).not.toMatch(/(?<![.\w])(?:confirm|alert|prompt)\(|window\.(?:confirm|alert|prompt)\b/u);
   });
 });
 
-describe('an organisation that can’t get apps yet gets no app form', () => {
-  it('without a security contact, or without an owner, says which to add first', async () => {
+describe('apps and scopes on an organisation: only what the API takes', () => {
+  it('without a security contact: no "Create an app" (createApp refuses it), the reason said; moving a legacy scope stays (it needs none)', async () => {
     const noContact = detail(ORGS[2]!, { members: [member('usr_jo', 'jo@kestrel.example', 'owner')], securityContacts: [], flags: { noSecurityContacts: true, ownersNotContacts: ['jo@kestrel.example'] } });
     const s = boot('/orgs/org_kestrel', orgsApi(undefined, { org_kestrel: noContact }));
     await vi.waitFor(() => expect(s.text()).toContain('Apps'));
     expect(s.buttons('Create an app')).toHaveLength(0);
-    expect(s.buttons('Move a legacy scope here')).toHaveLength(0);
-    expect(s.text()).toContain('Add a security contact first: an organisation without one can’t get apps.');
+    expect(s.buttons('Move a legacy scope here')).toHaveLength(1);
+    expect(s.text()).toContain('Add a security contact before creating an app: an organisation without one can’t get new apps.');
+  });
+
+  it('without an owner, both stay offered: a scope owned only by a NEAR account moves (and gets apps) without one', async () => {
     const noOwner = detail(ORGS[2]!, { members: [member('usr_vi', 'vi@kestrel.example', 'viewer')] });
     const t = boot('/orgs/org_kestrel', orgsApi(undefined, { org_kestrel: noOwner }));
-    await vi.waitFor(() => expect(t.text()).toContain('Invite an owner first'));
-    expect(t.buttons('Create an app')).toHaveLength(0);
+    await vi.waitFor(() => expect(t.button('Create an app')).toBeTruthy());
+    expect(t.buttons('Move a legacy scope here')).toHaveLength(1);
+  });
+
+  it('a refused move (scope_conflict) says the on-chain owner rule in words', async () => {
+    const s = boot('/orgs/org_legacy', orgsApi(() => ({ status: 409, body: { error: { code: 'scope_conflict', message: 'The scope has 1 on-chain OIDC owner(s) who are not owners of this org' } } })));
+    await vi.waitFor(() => expect(s.buttons('Move to an organisation')).toHaveLength(2));
+    s.buttons('Move to an organisation')[0]!.click();
+    await vi.waitFor(() => expect(s.main().querySelector('select[name=orgId]')).toBeTruthy());
+    s.submit(s.main().querySelector('select[name=orgId]')!.closest('form'));
+    (s.main().querySelector('.confirm button') as unknown as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(s.main().querySelector('.alert.error')).toBeTruthy());
+    const box = s.main().querySelector('.alert.error')!;
+    expect(box.querySelector('strong')!.textContent).toBe('The scope doesn’t fit this organisation');
+    expect(box.textContent).toContain('If the scope has Google-account owners on chain, each must be an owner of that organisation first (scopes owned only by a NEAR account move freely).');
+    expect(box.querySelector('.detail')!.textContent).toBe('The scope has 1 on-chain OIDC owner(s) who are not owners of this org');
+    expect(box.querySelector('.code')!.textContent).toBe('Error code scope_conflict (HTTP 409)');
   });
 
   it('with both, "Move a legacy scope here" lists the legacy scopes and sends this organisation as the target', async () => {

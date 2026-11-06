@@ -55,8 +55,10 @@ screen (D420; tests `test-spa/ux.test.ts`).
 - **Never offer an action that can't work.** What the API would refuse for a reason the page already knows is hidden
   or disabled with one line saying why: Legacy apps (`org_legacy`) has no members, so it shows no invite, member,
   owner-grant, freeze or app form, and offers "Invite a new partner" and, per scope, "Move to an organisation"
-  instead; an organisation without a security contact or an active owner gets no app form; "Issue statement" is
-  disabled until the month is over, settled and rated. Everything else is left to the server.
+  instead; an organisation without a security contact gets no "Create an app"; "Issue statement" is disabled until
+  the month is over, settled and rated. Everything else is left to the server, its refusal mapped: a scope moves (or
+  gets an app) only when each of its Google-account owners on chain is an owner of the target organisation (a scope
+  owned only by a NEAR account moves freely), else `scope_conflict`.
 - **Errors in plain words.** Every API code maps to a title and what to do next (`ERRORS` in `public/app.js`); the
   server's own message sits under it and the code is kept small (`Error code forbidden (HTTP 403)`) for support. A
   dropped connection and an unknown code get their own wording.

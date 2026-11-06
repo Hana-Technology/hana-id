@@ -74,7 +74,7 @@ async function api(method, path, body) {
 // ---- errors in plain words ----
 
 const LEGACY_ORG = 'org_legacy';
-const LEGACY_HINT = 'Legacy apps holds the scopes from before organisations existed. To onboard a partner, invite their first owner to a new organisation (Organisations, "Invite a new partner"), then move their scope there from Legacy apps.';
+const LEGACY_HINT = 'Legacy apps holds the scopes from before organisations existed. To onboard a partner, invite their first owner to a new organisation (Organisations, "Invite a new partner"), then use “Move to an organisation” on their scope in Legacy apps.';
 
 /** Every code the admin API answers (docs/api.md "Admin Worker"): what happened, and what to do next. */
 const ERRORS = {
@@ -92,7 +92,7 @@ const ERRORS = {
   version_conflict: ['Someone changed this first', 'Reload the page to see the latest version, then try again.'],
   already_applied: ['That’s already done', 'Reload the page to see the current state.'],
   token_used: ['That link was already used', 'Reload the page to see the current state.'],
-  scope_conflict: ['The scope doesn’t fit this organisation', 'Check the scope id. Its on-chain owners must be this organisation’s owners (`scope:register --owners-from-org`), and it can’t belong to another organisation.'],
+  scope_conflict: ['The scope doesn’t fit this organisation', 'If the scope has Google-account owners on chain, each must be an owner of that organisation first (scopes owned only by a NEAR account move freely). The scope must also be registered on chain and not belong to another organisation. The details say which.'],
   not_pending: ['This is no longer pending', 'It was applied, cancelled or expired. Reload the page to see it.'],
   conflict: ['That clashes with the current state', 'The details say what clashes. Reload the page and try again if it still applies.'],
   key_limit: ['This app has as many keys as it can have', 'Revoke an old key first.'],
@@ -723,8 +723,8 @@ async function legacyScopeOptions() {
 }
 
 function appsPanel(o, d) {
-  const owners = d.members.filter((m) => m.role === 'owner' && !m.disabled);
-  const blocked = d.flags.noSecurityContacts ? 'Add a security contact first: an organisation without one can’t get apps.' : !owners.length ? 'Invite an owner first: a scope is registered on chain with the organisation’s owners.' : '';
+  // createApp refuses an organisation without a security contact; moving a legacy scope here doesn't need one.
+  const blocked = d.flags.noSecurityContacts ? 'Add a security contact before creating an app: an organisation without one can’t get new apps.' : '';
   const create = disclosure(
     'Create an app',
     h(
@@ -733,7 +733,7 @@ function appsPanel(o, d) {
       h('h3', {}, 'Create an app'),
       form(
         [
-          { name: 'scopeId', label: 'Scope id', placeholder: 's…', required: true, help: 'Register it on chain first with this organisation’s owners: `scope:register --owners-from-org`.' },
+          { name: 'scopeId', label: 'Scope id', placeholder: 's…', required: true, help: 'The scope must be registered on chain. If it has Google-account owners on chain, each must be an owner of this organisation, or the app is refused (scope_conflict).' },
           { name: 'environment', type: 'select', label: 'Environment', optional: false, options: [{ value: 'test', label: 'Test' }, { value: 'live', label: 'Live' }] },
           { name: 'name', label: 'App name', placeholder: 'Lumen Pay checkout', required: true },
           { name: 'origins', label: 'Allowed origins', placeholder: 'https://app.partner.example', size: 'wide', help: 'Space or comma separated. The security contacts are emailed and they take effect after the waiting period.' },
@@ -756,7 +756,7 @@ function appsPanel(o, d) {
           box.replaceChildren(
             h('h3', {}, 'Move a legacy scope here'),
             options.length
-              ? form([{ name: 'scopeId', type: 'select', label: 'Legacy scope', optional: false, options, size: 'wide', help: 'Every app of the scope moves. Its on-chain owners must be this organisation’s owners.' }], 'Move scope', (v) => api('POST', `/api/scopes/${encodeURIComponent(v.scopeId)}/assign`, { orgId: o.id }), { confirm: (v) => `Move scope ${v.scopeId} and every app in it into ${o.name}? This can’t be undone from the console.`, done: (v) => `Scope ${v.scopeId} now belongs to ${o.name}.` })
+              ? form([{ name: 'scopeId', type: 'select', label: 'Legacy scope', optional: false, options, size: 'wide', help: 'Every app of the scope moves.' }], 'Move scope', (v) => api('POST', `/api/scopes/${encodeURIComponent(v.scopeId)}/assign`, { orgId: o.id }), { confirm: (v) => `Move scope ${v.scopeId} and every app in it into ${o.name}? If the scope has Google-account owners on chain, each must be an owner of that organisation first, or the move is refused (scope_conflict). This can’t be undone from the console.`, done: (v) => `Scope ${v.scopeId} now belongs to ${o.name}.` })
               : emptyState('Legacy apps is empty', 'Every legacy scope already belongs to an organisation.'),
           );
         } catch (err) {
@@ -768,10 +768,10 @@ function appsPanel(o, d) {
   );
   return panel(
     'Apps',
-    { actions: blocked ? [] : [create.button, move.button] },
+    { actions: blocked ? [move.button] : [create.button, move.button] },
     blocked ? note('warn', '', blocked) : '',
     appsTable(o, d.apps),
-    create.box,
+    blocked ? '' : create.box,
     move.box,
   );
 }
@@ -864,11 +864,11 @@ async function legacyPage(main, d) {
             box.replaceChildren(
               targets.length
                 ? form(
-                    [{ name: 'orgId', type: 'select', label: 'Move to', optional: false, options: targets, help: 'The scope’s on-chain owners must be that organisation’s owners.' }],
+                    [{ name: 'orgId', type: 'select', label: 'Move to', optional: false, options: targets, help: 'Every app of the scope moves.' }],
                     'Move scope',
                     (v) => api('POST', `/api/scopes/${encodeURIComponent(scopeId)}/assign`, { orgId: v.orgId }),
                     {
-                      confirm: (v) => `Move scope ${scopeId} (${live.length} app${live.length === 1 ? '' : 's'}) to ${(targets.find((t) => t.value === v.orgId) || { label: v.orgId }).label}? This can’t be undone from the console.`,
+                      confirm: (v) => `Move scope ${scopeId} (${live.length} app${live.length === 1 ? '' : 's'}) to ${(targets.find((t) => t.value === v.orgId) || { label: v.orgId }).label}? If the scope has Google-account owners on chain, each must be an owner of that organisation first, or the move is refused (scope_conflict). This can’t be undone from the console.`,
                       done: (v) => `Scope ${scopeId} now belongs to ${(targets.find((t) => t.value === v.orgId) || { label: v.orgId }).label}. Its apps are on that organisation’s page.`,
                     },
                   )
@@ -893,7 +893,7 @@ async function legacyPage(main, d) {
       meta: [orgStatus(o.status), badge('No members'), mono(o.id)],
       actions: [h('button', { type: 'button', class: 'primary', onclick: () => ((openInvite = true), (focusHeading = true), go('/orgs')) }, 'Invite a new partner')],
     }),
-    note('info', 'Nobody can be invited to Legacy apps, and it can’t be frozen', 'To onboard a partner whose app is here: invite their first owner to a new organisation, register the scope with that organisation’s owners (`scope:register --owners-from-org`), then use “Move to an organisation” on the scope below.'),
+    note('info', 'Nobody can be invited to Legacy apps, and it can’t be frozen', 'To onboard a partner whose app is here: invite their first owner to a new organisation, then use “Move to an organisation” on the scope. If the scope has Google-account owners on chain, each must be an owner of that organisation first, or the move is refused (scope_conflict).'),
     panel(
       'Scopes waiting for an organisation',
       { hint: 'Moving a scope moves every app in it.' },

@@ -7551,8 +7551,10 @@ branch.
 - Decision: the staff SPA follows the rules in `apps/admin/README.md` "UI principles": (1) an action the API would
   refuse isn't offered: Legacy apps (`org_legacy`) shows no members, invites, owner grants, freeze or app form, says
   why in one line and offers "Invite a new partner" and, per scope, "Move to an organisation" (the same `POST
-  /api/scopes/:scope/assign {orgId}`); an organisation without a security contact or an owner gets no app form; a
-  statement with blockers can't be issued; (2) every API error is mapped from its code to a title and what to do next,
+  /api/scopes/:scope/assign {orgId}`; it works when each Google-account (`Owner::Oidc`) owner of the scope on chain is
+  an owner of the target organisation, a scope owned only by a NEAR account moving freely; else `scope_conflict`,
+  said in those words); an organisation without a security contact gets no "Create an app"; a statement with
+  blockers can't be issued; (2) every API error is mapped from its code to a title and what to do next,
   the server's own message under it and the code small for support; (3) a destructive or guarded action is confirmed
   in the page (a strip with what will happen, the action's own label and Cancel, Escape cancels), never a browser
   dialog; (4) the nav is grouped by task (Partners, Support, Security, Money, System), each page has one header with
@@ -7564,7 +7566,7 @@ branch.
   context costs them a guess, and the old org page offered an invite form on an org that has no members.
 - Alternatives: (a) keep the forms and improve the error text only: staff still try what can't work. Not done. (b) A
   client-side copy of the API's rules for every action: duplicated rules drift. Only the refusals the screen can know
-  from data it already has (org_legacy, no contact, no owner, statement blockers) are mirrored; everything else is
+  from data it already has (org_legacy, no security contact, statement blockers) are mirrored; everything else is
   left to the server and its error mapped.
 
 ## Superseded or amended

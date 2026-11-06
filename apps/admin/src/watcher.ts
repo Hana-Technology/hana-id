@@ -17,6 +17,7 @@
 // stays before it, so the next run reads it first.
 import type { ScopeRow } from '@hana-id/console-core';
 import type { Env } from './env.ts';
+import { mailLabel } from './env.ts';
 import { onChainChanged, onChainPending, type ScopeState } from './email/messages.ts';
 import type { EmailSender } from './email/sender.ts';
 import { errorName, log } from './log.ts';
@@ -80,7 +81,7 @@ export async function runWatcher(rawEnv: Env, ops: OpsStore, sender: EmailSender
     }
     return contactsOf.get(orgId)!;
   };
-  const ctx = { env: env.ENV_NAME, consoleOrigin: env.CONSOLE_ORIGIN };
+  const ctx = { env: env.ENV_NAME, consoleOrigin: env.CONSOLE_ORIGIN, label: mailLabel(env) };
   let lastDone: string | null = stored ?? null;
   let stopped = false;
   for (const scope of page.scopes) {

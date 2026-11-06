@@ -17,7 +17,7 @@ export function nonceUnexplained(c: MailContext, rows: NonceCheck[]): Rendered {
     blocks.push({ kind: 'kv', rows: [['Relayer key', r.relayerPk], ['Nonce on chain', r.chainNonce.toString()], ['Checked at', isoTime(r.checkedAt)], ['Ledger relayed rows since the last check', String(r.ledgerRelayedSinceLast)]] });
   }
   blocks.push({ kind: 'p', text: 'The admin console’s security screen lists every check.' });
-  return render(c.env, `Relayer nonce unexplained (${rows.length})`, blocks, c.consoleOrigin);
+  return render(c.env, `Relayer nonce unexplained (${rows.length})`, blocks, c.consoleOrigin, c.label);
 }
 
 /** `rejection_rate` (D91): orgs whose relayed-then-rejected share passed the threshold for a day. */
@@ -29,7 +29,7 @@ export function rejectionRate(c: MailContext, rows: RejectionAlert[], o: { minRe
     blocks.push({ kind: 'kv', rows: [['Organisation', r.orgId], ['Day', r.day], ['Relayed', String(r.relayed)], ['Rejected after relay', `${r.rejected} (${((r.rejected * 100) / Math.max(1, r.relayed)).toFixed(1)}%)`]] });
   }
   blocks.push({ kind: 'p', text: 'A partner bug can cause this, and so can third parties replaying public signed requests. The service contract may bill partner-caused rejections above the threshold.' });
-  return render(c.env, `Rejection rate over ${o.pct}% (${rows.length})`, blocks, c.consoleOrigin);
+  return render(c.env, `Rejection rate over ${o.pct}% (${rows.length})`, blocks, c.consoleOrigin, c.label);
 }
 
 const REASON: Record<SettlementAlert['reason'], string> = {
@@ -46,7 +46,7 @@ export function settlementMismatch(c: MailContext, rows: SettlementAlert[]): Ren
     blocks.push({ kind: 'kv', rows: [['Request', r.requestId], ['Event time', isoTime(r.at)], ['Organisation', r.orgId], ['Transaction', r.nearTx], ['Why', REASON[r.reason]], ['Detail', oneLine(JSON.stringify(r.detail), 400)]] });
   }
   blocks.push({ kind: 'p', text: 'Check the transaction on chain at FINAL and the API’s logs for the request id; rotate the usage writer’s password if the event was not written by the API.' });
-  return render(c.env, `Settlement refused ${rows.length} event${rows.length === 1 ? '' : 's'}`, blocks, c.consoleOrigin);
+  return render(c.env, `Settlement refused ${rows.length} event${rows.length === 1 ? '' : 's'}`, blocks, c.consoleOrigin, c.label);
 }
 
 /** A statement was issued: to the org's security contacts, its billing email and the alias, with the statement hash. */
@@ -67,6 +67,7 @@ export function statementIssued(c: MailContext, s: { orgId: string; orgName: str
       { kind: 'p', text: 'Owners and viewers can download it from the partner console. Tax invoices come from Hana’s accounting software and quote this hash.' },
     ],
     c.consoleOrigin,
+    c.label,
   );
 }
 
@@ -103,7 +104,7 @@ export function retentionFailed(c: MailContext, p: RetentionProblem): Rendered {
     blocks.push({ kind: 'warn', text: `The monthly retention job for ${p.month} could not start: ${oneLine(p.reason, 200)}. Nothing was recorded; it runs once the usage ledger is reachable.` });
   }
   blocks.push({ kind: 'p', text: 'The admin console’s retention screen lists every run with its rows per table. docs/operations.md "Retention" has the recovery steps.' });
-  return render(c.env, subject, blocks, c.consoleOrigin);
+  return render(c.env, subject, blocks, c.consoleOrigin, c.label);
 }
 
 /**
@@ -122,5 +123,6 @@ export function directoryBudget(c: MailContext, o: { staff: string; window: '1h'
       { kind: 'p', text: 'If this isn’t expected support work, treat the staff session as compromised: remove the person from the Access policy and admin.staffEmails, and review their rows in the admin console’s audit (issuer directory reads).' },
     ],
     c.consoleOrigin,
+    c.label,
   );
 }

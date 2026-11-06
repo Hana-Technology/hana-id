@@ -32,7 +32,8 @@ export interface SealKey {
 }
 
 const enc = new TextEncoder();
-const dec = new TextDecoder('utf-8', { fatal: true, ignoreBOM: false });
+/** Made on first use: the package's other exports load with Web Crypto, TextEncoder and btoa alone (test/platform.test.ts). */
+const decoder = (): TextDecoder => new TextDecoder('utf-8', { fatal: true, ignoreBOM: false });
 
 const u32le = (n: number): Uint8Array<ArrayBuffer> => {
   const b = new Uint8Array(4);
@@ -161,7 +162,7 @@ export async function openSealedEmail(keys: readonly SealKey[], blob: unknown, i
     return { ok: false, reason: 'bad_seal' };
   }
   try {
-    const v = JSON.parse(dec.decode(pt)) as { email?: unknown; src?: unknown };
+    const v = JSON.parse(decoder().decode(pt)) as { email?: unknown; src?: unknown };
     const keysOk = v !== null && typeof v === 'object' && Object.keys(v).sort().join(',') === 'email,src';
     if (!keysOk || typeof v.email !== 'string' || v.email.length < 3 || v.email.length > SEALED_EMAIL_ADDRESS_MAX || !v.email.includes('@') || (v.src !== 'google' && v.src !== 'email')) {
       return { ok: false, reason: 'bad_seal' };

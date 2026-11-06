@@ -31,7 +31,7 @@ describe('google-record (D270)', () => {
     const issuedBefore = (await env.DB.prepare('SELECT COUNT(*) AS n FROM email_issuance').first<number>('n')) ?? 0;
     const { res, json } = await record(h, app, account);
     expect(res.status).toBe(200);
-    // No match data: no decision, no hosted flag, no token, no challenge; only the sealed address (D418).
+    // No match data: no decision, no hosted flag, no token, no challenge; only the sealed address (D419).
     expect(json).toEqual({ accepted: true, sealedEmail: expect.stringMatching(/^se1\./u) });
     expect(res.headers.get('access-control-allow-origin')).toBe(VAULT);
     expect(await userRow(account.sub)).toEqual({ email: account.email.toLowerCase(), email_verified: 1, hosted: 1, first_seen_ms: h.clock.now, last_seen_ms: h.clock.now });

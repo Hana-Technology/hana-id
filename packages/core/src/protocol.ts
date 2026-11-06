@@ -815,7 +815,7 @@ export interface WindowMessageMap {
      */
     supportId?: string;
     /**
-     * D411, D422: the session's address is shared with this app: the account line offers "Stop sharing"
+     * D411, D423: the session's address is shared with this app: the account line offers "Stop sharing"
      * (`hana:email-revoke`). Present only then, so other requests send exactly the message older pages take.
      */
     emailShared?: true;
@@ -909,7 +909,7 @@ export interface WindowMessageMap {
   /** Vault → the sheet: the answer was recorded (`state`) or couldn't be (`failed`); the sheet closes. */
   'hana:email-share-done': { state: 'granted' | 'declined' | 'failed' };
   /**
-   * D411, D422: the approval popup's account line → vault: "Stop sharing" (the request carried `emailShared`). The
+   * D411, D423: the approval popup's account line → vault: "Stop sharing" (the request carried `emailShared`). The
    * vault revokes every address of this app and account, then answers `hana:email-revoked`.
    */
   'hana:email-revoke': Record<string, never>;

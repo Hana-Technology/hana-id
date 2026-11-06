@@ -1,13 +1,14 @@
 # @hana-id/react
 
-React bindings for Hana ID (`@hana-id/web`): `HanaProvider`, `useHana` and `useWallet`. React 18 and 19.
+React bindings for Hana ID (`@hana-id/web`): `HanaProvider`, `useHana`, `useWallet`, `useIdentityToken` and
+`useEmailSharing`. React 18 and 19.
 
 ## Install
 
 The packages aren't on a registry yet. Hana sends you the tarballs; install them together, next to your React:
 
 ```sh
-npm install ./hana-id-core-0.2.0.tgz ./hana-id-web-0.2.0.tgz ./hana-id-react-0.2.0.tgz
+npm install ./hana-id-core-0.3.0.tgz ./hana-id-web-0.3.0.tgz ./hana-id-react-0.3.0.tgz
 ```
 
 Peer dependency: `react` `^18.0.0 || ^19.0.0` (tested with 18.3.1 and 19.3.1). ESM only, with TypeScript
@@ -16,7 +17,7 @@ declarations.
 ## Use
 
 ```tsx
-import { HanaProvider, useHana, useIdentityToken, useWallet } from '@hana-id/react';
+import { HanaProvider, useEmailSharing, useHana, useIdentityToken, useWallet } from '@hana-id/react';
 
 const config = {
   publishableKey: 'pk_test_…', // from Hana
@@ -41,6 +42,7 @@ function SignIn() {
 const { address, signer } = useWallet('stellar'); // signer is hana.stellar
 const { address, provider } = useWallet('evm');   // provider is hana.ethereum (EIP-1193)
 const { identityToken, refresh, error } = useIdentityToken(); // a JWT for your backend, kept fresh while visible
+const { request, state, error } = useEmailSharing();          // <button onClick={request}>: Hana's email sharing sheet (0.3.0)
 ```
 
 - `HanaProvider` creates one client, also under strict mode, and destroys it on unmount. It reads `config` once; to

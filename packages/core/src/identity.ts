@@ -385,14 +385,14 @@ export const identityJwksEntry = (jwk: P256PublicJwk): { kty: 'EC'; crv: 'P-256'
 // ---- POST /v1/identity/token (the vault's request and the API's answer) ----
 
 /**
- * `emailStatus` in a mint answer (D411, D421): `off` (the app's setting), `not_asked` / `declined` (the session's sealed
+ * `emailStatus` in a mint answer (D411, D422): `off` (the app's setting), `not_asked` / `declined` (the session's sealed
  * address has no consent / was declined), `missing` (no sealed address and nothing shared), `invalid` (a sealed address
  * the API can't open, and nothing shared), `included` (the token carries `email`).
  */
 export const IDENTITY_EMAIL_STATUSES = ['off', 'not_asked', 'declined', 'missing', 'invalid', 'included'] as const;
 export type IdentityEmailStatus = (typeof IDENTITY_EMAIL_STATUSES)[number];
 
-/** The mint request body: bytes as JSON number arrays; `sealedEmail` when the session has one (D418). */
+/** The mint request body: bytes as JSON number arrays; `sealedEmail` when the session has one (D419). */
 export interface IdentityTokenBody {
   sessionPublicKey: number[];
   issuedAtMs: number;

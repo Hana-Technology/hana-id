@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D418 (branch `fix/hyperdrive-account-id-hint`, decided by the user, C16 after the pilot) on 2026-11-06; D417 (branch `docs/personal-account-free-tier`, decided by the user) on 2026-11-06; D416 (branch `feat/console-remove-audience`, decided while building, to confirm) on 2026-11-06, extending D238; D415 (branch `docs/auto-deploy-intent`, decided by the user, intent only, not built) on 2026-11-06; D414 (branch `feat/m4-personal-account`, decided by the user) on 2026-11-05, amending D404, with a row of "Superseded or amended"; D401 amended (branch `fix/sendgrid-suppression`: alerts and blocking notices bypass SendGrid's suppression lists, a security review fix) on 2026-11-05; D401 (branch `feat/sandbox-dev-dashboard-blocks`, asked for by the user: SendGrid for every Hana email; the isolate memo to confirm) and D402 (same branch, agreed by the user: sandbox-dev's 1-day statement lock) on 2026-11-05, amending D87, D279, D308 and settling D194's open point, with rows of "Superseded or amended"; D413 (branch `feat/local-verify`, asked for by the user, confirmed by the user) on 2026-11-05, amending D387, with a row of "Superseded or amended"; D410 and D412 (branch `fix/security-review-1105`: a security review's fixes, to confirm) on 2026-11-05, amending D224, D391, D392, D396, D399 and D403, with two rows of "Superseded or amended"; D411 (branch `docs/email-sharing-decisions`, decided by the user, not built) on 2026-11-05, amending D127's email questions, with a row of "Superseded or amended"; D404 (branch `feat/account-migration`: testnet's move to company accounts decided by the user, the custom-domain placements, `cloudflare.accountId`, `env-secrets`, `d1-move`, `issuer:iss` and the runbook to confirm) on 2026-11-05, amending D230, with a row of "Superseded or amended"; D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
+Last verified against code: 2026-10-28 (commit 58edee9); D411 built and D419–D424 (branch `feat/email-sharing`, decided while building, to confirm; not merged: it merges after the user's first round of M4 testing, D411 point 9 as amended 2026-11-06) on 2026-11-06, with D411's row of "Superseded or amended" updated; D418 (branch `fix/hyperdrive-account-id-hint`, decided by the user, C16 after the pilot) on 2026-11-06; D417 (branch `docs/personal-account-free-tier`, decided by the user) on 2026-11-06; D416 (branch `feat/console-remove-audience`, decided while building, to confirm) on 2026-11-06, extending D238; D415 (branch `docs/auto-deploy-intent`, decided by the user, intent only, not built) on 2026-11-06; D414 (branch `feat/m4-personal-account`, decided by the user) on 2026-11-05, amending D404, with a row of "Superseded or amended"; D401 amended (branch `fix/sendgrid-suppression`: alerts and blocking notices bypass SendGrid's suppression lists, a security review fix) on 2026-11-05; D401 (branch `feat/sandbox-dev-dashboard-blocks`, asked for by the user: SendGrid for every Hana email; the isolate memo to confirm) and D402 (same branch, agreed by the user: sandbox-dev's 1-day statement lock) on 2026-11-05, amending D87, D279, D308 and settling D194's open point, with rows of "Superseded or amended"; D413 (branch `feat/local-verify`, asked for by the user, confirmed by the user) on 2026-11-05, amending D387, with a row of "Superseded or amended"; D410 and D412 (branch `fix/security-review-1105`: a security review's fixes, to confirm) on 2026-11-05, amending D224, D391, D392, D396, D399 and D403, with two rows of "Superseded or amended"; D411 (branch `docs/email-sharing-decisions`, decided by the user, not built) on 2026-11-05, amending D127's email questions, with a row of "Superseded or amended"; D404 (branch `feat/account-migration`: testnet's move to company accounts decided by the user, the custom-domain placements, `cloudflare.accountId`, `env-secrets`, `d1-move`, `issuer:iss` and the runbook to confirm) on 2026-11-05, amending D230, with a row of "Superseded or amended"; D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
 user, implementation choices to confirm) on 2026-11-05; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
 flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
@@ -7219,8 +7219,9 @@ branch.
 ## Partners and user emails: the sharing design (branch `docs/email-sharing-decisions`), 2026-11-05
 
 ### D411. Partners see a user's email only after the user shares it with that app; a three-value app setting decides when Hana asks
-- Date 2026-11-05 · Status: **decided by the user** ("all as recommended", 2026-11-05), **not built**: after batch C's
-  Users screen is live (M4) · Amends D127 (Q6, Q7: the identity token spec's "Verified email: opt-in per app") ·
+- Date 2026-11-05 · Status: **decided by the user** ("all as recommended", 2026-11-05); **built on
+  `feat/email-sharing` (2026-11-06), not merged** (point 9 as amended); the details D411 left open are D419–D424, to
+  confirm; the build note is `docs/email-sharing-spec.md` · Amends D127 (Q6, Q7: the identity token spec's "Verified email: opt-in per app") ·
   Source: the proposal of 2026-11-05 (Privy, Dynamic, Magic, Web3Auth and Turnkey compared: wallets the developer owns
   show emails with no consent step; Magic's cross-app Universal Wallet asked per app, as Hana Home's wallets put Hana)
 - Decisions (1–9 of the proposal, each as recommended):
@@ -7246,6 +7247,9 @@ branch.
   8. **Partner search by email:** only over addresses shared with that partner's apps, so an unshared address can't be
      probed (D315's rule).
   9. **Timing:** built after the M4 consoles; emails stay hidden until then.
+     **Amended 2026-11-06 (the user):** built now, on its own branch (`feat/email-sharing`), but not merged into
+     `develop` until after the user's first round of testing the M4 dashboards on sandbox-dev; it merges then. Until it
+     merges, sandbox-dev's partners still see no email.
 - What the partner gets once shared: `email` with `email_verified: true` in identity tokens (`emailStatus:
   'included'`), and an **Email** column on the console's Users screen ("Not shared" otherwise).
 - Privacy: off by default; specific, informed consent (the sheet names the app and shows the address); withdrawing as
@@ -7514,12 +7518,99 @@ branch.
 - Why: the pilot's partners are onboarded through the consoles (M4); the CLI keeps working as it is, and its cleanup
   is easier to scope once the pilot shows which commands staff still use.
 
+## Email sharing with partners, built (branch `feat/email-sharing`), 2026-11-06
+
+D411's details that it left open, decided while building `docs/email-sharing-spec.md` (the build note). All **to
+confirm** by the user. Number note: D419–D424 were taken with D418 the highest on `origin/develop`; renumber at merge
+if another branch took them first.
+
+### D419. The verified address reaches the API only sealed by the email issuer; the vault keeps the blob, the popup reads it through the API
+- Date 2026-11-06 · Status: decided while building, **to confirm** · Built: `packages/email/src/sealed.ts`, the issuer's
+  `handlers.ts` (google-match, google-record, verify), `packages/web/src/vault/vault.ts`, `apps/api/src/identity/email.ts`
+- Decision: the identity token spec's sealed email (D127, its AAD already pinned by core's vectors): the issuer seals
+  the address it verified (Google's userinfo address, lowercased; or the normalized login address) under a new
+  `IDENTITY_SEAL_KEY` shared with the API, bound to the app, the session key and the session's expiry, in every
+  successful google-match and google-record and in a `verify` that mints a `session` token, whatever the app's
+  setting. The vault keeps the blob with the session (memory and its IndexedDB record) and sends it with each mint and
+  consent call; it can't open it. The sheet in the auth popup gets the address from `POST
+  /v1/identity/email-consent/preview` (`Origin: AUTH_ORIGIN` only) with a single-use `preview` session proof the vault
+  made, so the address never reaches the vault frame or the partner page.
+- Why: the API can't verify an address any other way (it has no issuer binding, and the issuer's directory is staff
+  only, D275); sealing always (rather than only for apps with sharing on) needs no issuer read of the API's new column,
+  so no deploy order can break email logins.
+- Rejected: the API reading the issuer's directory (breaks D275's "no other Worker binds the issuer"); the popup
+  asserting the address (anyone could share a false address as `email_verified: true`); the API calling Google's
+  tokeninfo itself (no answer for email logins, and the access token is gone after login).
+
+### D420. One consent table keyed by app, User ID and an address MAC under a new EMAIL_CONSENT_KEY; email search is an exact MAC lookup
+- Date 2026-11-06 · Status: decided while building, **to confirm** · Built: `apps/api/migrations/0012_email_sharing.sql`,
+  `apps/api/src/identity/email.ts`, `apps/api/src/directory/read.ts`
+- Decision: hot-D1 `email_consents (app_id, user_sub, email_mac, state, email, scope_id, decided_at)`, PK app × User ID
+  (`u1_…`) × `HMAC-SHA256(EMAIL_CONSENT_KEY, "hana-id/email-consent/v1" ‖ 0x00 ‖ lowercase address)`; `email` (the
+  dashboard's copy) is set exactly while the row is `granted`. `EMAIL_CONSENT_KEY` is a new API-only secret (no doc gives
+  `IDENTITY_SUB_KEY` or `USER_ID_KEY` that purpose), generated with `IDENTITY_SEAL_KEY` by `identity-key <env>
+  email-keys`. A partner's email search is a full address only, matched by its MAC among the org's `granted` rows. A
+  revoke covers every address of the app × account. Rows go with `uid-erase` and 30 days after the app's deletion.
+- Why: a declined address must be remembered without being kept; an exact MAC match can't be used to probe prefixes
+  or unshared addresses (D315).
+- Trade-offs: rotating `EMAIL_CONSENT_KEY` would ask every user again (it is never rotated in normal operation).
+
+### D421. The consent endpoints take the identity token's session proof over their own payload, and check the share and session as a mint does
+- Date 2026-11-06 · Status: decided while building, **to confirm** · Built: `apps/api/src/identity/email.ts`,
+  `packages/core/src/identity.ts` `emailConsentPayload` (vectors in `identity-v1.json`)
+- Decision: `POST /v1/identity/email-consent/state`, `/v1/identity/email-consent`, `/revoke` (vault origin) and
+  `/preview` (auth origin); each a single-use session proof (±60 s, the mint's marker) over `"email-consent" ‖
+  borsh(action) ‖ borsh(parent_origin) ‖ sha256(sealed_email or "")`; the share ('session' mode) and the on-chain
+  session as the mint checks them; the account from the session's path. A decision or a preview is refused while the
+  setting is `off` (`409 identity_email_off`); a revoke always works, also while the contract is paused. Without the
+  keys every endpoint answers `503 email_sharing_unavailable`.
+- Why: the decision binds to the account through the session, never through a page's word (the identity token spec's
+  rule), and reuses checks already reviewed.
+
+### D422. Tokens carry the session's own address when it is shared; a session without a readable seal gets the latest shared one
+- Date 2026-11-06 · Status: decided while building, **to confirm** · Built: `apps/api/src/identity/email.ts` `mintEmail`
+- Decision: setting `off` → `emailStatus: 'off'`. A seal that opens → its own consent decides (`included` with that
+  address, `declined`, `not_asked`). No seal, or one that can't be opened (the issuer was unreachable at login, a key
+  rotated past its overlap) → the account's most recently shared address for the app (`included`), else `missing` /
+  `invalid`. A D1 or key failure gives no email, never a failed mint.
+- Why: a linked second address isn't shared until asked (D411 point 5), but a session that simply lacks a blob
+  shouldn't lose an address the user did share.
+
+### D423. The sheet is its own auth page; at login the popup ends on it; the approval popup's account line and the sheet revoke
+- Date 2026-11-06 · Status: decided while building, **to confirm** · Built: `packages/web/src/auth/share-page.ts`,
+  `share-handoff.ts`, `vault/email-share.ts`, `approve-page.ts`
+- Decision: `/share-email` (CSP `connect-src` the API only). `at_login`: auth-params carry `emailShare`, and the login
+  popup, instead of closing at the end (the callback after its relay, the email step on the vault's `done`), goes to
+  `/share-email?from=login`; the vault, after the key passed its check and before it answers the login, reads the state
+  and shows the sheet there when it is `not_asked`, else tells the window to close; for a Google record-only login it
+  awaits google-record (30 s at most) for the blob. A closed popup, no hello within 20 s, or any failure: the login
+  finishes, asked again next time. `requestEmailSharing()`: the SDK opens `/share-email?from=partner&v=…` in the click
+  (the launcher when blocked); an address already shared shows "Stop sharing" / "Done". The approval popup's account
+  line shows "Email shared with {App} · Stop sharing" while the vault's last known state is `granted`. "Share email" is
+  the approval popup's guarded button (D36); the D42 caveat is shown for an app on its own Google client.
+- Why: the login state machine stays as it was (one flag and two close points); the sheet works the same in both
+  places; D411 point 6 names the popup's account view, and the approval popup's account line is its only one (D395).
+- Trade-off: an app whose signing is all auto-approved shows users no approval popup, so its only revoke path until
+  Hana Home is the sheet the partner opens.
+
+### D424. SDK 0.3.0: requestEmailSharing() resolves granted, declined or dismissed; emailSharingChanged; useEmailSharing
+- Date 2026-11-06 · Status: decided while building, **to confirm** · Built: `packages/web/src/client/client.ts`,
+  `packages/react/src/email-sharing.ts`, `packages/core/src/protocol.ts`; all four packages at 0.3.0
+- Decision: `hana.requestEmailSharing(): Promise<'granted' | 'declined' | 'dismissed'>` (`dismissed`: the window
+  closed, nothing recorded); errors `email_sharing_unavailable` (`data.reason` `off`, `no_address`, `unavailable`) and
+  4100 when logged out. The vault sends `emailSharingChanged {state}` only to an SDK of `EMAIL_SHARING_SDK_MIN` (0.3.0)
+  or later (D393's gate) and drops its cached identity token silently (not `identityTokenChanged(null)`, which means
+  logged out). React: `useEmailSharing()` → `{request, state, error}`.
+- Why: the spec's `'granted' | 'declined'` can't tell a closed window from "Not now"; a closed window must record
+  nothing (never mandatory, D411 point 7).
+
 ## Superseded or amended
 
 | Was | Now | Source |
 |---|---|---|
 | D387: the checks run locally before a merge, from a list of commands in docs/operations.md | `pnpm verify` (CI's checks for the change, D383's rules) before every merge into `develop`, `--full` before a deploy; an optional pre-push hook runs `--quick` on pushes to `develop` and `main` (D413) | `scripts/verify.mjs`, `scripts/verify-hook.mjs`, `.githooks/pre-push`; docs/operations.md "CI and git" |
-| D127 Q6/Q7: email sharing asked once per app at first login, for apps with the email claim on | A three-value app setting (`off` default / `on_request` / `at_login`), per app × account, a stored copy for the dashboard, re-ask for a second linked address, search only over shared addresses (D411) | not built |
+| D127 Q6/Q7: email sharing asked once per app at first login, for apps with the email claim on | A three-value app setting (`off` default / `on_request` / `at_login`), per app × account, a stored copy for the dashboard, re-ask for a second linked address, search only over shared addresses (D411); built as D419–D424 | branch `feat/email-sharing` (not merged); `docs/email-sharing-spec.md` |
+| docs/identity-token-spec.md's email design: the consent asked in the login popup before the relay (`/v1/identity/email-consent/lookup`), one `identity_email_consents` row per app and `sub` with no address, `identity_email` `'off'`/`'on'`, Hana Home's revoke | The sealed address kept with the session; the sheet as its own page after the key's check (`at_login`) or from `requestEmailSharing()`; `email_consents` per app × account × address MAC with the shared copy; the approval popup's and the sheet's Stop sharing (D419–D424) | branch `feat/email-sharing` (not merged) |
 | The email issuer is reached at its own `workers.dev` URL on a `workers.dev` env, else under the API's URL by a zone route (D230); `gen` gives an `emailIssuer.url` on another host neither a route nor a `workers.dev` URL | An `emailIssuer.url` on another host is the issuer's own Custom Domain (a dev env on custom domains); the zone route stays production's way (D404) | branch `feat/account-migration` |
 | sandbox-dev's admin Access: the GitHub team `hana-admins` plus exact-email Google rules (D88), the workers.dev Worker-level toggle turned on in the dashboard (D284), the policy and AUD by hand | `sandbox*`: Google, exact emails only; every env's application and policies made and checked by `access-setup <env>` from the manifest, a hostname application on workers.dev (D409) | `scripts/lib/access-setup.ts`; docs/operations.md "Admin Worker" step 1 |
 | D384: the watchdog, console, console-auth, admin and files Workers unstamped; `deploy-check` reads the API, the page Workers and bundles and the issuer; each of the API and issuer has its own `scripts/deploy.ts` | Every env Worker deploys through `packages/env/src/stamped-deploy.ts`; the console, console-auth and files Workers serve `/.well-known/hana-build`, the console SPA carries the meta; the admin's and the watchdog's id is read from the deployed version with wrangler (`--only watchdog` for the watchdog); `--only`/`--skip` (D406) | `packages/env/src/stamped-deploy.ts`, `scripts/lib/deploy-check.ts`; docs/operations.md "Checking a deploy" |

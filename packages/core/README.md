@@ -11,7 +11,7 @@ Partner apps don't need to import it to integrate; install it with the other Han
 The packages aren't on a registry yet. Hana sends you the tarballs; install them together:
 
 ```sh
-npm install ./hana-id-core-0.2.0.tgz ./hana-id-web-0.2.0.tgz
+npm install ./hana-id-core-0.3.0.tgz ./hana-id-web-0.3.0.tgz
 ```
 
 ESM only, with TypeScript declarations.

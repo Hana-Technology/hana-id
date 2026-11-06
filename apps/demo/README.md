@@ -30,6 +30,9 @@ One page: a testnet banner and a short explainer, then
 - **Identity token**: *Get identity token* (`hana.getIdentityToken()`, no popup) shows the token's decoded header and
   claims (display only: the page never trusts them) and a "verify it yourself" `jose` snippet with the token's own
   `iss` and `aud` (`docs/integration.md` section 15);
+- **Share email…** (`hana.requestEmailSharing()`, D411): Hana's email sharing sheet in a popup, when the demo app's
+  `identity_email` setting is `on_request` or `at_login` (`admin <env> app:settings <app> --identity-email …`); then
+  the token shows `email` and `email_verified`. With the setting off it says how to turn it on;
 - **Login timings** (collapsible): per login, its method and the vault's per-stage times (`app`, `popup`, sign-in,
   `verify`, `chain`, `decrypt`, which `pk_test_` apps get) and the total from the click; sign-in is `google` for a
   Google login and, for email, the email step's address, code request, code wait and verify (each listed under the

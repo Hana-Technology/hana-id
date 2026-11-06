@@ -3,7 +3,7 @@
 **Status: built on `feat/email-sharing` (2026-11-06), not merged.** It merges into `develop` after the user's first
 round of M4 dashboard testing on sandbox-dev (D411 point 9 as amended 2026-11-06). Decided by the user as D411
 ("all as recommended", 2026-11-05); the details below that D411 left open were decided while building and are **to
-confirm**: D418–D423. This note is a spec (history once merged): the current state is in `docs/api.md`
+confirm**: D419–D424. This note is a spec (history once merged): the current state is in `docs/api.md`
 ("Email sharing"), `docs/architecture.md` ("Email sharing with partners"), `docs/integration.md` section 15,
 `docs/security.md` and `docs/operations.md` ("Email sharing keys"). It replaces `docs/identity-token-spec.md`
 "Verified email: opt-in per app" and its email endpoints where they differ (D127's Q6/Q7 as amended by D411).
@@ -23,7 +23,7 @@ No wallet address, path or key derivation changes: nothing here reaches the cont
 nonce or a path. The consent rows are keyed by the identity token's `sub` (`u1_…`), which is computed from the
 session's on-chain path, never the other way round.
 
-## Where the address comes from (D418)
+## Where the address comes from (D419)
 
 Only the email issuer reads an address from its source (Google's userinfo, or the code the user proved), as before.
 It hands the API the address **sealed**, as `docs/identity-token-spec.md` "The sealed email" specified (D127):
@@ -48,7 +48,7 @@ not_after_ms = the session commitment's expiresAtMs
   for that purpose. So the address reaches the issuer, the API (which keeps it only on a grant) and the popup, never
   the vault frame or the partner page.
 
-## Data model: migration 0012 (D419)
+## Data model: migration 0012 (D420)
 
 `apps/api/migrations/0012_email_sharing.sql`, hot D1:
 
@@ -71,7 +71,7 @@ not_after_ms = the session commitment's expiresAtMs
 - Deleted: by `uid-erase` (C13, the account's User IDs), with the app (the monthly retention job, 30 days after the
   app's deletion, with the wallet directory's purge), and never otherwise: a decline must be remembered.
 
-## API (D420, D421)
+## API (D421, D422)
 
 Every endpoint takes the identity token's session proof (`sessionPublicKey`, `issuedAtMs`, `nonce`, `signature`;
 ±60 s, single use, the same marker as a mint) over the payload `"email-consent" ‖ borsh(action) ‖ borsh(parent_origin)
@@ -85,12 +85,12 @@ computes the `sub` from the session's path.
 | `POST /v1/identity/email-consent/revoke` | vault | every address of this app × account → `declined`, copies deleted (allowed whatever the setting) |
 | `POST /v1/identity/email-consent/preview` | auth popup | `{email}`: the sealed address, for the sheet only |
 
-The mint (`POST /v1/identity/token`, D421): setting `off` → `emailStatus: 'off'`; a sealed address that opens →
+The mint (`POST /v1/identity/token`, D422): setting `off` → `emailStatus: 'off'`; a sealed address that opens →
 its own consent decides (`included` with that address, `declined`, `not_asked`); no readable seal (`missing`,
 `invalid`) → the account's most recently shared address for the app, if any (`included`). `GET /v1/app` gains
 `identityEmail`.
 
-## Screens (D420, D422)
+## Screens (D423)
 
 - **The sheet**, `/share-email` on the auth origin (its own page, entry and CSP: `connect-src` the API only): the app's
   logo and name, the address, "{App} can then email you and recognise your account. You can stop sharing later; {App}
@@ -109,16 +109,16 @@ its own consent decides (`included` with that address, `declined`, `not_asked`);
   the vault's launcher), the vault sends the sheet for the session's address, records the answer and resolves
   `'granted'`, `'declined'` or `'dismissed'` (the window closed: nothing recorded).
 - **Revoke**: the approval popup's account line shows "Email shared with {App} · Stop sharing" while the state is
-  `granted` (D422); the sheet above too. A revoke covers every address of the app × account.
+  `granted` (D423); the sheet above too. A revoke covers every address of the app × account.
 
-## SDK (D423)
+## SDK (D424)
 
 `packages/web` 0.3.0 (all four packages move together): `hana.requestEmailSharing(): Promise<'granted' | 'declined' |
 'dismissed'>`; the event `emailSharingChanged` (`'granted' | 'declined'`) after any change made on this device (the
 vault drops its cached identity token, so the next `getIdentityToken()` mints with or without the email); the vault
 sends the event only to an SDK of 0.3.0 or later (`EMAIL_SHARING_SDK_MIN`, D393's gate). Errors:
-`email_sharing_unavailable` (`data.reason`: `off`, `no_address`, `unavailable`), `not_logged_in` as the identity
-token's. `packages/react`: `useEmailSharing()` → `{request, lastResult}`.
+`email_sharing_unavailable` (`data.reason`: `off`, `no_address`, `unavailable`), 4100 when logged out, `busy` during a
+sign-in. `packages/react`: `useEmailSharing()` → `{request, state, error}`.
 
 ## Settings, consoles, CLI
 
@@ -130,7 +130,9 @@ token's. `packages/react`: `useEmailSharing()` → `{request, lastResult}`.
   user's scope, or null → "Not shared") and, in a user's detail, `emails` per app. Search by a full address only, as an
   exact MAC lookup over `granted` rows of the org's apps (D315's rule: an unshared address can't be probed, and no
   prefix search). No new audit rows: the console audits no reads, and setting changes are in `app_changes`.
-- Staff: the admin Users screen already shows the issuer's address; no change.
+- Staff: the admin Users screen already shows the issuer's address; no change. The admin's monthly retention job adds
+  "email consents of deleted apps" to its counts.
+- The demo (`apps/demo`): a "Share email…" button beside "Get identity token".
 
 ## Open questions (to confirm)
 
@@ -138,4 +140,4 @@ token's. `packages/react`: `useEmailSharing()` → `{request, lastResult}`.
 2. Hana Home will list every consent; until then the approval popup and the sheet are the only revoke paths, so an
    app whose signing is all auto-approved shows its users only the sheet (when the partner offers it).
 3. A linked account's second address: tokens carry the session's own address; a session without a readable seal
-   falls back to the latest shared address (D421).
+   falls back to the latest shared address (D422).

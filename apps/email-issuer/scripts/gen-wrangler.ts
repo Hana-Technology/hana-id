@@ -154,7 +154,7 @@ const SENDGRID_KEY = /^SG\.[A-Za-z0-9_-]{16,100}\.[A-Za-z0-9_-]{16,100}$/u;
 
 /**
  * .dev.vars lines from .secrets/<env>/: the active signing key (its thumbprint must be the manifest's active kid; the
- * standby is never written), the three HMAC keys, the SendGrid key and the sealed email's IDENTITY_SEAL_KEY (D418,
+ * standby is never written), the three HMAC keys, the SendGrid key and the sealed email's IDENTITY_SEAL_KEY (D419,
  * `identity-seal-key`, the API's same value) when their files exist. Values single-quoted
  * (taken literally by wrangler's dotenv). Never printed.
  */

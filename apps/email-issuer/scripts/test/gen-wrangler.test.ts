@@ -171,7 +171,7 @@ describe('.dev.vars', () => {
     expect(() => devVarsContent(manifest(), root)).toThrow('0600');
   });
 
-  it('adds the sealed email’s IDENTITY_SEAL_KEY when identity-seal-key exists (D418): checked, 0600, never printed', () => {
+  it('adds the sealed email’s IDENTITY_SEAL_KEY when identity-seal-key exists (D419): checked, 0600, never printed', () => {
     const root = dir;
     const s = join(root, '.secrets', 'sandbox-dev');
     mkdirSync(s, { recursive: true, mode: 0o700 });

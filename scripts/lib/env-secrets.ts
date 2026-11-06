@@ -191,7 +191,7 @@ export function secretInventory(m: Manifest, root: string = repoRoot, only?: Wor
         out.push({ worker: 'api', name, source: 'not kept on disk', required: true, status: 'missing', note: `create a new access key for the signer's IAM user and run \`identity-key ${m.name} kms-put-aws-key --yes\`` });
       }
     }
-    // Email sharing's keys (D418, D419; `identity-key <env> email-keys`): optional, set when their files exist.
+    // Email sharing's keys (D419, D420; `identity-key <env> email-keys`): optional, set when their files exist.
     out.push(item('api', 'IDENTITY_SEAL_KEY', shown(IDENTITY_SECRET_FILES.sealKey), false, f(IDENTITY_SECRET_FILES.sealKey), () => readSealKeyFile(f(IDENTITY_SECRET_FILES.sealKey)), "email sharing: the issuer's copy is the same value"));
     out.push(item('api', 'EMAIL_CONSENT_KEY', shown(IDENTITY_SECRET_FILES.emailConsentKey), false, f(IDENTITY_SECRET_FILES.emailConsentKey), () => readSubKeyFile(f(IDENTITY_SECRET_FILES.emailConsentKey)), 'email sharing: keep it, a new key forgets every consent'));
     out.push(item('api', 'USER_ID_KEY', shown(USER_ID_KEY_FILE), m.usage !== undefined, f(USER_ID_KEY_FILE), () => readText(f(USER_ID_KEY_FILE), B64_32_RE, 'base64 of 32 bytes'), 'never replaced: a new key makes every user a new user'));
@@ -232,7 +232,7 @@ export function secretInventory(m: Manifest, root: string = repoRoot, only?: Wor
     const values = hmacItems.filter((i) => i.status === 'ok').map((i) => i.value);
     if (values.length === 3 && new Set(values).size !== 3) for (const i of hmacItems) Object.assign(i, { status: 'invalid', note: 'K_sub, K_code and K_rl must differ', value: undefined });
     out.push(...hmacItems);
-    out.push(item('issuer', 'IDENTITY_SEAL_KEY', shown(IDENTITY_SECRET_FILES.sealKey), false, f(IDENTITY_SECRET_FILES.sealKey), () => readSealKeyFile(f(IDENTITY_SECRET_FILES.sealKey)), "email sharing (D418): the API's same value"));
+    out.push(item('issuer', 'IDENTITY_SEAL_KEY', shown(IDENTITY_SECRET_FILES.sealKey), false, f(IDENTITY_SECRET_FILES.sealKey), () => readSealKeyFile(f(IDENTITY_SECRET_FILES.sealKey)), "email sharing (D419): the API's same value"));
     out.push(item('issuer', 'SENDGRID_API_KEY', shown(F.sendgridKey), t.sender === 'sendgrid', f(F.sendgridKey), () => readText(f(F.sendgridKey), SENDGRID_RE, 'a SendGrid API key (SG.<id>.<secret>)'), 'Mail Send only (D194)'));
   }
 

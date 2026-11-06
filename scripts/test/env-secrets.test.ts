@@ -269,7 +269,7 @@ describe('env-secrets --yes', () => {
   });
 });
 
-describe('env-secrets: email sharing keys (D418, D419)', () => {
+describe('env-secrets: email sharing keys (D419, D420)', () => {
   it('optional: listed as not set without their files, nothing blocked, nothing uploaded for them', () => {
     seedAll();
     run([]);

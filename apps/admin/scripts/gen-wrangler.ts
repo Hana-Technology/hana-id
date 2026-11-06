@@ -78,8 +78,11 @@ export function wranglerConfig(m: Manifest, opts: { adminHyperdriveId?: string |
     ...adminPlacement(m),
     main: 'src/index.ts',
     compatibility_date: COMPATIBILITY_DATE,
-    // pg (the ops store over Hyperdrive) needs the Node built-ins.
-    compatibility_flags: ['nodejs_compat'],
+    // pg (the ops store over Hyperdrive) needs the Node built-ins. global_fetch_strictly_public: every outbound fetch
+    // goes over the public internet (all of them are to public services: Access certs, SendGrid, NEAR RPC, the
+    // watchdog), so a watchdog on the same Cloudflare account's workers.dev answers instead of Cloudflare's error 1042
+    // page (sandbox-dev until the account move, D404/D414; seen 2026-11-06 as `watchdog_bad_answer`).
+    compatibility_flags: ['nodejs_compat', 'global_fetch_strictly_public'],
     // The Worker's own JSON log lines (src/log.ts: no email, sub, JWT or token), not the per-request invocation records
     // (their URLs can carry an audit filter with a staff or member id).
     observability: { enabled: true, logs: { invocation_logs: false } },

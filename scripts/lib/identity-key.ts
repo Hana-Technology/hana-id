@@ -11,9 +11,9 @@
 //                                       holds which kid (public data); a switch uploads into the slot the active key
 //                                       isn't in, so the Worker always has a key with the active kid
 //   identity-sub-key                    32 random bytes (base64): the `sub`/`sid` HMAC key, never rotated
-//   identity-seal-key                   IDENTITY_SEAL_KEY (D419): `<id>:<base64 of 32 bytes>`, the sealed email's key,
+//   identity-seal-key                   IDENTITY_SEAL_KEY (D420): `<id>:<base64 of 32 bytes>`, the sealed email's key,
 //                                       on the API and the email issuer
-//   email-consent-key                   EMAIL_CONSENT_KEY (D420): 32 random bytes (base64), the consents' MAC key (API)
+//   email-consent-key                   EMAIL_CONSENT_KEY (D421): 32 random bytes (base64), the consents' MAC key (API)
 //
 //   init [--local]                  generate active, standby and sub key; files; the manifest's `identityToken`; upload
 //                                   the active key and the sub key (never the standby). --local: no upload
@@ -24,7 +24,7 @@
 //   retire --key previous|standby   remove that key from the manifest's `publicKeys`, delete its Worker secret if it
 //                                   is in a slot, and set its file aside (`identity-signing-key-retired-<kid>.json`)
 //   show                            the published kids, their roles and slots (public values only)
-//   email-keys [--local]            email sharing's keys (D419, D420): write identity-seal-key and email-consent-key
+//   email-keys [--local]            email sharing's keys (D420, D421): write identity-seal-key and email-consent-key
 //                                   (each only if missing: an existing file is reused, never replaced), then set
 //                                   IDENTITY_SEAL_KEY and EMAIL_CONSENT_KEY on the API Worker and IDENTITY_SEAL_KEY on
 //                                   the email issuer Worker (skipped when the manifest has no emailIssuer). --local: no
@@ -56,7 +56,7 @@ export const IDENTITY_KEY_USAGE = `Usage: identity-key.ts <env> <command> [--yes
   switch --to next|standby       upload that key into the free slot and make it the active key (manifest)
   retire --key previous|standby  unpublish that key, delete its Worker secret if it has one, set its file aside
   show                           the published kids, their roles and slots (public values only)
-  email-keys [--local]           email sharing's keys (D419, D420): write .secrets/<env>/identity-seal-key
+  email-keys [--local]           email sharing's keys (D420, D421): write .secrets/<env>/identity-seal-key
                                  (IDENTITY_SEAL_KEY, 1:<32 bytes>) and email-consent-key (EMAIL_CONSENT_KEY, 32 bytes),
                                  0600, each only if missing (an existing file is reused), then set both on the API
                                  Worker and IDENTITY_SEAL_KEY on the email issuer Worker (if the env has one).
@@ -84,7 +84,7 @@ AWS KMS signer (staging and mainnet; D215, docs/operations.md "Identity token ke
   never print a credential.`;
 
 export type SigningSlot = 'IDENTITY_SIGNING_KEY' | 'IDENTITY_SIGNING_KEY_STANDBY';
-/** Email sharing's API secrets (D419, D420); IDENTITY_SEAL_KEY also goes to the email issuer. */
+/** Email sharing's API secrets (D420, D421); IDENTITY_SEAL_KEY also goes to the email issuer. */
 export type EmailKeySecret = 'IDENTITY_SEAL_KEY' | 'EMAIL_CONSENT_KEY';
 export type IdentitySecret = SigningSlot | 'IDENTITY_SUB_KEY' | EmailKeySecret;
 export const SIGNING_SLOTS: readonly SigningSlot[] = ['IDENTITY_SIGNING_KEY', 'IDENTITY_SIGNING_KEY_STANDBY'];
@@ -538,7 +538,7 @@ export function identityKey(argv: readonly string[], deps: IdentityKeyDeps): voi
 }
 
 /**
- * `email-keys [put]` (D419, D420, docs/operations.md "Email sharing keys"): IDENTITY_SEAL_KEY (the sealed email, on the
+ * `email-keys [put]` (D420, D421, docs/operations.md "Email sharing keys"): IDENTITY_SEAL_KEY (the sealed email, on the
  * API and the email issuer) and EMAIL_CONSENT_KEY (the consents' MAC, on the API). Without `put`, each file is written
  * only when it is missing (an existing one is checked and reused, never replaced: the seal key's value is needed for a
  * rotation, and a new consent key forgets every consent); `put` only uploads them. The API is set first, so a blob the

@@ -56,7 +56,7 @@ export function proofsMatch(p: unknown, addresses: { stellar: string; evm: strin
 }
 
 /**
- * The POST /v1/identity/token body, signed by the session key over the identity message. `sealedEmail` (D419): the
+ * The POST /v1/identity/token body, signed by the session key over the identity message. `sealedEmail` (D420): the
  * session's sealed address, sent (and covered by the proof) when it has one, so the API can put the shared address in
  * the token.
  */

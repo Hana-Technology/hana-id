@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { DASHBOARD_BLOCKS, hanaOriginProblem, isDevEnv, isLocalEnv, isLoopbackHost, loadEnv, manifestPath, manifestSchema, siteOf } from './index.ts';
+import { DASHBOARD_BLOCKS, envAlertLabel, hanaOriginProblem, isDevEnv, isLocalEnv, isLoopbackHost, loadEnv, manifestPath, manifestSchema, siteOf } from './index.ts';
 
 // Without identityToken: these tests move apiUrl, and the identity issuer must follow it (tested in identity.test.ts).
 // Without the dashboard blocks: these tests rename the env and move vaultOrigin/authOrigin, and the dashboard's own
@@ -33,6 +33,22 @@ describe('isDevEnv / isLocalEnv', () => {
     expect(isLocalEnv('local-dev')).toBe(true);
     expect(isLocalEnv('sandbox-dev')).toBe(false);
     expect(isLocalEnv('prod-local')).toBe(false);
+  });
+});
+
+describe('envAlertLabel (D419)', () => {
+  it('labels every testnet env by its name, sandbox, staging and local first', () => {
+    expect(envAlertLabel({ name: 'sandbox-dev', network: 'testnet' })).toBe('[SANDBOX]');
+    expect(envAlertLabel({ name: 'sandbox2', network: 'testnet' })).toBe('[SANDBOX]');
+    expect(envAlertLabel({ name: 'staging', network: 'testnet' })).toBe('[STAGING]');
+    expect(envAlertLabel({ name: 'staging-eu', network: 'testnet' })).toBe('[STAGING]');
+    expect(envAlertLabel({ name: 'local-dev', network: 'testnet' })).toBe('[LOCAL]');
+    expect(envAlertLabel({ name: 'prod', network: 'testnet' })).toBe('[TESTNET]');
+    expect(envAlertLabel({ name: 'my-sandbox', network: 'testnet' })).toBe('[TESTNET]');
+  });
+
+  it('never labels an env on another network, whatever its name', () => {
+    for (const name of ['prod', 'mainnet', 'sandbox-dev', 'staging', 'local']) expect(envAlertLabel({ name, network: 'mainnet' }), name).toBe('');
   });
 });
 

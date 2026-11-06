@@ -483,7 +483,7 @@ describe('the identity token', () => {
     expect(() => writeDevVars(manifest.name, root, tmp(), withIdentity())).toThrow(/mode 644/u);
   });
 
-  it('.dev.vars: email sharing’s IDENTITY_SEAL_KEY and EMAIL_CONSENT_KEY when their files exist (D419, D420), checked', () => {
+  it('.dev.vars: email sharing’s IDENTITY_SEAL_KEY and EMAIL_CONSENT_KEY when their files exist (D420, D421), checked', () => {
     const seal = `1:${randomBytes(32).toString('base64')}`;
     const consent = randomBytes(32).toString('base64');
     const parsed = dotenvParse(devVarsContent({ identity: identityDevVarsLines(withIdentity(), { sealKey: `${seal}\n`, consentKey: `${consent}\n` }) }));

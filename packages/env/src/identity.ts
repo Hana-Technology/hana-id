@@ -151,11 +151,11 @@ export const IDENTITY_SECRET_FILES = {
    */
   awsAccessKey: 'identity-aws-access-key.json',
   /**
-   * The sealed email's key (D419, docs/email-sharing-spec.md): IDENTITY_SEAL_KEY on the API and the email issuer,
+   * The sealed email's key (D420, docs/email-sharing-spec.md): IDENTITY_SEAL_KEY on the API and the email issuer,
    * `<id>:<base64 of 32 bytes>` (`identitySealKeyId`). Written and uploaded by `identity-key <env> email-keys`.
    */
   sealKey: 'identity-seal-key',
-  /** The email consents' MAC key (D420): EMAIL_CONSENT_KEY on the API, base64 of 32 bytes. Written with the seal key. */
+  /** The email consents' MAC key (D421): EMAIL_CONSENT_KEY on the API, base64 of 32 bytes. Written with the seal key. */
   emailConsentKey: 'email-consent-key',
 } as const;
 

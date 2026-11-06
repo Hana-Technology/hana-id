@@ -61,7 +61,7 @@ export default defineConfig(async () => {
             IDENTITY_SIGNING_KEY: identityActive.private,
             IDENTITY_SIGNING_KEY_STANDBY: identityStandby.private,
             IDENTITY_SUB_KEY: randomBytes(32).toString('base64'),
-            // Email sharing (D411, D419, D420): the issuer's seal key (the tests seal with it, as the issuer would) and the
+            // Email sharing (D411, D420, D421): the issuer's seal key (the tests seal with it, as the issuer would) and the
             // consent MAC key.
             IDENTITY_SEAL_KEY: `7:${randomBytes(32).toString('base64')}`,
             EMAIL_CONSENT_KEY: randomBytes(32).toString('base64'),

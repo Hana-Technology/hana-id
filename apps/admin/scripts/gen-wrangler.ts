@@ -20,7 +20,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type Manifest, accountIdFields, isDevEnv, isLoopbackHost, loadEnv } from '@hana-id/env';
+import { type Manifest, accountIdFields, envAlertLabel, isDevEnv, isLoopbackHost, loadEnv } from '@hana-id/env';
 import { workersDevHost } from '../../api/scripts/pages-wrangler.ts';
 import { TEST_MANIFEST as CONSOLE_TEST_MANIFEST } from '../../console/scripts/gen-wrangler.ts';
 import { CRONS, FIVE_MINUTES } from '../src/crons.ts';
@@ -88,6 +88,8 @@ export function wranglerConfig(m: Manifest, opts: { adminHyperdriveId?: string |
     observability: { enabled: true, logs: { invocation_logs: false } },
     vars: {
       ENV_NAME: m.name,
+      // Every email subject's label on a non-production env (D419); none on a production network (no var at all).
+      ...(envAlertLabel(m) ? { ENV_LABEL: envAlertLabel(m) } : {}),
       ADMIN_ORIGIN: a.origin,
       CONSOLE_ORIGIN: c.origin,
       FILES_ORIGIN: f.origin,

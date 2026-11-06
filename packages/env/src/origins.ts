@@ -10,6 +10,25 @@ export function isDevEnv(name: string): boolean {
   return /^(local|sandbox)/u.test(name);
 }
 
+/** The labels a non-production env's alert and staff email titles start with (D419). */
+export const ENV_ALERT_LABELS = ['[SANDBOX]', '[STAGING]', '[LOCAL]', '[TESTNET]'] as const;
+export type EnvAlertLabel = (typeof ENV_ALERT_LABELS)[number] | '';
+
+/**
+ * The label every alert and staff email title of an env starts with, so nobody mistakes test mail for production
+ * (D419, the user 2026-11-06): `[SANDBOX]` for `sandbox*`, `[STAGING]` for `staging*`, `[LOCAL]` for `local*`, and
+ * `[TESTNET]` for any other env on testnet. Tied to the network as well as the name: an env on any other network (a
+ * production one) gets no label, whatever its name, so no manifest can label production mail or unlabel test mail.
+ * The watchdog mirrors it as `alertLabelFor` (its source, a scripts test keeps them equal).
+ */
+export function envAlertLabel(m: { name: string; network: string }): EnvAlertLabel {
+  if (m.network !== 'testnet') return '';
+  if (/^sandbox/u.test(m.name)) return '[SANDBOX]';
+  if (/^staging/u.test(m.name)) return '[STAGING]';
+  if (/^local/u.test(m.name)) return '[LOCAL]';
+  return '[TESTNET]';
+}
+
 /** `local*` envs only: the only envs whose Hana origins (`vaultOrigin`, `authOrigin`) may be loopback. */
 export function isLocalEnv(name: string): boolean {
   return /^local/u.test(name);

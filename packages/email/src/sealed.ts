@@ -1,4 +1,4 @@
-// The sealed email (docs/email-sharing-spec.md "Where the address comes from", D419; docs/identity-token-spec.md "The
+// The sealed email (docs/email-sharing-spec.md "Where the address comes from", D420; docs/identity-token-spec.md "The
 // sealed email", D127): how the email issuer hands the API a verified address through the vault, which can't read it.
 //
 //   sealed_email = "se1." ‖ b64url( u32le(key_id) ‖ u64le(not_after_ms) ‖ iv(12) ‖ ct )

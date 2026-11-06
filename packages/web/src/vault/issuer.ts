@@ -11,7 +11,7 @@
 // A 429 or 503 is MatchBusy (with the `retry-after`, when sent; the issuer's CORS exposes it): the login retries it
 // (G-M3). The request gives up after MATCH_TIMEOUT_MS (G-L5), or when the login's own signal aborts.
 //
-// D419: both answers may carry `sealedEmail`, the verified address sealed for the API (the vault keeps it with the
+// D420: both answers may carry `sealedEmail`, the verified address sealed for the API (the vault keeps it with the
 // session for the identity token and the email sharing sheet; it can't open it). A malformed one is dropped (no address),
 // never a reason to refuse the answer.
 //
@@ -34,7 +34,7 @@ export interface GoogleMatch {
   linkImmediate: boolean | null;
   /** Case A, not Google-hosted: the code challenge google-match prepared (its first code goes out with `resend`). */
   challenge: { challengeId: string; expiresAtMs: number; to: string } | null;
-  /** D419: the Google address sealed for the API and this session, or null (unverified, or an issuer without the key). */
+  /** D420: the Google address sealed for the API and this session, or null (unverified, or an issuer without the key). */
   sealedEmail: string | null;
 }
 
@@ -114,7 +114,7 @@ export interface IssuerApi {
   googleMatch(r: MatchRequest, signal?: AbortSignal): Promise<GoogleMatch>;
   /**
    * token_first's record (D269, D270): resolves when the issuer took it (`{accepted: true}`), with its sealed address
-   * (D419) or null; throws on anything else (an ApiError, MatchBusy on 429 or 503, a network error or timeout). Callers
+   * (D420) or null; throws on anything else (an ApiError, MatchBusy on 429 or 503, a network error or timeout). Callers
    * treat every failure as "not recorded".
    */
   googleRecord(r: RecordRequest, signal?: AbortSignal): Promise<{ sealedEmail: string | null }>;

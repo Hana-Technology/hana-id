@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
-// /share-email (D411, D419–D423; auth/share-page.ts) and the login popup's hand-off to it (auth/share-handoff.ts), and
-// the approval popup's "Stop sharing" (D423): the sender checks, the address read from the API with the vault's proof,
+// /share-email (D411, D420–D424; auth/share-page.ts) and the login popup's hand-off to it (auth/share-handoff.ts), and
+// the approval popup's "Stop sharing" (D424): the sender checks, the address read from the API with the vault's proof,
 // the guarded "Share email", "Not now", the already-shared sheet, the D42 caveat, and closing on the vault's word.
 import { evmTxSigningPayload, newRequestId, parseEvmTxRequest } from '@hana-id/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -204,7 +204,7 @@ describe('the login popup’s hand-off (share-handoff.ts)', () => {
   });
 });
 
-describe('the approval popup’s account line (D423)', () => {
+describe('the approval popup’s account line (D424)', () => {
   it('shows "Stop sharing" only with emailShared, posts hana:email-revoke, and says what happened', async () => {
     resetDom();
     const w = new FakeWindow('/approve');

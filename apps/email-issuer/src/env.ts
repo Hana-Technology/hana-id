@@ -73,7 +73,7 @@ export interface Env {
   /** SendGrid API key restricted to Mail Send, used only by this Worker (D194). */
   SENDGRID_API_KEY?: string;
   /**
-   * The sealed email's key (D419, docs/email-sharing-spec.md): `<id>:<base64 of 32 bytes>`, id 1..2^32-1, the same value
+   * The sealed email's key (D420, docs/email-sharing-spec.md): `<id>:<base64 of 32 bytes>`, id 1..2^32-1, the same value
    * as the API's. google-match, google-record and a `session` verify seal the verified address with it for the API
    * (`sealedEmail`). Absent or malformed: no answer carries `sealedEmail` (logged once as a code), nothing else changes.
    */

@@ -1,4 +1,4 @@
-// The vault's side of email sharing (D411, D419–D424; vault/email-share.ts, vault.ts): the sealed address kept with the
+// The vault's side of email sharing (D411, D420–D425; vault/email-share.ts, vault.ts): the sealed address kept with the
 // session and sent with every mint, hana_requestEmailSharing's sheet in the partner-opened window, the `at_login` sheet
 // in the login popup, the emailSharingChanged event (SDK 0.3.0 and later only), and the approval popup's revoke.
 import { emailConsentPayload, encryptRelayPayload, followSlot, identityMessage, type RelayPayload } from '@hana-id/core';
@@ -106,7 +106,7 @@ describe('the sealed address', () => {
   });
 });
 
-describe('where the session’s sealed address comes from (D419)', () => {
+describe('where the session’s sealed address comes from (D420)', () => {
   it('an email login: beside the email token in the relay (a malformed one is dropped); kept in the record', async () => {
     const issuer = await emailIssuer();
     for (const [sent, kept] of [[SEALED, SEALED], ['not a blob', null]] as const) {
@@ -248,7 +248,7 @@ describe('hana_requestEmailSharing', () => {
   });
 });
 
-describe('the approval popup’s account line (D423)', () => {
+describe('the approval popup’s account line (D424)', () => {
   it('carries emailShared while the session’s address is shared, and its Stop sharing revokes every address', async () => {
     const t = await loggedIn();
     const plain = t.request('stellar_signMessage', { message: 'one' });

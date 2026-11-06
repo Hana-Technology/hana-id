@@ -39,7 +39,7 @@ partners never see it. Logs still never carry an address.
 | `EMAIL_CODE_KEY` (K_code) | code MACs in the challenge objects; K_device, derived from it, signs owner device tickets |
 | `EMAIL_RL_KEY` (K_rl) | limiter keys: the mailbox (the address without its `+tag`) and the recipient domain |
 | `SENDGRID_API_KEY` | Mail Send only, this Worker's alone (D194) |
-| `IDENTITY_SEAL_KEY` | the sealed email's key (D419, `<id>:<base64 of 32 bytes>`, the API's same value; `scripts/identity-key.ts <env> email-keys`): every 200 of `google-match` and `google-record` for a Google-verified address, and a `verify` that mints a `session` token, carry `sealedEmail` (the address sealed for the app, the session key and its expiry, `@hana-id/email` `sealEmail`). Optional: without it (or malformed, logged once as `bad_seal_key`) no answer carries one |
+| `IDENTITY_SEAL_KEY` | the sealed email's key (D420, `<id>:<base64 of 32 bytes>`, the API's same value; `scripts/identity-key.ts <env> email-keys`): every 200 of `google-match` and `google-record` for a Google-verified address, and a `verify` that mints a `session` token, carry `sealedEmail` (the address sealed for the app, the session key and its expiry, `@hana-id/email` `sealEmail`). Optional: without it (or malformed, logged once as `bad_seal_key`) no answer carries one |
 
 It reads hana-signer views over the manifest's RPC and the API's D1 (`app_keys`, `apps`, `plans`) read only, finding an
 app as the API's gate does (a key in `app_keys` not revoked or in its grace, an undeleted app, active only with
@@ -92,7 +92,7 @@ google-match's directory write, `test/directory.test.ts` the upserts in both arr
 DirectoryRpc (the staff check, the searches, the ticket rule, the audit's atomicity and `detail`, the row budget, no
 address in a log line).
 
-Last verified: 2026-11-06 (branch `feat/email-sharing`: `IDENTITY_SEAL_KEY`, `sealedEmail`, D419); 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy` is the shared wrapper, D406); 2026-11-05 (branch `feat/batch-c-15-screen`: `DirectoryRpc.get`'s `purpose`, D399); 2026-11-05 (branch
+Last verified: 2026-11-06 (branch `feat/email-sharing`: `IDENTITY_SEAL_KEY`, `sealedEmail`, D420); 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy` is the shared wrapper, D406); 2026-11-05 (branch `feat/batch-c-15-screen`: `DirectoryRpc.get`'s `purpose`, D399); 2026-11-05 (branch
 `feat/batch-c-8b`: `DirectoryRpc`, migration 0003, the `ADMIN_*` vars, D388–D392);
 2026-11-05 (branch `feat/deploy-build-check`: `GET /v1/email/health`, `scripts/deploy.ts`, D384);
 2026-11-04 (branch `fix/dev-email-limits`: dev envs' limit set, D340, `test/dev-limits.test.ts`; every

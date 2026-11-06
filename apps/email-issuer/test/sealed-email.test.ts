@@ -1,4 +1,4 @@
-// The sealed email (D419, docs/email-sharing-spec.md "Where the address comes from"): google-match, google-record and a
+// The sealed email (D420, docs/email-sharing-spec.md "Where the address comes from"): google-match, google-record and a
 // `session` verify hand the API the verified address sealed under IDENTITY_SEAL_KEY for one app and session, until the
 // session's expiry. Only a Google-verified address (userinfo's, lowercased) or the normalized login address is sealed;
 // no key, no blob; never for case B, the link purposes or auto_link; never logged.
@@ -61,7 +61,7 @@ describe('the seal key (IDENTITY_SEAL_KEY)', () => {
   });
 });
 
-describe('google-match and google-record seal the Google-verified address (D419)', () => {
+describe('google-match and google-record seal the Google-verified address (D420)', () => {
   it('google-match: the blob opens for this app, session and expiry only, with userinfo’s address lowercased, src google', async () => {
     const h = await harness();
     const app = await seedApp(h);
@@ -143,7 +143,7 @@ describe('google-match and google-record seal the Google-verified address (D419)
   });
 });
 
-describe('verify seals the login address for a session token only (D419)', () => {
+describe('verify seals the login address for a session token only (D420)', () => {
   it('a session token: the normalized address, src email, for the start’s session key and expiry', async () => {
     const h = await harness();
     const app = await seedApp(h);

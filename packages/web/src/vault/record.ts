@@ -19,7 +19,7 @@
 // session is dormant needs no PRK. They are not secret (bound to this session key and app). A format-1 record is read
 // as is and gets its proofs at its next unlock, which has PRK.
 //
-// Batch C15 adds an optional plaintext `supportId` (the API's Support ID for the session), in either format. D419 adds
+// Batch C15 adds an optional plaintext `supportId` (the API's Support ID for the session), in either format. D420 adds
 // an optional `sealedEmail`: the issuer's sealed address for this session, which the vault can't open (only the API
 // can), kept so a reload still has it for identity tokens and the email sharing sheet; not in the AAD either.
 //
@@ -77,7 +77,7 @@ export interface RecordV1 {
    */
   supportId?: string;
   /**
-   * D419: the session's sealed address (`se1.…`, the email issuer's, opened only by the API). Optional in either
+   * D420: the session's sealed address (`se1.…`, the email issuer's, opened only by the API). Optional in either
    * format; a malformed one is dropped on read, never a reason to delete the record.
    */
   sealedEmail?: string;

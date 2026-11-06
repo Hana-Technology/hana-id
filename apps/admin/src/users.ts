@@ -40,6 +40,7 @@ import {
 import { directoryBudget } from './email/ledger-messages.ts';
 import { outbound } from './email/sender.ts';
 import type { Env } from './env.ts';
+import { mailLabel } from './env.ts';
 import { type ErrorCode, errorResponse, json } from './http.ts';
 import { errorName, log } from './log.ts';
 import { Budget, metered, recipients, sendToAll } from './mail.ts';
@@ -102,7 +103,7 @@ export async function budgetAlert(c: RouteCtx, b: NonNullable<DirectoryFail['bud
       outbound.email(c.env),
       new Budget(to.length, 0),
       to,
-      directoryBudget({ env: c.env.ENV_NAME, consoleOrigin: c.env.CONSOLE_ORIGIN }, { staff: c.staff.actor.email, window: b.window, limit: b.limit, retryAfterMs: b.retryAfterMs, at: now }),
+      directoryBudget({ env: c.env.ENV_NAME, consoleOrigin: c.env.CONSOLE_ORIGIN, label: mailLabel(c.env) }, { staff: c.staff.actor.email, window: b.window, limit: b.limit, retryAfterMs: b.retryAfterMs, at: now }),
       `directory_budget:${c.env.ENV_NAME}:${c.staff.actor.email}:${b.window}:${opens}`,
     );
     log({ event: 'directory_budget', requestId: c.staff.requestId, outcome: r.allAccepted ? 'ok' : 'error', sent: r.sent, failed: r.failed }, r.allAccepted ? 'warn' : 'error');

@@ -630,7 +630,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       }
       return showGoogleWallet(verified.link ?? null);
     }
-    // D419: a session token's sealed address rides beside it to the vault (which can't open it either).
+    // D420: a session token's sealed address rides beside it to the vault (which can't open it either).
     const sealed = verified.sealedEmail && !ctx.exportMode ? { sealedEmail: verified.sealedEmail } : {};
     if (sink.kind === 'answer') {
       await answer(sink.slot, { idToken: verified.idToken, as: sink.as, ...(sink.as === 'session' ? sealed : {}) });

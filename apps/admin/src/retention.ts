@@ -22,6 +22,7 @@
 // a uid, a sub, an address or a wallet.
 import { RETENTION_BATCH, auditCutoff, deletedAppCutoff } from '@hana-id/console-core';
 import type { AdminRpcClient, Env, StaffRpcClient } from './env.ts';
+import { mailLabel } from './env.ts';
 import { retentionFailed } from './email/ledger-messages.ts';
 import type { MailContext } from './email/messages.ts';
 import type { EmailSender } from './email/sender.ts';
@@ -239,7 +240,7 @@ export async function runRetention(d: RetentionDeps): Promise<RetentionSummary> 
   return { ran: true, runId: id, status, calls, rows, error };
 }
 
-const mail = (env: Pick<Env, 'ENV_NAME' | 'CONSOLE_ORIGIN'>): MailContext => ({ env: env.ENV_NAME, consoleOrigin: env.CONSOLE_ORIGIN });
+const mail = (env: Pick<Env, 'ENV_NAME' | 'CONSOLE_ORIGIN' | 'ENV_LABEL' | 'NEAR_NETWORK'>): MailContext => ({ env: env.ENV_NAME, consoleOrigin: env.CONSOLE_ORIGIN, label: mailLabel(env) });
 
 /**
  * `retention_failed` to the security alias (spec "Email": direct): failed runs not yet emailed, as one digest at most

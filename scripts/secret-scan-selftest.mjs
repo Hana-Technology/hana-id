@@ -58,6 +58,7 @@ const keyFile = (account) => `${JSON.stringify({ account_id: account, public_key
 const CASES = [
   { name: 'ed25519 secret key as a TS constant', files: { 'src/config.ts': `export const RELAYER = "${secretKey()}";\n` }, expect: ['near-ed25519-secret-key'] },
   { name: 'relayer pool keys pasted into an innocent file', files: { 'backup/pool.json': `${JSON.stringify([secretKey(), secretKey()], null, 2)}\n` }, expect: ['near-ed25519-secret-key'] },
+  { name: 'a 64-hex token beside accessAud in a manifest (only the AUD line is waived)', files: { 'envs/aud.json': `{\n  "admin": {\n    "accessAud": "${randomBytes(32).toString('hex')}",\n    "apiToken": "${randomBytes(32).toString('hex')}"\n  }\n}\n` }, expect: ['generic-api-key'] },
   { name: 'relayer-keys.json outside .secrets', files: { 'notes/relayer-keys.json': `${JSON.stringify([secretKey()], null, 2)}\n` }, expect: ['hana-secret-file', 'near-ed25519-secret-key'] },
   { name: 'owner-relayer-keys.json', files: { 'owner-relayer-keys.json': `${JSON.stringify([secretKey()])}\n` }, expect: ['hana-secret-file', 'near-ed25519-secret-key'] },
   { name: 'keys-updater.json', files: { 'keys-updater.json': keyFile('hana-id-signer-dev1.testnet') }, expect: ['hana-secret-file', 'near-ed25519-secret-key'] },
@@ -133,6 +134,7 @@ const NEGATIVE = {
   'test/fixture.ts': `const placeholder = "1:${'A'.repeat(43)}=";\n`,
   'scripts/vault-kek.ts': '// vault-kek.ts <env> <init | put | rotate>\n',
   'envs/x.json': `{ "watchdogs": ["${publicKey()}"], "identityToken": { "publicKeys": [${publicJwk()}] } }\n`,
+  'envs/aud.json': `{\n  "admin": {\n    "accessAud": "${randomBytes(32).toString('hex')}",\n    "staffEmails": []\n  }\n}\n`,
   'docs/jwks.md': `IDENTITY_SIGNING_KEY=<a P-256 private JWK>\nIDENTITY_SUB_KEY=<base64 of 32 bytes>\n`,
   'docs/usage.md': 'postgresql://usage_writer:<password>@<host>/neondb?sslmode=require\nUSER_ID_KEY=<base64 of 32 bytes>\npostgresql://usage_writer:unused@usage-db.test.invalid:5432/usage\nAuthorization: Bearer napi_<key>; napi_…\n',
 };

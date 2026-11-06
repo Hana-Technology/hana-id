@@ -115,6 +115,17 @@ targetRules = ["generic-api-key"]
 regexTarget = "secret"
 regexes = ['''^pk_test_[1-9A-HJ-NP-Za-km-z]{16,64}$''']
 
+# A Cloudflare Access application's AUD tag in a manifest (`admin.accessAud`, written by `access-setup
+# --write-manifest`, D409): 64 hex, public by design (it is the `aud` of every Access JWT the application issues).
+# Only the generic rule is waived, only in `envs/*.json`, only for a whole `"accessAud": "<64 hex>"` line.
+[[allowlists]]
+description = "Cloudflare Access AUD tags in env manifests (public)"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(^|/)envs/[^/]+\.json$''']
+regexTarget = "line"
+regexes = ['''^\s*"accessAud": "[0-9a-f]{64}",?\s*$''']
+
 # The self-test's source names secret files and key helpers (`'keys-updater.json': keyFile(…)`), which the generic rule
 # reads as assignments; it holds no secret (every fake is generated at run time). Only the generic rule is waived, so a
 # real key pasted into it still fails the custom rules.

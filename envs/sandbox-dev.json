@@ -115,8 +115,8 @@
   "admin": {
     "workerName": "hana-id-admin-sandbox-dev",
     "origin": "https://hana-id-admin-sandbox-dev.tingtc.workers.dev",
-    "accessTeamDomain": "hana-id-team-unset.cloudflareaccess.com",
-    "accessAud": "UNSET",
+    "accessTeamDomain": "bitter-hill-fe6f.cloudflareaccess.com",
+    "accessAud": "d9adcde619f581fabd9a89079b3ee3239fa577df4a9ba05866d69bdb231e7634",
     "staffEmails": ["hello@ting.rocks", "mark@hanawallet.io"]
   },
   "usage": {

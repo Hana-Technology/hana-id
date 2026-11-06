@@ -1,6 +1,6 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
-Last verified against code: 2026-11-06 (branch `feat/admin-system-status`: the admin's `GET /api/status`, `AdminRpc.systemStatus`, `StaffRpc.health`, `DirectoryRpc.health`, the console's `cron_runs` (migration 0003), the admin's `ledger_cron.last_run` and its new vars, D425); 2026-11-06 (branch `fix/admin-renew-team-login`: the admin's `GET /api/me` `renewUrl`, D424 amended); 2026-11-06 (branch `fix/session-expiry-ux`: the admin's `GET /api/me` `accessExp`, the console's `GET /api/me` `sessionExpiresAt`, D424; no route or request changed); 2026-11-06 (branch `fix/google-key-hysteresis`: "Cron" step 3: three JWKS fetches a run, removal after 24 h missing from every fetch, never a kid with a token in the last 24 h, migration 0012, D422); 2026-11-06 (branch `feat/console-ux-redesign`: the console SPA's pages and error display, D421; no route or request changed); 2026-11-06 (branch `feat/env-alert-label`: the admin Worker's `ENV_LABEL` var, D419); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: the admin Worker's "Email" through SendGrid, accepted on `202`, no idempotency key, the per-isolate memo; D401); 2026-11-05 (branch `fix/security-review-1105`: the admin's `POST /api/users/search` ticket for a sub or full address, `POST /api/users/find` `{query, ticket}` audited first as `users.find`, `support.lookup`'s `requestIdList`, `recordStaffAction`'s two org-less actions, D410); 2026-11-05 (branch `feat/deploy-check-all-workers`: the build id on every Worker, D406: `GET /.well-known/hana-build` on the console, console-auth and files Workers, the console SPA's `<meta name="hana-build">`, none on the admin (read through wrangler); the shared deploy wrapper); 2026-11-05 (branch `feat/sdk-error-request-id`: "Conventions": an error's `requestId` passed on to the SDK as `data.requestId`, D405); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup's screen: the email join in `POST /api/support/lookup` (`emails`, `emailsNote`, `unverifiedWarning`), its ticket in the issuer's rule, `DirectoryRpc.get`'s `purpose` (`support_lookup`), D399); 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
+Last verified against code: 2026-11-06 (branch `feat/mainnet-demo-key-export`: `GET /v1/app`'s `mainnetDemo`, `POST /v1/mainnet-demo/events`, `POST /v1/login`'s `exportChain` and the `key_exported` event, migration 0013 (`apps.mainnet_demo`, `user_events`), `AdminRpc.setMainnetDemo`, the staff app view's `settings.mainnetDemo`, `StaffUser.events`, the admin's `POST /api/apps/:app/mainnet-demo`, the auth Worker's `MAINNET_DEMO_BALANCE` and `/approve`'s dev-env `connect-src`; D426–D428); 2026-11-06 (branch `feat/admin-system-status`: the admin's `GET /api/status`, `AdminRpc.systemStatus`, `StaffRpc.health`, `DirectoryRpc.health`, the console's `cron_runs` (migration 0003), the admin's `ledger_cron.last_run` and its new vars, D425); 2026-11-06 (branch `fix/admin-renew-team-login`: the admin's `GET /api/me` `renewUrl`, D424 amended); 2026-11-06 (branch `fix/session-expiry-ux`: the admin's `GET /api/me` `accessExp`, the console's `GET /api/me` `sessionExpiresAt`, D424; no route or request changed); 2026-11-06 (branch `fix/google-key-hysteresis`: "Cron" step 3: three JWKS fetches a run, removal after 24 h missing from every fetch, never a kid with a token in the last 24 h, migration 0012, D422); 2026-11-06 (branch `feat/console-ux-redesign`: the console SPA's pages and error display, D421; no route or request changed); 2026-11-06 (branch `feat/env-alert-label`: the admin Worker's `ENV_LABEL` var, D419); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: the admin Worker's "Email" through SendGrid, accepted on `202`, no idempotency key, the per-isolate memo; D401); 2026-11-05 (branch `fix/security-review-1105`: the admin's `POST /api/users/search` ticket for a sub or full address, `POST /api/users/find` `{query, ticket}` audited first as `users.find`, `support.lookup`'s `requestIdList`, `recordStaffAction`'s two org-less actions, D410); 2026-11-05 (branch `feat/deploy-check-all-workers`: the build id on every Worker, D406: `GET /.well-known/hana-build` on the console, console-auth and files Workers, the console SPA's `<meta name="hana-build">`, none on the admin (read through wrangler); the shared deploy wrapper); 2026-11-05 (branch `feat/sdk-error-request-id`: "Conventions": an error's `requestId` passed on to the SDK as `data.requestId`, D405); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup's screen: the email join in `POST /api/support/lookup` (`emails`, `emailsNote`, `unverifiedWarning`), its ticket in the issuer's rule, `DirectoryRpc.get`'s `purpose` (`support_lookup`), D399); 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
 answers, D395; `AdminRpc.supportLookup` / `userShares`; the admin Worker's `POST /api/support/lookup`; the
 `support.lookup` staff action; D394–D396); 2026-11-05 (branch `feat/deploy-build-check`: the build id, D384: `GET /v1/health`'s
 `build`, the page Workers' `GET /.well-known/hana-build`, the issuer's `GET /v1/email/health`, the `HANA_BUILD` var
@@ -320,10 +320,17 @@ Headers: `x-hana-key`; from a Hana page also `x-hana-parent-origin`. Gate kind `
 { "name": "string", "scopeId": "string", "signer": "string",
   "google": { "clientId": "string", "mode": "own" | "shared" } | null,
   "loginMethods": ["google", "email"], "email": { "aud": "email:<scopeId>" },
-  "serverTimeMs": 0, "autoApprovePolicy": {} | null, "rawSign": "off" | "approval",
+  "serverTimeMs": 0, "autoApprovePolicy": {} | null, "rawSign": "off" | "approval", "mainnetDemo": false,
   "logoUrl": "https://<files.origin>/logos/<app id>/<sha256 hex>.png" | null,
   "timings": { "totalMs": 0, "phases": {} }, "requestId": "string" }
 ```
+
+`mainnetDemo` (D426): `true` only when the Worker's env is a dev env on testnet (`isDevEnv(ENV_NAME)`, `NETWORK =
+testnet`), the app's scope is `test` and Hana staff set `apps.mainnet_demo = 1` (migration 0013); otherwise `false`,
+also when the column is missing (0013 not applied) or its read fails (`src/mainnet-demo-setting.ts`). It is read beside
+the settings row. The vault re-reads it, on the same 10 s bound as `rawSign`, before every mainnet request of a test
+app, and honours it only in a dev testnet build of its own; the cap and what can be valued are the vault's
+(`docs/mainnet-demo-and-key-export-spec.md`).
 
 `logoUrl` (C11, D305): `<FILES_ORIGIN>/<apps.logo_key>`, or `null` when the app has no logo or the env has no files
 origin (no dashboard blocks). Read from the gate's row (no extra query). The vault passes it to the auth pages
@@ -469,7 +476,9 @@ One transaction per login. Called by the vault and the export window (`AUTH_ORIG
 
 Body: exactly the `/v1/sessions` fields (without the proof of possession) plus `signature: number[64]` (session
 signature over counter 1 of the CKD payload), `pk1`, `pk2`, and for email login's automatic link (L, D133)
-`linkJwt` (an email token) and `linkImmediate` (a boolean, only with `linkJwt`). Any other field: `400 bad_request`.
+`linkJwt` (an email token) and `linkImmediate` (a boolean, only with `linkJwt`), and from the export window only
+`exportChain` (`"stellar"` or `"evm"`, D428: a label for the `key_exported` event, never relayed, not in the nonce or the
+CKD payload; from any other page `400 bad_request`). Any other field: `400 bad_request`.
 Without `linkJwt` the relayed arguments are batch B's exactly; with it, `link_jwt` and `link_immediate` are added, the
 signature must be over the **linked CKD payload** `"hana-id-ckd-link-v1:" ‖ sha256(linkJwt) ‖ u8(linkImmediate) ‖
 pk1 ‖ ":" ‖ pk2`, and the gas is 250 Tgas. `jwt` is a Google or an email token ("Email tokens" below).
@@ -517,7 +526,9 @@ failing receipt's executor:
 | 502 | `near_error` | another receipt, or none identified |
 
 Usage event: `login` (uid from the login's path on success; `ckd_failed` is a rejected, relayed event: its gas was
-burnt).
+burnt). An export's success (`AUTH_ORIGIN`, D428) also writes a `key_exported` row in `user_events` after the answer:
+the account's internal id (`hu_…`, from the root whose path the session opened), the app, `exportChain` (or null) and
+the time; no key, token or path. A failure is only logged (`key_export_unrecorded`, with the app and a code).
 With an email token also `email_usage.email_sessions`, with a link `email_usage.links` (L, on success; copied
 hourly to the ledger's `usage.email_counts`, D233).
 
@@ -712,6 +723,23 @@ Unlock unwraps K_s before the counter moves, re-wraps it under the current KEK i
 Revoke and revoke-all ignore the settings. Revoke-all keeps its own share live and runs as one D1 batch (one
 transaction): the other shares are revoked only on the condition the counter move then meets, so a failed write
 changes nothing and a replay revokes nothing.
+
+### `POST /v1/mainnet-demo/events` — a mainnet demo signature (D426)
+
+From the vault page only (`Origin: VAULT_ORIGIN`, `x-hana-key`, `x-hana-parent-origin`, as `/v1/vault/*`; the vault
+limits apply). Body, exactly: `{chain: "evm" | "stellar", network: "8453" | "pubnet", kind: "evm_tx" | "stellar_tx",
+address, usdMicros}` (an EVM address or a `G…` account for that chain; `usdMicros` a decimal string, at most the cap
+9990000). No key, signature or signed bytes. Stores a `mainnet_signature` row in `user_events`. It is the vault's word
+(the API can't check that the signature happened); staff see it as such.
+
+| Status | Code | When |
+|---|---|---|
+| 200 | — | `{recorded: true}` |
+| 400 | `bad_request` | any other body |
+| 403 | `origin_not_allowed` | not the vault page, or a parent origin the app doesn't allow |
+| 409 | `mainnet_demo_off` | the app doesn't have the demo on (or the env can't have it) |
+| 429 | `rate_limited` | more than 120 reports for the app this hour (`mainnet_demo:hour`) |
+| 503 | `event_unavailable`, `rate_limiter_unavailable` | the write or the limiter failed |
 
 ### `POST /v1/wallets/record` — the wallet directory · W
 
@@ -1101,6 +1129,7 @@ no budget, plus:
 
 | `AdminRpc` method | What it does |
 |---|---|
+| `setMainnetDemo` (D426) | `{orgId, appId, on, expectedVersion}`: the mainnet demo switch, immediate (`settings_version` + 1, an `app_changes` row `mainnet_demo.on`/`.off`; already so → no write). `env_mismatch` unless the Worker's env is a dev env on testnet and the app is a test app. `ConsoleRpc` has no such method. `getApp`'s staff view carries `settings.mainnetDemo` only where it can be set (a partner's view never) |
 | `createApp` | Refuses `no_security_contact`; reads `get_scope` uncached (`near_unavailable`): the scope must be registered and every `Owner::Oidc` must be in `orgOwnerSubs`, else `scope_conflict`; an existing scope of another org is `scope_conflict`, of the other environment `env_mismatch`, assigned less than `appChangeDelayMs` ago (with origins) `conflict`. Writes the scope row (if new), the app (`apps.publishable_key` = its first key), the key, and the origins as staff proposals, with the `no_session` candidate only on a scope row it created |
 | `assignScopeOrg` | Only a scope in `org_legacy` (else `scope_conflict`), the same owner check; moves every app of the scope (trigger) and sets `assigned_at` |
 | `deleteApp` | Soft delete: `deleted_at`, bit 1, every key revoked, pending changes cancelled, pending origin rows deleted; every later write on it is `not_found` |
@@ -1115,7 +1144,7 @@ no budget, plus:
 | `governance` (C14) | `{}` → `{governance}`: the whole `GET /v1/governance` snapshot (above; the same isolate cache, so one read serves the endpoint and the RPCs for 10 s), for the "Security & monitoring" view. `hana` only. `near_unavailable` when a view fails or has an unknown shape (nothing partial) |
 | `pendingUpgrades` (C14) | `{}` → `{pendingUpgrades}`: the same view as `ConsoleRpc.pendingUpgrades`, for the admin's page. `hana` only |
 | `systemStatus` (D425) | `{}` → `{build, hotDb: {ok, latencyMs}, jwksSync: [{job, atMs, outcome, detail}] \| null, notices: {pending, oldestAt, truncated} \| null, relayerKeys: [{pool, publicKey}] \| null, governance: {ok: true, snapshot} \| {ok: false, code}}`: the admin's System status page in one call. `build` the deployed `HANA_BUILD` (null unstamped); `hotDb` a timed `SELECT 1`; `jwksSync` the Google-key sync's last run per provider (`issuer_key_sync_runs`, written by every 15-minute cron run); `notices` the guarded changes pending and unannounced (at most 100 counted); `relayerKeys` public keys only; `governance` the `GET /v1/governance` snapshot (its 10 s isolate cache) or why not. Each part fails on its own (a D1 failure is `ok: false` / null, never a thrown call). `hana` only, read-only, no user data (`apps/api/src/system-status.ts`) |
-| `listUsers`, `getUser`, `findUsers` (W) | The wallet directory for staff (D315): `listUsers({orgId?, scopeId?, cursor?, limit ≤ 200})`, `getUser({userId})` or `getUser({internalId})`, exactly one (`not_found`), `findUsers({query, provider?})` (a Stellar or EVM address: every user listing it; a User ID `u1_…`; an internal id `hu_…`, any case; a Support ID, any case, with or without `HANA-` and dashes: every user it is the short form of; else a sub, which `provider` narrows and forces), at most 50. A `StaffUser` is `{userId, supportId, internalId, scopeId, orgId, createdAt, lastSeenAt, identities: [{provider, sub, identityKey, role, status, effectiveAt, firstSeenAt, observedAt, directoryKey}], wallets: [{chain, address, keyIndex, firstSeenAt, lastUsedAt, sharedWith}]}`. `status` is read at answer time (a pending member past `effectiveAt` is `active`). The email isn't here: `directoryKey` `{provider, sub}` is the key for D275's `DirectoryRpc` (C8b) |
+| `listUsers`, `getUser`, `findUsers` (W) | The wallet directory for staff (D315): `listUsers({orgId?, scopeId?, cursor?, limit ≤ 200})`, `getUser({userId})` or `getUser({internalId})`, exactly one (`not_found`), `findUsers({query, provider?})` (a Stellar or EVM address: every user listing it; a User ID `u1_…`; an internal id `hu_…`, any case; a Support ID, any case, with or without `HANA-` and dashes: every user it is the short form of; else a sub, which `provider` narrows and forces), at most 50. A `StaffUser` is `{userId, supportId, internalId, scopeId, orgId, createdAt, lastSeenAt, identities: [{provider, sub, identityKey, role, status, effectiveAt, firstSeenAt, observedAt, directoryKey}], wallets: [{chain, address, keyIndex, firstSeenAt, lastUsedAt, sharedWith}]}`. `status` is read at answer time (a pending member past `effectiveAt` is `active`). `getUser` and `findUsers` (and so `supportLookup`) add `events` (D426, D428): up to 20 of `{kind: 'key_exported' \| 'mainnet_signature', appId, chain, network, address, usdMicros, at}` from `user_events`, newest first (exports by the internal id, signatures by the user's wallet addresses; empty before migration 0013); `listUsers` doesn't. The email isn't here: `directoryKey` `{provider, sub}` is the key for D275's `DirectoryRpc` (C8b) |
 | `appNames` (C8b) | `{appIds: string[1..50]}` → `{apps: [{id, name, orgId, scopeId, environment, deletedAt}]}`: the Users screen's app labels (the issuer's directory names apps by id, and `getApp` needs the org); one SELECT, unknown ids left out, deleted apps included. `hana` only (D391) |
 | `supportLookup({query, days?})` (C15) | `hana` only, read only (D394). `query`: a Support ID (any case, `HANA-` and dashes optional), a User ID (`u1_…`) or an internal id (`hu_…`), else `bad_request` (a wallet or a sub goes through `findUsers` first); `days` 1–731, 30 by default → `{query: {kind, …}, since, truncated, matches: [{user: StaffUser, apps: [{appId, name, orgId, environment, persistence, deletedAt}], shares: [{appId, keyIndex, createdAt, idleUntil, absExpiresAt, revokedAt, live}], changes: AppChange[]}]}`: every directory user the query names (at most 10 in full, newest first by last seen; `truncated` when more share the code), the scope's apps (deleted ones too), the user's `vault_shares` not past `abs_expires_at` (the account root's path at key index 0 and each key index its wallets show; never a share id, key or counter) and the scope's apps' `app_changes` since `since` (at most 50, newest first). No ledger rows: the admin Worker and the CLI read those as `usage_admin` |
 | `userShares({appId, path})` (C15) | `hana` only. The `vault_shares` of `sha256(path)` in the app not past `abs_expires_at`, newest first, at most 100 → `{shares: [{createdAt, idleUntil, absExpiresAt, revokedAt}]}`; the path is hashed, never stored or logged |
@@ -1274,6 +1303,8 @@ this key's public key, start at R with no chain read (skips up to 99 nonces) and
 | `end_users` (W) | `user_id` PK (the internal id: `hu_` + 26 Crockford base32 characters of the uid of the account root, D312; staff only), `token_sub` (the User ID partners see: the identity token's `sub`, `u1_…`, 25 characters; unique, D346), `support_code` (the Support ID's 8 characters: Crockford base32 of the first 5 bytes of `token_sub`'s 16; indexed), `scope_id`, `created_at` (MIN), `last_seen_at` (MAX); indexes by scope and by recency, ties by `token_sub`. Personal data (pseudonyms per scope) | 0011 |
 | `end_user_wallets` (W) | (`user_id` → end_users, `chain` `stellar`/`evm`, `address`) PK, `key_index`, `first_seen_at` (MIN), `last_used_at` (MAX: the last login that recorded it); index on `address` (an address may be under several users: a reused key) | 0011 |
 | `end_user_identities` (W) | (`scope_id`, `identity_key` hex) PK, `user_id` → end_users (indexed), `provider`, `sub` (NULL for a member seen only on chain; indexed), `role` `root`/`member`, `status` `active`/`pending`/`unlinked`/`cancelled`, `effective_at` (a member's link; pending reads as active once passed), `first_seen_at`, `observed_at` (a write lands only when no older than the row's). Holds Google and email `sub`s: staff only; `ConsoleRpc` never selects `sub` or `identity_key` | 0011 |
+| `apps.mainnet_demo` (D426) | 0/1, default 0: Hana staff's switch for the mainnet demo exception to D39 (`AdminRpc.setMainnetDemo`, `admin app:settings --mainnet-demo`); triggers `apps_mainnet_demo_test_only_insert`/`_update` refuse 1 for an app whose scope isn't `test` | 0013 |
+| `user_events` (D426, D428) | `id` PK, `kind` `key_exported`/`mainnet_signature`, `app_id`, `scope_id`, `user_id` (`hu_…`; required for `key_exported`), `chain`, `network` (EVM chain ID or `pubnet`), `address` (a signature's wallet), `usd_micros`, `request_id`, `at`; indexed by user, by address and by app. No key, token, signature, bytes or path. Personal data (an internal id or an address with times); not in C13's purge yet (`mainnet-readiness.md` 7.17) | 0013 |
 | `vault_shares` | `share_id` BLOB(16) PK, `app_id`, `session_pk` BLOB(32) UNIQUE, `path_hash` = sha256(path), `partner_origin`, `share_enc` = iv ‖ AES-GCM(KEK, K_s, aad = share_id ‖ app_id ‖ session_pk), `kek_id`, `counter`, `created_at`, `idle_until`, `abs_expires_at`, `revoked_at`; indexes (`app_id`, `path_hash`), `abs_expires_at`, `kek_id` | 0003 |
 
 ## Cron (`*/15 * * * *`)
@@ -1404,7 +1435,9 @@ Vars are generated from `envs/<env>.json` by `apps/api/scripts/gen-wrangler.ts` 
 | `IDENTITY_ROOT_LIMIT` (I) | Rate Limiting (`ratelimits`) | `gen` writes it: namespace `95004`; 30 per 60 s | `/v1/identity/token` per account root (keyed by the HMAC `sub` bytes, never the Google `sub`), per location (D176) |
 
 `gen` also writes the page Workers' `wrangler.vault.jsonc` (var `VAULT_ORIGIN`, assets, service binding `API` to this
-Worker) and `wrangler.auth.jsonc` (vars `AUTH_ORIGIN`, `API_URL`, `NEAR_RPC`, `NEAR_RPC_FALLBACK` when set; assets),
+Worker) and `wrangler.auth.jsonc` (vars `AUTH_ORIGIN`, `API_URL`, `NEAR_RPC`, `NEAR_RPC_FALLBACK` when set,
+`MAINNET_DEMO_BALANCE: "1"` in a dev env on testnet only (D427: `/approve`'s `connect-src` then lists Hana's two
+balance endpoints, `https://mainnet.base.org` and `https://horizon.stellar.org`, as the build's meta policy does); assets),
 both gitignored (`apps/api/scripts/pages-wrangler.ts`).
 
 `HANA_BUILD` (all three Workers, and the email issuer's): the build id (D384), never written by `gen`; `deploy` and
@@ -1810,6 +1843,7 @@ binding throws; `405` with `allow`; `413` over 64 KiB (16 KiB without a `Content
 | `GET /api/apps/:app?org=` | → `{app}` | `getApp` |
 | `POST /api/apps/:app/suspend`, `/resume`, `/delete` | `{bit}` (suspend: 1 by default) → `{suspendedBy}`; `{}` | `setSuspended`, `deleteApp` |
 | `POST /api/apps/:app/origins`, `/origins/remove`, `/changes`, `/off` | `{orgId, add, expectedVersion}`, `{orgId, remove, expectedVersion}`, `{orgId, kind, policy?, expectedVersion}`, `{orgId, what, expectedVersion}` | `addOrigins`, `removeOrigins`, `proposeChange`, `turnOff` |
+| `POST /api/apps/:app/mainnet-demo` (D426) | `{orgId, on, expectedVersion}` | `setMainnetDemo` (a dev testnet env, a test app) |
 | `POST /api/apps/:app/keys/:key/revoke` | `{orgId}` | `revokeKey` |
 | `POST /api/changes/:id/cancel`, `/expedite` | `{orgId}`, `{reason}` (≥ 20 characters) | `cancelChange`, `expediteChange` |
 | `GET /api/audit?orgId&appId&actorKind&actorId&action&from&to&cursor&changesBefore&dirStaff&dirAction&dirBefore` | → `{rows, next?, changes, directory}` (`changes`: the org's `app_changes` when `orgId` is set, else null; `directory` (C8b): the email issuer's `email_admin_audit` rows, newest first, 100 a page, `{rows, next?}` (`next`: the `dirBefore` of the next page), `{error}` when the issuer fails (the page stays up), null without an `ISSUER` binding) | `queryAudit`, `listChanges`, `DirectoryRpc.auditSince` |

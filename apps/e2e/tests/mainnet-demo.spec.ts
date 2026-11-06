@@ -29,6 +29,9 @@ test('a demo app signs a small Stellar public-network payment behind the red ban
   const app = await newApp({ mainnetDemo: true });
   await openPartner(page, app);
   const { stellar } = await login(page);
+  // The page learns the exception and its rules from the vault (hana.mainnetDemo).
+  const demo = await page.evaluate(() => (window as unknown as { e2e: { hana: { mainnetDemo: unknown } } }).e2e.hana.mainnetDemo);
+  expect(demo).toMatchObject({ evmChains: [8453], stellarNetworkPassphrase: 'Public Global Stellar Network ; September 2015', txCapUsd: '9.99' });
   await runAction(page, 'sig', 'stellarSignPubnet', '2');
   const popup = await clickLauncher(page, 'Review in Hana');
   await expect(popup.getByText('Real funds, test custody: these funds may be lost')).toBeVisible();
@@ -52,6 +55,7 @@ test('over the cap: refused before any popup, and the launcher says why; without
   const plain = await newApp();
   await openPartner(page, plain);
   await login(page);
+  expect(await page.evaluate(() => (window as unknown as { e2e: { hana: { mainnetDemo: unknown } } }).e2e.hana.mainnetDemo)).toBeNull();
   await runAction(page, 'off', 'stellarSignPubnet', '1');
   expect(await errorOf(page, 'off')).toMatchObject({ code: 4100, reason: 'mainnet_not_allowed' });
 });

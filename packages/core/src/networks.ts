@@ -35,18 +35,14 @@ export const TEST_EVM_CHAINS: Readonly<Record<number, string>> = Object.freeze({
 
 // The mainnet demo (D426): the mainnets a `pk_test_` app with Hana's demo on may sign for are Base (8453) and Stellar's
 // public network. The vault decides with the app's setting and the per-transaction cap (`@hana-id/core/mainnet-demo`);
-// the partner client only lets Base through its own early check, so the vault's answer (4100 `mainnet_not_allowed`
-// when the demo is off) is the one that counts. The constants live in demo-config.ts (no imports) for the API Worker.
+// the partner client lets Base through its own early check only while its vault says the demo is on (the
+// `mainnetDemo` port event), and the vault's answer is the one that counts. The constants live in demo-config.ts (no imports) for the API Worker.
 export { MAINNET_DEMO_BALANCE_ENDPOINTS, MAINNET_DEMO_BALANCE_ORIGINS, MAINNET_DEMO_EVM_CHAINS, MAINNET_DEMO_TX_CAP_USD_MICROS } from './demo-config.ts';
-import { MAINNET_DEMO_EVM_CHAINS } from './demo-config.ts';
 
 export const isTestPublishableKey = (pk: string): boolean => pk.startsWith('pk_test_');
 
 /** Whether a test app may use this EVM chain (it is on the testnet allowlist). */
 export const isTestEvmChain = (chainId: number): boolean => Number.isSafeInteger(chainId) && Object.hasOwn(TEST_EVM_CHAINS, chainId);
-
-/** Whether the partner client's early D39 check lets a test app use this EVM chain (a testnet, or a demo mainnet). */
-export const isTestOrDemoEvmChain = (chainId: number): boolean => isTestEvmChain(chainId) || MAINNET_DEMO_EVM_CHAINS.includes(chainId);
 
 /** Whether a test app may sign for this Stellar network. */
 export const isTestStellarNetwork = (passphrase: string): boolean => passphrase !== STELLAR_MAINNET_PASSPHRASE;

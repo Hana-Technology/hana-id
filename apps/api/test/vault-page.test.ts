@@ -229,6 +229,18 @@ describe('GET {vaultOrigin}/vault', () => {
   });
 });
 
+describe('the mainnet demo on the vault page (D426)', () => {
+  it('inlines mainnetDemo: true only for an app with the demo on, in a dev testnet env; absent otherwise', async () => {
+    const app = await seedApp();
+    const settingsOf = async (bindings?: Partial<typeof env>) => inlinedConfig(await (await vaultPage(app.key, bindings ? { env: bindings } : {})).text())!.settings as Record<string, unknown>;
+    expect(await settingsOf()).not.toHaveProperty('mainnetDemo');
+    await env.DB.prepare('UPDATE apps SET mainnet_demo = 1 WHERE id = ?1').bind(app.id).run();
+    expect((await settingsOf()).mainnetDemo).toBe(true);
+    expect(await settingsOf(PROD)).not.toHaveProperty('mainnetDemo');
+    expect(await settingsOf({ NETWORK: 'mainnet' })).not.toHaveProperty('mainnetDemo');
+  });
+});
+
 describe('delayed settings on the vault page', () => {
   it('raw_sign uses the pending value only from raw_sign_effective_at', async () => {
     const app = await seedApp();

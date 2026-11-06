@@ -75,6 +75,7 @@ export const MAINNET_DEMO = Object.freeze({
       native: Object.freeze({ symbol: 'ETH', decimals: 18, priceUsdMicros: 8_000_000_000n, sodaxHubAsset: '0x70178089842be7f8e4726b33f0d1569db8021faa' }),
       tokens: Object.freeze({
         '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913': Object.freeze({ symbol: 'USDC', decimals: 6, priceUsdMicros: 1_050_000n, sodaxHubAsset: '0x72E852545B024ddCbc5b70C1bCBDAA025164259C' }),
+        '0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42': Object.freeze({ symbol: 'EURC', decimals: 6, priceUsdMicros: 1_350_000n, sodaxHubAsset: '0x228615a4e0cb4cb1a8931605301661db2782adb8' }),
       }),
       sodaxAssetManager: '0x348BE44F63A458be9C1b13D6fD8e99048F297Bc3',
       balanceRpc: MAINNET_DEMO_BALANCE_ENDPOINTS.evm[8453] as string,
@@ -90,6 +91,13 @@ export const MAINNET_DEMO = Object.freeze({
         priceUsdMicros: 1_050_000n,
         assetContract: 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
         sodaxHubAsset: '0x348007B53F25A9A857aB8eA81ec9E3CCBCf440f2',
+      }),
+      'EURC:GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2': Object.freeze({
+        symbol: 'EURC',
+        decimals: 7,
+        priceUsdMicros: 1_350_000n,
+        assetContract: 'CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV',
+        sodaxHubAsset: '0x93d5d2382f302fa78350c18b4df3ee0bd09b3945',
       }),
     }),
     sodaxAssetManager: 'CCGF33A4CO6D3BXFEKPXVCFCZBK76I3AQOZK6KIKRPAWAZR3632WHCJ3',
@@ -113,6 +121,20 @@ export type DemoRefusalReason = 'mainnet_not_allowed' | 'mainnet_demo_unknown_ca
 export type DemoAssessment =
   | { readonly ok: true; readonly network: DemoNetwork; readonly usdMicros: UsdMicros; readonly capUsdMicros: UsdMicros; readonly movements: readonly DemoMovement[] }
   | { readonly ok: false; readonly reason: DemoRefusalReason; readonly message: string; readonly network: DemoNetwork | null; readonly usdMicros?: UsdMicros };
+
+/**
+ * What the vault tells the SDK about an app with the mainnet demo on (the `mainnetDemo` port event), so the page can
+ * show it and its EVM provider lets exactly these chains through its early check. The vault stays the authority.
+ */
+export function mainnetDemoState(): { evmChains: number[]; stellarNetworkPassphrase: string; txCapUsdMicros: string; pricesReviewedAt: string; pricesValidUntilMs: number } {
+  return {
+    evmChains: Object.keys(MAINNET_DEMO.evm).map(Number),
+    stellarNetworkPassphrase: MAINNET_DEMO.stellar.networkPassphrase,
+    txCapUsdMicros: MAINNET_DEMO.txCapUsdMicros.toString(),
+    pricesReviewedAt: MAINNET_DEMO.reviewedAt,
+    pricesValidUntilMs: MAINNET_DEMO.validUntilMs,
+  };
+}
 
 /** The demo network a request is for. */
 export type DemoNetwork = { readonly chain: 'evm'; readonly chainId: number } | { readonly chain: 'stellar'; readonly network: 'pubnet' };
@@ -267,6 +289,7 @@ function stellarAsset(code: string): DemoAsset & { assetContract: string } {
 function stellarAssetByContract(contract: string): DemoAsset & { assetContract: string } {
   const s = MAINNET_DEMO.stellar;
   if (contract === s.native.assetContract) return s.native;
+  // (Each classic asset's contract is pinned by test/mainnet-demo.test.ts against Asset.contractId on pubnet.)
   const hit = Object.values(s.assets).find((a) => a.assetContract === contract);
   return hit ?? unpriced(`the token contract ${contract}`);
 }

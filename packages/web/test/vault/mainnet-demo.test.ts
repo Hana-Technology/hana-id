@@ -136,6 +136,35 @@ describe('the mainnet demo in the vault', () => {
     expect(s.t.browser.backend.count('/v1/app')).toBe(before);
   });
 
+  it('tells the SDK its state with the rules (before ready when the page inlined it), and again when GET /v1/app changes it', async () => {
+    const browser = new Browser();
+    browser.backend.serverNow = () => NOW;
+    browser.backend.app = { ...browser.backend.app, mainnetDemo: true };
+    const t = await readyTab(browser, { googleJwk: g.jwk, config: makeConfig({ serverTimeMs: NOW, settings: { mainnetDemo: true } }) });
+    tabs.push(t);
+    const names = t.events.map((e) => e.event);
+    expect(names.indexOf('mainnetDemo')).toBeGreaterThanOrEqual(0);
+    expect(names.indexOf('mainnetDemo')).toBeLessThan(names.indexOf('ready'));
+    const demoEvents = () => t.events.filter((e) => e.event === 'mainnetDemo').map((e) => e.data);
+    expect(demoEvents()).toEqual([{ evmChains: [8453], stellarNetworkPassphrase: STELLAR_MAINNET_PASSPHRASE, txCapUsdMicros: '9990000', pricesReviewedAt: '2026-11-06', pricesValidUntilMs: Date.UTC(2026, 11, 21) }]);
+    // Turned off: the next GET /v1/app (here the re-read before a mainnet request) tells the SDK null.
+    await login(t, g, { iat: Math.floor(NOW / 1000), exp: Math.floor(NOW / 1000) + 3600 });
+    t.browser.backend.app = { ...t.browser.backend.app, mainnetDemo: false };
+    t.browser.timers.advance(11_000);
+    expect((await t.request('eth_signTransaction', { tx: send() })).error).toMatchObject({ code: 4100, data: { reason: 'mainnet_not_allowed' } });
+    expect(demoEvents().at(-1)).toBeNull();
+    expect(demoEvents()).toHaveLength(2);
+  });
+
+  it('a production build never tells the SDK anything about it', async () => {
+    const browser = new Browser();
+    browser.backend.serverNow = () => NOW;
+    browser.backend.app = { ...browser.backend.app, mainnetDemo: true };
+    const t = await readyTab(browser, { googleJwk: g.jwk, env: { ...ENV, name: 'production', devEnv: false }, config: makeConfig({ serverTimeMs: NOW, settings: { mainnetDemo: true } }) });
+    tabs.push(t);
+    expect(t.events.filter((e) => e.event === 'mainnetDemo')).toEqual([]);
+  });
+
   it('never auto-approves a demo request, even under an accepted policy that covers it', async () => {
     const policy = {
       v: 1,

@@ -141,7 +141,7 @@ function demoRefusal(a: Extract<DemoAssessment, { ok: false }>, mainnet: NonNull
   return new VaultError(ErrorCode.unauthorized, message, {
     reason: a.reason,
     ...mainnet,
-    ...(a.usdMicros !== undefined ? { usd: formatUsd(a.usdMicros) } : {}),
+    ...(a.usdMicros !== undefined ? { usd: formatUsd(a.usdMicros), capUsd: formatUsd(MAINNET_DEMO.txCapUsdMicros) } : {}),
   });
 }
 

@@ -26,5 +26,8 @@ export const MAINNET_DEMO_BALANCE_ORIGINS: readonly string[] = Object.freeze([
   new URL(MAINNET_DEMO_BALANCE_ENDPOINTS.stellar).origin,
 ]);
 
+/** Stellar's public network passphrase (networks.ts STELLAR_MAINNET_PASSPHRASE, the same string; tested). */
+export const MAINNET_DEMO_STELLAR_PASSPHRASE = 'Public Global Stellar Network ; September 2015';
+
 /** `POST /v1/mainnet-demo/events`: the vault's report of one mainnet demo signature. */
 export const MAINNET_DEMO_EVENTS_ENDPOINT = '/v1/mainnet-demo/events';

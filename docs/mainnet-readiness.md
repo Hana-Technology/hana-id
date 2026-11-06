@@ -3,7 +3,7 @@
 Everything that must be true before Hana ID runs on mainnet with real funds. This is a current-state doc for the
 two founders to track. Update a row in the same branch as the change that moves it (rule in `CLAUDE.md`).
 
-Last verified: 2026-11-06 for rows 5.11 and 5.12 (branch `feat/admin-system-status`: the System status page and what it can't measure yet, D425; the summary's group 5 counts them); 2026-11-06 for row 7.16 (branch `fix/google-key-hysteresis`: the Google key rollout hysteresis, D422; the summary's group 7 counts it); 2026-11-06 for every row, the summary, the top blockers and the inconsistencies (branch
+Last verified: 2026-11-06 for rows 1.18, 1.19 and 7.17 (branch `feat/mainnet-demo-key-export`: key export on mainnet, D429; the mainnet demo's readings and its production exclusion, D426–D428; `user_events` retention; the summary's groups 1 and 7 count them); 2026-11-06 for rows 5.11 and 5.12 (branch `feat/admin-system-status`: the System status page and what it can't measure yet, D425; the summary's group 5 counts them); 2026-11-06 for row 7.16 (branch `fix/google-key-hysteresis`: the Google key rollout hysteresis, D422; the summary's group 7 counts it); 2026-11-06 for every row, the summary, the top blockers and the inconsistencies (branch
 `docs/readiness-refresh-1106`: each row rechecked against `origin/develop` @ f920f8a (C1–C15 merged, email login
 batches 1–8b merged and live on sandbox-dev), `docs/decisions.md` D1–D417, `docs/operations.md`'s sandbox-dev state,
 git history and the testnet chain (the signer's `view_account` code hash `DVXqka2…` and `get_governance`
@@ -43,16 +43,16 @@ with what became of each.
 
 | Group | Rows | done | built, not deployed | not built | decision needed | unclear: check |
 |---|---|---|---|---|---|---|
-| 1. Decisions still open | 17 | 1 | 0 | 0 | 16 | 0 |
+| 1. Decisions still open | 19 | 1 | 0 | 0 | 18 | 0 |
 | 2. Keys and custody | 13 | 0 | 1 | 11 | 1 | 0 |
 | 3. Governance | 8 | 2 | 4 | 2 | 0 | 0 |
 | 4. Infrastructure and accounts | 23 | 0 | 3 | 15 | 3 | 2 |
 | 5. Monitoring and paging | 12 | 0 | 5 | 6 | 1 | 0 |
 | 6. Security reviews and drills | 9 | 2 | 0 | 6 | 0 | 1 |
-| 7. Builds not done | 24 | 1 | 9 | 8 | 6 | 0 |
+| 7. Builds not done | 25 | 1 | 9 | 9 | 6 | 0 |
 | 8. Address freeze | 7 | 1 | 1 | 2 | 2 | 1 |
 | 9. Legal and product | 8 | 0 | 0 | 4 | 3 | 1 |
-| **Total** | **121** | **7** | **23** | **54** | **32** | **5** |
+| **Total** | **124** | **7** | **23** | **55** | **34** | **5** |
 
 Counted from each row's Status (its first words). Group 7 counts every row, 7.1b–7.1i included.
 
@@ -103,6 +103,8 @@ the readings to confirm are new on the list.
 | 1.15 | Hana Home billing: D98 (and the Home spec's confirmed item 12) puts an active app's Home derives on its org's statement as their own line; the Home spec's body counts them as Hana's own, on no statement; batch C's ledger has no Home event kind | Statements and the ledger schema | decision needed (settle when Hana Home is built) | founder | D98; hana-home-spec "Cost and latency (who pays)"; batch-c-spec |
 | 1.16 | Hana Home directory source: "every app with at least one login" (D98). The Home spec reads D1 `usage.sessions > 0`, which batch C stops writing (C4) and drops (migration 0007, C4b); its directory must use the hot DB's `session_markers` (migration 0009, an app's first settled session-pool relay; D220) instead, never the Neon ledger (the Home spec itself is left as written until Home is built) | Which apps Home lists for a user | decision needed (settle when Hana Home is built) | founder, Claude build | D98, D220; hana-home-spec "Discovery: finding a user's apps"; batch-c-build-plan C4b |
 | 1.17 | The other readings still "to confirm" (not in rows 1.5, 1.6, 7.1c, 7.1f, 7.1i): identity token steps 7–8 (D210–D219); batch C5–C15 and the wallet directory (D225–D229, D235, D236's rest, D237–D244, D277–D285, D291–D297, D300–D308, D311–D317, D320–D338, D350–D358, D360–D374, D380, D388–D397, D399); fixes and tooling (D253, D260–D262, D273, D274, D381, D383–D385, D400, D404's tooling, D405, D406, D409's implementation, D410, D412, D416) | Built code rests on them; `docs/decisions.md` "Proposed, not yet confirmed" lists only some of them (inconsistency 23) | decision needed | founder | decisions.md, each entry's Status line |
+| 1.18 | Key export on mainnet: D41 (confirmed) says export is mandatory and partners can't switch it off; the 2026-11-06 brief asked to decide production behaviour (allowed? a Privy-style partner switch?) before mainnet. No gate is built: the manifest accepts only `testnet` (D429) | The non-custodial claim and the exit guarantee (D41) vs a partner's wish to control it | decision needed (confirm D41 for mainnet, or amend it) | founder | D41, D429; `docs/mainnet-demo-and-key-export-spec.md` "Scope and production" |
+| 1.19 | The mainnet demo (D426): its mechanics to confirm (D427: the price table and its 45-day expiry, the valued shapes, immediate on/off, the balance endpoints; D428's export mechanics), and its exclusion from production to recheck when mainnet manifests become possible (4.4): every layer keys on `isDevEnv` and `network === 'testnet'` (vault build, API, CLI, AdminRpc), a D1 trigger refuses it for a live scope | A production env that let a test app sign mainnet transactions with testnet-MPC keys would put real funds behind weaker custody | decision needed (confirm D427; recheck the exclusion with 4.4) | founder, Claude build | D426, D427, D428; `docs/mainnet-demo-and-key-export-spec.md` "Security self-review" |
 
 ## 2. Keys and custody
 
@@ -222,6 +224,7 @@ the readings to confirm are new on the list.
 | 7.14 | Settlement (C12) checks each relayed event against its transaction: `near_tx` unique in the ledger, and the transaction's signer key and nonce equal the event's `relayer_pk` and `relayer_nonce`; anything else is not billed and is alerted | A leaked writer credential could otherwise bill a partner for a real transaction that isn't theirs | built, not deployed (C12 merged, `8e67405`; D321: also a key outside the pools and a receiver mismatch; a duplicate bills neither, at read time too) | Claude build | D222, D321; batch-c-build-plan C12; security.md "What a compromise gives" |
 | 7.15 | The Workers plan for the admin Worker's budgets: 40 outbound calls a run, every RPC and the connection counted (D280, D380), caps settlement at 38 transactions a 15-minute run (≈ 3 600 a day, fewer in runs that also send notices or run the monthly job; D322), and the admin's two cron triggers per env (D329) with the API's, the watchdog's and the console's exceed the free plan's 5 per account for two envs; a statement's PDF and CSV and a large export need more CPU than the free plan's per-request limit | Settlement falls behind past ≈ 3 600 relayed transactions a day; the crons don't all fit on one free account; statements may fail to render | decision needed | founder | D280, D322, D329, D380; build plan open question 3 |
 | 7.16 | Google key rollout hysteresis: the JWKS cron fetches 3 times a run and removes a kid only after 24 h missing from every fetch and never one that signed a token in the last 24 h; the watchdog cancels a "retired" Add or confirms a Remove early only on 3+ absent fetches over a minimum time (D422) | During a rotation Google's edges serve different key sets for a day or two; on sandbox-dev (2026-11-04/05) the old rules added and removed the new key four times. On mainnet a key removed while Google signs with it breaks Google logins for 1.5–3.5 h. Follow-up: a new kid the API sees before the watchdog ever does is still judged forged if two watchdog fetches 60 s apart miss it (cancel + updater keys deleted) | built, not deployed (on `develop`; sandbox-dev after its migrations 0012 and watchdog 0002) | Claude build | D422, D153 |
+| 7.17 | `user_events` (migration 0013: key exports with the user's internal id, mainnet demo signatures with the wallet address) in retention and erasure: C13's monthly purge and `erasure` don't delete these rows yet | Personal data in Hana's hands (an internal id or an address, with times); an erasure request must reach it | not built | Claude build | D428, D360–D369; `docs/operations.md` "Retention" |
 
 Not tracked as blockers: Sign in with Apple (paused, D160) and the native apps spec (`docs/native-apps-spec.md`, a
 draft with 19 open questions, on `develop` since 2026-11-04).

@@ -97,7 +97,7 @@ import {
 } from './record.ts';
 import { type Channel, Clock, type Locks, type Timers, type WindowMessageEvent, type WindowRef, randomHex128, realTimers, sleep } from './runtime.ts';
 import { MAINNET_DEMO_REFUSALS, type SignRequest, approvalSubject, demoRefusalFlash, signRequest } from './signing.ts';
-import { assessMainnetDemo } from '@hana-id/core/mainnet-demo';
+import { assessMainnetDemo, mainnetDemoState } from '@hana-id/core/mainnet-demo';
 
 /** performance.now where there is one (browsers, workers), else Date.now. */
 const defaultPerfNow = (): number => (typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now());
@@ -433,6 +433,9 @@ export class Vault {
     this.policyCheckedAt = o.config.serverTimeMs;
     this.rawSign = o.config.settings.rawSign;
     this.rawSignCheckedAt = o.config.serverTimeMs;
+    // The page's own render counts as a reading (as for rawSign); GET /v1/app re-confirms it before any mainnet request.
+    this.mainnetDemo = o.config.settings.mainnetDemo === true;
+    this.mainnetDemoCheckedAt = o.config.serverTimeMs;
     this.testApp = isTestPublishableKey(o.config.publishableKey);
     this.launcher = new Launcher(o.launcherView, (ui) => this.emit('ui', ui), this.timers);
     this.lockName = `hana-vault-unlock:${o.config.appId}`;
@@ -523,6 +526,8 @@ export class Vault {
     port.onmessage = (m) => void this.onPortMessage(m.data);
     // Before storage and the unlock: the SDK's answer deadline only covers the frame's load and this hello.
     this.emit('connected', null);
+    // The mainnet demo's state (D426), before `ready`, so the SDK's provider knows it before a page switches chains.
+    this.announceMainnetDemo();
     this.started = this.start();
   }
 
@@ -616,6 +621,7 @@ export class Vault {
         this.applyServedRawSign(app, at);
         this.mainnetDemo = app.mainnetDemo === true;
         this.mainnetDemoCheckedAt = Math.max(this.mainnetDemoCheckedAt, at);
+        this.announceMainnetDemo();
         return app;
       });
       this.appConfigPromise = p;
@@ -685,6 +691,23 @@ export class Vault {
       throw new VaultError('api_unavailable', 'Could not confirm that the mainnet demo is on for this app', { reason: 'mainnet_demo_unconfirmed' });
     }
     return this.mainnetDemo ? { nowMs: this.clock.now() } : null;
+  }
+
+  /** What the SDK was last told about the mainnet demo: it assumes off until told, so "off" is sent only after "on". */
+  private announcedDemo = false;
+
+  /**
+   * Tells the SDK whether this app has the mainnet demo on, with its rules (the `mainnetDemo` port event, D426), when
+   * it changes: once after the hello, then whenever GET /v1/app changes it. A dev testnet build only: a production
+   * build never sends it. The SDK's EVM provider opens its early check for exactly these chains; this vault still
+   * decides every request.
+   */
+  private announceMainnetDemo(): void {
+    if (!this.demoBuild || !this.port) return;
+    const on = this.mainnetDemo;
+    if (this.announcedDemo === on) return;
+    this.announcedDemo = on;
+    this.emit('mainnetDemo', on ? mainnetDemoState() : null);
   }
 
   /** Whether `request` names a mainnet (D39); false for a request that doesn't parse (approvalSubject refuses it). */

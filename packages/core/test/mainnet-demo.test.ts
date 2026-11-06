@@ -6,8 +6,10 @@ import { Address, Asset, Networks, Operation, xdr } from '@stellar/stellar-base'
 import { type Hex, encodeAbiParameters, encodeFunctionData, parseAbi, parseAbiParameters, serializeTransaction } from 'viem';
 import { describe, expect, it } from 'vitest';
 import type { ApprovalSubject } from '../src/approval.ts';
-import { MAINNET_DEMO, MAINNET_DEMO_BALANCE_ORIGINS, assessMainnetDemo, formatUsd, usdOf } from '../src/mainnet-demo.ts';
-import { MAINNET_DEMO_EVM_CHAINS, STELLAR_MAINNET_PASSPHRASE, isTestOrDemoEvmChain } from '../src/networks.ts';
+import { MAINNET_DEMO, MAINNET_DEMO_BALANCE_ORIGINS, assessMainnetDemo, formatUsd, mainnetDemoState, usdOf } from '../src/mainnet-demo.ts';
+import { MAINNET_DEMO_STELLAR_PASSPHRASE } from '../src/demo-config.ts';
+import { MAINNET_DEMO_EVM_CHAINS, STELLAR_MAINNET_PASSPHRASE } from '../src/networks.ts';
+import { parsePortEvent } from '../src/protocol.ts';
 import { OTHER, USER, addressAuth, invocation, sourceAuth, sorobanData, txBytes } from './stellar-fixtures.ts';
 
 const NOW = Date.UTC(2026, 10, 6, 12);
@@ -90,9 +92,10 @@ describe('the reviewed config', () => {
     expect(Object.keys(MAINNET_DEMO.evm)).toEqual(['8453']);
     expect(MAINNET_DEMO_EVM_CHAINS).toEqual([8453]);
     expect(MAINNET_DEMO.stellar.networkPassphrase).toBe(STELLAR_MAINNET_PASSPHRASE);
-    // Circle's USDC contract addresses page (2026-11-06).
-    expect(Object.keys(BASE.tokens)).toEqual([USDC_BASE]);
-    expect(Object.keys(MAINNET_DEMO.stellar.assets)).toEqual(['USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN']);
+    // Circle's USDC and EURC contract addresses pages (2026-11-06).
+    expect(Object.keys(BASE.tokens)).toEqual([USDC_BASE, '0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42']);
+    expect(Object.keys(MAINNET_DEMO.stellar.assets)).toEqual(['USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN', 'EURC:GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2']);
+    expect(MAINNET_DEMO_STELLAR_PASSPHRASE).toBe(STELLAR_MAINNET_PASSPHRASE);
     // @sodax/sdk 2.2.0's packaged config.
     expect(BASE.sodaxAssetManager).toBe('0x348BE44F63A458be9C1b13D6fD8e99048F297Bc3');
     expect(MAINNET_DEMO.stellar.sodaxAssetManager).toBe('CCGF33A4CO6D3BXFEKPXVCFCZBK76I3AQOZK6KIKRPAWAZR3632WHCJ3');
@@ -114,10 +117,15 @@ describe('the reviewed config', () => {
     expect(MAINNET_DEMO_BALANCE_ORIGINS).toEqual(['https://mainnet.base.org', 'https://horizon.stellar.org']);
   });
 
-  it('lets the partner client through for Base only, besides the testnets', () => {
-    expect(isTestOrDemoEvmChain(8453)).toBe(true);
-    expect(isTestOrDemoEvmChain(84532)).toBe(true);
-    for (const id of [1, 146, 10, 42161, 137]) expect(isTestOrDemoEvmChain(id)).toBe(false);
+  it('states its rules to the SDK in the mainnetDemo event, which accepts only the demo’s own chains and network', () => {
+    const state = mainnetDemoState();
+    expect(state).toEqual({ evmChains: [8453], stellarNetworkPassphrase: STELLAR_MAINNET_PASSPHRASE, txCapUsdMicros: '9990000', pricesReviewedAt: '2026-11-06', pricesValidUntilMs: MAINNET_DEMO.validUntilMs });
+    const event = (data: unknown) => parsePortEvent({ v: 1, event: 'mainnetDemo', data });
+    expect(event(state)).not.toBeNull();
+    expect(event(null)).not.toBeNull();
+    for (const bad of [{ ...state, evmChains: [8453, 1] }, { ...state, evmChains: [146] }, { ...state, evmChains: [8453, 8453] }, { ...state, stellarNetworkPassphrase: 'Test SDF Network ; September 2015' }, { ...state, txCapUsdMicros: 9990000 }, { ...state, extra: 1 }]) {
+      expect(event(bad), JSON.stringify(bad)).toBeNull();
+    }
   });
 
   it('rounds values up, never down', () => {
@@ -156,6 +164,13 @@ describe('EVM on Base', () => {
     expect(ok(approve(5_000_000n)).movements.map((m) => m.what)).toEqual(['fee', 'approval']);
     expect(ok(approve(0n)).usdMicros).toBe(0n);
     expect(refused(approve(2n ** 256n - 1n)).reason).toBe('mainnet_demo_over_cap');
+  });
+
+  it('values EURC on Base like USDC, at its own (higher) price', () => {
+    const eurc = '0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42';
+    const transfer = (amount: bigint) => evmTx({ to: eurc, value: 0n, data: encodeFunctionData({ abi: erc20, functionName: 'transfer', args: [FRIEND, amount] }) });
+    expect(ok(transfer(7_000_000n)).usdMicros).toBe(9_450_000n);
+    expect(refused(transfer(7_400_001n)).reason).toBe('mainnet_demo_over_cap');
   });
 
   it('refuses a token it has no price for', () => {

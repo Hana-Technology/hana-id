@@ -195,7 +195,7 @@ describe('key_exported (D428)', () => {
     // Another user's wallet: not this user's event.
     expect((await report(app, event({ address: '0x1111111111111111111111111111111111111111' }))).status).toBe(200);
     const staff = new AdminRpc(createExecutionContext(), env);
-    const got = (await staff.getUser({ ...hana(), internalId })) as { ok: true; user: { events: Record<string, unknown>[] } };
+    const got = (await staff.getUser({ ...hana(), internalId })) as unknown as { ok: true; user: { events: Record<string, unknown>[] } };
     expect(got.user.events).toEqual([
       { kind: 'mainnet_signature', appId: app.id, chain: 'evm', network: '8453', address: mine, usdMicros: 8000001, at: expect.any(Number) },
       { kind: 'key_exported', appId: app.id, chain: 'evm', network: null, address: null, usdMicros: null, at: expect.any(Number) },

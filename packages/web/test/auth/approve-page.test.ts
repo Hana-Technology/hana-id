@@ -1191,10 +1191,11 @@ describe('/approve: the mainnet demo banner (D426, D427)', () => {
   };
 
   it('shows the red banner with the value and the cap, then the balance, read only from Hana’s pinned Base endpoint', async () => {
-    // 0.0005 ETH and 3 USDC: $4 + $3.15.
+    // 0.0005 ETH, 3 USDC and no EURC: $4 + $3.15.
     startDemo(async (_url, init) => {
-      const body = JSON.parse(init.body as string) as { method: string };
-      return rpcAnswer(body.method === 'eth_getBalance' ? '0x1c6bf52634000' : '0x2dc6c0');
+      const body = JSON.parse(init.body as string) as { method: string; params: [{ to?: string }] };
+      if (body.method === 'eth_getBalance') return rpcAnswer('0x1c6bf52634000');
+      return rpcAnswer(body.params[0].to === '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' ? '0x2dc6c0' : '0x0');
     });
     send(baseRequest());
     expect(pageText()).toContain(MAINNET_DEMO_BANNER);

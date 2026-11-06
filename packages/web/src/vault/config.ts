@@ -20,6 +20,11 @@ export interface VaultSettings {
   rawSign: RawSign;
   /** The policy JSON in force, unvalidated (see VaultConfig.policy). */
   autoApprovePolicy: Record<string, unknown> | null;
+  /**
+   * The mainnet demo (D426): present (true) only when the API rendered this page for an app with the demo on in a dev
+   * testnet env. The vault re-reads it from GET /v1/app before any mainnet request; it only tells the SDK early.
+   */
+  mainnetDemo?: true;
 }
 
 export interface VaultConfig {
@@ -57,14 +62,15 @@ const exactKeys = (o: Obj, required: readonly string[], optional: readonly strin
 const isInt = (v: unknown, min: number, max: number): v is number => Number.isSafeInteger(v) && (v as number) >= min && (v as number) <= max;
 
 function parseSettings(v: unknown): VaultSettings | null {
-  if (!isPlainObject(v) || !exactKeys(v, ['persistence', 'sessionTtlMs', 'idleTtlMs', 'rawSign'], ['autoApprovePolicy'])) return null;
+  if (!isPlainObject(v) || !exactKeys(v, ['persistence', 'sessionTtlMs', 'idleTtlMs', 'rawSign'], ['autoApprovePolicy', 'mainnetDemo'])) return null;
+  if (v.mainnetDemo !== undefined && v.mainnetDemo !== true) return null;
   const { persistence, sessionTtlMs, idleTtlMs, rawSign } = v;
   if (persistence !== 'session' && persistence !== 'none') return null;
   if (rawSign !== 'off' && rawSign !== 'approval') return null;
   if (!isInt(sessionTtlMs, SESSION_TTL_MIN_MS, SESSION_TTL_CAP_MS) || !isInt(idleTtlMs, IDLE_TTL_MIN_MS, sessionTtlMs)) return null;
   const policy = v.autoApprovePolicy ?? null;
   if (policy !== null && !isPlainObject(policy)) return null;
-  return { persistence, sessionTtlMs, idleTtlMs, rawSign, autoApprovePolicy: policy };
+  return { persistence, sessionTtlMs, idleTtlMs, rawSign, autoApprovePolicy: policy, ...(v.mainnetDemo === true ? { mainnetDemo: true as const } : {}) };
 }
 
 /** Validates the config object, or null. */

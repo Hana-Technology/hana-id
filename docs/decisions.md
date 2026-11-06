@@ -7744,7 +7744,11 @@ branch.
   framing, and `frame-ancestors 'none'` is ours too); retrying on its own once the sign-in is back (a write must be
   the user's click); keeping a form draft in `sessionStorage` across a reload (it holds emails: the no-storage rule);
   sending the whole window to sign-in (loses what was typed).
-
+- Amended 2026-11-06 (tested by the user on sandbox-dev): opening the team's login URL for the application while the
+  token is still valid **does** mint a fresh one (the banner's end moved). Renew now opens `GET /api/me` `renewUrl`
+  (`https://<team>/cdn-cgi/access/login/<host>?kid=<aud>&redirect_url=%2Fsigned-in`, built by the Worker from the
+  team domain and AUD, public values); "Sign in again" after the end keeps `/signed-in` (Access asks there). The SPA
+  accepts only an `https://<x>.cloudflareaccess.com/cdn-cgi/access/login/` URL and falls back to `/signed-in`.
 ## Superseded or amended
 
 | Was | Now | Source |

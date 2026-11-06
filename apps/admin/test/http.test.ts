@@ -29,7 +29,9 @@ describe('the Access check on /api/*', () => {
     expect(res.status).toBe(200);
     const body = await json(res);
     expect(body.accessExp).toBe(exp);
-    expect(Object.keys(body).sort()).toEqual(['accessExp', 'consoleOrigin', 'email', 'env', 'sub']);
+    expect(Object.keys(body).sort()).toEqual(['accessExp', 'consoleOrigin', 'email', 'env', 'renewUrl', 'sub']);
+    // Renew: the team's Access login for this application (public values), back to /signed-in.
+    expect(body.renewUrl).toMatch(/^https:\/\/[a-z0-9-]+\.cloudflareaccess\.com\/cdn-cgi\/access\/login\/[^/?]+\?kid=[0-9a-f]{64}&redirect_url=%2Fsigned-in$/u);
     const text = JSON.stringify(body);
     for (const part of jwt.split('.')) expect(text).not.toContain(part);
   });

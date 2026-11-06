@@ -135,7 +135,7 @@ async function directoryAudit(c: RouteCtx): Promise<{ rows: DirectoryAuditRow[];
 }
 
 const ROUTES: Route[] = [
-  { method: 'GET', pattern: '/api/me', handler: async (c) => json(200, { email: c.staff.actor.email, sub: c.staff.actor.id, env: c.env.ENV_NAME, consoleOrigin: c.env.CONSOLE_ORIGIN, accessExp: c.staff.accessExp }) },
+  { method: 'GET', pattern: '/api/me', handler: async (c) => json(200, { email: c.staff.actor.email, sub: c.staff.actor.id, env: c.env.ENV_NAME, consoleOrigin: c.env.CONSOLE_ORIGIN, accessExp: c.staff.accessExp, ...renewField(c.env) }) },
 
   // ---- orgs ----
   {
@@ -336,4 +336,22 @@ export async function handleApi(request: Request, env: Env, staff: StaffRequest)
     body = read.value as Record<string, unknown>;
   }
   return hit.route.handler({ request, env, staff, url, params: hit.params, body });
+}
+
+/**
+ * The SPA's Renew link (D424 amended): the Access team's login for this application, which issues a fresh token while
+ * the team session lasts and returns to `/signed-in` (a plain visit of the console doesn't: Access keeps an unexpired
+ * application token). Public values only (the team domain and the AUD are in every Access JWT). Omitted when either is
+ * malformed; the SPA then falls back to `/signed-in`.
+ */
+export function renewField(env: { ACCESS_TEAM_DOMAIN: string; ACCESS_AUD: string; ADMIN_ORIGIN: string }): { renewUrl?: string } {
+  const team = env.ACCESS_TEAM_DOMAIN ?? '';
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.cloudflareaccess\.com$/u.test(team) || !/^[0-9a-f]{64}$/u.test(env.ACCESS_AUD ?? '')) return {};
+  let host: string;
+  try {
+    host = new URL(env.ADMIN_ORIGIN).host;
+  } catch {
+    return {};
+  }
+  return { renewUrl: `https://${team}/cdn-cgi/access/login/${host}?kid=${env.ACCESS_AUD}&redirect_url=${encodeURIComponent('/signed-in')}` };
 }

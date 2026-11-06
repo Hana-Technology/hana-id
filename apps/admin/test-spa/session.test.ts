@@ -186,6 +186,7 @@ describe('the warning before the sign-in ends (GET /api/me accessExp)', () => {
     expect(box.getAttribute('role')).toBe('status');
     expect(box.textContent).toContain('At 2026-11-06 09:20 UTC.');
     const renew = bannerButton(s, 'Renew') as unknown as HTMLAnchorElement;
+    // Without renewUrl (an older Worker) Renew falls back to /signed-in.
     expect([renew.tagName, renew.getAttribute('href'), renew.getAttribute('target')]).toEqual(['A', '/signed-in', '_blank']);
     vi.setSystemTime(T + 18 * 60_000 + 10_000);
     vi.advanceTimersByTime(15_000);
@@ -232,5 +233,24 @@ describe('the warning before the sign-in ends (GET /api/me accessExp)', () => {
     const s = boot('/signed-in', () => ({ body: {} }));
     await vi.waitFor(() => expect(s.text()).toContain('You’re signed in'));
     expect(s.text()).toContain('Go back to the tab you were working in and press Try again there');
+  });
+});
+
+describe('Renew through the Access team login (GET /api/me renewUrl)', () => {
+  it('points Renew at renewUrl when the Worker gives one, and ignores a URL that is not an Access login', async () => {
+    const T = Date.UTC(2026, 10, 6, 9, 0, 0);
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    vi.setSystemTime(T);
+    const exp = T / 1000 + 4 * 60;
+    const url = 'https://team.cloudflareaccess.com/cdn-cgi/access/login/admin.example?kid=' + 'e'.repeat(64) + '&redirect_url=%2Fsigned-in';
+    const s = boot('/orgs', orgsApi(() => ({ body: {} })), { me: () => ({ body: { ...meWith(exp).body, renewUrl: url } }) });
+    await vi.waitFor(() => expect(banner(s).textContent).toContain('Your sign-in ends in'));
+    expect((bannerButton(s, 'Renew') as unknown as HTMLAnchorElement).getAttribute('href')).toBe(url);
+    vi.useRealTimers();
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    vi.setSystemTime(T);
+    const evil = boot('/orgs', orgsApi(() => ({ body: {} })), { me: () => ({ body: { ...meWith(exp).body, renewUrl: 'https://evil.example/login' } }) });
+    await vi.waitFor(() => expect(banner(evil).textContent).toContain('Your sign-in ends in'));
+    expect((bannerButton(evil, 'Renew') as unknown as HTMLAnchorElement).getAttribute('href')).toBe('/signed-in');
   });
 });

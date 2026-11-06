@@ -92,7 +92,9 @@ screen (D420; tests `test-spa/ux.test.ts`).
   page drops what waited on the old one (never sent later). A real network failure keeps "Can't reach the admin
   console". Nothing of it is stored: a reload loses unsent input, as before.
 - **The warning before it ends**: `GET /api/me` answers the Access token's `accessExp` (seconds; never the token).
-  5 minutes before, the banner says "Your sign-in ends in N min" with **Renew** (the same new-tab sign-in; back here
+  5 minutes before, the banner says "Your sign-in ends in N min" with **Renew**, which opens the Access team's login for
+  this application (`GET /api/me` `renewUrl`; it mints a fresh token while the team session lasts, checked on
+  sandbox-dev 2026-11-06; without it, the same new-tab sign-in; back here
   `exp` is read again). Cloudflare Access issues a new token only once the old session has ended, so a Renew while
   the session still runs usually changes nothing, and the banner then says so plainly ("Access kept your current
   sign-in: it still ends at …"). At `exp` the Worker is asked once (the reader's clock may be off), so the expired

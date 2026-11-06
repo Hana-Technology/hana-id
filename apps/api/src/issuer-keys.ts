@@ -2,14 +2,16 @@
 // contract's delayed key changes (docs/governance-spec.md "Rotation and logins", D33). It signs with the keys-updater
 // key, a function-call key on SIGNER_ACCOUNT limited to UPDATER_METHODS, and only ever:
 //   - proposes an Add (`set_issuer_key`) for a kid Google publishes that is neither active nor pending on chain;
-//   - proposes a Remove (`propose_issuer_key_removal`) for an active kid missing from the JWKS for ≥ 55 min, never
-//     the issuer's last key;
+//   - proposes a Remove (`propose_issuer_key_removal`) for an active kid missing from every fetch for ≥ 24 h, never
+//     one that signed a verified token in the last 24 h and never the issuer's last key (rollout hysteresis, D422);
 //   - executes (`execute_issuer_key_change`) a matured change that agrees with the JWKS it just fetched: an Add whose
 //     n and e equal Google's key for that kid, a Remove of a kid Google no longer publishes. Anything else is left for
 //     the watchdog and the owner (the cron can't cancel, by design).
 // It never calls `remove_issuer_key` (owner-only). A change of ours that disappears without being applied was
-// cancelled (owner or watchdog): it is logged once and not proposed again for REPROPOSE_AFTER_CANCEL_MS. Every fetch
-// also records the kids it lists for the key lead-time measurement (key-observations.ts).
+// cancelled (owner or watchdog): it is logged once and not proposed again for REPROPOSE_AFTER_CANCEL_MS. Each run
+// fetches the JWKS JWKS_FETCHES_PER_RUN times: Google's edges serve different key sets during a rollout (seen
+// 2026-11-03..05, D422), so a kid any fetch lists counts as published, and a kid counts as missing only when every
+// fetch succeeded and none listed it. The union is recorded for the key lead-time measurement (key-observations.ts).
 import { type Jwk, GOOGLE_JWKS_URL, GOOGLE_PROVIDER, usableJwks } from '@hana-id/jwks';
 import { base64UrlDecode } from './bytes.ts';
 import type { Env } from './env.ts';
@@ -23,10 +25,18 @@ import { type UpdaterMethod, updaterAllows } from './relayer-config.ts';
 export { GOOGLE_JWKS_URL, GOOGLE_PROVIDER, type Jwk, usableJwks } from '@hana-id/jwks';
 
 /**
- * A kid missing from the JWKS is proposed for removal only once it has been missing this long (first seen missing by
- * one run, still missing ≥ 55 min later), so a single stale or partial JWKS response can't start a live key's removal.
+ * JWKS fetches per run. Google's frontends answer from different caches (each up to ~6 h old): during a rollout some
+ * list a new kid and some don't, so one fetch is weak evidence of absence (D422).
  */
-export const REMOVE_AFTER_MISSING_MS = 55 * 60_000;
+export const JWKS_FETCHES_PER_RUN = 3;
+/**
+ * A kid is proposed for removal only once every run's every fetch has missed it for this long (first seen missing by
+ * a complete run, missing from every complete run since): a key left on chain a day longer is harmless (Google stops
+ * signing with a key before it stops publishing it), a key removed early breaks logins (D422, was 55 min).
+ */
+export const REMOVE_AFTER_MISSING_MS = 24 * 60 * 60_000;
+/** Never propose or execute the removal of a kid that signed a verified token within this window (D422). */
+export const KEEP_AFTER_LAST_TOKEN_MS = 24 * 60 * 60_000;
 /** After a proposal of ours was cancelled on chain, the same kid and op is not proposed again for this long. */
 export const REPROPOSE_AFTER_CANCEL_MS = 60 * 60_000;
 /** The contract's caps (docs/contract-interface.md "Limits"): checked here so a run never sends a doomed proposal. */
@@ -112,6 +122,8 @@ export interface SyncNote {
     | 'queue_full' // MAX_PENDING_KEY_CHANGES reached
     | 'issuer_full' // active + pending additions would exceed MAX_KEYS_PER_ISSUER
     | 'last_key_kept' // removing it would leave the issuer without an active key
+    | 'recent_token_kept' // a verified token was signed with it less than KEEP_AFTER_LAST_TOKEN_MS ago
+    | 'removal_evidence_incomplete' // not every fetch of this run succeeded, or the token sightings couldn't be read
     | 'execute_raced'; // the change was applied or cancelled by someone else between our read and our execute
   kid: string;
   id?: number;
@@ -126,6 +138,8 @@ const NOTE_LEVEL: Readonly<Record<SyncNote['code'], 'warn' | 'error'>> = {
   queue_full: 'warn',
   issuer_full: 'warn',
   last_key_kept: 'warn',
+  recent_token_kept: 'warn',
+  removal_evidence_incomplete: 'warn',
   execute_raced: 'warn',
 };
 
@@ -141,7 +155,7 @@ export interface SyncPlan {
 
 export interface PlanInput {
   provider: string;
-  /** Google's usable keys from this run's fetch (non-empty). */
+  /** Google's usable keys listed by any of this run's fetches (non-empty). */
   jwks: Jwk[];
   /** Active kids on chain (`get_issuer`). */
   active: readonly string[];
@@ -153,6 +167,13 @@ export interface PlanInput {
   dueRemovals: readonly string[];
   /** `${op}:${kid}` of our proposals cancelled less than REPROPOSE_AFTER_CANCEL_MS ago. */
   held: ReadonlySet<string>;
+  /**
+   * Whether this run may judge a kid absent: every fetch succeeded and the token sightings were read. Without it no
+   * Remove is proposed or executed (default true for callers that pass a single complete fetch).
+   */
+  removalEvidence?: boolean;
+  /** Kids that signed a verified token less than KEEP_AFTER_LAST_TOKEN_MS ago (never removed). */
+  recentTokens?: ReadonlySet<string>;
 }
 
 /**
@@ -168,6 +189,8 @@ export function planIssuerKeySync(input: PlanInput): SyncPlan {
   const pendingByKid = new Map(mine.map((c) => [c.kid, c]));
   const published = new Map<string, Jwk>();
   for (const k of input.jwks) if (!published.has(k.kid)) published.set(k.kid, k);
+  const evidence = input.removalEvidence ?? true;
+  const recentTokens = input.recentTokens ?? new Set<string>();
 
   const execute: KeyChange[] = [];
   const matured = mine.filter((c) => c.executable_at_ms <= now);
@@ -185,7 +208,9 @@ export function planIssuerKeySync(input: PlanInput): SyncPlan {
         live++;
       } else if (!jwk) notes.push({ code: 'unpublished_change', kid: c.kid, id: c.id });
     } else if (!jwk) {
-      if (live <= 1) notes.push({ code: 'last_key_kept', kid: c.kid, id: c.id });
+      if (!evidence) notes.push({ code: 'removal_evidence_incomplete', kid: c.kid, id: c.id });
+      else if (recentTokens.has(c.kid)) notes.push({ code: 'recent_token_kept', kid: c.kid, id: c.id });
+      else if (live <= 1) notes.push({ code: 'last_key_kept', kid: c.kid, id: c.id });
       else {
         execute.push(c);
         live--;
@@ -211,9 +236,10 @@ export function planIssuerKeySync(input: PlanInput): SyncPlan {
   }
 
   const proposeRemoval: string[] = [];
-  for (const kid of input.dueRemovals) {
+  for (const kid of evidence ? input.dueRemovals : []) {
     if (!active.has(kid) || published.has(kid) || pendingByKid.has(kid)) continue;
-    if (input.held.has(`Remove:${kid}`)) notes.push({ code: 'held_after_cancel', kid });
+    if (recentTokens.has(kid)) notes.push({ code: 'recent_token_kept', kid });
+    else if (input.held.has(`Remove:${kid}`)) notes.push({ code: 'held_after_cancel', kid });
     else if (active.size - pendingRemovals <= 1) notes.push({ code: 'last_key_kept', kid });
     else if (pendingTotal >= MAX_PENDING_KEY_CHANGES) notes.push({ code: 'queue_full', kid });
     else {
@@ -273,6 +299,23 @@ export async function dueForRemoval(db: D1Database, provider: string, missing: s
   } catch {
     log({ event: 'jwks_sync_failed', code: 'missing_kids_unavailable' }, 'error');
     return [];
+  }
+}
+
+/**
+ * Kids of `provider` that signed a verified token less than KEEP_AFTER_LAST_TOKEN_MS ago (`last_token_ms`, migration
+ * 0012), or null when D1 can't be read (the run then removes nothing).
+ */
+export async function recentTokenKids(db: D1Database, provider: string, now: number): Promise<Set<string> | null> {
+  try {
+    const rows = await db
+      .prepare('SELECT kid FROM issuer_key_observations WHERE provider = ?1 AND COALESCE(last_token_ms, first_token_ms) >= ?2')
+      .bind(provider, now - KEEP_AFTER_LAST_TOKEN_MS)
+      .all<{ kid: string }>();
+    return new Set(rows.results.map((r) => r.kid));
+  } catch {
+    log({ event: 'jwks_sync_failed', code: 'token_sightings_unavailable' }, 'error');
+    return null;
   }
 }
 
@@ -371,15 +414,19 @@ async function runSync(env: Env, provider: string, jwksUrl: string, now: number)
     return { ...result, skipped: code };
   };
 
-  let jwks: Jwk[];
-  try {
-    const fetched = await fetchUsableJwks(jwksUrl);
-    jwks = fetched.keys;
-    // Measurement only (never fails the sync): recorded whether or not this env can post keys.
-    await recordJwksObservation(env.DB, provider, jwks.map((k) => k.kid), fetched.maxAgeS, now);
-  } catch {
-    return skip('jwks_fetch_failed');
-  }
+  // JWKS_FETCHES_PER_RUN fetches, one after another: a kid any of them lists is published (D422).
+  const fetches: PromiseSettledResult<{ keys: Jwk[]; maxAgeS: number | null }>[] = [];
+  for (let i = 0; i < JWKS_FETCHES_PER_RUN; i++) fetches.push(...(await Promise.allSettled([fetchUsableJwks(jwksUrl)])));
+  const succeeded = fetches.flatMap((f) => (f.status === 'fulfilled' ? [f.value] : []));
+  if (succeeded.length === 0) return skip('jwks_fetch_failed');
+  // An empty answer is a broken one, not "Google publishes nothing": it neither lists nor misses a kid.
+  const answers = succeeded.filter((a) => a.keys.length > 0);
+  const union = new Map<string, Jwk>();
+  for (const a of answers) for (const k of a.keys) if (!union.has(k.kid)) union.set(k.kid, k);
+  const jwks = [...union.values()];
+  // Measurement only (never fails the sync): the union, recorded whether or not this env can post keys.
+  await recordJwksObservation(env.DB, provider, jwks.map((k) => k.kid), answers[0]?.maxAgeS ?? null, now);
+  const completeFetches = answers.length === JWKS_FETCHES_PER_RUN;
   if (!env.KEYS_UPDATER_KEY) return skip('no_keys_updater_key', 'warn');
   if (jwks.length === 0) return skip('jwks_empty');
   const rpc = new Rpc(env.NEAR_RPC);
@@ -403,10 +450,16 @@ async function runSync(env: Env, provider: string, jwksUrl: string, now: number)
   const active = new Set(onChain);
   const published = new Set(jwks.map((k) => k.kid));
   const missing = onChain.filter((kid) => !published.has(kid));
-  const [{ held, cancelled }, dueRemovals] = await Promise.all([reconcileProposals(env.DB, provider, env.SIGNER_ACCOUNT, active, changes, now), dueForRemoval(env.DB, provider, missing, now)]);
+  // An incomplete run (a fetch failed or was empty) leaves the missing-since rows as they are: it neither starts nor
+  // resets a kid's 24 h, and judges nothing absent.
+  const [{ held, cancelled }, dueRemovals, recentTokens] = await Promise.all([
+    reconcileProposals(env.DB, provider, env.SIGNER_ACCOUNT, active, changes, now),
+    completeFetches ? dueForRemoval(env.DB, provider, missing, now) : Promise.resolve([]),
+    recentTokenKids(env.DB, provider, now),
+  ]);
   result.cancelled = cancelled;
 
-  const plan = planIssuerKeySync({ provider, jwks, active: onChain, changes, paused, now, dueRemovals, held });
+  const plan = planIssuerKeySync({ provider, jwks, active: onChain, changes, paused, now, dueRemovals, held, removalEvidence: completeFetches && recentTokens !== null, recentTokens: recentTokens ?? new Set() });
   result.notes = plan.notes;
   for (const n of plan.notes) logNote(n);
   if (plan.execute.length === 0 && plan.propose.length === 0 && plan.proposeRemoval.length === 0) {

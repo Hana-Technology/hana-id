@@ -3,7 +3,7 @@
 Everything that must be true before Hana ID runs on mainnet with real funds. This is a current-state doc for the
 two founders to track. Update a row in the same branch as the change that moves it (rule in `CLAUDE.md`).
 
-Last verified: 2026-11-06 for every row, the summary, the top blockers and the inconsistencies (branch
+Last verified: 2026-11-06 for row 7.16 (branch `fix/google-key-hysteresis`: the Google key rollout hysteresis, D422; the summary's group 7 counts it); 2026-11-06 for every row, the summary, the top blockers and the inconsistencies (branch
 `docs/readiness-refresh-1106`: each row rechecked against `origin/develop` @ f920f8a (C1–C15 merged, email login
 batches 1–8b merged and live on sandbox-dev), `docs/decisions.md` D1–D417, `docs/operations.md`'s sandbox-dev state,
 git history and the testnet chain (the signer's `view_account` code hash `DVXqka2…` and `get_governance`
@@ -49,10 +49,10 @@ with what became of each.
 | 4. Infrastructure and accounts | 23 | 0 | 3 | 15 | 3 | 2 |
 | 5. Monitoring and paging | 10 | 0 | 4 | 5 | 1 | 0 |
 | 6. Security reviews and drills | 9 | 2 | 0 | 6 | 0 | 1 |
-| 7. Builds not done | 23 | 1 | 8 | 8 | 6 | 0 |
+| 7. Builds not done | 24 | 1 | 9 | 8 | 6 | 0 |
 | 8. Address freeze | 7 | 1 | 1 | 2 | 2 | 1 |
 | 9. Legal and product | 8 | 0 | 0 | 4 | 3 | 1 |
-| **Total** | **118** | **7** | **21** | **53** | **32** | **5** |
+| **Total** | **119** | **7** | **22** | **53** | **32** | **5** |
 
 Counted from each row's Status (its first words). Group 7 counts every row, 7.1b–7.1i included.
 
@@ -219,6 +219,7 @@ the readings to confirm are new on the list.
 | 7.13 | API-side NEAR RPC fallback | The API reads only `NEAR_RPC` | not built (whether a mainnet blocker isn't stated) | Claude build | playbooks `near-rpc-outage` |
 | 7.14 | Settlement (C12) checks each relayed event against its transaction: `near_tx` unique in the ledger, and the transaction's signer key and nonce equal the event's `relayer_pk` and `relayer_nonce`; anything else is not billed and is alerted | A leaked writer credential could otherwise bill a partner for a real transaction that isn't theirs | built, not deployed (C12 merged, `8e67405`; D321: also a key outside the pools and a receiver mismatch; a duplicate bills neither, at read time too) | Claude build | D222, D321; batch-c-build-plan C12; security.md "What a compromise gives" |
 | 7.15 | The Workers plan for the admin Worker's budgets: 40 outbound calls a run, every RPC and the connection counted (D280, D380), caps settlement at 38 transactions a 15-minute run (≈ 3 600 a day, fewer in runs that also send notices or run the monthly job; D322), and the admin's two cron triggers per env (D329) with the API's, the watchdog's and the console's exceed the free plan's 5 per account for two envs; a statement's PDF and CSV and a large export need more CPU than the free plan's per-request limit | Settlement falls behind past ≈ 3 600 relayed transactions a day; the crons don't all fit on one free account; statements may fail to render | decision needed | founder | D280, D322, D329, D380; build plan open question 3 |
+| 7.16 | Google key rollout hysteresis: the JWKS cron fetches 3 times a run and removes a kid only after 24 h missing from every fetch and never one that signed a token in the last 24 h; the watchdog cancels a "retired" Add or confirms a Remove early only on 3+ absent fetches over a minimum time (D422) | During a rotation Google's edges serve different key sets for a day or two; on sandbox-dev (2026-11-04/05) the old rules added and removed the new key four times. On mainnet a key removed while Google signs with it breaks Google logins for 1.5–3.5 h. Follow-up: a new kid the API sees before the watchdog ever does is still judged forged if two watchdog fetches 60 s apart miss it (cancel + updater keys deleted) | built, not deployed (on `develop`; sandbox-dev after its migrations 0012 and watchdog 0002) | Claude build | D422, D153 |
 
 Not tracked as blockers: Sign in with Apple (paused, D160) and the native apps spec (`docs/native-apps-spec.md`, a
 draft with 19 open questions, on `develop` since 2026-11-04).

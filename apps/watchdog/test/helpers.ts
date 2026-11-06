@@ -8,7 +8,7 @@ import type { Channel } from '../src/checks.ts';
 import { type IdentityResponse, p256Thumbprint } from '../src/identity.ts';
 import type { SignerPins } from '../src/pins.ts';
 import { type AccessKeyEntry, nearToYocto, type RelayerFunds, relayerFundsFrom, relayerThresholds } from '../src/relayer.ts';
-import { type RunDeps, type RunReport, runWatchdog } from '../src/run.ts';
+import { RETIRED_ABSENT_SPAN_MS, RETIRED_MIN_KEY_AGE_MS, RETIRED_UNSEEN_MS, type RunDeps, type RunReport, runWatchdog } from '../src/run.ts';
 import { Store } from '../src/store.ts';
 
 export const SIGNER = 'signer.test.near';
@@ -540,6 +540,30 @@ export async function initialized(opts: Omit<WorldOpts, 'at'> & { before?: (w: W
   w.notifier.clear();
   w.writer.calls = [];
   return w;
+}
+
+/**
+ * D422: Google listed every kid of the world's JWKS for over RETIRED_MIN_KEY_AGE_MS, then only `keep` for over
+ * RETIRED_UNSEEN_MS: a kid dropped here is old and long unlisted, provably retired once fetches in a row over
+ * RETIRED_ABSENT_SPAN_MS miss it (`runsOverRetiredSpan`).
+ */
+export async function retiredLongAgo(w: World, keep: Jwk[]): Promise<void> {
+  w.clock.t += RETIRED_MIN_KEY_AGE_MS;
+  await w.run();
+  w.jwks.keys = keep;
+  w.clock.t += RETIRED_UNSEEN_MS;
+  w.notifier.clear();
+  w.writer.calls = [];
+}
+
+/** Runs every 15 min until the pending kids' absences span RETIRED_ABSENT_SPAN_MS (a run moves 5 min itself). */
+export async function runsOverRetiredSpan(w: World): Promise<void> {
+  const until = w.clock.t + RETIRED_ABSENT_SPAN_MS;
+  await w.run();
+  while (w.clock.t <= until) {
+    w.clock.t += 10 * MIN;
+    await w.run();
+  }
 }
 
 export async function alertsOf(store: Store, kind?: string) {

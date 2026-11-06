@@ -69,6 +69,8 @@ export class NearMock {
   /** `view_access_key_list` of any account: `[{public_key, access_key: {nonce, permission}}]`. */
   accessKeyList: unknown[] = [];
   jwks: unknown = { keys: [] };
+  /** When non-empty, each JWKS fetch takes the next answer from here (a status number answers that HTTP status) before falling back to `jwks`. */
+  jwksSequence: unknown[] = [];
   jwksStatus = 200;
   /** Cache-Control of the JWKS response (Google sends `public, max-age=…`). */
   jwksCacheControl?: string;
@@ -82,7 +84,9 @@ export class NearMock {
       const url = input instanceof Request ? input.url : String(input);
       if (url === GOOGLE_JWKS_URL) {
         this.jwksFetches++;
-        return Promise.resolve(Response.json(this.jwks, { status: this.jwksStatus, headers: this.jwksCacheControl ? { 'cache-control': this.jwksCacheControl } : {} }));
+        const next = this.jwksSequence.length ? this.jwksSequence.shift() : undefined;
+        if (typeof next === 'number') return Promise.resolve(new Response('unavailable', { status: next }));
+        return Promise.resolve(Response.json(next ?? this.jwks, { status: this.jwksStatus, headers: this.jwksCacheControl ? { 'cache-control': this.jwksCacheControl } : {} }));
       }
       if (url.startsWith(env.NEAR_RPC) && typeof init?.body === 'string') {
         // Parsed synchronously so RPC calls are seen in exactly the order the worker sent them.

@@ -30,7 +30,7 @@ import {
 import { type DecodedApproval, decodeApprovalRequest } from '@hana-id/core/decode';
 import { type AutoApprovePolicyV1, type AutoApproveReason, policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import type { HanaEnv } from '../hana-env.ts';
-import { ApproveGuard, type Coords, type GuardInput } from './approve-guard.ts';
+import { ApproveGuard, type GuardInput, guardInputOf } from './approve-guard.ts';
 import { type Dom, dom, errorView } from './dom.ts';
 import { appLogo } from './logo.ts';
 import { type GestureCheck, type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed, isUserGesture } from './page-window.ts';
@@ -170,7 +170,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   };
 
   const onGesture = (type: GuardInput['type']) => (e: Event) => {
-    if (isGesture(e)) guard.gesture(guardInput(type, e));
+    if (isGesture(e)) guard.gesture(guardInputOf(type, e));
   };
   const listeners: [string, (e: Event) => void][] = [
     ['message', onMessage],
@@ -444,32 +444,4 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     guard,
     stop,
   };
-}
-
-/** The client coordinates of a pointer event (each only when it is a number). */
-function position(o: Partial<PointerEvent>): Coords {
-  const out: Coords = {};
-  for (const k of ['clientX', 'clientY'] as const) if (typeof o[k] === 'number') out[k] = o[k];
-  return out;
-}
-
-/** The fields of a pointer or keyboard event the guard reads (approve-guard.ts). */
-function guardInput(type: GuardInput['type'], e: Event): GuardInput {
-  const o = e as Partial<PointerEvent & KeyboardEvent>;
-  const num = (v: unknown) => (typeof v === 'number' ? v : undefined);
-  const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
-  const pointerType = str(o.pointerType);
-  switch (type) {
-    case 'pointermove': {
-      const movementX = num(o.movementX);
-      const movementY = num(o.movementY);
-      return { type, ...(pointerType !== undefined ? { pointerType } : {}), ...(movementX !== undefined ? { movementX } : {}), ...(movementY !== undefined ? { movementY } : {}), ...position(o) };
-    }
-    case 'pointerdown':
-      return { type, ...(pointerType !== undefined ? { pointerType } : {}), ...position(o) };
-    case 'keydown': {
-      const key = str(o.key);
-      return { type, ...(key !== undefined ? { key } : {}), repeat: o.repeat === true };
-    }
-  }
 }

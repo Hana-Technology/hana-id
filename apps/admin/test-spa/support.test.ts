@@ -5,54 +5,13 @@
 // (ledger unavailable said plainly, errors of request IDs, collisions with `truncated`), data put in as text only, and
 // nothing in the URL. Also the Users screen itself (D410): the ticket for a search that names one user, and an opened
 // user kept in memory at a fixed path (back and forward between them, nobody after a reload).
-import { readFileSync } from 'node:fs';
-import { Window } from 'happy-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { type Answer, type Call, boot, closeWindow } from './boot.ts';
 
-const SRC = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-const BODY = /<body>([\s\S]*)<\/body>/u.exec(readFileSync(new URL('../public/index.html', import.meta.url), 'utf8'))![1]!;
 const T = Date.UTC(2026, 10, 1, 12, 0, 0);
 const DAY = 86_400_000;
 
-interface Call {
-  method: string;
-  path: string;
-  body?: Record<string, unknown>;
-  headers: Record<string, string>;
-}
-type Answer = { status?: number; body: unknown };
-
-let win: Window | null = null;
-afterEach(async () => {
-  await win?.happyDOM.close();
-  win = null;
-});
-
-/** The SPA at `path`, answering each API call with `answer` (GET /api/me is answered here). */
-function boot(path: string, answer: (c: Call) => Answer) {
-  const w = new Window({ url: `https://admin.test${path}` });
-  win = w;
-  w.document.body.innerHTML = BODY.replace(/<script[^>]*><\/script>/gu, '');
-  const calls: Call[] = [];
-  const fetch = async (p: string, init: { method: string; headers: Record<string, string>; body?: string }) => {
-    const c: Call = { method: init.method, path: p, headers: init.headers, ...(init.body !== undefined ? { body: JSON.parse(init.body) as Record<string, unknown> } : {}) };
-    calls.push(c);
-    const a = p === '/api/me' ? { body: { email: 'staff@hana.example', env: 'sandbox-dev' } } : answer(c);
-    return new Response(JSON.stringify(a.body), { status: a.status ?? 200, headers: { 'content-type': 'application/json' } });
-  };
-  // The page's globals, from this window (the script is the same text the browser runs).
-  const globals = { window: w, document: w.document, history: w.history, location: w.location, navigator: w.navigator, Node: w.Node, fetch, URL: w.URL, URLSearchParams: w.URLSearchParams, Event: w.Event };
-  new Function(...Object.keys(globals), SRC)(...Object.values(globals));
-  const doc = w.document;
-  const main = () => doc.getElementById('app')!;
-  const text = () => main().textContent ?? '';
-  const form = () => main().querySelector('form')!;
-  const field = (name: string) => form().querySelector(`[name="${name}"]`) as unknown as HTMLInputElement;
-  const submit = () => form().dispatchEvent(new w.Event('submit', { cancelable: true }));
-  const button = (label: string) => [...main().querySelectorAll('button')].find((b) => (b.textContent ?? '').startsWith(label)) as unknown as HTMLButtonElement;
-  const api = () => calls.filter((c) => c.path !== '/api/me');
-  return { w, doc, calls, api, main, text, form, field, submit, button };
-}
+afterEach(closeWindow);
 
 const identity = (provider: string, sub: string | null, role = 'root') => ({
   provider,
@@ -195,7 +154,13 @@ describe('the Support ID lookup screen', () => {
     s.field('query').value = 'HANA-0000-0000';
     s.field('ticket').value = 'T-1';
     s.submit();
-    await vi.waitFor(() => expect(s.text()).toContain('bad_request: ticket: a support reference'));
+    // The refusal in plain words, the server's own detail, what to do, and the code (small) for support.
+    await vi.waitFor(() => expect(s.text()).toContain('Check what you entered'));
+    const box = s.main().querySelector('.alert.error')!;
+    expect(box.getAttribute('role')).toBe('alert');
+    expect(box.textContent).toContain('ticket: a support reference');
+    expect(box.textContent).toContain('Fix it and try again');
+    expect(box.querySelector('.code')!.textContent).toBe('Error code bad_request (HTTP 400)');
     expect(s.field('query').value).toBe('HANA-0000-0000');
   });
 

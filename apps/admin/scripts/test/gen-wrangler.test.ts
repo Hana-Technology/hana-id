@@ -383,4 +383,11 @@ describe('source checks', () => {
     expect(html).not.toMatch(/<script>|style=/u);
     expect(spa).not.toMatch(/style=|\.style\./u);
   });
+
+  it('public/ is the SPA alone: the local preview harness and its fake data stay in test-spa/, never served', () => {
+    expect(readdirSync(new URL('../../public/', import.meta.url)).sort()).toEqual(['app.css', 'app.js', 'index.html']);
+    const css = readFileSync(new URL('../../public/app.css', import.meta.url), 'utf8');
+    // The stylesheet loads nothing: no font, image or import from anywhere (CSP font-src and img-src 'self').
+    expect(css).not.toMatch(/@import|url\(|@font-face/u);
+  });
 });

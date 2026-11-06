@@ -7,7 +7,8 @@
 import type { AppSummary, UsageRow } from '@hana-id/console-core';
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { ErrorNote, useApi, utcDay } from '../lib.tsx';
+import { useApi, utcDay } from '../lib.tsx';
+import { Empty, ErrorNote, Loading, PageHeader } from '../ui.tsx';
 import { near, usd } from '../units.ts';
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/u;
@@ -47,28 +48,31 @@ export function Usage() {
 
   return (
     <>
-      <h2>Usage</h2>
-      <p className="muted">
-        By UTC day or month, at most 400 days and 100 apps. Gas is what Hana’s relayer paid, settled at FINAL; unsettled events are never billed, and relayed-then-rejected gas is not billed by default (it is part of
-        the Tgas, NEAR and USD columns and shown on its own). USD is at each day’s NEAR/USD rate (testnet usage at the mainnet price); “—” until the day has a rate. The monthly statement is the billing record.
-      </p>
+      <PageHeader title="Usage" description="What your apps did, by UTC day or month: logins, signatures, users, and the NEAR gas Hana paid for them. The monthly statement is the billing record." />
+      <details className="explain">
+        <summary>How usage is counted</summary>
+        <p>
+          At most 400 days and 100 apps at a time. Gas is what Hana’s relayer paid, settled at FINAL; unsettled events are never billed, and relayed-then-rejected gas is not billed by default (it is part of the Tgas,
+          NEAR and USD columns and shown on its own). USD is at each day’s NEAR/USD rate (testnet usage at the mainnet price); “—” until the day has a rate.
+        </p>
+      </details>
       <form
-        className="inline-form"
+        className="form form-inline filters"
         onSubmit={(e) => {
           e.preventDefault();
           if (valid) setQuery({ ...form, apps: [...form.apps] });
         }}
       >
-        <label>
-          From
+        <label className="field">
+          <span className="field-label">From</span>
           <input type="date" value={form.from} onChange={(e) => setForm({ ...form, from: e.target.value })} />
         </label>
-        <label>
-          To
+        <label className="field">
+          <span className="field-label">To</span>
           <input type="date" value={form.to} onChange={(e) => setForm({ ...form, to: e.target.value })} />
         </label>
-        <label>
-          By
+        <label className="field">
+          <span className="field-label">By</span>
           <select value={form.by} onChange={(e) => setForm({ ...form, by: e.target.value === 'month' ? 'month' : 'day' })}>
             <option value="day">day</option>
             <option value="month">month</option>
@@ -89,19 +93,41 @@ export function Usage() {
             ))}
           </fieldset>
         )}
-        <button type="submit" disabled={!valid}>
+        <button type="submit" className="btn btn-primary" disabled={!valid}>
           Show
         </button>
       </form>
-      {!valid && <p className="note note-warn">Pick a start day on or before the end day.</p>}
+      {!valid && <p className="field-error">Pick a start day on or before the end day.</p>}
       {query.apps.length > 0 && <p className="muted">Filtered by app: owner actions (which belong to a scope, not an app) are left out.</p>}
-      {r.error && <ErrorNote error={r.error} />}
-      {!r.data && !r.error && <p className="muted">Loading…</p>}
-      {r.data && rows.length === 0 && <p className="note">No usage in this period.</p>}
+      {r.error && <ErrorNote error={r.error} onRetry={r.reload} />}
+      {!r.data && !r.error && <Loading />}
+      {r.data && rows.length === 0 && (
+        <Empty title="No usage in this period.">
+          <p>Usage shows here once users log in to your apps. Try a longer period, or untick the app filter.</p>
+        </Empty>
+      )}
       {r.data && rows.length > 0 && (
         <div className="table-wrap">
-          <table className="report">
+          <table className="table report">
             <thead>
+              <tr className="group-row">
+                <th scope="colgroup" colSpan={2} />
+                <th scope="colgroup" colSpan={7}>
+                  Activity
+                </th>
+                <th scope="colgroup" colSpan={3}>
+                  Users and failures
+                </th>
+                <th scope="colgroup" colSpan={7}>
+                  Gas and cost
+                </th>
+                <th scope="colgroup" colSpan={2}>
+                  Speed
+                </th>
+                <th scope="colgroup" colSpan={late ? 2 : 1}>
+                  Settlement
+                </th>
+              </tr>
               <tr>
                 <th>{query.by === 'month' ? 'Month' : 'Day'}</th>
                 <th>App or scope</th>
@@ -131,7 +157,7 @@ export function Usage() {
             <tbody>
               {rows.map((x) => (
                 <tr key={`${x.period}:${x.appId ?? `scope:${x.scopeId ?? ''}`}`}>
-                  <td className="mono">{x.period}</td>
+                  <td className="mono num">{x.period}</td>
                   <td>
                     {x.appId ? (
                       <>
@@ -142,23 +168,23 @@ export function Usage() {
                       `Owner actions, scope ${x.scopeId ?? '—'}`
                     )}
                   </td>
-                  <td>{x.logins}</td>
-                  <td>{x.derives}</td>
-                  <td>{x.revokes}</td>
-                  <td>{x.unlocks}</td>
-                  <td>{x.ownerActions}</td>
-                  <td>{x.linkActions ?? 0}</td>
-                  <td>{x.identityTokens ?? 0}</td>
-                  <td>{x.activeUsers ?? '—'}</td>
-                  <td>{x.newUsers}</td>
+                  <td className="num">{x.logins}</td>
+                  <td className="num">{x.derives}</td>
+                  <td className="num">{x.revokes}</td>
+                  <td className="num">{x.unlocks}</td>
+                  <td className="num">{x.ownerActions}</td>
+                  <td className="num">{x.linkActions ?? 0}</td>
+                  <td className="num">{x.identityTokens ?? 0}</td>
+                  <td className="num">{x.activeUsers ?? '—'}</td>
+                  <td className="num">{x.newUsers}</td>
                   <td className="mono small">{failures(x.failuresByCode)}</td>
-                  <td className="mono">{x.tgas}</td>
-                  <td className="mono">{x.relayedRejectedTgas}</td>
-                  <td className="mono">{x.errorTgas}</td>
-                  <td className="mono">{near(x.burntYocto)}</td>
-                  <td className="mono">{near(x.relayedRejectedBurntYocto)}</td>
-                  <td className="mono">{usd(x.usdMicros)}</td>
-                  <td className="mono">{usd(x.relayedRejectedUsdMicros)}</td>
+                  <td className="mono num">{x.tgas}</td>
+                  <td className="mono num">{x.relayedRejectedTgas}</td>
+                  <td className="mono num">{x.errorTgas}</td>
+                  <td className="mono num">{near(x.burntYocto)}</td>
+                  <td className="mono num">{near(x.relayedRejectedBurntYocto)}</td>
+                  <td className="mono num">{usd(x.usdMicros)}</td>
+                  <td className="mono num">{usd(x.relayedRejectedUsdMicros)}</td>
                   <td>
                     {ms(x.p50.login)} / {ms(x.p95.login)}
                   </td>

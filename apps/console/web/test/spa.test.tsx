@@ -118,15 +118,31 @@ describe('signed in', () => {
     expect(await screen.findByText('Wallet')).toBeTruthy();
     expect(window.location.pathname).toBe('/orgs/org_a');
     fireEvent.click(screen.getByText('Wallet'));
-    expect(await screen.findByText('https://bücher.example', { selector: 'td' , exact: false })).toBeTruthy();
-    expect(screen.getAllByText('IDN').length).toBeGreaterThan(0);
-    expect(screen.getByText('pk_test_abc')).toBeTruthy();
+    // The overview: the copyable App ID and key, the suspension, the change waiting, the settings summary.
+    expect(await screen.findByText('pk_test_abc', { selector: 'code' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Copy App ID' })).toBeTruthy();
+    expect(screen.getAllByText(/Suspended by your organisation/u).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Pending: active from/u)).toBeTruthy();
     expect(screen.getByText('2 h')).toBeTruthy();
     expect(screen.getByText('30 min')).toBeTruthy();
-    expect(screen.getByText(/Suspended by your organisation/u)).toBeTruthy();
-    expect(screen.getByText(/Pending: active from/u)).toBeTruthy();
-    // A viewer: no write control on the page (sign out is the only button).
-    expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual(['Sign out']);
+    expect(screen.getByText(/You’re a viewer: you can see this app’s setup/u)).toBeTruthy();
+    // A viewer: no write control on any section (sign out and the copy buttons are the only buttons).
+    const writes = () =>
+      screen
+        .getAllByRole('button')
+        .filter((b) => !b.classList.contains('btn-copy'))
+        .map((b) => b.textContent);
+    expect(writes()).toEqual(['Sign out']);
+    fireEvent.click(screen.getByRole('link', { name: /^Origins/u }));
+    expect(await screen.findByText('https://bücher.example', { selector: 'span' })).toBeTruthy();
+    expect(screen.getAllByText('IDN').length).toBeGreaterThan(0);
+    expect(screen.getByText('Only owners can add or remove origins.')).toBeTruthy();
+    expect(writes()).toEqual(['Sign out']);
+    for (const [name, heading] of [['Keys', 'Publishable keys'], ['Login & sessions', 'Change these settings'], ['Signing', 'Raw signing'], ['Branding', 'Logo'], ['Suspend', 'Suspend the app']] as const) {
+      fireEvent.click(screen.getByRole('link', { name: new RegExp(`^${name}`, 'u') }));
+      await screen.findByRole('heading', { name: heading });
+      expect(writes(), name).toEqual(['Sign out']);
+    }
   });
 
   it('members: roles, a pending owner, open invites with Hana as inviter', async () => {

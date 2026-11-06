@@ -7,6 +7,8 @@ export class ApiError extends Error {
     readonly status: number,
     readonly code: string,
     message: string,
+    /** The policy validator's problems (`policy_invalid`), one per line. */
+    readonly problems: readonly string[] = [],
   ) {
     super(message);
     this.name = 'ApiError';
@@ -15,10 +17,11 @@ export class ApiError extends Error {
 
 async function errorOf(res: Response): Promise<ApiError> {
   try {
-    const body = (await res.json()) as { error?: { code?: unknown; message?: unknown } };
+    const body = (await res.json()) as { error?: { code?: unknown; message?: unknown }; problems?: unknown };
     const code = typeof body.error?.code === 'string' ? body.error.code : 'internal';
     const message = typeof body.error?.message === 'string' ? body.error.message : 'Something went wrong';
-    return new ApiError(res.status, code, message);
+    const problems = Array.isArray(body.problems) ? body.problems.filter((x): x is string => typeof x === 'string').slice(0, 50) : [];
+    return new ApiError(res.status, code, message, problems);
   } catch {
     return new ApiError(res.status, 'internal', 'Something went wrong');
   }

@@ -7693,7 +7693,9 @@ branch.
   processes would build the same wasm into the same target dirs and race on `target/near/*.wasm`, `target/v2-src`
   and the Sputnik download: it needs a cross-process lock in the harness first); unit tests beside anything heavy
   (D140); faster sandbox blocks (changes the timing the delay tests rely on).
-
+- Amended 2026-11-06: Playwright moved to a phase of its own after the sandbox e2e. Beside the 8 sandbox nodes,
+  Firefox's `linking.spec.ts:234` (case B, link pending) timed out at 13.2 s in a `--full` run (it passes in 4–5 s alone,
+  3/3); the risk was named above. `--full` gains about 1.7 min (Playwright no longer overlaps the sandbox suite).
 ## Session expiry in both consoles (branch `fix/session-expiry-ux`), 2026-11-06
 
 ### D424. A console session that ends is said as such: the request waits, nothing typed is lost, Try again sends it

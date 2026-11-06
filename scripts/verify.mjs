@@ -20,7 +20,9 @@
 //   0  lockfile
 //   1  gitleaks | typecheck | contract (cargo test + wasm)
 //   2  unit tests | docs checks                          (alone: see below)
-//   3  sandbox e2e | SDK pack check, then Playwright     (Rust nodes beside browsers)
+//   3  sandbox e2e | SDK pack check                      (Rust nodes beside a short build)
+//   4  Playwright                                        (alone: browsers beside 8 sandbox nodes made Firefox's
+//                                                         timing-sensitive specs time out, 2026-11-06)
 //
 // Each step's output goes to a log in the system temp dir; a failing step's tail is printed, its running siblings are
 // stopped and nothing after it starts. Unit tests run at pnpm's default of 4 packages at a time and never beside
@@ -312,7 +314,7 @@ export function plan({ mode, files, pkgs, reads, dirty = false, cpus = available
     // dist/ while the stack's build bundles @hana-id/web's pages.
     step('sandbox', 'sandbox e2e (near-workspaces)', 3, [cmd('cargo', ['test', '--locked', '--', `--test-threads=${SANDBOX_TEST_THREADS}`], 'contracts/integration-tests')], notQuick ?? (jobs.rust ? null : 'no Rust change')),
     step('pack', 'SDK pack check', 3, [cmd('pnpm', ['run', 'pack:check'])], notQuick ?? (jobs.web ? null : 'no web change'), 'web'),
-    step('e2e', `Playwright (${browsers.join(', ')})`, 3, [cmd('pnpm', ['--filter', '@hana-id/e2e', 'run', 'e2e', '--forbid-only', ...browsers.flatMap((b) => ['--project', b])])], notQuick ?? (jobs.web ? null : 'no web change'), 'web'),
+    step('e2e', `Playwright (${browsers.join(', ')})`, 4, [cmd('pnpm', ['--filter', '@hana-id/e2e', 'run', 'e2e', '--forbid-only', ...browsers.flatMap((b) => ['--project', b])])], notQuick ?? (jobs.web ? null : 'no web change')),
   ];
   return { mode, selection: sel, jobs, steps };
 }

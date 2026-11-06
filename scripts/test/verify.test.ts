@@ -263,11 +263,13 @@ describe('the plan', () => {
 
   it('cheapest first: lockfile; gitleaks + typecheck + contract; unit + docs; sandbox beside pack then browsers (D423)', () => {
     const p = plan('full', null);
-    expect(Object.fromEntries(p.steps.map((s) => [s.id, s.phase]))).toEqual({ install: 0, secrets: 1, typecheck: 1, contract: 1, unit: 2, docs: 2, sandbox: 3, pack: 3, e2e: 3 });
+    expect(Object.fromEntries(p.steps.map((s) => [s.id, s.phase]))).toEqual({ install: 0, secrets: 1, typecheck: 1, contract: 1, unit: 2, docs: 2, sandbox: 3, pack: 3, e2e: 4 });
     const laneIds = (ph: number) => V.lanes(p.steps, ph).map(([lane, steps]) => [lane, steps.map((s) => s.id)]);
     expect(laneIds(1)).toEqual([['secrets', ['secrets']], ['typecheck', ['typecheck']], ['contract', ['contract']]]);
     // The pack check and Playwright one after the other (both build @hana-id/web), beside the sandbox nodes.
-    expect(laneIds(3)).toEqual([['sandbox', ['sandbox']], ['web', ['pack', 'e2e']]]);
+    expect(laneIds(3)).toEqual([['sandbox', ['sandbox']], ['web', ['pack']]]);
+    // Playwright alone, after the sandbox nodes are gone (Firefox timed out beside them, 2026-11-06).
+    expect(laneIds(4)).toEqual([['e2e', ['e2e']]]);
     // The table lists the steps in the order they start.
     expect(p.steps.map((s) => s.id)).toEqual(['install', 'secrets', 'typecheck', 'contract', 'unit', 'docs', 'sandbox', 'pack', 'e2e']);
   });
@@ -281,7 +283,8 @@ describe('the plan', () => {
 
   it('skipped steps leave their lane: a web-only change runs the pack check then Playwright alone in the last phase', () => {
     const web = plan('default', ['packages/web/src/index.ts']);
-    expect(V.lanes(web.steps, 3).map(([lane, steps]) => [lane, steps.map((s) => s.id)])).toEqual([['web', ['pack', 'e2e']]]);
+    expect(V.lanes(web.steps, 3).map(([lane, steps]) => [lane, steps.map((s) => s.id)])).toEqual([['web', ['pack']]]);
+    expect(V.lanes(web.steps, 4).map(([lane, steps]) => [lane, steps.map((s) => s.id)])).toEqual([['e2e', ['e2e']]]);
     expect(V.lanes(plan('quick', null).steps, 3)).toEqual([]);
   });
 

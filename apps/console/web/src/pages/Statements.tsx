@@ -8,7 +8,8 @@
 import type { StatementMeta, StatementTotals, StatementView } from '@hana-id/console-core';
 import { Fragment, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ErrorNote, useApi, utcMonth, when } from '../lib.tsx';
+import { useApi, utcMonth, when } from '../lib.tsx';
+import { CopyButton, Empty, ErrorNote, Loading, PageHeader, Panel } from '../ui.tsx';
 
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/u;
 
@@ -24,7 +25,7 @@ const VERIFY = (
 function Hash({ label, sha }: { label: string; sha: string }) {
   return (
     <div className="hash">
-      <span className="muted">{label}</span> <code className="mono small">{sha}</code>
+      <span className="muted">{label}</span> <code className="mono small">{sha}</code> <CopyButton value={sha} label={label} />
     </div>
   );
 }
@@ -55,17 +56,20 @@ export function Statements() {
   const issued = sorted.find((s) => s.month === month);
   return (
     <>
-      <h2>Monthly statements</h2>
-      <p className="muted">
-        Hana issues each month’s statement from the 3rd of the next month, once every relayed event is settled. A statement is frozen: its CSV, PDF and this page show the same totals, and its hash (the SHA-256 of the
-        CSV) identifies it on invoices. {VERIFY}
-      </p>
-      {list.error && <ErrorNote error={list.error} />}
-      {!list.data && !list.error && <p className="muted">Loading…</p>}
-      {list.data && sorted.length === 0 && <p className="note">No statements yet.</p>}
+      <PageHeader
+        title="Statements"
+        description="Hana issues each month’s statement from the 3rd of the next month, once every relayed event is settled. A statement is frozen: its CSV, PDF and on-screen view show the same totals, and its hash (the SHA-256 of the CSV) identifies it on invoices."
+      />
+      {list.error && <ErrorNote error={list.error} onRetry={list.reload} />}
+      {!list.data && !list.error && <Loading />}
+      {list.data && sorted.length === 0 && (
+        <Empty title="No statements yet.">
+          <p>The first one appears early in the month after your apps’ first usage. Meanwhile, Usage shows the running figures.</p>
+        </Empty>
+      )}
       {list.data && sorted.length > 0 && (
         <div className="table-wrap">
-          <table>
+          <table className="table">
             <thead>
               <tr>
                 <th>Month</th>
@@ -83,7 +87,7 @@ export function Statements() {
                   </td>
                   <td>{when(s.asOf)}</td>
                   <td>{when(s.issuedAt)} by Hana</td>
-                  <td className="mono small">{s.csvSha256}</td>
+                  <td className="mono small hash-cell">{s.csvSha256}</td>
                   <td>
                     <Downloads org={org!} s={s} />
                   </td>
@@ -93,15 +97,15 @@ export function Statements() {
           </table>
         </div>
       )}
-      <section className="section">
-        <h2>Ledger CSV</h2>
+      <p className="muted small verify">{VERIFY}</p>
+      <Panel title="Ledger CSV">
         <p className="muted">
           Every event of a month, one line each, with its settlement and transaction (check any of them on chain at FINAL). For a month with a statement it is read as of the statement’s time, so its final gas sums to the
           statement’s Tgas and NEAR; for any other month, as of now. A line starting <code>#&nbsp;incomplete</code> at the end means the file was cut short: download it again.
         </p>
-        <div className="inline-form">
-          <label>
-            Month
+        <div className="form form-inline">
+          <label className="field">
+            <span className="field-label">Month</span>
             <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
           </label>
           {MONTH_RE.test(month) ? (
@@ -112,7 +116,7 @@ export function Statements() {
             <span className="muted">Pick a month.</span>
           )}
         </div>
-      </section>
+      </Panel>
     </>
   );
 }
@@ -121,17 +125,14 @@ export function StatementPage() {
   const { org, month } = useParams();
   const ok = MONTH_RE.test(month ?? '');
   const r = useApi<{ statement: StatementMeta & { totals: StatementTotals }; view: StatementView }>(ok ? `/api/orgs/${org}/statements/${month}` : null);
-  const back = (
-    <p>
-      <Link to={`/orgs/${org}/statements`}>← Statements</Link>
-    </p>
-  );
+  const backTo = { to: `/orgs/${org}/statements`, label: 'Statements' };
+  const back = <PageHeader title={`Statement ${ok ? month : ''}`.trim()} back={backTo} />;
   if (!ok)
     return (
       <>
         {back}
-        <p className="note note-error" role="alert">
-          That isn’t a month (YYYY-MM).
+        <p className="callout callout-error" role="alert">
+          That isn’t a month (YYYY-MM). Pick a statement from the list.
         </p>
       </>
     );
@@ -139,22 +140,27 @@ export function StatementPage() {
     return (
       <>
         {back}
-        {r.error.status === 404 ? <p className="note">No statement for {month}: Hana hasn’t issued it yet.</p> : <ErrorNote error={r.error} />}
+        {r.error.status === 404 ? (
+          <Empty title={`No statement for ${month}: Hana hasn’t issued it yet.`}>
+            <p>Statements are issued from the 3rd of the following month. Usage shows the month’s running figures.</p>
+          </Empty>
+        ) : (
+          <ErrorNote error={r.error} onRetry={r.reload} />
+        )}
       </>
     );
   if (!r.data)
     return (
       <>
         {back}
-        <p className="muted">Loading…</p>
+        <Loading />
       </>
     );
   const { statement: s, view } = r.data;
   return (
     <>
-      {back}
-      <h2>{view.title}</h2>
-      <dl className="settings">
+      <PageHeader title={view.title} back={backTo} />
+      <dl className="facts facts-panel">
         {view.header.map(([k, v]) => (
           <Fragment key={k}>
             <dt>{k}</dt>
@@ -165,7 +171,7 @@ export function StatementPage() {
         <dd>{when(s.issuedAt)} by Hana</dd>
       </dl>
       <div className="table-wrap section">
-        <table>
+        <table className="table">
           <thead>
             <tr>
               <th>App or scope</th>
@@ -196,7 +202,7 @@ export function StatementPage() {
           </tbody>
         </table>
       </div>
-      <dl className="settings">
+      <dl className="facts facts-panel">
         {view.summary.map(([k, v]) => (
           <Fragment key={k}>
             <dt className={k.startsWith('Billed') ? 'strong' : undefined}>{k}</dt>
@@ -209,13 +215,12 @@ export function StatementPage() {
           {n}
         </p>
       ))}
-      <section className="section">
-        <h2>Download</h2>
+      <Panel title="Download">
         <Hash label="CSV SHA-256 (the statement hash)" sha={s.csvSha256} />
         {s.pdfSha256 && <Hash label="PDF SHA-256" sha={s.pdfSha256} />}
         <Downloads org={org!} s={s} />
         <p className="muted">The ledger CSV is read as of this statement’s time, so its final gas sums to the Tgas and NEAR above. {VERIFY}</p>
-      </section>
+      </Panel>
     </>
   );
 }

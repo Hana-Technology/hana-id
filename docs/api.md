@@ -1,6 +1,6 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
-Last verified against code: 2026-11-06 (branch `feat/env-alert-label`: the admin Worker's `ENV_LABEL` var, D419); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: the admin Worker's "Email" through SendGrid, accepted on `202`, no idempotency key, the per-isolate memo; D401); 2026-11-05 (branch `fix/security-review-1105`: the admin's `POST /api/users/search` ticket for a sub or full address, `POST /api/users/find` `{query, ticket}` audited first as `users.find`, `support.lookup`'s `requestIdList`, `recordStaffAction`'s two org-less actions, D410); 2026-11-05 (branch `feat/deploy-check-all-workers`: the build id on every Worker, D406: `GET /.well-known/hana-build` on the console, console-auth and files Workers, the console SPA's `<meta name="hana-build">`, none on the admin (read through wrangler); the shared deploy wrapper); 2026-11-05 (branch `feat/sdk-error-request-id`: "Conventions": an error's `requestId` passed on to the SDK as `data.requestId`, D405); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup's screen: the email join in `POST /api/support/lookup` (`emails`, `emailsNote`, `unverifiedWarning`), its ticket in the issuer's rule, `DirectoryRpc.get`'s `purpose` (`support_lookup`), D399); 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
+Last verified against code: 2026-11-06 (branch `feat/console-ux-redesign`: the console SPA's pages and error display, D421; no route or request changed); 2026-11-06 (branch `feat/env-alert-label`: the admin Worker's `ENV_LABEL` var, D419); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: the admin Worker's "Email" through SendGrid, accepted on `202`, no idempotency key, the per-isolate memo; D401); 2026-11-05 (branch `fix/security-review-1105`: the admin's `POST /api/users/search` ticket for a sub or full address, `POST /api/users/find` `{query, ticket}` audited first as `users.find`, `support.lookup`'s `requestIdList`, `recordStaffAction`'s two org-less actions, D410); 2026-11-05 (branch `feat/deploy-check-all-workers`: the build id on every Worker, D406: `GET /.well-known/hana-build` on the console, console-auth and files Workers, the console SPA's `<meta name="hana-build">`, none on the admin (read through wrangler); the shared deploy wrapper); 2026-11-05 (branch `feat/sdk-error-request-id`: "Conventions": an error's `requestId` passed on to the SDK as `data.requestId`, D405); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup's screen: the email join in `POST /api/support/lookup` (`emails`, `emailsNote`, `unverifiedWarning`), its ticket in the issuer's rule, `DirectoryRpc.get`'s `purpose` (`support_lookup`), D399); 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
 answers, D395; `AdminRpc.supportLookup` / `userShares`; the admin Worker's `POST /api/support/lookup`; the
 `support.lookup` staff action; D394–D396); 2026-11-05 (branch `feat/deploy-build-check`: the build id, D384: `GET /v1/health`'s
 `build`, the page Workers' `GET /.well-known/hana-build`, the issuer's `GET /v1/email/health`, the `HANA_BUILD` var
@@ -1627,6 +1627,17 @@ its own backend's checks and answers: `GET /api/orgs/:org/usage?from&to&by&apps`
 `/orgs/:org/statements/:month` (the on-screen statement), and `/orgs/:org/upgrades` (the pending-upgrades view); the
 files are plain `<a href download>` links to these routes (the browser builds no file; the ledger of an issued month at
 its statement's `?asOf=`).
+
+**The SPA's pages (D421).** A sidebar frame (the org, a switcher when the member has several, the sections, sign
+out). `/orgs/:org` lists the apps (an empty org shows what to send Hana); `/orgs/:org/apps/:app` is the app's overview
+(the copyable App ID and publishable key, changes waiting, the getting-started checklist, a settings summary) and its
+sections are nested routes: `/origins`, `/keys`, `/sessions` (login and session settings), `/signing` (the
+auto-approve policy and raw signing), `/branding` (name and logo), `/suspend`. The other pages: `/orgs/:org/members`,
+`/scopes/:scope`, `/users`, `/usage`, `/statements`, `/statements/:month`, `/upgrades`, `/audit`; `/actions/:id`,
+`/signin`, `/invite`, `/cancel/:changeId`, `/cancel-owner/:grantId` as above. They call exactly the routes in this
+section with the same bodies. Every error answer is shown as plain text for its `code` (`web/src/messages.ts`), the
+answer's `message` under it when it adds something (a refused origin's reason, `policy_invalid`'s `problems`, one per
+line), and the code and HTTP status small, for support. Local preview with fake answers: `apps/console/README.md`.
 
 ### Emailed links (no session; C7)
 

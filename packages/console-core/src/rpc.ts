@@ -50,6 +50,8 @@ export const listAppsInput = ctx.extend(org).strict();
 export const getAppInput = ctx.extend(app).strict();
 export const removeOriginsInput = ctx.extend({ ...app, remove: origins, expectedVersion: version }).strict();
 export const turnOffInput = ctx.extend({ ...app, what: z.enum(['policy', 'raw_sign']), expectedVersion: version }).strict();
+/** AdminRpc.setMainnetDemo (D426): Hana staff only; ConsoleRpc has no such method. */
+export const setMainnetDemoInput = ctx.extend({ ...app, on: z.boolean(), expectedVersion: version }).strict();
 export const updateSettingsInput = ctx
   .extend({
     ...app,
@@ -120,6 +122,7 @@ export type ListAppsInput = z.infer<typeof listAppsInput>;
 export type GetAppInput = z.infer<typeof getAppInput>;
 export type RemoveOriginsInput = z.infer<typeof removeOriginsInput>;
 export type TurnOffInput = z.infer<typeof turnOffInput>;
+export type SetMainnetDemoInput = z.infer<typeof setMainnetDemoInput>;
 export type UpdateSettingsInput = z.infer<typeof updateSettingsInput>;
 export type SetLogoInput = z.infer<typeof setLogoInput>;
 export type CancelChangeInput = z.infer<typeof cancelChangeInput>;

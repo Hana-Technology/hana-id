@@ -3,7 +3,10 @@
 // refuse the switch on a live app; POST /v1/mainnet-demo/events stores the vault's report (vault page only, the demo
 // on, exact fields, within the cap); the export window's /v1/login records `key_exported` without key material.
 import { env } from 'cloudflare:workers';
+import { createExecutionContext } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
+import { AdminRpc } from '../src/rpc/admin.ts';
+import { consoleRpc, hana, member, orgApp } from './rpc-helpers.ts';
 import { MAINNET_DEMO_EVENTS_PER_HOUR, toMainnetDemoEvent } from '../src/mainnet-demo.ts';
 import { appHeaders, call, chain, newKey, seedApp, uid } from './helpers.ts';
 import { AUTH, hanaHeaders, loginBody, withCombinedCall } from './login-helpers.ts';
@@ -118,6 +121,51 @@ describe('POST /v1/mainnet-demo/events (D426)', () => {
   });
 });
 
+describe('AdminRpc.setMainnetDemo (D426)', () => {
+  const staffRpc = (bindings: Partial<typeof env> = {}) => new AdminRpc(createExecutionContext(), { ...env, ...bindings });
+  const version = async (appId: string) => (await env.DB.prepare('SELECT settings_version AS v FROM apps WHERE id = ?1').bind(appId).first<{ v: number }>())!.v;
+  const stored = async (appId: string) => (await env.DB.prepare('SELECT mainnet_demo AS m FROM apps WHERE id = ?1').bind(appId).first<{ m: number }>())!.m;
+
+  it('Hana staff turn it on and off at once, each a settings_version bump and an app_changes row; the staff view shows it', async () => {
+    const app = await orgApp();
+    const v = await version(app.id);
+    expect(await staffRpc().setMainnetDemo({ ...hana(), orgId: app.org, appId: app.id, on: true, expectedVersion: v })).toEqual({ ok: true, version: v + 1 });
+    expect(await stored(app.id)).toBe(1);
+    // Already on: no write.
+    expect(await staffRpc().setMainnetDemo({ ...hana(), orgId: app.org, appId: app.id, on: true, expectedVersion: v + 1 })).toEqual({ ok: true, version: v + 1 });
+    const detail = (await staffRpc().getApp({ ...hana(), orgId: app.org, appId: app.id })) as { ok: true; app: { settings: Record<string, unknown> } };
+    expect(detail.app.settings.mainnetDemo).toBe(true);
+    // A partner's view of the same app leaves the switch out.
+    const partner = (await consoleRpc().getApp({ ...member(), orgId: app.org, appId: app.id })) as { ok: boolean; app?: { settings: Record<string, unknown> } };
+    if (partner.ok) expect(partner.app!.settings).not.toHaveProperty('mainnetDemo');
+    expect(await staffRpc().setMainnetDemo({ ...hana(), orgId: app.org, appId: app.id, on: false, expectedVersion: v + 1 })).toEqual({ ok: true, version: v + 2 });
+    expect(await stored(app.id)).toBe(0);
+    const kinds = await env.DB.prepare("SELECT kind FROM app_changes WHERE app_id = ?1 AND kind LIKE 'mainnet_demo.%' ORDER BY seq").bind(app.id).all<{ kind: string }>();
+    expect(kinds.results.map((r) => r.kind)).toEqual(['mainnet_demo.on', 'mainnet_demo.off']);
+  });
+
+  it('is refused in a production env, on another network, and for a live app', async () => {
+    const app = await orgApp();
+    for (const bindings of [{ ENV_NAME: 'testnet' }, { ENV_NAME: 'production' }, { NETWORK: 'mainnet' }]) {
+      const r = (await staffRpc(bindings).setMainnetDemo({ ...hana(), orgId: app.org, appId: app.id, on: true, expectedVersion: await version(app.id) })) as { ok: boolean; code?: string };
+      expect([r.ok, r.code], JSON.stringify(bindings)).toEqual([false, 'env_mismatch']);
+    }
+    const live = await orgApp({ live: true });
+    const r = (await staffRpc().setMainnetDemo({ ...hana(), orgId: live.org, appId: live.id, on: true, expectedVersion: await version(live.id) })) as { ok: boolean; code?: string };
+    expect([r.ok, r.code]).toEqual([false, 'env_mismatch']);
+    expect(await stored(app.id)).toBe(0);
+    expect(await stored(live.id)).toBe(0);
+  });
+
+  it('a partner has no way to set it: ConsoleRpc has no such method, and a member actor is refused by AdminRpc', async () => {
+    expect('setMainnetDemo' in consoleRpc()).toBe(false);
+    const app = await orgApp();
+    const r = (await staffRpc().setMainnetDemo({ ...member(), orgId: app.org, appId: app.id, on: true, expectedVersion: await version(app.id) })) as { ok: boolean };
+    expect(r.ok).toBe(false);
+    expect(await stored(app.id)).toBe(0);
+  });
+});
+
 describe('key_exported (D428)', () => {
   it('the export window’s login records the event for the account’s user, with its chain, and no key, token or path', async () => {
     const { app, aud } = await demoApp(false);
@@ -130,6 +178,30 @@ describe('key_exported (D428)', () => {
     expect(row!.user_id).toMatch(/^hu_[0-9a-hjkmnp-tv-z]{26}$/u);
     const all = JSON.stringify(await env.DB.prepare('SELECT * FROM user_events WHERE app_id = ?1').bind(app.id).all());
     expect(all).not.toMatch(/eyJ|#google#|bls12381/u);
+  });
+
+  it('staff see the export and the user’s wallets’ demo signatures on the user’s detail and in a Support ID lookup', async () => {
+    const { app, aud } = await demoApp();
+    withCombinedCall(chain({ [aud]: app.scope }));
+    const login = await call('/v1/login', { headers: hanaHeaders(app, AUTH), body: { ...(await loginBody(app.scope, aud)), exportChain: 'evm' } });
+    expect(login.status).toBe(200);
+    const supportId = (await body(login)).supportId as string;
+    const internalId = ((await rows(app.id)) as { user_id: string }[])[0]!.user_id;
+    const now = Date.now();
+    // This user's own wallet (the directory matches demo signatures by address, across apps).
+    const mine = `0x${[...crypto.getRandomValues(new Uint8Array(20))].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
+    await env.DB.prepare("INSERT INTO end_user_wallets (user_id, chain, address, key_index, first_seen_at, last_used_at) VALUES (?1, 'evm', ?2, 0, ?3, ?3)").bind(internalId, mine, now).run();
+    expect((await report(app, event({ address: mine }))).status).toBe(200);
+    // Another user's wallet: not this user's event.
+    expect((await report(app, event({ address: '0x1111111111111111111111111111111111111111' }))).status).toBe(200);
+    const staff = new AdminRpc(createExecutionContext(), env);
+    const got = (await staff.getUser({ ...hana(), internalId })) as { ok: true; user: { events: Record<string, unknown>[] } };
+    expect(got.user.events).toEqual([
+      { kind: 'mainnet_signature', appId: app.id, chain: 'evm', network: '8453', address: mine, usdMicros: 8000001, at: expect.any(Number) },
+      { kind: 'key_exported', appId: app.id, chain: 'evm', network: null, address: null, usdMicros: null, at: expect.any(Number) },
+    ]);
+    const lookup = (await staff.supportLookup({ ...hana(), query: supportId })) as { ok: true; matches: { user: { events: unknown[] } }[] };
+    expect(lookup.matches[0]!.user.events).toHaveLength(2);
   });
 
   it('a plain login records nothing, and only the export window may label its login', async () => {

@@ -48,6 +48,7 @@ import {
   systemStatusInput,
   suspendOrgInput,
   turnOffInput,
+  setMainnetDemoInput,
   updateSettingsInput,
   userSharesInput,
 } from '@hana-id/console-core';
@@ -68,7 +69,7 @@ import { getApp, listApps, listChanges } from '../changes/apps.ts';
 import { createKey, revokeKey, rotateKey } from '../changes/keys.ts';
 import { ackNotice, cancelChange, expediteChange, pendingNotices } from '../changes/lifecycle.ts';
 import { addOrigins, removeOrigins } from '../changes/origins.ts';
-import { proposeSetting, setLogo, turnOff, updateSettings } from '../changes/settings.ts';
+import { proposeSetting, setLogo, setMainnetDemo, turnOff, updateSettings } from '../changes/settings.ts';
 import { deleteApp, setSuspensionBit, suspendOrg } from '../changes/suspension.ts';
 import { governanceSnapshot } from '../governance-status.ts';
 import { systemStatus } from '../system-status.ts';
@@ -92,7 +93,7 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
   }
 
   getApp(c: unknown) {
-    return runRpc(this.env, 'admin.getApp', getAppInput, c, { actors: HANA_OR_SYSTEM }, async ({ input, db, w }) => ({ app: await getApp(db, input.appId, input.orgId, w.now, this.env.FILES_ORIGIN) }));
+    return runRpc(this.env, 'admin.getApp', getAppInput, c, { actors: HANA_OR_SYSTEM }, async ({ input, db, w }) => ({ app: await getApp(db, input.appId, input.orgId, w.now, this.env.FILES_ORIGIN, { mainnetDemo: true }) }));
   }
 
   listChanges(c: unknown) {
@@ -105,6 +106,11 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
 
   turnOff(c: unknown) {
     return runRpc(this.env, 'admin.turnOff', turnOffInput, c, { actors: HANA }, ({ input, db, w }) => turnOff(db, w, input));
+  }
+
+  /** The mainnet demo exception to D39 (D426): Hana staff only, a test app in a dev testnet env only. */
+  setMainnetDemo(c: unknown) {
+    return runRpc(this.env, 'admin.setMainnetDemo', setMainnetDemoInput, c, { actors: HANA }, ({ input, db, w }) => setMainnetDemo(db, this.env, w, input));
   }
 
   updateSettings(c: unknown) {

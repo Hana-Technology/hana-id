@@ -1,6 +1,11 @@
 // The Hana admin console SPA (batch C8; reports, statements and rates in C12; retention in C13; Users in C8b; the Support ID lookup in C15): plain JavaScript, no build step and no dependency, under the admin CSP
 // (script-src 'self', style-src 'self'). Every value from the API is put in the page as text (textContent), never as
 // HTML. Writes send the admin's CSRF headers; Cloudflare Access adds the staff identity at the edge.
+//
+// UI rules (apps/admin/README.md "UI principles"): the nav is grouped by task; each page has one header with at most
+// one primary action; an action that can't work isn't offered (it is hidden or disabled with one line saying why);
+// every API error is said in plain words with what to do next, its code kept small for support; anything destructive
+// or guarded is confirmed in the page (never a browser dialog); a support reference is explained where it is asked.
 'use strict';
 
 // ---- helpers ----
@@ -19,8 +24,26 @@ function h(tag, attrs, ...children) {
   return el;
 }
 
-const time = (ms) => (typeof ms === 'number' ? new Date(ms).toISOString().replace('.000Z', 'Z') : '');
+/** A time as `2026-11-06 04:28 UTC` (staff work across time zones: always UTC, to the minute). */
+const time = (ms) => (typeof ms === 'number' ? `${new Date(ms).toISOString().slice(0, 16).replace('T', ' ')} UTC` : '');
+/** A short span: `4 min`, `3 h 5 min`, `2 d 4 h`. */
+function span(ms) {
+  const abs = Math.abs(ms);
+  const days = Math.floor(abs / 86_400_000);
+  const hours = Math.floor((abs % 86_400_000) / 3_600_000);
+  const mins = Math.round((abs % 3_600_000) / 60_000);
+  return days ? `${days} d ${hours} h` : hours ? `${hours} h ${mins} min` : `${mins} min`;
+}
+/** `4 min ago` / `in 2 d 3 h`, from the reader's clock. */
+const relative = (ms) => (typeof ms !== 'number' ? '' : ms <= Date.now() ? `${roughly(Date.now() - ms)} ago` : `in ${roughly(ms - Date.now())}`);
+/** A span to its largest unit past a day (`20 d`), else as `span`. */
+const roughly = (ms) => (ms >= 2 * 86_400_000 ? `${Math.floor(ms / 86_400_000)} d` : span(ms));
+/** A time cell: the UTC time, with how long ago underneath. */
+const when = (ms) => (typeof ms === 'number' ? h('span', {}, h('time', { datetime: new Date(ms).toISOString() }, time(ms)), h('span', { class: 'sub' }, relative(ms))) : '');
 const link = (path, text) => h('a', { href: path, 'data-link': true }, text);
+const mono = (s) => (s === null || s === undefined || s === '' ? '' : h('code', { class: String(s).length <= 30 ? 'nw' : undefined }, String(s)));
+/** A name with its id underneath, small (ids stay visible for support, never the headline). */
+const named = (name, id) => h('span', {}, name, id ? h('span', { class: 'sub' }, h('code', {}, id)) : '');
 
 class ApiError extends Error {
   constructor(status, code, message) {
@@ -37,80 +60,353 @@ async function api(method, path, body) {
     init.headers['x-hana-admin'] = '1';
     init.body = JSON.stringify(body || {});
   }
-  const res = await fetch(path, init);
+  let res;
+  try {
+    res = await fetch(path, init);
+  } catch {
+    throw new ApiError(0, 'network', 'The browser could not reach the admin console');
+  }
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new ApiError(res.status, data?.error?.code || 'error', data?.error?.message || `HTTP ${res.status}`);
   return data;
 }
 
+// ---- errors in plain words ----
+
+const LEGACY_ORG = 'org_legacy';
+const LEGACY_HINT = 'Legacy apps holds the scopes from before organisations existed. To onboard a partner, invite their first owner to a new organisation (Organisations, "Invite a new partner"), then move their scope there from Legacy apps.';
+
+/** Every code the admin API answers (docs/api.md "Admin Worker"): what happened, and what to do next. */
+const ERRORS = {
+  network: ['Can’t reach the admin console', 'Check your connection and try again. If your Access session expired, reload the page to sign in again.'],
+  unauthenticated: ['Your sign-in has expired', 'Reload the page to sign in through Cloudflare Access again.'],
+  not_staff: ['This account isn’t on the Hana staff list', 'Sign in with your Hana staff account. A founder adds staff to the environment’s staff list.'],
+  csrf: ['The browser’s same-origin check failed', 'Reload the page and try again. If it keeps happening, turn off browser extensions that change requests.'],
+  access_unavailable: ['Cloudflare Access can’t be checked right now', 'Try again in a minute.'],
+  upstream_unavailable: ['A Hana service didn’t answer', 'Nothing was changed. Try again in a minute; if it keeps failing, check the API and console Workers.'],
+  ledger_unavailable: ['The usage ledger isn’t available', 'Reports, statements, rates and exports need the usage ledger. In an environment without usage capture this is expected.'],
+  not_found: ['Not found', 'It may have been deleted, or the page is out of date. Go back and reload the list.'],
+  bad_request: ['Check what you entered', 'The details say which field the server refused. Fix it and try again.'],
+  forbidden: ['That isn’t allowed here', 'The details say why. Nothing was changed.'],
+  not_owner: ['Only an owner can do that', 'Nothing was changed.'],
+  version_conflict: ['Someone changed this first', 'Reload the page to see the latest version, then try again.'],
+  already_applied: ['That’s already done', 'Reload the page to see the current state.'],
+  token_used: ['That link was already used', 'Reload the page to see the current state.'],
+  scope_conflict: ['The scope doesn’t fit this organisation', 'Check the scope id. Its on-chain owners must be this organisation’s owners (`scope:register --owners-from-org`), and it can’t belong to another organisation.'],
+  not_pending: ['This is no longer pending', 'It was applied, cancelled or expired. Reload the page to see it.'],
+  conflict: ['That clashes with the current state', 'The details say what clashes. Reload the page and try again if it still applies.'],
+  key_limit: ['This app has as many keys as it can have', 'Revoke an old key first.'],
+  no_security_contact: ['This organisation has no security contact', 'Add at least one security contact on the organisation’s page first.'],
+  env_mismatch: ['Test and live don’t match', 'The scope is registered for the other environment: choose that environment.'],
+  origin_refused: ['That origin isn’t accepted', 'Use a full https:// origin with no path, for example https://app.partner.example.'],
+  policy_invalid: ['The policy isn’t valid', 'The details name the field to fix.'],
+  invalid_client_proof: ['The client proof isn’t valid', 'Check the value and try again.'],
+  owner_nonce_mismatch: ['The on-chain state moved on', 'Reload the page and try again.'],
+  passkeys_required: ['This organisation requires passkeys', 'The member has to add a passkey first.'],
+  org_frozen: ['This organisation is frozen', 'Unfreeze it first if the change should go ahead.'],
+  user_disabled: ['This user is disabled', 'Enable the user first if the change should go ahead.'],
+  already_member: ['This person is already a member', 'Change their role in Members instead.'],
+  invite_invalid: ['That invite can’t be used', 'It was revoked, accepted or has expired. Send a new invite.'],
+  not_invited: ['This person has no invite', 'Send them an invite first.'],
+  rate_limited: ['Too many requests', 'Wait a few minutes, then try again.'],
+  near_unavailable: ['NEAR didn’t answer', 'Nothing was changed. Try again in a minute.'],
+  method_not_allowed: ['The console sent a request the server doesn’t take', 'Reload the page: the console may be out of date.'],
+  payload_too_large: ['That’s too large to send', 'Shorten it and try again.'],
+  internal: ['Something went wrong on the server', 'Try again. If it keeps failing, pass the error code to whoever is on call.'],
+  watchdog_unconfigured: ['The watchdog isn’t set up for this console', 'Its address and status token are missing from the admin Worker (docs/operations.md "Security & monitoring").'],
+  watchdog_unavailable: ['The watchdog didn’t answer', 'Try again in a minute. The watchdog keeps alerting on its own.'],
+  watchdog_timeout: ['The watchdog took too long to answer', 'Try again in a minute. The watchdog keeps alerting on its own.'],
+  watchdog_too_large: ['The watchdog’s answer was too large', 'Tell an engineer: the admin Worker caps what it accepts.'],
+  watchdog_bad_answer: ['The watchdog’s answer wasn’t understood', 'Tell an engineer: the watchdog and the admin Worker may be on different versions.'],
+  watchdog_unauthorized: ['The watchdog refused this console', 'The two copies of the watchdog’s status token differ (docs/operations.md "Security & monitoring").'],
+  already_acknowledged: ['Someone already acknowledged this alert', 'Reload the page to see who.'],
+  directory_unavailable: ['The user directory isn’t available', 'The email issuer is missing in this environment or didn’t answer. Try again in a minute.'],
+  directory_refused: ['The user directory refused your staff identity', 'Its admin Access settings differ from this console’s (docs/operations.md "Users screen").'],
+};
+
+/** An error as {title, detail, hint, code, status}: plain words first, the server's own text and the code underneath. */
+function explain(err) {
+  if (!(err instanceof ApiError)) return { title: 'Something went wrong in this page', detail: String(err && err.message ? err.message : err), hint: 'Reload the page and try again.' };
+  const msg = err.message || '';
+  const base = { detail: msg && msg !== err.code ? msg : '', code: err.code, status: err.status };
+  if (/org_legacy has no members/u.test(msg)) return { ...base, title: 'Legacy apps has no members', hint: LEGACY_HINT };
+  if (/org_legacy can['’]t be frozen/u.test(msg)) return { ...base, title: 'Legacy apps can’t be frozen', hint: 'To stop its apps, suspend them instead (the danger zone at the bottom of the page).' };
+  if (/assigned to org_legacy/u.test(msg)) return { ...base, title: 'A scope can’t be moved into Legacy apps', hint: 'Choose the partner’s organisation instead.' };
+  const known = ERRORS[err.code];
+  if (known) return { ...base, title: known[0], hint: known[1] };
+  return { ...base, title: err.status ? `The server refused the request (HTTP ${err.status})` : 'The request failed', hint: 'Read the details, then reload the page and try again.' };
+}
+
 function errorBox(err) {
-  return h('p', { class: 'error' }, err instanceof ApiError ? `${err.code}: ${err.message}` : String(err && err.message ? err.message : err));
-}
-
-/** A form whose submit runs `action(values)` and then re-renders the current page; errors show above it. */
-function form(fields, label, action, opts = {}) {
-  const status = h('div');
-  const inputs = {};
-  const el = h(
-    'form',
-    {
-      onsubmit: async (ev) => {
-        ev.preventDefault();
-        status.replaceChildren();
-        if (opts.confirm && !window.confirm(opts.confirm)) return;
-        const values = {};
-        for (const [name, input] of Object.entries(inputs)) values[name] = input.type === 'checkbox' ? input.checked : input.value;
-        try {
-          const out = await action(values);
-          if (opts.after) opts.after(out, status);
-          else await render();
-        } catch (err) {
-          status.append(errorBox(err));
-        }
-      },
-    },
-    fields.map((f) => {
-      let input;
-      if (f.type === 'select') input = h('select', { name: f.name }, f.options.map((o) => h('option', { value: o }, o)));
-      else if (f.type === 'textarea') input = h('textarea', { name: f.name, placeholder: f.placeholder || '' });
-      else input = h('input', { name: f.name, type: f.type || 'text', placeholder: f.placeholder || '', value: f.value ?? '', required: f.required });
-      inputs[f.name] = input;
-      return f.label ? h('label', {}, `${f.label} `, input) : input;
-    }),
-    h('button', { type: 'submit', class: opts.danger ? 'danger' : undefined }, label),
+  const e = explain(err);
+  return h(
+    'div',
+    { class: 'alert error', role: 'alert' },
+    h('strong', {}, e.title),
+    e.detail ? h('p', { class: 'detail' }, e.detail) : '',
+    e.hint ? h('p', {}, richText(e.hint)) : '',
+    e.code ? h('p', { class: 'code' }, 'Error code ', h('code', {}, e.code), e.status ? ` (HTTP ${e.status})` : '') : '',
   );
-  return h('div', {}, status, el);
 }
 
-/** A button that runs `action()` (after a confirm when given) and re-renders. */
-function actionButton(label, action, confirmText, danger) {
-  const out = h('span');
+/** A message box: kind is info, ok, warn or error; the first child is its title when it is a string. */
+function note(kind, title, ...body) {
+  return h('div', { class: `alert ${kind}`, role: kind === 'error' ? 'alert' : undefined }, title ? h('strong', {}, title) : '', ...body.map((b) => (typeof b === 'string' ? h('p', {}, richText(b)) : b)));
+}
+
+function emptyState(title, text) {
+  return h('div', { class: 'empty-state' }, h('strong', {}, title), text ? richText(text) : '');
+}
+
+const loading = (text) => h('p', { class: 'loading', role: 'status' }, text || 'Loading…');
+
+// ---- page structure ----
+
+let uid = 0;
+const nextId = (p) => `${p}-${(uid += 1)}`;
+
+/** The page's header: a back link, the title, a subtitle, small facts, and at most one primary action. */
+function pageHead(title, opts = {}) {
+  return h(
+    'div',
+    { class: 'page-head' },
+    h(
+      'div',
+      { class: 'titles' },
+      opts.back ? h('a', { href: opts.back.href, 'data-link': true, class: 'back' }, `← ${opts.back.text}`) : '',
+      h('h1', { tabindex: '-1' }, title),
+      opts.subtitle ? h('p', { class: 'subtitle' }, richText(opts.subtitle)) : '',
+      opts.meta && opts.meta.length ? h('div', { class: 'meta' }, opts.meta) : '',
+    ),
+    opts.actions && opts.actions.length ? h('div', { class: 'page-actions' }, opts.actions) : '',
+  );
+}
+
+/** A section of a page: a titled panel with an optional hint and actions in its header. */
+function panel(title, opts, ...children) {
+  const id = nextId('panel');
+  return h(
+    'section',
+    { class: `panel${opts && opts.danger ? ' danger-zone' : ''}`, 'aria-labelledby': id, id: opts && opts.anchor },
+    h('div', { class: 'panel-head' }, h('h2', { id }, title), opts && opts.actions ? h('div', { class: 'row' }, opts.actions) : ''),
+    opts && opts.hint ? h('p', { class: 'hint' }, richText(opts.hint)) : '',
+    ...children,
+  );
+}
+
+/** A button that shows or hides `content` below it (forms that are needed now and then, not on every visit). */
+function disclosure(label, content, opts = {}) {
+  const box = h('div', { hidden: !opts.open }, content);
   const btn = h(
     'button',
     {
-      class: danger ? 'danger' : undefined,
-      onclick: async () => {
-        if (confirmText && !window.confirm(confirmText)) return;
-        out.replaceChildren();
-        try {
-          await action();
-          await render();
-        } catch (err) {
-          out.append(errorBox(err));
+      type: 'button',
+      class: [opts.primary ? 'primary' : '', opts.small ? 'small' : ''].filter(Boolean).join(' ') || undefined,
+      'aria-expanded': opts.open ? 'true' : 'false',
+      onclick: () => {
+        const open = box.hidden;
+        box.hidden = !open;
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (open) {
+          const first = box.querySelector('input, select, textarea, button');
+          if (first) first.focus();
+          if (opts.onOpen) opts.onOpen(box);
         }
       },
     },
     label,
   );
-  return h('span', {}, btn, out);
+  return { button: btn, box };
 }
 
-function table(headers, rows) {
-  return h('table', {}, h('thead', {}, h('tr', {}, headers.map((x) => h('th', {}, x)))), h('tbody', {}, rows.length ? rows : [h('tr', {}, h('td', { colspan: headers.length, class: 'muted' }, 'None'))]));
+// ---- confirmations, in the page ----
+
+/** The confirmation strip: what will happen, a button that does it and one that doesn't. Escape cancels. */
+function confirmStrip(text, label, danger, onYes, onNo) {
+  const yes = h('button', { type: 'button', class: danger ? 'danger solid small' : 'primary small', onclick: onYes }, label);
+  const no = h('button', { type: 'button', class: 'small', onclick: onNo }, 'Cancel');
+  const box = h(
+    'div',
+    {
+      class: `confirm${danger ? ' danger' : ''}`,
+      role: 'group',
+      'aria-label': `Confirm: ${label}`,
+      onkeydown: (ev) => {
+        if (ev.key === 'Escape') onNo();
+      },
+    },
+    h('p', {}, richText(text)),
+    h('div', { class: 'form-actions' }, yes, no),
+  );
+  return { box, yes };
 }
 
-const tr = (...cells) => h('tr', {}, cells.map((c) => h('td', {}, c)));
+/** A message shown once at the top of the next page render (after an action re-renders it). */
+let flash = null;
+
+/** A button that runs `action()` (after an in-page confirmation when given) and re-renders the page. */
+function actionButton(label, action, confirmText, danger, opts = {}) {
+  const wrap = h('span', { class: 'inline-action' });
+  const status = h('span');
+  const btn = h('button', { type: 'button', class: [danger ? 'danger' : opts.primary ? 'primary' : '', opts.large ? '' : 'small'].filter(Boolean).join(' ') || undefined }, label);
+  const run = async () => {
+    status.replaceChildren();
+    btn.disabled = true;
+    btn.setAttribute('aria-busy', 'true');
+    try {
+      await action();
+      if (opts.done) flash = opts.done;
+      await render();
+    } catch (err) {
+      btn.disabled = false;
+      btn.removeAttribute('aria-busy');
+      status.replaceChildren(errorBox(err));
+    }
+  };
+  btn.addEventListener('click', () => {
+    if (!confirmText) return void run();
+    if (wrap.querySelector('.confirm')) return undefined;
+    const c = confirmStrip(
+      confirmText,
+      label,
+      danger,
+      () => {
+        c.box.remove();
+        btn.hidden = false;
+        void run();
+      },
+      () => {
+        c.box.remove();
+        btn.hidden = false;
+        btn.focus();
+      },
+    );
+    btn.hidden = true;
+    wrap.append(c.box);
+    c.yes.focus();
+    return undefined;
+  });
+  wrap.append(btn, status);
+  return wrap;
+}
+
+/** A disabled button with the reason next to it: an action that can't work, said plainly. */
+const unavailable = (label, why) => h('span', { class: 'inline-action' }, h('button', { type: 'button', class: 'small', disabled: true }, label), h('span', { class: 'hint' }, why));
+
+/** One labelled input. A field: {name, label, type, options, placeholder, required, value, help, size, …}. */
+function field(f) {
+  let input;
+  const common = { name: f.name, id: nextId(`f-${f.name}`), required: f.required, placeholder: f.placeholder || undefined, pattern: f.pattern, minlength: f.minlength, maxlength: f.maxlength, min: f.min, max: f.max, autocomplete: f.autocomplete || 'off' };
+  if (f.type === 'select') input = h('select', { name: f.name, id: common.id }, f.options.map((o) => h('option', { value: o.value ?? o, selected: (o.value ?? o) === f.value || undefined }, o.label ?? o)));
+  else if (f.type === 'textarea') input = h('textarea', common, f.value ?? '');
+  else if (f.type === 'checkbox') return h('label', { class: 'check' }, h('input', { name: f.name, type: 'checkbox', checked: !!f.value }), f.label);
+  else input = h('input', { ...common, type: f.type || 'text', value: f.value ?? '' });
+  const helpId = f.help ? `${common.id}-help` : undefined;
+  if (helpId) input.setAttribute('aria-describedby', helpId);
+  return h(
+    'label',
+    { class: `field${f.size ? ` ${f.size}` : ''}`, for: common.id },
+    h('span', { class: 'label' }, f.label, f.required ? '' : f.optional === false ? '' : h('span', { class: 'req' }, f.optionalText || ' (optional)')),
+    input,
+    f.help ? h('span', { class: 'help', id: helpId }, richText(f.help)) : '',
+  );
+}
+
+/** A form whose submit runs `action(values)` (after an in-page confirmation when `opts.confirm`), then re-renders. */
+function form(fields, label, action, opts = {}) {
+  const status = h('div');
+  const submit = h('button', { type: 'submit', class: opts.danger ? 'danger' : 'primary' }, label);
+  const actions = h('div', { class: 'form-actions' }, submit, opts.extra || '');
+  const run = async (values) => {
+    submit.disabled = true;
+    submit.setAttribute('aria-busy', 'true');
+    try {
+      const out = await action(values);
+      submit.disabled = false;
+      submit.removeAttribute('aria-busy');
+      if (opts.after) opts.after(out, status);
+      else {
+        if (opts.done) flash = typeof opts.done === 'function' ? opts.done(values, out) : opts.done;
+        await render();
+      }
+    } catch (err) {
+      submit.disabled = false;
+      submit.removeAttribute('aria-busy');
+      status.replaceChildren(errorBox(err));
+    }
+  };
+  const el = h(
+    'form',
+    {
+      class: `form${opts.vertical ? ' vertical' : ''}`,
+      onsubmit: (ev) => {
+        ev.preventDefault();
+        status.replaceChildren();
+        const values = {};
+        for (const f of fields) {
+          const input = el.elements[f.name];
+          values[f.name] = input.type === 'checkbox' ? input.checked : input.value;
+        }
+        if (!opts.confirm) return void run(values);
+        if (actions.querySelector('.confirm')) return undefined;
+        const text = typeof opts.confirm === 'function' ? opts.confirm(values) : opts.confirm;
+        const c = confirmStrip(
+          text,
+          opts.confirmLabel || label,
+          opts.danger,
+          () => {
+            c.box.remove();
+            submit.hidden = false;
+            void run(values);
+          },
+          () => {
+            c.box.remove();
+            submit.hidden = false;
+            submit.focus();
+          },
+        );
+        submit.hidden = true;
+        actions.append(c.box);
+        c.yes.focus();
+        return undefined;
+      },
+    },
+    fields.map(field),
+    actions,
+  );
+  return h('div', {}, el, status);
+}
+
+/** A table. A header is a string or {text, num}; an empty table says `opts.empty` (what is missing, or what to do). */
+function table(headers, rows, opts = {}) {
+  const hs = headers.map((x) => (typeof x === 'string' ? { text: x } : x));
+  const body = rows.filter(Boolean);
+  return h(
+    'div',
+    { class: `table-wrap${opts.class ? ` ${opts.class}` : ''}` },
+    h(
+      'table',
+      {},
+      h('thead', {}, h('tr', {}, hs.map((x) => h('th', { scope: 'col', class: [x.num ? 'num' : '', x.extra ? 'extra' : ''].filter(Boolean).join(' ') || undefined }, x.text)))),
+      h('tbody', {}, body.length ? body : [h('tr', {}, h('td', { colspan: hs.length, class: 'empty' }, opts.empty || 'Nothing here yet.'))]),
+    ),
+  );
+}
+
+/** A row; a cell that is just a time (`time()`) doesn't wrap. */
+const tr = (...cells) => h('tr', {}, cells.map((c) => h('td', {}, typeof c === 'string' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC$/u.test(c) ? h('span', { class: 'nw' }, c) : c)));
+/** A two-column table of facts: [label, value] rows. */
+const facts = (rows) => h('div', { class: 'table-wrap' }, h('table', { class: 'kv' }, h('tbody', {}, rows.filter(Boolean).map(([k, v]) => h('tr', {}, h('th', { scope: 'row' }, k), h('td', {}, v))))));
 const lines = (s) => s.split(/[\s,]+/u).map((x) => x.trim()).filter(Boolean);
+
+/** A record's details as `key: value` pairs (nested values as compact JSON), never one long JSON line. */
+function detailPairs(v) {
+  if (v === null || v === undefined) return '';
+  if (typeof v !== 'object') return String(v);
+  const entries = Object.entries(v);
+  if (!entries.length) return '';
+  return h('span', { class: 'kvs' }, entries.map(([k, x]) => h('span', {}, h('b', {}, `${k}: `), typeof x === 'object' && x !== null ? JSON.stringify(x) : String(x))));
+}
 
 /** An integer decimal string of 10^-decimals units, exactly (string arithmetic, never a float); '' when absent. */
 function units(v, decimals) {
@@ -134,6 +430,7 @@ function queryForm(path, fields, label) {
   const el = h(
     'form',
     {
+      class: 'form',
       onsubmit: (ev) => {
         ev.preventDefault();
         const q = new URLSearchParams();
@@ -145,261 +442,700 @@ function queryForm(path, fields, label) {
         render();
       },
     },
-    fields.map((f) => {
-      const value = params.get(f.name) ?? f.value ?? '';
-      const input =
-        f.type === 'select'
-          ? h('select', { name: f.name }, f.options.map((o) => h('option', { value: o.value ?? o, selected: (o.value ?? o) === value }, o.label ?? o)))
-          : h('input', { name: f.name, type: f.type || 'text', placeholder: f.placeholder || '', value });
-      return h('label', {}, `${f.label || f.name} `, input);
-    }),
-    h('button', { type: 'submit' }, label),
+    fields.map((f) => field({ ...f, value: params.get(f.name) ?? f.value ?? '', optional: f.optional ?? false })),
+    h('div', { class: 'form-actions' }, h('button', { type: 'submit', class: 'primary' }, label)),
   );
   return el;
 }
 
-/** The organisations as select options (the first page). */
-async function orgOptions() {
+/** The organisations as select options, by name (the first page); `exclude` leaves some out. */
+async function orgOptions(exclude = []) {
   const d = await api('GET', '/api/orgs');
-  return d.orgs.map((o) => ({ value: o.id, label: `${o.name} (${o.id})` }));
+  return d.orgs
+    .filter((o) => !exclude.includes(o.id))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((o) => ({ value: o.id, label: `${o.id === LEGACY_ORG ? 'Legacy apps' : o.name} (${o.id})` }));
 }
+
+// ---- labels for the system's words ----
+
+const badge = (text, kind) => h('span', { class: `badge ${kind || ''}` }, text);
+const ORG_KIND = { partner: 'Partner', internal: 'Internal' };
+const orgKind = (o) => (o.id === LEGACY_ORG ? 'Legacy' : ORG_KIND[o.kind] || o.kind);
+const orgStatus = (s) => (s === 'frozen' ? badge('Frozen', 'bad') : badge('Active', 'ok'));
+const envBadge = (e) => (e === 'live' ? badge('Live', 'info') : badge(e === 'test' ? 'Test' : e || 'unknown'));
+/** Who suspended an app: the three switches of `suspendedBy`. */
+const SUSPENDERS = [
+  [1, 'Hana'],
+  [2, 'the organisation-wide switch'],
+  [4, 'the partner'],
+];
+const suspendedBy = (bits) => SUSPENDERS.filter(([b]) => bits & b).map(([, who]) => who);
+function appState(a) {
+  if (a.deleted) return badge('Deleted');
+  if (a.suspendedBy) return h('span', {}, badge('Suspended', 'bad'), h('span', { class: 'sub' }, `by ${suspendedBy(a.suspendedBy).join(', ')}`));
+  return badge('Active', 'ok');
+}
+const ACTOR = { hana: 'Hana staff', member: 'Member', system: 'System', link: 'Account link' };
+const actor = (kind, id) => h('span', {}, ACTOR[kind] || kind, id ? h('span', { class: 'sub' }, id) : '');
+const CHANGE_KIND = { origin_add: 'Add an origin', policy_set: 'Set an auto-approve policy', raw_sign_on: 'Turn raw signing on' };
+const CHANGE_STATUS = { pending: ['Pending', 'warning'], active: ['In force', 'ok'], cancelled: ['Cancelled', ''], ended: ['Ended', ''] };
+const changeStatus = (s) => badge(...(CHANGE_STATUS[s] || [s, '']));
+/** The app-change log's kinds (`app_changes.kind`), in words. */
+const LOG_KIND = {
+  'app.created': 'App created',
+  'app.deleted': 'App deleted',
+  'app.suspended': 'App suspended',
+  'app.resumed': 'Suspension lifted',
+  'change.proposed': 'Change proposed',
+  'change.announced': 'Change emailed',
+  'change.cancelled': 'Change cancelled',
+  'change.expedited': 'Change put in force early',
+  'key.created': 'Key created',
+  'key.revoked': 'Key revoked',
+  'key.rotated': 'Key rotated',
+  'origin.proposed': 'Origin proposed',
+  'origin.removed': 'Origin removed',
+  'org.security_contacts': 'Security contacts replaced',
+  'scope.assigned': 'Scope moved here',
+};
+const logKind = (k) => h('span', {}, LOG_KIND[k] || k, LOG_KIND[k] ? h('span', { class: 'sub' }, h('code', {}, k)) : '');
 
 // ---- navigation ----
 
-// The screens of the spec's admin layout. Reports, statements and rates are C12's; Security & monitoring, the
+// The screens, grouped by the task staff come for. Reports, statements and rates are C12's; Security & monitoring, the
 // pending-upgrades page and the playbooks are C14's; retention is C13's; Users is C8b's (D275); the Support ID lookup is
 // C15's (D394–D396, D399).
-const NAV = [
-  { path: '/orgs', label: 'Organisations' },
-  { path: '/users', label: 'Users' },
-  { path: '/support', label: 'Support ID lookup' },
-  { path: '/audit', label: 'Audit' },
-  { path: '/security', label: 'Feed and notices' },
-  { path: '/security/monitoring', label: 'Security & monitoring' },
-  { path: '/security/upgrades', label: 'Pending upgrades' },
-  { path: '/security/playbooks', label: 'Playbooks' },
-  { path: '/reports', label: 'Reports' },
-  { path: '/statements', label: 'Statements' },
-  { path: '/rates', label: 'Rates' },
-  { path: '/retention', label: 'Retention' },
+const NAV_GROUPS = [
+  { title: 'Partners', items: [{ path: '/orgs', label: 'Organisations' }] },
+  { title: 'Support', items: [{ path: '/users', label: 'Users' }, { path: '/support', label: 'Support ID lookup' }] },
+  {
+    title: 'Security',
+    items: [
+      { path: '/security/monitoring', label: 'Security & monitoring' },
+      { path: '/security', label: 'Feed and notices' },
+      { path: '/security/upgrades', label: 'Pending upgrades' },
+      { path: '/security/playbooks', label: 'Playbooks' },
+      { path: '/audit', label: 'Audit log' },
+    ],
+  },
+  { title: 'Money', items: [{ path: '/reports', label: 'Reports' }, { path: '/statements', label: 'Statements' }, { path: '/rates', label: 'Rates' }] },
+  { title: 'System', items: [{ path: '/retention', label: 'Retention' }] },
 ];
+const NAV = NAV_GROUPS.flatMap((g) => g.items);
 
 function renderNav() {
   const nav = document.getElementById('nav');
   // The longest nav path the current path is under is the active one (/security/playbooks/x → Playbooks).
   const under = (p) => location.pathname === p || location.pathname.startsWith(`${p}/`) || (p === '/orgs' && location.pathname === '/');
-  const active = NAV.filter((n) => n.path && under(n.path)).sort((a, b) => b.path.length - a.path.length)[0];
-  nav.replaceChildren(...NAV.map((n) => (n.path ? h('a', { href: n.path, 'data-link': true, class: n === active ? 'active' : undefined }, n.label) : h('a', { class: 'disabled', 'aria-disabled': 'true' }, n.label))));
+  const active = NAV.filter((n) => under(n.path)).sort((a, b) => b.path.length - a.path.length)[0];
+  nav.replaceChildren(
+    ...NAV_GROUPS.map((g) => {
+      const id = `nav-${g.title.toLowerCase()}`;
+      return h('div', { class: 'nav-group', role: 'group', 'aria-labelledby': id }, h('h2', { id }, g.title), g.items.map((n) => h('a', { href: n.path, 'data-link': true, class: n === active ? 'active' : undefined, 'aria-current': n === active ? 'page' : undefined }, n.label)));
+    }),
+  );
 }
+
+/** Set by a navigation: the next render moves focus to the page's heading (keyboard and screen-reader users). */
+let focusHeading = false;
 
 document.addEventListener('click', (ev) => {
   const a = ev.target.closest && ev.target.closest('a[data-link]');
   if (!a || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;
   ev.preventDefault();
   history.pushState(null, '', a.getAttribute('href'));
+  focusHeading = true;
   render();
 });
-window.addEventListener('popstate', () => render());
+window.addEventListener('popstate', () => {
+  focusHeading = true;
+  render();
+});
 
-// ---- screens ----
+// ---- organisations ----
+
+/** Set by "Invite a new partner" on the Legacy apps page: the organisations page opens with its invite form open. */
+let openInvite = false;
+
+function newPartnerForm() {
+  return form(
+    [
+      { name: 'newOrgName', label: 'Organisation name', placeholder: 'Lumen Pay', required: true, help: 'As the partner wants it shown in their console.' },
+      { name: 'email', type: 'email', label: 'First owner’s email', placeholder: 'owner@partner.example', required: true, autocomplete: 'off', help: 'They get a link by email. It works once that email has gone out (within 5 minutes).' },
+      {
+        name: 'kind',
+        type: 'select',
+        label: 'Type',
+        optional: false,
+        options: [
+          { value: 'partner', label: 'Partner' },
+          { value: 'internal', label: 'Internal (Hana’s own apps)' },
+        ],
+      },
+    ],
+    'Send invite',
+    (v) => api('POST', '/api/invites', { email: v.email, role: 'owner', newOrgName: v.newOrgName, kind: v.kind }),
+    { done: (v) => `Invite sent to ${v.email.trim()} for the new organisation “${v.newOrgName.trim()}”. The email goes out within 5 minutes; the organisation is listed here once they accept.` },
+  );
+}
 
 async function orgsPage(main) {
   const cursor = new URLSearchParams(location.search).get('cursor');
   const data = await api('GET', `/api/orgs${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`);
+  const invite = disclosure('Invite a new partner', panel('Invite a new partner', { hint: 'Creates the organisation when its first owner accepts. Then create their apps, or move their existing scope from Legacy apps.' }, newPartnerForm()), { primary: true, open: openInvite });
+  openInvite = false;
+  // Legacy apps last: it is a holding place, not a partner.
+  const list = [...data.orgs].sort((a, b) => (a.id === LEGACY_ORG) - (b.id === LEGACY_ORG));
   main.append(
-    h('h1', {}, 'Organisations'),
-    table(
-      ['Id', 'Name', 'Kind', 'Status', 'Created'],
-      data.orgs.map((o) => tr(link(`/orgs/${encodeURIComponent(o.id)}`, o.id), o.name, o.kind, o.status, time(o.createdAt))),
-    ),
-    data.next ? link(`/orgs?cursor=${encodeURIComponent(data.next)}`, 'Next page') : '',
-    h('h2', {}, 'Invite the first owner of a new organisation'),
-    h('p', { class: 'muted' }, 'The invite works only once its notices are sent (within 5 minutes). The invitee gets the link by email.'),
-    form(
-      [
-        { name: 'newOrgName', placeholder: 'Organisation name', required: true },
-        { name: 'email', type: 'email', placeholder: 'owner@partner.example', required: true },
-        { name: 'kind', type: 'select', options: ['partner', 'internal'] },
-      ],
-      'Invite',
-      (v) => api('POST', '/api/invites', { email: v.email, role: 'owner', newOrgName: v.newOrgName, kind: v.kind }),
+    pageHead('Organisations', { subtitle: 'Partners and their apps. Start here to onboard a partner, change an app or freeze an organisation.', actions: [invite.button] }),
+    invite.box,
+    panel(
+      `${data.orgs.length} organisation${data.orgs.length === 1 ? '' : 's'}`,
+      {},
+      table(
+        ['Organisation', 'Type', 'Status', 'Created'],
+        list.map((o) =>
+          tr(
+            o.id === LEGACY_ORG ? h('span', {}, link(`/orgs/${encodeURIComponent(o.id)}`, 'Legacy apps'), h('span', { class: 'sub' }, 'Scopes from before organisations, waiting to be moved to their partner')) : h('span', {}, link(`/orgs/${encodeURIComponent(o.id)}`, o.name), h('span', { class: 'sub' }, h('code', {}, o.id))),
+            orgKind(o),
+            orgStatus(o.status),
+            when(o.createdAt),
+          ),
+        ),
+        { empty: 'No organisation yet. Use “Invite a new partner” to create the first one.' },
+      ),
+      data.next ? h('p', {}, link(`/orgs?cursor=${encodeURIComponent(data.next)}`, 'Next page')) : '',
     ),
   );
+}
+
+function membersPanel(o, d) {
+  const owners = d.members.filter((m) => m.role === 'owner' && !m.disabled);
+  const inviteForm = form(
+    [
+      { name: 'email', type: 'email', label: 'Email', placeholder: 'person@partner.example', required: true },
+      {
+        name: 'role',
+        type: 'select',
+        label: 'Role',
+        optional: false,
+        options: [
+          { value: 'viewer', label: 'Viewer (read only)' },
+          { value: 'owner', label: 'Owner' },
+        ],
+        help: 'A new owner waits for the owner-grant period first; every owner and security contact is told.',
+      },
+    ],
+    'Send invite',
+    (v) => api('POST', '/api/invites', { email: v.email, role: v.role, orgId: o.id }),
+    { done: (v) => `Invite sent to ${v.email.trim()}. The email goes out within 5 minutes; the link works from then.` },
+  );
+  return panel(
+    'Members',
+    { anchor: 'members', hint: owners.length ? '' : 'No active owner: invite one, so the organisation can manage its apps.' },
+    table(
+      ['Person', 'Role', 'Since', 'Status', ''],
+      d.members.map((m) =>
+        tr(
+          named(m.email, m.userId),
+          m.pendingOwnerFrom ? h('span', {}, 'Viewer', h('span', { class: 'sub' }, `owner from ${time(m.pendingOwnerFrom)}`)) : m.role === 'owner' ? 'Owner' : 'Viewer',
+          when(m.roleSince),
+          m.disabled ? badge('Disabled', 'bad') : badge('Active', 'ok'),
+          h(
+            'div',
+            { class: 'cell-actions' },
+            actionButton(m.role === 'owner' ? 'Make viewer' : 'Make owner', () => api('POST', `/api/orgs/${encodeURIComponent(o.id)}/members/${encodeURIComponent(m.userId)}`, { role: m.role === 'owner' ? 'viewer' : 'owner' }), m.role === 'owner' ? `Make ${m.email} a viewer? They keep read access only.` : `Make ${m.email} an owner? They wait for the owner-grant period first, and every owner and security contact is emailed.`, false, { done: `Role changed for ${m.email}.` }),
+            actionButton('Remove', () => api('POST', `/api/orgs/${encodeURIComponent(o.id)}/members/${encodeURIComponent(m.userId)}`, { role: null }), `Remove ${m.email} from ${o.name}? They lose access to it at once.`, true, { done: `${m.email} was removed.` }),
+            actionButton(m.disabled ? 'Enable user' : 'Disable user', () => api('POST', `/api/users/${encodeURIComponent(m.userId)}/disable`, { disabled: !m.disabled }), m.disabled ? null : `Disable ${m.email} everywhere, in every organisation? Their sessions end at once.`, !m.disabled, { done: m.disabled ? `${m.email} can sign in again.` : `${m.email} is disabled.` }),
+          ),
+        ),
+      ),
+      { empty: 'No member yet. Invite the first owner below.' },
+    ),
+    h('h3', {}, 'Invite someone'),
+    inviteForm,
+  );
+}
+
+function invitesPanel(d) {
+  if (!d.invites.length) return '';
+  const now = Date.now();
+  const state = (i) => (i.acceptedAt ? badge('Accepted', 'ok') : i.revokedAt ? badge('Revoked') : i.expiresAt < now ? badge('Expired') : i.notifiedAt ? badge('Open', 'info') : badge('Email not sent yet', 'warning'));
+  return panel(
+    'Invites',
+    { hint: 'An invite works only once its email has gone out (the job runs every 5 minutes).' },
+    table(
+      ['Email', 'Role', 'Sent', 'Expires', 'State', ''],
+      d.invites.map((i) =>
+        tr(
+          named(i.email, i.id),
+          i.role === 'owner' ? 'Owner' : 'Viewer',
+          i.notifiedAt ? when(i.notifiedAt) : h('span', { class: 'muted' }, 'not yet'),
+          when(i.expiresAt),
+          state(i),
+          !i.acceptedAt && !i.revokedAt ? actionButton('Revoke', () => api('POST', `/api/invites/${encodeURIComponent(i.id)}/revoke`), `Revoke the invite for ${i.email}? Its link stops working.`, true, { done: `The invite for ${i.email} was revoked.` }) : '',
+        ),
+      ),
+    ),
+  );
+}
+
+function grantsPanel(d) {
+  if (!d.grants.length) return '';
+  const byId = new Map(d.members.map((m) => [m.userId, m.email]));
+  const invites = new Map(d.invites.map((i) => [i.id, i.email]));
+  return panel(
+    'Pending owner grants',
+    { hint: 'A new owner waits this period so the other owners can react. Cancelling keeps the person as a viewer.' },
+    table(
+      ['Person', 'Granted by', 'Emailed', 'Owner from', ''],
+      d.grants.map((g) =>
+        tr(
+          named(byId.get(g.userId) || invites.get(g.inviteId) || 'Unknown person', g.userId || g.inviteId || ''),
+          actor(g.grantedByKind, g.grantedBy),
+          g.notifiedAt ? when(g.notifiedAt) : h('span', { class: 'muted' }, 'not yet'),
+          g.ownerFrom ? when(g.ownerFrom) : h('span', { class: 'muted' }, 'when the invite is accepted'),
+          actionButton('Cancel grant', () => api('POST', `/api/owner-grants/${encodeURIComponent(g.id)}/cancel`), 'Cancel this owner grant? The person stays a viewer.', true, { done: 'The owner grant was cancelled.' }),
+        ),
+      ),
+    ),
+  );
+}
+
+function appsTable(o, apps) {
+  return table(
+    ['App', 'Environment', 'Scope', 'State', { text: 'Origins', num: true }, { text: 'Pending changes', num: true }],
+    apps.map((a) => tr(h('span', {}, link(`/orgs/${encodeURIComponent(o.id)}/apps/${encodeURIComponent(a.id)}`, a.name), h('span', { class: 'sub' }, h('code', {}, a.id))), envBadge(a.environment), mono(a.scopeId), appState(a), String(a.activeOrigins), a.pendingChanges ? h('strong', {}, String(a.pendingChanges)) : '0')),
+    { empty: 'No app yet.' },
+  );
+}
+
+/** The legacy scopes as select options (read when staff open "Move a legacy scope here"). */
+async function legacyScopeOptions() {
+  const d = await api('GET', `/api/orgs/${LEGACY_ORG}`);
+  const scopes = new Map();
+  for (const a of d.apps) {
+    if (!scopes.has(a.scopeId)) scopes.set(a.scopeId, []);
+    if (!a.deleted) scopes.get(a.scopeId).push(`${a.name} (${a.environment})`);
+  }
+  return [...scopes].map(([scopeId, names]) => ({ value: scopeId, label: `${scopeId}: ${names.join(', ') || 'deleted apps only'}` }));
+}
+
+function appsPanel(o, d) {
+  const owners = d.members.filter((m) => m.role === 'owner' && !m.disabled);
+  const blocked = d.flags.noSecurityContacts ? 'Add a security contact first: an organisation without one can’t get apps.' : !owners.length ? 'Invite an owner first: a scope is registered on chain with the organisation’s owners.' : '';
+  const create = disclosure(
+    'Create an app',
+    h(
+      'div',
+      {},
+      h('h3', {}, 'Create an app'),
+      form(
+        [
+          { name: 'scopeId', label: 'Scope id', placeholder: 's…', required: true, help: 'Register it on chain first with this organisation’s owners: `scope:register --owners-from-org`.' },
+          { name: 'environment', type: 'select', label: 'Environment', optional: false, options: [{ value: 'test', label: 'Test' }, { value: 'live', label: 'Live' }] },
+          { name: 'name', label: 'App name', placeholder: 'Lumen Pay checkout', required: true },
+          { name: 'origins', label: 'Allowed origins', placeholder: 'https://app.partner.example', size: 'wide', help: 'Space or comma separated. The security contacts are emailed and they take effect after the waiting period.' },
+        ],
+        'Create app',
+        (v) => api('POST', '/api/apps', { orgId: o.id, scopeId: v.scopeId, environment: v.environment, name: v.name, origins: lines(v.origins) }),
+        { after: (out, status) => status.replaceChildren(note('ok', `Created ${out.app.id}`, h('p', {}, 'Its publishable key (give it to the partner; it is also listed on the app’s page): ', h('code', {}, out.publishableKey)), h('p', {}, link(`/orgs/${encodeURIComponent(o.id)}/apps/${encodeURIComponent(out.app.id)}`, 'Open the app')))) },
+      ),
+    ),
+  );
+  const move = disclosure(
+    'Move a legacy scope here',
+    h('div', {}, h('h3', {}, 'Move a legacy scope here'), loading('Reading Legacy apps…')),
+    {
+      onOpen: async (box) => {
+        if (box.dataset.loaded) return;
+        box.dataset.loaded = '1';
+        try {
+          const options = await legacyScopeOptions();
+          box.replaceChildren(
+            h('h3', {}, 'Move a legacy scope here'),
+            options.length
+              ? form([{ name: 'scopeId', type: 'select', label: 'Legacy scope', optional: false, options, size: 'wide', help: 'Every app of the scope moves. Its on-chain owners must be this organisation’s owners.' }], 'Move scope', (v) => api('POST', `/api/scopes/${encodeURIComponent(v.scopeId)}/assign`, { orgId: o.id }), { confirm: (v) => `Move scope ${v.scopeId} and every app in it into ${o.name}? This can’t be undone from the console.`, done: (v) => `Scope ${v.scopeId} now belongs to ${o.name}.` })
+              : emptyState('Legacy apps is empty', 'Every legacy scope already belongs to an organisation.'),
+          );
+        } catch (err) {
+          box.dataset.loaded = '';
+          box.replaceChildren(errorBox(err));
+        }
+      },
+    },
+  );
+  return panel(
+    'Apps',
+    { actions: blocked ? [] : [create.button, move.button] },
+    blocked ? note('warn', '', blocked) : '',
+    appsTable(o, d.apps),
+    create.box,
+    move.box,
+  );
+}
+
+function contactsPanel(o, d) {
+  return panel(
+    'Security contacts',
+    { anchor: 'contacts', hint: 'They are emailed about every app change and security event of this organisation.' },
+    d.securityContacts.length ? h('p', {}, d.securityContacts.join(', ')) : emptyState('No security contact yet', 'Add at least one: the organisation can’t get apps until it has one.'),
+    form(
+      [{ name: 'emails', label: 'Replace with', placeholder: 'a@partner.example, b@partner.example', value: d.securityContacts.join(', '), required: true, size: 'wide', help: 'Comma or space separated. The old and the new contacts are emailed.' }],
+      'Replace contacts',
+      (v) => api('PUT', `/api/orgs/${encodeURIComponent(o.id)}/security-contacts`, { emails: lines(v.emails) }),
+      { confirm: (v) => `Replace the security contacts with ${lines(v.emails).join(', ')}? The old and the new contacts are emailed.`, done: 'Security contacts replaced.' },
+    ),
+  );
+}
+
+function dangerPanel(o, legacy) {
+  const id = encodeURIComponent(o.id);
+  return panel(
+    'Danger zone',
+    { danger: true },
+    h(
+      'div',
+      { class: 'stack' },
+      legacy
+        ? ''
+        : h(
+            'div',
+            {},
+            h('h3', {}, o.status === 'frozen' ? 'Unfreeze' : 'Freeze the organisation'),
+            h('p', { class: 'hint' }, 'Frozen: its members are signed out, and every console write except cancels and kill switches is refused. Apps keep working.'),
+            actionButton(o.status === 'frozen' ? 'Unfreeze' : 'Freeze', () => api('POST', `/api/orgs/${id}/freeze`, { frozen: o.status !== 'frozen' }), o.status === 'frozen' ? null : `Freeze ${o.name}? Its members are signed out and every console write but cancels and kill switches is refused.`, o.status !== 'frozen', { done: o.status === 'frozen' ? `${o.name} is unfrozen.` : `${o.name} is frozen.` }),
+          ),
+      h(
+        'div',
+        {},
+        h('h3', {}, 'Suspend every app'),
+        h('p', { class: 'hint' }, 'The organisation-wide switch: logins to every app stop at once. Lifting it doesn’t lift a suspension set by Hana on one app or by the partner.'),
+        h(
+          'div',
+          { class: 'row' },
+          actionButton('Suspend every app', () => api('POST', `/api/orgs/${id}/suspend`, { suspended: true }), `Suspend every app of ${legacy ? 'Legacy apps' : o.name}? Logins stop at once.`, true, { done: 'Every app is suspended.' }),
+          actionButton('Lift the organisation-wide suspension', () => api('POST', `/api/orgs/${id}/suspend`, { suspended: false }), null, false, { done: 'The organisation-wide suspension is lifted.' }),
+        ),
+      ),
+    ),
+  );
+}
+
+async function changesPanel(main, orgId) {
+  const box = h('div', {}, loading());
+  main.append(panel('Recent app changes', { hint: 'Every change to this organisation’s apps, newest first.' }, box));
+  try {
+    const changes = await api('GET', `/api/orgs/${encodeURIComponent(orgId)}/changes`);
+    box.replaceChildren(changesTable(changes.changes));
+  } catch (err) {
+    box.replaceChildren(errorBox(err));
+  }
+}
+
+/** Legacy apps (org_legacy): no members, no invites, no freeze; its scopes wait to be moved to their partner. */
+async function legacyPage(main, d) {
+  const o = d.org;
+  const scopes = new Map();
+  for (const a of d.apps) {
+    if (!scopes.has(a.scopeId)) scopes.set(a.scopeId, []);
+    scopes.get(a.scopeId).push(a);
+  }
+  let targets = null;
+  const moveCell = (scopeId, apps) => {
+    const live = apps.filter((a) => !a.deleted);
+    const box = h('div', { hidden: true });
+    const btn = h(
+      'button',
+      {
+        type: 'button',
+        class: 'small',
+        'aria-expanded': 'false',
+        onclick: async () => {
+          const open = box.hidden;
+          box.hidden = !open;
+          btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+          if (!open || box.dataset.loaded) return;
+          box.dataset.loaded = '1';
+          box.replaceChildren(loading('Reading organisations…'));
+          try {
+            targets = targets || (await orgOptions([LEGACY_ORG]));
+            box.replaceChildren(
+              targets.length
+                ? form(
+                    [{ name: 'orgId', type: 'select', label: 'Move to', optional: false, options: targets, help: 'The scope’s on-chain owners must be that organisation’s owners.' }],
+                    'Move scope',
+                    (v) => api('POST', `/api/scopes/${encodeURIComponent(scopeId)}/assign`, { orgId: v.orgId }),
+                    {
+                      confirm: (v) => `Move scope ${scopeId} (${live.length} app${live.length === 1 ? '' : 's'}) to ${(targets.find((t) => t.value === v.orgId) || { label: v.orgId }).label}? This can’t be undone from the console.`,
+                      done: (v) => `Scope ${scopeId} now belongs to ${(targets.find((t) => t.value === v.orgId) || { label: v.orgId }).label}. Its apps are on that organisation’s page.`,
+                    },
+                  )
+                : emptyState('No organisation to move it to', 'Invite the partner’s first owner to a new organisation first.'),
+            );
+            const first = box.querySelector('select');
+            if (first) first.focus();
+          } catch (err) {
+            box.dataset.loaded = '';
+            box.replaceChildren(errorBox(err));
+          }
+        },
+      },
+      'Move to an organisation',
+    );
+    return h('div', { class: 'inline-action' }, btn, box);
+  };
+  main.append(
+    pageHead('Legacy apps', {
+      back: { href: '/orgs', text: 'Organisations' },
+      subtitle: 'The scopes from before organisations existed. Each waits to be moved to its partner’s organisation.',
+      meta: [orgStatus(o.status), badge('No members'), mono(o.id)],
+      actions: [h('button', { type: 'button', class: 'primary', onclick: () => ((openInvite = true), (focusHeading = true), go('/orgs')) }, 'Invite a new partner')],
+    }),
+    note('info', 'Nobody can be invited to Legacy apps, and it can’t be frozen', 'To onboard a partner whose app is here: invite their first owner to a new organisation, register the scope with that organisation’s owners (`scope:register --owners-from-org`), then use “Move to an organisation” on the scope below.'),
+    panel(
+      'Scopes waiting for an organisation',
+      { hint: 'Moving a scope moves every app in it.' },
+      table(
+        ['Scope', 'Apps', ''],
+        [...scopes].map(([scopeId, apps]) =>
+          tr(
+            mono(scopeId),
+            h('div', {}, apps.map((a) => h('div', {}, link(`/orgs/${LEGACY_ORG}/apps/${encodeURIComponent(a.id)}`, a.name), ' ', envBadge(a.environment), a.deleted ? [' ', badge('Deleted')] : a.suspendedBy ? [' ', badge('Suspended', 'bad')] : ''))),
+            moveCell(scopeId, apps),
+          ),
+        ),
+        { empty: 'Every legacy scope already belongs to an organisation.' },
+      ),
+    ),
+    contactsPanel({ ...o, name: 'Legacy apps' }, d),
+  );
+  await changesPanel(main, o.id);
+  main.append(dangerPanel(o, true));
 }
 
 async function orgPage(main, orgId) {
   const d = await api('GET', `/api/orgs/${encodeURIComponent(orgId)}`);
   const o = d.org;
-  main.append(h('h1', {}, `${o.name} `, h('span', { class: 'muted' }, `(${o.id}, ${o.kind}, ${o.status})`)));
-  if (d.flags.noSecurityContacts) main.append(h('p', { class: 'warn' }, 'This organisation has no security contacts: it cannot get apps, and notices go to the Hana security alias only.'));
-  if (d.flags.ownersNotContacts.length) main.append(h('p', { class: 'warn' }, `Owners who are not security contacts: ${d.flags.ownersNotContacts.join(', ')}`));
+  if (o.id === LEGACY_ORG) return legacyPage(main, d);
   main.append(
-    h(
-      'div',
-      { class: 'row' },
-      actionButton(o.status === 'frozen' ? 'Unfreeze' : 'Freeze', () => api('POST', `/api/orgs/${encodeURIComponent(o.id)}/freeze`, { frozen: o.status !== 'frozen' }), o.status === 'frozen' ? null : 'Freeze this organisation? Its members are signed out and every console write but cancels and kill switches is refused.', o.status !== 'frozen'),
-      actionButton('Suspend every app (bit 2)', () => api('POST', `/api/orgs/${encodeURIComponent(o.id)}/suspend`, { suspended: true }), 'Suspend every app of this organisation?', true),
-      actionButton('Resume every app (bit 2)', () => api('POST', `/api/orgs/${encodeURIComponent(o.id)}/suspend`, { suspended: false })),
-    ),
-    h('h2', {}, 'Security contacts'),
-    h('p', {}, d.securityContacts.length ? d.securityContacts.join(', ') : 'None'),
-    form([{ name: 'emails', placeholder: 'a@partner.example, b@partner.example', value: d.securityContacts.join(', '), required: true }], 'Replace contacts', (v) => api('PUT', `/api/orgs/${encodeURIComponent(o.id)}/security-contacts`, { emails: lines(v.emails) }), { confirm: 'Replace the security contacts? The old and the new contacts are emailed.' }),
-    h('h2', {}, 'Members'),
-    table(
-      ['User', 'Email', 'Role', 'Since', 'Status', 'Actions'],
-      d.members.map((m) =>
-        tr(
-          m.userId,
-          m.email,
-          m.pendingOwnerFrom ? `viewer (owner from ${time(m.pendingOwnerFrom)})` : m.role,
-          time(m.roleSince),
-          m.disabled ? 'disabled' : 'active',
-          h(
-            'div',
-            { class: 'row' },
-            actionButton(m.role === 'owner' ? 'Make viewer' : 'Make owner', () => api('POST', `/api/orgs/${encodeURIComponent(o.id)}/members/${encodeURIComponent(m.userId)}`, { role: m.role === 'owner' ? 'viewer' : 'owner' }), m.role === 'owner' ? null : 'Promote to owner? A new owner waits (owner grant) and every owner and contact is notified.'),
-            actionButton('Remove', () => api('POST', `/api/orgs/${encodeURIComponent(o.id)}/members/${encodeURIComponent(m.userId)}`, { role: null }), 'Remove this member from the organisation?', true),
-            actionButton(m.disabled ? 'Enable user' : 'Disable user', () => api('POST', `/api/users/${encodeURIComponent(m.userId)}/disable`, { disabled: !m.disabled }), m.disabled ? null : 'Disable this user everywhere? Their sessions end.', !m.disabled),
-          ),
-        ),
-      ),
-    ),
-    h('h2', {}, 'Invites'),
-    table(
-      ['Invite', 'Email', 'Role', 'Created', 'Notified', 'Expires', 'State', ''],
-      d.invites.map((i) =>
-        tr(i.id, i.email, i.role, time(i.createdAt), i.notifiedAt ? time(i.notifiedAt) : 'not yet', time(i.expiresAt), i.acceptedAt ? 'accepted' : i.revokedAt ? 'revoked' : 'open', !i.acceptedAt && !i.revokedAt ? actionButton('Revoke', () => api('POST', `/api/invites/${encodeURIComponent(i.id)}/revoke`), 'Revoke this invite?', true) : ''),
-      ),
-    ),
-    form(
-      [
-        { name: 'email', type: 'email', placeholder: 'person@partner.example', required: true },
-        { name: 'role', type: 'select', options: ['viewer', 'owner'] },
-      ],
-      'Invite to this organisation',
-      (v) => api('POST', '/api/invites', { email: v.email, role: v.role, orgId: o.id }),
-    ),
-    h('h2', {}, 'Pending owner grants'),
-    table(
-      ['Grant', 'User or invite', 'Granted by', 'Notified', 'Owner from', ''],
-      d.grants.map((g) => tr(g.id, g.userId || g.inviteId || '', `${g.grantedByKind} ${g.grantedBy}`, g.notifiedAt ? time(g.notifiedAt) : 'not yet', g.ownerFrom ? time(g.ownerFrom) : 'after acceptance', actionButton('Cancel', () => api('POST', `/api/owner-grants/${encodeURIComponent(g.id)}/cancel`), 'Cancel this owner grant? The person stays a viewer.', true))),
-    ),
-    h('h2', {}, 'Apps'),
-    table(
-      ['App', 'Name', 'Scope', 'Env', 'Suspended', 'Origins', 'Pending'],
-      d.apps.map((a) => tr(link(`/orgs/${encodeURIComponent(o.id)}/apps/${encodeURIComponent(a.id)}`, a.id), a.name, a.scopeId, a.environment, a.deleted ? 'deleted' : a.suspendedBy ? `bits ${a.suspendedBy}` : 'no', String(a.activeOrigins), String(a.pendingChanges))),
-    ),
-    h('h2', {}, 'Create an app'),
-    h('p', { class: 'muted' }, "The scope must be registered on chain with this organisation's owners (scope:register --owners-from-org). Its origins are staff proposals: emailed, then in force after the delay."),
-    form(
-      [
-        { name: 'scopeId', placeholder: 'scope id (s…)', required: true },
-        { name: 'environment', type: 'select', options: ['test', 'live'] },
-        { name: 'name', placeholder: 'App name', required: true },
-        { name: 'origins', placeholder: 'https://app.partner.example (comma or space separated)' },
-      ],
-      'Create app',
-      (v) => api('POST', '/api/apps', { orgId: o.id, scopeId: v.scopeId, environment: v.environment, name: v.name, origins: lines(v.origins) }),
-      { after: (out, status) => status.append(h('p', { class: 'notice' }, `Created ${out.app.id}. Its publishable key: `, h('code', {}, out.publishableKey))) },
-    ),
-    h('h2', {}, 'Assign a legacy scope'),
-    form([{ name: 'scopeId', placeholder: 'scope id (s…)', required: true }], 'Assign to this organisation', (v) => api('POST', `/api/scopes/${encodeURIComponent(v.scopeId)}/assign`, { orgId: o.id }), { confirm: 'Move every app of this legacy scope into this organisation?' }),
-    h('h2', {}, 'App changes'),
+    pageHead(o.name, {
+      back: { href: '/orgs', text: 'Organisations' },
+      meta: [orgStatus(o.status), ORG_KIND[o.kind] || o.kind, mono(o.id), `created ${time(o.createdAt)}`],
+      actions: [h('button', { type: 'button', class: 'primary', onclick: () => main.querySelector('#members input[name=email]').focus() }, 'Invite someone')],
+    }),
   );
-  const changes = await api('GET', `/api/orgs/${encodeURIComponent(o.id)}/changes`);
-  main.append(changesTable(changes.changes));
+  if (o.status === 'frozen') main.append(note('error', 'This organisation is frozen', 'Its members are signed out and console writes are refused, except cancels and kill switches. Unfreeze it in the danger zone at the bottom of the page.'));
+  if (d.flags.noSecurityContacts) main.append(note('warn', 'No security contact', 'This organisation can’t get apps until it has one, and its notices go to the Hana security alias only. Add one under Security contacts.'));
+  if (d.flags.ownersNotContacts.length) main.append(note('warn', 'Owners who aren’t security contacts', `${d.flags.ownersNotContacts.join(', ')}: add them under Security contacts so they hear about changes to their apps.`));
+  main.append(membersPanel(o, d), invitesPanel(d), grantsPanel(d), appsPanel(o, d), contactsPanel(o, d));
+  await changesPanel(main, o.id);
+  main.append(dangerPanel(o, false));
+  return undefined;
 }
 
 function changesTable(changes) {
   return table(
-    ['Seq', 'At', 'Kind', 'App', 'Actor', 'Detail'],
-    changes.map((c) => tr(String(c.seq), time(c.at), c.kind, c.appId || '', `${c.actorKind} ${c.actorId}`, h('code', {}, JSON.stringify(c.detail)))),
+    ['When', 'What', 'App', 'By', 'Details'],
+    changes.map((c) => tr(h('span', {}, time(c.at), h('span', { class: 'sub' }, `#${c.seq}`)), logKind(c.kind), mono(c.appId || ''), actor(c.actorKind, c.actorId), detailPairs(c.detail))),
+    { empty: 'No app change yet.' },
   );
 }
+
+// ---- one app ----
 
 async function appPage(main, orgId, appId) {
   const { app } = await api('GET', `/api/apps/${encodeURIComponent(appId)}?org=${encodeURIComponent(orgId)}`);
   const base = `/api/apps/${encodeURIComponent(app.id)}`;
+  const legacy = orgId === LEGACY_ORG;
   main.append(
-    h('h1', {}, `${app.name} `, h('span', { class: 'muted' }, `(${app.id}, ${app.scopeId}, ${app.environment})`)),
-    h('p', {}, link(`/orgs/${encodeURIComponent(orgId)}`, `← ${orgId}`)),
-    h('p', {}, `Suspended bits: ${app.suspendedBy || 'none'} (1 Hana, 2 organisation, 4 partner)${app.deleted ? ' · deleted' : ''} · origins version ${app.originsVersion} · settings version ${app.settingsVersion}`),
-    h(
-      'div',
-      { class: 'row' },
-      actionButton('Suspend (Hana bit 1)', () => api('POST', `${base}/suspend`, { bit: 1 }), 'Suspend this app? Logins stop at once.', true),
-      ...[1, 2, 4].filter((b) => app.suspendedBy & b).map((b) => actionButton(`Clear bit ${b}`, () => api('POST', `${base}/resume`, { bit: b }))),
-      actionButton('Delete app', () => api('POST', `${base}/delete`), 'Delete this app? Every key is revoked; this cannot be undone.', true),
-    ),
-    h('h2', {}, 'Origins'),
-    table(
-      ['Origin', 'Shown as', 'Active from', ''],
-      app.origins.map((x) => tr(x.origin, `${x.display}${x.idn ? ' (IDN: check for lookalikes)' : ''}`, x.activeFrom === null ? 'pending' : time(x.activeFrom), actionButton('Remove', () => api('POST', `${base}/origins/remove`, { orgId, remove: [x.origin], expectedVersion: app.originsVersion }), `Remove ${x.origin}? It stops working at once.`, true))),
-    ),
-    form([{ name: 'add', placeholder: 'https://new.partner.example', required: true }], 'Propose origins', (v) => api('POST', `${base}/origins`, { orgId, add: lines(v.add), expectedVersion: app.originsVersion }), { confirm: 'Propose these origins? The security contacts are emailed and they take effect after the delay.' }),
-    h('h2', {}, 'Guarded changes'),
-    table(
-      ['Change', 'Kind', 'What', 'Status', 'Proposed', 'Notified', 'Active from', ''],
-      app.changes.map((c) =>
-        tr(
-          c.id,
-          c.kind,
-          c.origin || c.policyId || '',
-          c.status,
-          `${time(c.proposedAt)} by ${c.proposedByKind} ${c.proposedBy}`,
-          c.notifiedAt ? time(c.notifiedAt) : 'not yet',
-          c.activeFrom ? time(c.activeFrom) : '',
-          c.status === 'pending'
-            ? h(
-                'div',
-                {},
-                actionButton('Cancel', () => api('POST', `/api/changes/${encodeURIComponent(c.id)}/cancel`, { orgId }), 'Cancel this change?', true),
-                c.proposedByKind === 'member' && c.notifiedAt
-                  ? form([{ name: 'reason', placeholder: 'Which contact confirmed it, and how (20+ characters)', required: true }], 'Expedite', (v) => api('POST', `/api/changes/${encodeURIComponent(c.id)}/expedite`, { reason: v.reason }), { confirm: 'Put this change in force now?' })
-                  : '',
-              )
-            : '',
-        ),
-      ),
-    ),
-    h('h2', {}, 'Settings'),
-    h('pre', {}, JSON.stringify(app.settings, null, 2)),
-    h(
-      'div',
-      { class: 'row' },
-      app.settings.policy ? actionButton('Remove the policy', () => api('POST', `${base}/off`, { orgId, what: 'policy', expectedVersion: app.settingsVersion }), 'Remove the auto-approve policy? Auto-signing stops within 10 s.', true) : '',
-      app.settings.rawSign !== 'off' ? actionButton('Turn raw signing off', () => api('POST', `${base}/off`, { orgId, what: 'raw_sign', expectedVersion: app.settingsVersion }), 'Turn raw signing off?', true) : '',
-      app.environment === 'live' && app.settings.rawSign === 'off' ? actionButton('Propose raw signing on', () => api('POST', `${base}/changes`, { orgId, kind: 'raw_sign_on', expectedVersion: app.settingsVersion }), 'Propose raw signing (with approval)? The contacts are emailed; it takes effect after the delay.') : '',
-    ),
-    h('h3', {}, 'Propose an auto-approve policy'),
-    form(
-      [{ name: 'policy', type: 'textarea', placeholder: '{"v": 1, "label": "…", "maxConsentMs": …, "limits": {"perDayCount": …}, "stellar": {…}}' }],
-      'Propose policy',
-      (v) => {
-        let policy;
-        try {
-          policy = JSON.parse(v.policy);
-        } catch {
-          throw new Error('The policy is not valid JSON');
-        }
-        return api('POST', `${base}/changes`, { orgId, kind: 'policy_set', policy, expectedVersion: app.settingsVersion });
-      },
-      { confirm: 'Propose this policy? The contacts are emailed; it takes effect after the delay and each user consents to it.' },
-    ),
-    h('h2', {}, 'Keys'),
-    table(
-      ['Key', 'Created', 'Revoked', ''],
-      app.keys.map((k) => tr(h('code', {}, k.key), `${time(k.createdAt)} by ${k.createdBy}`, k.revokedAt ? time(k.revokedAt) : '', k.revokedAt && k.revokedAt <= Date.now() ? '' : actionButton('Revoke', () => api('POST', `${base}/keys/${encodeURIComponent(k.id)}/revoke`, { orgId }), 'Revoke this key now? Every page using it stops working.', true))),
+    pageHead(app.name, {
+      back: { href: `/orgs/${encodeURIComponent(orgId)}`, text: legacy ? 'Legacy apps' : 'Organisation' },
+      meta: [envBadge(app.environment), appState(app), mono(app.id), h('span', {}, 'scope ', mono(app.scopeId))],
+    }),
+  );
+  if (app.deleted) main.append(note('warn', 'This app is deleted', 'Its keys are revoked. Nothing here can be changed.'));
+
+  // Suspensions: one switch each for Hana, the organisation and the partner.
+  const bits = [1, 2, 4].filter((b) => app.suspendedBy & b);
+  main.append(
+    panel(
+      'Suspension',
+      { hint: 'An app is suspended while any of its three switches is on: Hana’s, the organisation-wide one, or the partner’s own. Logins stop at once.' },
+      bits.length
+        ? table(
+            ['Suspended by', ''],
+            bits.map((b) => tr(SUSPENDERS.find(([x]) => x === b)[1].replace(/^the /u, '').replace(/^./u, (c) => c.toUpperCase()), actionButton(b === 4 ? 'Lift the partner’s suspension' : b === 2 ? 'Lift the organisation-wide suspension' : 'Lift Hana’s suspension', () => api('POST', `${base}/resume`, { bit: b }), b === 4 ? 'Lift the partner’s own suspension? Only do this when the partner asked for it.' : null, false, { done: 'Suspension lifted.' }))),
+          )
+        : h('p', {}, badge('Not suspended', 'ok'), ' Logins work.'),
     ),
   );
+
+  main.append(
+    panel(
+      'Allowed origins',
+      { hint: 'The web pages that may use this app. A new origin is emailed to the security contacts and takes effect after the waiting period; removing one takes effect at once.' },
+      table(
+        ['Origin', 'Shown to users as', 'State', ''],
+        app.origins.map((x) =>
+          tr(
+            mono(x.origin),
+            h('span', {}, x.display, x.idn ? [' ', badge('Lookalike check: international characters', 'warning')] : ''),
+            x.activeFrom === null ? badge('Pending', 'warning') : h('span', {}, 'Active', h('span', { class: 'sub' }, `since ${time(x.activeFrom)}`)),
+            app.deleted ? '' : actionButton('Remove', () => api('POST', `${base}/origins/remove`, { orgId, remove: [x.origin], expectedVersion: app.originsVersion }), `Remove ${x.origin}? It stops working at once.`, true, { done: `${x.origin} was removed.` }),
+          ),
+        ),
+        { empty: 'No origin yet: the app can’t be used from any page until one is added.' },
+      ),
+      app.deleted
+        ? ''
+        : h(
+            'div',
+            {},
+            h('h3', {}, 'Propose origins'),
+            form(
+              [{ name: 'add', label: 'Origins to add', placeholder: 'https://new.partner.example', required: true, size: 'wide', help: 'Full https:// origins, space or comma separated.' }],
+              'Propose',
+              (v) => api('POST', `${base}/origins`, { orgId, add: lines(v.add), expectedVersion: app.originsVersion }),
+              { confirm: 'Propose these origins? The security contacts are emailed and they take effect after the delay.', done: 'Origins proposed. They take effect after the waiting period, once the email has gone out.' },
+            ),
+          ),
+    ),
+  );
+
+  main.append(
+    panel(
+      'Guarded changes',
+      { hint: 'Changes that wait a period after their email so the security contacts can react. Cancel one that nobody asked for.' },
+      table(
+        ['Change', 'State', 'Proposed', 'Emailed', 'In force from', ''],
+        app.changes.map((c) =>
+          tr(
+            h('span', {}, CHANGE_KIND[c.kind] || c.kind, c.origin || c.policyId ? h('span', { class: 'sub' }, c.origin || c.policyId) : '', h('span', { class: 'sub' }, h('code', {}, c.id))),
+            changeStatus(c.status),
+            h('span', {}, time(c.proposedAt), h('span', { class: 'sub' }, `by ${ACTOR[c.proposedByKind] || c.proposedByKind} ${c.proposedBy}`)),
+            c.notifiedAt ? when(c.notifiedAt) : h('span', { class: 'muted' }, 'not yet'),
+            c.activeFrom ? when(c.activeFrom) : '',
+            c.status === 'pending'
+              ? h(
+                  'div',
+                  { class: 'cell-actions' },
+                  actionButton('Cancel change', () => api('POST', `/api/changes/${encodeURIComponent(c.id)}/cancel`, { orgId }), 'Cancel this change? It won’t take effect.', true, { done: 'Change cancelled.' }),
+                  c.proposedByKind === 'member' && c.notifiedAt ? expediteControl(c) : '',
+                )
+              : '',
+          ),
+        ),
+        { empty: 'No guarded change.' },
+      ),
+    ),
+  );
+
+  const policy = app.settings && app.settings.policy;
+  const proposePolicy = disclosure(
+    'Propose an auto-approve policy',
+    h(
+      'div',
+      {},
+      h('h3', {}, 'Propose an auto-approve policy'),
+      form(
+        [{ name: 'policy', type: 'textarea', label: 'Policy (JSON)', placeholder: '{"v": 1, "label": "…", "maxConsentMs": …, "limits": {"perDayCount": …}, "stellar": {…}}', required: true, size: 'wide', help: 'The format is in docs/api.md. Each user consents to it before it signs anything for them.' }],
+        'Propose policy',
+        (v) => {
+          let p;
+          try {
+            p = JSON.parse(v.policy);
+          } catch {
+            throw new Error('The policy is not valid JSON');
+          }
+          return api('POST', `${base}/changes`, { orgId, kind: 'policy_set', policy: p, expectedVersion: app.settingsVersion });
+        },
+        { confirm: 'Propose this policy? The contacts are emailed; it takes effect after the delay and each user consents to it.', done: 'Policy proposed. It takes effect after the waiting period.' },
+      ),
+    ),
+    { small: true },
+  );
+  main.append(
+    panel(
+      'Signing settings',
+      {},
+      facts([
+        ['Raw signing', app.settings.rawSign === 'off' ? 'Off' : `On (${app.settings.rawSign})`],
+        ['Auto-approve policy', policy ? h('span', {}, policy.label || 'Unnamed policy', h('details', { class: 'raw' }, h('summary', {}, 'Show the policy'), h('pre', {}, JSON.stringify(policy, null, 2)))) : 'None'],
+        ['Other settings', h('details', { class: 'raw' }, h('summary', {}, 'Show all settings'), h('pre', {}, JSON.stringify(app.settings, null, 2)))],
+      ]),
+      app.deleted
+        ? ''
+        : h(
+            'div',
+            { class: 'row' },
+            policy ? actionButton('Remove the policy', () => api('POST', `${base}/off`, { orgId, what: 'policy', expectedVersion: app.settingsVersion }), 'Remove the auto-approve policy? Auto-signing stops within 10 s.', true, { done: 'Policy removed.' }) : '',
+            app.settings.rawSign !== 'off' ? actionButton('Turn raw signing off', () => api('POST', `${base}/off`, { orgId, what: 'raw_sign', expectedVersion: app.settingsVersion }), 'Turn raw signing off? It stops at once.', true, { done: 'Raw signing is off.' }) : '',
+            app.environment === 'live' && app.settings.rawSign === 'off' ? actionButton('Propose raw signing on', () => api('POST', `${base}/changes`, { orgId, kind: 'raw_sign_on', expectedVersion: app.settingsVersion }), 'Propose raw signing (with approval)? The contacts are emailed; it takes effect after the delay.', false, { done: 'Raw signing proposed. It takes effect after the waiting period.' }) : '',
+            proposePolicy.button,
+          ),
+      proposePolicy.box,
+    ),
+  );
+
+  const now = Date.now();
+  main.append(
+    panel(
+      'Publishable keys',
+      { hint: 'The keys the partner’s pages use. Revoking one stops every page that uses it.' },
+      table(
+        ['Key', 'Created', 'State', ''],
+        app.keys.map((k) => {
+          const gone = k.revokedAt && k.revokedAt <= now;
+          return tr(mono(k.key), h('span', {}, time(k.createdAt), h('span', { class: 'sub' }, `by ${k.createdBy}`)), gone ? h('span', {}, badge('Revoked'), h('span', { class: 'sub' }, time(k.revokedAt))) : k.revokedAt ? h('span', {}, badge('Retiring', 'warning'), h('span', { class: 'sub' }, `stops ${time(k.revokedAt)}`)) : badge('Active', 'ok'), gone ? '' : actionButton('Revoke now', () => api('POST', `${base}/keys/${encodeURIComponent(k.id)}/revoke`, { orgId }), 'Revoke this key now? Every page using it stops working.', true, { done: 'Key revoked.' }));
+        }),
+        { empty: 'No key.' },
+      ),
+    ),
+  );
+
+  if (!app.deleted) {
+    main.append(
+      panel(
+        'Danger zone',
+        { danger: true },
+        h(
+          'div',
+          { class: 'stack' },
+          app.suspendedBy & 1 ? '' : h('div', {}, h('p', { class: 'hint' }, 'Hana’s own switch for this app: logins stop at once, until it is lifted above.'), actionButton('Suspend this app', () => api('POST', `${base}/suspend`, { bit: 1 }), 'Suspend this app? Logins stop at once.', true, { done: 'The app is suspended by Hana.' })),
+          h('div', {}, h('p', { class: 'hint' }, 'Deleting revokes every key. It can’t be undone.'), actionButton('Delete app', () => api('POST', `${base}/delete`), `Delete ${app.name}? Every key is revoked; this cannot be undone.`, true, { done: `${app.name} was deleted.` })),
+        ),
+      ),
+    );
+  }
 }
+
+/** "Put in force now": a member's change whose email went out, with who confirmed it and how (at least 20 characters). */
+function expediteControl(c) {
+  const d = disclosure(
+    'Put in force now…',
+    form(
+      [{ name: 'reason', type: 'textarea', label: 'Who confirmed it, and how', placeholder: 'Aisyah (owner) confirmed on a call to her listed number, 2026-11-06 10:15 UTC', required: true, minlength: 20, size: 'wide', help: 'At least 20 characters. Kept in the audit log.' }],
+      'Put in force now',
+      (v) => api('POST', `/api/changes/${encodeURIComponent(c.id)}/expedite`, { reason: v.reason }),
+      { confirm: 'Put this change in force now, without the rest of the waiting period?', done: 'The change is in force.', vertical: true },
+    ),
+  );
+  d.button.classList.add('small');
+  return h('div', { class: 'inline-action' }, d.button, d.box);
+}
+
+// ---- audit ----
 
 async function auditPage(main) {
   const params = new URLSearchParams(location.search);
   const keys = ['orgId', 'appId', 'actorKind', 'actorId', 'action'];
+  const labels = { orgId: 'Organisation id', appId: 'App id', actorKind: 'Done by', actorId: 'Actor id or email', action: 'Action' };
   const filterForm = h(
     'form',
     {
+      class: 'form',
       onsubmit: (ev) => {
         ev.preventDefault();
         const q = new URLSearchParams();
@@ -415,31 +1151,39 @@ async function auditPage(main) {
         render();
       },
     },
-    keys.map((k) => h('input', { name: k, placeholder: k, value: params.get(k) || '' })),
-    h('label', {}, 'from ', h('input', { name: 'from', type: 'date', value: params.get('from') ? new Date(Number(params.get('from'))).toISOString().slice(0, 10) : '' })),
-    h('label', {}, 'to ', h('input', { name: 'to', type: 'date', value: params.get('to') ? new Date(Number(params.get('to'))).toISOString().slice(0, 10) : '' })),
-    h('button', { type: 'submit' }, 'Filter'),
+    keys.map((k) =>
+      k === 'actorKind'
+        ? field({ name: k, type: 'select', label: labels[k], optional: false, value: params.get(k) || '', options: [{ value: '', label: 'Anyone' }, { value: 'hana', label: 'Hana staff' }, { value: 'member', label: 'Members' }, { value: 'system', label: 'System' }, { value: 'link', label: 'Account link' }] })
+        : field({ name: k, label: labels[k], optional: false, value: params.get(k) || '', placeholder: k === 'action' ? 'e.g. invite.issue' : k === 'orgId' ? 'org_…' : '' }),
+    ),
+    field({ name: 'from', type: 'date', label: 'From', optional: false, size: 'narrow', value: params.get('from') ? new Date(Number(params.get('from'))).toISOString().slice(0, 10) : '' }),
+    field({ name: 'to', type: 'date', label: 'To', optional: false, size: 'narrow', value: params.get('to') ? new Date(Number(params.get('to'))).toISOString().slice(0, 10) : '' }),
+    h('div', { class: 'form-actions' }, h('button', { type: 'submit', class: 'primary' }, 'Filter'), [...params.keys()].length ? link('/audit', 'Clear filters') : ''),
   );
   const csv = new URLSearchParams(params);
   csv.delete('cursor');
-  main.append(h('h1', {}, 'Audit'), filterForm, h('p', {}, h('a', { href: `/api/audit.csv?${csv}`, download: true }, 'Download CSV'), h('span', { class: 'muted' }, ' (console audit rows; with an organisation filter, its app changes too)')));
+  main.append(
+    pageHead('Audit log', { subtitle: 'Who did what in the partner console and here, and every staff read of the user directory.', actions: [h('a', { href: `/api/audit.csv?${csv}`, download: true, class: 'back' }, 'Download CSV')] }),
+    panel('Filter', { hint: 'The CSV has the console rows below and, with an organisation filter, its app changes too.' }, filterForm),
+  );
   const data = await api('GET', `/api/audit?${params}`);
   main.append(
-    h('h2', {}, 'Console audit'),
-    table(
-      ['Seq', 'At', 'Action', 'Org', 'App', 'Actor', 'Target', 'Outcome', 'Request', 'Details'],
-      data.rows.map((r) => tr(String(r.seq), time(r.at), r.action, r.orgId || '', r.appId || '', `${r.actorKind} ${r.actorEmail || r.actorId}`, r.target || '', r.outcome, r.requestId, h('code', {}, JSON.stringify(r.details)))),
+    panel(
+      'Console audit',
+      {},
+      table(
+        ['When', 'Action', 'Done by', 'Organisation', 'Target', 'Outcome', 'Details'],
+        data.rows.map((r) => tr(h('span', {}, time(r.at), h('span', { class: 'sub' }, `#${r.seq}`)), mono(r.action), actor(r.actorKind, r.actorEmail || r.actorId), h('span', {}, mono(r.orgId || ''), r.appId ? h('span', { class: 'sub' }, r.appId) : ''), mono(r.target || ''), r.outcome === 'ok' ? badge('ok', 'ok') : badge(r.outcome, 'bad'), h('span', {}, detailPairs(r.details), h('span', { class: 'sub' }, r.requestId)))),
+        { empty: 'No row matches these filters.' },
+      ),
+      data.next ? h('p', {}, link(`/audit?${new URLSearchParams([...[...params].filter(([k]) => k !== 'cursor'), ['cursor', data.next]])}`, 'Older rows')) : '',
     ),
+    panel('App changes', {}, data.changes ? changesTable(data.changes) : emptyState('Filter by an organisation', 'Its app changes are listed here.')),
   );
-  if (data.next) {
-    const next = new URLSearchParams(params);
-    next.set('cursor', data.next);
-    main.append(link(`/audit?${next}`, 'Older rows'));
-  }
-  main.append(h('h2', {}, 'App changes'), data.changes ? changesTable(data.changes) : h('p', { class: 'muted' }, 'Filter by an organisation to see its app changes.'));
   const dirForm = h(
     'form',
     {
+      class: 'form',
       onsubmit: (ev) => {
         ev.preventDefault();
         const q = new URLSearchParams(params);
@@ -453,30 +1197,61 @@ async function auditPage(main) {
         render();
       },
     },
-    h('input', { name: 'dirStaff', placeholder: 'staff email', value: params.get('dirStaff') || '' }),
-    h('select', { name: 'dirAction' }, ['', 'user_search', 'user_view', 'support_lookup', 'client_proof', 'unlock', 'unsuppress', 'revoke_tickets'].map((a) => h('option', { value: a, selected: params.get('dirAction') === a }, a || 'any action'))),
-    h('button', { type: 'submit' }, 'Filter issuer rows'),
+    field({ name: 'dirStaff', label: 'Staff email', optional: false, value: params.get('dirStaff') || '' }),
+    field({ name: 'dirAction', type: 'select', label: 'Action', optional: false, value: params.get('dirAction') || '', options: ['', 'user_search', 'user_view', 'support_lookup', 'client_proof', 'unlock', 'unsuppress', 'revoke_tickets'].map((a) => ({ value: a, label: a ? DIR_ACTION[a] : 'Any action' })) }),
+    h('div', { class: 'form-actions' }, h('button', { type: 'submit' }, 'Filter directory reads')),
   );
-  directoryAuditBlock(main, params, data.directory);
-  main.append(dirForm);
+  const dir = h('section', { class: 'panel' });
+  directoryAuditBlock(dir, params, data.directory);
+  dir.append(dirForm);
+  main.append(dir);
 }
+
+const DIR_ACTION = { user_search: 'User search', user_view: 'User opened', support_lookup: 'Support ID lookup', client_proof: 'Client proof', unlock: 'Unlock', unsuppress: 'Unsuppress', revoke_tickets: 'Revoke tickets' };
+
+// ---- feed and notices ----
+
+const FEED_SOURCE = { app_changes: 'App changes', security_events: 'Security events', console_audit: 'Console audit', member_notices: 'Member notices' };
 
 async function securityPage(main) {
   const d = await api('GET', '/api/security');
-  main.append(h('h1', {}, 'Feed and notices'));
-  if (d.opsError) main.append(h('p', { class: 'warn' }, d.opsError));
+  main.append(pageHead('Feed and notices', { subtitle: 'What the 5-minute job still has to email, and how far each feed has got. Normally the lists are empty and every feed is caught up.' }));
+  if (d.opsError) main.append(note('warn', 'The admin’s own state couldn’t be read', d.opsError));
+  const waiting = (d.notices.changes || []).length + (d.notices.members || []).length;
   main.append(
-    h('h2', {}, 'Blocking notices not yet sent'),
-    d.notices.changes === null ? h('p', { class: 'error' }, 'The API did not answer') : table(['Change', 'Kind', 'App', 'Org', 'Proposed', 'Contacts'], d.notices.changes.map((n) => tr(n.changeId, n.kind, n.appId, n.orgId, time(n.proposedAt), String(n.contacts)))),
-    d.notices.members === null ? h('p', { class: 'error' }, 'The console did not answer') : table(['Kind', 'Id', 'Org', 'Created'], d.notices.members.map((n) => tr(n.kind, n.id || '', n.orgId || '(new organisation)', time(n.createdAt)))),
-    h('h2', {}, 'Feed'),
-    d.feed ? table(['Source', 'Cursor', 'Moved', 'Lag'], Object.entries(d.feed).map(([k, v]) => tr(k, String(v.cursor), v.updatedAt ? time(v.updatedAt) : 'never', v.lagMs === null ? 'unknown' : v.lagMs === 0 ? 'caught up' : `${Math.round(v.lagMs / 60000)} min`))) : h('p', { class: 'muted' }, 'Unavailable'),
-    h('h2', {}, 'Watcher'),
-    h('p', {}, d.watcher ? `Next scope after: ${d.watcher.cursor || '(start)'}; moved ${d.watcher.updatedAt ? time(d.watcher.updatedAt) : 'never'}` : 'Unavailable'),
-    h('h2', {}, 'Last cron run'),
-    h('pre', {}, d.lastRun ? JSON.stringify(d.lastRun, null, 2) : 'None recorded'),
-    h('h2', {}, 'Security events not yet emailed'),
-    d.unnotifiedEvents === null ? h('p', { class: 'error' }, 'The API did not answer') : table(['Id', 'Detected', 'Kind', 'Org', 'App', 'Scope', 'Detail'], d.unnotifiedEvents.map((e) => tr(e.id, time(e.detectedAt), e.kind, e.orgId || '', e.appId || '', e.scopeId || '', h('code', {}, JSON.stringify(e.detail))))),
+    panel(
+      'Waiting to be emailed',
+      { hint: 'An app change, invite or owner grant starts only once its email is accepted. The job retries every 5 minutes; something listed for longer than that means emails are failing.' },
+      d.notices.changes === null
+        ? note('error', 'The API didn’t answer', 'App-change notices can’t be listed. Try again in a minute.')
+        : table(
+            ['Change', 'App', 'Organisation', 'Proposed', { text: 'Contacts', num: true }],
+            d.notices.changes.map((n) => tr(h('span', {}, CHANGE_KIND[n.kind] || n.kind, h('span', { class: 'sub' }, h('code', {}, n.changeId))), mono(n.appId), mono(n.orgId), when(n.proposedAt), String(n.contacts))),
+            { empty: 'No app-change email waiting.' },
+          ),
+      d.notices.members === null
+        ? note('error', 'The console didn’t answer', 'Invite and owner-grant notices can’t be listed. Try again in a minute.')
+        : table(
+            ['Notice', 'Id', 'Organisation', 'Created'],
+            d.notices.members.map((n) => tr(n.kind === 'invite' ? 'Invite' : n.kind === 'grant' ? 'Owner grant' : n.kind, mono(n.id || ''), n.orgId ? mono(n.orgId) : 'New organisation', when(n.createdAt))),
+            { empty: 'No invite or owner-grant email waiting.' },
+          ),
+      waiting ? '' : h('p', { class: 'hint' }, 'Everything has been emailed.'),
+    ),
+    panel(
+      'Security events not yet emailed',
+      {},
+      d.unnotifiedEvents === null ? note('error', 'The API didn’t answer', 'Try again in a minute.') : table(['Detected', 'Kind', 'Organisation', 'App', 'Scope', 'Details'], d.unnotifiedEvents.map((e) => tr(when(e.detectedAt), h('span', {}, mono(e.kind), h('span', { class: 'sub' }, e.id)), mono(e.orgId || ''), mono(e.appId || ''), mono(e.scopeId || ''), detailPairs(e.detail))), { empty: 'None: every security event has been emailed.' }),
+    ),
+    panel(
+      'Feeds',
+      { hint: 'Each feed emails new rows of its source to the security contacts. “Behind by” is how old its oldest unsent row is.' },
+      d.feed ? table(['Source', 'Position', 'Last moved', 'Behind by'], Object.entries(d.feed).map(([k, v]) => tr(FEED_SOURCE[k] || k, mono(String(v.cursor)), v.updatedAt ? when(v.updatedAt) : 'never', v.lagMs === null ? 'unknown' : v.lagMs === 0 ? badge('Caught up', 'ok') : badge(`${Math.round(v.lagMs / 60000)} min`, 'warning')))) : note('warn', 'The feeds can’t be read right now', ''),
+      h('h3', {}, 'On-chain watcher'),
+      h('p', {}, d.watcher ? ['Reads each scope on chain and emails a proposal nobody announced. Next scope after ', mono(d.watcher.cursor || '(the start)'), `; last moved ${d.watcher.updatedAt ? `${time(d.watcher.updatedAt)} (${relative(d.watcher.updatedAt)})` : 'never'}.`] : 'Unavailable.'),
+      h('h3', {}, 'Last run of the job'),
+      d.lastRun ? h('details', { class: 'raw' }, h('summary', {}, `Finished ${d.lastRun.at ? relative(d.lastRun.at) : ''}: show what it did`), h('pre', {}, JSON.stringify(d.lastRun, null, 2))) : h('p', { class: 'muted' }, 'No run recorded yet.'),
+    ),
   );
   ledgerSecurity(main, d.ledger);
 }
@@ -491,16 +1266,11 @@ async function securityPage(main) {
 function countdown(atMs) {
   if (typeof atMs !== 'number') return '';
   const d = atMs - Date.now();
-  const abs = Math.abs(d);
-  const days = Math.floor(abs / 86_400_000);
-  const hours = Math.floor((abs % 86_400_000) / 3_600_000);
-  const mins = Math.round((abs % 3_600_000) / 60_000);
-  const span = days ? `${days} d ${hours} h` : hours ? `${hours} h ${mins} min` : `${mins} min`;
-  return d > 0 ? `in ${span} (${time(atMs)})` : `due ${span} ago (${time(atMs)})`;
+  return d > 0 ? `in ${span(d)} (${time(atMs)})` : `due ${span(d)} ago (${time(atMs)})`;
 }
 
-const badge = (text, kind) => h('span', { class: `badge ${kind || ''}` }, text);
-const sev = (s) => badge(s, s);
+const SEVERITY = { critical: 'Critical', warning: 'Warning', info: 'Info' };
+const sev = (s) => badge(SEVERITY[s] || s, s);
 const external = (href, text) => (typeof href === 'string' && href.startsWith('https://') ? h('a', { href, target: '_blank', rel: 'noopener noreferrer' }, text) : text);
 const playbookLink = (p) => (p ? link(`/security/playbooks/${encodeURIComponent(p.id)}`, p.title) : h('span', { class: 'error' }, 'no playbook'));
 const plainJson = (v) => h('pre', {}, v === null || v === undefined ? 'None' : JSON.stringify(v, null, 2));
@@ -514,7 +1284,7 @@ function richText(s) {
 
 /** A command in a copyable block, verbatim (placeholders such as <env> stay as they are). */
 function commandBlock(cmd) {
-  const status = h('span', { class: 'muted' });
+  const status = h('span', { class: 'muted', role: 'status' });
   return h(
     'div',
     { class: 'command' },
@@ -523,12 +1293,13 @@ function commandBlock(cmd) {
       'button',
       {
         type: 'button',
+        class: 'small',
         onclick: async () => {
           try {
             await navigator.clipboard.writeText(cmd);
-            status.textContent = ' copied';
+            status.textContent = 'Copied';
           } catch {
-            status.textContent = ' copy failed: select the text instead';
+            status.textContent = 'Copy failed: select the text instead';
           }
         },
       },
@@ -539,44 +1310,47 @@ function commandBlock(cmd) {
 }
 
 function sourceError(what, part) {
-  return h('p', { class: 'error' }, `${what} unavailable: ${part.code}`);
+  const e = explain(new ApiError(0, part.code, ''));
+  return note('error', `${what} is unavailable`, e.title === 'The request failed' ? '' : `${e.title}. ${e.hint}`, h('p', { class: 'code' }, 'Error code ', h('code', {}, part.code)));
 }
 
 function alertsTable(alerts, opts = {}) {
   return table(
-    ['Alert', 'Severity', 'Kind', 'Title', 'Raised', 'State', 'Re-sends', 'Acknowledged', 'Playbook', ''],
+    ['Alert', 'Severity', 'Raised', 'State', 'Re-sends', 'Acknowledged', 'Playbook', ''],
     alerts.map((a) =>
       tr(
-        `#${a.id}`,
+        h('span', {}, h('strong', {}, `#${a.id} `), a.title, h('span', { class: 'sub' }, h('code', {}, a.kind))),
         sev(a.severity),
-        a.kind,
-        a.title,
-        time(a.createdAt),
-        a.open ? 'open (condition holds)' : `resolved ${time(a.resolvedAt)}`,
-        a.resendsUntilAck ? `${a.sendCount ?? 0} sent, last ${time(a.lastSentAt)}` : 'none (not critical)',
-        a.ackedAt ? `${time(a.ackedAt)} by ${a.ackedBy || '?'} via ${a.ackedVia || '?'}` : 'no',
+        when(a.createdAt),
+        a.open ? badge('Open', 'bad') : h('span', {}, 'Resolved', h('span', { class: 'sub' }, time(a.resolvedAt))),
+        a.resendsUntilAck ? h('span', {}, `${a.sendCount ?? 0} sent`, h('span', { class: 'sub' }, `last ${time(a.lastSentAt)}`)) : h('span', { class: 'muted' }, 'none (not critical)'),
+        a.ackedAt ? h('span', {}, time(a.ackedAt), h('span', { class: 'sub' }, `by ${a.ackedBy || '?'} via ${a.ackedVia || '?'}`)) : 'No',
         playbookLink(a.playbook),
         h(
           'div',
-          {},
+          { class: 'cell-actions' },
           a.canAck
             ? actionButton(
                 'Acknowledge',
                 () => api('POST', `/api/monitoring/alerts/${encodeURIComponent(a.id)}/ack`),
                 `Acknowledge alert #${a.id} (${a.kind})? This only stops its 15-minute re-sends. It does not clear the condition, and the watchdog keeps checking. Your Access identity is recorded.`,
+                false,
+                { done: `Alert #${a.id} acknowledged: its re-sends stop. The condition is still checked.` },
               )
             : '',
-          opts.details ? h('details', {}, h('summary', {}, 'Details and deliveries'), plainJson(a.details), h('p', { class: 'muted' }, `Deliveries: the last ${a.deliveries.length} of ${a.deliveriesTotal}`), plainJson(a.deliveries)) : '',
+          opts.details ? h('details', { class: 'raw' }, h('summary', {}, 'Details and deliveries'), plainJson(a.details), h('p', { class: 'muted' }, `Deliveries: the last ${a.deliveries.length} of ${a.deliveriesTotal}`), plainJson(a.deliveries)) : '',
         ),
       ),
     ),
+    { empty: opts.empty || 'No alert.' },
   );
 }
 
 function actionsTable(actions) {
   return table(
-    ['Action', 'At', 'Method', 'Reason', 'Result', 'Transaction', 'Args'],
-    actions.map((x) => tr(`#${x.id}`, time(x.at), x.method, x.reason || '', x.ok ? 'ok' : `failed${x.error ? `: ${x.error}` : ''}`, x.txHash ? external(x.txUrl, x.txHash) : '', h('code', {}, JSON.stringify(x.args)))),
+    ['When', 'What', 'Why', 'Result', 'Transaction', 'Arguments'],
+    actions.map((x) => tr(h('span', {}, time(x.at), h('span', { class: 'sub' }, `#${x.id}`)), mono(x.method), x.reason || '', x.ok ? badge('ok', 'ok') : h('span', {}, badge('Failed', 'bad'), x.error ? h('span', { class: 'sub' }, x.error) : ''), x.txHash ? external(x.txUrl, x.txHash) : '', detailPairs(x.args))),
+    { empty: 'The watchdog hasn’t acted on chain.' },
   );
 }
 
@@ -588,84 +1362,88 @@ async function monitoringPage(main) {
   const [d, alertPage, actions] = await Promise.all([api('GET', '/api/monitoring'), settle(api('GET', `/api/monitoring/alerts?${alertsQuery}`)), settle(api('GET', `/api/monitoring/actions${params.get('actionsCursor') ? `?cursor=${encodeURIComponent(params.get('actionsCursor'))}` : ''}`))]);
   const w = d.watchdog;
   const g = d.governance;
-  main.append(
-    h('h1', {}, 'Security & monitoring'),
-    h('p', { class: 'muted' }, `A view of the watchdog and the contract (${d.env}). The watchdog sends its own alerts; nothing here alerts or acts on chain. Read at ${time(d.now)}.`),
-  );
-  if (w.ok && w.silent) main.append(h('p', { class: 'banner critical' }, w.sinceLastRunMs === null ? 'The watchdog has never finished a run.' : `The watchdog has been silent for ${Math.round(w.sinceLastRunMs / 60000)} min: more than two ${Math.round(w.runIntervalMs / 60000)}-minute intervals. `, link('/security/playbooks/watchdog-down', 'Playbook: watchdog down')));
+  main.append(pageHead('Security & monitoring', { subtitle: `The watchdog and the contract for ${d.env}, read ${time(d.now)}. The watchdog sends its own alerts; nothing on this page alerts or acts on chain.` }));
+  if (w.ok && w.silent) main.append(h('p', { class: 'banner critical', role: 'alert' }, w.sinceLastRunMs === null ? 'The watchdog has never finished a run. ' : `The watchdog has been silent for ${Math.round(w.sinceLastRunMs / 60000)} min: more than two ${Math.round(w.runIntervalMs / 60000)}-minute intervals. `, link('/security/playbooks/watchdog-down', 'Playbook: watchdog down')));
 
   main.append(
-    h('h2', {}, 'Findings'),
-    d.findings.length ? h('ul', { class: 'findings' }, d.findings.map((f) => h('li', {}, sev(f.severity), ` ${f.source}: `, f.text, f.playbook ? [' ', playbookLink(f.playbook)] : ''))) : h('p', {}, 'None'),
+    panel(
+      'Needs attention',
+      {},
+      d.findings.length ? h('ul', { class: 'findings' }, d.findings.map((f) => h('li', {}, sev(f.severity), h('span', {}, f.text, h('span', { class: 'muted' }, ` (${f.source})`)), f.playbook ? playbookLink(f.playbook) : ''))) : emptyState('Nothing needs attention', 'The watchdog and the contract look as expected.'),
+    ),
   );
 
-  // The watchdog.
-  main.append(h('h2', {}, 'Watchdog'));
-  if (!w.ok) main.append(sourceError('The watchdog status', w));
+  if (!w.ok) main.append(panel('Watchdog', {}, sourceError('The watchdog status', w)));
   else {
     const hb = w.heartbeat || {};
     main.append(
-      table(
-        ['Env', 'Account', 'Network', 'Last run', 'Outcome', 'Heartbeat', 'Channels'],
-        [
-          tr(
-            w.env || '',
-            w.watchdogAccount || '',
-            w.network || '',
-            w.lastRun ? `#${w.lastRun.id} finished ${time(w.lastRun.finishedAt)}` : 'never',
-            w.lastRun ? w.lastRun.outcome || '' : '',
-            hb.configured === false ? 'not configured' : `${hb.ok ? 'ok' : 'failing'}, last ok ${time(hb.last_ok_at)}`,
+      panel(
+        'Open alerts',
+        { hint: 'Critical alerts are re-sent every 15 minutes until someone acknowledges them.' },
+        alertsTable(w.openAlerts, { empty: 'No open alert.' }),
+      ),
+      panel(
+        'Watchdog',
+        {},
+        h(
+          'div',
+          { class: 'stat-row' },
+          stat('Last run', w.lastRun ? `${relative(w.lastRun.finishedAt)} (#${w.lastRun.id}, ${w.lastRun.outcome || 'no outcome'})` : 'never'),
+          stat('Heartbeat', hb.configured === false ? 'not configured' : hb.ok ? `ok, ${relative(hb.last_ok_at)}` : `failing since ${time(hb.last_ok_at)}`),
+          stat(
+            'Alert channels',
             Object.entries(w.channels || {})
-              .map(([k, v]) => `${k}: ${v && v.configured ? 'on' : 'off'}`)
+              .map(([k, v]) => `${k} ${v && v.configured ? 'on' : 'off'}`)
               .join(', '),
           ),
-        ],
+          stat('Account', h('code', {}, w.watchdogAccount || '')),
+          stat('Network', w.network || ''),
+        ),
+        h('h3', {}, 'Checks of the last run'),
+        table(['Check', 'Outcome', 'Detail', 'Shown in'], w.checks.map((c) => tr(c.known ? h('span', {}, c.title, h('span', { class: 'sub' }, h('code', {}, c.id))) : h('span', { class: 'error' }, `${c.id} (no portal rendering)`), c.outcome === 'ok' ? badge('ok', 'ok') : c.outcome ? badge(c.outcome, 'bad') : h('span', { class: 'muted' }, 'not reported'), c.detail || '', c.shownIn || ''))),
       ),
-      h('h3', {}, 'Checks of the last run'),
-      table(['Check', 'What', 'Outcome', 'Detail', 'Shown in'], w.checks.map((c) => tr(c.known ? c.id : h('span', { class: 'error' }, `${c.id} (no portal rendering)`), c.title, c.outcome || 'not reported', c.detail || '', c.shownIn || ''))),
-      h('h3', {}, 'Open alerts'),
-      alertsTable(w.openAlerts),
     );
   }
 
-  // Governance.
-  main.append(h('h2', {}, 'Contract governance'));
-  if (!g.ok) main.append(sourceError('The governance state', g));
+  if (!g.ok) main.append(panel('Contract governance', {}, sourceError('The governance state', g)));
   else {
+    const pendingRows = [
+      g.pendingUpgrade ? tr('Contract upgrade', mono(g.pendingUpgrade.codeHash), countdown(g.pendingUpgrade.executableAtMs)) : null,
+      g.pendingOwner ? tr('Owner transfer', mono(g.pendingOwner.owner), countdown(g.pendingOwner.acceptableAtMs)) : null,
+      g.pendingWithdrawal ? tr('Withdrawal', `${near(g.pendingWithdrawal.amountYocto)} NEAR to ${g.pendingWithdrawal.receiver}`, countdown(g.pendingWithdrawal.executableAtMs)) : null,
+      ...['pendingIssuerKeyDelay', 'pendingGovernanceDelay', 'pendingChangeDelay'].filter((k) => g.delays && g.delays[k]).map((k) => tr('Shorter delay', `${k}: ${span(g.delays[k].valueMs)}`, countdown(g.delays[k].effectiveAtMs))),
+      ...(g.pendingConsoleAudiences || []).map((a) => tr('Console audience', `${a.provider} ${a.aud}`, countdown(a.effectiveAtMs))),
+    ];
     main.append(
-      h('p', {}, `Read ${time(g.readAtMs)} · state version ${g.stateVersion} · `, g.pause.paused ? h('strong', { class: 'error' }, 'PAUSED') : 'not paused', g.pause.unpausedAtMs ? ` · last unpause ${time(g.pause.unpausedAtMs)}` : '', g.pause.lastWatchdogPause ? ` · the watchdog last paused at ${time(g.pause.lastWatchdogPause.at)} (${g.pause.lastWatchdogPause.reason || ''})` : ''),
-      h('h3', {}, 'Pending issuer-key changes'),
-      table(
-        ['Change', 'Provider', 'Kid', 'Op', 'Proposer', 'Executable', "Google's JWKS (the API's fetch)", "Watchdog's sighting"],
-        (g.keyChanges || []).map((c) => tr(String(c.id), c.provider, c.kid, c.op, c.by, countdown(c.executableAtMs), c.jwks, c.watchdogSeen ? `seen since ${time(c.watchdogSeen.firstSeenAt)}` : 'never seen')),
+      panel(
+        'Contract governance',
+        { hint: `Read ${time(g.readAtMs)}, state version ${g.stateVersion}.` },
+        h(
+          'div',
+          { class: 'stat-row' },
+          stat('Contract', g.pause.paused ? badge('Paused', 'critical') : badge('Not paused', 'ok')),
+          g.pause.unpausedAtMs ? stat('Last unpaused', time(g.pause.unpausedAtMs)) : '',
+          g.pause.lastWatchdogPause ? stat('Last watchdog pause', `${time(g.pause.lastWatchdogPause.at)} (${g.pause.lastWatchdogPause.reason || 'no reason given'})`) : '',
+        ),
+        h('h3', {}, 'Queued owner actions'),
+        table(['What', 'Detail', 'When'], pendingRows, { empty: 'Nothing queued.' }),
+        h('p', { class: 'hint' }, link('/security/upgrades', 'Pending upgrades'), ': what partners see, with how to check a release.'),
+        h('h3', {}, 'Pending Google key changes'),
+        table(['Change', 'Key id', 'Proposed by', 'Executable', 'Google publishes it', 'Watchdog saw it'], (g.keyChanges || []).map((c) => tr(`#${c.id} ${c.op} (${c.provider})`, mono(c.kid), mono(c.by), countdown(c.executableAtMs), c.jwks, c.watchdogSeen ? `since ${time(c.watchdogSeen.firstSeenAt)}` : h('span', { class: 'error' }, 'never'))), { empty: 'No key change pending.' }),
+        h('h3', {}, 'Updater keys on the signer account'),
+        table(['Updater key', 'On the signer account', 'Permission'], (g.updaterKeyCheck || []).map((k) => tr(mono(k.publicKey), k.onAccount === null ? 'unknown' : k.onAccount ? badge('yes', 'ok') : badge('missing', 'bad'), k.permissionOk === null ? '' : k.permissionOk ? badge('ok', 'ok') : badge('wrong', 'bad')))),
+        table(['Other signer key', 'Kind', 'Receiver', 'Methods'], (g.otherSignerKeys || []).map((k) => tr(mono(k.publicKey), k.kind, k.receiverId || '', (k.methodNames || []).join(', '))), { empty: 'No other key.' }),
+        h('h3', {}, 'Watchdogs on chain'),
+        table(['Account', 'May confirm from', 'Can confirm'], (g.watchdogs || []).map((x) => tr(mono(x.accountId), time(x.confirmFromMs), x.canConfirm ? 'yes' : 'not yet'))),
+        h('details', { class: 'raw' }, h('summary', {}, 'The API’s Google-key job'), plainJson(g.updater)),
       ),
-      h('h3', {}, 'Pending upgrades and owner actions'),
-      table(
-        ['What', 'Detail', 'When'],
-        [
-          g.pendingUpgrade ? tr('Upgrade', g.pendingUpgrade.codeHash, countdown(g.pendingUpgrade.executableAtMs)) : null,
-          g.pendingOwner ? tr('Owner transfer', g.pendingOwner.owner, countdown(g.pendingOwner.acceptableAtMs)) : null,
-          g.pendingWithdrawal ? tr('Withdrawal', `${g.pendingWithdrawal.amountYocto} yoctoNEAR to ${g.pendingWithdrawal.receiver}`, countdown(g.pendingWithdrawal.executableAtMs)) : null,
-          ...['pendingIssuerKeyDelay', 'pendingGovernanceDelay', 'pendingChangeDelay'].filter((k) => g.delays && g.delays[k]).map((k) => tr('Delay decrease', `${k}: ${g.delays[k].valueMs} ms`, countdown(g.delays[k].effectiveAtMs))),
-          ...(g.pendingConsoleAudiences || []).map((a) => tr('Console audience', `${a.provider} ${a.aud}`, countdown(a.effectiveAtMs))),
-        ].filter(Boolean),
-      ),
-      h('p', {}, link('/security/upgrades', 'The pending-upgrades page'), ' (what partners see too).'),
-      h('h3', {}, 'Updater keys against the signer’s access keys'),
-      table(['Updater key', 'On the signer account', 'Permission'], (g.updaterKeyCheck || []).map((k) => tr(h('code', {}, k.publicKey), k.onAccount === null ? 'unknown' : k.onAccount ? 'yes' : h('span', { class: 'error' }, 'no'), k.permissionOk === null ? '' : k.permissionOk ? 'ok' : h('span', { class: 'error' }, 'wrong')))),
-      table(['Other signer key', 'Kind', 'Receiver', 'Methods'], (g.otherSignerKeys || []).map((k) => tr(h('code', {}, k.publicKey), k.kind, k.receiverId || '', (k.methodNames || []).join(', ')))),
-      h('h3', {}, 'Watchdogs on chain'),
-      table(['Account', 'May confirm from', 'Can confirm'], (g.watchdogs || []).map((x) => tr(x.accountId, time(x.confirmFromMs), x.canConfirm ? 'yes' : 'not yet'))),
-      h('h3', {}, "The API's JWKS cron"),
-      plainJson(g.updater),
     );
   }
 
-  // History.
-  main.append(h('h2', {}, 'Alert history'));
   const sevForm = h(
     'form',
     {
+      class: 'form',
       onsubmit: (ev) => {
         ev.preventDefault();
         const q = new URLSearchParams();
@@ -674,75 +1452,82 @@ async function monitoringPage(main) {
         render();
       },
     },
-    h('select', { name: 'severity' }, ['', 'critical', 'warning', 'info'].map((s) => h('option', { value: s, selected: params.get('severity') === s || undefined }, s || 'all severities'))),
-    h('button', { type: 'submit' }, 'Filter'),
+    field({ name: 'severity', type: 'select', label: 'Severity', optional: false, size: 'narrow', value: params.get('severity') || '', options: [{ value: '', label: 'All' }, { value: 'critical', label: 'Critical' }, { value: 'warning', label: 'Warning' }, { value: 'info', label: 'Info' }] }),
+    h('div', { class: 'form-actions' }, h('button', { type: 'submit' }, 'Filter')),
   );
-  main.append(sevForm);
-  if (!alertPage.ok) main.append(errorBox(alertPage.e));
+  const history_ = panel('Alert history', {}, sevForm);
+  if (!alertPage.ok) history_.append(errorBox(alertPage.e));
   else {
-    main.append(alertsTable(alertPage.v.alerts, { details: true }));
+    history_.append(alertsTable(alertPage.v.alerts, { details: true, empty: 'No alert of this severity.' }));
     if (alertPage.v.nextCursor) {
       const next = new URLSearchParams(params);
       next.set('cursor', String(alertPage.v.nextCursor));
-      main.append(link(`/security/monitoring?${next}`, 'Older alerts'));
+      history_.append(h('p', {}, link(`/security/monitoring?${next}`, 'Older alerts')));
     }
   }
-  main.append(h('h2', {}, "The watchdog's actions"));
-  if (!actions.ok) main.append(errorBox(actions.e));
+  const acts = panel('What the watchdog did on chain', {});
+  if (!actions.ok) acts.append(errorBox(actions.e));
   else {
-    main.append(actionsTable(actions.v.actions));
+    acts.append(actionsTable(actions.v.actions));
     if (actions.v.nextCursor) {
       const next = new URLSearchParams(params);
       next.set('actionsCursor', String(actions.v.nextCursor));
-      main.append(link(`/security/monitoring?${next}`, 'Older actions'));
+      acts.append(h('p', {}, link(`/security/monitoring?${next}`, 'Older actions')));
     }
   }
+  main.append(history_, acts);
 
   if (w.ok) {
     main.append(
-      h('h2', {}, 'Seen kids'),
-      table(['Provider', 'Kid', 'Source', 'First seen', 'Last seen'], w.seenKids.map((k) => tr(k.provider || '', k.kid || '', k.source || '', time(k.firstSeenAt), time(k.lastSeenAt)))),
-      h('h2', {}, 'Relayer funds'),
-      plainJson(w.relayerFunds),
-      h('h2', {}, 'Email issuer pins and the chain'),
-      plainJson(w.email),
-      h('h2', {}, 'Identity token keys'),
-      plainJson(w.identity),
-      h('h2', {}, 'Link stats'),
-      plainJson(w.linkStats),
-      h('h2', {}, 'Alert kinds and their playbooks'),
-      table(['Kind', 'Severity', 'Check', 'Description', 'Playbook'], w.alertKinds.map((k) => tr(k.kind, sev(k.severity), k.check || '', k.description || '', playbookLink(k.playbook)))),
+      panel(
+        'More from the watchdog',
+        {},
+        h('h3', {}, 'Google signing keys seen'),
+        table(['Provider', 'Key id', 'Source', 'First seen', 'Last seen'], w.seenKids.map((k) => tr(k.provider || '', mono(k.kid || ''), k.source || '', time(k.firstSeenAt), time(k.lastSeenAt)))),
+        h('details', { class: 'raw' }, h('summary', {}, 'Relayer funds'), plainJson(w.relayerFunds)),
+        h('details', { class: 'raw' }, h('summary', {}, 'Email issuer keys and the chain'), plainJson(w.email)),
+        h('details', { class: 'raw' }, h('summary', {}, 'Identity token keys'), plainJson(w.identity)),
+        h('details', { class: 'raw' }, h('summary', {}, 'Account link stats'), plainJson(w.linkStats)),
+        h('h3', {}, 'Alert kinds and their playbooks'),
+        table(['Kind', 'Severity', 'Check', 'What it means', 'Playbook'], w.alertKinds.map((k) => tr(mono(k.kind), sev(k.severity), mono(k.check || ''), k.description || '', playbookLink(k.playbook)))),
+      ),
     );
   }
-  main.append(
-    h('h2', {}, 'Security events'),
-    d.events.ok ? table(['Id', 'Detected', 'Kind', 'Org', 'App', 'Scope', 'Emailed', 'Detail'], d.events.events.map((e) => tr(e.id, time(e.detectedAt), e.kind, e.orgId || '', e.appId || '', e.scopeId || '', e.notifiedAt ? time(e.notifiedAt) : 'not yet', h('code', {}, JSON.stringify(e.detail))))) : sourceError('The security events', d.events),
-  );
+  main.append(panel('Security events', {}, d.events.ok ? table(['Detected', 'Kind', 'Organisation', 'App', 'Scope', 'Emailed', 'Details'], d.events.events.map((e) => tr(when(e.detectedAt), h('span', {}, mono(e.kind), h('span', { class: 'sub' }, e.id)), mono(e.orgId || ''), mono(e.appId || ''), mono(e.scopeId || ''), e.notifiedAt ? time(e.notifiedAt) : badge('not yet', 'warning'), detailPairs(e.detail))), { empty: 'No security event.' }) : sourceError('The security events', d.events)));
 }
+
+const stat = (label, value) => h('div', { class: 'stat' }, h('span', { class: 'label' }, label), h('span', { class: 'value' }, value));
 
 async function upgradesPage(main) {
   const { pendingUpgrades: p } = await api('GET', '/api/governance/pending-upgrades');
-  main.append(
-    h('h1', {}, 'Pending upgrades'),
-    h('p', { class: 'muted' }, `What the contract owner has queued for ${p.signer} (${p.env}), read ${time(p.readAtMs)}. Partners see the same page. Each waits the governance delay (${Math.round(p.governanceDelayMs / 60000)} min) so partners and users can react, for example by exporting keys.`),
-  );
-  if (p.paused) main.append(h('p', { class: 'banner critical' }, 'The contract is paused.'));
-  if (!p.anyPending) main.append(h('p', {}, 'Nothing is pending.'));
+  main.append(pageHead('Pending upgrades', { subtitle: `What the contract owner has queued for ${p.signer} (${p.env}), read ${time(p.readAtMs)}. Partners see the same page. Each waits the governance delay (${span(p.governanceDelayMs)}) so partners and users can react, for example by exporting keys.` }));
+  if (p.paused) main.append(h('p', { class: 'banner critical', role: 'alert' }, 'The contract is paused.'));
+  if (!p.anyPending) main.append(panel('Nothing is pending', {}, emptyState('Nothing is pending', 'No upgrade, owner transfer, withdrawal or delay change is queued.')));
   if (p.upgrade) {
     const u = p.upgrade;
-    main.append(h('h2', {}, 'Contract upgrade'), table(['Code hash', 'Proposed', 'Executable'], [tr(h('code', {}, u.codeHash), time(u.proposedAtMs), countdown(u.executableAtMs))]));
-    if (u.release) {
-      main.append(
-        h('p', {}, `Release ${u.release.version}, source commit `, h('code', {}, u.release.commit), '. Rebuild it and compare the hash:'),
-        commandBlock(u.release.buildCommand),
-        u.release.diffCommand ? [h('p', {}, 'The diff to the last release:'), commandBlock(u.release.diffCommand)] : h('p', { class: 'muted' }, 'The first published release: no earlier release to diff against.'),
-      );
-    } else main.append(h('p', { class: 'warn' }, 'This code hash is not a published release: no source commit or reproducible-build command is on record for it. Treat it as unexplained until it is published.'));
+    main.append(
+      panel(
+        'Contract upgrade',
+        {},
+        facts([
+          ['Code hash', mono(u.codeHash)],
+          ['Proposed', time(u.proposedAtMs)],
+          ['Can be executed', countdown(u.executableAtMs)],
+        ]),
+        u.release
+          ? [
+              h('p', {}, `Release ${u.release.version}, source commit `, mono(u.release.commit), '. Rebuild it and compare the hash:'),
+              commandBlock(u.release.buildCommand),
+              u.release.diffCommand ? [h('p', {}, 'What changed since the last release:'), commandBlock(u.release.diffCommand)] : h('p', { class: 'muted' }, 'The first published release: no earlier release to compare with.'),
+            ]
+          : note('warn', 'Not a published release', 'No source commit or reproducible-build command is on record for this code hash. Treat it as unexplained until it is published.'),
+      ),
+    );
   }
-  if (p.ownerTransfer) main.append(h('h2', {}, 'Owner transfer'), table(['New owner', 'Acceptable'], [tr(p.ownerTransfer.owner, countdown(p.ownerTransfer.acceptableAtMs))]));
-  if (p.withdrawal) main.append(h('h2', {}, 'Withdrawal'), table(['Receiver', 'Amount (yoctoNEAR)', 'Executable'], [tr(p.withdrawal.receiver, p.withdrawal.amountYocto, countdown(p.withdrawal.executableAtMs))]));
-  if (p.delayDecreases.length) main.append(h('h2', {}, 'Delay decreases'), table(['Delay', 'Now (ms)', 'Becomes (ms)', 'Effective'], p.delayDecreases.map((x) => tr(x.delay, String(x.currentMs), String(x.valueMs), countdown(x.effectiveAtMs)))));
-  if (p.consoleAudienceAdditions.length) main.append(h('h2', {}, 'Console audience additions'), table(['Provider', 'Audience', 'Effective'], p.consoleAudienceAdditions.map((x) => tr(x.provider, x.aud, countdown(x.effectiveAtMs)))));
+  if (p.ownerTransfer) main.append(panel('Owner transfer', {}, table(['New owner', 'Can be accepted'], [tr(mono(p.ownerTransfer.owner), countdown(p.ownerTransfer.acceptableAtMs))])));
+  if (p.withdrawal) main.append(panel('Withdrawal', {}, table(['Receiver', 'Amount (NEAR)', 'Can be executed'], [tr(mono(p.withdrawal.receiver), near(p.withdrawal.amountYocto), countdown(p.withdrawal.executableAtMs))])));
+  if (p.delayDecreases.length) main.append(panel('Shorter delays', {}, table(['Delay', 'Now', 'Becomes', 'Effective'], p.delayDecreases.map((x) => tr(x.delay, span(x.currentMs), span(x.valueMs), countdown(x.effectiveAtMs))))));
+  if (p.consoleAudienceAdditions.length) main.append(panel('New console sign-in clients', {}, table(['Provider', 'Audience', 'Effective'], p.consoleAudienceAdditions.map((x) => tr(x.provider, mono(x.aud), countdown(x.effectiveAtMs))))));
 }
 
 async function playbooksPage(main) {
@@ -751,6 +1536,8 @@ async function playbooksPage(main) {
   const filter = h(
     'form',
     {
+      class: 'form',
+      role: 'search',
       onsubmit: (ev) => {
         ev.preventDefault();
         const q = new URLSearchParams();
@@ -759,18 +1546,22 @@ async function playbooksPage(main) {
         render();
       },
     },
-    h('input', { name: 'q', placeholder: 'Search title, summary, signals, impact', value: params.get('q') || '' }),
-    h('select', { name: 'kind' }, ['', 'alert', 'incident'].map((s) => h('option', { value: s, selected: params.get('kind') === s || undefined }, s || 'alerts and incidents'))),
-    h('select', { name: 'severity' }, ['', 'critical', 'warning', 'info'].map((s) => h('option', { value: s, selected: params.get('severity') === s || undefined }, s || 'all severities'))),
-    h('button', { type: 'submit' }, 'Search'),
+    field({ name: 'q', type: 'search', label: 'Search', optional: false, value: params.get('q') || '', placeholder: 'e.g. relayer, paused, key' }),
+    field({ name: 'kind', type: 'select', label: 'Type', optional: false, size: 'narrow', value: params.get('kind') || '', options: [{ value: '', label: 'All' }, { value: 'alert', label: 'Alerts' }, { value: 'incident', label: 'Incidents' }] }),
+    field({ name: 'severity', type: 'select', label: 'Severity', optional: false, size: 'narrow', value: params.get('severity') || '', options: [{ value: '', label: 'All' }, { value: 'critical', label: 'Critical' }, { value: 'warning', label: 'Warning' }, { value: 'info', label: 'Info' }] }),
+    h('div', { class: 'form-actions' }, h('button', { type: 'submit', class: 'primary' }, 'Search')),
   );
   main.append(
-    h('h1', {}, 'Recovery playbooks'),
-    h('p', { class: 'muted' }, `From @hana-id/playbooks (last verified ${d.lastVerified}). Read-only: owner calls stay in scripts/ and the council's own signing.`),
-    filter,
-    table(
-      ['Playbook', 'Kind', 'Severity', 'Status', 'Summary', 'Alert kinds'],
-      d.playbooks.map((p) => tr(link(`/security/playbooks/${encodeURIComponent(p.id)}`, p.title), p.kind, sev(p.severity), p.status === 'planned' ? badge('planned: not built yet', 'warning') : 'live', p.summary, p.alertKinds.join(', '))),
+    pageHead('Playbooks', { subtitle: `What to do when an alert fires or an incident happens (last verified ${d.lastVerified}). Read-only: owner calls stay in scripts/ and the council’s own signing.` }),
+    panel('Find a playbook', {}, filter),
+    panel(
+      `${d.playbooks.length} playbook${d.playbooks.length === 1 ? '' : 's'}`,
+      {},
+      table(
+        ['Playbook', 'Severity', 'What it covers', 'Alert kinds'],
+        d.playbooks.map((p) => tr(h('span', {}, link(`/security/playbooks/${encodeURIComponent(p.id)}`, p.title), h('span', { class: 'sub' }, p.kind === 'incident' ? 'Incident' : 'Alert', p.status === 'planned' ? [' ', badge('planned: not built yet', 'warning')] : '')), sev(p.severity), p.summary, h('span', {}, p.alertKinds.map((k, i) => [i ? ', ' : '', h('code', {}, k)])))),
+        { empty: 'No playbook matches. Try fewer words.' },
+      ),
     ),
   );
 }
@@ -779,59 +1570,53 @@ async function playbookPage(main, id) {
   const { notes, playbook: p } = await api('GET', `/api/playbooks/${encodeURIComponent(id)}`);
   const list = (items) => (items.length ? h('ul', {}, items.map((x) => h('li', {}, richText(x)))) : h('p', { class: 'muted' }, 'None'));
   main.append(
-    h('p', {}, link('/security/playbooks', '← Playbooks')),
-    h('h1', {}, p.title),
-    h('p', {}, sev(p.severity), ' ', badge(p.kind), ' ', p.status === 'planned' ? badge('planned: not built yet', 'warning') : '', p.alertKinds.length ? ` Alert kinds: ${p.alertKinds.join(', ')}` : ''),
-    h('p', {}, richText(p.summary)),
-    h('div', { class: 'notice' }, h('strong', {}, 'Before you start'), h('ul', {}, notes.map((n) => h('li', {}, richText(n))))),
-    h('h2', {}, 'Signals'),
-    list(p.signals),
-    h('h2', {}, 'Impact'),
-    list(p.impact),
-    h('h2', {}, 'Steps'),
-    h(
-      'ol',
-      { class: 'steps' },
-      p.steps.map((s) => h('li', {}, h('p', {}, badge(s.who, 'who'), ' ', h('strong', {}, s.title)), h('p', {}, richText(s.detail)), s.commands.map(commandBlock))),
-    ),
-    h('h2', {}, 'Verify'),
-    list(p.verify),
-    h('h2', {}, 'Follow-ups'),
-    list(p.followUps),
-    h('h2', {}, 'References'),
-    h('ul', {}, p.refs.map((r) => h('li', {}, external(r.href, r.ref)))),
-    h('h2', {}, 'Related playbooks'),
-    p.related.length ? h('ul', {}, p.related.map((r) => h('li', {}, link(`/security/playbooks/${encodeURIComponent(r.id)}`, r.title)))) : h('p', { class: 'muted' }, 'None'),
+    pageHead(p.title, { back: { href: '/security/playbooks', text: 'Playbooks' }, subtitle: p.summary, meta: [sev(p.severity), badge(p.kind === 'incident' ? 'Incident' : 'Alert'), p.status === 'planned' ? badge('planned: not built yet', 'warning') : '', p.alertKinds.length ? h('span', {}, 'Alert kinds: ', p.alertKinds.map((k, i) => [i ? ', ' : '', h('code', {}, k)])) : ''] }),
+    note('info', 'Before you start', h('ul', {}, notes.map((n) => h('li', {}, richText(n))))),
+    h('div', { class: 'cols' }, panel('Signals', {}, list(p.signals)), panel('Impact', {}, list(p.impact))),
+    panel('Steps', {}, h('ol', { class: 'steps' }, p.steps.map((s) => h('li', {}, h('p', {}, badge(s.who, 'who'), ' ', h('strong', {}, s.title)), h('p', {}, richText(s.detail)), s.commands.map(commandBlock))))),
+    h('div', { class: 'cols' }, panel('Verify', {}, list(p.verify)), panel('Follow-ups', {}, list(p.followUps))),
+    h('div', { class: 'cols' }, panel('References', {}, h('ul', {}, p.refs.map((r) => h('li', {}, external(r.href, r.ref))))), panel('Related playbooks', {}, p.related.length ? h('ul', {}, p.related.map((r) => h('li', {}, link(`/security/playbooks/${encodeURIComponent(r.id)}`, r.title)))) : h('p', { class: 'muted' }, 'None'))),
   );
 }
 
 /** The usage ledger's part of the security screen (C12): nonce checks, rejection and settlement alerts, partitions. */
 function ledgerSecurity(main, l) {
-  main.append(h('h2', {}, 'Usage ledger'));
   if (!l || l.error) {
-    main.append(h('p', { class: 'warn' }, l && l.error ? l.error : 'Unavailable'));
+    main.append(panel('Usage ledger', {}, note('warn', 'The usage ledger can’t be read', l && l.error ? l.error : 'In an environment without usage capture this is expected.')));
     return;
   }
-  if (!l.relayerAccountSet) main.append(h('p', { class: 'warn' }, 'RELAYER_ACCOUNT is not set: settlement and the nonce check do not run.'));
   main.append(
-    l.partitionsLow ? h('p', { class: 'warn' }, `Only ${l.partitionsAhead} future monthly partition(s) of usage.events: an event outside every partition is lost. Check the API's and the admin's partition keepers.`) : h('p', {}, `Future monthly partitions: ${l.partitionsAhead}`),
-    h('h3', {}, 'Settlement backlog'),
-    h('p', {}, `${l.settlementBacklog.pending} relayed event(s) without a settlement${l.settlementBacklog.oldestAt ? `, the oldest from ${time(l.settlementBacklog.oldestAt)}` : ''}`),
-    h('h3', {}, 'Nonce cross-check (latest per relayer key)'),
-    table(
-      ['Relayer key', 'Checked', 'Nonce on chain', 'Result', 'Ledger rows since last', 'Alerted'],
-      l.nonceChecks.map((n) => tr(h('code', {}, n.relayerPk), time(n.checkedAt), n.chainNonce, n.explained ? 'explained' : h('strong', { class: 'error' }, 'UNEXPLAINED'), String(n.ledgerRelayedSinceLast), n.alertedAt ? time(n.alertedAt) : n.explained ? '' : 'not yet')),
-    ),
-    h('h3', {}, 'Rejection-rate alerts (D91)'),
-    table(
-      ['Org', 'Day', 'Relayed', 'Rejected after relay', 'Alerted'],
-      l.rejectionAlerts.map((a) => tr(a.orgId, a.day, String(a.relayed), `${a.rejected} (${((a.rejected * 100) / Math.max(1, a.relayed)).toFixed(1)}%)`, a.alertedAt ? time(a.alertedAt) : 'not yet')),
-    ),
-    h('h3', {}, 'Settlement refusals (not billed)'),
-    h('p', { class: 'muted' }, 'A relayed event is billed only when its transaction is its own: no other event carries it, and it is signed by the event’s pool key at its nonce.'),
-    table(
-      ['Detected', 'Reason', 'Org', 'Request', 'Event time', 'Transaction', 'Detail', 'Alerted'],
-      l.settlementAlerts.map((a) => tr(time(a.detectedAt), a.reason, a.orgId, a.requestId, time(a.at), h('code', {}, a.nearTx), h('code', {}, JSON.stringify(a.detail)), a.alertedAt ? time(a.alertedAt) : 'not yet')),
+    panel(
+      'Usage ledger',
+      { hint: 'Billing checks: every relayed transaction is settled and explained.' },
+      l.relayerAccountSet ? '' : note('warn', 'Settlement isn’t running', 'RELAYER_ACCOUNT is not set: settlement and the nonce check do not run.'),
+      l.partitionsLow ? note('warn', `Only ${l.partitionsAhead} future monthly partition(s) of usage events`, 'An event outside every partition is lost. Check the API’s and the admin’s partition jobs.') : '',
+      h(
+        'div',
+        { class: 'stat-row' },
+        stat('Future monthly partitions', String(l.partitionsAhead)),
+        stat('Waiting for settlement', `${l.settlementBacklog.pending} relayed event(s)${l.settlementBacklog.oldestAt ? `, oldest ${relative(l.settlementBacklog.oldestAt)}` : ''}`),
+      ),
+      h('h3', {}, 'Nonce check (latest per relayer key)'),
+      h('p', { class: 'hint' }, 'Each relayer key’s newest on-chain transaction must be in the ledger. An unexplained one may mean a leaked relayer key.'),
+      table(
+        ['Relayer key', 'Checked', 'Nonce on chain', 'Result', { text: 'Ledger rows since last', num: true }, 'Alerted'],
+        l.nonceChecks.map((n) => tr(mono(n.relayerPk), time(n.checkedAt), mono(n.chainNonce), n.explained ? badge('Explained', 'ok') : h('strong', { class: 'error' }, 'UNEXPLAINED'), String(n.ledgerRelayedSinceLast), n.alertedAt ? time(n.alertedAt) : n.explained ? '' : 'not yet')),
+        { empty: 'No check has run yet.' },
+      ),
+      h('h3', {}, 'High rejection rates'),
+      table(
+        ['Organisation', 'Day', { text: 'Relayed', num: true }, { text: 'Rejected after relay', num: true }, 'Alerted'],
+        l.rejectionAlerts.map((a) => tr(mono(a.orgId), a.day, String(a.relayed), `${a.rejected} (${((a.rejected * 100) / Math.max(1, a.relayed)).toFixed(1)}%)`, a.alertedAt ? time(a.alertedAt) : 'not yet')),
+        { empty: 'None.' },
+      ),
+      h('h3', {}, 'Settlement refusals (not billed)'),
+      h('p', { class: 'hint' }, 'A relayed event is billed only when its transaction is its own: no other event carries it, and it is signed by the event’s pool key at its nonce.'),
+      table(
+        ['Detected', 'Reason', 'Organisation', 'Request', 'Event time', 'Transaction', 'Details', 'Alerted'],
+        l.settlementAlerts.map((a) => tr(time(a.detectedAt), a.reason, mono(a.orgId), mono(a.requestId), time(a.at), mono(a.nearTx), detailPairs(a.detail), a.alertedAt ? time(a.alertedAt) : 'not yet')),
+        { empty: 'None.' },
+      ),
     ),
   );
 }
@@ -841,68 +1626,80 @@ function ledgerSecurity(main, l) {
 async function reportsPage(main) {
   const params = new URLSearchParams(location.search);
   const first = `${thisMonth()}-01`;
+  const options = await orgOptions();
   main.append(
-    h('h1', {}, 'Usage reports'),
-    queryForm(
-      '/reports',
-      [
-        { name: 'org', label: 'Organisation', type: 'select', options: [{ value: '', label: '(choose)' }, ...(await orgOptions())] },
-        { name: 'from', label: 'From', type: 'date', value: first },
-        { name: 'to', label: 'To', type: 'date', value: today() },
-        { name: 'by', label: 'By', type: 'select', options: ['day', 'month'] },
-        { name: 'apps', label: 'Apps', placeholder: 'app ids, comma separated (optional)' },
-      ],
-      'Show',
-    ),
-    h('p', { class: 'muted' }, 'At most 400 days and 100 apps. Gas is settled gas at FINAL; unsettled events are never billed. Late events (received after the month’s statement) are flagged.'),
-  );
-  const org = params.get('org');
-  if (!org) return;
-  const q = new URLSearchParams({ org, from: params.get('from') || first, to: params.get('to') || today(), by: params.get('by') || 'day' });
-  if (params.get('apps')) q.set('apps', lines(params.get('apps')).join(','));
-  const d = await api('GET', `/api/reports?${q}`);
-  main.append(
-    table(
-      ['Period', 'App or scope', 'Logins', 'Derives', 'Owner actions', 'Link actions', 'Identity tokens', 'Active users', 'New users', 'Tgas', 'Rejected Tgas', 'Error Tgas', 'NEAR', 'USD', 'Login p50 ms', 'Login p95 ms', 'Failures', 'Unsettled', 'After statement'],
-      d.rows.map((r) =>
-        tr(
-          r.period,
-          r.appId ? r.appId : `owner actions, ${r.scopeId}`,
-          String(r.logins),
-          String(r.derives),
-          String(r.ownerActions),
-          String(r.linkActions ?? 0),
-          String(r.identityTokens ?? 0),
-          String(r.activeUsers ?? ''),
-          String(r.newUsers),
-          r.tgas,
-          r.relayedRejectedTgas,
-          r.errorTgas,
-          near(r.burntYocto),
-          usd(r.usdMicros),
-          r.p50.login === undefined ? '' : String(r.p50.login),
-          r.p95.login === undefined ? '' : String(r.p95.login),
-          Object.entries(r.failuresByCode).map(([k, v]) => `${k}=${v}`).join('; '),
-          r.unsettled ? h('strong', {}, String(r.unsettled)) : '0',
-          r.afterStatement ? h('strong', { class: 'warn' }, `${r.afterStatement} late`) : '0',
-        ),
+    pageHead('Usage reports', { subtitle: 'Logins, derives and gas per app and day or month, for one organisation.' }),
+    panel(
+      'Choose',
+      { hint: 'At most 400 days and 100 apps. Gas is settled gas at FINAL; unsettled events are never billed. Events received after the month’s statement are flagged as late.' },
+      queryForm(
+        '/reports',
+        [
+          { name: 'org', label: 'Organisation', type: 'select', options: [{ value: '', label: 'Choose an organisation' }, ...options] },
+          { name: 'from', label: 'From', type: 'date', value: first, size: 'narrow' },
+          { name: 'to', label: 'To', type: 'date', value: today(), size: 'narrow' },
+          { name: 'by', label: 'Per', type: 'select', options: [{ value: 'day', label: 'Day' }, { value: 'month', label: 'Month' }], size: 'narrow' },
+          { name: 'apps', label: 'Only these apps', placeholder: 'app ids, comma separated', optional: true },
+        ],
+        'Show report',
       ),
     ),
   );
+  const org = params.get('org');
+  if (!org) {
+    main.append(emptyState('Choose an organisation', 'Its usage for the dates you pick is shown here.'));
+    return;
+  }
+  const q = new URLSearchParams({ org, from: params.get('from') || first, to: params.get('to') || today(), by: params.get('by') || 'day' });
+  if (params.get('apps')) q.set('apps', lines(params.get('apps')).join(','));
+  const d = await api('GET', `/api/reports?${q}`);
+  const x = (text) => ({ text, extra: true, num: true });
+  const n = (text) => ({ text, num: true });
+  const wrap = table(
+    ['Period', 'App or scope', n('Logins'), n('Derives'), x('Owner actions'), x('Link actions'), x('Identity tokens'), n('Active users'), n('New users'), n('Tgas'), x('Rejected Tgas'), x('Error Tgas'), n('NEAR'), n('USD'), n('Login p50 ms'), n('Login p95 ms'), 'Failures', n('Unsettled'), n('After statement')],
+    d.rows.map((r) => {
+      const cells = [
+        h('span', { class: 'nw' }, r.period),
+        r.appId ? mono(r.appId) : h('span', {}, 'Owner actions', h('span', { class: 'sub' }, h('code', {}, r.scopeId))),
+        String(r.logins),
+        String(r.derives),
+        String(r.ownerActions),
+        String(r.linkActions ?? 0),
+        String(r.identityTokens ?? 0),
+        String(r.activeUsers ?? ''),
+        String(r.newUsers),
+        r.tgas,
+        r.relayedRejectedTgas,
+        r.errorTgas,
+        near(r.burntYocto),
+        usd(r.usdMicros),
+        r.p50.login === undefined ? '' : String(r.p50.login),
+        r.p95.login === undefined ? '' : String(r.p95.login),
+        detailPairs(r.failuresByCode),
+        r.unsettled ? h('strong', {}, String(r.unsettled)) : '0',
+        r.afterStatement ? h('strong', { class: 'warn' }, `${r.afterStatement} late`) : '0',
+      ];
+      const extra = new Set([4, 5, 6, 10, 11]);
+      const numeric = new Set([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18]);
+      return h('tr', {}, cells.map((c, i) => h('td', { class: [extra.has(i) ? 'extra' : '', numeric.has(i) ? 'num' : ''].filter(Boolean).join(' ') || undefined }, c)));
+    }),
+    { class: 'compact', empty: 'No usage in this period.' },
+  );
+  const toggle = h('label', { class: 'check' }, h('input', { type: 'checkbox', onchange: (ev) => wrap.classList.toggle('compact', !ev.target.checked) }), 'Show every column');
+  main.append(panel(`Usage of ${(options.find((o) => o.value === org) || { label: org }).label}`, { actions: [toggle] }, wrap));
 }
 
 /** The on-screen statement (D92): the same labels and values as its PDF. */
 function statementBlock(st, view) {
-  return h(
-    'div',
+  return panel(
+    view.title,
     {},
-    h('h2', {}, view.title),
-    h('p', { class: 'notice' }, 'Statement hash (SHA-256 of the CSV): ', h('code', {}, st.csvSha256)),
-    table(['', ''], view.header.map(([k, v]) => tr(k, v))),
-    table(['App or scope', ...view.tableColumns], view.table.map((r) => tr(r.label, ...r.cells))),
-    table(['', ''], view.summary.map(([k, v]) => tr(k.startsWith('Billed') ? h('strong', {}, k) : k, k.startsWith('Billed') ? h('strong', {}, v) : v))),
-    view.notes.map((n) => h('p', { class: 'muted' }, n)),
-    h('p', {}, `Issued ${time(st.issuedAt)} by ${st.issuedBy}${st.pdfSha256 ? ` · PDF SHA-256 ${st.pdfSha256}` : ''}`),
+    note('info', 'Statement hash (SHA-256 of the CSV)', h('p', {}, h('code', {}, st.csvSha256))),
+    facts(view.header),
+    table(['App or scope', ...view.tableColumns.map((c) => ({ text: c, num: true }))], view.table.map((r) => h('tr', {}, h('td', {}, r.label), r.cells.map((c) => h('td', { class: 'num' }, c))))),
+    facts(view.summary.map(([k, v]) => [k, k.startsWith('Billed') ? h('strong', {}, v) : v])),
+    view.notes.map((n) => h('p', { class: 'hint' }, n)),
+    h('p', { class: 'hint' }, `Issued ${time(st.issuedAt)} by ${st.issuedBy}`, st.pdfSha256 ? ['. PDF SHA-256 ', h('code', {}, st.pdfSha256)] : ''),
   );
 }
 
@@ -911,18 +1708,25 @@ async function statementsPage(main) {
   const now = new Date();
   const prev = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).toISOString().slice(0, 7);
   main.append(
-    h('h1', {}, 'Monthly statements'),
-    queryForm(
-      '/statements',
-      [
-        { name: 'org', label: 'Organisation', type: 'select', options: [{ value: '', label: '(choose)' }, ...(await orgOptions())] },
-        { name: 'month', label: 'Month', type: 'month', value: prev },
-      ],
-      'Show',
+    pageHead('Monthly statements', { subtitle: 'Issue, read and download an organisation’s frozen monthly statement, and export its ledger.' }),
+    panel(
+      'Choose',
+      {},
+      queryForm(
+        '/statements',
+        [
+          { name: 'org', label: 'Organisation', type: 'select', options: [{ value: '', label: 'Choose an organisation' }, ...(await orgOptions())] },
+          { name: 'month', label: 'Month', type: 'month', value: prev, size: 'narrow' },
+        ],
+        'Show',
+      ),
     ),
   );
   const org = params.get('org');
-  if (!org) return;
+  if (!org) {
+    main.append(emptyState('Choose an organisation and a month', 'From the 3rd of each month, last month’s statement can be issued.'));
+    return;
+  }
   const month = params.get('month') || prev;
   const base = `/api/statements/${enc(org)}/${enc(month)}`;
   const d = await api('GET', base);
@@ -933,44 +1737,56 @@ async function statementsPage(main) {
     );
   } else {
     const b = d.blockers;
+    const early = Date.now() < d.issuableFrom;
+    const ready = !early && !b.pending && !b.missingRateDays.length;
     main.append(
-      h('h2', {}, `${month}: not issued`),
-      h('p', {}, `Can be issued from ${time(d.issuableFrom)}.`),
-      b.pending ? h('p', { class: 'warn' }, `${b.pending} relayed event(s) of the month are not settled yet (settlement runs every 15 minutes).`) : h('p', {}, 'Every relayed event of the month has a settlement.'),
-      b.missingRateDays.length ? h('p', { class: 'warn' }, `Days without a NEAR/USD rate: ${b.missingRateDays.join(', ')} (set them on the Rates screen).`) : h('p', {}, 'Every day of the month has a rate.'),
-      actionButton('Issue statement', () => api('POST', `${base}/issue`, {}), `Issue the ${month} statement for ${org}? It is frozen once issued: no change, no second statement.`),
+      panel(
+        `${month}: not issued yet`,
+        { hint: 'A statement is frozen once issued: no change and no second statement.' },
+        table(
+          ['Before issuing', 'State'],
+          [
+            tr('The month is over (from the 3rd of the next month)', early ? h('span', {}, badge('Not yet', 'warning'), h('span', { class: 'sub' }, `from ${time(d.issuableFrom)}`)) : badge('Done', 'ok')),
+            tr('Every relayed event is settled', b.pending ? h('span', {}, badge('Waiting', 'warning'), h('span', { class: 'sub' }, `${b.pending} event(s) left; settlement runs every 15 minutes`)) : badge('Done', 'ok')),
+            tr('Every day has a NEAR/USD rate', b.missingRateDays.length ? h('span', {}, badge('Missing', 'bad'), h('span', { class: 'sub' }, b.missingRateDays.join(', ')), link(`/rates?month=${enc(month)}`, 'Set them on the Rates screen')) : badge('Done', 'ok')),
+          ],
+        ),
+        ready ? actionButton('Issue statement', () => api('POST', `${base}/issue`, {}), `Issue the ${month} statement for ${org}? It is frozen once issued: no change, no second statement.`, false, { primary: true, large: true, done: `The ${month} statement is issued.` }) : unavailable('Issue statement', 'Available once every item above is done.'),
+      ),
     );
   }
-  const exportOut = h('div');
-  main.append(
-    h('h2', {}, 'Ledger export'),
-    h('p', { class: 'muted' }, d.statement ? 'As of the statement’s time, so its final gas sums to the statement’s Tgas and NEAR.' : 'As of now.'),
-    h(
-      'button',
-      {
-        onclick: async () => {
-          exportOut.replaceChildren(h('p', { class: 'muted' }, 'Exporting…'));
-          try {
-            const out = await api('POST', `/api/exports/${enc(org)}/${enc(month)}`, d.statement ? { asOf: d.statement.asOf } : {});
-            exportOut.replaceChildren(
-              h('p', { class: 'notice' }, `${out.rows} rows as of ${time(out.asOf)}; final gas ${units(out.finalGas, 12)} Tgas, ${near(out.finalTokens)} NEAR; SHA-256 `, h('code', {}, out.sha256)),
-              h('p', {}, h('a', { href: `/api/exports/${enc(org)}/${enc(month)}/${enc(out.file)}`, download: true }, 'Download the export'), h('span', { class: 'muted' }, ' (kept 30 days)')),
-            );
-          } catch (err) {
-            exportOut.replaceChildren(errorBox(err));
-          }
-        },
+  const exportOut = h('div', { role: 'status' });
+  const exportBtn = h(
+    'button',
+    {
+      type: 'button',
+      onclick: async () => {
+        exportBtn.disabled = true;
+        exportOut.replaceChildren(loading('Exporting…'));
+        try {
+          const out = await api('POST', `/api/exports/${enc(org)}/${enc(month)}`, d.statement ? { asOf: d.statement.asOf } : {});
+          exportOut.replaceChildren(
+            note('ok', `${out.rows} rows as of ${time(out.asOf)}`, h('p', {}, `Final gas ${units(out.finalGas, 12)} Tgas, ${near(out.finalTokens)} NEAR. SHA-256 `, h('code', {}, out.sha256)), h('p', {}, h('a', { href: `/api/exports/${enc(org)}/${enc(month)}/${enc(out.file)}`, download: true }, 'Download the export'), h('span', { class: 'muted' }, ' (kept 30 days)'))),
+          );
+        } catch (err) {
+          exportOut.replaceChildren(errorBox(err));
+        }
+        exportBtn.disabled = false;
       },
-      'Export ledger CSV',
-    ),
-    exportOut,
-    h('h2', {}, 'Statements of this organisation'),
+    },
+    'Export ledger CSV',
   );
+  main.append(panel('Ledger export', { hint: d.statement ? 'As of the statement’s time, so its final gas sums to the statement’s Tgas and NEAR.' : 'As of now.' }, exportBtn, exportOut));
   const list = await api('GET', `/api/statements?org=${enc(org)}`);
   main.append(
-    table(
-      ['Month', 'As of', 'CSV SHA-256', 'Issued', 'By'],
-      list.statements.map((s) => tr(link(`/statements?org=${enc(org)}&month=${enc(s.month)}`, s.month), time(s.asOf), h('code', {}, s.csvSha256), time(s.issuedAt), s.issuedBy)),
+    panel(
+      'Statements of this organisation',
+      {},
+      table(
+        ['Month', 'As of', 'CSV SHA-256', 'Issued', 'By'],
+        list.statements.map((s) => tr(link(`/statements?org=${enc(org)}&month=${enc(s.month)}`, s.month), time(s.asOf), mono(s.csvSha256), time(s.issuedAt), s.issuedBy)),
+        { empty: 'No statement issued yet.' },
+      ),
     ),
   );
 }
@@ -978,29 +1794,32 @@ async function statementsPage(main) {
 async function ratesPage(main) {
   const params = new URLSearchParams(location.search);
   const month = params.get('month') || thisMonth();
-  main.append(h('h1', {}, 'NEAR/USD rates'), queryForm('/rates', [{ name: 'month', label: 'Month', type: 'month', value: month }], 'Show'));
+  main.append(pageHead('NEAR/USD rates', { subtitle: 'Fetched daily from CoinGecko (the price at 00:00 UTC). A month with a statement is frozen. Testnet usage is valued at the mainnet price.' }), panel('Month', {}, queryForm('/rates', [{ name: 'month', label: 'Month', type: 'month', value: month, size: 'narrow' }], 'Show')));
   const d = await api('GET', `/api/rates?month=${enc(month)}`);
   main.append(
-    h('p', { class: 'muted' }, 'Fetched daily from CoinGecko (the price at 00:00 UTC of the day). A month with a statement is frozen. Testnet usage is valued at the mainnet price.'),
-    d.missing.length ? h('p', { class: 'warn' }, `Days without a rate: ${d.missing.join(', ')}`) : h('p', {}, 'Every past day of the month has a rate.'),
-    table(['Day', 'USD per NEAR', 'Source', 'Entered by', 'Set at'], d.rates.map((r) => tr(r.day, usd(r.usdMicros), r.source, r.enteredBy || '(fetched)', time(r.fetchedAt)))),
-    h('h2', {}, 'Override a rate'),
-    h('p', { class: 'muted' }, 'Audited: the old and new rate, who and why are kept with it. Refused once the month has a statement.'),
-    form(
-      [
-        { name: 'day', type: 'date', required: true },
-        { name: 'usd', placeholder: 'USD per NEAR, e.g. 2.345678', required: true },
-        { name: 'reason', placeholder: 'Why (10 to 500 characters)', required: true },
-      ],
-      'Set rate',
-      (v) => api('PUT', `/api/rates/${enc(v.day)}`, { usd: v.usd.trim(), reason: v.reason.trim() }),
-      { confirm: 'Set this rate by hand? It replaces the fetched one for that day.' },
+    panel(
+      `Rates for ${month}`,
+      {},
+      d.missing.length ? note('warn', 'Days without a rate', `${d.missing.join(', ')}. A statement can’t be issued until each has one: set it below.`) : h('p', {}, badge('Complete', 'ok'), ' Every past day of the month has a rate.'),
+      table(['Day', { text: 'USD per NEAR', num: true }, 'Source', 'Entered by', 'Set at'], d.rates.map((r) => h('tr', {}, h('td', {}, r.day), h('td', { class: 'num' }, usd(r.usdMicros)), h('td', {}, r.source === 'override' ? badge('Set by hand', 'warning') : r.source), h('td', {}, r.enteredBy || h('span', { class: 'muted' }, 'fetched')), h('td', {}, time(r.fetchedAt)))), { empty: 'No rate yet this month.' }),
     ),
-    h('h2', {}, 'Override history'),
-    table(['At', 'Day', 'USD', 'Was', 'By', 'Reason'], d.overrides.map((o) => tr(time(o.at), o.day, usd(o.usdMicros), o.previousUsdMicros ? `${usd(o.previousUsdMicros)} (${o.previousSource})` : '(none)', o.enteredBy, o.reason))),
+    panel(
+      'Set a rate by hand',
+      { hint: 'Audited: the old and new rate, who and why are kept with it. Refused once the month has a statement.' },
+      form(
+        [
+          { name: 'day', type: 'date', label: 'Day', required: true, size: 'narrow' },
+          { name: 'usd', label: 'USD per NEAR', placeholder: '2.345678', required: true, pattern: '\\d+(\\.\\d{1,6})?', size: 'narrow', help: 'Up to 6 decimal places.' },
+          { name: 'reason', label: 'Why', placeholder: 'CoinGecko returned a stale price for this day', required: true, minlength: 10, maxlength: 500, help: '10 to 500 characters, kept with the rate.' },
+        ],
+        'Set rate',
+        (v) => api('PUT', `/api/rates/${enc(v.day)}`, { usd: v.usd.trim(), reason: v.reason.trim() }),
+        { confirm: (v) => `Set ${v.day} to ${v.usd.trim()} USD per NEAR? It replaces the fetched rate for that day.`, done: (v) => `The rate for ${v.day} is set.` },
+      ),
+    ),
+    panel('Rates set by hand', {}, table(['At', 'Day', { text: 'USD', num: true }, 'Was', 'By', 'Why'], d.overrides.map((o) => tr(time(o.at), o.day, usd(o.usdMicros), o.previousUsdMicros ? `${usd(o.previousUsdMicros)} (${o.previousSource})` : '(none)', o.enteredBy, o.reason)), { empty: 'No rate of this month was set by hand.' })),
   );
 }
-
 
 // The monthly retention job (C13, D90): its runs with the rows per table, a warning until a run succeeds, the next
 // run, what waits for a person, the manual issuer step and the recent erasures.
@@ -1045,31 +1864,45 @@ const RETENTION_STATE = {
   running: 'a run is in progress',
   retry_later: 'the last run failed; it is retried an hour after the failure',
 };
+const RUN_STATUS = { ok: ['Complete', 'ok'], partial: ['Partial: continued', 'warning'], failed: ['Failed', 'bad'], running: ['Running', 'info'] };
 
 async function retentionPage(main) {
   const d = await api('GET', '/api/retention');
+  main.append(pageHead('Retention', { subtitle: 'The monthly job that deletes what is past its keep period: raw usage 24 months (then the uid is removed and the rows kept), settlement records 7 years, audit logs 5 years, the admin’s own state 400 days. It runs from the 1st at 01:00 UTC until one run of the month completes.' }));
+  if (d.warning) main.append(note('warn', 'Check the job', d.warning));
   main.append(
-    h('h1', {}, 'Retention'),
-    h('p', { class: 'muted' }, 'D90: raw usage 24 months (then the uid is removed and the rows kept), settlement records 7 years (whole months), audit logs 5 years, the admin’s own state 400 days. The job runs on the 1st at 01:00 UTC until one run of the month completes.'),
-  );
-  if (d.warning) main.append(h('p', { class: 'warn' }, d.warning));
-  main.append(
-    table(['Month', 'State', 'Due at', 'Next run'], [tr(d.month, RETENTION_STATE[d.state] || d.state, time(d.dueAt), time(d.nextRunAt))]),
-    h('h2', {}, 'Waiting for a person'),
-    d.due && (d.due.statements || d.due.rates || d.due.rateOverrides)
-      ? h('p', { class: 'warn' }, `Past 7 years: ${d.due.statements} statement(s)${d.due.oldestStatement ? ` (oldest ${d.due.oldestStatement})` : ''}, ${d.due.rates} rate(s), ${d.due.rateOverrides} rate override(s). Statements, rates and their files are deleted by hand after review (docs/operations.md "Retention").`)
-      : h('p', {}, 'Nothing past 7 years waits for review.'),
-    h('p', { class: 'muted' }, 'Not done by this job: the email issuer’s user directory (rows of apps deleted 30 days ago) and its staff audit (60 months). This Worker’s binding to the issuer only reads (DirectoryRpc, C8b): run `admin <env> retention:issuer --remote` after each month’s run (docs/operations.md "Retention").'),
-    h('h2', {}, 'Runs'),
-    table(
-      ['Run', 'Month', 'Started', 'Finished', 'Status', 'Calls', 'Rows', 'Error'],
-      d.runs.map((r) => tr(String(r.id), r.month, time(r.startedAt), time(r.finishedAt), r.status, String((r.rows && r.rows.calls) || 0), retentionRows(r.rows), r.error || '')),
+    panel(
+      `This month (${d.month})`,
+      {},
+      facts([
+        ['State', h('span', {}, d.state === 'done' ? badge('Done', 'ok') : d.state === 'retry_later' ? badge('Failed', 'bad') : badge(d.state === 'not_yet' ? 'Not due' : 'In progress', d.state === 'not_yet' ? '' : 'warning'), ' ', RETENTION_STATE[d.state] || d.state)],
+        ['Due at', time(d.dueAt)],
+        ['Next run', `${time(d.nextRunAt)} (${relative(d.nextRunAt)})`],
+      ]),
     ),
-    h('h2', {}, 'Erasures'),
-    h('p', { class: 'muted' }, 'Each `uid-erase` run: who ran it, under which ticket, in which scope, and how many rows each store lost. Never whom.'),
-    table(
-      ['At', 'Ticket', 'Operator', 'Scope', 'Rows'],
-      d.erasures.map((e) => tr(time(e.at), e.ticket, e.operator, e.scopeId, h('code', {}, JSON.stringify(e.rows)))),
+    panel(
+      'Waiting for a person',
+      {},
+      d.due && (d.due.statements || d.due.rates || d.due.rateOverrides)
+        ? note('warn', 'Past 7 years: review and delete by hand', `${d.due.statements} statement(s)${d.due.oldestStatement ? ` (oldest ${d.due.oldestStatement})` : ''}, ${d.due.rates} rate(s), ${d.due.rateOverrides} rate override(s). Statements, rates and their files are deleted by hand after review (docs/operations.md "Retention").`)
+        : emptyState('Nothing waits for review', 'No statement or rate is past 7 years.'),
+      h('h3', {}, 'Every month, after the job'),
+      h('p', { class: 'hint' }, 'This job doesn’t clean the email issuer’s user directory (rows of apps deleted 30 days ago) or its staff audit (60 months): this console only reads the issuer. Run this after each month’s run (docs/operations.md "Retention"):'),
+      commandBlock('admin <env> retention:issuer --remote'),
+    ),
+    panel(
+      'Runs',
+      {},
+      table(
+        ['Run', 'Month', 'Started', 'Finished', 'Result', { text: 'Calls', num: true }, 'Rows deleted', 'Error'],
+        d.runs.map((r) => tr(`#${r.id}`, r.month, time(r.startedAt), time(r.finishedAt), badge(...(RUN_STATUS[r.status] || [r.status, ''])), String((r.rows && r.rows.calls) || 0), retentionRows(r.rows), r.error ? h('code', {}, r.error) : '')),
+        { empty: 'The job hasn’t run yet.' },
+      ),
+    ),
+    panel(
+      'Erasures',
+      { hint: 'Each `uid-erase` run: who ran it, under which ticket, in which scope, and how many rows each store lost. Never whom.' },
+      table(['At', 'Ticket', 'Operator', 'Scope', 'Rows'], d.erasures.map((e) => tr(time(e.at), mono(e.ticket), e.operator, mono(e.scopeId), detailPairs(e.rows))), { empty: 'No erasure yet.' }),
     ),
   );
 }
@@ -1088,6 +1921,8 @@ const OPENED_MAX = 50;
 const KIND = { google: 'Google', email: 'Email', apple: 'Apple' };
 const kindLabel = (k) => KIND[k] || k;
 const chainLabel = (c) => (c === 'stellar' ? 'Stellar' : c === 'evm' ? 'EVM' : c);
+/** The help text of every support-reference field (the same rule for the console's and the issuer's audits). */
+const TICKET_HELP = 'Your ticket or case number, e.g. ZD-4127: letters, digits and . _ # : - only. It is recorded in the audit with your name.';
 /** Opens one identity's page from memory: the fixed path, the identity never in the URL or history state. */
 function openUser(provider, sub) {
   usersState.seq += 1;
@@ -1123,20 +1958,21 @@ const unverifiedBadge = () => h('span', { class: 'badge warning' }, 'UNVERIFIED 
 function directoryRows(users, warning) {
   const claims = users.filter((u) => u.unverifiedClaim).length;
   return [
-    claims ? h('p', { class: 'warn' }, `${warning} (${claims} row${claims === 1 ? '' : 's'} below, listed last).`) : '',
+    claims ? note('warn', '', `${warning} (${claims} row${claims === 1 ? '' : 's'} below, listed last).`) : '',
     table(
-      ['Address', 'Account', 'Verified', 'Hosted', 'Apps', 'Last seen', ''],
+      ['Email', 'Account', 'Verified', 'Google-hosted', { text: 'Apps', num: true }, 'Last seen', ''],
       users.map((u) =>
         tr(
           u.unverifiedClaim ? h('span', {}, u.email, ' ', unverifiedBadge()) : u.email,
           kindLabel(u.provider),
-          u.emailVerified ? 'yes' : 'no',
-          u.hosted === null ? '' : u.hosted ? 'Google-hosted' : 'no',
+          u.emailVerified ? 'yes' : h('strong', { class: 'warn' }, 'no'),
+          u.hosted === null ? '' : u.hosted ? 'yes' : 'no',
           String(u.appCount),
-          time(u.lastSeenMs),
+          when(u.lastSeenMs),
           userLink(u.provider, u.sub, 'Open'),
         ),
       ),
+      { empty: 'Nobody matches. Try fewer characters, or another account kind.' },
     ),
   ];
 }
@@ -1144,36 +1980,47 @@ function directoryRows(users, warning) {
 function walletUserBlock(u) {
   return h(
     'div',
-    {},
-    table(['User ID', 'Support ID', 'Internal id', 'Scope', 'Org', 'Created', 'Last seen'], [tr(h('code', {}, u.userId), h('code', {}, u.supportId), h('code', {}, u.internalId), u.scopeId, u.orgId || '', time(u.createdAt), time(u.lastSeenAt))]),
+    { class: 'match' },
+    facts([
+      ['User ID', mono(u.userId)],
+      ['Support ID', mono(u.supportId)],
+      ['Internal id', mono(u.internalId)],
+      ['Scope', mono(u.scopeId)],
+      ['Organisation', mono(u.orgId || '')],
+      ['Created', time(u.createdAt)],
+      ['Last seen', when(u.lastSeenAt)],
+    ]),
     // The Support ID and its activity: the lookup by User ID, the ticket carried over (in memory); staff press "Look up".
-    h('p', {}, h('button', { type: 'button', onclick: () => openLookup(u.userId, usersState.ticket, false) }, 'Support ID lookup: activity, shares, emails')),
+    h('p', {}, h('button', { type: 'button', onclick: () => openLookup(u.userId, usersState.ticket, false) }, 'Support ID lookup: activity, sessions, emails')),
+    h('h3', {}, 'Sign-in identities'),
     table(
       ['Account', 'Sub', 'Role', 'Status', 'Effective', 'Observed'],
       u.identities.map((i) => tr(kindLabel(i.provider), i.sub ? userLink(i.provider, i.sub, i.sub) : h('span', { class: 'muted' }, 'seen on chain only'), i.role, i.status, i.effectiveAt ? time(i.effectiveAt) : '', time(i.observedAt))),
     ),
+    h('h3', {}, 'Wallets'),
     table(
-      ['Wallet', 'Address', 'Key index', 'First seen', 'Last used'],
-      u.wallets.map((w) => tr(chainLabel(w.chain), h('span', {}, h('code', {}, w.address), w.sharedWith ? h('span', { class: 'badge warning' }, ` also listed by ${w.sharedWith} other user(s): not proof of ownership`) : ''), String(w.keyIndex), time(w.firstSeenAt), time(w.lastUsedAt))),
+      ['Chain', 'Address', { text: 'Key index', num: true }, 'First seen', 'Last used'],
+      u.wallets.map((w) => tr(chainLabel(w.chain), h('span', {}, h('code', {}, w.address), w.sharedWith ? h('span', { class: 'sub' }, h('span', { class: 'badge warning' }, `also listed by ${w.sharedWith} other user(s): not proof of ownership`)) : ''), String(w.keyIndex), time(w.firstSeenAt), time(w.lastUsedAt))),
+      { empty: 'No wallet yet.' },
     ),
   );
 }
 
 async function usersPage(main) {
   const f = usersState.form;
-  const results = h('div');
+  const results = h('div', { 'aria-live': 'polite' });
   const showResults = () => {
     const r = usersState.result;
     if (!r) return results.replaceChildren();
     if (usersState.kind === 'wallet') {
-      results.replaceChildren(h('h2', {}, 'Wallet directory'), r.users.length ? h('div', {}, r.users.map(walletUserBlock)) : h('p', { class: 'muted' }, 'No user has this id or wallet (a Support ID resolves only for users who logged in since the wallet directory’s deploy).'));
+      results.replaceChildren(panel('Wallet directory', {}, r.users.length ? h('div', {}, r.users.map(walletUserBlock)) : emptyState('Nobody has this id or wallet', 'A Support ID resolves only for users who logged in since the wallet directory’s deploy.')));
       return undefined;
     }
-    results.replaceChildren(h('h2', {}, 'Directory'), ...directoryRows(r.users, r.unverifiedWarning), r.next ? h('button', { type: 'button', onclick: () => runSearch(r.next) }, 'Next page') : '');
+    results.replaceChildren(panel(`Directory: ${r.users.length}${r.next ? '+' : ''} ${r.users.length === 1 ? 'person' : 'people'}`, {}, ...directoryRows(r.users, r.unverifiedWarning), r.next ? h('p', {}, h('button', { type: 'button', onclick: () => runSearch(r.next) }, 'Next page')) : ''));
     return undefined;
   };
   const runSearch = async (cursor) => {
-    results.replaceChildren(h('p', { class: 'muted' }, 'Searching…'));
+    results.replaceChildren(loading('Searching…'));
     try {
       const q = (f.q || '').trim();
       // A Support ID goes to the lookup (activity, shares, emails; D399), run at once when a support reference is given.
@@ -1187,7 +2034,8 @@ async function usersPage(main) {
       if (ticket) usersState.ticket = ticket;
       // A search that names one user (an id, a wallet, a sub or a full address) needs the support reference (D410).
       if (!ticket && ((q && (walletQuery(q) || fullAddress(q))) || (f.sub || '').trim())) {
-        results.replaceChildren(h('p', { class: 'error' }, 'A support reference is required to search by User ID, internal id, wallet, sub or a full address: it is recorded in the audit. Browsing (a part of an address, the account kind, an app, unverified claims) needs none.'));
+        results.replaceChildren(note('warn', 'Add a support reference', 'A support reference is required to search by User ID, internal id, wallet, sub or a full address: it is recorded in the audit. Browsing (a part of an address, the account kind, an app, unverified claims) needs none.'));
+        el.elements.ticket.focus();
         return;
       }
       if (q && walletQuery(q)) {
@@ -1207,10 +2055,12 @@ async function usersPage(main) {
       results.replaceChildren(errorBox(err));
     }
   };
-  const input = (name, placeholder) => h('input', { name, placeholder, value: f[name] || '' });
+  const filtersOpen = !!(f.provider || f.appId || f.sub || f.unverifiedOnly);
   const el = h(
     'form',
     {
+      class: 'form',
+      role: 'search',
       onsubmit: async (ev) => {
         ev.preventDefault();
         for (const k of ['q', 'provider', 'appId', 'sub', 'ticket']) f[k] = el.elements[k].value;
@@ -1218,26 +2068,33 @@ async function usersPage(main) {
         await runSearch(null);
       },
     },
-    input('q', 'Address (or ≥ 3 characters of one), User ID, Support ID, internal id or wallet'),
-    h('select', { name: 'provider' }, ['', 'email', 'google'].map((p) => h('option', { value: p, selected: f.provider === p }, p ? kindLabel(p) : 'Any account'))),
-    input('appId', 'App id'),
-    input('sub', 'Sub (exact)'),
-    h('label', {}, h('input', { name: 'unverifiedOnly', type: 'checkbox', checked: !!f.unverifiedOnly }), ' Unverified claims only'),
-    input('ticket', 'Support reference (for an id, wallet, sub or full address)'),
-    h('button', { type: 'submit' }, 'Search'),
+    field({ name: 'q', type: 'search', label: 'Email, User ID, Support ID or wallet', optional: false, value: f.q || '', placeholder: 'farah@ or HANA-2750-G5HM', help: 'Part of an email (3+ characters) browses. A full email, User ID (u1_…), internal id (hu_…) or wallet finds one person. A Support ID opens the Support ID lookup.' }),
+    field({ name: 'ticket', label: 'Support reference', optionalText: ' (to find one person)', value: f.ticket || '', placeholder: 'ZD-4127', help: TICKET_HELP }),
+    h(
+      'details',
+      { class: 'more', open: filtersOpen },
+      h('summary', {}, 'More filters'),
+      h(
+        'div',
+        { class: 'form' },
+        field({ name: 'provider', type: 'select', label: 'Account kind', optional: false, value: f.provider || '', options: ['', 'email', 'google'].map((p) => ({ value: p, label: p ? kindLabel(p) : 'Any account' })), size: 'narrow' }),
+        field({ name: 'appId', label: 'App id', value: f.appId || '', placeholder: 'app_…' }),
+        field({ name: 'sub', label: 'Sub (exact)', value: f.sub || '', help: 'Needs a support reference.' }),
+        field({ name: 'unverifiedOnly', type: 'checkbox', label: 'Unverified Google claims only', value: !!f.unverifiedOnly }),
+      ),
+    ),
+    h('div', { class: 'form-actions' }, h('button', { type: 'submit', class: 'primary' }, 'Search')),
   );
   main.append(
-    h('h1', {}, 'Users'),
-    h('p', { class: 'muted' }, 'Hana staff only: partners never see addresses. Every search and every opened user is audited by the email issuer under your Access identity, and each staff member can read at most 500 identities an hour and 2 000 a day (past that the reads stop and Hana security is emailed). There is no export: bulk reads stay with `admin <env> user:list --json`.'),
-    h('p', { class: 'muted' }, 'A Support ID (HANA-XXXX-XXXX) opens the Support ID lookup; a User ID, internal id or wallet lists the wallet directory’s users. Both, and a search by sub or by a full address, need a support reference (recorded in the audit); browsing by a part of an address, the account kind, an app or unverified claims doesn’t.'),
-    el,
+    pageHead('Users', { subtitle: 'Find a person by email, id or wallet, then open them to see their apps, wallets and on-chain accounts. Hana staff only: partners never see addresses.' }),
+    panel('Search', { hint: 'Every search and every opened user is audited by the email issuer under your Access identity. Each staff member can read at most 500 people an hour and 2 000 a day; past that the reads stop and Hana security is emailed. There is no export: bulk reads stay with `admin <env> user:list --json`.' }, el),
     results,
   );
   showResults();
 }
 
 function standingBlock(s) {
-  if (!s.ok) return h('div', {}, h('h3', {}, s.scopeId), h('p', { class: 'error' }, s.reason === 'not_read' ? 'Not read (this page’s call budget)' : 'chain unavailable'));
+  if (!s.ok) return h('div', { class: 'match' }, h('h3', {}, 'Scope ', mono(s.scopeId)), note('warn', '', s.reason === 'not_read' ? 'Not read: this page reads a limited number of scopes per opening.' : 'The chain didn’t answer: try opening the user again.'));
   const rows = [
     ['Status', s.status === 'pending' ? `pending: takes effect ${time(s.effectiveAtMs)}` : s.status],
     ['Path', h('code', {}, s.path)],
@@ -1246,49 +2103,51 @@ function standingBlock(s) {
     ['Read at block', s.blockHeight === null ? 'unknown' : String(s.blockHeight)],
   ];
   if (s.root) rows.splice(2, 0, ['Account root', userLink(s.root.provider, s.root.sub, `${kindLabel(s.root.provider)} ${s.root.sub}`)]);
-  const parts = [h('h3', {}, s.scopeId), table(['', ''], rows.map(([k, v]) => tr(k, v)))];
+  const parts = [h('h3', {}, 'Scope ', mono(s.scopeId)), facts(rows)];
   if (s.account) {
     parts.push(
       h('p', {}, 'Account root: ', userLink(s.account.root.provider, s.account.root.sub, `${kindLabel(s.account.root.provider)} ${s.account.root.sub}`), ` (epoch ${s.account.epoch})`),
       table(['Member', 'Sub', 'Key', 'Active', 'Effective'], s.account.members.map((m) => tr(kindLabel(m.provider), m.sub ? userLink(m.provider, m.sub, m.sub) : h('span', { class: 'muted' }, 'unknown to the wallet directory'), h('code', {}, m.key), m.active ? 'yes' : 'no', m.effectiveAtMs ? time(m.effectiveAtMs) : ''))),
     );
-  } else if (s.accountUnread) parts.push(h('p', { class: 'warn' }, `In an account; its members: ${s.accountUnread === 'not_read' ? 'not read (this page’s call budget)' : 'chain unavailable'}`));
-  return h('div', {}, parts);
+  } else if (s.accountUnread) parts.push(note('warn', '', `In an account; its members: ${s.accountUnread === 'not_read' ? 'not read (this page’s call budget)' : 'chain unavailable'}`));
+  return h('div', { class: 'match' }, parts);
 }
 
 function userDetail(main, d) {
   const u = d.user;
-  if (d.warning) main.append(h('p', { class: 'warn' }, d.warning));
-  main.append(h('h2', {}, 'Directory'));
-  if (!u) main.append(h('p', { class: 'muted' }, 'No directory row: the issuer hasn’t seen this identity log in since the directory’s deploy (D269), its app is on no issuer env, or a best-effort write was lost.'));
-  else {
-    main.append(
-      table(
-        ['', ''],
-        [
-          ['Address', u.unverifiedClaim ? h('span', {}, u.email, ' ', unverifiedBadge()) : u.email],
-          ['Account', kindLabel(u.provider)],
-          ['Sub', h('code', {}, u.sub)],
-          ['Verified', u.provider === 'email' ? 'yes (a sign-in code)' : u.emailVerified ? 'yes (Google)' : 'NO: Google hasn’t verified this address; the account only claims it'],
-          ['Hosted', u.hosted === null ? '' : u.hosted ? 'Google-hosted' : 'not Google-hosted'],
-          ['First seen', time(u.firstSeenMs)],
-          ['Last seen', time(u.lastSeenMs)],
-        ].map(([k, v]) => tr(k, v)),
-      ),
-      h('p', { class: 'muted' }, 'Seen times are when the issuer saw the identity log in; writes are best effort, so a lost one leaves a gap.'),
-    );
-  }
+  if (d.warning) main.append(note('warn', '', d.warning));
   main.append(
-    h('h2', {}, 'Apps'),
-    d.appNamesError ? h('p', { class: 'warn' }, `App names unavailable: ${d.appNamesError}`) : '',
-    table(['App', 'Id', 'Org', 'Environment', 'Scope', 'First seen', 'Last seen'], d.apps.map((a) => tr(a.name ? `${a.name}${a.deletedAt ? ' (deleted)' : ''}` : h('span', { class: 'muted' }, 'unknown'), h('code', {}, a.appId), a.orgId || '', a.environment || '', a.scopeId, time(a.firstSeenMs), time(a.lastSeenMs)))),
-    d.appsTruncated ? h('p', { class: 'muted' }, 'Only the 200 most recent apps are listed.') : '',
-    h('h2', {}, 'Wallets and ids'),
+    panel(
+      'Directory',
+      {},
+      !u
+        ? emptyState('No directory row', 'The issuer hasn’t seen this identity log in since the directory’s deploy, its app is on no issuer env, or a best-effort write was lost.')
+        : [
+            facts([
+              ['Email', u.unverifiedClaim ? h('span', {}, u.email, ' ', unverifiedBadge()) : u.email],
+              ['Account', kindLabel(u.provider)],
+              ['Sub', h('code', {}, u.sub)],
+              ['Verified', u.provider === 'email' ? 'yes (a sign-in code)' : u.emailVerified ? 'yes (Google)' : h('strong', { class: 'warn' }, 'NO: Google hasn’t verified this address; the account only claims it')],
+              ['Google-hosted', u.hosted === null ? '' : u.hosted ? 'yes' : 'no'],
+              ['First seen', time(u.firstSeenMs)],
+              ['Last seen', when(u.lastSeenMs)],
+            ]),
+            h('p', { class: 'hint' }, 'Seen times are when the issuer saw the identity log in; writes are best effort, so a lost one leaves a gap.'),
+          ],
+    ),
+    panel(
+      'Apps',
+      {},
+      d.appNamesError ? note('warn', '', `App names unavailable: ${d.appNamesError}`) : '',
+      table(['App', 'Organisation', 'Environment', 'Scope', 'First seen', 'Last seen'], d.apps.map((a) => tr(a.name ? named(`${a.name}${a.deletedAt ? ' (deleted)' : ''}`, a.appId) : named(h('span', { class: 'muted' }, 'unknown'), a.appId), mono(a.orgId || ''), a.environment ? envBadge(a.environment) : '', mono(a.scopeId), time(a.firstSeenMs), time(a.lastSeenMs))), { empty: 'No app has seen this identity.' }),
+      d.appsTruncated ? h('p', { class: 'hint' }, 'Only the 200 most recent apps are listed.') : '',
+    ),
   );
-  if (d.walletUsers === null) main.append(h('p', { class: 'error' }, `Wallet directory unavailable: ${d.walletError || 'error'}`));
-  else if (d.walletUsers.length === 0) main.append(h('p', { class: 'muted' }, 'No wallet-directory user holds this identity yet (a user appears at their next login).'));
-  else main.append(...d.walletUsers.map(walletUserBlock));
-  main.append(h('h2', {}, 'On chain, per scope (read live)'), d.chain.length ? h('div', {}, d.chain.map(standingBlock)) : h('p', { class: 'muted' }, 'No scope to read.'));
+  const wallets = panel('Wallets and ids', {});
+  if (d.walletUsers === null) wallets.append(note('error', 'Wallet directory unavailable', d.walletError || 'error'));
+  else if (d.walletUsers.length === 0) wallets.append(emptyState('No wallet-directory user yet', 'A user appears at their next login.'));
+  else wallets.append(...d.walletUsers.map(walletUserBlock));
+  main.append(wallets, panel('On chain, per scope (read live)', {}, d.chain.length ? h('div', {}, d.chain.map(standingBlock)) : emptyState('No scope to read', '')));
 }
 
 async function userPage(main) {
@@ -1296,20 +2155,21 @@ async function userPage(main) {
   const who = st && typeof st.user === 'number' ? usersState.opened.get(st.user) : undefined;
   if (!who) {
     // A reload, a copied link or a user forgotten past OPENED_MAX: the identity was never in the URL, so open it again.
-    main.append(h('h1', {}, 'No user open'), h('p', { class: 'muted' }, 'An opened user lives in this tab’s memory only, never in the URL: search Users and open them again.'), link('/users', 'Users'));
+    main.append(pageHead('No user open', { back: { href: '/users', text: 'Users' }, subtitle: 'An opened user lives in this tab’s memory only, never in the URL, so a reload or a copied link opens nobody. Search Users and open them again.' }), h('p', {}, link('/users', 'Search Users')));
     return;
   }
   const { provider, sub } = who;
-  main.append(h('h1', {}, `${kindLabel(provider)} ${sub}`), link('/users', 'Back to the search'));
-  const out = h('div');
+  main.append(pageHead([`${kindLabel(provider)} `, h('code', {}, sub)], { back: { href: '/users', text: 'Back to the search' }, subtitle: 'Nothing about this person is read until you give a support reference.' }));
+  const out = h('div', { 'aria-live': 'polite' });
   const el = h(
     'form',
     {
+      class: 'form',
       onsubmit: async (ev) => {
         ev.preventDefault();
         const ticket = el.elements.ticket.value.trim();
         usersState.ticket = ticket;
-        out.replaceChildren(h('p', { class: 'muted' }, 'Reading…'));
+        out.replaceChildren(loading('Reading…'));
         try {
           const d = await api('POST', '/api/users/get', { provider, sub, ticket });
           out.replaceChildren();
@@ -1319,27 +2179,27 @@ async function userPage(main) {
         }
       },
     },
-    h('label', {}, 'Support reference (required to open a user; recorded in the issuer’s audit) ', h('input', { name: 'ticket', required: true, maxlength: 64, pattern: '[A-Za-z0-9._#:\\-]{1,64}', value: usersState.ticket })),
-    h('button', { type: 'submit' }, 'Open'),
+    h('label', { class: 'field', for: 'user-ticket' }, h('span', { class: 'label' }, 'Support reference'), h('input', { name: 'ticket', required: true, maxlength: 64, pattern: '[A-Za-z0-9._#:\\-]{1,64}', value: usersState.ticket, id: 'user-ticket', placeholder: 'ZD-4127', 'aria-describedby': 'user-ticket-help' }), h('span', { class: 'help', id: 'user-ticket-help' }, `Required to open a person. ${TICKET_HELP}`)),
+    h('div', { class: 'form-actions' }, h('button', { type: 'submit', class: 'primary' }, 'Open')),
   );
-  main.append(el, out);
+  main.append(panel('Open this person', {}, el), out);
 }
 
 function directoryAuditBlock(main, params, dir) {
-  main.append(h('h2', {}, 'Issuer directory reads and staff actions'));
+  main.append(h('div', { class: 'panel-head' }, h('h2', {}, 'User directory reads and issuer staff actions')));
   if (dir === null || dir === undefined) {
-    main.append(h('p', { class: 'muted' }, 'No email issuer in this environment.'));
+    main.append(emptyState('No email issuer in this environment', ''));
     return;
   }
   if (dir.error) {
-    main.append(h('p', { class: 'error' }, `Unavailable: ${dir.error}`));
+    main.append(sourceError('The issuer’s audit', { code: dir.error }));
     return;
   }
-  main.append(table(['Id', 'At', 'Staff', 'Action', 'Ticket', 'Scope', 'Subject', 'Detail'], dir.rows.map((r) => tr(String(r.id), time(r.atMs), r.staff, r.action, r.ticket || '', r.scopeId || '', r.subject || '', h('code', {}, r.detail === null ? '' : JSON.stringify(r.detail))))));
+  main.append(table(['When', 'Staff', 'Action', 'Ticket', 'Scope', 'Subject', 'Details'], dir.rows.map((r) => tr(h('span', {}, time(r.atMs), h('span', { class: 'sub' }, `#${r.id}`)), r.staff, DIR_ACTION[r.action] || r.action, mono(r.ticket || ''), mono(r.scopeId || ''), r.subject || '', r.detail === null ? '' : detailPairs(r.detail))), { empty: 'No read matches.' }));
   if (dir.next) {
     const next = new URLSearchParams(params);
     next.set('dirBefore', String(dir.next));
-    main.append(link(`/audit?${next}`, 'Older issuer rows'));
+    main.append(h('p', {}, link(`/audit?${next}`, 'Older issuer rows')));
   }
 }
 
@@ -1360,6 +2220,7 @@ function openLookup(query, ticket, run) {
   supportState.result = null;
   supportState.wallet = null;
   supportState.run = !!(run && ticket);
+  focusHeading = true;
   go('/support');
 }
 
@@ -1388,11 +2249,18 @@ const outcomeBadge = (o) => (o === 'ok' ? badge('ok', 'info') : o === 'rejected'
 function supportMatchBlock(m, k, n, activity, ledger, emails, days) {
   const u = m.user;
   const appName = new Map(m.apps.map((a) => [a.appId, a.name]));
-  const appLabel = (id) => (id ? `${appName.get(id) || 'unknown app'} (${id})` : '');
+  const appLabel = (id) => (id ? named(appName.get(id) || 'unknown app', id) : '');
   const parts = [
-    h('h2', {}, n > 1 ? `Match ${k + 1} of ${n}: ` : '', h('code', {}, u.supportId), ' · ', h('code', {}, u.userId)),
-    table(['User ID', 'Support ID', 'Internal id', 'Scope', 'Org', 'Created', 'Last seen'], [tr(h('code', {}, u.userId), h('code', {}, u.supportId), h('code', {}, u.internalId), u.scopeId, u.orgId || '', time(u.createdAt), time(u.lastSeenAt))]),
-    h('h3', {}, 'Identities'),
+    facts([
+      ['User ID', mono(u.userId)],
+      ['Support ID', mono(u.supportId)],
+      ['Internal id', mono(u.internalId)],
+      ['Scope', mono(u.scopeId)],
+      ['Organisation', mono(u.orgId || '')],
+      ['Created', time(u.createdAt)],
+      ['Last seen', when(u.lastSeenAt)],
+    ]),
+    h('h3', {}, 'Sign-in identities'),
     table(
       ['Account', 'Email (the issuer’s directory)', 'Sub', 'Role', 'Status', 'Effective', 'Observed'],
       u.identities.map((i) =>
@@ -1409,57 +2277,63 @@ function supportMatchBlock(m, k, n, activity, ledger, emails, days) {
     ),
     h('h3', {}, 'Wallets'),
     table(
-      ['Wallet', 'Address', 'Key index', 'First seen', 'Last used'],
-      u.wallets.map((w) => tr(chainLabel(w.chain), h('span', {}, h('code', {}, w.address), w.sharedWith ? h('span', { class: 'badge warning' }, ` also listed by ${w.sharedWith} other user(s): not proof of ownership`) : ''), String(w.keyIndex), time(w.firstSeenAt), time(w.lastUsedAt))),
+      ['Chain', 'Address', { text: 'Key index', num: true }, 'First seen', 'Last used'],
+      u.wallets.map((w) => tr(chainLabel(w.chain), h('span', {}, h('code', {}, w.address), w.sharedWith ? h('span', { class: 'sub' }, h('span', { class: 'badge warning' }, `also listed by ${w.sharedWith} other user(s): not proof of ownership`)) : ''), String(w.keyIndex), time(w.firstSeenAt), time(w.lastUsedAt))),
+      { empty: 'No wallet yet.' },
     ),
     h('h3', {}, 'Apps of the scope'),
-    table(['App', 'Id', 'Org', 'Environment', 'Persistence', 'Deleted'], m.apps.map((a) => tr(a.name, h('code', {}, a.appId), a.orgId, a.environment || 'unknown', a.persistence, a.deletedAt ? time(a.deletedAt) : ''))),
+    table(['App', 'Organisation', 'Environment', 'Persistence', 'Deleted'], m.apps.map((a) => tr(named(a.name, a.appId), mono(a.orgId), a.environment ? envBadge(a.environment) : 'unknown', a.persistence, a.deletedAt ? time(a.deletedAt) : ''))),
     h('h3', {}, 'Vault shares that haven’t expired'),
-    h('p', { class: 'muted' }, 'A share keeps the wallet across reloads (persistence "session"). Live: not revoked, and before its idle and absolute limits.'),
-    table(['App', 'Key index', 'Created', 'Idle until', 'Expires', 'Revoked', 'Live'], m.shares.map((x) => tr(appLabel(x.appId), String(x.keyIndex), time(x.createdAt), time(x.idleUntil), time(x.absExpiresAt), x.revokedAt ? time(x.revokedAt) : '', x.live ? badge('live', 'info') : 'no'))),
+    h('p', { class: 'hint' }, 'A share keeps the wallet across reloads (persistence "session"). Live: not revoked, and before its idle and absolute limits.'),
+    table(['App', { text: 'Key index', num: true }, 'Created', 'Idle until', 'Expires', 'Revoked', 'Live'], m.shares.map((x) => tr(appLabel(x.appId), String(x.keyIndex), time(x.createdAt), time(x.idleUntil), time(x.absExpiresAt), x.revokedAt ? time(x.revokedAt) : '', x.live ? badge('live', 'info') : 'no')), { empty: 'No live share.' }),
     h('h3', {}, `App changes (last ${days} days, at most 50)`),
     changesTable(m.changes),
     h('h3', {}, `Ledger events (ok logins, sessions and derives; last ${days} days, at most 400)`),
   ];
-  if (!ledger.available || activity === null) parts.push(h('p', { class: 'warn' }, `Not shown: ${ledger.available ? 'ledger unavailable' : ledger.reason}`));
+  if (!ledger.available || activity === null) parts.push(note('warn', '', `Not shown: ${ledger.available ? 'ledger unavailable' : ledger.reason}`));
   else {
     parts.push(
       table(
-        ['At', 'Request ID', 'App', 'Endpoint', 'Status', 'Latency ms', 'Relayed', 'NEAR tx'],
+        ['At', 'Request ID', 'App', 'Endpoint', { text: 'Status', num: true }, { text: 'Latency ms', num: true }, 'Relayed', 'NEAR tx'],
         activity.map((a) => tr(time(a.at), h('code', {}, a.requestId), appLabel(a.appId), a.endpoint, String(a.status), String(a.latencyMs), a.relayed ? 'yes' : 'no', a.nearTx ? h('code', {}, a.nearTx) : '')),
+        { empty: 'No ledger event in this window.' },
       ),
-      h('p', { class: 'muted' }, 'Failures carry no user id in the ledger, by design: look them up by the request IDs the partner gives.'),
+      h('p', { class: 'hint' }, 'Failures carry no user id in the ledger, by design: look them up by the request IDs the partner gives.'),
     );
   }
-  return h('div', {}, parts);
+  return panel(n > 1 ? [`Match ${k + 1} of ${n}: `, h('code', {}, u.supportId), ' ', h('code', {}, u.userId)] : ['User ', h('code', {}, u.supportId), ' ', h('code', {}, u.userId)], {}, parts);
 }
 
 function supportResult(out, v, askedIds) {
   const emails = new Map((v.emails || []).map((e) => [emailKey(e.provider, e.sub), e]));
   const by = v.query.kind === 'supportId' ? 'Support ID' : v.query.kind === 'userId' ? 'User ID' : 'internal id';
-  out.append(h('p', { class: 'muted' }, `Looked up by ${by}, since ${time(v.since)} (${v.days} days). Recorded in the audit under your Access identity.`));
-  if (!v.ledger.available) out.append(h('p', { class: 'warn' }, `Ledger unavailable: ${v.ledger.reason}. Ledger events and request-ID events are not shown; the directory part below is complete.`));
-  if (v.emailsNote) out.append(h('p', { class: 'warn' }, v.emailsNote));
-  if (v.unverifiedWarning) out.append(h('p', { class: 'warn' }, v.unverifiedWarning));
-  if (v.truncated) out.append(h('p', { class: 'warn' }, `Truncated: more users share this Support ID than are listed; only the ${v.matches.length} most recently seen are shown. Ask the partner for the User ID.`));
-  if (v.matches.length === 0) out.append(h('p', { class: 'muted' }, 'No user has this id (a Support ID resolves only for users who logged in since the wallet directory’s deploy, and an erased user is gone).'));
+  out.append(h('p', { class: 'hint' }, `Looked up by ${by}, since ${time(v.since)} (${v.days} days). Recorded in the audit under your Access identity.`));
+  if (!v.ledger.available) out.append(note('warn', '', `Ledger unavailable: ${v.ledger.reason}. Ledger events and request-ID events are not shown; the directory part below is complete.`));
+  if (v.emailsNote) out.append(note('warn', '', v.emailsNote));
+  if (v.unverifiedWarning) out.append(note('warn', '', v.unverifiedWarning));
+  if (v.truncated) out.append(note('warn', '', `Truncated: more users share this Support ID than are listed; only the ${v.matches.length} most recently seen are shown. Ask the partner for the User ID.`));
+  if (v.matches.length === 0) out.append(emptyState('No user has this id', 'A Support ID resolves only for users who logged in since the wallet directory’s deploy, and an erased user is gone. Check the code with the partner.'));
   else if (v.matches.length > 1 || v.truncated) {
     out.append(
-      h('h2', {}, 'Matches'),
-      h('p', { class: 'notice' }, `${v.matches.length}${v.truncated ? '+' : ''} users share this Support ID (40 bits collide rarely). Tell them apart by the app and the time the partner names.`),
-      table(['#', 'User ID', 'Scope', 'Org', 'Apps', 'Last seen'], v.matches.map((m, k) => tr(String(k + 1), h('code', {}, m.user.userId), m.user.scopeId, m.user.orgId || '', m.apps.map((a) => a.name).join(', '), time(m.user.lastSeenAt)))),
+      panel(
+        'Matches',
+        {},
+        note('info', '', `${v.matches.length}${v.truncated ? '+' : ''} users share this Support ID (40 bits collide rarely). Tell them apart by the app and the time the partner names.`),
+        table(['#', 'User ID', 'Scope', 'Organisation', 'Apps', 'Last seen'], v.matches.map((m, k) => tr(String(k + 1), h('code', {}, m.user.userId), mono(m.user.scopeId), mono(m.user.orgId || ''), m.apps.map((a) => a.name).join(', '), time(m.user.lastSeenAt)))),
+      ),
     );
   }
   v.matches.forEach((m, k) => out.append(supportMatchBlock(m, k, v.matches.length, v.activity[k], v.ledger, emails, v.days)));
   if (!askedIds) return;
-  out.append(h('h2', {}, 'Request IDs'));
+  const reqs = panel('Request IDs', { hint: 'The events of the request IDs the partner gave, with their errors.' });
+  out.append(reqs);
   if (v.requests === null) {
-    out.append(h('p', { class: 'warn' }, `Not shown: ${v.ledger.available ? 'ledger unavailable' : v.ledger.reason}`));
+    reqs.append(note('warn', '', `Not shown: ${v.ledger.available ? 'ledger unavailable' : v.ledger.reason}`));
     return;
   }
-  out.append(
+  reqs.append(
     table(
-      ['At', 'Request ID', 'Outcome', 'Code', 'Status', 'Endpoint', 'Org', 'App', 'Scope', 'Latency ms', 'Relayed', 'NEAR tx', 'This user'],
+      ['At', 'Request ID', 'Outcome', 'Code', { text: 'Status', num: true }, 'Endpoint', 'Organisation', 'App', 'Scope', { text: 'Latency ms', num: true }, 'Relayed', 'NEAR tx', 'This user'],
       v.requests.map((r) =>
         tr(
           time(r.at),
@@ -1468,26 +2342,27 @@ function supportResult(out, v, askedIds) {
           r.code ? h('code', {}, r.code) : '',
           String(r.status),
           r.endpoint,
-          r.orgId,
-          r.appId || '',
-          r.scopeId,
+          mono(r.orgId),
+          mono(r.appId || ''),
+          mono(r.scopeId),
           String(r.latencyMs),
           r.relayed ? 'yes' : 'no',
           r.nearTx ? h('code', {}, r.nearTx) : '',
           r.byMatch ? 'yes' : h('span', { class: 'muted' }, 'no user id on the event'),
         ),
       ),
+      { empty: 'None of these request IDs has a ledger event.' },
     ),
   );
-  if (v.requestsNotFound.length) out.append(h('p', { class: 'warn' }, 'No ledger event for: ', v.requestsNotFound.flatMap((id, k) => [k ? ', ' : '', h('code', {}, id)]), ' (an unknown id, a rejection before the gate recorded it, or usage capture off then).'));
+  if (v.requestsNotFound.length) reqs.append(note('warn', '', h('p', {}, 'No ledger event for: ', v.requestsNotFound.flatMap((id, k) => [k ? ', ' : '', h('code', {}, id)]), ' (an unknown id, a rejection before the gate recorded it, or usage capture off then).')));
 }
 
 async function supportPage(main) {
   const f = supportState.form;
-  const out = h('div');
+  const out = h('div', { 'aria-live': 'polite' });
   const show = () => {
     out.replaceChildren();
-    if (supportState.wallet) out.append(h('h2', {}, 'Wallet directory only'), supportState.wallet.users.length ? h('div', {}, supportState.wallet.users.map(walletUserBlock)) : h('p', { class: 'muted' }, 'No user has this id or wallet.'));
+    if (supportState.wallet) out.append(panel('Wallet directory only', {}, supportState.wallet.users.length ? h('div', {}, supportState.wallet.users.map(walletUserBlock)) : emptyState('No user has this id or wallet', '')));
     else if (supportState.result) supportResult(out, supportState.result, supportState.askedIds);
   };
   let el;
@@ -1497,7 +2372,7 @@ async function supportPage(main) {
   const run = async () => {
     supportState.wallet = null;
     supportState.result = null;
-    out.replaceChildren(h('p', { class: 'muted' }, 'Looking up…'));
+    out.replaceChildren(loading('Looking up…'));
     try {
       const body = { query: f.query.trim(), ticket: f.ticket.trim() };
       const ids = lines(f.requestIds);
@@ -1513,7 +2388,7 @@ async function supportPage(main) {
   const walletOnly = async () => {
     read();
     supportState.result = null;
-    out.replaceChildren(h('p', { class: 'muted' }, 'Searching…'));
+    out.replaceChildren(loading('Searching…'));
     try {
       supportState.wallet = await api('POST', '/api/users/find', { query: f.query.trim(), ticket: f.ticket.trim() });
       show();
@@ -1521,30 +2396,31 @@ async function supportPage(main) {
       out.replaceChildren(errorBox(err));
     }
   };
+  const label = (text, input, help, opts = {}) => {
+    const id = `support-${input.getAttribute('name')}`;
+    input.setAttribute('id', id);
+    if (help) input.setAttribute('aria-describedby', `${id}-help`);
+    return h('label', { class: `field${opts.size ? ` ${opts.size}` : ''}`, for: id }, h('span', { class: 'label' }, text, opts.optional ? h('span', { class: 'req' }, ' (optional)') : ''), input, help ? h('span', { class: 'help', id: `${id}-help` }, help) : '');
+  };
   el = h(
     'form',
     {
+      class: 'form',
       onsubmit: async (ev) => {
         ev.preventDefault();
         read();
         await run();
       },
     },
-    h('label', {}, 'Support ID, User ID or internal id ', h('input', { name: 'query', required: true, maxlength: 64, placeholder: 'HANA-XXXX-XXXX, u1_… or hu_…', value: f.query })),
-    h('label', {}, 'Support reference (required; recorded in the console’s and the issuer’s audits) ', h('input', { name: 'ticket', required: true, maxlength: 64, pattern: SUPPORT_TICKET_PATTERN, value: f.ticket })),
-    h('label', {}, 'Days ', h('input', { name: 'days', type: 'number', min: 1, max: 731, value: f.days })),
-    h('label', {}, 'Request IDs from the escalation (up to 20) ', h('textarea', { name: 'requestIds', placeholder: 'req_… one per line' }, f.requestIds)),
-    h('button', { type: 'submit' }, 'Look up'),
-    h('button', { type: 'button', onclick: walletOnly }, 'Wallet directory only (no activity; the ticket still recorded)'),
+    label('Support ID, User ID or internal id', h('input', { name: 'query', required: true, maxlength: 64, placeholder: 'HANA-XXXX-XXXX, u1_… or hu_…', value: f.query, autocomplete: 'off' }), 'From the partner’s escalation. For a wallet address or a sub, search Users first.'),
+    label('Support reference', h('input', { name: 'ticket', required: true, maxlength: 64, pattern: SUPPORT_TICKET_PATTERN, value: f.ticket, placeholder: 'ZD-4127', autocomplete: 'off' }), `${TICKET_HELP} The lookup is recorded before anything is read.`),
+    label('Days back', h('input', { name: 'days', type: 'number', min: 1, max: 731, value: f.days }), '1 to 731.', { size: 'narrow' }),
+    label('Request IDs from the escalation', h('textarea', { name: 'requestIds', placeholder: 'req_… one per line' }, f.requestIds), 'Up to 20, one per line. They come from the SDK’s errors and the demo’s diagnostics.', { size: 'wide', optional: true }),
+    h('div', { class: 'form-actions' }, h('button', { type: 'submit', class: 'primary' }, 'Look up'), h('button', { type: 'button', onclick: walletOnly }, 'Wallet directory only'), h('span', { class: 'hint' }, 'Wallet directory only: ids and wallets, no activity. The reference is still recorded.')),
   );
   main.append(
-    h('h1', {}, 'Support ID lookup'),
-    h(
-      'p',
-      { class: 'muted' },
-      'Hana staff only. What happened to one user: their ids, identities with the directory’s addresses, wallets, the vault shares that haven’t expired, the scope’s app changes, their ledger events, and the events of the request IDs a partner escalates (errors included). Every lookup is audited before anything is read; each address is read from the issuer’s directory under your Access identity and row budget. A wallet address or a sub: search Users first. There is no export: the operator’s path is the CLI’s `admin <env> support:lookup`.',
-    ),
-    el,
+    pageHead('Support ID lookup', { subtitle: 'What happened to one user: their ids, sign-ins with the directory’s emails, wallets, live sessions, the scope’s app changes, their ledger events, and the events of the request IDs a partner escalates (errors included).' }),
+    panel('Look up a user', { hint: 'Hana staff only. Every lookup is audited before anything is read; each email is read from the issuer’s directory under your Access identity and row budget. There is no export: the operator’s path is the CLI’s `admin <env> support:lookup`.' }, el),
     out,
   );
   show();
@@ -1564,15 +2440,29 @@ function go(path, state = null) {
   render();
 }
 
+async function notFoundPage(main) {
+  main.append(pageHead('Page not found', { subtitle: 'This address isn’t a page of the admin console. Use the menu, or go to the organisations.' }), h('p', {}, link('/orgs', 'Organisations')));
+}
+
+/** Each render gets a number: an older render that finishes late doesn't replace a newer page. */
+let renderSeq = 0;
+
 async function render() {
+  const seq = (renderSeq += 1);
   renderNav();
-  const main = document.getElementById('app');
-  main.replaceChildren();
+  const root = document.getElementById('app');
+  // The page is built off-screen in `main`, then swapped in whole (no half-drawn page, no flicker of an old one).
+  const main = h('div', { class: 'view' });
+  const shown = setTimeout(() => {
+    if (seq === renderSeq && !root.contains(main)) root.replaceChildren(loading());
+  }, 150);
   const path = location.pathname;
   try {
     if (!me) {
       me = await api('GET', '/api/me');
-      document.getElementById('who').textContent = `${me.email} · ${me.env}`;
+      document.getElementById('who').textContent = `Signed in as ${me.email}`;
+      document.getElementById('env').textContent = me.env;
+      document.title = `Hana ID admin (${me.env})`;
     }
     let m;
     if (path === '/' || path === '/orgs') await orgsPage(main);
@@ -1597,9 +2487,25 @@ async function render() {
       renderNav();
       await usersPage(main);
     }
-    else main.append(h('h1', {}, 'Not found'), link('/orgs', 'Organisations'));
+    else await notFoundPage(main);
   } catch (err) {
     main.append(errorBox(err));
+  }
+  clearTimeout(shown);
+  if (seq !== renderSeq) return;
+  const message = flash;
+  flash = null;
+  root.replaceChildren(...(message ? [note('ok', '', message)] : []), main);
+  if (message) root.firstChild.setAttribute('role', 'status');
+  if (focusHeading) {
+    focusHeading = false;
+    try {
+      window.scrollTo(0, 0);
+    } catch {
+      // Not every browser (or test window) scrolls.
+    }
+    const heading = root.querySelector('h1');
+    if (heading) heading.focus();
   }
 }
 

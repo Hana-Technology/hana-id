@@ -3,16 +3,23 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
     <title>Hana ID admin</title>
     <link rel="stylesheet" href="/app.css" />
     <script src="/app.js" defer></script>
   </head>
   <body>
-    <header>
-      <strong>Hana ID admin</strong>
-      <nav id="nav"></nav>
-      <span id="who"></span>
-    </header>
-    <main id="app"><p>Loading…</p></main>
+    <a class="skip" href="#app">Skip to content</a>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <strong>Hana ID admin</strong>
+          <span id="env" class="env"></span>
+        </div>
+        <nav id="nav" aria-label="Main"></nav>
+        <div id="who"></div>
+      </aside>
+      <main id="app" tabindex="-1"><p class="loading">Loading…</p></main>
+    </div>
   </body>
 </html>

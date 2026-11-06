@@ -8,7 +8,8 @@
     "gen": "tsx scripts/gen-wrangler.ts",
     "deploy": "tsx ../../packages/env/src/stamped-deploy.ts",
     "test": "vitest run && vitest run -c vitest.scripts.config.ts && vitest run -c vitest.ops.config.ts && vitest run -c vitest.spa.config.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts && tsc --noEmit -p test-ops && tsc --noEmit -p test-spa"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts && tsc --noEmit -p test-ops && tsc --noEmit -p test-spa",
+    "preview": "tsx test-spa/preview.ts"
   },
   "dependencies": {
     "@hana-id/console-core": "workspace:*",

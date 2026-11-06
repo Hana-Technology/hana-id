@@ -77,6 +77,7 @@ import { adminAppNames, adminFindUsers, adminGetUser, adminListUsers } from '../
 import { supportLookup, userShares } from '../directory/support.ts';
 import { deletedApps, purgeAudit, purgeDirectory } from '../changes/retention.ts';
 import { runRpc } from './common.ts';
+import { mainnetDemoEnv } from '../mainnet-demo-setting.ts';
 
 const HANA = ['hana'] as const;
 /** Methods the admin Worker's crons call (notices, the feed, the watcher). */
@@ -93,7 +94,7 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
   }
 
   getApp(c: unknown) {
-    return runRpc(this.env, 'admin.getApp', getAppInput, c, { actors: HANA_OR_SYSTEM }, async ({ input, db, w }) => ({ app: await getApp(db, input.appId, input.orgId, w.now, this.env.FILES_ORIGIN, { mainnetDemo: true }) }));
+    return runRpc(this.env, 'admin.getApp', getAppInput, c, { actors: HANA_OR_SYSTEM }, async ({ input, db, w }) => ({ app: await getApp(db, input.appId, input.orgId, w.now, this.env.FILES_ORIGIN, { mainnetDemo: mainnetDemoEnv(this.env) }) }));
   }
 
   listChanges(c: unknown) {

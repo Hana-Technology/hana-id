@@ -624,6 +624,35 @@ function form(fields, label, action, opts = {}) {
 }
 
 /** A table. A header is a string or {text, num}; an empty table says `opts.empty` (what is missing, or what to do). */
+/** USD micros as `$9.99` (rounded up to the cent, as the vault shows it). */
+const usdMicros = (n) => `$${(Math.ceil(n / 10_000) / 100).toFixed(2)}`;
+
+/**
+ * The user's key exports and mainnet demo signatures (D426, D428; StaffUser.events), newest first; nothing when the
+ * answer carries no `events` (a list row, or an older API).
+ */
+function userEventsBlock(u) {
+  if (!Array.isArray(u.events)) return [];
+  return [
+    h('h3', {}, 'Key exports and mainnet demo signatures'),
+    table(
+      ['When', 'What', 'App', 'Chain', 'Detail'],
+      u.events.map((e) =>
+        tr(
+          time(e.at),
+          e.kind === 'key_exported' ? h('span', { class: 'badge warning' }, 'Key exported') : h('span', { class: 'badge' }, 'Mainnet demo signature'),
+          h('code', {}, e.appId),
+          e.chain ? chainLabel(e.chain) : 'unknown (older export window)',
+          e.kind === 'key_exported'
+            ? 'The export window signed in again and derived the key; the user may have shown or copied it.'
+            : h('span', {}, `${e.network === 'pubnet' ? 'Stellar public network' : `EVM chain ${e.network}`}, about ${usdMicros(e.usdMicros || 0)} from `, h('code', {}, e.address), h('span', { class: 'sub' }, ' as the vault reported it')),
+        ),
+      ),
+      { empty: 'No key export and no mainnet demo signature.' },
+    ),
+  ];
+}
+
 function table(headers, rows, opts = {}) {
   const hs = headers.map((x) => (typeof x === 'string' ? { text: x } : x));
   const body = rows.filter(Boolean);
@@ -1309,6 +1338,10 @@ async function appPage(main, orgId, appId) {
       {},
       facts([
         ['Raw signing', app.settings.rawSign === 'off' ? 'Off' : `On (${app.settings.rawSign})`],
+        // D426: only in an env where it can be set (a dev env on testnet): the API leaves it out elsewhere.
+        ...(app.settings.mainnetDemo === undefined
+          ? []
+          : [['Mainnet demo', app.settings.mainnetDemo ? 'On: signs on Base and Stellar’s public network, up to $9.99 per transaction, every request through the approval popup' : 'Off: mainnets refused (D39)']]),
         ['Auto-approve policy', policy ? h('span', {}, policy.label || 'Unnamed policy', h('details', { class: 'raw' }, h('summary', {}, 'Show the policy'), h('pre', {}, JSON.stringify(policy, null, 2)))) : 'None'],
         ['Other settings', h('details', { class: 'raw' }, h('summary', {}, 'Show all settings'), h('pre', {}, JSON.stringify(app.settings, null, 2)))],
       ]),
@@ -1320,6 +1353,17 @@ async function appPage(main, orgId, appId) {
             policy ? actionButton('Remove the policy', () => api('POST', `${base}/off`, { orgId, what: 'policy', expectedVersion: app.settingsVersion }), 'Remove the auto-approve policy? Auto-signing stops within 10 s.', true, { done: 'Policy removed.' }) : '',
             app.settings.rawSign !== 'off' ? actionButton('Turn raw signing off', () => api('POST', `${base}/off`, { orgId, what: 'raw_sign', expectedVersion: app.settingsVersion }), 'Turn raw signing off? It stops at once.', true, { done: 'Raw signing is off.' }) : '',
             app.environment === 'live' && app.settings.rawSign === 'off' ? actionButton('Propose raw signing on', () => api('POST', `${base}/changes`, { orgId, kind: 'raw_sign_on', expectedVersion: app.settingsVersion }), 'Propose raw signing (with approval)? The contacts are emailed; it takes effect after the delay.', false, { done: 'Raw signing proposed. It takes effect after the waiting period.' }) : '',
+            app.settings.mainnetDemo !== undefined && app.environment === 'test'
+              ? actionButton(
+                  app.settings.mainnetDemo ? 'Turn the mainnet demo off' : 'Turn the mainnet demo on',
+                  () => api('POST', `${base}/mainnet-demo`, { orgId, on: !app.settings.mainnetDemo, expectedVersion: app.settingsVersion }),
+                  app.settings.mainnetDemo
+                    ? 'Turn the mainnet demo off? Open wallets stop signing on mainnets within 10 s.'
+                    : 'Turn the mainnet demo on? This test app’s users can then sign real-funds transactions on Base and Stellar (up to $9.99 each) with testnet-MPC keys, which can be lost. It takes effect at once.',
+                  !app.settings.mainnetDemo,
+                  { done: app.settings.mainnetDemo ? 'The mainnet demo is off.' : 'The mainnet demo is on.' },
+                )
+              : '',
             proposePolicy.button,
           ),
       proposePolicy.box,
@@ -2364,6 +2408,7 @@ function walletUserBlock(u) {
       u.wallets.map((w) => tr(chainLabel(w.chain), h('span', {}, h('code', {}, w.address), w.sharedWith ? h('span', { class: 'sub' }, h('span', { class: 'badge warning' }, `also listed by ${w.sharedWith} other user(s): not proof of ownership`)) : ''), String(w.keyIndex), time(w.firstSeenAt), time(w.lastUsedAt))),
       { empty: 'No wallet yet.' },
     ),
+    ...userEventsBlock(u),
   );
 }
 
@@ -2642,6 +2687,7 @@ function supportMatchBlock(m, k, n, activity, ledger, emails, days) {
       u.wallets.map((w) => tr(chainLabel(w.chain), h('span', {}, h('code', {}, w.address), w.sharedWith ? h('span', { class: 'sub' }, h('span', { class: 'badge warning' }, `also listed by ${w.sharedWith} other user(s): not proof of ownership`)) : ''), String(w.keyIndex), time(w.firstSeenAt), time(w.lastUsedAt))),
       { empty: 'No wallet yet.' },
     ),
+    ...userEventsBlock(u),
     h('h3', {}, 'Apps of the scope'),
     table(['App', 'Organisation', 'Environment', 'Persistence', 'Deleted'], m.apps.map((a) => tr(named(a.name, a.appId), mono(a.orgId), a.environment ? envBadge(a.environment) : 'unknown', a.persistence, a.deletedAt ? time(a.deletedAt) : ''))),
     h('h3', {}, 'Vault shares that haven’t expired'),

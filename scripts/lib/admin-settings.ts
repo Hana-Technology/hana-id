@@ -10,6 +10,7 @@
 // `--auto-approve off` take effect at once, drop any pending value and end or cancel the guarded changes. Every write
 // bumps `settings_version` and records an `app_changes` row.
 import { readFileSync, statSync } from 'node:fs';
+import { isDevEnv } from '@hana-id/env';
 import { isAbsolute, resolve } from 'node:path';
 import { canonicalJson, parseAutoApprovePolicy, policyId } from '@hana-id/core/policy';
 import type { Manifest } from '@hana-id/env';
@@ -424,6 +425,49 @@ export function unchangedSince(row: SettingsRow): string {
 /** The error when the guarded UPDATE matched no row. */
 export const SETTINGS_CHANGED = "The app's settings changed since they were read (another admin:settings or a D1 edit): nothing was written. Run the command again to see and change the current settings.";
 
+// ---- the mainnet demo (D426): `--mainnet-demo on|off`, alone ----
+
+/** The flag's value, or undefined when it isn't given. */
+export function parseMainnetDemoArg(args: Args): boolean | undefined {
+  const v = args.str('mainnet-demo');
+  if (v === undefined) return undefined;
+  if (v !== 'on' && v !== 'off') throw new CliError("--mainnet-demo must be 'on' or 'off'");
+  return v === 'on';
+}
+
+/** The app's switch (migration 0013), or null when the column isn't there yet. */
+export function mainnetDemoSql(appId: string): string {
+  return sql`SELECT mainnet_demo FROM apps WHERE id = ${appId}`;
+}
+
+export const MAINNET_DEMO_WARNING =
+  'WARNING: the mainnet demo lets this test app’s users sign real-funds transactions on Base and Stellar’s public network (up to $9.99 each, every one through the approval popup) with keys from the testnet MPC, which can be lost or stolen. Keep it to the Sodax demo.';
+
+/**
+ * Plans `--mainnet-demo on|off` (D426): refused unless the manifest is a dev env on testnet and the app is a test app;
+ * one guarded write (the version and the switch as read) with its `app_changes` row. Null write when already so.
+ */
+export function planMainnetDemo(
+  m: Pick<Manifest, 'name' | 'network'>,
+  row: SettingsRow,
+  current: boolean,
+  on: boolean,
+  ctx: { now: number; actor?: CliActor; requestId?: string },
+): SettingsPlan {
+  if (!(isDevEnv(m.name) && m.network === 'testnet')) throw new CliError(`--mainnet-demo is refused in ${m.name}: the mainnet demo exists only in a dev env (local*, sandbox*) on testnet (D426)`);
+  if (row.environment !== 'test') throw new CliError('--mainnet-demo is for test apps (pk_test_) only (D426)');
+  const warnings = on ? [MAINNET_DEMO_WARNING] : [];
+  if (current === on) return { write: null, lines: [`mainnet demo: already ${on ? 'on' : 'off'}`], warnings };
+  const actor = ctx.actor ?? { id: 'cli' };
+  const requestId = ctx.requestId ?? `cli_${ctx.now}`;
+  const guard = {
+    where: `${sql`id = ${row.id}`} AND ${sql`settings_version = ${row.settings_version}`} AND ${sql`mainnet_demo = ${current ? 1 : 0}`} AND deleted_at IS NULL`,
+    set: [sql`settings_version = ${row.settings_version + 1}`, sql`mainnet_demo = ${on ? 1 : 0}`],
+  };
+  const write = settingsWrite(row, guard, { kind: on ? 'mainnet_demo.on' : 'mainnet_demo.off', detail: { mainnetDemo: on } }, [], { now: ctx.now, actor, requestId });
+  return { write, lines: [`mainnet demo: ${current ? 'on' : 'off'} → ${on ? 'on' : 'off'} (immediate; open vaults follow within 10 s)`], warnings };
+}
+
 /** The settings as stored and in force, for `app:settings <app>` with no setting flags. */
 export function describeSettings(row: SettingsRow, now: number, openChanges: readonly ChangeRow[] = []): string[] {
   const out = [
@@ -517,9 +561,27 @@ export async function appSettings(m: Manifest, idOrKey: string, args: Args, wher
   const now = deps.now();
   const header = `${row.id} "${row.name}" (scope ${row.scope_id}, ${where})`;
   const openChanges = deps.d1(openChangesSql(row.id)) as unknown as ChangeRow[];
+  const mainnetDemo = parseMainnetDemoArg(args);
+  if (mainnetDemo !== undefined) {
+    if (Object.keys(change).length) throw new CliError('--mainnet-demo goes alone: set the other settings in another call');
+    if (row.deleted_at !== null) throw new Error(`App ${row.id} is deleted`);
+    const current = readMainnetDemo(deps, row.id);
+    if (current === null) throw new Error('This env’s D1 has no mainnet_demo column yet: apply migration 0013 first (docs/operations.md)');
+    const plan = planMainnetDemo(m, row, current, mainnetDemo, { now, actor: deps.actor, requestId: deps.newRequestId?.() });
+    for (const w of plan.warnings) deps.log(w);
+    if (plan.write) {
+      const result = deps.d1(writeCommand(plan.write));
+      if (Number(result[result.length - 1]?.committed ?? 0) !== 1) throw new Error(SETTINGS_CHANGED);
+    }
+    deps.log(`${at(now)} app:settings ${header}${plan.write ? '' : ': no change'}`);
+    for (const line of plan.lines) deps.log(`  ${line}`);
+    return;
+  }
   if (!Object.keys(change).length) {
     deps.log(header);
     for (const line of describeSettings(row, now, openChanges)) deps.log(`  ${line}`);
+    const demo = readMainnetDemo(deps, row.id);
+    deps.log(`  mainnet demo: ${demo === null ? 'unknown (migration 0013 not applied)' : demo ? 'on (Base and Stellar, up to $9.99 per transaction)' : 'off'}`);
     return;
   }
   if (row.deleted_at !== null) throw new Error(`App ${row.id} is deleted`);
@@ -549,6 +611,16 @@ export async function appSettings(m: Manifest, idOrKey: string, args: Args, wher
   // The change log: when, which app, where, and every line (no policy body, only its id and label).
   deps.log(`${at(now)} app:settings ${header}${plan.write ? '' : ': no change'}`);
   for (const line of plan.lines) deps.log(`  ${line}`);
+}
+
+/** The app's mainnet demo switch, or null when the column isn't there (migration 0013 not applied). */
+function readMainnetDemo(deps: Pick<AppSettingsDeps, 'd1'>, appId: string): boolean | null {
+  try {
+    const rows = deps.d1(mainnetDemoSql(appId));
+    return Number(rows[0]?.mainnet_demo ?? 0) === 1;
+  } catch {
+    return null;
+  }
 }
 
 /** How a staff proposal is announced in this env (printed with it). */

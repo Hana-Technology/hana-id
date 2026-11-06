@@ -148,6 +148,27 @@ describe('the Support ID lookup screen', () => {
     expect(badges).toEqual(['error']);
   });
 
+  it('lists the user’s key exports and mainnet demo signatures (D426, D428), as text', async () => {
+    const view = unboundView();
+    const user = view.matches[0]!.user as Record<string, unknown>;
+    user.events = [
+      { kind: 'mainnet_signature', appId: 'app_1', chain: 'evm', network: '8453', address: '0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826', usdMicros: 8_000_001, at: T - 1000 },
+      { kind: 'key_exported', appId: 'app_1', chain: 'stellar', network: null, address: null, usdMicros: null, at: T - 2000 },
+      { kind: 'key_exported', appId: 'app_1', chain: null, network: null, address: null, usdMicros: null, at: T - 3000 },
+    ];
+    const s = boot('/support', () => ({ body: view }));
+    await vi.waitFor(() => expect(s.text()).toContain('Support ID lookup'));
+    s.field('query').value = 'HANA-2750-G5HM';
+    s.field('ticket').value = 'ZD-1234';
+    s.submit();
+    await vi.waitFor(() => expect(s.text()).toContain('Key exports and mainnet demo signatures'));
+    const t = s.text();
+    expect(t).toContain('Key exported');
+    expect(t).toContain('Mainnet demo signature');
+    expect(t).toContain('EVM chain 8453, about $8.01 from 0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826 as the vault reported it');
+    expect(t).toContain('unknown (older export window)');
+  });
+
   it('shows the route’s refusal and keeps the form', async () => {
     const s = boot('/support', () => ({ status: 400, body: { error: { code: 'bad_request', message: 'ticket: a support reference' } } }));
     await vi.waitFor(() => expect(s.form()).toBeTruthy());

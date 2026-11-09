@@ -48,7 +48,8 @@ export default defineConfig(async () => {
           // The console client's secret is a throwaway test value: Google's token endpoint is mocked in the tests.
           bindings: { TEST_MIGRATIONS: migrations, TEST_API_MIGRATIONS: apiMigrations, CONSOLE_GOOGLE_CLIENT_SECRET: 'test-console-client-secret' },
           d1Databases: { HOT_DB: HOT_DB_ID, FAKE_UPSTREAM: UPSTREAM_DB_ID },
-          serviceBindings: { API_ADMIN: { name: TEST_MANIFEST.cloudflare.workerName, entrypoint: 'AdminRpc' } },
+          // ISSUER stands in for the issuer's ConsoleIssuerRpc (test/fake-upstream.js): the deployed binding is written by gen.
+          serviceBindings: { API_ADMIN: { name: TEST_MANIFEST.cloudflare.workerName, entrypoint: 'AdminRpc' }, ISSUER: { name: UPSTREAM_WORKER, entrypoint: 'ConsoleIssuerRpc' } },
           workers: [
             {
               name: TEST_MANIFEST.cloudflare.workerName,

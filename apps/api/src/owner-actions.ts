@@ -9,6 +9,7 @@
 // Both tokens are relayed to the chain, where they are public, so both are held to the claim allow-list (claims.ts,
 // `token_has_pii`) as login tokens are (D271, D274), on both paths (the endpoint and ConsoleRpc.ownerAction): an
 // owner's email or Workspace domain is never relayed.
+import { EMAIL_PROVIDER, verifyEmailToken } from './email-token.ts';
 import { AUTHENTICATED_OWNER_METHODS, clientProofNonce, ownerActionNonce } from '@hana-id/console-core';
 import { verifyIdToken } from '@hana-id/oidc';
 import { hex } from './bytes.ts';
@@ -118,7 +119,17 @@ export async function precheckOwnerAction(env: Env, call: ContractCall, now: num
       const change = args.change as { AddClient?: { provider: string; aud: string }; SetAllowShared?: { allow: boolean } };
       if (change.SetAllowShared && scope.allow_shared) return no(409, 'shared_login_enabled', 'Shared login is already enabled for this scope');
       const add = change.AddClient;
-      if (add) {
+      if (add?.provider === EMAIL_PROVIDER) {
+        // The scope's email client (D447): the issuer's JWS JSON proof, checked against the published keys and the on-chain signer policy.
+        const proof = await verifyEmailToken(env, args.client_proof as string, now, 0);
+        if (!proof.ok) return no(400, proof.code === 'invalid_token' ? 'bad_token' : 'invalid_client_proof', `Client proof: ${proof.error}`);
+        if (proof.token.aud !== add.aud) return no(400, 'invalid_client_proof', 'Client proof is for another client');
+        if (proof.token.sub !== 'hana-client-proof') return no(400, 'invalid_client_proof', 'Not a client proof');
+        if (proof.token.nonce !== (await clientProofNonce({ signer: env.SIGNER_ACCOUNT, scopeId, actionNonce }))) {
+          return no(400, 'invalid_client_proof', `Client proof nonce is not this scope's client-proof nonce at action_nonce ${actionNonce}`);
+        }
+        if (scope.clients.some(([p, a]) => p === add.provider && a === add.aud)) return no(409, 'client_registered', 'Client is already in this scope');
+      } else if (add) {
         const proof = await verifyIdToken(args.client_proof as string, now, { onStaleKeys: logStaleJwks, identityIssuer: env.IDENTITY_ISS });
         if (!proof.ok) return no(400, proof.code === 'bad_token' ? 'bad_token' : 'invalid_client_proof', `Client proof: ${proof.error}`);
         const proofPii = piiRefusal(args.client_proof as string, 'The client proof');

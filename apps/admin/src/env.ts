@@ -4,6 +4,7 @@
 // each is optional in the type so a missing one fails closed at the step that needs it (no notice is acked, no email
 // leaves, the watchdog shows as not configured) instead of at start-up.
 import type {
+  LinkStatsRow,
   ApiPurgeAuditResult,
   ApiSystemStatus,
   ConsoleHealth,
@@ -105,6 +106,8 @@ export interface AdminRpcClient {
   findUsers(c: unknown): Answer<{ users: StaffUser[] }>;
   /** The Users screen's app labels (C8b): names, orgs, scopes, environments of up to 50 app ids. */
   appNames(c: unknown): Answer<{ apps: AppNameView[] }>;
+  /** The links view's counts (batch 9, D445): per app and day, the cron's jump check too. */
+  linkStats(c: unknown): Answer<{ rows: LinkStatsRow[] }>;
   /** The Support ID lookup's hot-DB part (C15, staff only): matches, their apps, shares and the apps' changes. */
   supportLookup(c: unknown): Answer<SupportLookupResult>;
   /** The vault shares of one path in one app that haven't expired (C15). */
@@ -171,6 +174,9 @@ export interface Env {
   VAULT_ORIGIN?: string;
   AUTH_ORIGIN?: string;
   EMAIL_ISSUER_URL?: string;
+  /** The issuer's signer kind (manifest `emailIssuer.signer.kind`) and the watchdog's pins, JSON (the Email issuer page, D448). */
+  EMAIL_SIGNER_KIND?: string;
+  EMAIL_PINNED_KEYS?: string;
   CONSOLE_AUTH_ORIGIN?: string;
   /**
    * JSON `[{worker, crons}]`: the cron triggers the manifest puts on this Worker's Cloudflare account (the API, the

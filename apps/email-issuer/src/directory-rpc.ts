@@ -8,7 +8,9 @@
 //     or a full address, console-core `searchNamesIdentity`, D410) and optional when it browses;
 //   - `get`: one identity and its apps; the ticket is required; audited as `user_view`, or as `support_lookup` for the
 //     Support ID lookup's email join (`purpose`, D399);
-//   - `auditSince`: the issuer's `email_admin_audit` rows (no directory value in them), for the admin's audit view.
+//   - `auditSince`: the issuer's `email_admin_audit` rows (no directory value in them), for the admin's audit view;
+//   - `issuerStats`: the admin console's Email issuer page (build plan batch 9, D446): issuance and the daily counters
+//     per app and day; counts only (no personal data, so no audit row and no row budget).
 //
 // Every call checks the staff member itself: the request's Cloudflare Access JWT (the admin application's AUD tag and
 // team domain, `@hana-id/oidc`), and its email on the admin's staff list. That email is the actor. Every `search` and
@@ -30,7 +32,9 @@ import {
   type DirectoryFail,
   type DirectoryUserApp,
   type DirectoryUserRow,
+  type IssuerStats,
   directoryAuditInput,
+  directoryIssuerStatsInput,
   directoryGetInput,
   directoryHealthInput,
   directorySearchInput,
@@ -48,6 +52,9 @@ import { log } from './log.ts';
 export const DIRECTORY_APPS_MAX = 200;
 /** The audit `detail` of a search keeps the address term only as this many characters of a keyed hash. */
 export const TERM_HASH_CHARS = 12;
+/** Rows one Email issuer page reads at most from each table (the page says when it was cut). */
+export const ISSUANCE_ROWS_MAX = 3000;
+export const DAILY_ROWS_MAX = 6000;
 const AUD_RE = /^[0-9a-f]{64}$/u;
 
 type Fail = DirectoryFail;
@@ -415,6 +422,35 @@ export class DirectoryRpc extends WorkerEntrypoint<Env> {
         detail: parseDetail(r.detail),
       })),
     };
+  }
+
+  /**
+   * The Email issuer page (build plan batch 9, D446): tokens issued per day, app and purpose (`email_issuance`) and the
+   * daily counters (`email_daily`) over the last `days`. Counts only: no address, sub or key, so like `health` it takes
+   * no row budget and writes no audit row. Capped; past the caps `truncated` says the page was cut.
+   */
+  async issuerStats(c: unknown): Promise<({ ok: true } & IssuerStats) | Fail> {
+    const parsed = directoryIssuerStatsInput.safeParse(c);
+    if (!parsed.success) return fail('bad_request', 'Malformed stats query');
+    const i = parsed.data;
+    const who = await staffOf(this.env, i.accessJwt, i.requestId, Date.now());
+    if (!who.ok) return who;
+    const fromMs = Date.now() - (i.days - 1) * 86_400_000;
+    const fromDay = new Date(fromMs).toISOString().slice(0, 10);
+    const fromS = Math.floor(Date.parse(`${fromDay}T00:00:00Z`) / 1000);
+    try {
+      const [iss, dly] = await this.env.DB.batch<{ day: string; app_id: string | null; purpose?: string; metric?: string; n?: number; count?: number }>([
+        this.env.DB.prepare("SELECT strftime('%Y-%m-%d', iat, 'unixepoch') AS day, app_id, purpose, COUNT(*) AS n FROM email_issuance WHERE iat >= ?1 GROUP BY 1, 2, 3 ORDER BY 1 DESC, 2, 3 LIMIT ?2").bind(fromS, ISSUANCE_ROWS_MAX + 1),
+        this.env.DB.prepare('SELECT day, app_id, metric, count FROM email_daily WHERE day >= ?1 ORDER BY day DESC, app_id, metric LIMIT ?2').bind(fromDay, DAILY_ROWS_MAX + 1),
+      ]);
+      const issuance = iss!.results.slice(0, ISSUANCE_ROWS_MAX).map((r) => ({ day: r.day, appId: r.app_id, purpose: r.purpose!, count: r.n! }));
+      const metrics = dly!.results.slice(0, DAILY_ROWS_MAX).map((r) => ({ day: r.day, appId: r.app_id ? r.app_id : null, metric: r.metric!, count: r.count! }));
+      log({ event: 'directory_read', requestId: i.requestId, outcome: 'ok', code: 'issuer_stats', count: issuance.length + metrics.length });
+      return { ok: true, days: i.days, truncated: iss!.results.length > ISSUANCE_ROWS_MAX || dly!.results.length > DAILY_ROWS_MAX, issuance, metrics };
+    } catch {
+      log({ event: 'directory_read_failed', requestId: i.requestId, outcome: 'error', code: 'issuer_stats' }, 'error');
+      return fail('internal', 'The stats read failed');
+    }
   }
 
   /**

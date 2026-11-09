@@ -55,6 +55,8 @@ export interface Env {
   ADMIN_ACCESS_TEAM_DOMAIN?: string;
   ADMIN_ACCESS_AUD?: string;
   ADMIN_STAFF_EMAILS?: string;
+  /** The security alias the issuer's alert mails go to (D446; manifest `email.securityAlias`); absent: counted only, no mail. */
+  SECURITY_ALIAS?: string;
   /** SendGrid's Event Webhook verification key (base64 SPKI, public). */
   SENDGRID_WEBHOOK_PUBLIC_KEY?: string;
   /**

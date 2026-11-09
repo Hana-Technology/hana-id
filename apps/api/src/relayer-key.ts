@@ -10,6 +10,7 @@ import { gasFor } from './gas.ts';
 import { log } from './log.ts';
 import { POOL_SECRET, type Pool, isPool, parseRelayerKeys, poolAllows } from './relayer-config.ts';
 import { RELAY_WAIT_UNTIL, type Rpc, type RpcError, nearRpc, invalidNonce, isDefiniteRejection, isExpired, type SendTxResult } from './near/rpc.ts';
+import type { LinkTally } from './link-usage.ts';
 import { type ContractCall, parseKeyPair, signFunctionCall, waitForOutcome } from './near/tx.ts';
 
 export { parseRelayerKeys };
@@ -94,7 +95,7 @@ export interface RelaySigner {
 
 /** `executor`: on `contract_rejected`, the account whose receipt failed (null when the RPC did not say). */
 export type RelayResult = (
-  | ({ ok: true; result: unknown; nearTx: string } & RelaySigner)
+  | ({ ok: true; result: unknown; nearTx: string; linkTally?: LinkTally } & RelaySigner)
   | ({ ok: false; status: number; code: string; error: string; nearTx?: string; executor?: string | null } & RelaySigner)
 ) & { timing?: RelayTiming; instance?: RelayInstance };
 
@@ -200,11 +201,12 @@ export class RelayerKey extends DurableObject<Env> {
 
         const nonce = sent.nonce;
         const outcome = await waitForOutcome(rpc, sent.hash, this.env.RELAYER_ACCOUNT, initial, {
+          linkEventsFrom: this.env.SIGNER_ACCOUNT,
           // A later nonce of this key landed first: this tx can never be included (it was dropped from the pool).
           superseded: async () => BigInt((await rpc.viewAccessKey(this.env.RELAYER_ACCOUNT, this.publicKey)).nonce) >= nonce,
         });
         const burnt: RelaySigner = outcome.gas ? { relayGasBurnt: outcome.gas.gasBurnt.toString(), relayTokensBurnt: outcome.gas.tokensBurnt.toString() } : {};
-        if (outcome.ok) return { ok: true, result: outcome.value, nearTx: sent.hash, ...signer, ...burnt };
+        if (outcome.ok) return { ok: true, result: outcome.value, nearTx: sent.hash, ...signer, ...burnt, ...(outcome.linkTally ? { linkTally: outcome.linkTally } : {}) };
         if (outcome.kind === 'dropped') {
           if (attempt === 0) {
             // It never executed: resend once with a fresh nonce (re-read, since other txs moved the key on).

@@ -49,6 +49,9 @@ export function mockApi(): Plugin {
         void load().then(async ({ m, state }) => {
           if (pick) {
             const s = SCENARIO_RE.test(pick[1]!) && (m.SCENARIOS as readonly string[]).includes(pick[1]!) ? pick[1]! : 'owner';
+            // The Email login page's state (a screenshot picks one with `?email=<state>`; fixtures.ts emailStatus).
+            const e = url.searchParams.get('email');
+            if (e && /^[a-z-]{1,20}$/u.test(e)) state.emailState = e;
             res.writeHead(302, { location: safeTo(url.searchParams.get('to')), 'set-cookie': `hana_preview=${s}; Path=/; SameSite=Lax` });
             res.end();
             return;

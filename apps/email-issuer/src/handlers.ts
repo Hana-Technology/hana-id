@@ -8,6 +8,7 @@
 import { base64UrlDecode, base64UrlEncode, sha256, toHex, utf8 } from './bytes.ts';
 import { BUILD_ID_RE } from '@hana-id/env/build-id';
 import { emailSub, isDisposableDomain, isGoogleHosted, normalizeEmail, sealEmail, type SealedEmailSource } from '@hana-id/email';
+import type { PartnerClientProof } from '@hana-id/console-core';
 import { ApiUnavailable, type IssuerApp, appById, appByKey, isPublishableKey, scopeHasEmailApp } from './apps.ts';
 import type { ChallengeRecord, TicketRecord } from './challenge.ts';
 import { type ChallengeId, decryptEmail, encryptEmail, newChallengeId, parseChallengeId } from './challenge-id.ts';
@@ -17,6 +18,7 @@ import { type Judgement, type Side, judge } from './decide.ts';
 import type { Deps } from './deps.ts';
 import { recordUserEmailLater } from './directory.ts';
 import { isExemptDomain, registrableDomain } from './domain.ts';
+import { countDaily, countRefusal, raiseAlert } from './daily.ts';
 import { dailySendBudget } from './env.ts';
 import { GoogleUnavailable, type UserInfo } from './google.ts';
 import { corsHeaders, error, isObj, json, onlyKeys, readJson } from './http.ts';
@@ -52,6 +54,9 @@ import { SignerUnavailable } from './signer.ts';
 import { readWebhookBody, SIGNATURE_HEADER, suppressionsOf, TIMESTAMP_HEADER, verifyWebhook, webhookHeadersOk } from './webhook.ts';
 
 export const MAX_BODY = 8 * 1024;
+/** The audit `staff` of a partner client proof (D447): not an email, so it can't be a staff member's row. */
+export const PARTNER_PROOF_STAFF = 'partner-console';
+const PARTNER_PROOF_LIMITS: Limit[] = [{ name: 'partner-proof:1d', windowMs: 86_400_000, max: 20 }];
 /** The `sub` of a staff client proof (client-proof.ts): not an `e1.` sub, so it can never be an email user's identity. */
 export { CLIENT_PROOF_SUB } from './client-proof.ts';
 /** Hints read per verify (one address can be reported by a few Google accounts). */
@@ -119,6 +124,7 @@ async function ipLimit(ctx: Ctx, request: Request, limits: readonly Limit[]): Pr
   const r = await limiter(ctx.deps, `ip:${ipOf(request)}`).hit(limits, ctx.deps.now());
   if (r.ok) return null;
   log({ event: 'limit', requestId: ctx.requestId, endpoint: ctx.endpoint, limit: r.limit });
+  countRefusal(ctx.deps, null, r.limit);
   return tooMany(ctx, r.retryAfterMs);
 }
 
@@ -128,6 +134,7 @@ async function aggregateLimits(ctx: Ctx, request: Request): Promise<Response | n
     const r = await limiter(ctx.deps, `ip:${agg}`).hit(IP_AGGREGATE_START_LIMITS, ctx.deps.now());
     if (!r.ok) {
       log({ event: 'limit', requestId: ctx.requestId, endpoint: ctx.endpoint, limit: `${agg.split(':')[0]}:${r.limit}` });
+      countRefusal(ctx.deps, null, `${agg.split(':')[0]}:${r.limit}`);
       return tooMany(ctx, r.retryAfterMs);
     }
   }
@@ -140,6 +147,7 @@ async function aggregateLimits(ctx: Ctx, request: Request): Promise<Response | n
  */
 const tryLater = (ctx: Ctx, why: string): Response => {
   log({ event: 'limit', requestId: ctx.requestId, endpoint: ctx.endpoint, limit: `mailbox:${why}` });
+  countRefusal(ctx.deps, null, `mailbox:${why}`);
   return fail(ctx, 429, 'rate_limited', 'Too many requests, try again later', undefined, { 'retry-after': String(MAILBOX_RETRY_AFTER_S) });
 };
 
@@ -190,9 +198,13 @@ async function reserveBudget(ctx: Ctx, appId: string | null, share: number, kind
   const appField = appId ? { appId } : {};
   if (!r.ok) {
     log({ event: 'send_budget_exhausted', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'error', code: budget > 0 ? r.limit : 'unconfigured', ...appField }, 'error');
+    raiseAlert(ctx.deps, ctx.requestId, 'send_budget_exhausted', budget > 0 ? r.limit : 'unconfigured', appId);
     return null;
   }
-  for (const c of r.crossed) log({ event: c.startsWith('owner_') ? 'email_owner_pool' : 'email_budget', requestId: ctx.requestId, endpoint: ctx.endpoint, code: c, ...appField }, 'warn');
+  for (const c of r.crossed) {
+    log({ event: c.startsWith('owner_') ? 'email_owner_pool' : 'email_budget', requestId: ctx.requestId, endpoint: ctx.endpoint, code: c, ...appField }, 'warn');
+    raiseAlert(ctx.deps, ctx.requestId, c.startsWith('owner_') ? 'email_owner_pool' : 'email_budget', c, appId);
+  }
   return r.reservation;
 }
 
@@ -233,7 +245,10 @@ async function reserveDomain(ctx: Ctx, key: string, request: Request, now: numbe
   const prefixes = ipAggregates(rawIp(request)).map(requesterKey);
   const d = await limiter(ctx.deps, `dom:${key}`).reserveDomain(prefixes, now);
   if (!d.ok) return { ok: false, r: null };
-  if (d.filled) log({ event: 'email_domain_cap', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'rejected', subject: key.slice(0, 12) }, 'warn');
+  if (d.filled) {
+    log({ event: 'email_domain_cap', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'rejected', subject: key.slice(0, 12) }, 'warn');
+    raiseAlert(ctx.deps, ctx.requestId, 'email_domain_cap', '', null);
+  }
   return { ok: true, r: d.reservation };
 }
 const releaseDomain = async (deps: Deps, key: string, r: Reservation | null): Promise<void> => {
@@ -253,13 +268,14 @@ async function domainSubject(deps: Deps, domain: string): Promise<string> {
 async function deliver(ctx: Ctx, rec: ChallengeRecord, to: string, code: string, undo: () => Promise<void>): Promise<void> {
   const { deps } = ctx;
   try {
-    const res = await deps.sender.send(codeMail({ to, code, appName: rec.appName, authOrigin: deps.env.AUTH_ORIGIN, purpose: rec.purpose }));
+    const res = await deps.sender.send(codeMail({ to, code, appName: rec.appName, authOrigin: deps.env.AUTH_ORIGIN, purpose: rec.purpose, appId: rec.appId }));
     if (!res.ok) {
       await undo();
       log({ event: 'code_mail', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'error', code: res.reason, appId: rec.appId, ...(res.providerStatus ? { providerStatus: res.providerStatus } : {}) }, 'error');
       return;
     }
     log({ event: 'code_mail', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'ok', appId: rec.appId, purpose: rec.purpose });
+    countDaily(deps, rec.appId, 'sent');
   } catch {
     log({ event: 'code_mail', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'error', code: 'internal', appId: rec.appId }, 'error');
   }
@@ -275,9 +291,10 @@ async function notify(ctx: Ctx, to: string, appName: string, pending: boolean, a
     if (await isSuppressed(deps, await suppressionKey(await deps.keys(), to))) return;
     const budget = await reserveBudget(ctx, appId, share, 'user');
     if (!budget) return;
-    const res = await deps.sender.send(linkNoticeMail({ to, appName, authOrigin: deps.env.AUTH_ORIGIN, pending }));
+    const res = await deps.sender.send(linkNoticeMail({ to, appName, authOrigin: deps.env.AUTH_ORIGIN, pending, appId }));
     if (!res.ok) await limiter(deps, 'global').refund(budget);
     log({ event: 'link_notice', requestId: ctx.requestId, outcome: res.ok ? 'ok' : 'error', appId, ...(res.ok ? {} : { code: res.reason }) }, res.ok ? 'info' : 'error');
+    if (res.ok) countDaily(deps, appId, 'sent');
   } catch {
     log({ event: 'link_notice', requestId: ctx.requestId, outcome: 'error', code: 'internal', appId }, 'error');
   }
@@ -352,6 +369,7 @@ export async function handleStart(request: Request, ctx: Ctx): Promise<Response>
     await undoMailbox(true);
     await releaseDomain(deps, dKey, dom.r);
     log({ event: 'limit', requestId: ctx.requestId, endpoint: ctx.endpoint, appId: app.id, limit: appLimit.limit });
+    countRefusal(deps, app.id, appLimit.limit);
     return tooMany(ctx, appLimit.retryAfterMs);
   }
   const undoApp = async () => {
@@ -518,7 +536,10 @@ export async function handleVerify(request: Request, ctx: Ctx): Promise<Response
   // A mailbox whose backstop tripped or that reached its ceiling is being guessed at: logged at error level, once per
   // trip, with a pseudonymous prefix of its key (an HMAC under K_rl, never the address) so staff can see targeted
   // mailboxes. Until the UTC day ends it answers "try again later" (D198).
-  if (guess.tripped) log({ event: 'mailbox_guess_limit', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'error', code: guess.tripped, subject: live.mailboxKey.slice(0, 12) }, 'error');
+  if (guess.tripped) {
+    log({ event: 'mailbox_guess_limit', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'error', code: guess.tripped, subject: live.mailboxKey.slice(0, 12) }, 'error');
+    raiseAlert(deps, ctx.requestId, 'mailbox_guess_limit', guess.tripped, null);
+  }
   const keys = await deps.keys();
   const v = await stub.verify(await codeMac(keys, cid.id, b.code), now);
   if (v.result === 'gone') {
@@ -875,6 +896,43 @@ const audit = (deps: Deps, row: { staff: string; action: string; ticket: string;
  * `{scopeId, actionNonce, ticket}` → a client proof for `("email", "email:" + scopeId)`: only for a registered scope
  * whose current `action_nonce` is `actionNonce` and that has an active app with email on (tokens review L6).
  */
+/**
+ * A partner console's client proof (ConsoleIssuerRpc, D447): the same checks and the same audit table as the staff
+ * route, for the owner action the console is building. A proof is bound to one scope and action nonce and does nothing
+ * without an on-chain owner (the contract checks the owner's token). The console checked the member is an owner of the
+ * org holding this scope; this route has no Access gate of its own (the service binding is the only way in, bound only
+ * by the console Worker).
+ */
+export async function mintPartnerClientProof(deps: Deps, requestId: string, i: { scopeId: string; actionNonce: number; orgId: string; actorId: string }): Promise<PartnerClientProof> {
+  const ctx: Ctx = { deps, requestId, endpoint: 'ConsoleIssuerRpc.clientProof', cors: {}, limits: limitsFor(deps.env.ENV_NAME) };
+  if (!isScopeId(i.scopeId)) return { ok: false, code: 'bad_request', error: 'Malformed scope id' };
+  let scope;
+  try {
+    scope = await deps.chain.scope(i.scopeId, true);
+  } catch (err) {
+    if (err instanceof ChainUnavailable) return { ok: false, code: 'unavailable', error: 'The chain could not be read' };
+    throw err;
+  }
+  if (!scope) return { ok: false, code: 'unknown_scope', error: 'The scope is not registered on chain' };
+  if (scope.actionNonce !== i.actionNonce) return { ok: false, code: 'stale_action_nonce', error: 'actionNonce is not the scope’s current action_nonce' };
+  let hasEmailApp: boolean;
+  try {
+    hasEmailApp = await scopeHasEmailApp(deps.env.API, i.scopeId);
+  } catch (err) {
+    if (err instanceof ApiUnavailable) return { ok: false, code: 'unavailable', error: 'The API could not be read' };
+    throw err;
+  }
+  if (!hasEmailApp) return { ok: false, code: 'email_not_enabled', error: 'No active app of this scope has email on' };
+  const lim = await limiter(deps, `partner-proof:${i.scopeId}`).hit(PARTNER_PROOF_LIMITS, deps.now());
+  if (!lim.ok) return { ok: false, code: 'rate_limited', error: 'Too many proofs for this scope today' };
+  const jti = randomId(16);
+  await deps.env.DB.prepare('INSERT INTO email_admin_audit (at_ms, staff, action, ticket, scope_id, action_nonce, jti, subject, detail) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8)')
+    .bind(deps.now(), PARTNER_PROOF_STAFF, 'client_proof', i.orgId.slice(0, 64), i.scopeId, i.actionNonce, jti, JSON.stringify({ org: i.orgId, actor: i.actorId, requestId }))
+    .run();
+  const { token } = await mint(ctx, null, i.scopeId, CLIENT_PROOF_SUB, clientProofNonce(deps.env.SIGNER_ACCOUNT, i.scopeId, i.actionNonce), 'client_proof', jti);
+  return { ok: true, token, client: emailClient(i.scopeId) as [string, string] };
+}
+
 export async function handleClientProof(request: Request, ctx: Ctx): Promise<Response> {
   const { deps } = ctx;
   const gate = await staffGate(request, ctx, ['scopeId', 'actionNonce']);
@@ -1043,6 +1101,7 @@ export async function handleSendgridWebhook(request: Request, ctx: Ctx): Promise
       ),
     );
   }
+  for (const s of list) countDaily(deps, s.appId, s.reason === 'complaint' ? 'complained' : 'bounced');
   if (list.some((s) => s.reason === 'complaint')) {
     const n = await deps.env.DB.prepare("SELECT COUNT(*) AS n FROM email_suppressions WHERE reason = 'complaint' AND at_ms > ?1").bind(now - 86_400_000).first<number>('n');
     if ((n ?? 0) > COMPLAINT_ALERT_PER_DAY) log({ event: 'email_complaint_rate', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'error', code: 'complaints_24h', count: n ?? 0 }, 'error');

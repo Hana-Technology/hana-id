@@ -39,6 +39,7 @@ export interface SettingsInput {
   googleWebClientId?: string | null;
   name?: string;
   identityEmail?: 'off' | 'on_request' | 'at_login';
+  loginMethods?: 'google' | 'google,email';
 }
 
 export async function updateSettings(db: HotDb, env: Env, w: Writer, i: SettingsInput): Promise<{ version: number }> {
@@ -80,6 +81,11 @@ export async function updateSettings(db: HotDb, env: Env, w: Writer, i: Settings
     set.push(q`identity_email = ${i.identityEmail}`);
     changed.identityEmail = i.identityEmail;
   }
+  if (i.loginMethods !== undefined && i.loginMethods !== a.login_methods) {
+    if (i.loginMethods !== 'google' && i.loginMethods !== 'google,email') refuse('bad_request', 'loginMethods must be google or google,email');
+    set.push(q`login_methods = ${i.loginMethods}`);
+    changed.loginMethods = i.loginMethods;
+  }
   if (i.name !== undefined) {
     const name = appName(i.name);
     if (name !== a.name) {
@@ -110,11 +116,21 @@ export async function setLogo(db: HotDb, w: Writer, i: { orgId: string | null; a
 }
 
 /** turnOff: the policy removed, or raw signing off; immediate. Nothing to turn off answers the current version unchanged. */
-export async function turnOff(db: HotDb, w: Writer, i: { orgId: string | null; appId: string; what: 'policy' | 'raw_sign'; expectedVersion: number }): Promise<{ version: number }> {
-  expectReplay(w, ['policy.removed', 'raw_sign.off']);
+export async function turnOff(db: HotDb, w: Writer, i: { orgId: string | null; appId: string; what: 'policy' | 'raw_sign' | 'email'; expectedVersion: number }): Promise<{ version: number }> {
+  expectReplay(w, ['policy.removed', 'raw_sign.off', 'email.off']);
   const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, w, with: { changes: true } });
   const a = plan.app;
   expectVersion(a.settings_version, i.expectedVersion);
+  if (i.what === 'email') {
+    // Off for this app at once, whatever the scope's client (a kill switch, as the policy and raw signing): logins with
+    // email stop as soon as the issuer and `/v1/app` read this. Removing the scope's on-chain client is a separate owner action.
+    if (!a.login_methods.split(',').includes('email')) return { version: a.settings_version };
+    await runWrite(db, w, [
+      commitOnApp(w, { kind: 'email.off', detail: {} }, i.appId, i.orgId, q`a.settings_version = ${i.expectedVersion} AND a.deleted_at IS NULL`),
+      q`UPDATE apps SET settings_version = settings_version + 1, login_methods = 'google' WHERE id = ${i.appId} AND ${committed(w.requestId)}`,
+    ]);
+    return { version: i.expectedVersion + 1 };
+  }
   const kind = i.what === 'policy' ? 'policy_set' : 'raw_sign_on';
   const open = plan.openChanges.filter((c) => c.kind === kind);
   const isOn = i.what === 'policy' ? a.auto_approve_policy !== null || a.auto_approve_pending !== null : a.raw_sign !== 'off' || a.raw_sign_pending !== null;

@@ -69,6 +69,26 @@ export async function getScope(rpc: string, signer: string, scopeId: string): Pr
   };
 }
 
+// ---- build plan batch 9: the email signer on chain, for the Email issuer page (D448) ----
+
+/** `get_self_issued("email")`, `get_issuer_keys("email")` and `get_issuer("email")`: the signer policy and the active keys' thumbprints. */
+export async function getEmailSignerPolicy(rpc: string, signer: string): Promise<{ required: number; signers: { id: string; kids: string[] }[]; keys: string[]; iss: string[] } | null> {
+  const [policy, keys, issuer] = await Promise.all([
+    view(rpc, signer, 'get_self_issued', { provider: 'email' }),
+    view(rpc, signer, 'get_issuer_keys', { provider: 'email' }),
+    view(rpc, signer, 'get_issuer', { provider: 'email' }),
+  ]);
+  if (policy === null) return null;
+  const p = policy as { signers?: unknown; required?: unknown };
+  if (!Array.isArray(p.signers) || typeof p.required !== 'number') throw new NearViewError('get_self_issued: unexpected shape');
+  const signers = p.signers.map((s: unknown) => {
+    const x = s as { id?: unknown; kids?: unknown };
+    return { id: String(x.id), kids: Array.isArray(x.kids) ? x.kids.filter((k): k is string => typeof k === 'string') : [] };
+  });
+  const iss = Array.isArray((issuer as { iss_values?: unknown } | null)?.iss_values) ? ((issuer as { iss_values: unknown[] }).iss_values.filter((i): i is string => typeof i === 'string')) : [];
+  return { required: p.required, signers, keys: Array.isArray(keys) ? (keys as { kid?: unknown }[]).flatMap((k) => (typeof k.kid === 'string' ? [k.kid] : [])) : [], iss };
+}
+
 // ---- batch C8b: an identity's standing for the Users screen ----
 
 /** `get_identity(scope, provider, sub)` (docs/contract-interface.md "Identity"). */

@@ -52,7 +52,8 @@ describe('src/directory-rpc.ts (DirectoryRpc) reads only, and only the directory
     expect(text).not.toMatch(/\bON CONFLICT\b/iu);
     const tables = [...text.matchAll(/\b(?:FROM|JOIN)\s+([a-z_]+)/gu)].map((m) => m[1]!);
     expect(tables.length).toBeGreaterThan(0);
-    for (const t of tables) expect(['user_emails', 'user_email_apps', 'email_admin_audit'], t).toContain(t);
+    // email_issuance and email_daily are the counts-only Email issuer page (batch 9, D446): no address, sub or key.
+    for (const t of tables) expect(['user_emails', 'user_email_apps', 'email_admin_audit', 'email_issuance', 'email_daily'], t).toContain(t);
     const inserts = [...text.matchAll(/\bINSERT INTO\s+([a-z_]+)/gu)].map((m) => m[1]!);
     expect(inserts).toEqual(['email_admin_audit']);
     // Every prepared statement is a SELECT or that INSERT (`AUDIT_INSERT` + its detail expression).

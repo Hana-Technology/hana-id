@@ -18,6 +18,7 @@ import type { App } from './apps.ts';
 import { fromHex, hex, sha256 } from './bytes.ts';
 import { inBackground, syncAccount } from './directory/sync.ts';
 import { countEmailUsage } from './email-usage.ts';
+import { countLinkUsage } from './link-usage.ts';
 import type { Env } from './env.ts';
 import { readJson } from './http.ts';
 import { type LinkRefusal, accountRootIk, checkKey, roomFor } from './link-precheck.ts';
@@ -321,6 +322,7 @@ async function linkEndpoint(request: Request, env: Env, endpoint: LinkEndpoint, 
   if (!result.ok && NOT_EXECUTED.has(result.code)) await unclaim();
   if (!result.ok) return relayFailure(ctx, env, result, panicKey);
   await revokeAccountShares(env, app.scope_id, checked.root, ctx);
+  await countLinkUsage(env, app.id, result.linkTally, ctx, exec);
   // The wallet directory's identities (D314): the account as the chain has it now, with the subs these tokens carried.
   const known = tokens.map((t) => ({ provider: t.provider, sub: t.sub }));
   const hint = body.kind === 'link' ? undefined : { memberKey: body.memberKey, action: body.kind };

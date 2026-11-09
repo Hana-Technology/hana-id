@@ -77,6 +77,8 @@ async function apiAnswer(method: string, url: URL, body: Record<string, unknown>
     if ((m = /^\/api\/statements\/([^/]+)\/(\d{4}-\d{2})$/u.exec(p))) return ok(data.statement(decodeURIComponent(m[1]!), m[2]!));
     if (p === '/api/rates') return ok(data.rates(q.get('month') ?? new Date().toISOString().slice(0, 7)));
     if (p === '/api/retention') return ok(data.retention);
+    if (p === '/api/email/issuer') return ok(data.emailIssuer(Number(q.get('days') ?? 14)));
+    if (p === '/api/email/links') return ok(data.emailLinks(Number(q.get('days') ?? 14)));
     return refuse(404, 'not_found', 'Not found');
   }
   // Writes: the refusals the console and the API give for org_legacy, then success.

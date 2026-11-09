@@ -48,6 +48,7 @@ async function samples(m: Member, app: { id: string; scope: string }): Promise<S
     { method: 'POST', path: `${o}/actions`, body: { kind: 'member.invite', params: { email: 'matrix@partner.example', role: 'viewer' } } },
     { method: 'POST', path: `${o}/apps/${app.id}/origins/remove`, body: { remove: ['https://app.partner.example'], expectedVersion: r.origins_version } },
     { method: 'POST', path: `${o}/apps/${app.id}/off`, body: { what: 'raw_sign', expectedVersion: r.settings_version } },
+    { method: 'GET', path: `${o}/apps/${app.id}/email` },
     { method: 'POST', path: `${o}/changes/gc_unknown1/cancel`, body: {} },
     { method: 'POST', path: `${o}/apps/${app.id}/suspend`, body: {} },
     { method: 'POST', path: `${o}/apps/${app.id}/profile`, body: { name: 'Renamed', expectedVersion: r.settings_version } },

@@ -105,13 +105,15 @@ export interface AppRow {
   google_web_client_id: string | null;
   /** Migration 0014 (D411). */
   identity_email: string;
+  /** Migration 0010: `google`, `email` or `google,email`. */
+  login_methods: string;
   environment: 'test' | 'live';
   first_session_at: number | null;
   assigned_at: number;
 }
 
 export const APP_COLUMNS =
-  'a.id, a.name, a.scope_id, a.org_id, a.suspended_by, a.deleted_at, a.logo_key, a.created_at, a.origins_version, a.settings_version, a.persistence, a.session_ttl_ms, a.idle_ttl_ms, a.raw_sign, a.raw_sign_pending, a.raw_sign_effective_at, a.auto_approve_policy, a.auto_approve_pending, a.auto_approve_effective_at, a.google_web_client_id, a.identity_email, s.environment, s.first_session_at, s.assigned_at';
+  'a.id, a.name, a.scope_id, a.org_id, a.suspended_by, a.deleted_at, a.logo_key, a.created_at, a.origins_version, a.settings_version, a.persistence, a.session_ttl_ms, a.idle_ttl_ms, a.raw_sign, a.raw_sign_pending, a.raw_sign_effective_at, a.login_methods, a.auto_approve_policy, a.auto_approve_pending, a.auto_approve_effective_at, a.google_web_client_id, a.identity_email, s.environment, s.first_session_at, s.assigned_at';
 
 /** `<FILES_ORIGIN>/<logo_key>`, or none (no logo, or no files origin in this env). */
 export function logoUrl(filesOrigin: string | undefined, logoKey: string | null): string | undefined {
@@ -132,6 +134,7 @@ export function summaryView(r: AppRow & { active_origins: number; pending_change
   };
   const url = logoUrl(filesOrigin, r.logo_key);
   if (url) v.logoUrl = url;
+  v.emailOn = r.login_methods.split(',').includes('email');
   return v;
 }
 

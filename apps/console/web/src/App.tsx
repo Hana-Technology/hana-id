@@ -8,6 +8,7 @@ import { Branding } from './pages/app/Branding.tsx';
 import { Keys } from './pages/app/Keys.tsx';
 import { Origins } from './pages/app/Origins.tsx';
 import { Overview } from './pages/app/Overview.tsx';
+import { EmailLogin } from './pages/app/EmailLogin.tsx';
 import { Sessions } from './pages/app/Sessions.tsx';
 import { Signing } from './pages/app/Signing.tsx';
 import { Suspend } from './pages/app/Suspend.tsx';
@@ -39,6 +40,7 @@ export function App() {
           <Route path="origins" element={<Origins />} />
           <Route path="keys" element={<Keys />} />
           <Route path="sessions" element={<Sessions />} />
+          <Route path="email" element={<EmailLogin />} />
           <Route path="signing" element={<Signing />} />
           <Route path="branding" element={<Branding />} />
           <Route path="suspend" element={<Suspend />} />

@@ -74,7 +74,7 @@ export async function verifyWebhook(publicKeyB64: string, timestamp: string, bod
   }
 }
 
-export type Suppression = { emailKey: string; reason: 'bounce' | 'complaint' };
+export type Suppression = { emailKey: string; reason: 'bounce' | 'complaint'; appId: string | null };
 
 /** The categories the issuer's own mails carry (sendgrid.ts): events of any other mail are ignored (M3). */
 export const ISSUER_CATEGORIES: ReadonlySet<string> = new Set(['hana-id-code', 'hana-id-link_notice', 'hana-id-unlock', 'hana-id-confirm']);
@@ -95,7 +95,8 @@ export async function suppressionsOf(keys: IssuerKeys, events: unknown): Promise
     const r = normalizeEmail(ev.email);
     if (!r.ok) continue;
     const k = await suppressionKey(keys, r.email);
-    if (!out.has(k) || reason === 'complaint') out.set(k, { emailKey: k, reason });
+    const appId = typeof ev.hana_app === 'string' && /^app_[A-Za-z0-9]{1,64}$/u.test(ev.hana_app) ? ev.hana_app : null;
+    if (!out.has(k) || reason === 'complaint') out.set(k, { emailKey: k, reason, appId });
   }
   return [...out.values()];
 }

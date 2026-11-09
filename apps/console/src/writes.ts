@@ -16,6 +16,7 @@
 import { type Actor, type RpcFail, changeIdInput, inviteIdInput, keyIdInput, ownerGrantIdInput, scopeIdInput } from '@hana-id/console-core';
 import { z } from 'zod';
 import { type AuditAction, type Writer, auditInsert, entry } from './audit.ts';
+import { appEmailRoute } from './email.ts';
 import { type OrgCaller, actorOf, createAction } from './actions.ts';
 import type { Env } from './env.ts';
 import { RpcRefusal } from './errors.ts';
@@ -108,7 +109,7 @@ const ROUTES: OrgRouteDef[] = [
     role: 'owner',
     frozenOk: true,
     run: async (c) => {
-      const b = await body(c, z.object({ what: z.enum(['policy', 'raw_sign']), expectedVersion: version }).strict(), 'Expected {what: "policy" | "raw_sign", expectedVersion}');
+      const b = await body(c, z.object({ what: z.enum(['policy', 'raw_sign', 'email']), expectedVersion: version }).strict(), 'Expected {what: "policy" | "raw_sign" | "email", expectedVersion}');
       if (!b.ok) return b.res;
       const r = await c.env.API.turnOff({ ...ctxOf(c), orgId: c.caller.orgId, appId: appOf(c), ...b.value });
       return answered(c, 'turnOff', 'app.turned_off', appOf(c), r, (x) => ({ version: x.version, what: b.value.what }), (x) => ({ version: x.version }));
@@ -280,6 +281,9 @@ const ROUTES: OrgRouteDef[] = [
       return json(ok ? 200 : 422, { status: r.status, ...(r.nearTx ? { nearTx: r.nearTx } : {}), ...(r.code ? { code: r.code } : {}), ...(r.error ? { error: r.error } : {}) });
     },
   },
+
+  // ---- the Email login page (build plan batch 9, D444, D447): any member, a read ----
+  { method: 'GET', re: new RegExp(`^/apps/(${APP})/email$`, 'u'), role: 'viewer', frozenOk: true, run: (c) => appEmailRoute(c.env, ctxOf(c), c.caller.orgId, appOf(c), c.caller.session.sub) },
 
   // ---- reports and statements (C12's backend, reports.ts) and pending upgrades (C14's, governance.ts): any member ----
   { method: 'GET', re: /^\/usage$/u, role: 'viewer', frozenOk: true, run: (c) => usageRoute(c.env, c.info, reportCaller(c), c.url) },

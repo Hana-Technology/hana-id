@@ -5,6 +5,7 @@
 import { appKeyPairs, appKeyProblem } from './bls.ts';
 import { isJsonForm } from './email-token.ts';
 import { countEmailUsage } from './email-usage.ts';
+import { countLinkUsage } from './link-usage.ts';
 import type { Env } from './env.ts';
 import { hex, sha256 } from './bytes.ts';
 import { type Ctx, appGate, appQuota, chainGate, chainGateResponse, checkClientScope, done, firstSession, lap, lapRelay, limiter, loginTokenRefusal, newCtx, reject, settle } from './handlers.ts';
@@ -249,6 +250,8 @@ async function login(request: Request, env: Env, ctx: Ctx, exec?: ExecutionConte
     // Email logins and new links per app and day (D1 `email_usage`, copied hourly to the ledger, D233).
     if (token.email) await countEmailUsage(env, app.id, 'email_sessions', ctx, exec);
     if (link) await countEmailUsage(env, app.id, 'links', ctx, exec);
+    // What the transaction did to links (the links view, D445): from the contract's own events, counts only.
+    await countLinkUsage(env, app.id, result.linkTally, ctx, exec);
     // The wallet directory (D314): the user seen now, and a member's or a new link's identity rows.
     const linkRef = link ? { provider: link.provider, sub: link.sub } : null;
     await inBackground(exec, () => syncAfterLogin(env, app.scope_id, { provider: token.provider, sub: token.sub }, linkRef, standing, { requestId, endpoint: ctx.endpoint, appId: app.id }));

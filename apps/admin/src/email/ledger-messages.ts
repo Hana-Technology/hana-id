@@ -107,6 +107,21 @@ export function retentionFailed(c: MailContext, p: RetentionProblem): Rendered {
   return render(c.env, subject, blocks, c.consoleOrigin, c.label);
 }
 
+/** `link_jump` (spec "Links view", D448): apps whose links today are at least 5× their 7-day median. Counts only. */
+export interface LinkJumpAlert {
+  appId: string;
+  appName: string;
+  today: number;
+  median: number;
+}
+
+export function linkJumpMessage(c: MailContext, rows: LinkJumpAlert[]): Rendered {
+  const blocks: Block[] = [{ kind: 'warn', text: `${rows.length} app${rows.length === 1 ? '' : 's'} made far more sign-in-method links today than usual (at least 5× the 7-day median, and at least 10). A jump can be a real rollout, or someone linking at scale: check the app with its partner.` }];
+  for (const r of rows) blocks.push({ kind: 'kv', rows: [['App', `${oneLine(r.appName, 80)} (${r.appId})`], ['Links today', String(r.today)], ['7-day median', String(r.median)]] });
+  blocks.push({ kind: 'p', text: 'The admin console’s Account links page shows the days and the counts per app. No user is named here or there.' });
+  return render(c.env, `Link rate jump: ${rows.length} app${rows.length === 1 ? '' : 's'}`, blocks, c.consoleOrigin, c.label);
+}
+
 /**
  * `directory_budget` (D275, C8b; a Direct kind to the security alias): a staff member's Users screen reads reached the
  * row budget, so the issuer refused the next one. The staff address is Hana's own (an Access identity), never an end

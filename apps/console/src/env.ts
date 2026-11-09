@@ -2,6 +2,7 @@
 // `console` and `files` blocks and `consoleAudiences`). Vars are public; the one secret is CONSOLE_GOOGLE_CLIENT_SECRET
 // (sign-in's code exchange, batch C9; `wrangler secret put`, docs/operations.md setup step 11).
 import type {
+  ConsoleIssuerRpcClient,
   AppChange,
   AppDetail,
   AppSummary,
@@ -73,6 +74,11 @@ export interface ConsoleRpcClient {
 }
 
 export interface Env {
+  /**
+   * The email issuer's `ConsoleIssuerRpc` (build plan batch 9, D447): the Email login page's client proof and
+   * deliverability. Absent on an env without an email issuer: the page says email isn't offered there.
+   */
+  ISSUER?: ConsoleIssuerRpcClient;
   /** The manifest's `name`: the env every generic step-up action commits to, and the rate-limit key prefix. */
   ENV_NAME: string;
   /** `console.origin`: the only host this Worker serves, and the `Origin` every non-GET request must carry. */

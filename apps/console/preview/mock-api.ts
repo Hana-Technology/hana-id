@@ -31,6 +31,8 @@ interface ActionRecord {
 /** The harness's state: the actions built in this run (a fresh sign-in's review page reads them back). */
 export class PreviewState {
   readonly actions = new Map<string, ActionRecord>();
+  /** The Email login page's state; `/__preview/<scenario>?email=<state>` picks it. */
+  emailState = 'off';
   private n = 0;
   nextActionId(): string {
     this.n += 1;
@@ -165,6 +167,13 @@ export function answer(scenario: Scenario, method: string, url: URL, body: unkno
   if (appM) {
     const a = apps.find((x) => x.id === appM[1]);
     return a ? ok({ app: a }) : fail(404, 'not_found', 'Not found');
+  }
+  const emailM = /^\/apps\/([^/]+)\/email$/u.exec(rest);
+  if (emailM) {
+    const a = apps.find((x) => x.id === emailM[1]);
+    if (!a) return fail(404, 'not_found', 'Not found');
+    if (scenario === 'errors') return fail(503, 'near_unavailable', 'NEAR RPC is unavailable: try again');
+    return ok(F.emailStatus(a, now, state.emailState));
   }
   if (rest === '/members') return ok(scenario === 'new-org' ? { members: [F.members(now).members[0]!], invites: [], grants: [] } : F.members(now));
   if (rest === '/audit') return ok(F.audit(now));

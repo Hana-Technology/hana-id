@@ -198,6 +198,8 @@ export const appSummary = z
     activeOrigins: z.number().int().nonnegative(),
     pendingChanges: z.number().int().nonnegative(),
     logoUrl: z.string().url().optional(),
+    /** Email login is on (`apps.login_methods` lists it; an API before batch 9's build omits it). */
+    emailOn: z.boolean().optional(),
     createdAt: ms,
   })
   .strict();
@@ -219,6 +221,8 @@ export const appDetail = appSummary
         policy: z.object({ policyId: z.string().regex(/^[0-9a-f]{64}$/u), label: z.string(), json: z.unknown() }).strict().nullable(),
         /** D411: `identity_email` (an API before migration 0014's build omits it). */
         identityEmail: z.enum(['off', 'on_request', 'at_login']).optional(),
+        /** `apps.login_methods` (an API before batch 9's build omits it): who may sign in. */
+        loginMethods: z.enum(['google', 'email', 'google,email']).optional(),
         /**
          * Hana's mainnet demo exception (D428): in the staff view (AdminRpc.getApp) only, where staff set it; a partner's
          * view (ConsoleRpc.getApp) leaves it out.

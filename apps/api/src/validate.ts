@@ -163,7 +163,8 @@ export function toOwnerAction(body: unknown): Checked<ContractCall> {
       const kind = changeKind(args.change);
       if (!kind) return { error: 'Malformed change' };
       const proof = args.client_proof ?? null;
-      if (kind === 'AddClient' && !isJwt(proof)) return { error: 'AddClient needs a client_proof token' };
+      // An email client's proof is the issuer's JWS JSON form (D447); every other provider's is a compact JWT.
+      if (kind === 'AddClient' && !((args.change as { AddClient: { provider: string } }).AddClient.provider === 'email' ? isToken(proof) : isJwt(proof))) return { error: 'AddClient needs a client_proof token' };
       if (kind !== 'AddClient' && proof !== null) return { error: 'client_proof is only for AddClient' };
       return { method, args: { scope_id: args.scope_id, auth: args.auth, change: args.change, client_proof: proof } };
     }

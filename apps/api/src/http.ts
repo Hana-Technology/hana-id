@@ -22,10 +22,10 @@ export function corsHeaders(origin: string | '*', allowHeaders: string, methods 
 }
 
 /**
- * Reads a JSON body up to `max` bytes. The body is streamed and reading stops as soon as it passes `max`, so a
- * chunked body (no Content-Length) or one with a false Content-Length is never buffered beyond the limit.
+ * Reads a body up to `max` bytes. The body is streamed and reading stops as soon as it passes `max`, so a chunked body
+ * (no Content-Length) or one with a false Content-Length is never buffered beyond the limit.
  */
-export async function readJson(request: Request, max: number): Promise<{ ok: true; body: unknown } | { ok: false; status: number; error: string }> {
+export async function readBody(request: Request, max: number): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; status: number; error: string }> {
   const tooLarge = { ok: false as const, status: 413, error: 'Body too large' };
   const declared = request.headers.get('content-length');
   if (declared !== null && !(Number(declared) <= max)) return tooLarge;
@@ -44,8 +44,15 @@ export async function readJson(request: Request, max: number): Promise<{ ok: tru
       size += value.byteLength;
     }
   }
+  return { ok: true, bytes: bytes.slice(0, size) };
+}
+
+/** Reads a JSON body up to `max` bytes (readBody's limits). */
+export async function readJson(request: Request, max: number): Promise<{ ok: true; body: unknown } | { ok: false; status: number; error: string }> {
+  const read = await readBody(request, max);
+  if (!read.ok) return read;
   try {
-    return { ok: true, body: JSON.parse(new TextDecoder().decode(bytes.subarray(0, size))) as unknown };
+    return { ok: true, body: JSON.parse(new TextDecoder().decode(read.bytes)) as unknown };
   } catch {
     return { ok: false, status: 400, error: 'Body must be JSON' };
   }

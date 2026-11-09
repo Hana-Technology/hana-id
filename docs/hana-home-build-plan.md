@@ -1,6 +1,6 @@
 # Hana Home build plan (batches)
 
-**Status (2026-11-09): H0 (this plan, the spec's rewrite, D460–D466, the readiness rows) on branch `docs/hana-home-h0`; H1–H12 not started; no Home code exists.** Splits `docs/hana-home-spec.md` (D40, D45, D98, D460–D466) into reviewable
+**Status (2026-11-09): H0 (this plan, the spec's rewrite, D460–D466, the readiness rows) on branch `docs/hana-home-h0`; H1 built on branch `feat/hana-home-h1`, its security review's fixes on `feat/hana-home-h1-2` (not merged, not deployed; see its result line below); H2–H12 not started.** Splits `docs/hana-home-spec.md` (D40, D45, D98, D460–D466) into reviewable
 batches. The spec stays the source of truth for *what* to build; this file says *in which order*, *what each batch
 ships* and *what users see after it*. Like a spec it is history once the work merges: the current state lives in the
 reference docs (`docs/README.md`).
@@ -22,6 +22,8 @@ checked. Sizes as in the spec: S ≤ 1 day, M 2–3 days, L 4–5 days.
   is 0008.
 - **No new cron trigger** (D417: 5 of 5, asserted in `apps/admin/scripts/test/gen-wrangler.test.ts`). Hourly work goes in
   `vaultMaintenance` under `isHourlyRun`.
+- **One `hk` per sign-in.** Each sign-in makes a new `hk`, and `homeMessage` doesn't carry `expiresAtMs`. A batch that
+  reuses `hk` across sign-ins must add `expiresAtMs` to `homeMessage` first (H1's review).
 
 ## What changed from the spec (the review of develop)
 
@@ -98,6 +100,8 @@ additions conflict in `apps/api/src/index.ts`, so expect small merges. About 30 
 - **Tests.** Vectors against an independent Node implementation; every identity refusal in the spec's list.
 - **Migration / deploy.** API.
 - **User-visible.** Nothing.
+- **Result (2026-11-09, `feat/hana-home-h1`, not merged, not deployed).** `packages/core/src/home.ts` (subpath `@hana-id/core/home`) and `test/vectors/home-v1.json`; `apps/api/src/home/` (`homeGate`, `homeAudienceRoute`, `GET /v1/home/config`, CORS); `log()`'s redacted names; D473, D474. No route uses the verifier yet (H2 onwards); no contract or derivation change. `apps/api/src/login-token.ts` gained its app-less case.
+- **Security review (2026-11-09, `feat/hana-home-h1-2`).** No critical, high or medium issue. The low cost issue is fixed (D475: a limiter call's row reads no longer grow with the markers held); the signed vector now goes through `homeGate` and is asserted in core. The review's conditions are on the batches they bind (H7, H10, H6, "Deploy checklist", the "One `hk` per sign-in" rule) and in `docs/security.md`.
 
 ### H2: the app list
 
@@ -147,6 +151,8 @@ additions conflict in `apps/api/src/index.ts`, so expect small merges. About 30 
   client is refused; the Google client removed while the change waits fails the execute.
 - **Migration / deploy.** No `migrate` and no state change. The timelocked upgrade, then the API, then the console. Land
   before the audit (readiness 6.1).
+- **Condition (H1's review).** If this lands before H10, take H10's condition here: the contract refuses a client proof
+  for `("email", "hana-home")`.
 - **User-visible.** A partner's turn-off of shared login now waits the scope's delay. Partners need telling before it
   ships on any env they use.
 
@@ -156,8 +162,9 @@ additions conflict in `apps/api/src/index.ts`, so expect small merges. About 30 
 - **Files.** `packages/web/src/auth/home-page.ts` (new), `entries/home.ts`; `apps/api/src/pages/host.ts`.
 - **Tests.** The state machine; the opener checks; text-only rendering of partner strings; expiry (detect, warn, lose
   nothing, no auto-retry).
-- **Migration / deploy.** Pages. Not linked yet.
+- **Migration / deploy.** Pages. Not linked yet. Run the "Deploy checklist" below first.
 - **User-visible.** Only by typing the URL.
+- **Condition (H1's review).** `/login?mode=home`: only a same-origin opener at `/home` may supply the nonce.
 
 ### H8: export
 
@@ -183,6 +190,11 @@ additions conflict in `apps/api/src/index.ts`, so expect small merges. About 30 
 - **Tests.** A Home token can't open a session; a suspended scope works; the mailbox limits still apply.
 - **Migration / deploy.** Issuer, API, pages (the API before the issuer).
 - **User-visible.** Only by typing the URL.
+- **Condition (H1's review; H6 or H10, whichever lands first).** If the route signs a caller-supplied nonce, an owner can
+  get a `hana-home` token carrying `client_proof_nonce` for their own mailbox and register `("email", "hana-home")` on
+  their scope (`registry.rs`, `AddClient`). Refuse that client: in the contract's `propose_change`, or in the issuer by
+  computing the `homeNonce` from the key, expiry and salt instead of signing what it's given. Test it. Until then D474's
+  "on no scope" isn't a guarantee.
 
 ### H11: billing
 
@@ -200,6 +212,16 @@ additions conflict in `apps/api/src/index.ts`, so expect small merges. About 30 
   screen and the approval popup.
 - **Migration / deploy.** sandbox-dev.
 - **User-visible.** Hana Home.
+
+## Deploy checklist
+
+Run by hand on an env before H7's first deploy to it and before each later Home deploy (H12 moves it into
+`docs/operations.md`):
+
+- The shared client's **only** authorized redirect URI is `{authOrigin}/login/callback` (`docs/batch-b-spec.md`
+  "Chain of trust for a shared-client login", the redirect URI row in `docs/operations.md`), and it has no JavaScript
+  origins. Home's Google route relies on it: another redirect URI on that client could receive a user's token with a nonce
+  for its own Home key, which is a Home identity. No code can see a Google client's settings, so this stays manual.
 
 ## Decided on 2026-11-09
 
@@ -233,7 +255,7 @@ pending turn-off. A partner also loses its instant cut if Hana's login is compro
 
 ## Independent security review
 
-- H1: identity.
+- H1: identity (done 2026-11-09: no critical, high or medium; see H1's review line).
 - H3: a derive without an app gate.
 - H4–H5: auto-sign.
 - H6: the contract.

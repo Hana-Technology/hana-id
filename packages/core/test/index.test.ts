@@ -45,11 +45,12 @@ describe('@hana-id/core', () => {
     expect(VERSION).toBe(pkg.version);
   });
 
-  it('publishes the derivation, identity, wallet record, Stellar signer, decode, policy, Support ID, mainnet demo, demo constants and demo prices subpaths, and they exist', () => {
+  it('publishes the derivation, identity, Home, wallet record, Stellar signer, decode, policy, Support ID, mainnet demo, demo constants and demo prices subpaths, and they exist', () => {
     expect(pkg.exports).toEqual({
       '.': './src/index.ts',
       './derivation': './src/derivation.ts',
       './identity': './src/identity.ts',
+      './home': './src/home.ts',
       './wallet-record': './src/wallet-record.ts',
       './signers/stellar': './src/signers/stellar.ts',
       './decode': './src/decode/index.ts',

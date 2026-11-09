@@ -6,6 +6,7 @@ import { KeyPair } from '@near-js/crypto';
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { purgeDirectory } from '../src/changes/retention.ts';
+import { syncAfterLogin } from '../src/directory/sync.ts';
 import { HotDb } from '../src/changes/db.ts';
 import { HOME_APPS_ENDPOINT, HOME_APPS_PER_IP_MINUTE, HOME_APPS_PER_KEY_MINUTE, HOME_LIST_PAGE, HOME_MINE_MAX, HOME_SCOPE_READS, HOME_SEARCH_PER_KEY_MINUTE } from '../src/home/apps.ts';
 import { homeCoverage } from '../src/home/coverage.ts';
@@ -323,7 +324,7 @@ describe('GET /v1/home/apps: the list and the overlay', () => {
     expect(google2).not.toHaveProperty('addresses');
   });
 
-  it('a link in its delay is not in the account yet; a matured one is', async () => {
+  it('a link in its delay, or past it but not yet written active, is not in the account; a member’s login writes it', async () => {
     const app = await seedApp();
     const root = await seedUser(app.scope, { sub: `root-${uid()}` });
     const pendingSub = `pending-${uid()}`;
@@ -332,8 +333,18 @@ describe('GET /v1/home/apps: the list and the overlay', () => {
     expect(pending).toMatchObject({ mine: false });
     expect(pending).not.toHaveProperty('addresses');
 
+    // Past its delay but still `pending` in D1: a cancel's sync may have been lost, so the row alone proves nothing.
     const maturedSub = `matured-${uid()}`;
     await seedUser(app.scope, { userId: root.userId, sub: maturedSub, role: 'member', status: 'pending', effectiveAt: Date.now() - 1, wallets: null });
+    const matured = await one(await newIdentity({ sub: maturedSub }), app.scope);
+    expect(matured).toMatchObject({ mine: false });
+    expect(matured).not.toHaveProperty('supportId');
+    expect(matured).not.toHaveProperty('addresses');
+
+    // A genuine member isn't locked out: the app stays listed, and the member's next login writes `active`.
+    const member = { provider: 'google', sub: maturedSub };
+    const standing = { pending: false, path: `${app.scope}#google#${root.userId}#0`, confirmed: true, member: { root: { provider: 'google', sub: `root-${uid()}` }, effectiveAtMs: Date.now() - 1 } };
+    expect(await syncAfterLogin(env, app.scope, member, null, standing, { requestId: 'req_test', endpoint: 'test' })).toBe(true);
     expect(await one(await newIdentity({ sub: maturedSub }), app.scope)).toMatchObject({ mine: true });
   });
 
@@ -439,7 +450,7 @@ describe('GET /v1/home/apps: the list and the overlay', () => {
 });
 
 describe('the quieter listing (D98 item 8)', () => {
-  it('leaves the list but is found by its whole app name, its scope id or app id', async () => {
+  it('leaves the list but is found by its whole app name or its app id, never by walking scope ids', async () => {
     const quiet = await seedApp();
     near.allowShared.add(quiet.scope);
     await setQuiet(quiet.scope);
@@ -449,8 +460,19 @@ describe('the quieter listing (D98 item 8)', () => {
     const byName = await list(await newIdentity(), `?q=${encodeURIComponent(name.toUpperCase())}`);
     expect(byName.scopes.some((s) => s.scopeId === quiet.scope)).toBe(true);
     expect((await list(await newIdentity(), `?q=${encodeURIComponent(name.slice(0, -2))}`)).scopes.some((s) => s.scopeId === quiet.scope)).toBe(false);
-    expect((await list(await newIdentity(), `?scopeId=${quiet.scope}`)).scopes).toHaveLength(1);
+    expect((await list(await newIdentity(), `?scopeId=${quiet.scope}`)).scopes).toEqual([]);
     expect((await list(await newIdentity(), `?appId=${quiet.id}`)).scopes).toHaveLength(1);
+  });
+
+  it('a stranger’s scope-id lookup finds a normal scope but nothing quiet; the scope’s own user still finds it by id', async () => {
+    const normal = await seedApp();
+    expect((await list(await newIdentity(), `?scopeId=${normal.scope}`)).scopes).toHaveLength(1);
+    const quiet = await seedApp();
+    await setQuiet(quiet.scope);
+    expect((await list(await newIdentity(), `?scopeId=${quiet.scope}`)).scopes).toEqual([]);
+    const sub = `quiet-owner-${uid()}`;
+    await seedUser(quiet.scope, { sub });
+    expect(await one(await newIdentity({ sub }), quiet.scope)).toMatchObject({ scopeId: quiet.scope, mine: true });
   });
 
   it('still shows for its own users, without a search', async () => {
@@ -546,7 +568,7 @@ describe('paging and the free-plan bounds (D417)', () => {
     expect(getScopeCalls()).toBeLessThanOrEqual(5);
   });
 
-  it('coverage is cached up to 60 s: a turn-off shows on the next read after the cache', async () => {
+  it('coverage is cached (at most about 70 s, D500): a turn-off shows on the next read after the cache', async () => {
     const app = await seedApp();
     near.allowShared.add(app.scope);
     expect(await one(await newIdentity(), app.scope)).toMatchObject({ coverage: 'shared' });

@@ -12,6 +12,11 @@ import { blob } from './shares.ts';
 export const CONSENT_HEADER = 'x-hana-consent';
 /** Revoked rows are kept this long, then pruned (a share-mode row's replay is stopped by the share's counter). */
 export const CONSENT_REVOKED_KEEP_MS = 60 * 60 * 1000;
+/**
+ * Rows a session key may hold (D513): the D1 write bound for one key. A user registers once per Allow, so 20 stays well
+ * above any real session; revoked 'session'-mode rows fall away within the hour, 'none'-mode ones at their expiry.
+ */
+export const CONSENT_MAX_PER_SESSION_KEY = 20;
 
 export type ConsentStatus = 'active' | 'revoked' | 'unknown';
 
@@ -31,6 +36,12 @@ export async function getConsent(db: D1Database, appId: string, consentId: Uint8
 /** True when any app already used this id. A consent id is 128 random bits: a hit is a repeat, not a collision. */
 export async function consentExists(db: D1Database, consentId: Uint8Array): Promise<boolean> {
   return (await db.prepare('SELECT 1 AS hit FROM vault_consents WHERE consent_id = ?1').bind(consentId).first<{ hit: number }>()) !== null;
+}
+
+/** This session key's rows, read through the `path_hash` index (only one account's rows are scanned). */
+export async function consentRowsForKey(db: D1Database, pathHash: Uint8Array, sessionPk: Uint8Array): Promise<number> {
+  const r = await db.prepare('SELECT COUNT(*) AS n FROM vault_consents WHERE path_hash = ?1 AND session_pk = ?2').bind(pathHash, sessionPk).first<{ n: number }>();
+  return r?.n ?? 0;
 }
 
 export interface NewConsent {

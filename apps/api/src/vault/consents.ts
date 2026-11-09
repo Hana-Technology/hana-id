@@ -19,7 +19,7 @@ import type { Env } from '../env.ts';
 import { type Ctx, done, lap, newCtx, reject } from '../handlers.ts';
 import { readJson } from '../http.ts';
 import { checkChainSession, checkShare } from '../identity/token.ts';
-import { consentExists, getConsent, registerConsent, revokeConsent } from './consent-store.ts';
+import { CONSENT_MAX_PER_SESSION_KEY, consentExists, consentRowsForKey, getConsent, registerConsent, revokeConsent } from './consent-store.ts';
 import { refusal, shareLimit, vaultApp, vaultLimits } from './endpoints.ts';
 import { NO_SHARE_ID, SHARE_ID_BYTES, verifyVaultSignature } from './message.ts';
 import { effectiveSettings, getSettingsRow } from './settings.ts';
@@ -90,9 +90,6 @@ export async function handleVaultConsent(request: Request, env: Env, endpoint: C
   const register = endpoint === REGISTER;
   const body = register ? toRegisterBody(parsed.body) : toBody(parsed.body, []);
   if (!body) return reject(ctx, 400, 'bad_request', 'Malformed consent request');
-  // 10/min per share. A 'none'-mode consent has no share, so its session key takes the share's place in the window.
-  const perShare = await shareLimit(env, ctx, gate.app, body.shareId ?? body.sessionPk);
-  if (perShare) return perShare;
   lap(ctx, 'limits');
   try {
     return register ? await registerRequest(env, ctx, gate.app, gate.parentOrigin, body as RegisterBody) : await revokeRequest(env, ctx, gate.app, body);
@@ -104,10 +101,19 @@ export async function handleVaultConsent(request: Request, env: Env, endpoint: C
 const notInForce = (ctx: Ctx): Response => reject(ctx, 409, 'policy_not_in_force', 'The consent is not for the policy in force');
 const exists = (ctx: Ctx): Response => reject(ctx, 409, 'consent_exists', 'This consent id was already registered');
 
+/**
+ * The 10/min window, after the signature (D510): an unsigned request can't spend a real user's window, while the per-IP
+ * limit (`vaultLimits`, before the body) still caps signature checks. A 'none'-mode consent has no share, so its session
+ * key takes the share's place in the window.
+ */
+const consentLimit = (env: Env, ctx: Ctx, app: App, b: ConsentBody): Promise<Response | null> => shareLimit(env, ctx, app, b.shareId ?? b.sessionPk);
+
 async function registerRequest(env: Env, ctx: Ctx, app: App, parentOrigin: string, b: RegisterBody): Promise<Response> {
   const payload = consentRegisterPayload({ consentId: b.consentId, policyId: b.policyId, expiresAtMs: b.expiresAtMs, parentOrigin });
   if (!(await signedBy(env, app, b, payload))) return reject(ctx, 401, 'invalid_signature', 'Invalid session signature');
   lap(ctx, 'proof');
+  const perShare = await consentLimit(env, ctx, app, b);
+  if (perShare) return perShare;
 
   const now = Date.now();
   // The share's rules, as a mint reads them: 'session' apps need a live share of this app and parent; 'none' apps need
@@ -122,7 +128,9 @@ async function registerRequest(env: Env, ctx: Ctx, app: App, parentOrigin: strin
     cap = share.absCapMs;
     pathHash = share.pathHash;
   } else {
-    const chain = await checkChainSession(env, ctx, app, b.sessionPk, now);
+    // One chain read at most (D513): a fresh throwaway key must not cost a retry loop of reads, and a session the node
+    // hasn't caught up with answers a retryable 503, which the vault tries again.
+    const chain = await checkChainSession(env, ctx, app, b.sessionPk, now, { singleRead: true });
     if (!chain.ok) return chain.response;
     cap = chain.session.expires_at_ms;
     pathHash = await sha256(new TextEncoder().encode(chain.session.path));
@@ -139,6 +147,7 @@ async function registerRequest(env: Env, ctx: Ctx, app: App, parentOrigin: strin
   if (b.expiresAtMs <= now || b.expiresAtMs > cap) return reject(ctx, 400, 'bad_expiry', 'The consent must end after now and no later than the session');
 
   if (await consentExists(env.DB, b.consentId)) return exists(ctx);
+  if ((await consentRowsForKey(env.DB, pathHash, b.sessionPk)) >= CONSENT_MAX_PER_SESSION_KEY) return reject(ctx, 429, 'too_many_consents', 'This session has registered too many consents');
   const { created, advanced } = await registerConsent(
     env.DB,
     { consentId: b.consentId, appId: app.id, shareId: b.shareId, sessionPk: b.sessionPk, pathHash, partnerOrigin: parentOrigin, policyId: b.policyId, label: policy.label, grantedAt: now, expiresAt: b.expiresAtMs },
@@ -154,6 +163,8 @@ async function registerRequest(env: Env, ctx: Ctx, app: App, parentOrigin: strin
 async function revokeRequest(env: Env, ctx: Ctx, app: App, b: ConsentBody): Promise<Response> {
   if (!(await signedBy(env, app, b, consentRevokePayload(b.consentId)))) return reject(ctx, 401, 'invalid_signature', 'Invalid session signature');
   lap(ctx, 'proof');
+  const perShare = await consentLimit(env, ctx, app, b);
+  if (perShare) return perShare;
   const now = Date.now();
   const row = await getConsent(env.DB, app.id, b.consentId);
   // The same answer for "no such consent" and "not yours": a key can only ever act on its own consents.

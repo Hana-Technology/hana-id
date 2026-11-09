@@ -6,19 +6,19 @@
 //     its Support ID and addresses. A linked member's row points at its account, so it gets the account root's wallet.
 //
 // SECURITY: `(provider, sub)` comes only from `homeGate`'s verified token, and every per-user value (`mine`, `supportId`,
-// `addresses`) is read by it: nothing in the request can name another user. An unlinked or cancelled identity, or a link
-// still in its delay, is not in the account (`statusAt`), so it sees none of the account's rows. Partner-controlled
-// strings (names, origins, logos) go out as JSON data. Nothing here logs `sub`, a token, an address or a path hash.
+// `addresses`) is read by it: nothing in the request can name another user. Only a row the directory records as `active`
+// counts (D466): an unlinked or cancelled identity, or a link still in its delay, sees none of the account's rows, and a
+// link past its delay counts once the member's login writes `active`. Partner-controlled strings (names, origins, logos)
+// go out as JSON data. Nothing here logs `sub`, a token, an address or a path hash.
 //
 // The free plan's 10 ms CPU and 50 subrequests (D417) bound everything: at most HOME_MINE_MAX own rows and HOME_LIST_PAGE
 // listed rows, the per-scope `get_scope` reads capped at HOME_SCOPE_READS a request and stopped at the first failure (a
 // failing endpoint can multiply a read by the fallbacks). A row with no read answers `coverage: 'unknown'`; the page asks
-// for it by `?scopeId=`. Coverage is display only: `POST /v1/home/login` (H3) and the contract check it again.
+// for it by `?scopeId=` (a quiet scope by `?appId=`, D502). Coverage is display only: `POST /v1/home/login` (H3) and the contract check it again.
 import { formatSupportId } from '@hana-id/console-core';
 import { HotDb } from '../changes/db.ts';
 import { type Q, join, q, raw } from '../changes/sql.ts';
 import { logoUrl } from '../changes/views.ts';
-import { statusAt } from '../directory/read.ts';
 import type { Env } from '../env.ts';
 import { done, lap, limiter, newCtx, reject } from '../handlers.ts';
 import { isDevEnv } from '../origins.ts';
@@ -35,7 +35,7 @@ export const HOME_SEARCH_PER_KEY_MINUTE = 10;
 /** The user's own scopes in one answer, and the listed scopes of one page. */
 export const HOME_MINE_MAX = 30;
 export const HOME_LIST_PAGE = 15;
-/** `get_scope` reads a request may make; what the isolate has cached (≤ 60 s) doesn't count. */
+/** `get_scope` reads a request may make; what the isolate has cached (at most about 70 s, D500) doesn't count. */
 export const HOME_SCOPE_READS = 16;
 /** Reads at once, so a failure stops the rest of them. */
 const HOME_READ_BATCH = 5;
@@ -82,28 +82,26 @@ interface OverlayEntry {
 
 interface OverlayRow {
   scope_id: string;
-  status: string;
-  effective_at: number | null;
   support_code: string;
   wallets_json: string;
 }
 
 /**
- * This identity's directory rows, newest first (D466): identities of its account only, and only while it is in that
- * account (`statusAt`: a pending link counts once its delay has passed). Addresses at `key_index` 0, the only ones Home
- * derives.
+ * This identity's directory rows, newest first (D466): identities of its account only, and only rows recorded `active`.
+ * A `pending` row past its `effective_at` stays out: a cancel's directory sync is best effort, so the row alone can't say
+ * the link wasn't cancelled. A matured member's next login writes `active` (`syncAfterLogin`). Addresses at `key_index`
+ * 0, the only ones Home derives.
  */
-async function readOverlay(db: HotDb, provider: string, sub: string, now: number): Promise<Map<string, OverlayEntry>> {
+async function readOverlay(db: HotDb, provider: string, sub: string): Promise<Map<string, OverlayEntry>> {
   const rows = await db.all<OverlayRow>(
-    q`SELECT i.scope_id, i.status, i.effective_at, u.support_code,
+    q`SELECT i.scope_id, u.support_code,
         (SELECT json_group_array(json_object('chain', w.chain, 'address', w.address)) FROM end_user_wallets w WHERE w.user_id = i.user_id AND w.key_index = 0) AS wallets_json
         FROM end_user_identities i JOIN end_users u ON u.user_id = i.user_id
-       WHERE i.sub = ${sub} AND i.provider = ${provider} AND i.status IN ('active', 'pending')
+       WHERE i.sub = ${sub} AND i.provider = ${provider} AND i.status = 'active'
        ORDER BY u.last_seen_at DESC, i.scope_id LIMIT ${HOME_MINE_MAX}`,
   );
   const out = new Map<string, OverlayEntry>();
   for (const r of rows) {
-    if (statusAt(r.status, r.effective_at, now) !== 'active') continue;
     const addresses = (JSON.parse(r.wallets_json || '[]') as { chain: string; address: string }[]).sort((a, b) => (a.chain === b.chain ? (a.address < b.address ? -1 : 1) : a.chain === 'stellar' ? -1 : 1));
     out.set(r.scope_id, { supportCode: r.support_code, addresses });
   }
@@ -147,7 +145,8 @@ const likeTerm = (term: string): string => `%${term.replace(/[\\%_]/gu, (c) => `
 function listingQuery(query: Exclude<HomeQuery, { kind: 'first' }> | null, env: Env, now: number, mine: readonly string[]): Q {
   const select = q`SELECT ${scopeColumns(now)} FROM scopes s WHERE ${environmentFilter(env)}`;
   const isMine = mine.length > 0 ? q`s.scope_id IN (${join(mine.map((id) => q`${id}`), ', ')})` : raw('0');
-  if (query?.kind === 'scope') return q`${select} AND s.scope_id = ${query.scopeId} AND (s.first_session_at IS NOT NULL OR ${isMine})`;
+  // Scope ids are sequential, so a quiet scope isn't found by one (D502): its link names an app id, which can't be walked.
+  if (query?.kind === 'scope') return q`${select} AND s.scope_id = ${query.scopeId} AND (s.first_session_at IS NOT NULL OR ${isMine}) AND (s.home_quiet = 0 OR ${isMine})`;
   if (query?.kind === 'app') return q`${select} AND s.scope_id = (SELECT scope_id FROM apps WHERE id = ${query.appId}) AND (s.first_session_at IS NOT NULL OR ${isMine})`;
   if (query?.kind === 'search') {
     // A listed scope by any part of an app's name; a quiet one only by an app's whole name, so a search can't enumerate them.
@@ -217,7 +216,7 @@ export async function handleHomeApps(request: Request, env: Env, requestId: stri
   let nextCursor: string | null = null;
   try {
     const db = new HotDb(env.DB);
-    overlay = await readOverlay(db, provider, sub, now);
+    overlay = await readOverlay(db, provider, sub);
     const mine = [...overlay.keys()];
     const statements: Q[] = [listingQuery(query.kind === 'first' ? null : query, env, now, mine)];
     if (query.kind === 'first' && mine.length > 0) statements.push(q`SELECT ${scopeColumns(now)} FROM scopes s WHERE ${environmentFilter(env)} AND s.scope_id IN (${join(mine.map((id) => q`${id}`), ', ')})`);

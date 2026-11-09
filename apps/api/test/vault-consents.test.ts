@@ -6,7 +6,7 @@ import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { forgetCachedApps } from '../src/app-cache.ts';
 import { base64UrlEncode, fromHex, sha256 } from '../src/bytes.ts';
-import { CONSENT_REVOKED_KEEP_MS, pruneConsents } from '../src/vault/consent-store.ts';
+import { CONSENT_MAX_PER_SESSION_KEY, CONSENT_REVOKED_KEEP_MS, pruneConsents } from '../src/vault/consent-store.ts';
 import { SHARE_TOMBSTONE_MS, pruneShares, vaultMaintenance } from '../src/vault/cron.ts';
 import { clearKekCache } from '../src/vault/kek.ts';
 import { NO_SHARE_ID } from '../src/vault/message.ts';
@@ -356,9 +356,24 @@ describe('none mode', () => {
     const { app, near } = await setup('none');
     const foreign = spentSession(near, 'other-scope');
     await expectCode((await register(app, { spk: foreign, shareId: null })).res, 403, 'scope_mismatch');
-    await expectCode((await register(app, { spk: newSessionKey(), shareId: null })).res, 410, 'session_ended');
+    await expectCode((await register(app, { spk: newSessionKey(), shareId: null })).res, 503, 'session_not_visible');
     const expired = spentSession(near, app.scope, { expiresAtMs: Date.now() - 1 });
     await expectCode((await register(app, { spk: expired, shareId: null })).res, 410, 'session_ended');
+  });
+
+  it('a session the chain has not shown costs one read and answers a retryable 503; once visible, the same request registers', async () => {
+    const { app, near } = await setup('none');
+    const spk = newSessionKey();
+    near.viewCalls.length = 0;
+    const started = Date.now();
+    const { res } = await register(app, { spk, shareId: null });
+    expect(res.status).toBe(503);
+    expect(res.headers.get('retry-after')).toBe('1');
+    expect(((await res.json()) as { code: string }).code).toBe('session_not_visible');
+    expect(near.viewCalls.filter((c) => c.method === 'get_session')).toHaveLength(1);
+    expect(Date.now() - started).toBeLessThan(250);
+    near.sessions.set(JSON.stringify(spk), { path: pathFor(app.scope), scope_id: app.scope, expires_at_ms: Date.now() + 12 * HOUR, max_uses: 1, used: 1 });
+    expect((await register(app, { spk, shareId: null })).res.status).toBe(201);
   });
 
   it('the expiry bound is the chain session', async () => {
@@ -456,6 +471,28 @@ describe('POST /v1/vault/consents*: gate and limits', () => {
     await expectCode((await register(app, device, { env: { VAULT_IP_LIMIT: no } })).res, 429, 'rate_limited');
   });
 
+  it.each(['session', 'none'] as const)('%s mode: a bad signature does not spend the window, on register or revoke', async (mode) => {
+    const { app, device } = await setup(mode);
+    const seen: string[] = [];
+    const recording = { limit: async ({ key }: { key: string }) => { seen.push(key); return { success: true }; } } as unknown as RateLimit;
+    const envOverride = { VAULT_SHARE_LIMIT: recording };
+    const wrongKey = newSessionKey();
+    const reg = await registerBody(app, device, { signWith: wrongKey });
+    await expectCode(await call(REGISTER, { headers: vaultHeaders(app), body: reg.body, env: envOverride }), 401, 'invalid_signature');
+    const rev = await revokeBody(app, device, newConsentId(), { signWith: wrongKey });
+    await expectCode(await call(REVOKE, { headers: vaultHeaders(app), body: rev, env: envOverride }), 401, 'invalid_signature');
+    expect(seen).toEqual([]);
+    expect((await register(app, device, { env: envOverride })).res.status).toBe(201);
+    expect(seen).toHaveLength(1);
+  });
+
+  it('the per-IP limit comes before the signature, so unsigned floods can’t buy signature checks', async () => {
+    const { app, device } = await setup('none');
+    const no = { limit: async () => ({ success: false }) } as unknown as RateLimit;
+    const { body } = await registerBody(app, device, { signWith: newSessionKey() });
+    await expectCode(await call(REGISTER, { headers: vaultHeaders(app), body, env: { VAULT_IP_LIMIT: no } }), 429, 'rate_limited');
+  });
+
   it('none mode counts the per-share limit under the session key', async () => {
     const { app, device } = await setup('none');
     const keys: string[] = [];
@@ -474,6 +511,42 @@ describe('POST /v1/vault/consents*: gate and limits', () => {
     const text = lines.join('\n');
     expect(text).toContain('/v1/vault/consents');
     for (const banned of ['consentId', 'x-hana-consent', 'sessionPublicKey', base64UrlEncode(Uint8Array.from(consentId))]) expect(text).not.toContain(banned);
+  });
+});
+
+describe('a session key’s consent cap', () => {
+  const seedRows = async (app: SeededApp, device: Device, n: number): Promise<void> => {
+    const pathHashBytes = Uint8Array.from(await pathHash(pathFor(app.scope)));
+    const now = Date.now();
+    for (let i = 0; i < n; i++) {
+      await env.DB.prepare(
+        `INSERT INTO vault_consents (consent_id, app_id, share_id, session_pk, path_hash, partner_origin, policy_id, label, granted_at, expires_at, revoked_at, revoked_by)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'x', ?8, ?9, ?8, 'device')`,
+      )
+        .bind(Uint8Array.from(newConsentId()), app.id, device.shareId ? Uint8Array.from(device.shareId) : null, Uint8Array.from(device.spk), pathHashBytes, ORIGIN, Uint8Array.from(POLICY_ID), now, now + HOUR)
+        .run();
+    }
+  };
+
+  it.each(['session', 'none'] as const)('%s mode: at the cap a register is refused and writes nothing; below it, it works', async (mode) => {
+    const { app, device } = await setup(mode);
+    await seedRows(app, device, CONSENT_MAX_PER_SESSION_KEY);
+    const { res, consentId } = await register(app, device);
+    await expectCode(res, 429, 'too_many_consents');
+    expect(await stored(consentId)).toBeNull();
+    if (device.shareId) expect(await counterOf(device.shareId)).toBe(0);
+
+    const { app: other, device: below } = await setup(mode);
+    await seedRows(other, below, CONSENT_MAX_PER_SESSION_KEY - 1);
+    expect((await register(other, below)).res.status).toBe(201);
+  });
+
+  it('a revoke is never capped, and another session key of the same account is unaffected', async () => {
+    const { app, near, device } = await setup('none');
+    const { consentId } = await register(app, device);
+    await seedRows(app, device, CONSENT_MAX_PER_SESSION_KEY);
+    expect((await revoke(app, device, consentId)).status).toBe(200);
+    expect((await register(app, await newDevice('none', app, near))).res.status).toBe(201);
   });
 });
 

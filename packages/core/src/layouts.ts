@@ -137,7 +137,7 @@ export const vaultPayload = {
   touch: (): Bytes => utf8('touch'),
   revoke: (): Bytes => utf8('revoke'),
   revokeAll: (): Bytes => utf8('revoke-all'),
-  /** Hana Home's server consents (docs/hana-home-spec.md "Vault messages"): `home.ts` has the layouts. */
+  /** Hana Home's server consents: `home.ts` has the layouts. */
   consent: consentRegisterPayload,
   consentRevoke: consentRevokePayload,
 } as const;

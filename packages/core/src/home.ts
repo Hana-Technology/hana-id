@@ -23,8 +23,8 @@ export const HOME_SIGNATURE_BYTES = 64;
 /** Longest accepted `x-hana-home` (an email token of MAX_JWT characters, JSON-escaped and base64url-encoded, with the other fields). */
 export const HOME_HEADER_MAX_CHARS = 12_288;
 /**
- * The `aud` the email issuer's Home route signs (batch H10, D463). It is on no scope: a client proof is minted only for
- * `email:{scope}` (apps/email-issuer), so no owner can ever register it; not `email:`-prefixed for the same reason.
+ * The `aud` the email issuer's Home route signs. It belongs to no scope today, and must not be registered on one: the
+ * contract or the issuer has to refuse that client. Not `email:`-prefixed for that reason.
  */
 export const HOME_EMAIL_AUDIENCE = 'hana-home';
 

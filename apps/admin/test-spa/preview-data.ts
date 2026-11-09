@@ -362,7 +362,7 @@ export const retention = {
   nextRunAt: Date.UTC(new Date(NOW).getUTCFullYear(), new Date(NOW).getUTCMonth() + 1, 1, 1),
   due: { statements: 0, rates: 0, rateOverrides: 0, oldestStatement: null },
   runs: [
-    { id: 6, month, startedAt: Date.parse(`${month}-01T01:00:12Z`), finishedAt: Date.parse(`${month}-01T01:00:41Z`), status: 'ok', rows: { calls: 22, uidsStripped: 1840, nonceChecksDeleted: 12, scopeWatchDeleted: 340 }, error: null },
+    { id: 6, month, startedAt: Date.parse(`${month}-01T01:00:12Z`), finishedAt: Date.parse(`${month}-01T01:00:41Z`), status: 'ok', rows: { calls: 23, uidsStripped: 1840, nonceChecksDeleted: 12, scopeWatchDeleted: 340, userEventsExpired: 3 }, error: null },
     { id: 5, month: prevMonth, startedAt: Date.parse(`${prevMonth}-01T01:00:09Z`), finishedAt: Date.parse(`${prevMonth}-01T01:15:30Z`), status: 'partial', rows: { calls: 40, uidsStripped: 9120 }, error: null },
   ],
   erasures: [{ at: ago(12 * DAY), ticket: 'ZD-3988', operator: 'nadia@hana.example', scopeId: 's5d1e8a0c2f6b9', rows: { events: 412, app_users: 1, directory: 1 } }],

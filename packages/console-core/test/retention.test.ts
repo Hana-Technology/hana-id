@@ -2,7 +2,19 @@
 // (SQLite's `'-N months'`: an overflowing day rolls forward) and the retention RPCs' inputs.
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
-import { AUDIT_KEEP_MONTHS, DELETED_APP_GRACE_MS, auditCutoff, deletedAppCutoff, deletedAppsInput, monthsBefore, purgeAuditInput, purgeDirectoryInput } from '../src/index.ts';
+import {
+  AUDIT_KEEP_MONTHS,
+  DELETED_APP_GRACE_MS,
+  USER_EVENTS_KEEP_MONTHS,
+  auditCutoff,
+  deletedAppCutoff,
+  deletedAppsInput,
+  monthsBefore,
+  purgeAuditInput,
+  purgeDirectoryInput,
+  purgeUserEventsInput,
+  userEventsCutoff,
+} from '../src/index.ts';
 
 const ctx = { actor: { kind: 'system' as const, id: 'admin-cron' }, requestId: 'cron_12345678', clientIp: '0.0.0.0' };
 
@@ -23,6 +35,14 @@ describe('the cutoffs', () => {
     expect(deletedAppCutoff(now)).toBe(now - 30 * 86_400_000);
     expect(DELETED_APP_GRACE_MS).toBe(30 * 86_400_000);
   });
+
+  it('user events (key exports, mainnet demo signatures) are kept 24 months, as the ledger keeps a uid on raw usage', () => {
+    const now = Date.parse('2031-07-15T01:00:00Z');
+    expect(USER_EVENTS_KEEP_MONTHS).toBe(24);
+    expect(new Date(userEventsCutoff(now)).toISOString()).toBe('2029-07-15T01:00:00.000Z');
+    // SQLite's arithmetic, as the API's clamp computes it: an overflowing day rolls forward.
+    expect(new Date(userEventsCutoff(Date.parse('2032-02-29T00:00:00Z'))).toISOString()).toBe('2030-03-01T00:00:00.000Z');
+  });
 });
 
 describe('the retention RPC inputs', () => {
@@ -32,6 +52,11 @@ describe('the retention RPC inputs', () => {
     expect(purgeAuditInput.safeParse({ ...ctx, before: -1, limit: 1 }).success).toBe(false);
     expect(purgeAuditInput.safeParse({ ...ctx, before: 1, limit: 1, extra: true }).success).toBe(false);
     expect(purgeDirectoryInput.safeParse({ ...ctx, before: 1, limit: 1000 }).success).toBe(true);
+    expect(purgeUserEventsInput.safeParse({ ...ctx, before: 1, deletedBefore: 2, limit: 500 }).success).toBe(true);
+    expect(purgeUserEventsInput.safeParse({ ...ctx, before: 1, limit: 500 }).success).toBe(false);
+    expect(purgeUserEventsInput.safeParse({ ...ctx, before: 1, deletedBefore: -1, limit: 500 }).success).toBe(false);
+    expect(purgeUserEventsInput.safeParse({ ...ctx, before: 1, deletedBefore: 2, limit: 1001 }).success).toBe(false);
+    expect(purgeUserEventsInput.safeParse({ ...ctx, before: 1, deletedBefore: 2, limit: 1, userId: 'hu_x' }).success).toBe(false);
     expect(deletedAppsInput.safeParse({ ...ctx, before: 1 }).success).toBe(true);
     expect(deletedAppsInput.safeParse({ ...ctx, before: 1, after: '1730000000000:app_abc', limit: 10 }).success).toBe(true);
     for (const after of ['', 'x:app_a', '1:usr_a', '01:app_a', '1:app_a;DROP']) expect(deletedAppsInput.safeParse({ ...ctx, before: 1, after }).success, after).toBe(false);

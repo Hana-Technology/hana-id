@@ -168,6 +168,20 @@ describe('the Support ID lookup screen', () => {
     expect(t).toContain('EVM chain 8453, about $8.01 from 0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826 reported by the vault');
     expect(t).toContain('Mainnet demo signature (reported by the vault)');
     expect(t).toContain('unknown (older export window)');
+    // The period, so an empty list after the purge doesn't read as "never exported" (readiness 7.17).
+    expect(t).toContain('Kept 24 months, then deleted by the monthly retention job (and at once by an erasure request).');
+  });
+
+  it('a user whose events were purged or erased: the lookup still shows the match, with the 24-month empty state', async () => {
+    const view = unboundView();
+    (view.matches[0]!.user as Record<string, unknown>).events = [];
+    const s = boot('/support', () => ({ body: view }));
+    await vi.waitFor(() => expect(s.text()).toContain('Support ID lookup'));
+    s.field('query').value = 'HANA-2750-G5HM';
+    s.field('ticket').value = 'ZD-1234';
+    s.submit();
+    await vi.waitFor(() => expect(s.text()).toContain('Key exports and mainnet demo signatures'));
+    expect(s.text()).toContain('No key export and no mainnet demo signature in the last 24 months.');
   });
 
   it('shows the route’s refusal and keeps the form', async () => {

@@ -66,9 +66,11 @@ describe('the retention RPCs across the service bindings', () => {
     expect(await e.API.purgeAudit({ ...systemCtx(), before: now, limit: 10 })).toMatchObject({ ok: true, appChanges: expect.any(Number), guardedChanges: expect.any(Number) });
     expect(await e.API.deletedApps({ ...systemCtx(), before: now, limit: 10 })).toMatchObject({ ok: true, appIds: expect.any(Array), more: false });
     expect(await e.API.purgeDirectory({ ...systemCtx(), before: now, limit: 10 })).toMatchObject({ ok: true, users: 0 });
+    expect(await e.API.purgeUserEvents({ ...systemCtx(), before: now, deletedBefore: now, limit: 10 })).toEqual({ ok: true, expired: 0, deadScopes: 0 });
     expect(await e.CONSOLE.purgeAudit({ ...systemCtx(), before: now, limit: 10 })).toMatchObject({ ok: true, auditLog: expect.any(Number) });
     const staff = staffCtx({ actor: { kind: 'hana', id: 'access-sub-1', email: 'staff@hana.example' }, requestId: 'req_staff_retention_1', clientIp: '198.51.100.9' });
     expect(await e.API.purgeAudit({ ...staff, before: now, limit: 10 })).toMatchObject({ ok: false, code: 'forbidden' });
+    expect(await e.API.purgeUserEvents({ ...staff, before: now, deletedBefore: now, limit: 10 })).toMatchObject({ ok: false, code: 'forbidden' });
     expect(await e.CONSOLE.purgeAudit({ ...staff, before: now, limit: 10 })).toMatchObject({ ok: false, code: 'forbidden' });
   });
 });

@@ -6,7 +6,7 @@ import { env } from 'cloudflare:workers';
 import { createExecutionContext } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import { AdminRpc } from '../src/rpc/admin.ts';
-import { consoleRpc, hana, member, orgApp } from './rpc-helpers.ts';
+import { consoleRpc, hana, member, orgApp, system } from './rpc-helpers.ts';
 import { STAFF_USER_EVENTS_MAX } from '@hana-id/console-core';
 import { identityMessage, mainnetDemoEventPayload } from '@hana-id/core/identity';
 import { MAINNET_DEMO_EVENTS_PER_HOUR, toMainnetDemoEvent, toMainnetDemoReport } from '../src/mainnet-demo.ts';
@@ -272,6 +272,34 @@ describe('key_exported (D430)', () => {
     const kinds = got.user.events.map((e) => e.kind);
     expect(kinds.filter((k) => k === 'mainnet_signature')).toHaveLength(STAFF_USER_EVENTS_MAX);
     expect(kinds.filter((k) => k === 'key_exported')).toHaveLength(1);
+  });
+
+  it('after the retention purge (24 months, readiness 7.17) the user’s detail and the Support ID lookup show what is left, or nothing', async () => {
+    const { app, aud } = await demoApp();
+    withCombinedCall(chain({ [aud]: app.scope }));
+    const login = await call('/v1/login', { headers: hanaHeaders(app, AUTH), body: { ...(await loginBody(app.scope, aud, {}, { sub: 'purged-1' })), exportChain: 'stellar' } });
+    expect(login.status).toBe(200);
+    const supportId = (await body(login)).supportId as string;
+    const internalId = ((await rows(app.id)) as { user_id: string }[])[0]!.user_id;
+    // An export and a demo signature from 25 months ago, besides today's export.
+    const old = Date.now() - 25 * 30.44 * 86_400_000;
+    const insert = env.DB.prepare('INSERT INTO user_events (kind, app_id, scope_id, user_id, chain, network, address, usd_micros, request_id, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)');
+    await env.DB.batch([
+      insert.bind('key_exported', app.id, app.scope, internalId, 'evm', null, null, null, `rq_old_${uid()}`, old),
+      insert.bind('mainnet_signature', app.id, app.scope, internalId, 'evm', '8453', EVM, 1, `rq_old_${uid()}`, old + 1),
+    ]);
+    const staff = new AdminRpc(createExecutionContext(), env);
+    const view = async () => ((await staff.getUser({ ...hana(), internalId })) as unknown as { ok: true; user: { events: { kind: string; at: number }[] } }).user.events;
+    expect(await view()).toHaveLength(3);
+    expect(await staff.purgeUserEvents({ ...system(), before: Date.now(), deletedBefore: Date.now(), limit: 500 })).toMatchObject({ ok: true, expired: 2 });
+    expect(await view()).toEqual([expect.objectContaining({ kind: 'key_exported', chain: 'stellar' })]);
+    const lookup = (await staff.supportLookup({ ...hana(), query: supportId })) as { ok: true; matches: { user: { internalId: string; events: unknown[] } }[] };
+    expect(lookup.matches.map((m) => [m.user.internalId, m.user.events.length])).toEqual([[internalId, 1]]);
+    // Every row gone: the user and the lookup still answer, with no events.
+    await env.DB.prepare('DELETE FROM user_events WHERE user_id = ?1').bind(internalId).run();
+    expect(await view()).toEqual([]);
+    const after = (await staff.supportLookup({ ...hana(), query: supportId })) as { ok: true; matches: { user: { events: unknown[] } }[] };
+    expect(after.matches.map((m) => m.user.events)).toEqual([[]]);
   });
 
   it('a plain login records nothing, and only the export window may label its login', async () => {

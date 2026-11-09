@@ -635,6 +635,7 @@ function userEventsBlock(u) {
   if (!Array.isArray(u.events)) return [];
   return [
     h('h3', {}, 'Key exports and mainnet demo signatures'),
+    h('p', { class: 'hint' }, 'Kept 24 months, then deleted by the monthly retention job (and at once by an erasure request).'),
     table(
       ['When', 'What', 'App', 'Chain', 'Detail'],
       u.events.map((e) =>
@@ -648,7 +649,7 @@ function userEventsBlock(u) {
             : h('span', {}, `${e.network === 'pubnet' ? 'Stellar public network' : `EVM chain ${e.network}`}, about ${usdMicros(e.usdMicros || 0)} from `, h('code', {}, e.address), h('span', { class: 'sub' }, ' reported by the vault')),
         ),
       ),
-      { empty: 'No key export and no mainnet demo signature.' },
+      { empty: 'No key export and no mainnet demo signature in the last 24 months.' },
     ),
   ];
 }
@@ -2248,6 +2249,8 @@ const RETENTION_LABELS = {
   directoryUsers: 'wallet directory users',
   directoryWallets: 'wallet directory wallets',
   directoryIdentities: 'wallet directory identities',
+  userEventsExpired: 'key exports and mainnet demo signatures (24 months)',
+  userEventsDeadScopes: 'key exports and mainnet demo signatures of scopes left without apps',
   appChangesDeleted: 'app_changes (60 months)',
   guardedChangesDeleted: 'guarded_changes (60 months)',
   auditLogDeleted: 'console audit_log (60 months)',
@@ -2273,7 +2276,7 @@ const RUN_STATUS = { ok: ['Complete', 'ok'], partial: ['Partial: continued', 'wa
 
 async function retentionPage(main) {
   const d = await api('GET', '/api/retention');
-  main.append(pageHead('Retention', { subtitle: 'The monthly job that deletes what is past its keep period: raw usage 24 months (then the uid is removed and the rows kept), settlement records 7 years, audit logs 5 years, the admin’s own state 400 days. It runs from the 1st at 01:00 UTC until one run of the month completes.' }));
+  main.append(pageHead('Retention', { subtitle: 'The monthly job that deletes what is past its keep period: raw usage 24 months (then the uid is removed and the rows kept), key exports and mainnet demo signatures 24 months, settlement records 7 years, audit logs 5 years, the admin’s own state 400 days. It runs from the 1st at 01:00 UTC until one run of the month completes.' }));
   if (d.warning) main.append(note('warn', 'Check the job', d.warning));
   main.append(
     panel(

@@ -1,4 +1,4 @@
-// Hana Home's identity verifier (docs/hana-home-spec.md "Identity without a user database", D463, D471): every Home API
+// Hana Home's identity verifier (docs/hana-home-spec.md "Identity without a user database", D463, D473): every Home API
 // call carries `x-hana-home`, a token whose nonce commits to a key only the /home page holds, and a fresh signature by
 // that key over the request. `homeGate` answers who the user is, or the refusal, as `appGate` does for app endpoints:
 // `{provider, sub}` with no chain transaction, no cookie (D70) and no stored account. Nothing here derives a key.

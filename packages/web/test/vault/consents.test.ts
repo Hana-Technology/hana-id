@@ -604,8 +604,18 @@ describe('parallel requests and limits', () => {
     const s = await session(new Browser(), { settings: { persistence: 'none', autoApprovePolicy: { ...POLICY(), ...change } } });
     await grant(s);
     s.t.browser.timers.now += POLICY_FRESH_MS;
-    // Five at once, all waiting on the same status read.
+    // Five at once, all waiting on the same status read, so they all resume together when it answers.
+    const backend = s.t.browser.backend;
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    backend.overrides.set('/v1/app', async () => {
+      await held;
+      return undefined;
+    });
     for (let i = 0; i < 5; i++) void s.t.request('eth_signTransaction', { tx: evmTx({ nonce: `0x${(i + 2).toString(16)}` }) }).catch(() => undefined);
+    await sleepReal(30);
+    backend.overrides.delete('/v1/app');
+    release();
     await eventually(() => s.t.events.filter((e) => e.event === 'autoApproved').length >= 2, 'two signed');
     await sleepReal(50);
     expect(s.t.events.filter((e) => e.event === 'autoApproved')).toHaveLength(2);

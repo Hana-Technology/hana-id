@@ -401,6 +401,37 @@ export async function clickMayClose(page: Page, selector: string): Promise<void>
 }
 
 /**
+ * A click on a control its own click replaces (the email step's Send code: its submit swaps the form for "Sending a
+ * code…" in the same event). Firefox can lose the press of a click sent to a freshly loaded popup: the page gets
+ * `mouseup` with no `mousedown`, so no click and no submit, though Playwright's checks (visible, stable, hit target)
+ * all pass. Seen under load on a test's second popup, whose page loads fast in a process already running.
+ *
+ * The condition is the element itself: while that same element is still in the page, the page never took the click, so
+ * this clicks again, as a person would. Once it has gone the page took the click, whatever the answer was: a screen
+ * re-rendered after a failed send has a new element and is not clicked again, so no request is ever repeated.
+ */
+export async function clickUntilTaken(page: Page, selector: string): Promise<void> {
+  const button = await page.waitForSelector(selector);
+  const gone = () => button.evaluate((b) => !b.isConnected).catch(() => true);
+  const deadline = Date.now() + 20_000;
+  for (;;) {
+    try {
+      await button.click();
+    } catch (e) {
+      if (await gone()) return;
+      throw e;
+    }
+    // The click's handlers have run by now in every run seen; a short look covers one still being delivered.
+    const lookUntil = Date.now() + 1_000;
+    while (Date.now() < lookUntil) {
+      if (await gone()) return;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    if (Date.now() > deadline) throw new Error(`${selector}: the page never took the click`);
+  }
+}
+
+/**
  * Clicks a control that closes the window (a banner's Done or Cancel, the email step's Cancel, the stub's account
  * when the callback relays and closes) and waits until it has closed (clickMayClose, closeOf).
  */

@@ -6,7 +6,7 @@
 import type { Page, TestInfo } from '@playwright/test';
 import { GOOGLE_AUTH_URL } from '../src/google-stub.ts';
 import { ISSUER_URL } from '../src/stack.ts';
-import { LOGIN_ENDPOINT, clickAction, clickClosing, clickMayClose, errorOf, expect, newApp, okValue, openPartner, peek, runAction, test, waitPersisted } from './fixtures.ts';
+import { LOGIN_ENDPOINT, clickAction, clickClosing, clickMayClose, clickUntilTaken, errorOf, expect, newApp, okValue, openPartner, peek, runAction, test, waitPersisted } from './fixtures.ts';
 
 const rand = (): string => crypto.randomUUID().replace(/-/gu, '').slice(0, 10);
 /** A fresh Google `sub` (21 digits, as Google's). */
@@ -115,7 +115,7 @@ async function emailCode(popup: Page, to: string): Promise<void> {
   await expect(popup.locator('#email-address')).toBeVisible();
   await popup.fill('#email-address', to);
   const before = await codeCount(to);
-  await popup.click('#email-send');
+  await clickUntilTaken(popup, '#email-send');
   await expect(popup.locator('#email-code')).toBeVisible();
   await expect.poll(() => codeCount(to), { timeout: 10_000 }).toBeGreaterThan(before);
   const codes = (await mails(to)).filter((m) => m.kind === 'code');

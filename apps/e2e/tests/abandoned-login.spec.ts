@@ -9,7 +9,7 @@
 import type { Page, TestInfo } from '@playwright/test';
 import { GOOGLE_AUTH_URL } from '../src/google-stub.ts';
 import { ISSUER_URL } from '../src/stack.ts';
-import { LOGIN_PENDING_MS, clickAction, errorOf, expect, newApp, openPartner, peek, responsive, runAction, status, test, vaultFrame } from './fixtures.ts';
+import { LOGIN_PENDING_MS, clickAction, clickUntilTaken, errorOf, expect, newApp, openPartner, peek, responsive, runAction, status, test, vaultFrame } from './fixtures.ts';
 
 const address = (info: TestInfo, tag: string): string => `e2e-ab-${tag}-${info.project.name}-${crypto.randomUUID().slice(0, 8)}@mail-e2e.example.com`;
 const mailCount = async (to: string): Promise<number> => ((await (await fetch(`${ISSUER_URL}/__e2e/outbox?to=${encodeURIComponent(to)}`)).json()) as unknown[]).length;
@@ -78,7 +78,7 @@ test('left on the email code step: login_timeout at 5 minutes, nothing frozen', 
   const popup = await startLogin(page, { method: 'email' });
   const to = address(info, 'code');
   await popup.fill('#email-address', to);
-  await popup.click('#email-send');
+  await clickUntilTaken(popup, '#email-send');
   await expect.poll(() => mailCount(to)).toBeGreaterThan(0);
   await expect(popup.locator('#email-code')).toBeVisible();
   await expectTimedOut(page);

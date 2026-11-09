@@ -123,17 +123,53 @@ describe('what never counts as a close', () => {
     expect((await pending).error).toBeUndefined();
   });
 
-  it('a window that relayed its answer and closes itself (the callback, the email step)', async () => {
-    for (const announced of [true, false]) {
-      const t = await tab(new Browser(), ENV);
-      const pending = t.request('hana_login');
-      const run = await popupHello(t);
-      await deliverToken(t, g, run);
-      // With the announcement the close is ignored outright; without it the grace lets the written answer win.
-      if (announced) signal(t, run, 'relayed');
-      run.popup.closed = true;
-      expect((await pending).error, String(announced)).toBeUndefined();
-    }
+  // A grace the test's clock holds: the harness runs a timer of up to 5 s on the next real tick, so the real 1 s grace
+  // would be 1 ms here, and the answer's read (a fetch, then a decrypt off the main thread) would race it. In each case
+  // the answer comes only once the watch has read `closed`, so each proves the watch's own decision, not a lost race.
+  const HELD_GRACE_MS = 10_000;
+
+  it('a window that relayed its answer and closes itself (the callback, the email step): the close is ignored outright', async () => {
+    const t = await tab(new Browser(), ENV, { graceMs: HELD_GRACE_MS });
+    const pending = t.request('hana_login');
+    const run = await popupHello(t);
+    const grace = t.browser.timers.now + HELD_GRACE_MS;
+    signal(t, run, 'relayed');
+    run.popup.closed = true;
+    // The watch's next tick (due in 1 ms) comes before this longer pause's, so it has read `closed` by the end of it.
+    await pause(5);
+    expect(t.browser.timers.dueAt()).not.toContain(grace);
+    await deliverToken(t, g, run);
+    expect((await pending).error).toBeUndefined();
+  });
+
+  it('a window that closes itself without the announcement (the signal lost): the grace lets the written answer win', async () => {
+    const t = await tab(new Browser(), ENV, { graceMs: HELD_GRACE_MS });
+    const pending = t.request('hana_login');
+    const run = await popupHello(t);
+    const grace = t.browser.timers.now + HELD_GRACE_MS;
+    run.popup.closed = true;
+    await t.waitUntil(() => t.browser.timers.dueAt().includes(grace), 'the grace');
+    await deliverToken(t, g, run);
+    expect((await pending).error).toBeUndefined();
+    expect(t.browser.timers.dueAt()).not.toContain(grace);
+  });
+
+  it('the announcement arriving after the watch read `closed` (a busy vault, D495): the grace is off, the login waits for the answer', async () => {
+    const t = await tab(new Browser(), ENV, { graceMs: HELD_GRACE_MS });
+    const pending = t.request('hana_login');
+    const settled = settledFlag(pending);
+    const run = await popupHello(t);
+    const grace = t.browser.timers.now + HELD_GRACE_MS;
+    run.popup.closed = true;
+    await t.waitUntil(() => t.browser.timers.dueAt().includes(grace), 'the grace');
+    signal(t, run, 'relayed');
+    expect(t.browser.timers.dueAt()).not.toContain(grace);
+    // Past where the grace would have ended: the close was never the user's.
+    t.browser.timers.advance(HELD_GRACE_MS);
+    await pause(5);
+    expect(settled()).toBe(false);
+    await deliverToken(t, g, run, { iat: Math.floor(t.browser.timers.now / 1000) });
+    expect((await pending).error).toBeUndefined();
   });
 
   it('a close while the vault works alone (the chain step): the login finishes', async () => {

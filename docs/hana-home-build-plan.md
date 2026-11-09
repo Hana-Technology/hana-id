@@ -1,6 +1,6 @@
 # Hana Home build plan (batches)
 
-**Status (2026-11-09): H0 (this plan, the spec's rewrite, D460–D466, the readiness rows) on branch `docs/hana-home-h0`; H1–H12 not started; no Home code exists.** Splits `docs/hana-home-spec.md` (D40, D45, D98, D460–D466) into reviewable
+**Status (2026-11-09): H0 (this plan, the spec's rewrite, D460–D466, the readiness rows) on branch `docs/hana-home-h0`; H1 built on branch `feat/hana-home-h1` (not merged, not deployed; see its result line below); H2–H12 not started.** Splits `docs/hana-home-spec.md` (D40, D45, D98, D460–D466) into reviewable
 batches. The spec stays the source of truth for *what* to build; this file says *in which order*, *what each batch
 ships* and *what users see after it*. Like a spec it is history once the work merges: the current state lives in the
 reference docs (`docs/README.md`).
@@ -98,6 +98,7 @@ additions conflict in `apps/api/src/index.ts`, so expect small merges. About 30 
 - **Tests.** Vectors against an independent Node implementation; every identity refusal in the spec's list.
 - **Migration / deploy.** API.
 - **User-visible.** Nothing.
+- **Result (2026-11-09, `feat/hana-home-h1`, not merged, not deployed).** `packages/core/src/home.ts` (subpath `@hana-id/core/home`) and `test/vectors/home-v1.json`; `apps/api/src/home/` (`homeGate`, `homeAudienceRoute`, `GET /v1/home/config`, CORS); `log()`'s redacted names; D471, D472. No route uses the verifier yet (H2 onwards); no contract or derivation change. `apps/api/src/login-token.ts` gained its app-less case.
 
 ### H2: the app list
 

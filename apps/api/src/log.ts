@@ -58,8 +58,16 @@ export interface LogFields {
   priceSource?: 'pro' | 'demo' | 'public';
 }
 
+/**
+ * Field names dropped from every log line, wherever they are nested: Hana Home's identity header (it carries a token), a
+ * user's `sub`, a path hash and any token, however a value reaches `log`. `LogFields` already refuses them at compile
+ * time; this is the runtime backstop for a spread of untyped fields (docs/hana-home-spec.md, "Logs never contain…").
+ */
+const REDACTED_FIELDS: ReadonlySet<string> = new Set(['x-hana-home', 'xHanaHome', 'sub', 'pathHash', 'path_hash', 'jwt', 'token', 'idToken', 'id_token']);
+const redact = (key: string, value: unknown): unknown => (REDACTED_FIELDS.has(key) ? undefined : value);
+
 export function log(fields: LogFields, level: 'info' | 'warn' | 'error' = 'info'): void {
-  const line = JSON.stringify({ level, ts: new Date().toISOString(), ...fields });
+  const line = JSON.stringify({ level, ts: new Date().toISOString(), ...fields }, redact);
   if (level === 'error') console.error(line);
   else if (level === 'warn') console.warn(line);
   else console.log(line);

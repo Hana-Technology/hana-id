@@ -25,7 +25,8 @@
     "./mainnet-demo": "./src/mainnet-demo.ts",
     "./demo-config": "./src/demo-config.ts",
     "./mainnet-demo-prices": "./src/mainnet-demo-prices.ts",
-    "./support-id": "./src/support-id.ts"
+    "./support-id": "./src/support-id.ts",
+    "./home": "./src/home.ts"
   },
   "files": [
     "dist",
@@ -77,6 +78,10 @@
         "types": "./dist/support-id.d.ts",
         "import": "./dist/support-id.js"
       },
+      "./home": {
+        "types": "./dist/home.d.ts",
+        "import": "./dist/home.js"
+      },
       "./package.json": "./package.json"
     },
     "main": "./dist/index.js",
@@ -86,7 +91,7 @@
     "build:lib": "tsx ../../scripts/sdk-build.ts",
     "prepack": "pnpm run build:lib",
     "test": "vitest run",
-    "gen-vectors": "node scripts/gen-layout-vectors.mjs && node scripts/gen-derivation-vectors.mjs && node scripts/gen-identity-vectors.mjs",
+    "gen-vectors": "node scripts/gen-layout-vectors.mjs && node scripts/gen-derivation-vectors.mjs && node scripts/gen-identity-vectors.mjs && node scripts/gen-home-vectors.mjs",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json"
   },
   "dependencies": {

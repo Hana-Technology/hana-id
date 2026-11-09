@@ -27,16 +27,14 @@ export type LoginTokenResult = { ok: true; token: LoginToken } | { ok: false; st
 /** Retry-After of an email token whose key isn't active on chain yet (as handlers.ts ISSUER_KEY_PENDING_RETRY_S). */
 const EMAIL_KEY_PENDING_RETRY_S = 30;
 
-export interface LoginTokenOptions {
-  /** The app the request is for: an email token needs `email` in its login methods (unless `anyLoginMethod`). */
-  appId: string;
-  /**
-   * Accept an email token whatever the app's `login_methods` say (review L6): `/v1/link/cancel` and `/unlink` only
-   * remove a sign-in method, which must stay possible after a partner turns email off.
-   */
-  anyLoginMethod?: boolean;
-  exec?: ExecutionContext | undefined;
-}
+/**
+ * Either for one app (`appId`: an email token needs `email` in its login methods), or `anyLoginMethod`: an email token is
+ * accepted whatever any app's `login_methods` say. `/v1/link/cancel` and `/unlink` only remove a sign-in method, which
+ * must stay possible after a partner turns email off (review L6), and Hana Home has no app at all (a Home identity
+ * outlives a suspended or deleted app, D463), so there `appId` is simply not given. It is required otherwise, so the
+ * app-less case can't be reached by forgetting it.
+ */
+export type LoginTokenOptions = ({ appId: string; anyLoginMethod?: boolean } | { appId?: undefined; anyLoginMethod: true }) & { exec?: ExecutionContext | undefined };
 
 /**
  * Verifies `jwt` (see the top of this file). Every refusal is an answer (a chain read that fails is 502
@@ -58,7 +56,7 @@ export async function verifyLoginToken(env: Env, jwt: string, now: number, opts:
     }
     let methods;
     try {
-      methods = opts.anyLoginMethod ? ['email'] : await appLoginMethods(env.DB, opts.appId);
+      methods = opts.anyLoginMethod ? ['email'] : await appLoginMethods(env.DB, opts.appId as string);
     } catch {
       return { ok: false, status: 503, code: 'config_unavailable', error: 'App config is unavailable, try again' };
     }

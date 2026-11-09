@@ -190,7 +190,7 @@ export class RelayerKey extends DurableObject<Env> {
           }
           if (bad) return { ok: false, status: 503, code: 'relayer_busy', error: 'The relayer could not get a valid nonce, try again', nearTx: sent.hash, ...signer };
           // Only a validation error is a definite "not accepted". Anything else (timeout, dropped connection, a
-          // non-JSON 5xx from a proxy, any answer after an RPC failover, D432) may have been forwarded and may still
+          // non-JSON 5xx from a proxy, any answer after an RPC failover, D435) may have been forwarded and may still
           // execute: poll its hash.
           if (isDefiniteRejection(err)) {
             log({ event: 'relay_rejected', requestId, pool, keyIndex, method: call.method, code: rejectionName(err), nearTx: sent.hash }, 'error');

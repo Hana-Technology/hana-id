@@ -207,7 +207,7 @@ describe('wrangler.jsonc', () => {
     expect((wranglerConfig(withFallback, LOCAL_D1_ID) as { vars: Record<string, string> }).vars.NEAR_RPC_FALLBACK).toBe('https://rpc.fallback.example');
   });
 
-  it('writes the API’s failover list as NEAR_RPC_FALLBACKS: apiRpcFallbacks in order, else rpcFallback, else nothing (D432)', () => {
+  it('writes the API’s failover list as NEAR_RPC_FALLBACKS: apiRpcFallbacks in order, else rpcFallback, else nothing (D435)', () => {
     const vars = (m: unknown) => (wranglerConfig(manifestSchema.parse(m), LOCAL_D1_ID) as { vars: Record<string, string> }).vars;
     const { apiRpcFallbacks: _a, rpcFallback: _f, ...neither } = manifest;
     expect(vars({ ...neither, apiRpcFallbacks: ['https://rpc.two.example', 'https://rpc.one.example'] }).NEAR_RPC_FALLBACKS).toBe(JSON.stringify(['https://rpc.two.example', 'https://rpc.one.example']));

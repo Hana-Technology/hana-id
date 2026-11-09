@@ -49,7 +49,7 @@ export interface LogFields {
   /** The hourly identity-count copy to the usage ledger (usage/identity-sync.ts): rows sent. */
   synced?: number;
   /**
-   * `near_rpc_failover` (near/rpc.ts, D432): the endpoint passed over and the one asked next, as indexes into
+   * `near_rpc_failover` (near/rpc.ts, D435): the endpoint passed over and the one asked next, as indexes into
    * NEAR_RPC followed by NEAR_RPC_FALLBACKS (0 is NEAR_RPC). Never the URL, which can carry a provider's API key.
    */
   rpcEndpoint?: number;

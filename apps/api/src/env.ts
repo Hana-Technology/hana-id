@@ -12,7 +12,7 @@ export interface Env {
    */
   NEAR_RPC_FALLBACK?: string;
   /**
-   * The API's own NEAR RPC fallbacks, in order after NEAR_RPC (D432): a JSON array of URLs, from the manifest's
+   * The API's own NEAR RPC fallbacks, in order after NEAR_RPC (D435): a JSON array of URLs, from the manifest's
    * `apiRpcFallbacks`, or `[rpcFallback]` when that is unset; written only when non-empty. A call moves to the next
    * one only when an endpoint gives no JSON-RPC answer (near/rpc.ts Rpc).
    */

@@ -86,7 +86,7 @@ describe('manifestSchema: rpcFallback', () => {
   });
 });
 
-describe('manifestSchema: apiRpcFallbacks (D432)', () => {
+describe('manifestSchema: apiRpcFallbacks (D435)', () => {
   const messages = (m: Record<string, unknown>): string[] => manifestSchema.safeParse(m).error?.issues.map((i) => i.message) ?? [];
 
   it('is optional; when set, 1 to MAX_API_RPC_FALLBACKS https URLs, kept in order', () => {

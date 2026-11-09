@@ -8,7 +8,7 @@ import { hanaOriginProblem, isDevEnv, isLocalEnv, isLoopbackHost, siteOf } from 
 /** Independent RPC providers the pinned CKD network key must be read from, all agreeing (OPER-1, D100). */
 export const MIN_CKD_SOURCES = 3;
 
-/** At most this many `apiRpcFallbacks`: each can add a per-endpoint timeout to an API call (D432). */
+/** At most this many `apiRpcFallbacks`: each can add a per-endpoint timeout to an API call (D435). */
 export const MAX_API_RPC_FALLBACKS = 3;
 
 const nearAccount = z.string().regex(/^(?=.{2,64}$)(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/u, 'Invalid NEAR account id');
@@ -243,7 +243,7 @@ export const manifestSchema = z
      */
     rpcFallback: z.string().url().optional(),
     /**
-     * The API's own NEAR RPC fallbacks (D432), asked in this order after `rpc` when an endpoint gives no JSON-RPC
+     * The API's own NEAR RPC fallbacks (D435), asked in this order after `rpc` when an endpoint gives no JSON-RPC
      * answer (a network error, a timeout, HTTP 5xx or 429, a body that isn't JSON-RPC, a node with no synced block);
      * never for a JSON-RPC answer, an error answer included. 1–MAX_API_RPC_FALLBACKS https URLs (http only for a
      * loopback host in `local*` envs), distinct, none of them `rpc`. Unset: the API falls back to `rpcFallback` alone
@@ -425,7 +425,7 @@ export function endpointUrlProblem(value: string, envName: string): string | nul
 }
 
 /**
- * The API's NEAR RPC fallbacks, in order after `rpc` (D432): `apiRpcFallbacks`, or `rpcFallback` alone when that is
+ * The API's NEAR RPC fallbacks, in order after `rpc` (D435): `apiRpcFallbacks`, or `rpcFallback` alone when that is
  * unset, or none. The API's gen writes them as `NEAR_RPC_FALLBACKS`.
  */
 export function apiRpcFallbacksOf(m: Pick<Manifest, 'apiRpcFallbacks' | 'rpcFallback'>): string[] {

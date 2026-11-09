@@ -150,7 +150,7 @@ into the pages and joins `rpc` in their CSP (`NEAR_RPC_FALLBACK` in the generate
 `https://rpc.testnet.near.org` (primary `test.rpc.fastnear.com`; the fallback answered in ~3.5 s when probed, slow but
 fine for a fallback).
 
-`apiRpcFallbacks` (optional, D432): the API's own NEAR RPC fallbacks, 1 to 3 `https` URLs (http only for a loopback
+`apiRpcFallbacks` (optional, D435): the API's own NEAR RPC fallbacks, 1 to 3 `https` URLs (http only for a loopback
 host in `local*` envs), distinct and none of them `rpc`. The API asks them in this order after `rpc` when an endpoint
 gives no JSON-RPC answer (a network error, a timeout, HTTP 5xx or 429, a body that isn't JSON-RPC, a node with no
 synced block), never for an answer, a JSON-RPC error included. Unset, the API falls back to `rpcFallback` alone. Only

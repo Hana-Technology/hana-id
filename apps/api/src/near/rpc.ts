@@ -1,5 +1,5 @@
 // Minimal NEAR JSON-RPC client (ported from legacy/relayer/embed-relayer.ts), over the env's ordered endpoints with
-// failover (D432: see Rpc).
+// failover (D435: see Rpc).
 import { base64Decode, base64Encode } from '../bytes.ts';
 import { log } from '../log.ts';
 
@@ -118,12 +118,12 @@ export interface SendTxResult extends Partial<FinalOutcome> {
  * How long every read (`view`/call_function, the access key views, `block`) waits for one endpoint: a node that
  * stalls fails that endpoint (an RpcError: the next endpoint is asked, and when none answers the endpoints answer
  * 502 near_unavailable and the vault asks GET /v1/app once more) instead of holding the request open. A healthy view
- * answers in ≈ 0.3 s. The same bound as the vault's own RPC calls (packages/web near-call.ts; D261, D432).
+ * answers in ≈ 0.3 s. The same bound as the vault's own RPC calls (packages/web near-call.ts; D261, D435).
  */
 export const VIEW_TIMEOUT_MS = 8_000;
 
 /**
- * How long a transaction call (`send_tx`, `tx`) waits for one endpoint (D432). Above the node's own wait (nearcore
+ * How long a transaction call (`send_tx`, `tx`) waits for one endpoint (D435). Above the node's own wait (nearcore
  * answers TIMEOUT_ERROR after ~10 s, an answer: the caller polls again), so a healthy node answers first; a node that
  * holds the request past it is treated as down and the next endpoint is asked.
  */
@@ -138,7 +138,7 @@ export const MAX_RPC_FALLBACKS = 3;
 type RpcEnv = { NEAR_RPC: string; NEAR_RPC_FALLBACKS?: string | undefined };
 
 /**
- * The endpoints the API asks, in order (D432): NEAR_RPC, then NEAR_RPC_FALLBACKS (a JSON array of URLs that
+ * The endpoints the API asks, in order (D435): NEAR_RPC, then NEAR_RPC_FALLBACKS (a JSON array of URLs that
  * gen-wrangler writes from the manifest's `apiRpcFallbacks`, or `rpcFallback` when that is unset). Entries that aren't
  * http(s) URLs or repeat an earlier one are dropped, and only the first MAX_RPC_FALLBACKS are kept; a value that isn't
  * a JSON array means no fallback. The manifest schema refuses all of these, so a generated config never has them.
@@ -227,7 +227,7 @@ export interface RpcOptions {
 }
 
 /**
- * NEAR JSON-RPC over an ordered list of endpoints (D432). A call goes to one endpoint and moves to the next only when
+ * NEAR JSON-RPC over an ordered list of endpoints (D435). A call goes to one endpoint and moves to the next only when
  * that endpoint gave no JSON-RPC answer: a network error, its timeout, HTTP 5xx or 429, a body that isn't a JSON-RPC
  * response (not JSON, or neither `result` nor `error`), or the node saying it has no synced block. Every other answer
  * is final, a JSON-RPC error included (an unknown account, a contract panic, InvalidNonce, TIMEOUT_ERROR,
@@ -340,7 +340,7 @@ export class Rpc {
 /**
  * A broadcast whose first endpoint failed: whatever a later endpoint said, the first may have forwarded it and it may
  * still execute. No body and no node text, so isDefiniteRejection, invalidNonce and isExpired never match it and
- * isTransient does: the caller polls the hash (D432).
+ * isTransient does: the caller polls the hash (D435).
  */
 function unknownBroadcast(): RpcError {
   return new RpcError('NEAR RPC: the broadcast failed over to another endpoint; its outcome is not known yet', null);

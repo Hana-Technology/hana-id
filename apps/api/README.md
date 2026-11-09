@@ -38,7 +38,7 @@ keys, e.g. the content of `.secrets/<env>/relayer-keys.json`) → `wrangler secr
 |---|---|---|
 | `NEAR_RPC`, `SIGNER_ACCOUNT`, `RELAYER_ACCOUNT`, `ENV_NAME`, `MPC_ACCOUNT` | vars (manifest) | `rpc`, `signer`, `relayer`, `name`, `mpc`. `ENV_NAME` `local*`/`sandbox*` is a dev env (see Origins) |
 | `NEAR_RPC_FALLBACK` | optional var (manifest) | `rpcFallback`, written only when set: the vault and export pages' `connect-src` (D65) |
-| `NEAR_RPC_FALLBACKS` | optional var (manifest) | `apiRpcFallbacks`, else `[rpcFallback]`, as a JSON array, written only when non-empty: the API's own RPC failover after `NEAR_RPC` (`src/near/rpc.ts`, D432): a call moves on only when an endpoint gives no JSON-RPC answer (network, timeout, 5xx, 429, not JSON-RPC, not synced); a broadcast that failed over is polled by hash, never re-signed |
+| `NEAR_RPC_FALLBACKS` | optional var (manifest) | `apiRpcFallbacks`, else `[rpcFallback]`, as a JSON array, written only when non-empty: the API's own RPC failover after `NEAR_RPC` (`src/near/rpc.ts`, D435): a call moves on only when an endpoint gives no JSON-RPC answer (network, timeout, 5xx, 429, not JSON-RPC, not synced); a broadcast that failed over is polled by hash, never re-signed |
 | `DO_LOCATION_HINT` | optional var (manifest) | `cloudflare.durableObjectLocation`: region of the shared Durable Objects (`src/placement.ts`) |
 | `VAULT_ORIGIN`, `AUTH_ORIGIN` | vars (manifest) | `vaultOrigin`, `authOrigin`; `gen` refuses an env without them |
 | `BLS_PRECHECK` | var | `"0"` everywhere until its step in `docs/batch-b-spec.md` ("Order of work"). (`REJECT_PII_ON_SESSIONS` is retired: the claim allow-list is always on and a leftover var is ignored, D271) |

@@ -570,7 +570,7 @@ const nearRpcOutage: Playbook = {
   severity: 'warning',
   status: 'live',
   summary:
-    "The manifest's `rpc` provider is down or wrong. The API fails over to its `apiRpcFallbacks` in order (or `rpcFallback` when unset, D432); the vault, the export window and the watchdog fall back to `rpcFallback`.",
+    "The manifest's `rpc` provider is down or wrong. The API fails over to its `apiRpcFallbacks` in order (or `rpcFallback` when unset, D435); the vault, the export window and the watchdog fall back to `rpcFallback`.",
   signals: [
     '`near_rpc_failover` warnings in the API\'s logs (the endpoint index passed over and why: `network`, `timeout`, `http_5xx`, `http_429`, `not_jsonrpc`, `not_synced`).',
     '`502 near_unavailable` on API endpoints once every API endpoint fails; `rpc_failing` from the watchdog (both its RPCs failed 3 runs).',
@@ -598,7 +598,7 @@ const nearRpcOutage: Playbook = {
   ],
   verify: ["`GET /v1/health` and a smoke login work; `near_rpc_failover` lines stop (or name only the endpoint you replaced); the watchdog's `rpc_failing` resolves."],
   followUps: ["If the primary stays bad, make a healthy fallback `rpc` rather than living on failover: every isolate still tries `rpc` again every 30 s."],
-  refs: ['docs/operations.md#accounts-and-services-per-environment', 'docs/architecture.md#components', 'docs/security.md#parties', 'D65', 'D432'],
+  refs: ['docs/operations.md#accounts-and-services-per-environment', 'docs/architecture.md#components', 'docs/security.md#parties', 'D65', 'D435'],
   related: ['watchdog-degraded'],
 };
 

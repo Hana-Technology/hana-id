@@ -1,5 +1,5 @@
 // Every NEAR RPC client in the API's source is made by near/rpc.ts `nearRpc(env)`, so every read and every broadcast
-// gets the env's fallbacks (NEAR_RPC_FALLBACKS, D432); none reads NEAR_RPC alone.
+// gets the env's fallbacks (NEAR_RPC_FALLBACKS, D435); none reads NEAR_RPC alone.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';

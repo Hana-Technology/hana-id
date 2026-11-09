@@ -565,7 +565,7 @@ class KeySender {
             this.nonce = null;
             continue;
           }
-          // Not a definite rejection (nor is any answer after an RPC failover, D432): the tx may have been forwarded,
+          // Not a definite rejection (nor is any answer after an RPC failover, D435): the tx may have been forwarded,
           // so poll its outcome.
           if (isDefiniteRejection(err)) throw err;
         }

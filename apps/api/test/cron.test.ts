@@ -520,7 +520,7 @@ describe('scheduled JWKS sync', () => {
     expect(near.sent.map((t) => t.nonce)).toEqual([501n]);
   });
 
-  it('a broadcast that failed over after NEAR_RPC took it is polled by hash, never signed again (D432)', async () => {
+  it('a broadcast that failed over after NEAR_RPC took it is polled by hash, never signed again (D435)', async () => {
     const near = govChain([], { jwks: ['a'] });
     const FALLBACK = 'https://rpc-fallback.test.invalid';
     const sameChain = vi.mocked(globalThis.fetch).getMockImplementation()!;

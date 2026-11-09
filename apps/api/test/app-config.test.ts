@@ -113,7 +113,7 @@ describe('GET /v1/app (batch B)', () => {
     expect(near.viewCalls.filter((c) => c.method === 'get_config')).toHaveLength(2);
   });
 
-  it('every contract view gives up after VIEW_TIMEOUT_MS (an abort signal); transactions after TX_TIMEOUT_MS (D432)', async () => {
+  it('every contract view gives up after VIEW_TIMEOUT_MS (an abort signal); transactions after TX_TIMEOUT_MS (D435)', async () => {
     const seen: (AbortSignal | null | undefined)[] = [];
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
       seen.push(init?.signal);

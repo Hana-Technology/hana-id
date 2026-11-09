@@ -124,7 +124,7 @@ export function wranglerConfig(m: Manifest, d1Id: string, opts: { usageHyperdriv
     vars: {
       NEAR_RPC: m.rpc,
       ...(m.rpcFallback ? { NEAR_RPC_FALLBACK: m.rpcFallback } : {}),
-      // The API's own failover list after NEAR_RPC (D432): apiRpcFallbacks, else rpcFallback; none, no var.
+      // The API's own failover list after NEAR_RPC (D435): apiRpcFallbacks, else rpcFallback; none, no var.
       ...(apiRpcFallbacksOf(m).length ? { NEAR_RPC_FALLBACKS: JSON.stringify(apiRpcFallbacksOf(m)) } : {}),
       SIGNER_ACCOUNT: m.signer,
       RELAYER_ACCOUNT: m.relayer,

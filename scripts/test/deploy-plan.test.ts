@@ -5,7 +5,7 @@ import { HOME_RELAYER_METHODS, OWNER_RELAYER_METHODS, SESSION_RELAYER_METHODS, s
 import { type GovernanceView, UPDATER_METHODS } from '../lib/contract.ts';
 import { buildDeployPlan, checkFunctionKey, creationPlan, type DeployObserved, type DeployOptions, type DeployStep, describeStep, CLOCK_MARGIN_MS, ownerCallOf, QUARANTINE_MARGIN_MS, SINK_WAIT_MAX_MS, signerFullAccessAllowed, sinkWaitMs } from '../lib/deploy-plan.ts';
 import { type AccessKeyListEntry, EMPTY_CODE_HASH, nearToYocto } from '../lib/near.ts';
-import { DEFAULT_OWNER_ALLOWANCE_NEAR } from '../lib/deploy-run.ts';
+import { DEFAULT_HOME_ALLOWANCE_NEAR, DEFAULT_OWNER_ALLOWANCE_NEAR } from '../lib/deploy-run.ts';
 import { OWNER_POOL_ALLOWANCE_YOCTO, POOL_METHODS as API_POOL_METHODS } from '../../apps/api/src/relayer-config.ts';
 import { councilPolicy } from '../lib/sputnik.ts';
 import { ACCOUNT_OWNER } from './sim-fixtures.ts';
@@ -824,6 +824,10 @@ describe('buildDeployPlan', () => {
   it('sets console audiences when the manifest has them', () => {
     const p = buildDeployPlan({ ...m, consoleAudiences: [['google', 'console.apps.googleusercontent.com']] }, fresh(), opts);
     expect(p.steps).toContainEqual({ kind: 'set-console-audiences', audiences: [['google', 'console.apps.googleusercontent.com']] });
+  });
+
+  it('the Home pool’s default allowance is 5 NEAR (D542)', () => {
+    expect(DEFAULT_HOME_ALLOWANCE_NEAR).toBe('5');
   });
 
   it('the owner pool’s default allowance is the base of the API’s owner_allowance_low check', () => {

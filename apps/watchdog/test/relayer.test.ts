@@ -29,7 +29,7 @@ describe('relayer.ts', () => {
       balance: { warn: 5n * NEAR, critical: NEAR },
       session: { warn: nearToYocto(0.5), critical: nearToYocto(0.1) },
       owner: { warn: nearToYocto(0.1), critical: nearToYocto(0.02) },
-      home: { warn: nearToYocto(0.5), critical: nearToYocto(0.1) },
+      home: { warn: nearToYocto(1), critical: nearToYocto(0.2) },
     });
     const o = relayerThresholds(JSON.stringify({ balance: { warn: 20, critical: 3 } }));
     expect(o.thresholds.balance).toEqual({ warn: 20n * NEAR, critical: 3n * NEAR });
@@ -89,7 +89,7 @@ describe('relayer_funds check', () => {
     expect(empty?.title).toContain('every Home derive relay fails');
 
     const permission = home.access_key.permission as { FunctionCall: { allowance: string | null } };
-    permission.FunctionCall.allowance = nearToYocto(0.3).toString();
+    permission.FunctionCall.allowance = nearToYocto(0.5).toString();
     w.chain.relayer.keys.push(home);
     await w.run();
     expect(await open(w, 'relayer_pool_empty')).toEqual([]);

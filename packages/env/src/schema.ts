@@ -122,7 +122,7 @@ const watchdogSchema = z.object({
   /**
    * Thresholds (NEAR) of the relayer funds check (`relayer` account balance, each pool key's remaining allowance);
    * each pair optional. Defaults (apps/watchdog/src/relayer.ts): balance 5 / 1, session-pool key 0.5 / 0.1 (of its 2 NEAR
-   * allowance), owner-pool key 0.1 / 0.02 (of 0.5 NEAR), Home-pool key 0.5 / 0.1 (of 2 NEAR). Raise the allowance pairs
+   * allowance), owner-pool key 0.1 / 0.02 (of 0.5 NEAR), Home-pool key 1 / 0.2 (of 5 NEAR). Raise the allowance pairs
    * if deploy-contract ran with a larger `--relayer-allowance` / `--owner-relayer-allowance` / `--home-relayer-allowance`.
    */
   relayerFunds: z

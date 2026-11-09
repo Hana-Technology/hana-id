@@ -878,7 +878,7 @@ admitted only while `("email", "hana-home")` is in force on the exit list (D494)
 Nothing here derives a key: that's H3. Layouts live in `packages/core/src/home.ts` (`@hana-id/core/home`), shared by the
 page and the API, with Node vectors in `packages/core/test/vectors/home-v1.json`.
 
-**Home's derive (H3, `POST /v1/home/login`, D520–D529; `docs/api.md`).** A Home identity opens a wallet in any registered
+**Home's derive (H3, `POST /v1/home/login`, D520–D529, D540–D542; `docs/api.md`).** A Home identity opens a wallet in any registered
 scope with no app gate, relayed from a dedicated pool (`home`, the `HOME_RELAYER_KEYS` secret, one key by default, method
 `create_session_and_derive` only, objects `home-relayer-key-<i>` in the same Durable Object namespace), so a Home flood can only spend that pool. The
 per-wallet, per-user and daily limits are checked last, right before the relay, so a refused request spends nothing. The path

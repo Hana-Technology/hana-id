@@ -45,7 +45,7 @@ import { readPin, readPolicyTemplate, type SputnikPolicy } from './sputnik.ts';
 
 export const DEPLOY_USAGE = `Usage: deploy-contract.ts <env> [--yes] [--relayer-keys 3] [--relayer-allowance 2]
                           [--owner-relayer-keys 1] [--owner-relayer-allowance 0.5]
-                          [--home-relayer-keys 1] [--home-relayer-allowance 2]
+                          [--home-relayer-keys 1] [--home-relayer-allowance 5]
                           [--upgrade] [--wasm <file>] [--skip-build]
                           [--transfer-owner] [--member <council member>] [--approve-with <council member>]
                           [--known-owner <account,…>]
@@ -56,7 +56,7 @@ export const DEPLOY_USAGE = `Usage: deploy-contract.ts <env> [--yes] [--relayer-
   --owner-relayer-keys N      owner-pool keys on the relayer (OWNER_RELAYER_KEYS: /v1/owner-actions) (default 1)
   --owner-relayer-allowance   gas allowance per owner-pool key, in NEAR (default 0.5)
   --home-relayer-keys N       Home-pool keys on the relayer (HOME_RELAYER_KEYS: /v1/home/login) (default 1)
-  --home-relayer-allowance    gas allowance per Home-pool key, in NEAR (default 2)
+  --home-relayer-allowance    gas allowance per Home-pool key, in NEAR (default 5)
   --upgrade                   change the code of an initialised contract: propose_upgrade(hash) by the owner, and
                               execute_upgrade once governance_delay_ms passed (a v1 contract is refused)
   --wasm <file>               deploy this wasm instead of building
@@ -74,8 +74,8 @@ export const DRY_RUN_LINE = 'Dry run: nothing changed. Re-run with --yes to appl
  * (apps/api/src/relayer-config.ts OWNER_POOL_ALLOWANCE_YOCTO; a test keeps the two equal).
  */
 export const DEFAULT_OWNER_ALLOWANCE_NEAR = '0.5';
-/** Each Home-pool key's allowance by default (D98 item 11: one key with 2 NEAR). */
-export const DEFAULT_HOME_ALLOWANCE_NEAR = '2';
+/** Each Home-pool key's allowance by default (D542: one key with 5 NEAR, about the 500-a-day ceiling at 100 Tgas prepaid). */
+export const DEFAULT_HOME_ALLOWANCE_NEAR = '5';
 
 const CONTRACT_DIR = join(repoRoot, 'contracts', 'hana-signer');
 const WASM_CANDIDATES = [join(CONTRACT_DIR, 'target', 'near', 'hana_signer.wasm'), join(CONTRACT_DIR, 'target', 'wasm32-unknown-unknown', 'release', 'hana_signer.wasm')];

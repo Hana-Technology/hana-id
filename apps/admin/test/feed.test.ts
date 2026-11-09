@@ -251,6 +251,18 @@ describe('audit_log', () => {
 });
 
 describe('security_events', () => {
+  it('emails a Hana Home budget alert to the alias, with no org and counts only (D541)', async () => {
+    await drain(env);
+    const id = `se_${uid()}`;
+    await env.HOT_DB.prepare("INSERT INTO security_events (id, detected_at, kind, detail_json) VALUES (?1, ?2, 'home_budget_high', '{\"day\":\"2026-11-09\",\"derives\":400,\"ceiling\":500,\"thresholdPct\":80}')").bind(id, Date.now()).run();
+    const fake = new FakeEmail();
+    await feedSecurityEvents(env, fake, big());
+    const mine = fake.about(id);
+    expect(mine.map((m) => m.to)).toEqual([ALIAS]);
+    expect(mine[0]!.text).toContain('home_budget_high');
+    expect(await env.HOT_DB.prepare('SELECT notified_at FROM security_events WHERE id = ?1').bind(id).first('notified_at')).not.toBeNull();
+  });
+
   it('emails the alias and the org’s contacts once, then marks each event notified', async () => {
     await drain(env);
     const app = await seedHotApp();

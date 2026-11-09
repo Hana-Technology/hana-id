@@ -883,7 +883,7 @@ restricted key with Mail Send only, held by its Worker and one `.secrets/<env>/`
   admin role changes the ledger only through the owner's retention functions (it still can't update an event or
   delete an `app_users` row, a settlement or a partition itself); each function computes its D90 cutoff from the
   database's clock. The retention RPCs take the cron's `system` actor only and clamp `before` to their period in SQL
-  (60 months by the triggers' own clock; 24 months for `user_events`, D433; 30 days after an app's deletion), so a
+  (60 months by the triggers' own clock; 24 months for `user_events`, D433, whose Home rows `uid-erase` also finds in a scope with no directory row, D543; 30 days after an app's deletion), so a
   caller can't purge a younger row. The audit purges keep what drift detection reads (D364). An erasure deletes the
   user's `user_events` (key exports, mainnet demo signatures) by internal id and by each wallet address of theirs,
   before their wallet rows, and re-counts them to zero (D433). The erasure record (`ops.erasures`) holds a ticket, an operator
@@ -999,7 +999,7 @@ identity into a free-tier row-read burn.
   (`registry.rs` `assert_client_shape`) makes `("email", "hana-home")` no scope's client at registration, propose or execute,
   even with a valid proof, and before the exit list is set. H10 still computes the nonce itself (a defence in depth).
 
-### Hana Home's derive (H3, D520–D529; `POST /v1/home/login`)
+### Hana Home's derive (H3, D520–D529, D540–D543; `POST /v1/home/login`)
 
 A derive with no app gate. What stands in for the app gate is the user's own proof: a fresh Home identity and a session
 token for the same `(provider, sub)`, whose nonce commits to this session in this scope.
@@ -1016,6 +1016,8 @@ token for the same `(provider, sub)`, whose nonce commits to this session in thi
 | `ckd_failed` gives back only the wallet's hour (D528); parallel requests can't pass the wallet window or the daily ceiling | `home-login.test.ts` "parallel requests" |
 | A Home derive marks no app as launched, spends no app's quota, writes no usage event | `home-login.test.ts` "leaves apps unlaunched" |
 | `homeDerivesPerDay: 0` stops every Home derive without a code change (D529) | `home-login.test.ts` "kill switch" |
+| An identity with no directory row can use only 20% of the day's ceiling, in the same atomic statement as the total, so a flood of throwaway accounts can't use up the share kept for people with records (D540) | `countHomeDerive`; `home-login.test.ts` "unrecorded" |
+| 80% of the ceiling writes one `home_budget_high` security event a day, counts only, shown and emailed by the admin (D541); no new cron | `noteBudgetHigh` |
 | The Home pool's one method and small allowance bound a leaked key or a flood; `deploy-contract` and the watchdog know the pool | `relayer-config.ts`, `scripts/lib/keys.ts`, `apps/watchdog/src/relayer.ts` |
 | Nothing logs a token, `sub`, path or path hash; limiter names are hashes | `home-login.test.ts` "never logs" |
 
@@ -1027,9 +1029,8 @@ suspended or deleted app). It can't derive again. A used-up session looks exactl
 can't be told apart without a marker read on every partner call (D524 as corrected); the key lives only in the Home page's
 memory, whose holder already has the user's key.
 
-The daily ceiling is shared, so about 25 Google accounts at their own 20/day can use up a day's
-Home derives for everyone until the next UTC day (a rescue route, bounded spend, D98's budget; the per-user day limit and
-Google's own limits are the only brake). A linked account is counted per identity for the per-user windows (the per-wallet
+Throwaway accounts can still use up the 20% share kept for identities with no directory row, about 5 accounts at their own
+20/day at the default ceiling; a real owner with no row (a purged scope, a lost record) falls in that share (D540). A linked account is counted per identity for the per-user windows (the per-wallet
 window is shared). The API can't verify the Home page's `max_age=0` freshness: as for the export window, it is the page's
 rule. Cross-client equality of Google's `sub` (D484) remains a live check before the exit client is used.
 

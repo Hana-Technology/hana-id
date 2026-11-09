@@ -43,7 +43,7 @@ export interface RelayerThresholds {
   session: Threshold;
   /** Each owner-pool key's remaining allowance (default allowance 0.5 NEAR). */
   owner: Threshold;
-  /** Each Home-pool key's remaining allowance (default allowance 2 NEAR). */
+  /** Each Home-pool key's remaining allowance (default allowance 5 NEAR). */
   home: Threshold;
 }
 
@@ -57,14 +57,14 @@ export interface RelayerFundsSetting {
 
 /**
  * Defaults, in NEAR. Balance: 5 / 1 (at ~0.004 NEAR of gas per login on testnet, 1 NEAR is ~250 logins). Session key:
- * 0.5 / 0.1 of its 2 NEAR allowance (3 × 2 NEAR covered ~1,500 logins). Owner key: 0.1 / 0.02 of its 0.5 NEAR. Home key: 0.5 / 0.1
- * of its 2 NEAR (about 200 derives at 100 Tgas prepaid each, D98 item 11).
+ * 0.5 / 0.1 of its 2 NEAR allowance (3 × 2 NEAR covered ~1,500 logins). Owner key: 0.1 / 0.02 of its 0.5 NEAR. Home key: 1 / 0.2
+ * of its 5 NEAR (about 500 derives at 100 Tgas prepaid each, D542).
  */
 export const DEFAULT_RELAYER_FUNDS = {
   balance: { warn: 5, critical: 1 },
   sessionAllowance: { warn: 0.5, critical: 0.1 },
   ownerAllowance: { warn: 0.1, critical: 0.02 },
-  homeAllowance: { warn: 0.5, critical: 0.1 },
+  homeAllowance: { warn: 1, critical: 0.2 },
 } as const satisfies Required<RelayerFundsSetting>;
 
 /** Largest threshold accepted (NEAR): a guard against a typo in yocto. */

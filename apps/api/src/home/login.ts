@@ -25,6 +25,7 @@
 // SECURITY: nothing here logs a token, a `sub`, a path or a path hash. A limiter name is a hash, never a `sub`.
 import { appKeyPairs, appKeyProblem } from '../bls.ts';
 import { hex, sha256 } from '../bytes.ts';
+import { eventId } from '../changes/guard.ts';
 import { identityKeyHex, sessionSupportId } from '../directory/store.ts';
 import { inBackground, syncAfterLogin } from '../directory/sync.ts';
 import type { Env } from '../env.ts';
@@ -57,8 +58,12 @@ export const HOME_DERIVES_PER_USER_DAY = 20;
 export const HOME_DERIVES_PER_DAY_DEFAULT = 500;
 /** How far ahead a Home session may end: the export window's 15 minutes with the Home identity's margin. Inside the contract's exit cap (30 minutes, D486). */
 export const HOME_SESSION_MAX_MS = 20 * 60_000;
-/** A warning is logged when a day's derives reach this share of the ceiling (D85). */
-const HOME_USAGE_WARN_PCT = 80;
+/** A `home_budget_high` security event is written when a day's derives reach this share of the ceiling (D85, D541). */
+const HOME_USAGE_ALERT_PCT = 80;
+/** The event is attempted on this many requests past the threshold, so one lost write doesn't lose the day's alert; its fixed id keeps it to one row. */
+const HOME_USAGE_ALERT_TRIES = 5;
+/** The share of the daily ceiling an identity with no directory row may use (D540). */
+const HOME_UNRECORDED_PCT = 20;
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
@@ -98,12 +103,27 @@ const utcDay = (now: number): string => new Date(now).toISOString().slice(0, 10)
 const secondsToNextUtcDay = (now: number): number => Math.max(1, Math.ceil((Math.ceil((now + 1) / DAY) * DAY - now) / 1000));
 
 /**
- * One more Home derive for the day, atomically (one D1 statement): the new count, or null at the ceiling (the row stays
- * as it was). Throws when D1 can't be written: the caller refuses, since an uncounted derive is one the budget can't see.
+ * What identities with no directory row may use of a ceiling of `max` (D540): 20%, rounded down, at least 1 so that they
+ * aren't locked out at a small ceiling, and always leaving at least one derive for people with records (a ceiling of 1
+ * gives them nothing).
  */
-export async function countHomeDerive(env: Pick<Env, 'DB'>, day: string, max: number): Promise<number | null> {
-  // The statement below always inserts a day's first row, so a ceiling of 0 has to refuse before it.
-  if (max <= 0) return null;
+export const homeUnrecordedCeiling = (max: number): number => Math.max(0, Math.min(max - 1, Math.max(1, Math.floor((max * HOME_UNRECORDED_PCT) / 100))));
+
+/**
+ * One more Home derive for the day, atomically (one D1 statement): the new count, or null at the ceiling (the row stays
+ * as it was). `unrecorded`: an identity with no directory row, also held to `homeUnrecordedCeiling`, in the same statement.
+ * Throws when D1 can't be written: the caller refuses, since an uncounted derive is one the budget can't see.
+ */
+export async function countHomeDerive(env: Pick<Env, 'DB'>, day: string, max: number, unrecorded = false): Promise<number | null> {
+  // The statements below always insert a day's first row, so a ceiling of 0 has to refuse before them.
+  const share = homeUnrecordedCeiling(max);
+  if (max <= 0 || (unrecorded && share <= 0)) return null;
+  if (unrecorded) {
+    const row = await env.DB.prepare('INSERT INTO home_usage (day, derives, unrecorded) VALUES (?1, 1, 1) ON CONFLICT (day) DO UPDATE SET derives = derives + 1, unrecorded = unrecorded + 1 WHERE derives < ?2 AND unrecorded < ?3 RETURNING derives')
+      .bind(day, max, share)
+      .first<{ derives: number }>();
+    return row?.derives ?? null;
+  }
   const row = await env.DB.prepare('INSERT INTO home_usage (day, derives) VALUES (?1, 1) ON CONFLICT (day) DO UPDATE SET derives = derives + 1 WHERE derives < ?2 RETURNING derives')
     .bind(day, max)
     .first<{ derives: number }>();
@@ -196,10 +216,12 @@ export async function handleHomeLogin(request: Request, env: Env, requestId: str
     }
     const day = utcDay(hitAt);
     const max = homeDerivesPerDay(env);
+    // A user the directory or the chain already knows here (D527); everyone else shares a fifth of the ceiling (D540).
+    const known = standing.member !== undefined || (await holdsActiveRow(env, scopeId, token));
     const takeBack = (): Promise<unknown> => Promise.allSettled(windows.map(async (w) => limiter(env, w.subject).unhit(w.limits, hitAt)));
     let count: number | null;
     try {
-      count = await countHomeDerive(env, day, max);
+      count = await countHomeDerive(env, day, max, !known);
     } catch {
       await takeBack();
       return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
@@ -208,7 +230,8 @@ export async function handleHomeLogin(request: Request, env: Env, requestId: str
       await takeBack();
       return reject(ctx, 429, 'home_busy', 'Hana Home is busy, try again tomorrow', { 'retry-after': String(secondsToNextUtcDay(hitAt)) });
     }
-    if (count === Math.ceil((max * HOME_USAGE_WARN_PCT) / 100)) log({ event: 'home_derives_high', endpoint: ctx.endpoint, requestId, code: 'home_budget_80pct' }, 'warn');
+    const alertAt = Math.ceil((max * HOME_USAGE_ALERT_PCT) / 100);
+    if (count >= alertAt && count < alertAt + HOME_USAGE_ALERT_TRIES) await inBackground(exec, () => noteBudgetHigh(env, day, count as number, max, requestId));
 
     lap(ctx, 'limits');
     const result = await relay(env, 'home', { method: call.method, args: call.args }, requestId, { sessionPublicKey: req.sessionPublicKey, expiresAtMs: req.expiresAtMs, counter: 1 });
@@ -216,7 +239,7 @@ export async function handleHomeLogin(request: Request, env: Env, requestId: str
     forgetSession(req.sessionPublicKey);
     if (!result.ok) {
       // A transaction that certainly never ran spends none of the budget. Anything else may have, and stays counted.
-      if (result.code === ALREADY_RELAYED || NOT_EXECUTED.has(result.code)) await inBackground(exec, () => Promise.all([takeBack(), giveBackDerive(env, day)]));
+      if (result.code === ALREADY_RELAYED || NOT_EXECUTED.has(result.code)) await inBackground(exec, () => Promise.all([takeBack(), giveBackDerive(env, day, !known)]));
       if (result.code === ALREADY_RELAYED) return reject(ctx, 409, 'session_exists', 'This session key is already in use');
       const failure = loginFailure(env, result);
       // The MPC failed after the session was committed and the one-use session is spent: no key came back, and the user
@@ -232,7 +255,6 @@ export async function handleHomeLogin(request: Request, env: Env, requestId: str
     // null, D520) and, for a user the directory or the chain already knows here (D527), its directory row (D500: it is
     // what turns a linked member `mine` in Home's list). A stranger gets no row, so no `mine` and no unlaunched apps.
     const root = standing.member?.root ?? { provider: token.provider, sub: token.sub };
-    const known = standing.member !== undefined || (await holdsActiveRow(env, scopeId, token));
     if (known) await inBackground(exec, () => syncAfterLogin(env, scopeId, { provider: token.provider, sub: token.sub }, null, standing, { requestId, endpoint: ctx.endpoint }));
     await inBackground(exec, () => recordKeyExport(env, { appId: null, scopeId, root, chain: null, requestId }));
     // A code staff can't look up is worse than none (D395): none without a directory row.
@@ -273,10 +295,24 @@ async function holdsActiveRow(env: Pick<Env, 'DB'>, scopeId: string, identity: {
   }
 }
 
-/** Gives the day's budget back after a relay that never ran. Never throws: a failed give-back leaves the count high. */
-async function giveBackDerive(env: Pick<Env, 'DB'>, day: string): Promise<void> {
+/**
+ * The day's alert (D541): one `home_budget_high` security event, which the admin's Security & monitoring view shows and its
+ * feed emails. A fixed id per day, so at most one row. Counts only: no `sub`, path, scope or address. Never throws.
+ */
+async function noteBudgetHigh(env: Pick<Env, 'DB'>, day: string, derives: number, ceiling: number, requestId: string): Promise<void> {
   try {
-    await env.DB.prepare('UPDATE home_usage SET derives = derives - 1 WHERE day = ?1 AND derives > 0').bind(day).run();
+    await env.DB.prepare("INSERT OR IGNORE INTO security_events (id, detected_at, kind, detail_json) VALUES (?1, ?2, 'home_budget_high', ?3)")
+      .bind(await eventId('home_budget_high', day), Date.now(), JSON.stringify({ day, derives, ceiling, thresholdPct: HOME_USAGE_ALERT_PCT }))
+      .run();
+  } catch {
+    log({ event: 'home_budget_alert_failed', endpoint: HOME_LOGIN_ENDPOINT, requestId }, 'warn');
+  }
+}
+
+/** Gives the day's budget back after a relay that never ran. Never throws: a failed give-back leaves the count high. */
+async function giveBackDerive(env: Pick<Env, 'DB'>, day: string, unrecorded: boolean): Promise<void> {
+  try {
+    await env.DB.prepare('UPDATE home_usage SET derives = derives - 1, unrecorded = unrecorded - ?2 WHERE day = ?1 AND derives > 0 AND unrecorded >= ?2').bind(day, unrecorded ? 1 : 0).run();
   } catch {
     log({ event: 'home_usage_give_back_failed', endpoint: HOME_LOGIN_ENDPOINT }, 'warn');
   }

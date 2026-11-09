@@ -31,7 +31,7 @@ describe('poolOf', () => {
   it('defaults sit below the default allowances (2 NEAR session, 0.5 NEAR owner: scripts/lib/deploy-run.ts)', () => {
     expect(DEFAULT_RELAYER_FUNDS.sessionAllowance.warn).toBeLessThan(2);
     expect(DEFAULT_RELAYER_FUNDS.ownerAllowance.warn).toBeLessThan(0.5);
-    expect(DEFAULT_RELAYER_FUNDS.homeAllowance.warn).toBeLessThan(2);
+    expect(DEFAULT_RELAYER_FUNDS.homeAllowance.warn).toBeLessThan(5);
     for (const p of Object.values(DEFAULT_RELAYER_FUNDS)) expect(p.critical).toBeLessThan(p.warn);
   });
 });

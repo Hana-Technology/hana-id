@@ -471,7 +471,7 @@ issuer keys and code changes behind public delays and makes the owner a 2-of-3 S
 | Vote / list council proposals | `admin <env> owner:vote <id> --member <m> [--reject] [--yes]` · `admin <env> owner:proposals [--json]` |
 | Replace a council member | `admin <env> council:replace-member --remove <old> --add <new> [--member <m>] [--approve-with <m>] [--yes]` |
 | Governance state and findings | `admin <env> governance:status [--json]` |
-| Hana Home derive: the Home relayer key | `deploy-contract <env> --yes` adds it (`--home-relayer-keys N`, default 1; `--home-relayer-allowance NEAR`, default 2), writes `.secrets/<env>/home-relayer-keys.json` (0600); upload `HOME_RELAYER_KEYS` with `wrangler secret put HOME_RELAYER_KEYS` (see "Hana Home derive: deploy") |
+| Hana Home derive: the Home relayer key | `deploy-contract <env> --yes` adds it (`--home-relayer-keys N`, default 1; `--home-relayer-allowance NEAR`, default 5), writes `.secrets/<env>/home-relayer-keys.json` (0600); upload `HOME_RELAYER_KEYS` with `wrangler secret put HOME_RELAYER_KEYS` (see "Hana Home derive: deploy") |
 | Hana Home: daily derive ceiling | manifest `homeDerivesPerDay` (integer of 0 or more; default 500; `0` turns Home derives off), written as the var `HOME_DERIVES_PER_DAY` by `gen`; read `home_usage` in D1 to see the day's count |
 | Hana Home: record a Hana-held Google client (Enterprise onboarding) | `admin <env> home:client:add --scope <id> --client <google client id> [--remote] [--yes]` (the chain must list the client in the scope; D1 only, `hana_held_clients`; dry run without `--yes`) |
 | Hana Home: a scope's quieter listing | `admin <env> home:listing --scope <id> (--quiet\|--normal) [--remote] [--yes]` (D1 `scopes.home_quiet`; dry run without `--yes`) |
@@ -2184,7 +2184,7 @@ What isn't automatic, by design:
   binding, C8b, is `DirectoryRpc`: reads only), so its part of the purge (the `user_email_apps` rows of apps deleted 30 days ago, `email_admin_audit` past 60 months) is
   `admin <env> retention:issuer`, run after each month's job. Its `user_emails` rows have no expiry (D269); an erasure
   request removes them with `uid-erase`.
-- **An end user's erasure request**: `uid-erase` (below), per scope.
+- **An end user's erasure request**: `uid-erase` (below), per scope. The plan also names scopes where the user has only a Hana Home derive (a `key_exported` row with no directory row, D543): run it for each.
 - **D1 Time Travel and Neon point-in-time restore** keep deleted rows for their own windows (30 days and the plan's).
 
 ### Setting it up (once per env, for the user to run)
@@ -4471,13 +4471,13 @@ who use Hana's shared client a client change that the cross-project `sub` match 
 
 H3 adds `POST /v1/home/login`, the `home` pool and migration 0018. Order (not done by this branch; testnet only):
 
-1. Apply D1 from the deployed commit: `0018_home_usage.sql` creates `home_usage` and rebuilds `user_events` (`app_id` nullable for `key_exported` only). The older API keeps working during it.
-2. `deploy-contract <env> --yes`: creates one Home key (allowance 2 NEAR) on the relayer account for `create_session_and_derive` only (funded from the relayer's balance by its allowance; the relayer account must hold enough, about 2 NEAR extra). Writes `.secrets/<env>/home-relayer-keys.json`. A `--home-relayer-keys`/`--home-relayer-allowance` run changes nothing else.
+1. Apply D1 from the deployed commit: `0018_home_usage.sql` creates `home_usage`, rebuilds `user_events` (`app_id` nullable for `key_exported` only) and `security_events` (the `home_budget_high` kind). The older API keeps working during it.
+2. `deploy-contract <env> --yes`: creates one Home key (allowance 5 NEAR, D542) on the relayer account for `create_session_and_derive` only (funded from the relayer's balance by its allowance; the relayer account should hold about 5 NEAR extra). Writes `.secrets/<env>/home-relayer-keys.json`. A `--home-relayer-keys`/`--home-relayer-allowance` run changes nothing else.
 3. Upload the secret: `node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/home-relayer-keys.json")))' | corepack pnpm --dir apps/api exec wrangler secret put HOME_RELAYER_KEYS`.
 4. Deploy the API.
 5. Deploy the watchdog last, so `relayer_pool_empty:home` doesn't page before the key exists.
 
-Without the key the endpoint answers 503 `relayer_unconfigured`; nothing else is affected. Home derives are not in the usage ledger or the
+Without the key the endpoint answers 503 `relayer_unconfigured`; nothing else is affected. The day's derives past 80% of the ceiling write one `home_budget_high` security event, shown in the admin's Security & monitoring and emailed by its feed (D541; playbook `home-budget-high`). Identities with no directory row can use only 20% of the ceiling (D540). Home derives are not in the usage ledger or the
 admin's relayer list until H11, so they don't appear in the daily nonce check.
 
 ## Hana Home exit client

@@ -151,7 +151,7 @@ same run). Steps:
      limited to `propose_change`, `cancel_change`, `remove_client`, `disable_shared_login`, `execute_change`,
      allowance `--owner-relayer-allowance` each (default 0.5 NEAR).
    - **Home pool** (the API's `HOME_RELAYER_KEYS`, `/v1/home/login`): `--home-relayer-keys` keys (default 1), limited to
-     `create_session_and_derive`, allowance `--home-relayer-allowance` each (default 2 NEAR).
+     `create_session_and_derive`, allowance `--home-relayer-allowance` each (default 5 NEAR).
 
    The pools never share a key, so abuse of the public owner-actions endpoint can only drain the owner pool. It can
    never stop logins.

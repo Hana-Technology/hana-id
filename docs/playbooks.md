@@ -49,6 +49,7 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [Hana's identity JWKS publishes a key the watchdog didn't pin, or can't be judged](#identity-jwks-forged) | critical | `identity_key_unpinned`, `identity_private_key_published`, `identity_discovery_mismatch`, `identity_jwks_unreadable` |
 | [A pinned identity key isn't in Hana's identity JWKS](#identity-jwks-degraded) | warning | `identity_key_missing` |
 | [An issuer key on chain has an identity key's kid](#identity-key-on-chain) | critical | `identity_key_on_chain` |
+| [Hana Home's daily derive budget reached 80%](#home-budget-high) | warning | — |
 | [`KEYS_UPDATER_KEY` stolen (API secrets leaked)](#updater-key-stolen) | critical | — |
 | [A relayer key stolen (session pool or owner pool)](#relayer-key-stolen) | warning | — |
 | [`VAULT_KEK` leaked (and routine rotation)](#vault-kek-leaked) | critical | — |
@@ -1443,6 +1444,38 @@ An active Google or email issuer key, or a pending key addition of any provider,
 **Refs:** [`docs/identity-token-spec.md#jwks-and-discovery`](identity-token-spec.md#jwks-and-discovery), [`apps/watchdog/README.md#what-a-run-does-every-5-min`](../apps/watchdog/README.md#what-a-run-does-every-5-min), D212 (`docs/decisions.md`) · **See also:** [forged-key-change](#forged-key-change), [forged-active-key](#forged-active-key), [unverifiable-key-change](#unverifiable-key-change), [identity-signing-key-compromised](#identity-signing-key-compromised)
 
 ## Incident playbooks
+
+<a id="home-budget-high"></a>
+
+### Hana Home's daily derive budget reached 80%
+
+`home-budget-high` · warning
+
+A `home_budget_high` security event: a day's Hana Home derives reached 80% of `homeDerivesPerDay` (default 500).
+
+**Signals**
+
+- A `home_budget_high` row in the admin's Security & monitoring, emailed by the feed (one a day; counts only).
+
+**Impact**
+
+- At the ceiling Hana Home derives answer `429 home_busy` until the next UTC day. Partner logins and owner actions are on other pools and unaffected. Identities with no directory row can use only 20% of it.
+
+**Steps**
+
+1. **Tell real use from abuse** (who: a founder). Read the day's `home_usage` row in the API's D1: `derives` and `unrecorded` (derives by identities with no directory row). Compare with the partner shutdowns you know of.
+
+2. **Raise or stop it** (who: a founder). Real demand: raise `homeDerivesPerDay` in the manifest, regenerate and redeploy the API, and check the Home key's allowance. Abuse or a compromise: set it to `0`, which stops every Home derive until it is raised again.
+
+**Verify**
+
+- The next day's `home_usage` row stays under the ceiling, or Hana Home derives answer again after the ceiling was raised.
+
+**Follow-ups**
+
+- If real demand keeps reaching it, raise the Home key's allowance with the ceiling.
+
+**Refs:** [`docs/operations.md#hana-home-derive-deploy`](operations.md#hana-home-derive-deploy), D541 (`docs/decisions.md`) · **See also:** [relayer-key-stolen](#relayer-key-stolen)
 
 <a id="updater-key-stolen"></a>
 

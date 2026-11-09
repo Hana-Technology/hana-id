@@ -6,13 +6,14 @@ import { applyD1Migrations } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { KeyPair, type KeyPairString } from '@near-js/crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { HOME_DERIVES_PER_DAY_DEFAULT, HOME_DERIVES_PER_PATH_HOUR, HOME_DERIVES_PER_USER_DAY, HOME_DERIVES_PER_USER_HOUR, HOME_LOGIN_ENDPOINT, HOME_LOGIN_PER_IP_HOUR, HOME_SESSION_MAX_MS, checkHomeClientScope, countHomeDerive, homeDerivesPerDay, toHomeLogin } from '../src/home/login.ts';
+import { HOME_DERIVES_PER_DAY_DEFAULT, HOME_DERIVES_PER_PATH_HOUR, HOME_DERIVES_PER_USER_DAY, HOME_DERIVES_PER_USER_HOUR, HOME_LOGIN_ENDPOINT, HOME_LOGIN_PER_IP_HOUR, HOME_SESSION_MAX_MS, checkHomeClientScope, countHomeDerive, homeDerivesPerDay, homeUnrecordedCeiling, toHomeLogin } from '../src/home/login.ts';
 import { clearViewCaches } from '../src/views.ts';
 import { syncAfterLogin } from '../src/directory/sync.ts';
 import { clearLinkViewCaches } from '../src/link-views.ts';
 import { sha256Hex } from '../src/owner-actions.ts';
 import { parseRelayerKeys, POOL_METHODS, POOL_SECRET, poolAllows, relayerKeyName } from '../src/relayer-config.ts';
 import { ckdPayload, sessionNonce } from '../src/session-crypto.ts';
+import { adminRpc, system } from './rpc-helpers.ts';
 import { emailAud, emailEnv, emailToken, withEmail, type EmailChain } from './email-helpers.ts';
 import { GOOGLE_ISS, type Chain, call, chain, google, seedApp, signSession, uid } from './helpers.ts';
 import { appKey, loginBody, withCombinedCall } from './login-helpers.ts';
@@ -102,6 +103,14 @@ const usage = async (): Promise<number> => (await env.DB.prepare('SELECT derives
 const events = async (scopeId: string) =>
   (await env.DB.prepare("SELECT kind, app_id, user_id, chain, request_id FROM user_events WHERE scope_id = ?1 AND kind = 'key_exported' ORDER BY id").bind(scopeId).all<Record<string, unknown>>()).results;
 const relays = () => near.sent.filter((t) => t.method === 'create_session_and_derive');
+/** The directory holds `sub` as an active user of `scopeId`, as a partner login would have written it. */
+const hasRow = (scopeId: string, sub: string) => syncAfterLogin(env, scopeId, { provider: 'google', sub }, null, { pending: false, path: `${scopeId}#google#${sub}#0`, confirmed: true }, { requestId: 'seed', endpoint: 'test' });
+const newScope = (): string => {
+  const s = `x${uid()}`.toLowerCase().replace(/[^a-z0-9]/gu, '').slice(0, 60);
+  near.allowShared.add(s);
+  return s;
+};
+const budgetEvents = async () => (await env.DB.prepare("SELECT id, kind, scope_id, detail_json FROM security_events WHERE kind = 'home_budget_high'").all<Record<string, unknown>>()).results;
 
 beforeEach(async () => {
   SUB = `sub-${uid()}`;
@@ -111,6 +120,7 @@ beforeEach(async () => {
   near.allowShared.add(scope);
   near.install();
   await env.DB.exec('DELETE FROM home_usage');
+  await env.DB.exec("DELETE FROM security_events WHERE kind = 'home_budget_high'");
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -550,6 +560,74 @@ describe('POST /v1/home/login: the limits, all before the relay', () => {
     expect((await stub.hit([{ name: 'home:user:hour', windowMs: 3_600_000, max: 1 }])).ok).toBe(true);
   });
 
+  it('identities with no directory row stop at 20% while a user with a row still gets through (unrecorded, D540)', async () => {
+    const e = { HOME_DERIVES_PER_DAY: '10' };
+    for (let i = 0; i < 2; i++) {
+      const sub = `burner-${uid()}`;
+      expect((await derive(await body(newScope(), SHARED, { sub }), undefined, { sub, env: e })).status).toBe(200);
+    }
+    const before = relays().length;
+    const sub = `burner-${uid()}`;
+    const r = await derive(await body(newScope(), SHARED, { sub }), undefined, { sub, env: e });
+    expect(r.status).toBe(429);
+    expect((await json(r)).code).toBe('home_busy');
+    expect(relays().length).toBe(before);
+
+    const owner = `owner-${uid()}`;
+    const mine = newScope();
+    await hasRow(mine, owner);
+    expect((await derive(await body(mine, SHARED, { sub: owner }), undefined, { sub: owner, env: e })).status).toBe(200);
+    expect(await env.DB.prepare('SELECT derives, unrecorded FROM home_usage WHERE day = ?1').bind(today()).first()).toEqual({ derives: 3, unrecorded: 2 });
+  });
+
+  it('parallel requests can’t pass the unrecorded share', async () => {
+    const e = { HOME_DERIVES_PER_DAY: '10' };
+    const people = Array.from({ length: 6 }, () => ({ sub: `burner-${uid()}`, scope: newScope() }));
+    const bodies = await Promise.all(people.map((p) => body(p.scope, SHARED, { sub: p.sub })));
+    const before = relays().length;
+    const results = await Promise.all(bodies.map((b, i) => derive(b, undefined, { sub: people[i]!.sub, env: e })));
+    expect(results.map((r) => r.status).sort()).toEqual([200, 200, 429, 429, 429, 429]);
+    expect(relays().length).toBe(before + 2);
+  });
+
+  it('the share rounds sensibly and always leaves one for people with records', async () => {
+    expect([1, 2, 4, 5, 9, 10, 11, 500].map(homeUnrecordedCeiling)).toEqual([0, 1, 1, 1, 1, 2, 2, 100]);
+    const day = '2026-11-13';
+    await env.DB.prepare('DELETE FROM home_usage WHERE day = ?1').bind(day).run();
+    expect(await countHomeDerive(env, day, 1, true)).toBeNull();
+    expect(await env.DB.prepare('SELECT derives FROM home_usage WHERE day = ?1').bind(day).first()).toBeNull();
+    expect(await countHomeDerive(env, day, 1, false)).toBe(1);
+  });
+
+  it('a relay that never ran gives the unrecorded share back too', async () => {
+    const r = await derive(await body(scope, SHARED), undefined, { env: { HOME_RELAYER_KEYS: '[]' } });
+    expect(r.status).toBe(503);
+    expect(await env.DB.prepare('SELECT derives, unrecorded FROM home_usage WHERE day = ?1').bind(today()).first()).toEqual({ derives: 0, unrecorded: 0 });
+  });
+
+  it('80% of the ceiling writes one home_budget_high event, counts only, that the admin can read (D541)', async () => {
+    const e = { HOME_DERIVES_PER_DAY: '10' };
+    await env.DB.prepare('INSERT INTO home_usage (day, derives) VALUES (?1, 6)').bind(today()).run();
+    const owner = async () => {
+      const sub = `owner-${uid()}`;
+      const s = newScope();
+      await hasRow(s, sub);
+      return { sub, r: await derive(await body(s, SHARED, { sub }), undefined, { sub, env: e }) };
+    };
+    expect((await owner()).r.status).toBe(200);
+    expect(await budgetEvents()).toEqual([]);
+    const crossing = await owner();
+    expect(crossing.r.status).toBe(200);
+    expect((await owner()).r.status).toBe(200);
+    const rows = await budgetEvents();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.scope_id).toBeNull();
+    expect(JSON.parse(rows[0]!.detail_json as string)).toEqual({ day: today(), derives: 8, ceiling: 10, thresholdPct: 80 });
+    expect(rows[0]!.detail_json as string).not.toContain(crossing.sub);
+    const listed = await adminRpc().securityEvents({ ...system(), unnotifiedOnly: false, limit: 500 });
+    expect(listed.ok && listed.events.some((x) => x.kind === 'home_budget_high')).toBe(true);
+  });
+
   it('a ceiling of 0 is a kill switch: nothing relayed, nothing counted', async () => {
     expect(homeDerivesPerDay({ HOME_DERIVES_PER_DAY: '0' })).toBe(0);
     const before = near.sent.length;
@@ -577,6 +655,7 @@ describe('POST /v1/home/login: the limits, all before the relay', () => {
     for (const s of scopes) near.allowShared.add(s);
     fresh();
     const subs = scopes.map(() => `sub-${uid()}`);
+    for (const [i, s] of scopes.entries()) await hasRow(s, subs[i]!);
     const bodies = await Promise.all(scopes.map((s, i) => body(s, SHARED, { sub: subs[i]! })));
     const before = relays().length;
     const results = await Promise.all(bodies.map((b, i) => derive(b, undefined, { sub: subs[i]!, env: { HOME_DERIVES_PER_DAY: String(max) } })));
@@ -673,7 +752,12 @@ describe('migration 0018', () => {
       .prepare("INSERT INTO user_events (id, kind, app_id, scope_id, user_id, chain, network, address, usd_micros, request_id, at) VALUES (7, 'mainnet_signature', 'app_x', 's1', ?1, 'evm', '8453', ?2, 5, 'rs', 11), (8, 'key_exported', 'app_y', 's2', ?1, 'stellar', NULL, NULL, NULL, 're', 12)")
       .bind(`hu_${'b'.repeat(26)}`, `0x${'a'.repeat(40)}`)
       .run();
+    await db.prepare("INSERT INTO security_events (id, detected_at, kind, detail_json, notified_at) VALUES ('se1', 5, 'drift', '{}', 6)").run();
     await applyD1Migrations(db, env.TEST_MIGRATIONS.filter((m) => m.name.startsWith('0018')));
+    expect(await db.prepare("SELECT id, kind, notified_at FROM security_events").all().then((r) => r.results)).toEqual([{ id: 'se1', kind: 'drift', notified_at: 6 }]);
+    await db.prepare("INSERT INTO security_events (id, detected_at, kind, detail_json) VALUES ('se2', 7, 'home_budget_high', '{}')").run();
+    await expect(db.prepare("INSERT INTO security_events (id, detected_at, kind, detail_json) VALUES ('se3', 7, 'nonsense', '{}')").run()).rejects.toThrow();
+    await expect(db.prepare("INSERT INTO home_usage (day, derives, unrecorded) VALUES ('2026-01-01', 1, 2)").run()).rejects.toThrow();
     const rows = (await db.prepare('SELECT id, kind, app_id, scope_id, chain, usd_micros, request_id, at FROM user_events ORDER BY id').all<Record<string, unknown>>()).results;
     expect(rows).toEqual([
       { id: 7, kind: 'mainnet_signature', app_id: 'app_x', scope_id: 's1', chain: 'evm', usd_micros: 5, request_id: 'rs', at: 11 },

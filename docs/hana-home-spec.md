@@ -31,7 +31,7 @@ are updated in the same branch as the code, not now.
 9. "Sign out this device" (share revoke) is added. **Extended (D465):** it stops auto-signing within about 10 s.
 10. A coarse device label ("Chrome on macOS") is stored on the share and deleted with it.
 11. Budget and limits: 500 Home derives a day; per user 10/hour, 20/day; per path 3/hour; one Home relayer key with
-    2 NEAR.
+    5 NEAR (D542; 2 NEAR as first confirmed). Identities with no directory row share 20% of the day's ceiling (D540).
 12. **Billing (user):** while an app is active, its Home derives appear on its org's statement as their own line ("Hana
     Home logins"); after the partner leaves, Hana pays (D461).
 13. Fail closed: auto-approve can't be turned on while the API can't record the consent.
@@ -336,7 +336,7 @@ Errors map to the existing auth-page error views (`errors.ts`), plus `home_accou
 |---|---|---|
 | `GET /v1/home/config` | `Origin === AUTH_ORIGIN` | `{serverTimeMs, signer, sharedGoogleClientId}` |
 | `GET /v1/home/apps` | Home identity | the list and overlay: `[{scopeId, mine, coverage: 'shared' \| 'hana_client' \| 'partner_client' \| 'email' \| 'none', googleClientId, sharedLoginEndsAtMs, supportId?, addresses?, apps: [{appId, name, status: 'active' \| 'suspended' \| 'deleted', environment, origins}], liveDevices}]`; coverage and `sharedLoginEndsAtMs` from cached `get_scope` / `get_config` views (≤ 60 s) and D1 `hana_held_clients`. **As built (H2, D500–D503, `docs/api.md`):** coverage adds `exit` and `unknown`; no `sharedLoginEndsAtMs` (D480) or `liveDevices` (H9); paged and bounded |
-| `POST /v1/home/login` | Home identity | `/v1/login`'s body plus `scopeId`. In order: IP limit; shape; token (`verifyLoginToken` without `appId`; nonce = `sessionNonce(SIGNER, scopeId, …)`); the identity matches; `sessionStanding` for the root path; the Home limits; counter hold; `checkClientScope` and `session_key_in_use`; session signature; BLS shape; relay `create_session_and_derive` through the **Home pool**; `key_exported`; failures as `loginFailure`. No app gate. **As built (H3, proposed D521–D529, `docs/api.md`):** a derive writes a directory row only for a confirmed member or an identity already `active` there (D527); the per-wallet, per-user and daily limits come last, after every check; a standing the chain didn't confirm is refused; `keyIndex` 0, `maxUses` 1, at most 20 minutes, no link fields |
+| `POST /v1/home/login` | Home identity | `/v1/login`'s body plus `scopeId`. In order: IP limit; shape; token (`verifyLoginToken` without `appId`; nonce = `sessionNonce(SIGNER, scopeId, …)`); the identity matches; `sessionStanding` for the root path; the Home limits; counter hold; `checkClientScope` and `session_key_in_use`; session signature; BLS shape; relay `create_session_and_derive` through the **Home pool**; `key_exported`; failures as `loginFailure`. No app gate. **As built (H3, D521–D529, D540, `docs/api.md`):** identities with no directory row share 20% of the daily ceiling (D540); a derive writes a directory row only for a confirmed member or an identity already `active` there (D527); the per-wallet, per-user and daily limits come last, after every check; a standing the chain didn't confirm is refused; `keyIndex` 0, `maxUses` 1, at most 20 minutes, no link fields |
 | `GET /v1/home/devices` | Home identity | see [Home: list and revoke](#home-list-and-revoke) |
 | `POST /v1/home/consents/revoke`, `/v1/home/shares/revoke`, `/v1/home/email-sharing/revoke` | Home identity | same |
 | `POST /v1/vault/consents`, `/v1/vault/consents/revoke` | vault gate + vault message | see [Vault messages](#vault-messages-new-payloads-existing-layout) |
@@ -430,7 +430,7 @@ Invariants (each has a test):
 | Consent status | none | 0 | added to the existing `GET /v1/app` | Hana | — |
 
 Budget: worst case `HOME_DERIVES_PER_DAY × $0.02` = $10/day at the default. A function-call key's allowance is charged the
-prepaid gas (100 Tgas ≈ 0.01 NEAR per call; to verify on testnet), so 2 NEAR covers about 200 Home derives before a top-up.
+prepaid gas (100 Tgas ≈ 0.01 NEAR per call; to verify on testnet), so the 5 NEAR allowance (D542) covers about 500 Home derives before a top-up.
 The ledger needs the `app_id` check widened and `org_id` from `scopes.org_id`; after exit, the event goes to Hana's internal
 org. Charging partners for users leaving them needs wording in the partner terms (readiness 9.9).
 

@@ -56,6 +56,25 @@ const updaterKeyStolen: Playbook = {
   related: ['forged-key-change', 'api-or-cloudflare-compromised'],
 };
 
+const homeBudgetHigh: Playbook = {
+  id: 'home-budget-high',
+  title: "Hana Home's daily derive budget reached 80%",
+  kind: 'incident',
+  severity: 'warning',
+  status: 'live',
+  summary: "A `home_budget_high` security event: a day's Hana Home derives reached 80% of `homeDerivesPerDay` (default 500).",
+  signals: ['A `home_budget_high` row in the admin\'s Security & monitoring, emailed by the feed (one a day; counts only).'],
+  impact: ["At the ceiling Hana Home derives answer `429 home_busy` until the next UTC day. Partner logins and owner actions are on other pools and unaffected. Identities with no directory row can use only 20% of it."],
+  steps: [
+    { title: 'Tell real use from abuse', who: 'a founder', detail: 'Read the day\'s `home_usage` row in the API\'s D1: `derives` and `unrecorded` (derives by identities with no directory row). Compare with the partner shutdowns you know of.' },
+    { title: 'Raise or stop it', who: 'a founder', detail: 'Real demand: raise `homeDerivesPerDay` in the manifest, regenerate and redeploy the API, and check the Home key\'s allowance. Abuse or a compromise: set it to `0`, which stops every Home derive until it is raised again.' },
+  ],
+  verify: ['The next day\'s `home_usage` row stays under the ceiling, or Hana Home derives answer again after the ceiling was raised.'],
+  followUps: ['If real demand keeps reaching it, raise the Home key\'s allowance with the ceiling.'],
+  refs: ['docs/operations.md#hana-home-derive-deploy', 'D541'],
+  related: ['relayer-key-stolen'],
+};
+
 const relayerKeyStolen: Playbook = {
   id: 'relayer-key-stolen',
   title: 'A relayer key stolen (session pool or owner pool)',
@@ -907,6 +926,7 @@ const identityKmsSigner: Playbook = {
 };
 
 export const INCIDENT_PLAYBOOKS: readonly Playbook[] = [
+  homeBudgetHigh,
   updaterKeyStolen,
   relayerKeyStolen,
   vaultKekLeaked,

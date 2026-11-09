@@ -247,9 +247,29 @@ async function counts(c: Ctx, p: CountsOf): Promise<Pick<Plan, 'ledger' | 'direc
   return { ledger, directory, consents, issuer, events };
 }
 
-/** The other scopes the account's identities are seen in (by either directory): each needs its own run. */
-async function otherScopes(c: Ctx, identities: readonly Identity[]): Promise<string[]> {
+/**
+ * The other scopes where these identities have only a Hana Home derive: a stranger's derive leaves a `key_exported` row
+ * with no app and no directory row (D527), so neither directory names the scope. The internal id is per scope, so it is
+ * recomputed for each scope holding such a row (D543). Never printed.
+ */
+async function homeEventScopes(c: Ctx, identities: readonly Identity[]): Promise<string[]> {
+  const home = `kind = 'key_exported' AND app_id IS NULL AND scope_id <> ${sql`${c.scopeId}`}`;
+  const scopes = (await c.deps.apiD1(c.m, `SELECT DISTINCT scope_id FROM user_events WHERE ${home}`, c.remote)).map((r) => String(r.scope_id));
+  if (!scopes.length) return [];
+  const key = c.deps.userIdKey(c.m.name);
+  const ids: string[] = [];
+  try {
+    for (const scopeId of scopes) for (const i of identities) ids.push(internalIdOf(await uidOf(key, { scopeId, provider: i.provider, sub: i.sub })));
+  } finally {
+    key.fill(0);
+  }
+  return (await c.deps.apiD1(c.m, `SELECT DISTINCT scope_id FROM user_events WHERE ${home} AND user_id IN (${list(ids)})`, c.remote)).map((r) => String(r.scope_id));
+}
+
+/** The other scopes the account's identities are seen in (by either directory, or by a Home derive): each needs its own run. */
+async function otherScopes(c: Ctx, identities: readonly Identity[], events: boolean): Promise<string[]> {
   const out = new Set<string>();
+  if (events) for (const s of await homeEventScopes(c, identities)) out.add(s);
   for (const r of await c.deps.apiD1(c.m, `SELECT DISTINCT scope_id FROM end_user_identities WHERE (${pairs(identities)}) AND scope_id <> ${sql`${c.scopeId}`}`, c.remote)) out.add(String(r.scope_id));
   if (c.m.emailIssuer) {
     for (const r of await c.deps.issuerD1(c.m, `SELECT DISTINCT scope_id FROM user_email_apps WHERE (${pairs(identities)}) AND scope_id <> ${sql`${c.scopeId}`}`, c.remote)) out.add(String(r.scope_id));
@@ -296,7 +316,7 @@ export async function planErasure(c: Ctx, named: Identity): Promise<Plan> {
   const eventsTable = await hasUserEvents(c);
   const addresses = await userAddresses(c, internalIds, eventsTable);
   const base = { scopeId: c.scopeId, account, identities, uids, internalIds, users, userSubs: [...userSubs], consentTable, addresses };
-  return { ...base, ...(await counts(c, { ...base, eventsTable })), otherScopes: await otherScopes(c, identities) };
+  return { ...base, ...(await counts(c, { ...base, eventsTable })), otherScopes: await otherScopes(c, identities, eventsTable) };
 }
 
 export function formatPlan(p: Plan, where: string): string[] {

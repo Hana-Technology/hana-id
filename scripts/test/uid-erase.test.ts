@@ -352,6 +352,26 @@ describe('uid-erase and user_events (readiness 7.17)', PGLITE, () => {
   });
 });
 
+describe('uid-erase and a Hana Home derive with no directory row (D527, D543)', PGLITE, () => {
+  const homeRow = async (scopeId: string, i: { provider: string; sub: string }) =>
+    api.prepare("INSERT INTO user_events (kind, app_id, scope_id, user_id, chain, network, address, usd_micros, request_id, at) VALUES ('key_exported', NULL, ?, ?, NULL, NULL, NULL, NULL, 'r', 1)").run(scopeId, internalIdOf(await uid(KEY, { scopeId, ...i })));
+  const own = async (_m: Manifest, method: string) =>
+    method === 'get_identity' ? { key: 'f'.repeat(64), status: 'own', opened: true, root: null, effective_at_ms: null, account_epoch: 0 } : null;
+
+  it('names the scope where the user has only a Home derive, and not one where somebody else does', async () => {
+    await homeRow('s9', GOOGLE);
+    await homeRow('s10', { provider: 'google', sub: 'somebody-else' });
+    await uidErase(ARGV, deps());
+    expect(lines.join('\n')).toMatch(/also seen in scope\(s\) s8, s9 /u);
+  });
+
+  it('deletes that row when run for its scope', async () => {
+    await homeRow('s9', GOOGLE);
+    await uidErase(['sandbox-dev', '--scope', 's9', '--provider', GOOGLE.provider, '--sub', GOOGLE.sub, '--ticket', 'SUP-125', '--yes', '--no-ledger'], deps({ view: own as UidEraseDeps['view'] }));
+    expect(one(api, "SELECT COUNT(*) AS n FROM user_events WHERE scope_id = 's9'")).toBe(0);
+  });
+});
+
 describe('uid-erase refusals', PGLITE, () => {
   it('needs a ticket without an address, a scope, a provider and a sub; testnet only; the ledger’s file unless --no-ledger', async () => {
     await expect(uidErase(ARGV.filter((a) => a !== '--ticket' && a !== 'SUP-123'), deps())).rejects.toThrow(/--ticket is required/u);

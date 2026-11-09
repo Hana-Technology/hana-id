@@ -1,11 +1,13 @@
--- Hana Home's derive (batch H3, docs/hana-home-build-plan.md, D520, D523). Two changes, both expand-only for the API that
--- reads them: applied before the API that writes the new shapes (D1 first).
+-- Hana Home's derive (batch H3, docs/hana-home-build-plan.md, D520, D523, D540, D541). Three changes, all expand-only for
+-- the API that reads them: applied before the API that writes the new shapes (D1 first).
 --
 -- `home_usage`: Home derives per UTC day (one row a day, a count: nothing personal), incremented atomically by
 -- POST /v1/home/login right before it relays, and refused at the env's daily ceiling (HOME_DERIVES_PER_DAY, default 500).
+-- `unrecorded`: how many of those were by an identity with no directory row, which may use only 20% of the ceiling (D540).
 CREATE TABLE home_usage (
   day     TEXT PRIMARY KEY CHECK (day GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
-  derives INTEGER NOT NULL DEFAULT 0 CHECK (derives >= 0)
+  derives INTEGER NOT NULL DEFAULT 0 CHECK (derives >= 0),
+  unrecorded INTEGER NOT NULL DEFAULT 0 CHECK (unrecorded >= 0 AND unrecorded <= derives)
 );
 
 -- `user_events.app_id` becomes nullable, for `key_exported` only: a Home derive is per scope and names no app, and
@@ -36,3 +38,21 @@ ALTER TABLE user_events_new RENAME TO user_events;
 CREATE INDEX user_events_user ON user_events (user_id, kind, at DESC);
 CREATE INDEX user_events_address ON user_events (address, at DESC);
 CREATE INDEX user_events_app ON user_events (app_id, kind, at DESC);
+
+-- `security_events` gains the kind `home_budget_high`: a day's Home derives reached 80% of the ceiling (D541). SQLite can't
+-- alter a CHECK, so the table is rebuilt: same columns, rows and index. No table references it.
+CREATE TABLE security_events_new (
+  id          TEXT PRIMARY KEY,
+  detected_at INTEGER NOT NULL,
+  kind        TEXT NOT NULL CHECK (kind IN ('drift', 'breaker', 'owner_cap', 'owner_allowance_low', 'home_budget_high')),
+  org_id      TEXT,
+  app_id      TEXT,
+  scope_id    TEXT,
+  detail_json TEXT NOT NULL CHECK (json_valid(detail_json)),
+  notified_at INTEGER
+);
+INSERT INTO security_events_new (id, detected_at, kind, org_id, app_id, scope_id, detail_json, notified_at)
+  SELECT id, detected_at, kind, org_id, app_id, scope_id, detail_json, notified_at FROM security_events;
+DROP TABLE security_events;
+ALTER TABLE security_events_new RENAME TO security_events;
+CREATE INDEX security_events_unnotified ON security_events (notified_at);

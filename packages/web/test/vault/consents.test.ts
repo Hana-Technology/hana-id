@@ -214,10 +214,27 @@ describe('register before use', () => {
     browser.backend.overrides.set('/v1/vault/shares', () => apiError(503, 'config_unavailable'));
     const s = await session(browser);
     await eventually(() => (s.t.vault as unknown as { session: { persist: unknown } }).session.persist === null, 'the persist gave up');
-    browser.backend.overrides.set('/v1/vault/consents', () => responseWith(410, 'session_ended'));
+    browser.backend.overrides.set('/v1/vault/consents', () => apiError(410, 'session_ended', { reason: 'unknown_share' }));
     const { reply } = await allow(s);
     expect(reply.error).toMatchObject({ code: 'api_unavailable', data: { granted: false } });
     expect((s.t.vault as unknown as { session: unknown }).session).not.toBeNull();
+  });
+
+  it("an app switched from 'none' to 'session' while the tab is open: the 410 keeps the live session, failing closed", async () => {
+    const s = await session(new Browser(), none);
+    s.t.browser.backend.overrides.set('/v1/vault/consents', () => apiError(410, 'session_ended', { reason: 'unknown_share' }));
+    const { reply } = await allow(s);
+    expect(reply.error).toMatchObject({ code: 'api_unavailable', data: { granted: false, reason: 'consent_not_recorded' } });
+    expect((s.t.vault as unknown as { session: unknown }).session).not.toBeNull();
+    expect(await status(s)).toBeNull();
+  });
+
+  it('"none" mode: a 410 because the chain session is over ends the session', async () => {
+    const s = await session(new Browser(), none);
+    s.t.browser.backend.overrides.set('/v1/vault/consents', () => apiError(410, 'session_ended', { reason: 'no_session' }));
+    const { reply } = await allow(s);
+    expect(reply.error?.code).toBe(4900);
+    expect((s.t.vault as unknown as { session: unknown }).session).toBeNull();
   });
 
   it('a lowered session TTL: the Allow fails once, and the next asks for the end the API named', async () => {

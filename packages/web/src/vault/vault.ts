@@ -2725,9 +2725,10 @@ export class Vault {
       await this.registerConsent(s, policy, consentId, expiresAtMs);
     } catch (e) {
       if (this.live() !== s) throw disconnected();
-      if (e instanceof ApiError && e.status === 410 && (s.share || this.config.settings.persistence === 'none')) {
+      if (e instanceof ApiError && e.status === 410 && (s.share || e.details.reason !== 'unknown_share')) {
         // The session is over on the server: end it here as a touch's 410 does, rather than offer a screen that can't work.
-        // (A 'session' app whose share was never made also answers 410, for a session that is fine in memory.)
+        // A session with no share is told `unknown_share` when the app keeps logins and it has none (its share was never
+        // made, or the app switched to 'session' after this tab loaded). That session is fine in memory: it fails closed.
         void this.deleteRecordIf(s).catch(() => undefined);
         if (s.share) this.broadcastRevoked(s.share.shareId);
         this.endSession(true);

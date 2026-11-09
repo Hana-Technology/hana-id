@@ -1,7 +1,7 @@
 // uid-erase.ts <env> --scope <scope id> --provider <provider> --sub <sub | -> --ticket <ref> [--remote] [--no-ledger] [--yes]
 //
 // An end user's erasure request for one scope (D90; batch C13, D361) across the usage ledger, the wallet directory
-// (with the user's user_events, D432) and the issuer's user directory; see lib/uid-erase.ts and docs/operations.md
+// (with the user's user_events, D433) and the issuer's user directory; see lib/uid-erase.ts and docs/operations.md
 // "Retention". The ledger is reached as usage_admin over .secrets/<env>/neon-usage-admin.url (written by `usage-setup
 // <env> roles`), USER_ID_KEY is read from .secrets/<env>/user-id-key: neither is ever printed, and a driver error has
 // the URL and password removed.

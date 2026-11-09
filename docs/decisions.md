@@ -9202,6 +9202,51 @@ tests). Not built. None changes a path, a key or derivation: `aud` never enters 
 - Decision: `admin home:client:add --scope --client [--yes]` records a Google client Hana holds, only after `get_scope` lists that client in that scope (a typo or a client in another scope is refused; a row for another scope is refused, not moved). Testnet only. Coverage counts a row only while the chain still lists the client in the scope, so a stale row changes nothing. `admin home:listing` and `home:client:add` write only D1, with no `app_changes` row: they aren't app settings a partner sees, and neither changes access to anything.
 - Limit: no `home:client:remove` in this batch; a row for a client Hana no longer holds (a partner taking over the project) is removed by a D1 statement until a removal command is needed.
 
+## Hana Home H4: consents on the server (branch `feat/hana-home-h4`), 2026-11-09
+
+### D510. A 'none'-mode consent's replay check is its own row, kept until the consent expires
+- Date 2026-11-09 · Status: decided while building, to confirm · Built on `feat/hana-home-h4`
+  (`apps/api/src/vault/consent-store.ts` `pruneConsents`) · Amends the Home spec's "revoked more than 1 h ago" for rows
+  with no share
+- Context: the H1 message layout (`utf8("consent") ‖ consentId ‖ policyId ‖ expiresAtMs ‖ parentOrigin`, with
+  `shareId` 0×16 and `counter` 0 in 'none' mode) has no nonce and no counter. A share counter makes a 'session'-mode
+  message single use for good. In 'none' mode only `consent_id` (the PRIMARY KEY) stops a repeat, and the spec's prune
+  would have removed it an hour after a revoke while the signed message could still pass `expiresAtMs > now`, so a
+  captured register could have re-created a consent the user had stopped.
+- Decision: the hourly prune deletes a consent past `expires_at`, or a `share_id IS NOT NULL` consent revoked over an
+  hour ago. A revoked 'none'-mode row stays until its `expires_at` (at most the session's end).
+- Options: (a) this; (b) a limiter marker per consent (one more Durable Object call on every register, and a marker held
+  for up to 24 h); (c) a nonce in the layout (changes H1's frozen vectors, for no gain over (a)).
+- Why (a): no new write, no new call, and the row still lives no longer than a session plus an hour, which is the
+  privacy promise. Narrow-only either way: a replay could only have made a row read `active`, never let the vault sign
+  without its sealed consent.
+
+### D511. `GET /v1/app` leaves `consent` out when it can't read it; `'unknown'` means the row isn't there
+- Date 2026-11-09 · Status: decided while building, to confirm · Built on `feat/hana-home-h4` (`handlers.ts`)
+- Decision: `consent` appears only on the vault's own read (`Origin: VAULT_ORIGIN`, `x-hana-consent`). `'unknown'` means
+  this app has no such consent (or a malformed id, answered without a D1 read). A failed D1 read leaves the field out
+  (and logs `consent_status_unavailable`), never `'unknown'`.
+- Why: the spec has `'unknown'` clear the local consent, so a D1 blip must not read as one. H5: a missing `consent` is
+  "no fresh answer": no auto-sign (popup) and the local consent stays.
+
+### D512. The device label is the vault's word, shape-checked and never a reason to refuse
+- Date 2026-11-09 · Status: decided while building, to confirm · Built on `feat/hana-home-h4` (`vault/endpoints.ts`
+  `DEVICE_LABEL_RE`) · Carries out D98 item 10
+- Decision: `deviceLabel` is optional on `POST /v1/vault/shares`, unsigned (the create-share signature doesn't cover
+  it), at most 40 characters of letters, digits and ` .()/_-`, starting with a letter or digit. Anything else is stored as
+  null and the share is still made. Any other extra key is still `400 bad_request`.
+- Why: no login should fail over a cosmetic label, and a coarse allow-list of shapes keeps a label from being a
+  fingerprint or markup. Older vaults send none. Rejected: a fixed list of browsers and systems (each new one would
+  need an API deploy).
+
+### D513. A consent's server-side details: the share is the expiry bound, and a dead share's revoke says so
+- Date 2026-11-09 · Status: decided while building, to confirm · Built on `feat/hana-home-h4` (`vault/consents.ts`)
+- Decision: in 'session' mode `expiresAtMs` must be after now and at most the share's capped end (`min(abs_expires_at,
+  created_at + session_ttl_ms)`), not the chain's session expiry (no chain read). So H5 clamps a consent's end to the share's
+  absolute end. A device's revoke of a consent whose share is dead answers `410 share_revoked` or `share_expired`, and
+  `revoked_by = 'share'` is left for H9's Home sign-out: the status read already treats such a consent as `'revoked'`
+  from the share row. `/v1/vault/consents*` count in the share's 10/min window, in 'none' mode under the session key.
+
 ## Superseded or amended
 
 | Was | Now | Source |

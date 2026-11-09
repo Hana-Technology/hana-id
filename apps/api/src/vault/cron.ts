@@ -3,6 +3,7 @@
 import type { Env } from '../env.ts';
 import { log } from '../log.ts';
 import { type Keks, loadKeks, unwrapShareKey, wrapShareKey } from './kek.ts';
+import { pruneConsents } from './consent-store.ts';
 import { blob } from './shares.ts';
 
 /** Rows re-wrapped per run, in pages of REWRAP_PAGE (bounds one run's CPU and D1 time). */
@@ -11,6 +12,8 @@ const REWRAP_PAGE = 100;
 
 export interface VaultMaintenance {
   pruned: number;
+  /** Consents past their expiry, or revoked over an hour ago (consent-store.ts `pruneConsents`). */
+  prunedConsents: number;
   rewrapped: number;
   /** Rows under a KEK id neither configured key has (they can't be unlocked until that key is configured again). */
   unknownKek: number;
@@ -73,6 +76,7 @@ export async function rewrapShares(db: D1Database, keks: Keks, limit = REWRAP_PE
 
 export async function vaultMaintenance(env: Env, now: number = Date.now()): Promise<VaultMaintenance> {
   const pruned = await pruneShares(env.DB, now);
+  const prunedConsents = await pruneConsents(env.DB, now);
   const keks = await loadKeks(env);
   let rewrapped = 0;
   let unknownKek = 0;
@@ -86,6 +90,6 @@ export async function vaultMaintenance(env: Env, now: number = Date.now()): Prom
   }
   // No VAULT_KEK yet (an env that doesn't serve the vault) is a warning; shares nobody can unlock are an error.
   const level = unknownKek > 0 ? 'error' : keks ? 'info' : 'warn';
-  log({ event: 'vault_maintenance', outcome: keks ? 'ok' : 'error', code: keks ? undefined : 'vault_key_unavailable', pruned, rewrapped, unknownKek }, level);
-  return { pruned, rewrapped, unknownKek };
+  log({ event: 'vault_maintenance', outcome: keks ? 'ok' : 'error', code: keks ? undefined : 'vault_key_unavailable', pruned, prunedConsents, rewrapped, unknownKek }, level);
+  return { pruned, prunedConsents, rewrapped, unknownKek };
 }

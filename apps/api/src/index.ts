@@ -24,6 +24,7 @@ import { syncEmailUsage } from './usage/email-sync.ts';
 import { syncIdentityUsage } from './usage/identity-sync.ts';
 import { ensureUsagePartitions } from './usage/partitions.ts';
 import { vaultMaintenance } from './vault/cron.ts';
+import { handleVaultConsent, isConsentEndpoint } from './vault/consents.ts';
 import { handleVaultEndpoint, isVaultEndpoint, vaultPreflight } from './vault/endpoints.ts';
 import { BASE_CSP, handleVaultPage, isVaultPageRequest } from './vault/page.ts';
 
@@ -132,6 +133,12 @@ export default {
       if (isVaultEndpoint(pathname)) {
         if (request.method === 'OPTIONS') return vaultPreflight(request, env);
         if (request.method === 'POST') return await handleVaultEndpoint(request, env, pathname, requestId, ctx);
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
+      }
+      if (isConsentEndpoint(pathname)) {
+        // Vault only, like /v1/vault/* (Hana Home H4: the server's record of auto-approve consents).
+        if (request.method === 'OPTIONS') return vaultPreflight(request, env);
+        if (request.method === 'POST') return await handleVaultConsent(request, env, pathname, requestId);
         return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
       }
       if (pathname === IDENTITY_TOKEN_ENDPOINT) {

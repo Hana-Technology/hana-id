@@ -1,6 +1,6 @@
 # Hana Home build plan (batches)
 
-**Status (2026-11-09): H0 (this plan, the spec's rewrite, D460–D466, the readiness rows) on branch `docs/hana-home-h0`; H1 built on branch `feat/hana-home-h1`, its security review's fixes on `feat/hana-home-h1-2` (not merged, not deployed; see its result line below); H2 built on branch `feat/hana-home-h2` (not merged, not deployed; see its result line); H3–H5, H7–H12 not started; H6 built on branch `feat/hana-home-h6` (not merged, not deployed; see its result line); H6's design and D480–D489 on branch `docs/hana-home-h6-design` (not merged).** Splits `docs/hana-home-spec.md` (D40, D45, D98, D461–D466, D468, D480–D489) into reviewable
+**Status (2026-11-09): H0 (this plan, the spec's rewrite, D460–D466, the readiness rows) on branch `docs/hana-home-h0`; H1 built on branch `feat/hana-home-h1`, its security review's fixes on `feat/hana-home-h1-2` (not merged, not deployed; see its result line below); H2 built on branch `feat/hana-home-h2` and H4 built on branch `feat/hana-home-h4`, merged on `feat/hana-home-h2-h4` with their security reviews' fixes (not merged, not deployed; see their result lines); H3, H5, H7–H12 not started; H6 built on branch `feat/hana-home-h6` (not merged, not deployed; see its result line); H6's design and D480–D489 on branch `docs/hana-home-h6-design` (not merged).** Splits `docs/hana-home-spec.md` (D40, D45, D98, D461–D466, D468, D480–D489) into reviewable
 batches. The spec stays the source of truth for *what* to build; this file says *in which order*, *what each batch
 ships* and *what users see after it*. Like a spec it is history once the work merges: the current state lives in the
 reference docs (`docs/README.md`).
@@ -130,6 +130,7 @@ additions conflict in `apps/api/src/index.ts`, so expect small merges. About 30 
 - **Tests.** The spec's consent list; both persistence modes; a revoked share reads `'revoked'`.
 - **Migration / deploy.** D1; API.
 - **User-visible.** Nothing.
+- **Result (2026-11-09, `feat/hana-home-h4`, not merged, not deployed).** Migration **0017** (`vault_consents`, `vault_shares.device_label`, the `path_hash` indexes); `POST /v1/vault/consents` and `/revoke` (`apps/api/src/vault/consents.ts`, `consent-store.ts`) in both modes, reusing `checkShare` and `checkChainSession`; `deviceLabel` on `POST /v1/vault/shares`; `consent` on `GET /v1/app` for the vault's `x-hana-consent`; the prune in `vaultMaintenance`. D510–D513 (to confirm). No vault or SDK change: no live partner tab changes, and H5's vault still needs H4 live first. Deploy: D1, then the API. Before the D1 migration an API at this commit fails to create shares, so the order matters.
 
 ### H5: the vault
 

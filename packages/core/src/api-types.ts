@@ -35,6 +35,11 @@ export interface AppConfig {
    */
   mainnetDemoPrices?: unknown;
   /**
+   * The status of the auto-approve consent the vault named on its own read: 'active', 'revoked' or 'unknown'. Absent
+   * on any other read and when the API couldn't read it. Typed unknown on purpose: anything else counts as no answer.
+   */
+  consent?: unknown;
+  /**
    * Email login: the sign-in methods the app offers and its scope can serve, in the order google, email. Older
    * APIs omit it (Google only). An app with email but no Google (`google: null`) is refused by isAppConfig until the
    * vault supports it.

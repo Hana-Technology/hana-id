@@ -43,6 +43,14 @@ export const notLoggedIn = (): VaultError => new VaultError(ErrorCode.unauthoriz
 export const userRejected = (message = 'The user rejected the request'): VaultError => new VaultError(ErrorCode.userRejected, message);
 export const disconnected = (message = 'The vault is disconnected'): VaultError => new VaultError(ErrorCode.disconnected, message);
 
+const CONSENT_NOT_RECORDED = 'consent_not_recorded';
+
+/** Allow was pressed but the API couldn't record the consent: nothing is stored (`e`, the failure, marks the request ID). */
+export const consentNotRecorded = (e: unknown): VaultError =>
+  new VaultError('api_unavailable', 'Auto-approve could not be turned on: Hana could not record it', { granted: false, reason: CONSENT_NOT_RECORDED }).fromRequest(e instanceof ApiError ? e : null);
+
+export const isConsentNotRecorded = (e: unknown): boolean => e instanceof VaultError && e.data?.reason === CONSENT_NOT_RECORDED;
+
 /**
  * newSessionKey's failure as the login's error (D385): `derive_failed` with `data.reason` `webcrypto_unsupported`
  * (this browser has no Ed25519 WebCrypto: update it or use another) or `webcrypto_failed` (the browser refused to make

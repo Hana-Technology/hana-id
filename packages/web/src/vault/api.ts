@@ -70,6 +70,28 @@ export interface VaultApiOptions {
 
 const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
 
+/** The proof every consent call carries: `shareId` in 'session' mode; none in 'none' mode (counter 0). */
+export interface ConsentProof {
+  shareId?: number[];
+  sessionPublicKey: number[];
+  counter: number;
+  signature: number[];
+}
+
+export interface ConsentRegisterBody extends ConsentProof {
+  consentId: number[];
+  policyId: number[];
+  expiresAtMs: number;
+}
+
+export interface ConsentRevokeBody extends ConsentProof {
+  consentId: number[];
+}
+
+const isConsentRegistered = (v: unknown): v is { counter: number; grantedAtMs: number; expiresAtMs: number } =>
+  isObj(v) && Number.isSafeInteger(v.counter) && Number.isSafeInteger(v.grantedAtMs) && Number.isSafeInteger(v.expiresAtMs);
+const isConsentRevoked = (v: unknown): v is { revoked: boolean } => isObj(v) && typeof v.revoked === 'boolean';
+
 export class VaultApi {
   private readonly base: string;
   private readonly fetchFn: Fetch;
@@ -98,9 +120,14 @@ export class VaultApi {
     return { value, nearTx: str(body.nearTx) };
   }
 
-  /** GET /v1/app: the scope, signer and Google client (read from chain by the API), plus serverTimeMs. */
-  async app(): Promise<AppConfig> {
-    const { res, body } = await this.request('/v1/app', { method: 'GET', headers: this.headers(false) });
+  /**
+   * GET /v1/app: the scope, signer and Google client (read from chain by the API), plus serverTimeMs. `consentHeader`
+   * (base64url of the consent id) also asks for that consent's status; the API honours it only from the vault's origin.
+   */
+  async app(consentHeader?: string): Promise<AppConfig> {
+    const headers = this.headers(false);
+    if (consentHeader) headers['x-hana-consent'] = consentHeader;
+    const { res, body } = await this.request('/v1/app', { method: 'GET', headers });
     if (!isAppConfig(body)) throw new ApiError(res.status, 'bad_response', 'Unexpected /v1/app response', null, str(body.requestId));
     if (body.serverTimeMs !== undefined) this.o.onServerTime?.(body.serverTimeMs);
     return body;
@@ -227,6 +254,36 @@ export class VaultApi {
   /** POST /v1/identity/token: a partner identity token for the session that signed `body` (identity.ts). */
   async identityToken(body: IdentityTokenBody): Promise<IdentityTokenResponse> {
     return (await this.post('/v1/identity/token', body, isIdentityTokenResponse)).value;
+  }
+
+  /**
+   * POST /v1/vault/consents or /v1/vault/consents/revoke. An error keeps the response's `Retry-After` as
+   * `details.retryAfterS`, for the one code the vault retries (`session_not_visible`).
+   */
+  private async consentRequest<T>(path: string, payload: object, check: (v: unknown) => v is T): Promise<T> {
+    const res = await this.fetchFn(`${this.base}${path}`, { method: 'POST', headers: this.headers(true), body: JSON.stringify(payload), credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer' });
+    let body: Record<string, unknown>;
+    try {
+      body = await parseApiResponse(res);
+    } catch (e) {
+      const retryAfterS = Number(res.headers.get('retry-after'));
+      if (e instanceof ApiError && Number.isFinite(retryAfterS) && retryAfterS > 0) {
+        throw new ApiError(e.status, e.code, e.message, e.nearTx, e.requestId, { ...e.details, retryAfterS });
+      }
+      throw e;
+    }
+    if (!check(body)) throw new ApiError(res.status, 'bad_response', `Unexpected ${path} response`, str(body.nearTx), str(body.requestId));
+    return body;
+  }
+
+  /** POST /v1/vault/consents: records a consent, before the vault uses it. Throws ApiError or a network error. */
+  registerConsent(body: ConsentRegisterBody): Promise<{ counter: number; grantedAtMs: number; expiresAtMs: number }> {
+    return this.consentRequest('/v1/vault/consents', body, isConsentRegistered);
+  }
+
+  /** POST /v1/vault/consents/revoke: the device stops a consent it holds. Throws ApiError or a network error. */
+  revokeConsent(body: ConsentRevokeBody): Promise<{ revoked: boolean }> {
+    return this.consentRequest('/v1/vault/consents/revoke', body, isConsentRevoked);
   }
 
   /** D411: POST /v1/identity/email-consent/state: the app's setting and the session's consent state. */

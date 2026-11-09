@@ -14,7 +14,7 @@ popup, unless it falls under an auto-approve policy you set and the user accepte
 > on NEAR; that is what "NEAR testnet" means wherever an environment's network is named. Your users get a Stellar and
 > an EVM wallet. The SDK has no NEAR account or NEAR signer, and your app never talks to NEAR.
 
-Last verified against code: 2026-11-09, SDK 0.3.0. "SDK releases after 0.2.0" marks what arrived after 0.2.0 (all of it is in 0.3.0).
+Last verified against code: 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: `hana.requestAutoApprove` failing closed, section 9, D530), SDK 0.3.0. "SDK releases after 0.2.0" marks what arrived after 0.2.0 (all of it is in 0.3.0).
 
 ## How it works
 
@@ -783,6 +783,14 @@ await hana.revokeAutoApprove();    // the user can also stop it from any Hana po
 Without `requestAutoApprove()`, the first matching request shows the consent screen. A request that doesn't match
 gets the normal popup, which tells the user why it wasn't auto-approved. After each auto-signed request the vault
 emits `autoApproved` and its button briefly shows "Signed by Hana under {label}".
+
+Hana records each consent on its API, so auto-approve can't be turned on while the API can't record it. After the
+user presses Allow, `requestAutoApprove()` rejects with `api_unavailable` (`data.reason` is `consent_not_recorded`,
+`data.granted` is `false`) rather than granting. A matching request in the same situation just goes to the normal
+popup. Treat the rejection like any other failure: offer it again later; the user's Allow isn't remembered. If the user
+stops auto-approve from Hana on another device, an open tab stops auto-signing within about 10 seconds, and a Hana popup
+appears for the next matching request. Requests go to the popup the same way while Hana's API can't be reached; your
+page needs no code for this.
 
 ## 10. React
 

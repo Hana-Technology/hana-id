@@ -9121,6 +9121,7 @@ tests). Not built. None changes a path, a key or derivation: `aud` never enters 
 - Not enforced: the intent's `minOutputAmount` (shown in the popup, above), and not bound: its `intentId`, and an input amount below the approval (the difference stays in the user's own hub wallet). These are the swap's terms, not where it goes. A byte-by-byte run over the SDK's swap calldata (2026-11-09) shows only these fields, the deposit amount's low bytes and a deadline inside its limit stay accepted. The one that matters: a compromised page can set the minimum output to almost nothing, so a filler could take the whole deposit for dust. The popup now shows the minimum, so the user can see it before approving, and it is bounded by the $9.99 cap per transaction. Hana's prices are ceilings, so a floor check would need a separate decision.
 - A factory upgrade that changes the derivation now refuses every Sodax deposit, not only bridges, until the formula is reviewed and rebuilt (fail closed; nothing is signed). The upgrade risk is D476's.
 
+- Note, 2026-11-09: only the vault applies the deadline's one-hour limit. The popup uses the device's clock, which could disagree and hide a swap's recipient and minimum, so it applies only the non-zero check.
 ## Superseded or amended
 
 | Was | Now | Source |

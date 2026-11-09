@@ -825,8 +825,8 @@ describe('the Sodax USDC ⇄ USDC bridge between Base and Stellar (D476)', () =>
           ['data: one byte', { data: '0x01' as Hex }, UNKNOWN],
           ['allowPartialFill: true', { allowPartialFill: true }, UNKNOWN],
           ['deadline: zero', { deadline: 0n }, UNKNOWN],
-          ['deadline: one second past the hour', { deadline: NOW_SECONDS + 3_601n }, UNKNOWN],
-          ['deadline: far future', { deadline: 2n ** 255n }, UNKNOWN],
+          ['deadline: one second past the hour', { deadline: NOW_SECONDS + 3_601n }, ['mainnet_demo_unknown_call', 'ok']],
+          ['deadline: far future', { deadline: 2n ** 255n }, ['mainnet_demo_unknown_call', 'ok']],
         ] as const)('Base → Stellar: %s', (_name, over, expected) => {
           expect(reasons(() => baseIntent())).toEqual(['ok', 'ok']);
           expect(reasons(() => baseIntent(over as SwapOptions))).toEqual(expected);
@@ -855,8 +855,8 @@ describe('the Sodax USDC ⇄ USDC bridge between Base and Stellar (D476)', () =>
           ['data: one byte', { data: '0x01' as Hex }, UNKNOWN],
           ['allowPartialFill: true', { allowPartialFill: true }, UNKNOWN],
           ['deadline: zero', { deadline: 0n }, UNKNOWN],
-          ['deadline: one second past the hour', { deadline: NOW_SECONDS + 3_601n }, UNKNOWN],
-          ['deadline: far future', { deadline: 2n ** 255n }, UNKNOWN],
+          ['deadline: one second past the hour', { deadline: NOW_SECONDS + 3_601n }, ['mainnet_demo_unknown_call', 'ok']],
+          ['deadline: far future', { deadline: 2n ** 255n }, ['mainnet_demo_unknown_call', 'ok']],
         ] as const)('Stellar → Base: %s', (_name, over, expected) => {
           expect(reasons(() => stellarIntent())).toEqual(['ok', 'ok']);
           expect(reasons(() => stellarIntent(over as SwapOptions))).toEqual(expected);

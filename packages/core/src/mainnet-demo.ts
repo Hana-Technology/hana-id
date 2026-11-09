@@ -352,7 +352,9 @@ function checkSwapIntent(items: readonly AbiValue[], spoke: DemoSpokeDeposit, re
   const partial = items[7];
   if (!partial || partial.kind !== 'bool' || partial.value) unknownCall('a swap that can be partly filled');
   const deadline = uintOf(items[6]);
-  if (deadline === 0n || deadline > BigInt(Math.floor(spoke.nowMs / 1000) + SWAP_DEADLINE_LIMIT_SECONDS)) unknownCall('a swap with no deadline, or one more than an hour away');
+  // The popup's clock is the device's: it could disagree with the vault's and hide a swap's details, so only the vault
+  // applies the upper limit (it has already done so by the time the popup shows the request).
+  if (deadline === 0n || (recipients !== 'shown' && deadline > BigInt(Math.floor(spoke.nowMs / 1000) + SWAP_DEADLINE_LIMIT_SECONDS))) unknownCall('a swap with no deadline, or one more than an hour away');
   return { toChain: dst.chainName, recipient, minimumOutput: decimalAmount(uintOf(items[5]), output.decimals), outputSymbol: output.symbol };
 }
 

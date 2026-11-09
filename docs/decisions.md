@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D437, D431's confirmation and D435's System status note (branch `chore/status-access-followups`, with rows of "Superseded or amended") on 2026-11-09; D432 (branch `fix/watchdog-new-key-grace`, asked for by the user as D422's follow-up, the design to confirm, amending D153 and D422's watchdog rule, with a row of "Superseded or amended") on 2026-11-06; D433 (branch `feat/user-events-retention`, decided while building, to confirm) on 2026-11-06, amending D430 and D361, with a row of "Superseded or amended"; D434 (branch `feat/issuer-readonly-rpc`, readiness row 7.1d: the issuer's read-only `IssuerRpc`, decided while building, to confirm) on 2026-11-06, superseding D251, with a row of "Superseded or amended"; D435 (branch `feat/api-near-rpc-fallback`, asked for by the user, the mechanics to confirm) on 2026-11-06, amending D261, with a row of "Superseded or amended"; D425 (branch `feat/admin-system-status`, asked for by the user, the checks and thresholds to confirm with the screenshots, extending D420) on 2026-11-06; D424 (branch `fix/session-expiry-ux`, asked for by the user, design choices to confirm, extending D420 and D421) on 2026-11-06; D423 (branch `chore/verify-parallel`, asked for by the user, amending D413, with a row of "Superseded or amended") on 2026-11-06; D422 (branch `fix/google-key-hysteresis`, proposed by the assistant and approved by the user, amending D153 and the JWKS cron's removal grace, with a row of "Superseded or amended") on 2026-11-06; D421 (branch `feat/console-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D420 (branch `feat/admin-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D419 (branch `feat/env-alert-label`, asked for by the user, implementation choices to confirm) on 2026-11-06; D418 (branch `fix/hyperdrive-account-id-hint`, decided by the user, C16 after the pilot) on 2026-11-06; D417 (branch `docs/personal-account-free-tier`, decided by the user) on 2026-11-06; D416 (branch `feat/console-remove-audience`, decided while building, to confirm) on 2026-11-06, extending D238; D415 (branch `docs/auto-deploy-intent`, decided by the user, intent only, not built) on 2026-11-06; D414 (branch `feat/m4-personal-account`, decided by the user) on 2026-11-05, amending D404, with a row of "Superseded or amended"; D401 amended (branch `fix/sendgrid-suppression`: alerts and blocking notices bypass SendGrid's suppression lists, a security review fix) on 2026-11-05; D401 (branch `feat/sandbox-dev-dashboard-blocks`, asked for by the user: SendGrid for every Hana email; the isolate memo to confirm) and D402 (same branch, agreed by the user: sandbox-dev's 1-day statement lock) on 2026-11-05, amending D87, D279, D308 and settling D194's open point, with rows of "Superseded or amended"; D413 (branch `feat/local-verify`, asked for by the user, confirmed by the user) on 2026-11-05, amending D387, with a row of "Superseded or amended"; D410 and D412 (branch `fix/security-review-1105`: a security review's fixes, to confirm) on 2026-11-05, amending D224, D391, D392, D396, D399 and D403, with two rows of "Superseded or amended"; D411 (branch `docs/email-sharing-decisions`, decided by the user, not built) on 2026-11-05, amending D127's email questions, with a row of "Superseded or amended"; D404 (branch `feat/account-migration`: testnet's move to company accounts decided by the user, the custom-domain placements, `cloudflare.accountId`, `env-secrets`, `d1-move`, `issuer:iss` and the runbook to confirm) on 2026-11-05, amending D230, with a row of "Superseded or amended"; D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
+Last verified against code: 2026-10-28 (commit 58edee9); 2026-11-09: 184 readings settled in the user's bulk decision review (17 after reading the review's note, 163 in bulk on its recommendation, 4 retired as replaced), each status says which; D437, D431's confirmation and D435's System status note (branch `chore/status-access-followups`, with rows of "Superseded or amended") on 2026-11-09; D432 (branch `fix/watchdog-new-key-grace`, asked for by the user as D422's follow-up, the design to confirm, amending D153 and D422's watchdog rule, with a row of "Superseded or amended") on 2026-11-06; D433 (branch `feat/user-events-retention`, decided while building, to confirm) on 2026-11-06, amending D430 and D361, with a row of "Superseded or amended"; D434 (branch `feat/issuer-readonly-rpc`, readiness row 7.1d: the issuer's read-only `IssuerRpc`, decided while building, to confirm) on 2026-11-06, superseding D251, with a row of "Superseded or amended"; D435 (branch `feat/api-near-rpc-fallback`, asked for by the user, the mechanics to confirm) on 2026-11-06, amending D261, with a row of "Superseded or amended"; D425 (branch `feat/admin-system-status`, asked for by the user, the checks and thresholds to confirm with the screenshots, extending D420) on 2026-11-06; D424 (branch `fix/session-expiry-ux`, asked for by the user, design choices to confirm, extending D420 and D421) on 2026-11-06; D423 (branch `chore/verify-parallel`, asked for by the user, amending D413, with a row of "Superseded or amended") on 2026-11-06; D422 (branch `fix/google-key-hysteresis`, proposed by the assistant and approved by the user, amending D153 and the JWKS cron's removal grace, with a row of "Superseded or amended") on 2026-11-06; D421 (branch `feat/console-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D420 (branch `feat/admin-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D419 (branch `feat/env-alert-label`, asked for by the user, implementation choices to confirm) on 2026-11-06; D418 (branch `fix/hyperdrive-account-id-hint`, decided by the user, C16 after the pilot) on 2026-11-06; D417 (branch `docs/personal-account-free-tier`, decided by the user) on 2026-11-06; D416 (branch `feat/console-remove-audience`, decided while building, to confirm) on 2026-11-06, extending D238; D415 (branch `docs/auto-deploy-intent`, decided by the user, intent only, not built) on 2026-11-06; D414 (branch `feat/m4-personal-account`, decided by the user) on 2026-11-05, amending D404, with a row of "Superseded or amended"; D401 amended (branch `fix/sendgrid-suppression`: alerts and blocking notices bypass SendGrid's suppression lists, a security review fix) on 2026-11-05; D401 (branch `feat/sandbox-dev-dashboard-blocks`, asked for by the user: SendGrid for every Hana email; the isolate memo to confirm) and D402 (same branch, agreed by the user: sandbox-dev's 1-day statement lock) on 2026-11-05, amending D87, D279, D308 and settling D194's open point, with rows of "Superseded or amended"; D413 (branch `feat/local-verify`, asked for by the user, confirmed by the user) on 2026-11-05, amending D387, with a row of "Superseded or amended"; D410 and D412 (branch `fix/security-review-1105`: a security review's fixes, to confirm) on 2026-11-05, amending D224, D391, D392, D396, D399 and D403, with two rows of "Superseded or amended"; D411 (branch `docs/email-sharing-decisions`, decided by the user, not built) on 2026-11-05, amending D127's email questions, with a row of "Superseded or amended"; D404 (branch `feat/account-migration`: testnet's move to company accounts decided by the user, the custom-domain placements, `cloudflare.accountId`, `env-secrets`, `d1-move`, `issuer:iss` and the runbook to confirm) on 2026-11-05, amending D230, with a row of "Superseded or amended"; D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
 Last verified against code: 2026-10-28 (commit 58edee9); D411 and D438–D443 (brought up to date with `develop` @ a3de75e on `feat/email-sharing-2`, 2026-11-09: the branch's decisions renumbered D438–D443 from D420–D425, migration 0014; D411 point 9 amended again: the user approved merging it in the next batch; D438–D443 still to confirm) on 2026-11-09; D411 built and D438–D443 (branch `feat/email-sharing`, decided while building, to confirm; not merged) on 2026-11-06, with D411's row of "Superseded or amended" updated and a new row; D432 (branch `fix/watchdog-new-key-grace`, asked for by the user as D422's follow-up, the design to confirm, amending D153 and D422's watchdog rule, with a row of "Superseded or amended") on 2026-11-06; D433 (branch `feat/user-events-retention`, decided while building, to confirm) on 2026-11-06, amending D430 and D361, with a row of "Superseded or amended"; D434 (branch `feat/issuer-readonly-rpc`, readiness row 7.1d: the issuer's read-only `IssuerRpc`, decided while building, to confirm) on 2026-11-06, superseding D251, with a row of "Superseded or amended"; D435 (branch `feat/api-near-rpc-fallback`, asked for by the user, the mechanics to confirm) on 2026-11-06, amending D261, with a row of "Superseded or amended"; D425 (branch `feat/admin-system-status`, asked for by the user, the checks and thresholds to confirm with the screenshots, extending D420) on 2026-11-06; D424 (branch `fix/session-expiry-ux`, asked for by the user, design choices to confirm, extending D420 and D421) on 2026-11-06; D423 (branch `chore/verify-parallel`, asked for by the user, amending D413, with a row of "Superseded or amended") on 2026-11-06; D422 (branch `fix/google-key-hysteresis`, proposed by the assistant and approved by the user, amending D153 and the JWKS cron's removal grace, with a row of "Superseded or amended") on 2026-11-06; D421 (branch `feat/console-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D420 (branch `feat/admin-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D419 (branch `feat/env-alert-label`, asked for by the user, implementation choices to confirm) on 2026-11-06; D418 (branch `fix/hyperdrive-account-id-hint`, decided by the user, C16 after the pilot) on 2026-11-06; D417 (branch `docs/personal-account-free-tier`, decided by the user) on 2026-11-06; D416 (branch `feat/console-remove-audience`, decided while building, to confirm) on 2026-11-06, extending D238; D415 (branch `docs/auto-deploy-intent`, decided by the user, intent only, not built) on 2026-11-06; D414 (branch `feat/m4-personal-account`, decided by the user) on 2026-11-05, amending D404, with a row of "Superseded or amended"; D401 amended (branch `fix/sendgrid-suppression`: alerts and blocking notices bypass SendGrid's suppression lists, a security review fix) on 2026-11-05; D401 (branch `feat/sandbox-dev-dashboard-blocks`, asked for by the user: SendGrid for every Hana email; the isolate memo to confirm) and D402 (same branch, agreed by the user: sandbox-dev's 1-day statement lock) on 2026-11-05, amending D87, D279, D308 and settling D194's open point, with rows of "Superseded or amended"; D413 (branch `feat/local-verify`, asked for by the user, confirmed by the user) on 2026-11-05, amending D387, with a row of "Superseded or amended"; D410 and D412 (branch `fix/security-review-1105`: a security review's fixes, to confirm) on 2026-11-05, amending D224, D391, D392, D396, D399 and D403, with two rows of "Superseded or amended"; D411 (branch `docs/email-sharing-decisions`, decided by the user, not built) on 2026-11-05, amending D127's email questions, with a row of "Superseded or amended"; D404 (branch `feat/account-migration`: testnet's move to company accounts decided by the user, the custom-domain placements, `cloudflare.accountId`, `env-secrets`, `d1-move`, `issuer:iss` and the runbook to confirm) on 2026-11-05, amending D230, with a row of "Superseded or amended"; D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
 
 user, implementation choices to confirm) on 2026-11-05; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
@@ -1664,7 +1664,7 @@ Readings made while building `docs/batch-c-build-plan.md` C5 on `feat/batch-c-5`
 detail open. Each follows the spec's intent; all five are **to confirm** by the user.
 
 ### D225. The legacy `apps.publishable_key` stays on a valid key; deleted apps stay suspended (C3's email-issuer obligation)
-- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/changes/keys.ts` `syncLegacyKey`, `changes/suspension.ts`
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`apps/api/src/changes/keys.ts` `syncLegacyKey`, `changes/suspension.ts`
   `deleteApp`, `scripts/lib/admin-apps.ts` `appSuspension`) · Source: D206's obligation for `apps/email-issuer`
   (branch `feat/email-login-4`: finds apps by `apps.publishable_key` and checks only `status`)
 - Decision: rather than block key rotation and deletion for email-enabled apps (the API's DB has no `login_methods`
@@ -1685,7 +1685,7 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
   (a second key created for a migration would break the first one's email logins).
 
 ### D226. `pendingNotices` also returns the app and the policy
-- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/changes/lifecycle.ts`) · Source: spec §RPC
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`apps/api/src/changes/lifecycle.ts`) · Source: spec §RPC
   (`pendingNotices` → `{change, contacts}`) and §Notice and cancel (the notice describes the app, the origin or the
   policy's contracts, functions and limits)
 - Decision: each notice also carries `app: {id, name, orgId, scopeId, environment}` and, for a `policy_set`, `policy`
@@ -1693,7 +1693,7 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
   Worker builds the notice without a second call per change. Changes of a deleted app are never listed.
 
 ### D227. Keys and no-op writes
-- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/changes/keys.ts`, `settings.ts`, `suspension.ts`,
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`apps/api/src/changes/keys.ts`, `settings.ts`, `suspension.ts`,
   `admin.ts`) · Source: spec "Keys" ("at most 5 unrevoked keys", rotate, revoke) and §RPC result types
 - Decision: "unrevoked" for the 5-key limit means `revoked_at` NULL, so a key in its rotation grace doesn't count, and
   rotation never hits the limit. "The last valid key" and what revoke accepts count keys still valid now (a rotating
@@ -1704,7 +1704,7 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
   counts the call (D93 Q21: per call).
 
 ### D228. Drift and breaker events: one per finding; what explains a value
-- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/changes/drift.ts`, `changes/guard.ts`) · Source: spec
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09, after reading the review's note; built (`apps/api/src/changes/drift.ts`, `changes/guard.ts`) · Source: spec
   "Drift detection" ("flags … once"), §RPC "Destructive-call breaker"
 - Decision:
   - An origin in force is explained by an announced, open `origin_add` for that row whose `active_from` is no later
@@ -1740,7 +1740,7 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
     and suspensions for an hour, though not their `turnOff` or `cancelChange`.
 
 ### D229. RPC actors, refusal codes and staff proposal details
-- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/rpc/`, `src/changes/`) · Source: spec §RPC, "Guarded
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`apps/api/src/rpc/`, `src/changes/`) · Source: spec §RPC, "Guarded
   changes", "Apps, scopes"
 - Decision:
   - **Actors.** `ConsoleRpc` takes only `member` actors (`cancelChangeByLink` only `link`), and never `org_legacy`.
@@ -1780,7 +1780,7 @@ Readings made while building `docs/batch-c-build-plan.md` C6 on `feat/batch-c-6`
 detail open or a safer reading was needed. Each follows the spec's intent; all five are **to confirm** by the user.
 
 ### D235. The API's step-up check for member proposals: order, codes, and what it adds to the spec's six steps
-- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/changes/step-up.ts`, `changes/origins.ts`
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`apps/api/src/changes/step-up.ts`, `changes/origins.ts`
   `changeOrigins`, `changes/settings.ts` `proposeSettingByMember`, `changes/lifecycle.ts` `noSessionWaiver`,
   `changes/drift.ts`, `scripts/lib/admin-sql.ts`) · Source: spec "API verification", "Waivers", "Lifecycle"
 - Decision:
@@ -1815,7 +1815,7 @@ detail open or a safer reading was needed. Each follows the spec's intent; all f
 ### D236. Owner actions: the precheck's nonce, and the caps reconciled with D100
 - Date 2026-11-02 · Status: the per-owner proposal windows (2 a minute, 4 a day) **confirmed by the user (2026-11-04:
   "yes" to keeping them shared)**: counted per owner identity across all of its scopes (`ownerLimiterKey` has no scope
-  in it), as built; the rest to confirm; built (`apps/api/src/owner-actions.ts`, `handlers.ts` `ownerActionWindows`,
+  in it), as built; the rest confirmed by the user 2026-11-09, after reading the review's note; built (`apps/api/src/owner-actions.ts`, `handlers.ts` `ownerActionWindows`,
   `ownerCapEvent`, `owner-pool.ts`, `@hana-id/console-core` `owner-actions.ts`) · Source: spec "On-chain owner
   actions" (Limits, Allowance alert), D93 Q23, D100
 - Decision:
@@ -1855,7 +1855,7 @@ detail open or a safer reading was needed. Each follows the spec's intent; all f
   above).
 
 ### D237. `ConsoleRpc.ownerAction`: one path with `/v1/owner-actions`, plus three console rules
-- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/rpc/console.ts`, `handlers.ts` `runOwnerAction`) ·
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`apps/api/src/rpc/console.ts`, `handlers.ts` `runOwnerAction`) ·
   Source: spec "On-chain owner actions" (steps 4–5, API changes), §RPC `ownerAction`
 - Decision:
   - The RPC runs the HTTP endpoint's code (`runOwnerAction`): the per-IP limiter fed `clientIp` (the same object as
@@ -1879,7 +1879,7 @@ detail open or a safer reading was needed. Each follows the spec's intent; all f
   `/v1/owner-actions` too (D274 made the refusal this entry rejected). The strict optional claims stay console-only.
 
 ### D238. The console sink scope in deploy-contract: the quarantine, who removes, what counts as a sink
-- Date 2026-11-02 · Status: to confirm; built (`scripts/lib/deploy-plan.ts` `consoleSinkPlan`, `scripts/lib/
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`scripts/lib/deploy-plan.ts` `consoleSinkPlan`, `scripts/lib/
   deploy-run.ts`, `scripts/lib/contract.ts` `SCOPE_OWNER_CALLS`) · Source: spec "Address impact", D93 Q7
 - Decision:
   - **The quarantine.** The spec's existing-env plan (`remove_client` from `global`, then `admin_register_scope` "in
@@ -1909,7 +1909,7 @@ detail open or a safer reading was needed. Each follows the spec's intent; all f
 - No user address changes (the path has no client id).
 
 ### D239. What the API keeps of an owner or step-up token (PII, D25, D96)
-- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/changes/step-up.ts`, `owner-actions.ts`, `changes/cas.ts`)
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`apps/api/src/changes/step-up.ts`, `owner-actions.ts`, `changes/cas.ts`)
   · Source: spec "Fresh sign-in" (a step-up token carries no `email`), D25, D96
 - Decision: of a step-up or owner token the API keeps only its sha256 (the single-use marker until `exp`) and, for a
   verified member proposal, its `sub` (`guarded_changes.proposer_sub`, `app_changes.actor_sub`; the on-chain
@@ -1929,7 +1929,7 @@ CSRF, `StaffRpc`, invites and owner grants, the hourly cron; no public route), w
 detail open or two of its lines pull apart. Each follows the spec's intent; all five are **to confirm** by the user.
 
 ### D240. The console never holds or returns an invite token ("`issueInvite` returns the token once")
-- Date 2026-11-02 · Status: to confirm; built (`apps/console/src/invites.ts`, `staff-rpc.ts`) · Source: spec "Tests:
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`apps/console/src/invites.ts`, `staff-rpc.ts`) · Source: spec "Tests:
   Invites and roles" ("`issueInvite` returns the token once; it is never stored, logged or returned again") against
   §Nonce layouts (T = HMAC(`INVITE_LINK_KEY`, …), a key only the admin Worker holds), §RPC `issueInvite` ("the admin
   Worker computes and emails the token") and §Invites "Notice first"
@@ -1945,7 +1945,7 @@ detail open or two of its lines pull apart. Each follows the spec's intent; all 
   links; a re-sent notice after a failed ack could not carry the same link without storing it).
 
 ### D241. An owner invite to an existing org always gets a grant; its notice comes before acceptance
-- Date 2026-11-02 · Status: to confirm; built (`invites.ts` `issueInvite`, `acceptInvite`; `cron.ts`) · Source: spec
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`invites.ts` `issueInvite`, `acceptInvite`; `cron.ts`) · Source: spec
   "Invites and owner grants" ("an owner invite to an org that already has an owner also creates an `owner_grants`
   row"; "every grant notice carries a cancel link"; the first-owner exception), §Membership rules
 - Decision:
@@ -1970,7 +1970,7 @@ detail open or two of its lines pull apart. Each follows the spec's intent; all 
   delay from its new notice.
 
 ### D242. `invites.new_org_kind` (CONSOLE_DB migration 0002) and the passkey gate's count
-- Date 2026-11-02 · Status: to confirm; built (`apps/console/migrations/0002_invites_kind_audit_request.sql`,
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`apps/console/migrations/0002_invites_kind_audit_request.sql`,
   `invites.ts`) · Source: spec §RPC `issueInvite({…, kind?})`, §Deferred (the passkey gate), §`CONSOLE_DB` (the invite
   row has no kind; the acceptance SQL inserts the org with the default kind)
 - Decision: migration 0002 adds `invites.new_org_kind` (`partner` | `internal`, set exactly with `new_org_name`, by
@@ -1983,7 +1983,7 @@ detail open or two of its lines pull apart. Each follows the spec's intent; all 
   issued before either is accepted would make two partner orgs.
 
 ### D243. StaffRpc readings: actors, the audit commit row, the last-owner rule, what the audit keeps
-- Date 2026-11-02 · Status: to confirm; built (`apps/console/src/{staff-rpc,members,grants,invites,audit,sql}.ts`) ·
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`apps/console/src/{staff-rpc,members,grants,invites,audit,sql}.ts`) ·
   Source: spec §RPC `StaffRpc` ("every method takes a Hana actor"), §Roles, §Invites, §Audit, §Sessions; D229 (the
   API's actor rule for `ackNotice`)
 - Decision:
@@ -2023,7 +2023,7 @@ detail open or two of its lines pull apart. Each follows the spec's intent; all 
   `pendingMemberNotices` / `ackMemberNotice` skip and refuse (`not_pending`) a frozen org's notices.
 
 ### D244. The console's C7 surface: two link routes, CSRF everywhere, the cron's details
-- Date 2026-11-02 · Status: to confirm; built (`apps/console/src/{index,links,csrf,headers,cron}.ts`,
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`apps/console/src/{index,links,csrf,headers,cron}.ts`,
   `apps/console/scripts/gen-wrangler.ts`) · Source: spec §Static assets, §Response headers, §Sessions (CSRF, rate
   limits), §Console BFF routes, §Audit, §Retention; build plan C7 ("no public route")
 - Decision:
@@ -2731,7 +2731,7 @@ contradicted itself or allowed two readings. Each takes the stricter or safer re
 is computed by `@hana-id/email` alone, from the normalized address including any Gmail `+tag` (D159).
 
 ### D195. Case A, not Google-hosted: google-match prepares the code challenge, the popup sends it with `resend`
-- Date 2026-11-02 · Status: to confirm (built on `feat/email-login-4`, not merged) · Source: build of
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) (built on `feat/email-login-4`, not merged) · Source: build of
   `docs/email-login-spec.md` "Endpoints" (`link` "from the user's Link and continue"), "How the popup gets Google's
   verified email" (the access token is revoked after the call) and "The four cases" ("a code to a…@domain first
   (purpose `auto_link`)")
@@ -2754,7 +2754,7 @@ is computed by `@hana-id/email` alone, from the normalized address including any
   address.
 
 ### D196. Manifest `emailIssuer` as `identityToken`; the standby key stays off the Worker; init uploads nothing
-- Date 2026-11-02 · Status: to confirm (built) · Source: build of the spec's "Issuer configuration", "Signing key"
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) (built) · Source: build of the spec's "Issuer configuration", "Signing key"
   and "Migration" ("the signing keys (primary, standby) as Worker secrets"); D173, D177
 - Decision: `emailIssuer: {iss, cloudflare: {workerName, d1Name}, signer: {kind: "worker-secret", activeKid} | {kind:
   "aws-kms", awsRegion, keys: {primary: {kid, arn}, standby: {kid, arn}}}, publicKeys, from, sender: "sendgrid" |
@@ -2772,7 +2772,7 @@ is computed by `@hana-id/email` alone, from the normalized address including any
   change, so it belongs with batch 10's rotation tooling).
 
 ### D197. A challenge lives 10 minutes from its creation; a refused send is taken back
-- Date 2026-11-02 · Status: to confirm (built) · Source: build of the spec's "Codes, attempts, expiry, replay" and
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) (built) · Source: build of the spec's "Codes, attempts, expiry, replay" and
   "Privacy and what is stored" (the address in the challenge object "until it ends (≤ 10 min)")
 - Decision: a resend doesn't extend the challenge: every code of it dies 10 minutes after the challenge was created,
   so the address is never held longer. A send the provider refused is taken back from the limits and from the
@@ -2786,7 +2786,7 @@ is computed by `@hana-id/email` alone, from the normalized address including any
   holds no readable address. The worker decrypts it only during a `resend` or `verify` that carries the full id.
 
 ### D198. The limits: per mailbox and requester, atomic, with a mailbox-wide backstop
-- Date 2026-11-02 · Status: to confirm (built; values provisional per D123 Q22). Revised the same day after a security
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09, after reading the review's note (built; values provisional per D123 Q22). Revised the same day after a security
   review of the first build (a check-then-count race in `verify`, and limits an attacker could use to lock an
   address's owner out) · Source: build of the spec's "Rate limits and abuse" and "Enumeration resistance"
 - Decision:
@@ -2983,7 +2983,7 @@ is computed by `@hana-id/email` alone, from the normalized address including any
         tickets of one app take at most 20% of the pool, so five attacker-held apps can fill the fresh half.
 
 ### D199. HTTP, data and chain readings of the issuer
-- Date 2026-11-02 · Status: to confirm (built) · Source: build of the spec's "Endpoints", "The four cases",
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09, after reading the review's note (built) · Source: build of the spec's "Endpoints", "The four cases",
   "Privacy and what is stored", "Deliverability" and "Issuer configuration"
 - Decision:
   - CORS per route: `start`, `resend`, `verify` for `authOrigin`; `google-match` for `vaultOrigin` (the spec says
@@ -3087,7 +3087,7 @@ Made while building `docs/batch-c-build-plan.md` C2 (branch `feat/batch-c-2`), w
 or allowed two readings. None changes a derivation path or an address.
 
 ### D201. The new ID-token claims: typed on request (strict for the console), ignored by the API
-- Date 2026-11-02 · Status: **to confirm** · Source: build of `docs/batch-c-spec.md` "Code flow" (`verifyIdToken`
+- Date 2026-11-02 · Status: **confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)** · Source: build of `docs/batch-c-spec.md` "Code flow" (`verifyIdToken`
   gains `email`, `email_verified`, `iat`, `hd`, `azp`, `amr`, `auth_time`); C2 review M1, L1
 - Decision (`packages/oidc/src/id-token.ts`, `VerifyOptions.optionalClaims`): each claim is optional and is returned
   only when the token carries it with the right type: a JSON string (`email`, `hd`, `azp`), a finite number (`iat`,
@@ -3110,7 +3110,7 @@ or allowed two readings. None changes a derivation path or an address.
 - Rejected: strict by default (the first C2 draft), which changed the API's answers; a boolean-only `email_verified`.
 
 ### D202. The Access JWT check: aud as string or array, 60 s skew, certs ≤ 10 min old, staff list outside
-- Date 2026-11-02 · Status: **to confirm** · Source: build of `docs/batch-c-spec.md` "Hana admin console" (JWT check on
+- Date 2026-11-02 · Status: **confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)** · Source: build of `docs/batch-c-spec.md` "Hana admin console" (JWT check on
   every `/api/*` request) and "Admin and email" tests; C2 review M2, L3
 - Decision (`packages/oidc/src/access.ts` `AccessJwtVerifier`, for C8): RS256 only, a non-empty `kid` in the team's
   certs (`https://<accessTeamDomain>/cdn-cgi/access/certs`, through an injected fetcher), `type === 'app'`, `iss ===
@@ -3134,7 +3134,7 @@ or allowed two readings. None changes a derivation path or an address.
   package (the manifest is C8's).
 
 ### D203. The package logs nothing: the API passes its stale-JWKS log in; fetch limits on Google's JWKS too
-- Date 2026-11-02 · Status: **to confirm** · Source: build of `docs/batch-c-build-plan.md` C2 ("unchanged in behaviour
+- Date 2026-11-02 · Status: **confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)** · Source: build of `docs/batch-c-build-plan.md` C2 ("unchanged in behaviour
   for the API"); C2 review M2
 - Decision: `@hana-id/oidc` keeps the module-level, per-isolate Google JWKS cache and the same exports as
   `apps/api/src/{jwt,jwks}.ts` (`verifyIdToken`, `publishedKeys`, `clearJwksCache`, `JwksUnavailableError`,
@@ -3154,7 +3154,7 @@ Readings made while building `docs/batch-c-build-plan.md` C3 on `feat/batch-c-3`
 detail open. Each follows the spec's intent; all five are **to confirm** by the user.
 
 ### D205. Migration 0006 details: the baseline keeps policies as stored; four extra checks
-- Date 2026-11-02 · Status: to confirm; built (`apps/api/migrations/0006_dashboard_expand.sql`) · Source: spec §Hot DB
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`apps/api/migrations/0006_dashboard_expand.sql`) · Source: spec §Hot DB
   "Migration 0006"
 - Decision: (1) the `migration.baseline` row lists each app's stored `auto_approve_policy` / `auto_approve_pending`
   JSON (and their effective time, the raw-signing values and `suspended_by`) instead of their `policyId`: SQL can't
@@ -3176,7 +3176,7 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
   when C4 merged after it). No code reads the legacy `usage` table any more.
 
 ### D206. CLI readings: environment, actor, waivers, one ledger row per write, no cancel command
-- Date 2026-11-02 · Status: to confirm; built (`scripts/lib/admin-apps.ts`, `admin-sql.ts`, `admin-settings.ts`) ·
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`scripts/lib/admin-apps.ts`, `admin-sql.ts`, `admin-settings.ts`) ·
   Source: spec §CLI, §Guarded changes
 - Decision: `app:create` needs `--environment test|live` for a scope with no app yet (no default: the choice is
   permanent for the scope) and takes the scope's own otherwise. The actor is `cli:<operator login>` (`hana` kind). The
@@ -3214,7 +3214,7 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
   `AdminRpc` will make, and never makes a change live sooner than the spec allows.
 
 ### D207. CLI writes: the commit row first, everything else gated on it, read back
-- Date 2026-11-02 · Status: to confirm (settled by the M1 rehearsal, below); built and tested on SQLite · Source:
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) (settled by the M1 rehearsal, below); built and tested on SQLite · Source:
   spec §RPC "CAS" applied to the CLI; batch B's settings guard; review L2 and its re-check
 - Decision: every CLI write is one `wrangler d1 execute --command` of several statements: first the write's
   `app_changes` row, inserted only while the compare-and-swap predicate holds (the version read, or for settings also
@@ -3232,7 +3232,7 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
   the same number would satisfy.
 
 ### D208. The vault endpoints' app cache keeps its 30 s
-- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/app-cache.ts` unchanged, `getAppByKey` filters) · Source:
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`apps/api/src/app-cache.ts` unchanged, `getAppByKey` filters) · Source:
   spec §Hot DB "Login-path reads" ("any future app-config cache … TTL ≤ 10 s"); D78
 - Decision: D78's cache stays at 30 s. It caches what `getAppByKey` returns, the origins in force at the read, so it
   never serves a pending origin early; one that comes into force is served from the next read (≤ 30 s late), and a
@@ -3243,7 +3243,7 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
   per 10 s per isolate; a one-line change if wanted.
 
 ### D209. The gate keeps `scope_conflict` as a second check; `first_session_at` at the relay attempt
-- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/apps.ts`, `handlers.ts`, `login.ts`, `vault/*`) · Source:
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`apps/api/src/apps.ts`, `handlers.ts`, `login.ts`, `vault/*`) · Source:
   spec §Hot DB "Login-path reads"
 - Decision: the batch B `scope_conflict` subquery is gone (replaced by `scopes.environment`, as the spec says), but
   the gate still answers `403 scope_conflict` when the key's prefix names the other environment than its scope (only
@@ -3264,7 +3264,7 @@ spec ("JWKS and discovery", "Pinning") was silent or allowed two readings. None 
 or the contract. All five are **to confirm** by the user.
 
 ### D210. The identity JWKS check: pins in the watchdog's config, an outside probe, alerts only; detection, not prevention
-- Date 2026-11-02 (amended the same day after the step 8 review: H1, H2, M2, L1, L2) · Status: **to confirm**; built
+- Date 2026-11-02 (amended the same day after the step 8 review: H1, H2, M2, L1, L2) · Status: **confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)**; built
   (`packages/jwks/src/identity.ts`, `apps/watchdog/src/identity.ts`, `run.ts` `identityJwks`,
   `scripts/lib/identity-probe.ts`, `.github/workflows/identity-probe.yml`) · Source: spec "JWKS and discovery" ("the
   watchdog fetches the JWKS every run and raises a critical alert for any key whose thumbprint isn't in its pinned
@@ -3318,7 +3318,7 @@ or the contract. All five are **to confirm** by the user.
   before the protective work; probe secrets or a paid monitor (the probe needs neither).
 
 ### D211. Pin before publish: the schema ties the published keys to the pins; identity-key writes both
-- Date 2026-11-02 · Status: **to confirm**; built (`packages/env/src/schema.ts` `watchdogRules`,
+- Date 2026-11-02 · Status: **confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)**; built (`packages/env/src/schema.ts` `watchdogRules`,
   `scripts/lib/identity-key.ts` `withIdentityPins`) · Source: spec "Rotation playbook" step 1 ("add its thumbprint to
   the watchdog pins (operator redeploy)") and step 4 ("remove the old key from the JWKS and the pins")
 - Decision: when a manifest has both `watchdog` and `identityToken`, every `identityToken.publicKeys` kid must be in
@@ -3338,7 +3338,7 @@ or the contract. All five are **to confirm** by the user.
   someone removes it; a separate pins file outside the manifest (the email pins live in the manifest too).
 
 ### D212. "Identity key on chain" is a kid check, alert only; no contract change
-- Date 2026-11-02 · Status: **to confirm**; built (`run.ts` `identityOnChain`, check `identity_on_chain`) · Source:
+- Date 2026-11-02 · Status: **confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)**; built (`run.ts` `identityOnChain`, check `identity_on_chain`) · Source:
   spec "JWKS and discovery" ("the watchdog also alerts if an identity key's thumbprint ever appears among the
   contract's issuer keys (the contract must never trust it)"), invariant 6, threat model "Replay against Hana"
 - Decision: the contract stores issuer keys as RSA `{n, e}` only (`issuers.rs` `RsaKey`) and verifies RS256 only, so an
@@ -3355,7 +3355,7 @@ or the contract. All five are **to confirm** by the user.
   fetching the JWKS before the protective phase.
 
 ### D213. The discovery document: `issuer` exact, `jwks_uri` exact, both critical; nothing followed
-- Date 2026-11-02 · Status: **to confirm**; built (`identity.ts` `judgeDiscovery`) · Source: spec "JWKS and
+- Date 2026-11-02 · Status: **confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)**; built (`identity.ts` `judgeDiscovery`) · Source: spec "JWKS and
   discovery" (the discovery document's fields), Q14
 - Decision: `issuer` must equal `identityToken.iss` exactly (no trailing-slash or case tolerance: an OpenID client
   compares it with the token's `iss` byte for byte) and `jwks_uri` must equal `{iss}/jwks.json`. Either one wrong,
@@ -3369,7 +3369,7 @@ or the contract. All five are **to confirm** by the user.
   judging the advertised `jwks_uri` too (an attacker-chosen URL in the watchdog's run).
 
 ### D214. Bounded identity alerts, and the portal hand-off without the portal
-- Date 2026-11-02 · Status: **to confirm**; built (`run.ts`, `checks.ts`, `status.ts`, `@hana-id/playbooks`) · Source:
+- Date 2026-11-02 · Status: **confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)**; built (`run.ts`, `checks.ts`, `status.ts`, `@hana-id/playbooks`) · Source:
   spec step 8 ("portal rendering (D83)"), D83, D126
 - Decision: an unpinned or private set is one condition keyed by a hash of what was found (a new key is a new page;
   the old set resolves), listing at most 20 entries; kids and URLs from Hana's answers are cut to 256 characters and
@@ -3395,7 +3395,7 @@ Readings made while building `docs/batch-c-build-plan.md` C4 on `feat/batch-c-4`
 detail open. Each follows the spec's intent; all five are **to confirm** by the user.
 
 ### D220. The `no_session` waiver's hot-DB sign: a session marker per app (migration 0009)
-- Date 2026-11-02 · Status: to confirm; built (`apps/api/migrations/0009_session_markers.sql`, `apps/api/src/apps.ts`
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`apps/api/migrations/0009_session_markers.sql`, `apps/api/src/apps.ts`
   `markSession`, `handlers.ts` `firstSession`, `scripts/lib/admin-sql.ts` `noSessionWaiver`) · Source: D205's forward
   obligation; build plan C4
 - Decision: a new hot-DB table `session_markers (app_id PK → apps, first_at)`. When the gate saw no
@@ -3418,7 +3418,7 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
   and decision names 0007 as the drop).
 
 ### D221. What one usage event covers, and when it is opened and closed
-- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/usage/event.ts`, `handlers.ts`, `login.ts`,
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`apps/api/src/usage/event.ts`, `handlers.ts`, `login.ts`,
   `vault/endpoints.ts`) · Source: spec "Usage capture"
 - Decision: the event opens once the request passed the gate (for `/v1/vault/unlock`: the vault gate, app, origins and
   the vault's IP and app limits; for owner actions: the owner check) and closes in `done` with the response, so every
@@ -3432,7 +3432,7 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
   even when its scope has no app.
 
 ### D222. The writer: checked in the Worker, one retry for transient errors only, relayed by the relay result
-- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/usage/record.ts`, `relayer-key.ts`, `near/tx.ts`) ·
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`apps/api/src/usage/record.ts`, `relayer-key.ts`, `near/tx.ts`) ·
   Source: spec "Write", "Gas", tests "Topology and config"
 - Decision: the event is checked against UsageEvent v1 (`console-core`, zod) before it is sent; a refusal is
   `usage_write_rejected` and never sent. One new `pg` connection per event over `USAGE_DB` (Hyperdrive pools), 5 s to
@@ -3456,7 +3456,7 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
   a shape refusal is a bug that a retry can't fix; the nonce cross-check needs every relayed row's key and nonce.
 
 ### D223. Identity token counts reach the ledger by an hourly copy, not per mint
-- Date 2026-11-02 · Status: to confirm; built (`apps/api/migrations-usage/0002_identity_tokens.sql`,
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`apps/api/migrations-usage/0002_identity_tokens.sql`,
   `apps/api/src/usage/identity-sync.ts`, the API's hourly cron) · Source: build plan "Conventions" (the ledger counts
   `identity_tokens` per app and day); D172
 - Decision: the mint keeps counting in the hot DB (`identity_usage`, unchanged, and the identity signing code is not
@@ -3476,7 +3476,7 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
   table, a Neon write per mint, and a change in the identity signing files).
 
 ### D224. `usage-setup` and the binding: subcommands, SCRAM verifiers (amended by D403), re-runnable; capture optional on sandbox-dev
-- Date 2026-11-02 · Status: to confirm; built (`scripts/lib/usage-setup.ts`, `apps/api/scripts/gen-wrangler.ts`) ·
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`scripts/lib/usage-setup.ts`, `apps/api/scripts/gen-wrangler.ts`) ·
   Source: build plan "Setup steps" 3, 4 and 6
 - Decision: `usage-setup <env> roles | hyperdrive | user-id-key [--yes]` (testnet only, dry run by default).
   `roles` writes each role's URL first (the owner's direct endpoint and database, `sslmode=require` only: Neon's
@@ -3512,7 +3512,7 @@ and alarms are the operator's setup before mainnet (`docs/operations.md` "Identi
 uses the KMS signer yet. None changes a derivation path or an address.
 
 ### D215. The KMS signer in the manifest: keys by role with their ARNs, credentials as Worker secrets of one IAM user
-- Date 2026-11-02 · Status: **to confirm** · Source: build of the spec's "D1 schema, manifest and secrets" and "Where
+- Date 2026-11-02 · Status: **confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)** · Source: build of the spec's "D1 schema, manifest and secrets" and "Where
   the key lives" (`packages/env/src/identity.ts`, `apps/api/scripts/gen-wrangler.ts`, `apps/api/src/identity/signers.ts`)
 - Decision: `identityToken.signer` is `{kind: "aws-kms", credentials: {kind: "worker-secret", iamUser}, keys: {active:
   {kid, arn}, standby?: {kid, arn}, next?: …, previous?: …}}`. Each key carries its own single-region ARN (no
@@ -3538,7 +3538,7 @@ uses the KMS signer yet. None changes a derivation path or an address.
   session token and a refresher the Worker doesn't have).
 
 ### D216. KMS `Sign` with `MessageType = DIGEST`: the Worker hashes, AWS sees 32 bytes
-- Date 2026-11-02 · Status: **to confirm** · Source: build of the spec's "Signing" bullet (`apps/api/src/identity/kms.ts`)
+- Date 2026-11-02 · Status: **confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)** · Source: build of the spec's "Signing" bullet (`apps/api/src/identity/kms.ts`)
 - Decision: the adapter computes `sha256(header ‖ "." ‖ payload)` itself and calls `Sign` with `MessageType: DIGEST`,
   `SigningAlgorithm: ECDSA_SHA_256`; the IAM and key policies require both values (`kms:MessageType`,
   `kms:SigningAlgorithm`).
@@ -3549,7 +3549,7 @@ uses the KMS signer yet. None changes a derivation path or an address.
 - Rejected: `RAW` (claims at AWS, a size limit, no gain in what a leaked credential can do).
 
 ### D217. Strict DER to JOSE conversion, high-S kept, every signature verified before it is answered
-- Date 2026-11-02 · Status: **to confirm** · Source: build of the spec's "Signing" bullet and "Tests" ("DER → JOSE
+- Date 2026-11-02 · Status: **confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)** · Source: build of the spec's "Signing" bullet and "Tests" ("DER → JOSE
   conversion, high-S and short-`r` cases, refusal when the self-verify fails") (`derToJose` in
   `apps/api/src/identity/kms.ts`)
 - Decision: KMS's `ECDSA-Sig-Value` is accepted only as strict DER: one SEQUENCE with a short-form length equal to the
@@ -3565,7 +3565,7 @@ uses the KMS signer yet. None changes a derivation path or an address.
 - Rejected: normalizing to low-S (pointless for JOSE); trusting KMS's answer without the self-check.
 
 ### D218. KMS call limits: one `Sign` per mint, no retry, a 3 s deadline, a 4 KiB answer cap, fail closed
-- Date 2026-11-02 · Status: **to confirm** · Source: build of the spec's latency budget and "Mint flood" row
+- Date 2026-11-02 · Status: **confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)** · Source: build of the spec's latency budget and "Mint flood" row
   (`apps/api/src/identity/kms.ts`)
 - Decision: each mint sends at most one `Sign` request; aws4fetch's retries are off and the adapter never calls twice.
   One 3 s deadline covers the request and its body (a stalled body is a timeout), the answer is read up to 4 KiB, and
@@ -3583,7 +3583,7 @@ uses the KMS signer yet. None changes a derivation path or an address.
   job, and migration numbers are reserved by other branches).
 
 ### D219. KMS standby and rotation: another region, the IAM policy names the active key only
-- Date 2026-11-02 · Status: **to confirm** · Source: build of the spec's rotation playbook and D177 for KMS
+- Date 2026-11-02 · Status: **confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)** · Source: build of the spec's rotation playbook and D177 for KMS
   (`docs/operations.md` "Identity token keys on AWS KMS", `scripts/lib/identity-kms.ts`, playbook
   `identity-kms-signer-compromised`)
 - Decision: the standby is a separate single-region key in another region than the active key (the schema refuses the
@@ -3619,7 +3619,7 @@ changes" and the plan's deploy order were silent, ambiguous or unworkable as wri
 five are **to confirm** by the user. None changes an address: no path, derivation or `sub` is touched.
 
 ### D230. `{…}/v1/email/*` reaches the issuer without the API: its own `workers.dev` URL on sandbox-dev, a zone route in production
-- Date 2026-11-02 · Status: to confirm; built (`packages/env/src/email-issuer.ts` `url`, `workersDevIssuerUrl`,
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`packages/env/src/email-issuer.ts` `url`, `workersDevIssuerUrl`,
   `emailIssuerUrl`, `emailJwksUrl`; `scripts/lib/email-issuer.ts` init; the watchdog's default `jwksUrl`) · Source:
   D199 "Open for batch 6"; D123 Q5 ("the issuer under `{apiUrl}/v1/email`")
 - Decision: the manifest's `emailIssuer.url` names the origin the issuer Worker is reached at; it serves
@@ -3644,7 +3644,7 @@ five are **to confirm** by the user. None changes an address: no path, derivatio
   address in its own D1 (`user_emails`), read by Hana staff only (`admin user:list` / `user:find`).
 
 ### D231. Email tokens at the API: the manifest's keys, the issuer's exact form, the chain's policy, the app's methods
-- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/email-token.ts`, `login-token.ts`, `login-methods.ts`,
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`apps/api/src/email-token.ts`, `login-token.ts`, `login-methods.ts`,
   `link-views.ts`, `handlers.ts` `handleAppConfig`, migration 0010) · Source: spec "API changes" ("the JWKS from the
   issuer's endpoint, cached like Google's"; "checked against `get_self_issued("email")` like the contract")
 - Decision:
@@ -3675,7 +3675,7 @@ five are **to confirm** by the user. None changes an address: no path, derivatio
   gating Google tokens on `login_methods` (it would refuse every existing login on a database before 0010).
 
 ### D232. The link precheck, the link relays, and the email-login panics as errors
-- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/link-precheck.ts`, `links.ts`, `login.ts`, `panics.ts`,
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09, after reading the review's note; built (`apps/api/src/link-precheck.ts`, `links.ts`, `login.ts`, `panics.ts`,
   `gas.ts`, `relayer-config.ts`, `origins.ts`) · Source: spec "API changes", "Link methods"; D133, D135, D155, D200
 - Decision:
   - **`/v1/login` with `linkJwt`** (D133): before relaying, the API verifies the link token (an email token of the
@@ -3704,7 +3704,7 @@ five are **to confirm** by the user. None changes an address: no path, derivatio
   pages on the link relays.
 
 ### D233. Share revocation by the root path's key indexes; email usage in its own table; the issuer finds apps by the gate's model
-- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/links.ts` `revokeAccountShares`, `email-usage.ts`,
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`apps/api/src/links.ts` `revokeAccountShares`, `email-usage.ts`,
   migration 0010; `apps/email-issuer/src/apps.ts`) · Source: spec "Unlink and cancel" ("revokes every vault share of
   the account's path in that scope (`vault_shares.path_hash`)"), "API changes" ("Usage counts email logins and links
   per app"); D206, D225
@@ -3735,7 +3735,7 @@ five are **to confirm** by the user. None changes an address: no path, derivatio
   logins in the legacy `usage` table (C4b drops it).
 
 ### D234. Batch 6's deploy order, corrected: issuer keys and pins, D1, pages then API, pool keys, v3, accept, issuer Worker, its keys; the email clients in batch 8
-- Date 2026-11-02 · Status: to confirm; written as the user's steps (`docs/operations.md` "Email login on sandbox-dev
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); written as the user's steps (`docs/operations.md` "Email login on sandbox-dev
   (build plan batch 6)") · Source: build plan batch 6 "Deploy (sandbox-dev), in order"; D199 (client proofs)
 - Decision (the full order, as `docs/operations.md` "Email login on sandbox-dev" runs it, amended after the batch 6
   reviews: 1 the issuer's keys and manifest block, 2 the watchdog pins, 3 the API's D1 (0006 if missing, 0009, 0010;
@@ -3767,7 +3767,7 @@ five are **to confirm** by the user. None changes an address: no path, derivatio
   minting the client proofs by turning email on for the test apps in batch 6 (against "nothing ships half-wired").
 
 ### D250. Batch 6 review follow-ups: requests bound to fail, per-account link limits, gas per signature, stale email keys
-- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/session-standing.ts`, `panic-cache.ts`, `links.ts`,
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`apps/api/src/session-standing.ts`, `panic-cache.ts`, `links.ts`,
   `gas.ts`, `email-token.ts`, `login-token.ts`, `validate.ts`; migrations-usage `0005_link_events.sql`) · Source: the
   login/links review of batch 6 (M1, M2, L1–L3, L5, L6) and the deploy review (H1)
 - Decision:
@@ -3801,7 +3801,7 @@ five are **to confirm** by the user. None changes an address: no path, derivatio
   app-wide caps.
 
 ### D251. The issuer's APP_DB is a read-write D1 binding: kept for now, held to reads by a source test
-- Date 2026-11-02 · Status: to confirm; **superseded by D434** (2026-11-06, branch `feat/issuer-readonly-rpc`: the read-only RPC built, `APP_DB` and its source test removed) · Source: the deploy review of batch 6 (M4)
+- Date 2026-11-02 · Status: retired by the user 2026-11-09 (replaced: Replaced by the API's read-only issuer RPC; the database binding and its source test are gone (D434)); **superseded by D434** (2026-11-06, branch `feat/issuer-readonly-rpc`: the read-only RPC built, `APP_DB` and its source test removed) · Source: the deploy review of batch 6 (M4)
 - Decision: Cloudflare has no read-only D1 binding, so the issuer's `APP_DB` (the API's D1) could write the API's tables
   if its code did. For now its code is held to reads by a source test (`apps/email-issuer/scripts/test/app-db-read-only.test.ts`:
   every use goes through `src/apps.ts`, whose statements are SELECTs), the risk is in `docs/security.md`, and
@@ -3813,7 +3813,7 @@ five are **to confirm** by the user. None changes an address: no path, derivatio
 - Rejected: leaving it undocumented; copying the app rows into the issuer's own D1 (two sources of truth).
 
 ### D252. The session pool carries the link methods, with a global daily cap on link adds
-- Date 2026-11-02 · Status: to confirm · Source: the deploy review of batch 6 (M5)
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09, after reading the review's note · Source: the deploy review of batch 6 (M5)
 - Decision: `link_identity`, `cancel_link` and `unlink_identity` are relayed by the session pool (its keys' allowance
   pays them), as built in batch 6. Their spend is bounded by the per-IP, per-account and per-app limits (D250) and a
   global ceiling of 5 000 link adds a UTC day across apps (`link-global`, refused above; removals can only follow adds).
@@ -3825,7 +3825,7 @@ five are **to confirm** by the user. None changes an address: no path, derivatio
 Spec ambiguities met while building the minimal slice of batch 8 (no linking). All to confirm.
 
 ### D245. The email step handles wrong and expired codes itself; a cancel tells the partner why; `email_code` comes from the popup
-- Date 2026-11-02 · Status: to confirm; built (`packages/web/src/auth/email-page.ts`, `vault/login.ts`
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`packages/web/src/auth/email-page.ts`, `vault/login.ts`
   `EMAIL_RELAY_ERRORS`, `acceptProgress`; core `hana:auth-progress`) · Source: spec "Vault, popup and SDK changes"
   (errors `code_invalid`, `challenge_expired`; `loginProgress` gains `email_code`)
 - Decision: the popup keeps the user on wrong codes (tries left shown), expired or used challenges (back to the
@@ -3847,7 +3847,7 @@ Spec ambiguities met while building the minimal slice of batch 8 (no linking). A
   each step (only the one progress signal is needed).
 
 ### D246. No key export for an email wallet in batch 8a
-- Date 2026-11-02 · Status: to confirm; built (`vault.ts` `startExport`) · Source: spec "Export resolves the path the
+- Date 2026-11-02 · Status: retired by the user 2026-11-09 (replaced: Lifted: email wallets now export like Google ones, after a fresh email code in the export window (D258)); built (`vault.ts` `startExport`) · Source: spec "Export resolves the path the
   same way"
 - Decision: `hana.exportKey()` on a session whose path isn't `#google#` is refused before any window opens (`4200`,
   `data.reason: 'email_export'`). The export window re-authenticates with Google only (export mode); an email
@@ -3859,7 +3859,7 @@ Spec ambiguities met while building the minimal slice of batch 8 (no linking). A
   'email_export'` no longer exists.
 
 ### D247. The SDK surface: `login_method_unavailable`, `emailHint` rules, Google plus email only
-- Date 2026-11-02 · Status: to confirm; built (core `protocol.ts`, `api-types.ts`; `client/login.ts`) · Source: spec
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (core `protocol.ts`, `api-types.ts`; `client/login.ts`) · Source: spec
   "SDK"
 - Decision: `hana.login({method?, emailHint?})`. `method` is `'google'` or `'email'`; one the app doesn't offer here
   (its `login_methods`, its scope's email client, or an env whose bundle pins no email issuer) rejects with the new
@@ -3875,7 +3875,7 @@ Spec ambiguities met while building the minimal slice of batch 8 (no linking). A
 - Rejected: falling back to the chooser on an unavailable method (the partner asked for one method; it should know).
 
 ### D248. Turning email on for the demo app is by hand on sandbox-dev
-- Date 2026-11-02 · Status: to confirm (who owns the demo's scope, and the owner's `propose_change` command) ·
+- Date 2026-11-02 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) (who owns the demo's scope, and the owner's `propose_change` command) ·
   Source: D234 (batch 8's order), `docs/operations.md` "Email login demo on sandbox-dev (batch 8a)"
 - **Only demo and test scopes get email in 8a.** Every email identity opened in 8a is a wallet of its own, and it can never join a Google account later (the contract refuses a link to an identity that already has a wallet: "Sign-in method already has a wallet"). Nothing writes `email_hints` before google-match (batch 8b), so case B never happens in 8a: a Google user who picks email with their Gmail address gets that second wallet. So email is turned on only for scopes whose
   users are Hana's own testers (the demo's), never for a scope with real Google users, until google-match's hint
@@ -3896,7 +3896,7 @@ Spec ambiguities met while building the minimal slice of batch 8 (no linking). A
   (D253); the demo's scope is `s2`, owned by `hana-id-admin-dev1.testnet`.
 
 ### D249. Batch 8a's paths come from the token, not `get_identity`; the popup's storage
-- Date 2026-11-02 · Status: to confirm · Source: build plan batch 7 ("compute the path from `get_identity`"), batch 8;
+- Date 2026-11-02 · Status: retired by the user 2026-11-09 (replaced: The path now comes from on-chain get_identity, confirmed on two providers (D263); only the popup storage rules survive, with D256's follow-up key added) · Source: build plan batch 7 ("compute the path from `get_identity`"), batch 8;
   spec "Codes, attempts, expiry, replay" (`challengeId` in `sessionStorage`), D198 (device tickets)
 - Decision:
   - Batch 7 isn't built. The vault fixes `{scope}#{provider}#{sub}#0` from the token it verified (`loginPath`; Google
@@ -3929,7 +3929,7 @@ Spec ambiguities met while building batch 7 (path resolution) and batch 8b (goog
 D139 in the vault, banners, `linkAccount`, email export). Each takes the safer reading. All to confirm.
 
 ### D254. Google's verified email: a second, silent request by default; one interactive retry; the switch waits for the spike
-- Date 2026-11-03 · Status: to confirm; amended by D264 (an explainer before the retry), D265 (the token is never
+- Date 2026-11-03 · Status: retired by the user 2026-11-09 (replaced: Replaced as the live flow by token_first, with email on Google's own screen (D270); the second request is only the tested fallback, and one_request is removed (D273)); amended by D264 (an explainer before the retry), D265 (the token is never
   revoked, so the retry is the first login's only), D270 (a third flow, `'token_first'`, in force since 2026-11-04,
   when the spike passed: `'second_request'` is now the tested fallback) and D273 (`'one_request'` removed; the
   callback's claim allow-list); built (`packages/web/src/auth/google.ts` `GOOGLE_EMAIL_FLOW`, `callback-page.ts`) ·
@@ -3949,7 +3949,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   `email`).
 
 ### D255. When google-match can't answer, a Google identity without a wallet or an account is refused
-- Date 2026-11-03 · Status: to confirm; amended by D264 (declined consent and another account get their own screen and
+- Date 2026-11-03 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); amended by D264 (declined consent and another account get their own screen and
   reasons); built (`vault/login.ts` `matchGoogle`) · Source: spec "The four cases" ("The
   vault runs google-match before any chain call"), D122
 - Decision: in a login of an app with email, if the issuer is unreachable, answers an error, or no access token came
@@ -3963,7 +3963,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 - Rejected: proceeding without the match (a second wallet); refusing every Google login (existing users locked out).
 
 ### D256. The follow-up channel: the popup waits for the vault's word through relay slots; the vault may write them; `verify` answers the case-B `sub`
-- Date 2026-11-03 · Status: to confirm; built (`packages/core/src/links.ts` `followSlot`, `relay.ts` `FollowNotice`,
+- Date 2026-11-03 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`packages/core/src/links.ts` `followSlot`, `relay.ts` `FollowNotice`,
   `vault/login.ts` `FollowChannel`, `auth/email-page.ts` follow-up mode, `apps/api/src/login-relay.ts` WRITERS,
   `apps/email-issuer/src/handlers.ts` `verify`) · Source: spec "Popup flow" (case A's "Link and continue" after the
   vault's google-match; banners in "every Hana popup"), D139 ("the `sub` of the address verified there (the issuer's
@@ -3986,7 +3986,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   algorithms).
 
 ### D257. D137's recovery ends the login after revoking; D136's stale session asks the user to sign in again
-- Date 2026-11-03 · Status: to confirm; built (`vault/login.ts` `LoginChain.onLinkedError`, `derive`) · Source: D137
+- Date 2026-11-03 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`vault/login.ts` `LoginChain.onLinkedError`, `derive`) · Source: D137
   ("revokes that session and restarts with a fresh session key, a fresh Google token and a fresh link token"), D136
 - Decision: a linked login resends only the API's "not executed" answers, and uses a known transaction's CKD answer
   when it has one. On `session_exists`, `session_key_in_use`, `ckd_failed`, a timeout, a NEAR error or an unknown
@@ -4001,7 +4001,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 - Rejected: an automatic restart through the follow-up channel (more states for a rare path).
 
 ### D258. Email-wallet key export (D246 lifted): the `session` purpose over the export window's own session
-- Date 2026-11-03 · Status: to confirm; built (`auth/export-page.ts`, `auth/login-page.ts` in export mode,
+- Date 2026-11-03 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`auth/export-page.ts`, `auth/login-page.ts` in export mode,
   `auth/email-page.ts` export mode, `vault/vault.ts` `startExport`) · Source: the user (2026-11-03, "key export for
   email wallets"), D27, D41, D111, D246
 - Decision: no new issuer purpose. The export window already opens its own short-lived session (`max_uses = 1`, its
@@ -4016,7 +4016,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 - Rejected: an `export` purpose.
 
 ### D259. Banners, Cancel and Remove in the login popup; `hana.account()` and `linkChanged`; `linkAccount` proves the root
-- Date 2026-11-03 · Status: to confirm; built (`vault/login.ts` `Afterword`, `PendingLink`; `vault/vault.ts`
+- Date 2026-11-03 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`vault/login.ts` `Afterword`, `PendingLink`; `vault/vault.ts`
   `account`, `noteMethods`, `linkAccount`; `client/client.ts`) · Source: spec "Notices", "Explicit linking", "SDK"
 - Decision:
   - **Banners** show in the login popup after a login (its last word): every pending member (with **Cancel**), the
@@ -4039,7 +4039,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 ## Demo polish (branch `fix/demo-polish`), 2026-11-03
 
 ### D260. An email login's timings have their own stages; `google` is Google's only
-- Date 2026-11-03 · Status: to confirm · Source: the sandbox-dev demo's diagnostics (an email login reported
+- Date 2026-11-03 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Source: the sandbox-dev demo's diagnostics (an email login reported
   `google: 32476`), `packages/core/src/timings.ts`
 - Decision: the residual of the vault's hello → token was always named `google`. For an email login it is now
   `emailRelay` (the relay's network legs), and the email step reports what it can measure on its own clock, as sums:
@@ -4053,7 +4053,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 - Rejected: renaming `google` to a neutral name for both methods (breaks every saved run and the smoke page's history).
 
 ### D261. GET /v1/app: reads side by side, 8 s view timeouts, one retry from the login, its own timings
-- Date 2026-11-03 · Status: to confirm · Source: a demo login with `app: 9954` (normally 0–500 ms)
+- Date 2026-11-03 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Source: a demo login with `app: 9954` (normally 0–500 ms)
 - Findings (from the code; the request log of that login wasn't available here): the `app` stage is only the wait
   for `GET /v1/app`, which the vault asks right after `ready`. The vault's email-chain views (8a) and the registry
   check start after `app` and run in parallel, and the vault's RPC fallback (8 s, then `rpc.testnet.near.org` at
@@ -4075,7 +4075,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   D79's reason); an API-side RPC fallback (the API reads only `NEAR_RPC` today; a second endpoint is its own decision).
 
 ### D262. The SDK's vault load: an early `connected`, one frame retry, reasons for `vault_unavailable`
-- Date 2026-11-03 · Status: to confirm · Source: "Could not load the Hana vault" for several minutes after a round of
+- Date 2026-11-03 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Source: "Could not load the Hana vault" for several minutes after a round of
   deploys, with wallet extensions installed, later fine with them on
 - Findings: the SDK gave the whole load 5 s from inserting the frame to `ready`, with no retry. `ready` waits for the
   vault page (page Worker → API Worker → 3 D1 reads), `/vault.js`, IndexedDB and, with a stored session, the
@@ -4100,7 +4100,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 ## Email login build, batch 8b review fixes (branch `feat/email-login-8b`), 2026-11-03
 
 ### D263. A path through another identity is confirmed on two independent RPC providers; the vault pins each identity's root
-- Date 2026-11-03 · Status: to confirm; built (`packages/web/src/path-check.ts` `confirmPath`; `vault/login.ts`
+- Date 2026-11-03 · Status: confirmed by the user 2026-11-09, after reading the review's note; built (`packages/web/src/path-check.ts` `confirmPath`; `vault/login.ts`
   `ownPath`, `movedPath`, `judgeLink`, `checkPin`; `auth/export-page.ts` `pathFor`; `vault/near.ts` and
   `auth/near-rpc.ts` `independent()`; `vault/record.ts` root pins; `packages/env` schema) · Source: the batch 8b
   review (W-H1); D96, D100, D119
@@ -4146,7 +4146,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   change outright (an unlinked user would be locked out on that device for good).
 
 ### D264. Google's email permission: explained before it is asked, its refusal and a wrong account have their own screen and reasons
-- Date 2026-11-03 · Status: to confirm; built (`auth/callback-page.ts` `explainEmailPrompt`, `auth/email-page.ts`
+- Date 2026-11-03 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`auth/callback-page.ts` `explainEmailPrompt`, `auth/email-page.ts`
   `showEmailConsent`, `vault/login.ts` `matchGoogle`, core `FollowNotice` `email_consent`, issuer
   `google_account_mismatch`) · Source: the batch 8b review (G-M1, G-M2); amends D255; D42 · Amended by D270: under
   `'token_first'` there is no explainer (Google's sign-in screen lists the email) and declining that screen is no
@@ -4187,7 +4187,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   client can read the address through Google, D42.)
 
 ### D265. Google's access token is never revoked (amends D254); google-match is retried after 429 or 503
-- Date 2026-11-03 · Status: to confirm; built (`apps/email-issuer/src/handlers.ts` `handleGoogleMatch`,
+- Date 2026-11-03 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`apps/email-issuer/src/handlers.ts` `handleGoogleMatch`,
   `src/google.ts`; `vault/login.ts` `googleMatch`, `vault/issuer.ts` `MatchBusy`; `apps/smoke/spike-email.html` legs C
   and D) · Source: the batch 8b review (G-H1, G-H2, G-L1, G-L5, G-L6); amends D254, D195's "the access token is
   revoked after the call"
@@ -4207,7 +4207,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 - Rejected: revoking (the reasons above); revoking only on a mismatch (the grant is the user's, not the token's).
 
 ### D266. Which email identity a Google address matches is the email issuer's word: accepted (extends D119)
-- Date 2026-11-03 · Status: to confirm (accepted risk) · Source: the batch 8b review (W-M1, W-L1); D119, D133, D139,
+- Date 2026-11-03 · Status: confirmed by the user 2026-11-09, after reading the review's note (accepted risk) · Source: the batch 8b review (W-M1, W-L1); D119, D133, D139,
   D200
 - Decision: the vault can't check google-match's answer about *which* email identity a Google address belongs to: only
   the issuer holds `K_sub`, and the address never reaches the vault. So a compromised issuer (Worker code or secrets)
@@ -4222,7 +4222,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   A (a second holder of `K_sub`).
 
 ### D267. Rate limits for linking logins: the login relay 40 writes a minute per IP, google-match 120 per 10 minutes
-- Date 2026-11-03 · Status: to confirm; built (`apps/api/src/login-relay.ts` `RELAY_WRITES_PER_IP_MINUTE`,
+- Date 2026-11-03 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); built (`apps/api/src/login-relay.ts` `RELAY_WRITES_PER_IP_MINUTE`,
   `RELAY_MAX_BODY`; `apps/email-issuer/src/limits.ts` `IP_MATCH_LIMITS`; core `RELAY_MAX_PLAINTEXT_BYTES`) · Source:
   the batch 8b review (G-M3, G-L7)
 - Decision: a Google login of an app with email writes about 5 relay slots (the token, the access token, a notice, an
@@ -4238,7 +4238,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 ## Operator tooling for the email demo, 2026-11-03
 
 ### D253. Dev envs mint a scope's email client proof locally; production keeps the issuer's Access route
-- Date 2026-11-03 · Status: to confirm · Source: conversation (the internal email-login demo on sandbox-dev); D234,
+- Date 2026-11-03 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Source: conversation (the internal email-login demo on sandbox-dev); D234,
   D248 (its open "the owner's `propose_change` command"); `docs/operations.md` "Email login demo on sandbox-dev (batch
   8a)" step 3
 - Decision: `admin <env> scope:add-email-client --scope <id> [--yes]` adds `("email", "email:<id>")` to a scope in one
@@ -4444,7 +4444,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 ## Google's email on Google's sign-in screen: the build (branch `feat/google-token-first`), 2026-11-04
 
 ### D273. token_first's silent ID request: one interactive openid-only retry; `'one_request'` removed; the callback refuses PII before relaying
-- Date 2026-11-04 · Status: to confirm (taken while building D270) · Built on `feat/google-token-first`
+- Date 2026-11-04 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) (taken while building D270) · Built on `feat/google-token-first`
   (`packages/web/src/auth/callback-page.ts` `tokenFirstId`, `relayLeg`; `auth/google.ts`) · Source: D270, D254, D264
 - Decision:
   - When token_first's silent `id_token` request (`prompt=none`, `login_hint`) fails with `login_required`,
@@ -4481,7 +4481,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 
 ### D274. Owner-action tokens and client proofs are held to the same claim allow-list
 - Date 2026-11-04 · Status: decided while building D271 (Claude, under D271's "every route that relays a Google
-  token"), to confirm · Built on `fix/sessions-allow-list` (`apps/api/src/owner-actions.ts` `piiRefusal`) · Amends the
+  token"), confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built on `fix/sessions-allow-list` (`apps/api/src/owner-actions.ts` `piiRefusal`) · Amends the
   `/v1/owner-actions` note in `docs/api.md` ("Their other claims are not read … nothing refuses one that isn't")
 - Decision: `/v1/owner-actions` refuses an `auth` owner token or an `AddClient` `client_proof` with a claim outside
   `TOKEN_CLAIM_ALLOW_LIST`: `400 token_has_pii` with `data: {claim}`, after the signature check and before the token
@@ -4495,7 +4495,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 ## Batch C6 on current `develop` (branch `feat/batch-c-6-merge`), 2026-11-04
 
 ### D277. Batch C6 meets the claim allow-list: one rule for every Google token the API verifies
-- Date 2026-11-04 · Status: to confirm (decided while merging `develop` into batch C6, which had been built before
+- Date 2026-11-04 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) (decided while merging `develop` into batch C6, which had been built before
   D271 and D274) · Built on `feat/batch-c-6-merge` (`apps/api/src/owner-actions.ts` `precheckOwnerAction`,
   `changes/step-up.ts` `verifyStepUpToken`, `rpc/console.ts` `ownerAction`; `apps/api/scripts/test/relayed-tokens.test.ts`)
   · Amends D237 and D239
@@ -4522,7 +4522,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 ## Batch C8: the admin Worker (branch `feat/batch-c-8`), 2026-11-04
 
 ### D278. The admin BFF: routes, the Access check's order, error codes, what the SPA is
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/{index,access,csrf,routes,
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/admin/src/{index,access,csrf,routes,
   export}.ts`, `public/` · Source: spec §Admin BFF routes, §Hana admin console, §Static assets
 - Decision:
   - **Order on `/api/*`**: host (only `admin.origin`, else 404), then the Access JWT check (`Cf-Access-Jwt-Assertion`
@@ -4551,7 +4551,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   assets only with a JWT (no gain behind Access, and it breaks the error page before sign-in).
 
 ### D279. Blocking notices: one message per recipient, who gets what, when the ack happens
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/notices.ts`, `mail.ts`,
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/admin/src/notices.ts`, `mail.ts`,
   `email/` · Source: spec §Email, §Notice and cancel, §Invites and owner grants
 - Decision:
   - Every email is **one message per recipient** (no contact sees another's address), each with a Resend
@@ -4574,7 +4574,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   checked; sending the invitee last keeps a working-looking link from leaving while the owners weren't told.
 
 ### D280. The 5-minute cron's order and its budget of outbound calls
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/cron.ts`, `mail.ts`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/admin/src/cron.ts`, `mail.ts`
   `RUN_BUDGET` · Source: spec §Crons
 - Decision: one cron (`*/5 * * * *`) runs the blocking notices (changes, then members), then the feed (security
   events, app changes, console audit), then the watcher, each step on its own. They share a budget of **40 outbound
@@ -4586,7 +4586,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   3); a bounded run never half-sends a notice, and the blocking work comes first.
 
 ### D281. The feed: digests per org, what is skipped, who gets them, where the cursors start
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/feed.ts`, `ops.ts` · Source:
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/admin/src/feed.ts`, `ops.ts` · Source:
   spec §Email (Feed), §Audit
 - Decision:
   - Rows are read in pages of 50 after the cursor (`feed.app_changes.seq`, `feed.audit_log.seq` in `ops.state`) and
@@ -4609,7 +4609,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   first run). *(Taken after all by D344: emailing the whole history was the worse failure.)*
 
 ### D282. The watcher: round-robin scopes, a silent baseline, retries until sent
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/watcher.ts`, `near.ts`;
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/admin/src/watcher.ts`, `near.ts`;
   `apps/api/src/rpc/admin.ts` (`listApps`, `getApp` take `system`) · Source: spec §On-chain owner actions (watcher)
 - Decision:
   - Each run reads up to 15 scopes of `AdminRpc.listScopes` after `watch.scope_cursor` (wrapping to the start), one
@@ -4629,7 +4629,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   unannounced. Registration and the first read are minutes apart and the registration itself is a staff action.
 
 ### D283. `StaffRpc.getOrg` also returns the org's live owner grants
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/console/src/views.ts` `grantsOf`,
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/console/src/views.ts` `grantsOf`,
   `staff-rpc.ts` · Source: spec §RPC (`getOrg` → org, members, invites), §Admin BFF routes ("pending invites and
   grants", cancel by id)
 - Decision: an additive `grants` field (`OwnerGrantView[]`, not cancelled and not applied, newest first, at most 100;
@@ -4638,7 +4638,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   member at all.
 
 ### D284. The admin config: where it lives, the Hyperdrive id, what it binds in C8
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/scripts/gen-wrangler.ts` · Source:
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/admin/scripts/gen-wrangler.ts` · Source:
   spec §Topology (admin routes), §Bindings, build plan C8
 - Decision:
   - `admin.origin` on `https://<admin.workerName>.<subdomain>.workers.dev` gives `workers_dev: true` in a dev env
@@ -4653,7 +4653,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
 - Why: nothing half-wired; the spec allows workers.dev only for a dev env without a Hana zone.
 
 ### D285. The owner/contact flag and C8's part of the security screen
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/routes.ts` (`GET
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/admin/src/routes.ts` (`GET
   /api/orgs/:org` flags), `security.ts` · Source: spec §Hana admin console (screens)
 - Decision: the org screen flags an org with **no security contacts** and lists **owners who aren't security
   contacts** (the onboarding default makes every owner a contact). `GET /api/security` in C8 shows the notice backlog,
@@ -4700,7 +4700,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   caller could attach any address to any user); partners seeing emails by default.
 
 ### D311. The wallet record: ECDSA and Ed25519 over a `hana-id/wallet-record/v1` statement, the identity proof's scheme
-- Date 2026-11-04 · Status: to confirm (decided while building D310) · Built on `feat/wallet-directory`
+- Date 2026-11-04 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) (decided while building D310) · Built on `feat/wallet-directory`
   (`packages/core/src/wallet-record.ts`, `test/wallet-record.test.ts`) · Source: D310 point 3, D179
 - Decision: each address is proven by its own key over
   `"hana-id/wallet-record/v1" ‖ 0x00 ‖ borsh(env) ‖ borsh(signer) ‖ borsh(app_id) ‖ borsh(scope_id) ‖ borsh(path) ‖
@@ -4744,7 +4744,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   session's key, so the row stays under its own user).
 
 ### D312. The user id is the usage ledger's uid, `hu_` + Crockford base32; the Support ID is its first 8 characters
-- Date 2026-11-04 · Status: to confirm (decided while building D310) · Built on `feat/wallet-directory`
+- Date 2026-11-04 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) (decided while building D310) · Built on `feat/wallet-directory`
   (`packages/console-core/src/users.ts`, `apps/api/src/directory/store.ts` `directoryUser`) · Source: D310 point 2,
   D96, D144, D276
 - Decision: a user's id is deterministic: the uid (`HMAC-SHA256(USER_ID_KEY, "hana-id/uid/v1" ‖ borsh(scope) ‖
@@ -4768,7 +4768,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   wanted one id, the one their backends already store (Privy's DID).
 
 ### D313. `POST /v1/wallets/record`: the vault gate, the records, the session on that exact path; no session-key signature
-- Date 2026-11-04 · Status: to confirm (decided while building D310) · Built on `feat/wallet-directory`
+- Date 2026-11-04 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) (decided while building D310) · Built on `feat/wallet-directory`
   (`apps/api/src/directory/record.ts`, `test/wallet-directory.test.ts`) · Source: D310 point 3
 - Decision: the endpoint takes `{sessionPublicKey, issuedAtMs, path, wallets: {stellar, evm}}` (≤ 4 KiB) from the vault
   origin only (the vault gate and `vaultLimits`, as `/v1/vault/*`), refuses a statement time outside ±5 min
@@ -4792,7 +4792,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   User ID and Support ID come from it); the log's `code` says which (`no_user_id_key`, `no_sub_key`, `bad_sub_key`).
 
 ### D314. Identities kept current from chain reads after the API's own relays; one row per identity per scope
-- Date 2026-11-04 · Status: to confirm (decided while building D310) · Built on `feat/wallet-directory`
+- Date 2026-11-04 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) (decided while building D310) · Built on `feat/wallet-directory`
   (`apps/api/src/directory/sync.ts`, `links.ts`, `login.ts`, `session-standing.ts` `confirmed`) · Source: D310 point 4
 - Decision:
   - After a successful link relay (`/v1/link`, `/v1/link/cancel`, `/v1/link/unlink`) the API reads the account root's
@@ -4813,7 +4813,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   standing read already has).
 
 ### D315. The read APIs: staff get identities with subs; partners get their own org's users with kinds and wallets only
-- Date 2026-11-04 · Status: to confirm (decided while building D310) · Built on `feat/wallet-directory`
+- Date 2026-11-04 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) (decided while building D310) · Built on `feat/wallet-directory`
   (`apps/api/src/directory/read.ts`, `rpc/admin.ts`, `rpc/console.ts`, console-core `users.ts`) · Source: D310 point 5,
   D275
 - Decision:
@@ -4836,7 +4836,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   Pages tie by User ID, so the cursor is `lastSeenAt:u1_…` (no internal id in a partner's hands).
 
 ### D316. The admin CLI reads the wallet directory without the statement in a process argument
-- Date 2026-11-04 · Status: to confirm (decided while building D310) · Built on `feat/wallet-directory`
+- Date 2026-11-04 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) (decided while building D310) · Built on `feat/wallet-directory`
   (`scripts/lib/d1.ts` `apiPrivateD1Execute`, `scripts/lib/admin-users.ts`, `scripts/admin.ts`) · Source: D269's CLI
   rule, D310 point 5
 - Decision: the hot DB now holds subs and wallet addresses, so `user:*` read it as they read the issuer's D1: locally a
@@ -4850,7 +4850,7 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   `--user` takes `u1_…` (exact case), `hu_…` (any case) or a Support ID.
 
 ### D317. The vault reports the wallet once per login, in the background, with a 15 s limit and no retry
-- Date 2026-11-04 · Status: to confirm (decided while building D310) · Built on `feat/wallet-directory`
+- Date 2026-11-04 · Status: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) (decided while building D310) · Built on `feat/wallet-directory`
   (`packages/web/src/vault/wallet-record.ts`, `vault.ts` `recordWallets`, `test/vault/wallet-record.test.ts`) · Source:
   D310 point 3
 - Decision: when `finishLogin` adopts a new session (the login succeeded and its key passed the pairing check), the
@@ -4917,7 +4917,7 @@ Readings of `docs/batch-c-spec.md` ("Other app settings, name and logo", "R2", "
 made while building C11, where the spec is silent or loose. Each took the safer reading.
 
 ### D300. The logo upload takes a raw `application/octet-stream` body: the one exception to the console's JSON-only CSRF rule
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/console/src/csrf.ts` (`bodyTypeFor`,
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/console/src/csrf.ts` (`bodyTypeFor`,
   `LOGO_UPLOAD_PATH_RE`), `src/logo.ts` `logoUploadRoute`
 - Decision: the spec has the upload as a raw body, but also says that every non-GET request needs `content-type:
   application/json`. So `POST /api/orgs/:org/apps/:app/logo` needs exactly `application/octet-stream`, and every
@@ -4935,7 +4935,7 @@ made while building C11, where the spec is silent or loose. Each took the safer 
   - reading the version inside the request (getApp only): that turns the CAS into "last writer wins" for the owner.
 
 ### D301. Upload order: cheap checks, the decoder's `info`, then `getApp`, then the paid transform; the replaced logo is the one at the CAS version
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/console/src/logo.ts`, `src/cron.ts`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/console/src/logo.ts`, `src/cron.ts`
   `purgeLogos`, `src/limits.ts` (`logo`)
 - Decision:
   - **Order.** First the bytes (size, magic bytes, container; D302), then `IMAGES.info` (type, size, shape), then
@@ -4965,7 +4965,7 @@ made while building C11, where the spec is silent or loose. Each took the safer 
   objects first in the purge (C7's order: an un-mark between the select and the delete loses the current logo).
 
 ### D302. "Polyglot" means anything that isn't exactly one static image of the type its magic bytes name
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/console/src/logo-format.ts`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/console/src/logo-format.ts`
 - Decision: an upload is refused `logo_type` when:
   - there are bytes after the format's own end (PNG's IEND, JPEG's EOI, the WebP RIFF size);
   - a PNG chunk's CRC is wrong, the first chunk isn't IHDR, there is no IDAT, a JPEG has no scan or no EOI or has
@@ -4982,7 +4982,7 @@ made while building C11, where the spec is silent or loose. Each took the safer 
   chunks); passing animated files with `anim: false`.
 
 ### D303. The re-encode: Images `fit: 'pad'` on transparent, PNG, then the console strips the output to its image chunks
-- Date 2026-11-04 · Status: decided while building, to confirm at milestone M5 against the real binding ·
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); its check against the real binding still runs at milestone M5 ·
   Built: `apps/console/src/logo.ts` (`LOGO_TRANSFORM`, `LOGO_OUTPUT`, `reencode`), `src/logo-format.ts` `stripPng`
 - Decision:
   - The spec's "fit contain, transparent padding" maps to `{width: 256, height: 256, fit: 'pad', background:
@@ -5000,7 +5000,7 @@ made while building C11, where the spec is silent or loose. Each took the safer 
   `gAMA` (colour hints, not personal data, but nothing needs them in a 32 px logo).
 
 ### D304. The files Worker re-checks each object more than the spec asks, and answers errors uncached
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/files/src/index.ts`, `src/rules.ts`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/files/src/index.ts`, `src/rules.ts`
 - Decision:
   - The spec checks that the object exists, has `contentType` `image/png` and starts with the PNG signature. The
     files Worker also requires the object to be ≤ 128 KiB and its sha256 to equal the hash in its key: a key is
@@ -5016,7 +5016,7 @@ made while building C11, where the spec is silent or loose. Each took the safer 
 - Rejected: streaming the body unchecked; sending HSTS (the spec lists the headers exactly).
 
 ### D305. The auth pages get the logo from GET /v1/app through the vault's messages, never the inlined config
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/api/src/handlers.ts`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/api/src/handlers.ts`
   (`handleAppConfig`), `packages/core/src/logo.ts`, `protocol.ts`, `packages/web/src/vault/{vault,login,approvals}.ts`,
   `src/auth/{logo,login-page,email-page,email-storage,approve-page,export-page}.ts`
 - Decision:
@@ -5041,7 +5041,7 @@ made while building C11, where the spec is silent or loose. Each took the safer 
   over decoration).
 
 ### D306. `FILES_ORIGIN` joins `img-src` in place, on the logo pages only, in both policies; a malformed value is left out
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `packages/web/src/auth/pages.ts`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `packages/web/src/auth/pages.ts`
   (`LOGO_PAGES`, `imgSources`, `authPageMetaCsp`), `apps/api/src/pages/host.ts` (`AUTH_LOGO_PATHS`, `FILES_ORIGIN`),
   `src/vault/page.ts` `pageHeaders`, `scripts/pages-wrangler.ts`, `packages/web/scripts/gen-envs.ts` (`filesOrigin`)
 - Decision:
@@ -5059,7 +5059,7 @@ made while building C11, where the spec is silent or loose. Each took the safer 
   failing over a logo).
 
 ### D307. The files Worker's placement follows `files.origin`, like the page Workers; on workers.dev it must be its own name
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/files/scripts/gen-wrangler.ts`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/files/scripts/gen-wrangler.ts`
 - Decision:
   - A `<files.workerName>.<subdomain>.workers.dev` origin is allowed in `local*`/`sandbox*` envs only (D93), with
     `workers_dev: true`. Any other https host gets a Custom Domain route. A loopback origin is `wrangler dev`'s.
@@ -5072,7 +5072,7 @@ made while building C11, where the spec is silent or loose. Each took the safer 
 - Rejected: a route on the API Worker (D66: one thin Worker per extra Hana origin).
 
 ### D308. R2 rules: the `STATEMENTS` lock covers the whole bucket for 2557 days; the `EXPORTS` lifecycle applies to `exports/`, which C12 writes under
-- Date 2026-11-04 · Status: decided while building, to confirm · Written: `docs/operations.md` "Files Worker and
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Written: `docs/operations.md` "Files Worker and
   logos" (setup step 7)
 - Decision:
   - `STATEMENTS` gets one bucket-lock rule with an empty prefix (every object) and `--retention-days 2557`: 7 years,
@@ -5122,7 +5122,7 @@ decided while building, to confirm.
   (checking it costs nothing and binds the two tokens of one answer).
 
 ### D291. The membership rules run at `/api/auth/complete`; the handoff row carries the verified identity, scrubbed when used; the state is derived from the start handle
-- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-9`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built on `feat/batch-c-9`
   (`apps/console/src/auth-flow.ts` `flowState`, `callback`; `sign-in.ts` `completeSignIn`)
 - Decision:
   - The callback (auth origin) verifies the token and writes the handoff row; the membership rules and invite
@@ -5142,7 +5142,7 @@ decided while building, to confirm.
 - Rejected: storing the state in clear (a D1 read would give a live state); keeping the identity until the purge.
 
 ### D292. `/api/auth/complete` answers with redirects: `/` on success, `/signin#error=<code>` on any refusal
-- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-9` (`sign-in.ts`,
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built on `feat/batch-c-9` (`sign-in.ts`,
   console-core `SIGN_IN_ERRORS`, the SPA's `/signin`)
 - Decision: complete is the target of a top-level navigation (the callback's 303), so it never answers JSON: a refusal
   is `303 /signin#error=<code>` with the pre-flow cookie cleared, the code one of `not_invited`, `invite_invalid`,
@@ -5152,7 +5152,7 @@ decided while building, to confirm.
 - Rejected: a JSON 403 to a navigation (the browser shows raw JSON); a query parameter (logged with the URL).
 
 ### D293. An invite link that names no live invite is refused at the start; invite refusals at completion are logged, not audited
-- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-9`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built on `feat/batch-c-9`
   (`auth-flow.ts` `createLoginFlow`, `sign-in.ts` `membershipRules`)
 - Decision:
   - `POST /api/auth/start` with an `invite` whose sha256 matches no open, notified invite answers `403
@@ -5170,7 +5170,7 @@ decided while building, to confirm.
   `not_invited`); auditing invite refusals (the spec's test row says none is written).
 
 ### D294. The console's Google client is the manifest's one `google` console audience; the console route is on by config
-- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-9`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built on `feat/batch-c-9`
   (`apps/console/scripts/gen-wrangler.ts` `consoleGoogleClientId`, `placement`; `apps/console-auth/scripts/gen-wrangler.ts`)
 - Decision:
   - `CONSOLE_GOOGLE_CLIENT_ID` is the single `["google", …]` entry of `consoleAudiences`; `gen` refuses none or several
@@ -5184,7 +5184,7 @@ decided while building, to confirm.
 - Rejected: a new `console.googleClientId` manifest field (one more thing to keep equal to `consoleAudiences`).
 
 ### D295. Open question 1 is tested by a script on the console client's real redirect URI; `at_hash` is the expected finding
-- Date 2026-11-04 · Status: decided while building, to confirm; **the spike is not run** (the user runs it after setup
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09, after reading the review's note; **the spike is not run** (the user runs it after setup
   step 11) · Built on `feat/batch-c-9` (`scripts/console-code-flow-spike.ts`, `scripts/lib/console-code-flow.ts`)
 - Decision: `corepack pnpm --filter @hana-id/scripts console-code-flow-spike <env>` runs the code flow with the console
   client for `scope=openid` and `scope=openid email`, on its only redirect URI (no extra one is registered): the
@@ -5203,7 +5203,7 @@ decided while building, to confirm.
   URI); a browser page like `spike-email.html` (the code exchange needs the client secret).
 
 ### D296. What partners see: staff as `hana`, no `sub`, no network data; the audit merged by time with a two-part cursor; frozen orgs read-only
-- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-9` (`apps/console/src/bff.ts`,
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built on `feat/batch-c-9` (`apps/console/src/bff.ts`,
   console-core `partner.ts`)
 - Decision:
   - The partner views (console-core `partner.ts`) carry no staff Access subject or staff address (an actor, inviter or
@@ -5220,7 +5220,7 @@ decided while building, to confirm.
   sources are two databases).
 
 ### D297. The SPA: React 18.3.1, React Router 6.30.1, Vite 7 with esbuild's JSX; Playwright under the CSP left for C17
-- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-9` (`apps/console/web/`,
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built on `feat/batch-c-9` (`apps/console/web/`,
   `vite.config.ts`, `scripts/test/spa-build.test.ts`)
 - Decision: `apps/console/web` builds to `apps/console/dist` (the Worker's assets; `deploy` builds first; the Worker
   tests serve a fixed stand-in, `test/assets`). No React Vite plugin (esbuild's automatic JSX), no modulepreload
@@ -5291,7 +5291,7 @@ decided while building, to confirm.
   unfreeze (nobody is told again that they are live).
 
 ### D350. A client proof pasted into the console is held to the claim allow-list; the PII warning names what stays public
-- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built on `feat/batch-c-10`
   (`apps/console/src/auth-token.ts` `verifyClientProof`, `actions.ts` `buildOwnerAction`, `web/src/pages/Scope.tsx`) ·
   Source: spec "On-chain owner actions" step 3; D274, D277
 - Decision: before an AddClient is built the console verifies the pasted proof (Google's JWKS, `iss`, `exp`, `aud` and
@@ -5306,7 +5306,7 @@ decided while building, to confirm.
 - Rejected: keeping the spec's wording (it would describe a proof Hana refuses); no warning (the `sub` is still public).
 
 ### D351. The client-proof helper uses Google's implicit flow with `scope=openid`, not Google Identity Services
-- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10` (`apps/console/src/scopes.ts`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built on `feat/batch-c-10` (`apps/console/src/scopes.ts`
   `helperHtml`, `helperRoute`) · Source: spec "On-chain owner actions" step 3 ("it loads GIS with that nonce")
 - Decision: the downloaded helper (a self-contained page, `Content-Disposition: attachment`, the client id, scope and
   client-proof nonce at the scope's current `action_nonce` inside it) sends the browser to Google's authorization
@@ -5320,7 +5320,7 @@ decided while building, to confirm.
   own origin, and the console never serves it).
 
 ### D352. The policy editor's consent preview is packages/web's own renderer, fed by a console check route
-- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built on `feat/batch-c-10`
   (`apps/console/web/src/pages/Consent.tsx`, `src/policy.ts` `policyCheckRoute`, `writes.ts`) · Source: spec "Policy and
   raw-signing input rules" ("the editor shows the consent screen as users will see it (`render-consent.ts`, …)")
 - Decision: the SPA imports `packages/web/src/auth/render-consent.ts` and `dom.ts` by relative path (no new package
@@ -5334,7 +5334,7 @@ decided while building, to confirm.
   console bundle and the server would still have to check).
 
 ### D353. Owner drift's SetOwners is built by the server from the org's owners and keeps the scope's NEAR owners
-- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10` (`apps/console/src/scopes.ts`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built on `feat/batch-c-10` (`apps/console/src/scopes.ts`
   `scopeAnswer`, `actions.ts` `buildOwnerAction`) · Source: spec "Apps, scopes and client mode" → "Owner drift"; D296
 - Decision: the scope page compares the org's usable owners (role or matured grant, not disabled) with the scope's
   on-chain `Oidc` owners and lists who is missing on chain, who is on chain but not an owner in the console, and how many
@@ -5347,7 +5347,7 @@ decided while building, to confirm.
 - Rejected: a free-form owner list; dropping `Near` owners.
 
 ### D354. A fresh sign-in's action is used once whatever the outcome; where each refusal lands
-- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10` (`apps/console/src/actions.ts`,
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09, after reading the review's note · Built on `feat/batch-c-10` (`apps/console/src/actions.ts`,
   `auth-flow.ts` `callback`, `web/src/pages/Action.tsx`) · Source: spec "Fresh sign-in", "On-chain owner actions" step 5
 - Decision:
   - Every step-up action has a page, `/actions/:id`, that shows the decoded action (what will be applied), the "Confirm
@@ -5372,7 +5372,7 @@ decided while building, to confirm.
   token for a later relay.
 
 ### D355. An owner sets `required_hd` only to their own session's Workspace domain
-- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10` (`apps/console/src/members.ts`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built on `feat/batch-c-10` (`apps/console/src/members.ts`
   `setOrgPolicy`) · Source: spec "Roles and permissions" (Org `required_hd`: owner, fresh sign-in)
 - Decision: `org.policy` refuses a domain other than the acting session's `hd` (`conflict`, before the sign-in and again
   in the batch); null (no requirement) is always allowed. The change, the action's consumption and the `org.policy`
@@ -5383,7 +5383,7 @@ decided while building, to confirm.
 - Rejected: allowing any domain with a warning.
 
 ### D356. The role matrix as built: frozen orgs keep exactly the cancels and the kill switches
-- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10` (`apps/console/src/writes.ts`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built on `feat/batch-c-10` (`apps/console/src/writes.ts`
   `ROUTES`, `runOrgRoute`; `test/writes.test.ts` "the role matrix") · Source: spec "Roles and permissions", "Console BFF
   routes"
 - Decision: every signed-in write route declares its role (`owner`) and whether a frozen org allows it. Open while
@@ -5399,7 +5399,7 @@ decided while building, to confirm.
 - Rejected: allowing `execute_change` in a frozen org (it makes a pending change take effect).
 
 ### D357. The partner Users screen ships behind `USERS_SCREEN` (off until an env's API runs D346)
-- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10` (`apps/console/src/users.ts`,
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built on `feat/batch-c-10` (`apps/console/src/users.ts`,
   `web/src/pages/Users.tsx`, `/api/me` `features.users`) · Source: D310, D346; the build brief ("if the wallet directory
   hasn't landed, build it against a typed client stub, behind a feature flag that's off")
 - Decision: `GET /api/orgs/:org/users` and `/users/:userId` (viewer) call `ConsoleRpc.listUsers` / `getUser` as
@@ -5415,7 +5415,7 @@ decided while building, to confirm.
 - Rejected: shipping the screen on with a mock answer; waiting for the wallet directory before building it.
 
 ### D358. Routes and checks the spec doesn't list
-- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/batch-c-10`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built on `feat/batch-c-10`
 - Decision:
   - `POST /api/orgs/:org/apps/:app/logo/remove {expectedVersion}` (C11's `logoRemoveRoute`), `POST …/policy/check`
     (D352), and the SPA pages `/actions/:id`, `/orgs/:org/scopes/:scope`, `/orgs/:org/users`.
@@ -5437,7 +5437,7 @@ Readings of `docs/governance-spec.md` "Monitoring in the admin portal", `docs/ba
 safer reading.
 
 ### D330. The watchdog's bearer stays in the admin Worker; its URL is the manifest's `watchdog.url`
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/watchdog.ts`,
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/admin/src/watchdog.ts`,
   `scripts/gen-wrangler.ts`; `packages/env/src/schema.ts` (`watchdog.url`, `watchdogUrlProblem`) · Source:
   governance-spec "Status endpoint" ("a bearer token that only the admin Worker holds"), build plan C14
 - Decision:
@@ -5458,7 +5458,7 @@ safer reading.
   with the header added (the browser would choose the path).
 
 ### D331. Bounds on the watchdog's answers: caps, one deadline, plain text
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/watchdog.ts`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/admin/src/watchdog.ts`
   (`WATCHDOG_LIMITS`, `watchdogTiming`), `src/plain.ts`, `src/monitoring.ts` · Source: build plan C14 ("size-cap and
   time out the watchdog responses, and render them as text only")
 - Decision:
@@ -5476,7 +5476,7 @@ safer reading.
   these bounds keep that text honest and the page usable.
 
 ### D332. The acknowledge button: who, which alerts, what it does not do
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/monitoring.ts` (`ackRoute`,
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/admin/src/monitoring.ts` (`ackRoute`,
   `ackBy`, `alertView`), `public/app.js` · Source: governance-spec "Monitoring in the admin portal" ("acknowledge
   (posted to the watchdog's ack endpoint, recorded with the Access identity)"), D85
 - Decision:
@@ -5494,7 +5494,7 @@ safer reading.
 - Why: the identity must be the one Access verified; an ack button on a warning or info alert would stop nothing.
 
 ### D333. One pending-upgrades view for both consoles, and a release registry for the commit and build
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `packages/console-core/src/governance.ts`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `packages/console-core/src/governance.ts`
   (`pendingUpgradesView`, `CONTRACT_RELEASES`, `releaseProblems`), `apps/api/src/rpc/{admin,console}.ts`
   (`pendingUpgrades`) · Source: governance-spec "Alerts" (the page shows "code hash, source commit,
   reproducible-build command, diff to the last release, countdown"), D86 Q11, Q14
@@ -5517,7 +5517,7 @@ safer reading.
   commit and command out until mainnet (the page would ship without what the spec says it shows).
 
 ### D334. The governance read is `AdminRpc.governance`, the same snapshot as `GET /v1/governance`; the portal's own chain and DAO reads are deferred
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/api/src/governance-status.ts`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09, after reading the review's note · Built: `apps/api/src/governance-status.ts`
   (`governanceSnapshot`), `apps/api/src/rpc/admin.ts` · Source: build plan C14 ("the governance state from `GET
   /v1/governance`"), governance-spec "Monitoring in the admin portal" (the admin Worker reads the chain itself)
 - Decision:
@@ -5537,7 +5537,7 @@ safer reading.
   than a second parser of the same views.
 
 ### D335. The partner console's route is `GET /api/orgs/:org/governance/pending-upgrades`, checked against the membership twice
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/console/src/governance.ts`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/console/src/governance.ts`
   (`pendingUpgradesRoute`, not routed until C10), `ConsoleRpc.pendingUpgrades` · Source: spec §Console BFF routes
   (`GET /api/governance/pending-upgrades`, role "session"), build plan C14
 - Decision: the route sits under the org (any member, any role) rather than at the spec's org-less path: every
@@ -5549,7 +5549,7 @@ safer reading.
 - Rejected: the org-less path with an implicit org (the first membership: arbitrary for a member of several).
 
 ### D336. The playbooks are served by the admin Worker from the bundled package; the search runs there
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/playbooks.ts`,
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/admin/src/playbooks.ts`,
   `public/app.js` · Source: spec "Security & monitoring: recovery playbooks" ("the admin SPA imports the package at
   build time"; search "client-side")
 - Decision: the SPA has no build step (D278), so the Worker bundles `@hana-id/playbooks` and serves `GET
@@ -5564,7 +5564,7 @@ safer reading.
   the next admin deploy.
 
 ### D337. The findings the portal shows, and the check registry
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/monitoring.ts`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/admin/src/monitoring.ts`
   (`findingsOf`), `src/monitoring-registry.ts` · Source: D83 (the view's list and the standing rule), `api.md` "What
   the portal derives from it", operations.md "Governance status for the admin portal"
 - Decision:
@@ -5585,7 +5585,7 @@ safer reading.
 - Why: D83's standing rule, enforced by a test on each side.
 
 ### D338. The C14 screens and their routes
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/public/app.js`, `app.css` ·
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/admin/public/app.js`, `app.css` ·
   Source: spec "Security & monitoring: recovery playbooks" (`/security/playbooks`, `/security/playbooks/<id>`)
 - Decision: three nav entries: Security & monitoring (`/security/monitoring`), Pending upgrades (`/security/upgrades`)
   and Playbooks (`/security/playbooks`, one page per id); C8's "Feed and notices" keeps `/security`. The monitoring
@@ -5634,7 +5634,7 @@ Made while building C12 (`docs/batch-c-build-plan.md` C12, `docs/batch-c-spec.md
 changes a derivation path or an address. Every one is **decided while building, to confirm**.
 
 ### D320. C12's Neon migration is `0006_reports.sql`; C13 takes `0007`; one billing rule in `usage.classified`
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/api/migrations-usage/0006_reports.sql`,
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/api/migrations-usage/0006_reports.sql`,
   `apps/api/test-usage/reports.test.ts` · Source: build plan "Conventions" (C12 = 0004, C13 = 0005), taken by the email
   work's `0004_email_counts.sql` and `0005_link_events.sql`
 - Decision:
@@ -5657,7 +5657,7 @@ changes a derivation path or an address. Every one is **decided while building, 
   separately in the report and the ledger SQL (two rules drift).
 
 ### D321. Settlement bills a relayed event only for its own transaction (the C4 obligation, review L7)
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/settlement.ts`, `near.ts`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/admin/src/settlement.ts`, `near.ts`
   (`txFinal`, `parseTxResult`), `0006_reports.sql` (`gas_settlements.reason`, `ops.settlement_alerts`,
   `usage.classified`), `apps/admin/test-ops/settlement.test.ts` · Source: build plan C12 "Obligation from C4", D222
 - Decision: before a relayed event is billed:
@@ -5684,7 +5684,7 @@ changes a derivation path or an address. Every one is **decided while building, 
   arguments against the scope (borsh/JSON per method, more surface for the same guarantee).
 
 ### D322. Settlement's run: the 40-call budget, any age, one read an hour, alerts and notices first
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/settlement.ts`,
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/admin/src/settlement.ts`,
   `ledger-cron.ts`, `ledger.ts` (`settlementQueue`, `ops.settlement_tries`) · Source: spec "Settlement" (≤ 500 a run,
   the last 3 days), D280
 - Decision:
@@ -5702,7 +5702,7 @@ changes a derivation path or an address. Every one is **decided while building, 
 - Why: the spec's per-run cap assumed the paid plan; the budget is the binding constraint until the plan is settled.
 
 ### D323. The nonce cross-check: a silent baseline, relayed rows only, skipped keys never alert
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/nonce-check.ts`, `ledger.ts`,
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/admin/src/nonce-check.ts`, `ledger.ts`,
   `alerts.ts` · Source: spec "Daily nonce cross-check", D34, D93 Q13
 - Decision: the keys are `AdminRpc.relayerKeys` (both pools); `view_access_key` at `finality: final` on
   `RELAYER_ACCOUNT`. Explained: N unchanged since the key's last check; or a **relayed** ledger row with
@@ -5716,7 +5716,7 @@ changes a derivation path or an address. Every one is **decided while building, 
   next day's check explains it.
 
 ### D324. Reports and the statement CSV: link relays and identity tokens added; exact decimals; what is billed
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `0006_reports.sql` (`usage.org_report`),
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `0006_reports.sql` (`usage.org_report`),
   `packages/console-core/src/reports.ts`, `apps/admin/src/statement.ts` · Source: spec "Reports", "CSV"
 - Decision:
   - Two count columns the spec's list predates: `link_actions` (ok `link`, `link_cancel`, `link_unlink` events, email
@@ -5734,7 +5734,7 @@ changes a derivation path or an address. Every one is **decided while building, 
   disagree with the ledger CSV's row count.
 
 ### D325. The NEAR/USD rate: CoinGecko's daily history, ten days back, never replaced; the audited override
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/rates.ts`,
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09, after reading the review's note · Built: `apps/admin/src/rates.ts`,
   `report-routes.ts` (`PUT /api/rates/:day`), `0006_reports.sql` (`usage.override_rate`, `usage.rate_overrides`) ·
   Source: spec "Crons", D93 Q17
 - Decision:
@@ -5752,7 +5752,7 @@ changes a derivation path or an address. Every one is **decided while building, 
 - To confirm: the source is named in the service contract (D93); the history endpoint's rate limits on the free key.
 
 ### D326. Issuing a statement: refusals, keys, the commit point, the notice, the files served only by hash
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/statements.ts`,
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/admin/src/statements.ts`,
   `statement.ts`, `statement-pdf.ts`, `alerts.ts` (`runStatementNotices`), `report-routes.ts`,
   `apps/console/src/reports.ts` · Source: spec "Monthly statements", D92
 - Decision:
@@ -5774,7 +5774,7 @@ changes a derivation path or an address. Every one is **decided while building, 
 - Why: Neon's row is the only commit point the spec gives; the hash check costs one digest per download.
 
 ### D327. The admin's own acts are audited through `StaffRpc.recordStaffAction`
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/console/src/staff-rpc.ts`, `audit.ts`,
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/console/src/staff-rpc.ts`, `audit.ts`,
   `packages/console-core/src/staff.ts` · Source: spec "Monthly statements" ("audited (`statement.issued`)"), "Audit"
 - Decision: a Hana-only `StaffRpc.recordStaffAction({orgId?, action, target?, details})` appends the `audit_log` row of
   an act with no RPC write of its own: `statement.issued` (month, both hashes, `as_of`, lines), `ledger.exported`
@@ -5787,7 +5787,7 @@ changes a derivation path or an address. Every one is **decided while building, 
   the admin Worker.
 
 ### D328. The partner side: `ConsoleRpc.usage` / `statements` / `ledger`, and the console's backend for C10
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/api/src/usage/reports.ts`,
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/api/src/usage/reports.ts`,
   `src/rpc/console.ts`, `apps/console/src/reports.ts` · Source: spec "RPC interfaces", "Console BFF routes", "Reports"
 - Decision:
   - The three methods call the owner's functions over the writer's `USAGE_DB` and issue no hot-DB statement, so they
@@ -5803,7 +5803,7 @@ changes a derivation path or an address. Every one is **decided while building, 
     CSV streams pages; a page failing after the first ends the file with an `# incomplete` line (at most 200 pages).
 
 ### D329. Exports, partitions and the admin's crons
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/statements.ts`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/admin/src/statements.ts`
   (`exportLedger`), `ledger-cron.ts`, `crons.ts`, `scripts/gen-wrangler.ts`, `security.ts` · Source: spec "Crons",
   "Ledger CSV", D280, D308
 - Decision:
@@ -5823,7 +5823,7 @@ changes a derivation path or an address. Every one is **decided while building, 
 ## Batch C13: retention (branch `feat/batch-c-13`), 2026-11-04
 
 ### D360. The monthly retention job rides the 15-minute trigger until a run of the month completes; at most 12 calls
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/retention.ts`,
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/admin/src/retention.ts`,
   `retention-store.ts`, `ledger-cron.ts`; `apps/admin/test-ops/retention.test.ts` · Source: spec "Crons" (admin,
   monthly, the 1st 01:00 UTC), "Retention" ("Monthly purge job"), D90, D280, D329
 - Decision:
@@ -5856,7 +5856,7 @@ changes a derivation path or an address. Every one is **decided while building, 
   or an outage would skip a month).
 
 ### D361. The erasure path: one script, `scripts/uid-erase.ts`, per scope, across the ledger and both directories
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `scripts/uid-erase.ts`,
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `scripts/uid-erase.ts`,
   `scripts/lib/uid-erase.ts`, console-core `uidOfInternalId`; `scripts/test/uid-erase.test.ts` · Source: spec "CLI"
   (`uid:erase --scope --provider --sub`, the proposed `user:erase --provider --sub`), D269, D275, D276 (its open
   "whether `user:erase` lands here or with C13"), D310
@@ -5891,7 +5891,7 @@ changes a derivation path or an address. Every one is **decided while building, 
   one partner's data gone); erasing by the named identity alone (its account's rows sit under the root's uid).
 
 ### D362. `usage.erase_uid(uid)` erases by uid alone; the uid indexes move from C15 into 0007
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/api/migrations-usage/0007_retention.sql`;
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/api/migrations-usage/0007_retention.sql`;
   `apps/api/test-usage/retention.test.ts` · Source: spec "Usage ledger" functions (`usage.erase_uid(app_ids text[],
   uid bytea)`), build plan C15 (`events (uid, at) WHERE uid IS NOT NULL`, `app_users (uid)`)
 - Decision: `erase_uid` takes the uid only and deletes its `app_users` rows and NULLs it on every event, **in any app**.
@@ -5903,7 +5903,7 @@ changes a derivation path or an address. Every one is **decided while building, 
 - Rejected: the spec's signature (a correctness dependency on the caller's app list for no benefit).
 
 ### D363. An app deletion reaches the new stores: the wallet directory of a scope left without apps, the issuer's app rows
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/api/src/changes/retention.ts`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09, after reading the review's note · Built: `apps/api/src/changes/retention.ts`
   `purgeDirectory`, `AdminRpc.purgeDirectory`; `scripts/lib/admin-retention.ts`; `apps/api/test/rpc-retention.test.ts`,
   `scripts/test/uid-erase.test.ts` · Source: spec "Retention" (`app_users`: app deleted + 30 days), D269, D310
 - Decision:
@@ -5924,7 +5924,7 @@ changes a derivation path or an address. Every one is **decided while building, 
   the staff and partner views); keeping the directory of a dead scope for good.
 
 ### D364. The audit purges keep what drift detection and the gate still read
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/api/src/changes/retention.ts`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/api/src/changes/retention.ts`
   `purgeAudit` (with `changes/drift.ts` `DRIFT_LEDGER_KINDS`), `apps/console/src/retention.ts`;
   `apps/api/test/rpc-retention.test.ts`, `apps/console/test/retention.test.ts` · Source: spec "Retention" (`audit_log`,
   `app_changes`, `guarded_changes`, `owner_grants`: 5 years, the triggers' constant), "Drift detection"
@@ -5947,7 +5947,7 @@ changes a derivation path or an address. Every one is **decided while building, 
   the app lives.
 
 ### D365. The issuer's part of the job is an operator command, `admin <env> retention:issuer`
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `scripts/lib/admin-retention.ts`, `scripts/admin.ts`;
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09, after reading the review's note · Built: `scripts/lib/admin-retention.ts`, `scripts/admin.ts`;
   `scripts/test/uid-erase.test.ts` · Source: spec "Retention" (issuer `email_admin_audit`: "an issuer purge to add with
   C13"), D269, D275, D276 ("`DirectoryRpc` stays read-only")
 - Decision: the admin Worker has **no binding to the issuer** (C8b isn't built, and D276 keeps `DirectoryRpc` read
@@ -5964,7 +5964,7 @@ changes a derivation path or an address. Every one is **decided while building, 
 - Rejected: an issuer D1 binding in the admin Worker (D275 (a): read-write on the whole database).
 
 ### D366. Nothing erasure or retention does touches what derivation depends on
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `scripts/lib/uid-erase.ts`,
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `scripts/lib/uid-erase.ts`,
   `0007_retention.sql`, `apps/api/src/changes/retention.ts` · Source: task brief; `docs/architecture.md` "Key
   derivation"
 - Decision: the chain stays the source of truth for identities, accounts and paths, and nothing here writes to it; the
@@ -5975,7 +5975,7 @@ changes a derivation path or an address. Every one is **decided while building, 
 - Why: an erasure of Hana's records must never cost a user their funds.
 
 ### D367. `retention_failed`: one digest a day for failures, once a month overdue, the due tick for a skipped run
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/retention.ts`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/admin/src/retention.ts`
   `runRetentionAlerts`, `sendRetentionSkipped`, `email/ledger-messages.ts` `retentionFailed` · Source: spec "Email"
   (direct `retention_failed`), "Retention" ("a failed or skipped run emails `retention_failed` to the security alias and
   shows as a warning until a run succeeds")
@@ -5991,7 +5991,7 @@ changes a derivation path or an address. Every one is **decided while building, 
 - Why: the spec's "failed or skipped" without an hourly email storm.
 
 ### D368. The periods the spec left open
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `0007_retention.sql` (`ops.purge_expired`,
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `0007_retention.sql` (`ops.purge_expired`,
   `drop_expired_partitions`, `retention_due`, `ops.erasures`) · Source: spec "Retention" (`ops.*`: "current;
   nonce_checks 400 days")
 - Decision: `ops.rejection_alerts` 400 days (as `nonce_checks`); `ops.scope_watch` rows notified 400 days ago (a
@@ -6005,7 +6005,7 @@ changes a derivation path or an address. Every one is **decided while building, 
 - Why: every table gets a period; none longer than its purpose.
 
 ### D369. The shapes the spec didn't fix: `deletedApps` pages, `strip_uids` batches, a read-only screen
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: console-core `retention.ts`,
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: console-core `retention.ts`,
   `apps/admin/src/retention-routes.ts`, `public/app.js` · Source: spec "RPC interfaces" (`deletedApps(c: Ctx & {before})
   : {appIds}`), "Usage ledger" (`strip_uids()`, "batches of 10 000"), "Admin BFF routes" (`GET /api/retention`)
 - Decision:
@@ -6025,7 +6025,7 @@ The SPA screens over C12's report backend and C14's pending-upgrades route, both
 follow-up there.
 
 ### D370. Three tabs for any member: Usage, Statements, Pending upgrades; reads only, frozen orgs included
-- Date 2026-11-04 · Status: decided while building, to confirm · Built on `feat/console-reports-upgrades`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built on `feat/console-reports-upgrades`
   (`apps/console/web/src/pages/{Usage,Statements,Upgrades}.tsx`, `App.tsx`, `Shell.tsx`) · Source: spec "Roles and
   permissions" ("View … usage, statements": owner and viewer), D86 Q11, D335, D356
 - Decision: the org shell gets the tabs Usage (`/orgs/:org/usage`), Statements (`/orgs/:org/statements`, one statement
@@ -6038,7 +6038,7 @@ follow-up there.
   every org page.
 
 ### D371. A statement's issuer is shown to partners as `hana`, never the staff address
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/console/src/reports.ts` (`listItem`),
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/console/src/reports.ts` (`listItem`),
   `test/reports.test.ts` · Source: D296 ("an actor … that isn't a `usr_…` id is `hana`")
 - Decision: C12's console backend passed `issuedBy` (the staff member's address the admin Worker records) through to
   the statement list and the on-screen statement. Statements are only issued by staff, so the console's answers now say
@@ -6048,7 +6048,7 @@ follow-up there.
 - Rejected: dropping the field (StatementMeta's shape is the spec's).
 
 ### D372. Downloads are plain links to the console's routes; the hashes beside them; the ledger at the statement's as_of
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `web/src/pages/Statements.tsx` · Source: spec
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `web/src/pages/Statements.tsx` · Source: spec
   "Monthly statements" ("partners download the same files read-only … with the sha256 beside them"), "Ledger CSV", D92,
   D326
 - Decision:
@@ -6068,7 +6068,7 @@ follow-up there.
   memory); a check request before each download (one more read of the rate-limited RPC per click).
 
 ### D373. The usage screen shows the server's rows as they are: every statement count, exact NEAR and USD, no totals added
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `web/src/pages/Usage.tsx`, `web/src/units.ts`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `web/src/pages/Usage.tsx`, `web/src/units.ts`
   · Source: spec "Reports", D324, D297
 - Decision:
   - The form: from, to (UTC days, this UTC month by day by default), by day or month, and an app filter (the org's apps
@@ -6087,7 +6087,7 @@ follow-up there.
 - Rejected: a totals row computed in the browser (it could disagree with the statement).
 
 ### D374. Pending upgrades: countdowns on the reader's clock without a reload; "not a published release" as an alert
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `web/src/pages/Upgrades.tsx`, `web/src/lib.tsx`
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `web/src/pages/Upgrades.tsx`, `web/src/lib.tsx`
   (`useNow`, `countdown`) · Source: D86 Q11, D333, governance-spec "Alerts"
 - Decision:
   - The page shows the signer and env, when the chain was read, the governance delay, the pause state (an alert), and
@@ -6107,7 +6107,7 @@ follow-up there.
 ## The admin crons' call budget (branch `fix/admin-cron-budget`), 2026-11-04
 
 ### D380. Every outbound call of an admin cron run comes out of its 40, RPCs and the connection included; at most 30 RPCs
-- Date 2026-11-04 · Status: decided while building, to confirm · Built: `apps/admin/src/mail.ts` (`Budget`,
+- Date 2026-11-04 · Status: decided while building, confirmed by the user 2026-11-09, after reading the review's note · Built: `apps/admin/src/mail.ts` (`Budget`,
   `metered`, `meteredEnv`, `RPC_BUDGET`, `OutOfBudget`), `cron.ts`, `ledger-cron.ts`, `notices.ts`, `feed.ts`,
   `watcher.ts`, `alerts.ts`, `retention.ts`; `apps/admin/test-ops/budget.test.ts` · Amends D280, D322 and D360
 - The bug: D280 counted emails and `get_scope` only, with "room for the RPC calls between them". C12 added RPCs that
@@ -6155,7 +6155,7 @@ follow-up there.
 ## WebKit Linux's Ed25519 keys and the e2e flakes (branch `fix/e2e-flakes`), 2026-11-05
 
 ### D381. The session key's WebCrypto `generateKey` is asked again after an `OperationError`, up to 4 attempts
-- Date 2026-11-05 · Status: decided while fixing CI's Playwright flakes, to confirm · Built:
+- Date 2026-11-05 · Status: decided while fixing CI's Playwright flakes, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built:
   `packages/core/src/session.ts` (`newSessionKey`, `SESSION_KEYGEN_ATTEMPTS`); tests: `packages/core/test/layouts.test.ts`
   ("D381"), `apps/e2e/tests/login.spec.ts` ("D381")
 - The bug: WebKit's Linux ports (WebKitGTK and WPE: GNOME Web, embedded WPE browsers, Playwright's Linux WebKit, the
@@ -6202,7 +6202,7 @@ follow-up there.
   watchdog's fetches can be told apart, D210).
 
 ### D383. CI runs only the jobs a change can affect; WebKit and Firefox nightly; the identity probe every 3 hours
-- Date 2026-11-05 · Status: **asked for by the user** (implementation choices: to confirm) · Built:
+- Date 2026-11-05 · Status: **asked for by the user** (implementation choices: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)) · Built:
   `.github/workflows/ci.yml` (job `changes`, the gates, the nightly schedule), `scripts/ci-changes.mjs`,
   `.github/workflows/identity-probe.yml` (`17 */3 * * *`) · Amends D382
 - Context: Nov 1–5 hana-id used about 2 270 billed Actions minutes (about $13.60 at $0.006 a minute; the org's
@@ -6228,7 +6228,7 @@ follow-up there.
   costs the minutes back).
 
 ### D384. Every Worker and page bundle carries a build id; `deploy-check` compares them after a deploy
-- Date 2026-11-05 · Status: **asked for by the user** (implementation choices: to confirm) · Built:
+- Date 2026-11-05 · Status: **asked for by the user** (implementation choices: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)) · Built:
   `packages/env/src/build-id.ts`, `local-build.ts`; `apps/api/scripts/deploy.ts`, `src/build.ts`, `src/pages/host.ts`
   (`/.well-known/hana-build`), `GET /v1/health` `build`; `apps/email-issuer/scripts/deploy.ts`, `GET /v1/email/health`;
   `packages/web/scripts/build-vault.ts`, `build-auth-pages.ts`; `scripts/lib/deploy-check.ts` · Number note: D384
@@ -6264,7 +6264,7 @@ follow-up there.
 ## The vault's WebCrypto failures and the WebKit Linux audit (branch `fix/webcrypto-linux-webkit`), 2026-11-05
 
 ### D385. A session key the browser can't make is `derive_failed` with `data.reason`, not `api_unavailable`; the other WebCrypto calls are unaffected by WebKit Linux's zero-byte bug
-- Date 2026-11-05 · Status: decided while following up D381, to confirm · Amends D381 (its first "Rejected" item) ·
+- Date 2026-11-05 · Status: decided while following up D381, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Amends D381 (its first "Rejected" item) ·
   Numbered D385 because D384 is taken on `chore/ci-cost` (not merged when this was written) ·
   Built: `packages/core/src/session.ts` (`sessionKeyFailure`), `packages/web/src/vault/errors.ts` (`sessionKeyError`),
   `vault/login.ts` (the login and `hana_linkAccount`), `auth/export-page.ts` and `auth/errors.ts` (`sessionKeyText`),
@@ -6306,7 +6306,7 @@ follow-up there.
 
 ### D386. A manual pre-release COOP canary checks D347's assumption, in place of `curl -sI`
 - Date 2026-11-05 · Status: **agreed by the user** (2026-11-05, "the canary: agreed", as a manual pre-release check;
-  the rules and the controls below: decided while building, to confirm) · Built: `scripts/coop-canary.ts`,
+  the rules and the controls below: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)) · Built: `scripts/coop-canary.ts`,
   `scripts/lib/coop-canary.ts` (`coop-canary` in `scripts/package.json`); tests: `scripts/test/coop-canary.test.ts`;
   the `google-enforces-coop` playbook (`packages/playbooks/src/incidents.ts`) · Amends D347 ("recheck (`curl -sI` on
   the authorization URL) before each release")
@@ -6341,7 +6341,7 @@ follow-up there.
 - Note: built as D385 and renumbered D386 at merge (D384 went to `deploy-check`, D385 to the WebCrypto errors).
 ### D394. The Support ID lookup: the hot-DB part in `AdminRpc`, the ledger part read as `usage_admin` by the admin Worker and the CLI
 - Date 2026-11-05 · Status: decided while building C15 (the design confirmed by the user as D276's 2026-11-05
-  amendment; these details: to confirm) · Built: console-core `support.ts`; `apps/api/src/directory/support.ts`,
+  amendment; these details: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)) · Built: console-core `support.ts`; `apps/api/src/directory/support.ts`,
   `AdminRpc.supportLookup` / `userShares`; `apps/admin/src/support.ts` (`POST /api/support/lookup`); tests
   `apps/api/test/support-lookup.test.ts`, `apps/admin/test/support.test.ts`, `apps/admin/test-ops/support.test.ts`,
   `packages/console-core/test/support.test.ts` · Source: D96, D144, D276, D346
@@ -6369,7 +6369,7 @@ follow-up there.
   (one more way to probe the directory with a Google account); listing errors per user (D276 (d): uids on failures).
 
 ### D395. `supportId` in the session answers is computed exactly as the directory stores it, from the session's own account root
-- Date 2026-11-05 · Status: decided while building C15 (to confirm) · Built: `apps/api/src/directory/store.ts`
+- Date 2026-11-05 · Status: decided while building C15 (confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)) · Built: `apps/api/src/directory/store.ts`
   `sessionSupportId`, `login.ts`, `handlers.ts`, `link-precheck.ts` `autoLinkRoot`; the vault, the approval popup and
   the SDK (D393, `docs/integration.md`) · Source: D276 (as amended 2026-11-05), D346 ("it must come from the API")
 - Decision: the `/v1/login` and `/v1/sessions` 200 answers carry `supportId` (`HANA-XXXX-XXXX`), additive and optional,
@@ -6385,7 +6385,7 @@ follow-up there.
   backend already has it from the identity token; the popup needs only the short form).
 
 ### D396. The admin console's lookup is audited before it reads anything, in the console's `audit_log`, never in a partner's view
-- Date 2026-11-05 · Status: decided while building C15 (to confirm) · Built: `apps/admin/src/support.ts`;
+- Date 2026-11-05 · Status: decided while building C15 (confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)) · Built: `apps/admin/src/support.ts`;
   `StaffRpc.recordStaffAction` action `support.lookup` (console-core `staff.ts`, `apps/console/src/audit.ts`,
   `staff-rpc.ts`); `apps/admin/src/feed.ts` · Source: D327, D275 ("audit before data"), spec "Retention" (audit 5 years)
 - Decision: `POST /api/support/lookup` requires a `ticket` (1–64 printable characters, no `@`: it is stored) and first
@@ -6405,7 +6405,7 @@ follow-up there.
   first, as org-less `users.find` (`{by, ticket}`).
 
 ### D397. The CLI's lookup is its own command, `admin <env> support:lookup`, not more sections of `user:find --user`
-- Date 2026-11-05 · Status: decided while building C15 (to confirm) · Built: `scripts/lib/admin-support.ts`,
+- Date 2026-11-05 · Status: decided while building C15 (confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)) · Built: `scripts/lib/admin-support.ts`,
   `scripts/admin.ts`; `scripts/test/admin-support.test.ts` · Source: D316, D361
 - Decision: `corepack pnpm --filter @hana-id/scripts admin <env> support:lookup <HANA-XXXX-XXXX | u1_… | hu_… | ->
   [--request-id <id>]… [--days 30] [--json] [--remote]`: the same answer as the admin route, read like `user:find`
@@ -6419,7 +6419,7 @@ follow-up there.
 - Rejected: extending `user:find --user`.
 
 ### D393. The vault gives `supportId` only to an SDK of 0.2.0 or later; the lockstep SDK version moves to 0.2.0
-- Date 2026-11-05 · Status: decided while building C15 (to confirm; a release step under D72) · Built:
+- Date 2026-11-05 · Status: decided while building C15 (confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code); a release step under D72) · Built:
   `packages/core/src/support-id.ts` (`SUPPORT_ID_SDK_MIN`, `sdkAtLeast`), `packages/web/src/vault/vault.ts`
   (`sdkTakesSupportId`), the four packages at `0.2.0` (`scripts/sdk-version.ts`); tests
   `packages/core/test/support-id.test.ts`, `packages/web/test/vault/support-id.test.ts`,
@@ -6463,7 +6463,7 @@ follow-up there.
 
 ### D398. A close inside D347's COOP window ends the login after 90 s without an answer, not after 5 minutes
 - Date 2026-11-05 · Status: **asked for by the user** (2026-11-05, "yes make it give up after about 90 seconds";
-  implementation choices: to confirm) · Built on `fix/popup-early-close-deadline` (`packages/web/src/vault/login.ts`
+  implementation choices: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)) · Built on `fix/popup-early-close-deadline` (`packages/web/src/vault/login.ts`
   `POPUP_WATCH.earlyCloseDeadlineMs`, `PopupTask.watchPopup`, `popupWait`, `stopWatch`) · Amends D347 ("the watch
   stops for the rest of that login, which falls back to its 5-minute limit") and the partner guide's "An unfinished
   login" (a close within seconds of reaching Google's page was `login_timeout` after 5 minutes). Built as D385 and renumbered
@@ -6527,7 +6527,7 @@ C15, merged into `develop` while this was built, took D393–D397, so D388–D39
 still take them: renumber on merge.
 
 ### D388. DirectoryRpc as built: the admin application's Access check in the issuer, three reads, no `byUid`
-- Date 2026-11-05 · Status: decided while building, to confirm · Built: `apps/email-issuer/src/directory-rpc.ts`,
+- Date 2026-11-05 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/email-issuer/src/directory-rpc.ts`,
   `src/index.ts` (the export), `src/env.ts`, `scripts/gen-wrangler.ts`; `packages/console-core/src/directory.ts`;
   `apps/admin/scripts/gen-wrangler.ts` (`ISSUER`) · Source: D275 (confirmed with amendments), spec "Users and Support
   ID" → "Data path"
@@ -6559,7 +6559,7 @@ still take them: renumber on merge.
   `emailIssuer.adminAccess` manifest block (a copy of `admin`'s).
 
 ### D389. The directory search: exact or substring, verified rows first on an address search, the audit's `detail`
-- Date 2026-11-05 · Status: decided while building, to confirm · Built: `apps/email-issuer/src/directory-rpc.ts`
+- Date 2026-11-05 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/email-issuer/src/directory-rpc.ts`
   (`search`, `get`, `termHash`), `test/directory-rpc.test.ts` · Source: spec "Users screen", D275, D269's review fixes
 - Decision:
   - **Address term**: a full address (console-core `isFullAddress`) matches exactly, as typed and lowercased (Google
@@ -6586,7 +6586,7 @@ still take them: renumber on merge.
   index order); a substring term's hash identifies the term only to someone holding K_rl.
 
 ### D390. The row budget: rows granted before the read, the rest given back; the alias emailed once per window
-- Date 2026-11-05 · Status: decided while building, to confirm (the numbers are the user's, provisional) · Built:
+- Date 2026-11-05 · Status: decided while building, confirmed by the user 2026-11-09, after reading the review's note (the numbers are the user's, provisional) · Built:
   `apps/email-issuer/src/rate-limiter.ts` (`takeRows`, `returnRows`), `src/limits.ts` (`DIRECTORY_ROW_LIMITS`),
   console-core `DIRECTORY_ROWS_PER_HOUR` / `DIRECTORY_ROWS_PER_DAY`; `apps/admin/src/users.ts` (`budgetAlert`),
   `src/email/ledger-messages.ts` (`directoryBudget`) · Source: D275 as confirmed ("past that the call answers
@@ -6613,7 +6613,7 @@ still take them: renumber on merge.
   reads stop either way).
 
 ### D391. The admin Users screen: three POST routes, the wallet directory and the chain joined by provider and sub
-- Date 2026-11-05 · Status: decided while building, to confirm · Built: `apps/admin/src/users.ts`, `routes.ts`,
+- Date 2026-11-05 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/admin/src/users.ts`, `routes.ts`,
   `near.ts` (`getIdentity`, `getAccount` with the block height), `public/app.js`; `apps/api/src/rpc/admin.ts`
   `appNames`, `directory/read.ts` `adminAppNames`; console-core `adminAppNamesInput` · Source: spec "Users screen",
   D275, D310 ("admins see email and wallets"), D346
@@ -6647,7 +6647,7 @@ still take them: renumber on merge.
   fixed path `/users/open` from memory (the history entry an opaque number), never `/users/<provider>/<sub>`.
 
 ### D392. Issuer migration 0003: the audit rebuilt with every row, the ticket optional on a search only, `support_lookup` now
-- Date 2026-11-05 · Status: decided while building, to confirm · Built: `apps/email-issuer/migrations/
+- Date 2026-11-05 · Status: decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `apps/email-issuer/migrations/
   0003_directory_audit.sql`; `scripts/test/directory-rpc-source.test.ts` · Source: spec "Data path" (0003), the user's
   ticket rule (2026-11-05)
 - Decision: `email_admin_audit` is rebuilt (create, copy with ids, drop, rename; the AUTOINCREMENT sequence moves with
@@ -6667,7 +6667,7 @@ still take them: renumber on merge.
 
 ### D399. The lookup's screen: the email join inside the lookup route, audited by the issuer as `support_lookup`; one ticket rule for both audits
 - Date 2026-11-05 · Status: decided while building (the `support_lookup` action was the requester's suggestion,
-  "unless there's a reason not to"; the rest: to confirm) · Built on `feat/batch-c-15-screen`:
+  "unless there's a reason not to"; the rest: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)) · Built on `feat/batch-c-15-screen`:
   `apps/admin/src/support.ts` (`lookupEmails`, `SUPPORT_EMAILS_MAX`, `SupportLookupAnswer`), `apps/admin/public/app.js`
   (`/support`, `openLookup`, the Users search and the wallet-directory block), console-core `directory.ts`
   (`DIRECTORY_GET_PURPOSES`, `directoryGetInput.purpose`) and `support.ts` (`supportTicket`),
@@ -6721,7 +6721,7 @@ still take them: renumber on merge.
 ## The popup's signals before it leaves (branch `fix/popup-signal-before-navigate`), 2026-11-05
 
 ### D400. A Hana page that signals the vault and then navigates or closes waits for the vault's ack (at most 150 ms)
-- Date 2026-11-05 · Status: decided while fixing what D398 found, to confirm · Built on
+- Date 2026-11-05 · Status: decided while fixing what D398 found, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built on
   `fix/popup-signal-before-navigate` (`packages/web/src/auth/vault-signal.ts` `vaultSignals`, `SIGNAL_ACK_WAIT_MS`;
   `auth/login-page.ts` `toGoogle`; `auth/callback-page.ts` `vaultTargets` and every leave; `auth/email-page.ts`
   `tellVaultThen`; `vault/login.ts` `PopupTask.ackPopup`; core `hana:auth-progress-ack`) · Amends D347 ("every Hana
@@ -6792,7 +6792,7 @@ branch.
 
 ### D401. The admin Worker's notices and the watchdog's alerts go through SendGrid too; Resend is gone (amends D87, settles D194's open point)
 - Date 2026-11-05 · Status: asked for by the user ("can we replace Resend with Sendgrid?", 2026-11-05), recommended and
-  accepted; the isolate memo below decided while building, to confirm · Built on `feat/sandbox-dev-dashboard-blocks`
+  accepted; the isolate memo below decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built on `feat/sandbox-dev-dashboard-blocks`
   (`packages/sendgrid` `sendgridSend`; `apps/admin/src/email/sender.ts` `sendgridSender`, `mail.ts` `sendToAll`,
   `messageKey`; `apps/watchdog/src/channels.ts` `sendgridEmail`; `apps/email-issuer/src/sendgrid.ts` on the shared
   adapter) · Amends D87 (the provider of the admin Worker's notices and the watchdog's alerts) and D279 (the
@@ -6864,7 +6864,7 @@ branch.
 
 ### D403. `usage-setup <env> roles` has Neon's API reset each role's password; SQL only gives LOGIN; every run replaces the role files
 - Date 2026-11-05 · Status: **decided by the user** (2026-11-05, option A: "let Neon generate the passwords via its
-  API"; implementation choices: to confirm) · Built on `fix/usage-setup-neon-api-passwords`: `scripts/lib/neon-api.ts`
+  API"; implementation choices: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)) · Built on `fix/usage-setup-neon-api-passwords`: `scripts/lib/neon-api.ts`
   (`NeonApi`, `readNeonApiKey`, `scrub`), `scripts/lib/usage-setup.ts` (`rolesCommand`, `rolePasswordProblem`,
   `roleUrl`), `.gitleaks.toml` (`neon-api-key` in `hana-secret-file`, rule `hana-neon-api-key`); tests
   `scripts/test/usage-setup.test.ts`, `scripts/secret-scan-selftest.mjs` · Amends D224 ("sets `LOGIN PASSWORD` to a
@@ -6935,7 +6935,7 @@ branch.
   and the Google Cloud project that owns the OAuth clients, from the personal accounts; timing to be agreed with the
   colleague; pending in `docs/mainnet-readiness.md` row 4.21 and `docs/operations.md` "Moving an env to another
   Cloudflare account"). Custom domains for the dev envs: recommended by the user. The tooling and the runbook as built
-  on `feat/account-migration`: **to confirm** · Built: `packages/env/src/cloudflare.ts` (`accountIdFields`,
+  on `feat/account-migration`: **confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)** · Built: `packages/env/src/cloudflare.ts` (`accountIdFields`,
   `customDomainPlacement`), the manifest's `cloudflare.accountId` (`schema.ts`), `apiPlacement` in
   `apps/api/scripts/gen-wrangler.ts`, `issuerPlacement` in `apps/email-issuer/scripts/gen-wrangler.ts`, the watchdog's
   Custom Domain, the demo's `HANA_DEMO_ORIGIN`, `account_id` in every `gen`; `scripts/env-secrets.ts`,
@@ -7040,7 +7040,7 @@ branch.
 ## The API request ID in the SDK's errors (branch `feat/sdk-error-request-id`), 2026-11-05
 
 ### D405. The vault puts the API answer's request ID in a port error's `data.requestId`, for an SDK of 0.2.0 or later
-- Date 2026-11-05 · Status: decided while building C15's follow-up (to confirm) · Built on
+- Date 2026-11-05 · Status: decided while building C15's follow-up (confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)) · Built on
   `feat/sdk-error-request-id`: `packages/core/src/api-request-id.ts` (`API_REQUEST_ID_RE`, `isApiRequestId`,
   `apiRequestIdOf`, `API_REQUEST_ID_SDK_MIN`), `packages/web/src/vault/errors.ts` (`VaultError.requestId`,
   `fromRequest`, `toProtocol(withRequestId)`, `apiErrorToVault`), `vault/login.ts` (`LoginChain.noteAnswer`, `traced`;
@@ -7095,7 +7095,7 @@ branch.
 ### D409. `access-setup <env>` makes the admin console's Access application and staff policies through Cloudflare's API; sandbox* staff sign in with Google, exact emails only
 - Date 2026-11-05 · Status: **decided by the user** (2026-11-05: sandbox staff sign in with Google, exact emails only,
   no GitHub team for sandbox; session 1 h; no service tokens; the Free plan; the user makes the Zero Trust team and
-  the Google login method in the dashboard); implementation choices: to confirm · Built on `feat/access-setup`:
+  the Google login method in the dashboard); implementation choices: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built on `feat/access-setup`:
   `scripts/access-setup.ts`, `scripts/lib/access-setup.ts`, `scripts/lib/cloudflare-api.ts`,
   `scripts/lib/manifest-edit.ts` `setAdminAccess`, `scripts/lib/secrets.ts` `readOneLineSecret`, `.gitleaks.toml`
   (`cloudflare-access-token` in `hana-secret-file`); tests `scripts/test/access-setup.test.ts` (a mocked Cloudflare
@@ -7169,7 +7169,7 @@ branch.
 ## Every Worker stamped: the dashboard Workers and the watchdog in `deploy-check` (branch `feat/deploy-check-all-workers`), 2026-11-05
 
 ### D406. The console, console-auth, files, admin and watchdog Workers carry the build id; the admin's and the watchdog's are read from their deployed version with wrangler
-- Date 2026-11-05 · Status: **asked for by the user** (implementation choices: to confirm) · Amends D384 (its
+- Date 2026-11-05 · Status: **asked for by the user** (implementation choices: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)) · Amends D384 (its
   "Limits": those five Workers weren't stamped; and its rejected "Cloudflare's version metadata", see "Why") · Built:
   `packages/env/src/stamped-deploy.ts` (the one wrapper), `build-id.ts` (`deployedBuild`, `buildBody`); each app's
   `deploy` script; `apps/console/src/index.ts`, `apps/console-auth/src/index.ts`, `apps/files/src/index.ts`
@@ -7271,7 +7271,7 @@ branch.
 
 ### D410. A search that names one identity needs the ticket; `users/find` is ticketed and audited first; an opened user never reaches the URL; a lookup's audit lists its request IDs
 - Date 2026-11-05 · Status: decided while fixing a security review of the day's merges (the review asked for these
-  fixes; the rules chosen: to confirm) · Built on `fix/security-review-1105`: console-core `directory.ts`
+  fixes; the rules chosen: confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)) · Built on `fix/security-review-1105`: console-core `directory.ts`
   (`searchNamesIdentity`, `SEARCH_TICKET_REQUIRED`, `directorySearchInput`'s refine) and `staff.ts` (`users.find`,
   `ORGLESS_STAFF_ACTIONS`, the request-ID list detail); `apps/email-issuer/src/directory-rpc.ts` `search`;
   `apps/admin/src/users.ts` (`usersSearchRoute`, `usersFindRoute`), `src/support.ts`, `src/feed.ts`, `public/app.js`
@@ -7330,7 +7330,7 @@ branch.
   audited with the term's keyed hash, D389, D390); a reload of an opened user's page needs the search again.
 
 ### D412. `usage-setup hyperdrive` creates the configs through Cloudflare's API; a failed reset sets the roles not reset NOLOGIN
-- Date 2026-11-05 · Status: decided while fixing the security review (to confirm) · Built on
+- Date 2026-11-05 · Status: decided while fixing the security review (confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)) · Built on
   `fix/security-review-1105`: `scripts/lib/usage-setup.ts` (`hyperdriveCommand`, `hyperdriveBody`, `lockRoles`,
   `CLOUDFLARE_HYPERDRIVE_TOKEN_FILE`), `scripts/lib/cloudflare-api.ts` (`resolveAccount` moved from
   `access-setup.ts`; `readCloudflareToken`'s `how`), `scripts/usage-setup.ts`, `.gitleaks.toml`; tests
@@ -7473,7 +7473,7 @@ branch.
 ## Retiring a console client (branch `feat/console-remove-audience`), 2026-11-06
 
 ### D416. A retired console client leaves its sink by `admin console:remove-audience`, only once the manifest has dropped it
-- Date 2026-11-06 · Status: **decided while building** (to confirm) · Built: `scripts/lib/admin-console-sink.ts`,
+- Date 2026-11-06 · Status: **decided while building** (confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)) · Built: `scripts/lib/admin-console-sink.ts`,
   `isConsoleSinkView` in `scripts/lib/deploy-plan.ts` (shared with deploy-contract's sink test), deploy-contract's
   blocker naming the command; `scripts/test/admin-console-sink.test.ts`, `scripts/test/deploy-plan.test.ts`; docs/operations.md
   "Console sink scope" · Extends D238 · Number note: D416 was taken with D415 the highest on `origin/develop`
@@ -7530,7 +7530,7 @@ branch.
 ### D419. Every alert title and Hana email subject from a non-production env starts with the env's label
 - Date 2026-11-06 · Status: **asked for by the user, 2026-11-06** ("make sure those alerts include a [SANDBOX] or
   [STAGING] in the title so I don't get spooked thinking it's production"); the choices below decided while
-  building, to confirm · Built: `@hana-id/env` `envAlertLabel` / `ENV_ALERT_LABELS`; the watchdog's channels
+  building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) · Built: `@hana-id/env` `envAlertLabel` / `ENV_ALERT_LABELS`; the watchdog's channels
   (`apps/watchdog/src/channels.ts`, `alertLabel` in `env.ts`, `alertLabelFor` in `names.ts`) and the admin Worker's
   `render` (`apps/admin/src/email/render.ts`, `mailLabel` in `env.ts`); both `gen` scripts write `ENV_LABEL` · Number
   note: D419 was taken with D418 the highest on `origin/develop`; a branch in flight (D411's build) may take D419
@@ -7556,7 +7556,7 @@ branch.
 ### D420. The admin console never offers an action that can't work; errors in plain words; confirmations in the page
 - Date 2026-11-06 · Status: **asked for by the user** ("the admin console UI/UX don't look very good … straightforward /
   no nonsense / least confusing and most user friendly", after an invite into `org_legacy` answered `forbidden:
-  org_legacy has no members`); the design choices decided while building, to confirm with the screenshots · Built on
+  org_legacy has no members`); the design choices decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) with the screenshots · Built on
   `feat/admin-ux-redesign` (`apps/admin/public/`, tests `apps/admin/test-spa/ux.test.ts`) · Number note: first
   written as D419; renumbered D420 at the merge of `origin/develop`, which took D419 (`feat/env-alert-label`)
 - Decision: the staff SPA follows the rules in `apps/admin/README.md` "UI principles": (1) an action the API would
@@ -7584,7 +7584,7 @@ branch.
 
 ### D421. The partner console SPA: a sidebar, an app's settings as sections, plain-language errors, no control that can't work
 - Date 2026-11-06 · Status: asked for by the user ("the best possible UI/UX … straightforward, least confusing"),
-  design choices decided while building, **to confirm** (screenshots for review) · Built on `feat/console-ux-redesign`
+  design choices decided while building, **confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)** (screenshots for review) · Built on `feat/console-ux-redesign`
   (`apps/console/web/src`, `apps/console/preview`, `apps/console/README.md`) · Number note: D421 (taken as D420 on its branch; renumbered at merge, the admin redesign holding D420) was taken with D419
   the highest on `origin/develop`; the admin console's redesign runs in parallel and may take the same number, so the
   later merge renumbers
@@ -7713,7 +7713,7 @@ branch.
 - Date 2026-11-06 · Status: **asked for by the user 2026-11-06** ("sessions can expire quietly, this UX is
   terrible", after "Send invite" on sandbox-dev's admin answered "Can't reach the admin console … Error code network":
   the 1 h Access session (D409) had ended and the fetch's redirect to `<team>.cloudflareaccess.com` was blocked by
-  CORS); the design choices decided while building, to confirm with the screenshots · Built: `apps/admin/public/`
+  CORS); the design choices decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) with the screenshots · Built: `apps/admin/public/`
   (`send`/`api`, `session`, `renderSession`, `/signed-in`), `apps/admin/src/access.ts` (`exp` on the staff check),
   `routes.ts` (`GET /api/me` `accessExp`), `test-spa/session.test.ts`, `test-spa/preview.ts`
   (`PREVIEW_SESSION_MIN`); `apps/console/web/src/api.ts` (`request`, `session`, `sessionStore`),
@@ -7767,7 +7767,7 @@ branch.
 - Date 2026-11-06 · Status: **asked for by the user 2026-11-06** ("add some pages so there's a 'birds eye view' of the
   whole system, basically I can look at the page and feel confident that 'all systems operational' and 'no issues'.
   The page should also give warnings if issues found … an overview dashboard of our whole system and to check if all
-  parts of system is up or down"); the checks, thresholds and wording decided while building, to confirm with the
+  parts of system is up or down"); the checks, thresholds and wording decided while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) with the
   screenshots · Built: `apps/admin/src/status.ts`, `status-probes.ts`, `routes.ts` (`GET /api/status`),
   `ledger-cron.ts` (`ledger_cron.last_run`), `scripts/gen-wrangler.ts` (the new vars, `accountCrons`), `public/`
   (`statusPage`, the Overview nav), `test/status.test.ts`, `test-spa/status.test.ts`, `test-spa/preview-status.ts`;
@@ -7823,7 +7823,7 @@ branch.
 - Date 2026-11-06 · Status: **asked for by the user 2026-11-06** ("style both admin and partner portal to use Hana
   fonts, styling and color schemes … look at hanawallet.io website as well as hana-app and hana-extension repos for
   inspiration"; extended the same day to the approval popups and everything user-facing); the palette, type and
-  shapes chosen while building, to confirm with the before/after gallery · Built: `packages/brand` (new),
+  shapes chosen while building, confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code) with the before/after gallery · Built: `packages/brand` (new),
   `apps/admin/public` (`app.css`, `index.html`, `fonts/`), `apps/admin/scripts/sync-brand.ts`, `apps/console/web`
   (`styles.css`, `ui.tsx`), `apps/console/vite.config.ts`, `packages/web/src/auth` (the sign-in, approval and export
   pages), `packages/web/src/vault/launcher.ts`, `packages/web/scripts/build-auth-pages.ts` · Extends D420 and D421 (their
@@ -7970,7 +7970,7 @@ free numbers on `origin/develop` (D427 the highest: D426 the Hana brand, D427 th
   letting partners set it; trusting the partner's RPC for the balance.
 
 ### D429. The mainnet demo's mechanics: the price table, what can be valued, the freshness and the reads
-- Date 2026-11-06 · Status: **to confirm** (implementation choices while building D428) · Built: as D428
+- Date 2026-11-06 · Status: **confirmed by the user 2026-11-09, after reading the review's note** (implementation choices while building D428) · Built: as D428
 - Decision:
   1. **Prices** (`MAINNET_DEMO`, reviewed 2026-11-06): ETH $8,000, USDC $1.05 and EURC $1.35 on Base and on Stellar, XLM $1.00, all
      deliberately above the market (a live price couldn't be confirmed; a higher price makes the cap stricter and the
@@ -8019,7 +8019,7 @@ free numbers on `origin/develop` (D427 the highest: D426 the Hana brand, D427 th
 ### D430. Key export additions: auto-hide after 60 s, the guarded click, plain warnings, a `key_exported` event
 - Date 2026-11-06 · Status: the feature **decided by the user 2026-11-06** ("an option to let the user export their
   private key just in case anything goes wrong i.e. testnet MPC issues etc that causes fund lost cause derivation was
-  no longer possible"); the mechanics **to confirm** · Built: `packages/web/src/auth/export-page.ts`
+  no longer possible"); the mechanics **confirmed by the user 2026-11-09 in bulk, on the review's recommendation (not re-checked line by line against the code)** · Built: `packages/web/src/auth/export-page.ts`
   (`EXPORT_SHOW_MS`, `EXPORT_WARNING`, the guard), `auth/approve-guard.ts` (`guardInputOf`), `apps/api/src/login.ts`
   (`exportChain`), `src/mainnet-demo.ts` (`recordKeyExport`), `src/directory/read.ts` (`withEvents`), the admin
   console's events table · Extends D40, D41, D59, D111, D268

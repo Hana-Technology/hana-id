@@ -616,7 +616,7 @@ describe('/approve', () => {
     arm();
     click(primary());
     expect(page.state).toBe('waiting');
-    expect(pageText()).toContain('Waiting for the next request from Partner App');
+    expect(pageText()).toContain('You can go back to Partner App.');
     vi.advanceTimersByTime(KEEP_OPEN_MS - 1000);
     const next = stellarRequest({ position: 1, queued: 1 });
     send(next);
@@ -809,6 +809,316 @@ describe('/approve', () => {
       send(evmRequest());
       expect(results()).toHaveLength(1);
     });
+  });
+});
+
+describe('/approve after an answer (D471)', () => {
+  const heading = () => document.querySelector('h1')?.textContent;
+  const mark = () => document.querySelector('h1 svg.outcome-mark');
+  const countdown = () => document.querySelector('p.countdown')?.textContent;
+  const closeNow = () => document.querySelector<HTMLButtonElement>('#approve-close');
+  const BYE = { v: 1, t: 'hana:approve-bye' };
+  const byes = () => results().filter((m) => m.t === 'hana:approve-bye');
+  /** Answers with the primary button (Approve or Allow) after the guard. */
+  const accept = () => {
+    arm();
+    click(primary());
+  };
+
+  it('a request approved: Approved with a check mark, back to the app, and that a follow-up appears here', () => {
+    send(evmRequest());
+    accept();
+    expect(page.state).toBe('waiting');
+    expect(heading()).toBe('Approved');
+    expect(mark()).not.toBeNull();
+    expect(mark()?.namespaceURI).toBe('http://www.w3.org/2000/svg');
+    expect(mark()?.getAttribute('aria-hidden')).toBe('true');
+    const text = pageText();
+    expect(text).toContain('You can go back to Partner App.');
+    expect(text).toContain('If it needs another approval, it’ll appear here.');
+    expect(text).toContain('Closing in 15 s');
+    expect(text).not.toContain('Done');
+    expect(text).not.toContain('Waiting for the next request');
+    expect(results()[0]).toMatchObject({ t: 'hana:approve-result', approved: true });
+  });
+
+  it('a request rejected: Declined, nothing signed, no check mark, the same countdown and button', () => {
+    send(evmRequest());
+    click(secondary());
+    expect(page.state).toBe('waiting');
+    expect(heading()).toBe('Declined');
+    expect(mark()).toBeNull();
+    const text = pageText();
+    expect(text).toContain('Nothing was signed.');
+    expect(text).not.toContain('You can go back to');
+    expect(text).not.toContain('If it needs another approval');
+    expect(countdown()).toBe('Closing in 15 s');
+    expect(closeNow()?.textContent).toBe('Close now');
+    expect(results()[0]).toMatchObject({ t: 'hana:approve-result', approved: false });
+  });
+
+  it('a consent allowed: Allowed, in its own words, with nothing said about a signature', () => {
+    send(consentRequest());
+    accept();
+    expect(results()[0]).toMatchObject({ t: 'hana:consent-result', allowed: true });
+    expect(heading()).toBe('Allowed');
+    expect(mark()).not.toBeNull();
+    const text = pageText();
+    expect(text).toContain('You can go back to Partner App.');
+    expect(text).toContain('If it needs another approval, it’ll appear here.');
+    expect(text).not.toContain('Approved');
+    expect(text).not.toContain('signed');
+    expect(countdown()).toBe('Closing in 15 s');
+  });
+
+  it('a consent refused: Not allowed, that automatic signing stayed off, nothing said about a request', () => {
+    send(consentRequest());
+    click(secondary());
+    expect(results()[0]).toMatchObject({ t: 'hana:consent-result', allowed: false });
+    expect(heading()).toBe('Not allowed');
+    expect(mark()).toBeNull();
+    const text = pageText();
+    expect(text).toContain('Automatic signing wasn’t turned on.');
+    expect(text).not.toContain('Declined');
+    expect(text).not.toContain('Nothing was signed');
+    expect(countdown()).toBe('Closing in 15 s');
+  });
+
+  it('a request that can’t be approved says Declined, the same answer the vault was sent', () => {
+    send(evmRequest({ bytes: new Uint8Array([0x02, 0xc0]) }));
+    click(secondary());
+    expect(results()[0]).toMatchObject({ approved: false });
+    expect(heading()).toBe('Declined');
+  });
+
+  it('the app’s name is text only: markup in it is not parsed, and it is bidi-isolated in a <strong>', () => {
+    const name = '<img src=x onerror="alert(1)"><b>App</b>';
+    send(evmRequest({ appName: name }));
+    accept();
+    expect(pageText()).toContain(`You can go back to ${name}.`);
+    expect(document.querySelector('.answered img')).toBeNull();
+    expect(document.querySelector('.answered b')).toBeNull();
+    expect(document.querySelector('.answered strong')?.textContent).toBe(name);
+  });
+
+  it('counts down each second from the time really left, and closes as the last second ends', () => {
+    send(evmRequest());
+    accept();
+    expect(countdown()).toBe('Closing in 15 s');
+    vi.advanceTimersByTime(999);
+    expect(countdown()).toBe('Closing in 15 s');
+    vi.advanceTimersByTime(1);
+    expect(countdown()).toBe('Closing in 14 s');
+    vi.advanceTimersByTime(3000);
+    expect(countdown()).toBe('Closing in 11 s');
+    vi.advanceTimersByTime(10_000);
+    expect(countdown()).toBe('Closing in 1 s');
+    expect(win.closed).toBe(false);
+    vi.advanceTimersByTime(999);
+    expect(countdown()).toBe('Closing in 1 s');
+    expect(win.closed).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(win.closed).toBe(true);
+    expect(byes()).toEqual([BYE]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('reads the deadline, so a late timer (a throttled background window) shows the true time, not one less each tick', () => {
+    send(evmRequest());
+    accept();
+    vi.setSystemTime(Date.now() + 6400); // the clock moved on with no timer run
+    vi.advanceTimersByTime(1000);
+    expect(countdown()).toBe('Closing in 8 s');
+  });
+
+  it('keeps one idle timer and one countdown timer, however long it waits', () => {
+    send(evmRequest());
+    accept();
+    expect(vi.getTimerCount()).toBe(2);
+    vi.advanceTimersByTime(7000);
+    expect(vi.getTimerCount()).toBe(2);
+  });
+
+  it('a new request stops the countdown: no timer left for it, and no stale text on the new request', () => {
+    send(evmRequest());
+    accept();
+    vi.advanceTimersByTime(3000);
+    const next = stellarRequest();
+    send(next);
+    expect(page.state).toBe('request');
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(KEEP_OPEN_MS * 2);
+    expect(pageText()).not.toContain('Closing in');
+    expect(closeNow()).toBeNull();
+    expect(win.closed).toBe(false);
+    expect(byes()).toEqual([]);
+  });
+
+  it('a consent request interrupts it the same way', () => {
+    send(evmRequest());
+    accept();
+    vi.advanceTimersByTime(3000);
+    send(consentRequest());
+    expect(page.state).toBe('consent');
+    expect(vi.getTimerCount()).toBe(0);
+    expect(pageText()).not.toContain('Closing in');
+  });
+
+  it('after an interrupting request is answered the countdown starts again from 15 s', () => {
+    send(evmRequest());
+    accept();
+    vi.advanceTimersByTime(4000);
+    send(stellarRequest());
+    click(secondary());
+    expect(heading()).toBe('Declined');
+    expect(countdown()).toBe('Closing in 15 s');
+    expect(vi.getTimerCount()).toBe(2);
+  });
+
+  it('a message that isn’t a request leaves the countdown running', () => {
+    send(evmRequest());
+    accept();
+    send({ v: 1, t: 'hana:nonsense' });
+    send(evmRequest(), EVIL);
+    vi.advanceTimersByTime(1000);
+    expect(countdown()).toBe('Closing in 14 s');
+    expect(page.state).toBe('waiting');
+  });
+
+  it('the vault’s hana:approve-close stops it without a bye', () => {
+    send(evmRequest());
+    accept();
+    send({ v: 1, t: 'hana:approve-close' });
+    expect(win.closed).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(byes()).toEqual([]);
+  });
+
+  it('the window closing stops it', () => {
+    send(evmRequest());
+    accept();
+    win.dispatch('pagehide');
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(KEEP_OPEN_MS);
+    expect(byes()).toEqual([]);
+  });
+
+  it('closing with a request still on screen leaves no countdown running', () => {
+    send(evmRequest());
+    win.dispatch('pagehide');
+    expect(results()[0]).toMatchObject({ approved: false });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('Close now says bye and closes, once, on the same path as the timer', () => {
+    send(evmRequest());
+    accept();
+    vi.advanceTimersByTime(GUARD_DELAY_MS);
+    const button = closeNow();
+    click(button);
+    expect(win.closed).toBe(true);
+    expect(page.state).toBe('closed');
+    expect(byes()).toEqual([BYE]);
+    expect(vault.postMessage).toHaveBeenLastCalledWith(BYE, ENV.vaultOrigin);
+    expect(vi.getTimerCount()).toBe(0);
+    click(button);
+    expect(byes()).toEqual([BYE]);
+  });
+
+  it('Close now works after a rejection too', () => {
+    send(evmRequest());
+    click(secondary());
+    vi.advanceTimersByTime(GUARD_DELAY_MS);
+    click(closeNow());
+    expect(win.closed).toBe(true);
+    expect(byes()).toEqual([BYE]);
+  });
+
+  it('Close now takes one touch tap: it doesn’t need the Approve guard’s arming gesture', () => {
+    send(evmRequest());
+    click(secondary());
+    vi.advanceTimersByTime(GUARD_DELAY_MS);
+    tap(closeNow());
+    expect(win.closed).toBe(true);
+  });
+
+  it('Close now ignores a click within 1 s of the screen: the rest of a double-click on Approve or Reject', () => {
+    send(evmRequest());
+    accept();
+    click(closeNow());
+    vi.advanceTimersByTime(GUARD_DELAY_MS - 1);
+    click(closeNow());
+    expect(win.closed).toBe(false);
+    expect(byes()).toEqual([]);
+    expect(page.state).toBe('waiting');
+    vi.advanceTimersByTime(1);
+    click(closeNow());
+    expect(win.closed).toBe(true);
+  });
+
+  it('Close now is never focused by the page, so a held Enter can’t reach it', () => {
+    send(evmRequest());
+    accept();
+    expect(document.activeElement).not.toBe(closeNow());
+  });
+
+  it('Close now ignores an untrusted click', () => {
+    win = new FakeWindow('/approve');
+    vault = remoteWindow();
+    win.opener = asWindow(vault);
+    let trusted = true;
+    page.stop();
+    page = startApprovePage({ win, env: ENV, isGesture: () => trusted });
+    send(evmRequest());
+    click(secondary());
+    vi.advanceTimersByTime(GUARD_DELAY_MS);
+    trusted = false;
+    click(closeNow());
+    expect(win.closed).toBe(false);
+    expect(byes()).toEqual([]);
+  });
+
+  it('the countdown is not a live region, so it isn’t read out every second; the result is', () => {
+    send(evmRequest());
+    accept();
+    const el = document.querySelector('p.countdown');
+    expect(el?.closest('[role="status"],[role="alert"],[aria-live]')).toBeNull();
+    expect(el?.hasAttribute('aria-live')).toBe(false);
+    expect(document.querySelector('[role="status"] h1')?.textContent).toBe('Approved');
+  });
+
+  it('shows no countdown or Close now on the loading screen: that idle close isn’t the same promise', () => {
+    expect(page.state).toBe('connecting');
+    expect(pageText()).toContain('Loading the request');
+    expect(pageText()).not.toContain('Closing in');
+    expect(closeNow()).toBeNull();
+    vi.advanceTimersByTime(KEEP_OPEN_MS - 1);
+    expect(pageText()).not.toContain('Closing in');
+    expect(win.closed).toBe(false);
+  });
+
+  it('shows no countdown on a partner-opened popup still waiting for its request (ADOPT_TIMEOUT_MS)', () => {
+    page.stop();
+    resetDom();
+    win = new FakeWindow('/approve', `?from=partner&v=hana-vault-${'c'.repeat(32)}`);
+    win.opener = asWindow(remoteWindow());
+    page = startApprovePage({ win, env: ENV, isGesture: () => true });
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    vi.advanceTimersByTime(LOADING_DELAY_MS);
+    expect(pageText()).toContain('Loading the request');
+    vi.advanceTimersByTime(ADOPT_TIMEOUT_MS - LOADING_DELAY_MS - 1);
+    expect(pageText()).not.toContain('Closing in');
+    expect(closeNow()).toBeNull();
+    expect(win.closed).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(win.closed).toBe(true);
+  });
+
+  it('stop() clears the countdown', () => {
+    send(evmRequest());
+    accept();
+    page.stop();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 

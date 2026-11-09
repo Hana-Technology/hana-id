@@ -2,7 +2,8 @@
 // the app's vault on vaultOrigin, decodes every request's bytes itself, and answers with a digest computed from
 // exactly what it rendered (the approval digest, or the consent digest for the auto-approve consent screen), so the
 // vault signs only what the user saw. Approve and Allow are guarded (approve-guard.ts). After an answer it waits up to
-// 15 s for a follow-up request, then says bye and closes.
+// 15 s for a follow-up request, then says bye and closes; meanwhile it says what the answer did, counting down the time
+// left, with Close now (D471).
 //
 // Opener modes (D99):
 //   vault    /approve                          opened by the vault's launcher; the vault is window.opener
@@ -34,7 +35,7 @@ import {
 import { type DecodedApproval, decodeApprovalRequest } from '@hana-id/core/decode';
 import { type AutoApprovePolicyV1, type AutoApproveReason, policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import type { HanaEnv } from '../hana-env.ts';
-import { ApproveGuard, type GuardInput, guardInputOf } from './approve-guard.ts';
+import { ApproveGuard, GUARD_DELAY_MS, type GuardInput, guardInputOf } from './approve-guard.ts';
 import { type Dom, dom, errorView } from './dom.ts';
 import { appLogo } from './logo.ts';
 import { type GestureCheck, type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed, isUserGesture } from './page-window.ts';
@@ -150,6 +151,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   let state: ApprovePageState = 'connecting';
   let current: Current | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  let countdownTimer: ReturnType<typeof setTimeout> | undefined;
   let loadingTimer: ReturnType<typeof setTimeout> | undefined;
   let primary: HTMLButtonElement | null = null;
   let stopped = false;
@@ -193,9 +195,14 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   ];
   const onVisibility = () => (visible() ? guard.focused() : guard.blurred());
 
+  function clearIdle(): void {
+    clearTimeout(idleTimer);
+    clearTimeout(countdownTimer);
+  }
+
   function stop(): void {
     stopped = true;
-    clearTimeout(idleTimer);
+    clearIdle();
     clearTimeout(loadingTimer);
     for (const [t, l] of listeners) win.removeEventListener(t, l);
     win.document.removeEventListener('visibilitychange', onVisibility);
@@ -223,7 +230,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
       close();
       return;
     }
-    clearTimeout(idleTimer);
+    clearIdle();
     clearTimeout(loadingTimer);
     if (msg.t === 'hana:approve-request') showRequest(msg);
     else showConsent(msg);
@@ -428,22 +435,84 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     guard.rendered();
   }
 
-  /** Closes after `ms` (KEEP_OPEN_MS) without a request, saying bye so the vault stops reusing this window. */
-  function idleClose(ms = KEEP_OPEN_MS): void {
-    clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => {
-      post({ t: 'hana:approve-bye' });
-      close();
-    }, ms);
+  /** Says bye, so the vault stops reusing this window, and closes it. */
+  function byeAndClose(): void {
+    if (state === 'closed') return;
+    post({ t: 'hana:approve-bye' });
+    close();
+  }
+
+  /**
+   * Closes after `ms` (KEEP_OPEN_MS) without a request. `onSecond`, only where the screen shows a countdown, gets the
+   * whole seconds left now and at each whole second after, all read from this one deadline, so a throttled background
+   * timer can't make the number wrong. A new request or a close clears both timers (clearIdle).
+   */
+  function idleClose(ms = KEEP_OPEN_MS, onSecond?: (secondsLeft: number) => void): void {
+    clearIdle();
+    const deadline = now() + ms;
+    idleTimer = setTimeout(byeAndClose, ms);
+    if (!onSecond) return;
+    const tick = () => {
+      const left = deadline - now();
+      if (left <= 0) return;
+      onSecond(Math.ceil(left / 1000));
+      countdownTimer = setTimeout(tick, left % 1000 || 1000);
+    };
+    tick();
   }
 
   const loadingView = () => d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Review in Hana'), d.h('p', { class: 'muted' }, 'Loading the request…')));
 
+  /** Whether `c` can be approved at all: a request the popup decoded, a policy it validated. */
+  const answerable = (c: Current): boolean => (c.kind === 'request' ? c.decodable : c.valid);
+
   /** The answer to `c`, with the digest of exactly what was rendered for it. */
   function result(c: Current, approved: boolean): Record<string, unknown> {
-    if (c.kind === 'request') return { t: 'hana:approve-result', id: c.msg.id, approved: approved && c.decodable, digest: approvalDigest(c.input) };
+    if (c.kind === 'request') return { t: 'hana:approve-result', id: c.msg.id, approved: approved && answerable(c), digest: approvalDigest(c.input) };
     const { id, policyId: pid, parentOrigin, expiresAtMs } = c.msg;
-    return { t: 'hana:consent-result', id, allowed: approved && c.valid, digest: consentDigest({ id, policyId: pid, parentOrigin, expiresAtMs }) };
+    return { t: 'hana:consent-result', id, allowed: approved && answerable(c), digest: consentDigest({ id, policyId: pid, parentOrigin, expiresAtMs }) };
+  }
+
+  /** A check mark in the brand's ok colours (auth.css), for an answer that went ahead. Decorative: the heading says it. */
+  function checkMark(): SVGSVGElement {
+    const SVG = 'http://www.w3.org/2000/svg';
+    const el = (tag: string, attrs: Record<string, string>) => {
+      const node = d.doc.createElementNS(SVG, tag);
+      for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+      return node;
+    };
+    const svg = el('svg', { class: 'outcome-mark', viewBox: '0 0 24 24', width: '26', height: '26', 'aria-hidden': 'true', focusable: 'false' }) as SVGSVGElement;
+    svg.append(el('circle', { class: 'bg', cx: '12', cy: '12', r: '12' }), el('path', { class: 'tick', d: 'M7 12.5l3.4 3.4L17 9' }));
+    return svg;
+  }
+
+  /**
+   * The screen after an answer (D471): what it did, in words true for each kind (an approved request is not yet a sent
+   * transaction; a consent signs nothing), the time left, Close now. `accepted` is the value the vault was sent. The
+   * app's name goes in as a node, as everywhere on this page: text only, and bidi-isolated (`strong`).
+   */
+  function answeredView(c: Current, accepted: boolean, countdown: HTMLElement): HTMLElement {
+    const consent = c.kind === 'consent';
+    const heading = accepted ? (consent ? 'Allowed' : 'Approved') : consent ? 'Not allowed' : 'Declined';
+    const lines = accepted
+      ? [d.h('p', {}, 'You can go back to ', d.h('strong', {}, c.msg.appName), '.'), d.h('p', { class: 'muted' }, 'If it needs another approval, it’ll appear here.')]
+      : [d.h('p', {}, consent ? 'Automatic signing wasn’t turned on.' : 'Nothing was signed.')];
+    const closeNow = d.h('button', { class: 'secondary', attrs: { type: 'button', id: 'approve-close' } }, 'Close now');
+    const shownAt = now();
+    closeNow.addEventListener('click', (e) => {
+      // The rest of a double-click on Approve or Reject, or taps carried over from that screen, must not close the
+      // window and cost the follow-up: in a short or scrolled window this can sit where those buttons were. So the
+      // same 1 s as D36, which is enough here (a press of Close now can't sign anything, so one tap does it), and the
+      // page never focuses it, so a held Enter can't reach it.
+      if (isGesture(e) && now() - shownAt >= GUARD_DELAY_MS) byeAndClose();
+    });
+    // The result is the live region; the countdown stays outside it, so it isn't announced every second.
+    return d.h(
+      'section',
+      { class: 'panel answered' },
+      d.h('div', { attrs: { role: 'status' } }, d.h('h1', { class: 'outcome' }, accepted ? checkMark() : null, heading), ...lines),
+      d.h('div', { class: 'answered-foot' }, countdown, closeNow),
+    );
   }
 
   function answer(approved: boolean): void {
@@ -455,8 +524,11 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     guard.cleared();
     if (stopped) return;
     state = 'waiting';
-    d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, approved ? 'Done' : 'Rejected'), d.h('p', { class: 'muted' }, `Waiting for the next request from ${c.msg.appName}…`)));
-    idleClose();
+    const countdown = d.h('p', { class: 'countdown muted' });
+    d.show(answeredView(c, approved && answerable(c), countdown));
+    idleClose(KEEP_OPEN_MS, (seconds) => {
+      countdown.textContent = `Closing in ${seconds} s`;
+    });
   }
 
   if (isFramed(win)) {

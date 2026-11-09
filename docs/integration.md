@@ -506,7 +506,8 @@ and raw signing `'off'` refuses raw requests within 10 s too (the vault re-reads
 
 Every signing request goes through the user. The Hana popup decodes the request bytes itself, so your page can't
 misdescribe them. The popup stays open for 15 s after an answer, so a follow-up request (`restoreFootprint`, a
-re-sign, a trustline) appears there without another click. Each one still needs its own Approve. Reject, closing the
+re-sign, a trustline) appears there without another click. Meanwhile it says "Approved" or "Declined" and counts down,
+with a Close now button. Each follow-up still needs its own Approve. Reject, closing the
 popup, or 5 min without an answer gives `4001`.
 
 **Call the SDK directly in your click handler**. Every signing method (`hana.stellar.sign*`, the Stellar

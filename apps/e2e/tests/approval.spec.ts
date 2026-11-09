@@ -9,6 +9,7 @@ import {
   type App,
   VAULT_FRAME,
   approve,
+  clickClosing,
   clickLauncher,
   errorCode,
   errorOf,
@@ -49,6 +50,12 @@ async function runSignRaw(page: Page, name: string, chain: 'stellar' | 'evm', le
   return new Uint8Array(len).fill(fill);
 }
 
+/** With HANA_SHOTS_DIR set (Chromium only), saves the popup's screen there for review. */
+async function shot(popup: Page, name: string, browserName: string): Promise<void> {
+  const dir = process.env.HANA_SHOTS_DIR;
+  if (dir && browserName === 'chromium') await popup.screenshot({ path: `${dir}/${name}.png`, animations: 'disabled' });
+}
+
 /** The guard holds: nothing was signed `ms` after the attempt. */
 async function stillPending(page: Page, name: string, ms = 1_500): Promise<void> {
   await page.waitForTimeout(ms);
@@ -80,6 +87,7 @@ test('Reject returns 4001, and so does closing the popup', async ({ page }) => {
   await expect(popup.getByRole('button', { name: 'Approve', exact: true })).toBeVisible();
   await reject(popup);
   expect(await errorCode(page, 'rejected')).toBe(4001);
+  await expect(popup.getByRole('heading', { name: 'Declined', exact: true })).toBeVisible();
 
   // The popup now waits for a follow-up; a new request is shown there, and closing the window rejects it.
   await runAction(page, 'closed', 'stellarSignMessage', 'bye');
@@ -88,13 +96,61 @@ test('Reject returns 4001, and so does closing the popup', async ({ page }) => {
   expect(await errorCode(page, 'closed')).toBe(4001);
 });
 
+test('after an answer the popup says what happened, counts down, and Close now ends it (D471)', async ({ page, browserName }) => {
+  await loggedIn(page);
+  await runAction(page, 'first', 'personalSign', 'one');
+  const popup = await clickLauncher(page, 'Review in Hana');
+  await popup.setViewportSize({ width: 420, height: 680 }); // APPROVE_FEATURES
+  const approveBox = await popup.getByRole('button', { name: 'Approve', exact: true }).boundingBox();
+  const rejectBox = await popup.getByRole('button', { name: 'Reject', exact: true }).boundingBox();
+  await approve(popup);
+  expect(await okValue(page, 'first')).toMatchObject({ valid: true });
+  await expect(popup.getByRole('heading', { name: 'Approved', exact: true })).toBeVisible();
+  await expect(popup.getByText('You can go back to E2E Partner.')).toBeVisible();
+  await expect(popup.getByText('If it needs another approval, it’ll appear here.')).toBeVisible();
+  await expect(popup.locator('p.countdown')).toHaveText(/^Closing in \d+ s$/u);
+  // At the popup's size, Close now isn't where Approve and Reject were.
+  const closeBox = await popup.locator('#approve-close').boundingBox();
+  expect(closeBox!.y + closeBox!.height).toBeLessThan(Math.min(approveBox!.y, rejectBox!.y));
+  await shot(popup, 'approved-light', browserName);
+  await popup.emulateMedia({ colorScheme: 'dark' });
+  await shot(popup, 'approved-dark', browserName);
+  await popup.emulateMedia({ colorScheme: 'light' });
+
+  // The countdown really moves.
+  const before = await popup.locator('p.countdown').textContent();
+  await expect(popup.locator('p.countdown')).not.toHaveText(before as string);
+
+  // A double-click on Reject: the second click lands on the new screen and must not close the window.
+  await runAction(page, 'second', 'personalSign', 'two');
+  await expect(popup.getByText('Request 2 of 2', { exact: false })).toBeVisible();
+  await rawClick(popup, 'button.secondary', 2);
+  expect(await errorCode(page, 'second')).toBe(4001);
+  await expect(popup.getByRole('heading', { name: 'Declined', exact: true })).toBeVisible();
+  await expect(popup.getByText('Nothing was signed.')).toBeVisible();
+  expect(popup.isClosed()).toBe(false);
+  await shot(popup, 'declined-light', browserName);
+  await popup.emulateMedia({ colorScheme: 'dark' });
+  await shot(popup, 'declined-dark', browserName);
+  await popup.emulateMedia({ colorScheme: 'light' });
+
+  // Close now: past the 1 s, it closes the window and the vault stops reusing it.
+  await popup.waitForTimeout(1_100);
+  await clickClosing(popup, '#approve-close');
+  await runAction(page, 'third', 'personalSign', 'three');
+  const next = await clickLauncher(page, 'Review in Hana');
+  await expect(next.getByText('Request 1 of 1', { exact: false })).toBeVisible();
+  await reject(next);
+  expect(await errorCode(page, 'third')).toBe(4001);
+});
+
 test('a follow-up request appears in the same open popup and needs its own guarded Approve', async ({ page }) => {
   const { evm } = await loggedIn(page);
   await runAction(page, 'first', 'personalSign', 'one');
   const popup = await clickLauncher(page, 'Review in Hana');
   await approve(popup);
   expect(await okValue(page, 'first')).toMatchObject({ valid: true });
-  await expect(popup.getByText('Waiting for the next request', { exact: false })).toBeVisible();
+  await expect(popup.getByRole('heading', { name: 'Approved', exact: true })).toBeVisible();
 
   // Injected into the reused popup, then clicked within 1 s of rendering: no signature.
   let opened = false;

@@ -17,7 +17,7 @@
 //   hana:approve-hello   → the popup is ready: send the head of the queue (also how a partner-opened popup is adopted)
 //   hana:approve-result  → {id, approved, digest} for the request on show (pending, < 5 min old, digest matches)
 //   hana:consent-result  → {id, allowed, digest} for the consent screen on show (consentDigest)
-//   hana:approve-bye     → the popup closes itself after 15 s idle
+//   hana:approve-bye     → the popup closes itself after 15 s idle, or the user pressed its Close now
 //   hana:auto-approve-stop → "Stop auto-approving"
 //   hana:email-revoke      → "Stop sharing" on the account line (D411, D442), answered hana:email-revoked
 // Reject, a popup closed while a request is on show, or a request older than 5 min resolves 'rejected' (4001).

@@ -209,6 +209,17 @@ describe('POST /v1/sessions: ID token verification', () => {
     expect(near.sent).toHaveLength(2);
   });
 
+  it('a copy another isolate would relay is refused by the session’s relayer object: 409 session_exists, one transaction (D455)', async () => {
+    const { app, aud, near, post } = await setup();
+    const b = await sessionBody(app.scope, aud);
+    expect((await post(b)).status).toBe(200);
+    // Another isolate, and a chain view still behind the original's transaction.
+    clearViewCaches();
+    near.views.session_key_in_use = () => false;
+    await expectRejected(await post(b), 409, 'session_exists');
+    expect(near.sent).toHaveLength(1);
+  });
+
   it('rejects a replay after the session was revoked, until it expires (409, not relayed)', async () => {
     const { app, aud, near, post } = await setup();
     const b = await sessionBody(app.scope, aud);

@@ -1,8 +1,9 @@
 // The derive/revoke pre-check: requests the contract would certainly refuse (replayed counter, use limit reached,
 // counter past the limit) are rejected off-chain; anything that might succeed is still relayed.
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CLAIM_MEMORY_MS } from '../src/relayer-key.ts';
 import { heldCounters, sessionUseRejection } from '../src/session-use.ts';
-import { type SessionView, TtlCache } from '../src/views.ts';
+import { type SessionView, TtlCache, clearViewCaches } from '../src/views.ts';
 import { type Chain, appHeaders, call, chain, deriveBody, newSessionKey, revokeBody, seedApp, seedPlan, uid } from './helpers.ts';
 import { appKey } from './login-helpers.ts';
 afterEach(() => vi.restoreAllMocks());
@@ -108,6 +109,17 @@ describe('POST /v1/derive and /v1/sessions/revoke: counter and use-limit pre-che
     expect(sessionViews(near)).toBe(1);
     await expectRejected(await derive(2), 409, 'counter_used', 4);
     expect(sentCounters(near)).toEqual([1, 2, 3]);
+  });
+
+  it('a copy another isolate would relay is refused by the session’s relayer object: 409 counter_used, one transaction (D455)', async () => {
+    const { near, derive, spk } = await setup();
+    expect((await derive(1)).status).toBe(200);
+    // Another isolate: nothing cached there, and the chain view it reads is behind the original's transaction.
+    clearViewCaches();
+    near.sessions.set(JSON.stringify(spk), { ...near.sessions.get(JSON.stringify(spk))!, used: 0 });
+    await expectRejected(await derive(1), 409, 'counter_used', 2);
+    expect(sentCounters(near)).toEqual([1]);
+    expect(heldCounters()).toBe(0);
   });
 
   it('rejects derives once the use limit is reached (409 session_exhausted); revoke still works', async () => {
@@ -277,9 +289,14 @@ describe('POST /v1/derive and /v1/sessions/revoke: counter and use-limit pre-che
     await expectRejected(await derive(1), 409, 'counter_used', 2);
     at(t0 + 9_000);
     await expectRejected(await derive(1), 409, 'counter_used', 2);
-    // ...but does not restart the entry's TTL: after it, the chain's answer is used (here the replay is relayed and
-    // refused on chain, which costs gas but never refuses a valid request on a count the chain doesn't show).
+    // ...but does not restart the entry's TTL: after it, the chain's answer is used. The relayer object still remembers
+    // the transaction it saw succeed (D455)...
     at(t0 + 10_500);
+    await expectRejected(await derive(1), 409, 'counter_used', 2);
+    expect(sentCounters(near)).toEqual([1]);
+    // ...and once it has forgotten, the replay is relayed and refused on chain, which costs gas but never refuses a valid
+    // request on a count the chain doesn't show.
+    at(t0 + CLAIM_MEMORY_MS + 1);
     expect((await derive(1)).status).toBe(422);
     expect(sentCounters(near)).toEqual([1, 1]);
   });

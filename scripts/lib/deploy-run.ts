@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { CONTRACT_RELEASES } from '@hana-id/console-core';
 import { type Manifest, loadEnv, manifestPath, repoRoot } from '@hana-id/env';
 import { type KeyPair, PublicKey } from '@near-js/crypto';
 import { actionCreators } from '@near-js/transactions';
@@ -212,7 +213,8 @@ async function observe(c: Ctx, wasmPath: string | null): Promise<{ observed: Dep
     const dao = await rpc.account(m.council.dao);
     // Its policy, not only its code: who votes and how many votes each proposal kind needs (D81).
     const policy = dao ? await tryView<SputnikPolicy>(rpc, m.council.dao, 'get_policy') : null;
-    councilDao = { exists: !!dao, codeHash: dao?.code_hash ?? '', policy };
+    const daoKeys = dao ? await rpc.accessKeys(m.council.dao) : [];
+    councilDao = { exists: !!dao, codeHash: dao?.code_hash ?? '', policy, fullAccessKeys: daoKeys.filter((k) => k.access_key.permission === 'FullAccess').map((k) => k.public_key) };
     for (const a of m.council.members) {
       councilKeys[a] = m.network === 'testnet' && (councilKeysOnDisk(m) ? !!readCouncilKey(m.name, a, c.secretsRoot) : !!findLegacyCredential(a, m.network, c.home));
     }
@@ -231,6 +233,7 @@ async function observe(c: Ctx, wasmPath: string | null): Promise<{ observed: Dep
       governance,
       relayerAccessKeys: keyLists.relayer ?? [],
       signerAccessKeys: keyLists.signer ?? [],
+      ...(m.ownerKind === 'sputnik' ? {} : { ownerAccessKeys: keyLists.owner ?? [] }),
       poolKeysInFile: {
         session: readPoolKeys(m.name, 'session', c.secretsRoot).map((k) => k.getPublicKey().toString()),
         owner: readPoolKeys(m.name, 'owner', c.secretsRoot).map((k) => k.getPublicKey().toString()),
@@ -301,6 +304,9 @@ async function execute(c: Ctx, step: DeployStep, creds: Partial<Record<Role, Loa
       const code = wasm();
       await storageCheck(code);
       await send(m.signer, [actionCreators.deployContract(new Uint8Array(code)), actionCreators.functionCall('new', step.init, GAS_INIT, 0n)]);
+      const deployedHash = (await rpc.account(m.signer))?.code_hash;
+      if (deployedHash !== codeHashOf(code)) throw new Error(`Deployed ${codeHashOf(code)} but ${m.signer} runs ${deployedHash ?? '(nothing)'}: stop and find out why before using this env.`);
+      log(`    ${m.signer} now runs ${deployedHash}`);
       return 'done';
     }
     case 'relayer-keys': {
@@ -308,10 +314,13 @@ async function execute(c: Ctx, step: DeployStep, creds: Partial<Record<Role, Loa
       const fresh: KeyPair[] = Array.from({ length: step.generate }, () => generateKey());
       // Save before adding on chain, so a key that lands on chain is never lost.
       if (fresh.length) writePoolKeys(m.name, step.pool, [...existing, ...fresh], c.secretsRoot);
-      const toAdd = [...existing.filter((k) => step.reuse.includes(k.getPublicKey().toString())), ...fresh];
+      const toAdd = [...existing.filter((k) => step.reuse.includes(k.getPublicKey().toString()) || step.replace.includes(k.getPublicKey().toString())), ...fresh];
       const access = actionCreators.functionCallAccessKey(m.signer, step.methods, step.allowanceYocto);
-      await send(m.relayer, toAdd.map((k) => actionCreators.addKey(k.getPublicKey(), access)));
-      for (const k of toAdd) log(`    added ${k.getPublicKey().toString()}`);
+      // One transaction: a replaced key is deleted and added back with the right permission atomically (D456's note), so
+      // the pool never has a gap, and a failed transaction changes nothing.
+      await send(m.relayer, [...step.replace.map((pk) => actionCreators.deleteKey(PublicKey.fromString(pk))), ...toAdd.map((k) => actionCreators.addKey(k.getPublicKey(), access))]);
+      for (const pk of step.replace) log(`    replaced ${pk} (nonce restarts on chain: one relay_retry per replaced key is expected)`);
+      for (const k of toAdd.filter((key) => !step.replace.includes(key.getPublicKey().toString()))) log(`    added ${k.getPublicKey().toString()}`);
       return 'done';
     }
     case 'add-updater-key': {
@@ -468,6 +477,8 @@ export async function deployMain(argv: readonly string[], deps: DeployDeps = def
     },
     upgrade: args.flag('upgrade'),
     skipBuild: args.flag('skip-build') || !!wasmArg,
+    wasmGiven: !!wasmArg,
+    publishedCodeHashes: CONTRACT_RELEASES.map((r) => r.codeHash),
     transferOwner: args.flag('transfer-owner'),
     ownerTx,
     sputnikCodeHash: deps.sputnikCodeHash ?? readPin().code_hash,

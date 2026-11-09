@@ -48,7 +48,7 @@ export default defineConfig(async () => {
             RELAYER_KEYS: JSON.stringify(relayerKeys),
             OWNER_RELAYER_KEYS: JSON.stringify(ownerRelayerKeys),
             // A gas override (gas.ts) for a method no endpoint relays, so the default gas of the others stays tested.
-            GAS_PRUNE_SESSIONS_TGAS: '70',
+            GAS_REMOVE_CLIENT_TGAS: '70',
             KEYS_UPDATER_KEY: keysUpdaterKey,
             VAULT_ORIGIN: 'https://vault.test',
             AUTH_ORIGIN: 'https://auth.test',

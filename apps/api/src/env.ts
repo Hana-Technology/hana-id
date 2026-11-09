@@ -32,7 +32,7 @@ export interface Env {
   BLS_PRECHECK?: string;
   /** Optional Durable Object location hint for the shared objects (manifest cloudflare.durableObjectLocation). */
   DO_LOCATION_HINT?: string;
-  /** Secret: session pool. JSON array of `ed25519:...` secret keys (create_session, create_session_and_derive, derive_key, revoke_session, prune_sessions). */
+  /** Secret: session pool. JSON array of `ed25519:...` secret keys (create_session, create_session_and_derive, derive_key, revoke_session and the link methods). */
   RELAYER_KEYS: string;
   /**
    * Optional secret (D436): a CoinGecko API key (Pro, else Demo) for the sandbox mainnet demo's live prices. Sent only in

@@ -42,7 +42,7 @@ import { type GestureCheck, type PageWindow, VAULT_FRAME_NAME, childFrame, fromP
 import { renderApproval } from './render-approval.ts';
 import { renderConsent } from './render-consent.ts';
 import { type BalanceFetch, readDemoBalance } from './demo-balance.ts';
-import { type DemoBridge, type DemoNetwork, MAINNET_DEMO, assessMainnetDemo, demoNetworkOf, fixedMainnetDemoPrices, formatUsd, parseMainnetDemoPrices } from '@hana-id/core/mainnet-demo';
+import { type DemoBridge, type DemoNetwork, type DemoSwap, MAINNET_DEMO, assessMainnetDemo, demoNetworkOf, fixedMainnetDemoPrices, formatUsd, parseMainnetDemoPrices } from '@hana-id/core/mainnet-demo';
 
 /** How long the popup waits for a follow-up request after an answer before it closes. */
 export const KEEP_OPEN_MS = 15_000;
@@ -328,9 +328,9 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   function demoBanner(input: ApprovalDigestInput, network: DemoNetwork, id: string, demoPrices: unknown): HTMLElement {
     const cap = formatUsd(MAINNET_DEMO.txCapUsdMicros);
     const prices = parseMainnetDemoPrices(demoPrices, null) ?? fixedMainnetDemoPrices();
-    // `shown`: this page holds the signing chain's address only, so it shows a bridge's recipient (the vault has bound
-    // it to the user's own wallet before this popup opened), and the assessment still checks the deposit's hub wallet
-    // against that address itself, so the bridge line appears only once the hub wallet is verified (D476).
+    // `shown`: this page holds the signing chain's address only, so it shows a bridge's or swap's recipient (the vault
+    // has bound it to the user's own wallet before this popup opened), and the assessment still checks the hub wallet and
+    // a swap's other fields against that address itself, so a recipient appears only once they are verified.
     const assessed = assessMainnetDemo(input, now(), prices, 'shown');
     const value = assessed.ok
       ? `This request can move about ${formatUsd(assessed.usdMicros)}, fee included. Hana’s limit is ${cap} per transaction.`
@@ -354,6 +354,8 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
       d.h('p', { class: 'danger takeover' }, MAINNET_DEMO_BANNER),
       d.h('p', { class: 'danger' }, value),
       assessed.ok && assessed.bridge ? bridgeLine(assessed.bridge) : null,
+      assessed.ok && assessed.swap ? swapLine(assessed.swap) : null,
+      assessed.ok && assessed.swap ? d.h('p', { class: 'demo-swap-minimum' }, `Minimum you receive: ${assessed.swap.minimumOutput} ${assessed.swap.outputSymbol}`) : null,
       d.h('p', { class: 'muted' }, MAINNET_DEMO_WHY),
       balance,
     );
@@ -362,6 +364,11 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   /** What a Sodax bridge does (D476): the same amount arrives, on the other chain, at this recipient. */
   function bridgeLine(b: DemoBridge): HTMLElement {
     return d.h('p', { class: 'demo-bridge' }, `Bridge ${b.amount} ${b.symbol} from ${b.fromChain} to ${b.toChain}, 1:1. Recipient on ${b.toChain}: `, d.h('code', { class: 'mono' }, b.recipient));
+  }
+
+  /** Where a Sodax swap's output goes. */
+  function swapLine(s: DemoSwap): HTMLElement {
+    return d.h('p', { class: 'demo-swap' }, `Swap on Sodax. Recipient on ${s.toChain}: `, d.h('code', { class: 'mono' }, s.recipient));
   }
 
   /** A new request replaces the one on screen: the unanswered one is rejected first. */

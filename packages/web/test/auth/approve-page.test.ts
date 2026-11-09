@@ -32,9 +32,11 @@ import {
 import { NO_NETWORK_NOTE } from '../../src/auth/render-approval.ts';
 import { formatEndTime, lingeringSignaturesNote } from '../../src/auth/render-consent.ts';
 import { policyJson } from '../../../core/test/policy-fixtures.ts';
-import { PASSPHRASE, USER, paymentOp, txBytes } from '../../../core/test/stellar-fixtures.ts';
+import { PASSPHRASE, USER, invocation, paymentOp, sorobanData, sourceAuth, txBytes } from '../../../core/test/stellar-fixtures.ts';
+import { Address, Operation, xdr } from '@stellar/stellar-base';
+import { sodaxHubWalletOf } from '@hana-id/core/mainnet-demo';
 import { ENV, EVIL, FakeWindow, PARTNER, type RemoteWindow, asWindow, pageText, remoteWindow, resetDom } from './helpers.ts';
-import { OTHER, SODAX_ASSET_MANAGER_BASE, sodaxBridgeDeposit } from '../vault/chains.ts';
+import { OTHER, SODAX_ASSET_MANAGER_BASE, sodaxBridgeDeposit, sodaxEmptyDeposit, sodaxStellarSwapCalls, sodaxSwapDeposit } from '../vault/chains.ts';
 
 const EVM = '0x2c7536E3605D9C16a7a3D7b1898e529396a65c23';
 const TX = { chainId: '0xaa36a7', nonce: '0x1', gas: '0x5208', maxFeePerGas: '0x2', maxPriorityFeePerGas: '0x1', to: EVM, value: '0xde0b6b3a7640000', data: '0x' };
@@ -1514,6 +1516,115 @@ describe('/approve: the mainnet demo banner (D428, D429)', () => {
     send(baseRequest({ bytes: evmTxSigningPayload(parseEvmTxRequest({ ...BASE_TX, to: SODAX_ASSET_MANAGER_BASE, value: '0x0', data: sodaxBridgeDeposit(OTHER, EVM, `0x${'22'.repeat(20)}`) })) }));
     expect(document.querySelector('.demo-bridge')).toBeNull();
     expect(pageText()).not.toContain('Recipient on');
+    expect(pageText()).not.toContain('This request can move about');
+  });
+
+  const sodaxRequest = (data: string) => send(baseRequest({ bytes: evmTxSigningPayload(parseEvmTxRequest({ ...BASE_TX, to: SODAX_ASSET_MANAGER_BASE, value: '0x0', data })) }));
+  const OTHER_HUB_WALLET = `0x${'22'.repeat(20)}`;
+
+  it('names a swap’s recipient from its own decoding of the bytes (D492)', () => {
+    startDemo(async () => rpcAnswer('0x0'));
+    sodaxRequest(sodaxSwapDeposit(OTHER, EVM));
+    expect(document.querySelector('.demo-swap')?.textContent).toBe(`Swap on Sodax. Recipient on Stellar: ${OTHER}`);
+    expect(pageText()).toContain('This request can move about');
+    expect(document.querySelector('.demo-bridge')).toBeNull();
+  });
+
+  // The hub assets and decimals pinned by packages/core/test/mainnet-demo.test.ts.
+  const HUB = {
+    eth: '0x70178089842be7f8e4726b33f0d1569db8021faa',
+    baseUsdc: '0x72E852545B024ddCbc5b70C1bCBDAA025164259C',
+    baseEurc: '0x228615a4e0cb4cb1a8931605301661db2782adb8',
+    xlm: '0x8ac68af223907fb1b893086601a3d99e00f2fa9d',
+    stellarUsdc: '0x348007B53F25A9A857aB8eA81ec9E3CCBCf440f2',
+    stellarEurc: '0x93d5d2382f302fa78350c18b4df3ee0bd09b3945',
+  };
+  const minimumLine = () => document.querySelector('.demo-swap-minimum');
+  const STELLAR_AM = 'CCGF33A4CO6D3BXFEKPXVCFCZBK76I3AQOZK6KIKRPAWAZR3632WHCJ3';
+  const STELLAR_USDC_SAC = 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75';
+  const hexScVal = (hex: string) => xdr.ScVal.scvBytes(Buffer.from(hex.replace(/^0x/u, ''), 'hex'));
+  /** A Stellar → Base swap deposit of 1 USDC with the SDK's hub calls, to `to` (the signer's own hub wallet by default). */
+  function stellarSwapRequest(over: { outputToken?: string; minOutput?: bigint }, to = sodaxHubWalletOf('stellar', USER)) {
+    const u128 = (n: bigint) => xdr.ScVal.scvU128(new xdr.UInt128Parts({ hi: xdr.Uint64.fromString('0'), lo: xdr.Uint64.fromString(n.toString()) }));
+    const i128 = (n: bigint) => xdr.ScVal.scvI128(new xdr.Int128Parts({ hi: xdr.Int64.fromString('0'), lo: xdr.Uint64.fromString(n.toString()) }));
+    const addr = (a: string) => new Address(a).toScVal();
+    const args = [addr(USER), addr(STELLAR_USDC_SAC), u128(10_000_000n), hexScVal(to), hexScVal(sodaxStellarSwapCalls(over))];
+    const auth = sourceAuth(invocation(STELLAR_AM, 'transfer', args, [invocation(STELLAR_USDC_SAC, 'transfer', [addr(USER), addr(STELLAR_AM), i128(10_000_000n)])]));
+    return pubnetRequest({ bytes: txBytes([Operation.invokeContractFunction({ contract: STELLAR_AM, function: 'transfer', args, auth: [auth] })], { soroban: sorobanData(), fee: '100000' }) });
+  }
+
+  it.each([
+    ['XLM', HUB.xlm, 12_340_000n, 'Minimum you receive: 1.234 XLM'],
+    ['USDC', HUB.stellarUsdc, 12_340_000n, 'Minimum you receive: 1.234 USDC'],
+    ['EURC', HUB.stellarEurc, 12_340_000n, 'Minimum you receive: 1.234 EURC'],
+  ] as const)('Base → Stellar: shows the minimum in %s, in its own decimals', (_name, outputToken, minOutput, text) => {
+    startDemo(async () => rpcAnswer('0x0'));
+    sodaxRequest(sodaxSwapDeposit(OTHER, EVM, { outputToken, minOutput }));
+    expect(minimumLine()?.textContent).toBe(text);
+    expect(minimumLine()?.children).toHaveLength(0);
+  });
+
+  it.each([
+    ['ETH', HUB.eth, 1_234_000_000_000_000_000n, 'Minimum you receive: 1.234 ETH'],
+    ['USDC', HUB.baseUsdc, 1_234_000n, 'Minimum you receive: 1.234 USDC'],
+    ['EURC', HUB.baseEurc, 1_234_000n, 'Minimum you receive: 1.234 EURC'],
+  ] as const)('Stellar → Base: shows the minimum in %s, in its own decimals', (_name, outputToken, minOutput, text) => {
+    startDemo(async () => rpcAnswer('0x0'));
+    send(stellarSwapRequest({ outputToken, minOutput }));
+    expect(document.querySelector('.demo-swap')?.textContent).toMatch(/^Swap on Sodax\. Recipient on Base: 0x/u);
+    expect(minimumLine()?.textContent).toBe(text);
+  });
+
+  it.each([
+    ['one stroop of Stellar USDC', () => sodaxRequest(sodaxSwapDeposit(OTHER, EVM, { minOutput: 1n })), 'Minimum you receive: 0.0000001 USDC'],
+    ['one unit of Base USDC', () => send(stellarSwapRequest({ minOutput: 1n })), 'Minimum you receive: 0.000001 USDC'],
+    ['one wei of ETH', () => send(stellarSwapRequest({ outputToken: HUB.eth, minOutput: 1n })), 'Minimum you receive: 0.000000000000000001 ETH'],
+    ['zero', () => sodaxRequest(sodaxSwapDeposit(OTHER, EVM, { minOutput: 0n })), 'Minimum you receive: 0 USDC'],
+  ] as const)('shows a very small minimum in full: %s', (_name, request, text) => {
+    startDemo(async () => rpcAnswer('0x0'));
+    request();
+    expect(minimumLine()?.textContent).toBe(text);
+  });
+
+  it('shows no minimum when the popup’s checks fail, or for a request that isn’t a swap', () => {
+    for (const request of [
+      () => sodaxRequest(sodaxSwapDeposit(OTHER, EVM, { to: OTHER_HUB_WALLET })),
+      () => sodaxRequest(sodaxSwapDeposit(OTHER, EVM, { creator: OTHER_HUB_WALLET })),
+      () => sodaxRequest(sodaxSwapDeposit(OTHER, EVM, { outputToken: `0x${'33'.repeat(20)}` })),
+      () => sodaxRequest(sodaxSwapDeposit(OTHER, EVM, { deadline: 0n })),
+      () => send(stellarSwapRequest({}, OTHER_HUB_WALLET)),
+      () => sodaxRequest(sodaxEmptyDeposit(EVM)),
+      () => sodaxRequest(sodaxBridgeDeposit(OTHER, EVM)),
+    ]) {
+      startDemo(async () => rpcAnswer('0x0'));
+      request();
+      expect(minimumLine()).toBeNull();
+      expect(pageText()).not.toContain('Minimum you receive');
+    }
+  });
+
+  it.each([
+    ['its spoke `to` isn’t the signing address’s own hub wallet', { to: OTHER_HUB_WALLET }],
+    ['it was created for another hub wallet', { creator: OTHER_HUB_WALLET }],
+  ] as const)('names no recipient and no value when %s (D492)', (_name, over) => {
+    startDemo(async () => rpcAnswer('0x0'));
+    sodaxRequest(sodaxSwapDeposit(OTHER, EVM, over));
+    expect(document.querySelector('.demo-swap')).toBeNull();
+    expect(pageText()).not.toContain('Recipient on');
+    expect(pageText()).not.toContain('This request can move about');
+  });
+
+  it('values a plain deposit to the signing address’s own hub wallet, and names no recipient (D492)', () => {
+    startDemo(async () => rpcAnswer('0x0'));
+    sodaxRequest(sodaxEmptyDeposit(EVM));
+    expect(pageText()).toContain('This request can move about');
+    expect(document.querySelector('.demo-swap')).toBeNull();
+    expect(document.querySelector('.demo-bridge')).toBeNull();
+  });
+
+  it('shows no value for a plain deposit to another hub wallet (D492)', () => {
+    startDemo(async () => rpcAnswer('0x0'));
+    sodaxRequest(sodaxEmptyDeposit(EVM, OTHER_HUB_WALLET));
     expect(pageText()).not.toContain('This request can move about');
   });
 

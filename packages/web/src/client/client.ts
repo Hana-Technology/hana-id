@@ -139,8 +139,9 @@ export interface MainnetDemoPrices {
  * Hana's mainnet demo for this test app: the mainnets it may sign on, the per-transaction cap and the prices in force.
  * The vault values each request itself with exactly these prices, and refuses one over the cap (4100
  * `mainnet_demo_over_cap`, `data.usd` and `data.capUsd` strings such as `"$12.40"`) or one it can't value
- * (`mainnet_demo_unknown_call`, `mainnet_demo_unpriced`). Your page can aim under the cap: value the amount, plus the
- * transaction's maximum fee in the native asset, at `prices`, and compare with `txCapUsd`.
+ * (`mainnet_demo_unknown_call`, `mainnet_demo_unpriced`), or one that would send funds anywhere but the user's own
+ * wallets (`mainnet_demo_wrong_destination`). Your page can aim under the cap: value the amount, plus the transaction's
+ * maximum fee in the native asset, at `prices`, and compare with `txCapUsd`.
  */
 export interface MainnetDemo extends MainnetDemoState {
   /** The cap in dollars, `"9.99"`. */

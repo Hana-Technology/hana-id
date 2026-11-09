@@ -198,7 +198,7 @@ describe('ops.purge_expired (the admin’s own state)', () => {
   it('nonce checks and rejection alerts after 400 days, notified watcher rows after 400 days; recent and pending rows stay', async () => {
     const pk = 'ed25519:6E8sCci9badyRkXb3JoRpBj5p8C6Tw41ELDZoiihKEtp';
     await db.query("INSERT INTO ops.nonce_checks (relayer_pk, checked_at, chain_nonce, explained, ledger_relayed_since_last) VALUES ($1, now() - interval '401 days', 1, true, 0), ($1, now() - interval '10 days', 2, true, 0)", [pk]);
-    await db.query("INSERT INTO ops.rejection_alerts (org_id, day, relayed, rejected) VALUES ('org_a', (now() - interval '401 days')::date, 100, 9), ('org_a', (now() - interval '1 day')::date, 100, 9)");
+    await db.query("INSERT INTO ops.rejection_alerts (org_id, day, relayed, rejected) VALUES ('org_a', (now() - interval '402 days')::date, 100, 9), ('org_a', (now() - interval '1 day')::date, 100, 9)");
     await db.query(
       "INSERT INTO ops.scope_watch (scope_id, change_id, first_seen_at, notified_at) VALUES ('s1', 1, now() - interval '500 days', now() - interval '401 days'), ('s1', 2, now() - interval '500 days', NULL), ('s1', 3, now(), now())",
     );

@@ -8587,7 +8587,7 @@ path, a key or derivation.
   satisfies its rule (`docs/hana-home-build-plan.md` "Still open", item 2).
 - Contract change, no address impact.
 
-- Open, 2026-11-09 (the user): after a delayed turn-off, `remove_client` can still remove the last Google client at once. The user wants a way for users to keep access to their funds whatever the partner does; under discussion, blocks batch H6.
+- Note, 2026-11-09 (the user): `remove_client` can still remove the last Google client at once after a delayed turn-off; D468's exit client is the answer, so users keep access whatever the partner does.
 ### D461. Hana Home billing: a statement line while the app is active, Hana pays after it's gone
 - Date 2026-11-09 · Status: **decided by the user 2026-11-09** · Not built (batch H11) · Confirms D98's item 12 · Source:
   `docs/mainnet-readiness.md` 1.15
@@ -8704,6 +8704,23 @@ path, a key or derivation.
     arrived is the proof (`docs/operations.md` "Test page").
 - Alternatives: a `test_page` alert kind acknowledged by hand: it needs a playbook, shows in the open-alerts list and
   re-sends until someone acts, all of which this must not do. No cooldown: one bad loop rings phones without limit.
+
+### D468. A permanent exit client: the contract always accepts Hana Home's client, whatever a partner does
+- Date 2026-11-09 · Status: **decided by the user 2026-11-09**; the mechanics are designed in batch H6 and reviewed there
+- Context: access to a user's key depends on a client list the partner controls. D460's delay doesn't protect a user who
+  isn't watching, because Hana doesn't contact users (D96), and after a delayed turn-off `remove_client` can still remove
+  the last Google client at once. The user asked for a way for users to keep access to their funds whatever the partner does.
+- Decision: the contract keeps a council-set list of exit clients (Hana Home's Google client and an email equivalent),
+  changed only by the council under a timelock, and accepts them for every scope regardless of that scope's `clients` and
+  `allow_shared`. A partner can't remove them or opt out. Each use emits an on-chain event the partner and the watchdog can
+  see. It is a contract change in batch H6 and changes no path or key: Google's `sub` is the same across clients, so an
+  exit client reaches the same wallet.
+- Trade-offs: a compromised Hana Home page could reach users of every scope who sign in there, including partners who
+  turned off shared login, so a partner can't fully exclude Hana. Hana still never holds a key: it takes the user's own
+  sign-in, and the key exists only in their browser. Enterprises must be told (readiness 9.12); the external audit covers it.
+- Rejected: a delay and a Home notice only (only helps users who look in time); pressing users to export or link a backup
+  at signup (no guarantee); partner terms only (a legal remedy after the loss).
+- Open for H6: whether D460's "needs a remaining Google client" and D464's owner seat are still needed once this exists.
 
 ## Superseded or amended
 

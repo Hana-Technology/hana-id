@@ -54,8 +54,8 @@ with what became of each.
 | 6. Security reviews and drills | 9 | 2 | 0 | 6 | 0 | 1 |
 | 7. Builds not done | 25 | 5 | 13 | 6 | 1 | 0 |
 | 8. Address freeze | 7 | 1 | 1 | 2 | 2 | 1 |
-| 9. Legal and product | 11 | 0 | 0 | 7 | 3 | 1 |
-| **Total** | **128** | **18** | **28** | **55** | **22** | **5** |
+| 9. Legal and product | 12 | 0 | 0 | 8 | 3 | 1 |
+| **Total** | **129** | **18** | **28** | **56** | **22** | **5** |
 
 Counted from each row's Status (its first words). Group 7 counts every row, 7.1b–7.1i included.
 
@@ -261,6 +261,7 @@ discarded at the freeze (D122).
 | 9.9 | Partner terms: an active app's Hana Home logins are a line on its org's statement, and Hana pays after the app is gone | Partners are charged for users leaving them, so the terms must say so | not built | legal/founder | D461, D98 |
 | 9.10 | Privacy notice line: Home uses the wallet directory to show a user their own apps and addresses | D466 is conditional on this disclosure; part of row 9.2's review | not built | legal/founder | D466, D310 |
 | 9.11 | Enterprise onboarding contract wording: Hana is a scope owner from onboarding, why (users keep an exit even if the company disappears), and that the partner doesn't remove Hana | The chain can't stop a timelocked `SetOwners`; the wording is what does | not built | legal/founder | D464, D98 |
+| 9.12 | Tell Enterprise partners about the permanent exit client: a partner can't fully exclude Hana Home, even with shared login off (D468) | It changes what a partner who opts out of shared login is promised | not built | legal/founder | D468; `docs/hana-home-build-plan.md` |
 
 ## Inconsistencies found
 

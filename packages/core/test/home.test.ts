@@ -1,5 +1,6 @@
 // Hana Home's byte layouts against the independent Node implementation (test/vectors/home-v1.json,
 // scripts/gen-home-vectors.mjs). The API's verifier agrees with the same file (apps/api/test/home-identity.test.ts).
+import { createPrivateKey, createPublicKey, verify } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { base64UrlEncode, fromHex, sha256, toHex, utf8 } from '../src/bytes.ts';
 import {
@@ -113,6 +114,31 @@ describe('homeMessage', () => {
     expect(homeRequestPath(new URL('https://api.test/v1/home/apps'))).toBe('/v1/home/apps');
     expect(homeRequestPath(new URL('https://api.test/v1/home/devices?scopeId=s1'))).toBe('/v1/home/devices?scopeId=s1');
     expect(homeRequestPath(new URL('https://api.test/v1/home/apps?'))).toBe('/v1/home/apps');
+  });
+});
+
+describe('the vector signatures (Ed25519 by seed [7; 32])', () => {
+  const key = createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x: Buffer.from(V.pk_hex, 'hex').toString('base64url') }, format: 'jwk' });
+  const verifies = (msg: Uint8Array, sigHex: string): boolean => verify(null, msg, key, Buffer.from(sigHex, 'hex'));
+  const messageOf = (name: string): Uint8Array => {
+    const i = V.messages[name]!.input;
+    return homeMessage({ signer: i.signer, counter: i.counter, method: i.method, path: i.path, body: fromHex(i.body_hex) });
+  };
+
+  it('pk_hex is seed7_hex’s public key', () => {
+    const der = Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), Buffer.from(V.seed7_hex, 'hex')]);
+    const pub = createPublicKey(createPrivateKey({ key: der, format: 'der', type: 'pkcs8' })).export({ format: 'jwk' }).x!;
+    expect(Buffer.from(pub, 'base64url').toString('hex')).toBe(V.pk_hex);
+  });
+
+  it.each(['get', 'get_query', 'post'])('messages.%s’s signature verifies over homeMessage’s bytes', (name) => {
+    expect(verifies(messageOf(name), V.messages[name]!.signature_seed7_hex)).toBe(true);
+  });
+
+  it('a signature doesn’t verify over another message, and the header carries the first one', () => {
+    expect(verifies(messageOf('get'), V.messages.post!.signature_seed7_hex)).toBe(false);
+    expect(verifies(messageOf('post'), V.messages.get!.signature_seed7_hex)).toBe(false);
+    expect(V.header.fields_input.sig_hex).toBe(V.messages.get!.signature_seed7_hex);
   });
 });
 

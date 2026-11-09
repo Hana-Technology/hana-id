@@ -150,6 +150,39 @@ describe('Home identity: what it accepts', () => {
   });
 });
 
+describe('the Node vector’s signatures, through the real gate', () => {
+  // Only bytes from the vector file reach the gate (nonce, key, salt, counter, signature, path, body): no call to core's
+  // homeMessage, homeNonce or encodeHomeIdentity. Ed25519 signatures from Node's crypto, verified by the gate's WebCrypto.
+  const fields = vectors.header.fields_input;
+  const now = fields.expiresAtMs - 10 * 60_000;
+  const signerEnv = { SIGNER_ACCOUNT: vectors.signer };
+  const headerFrom = (counter: number, sigHex: string, jwt: string): string => {
+    const json = JSON.parse(vectors.header.json) as Record<string, unknown>;
+    return Buffer.from(JSON.stringify({ ...json, jwt, counter, sig: Buffer.from(sigHex, 'hex').toString('base64url') })).toString('base64url');
+  };
+  const vectorToken = () => google.sign({ iss: GOOGLE_ISS, aud: SHARED, sub: SUB, nonce: vectors.nonces.basic.nonce, exp: Math.floor(now / 1000) + 3600 });
+  const requestFor = (input: { method: string; path: string; body_hex: string }, header: string) => {
+    const body = Buffer.from(input.body_hex, 'hex');
+    return makeRequest(header, { method: input.method, path: input.path, ...(body.length > 0 ? { body: Uint8Array.from(body) } : {}) });
+  };
+
+  it.each(['get', 'get_query', 'post'] as const)('messages.%s is accepted', async (name) => {
+    const v = vectors.messages[name];
+    const g = await gate(requestFor(v.input, headerFrom(v.input.counter, v.signature_seed7_hex, await vectorToken())), signerEnv, { ...OPTS, window: `vec${uid()}` }, now);
+    expect(g.ok).toBe(true);
+  });
+
+  it('the vector’s signature for another request, and one with a flipped bit, are refused', async () => {
+    const { get, post } = vectors.messages;
+    const jwt = await vectorToken();
+    const other = await refusal(await gate(requestFor(get.input, headerFrom(get.input.counter, post.signature_seed7_hex, jwt)), signerEnv, { ...OPTS, window: `vec${uid()}` }, now));
+    expect([other.status, other.code]).toEqual([401, 'invalid_signature']);
+    const flipped = (parseInt(get.signature_seed7_hex.slice(0, 2), 16) ^ 1).toString(16).padStart(2, '0') + get.signature_seed7_hex.slice(2);
+    const bad = await refusal(await gate(requestFor(get.input, headerFrom(get.input.counter, flipped, jwt)), signerEnv, { ...OPTS, window: `vec${uid()}` }, now));
+    expect([bad.status, bad.code]).toEqual([401, 'invalid_signature']);
+  });
+});
+
 describe('Home identity: every refusal in the spec’s list', () => {
   it('a wrong Origin (and a missing one), with no CORS headers', async () => {
     const id = await newIdentity();

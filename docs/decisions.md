@@ -8041,7 +8041,7 @@ free numbers on `origin/develop` (D427 the highest: D426 the Hana brand, D427 th
 
 ### D432. An updater Add of a Google kid the watchdog has never seen waits until 18 min before it is executable
 - Date 2026-11-06 · Status: **asked for by the user (D422's follow-up, `docs/mainnet-readiness.md` 7.16); the design
-  proposed by the assistant, to confirm** · Built: `apps/watchdog/src/run.ts` (`NEW_KID_GRACE_MS`, the re-exported
+  proposed by the assistant, confirmed by the user 2026-11-09** · Built: `apps/watchdog/src/run.ts` (`NEW_KID_GRACE_MS`, the re-exported
   `NEW_KID_CANCEL_LEAD_MS`, `newKidDeadline`, `unseenPending`, `newKidsDueWithoutFetch`, `Run.updaterForged`),
   `apps/watchdog/src/checks.ts` (`NEW_KID_CANCEL_LEAD_MS`, alert kind `unseen_key_change`), the playbook
   `unseen-key-change`; no migration (the deadline comes from the change's own `proposed_at_ms` and
@@ -8107,7 +8107,7 @@ Readiness row 7.17: migration 0013's `user_events` (D428, D430) were outside C13
 (D361).
 
 ### D433. `user_events`: 24 months, no longer than the scope's directory, and erased with the user by internal id and address
-- Date 2026-11-06 · Status: decided while building, to confirm (the 24 months goes to the accountant with D90's
+- Date 2026-11-06 · Status: decided while building, confirmed by the user 2026-11-09 (the 24 months goes to the accountant with D90's
   periods, `docs/mainnet-readiness.md` 9.3) · Built on `feat/user-events-retention`: console-core
   `USER_EVENTS_KEEP_MONTHS`, `purgeUserEventsInput`; `apps/api/src/changes/retention.ts` `purgeUserEvents`,
   `AdminRpc.purgeUserEvents`; `apps/admin/src/retention.ts` (the `user_events` step), `public/app.js`;
@@ -8149,7 +8149,7 @@ Readiness row 7.17: migration 0013's `user_events` (D428, D430) were outside C13
   signature row of a reused key elsewhere would keep the address); a migration for an `at` index (the table is small:
   key exports are rare and the demo staff only; the oldest rows come first in `id` order, so a batch stops early).
 ### D434. The email issuer reads apps through the API's read-only IssuerRpc, not a D1 binding
-- Date 2026-11-06 · Status: decided while building, to confirm · Built: branch `feat/issuer-readonly-rpc` (not merged,
+- Date 2026-11-06 · Status: decided while building, confirmed by the user 2026-11-09 · Built: branch `feat/issuer-readonly-rpc` (not merged,
   not deployed): `apps/api/src/rpc/issuer.ts`, `apps/api/src/issuer-apps.ts`, `packages/console-core/src/issuer-apps.ts`,
   `apps/email-issuer/src/apps.ts`, `apps/email-issuer/scripts/gen-wrangler.ts` · Source: the task brief for
   `docs/mainnet-readiness.md` 7.1d; replaces D251's interim source check
@@ -8194,7 +8194,7 @@ Readiness row 7.17: migration 0013's `user_events` (D428, D430) were outside C13
 ### D435. The API fails over to an ordered list of NEAR RPCs, never for an answer; a failed-over broadcast is polled
 - Date 2026-11-06 · Status: asked for by the user (readiness row 7.13: an ordered list from the manifest; failover on
   network errors, 5xx, 429 and timeouts, never on a valid JSON-RPC answer; think through broadcasts); the mechanics
-  **to confirm** · Built: `apps/api/src/near/rpc.ts` (`Rpc`, `nearRpc`, `rpcEndpoints`, `RpcHealth`),
+  **confirmed by the user 2026-11-09** · Built: `apps/api/src/near/rpc.ts` (`Rpc`, `nearRpc`, `rpcEndpoints`, `RpcHealth`),
   `packages/env/src/schema.ts` (`apiRpcFallbacks`, `apiRpcFallbacksOf`), `apps/api/scripts/gen-wrangler.ts`
   (`NEAR_RPC_FALLBACKS`), `envs/sandbox-dev.json`; tests `apps/api/test/near-rpc.test.ts`, `test/cron.test.ts`,
   `scripts/test/rpc-endpoints.test.ts` · Amends D261 (transactions and the relayer's access-key and block reads waited

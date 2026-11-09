@@ -29,6 +29,8 @@ import { sessionStanding } from './session-standing.ts';
 import { claimCounter, precheckSessionUse } from './session-use.ts';
 import { type UsageDraft, beginUsage, finishUsage, finishUsageOnThrow, notePath, noteRelay } from './usage/event.ts';
 import { MAX_BODY, isError, toCreateSession, toDeriveKey, toOwnerAction, toRevokeSession } from './validate.ts';
+import { CONSENT_HEADER, type ConsentStatus, consentStatus, parseConsentHeader } from './vault/consent-store.ts';
+import { parentOriginAllowed } from './vault/origins.ts';
 import { type AppSettings, effectiveSettings, getSettingsRow } from './vault/settings.ts';
 import { type LoginMethod, appLoginMethods } from './login-methods.ts';
 import { mainnetDemoOn } from './mainnet-demo-setting.ts';
@@ -37,7 +39,7 @@ import { fixedMainnetDemoPrices } from '@hana-id/core/mainnet-demo-prices';
 import { LINK_ADDS_PER_IP_MINUTE, LINK_CHANGES_PER_IP_MINUTE } from './links.ts';
 import { TtlCache, effectiveSharedClients, forgetScope, forgetSession, getConfig, getScope, isIssuerKeyActive, isSessionView, isSharedClient, recordSessionUse, rememberSession, scopeForClient, sessionKeyInUse } from './views.ts';
 
-const APP_ALLOW_HEADERS = `content-type, x-hana-key, ${PARENT_ORIGIN_HEADER}, ${RELAY_KEY_HEADER}`;
+const APP_ALLOW_HEADERS = `content-type, x-hana-key, ${PARENT_ORIGIN_HEADER}, ${RELAY_KEY_HEADER}, ${CONSENT_HEADER}`;
 const APP_METHODS = 'GET, POST, OPTIONS';
 /** Owner actions are unauthenticated at the API (the proof is in the args): keep them slow. */
 export const OWNER_ACTIONS_PER_IP_MINUTE = 10;
@@ -360,7 +362,19 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
   // The mainnet demo's prices (D436), beside the chain read, only once the app is known to have the demo on: a CoinGecko
   // call happens for no other request. Its own phase, only then. Never fails: the fixed table stands in.
   const pricesRead = settingsRead.then((s) => (s.ok && s.value[3] ? timed('prices', mainnetDemoPrices(env, exec)).then((p) => (p.ok ? p.value : fixedMainnetDemoPrices())) : null));
-  const [settingsDone, chainDone, demoPrices] = await Promise.all([settingsRead, chainRead, pricesRead]);
+  // The consent's status (D465), only for the vault's own read: one uncached D1 statement. `undefined` is "no answer" (no
+  // header, another origin, or a failed read): the field is left out, which is not 'unknown', so a D1 blip never makes a
+  // vault drop a consent (D511).
+  const consentHeader = env.VAULT_ORIGIN && request.headers.get('origin') === env.VAULT_ORIGIN ? request.headers.get(CONSENT_HEADER) : null;
+  const consentRead: Promise<ConsentStatus | undefined> =
+    consentHeader === null
+      ? Promise.resolve(undefined)
+      : timed('consent', readConsentStatus(env, app, consentHeader)).then((r) => {
+          if (r.ok) return r.value;
+          log({ event: 'consent_status_unavailable', requestId, appId: app.id, endpoint: ctx.endpoint }, 'warn');
+          return undefined;
+        });
+  const [settingsDone, chainDone, demoPrices, consent] = await Promise.all([settingsRead, chainRead, pricesRead, consentRead]);
   if (!settingsDone.ok) return reject(ctx, 503, 'config_unavailable', 'App config is unavailable, try again');
   const [settings, methods, identityEmail, mainnetDemo] = settingsDone.value;
   const autoApprovePolicy: AppSettings['autoApprovePolicy'] = settings?.autoApprovePolicy ?? null;
@@ -406,10 +420,19 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
       logoUrl: logoUrl(env.FILES_ORIGIN, app.logo_key) ?? null,
       // D411: when the vault asks the user to share their address with the app (identity/email.ts).
       identityEmail,
+      // D465: only on the vault's read with `x-hana-consent`; older vaults never send the header.
+      ...(consent ? { consent } : {}),
     });
   } catch {
     return reject(ctx, 502, 'near_unavailable', 'Could not read the app registry');
   }
+}
+
+/** `x-hana-consent` → the consent's status for this app. A malformed value can't name a consent: 'unknown', no D1 read. */
+function readConsentStatus(env: Env, app: App, header: string): Promise<ConsentStatus> {
+  const consentId = parseConsentHeader(header);
+  if (!consentId) return Promise.resolve('unknown');
+  return consentStatus(env.DB, app.id, consentId, Date.now(), (origin) => parentOriginAllowed(env.ENV_NAME, app, origin));
 }
 
 // ---- App endpoints ----

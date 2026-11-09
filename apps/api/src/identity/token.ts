@@ -117,7 +117,7 @@ export async function verifyEd25519(publicKey: Uint8Array, signature: Uint8Array
 
 // ---- handler ----
 
-type ShareCheck = { ok: true; share: { idleUntilMs: number; absCapMs: number } | null } | { ok: false; response: Response };
+type ShareCheck = { ok: true; share: { shareId: Uint8Array; pathHash: Uint8Array; idleUntilMs: number; absCapMs: number } | null } | { ok: false; response: Response };
 
 const sessionEnded = (ctx: Ctx, reason: string): Response => done(ctx, 410, { error: 'The Hana session has ended', code: 'session_ended', reason });
 
@@ -146,7 +146,7 @@ export async function checkShare(env: Env, ctx: Ctx, app: App, parentOrigin: str
   if (settings.persistence !== 'session') return { ok: false, response: sessionEnded(ctx, 'persistence_off') };
   const absCapMs = Math.min(row.abs_expires_at, row.created_at + settings.session_ttl_ms);
   if (now >= row.idle_until || now >= absCapMs) return { ok: false, response: sessionEnded(ctx, 'share_expired') };
-  return { ok: true, share: { idleUntilMs: row.idle_until, absCapMs } };
+  return { ok: true, share: { shareId: row.share_id, pathHash: row.path_hash, idleUntilMs: row.idle_until, absCapMs } };
 }
 
 export type ChainCheck = { ok: true; session: SessionView } | { ok: false; response: Response };

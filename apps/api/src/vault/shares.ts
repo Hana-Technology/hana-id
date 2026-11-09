@@ -53,17 +53,19 @@ export interface NewShare {
   createdAt: number;
   idleUntil: number;
   absExpiresAt: number;
+  /** A coarse "Chrome on macOS" from the vault (D98 item 10), or null. Deleted with the share. */
+  deviceLabel: string | null;
 }
 
 /** Inserts a share; false if the session key already has one (the UNIQUE `session_pk`). */
 export async function insertShare(db: D1Database, s: NewShare): Promise<boolean> {
   const res = await db
     .prepare(
-      `INSERT INTO vault_shares (share_id, app_id, session_pk, path_hash, partner_origin, share_enc, kek_id, counter, created_at, idle_until, abs_expires_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?9, ?10)
+      `INSERT INTO vault_shares (share_id, app_id, session_pk, path_hash, partner_origin, share_enc, kek_id, counter, created_at, idle_until, abs_expires_at, device_label)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?9, ?10, ?11)
        ON CONFLICT (session_pk) DO NOTHING`,
     )
-    .bind(s.shareId, s.appId, s.sessionPk, s.pathHash, s.partnerOrigin, s.shareEnc, s.kekId, s.createdAt, s.idleUntil, s.absExpiresAt)
+    .bind(s.shareId, s.appId, s.sessionPk, s.pathHash, s.partnerOrigin, s.shareEnc, s.kekId, s.createdAt, s.idleUntil, s.absExpiresAt, s.deviceLabel)
     .run();
   return res.meta.changes === 1;
 }

@@ -8625,6 +8625,15 @@ path, a key or derivation.
 - Options: (a) use it, disclosed; (b) keep D98's directory-only listing, with addresses only after a derive.
 - Why (a): the data exists since D310, for staff and partners, and it lets a user see their apps and addresses with no chain
   transaction or re-auth (D98's item 7). Home shows only the signed-in user's own rows.
+### D467. Merges into `develop` on `hana-id` go through a pull request; the sample repo's `main` stays direct for now
+- Date 2026-11-09 · Status: **decided by the user 2026-11-09**
+- Context: the organisation's "PR Required Ruleset" requires a pull request with one approving review on `main` and
+  `develop` of both repos. Every direct push so far went through on the user's bypass; the warning was not reported
+  because the push output was trimmed.
+- Decision: after verify, a merge into `hana-id` `develop` goes through a PR, merged by `gh pr merge --admin` unless
+  someone reviews it. So a merge has a record but no second reviewer unless a person adds one. The sample repo's `main`
+  stays direct pushes until the Sodax team is added. Any bypass warning a push prints is reported.
+- Rejected: continuing direct pushes on `hana-id` (no record); PRs on both (no gain on the sample while one person works on it).
 
 ## Superseded or amended
 

@@ -64,6 +64,9 @@ const WATCHDOG_URL = 'https://<workerName>.<subdomain>.workers.dev';
 export const watchdogStatus = `${WATCHDOG_AUTH} ${WATCHDOG_URL}/status`;
 export const watchdogAlerts = `${WATCHDOG_AUTH} '${WATCHDOG_URL}/alerts?severity=critical'`;
 export const watchdogActions = `${WATCHDOG_AUTH} ${WATCHDOG_URL}/actions`;
+/** The test critical page (D449): without `--yes`, the channels the deployed watchdog would use, nothing sent. */
+export const watchdogTestPagePlan = `${SCRIPTS} admin <env> watchdog:test-page`;
+export const watchdogTestPage = `${SCRIPTS} admin <env> watchdog:test-page --yes`;
 export const watchdogSecretsInit = 'corepack pnpm --filter @hana-id/watchdog secrets <env> init';
 export const watchdogSecretsCheck = 'corepack pnpm --filter @hana-id/watchdog secrets <env> check';
 export const watchdogGen = 'corepack pnpm --filter @hana-id/watchdog gen <env>';

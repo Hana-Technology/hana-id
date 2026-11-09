@@ -63,9 +63,9 @@ export function alertText(alert: Pick<AlertRow, 'id' | 'kind' | 'severity' | 'de
   return lines.join('\n');
 }
 
-const senderFor = (n: Notifier, c: Channel): Sender => (c === 'pager' ? n.pager : c === 'slack' ? n.slack : n.email);
+export const senderFor = (n: Notifier, c: Channel): Sender => (c === 'pager' ? n.pager : c === 'slack' ? n.slack : n.email);
 
-async function sendSafe(sender: Sender, msg: AlertMessage): Promise<SendResult> {
+export async function sendSafe(sender: Sender, msg: AlertMessage): Promise<SendResult> {
   try {
     return await sender.send(msg);
   } catch {

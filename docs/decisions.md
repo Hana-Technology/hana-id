@@ -8587,6 +8587,7 @@ path, a key or derivation.
   satisfies its rule (`docs/hana-home-build-plan.md` "Still open", item 2).
 - Contract change, no address impact.
 
+- Open, 2026-11-09 (the user): after a delayed turn-off, `remove_client` can still remove the last Google client at once. The user wants a way for users to keep access to their funds whatever the partner does; under discussion, blocks batch H6.
 ### D461. Hana Home billing: a statement line while the app is active, Hana pays after it's gone
 - Date 2026-11-09 · Status: **decided by the user 2026-11-09** · Not built (batch H11) · Confirms D98's item 12 · Source:
   `docs/mainnet-readiness.md` 1.15
@@ -8597,6 +8598,8 @@ path, a key or derivation.
   `app_id` check is widened, and after exit the event goes to Hana's internal org.
 - Limit: partners are charged for users leaving them, which is why the terms must say so.
 
+- Note, 2026-11-09 (the user): a suspended app is not "active": Hana pays for Hana Home logins made while an app is
+  suspended, for now. To discuss with colleagues before finalising.
 ### D462. Hana Home lists apps from `scopes.first_session_at`
 - Date 2026-11-09 · Status: **decided by the user 2026-11-09** · Not built (batch H2) · Source:
   `docs/mainnet-readiness.md` 1.16
@@ -8627,6 +8630,7 @@ path, a key or derivation.
   on-chain identity holds the role is open (`docs/hana-home-build-plan.md` "Still open", item 6). The wording is
   `docs/mainnet-readiness.md` 9.11.
 
+- Note, 2026-11-09 (the user): the seat is held by the Hana governance council, not a single key.
 ### D465. Remote sign-out stops auto-signing within about 10 s, in the vault's existing read
 - Date 2026-11-09 · Status: **decided by the user 2026-11-09** · Not built (batches H4, H5) · Amends D55 for auto-signing;
   sets the speed of D98's item 9

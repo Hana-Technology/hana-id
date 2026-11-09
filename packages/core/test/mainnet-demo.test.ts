@@ -37,7 +37,10 @@ const spoke = parseAbi(['function transfer(address token, bytes to, uint256 amou
 const intents = parseAbi([
   'function createIntent((uint256 intentId, address creator, address inputToken, address outputToken, uint256 inputAmount, uint256 minOutputAmount, uint256 deadline, bool allowPartialFill, uint256 srcChain, uint256 dstChain, bytes srcAddress, bytes dstAddress, address solver, bytes data) intent)',
 ]);
-const HUB_WALLET = '0x1111111111111111111111111111111111111111';
+// The factory's own answers, through rpc.soniclabs.com (read-only `getDeployedAddress`, 2026-11-09; D476): every Sodax
+// deposit's spoke `to` must be the signing address's own hub wallet (D492).
+const BASE_HUB_WALLET = '0xF05e4fB1A3917A7Fd722749047c2f6795Fa1368B' as Hex; // EVM_USER, relay 30
+const STELLAR_HUB_WALLET = '0x00504aAc4AfF32F24E4dD77b6b81d6aF2d936B6E' as Hex; // USER, relay 27
 
 /** Sodax's hub calls, as constructCreateIntentData encodes them. */
 function hubCalls(o: { hubAsset?: Hex; approve?: bigint; spender?: Hex; intentToken?: Hex; intentAmount?: bigint; extra?: boolean; approveTarget?: Hex } = {}): Hex {
@@ -49,7 +52,7 @@ function hubCalls(o: { hubAsset?: Hex; approve?: bigint; spender?: Hex; intentTo
     args: [
       {
         intentId: 7n,
-        creator: HUB_WALLET,
+        creator: BASE_HUB_WALLET,
         inputToken: o.intentToken ?? hubAsset,
         outputToken: '0x2222222222222222222222222222222222222222',
         inputAmount: o.intentAmount ?? 1000n,
@@ -73,7 +76,7 @@ function hubCalls(o: { hubAsset?: Hex; approve?: bigint; spender?: Hex; intentTo
   return encodeAbiParameters(parseAbiParameters('(address,uint256,bytes)[]'), [calls]);
 }
 
-const deposit = (token: Hex, amount: bigint, data: Hex = '0x', to: Hex = HUB_WALLET) => encodeFunctionData({ abi: spoke, functionName: 'transfer', args: [token, to, amount, data] });
+const deposit = (token: Hex, amount: bigint, data: Hex = '0x', to: Hex = BASE_HUB_WALLET) => encodeFunctionData({ abi: spoke, functionName: 'transfer', args: [token, to, amount, data] });
 const ZERO = '0x0000000000000000000000000000000000000000' as Hex;
 
 const ok = (s: ApprovalSubject, now = NOW) => {
@@ -288,7 +291,7 @@ describe('Stellar’s public network', () => {
   const u128 = (n: bigint) => xdr.ScVal.scvU128(new xdr.UInt128Parts({ hi: xdr.Uint64.fromString('0'), lo: xdr.Uint64.fromString(n.toString()) }));
   const i128 = (n: bigint) => xdr.ScVal.scvI128(new xdr.Int128Parts({ hi: xdr.Int64.fromString('0'), lo: xdr.Uint64.fromString(n.toString()) }));
   const bytes = (hex: string) => xdr.ScVal.scvBytes(Buffer.from(hex.replace(/^0x/u, ''), 'hex'));
-  const depositArgs = (amount: bigint, data: string, from = USER, token = XLM_SAC) => [scAddr(from), scAddr(token), u128(amount), bytes(HUB_WALLET), bytes(data)];
+  const depositArgs = (amount: bigint, data: string, from = USER, token = XLM_SAC) => [scAddr(from), scAddr(token), u128(amount), bytes(STELLAR_HUB_WALLET), bytes(data)];
   const xlmHub = MAINNET_DEMO.stellar.native.sodaxHubAsset as Hex;
   const sodaxAuth = (args: xdr.ScVal[], sub: { from?: string; to?: string; amount?: bigint; token?: string; extra?: boolean } = {}) =>
     sourceAuth(
@@ -383,9 +386,6 @@ describe('the Sodax USDC ⇄ USDC bridge between Base and Stellar (D476)', () =>
   const baseToStellar = (over: Partial<Build> = {}): Hex => bridgeHubCalls({ srcHub: BASE_HUB, dstHub: STELLAR_HUB, srcDec: 6, dstDec: 7, amount: 1_000_000n, recipient: STELLAR_RECIPIENT, ...over });
   const stellarToBase = (over: Partial<Build> = {}): Hex => bridgeHubCalls({ srcHub: STELLAR_HUB, dstHub: BASE_HUB, srcDec: 7, dstDec: 6, amount: 10_000_000n, recipient: BASE_RECIPIENT, ...over });
 
-  // The factory's own answers, through rpc.soniclabs.com (read-only `getDeployedAddress`, 2026-11-09; D476).
-  const BASE_HUB_WALLET = '0xF05e4fB1A3917A7Fd722749047c2f6795Fa1368B' as Hex; // EVM_USER, relay 30
-  const STELLAR_HUB_WALLET = '0x00504aAc4AfF32F24E4dD77b6b81d6aF2d936B6E' as Hex; // USER, relay 27
   const baseDeposit = (data: Hex, amount = 1_000_000n, to: Hex = BASE_HUB_WALLET) => evmTx({ to: ASSET_MANAGER, value: 0n, data: deposit(USDC_BASE as Hex, amount, data, to) });
   const assess = (s: ApprovalSubject, recipients: Parameters<typeof assessMainnetDemo>[3] = { wallets: WALLETS }) => assessMainnetDemo(s, NOW, fixedMainnetDemoPrices(), recipients);
   const bridgeOk = (s: ApprovalSubject, recipients?: Parameters<typeof assessMainnetDemo>[3]) => {
@@ -544,7 +544,7 @@ describe('the Sodax USDC ⇄ USDC bridge between Base and Stellar (D476)', () =>
     for (const recipient of wrongEvm) expect(bridgeRefusal(stellarDeposit(stellarToBase({ recipient }))), recipient).toBe('mainnet_demo_unknown_call');
   });
 
-  describe('the spoke `to` is the signing address’s own hub wallet (D476)', () => {
+  describe('the spoke `to` is the signing address’s own hub wallet (D476, D492)', () => {
     const relayXdr = (g: string) => Uint8Array.from(Buffer.from(recipientOf(g).slice(2), 'hex'));
     const evmBytes = (a: string) => Uint8Array.from(Buffer.from(a.slice(2), 'hex'));
     const OTHER_EVM = '0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB';
@@ -626,9 +626,109 @@ describe('the Sodax USDC ⇄ USDC bridge between Base and Stellar (D476)', () =>
       expect(r.ok ? null : r.reason).toBe('mainnet_demo_unknown_call');
     });
 
-    it('leaves a swap’s spoke `to` unbound, as D429 and R5 record', () => {
-      const swap = evmTx({ to: ASSET_MANAGER, value: 0n, data: deposit(USDC_BASE as Hex, 2_000_000n, hubCalls({ hubAsset: BASE_HUB, approve: 2_000_000n, intentAmount: 1_990_000n }), FRIEND as Hex) });
-      expect(ok(swap).bridge).toBeUndefined();
+    describe('on every deposit, not only a bridge (D492)', () => {
+      // @sodax/sdk 2.2.0's own hub calls for a swap of 1 USDC each way (EvmSolverService.constructCreateIntentData, offline,
+      // with its packaged config and the hub wallets above as the intent's creator).
+      const SDK_SWAP_BASE_TO_STELLAR = '0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000012000000000000000000000000072e852545b024ddcbc5b70c1bcbdaa025164259c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000044095ea7b30000000000000000000000006382d6ccd780758c5e8a6123c33ee8f4472f96ef00000000000000000000000000000000000000000000000000000000000f4240000000000000000000000000000000000000000000000000000000000000000000000000000000006382d6ccd780758c5e8a6123c33ee8f4472f96ef0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000002a4016f02e300000000000000000000000000000000000000000000000000000000000000205e7fefbf0064ee5b02d3e12a295e5ea969a891cf9e9427fc1520d4312e9de767000000000000000000000000f05e4fb1a3917a7fd722749047c2f6795fa1368b00000000000000000000000072e852545b024ddcbc5b70c1bcbdaa025164259c000000000000000000000000348007b53f25a9a857ab8ea81ec9e3ccbcf440f200000000000000000000000000000000000000000000000000000000000f424000000000000000000000000000000000000000000000000000000000000dbba000000000000000000000000000000000000000000000000000000000713fb3000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001e000000000000000000000000000000000000000000000000000000000000001b00000000000000000000000000000000000000000000000000000000000001c00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002600000000000000000000000000000000000000000000000000000000000000014cd2a3d9f938e13cd947ec05abc7fe734df8dd826000000000000000000000000000000000000000000000000000000000000000000000000000000000000002c000000120000000000000000ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000' as Hex;
+      const SDK_SWAP_STELLAR_TO_BASE = '0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000120000000000000000000000000348007b53f25a9a857ab8ea81ec9e3ccbcf440f2000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000044095ea7b30000000000000000000000006382d6ccd780758c5e8a6123c33ee8f4472f96ef0000000000000000000000000000000000000000000000000000000000989680000000000000000000000000000000000000000000000000000000000000000000000000000000006382d6ccd780758c5e8a6123c33ee8f4472f96ef0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000002a4016f02e300000000000000000000000000000000000000000000000000000000000000205a8a6ca9e7f7ccbb537be0411c95cfdebcf64ca5edd68f5bcd441b8fbb6e04f300000000000000000000000000504aac4aff32f24e4dd77b6b81d6af2d936b6e000000000000000000000000348007b53f25a9a857ab8ea81ec9e3ccbcf440f200000000000000000000000072e852545b024ddcbc5b70c1bcbdaa025164259c000000000000000000000000000000000000000000000000000000000098968000000000000000000000000000000000000000000000000000000000000dbba000000000000000000000000000000000000000000000000000000000713fb3000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001b000000000000000000000000000000000000000000000000000000000000001e00000000000000000000000000000000000000000000000000000000000001c0000000000000000000000000000000000000000000000000000000000000022000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000260000000000000000000000000000000000000000000000000000000000000002c000000120000000000000000ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000014cd2a3d9f938e13cd947ec05abc7fe734df8dd826000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000' as Hex;
+      const OTHER_BASE_WALLET = '0xe72338645575223efA8c6063246e07D952F2514C' as Hex;
+      const CROSSED_BASE_WALLET = '0xD146a78303b3Dc78a1061c4DcCB3f3B0e6F8d391' as Hex;
+      const OTHER_STELLAR_WALLET = '0xB19704b8F84Ba567d36A643BD61fa0ed8A624417' as Hex;
+      const CROSSED_STELLAR_WALLET = sodaxHubWallet(30, relayXdr(USER)) as Hex;
+
+      const baseSwap = (to: Hex = BASE_HUB_WALLET) => baseDeposit(SDK_SWAP_BASE_TO_STELLAR, 1_000_000n, to);
+      const stellarSwap = (to: Hex = STELLAR_HUB_WALLET) => stellarDeposit(SDK_SWAP_STELLAR_TO_BASE, 10_000_000n, USDC_SAC, to);
+      const baseEmpty = (to: Hex = BASE_HUB_WALLET) => baseDeposit('0x', 1_000_000n, to);
+      const stellarEmpty = (to: Hex = STELLAR_HUB_WALLET) => stellarDeposit('0x', 10_000_000n, USDC_SAC, to);
+      const baseNative = (to: Hex = BASE_HUB_WALLET) => evmTx({ to: ASSET_MANAGER, value: 10n ** 15n, data: deposit(ZERO, 10n ** 15n, '0x', to) });
+      const stellarNative = (to: Hex = STELLAR_HUB_WALLET) => stellarDeposit('0x', 10_000_000n, MAINNET_DEMO.stellar.native.assetContract, to);
+
+      it.each([
+        ['the SDK’s swap, Base → Stellar', baseSwap],
+        ['the SDK’s swap, Stellar → Base', stellarSwap],
+        ['an empty-data USDC deposit on Base', baseEmpty],
+        ['an empty-data USDC deposit on Stellar', stellarEmpty],
+        ['an empty-data ETH deposit on Base', baseNative],
+        ['an empty-data XLM deposit on Stellar', stellarNative],
+      ] as const)('signs %s to the signing address’s own hub wallet: vault, popup and no wallets given', (_name, make) => {
+        for (const r of [assess(make()), assess(make(), 'shown'), assessMainnetDemo(make(), NOW)]) {
+          expect(r.ok, r.ok ? '' : r.message).toBe(true);
+          expect(r.ok && r.bridge).toBeFalsy();
+        }
+      });
+
+      it.each(wrongTo(BASE_HUB_WALLET, OTHER_BASE_WALLET, CROSSED_BASE_WALLET))('Base: refuses a swap and an empty-data deposit to %s, in the vault and in the popup', (_name, to) => {
+        refusedBoth(() => baseSwap(to));
+        refusedBoth(() => baseEmpty(to));
+        refusedBoth(() => baseNative(to));
+      });
+
+      it.each(wrongTo(STELLAR_HUB_WALLET, OTHER_STELLAR_WALLET, CROSSED_STELLAR_WALLET))('Stellar: refuses a swap and an empty-data deposit to %s, in the vault and in the popup', (_name, to) => {
+        refusedBoth(() => stellarSwap(to));
+        refusedBoth(() => stellarEmpty(to));
+        refusedBoth(() => stellarNative(to));
+      });
+
+      it('refuses the other chain’s own hub wallet: the two aren’t interchangeable', () => {
+        for (const make of [baseSwap, baseEmpty]) refusedBoth(() => make(STELLAR_HUB_WALLET));
+        for (const make of [stellarSwap, stellarEmpty]) refusedBoth(() => make(BASE_HUB_WALLET));
+      });
+
+      it('refuses a wrong `to` with no wallets given, so no caller can skip the check', () => {
+        for (const s of [baseSwap(FRIEND as Hex), baseEmpty(FRIEND as Hex), stellarSwap(FRIEND as Hex), stellarEmpty(FRIEND as Hex)]) {
+          const r = assessMainnetDemo(s, NOW);
+          expect(r.ok ? null : r.reason).toBe('mainnet_demo_unknown_call');
+        }
+      });
+
+      it.each([
+        ['a swap', SDK_SWAP_BASE_TO_STELLAR],
+        ['an empty-data deposit', '0x' as Hex],
+      ] as const)('Base: refuses every change to the 20 `to` bytes and the last byte of its length word, for %s', (_name, hubData) => {
+        const data = deposit(USDC_BASE as Hex, 1_000_000n, hubData, BASE_HUB_WALLET);
+        const bytes = Buffer.from(data.slice(2), 'hex');
+        expect(`0x${bytes.subarray(164, 184).toString('hex')}`).toBe(BASE_HUB_WALLET.toLowerCase());
+        expect(assess(evmTx({ to: ASSET_MANAGER, value: 0n, data })).ok).toBe(true);
+        for (let i = 163; i <= 183; i++) {
+          for (const mask of [0x01, 0x80, 0xff]) {
+            const mutated = Buffer.from(bytes);
+            mutated[i]! ^= mask;
+            for (const recipients of [{ wallets: WALLETS }, 'shown'] as const) {
+              expect(assess(evmTx({ to: ASSET_MANAGER, value: 0n, data: `0x${mutated.toString('hex')}` }), recipients).ok, `byte ${i} mask ${mask}`).toBe(false);
+            }
+          }
+        }
+      });
+
+      it.each([
+        ['a swap', SDK_SWAP_STELLAR_TO_BASE],
+        ['an empty-data deposit', '0x' as Hex],
+      ] as const)('Stellar: refuses every change to the 20 `to` bytes, for %s', (_name, hubData) => {
+        const own = Buffer.from(STELLAR_HUB_WALLET.slice(2), 'hex');
+        expect(assess(stellarDeposit(hubData, 10_000_000n, USDC_SAC, STELLAR_HUB_WALLET)).ok).toBe(true);
+        for (let i = 0; i < own.length; i++) {
+          for (const mask of [0x01, 0x80, 0xff]) {
+            const mutated = Buffer.from(own);
+            mutated[i]! ^= mask;
+            const to = `0x${mutated.toString('hex')}` as Hex;
+            for (const recipients of [{ wallets: WALLETS }, 'shown'] as const) {
+              expect(assess(stellarDeposit(hubData, 10_000_000n, USDC_SAC, to), recipients).ok, `byte ${i} mask ${mask}`).toBe(false);
+            }
+          }
+        }
+      });
+
+      it('binds a swap’s hub wallet to the signing address in the popup too', () => {
+        const r = assess({ ...baseSwap(), address: OTHER_EVM }, 'shown');
+        expect(r.ok ? null : r.reason).toBe('mainnet_demo_unknown_call');
+        const s = assess({ ...stellarSwap(), address: OTHER }, 'shown');
+        expect(s.ok ? null : s.reason).toBe('mainnet_demo_unknown_call');
+      });
+
+      it('refuses a swap or an empty deposit whose spoke side wasn’t given to the check', () => {
+        expect(() => checkSodaxHubCalls('0x', BASE_HUB, 1_000_000n, { wallets: WALLETS })).toThrow();
+        expect(() => checkSodaxHubCalls(SDK_SWAP_BASE_TO_STELLAR, BASE_HUB, 1_000_000n, { wallets: WALLETS })).toThrow();
+      });
     });
   });
 

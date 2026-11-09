@@ -34,7 +34,7 @@ import { formatEndTime, lingeringSignaturesNote } from '../../src/auth/render-co
 import { policyJson } from '../../../core/test/policy-fixtures.ts';
 import { PASSPHRASE, USER, paymentOp, txBytes } from '../../../core/test/stellar-fixtures.ts';
 import { ENV, EVIL, FakeWindow, PARTNER, type RemoteWindow, asWindow, pageText, remoteWindow, resetDom } from './helpers.ts';
-import { OTHER, SODAX_ASSET_MANAGER_BASE, sodaxBridgeDeposit } from '../vault/chains.ts';
+import { OTHER, SODAX_ASSET_MANAGER_BASE, sodaxBridgeDeposit, sodaxEmptyDeposit, sodaxSwapDeposit } from '../vault/chains.ts';
 
 const EVM = '0x2c7536E3605D9C16a7a3D7b1898e529396a65c23';
 const TX = { chainId: '0xaa36a7', nonce: '0x1', gas: '0x5208', maxFeePerGas: '0x2', maxPriorityFeePerGas: '0x1', to: EVM, value: '0xde0b6b3a7640000', data: '0x' };
@@ -1515,6 +1515,26 @@ describe('/approve: the mainnet demo banner (D428, D429)', () => {
     expect(document.querySelector('.demo-bridge')).toBeNull();
     expect(pageText()).not.toContain('Recipient on');
     expect(pageText()).not.toContain('This request can move about');
+  });
+
+  it.each([
+    ['a swap', sodaxSwapDeposit],
+    ['an empty-data deposit', sodaxEmptyDeposit],
+  ] as const)('values %s only when its spoke `to` is the signing address’s own hub wallet (D492)', (_name, make) => {
+    startDemo(async () => rpcAnswer('0x0'));
+    send(baseRequest({ bytes: evmTxSigningPayload(parseEvmTxRequest({ ...BASE_TX, to: SODAX_ASSET_MANAGER_BASE, value: '0x0', data: make(EVM) })) }));
+    expect(pageText()).toContain('This request can move about');
+    expect(document.querySelector('.demo-bridge')).toBeNull();
+  });
+
+  it.each([
+    ['a swap', sodaxSwapDeposit],
+    ['an empty-data deposit', sodaxEmptyDeposit],
+  ] as const)('shows no value for %s to another hub wallet (D492)', (_name, make) => {
+    startDemo(async () => rpcAnswer('0x0'));
+    send(baseRequest({ bytes: evmTxSigningPayload(parseEvmTxRequest({ ...BASE_TX, to: SODAX_ASSET_MANAGER_BASE, value: '0x0', data: make(EVM, `0x${'22'.repeat(20)}`) })) }));
+    expect(pageText()).not.toContain('This request can move about');
+    expect(document.querySelector('.demo-bridge')).toBeNull();
   });
 
   it('shows no bridge line for a plain send', () => {

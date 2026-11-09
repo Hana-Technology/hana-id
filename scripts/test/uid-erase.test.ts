@@ -365,6 +365,17 @@ describe('uid-erase and a Hana Home derive with no directory row (D527, D543)', 
     expect(lines.join('\n')).toMatch(/also seen in scope\(s\) s8, s9 /u);
   });
 
+  it('reads in batches inside D1’s statement size, and still finds a late scope', async () => {
+    for (let i = 0; i < 1500; i++) await homeRow(`b${i}`, { provider: 'google', sub: 'somebody-else' });
+    await homeRow('zz9', GOOGLE);
+    const statements: string[] = [];
+    await uidErase(ARGV, deps({ apiD1: (_m, s) => (statements.push(s), d1(api)(s)) }));
+    const reads = statements.filter((s) => s.includes('user_id IN') && s.includes('app_id IS NULL'));
+    expect(reads.length).toBeGreaterThan(1);
+    for (const s of reads) expect(s.length).toBeLessThan(100_000);
+    expect(lines.join('\n')).toMatch(/also seen in scope\(s\) [^\n]*zz9/u);
+  });
+
   it('deletes that row when run for its scope', async () => {
     await homeRow('s9', GOOGLE);
     await uidErase(['sandbox-dev', '--scope', 's9', '--provider', GOOGLE.provider, '--sub', GOOGLE.sub, '--ticket', 'SUP-125', '--yes', '--no-ledger'], deps({ view: own as UidEraseDeps['view'] }));

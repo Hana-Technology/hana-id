@@ -883,7 +883,7 @@ scope with no app gate, relayed from a dedicated pool (`home`, the `HOME_RELAYER
 `create_session_and_derive` only, objects `home-relayer-key-<i>` in the same Durable Object namespace), so a Home flood can only spend that pool. The
 per-wallet, per-user and daily limits are checked last, right before the relay, so a refused request spends nothing. The path
 comes from the chain-resolved root as for any login: no path, key rule or derivation changes. Home derives one use, key
-index 0, within 20 minutes. The derive writes `key_exported` (no app: `user_events.app_id` NULL, D520) and, only for a linked
+index 0, within 20 minutes, and is refused when the chain shows the identity never opened a wallet in the scope (D544: a derive marks it `opened` for good). The derive writes `key_exported` (no app: `user_events.app_id` NULL, D520) and, only for a linked
 member or an identity the directory already has, the directory row (D500, D527), and counts in `home_usage` (one row per UTC day). It marks no app as launched and counts in no app's usage.
 
 **The app list (H2, `GET /v1/home/apps`, D462, D466, D500–D503; `docs/api.md`).** Home's listing needs no chain

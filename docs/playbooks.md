@@ -1459,11 +1459,11 @@ A `home_budget_high` security event: a day's Hana Home derives reached 80% of `h
 
 **Impact**
 
-- At the ceiling Hana Home derives answer `429 home_busy` until the next UTC day. Partner logins and owner actions are on other pools and unaffected. Identities with no directory row can use only 20% of it.
+- At the ceiling Hana Home derives answer `429 home_busy` until the next UTC day. Partner logins and owner actions are on other pools and unaffected. Where links aren't open, identities not otherwise known can use only 20% of it.
 
 **Steps**
 
-1. **Tell real use from abuse** (who: a founder). Read the day's `home_usage` row in the API's D1: `derives` and `unrecorded` (derives by identities with no directory row). Compare with the partner shutdowns you know of.
+1. **Tell real use from abuse** (who: a founder). Read the day's `home_usage` row in the API's D1: `derives` and `unrecorded` (derives held to the 20% share). Compare with the partner shutdowns you know of.
 
 2. **Raise or stop it** (who: a founder). Real demand: raise `homeDerivesPerDay` in the manifest, regenerate and redeploy the API, and check the Home key's allowance. Abuse or a compromise: set it to `0`, which stops every Home derive until it is raised again.
 

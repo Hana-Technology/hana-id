@@ -3,7 +3,7 @@
 --
 -- `home_usage`: Home derives per UTC day (one row a day, a count: nothing personal), incremented atomically by
 -- POST /v1/home/login right before it relays, and refused at the env's daily ceiling (HOME_DERIVES_PER_DAY, default 500).
--- `unrecorded`: how many of those were by an identity with no directory row, which may use only 20% of the ceiling (D540).
+-- `unrecorded`: how many of those were held to the 20% share of the ceiling (D540: an identity not otherwise known).
 CREATE TABLE home_usage (
   day     TEXT PRIMARY KEY CHECK (day GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
   derives INTEGER NOT NULL DEFAULT 0 CHECK (derives >= 0),

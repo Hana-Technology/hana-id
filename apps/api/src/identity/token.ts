@@ -117,7 +117,7 @@ export async function verifyEd25519(publicKey: Uint8Array, signature: Uint8Array
 
 // ---- handler ----
 
-type ShareCheck = { ok: true; share: { idleUntilMs: number; absCapMs: number } | null } | { ok: false; response: Response };
+type ShareCheck = { ok: true; share: { shareId: Uint8Array; pathHash: Uint8Array; idleUntilMs: number; absCapMs: number } | null } | { ok: false; response: Response };
 
 const sessionEnded = (ctx: Ctx, reason: string): Response => done(ctx, 410, { error: 'The Hana session has ended', code: 'session_ended', reason });
 
@@ -146,7 +146,7 @@ export async function checkShare(env: Env, ctx: Ctx, app: App, parentOrigin: str
   if (settings.persistence !== 'session') return { ok: false, response: sessionEnded(ctx, 'persistence_off') };
   const absCapMs = Math.min(row.abs_expires_at, row.created_at + settings.session_ttl_ms);
   if (now >= row.idle_until || now >= absCapMs) return { ok: false, response: sessionEnded(ctx, 'share_expired') };
-  return { ok: true, share: { idleUntilMs: row.idle_until, absCapMs } };
+  return { ok: true, share: { shareId: row.share_id, pathHash: row.path_hash, idleUntilMs: row.idle_until, absCapMs } };
 }
 
 export type ChainCheck = { ok: true; session: SessionView } | { ok: false; response: Response };
@@ -156,8 +156,11 @@ export type ChainCheck = { ok: true; session: SessionView } | { ok: false; respo
  * `sessions_valid_from_ms`), in the app's scope, not expired. A cached answer that would refuse is re-read fresh, and
  * a missing one is re-read for a while (SESSION_RETRY_FOR_MS, as share creation does): the node that answers may be a
  * block behind the login that created the session, and a wrong "no session" would end the user's session in the vault.
+ *
+ * `singleRead`: at most one chain read and no re-reads, for a route any throwaway key can reach (D513). A missing session
+ * then answers 503 `session_not_visible` with `retry-after`, so a lagging node ends nothing and the vault tries again.
  */
-export async function checkChainSession(env: Env, ctx: Ctx, app: App, sessionPk: Uint8Array, now: number): Promise<ChainCheck> {
+export async function checkChainSession(env: Env, ctx: Ctx, app: App, sessionPk: Uint8Array, now: number, opts: { singleRead?: boolean } = {}): Promise<ChainCheck> {
   const judge = (s: SessionView | null): 'ok' | 'missing' | 'expired' | 'scope_mismatch' =>
     !s ? 'missing' : s.expires_at_ms <= now ? 'expired' : s.scope_id !== app.scope_id ? 'scope_mismatch' : 'ok';
   let read;
@@ -165,7 +168,7 @@ export async function checkChainSession(env: Env, ctx: Ctx, app: App, sessionPk:
     read = await getSession(env, [...sessionPk]);
     if (read.cached && judge(read.session) !== 'ok') read = await getSession(env, [...sessionPk], { fresh: true });
     const deadline = Date.now() + SESSION_RETRY_FOR_MS;
-    while (judge(read.session) === 'missing' && Date.now() + SESSION_RETRY_INTERVAL_MS <= deadline) {
+    while (!opts.singleRead && judge(read.session) === 'missing' && Date.now() + SESSION_RETRY_INTERVAL_MS <= deadline) {
       await new Promise((resolve) => setTimeout(resolve, SESSION_RETRY_INTERVAL_MS));
       read = await getSession(env, [...sessionPk], { fresh: true });
     }
@@ -173,6 +176,7 @@ export async function checkChainSession(env: Env, ctx: Ctx, app: App, sessionPk:
     return { ok: false, response: reject(ctx, 502, 'near_unavailable', 'Could not read the session') };
   }
   const verdict = judge(read.session);
+  if (verdict === 'missing' && opts.singleRead) return { ok: false, response: reject(ctx, 503, 'session_not_visible', 'The session is not visible on chain yet, try again', { 'retry-after': '1' }) };
   if (verdict === 'missing' || verdict === 'expired') return { ok: false, response: sessionEnded(ctx, 'no_session') };
   if (verdict === 'scope_mismatch') return { ok: false, response: reject(ctx, 403, 'scope_mismatch', 'The session is for another scope') };
   return { ok: true, session: read.session! };

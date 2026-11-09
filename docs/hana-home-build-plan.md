@@ -1,6 +1,6 @@
 # Hana Home build plan (batches)
 
-**Status (2026-11-09): H0 (this plan, the spec's rewrite, D460–D466, the readiness rows) on branch `docs/hana-home-h0`; H1 built on branch `feat/hana-home-h1`, its security review's fixes on `feat/hana-home-h1-2` (not merged, not deployed; see its result line below); H2–H12 not started; H6 built on branch `feat/hana-home-h6` (not merged, not deployed; see its result line); H6's design and D480–D489 on branch `docs/hana-home-h6-design` (not merged).** Splits `docs/hana-home-spec.md` (D40, D45, D98, D461–D466, D468, D480–D489) into reviewable
+**Status (2026-11-09): H0 (this plan, the spec's rewrite, D460–D466, the readiness rows) on branch `docs/hana-home-h0`; H1 built on branch `feat/hana-home-h1`, its security review's fixes on `feat/hana-home-h1-2` (not merged, not deployed; see its result line below); H2 built on branch `feat/hana-home-h2` and H4 built on branch `feat/hana-home-h4`, merged on `feat/hana-home-h2-h4` with their security reviews' fixes (not merged, not deployed; see their result lines); H3, H5, H7–H12 not started; H6 built on branch `feat/hana-home-h6` (not merged, not deployed; see its result line); H6's design and D480–D489 on branch `docs/hana-home-h6-design` (not merged).** Splits `docs/hana-home-spec.md` (D40, D45, D98, D461–D466, D468, D480–D489) into reviewable
 batches. The spec stays the source of truth for *what* to build; this file says *in which order*, *what each batch
 ships* and *what users see after it*. Like a spec it is history once the work merges: the current state lives in the
 reference docs (`docs/README.md`).
@@ -111,6 +111,8 @@ additions conflict in `apps/api/src/index.ts`, so expect small merges. About 30 
 - **Tests.** Each coverage row; suspended, deleted and purged scopes; a member resolving to its root.
 - **Migration / deploy.** D1 (`hana_held_clients`, the listing flag); API.
 - **User-visible.** Nothing (no page yet).
+- **Security review (2026-11-09, on `feat/hana-home-h2-h4`).** `?scopeId=` no longer finds a quiet scope; the overlay reads `active` rows only (D500); the unreleased-app exposure is closed by `apps.first_login_at` (D462: strangers see only apps with a recorded login, a scope's own users see all of its apps).
+- **Result (2026-11-09, `feat/hana-home-h2`, not merged, not deployed).** `apps/api/src/home/apps.ts` (`GET /v1/home/apps`), `coverage.ts`, migration 0016 (`hana_held_clients`, `scopes.home_quiet`), `scripts/lib/admin-home.ts` (`admin home:client:add`, `admin home:listing`), a 60 s per-isolate `get_scope` cache for Home's list in `views.ts`; `docs/api.md`, `security.md`, `architecture.md`, `operations.md`. D500–D503, confirmed by the user 2026-11-09. No key is derived; no contract or derivation change. Deviations from the spec: no `sharedLoginEndsAtMs` (D480) or `liveDevices` (H9), `exit` and `unknown` coverage values (D501).
 
 ### H3: Home derives
 
@@ -119,6 +121,7 @@ additions conflict in `apps/api/src/index.ts`, so expect small merges. About 30 
 - **Files.** `apps/api/src/login.ts`, `login-token.ts`, `relayer-config.ts`, `mainnet-demo.ts`; `scripts/deploy-contract.ts`;
   the watchdog's pool list.
 - **Tests.** Every limit before the relay; a member's path; a suspended app; nothing relayed on any failed check.
+- **Carried from H2's review (D500).** A matured link counts in Home's list only once the directory has `active`, so `POST /v1/home/login` must write the member's row as `/v1/login` does (`syncAfterLogin`); without it, a member of a shut-down app never turns `mine`.
 - **Migration / deploy.** D1 `home_usage`, and `user_events` if open item 4 relaxes it; key, API.
 - **User-visible.** Nothing.
 
@@ -129,6 +132,8 @@ additions conflict in `apps/api/src/index.ts`, so expect small merges. About 30 
 - **Tests.** The spec's consent list; both persistence modes; a revoked share reads `'revoked'`.
 - **Migration / deploy.** D1; API.
 - **User-visible.** Nothing.
+- **Security review (2026-11-09, on `feat/hana-home-h2-h4`).** The 10/min window spends only signed requests (D510); a `'none'`-mode register makes one chain read and answers `503 session_not_visible` when the chain doesn't show the session yet; 20 rows per session key (D513).
+- **Result (2026-11-09, `feat/hana-home-h4`, not merged, not deployed).** Migration **0017** (`vault_consents`, `vault_shares.device_label`, the `path_hash` indexes); `POST /v1/vault/consents` and `/revoke` (`apps/api/src/vault/consents.ts`, `consent-store.ts`) in both modes, reusing `checkShare` and `checkChainSession`; `deviceLabel` on `POST /v1/vault/shares`; `consent` on `GET /v1/app` for the vault's `x-hana-consent`; the prune in `vaultMaintenance`. D510–D513 (confirmed by the user 2026-11-09). No vault or SDK change: no live partner tab changes, and H5's vault still needs H4 live first. Deploy: D1, then the API. Before the D1 migration an API at this commit fails to create shares, so the order matters.
 
 ### H5: the vault
 
@@ -139,6 +144,7 @@ additions conflict in `apps/api/src/index.ts`, so expect small merges. About 30 
   within about 10 s.
 - **Migration / deploy.** The vault, after H4 is live.
 - **User-visible.** Auto-approve can't be turned on while the API can't record it (D98 item 13). Nothing else.
+- **Carried from H4's review (D510, D513).** Never give a `consent_id` to the partner page. Tell `409 bad_counter` from `409 consent_exists` (a stale counter retries with the expected value; a repeated id does not). `hana_revokeAutoApprove` sends no server revoke when there is no local consent. Render the partner-set policy `label` as text only. Retry `503 session_not_visible` a few times with its `retry-after`, then fail closed like any failed register; `429 too_many_consents` fails closed with no retry.
 
 ### H6: the contract
 
@@ -200,6 +206,7 @@ The design is `docs/hana-home-h6-design.md`; its decisions are D480–D489.
 - **Tests.** Only this user's rows; a 404 for anyone else's id.
 - **Migration / deploy.** Needs 0014 and the email keys on the env; API, pages.
 - **User-visible.** Only by typing the URL.
+- **Carried from H4's review.** Render the partner-set policy `label` as text only, here as in H5.
 
 ### H10: email users
 
@@ -254,7 +261,7 @@ Run by hand on an env before H7's first deploy to it and before each later Home 
 |---|---|---|
 | D460 (row 1.14) | Reversed the same day by D480: turning off shared login stays immediate | — |
 | D461 (row 1.15) | Statement line while the app is active, Hana pays after it's gone | H11 |
-| D462 (row 1.16) | The list from `scopes.first_session_at`, the wallet directory as a "your apps" overlay | H2 |
+| D462 (row 1.16) | The list from `scopes.first_session_at` and `apps.first_login_at`, the wallet directory as a "your apps" overlay | H2 |
 | D463 | Email-only users get Home at launch | H10 |
 | D464 | Dropped the same day by D481: no owner rights over partner scopes | — |
 | D465 | A revoked share stops auto-signing within about 10 s, in the vault's existing read | H4, H5 |

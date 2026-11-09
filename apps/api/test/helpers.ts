@@ -45,7 +45,7 @@ export async function seedPlan(id: string, perMinute: number, perDay: number, pe
  * the 0006 triggers, as in a deployed env.
  */
 export async function seedApp(
-  opts: { scope?: string; key?: string; status?: string; suspendedBy?: number; plan?: string; origins?: string[]; firstSession?: number | null; db?: D1Database } = {},
+  opts: { scope?: string; key?: string; status?: string; suspendedBy?: number; plan?: string; origins?: string[]; firstSession?: number | null; firstLogin?: number | null; db?: D1Database } = {},
 ): Promise<SeededApp> {
   const db = opts.db ?? env.DB;
   const id = `app_${uid()}`;
@@ -60,6 +60,9 @@ export async function seedApp(
   await db.prepare('INSERT INTO apps (id, name, scope_id, publishable_key, status, plan) VALUES (?1, ?2, ?3, ?4, ?5, ?6)')
     .bind(id, `Test ${id}`, scope, key, opts.status ?? 'active', opts.plan ?? 'free')
     .run();
+  // A given `db` may predate migration 0016 (rpc-issuer's pre-0010 database), so it isn't marked.
+  const firstLogin = opts.firstLogin === undefined ? now : opts.firstLogin;
+  if (!opts.db && firstLogin !== null) await db.prepare('UPDATE apps SET first_login_at = ?2 WHERE id = ?1').bind(id, firstLogin).run();
   if (opts.suspendedBy) await db.prepare('UPDATE apps SET suspended_by = ?2 WHERE id = ?1').bind(id, opts.suspendedBy).run();
   await db.prepare("INSERT INTO app_keys (id, app_id, key, created_by, created_at) VALUES (?1, ?2, ?3, 'test', ?4)").bind(`key_${uid()}`, id, key, now).run();
   for (const origin of opts.origins ?? [ORIGIN]) await db.prepare('INSERT INTO app_origins (app_id, origin, active_from) VALUES (?1, ?2, 0)').bind(id, origin).run();

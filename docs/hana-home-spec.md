@@ -164,8 +164,9 @@ Home makes two reads, both without a chain call:
 
 1. **The list (D462).** Every scope with `scopes.first_session_at` set, grouped by scope with its apps in D1, suspended
    and deleted included, searchable. Test apps only in dev envs. A scope with a quieter listing (D98 item 8) appears
-   only after a search for its app or through the partner's link. This survives a purge. It can over-list a scope whose
-   first login failed, which is harmless.
+   only after a search for its app or through the partner's link. This survives a purge. Strangers see only apps with
+   `apps.first_login_at` set (D462); a scope's own users see all of its apps. It can over-list a scope whose first login
+   failed, which is harmless.
 2. **The overlay (D466).** `end_user_identities` by `(provider, sub)` gives the user's scopes, `user_id` and root. These
    scopes come first as "Your apps", with addresses from `end_user_wallets` and the Support ID. A member's root comes
    from the same rows.
@@ -334,7 +335,7 @@ Errors map to the existing auth-page error views (`errors.ts`), plus `home_accou
 | Endpoint | Auth | Does |
 |---|---|---|
 | `GET /v1/home/config` | `Origin === AUTH_ORIGIN` | `{serverTimeMs, signer, sharedGoogleClientId}` |
-| `GET /v1/home/apps` | Home identity | the list and overlay: `[{scopeId, mine, coverage: 'shared' \| 'hana_client' \| 'partner_client' \| 'email' \| 'none', googleClientId, sharedLoginEndsAtMs, supportId?, addresses?, apps: [{appId, name, status: 'active' \| 'suspended' \| 'deleted', environment, origins}], liveDevices}]`; coverage and `sharedLoginEndsAtMs` from cached `get_scope` / `get_config` views (≤ 60 s) and D1 `hana_held_clients` |
+| `GET /v1/home/apps` | Home identity | the list and overlay: `[{scopeId, mine, coverage: 'shared' \| 'hana_client' \| 'partner_client' \| 'email' \| 'none', googleClientId, sharedLoginEndsAtMs, supportId?, addresses?, apps: [{appId, name, status: 'active' \| 'suspended' \| 'deleted', environment, origins}], liveDevices}]`; coverage and `sharedLoginEndsAtMs` from cached `get_scope` / `get_config` views (≤ 60 s) and D1 `hana_held_clients`. **As built (H2, D500–D503, `docs/api.md`):** coverage adds `exit` and `unknown`; no `sharedLoginEndsAtMs` (D480) or `liveDevices` (H9); paged and bounded |
 | `POST /v1/home/login` | Home identity | `/v1/login`'s body plus `scopeId`. In order: IP limit; shape; token (`verifyLoginToken` without `appId`; nonce = `sessionNonce(SIGNER, scopeId, …)`); the identity matches; `sessionStanding` for the root path; the Home limits; counter hold; `checkClientScope` and `session_key_in_use`; session signature; BLS shape; relay `create_session_and_derive` through the **Home pool**; `key_exported`; failures as `loginFailure`. No app gate |
 | `GET /v1/home/devices` | Home identity | see [Home: list and revoke](#home-list-and-revoke) |
 | `POST /v1/home/consents/revoke`, `/v1/home/shares/revoke`, `/v1/home/email-sharing/revoke` | Home identity | same |

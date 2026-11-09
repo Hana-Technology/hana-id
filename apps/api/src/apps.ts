@@ -26,6 +26,8 @@ export interface App {
   environment: Environment;
   /** When the scope saw its first successful login, or null (no user has a key in it yet). */
   first_session_at: number | null;
+  /** When this app saw its first successful login, or null (Hana Home doesn't list it to strangers, D462). */
+  first_login_at: number | null;
   /**
    * The key's prefix names the other environment than its scope. The 0006 triggers refuse such a row, so this is a
    * second check only: the gate refuses it (403 scope_conflict) so a test key's dev-env privileges never reach a live
@@ -61,7 +63,7 @@ export async function getAppByKey(db: D1Database, publishableKey: string, now = 
   const row = await db
     .prepare(
       `SELECT a.id, a.name, a.scope_id, a.org_id, a.plan, a.suspended_by, a.status, a.logo_key, a.google_web_client_id,
-              k.key AS publishable_key, s.environment, s.first_session_at, p.per_minute, p.per_day, p.per_ip_minute
+              k.key AS publishable_key, s.environment, s.first_session_at, a.first_login_at, p.per_minute, p.per_day, p.per_ip_minute
          FROM app_keys k JOIN apps a ON a.id = k.app_id JOIN scopes s ON s.scope_id = a.scope_id JOIN plans p ON p.id = a.plan
         WHERE k.key = ?1 AND (k.revoked_at IS NULL OR k.revoked_at > ?2) AND a.deleted_at IS NULL`,
     )
@@ -87,6 +89,21 @@ export function startFirstSession(db: D1Database, app: Pick<App, 'scope_id' | 'f
     .prepare('UPDATE scopes SET first_session_at = ?1 WHERE scope_id = ?2 AND first_session_at IS NULL')
     .bind(now, app.scope_id)
     .run()
+    .then(
+      () => undefined,
+      () => onError(),
+    );
+}
+
+/**
+ * Records the app's first successful login (D462): only while the gate read it as null, so every later login sends no
+ * statement at all, and conditional, so a race changes nothing. A failure is only logged; the next login retries. The
+ * promise never rejects, even if the statement can't be built; null when there is nothing to write.
+ */
+export function markFirstLogin(db: D1Database, app: Pick<App, 'id' | 'first_login_at'>, onError: () => void, now = Date.now()): Promise<void> | null {
+  if (app.first_login_at !== null) return null;
+  return Promise.resolve()
+    .then(() => db.prepare('UPDATE apps SET first_login_at = ?1 WHERE id = ?2 AND first_login_at IS NULL').bind(now, app.id).run())
     .then(
       () => undefined,
       () => onError(),

@@ -33,6 +33,8 @@ export interface LogFields {
   executed?: number;
   /** Vault maintenance (vault/cron.ts): shares pruned, re-wrapped, unreadable, and under an unknown KEK id. */
   pruned?: number;
+  /** Consents deleted by the same run (vault/consent-store.ts `pruneConsents`). */
+  prunedConsents?: number;
   rewrapped?: number;
   unreadable?: number;
   unknownKek?: number;
@@ -63,7 +65,7 @@ export interface LogFields {
  * user's `sub`, a path hash and any token, however a value reaches `log`. `LogFields` already refuses them at compile
  * time; this is the runtime backstop for a spread of untyped fields (docs/hana-home-spec.md, "Logs never contain…").
  */
-const REDACTED_FIELDS: ReadonlySet<string> = new Set(['x-hana-home', 'xHanaHome', 'sub', 'pathHash', 'path_hash', 'jwt', 'token', 'idToken', 'id_token']);
+const REDACTED_FIELDS: ReadonlySet<string> = new Set(['x-hana-home', 'xHanaHome', 'x-hana-consent', 'consentId', 'sub', 'pathHash', 'path_hash', 'jwt', 'token', 'idToken', 'id_token']);
 const redact = (key: string, value: unknown): unknown => (REDACTED_FIELDS.has(key) ? undefined : value);
 
 export function log(fields: LogFields, level: 'info' | 'warn' | 'error' = 'info'): void {

@@ -8,6 +8,7 @@ declare global {
       MIGRATION_DB: D1Database;
       FRESH_DB: D1Database;
       SNAPSHOT_DB: D1Database;
+      BACKFILL_DB: D1Database;
       MIX_DB: D1Database;
       PRE_0010_DB: D1Database;
       /** IssuerRpc's reads on a D1 before migration 0010 (rpc-issuer.test.ts). */

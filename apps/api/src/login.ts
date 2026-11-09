@@ -8,7 +8,7 @@ import { countEmailUsage } from './email-usage.ts';
 import { countLinkUsage } from './link-usage.ts';
 import type { Env } from './env.ts';
 import { hex, sha256 } from './bytes.ts';
-import { type Ctx, appGate, appQuota, chainGate, chainGateResponse, checkClientScope, done, firstSession, lap, lapRelay, limiter, loginTokenRefusal, newCtx, reject, settle } from './handlers.ts';
+import { type Ctx, appGate, appQuota, chainGate, chainGateResponse, checkClientScope, done, firstLogin, firstSession, lap, lapRelay, limiter, loginTokenRefusal, newCtx, reject, settle } from './handlers.ts';
 import { readJson } from './http.ts';
 import { type LinkRefusal, autoLinkRoot, checkKey, precheckAutoLink } from './link-precheck.ts';
 import { sessionSupportId } from './directory/store.ts';
@@ -249,6 +249,7 @@ async function login(request: Request, env: Env, ctx: Ctx, exec?: ExecutionConte
     }
     const r = result.result as { big_y?: unknown; big_c?: unknown } | null;
     if (!r || typeof r.big_y !== 'string' || typeof r.big_c !== 'string') return done(ctx, 502, { error: 'The contract returned no key', code: 'bad_contract_result', nearTx: result.nearTx });
+    await firstLogin(env, app, ctx, exec);
     // Email logins and new links per app and day (D1 `email_usage`, copied hourly to the ledger, D233).
     if (token.email) await countEmailUsage(env, app.id, 'email_sessions', ctx, exec);
     if (link) await countEmailUsage(env, app.id, 'links', ctx, exec);

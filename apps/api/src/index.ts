@@ -7,6 +7,7 @@ import { detectDrift } from './changes/drift.ts';
 import { WALLET_RECORD_ENDPOINT, handleWalletRecord } from './directory/record.ts';
 import { MAINNET_DEMO_EVENTS_ENDPOINT, handleMainnetDemoEvent } from './mainnet-demo.ts';
 import { guardedChangesMaintenance } from './guarded/cron.ts';
+import { HOME_APPS_ENDPOINT, handleHomeApps } from './home/apps.ts';
 import { HOME_CONFIG_ENDPOINT, handleHomeConfig } from './home/config.ts';
 import { homePreflight } from './home/identity.ts';
 import { syncIssuerKeys } from './issuer-keys.ts';
@@ -23,6 +24,7 @@ import { syncEmailUsage } from './usage/email-sync.ts';
 import { syncIdentityUsage } from './usage/identity-sync.ts';
 import { ensureUsagePartitions } from './usage/partitions.ts';
 import { vaultMaintenance } from './vault/cron.ts';
+import { handleVaultConsent, isConsentEndpoint } from './vault/consents.ts';
 import { handleVaultEndpoint, isVaultEndpoint, vaultPreflight } from './vault/endpoints.ts';
 import { BASE_CSP, handleVaultPage, isVaultPageRequest } from './vault/page.ts';
 
@@ -133,6 +135,12 @@ export default {
         if (request.method === 'POST') return await handleVaultEndpoint(request, env, pathname, requestId, ctx);
         return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
       }
+      if (isConsentEndpoint(pathname)) {
+        // Vault only, like /v1/vault/* (Hana Home H4: the server's record of auto-approve consents).
+        if (request.method === 'OPTIONS') return vaultPreflight(request, env);
+        if (request.method === 'POST') return await handleVaultConsent(request, env, pathname, requestId);
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
+      }
       if (pathname === IDENTITY_TOKEN_ENDPOINT) {
         // Vault only, like /v1/vault/* (same preflight: Origin must be VAULT_ORIGIN).
         if (request.method === 'OPTIONS') return vaultPreflight(request, env);
@@ -161,6 +169,12 @@ export default {
         // Hana Home (docs/hana-home-spec.md): `AUTH_ORIGIN` only. No identity yet: the page calls it before a sign-in.
         if (request.method === 'OPTIONS') return homePreflight(request, env);
         if (request.method === 'GET') return await handleHomeConfig(request, env, requestId);
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'GET, OPTIONS' });
+      }
+      if (pathname === HOME_APPS_ENDPOINT) {
+        // Hana Home's app list (H2): a Home identity sees its own rows only. No key is derived here.
+        if (request.method === 'OPTIONS') return homePreflight(request, env);
+        if (request.method === 'GET') return await handleHomeApps(request, env, requestId);
         return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'GET, OPTIONS' });
       }
       if (IDENTITY_PUBLIC_ENDPOINTS.includes(pathname)) {

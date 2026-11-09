@@ -139,7 +139,7 @@ export async function vaultLimits(request: Request, env: Env, ctx: Ctx, app: App
  * The share actions' last limit, once the IP and app limits accepted and the body names a share: the per-share flood
  * limit (`VAULT_SHARE_LIMIT` binding, D95), so it counts only requests that passed the others. Null when it accepts.
  */
-async function shareLimit(env: Env, ctx: Ctx, app: App, shareId: Uint8Array): Promise<Response | null> {
+export async function shareLimit(env: Env, ctx: Ctx, app: App, shareId: Uint8Array): Promise<Response | null> {
   try {
     const hit = await env.VAULT_SHARE_LIMIT.limit({ key: vaultShareKey(env.ENV_NAME, app.id, hex(shareId)) });
     return hit.success ? null : bindingRefusal(ctx, 'share');
@@ -156,11 +156,20 @@ const exactKeys = (o: Obj, keys: string[]): boolean => Object.keys(o).length ===
 const toBytes = (v: unknown, n: number): Uint8Array | null =>
   Array.isArray(v) && v.length === n && v.every((b) => Number.isInteger(b) && b >= 0 && b <= 255) ? Uint8Array.from(v as number[]) : null;
 
-function toCreateShare(body: unknown): { sessionPk: Uint8Array; signature: Uint8Array } | null {
-  if (!isObj(body) || !exactKeys(body, ['sessionPublicKey', 'signature'])) return null;
+/**
+ * A coarse "Chrome on macOS" (D98 item 10): letters, digits and a little punctuation, at most 40 characters. It only ever
+ * names the device in Hana Home, as text. Anything else is dropped (stored as null), never refused: no login may fail
+ * over a label, and a vault that doesn't send one (every build before H5) is the normal case (D512).
+ */
+const DEVICE_LABEL_RE = /^[A-Za-z0-9][A-Za-z0-9 .()/_-]{0,39}$/u;
+const toDeviceLabel = (v: unknown): string | null => (typeof v === 'string' && DEVICE_LABEL_RE.test(v) ? v : null);
+
+function toCreateShare(body: unknown): { sessionPk: Uint8Array; signature: Uint8Array; deviceLabel: string | null } | null {
+  if (!isObj(body)) return null;
+  if (!exactKeys(body, 'deviceLabel' in body ? ['sessionPublicKey', 'signature', 'deviceLabel'] : ['sessionPublicKey', 'signature'])) return null;
   const sessionPk = toBytes(body.sessionPublicKey, 32);
   const signature = toBytes(body.signature, 64);
-  return sessionPk && signature ? { sessionPk, signature } : null;
+  return sessionPk && signature ? { sessionPk, signature, deviceLabel: toDeviceLabel(body.deviceLabel) } : null;
 }
 
 function toShareRequest(body: unknown): { shareId: Uint8Array; counter: number; signature: Uint8Array } | null {
@@ -249,7 +258,7 @@ async function spentSession(env: Env, sessionPk: Uint8Array, scopeId: string): P
 /** POST /v1/vault/shares: after a login in 'session' mode, store a new share for its (used-up) session key. */
 async function createShare(env: Env, ctx: Ctx, app: App, parentOrigin: string, body: unknown): Promise<Response> {
   const req = toCreateShare(body);
-  if (!req) return reject(ctx, 400, 'bad_request', 'Body must be {sessionPublicKey: 32 bytes, signature: 64 bytes}');
+  if (!req) return reject(ctx, 400, 'bad_request', 'Body must be {sessionPublicKey: 32 bytes, signature: 64 bytes, deviceLabel?: string}');
   const keks = await loadKeks(env);
   if (!keks) return vaultKeyUnavailable(ctx);
 
@@ -300,6 +309,7 @@ async function createShare(env: Env, ctx: Ctx, app: App, parentOrigin: string, b
       createdAt: now,
       idleUntil,
       absExpiresAt,
+      deviceLabel: req.deviceLabel,
     });
     lap(ctx, 'insert');
     if (!created) return reject(ctx, 409, 'share_exists', 'This session key already has a share');
@@ -336,7 +346,7 @@ async function settingsRefusal(env: Env, ctx: Ctx, app: App, row: ShareRow, now:
 }
 
 /** Why an advance changed nothing: re-read the share (and, for unlock and touch, the settings) and name the first reason. */
-async function refusal(env: Env, ctx: Ctx, app: App, shareId: Uint8Array, now: number, checkSettings = false): Promise<Response> {
+export async function refusal(env: Env, ctx: Ctx, app: App, shareId: Uint8Array, now: number, checkSettings = false): Promise<Response> {
   const row = await getShare(env.DB, app.id, shareId);
   if (!row) return reject(ctx, 404, 'unknown_share', 'Unknown share');
   if (row.revoked_at !== null) return reject(ctx, 410, 'share_revoked', 'This share was revoked');

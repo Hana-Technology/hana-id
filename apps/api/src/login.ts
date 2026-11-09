@@ -21,6 +21,7 @@ import { recalledPanic, rememberPanic, requestKey } from './panic-cache.ts';
 import { sessionStanding } from './session-standing.ts';
 import { isTestApp } from './origins.ts';
 import type { RelayResult } from './relayer-key.ts';
+import { ALREADY_RELAYED } from './relayer-config.ts';
 import { relay } from './relayer-pool.ts';
 import { ckdPayload, linkedCkdPayload, sessionNonce, sessionNoncePreimage, verifySessionSignature } from './session-crypto.ts';
 import { claimCounter } from './session-use.ts';
@@ -232,13 +233,14 @@ async function login(request: Request, env: Env, ctx: Ctx, exec?: ExecutionConte
     const quota = await appQuota(env, ctx, app);
     if (quota) return quota;
 
-    const relayed = relay(env, 'session', { method: call.method, args: call.args }, requestId);
+    const relayed = relay(env, 'session', { method: call.method, args: call.args }, requestId, { sessionPublicKey: req.sessionPublicKey, expiresAtMs: req.expiresAtMs, counter: 1 });
     const noted = firstSession(env, app, ctx, relayed, exec);
     const result = await relayed;
     await noted;
     lapRelay(ctx, result);
     // Whatever happened, the session (if any) is read from chain next time.
     forgetSession(req.sessionPublicKey);
+    if (!result.ok && result.code === ALREADY_RELAYED) return reject(ctx, 409, 'session_exists', 'This session key is already in use');
     if (!result.ok) {
       const failure = loginFailure(env, result);
       if (typeof failure.body.code === 'string' && typeof failure.body.error === 'string') rememberPanic(panicKey, { status: failure.status, code: failure.body.code, error: failure.body.error });

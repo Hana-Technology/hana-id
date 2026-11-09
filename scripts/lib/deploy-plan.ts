@@ -65,6 +65,8 @@ export interface DeployObserved {
   relayerAccessKeys: AccessKeyListEntry[];
   /** Every access key on the signer account (the updater keys live here). */
   signerAccessKeys: AccessKeyListEntry[];
+  /** Every access key on an owner account (absent: not read, e.g. the owner is the council DAO). */
+  ownerAccessKeys?: AccessKeyListEntry[];
   /** Public keys in .secrets/<env>/relayer-keys.json (session) and owner-relayer-keys.json (owner). */
   poolKeysInFile: Record<KeyPool, string[]>;
   /** Public key in .secrets/<env>/keys-updater.json. */
@@ -90,7 +92,7 @@ export interface DeployObserved {
   /** Which manifest watchdog accounts exist on chain. */
   watchdogAccounts: Record<string, boolean>;
   /** The council DAO account (null without a council); `policy` is its get_policy (null if it fails or no DAO). */
-  councilDao: { exists: boolean; codeHash: string; policy: SputnikPolicy | null } | null;
+  councilDao: { exists: boolean; codeHash: string; policy: SputnikPolicy | null; fullAccessKeys?: string[] } | null;
   /** Council members whose signing key the scripts can read (dev: .secrets/<env>/council/; else ~/.near-credentials). */
   councilKeys: Record<string, boolean>;
   /**
@@ -123,6 +125,8 @@ export interface DeployOptions {
   upgrade: boolean;
   /** Skip the wasm build and use the existing file (its hash is then known when planning). */
   skipBuild: boolean;
+  /** The wasm was named with --wasm (not whatever is in target/). Outside dev envs a new code hash needs it (D456). */
+  wasmGiven?: boolean;
   /** Owner transfer to the council DAO: propose_owner(DAO), then (once due) the DAO's accept_owner. */
   transferOwner: boolean;
   /** Council options for owner steps (--member, --approve-with). */
@@ -519,6 +523,30 @@ export function buildDeployPlan(m: Manifest, o: DeployObserved, opts: DeployOpti
     }
   }
 
+  // --- full-access keys nobody here knows of (security sweep OPER-7, D456) ---
+  const strayFull = (role: Role, keys: readonly AccessKeyListEntry[]): void => {
+    const full = keys.filter((k) => k.access_key.permission === 'FullAccess').map((k) => k.public_key);
+    const cred = o.credentials[role];
+    if (!cred.found) {
+      if (full.length) warnings.push(`${m[role]} (${role}) has full-access key(s) ${full.join(', ')} and there is no local key to compare them with: check they are all yours.`);
+      return;
+    }
+    const extra = full.filter((k) => k !== cred.publicKey);
+    if (!extra.length) return;
+    const text = `${m[role]} (${role}) has full-access key(s) besides the one in ~/.near-credentials (${cred.publicKey}): ${extra.join(', ')}. Anyone holding one controls the account. If it isn't in use, delete it: ${extra.map((k) => deleteKeyCmd(m[role], k)).join(' ; ')}`;
+    if (isDevEnv(m.name)) warnings.push(text);
+    else blockers.push(text);
+  };
+  strayFull('relayer', o.relayerAccessKeys);
+  if (o.ownerAccessKeys) strayFull('owner', o.ownerAccessKeys);
+  if (allowFull) strayFull('signer', o.signerAccessKeys);
+  const daoKeys = o.councilDao?.fullAccessKeys ?? [];
+  if (daoKeys.length) {
+    const text = `The council DAO ${m.council?.dao} has full-access key(s) ${daoKeys.join(', ')}: anyone holding one can replace its code, whatever the council votes. Delete them.`;
+    if (isDevEnv(m.name)) warnings.push(text);
+    else blockers.push(text);
+  }
+
   // --- the signer's own keys: full access only where allowed; function-call keys only the contract's updater keys ---
   if (signerFullKeys.length && !allowFull && initialised) {
     blockers.push(
@@ -677,6 +705,12 @@ export function buildDeployPlan(m: Manifest, o: DeployObserved, opts: DeployOpti
     const clients: [string, string][] = m.googleClientIds.map((aud) => [GOOGLE_PROVIDER, aud] as [string, string]);
     if (clients.length > 10) blockers.push(`The "${GLOBAL_SCOPE}" scope would get ${clients.length} clients (googleClientIds); the contract allows 10.`);
     steps.push({ kind: 'register-global', owners: [{ Near: { account_id: m.owner } }], clients, allowShared: false });
+  }
+
+  // Outside dev envs new code comes only from a reproducible build named with --wasm (D86, D456): never this script's
+  // non-reproducible build, nor whatever is in target/. Executing a proposed upgrade needs neither: its hash is checked.
+  if (!isDevEnv(m.name) && (steps.some((s) => s.kind === 'build') || (steps.some((s) => s.kind === 'propose-upgrade') && !opts.wasmGiven))) {
+    blockers.push(`${m.name} takes only a reproducible build: cd contracts/hana-signer && cargo near build reproducible-wasm, publish its hash, then pass --wasm <that file> (D86).`);
   }
 
   // The owner transfer goes last: everything else is configured by the current owner first.

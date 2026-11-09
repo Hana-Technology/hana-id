@@ -160,25 +160,31 @@ fn evil_issuer_key(env: &Env) -> Value {
 // One test per key and check, each on its own sandbox, so they run side by side (D423): as one test they took
 // about 9 minutes, half the suite run one test at a time.
 
-/// The session pool opens sessions and prunes, the owner pool runs owner-pool methods, neither runs the other's, the
-/// two allowlists don't overlap, and neither key reaches another receiver.
+/// The session pool opens sessions, the owner pool reaches owner-pool methods, neither runs the other's or the open
+/// maintenance methods no endpoint relays (D455), the two allowlists don't overlap, and neither key reaches another
+/// receiver.
 #[tokio::test]
 async fn access_keys_each_pool_runs_only_its_own_methods() -> Result<()> {
     let env = Env::setup().await?;
     let signer = env.signer.id();
 
-    // The session pool can open sessions (see also the test above) and prune.
+    // The session pool can open sessions (see also the test above).
     let (s, jwt) = env.new_session(APP_A, USER_SUB, &env.scope_a, 0, 600_000).await?;
     env.create_session(&env.relayer_fc, &s, &jwt).await?.into_result()?;
-    env.relayer_fc.call(signer, "prune_sessions").args_json(json!({"limit": 10})).gas(api_gas("prune_sessions")).transact().await?.into_result()?;
-    // The owner pool can run owner-pool methods (apply_pending_config takes no arguments)...
-    env.relayer_owner_fc.call(signer, "apply_pending_config").args_json(json!({})).gas(PROBE_GAS).transact().await?.into_result()?;
+    // The owner pool reaches owner-pool methods (it fails in the contract on empty args, past the access key)...
+    let text = expect_failure(tx(env.relayer_owner_fc.call(signer, "execute_change").args_json(json!({})).gas(PROBE_GAS).transact().await), "");
+    assert!(!text.contains("MethodNameMismatch"), "owner pool execute_change: expected to reach the contract, got {text}");
     // ...but can't open sessions: abuse of the owner endpoint can never use up the login keys, and vice versa.
     let (s2, jwt2) = env.new_session(APP_A, USER_SUB, &env.scope_a, 0, 600_000).await?;
     let text = expect_failure(env.create_session(&env.relayer_owner_fc, &s2, &jwt2).await, "");
     assert!(text.contains("MethodNameMismatch"), "owner pool create_session: expected an access-key rejection, got {text}");
     let text = expect_failure(tx(env.relayer_fc.call(signer, "apply_pending_config").args_json(json!({})).gas(PROBE_GAS).transact().await), "");
     assert!(text.contains("MethodNameMismatch"), "session pool apply_pending_config: expected an access-key rejection, got {text}");
+    // Neither pool holds the open methods no endpoint relays: a leaked key can't spend its allowance on them.
+    for (key, method) in [(&env.relayer_fc, "prune_sessions"), (&env.relayer_owner_fc, "apply_pending_config"), (&env.relayer_owner_fc, "register_scope")] {
+        let text = expect_failure(tx(key.call(signer, method).args_json(json!({})).gas(PROBE_GAS).transact().await), "");
+        assert!(text.contains("MethodNameMismatch"), "{method}: expected an access-key rejection, got {text}");
+    }
 
     // The two pools don't overlap.
     for m in SESSION_RELAYER_METHODS {
@@ -397,10 +403,10 @@ fn session_allowlist_is_in_a_planned_state_everywhere() -> Result<()> {
         v
     };
     let owned = |m: &[&str]| sorted(m.iter().map(|s| s.to_string()).collect());
-    // The three states, as the spec lists them: each keeps derive_key, revoke_session and prune_sessions (and, since
-    // email login batch 6, the link methods); state 2 drops create_session, state 3 drops create_session_and_derive.
+    // The three states, as the spec lists them less prune_sessions (D455): each keeps derive_key and revoke_session
+    // (and, since email login batch 6, the link methods); state 2 drops create_session, state 3 create_session_and_derive.
     let [s1, s2, s3] = SESSION_ALLOWLIST_STATES;
-    let mut first = vec!["create_session", "create_session_and_derive", "derive_key", "revoke_session", "prune_sessions"];
+    let mut first = vec!["create_session", "create_session_and_derive", "derive_key", "revoke_session"];
     first.extend_from_slice(LINK_RELAYER_METHODS);
     assert_eq!(owned(s1), owned(&first));
     for state in SESSION_ALLOWLIST_STATES {
@@ -511,13 +517,13 @@ async fn public_registration_and_timelocked_changes() -> Result<()> {
     assert_eq!(scope["owners"], json!(owners));
     assert_eq!(scope["allow_shared"], json!(false));
 
-    // A shared-only scope needs no proof (scope ids are contract-assigned, nothing to squat). Through the owner
-    // pool, which is a sponsor.
+    // A shared-only scope needs no proof (scope ids are contract-assigned, nothing to squat). From the relayer account,
+    // a sponsor (no pool key holds register_scope, D455).
     let shared_only: String = env
-        .relayer_owner_fc
+        .relayer
         .call(signer, "register_scope")
         .args_json(json!({"owners": [near_owner(env.carol.id())], "client_proofs": [], "allow_shared": true}))
-        .gas(api_gas("register_scope"))
+        .gas(GAS)
         .transact()
         .await?
         .into_result()?
@@ -527,12 +533,11 @@ async fn public_registration_and_timelocked_changes() -> Result<()> {
     assert_eq!(scope_so["allow_shared"], json!(true));
     // Without shared login a scope needs at least one client.
     expect_failure(
-        tx(env.relayer_owner_fc.call(signer, "register_scope").args_json(json!({"owners": [near_owner(env.carol.id())], "client_proofs": [], "allow_shared": false})).gas(api_gas("register_scope")).transact().await),
+        tx(env.relayer.call(signer, "register_scope").args_json(json!({"owners": [near_owner(env.carol.id())], "client_proofs": [], "allow_shared": false})).gas(GAS).transact().await),
         "A scope needs a client or shared login",
     );
 
-    // Worst case for the API's register_scope gas: MAX_CLIENTS (10) RS256 proofs and 5 OIDC owners, relayed by the
-    // owner pool at api_gas("register_scope") (the 10-proof entry of apps/api/src/gas.ts).
+    // Worst case for register_scope: MAX_CLIENTS (10) RS256 proofs and 5 OIDC owners.
     let big_owners: Vec<Value> = (0..5).map(|i| oidc_owner(&format!("{OWNER_SUB}-{i}"))).collect();
     let big_auds: Vec<String> = (0..10).map(|i| format!("app-big-{i}.apps.googleusercontent.com")).collect();
     let big_clients: Vec<(&str, &str)> = big_auds.iter().map(|a| (PROVIDER, a.as_str())).collect();
@@ -542,13 +547,13 @@ async fn public_registration_and_timelocked_changes() -> Result<()> {
         big_proofs.push(env.jwt(aud, OWNER_SUB, Some(&big_nonce)).await?);
     }
     let big = env
-        .relayer_owner_fc
+        .relayer
         .call(signer, "register_scope")
         .args_json(json!({"owners": big_owners, "client_proofs": big_proofs, "allow_shared": false}))
-        .gas(api_gas("register_scope"))
+        .gas(GAS)
         .transact()
         .await?;
-    println!("register_scope with 10 proofs burnt {} Tgas (attached {} Tgas)", big.total_gas_burnt.as_tgas(), api_gas("register_scope").as_tgas());
+    println!("register_scope with 10 proofs burnt {} Tgas", big.total_gas_burnt.as_tgas());
     let scope_big: String = big.into_result()?.json()?;
     assert_eq!(env.get_scope(&scope_big).await?["clients"].as_array().map(Vec::len), Some(10));
 
@@ -733,7 +738,7 @@ async fn prune_sessions_after_expiry() -> Result<()> {
     assert!(env.get_session(&long).await?.is_some());
     assert!(env.get_session(&s).await?.is_some());
 
-    let pruned: u32 = env.relayer_fc.call(signer, "prune_sessions").args_json(json!({"limit": 100})).gas(api_gas("prune_sessions")).transact().await?.into_result()?.json()?;
+    let pruned: u32 = env.alice.call(signer, "prune_sessions").args_json(json!({"limit": 100})).gas(GAS).transact().await?.into_result()?.json()?;
     assert_eq!(pruned, 0);
     Ok(())
 }
@@ -781,8 +786,8 @@ async fn shared_client_login() -> Result<()> {
     // Lazy on read: the view shows it effective once the delay has passed.
     let config = env.get_config().await?;
     assert_eq!(config["shared_clients"], json!([[PROVIDER, SHARED]]), "config: {config}");
-    // Anyone may apply it (here the owner pool).
-    env.relayer_owner_fc.call(signer, "apply_pending_config").args_json(json!({})).gas(api_gas("apply_pending_config")).transact().await?.into_result()?;
+    // Anyone may apply it.
+    env.alice.call(signer, "apply_pending_config").args_json(json!({})).gas(GAS).transact().await?.into_result()?;
     let config = env.get_config().await?;
     assert_eq!(config["shared_clients"], json!([[PROVIDER, SHARED]]), "config: {config}");
     assert_eq!(pending_shared_unlock(&config, SHARED), None, "applied addition still pending: {config}");

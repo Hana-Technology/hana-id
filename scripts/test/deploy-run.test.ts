@@ -11,7 +11,7 @@ import { parseCli } from '../lib/cli.ts';
 import { scopeRegister, SCOPE_DRY_RUN_LINE } from '../lib/admin-scope.ts';
 import { DRY_RUN_LINE, type DeployRpc, deployMain } from '../lib/deploy-run.ts';
 import { keysUpdaterFile, poolKeysFile, readKeysUpdater, readPoolKeys, readRelayerKeys, relayerKeysFile, writeRelayerKeys } from '../lib/keys.ts';
-import type { AccessKeyListEntry, AccountView, TxSigner } from '../lib/near.ts';
+import { type AccessKeyListEntry, type AccountView, codeHashOf, type TxSigner } from '../lib/near.ts';
 import { ACCOUNT_OWNER, GOVERNANCE_DEFAULT, NOW } from './sim-fixtures.ts';
 
 const m = {
@@ -58,6 +58,8 @@ interface Chain {
   /** get_config result; null = not initialised (view fails like a code-less account). */
   config: object | null;
   codeHash: string;
+  /** The signer's code doesn't change when the deploy goes through (a node lying, or someone else deploying). */
+  deployedOther?: boolean;
   /** Extra access keys per account, on top of the full-access keychain key. */
   extraKeys?: Record<string, AccessKeyListEntry[]>;
 }
@@ -82,6 +84,7 @@ function stubRpc(chain: Chain) {
     }) as DeployRpc['view'],
     sendTx: async (signer: TxSigner, receiver: string, actions: Action[]) => {
       sent.push({ signer: signer.accountId, receiver, actions });
+      for (const a of actions) if (a.deployContract && !chain.deployedOther) chain.codeHash = codeHashOf(a.deployContract.code);
       return { hash: `hash${sent.length}`, value: null };
     },
   };
@@ -137,6 +140,16 @@ describe('deploy-contract --yes gate', () => {
     expect(existsSync(join(secretsRoot, '.secrets'))).toBe(false);
   });
 
+  it('a first deploy checks the code on chain against the wasm it sent', async () => {
+    const r = await deploy([m.name, '--yes'], { config: null, codeHash: '11111111111111111111111111111111' });
+    expect(r.code).toBe(0);
+    expect(r.out).toMatch(new RegExp(`${m.signer} now runs [1-9A-HJ-NP-Za-km-z]+`, 'u'));
+  });
+
+  it('a first deploy stops when the chain runs other code than the wasm it sent', async () => {
+    await expect(deploy([m.name, '--yes'], { config: null, codeHash: '11111111111111111111111111111111', deployedOther: true })).rejects.toThrow(/Deployed .* but .* runs 1{32}/u);
+  });
+
   it('with --yes runs every planned step', async () => {
     const r = await deploy([m.name, '--yes'], { config: null, codeHash: '11111111111111111111111111111111' });
     expect(r.code).toBe(0);
@@ -182,10 +195,10 @@ describe('deploy-contract --yes gate', () => {
     const owner = perm(r.sent[1]);
     expect(session).toHaveLength(2);
     expect(owner).toHaveLength(2);
-    expect(session?.[0]).toMatchObject({ receiverId: m.signer, methodNames: ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'prune_sessions', 'link_identity', 'cancel_link', 'unlink_identity'], allowance: 3n * NEAR });
+    expect(session?.[0]).toMatchObject({ receiverId: m.signer, methodNames: ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'link_identity', 'cancel_link', 'unlink_identity'], allowance: 3n * NEAR });
     expect(owner?.[0]).toMatchObject({
       receiverId: m.signer,
-      methodNames: ['propose_change', 'cancel_change', 'remove_client', 'disable_shared_login', 'execute_change', 'register_scope', 'apply_pending_config'],
+      methodNames: ['propose_change', 'cancel_change', 'remove_client', 'disable_shared_login', 'execute_change'],
       allowance: NEAR / 4n,
     });
     // The two pools hold different keys, each in its own file.
@@ -280,7 +293,7 @@ describe('deploy-contract compares on-chain key permissions', () => {
     const r = await deploy([m.name, '--yes'], { config: initialised, codeHash: 'abc', extraKeys });
     expect(r.code).toBe(1);
     expect(r.out).toContain('with the wrong permission for the session pool');
-    expect(r.out).toContain(`has methods ${a2.join(', ')}; expected create_session, create_session_and_derive, derive_key, revoke_session, prune_sessions`);
+    expect(r.out).toContain(`has methods ${a2.join(', ')}; expected create_session, create_session_and_derive, derive_key, revoke_session, link_identity, cancel_link, unlink_identity`);
     expect(r.out).toContain(`near account delete-keys ${m.relayer} public-keys ${old.getPublicKey().toString()}`);
     expect(r.out).not.toContain(old.toString());
     expect(r.sent).toEqual([]);

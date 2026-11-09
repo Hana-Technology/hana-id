@@ -18,7 +18,7 @@
 // Phases run one after another; a phase's lanes run side by side, a lane's steps one after another (D423):
 //
 //   0  lockfile
-//   1  gitleaks | typecheck | contract (cargo test + wasm)
+//   1  gitleaks | typecheck | contract (cargo test + wasm) | dependency advisories (--full)
 //   2  unit tests | docs checks                          (alone: see below)
 //   3  sandbox e2e | SDK pack check                      (Rust nodes beside a short build)
 //   4  Playwright                                        (alone: browsers beside 8 sandbox nodes made Firefox's
@@ -301,6 +301,8 @@ export function plan({ mode, files, pkgs, reads, dirty = false, cpus = available
       cmd('cargo', ['test', '--locked'], 'contracts/hana-signer'),
       cmd('cargo', ['near', 'build', 'non-reproducible-wasm'], 'contracts/hana-signer'),
     ], notQuick ?? (jobs.rust ? null : 'no Rust change')),
+    // Needs the network and cargo-audit, and an advisory can fail it with no change here: before a deploy, not each merge.
+    step('audit', 'dependency advisories', 1, [cmd('node', ['scripts/dep-audit.mjs'])], mode === 'full' ? null : 'only in --full'),
     // CI=true as in CI: vitest then fails on a stray `.only`. pnpm's default 4 at a time, for the PGlite suites; a
     // phase of their own with the light docs checks.
     step('unit', `unit tests (${count(unit)})`, 2, [recursive('test', unit, 4, { CI: 'true' })], empty(unit)),

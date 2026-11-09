@@ -212,7 +212,8 @@ async function observe(c: Ctx, wasmPath: string | null): Promise<{ observed: Dep
     const dao = await rpc.account(m.council.dao);
     // Its policy, not only its code: who votes and how many votes each proposal kind needs (D81).
     const policy = dao ? await tryView<SputnikPolicy>(rpc, m.council.dao, 'get_policy') : null;
-    councilDao = { exists: !!dao, codeHash: dao?.code_hash ?? '', policy };
+    const daoKeys = dao ? await rpc.accessKeys(m.council.dao) : [];
+    councilDao = { exists: !!dao, codeHash: dao?.code_hash ?? '', policy, fullAccessKeys: daoKeys.filter((k) => k.access_key.permission === 'FullAccess').map((k) => k.public_key) };
     for (const a of m.council.members) {
       councilKeys[a] = m.network === 'testnet' && (councilKeysOnDisk(m) ? !!readCouncilKey(m.name, a, c.secretsRoot) : !!findLegacyCredential(a, m.network, c.home));
     }
@@ -231,6 +232,7 @@ async function observe(c: Ctx, wasmPath: string | null): Promise<{ observed: Dep
       governance,
       relayerAccessKeys: keyLists.relayer ?? [],
       signerAccessKeys: keyLists.signer ?? [],
+      ...(m.ownerKind === 'sputnik' ? {} : { ownerAccessKeys: keyLists.owner ?? [] }),
       poolKeysInFile: {
         session: readPoolKeys(m.name, 'session', c.secretsRoot).map((k) => k.getPublicKey().toString()),
         owner: readPoolKeys(m.name, 'owner', c.secretsRoot).map((k) => k.getPublicKey().toString()),
@@ -301,6 +303,9 @@ async function execute(c: Ctx, step: DeployStep, creds: Partial<Record<Role, Loa
       const code = wasm();
       await storageCheck(code);
       await send(m.signer, [actionCreators.deployContract(new Uint8Array(code)), actionCreators.functionCall('new', step.init, GAS_INIT, 0n)]);
+      const deployedHash = (await rpc.account(m.signer))?.code_hash;
+      if (deployedHash !== codeHashOf(code)) throw new Error(`Deployed ${codeHashOf(code)} but ${m.signer} runs ${deployedHash ?? '(nothing)'}: stop and find out why before using this env.`);
+      log(`    ${m.signer} now runs ${deployedHash}`);
       return 'done';
     }
     case 'relayer-keys': {
@@ -468,6 +473,7 @@ export async function deployMain(argv: readonly string[], deps: DeployDeps = def
     },
     upgrade: args.flag('upgrade'),
     skipBuild: args.flag('skip-build') || !!wasmArg,
+    wasmGiven: !!wasmArg,
     transferOwner: args.flag('transfer-owner'),
     ownerTx,
     sputnikCodeHash: deps.sputnikCodeHash ?? readPin().code_hash,

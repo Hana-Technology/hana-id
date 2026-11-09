@@ -70,8 +70,8 @@ const inFlight = new Map<string, Promise<void>>();
  * request for the same counter (a client retry, or a replay racing the original before chain views show it) waits for
  * the first to finish rather than being relayed beside it, since at most one of them can succeed; it is then judged
  * on the first one's outcome (counted in the session cache after a successful derive, or the session read again
- * after a failure). Other counters don't wait. Copies arriving in other isolates are not covered: they are relayed and
- * all but one fail on chain.
+ * after a failure). Other counters don't wait. Copies arriving in other isolates meet at the session's relayer key
+ * object instead, which relays one (RelayerKey `claims`, D454).
  */
 export async function claimCounter(sessionPublicKey: number[], counter: number): Promise<() => void> {
   const key = `${hex(new Uint8Array(sessionPublicKey))}:${counter}`;

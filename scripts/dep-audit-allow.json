@@ -1,0 +1,77 @@
+{
+  "GHSA-848j-6mx2-7j84": {
+    "where": ["npm"],
+    "reviewBy": "2026-12-31",
+    "reason": "elliptic 6.6.1 through @near-js/crypto > secp256k1, no fixed release published. The Workers replace secp256k1 with a shim (apps/api/src/shims/secp256k1.ts); Hana ID only signs NEAR transactions with ed25519, so the code is never called."
+  },
+  "GHSA-wrjc-x8rr-h8h6": {
+    "where": ["npm"],
+    "reviewBy": "2026-12-31",
+    "reason": "react-router 6.30.4 (apps/console), fixed only in 7.18. Every Link and navigate target in the console SPA is a fixed path or a server-listed id, never a URL or path from the query string, so the backslash open redirect has no input."
+  },
+  "GHSA-337j-9hxr-rhxg": {
+    "where": ["npm"],
+    "reviewBy": "2026-12-31",
+    "reason": "react-router 6.30.4 (apps/console), fixed only in 7.18. deserializeErrors runs on SSR hydration data; the console is a client-only BrowserRouter SPA with no hydrationData."
+  },
+  "GHSA-mrhx-c7xc-m3w5": {
+    "where": ["npm"],
+    "reviewBy": "2026-12-31",
+    "reason": "zod 3.25.76 (apps/console, packages/console-core, packages/env), fixed only in 4.6.6, a major upgrade (D450). packages/env validates operator manifests; the console Worker reads bodies through a size cap (apps/console/src/http.ts payload_too_large). Worst case: one isolate restarts."
+  },
+  "RUSTSEC-2026-0009": {
+    "where": ["contracts/hana-signer/Cargo.lock", "contracts/mock-mpc/Cargo.lock"],
+    "reviewBy": "2026-12-31",
+    "reason": "time 0.3.45, a host-only dependency of near-sdk's unit-testing stack: cargo tree --target wasm32-unknown-unknown -e normal -i time prints nothing, so it is not in the contract wasm."
+  },
+  "RUSTSEC-2026-0391": {
+    "where": ["contracts/hana-signer/Cargo.lock", "contracts/integration-tests/Cargo.lock"],
+    "reviewBy": "2026-12-31",
+    "reason": "zstd 0.13.3 through near-primitives, host and test builds only: cargo tree --target wasm32-unknown-unknown -e normal -i zstd prints nothing for hana-signer."
+  },
+  "RUSTSEC-2026-0403": {
+    "where": ["contracts/hana-signer/Cargo.lock", "contracts/integration-tests/Cargo.lock"],
+    "reviewBy": "2026-12-31",
+    "reason": "zstd-safe 7.3.0 through near-primitives, host and test builds only (not in the contract wasm), and it only decompresses data from the local sandbox."
+  },
+  "RUSTSEC-2026-0398": {
+    "where": ["contracts/hana-signer/Cargo.lock", "contracts/integration-tests/Cargo.lock"],
+    "reviewBy": "2026-12-31",
+    "reason": "zstd-safe 7.3.0 through near-primitives, host and test builds only (not in the contract wasm); the seekable API is not used."
+  },
+  "RUSTSEC-2026-0410": {
+    "where": ["contracts/hana-signer/Cargo.lock"],
+    "reviewBy": "2026-12-31",
+    "reason": "zstd-sys 2.1.1 through near-primitives, a host dependency: cargo tree --target wasm32-unknown-unknown -e normal -i zstd prints nothing, so its wasm allocator shim is not in the contract wasm."
+  },
+  "RUSTSEC-2023-0071": {
+    "where": ["contracts/integration-tests/Cargo.lock"],
+    "reviewBy": "2026-12-31",
+    "reason": "rsa 0.9.10, a dev-dependency of the sandbox tests only: it signs test tokens with throwaway keys in a local process, so the timing side channel has nothing to leak."
+  },
+  "RUSTSEC-2026-0346": {
+    "where": ["contracts/integration-tests/Cargo.lock"],
+    "reviewBy": "2026-12-31",
+    "reason": "rustls 0.23.43 through near-workspaces, test harness only: it never ships, and holds no secret beyond the local sandbox."
+  },
+  "RUSTSEC-2026-0285": {
+    "where": ["contracts/integration-tests/Cargo.lock"],
+    "reviewBy": "2026-12-31",
+    "reason": "rustls 0.23.43 through near-workspaces, test harness only: it never ships, and talks to a local sandbox."
+  },
+  "RUSTSEC-2026-0348": {
+    "where": ["contracts/integration-tests/Cargo.lock"],
+    "reviewBy": "2026-12-31",
+    "reason": "rustls 0.23.43 through near-workspaces, test harness only: it never ships, and talks to a local sandbox."
+  },
+  "RUSTSEC-2026-0349": {
+    "where": ["contracts/integration-tests/Cargo.lock"],
+    "reviewBy": "2026-12-31",
+    "reason": "rustls 0.23.43 through near-workspaces, test harness only: it never ships, and talks to a local sandbox."
+  },
+  "RUSTSEC-2026-0382": {
+    "where": ["contracts/integration-tests/Cargo.lock"],
+    "reviewBy": "2026-12-31",
+    "reason": "rustls-webpki 0.103.13 through near-workspaces, test harness only: it never ships, and talks to a local sandbox."
+  }
+}

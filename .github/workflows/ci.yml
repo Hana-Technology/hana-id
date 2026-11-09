@@ -90,6 +90,31 @@ jobs:
       - name: Self-test the rules on generated fakes
         run: node scripts/secret-scan-selftest.mjs ./gitleaks
 
+  # Known vulnerabilities in the locked dependencies (scripts/dep-audit.mjs, security sweep OPER-9): on every event,
+  # the nightly run included, since an advisory can appear without any change here.
+  audit:
+    name: Dependency advisories
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: Install cargo-audit (checksum-verified)
+        env:
+          CARGO_AUDIT_VERSION: 0.22.2
+          CARGO_AUDIT_SHA256: 7fb9497f8594b389e5fce5ef9b92db08432996895b2e0c5a0167a69ed445c428
+        run: |
+          curl -sSfL -o cargo-audit.tgz "https://github.com/rustsec/rustsec/releases/download/cargo-audit/v${CARGO_AUDIT_VERSION}/cargo-audit-x86_64-unknown-linux-musl-v${CARGO_AUDIT_VERSION}.tgz"
+          echo "${CARGO_AUDIT_SHA256}  cargo-audit.tgz" | sha256sum -c -
+          tar -xzf cargo-audit.tgz --strip-components=1 -C "$HOME/.cargo/bin" "cargo-audit-x86_64-unknown-linux-musl-v${CARGO_AUDIT_VERSION}/cargo-audit"
+          rm cargo-audit.tgz
+      - run: node scripts/dep-audit.mjs
+
   contract:
     name: Contract (cargo test + wasm)
     needs: changes
@@ -233,6 +258,23 @@ jobs:
           tar -xzf cargo-near.tar.gz --strip-components=1 -C "$HOME/.cargo/bin" cargo-near-x86_64-unknown-linux-gnu/cargo-near
           rm cargo-near.tar.gz
           cargo near --version
+      # The binary near-workspaces would otherwise fetch unchecked from S3 at test time (security sweep OPER-8): the one
+      # near-sandbox's DEFAULT_NEAR_SANDBOX_VERSION names. scripts/test/release-supply-chain.test.ts ties the crate
+      # version to Cargo.lock: bumping the crate means re-pinning both values here.
+      - name: Install near-sandbox (checksum-verified)
+        working-directory: .
+        env:
+          NEAR_SANDBOX_CRATE: 0.3.16
+          NEAR_SANDBOX_VERSION: 2.13.4
+          NEAR_SANDBOX_SHA256: 5690a4635172263cf026683f75965cac09dd916912584f12709974fed620163f
+        run: |
+          curl -sSfL -o near-sandbox.tar.gz "https://s3-us-west-1.amazonaws.com/build.nearprotocol.com/nearcore/Linux-x86_64/${NEAR_SANDBOX_VERSION}/near-sandbox.tar.gz"
+          echo "${NEAR_SANDBOX_SHA256}  near-sandbox.tar.gz" | sha256sum -c -
+          mkdir -p "$HOME/near-sandbox"
+          tar -xzf near-sandbox.tar.gz --strip-components=1 -C "$HOME/near-sandbox" Linux-x86_64/near-sandbox
+          rm near-sandbox.tar.gz
+          chmod +x "$HOME/near-sandbox/near-sandbox"
+          echo "NEAR_SANDBOX_BIN_PATH=$HOME/near-sandbox/near-sandbox" >> "$GITHUB_ENV"
       # 8 tests at a time, each on its own sandbox node, as `pnpm verify` runs them (D423; scripts/verify.mjs
       # SANDBOX_TEST_THREADS). Measured on the 16-core dev Mac; on a 4-vCPU runner watch for startup or RPC timeouts.
       - run: cargo test --locked -- --test-threads=8

@@ -25,8 +25,8 @@ const NEAR = 10n ** 24n;
 const PROD_DELAYS = { issuerKeyDelayMs: 7_200_000, governanceDelayMs: 259_200_000 };
 
 /** Batch B allowlist state 1 (docs/batch-b-spec.md, "Relayer allowlists"). */
-const SESSION = ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'prune_sessions', 'link_identity', 'cancel_link', 'unlink_identity'];
-const OWNER = ['propose_change', 'cancel_change', 'remove_client', 'disable_shared_login', 'execute_change', 'register_scope', 'apply_pending_config'];
+const SESSION = ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'link_identity', 'cancel_link', 'unlink_identity'];
+const OWNER = ['propose_change', 'cancel_change', 'remove_client', 'disable_shared_login', 'execute_change'];
 /** The governance contract's updater key methods (its UPDATER_METHODS) and the v1 key's. */
 const UPDATER = ['set_issuer_key', 'propose_issuer_key_removal', 'execute_issuer_key_change'];
 const V1_UPDATER = ['set_issuer_key', 'remove_issuer_key'];
@@ -76,11 +76,12 @@ const govOk: GovernanceView = {
 function fresh(over: Partial<DeployObserved> = {}): DeployObserved {
   const acct = { exists: true, balanceYocto: 10n * NEAR, codeHash: EMPTY_CODE_HASH };
   const cred = { found: true, publicKey: 'ed25519:K', fullAccessOnChain: true };
+  const credOf = (publicKey: string) => ({ ...cred, publicKey });
   return {
     chainId: 'testnet',
     nowMs: NOW,
     accounts: { signer: acct, relayer: acct, owner: acct },
-    credentials: { signer: cred, relayer: cred, owner: cred },
+    credentials: { signer: credOf('ed25519:S'), relayer: credOf('ed25519:R'), owner: cred },
     config: null,
     governance: null,
     relayerAccessKeys: [],
@@ -506,6 +507,73 @@ describe('buildDeployPlan', () => {
 
     it('without --upgrade, a pending upgrade is reported', () => {
       expect(buildDeployPlan(m, pending('H', NOW - CLOCK_MARGIN_MS), opts).warnings.join()).toContain('Upgrade H is pending');
+    });
+  });
+
+  describe('full-access keys nobody knows of (OPER-7, D456)', () => {
+    const staging = { ...m, ...PROD_DELAYS, name: 'staging', allowSignerFullAccessKey: undefined };
+    const extra = (o: Partial<DeployObserved> = {}) => deployed({ relayerAccessKeys: [...deployed().relayerAccessKeys, full('ed25519:X')], ...o });
+
+    it('warns on an extra relayer key in a dev env, with the command to delete it', () => {
+      const p = buildDeployPlan(m, extra(), opts);
+      expect(p.blockers).toEqual([]);
+      const w = p.warnings.join('\n');
+      expect(w).toContain(`${m.relayer} (relayer) has full-access key(s) besides the one in ~/.near-credentials (ed25519:R): ed25519:X`);
+      expect(w).toContain(`near account delete-keys ${m.relayer} public-keys ed25519:X`);
+    });
+
+    it('blocks on one outside dev envs', () => {
+      const p = buildDeployPlan(staging, extra({ signerAccessKeys: [fc('ed25519:U', m.signer, UPDATER)] }), opts);
+      expect(p.blockers.join('\n')).toContain('(relayer) has full-access key(s) besides');
+    });
+
+    it('checks an owner account’s keys when it read them, and says so when there is no local key to compare', () => {
+      const owner = buildDeployPlan(staging, deployed({ signerAccessKeys: [fc('ed25519:U', m.signer, UPDATER)], ownerAccessKeys: [full('ed25519:K'), full('ed25519:Y')] }), opts);
+      expect(owner.blockers.join('\n')).toContain(`${m.owner} (owner) has full-access key(s) besides the one in ~/.near-credentials (ed25519:K): ed25519:Y`);
+      const noCred = buildDeployPlan(m, deployed({ credentials: { ...fresh().credentials, relayer: { found: false, fullAccessOnChain: false } } }), opts);
+      expect(noCred.warnings.join('\n')).toContain(`${m.relayer} (relayer) has full-access key(s) ed25519:R and there is no local key to compare them with`);
+    });
+
+    it('checks the signer’s own only in a dev env that may keep one: elsewhere every full-access key already blocks', () => {
+      const dev = buildDeployPlan(m, deployed({ signerAccessKeys: [full('ed25519:S'), full('ed25519:Z'), fc('ed25519:U', m.signer, UPDATER)] }), opts);
+      expect(dev.warnings.join('\n')).toContain(`${m.signer} (signer) has full-access key(s) besides the one in ~/.near-credentials (ed25519:S): ed25519:Z`);
+    });
+
+    it('stops on a full-access key on the council DAO outside dev envs', () => {
+      const dao = (keys: string[]) => ({ councilDao: { ...fresh().councilDao!, fullAccessKeys: keys } });
+      expect(buildDeployPlan(m, deployed(dao(['ed25519:D'])), opts).warnings.join('\n')).toContain('has full-access key(s) ed25519:D');
+      expect(buildDeployPlan(staging, deployed({ ...dao(['ed25519:D']), signerAccessKeys: [fc('ed25519:U', m.signer, UPDATER)] }), opts).blockers.join('\n')).toContain('has full-access key(s) ed25519:D');
+      expect(buildDeployPlan(m, deployed(dao([])), opts).warnings.join('\n')).not.toContain('has full-access key');
+    });
+
+    it('accepts exactly the known keys', () => {
+      expect(buildDeployPlan(m, deployed({ ownerAccessKeys: [full('ed25519:K')] }), opts).warnings.join('\n')).not.toContain('full-access key(s)');
+    });
+  });
+
+  describe('new code outside dev envs comes only from a reproducible build (OPER-7, D86, D456)', () => {
+    const staging = { ...m, ...PROD_DELAYS, name: 'staging', allowSignerFullAccessKey: undefined };
+    const noFull = { signerAccessKeys: [fc('ed25519:U', m.signer, UPDATER)] };
+    const refused = 'takes only a reproducible build';
+
+    it('refuses an upgrade that would build here, or take whatever is in target/', () => {
+      expect(buildDeployPlan(staging, deployed(noFull), { ...opts, upgrade: true, skipBuild: false }).blockers.join('\n')).toContain(refused);
+      const lastBuild = buildDeployPlan(staging, deployed({ ...noFull, wasmCodeHash: 'new', wasmBytes: 1000 }), { ...opts, upgrade: true, skipBuild: true });
+      expect(lastBuild.steps.map((s) => s.kind)).toContain('propose-upgrade');
+      expect(lastBuild.blockers.join('\n')).toContain(refused);
+    });
+
+    it('takes a build named with --wasm, and executes a proposed hash without one', () => {
+      const named = buildDeployPlan(staging, deployed({ ...noFull, wasmCodeHash: 'new', wasmBytes: 1000 }), { ...opts, upgrade: true, skipBuild: true, wasmGiven: true });
+      expect(named.blockers.join('\n')).not.toContain(refused);
+      const gov = { ...govOk, pending_upgrade: { code_hash: 'new', proposed_at_ms: 0, executable_at_ms: NOW - CLOCK_MARGIN_MS - 1 } };
+      const execute = buildDeployPlan(staging, deployed({ ...noFull, governance: gov, wasmCodeHash: 'new', wasmBytes: 1000 }), { ...opts, upgrade: true, skipBuild: true });
+      expect(execute.steps.map((s) => s.kind)).toContain('execute-upgrade');
+      expect(execute.blockers.join('\n')).not.toContain(refused);
+    });
+
+    it('a dev env still builds here', () => {
+      expect(buildDeployPlan(m, deployed(), { ...opts, upgrade: true, skipBuild: false }).blockers.join('\n')).not.toContain(refused);
     });
   });
 

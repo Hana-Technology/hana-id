@@ -60,6 +60,14 @@ async function emailUsage(appId: string): Promise<{ email_sessions: number; link
 const sessions = (app: { key: string }, req: unknown, bindings: Partial<typeof env> = emailEnv()) => call('/v1/sessions', { headers: appHeaders(app), body: req, env: bindings });
 
 describe('POST /v1/sessions: email tokens and the proof of possession (D137)', () => {
+  it('an email login sets the app’s first-login marker, as a Google login does (D462)', async () => {
+    const { app } = await setup();
+    await env.DB.prepare('UPDATE apps SET first_login_at = NULL WHERE id = ?1').bind(app.id).run();
+    expect((await sessions(app, await emailSessionBody(app.scope))).status).toBe(200);
+    const row = await env.DB.prepare('SELECT first_login_at FROM apps WHERE id = ?1').bind(app.id).first<{ first_login_at: number | null }>();
+    expect(row!.first_login_at).toEqual(expect.any(Number));
+  });
+
   it('relays an email token for an app with email on, with the proof as `signature`, and counts an email session', async () => {
     const { app, near } = await setup();
     const req = await emailSessionBody(app.scope);

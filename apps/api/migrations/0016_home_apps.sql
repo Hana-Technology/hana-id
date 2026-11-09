@@ -6,6 +6,24 @@
 -- (`admin home:listing`), never by a partner.
 ALTER TABLE scopes ADD COLUMN home_quiet INTEGER NOT NULL DEFAULT 0 CHECK (home_quiet IN (0, 1));
 
+-- When an app had its first successful login (D462 as amended): Home lists only apps with this set, so a partner's
+-- unreleased app or staging origin stays out of the list. Written once by `apps.ts` `markFirstLogin`, never cleared.
+ALTER TABLE apps ADD COLUMN first_login_at INTEGER CHECK (first_login_at IS NULL OR first_login_at >= 0);
+
+-- Backfill from what existing rows prove about that app itself, the earliest time among them: a session marker (the
+-- app of its scope's first session-pool relay, which passed every check before the relay), a vault share (made by a
+-- session key that logged in through this app), identity tokens minted, email sessions counted, and a user event. A day
+-- count reads as that UTC day's start. An app with none of these stays NULL until its next successful login.
+UPDATE apps SET first_login_at = (
+  SELECT MIN(t) FROM (
+    SELECT first_at AS t FROM session_markers WHERE app_id = apps.id
+    UNION ALL SELECT created_at FROM vault_shares WHERE app_id = apps.id
+    UNION ALL SELECT at FROM user_events WHERE app_id = apps.id
+    UNION ALL SELECT unixepoch(day) * 1000 FROM identity_usage WHERE app_id = apps.id AND tokens > 0
+    UNION ALL SELECT unixepoch(day) * 1000 FROM email_usage WHERE app_id = apps.id AND email_sessions > 0
+  )
+);
+
 -- The list's page order on a live env: only the scopes the page reads (`first_session_at` set, not quiet), so a page
 -- doesn't scan what it filters out.
 CREATE INDEX scopes_home_listed ON scopes (environment, scope_id) WHERE first_session_at IS NOT NULL AND home_quiet = 0;

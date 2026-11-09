@@ -254,6 +254,8 @@ describe('0006 on a sandbox-dev-shaped database (0001–0005 and 0008 applied, t
     // wrangler applies the unapplied files in name order: here 0006 alone, after 0008 (as batch C3's deploy did; later
     // files came with later batches).
     await applyD1Migrations(db, ALL.filter((m) => m.name < '0009'));
+    // getAppByKey now reads 0016's marker: this block checks 0006's answers with today's read, then the last test drops it.
+    await db.prepare('ALTER TABLE apps ADD COLUMN first_login_at INTEGER').run();
   });
 
   it('applies 0006 last and only 0006', async () => {
@@ -349,6 +351,7 @@ describe('0006 on a sandbox-dev-shaped database (0001–0005 and 0008 applied, t
 
   // Last in this block: it applies the later files on the same database.
   it('then the later files apply in name order (0009 batch C4, 0010 email login, 0011 the wallet directory, 0012 the last token sighting, 0013 the mainnet demo and user events, 0014 email sharing, 0015 link counts, 0016 the Home list, 0017 vault consents), every app Google-only and sharing no email', async () => {
+    await db.prepare('ALTER TABLE apps DROP COLUMN first_login_at').run();
     await applyD1Migrations(db, ALL);
     const { results } = await db.prepare('SELECT name FROM d1_migrations ORDER BY id').all<{ name: string }>();
     expect(results.map((r) => r.name).slice(-10)).toEqual(['0006_dashboard_expand.sql', '0009_session_markers.sql', '0010_login_methods.sql', '0011_wallet_directory.sql', '0012_issuer_key_last_token.sql', '0013_mainnet_demo_events.sql', '0014_email_sharing.sql', '0015_link_usage.sql', '0016_home_apps.sql', '0017_vault_consents.sql']);

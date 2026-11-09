@@ -502,6 +502,42 @@ describe('the quieter listing (D98 item 8)', () => {
   });
 });
 
+describe('an unlaunched app (no first login, D462)', () => {
+  const nameOf = async (id: string): Promise<string> => (await env.DB.prepare('SELECT name FROM apps WHERE id = ?1').bind(id).first<{ name: string }>())!.name;
+
+  it('is hidden from strangers in the list, a search, a scope id and an app id, and shown to its own user, even with its marker’s write lost', async () => {
+    const app = await seedApp({ firstLogin: null });
+    const name = await nameOf(app.id);
+    expect((await walk()).some((s) => s.scopeId === app.scope)).toBe(false);
+    expect((await list(await newIdentity(), `?q=${encodeURIComponent(name)}`)).scopes).toEqual([]);
+    expect((await list(await newIdentity(), `?scopeId=${app.scope}`)).scopes).toEqual([]);
+    expect((await list(await newIdentity(), `?appId=${app.id}`)).scopes).toEqual([]);
+
+    const sub = `own-${uid()}`;
+    await seedUser(app.scope, { sub });
+    const mine = await one(await newIdentity({ sub }), app.scope);
+    expect(mine).toMatchObject({ mine: true });
+    expect(mine!.apps.map((a) => a.appId)).toEqual([app.id]);
+    expect((await list(await newIdentity({ sub }))).scopes.find((s) => s.scopeId === app.scope)).toMatchObject({ mine: true });
+    expect((await list(await newIdentity({ sub }), `?appId=${app.id}`)).scopes).toHaveLength(1);
+    expect((await list(await newIdentity({ sub }), `?q=${encodeURIComponent(name)}`)).scopes.some((s) => s.scopeId === app.scope)).toBe(true);
+  });
+
+  it('a launched app’s scope shows strangers only the launched app; its unlaunched sibling’s name and origins stay out', async () => {
+    const launched = await seedApp();
+    const unlaunched = await seedApp({ scope: launched.scope, firstLogin: null, origins: ['https://staging.partner.test'] });
+    const seen = await one(await newIdentity(), launched.scope);
+    expect(seen!.apps.map((a) => a.appId)).toEqual([launched.id]);
+    expect(JSON.stringify(seen)).not.toContain('staging.partner.test');
+    expect((await list(await newIdentity(), `?appId=${unlaunched.id}`)).scopes).toEqual([]);
+    expect((await list(await newIdentity(), `?q=${encodeURIComponent(await nameOf(unlaunched.id))}`)).scopes).toEqual([]);
+
+    const sub = `own-${uid()}`;
+    await seedUser(launched.scope, { sub });
+    expect((await one(await newIdentity({ sub }), launched.scope))!.apps.map((a) => a.appId).sort()).toEqual([launched.id, unlaunched.id].sort());
+  });
+});
+
 describe('paging and the free-plan bounds (D417)', () => {
   it('a cursor walks the list once each, the user’s own rows only on the first page', async () => {
     const sub = `walker-${uid()}`;

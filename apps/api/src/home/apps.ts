@@ -1,7 +1,8 @@
 // GET /v1/home/apps (docs/hana-home-spec.md "Discovery", D462, D466, D500-D503): the apps Home can show a signed-in user.
 // Two reads, no chain transaction and no key derived:
-//   - the list: every scope with `scopes.first_session_at` set (D462), with its apps in D1, suspended and deleted
-//     included, which survives the wallet directory's purge (30 days after a scope's apps are all deleted);
+//   - the list: every scope with `scopes.first_session_at` set and an app that has had a login (`apps.first_login_at`,
+//     D462), with those apps in D1, suspended and deleted included, which survives the wallet directory's purge (30 days
+//     after a scope's apps are all deleted). A scope's own users see all of its apps, marked or not;
 //   - the overlay: the directory rows of this identity's `(provider, sub)` (D466), which mark a scope `mine` and give
 //     its Support ID and addresses. A linked member's row points at its account, so it gets the account root's wallet.
 //
@@ -126,13 +127,17 @@ interface ScopeRow {
   held_json: string;
 }
 
-/** Live apps first, then deleted ones, at most HOME_APPS_PER_SCOPE; origins in force, at most HOME_ORIGINS_PER_APP each. */
-const scopeColumns = (now: number): Q =>
+/**
+ * Live apps first, then deleted ones, at most HOME_APPS_PER_SCOPE; origins in force, at most HOME_ORIGINS_PER_APP each.
+ * `allApps`: true for the user's own scopes (the marker may have failed to write, and the directory is per scope, so it
+ * can't say which app they used); otherwise only apps with a first login.
+ */
+const scopeColumns = (now: number, allApps: Q): Q =>
   q`s.scope_id, s.environment,
     (SELECT json_group_array(json_object('id', a.id, 'name', a.name, 'status', a.status, 'suspended_by', a.suspended_by, 'deleted_at', a.deleted_at,
         'logo_key', a.logo_key, 'google_web_client_id', a.google_web_client_id,
         'origins', json((SELECT json_group_array(o.origin) FROM (SELECT origin FROM app_origins WHERE app_id = a.id AND active_from <= ${now} ORDER BY origin LIMIT ${HOME_ORIGINS_PER_APP}) o))))
-       FROM (SELECT x.* FROM apps x WHERE x.scope_id = s.scope_id ORDER BY (x.deleted_at IS NOT NULL), x.created_at, x.id LIMIT ${HOME_APPS_PER_SCOPE}) a) AS apps_json,
+       FROM (SELECT x.* FROM apps x WHERE x.scope_id = s.scope_id AND (x.first_login_at IS NOT NULL OR ${allApps}) ORDER BY (x.deleted_at IS NOT NULL), x.created_at, x.id LIMIT ${HOME_APPS_PER_SCOPE}) a) AS apps_json,
     (SELECT json_group_array(h.aud) FROM hana_held_clients h WHERE h.scope_id = s.scope_id AND h.provider = 'google') AS held_json`;
 
 /** Test apps only in dev envs (D98 item 8). */
@@ -143,19 +148,22 @@ const likeTerm = (term: string): string => `%${term.replace(/[\\%_]/gu, (c) => `
 
 /** The statement that picks this request's listed rows (D462); the quieter listing is D502's. */
 function listingQuery(query: Exclude<HomeQuery, { kind: 'first' }> | null, env: Env, now: number, mine: readonly string[]): Q {
-  const select = q`SELECT ${scopeColumns(now)} FROM scopes s WHERE ${environmentFilter(env)}`;
   const isMine = mine.length > 0 ? q`s.scope_id IN (${join(mine.map((id) => q`${id}`), ', ')})` : raw('0');
+  const select = q`SELECT ${scopeColumns(now, isMine)} FROM scopes s WHERE ${environmentFilter(env)}`;
+  // A scope a stranger may see: one app has had a login (D462).
+  const launched = raw('EXISTS (SELECT 1 FROM apps x WHERE x.scope_id = s.scope_id AND x.first_login_at IS NOT NULL)');
   // Scope ids are sequential, so a quiet scope isn't found by one (D502): its link names an app id, which can't be walked.
-  if (query?.kind === 'scope') return q`${select} AND s.scope_id = ${query.scopeId} AND (s.first_session_at IS NOT NULL OR ${isMine}) AND (s.home_quiet = 0 OR ${isMine})`;
-  if (query?.kind === 'app') return q`${select} AND s.scope_id = (SELECT scope_id FROM apps WHERE id = ${query.appId}) AND (s.first_session_at IS NOT NULL OR ${isMine})`;
+  if (query?.kind === 'scope') return q`${select} AND s.scope_id = ${query.scopeId} AND (${isMine} OR (s.first_session_at IS NOT NULL AND s.home_quiet = 0 AND ${launched}))`;
+  // A link to an app with no login answers nothing to a stranger, as the list would: nobody can have a wallet there yet.
+  if (query?.kind === 'app') return q`${select} AND s.scope_id = (SELECT scope_id FROM apps WHERE id = ${query.appId}) AND (${isMine} OR (s.first_session_at IS NOT NULL AND EXISTS (SELECT 1 FROM apps x WHERE x.id = ${query.appId} AND x.first_login_at IS NOT NULL)))`;
   if (query?.kind === 'search') {
     // A listed scope by any part of an app's name; a quiet one only by an app's whole name, so a search can't enumerate them.
-    return q`${select} AND s.first_session_at IS NOT NULL AND EXISTS (SELECT 1 FROM apps a WHERE a.scope_id = s.scope_id
+    return q`${select} AND s.first_session_at IS NOT NULL AND EXISTS (SELECT 1 FROM apps a WHERE a.scope_id = s.scope_id AND (a.first_login_at IS NOT NULL OR ${isMine})
         AND ((s.home_quiet = 0 AND a.name LIKE ${likeTerm(query.term)} ESCAPE '\\') OR a.name = ${query.term} COLLATE NOCASE))
       ORDER BY s.scope_id LIMIT ${HOME_LIST_PAGE}`;
   }
   const after = query?.kind === 'cursor' ? q` AND s.scope_id > ${query.cursor}` : raw('');
-  return q`${select} AND s.first_session_at IS NOT NULL AND s.home_quiet = 0${after} ORDER BY s.scope_id LIMIT ${HOME_LIST_PAGE + 1}`;
+  return q`${select} AND s.first_session_at IS NOT NULL AND s.home_quiet = 0 AND ${launched}${after} ORDER BY s.scope_id LIMIT ${HOME_LIST_PAGE + 1}`;
 }
 
 /** The chain's scopes for the rows in order, spending at most HOME_SCOPE_READS and stopping at a failed read. */
@@ -219,7 +227,7 @@ export async function handleHomeApps(request: Request, env: Env, requestId: stri
     overlay = await readOverlay(db, provider, sub);
     const mine = [...overlay.keys()];
     const statements: Q[] = [listingQuery(query.kind === 'first' ? null : query, env, now, mine)];
-    if (query.kind === 'first' && mine.length > 0) statements.push(q`SELECT ${scopeColumns(now)} FROM scopes s WHERE ${environmentFilter(env)} AND s.scope_id IN (${join(mine.map((id) => q`${id}`), ', ')})`);
+    if (query.kind === 'first' && mine.length > 0) statements.push(q`SELECT ${scopeColumns(now, raw('1'))} FROM scopes s WHERE ${environmentFilter(env)} AND s.scope_id IN (${join(mine.map((id) => q`${id}`), ', ')})`);
     const [listed, own] = await db.batch(statements);
     let listedRows = (listed?.results ?? []) as unknown as ScopeRow[];
     if (query.kind === 'first' || query.kind === 'cursor') {

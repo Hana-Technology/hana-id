@@ -164,8 +164,9 @@ Home makes two reads, both without a chain call:
 
 1. **The list (D462).** Every scope with `scopes.first_session_at` set, grouped by scope with its apps in D1, suspended
    and deleted included, searchable. Test apps only in dev envs. A scope with a quieter listing (D98 item 8) appears
-   only after a search for its app or through the partner's link. This survives a purge. It can over-list a scope whose
-   first login failed, which is harmless.
+   only after a search for its app or through the partner's link. This survives a purge. Strangers see only apps with
+   `apps.first_login_at` set (D462); a scope's own users see all of its apps. It can over-list a scope whose first login
+   failed, which is harmless.
 2. **The overlay (D466).** `end_user_identities` by `(provider, sub)` gives the user's scopes, `user_id` and root. These
    scopes come first as "Your apps", with addresses from `end_user_wallets` and the Support ID. A member's root comes
    from the same rows.

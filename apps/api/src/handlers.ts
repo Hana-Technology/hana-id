@@ -2,7 +2,7 @@
 import { identityRoot } from '@hana-id/core/identity';
 import { appIdentityEmail } from './identity/email.ts';
 import { JwksUnavailableError } from '@hana-id/oidc';
-import { type App, HOT_DB_SCHEMA, PUBLISHABLE_KEY_RE, appSuspended, getAppByKey, markSession, startFirstSession } from './apps.ts';
+import { type App, HOT_DB_SCHEMA, PUBLISHABLE_KEY_RE, appSuspended, getAppByKey, markFirstLogin, markSession, startFirstSession } from './apps.ts';
 import { appKeyPairs, appKeyProblem } from './bls.ts';
 import { deployedBuild } from './build.ts';
 import type { Env } from './env.ts';
@@ -523,6 +523,7 @@ async function appEndpoint(request: Request, env: Env, endpoint: AppEndpoint, ct
     if (!result.ok) return relayFailure(ctx, env, result, panicKey);
     if (!isSessionView(result.result)) return done(ctx, 502, { error: 'The contract returned no session', code: 'bad_contract_result', nearTx: result.nearTx });
     rememberSession(req.sessionPublicKey, result.result);
+    await firstLogin(env, app, ctx, exec);
     // The uid's input: the new session's path (kept in memory, never sent).
     notePath(ctx, result.result.path);
     // An email session per app and day (D1 `email_usage`, copied hourly to the ledger, D233).
@@ -636,6 +637,17 @@ export function firstSession(env: Env, app: App, ctx: { requestId: string; endpo
     return Promise.resolve();
   }
   return both;
+}
+
+/**
+ * After a login succeeded, on an app with no `first_login_at` yet (as the gate read it): writes it (apps.ts
+ * markFirstLogin, D462), after the response when an execution context is there, so it can't slow or fail the login.
+ */
+export async function firstLogin(env: Env, app: App, ctx: { requestId: string; endpoint: string }, exec?: ExecutionContext): Promise<void> {
+  const write = markFirstLogin(env.DB, app, () => log({ event: 'first_login_write_failed', requestId: ctx.requestId, appId: app.id, endpoint: ctx.endpoint }, 'error'));
+  if (!write) return;
+  if (exec) exec.waitUntil(write);
+  else await write;
 }
 
 type ScopeRejection = { status: number; code: string; error: string };

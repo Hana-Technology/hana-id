@@ -2323,16 +2323,12 @@ async function retentionPage(main) {
   );
 }
 
-// ---- users (C8b, D275): the issuer's directory, the wallet directory, the chain ----
-
-// The search and the last support reference live in memory only: never in the URL, history or storage (no address,
-// sub or code in a URL; the server's routes are POST). An opened user is too (D410): its page is the fixed path
-// USER_OPEN_PATH, and the history entry holds only an opaque number into `opened` (this page's memory), so back and
-// forward move between the users opened in this tab, and a reload or a copied link opens nobody.
-const usersState = { form: {}, result: null, kind: null, ticket: '', opened: new Map(), seq: 0 };
 // ---- email login (build plan batch 9, D446, D448) ----
 
 const STATS_DAYS = [7, 14, 31];
+
+/** A row whose cells from `numFrom` on are numbers (right-aligned, as the column's header). */
+const numTr = (numFrom, ...cells) => h('tr', {}, cells.map((c, i) => h('td', i >= numFrom ? { class: 'num' } : {}, c)));
 
 /** The window links of the email pages (`?days=`): plain links, the page reads the query. */
 function daysLinks(base, days) {
@@ -2389,21 +2385,21 @@ async function emailIssuerPage(main) {
         { hint: 'Each kind emails the security alias at most once a UTC day. These count every occurrence.' },
         table(
           ['Day (UTC)', 'What', 'App', { text: 'Count', num: true }],
-          alerts.map((m) => tr(mono(m.day), alertLabel(m.metric), appCell(d, m.appId), String(m.count))),
+          alerts.map((m) => numTr(3, mono(m.day), alertLabel(m.metric), appCell(d, m.appId), String(m.count))),
           { empty: 'No alerts in this window.' },
         ),
       ),
       panel(
         'Tokens issued',
         { hint: 'Per day, app and purpose: session logins, link flows and client proofs.' },
-        table(['Day (UTC)', 'App', 'Purpose', { text: 'Tokens', num: true }], d.stats.issuance.map((r) => tr(mono(r.day), appCell(d, r.appId), r.purpose, String(r.count))), { empty: 'No tokens issued in this window.' }),
+        table(['Day (UTC)', 'App', 'Purpose', { text: 'Tokens', num: true }], d.stats.issuance.map((r) => numTr(3, mono(r.day), appCell(d, r.appId), r.purpose, String(r.count))), { empty: 'No tokens issued in this window.' }),
       ),
       panel(
         'Mail per app and day',
         { hint: 'Accepted by the mail provider, and bounces and spam complaints it reports back. Rates over the same row’s sent mail.' },
         table(
           ['Day (UTC)', 'App', { text: 'Sent', num: true }, { text: 'Bounced', num: true }, { text: 'Complaints', num: true }, { text: 'Bounce', num: true }, { text: 'Complaint', num: true }],
-          days_.filter((r) => r.sent || r.bounced || r.complained).map((r) => tr(mono(r.day), appCell(d, r.appId), String(r.sent), String(r.bounced), String(r.complained), ratePct(r.bounced, r.sent), ratePct(r.complained, r.sent))),
+          days_.filter((r) => r.sent || r.bounced || r.complained).map((r) => numTr(2, mono(r.day), appCell(d, r.appId), String(r.sent), String(r.bounced), String(r.complained), ratePct(r.bounced, r.sent), ratePct(r.complained, r.sent))),
           { empty: 'No mail in this window.' },
         ),
       ),
@@ -2412,7 +2408,7 @@ async function emailIssuerPage(main) {
         { hint: 'start and verify refusals, by the limit that refused (ip:start:10m, mailbox:…, app:start:1d). Each counted up to 1,000 a day per app.' },
         table(
           ['Day (UTC)', 'App', 'Limit', { text: 'Refused', num: true }],
-          d.stats.metrics.filter((m) => m.metric.startsWith('refused:')).map((m) => tr(mono(m.day), appCell(d, m.appId), mono(m.metric.slice('refused:'.length)), String(m.count))),
+          d.stats.metrics.filter((m) => m.metric.startsWith('refused:')).map((m) => numTr(3, mono(m.day), appCell(d, m.appId), mono(m.metric.slice('refused:'.length)), String(m.count))),
           { empty: 'No refusals in this window.' },
         ),
       ),
@@ -2447,20 +2443,27 @@ async function emailLinksPage(main) {
     panel(
       'Today',
       { hint: 'Apps with links today, against their 7-day median. Staff can’t create or cancel a link: both need the user’s own proof.' },
-      table(['App', { text: 'Links today', num: true }, { text: '7-day median', num: true }, 'Rate'], d.jumps.map((j) => tr(j.appName, String(j.today), String(j.median), j.jumped ? badge('Jumped', 'bad') : badge('Normal', 'ok'))), { empty: 'No links today.' }),
+      table(['App', { text: 'Links today', num: true }, { text: '7-day median', num: true }, { text: 'Rate', num: true }], d.jumps.map((j) => numTr(1, j.appName, String(j.today), String(j.median), j.jumped ? badge('Jumped', 'bad') : badge('Normal', 'ok'))), { empty: 'No links today.' }),
     ),
     panel(
       `The last ${d.days} days`,
       {},
       table(
         ['Day (UTC)', 'App', 'Organisation', { text: 'Proposed', num: true }, { text: 'Linked at once', num: true }, { text: 'Activated', num: true }, { text: 'Cancelled', num: true }, { text: 'Unlinked', num: true }, { text: 'Automatic', num: true }, { text: 'Explicit', num: true }],
-        d.rows.map((r) => tr(mono(r.day), h('span', { title: r.appId }, r.appName), mono(r.orgId), String(r.proposed), String(r.linked), String(r.activated), String(r.cancelled), String(r.unlinked), String(r.auto), String(r.explicit))),
+        d.rows.map((r) => numTr(3, mono(r.day), h('span', { title: r.appId }, r.appName), mono(r.orgId), String(r.proposed), String(r.linked), String(r.activated), String(r.cancelled), String(r.unlinked), String(r.auto), String(r.explicit))),
         { empty: 'No links in this window.' },
       ),
     ),
   );
 }
 
+// ---- users (C8b, D275): the issuer's directory, the wallet directory, the chain ----
+
+// The search and the last support reference live in memory only: never in the URL, history or storage (no address,
+// sub or code in a URL; the server's routes are POST). An opened user is too (D410): its page is the fixed path
+// USER_OPEN_PATH, and the history entry holds only an opaque number into `opened` (this page's memory), so back and
+// forward move between the users opened in this tab, and a reload or a copied link opens nobody.
+const usersState = { form: {}, result: null, kind: null, ticket: '', opened: new Map(), seq: 0 };
 const USER_OPEN_PATH = '/users/open';
 /** Users kept for back and forward in this tab (the oldest forgotten past it). */
 const OPENED_MAX = 50;

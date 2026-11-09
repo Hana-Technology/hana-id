@@ -428,5 +428,10 @@ describe('admin retention:issuer (the issuer’s part of the monthly job)', PGLI
     expect(one(issuer, 'SELECT COUNT(*) AS n FROM email_admin_audit')).toBe(1);
     // The identities' address rows stay (D269); only an erasure request removes them.
     expect(await run(['--yes'])).toEqual({ apps: 1, appRows: 0, auditRows: 0 });
+    // The daily counters past 24 months go too (D446); recent ones stay.
+    issuer.prepare("INSERT INTO email_daily (day, app_id, metric, count) VALUES ('2020-01-01', 'app_old', 'sent', 3), ('2030-12-01', 'app_old', 'sent', 4)").run();
+    await run(['--yes']);
+    expect(one(issuer, "SELECT COUNT(*) AS n FROM email_daily WHERE day = '2020-01-01'")).toBe(0);
+    expect(one(issuer, "SELECT COUNT(*) AS n FROM email_daily WHERE app_id = 'app_old'")).toBe(1);
   });
 });

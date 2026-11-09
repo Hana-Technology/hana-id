@@ -22,7 +22,7 @@ import type { LedgerStore } from './ledger.ts';
 import { ledgerSource } from './ledger.ts';
 import { errorName, log } from './log.ts';
 import { Budget, RUN_BUDGET, meteredEnv } from './mail.ts';
-import { runLinkJumpAlert } from './email-views.ts';
+import { runLinkJumpAlert } from './link-alerts.ts';
 import { nearReader } from './near.ts';
 import { runNonceCheck } from './nonce-check.ts';
 import { coingecko, runRates } from './rates.ts';

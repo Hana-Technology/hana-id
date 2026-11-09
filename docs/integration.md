@@ -96,7 +96,10 @@ changes are waiting. An app's page shows the **App ID** and the **Publishable ke
 | **Branding** | the name users see in Hana's popups (up to 64 characters), and your logo: PNG, JPEG or WebP, at most 512 KiB, 128 to 2048 px a side, nearly square, not animated; Hana re-encodes it to a 256 × 256 PNG and shows it next to the name in its popups |
 | **Suspend** | **Suspend the app** stops logins at once; **Resume** (confirmed with Google). A suspension by Hana only Hana can lift |
 
-Email login can't be switched on in the portal yet: ask Hana ([section 4](#4-log-in-log-out), "Email login").
+**Email login**: an owner turns it on from the app's **Email login** page in two steps, each confirmed with Google: first for the
+app, then an on-chain owner of the scope adds the scope's email client, which waits the scope's timelock and is then
+applied (any owner, from the same page). Turning it off for the app is one confirmation, at once. The page shows the
+app's mail per day (sent, bounced, complaints, refusals), never an address ([section 4](#4-log-in-log-out), "Email login").
 
 <a id="allowed-origins"></a>**Allowed origins.** The vault loads only on pages served from one of your app's origins,
 compared exactly: scheme, host and port, no path (`http://localhost:5173` and `http://localhost:5174` are two origins,
@@ -347,7 +350,7 @@ button.addEventListener('click', async () => {
   the session for reloads in the background (one API call). If that fails, the wallet keeps working in this tab,
   `hana.persistence` becomes `'none'` (with a `persistenceChanged` event; `useHana()` re-renders), and the next page
   load needs a new login; a reload within that moment after `login()` resolved is a new login too.
-- **Email login** (off until Hana turns it on for your app; ask Hana). With email on,
+- **Email login** (off until an owner turns it on for your app in the portal, [section 1](#1-your-app-and-the-partner-portal)). With email on,
   `hana.login()` shows a chooser in the Hana popup: "Continue with Google" or "Continue with email". The email path
   asks for the address, mails a 6-digit code, and the user types it into the same Hana popup (never into your page).
   To skip the chooser, pass the method; to prefill the address you already know, pass `emailHint`:

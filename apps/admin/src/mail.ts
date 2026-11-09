@@ -221,6 +221,8 @@ export async function sendToAll(sender: EmailSender, budget: Budget, to: readonl
  * test holds every purpose in the code to one of the two.
  */
 export const BYPASS_PURPOSES: ReadonlySet<string> = new Set([
+  // The link-rate alert (batch 9, D448).
+  'link_jump',
   'change_pending',
   'invite_notice',
   'owner_grant',

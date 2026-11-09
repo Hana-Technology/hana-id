@@ -69,6 +69,8 @@ function fakeRpcs(o: { deleted?: string[][]; full?: boolean; fail?: Partial<Reco
         }),
       purgeDirectory: (c: unknown) => answer('purgeDirectory', c as Record<string, unknown>, 'purgeDirectory', () => ({ scopes: 1, users: n(2), wallets: n(3), identities: n(2) })),
       purgeUserEvents: (c: unknown) => answer('purgeUserEvents', c as Record<string, unknown>, 'userEvents', () => ({ expired: n(4), deadScopes: n(1) })),
+      // The 15-minute run's link-rate read (D448): not the retention job's, so not in `calls`.
+      linkStats: async () => ({ ok: true, rows: [] }) as Ans as never,
       purgeAudit: (c: unknown) => answer('apiPurgeAudit', c as Record<string, unknown>, 'apiAudit', () => ({ appChanges: n(5), guardedChanges: n(1) })),
     },
     console: {
@@ -192,7 +194,7 @@ describe('the call budget (D280)', () => {
     vi.spyOn(ledgerSource, 'open').mockResolvedValue({ ...store, close: async () => {} });
     const sum = await everyFifteenMinutes({ ...env, EMAIL_FROM: 'Hana <no-reply@hana.example>', API: rpcs.api, CONSOLE: rpcs.console } as unknown as Env, t);
     expect(sum!.retention).toMatchObject({ ran: true, status: 'partial', calls: RETENTION_MAX_CALLS });
-    expect(RUN_BUDGET - sum!.budgetLeft).toBe(RETENTION_MAX_CALLS);
+    expect(RUN_BUDGET - sum!.budgetLeft).toBe(RETENTION_MAX_CALLS + 1); // + the link-rate read (D448)
     expect(rpcs.calls).toHaveLength(RETENTION_MAX_CALLS);
     // The next 15-minute run continues it, again within its own budget.
     const next = await everyFifteenMinutes({ ...env, EMAIL_FROM: 'Hana <no-reply@hana.example>', API: fakeRpcs().api, CONSOLE: fakeRpcs().console } as unknown as Env, t + 15 * MIN);

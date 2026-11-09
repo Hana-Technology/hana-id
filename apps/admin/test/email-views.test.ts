@@ -5,7 +5,7 @@
 import { env } from 'cloudflare:workers';
 import { LINK_JUMP_MIN_LINKS } from '@hana-id/console-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { LINK_JUMP_ALERT_STATE, runLinkJumpAlert } from '../src/email-views.ts';
+import { LINK_JUMP_ALERT_STATE, runLinkJumpAlert } from '../src/link-alerts.ts';
 import worker from '../src/index.ts';
 import { Budget } from '../src/mail.ts';
 import { ADMIN, FakeEmail, adminRequest, downBinding, emailChain, envWith, json, newOpsData, memoryOps, seedHotApp, setNearDown, staffJwt, stubNetwork } from './helpers.ts';

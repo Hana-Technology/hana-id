@@ -43,9 +43,15 @@ export async function retentionIssuer(args: Args, where: { api: string; issuer: 
   const auditRows = yes
     ? (await deps.issuerD1(sql`DELETE FROM email_admin_audit WHERE at_ms < ${auditBefore} RETURNING 1 AS x`)).length
     : count(await deps.issuerD1(sql`SELECT COUNT(*) AS n FROM email_admin_audit WHERE at_ms < ${auditBefore}`));
+  // The daily counters past 24 months (D90's raw usage period; D446): counts only, no personal data.
+  const dailyBefore = new Date(now - 730 * 86_400_000).toISOString().slice(0, 10);
+  const dailyRows = yes
+    ? (await deps.issuerD1(sql`DELETE FROM email_daily WHERE day < ${dailyBefore} RETURNING 1 AS x`)).length
+    : count(await deps.issuerD1(sql`SELECT COUNT(*) AS n FROM email_daily WHERE day < ${dailyBefore}`));
   deps.log(`Issuer retention (${where.issuer}; deleted apps from ${where.api}):`);
   deps.log(`  ${apps.length} app(s) deleted 30 days ago or more: ${appRows} user_email_apps row(s) ${yes ? 'deleted' : 'to delete'} (each identity's address row stays: D269, uid-erase removes it)`);
   deps.log(`  email_admin_audit rows older than 60 months: ${auditRows} ${yes ? 'deleted' : 'to delete'}`);
+  deps.log(`  email_daily rows older than 24 months: ${dailyRows} ${yes ? 'deleted' : 'to delete'}`);
   if (!yes) deps.log('Dry run: nothing changed. Run again with --yes to delete.');
   return { apps: apps.length, appRows, auditRows };
 }

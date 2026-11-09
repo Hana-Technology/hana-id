@@ -272,6 +272,8 @@ describe('the route table', () => {
         "GET /api/rates",
         "PUT /api/rates/:day",
         "GET /api/retention",
+        "GET /api/email/issuer",
+        "GET /api/email/links",
         "POST /api/users/search",
         "POST /api/users/find",
         "POST /api/users/get",

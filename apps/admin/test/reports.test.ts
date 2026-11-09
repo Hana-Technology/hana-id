@@ -204,11 +204,12 @@ describe('the C12 crons', () => {
       ['alerts', 'ok'],
       ['retention_alerts', 'ok'],
       ['statement_notices', 'ok'],
+      ['link_jump', 'ok'],
       ['settlement', 'ok'],
       ['budget', 'ok'],
     ]);
-    // The real API's relayerKeys over the service binding is one call of the run's budget (D380).
-    expect(fifteen.find((l) => l.event === 'ledger_cron' && l.step === 'budget')).toMatchObject({ count: 1, calls: { relayer_keys: 1 } });
+    // relayerKeys and the link-rate check's linkStats are one call each of the run's budget (D380, D448).
+    expect(fifteen.find((l) => l.event === 'ledger_cron' && l.step === 'budget')).toMatchObject({ count: 2, calls: { relayer_keys: 1, link_jump: 1 } });
     expect(calls).toContain('settlementQueue');
     calls.length = 0;
     // The rate source isn't reachable from the test: the fetch fails and is counted, never thrown.
@@ -222,6 +223,7 @@ describe('the C12 crons', () => {
       ['alerts', 'ok'],
       ['retention_alerts', 'ok'],
       ['statement_notices', 'ok'],
+      ['link_jump', 'ok'],
       ['rates', 'ok'],
       ['settlement', 'ok'],
       ['budget', 'ok'],

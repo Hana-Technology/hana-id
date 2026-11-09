@@ -39,7 +39,7 @@ function Deliverability({ d }: { d: AppEmailAnswer['deliverability'] }) {
           <tbody>
             {days.map((x) => (
               <tr key={x.day}>
-                <td className="mono num">{x.day}</td>
+                <td className="mono">{x.day}</td>
                 <td className="num">{x.sent}</td>
                 <td className="num">{x.bounced}</td>
                 <td className="num">{x.complained}</td>

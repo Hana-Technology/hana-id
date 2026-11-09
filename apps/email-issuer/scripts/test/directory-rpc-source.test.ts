@@ -109,7 +109,7 @@ describe('issuer migration 0003 (the audit rebuilt for the directory reads)', ()
   };
 
   it('keeps every row and id, continues the id sequence, and checks the new actions and the ticket rule', () => {
-    expect(migrations).toEqual(['0001_init.sql', '0002_user_emails.sql', '0003_directory_audit.sql']);
+    expect(migrations).toEqual(['0001_init.sql', '0002_user_emails.sql', '0003_directory_audit.sql', '0004_email_daily.sql']);
     const db = new DatabaseSync(':memory:');
     apply(db, migrations.slice(0, 2));
     db.prepare("INSERT INTO email_admin_audit (at_ms, staff, action, ticket, scope_id, action_nonce, jti) VALUES (1, 'a@hana.example', 'client_proof', 'T-1', 's1', 3, 'jti-1')").run();

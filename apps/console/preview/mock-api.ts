@@ -113,7 +113,7 @@ function decodedFor(kind: string, params: Record<string, unknown>, now: number):
     case 'org.policy':
       return { requiredHd: params.requiredHd ?? null };
     case 'owner_action':
-      return { scopeId: params.scopeId, actionNonce: 6, method: params.method, ...(params.aud ? { aud: params.aud, provider: 'google', immediate: true } : {}), ...(params.change ? { change: params.change } : {}) };
+      return { scopeId: params.scopeId, actionNonce: 6, method: params.method, ...(params.aud ? { aud: params.aud, provider: String(params.aud).startsWith('email:') ? 'email' : 'google', immediate: true } : {}), ...(params.change ? { change: (params.change as { kind?: string }).kind === 'AddEmailClient' ? { kind: 'AddClient', provider: 'email', aud: `email:${String(params.scopeId)}` } : params.change } : {}) };
     default:
       return base;
   }

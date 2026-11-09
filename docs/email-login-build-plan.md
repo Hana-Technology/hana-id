@@ -198,6 +198,9 @@ Steps 0, 3 and 5 can run beside 1–2. About 12k lines in all, as the spec estim
   (D1 setting plus the on-chain `AddClient`, removal through `remove_client`). Needs batch C's Workers; until then
   Hana staff enable email per app by hand (`operations.md`).
 - **User-visible.** Partners can turn email on themselves.
+- **Result (2026-11-09).** Built on `feat/email-login-9`, not merged: the Email issuer and Account links pages, the partner's Email
+  login page, the counters, the alerts, D444–D448. The CloudTrail, AWS key age and `Sign` figures wait for batch 10; the
+  watchdog's link-volume check wasn't part of this batch's scope. Support ID lookup already lists methods by provider and pending links.
 
 ### Batch 10: AWS KMS and mainnet readiness
 

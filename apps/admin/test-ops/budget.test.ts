@@ -139,7 +139,7 @@ describe('the budget', () => {
 describe('a worst-case 15-minute tick (D380): the 00:30 daily work, a due retention run, the alerts, a backlog of statement notices and of settlement', () => {
   // The 2nd of the month, 00:30 UTC: the daily tick, and the month's retention job is due (it has not run yet).
   const T0 = Date.UTC(2031, 2, 2, 0, 30);
-  const SETTLE = 60;
+  const SETTLE = 58;
   const STATEMENTS = STATEMENT_NOTICES_PER_RUN + 1;
   let net: Net;
   let rpc: string[];
@@ -162,6 +162,8 @@ describe('a worst-case 15-minute tick (D380): the 00:30 daily work, a due retent
     recorded(
       {
         relayerKeys: async () => ({ ok: true as const, keys: [{ pool: 'session' as const, publicKey: PK_A }, { pool: 'owner' as const, publicKey: PK_B }] }),
+        // The link-rate alert's one read (D448): no jump here, so no email.
+        linkStats: async () => ({ ok: true as const, rows: [] }),
         getSecurityContacts: async () => ({ ok: true as const, emails: ['sec@partner.example'] }),
         // 14 pages of deleted apps before the job's other RPCs: more than one run's RETENTION_MAX_CALLS.
         deletedApps: async () => ({ ok: true as const, appIds: [], next: `1:app_${++deletedPages}`, more: deletedPages < 14 }),
@@ -209,6 +211,7 @@ describe('a worst-case 15-minute tick (D380): the 00:30 daily work, a due retent
       relayer_keys: countOf(mine, 'api.relayerKeys'),
       nonce_check: net.key - before.key,
       retention: countOf(mine, 'api.deletedApps', 'api.purgeDirectory', 'api.purgeUserEvents', 'api.purgeAudit', 'console.purgeAudit'),
+      link_jump: countOf(mine, 'api.linkStats'),
       alerts: sent.filter((m) => ALERT_SUBJECT.test(m.subject)).length,
       statement_notices: countOf(mine, 'api.getSecurityContacts', 'console.getOrg') + sent.filter((m) => !ALERT_SUBJECT.test(m.subject) && !/\] Retention/u.test(m.subject)).length,
       rates: net.rate - before.rate,
@@ -245,7 +248,7 @@ describe('a worst-case 15-minute tick (D380): the 00:30 daily work, a due retent
     // The order is the priority: the connection, the pool keys, the daily nonce check, the retention job (at most 12),
     // the alerts, then the statement notices (2 RPCs and 3 emails each: the contacts, the billing email, the alias) as
     // far as they fit; the rates get what is left and settlement nothing this run.
-    expect(first.sum.calls).toEqual({ ledger: 1, relayer_keys: 1, nonce_check: 2, retention: RETENTION_MAX_CALLS, alerts: 2, statement_notices: 4 * 5, rates: 2 });
+    expect(first.sum.calls).toEqual({ ledger: 1, relayer_keys: 1, nonce_check: 2, retention: RETENTION_MAX_CALLS, alerts: 2, statement_notices: 4 * 5, link_jump: 1, rates: 1 });
     expect(first.total).toBe(RUN_BUDGET);
     // D425: the run's record in ops.state, written on the run's own connection: a query, not a call (the counts above
     // are unchanged), read by the System status page.
@@ -253,25 +256,25 @@ describe('a worst-case 15-minute tick (D380): the 00:30 daily work, a due retent
     expect(JSON.parse(rec!.value)).toEqual({ at: T0, budgetLeft: 0, calls: first.sum.calls, failed: [] });
     expect(first.sum.retention).toMatchObject({ ran: true, status: 'partial', calls: RETENTION_MAX_CALLS });
     expect(first.sum.notices).toEqual({ sent: 4, failed: 0 });
-    expect(first.sum.daily!.rates).toMatchObject({ missing: 10, fetched: 2 });
+    expect(first.sum.daily!.rates).toMatchObject({ missing: 10, fetched: 1 });
     expect(first.sum.settlement).toMatchObject({ read: 0 });
 
     // 15 minutes later: retention finishes, the last statement notices go out, settlement takes the rest.
     const second = await tick(T0 + 15 * MIN);
-    expect(second.sum.calls).toEqual({ ledger: 1, relayer_keys: 1, retention: 6, statement_notices: 2 * 5, settlement: RUN_BUDGET - 18 });
+    expect(second.sum.calls).toEqual({ ledger: 1, relayer_keys: 1, retention: 6, statement_notices: 2 * 5, link_jump: 1, settlement: RUN_BUDGET - 19 });
     expect(second.sum.retention).toMatchObject({ ran: true, status: 'ok' });
     expect(await store.unnoticedStatements(100)).toEqual([]);
-    expect(second.sum.settlement).toMatchObject({ read: RUN_BUDGET - 18, final: RUN_BUDGET - 18 });
+    expect(second.sum.settlement).toMatchObject({ read: RUN_BUDGET - 19, final: RUN_BUDGET - 19 });
 
     // Then settlement drains the backlog; the month's retention is done and takes nothing.
     const third = await tick(T0 + 30 * MIN);
-    expect(third.sum.calls).toEqual({ ledger: 1, relayer_keys: 1, settlement: SETTLE - (RUN_BUDGET - 18) });
+    expect(third.sum.calls).toEqual({ ledger: 1, relayer_keys: 1, link_jump: 1, settlement: SETTLE - (RUN_BUDGET - 19) });
     expect(third.sum.retention).toMatchObject({ ran: false, why: 'done' });
     expect(await store.settlementBacklog()).toMatchObject({ pending: 0 });
 
     // The next day's 00:30 tick fills the rates the first one had no calls for.
     const daily = await tick(T0 + 24 * 60 * MIN);
-    expect(daily.sum.calls).toEqual({ ledger: 1, relayer_keys: 1, nonce_check: 2, rates: 9 });
+    expect(daily.sum.calls).toEqual({ ledger: 1, relayer_keys: 1, nonce_check: 2, link_jump: 1, rates: 10 });
     expect((await store.ratesBetween('2031-02-22', '2031-03-03')).length).toBe(10);
     expect(email.sent.filter((m) => ALERT_SUBJECT.test(m.subject))).toHaveLength(2);
   });

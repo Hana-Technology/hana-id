@@ -381,6 +381,7 @@ export function emailStatus(a: { id: string; scopeId: string; settings: { loginM
     : state === 'waiting' ? { clientOnChain: false, pending: { changeId: 12, unlockAt: now + 3 * 3_600_000, executable: false }, youAreOnChainOwner: true }
     : state === 'ready' ? { clientOnChain: false, pending: { changeId: 12, unlockAt: now - 600_000, executable: true }, youAreOnChainOwner: true }
     : state === 'stuck' ? { clientOnChain: false, pending: null, youAreOnChainOwner: true }
+    : state === 'stuck-other' ? { clientOnChain: false, pending: null, youAreOnChainOwner: false }
     : { clientOnChain: state === 'off-with-client', pending: null, youAreOnChainOwner: state !== 'not-owner' };
-  return { emailOn: state === 'on' || state === 'waiting' || state === 'ready' || state === 'stuck' || state === 'nochain', scopeId: a.scopeId, scope, otherAppsEmailOn: state === 'waiting' ? 1 : 0, available: state !== 'unavailable', deliverability };
+  return { emailOn: state === 'on' || state === 'waiting' || state === 'ready' || state === 'stuck' || state === 'stuck-other' || state === 'nochain', scopeId: a.scopeId, scope, otherAppsEmailOn: state === 'waiting' ? 1 : 0, available: state !== 'unavailable', deliverability };
 }

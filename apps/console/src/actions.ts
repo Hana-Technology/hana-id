@@ -49,7 +49,7 @@ import {
   userIdInput,
   utf8,
 } from '@hana-id/console-core';
-import { z } from 'zod';
+import { issuesAsZod3, z } from '@hana-id/env/zod';
 import { type Writer, auditInsert, entry } from './audit.ts';
 import { flowState } from './auth-flow.ts';
 import { verifyClientProof } from './auth-token.ts';
@@ -88,7 +88,7 @@ export type StepUpCode = ErrorCode | 'sub_mismatch' | 'session_ended' | 'step_up
 const originList = z.array(z.string().min(1).max(2048)).max(20);
 const params = {
   'origin.add': z.object({ appId: appIdInput, add: originList.min(1), remove: originList.default([]) }).strict(),
-  'policy.set': z.object({ appId: appIdInput, policy: z.unknown() }).strict(),
+  'policy.set': z.object({ appId: appIdInput, policy: z.unknown().optional() }).strict(),
   'raw_sign.on': z.object({ appId: appIdInput }).strict(),
   'app.resume': z.object({ appId: appIdInput }).strict(),
   'app.settings': z
@@ -138,7 +138,7 @@ const params = {
     .strict(),
 } as const satisfies Record<StepUpKind, z.ZodType>;
 
-const actionBody = z.object({ kind: z.enum(STEP_UP_KINDS), params: z.unknown() }).strict();
+const actionBody = z.object({ kind: z.enum(STEP_UP_KINDS), params: z.unknown().optional() }).strict();
 
 /** The org and role a session route resolved. */
 export interface OrgCaller {
@@ -230,7 +230,7 @@ async function scopeNow(env: Env, scopeId: string): Promise<ScopeView> {
 /** Builds one action (no write). Throws BuildRefusal. */
 async function build(env: Env, c: OrgCaller, ctx: RpcCtx, kind: StepUpKind, raw: unknown, now: number): Promise<Built> {
   const parsed = params[kind].safeParse(raw);
-  if (!parsed.success) return no('bad_request', `Bad params for ${kind}: ${parsed.error.issues.map((i: z.ZodIssue) => `${i.path.join('.') || 'params'}: ${i.message}`).join('; ').slice(0, 300)}`);
+  if (!parsed.success) return no('bad_request', `Bad params for ${kind}: ${issuesAsZod3(parsed.error.issues).map((i: z.core.$ZodIssue) => `${i.path.join('.') || 'params'}: ${i.message}`).join('; ').slice(0, 300)}`);
   const p = parsed.data as Record<string, unknown>;
   const base = { v: 1 as const, env: env.ENV_NAME, org_id: c.orgId, kind };
   const generic = async (fields: Record<string, unknown>, decoded: Record<string, unknown>): Promise<Built> => {

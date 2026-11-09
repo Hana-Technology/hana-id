@@ -2,7 +2,7 @@
 // every call with them before it reads anything, and the console and the admin Worker build their calls from the same
 // types. Each schema is the call's `Ctx` (actor, requestId, clientIp) plus its own fields, strict (an unknown field is
 // `bad_request`, so a caller can't think it set something the API ignores).
-import { z } from 'zod';
+import { z } from '@hana-id/env/zod';
 import { ctx, environment, ownerActionBody } from './types.ts';
 import { APP_NAME_MAX } from './names.ts';
 import { MAX_APP_ORIGINS } from './origins.ts';

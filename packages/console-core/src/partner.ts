@@ -4,7 +4,7 @@
 // `sub`, a member's Google `sub`, an IP prefix, a token or a hash) can't slip into one. Partners never see end-user
 // email addresses (D269): nothing here, or in the console, reads the email issuer's directory. The addresses below are
 // the org's own members and invitees (partner staff), which the spec shows them.
-import { z } from 'zod';
+import { z } from '@hana-id/env/zod';
 import { ACTOR_KINDS, AUDIT_OUTCOMES, GRANTOR_KINDS, ORG_STATUSES, role } from './types.ts';
 
 const ms = z.number().int().nonnegative();

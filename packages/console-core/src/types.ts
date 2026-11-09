@@ -1,7 +1,7 @@
 // The RPC and view types of docs/batch-c-spec.md "RPC interfaces" and "Types", as zod schemas (the RPC boundaries
 // validate with them) with their TS types. The enum lists are the single source for the databases' CHECK lists: the
 // migration tests compare them.
-import { z } from 'zod';
+import { urlString, z } from '@hana-id/env/zod';
 
 // ---- enums shared with the migrations ----
 
@@ -197,7 +197,7 @@ export const appSummary = z
     deleted: z.boolean(),
     activeOrigins: z.number().int().nonnegative(),
     pendingChanges: z.number().int().nonnegative(),
-    logoUrl: z.string().url().optional(),
+    logoUrl: urlString().optional(),
     /** Email login is on (`apps.login_methods` lists it; an API before batch 9's build omits it). */
     emailOn: z.boolean().optional(),
     createdAt: ms,
@@ -218,7 +218,7 @@ export const appDetail = appSummary
         idleTtlMs: ms,
         googleWebClientId: z.string().nullable(),
         rawSign: z.enum(['off', 'approval']),
-        policy: z.object({ policyId: z.string().regex(/^[0-9a-f]{64}$/u), label: z.string(), json: z.unknown() }).strict().nullable(),
+        policy: z.object({ policyId: z.string().regex(/^[0-9a-f]{64}$/u), label: z.string(), json: z.unknown().optional() }).strict().nullable(),
         /** D411: `identity_email` (an API before migration 0014's build omits it). */
         identityEmail: z.enum(['off', 'on_request', 'at_login']).optional(),
         /** `apps.login_methods` (an API before batch 9's build omits it): who may sign in. */

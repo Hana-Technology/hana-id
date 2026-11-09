@@ -3,7 +3,7 @@
 // `deletedApps`, `purgeDirectory`, `purgeUserEvents`) and the console (`StaffRpc.purgeAudit`). Every method takes a
 // `system` actor only (the cron), and each clamps `before` to its own period, so a caller can never purge younger rows
 // than D90 allows.
-import { z } from 'zod';
+import { z } from '@hana-id/env/zod';
 import { ctx } from './types.ts';
 
 /** Audit rows (`audit_log`, `app_changes`, `guarded_changes`, `owner_grants`): 60 months, the triggers' constant. */

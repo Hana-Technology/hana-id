@@ -14,7 +14,7 @@
 // actions go through `POST …/actions` and a fresh sign-in (actions.ts). The read routes of C12 (usage, statements, the
 // ledger CSV; reports.ts) and C14 (`/governance/pending-upgrades`; governance.ts) are routed here too, for any member.
 import { type Actor, type RpcFail, changeIdInput, inviteIdInput, keyIdInput, ownerGrantIdInput, scopeIdInput } from '@hana-id/console-core';
-import { z } from 'zod';
+import { z } from '@hana-id/env/zod';
 import { type AuditAction, type Writer, auditInsert, entry } from './audit.ts';
 import { appEmailRoute } from './email.ts';
 import { type OrgCaller, actorOf, createAction } from './actions.ts';
@@ -61,11 +61,11 @@ const version = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const ctxOf = (c: RouteCall) => ({ actor: actorOf(c.caller.session) as Actor, requestId: c.info.requestId, clientIp: c.info.clientIp });
 const writerOf = (c: RouteCall): Writer => ({ actor: actorOf(c.caller.session), requestId: c.info.requestId, now: Date.now(), ipPrefix: ipPrefix(c.info.clientIp), country: c.info.country });
 
-async function body<S extends z.ZodTypeAny>(c: RouteCall, schema: S, hint: string): Promise<{ ok: true; value: z.infer<S> } | { ok: false; res: Response }> {
-  return bodyOf(c, schema, hint);
+async function body<S extends z.ZodType>(c: RouteCall, schema: S, hint: string): Promise<{ ok: true; value: z.infer<S> } | { ok: false; res: Response }> {
+  return bodyOf(c, schema as z.ZodType<z.infer<S>>, hint);
 }
 
-async function bodyOf<T>(c: RouteCall, schema: z.ZodType<T, z.ZodTypeDef, unknown>, hint: string): Promise<{ ok: true; value: T } | { ok: false; res: Response }> {
+async function bodyOf<T>(c: RouteCall, schema: z.ZodType<T>, hint: string): Promise<{ ok: true; value: T } | { ok: false; res: Response }> {
   const b = await readJson(c.request);
   if (!b.ok) return { ok: false, res: errorResponse(b.code) };
   const p = schema.safeParse(b.value);

@@ -2,7 +2,7 @@
 // emailed-link confirms (§Console BFF routes `POST /api/cancel`, `POST /api/owner-grants/cancel`), as zod schemas: the
 // console validates every call with them before it reads anything, and the admin Worker (batch C8) builds its calls
 // from the same types. Strict like rpc.ts: an unknown field is `bad_request`.
-import { z } from 'zod';
+import { z } from '@hana-id/env/zod';
 import { ACTOR_KINDS, ORG_KINDS, ctx, inviteView, ownerGrantView, requestId, role } from './types.ts';
 import { orgIdInput } from './rpc.ts';
 

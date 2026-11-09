@@ -1,7 +1,7 @@
 // Batch C's manifest additions (docs/batch-c-spec.md "Manifest"): the guarded-change delay every env sets, and the
 // dashboard blocks (`console`, `files`, `admin`, `usage`, `email`, `ownerGrantDelayMs`), which an env has together
 // or not at all, so an env without a dashboard still validates and deploys the API.
-import { z } from 'zod';
+import { z } from './zod.ts';
 import { hanaOriginProblem, isDevEnv, siteOf } from './origins.ts';
 
 const DAY_MS = 24 * 60 * 60_000;

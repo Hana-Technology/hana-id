@@ -10,7 +10,7 @@
 //
 // Partners never reach any of this: no partner Worker binds the issuer, and no ConsoleRpc, `/v1` or SDK field carries a
 // directory value (tests in apps/email-issuer/scripts/test/directory-rpc-source.test.ts and apps/admin's config tests).
-import { z } from 'zod';
+import { z } from '@hana-id/env/zod';
 import { requestId } from './types.ts';
 import type { IssuerStats } from './email-views.ts';
 

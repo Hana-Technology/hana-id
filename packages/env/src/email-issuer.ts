@@ -3,7 +3,7 @@
 // access for client proofs. The JWKS is generated from `publicKeys` alone, so what the issuer publishes never depends on
 // D1 or on a secret. Public keys only: a private member (`d`, `p`, …) is refused.
 import { createHash } from 'node:crypto';
-import { z } from 'zod';
+import { z } from './zod.ts';
 import { emailFromProblem } from './dashboard.ts';
 import { isLocalEnv } from './origins.ts';
 

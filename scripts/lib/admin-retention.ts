@@ -48,10 +48,16 @@ export async function retentionIssuer(args: Args, where: { api: string; issuer: 
   const dailyRows = yes
     ? (await deps.issuerD1(sql`DELETE FROM email_daily WHERE day < ${dailyBefore} RETURNING 1 AS x`)).length
     : count(await deps.issuerD1(sql`SELECT COUNT(*) AS n FROM email_daily WHERE day < ${dailyBefore}`));
+  // The webhook's dedupe keys past a week (D446 as amended): SendGrid retries for up to 24 hours, so older ones can't repeat.
+  const webhookBefore = now - 7 * 86_400_000;
+  const webhookRows = yes
+    ? (await deps.issuerD1(sql`DELETE FROM email_webhook_events WHERE at_ms < ${webhookBefore} RETURNING 1 AS x`)).length
+    : count(await deps.issuerD1(sql`SELECT COUNT(*) AS n FROM email_webhook_events WHERE at_ms < ${webhookBefore}`));
   deps.log(`Issuer retention (${where.issuer}; deleted apps from ${where.api}):`);
   deps.log(`  ${apps.length} app(s) deleted 30 days ago or more: ${appRows} user_email_apps row(s) ${yes ? 'deleted' : 'to delete'} (each identity's address row stays: D269, uid-erase removes it)`);
   deps.log(`  email_admin_audit rows older than 60 months: ${auditRows} ${yes ? 'deleted' : 'to delete'}`);
   deps.log(`  email_daily rows older than 24 months: ${dailyRows} ${yes ? 'deleted' : 'to delete'}`);
+  deps.log(`  email_webhook_events rows older than 7 days: ${webhookRows} ${yes ? 'deleted' : 'to delete'}`);
   if (!yes) deps.log('Dry run: nothing changed. Run again with --yes to delete.');
   return { apps: apps.length, appRows, auditRows };
 }

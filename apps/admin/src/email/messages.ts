@@ -141,6 +141,42 @@ export function ownerGrantNotice(c: MailContext, n: MemberNotice, o: { orgName?:
   );
 }
 
+/**
+ * The notice that an app's login methods changed (D444 as amended): already in force, so it says what changed, on which
+ * app, and how to undo it. To the alias and the org's security contacts, from the feed's walk of `app_changes`.
+ */
+export function loginMethodsChanged(c: MailContext, r: AppChange, o: { appName?: string; undoUrl: string }): Rendered {
+  const on = String(r.detail.loginMethods).split(',').includes('email');
+  const app = o.appName ? `${oneLine(o.appName, 80)} (${r.appId ?? ''})` : (r.appId ?? 'an app');
+  return render(
+    c.env,
+    `Email login turned ${on ? 'on' : 'off'} for ${o.appName ? oneLine(o.appName, 60) : (r.appId ?? 'an app')}`,
+    [
+      { kind: 'p', text: `Email login was turned ${on ? 'on' : 'off'} for ${app}. This is already in force: this setting has no waiting period.` },
+      {
+        kind: 'kv',
+        rows: [
+          ['App', app],
+          ['Organisation', r.orgId],
+          ...(r.scopeId ? ([['Scope', r.scopeId]] as [string, string][]) : []),
+          ['Login methods now', String(r.detail.loginMethods)],
+          ['Changed by', `${r.actorKind === 'hana' ? 'Hana staff' : r.actorKind === 'member' ? 'a console member' : 'the system'} (${r.actorId})`],
+          ['Changed at', isoTime(r.at)],
+        ],
+      },
+      ...(on
+        ? ([
+            { kind: 'p', text: 'Users of this app can sign in with email once the scope’s email client is on chain. If the scope already has that client, they can do so now.' },
+            { kind: 'p', text: 'If you did not expect this, turn it off now: any owner can do so on the app’s Email login page in the console. It takes effect at once and needs no fresh sign-in. Hana security can also turn it off.' },
+          ] as Block[])
+        : ([{ kind: 'p', text: 'New sign-ins with email for this app stop at once. If you did not expect this, an owner can turn it on again on the app’s Email login page in the console, or ask Hana security.' }] as Block[])),
+      { kind: 'link', label: 'Open the app’s Email login page', url: o.undoUrl },
+    ],
+    c.consoleOrigin,
+    c.label,
+  );
+}
+
 // ---- the feed (best effort, after the fact) ----
 
 const detailText = (d: Record<string, unknown>): string => {

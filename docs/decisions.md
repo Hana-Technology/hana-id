@@ -9174,6 +9174,34 @@ tests). Not built. None changes a path, a key or derivation: `aud` never enters 
 - Options: a single window counter (a straddling burst splits; the two-window read still needs a combined level to see a split
   burst, D493); retiring only in-force clients (a pending client would be claimable the moment it is dropped).
 
+## Hana Home H2: the app list (branch `feat/hana-home-h2`), 2026-11-09
+
+### D500. `GET /v1/home/apps` is bounded per request; rows beyond the budget answer `coverage: 'unknown'`
+- Date 2026-11-09 · Status: decided while building, to confirm · Built: `apps/api/src/home/apps.ts`, `apps/api/src/views.ts`; `docs/api.md` · Source: the plan's H2, D417, D462, D466
+- Decision: one route reads two sources, the list (`scopes.first_session_at`, D462) and the overlay (the wallet directory, by the verified `(provider, sub)`, D466), with no chain transaction. An answer has at most 30 of the user's own scopes (first page only) and 15 listed scopes a page, in `scope_id` order with a cursor. Coverage reads `get_scope` through a 60 s per-isolate cache (a missing scope 10 s) and may make at most 16 reads a request, own rows first, five at a time, stopping at the first failure; a row with no read answers `coverage: 'unknown'` and the page asks for it by `?scopeId=`. A search scans `apps`, so it has its own window of 10 a minute per Home key, on top of `homeGate`'s 30 a minute per IP and 60 per Home key.
+- Why: the free plan's 10 ms CPU and 50 subrequests (D417) forbid a chain read per listed scope, and a failing RPC multiplies a read by its fallbacks: 16 reads stopped at the first failure stays under 50 even with every endpoint down. `first_session_at` costs a D1 read, not a chain read, and the listing keeps working if a chain read fails.
+- Options: a chain read per scope (over budget); coverage only on an app's own page (no badge in the list, F2); a cron-maintained coverage table (no new cron, D417).
+- Limits: a badge can be up to 60 s stale; a user with more than 30 scopes sees only the 30 most recently seen as "your apps" (the others stay reachable by the list).
+- Address impact: none. Nothing here reads or changes how a path or key is derived.
+
+### D501. Coverage values and order; `exit` added, `sharedLoginEndsAtMs` and `liveDevices` left out
+- Date 2026-11-09 · Status: decided while building, to confirm · Built: `apps/api/src/home/coverage.ts` · Amends the spec's `/v1/home/apps` shape (D98, D480, D490)
+- Decision: for a Google identity, in order: `shared` (shared login on and a shared Google client in force), `hana_client` (a client the chain lists in the scope and `hana_held_clients` records, D503), `exit` (an exit Google client in force), `partner_client` (a partner's own client, no exit client in force; best effort), `none`. For an email identity: `email` (the scope's email client), `exit` (the Home audience on the exit list), `none`. A scope the chain doesn't have is `none`. `googleClientId` is the client Home should sign in with. Among several partner clients, the app's `google_web_client_id` is preferred. The spec's `sharedLoginEndsAtMs` is dropped: D480 made turn-offs immediate, so nothing is ever pending. `liveDevices` waits for H9's `/devices`, which reads shares by `path_hash` (no index on that column until H4).
+- Why (D490 and the `hana_client` reading): a Hana-held client is the scope's normal route, so the exit counter (D487) stays a signal of real exits; a partner-held client isn't Hana's, so where the exit client exists Home uses it rather than a client whose redirect list Hana can't see.
+- To confirm: D490 read literally ("shared login off" → exit) would send an Enterprise scope's users through the exit client even with a Hana-held client. This build keeps them on the Hana-held client and the exit client for the rest.
+- Address impact: none. `aud` never enters the path.
+
+### D502. The quieter listing: `scopes.home_quiet`, reachable by whole name, link or the user's own overlay
+- Date 2026-11-09 · Status: decided while building, to confirm · Built: migration 0016, `apps/api/src/home/apps.ts`, `admin home:listing` · Implements D98 item 8
+- Decision: `scopes.home_quiet` (0/1, staff-set, `admin home:listing`). A quiet scope is left out of the list pages, and found by a search for an app's whole name (ASCII case-insensitive), by its `scopeId` or `appId` (the partner's link), and always in its own users' "your apps" (D466), since a user's own wallets are never hidden from them. An ordinary scope is found by any part of an app's name. Search covers app names only.
+- To confirm: D98 item 8 said a quiet app is "shown after the user searches for the app or opens the partner's link", and read literally that hides it from its own users too. This build shows it to them. Also: whether "searches for the app" should mean the whole name (built, so a search can't enumerate quiet apps) or any part of it.
+- Rejected: a quiet flag per app (the listing is by scope, D462); removing a quiet scope from the list entirely (D98: never removal).
+
+### D503. `hana_held_clients` and `admin home:client:add`: recorded only for a client the chain already lists
+- Date 2026-11-09 · Status: decided while building, to confirm · Built: migration 0016, `scripts/lib/admin-home.ts`, `apps/api/src/home/coverage.ts` · Implements the spec's `hana_held_clients (provider, aud, scope_id, added_at)`
+- Decision: `admin home:client:add --scope --client [--yes]` records a Google client Hana holds, only after `get_scope` lists that client in that scope (a typo or a client in another scope is refused; a row for another scope is refused, not moved). Testnet only. Coverage counts a row only while the chain still lists the client in the scope, so a stale row changes nothing. `admin home:listing` and `home:client:add` write only D1, with no `app_changes` row: they aren't app settings a partner sees, and neither changes access to anything.
+- Limit: no `home:client:remove` in this batch; a row for a client Hana no longer holds (a partner taking over the project) is removed by a D1 statement until a removal command is needed.
+
 ## Superseded or amended
 
 | Was | Now | Source |

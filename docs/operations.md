@@ -4473,7 +4473,7 @@ H3 adds `POST /v1/home/login`, the `home` pool and migration 0018. Order (not do
 
 1. Apply D1 from the deployed commit: `0018_home_usage.sql` creates `home_usage` and rebuilds `user_events` (`app_id` nullable for `key_exported` only). The older API keeps working during it.
 2. `deploy-contract <env> --yes`: creates one Home key (allowance 2 NEAR) on the relayer account for `create_session_and_derive` only (funded from the relayer's balance by its allowance; the relayer account must hold enough, about 2 NEAR extra). Writes `.secrets/<env>/home-relayer-keys.json`. A `--home-relayer-keys`/`--home-relayer-allowance` run changes nothing else.
-3. Upload the secret: `node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/home-relayer-keys.json")))' | pnpm --dir apps/api exec wrangler secret put HOME_RELAYER_KEYS`.
+3. Upload the secret: `node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/home-relayer-keys.json")))' | corepack pnpm --dir apps/api exec wrangler secret put HOME_RELAYER_KEYS`.
 4. Deploy the API.
 5. Deploy the watchdog last, so `relayer_pool_empty:home` doesn't page before the key exists.
 

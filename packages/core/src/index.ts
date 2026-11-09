@@ -14,6 +14,7 @@ export * from './consent.ts';
 export * from './display-safe.ts';
 export * from './derivation.ts';
 export * from './export.ts';
+export * from './home.ts';
 export * from './email-token.ts';
 export * from './id-token.ts';
 export * from './identity.ts';

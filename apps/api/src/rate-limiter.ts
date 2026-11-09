@@ -114,26 +114,29 @@ export class RateLimiter extends DurableObject<Env> {
   /**
    * One-time markers (e.g. an owner token reserved for, or already used by, one relay). `reserve` is an atomic
    * test-and-set: true (and marked until `untilMs`) only if no unexpired marker exists, so concurrent requests with
-   * the same key can't all pass. Expired markers are dropped on the next `reserve`.
+   * the same key can't all pass. A call reads one row however many markers the object holds (D475): an expired marker
+   * no longer counts, and the alarm deletes it.
    */
   reserve(key: string, untilMs: number, now: number = Date.now()): boolean {
     const kv = this.ctx.storage.kv;
     const until = kv.get<number>(`mark:${key}`);
     if (until !== undefined && until > now) return false;
-    for (const [k, u] of kv.list<number>({ prefix: 'mark:' })) if (u <= now) kv.delete(k);
     kv.put(`mark:${key}`, untilMs);
-    // An object that holds markers but sees no further request (one per session key, for the identity token's proofs)
-    // must not keep them forever: an alarm at the latest marker's end deletes the expired ones.
     void this.scheduleMarkerSweep(untilMs);
     return true;
   }
 
+  /**
+   * Arms the sweep only when none is armed. Moving an armed alarm out to each new marker's end would starve it on a
+   * shared object with steady traffic (`owner-actions:tokens`, `link-tokens`): the next marker would always arrive
+   * first, and expired ones would pile up with nothing to delete them. Left alone, a marker waits at most one further
+   * marker lifetime past its own end, and `alarm` re-arms itself for any that outlive it.
+   */
   private async scheduleMarkerSweep(untilMs: number): Promise<void> {
-    const current = await this.ctx.storage.getAlarm();
-    if (current === null || current < untilMs) await this.ctx.storage.setAlarm(untilMs + 1);
+    if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(untilMs + 1);
   }
 
-  /** Deletes expired markers (and, when nothing else is stored, everything: the object then holds no state). */
+  /** Deletes expired markers, and re-arms for the latest live one. The only place markers are listed. */
   override async alarm(): Promise<void> {
     const kv = this.ctx.storage.kv;
     const now = Date.now();
@@ -282,16 +285,18 @@ export class RateLimiter extends DurableObject<Env> {
     this.ctx.storage.kv.delete(`mark:${key}`);
   }
 
-  /** Drops counters of windows that have ended (keys are `<name>@<windowStart>`). */
+  /**
+   * Drops counters of windows that have ended (keys are `<name>@<windowStart>`). Lists only these limits' own keys, so
+   * a `hit` never reads the object's markers or other limits' counters (D475).
+   */
   private prune(limits: Limit[], now: number): void {
     const kv = this.ctx.storage.kv;
-    const byName = new Map(limits.map((l) => [l.name, l.windowMs]));
-    for (const [key] of kv.list<number>()) {
-      if (key.startsWith('mark:')) continue;
-      const at = key.lastIndexOf('@');
-      const windowMs = byName.get(key.slice(0, at));
-      const start = Number(key.slice(at + 1));
-      if (windowMs !== undefined && start + windowMs <= now) kv.delete(key);
+    for (const l of limits) {
+      const prefix = `${l.name}@`;
+      for (const [key] of kv.list<number>({ prefix })) {
+        // A longer name that happens to start with this one (`a@b@<start>` under `a@`) parses as NaN and stays.
+        if (Number(key.slice(prefix.length)) + l.windowMs <= now) kv.delete(key);
+      }
     }
   }
 }

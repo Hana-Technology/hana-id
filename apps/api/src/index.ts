@@ -7,6 +7,8 @@ import { detectDrift } from './changes/drift.ts';
 import { WALLET_RECORD_ENDPOINT, handleWalletRecord } from './directory/record.ts';
 import { MAINNET_DEMO_EVENTS_ENDPOINT, handleMainnetDemoEvent } from './mainnet-demo.ts';
 import { guardedChangesMaintenance } from './guarded/cron.ts';
+import { HOME_CONFIG_ENDPOINT, handleHomeConfig } from './home/config.ts';
+import { homePreflight } from './home/identity.ts';
 import { syncIssuerKeys } from './issuer-keys.ts';
 import { identityMaintenance } from './identity/maintenance.ts';
 import { IDENTITY_PUBLIC_ENDPOINTS, handleIdentityPublic } from './identity/public.ts';
@@ -154,6 +156,12 @@ export default {
         if (request.method === 'OPTIONS') return vaultPreflight(request, env);
         if (request.method === 'POST') return await handleMainnetDemoEvent(request, env, requestId);
         return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
+      }
+      if (pathname === HOME_CONFIG_ENDPOINT) {
+        // Hana Home (docs/hana-home-spec.md): `AUTH_ORIGIN` only. No identity yet: the page calls it before a sign-in.
+        if (request.method === 'OPTIONS') return homePreflight(request, env);
+        if (request.method === 'GET') return await handleHomeConfig(request, env, requestId);
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'GET, OPTIONS' });
       }
       if (IDENTITY_PUBLIC_ENDPOINTS.includes(pathname)) {
         if (request.method === 'GET' || request.method === 'HEAD') return handleIdentityPublic(request, env, pathname, requestId);

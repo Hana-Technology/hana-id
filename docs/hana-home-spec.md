@@ -130,8 +130,9 @@ page.
    `hana:auth-params` only from its same-origin opener at `/home`); the first shared Google client in force,
    `scope=openid`, `prompt=select_account`, no `max_age`.
    **Email (D463, H10):** `/login/email` in Home mode; the issuer's Home route signs a token with an `aud` that is on no
-   scope (a client proof is minted only for `email:{scope}`, so no owner can register it) and the `homeNonce`. Mailbox
-   limits apply as at any login.
+   scope and the `homeNonce`. Mailbox limits apply as at any login. H1's review (2026-11-09, D474): the contract checks only
+   a client proof's provider, `aud` and nonce, so a route that signs a caller-supplied nonce would let an owner register
+   this `aud` with `client_proof_nonce` for their own mailbox; the issuer or the contract must refuse it (H6 or H10).
 4. Every Home API call carries header `x-hana-home: b64url(json {jwt, key: hk_pub, expiresAtMs, salt, counter, sig})`
    with `sig = Ed25519(hk, utf8("hana-id-home-v1:") ‖ borsh(signer) ‖ u64le(counter) ‖ sha256(borsh(method) ‖ borsh(path)
    ‖ body))`. The API checks, in order: `Origin === AUTH_ORIGIN`; the token (signature, `iss`, `exp` with 60 s skew,

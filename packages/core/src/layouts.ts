@@ -5,6 +5,7 @@
 // test/layouts.test.ts checks them, the approval digest included, against contracts/hana-signer/src/test_fixture.json and test/vectors/layouts-v1.json (written by
 // scripts/gen-layout-vectors.mjs, an independent implementation).
 import { type Bytes, base64UrlEncode, borshString, concatBytes, sha256, toBytes, u32le, u64le, utf8 } from './bytes.ts';
+import { consentRegisterPayload, consentRevokePayload } from './home.ts';
 
 export const SESSION_NONCE_DOMAIN = 'hana-id/session/v1';
 export const SESSION_MESSAGE_DOMAIN = 'hana-id-session-v1:';
@@ -136,6 +137,9 @@ export const vaultPayload = {
   touch: (): Bytes => utf8('touch'),
   revoke: (): Bytes => utf8('revoke'),
   revokeAll: (): Bytes => utf8('revoke-all'),
+  /** Hana Home's server consents: `home.ts` has the layouts. */
+  consent: consentRegisterPayload,
+  consentRevoke: consentRevokePayload,
 } as const;
 
 // ---- vault record AAD (docs/batch-b-spec.md "Record") ----

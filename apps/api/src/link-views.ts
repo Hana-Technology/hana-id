@@ -3,7 +3,7 @@
 // Identity and account reads are never cached: a link nonce commits to the chain state at the time of the call, and
 // the contract re-checks every one of them.
 import type { Env } from './env.ts';
-import { Rpc } from './near/rpc.ts';
+import { nearRpc } from './near/rpc.ts';
 import { TtlCache } from './views.ts';
 
 /** `get_self_issued(provider)`: the signer policy (signer ids with their active kids) and `required`. */
@@ -93,7 +93,7 @@ async function readPolicy(env: Env, provider: string): Promise<SelfIssuedView | 
   const inFlight = policyReads.get(provider);
   if (inFlight) return inFlight;
   const read = (async () => {
-    const policy = parseSelfIssued(await new Rpc(env.NEAR_RPC).view<unknown>(env.SIGNER_ACCOUNT, 'get_self_issued', { provider }));
+    const policy = parseSelfIssued(await nearRpc(env).view<unknown>(env.SIGNER_ACCOUNT, 'get_self_issued', { provider }));
     policyCache.set(provider, { policy, readAt: Date.now() });
     return policy;
   })();
@@ -122,7 +122,7 @@ const pendingCache = new TtlCache<ReadonlySet<string>>(10_000, 4);
 export async function pendingKeyAdds(env: Env, provider: string): Promise<ReadonlySet<string>> {
   const hit = pendingCache.get(provider);
   if (hit) return hit;
-  const raw = await new Rpc(env.NEAR_RPC).view<unknown>(env.SIGNER_ACCOUNT, 'get_key_changes', {});
+  const raw = await nearRpc(env).view<unknown>(env.SIGNER_ACCOUNT, 'get_key_changes', {});
   if (!Array.isArray(raw)) throw new ViewShapeError('get_key_changes');
   const kids = new Set(
     raw.flatMap((c) => (isObj(c) && c.provider === provider && c.op === 'Add' && typeof c.kid === 'string' ? [c.kid] : [])),
@@ -132,11 +132,11 @@ export async function pendingKeyAdds(env: Env, provider: string): Promise<Readon
 }
 
 export async function getIdentity(env: Env, scopeId: string, provider: string, sub: string): Promise<IdentityView> {
-  return parseIdentity(await new Rpc(env.NEAR_RPC).view<unknown>(env.SIGNER_ACCOUNT, 'get_identity', { scope_id: scopeId, provider, sub }));
+  return parseIdentity(await nearRpc(env).view<unknown>(env.SIGNER_ACCOUNT, 'get_identity', { scope_id: scopeId, provider, sub }));
 }
 
 export async function getAccount(env: Env, scopeId: string, provider: string, sub: string): Promise<AccountView | null> {
-  return parseAccount(await new Rpc(env.NEAR_RPC).view<unknown>(env.SIGNER_ACCOUNT, 'get_account', { scope_id: scopeId, provider, sub }));
+  return parseAccount(await nearRpc(env).view<unknown>(env.SIGNER_ACCOUNT, 'get_account', { scope_id: scopeId, provider, sub }));
 }
 
 /** Tests only. */

@@ -1,7 +1,7 @@
 # Recovery playbooks
 
 Generated from `packages/playbooks` (D126) by `corepack pnpm --filter @hana-id/playbooks gen-docs`: edit the package,
-not this file (a test fails when it is stale). Last verified against code: 2026-11-06 (branch `fix/watchdog-new-key-grace`: `unseen-key-change`, and `forged-key-change` with the new-kid grace, D432); 2026-11-06 (branch `fix/google-key-hysteresis`: `retired-key-change`, `key-sync-stalled` and `updater-key-stolen` with the rollout hysteresis, D422); 2026-11-05 (branch `feat/deploy-check-all-workers`: the watchdog deploys through `run deploy`, stamped with the build id, D406); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/coop-canary`: the `google-enforces-coop` incident, D386); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`).
+not this file (a test fails when it is stale). Last verified against code: 2026-11-06 (branch `fix/watchdog-new-key-grace`: `unseen-key-change`, and `forged-key-change` with the new-kid grace, D432); 2026-11-06 (branch `feat/api-near-rpc-fallback`: `near-rpc-outage` with the API-side RPC failover, `apiRpcFallbacks`, D435); 2026-11-06 (branch `fix/google-key-hysteresis`: `retired-key-change`, `key-sync-stalled` and `updater-key-stolen` with the rollout hysteresis, D422); 2026-11-05 (branch `feat/deploy-check-all-workers`: the watchdog deploys through `run deploy`, stamped with the build id, D406); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/coop-canary`: the `google-enforces-coop` incident, D386); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`).
 
 One step-by-step guide for every watchdog alert kind and for every incident the watchdog does not raise. The admin
 portal's "Security & monitoring" view renders the same playbooks (`docs/batch-c-spec.md`), and every watchdog
@@ -2058,27 +2058,31 @@ A page of the login popup's trip (Google's sign-in pages, or Hana's callback) se
 
 `near-rpc-outage` · warning
 
-The manifest's `rpc` provider is down or wrong. The API reads only `rpc`; the vault, the export window and the watchdog fall back to `rpcFallback`.
+The manifest's `rpc` provider is down or wrong. The API fails over to its `apiRpcFallbacks` in order (or `rpcFallback` when unset, D435); the vault, the export window and the watchdog fall back to `rpcFallback`.
 
 **Signals**
 
-- `502 near_unavailable` on API endpoints; `rpc_failing` from the watchdog (both its RPCs failed 3 runs).
+- `near_rpc_failover` warnings in the API's logs (the endpoint index passed over and why: `network`, `timeout`, `http_5xx`, `http_429`, `not_jsonrpc`, `not_synced`).
+- `502 near_unavailable` on API endpoints once every API endpoint fails; `rpc_failing` from the watchdog (both its RPCs failed 3 runs).
 
 **Impact**
 
-- Logins, derives and owner actions through the API fail while `rpc` is down. Users with an unlocked or persisted vault keep signing (no chain call needed for the key). Logins of a linked identity (a member's path, through its account root) also need `rpcFallback` to answer: the vault confirms that path on both providers and refuses when either is down (D263).
-- A lying RPC can fail derives or refuse logins. It can't forge a CKD result for a user's own path (pinned key, pairing check), but it could forge one for a path whose secret it knows if the vault took its word that the user is a member of that account: the vault and the export window therefore confirm every member path on `rpc` and `rpcFallback` separately (D263). Keep the two on independent providers (the manifest schema refuses one registrable domain for both).
+- While only `rpc` is down the API keeps working through its fallbacks: each isolate pays one failed attempt (up to 8 s for a read, 20 s for a transaction when the node hangs) and then asks the fallbacks first for 30 s, so logins are slower, not broken. A fallback answers only when the endpoints before it gave no JSON-RPC answer; a node's answer, an error answer included, is never retried elsewhere.
+- Logins, derives and owner actions through the API fail only when every API endpoint is down. Users with an unlocked or persisted vault keep signing (no chain call needed for the key). Logins of a linked identity (a member's path, through its account root) also need `rpcFallback` to answer: the vault confirms that path on both providers and refuses when either is down (D263).
+- A broadcast that fails over sends the same signed transaction again (one hash, one nonce: it executes at most once). The API then polls its hash instead of trusting the second node's InvalidNonce or Expired, so a relay whose transaction never reached any node can wait out its 60 s and answer `504 timeout`; the user retries.
+- A lying RPC can fail derives or refuse logins. It can't forge a CKD result for a user's own path (pinned key, pairing check), but it could forge one for a path whose secret it knows if the vault took its word that the user is a member of that account: the vault and the export window therefore confirm every member path on `rpc` and `rpcFallback` separately (D263). Keep the two on independent providers (the manifest schema refuses one registrable domain for both). Every `apiRpcFallbacks` provider is trusted like `rpc` for the API's views whenever the ones before it fail.
 
 **Steps**
 
-1. **Confirm it is the provider** (who: a founder). Check the provider's status and another provider.
+1. **Confirm it is the provider** (who: a founder). Check the provider's status and another provider. The API's failover lines say which endpoint (0 is `rpc`, then `apiRpcFallbacks` in order) failed and how.
 
    ```sh
    curl -s https://<worker-url>/v1/health
+   corepack pnpm --dir apps/api exec wrangler tail <cloudflare.workerName> --search near_rpc_failover
    corepack pnpm --dir apps/api exec wrangler tail <cloudflare.workerName> --status error
    ```
 
-2. **Switch the API to another provider** (who: a founder). Change `rpc` (and keep `rpcFallback` a different provider) in `envs/<env>.json` (code-owner review; https; testnet only: every script and the watchdog refuse another `chain_id`). The value is built into the vault and auth bundles and their CSP: regenerate, rebuild and redeploy the API and both page Workers, and the watchdog.
+2. **If every API endpoint fails, or the outage lasts** (who: a founder). Change `rpc` (and keep `rpcFallback` a different provider), or reorder or replace `apiRpcFallbacks` (1–3 https URLs, none of them `rpc`), in `envs/<env>.json` (code-owner review; testnet only: every script and the watchdog refuse another `chain_id`). An `apiRpcFallbacks` change is the API's alone: `gen` and redeploy the API. `rpc` and `rpcFallback` are built into the vault and auth bundles and their CSP: regenerate, rebuild and redeploy the API and both page Workers, and the watchdog.
 
    ```sh
    corepack pnpm --filter @hana-id/api run gen <env>
@@ -2091,13 +2095,13 @@ The manifest's `rpc` provider is down or wrong. The API reads only `rpc`; the va
 
 **Verify**
 
-- `GET /v1/health` and a smoke login work; the watchdog's `rpc_failing` resolves.
+- `GET /v1/health` and a smoke login work; `near_rpc_failover` lines stop (or name only the endpoint you replaced); the watchdog's `rpc_failing` resolves.
 
 **Follow-ups**
 
-- Not built yet: an API-side RPC fallback (the API reads only `NEAR_RPC`).
+- If the primary stays bad, make a healthy fallback `rpc` rather than living on failover: every isolate still tries `rpc` again every 30 s.
 
-**Refs:** [`docs/operations.md#accounts-and-services-per-environment`](operations.md#accounts-and-services-per-environment), [`docs/security.md#parties`](security.md#parties), D65 (`docs/decisions.md`) · **See also:** [watchdog-degraded](#watchdog-degraded)
+**Refs:** [`docs/operations.md#accounts-and-services-per-environment`](operations.md#accounts-and-services-per-environment), [`docs/architecture.md#components`](architecture.md#components), [`docs/security.md#parties`](security.md#parties), D65 (`docs/decisions.md`), D435 (`docs/decisions.md`) · **See also:** [watchdog-degraded](#watchdog-degraded)
 
 <a id="mpc-ckd-outage"></a>
 

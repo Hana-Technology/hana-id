@@ -8,6 +8,9 @@ import { hanaOriginProblem, isDevEnv, isLocalEnv, isLoopbackHost, siteOf } from 
 /** Independent RPC providers the pinned CKD network key must be read from, all agreeing (OPER-1, D100). */
 export const MIN_CKD_SOURCES = 3;
 
+/** At most this many `apiRpcFallbacks`: each can add a per-endpoint timeout to an API call (D435). */
+export const MAX_API_RPC_FALLBACKS = 3;
+
 const nearAccount = z.string().regex(/^(?=.{2,64}$)(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/u, 'Invalid NEAR account id');
 
 /** Cloudflare Durable Object location hints (https://developers.cloudflare.com/durable-objects/reference/data-location/). */
@@ -239,6 +242,15 @@ export const manifestSchema = z
      * `emailIssuer` outside `local*` envs (linking makes members). It joins `rpc` in those pages' CSP `connect-src`.
      */
     rpcFallback: z.string().url().optional(),
+    /**
+     * The API's own NEAR RPC fallbacks (D435), asked in this order after `rpc` when an endpoint gives no JSON-RPC
+     * answer (a network error, a timeout, HTTP 5xx or 429, a body that isn't JSON-RPC, a node with no synced block);
+     * never for a JSON-RPC answer, an error answer included. 1–MAX_API_RPC_FALLBACKS https URLs (http only for a
+     * loopback host in `local*` envs), distinct, none of them `rpc`. Unset: the API falls back to `rpcFallback` alone
+     * (apiRpcFallbacksOf). Each one is trusted like `rpc` for the API's views whenever the earlier ones fail. Only the
+     * API reads it (`NEAR_RPC_FALLBACKS`): the pages, the watchdog and the admin Worker keep `rpc` and `rpcFallback`.
+     */
+    apiRpcFallbacks: z.array(z.string().url()).min(1).max(MAX_API_RPC_FALLBACKS).optional(),
     /** The API's base URL: https outside `local*` envs (there, http only for a loopback host). */
     apiUrl: z.string().url(),
     /**
@@ -371,6 +383,12 @@ export const manifestSchema = z
     } else if (m.rpcFallback !== undefined && !isLocalEnv(m.name) && safeSite(m.rpcFallback) !== null && safeSite(m.rpcFallback) === safeSite(m.rpc)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['rpcFallback'], message: `rpcFallback must be another provider (registrable domain) than rpc outside local* envs (both are ${safeSite(m.rpc)})` });
     }
+    for (const [i, url] of (m.apiRpcFallbacks ?? []).entries()) {
+      const problem = endpointUrlProblem(url, m.name);
+      if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['apiRpcFallbacks', i], message: `apiRpcFallbacks[${i}] ${problem}` });
+      else if (url === m.rpc) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['apiRpcFallbacks', i], message: 'apiRpcFallbacks must not repeat rpc (it is always asked first)' });
+      else if (m.apiRpcFallbacks?.indexOf(url) !== i) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['apiRpcFallbacks', i], message: `apiRpcFallbacks lists ${url} twice` });
+    }
     if (m.emailIssuer && m.rpcFallback === undefined && !isLocalEnv(m.name)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['rpcFallback'], message: 'an env with emailIssuer needs rpcFallback outside local* envs: a linked identity’s path is confirmed on two providers (D263)' });
     }
@@ -404,6 +422,15 @@ export function endpointUrlProblem(value: string, envName: string): string | nul
   if (url.protocol === 'https:') return null;
   if (url.protocol === 'http:' && isLocalEnv(envName) && isLoopbackHost(url.hostname)) return null;
   return 'must be an https URL (http only for a loopback host in local* envs)';
+}
+
+/**
+ * The API's NEAR RPC fallbacks, in order after `rpc` (D435): `apiRpcFallbacks`, or `rpcFallback` alone when that is
+ * unset, or none. The API's gen writes them as `NEAR_RPC_FALLBACKS`.
+ */
+export function apiRpcFallbacksOf(m: Pick<Manifest, 'apiRpcFallbacks' | 'rpcFallback'>): string[] {
+  if (m.apiRpcFallbacks) return [...m.apiRpcFallbacks];
+  return m.rpcFallback ? [m.rpcFallback] : [];
 }
 
 /** The registrable domain of a URL, or null when it doesn't parse (endpointUrlProblem reports that). */

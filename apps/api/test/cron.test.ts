@@ -23,6 +23,7 @@ import {
   syncIssuerKeys,
   usableJwks,
 } from '../src/issuer-keys.ts';
+import { rpcHealth } from '../src/near/rpc.ts';
 import { UPDATER_METHODS } from '../src/relayer-config.ts';
 import { NearMock, panic } from './near-mock.ts';
 
@@ -517,6 +518,27 @@ describe('scheduled JWKS sync', () => {
     };
     expect(await run(near)).toMatchObject({ proposed: ['a'], failed: [] });
     expect(near.sent.map((t) => t.nonce)).toEqual([501n]);
+  });
+
+  it('a broadcast that failed over after NEAR_RPC took it is polled by hash, never signed again (D435)', async () => {
+    const near = govChain([], { jwks: ['a'] });
+    const FALLBACK = 'https://rpc-fallback.test.invalid';
+    const sameChain = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    // NEAR_RPC includes the tx, then answers like a broken proxy; the fallback is another node of the same chain, so
+    // the same signed bytes get InvalidNonce there (the nonce is used). Re-signing on that would send a second tx.
+    near.sendTxTransportError = 503;
+    vi.mocked(globalThis.fetch).mockImplementation((input, init) => {
+      if ((input instanceof Request ? input.url : String(input)) !== FALLBACK) return sameChain(input, init);
+      near.sendTxTransportError = undefined;
+      return sameChain(env.NEAR_RPC, init);
+    });
+    try {
+      expect(await run(near, { ...env, NEAR_RPC_FALLBACKS: JSON.stringify([FALLBACK]) })).toMatchObject({ proposed: ['a'], failed: [] });
+      expect(near.sent).toHaveLength(1);
+      expect(near.rpcMethods.filter((m) => m === 'send_tx')).toHaveLength(2);
+    } finally {
+      rpcHealth.clear();
+    }
   });
 
   it('skips with a malformed keys-updater key', async () => {

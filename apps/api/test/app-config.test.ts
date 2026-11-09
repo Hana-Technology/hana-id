@@ -1,7 +1,7 @@
 // GET /v1/app, batch B additions: name, serverTimeMs, google_web_client_id, calls from the Hana pages.
 import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Rpc } from '../src/near/rpc.ts';
+import { Rpc, TX_TIMEOUT_MS } from '../src/near/rpc.ts';
 import { CONFIG_READ_STALE_MS, VIEW_TIMEOUT_MS, clearViewCaches, getConfig } from '../src/views.ts';
 import { ORIGIN, appHeaders, call, chain, newKey, seedApp, uid } from './helpers.ts';
 import { AUTH, VAULT, hanaHeaders } from './login-helpers.ts';
@@ -113,7 +113,7 @@ describe('GET /v1/app (batch B)', () => {
     expect(near.viewCalls.filter((c) => c.method === 'get_config')).toHaveLength(2);
   });
 
-  it('every contract view gives up after VIEW_TIMEOUT_MS (an abort signal); transactions wait for the node', async () => {
+  it('every contract view gives up after VIEW_TIMEOUT_MS (an abort signal); transactions after TX_TIMEOUT_MS (D435)', async () => {
     const seen: (AbortSignal | null | undefined)[] = [];
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
       seen.push(init?.signal);
@@ -122,8 +122,9 @@ describe('GET /v1/app (batch B)', () => {
     await expect(new Rpc(env.NEAR_RPC).view('signer.test', 'get_scope', {})).rejects.toThrow(/NEAR RPC unreachable/u);
     await expect(new Rpc(env.NEAR_RPC).txStatus('h', 'relayer.test')).rejects.toThrow(/NEAR RPC unreachable/u);
     expect(seen[0]).toBeInstanceOf(AbortSignal);
-    expect(seen[1]).toBeUndefined();
+    expect(seen[1]).toBeInstanceOf(AbortSignal);
     expect(VIEW_TIMEOUT_MS).toBe(8_000);
+    expect(TX_TIMEOUT_MS).toBe(20_000);
   });
 
   it('uses google_web_client_id when set, the scope’s first Google client when unset', async () => {

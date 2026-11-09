@@ -76,7 +76,7 @@ export const MAINNET_DEMO = Object.freeze({
   /** Sodax's intents contract on the hub (Sonic). */
   sodaxIntents: '0x6382D6ccD780758C5e8A6123c33ee8F4472F96ef',
   /**
-   * Sodax's USDC ⇄ USDC bridge between Base and Stellar (D476), from @sodax/sdk 2.2.0's packaged config, pinned by
+   * Sodax's USDC ⇄ USDC bridge between Base and Stellar, from @sodax/sdk 2.2.0's packaged config, pinned by
    * test/mainnet-demo.test.ts: the sodaUSDC vault, the hub asset manager, and the two USDC hub assets with their
    * spoke decimals. A bridge of anything else is refused, and a Sodax redeploy of any of these fails closed.
    */
@@ -152,11 +152,11 @@ export interface DemoBridge {
 }
 
 /**
- * Who a bridge may deliver to (D476). `wallets`: the user's own addresses, which the bridge's recipient must be (the
+ * Who a bridge may deliver to. `wallets`: the user's own addresses, which the bridge's recipient must be (the
  * vault always passes these, and they are compared in the encoded form the hub receives). `'shown'`: only the popup,
  * which holds the signing chain's address alone and shows the recipient; the vault has already checked it.
  * Omitted: a bridge is refused. Either way the deposit's spoke `to` must be the signing address's own hub wallet
- * (checked offline from the signing address, in both the vault and the popup; D476).
+ * (checked offline from the signing address, in both the vault and the popup).
  */
 export type DemoBridgeRecipients = { readonly wallets: { readonly evm: string; readonly stellar: string } } | 'shown';
 
@@ -263,7 +263,7 @@ function decodeOr(fnAbi: ReturnType<typeof fn>, data: Uint8Array, what: string):
 /**
  * A Sodax deposit's `data` (relayed to the hub and run by the user's hub wallet): empty; or exactly
  * `[approve(intents, g) on hubAsset, createIntent(intent) on intents]` with g ≤ amount, the intent's input the hub
- * asset and its input amount ≤ g; or exactly the four calls of a USDC ⇄ USDC bridge (checkBridgeCalls, D476). So the
+ * asset and its input amount ≤ g; or exactly the four calls of a USDC ⇄ USDC bridge (checkBridgeCalls). So the
  * hub calls can spend at most the deposited amount of the deposited asset. Returns the bridge it found, else null.
  */
 export function checkSodaxHubCalls(dataHex: string, hubAsset: string | undefined, amount: bigint, recipients?: DemoBridgeRecipients, spoke?: DemoSpokeDeposit): DemoBridge | null {
@@ -311,7 +311,7 @@ function bridgeCall(item: AbiValue, target: string, what: ReturnType<typeof fn>,
  * so no dust is left behind). The source is the deposited asset's hub asset and the destination is the other one of the
  * pinned pair. Every target, spender and amount is exact, so the calls spend exactly the deposit, and the deposit
  * stays what is valued against the cap. The deposit's spoke `to`, where the funds reach the hub first, must be the
- * signing address's own hub wallet (D476).
+ * signing address's own hub wallet.
  */
 function checkBridgeCalls(items: readonly AbiValue[], hubAsset: string, amount: bigint, recipients: DemoBridgeRecipients | undefined, spoke: DemoSpokeDeposit | undefined): DemoBridge {
   const b = MAINNET_DEMO.sodaxBridge;
@@ -360,7 +360,7 @@ const CREATE3_PROXY_INITCODE_HASH = '0x21c35dbe1b344a2488cf3321d6ce542f8e9f30554
 
 /**
  * The address Sodax's factory answers from `getDeployedAddress(relayChainId, user)` (read from its UUPS implementation
- * on Sonic, 2026-11-09, and pinned to the factory's own answers by test/mainnet-demo.test.ts; D476):
+ * on Sonic, 2026-11-09, and pinned to the factory's own answers by test/mainnet-demo.test.ts):
  * salt = keccak256(factory ‖ relayChainId as a 32-byte word ‖ user), proxy = the CREATE2 address of the CREATE3 proxy
  * under that salt, wallet = the address that proxy's first CREATE gives. Offline, so a signature needs no new network
  * read. An upgrade of the factory that changes this makes every bridge refused (fail closed) until it's reviewed.

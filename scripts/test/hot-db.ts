@@ -9,7 +9,7 @@ import { repoRoot } from '@hana-id/env';
 
 export const MIGRATIONS_DIR = join(repoRoot, 'apps', 'api', 'migrations');
 
-/** `before`: only the migrations whose file name sorts before it (`'0012'`: a database still at 0011). */
+/** `before`: only the migrations whose file name sorts before it (`'0014'`: a database still at 0013). */
 export function newHotDb(opts: { before?: string } = {}): DatabaseSync {
   const db = new DatabaseSync(':memory:');
   const files = readdirSync(MIGRATIONS_DIR)

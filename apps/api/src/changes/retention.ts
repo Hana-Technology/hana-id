@@ -4,7 +4,7 @@
 //   purgeAudit      app_changes and guarded_changes rows older than 60 months, in batches
 //   deletedApps     the apps deleted 30 days ago or more (the ledger's app_users purge, usage.purge_app_users)
 //   purgeDirectory  the wallet directory (migration 0011) of every scope whose apps were all deleted 30 days ago or more,
-//                   and the email consents (migration 0012, D411) of every app deleted 30 days ago or more
+//                   and the email consents (migration 0014, D411) of every app deleted 30 days ago or more
 //
 // Each clamps the caller's `before` to its own period in SQL (`unixepoch('now', …)`: the same clock as the
 // app_changes trigger), so even a compromised admin Worker can't purge rows D90 still keeps. Nothing here reads or

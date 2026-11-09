@@ -146,7 +146,7 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
   Durations: 12h, 23h50m, 15m, 3600000ms. --google-web-client must be one of the scope's Google clients on chain
   (default: the first one). --identity-email (D411): when Hana asks users to share their email with the app: off
   (never, the default), on_request (when the app calls requestEmailSharing()), at_login (at their first login); it
-  needs migration 0012 on the hot D1.`;
+  needs migration 0014 on the hot D1.`;
 
 const COMMANDS = [
   'app:create',

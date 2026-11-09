@@ -103,7 +103,7 @@ export interface AppRow {
   auto_approve_pending: string | null;
   auto_approve_effective_at: number | null;
   google_web_client_id: string | null;
-  /** Migration 0012 (D411). */
+  /** Migration 0014 (D411). */
   identity_email: string;
   environment: 'test' | 'live';
   first_session_at: number | null;

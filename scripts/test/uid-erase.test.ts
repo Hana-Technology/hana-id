@@ -1,6 +1,6 @@
 // uid-erase (lib/uid-erase.ts; batch C13, D361) and admin retention:issuer (lib/admin-retention.ts, D365) against the
 // real migrations of all three stores: the usage ledger on PGlite as usage_admin (apps/api/migrations-usage), the
-// API's D1 (node:sqlite, apps/api/migrations: the wallet directory of 0011, the email consents of 0012) and the issuer's
+// API's D1 (node:sqlite, apps/api/migrations: the wallet directory of 0011, the email consents of 0014) and the issuer's
 // D1 (node:sqlite, apps/email-issuer/migrations). The chain is a fake view of get_identity / get_account. An erasure
 // covers the account (root and members) in one scope across the three stores, leaves other users and other scopes
 // alone, is dry run by default, re-countable to zero, recorded in ops.erasures without whom, and never touches what
@@ -101,7 +101,7 @@ function deps(over: Partial<UidEraseDeps> = {}): UidEraseDeps {
   };
 }
 
-/** `consents: false` for an API D1 before migration 0012; `ledger: false` to seed only the two D1s. */
+/** `consents: false` for an API D1 before migration 0014; `ledger: false` to seed only the two D1s. */
 async function seed(opts: { consents?: boolean; ledger?: boolean } = {}): Promise<void> {
   const root = await userOf(GOOGLE);
   const emailOwn = await userOf(EMAIL); // the email identity's own account, from before it was linked
@@ -335,14 +335,14 @@ describe('uid-erase refusals', PGLITE, () => {
     expect(one(issuer, 'SELECT COUNT(*) AS n FROM user_emails')).toBe(3);
   });
 
-  it('an API D1 before migration 0012 (no email_consents): the plan says so and the rest is erased', async () => {
-    api = newHotDb({ before: '0012' });
+  it('an API D1 before migration 0014 (no email_consents): the plan says so and the rest is erased', async () => {
+    api = newHotDb({ before: '0014' });
     issuer = issuerDb();
     await seed({ consents: false, ledger: false });
     expect(await d1(api)(CONSENT_TABLE_SQL)).toEqual([{ n: 0 }]);
     const out = await uidErase([...ARGV, '--yes'], deps());
     expect(out!.plan.consents).toBeNull();
-    expect(lines.join('\n')).toMatch(/consents {2}none: the API's D1 has no email_consents table \(migration 0012 not applied\)/u);
+    expect(lines.join('\n')).toMatch(/consents {2}none: the API's D1 has no email_consents table \(migration 0014 not applied\)/u);
     expect(out!.erased).not.toHaveProperty('emailConsents');
     expect(out!.erased).toMatchObject({ directoryUsers: 2, issuerApps: 2 });
   });

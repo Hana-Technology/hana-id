@@ -327,7 +327,7 @@ export const identityEmailLabel = (v: unknown): string => IDENTITY_EMAIL.find(([
 
 function Settings({ org, app, owner, frozen }: AppCtl) {
   const s = app.settings;
-  // An API before migration 0012's build omits the setting: it is off there.
+  // An API before migration 0014's build omits the setting: it is off there.
   const shareNow: IdentityEmail = s.identityEmail ?? 'off';
   const step = useStepUp(org);
   const [persistence, setPersistence] = useState(s.persistence);

@@ -1,5 +1,5 @@
--- Email sharing with partners (D411, D439; docs/email-sharing-spec.md "Data model"). Numbered 0012, the next free
--- number after the wallet directory's 0011. This file only adds a column with a default and creates its own table, so
+-- Email sharing with partners (D411, D439; docs/email-sharing-spec.md "Data model"). Numbered 0014, the next free
+-- number after develop's 0012 and 0013. This file only adds a column with a default and creates its own table, so
 -- it applies the same before or after any other; nothing it adds is read by derivation (paths, identities and keys are
 -- on chain, untouched).
 

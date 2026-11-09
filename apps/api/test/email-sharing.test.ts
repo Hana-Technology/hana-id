@@ -88,7 +88,7 @@ async function claimsOf(app: SeededApp, spk: number[], sealedEmail?: string): Pr
   return { status: b.emailStatus, claims: (await verifyToken(b.identityToken as string)).claims };
 }
 
-describe('the app setting (migration 0012)', () => {
+describe('the app setting (migration 0014)', () => {
   it("defaults to 'off'; GET /v1/app answers it", async () => {
     const { seedApp, chain } = await import('./helpers.ts');
     const app = await seedApp();

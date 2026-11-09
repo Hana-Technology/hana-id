@@ -6,7 +6,7 @@
 //   the wallet directory         the API's D1 (migration 0011): the user's end_users rows (keyed by the internal id
 //                                `hu_…`, the uid's encoding, D346) with their wallets and
 //                                identities, through D1's REST API as the operator (lib/d1.ts apiPrivateD1Execute)
-//   the email consents           the API's D1 (migration 0012, D411): the account's email_consents rows of the scope,
+//   the email consents           the API's D1 (migration 0014, D411): the account's email_consents rows of the scope,
 //                                with the copy of any address the user shared with an app (keyed by the User ID, the
 //                                identity token's `sub`; none when the table isn't there yet)
 //   the issuer's user directory  the email issuer's D1 (D269): the identities' user_email_apps rows of the scope, and
@@ -98,7 +98,7 @@ export interface Plan {
   users: { internalId: string; userId: string; supportId: string }[];
   /** The User IDs (`u1_…`) the account's email consents are keyed by: never printed. */
   userSubs: string[];
-  /** Whether the API's D1 has migration 0012's email_consents. */
+  /** Whether the API's D1 has migration 0014's email_consents. */
   consentTable: boolean;
   ledger: { events: number; appUsers: number } | null;
   directory: { users: number; wallets: number; identities: number };
@@ -108,7 +108,7 @@ export interface Plan {
   otherScopes: string[];
 }
 
-/** 1 when the API's D1 has migration 0012's email_consents table. */
+/** 1 when the API's D1 has migration 0014's email_consents table. */
 export const CONSENT_TABLE_SQL = "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'email_consents'";
 
 const PROVIDER_RE = /^[a-z][a-z0-9_-]{0,31}$/u;
@@ -280,7 +280,7 @@ export function formatPlan(p: Plan, where: string): string[] {
     p.ledger ? `  ledger    ${p.ledger.events} event(s) lose their uid, ${p.ledger.appUsers} app_users row(s) deleted` : '  ledger    skipped (--no-ledger)',
     `  wallets   ${p.directory.users} user row(s), ${p.directory.wallets} wallet row(s), ${p.directory.identities} identity row(s) deleted (the API's D1)`,
     p.consents === null
-      ? "  consents  none: the API's D1 has no email_consents table (migration 0012 not applied)"
+      ? "  consents  none: the API's D1 has no email_consents table (migration 0014 not applied)"
       : `  consents  ${p.consents} email consent row(s) of the scope deleted, with any address shared with an app (the API's D1, D411)`,
     p.issuer ? `  issuer    ${p.issuer.apps} app row(s) of the scope deleted, ${p.issuer.emails} address row(s) deleted (no app row left in another scope)` : '  issuer    none (this env has no email issuer)',
   ];

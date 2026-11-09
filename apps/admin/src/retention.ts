@@ -208,7 +208,7 @@ export async function runRetention(d: RetentionDeps): Promise<RetentionSummary> 
       add('directoryUsers', r.users);
       add('directoryWallets', r.wallets);
       add('directoryIdentities', r.identities);
-      // D411: a deleted app's email consents, in pages of the same size (an API before 0012's build answers none).
+      // D411: a deleted app's email consents, in pages of the same size (an API before 0014's build answers none).
       add('emailConsentsPurged', r.emailConsents ?? 0);
       if (r.users < RETENTION_BATCH && (r.emailConsents ?? 0) < RETENTION_BATCH) return;
     }

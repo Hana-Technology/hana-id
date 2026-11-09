@@ -9,7 +9,7 @@
 // - Partners (`PartnerUser`): only users of the org's own scopes (`scopes.org_id`, the same filter every ConsoleRpc
 //   query has); the User ID (the identity token's `sub`), Support ID, times, the connected account kinds that are
 //   active or pending, the wallet addresses, and the email the user shared with one of the org's live apps (D411:
-//   the `granted` rows of migration 0012's `email_consents`, the API's own copy; null when none). An email search is a
+//   the `granted` rows of migration 0014's `email_consents`, the API's own copy; null when none). An email search is a
 //   full address, matched by its MAC among those shared rows only (D315: nothing else can be probed). The SELECT never names `u.user_id` (the internal id), `sub` or
 //   `identity_key` as an output column, so no bug in the mapping can hand one out; a page cursor is `lastSeenAt:u1_…`.
 import {

@@ -2,7 +2,7 @@
 // database with apps/api's migrations applied (0006 included), so every write also passes (or is refused by) the
 // migrations' CHECKs and triggers. Raw signing and new policies are staff proposals, announced here with
 // app:changes:announce (on sandbox-dev without its dashboard blocks: an env with no admin Worker). `--identity-email`
-// (D411) against migration 0012's column, and against a database still at 0011 (no column: shown so, a write refused).
+// (D411) against migration 0014's column, and against a database still at 0013 (no column: shown so, a write refused).
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,7 +25,7 @@ import {
   describeSettings,
   formatDuration,
   IDENTITY_EMAIL_COLUMN_SQL,
-  IDENTITY_EMAIL_NEEDS_0012,
+  IDENTITY_EMAIL_NEEDS_0014,
   IDLE_TTL_MIN_MS,
   parseDuration,
   parseSettingsArgs,
@@ -269,7 +269,7 @@ describe('app:settings --identity-email (D411)', () => {
     await expect(h.run(['--identity-email', 'at_login', '--session-ttl', '30m'])).rejects.toThrow('--session-ttl');
     expect(row(h.db)).toMatchObject({ identity_email: 'off', settings_version: 0 });
     expect(ledger(h.db)).toEqual([]);
-    // Migration 0012's CHECK refuses anything else too.
+    // Migration 0014's CHECK refuses anything else too.
     expect(() => set({ identity_email: 'always' })).toThrow(/CHECK/u);
   });
 
@@ -302,9 +302,9 @@ describe('app:settings --identity-email (D411)', () => {
     expect(row(h.db)).toMatchObject({ persistence: 'session', identity_email: 'at_login' });
   });
 
-  describe('on a hot D1 without migration 0012', () => {
+  describe('on a hot D1 without migration 0014', () => {
     beforeEach(() => {
-      const old = newHotDb({ before: '0012' });
+      const old = newHotDb({ before: '0014' });
       seedHotApp(old, { id: APP, key: KEY, scope: SCOPE });
       h.db = old;
     });
@@ -312,21 +312,21 @@ describe('app:settings --identity-email (D411)', () => {
     it('has no column (the check reads 0), the display says so, and other settings still work', async () => {
       expect(d1Of(h.db)(IDENTITY_EMAIL_COLUMN_SQL)).toEqual([{ n: 0 }]);
       await h.run([]);
-      expect(output()).toContain('Email sharing: not available (migration 0012 not applied to this hot D1)');
+      expect(output()).toContain('Email sharing: not available (migration 0014 not applied to this hot D1)');
       await h.run(['--persistence', 'none']);
       expect(h.db.prepare('SELECT persistence, settings_version FROM apps WHERE id = ?').get(APP)).toEqual({ persistence: 'none', settings_version: 1 });
     });
 
-    it('refuses --identity-email with "apply migration 0012 first", writing nothing', async () => {
-      await expect(h.run(['--identity-email', 'at_login'])).rejects.toThrow(IDENTITY_EMAIL_NEEDS_0012);
-      expect(IDENTITY_EMAIL_NEEDS_0012).toContain('apply migration 0012');
-      await expect(h.run(['--persistence', 'none', '--identity-email', 'off'])).rejects.toThrow(IDENTITY_EMAIL_NEEDS_0012);
+    it('refuses --identity-email with "apply migration 0014 first", writing nothing', async () => {
+      await expect(h.run(['--identity-email', 'at_login'])).rejects.toThrow(IDENTITY_EMAIL_NEEDS_0014);
+      expect(IDENTITY_EMAIL_NEEDS_0014).toContain('apply migration 0014');
+      await expect(h.run(['--persistence', 'none', '--identity-email', 'off'])).rejects.toThrow(IDENTITY_EMAIL_NEEDS_0014);
       expect(h.db.prepare('SELECT persistence, settings_version FROM apps WHERE id = ?').get(APP)).toEqual({ persistence: 'session', settings_version: 0 });
       expect(h.db.prepare("SELECT COUNT(*) AS n FROM app_changes WHERE kind != 'migration.baseline'").get()).toEqual({ n: 0 });
     });
   });
 
-  it('the column check reads 1 once migration 0012 is applied', () => {
+  it('the column check reads 1 once migration 0014 is applied', () => {
     expect(d1Of(h.db)(IDENTITY_EMAIL_COLUMN_SQL)).toEqual([{ n: 1 }]);
   });
 });

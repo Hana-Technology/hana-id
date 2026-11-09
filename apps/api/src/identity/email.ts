@@ -1,5 +1,5 @@
 // Email sharing with partners (D411, D438–D441; docs/email-sharing-spec.md, docs/api.md "Email sharing"): the app
-// setting `identity_email`, the consent rows (migration 0012 `email_consents`), the endpoints the vault and the auth
+// setting `identity_email`, the consent rows (migration 0014 `email_consents`), the endpoints the vault and the auth
 // popup call, and the address a mint puts in the identity token.
 //
 //   POST /v1/identity/email-consent/state    vault   {setting, state} for the session's sealed address
@@ -64,7 +64,7 @@ const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
 // ---- the app setting ----
 
 /**
- * The app's `identity_email`. Before migration 0012 the column doesn't exist: every app is 'off' (as the default
+ * The app's `identity_email`. Before migration 0014 the column doesn't exist: every app is 'off' (as the default
  * says), so the API can be deployed before the migration without sharing or refusing anything. Throws on any other D1
  * error (callers answer 503, or a mint gives no email).
  */

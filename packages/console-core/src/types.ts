@@ -217,7 +217,7 @@ export const appDetail = appSummary
         googleWebClientId: z.string().nullable(),
         rawSign: z.enum(['off', 'approval']),
         policy: z.object({ policyId: z.string().regex(/^[0-9a-f]{64}$/u), label: z.string(), json: z.unknown() }).strict().nullable(),
-        /** D411: `identity_email` (an API before migration 0012's build omits it). */
+        /** D411: `identity_email` (an API before migration 0014's build omits it). */
         identityEmail: z.enum(['off', 'on_request', 'at_login']).optional(),
       })
       .strict(),

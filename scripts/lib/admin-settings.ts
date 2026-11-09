@@ -10,9 +10,9 @@
 // `--auto-approve off` take effect at once, drop any pending value and end or cancel the guarded changes. Every write
 // bumps `settings_version` and records an `app_changes` row.
 //
-// `--identity-email off|on_request|at_login` (D411, migration 0012's `apps.identity_email`): when Hana asks users to
+// `--identity-email off|on_request|at_login` (D411, migration 0014's `apps.identity_email`): when Hana asks users to
 // share their email with the app; immediate, like the persistence (turning it on shares nothing until a user agrees).
-// On a hot D1 without migration 0012 the display says so and the flag is refused before anything is written.
+// On a hot D1 without migration 0014 the display says so and the flag is refused before anything is written.
 import { readFileSync, statSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { canonicalJson, parseAutoApprovePolicy, policyId } from '@hana-id/core/policy';
@@ -51,13 +51,13 @@ export const RAW_SIGN_WARNING =
 
 export type Persistence = 'session' | 'none';
 export type RawSign = 'off' | 'approval';
-/** D411: when Hana asks users to share their email with the app (migration 0012's CHECK). */
+/** D411: when Hana asks users to share their email with the app (migration 0014's CHECK). */
 export type IdentityEmail = 'off' | 'on_request' | 'at_login';
 export const IDENTITY_EMAIL_VALUES: readonly IdentityEmail[] = ['off', 'on_request', 'at_login'];
 /** How the display names each value. */
 export const IDENTITY_EMAIL_LABEL: Record<IdentityEmail, string> = { off: 'off', on_request: 'when the app asks', at_login: 'at first login' };
 /** The refusal of `--identity-email` on a hot D1 without the column. */
-export const IDENTITY_EMAIL_NEEDS_0012 = "--identity-email needs apps.identity_email, which this env's hot D1 doesn't have: apply migration 0012 (0012_email_sharing.sql) first";
+export const IDENTITY_EMAIL_NEEDS_0014 = "--identity-email needs apps.identity_email, which this env's hot D1 doesn't have: apply migration 0014 (0014_email_sharing.sql) first";
 
 export interface SettingsRow {
   id: string;
@@ -78,7 +78,7 @@ export interface SettingsRow {
   auto_approve_pending: string | null;
   auto_approve_effective_at: number | null;
   google_web_client_id: string | null;
-  /** Migration 0012 (D411); absent when the hot D1 doesn't have the column yet. */
+  /** Migration 0014 (D411); absent when the hot D1 doesn't have the column yet. */
   identity_email?: string;
 }
 
@@ -112,10 +112,10 @@ export interface SettingsPlan {
 const SETTINGS_COLUMNS =
   'persistence, session_ttl_ms, idle_ttl_ms, raw_sign, raw_sign_pending, raw_sign_effective_at, auto_approve_policy, auto_approve_pending, auto_approve_effective_at, google_web_client_id';
 
-/** 1 when the hot D1's `apps` has migration 0012's `identity_email` column, else 0 (the table's stored definition). */
+/** 1 when the hot D1's `apps` has migration 0014's `identity_email` column, else 0 (the table's stored definition). */
 export const IDENTITY_EMAIL_COLUMN_SQL = "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'apps' AND instr(sql, 'identity_email') > 0";
 
-/** The settings columns this database has: migration 0012's `identity_email` only once applied. */
+/** The settings columns this database has: migration 0014's `identity_email` only once applied. */
 const settingsColumns = (identityEmail: boolean): string[] => [...SETTINGS_COLUMNS.split(', '), ...(identityEmail ? ['identity_email'] : [])];
 
 /**
@@ -363,7 +363,7 @@ export function planSettings(row: SettingsRow, change: SettingsChange, ctx: Plan
   }
 
   if (change.identityEmail !== undefined) {
-    if (row.identity_email === undefined) throw new CliError(IDENTITY_EMAIL_NEEDS_0012);
+    if (row.identity_email === undefined) throw new CliError(IDENTITY_EMAIL_NEEDS_0014);
     const before = identityEmailOf(row);
     if (change.identityEmail === row.identity_email) lines.push(`email sharing: already ${IDENTITY_EMAIL_LABEL[before]}`);
     else {
@@ -480,7 +480,7 @@ export function describeSettings(row: SettingsRow, now: number, openChanges: rea
     `idle TTL: ${formatDuration(row.idle_ttl_ms)}`,
     `raw signing: ${rawSignInForce(row, now)}${row.raw_sign_pending !== null && row.raw_sign_effective_at !== null && !matured(row.raw_sign_pending, row.raw_sign_effective_at, now) ? ` (approval pending until ${at(row.raw_sign_effective_at)})` : ''}`,
     `Google web client: ${row.google_web_client_id ?? 'the scope’s first Google client'}`,
-    `Email sharing: ${row.identity_email === undefined ? 'not available (migration 0012 not applied to this hot D1)' : IDENTITY_EMAIL_LABEL[identityEmailOf(row)]}`,
+    `Email sharing: ${row.identity_email === undefined ? 'not available (migration 0014 not applied to this hot D1)' : IDENTITY_EMAIL_LABEL[identityEmailOf(row)]}`,
   ];
   const inForce = policyInForce(row, now);
   const policyText = (text: string) => {

@@ -7573,7 +7573,7 @@ decisions, not these.
   tokeninfo itself (no answer for email logins, and the access token is gone after login).
 
 ### D439. One consent table keyed by app, User ID and an address MAC under a new EMAIL_CONSENT_KEY; email search is an exact MAC lookup
-- Date 2026-11-06 · Status: decided while building, **to confirm** · Built: `apps/api/migrations/0012_email_sharing.sql`,
+- Date 2026-11-06 · Status: decided while building, **to confirm** · Built: `apps/api/migrations/0014_email_sharing.sql`,
   `apps/api/src/identity/email.ts`, `apps/api/src/directory/read.ts`
 - Decision: hot-D1 `email_consents (app_id, user_sub, email_mac, state, email, scope_id, decided_at)`, PK app × User ID
   (`u1_…`) × `HMAC-SHA256(EMAIL_CONSENT_KEY, "hana-id/email-consent/v1" ‖ 0x00 ‖ lowercase address)`; `email` (the

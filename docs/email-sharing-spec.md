@@ -48,9 +48,9 @@ not_after_ms = the session commitment's expiresAtMs
   for that purpose. So the address reaches the issuer, the API (which keeps it only on a grant) and the popup, never
   the vault frame or the partner page.
 
-## Data model: migration 0012 (D439)
+## Data model: migration 0014 (D439)
 
-`apps/api/migrations/0012_email_sharing.sql`, hot D1:
+`apps/api/migrations/0014_email_sharing.sql`, hot D1:
 
 | Change | Columns |
 |---|---|

@@ -390,6 +390,8 @@ export class Vault {
   private policy: PolicyInForce | null;
   /** Server-corrected time of the last GET /v1/app (or page render) that confirmed `policy`. */
   private policyCheckedAt: number;
+  /** The same moment on perfNow: `policyFresh` ages the check on both. */
+  private policyCheckedPerf: number;
   private policyCheck: Promise<void> | null = null;
   private policyTimer: unknown = null;
   /** The raw-signing setting in force: the inlined one until GET /v1/app says 'off' (then 'off' until a reload). */
@@ -487,6 +489,7 @@ export class Vault {
     this.clock = new Clock(o.config.serverTimeMs, this.deviceNow);
     this.policy = policyInForce(o.config.settings);
     this.policyCheckedAt = o.config.serverTimeMs;
+    this.policyCheckedPerf = this.perfNow();
     this.rawSign = o.config.settings.rawSign;
     this.rawSignCheckedAt = o.config.serverTimeMs;
     // The page's own render counts as a reading (as for rawSign); GET /v1/app re-confirms it before any mainnet request.
@@ -685,7 +688,7 @@ export class Vault {
       const p = this.api!.app(consentId ? base64UrlEncode(fromHex(consentId)) : undefined).then((app) => {
         this.appRtts.set(app, this.perfNow() - sent);
         this.logoUrl = logoUrlOn(this.env.filesOrigin, app.logoUrl, this.config.appId);
-        this.applyServedPolicy(app, at);
+        this.applyServedPolicy(app, at, sent);
         this.applyServedRawSign(app, at);
         this.applyServedConsent(app, consentId, at, sent);
         this.mainnetDemo = app.mainnetDemo === true;
@@ -710,12 +713,13 @@ export class Vault {
    * Keeps the inlined policy only while GET /v1/app (asked at `at`) serves the same policyId. A removal or a change
    * drops it until a reload: the new policy, if any, then needs its own consent.
    */
-  private applyServedPolicy(app: AppConfig, at: number): void {
+  private applyServedPolicy(app: AppConfig, at: number, sent: number): void {
     const current = this.policy;
     if (!current) return;
     const served = app.autoApprovePolicy ? policyInForce({ ...this.config.settings, autoApprovePolicy: app.autoApprovePolicy }) : null;
     if (served?.policyId === current.policyId) {
       this.policyCheckedAt = Math.max(this.policyCheckedAt, at);
+      this.policyCheckedPerf = Math.max(this.policyCheckedPerf, sent);
       return;
     }
     this.policy = null;
@@ -865,9 +869,14 @@ export class Vault {
    * null, and the request then goes to the approval popup. A failed re-read also gives null for this request.
    */
   private async freshPolicy(): Promise<PolicyInForce | null> {
-    if (this.policy && this.clock.now() - this.policyCheckedAt >= POLICY_FRESH_MS) await this.refreshPolicy().catch(() => undefined);
+    if (this.policy && !this.policyFresh()) await this.refreshPolicy().catch(() => undefined);
     const policy = this.policy;
-    return policy && this.clock.now() - this.policyCheckedAt < POLICY_FRESH_MS ? policy : null;
+    return policy && this.policyFresh() ? policy : null;
+  }
+
+  /** The policy was confirmed within POLICY_FRESH_MS, on the larger of two clocks (as `consentConfirmed`). */
+  private policyFresh(): boolean {
+    return Math.max(this.clock.now() - this.policyCheckedAt, this.perfNow() - this.policyCheckedPerf) < POLICY_FRESH_MS;
   }
 
   private async jwks(kid: string): Promise<Jwk | null> {
@@ -2511,7 +2520,7 @@ export class Vault {
       if (this.live() !== s) throw disconnected();
       const now = this.clock.now();
       // The lock can be slow: the policy must still be this one, confirmed within the bound, when the signature is made.
-      if (this.policy?.policyId !== policy.policyId || now - this.policyCheckedAt >= POLICY_FRESH_MS) return { value: { kind: 'unconfirmed' } };
+      if (this.policy?.policyId !== policy.policyId || !this.policyFresh()) return { value: { kind: 'unconfirmed' } };
       if (!consentActive(consent, policy, now, s.expiresAtMs)) return { value: { kind: 'no_consent' } };
       // Under the lock, on the consent actually read: never a consent the API hasn't just confirmed.
       if (!this.consentConfirmed(consent.consentId!)) return { value: { kind: 'unconfirmed' } };

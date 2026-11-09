@@ -497,10 +497,28 @@ describe('the consent status in the existing 10 s read', () => {
     await grant(s);
     const backend = s.t.browser.backend;
     const before = backend.count('/v1/app');
-    // The corrected clock stands still; only the monotonic timer passes 10 s.
+    // The corrected clock stands still; only the monotonic timer passes 10 s, for the status alone.
     perf += POLICY_FRESH_MS;
+    (s.t.vault as unknown as { policyCheckedPerf: number }).policyCheckedPerf = perf;
     await signAuto(s);
     expect(backend.count('/v1/app')).toBe(before + 1);
+  });
+
+  it("a device clock going back cannot stretch the policy's 10 s either", async () => {
+    let perf = 1_000;
+    const s = await session(new Browser(), {}, { perfNow: () => perf });
+    const popup = await grant(s);
+    const backend = s.t.browser.backend;
+    const before = backend.count('/v1/app');
+    // The corrected clock stands still; only the monotonic timer passes 10 s, for the policy alone, and the app removed it.
+    perf += POLICY_FRESH_MS;
+    (s.t.vault as unknown as { consentRead: { sent: number } }).consentRead.sent = perf;
+    backend.autoApprovePolicy = null;
+    const reply = s.t.request('eth_signTransaction', { tx: evmTx() });
+    answer(s.t, popup, await popup.next('hana:approve-request'), false);
+    expect((await reply).error?.code).toBe(4001);
+    expect(backend.count('/v1/app')).toBe(before + 1);
+    expect(s.t.events.some((e) => e.event === 'autoApproved')).toBe(false);
   });
 
   it("an 'active' answer for consent A can't authorise consent B", async () => {

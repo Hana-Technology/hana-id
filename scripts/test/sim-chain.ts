@@ -190,6 +190,7 @@ export class SimChain {
     if (a.addKey) {
       const acct = this.accounts.get(receiver)!;
       const fc = a.addKey.accessKey.permission.functionCall;
+      if (acct.keys.some((k) => k.public_key === a.addKey!.publicKey.toString())) throw new Error('AddKeyAlreadyExists');
       acct.keys.push({
         public_key: a.addKey.publicKey.toString(),
         access_key: { nonce: 0, permission: fc ? { FunctionCall: { allowance: fc.allowance?.toString() ?? null, receiver_id: fc.receiverId, method_names: fc.methodNames } } : 'FullAccess' },

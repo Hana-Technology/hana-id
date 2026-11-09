@@ -1,6 +1,6 @@
 # hana-signer contract interface (batch A, A.2, B, governance and email login)
 
-Last verified against code: 2026-11-04 (branch `fix/sessions-allow-list`: "No claim allow-list on chain", the API's allow-list on every relayed token, D271, D274); 2026-11-02 (branch `feat/email-login-6`: the API's gas values in the conventions and in "Gas
+Last verified against code: 2026-11-09 (branch `fix/before-mainnet-sweep`: the API's gas list without the methods it no longer relays, D456; the contract is unchanged); 2026-11-04 (branch `fix/sessions-allow-list`: "No claim allow-list on chain", the API's allow-list on every relayed token, D271, D274); 2026-11-02 (branch `feat/email-login-6`: the API's gas values in the conventions and in "Gas
 of the email login calls", D155); 2026-11-02 (branch `feat/batch-c-6`: the security note on unregistered clients names the
 console sink scope; the owner-action nonce is now also recomputed by the API's precheck, against the contract's
 `test_fixture.json`); 2026-11-02 (branch `docs/consistency-pass`: the conventions' gas note points at the
@@ -37,8 +37,7 @@ Conventions:
 - Gas: `derive_key` forwards a fixed 20 Tgas to the MPC and needs ≥ 50 Tgas attached. The API's per-method defaults
   (`apps/api/src/gas.ts`, overridable per env with `GAS_<METHOD>_TGAS`): `create_session` 100 Tgas,
   `create_session_and_derive` 150 (250 with a `link_jwt`), `link_identity` 250, `cancel_link` and `unlink_identity` 150
-  (D155, from email login batch 6), `derive_key` 60, `revoke_session` 20, `prune_sessions` 50, owner-pool methods 50
-  except `register_scope` (30 + 25 per client proof, ≤ 280). Measured on testnet (`docs/context.md`): `create_session`
+  (D155, from email login batch 6), `derive_key` 60, `revoke_session` 20, owner-pool methods 50. Measured on testnet (`docs/context.md`): `create_session`
   and `derive_key` each burn ~20 Tgas over all receipts. `create_session_and_derive` is measured in the sandbox with
   the mock MPC (email-login batch 2), not yet on testnet: ≈ 20.5 Tgas in the signer's receipt, 22–23 Tgas in all with a
   Google token ([Gas of the email login calls](#gas-of-the-email-login-calls-sandbox), [Upgrades](#upgrades)). 300 Tgas

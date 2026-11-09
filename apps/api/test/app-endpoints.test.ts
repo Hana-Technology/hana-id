@@ -1,6 +1,8 @@
+import { KeyPair, type KeyPairString } from '@near-js/crypto';
 import { baseEncode } from '@near-js/utils';
 import { env } from 'cloudflare:workers';
 import { type Mock, afterEach, describe, expect, it, vi } from 'vitest';
+import { claimKeyIndex, relayerKeyCount } from '../src/relayer-pool.ts';
 import { panic, rsaSigner } from './near-mock.ts';
 import { usageOf } from './usage-ledger.ts';
 import { DERIVE_KEY, ORIGIN, appHeaders, bytes, call, chain, deriveBody, google, newKey, newSessionKey, revokeBody, seedApp, seedPlan, sessionBody, uid, startOfMinuteClock } from './helpers.ts';
@@ -436,6 +438,20 @@ describe('POST /v1/derive and /v1/sessions/revoke', () => {
     expect(usage(app.id)).toEqual(['session ok', 'derive ok', 'derive ok']);
     expect((await call('/v1/sessions/revoke', { headers: appHeaders(app), body: await revokeBody(spk, { counter: 3 }) })).status).toBe(200);
     expect(usage(app.id)).toEqual(['session ok', 'derive ok', 'derive ok', 'revoke ok']);
+  });
+
+  it('a session whose key lost its allowance (D455): derive and revoke go through the next key', async () => {
+    const { app, near, spk } = await withSession();
+    const count = relayerKeyCount(env);
+    const first = await claimKeyIndex('session', env.RELAYER_KEYS, spk, count);
+    const keyAt = (i: number) => (JSON.parse(env.RELAYER_KEYS) as string[])[i] as KeyPairString;
+    const bad = KeyPair.fromString(keyAt(first)).getPublicKey().toString();
+    const next = KeyPair.fromString(keyAt((first + 1) % count)).getPublicKey().toString();
+    near.onSendTx = (tx) => (tx.publicKey === bad ? { error: { name: 'HANDLER_ERROR', cause: { name: 'INVALID_TRANSACTION' }, data: { TxExecutionError: { InvalidTxError: 'NotEnoughAllowance' } } } } : undefined);
+    expect((await call('/v1/derive', { headers: appHeaders(app), body: await deriveBody(spk) })).status).toBe(200);
+    expect((await call('/v1/sessions/revoke', { headers: appHeaders(app), body: await revokeBody(spk, { counter: 2 }) })).status).toBe(200);
+    expect(near.sent.map((t) => [t.method, t.publicKey])).toEqual([['derive_key', next], ['revoke_session', next]]);
+    expect(usage(app.id)).toEqual(['derive ok', 'revoke ok']);
   });
 
   it('caches get_session (≤ 10 s)', async () => {

@@ -9,7 +9,7 @@ import type { NearRpc } from './near.ts';
  * link methods (contract v3; a key may name them before the upgrade, nothing can call them then): existing keys are
  * deleted and re-added (`deploy-contract` lists them as a blocker with the commands, docs/operations.md).
  */
-export const SESSION_RELAYER_METHODS = ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'prune_sessions', 'link_identity', 'cancel_link', 'unlink_identity'] as const;
+export const SESSION_RELAYER_METHODS = ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'link_identity', 'cancel_link', 'unlink_identity'] as const;
 
 /** Methods the relayer's owner-pool keys (the API's OWNER_RELAYER_KEYS, /v1/owner-actions) may call on the signer. */
 export const OWNER_RELAYER_METHODS = [
@@ -18,8 +18,6 @@ export const OWNER_RELAYER_METHODS = [
   'remove_client',
   'disable_shared_login',
   'execute_change',
-  'register_scope',
-  'apply_pending_config',
 ] as const;
 
 /**

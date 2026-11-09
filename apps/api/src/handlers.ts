@@ -16,6 +16,7 @@ import { type Caller, PARENT_ORIGIN_HEADER, RELAY_KEY_HEADER, checkCaller, isTes
 import { precheckOwnerAction, sha256Hex } from './owner-actions.ts';
 import type { Limit, RateLimiter } from './rate-limiter.ts';
 import type { RelayInstance, RelayResult } from './relayer-key.ts';
+import { ALREADY_RELAYED } from './relayer-config.ts';
 import { relay } from './relayer-pool.ts';
 import { ckdPayload, createProofPayload, revokePayload, sessionNonce, verifySessionSignature } from './session-crypto.ts';
 import { countEmailUsage } from './email-usage.ts';
@@ -490,11 +491,12 @@ async function appEndpoint(request: Request, env: Env, endpoint: AppEndpoint, ct
     const quota = await appQuota(env, ctx, app);
     if (quota) return quota;
 
-    const relayed = relay(env, 'session', { method: call.method, args: call.args }, requestId);
+    const relayed = relay(env, 'session', { method: call.method, args: call.args }, requestId, { sessionPublicKey: req.sessionPublicKey, expiresAtMs: req.expiresAtMs, counter: 0 });
     const noted = firstSession(env, app, ctx, relayed, exec);
     const result = await relayed;
     await noted;
     lapRelay(ctx, result);
+    if (!result.ok && result.code === ALREADY_RELAYED) return reject(ctx, 409, 'session_exists', 'This session key is already in use');
     if (!result.ok) return relayFailure(ctx, env, result, panicKey);
     if (!isSessionView(result.result)) return done(ctx, 502, { error: 'The contract returned no session', code: 'bad_contract_result', nearTx: result.nearTx });
     rememberSession(req.sessionPublicKey, result.result);
@@ -566,7 +568,7 @@ async function appEndpoint(request: Request, env: Env, endpoint: AppEndpoint, ct
     const quota = await appQuota(env, ctx, app);
     if (quota) return quota;
 
-    const relayed = relay(env, 'session', { method: call.method, args: call.args }, requestId);
+    const relayed = relay(env, 'session', { method: call.method, args: call.args }, requestId, { sessionPublicKey: call.sessionPublicKey, expiresAtMs: check.session.expires_at_ms, counter: call.counter });
     const noted = firstSession(env, app, ctx, relayed, exec);
     const result = await relayed;
     await noted;
@@ -577,6 +579,8 @@ async function appEndpoint(request: Request, env: Env, endpoint: AppEndpoint, ct
     // land), so the next request reads it from chain.
     if (endpoint === '/v1/derive' && result.ok) recordSessionUse(call.sessionPublicKey, call.counter, check.session);
     else forgetSession(call.sessionPublicKey);
+    // A copy relayed from another isolate: this counter is used, so the next one is at least one higher.
+    if (!result.ok && result.code === ALREADY_RELAYED) return done(ctx, 409, { error: `Counter already used (replayed request); the next one is ${call.counter + 1}`, code: 'counter_used', nextCounter: call.counter + 1 });
     if (!result.ok) return relayFailure(ctx, env, result, panicKey);
     // A derive or a revoke can activate a pending link (the contract's `settle`, D445): counted like a login's.
     await countLinkUsage(env, app.id, result.linkTally, ctx, exec);

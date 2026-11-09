@@ -8,7 +8,7 @@ import { DurableObject } from 'cloudflare:workers';
 import type { Env } from './env.ts';
 import { gasFor } from './gas.ts';
 import { log } from './log.ts';
-import { POOL_SECRET, type Pool, isPool, parseRelayerKeys, poolAllows } from './relayer-config.ts';
+import { ALREADY_RELAYED, POOL_SECRET, type Pool, isPool, parseRelayerKeys, poolAllows } from './relayer-config.ts';
 import { RELAY_WAIT_UNTIL, type Rpc, type RpcError, nearRpc, invalidNonce, isDefiniteRejection, isExpired, type SendTxResult } from './near/rpc.ts';
 import type { LinkTally } from './link-usage.ts';
 import { type ContractCall, parseKeyPair, signFunctionCall, waitForOutcome } from './near/tx.ts';
@@ -106,6 +106,17 @@ interface Dispatched {
   response: Promise<SendTxResult>;
 }
 
+const alreadyRelayed: RelayResult = { ok: false, status: 409, code: ALREADY_RELAYED, error: 'This request was already relayed' };
+
+/**
+ * How long a relayed claim is remembered: past the API's session cache (≤ 10 s, views.ts sessionCache), the longest an
+ * isolate can still judge a copy against the session as it was before the original landed. Memory only: an evicted
+ * object forgets (idle ~10 s, by when those cached views have expired too), and the copy then fails on chain.
+ */
+export const CLAIM_MEMORY_MS = 30_000;
+/** At most this many remembered claims per object; the oldest go first. */
+export const MAX_REMEMBERED_CLAIMS = 5_000;
+
 export class RelayerKey extends DurableObject<Env> {
   /** The pool this object serves, fixed by its first relay (an object never signs for two pools). */
   private pool: Pool | null = null;
@@ -125,13 +136,63 @@ export class RelayerKey extends DurableObject<Env> {
   private readonly startedAt = Date.now();
   private served = 0;
   private inflight = 0;
+  /**
+   * Requests signed once (D455, security.md (g)). Every copy of one lands here, from any isolate (relayer-pool.ts
+   * claimKeyIndex; a copy that failed here moves on to the next key, the same one for every copy): held while the
+   * original is in flight, then refused once it succeeded (a copy would only fail on chain, at ~2.2 Tgas), and relayed
+   * when it failed (it may still succeed). An isolate's own holds and pre-checks come first (session-use.ts); this
+   * covers what they can't see.
+   */
+  private readonly claims = new Map<string, Promise<void>>();
+  /** Claim → when its success is forgotten (see CLAIM_MEMORY_MS). */
+  private readonly relayed = new Map<string, number>();
 
   /** Requests currently being relayed through this key (dispatched or waiting for an outcome). */
   get busy(): number {
     return this.inflight;
   }
 
-  async relay(pool: Pool, keyIndex: number, request: ContractCall, requestId?: string): Promise<RelayResult> {
+  async relay(pool: Pool, keyIndex: number, request: ContractCall, requestId?: string, claim?: string): Promise<RelayResult> {
+    if (claim === undefined) return this.relayOnce(pool, keyIndex, request, requestId);
+    for (;;) {
+      if (this.isRelayed(claim)) return alreadyRelayed;
+      const held = this.claims.get(claim);
+      if (!held) break;
+      await held;
+    }
+    let settle!: () => void;
+    this.claims.set(claim, new Promise<void>((resolve) => (settle = resolve)));
+    try {
+      const result = await this.relayOnce(pool, keyIndex, request, requestId);
+      if (result.ok) this.rememberRelayed(claim);
+      return result;
+    } finally {
+      this.claims.delete(claim);
+      settle();
+    }
+  }
+
+  private isRelayed(claim: string): boolean {
+    const until = this.relayed.get(claim);
+    if (until === undefined) return false;
+    if (until > Date.now()) return true;
+    this.relayed.delete(claim);
+    return false;
+  }
+
+  private rememberRelayed(claim: string): void {
+    const now = Date.now();
+    if (this.relayed.size >= MAX_REMEMBERED_CLAIMS) {
+      for (const [k, until] of this.relayed) if (until <= now) this.relayed.delete(k);
+      for (const k of this.relayed.keys()) {
+        if (this.relayed.size < MAX_REMEMBERED_CLAIMS) break;
+        this.relayed.delete(k);
+      }
+    }
+    this.relayed.set(claim, now + CLAIM_MEMORY_MS);
+  }
+
+  private async relayOnce(pool: Pool, keyIndex: number, request: ContractCall, requestId?: string): Promise<RelayResult> {
     const started = Date.now();
     const mark = { dispatched: started };
     const parts: DispatchTiming = { queueMs: 0, chainReadMs: 0, signMs: 0, persistMs: 0 };

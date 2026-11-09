@@ -69,9 +69,9 @@ pub const SHARED_2: &str = "hana-shared-2.apps.googleusercontent.com";
 /// contract). Email login batch 6 adds the three link methods to every state (`LINK_RELAYER_METHODS`, another
 /// delete-and-re-add).
 pub const SESSION_ALLOWLIST_STATES: [&[&str]; 3] = [
-    &["create_session", "create_session_and_derive", "derive_key", "revoke_session", "prune_sessions", "link_identity", "cancel_link", "unlink_identity"],
-    &["create_session_and_derive", "derive_key", "revoke_session", "prune_sessions", "link_identity", "cancel_link", "unlink_identity"],
-    &["create_session", "derive_key", "revoke_session", "prune_sessions", "link_identity", "cancel_link", "unlink_identity"],
+    &["create_session", "create_session_and_derive", "derive_key", "revoke_session", "link_identity", "cancel_link", "unlink_identity"],
+    &["create_session_and_derive", "derive_key", "revoke_session", "link_identity", "cancel_link", "unlink_identity"],
+    &["create_session", "derive_key", "revoke_session", "link_identity", "cancel_link", "unlink_identity"],
 ];
 /// The email-login link methods the session pool relays (/v1/link, /v1/link/cancel, /v1/link/unlink), in every state.
 pub const LINK_RELAYER_METHODS: &[&str] = &["link_identity", "cancel_link", "unlink_identity"];
@@ -86,8 +86,6 @@ pub const OWNER_RELAYER_METHODS: &[&str] = &[
     "remove_client",
     "disable_shared_login",
     "execute_change",
-    "register_scope",
-    "apply_pending_config",
 ];
 /// The methods of an updater key, the function-call key the contract installs on its own account with
 /// `add_updater_key` (docs/governance-spec.md "Updater keys"; the contract's `UPDATER_METHODS`). Written out here

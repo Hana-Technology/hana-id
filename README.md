@@ -144,12 +144,12 @@ same run). Steps:
    Details and the sandbox-dev migration: `docs/operations.md` "Governance".
 3. Add two pools of function-call keys on `relayer`, both with receiver = `signer`, one transaction per pool:
    - **Session pool** (the API's `RELAYER_KEYS`, logins): `--relayer-keys` keys (default 3), limited to
-     `create_session`, `create_session_and_derive`, `derive_key`, `revoke_session`, `prune_sessions`, allowance
+     `create_session`, `create_session_and_derive`, `derive_key`, `revoke_session` and the link methods, allowance
      `--relayer-allowance` each (default 2 NEAR). A key already on chain with another method list (an earlier
      allowlist) stops the plan with the commands to delete it; re-running then re-adds it with the current list.
    - **Owner pool** (the API's `OWNER_RELAYER_KEYS`, `/v1/owner-actions`): `--owner-relayer-keys` keys (default 1),
      limited to `propose_change`, `cancel_change`, `remove_client`, `disable_shared_login`, `execute_change`,
-     `register_scope`, `apply_pending_config`, allowance `--owner-relayer-allowance` each (default 0.5 NEAR).
+     allowance `--owner-relayer-allowance` each (default 0.5 NEAR).
 
    The pools never share a key, so abuse of the public owner-actions endpoint can only drain the owner pool. It can
    never stop logins.
@@ -181,8 +181,7 @@ near CLI command to fix it.
 
 An allowance drops by the gas each call burns, not the gas attached (refunds restore it; measured on testnet,
 `docs/context.md`). The API attaches per-method gas (`apps/api/src/gas.ts`: `create_session` 50 Tgas,
-`create_session_and_derive` 100, `derive_key` 60, `revoke_session` 20, `prune_sessions` 50, `register_scope` 30 + 25
-per client proof, other owner-pool methods 50). A split login burns ~40 Tgas (~0.004 NEAR), so 3 keys × 2 NEAR cover
+`create_session_and_derive` 100, `derive_key` 60, `revoke_session` 20, owner-pool methods 50). A split login burns ~40 Tgas (~0.004 NEAR), so 3 keys × 2 NEAR cover
 ~1,500 logins. Pass larger allowances for heavier testing. To replace a used-up key,
 delete it on chain with near CLI, remove it from its `.secrets` file, and re-run.
 

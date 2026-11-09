@@ -4,6 +4,7 @@ import { ALLOWED_CLAIMS } from '../src/claims.ts';
 import { DEFAULT_GAS_TGAS, TGAS } from '../src/gas.ts';
 import { EXPORTS_PER_PATH_HOUR, exportLimiterKey, loginFailure } from '../src/login.ts';
 import { failedExecutor } from '../src/near/tx.ts';
+import { clearViewCaches } from '../src/views.ts';
 import { ORIGIN, appHeaders, bytes, call, chain, newSessionKey, seedApp, sessionBody, uid } from './helpers.ts';
 import { AUTH, VAULT, appKey, hanaHeaders, loginBody, mismatchedAppKey, withCombinedCall } from './login-helpers.ts';
 import { panic, receiptFailure } from './near-mock.ts';
@@ -222,6 +223,18 @@ describe('POST /v1/login', () => {
     // The same body again (a replay, or a client retry): the key holds a session now.
     const again = await login(app, req);
     expect([again.status, (await body(again)).code]).toEqual([409, 'session_exists']);
+    expect(near.sent).toHaveLength(1);
+  });
+
+  it('a copy another isolate would relay is refused by the session’s relayer object: 409 session_exists, one transaction (D455)', async () => {
+    const { app, aud, near } = await setup();
+    const req = await loginBody(app.scope, aud);
+    expect((await login(app, req)).status).toBe(200);
+    // Another isolate, and a chain view still behind the original's transaction.
+    clearViewCaches();
+    near.views.session_key_in_use = () => false;
+    const copy = await login(app, req);
+    expect([copy.status, (await body(copy)).code]).toEqual([409, 'session_exists']);
     expect(near.sent).toHaveLength(1);
   });
 

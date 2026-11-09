@@ -42,8 +42,8 @@ keys, e.g. the content of `.secrets/<env>/relayer-keys.json`) → `wrangler secr
 | `DO_LOCATION_HINT` | optional var (manifest) | `cloudflare.durableObjectLocation`: region of the shared Durable Objects (`src/placement.ts`) |
 | `VAULT_ORIGIN`, `AUTH_ORIGIN` | vars (manifest) | `vaultOrigin`, `authOrigin`; `gen` refuses an env without them |
 | `BLS_PRECHECK` | var | `"0"` everywhere until its step in `docs/batch-b-spec.md` ("Order of work"). (`REJECT_PII_ON_SESSIONS` is retired: the claim allow-list is always on and a leftover var is ignored, D271) |
-| `RELAYER_KEYS` | secret | Session pool: JSON array of function-call keys on `RELAYER_ACCOUNT` (receiver `SIGNER_ACCOUNT`; `create_session`, `create_session_and_derive`, `derive_key`, `revoke_session`, `prune_sessions`) |
-| `OWNER_RELAYER_KEYS` | secret | Owner pool (small allowance), same format: `propose_change`, `cancel_change`, `remove_client`, `disable_shared_login`, `execute_change`, `register_scope`, `apply_pending_config`. Without it `/v1/owner-actions` answers 503 and logins are unaffected |
+| `RELAYER_KEYS` | secret | Session pool: JSON array of function-call keys on `RELAYER_ACCOUNT` (receiver `SIGNER_ACCOUNT`; `create_session`, `create_session_and_derive`, `derive_key`, `revoke_session` and the link methods) |
+| `OWNER_RELAYER_KEYS` | secret | Owner pool (small allowance), same format: `propose_change`, `cancel_change`, `remove_client`, `disable_shared_login`, `execute_change`. Without it `/v1/owner-actions` answers 503 and logins are unaffected |
 | `GAS_<METHOD>_TGAS` | optional vars | Per-method gas override in Tgas (integer 1..300), e.g. `GAS_DERIVE_KEY_TGAS=80`; invalid values are ignored (logged) |
 | `KEYS_UPDATER_KEY` | secret | function-call key on `SIGNER_ACCOUNT` (governance contract: exactly `set_issuer_key`, `propose_issuer_key_removal`, `execute_issuer_key_change`, installed by `add_updater_key`); cron skips without it |
 | `API_URL` | vars (manifest) | `apiUrl`: the API's own URL, in the vault page's CSP `connect-src` |
@@ -359,8 +359,10 @@ the source batch C's admin portal reads for the contract side of "Security & mon
 Two pools (`src/relayer-config.ts`), each with a strict method allowlist enforced by `relay()` and again inside the
 Durable Object: the session pool (`RELAYER_KEYS`, objects `relayer-key-<index>`) and the owner pool
 (`OWNER_RELAYER_KEYS`, objects `owner-relayer-key-<index>`). Abuse of `/v1/owner-actions` can only drain the owner
-pool, never stop logins. `relayer-pool.ts` picks a key of the pool round-robin and calls its `RelayerKey` Durable
-Object; an object serves one pool and key only.
+pool, never stop logins. `relayer-pool.ts` picks a key of the pool round-robin (a session-signed request: the key an
+HMAC of its session key selects, so every copy meets at one object and a client can't choose it, and the next key once
+if it did not execute on that one, D455) and calls its `RelayerKey` Durable Object; an object serves one pool and key
+only.
 Inside the object a promise-chain mutex covers only *next nonce → sign → reserve → dispatch `send_tx`*; the outcome
 (`send_tx` / `tx` with `wait_until: EXECUTED_OPTIMISTIC`, `tx` polled every 400 ms for up to 60 s) is awaited outside
 it, so many transactions per key are in flight. Nonces are reserved in blocks of 100 (`NONCE_RESERVATION`): storage
@@ -373,8 +375,7 @@ the access key (`max(local, chain, ak_nonce from the error)`) and retries once; 
 retried once; a tx superseded twice 2 s apart while unknown is treated as dropped and resent once with a fresh nonce. The object only relays its pool's methods, always to `SIGNER_ACCOUNT`, no deposit, with
 per-method gas from `src/gas.ts` (never the caller's): `create_session` 100 Tgas, `create_session_and_derive` 150 (250
 with a `link_jwt`), `link_identity` 250, `cancel_link` and `unlink_identity` 150 (D155: 4096-bit issuer keys),
-`derive_key` 60, `revoke_session` 20, `prune_sessions` 50, owner-pool methods 50 except `register_scope`, which
-verifies one RS256 client proof per client: 30 + 25 per proof, capped at 300 (280 for the contract's 10). **To
+`derive_key` 60, `revoke_session` 20, owner-pool methods 50. **To
 measure on testnet**; override with `GAS_<METHOD>_TGAS`.
 
 ## Logging

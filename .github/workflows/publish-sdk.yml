@@ -2,7 +2,8 @@ name: Publish SDK packages
 
 # Publishes @hana-id/core, web, react and sodax (docs/operations.md "Releasing the SDK packages"). Manual dispatch
 # only, from main. Inert until all of these hold:
-#   - the NPM_TOKEN secret exists (the `gate` job skips everything else without it);
+#   - the npm-publish environment exists, limited to the branch main, and holds the NPM_TOKEN secret (never a
+#     repository or organisation secret: the gate fails the run on one; security sweep OPER-4, D452);
 #   - the four packages no longer say `"private": true` (npm refuses to publish a private package);
 #   - the registry, access and licence decisions in docs/operations.md are made.
 # Dry run is the default. Provenance (npm --provenance, signed through this workflow's OIDC token) needs a public
@@ -34,57 +35,56 @@ concurrency:
 
 # Actions are pinned to commit SHAs (supply-chain safety); the comment gives the tag.
 jobs:
+  # In no environment, so a secret it sees is a repository or organisation one. scripts/publish-gate.mjs.
   gate:
-    name: Check the publish token
+    name: Check the publish setup
     runs-on: ubuntu-latest
     timeout-minutes: 2
+    permissions:
+      contents: read
+      actions: read
     outputs:
-      ready: ${{ steps.token.outputs.ready }}
+      ready: ${{ steps.gate.outputs.ready }}
     steps:
-      - id: token
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - id: gate
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          REPO_NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          if [ -n "$NPM_TOKEN" ]; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::NPM_TOKEN is not set: nothing is published (docs/operations.md, Releasing the SDK packages)."
-          fi
+          # An environment that is missing or unreadable reads as "not set up": nothing is published.
+          ENVIRONMENT_JSON=$(gh api "repos/$GITHUB_REPOSITORY/environments/npm-publish" 2>/dev/null || true)
+          BRANCH_POLICIES_JSON=$(gh api "repos/$GITHUB_REPOSITORY/environments/npm-publish/deployment-branch-policies" 2>/dev/null || true)
+          export ENVIRONMENT_JSON BRANCH_POLICIES_JSON
+          node scripts/publish-gate.mjs
 
-  publish:
-    name: Build, check and publish
+  # Install, tests and packing: no token and no OIDC here, whatever a dependency's code does.
+  build:
+    name: Build, check and pack
     needs: gate
     if: needs.gate.outputs.ready == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
-      id-token: write # npm provenance
     env:
       VERSION: ${{ inputs.version }}
       DIST_TAG: ${{ inputs.dist_tag }}
-      DRY_RUN: ${{ inputs.dry_run }}
-      # Decision pending (docs/operations.md): "public" for a public @hana-id npm org, "restricted" for a private one.
-      NPM_ACCESS: restricted
     steps:
-      - name: Only from main
-        if: github.ref != 'refs/heads/main'
-        run: |
-          echo "::error::Publish from main only (this run is on $GITHUB_REF)."
-          exit 1
       - name: Check the inputs
         run: |
           echo "$VERSION" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$' || { echo "::error::version must be x.y.z or x.y.z-pre"; exit 1; }
           echo "$DIST_TAG" | grep -Eq '^[a-z][a-z0-9-]{0,31}$' || { echo "::error::dist_tag must be a lower-case tag name"; exit 1; }
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
-          # Decision pending: the registry. npmjs.org for a public or private @hana-id org.
-          registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
       - name: The four packages are at the requested version
         run: |
@@ -95,8 +95,7 @@ jobs:
       - run: pnpm -r typecheck
       - run: pnpm -r test
       - run: pnpm run pack:check
-      # pnpm pack (prepack runs build:lib) rewrites workspace:^ and applies publishConfig; npm publishes the tarballs
-      # in dependency order.
+      # pnpm pack (prepack runs build:lib) rewrites workspace:^ and applies publishConfig.
       - name: Pack
         run: |
           mkdir -p "$RUNNER_TEMP/packs"
@@ -104,12 +103,53 @@ jobs:
             (cd "packages/$p" && pnpm pack --pack-destination "$RUNNER_TEMP/packs")
           done
           ls -l "$RUNNER_TEMP/packs"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sdk-tarballs
+          path: ${{ runner.temp }}/packs/
+          if-no-files-found: error
+          retention-days: 1
+
+  # Only this job gets the token and the OIDC permission, and it runs none of the repo's code: it publishes the
+  # tarballs the build job made. GitHub hands the environment's secret only to a run on the environment's allowed
+  # branch (main), however this file was edited on another branch.
+  publish:
+    name: Publish
+    needs: [gate, build]
+    if: needs.gate.outputs.ready == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    env:
+      VERSION: ${{ inputs.version }}
+      DIST_TAG: ${{ inputs.dist_tag }}
+      DRY_RUN: ${{ inputs.dry_run }}
+      # Decision pending (docs/operations.md): "public" for a public @hana-id npm org, "restricted" for a private one.
+      NPM_ACCESS: restricted
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: sdk-tarballs
+          path: packs
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          # Decision pending: the registry. npmjs.org for a public or private @hana-id org.
+          registry-url: https://registry.npmjs.org
+      # In dependency order.
       - name: Publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::notice::NPM_TOKEN is not set on the npm-publish environment: nothing is published (docs/operations.md, Releasing the SDK packages)."
+            exit 0
+          fi
           flags="--provenance --access $NPM_ACCESS --tag $DIST_TAG"
           [ "$DRY_RUN" = "true" ] && flags="$flags --dry-run"
           for p in core web react sodax; do
-            npm publish "$RUNNER_TEMP/packs/hana-id-$p-$VERSION.tgz" $flags
+            npm publish "packs/hana-id-$p-$VERSION.tgz" $flags
           done

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { alertText } from '../src/alerts.ts';
 import { type AlertMessage, emailSender, ntfyPager, pagerDutyPager, pushoverPager, sendgridEmail, slackSender } from '../src/channels.ts';
 import { headerValue, ident, MAX_IDENT_CHARS, printable, slackEscape } from '../src/sanitize.ts';
-import { alertsOf, initialized, jwk, T0 } from './helpers.ts';
+import { alertsOf, initialized, jwk, NO_GRACE, T0 } from './helpers.ts';
 
 /** Kids a compromised owner or updater could post (the contract allows any 1..=128 bytes). */
 const HOSTILE = {
@@ -143,7 +143,7 @@ describe('a run with hostile kids', () => {
   it('cancels them and raises alerts whose titles are printable, escaped and bounded', async () => {
     const w = await initialized();
     const kids = Object.values(HOSTILE);
-    for (const [i, kid] of kids.entries()) w.chain.propose('Add', kid, { key: jwk(`x${i}`, 40 + i) });
+    for (const [i, kid] of kids.entries()) w.chain.propose('Add', kid, { key: jwk(`x${i}`, 40 + i), ...NO_GRACE });
     await w.run();
     expect(w.writer.methods().filter((m) => m === 'cancel_issuer_key_change')).toHaveLength(kids.length);
     const alerts = await alertsOf(w.store, 'forged_key_change');

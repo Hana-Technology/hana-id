@@ -1,7 +1,7 @@
 # Hana Home spec: cross-app wallets, key export and consent revocation (pre-mainnet)
 
 **Status: approved design, not built (body rewritten 2026-11-09 in batch H0 to agree with D98, D460–D466 and `develop`
-@ 6304d21).** Implements `docs/decisions.md` D40 (Hana Home before mainnet, amended by D463) and D45 (list and revoke
+@ 6304d21; amended 2026-11-09 for the exit client, D468 and D480–D489, `docs/hana-home-h6-design.md`).** Implements `docs/decisions.md` D40 (Hana Home before mainnet, amended by D463) and D45 (list and revoke
 auto-approve consents per device from any device), under D41 (export stays available, not featured) and D42 (Google
 client tiers). `docs/hana-home-build-plan.md` splits it into batches H0–H12 and holds the open items.
 
@@ -16,10 +16,12 @@ are updated in the same branch as the code, not now.
 2. Partner-held own clients: listed as "best effort"; D40's wording is corrected as this spec says.
 3. **Enterprise (user):** Hana keeps a Hana-held branded Google project and client alive for **at least 2 years** after
    the partner leaves, and Hana can enable shared login on the partner's scope at exit, so Home stays reachable through
-   Hana's own client even if the branded one is suspended. **Amended (D464):** Hana is a scope owner from onboarding,
-   because enabling shared login needs on-chain owner rights.
+   Hana's own client even if the branded one is suspended. **Amended (D481):** Hana holds no owner rights over partner
+   scopes: D464's seat is dropped, because the exit client (D468) gives the same exit without it. Legal reviews the 2-year
+   wording (D489).
 4. Turning off shared login is **delayed by `change_delay_ms`** (a contract change), so a partner can't cut Home's route
-   and shut down at once (D41's exit guarantee). **Extended (D460):** it also needs a remaining Google client.
+   and shut down at once (D41's exit guarantee). **Reversed (D480):** D460's delay and its remaining Google
+   client are dropped. Turning off shared login stays immediate; the exit client (D468) covers users.
 5. Never remove the last shared Google client before its replacement is in force.
 6. One login per app opens both chains' export, PRK held ≤ 5 min.
 7. No forced re-auth just to view addresses; export keeps today's fresh-login rule.
@@ -35,7 +37,7 @@ are updated in the same branch as the code, not now.
 13. Fail closed: auto-approve can't be turned on while the API can't record the consent.
 14. Identity client: the first shared Google client, not a dedicated client, because an unregistered dedicated client
     could be registered by a scope owner as its own. **Extended (D463):** an email user's identity comes from the
-    email issuer.
+    email issuer. **Amended (D484):** Home signs in through a dedicated exit client, which the contract keeps off every scope.
 15. `/home` on `authOrigin`.
 16. Legal review of Home's privacy notice before mainnet.
 
@@ -91,13 +93,14 @@ separate routes; a scope can have both.
 
 | Scope on chain | Tier (D42) | Home | Why |
 |---|---|---|---|
-| `allow_shared`, no own client | Standard (default; Sodax pilot) | **Covered** | Hana's shared client, scope from the nonce. The owner can't turn shared login off: no Google client remains (D460) |
-| `allow_shared` and only the email client | Standard with email | **Covered** | As above: the email client doesn't count as a remaining Google client (D460). Until H6 ships, the owner can turn shared login off at once |
-| `allow_shared` and own Google client | Standard moving to Enterprise, or a partner keeping both | **Covered while `allow_shared`** | Home uses the shared client: the path has no client id, so addresses are the same (D12, D42). A turn-off waits `change_delay_ms` (D460), and Home shows it pending; then the next rows apply |
-| Own client held by Hana, no `allow_shared` | Enterprise (D42) | **Covered while Hana keeps the project and the client stays in the scope** | Hana controls the project. Hana is a scope owner from onboarding and can propose `SetAllowShared {allow:true}` at exit (D464) |
-| Own client held by the partner, no `allow_shared` | Partner-held (D42, discouraged) | **Best effort** | Works only while the partner's client exists and lists `{authOrigin}/login/callback`. Nobody can mint a token with that `aud` once it's deleted, and its wallets are unreachable for good. Hana can't prevent it |
+| Any registered scope, once H6 ships | any | **Covered through the exit client** | Home's exit client (D468) is accepted for every scope whatever its `clients` and `allow_shared`; `aud` never enters the path, so addresses are the same. The email exit reaches scopes that dropped their email client (D485) |
+| `allow_shared`, no own client | Standard (default; Sodax pilot) | **Covered** | Hana's shared client, scope from the nonce. The owner can turn shared login off at once (D480); the exit client then covers it |
+| `allow_shared` and only the email client | Standard with email | **Covered** | As above. Until H6 ships, the owner can turn shared login off at once and leave no route for unlinked Google users |
+| `allow_shared` and own Google client | Standard moving to Enterprise, or a partner keeping both | **Covered while `allow_shared`** | Home uses the shared client: the path has no client id, so addresses are the same (D12, D42). A turn-off is immediate (D480); the exit client then covers it, or, before H6 ships, the next rows apply |
+| Own client held by Hana, no `allow_shared` | Enterprise (D42) | **Covered while Hana keeps the project and the client stays in the scope; the exit client covers it either way** | Hana controls the project. Hana holds no owner seat (D481); the exit client (D468) reaches the scope if the client is removed |
+| Own client held by the partner, no `allow_shared` | Partner-held (D42, discouraged) | **Best effort** | Works only while the partner's client exists and lists `{authOrigin}/login/callback`. Nobody can mint a token with that `aud` once it's deleted, and its wallets are unreachable for good, unless the exit client covers them (D468). Hana can't prevent the deletion |
 | The email client `("email", "email:{scope}")` | any tier with email | **Covered for email identities** | Hana runs the issuer. Gated on the client's registration on chain, not on an active app (D434, D463) |
-| No usable client | — | Not covered | Nothing can open a session |
+| No usable client | — | Not covered, before H6 ships | Nothing can open a session |
 
 Correction to D40's wording ("only their origins can get tokens for that client"): Hana's callback can get them while
 the client exists. The real limit is control of the client.
@@ -106,11 +109,11 @@ Things that stop coverage of a covered scope:
 
 | Event | Who | Effect | Mitigation |
 |---|---|---|---|
-| `SetAllowShared {allow:false}` | any scope owner, after `change_delay_ms` (≤ 7 days) | shared route gone; falls to the own-client row | D460: delayed, needs a remaining Google client. Hana never contacts users (D96), so Home shows the date from `get_scope` |
-| `remove_client` on the last Google client, once shared login is off | any scope owner, immediate | unlinked Google users stranded | **Open** (plan, open item 2): an email client satisfies the rule today |
-| `SetOwners` removing Hana from an Enterprise scope | any scope owner, timelocked | Hana can't enable shared login at exit | the contract wording (D464); the chain can't refuse it |
+| `disable_shared_login` | any scope owner, immediate | shared route gone; falls to the own-client row | the exit client (D468, D480) |
+| `remove_client` on the last Google client, once shared login is off | any scope owner, immediate (today's rule, D480) | that route gone for unlinked Google users | the exit client (D468) |
 | `set_shared_clients` removing the last shared Google client | Hana's owner, immediate | every shared-only scope uncovered | operational rule: rotate by adding first (D98 item 5) |
 | Hana stops paying for or deletes an Enterprise project | Hana | that scope unreachable | contract term (D98 item 3) |
+| The council removes an exit client | council, immediate; retired forever (D483) | exit route gone until a replacement has waited the upgrade delay (D482) | by design: it's the stop for a compromised Home |
 | Governance pause (D86) | owner multisig / watchdog | every derive, Home's included | by design |
 
 App status in D1 (suspended, soft-deleted) does **not** stop Home: Home is keyed by scope, not by app.
@@ -315,7 +318,7 @@ Home falls back to the identity's own path, which finds an unlinked user's share
 | # | Flow | Steps | Chain | Time |
 |---|---|---|---|---|
 | F1 | Sign in | `/home` → Google or an email code → front page | none | Google or mail + ~1 s |
-| F2 | Your apps | your apps first, then the searchable list: name, logo, origins, status, coverage badge, "signed in on N devices", a pending turn-off's date | none | D1 + cached views |
+| F2 | Your apps | your apps first, then the searchable list: name, logo, origins, status, coverage badge, "signed in on N devices" | none | D1 + cached views |
 | F3 | See addresses | an app's page shows them from the overlay, with copy and explorer links, and the Support ID | none | one API call |
 | F4 | Export | expand "Move this wallet…" → fresh Google login or email code → chain → warnings → type `EXPORT` → Show key or Copy key | 1 tx, then none within 5 min | ~8–12 s + Google or mail |
 | F5 | Devices and auto-approve | per app: origin, label, signed in, ends; its consent → "Stop auto-approving"; "Sign out this device"; "Stop sharing email" | none | one API call |
@@ -347,16 +350,22 @@ hashes.
 signer, its own allowance; `deploy-contract` checks it like the session pool. A Home flood can't drain partner logins.
 
 **Email issuer (H10):** a Home route that needs no publishable key and no `IssuerRpc` read: it gates on the chain's
-`("email", "email:{scope}")` client, and mints either the Home identity or a per-scope token.
+`("email", "email:{scope}")` client, and mints either the Home identity or a per-scope token. Once H6 ships, the exit
+token (audience `hana-home`, on the exit list) reaches a registered scope that dropped its email client (D485). The route
+computes the nonce from typed inputs and never accepts one.
 
-## Contract changes (H6, D460)
+## Contract changes (H6, D468, D480–D488)
 
-- `propose_change` accepts `SetAllowShared {allow:false}` when shared login is on, the scope has at least one `("google", …)`
-  client, and the same change isn't already pending. An email client doesn't count.
-- `execute_change` re-checks the Google client, so a client removed while the change waits fails it.
-- `disable_shared_login` no longer turns shared login off at once (removed or a panic: plan, open item 3).
-- A scope owner cancels a pending turn-off with `cancel_change`.
-- No `migrate`, no state change, no address impact. Upgrade through the timelocked path.
+- `set_exit_clients` keeps a council-set list of exit clients (Home's Google client and `("email", "hana-home")`). A new one
+  waits `governance_delay_ms` (D482); a removal is immediate and retired forever (D483). A partner has no method that touches it.
+- `exit_scope()`, called only from `open_session`, accepts them for every registered scope whatever its `clients` and
+  `allow_shared`; `session_scope` is unchanged, so link and owner methods never accept an exit client.
+- Client sets stay disjoint; a self-issued provider's client must be exactly `email:{scope_id}`.
+- Exit sessions: at most 30 minutes and 3 uses, `link_jwt` refused (D486). One event per session and an hourly alert-only
+  counter in `get_config` (D487). No waiting period before the key is released (D488).
+- `disable_shared_login` and `remove_client` keep today's behaviour (D480). Hana holds no owner seat (D481).
+- **`migrate` is needed (state version 4). No address impact.** Upgrade through the timelocked path, then the council sets the
+  list. The design and the order are in `docs/hana-home-h6-design.md`.
 
 Home relies otherwise on shared clients and `allow_shared` (A.2), `create_session_and_derive` (B), the registry views, and
 the governance pause (D86).
@@ -365,7 +374,7 @@ the governance pause (D86).
 
 - `/home` joins `AUTH_PAGE_PATHS` and `AUTH_LOGO_PATHS` (`apps/api/src/pages/host.ts`) and the auth page build, in Hana's
   brand (`packages/brand`, D426). Its policy adds `frame-ancestors 'none'; connect-src {apiUrl} {rpc} {rpcFallback}
-  https://www.googleapis.com` and, with H10, the issuer. No new Google redirect URI: Home uses `/login/callback`.
+  https://www.googleapis.com` and, with H10, the issuer. The shared client adds no Google redirect URI: Home uses `/login/callback`. The exit client's only redirect is Home's page (D484).
 - `/login?mode=home`: accepted only with `event.origin === authOrigin`, `event.source === window.opener` and
   `opener.location.pathname === '/home'`; Google with `max_age=0` for per-app derives, without it for the identity.
 - `@hana-id/core`: `homeNonce`, `homeMessage` and the two consent payloads, with vectors.
@@ -379,7 +388,7 @@ the governance pause (D86).
 | Anyone who signs in as the user (Google or their mailbox) | everything Home offers | — (inherent; the same holds for today's export) |
 | A partner page, or XSS on it | open `/home` in a window | drive Home (no messages accepted, actions need clicks, `frame-ancestors 'none'`), get a Home or shared-client token |
 | A partner holding its own client | mint tokens for its own scope (today) | a Home identity, so no listing or revoking elsewhere |
-| A scope owner | turn shared login off after the delay, while a Google client remains; remove a client (plan, open item 2) | cut Home's route at once (D460) |
+| A scope owner | turn shared login off at once; remove a client (D480) | cut Home's exit route, once H6 ships: it can't touch the exit list (D468) |
 | Compromised API logic or D1 (not the pages) | mislabel or hide apps; **show a wrong address in the view-only list**; hide consents, ignore revocations, deny service, learn that a user visited Home | derive for itself or substitute a key (Home fixes the path from its own token and the chain, the relay is end-to-end encrypted, the pairing check uses the pinned key), grant a consent, sign |
 | Compromised `authOrigin` Worker or bundles, or Cloudflare account | everything, as today (single trust root) | |
 | Someone who sees a Home token (API logs, a proxy) | nothing alone: each call needs `hk`'s signature and a fresh counter; the nonce is never valid on chain | |
@@ -429,15 +438,17 @@ org. Charging partners for users leaving them needs wording in the partner terms
 **Core:** `homeNonce` and `homeMessage` vectors against an independent Node implementation; prefixes differ from every other
 layout; consent payload vectors.
 
-**Contract:** a turn-off waits the delay; refused without a Google client, an email client not counting; refused when
-already off or pending; `execute_change` refused when the Google client has gone; `cancel_change` cancels it; paths unchanged.
+**Contract:** exit on a scope with `allow_shared` false, for Google and email; refused for an unknown scope, a pending or removed
+client, a paused contract, a wrong nonce and over the caps; exit tokens refused by the link methods and owner auth; `link_jwt`
+refused; disjoint client sets; `("email", "hana-home")` refused as a scope client; paths unchanged through own client, shared
+client and exit; v3 to v4 keeps every field. The design's section 6 has the full list.
 
 **API (vitest, miniflare):**
 - Home identity: accepts a valid token of each kind with the Home nonce, key, signature and fresh counter; refuses a scope
   client's token, a retired or pending shared client, a session-nonce token, a wrong key, bad signature, reused counter,
   expired `expiresAtMs`, `expiresAtMs` > now + 20 min, a PII claim, a wrong `Origin`.
 - `/v1/home/apps`: coverage per row of the coverage table; suspended, deleted and purged scopes; a scope with no
-  `first_session_at` left out; test apps; a quieter listing; a member's root; a pending turn-off's date; no Support ID when
+  `first_session_at` left out; test apps; a quieter listing; a member's root; no Support ID when
   there's no row.
 - `/v1/home/login`: works for a suspended app's scope and with no publishable key; refuses a different identity,
   `scope_mismatch`, `shared_login_disabled`, `unregistered_client`, a wrong nonce; per-path, per-user, per-IP and global
@@ -451,7 +462,7 @@ already off or pending; `execute_change` refused when the Google client has gone
 - Billing: an active app's line; Hana's org after exit; report and statement totals.
 - Logs never contain `x-hana-home`, tokens, `sub` or path hashes.
 
-**Email issuer:** a Home token can't open a session; a suspended app's scope gets a token; a scope without the client doesn't;
+**Email issuer:** a Home identity token can't open a session, an exit token opens one for its own user (D485); a suspended app's scope gets a token; a scope without the client doesn't;
 mailbox limits apply.
 
 **Web unit:** the Home state machine (sign in, list, addresses, export, Show key and Copy key, PRK zeroed at 5 min and on
@@ -479,5 +490,6 @@ deferred).
 
 ## Open items
 
-The 2026-10-29 questions were answered in D98, and the readings left over in D460–D466. What's still open is in
+The 2026-10-29 questions were answered in D98, the readings left over in D460–D466 (D460 and D464 since dropped: D480, D481),
+and H6's design in D480–D489. What's still open is in
 `docs/hana-home-build-plan.md` "Still open", each with an owner.

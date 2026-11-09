@@ -90,7 +90,7 @@ test('two sequential requests from two clicks reuse the one approval window', as
   const popup = await popupP;
   await approve(popup);
   expect(await okValue(page, 'first')).toMatchObject({ valid: true });
-  await expect(popup.getByText('Waiting for the next request', { exact: false })).toBeVisible();
+  await expect(popup.getByRole('heading', { name: 'Approved', exact: true })).toBeVisible();
 
   await clickAction(page, 'second', 'stellarSignMessage', 'second');
   await expect(popup.getByText('Request 2 of 2', { exact: false })).toBeVisible();

@@ -11,9 +11,9 @@
 // caller that awaits or `.catch`es it still gets the rejection. `login(options)` takes `hana.login()`'s options
 // (`{ method, emailHint }`); an event argument (`onClick={login}`) is not an option and is dropped. `logout` and `exportKey` reject as usual: their
 // failures are reported nowhere else, so handle them (`onClick={() => logout().catch(report)}`).
-import type { HanaAddresses, HanaClient, HanaEthereumProvider, HanaStellarSigner, LoginOptions } from '@hana-id/web';
+import type { HanaAddresses, HanaClient, HanaEthereumProvider, HanaStellarSigner, LoginOptions, MainnetDemo } from '@hana-id/web';
 import { HanaError } from '@hana-id/web';
-import { type SyntheticEvent, useCallback, useContext, useMemo, useSyncExternalStore } from 'react';
+import { type SyntheticEvent, useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { HanaContext, type HanaContextValue } from './provider.tsx';
 import { INITIAL_STATE, type HanaState } from './store.ts';
 
@@ -95,6 +95,42 @@ export function useHana(): UseHanaResult {
   const logout = useCallback(() => (client ? client.logout() : notMounted()), [client]);
   const exportKey = useCallback((chain: HanaChain) => (client ? client.exportKey(chain) : notMounted()), [client]);
   return useMemo(() => ({ ...state, login, logout, exportKey, client }), [state, login, logout, exportKey, client]);
+}
+
+export interface UseMainnetDemoResult {
+  /** Hana's mainnet demo for this app (its rules and prices), or null: off, or not known yet (see `known`). */
+  demo: MainnetDemo | null;
+  /** True once the client is ready. While false, a null `demo` says nothing; after it, null means the demo is off. */
+  known: boolean;
+}
+
+const DEMO_NOT_KNOWN: UseMainnetDemoResult = Object.freeze({ demo: null, known: false });
+
+/**
+ * `hana.mainnetDemo` and whether it is known yet, as state: re-renders when the demo turns on or off and when its
+ * prices change. Off, "not known yet" and on are three different answers.
+ */
+export function useMainnetDemo(): UseMainnetDemoResult {
+  const { client } = useHanaContext('useMainnetDemo');
+  const [state, setState] = useState<UseMainnetDemoResult>(DEMO_NOT_KNOWN);
+  useEffect(() => {
+    if (!client) {
+      setState(DEMO_NOT_KNOWN);
+      return;
+    }
+    let active = true;
+    const update = () => {
+      if (active) setState({ demo: client.mainnetDemo, known: client.mainnetDemoKnown });
+    };
+    update();
+    client.on('mainnetDemoChanged', update);
+    client.ready.then(update, update);
+    return () => {
+      active = false;
+      client.off('mainnetDemoChanged', update);
+    };
+  }, [client]);
+  return state;
 }
 
 export function useWallet(chain: 'stellar'): StellarWallet;

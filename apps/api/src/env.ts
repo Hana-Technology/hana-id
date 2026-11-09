@@ -34,6 +34,12 @@ export interface Env {
   DO_LOCATION_HINT?: string;
   /** Secret: session pool. JSON array of `ed25519:...` secret keys (create_session, create_session_and_derive, derive_key, revoke_session, prune_sessions). */
   RELAYER_KEYS: string;
+  /**
+   * Optional secret (D436): a CoinGecko API key (Pro, else Demo) for the sandbox mainnet demo's live prices. Sent only in
+   * CoinGecko's own header, and only for an app with the demo on, in a dev testnet env. Without it the public API, then
+   * the fixed table, are used.
+   */
+  COINGECKO_API_KEY?: string;
   /** Secret: owner pool. JSON array of `ed25519:...` secret keys, small allowance, used by /v1/owner-actions only. */
   OWNER_RELAYER_KEYS?: string;
   /**

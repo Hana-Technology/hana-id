@@ -35,7 +35,7 @@ export interface ProtocolEffects {
   readonly recipients: readonly string[];
   /** Every contract the call makes act (approvals, executions). */
   readonly targets: readonly string[];
-  /** Token movements, for display (amount caps are Q39, not enforced in batch B). */
+  /** Token movements, for display (amount caps are not enforced by decoders). */
   readonly tokens: readonly { readonly asset: string; readonly amount: string }[];
 }
 
@@ -55,7 +55,7 @@ export interface ProtocolDecoder {
 
 export type ProtocolDecoderRegistry = ReadonlyMap<string, ProtocolDecoder>;
 
-/** The decoders this bundle ships: none in batch B. */
+/** The decoders this bundle ships: none yet. */
 export const PROTOCOL_DECODERS: ProtocolDecoderRegistry = new Map();
 
 /** Builds a registry (tests, and later bundles that ship decoders). Throws on a duplicate id. */

@@ -36,6 +36,7 @@ import {
   isPublishableKey,
   isTestPublishableKey,
 } from '@hana-id/core';
+import { MAINNET_DEMO_ASSETS, type MainnetDemoAsset, type MainnetDemoPriceBook, type MainnetDemoPriceSource, usdMicrosToString } from '@hana-id/core/mainnet-demo-prices';
 import { VERSION } from '../version.ts';
 import { type ApprovalTicket, ApprovalWindows } from './approval-window.ts';
 import { Emitter } from './emitter.ts';
@@ -74,7 +75,7 @@ export interface HanaEvents {
   /** The vault's launcher (a 320×72 px Hana button) is shown or hidden; `label` is its text. */
   launcher: [{ visible: boolean; label: string }];
   /**
-   * `persistence` changed after login: 'none' when the vault could not save the session for reloads (D79). The wallet
+   * `persistence` changed after login: 'none' when the vault could not save the session for reloads. The wallet
    * keeps working on this page; the next page load needs a new login.
    */
   persistenceChanged: [Persistence];
@@ -85,31 +86,60 @@ export interface HanaEvents {
   identityTokenChanged: [string | null];
   /**
    * `supportId` changed: the user's Support ID arrived with a login or a restored session, or went (null) with the
-   * session. Batch C15.
+   * session.
    */
   supportIdChanged: [string | null];
   /**
    * A sign-in method of the wallet was added (`pending` until `effectiveAtMs`, or `active`), became active, or was
-   * removed (docs/integration.md "Sign-in methods"). Show pending ones to the user with a way to cancel: the mailbox of
+   * removed. Show pending ones to the user with a way to cancel: the mailbox of
    * a pending email may not be theirs.
    */
   linkChanged: [LinkChange];
   /**
-   * The mainnet demo (D428): the vault says this test app has Hana's demo exception on (its rules), or off (null). Sent
-   * only by a dev testnet build of the vault, for apps Hana staff switched on; `hana.mainnetDemo` holds the latest.
+   * Hana's mainnet demo for this test app changed: on with its rules and prices, or off (null). Only a sandbox build of
+   * Hana's vault sends it, for apps Hana staff switched on; `hana.mainnetDemo` holds the latest. It fires again when
+   * the prices change.
    */
   mainnetDemoChanged: [MainnetDemo | null];
 }
 
+/** The vault's price book as a page reads it. */
+function demoPricesForPage(book: MainnetDemoPriceBook): MainnetDemoPrices {
+  const assets = Object.fromEntries(MAINNET_DEMO_ASSETS.map((a) => [a, { usd: usdMicrosToString(BigInt(book.assets[a].usdMicros)), usdMicros: book.assets[a].usdMicros, source: book.assets[a].source }])) as MainnetDemoPrices['assets'];
+  return { source: MAINNET_DEMO_ASSETS.every((a) => book.assets[a].source === 'live') ? 'live' : 'fixed', atMs: book.atMs, assets };
+}
+
+/** One asset's price as the vault values it. */
+export interface MainnetDemoPrice {
+  /** USD per whole unit, as a decimal string: `"2251.7985"`. */
+  usd: string;
+  /** The same in millionths of a dollar, in decimal, for exact arithmetic. */
+  usdMicros: string;
+  /** `live`: from Hana's price feed; `fixed`: Hana's reviewed table, used when no live price is available for the asset. */
+  source: MainnetDemoPriceSource;
+}
+
+/** The prices the vault values requests with. */
+export interface MainnetDemoPrices {
+  /** `live` only when every asset's price is live; check each asset's `source` for the detail. */
+  source: MainnetDemoPriceSource;
+  /** The time (ms) of the oldest live price, or null when every asset is on the fixed table. */
+  atMs: number | null;
+  assets: Record<MainnetDemoAsset, MainnetDemoPrice>;
+}
+
 /**
- * Hana's mainnet demo exception for this app (D428; docs/integration.md "Test and live keys"): the mainnets a test app
- * may sign on, the per-transaction cap and Hana's price table. The vault values each request itself, with its own
- * reviewed prices (not your price source), and refuses one over the cap (4100 `mainnet_demo_over_cap`, `data.usd`,
- * `data.capUsd`) or one it can't value (`mainnet_demo_unknown_call`, `mainnet_demo_unpriced`).
+ * Hana's mainnet demo for this test app: the mainnets it may sign on, the per-transaction cap and the prices in force.
+ * The vault values each request itself with exactly these prices, and refuses one over the cap (4100
+ * `mainnet_demo_over_cap`, `data.usd` and `data.capUsd` strings such as `"$12.40"`) or one it can't value
+ * (`mainnet_demo_unknown_call`, `mainnet_demo_unpriced`). Your page can aim under the cap: value the amount, plus the
+ * transaction's maximum fee in the native asset, at `prices`, and compare with `txCapUsd`.
  */
 export interface MainnetDemo extends MainnetDemoState {
   /** The cap in dollars, `"9.99"`. */
   txCapUsd: string;
+  /** The prices in force, or null while the vault hasn't sent them (a vault older than this SDK). */
+  prices: MainnetDemoPrices | null;
 }
 
 export interface IdentityTokenOptions {
@@ -167,8 +197,12 @@ export class HanaClient extends Emitter<HanaEvents> {
   /** The handshake failed or the port died: status stays 'error'. */
   #vaultDown = false;
   #stopEip6963: (() => void) | null = null;
-  /** The vault's latest `mainnetDemo` announcement (D428), or null. */
+  /** The vault's latest `mainnetDemo` announcement, or null. */
   #mainnetDemo: MainnetDemo | null = null;
+  /** The vault's latest price book, kept apart so the announcement can arrive on either side of it. */
+  #mainnetDemoPrices: MainnetDemoPrices | null = null;
+  /** Whether `ready` resolved: the vault has said whatever it was going to say about the demo. */
+  #mainnetDemoKnown = false;
   readonly #windows: ApprovalWindows;
 
   constructor(config: HanaConfig, deps: HanaClientDeps) {
@@ -233,17 +267,25 @@ export class HanaClient extends Emitter<HanaEvents> {
     return this.#status;
   }
 
-  /** True for a `pk_test_` key: test networks only, and plaintext http RPC URLs allowed (the adapters read it, D115). */
+  /** True for a `pk_test_` key: test networks only, and plaintext http RPC URLs allowed (the adapters read it). */
   get testApp(): boolean {
     return this.#testApp;
   }
 
   /**
-   * Hana's mainnet demo exception for this test app (D428), as the vault stated it, or null (not on, a production env,
-   * or before the vault connected). See MainnetDemo; `mainnetDemoChanged` tells you when it changes.
+   * Hana's mainnet demo for this test app, as the vault stated it, or null: not on, or not known yet (tell those apart
+   * with `mainnetDemoKnown`). See MainnetDemo; `mainnetDemoChanged` tells you when it changes.
    */
   get mainnetDemo(): MainnetDemo | null {
     return this.#mainnetDemo;
+  }
+
+  /**
+   * True once `ready` has resolved. Until then a null `mainnetDemo` means "not known yet"; after it, null means the
+   * demo is off for this app. It stays false if the vault never connected.
+   */
+  get mainnetDemoKnown(): boolean {
+    return this.#mainnetDemoKnown;
   }
 
   /** `{stellar, evm}` while logged in, else null. */
@@ -260,7 +302,7 @@ export class HanaClient extends Emitter<HanaEvents> {
    * The logged-in user's Support ID (`HANA-XXXX-XXXX`), or null: logged out, or the session has none (an API that
    * couldn't compute it, or a session saved by an older vault). The short form of the identity token's `sub`, the same
    * in every app of your scope; it carries no address or email. Show it where your users look for help, put it in your
-   * diagnostics, and give it to Hana with the request IDs when you escalate (docs/integration.md "Support").
+   * diagnostics, and give it to Hana with the request IDs when you escalate.
    */
   get supportId(): string | null {
     return this.#supportId;
@@ -379,7 +421,7 @@ export class HanaClient extends Emitter<HanaEvents> {
   }
 
   /**
-   * The wallet's sign-in methods (build plan batch 7): its own (`root: true`) and the ones linked to it, each
+   * The wallet's sign-in methods: its own (`root: true`) and the ones linked to it, each
    * `active` or `pending` until `effectiveAtMs`. No identifiers or addresses. Rejects 4100 when logged out.
    */
   account(): Promise<AccountResult> {
@@ -387,7 +429,7 @@ export class HanaClient extends Emitter<HanaEvents> {
   }
 
   /**
-   * Adds a sign-in method to the wallet (`'google'` or `'email'`; build plan batch 8b). Call it synchronously in a
+   * Adds a sign-in method to the wallet (`'google'` or `'email'`). Call it synchronously in a
    * click handler, like login(): the Hana popup signs in the new method, then the wallet's own, and the link waits
    * `change_delay_ms` (24 h on mainnet) before it opens the wallet; it resolves with `{provider, status: 'pending',
    * effectiveAtMs}`. Rejects with `link_refused` (`data.reason`) when the methods can't be linked.
@@ -437,7 +479,7 @@ export class HanaClient extends Emitter<HanaEvents> {
   }
 
   /**
-   * The partner identity token (docs/integration.md "Identity token"): an ES256 JWT for this app that the partner's
+   * The partner identity token: an ES256 JWT for this app that the partner's
    * backend verifies against Hana's JWKS. Resolves null while logged out (never rejects for that). Silent: no popup, no
    * user activation needed, and it doesn't count as activity. The vault caches the token across this session's tabs
    * and mints a new one when less than 5 min remain or the cached one is older than `maxAgeMs`. Rejects with
@@ -520,6 +562,7 @@ export class HanaClient extends Emitter<HanaEvents> {
   }
 
   #onReady(s: ReadyStatus): void {
+    this.#mainnetDemoKnown = true;
     this.#readyTimings = this.#handshakeTimings(s);
     this.#persistence = s.persistence;
     this.#warning = s.warning ?? null;
@@ -607,17 +650,26 @@ export class HanaClient extends Emitter<HanaEvents> {
       case 'linkChanged':
         this.emit('linkChanged', e.data);
         return;
+      case 'mainnetDemoPrices':
+        if (!this.#testApp) return;
+        this.#mainnetDemoPrices = demoPricesForPage(e.data);
+        if (this.#mainnetDemo) this.#setMainnetDemo({ ...this.#mainnetDemo, prices: this.#mainnetDemoPrices });
+        return;
       case 'mainnetDemo': {
         // Only a test app's vault may say so (a live app's mainnets need no exception).
         if (!this.#testApp) return;
         const d = e.data;
-        const next: MainnetDemo | null = d === null ? null : { ...d, evmChains: [...d.evmChains], txCapUsd: (Number(BigInt(d.txCapUsdMicros) / 10_000n) / 100).toFixed(2) };
-        if (JSON.stringify(next) === JSON.stringify(this.#mainnetDemo)) return;
-        this.#mainnetDemo = next;
-        this.emit('mainnetDemoChanged', next);
+        if (d === null) this.#mainnetDemoPrices = null;
+        this.#setMainnetDemo(d === null ? null : { ...d, evmChains: [...d.evmChains], txCapUsd: (Number(BigInt(d.txCapUsdMicros) / 10_000n) / 100).toFixed(2), prices: this.#mainnetDemoPrices });
         return;
       }
     }
+  }
+
+  #setMainnetDemo(next: MainnetDemo | null): void {
+    if (JSON.stringify(next) === JSON.stringify(this.#mainnetDemo)) return;
+    this.#mainnetDemo = next;
+    this.emit('mainnetDemoChanged', next);
   }
 
   /** Records the current identity token and emits identityTokenChanged when it is a different one. */

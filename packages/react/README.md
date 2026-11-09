@@ -8,7 +8,7 @@ The packages aren't on a registry yet. Hana sends you the tarballs with their SH
 install them together, next to your React:
 
 ```sh
-npm install ./hana-id-core-0.2.0.tgz ./hana-id-web-0.2.0.tgz ./hana-id-react-0.2.0.tgz
+npm install ./hana-id-core-0.2.1.tgz ./hana-id-web-0.2.1.tgz ./hana-id-react-0.2.1.tgz
 ```
 
 Peer dependency: `react` `^18.0.0 || ^19.0.0` (tested with 18.3.1 and 19.3.1). ESM only, with TypeScript
@@ -17,7 +17,7 @@ declarations.
 ## Use
 
 ```tsx
-import { HanaProvider, useHana, useIdentityToken, useWallet } from '@hana-id/react';
+import { HanaProvider, useHana, useIdentityToken, useMainnetDemo, useWallet } from '@hana-id/react';
 
 const config = {
   publishableKey: 'pk_test_…', // your app's page in Hana's partner portal (header: Publishable key)
@@ -48,6 +48,7 @@ function SignIn() {
 const { address, signer } = useWallet('stellar'); // signer is hana.stellar
 const { address, provider } = useWallet('evm');   // provider is hana.ethereum (EIP-1193)
 const { identityToken, refresh, error } = useIdentityToken(); // a JWT for your backend, kept fresh while visible
+const { demo, known } = useMainnetDemo();                     // Hana's sandbox mainnet demo: off, not known yet, or on
 ```
 
 - `HanaProvider` creates one client, also under strict mode, and destroys it on unmount. It reads `config` once; to
@@ -62,6 +63,9 @@ const { identityToken, refresh, error } = useIdentityToken(); // a JWT for your 
   and `exportKey()` reject as usual: handle them.
 - `useHana().client` is the underlying `HanaClient`, for what the hooks don't wrap (events, auto-approve,
   `revokeOtherDevices`).
+- `useMainnetDemo()` returns `{ demo, known }` for Hana's own sandbox mainnet demo (not available to partner apps):
+  `demo` is `hana.mainnetDemo` (its rules and the prices it values with, `demo.prices.assets.ETH.usd` …) or null, and
+  `known` is false until the client is ready, so `known && !demo` means off and `!known` means not known yet.
 - Server rendering (Next.js): the modules are `'use client'` and the client is created in an effect, so a server
   render shows the initial state (`status: 'unlocking'`, no addresses, `signer`/`provider` null) and never touches
   `window`.

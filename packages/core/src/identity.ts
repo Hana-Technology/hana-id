@@ -39,7 +39,7 @@ export const IDENTITY_SID_PREFIX = 's1_';
 export const IDENTITY_SUB_KEY_BYTES = 32;
 export const IDENTITY_NONCE_BYTES = 16;
 export const IDENTITY_JTI_BYTES = 16;
-/** A token lives at most this long (D120's ceiling, Privy's access-token default). */
+/** A token lives at most this long (the access-token default of comparable wallet services). */
 export const IDENTITY_TOKEN_MAX_LIFETIME_S = 3600;
 /** Less than this left before the session ends: no token (`410 session_ending`). */
 export const IDENTITY_MIN_LIFETIME_S = 30;
@@ -89,7 +89,7 @@ export function identityTokenPayload(i: { parentOrigin: string; walletProofsHash
 }
 
 /**
- * The mainnet demo's signature report (D428, the security review of 2026-11-06): what the session key signs inside
+ * The mainnet demo's signature report: what the session key signs inside
  * identityMessage, binding the event to this session and to the wallet proof of the address that signed.
  * "mainnet-demo-event" ‖ borsh(chain) ‖ borsh(network) ‖ borsh(kind) ‖ borsh(usdMicros) ‖ borsh(address) ‖
  * borsh(Vec<u8> wallet proof signature).

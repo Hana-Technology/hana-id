@@ -33,6 +33,7 @@ import {
   newRequestId,
   parseWindowMessage,
 } from '@hana-id/core';
+import type { MainnetDemoPriceBook } from '@hana-id/core/mainnet-demo-prices';
 import type { AutoApprovePolicyV1 } from '@hana-id/core/policy';
 import { VaultError } from './errors.ts';
 import type { Launcher, LauncherHandle } from './launcher.ts';
@@ -74,6 +75,8 @@ interface SignItem extends BaseItem {
   type: 'sign';
   subject: ApprovalSubject;
   note?: AutoApproveNote;
+  /** The mainnet demo's prices this request was decided with (the popup shows its value with the same book). */
+  demoPrices?: MainnetDemoPriceBook;
 }
 
 interface ConsentItem extends BaseItem {
@@ -141,8 +144,8 @@ export class Approvals {
   constructor(private readonly d: ApprovalDeps) {}
 
   /** Queues a sign request for approval. */
-  requestApproval(subject: ApprovalSubject, note?: AutoApproveNote): Promise<ApprovalOutcome> {
-    return this.enqueue((base) => ({ ...base, type: 'sign', subject, ...(note ? { note } : {}) }));
+  requestApproval(subject: ApprovalSubject, note?: AutoApproveNote, demoPrices?: MainnetDemoPriceBook): Promise<ApprovalOutcome> {
+    return this.enqueue((base) => ({ ...base, type: 'sign', subject, ...(note ? { note } : {}), ...(demoPrices ? { demoPrices } : {}) }));
   }
 
   /** Queues the consent screen for a policy, ending at `expiresAtMs`. */
@@ -429,6 +432,7 @@ export class Approvals {
       context: { ...item.subject.context },
       ...(item.note ? { autoApprove: { ...item.note } } : {}),
       ...(supportId ? { supportId } : {}),
+      ...(item.demoPrices ? { demoPrices: item.demoPrices } : {}),
     };
   }
 

@@ -9,7 +9,7 @@ The packages aren't on a registry yet. Hana sends you the tarballs with their SH
 install them together:
 
 ```sh
-npm install ./hana-id-core-0.2.0.tgz ./hana-id-web-0.2.0.tgz ./hana-id-sodax-0.2.0.tgz @sodax/types@2.2.0
+npm install ./hana-id-core-0.2.1.tgz ./hana-id-web-0.2.1.tgz ./hana-id-sodax-0.2.1.tgz @sodax/types@2.2.0
 ```
 
 Peer dependency: `@sodax/types` `^2.2.0` (tested with 2.2.0). Install the version your `@sodax/sdk` depends on

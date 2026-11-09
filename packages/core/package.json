@@ -1,6 +1,6 @@
 {
   "name": "@hana-id/core",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Pure TypeScript core of Hana ID (no DOM): byte layouts, CKD, derivation v1, signers, decoders, token checks and protocol message schemas.",
   "private": true,
   "license": "UNLICENSED",
@@ -24,6 +24,7 @@
     "./policy": "./src/policy/index.ts",
     "./mainnet-demo": "./src/mainnet-demo.ts",
     "./demo-config": "./src/demo-config.ts",
+    "./mainnet-demo-prices": "./src/mainnet-demo-prices.ts",
     "./support-id": "./src/support-id.ts"
   },
   "files": [
@@ -67,6 +68,10 @@
       "./demo-config": {
         "types": "./dist/demo-config.d.ts",
         "import": "./dist/demo-config.js"
+      },
+      "./mainnet-demo-prices": {
+        "types": "./dist/mainnet-demo-prices.d.ts",
+        "import": "./dist/mainnet-demo-prices.js"
       },
       "./support-id": {
         "types": "./dist/support-id.d.ts",

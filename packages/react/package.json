@@ -1,6 +1,6 @@
 {
   "name": "@hana-id/react",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "React bindings for Hana ID over @hana-id/web: HanaProvider, useHana, useWallet.",
   "private": true,
   "license": "UNLICENSED",

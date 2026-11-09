@@ -6,7 +6,7 @@ import { isDisplaySafeLine } from './display-safe.ts';
 
 export type GoogleMode = 'own' | 'shared';
 
-/** `GET /v1/app`. `name`, `serverTimeMs`, `autoApprovePolicy` and `rawSign` arrive with batch B; older APIs omit them. */
+/** `GET /v1/app`. `name`, `serverTimeMs`, `autoApprovePolicy` and `rawSign` may be omitted by older APIs. */
 export interface AppConfig {
   scopeId: string;
   signer: string;
@@ -24,26 +24,31 @@ export interface AppConfig {
    */
   rawSign?: 'off' | 'approval';
   /**
-   * Hana's mainnet demo exception to D39 (D428): true only for a `pk_test_` app Hana staff switched on, in a dev testnet
+   * Hana's mainnet demo exception to the test-networks-only rule: true only for a `pk_test_` app Hana staff switched on, in a dev testnet
    * env. The vault re-reads it before every mainnet request (within 10 s, as `rawSign`) and treats a missing value as
    * false; its own build must also be a dev testnet build.
    */
   mainnetDemo?: boolean;
   /**
-   * Email login (D231): the sign-in methods the app offers and its scope can serve, in the order google, email. Older
+   * The mainnet demo's prices in force (only with `mainnetDemo: true`). Typed unknown on purpose: the vault runs
+   * parseMainnetDemoPrices on it and uses the fixed table for anything it refuses, or for a missing value (an older API).
+   */
+  mainnetDemoPrices?: unknown;
+  /**
+   * Email login: the sign-in methods the app offers and its scope can serve, in the order google, email. Older
    * APIs omit it (Google only). An app with email but no Google (`google: null`) is refused by isAppConfig until the
-   * vault supports it (D247).
+   * vault supports it.
    */
   loginMethods?: ('google' | 'email')[];
   /** Present when `loginMethods` has email: the scope's email client, `email:<scopeId>`. */
   email?: { aud: string };
   /**
-   * Batch C11: the app's logo on Hana's files origin (`<files origin>/logos/<app id>/<sha256 hex>.png`, logo.ts), or
+   * The app's logo on Hana's files origin (`<files origin>/logos/<app id>/<sha256 hex>.png`, logo.ts), or
    * null; older APIs omit it. Checked where used (logoUrlOn, against the files origin the build pins): a value of
    * another shape is dropped, never a reason to refuse the config (a logo is decoration).
    */
   logoUrl?: unknown;
-  /** pk_test_ apps: the API's own total and phases (docs/api.md "Timings"); checked where used (isServerTimings). */
+  /** pk_test_ apps: the API's own total and phases; checked where used (isServerTimings). */
   timings?: unknown;
   requestId: string;
 }
@@ -76,7 +81,7 @@ export interface CreateSessionBody {
   salt: number[];
   keyIndex: number;
   maxUses: number;
-  /** The session key's proof of possession (D137): `signCreate`, counter 0. Required by the API and by contract v3. */
+  /** The session key's proof of possession: `signCreate`, counter 0. Required by the API and by contract v3. */
   signature: number[];
 }
 
@@ -102,13 +107,13 @@ export interface LoginBody extends CreateSessionBody {
   pk1: string;
   pk2: string;
   /**
-   * An automatic link (D133, build plan batch 8b): the `auto_link` email token, and its mode. `signature` is then over
+   * An automatic link : the `auto_link` email token, and its mode. `signature` is then over
    * the linked CKD payload (core links.ts `linkedCkdPayload`).
    */
   linkJwt?: string;
   linkImmediate?: boolean;
   /**
-   * The export window only (D430): which chain's key it is exporting, a label for the API's `key_exported` event. Not in
+   * The export window only: which chain's key it is exporting, a label for the API's `key_exported` event. Not in
    * the session nonce, the contract call or the CKD payload; the API refuses it from any other page.
    */
   exportChain?: 'stellar' | 'evm';
@@ -118,8 +123,8 @@ export { MAINNET_DEMO_EVENTS_ENDPOINT } from './demo-config.ts';
 
 /**
  * One mainnet demo signature, as the vault reports it after signing: never a key or the signed bytes. `network` is the
- * EVM chain ID in decimal or `pubnet`; `usdMicros` the value the vault assessed, in decimal. Bound to the session (D428,
- * the security review of 2026-11-06): `signature` is the session key's over identityMessage with
+ * EVM chain ID in decimal or `pubnet`; `usdMicros` the value the vault assessed, in decimal. Bound to the session:
+ * `signature` is the session key's over identityMessage with
  * `mainnetDemoEventPayload`, `walletProof` the session's proof of the signing address (the address's own key over
  * this session and app), as the identity token's.
  */
@@ -157,10 +162,10 @@ export interface LoginResponse {
   session: { scope_id: string; expires_at_ms: number; max_uses: number; used: 1 };
   nearTx: string | null;
   requestId: string | null;
-  /** pk_test_ apps only: the API's own total and phases (docs/api.md "Timings"); check with isServerTimings. */
+  /** pk_test_ apps only: the API's own total and phases; check with isServerTimings. */
   timings?: unknown;
   /**
-   * Batch C15: the user's Support ID (`HANA-XXXX-XXXX`, support-id.ts), absent when the API can't compute it. Checked
+   * The user's Support ID (`HANA-XXXX-XXXX`, support-id.ts), absent when the API can't compute it. Checked
    * where used (`supportIdFrom`): a malformed value is dropped, never a reason to refuse the login.
    */
   supportId?: unknown;
@@ -190,7 +195,7 @@ export interface CreateShareResponse {
   absExpiresAtMs: number;
   idleUntilMs: number;
   requestId?: string;
-  /** pk_test_ apps only: the API's own total and phases (docs/api.md "Timings"); check with isServerTimings. */
+  /** pk_test_ apps only: the API's own total and phases; check with isServerTimings. */
   timings?: unknown;
 }
 
@@ -207,7 +212,7 @@ export interface UnlockResponse {
   idleUntilMs: number;
   absExpiresAtMs: number;
   requestId?: string;
-  /** pk_test_ apps only: the API's own total and phases (docs/api.md "Timings"); check with isServerTimings. */
+  /** pk_test_ apps only: the API's own total and phases; check with isServerTimings. */
   timings?: unknown;
 }
 
@@ -227,7 +232,7 @@ export interface RevokeAllResponse {
   requestId?: string;
 }
 
-/** Error codes the batch B endpoints add (docs/batch-b-spec.md "Vault endpoints", "/v1/login", "Relay"). */
+/** Error codes of the signing and vault endpoints. */
 export type VaultApiErrorCode =
   | 'persistence_off'
   | 'invalid_signature'

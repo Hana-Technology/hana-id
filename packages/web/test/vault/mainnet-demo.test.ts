@@ -175,6 +175,121 @@ describe('the mainnet demo in the vault', () => {
     expect(t.events.filter((e) => e.event === 'mainnetDemo')).toEqual([]);
   });
 
+  describe('prices from the API (D436)', () => {
+    const LIVE = {
+      atMs: NOW,
+      assets: { ETH: { usdMicros: '2251798500', source: 'live' }, XLM: { usdMicros: '155400', source: 'live' }, USDC: { usdMicros: '1048950', source: 'live' }, EURC: { usdMicros: '1165500', source: 'live' } },
+    };
+    /** 0.002 ETH: $16 at the fixed table, refused; about $4.50 at the market. */
+    const big = () => send({ value: `0x${(2n * 10n ** 15n).toString(16)}` });
+    const pricesOf = (t: Tab) => t.events.filter((e) => e.event === 'mainnetDemoPrices').map((e) => e.data);
+
+    async function withPrices(mainnetDemoPrices: unknown) {
+      const s = await session();
+      s.t.browser.backend.app = { ...s.t.browser.backend.app, mainnetDemoPrices };
+      s.t.browser.timers.advance(11_000);
+      return s;
+    }
+
+    it('values with the book the API sent: what the fixed table refuses goes to the popup, with those prices', async () => {
+      const s = await withPrices(LIVE);
+      const tx = big();
+      const reply = s.t.request('eth_signTransaction', { tx });
+      await waitLauncher(s.t, 'Review in Hana');
+      const popup = openApproval(s.t);
+      const m = await popup.next('hana:approve-request');
+      expect(m).toMatchObject({ demoPrices: LIVE });
+      answer(s.t, popup, m, true);
+      expect(evmTxSigner((await reply).result as string, tx)).toBe(s.evm);
+      await sleepReal(20);
+      // The report is the value at the prices it was decided with, not the table's.
+      expect((demoEvents(s.t)[0]!.body as { usdMicros: string }).usdMicros).toBe('4503598');
+    });
+
+    it('still refuses over the cap at the live price, naming the value', async () => {
+      const s = await withPrices(LIVE);
+      const reply = await s.t.request('eth_signTransaction', { tx: send({ value: `0x${(5n * 10n ** 15n).toString(16)}` }) });
+      expect(reply.error).toMatchObject({ code: 4100, data: { reason: 'mainnet_demo_over_cap', usd: '$11.26', capUsd: '$9.99' } });
+      await sleepReal(20);
+      expect(approvePopups(s.t)).toHaveLength(0);
+    });
+
+    it.each<[string, unknown]>([
+      ['a price under the floor', { atMs: NOW, assets: { ...LIVE.assets, ETH: { usdMicros: '999999999', source: 'live' } } }],
+      ['a price over the ceiling', { atMs: NOW, assets: { ...LIVE.assets, ETH: { usdMicros: '8000000001', source: 'live' } } }],
+      ['a book past the age limit', { ...LIVE, atMs: NOW - 16 * 60_000 }],
+      ['a missing asset', { atMs: NOW, assets: { XLM: LIVE.assets.XLM, USDC: LIVE.assets.USDC, EURC: LIVE.assets.EURC } }],
+      ['something else entirely', 'free money'],
+      ['no prices at all (an older API)', undefined],
+    ])('uses the fixed table for %s: a lying or old answer changes nothing', async (_name, book) => {
+      const s = await withPrices(book);
+      const reply = await s.t.request('eth_signTransaction', { tx: big() });
+      expect(reply.error).toMatchObject({ code: 4100, data: { reason: 'mainnet_demo_over_cap', usd: '$16.01' } });
+    });
+
+    /** A request refused at any price in the band (0.05 ETH), so it never waits on a popup. */
+    const refusedAnyway = () => send({ value: `0x${(5n * 10n ** 16n).toString(16)}` });
+
+    it('tells the SDK the prices before the demo’s rules, and again only when they change', async () => {
+      const s = await withPrices(LIVE);
+      await s.t.request('eth_signTransaction', { tx: refusedAnyway() });
+      await sleepReal(20);
+      const before = pricesOf(s.t).length;
+      expect(pricesOf(s.t).at(-1)).toEqual(LIVE);
+      // The same answer again: nothing new.
+      s.t.browser.timers.advance(11_000);
+      await s.t.request('eth_signTransaction', { tx: refusedAnyway() });
+      await sleepReal(20);
+      expect(pricesOf(s.t)).toHaveLength(before);
+      // A change is told at once; the page's prices follow the vault's.
+      const next = { atMs: NOW + 5_000, assets: { ...LIVE.assets, XLM: { usdMicros: '160000', source: 'live' } } };
+      s.t.browser.backend.app = { ...s.t.browser.backend.app, mainnetDemoPrices: next };
+      s.t.browser.timers.advance(11_000);
+      await s.t.request('eth_signTransaction', { tx: refusedAnyway() });
+      await sleepReal(20);
+      expect(pricesOf(s.t).at(-1)).toEqual(next);
+    });
+
+    it('announces the fixed table before ready, then the API’s prices, without waiting for a sign request', async () => {
+      const browser = new Browser();
+      browser.backend.serverNow = () => NOW;
+      browser.backend.app = { ...browser.backend.app, mainnetDemo: true, mainnetDemoPrices: LIVE };
+      const t = await readyTab(browser, { googleJwk: g.jwk, config: makeConfig({ serverTimeMs: NOW, settings: { mainnetDemo: true } }) });
+      tabs.push(t);
+      await sleepReal(20);
+      const names = t.events.map((e) => e.event);
+      expect(names.indexOf('mainnetDemoPrices')).toBeLessThan(names.indexOf('mainnetDemo'));
+      expect(pricesOf(t)[0]).toEqual({ atMs: null, assets: { ETH: { usdMicros: '8000000000', source: 'fixed' }, XLM: { usdMicros: '1000000', source: 'fixed' }, USDC: { usdMicros: '1050000', source: 'fixed' }, EURC: { usdMicros: '1350000', source: 'fixed' } } });
+      expect(pricesOf(t).at(-1)).toEqual(LIVE);
+    });
+
+    it('re-reads the prices on its own while the demo is on, and stops when it is off', async () => {
+      const s = await withPrices(LIVE);
+      await s.t.request('eth_signTransaction', { tx: refusedAnyway() });
+      const before = s.t.browser.backend.count('/v1/app');
+      s.t.browser.timers.advance(5 * 60_000 + 1);
+      await sleepReal(20);
+      expect(s.t.browser.backend.count('/v1/app')).toBeGreaterThan(before);
+      s.t.browser.backend.app = { ...s.t.browser.backend.app, mainnetDemo: false };
+      s.t.browser.timers.advance(5 * 60_000 + 1);
+      await sleepReal(20);
+      const off = s.t.browser.backend.count('/v1/app');
+      s.t.browser.timers.advance(30 * 60_000);
+      await sleepReal(20);
+      expect(s.t.browser.backend.count('/v1/app')).toBe(off);
+    });
+
+    it('a production build never uses the prices or asks for them', async () => {
+      const browser = new Browser();
+      browser.backend.serverNow = () => NOW;
+      browser.backend.app = { ...browser.backend.app, mainnetDemo: true, mainnetDemoPrices: LIVE };
+      const t = await readyTab(browser, { googleJwk: g.jwk, env: { ...ENV, name: 'production', devEnv: false }, config: makeConfig({ serverTimeMs: NOW, settings: { mainnetDemo: true } }) });
+      tabs.push(t);
+      await sleepReal(20);
+      expect(pricesOf(t)).toEqual([]);
+    });
+  });
+
   it('never auto-approves a demo request, even under an accepted policy that covers it', async () => {
     const policy = {
       v: 1,

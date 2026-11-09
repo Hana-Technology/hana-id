@@ -4,7 +4,7 @@
 // only when its URL has exactly this shape on the files origin its build pins, and its CSP `img-src` names that origin
 // alone besides 'self' and data:.
 
-/** The path of a logo on the files origin, the only path the files Worker serves (apps/files). */
+/** The path of a logo on the files origin, the only path Hana's files Worker serves. */
 export const LOGO_PATH_RE = /^\/logos\/app_[A-Za-z0-9]{1,64}\/[0-9a-f]{64}\.png$/u;
 
 /** The longest logo URL a message may carry (an origin of up to 512 characters plus the path). */

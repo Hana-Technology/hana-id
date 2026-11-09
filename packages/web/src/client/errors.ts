@@ -22,7 +22,7 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object
 /** `data.requestId` when it is a request ID, else null. */
 const requestIdIn = (data: unknown): string | null => (isObj(data) && isApiRequestId(data.requestId) ? data.requestId : null);
 
-/** `data` without a `requestId` that isn't one (D405); anything else as it came. */
+/** `data` without a `requestId` that isn't one; anything else as it came. */
 function checkedData(data: unknown): unknown {
   if (!isObj(data) || !Object.hasOwn(data, 'requestId') || isApiRequestId(data.requestId)) return data;
   const { requestId: _dropped, ...rest } = data;
@@ -42,7 +42,7 @@ export class HanaError extends Error {
   }
 
   /**
-   * The Hana API request this failure came from (`data.requestId`, D405), or null: an error that never reached the API
+   * The Hana API request this failure came from (`data.requestId`), or null: an error that never reached the API
    * (a check in the SDK or the vault, the user's cancel, a network failure), or from a vault before the field. Send it
    * to Hana with the user's Support ID.
    */
@@ -95,7 +95,7 @@ export class ProviderRpcError extends Error {
 /**
  * The numeric code an EIP-1193 caller sees for a Hana string code. A sign-in that didn't complete (cancelled, timed
  * out, blocked, closed) is 4001, which wagmi, viem and ethers treat as "user rejected"; a dead vault is 4900; a rate
- * limit is -32005; anything else is -32603. The Hana code is kept in `data.code`, and the API request ID (D405) in
+ * limit is -32005; anything else is -32603. The Hana code is kept in `data.code`, and the API request ID in
  * `data.requestId`, as on a HanaError with a numeric code.
  */
 const STRING_TO_NUMERIC: Partial<Record<string, number>> = {
@@ -120,7 +120,7 @@ export function toProviderRpcError(e: unknown): ProviderRpcError {
 
 /**
  * SWK's error shape (`{code, message, ext?}`): a number code, with the Hana string code in `ext[0]` and the API request
- * ID (D405), when there is one, in `ext[1]`. 4001 is a rejection.
+ * ID, when there is one, in `ext[1]`. 4001 is a rejection.
  */
 export interface SwkError {
   code: number;

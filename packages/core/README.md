@@ -12,7 +12,7 @@ The packages aren't on a registry yet. Hana sends you the tarballs with their SH
 install them together:
 
 ```sh
-npm install ./hana-id-core-0.2.0.tgz ./hana-id-web-0.2.0.tgz
+npm install ./hana-id-core-0.2.1.tgz ./hana-id-web-0.2.1.tgz
 ```
 
 ESM only, with TypeScript declarations.
@@ -27,6 +27,7 @@ ESM only, with TypeScript declarations.
 | `@hana-id/core/decode` | the transaction and message decoders the approval popup uses |
 | `@hana-id/core/policy` | the auto-approve policy validator and matcher |
 | `@hana-id/core/support-id` | `supportIdFromSub` on its own (also in the root entry) |
+| `@hana-id/core/mainnet-demo-prices` | the price book of Hana's sandbox mainnet demo: its floor and ceiling per asset and the strict check of a book (no other imports) |
 
 The `signers/stellar` and `decode` declarations reference Node's `Buffer` through `@stellar/stellar-base`: if you
 import those in TypeScript, add `@types/node` or keep `skipLibCheck` on.

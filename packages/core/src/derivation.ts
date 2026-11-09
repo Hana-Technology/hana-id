@@ -124,7 +124,7 @@ export const deriveAddresses = (prk: Uint8Array, account = 0): Addresses => ({
   evm: chainAddress(prk, 'evm', account) as `0x${string}`,
 });
 
-/** S → PRK → addresses, zeroing S and PRK. For callers that only need the addresses (apps/smoke, tests). */
+/** S → PRK → addresses, zeroing S and PRK. For callers that only need the addresses (tests and tooling). */
 export function addressesFromCkdSecret(s: Uint8Array, account = 0): Addresses {
   const prk = extractPrk(s);
   try {

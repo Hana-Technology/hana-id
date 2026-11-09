@@ -17,7 +17,7 @@ The packages aren't on a registry yet. Hana sends you the tarballs with their SH
 install them together (`@hana-id/core` too, from its tarball, never from a registry):
 
 ```sh
-npm install ./hana-id-core-0.2.0.tgz ./hana-id-web-0.2.0.tgz
+npm install ./hana-id-core-0.2.1.tgz ./hana-id-web-0.2.1.tgz
 ```
 
 ESM only, with TypeScript declarations. Use a bundler (Vite, webpack, esbuild, Next.js) or TypeScript with
@@ -142,6 +142,11 @@ A `pk_test_…` app signs only for test networks: any Stellar network but the pu
 `TEST_EVM_CHAINS` (Sepolia, Base Sepolia, Arbitrum Sepolia, OP Sepolia, Sonic testnets, BNB testnet, Amoy, Fuji,
 Holesky, Hoodi, local 31337/1337). Anything a mainnet would accept is refused with `4100`
 (`data.reason: 'mainnet_not_allowed'`) before any popup. Raw signing is never available to test apps.
+
+Hana's own sandbox mainnet demo (not available to partner apps) shows on the client as `hana.mainnetDemo` (its rules
+and the prices it values with, `null` when off or not known yet) and `hana.mainnetDemoKnown` (true once `hana.ready`
+resolved, so a null then means off); `mainnetDemoChanged` tells you when either changes. See the partner guide's
+section 12.
 
 ## Errors
 

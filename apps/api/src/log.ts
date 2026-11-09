@@ -54,6 +54,8 @@ export interface LogFields {
    */
   rpcEndpoint?: number;
   nextRpcEndpoint?: number;
+  /** The mainnet demo's price refresh (mainnet-demo-prices.ts, D436): which CoinGecko attempt. Never a URL or key. */
+  priceSource?: 'pro' | 'demo' | 'public';
 }
 
 export function log(fields: LogFields, level: 'info' | 'warn' | 'error' = 'info'): void {

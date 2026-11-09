@@ -150,6 +150,8 @@ export function secretInventory(m: Manifest, root: string = repoRoot, only?: Wor
 
   if (want('api')) {
     out.push(item('api', 'RELAYER_KEYS', shown(SECRET_FILES.relayerKeys), true, f(SECRET_FILES.relayerKeys), () => readPool(f(SECRET_FILES.relayerKeys))));
+    // Optional (D436): without it the mainnet demo's prices come from CoinGecko's public API, then the fixed table.
+    out.push(item('api', 'COINGECKO_API_KEY', shown('coingecko-api-key'), false, f('coingecko-api-key'), () => readText(f('coingecko-api-key'), /^[A-Za-z0-9_-]{8,200}$/u, 'a CoinGecko API key')));
     out.push(item('api', 'OWNER_RELAYER_KEYS', shown(SECRET_FILES.ownerRelayerKeys), true, f(SECRET_FILES.ownerRelayerKeys), () => readPool(f(SECRET_FILES.ownerRelayerKeys))));
     out.push(
       item('api', 'KEYS_UPDATER_KEY', shown(SECRET_FILES.keysUpdater, 'private_key'), true, f(SECRET_FILES.keysUpdater), () => {

@@ -8,9 +8,10 @@
 // that doesn't decode exactly as expected is refused. The decoders are the approval page's own (decode/), which
 // accept only canonical encodings, so what is valued here is what the chain executes.
 //
-// SECURITY: the prices are a reviewed, deliberately high table (a higher price makes the cap stricter), valid until
-// `validUntilMs`; after that every demo request is refused until someone reviews and rebuilds. Nothing here reads a
-// key or the network.
+// SECURITY: a request is valued with a price book (mainnet-demo-prices.ts, D436): the reviewed, deliberately high table
+// (a higher price makes the cap stricter), or live prices that the vault re-checked against the same band, floor to
+// that table. The table is valid until `validUntilMs`; after that a request valued with any fixed price is refused until
+// someone reviews and rebuilds. Live prices don't depend on that date. Nothing here reads a key or the network.
 import { type ApprovalSubject } from './approval.ts';
 import { type AbiType, type AbiValue, decodeAbiParameters, decodeFunctionData, parseFunctionSignature } from './decode/abi.ts';
 import { DecodeError } from './decode/errors.ts';
@@ -19,6 +20,9 @@ import { type DecodedApproval, decodeApprovalRequest } from './decode/request.ts
 import type { StellarAuthEntry, StellarContractCall, StellarInvocation, StellarScVal, StellarTransaction } from './decode/stellar.ts';
 import { from0xHex } from './bytes.ts';
 import { MAINNET_DEMO_BALANCE_ENDPOINTS, MAINNET_DEMO_EVM_CHAINS, MAINNET_DEMO_TX_CAP_USD_MICROS, STELLAR_MAINNET_PASSPHRASE } from './networks.ts';
+import { MAINNET_DEMO_ASSETS, MAINNET_DEMO_PRICE_BOUNDS, type MainnetDemoAsset, type MainnetDemoPriceBook, fixedMainnetDemoPrices } from './mainnet-demo-prices.ts';
+
+export { MAINNET_DEMO_ASSETS, MAINNET_DEMO_PRICE_BOUNDS, type MainnetDemoAsset, type MainnetDemoPriceBook, type MainnetDemoPriceEntry, type MainnetDemoPriceSource, fixedMainnetDemoPrices, parseMainnetDemoPrices } from './mainnet-demo-prices.ts';
 
 /** USD in millionths of a dollar. */
 export type UsdMicros = bigint;
@@ -26,7 +30,7 @@ export type UsdMicros = bigint;
 export interface DemoAsset {
   readonly symbol: string;
   readonly decimals: number;
-  /** A deliberately high USD price per whole unit, in micros. */
+  /** The fixed table's USD price per whole unit, in micros: the band's ceiling (a request is valued with a book). */
   readonly priceUsdMicros: UsdMicros;
   /** The asset's Sodax hub asset on Sonic (what a Sodax deposit's hub calls must spend), when Sodax lists it. */
   readonly sodaxHubAsset?: string;
@@ -56,7 +60,8 @@ export interface DemoStellar {
 
 /**
  * The reviewed config (2026-11-06; identifiers from Circle's USDC contract addresses page and @sodax/sdk 2.2.0's
- * packaged config, pinned by test/mainnet-demo.test.ts). Prices are above the market on purpose (D429, to confirm).
+ * packaged config, pinned by test/mainnet-demo.test.ts). The fixed prices are above the market on purpose. The
+ * fixed table is what is used when no live price can be.
  */
 export const MAINNET_DEMO = Object.freeze({
   reviewedAt: '2026-11-06',
@@ -72,10 +77,10 @@ export const MAINNET_DEMO = Object.freeze({
     8453: Object.freeze({
       chainId: 8453,
       name: 'Base',
-      native: Object.freeze({ symbol: 'ETH', decimals: 18, priceUsdMicros: 8_000_000_000n, sodaxHubAsset: '0x70178089842be7f8e4726b33f0d1569db8021faa' }),
+      native: Object.freeze({ symbol: 'ETH', decimals: 18, priceUsdMicros: MAINNET_DEMO_PRICE_BOUNDS.ETH.ceilingUsdMicros, sodaxHubAsset: '0x70178089842be7f8e4726b33f0d1569db8021faa' }),
       tokens: Object.freeze({
-        '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913': Object.freeze({ symbol: 'USDC', decimals: 6, priceUsdMicros: 1_050_000n, sodaxHubAsset: '0x72E852545B024ddCbc5b70C1bCBDAA025164259C' }),
-        '0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42': Object.freeze({ symbol: 'EURC', decimals: 6, priceUsdMicros: 1_350_000n, sodaxHubAsset: '0x228615a4e0cb4cb1a8931605301661db2782adb8' }),
+        '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913': Object.freeze({ symbol: 'USDC', decimals: 6, priceUsdMicros: MAINNET_DEMO_PRICE_BOUNDS.USDC.ceilingUsdMicros, sodaxHubAsset: '0x72E852545B024ddCbc5b70C1bCBDAA025164259C' }),
+        '0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42': Object.freeze({ symbol: 'EURC', decimals: 6, priceUsdMicros: MAINNET_DEMO_PRICE_BOUNDS.EURC.ceilingUsdMicros, sodaxHubAsset: '0x228615a4e0cb4cb1a8931605301661db2782adb8' }),
       }),
       sodaxAssetManager: '0x348BE44F63A458be9C1b13D6fD8e99048F297Bc3',
       balanceRpc: MAINNET_DEMO_BALANCE_ENDPOINTS.evm[8453] as string,
@@ -83,19 +88,19 @@ export const MAINNET_DEMO = Object.freeze({
   }) as Readonly<Record<number, DemoEvmChain>>,
   stellar: Object.freeze({
     networkPassphrase: STELLAR_MAINNET_PASSPHRASE,
-    native: Object.freeze({ symbol: 'XLM', decimals: 7, priceUsdMicros: 1_000_000n, assetContract: 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA', sodaxHubAsset: '0x8ac68af223907fb1b893086601a3d99e00f2fa9d' }),
+    native: Object.freeze({ symbol: 'XLM', decimals: 7, priceUsdMicros: MAINNET_DEMO_PRICE_BOUNDS.XLM.ceilingUsdMicros, assetContract: 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA', sodaxHubAsset: '0x8ac68af223907fb1b893086601a3d99e00f2fa9d' }),
     assets: Object.freeze({
       'USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN': Object.freeze({
         symbol: 'USDC',
         decimals: 7,
-        priceUsdMicros: 1_050_000n,
+        priceUsdMicros: MAINNET_DEMO_PRICE_BOUNDS.USDC.ceilingUsdMicros,
         assetContract: 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
         sodaxHubAsset: '0x348007B53F25A9A857aB8eA81ec9E3CCBCf440f2',
       }),
       'EURC:GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2': Object.freeze({
         symbol: 'EURC',
         decimals: 7,
-        priceUsdMicros: 1_350_000n,
+        priceUsdMicros: MAINNET_DEMO_PRICE_BOUNDS.EURC.ceilingUsdMicros,
         assetContract: 'CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV',
         sodaxHubAsset: '0x93d5d2382f302fa78350c18b4df3ee0bd09b3945',
       }),
@@ -145,6 +150,17 @@ export function usdOf(amount: bigint, asset: Pick<DemoAsset, 'decimals' | 'price
   const scale = 10n ** BigInt(asset.decimals);
   return (amount * asset.priceUsdMicros + scale - 1n) / scale;
 }
+
+const isDemoSymbol = (s: string): s is MainnetDemoAsset => (MAINNET_DEMO_ASSETS as readonly string[]).includes(s);
+
+/** `asset` at the price the book gives it. An asset the book doesn't price is refused, not valued at the table's. */
+export function pricedDemoAsset<A extends DemoAsset>(asset: A, prices: MainnetDemoPriceBook): A {
+  if (!isDemoSymbol(asset.symbol)) return unpriced(`the asset ${asset.symbol}`);
+  return { ...asset, priceUsdMicros: BigInt(prices.assets[asset.symbol].usdMicros) };
+}
+
+/** What a request's movements are valued with. */
+type Valuer = (amount: bigint, asset: DemoAsset) => UsdMicros;
 
 /** `$9.99`, `$12.40`, `$0.01` (rounded up to the cent; never shows less than it is). */
 export function formatUsd(micros: UsdMicros): string {
@@ -227,15 +243,15 @@ export function checkSodaxHubCalls(dataHex: string, hubAsset: string | undefined
 
 // ---- EVM ----
 
-function assessEvm(tx: DecodedEvmTx, chain: DemoEvmChain): DemoMovement[] {
+function assessEvm(tx: DecodedEvmTx, chain: DemoEvmChain, value: Valuer): DemoMovement[] {
   const out: DemoMovement[] = [];
   const native = chain.native;
-  out.push({ what: 'fee', symbol: native.symbol, amount: tx.maxFeeWei, usdMicros: usdOf(tx.maxFeeWei, native) });
+  out.push({ what: 'fee', symbol: native.symbol, amount: tx.maxFeeWei, usdMicros: value(tx.maxFeeWei, native) });
   if (tx.to === null) unknownCall('a contract creation');
   const data = from0xHex(tx.data);
   const to = tx.to as string;
   if (data.length === 0) {
-    out.push({ what: 'send', symbol: native.symbol, amount: tx.value, usdMicros: usdOf(tx.value, native) });
+    out.push({ what: 'send', symbol: native.symbol, amount: tx.value, usdMicros: value(tx.value, native) });
     return out;
   }
   const selector = tx.selector;
@@ -248,13 +264,13 @@ function assessEvm(tx: DecodedEvmTx, chain: DemoEvmChain): DemoMovement[] {
     if (eq(tokenAddress, ZERO_ADDRESS)) {
       if (tx.value !== amount) unknownCall('a native deposit whose value differs from its amount');
       checkSodaxHubCalls(bytesOf(hubData), native.sodaxHubAsset, amount);
-      out.push({ what: 'deposit', symbol: native.symbol, amount, usdMicros: usdOf(amount, native) });
+      out.push({ what: 'deposit', symbol: native.symbol, amount, usdMicros: value(amount, native) });
       return out;
     }
     const asset = tokenOf(chain, tokenAddress);
     checkSodaxHubCalls(bytesOf(hubData), asset.sodaxHubAsset, amount);
-    out.push({ what: 'deposit', symbol: asset.symbol, amount, usdMicros: usdOf(amount, asset) });
-    if (tx.value > 0n) out.push({ what: 'send', symbol: native.symbol, amount: tx.value, usdMicros: usdOf(tx.value, native) });
+    out.push({ what: 'deposit', symbol: asset.symbol, amount, usdMicros: value(amount, asset) });
+    if (tx.value > 0n) out.push({ what: 'send', symbol: native.symbol, amount: tx.value, usdMicros: value(tx.value, native) });
     return out;
   }
   // ERC-20 transfers and approvals of a priced token.
@@ -263,8 +279,8 @@ function assessEvm(tx: DecodedEvmTx, chain: DemoEvmChain): DemoMovement[] {
   const asset = tokenOf(chain, to);
   const args = decodeOr(erc20, data, 'a token call that doesn’t decode');
   const amount = uintOf(args[args.length - 1]);
-  out.push({ what: erc20 === ERC20_APPROVE ? 'approval' : 'token', symbol: asset.symbol, amount, usdMicros: usdOf(amount, asset) });
-  if (tx.value > 0n) out.push({ what: 'send', symbol: native.symbol, amount: tx.value, usdMicros: usdOf(tx.value, native) });
+  out.push({ what: erc20 === ERC20_APPROVE ? 'approval' : 'token', symbol: asset.symbol, amount, usdMicros: value(amount, asset) });
+  if (tx.value > 0n) out.push({ what: 'send', symbol: native.symbol, amount: tx.value, usdMicros: value(tx.value, native) });
   return out;
 }
 
@@ -311,7 +327,7 @@ const scBytes = (v: StellarScVal | undefined): string => (v && v.type === 'bytes
  * signing account, of a priced token; every auth entry for exactly that call, with at most the token's own
  * `transfer(from, assetManager, amount: i128)` under it.
  */
-function assessSodaxStellar(call: StellarContractCall, auth: readonly StellarAuthEntry[], signer: string): DemoMovement {
+function assessSodaxStellar(call: StellarContractCall, auth: readonly StellarAuthEntry[], signer: string, value: Valuer): DemoMovement {
   const s = MAINNET_DEMO.stellar;
   if (call.function !== 'transfer' || call.args.length !== 5) unknownCall('a Sodax call other than a deposit');
   const from = scAddress(call.args[0], 'account');
@@ -325,7 +341,7 @@ function assessSodaxStellar(call: StellarContractCall, auth: readonly StellarAut
     if (entry.credentials.type === 'address' && entry.credentials.address !== signer) unknownCall('an authorization for another account');
     checkInvocation(entry.rootInvocation, call, token.assetContract, from, s.sodaxAssetManager, amount);
   }
-  return { what: 'deposit', symbol: token.symbol, amount, usdMicros: usdOf(amount, token) };
+  return { what: 'deposit', symbol: token.symbol, amount, usdMicros: value(amount, token) };
 }
 
 function checkInvocation(root: StellarInvocation, call: StellarContractCall, tokenContract: string, from: string, assetManager: string, amount: bigint): void {
@@ -344,22 +360,22 @@ function checkInvocation(root: StellarInvocation, call: StellarContractCall, tok
   }
 }
 
-function assessStellar(tx: StellarTransaction, signer: string): DemoMovement[] {
+function assessStellar(tx: StellarTransaction, signer: string, value: Valuer): DemoMovement[] {
   const s = MAINNET_DEMO.stellar;
   const out: DemoMovement[] = [];
   const fee = STROOPS(tx.fee);
-  out.push({ what: 'fee', symbol: s.native.symbol, amount: fee, usdMicros: usdOf(fee, s.native) });
+  out.push({ what: 'fee', symbol: s.native.symbol, amount: fee, usdMicros: value(fee, s.native) });
   for (const op of tx.operations) {
     switch (op.type) {
       case 'payment': {
         const a = stellarAsset(op.asset);
         const amount = STROOPS(op.amount);
-        out.push({ what: 'send', symbol: a.symbol, amount, usdMicros: usdOf(amount, a) });
+        out.push({ what: 'send', symbol: a.symbol, amount, usdMicros: value(amount, a) });
         break;
       }
       case 'createAccount': {
         const amount = STROOPS(op.startingBalance);
-        out.push({ what: 'send', symbol: s.native.symbol, amount, usdMicros: usdOf(amount, s.native) });
+        out.push({ what: 'send', symbol: s.native.symbol, amount, usdMicros: value(amount, s.native) });
         break;
       }
       case 'changeTrust':
@@ -369,7 +385,7 @@ function assessStellar(tx: StellarTransaction, signer: string): DemoMovement[] {
       case 'invokeHostFunction': {
         const hf = op.hostFunction;
         if (hf.type !== 'invokeContract' || hf.contract !== s.sodaxAssetManager) unknownCall('a Soroban call Hana can’t read');
-        out.push(assessSodaxStellar(hf as StellarContractCall, op.auth, signer));
+        out.push(assessSodaxStellar(hf as StellarContractCall, op.auth, signer, value));
         break;
       }
       default:
@@ -392,10 +408,12 @@ export function demoNetworkOf(decoded: DecodedApproval): DemoNetwork | null {
 }
 
 /**
- * Whether the mainnet demo may sign this mainnet request, and what it can move. `nowMs` is the server-corrected time
- * (the price table's validity). Never throws: anything that doesn't decode is refused.
+ * Whether the mainnet demo may sign this mainnet request, and what it can move, valued with `prices` (default: the
+ * fixed table). `nowMs` is the server-corrected time, against which a fixed price's validity is checked: a request
+ * valued with any expired fixed price is refused (`mainnet_demo_prices_stale`), one valued only with live prices is
+ * not. Never throws: anything that doesn't decode is refused. `prices` is a book parseMainnetDemoPrices accepted.
  */
-export function assessMainnetDemo(subject: ApprovalSubject, nowMs: number): DemoAssessment {
+export function assessMainnetDemo(subject: ApprovalSubject, nowMs: number, prices: MainnetDemoPriceBook = fixedMainnetDemoPrices()): DemoAssessment {
   let decoded: DecodedApproval;
   try {
     decoded = decodeApprovalRequest(subject);
@@ -404,21 +422,30 @@ export function assessMainnetDemo(subject: ApprovalSubject, nowMs: number): Demo
   }
   const network = demoNetworkOf(decoded);
   if (!network) return { ok: false, reason: 'mainnet_not_allowed', network: null, message: MAINNET_DEMO_RULE };
-  if (!(nowMs < MAINNET_DEMO.validUntilMs)) {
-    return { ok: false, reason: 'mainnet_demo_prices_stale', network, message: `Hana’s mainnet demo prices were last reviewed on ${MAINNET_DEMO.reviewedAt} and have expired: nothing is signed until they are reviewed` };
-  }
+  const expired = !(nowMs < MAINNET_DEMO.validUntilMs);
+  const stale: DemoAssessment = {
+    ok: false,
+    reason: 'mainnet_demo_prices_stale',
+    network,
+    message: `Hana’s mainnet demo prices were last reviewed on ${MAINNET_DEMO.reviewedAt} and have expired: nothing is signed until they are reviewed`,
+  };
+  // With the whole table in use nothing is asked of the request first, as before live prices.
+  if (expired && MAINNET_DEMO_ASSETS.every((a) => prices.assets[a].source === 'fixed')) return stale;
+  const value: Valuer = (amount, asset) => usdOf(amount, pricedDemoAsset(asset, prices));
   let movements: DemoMovement[];
   try {
-    if (decoded.kind === 'evm_tx') movements = assessEvm(decoded.tx, MAINNET_DEMO.evm[decoded.chainId] as DemoEvmChain);
+    if (decoded.kind === 'evm_tx') movements = assessEvm(decoded.tx, MAINNET_DEMO.evm[decoded.chainId] as DemoEvmChain, value);
     else if (decoded.kind === 'stellar_tx') {
       if (decoded.envelope.envelope === 'fee_bump') unknownCall('a fee-bump transaction');
-      movements = assessStellar(decoded.envelope.tx, subject.address);
+      movements = assessStellar(decoded.envelope.tx, subject.address, value);
     } else if (decoded.kind === 'eip712') movements = unknownCall('typed data, which can authorize token moves');
     else movements = unknownCall('a Soroban authorization');
   } catch (e) {
     if (e instanceof Refusal) return { ok: false, reason: e.reason, network, message: e.message };
     return { ok: false, reason: 'mainnet_demo_unknown_call', network, message: 'Hana can’t tell how much this moves, so the mainnet demo won’t sign it' };
   }
+  // A mixed book after the table's expiry: refused only if this request leans on a fixed price.
+  if (expired && movements.some((m) => isDemoSymbol(m.symbol) && prices.assets[m.symbol].source === 'fixed')) return stale;
   const usdMicros = movements.reduce((sum, m) => sum + m.usdMicros, 0n);
   const cap = MAINNET_DEMO.txCapUsdMicros;
   if (usdMicros > cap) {

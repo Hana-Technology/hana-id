@@ -89,7 +89,7 @@ export const revokePayload = (): Bytes => utf8(REVOKE_PAYLOAD);
 export const CREATE_PROOF_PREFIX = 'hana-id-create-v1:';
 
 /**
- * A bare create_session's proof-of-possession payload (D137), signed with counter 0: "hana-id-create-v1:" ‖
+ * A bare create_session's proof-of-possession payload, signed with counter 0: "hana-id-create-v1:" ‖
  * sha256(session nonce preimage). It binds the proof to the session's every parameter (signer, scope, key, expiry,
  * key_index, max_uses, salt). Contract v3 requires it; v2 ignores the extra `signature` argument.
  */

@@ -24,7 +24,7 @@ import {
   signEvmTransaction,
 } from '@hana-id/core';
 import { withChainKey } from '@hana-id/core/derivation';
-import { type DemoAssessment, MAINNET_DEMO, assessMainnetDemo, formatUsd } from '@hana-id/core/mainnet-demo';
+import { type DemoAssessment, MAINNET_DEMO, type MainnetDemoPriceBook, assessMainnetDemo, formatUsd } from '@hana-id/core/mainnet-demo';
 import {
   parseStellarAuthPreimage,
   parseStellarEnvelope,
@@ -50,10 +50,11 @@ export interface SubjectRules {
   testApp: boolean;
   /**
    * The mainnet demo exception (D428): set only when this vault's build is a dev testnet build and the app's
-   * `mainnetDemo` was confirmed on (vault.ts freshMainnetDemo); `nowMs` is the server-corrected time the price table is
-   * checked against. Null: every mainnet is refused for a test app, as D39 says.
+   * `mainnetDemo` was confirmed on (vault.ts freshMainnetDemo); `nowMs` is the server-corrected time a fixed price's
+   * validity is checked against, `prices` the book the request is valued with (D436). Null: every mainnet is refused
+   * for a test app, as D39 says.
    */
-  mainnetDemo?: { nowMs: number } | null;
+  mainnetDemo?: { nowMs: number; prices: MainnetDemoPriceBook } | null;
   /**
    * EVM digests a raw request may never be (D179): the session's own identity wallet-proof digest, so an approved raw
    * signature can't stand in for a wallet proof.
@@ -128,7 +129,7 @@ export function approvalSubject(request: SignRequest, addresses: RecordAddresses
     const mainnet = mainnetOfRequest(request);
     if (mainnet) {
       if (!rules.mainnetDemo) throw new VaultError(ErrorCode.unauthorized, TEST_APP_NETWORK_RULE, { reason: 'mainnet_not_allowed', ...mainnet });
-      const assessed = assessMainnetDemo(subject, rules.mainnetDemo.nowMs);
+      const assessed = assessMainnetDemo(subject, rules.mainnetDemo.nowMs, rules.mainnetDemo.prices);
       if (!assessed.ok) throw demoRefusal(assessed, mainnet);
     }
   }

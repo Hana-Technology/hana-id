@@ -152,8 +152,8 @@ describe('chains', () => {
     const state = { evmChains: [8453], stellarNetworkPassphrase: 'Public Global Stellar Network ; September 2015', txCapUsdMicros: '9990000', pricesReviewedAt: '2026-11-06', pricesValidUntilMs: Date.UTC(2026, 11, 21) };
     s.vault.emit('mainnetDemo', state);
     await vi.waitFor(() => expect(s.client.mainnetDemo).not.toBeNull());
-    expect(s.client.mainnetDemo).toEqual({ ...state, txCapUsd: '9.99' });
-    expect(seen).toEqual([{ ...state, txCapUsd: '9.99' }]);
+    expect(s.client.mainnetDemo).toEqual({ ...state, txCapUsd: '9.99', prices: null });
+    expect(seen).toEqual([{ ...state, txCapUsd: '9.99', prices: null }]);
     await expect(switchTo('0x2105')).resolves.toBeNull();
     expect(await p.request({ method: 'eth_chainId' })).toBe('0x2105');
     // Another mainnet stays refused, configured or not.
@@ -168,6 +168,56 @@ describe('chains', () => {
     await vi.waitFor(() => expect(s.client.mainnetDemo).toBeNull());
     expect((await refused(switchTo('0x2105'), 4100)).data).toMatchObject({ reason: 'mainnet_not_allowed' });
     expect(seen.at(-1)).toBeNull();
+  });
+
+  it('carries the prices the vault values with, and whether the state is known yet', async () => {
+    const book = { atMs: 1_800_000_000_000, assets: { ETH: { usdMicros: '2251798500', source: 'live' }, XLM: { usdMicros: '155400', source: 'live' }, USDC: { usdMicros: '1050000', source: 'fixed' }, EURC: { usdMicros: '1165500', source: 'live' } } };
+    const state = { evmChains: [8453], stellarNetworkPassphrase: 'Public Global Stellar Network ; September 2015', txCapUsdMicros: '9990000', pricesReviewedAt: '2026-11-06', pricesValidUntilMs: Date.UTC(2026, 11, 21) };
+    s = setup({ config: { evm: EVM_CONFIG } });
+    expect(s.client.mainnetDemoKnown).toBe(false);
+    await s.vault.connect(LOGGED_IN);
+    expect(s.client.mainnetDemoKnown).toBe(true);
+    // Prices first (the vault's order): nothing is announced until the demo is on, then one change carries both.
+    const seen: unknown[] = [];
+    s.client.on('mainnetDemoChanged', (d) => seen.push(d));
+    s.vault.emit('mainnetDemoPrices', book);
+    s.vault.emit('mainnetDemo', state);
+    await vi.waitFor(() => expect(s.client.mainnetDemo).not.toBeNull());
+    expect(seen).toHaveLength(1);
+    expect(s.client.mainnetDemo?.prices).toEqual({
+      source: 'fixed',
+      atMs: 1_800_000_000_000,
+      assets: {
+        ETH: { usd: '2251.7985', usdMicros: '2251798500', source: 'live' },
+        XLM: { usd: '0.1554', usdMicros: '155400', source: 'live' },
+        USDC: { usd: '1.05', usdMicros: '1050000', source: 'fixed' },
+        EURC: { usd: '1.1655', usdMicros: '1165500', source: 'live' },
+      },
+    });
+    // New prices: one change, the same state otherwise.
+    const allLive = { ...book, assets: { ...book.assets, USDC: { usdMicros: '1048950', source: 'live' } } };
+    s.vault.emit('mainnetDemoPrices', allLive);
+    await vi.waitFor(() => expect(seen).toHaveLength(2));
+    expect(s.client.mainnetDemo?.prices?.source).toBe('live');
+    expect(s.client.mainnetDemo?.txCapUsd).toBe('9.99');
+    // A vault's book outside the band is dropped: the last good one stays.
+    s.vault.emit('mainnetDemoPrices', { atMs: book.atMs, assets: { ...book.assets, ETH: { usdMicros: '99000000000', source: 'live' } } });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(seen).toHaveLength(2);
+    // Off clears the prices; on again without any starts from null.
+    s.vault.emit('mainnetDemo', null);
+    await vi.waitFor(() => expect(s.client.mainnetDemo).toBeNull());
+    s.vault.emit('mainnetDemo', state);
+    await vi.waitFor(() => expect(s.client.mainnetDemo).not.toBeNull());
+    expect(s.client.mainnetDemo?.prices).toBeNull();
+  });
+
+  it('ignores the prices event on a live app', async () => {
+    s = setup({ config: { publishableKey: 'pk_live_1111111111111111111111', evm: EVM_CONFIG } });
+    await s.vault.connect(LOGGED_IN);
+    s.vault.emit('mainnetDemoPrices', { atMs: null, assets: { ETH: { usdMicros: '8000000000', source: 'fixed' }, XLM: { usdMicros: '1000000', source: 'fixed' }, USDC: { usdMicros: '1050000', source: 'fixed' }, EURC: { usdMicros: '1350000', source: 'fixed' } } });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(s.client.mainnetDemo).toBeNull();
   });
 
   it('a live app (pk_live_) may switch to mainnet chains', async () => {

@@ -77,7 +77,7 @@ export interface AutoApproveContext {
   /** Today's (or an older) usage from the consent record; null for none yet. */
   readonly usage: AutoApproveUsage | null;
   readonly nowMs: number;
-  /** Defaults to PROTOCOL_DECODERS (empty in batch B). */
+  /** Defaults to PROTOCOL_DECODERS (empty for now). */
   readonly decoders?: ProtocolDecoderRegistry;
 }
 

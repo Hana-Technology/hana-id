@@ -29,6 +29,8 @@ import { MAX_BODY, isError, toCreateSession, toDeriveKey, toOwnerAction, toRevok
 import { type AppSettings, effectiveSettings, getSettingsRow } from './vault/settings.ts';
 import { type LoginMethod, appLoginMethods } from './login-methods.ts';
 import { mainnetDemoOn } from './mainnet-demo-setting.ts';
+import { mainnetDemoPrices } from './mainnet-demo-prices.ts';
+import { fixedMainnetDemoPrices } from '@hana-id/core/mainnet-demo-prices';
 import { LINK_ADDS_PER_IP_MINUTE, LINK_CHANGES_PER_IP_MINUTE } from './links.ts';
 import { TtlCache, effectiveSharedClients, forgetScope, forgetSession, getConfig, getScope, isIssuerKeyActive, isSessionView, isSharedClient, recordSessionUse, rememberSession, scopeForClient, sessionKeyInUse } from './views.ts';
 
@@ -322,7 +324,7 @@ export async function appQuota(env: Env, ctx: Ctx, app: App): Promise<Response |
  * `loginMethods: ['google']` added, and its 409 `no_google_client`; an app with email on answers 409
  * `no_login_method` when neither method is available, and `google: null` when only email is.
  */
-export async function handleAppConfig(request: Request, env: Env, requestId: string): Promise<Response> {
+export async function handleAppConfig(request: Request, env: Env, requestId: string, exec?: ExecutionContext): Promise<Response> {
   const ctx = newCtx(env, requestId, APP_CONFIG_ENDPOINT, request);
   const gate = await appGate(request, env, ctx, 'config');
   if (!gate.ok) return gate.response;
@@ -352,7 +354,10 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
       return { scope, config: needsShared ? await settle(getConfig(env)) : null };
     }),
   );
-  const [settingsDone, chainDone] = await Promise.all([settingsRead, chainRead]);
+  // The mainnet demo's prices (D436), beside the chain read, only once the app is known to have the demo on: a CoinGecko
+  // call happens for no other request. Its own phase, only then. Never fails: the fixed table stands in.
+  const pricesRead = settingsRead.then((s) => (s.ok && s.value[2] ? timed('prices', mainnetDemoPrices(env, exec)).then((p) => (p.ok ? p.value : fixedMainnetDemoPrices())) : null));
+  const [settingsDone, chainDone, demoPrices] = await Promise.all([settingsRead, chainRead, pricesRead]);
   if (!settingsDone.ok) return reject(ctx, 503, 'config_unavailable', 'App config is unavailable, try again');
   const [settings, methods, mainnetDemo] = settingsDone.value;
   const autoApprovePolicy: AppSettings['autoApprovePolicy'] = settings?.autoApprovePolicy ?? null;
@@ -391,6 +396,8 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
       rawSign,
       // D428: the mainnet demo, on only for a test app Hana staff switched on, in a dev testnet env.
       mainnetDemo,
+      // D436: the prices in force, only with the demo on; older vaults ignore the field.
+      ...(demoPrices ? { mainnetDemoPrices: demoPrices } : {}),
       // Batch C11: the app's logo on the files origin (`<FILES_ORIGIN>/<logo_key>`), or null (no logo, or no files
       // origin in this env). The auth pages show it beside the name; older clients ignore the field.
       logoUrl: logoUrl(env.FILES_ORIGIN, app.logo_key) ?? null,

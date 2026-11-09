@@ -9,7 +9,7 @@ import { isTimings } from './timings.ts';
 
 export const RELAY_IV_BYTES = 12;
 export const RELAY_KEY_BYTES = 32;
-/** The relay's body cap (12 KiB, enforced by the API too: apps/api login-relay.ts RELAY_MAX_BODY). */
+/** The relay's body cap (12 KiB, enforced by the API too). */
 export const RELAY_MAX_BODY_BYTES = 12_288;
 /**
  * The largest plaintext a relay value may have: its ciphertext (plus the 16-byte tag), base64url in `{"iv","ct"}`, then
@@ -25,19 +25,19 @@ const GOOGLE_ERROR = /^[a-z_]{1,64}$/u;
  * access token. `timings`: pk_test_ apps only, the login popup's stage durations (`authCheck`, `callback*`,
  * timings.ts), which the vault adds to the login's timings.
  *
- * Email login and linking (build plan batch 8b), only in a login whose auth-params carried a `followKey`:
+ * Email login and linking, only in a login whose auth-params carried a `followKey`:
  * - `accessToken`: Google's access token beside the ID token, for the vault's google-match only (one-request mode's
- *   form; no popup sends it since that mode's removal, D273);
+ *   form; no popup sends it since that mode's removal);
  * - `access: 'follow'`: Google's access token is in follow-up slot 1 (second_request's silent request, or
- *   token_first's first request, D270; in a token_first record-only login, `emailRecord`, for google-record);
+ *   token_first's first request; in a token_first record-only login, `emailRecord`, for google-record);
  * - `caseB`: this popup's email step found the address's Google wallet (`verify` → `linkTicket`, the address's
- *   `sub`), and the user chose "Link and continue" before going to Google (D139);
+ *   `sub`), and the user chose "Link and continue" before going to Google;
  * - `as`: what a token answering the vault's follow-up is (`link`: case A's `auto_link` token after the code step;
  *   `session`: an email login's token; `proof`: a link method's proof).
  */
 export type RelayPayload = RelayTokenPayload | (({ accessToken: string } | { error: string; claim?: string }) & { timings?: Record<string, number> });
 
-/** A claim name the popup may name beside `{error: 'token_has_pii'}` (the first claim outside the allow-list, D273). */
+/** A claim name the popup may name beside `{error: 'token_has_pii'}` (the first claim outside the allow-list). */
 export const RELAY_CLAIM_NAME = /^[A-Za-z0-9_.:-]{1,64}$/u;
 
 /** A relayed token (RelayPayload's first form). */
@@ -53,7 +53,7 @@ export interface RelayTokenPayload {
 /** Whether a relay payload is a token (rather than an access token or an error). */
 export const isRelayToken = (p: RelayPayload): p is RelayTokenPayload => 'idToken' in p;
 
-/** Case B (D139): proof that this popup ran the email step for the address whose `sub` is `emailSub`. */
+/** Case B: proof that this popup ran the email step for the address whose `sub` is `emailSub`. */
 export interface CaseBProof {
   linkTicket: string;
   emailSub: string;
@@ -82,7 +82,7 @@ const TOKEN_EXTRAS: readonly string[] = ['accessToken', 'access', 'caseB', 'as']
 
 /**
  * True for `{idToken[, accessToken | access, caseB, as]}`, `{accessToken}` or `{error: ^[a-z_]{1,64}$}` (with
- * `claim` only beside `token_has_pii`: the popup refused an ID token before relaying it, D273), each with an optional
+ * `claim` only beside `token_has_pii`: the popup refused an ID token before relaying it), each with an optional
  * `timings` record.
  */
 export function isRelayPayload(v: unknown): v is RelayPayload {
@@ -132,7 +132,7 @@ export function decryptRelayPayload(relayKey: Uint8Array, relayId: string, value
 
 /**
  * A sign-in the vault asks the popup for: Google with this nonce (and the account to pick, `loginHint`, a Google
- * `sub`), or an email code with this purpose and commitment (the issuer computes the nonce from it, D195).
+ * `sub`), or an email code with this purpose and commitment (the issuer computes the nonce from it).
  */
 export type FollowProve =
   | { method: 'google'; nonce: string; loginHint: string | null }
@@ -154,14 +154,14 @@ export interface LinkBanner {
  * What the vault tells the popup after Google's (or the email step's) answer, in the follow-up slots 2, 4, 6, …; the
  * popup answers a notice in slot `n` (a token or `{error}`) in slot `n + 1`.
  * - `link_code`: case A, not Google-hosted: "Link and continue" (google-match prepared a code to `to`, a…@domain,
- *   sent by `resend` after the click) or "Sign in with email" (D195).
+ *   sent by `resend` after the click) or "Sign in with email".
  * - `use_email`: case A that can't link (the email's account already has a Google sign-in, or is full): only "Sign in
- *   with email" (never a second wallet, D122).
+ *   with email" (never a second wallet).
  * - `email_consent`: a Google identity without a wallet whose address google-match couldn't read, because the user
  *   declined Google's email permission (`declined`) or picked another Google account on Google's screen
  *   (`account_mismatch`): the popup explains why it is needed and offers "Sign in with email instead" (an email login,
  *   `as: 'session'`) or "Try Google again" (the access request again, `login_hint` the signed-in `sub`, whose answer,
- *   `{accessToken}` or `{error}`, is the reply), D264.
+ *   `{accessToken}` or `{error}`, is the reply).
  * - `prove`: a link method's proof (`hana.linkAccount`'s two sign-ins).
  * - `done`: the vault's last word: close, or show these banners first.
  * - `stop`: the login ended with `code` (`link_pending`: this method's link activates at `effectiveAtMs`).

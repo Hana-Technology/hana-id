@@ -21,7 +21,7 @@ export const apiRequestIdOf = (v: unknown): string | null => (isApiRequestId(v) 
 
 /**
  * The first SDK version told `data.requestId` in a port error. The vault adds it only for an SDK whose `hana:hello`
- * names this version or a later one (support-id.ts `sdkAtLeast`), as D393 does for `supportId`: an older SDK gets
+ * names this version or a later one (support-id.ts `sdkAtLeast`), as the SDK gate does for `supportId`: an older SDK gets
  * exactly the error shapes it was built against. Ships with 0.2.0, the release that brings `supportId`.
  */
 export const API_REQUEST_ID_SDK_MIN = '0.2.0';

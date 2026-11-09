@@ -247,6 +247,9 @@ async function counts(c: Ctx, p: CountsOf): Promise<Pick<Plan, 'ledger' | 'direc
   return { ledger, directory, consents, issuer, events };
 }
 
+/** Internal ids per read: 500 quoted ids is about 16 KB, well inside D1's 100 KB statement limit. */
+const HOME_EVENT_IDS_PER_READ = 500;
+
 /**
  * The other scopes where these identities have only a Hana Home derive: a stranger's derive leaves a `key_exported` row
  * with no app and no directory row (D527), so neither directory names the scope. The internal id is per scope, so it is
@@ -263,7 +266,12 @@ async function homeEventScopes(c: Ctx, identities: readonly Identity[]): Promise
   } finally {
     key.fill(0);
   }
-  return (await c.deps.apiD1(c.m, `SELECT DISTINCT scope_id FROM user_events WHERE ${home} AND user_id IN (${list(ids)})`, c.remote)).map((r) => String(r.scope_id));
+  // In batches: D1 caps a statement's size (100 KB), and the list grows with the scopes.
+  const found = new Set<string>();
+  for (let i = 0; i < ids.length; i += HOME_EVENT_IDS_PER_READ) {
+    for (const r of await c.deps.apiD1(c.m, `SELECT DISTINCT scope_id FROM user_events WHERE ${home} AND user_id IN (${list(ids.slice(i, i + HOME_EVENT_IDS_PER_READ))})`, c.remote)) found.add(String(r.scope_id));
+  }
+  return [...found];
 }
 
 /** The other scopes the account's identities are seen in (by either directory, or by a Home derive): each needs its own run. */

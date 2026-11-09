@@ -175,6 +175,7 @@ describe('POST /v1/home/login: what it opens', () => {
     e.exit = [['email', HOME_EMAIL_AUDIENCE]];
     fresh();
     const sub = `e1.${uid()}`;
+    e.identities.set(`email#${sub}`, { status: 'own', opened: true });
     const emailIdentity = await newIdentity({ jwt: (nonce) => emailToken({ aud: HOME_EMAIL_AUDIENCE, sub, nonce }) });
     const b = await loginBody(mail, emailAud(mail), { maxUses: 1, expiresAtMs: Date.now() + 10 * 60_000 }, {}, appKey(3n));
     const jwt = await emailToken({ aud: emailAud(mail), sub, nonce: await sessionNonce({ signer: env.SIGNER_ACCOUNT, scopeId: mail, sessionPublicKey: b.sessionPublicKey as number[], expiresAtMs: b.expiresAtMs as number, keyIndex: 0, maxUses: 1, salt: b.salt as number[] }) });
@@ -324,6 +325,71 @@ describe('POST /v1/home/login: what it opens', () => {
     expect(noKey.status).toBe(503);
     expect((await json(noKey)).code).toBe('relayer_unconfigured');
     expect(await usage()).toBe(1);
+  });
+});
+
+describe('POST /v1/home/login: nothing to rescue (D544)', () => {
+  it('an identity that never opened a wallet here is refused: nothing relayed, counted or spent', async () => {
+    withEmail(near, [scope]);
+    fresh();
+    const before = near.sent.length;
+    const r = await derive(await body(scope, SHARED), undefined, { env: emailEnv() });
+    expect(r.status).toBe(404);
+    expect((await json(r)).code).toBe('home_no_wallet');
+    expect(near.sent.length).toBe(before);
+    expect(await usage()).toBe(0);
+    expect(await events(scope)).toEqual([]);
+    const user = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`home-user:${await sha256Hex(`google#${SUB}`)}`));
+    expect((await user.hit([{ name: 'home:user:hour', windowMs: 3_600_000, max: 1 }])).ok).toBe(true);
+  });
+
+  it('an identity the chain shows as opened proceeds and counts as known, row or no row', async () => {
+    const e = withEmail(near, [scope]);
+    e.identities.set(`google#${SUB}`, { status: 'own', opened: true });
+    fresh();
+    // A ceiling of 1 leaves the unrecorded share nothing, so only a known identity gets through.
+    const r = await derive(await body(scope, SHARED), undefined, { env: { ...emailEnv(), HOME_DERIVES_PER_DAY: '1' } });
+    expect(r.status).toBe(200);
+    expect(await env.DB.prepare('SELECT derives, unrecorded FROM home_usage WHERE day = ?1').bind(today()).first()).toEqual({ derives: 1, unrecorded: 0 });
+    // Known for the share only: D527 still writes no directory row without one already there.
+    expect((await env.DB.prepare('SELECT COUNT(*) AS n FROM end_users WHERE scope_id = ?1').bind(scope).first<{ n: number }>())!.n).toBe(0);
+  });
+
+  it('while links aren’t open nothing is refused and the derive stays in the unrecorded share', async () => {
+    const e = withEmail(near, [scope]);
+    e.unrecordedWallets = true;
+    fresh();
+    const r = await derive(await body(scope, SHARED), undefined, { env: emailEnv() });
+    expect(r.status).toBe(200);
+    expect(await env.DB.prepare('SELECT derives, unrecorded FROM home_usage WHERE day = ?1').bind(today()).first()).toEqual({ derives: 1, unrecorded: 1 });
+  });
+
+  it('a confirmed member proceeds though it never opened a wallet of its own', async () => {
+    const e = withEmail(near, [scope]);
+    e.identities.set(`google#${SUB}`, { status: 'member', opened: false, root: { provider: 'email', sub: `e1.${uid()}` } });
+    fresh();
+    expect((await derive(await body(scope, SHARED), undefined, { env: emailEnv() })).status).toBe(200);
+    expect(await env.DB.prepare('SELECT unrecorded FROM home_usage WHERE day = ?1').bind(today()).first()).toEqual({ unrecorded: 0 });
+  });
+
+  it('a directory read that fails answers a retryable 503: nothing relayed, counted or charged to the smaller share', async () => {
+    const DB = new Proxy(env.DB, {
+      get(t, k) {
+        if (k === 'prepare') return (sql: string) => {
+          if (sql.includes('FROM end_user_identities')) throw new Error('D1 down');
+          return t.prepare(sql);
+        };
+        const v = Reflect.get(t, k) as unknown;
+        return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(t) : v;
+      },
+    });
+    const before = near.sent.length;
+    const r = await derive(await body(scope, SHARED), undefined, { env: { DB } });
+    expect(r.status).toBe(503);
+    expect((await json(r)).code).toBe('home_directory_unavailable');
+    expect(r.headers.get('retry-after')).toBe('1');
+    expect(near.sent.length).toBe(before);
+    expect(await usage()).toBe(0);
   });
 });
 

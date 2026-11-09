@@ -18,6 +18,11 @@ export interface SessionStanding {
    * False when the read failed and the standing is the fail-open guess (the wallet directory then writes nothing).
    */
   confirmed: boolean;
+  /**
+   * Whether the chain records this identity as having derived in the scope (`get_identity().opened`). Absent when links
+   * aren't open, so the view wasn't read: nothing is known then.
+   */
+  opened?: boolean;
   /** The identity's own view, when it was read: the account root of a member and its link's activation time. */
   member?: { root: { provider: string; sub: string }; effectiveAtMs: number | null };
 }
@@ -31,7 +36,7 @@ export async function sessionStanding(env: Env, scopeId: string, provider: strin
     if (view.status === 'member' && view.root) {
       return { pending: false, path: `${scopeId}#${view.root.provider}#${view.root.sub}#${keyIndex}`, confirmed: true, member: { root: view.root, effectiveAtMs: view.effectiveAtMs } };
     }
-    return own;
+    return { ...own, opened: view.opened };
   } catch {
     return { ...own, confirmed: false };
   }

@@ -1,8 +1,10 @@
 // POST /v1/home/login (docs/hana-home-spec.md "API changes", D463, H3): Hana Home's derive. A Home identity derives its
 // own key in any registered scope, with no app gate: a suspended or deleted app, or one with no allowed origin left,
-// doesn't stop it (Home is keyed by scope, D461). The chain can't say whether the user ever had a wallet there, so a
-// stranger can derive in a scope too (only their own key): that alone makes nobody one of the scope's users (D527). One `create_session_and_derive`, relayed from the
-// Home pool, and nothing else changes on chain.
+// doesn't stop it (Home is keyed by scope, D461). One `create_session_and_derive`, relayed from the Home pool. On chain
+// a derive also records the identity as `opened`, for good (`note_opened`), and an opened identity can never be linked to
+// another wallet. So a derive by an identity the chain shows hasn't opened a wallet in this scope is refused, before
+// anything is counted or relayed: there is nothing to rescue, and it would cost that user a future link (D544). Only
+// someone who already had `opened` gets here, or a member, or anyone where links aren't open yet and the view isn't read.
 //
 // What stands in for the app gate is the user: the request carries a fresh Home identity (homeGate: `Origin === AUTH_ORIGIN`,
 // the per-IP limit, the Home token, its key's signature over this exact body, single use), and the body's own session
@@ -194,6 +196,9 @@ export async function handleHomeLogin(request: Request, env: Env, requestId: str
     if (gov) return chainGateResponse(ctx, gov);
     if (!standing.confirmed) return reject(ctx, 502, 'near_unavailable', 'Could not read this identity');
     if (standing.pending) return reject(ctx, 409, 'link_pending', 'This sign-in method’s link is pending');
+    // Nothing to rescue (D544): from the view the standing already read, so no extra chain read. Not a member, and only
+    // where links are open (`opened` is absent otherwise).
+    if (standing.opened === false && !standing.member) return reject(ctx, 404, 'home_no_wallet', 'No wallet for this sign-in in that app');
     lap(ctx, 'checks');
 
     // 7. The session key signed the CKD request with counter 1.
@@ -202,6 +207,17 @@ export async function handleHomeLogin(request: Request, env: Env, requestId: str
     const keyProblem = appKeyProblem(req.pk1, req.pk2);
     if (keyProblem) return reject(ctx, 400, 'invalid_app_key', keyProblem);
     if (env.BLS_PRECHECK === '1' && !(await appKeyPairs(req.pk1, req.pk2))) return reject(ctx, 400, 'invalid_app_key', 'pk1 and pk2 are not the same key');
+
+    // A user the directory already holds or a confirmed member is `recorded` (D527: only these get a directory row). The
+    // chain's `opened` also counts as known for the daily share (D540): safe only because D544 refuses the unopened, so a
+    // derive can't promote anyone. A D1 failure is retried, never charged to the smaller share.
+    let recorded: boolean;
+    try {
+      recorded = standing.member !== undefined || (await holdsActiveRow(env, scopeId, token));
+    } catch {
+      return reject(ctx, 503, 'home_directory_unavailable', 'Try again', { 'retry-after': '1' });
+    }
+    const known = recorded || standing.opened === true;
 
     // 9. The limits, last: only a request every check passed counts (as appQuota, D100), so a refused request spends
     // nothing and the per-wallet and per-user windows can't be spent by a request that couldn't have been relayed.
@@ -216,8 +232,6 @@ export async function handleHomeLogin(request: Request, env: Env, requestId: str
     }
     const day = utcDay(hitAt);
     const max = homeDerivesPerDay(env);
-    // A user the directory or the chain already knows here (D527); everyone else shares a fifth of the ceiling (D540).
-    const known = standing.member !== undefined || (await holdsActiveRow(env, scopeId, token));
     const takeBack = (): Promise<unknown> => Promise.allSettled(windows.map(async (w) => limiter(env, w.subject).unhit(w.limits, hitAt)));
     let count: number | null;
     try {
@@ -255,10 +269,10 @@ export async function handleHomeLogin(request: Request, env: Env, requestId: str
     // null, D520) and, for a user the directory or the chain already knows here (D527), its directory row (D500: it is
     // what turns a linked member `mine` in Home's list). A stranger gets no row, so no `mine` and no unlaunched apps.
     const root = standing.member?.root ?? { provider: token.provider, sub: token.sub };
-    if (known) await inBackground(exec, () => syncAfterLogin(env, scopeId, { provider: token.provider, sub: token.sub }, null, standing, { requestId, endpoint: ctx.endpoint }));
+    if (recorded) await inBackground(exec, () => syncAfterLogin(env, scopeId, { provider: token.provider, sub: token.sub }, null, standing, { requestId, endpoint: ctx.endpoint }));
     await inBackground(exec, () => recordKeyExport(env, { appId: null, scopeId, root, chain: null, requestId }));
     // A code staff can't look up is worse than none (D395): none without a directory row.
-    const supportId = known ? await sessionSupportId(env, scopeId, root) : undefined;
+    const supportId = recorded ? await sessionSupportId(env, scopeId, root) : undefined;
     return done(ctx, 200, {
       result: { big_y: r.big_y, big_c: r.big_c },
       session: { scope_id: scopeId, expires_at_ms: req.expiresAtMs, max_uses: req.maxUses, used: 1 },
@@ -286,13 +300,9 @@ async function homeWindows(scopeId: string, path: string, user: { provider: stri
   ];
 }
 
-/** Whether the directory holds this identity as active in the scope (D527). False when D1 can't answer: nothing is written then. */
+/** Whether the directory holds this identity as active in the scope (D527). Throws when D1 can't answer: the caller refuses, retryable. */
 async function holdsActiveRow(env: Pick<Env, 'DB'>, scopeId: string, identity: { provider: string; sub: string }): Promise<boolean> {
-  try {
-    return (await env.DB.prepare("SELECT 1 AS ok FROM end_user_identities WHERE scope_id = ?1 AND identity_key = ?2 AND status = 'active'").bind(scopeId, await identityKeyHex(scopeId, identity)).first()) !== null;
-  } catch {
-    return false;
-  }
+  return (await env.DB.prepare("SELECT 1 AS ok FROM end_user_identities WHERE scope_id = ?1 AND identity_key = ?2 AND status = 'active'").bind(scopeId, await identityKeyHex(scopeId, identity)).first()) !== null;
 }
 
 /**

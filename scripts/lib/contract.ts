@@ -43,6 +43,7 @@ export const OWNER_METHODS = [
   'set_sponsors',
   'set_console_audiences',
   'set_shared_clients',
+  'set_exit_clients',
   'set_change_delay_ms',
   'set_issuer_key_delay_ms',
   'set_governance_delay_ms',

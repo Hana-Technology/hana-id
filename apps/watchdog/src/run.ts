@@ -37,7 +37,7 @@ import {
   sha256b64url,
 } from './identity.ts';
 import { log } from './log.ts';
-import { EMAIL_KEY_WHY, EMAIL_PROVIDER, type EmailKeyReason, emailKeyVerdict, pinnedSignersOf, policyFindings, policyId, type SignerPins, signerOfKid } from './pins.ts';
+import { EMAIL_KEY_WHY, EMAIL_PROVIDER, type EmailKeyReason, emailKeyVerdict, type ExitPins, pinnedSignersOf, policyFindings, policyId, type SignerPins, signerOfKid } from './pins.ts';
 import { formatNear, level, RELAYER_POOLS, type RelayerFunds, type RelayerThresholds, type Threshold } from './relayer.ts';
 import { ident, printable } from './sanitize.ts';
 import { iso } from './time.ts';
@@ -87,6 +87,8 @@ export const UNEXECUTED_AFTER_MS = 60 * 60_000;
 export const FAILING_RUNS = 3;
 /** `link_volume_high` once the current window's links reach this share of `total_per_hour` (D200). */
 export const LINK_VOLUME_WARN_SHARE = 0.5;
+/** Exit sessions per hour that page `exit_volume_high` (D487, D493; alert only, provisional, D490: real exits are rare). */
+export const DEFAULT_EXIT_ALERT_PER_HOUR = 20;
 /** A run lock older than this is taken over (a run that died without releasing it). */
 export const LOCK_STALE_MS = 10 * 60_000;
 /**
@@ -109,6 +111,10 @@ export interface RunConfig {
   relayerThresholds: { thresholds: RelayerThresholds; problems: string[] };
   /** The manifest's `watchdog.pinnedIssuerKeys.email` (`pins: null`: nothing pinned), and any problem reading it. */
   emailPins: { pins: SignerPins | null; problems: string[] };
+  /** The manifest's `watchdog.pinnedExitClients` (`pins: null`: nothing pinned), and any problem reading it (D468, D493). */
+  exitPins: { pins: ExitPins | null; problems: string[] };
+  /** Exit sessions per hour that page `exit_volume_high` (D487): `EXIT_ALERT_PER_HOUR`, else `DEFAULT_EXIT_ALERT_PER_HOUR`. */
+  exitAlertPerHour: number;
   /** A dev env (`local*`, `sandbox*`): `unrecorded_wallets` may be true there (D139). */
   devEnv: boolean;
   /**
@@ -328,10 +334,14 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
 
     // ---- config ----
     run.evaluate('watchdog_key_missing', 'channel_not_configured', 'pins_invalid');
-    run.check('config', 'ok', [...cfg.relayerThresholds.problems, ...cfg.emailPins.problems, ...cfg.identity.pins.problems].join('; ') || undefined);
+    run.check('config', 'ok', [...cfg.relayerThresholds.problems, ...cfg.emailPins.problems, ...cfg.exitPins.problems, ...cfg.identity.pins.problems].join('; ') || undefined);
     if (cfg.emailPins.problems.length) {
       // Fail closed: every email key then counts as unpinned (cancel, pause), so say why at once (L4).
       await run.condition('pins_invalid', 'pins_invalid', "The watchdog's email pins (EMAIL_PINS) are unreadable: every email key is treated as unpinned", { problems: cfg.emailPins.problems });
+    }
+    if (cfg.exitPins.problems.length) {
+      // Fail closed: every exit client then reads as unpinned, and the config is the thing to fix.
+      await run.condition('pins_invalid', 'pins_invalid:exit', "The watchdog's exit pins (EXIT_PINS) are unreadable: every exit client is treated as unpinned", { problems: cfg.exitPins.problems });
     }
     if (cfg.identity.pins.problems.length) {
       // Fail closed as for email: every published identity key then pages as unpinned (`pins_unreadable`).
@@ -439,6 +449,8 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
       await unrecordedWallets(run, snap);
       // D200: links per hour from one chain view, judged before the run is recorded and the lock released.
       await linkStats(run, snap);
+      // D468, D493: the exit list against its pins, and the hourly exit counter.
+      await exitClients(run, snap, canAct, self);
       // D212: no identity key's thumbprint as an issuer kid (chain data and stored config only: no third-party read).
       await identityOnChain(run, snap);
     }
@@ -585,7 +597,7 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
       } satisfies StoredSnapshot);
       await store.setMeta(META.selfChanges, self);
     } else {
-      for (const id of ['signer_policy', 'links', 'identity_on_chain', 'governance_diff', 'unexecuted_changes'] as const) run.check(id, 'skipped', 'no chain read');
+      for (const id of ['signer_policy', 'links', 'exit_clients', 'identity_on_chain', 'governance_diff', 'unexecuted_changes'] as const) run.check(id, 'skipped', 'no chain read');
     }
     // ---- relayer funds (alert only) ----
     let relayerRead = true;
@@ -1477,6 +1489,65 @@ async function linkStats(run: Run, s: ChainSnapshot): Promise<void> {
     });
   }
   run.check('links', 'ok', `${c.total} new link(s) this hour (alarm thresholds ${lim.per_scope_per_hour} per scope, ${lim.total_per_hour} in all); ${v.links_total} in all time`);
+}
+
+/**
+ * The exit clients against `watchdog.pinnedExitClients`, and the hourly exit counter (D468, D487, D493). Chain data
+ * only. A pinned expected list because a client on it reaches every scope: an unpinned one pending is critical (72 h of
+ * warning), and in force it pauses the contract (nothing else stops it). A pinned client on neither list is a warning: not
+ * yet proposed, or retired by an emergency removal and the pin not yet taken out. A pre-v4 contract is skipped.
+ */
+async function exitClients(run: Run, s: ChainSnapshot, canAct: boolean, self: SelfChanges): Promise<void> {
+  const inForce = s.config.exit_clients;
+  const pending = s.config.pending_exit_clients ?? [];
+  run.evaluate('exit_client_unpinned', 'exit_client_missing', 'exit_volume_high');
+  if (!inForce) {
+    run.check('exit_clients', 'skipped', 'no exit_clients (pre-v4 contract)');
+    return;
+  }
+  const { pins, problems } = run.d.config.exitPins;
+  const pairKey = (c: readonly [string, string]) => `${c[0]}:${c[1]}`;
+  const pinned = new Set((pins ?? []).map(pairKey));
+  const unpinnedInForce = inForce.filter((c) => !pinned.has(pairKey(c)));
+  const pendingKeys = pending.map((p): [string, string] => [p.provider, p.aud]);
+  const unpinnedPending = pendingKeys.filter((c) => !pinned.has(pairKey(c)));
+  const onChain = new Set([...inForce, ...pendingKeys].map(pairKey));
+  const missing = (pins ?? []).filter((c) => !onChain.has(pairKey(c)));
+  const window = s.config.exit_window;
+  const details = { pinned: pins, exit_clients: inForce, pending_exit_clients: pending };
+  // Unpinned, pending: critical, nothing done (it isn't in force, and the council can remove it for free, D483).
+  for (const c of unpinnedPending) {
+    await run.condition('exit_client_unpinned', `exit_client_unpinned:pending:${pairKey(c)}`, `Exit client ${ident(c[0])}/${ident(c[1])} is pending on chain but not pinned (watchdog.pinnedExitClients)`, { ...details, client: c, state: 'pending' });
+  }
+  if (problems.length === 0) {
+    for (const c of unpinnedInForce) {
+      // In force and unpinned: pause, like an unpinned active issuer key. Not if the watchdog already paused this run.
+      let action: ActionSummary | null = null;
+      if (canAct && !s.config.paused && !self.paused) {
+        action = await run.act('pause', {}, `exit client ${c[0]}/${c[1]} is in force but not pinned`);
+        if (action.ok) self.paused = true;
+        else await run.condition('protective_action_failed', 'protective_action_failed:pause', 'Pausing for an unpinned exit client failed', actionDetail(action));
+      }
+      const state = action?.ok ? 'paused' : s.config.paused || self.paused ? 'already paused' : canAct ? 'pause failed' : 'the watchdog could not act';
+      await run.condition('exit_client_unpinned', `exit_client_unpinned:in_force:${pairKey(c)}`, `Exit client ${ident(c[0])}/${ident(c[1])} is in force but not pinned (watchdog.pinnedExitClients); ${state}`, { ...details, client: c, state: 'in_force', ...(action ? { actions: [actionDetail(action)] } : {}) });
+    }
+    for (const c of missing) {
+      await run.condition('exit_client_missing', `exit_client_missing:${pairKey(c)}`, `Pinned exit client ${ident(c[0])}/${ident(c[1])} is on neither exit list`, { ...details, client: c });
+    }
+  }
+  const threshold = run.d.config.exitAlertPerHour;
+  if (window) {
+    const reached: [number, number][] = [
+      [window.window_start_ms, window.current],
+      [window.window_start_ms - 3_600_000, window.previous],
+    ];
+    for (const [start, count] of reached) {
+      if (count >= threshold) {
+        await run.condition('exit_volume_high', `exit_volume_high:${start}`, `${count} exit session(s) were opened in the hour from ${iso(start)}: the alarm threshold of ${threshold} per hour was reached (nothing was refused)`, { window_start_ms: start, count, threshold });
+      }
+    }
+  }
+  run.check('exit_clients', problems.length ? 'error' : unpinnedInForce.length + unpinnedPending.length ? 'alert' : 'ok', `${inForce.length} in force, ${pending.length} pending; ${pins ? `${pins.length} pinned` : 'nothing pinned'}; ${window ? `${window.current} exit session(s) this hour` : 'no exit_window'}`);
 }
 
 const thresholdText = (t: Threshold) => ({ warn_below: formatNear(t.warn), critical_below: formatNear(t.critical) });

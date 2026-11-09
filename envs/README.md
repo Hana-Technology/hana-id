@@ -123,6 +123,11 @@ D1 database). Per-IP limiters always stay near their client. Changing it creates
   (D191): pin a new signer's keys before the upgrade executes, raise `required` after it. A change needs
   `watchdog gen` and a redeploy (on the watchdog's own account: a pin change is the operator's, outside Hana's main
   account).
+- `pinnedExitClients` (optional; the exit client, D468, D493): Hana Home's exit clients the watchdog expects on chain,
+  `[["google","<client id>"],["email","hana-home"]]`, 1–4, each once. An exit client on chain that isn't pinned pages
+  critical, and pauses the contract when it is in force; absent means nothing is pinned. Pin before `set_exit_clients`
+  (`docs/operations.md` "Hana Home exit client"). `exitAlertPerHour` (optional, default 20): exit sessions per hour that page
+  `exit_volume_high` (the contract never refuses). A change needs `watchdog gen` and a redeploy.
 - `pinnedIdentityKeys` (optional; the partner identity token, `docs/identity-token-spec.md` "JWKS and discovery",
   D210, D211): the RFC 7638 thumbprints (43 base64url characters; the kids) of the identity token's P-256 keys the
   watchdog accepts in Hana's identity JWKS, 1–8, each once. With `identityToken` in the manifest, **every one of its

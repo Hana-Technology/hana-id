@@ -141,6 +141,15 @@ describe('manifestSchema: watchdog', () => {
   const withWatchdog = (w: unknown) => ({ ...raw(), watchdogs: [(w as { account?: unknown } | null)?.account], watchdog: w });
   const issues = (w: unknown) => manifestSchema.safeParse(withWatchdog(w)).error?.issues.map((i) => i.message) ?? [];
 
+  it('takes pinned exit clients and an alarm level, refuses a duplicate, a bad provider and an out-of-range level', () => {
+    expect(issues(watchdog({ pinnedExitClients: [['google', 'exit.apps'], ['email', 'hana-home']], exitAlertPerHour: 50 }))).toEqual([]);
+    expect(issues(watchdog({ pinnedExitClients: [['google', 'exit.apps'], ['google', 'exit.apps']] })).join()).toContain('An exit client is pinned once');
+    expect(issues(watchdog({ pinnedExitClients: [['Bad Provider', 'x']] })).join()).toContain('A provider is');
+    expect(issues(watchdog({ pinnedExitClients: [] })).length).toBeGreaterThan(0);
+    expect(issues(watchdog({ pinnedExitClients: [['a', '1'], ['b', '1'], ['c', '1'], ['d', '1'], ['e', '1']] })).length).toBeGreaterThan(0);
+    expect(issues(watchdog({ exitAlertPerHour: 0 })).length).toBeGreaterThan(0);
+  });
+
   it('is optional', () => {
     const { watchdog: _, ...base } = raw();
     expect(manifestSchema.safeParse(base).success).toBe(true);

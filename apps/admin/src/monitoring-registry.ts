@@ -19,6 +19,7 @@ export const CHECK_VIEWS: Readonly<Record<string, CheckView>> = {
   active_keys: { title: 'Active issuer keys judged (pause on a forged one)', shownIn: 'Checks; pause state; actions log' },
   signer_policy: { title: "Email issuer's signer policy against the pins", shownIn: 'Checks; email pins' },
   links: { title: 'Link volume against the alarm thresholds', shownIn: 'Checks; link stats' },
+  exit_clients: { title: 'Exit clients against the pins, and the hourly exit counter', shownIn: 'Checks; open alerts' },
   identity_on_chain: { title: 'No identity key trusted on chain', shownIn: 'Checks' },
   governance_diff: { title: 'Governance and config changes since the last run', shownIn: 'Pending upgrades and owner actions; open alerts' },
   unexecuted_changes: { title: 'Due key changes nobody executed', shownIn: 'Pending key changes' },

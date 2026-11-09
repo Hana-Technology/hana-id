@@ -41,14 +41,12 @@ pub const CHANGE_DELAY_MS: u64 = 20_000;
 pub const ISSUER_KEY_DELAY_MS: u64 = 20_000;
 /// governance_delay_ms of the sandbox deployment.
 pub const GOVERNANCE_DELAY_MS: u64 = 30_000;
-/// The commit whose hana-signer is the v2 contract (governance batch, contract 0.1.1, on sandbox-dev since
-/// 2026-10-30): the last develop commit before the v3 merge (9a52058). Its contracts/hana-signer is the tree of the
-/// sandbox-dev upgrade drill (90c39bd). The v2 → v3 upgrade tests build its wasm (`v2_wasm`).
-pub const V2_COMMIT: &str = "26fb70a92eecc74592df886e16a109fa6ee19830";
-/// sandbox-dev's v2 code hash (docs/context.md). `cargo near build non-reproducible-wasm --no-abi` of V2_COMMIT (what
-/// deploy-contract runs) reproduces it on the machine that built the deployed code; elsewhere the wasm embeds other
-/// cargo registry paths in its panic locations, so the hash differs and the tests only report it.
-pub const V2_SANDBOX_DEV_CODE_HASH: &str = "3TSDwkMqPUhZtzFCvvaJ39nQWXUQK4LExPhsaS9tScoz";
+/// The commit whose hana-signer is the v3 contract (email login and the link counter, on sandbox-dev since 2026-11-03):
+/// the develop commit batch H6 branched from. The v3 → v4 upgrade tests build its wasm (`v3_wasm`).
+pub const V3_COMMIT: &str = "81ebfa06bdacf20b33a34485045f15b2d008edae";
+/// Hana Home's exit clients in the sandbox tests (the dedicated Google client and the issuer's Home audience, D474, D484).
+pub const EXIT_G: &str = "hana-exit.apps.googleusercontent.com";
+pub const EXIT_E: &str = "hana-home";
 pub const APP_A: &str = "app-a.apps.googleusercontent.com";
 pub const APP_B: &str = "app-b.apps.googleusercontent.com";
 pub const APP_C: &str = "app-c.apps.googleusercontent.com";
@@ -148,6 +146,7 @@ pub const ALL_CHANGE_METHODS: &[&str] = &[
     "cancel_link",
     "unlink_identity",
     "set_link_thresholds",
+    "set_exit_clients",
 ];
 
 /// Gas for calls a user or the admin signs with their own wallet (not relayed by the API), which choose their own
@@ -326,34 +325,34 @@ pub fn deploy_wasm() -> Result<Vec<u8>> {
         .map_err(|e| anyhow!(e))
 }
 
-static V2_WASM: OnceLock<std::result::Result<Vec<u8>, String>> = OnceLock::new();
+static V3_WASM: OnceLock<std::result::Result<Vec<u8>, String>> = OnceLock::new();
 
-/// The v2 hana-signer wasm: `contracts/hana-signer` at `V2_COMMIT`, exported with `git archive` into
-/// `target/v2-src/<commit>` and built there (its own Cargo.lock and toolchain). `HANA_SIGNER_V2_WASM=<path>`
+/// The v3 hana-signer wasm: `contracts/hana-signer` at `V3_COMMIT`, exported with `git archive` into
+/// `target/v3-src/<commit>` and built there (its own Cargo.lock and toolchain). `HANA_SIGNER_V3_WASM=<path>`
 /// overrides the build.
-pub fn v2_wasm() -> Result<Vec<u8>> {
-    V2_WASM
+pub fn v3_wasm() -> Result<Vec<u8>> {
+    V3_WASM
         .get_or_init(|| {
-            if let Ok(path) = std::env::var("HANA_SIGNER_V2_WASM") {
-                return std::fs::read(&path).map_err(|e| format!("reading HANA_SIGNER_V2_WASM={path}: {e}"));
+            if let Ok(path) = std::env::var("HANA_SIGNER_V3_WASM") {
+                return std::fs::read(&path).map_err(|e| format!("reading HANA_SIGNER_V3_WASM={path}: {e}"));
             }
-            build_v2().map_err(|e| format!("{e:#}"))
+            build_v3().map_err(|e| format!("{e:#}"))
         })
         .clone()
         .map_err(|e| anyhow!(e))
 }
 
-fn build_v2() -> Result<Vec<u8>> {
+fn build_v3() -> Result<Vec<u8>> {
     let target = Path::new(env!("CARGO_MANIFEST_DIR")).join("target");
-    let src = target.join("v2-src").join(V2_COMMIT);
+    let src = target.join("v3-src").join(V3_COMMIT);
     let crate_dir = src.join("contracts").join("hana-signer");
     if !crate_dir.join("Cargo.toml").exists() {
         std::fs::create_dir_all(&src)?;
-        let tar = target.join("v2-src").join(format!("{V2_COMMIT}.tar"));
+        let tar = target.join("v3-src").join(format!("{V3_COMMIT}.tar"));
         let repo = contracts_dir().parent().expect("repo root").to_path_buf();
-        let out = Command::new("git").arg("-C").arg(&repo).args(["archive", "--format=tar", "-o"]).arg(&tar).arg(V2_COMMIT).arg("contracts/hana-signer").output()?;
+        let out = Command::new("git").arg("-C").arg(&repo).args(["archive", "--format=tar", "-o"]).arg(&tar).arg(V3_COMMIT).arg("contracts/hana-signer").output()?;
         if !out.status.success() {
-            bail!("git archive {V2_COMMIT} failed (is the commit in this clone?): {}", String::from_utf8_lossy(&out.stderr));
+            bail!("git archive {V3_COMMIT} failed (is the commit in this clone?): {}", String::from_utf8_lossy(&out.stderr));
         }
         let out = Command::new("tar").arg("-xf").arg(&tar).arg("-C").arg(&src).output()?;
         if !out.status.success() {
@@ -365,10 +364,10 @@ fn build_v2() -> Result<Vec<u8>> {
     let manifest = crate_dir.join("Cargo.toml");
     let text = std::fs::read_to_string(&manifest)?;
     if !text.lines().any(|l| l.trim() == "[workspace]") {
-        std::fs::write(&manifest, format!("{text}\n# Added by the sandbox tests: a standalone copy (see tests/common/mod.rs build_v2).\n[workspace]\n"))?;
+        std::fs::write(&manifest, format!("{text}\n# Added by the sandbox tests: a standalone copy (see tests/common/mod.rs build_v3).\n[workspace]\n"))?;
     }
     // `--no-abi`, as deploy-contract builds the code it deploys (scripts/lib/deploy-run.ts).
-    build_wasm_at(&crate_dir, "hana_signer.wasm", &target.join("wasm-v2"), &["--no-abi"])
+    build_wasm_at(&crate_dir, "hana_signer.wasm", &target.join("wasm-v3"), &["--no-abi"])
 }
 
 static SPUTNIK_WASM: OnceLock<std::result::Result<Vec<u8>, String>> = OnceLock::new();
@@ -964,7 +963,7 @@ async fn deploy_signer(root: &Account, name: &str, admin: &Account, watchdog: &A
     deploy_signer_code(root, name, &signer_wasm, admin, watchdog, mpc, issuer, relayer).await
 }
 
-/// `deploy_signer` with the given hana-signer code (the current one, or the v2 code of `v2_wasm`, whose `new`, Google
+/// `deploy_signer` with the given hana-signer code (the current one, or the v3 code of `v3_wasm`, whose `new`, Google
 /// key flow and setters take the same arguments).
 #[allow(clippy::too_many_arguments)]
 pub async fn deploy_signer_code(root: &Account, name: &str, code: &[u8], admin: &Account, watchdog: &Account, mpc: &AccountId, issuer: &TestIssuer, relayer: &AccountId) -> Result<Contract> {

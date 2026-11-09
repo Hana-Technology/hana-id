@@ -74,6 +74,19 @@ export interface ConfigView {
    * never be true outside a dev env (D139).
    */
   unrecorded_wallets?: boolean;
+  /** Contract v4: Hana Home's exit clients in force (D468). Absent before v4. */
+  exit_clients?: [string, string][];
+  /** Contract v4: exit clients still waiting `governance_delay_ms` (D482). */
+  pending_exit_clients?: PendingClient[];
+  /** Contract v4: exit sessions opened this hour and the hour before (D487; alert only). */
+  exit_window?: ExitWindow;
+}
+
+/** `get_config().exit_window` (contract v4, D487): exit sessions per fixed UTC hour. It never refuses. */
+export interface ExitWindow {
+  window_start_ms: number;
+  current: number;
+  previous: number;
 }
 
 /** `get_self_issued(provider)` (contract v3): the signer policy of a self-issued issuer. */

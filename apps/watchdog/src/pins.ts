@@ -10,6 +10,26 @@ import { rsaThumbprint } from '@hana-id/jwks';
 import type { EmailSnapshot, SelfIssuedView } from './chain.ts';
 import { ident } from './sanitize.ts';
 
+/** `watchdog.pinnedExitClients` (D468, D493): the exit clients expected on chain, as `[provider, aud]`. Absent: nothing pinned. */
+export type ExitPins = [string, string][];
+
+/**
+ * The `EXIT_PINS` var (JSON, written by `gen`). Absent → `pins: null` (nothing pinned: every on-chain exit client is
+ * unpinned). Malformed → `pins: null` with the problem for the `config` check: a broken var never loosens anything.
+ */
+export function parseExitPins(raw: string | undefined): { pins: ExitPins | null; problems: string[] } {
+  if (raw === undefined || raw.trim() === '') return { pins: null, problems: [] };
+  const bad = { pins: null, problems: ['EXIT_PINS is malformed: every exit client is treated as unpinned'] };
+  let v: unknown;
+  try {
+    v = JSON.parse(raw);
+  } catch {
+    return bad;
+  }
+  if (!Array.isArray(v) || !v.every((e) => Array.isArray(e) && e.length === 2 && typeof e[0] === 'string' && typeof e[1] === 'string')) return bad;
+  return { pins: v as ExitPins, problems: [] };
+}
+
 /** The path provider of Hana's email issuer (frozen at the address freeze; `SELF_ISSUABLE` in the contract). */
 export const EMAIL_PROVIDER = 'email';
 

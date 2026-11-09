@@ -9,7 +9,9 @@
 //             issuer (`email_issuer`, `email_issuer_keys`), and its signer policy (`email_signer_policy`: marked
 //             self-issued, or signers or required changed by an upgrade's migrate). `unrecorded_wallets` (contract v3,
 //             D135): the owner's accept_unrecorded_wallets, or an upgrade that set it. The link alarm thresholds (D200):
-//             a raise (`link_thresholds` up, or a `pending_thresholds` raise appearing or changing) is critical.
+//             a raise (`link_thresholds` up, or a `pending_thresholds` raise appearing or changing) is critical. The exit
+//             clients and pending additions (contract v4, D468; `exit_clients`, `pending_exit_clients`): a pinned expected
+//             value is checked apart (run.ts `exitClients`, D493); this is the change alarm.
 //   warning:  shared clients, sponsors, public registration; the link thresholds lowered, or a pending raise cancelled.
 //   matured:  a scheduled delay decrease or audience addition coming into force as scheduled (info).
 import type { ChainSnapshot, ConfigView, GovernanceView, IssuerView, KeyChange, LinkThresholds, LinkStatsView, OwnerAccount, PendingClient, SelfIssuedView } from './chain.ts';
@@ -61,7 +63,11 @@ const CRITICAL_CONFIG = [
   'unpaused_at_ms',
   'sessions_valid_from_ms',
   'unrecorded_wallets',
+  'exit_clients',
+  'pending_exit_clients',
 ] as const;
+/** Config fields a pre-v4 contract and a pre-v4 snapshot don't have: that run's value is the baseline. */
+const V4_CONFIG = new Set<string>(['exit_clients', 'pending_exit_clients']);
 /** The owner account's code and DAO policy (D81). */
 const CRITICAL_OWNER = [
   ['owner_code_hash', (o: OwnerAccount | null) => o?.code_hash ?? null],
@@ -80,6 +86,7 @@ const DELAYS = [
 const LISTS = [
   ['console_audiences', 'pending_console_audiences'],
   ['shared_clients', 'pending_shared_clients'],
+  ['exit_clients', 'pending_exit_clients'],
 ] as const;
 
 /** JSON with sorted object keys, so equal values compare equal. */
@@ -101,7 +108,7 @@ const sortedSet = (pairs: unknown[]) => stable([...new Set(pairs.map(stable))].s
 function emptyBaseline(cur: ChainSnapshot): StoredSnapshot {
   return {
     at: 0,
-    config: { ...cur.config, paused: false, pending_change_delay: null, pending_issuer_key_delay: null, pending_governance_delay: null, pending_console_audiences: [] },
+    config: { ...cur.config, paused: false, pending_change_delay: null, pending_issuer_key_delay: null, pending_governance_delay: null, pending_console_audiences: [], ...(cur.config.pending_exit_clients ? { pending_exit_clients: [] } : {}) },
     governance: { ...cur.governance, pending_upgrade: null, pending_owner: null, pending_withdrawal: null },
     keyChanges: [],
     owner: cur.owner,
@@ -170,13 +177,13 @@ export function diffChain(prevIn: StoredSnapshot | null, cur: ChainSnapshot, now
     }
   }
   for (const [list, pending] of LISTS) {
-    const before = prev.config[list];
-    const pend: PendingClient[] = prev.config[pending];
+    const before = (prev.config[list] ?? []) as [string, string][];
+    const pend: PendingClient[] = (prev.config[pending] ?? []) as PendingClient[];
     const matured = pend.filter((p) => p.effective_at_ms <= now);
     if (matured.length === 0) continue;
     const expectedList = sortedSet([...before, ...matured.map((p) => [p.provider, p.aud])]);
     const expectedPending = sortedSet(pend.filter((p) => p.effective_at_ms > now));
-    if (sortedSet(cur.config[list]) === expectedList && sortedSet(cur.config[pending]) === expectedPending) {
+    if (sortedSet((cur.config[list] ?? []) as unknown[]) === expectedList && sortedSet((cur.config[pending] ?? []) as unknown[]) === expectedPending) {
       out.matured.push({ field: list, before, after: cur.config[list] });
       handled.add(list).add(pending);
     }
@@ -187,7 +194,7 @@ export function diffChain(prevIn: StoredSnapshot | null, cur: ChainSnapshot, now
   const expectedKeys = prev.governance.updater_keys.filter((k) => !self.deletedUpdaterKeys.includes(k));
   if (self.deletedUpdaterKeys.length && same([...expectedKeys].sort(), [...cur.governance.updater_keys].sort())) handled.add('updater_keys');
 
-  for (const f of CRITICAL_CONFIG) if (!handled.has(f) && !same(pc[f], cc[f])) out.critical.push({ field: f, before: pc[f], after: cc[f] });
+  for (const f of CRITICAL_CONFIG) if (!handled.has(f) && !(pc[f] === undefined && V4_CONFIG.has(f)) && !same(pc[f], cc[f])) out.critical.push({ field: f, before: pc[f], after: cc[f] });
   const pg = prev.governance as unknown as Record<string, unknown>;
   const cg = cur.governance as unknown as Record<string, unknown>;
   for (const f of CRITICAL_GOVERNANCE) if (!handled.has(f) && !same(pg[f], cg[f])) out.critical.push({ field: f, before: pg[f], after: cg[f] });

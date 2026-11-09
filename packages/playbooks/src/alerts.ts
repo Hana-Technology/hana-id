@@ -292,7 +292,7 @@ const governanceChange: Playbook = {
     "An upgrade, owner transfer, withdrawal, watchdog, updater-key, delay or console-audience change, a pause or unpause, a raised session floor, the owner DAO's code or policy, or the owner's immediate issuer actions. Alert only: confirm the council meant it.",
   signals: [
     'Critical `governance_change` page with one line per change (`field: before -> after`, lists as removed / added).',
-    'Fields: `pending_upgrade`, `owner`, `pending_owner`, `pending_withdrawal`, `watchdogs`, `updater_keys`, the delays, `console_audiences`, `paused`, `unpaused_at_ms`, `sessions_valid_from_ms`, `owner_code_hash`, `owner_policy`, `issuer`, `issuer_keys`, `email_issuer`, `email_issuer_keys`, `email_signer_policy`, `unrecorded_wallets`, `mpc`, `ckd_domain_id`, `state_version`.',
+    'Fields: `pending_upgrade`, `owner`, `pending_owner`, `pending_withdrawal`, `watchdogs`, `updater_keys`, the delays, `console_audiences`, `paused`, `unpaused_at_ms`, `sessions_valid_from_ms`, `owner_code_hash`, `owner_policy`, `issuer`, `issuer_keys`, `email_issuer`, `email_issuer_keys`, `email_signer_policy`, `unrecorded_wallets`, `exit_clients`, `pending_exit_clients`, `mpc`, `ckd_domain_id`, `state_version`.',
   ],
   impact: [
     'Every owner action on `hana-signer` needs two council votes, so an unexpected one means two council keys acted. Upgrades, owner transfers and withdrawals wait `governance_delay_ms` (72 h on mainnet): that is the window to cancel and to warn partners.',
@@ -1005,6 +1005,61 @@ const linkVolume: Playbook = {
   related: ['email-issuer-key-compromised', 'forged-active-key', 'forged-key-change', 'governance-change'],
 };
 
+const exitClientUnpinned: Playbook = {
+  id: 'exit-client-unpinned',
+  title: 'Exit client not pinned, or exit volume high',
+  kind: 'alert',
+  alertKinds: ['exit_client_unpinned', 'exit_client_missing', 'exit_volume_high'],
+  severity: 'critical',
+  status: 'live',
+  summary:
+    "An exit client (D468) reaches every scope, even those with shared login off, so the watchdog holds the list the council is meant to have set (`watchdog.pinnedExitClients`). A client on chain that isn't pinned pages critical: pending, it can be removed for free; in force, the watchdog pauses the contract. `exit_volume_high` is the hourly counter (D487) past its alarm level: exits never stop by themselves. `exit_client_missing` is a pin with nothing on chain (a warning).",
+  signals: [
+    'Critical `exit_client_unpinned:pending:<provider>:<aud>`: a `set_exit_clients` proposal, or an upgrade, left a client on `pending_exit_clients` that the manifest doesn\'t pin. It is not in force yet (`governance_delay_ms`, 72 h on mainnet).',
+    'Critical `exit_client_unpinned:in_force:<provider>:<aud>`: that client is in force; the title says `paused`, `already paused` or `the watchdog could not act`. Check id `exit_clients`.',
+    'Critical `exit_volume_high:<hour>`: the contract counted that many `exit_session_opened` this hour (`get_config().exit_window`). It refuses nothing.',
+    'Warning `exit_client_missing:<provider>:<aud>`: a pinned client on neither list. Right after an emergency removal (D483) this is expected until the pin is taken out.',
+    'A `governance_change` alert for the `exit_clients` or `pending_exit_clients` field follows any change to the lists.',
+  ],
+  impact: [
+    "An unpinned exit client in force can open sessions in every registered scope for any user whose token it can get, including users of partners who turned off shared login (D468, D485). It can't mint a token by itself: it is a Google client id or the email issuer's Home audience, so the danger is whoever controls that client's redirect or the issuer key.",
+    'A pause stops every login and derive (all apps), so a wrong pin costs a real outage: pin before the council runs `set_exit_clients`.',
+    "`exit_volume_high` on its own may be a partner shutting down (users rushing out through Home) or a compromised Home page harvesting keys: the alert can't tell them apart, the steps below do.",
+  ],
+  steps: [
+    {
+      title: 'Establish whether the list change was planned',
+      who: 'a founder',
+      detail:
+        "Compare `get_config().exit_clients` and `pending_exit_clients` with `watchdog.pinnedExitClients` in the manifest and with the council's recent proposals. A planned addition whose pin was forgotten: pin it (manifest, watchdog `gen` and deploy) and, if the watchdog already paused, unpause after the check.",
+      commands: [c.watchdogStatus, c.watchdogAlerts],
+    },
+    {
+      title: 'Unplanned: remove it at once (free, and retired forever)',
+      who: 'council (2 of 3)',
+      detail:
+        "`set_exit_clients` with the list minus the client: a removal is immediate and permanent (D483), the client can never return. Then treat the council's keys or the code path that added it as compromised (unexpected-owner-action). Other exit clients listed in the call are unaffected; a pending one stays pending.",
+      commands: [c.ownerCall('set_exit_clients', '{"clients":[["google","<the exit clients to keep>"]]}')],
+    },
+    {
+      title: 'A compromised Home: remove the exit client or pause',
+      who: 'council (2 of 3)',
+      detail:
+        "Removing the exit client at once stops exit logins without touching any partner (D483); it also takes Home's rescue route away from every user until a new client has waited its delay, so weigh it. A watchdog pause stops everything; the council unpauses after the fix. Check which scopes the `exit_session_opened` events name.",
+      commands: [c.ownerCall('pause'), c.ownerCall('set_exit_clients', '{"clients":[]}')],
+    },
+    {
+      title: 'Only if the alarm level is wrong for real traffic: change the threshold',
+      who: 'a founder',
+      detail: 'A rescue rush needs nothing (nothing was refused). If ordinary traffic keeps crossing the level, raise `watchdog.exitAlertPerHour` in the manifest and redeploy the watchdog.',
+    },
+  ],
+  verify: ['`get_config().exit_clients` and `pending_exit_clients` match `watchdog.pinnedExitClients`; the next run closes `exit_client_unpinned` and `exit_client_missing`.', '`exit_volume_high` resolves after its hour leaves both windows.'],
+  followUps: ['Tune the provisional alarm level (`DEFAULT_EXIT_ALERT_PER_HOUR`, D493) from sandbox-dev and staging traffic before mainnet.'],
+  refs: ['docs/hana-home-h6-design.md', 'docs/operations.md#hana-home-exit-client', 'D468', 'D483', 'D487', 'D493'],
+  related: ['governance-change', 'unexpected-owner-action', 'forged-active-key', 'link-volume'],
+};
+
 const selfIssuedKeyChange: Playbook = {
   id: 'self-issued-key-change',
   title: 'Pending email key change (info)',
@@ -1193,6 +1248,7 @@ export const ALERT_PLAYBOOKS: readonly Playbook[] = [
   unrecordedWallets,
   emailJwksMismatch,
   linkVolume,
+  exitClientUnpinned,
   selfIssuedKeyChange,
   identityJwksForged,
   identityJwksDegraded,

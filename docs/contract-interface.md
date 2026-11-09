@@ -1,6 +1,6 @@
 # hana-signer contract interface (batch A, A.2, B, governance and email login)
 
-Last verified against code: 2026-11-09 (branch `fix/before-mainnet-sweep`: the API's gas list without the methods it no longer relays, D456; the contract is unchanged); 2026-11-04 (branch `fix/sessions-allow-list`: "No claim allow-list on chain", the API's allow-list on every relayed token, D271, D274); 2026-11-02 (branch `feat/email-login-6`: the API's gas values in the conventions and in "Gas
+Last verified against code: 2026-11-09 (branch `feat/hana-home-h6`, not merged, not deployed: H6: state v4, the exit client, the audience-shape rule, event version 1.3.0, gas); 2026-11-09 (branch `feat/hana-home-h6`, not merged, not deployed: H6, the exit client: state version 4, `exit_clients`, `pending_exit_clients`, `exit_window`, `set_exit_clients`, `exit_session_opened`, the audience-shape rule, the gas of an exit login, D468, D480–D494); 2026-11-09 (branch `fix/before-mainnet-sweep`: the API's gas list without the methods it no longer relays, D456; the contract is unchanged); 2026-11-04 (branch `fix/sessions-allow-list`: "No claim allow-list on chain", the API's allow-list on every relayed token, D271, D274); 2026-11-02 (branch `feat/email-login-6`: the API's gas values in the conventions and in "Gas
 of the email login calls", D155); 2026-11-02 (branch `feat/batch-c-6`: the security note on unregistered clients names the
 console sink scope; the owner-action nonce is now also recomputed by the API's precheck, against the contract's
 `test_fixture.json`); 2026-11-02 (branch `docs/consistency-pass`: the conventions' gas note points at the
@@ -100,7 +100,10 @@ Conventions:
   "unpaused_at_ms": 0,                          // the last unpause (0: never)
   "changes_unlock_floor_ms": 0,                 // no execute_change before this: the last unpause + change_delay_ms then
   "sessions_valid_from_ms": 0,                  // sessions opened before this can't derive (set_sessions_valid_from_ms)
-  "unrecorded_wallets": false                   // true after a migration from pre-v3 state until accept_unrecorded_wallets: links refused
+  "unrecorded_wallets": false,                  // true after a migration from pre-v3 state until accept_unrecorded_wallets: links refused
+  "exit_clients": [["google","hana-exit.apps.googleusercontent.com"],["email","hana-home"]],  // v4: in force now (matured pending ones included)
+  "pending_exit_clients": [],                   // v4: not yet in force (D482: governance_delay_ms)
+  "exit_window": {"window_start_ms":1800000000000,"current":2,"previous":0}  // v4: exit sessions this UTC hour and the hour before (alert only, D487)
 }
 
 // Issuer (get_issuer) — key material is not returned, only active key ids
@@ -694,6 +697,7 @@ batch](#changed-in-the-governance-batch) for why this differs from the spec draf
 | `set_change_delay_ms(change_delay_ms)` | `{"change_delay_ms":172800000}` | ≤ 7 days. An increase applies now. A **decrease** applies only after the current delay has passed (`pending_change_delay`), so the admin can't shorten a timelock to act on scopes faster than owners were promised. Already queued changes keep their `unlock_at_ms`. |
 | `enable_public_registration()` | `{}` | One way: false → true, never back. No-op if already true. Event `public_registration_enabled`. |
 | `set_shared_clients(clients)` | `{"clients":[["google","hana-shared.apps.googleusercontent.com"]]}` | Replaces the shared-client list (see below). |
+| `set_exit_clients(clients)` | `{"clients":[["google","hana-exit.apps.googleusercontent.com"],["email","hana-home"]]}` | Replaces the exit-client list (see [Exit clients](#exit-clients)). |
 
 `set_owner` is **gone** (`MethodNotFound`): the owner changes only through `propose_owner` / `accept_owner`
 ([Owner transfer](#owner-transfer)). The delays `issuer_key_delay_ms` and `governance_delay_ms` are set under
@@ -731,6 +735,43 @@ allows (see Security notes).
   client (`Client is a shared client` from `admin_register_scope`, `register_scope`, `propose_change(AddClient)` and
   `execute_change(AddClient)`).
 - Event `shared_clients_set` with the resulting lists.
+
+#### Exit clients
+
+Hana Home's own login clients (D468, D484, H6): a token of an exit client in force opens a session in **any existing
+scope**, whatever that scope's `clients` and `allow_shared` say (`exit_scope`, in `create_session` and
+`create_session_and_derive` only), for the user's own wallet (the path is computed as for any login: `aud` never enters
+it). Its sessions are limited on chain: at most `MAX_EXIT_SESSION_MS` (30 minutes, `Exit session expiry must be within
+30 minutes`) and `MAX_EXIT_USES` (3 uses, `Exit session max_uses must be 1-3`), and they can't carry a `link_jwt` (`An
+exit session can't carry a link`). The link methods and owner auth don't accept exit tokens: `session_scope` is
+unchanged, so they answer `Token is for an unregistered app` / `Token is not for the Hana console`. A paused contract
+refuses exits too (`Paused`). A partner has no method that touches the list.
+
+`set_exit_clients(clients)`, owner only (≤ 4, `Too many exit clients`, `MAX_EXIT_CLIENTS`), sets the list:
+
+- Clients in the new list and not listed now become pending: `effective_at_ms = now + governance_delay_ms` (D482: the
+  upgrade delay, because an exit client reaches every scope), shown in `pending_exit_clients`, and in `exit_clients`
+  from then on (matured entries count at once; `apply_pending_config` folds them). A pending client reserves the client
+  at once. Clients already listed or pending keep their state. It takes no proof: it can run before anything mints the
+  tokens (the email entry is `("email", "hana-home")`, D474).
+- Clients **not** in the new list (in force or still pending) stop working at once and are **retired for good** (D483):
+  `RemovedClient { scope_id: "#exit", free_at_ms: u64::MAX, reserved_by: None }`. A retired exit client can never return to
+  the exit list (`Client was an exit client and is retired`), join a scope (same panic) or become a shared client or a
+  console audience (same panic).
+- Each listed client: provider valid (`Invalid provider`, `Invalid aud`), `Unknown issuer` if the provider doesn't exist,
+  `Duplicate exit client`, `Client is already registered` (a scope client), `Client is a shared client`, `Client is
+  pending in a scope`, `Client is a console audience` (in force or pending), `Client was recently removed from another
+  scope`, `Client was a shared client and is retired`, `Client was an exit client and is retired`.
+- Disjointness the other way: an exit client (in force or pending) can't become a shared client or console audience
+  (`Client is an exit client`, from `set_shared_clients` and `set_console_audiences`), nor a scope client (`Client is an
+  exit client`, from `admin_register_scope`, `register_scope`, `propose_change(AddClient)` and `execute_change(AddClient)`);
+  a retired exit client panics `Client was an exit client and is retired` there as well.
+- **The audience shape**: at registration, propose and execute, a self-issued provider's client must be exactly
+  `{provider}:{scope_id}` (`A self-issued client must be its provider and scope`), so `("email", "hana-home")` can never be
+  a scope client, even before the exit list is set and with a valid proof (D474, D494).
+- Event `exit_clients_set` with the resulting lists.
+
+`exit_session_opened` is emitted once per exit session (`create_session`, `create_session_and_derive`), and `get_config().exit_window` counts it (D487: alert only, never refuses, a saturating counter).
 
 ### Issuers
 
@@ -1009,7 +1050,9 @@ change with `unlock_at_ms = now + change_delay_ms`. Increments `action_nonce`.
 - `AddClient` needs `client_proof` (`AddClient needs a client_proof`; Client proof above, token `(provider, aud)` must equal the change:
   `Client proof is for another client`, `Client proof nonce doesn't match`); the client must not be registered
   anywhere (`Client is already registered`), not a shared or pending shared client (`Client is a shared client`), not
-  quarantined by a removal from **another** scope (`Client was recently removed from another scope`; the scope it was
+  an exit client or pending exit client (`Client is an exit client`) or retired one (`Client was an exit client and is
+  retired`), of the exact shape for a self-issued provider (`A self-issued client must be its provider and scope`,
+  `{provider}:{scope_id}`), not quarantined by a removal from **another** scope (`Client was recently removed from another scope`; the scope it was
   removed from may re-add it at once, and a re-add proposed before `free_at_ms` keeps the client reserved for this
   scope until it is executed or cancelled), not already pending in this scope (`Client is already pending`), and the
   scope must have room (`A scope has at most 10 clients`). While pending, the client can't be made a shared client.
@@ -1138,6 +1181,12 @@ The stored record (borsh) is `path ‖ scope_id ‖ expires_at_ms u64 ‖ max_us
 created_at_ms u64` (`sessions.rs` `StoredSession`). Sessions opened by v1 code end after `revoked` (no creation
 time); v2 code reads both forms and writes a v1 record back in the v1 form, so no session needed migrating. The next
 layout change of sessions keeps that codec.
+
+**Exit clients** (H6, D468). A token of an exit client in force (`get_config().exit_clients`) is accepted for any existing
+scope, whatever its `clients` and `allow_shared` (panic `No such scope` if it doesn't exist), limited to
+`expires_at_ms ≤ now + 30 min` and `max_uses ≤ 3`, with no `link_jwt`; it emits `exit_session_opened`. See
+[Exit clients](#exit-clients). The path is the same as through any other client: `aud` never enters it (golden tests in
+`src/tests/email.rs`, `golden_paths_are_the_same_through_own_client_shared_client_and_exit`).
 
 #### `derive_key(session_public_key, counter, signature, pk1, pk2)` — anyone
 
@@ -1390,14 +1439,32 @@ D155, D232).
 An email token at 2-of-2 (Level 1) adds one more verification to every call that takes it: raise the attached gas
 with that upgrade.
 
+### Gas and storage of the exit client (sandbox, H6)
+
+`cargo test --test governance login_gas_of_v4_against_v3_and_of_an_exit_login -- --nocapture | grep -E '^(GAS|STORAGE)'`, a
+Google login (2048-bit test key). Each call is hana-signer's own receipt plus the transaction, as in the table above.
+
+| | Own client (v3 vs v4) | Exit client (v4) |
+|---|---|---|
+| `create_session_and_derive` | 22.56 → 22.58 Tgas (+0.017; +0.033 on a later login) | 22.91 Tgas (+0.23 over the own client on v4) |
+| `create_session` | 20.42 → 20.45 Tgas (+0.03) | 20.68 Tgas (+0.21 over the own client) |
+
+The design estimated 0.01 Tgas extra per call (the larger root state) and under 0.1 Tgas for the exit event; the small
+over-run is the exit path's extra scope read and event, still far under the 150 Tgas attached (`apps/api/src/gas.ts`).
+Root state: `STATE` is 24 bytes larger on v4 with empty lists (two `u32` lengths and the 16-byte `exit_window`), 82 bytes
+with one Google client in force (a bit over 130 bytes with Home's Google and email clients; the design estimated about 250).
+`execute_upgrade` v3 → v4 through the DAO: 105 Tgas in all, 30.5 Tgas in its own receipt (deploy + `migrate`, a 624 KB
+wasm). Account storage after the upgrade grew by the wasm's change (about 12 KB, 0.12 NEAR).
+
 ## Events (NEP-297)
 
-Logged as `EVENT_JSON:{"standard":"hana-id","version":"1.2.0","event":"<name>","data":[{...}]}` (`data` is a
+Logged as `EVENT_JSON:{"standard":"hana-id","version":"1.3.0","event":"<name>","data":[{...}]}` (`data` is a
 one-element array, as in NEP-171). Version `1.1.0` (governance batch, D86) is additive over `1.0.0`: new events,
 and `issuer_key_set` / `issuer_key_removed` gain fields and are now emitted when a key enters or leaves the active
 set (execution or confirmation, or an owner removal), no longer when a key is posted. Version `1.2.0` (email login)
 is additive over `1.1.0`: the self-issued and link events below, and `issuer_key_proposed` gains `signer` for a
-self-issued issuer's key. Link events carry identity keys in hex, never `sub`s.
+self-issued issuer's key. Link events carry identity keys in hex, never `sub`s. Version `1.3.0` (the exit client, H6) is
+additive over `1.2.0`: `exit_clients_set` and `exit_session_opened`.
 
 | event | data |
 |---|---|
@@ -1430,6 +1497,8 @@ self-issued issuer's key. Link events carry identity keys in hex, never `sub`s.
 | `sessions_valid_from_set` | `{"sessions_valid_from_ms"}` |
 | `upgrade_proposed` / `upgrade_cancelled` / `upgrade_executed` | `{"code_hash","executable_at_ms"}` / `{"code_hash"}` / `{"code_hash"}` |
 | `state_migrated` | `{"from_version","to_version"}` (logged by `migrate` in the deploy receipt: the upgrade really happened) |
+| `exit_clients_set` | `{"exit_clients":[[provider,aud]],"pending_exit_clients":[{"provider","aud","effective_at_ms"}]}` |
+| `exit_session_opened` | `{"scope_id","provider","aud","identity_key":"<hex>","expires_at_ms","max_uses"}`: one per exit session; never a `sub` |
 | `owner_proposed` / `owner_proposal_cancelled` / `owner_changed` | `{"owner","acceptable_at_ms"}` / `{"owner"}` / `{"old","new"}` |
 | `withdrawal_proposed` / `withdrawal_cancelled` / `withdrawal_executed` | `{"receiver","amount","executable_at_ms"}` / `{"receiver","amount"}` / `{"receiver","amount"}` (amount in yoctoNEAR, a string) |
 
@@ -1468,6 +1537,23 @@ the JWKS cron's own last run; the portal may read it instead of the views (it ru
 like the admin Worker, so it is no more independent than the portal itself). `scripts/admin.ts <env>
 governance:status --json` is an operator-side reference snapshot of the same chain state plus the council's open
 proposals, with the findings to show (`docs/operations.md` "Governance status for the admin portal").
+
+## Changed in the exit client batch (v4, H6)
+
+Layout v4, migrated **in place** by `migrate` (`execute_upgrade`), not deployed. **No existing byte layout, nonce, signed
+message, CKD request or path changed**: `aud` never enters a path, `ik`, `settle` or `path_identity`. Golden tests in
+`src/tests/email.rs` (`golden_paths_are_the_same_through_own_client_shared_client_and_exit`) open the same user through a
+scope's own client, a shared client and the exit client, for Google, email and a linked member, and get identical strings;
+the v3 fixture's sessions keep their stored paths. In detail:
+
+- **State** (`migrate.rs`, a field-for-field copy of v3): `exit_clients`, `pending_exit_clients`, `exit_window` appended; a
+  v3 state migrates in place and starts with no exit client, an empty window. v2 state is no longer migrated (the design's
+  condition: every env is v3, D494).
+- **New** `set_exit_clients`, `get_config().exit_clients`, `.pending_exit_clients`, `.exit_window`, events `exit_clients_set`,
+  `exit_session_opened`. `create_session` and `create_session_and_derive` accept an exit client for any existing scope with
+  the D486 limits.
+- **Refused**: a client that is, or was, an exit client, in every list; a self-issued client that isn't `{provider}:{scope_id}`.
+- **Unchanged**: `disable_shared_login` and `remove_client` (D480), and everything else.
 
 ## Changed in the email login batch (v3)
 
@@ -1627,6 +1713,9 @@ prepays them. New view `session_key_in_use` (also covers revoked, unexpired sess
   shared-only scope can't: disabling needs a client of its own, and the `AddClient` for one is timelocked by the same
   delay and proposed only after the addition was announced, so it lands after the new shared client is in force.
   Such a scope accepts every shared client (and the login page behind it) Hana adds.
+- **Removed exit clients are retired.** A client dropped from `set_exit_clients` (in force or still pending) gets a
+  permanent `removed_clients` record (`scope_id: "#exit"`, `free_at_ms: u64::MAX`): it can never return or be claimed, so a
+  retired Home client can't be taken over by a scope (D483, D494).
 - **Removed shared clients are retired.** A client dropped from `set_shared_clients` (in force or still pending) gets a
   permanent `removed_clients` record with scope id `#shared`, so no scope can ever claim it
   (`Client was a shared client and is retired`): anyone able to load Hana's login page could otherwise mint tokens

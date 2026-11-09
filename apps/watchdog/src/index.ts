@@ -8,9 +8,9 @@ import { BODY_LIMITS, BodyTooLarge, readCapped, readJsonCapped } from './http.ts
 import { log } from './log.ts';
 import { NearChain, NearWriter, Rpc } from './near.ts';
 import { identityDiscoveryUrl, identityJwksUrl, type IdentityResponse, parseIdentityPins } from './identity.ts';
-import { parsePins } from './pins.ts';
+import { parseExitPins, parsePins } from './pins.ts';
 import { relayerThresholds } from './relayer.ts';
-import { type RunDeps, runWatchdog } from './run.ts';
+import { DEFAULT_EXIT_ALERT_PER_HOUR, type RunDeps, runWatchdog } from './run.ts';
 import { handleRequest } from './status.ts';
 import { Store } from './store.ts';
 
@@ -59,6 +59,12 @@ export async function fetchIdentityDocument(url: string): Promise<IdentityRespon
   }
 }
 
+/** `EXIT_ALERT_PER_HOUR`: a positive integer, else the default (a typo must not stop the alarm). */
+function exitAlertThreshold(raw: string | undefined): number {
+  const n = Number(raw);
+  return raw !== undefined && Number.isInteger(n) && n >= 1 ? n : DEFAULT_EXIT_ALERT_PER_HOUR;
+}
+
 /** The real dependencies of a run, from the Worker's bindings. */
 export function runDeps(env: Env, notifier: Notifier = notifierFromEnv(env)): RunDeps {
   const rpc = new Rpc([env.NEAR_RPC, ...(env.NEAR_RPC_FALLBACK ? [env.NEAR_RPC_FALLBACK] : [])]);
@@ -72,6 +78,8 @@ export function runDeps(env: Env, notifier: Notifier = notifierFromEnv(env)): Ru
   }
   const emailJwksUrl = env.EMAIL_JWKS_URL?.trim();
   const emailPins = parsePins(env.EMAIL_PINS);
+  const exitPins = parseExitPins(env.EXIT_PINS);
+  const exitAlertPerHour = exitAlertThreshold(env.EXIT_ALERT_PER_HOUR);
   const identityIss = env.IDENTITY_ISS?.trim() || null;
   return {
     store: new Store(env.DB),
@@ -92,6 +100,8 @@ export function runDeps(env: Env, notifier: Notifier = notifierFromEnv(env)): Ru
       relayer: env.RELAYER_ACCOUNT?.trim() || null,
       relayerThresholds: relayerThresholds(env.RELAYER_FUNDS),
       emailPins,
+      exitPins,
+      exitAlertPerHour,
       devEnv: isDevEnvName(env.ENV_NAME),
       identity: { iss: identityIss, pins: parseIdentityPins(env.IDENTITY_PINS) },
     },

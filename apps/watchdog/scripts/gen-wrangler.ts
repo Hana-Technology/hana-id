@@ -43,6 +43,12 @@ export function identityVars(m: Manifest): Record<string, string> {
   return { ...(m.identityToken ? { IDENTITY_ISS: m.identityToken.iss } : {}), ...(pins ? { IDENTITY_PINS: JSON.stringify(pins) } : {}) };
 }
 
+/** The exit list's pins and alarm level (D468, D493): `EXIT_PINS` (JSON of `watchdog.pinnedExitClients`) and `EXIT_ALERT_PER_HOUR`. Absent: nothing pinned and the default level. */
+export function exitVars(m: Manifest): Record<string, string> {
+  const w = m.watchdog;
+  return { ...(w?.pinnedExitClients ? { EXIT_PINS: JSON.stringify(w.pinnedExitClients) } : {}), ...(w?.exitAlertPerHour !== undefined ? { EXIT_ALERT_PER_HOUR: String(w.exitAlertPerHour) } : {}) };
+}
+
 /** `env`: where CLOUDFLARE_ACCOUNT_ID is read (the tests' config passes none). */
 export function wranglerConfig(m: Manifest, d1Id: string, env: Readonly<Record<string, string | undefined>> = process.env): Record<string, unknown> {
   const w = m.watchdog;
@@ -80,6 +86,7 @@ export function wranglerConfig(m: Manifest, d1Id: string, env: Readonly<Record<s
       DIGEST_HOUR_UTC: String(w.digestHourUtc ?? 0),
       ...emailVars(m),
       ...identityVars(m),
+      ...exitVars(m),
     },
     d1_databases: [{ binding: 'DB', database_name: w.cloudflare.d1Name, database_id: d1Id, migrations_dir: 'migrations' }],
     triggers: { crons: [CRON] },

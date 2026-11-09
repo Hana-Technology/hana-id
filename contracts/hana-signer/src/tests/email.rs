@@ -5,6 +5,7 @@
 //! Tokens: `email_fixture.json` (JS-signed, `scripts/gen-email-fixtures.mjs`) for interoperability and layouts;
 //! everything else is minted here with the deterministic test keys of `test_rsa.rs`.
 
+mod exit;
 mod issuer_tokens;
 mod link_counter;
 
@@ -231,13 +232,43 @@ fn email_setup() -> HanaSigner {
     c
 }
 
+/// Hana Home's exit clients in the tests: a dedicated Google client and the email issuer's Home audience (D474, D484).
+const EXIT_G: &str = "hana-exit.apps.googleusercontent.com";
+const EXIT_E: &str = "hana-home";
+/// When the exit clients of `exit_setup` are in force (they wait `governance_delay_ms`, D482).
+const EXIT_MS: u64 = NOW_MS + GOV_DELAY_MS;
+
+/// email_setup() plus the exit clients (in force at EXIT_MS), SHARED (in force at NOW_MS + DELAY_MS) and a scope s3 with
+/// its own Google client C and shared login on, so one user can come in through all three routes.
+fn exit_setup() -> HanaSigner {
+    let mut c = email_setup();
+    ctx(ADMIN, NOW_MS);
+    c.set_shared_clients(vec![google(SHARED)]);
+    c.set_exit_clients(vec![google(EXIT_G), (EMAIL.into(), EXIT_E.into())]);
+    assert_eq!(c.admin_register_scope(vec![near_owner(BOB)], vec![google(C)], None, true), "s3");
+    c
+}
+
+/// The session nonce for key `seed` in `scope`, committing to this expiry, key index and max_uses (salt SALT).
+fn nonce_for(scope: &str, seed: u8, expires_at_ms: u64, max_uses: u32, key_index: u32) -> String {
+    let key = pk(seed);
+    nonce_of(&sessions::session_nonce_preimage(&SessionCommitment { signer: ME, scope_id: scope, session_public_key: &key, expires_at_ms, key_index, max_uses, salt: &SALT }))
+}
+
+/// `create_session` of `jwt` at `ms` as the relayer signs it (a test key's proof of possession).
+#[allow(clippy::too_many_arguments)]
+fn open_at(c: &mut HanaSigner, jwt: String, scope: &str, seed: u8, ms: u64, expires_at_ms: u64, max_uses: u32, key_index: u32) -> Session {
+    ctx(RELAYER, ms);
+    c.create_session_signed(jwt, scope.into(), pk(seed), expires_at_ms, SALT.to_vec(), key_index, max_uses)
+}
+
 /// A compact token of issuer `p` (p1..p3) for scope s1's client.
 fn p_tok(p: &str, sub: &str, nonce: &str) -> String {
     compact(rk(5), P_KID, &claims(&format!("https://{p}.example"), "p:s1", sub, nonce))
 }
 
-fn ev12(event: &str, data: Value) -> Value {
-    json!({"standard":"hana-id","version":"1.2.0","event":event,"data":[data]})
+fn ev13(event: &str, data: Value) -> Value {
+    json!({"standard":"hana-id","version":"1.3.0","event":event,"data":[data]})
 }
 
 fn events_named(name: &str) -> Vec<Value> {
@@ -720,6 +751,40 @@ fn golden_paths_of_identities_outside_every_account_are_unchanged() {
     login(&mut c, e_session(&sub, 7), 7, None, None);
     assert_eq!(mpc_path(), format!("s1#email#{sub}#0"));
     assert_eq!(c.get_identity("s1".into(), EMAIL.into(), sub.clone()).status, "own");
+}
+
+#[test]
+fn golden_paths_are_the_same_through_own_client_shared_client_and_exit() {
+    // The same user through a scope's own client, a shared client and the exit client opens the identical path string:
+    // `aud` never enters the path (D468). Google in a scope with shared login on, email in s1 (shared login is never
+    // for email), and a linked member reaching its root's path by its own client and by exit.
+    let mut c = exit_setup();
+    let (ms, expiry) = (EXIT_MS, EXIT_MS + 30 * 60 * 1000);
+    let g = "g-golden";
+    let own = open_at(&mut c, google_tok(C, g, &nonce_for("s3", 11, expiry, 3, 0)), "s3", 11, ms, expiry, 3, 0);
+    let shared = open_at(&mut c, google_tok(SHARED, g, &nonce_for("s3", 12, expiry, 3, 0)), "s3", 12, ms, expiry, 3, 0);
+    let exit = open_at(&mut c, google_tok(EXIT_G, g, &nonce_for("s3", 13, expiry, 3, 0)), "s3", 13, ms, expiry, 3, 0);
+    assert_eq!(own.path, "s3#google#g-golden#0");
+    assert_eq!((shared.path.clone(), exit.path.clone()), (own.path.clone(), own.path.clone()));
+    // Email: the scope's own email client and the exit audience.
+    let e = esub("carol@example.com");
+    let own = open_at(&mut c, email_tok("email:s1", &e, &nonce_for("s1", 14, expiry, 3, 0)), "s1", 14, ms, expiry, 3, 0);
+    let exit = open_at(&mut c, email_tok(EXIT_E, &e, &nonce_for("s1", 15, expiry, 3, 0)), "s1", 15, ms, expiry, 3, 0);
+    assert_eq!(own.path, format!("s1#email#{e}#0"));
+    assert_eq!(exit.path, own.path);
+    // A key index other than 0 is kept.
+    let exit = open_at(&mut c, google_tok(EXIT_G, g, &nonce_for("s3", 16, expiry, 3, 5)), "s3", 16, ms, expiry, 3, 5);
+    assert_eq!(exit.path, "s3#google#g-golden#5");
+    // A linked member: a Google identity joined to an email root opens the root's path, by its own client and by exit.
+    let mut c = exit_setup();
+    let e = esub("alice@gmail.com");
+    email_wallet(&mut c, &e, 7);
+    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, true, ja(&e))), Some(true));
+    assert_eq!(c.get_identity("s1".into(), "google".into(), G.into()).status, "member");
+    let own = open_at(&mut c, google_tok(A, G, &nonce_for("s1", 21, expiry, 3, 0)), "s1", 21, ms, expiry, 3, 0);
+    let exit = open_at(&mut c, google_tok(EXIT_G, G, &nonce_for("s1", 22, expiry, 3, 0)), "s1", 22, ms, expiry, 3, 0);
+    assert_eq!(own.path, format!("s1#email#{e}#0"));
+    assert_eq!(exit.path, own.path);
 }
 
 #[test]
@@ -1430,150 +1495,168 @@ fn identity_and_account_views() {
 }
 
 // ===================================================================================================================
-// Migration v2 → v3
+// Migration v3 → v4
 // ===================================================================================================================
 
-/// The v2 storage in src/v2_state_fixture.json (built by the v2 code, develop d1837ec; see its "about").
-fn v2_storage() -> std::collections::HashMap<Vec<u8>, Vec<u8>> {
-    let f: Value = serde_json::from_str(include_str!("../v2_state_fixture.json")).unwrap();
-    f["storage"].as_array().unwrap().iter().map(|kv| (unhex(kv[0].as_str().unwrap()), unhex(kv[1].as_str().unwrap()))).collect()
+fn v3_fixture() -> Value {
+    serde_json::from_str(include_str!("../v3_state_fixture.json")).unwrap()
+}
+
+/// The v3 storage in src/v3_state_fixture.json (built by the v3 code, develop 81ebfa06; see its "about").
+fn v3_storage() -> std::collections::HashMap<Vec<u8>, Vec<u8>> {
+    v3_fixture()["storage"].as_array().unwrap().iter().map(|kv| (unhex(kv[0].as_str().unwrap()), unhex(kv[1].as_str().unwrap()))).collect()
 }
 
 #[test]
-fn the_v2_layout_copy_round_trips_the_v2_state_fixture() {
+fn the_v3_layout_copy_round_trips_the_v3_state_fixture() {
     use near_sdk::borsh::BorshDeserialize;
-    let storage = v2_storage();
+    let storage = v3_storage();
     let raw = &storage[b"STATE".as_slice()];
-    let v2 = crate::migrate::HanaSignerV2::try_from_slice(raw).expect("the v2 layout reads the v2 state");
-    assert_eq!(&near_sdk::borsh::to_vec(&v2).unwrap(), raw);
-    assert_eq!(v2.state_version, 2);
-    // The v3 layout doesn't read v2 state, and the v2 layout (v2 code's migrate) doesn't read v3 state: an upgrade back
-    // to v2 code panics in its migrate and is reverted.
+    let v3 = crate::migrate::HanaSignerV3::try_from_slice(raw).expect("the v3 layout reads the v3 state");
+    assert_eq!(&near_sdk::borsh::to_vec(&v3).unwrap(), raw);
+    assert_eq!(v3.state_version, 3);
+    // The v4 layout doesn't read v3 state, and the v3 layout (v3 code's migrate) doesn't read v4 state: an upgrade back
+    // to v3 code panics in its migrate and is reverted.
     assert!(HanaSigner::try_from_slice(raw).is_err());
     let c = setup();
-    let v3 = near_sdk::borsh::to_vec(&c).unwrap();
-    assert!(crate::migrate::HanaSignerV2::try_from_slice(&v3).is_err());
-    // v3 = the v2 bytes, unchanged, followed by the v3 fields.
-    let v2_part = crate::migrate::HanaSignerV2::deserialize(&mut v3.as_slice()).unwrap();
-    let prefix = near_sdk::borsh::to_vec(&v2_part).unwrap();
-    assert_eq!(prefix, v3[..prefix.len()].to_vec());
+    let v4 = near_sdk::borsh::to_vec(&c).unwrap();
+    assert!(crate::migrate::HanaSignerV3::try_from_slice(&v4).is_err());
+    // v4 = the v3 bytes, unchanged, followed by the v4 fields (empty: two empty lists and the exit window).
+    let v3_part = crate::migrate::HanaSignerV3::deserialize(&mut v4.as_slice()).unwrap();
+    let prefix = near_sdk::borsh::to_vec(&v3_part).unwrap();
+    assert_eq!(prefix, v4[..prefix.len()].to_vec());
+    assert_eq!(v4.len() - prefix.len(), 4 + 4 + 16);
+}
+
+/// The views of `get_*` the v3 fixture recorded, for a migrated contract at NOW_MS (a member's `identity_key` and paths
+/// included).
+fn views_of(c: &HanaSigner, e: &str) -> Value {
+    json!({
+        "governance": c.get_governance(),
+        "key_changes": c.get_key_changes(),
+        "s1": c.get_scope("s1".into()),
+        "s2": c.get_scope("s2".into()),
+        "account": c.get_account("s1".into(), EMAIL.into(), e.to_string()),
+        "identity_email": c.get_identity("s1".into(), EMAIL.into(), e.to_string()),
+        "identity_g": c.get_identity("s1".into(), "google".into(), G.into()),
+        "identity_g2": c.get_identity("s1".into(), "google".into(), G2.into()),
+        "link_stats": c.get_link_stats(),
+        "self_issued": c.get_self_issued(EMAIL.into()),
+        "issuer_google": c.get_issuer("google".into()),
+        "issuer_email": c.get_issuer(EMAIL.into()),
+        "session7": c.get_session(pk(7)),
+        "session8": c.get_session(pk(8)),
+        "session9": c.get_session(pk(9)),
+        "session10": c.get_session(pk(10)),
+        "sessions_queue": [c.queue_head, c.queue_tail],
+        "client_e": c.scope_for_client("google".into(), E.into()),
+        "client_a": c.scope_for_client("google".into(), A.into()),
+    })
+}
+
+/// Removes every `key` field of a view, as the fixture's views have none.
+fn strip_identity_keys(v: &mut Value) {
+    match v {
+        Value::Object(o) => {
+            o.remove("key");
+            o.values_mut().for_each(strip_identity_keys);
+        }
+        Value::Array(a) => a.iter_mut().for_each(strip_identity_keys),
+        _ => {}
+    }
 }
 
 #[test]
-fn migrate_v2_to_v3_keeps_every_field_and_every_path() {
-    ctx_with_storage(ME, NOW_MS, v2_storage());
+fn migrate_v3_to_v4_keeps_every_field_and_every_path() {
+    let f = v3_fixture();
+    let e = f["email_sub"].as_str().unwrap().to_string();
+    ctx_with_storage(ME, NOW_MS, v3_storage());
     let mut c = HanaSigner::migrate();
-    assert_eq!(events(), vec![ev12("state_migrated", json!({"from_version":2,"to_version":3}))]);
-    // Every v2 field as the fixture's v2 code left it.
-    assert_eq!(
-        serde_json::to_value(c.get_config()).unwrap(),
-        json!({
-            "owner":ADMIN,"mpc":"v1.signer-prod.testnet","ckd_domain_id":2,
-            "console_audiences":[["google",CONSOLE]],
-            "pending_console_audiences":[{"provider":"google","aud":A,"effective_at_ms":NOW_MS + DELAY_MS}],
-            "sponsors":[RELAYER],
-            "shared_clients":[["google",SHARED]],
-            "pending_shared_clients":[{"provider":"google","aud":D,"effective_at_ms":NOW_MS + DELAY_MS}],
-            "change_delay_ms":DELAY_MS,"pending_change_delay":{"change_delay_ms":0,"effective_at_ms":NOW_MS + DELAY_MS},
-            "public_registration":false,
-            "issuer_key_delay_ms":KEY_DELAY_MS,"pending_issuer_key_delay":{"change_delay_ms":0,"effective_at_ms":NOW_MS + GOV_DELAY_MS},
-            "governance_delay_ms":GOV_DELAY_MS,"pending_governance_delay":{"change_delay_ms":HOUR_MS,"effective_at_ms":NOW_MS + GOV_DELAY_MS},
-            "paused":false,"unpaused_at_ms":NOW_MS,"changes_unlock_floor_ms":NOW_MS + DELAY_MS,"sessions_valid_from_ms":NOW_MS - HOUR_MS,"unrecorded_wallets":true
-        })
-    );
-    let gov = c.get_governance();
-    assert_eq!(gov.state_version, 3);
-    assert_eq!(gov.watchdogs.iter().map(|w| w.account_id.to_string()).collect::<Vec<_>>(), vec![WATCHDOG, WATCHDOG2]);
-    assert_eq!(gov.updater_keys, vec![near_pk(3)]);
-    assert_eq!(gov.pending_upgrade.unwrap().code_hash, code_hash(NEW_CODE));
-    assert_eq!(gov.pending_owner.unwrap().owner, acc(CAROL));
-    assert_eq!(gov.pending_withdrawal.unwrap().amount, NearToken::from_near(1));
-    // The owner's pending key change (stored by v2 code as KeyOp::Add) reads as before, with no signer field.
-    let changes = serde_json::to_value(c.get_key_changes()).unwrap();
-    assert_eq!(changes.as_array().unwrap().len(), 1);
-    assert_eq!((changes[0]["kid"].as_str(), changes[0]["op"].as_str(), changes[0].get("signer")), (Some("k2"), Some("Add"), None));
-    assert_eq!(kids(&c), vec!["test-kid".to_string()]);
-    assert_eq!(c.get_issuer("other".into()).unwrap().kids, vec!["test-kid2".to_string()]);
-    let s1 = c.get_scope("s1".into()).unwrap();
-    assert_eq!(s1.clients, vec![google(A)]);
-    assert_eq!(s1.pending.len(), 1);
-    assert_eq!(c.scope_for_client("google".into(), B.into()), Some("s2".into()));
-    assert!(c.get_scope("s3".into()).unwrap().allow_shared);
-    // Sessions and their paths, byte for byte.
-    assert_eq!(c.get_session(pk(7)), Some(Session { path: format!("s1#google#{USER}#0"), scope_id: "s1".into(), expires_at_ms: EXPIRES_MS, max_uses: 3, used: 1 }));
-    assert_eq!(c.get_session(pk(8)).unwrap().path, format!("s2#google#{USER}#0"));
-    // State no view shows survives too: the session queue (the two v2 sessions, pruned below), ...
-    let (head, tail) = (c.queue_head, c.queue_tail);
-    assert_eq!(tail - head, 2);
-    // ...the quarantine of A2 (removed from s1), ...
-    ctx(BOB, NOW_MS);
-    expect_panic("Client was recently removed from another scope", || {
-        c.propose_change("s2".into(), OwnerAuth::Near, add(A2), Some(tok("cp_a2_s2_0")));
-    });
-    // ...the pending AddClient E's reservation (a client pending in a scope can't be made shared), ...
-    ctx(ADMIN, NOW_MS);
-    expect_panic("Client is pending in a scope", || c.set_shared_clients(vec![google(SHARED), google(E)]));
-    // ...and the scope counter: s1..s4 exist, the next registration is s5.
-    assert_eq!(c.admin_register_scope(vec![near_owner(BOB)], vec![], None, true), "s5");
-    // The v3 fields start empty: no self-issued issuer, no account, nothing opened (v2 wallets aren't in `opened`).
-    assert!(c.self_issued.is_empty());
-    assert_eq!(c.get_self_issued("google".into()), None);
-    assert_eq!(c.get_identity("s1".into(), "google".into(), USER.into()).status, "own");
-    assert!(!c.get_identity("s1".into(), "google".into(), USER.into()).opened);
-    // The state round-trips as v3.
+    assert_eq!(events(), vec![ev13("state_migrated", json!({"from_version":3,"to_version":4}))]);
+    assert_eq!(c.state_version, 4);
+    // get_config: the same fields, plus the empty v4 ones.
+    let mut config = serde_json::to_value(c.get_config()).unwrap();
+    let new_fields = config.as_object_mut().unwrap();
+    assert_eq!(new_fields.remove("exit_clients"), Some(json!([])));
+    assert_eq!(new_fields.remove("pending_exit_clients"), Some(json!([])));
+    assert_eq!(new_fields.remove("exit_window"), Some(json!({"window_start_ms": NOW_MS, "current": 0, "previous": 0})));
+    assert_eq!(config, f["views"]["config"]);
+    // Every other view the fixture recorded, byte for byte (only `state_version` differs). The fixture omits identity
+    // keys (see its "about"): they are computed from public inputs, checked here against what the views answer.
+    let mut views = views_of(&c, &e);
+    assert_eq!(views["governance"]["state_version"], json!(4));
+    views["governance"]["state_version"] = json!(3);
+    assert_eq!(views["identity_email"]["key"], json!(h(&eik(&e))));
+    assert_eq!(views["identity_g"]["key"], json!(h(&gik(G))));
+    assert_eq!(views["identity_g2"]["key"], json!(h(&gik(G2))));
+    assert_eq!(views["account"]["members"][0]["key"], json!(h(&gik(G))));
+    strip_identity_keys(&mut views);
+    let recorded = f["views"].as_object().unwrap();
+    for (name, value) in views.as_object().unwrap() {
+        assert_eq!(value, &recorded[name], "view {name}");
+    }
+    // The state round-trips as v4.
     env::state_write(&c);
     let stored: HanaSigner = env::state_read().unwrap();
-    assert_eq!(stored.state_version, 3);
+    assert_eq!((stored.state_version, stored.exit_clients.clone(), stored.exit_window.clone()), (4, vec![], ExitWindow::default()));
+    drop(stored);
 
-    // It keeps working: the v2 session derives with the same path, and that marks its identity opened...
+    // Paths, byte for byte. Session 7 (email, the account root) derives; a member's session 8 reached the root's path,
+    // a Google wallet's session 9 its own.
+    assert_eq!(c.get_session(pk(9)).unwrap().path, "s1#google#g-bob#0");
     ctx(RELAYER, NOW_MS);
     derive(&mut c, 7, 2);
-    assert_eq!(mpc_path(), format!("s1#google#{USER}#0"));
-    assert!(c.get_identity("s1".into(), "google".into(), USER.into()).opened);
-    // ...a fresh Google login gives the same path the v2 code gave...
-    post_key(&mut c, "google", GOOGLE_KID, &rk(4).n_b64(), &rk(4).e_b64());
+    assert_eq!(mpc_path(), format!("s1#email#{e}#0"));
     ctx(RELAYER, NOW_MS);
-    let s = c.create_session_signed(google_tok(B, USER, &sess_nonce("s2", 9)), "s2".into(), pk(9), EXPIRES_MS, SALT.to_vec(), 0, 3);
-    assert_eq!(s.path, format!("s2#google#{USER}#0"));
-    // ...and email login can be set up on it (owner-posted key after the governance delay).
+    derive(&mut c, 8, 2);
+    assert_eq!(mpc_path(), format!("s1#email#{e}#0"));
+    // A fresh login by the member reaches the same root path, by its own client.
+    let s = open_at(&mut c, google_tok(A, G, &sess_nonce("s1", 41)), "s1", 41, NOW_MS, EXPIRES_MS, 3, 0);
+    assert_eq!(s.path, format!("s1#email#{e}#0"));
+
+    // State no view shows survives too: the quarantine of A2 (removed from s1, only s1 may take it back)...
+    let n = c.get_scope("s2".into()).unwrap().action_nonce;
+    let proof = google_tok(A2, OWNER_SUB, &client_proof_nonce(ME, "s2", n));
+    ctx(BOB, NOW_MS);
+    expect_panic("Client was recently removed from another scope", || { let _ = c.propose_change("s2".into(), OwnerAuth::Near, add(A2), Some(proof)); });
+    // ...the pending AddClient E's reservation...
     ctx(ADMIN, NOW_MS);
-    c.set_issuer(EMAIL.into(), vec![email_iss()]);
-    c.mark_self_issued(EMAIL.into());
-    let id = c.set_issuer_key(EMAIL.into(), HANA_KID.into(), rk(0).n_b64(), rk(0).e_b64(), Some("hana".into()));
-    ctx(ANYONE, NOW_MS + GOV_DELAY_MS);
-    c.execute_issuer_key_change(id);
-    assert_eq!(c.get_self_issued(EMAIL.into()).unwrap().signers[0].kids, vec![HANA_KID.to_string()]);
-    // Once they expire, prune_sessions removes the v2 sessions from the migrated queue, then the new one.
-    assert_eq!((c.queue_head, c.queue_tail), (head, tail + 1));
-    ctx(ANYONE, EXPIRES_MS + 1);
-    assert_eq!(c.prune_sessions(10), 3);
-    assert_eq!((c.queue_head, c.queue_tail), (tail + 1, tail + 1));
-    assert!(c.sessions.get(&pk(7)).is_none() && c.sessions.get(&pk(8)).is_none());
+    expect_panic("Client is pending in a scope", || c.set_shared_clients(vec![google(SHARED), google(E)]));
+    // ...and the scope counter: s1 and s2 exist, the next registration is s3.
+    assert_eq!(c.admin_register_scope(vec![near_owner(BOB)], vec![], None, true), "s3");
+
+    // The v3 code's pending changes still work: the exit list can be set, and the upgrade's pending AddClient still executes.
+    ctx(ANYONE, NOW_MS + 2 * DELAY_MS);
+    c.execute_change("s1".into(), 0);
+    assert_eq!(c.scope_for_client("google".into(), E.into()), Some("s1".into()));
+    ctx(ADMIN, NOW_MS + 2 * DELAY_MS);
+    c.set_exit_clients(vec![google(EXIT_G), (EMAIL.into(), EXIT_E.into())]);
+    assert_eq!(c.get_config().pending_exit_clients.len(), 2);
 }
 
 #[test]
 fn migrate_refuses_every_state_it_does_not_migrate_from() {
-    // A state shorter than the v2 layout (a v1 state is a strict prefix of it, and v1 has no migration any more), no
-    // state, a v2 layout that claims another version, a v3 layout that claims another version.
-    let mut storage = v2_storage();
+    // A state shorter than the v3 layout (a v2 state is a strict prefix of it, and v2 has no migration any more), no
+    // state, a v3 layout that claims another version, a v4 layout that claims another version.
+    let mut storage = v3_storage();
     let raw = storage.get_mut(b"STATE".as_slice()).unwrap();
     raw.truncate(raw.len() - 8);
     ctx_with_storage(ME, NOW_MS, storage);
     expect_panic("Unexpected state version", || drop(HanaSigner::migrate()));
     ctx_with_storage(ME, NOW_MS, Default::default());
     expect_panic("Unexpected state version", || drop(HanaSigner::migrate()));
-    let mut storage = v2_storage();
+    let mut storage = v3_storage();
     let raw = storage.get_mut(b"STATE".as_slice()).unwrap();
-    let mut v2 = <crate::migrate::HanaSignerV2 as near_sdk::borsh::BorshDeserialize>::try_from_slice(raw).unwrap();
-    v2.state_version = 3;
-    *raw = near_sdk::borsh::to_vec(&v2).unwrap();
+    let mut v3 = <crate::migrate::HanaSignerV3 as near_sdk::borsh::BorshDeserialize>::try_from_slice(raw).unwrap();
+    v3.state_version = 2;
+    *raw = near_sdk::borsh::to_vec(&v3).unwrap();
     ctx_with_storage(ME, NOW_MS, storage);
     expect_panic("Unexpected state version", || drop(HanaSigner::migrate()));
     let mut c = setup();
-    c.state_version = 2;
+    c.state_version = 3;
     env::state_write(&c);
     expect_panic("Unexpected state version", || drop(HanaSigner::migrate()));
-    // Trailing garbage after a v3 state.
+    // Trailing garbage after a v4 state.
     let c = setup();
     let mut bytes = near_sdk::borsh::to_vec(&c).unwrap();
     bytes.push(0);
@@ -1582,18 +1665,19 @@ fn migrate_refuses_every_state_it_does_not_migrate_from() {
 }
 
 #[test]
-fn migrate_on_a_v3_state_keeps_accounts_and_policies() {
-    let mut c = email_setup();
+fn migrate_on_a_v4_state_keeps_accounts_policies_and_the_exit_list() {
+    let mut c = exit_setup();
     let e = esub("alice@gmail.com");
     email_wallet(&mut c, &e, 7);
     login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, true, ja(&e))), Some(true));
-    let (policy, account) = (c.get_self_issued(EMAIL.into()), c.get_account("s1".into(), EMAIL.into(), e.clone()));
+    let (policy, account, config) = (c.get_self_issued(EMAIL.into()), c.get_account("s1".into(), EMAIL.into(), e.clone()), c.get_config());
     env::state_write(&c);
     drop(c);
     ctx(ME, NOW_MS);
     let c = HanaSigner::migrate();
-    assert_eq!(events(), vec![ev12("state_migrated", json!({"from_version":3,"to_version":3}))]);
-    assert_eq!((c.get_self_issued(EMAIL.into()), c.get_account("s1".into(), EMAIL.into(), e)), (policy, account));
+    assert_eq!(events(), vec![ev13("state_migrated", json!({"from_version":4,"to_version":4}))]);
+    assert_eq!((c.get_self_issued(EMAIL.into()), c.get_account("s1".into(), EMAIL.into(), e), c.get_config()), (policy, account, config));
+    assert_eq!(c.get_config().pending_exit_clients.len(), 2);
 }
 
 #[test]
@@ -1610,12 +1694,12 @@ fn storage_keys_of_the_v3_collections_are_new_prefixes() {
 }
 
 #[test]
-fn derivation_is_unchanged_for_v2_sessions_after_the_migration() {
-    // The v2 fixture's s2 session (key 8, opened by v2 code) derives with the v2 path.
-    ctx_with_storage(ME, NOW_MS, v2_storage());
+fn derivation_is_unchanged_for_v3_sessions_after_the_migration() {
+    // The fixture's s2 session (key 10, opened by v3 code) derives with the v3 path.
+    ctx_with_storage(ME, NOW_MS, v3_storage());
     let mut c = HanaSigner::migrate();
     ctx(RELAYER, NOW_MS);
-    derive(&mut c, 8, 1);
+    derive(&mut c, 10, 1);
     assert_eq!(mpc_path(), format!("s2#google#{USER}#0"));
 }
 

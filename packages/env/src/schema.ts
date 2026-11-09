@@ -34,6 +34,9 @@ export const MAX_PINNED_SIGNERS = 3;
 export const MAX_PINNED_KEYS = 8;
 /** Identity keys the watchdog pins, at most: the JWKS holds up to 4 (active, standby, next, previous), plus room to pin ahead. */
 export const MAX_PINNED_IDENTITY_KEYS = 8;
+/** At most as many exit clients as the contract holds (`MAX_EXIT_CLIENTS`). */
+export const MAX_PINNED_EXIT_CLIENTS = 4;
+const provider = z.string().regex(/^[a-z0-9_-]{1,32}$/u, 'A provider is 1-32 characters of a-z 0-9 _ -');
 
 /** An RSA key's RFC 7638 JWK thumbprint (unpadded base64url SHA-256): the email issuer's `kid` for that key. */
 const keyThumbprint = z.string().regex(/^[A-Za-z0-9_-]{43}$/u, 'A pinned key is its RFC 7638 JWK thumbprint (43 base64url characters)');
@@ -143,6 +146,14 @@ const watchdogSchema = z.object({
    * before the API publishes it warns `identity_key_missing` until it does).
    */
   pinnedIdentityKeys: z.array(keyThumbprint).min(1).max(MAX_PINNED_IDENTITY_KEYS).optional(),
+  /**
+   * Hana Home's exit clients the watchdog expects on chain (`[provider, aud]`, D468, D493): one on chain that isn't
+   * pinned here pages critical, and pauses the contract when it is in force. Pin before the council runs
+   * `set_exit_clients` (docs/operations.md). Absent = nothing pinned.
+   */
+  pinnedExitClients: z.array(z.tuple([provider, z.string().min(1).max(256)])).min(1).max(MAX_PINNED_EXIT_CLIENTS).optional(),
+  /** Exit sessions per hour that page `exit_volume_high` (D487, D493; alert only). Default 20 (the watchdog's constant). */
+  exitAlertPerHour: z.number().int().min(1).max(100_000).optional(),
 });
 
 /**
@@ -186,6 +197,8 @@ function watchdogRules(
   const jwksUrl = w.pinnedIssuerKeys?.email?.jwksUrl;
   const problem = jwksUrl === undefined ? null : endpointUrlProblem(jwksUrl, m.name);
   if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'pinnedIssuerKeys', 'email', 'jwksUrl'], message: `watchdog.pinnedIssuerKeys.email.jwksUrl ${problem}` });
+  const exitPins = (w.pinnedExitClients ?? []).map(([p, a]) => `${p}/${a}`);
+  if (new Set(exitPins).size !== exitPins.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'pinnedExitClients'], message: 'An exit client is pinned once' });
   const identityPins = w.pinnedIdentityKeys ?? [];
   if (new Set(identityPins).size !== identityPins.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'pinnedIdentityKeys'], message: 'An identity key is pinned once' });
   // Pin before publish (D211): a key the API publishes that the watchdog doesn't pin pages as a forgery.

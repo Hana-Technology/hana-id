@@ -8,7 +8,7 @@
 //! - the gas of every new call, printed as `GAS ...` lines (`cargo test --test email -- --nocapture | grep '^GAS'`)
 //!   and recorded in docs/contract-interface.md "Gas".
 //!
-//! The v2 → v3 upgrade and the email setup through the DAO are in tests/governance.rs.
+//! The v3 → v4 upgrade through the DAO is in tests/governance.rs.
 
 mod common;
 

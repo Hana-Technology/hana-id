@@ -1,11 +1,10 @@
-//! Sandbox tests of the governance batch (docs/governance-spec.md "Tests", "Sandbox e2e") and of the v2 → v3 upgrade
-//! (docs/email-login-build-plan.md batch 2):
+//! Sandbox tests of the governance batch (docs/governance-spec.md "Tests", "Sandbox e2e") and of the v3 → v4 upgrade
+//! (docs/hana-home-h6-design.md, batch H6):
 //!
-//! - the v2 → v3 upgrade through the owner DAO (`propose_upgrade`, then `execute_upgrade` = deploy + `migrate` in one
-//!   receipt) on real v2 state built by the v2 wasm (`V2_COMMIT`), keeping every view, session, pending change and
-//!   derivation path; links wait for `accept_unrecorded_wallets`; the email issuer set up through the DAO; no way
-//!   back to v2;
-//! - login gas of v3 against v2;
+//! - the v3 → v4 upgrade through the owner DAO (`propose_upgrade`, then `execute_upgrade` = deploy + `migrate` in one
+//!   receipt) on real v3 state built by the v3 wasm (`V3_COMMIT`), keeping every view, session, wallet, link, pending
+//!   change and derivation path; the exit client set through the DAO and used; no way back to v3;
+//! - login gas of v4 against v3, and of an exit login;
 //! - `execute_upgrade` with raw wasm input: deploy + `migrate` in one receipt, a failing `migrate` rolls back;
 //! - the mainnet-style creation batch (Deploy + `new` + DeleteKey signed by the deleted key);
 //! - a rotation end to end (updater proposes, watchdog confirms, a forged proposal is cancelled and the updater key
@@ -75,7 +74,7 @@ async fn propose_upgrade(owner: &Account, signer: &AccountId, code: &[u8]) -> Re
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// v2 → v3 through the DAO
+// v3 → v4 through the DAO
 
 /// Asserts that every field of `before` is in `after` with the same value, recursively (objects may gain fields;
 /// arrays keep their length and order). Returns the paths of the fields `after` added.
@@ -99,12 +98,13 @@ fn assert_kept(before: &Value, after: &Value, at: &str, added: &mut Vec<String>)
     }
 }
 
-/// A sandbox with a v2 hana-signer (the code sandbox-dev runs, built from V2_COMMIT) holding real v2 state: the Google
-/// key (watchdog-confirmed), a console audience, a sponsor, scopes s1 = [A, C] (alice), s2 = [B] (bob) and s3
-/// (shared only), a pending shared client, a pending AddClient (D) in s1, a removed (quarantined) client (C), a session
-/// used once, a wallet opened by a combined login, an updater key with a pending key proposal, a watchdog, and a 2 of
-/// 3 Sputnik DAO as the owner (as on sandbox-dev).
-struct V2World {
+/// A sandbox with a v3 hana-signer (the code sandbox-dev runs now, built from V3_COMMIT) holding real v3 state: Hana's
+/// email issuer (self-issued, its key active), scopes s1 = [A, C, email:s1] (alice, no shared login), s2 = [B] (bob) and
+/// s3 (shared only), the Google key (watchdog-confirmed), a console audience, a sponsor, a pending shared client, a
+/// pending AddClient (D) in s1, a removed (quarantined) client (C), a Google session used once, Google and email wallets
+/// opened by combined logins, an email identity linked to a Google wallet (a member), an updater key with a pending key
+/// proposal, a watchdog, and a 2 of 3 Sputnik DAO as the owner (as on sandbox-dev).
+struct V3World {
     worker: Worker<Sandbox>,
     signer: Contract,
     alice: Account,
@@ -117,14 +117,18 @@ struct V2World {
     bond: NearToken,
     mpc: Contract,
     issuer: TestIssuer,
+    email: TestIssuer,
+    /// The email identity with its own wallet in s1, and the one linked (a member) into USER_SUB's Google wallet.
+    e_root: String,
+    e_member: String,
     scope_a: String,
-    /// Opened (create_session + one derive_key) by v2 code.
+    /// Opened (create_session + one derive_key) by v3 code.
     session: TestSession,
     /// The updater key's pending proposal of Google's next key.
     pending_key_id: u64,
 }
 
-impl V2World {
+impl V3World {
     fn dao(&self) -> Dao<'_> {
         Dao { dao: &self.dao, bond: self.bond }
     }
@@ -164,7 +168,10 @@ impl V2World {
             "governance": view("get_governance", json!({})).await?,
             "issuer": view("get_issuer", json!({"provider": PROVIDER})).await?,
             "issuer_keys": view("get_issuer_keys", json!({"provider": PROVIDER})).await?,
+            "email_issuer": view("get_issuer", json!({"provider": EMAIL})).await?,
+            "self_issued": view("get_self_issued", json!({"provider": EMAIL})).await?,
             "key_changes": view("get_key_changes", json!({})).await?,
+            "link_stats": view("get_link_stats", json!({})).await?,
             "s1": view("get_scope", json!({"scope_id": "s1"})).await?,
             "s2": view("get_scope", json!({"scope_id": "s2"})).await?,
             "s3": view("get_scope", json!({"scope_id": "s3"})).await?,
@@ -174,9 +181,13 @@ impl V2World {
                 view("scope_for_client", json!({"provider": PROVIDER, "aud": APP_C})).await?,
                 view("scope_for_client", json!({"provider": PROVIDER, "aud": APP_D})).await?,
                 view("scope_for_client", json!({"provider": PROVIDER, "aud": SHARED})).await?,
+                view("scope_for_client", json!({"provider": EMAIL, "aud": email_aud("s1")})).await?,
             ],
             "session": view("get_session", json!({"session_public_key": self.session.public_key()})).await?,
             "in_use": view("session_key_in_use", json!({"session_public_key": self.session.public_key()})).await?,
+            "account": view("get_account", json!({"scope_id": "s1", "provider": PROVIDER, "sub": USER_SUB})).await?,
+            "identity_member": view("get_identity", json!({"scope_id": "s1", "provider": EMAIL, "sub": self.e_member})).await?,
+            "identity_user": view("get_identity", json!({"scope_id": "s1", "provider": PROVIDER, "sub": USER_SUB})).await?,
         }))
     }
 
@@ -185,27 +196,51 @@ impl V2World {
         Ok(self.mpc.view("expected_response").args_json(json!({"request": request})).await?.json()?)
     }
 
-    async fn mpc_paths(&self) -> Result<Vec<String>> {
-        let calls: Vec<RecordedCall> = self.mpc.view("get_calls").args_json(json!({"from_index": null, "limit": null})).await?.json()?;
-        Ok(calls.into_iter().map(|c| c.derivation_path).collect())
+    /// A combined login with `jwt` for session `s`, as the API relays it.
+    async fn relay_login(&self, s: &mut TestSession, jwt: &str) -> Result<ExecutionFinalResult> {
+        Ok(self.relayer.call(self.signer.id(), "create_session_and_derive").args_json(s.login_args(jwt, PK1, PK2)).gas(api_gas("create_session_and_derive")).transact().await?)
     }
 
-    /// A combined login of `sub` in s1 (APP_A), as the API relays it.
+    /// A combined login of `sub` in s1 through its own Google client (APP_A).
     async fn login(&self, sub: &str) -> Result<(TestSession, CkdResponse)> {
         let now = self.now_ms().await?;
         let mut s = TestSession::new(&self.scope_a, now + 600_000, 0, 5);
         let jwt = self.issuer.jwt(APP_A, sub, Some(&s.nonce(self.signer.id())), now);
-        let ckd = self.relayer.call(self.signer.id(), "create_session_and_derive").args_json(s.login_args(&jwt, PK1, PK2)).gas(api_gas("create_session_and_derive")).transact().await?.into_result()?.json()?;
+        let ckd = self.relay_login(&mut s, &jwt).await?.into_result()?.json()?;
         Ok((s, ckd))
+    }
+
+    /// A combined login of email identity `sub` in s1, through s1's email client.
+    async fn email_login(&self, sub: &str) -> Result<(TestSession, CkdResponse)> {
+        let now = self.now_ms().await?;
+        let mut s = TestSession::new(&self.scope_a, now + 600_000, 0, 5);
+        let jwt = self.email.email_jws(&email_aud("s1"), sub, &s.nonce(self.signer.id()), now);
+        let ckd = self.relay_login(&mut s, &jwt).await?.into_result()?.json()?;
+        Ok((s, ckd))
+    }
+
+    /// A combined exit login (30 min, 3 uses) of `sub` in `scope`: Google through the exit client, or email (EMAIL) through the issuer's Home audience.
+    async fn exit_login(&self, provider: &str, sub: &str, scope: &str) -> Result<(TestSession, ExecutionFinalResult)> {
+        let now = self.now_ms().await?;
+        let mut s = TestSession::new(scope, now + 25 * 60_000, 0, 3);
+        let nonce = s.nonce(self.signer.id());
+        let jwt = if provider == EMAIL { self.email.email_jws(EXIT_E, sub, &nonce, now) } else { self.issuer.jwt(EXIT_G, sub, Some(&nonce), now) };
+        let outcome = self.relay_login(&mut s, &jwt).await?;
+        Ok((s, outcome))
+    }
+
+    async fn root_state_len(&self) -> Result<usize> {
+        let state = self.worker.view_state(self.signer.id()).await?;
+        Ok(state.get(b"STATE".as_slice()).context("STATE")?.len())
     }
 }
 
-/// change_delay_ms of the v2 world: longer than the owner transfer plus the upgrade's delay (2 × GOVERNANCE_DELAY_MS).
-const V2_CHANGE_DELAY_MS: u64 = 180_000;
+/// change_delay_ms of the v3 world: longer than the owner transfer plus the upgrade's delay (2 × GOVERNANCE_DELAY_MS).
+const V3_CHANGE_DELAY_MS: u64 = 180_000;
 
-async fn v2_world() -> Result<V2World> {
+async fn v3_world() -> Result<V3World> {
     let (_, mpc_wasm) = wasms()?;
-    let v2 = v2_wasm()?;
+    let v3 = v3_wasm()?;
     let worker = near_workspaces::sandbox().await?;
     let root = worker.root_account()?;
     let admin = subaccount(&root, "admin", 20).await?;
@@ -218,17 +253,29 @@ async fn v2_world() -> Result<V2World> {
     let mpc = subaccount(&root, "mpc", 20).await?.deploy(&mpc_wasm).await?.into_result()?;
     mpc.call("new").transact().await?.into_result()?;
     let issuer = TestIssuer::generate()?;
-    let signer = deploy_signer_code(&root, "signer", &v2, &admin, &watchdog, mpc.id(), &issuer, relayer.id()).await?;
-    assert_eq!(signer.view("get_governance").await?.json::<Value>()?["state_version"], json!(2));
+    let signer = deploy_signer_code(&root, "signer", &v3, &admin, &watchdog, mpc.id(), &issuer, relayer.id()).await?;
+    assert_eq!(signer.view("get_governance").await?.json::<Value>()?["state_version"], json!(3));
+    // Hana's email issuer, as sandbox-dev has it: created, marked self-issued, an owner-posted key after the governance delay.
+    let email = TestIssuer::generate_with_kid(EMAIL_KID)?;
+    admin.call(signer.id(), "set_issuer").args_json(json!({"provider": EMAIL, "iss_values": [EMAIL_ISS]})).gas(GAS).transact().await?.into_result()?;
+    admin.call(signer.id(), "mark_self_issued").args_json(json!({"provider": EMAIL})).gas(GAS).transact().await?.into_result()?;
+    let key_id = post_email_key(&admin, signer.id(), &email).await?;
+    let changes: Value = signer.view("get_key_changes").await?.json()?;
+    let due = changes.as_array().unwrap().iter().find(|c| c["id"] == json!(key_id)).context("the email key change")?["executable_at_ms"].as_u64().unwrap();
+    advance_to(&worker, due).await?;
+    outsider.call(signer.id(), "execute_issuer_key_change").args_json(json!({"id": key_id})).gas(Gas::from_tgas(30)).transact().await?.into_result()?;
+
     let register = |owners: Value, clients: Value, allow_shared: bool| {
         admin.call(signer.id(), "admin_register_scope").args_json(json!({"owners": owners, "clients": clients, "scope_id": null, "allow_shared": allow_shared})).gas(GAS).transact()
     };
-    let scope_a: String = register(json!([near_owner(alice.id())]), json!([[PROVIDER, APP_A], [PROVIDER, APP_C]]), false).await?.into_result()?.json()?;
+    let aud = email_aud("s1");
+    let scope_a: String = register(json!([near_owner(alice.id())]), json!([[PROVIDER, APP_A], [PROVIDER, APP_C], [EMAIL, aud]]), false).await?.into_result()?.json()?;
+    assert_eq!(scope_a, "s1");
     let _s2: String = register(json!([near_owner(bob.id())]), json!([[PROVIDER, APP_B]]), false).await?.into_result()?.json()?;
     let _s3: String = register(json!([near_owner(bob.id())]), json!([]), true).await?.into_result()?.json()?;
     // A longer change delay (an increase applies at once), so C's quarantine below outlasts the owner transfer and the
     // upgrade's governance delay and is checked after the upgrade.
-    admin.call(signer.id(), "set_change_delay_ms").args_json(json!({"change_delay_ms": V2_CHANGE_DELAY_MS})).transact().await?.into_result()?;
+    admin.call(signer.id(), "set_change_delay_ms").args_json(json!({"change_delay_ms": V3_CHANGE_DELAY_MS})).transact().await?.into_result()?;
     // A shared client (pending for the change delay).
     admin.call(signer.id(), "set_shared_clients").args_json(json!({"clients": [[PROVIDER, SHARED]]})).gas(GAS).transact().await?.into_result()?;
     // A pending AddClient (D) in s1, with a client proof at action_nonce 0, then C removed (quarantined).
@@ -243,7 +290,8 @@ async fn v2_world() -> Result<V2World> {
         .await?
         .into_result()?;
     alice.call(signer.id(), "remove_client").args_json(json!({"scope_id": scope_a, "auth": "Near", "provider": PROVIDER, "aud": APP_C})).gas(GAS).transact().await?.into_result()?;
-    // A session (5 uses, 30 min) used once, and a wallet opened by a combined login (USER_SUB's).
+    // A session (5 uses, 30 min) used once, and Google and email wallets opened by combined logins, with the email member.
+    let now = now_ms(&worker).await?;
     let mut session = TestSession::new(&scope_a, now + 1_800_000, 0, 5);
     let jwt = issuer.jwt(APP_A, USER_SUB, Some(&session.nonce(signer.id())), now);
     relayer.call(signer.id(), "create_session").args_json(session.create_args(signer.id(), &jwt)).gas(GAS).transact().await?.into_result()?;
@@ -251,6 +299,18 @@ async fn v2_world() -> Result<V2World> {
     let mut login = TestSession::new(&scope_a, now + 600_000, 0, 1);
     let jwt = issuer.jwt(APP_A, OWNER_SUB, Some(&login.nonce(signer.id())), now);
     relayer.call(signer.id(), "create_session_and_derive").args_json(login.login_args(&jwt, PK1, PK2)).gas(api_gas("create_session_and_derive")).transact().await?.into_result()?;
+    let e_root = email_sub("ada@example.com");
+    let mut es = TestSession::new("s1", now + 600_000, 0, 5);
+    let ejwt = email.email_jws(&email_aud("s1"), &e_root, &es.nonce(signer.id()), now);
+    relayer.call(signer.id(), "create_session_and_derive").args_json(es.login_args(&ejwt, PK1, PK2)).gas(api_gas("create_session_and_derive")).transact().await?.into_result()?;
+    // A member: the email identity joins USER_SUB's Google wallet at once (case B), through an automatic link.
+    let e_member = email_sub("bea@example.com");
+    let gik = identity_key("s1", PROVIDER, USER_SUB);
+    let mut ls = TestSession::new("s1", now + 600_000, 0, 5);
+    let jwt = issuer.jwt(APP_A, USER_SUB, Some(&ls.nonce(signer.id())), now);
+    let nonce = nonce_of(&auto_link_preimage(signer.id().as_str(), "s1", &ls.preimage_hash(signer.id()), &gik, JOIN_LINK, &identity_key("s1", EMAIL, &e_member), &gik, 0, true));
+    let link = email.email_jws(&email_aud("s1"), &e_member, &nonce, now);
+    relayer.call(signer.id(), "create_session_and_derive").args_json(ls.linked_login_args(&jwt, PK1, PK2, &link, Some(true))).gas(Gas::from_tgas(250)).transact().await?.into_result()?;
     // An updater key, and its (not yet confirmed) proposal of Google's next key.
     let updater = add_updater_key(&worker, &admin, signer.id()).await?;
     let next = TestIssuer::generate_with_kid("google-next")?;
@@ -272,71 +332,70 @@ async fn v2_world() -> Result<V2World> {
     admin.call(signer.id(), "propose_owner").args_json(json!({"owner": dao.id()})).transact().await?.into_result()?;
     let acceptable = signer.view("get_governance").await?.json::<Value>()?["pending_owner"]["acceptable_at_ms"].as_u64().context("pending owner")?;
     advance_to(&worker, acceptable).await?;
-    let w = V2World { worker, signer, alice, bob, relayer, watchdog, outsider, council, dao, bond, mpc, issuer, scope_a, session, pending_key_id };
+    let w = V3World { worker, signer, alice, bob, relayer, watchdog, outsider, council, dao, bond, mpc, issuer, email, e_root, e_member, scope_a, session, pending_key_id };
     w.council_call("accept_owner", json!({})).await?.into_result()?;
     assert_eq!(w.signer.view("get_config").await?.json::<Value>()?["owner"], json!(w.dao.id()));
     Ok(w)
 }
 
-/// The upgrade sandbox-dev will run (build plan batch 6): v2 → v3 through the owner DAO (`propose_upgrade` by 2 of 3,
-/// then anyone `execute_upgrade`s the exact wasm, which deploys it and runs `migrate` in one receipt). Every v2 view is
-/// unchanged (views only gain fields), every session, wallet and pending change survives, every path stays; links wait
-/// for `accept_unrecorded_wallets`; the email issuer is then set up through the DAO as batch 6 does; the v2 code can't
-/// come back.
+/// The upgrade H6 needs (docs/hana-home-h6-design.md section 5): v3 → v4 through the owner DAO (`propose_upgrade` by 2 of 3,
+/// then anyone `execute_upgrade`s the exact wasm, which deploys it and runs `migrate` in one receipt). Every v3 view is
+/// unchanged (views only gain fields), every session, wallet, link and pending change survives, every path stays. Then
+/// the exit client through the DAO: a pending client doesn't count, in force it opens sessions in a scope that refused
+/// shared login, on the same paths, and it can be removed at once, for good. The v3 code can't come back.
 #[tokio::test]
-async fn v2_to_v3_upgrade_through_the_dao_keeps_every_view_and_path() -> Result<()> {
-    let mut w = v2_world().await?;
+async fn v3_to_v4_upgrade_through_the_dao_keeps_every_view_and_path() -> Result<()> {
+    let mut w = v3_world().await?;
     let signer = w.signer.id().clone();
-    // The exact artifact deploy-contract deploys (--no-abi), as the v2 code was.
-    let v3 = deploy_wasm()?;
-    let v2 = v2_wasm()?;
-    let v2_hash = account_code_hash(&w.worker, &signer).await?;
-    assert_eq!(v2_hash, code_hash(&v2));
-    println!(
-        "v2 wasm (V2_COMMIT {V2_COMMIT}, --no-abi): code hash {v2_hash}, {} sandbox-dev's {V2_SANDBOX_DEV_CODE_HASH}",
-        if v2_hash == V2_SANDBOX_DEV_CODE_HASH { "equal to" } else { "not equal to (another build machine: see V2_SANDBOX_DEV_CODE_HASH)" }
-    );
+    // The exact artifact deploy-contract deploys (--no-abi), as the v3 code was.
+    let v4 = deploy_wasm()?;
+    let v3 = v3_wasm()?;
+    assert_eq!(account_code_hash(&w.worker, &signer).await?, code_hash(&v3));
     let before = w.views().await?;
+    assert_eq!(before["governance"]["state_version"], json!(3));
     assert_eq!(before["s1"]["pending"].as_array().unwrap().len(), 1);
     assert_eq!(before["session"]["used"], json!(1));
     assert_eq!(before["key_changes"].as_array().unwrap().len(), 1);
+    assert_eq!(before["link_stats"]["links_total"], json!(1));
     let path = before["session"]["path"].as_str().unwrap().to_string();
     assert_eq!(path, format!("s1#google#{USER_SUB}#0"));
+    assert_eq!(before["identity_member"]["status"], json!("member"));
+    let state_before = w.root_state_len().await?;
+    let storage_before = w.signer.as_account().view_account().await?.storage_usage;
 
-    // v2 has no v3 methods: nobody can touch links or email before the upgrade.
-    let text = expect_failure(tx(w.outsider.call(&signer, "accept_unrecorded_wallets").transact().await), "");
+    // v3 has no exit methods.
+    let text = expect_failure(tx(w.outsider.call(&signer, "set_exit_clients").args_json(json!({"clients": []})).transact().await), "");
     assert!(text.contains("MethodNotFound"), "{text}");
 
     // The council proposes the upgrade (2 of 3); after the governance delay anyone sends the exact wasm.
-    w.council_call("propose_upgrade", json!({"code_hash": code_hash(&v3)})).await?.into_result()?;
+    w.council_call("propose_upgrade", json!({"code_hash": code_hash(&v4)})).await?.into_result()?;
     let due = w.signer.view("get_governance").await?.json::<Value>()?["pending_upgrade"]["executable_at_ms"].as_u64().context("pending upgrade")?;
-    expect_failure(execute_upgrade(&w.outsider, &signer, &v3).await, "Upgrade is still delayed");
+    expect_failure(execute_upgrade(&w.outsider, &signer, &v4).await, "Upgrade is still delayed");
     advance_to(&w.worker, due).await?;
-    expect_failure(execute_upgrade(&w.outsider, &signer, &v2).await, "Code doesn't match the proposed hash");
-    let outcome = execute_upgrade(&w.outsider, &signer, &v3).await?;
-    report_gas(&format!("execute_upgrade v2 → v3 ({} KB wasm, deploy + migrate)", v3.len() / 1024), &outcome, Gas::from_tgas(300));
+    expect_failure(execute_upgrade(&w.outsider, &signer, &v3).await, "Code doesn't match the proposed hash");
+    let outcome = execute_upgrade(&w.outsider, &signer, &v4).await?;
+    report_gas(&format!("execute_upgrade v3 → v4 ({} KB wasm, deploy + migrate)", v4.len() / 1024), &outcome, Gas::from_tgas(300));
     let events = hana_events(&outcome);
     outcome.into_result()?;
-    assert_eq!(events_named(&events, "upgrade_executed")[0]["data"][0], json!({"code_hash": code_hash(&v3)}));
-    assert_eq!(events_named(&events, "state_migrated")[0]["data"][0], json!({"from_version": 2, "to_version": 3}));
-    assert_eq!(account_code_hash(&w.worker, &signer).await?, code_hash(&v3));
+    assert_eq!(events_named(&events, "upgrade_executed")[0]["data"][0], json!({"code_hash": code_hash(&v4)}));
+    assert_eq!(events_named(&events, "state_migrated")[0]["data"][0], json!({"from_version": 3, "to_version": 4}));
+    assert_eq!(account_code_hash(&w.worker, &signer).await?, code_hash(&v4));
 
-    // Every v2 view is unchanged; views only gained fields, and the only changed value is the state version.
+    // Every v3 view is unchanged; views only gained fields, and the only changed value is the state version.
     let mut after = w.views().await?;
-    assert_eq!(after["governance"]["state_version"], json!(3));
-    after["governance"]["state_version"] = json!(2);
+    assert_eq!(after["governance"]["state_version"], json!(4));
+    after["governance"]["state_version"] = json!(3);
     let mut added = vec![];
     assert_kept(&before, &after, "", &mut added);
-    assert_eq!(added, vec![".config.unrecorded_wallets".to_string()], "fields v3 added to the v2 views");
-    assert_eq!(after["config"]["unrecorded_wallets"], json!(true));
-    // The new views: no email issuer, every identity on its own path, wallets opened by v2 code not recorded.
-    assert_eq!(w.signer.view("get_self_issued").args_json(json!({"provider": "email"})).await?.json::<Value>()?, Value::Null);
-    let identity = |sub: &str| w.signer.view("get_identity").args_json(json!({"scope_id": "s1", "provider": PROVIDER, "sub": sub}));
-    let ik = hex(&identity_key("s1", PROVIDER, USER_SUB));
-    assert_eq!(identity(USER_SUB).await?.json::<Value>()?, json!({"key": ik, "status": "own", "opened": false, "root": null, "effective_at_ms": null, "account_epoch": 0}));
-    assert_eq!(identity(OWNER_SUB).await?.json::<Value>()?["opened"], json!(false));
+    added.sort();
+    assert_eq!(added, vec![".config.exit_clients".to_string(), ".config.exit_window".to_string(), ".config.pending_exit_clients".to_string()], "fields v4 added to the v3 views");
+    assert_eq!(after["config"]["exit_clients"], json!([]));
+    assert_eq!(after["config"]["pending_exit_clients"], json!([]));
+    let state_after = w.root_state_len().await?;
+    let storage_after = w.signer.as_account().view_account().await?.storage_usage;
+    println!("STORAGE root STATE v3 {state_before} B → v4 {state_after} B (+{} B); account storage {storage_before} → {storage_after} B (includes the code's size change)", state_after - state_before);
 
-    // State no view shows survives too. The quarantine: C, removed from s1 by v2 code, can't join s2 yet.
+    // State no view shows survives too. The quarantine: C, removed from s1 by v3 code, can't join s2 yet.
     let now = w.now_ms().await?;
     let proof = w.issuer.jwt(APP_C, OWNER_SUB, Some(&client_proof_nonce(signer.as_str(), "s2", 0)), now);
     expect_failure(
@@ -353,24 +412,23 @@ async fn v2_to_v3_upgrade_through_the_dao_keeps_every_view_and_path() -> Result<
     let (status, text) = w.council_try("set_shared_clients", json!({"clients": [[PROVIDER, SHARED], [PROVIDER, APP_D]]})).await?;
     assert_eq!(status, "Failed");
     assert!(text.contains("Client is pending in a scope"), "{text}");
-    // The scope counter (next_scope): s1..s3 exist, the next registration is s4.
+    // The scope counter: s1..s3 exist, the next registration is s4.
     w.council_call("admin_register_scope", json!({"owners": [near_owner(w.bob.id())], "clients": [], "scope_id": null, "allow_shared": true})).await?.into_result()?;
     let s4: Value = w.signer.view("get_scope").args_json(json!({"scope_id": "s4"})).await?.json()?;
     assert_eq!((s4["owners"].clone(), s4["allow_shared"].clone()), (json!([near_owner(w.bob.id())]), json!(true)));
 
-    // The session opened by v2 code derives again with the same path; a fresh login gets that path too (and is now
-    // recorded in `opened`).
+    // The session opened by v3 code derives again with the same path; fresh logins through the own clients get the paths
+    // v3 gave (Google, email, a member its root's).
     let outcome = w.relayer.call(&signer, "derive_key").args_json(w.session.derive_args(PK1, PK2)).gas(api_gas("derive_key")).transact().await?;
     let response: CkdResponse = outcome.into_result()?.json()?;
     assert_eq!(response, w.expected_ckd(&path).await?);
     let (fresh, ckd) = w.login(USER_SUB).await?;
     assert_eq!(ckd, w.expected_ckd(&path).await?);
     assert_eq!(w.signer.view("get_session").args_json(json!({"session_public_key": fresh.public_key()})).await?.json::<Value>()?["path"], json!(path));
-    assert_eq!(identity(USER_SUB).await?.json::<Value>()?["opened"], json!(true));
-    let (_, owner_ckd) = w.login(OWNER_SUB).await?;
-    assert_eq!(owner_ckd, w.expected_ckd(&format!("s1#google#{OWNER_SUB}#0")).await?);
-    let paths = w.mpc_paths().await?;
-    assert_eq!(&paths[paths.len() - 3..], &[path.clone(), path.clone(), format!("s1#google#{OWNER_SUB}#0")]);
+    let (_, ckd) = w.email_login(&w.e_root).await?;
+    assert_eq!(ckd, w.expected_ckd(&format!("s1#email#{}#0", w.e_root)).await?);
+    let (_, ckd) = w.email_login(&w.e_member).await?;
+    assert_eq!(ckd, w.expected_ckd(&path).await?, "the member opens the root's (v3) wallet");
 
     // The pending AddClient executes on schedule; the updater's pending key proposal is still there and the watchdog
     // confirms it.
@@ -380,92 +438,88 @@ async fn v2_to_v3_upgrade_through_the_dao_keeps_every_view_and_path() -> Result<
     let d: Option<String> = w.signer.view("scope_for_client").args_json(json!({"provider": PROVIDER, "aud": APP_D})).await?.json()?;
     assert_eq!(d.as_deref(), Some(w.scope_a.as_str()));
     w.watchdog.call(&signer, "confirm_issuer_key_change").args_json(json!({"id": w.pending_key_id})).transact().await?.into_result()?;
-    let kids: Value = w.signer.view("get_issuer").args_json(json!({"provider": PROVIDER})).await?.json()?;
-    assert_eq!(kids["kids"].as_array().unwrap().len(), 2);
 
-    // Batch 6's chain setup, through the DAO: the email issuer, marked self-issued, its key (owner-posted, after the
-    // governance delay), then s1's email client by the scope owner with an issuer client proof.
-    let email = TestIssuer::generate_with_kid(EMAIL_KID)?;
-    w.council_call("set_issuer", json!({"provider": EMAIL, "iss_values": [EMAIL_ISS]})).await?.into_result()?;
-    w.council_call("mark_self_issued", json!({"provider": EMAIL})).await?.into_result()?;
-    w.council_call("set_issuer_key", json!({"provider": EMAIL, "kid": email.kid, "n": email.n, "e": email.e, "signer": EMAIL_SIGNER})).await?.into_result()?;
-    let changes: Value = w.signer.view("get_key_changes").await?.json()?;
-    let change = changes.as_array().unwrap().iter().find(|c| c["provider"] == json!(EMAIL)).cloned().context("the email key change")?;
-    expect_failure(tx(w.watchdog.call(&signer, "confirm_issuer_key_change").args_json(json!({"id": change["id"]})).transact().await), "Keys of a self-issued issuer can't be confirmed early");
-    advance_to(&w.worker, change["executable_at_ms"].as_u64().unwrap()).await?;
-    w.outsider.call(&signer, "execute_issuer_key_change").args_json(json!({"id": change["id"]})).gas(Gas::from_tgas(30)).transact().await?.into_result()?;
+    // The exit client, through the DAO: a pending client doesn't count yet, and the audience-shape rule refuses the email
+    // audience as a scope client, even before the exit list holds it (the owner of s1 has a valid email proof).
+    let now = w.now_ms().await?;
     let action_nonce = w.signer.view("get_scope").args_json(json!({"scope_id": "s1"})).await?.json::<Value>()?["action_nonce"].as_u64().context("action_nonce")?;
-    let aud = email_aud("s1");
-    let proof = email.email_jws(&aud, &email_sub("hana-client-proof"), &client_proof_nonce(signer.as_str(), "s1", action_nonce), w.now_ms().await?);
-    let change_id: u64 = w
-        .alice
-        .call(&signer, "propose_change")
-        .args_json(json!({"scope_id": "s1", "auth": "Near", "change": {"AddClient": {"provider": EMAIL, "aud": aud}}, "client_proof": proof}))
-        .deposit(NearToken::from_millinear(10))
-        .gas(GAS)
-        .transact()
-        .await?
-        .into_result()?
-        .json()?;
-    let s1: Value = w.signer.view("get_scope").args_json(json!({"scope_id": "s1"})).await?.json()?;
-    let pending = s1["pending"].as_array().unwrap().iter().find(|p| p["id"] == json!(change_id)).cloned().context("pending email client")?;
-    advance_to(&w.worker, pending["unlock_at_ms"].as_u64().unwrap()).await?;
-    w.alice.call(&signer, "execute_change").args_json(json!({"scope_id": "s1", "change_id": change_id})).gas(GAS).transact().await?.into_result()?;
-    assert_eq!(w.signer.view("scope_for_client").args_json(json!({"provider": EMAIL, "aud": aud})).await?.json::<Option<String>>()?.as_deref(), Some("s1"));
-
-    // An email login works at once (its own path); a link waits until the owner accepts the wallets v2 opened (D135).
-    let e = email_sub("ada@example.com");
-    let now = w.now_ms().await?;
-    let mut es = TestSession::new("s1", now + 600_000, 0, 5);
-    let ejwt = email.email_jws(&aud, &e, &es.nonce(&signer), now);
-    let ckd: CkdResponse = w.relayer.call(&signer, "create_session_and_derive").args_json(es.login_args(&ejwt, PK1, PK2)).gas(api_gas("create_session_and_derive")).transact().await?.into_result()?.json()?;
-    assert_eq!(ckd, w.expected_ckd(&format!("s1#email#{e}#0")).await?);
-    let e2 = email_sub("bea@example.com");
-    let linked_login = |s: &mut TestSession, now: u64, epoch: u64| {
-        let jwt = w.issuer.jwt(APP_A, USER_SUB, Some(&s.nonce(&signer)), now);
-        let gik = identity_key("s1", PROVIDER, USER_SUB);
-        let nonce = nonce_of(&auto_link_preimage(signer.as_str(), "s1", &s.preimage_hash(&signer), &gik, JOIN_LINK, &identity_key("s1", EMAIL, &e2), &gik, epoch, true));
-        let link = email.email_jws(&aud, &e2, &nonce, now);
-        s.linked_login_args(&jwt, PK1, PK2, &link, Some(true))
-    };
-    let now = w.now_ms().await?;
-    let mut ls = TestSession::new("s1", now + 600_000, 0, 5);
-    let args = linked_login(&mut ls, now, 0);
-    expect_failure(tx(w.relayer.call(&signer, "create_session_and_derive").args_json(args).gas(Gas::from_tgas(150)).transact().await), "Links wait until the owner accepts the wallets opened before v3");
-    let outcome = w.council_call("accept_unrecorded_wallets", json!({})).await?;
-    let events = hana_events(&outcome);
-    println!(
-        "GAS accept_unrecorded_wallets (through the DAO, flips the flag): {:.2} Tgas in the signer's receipt, {:.2} Tgas for the whole vote",
-        signer_receipts_gas(&outcome, &signer).as_gas() as f64 / 1e12,
-        outcome.total_gas_burnt.as_gas() as f64 / 1e12
+    let proof = w.email.email_jws(EXIT_E, &email_sub("hana-client-proof"), &client_proof_nonce(signer.as_str(), "s1", action_nonce), now);
+    expect_failure(
+        tx(w.alice
+            .call(&signer, "propose_change")
+            .args_json(json!({"scope_id": "s1", "auth": "Near", "change": {"AddClient": {"provider": EMAIL, "aud": EXIT_E}}, "client_proof": proof}))
+            .deposit(NearToken::from_millinear(10))
+            .gas(GAS)
+            .transact()
+            .await),
+        "A self-issued client must be its provider and scope",
     );
-    outcome.into_result()?;
-    assert_eq!(events_named(&events, "unrecorded_wallets_accepted").len(), 1);
-    assert_eq!(w.signer.view("get_config").await?.json::<Value>()?["unrecorded_wallets"], json!(false));
-    // The same link now goes through (case B at once): the email identity joins USER_SUB's account, whose wallet stays
-    // where v2 put it.
+    w.council_call("set_exit_clients", json!({"clients": [[PROVIDER, EXIT_G], [EMAIL, EXIT_E]]})).await?.into_result()?;
+    let config: Value = w.signer.view("get_config").await?.json()?;
+    assert_eq!(config["exit_clients"], json!([]));
+    let due = config["pending_exit_clients"][1]["effective_at_ms"].as_u64().context("pending exit client")?;
     let now = w.now_ms().await?;
-    let mut ls = TestSession::new("s1", now + 600_000, 0, 5);
-    let args = linked_login(&mut ls, now, 0);
-    let ckd: CkdResponse = w.relayer.call(&signer, "create_session_and_derive").args_json(args).gas(Gas::from_tgas(150)).transact().await?.into_result()?.json()?;
-    assert_eq!(ckd, w.expected_ckd(&path).await?);
-    let now = w.now_ms().await?;
-    let mut es2 = TestSession::new("s1", now + 600_000, 0, 5);
-    let ejwt = email.email_jws(&aud, &e2, &es2.nonce(&signer), now);
-    let ckd: CkdResponse = w.relayer.call(&signer, "create_session_and_derive").args_json(es2.login_args(&ejwt, PK1, PK2)).gas(api_gas("create_session_and_derive")).transact().await?.into_result()?.json()?;
-    assert_eq!(ckd.big_y, w.expected_ckd(&path).await?.big_y, "the member opens the root's (v2) wallet");
+    let s = TestSession::new("s1", now + 25 * 60_000, 0, 3);
+    let jwt = w.issuer.jwt(EXIT_G, USER_SUB, Some(&s.nonce(&signer)), now);
+    expect_failure(tx(w.relayer.call(&signer, "create_session").args_json(s.create_args(&signer, &jwt)).gas(GAS).transact().await), "Token is for an unregistered app");
+    advance_to(&w.worker, due).await?;
 
-    // The v2 code can't come back: its migrate reads the v2 layout, which the v3 state isn't, so the deploy reverts.
-    w.council_call("propose_upgrade", json!({"code_hash": code_hash(&v2)})).await?.into_result()?;
+    // In force: the same user's exit logins in s1 (no shared login) give the identical paths. One event and counter each.
+    let (s, outcome) = w.exit_login(PROVIDER, USER_SUB, "s1").await?;
+    report_gas("create_session_and_derive (exit, Google)", &outcome, api_gas("create_session_and_derive"));
+    let ev = hana_events(&outcome);
+    let ckd: CkdResponse = outcome.into_result()?.json()?;
+    assert_eq!(ckd, w.expected_ckd(&path).await?, "exit: the own client's wallet");
+    let exit_events = events_named(&ev, "exit_session_opened");
+    assert_eq!(exit_events.len(), 1);
+    let data = exit_events[0]["data"][0].to_string();
+    assert!(!data.contains(USER_SUB), "the event never carries a sub: {data}");
+    assert_eq!(exit_events[0]["data"][0]["identity_key"], json!(hex(&identity_key("s1", PROVIDER, USER_SUB))));
+    assert_eq!(w.signer.view("get_session").args_json(json!({"session_public_key": s.public_key()})).await?.json::<Value>()?["path"], json!(path));
+    let (_, outcome) = w.exit_login(EMAIL, &w.e_root, "s1").await?;
+    let ckd: CkdResponse = outcome.into_result()?.json()?;
+    assert_eq!(ckd, w.expected_ckd(&format!("s1#email#{}#0", w.e_root)).await?, "exit: the email identity's wallet");
+    let (_, outcome) = w.exit_login(EMAIL, &w.e_member, "s1").await?;
+    let ckd: CkdResponse = outcome.into_result()?.json()?;
+    assert_eq!(ckd, w.expected_ckd(&path).await?, "exit: a member opens its root's path");
+    let config: Value = w.signer.view("get_config").await?.json()?;
+    assert_eq!(config["exit_clients"].as_array().unwrap().len(), 2);
+    assert_eq!(config["exit_window"]["current"], json!(3));
+
+    // Pause stops exit too (and comes back); then the council removes the Google client at once, for good.
+    w.watchdog.call(&signer, "pause").transact().await?.into_result()?;
+    let (paused, ..) = {
+        let now = w.now_ms().await?;
+        let s = TestSession::new("s1", now + 25 * 60_000, 0, 3);
+        let jwt = w.issuer.jwt(EXIT_G, USER_SUB, Some(&s.nonce(&signer)), now);
+        let outcome = w.relayer.call(&signer, "create_session").args_json(s.create_args(&signer, &jwt)).gas(GAS).transact().await?;
+        (outcome,)
+    };
+    expect_failure(Ok(paused), "Paused");
+    w.council_call("unpause", json!({})).await?.into_result()?;
+    let (status, text) = w.council_try("set_exit_clients", json!({"clients": [[EMAIL, EXIT_E]]})).await?;
+    assert_eq!(status, "Approved", "{text}");
+    let config: Value = w.signer.view("get_config").await?.json()?;
+    assert_eq!(config["exit_clients"], json!([[EMAIL, EXIT_E]]));
+    let now = w.now_ms().await?;
+    let s = TestSession::new("s1", now + 25 * 60_000, 0, 3);
+    let jwt = w.issuer.jwt(EXIT_G, USER_SUB, Some(&s.nonce(&signer)), now);
+    expect_failure(tx(w.relayer.call(&signer, "create_session").args_json(s.create_args(&signer, &jwt)).gas(GAS).transact().await), "Token is for an unregistered app");
+    let (status, text) = w.council_try("set_exit_clients", json!({"clients": [[EMAIL, EXIT_E], [PROVIDER, EXIT_G]]})).await?;
+    assert_eq!(status, "Failed", "{text}");
+    assert!(text.contains("Client was an exit client and is retired"), "{text}");
+
+    // The v3 code can't come back: its migrate reads the v3 layout, which the v4 state isn't, so the deploy reverts.
+    w.council_call("propose_upgrade", json!({"code_hash": code_hash(&v3)})).await?.into_result()?;
     let due = w.signer.view("get_governance").await?.json::<Value>()?["pending_upgrade"]["executable_at_ms"].as_u64().context("pending upgrade")?;
     advance_to(&w.worker, due).await?;
-    expect_failure(execute_upgrade(&w.outsider, &signer, &v2).await, "Unexpected state version");
-    assert_eq!(account_code_hash(&w.worker, &signer).await?, code_hash(&v3));
-    assert_eq!(w.signer.view("get_governance").await?.json::<Value>()?["state_version"], json!(3));
+    expect_failure(execute_upgrade(&w.outsider, &signer, &v3).await, "Unexpected state version");
+    assert_eq!(account_code_hash(&w.worker, &signer).await?, code_hash(&v4));
+    assert_eq!(w.signer.view("get_governance").await?.json::<Value>()?["state_version"], json!(4));
     // migrate stays private.
     expect_failure(tx(w.alice.call(&signer, "migrate").args_json(json!({})).transact().await), "is private");
 
-    // The session queue survived: once the sessions opened by v2 code expire, prune_sessions removes them.
+    // The session queue survived: once the sessions opened by v3 code expire, prune_sessions removes them.
     advance_to(&w.worker, before["session"]["expires_at_ms"].as_u64().context("expiry")? + 1_000).await?;
     let key = json!({"session_public_key": w.session.public_key()});
     assert!(w.signer.view("get_session").args_json(key.clone()).await?.json::<Value>()?.is_object(), "an expired session stays until pruned");
@@ -475,14 +529,15 @@ async fn v2_to_v3_upgrade_through_the_dao_keeps_every_view_and_path() -> Result<
     Ok(())
 }
 
-/// Login gas of v3 against v2 (no link): the same create_session and create_session_and_derive on two deployments that
-/// differ only in code (one upgraded v2 → v3 in place). v3 adds a `links` read, an `opened` check and, at an
-/// identity's first derivation, one `opened` insert (spec "Gas and storage": ≈ +1–2 Tgas).
+/// Login gas of v4 against v3 (no link): the same create_session and create_session_and_derive on two deployments that
+/// differ only in code (one upgraded v3 → v4 in place), then an exit login on v4. The design's estimate
+/// (docs/hana-home-h6-design.md section 5): about 0.01 Tgas per call for the extra root state, under 0.1 Tgas for the
+/// exit event; these runs measure it.
 #[tokio::test]
-async fn login_gas_of_v3_against_v2() -> Result<()> {
+async fn login_gas_of_v4_against_v3_and_of_an_exit_login() -> Result<()> {
     let (_, mpc_wasm) = wasms()?;
-    let v3 = deploy_wasm()?;
-    let v2 = v2_wasm()?;
+    let v4 = deploy_wasm()?;
+    let v3 = v3_wasm()?;
     let worker = near_workspaces::sandbox().await?;
     let root = worker.root_account()?;
     let admin = subaccount(&root, "admin", 20).await?;
@@ -492,12 +547,20 @@ async fn login_gas_of_v3_against_v2() -> Result<()> {
     mpc.call("new").transact().await?.into_result()?;
     let issuer = TestIssuer::generate()?;
     // Same-length account names, so nonces and storage keys have the same size.
-    let old = deploy_signer_code(&root, "signer1", &v2, &admin, &watchdog, mpc.id(), &issuer, relayer.id()).await?;
-    let new = deploy_signer_code(&root, "signer2", &v2, &admin, &watchdog, mpc.id(), &issuer, relayer.id()).await?;
-    let due = propose_upgrade(&admin, new.id(), &v3).await?;
+    let old = deploy_signer_code(&root, "signer1", &v3, &admin, &watchdog, mpc.id(), &issuer, relayer.id()).await?;
+    let new = deploy_signer_code(&root, "signer2", &v3, &admin, &watchdog, mpc.id(), &issuer, relayer.id()).await?;
+    let due = propose_upgrade(&admin, new.id(), &v4).await?;
     advance_to(&worker, due).await?;
-    execute_upgrade(&admin, new.id(), &v3).await?.into_result()?;
-    assert_eq!(new.view("get_governance").await?.json::<Value>()?["state_version"], json!(3));
+    let upgrade = execute_upgrade(&admin, new.id(), &v4).await?;
+    report_gas(&format!("execute_upgrade v3 → v4 ({} KB wasm, small state)", v4.len() / 1024), &upgrade, Gas::from_tgas(300));
+    upgrade.into_result()?;
+    assert_eq!(new.view("get_governance").await?.json::<Value>()?["state_version"], json!(4));
+    let state_len = |c: Contract| {
+        let w = worker.clone();
+        async move { Ok::<usize, anyhow::Error>(w.view_state(c.id()).await?.get(b"STATE".as_slice()).context("STATE")?.len()) }
+    };
+    let (v3_state, v4_state) = (state_len(old.clone()).await?, state_len(new.clone()).await?);
+    println!("STORAGE root STATE v3 {v3_state} B, v4 (empty lists) {v4_state} B: +{} B", v4_state - v3_state);
 
     let mut burnt = vec![];
     for signer in [&old, &new] {
@@ -511,8 +574,7 @@ async fn login_gas_of_v3_against_v2() -> Result<()> {
             .json()?;
         let now = now_ms(&worker).await?;
         let mut gas = vec![];
-        // The first combined login of each identity (v3 records it in `opened`), then a second one, then a bare
-        // create_session.
+        // The first combined login of each identity (it records `opened`), then a second one, then a bare create_session.
         for sub in [USER_SUB, OWNER_SUB] {
             for _ in 0..2 {
                 let mut s = TestSession::new(&scope, now + 600_000, 0, 1);
@@ -527,82 +589,59 @@ async fn login_gas_of_v3_against_v2() -> Result<()> {
             gas.push(outcome.total_gas_burnt.as_gas());
             outcome.into_result()?;
         }
-        burnt.push(gas);
+        burnt.push((gas, scope));
     }
     let names = ["create_session_and_derive (first)", "create_session_and_derive (later)", "create_session"];
     for (i, name) in names.iter().chain(names.iter()).enumerate() {
-        let (v2, v3) = (burnt[0][i] as f64, burnt[1][i] as f64);
-        println!("GAS {name}, Google, no link: v2 {:.2} Tgas, v3 {:.2} Tgas ({:+.2} Tgas)", v2 / 1e12, v3 / 1e12, (v3 - v2) / 1e12);
-        // v3's create_session also checks the session key's proof of possession (one more Ed25519 verification, D137).
-        assert!(v3 <= v2 + 3e12, "{name}: v3 burnt {v3} gas, more than 3 Tgas over v2's {v2}");
-    }
-    Ok(())
-}
-
-/// D137 before the v3 upgrade (build plan batch 6): the API, the vault's split path and the smoke page send
-/// create_session's `signature` (the session key's proof of possession) while sandbox-dev still runs v2. The v2 wasm
-/// (`V2_COMMIT`) takes the extra argument and ignores it: with the proof, without it, and with a wrong one, each opens
-/// the session it would open without the field. After the upgrade to v3 (the same deployment) the proof is required
-/// and checked: missing or wrong is refused, the right one opens the session.
-#[tokio::test]
-async fn v2_ignores_the_create_session_proof_that_v3_requires() -> Result<()> {
-    let (_, mpc_wasm) = wasms()?;
-    let v3 = deploy_wasm()?;
-    let v2 = v2_wasm()?;
-    let worker = near_workspaces::sandbox().await?;
-    let root = worker.root_account()?;
-    let admin = subaccount(&root, "admin", 20).await?;
-    let relayer = subaccount(&root, "relayer", 20).await?;
-    let watchdog = subaccount(&root, "watchdog", 20).await?;
-    let mpc = subaccount(&root, "mpc", 20).await?.deploy(&mpc_wasm).await?.into_result()?;
-    mpc.call("new").transact().await?.into_result()?;
-    let issuer = TestIssuer::generate()?;
-    let signer = deploy_signer_code(&root, "signer", &v2, &admin, &watchdog, mpc.id(), &issuer, relayer.id()).await?;
-    assert_eq!(signer.view("get_governance").await?.json::<Value>()?["state_version"], json!(2));
-    let scope: String = admin
-        .call(signer.id(), "admin_register_scope")
-        .args_json(json!({"owners": [near_owner(admin.id())], "clients": [[PROVIDER, APP_A]], "scope_id": null, "allow_shared": false}))
-        .gas(GAS)
-        .transact()
-        .await?
-        .into_result()?
-        .json()?;
-    let create = |args: Value| relayer.call(signer.id(), "create_session").args_json(args).gas(api_gas("create_session")).transact();
-
-    // v2: the proof, no proof, and a wrong proof all open the session (the field is ignored).
-    let now = now_ms(&worker).await?;
-    for (i, variant) in ["proof", "none", "wrong"].into_iter().enumerate() {
-        let s = TestSession::new(&scope, now + 600_000, i as u32, 2);
-        let jwt = issuer.jwt(APP_A, USER_SUB, Some(&s.nonce(signer.id())), now);
-        let args = match variant {
-            "proof" => s.create_args(signer.id(), &jwt),
-            "none" => s.base_args(&jwt),
-            _ => {
-                let mut a = s.base_args(&jwt);
-                a["signature"] = json!(vec![0u8; 64]);
-                a
-            }
-        };
-        let session: Value = create(args).await?.into_result().with_context(|| format!("v2 create_session ({variant})"))?.json()?;
-        assert_eq!(session["path"], json!(format!("{scope}#{PROVIDER}#{USER_SUB}#{i}")), "v2 ({variant})");
-        assert_eq!(session["used"], json!(0), "v2 ({variant})");
+        let (v3, v4) = (burnt[0].0[i] as f64, burnt[1].0[i] as f64);
+        println!("GAS {name}, Google, no link: v3 {:.2} Tgas, v4 {:.2} Tgas ({:+.3} Tgas)", v3 / 1e12, v4 / 1e12, (v4 - v3) / 1e12);
+        assert!(v4 <= v3 + 0.5e12, "{name}: v4 burnt {v4} gas, more than 0.5 Tgas over v3's {v3} (the design's estimate is 0.01 Tgas)");
     }
 
-    // v3 on the same deployment: the proof is required and checked.
-    let due = propose_upgrade(&admin, signer.id(), &v3).await?;
+    // An exit login on v4: exit list set, in force, then the same flows through the exit client.
+    let scope = burnt[1].1.clone();
+    admin.call(new.id(), "set_exit_clients").args_json(json!({"clients": [[PROVIDER, EXIT_G]]})).gas(GAS).transact().await?.into_result()?;
+    let due = new.view("get_config").await?.json::<Value>()?["pending_exit_clients"][0]["effective_at_ms"].as_u64().context("pending exit client")?;
     advance_to(&worker, due).await?;
-    execute_upgrade(&admin, signer.id(), &v3).await?.into_result()?;
-    assert_eq!(signer.view("get_governance").await?.json::<Value>()?["state_version"], json!(3));
+    let v4_full_state = state_len(new.clone()).await?;
+    println!("STORAGE root STATE v4 with one Google exit client: {v4_full_state} B, +{} B over v3 (the design estimated about 250 B for the full list)", v4_full_state - v3_state);
     let now = now_ms(&worker).await?;
-    let s = TestSession::new(&scope, now + 600_000, 7, 2);
-    let jwt = issuer.jwt(APP_A, USER_SUB, Some(&s.nonce(signer.id())), now);
-    // A missing argument is a deserialization panic (near-sdk names the field in it).
-    expect_failure(create(s.base_args(&jwt)).await.map_err(Into::into), "deserialize");
-    let mut wrong = s.base_args(&jwt);
-    wrong["signature"] = json!(vec![0u8; 64]);
-    expect_failure(create(wrong).await.map_err(Into::into), "Invalid session signature");
-    let session: Value = create(s.create_args(signer.id(), &jwt)).await?.into_result()?.json()?;
-    assert_eq!(session["path"], json!(format!("{scope}#{PROVIDER}#{USER_SUB}#7")));
+    let mut normal = vec![];
+    let mut exit = vec![];
+    for sub in ["user-1", "user-2"] {
+        let mut s = TestSession::new(&scope, now + 600_000, 0, 3);
+        let jwt = issuer.jwt(APP_A, sub, Some(&s.nonce(new.id())), now);
+        let outcome = relayer.call(new.id(), "create_session_and_derive").args_json(s.login_args(&jwt, PK1, PK2)).gas(api_gas("create_session_and_derive")).transact().await?;
+        normal.push(outcome.total_gas_burnt.as_gas());
+        outcome.into_result()?;
+    }
+    for sub in ["user-3", "user-4"] {
+        let mut s = TestSession::new(&scope, now + 600_000, 0, 3);
+        let jwt = issuer.jwt(EXIT_G, sub, Some(&s.nonce(new.id())), now);
+        let outcome = relayer.call(new.id(), "create_session_and_derive").args_json(s.login_args(&jwt, PK1, PK2)).gas(api_gas("create_session_and_derive")).transact().await?;
+        exit.push(outcome.total_gas_burnt.as_gas());
+        outcome.into_result()?;
+    }
+    let bare_n = {
+        let s = TestSession::new(&scope, now + 600_000, 0, 3);
+        let jwt = issuer.jwt(APP_A, "user-5", Some(&s.nonce(new.id())), now);
+        let outcome = relayer.call(new.id(), "create_session").args_json(s.create_args(new.id(), &jwt)).gas(api_gas("create_session")).transact().await?;
+        let g = outcome.total_gas_burnt.as_gas();
+        outcome.into_result()?;
+        g
+    };
+    let bare_e = {
+        let s = TestSession::new(&scope, now + 600_000, 0, 3);
+        let jwt = issuer.jwt(EXIT_G, "user-6", Some(&s.nonce(new.id())), now);
+        let outcome = relayer.call(new.id(), "create_session").args_json(s.create_args(new.id(), &jwt)).gas(api_gas("create_session")).transact().await?;
+        let g = outcome.total_gas_burnt.as_gas();
+        outcome.into_result()?;
+        g
+    };
+    let avg = |v: &[u64]| v.iter().sum::<u64>() as f64 / v.len() as f64 / 1e12;
+    println!("GAS create_session_and_derive (first login), v4: own client {:.3} Tgas, exit client {:.3} Tgas ({:+.3} Tgas, the design: under 0.1)", avg(&normal), avg(&exit), avg(&exit) - avg(&normal));
+    println!("GAS create_session, v4: own client {:.3} Tgas, exit client {:.3} Tgas ({:+.3} Tgas)", bare_n as f64 / 1e12, bare_e as f64 / 1e12, (bare_e as f64 - bare_n as f64) / 1e12);
+    assert!(avg(&exit) <= avg(&normal) + 0.5, "exit burnt {} Tgas against {} Tgas: more than the design's bound", avg(&exit), avg(&normal));
     Ok(())
 }
 
@@ -613,9 +652,9 @@ async fn v2_ignores_the_create_session_proof_that_v3_requires() -> Result<()> {
 async fn execute_upgrade_deploys_and_migrates_in_one_receipt() -> Result<()> {
     let env = Env::setup().await?;
     let signer = env.signer.id();
-    let (v3, mock) = wasms()?;
-    let next = with_custom_section(&v3, "hana-test-upgrade", b"next");
-    assert_ne!(code_hash(&next), code_hash(&v3));
+    let (v4, mock) = wasms()?;
+    let next = with_custom_section(&v4, "hana-test-upgrade", b"next");
+    assert_ne!(code_hash(&next), code_hash(&v4));
     // A session opened before the upgrade.
     let (mut session, jwt) = env.new_session(APP_A, USER_SUB, &env.scope_a, 0, 600_000).await?;
     env.create_session(&env.relayer_fc, &session, &jwt).await?.into_result()?;
@@ -630,20 +669,20 @@ async fn execute_upgrade_deploys_and_migrates_in_one_receipt() -> Result<()> {
     expect_failure(execute_upgrade(&env.alice, signer, &next).await, "Upgrade is still delayed");
     env.advance_to(due).await?;
     expect_failure(execute_upgrade(&env.alice, signer, &mock).await, "Code doesn't match the proposed hash");
-    expect_failure(execute_upgrade(&env.alice, signer, &v3).await, "Code doesn't match the proposed hash");
+    expect_failure(execute_upgrade(&env.alice, signer, &v4).await, "Code doesn't match the proposed hash");
     // Allowed while paused (a fix must be deployable).
     env.watchdog.call(signer, "pause").transact().await?.into_result()?;
 
     // Anyone sends the exact wasm.
     let outcome = execute_upgrade(&env.alice, signer, &next).await?;
-    report_gas(&format!("execute_upgrade v3 → v3 ({} KB wasm, deploy + migrate)", next.len() / 1024), &outcome, Gas::from_tgas(300));
+    report_gas(&format!("execute_upgrade v4 → v4 ({} KB wasm, deploy + migrate)", next.len() / 1024), &outcome, Gas::from_tgas(300));
     let events = hana_events(&outcome);
     outcome.into_result()?;
     assert_eq!(events_named(&events, "upgrade_executed")[0]["data"][0], json!({"code_hash": code_hash(&next)}));
-    assert_eq!(events_named(&events, "state_migrated")[0]["data"][0], json!({"from_version": 3, "to_version": 3}));
+    assert_eq!(events_named(&events, "state_migrated")[0]["data"][0], json!({"from_version": 4, "to_version": 4}));
     assert_eq!(account_code_hash(&env.worker, signer).await?, code_hash(&next));
     let governance = env.get_governance().await?;
-    assert_eq!((governance["pending_upgrade"].clone(), governance["state_version"].clone()), (Value::Null, json!(3)));
+    assert_eq!((governance["pending_upgrade"].clone(), governance["state_version"].clone()), (Value::Null, json!(4)));
     assert_eq!(env.get_config().await?["paused"], json!(true));
 
     // State and sessions survive; the owner unpauses at once and derivation works again.
@@ -658,7 +697,7 @@ async fn execute_upgrade_deploys_and_migrates_in_one_receipt() -> Result<()> {
 async fn a_failing_migrate_rolls_the_upgrade_back() -> Result<()> {
     let env = Env::setup().await?;
     let signer = env.signer.id();
-    let (v3, mock) = wasms()?;
+    let (v4, mock) = wasms()?;
     let before = env.get_config().await?;
 
     // mock-mpc's migrate always panics: deploy and migrate are one receipt, so the deploy is rolled back too.
@@ -669,18 +708,18 @@ async fn a_failing_migrate_rolls_the_upgrade_back() -> Result<()> {
     let text = expect_failure(Ok(outcome), "mock-mpc: migrate always fails");
     assert!(!text.contains("Code doesn't match"), "{text}");
     assert_eq!(events_named(&events, "upgrade_executed").len(), 1, "the execute receipt itself committed");
-    assert_eq!(account_code_hash(&env.worker, signer).await?, code_hash(&v3), "the old code stays");
+    assert_eq!(account_code_hash(&env.worker, signer).await?, code_hash(&v4), "the old code stays");
     assert_eq!(env.get_config().await?, before);
     // The pending upgrade was consumed: a fixed build must be proposed again (and wait again).
     assert_eq!(env.get_governance().await?["pending_upgrade"], Value::Null);
 
-    // Code whose migrate refuses this state fails the same way: the v2 code (its migrate reads only the v2 layout), so
-    // v3 can't be downgraded by upgrade.
-    let v2 = v2_wasm()?;
-    let due = propose_upgrade(&env.admin, signer, &v2).await?;
+    // Code whose migrate refuses this state fails the same way: the v3 code (its migrate reads only the v3 layout, or a
+    // v2 state, which this isn't), so v4 can't be downgraded by upgrade.
+    let v3 = v3_wasm()?;
+    let due = propose_upgrade(&env.admin, signer, &v3).await?;
     env.advance_to(due).await?;
-    expect_failure(execute_upgrade(&env.bob, signer, &v2).await, "Unexpected state version");
-    assert_eq!(account_code_hash(&env.worker, signer).await?, code_hash(&v3));
+    expect_failure(execute_upgrade(&env.bob, signer, &v3).await, "Unexpected state version");
+    assert_eq!(account_code_hash(&env.worker, signer).await?, code_hash(&v4));
     assert_eq!(env.get_config().await?, before);
 
     // The contract still works.

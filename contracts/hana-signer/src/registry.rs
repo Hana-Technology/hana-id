@@ -17,6 +17,9 @@
 //!   become shared.
 //! - A scope without clients cost nobody an OAuth client, so sponsored (contract-paid) proposals on it are capped at
 //!   `MAX_SPONSORED_PENDING_WITHOUT_CLIENTS`, and registering one without a sponsor prepays that storage.
+//! - An exit client (`exit.rs`), in force or pending or retired, can't join a scope (checked at registration, propose
+//!   and execute), and a self-issued provider's client must be exactly `{provider}:{scope_id}`, so an issuer audience
+//!   can't be claimed by a scope.
 //! - `allow_shared` lets Hana's shared clients open sessions in the scope. A scope always has a client or
 //!   `allow_shared`. Enabling it on an existing scope is timelocked (`Change::SetAllowShared`); disabling is immediate.
 //! - Every nonce starts with borsh(current account id), binding it to this deployment.
@@ -81,6 +84,8 @@ pub struct PendingChange {
 
 /// `RemovedClient::scope_id` of a client dropped from the shared list. Contains `#`, so no scope can have this id.
 pub const RETIRED_SHARED: &str = "#shared";
+/// `RemovedClient::scope_id` of a client dropped from the exit list (D483). Contains `#`, so no scope can have this id.
+pub const RETIRED_EXIT: &str = "#exit";
 
 /// Where a removed client came from, and when another scope may take it.
 #[near(serializers = [borsh])]
@@ -276,6 +281,7 @@ impl HanaSigner {
                 let expected = client_proof_nonce(&this_signer(), &scope_id, scope.action_nonce);
                 assert!(token.nonce.as_deref() == Some(expected.as_str()), "Client proof nonce doesn't match");
                 let client = (provider.clone(), aud.clone());
+                self.assert_client_shape(&client, &scope_id);
                 self.assert_client_available(&client, Some(&scope_id));
                 assert!(!scope.pending.iter().any(|p| p.change == change), "Client is already pending");
                 assert!(scope.clients.len() < MAX_CLIENTS, "A scope has at most 10 clients");
@@ -331,6 +337,7 @@ impl HanaSigner {
         match &pending.change {
             Change::AddClient { provider, aud } => {
                 let client = (provider.clone(), aud.clone());
+                self.assert_client_shape(&client, &scope_id);
                 self.assert_client_available(&client, Some(&scope_id));
                 assert!(scope.clients.len() < MAX_CLIENTS, "A scope has at most 10 clients");
                 self.untrack_pending_add(&client);
@@ -430,11 +437,23 @@ impl HanaSigner {
     }
 
     /// Panics unless `client` may join `scope_id` (`None` = a new scope): it must not be registered anywhere, must
-    /// not be a shared (or pending shared) client, and must not be quarantined for another scope.
+    /// not be a shared (or pending shared) or exit (or pending exit) client, and must not be quarantined for another
+    /// scope or retired.
     fn assert_client_available(&self, client: &(String, String), scope_id: Option<&str>) {
         assert!(!self.client_index.contains_key(client), "Client is already registered");
         assert!(!self.is_shared_or_pending(client), "Client is a shared client");
+        assert!(!self.is_exit_or_pending(client), "Client is an exit client");
         self.assert_not_quarantined(client, scope_id);
+    }
+
+    /// Panics unless a self-issued provider's client is exactly `{provider}:{scope_id}`. Hana's issuer can mint a token
+    /// for any audience, so an audience of another form (`("email", "hana-home")`, Home's) must never become a scope
+    /// client, or that scope would capture it (a client proof checks only provider, audience and nonce). Checks the
+    /// name, not `self_issued`: true even before the provider is marked self-issued.
+    fn assert_client_shape(&self, client: &(String, String), scope_id: &str) {
+        if crate::self_issued::SELF_ISSUABLE.contains(&client.0.as_str()) {
+            assert!(client.1 == format!("{}:{scope_id}", client.0), "A self-issued client must be its provider and scope");
+        }
     }
 
     /// Panics if `client` was removed from a scope other than `scope_id` (`None` = no scope, e.g. a new scope or the
@@ -446,6 +465,7 @@ impl HanaSigner {
             return;
         }
         assert!(removed.scope_id != RETIRED_SHARED, "Client was a shared client and is retired");
+        assert!(removed.scope_id != RETIRED_EXIT, "Client was an exit client and is retired");
         let reserved = removed.reserved_by.is_some_and(|id| self.scopes.get(&removed.scope_id).is_some_and(|s| s.pending.iter().any(|p| p.id == id)));
         assert!(env::block_timestamp_ms() >= removed.free_at_ms && !reserved, "Client was recently removed from another scope");
     }
@@ -540,6 +560,7 @@ impl HanaSigner {
         };
         assert!(!self.scopes.contains_key(&id), "Scope already exists");
         for client in &clients {
+            self.assert_client_shape(client, &id);
             self.claim_client(client, &id);
         }
         events::emit(

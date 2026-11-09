@@ -48,6 +48,10 @@ export interface Env {
    * nothing pinned (every email key is unpinned; an email issuer on chain is a critical difference).
    */
   EMAIL_PINS?: string;
+  /** JSON array `[[provider, aud], …]` of the manifest's `watchdog.pinnedExitClients` (D493). Absent: nothing pinned. */
+  EXIT_PINS?: string;
+  /** Exit sessions per hour that page (D487, D493; alert only). Default `DEFAULT_EXIT_ALERT_PER_HOUR` in run.ts. */
+  EXIT_ALERT_PER_HOUR?: string;
   /** Hana's published email JWKS (set with the pins; default `{emailIssuer.url}/v1/email/jwks.json`, or under `apiUrl`, D230). */
   EMAIL_JWKS_URL?: string;
   /**

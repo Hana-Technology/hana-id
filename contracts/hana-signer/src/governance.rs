@@ -16,7 +16,7 @@ use near_sdk::{env, near, AccountId, Allowance, CryptoHash, Gas, NearToken, Prom
 use crate::{events, DelayChange, HanaSigner, HanaSignerExt};
 
 /// Layout version of the state this code reads and writes (`HanaSigner::state_version`).
-pub const STATE_VERSION: u32 = 3;
+pub const STATE_VERSION: u32 = 4;
 pub const MAX_ISSUER_KEY_DELAY_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 pub const MAX_GOVERNANCE_DELAY_MS: u64 = 30 * 24 * 60 * 60 * 1000;
 pub const MAX_WATCHDOGS: usize = 3;

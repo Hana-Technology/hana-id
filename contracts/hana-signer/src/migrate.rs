@@ -1,18 +1,19 @@
 //! State migrations, run by the contract account only (`#[private]`).
 //!
-//! - `migrate`: what `execute_upgrade` calls on the new code, in the deploy receipt. This version's: v2 → v3 (email
-//!   login, `docs/email-login-spec.md`) in place: it reads the exact v2 root struct below, keeps every field and
-//!   appends the v3 ones empty (no self-issued issuer, no account, nothing `opened`), so every scope, client, session,
-//!   issuer key, pending change and governance setting survives and no address changes. On a v3 state (a later v3 → v3
+//! - `migrate`: what `execute_upgrade` calls on the new code, in the deploy receipt. This version's: v3 → v4 (the exit
+//!   client, `docs/hana-home-h6-design.md`) in place: it reads the exact v3 root struct below, keeps every field and
+//!   appends the v4 ones empty (no exit client, an empty exit window), so every scope, client, session, issuer key,
+//!   account, pending change and governance setting survives and no address changes. On a v4 state (a later v4 → v4
 //!   fix) it keeps the state as it is.
 //!
-//! There is no v1 migration any more: no deployment is on v1 (sandbox-dev is v2), so `migrate_v1` and the v1 layout
-//! copy went with build-plan batch 2. A v1 state is a strict prefix of the v2 layout, so `migrate` refuses it.
+//! There is no v2 or earlier migration any more: every deployment is on v3 (sandbox-dev since 2026-11-03), so `migrate_v2`
+//! and the v2 layout copy went with this batch, as v1's did. A v2 state doesn't parse as the v3 or v4 layout (it is
+//! shorter), so `migrate` refuses it.
 //!
 //! `migrate` panics `Unexpected state version` on a state it doesn't migrate from, so a stray run can't corrupt state.
 //! Rollback: a panicking `migrate` reverts the deploy with it (one receipt), so the old code and its state stay. Once
-//! v3 is in, v2 code can't come back by upgrade: its `migrate` reads the v2 layout, which a v3 state doesn't parse as
-//! (trailing fields), so it panics and the deploy is reverted. A v3 fix is the way forward.
+//! v4 is in, v3 code can't come back by upgrade: its `migrate` reads the v3 layout, which a v4 state doesn't parse as
+//! (trailing fields), so it panics and the deploy is reverted. A v4 fix is the way forward.
 
 use near_sdk::borsh::BorshDeserialize;
 use near_sdk::serde_json::json;
@@ -21,13 +22,14 @@ use near_sdk::{env, near, AccountId, PublicKey};
 
 use crate::governance::{PendingOwner, PendingUpgrade, PendingWithdrawal, Watchdog, STATE_VERSION};
 use crate::issuers::PendingKeyChange;
-use crate::{events, registry, sessions, DelayChange, HanaSigner, HanaSignerExt, Issuer, PendingSharedClient, Scope, StorageKey};
+use crate::{events, exit, link_counter, links, registry, self_issued, sessions, DelayChange, HanaSigner, HanaSignerExt, Issuer, PendingSharedClient, Scope};
 
 const STATE_KEY: &[u8] = b"STATE";
 
-/// The v2 root struct (`develop` d1837ec, governance batch), field for field. Only `migrate` and its tests read it.
+/// The v3 root struct (`develop` 81ebfa06, email login and the link counter), field for field. Only `migrate` and its
+/// tests read it.
 #[near(serializers = [borsh])]
-pub(crate) struct HanaSignerV2 {
+pub(crate) struct HanaSignerV3 {
     pub owner: AccountId,
     pub mpc: AccountId,
     pub ckd_domain_id: u64,
@@ -68,6 +70,12 @@ pub(crate) struct HanaSignerV2 {
     pub changes_unlock_floor_ms: u64,
     pub sessions_valid_from_ms: u64,
     pub pending_updater_keys: Vec<PublicKey>,
+    pub self_issued: Vec<self_issued::SelfIssued>,
+    pub links: LookupMap<links::IdentityKey, links::MemberRecord>,
+    pub accounts: LookupMap<links::IdentityKey, links::Account>,
+    pub opened: LookupSet<links::IdentityKey>,
+    pub unrecorded_wallets: bool,
+    pub link_counter: link_counter::LinkCounter,
 }
 
 fn read_raw_state() -> Vec<u8> {
@@ -80,7 +88,7 @@ fn emit_migrated(from_version: u32) {
 
 #[near]
 impl HanaSigner {
-    /// Called by `execute_upgrade` on the new code. v2 → v3 (appends the v3 fields), or v3 → v3 (keeps the state).
+    /// Called by `execute_upgrade` on the new code. v3 → v4 (appends the v4 fields), or v4 → v4 (keeps the state).
     /// Anything else panics `Unexpected state version`, which reverts the deploy.
     #[private]
     #[init(ignore_state)]
@@ -91,66 +99,67 @@ impl HanaSigner {
             emit_migrated(this.state_version);
             return this;
         }
-        let v2 = HanaSignerV2::try_from_slice(&raw).unwrap_or_else(|_| env::panic_str("Unexpected state version"));
-        assert!(v2.state_version == 2, "Unexpected state version");
-        let this = Self::from_v2(v2);
-        emit_migrated(2);
+        let v3 = HanaSignerV3::try_from_slice(&raw).unwrap_or_else(|_| env::panic_str("Unexpected state version"));
+        assert!(v3.state_version == 3, "Unexpected state version");
+        let this = Self::from_v3(v3);
+        emit_migrated(3);
         this
     }
 }
 
 impl HanaSigner {
-    /// Every v2 field as it is, then the v3 fields empty.
-    pub(crate) fn from_v2(v2: HanaSignerV2) -> Self {
+    /// Every v3 field as it is, then the v4 fields empty.
+    pub(crate) fn from_v3(v3: HanaSignerV3) -> Self {
         Self {
-            owner: v2.owner,
-            mpc: v2.mpc,
-            ckd_domain_id: v2.ckd_domain_id,
-            console_audiences: v2.console_audiences,
-            sponsors: v2.sponsors,
-            shared_clients: v2.shared_clients,
-            pending_shared_clients: v2.pending_shared_clients,
-            change_delay_ms: v2.change_delay_ms,
-            pending_change_delay: v2.pending_change_delay,
-            public_registration: v2.public_registration,
-            issuers: v2.issuers,
-            iss_index: v2.iss_index,
-            scopes: v2.scopes,
-            client_index: v2.client_index,
-            removed_clients: v2.removed_clients,
-            pending_adds: v2.pending_adds,
-            next_scope: v2.next_scope,
-            sessions: v2.sessions,
-            session_queue: v2.session_queue,
-            queue_head: v2.queue_head,
-            queue_tail: v2.queue_tail,
+            owner: v3.owner,
+            mpc: v3.mpc,
+            ckd_domain_id: v3.ckd_domain_id,
+            console_audiences: v3.console_audiences,
+            sponsors: v3.sponsors,
+            shared_clients: v3.shared_clients,
+            pending_shared_clients: v3.pending_shared_clients,
+            change_delay_ms: v3.change_delay_ms,
+            pending_change_delay: v3.pending_change_delay,
+            public_registration: v3.public_registration,
+            issuers: v3.issuers,
+            iss_index: v3.iss_index,
+            scopes: v3.scopes,
+            client_index: v3.client_index,
+            removed_clients: v3.removed_clients,
+            pending_adds: v3.pending_adds,
+            next_scope: v3.next_scope,
+            sessions: v3.sessions,
+            session_queue: v3.session_queue,
+            queue_head: v3.queue_head,
+            queue_tail: v3.queue_tail,
             state_version: STATE_VERSION,
-            issuer_key_delay_ms: v2.issuer_key_delay_ms,
-            pending_issuer_key_delay: v2.pending_issuer_key_delay,
-            governance_delay_ms: v2.governance_delay_ms,
-            pending_governance_delay: v2.pending_governance_delay,
-            watchdogs: v2.watchdogs,
-            keys_slow_until_ms: v2.keys_slow_until_ms,
-            key_changes: v2.key_changes,
-            next_key_change: v2.next_key_change,
-            updater_keys: v2.updater_keys,
-            paused: v2.paused,
-            pending_upgrade: v2.pending_upgrade,
-            pending_owner: v2.pending_owner,
-            pending_withdrawal: v2.pending_withdrawal,
-            pending_console_audiences: v2.pending_console_audiences,
-            unpaused_at_ms: v2.unpaused_at_ms,
-            changes_unlock_floor_ms: v2.changes_unlock_floor_ms,
-            sessions_valid_from_ms: v2.sessions_valid_from_ms,
-            pending_updater_keys: v2.pending_updater_keys,
-            self_issued: vec![],
-            links: LookupMap::new(StorageKey::Links),
-            accounts: LookupMap::new(StorageKey::Accounts),
-            opened: LookupSet::new(StorageKey::Opened),
-            // Wallets derived by v1/v2 code aren't in `opened`: no link until the owner accepts that (D135).
-            unrecorded_wallets: true,
-            // No link yet: the default caps, empty windows (D200).
-            link_counter: crate::link_counter::LinkCounter::new(),
+            issuer_key_delay_ms: v3.issuer_key_delay_ms,
+            pending_issuer_key_delay: v3.pending_issuer_key_delay,
+            governance_delay_ms: v3.governance_delay_ms,
+            pending_governance_delay: v3.pending_governance_delay,
+            watchdogs: v3.watchdogs,
+            keys_slow_until_ms: v3.keys_slow_until_ms,
+            key_changes: v3.key_changes,
+            next_key_change: v3.next_key_change,
+            updater_keys: v3.updater_keys,
+            paused: v3.paused,
+            pending_upgrade: v3.pending_upgrade,
+            pending_owner: v3.pending_owner,
+            pending_withdrawal: v3.pending_withdrawal,
+            pending_console_audiences: v3.pending_console_audiences,
+            unpaused_at_ms: v3.unpaused_at_ms,
+            changes_unlock_floor_ms: v3.changes_unlock_floor_ms,
+            sessions_valid_from_ms: v3.sessions_valid_from_ms,
+            pending_updater_keys: v3.pending_updater_keys,
+            self_issued: v3.self_issued,
+            links: v3.links,
+            accounts: v3.accounts,
+            opened: v3.opened,
+            unrecorded_wallets: v3.unrecorded_wallets,
+            link_counter: v3.link_counter,
+            exit_clients: vec![],
+            pending_exit_clients: vec![],
+            exit_window: exit::ExitWindow::default(),
         }
     }
 }

@@ -468,6 +468,9 @@ export interface WorldOpts {
   at?: number;
   /** The manifest's email pins (default: none, as on sandbox-dev today). */
   pins?: SignerPins | null;
+  /** The manifest's exit client pins (D468; default: none). */
+  exitPins?: [string, string][] | null;
+  exitAlertPerHour?: number;
   /**
    * The identity token (D210): `published` keys in Hana's JWKS (default: exactly the pinned ones) and the pins
    * (thumbprints; default: the published keys' kids). Absent: the env has no identity token (check skipped).
@@ -509,6 +512,8 @@ export function world(opts: WorldOpts = {}): World {
       relayer: RELAYER,
       relayerThresholds: relayerThresholds(undefined),
       emailPins: { pins: opts.pins ?? null, problems: [] },
+      exitPins: { pins: opts.exitPins ?? null, problems: [] },
+      exitAlertPerHour: opts.exitAlertPerHour ?? 20,
       devEnv: true,
       identity: { iss: opts.identity ? IDENTITY_ISS : null, pins: { pins: identityPins, problems: [] } },
     },

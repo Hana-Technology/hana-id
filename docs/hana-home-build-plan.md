@@ -1,6 +1,6 @@
 # Hana Home build plan (batches)
 
-**Status (2026-11-09): H0 (this plan, the spec's rewrite, D460–D466, the readiness rows) on branch `docs/hana-home-h0`; H1 built on branch `feat/hana-home-h1`, its security review's fixes on `feat/hana-home-h1-2` (not merged, not deployed; see its result line below); H2–H12 not started; H6's design and D480–D489 on branch `docs/hana-home-h6-design` (not merged).** Splits `docs/hana-home-spec.md` (D40, D45, D98, D461–D466, D468, D480–D489) into reviewable
+**Status (2026-11-09): H0 (this plan, the spec's rewrite, D460–D466, the readiness rows) on branch `docs/hana-home-h0`; H1 built on branch `feat/hana-home-h1`, its security review's fixes on `feat/hana-home-h1-2` (not merged, not deployed; see its result line below); H2–H12 not started; H6 built on branch `feat/hana-home-h6` (not merged, not deployed; see its result line); H6's design and D480–D489 on branch `docs/hana-home-h6-design` (not merged).** Splits `docs/hana-home-spec.md` (D40, D45, D98, D461–D466, D468, D480–D489) into reviewable
 batches. The spec stays the source of truth for *what* to build; this file says *in which order*, *what each batch
 ships* and *what users see after it*. Like a spec it is history once the work merges: the current state lives in the
 reference docs (`docs/README.md`).
@@ -72,7 +72,7 @@ The spec's body was rewritten in H0 to agree with these ten points. They're kept
 | H3 | `POST /v1/home/login`, Home pool, `key_exported` | H1 | M | create and fund the Home key (2 NEAR) |
 | H4 | `vault_consents`, device label, consent endpoints, status read | H1 | M | — |
 | H5 | Vault: register first, fail closed, status read, revoke paths | H4 live | M | — |
-| H6 | Contract: the exit client (D468, D480–D488), `migrate` to state version 4, the upgrade | — | L | create the exit Google client (same Cloud project as the shared client); the council runs the upgrade and `set_exit_clients` |
+| H6 | Contract: the exit client (D468, D480–D488), `migrate` to state version 4, the upgrade (built: `feat/hana-home-h6`, not merged, not deployed) | — | L | create the exit Google client (same Cloud project as the shared client); the council runs the upgrade and `set_exit_clients` |
 | H7 | `/home` page: sign-in, Your apps, addresses, expiry | H1, H2 | L | — |
 | H8 | Export in Home | H3, H7 | M | — |
 | H9 | Devices, consent, share and email-share revoke | H5, H7 | M | — |
@@ -173,6 +173,7 @@ The design is `docs/hana-home-h6-design.md`; its decisions are D480–D489.
 - **Condition (H1's review).** If this lands before H10, take H10's condition here: the contract refuses a client proof
   for `("email", "hana-home")`, as the audience-shape rule above does.
 - **User-visible.** Nothing until H12. Partners keep their instant turn-off.
+- **Result (2026-11-09, `feat/hana-home-h6`, not merged, not deployed, awaiting its security review).** `contracts/hana-signer` (`exit.rs`, `set_exit_clients`, `exit_scope`, the audience-shape rule, `migrate` to v4, event version 1.3.0, the `v3_state_fixture.json`, `src/tests/email/exit.rs`); integration test `v3_to_v4_upgrade_through_the_dao_keeps_every_view_and_path` and `login_gas_of_v4_against_v3_and_of_an_exit_login` in `integration-tests/tests/governance.rs`; `apps/api` (`homeAudienceRoute` route `exit`, `/v1/home/config`'s `exitGoogleClientId`, `checkClientScope` unchanged and tested); `apps/watchdog` (`exitClients`, pins, the hourly alarm, the critical diff), `packages/env`, `packages/playbooks`; `set_exit_clients` in `scripts`; `docs/contract-interface.md`, `api.md`, `security.md`, `architecture.md`, `operations.md` ("Hana Home exit client"). D493, D494. Gas and storage measured (`docs/contract-interface.md` "Gas and storage of the exit client"): +0.02–0.03 Tgas on every login, +0.2 Tgas on an exit login (the design's estimate: under 0.1), root state +24 B empty, +82 B with one Google client. No path or derivation change: the golden tests through own client, shared client and exit give identical strings; existing vectors unchanged. Not done (for the deploy): the live Google `sub` check and the owner's Google client. H6's security review comes next.
 
 ### H7: the page
 

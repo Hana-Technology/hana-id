@@ -10,7 +10,7 @@ import { identityDiscoveryUrl, parseIdentityPins } from '../../src/identity.ts';
 import { parsePins } from '../../src/pins.ts';
 import { ALERT_LABELS, alertLabelFor, isDevEnvName, PAGER_PROVIDERS as WORKER_PAGERS, SECRET_NAMES } from '../../src/names.ts';
 import { relayerThresholds } from '../../src/relayer.ts';
-import { CRON, LOCAL_D1_ID, TEST_MANIFEST, devVarsContent, existingD1Id, identityVars, main, testWranglerConfig, wranglerConfig, writeWranglerConfig } from '../gen-wrangler.ts';
+import { CRON, exitVars, LOCAL_D1_ID, TEST_MANIFEST, devVarsContent, existingD1Id, identityVars, main, testWranglerConfig, wranglerConfig, writeWranglerConfig } from '../gen-wrangler.ts';
 import { SECRET_RULES } from '../secrets.ts';
 import { CUSTOM_DOMAIN, customDomainManifest } from '../../../../packages/env/src/custom-domain.fixture.ts';
 
@@ -136,6 +136,13 @@ describe('wranglerConfig', () => {
     expect(vars.IDENTITY_ISS).toBe(sandbox.identityToken!.iss);
     expect(parseIdentityPins(vars.IDENTITY_PINS)).toEqual({ pins: sandbox.identityToken!.publicKeys.map((k) => k.kid), problems: [] });
     expect(identityDiscoveryUrl(vars.IDENTITY_ISS!)).toBe(`${sandbox.apiUrl}/v1/identity/.well-known/openid-configuration`);
+  });
+
+  it('writes the exit pins and alarm level as vars (D468, D493), and neither when the manifest has none', () => {
+    const none = wranglerConfig(TEST_MANIFEST, D1).vars as Record<string, string>;
+    expect(none.EXIT_PINS).toBeUndefined();
+    expect(none.EXIT_ALERT_PER_HOUR).toBeUndefined();
+    expect(exitVars({ ...TEST_MANIFEST, watchdog: { ...TEST_MANIFEST.watchdog!, pinnedExitClients: [['google', 'exit']], exitAlertPerHour: 50 } })).toEqual({ EXIT_PINS: '[["google","exit"]]', EXIT_ALERT_PER_HOUR: '50' });
   });
 
   it("decides a dev env as @hana-id/env does (D139's unrecorded_wallets alert is for other envs)", () => {

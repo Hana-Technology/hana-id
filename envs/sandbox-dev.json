@@ -12,6 +12,7 @@
   },
   "watchdogs": ["hana-id-watchdog-dev1.testnet"],
   "watchdog": {
+    "pinnedExitClients": [["google", "875896396522-n0ekvvusgt889or6gi6og211qvjii0pc.apps.googleusercontent.com"], ["email", "hana-home"]],
     "account": "hana-id-watchdog-dev1.testnet",
     "cloudflare": { "accountId": "f0b1e2c42c3e5bd63992958a19d4abca", "workerName": "hana-id-watchdog-sandbox-dev", "d1Name": "hana-id-watchdog-sandbox-dev" },
     "url": "https://hana-id-watchdog-sandbox-dev.tingtc.workers.dev",

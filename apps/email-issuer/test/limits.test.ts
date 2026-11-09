@@ -28,6 +28,50 @@ const normalizeMailbox = (email: string): string => {
 };
 const wrongFor = (code: string) => (code === '000000' ? '111111' : '000000');
 
+/**
+ * Records every Durable Object call and D1 statement the harness's handlers make (the binding and method, or the SQL,
+ * never the arguments), in order: what a request's response waits for.
+ */
+function traceBackends(h: Harness): string[] {
+  const ops: string[] = [];
+  const trackStub = <T extends object>(name: string, stub: T): T =>
+    new Proxy(stub, {
+      get(target, prop) {
+        const value = Reflect.get(target, prop) as unknown;
+        if (typeof value !== 'function') return value;
+        return (...args: unknown[]) => {
+          ops.push(`${name}.${String(prop)}`);
+          return Reflect.apply(value as (...a: unknown[]) => unknown, target, args);
+        };
+      },
+    });
+  const trackNamespace = <T extends { get(id: DurableObjectId): object; idFromName(name: string): DurableObjectId }>(name: string, ns: T): T =>
+    new Proxy(ns, {
+      get(target, prop) {
+        if (prop === 'get') return (id: DurableObjectId) => trackStub(name, target.get(id));
+        const value = Reflect.get(target, prop) as unknown;
+        return typeof value === 'function' ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+      },
+    });
+  const denv = h.deps.env;
+  denv.RATE_LIMITER = trackNamespace('RATE_LIMITER', denv.RATE_LIMITER);
+  denv.EMAIL_CHALLENGE = trackNamespace('EMAIL_CHALLENGE', denv.EMAIL_CHALLENGE);
+  const db = denv.DB;
+  denv.DB = new Proxy(db, {
+    get(target, prop) {
+      if (prop === 'prepare') {
+        return (sql: string) => {
+          ops.push(`DB:${sql}`);
+          return target.prepare(sql);
+        };
+      }
+      const value = Reflect.get(target, prop) as unknown;
+      return typeof value === 'function' ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+    },
+  });
+  return ops;
+}
+
 describe('code mails per mailbox and requester', () => {
   it('3 per 15 min per requester: the 4th is a generic 429; another requester still gets a code', async () => {
     const h = await harness();
@@ -531,23 +575,42 @@ describe('per-IP, per-app and global limits (429)', () => {
 });
 
 describe('enumeration resistance', () => {
-  it('fresh and suppressed addresses: same status, body keys and similar timing; every mailbox-level refusal: one body and one retry-after (L1)', async () => {
-    const h = await harness();
+  it('fresh and suppressed addresses: same status, body keys and the same path; every mailbox-level refusal: one body and one retry-after (L1)', async () => {
+    const mailsInFlight: Promise<unknown>[] = [];
+    const h = await harness({ waitUntil: (p) => void mailsInFlight.push(p) });
     const app = await seedApp(h);
     const suppressed = addr('m');
     await env.DB.prepare('INSERT INTO email_suppressions (email_key, reason, at_ms) VALUES (?1, ?2, ?3)').bind(await addressKey(await h.deps.keys(), suppressed), 'complaint', h.clock.now).run();
-    const runs: Record<string, number[]> = { fresh: [], suppressed: [] };
+    // D198's timing claim, proved without a clock: what the response waits for is the same list of Durable Object calls
+    // and D1 statements in the same order for both, and the provider call is the only difference, after the response.
+    // (A wall-clock comparison of the two only measures the machine's load: 52 ms against 50 on a busy machine.)
+    // The provider answers only when told to: a response that waited for it would hang here, and the mail's own
+    // bookkeeping, which follows the send, can't be in the trace.
+    const held: (() => void)[] = [];
+    const recordMail = h.sender.send.bind(h.sender);
+    h.sender.send = async (m) => {
+      await new Promise<void>((go) => held.push(go));
+      return recordMail(m);
+    };
+    const ops = traceBackends(h);
+    const paths: Record<'fresh' | 'suppressed', string[][]> = { fresh: [], suppressed: [] };
     for (let i = 0; i < 5; i++) {
       for (const [k, email] of [['fresh', addr(`n${i}`)], ['suppressed', suppressed]] as const) {
-        const t0 = performance.now();
+        ops.length = 0;
         const r = await start(h, app, email, freshIp());
-        runs[k]!.push(performance.now() - t0);
+        paths[k].push([...ops]);
         expect(r.status).toBe(202);
         expect(Object.keys(r.body).sort()).toEqual(['challengeId', 'expiresAtMs', 'resendAfterMs']);
+        // Only a fresh address's start reached the provider, and its response came without the provider's answer.
+        expect(held.length).toBe(k === 'fresh' ? 1 : 0);
+        for (const go of held.splice(0)) go();
+        await Promise.all(mailsInFlight.splice(0));
       }
     }
-    const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
-    expect(Math.abs(median(runs.fresh!) - median(runs.suppressed!))).toBeLessThan(50);
+    h.sender.send = recordMail;
+    expect(paths.fresh[0]!.length).toBeGreaterThan(0);
+    expect(paths.suppressed).toEqual(paths.fresh);
+    expect(h.sender.sent).toHaveLength(5);
     // Mailbox-level refusals of different kinds: the per-requester code limit, the live-challenge cap.
     const a = addr('o');
     const ip = freshIp();

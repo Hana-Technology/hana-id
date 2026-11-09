@@ -8,7 +8,7 @@ import type { Page, TestInfo } from '@playwright/test';
 import type { GoogleStub } from '../src/google-stub.ts';
 import { ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK } from '../src/stack.ts';
 import { addressOfExport, base64Decode, fromUtf8 } from '@hana-id/core';
-import { AFTERWORD_MS, type App, LOGIN_PENDING_MS, chooseAccount, clickAction, clickClosing, clickLauncher, clickMayClose, closeOf, errorOf, expect, guardedClick, newApp, okValue, openPartner, peek, responsive, runAction, status, test, vaultFrame, waitPersisted } from './fixtures.ts';
+import { AFTERWORD_MS, type App, LOGIN_PENDING_MS, chooseAccount, clickAction, clickClosing, clickLauncher, clickMayClose, clickUntilTaken, closeOf, errorOf, expect, guardedClick, newApp, okValue, openPartner, peek, responsive, runAction, status, test, vaultFrame, waitPersisted } from './fixtures.ts';
 
 const MATCH = `${ISSUER_URL}/v1/email/google-match`;
 const RECORD = `${ISSUER_URL}/v1/email/google-record`;
@@ -46,7 +46,7 @@ async function emailCode(popup: Page, to: string): Promise<void> {
   await expect(popup.locator('#email-address')).toBeVisible();
   await popup.fill('#email-address', to);
   const before = await codeCount(to);
-  await popup.click('#email-send');
+  await clickUntilTaken(popup, '#email-send');
   await enterCode(popup, to, before);
 }
 

@@ -296,6 +296,8 @@ describe('the on-chain view and the client-proof helper', () => {
   it('SetOwners from the drift: the org’s owners plus the scope’s Near owners, shown by member, never by sub', async () => {
     const m = await member('owner');
     const other = await member('owner', { org: m.org });
+    // Owners are listed by added_at, then id: added in the same millisecond, the random ids would pick the order.
+    await env.CONSOLE_DB.prepare('UPDATE members SET added_at = added_at + 1000 WHERE org_id = ? AND user_id = ?').bind(m.org, other.userId).run();
     const app = await seedHotApp(m.org);
     await setScope({ id: app.scope, owners: [oidc(m.sub), { Near: { account_id: 'alice.testnet' } }], action_nonce: 2 });
     const a = await createAction(m, 'owner_action', { scopeId: app.scope, method: 'propose_change', change: { kind: 'SetOwners' } });

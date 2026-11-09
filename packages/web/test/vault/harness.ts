@@ -32,6 +32,7 @@ import {
   verifyWalletProof,
   walletProofsHash,
 } from '@hana-id/core';
+import { consentRegisterPayload, consentRevokePayload } from '@hana-id/core/home';
 import type { HanaEnv } from '../../src/hana-env.ts';
 import type { VaultConfig } from '../../src/vault/config.ts';
 import type { LauncherView } from '../../src/vault/launcher.ts';
@@ -204,6 +205,16 @@ interface FakeShare {
   counter: number;
   revoked: boolean;
   createdAt: number;
+  /** min(session end, now + TTL), as the API sets it: a consent may not end after it (D513). */
+  absExpiresAtMs: number;
+}
+
+/** A row of the fake API's `vault_consents`. */
+export interface FakeConsent {
+  shareId: Uint8Array | null;
+  sessionPk: Uint8Array;
+  expiresAtMs: number;
+  revoked: boolean;
 }
 
 export interface ApiCall {
@@ -261,6 +272,13 @@ export class FakeBackend {
   /** The raw-signing setting in force that GET /v1/app answers (each new tab's page sets it, as for the policy). */
   rawSign: 'off' | 'approval' = 'off';
   serverNow: () => number = () => START_MS;
+  /** `vault_consents` (Hana Home), by consent id in hex. */
+  readonly consents = new Map<string, FakeConsent>();
+  /**
+   * What GET /v1/app says about a consent when the vault names one: overrides the row's answer. `'omit'` leaves the
+   * field out (a D1 failure, D511); any other value is sent as is (a value of an unknown shape).
+   */
+  consentAnswer: ((idHex: string) => unknown) | null = null;
   /** The API's own timings to answer /v1/login, /v1/vault/shares and /v1/vault/unlock with (a pk_test_ API), or none. */
   serverTimings: { totalMs: number; phases: Record<string, number> } | null = null;
   /** The relay read's `heldMs`, or none (an older API). */
@@ -493,7 +511,7 @@ export class FakeBackend {
 
   private async route(call: ApiCall, url: URL, signal?: AbortSignal): Promise<Response> {
     const b = call.body as Record<string, unknown>;
-    if (call.path === '/v1/app') return json(200, { autoApprovePolicy: this.autoApprovePolicy, rawSign: this.rawSign, ...this.app, serverTimeMs: this.serverNow(), ...this.timingsField(), requestId: 'rq' });
+    if (call.path === '/v1/app') return json(200, { autoApprovePolicy: this.autoApprovePolicy, rawSign: this.rawSign, ...this.app, ...this.consentField(call.headers['x-hana-consent']), serverTimeMs: this.serverNow(), ...this.timingsField(), requestId: 'rq' });
     if (call.path === '/v1/login') {
       const r = this.createSession(b, true);
       const nearTx = this.nextTx();
@@ -584,6 +602,7 @@ export class FakeBackend {
       const r = await this.walletRecord(b, signal);
       return r instanceof Response ? r : json(200, { ...r, requestId: 'rq' });
     }
+    if (call.path === '/v1/vault/consents' || call.path === '/v1/vault/consents/revoke') return this.consentCall(call, call.path === '/v1/vault/consents');
     if (call.path === '/v1/vault/shares') return this.createShare(call);
     if (call.path.startsWith('/v1/vault/')) return this.shareAction(call, call.path.slice('/v1/vault/'.length));
     void url;
@@ -635,8 +654,64 @@ export class FakeBackend {
     for (const s of this.shares.values()) if (toHex(s.sessionPk) === toHex(pk)) return apiError(409, 'share_exists');
     const shareId = crypto.getRandomValues(new Uint8Array(16));
     const ks = crypto.getRandomValues(new Uint8Array(32));
-    this.shares.set(toHex(shareId), { shareId, ks, sessionPk: pk, appId: APP_ID, counter: 0, revoked: false, createdAt: this.serverNow() });
+    this.shares.set(toHex(shareId), { shareId, ks, sessionPk: pk, appId: APP_ID, counter: 0, revoked: false, createdAt: this.serverNow(), absExpiresAtMs: session.expires_at_ms });
     return json(201, { shareId: Array.from(shareId), ks: Array.from(ks), absExpiresAtMs: session.expires_at_ms, idleUntilMs: this.serverNow() + 2 * HOUR, ...this.timingsField(), requestId: 'rq' });
+  }
+
+  /** `consent` on GET /v1/app, for the vault's `x-hana-consent` header. */
+  private consentField(header: string | undefined): { consent?: unknown } {
+    if (header === undefined) return {};
+    const hex = toHex(base64UrlDecode(header));
+    const answered = this.consentAnswer?.(hex);
+    if (answered === 'omit') return {};
+    return { consent: answered ?? this.consentStatusOf(hex) };
+  }
+
+  /** As the API's consentStatus: `'unknown'` for no row, `'revoked'` for a stopped or expired consent or a dead share. */
+  consentStatusOf(hex: string): 'active' | 'revoked' | 'unknown' {
+    const c = this.consents.get(hex);
+    if (!c) return 'unknown';
+    if (c.revoked || this.serverNow() >= c.expiresAtMs) return 'revoked';
+    if (!c.shareId) return 'active';
+    const share = this.shares.get(toHex(c.shareId));
+    return !share || share.revoked ? 'revoked' : 'active';
+  }
+
+  /** POST /v1/vault/consents and /revoke, as the API judges them in short: a signature over the vault message, the counter in order, a repeated id refused. */
+  private async consentCall(call: ApiCall, register: boolean): Promise<Response> {
+    const b = call.body as { shareId?: number[]; sessionPublicKey: number[]; counter: number; signature: number[]; consentId: number[]; policyId?: number[]; expiresAtMs?: number };
+    // As the API's `toBody`: exactly these keys, and a counter that fits the mode.
+    const keys = ['sessionPublicKey', 'counter', 'signature', 'consentId', ...(register ? ['policyId', 'expiresAtMs'] : []), ...('shareId' in b ? ['shareId'] : [])];
+    if (Object.keys(b).length !== keys.length || !keys.every((k) => k in b)) return apiError(400, 'bad_request');
+    if ('shareId' in b ? b.counter < 1 : b.counter !== 0) return apiError(400, 'bad_request');
+    const pk = Uint8Array.from(b.sessionPublicKey);
+    const consentId = Uint8Array.from(b.consentId);
+    const hex = toHex(consentId);
+    const shareId = b.shareId ? Uint8Array.from(b.shareId) : null;
+    const payload = register ? consentRegisterPayload({ consentId, policyId: Uint8Array.from(b.policyId!), expiresAtMs: b.expiresAtMs!, parentOrigin: call.headers['x-hana-parent-origin'] ?? '' }) : consentRevokePayload(consentId);
+    const msg = vaultMessage({ signer: ENV.signer, appId: APP_ID, shareId: shareId ?? new Uint8Array(16), counter: b.counter, payload });
+    if (!(await verifyEd25519(pk, Uint8Array.from(b.signature), msg))) return apiError(401, 'invalid_signature');
+    const share = shareId ? this.shares.get(toHex(shareId)) : undefined;
+    if (shareId) {
+      if (!share || toHex(share.sessionPk) !== toHex(pk)) return apiError(404, 'unknown_share');
+      if (share.revoked) return apiError(410, 'session_ended', { reason: 'share_revoked' });
+      if (register && b.expiresAtMs! > share.absExpiresAtMs) return apiError(400, 'bad_expiry', { maxExpiresAtMs: share.absExpiresAtMs });
+      if (register ? this.consents.has(hex) : false) return apiError(409, 'consent_exists');
+      if (b.counter !== share.counter + 1) return apiError(409, 'bad_counter', { expected: share.counter + 1 });
+      share.counter = b.counter;
+    } else if (register && this.consents.has(hex)) {
+      return apiError(409, 'consent_exists');
+    }
+    if (register) {
+      for (const c of this.consents.values()) if (toHex(c.sessionPk) === toHex(pk)) c.revoked = true;
+      this.consents.set(hex, { shareId, sessionPk: pk, expiresAtMs: b.expiresAtMs!, revoked: false });
+      return json(201, { counter: b.counter, grantedAtMs: this.serverNow(), expiresAtMs: b.expiresAtMs, requestId: 'rq' });
+    }
+    const row = this.consents.get(hex);
+    if (!row || toHex(row.sessionPk) !== toHex(pk)) return apiError(404, 'unknown_consent');
+    const was = row.revoked;
+    row.revoked = true;
+    return json(200, { revoked: !was, counter: b.counter, requestId: 'rq' });
   }
 
   private async shareAction(call: ApiCall, action: string): Promise<Response> {

@@ -87,6 +87,11 @@ export interface RecordV1 {
 export const RECORD_VERSION = 2;
 
 export interface ConsentV1 extends AutoApproveUsage {
+  /**
+   * The id the API recorded this consent under (32 hex characters, 16 random bytes). Never given to the partner page.
+   * Absent on a consent made before registering existed: never honoured, cleared at its first read.
+   */
+  consentId?: string;
   policyId: string;
   grantedAt: number;
   expiresAtMs: number;
@@ -279,6 +284,7 @@ export async function sealConsent(prk: Uint8Array, binding: RecordBinding, conse
 
 const isConsent = (v: unknown): v is ConsentV1 =>
   isObj(v) &&
+  (v.consentId === undefined || (typeof v.consentId === 'string' && /^[0-9a-f]{32}$/u.test(v.consentId))) &&
   typeof v.policyId === 'string' &&
   /^[0-9a-f]{64}$/u.test(v.policyId) &&
   isMs(v.grantedAt) &&

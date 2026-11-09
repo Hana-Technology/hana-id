@@ -1,6 +1,6 @@
 # Hana Home build plan (batches)
 
-**Status (2026-11-09): H0 (this plan, the spec's rewrite, D460–D466, the readiness rows) on branch `docs/hana-home-h0`; H1 built on branch `feat/hana-home-h1`, its security review's fixes on `feat/hana-home-h1-2` (not merged, not deployed; see its result line below); H2 built on branch `feat/hana-home-h2` and H4 built on branch `feat/hana-home-h4`, merged on `feat/hana-home-h2-h4` with their security reviews' fixes (not merged, not deployed; see their result lines); H3 built on branch `feat/hana-home-h3` (not merged, not deployed; see its result line); H5, H7–H12 not started; H6 built on branch `feat/hana-home-h6` (not merged, not deployed; see its result line); H6's design and D480–D489 on branch `docs/hana-home-h6-design` (not merged).** Splits `docs/hana-home-spec.md` (D40, D45, D98, D461–D466, D468, D480–D489) into reviewable
+**Status (2026-11-09): H0, H1, H2, H4 and H6 merged and live on sandbox-dev (contract v4, exit clients in force); H3 and H5 built with their security reviews' fixes, merged on branch `merge/h3-h5` (not merged into `develop`, not deployed); H7–H12 not started. Older "not merged, not deployed" notes in the result lines below are history.** Splits `docs/hana-home-spec.md` (D40, D45, D98, D461–D466, D468, D480–D489) into reviewable
 batches. The spec stays the source of truth for *what* to build; this file says *in which order*, *what each batch
 ships* and *what users see after it*. Like a spec it is history once the work merges: the current state lives in the
 reference docs (`docs/README.md`).
@@ -147,6 +147,7 @@ additions conflict in `apps/api/src/index.ts`, so expect small merges. About 30 
 - **Migration / deploy.** The vault, after H4 is live.
 - **User-visible.** Auto-approve can't be turned on while the API can't record it (D98 item 13). Nothing else.
 - **Carried from H4's review (D510, D513).** Never give a `consent_id` to the partner page. Tell `409 bad_counter` from `409 consent_exists` (a stale counter retries with the expected value; a repeated id does not). `hana_revokeAutoApprove` sends no server revoke when there is no local consent. Render the partner-set policy `label` as text only. Retry `503 session_not_visible` a few times with its `retry-after`, then fail closed like any failed register; `429 too_many_consents` fails closed with no retry.
+- **Result (2026-11-09, `feat/hana-home-h5`, not merged, not deployed).** Vault only: registers on Allow (`POST /v1/vault/consents`, the id sealed with the consent) before storing, fails closed (`hana_requestAutoApprove` answers `api_unavailable` with `data.granted: false`; a covered request goes to the popup); auto-signs only with an `'active'` answer asked within 10 s (the existing `GET /v1/app` read carries `x-hana-consent`); `'revoked'`/`'unknown'` clear the consent; a failed or empty read holds it with no auto-sign. `hana_revokeAutoApprove` and "Stop auto-approving" clear locally first, then revoke on the API, only for a consent held (also a dormant tab's, without unlocking). Consents stored before H5 are dropped at their first read and the user is asked again. D530–D539 (confirmed by the user 2026-11-09). Tests: `packages/web/test/vault/consents.test.ts`, `legacy-consent.test.ts`. No migration. Deploy: the API (`bad_expiry`'s `maxExpiresAtMs`), then the vault, after H4 is live (H4 is live on sandbox-dev); open tabs keep the old vault until they reload. The vault doesn't send `deviceLabel` yet: left out, not H5's scope. **Security review (2026-11-09):** no auto-sign path without a live consent; fixed: daily limits under parallel requests with no record (D536), a 410 on register ends the session (D537), an unconfirmed consent isn't reported granted (D538), the policy re-checked under the lock, no seal or tamper verdict after the session ended, the status aged on a monotonic timer too (D532), the capped end from the API (D535). An auto-signature doesn't refresh the share's idle timer (D539).
 
 ### H6: the contract
 
@@ -209,6 +210,7 @@ The design is `docs/hana-home-h6-design.md`; its decisions are D480–D489.
 - **Migration / deploy.** Needs 0014 and the email keys on the env; API, pages.
 - **User-visible.** Only by typing the URL.
 - **Carried from H4's review.** Render the partner-set policy `label` as text only, here as in H5.
+- **Carried from H5's review (D534).** Derive a consent's "active" from its share's liveness, as `consentStatus` does: after a `'session'`-mode logout or new login the row's `revoked_at` stays NULL.
 
 ### H10: email users
 

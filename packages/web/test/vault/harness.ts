@@ -680,6 +680,10 @@ export class FakeBackend {
   /** POST /v1/vault/consents and /revoke, as the API judges them in short: a signature over the vault message, the counter in order, a repeated id refused. */
   private async consentCall(call: ApiCall, register: boolean): Promise<Response> {
     const b = call.body as { shareId?: number[]; sessionPublicKey: number[]; counter: number; signature: number[]; consentId: number[]; policyId?: number[]; expiresAtMs?: number };
+    // As the API's `toBody`: exactly these keys, and a counter that fits the mode.
+    const keys = ['sessionPublicKey', 'counter', 'signature', 'consentId', ...(register ? ['policyId', 'expiresAtMs'] : []), ...('shareId' in b ? ['shareId'] : [])];
+    if (Object.keys(b).length !== keys.length || !keys.every((k) => k in b)) return apiError(400, 'bad_request');
+    if ('shareId' in b ? b.counter < 1 : b.counter !== 0) return apiError(400, 'bad_request');
     const pk = Uint8Array.from(b.sessionPublicKey);
     const consentId = Uint8Array.from(b.consentId);
     const hex = toHex(consentId);
@@ -691,7 +695,7 @@ export class FakeBackend {
     if (shareId) {
       if (!share || toHex(share.sessionPk) !== toHex(pk)) return apiError(404, 'unknown_share');
       if (share.revoked) return apiError(410, 'session_ended', { reason: 'share_revoked' });
-      if (register && b.expiresAtMs! > share.absExpiresAtMs) return apiError(400, 'bad_expiry');
+      if (register && b.expiresAtMs! > share.absExpiresAtMs) return apiError(400, 'bad_expiry', { maxExpiresAtMs: share.absExpiresAtMs });
       if (register ? this.consents.has(hex) : false) return apiError(409, 'consent_exists');
       if (b.counter !== share.counter + 1) return apiError(409, 'bad_counter', { expected: share.counter + 1 });
       share.counter = b.counter;

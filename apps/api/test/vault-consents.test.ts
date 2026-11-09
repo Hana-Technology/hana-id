@@ -294,8 +294,10 @@ describe('session mode', () => {
 
   it('the expiry bound is the share: a consent can’t outlive its share’s absolute end', async () => {
     const { app, device } = await setup('session');
-    await setShare(device.shareId!, { abs_expires_at: Date.now() + HOUR / 2 });
-    await expectCode((await register(app, device, { expiresAtMs: Date.now() + HOUR })).res, 400, 'bad_expiry');
+    const capAt = Date.now() + HOUR / 2;
+    await setShare(device.shareId!, { abs_expires_at: capAt });
+    const refused = await expectCode((await register(app, device, { expiresAtMs: Date.now() + HOUR })).res, 400, 'bad_expiry');
+    expect(refused.maxExpiresAtMs).toBe(capAt);
     expect((await register(app, device, { expiresAtMs: Date.now() + HOUR / 4 })).res.status).toBe(201);
   });
 

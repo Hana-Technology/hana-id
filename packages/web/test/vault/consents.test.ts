@@ -1,11 +1,11 @@
-// Auto-approve consents on the API (Hana Home, D45, D98 item 13, D465, D510–D513, D530–D536): the vault records a
+// Auto-approve consents on the API (Hana Home, D45, D98 item 13, D465, D510–D513, D530–D538): the vault records a
 // consent before it stores it, fails closed, reads its status with the existing 10 s read, and stops it when it is revoked.
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { base64UrlEncode, fromHex, toHex } from '@hana-id/core';
 import { functionSelector } from '@hana-id/core/decode';
 import { CONSENT_ASK_AGAIN_MS, CONSENT_NOT_VISIBLE_RETRIES, CONSENT_RETRY_MAX_MS, POLICY_FRESH_MS, POLICY_REFRESH_MS } from '../../src/vault/vault.ts';
 import { openRecordStore, recordKey } from '../../src/vault/record.ts';
-import { APP_ID, Browser, ENV, type FakeWindow, type Google, HOUR, type Tab, SCOPE, answer, answerConsent, apiError, google, login, makeConfig, openApproval, readyTab, sleepReal, waitLauncher } from './harness.ts';
+import { APP_ID, Browser, ENV, type FakeWindow, type Google, HOUR, type Tab, type TabOptions, SCOPE, START_MS, answer, answerConsent, apiError, google, login, makeConfig, openApproval, readyTab, sleepReal, waitLauncher } from './harness.ts';
 import { CHAIN, EVM_VAULT, evmTx, evmTxSigner } from './chains.ts';
 
 let g: Google;
@@ -43,10 +43,10 @@ interface S {
   evm: string;
 }
 
-async function session(browser = new Browser(), over: Parameters<typeof makeConfig>[0] = {}): Promise<S> {
+async function session(browser = new Browser(), over: Parameters<typeof makeConfig>[0] = {}, options?: TabOptions['options']): Promise<S> {
   browser.backend.serverNow = () => browser.timers.now;
   const config = makeConfig({ ...over, settings: { autoApprovePolicy: POLICY(), ...over.settings } });
-  const t = await readyTab(browser, { googleJwk: g.jwk, config });
+  const t = await readyTab(browser, { googleJwk: g.jwk, config, ...(options ? { options } : {}) });
   tabs.push(t);
   const status = (await t.ready()) as { status: string; addresses?: { evm: string } };
   if (status.status === 'logged_in') return { t, evm: status.addresses!.evm };
@@ -64,6 +64,12 @@ const eventually = async (check: () => boolean, what: string): Promise<void> => 
   for (let i = 0; i < 200 && !check(); i++) await sleepReal(5);
   expect(check(), what).toBe(true);
 };
+const eventually2 = async (check: () => Promise<boolean>, what: string): Promise<void> => {
+  for (let i = 0; i < 200 && !(await check()); i++) await sleepReal(5);
+  expect(await check(), what).toBe(true);
+};
+type Internals = { session: { consent: { consentId: string } | null } | null; confirmConsent: unknown; consentConfirmed(id: string): boolean };
+const internals = (s: S) => s.t.vault as unknown as Internals;
 /** A share's id, as the backend holds it. */
 const shareOf = (s: S) => [...s.t.browser.backend.shares.values()].at(-1)!;
 
@@ -91,6 +97,9 @@ const signAuto = async (s: S, nonce = '0x7'): Promise<void> => {
   const tx = evmTx({ nonce });
   expect(evmTxSigner((await s.t.request('eth_signTransaction', { tx })).result as string, tx)).toBe(s.evm);
 };
+
+/** An auto-sign that needs (and gets) a fresh status read for the consent held now. */
+const signAutoAfterRead = (s: S): Promise<void> => signAuto(s, '0x6');
 
 const responseWith = (status: number, code: string, headers: Record<string, string> = {}): Response =>
   new Response(JSON.stringify({ error: code, code, requestId: 'rq' }), { status, headers: { 'content-type': 'application/json', ...headers } });
@@ -134,7 +143,6 @@ describe('register before use', () => {
     ['409 policy_not_in_force', 409, 'policy_not_in_force'],
     ['400 bad_expiry', 400, 'bad_expiry'],
     ['401 invalid_signature', 401, 'invalid_signature'],
-    ['410 share_revoked', 410, 'share_revoked'],
   ])('fails closed with no retry on %s: no grant, nothing stored', async (_, statusCode, code) => {
     const s = await session();
     s.t.browser.backend.overrides.set('/v1/vault/consents', () => apiError(statusCode, code));
@@ -173,13 +181,58 @@ describe('register before use', () => {
   it('a repeated id (409 consent_exists) is told apart from a stale counter: not retried', async () => {
     const s = await session();
     const backend = s.t.browser.backend;
-    backend.overrides.set('/v1/vault/consents', (call) => {
-      const b = call.body as { counter: number };
-      return b.counter < shareOf(s).counter + 1 ? apiError(409, 'bad_counter', { expected: shareOf(s).counter + 1 }) : apiError(409, 'consent_exists');
-    });
+    const expected = shareOf(s).counter + 5;
+    backend.overrides.set('/v1/vault/consents', (call) => ((call.body as { counter: number }).counter === expected ? apiError(409, 'consent_exists') : apiError(409, 'bad_counter', { expected })));
     const { reply } = await allow(s);
     expect(reply.error?.code).toBe('api_unavailable');
-    expect(registers(s)).toBe(1);
+    // One retry, for the stale counter, at exactly the expected value; none for the repeated id.
+    const counters = registerCalls(s).map((c) => (c.body as { counter: number }).counter);
+    expect(counters).toEqual([shareOf(s).counter + 1, expected]);
+  });
+
+  it('a second stale counter is not retried again', async () => {
+    const s = await session();
+    s.t.browser.backend.overrides.set('/v1/vault/consents', () => apiError(409, 'bad_counter', { expected: 50 }));
+    const { reply } = await allow(s);
+    expect(reply.error?.code).toBe('api_unavailable');
+    expect(registers(s)).toBe(2);
+  });
+
+  it('a 410 ends the session as a touch does: no consent, no further screen', async () => {
+    const s = await session();
+    shareOf(s).revoked = true;
+    const { reply } = await allow(s);
+    expect(reply.error?.code).toBe(4900);
+    expect((s.t.vault as unknown as { session: unknown }).session).toBeNull();
+    expect(((await s.t.request('hana_status')).result as { status: string }).status).toBe('logged_out');
+    const store = await openRecordStore(s.t.browser.idb);
+    await eventually2(async () => (await store.get(recordKey(ENV.signer, APP_ID, SCOPE, 0))) === undefined, 'the record was deleted');
+  });
+
+  it('a 410 for a session that never got its share keeps that session, failing closed', async () => {
+    const browser = new Browser();
+    browser.backend.overrides.set('/v1/vault/shares', () => apiError(503, 'config_unavailable'));
+    const s = await session(browser);
+    await eventually(() => (s.t.vault as unknown as { session: { persist: unknown } }).session.persist === null, 'the persist gave up');
+    browser.backend.overrides.set('/v1/vault/consents', () => responseWith(410, 'session_ended'));
+    const { reply } = await allow(s);
+    expect(reply.error).toMatchObject({ code: 'api_unavailable', data: { granted: false } });
+    expect((s.t.vault as unknown as { session: unknown }).session).not.toBeNull();
+  });
+
+  it('a lowered session TTL: the Allow fails once, and the next asks for the end the API named', async () => {
+    const s = await session();
+    const cap = s.t.browser.timers.now + HOUR;
+    // The app lowered its TTL after this tab loaded: only the API knows the new cap.
+    shareOf(s).absExpiresAtMs = cap;
+    const first = await allow(s);
+    expect(first.reply.error).toMatchObject({ code: 'api_unavailable', data: { reason: 'consent_not_recorded' } });
+    const again = s.t.request('hana_requestAutoApprove');
+    const m = await first.popup.next('hana:consent-request', 1);
+    expect(m.expiresAtMs).toBe(cap);
+    answerConsent(s.t, first.popup, m, true);
+    expect((await again).result).toMatchObject({ granted: true, expiresAtMs: cap });
+    await signAuto(s);
   });
 
   it('503 session_not_visible is retried, honouring its Retry-After, then succeeds', async () => {
@@ -418,6 +471,107 @@ describe('the consent status in the existing 10 s read', () => {
     expect(await status(s)).not.toBeNull();
   });
 
+  it('freshness counts from when the read was sent: an answer that took over 10 s confirms nothing', async () => {
+    const s = await session();
+    await grant(s);
+    const backend = s.t.browser.backend;
+    const id = consentId(s);
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    backend.overrides.set('/v1/app', async () => {
+      await held;
+      return undefined;
+    });
+    s.t.browser.timers.advance(POLICY_REFRESH_MS);
+    await eventually(() => backend.calls.some((c) => c.path === '/v1/app' && c.headers['x-hana-consent'] !== undefined), 'the read was sent');
+    s.t.browser.timers.now += POLICY_FRESH_MS + 1;
+    backend.overrides.delete('/v1/app');
+    release();
+    await eventually(() => (s.t.vault as unknown as { consentRead: { sent: number; at: number } | null }).consentRead?.at === START_MS + POLICY_REFRESH_MS, 'the late answer was applied');
+    expect(internals(s).consentConfirmed(id)).toBe(false);
+  });
+
+  it('a device clock going back cannot stretch the 10 s: the status is also aged on a monotonic timer', async () => {
+    let perf = 1_000;
+    const s = await session(new Browser(), {}, { perfNow: () => perf });
+    await grant(s);
+    const backend = s.t.browser.backend;
+    const before = backend.count('/v1/app');
+    // The corrected clock stands still; only the monotonic timer passes 10 s.
+    perf += POLICY_FRESH_MS;
+    await signAuto(s);
+    expect(backend.count('/v1/app')).toBe(before + 1);
+  });
+
+  it("an 'active' answer for consent A can't authorise consent B", async () => {
+    const s = await session(new Browser(), none);
+    const popup = await stale(s);
+    const backend = s.t.browser.backend;
+    const a = consentId(s);
+    const session0 = internals(s).session!;
+    // A is confirmed; the local consent is now another one.
+    await signAutoAfterRead(s);
+    session0.consent = { ...session0.consent!, consentId: 'b'.repeat(32) };
+    backend.consentAnswer = (hex) => (hex === a ? 'active' : 'omit');
+    const reply = s.t.request('eth_signTransaction', { tx: evmTx({ nonce: '0x8' }) });
+    const m = await popup.next('hana:approve-request');
+    expect(m.autoApprove).toBeUndefined();
+    answer(s.t, popup, m, false);
+    expect((await reply).error?.code).toBe(4001);
+    expect(s.t.events.filter((e) => e.event === 'autoApproved')).toHaveLength(1);
+    expect(session0.consent?.consentId).toBe('b'.repeat(32));
+  });
+
+  it('the re-check under the lock refuses a status that lapsed after the gate, with no note and no consent screen', async () => {
+    const s = await session();
+    const popup = await grant(s);
+    // The gate has passed (as if the lock then took more than 10 s), but the answer is no longer fresh.
+    vi.spyOn(internals(s) as unknown as { confirmConsent: () => Promise<string> }, 'confirmConsent').mockResolvedValue('active');
+    s.t.browser.timers.now += POLICY_FRESH_MS - 1_000;
+    const live = s.t.vault as unknown as { policyCheckedAt: number };
+    live.policyCheckedAt = s.t.browser.timers.now;
+    (s.t.vault as unknown as { consentRead: { at: number; sent: number } }).consentRead.at -= 2_000;
+    const reply = s.t.request('eth_signTransaction', { tx: evmTx() });
+    const m = await popup.next('hana:approve-request');
+    expect(m.autoApprove).toBeUndefined();
+    expect(popup.posted.filter((p) => p.message.t === 'hana:consent-request')).toHaveLength(1);
+    answer(s.t, popup, m, false);
+    expect((await reply).error?.code).toBe(4001);
+    expect(s.t.events.some((e) => e.event === 'autoApproved')).toBe(false);
+  });
+
+  it('the re-check under the lock refuses a policy dropped after the gate', async () => {
+    const s = await session();
+    const popup = await grant(s);
+    const v = s.t.vault as unknown as { policy: unknown; freshPolicy(): Promise<unknown> };
+    const policy = v.policy;
+    // The sign path saw the policy; by the time the lock is held it's gone.
+    vi.spyOn(v, 'freshPolicy').mockImplementation(async () => {
+      v.policy = null;
+      return policy;
+    });
+    vi.spyOn(internals(s) as unknown as { confirmConsent: () => Promise<string> }, 'confirmConsent').mockResolvedValue('active');
+    const reply = s.t.request('eth_signTransaction', { tx: evmTx() });
+    const m = await popup.next('hana:approve-request');
+    expect(m.autoApprove).toBeUndefined();
+    answer(s.t, popup, m, false);
+    expect((await reply).error?.code).toBe(4001);
+    expect(s.t.events.some((e) => e.event === 'autoApproved')).toBe(false);
+  });
+
+  it('hana_requestAutoApprove does not answer granted for a consent it cannot confirm', async () => {
+    const s = await session();
+    await grant(s);
+    const backend = s.t.browser.backend;
+    s.t.browser.timers.now += POLICY_FRESH_MS;
+    backend.overrides.set('/v1/app', () => apiError(503, 'config_unavailable'));
+    const reply = await s.t.request('hana_requestAutoApprove');
+    expect(reply.result).toBeUndefined();
+    expect(reply.error).toMatchObject({ code: 'api_unavailable', data: { granted: false, reason: 'consent_unconfirmed' } });
+    backend.overrides.delete('/v1/app');
+    expect((await s.t.request('hana_requestAutoApprove')).result).toMatchObject({ granted: true });
+  });
+
   it('a read that lands before the register completes cannot name the consent (its id exists only after the 201)', async () => {
     const s = await session();
     const backend = s.t.browser.backend;
@@ -439,6 +593,92 @@ describe('the consent status in the existing 10 s read', () => {
     release();
     expect((await pending).result).toMatchObject({ granted: true });
     await signAuto(s);
+  });
+});
+
+describe('parallel requests and limits', () => {
+  it.each([
+    ['perDayCount', { limits: { perDayCount: 2 } }],
+    ['maxValueWeiPerDay', { limits: { perDayCount: 50 }, evm: { chains: [{ ...POLICY().evm.chains[0]!, maxValueWeiPerDay: '200000' }] } }],
+  ])('"none" mode: parallel covered requests can\'t pass %s', async (_, change) => {
+    const s = await session(new Browser(), { settings: { persistence: 'none', autoApprovePolicy: { ...POLICY(), ...change } } });
+    await grant(s);
+    s.t.browser.timers.now += POLICY_FRESH_MS;
+    // Five at once, all waiting on the same status read.
+    for (let i = 0; i < 5; i++) void s.t.request('eth_signTransaction', { tx: evmTx({ nonce: `0x${(i + 2).toString(16)}` }) }).catch(() => undefined);
+    await eventually(() => s.t.events.filter((e) => e.event === 'autoApproved').length >= 2, 'two signed');
+    await sleepReal(50);
+    expect(s.t.events.filter((e) => e.event === 'autoApproved')).toHaveLength(2);
+    expect(await status(s)).toMatchObject({ used: { count: 2 } });
+  });
+});
+
+describe('a session that ends while waiting for the lock', () => {
+  it('is not read as tampering: the record stays and nothing is opened under the zeroed key', async () => {
+    const browser = new Browser();
+    const s = await session(browser);
+    await grant(s);
+    const v = s.t.vault as unknown as { lockName: string; endSession(announce: boolean): void };
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let entered!: () => void;
+    const inLock = new Promise<void>((r) => (entered = r));
+    void browser.locks.request(v.lockName, async () => {
+      entered();
+      await held;
+    });
+    await inLock;
+    const reply = s.t.request('hana_autoApproveStatus');
+    await sleepReal(10);
+    v.endSession(false);
+    release();
+    expect((await reply).error?.code).toBe(4900);
+    const store = await openRecordStore(browser.idb);
+    const r = (await store.get(recordKey(ENV.signer, APP_ID, SCOPE, 0))) as { consent?: unknown } | undefined;
+    expect(r?.consent).toBeDefined();
+  });
+});
+
+describe('two tabs and another account', () => {
+  it('a consent granted in one tab auto-signs in another; stopped in one, the other stops at once', async () => {
+    const browser = new Browser();
+    const a = await session(browser);
+    await grant(a);
+    const b = await session(browser);
+    await signAuto(b);
+    expect(browser.backend.count('/v1/vault/consents')).toBe(1);
+
+    await a.t.request('hana_revokeAutoApprove');
+    await eventually(() => browser.backend.consents.get(consentId(a))!.revoked, 'the revoke was applied');
+    const reply = b.t.request('eth_signTransaction', { tx: evmTx({ nonce: '0x8' }) });
+    await waitLauncher(b.t, 'Review in Hana');
+    const popup = openApproval(b.t);
+    answerConsent(b.t, popup, await popup.next('hana:consent-request'), false);
+    answer(b.t, popup, await popup.next('hana:approve-request'), false);
+    expect((await reply).error?.code).toBe(4001);
+    expect(b.t.events.filter((e) => e.event === 'autoApproved')).toHaveLength(1);
+  });
+
+  it("'session' mode: a login as another account ends the old consent and carries nothing over", async () => {
+    const browser = new Browser();
+    const s = await session(browser);
+    await grant(s);
+    const oldId = consentId(s);
+    const oldShare = shareOf(s);
+    await login(s.t, g, { sub: '220248495921238986421' });
+    expect(shareOf(s).shareId).not.toEqual(oldShare.shareId);
+    await eventually(() => oldShare.revoked, 'the old share was revoked');
+    expect(browser.backend.consentStatusOf(oldId)).toBe('revoked');
+    expect(await status(s)).toBeNull();
+    const before = browser.backend.calls.length;
+    s.t.browser.timers.now += POLICY_FRESH_MS;
+    const reply = s.t.request('eth_signTransaction', { tx: evmTx() });
+    await waitLauncher(s.t, 'Review in Hana');
+    const popup = openApproval(s.t);
+    answerConsent(s.t, popup, await popup.next('hana:consent-request'), false);
+    answer(s.t, popup, await popup.next('hana:approve-request'), false);
+    expect((await reply).error?.code).toBe(4001);
+    expect(browser.backend.calls.slice(before).every((c) => c.headers['x-hana-consent'] === undefined)).toBe(true);
   });
 });
 

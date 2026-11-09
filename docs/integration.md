@@ -786,8 +786,8 @@ emits `autoApproved` and its button briefly shows "Signed by Hana under {label}"
 
 Hana records each consent on its API, so auto-approve can't be turned on while the API can't record it. After the
 user presses Allow, `requestAutoApprove()` rejects with `api_unavailable` (`data.reason` is `consent_not_recorded`,
-`data.granted` is `false`) rather than granting. A matching request in the same situation just goes to the normal
-popup. Treat the rejection like any other failure: offer it again later; the user's Allow isn't remembered. If the user
+`data.granted` is `false`) rather than granting; it rejects the same way, with `consent_unconfirmed`, when Hana can't
+confirm a consent the user already gave. A matching request in the same situation just goes to the normal popup. Treat the rejection like any other failure: offer it again later; the user's Allow isn't remembered. If the user
 stops auto-approve from Hana on another device, an open tab stops auto-signing within about 10 seconds, and a Hana popup
 appears for the next matching request. Requests go to the popup the same way while Hana's API can't be reached; your
 page needs no code for this.

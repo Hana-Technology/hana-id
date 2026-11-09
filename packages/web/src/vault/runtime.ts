@@ -62,8 +62,9 @@ export class Clock {
 
   /**
    * Server-corrected time, monotonic: a device clock set back, or a server time behind the one already seen, holds it
-   * where it was until real time catches up, so the idle limit, expiries, consents and the policy re-read can't be
-   * stretched by a backwards step. A forward step only ends things earlier.
+   * where it was until real time catches up, so an absolute deadline (an expiry) is never moved later by a backwards
+   * step. A forward step only ends things earlier. While it holds, time reads as standing still, so a short elapsed-time
+   * window measured on it does stretch: an auto-approve consent's status is aged on a monotonic timer as well.
    */
   now(): number {
     const t = this.deviceNow() + this.offset;

@@ -240,6 +240,8 @@ interface Session {
    * this tab read or wrote, kept so hana_autoApproveStatus can answer while the session is dormant.
    */
   consent: ConsentV1 | null;
+  /** The tail of this session's consent work when it has no record or lock to serialise it (`withConsent`). */
+  consentQueue?: Promise<unknown>;
   /**
    * The identity token's proofs of `addresses` for this session key and app (vault/identity.ts), made at login or at
    * the unlock of a format-1 record; null only if making them failed (the session then gets no identity token).
@@ -463,8 +465,8 @@ export class Vault {
   /** Each GET /v1/app answer's round trip on this clock (pk_test_ login timings: `appRtt`). */
   private readonly appRtts = new WeakMap<AppConfig, number>();
   private declinedPolicyId: string | null = null;
-  /** The latest answer about a consent (GET /v1/app, or the register that recorded it), asked at server-corrected `at`. */
-  private consentRead: { id: string; status: 'active' | 'revoked' | 'unknown'; at: number } | null = null;
+  /** The latest answer about a consent (GET /v1/app, or the register that recorded it), asked at server-corrected `at` and at `sent` on perfNow. */
+  private consentRead: { id: string; status: 'active' | 'revoked' | 'unknown'; at: number; sent: number } | null = null;
   /** The consent id the GET /v1/app last sent asked about, or null. */
   private consentAsked: string | null = null;
   /** When a register last failed (server-corrected), so a covered request doesn't re-offer the consent screen at once. */
@@ -685,7 +687,7 @@ export class Vault {
         this.logoUrl = logoUrlOn(this.env.filesOrigin, app.logoUrl, this.config.appId);
         this.applyServedPolicy(app, at);
         this.applyServedRawSign(app, at);
-        this.applyServedConsent(app, consentId, at);
+        this.applyServedConsent(app, consentId, at, sent);
         this.mainnetDemo = app.mainnetDemo === true;
         this.mainnetDemoCheckedAt = Math.max(this.mainnetDemoCheckedAt, at);
         // The vault's own check, whatever the API sent: anything it refuses (or a missing value) means the fixed table.
@@ -728,12 +730,12 @@ export class Vault {
    * consent cleared by `confirmConsent` (a request) or the 60 s read's `dropEndedConsent`, so a request in progress can
    * see the answer and send itself to the popup.
    */
-  private applyServedConsent(app: AppConfig, id: string | null, at: number): void {
+  private applyServedConsent(app: AppConfig, id: string | null, at: number, sent: number): void {
     if (id === null) return;
     const status = app.consent;
     if (status !== 'active' && status !== 'revoked' && status !== 'unknown') return;
-    if (this.consentRead?.id === id && this.consentRead.at > at) return;
-    this.consentRead = { id, status, at };
+    if (this.consentRead?.id === id && this.consentRead.sent > sent) return;
+    this.consentRead = { id, status, at, sent };
   }
 
   /** After the 60 s read: a consent found revoked is cleared here, so a tab's status reflects it without any request. */
@@ -1950,8 +1952,8 @@ export class Vault {
     this.pendingLink?.abort(new VaultError('login_cancelled', 'Logged out'));
     this.shareSheet?.cancel();
     this.methodsSeen = null;
-    // Cleared first, so an auto-sign that reaches this tab's copy mid-logout finds nothing. A 'none'-mode consent is then
-    // stopped on the API; a share's consent ends with the share (below).
+    // This tab's copy is cleared first: in 'none' mode that is the consent itself, which is then stopped on the API. In
+    // 'session' mode the record holds the consent until the delete below, and it ends on the API with the share.
     if (s) {
       const id = s.share ? null : (s.consent?.consentId ?? null);
       s.consent = null;
@@ -2508,6 +2510,8 @@ export class Vault {
       // A logout or expiry while the lock was awaited zeroed PRK: never sign with it.
       if (this.live() !== s) throw disconnected();
       const now = this.clock.now();
+      // The lock can be slow: the policy must still be this one, confirmed within the bound, when the signature is made.
+      if (this.policy?.policyId !== policy.policyId || now - this.policyCheckedAt >= POLICY_FRESH_MS) return { value: { kind: 'unconfirmed' } };
       if (!consentActive(consent, policy, now, s.expiresAtMs)) return { value: { kind: 'no_consent' } };
       // Under the lock, on the consent actually read: never a consent the API hasn't just confirmed.
       if (!this.consentConfirmed(consent.consentId!)) return { value: { kind: 'unconfirmed' } };
@@ -2538,15 +2542,29 @@ export class Vault {
       if (this.session !== s) throw disconnected();
     }
     if (!s.share || !this.store) {
-      const out = await fn(s.consent);
-      if (out.write !== undefined) s.consent = out.write;
-      return out.value;
+      // No record and no per-app lock here: one at a time per session, so parallel requests each see the last one's
+      // counters and the daily limits bind.
+      const run = async (): Promise<T> => {
+        if (this.session !== s) throw disconnected();
+        const out = await fn(s.consent);
+        if (out.write !== undefined) s.consent = out.write;
+        return out.value;
+      };
+      const queued = (s.consentQueue ?? Promise.resolve()).then(run);
+      s.consentQueue = queued.catch(() => undefined);
+      return queued;
     }
     const share = s.share;
     const store = this.store;
     let tampered = false;
+    let gone = false;
     const value = await this.o.locks.request(this.lockName, async () => {
       const read = await this.readRecord().catch(() => null);
+      // The session ended while the lock or the read was awaited: PRK is zeroed, so a failed open would not be tampering.
+      if (this.session !== s) {
+        gone = true;
+        return null;
+      }
       const record = read && read !== 'invalid' && sameSession(read, { sessionPk: s.sessionPk, shareId: share.shareId }) ? read : null;
       let consent: ConsentV1 | null = s.consent;
       if (record) {
@@ -2568,6 +2586,11 @@ export class Vault {
       s.consent = consent;
       const out = await fn(consent);
       if (out.write !== undefined) {
+        // Never seal under a PRK zeroed while `fn` ran. Clearing needs no key.
+        if (out.write !== null && this.session !== s) {
+          gone = true;
+          return null;
+        }
         s.consent = out.write;
         if (record) {
           if (out.write === null) delete record.consent;
@@ -2577,6 +2600,7 @@ export class Vault {
       }
       return { v: out.value };
     });
+    if (gone) throw disconnected();
     if (tampered || value === null) {
       this.endSession(true);
       throw disconnected('The vault record was tampered with');
@@ -2587,7 +2611,10 @@ export class Vault {
   /** True while consent `id` has an `'active'` answer asked within POLICY_FRESH_MS (or the register that recorded it). */
   private consentConfirmed(id: string): boolean {
     const r = this.consentRead;
-    return !!r && r.id === id && r.status === 'active' && this.clock.now() - r.at < POLICY_FRESH_MS;
+    if (!r || r.id !== id || r.status !== 'active') return false;
+    // The larger of two clocks: the corrected clock holds still after a device clock goes back, and a monotonic timer
+    // may not run while the device sleeps. Either alone could stretch the 10 s.
+    return Math.max(this.clock.now() - r.at, this.perfNow() - r.sent) < POLICY_FRESH_MS;
   }
 
   /**
@@ -2652,8 +2679,9 @@ export class Vault {
     for (let attempt = 0; ; attempt++) {
       try {
         const at = this.clock.now();
+        const sent = this.perfNow();
         await this.serverConsentCall(who, payload, (proof) => this.api!.registerConsent({ ...proof, consentId: Array.from(id), policyId: Array.from(policyBytes), expiresAtMs }));
-        this.consentRead = { id: consentId, status: 'active', at };
+        this.consentRead = { id: consentId, status: 'active', at, sent };
         return;
       } catch (e) {
         if (!(e instanceof ApiError) || e.code !== 'session_not_visible' || attempt >= CONSENT_NOT_VISIBLE_RETRIES) throw e;
@@ -2688,6 +2716,17 @@ export class Vault {
       await this.registerConsent(s, policy, consentId, expiresAtMs);
     } catch (e) {
       if (this.live() !== s) throw disconnected();
+      if (e instanceof ApiError && e.status === 410 && (s.share || this.config.settings.persistence === 'none')) {
+        // The session is over on the server: end it here as a touch's 410 does, rather than offer a screen that can't work.
+        // (A 'session' app whose share was never made also answers 410, for a session that is fine in memory.)
+        void this.deleteRecordIf(s).catch(() => undefined);
+        if (s.share) this.broadcastRevoked(s.share.shareId);
+        this.endSession(true);
+        throw disconnected('This session was revoked').fromRequest(e);
+      }
+      // The API says how late the share may really run (a lowered session TTL): the next Allow asks for that end.
+      const cap = e instanceof ApiError && e.code === 'bad_expiry' ? e.details.maxExpiresAtMs : undefined;
+      if (s.share && Number.isSafeInteger(cap) && (cap as number) < expiresAtMs) s.share.absExpiresAtMs = cap as number;
       this.consentRegisterFailedAt = this.clock.now();
       throw consentNotRecorded(e);
     }
@@ -2714,10 +2753,11 @@ export class Vault {
     const policy = (await this.freshPolicy()) ?? this.policy;
     if (this.live() !== s) throw disconnected();
     if (!policy) throw new VaultError(ErrorCode.unauthorized, 'This app has no auto-approve policy in force');
-    // A consent the API says has ended is cleared before this answers; one it can't confirm stays (signing re-checks).
-    await this.confirmConsent(s, policy);
+    // A consent the API says has ended is cleared before this answers; one it can't confirm stays, and isn't reported as granted.
+    const standing = await this.confirmConsent(s, policy);
     if (this.live() !== s) throw disconnected();
     const active = await this.withConsent(s, async (c) => ({ value: consentActive(c, policy, this.clock.now(), s.expiresAtMs) ? c : null }));
+    if (active && standing === 'hold') throw new VaultError('api_unavailable', 'Hana could not confirm auto-approve right now', { granted: false, reason: 'consent_unconfirmed' });
     if (active) return { granted: true, policyId: policy.policyId, expiresAtMs: active.expiresAtMs };
     // Only a consent screen actually shown counts as activity (D112).
     this.noteActivity();

@@ -1,4 +1,4 @@
-// IssuerRpc (D432, readiness row 7.1d): the API's entrypoint for the email issuer Worker, bound only by it (`API`,
+// IssuerRpc (D434, readiness row 7.1d): the API's entrypoint for the email issuer Worker, bound only by it (`API`,
 // apps/email-issuer/scripts/gen-wrangler.ts) and reachable through no route. It replaces the issuer's read-write
 // `APP_DB` binding of this Worker's D1 (D251): the issuer now has no D1 binding but its own, so a compromised issuer
 // can't write the API's tables, and can read only these three lookups' answers (console-core issuer-apps.ts), not the

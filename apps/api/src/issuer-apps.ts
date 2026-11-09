@@ -1,4 +1,4 @@
-// The email issuer's three app reads (IssuerRpc, rpc/issuer.ts; D432), on the API's own D1. Moved here from
+// The email issuer's three app reads (IssuerRpc, rpc/issuer.ts; D434), on the API's own D1. Moved here from
 // apps/email-issuer/src/apps.ts, where they ran over the issuer's read-write `APP_DB` binding (D251), unchanged in
 // meaning. By the API gate's model (apps.ts getAppByKey, migration 0006; D206, D225): the key is an `app_keys` row not
 // revoked, or revoked with its rotation grace still running (`revoked_at` in the future); the app isn't deleted

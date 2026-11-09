@@ -25,7 +25,7 @@ import { BASE_CSP, handleVaultPage, isVaultPageRequest } from './vault/page.ts';
 
 export { LoginRelay } from './login-relay.ts';
 // Batch C's RPC entrypoints (no route: bound by the console and the admin Worker only, docs/batch-c-spec.md "RPC"),
-// and the email issuer's read-only app lookups (no route: bound by the issuer only, D432).
+// and the email issuer's read-only app lookups (no route: bound by the issuer only, D434).
 export { AdminRpc } from './rpc/admin.ts';
 export { ConsoleRpc } from './rpc/console.ts';
 export { IssuerRpc } from './rpc/issuer.ts';

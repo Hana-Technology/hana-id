@@ -1,4 +1,4 @@
-// IssuerRpc reads only (D432, replacing D251's issuer-side check): the entrypoint and its readers prepare SELECT
+// IssuerRpc reads only (D434, replacing D251's issuer-side check): the entrypoint and its readers prepare SELECT
 // statements only, never run a batch, an exec or a write, and touch the DB binding only (no secret, no Durable
 // Object, no other service), so the email issuer's binding to it can't change anything in the API.
 import { readFileSync } from 'node:fs';
@@ -11,7 +11,7 @@ const WRITE = /\b(INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER|PRAGMA|ATTACH|V
 /** The source without comments (they may name what isn't done). */
 const code = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//gu, '').replace(/^\s*\/\/.*$/gmu, '');
 
-describe('IssuerRpc reads only (D432)', () => {
+describe('IssuerRpc reads only (D434)', () => {
   it('its readers prepare only SELECTs, with no batch, exec or run', () => {
     const text = code(readers);
     const literals = [...text.matchAll(/`([^`]*)`|"([^"]*)"|'([^']*)'/gu)].map((m) => m[1] ?? m[2] ?? m[3]!).filter((s) => /\b(SELECT|FROM|WHERE)\b/u.test(s));

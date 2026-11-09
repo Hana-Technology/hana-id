@@ -242,7 +242,7 @@ describe('across Workers (config snapshots)', () => {
     expect(configs.filter(([, c]) => (c.services ?? []).some((s) => s.service === m.admin!.workerName)).map(([n]) => n)).toEqual([]);
   });
 
-  it('only the email issuer binds IssuerRpc; it binds the API at that entrypoint only, and no Worker but the API binds the API’s D1 (D432)', () => {
+  it('only the email issuer binds IssuerRpc; it binds the API at that entrypoint only, and no Worker but the API binds the API’s D1 (D434)', () => {
     const by = (entrypoint: string) => configs.filter(([, c]) => (c.services ?? []).some((s) => s.entrypoint === entrypoint)).map(([n]) => n);
     expect(by('IssuerRpc')).toEqual(['email issuer']);
     const issuer = configs.find(([n]) => n === 'email issuer')![1];

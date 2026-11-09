@@ -7,7 +7,7 @@
 //              an id already in wrangler.jsonc is kept only when that file names the same database.
 //
 // The issuer has no binding to the API's D1: it reads apps through the API Worker's read-only `IssuerRpc` entrypoint
-// (service binding `API`, D432), so the old `--app-d1-id` is refused with a pointer here.
+// (service binding `API`, D434), so the old `--app-d1-id` is refused with a pointer here.
 // --dev-vars   also write apps/email-issuer/.dev.vars (0600, gitignored) from .secrets/<env>/ (scripts/email-issuer.ts
 //              init), for `wrangler dev`. Never prints a secret.
 //
@@ -78,7 +78,7 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
       // dashboard (`admin`) block there is no admin Worker to bind the entrypoint, and every call fails closed.
       ...(m.admin ? { ADMIN_ACCESS_TEAM_DOMAIN: m.admin.accessTeamDomain, ADMIN_ACCESS_AUD: m.admin.accessAud, ADMIN_STAFF_EMAILS: JSON.stringify(m.admin.staffEmails) } : {}),
     },
-    // Its own D1 only: no binding to the API's (D432, replacing D251's read-write APP_DB).
+    // Its own D1 only: no binding to the API's (D434, replacing D251's read-write APP_DB).
     d1_databases: [{ binding: 'DB', database_name: t.cloudflare.d1Name, database_id: d1Id, migrations_dir: 'migrations' }],
     // The API's read-only app lookups (apps/api/src/rpc/issuer.ts): the issuer is the entrypoint's only caller, and
     // the API must serve it before this Worker deploys (docs/operations.md "Email issuer").
@@ -203,7 +203,7 @@ export function devVarsContent(m: Manifest, root: string = repoRoot): { content:
 
 export function main(argv: string[], opts: { root?: string; dir?: string; loadManifest?: (name: string) => Manifest } = {}): void {
   if (argv.includes('--app-d1-id')) {
-    throw new Error('--app-d1-id is gone: the issuer reads apps through the API\'s IssuerRpc (service binding API, D432) and binds no API D1. Drop the flag.');
+    throw new Error('--app-d1-id is gone: the issuer reads apps through the API\'s IssuerRpc (service binding API, D434) and binds no API D1. Drop the flag.');
   }
   const flagsWithValue = new Set(['--d1-id']);
   const envName = argv.find((a, i) => !a.startsWith('--') && !flagsWithValue.has(argv[i - 1] ?? ''));

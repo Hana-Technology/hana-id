@@ -10,7 +10,7 @@ declare global {
       TEST_STANDBY_KEY: string;
       /**
        * The API's D1, which the auxiliary API Worker's IssuerRpc reads (vitest.config.ts): the tests seed and change
-       * apps through it. Test-only: the issuer Worker itself binds no API D1 (D432).
+       * apps through it. Test-only: the issuer Worker itself binds no API D1 (D434).
        */
       API_TEST_DB: D1Database;
     }

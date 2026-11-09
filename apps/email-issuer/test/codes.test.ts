@@ -234,7 +234,7 @@ describe('purpose-bound nonces and the app gate', () => {
     expect(h.sender.sent).toHaveLength(0);
   });
 
-  it('finds apps through the API’s IssuerRpc, by the gate’s model: a suspension bit, a revoked key, a deleted app (D432)', async () => {
+  it('finds apps through the API’s IssuerRpc, by the gate’s model: a suspension bit, a revoked key, a deleted app (D434)', async () => {
     // The lookups' own rules (key grace, the legacy column, scope_conflict, before migration 0010) are the API's tests
     // (apps/api/test/rpc-issuer.test.ts); here each answer crosses the real service binding into the handlers.
     const h = await harness();
@@ -252,7 +252,7 @@ describe('purpose-bound nonces and the app gate', () => {
     expect(await code(body(other))).toBe('invalid_key');
   });
 
-  it('an API that can’t answer fails the request closed: 503 api_unavailable, no mail, nothing minted (D432)', async () => {
+  it('an API that can’t answer fails the request closed: 503 api_unavailable, no mail, nothing minted (D434)', async () => {
     const refuse = async () => ({ ok: false as const, code: 'internal' as const });
     for (const API of [undefined, { appByKey: refuse, appById: refuse, scopeHasEmailApp: refuse }, { appByKey: () => Promise.reject(new Error('no such entrypoint')), appById: refuse, scopeHasEmailApp: refuse }]) {
       const h = await harness({ env: { ...env, ENV_NAME: `t-${crypto.randomUUID().slice(0, 8)}`, API } });

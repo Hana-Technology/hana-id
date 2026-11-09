@@ -83,7 +83,7 @@ describe('wranglerConfig', () => {
     });
     expect(JSON.parse(c.vars.EMAIL_PUBLIC_KEYS)).toEqual([primary.pub, standby.pub]);
     expect(JSON.stringify(c)).not.toContain(primary.jwk.d);
-    // Its own D1 only: the API's is reached through IssuerRpc, never bound (D432).
+    // Its own D1 only: the API's is reached through IssuerRpc, never bound (D434).
     expect(c.d1_databases.map((d: { binding: string; database_name: string }) => [d.binding, d.database_name])).toEqual([['DB', 'hana-id-email-issuer-sandbox-dev']]);
     expect(JSON.stringify(c)).not.toContain('APP_DB');
     expect(JSON.stringify(c.d1_databases)).not.toContain(base.cloudflare.d1Name);
@@ -106,7 +106,7 @@ describe('wranglerConfig', () => {
     const c = wranglerConfig(manifest({}, { admin }), LOCAL_D1_ID) as Record<string, any>;
     expect(c.vars).toMatchObject({ ADMIN_ACCESS_TEAM_DOMAIN: 'hana.cloudflareaccess.com', ADMIN_ACCESS_AUD: 'e'.repeat(64), ADMIN_STAFF_EMAILS: '["a@hana.example","b@hana.example"]' });
     // The issuer binds nothing for DirectoryRpc (the admin Worker binds it; the entrypoint has no route here): its one
-    // service binding is the API's IssuerRpc (D432).
+    // service binding is the API's IssuerRpc (D434).
     expect(c.services).toEqual([{ binding: 'API', service: base.cloudflare.workerName, entrypoint: 'IssuerRpc' }]);
     expect(c.routes).toBeUndefined();
   });
@@ -136,7 +136,7 @@ describe('wranglerConfig', () => {
     expect(writeWranglerConfig(manifest(), {}, dir).d1Id).toBe(id);
   });
 
-  it('refuses the old --app-d1-id (the issuer binds no API D1, D432)', () => {
+  it('refuses the old --app-d1-id (the issuer binds no API D1, D434)', () => {
     expect(() => main(['sandbox-dev', '--d1-id', '11111111-2222-4333-8444-555555555555', '--app-d1-id', '66666666-7777-4888-8999-000000000000'], { dir, loadManifest: () => manifest() })).toThrow(/--app-d1-id is gone.*IssuerRpc/u);
   });
 });

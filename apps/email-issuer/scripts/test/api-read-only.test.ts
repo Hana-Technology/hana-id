@@ -1,4 +1,4 @@
-// The issuer can't write the API's D1 (D432, replacing D251's source check on the read-write APP_DB binding): it
+// The issuer can't write the API's D1 (D434, replacing D251's source check on the read-write APP_DB binding): it
 // binds no D1 but its own, and reaches the API only through the read-only IssuerRpc entrypoint, through apps.ts.
 //   - the generated config (every committed manifest with an issuer, and the tests') binds its own D1 only, and the
 //     API only at IssuerRpc;
@@ -36,7 +36,7 @@ const issuerEnvs = readdirSync(join(repoRoot, 'envs'))
     }
   });
 
-describe('the issuer binds no API D1 (D432)', () => {
+describe('the issuer binds no API D1 (D434)', () => {
   it('every generated config binds its own D1 only and the API at IssuerRpc only', () => {
     expect(issuerEnvs.length).toBeGreaterThan(0);
     const configs: [string, Config, string, string][] = [

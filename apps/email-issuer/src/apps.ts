@@ -1,5 +1,5 @@
 // The app behind a publishable key, read from the API through its read-only `IssuerRpc` entrypoint (service binding
-// `API`, D432; it replaced the read-write `APP_DB` binding of the API's D1, D251). The issuer has no binding to the
+// `API`, D434; it replaced the read-write `APP_DB` binding of the API's D1, D251). The issuer has no binding to the
 // API's D1 and can't write it; the API runs the lookups by its gate's model (apps/api/src/issuer-apps.ts: an
 // `app_keys` key not revoked or in its rotation grace, an undeleted app, active only with no suspension bit, email on
 // only when `login_methods` lists `email`) and answers each app's issuer view only (console-core `IssuerApp`).

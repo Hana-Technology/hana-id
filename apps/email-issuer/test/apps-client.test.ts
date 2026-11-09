@@ -1,4 +1,4 @@
-// src/apps.ts, the issuer's client of the API's IssuerRpc (D432): the answer is checked, not trusted; anything but a
+// src/apps.ts, the issuer's client of the API's IssuerRpc (D434): the answer is checked, not trusted; anything but a
 // well-formed `ok` answer is ApiUnavailable (the request answers 503 api_unavailable), with a reason naming the
 // method and the code only.
 import type { IssuerApp, IssuerRpcClient } from '@hana-id/console-core';

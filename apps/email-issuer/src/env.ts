@@ -10,7 +10,7 @@ export interface Env {
   /** The issuer's own D1: email_issuance, email_hints, email_suppressions, email_admin_audit, user_emails, user_email_apps (D269). */
   DB: D1Database;
   /**
-   * The API Worker's read-only `IssuerRpc` entrypoint (D432): `pk` or app id → the app's issuer view (scope, status,
+   * The API Worker's read-only `IssuerRpc` entrypoint (D434): `pk` or app id → the app's issuer view (scope, status,
    * plan limits, email on), and whether a scope has an email app. The issuer has no binding to the API's D1. Optional
    * in the type only: gen always binds it, and a missing one fails every lookup closed (`503 api_unavailable`).
    */

@@ -1,4 +1,4 @@
-// IssuerRpc (src/rpc/issuer.ts, D432): the email issuer's three read-only app lookups, by the gate's model, with strict
+// IssuerRpc (src/rpc/issuer.ts, D434): the email issuer's three read-only app lookups, by the gate's model, with strict
 // inputs and no caller clock; before migration 0010 no app has email on. Moved from the issuer's own tests of its
 // APP_DB readers (apps/email-issuer/test/codes.test.ts), which the issuer's suite now covers end to end over the real
 // service binding (apps/email-issuer/vitest.config.ts). That it only reads is a source check

@@ -1,4 +1,4 @@
-// IssuerRpc (D432, readiness row 7.1d): the API's read-only entrypoint for the email issuer, bound only by it (`API`)
+// IssuerRpc (D434, readiness row 7.1d): the API's read-only entrypoint for the email issuer, bound only by it (`API`)
 // and reachable through no route. It replaces the issuer's read-write `APP_DB` binding of the API's D1 (D251), so a
 // compromised issuer Worker can neither write the API's tables nor read any of them beyond these three lookups:
 //

@@ -1,5 +1,5 @@
 // DirectoryRpc's source rules (D275, confirmed 2026-11-05; spec "Users and Support ID" → "Data path", "What partners
-// never see"), the pattern of D251's APP_DB check (now scripts/test/api-read-only.test.ts, D432):
+// never see"), the pattern of D251's APP_DB check (now scripts/test/api-read-only.test.ts, D434):
 //   - src/directory-rpc.ts runs SELECTs on user_emails, user_email_apps and email_admin_audit and one INSERT into
 //     email_admin_audit, nothing else; it touches the DB and RATE_LIMITER bindings, its Access vars and EMAIL_RL_KEY
 //     (the audit's keyed hash) only, and imports neither the signer, the keys, the challenge nor the mail modules (nor

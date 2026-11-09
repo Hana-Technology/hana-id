@@ -10,7 +10,7 @@ URL on a `workers.dev` env (sandbox-dev), the API's URL through a zone route in 
 Worker, so an address or a code never passes through it. `gen` turns on `workers_dev` only for a `workers.dev` `url`;
 a `url` on another host (a dev env on custom domains) becomes the issuer's own Custom Domain (D404).
 It binds no D1 of the API's: it reads apps through the API Worker's read-only `IssuerRpc` entrypoint (service binding
-`API`, D432; it replaced the read-write `APP_DB` of D251), so the API must serve `IssuerRpc` before this Worker deploys.
+`API`, D434; it replaced the read-write `APP_DB` of D251), so the API must serve `IssuerRpc` before this Worker deploys.
 **Not deployed**; no app enables email yet (the sandbox-dev steps: `docs/operations.md` "Email login on sandbox-dev").
 
 Reference: endpoints, limits, Durable Objects, D1 and logs in `docs/api.md` "Email issuer"; setup and runbook in
@@ -83,7 +83,7 @@ corepack pnpm --filter @hana-id/email-issuer dev
 
 The tests reach no network: Google, NEAR, SendGrid and KMS are fakes; the `API` binding reaches the real API Worker
 (bundled by `vitest.config.ts` with wrangler's dry run) and its `IssuerRpc`, on a D1 the tests seed as `API_TEST_DB`
-(`test/apps-client.test.ts`, and `scripts/test/api-read-only.test.ts` for the binding rules, D432) (Google's real client code runs against a fake
+(`test/apps-client.test.ts`, and `scripts/test/api-read-only.test.ts` for the binding rules, D434) (Google's real client code runs against a fake
 fetch); the RSA keys and HMAC keys are throwaway values made per run. `test/privacy.test.ts` greps every log line of
 every flow for the address, the code, the `sub`, the tokens and the secrets (google-record and the directory's failure
 line included), and checks that a verified address is in `user_emails` and no other table;
@@ -92,7 +92,7 @@ google-match's directory write, `test/directory.test.ts` the upserts in both arr
 DirectoryRpc (the staff check, the searches, the ticket rule, the audit's atomicity and `detail`, the row budget, no
 address in a log line).
 
-Last verified: 2026-11-06 (branch `feat/issuer-readonly-rpc`: the `API` → `IssuerRpc` binding instead of `APP_DB`, `gen` without `--app-d1-id`, the tests' auxiliary API Worker, D432); 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy` is the shared wrapper, D406); 2026-11-05 (branch `feat/batch-c-15-screen`: `DirectoryRpc.get`'s `purpose`, D399); 2026-11-05 (branch
+Last verified: 2026-11-06 (branch `feat/issuer-readonly-rpc`: the `API` → `IssuerRpc` binding instead of `APP_DB`, `gen` without `--app-d1-id`, the tests' auxiliary API Worker, D434); 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy` is the shared wrapper, D406); 2026-11-05 (branch `feat/batch-c-15-screen`: `DirectoryRpc.get`'s `purpose`, D399); 2026-11-05 (branch
 `feat/batch-c-8b`: `DirectoryRpc`, migration 0003, the `ADMIN_*` vars, D388–D392);
 2026-11-05 (branch `feat/deploy-build-check`: `GET /v1/email/health`, `scripts/deploy.ts`, D384);
 2026-11-04 (branch `fix/dev-email-limits`: dev envs' limit set, D340, `test/dev-limits.test.ts`; every

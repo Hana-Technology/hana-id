@@ -1,7 +1,7 @@
 // The email issuer of the local stack (build plan batch 8a): apps/email-issuer's own Worker, run in Node like the API
 // (api-modules.ts), on its own origin (ISSUER_URL, as on sandbox-dev, D230), with its real handlers, Durable Objects
 // (Challenge, RateLimiter, Outbox on in-memory storage), its D1 migrations (node:sqlite), and as its `API` binding the
-// API's real read-only IssuerRpc entrypoint (apps/api/src/rpc/issuer.ts, D432) on the stack's API D1.
+// API's real read-only IssuerRpc entrypoint (apps/api/src/rpc/issuer.ts, D434) on the stack's API D1.
 // Mail goes to the `outbox` stub (`EMAIL_SENDER=outbox`, a `local*` env: the manifest and gen refuse it anywhere
 // else); the tests read it through `GET /__e2e/outbox` (no CORS, refused with an Origin, so no page can read a code).
 //

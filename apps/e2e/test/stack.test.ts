@@ -523,7 +523,7 @@ describe('in-memory Durable Objects', () => {
   });
 });
 
-describe('the email issuer: apps/email-issuer’s Worker, its app lookups through the API’s IssuerRpc (D432)', () => {
+describe('the email issuer: apps/email-issuer’s Worker, its app lookups through the API’s IssuerRpc (D434)', () => {
   it('finds the stack’s apps on the API’s D1: an unknown key is invalid_key, a suspended app app_suspended', async () => {
     const d1 = new D1Shim();
     const api = new MockApi(d1, new Chain(), modules);

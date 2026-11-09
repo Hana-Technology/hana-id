@@ -8,7 +8,7 @@ import { COMPATIBILITY_DATE, TEST_MANIFEST, testWranglerConfig } from './scripts
 // Throwaway keys per run: the signing key (primary) and a standby that stays off the Worker, and the three HMAC keys.
 // Tests never reach SendGrid, Google, a NEAR RPC or KMS: every outbound call goes to an injected fake.
 //
-// The `API` service binding (D432) reaches the real API Worker (bundled here with wrangler's dry run, as the admin
+// The `API` service binding (D434) reaches the real API Worker (bundled here with wrangler's dry run, as the admin
 // tests do) as an auxiliary Worker under the name the config binds, so every app lookup crosses a real service binding
 // into the real `IssuerRpc`. The tests seed and change the API's D1 through API_TEST_DB, the same database: a test-only
 // binding of the test isolate, never in the Worker's generated config.

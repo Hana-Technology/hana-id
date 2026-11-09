@@ -1,4 +1,4 @@
-// IssuerRpc's inputs (src/issuer-apps.ts, D432): strict, one lookup key each, in the forms the issuer accepts.
+// IssuerRpc's inputs (src/issuer-apps.ts, D434): strict, one lookup key each, in the forms the issuer accepts.
 import { describe, expect, it } from 'vitest';
 import { ISSUER_RPC_METHODS, issuerAppByIdInput, issuerAppByKeyInput, issuerScopeInput } from '../src/index.ts';
 

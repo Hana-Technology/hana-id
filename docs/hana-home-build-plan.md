@@ -1,6 +1,6 @@
 # Hana Home build plan (batches)
 
-**Status (2026-11-09): H0 (this plan, the spec's rewrite, D460–D466, the readiness rows) on branch `docs/hana-home-h0`; H1 built on branch `feat/hana-home-h1`, its security review's fixes on `feat/hana-home-h1-2` (not merged, not deployed; see its result line below); H2 built on branch `feat/hana-home-h2` and H4 built on branch `feat/hana-home-h4`, merged on `feat/hana-home-h2-h4` with their security reviews' fixes (not merged, not deployed; see their result lines); H3, H5, H7–H12 not started; H6 built on branch `feat/hana-home-h6` (not merged, not deployed; see its result line); H6's design and D480–D489 on branch `docs/hana-home-h6-design` (not merged).** Splits `docs/hana-home-spec.md` (D40, D45, D98, D461–D466, D468, D480–D489) into reviewable
+**Status (2026-11-09): H0 (this plan, the spec's rewrite, D460–D466, the readiness rows) on branch `docs/hana-home-h0`; H1 built on branch `feat/hana-home-h1`, its security review's fixes on `feat/hana-home-h1-2` (not merged, not deployed; see its result line below); H2 built on branch `feat/hana-home-h2` and H4 built on branch `feat/hana-home-h4`, merged on `feat/hana-home-h2-h4` with their security reviews' fixes (not merged, not deployed; see their result lines); H3 built on branch `feat/hana-home-h3` (not merged, not deployed; see its result line); H5, H7–H12 not started; H6 built on branch `feat/hana-home-h6` (not merged, not deployed; see its result line); H6's design and D480–D489 on branch `docs/hana-home-h6-design` (not merged).** Splits `docs/hana-home-spec.md` (D40, D45, D98, D461–D466, D468, D480–D489) into reviewable
 batches. The spec stays the source of truth for *what* to build; this file says *in which order*, *what each batch
 ships* and *what users see after it*. Like a spec it is history once the work merges: the current state lives in the
 reference docs (`docs/README.md`).
@@ -124,6 +124,7 @@ additions conflict in `apps/api/src/index.ts`, so expect small merges. About 30 
 - **Carried from H2's review (D500).** A matured link counts in Home's list only once the directory has `active`, so `POST /v1/home/login` must write the member's row as `/v1/login` does (`syncAfterLogin`); without it, a member of a shut-down app never turns `mine`.
 - **Migration / deploy.** D1 `home_usage`, and `user_events` if open item 4 relaxes it; key, API.
 - **User-visible.** Nothing.
+- **Result (2026-11-09, `feat/hana-home-h3`, not merged, not deployed).** `apps/api/src/home/login.ts` (`POST /v1/home/login`), the `home` relayer pool (`relayer-config.ts`, `relayer-pool.ts`, `HOME_RELAYER_KEYS`; `deploy-contract` `--home-relayer-keys`/`--home-relayer-allowance`; `gen`, the secret inventory; the watchdog's pool list and thresholds), migration 0018 (`home_usage`, `user_events.app_id` nullable for `key_exported`), `key_exported` with `chain` and `app_id` null, the directory write (D500), `docs/api.md`, `security.md`, `architecture.md`, `operations.md`. D520–D526 proposed, awaiting the user's confirmation. Open item 4 closed by D520. Limits are counted last, right before the relay (D521, a deviation from the spec's order). No contract, path, key rule or derivation change. Deliberately left to later batches: the 80% budget alert beyond a log line (needs a `security_events` kind), the Home pool in the usage ledger and the nonce check, the statement line (H11).
 
 ### H4: consents on the server
 
@@ -285,7 +286,7 @@ Run by hand on an env before H7's first deploy to it and before each later Home 
 | 1 | The production domain for `/home` (readiness 4.1, 4.2) | founder | production only |
 | 2 | **Closed 2026-11-09.** Neither is needed: D460's Google-client requirement is dropped (D480) and D464's owner seat is dropped (D481), because the exit client (D468) covers users | — | — |
 | 3 | **Closed 2026-11-09 (D480).** `disable_shared_login` stays and keeps working unchanged: there is no delay to bypass | — | — |
-| 4 | `user_events.app_id` is NOT NULL and a Home derive is per scope: record the scope's app, or relax the column | Claude build | H3 |
+| 4 | **Closed 2026-11-09 (D520, H3).** `user_events.app_id` is relaxed for `key_exported`; a Home derive names no app | — | — |
 | 5 | Billing of a suspended app: Hana pays for now (D461's note); to discuss with colleagues before finalising | founder, colleagues | H11 |
 | 6 | **Closed 2026-11-09 (D481).** Hana holds no owner seat, so there is no `SetOwners` to watch for | — | — |
 | 7 | Partner terms (readiness 9.9), the privacy notice line (9.10), telling Enterprise partners they can't exclude Home (9.12), legal's review of 9.6 (D489) | legal/founder | mainnet |

@@ -3,7 +3,8 @@
 //   when Hana staff set `apps.mainnet_demo` (migration 0013); anything unreadable is off;
 // - POST /v1/mainnet-demo/events: the vault's report of one demo signature (no key or signed bytes), proven by the
 //   session that signed and by the address's own wallet proof, stored as a `mainnet_signature` row naming the user;
-// - the `key_exported` row the export window's /v1/login writes once it succeeded (login.ts).
+// - the `key_exported` row the export window's /v1/login writes once it succeeded (login.ts), and Hana Home's
+//   POST /v1/home/login at its derive (home/login.ts), which has no app, so its `app_id` is NULL (migration 0018).
 //
 // SECURITY: nothing here reads or stores a key, a token, a path or a sub. A report is bound to a live session and to the
 // address's own key, but it is still the vault's word that the signature was made (the API never sees it); it is
@@ -139,17 +140,18 @@ export async function handleMainnetDemoEvent(request: Request, env: Env, request
 }
 
 /**
- * The export window's login succeeded (login.ts): records `key_exported` for the account's user. Never throws, never
- * slows the answer (run in the background); a failure (the directory keys missing, migration 0013 not applied) is
- * logged without any identifier but the app's.
+ * The export window's login (login.ts) or a Home derive (home/login.ts) succeeded: records `key_exported` for the
+ * account's user, `appId` null for a Home derive (a Home derive is per scope, and naming one of the scope's apps would
+ * be a false row, D520). Never throws, never slows the answer (run in the background); a failure (the directory keys
+ * missing, migration 0013 not applied) is logged without any identifier but the app's.
  */
 export async function recordKeyExport(
   env: Env,
-  a: { appId: string; scopeId: string; root: { provider: string; sub: string }; chain: 'stellar' | 'evm' | null; requestId: string },
+  a: { appId: string | null; scopeId: string; root: { provider: string; sub: string }; chain: 'stellar' | 'evm' | null; requestId: string },
 ): Promise<void> {
   const user = await directoryUser(env, a.scopeId, a.root).catch(() => 'no_user_id_key' as const);
   if (typeof user === 'string') {
-    log({ event: 'key_export_unrecorded', requestId: a.requestId, appId: a.appId, code: user }, 'warn');
+    log({ event: 'key_export_unrecorded', requestId: a.requestId, appId: a.appId ?? undefined, code: user }, 'warn');
     return;
   }
   try {
@@ -160,6 +162,6 @@ export async function recordKeyExport(
       .bind(a.appId, a.scopeId, user.internalId, a.chain, a.requestId, Date.now())
       .run();
   } catch {
-    log({ event: 'key_export_unrecorded', requestId: a.requestId, appId: a.appId, code: 'write_failed' }, 'warn');
+    log({ event: 'key_export_unrecorded', requestId: a.requestId, appId: a.appId ?? undefined, code: 'write_failed' }, 'warn');
   }
 }

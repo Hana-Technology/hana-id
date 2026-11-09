@@ -159,6 +159,7 @@ describe('deploy-contract --yes gate', () => {
       `${m.signer}→${m.signer}`, // deploy + new
       `${m.relayer}→${m.relayer}`, // session-pool relayer keys
       `${m.relayer}→${m.relayer}`, // owner-pool relayer keys
+      `${m.relayer}→${m.relayer}`, // Home-pool relayer key
       `${m.owner}→${m.signer}`, // add_updater_key: the contract installs the keys-updater key
       `${m.owner}→${m.signer}`, // set_issuer
       `${m.owner}→${m.signer}`, // set_sponsors
@@ -175,7 +176,7 @@ describe('deploy-contract --yes gate', () => {
       watchdogs: m.watchdogs,
       updater_keys: [],
     });
-    const addUpdater = r.sent[3]!.actions[0]!.functionCall!;
+    const addUpdater = r.sent[4]!.actions[0]!.functionCall!;
     expect(addUpdater.methodName).toBe('add_updater_key');
     expect(JSON.parse(Buffer.from(addUpdater.args).toString())).toEqual({ public_key: readKeysUpdater(m.name, secretsRoot)!.publicKey });
     // No hand-made AddKey on the signer any more.
@@ -220,12 +221,15 @@ describe('deploy-contract never prints secrets', () => {
   it('keeps generated relayer / keys-updater keys and keychain keys out of the output; files are 0600', async () => {
     const r = await deploy([m.name, '--yes'], { config: initialised, codeHash: 'abc' });
     expect(r.code).toBe(0);
-    expect(r.sent.map((t) => t.receiver)).toEqual([m.relayer, m.relayer, m.signer, m.signer, m.signer]);
+    expect(r.sent.map((t) => t.receiver)).toEqual([m.relayer, m.relayer, m.relayer, m.signer, m.signer, m.signer]);
 
     const relayerKeys = readRelayerKeys(m.name, secretsRoot);
     expect(relayerKeys).toHaveLength(3);
     const ownerKeys = readPoolKeys(m.name, 'owner', secretsRoot);
     expect(ownerKeys).toHaveLength(1);
+    const homeKeys = readPoolKeys(m.name, 'home', secretsRoot);
+    expect(homeKeys).toHaveLength(1);
+    expect(mode(poolKeysFile(m.name, 'home', secretsRoot))).toBe(0o600);
     expect(mode(poolKeysFile(m.name, 'owner', secretsRoot))).toBe(0o600);
     const updater = JSON.parse(readFileSync(keysUpdaterFile(m.name, secretsRoot), 'utf8')) as { private_key: string; public_key: string };
     expect(mode(relayerKeysFile(m.name, secretsRoot))).toBe(0o600);
@@ -233,10 +237,10 @@ describe('deploy-contract never prints secrets', () => {
     expect(mode(join(secretsRoot, '.secrets', m.name))).toBe(0o700);
 
     // Public keys are printed (so the output was captured) ...
-    for (const k of [...relayerKeys, ...ownerKeys]) expect(r.out).toContain(k.getPublicKey().toString());
+    for (const k of [...relayerKeys, ...ownerKeys, ...homeKeys]) expect(r.out).toContain(k.getPublicKey().toString());
     expect(r.out).toContain(updater.public_key);
     // ... secret keys never are, nor any part of them.
-    const secrets = [...relayerKeys.map((k) => k.toString()), ...ownerKeys.map((k) => k.toString()), updater.private_key, ...Object.values(fullKeys).map((k) => k.toString())];
+    const secrets = [...relayerKeys.map((k) => k.toString()), ...ownerKeys.map((k) => k.toString()), ...homeKeys.map((k) => k.toString()), updater.private_key, ...Object.values(fullKeys).map((k) => k.toString())];
     for (const s of secrets) {
       expect(r.out).not.toContain(s);
       expect(r.out).not.toContain(s.slice('ed25519:'.length, 'ed25519:'.length + 20));

@@ -28,6 +28,7 @@ import { type ConfigView, getConfig, isExitClient, isSharedClient } from '../vie
 const HOME_ALLOW_HEADERS = `content-type, ${HOME_IDENTITY_HEADER}`;
 const HOME_METHODS = 'GET, POST, OPTIONS';
 const MINUTE = 60_000;
+const HOUR = 3_600_000;
 const NO_BODY = new Uint8Array(0);
 
 /** Whether the request comes from the Hana auth origin, the only origin Home runs on (spec item 15; the API's origin rule, origins.ts). */
@@ -78,14 +79,15 @@ export interface HomeIdentity {
 
 export type HomeGate = { ok: true; identity: HomeIdentity; body: Uint8Array } | { ok: false; response: Response };
 
-export interface HomeGateOptions {
-  /** Requests a minute per IP (the spec's table), counted before anything is parsed. */
-  ipPerMinute: number;
+export type HomeGateOptions = HomeIpLimit & {
   /** Requests a minute per Home key, counted once the signature checks out. */
   keyPerMinute: number;
   /** Names the two windows, so endpoints with limits of their own don't share them (e.g. `apps`). */
   window: string;
-}
+};
+
+/** Requests per IP (the spec's table), counted before anything is parsed: a minute's, or for `/v1/home/login` an hour's. */
+type HomeIpLimit = { ipPerMinute: number; ipPerHour?: undefined } | { ipPerHour: number; ipPerMinute?: undefined };
 
 /**
  * The gate of every Home endpoint that needs an identity (see the top of this file). A POST's body is read here (at most
@@ -101,8 +103,8 @@ export async function homeGate(request: Request, env: Env, ctx: Ctx, opts: HomeG
 
   // 2. Per-IP limit, before any work on the request (as appGate).
   try {
-    const hit = await limiter(env, ipKey(request)).hit([{ name: `home:${opts.window}:ip`, windowMs: MINUTE, max: opts.ipPerMinute }], now);
-    if (!hit.ok) return fail(429, 'rate_limited', 'Rate limit exceeded (per IP per minute)', { 'retry-after': String(hit.retryAfterS) });
+    const hit = await limiter(env, ipKey(request)).hit([opts.ipPerHour !== undefined ? { name: `home:${opts.window}:ip`, windowMs: HOUR, max: opts.ipPerHour } : { name: `home:${opts.window}:ip`, windowMs: MINUTE, max: opts.ipPerMinute }], now);
+    if (!hit.ok) return fail(429, 'rate_limited', `Rate limit exceeded (per IP per ${opts.ipPerHour !== undefined ? 'hour' : 'minute'})`, { 'retry-after': String(hit.retryAfterS) });
   } catch {
     return fail(503, 'rate_limiter_unavailable', 'Try again');
   }

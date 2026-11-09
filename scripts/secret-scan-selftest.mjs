@@ -60,6 +60,7 @@ const CASES = [
   { name: 'relayer pool keys pasted into an innocent file', files: { 'backup/pool.json': `${JSON.stringify([secretKey(), secretKey()], null, 2)}\n` }, expect: ['near-ed25519-secret-key'] },
   { name: 'a 64-hex token beside accessAud in a manifest (only the AUD line is waived)', files: { 'envs/aud.json': `{\n  "admin": {\n    "accessAud": "${randomBytes(32).toString('hex')}",\n    "apiToken": "${randomBytes(32).toString('hex')}"\n  }\n}\n` }, expect: ['generic-api-key'] },
   { name: 'relayer-keys.json outside .secrets', files: { 'notes/relayer-keys.json': `${JSON.stringify([secretKey()], null, 2)}\n` }, expect: ['hana-secret-file', 'near-ed25519-secret-key'] },
+  { name: 'home-relayer-keys.json', files: { 'home-relayer-keys.json': `${JSON.stringify([secretKey()])}\n` }, expect: ['hana-secret-file', 'near-ed25519-secret-key'] },
   { name: 'owner-relayer-keys.json', files: { 'owner-relayer-keys.json': `${JSON.stringify([secretKey()])}\n` }, expect: ['hana-secret-file', 'near-ed25519-secret-key'] },
   { name: 'keys-updater.json', files: { 'keys-updater.json': keyFile('hana-id-signer-dev1.testnet') }, expect: ['hana-secret-file', 'near-ed25519-secret-key'] },
   {

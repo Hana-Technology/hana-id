@@ -20,6 +20,9 @@ export const OWNER_RELAYER_METHODS = [
   'execute_change',
 ] as const;
 
+/** Methods the relayer's Home-pool keys (the API's HOME_RELAYER_KEYS, POST /v1/home/login) may call on the signer: the derive only. */
+export const HOME_RELAYER_METHODS = ['create_session_and_derive'] as const;
+
 /**
  * Methods of the keys-updater function-call key (the API's KEYS_UPDATER_KEY, on the signer account itself) on the
  * governance contract: the contract installs it with exactly these (`add_updater_key`, its `UPDATER_METHODS`), receiver

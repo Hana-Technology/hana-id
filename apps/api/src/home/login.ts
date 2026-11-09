@@ -1,0 +1,264 @@
+// POST /v1/home/login (docs/hana-home-spec.md "API changes", D463, H3): Hana Home's derive. A Home identity opens a
+// wallet the user already has, in any registered scope, with no app gate: a suspended or deleted app, or one with no
+// allowed origin left, doesn't stop it (Home is keyed by scope, D461). One `create_session_and_derive`, relayed from the
+// Home pool, and nothing else changes on chain.
+//
+// What stands in for the app gate is the user: the request carries a fresh Home identity (homeGate: `Origin === AUTH_ORIGIN`,
+// the per-IP limit, the Home token, its key's signature over this exact body, single use), and the body's own session
+// token must be the same identity's, with a nonce committing to this session in this scope. So a token can only ever
+// reach its own user's key, in the one scope its nonce names. In order: the gate; shape; the token and its nonce; the
+// identity matches; the counter hold; the client admitted for the scope, the session key free, governance, the standing
+// (a member reaches its root's path; a pending member is refused); the session key's signature; the BLS shape; every limit;
+// then the relay. No limit is counted before the checks that a request can fail, and nothing is relayed unless every
+// check and limit passed.
+//
+// The address is never affected: the contract derives from the token's identity and the chain-resolved root, exactly as
+// a partner login does, `aud` never enters the path, and `key_index` is fixed to 0 here (Home opens only the address it
+// shows). A Home session is one use and short-lived, so it can't be used past these limits afterwards.
+//
+// The derive is not a login of any app: it marks no app as launched (D462: no `first_login_at`, no `first_session_at`, no
+// session marker) and counts in no app's quota or usage. It records `key_exported` for the account, with `app_id` NULL
+// (D520), and writes the member's directory row (D500), both after the response.
+//
+// SECURITY: nothing here logs a token, a `sub`, a path or a path hash. A limiter name is a hash, never a `sub`.
+import { appKeyPairs, appKeyProblem } from '../bls.ts';
+import { hex, sha256 } from '../bytes.ts';
+import { sessionSupportId } from '../directory/store.ts';
+import { inBackground, syncAfterLogin } from '../directory/sync.ts';
+import type { Env } from '../env.ts';
+import { type OwnerActionWindow, NOT_EXECUTED, chainGate, chainGateResponse, checkClientScope, done, hitAll, lap, lapRelay, limiter, loginTokenRefusal, newCtx, reject, settle } from '../handlers.ts';
+import { log } from '../log.ts';
+import { type LoginCall, loginFailure, toLogin } from '../login.ts';
+import { verifyLoginToken } from '../login-token.ts';
+import { recordKeyExport } from '../mainnet-demo.ts';
+import { sha256Hex } from '../owner-actions.ts';
+import { recalledPanic, rememberPanic, requestKey } from '../panic-cache.ts';
+import { ALREADY_RELAYED } from '../relayer-config.ts';
+import { relay } from '../relayer-pool.ts';
+import { ckdPayload, sessionNonce, verifySessionSignature } from '../session-crypto.ts';
+import { sessionStanding } from '../session-standing.ts';
+import { claimCounter } from '../session-use.ts';
+import { type Checked, isError } from '../validate.ts';
+import { forgetSession, getConfig, getScope, isExitClient, sessionKeyInUse } from '../views.ts';
+import { homeGate } from './identity.ts';
+
+export const HOME_LOGIN_ENDPOINT = '/v1/home/login';
+/** docs/hana-home-spec.md "Rate limits". */
+export const HOME_LOGIN_PER_IP_HOUR = 10;
+/** Requests a minute per Home key (the per-IP hour is the binding one; a key's requests are still counted like every Home route's). */
+export const HOME_LOGIN_PER_KEY_MINUTE = 10;
+/** A derive per wallet (D59's bound): the same three an hour an export window gets per app. */
+export const HOME_DERIVES_PER_PATH_HOUR = 3;
+export const HOME_DERIVES_PER_USER_HOUR = 10;
+export const HOME_DERIVES_PER_USER_DAY = 20;
+/** Across the env, per UTC day (D98 item 11; about $10 a day at the default). */
+export const HOME_DERIVES_PER_DAY_DEFAULT = 500;
+/** How far ahead a Home session may end: the export window's 15 minutes with the Home identity's margin. Inside the contract's exit cap (30 minutes, D486). */
+export const HOME_SESSION_MAX_MS = 20 * 60_000;
+/** A warning is logged when a day's derives reach this share of the ceiling (D85). */
+const HOME_USAGE_WARN_PCT = 80;
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+const SCOPE_RE = /^[a-z0-9]{1,64}$/u;
+/** What a Home body can't carry: a Home derive never links a sign-in method (the contract also refuses a link on an exit session, D486) and has no export window. */
+const REFUSED_FIELDS: readonly string[] = ['linkJwt', 'linkImmediate', 'exportChain'];
+
+export type HomeLoginCall = LoginCall & { scopeId: string };
+
+/**
+ * `/v1/login`'s body plus `scopeId`, and nothing a Home derive can't use: `key_index` 0, the only address Home shows (a
+ * nonzero index would also escape the per-wallet limit, the path differing by index), and one use within
+ * HOME_SESSION_MAX_MS, so the session can't serve further derives past these limits. The scope is the request's own here
+ * (no app's), and the token's nonce must commit to it.
+ */
+export function toHomeLogin(body: unknown, now: number = Date.now()): Checked<HomeLoginCall> {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return { error: 'Body must be a JSON object' };
+  const { scopeId, ...rest } = body as Record<string, unknown>;
+  if (typeof scopeId !== 'string' || !SCOPE_RE.test(scopeId)) return { error: 'scopeId must be 1 to 64 lower-case letters or digits' };
+  const refused = REFUSED_FIELDS.find((f) => f in rest);
+  if (refused !== undefined) return { error: `Unexpected field ${refused}` };
+  const call = toLogin(rest, scopeId, now);
+  if (isError(call)) return call;
+  if (call.request.keyIndex !== 0) return { error: 'A Home derive uses keyIndex 0' };
+  if (call.request.maxUses !== 1) return { error: 'A Home derive uses maxUses 1' };
+  if (call.request.expiresAtMs > now + HOME_SESSION_MAX_MS) return { error: 'A Home session ends within 20 minutes' };
+  return { ...call, scopeId };
+}
+
+/** The daily ceiling: the var HOME_DERIVES_PER_DAY when it is a positive integer, else the default. */
+export function homeDerivesPerDay(env: Pick<Env, 'HOME_DERIVES_PER_DAY'>): number {
+  const v = env.HOME_DERIVES_PER_DAY;
+  return v !== undefined && /^[1-9]\d{0,6}$/u.test(v) ? Number(v) : HOME_DERIVES_PER_DAY_DEFAULT;
+}
+
+const utcDay = (now: number): string => new Date(now).toISOString().slice(0, 10);
+const secondsToNextUtcDay = (now: number): number => Math.max(1, Math.ceil((Math.ceil((now + 1) / DAY) * DAY - now) / 1000));
+
+/**
+ * One more Home derive for the day, atomically (one D1 statement): the new count, or null at the ceiling (the row stays
+ * as it was). Throws when D1 can't be written: the caller refuses, since an uncounted derive is one the budget can't see.
+ */
+export async function countHomeDerive(env: Pick<Env, 'DB'>, day: string, max: number): Promise<number | null> {
+  const row = await env.DB.prepare('INSERT INTO home_usage (day, derives) VALUES (?1, 1) ON CONFLICT (day) DO UPDATE SET derives = derives + 1 WHERE derives < ?2 RETURNING derives')
+    .bind(day, max)
+    .first<{ derives: number }>();
+  return row?.derives ?? null;
+}
+
+/**
+ * Whether `(provider, aud)` may open a session in `scopeId` through Home: an exit client in force reaches any registered
+ * scope (D468), and otherwise the scope's own client or a shared client, exactly as a partner login. Only here: a partner
+ * login's `checkClientScope` stays closed to exit clients.
+ */
+export async function checkHomeClientScope(env: Env, provider: string, aud: string, scopeId: string, now: number): Promise<{ status: number; code: string; error: string } | null> {
+  if (isExitClient(await getConfig(env), provider, aud, now)) {
+    return (await getScope(env, scopeId)) ? null : { status: 403, code: 'unknown_scope', error: 'The scope is not registered' };
+  }
+  return checkClientScope(env, provider, aud, scopeId, now);
+}
+
+export async function handleHomeLogin(request: Request, env: Env, requestId: string, exec?: ExecutionContext, now: number = Date.now()): Promise<Response> {
+  const ctx = newCtx(env, requestId, HOME_LOGIN_ENDPOINT, request);
+  // 1. The Home identity (identity.ts): Origin, the per-IP hour, the Home token, its key's signature over this body, single use.
+  const gate = await homeGate(request, env, ctx, { ipPerHour: HOME_LOGIN_PER_IP_HOUR, keyPerMinute: HOME_LOGIN_PER_KEY_MINUTE, window: 'login' }, now);
+  if (!gate.ok) return gate.response;
+  lap(ctx, 'identity');
+
+  // 2. Shape.
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(gate.body));
+  } catch {
+    return reject(ctx, 400, 'bad_request', 'Body must be JSON');
+  }
+  const call = toHomeLogin(parsed, now);
+  if (isError(call)) return reject(ctx, 400, 'bad_request', call.error);
+  const req = call.request;
+  const { scopeId } = call;
+
+  // 3. A genuine token (no app to hold it to: login-token.ts `anyLoginMethod`), carrying only allow-listed claims, whose
+  // nonce commits to this session in this scope on this signer.
+  const verified = await verifyLoginToken(env, req.jwt, now, { anyLoginMethod: true, exec });
+  if (!verified.ok) return loginTokenRefusal(ctx, verified);
+  const token = verified.token;
+  if (token.nonce === null) return reject(ctx, 400, 'nonce_mismatch', 'The ID token has no nonce');
+  if (token.nonce !== (await sessionNonce({ signer: env.SIGNER_ACCOUNT, scopeId, ...req }))) return reject(ctx, 400, 'nonce_mismatch', 'The ID token nonce does not commit to this session');
+  // 4. The same identity as the Home sign-in (`sub` is global, so one Home user can't open another user's key).
+  if (token.provider !== gate.identity.provider || token.sub !== gate.identity.sub) return reject(ctx, 403, 'home_account_mismatch', 'Sign in as the same account you used in Home');
+
+  const panicKey = await requestKey(call.method, call.args);
+  const recalled = recalledPanic(panicKey);
+  if (recalled) return done(ctx, recalled.status, { error: recalled.error, code: recalled.code });
+
+  // 5. A login uses counter 1: a copy of this request in this isolate waits for this one (session-use.ts).
+  const release = await claimCounter(req.sessionPublicKey, 1);
+  try {
+    // 6. Beside each other (all read the chain): the client admitted for this scope, the session key free, the contract
+    // not paused and the token's kid active on chain, and where the identity stands. A standing the chain didn't confirm
+    // fails closed here (unlike a partner login): the per-wallet limit needs the real path.
+    const [scope, inUse, gov, standing] = await Promise.all([
+      settle(checkHomeClientScope(env, token.provider, token.aud, scopeId, now)),
+      settle(sessionKeyInUse(env, req.sessionPublicKey, now)),
+      chainGate(env, token.kid === null ? null : { provider: token.provider, kid: token.kid }, requestId),
+      sessionStanding(env, scopeId, token.provider, token.sub, req.keyIndex),
+    ]);
+    if (!scope.ok) return reject(ctx, 502, 'near_unavailable', 'Could not read the scope');
+    if (scope.value) return reject(ctx, scope.value.status, scope.value.code, scope.value.error);
+    if (!inUse.ok) return reject(ctx, 502, 'near_unavailable', 'Could not read the scope');
+    if (inUse.value) return reject(ctx, 409, 'session_exists', 'This session key is already in use');
+    if (gov) return chainGateResponse(ctx, gov);
+    if (!standing.confirmed) return reject(ctx, 502, 'near_unavailable', 'Could not read this identity');
+    if (standing.pending) return reject(ctx, 409, 'link_pending', 'This sign-in method’s link is pending');
+    lap(ctx, 'checks');
+
+    // 7. The session key signed the CKD request with counter 1.
+    if (!(await verifySessionSignature(req.sessionPublicKey, 1, req.signature, ckdPayload(req.pk1, req.pk2)))) return reject(ctx, 401, 'invalid_signature', 'Invalid session signature');
+    // 8. The app key: well-formed always; its pairing only behind BLS_PRECHECK (CPU-heavy, Workers Paid only).
+    const keyProblem = appKeyProblem(req.pk1, req.pk2);
+    if (keyProblem) return reject(ctx, 400, 'invalid_app_key', keyProblem);
+    if (env.BLS_PRECHECK === '1' && !(await appKeyPairs(req.pk1, req.pk2))) return reject(ctx, 400, 'invalid_app_key', 'pk1 and pk2 are not the same key');
+
+    // 9. The limits, last: only a request every check passed counts (as appQuota, D100), so a refused request spends
+    // nothing and the per-wallet and per-user windows can't be spent by a request that couldn't have been relayed.
+    const hitAt = Date.now();
+    const windows = await homeWindows(scopeId, standing.path, { provider: token.provider, sub: token.sub });
+    try {
+      const refused = await hitAll(env, windows, requestId, HOME_LOGIN_ENDPOINT, hitAt);
+      if (refused) return reject(ctx, 429, 'rate_limited', `Rate limit exceeded (${refused.window.label} per ${refused.limit.endsWith('day') ? 'day' : 'hour'})`, { 'retry-after': String(refused.retryAfterS) });
+    } catch {
+      return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
+    }
+    const day = utcDay(hitAt);
+    const max = homeDerivesPerDay(env);
+    const takeBack = (): Promise<unknown> => Promise.allSettled(windows.map(async (w) => limiter(env, w.subject).unhit(w.limits, hitAt)));
+    let count: number | null;
+    try {
+      count = await countHomeDerive(env, day, max);
+    } catch {
+      await takeBack();
+      return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
+    }
+    if (count === null) {
+      await takeBack();
+      return reject(ctx, 429, 'home_busy', 'Hana Home is busy, try again tomorrow', { 'retry-after': String(secondsToNextUtcDay(hitAt)) });
+    }
+    if (count === Math.ceil((max * HOME_USAGE_WARN_PCT) / 100)) log({ event: 'home_derives_high', endpoint: ctx.endpoint, requestId, code: 'home_budget_80pct' }, 'warn');
+
+    lap(ctx, 'limits');
+    const result = await relay(env, 'home', { method: call.method, args: call.args }, requestId, { sessionPublicKey: req.sessionPublicKey, expiresAtMs: req.expiresAtMs, counter: 1 });
+    lapRelay(ctx, result);
+    forgetSession(req.sessionPublicKey);
+    if (!result.ok) {
+      // A transaction that certainly never ran spends none of the budget. Anything else may have, and stays counted.
+      if (result.code === ALREADY_RELAYED || NOT_EXECUTED.has(result.code)) await inBackground(exec, () => Promise.all([takeBack(), giveBackDerive(env, day)]));
+      if (result.code === ALREADY_RELAYED) return reject(ctx, 409, 'session_exists', 'This session key is already in use');
+      const failure = loginFailure(env, result);
+      if (typeof failure.body.code === 'string' && typeof failure.body.error === 'string') rememberPanic(panicKey, { status: failure.status, code: failure.body.code, error: failure.body.error });
+      return done(ctx, failure.status, failure.body);
+    }
+    const r = result.result as { big_y?: unknown; big_c?: unknown } | null;
+    if (!r || typeof r.big_y !== 'string' || typeof r.big_c !== 'string') return done(ctx, 502, { error: 'The contract returned no key', code: 'bad_contract_result', nearTx: result.nearTx });
+
+    // Both after the answer: the member's directory row (D500: it is what turns a linked member `mine` in Home's list)
+    // and the account's key_exported event (chain null: one derive opens both chains, D98 item 6; app_id null, D520).
+    const root = standing.member?.root ?? { provider: token.provider, sub: token.sub };
+    await inBackground(exec, () => syncAfterLogin(env, scopeId, { provider: token.provider, sub: token.sub }, null, standing, { requestId, endpoint: ctx.endpoint }));
+    await inBackground(exec, () => recordKeyExport(env, { appId: null, scopeId, root, chain: null, requestId }));
+    const supportId = await sessionSupportId(env, scopeId, root);
+    return done(ctx, 200, {
+      result: { big_y: r.big_y, big_c: r.big_c },
+      session: { scope_id: scopeId, expires_at_ms: req.expiresAtMs, max_uses: req.maxUses, used: 1 },
+      nearTx: result.nearTx,
+      ...(supportId ? { supportId } : {}),
+    });
+  } finally {
+    release();
+  }
+}
+
+/** The per-wallet and per-user windows, most specific first. A limiter subject is a hash: never a `sub`. */
+async function homeWindows(scopeId: string, path: string, user: { provider: string; sub: string }): Promise<OwnerActionWindow[]> {
+  const pathHash = hex(await sha256(new TextEncoder().encode(path)));
+  return [
+    { subject: `home-path:${scopeId}:${pathHash}`, label: 'derives per wallet', limits: [{ name: 'home:path:hour', windowMs: HOUR, max: HOME_DERIVES_PER_PATH_HOUR }] },
+    {
+      subject: `home-user:${await sha256Hex(`${user.provider}#${user.sub}`)}`,
+      label: 'derives per user',
+      limits: [
+        { name: 'home:user:hour', windowMs: HOUR, max: HOME_DERIVES_PER_USER_HOUR },
+        { name: 'home:user:day', windowMs: DAY, max: HOME_DERIVES_PER_USER_DAY },
+      ],
+    },
+  ];
+}
+
+/** Gives the day's budget back after a relay that never ran. Never throws: a failed give-back leaves the count high. */
+async function giveBackDerive(env: Pick<Env, 'DB'>, day: string): Promise<void> {
+  try {
+    await env.DB.prepare('UPDATE home_usage SET derives = derives - 1 WHERE day = ?1 AND derives > 0').bind(day).run();
+  } catch {
+    log({ event: 'home_usage_give_back_failed', endpoint: HOME_LOGIN_ENDPOINT }, 'warn');
+  }
+}
+

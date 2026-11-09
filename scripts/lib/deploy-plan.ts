@@ -17,6 +17,7 @@ import {
   GOOGLE_ISS_VALUES,
   GOOGLE_PROVIDER,
   type GovernanceView,
+  HOME_RELAYER_METHODS,
   type IssuerView,
   OWNER_RELAYER_METHODS,
   type Owner,
@@ -67,7 +68,7 @@ export interface DeployObserved {
   signerAccessKeys: AccessKeyListEntry[];
   /** Every access key on an owner account (absent: not read, e.g. the owner is the council DAO). */
   ownerAccessKeys?: AccessKeyListEntry[];
-  /** Public keys in .secrets/<env>/relayer-keys.json (session) and owner-relayer-keys.json (owner). */
+  /** Public keys in .secrets/<env>/relayer-keys.json (session), owner-relayer-keys.json (owner) and home-relayer-keys.json (home). */
   poolKeysInFile: Record<KeyPool, string[]>;
   /** Public key in .secrets/<env>/keys-updater.json. */
   updaterKeyInFile: string | null;
@@ -116,7 +117,7 @@ export interface DeployOptions {
    * typically the owner before a council transfer (`--known-owner`). A sink owned by anyone else is a blocker (D238).
    */
   knownOwners?: string[];
-  /** session = RELAYER_KEYS (logins), owner = OWNER_RELAYER_KEYS (/v1/owner-actions). */
+  /** session = RELAYER_KEYS (logins), owner = OWNER_RELAYER_KEYS (/v1/owner-actions), home = HOME_RELAYER_KEYS (/v1/home/login). */
   pools: Record<KeyPool, PoolOptions>;
   /**
    * Change the code of an initialised contract: propose_upgrade(hash), and execute_upgrade once due (a v1 contract
@@ -242,7 +243,7 @@ export function ownerCallOf(s: DeployStep, newKey = '<new key in keys-updater.js
 
 const isPlaceholder = (s: string) => /UNSET/u.test(s);
 
-export const POOL_METHODS: Record<KeyPool, readonly string[]> = { session: SESSION_RELAYER_METHODS, owner: OWNER_RELAYER_METHODS };
+export const POOL_METHODS: Record<KeyPool, readonly string[]> = { session: SESSION_RELAYER_METHODS, owner: OWNER_RELAYER_METHODS, home: HOME_RELAYER_METHODS };
 
 export type KeyStatus = { kind: 'absent' } | { kind: 'ok' } | { kind: 'mismatch'; reason: string };
 
@@ -468,7 +469,7 @@ export function buildDeployPlan(m: Manifest, o: DeployObserved, opts: DeployOpti
     }
   }
 
-  // --- relayer function-call keys: two pools with their own method lists, counts and allowances ---
+  // --- relayer function-call keys: three pools with their own method lists, counts and allowances ---
   const filePools = new Map<string, KeyPool>();
   for (const pool of KEY_POOLS) {
     for (const k of o.poolKeysInFile[pool]) {
@@ -512,12 +513,13 @@ export function buildDeployPlan(m: Manifest, o: DeployObserved, opts: DeployOpti
       done.push(`${live.length} ${pool}-pool relayer key(s) in place.`);
     }
   }
-  // A stray key that may call any method, or methods of both pools (e.g. a batch A key left behind after its file
-  // was moved aside), keeps the mixed permission the two pools exist to remove: stop on it.
+  // A stray key that may call any method, or methods of both the session and owner pools (e.g. a batch A key left
+  // behind after its file was moved aside), keeps the mixed permission those pools exist to remove: stop on it. The
+  // Home pool's one method is a session method too, so it decides nothing here.
   for (const k of strayFunctionKeys(o.relayerAccessKeys, m.signer, new Set(filePools.keys()))) {
     const what = `${k.public_key} (${describePermission(k.access_key.permission)})`;
     const methods = strayMethods(k);
-    const pools = KEY_POOLS.filter((p) => methods.some((x) => POOL_METHODS[p].includes(x)));
+    const pools = KEY_POOLS.filter((p) => p !== 'home' && methods.some((x) => POOL_METHODS[p].includes(x)));
     if (methods.length === 0) {
       blockers.push(`${m.relayer} has a key for ${m.signer} that is in neither pool file and may call ANY method: ${what}. Delete it: ${deleteKeyCmd(m.relayer, k.public_key)}`);
     } else if (pools.length > 1) {

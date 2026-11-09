@@ -264,7 +264,7 @@ Manifest block (`envs/<env>.json`, schema `packages/env/src/schema.ts`, optional
   "alertFrom": "alerts@<sending subdomain>",
   "pager": "ntfy",
   "digestHourUtc": 0,
-  "relayerFunds": { "balance": { "warn": 5, "critical": 1 }, "sessionAllowance": { "warn": 0.5, "critical": 0.1 }, "ownerAllowance": { "warn": 0.1, "critical": 0.02 } },
+  "relayerFunds": { "balance": { "warn": 5, "critical": 1 }, "sessionAllowance": { "warn": 0.5, "critical": 0.1 }, "ownerAllowance": { "warn": 0.1, "critical": 0.02 }, "homeAllowance": { "warn": 0.5, "critical": 0.1 } },
   "pinnedIssuerKeys": { "email": { "required": 1, "signers": { "hana": ["<primary thumbprint>", "<standby thumbprint>"] } } },
   "pinnedIdentityKeys": ["<active identity kid>", "<standby identity kid>"]
 }

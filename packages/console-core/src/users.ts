@@ -245,7 +245,8 @@ export const STAFF_USER_EVENTS_MAX = 20;
 
 export interface StaffUserEvent {
   kind: 'key_exported' | 'mainnet_signature';
-  appId: string;
+  /** The app, or null for a Hana Home derive (a `key_exported` row with no app: one sign-in opens the scope's wallet, not one app's). */
+  appId: string | null;
   /** Which chain's key was exported, or null (an older export window); the signature's chain. */
   chain: WalletChain | null;
   /** A mainnet signature's network: the EVM chain ID or `pubnet`. */

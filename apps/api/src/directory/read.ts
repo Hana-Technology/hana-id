@@ -227,7 +227,7 @@ export async function adminGetUser(db: HotDb, id: { userId?: string | undefined;
 export async function withEvents(db: HotDb, users: StaffUser[]): Promise<StaffUser[]> {
   if (users.length === 0) return users;
   const ids = users.map((u) => q`${u.internalId}`);
-  let rows: { kind: string; app_id: string; user_id: string; chain: string | null; network: string | null; address: string | null; usd_micros: number | null; at: number }[];
+  let rows: { kind: string; app_id: string | null; user_id: string; chain: string | null; network: string | null; address: string | null; usd_micros: number | null; at: number }[];
   try {
     rows = await db.all(
       q`SELECT kind, app_id, user_id, chain, network, address, usd_micros, at FROM (

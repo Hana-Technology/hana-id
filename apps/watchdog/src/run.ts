@@ -1579,7 +1579,7 @@ async function checkRelayerFunds(run: Run, relayer: string, t: RelayerThresholds
   }
   const at = run.d.now();
   const str = (x: Threshold) => ({ warn: x.warn.toString(), critical: x.critical.toString() });
-  await run.d.store.setMeta(META.relayerFunds, { ...f, at, thresholds: { balance: str(t.balance), session: str(t.session), owner: str(t.owner) } } satisfies RelayerFundsStatus);
+  await run.d.store.setMeta(META.relayerFunds, { ...f, at, thresholds: { balance: str(t.balance), session: str(t.session), owner: str(t.owner), home: str(t.home) } } satisfies RelayerFundsStatus);
   run.evaluate('relayer_balance_critical', 'relayer_balance_low', 'relayer_allowance_critical', 'relayer_allowance_low', 'relayer_pool_empty');
   const available = BigInt(f.available);
   const counts = RELAYER_POOLS.map((p) => `${f.keys.filter((k) => k.pool === p).length} ${p}`).join(', ');
@@ -1598,7 +1598,7 @@ async function checkRelayerFunds(run: Run, relayer: string, t: RelayerThresholds
     const keys = f.keys.filter((k) => k.pool === pool);
     const th = t[pool];
     if (keys.length === 0) {
-      await run.condition('relayer_pool_empty', `relayer_pool_empty:${pool}`, `Relayer ${account} has no ${pool}-pool key for ${ident(run.d.config.signer)}: every ${pool === 'session' ? 'login' : 'owner action'} relay fails`, { account: relayer, pool, receiver: run.d.config.signer });
+      await run.condition('relayer_pool_empty', `relayer_pool_empty:${pool}`, `Relayer ${account} has no ${pool}-pool key for ${ident(run.d.config.signer)}: every ${pool === 'session' ? 'login' : pool === 'owner' ? 'owner action' : 'Home derive'} relay fails`, { account: relayer, pool, receiver: run.d.config.signer });
       continue;
     }
     for (const k of keys) {

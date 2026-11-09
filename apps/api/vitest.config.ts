@@ -8,6 +8,7 @@ import { testWranglerConfig } from './scripts/gen-wrangler.ts';
 // Fresh throwaway keys per run: tests never touch a real account (all RPC is mocked).
 const relayerKeys = [KeyPair.fromRandom('ed25519').toString(), KeyPair.fromRandom('ed25519').toString()];
 const ownerRelayerKeys = [KeyPair.fromRandom('ed25519').toString(), KeyPair.fromRandom('ed25519').toString()];
+const homeRelayerKeys = [KeyPair.fromRandom('ed25519').toString()];
 const keysUpdaterKey = KeyPair.fromRandom('ed25519').toString();
 const vaultKek = `1:${randomBytes(32).toString('base64')}`;
 // The identity token's keys (docs/identity-token-spec.md): two throwaway P-256 keys (active, standby) and a sub key.
@@ -47,6 +48,7 @@ export default defineConfig(async () => {
             DO_LOCATION_HINT: '',
             RELAYER_KEYS: JSON.stringify(relayerKeys),
             OWNER_RELAYER_KEYS: JSON.stringify(ownerRelayerKeys),
+            HOME_RELAYER_KEYS: JSON.stringify(homeRelayerKeys),
             // A gas override (gas.ts) for a method no endpoint relays, so the default gas of the others stays tested.
             GAS_REMOVE_CLIENT_TGAS: '70',
             KEYS_UPDATER_KEY: keysUpdaterKey,
@@ -74,7 +76,7 @@ export default defineConfig(async () => {
           // Empty databases for the migration tests: 0003's (apply 0001–0002, seed rows, then 0003), and 0006's (a fresh
           // database in order; a sandbox-dev-shaped one at 0001–0005 + 0008, then 0006; one whose scope mixes test and
           // live keys, which 0006 must refuse).
-          d1Databases: { DB: 'hana-id-test', MIGRATION_DB: 'migration-db', FRESH_DB: 'fresh-db', SNAPSHOT_DB: 'snapshot-db', BACKFILL_DB: 'backfill-db', MIX_DB: 'mix-db', PRE_0010_DB: 'pre-0010-db', PRE_0010_ISSUER_DB: 'pre-0010-issuer-db' },
+          d1Databases: { DB: 'hana-id-test', MIGRATION_DB: 'migration-db', FRESH_DB: 'fresh-db', SNAPSHOT_DB: 'snapshot-db', BACKFILL_DB: 'backfill-db', MIX_DB: 'mix-db', PRE_0010_DB: 'pre-0010-db', PRE_0010_ISSUER_DB: 'pre-0010-issuer-db', PRE_0018_DB: 'pre-0018-db' },
         },
       }),
     ],

@@ -42,6 +42,10 @@ export interface Env {
   COINGECKO_API_KEY?: string;
   /** Secret: owner pool. JSON array of `ed25519:...` secret keys, small allowance, used by /v1/owner-actions only. */
   OWNER_RELAYER_KEYS?: string;
+  /** Secret: Home pool. JSON array of `ed25519:...` secret keys, one by default, used by POST /v1/home/login only. Without it that endpoint answers 503. */
+  HOME_RELAYER_KEYS?: string;
+  /** Optional var: Home derives allowed per UTC day across the env (a positive integer). Default 500 (home/login.ts). */
+  HOME_DERIVES_PER_DAY?: string;
   /**
    * Optional var: the allowance (decimal yoctoNEAR) the owner-pool keys were added with, when deploy-contract ran with
    * another `--owner-relayer-allowance` than its 0.5 NEAR default: the base of the hourly `owner_allowance_low` check.

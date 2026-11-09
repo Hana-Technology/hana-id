@@ -171,3 +171,8 @@ Exit is permanent only within limits: a pause stops it, Hana can remove it, and 
 - contracts/hana-signer/src/lib.rs
 - contracts/hana-signer/src/migrate.rs
 - apps/watchdog/src/diff.ts
+
+## Settled after the design
+
+- Home uses the exit client only where a scope's normal route is gone (D490).
+- The exit client's only redirect URI is `{authOrigin}/home/callback` (D491).

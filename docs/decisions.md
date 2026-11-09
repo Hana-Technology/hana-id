@@ -9066,6 +9066,15 @@ tests). Not built. None changes a path, a key or derivation: `aud` never enters 
 - Options: say it plainly; soften or omit it.
 - Why: it changes what a partner who opts out of shared login is promised, so they must be told.
 
+### D490. Hana Home uses the exit client only where a scope's normal route is gone
+- Date 2026-11-09 · Status: **decided by the user 2026-11-09**
+- Decision: Home signs in through the shared client while the scope has shared login on and a Hana client, and through the exit client (D468, D484) only where that route is gone (shared login off, or no Hana client). The contract still accepts the exit client for every scope; this is Home's choice.
+- Why: the hourly exit counter (D487) then signals real exits, so a spike means something, and everyday Home logins stay on the ordinary route.
+
+### D491. The exit client's only redirect is its own callback page, `/home/callback` on the auth origin
+- Date 2026-11-09 · Status: **decided by the user 2026-11-09**
+- Decision: the dedicated Google client (D484) allows exactly one redirect URI, `{authOrigin}/home/callback`, used only by Home, so normal login flows can't produce exit tokens.
+
 ## Superseded or amended
 
 | Was | Now | Source |

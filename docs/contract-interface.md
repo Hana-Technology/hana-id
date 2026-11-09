@@ -1451,8 +1451,9 @@ Google login (2048-bit test key). Each call is hana-signer's own receipt plus th
 
 The design estimated 0.01 Tgas extra per call (the larger root state) and under 0.1 Tgas for the exit event; the small
 over-run is the exit path's extra scope read and event, still far under the 150 Tgas attached (`apps/api/src/gas.ts`).
-Root state: `STATE` is 24 bytes larger on v4 with empty lists (two `u32` lengths and the 16-byte `exit_window`), 82 bytes
-with one Google client in force (a bit over 130 bytes with Home's Google and email clients; the design estimated about 250).
+Root state: `STATE` is 24 bytes larger on v4 with empty lists (two `u32` lengths and the 16-byte `exit_window`), and 82 bytes
+larger with one Google client still in `pending_exit_clients` (a 36-character test id). Computed, not measured: Home's two
+clients with a real 72-character Google id come to about 150 bytes pending and 130 once folded (the design estimated about 250).
 `execute_upgrade` v3 → v4 through the DAO: 105 Tgas in all, 30.5 Tgas in its own receipt (deploy + `migrate`, a 624 KB
 wasm). Account storage after the upgrade grew by the wasm's change (about 12 KB, 0.12 NEAR).
 

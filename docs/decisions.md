@@ -9177,7 +9177,7 @@ tests). Not built. None changes a path, a key or derivation: `aud` never enters 
 ## A late `relayed` signal ends the close grace (branch `test/flake-fixes`), 2026-11-09
 
 ### D495. A popup's `relayed` signal the vault takes after the watch read `closed` turns the close grace off
-- Date 2026-11-09 · Status: decided while fixing a flaky test, to confirm · Built: `packages/web/src/vault/login.ts` `notePopup` · Amends D347, D400
+- Date 2026-11-09 · Status: decided while fixing a flaky test, confirmed by the user 2026-11-09 · Built: `packages/web/src/vault/login.ts` `notePopup` · Amends D347, D400
 - Decision: when the vault takes `relayed` from the popup it answered, it clears a grace already running for that close and forgets the close (`popupGone`), so the login goes on waiting for the answer (5-minute limit only).
 - Why: the popup posts `relayed` after its answer's write and closes after the ack, or after 150 ms without one (D400). A busy vault can run its `closed` poll before it gets the message posted earlier. The watch then starts the 1 s grace, and `relayed` used to change nothing: if the relay read took longer than the grace (a slow network, a stalled frame), a finished login ended in `login_cancelled`. Found reading the popup lifecycle for the flaky `popup-close` test; that test's own flake was the harness running the grace as a 1 ms real timer, not this.
 - Options: leave it (the 1 s grace covers almost every case, but the vault then knows the close wasn't the user's and cancels anyway); read `relayed` before `closed` in the poll (the browser orders the two tasks, not the page).

@@ -6,7 +6,7 @@ import { Address, Asset, Networks, Operation, xdr } from '@stellar/stellar-base'
 import { type Hex, encodeAbiParameters, encodeFunctionData, parseAbi, parseAbiParameters, serializeTransaction } from 'viem';
 import { describe, expect, it } from 'vitest';
 import type { ApprovalSubject } from '../src/approval.ts';
-import { MAINNET_DEMO, MAINNET_DEMO_BALANCE_ORIGINS, assessMainnetDemo, formatUsd, mainnetDemoState, usdOf } from '../src/mainnet-demo.ts';
+import { MAINNET_DEMO, MAINNET_DEMO_BALANCE_ORIGINS, assessMainnetDemo, checkSodaxHubCalls, fixedMainnetDemoPrices, formatUsd, mainnetDemoState, sodaxHubWallet, sodaxHubWalletOf, usdOf } from '../src/mainnet-demo.ts';
 import { MAINNET_DEMO_STELLAR_PASSPHRASE } from '../src/demo-config.ts';
 import { MAINNET_DEMO_EVM_CHAINS, STELLAR_MAINNET_PASSPHRASE } from '../src/networks.ts';
 import { parsePortEvent } from '../src/protocol.ts';
@@ -73,7 +73,7 @@ function hubCalls(o: { hubAsset?: Hex; approve?: bigint; spender?: Hex; intentTo
   return encodeAbiParameters(parseAbiParameters('(address,uint256,bytes)[]'), [calls]);
 }
 
-const deposit = (token: Hex, amount: bigint, data: Hex = '0x') => encodeFunctionData({ abi: spoke, functionName: 'transfer', args: [token, HUB_WALLET, amount, data] });
+const deposit = (token: Hex, amount: bigint, data: Hex = '0x', to: Hex = HUB_WALLET) => encodeFunctionData({ abi: spoke, functionName: 'transfer', args: [token, to, amount, data] });
 const ZERO = '0x0000000000000000000000000000000000000000' as Hex;
 
 const ok = (s: ApprovalSubject, now = NOW) => {
@@ -334,5 +334,315 @@ describe('Stellar’s public network', () => {
     const preimage: ApprovalSubject = { kind: 'stellar_auth_entry', chain: 'stellar', address: USER, context: { networkPassphrase: STELLAR_MAINNET_PASSPHRASE }, bytes: new Uint8Array([1, 2, 3]) };
     expect(refused(preimage).reason).toBe('mainnet_demo_unknown_call');
     expect(refused(stellar(txBytes([Operation.payment({ destination: OTHER, asset: Asset.native(), amount: '1' })]), Networks.TESTNET)).reason).toBe('mainnet_not_allowed');
+  });
+});
+
+describe('the Sodax USDC ⇄ USDC bridge between Base and Stellar (D476)', () => {
+  const VAULT = '0xAbbb91c0617090F0028BDC27597Cd0D038F3A833' as Hex;
+  const HUB_AM = '0x60c5681bD1DB4e50735c4cA3386005A4BA4937C0' as Hex;
+  const BASE_HUB = BASE.tokens[USDC_BASE]!.sodaxHubAsset as Hex;
+  const STELLAR_USDC = 'USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+  const STELLAR_HUB = MAINNET_DEMO.stellar.assets[STELLAR_USDC]!.sodaxHubAsset as Hex;
+  const EURC_BASE_ADDR = '0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42' as Hex;
+  const EURC_HUB = BASE.tokens[EURC_BASE_ADDR]!.sodaxHubAsset as Hex;
+  const WALLETS = { evm: EVM_USER, stellar: USER };
+  /** The user's Stellar account as the hub receives it: SCV_ADDRESS XDR, exactly what the SDK's encodeAddress gives. */
+  const recipientOf = (g: string) => `0x${new Address(g).toScVal().toXDR('hex')}` as Hex;
+  const STELLAR_RECIPIENT = recipientOf(USER);
+  const BASE_RECIPIENT = EVM_USER.toLowerCase() as Hex;
+
+  // Built offline with @sodax/sdk 2.2.0's static encoders (Erc20Service, EvmVaultTokenService, EvmAssetManagerService,
+  // encodeAddress, encodeContractCalls) and its packaged config, for 1 USDC each way; hex lowercased (same bytes).
+  const SDK_BASE_TO_STELLAR = '0x00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000001600000000000000000000000000000000000000000000000000000000000000240000000000000000000000000000000000000000000000000000000000000032000000000000000000000000072e852545b024ddcbc5b70c1bcbdaa025164259c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000044095ea7b3000000000000000000000000abbb91c0617090f0028bdc27597cd0d038f3a83300000000000000000000000000000000000000000000000000000000000f424000000000000000000000000000000000000000000000000000000000000000000000000000000000abbb91c0617090f0028bdc27597cd0d038f3a83300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000004447e7ef2400000000000000000000000072e852545b024ddcbc5b70c1bcbdaa025164259c00000000000000000000000000000000000000000000000000000000000f424000000000000000000000000000000000000000000000000000000000000000000000000000000000abbb91c0617090f0028bdc27597cd0d038f3a833000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000044f3fef3a3000000000000000000000000348007b53f25a9a857ab8ea81ec9e3ccbcf440f20000000000000000000000000000000000000000000000000de0b6b3a76400000000000000000000000000000000000000000000000000000000000000000000000000000000000060c5681bd1db4e50735c4ca3386005a4ba4937c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000104c6b4180b000000000000000000000000348007b53f25a9a857ab8ea81ec9e3ccbcf440f20000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000098968000000000000000000000000000000000000000000000000000000000000000e0000000000000000000000000000000000000000000000000000000000000002c000000120000000000000000ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000' as Hex;
+  const SDK_STELLAR_TO_BASE = '0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000016000000000000000000000000000000000000000000000000000000000000002400000000000000000000000000000000000000000000000000000000000000320000000000000000000000000348007b53f25a9a857ab8ea81ec9e3ccbcf440f2000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000044095ea7b3000000000000000000000000abbb91c0617090f0028bdc27597cd0d038f3a833000000000000000000000000000000000000000000000000000000000098968000000000000000000000000000000000000000000000000000000000000000000000000000000000abbb91c0617090f0028bdc27597cd0d038f3a83300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000004447e7ef24000000000000000000000000348007b53f25a9a857ab8ea81ec9e3ccbcf440f2000000000000000000000000000000000000000000000000000000000098968000000000000000000000000000000000000000000000000000000000000000000000000000000000abbb91c0617090f0028bdc27597cd0d038f3a833000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000044f3fef3a300000000000000000000000072e852545b024ddcbc5b70c1bcbdaa025164259c0000000000000000000000000000000000000000000000000de0b6b3a76400000000000000000000000000000000000000000000000000000000000000000000000000000000000060c5681bd1db4e50735c4ca3386005a4ba4937c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000e4c6b4180b00000000000000000000000072e852545b024ddcbc5b70c1bcbdaa025164259c000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000f424000000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000000000014cd2a3d9f938e13cd947ec05abc7fe734df8dd826000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000' as Hex;
+
+  type HubCall = [Hex, bigint, Hex];
+  const vaultAbi = parseAbi(['function deposit(address,uint256)', 'function withdraw(address,uint256)']);
+  const amAbi = parseAbi(['function transfer(address,bytes,uint256,bytes)']);
+  interface Build {
+    srcHub: Hex;
+    dstHub: Hex;
+    srcDec: number;
+    dstDec: number;
+    amount: bigint;
+    recipient: Hex;
+    mutate?: (c: HubCall[]) => HubCall[];
+  }
+  /** The bridge's four hub calls, as buildBridgeData encodes them; `mutate` then changes one field. */
+  function bridgeHubCalls(o: Build): Hex {
+    const w = o.amount * 10n ** BigInt(18 - o.srcDec);
+    const delivered = w / 10n ** BigInt(18 - o.dstDec);
+    const calls: HubCall[] = [
+      [o.srcHub, 0n, encodeFunctionData({ abi: erc20, functionName: 'approve', args: [VAULT, o.amount] })],
+      [VAULT, 0n, encodeFunctionData({ abi: vaultAbi, functionName: 'deposit', args: [o.srcHub, o.amount] })],
+      [VAULT, 0n, encodeFunctionData({ abi: vaultAbi, functionName: 'withdraw', args: [o.dstHub, w] })],
+      [HUB_AM, 0n, encodeFunctionData({ abi: amAbi, functionName: 'transfer', args: [o.dstHub, o.recipient, delivered, '0x'] })],
+    ];
+    return encodeAbiParameters(parseAbiParameters('(address,uint256,bytes)[]'), [o.mutate ? o.mutate(calls) : calls]);
+  }
+  const baseToStellar = (over: Partial<Build> = {}): Hex => bridgeHubCalls({ srcHub: BASE_HUB, dstHub: STELLAR_HUB, srcDec: 6, dstDec: 7, amount: 1_000_000n, recipient: STELLAR_RECIPIENT, ...over });
+  const stellarToBase = (over: Partial<Build> = {}): Hex => bridgeHubCalls({ srcHub: STELLAR_HUB, dstHub: BASE_HUB, srcDec: 7, dstDec: 6, amount: 10_000_000n, recipient: BASE_RECIPIENT, ...over });
+
+  // The factory's own answers, through rpc.soniclabs.com (read-only `getDeployedAddress`, 2026-11-09; D476).
+  const BASE_HUB_WALLET = '0xF05e4fB1A3917A7Fd722749047c2f6795Fa1368B' as Hex; // EVM_USER, relay 30
+  const STELLAR_HUB_WALLET = '0x00504aAc4AfF32F24E4dD77b6b81d6aF2d936B6E' as Hex; // USER, relay 27
+  const baseDeposit = (data: Hex, amount = 1_000_000n, to: Hex = BASE_HUB_WALLET) => evmTx({ to: ASSET_MANAGER, value: 0n, data: deposit(USDC_BASE as Hex, amount, data, to) });
+  const assess = (s: ApprovalSubject, recipients: Parameters<typeof assessMainnetDemo>[3] = { wallets: WALLETS }) => assessMainnetDemo(s, NOW, fixedMainnetDemoPrices(), recipients);
+  const bridgeOk = (s: ApprovalSubject, recipients?: Parameters<typeof assessMainnetDemo>[3]) => {
+    const r = assess(s, recipients);
+    if (!r.ok) throw new Error(`refused: ${r.reason} ${r.message}`);
+    return r;
+  };
+  const bridgeRefusal = (s: ApprovalSubject) => {
+    const r = assess(s);
+    if (r.ok) throw new Error('allowed');
+    return r.reason;
+  };
+
+  // The Stellar source's deposit.
+  const AM = MAINNET_DEMO.stellar.sodaxAssetManager;
+  const USDC_SAC = MAINNET_DEMO.stellar.assets[STELLAR_USDC]!.assetContract;
+  const EURC_KEY = 'EURC:GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2';
+  const scAddr = (a: string) => new Address(a).toScVal();
+  const u128 = (n: bigint) => xdr.ScVal.scvU128(new xdr.UInt128Parts({ hi: xdr.Uint64.fromString('0'), lo: xdr.Uint64.fromString(n.toString()) }));
+  const i128 = (n: bigint) => xdr.ScVal.scvI128(new xdr.Int128Parts({ hi: xdr.Int64.fromString('0'), lo: xdr.Uint64.fromString(n.toString()) }));
+  const scBytes = (hex: string) => xdr.ScVal.scvBytes(Buffer.from(hex.replace(/^0x/u, ''), 'hex'));
+  const stellarDeposit = (data: Hex, amount = 10_000_000n, token = USDC_SAC, to: Hex = STELLAR_HUB_WALLET): ApprovalSubject => {
+    const args = [scAddr(USER), scAddr(token), u128(amount), scBytes(to), scBytes(data)];
+    const auth = sourceAuth(invocation(AM, 'transfer', args, [invocation(token, 'transfer', [scAddr(USER), scAddr(AM), i128(amount)])]));
+    return {
+      kind: 'stellar_tx',
+      chain: 'stellar',
+      address: USER,
+      context: { networkPassphrase: STELLAR_MAINNET_PASSPHRASE },
+      bytes: txBytes([Operation.invokeContractFunction({ contract: AM, function: 'transfer', args, auth: [auth] })], { soroban: sorobanData(), fee: '100000' }),
+    };
+  };
+
+  it('pins sodaUSDC, the hub asset manager and the two USDC hub assets with their decimals (@sodax/sdk 2.2.0’s packaged config)', () => {
+    expect(MAINNET_DEMO.sodaxBridge.vault).toBe('0xAbbb91c0617090F0028BDC27597Cd0D038F3A833');
+    expect(MAINNET_DEMO.sodaxBridge.hubAssetManager).toBe('0x60c5681bD1DB4e50735c4cA3386005A4BA4937C0');
+    expect(MAINNET_DEMO.sodaxBridge.usdc).toEqual([
+      { hubAsset: '0x72E852545B024ddCbc5b70C1bCBDAA025164259C', decimals: 6, chain: 'evm', chainName: 'Base', relayChainId: 30 },
+      { hubAsset: '0x348007B53F25A9A857aB8eA81ec9E3CCBCf440f2', decimals: 7, chain: 'stellar', chainName: 'Stellar', relayChainId: 27 },
+    ]);
+    expect(MAINNET_DEMO.sodaxBridge.hubWalletFactory).toBe('0xA0ed3047D358648F2C0583B415CffCA571FDB544');
+    // The same hub assets and decimals as the swap's own pins.
+    expect(BASE.tokens[USDC_BASE]).toMatchObject({ sodaxHubAsset: '0x72E852545B024ddCbc5b70C1bCBDAA025164259C', decimals: 6 });
+    expect(MAINNET_DEMO.stellar.assets[STELLAR_USDC]).toMatchObject({ sodaxHubAsset: '0x348007B53F25A9A857aB8eA81ec9E3CCBCf440f2', decimals: 7 });
+  });
+
+  it('builds the same bytes as the SDK for both directions (the mutations below start from these)', () => {
+    expect(baseToStellar()).toBe(SDK_BASE_TO_STELLAR);
+    expect(stellarToBase()).toBe(SDK_STELLAR_TO_BASE);
+  });
+
+  it('signs Base → Stellar: the deposit is valued, and the bridge is described for the popup', () => {
+    const r = bridgeOk(baseDeposit(SDK_BASE_TO_STELLAR));
+    expect(r.usdMicros).toBe(1_050_000n);
+    expect(r.movements.map((m) => m.what)).toEqual(['fee', 'deposit']);
+    expect(r.bridge).toEqual({ symbol: 'USDC', amount: '1', fromChain: 'Base', toChain: 'Stellar', recipient: USER });
+  });
+
+  it('signs Stellar → Base from the signing account, with its own authorization', () => {
+    const r = bridgeOk(stellarDeposit(SDK_STELLAR_TO_BASE));
+    expect(r.movements.map((m) => m.what)).toEqual(['fee', 'deposit']);
+    expect(r.movements.find((m) => m.what === 'deposit')).toMatchObject({ symbol: 'USDC', amount: 10_000_000n });
+    expect(r.bridge).toEqual({ symbol: 'USDC', amount: '1', fromChain: 'Stellar', toChain: 'Base', recipient: EVM_USER });
+    // A fractional amount is shown as such.
+    const half = bridgeOk(stellarDeposit(stellarToBase({ amount: 2_500_000n }), 2_500_000n));
+    expect(half.bridge?.amount).toBe('0.25');
+  });
+
+  it('refuses a bridge when no wallets were given to check the recipient, and lets the popup read it to show it', () => {
+    const noWallets = assessMainnetDemo(baseDeposit(SDK_BASE_TO_STELLAR), NOW);
+    expect(noWallets.ok ? null : noWallets.reason).toBe('mainnet_demo_unknown_call');
+    // `shown` (the popup, which holds one address): the recipient is read, not bound; the vault binds it.
+    expect(bridgeOk(baseDeposit(baseToStellar({ recipient: recipientOf(OTHER) })), 'shown').bridge?.recipient).toBe(OTHER);
+    // A recipient of the wrong form is refused even then: the popup never renders one it can't read canonically.
+    const shownRefused = (recipient: Hex) => {
+      const r = assess(baseDeposit(baseToStellar({ recipient })), 'shown');
+      return r.ok ? null : r.reason;
+    };
+    expect(shownRefused(`0x000000120000000100000000${'ab'.repeat(32)}`)).toBe('mainnet_demo_unknown_call');
+    expect(shownRefused(`0x00000011${'00'.repeat(8)}${'ab'.repeat(32)}`)).toBe('mainnet_demo_unknown_call');
+    expect(shownRefused(BASE_RECIPIENT)).toBe('mainnet_demo_unknown_call');
+  });
+
+  const setCall = (i: number, c: (call: HubCall) => HubCall) => (calls: HubCall[]) => calls.map((x, n) => (n === i ? c(x) : x));
+  const ANY = '0x3333333333333333333333333333333333333333' as Hex;
+
+  it.each([
+    ['approve’s target', setCall(0, ([, v, d]) => [ANY, v, d])],
+    ['deposit’s target', setCall(1, ([, v, d]) => [ANY, v, d])],
+    ['withdraw’s target', setCall(2, ([, v, d]) => [ANY, v, d])],
+    ['the transfer’s target', setCall(3, ([, v, d]) => [ANY, v, d])],
+    ['approve’s selector', setCall(0, ([t, v, d]) => [t, v, `0xa9059cbb${d.slice(10)}` as Hex])],
+    ['deposit’s selector', setCall(1, ([t, v, d]) => [t, v, `0xdeadbeef${d.slice(10)}` as Hex])],
+    ['withdraw’s selector', setCall(2, ([t, v, d]) => [t, v, `0xdeadbeef${d.slice(10)}` as Hex])],
+    ['the transfer’s selector', setCall(3, ([t, v, d]) => [t, v, `0xdeadbeef${d.slice(10)}` as Hex])],
+    ['a value on approve', setCall(0, ([t, , d]) => [t, 1n, d])],
+    ['a value on deposit', setCall(1, ([t, , d]) => [t, 1n, d])],
+    ['a value on withdraw', setCall(2, ([t, , d]) => [t, 1n, d])],
+    ['a value on the transfer', setCall(3, ([t, , d]) => [t, 1n, d])],
+    ['the approval’s spender', setCall(0, ([t, v]) => [t, v, encodeFunctionData({ abi: erc20, functionName: 'approve', args: [FRIEND, 1_000_000n] })])],
+    ['the approval’s amount (lower)', setCall(0, ([t, v]) => [t, v, encodeFunctionData({ abi: erc20, functionName: 'approve', args: [VAULT, 999_999n] })])],
+    ['the approval’s amount (higher)', setCall(0, ([t, v]) => [t, v, encodeFunctionData({ abi: erc20, functionName: 'approve', args: [VAULT, 1_000_001n] })])],
+    ['the deposit’s amount', setCall(1, ([t, v]) => [t, v, encodeFunctionData({ abi: vaultAbi, functionName: 'deposit', args: [BASE_HUB, 999_999n] })])],
+    ['the deposit’s token', setCall(1, ([t, v]) => [t, v, encodeFunctionData({ abi: vaultAbi, functionName: 'deposit', args: [ANY, 1_000_000n] })])],
+    ['the withdrawal’s amount', setCall(2, ([t, v]) => [t, v, encodeFunctionData({ abi: vaultAbi, functionName: 'withdraw', args: [STELLAR_HUB, 10n ** 18n - 1n] })])],
+    ['the withdrawal’s token', setCall(2, ([t, v]) => [t, v, encodeFunctionData({ abi: vaultAbi, functionName: 'withdraw', args: [EURC_HUB, 10n ** 18n] })])],
+    ['the delivered amount', setCall(3, ([t, v]) => [t, v, encodeFunctionData({ abi: amAbi, functionName: 'transfer', args: [STELLAR_HUB, STELLAR_RECIPIENT, 9_999_999n, '0x'] })])],
+    ['the delivered token', setCall(3, ([t, v]) => [t, v, encodeFunctionData({ abi: amAbi, functionName: 'transfer', args: [EURC_HUB, STELLAR_RECIPIENT, 10_000_000n, '0x'] })])],
+    ['data on the transfer', setCall(3, ([t, v]) => [t, v, encodeFunctionData({ abi: amAbi, functionName: 'transfer', args: [STELLAR_HUB, STELLAR_RECIPIENT, 10_000_000n, '0x01'] })])],
+    ['a fifth call (a partner fee)', (calls: HubCall[]) => [...calls, [VAULT, 0n, encodeFunctionData({ abi: erc20, functionName: 'transfer', args: [FRIEND, 1n] })] as HubCall]],
+    ['a missing call', (calls: HubCall[]) => calls.slice(0, 3)],
+    ['the calls reordered', (calls: HubCall[]) => [calls[1]!, calls[0]!, calls[2]!, calls[3]!]],
+  ] as const)('refuses a mutated %s', (_name, mutate) => {
+    expect(bridgeRefusal(baseDeposit(baseToStellar({ mutate: mutate as (c: HubCall[]) => HubCall[] })))).toBe('mainnet_demo_unknown_call');
+  });
+
+  it('refuses swapped hub assets, a same-asset “bridge”, EURC, ETH and XLM', () => {
+    // Swapped: the source isn't the deposited asset's hub asset.
+    expect(bridgeRefusal(baseDeposit(baseToStellar({ srcHub: STELLAR_HUB, dstHub: BASE_HUB })))).toBe('mainnet_demo_unknown_call');
+    expect(bridgeRefusal(stellarDeposit(stellarToBase({ srcHub: BASE_HUB, dstHub: STELLAR_HUB })))).toBe('mainnet_demo_unknown_call');
+    // Source and destination the same hub asset.
+    expect(bridgeRefusal(baseDeposit(baseToStellar({ dstHub: BASE_HUB, dstDec: 6, recipient: BASE_RECIPIENT })))).toBe('mainnet_demo_unknown_call');
+    // EURC: deposited, or as the destination.
+    expect(bridgeRefusal(evmTx({ to: ASSET_MANAGER, value: 0n, data: deposit(EURC_BASE_ADDR, 1_000_000n, baseToStellar({ srcHub: EURC_HUB, dstHub: STELLAR_HUB })) }))).toBe('mainnet_demo_unknown_call');
+    expect(bridgeRefusal(baseDeposit(baseToStellar({ dstHub: MAINNET_DEMO.stellar.assets[EURC_KEY]!.sodaxHubAsset as Hex })))).toBe('mainnet_demo_unknown_call');
+    // ETH and XLM share a four-call shape but aren't the pair.
+    const ethAmount = 1_000_000_000_000_000n;
+    expect(
+      bridgeRefusal(evmTx({ to: ASSET_MANAGER, value: ethAmount, data: deposit(ZERO, ethAmount, bridgeHubCalls({ srcHub: ETH_HUB, dstHub: STELLAR_HUB, srcDec: 18, dstDec: 7, amount: ethAmount, recipient: STELLAR_RECIPIENT })) })),
+    ).toBe('mainnet_demo_unknown_call');
+    const xlmHub = MAINNET_DEMO.stellar.native.sodaxHubAsset as Hex;
+    expect(bridgeRefusal(stellarDeposit(bridgeHubCalls({ srcHub: xlmHub, dstHub: BASE_HUB, srcDec: 7, dstDec: 6, amount: 10_000_000n, recipient: BASE_RECIPIENT }), 10_000_000n, MAINNET_DEMO.stellar.native.assetContract))).toBe('mainnet_demo_unknown_call');
+  });
+
+  it('refuses dust from Stellar’s 7 decimals to Base’s 6, and a zero amount', () => {
+    // 1.0000001 USDC: the SDK floors it to 1 USDC on delivery and leaves dust; the exact-equality rule refuses it.
+    expect(bridgeRefusal(stellarDeposit(stellarToBase({ amount: 10_000_001n }), 10_000_001n))).toBe('mainnet_demo_unknown_call');
+    expect(bridgeRefusal(stellarDeposit(stellarToBase({ amount: 9n }), 9n))).toBe('mainnet_demo_unknown_call');
+    expect(bridgeRefusal(baseDeposit(baseToStellar({ amount: 0n }), 0n))).toBe('mainnet_demo_unknown_call');
+  });
+
+  it('refuses a recipient of the wrong form for the destination, or not the user’s own wallet', () => {
+    const wrong: Hex[] = [
+      // 20 bytes (an EVM address) where Stellar needs SCV_ADDRESS XDR.
+      BASE_RECIPIENT,
+      // 44 bytes without the `00000012` account prefix.
+      `0x000000120000000100000000${'ab'.repeat(32)}`,
+      `0x000000110000000000000000${'ab'.repeat(32)}`,
+      // A 32-byte key alone.
+      `0x${'ab'.repeat(32)}`,
+      // Another account.
+      recipientOf(OTHER),
+    ];
+    for (const recipient of wrong) expect(bridgeRefusal(baseDeposit(baseToStellar({ recipient }))), recipient).toBe('mainnet_demo_unknown_call');
+    const wrongEvm: Hex[] = [STELLAR_RECIPIENT, `0x${'ab'.repeat(19)}`, `0x${'ab'.repeat(21)}`, FRIEND.toLowerCase() as Hex];
+    for (const recipient of wrongEvm) expect(bridgeRefusal(stellarDeposit(stellarToBase({ recipient }))), recipient).toBe('mainnet_demo_unknown_call');
+  });
+
+  describe('the spoke `to` is the signing address’s own hub wallet (D476)', () => {
+    const relayXdr = (g: string) => Uint8Array.from(Buffer.from(recipientOf(g).slice(2), 'hex'));
+    const evmBytes = (a: string) => Uint8Array.from(Buffer.from(a.slice(2), 'hex'));
+    const OTHER_EVM = '0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB';
+
+    it.each([
+      ['a Base address', 30, evmBytes(EVM_USER), '0xF05e4fB1A3917A7Fd722749047c2f6795Fa1368B'],
+      ['another Base address', 30, evmBytes(OTHER_EVM), '0xe72338645575223efA8c6063246e07D952F2514C'],
+      ['a Stellar account', 27, relayXdr(USER), '0x00504aAc4AfF32F24E4dD77b6b81d6aF2d936B6E'],
+      ['another Stellar account', 27, relayXdr(OTHER), '0xB19704b8F84Ba567d36A643BD61fa0ed8A624417'],
+      ['an EVM address under Stellar’s relay id', 27, evmBytes(EVM_USER), '0xD146a78303b3Dc78a1061c4DcCB3f3B0e6F8d391'],
+    ] as const)('derives the hub wallet offline exactly as the factory answers: %s', (_name, relay, user, wallet) => {
+      expect(sodaxHubWallet(relay, user)).toBe(wallet);
+    });
+
+    it('derives from the side’s relay id and the encoded address', () => {
+      expect(sodaxHubWalletOf('evm', EVM_USER)).toBe(BASE_HUB_WALLET);
+      expect(sodaxHubWalletOf('stellar', USER)).toBe(STELLAR_HUB_WALLET);
+    });
+
+    const wrongTo = (own: Hex, other: Hex, crossed: Hex): Array<[string, Hex]> => [
+      ['empty', '0x'],
+      ['19 bytes', own.slice(0, 40) as Hex],
+      ['21 bytes', `${own}00`],
+      ['32 bytes, left-padded', `0x${'00'.repeat(12)}${own.slice(2)}`],
+      ['another user’s hub wallet', other],
+      ['the wallet under the other chain’s relay id', crossed],
+      ['an attacker’s address', FRIEND as Hex],
+      ['the zero address', ZERO],
+    ];
+    const refusedBoth = (make: () => ApprovalSubject) => {
+      for (const recipients of [{ wallets: WALLETS }, 'shown'] as const) {
+        const r = assess(make(), recipients);
+        expect(r.ok ? null : r.reason, String(recipients)).toBe('mainnet_demo_unknown_call');
+      }
+    };
+
+    it.each(wrongTo(BASE_HUB_WALLET, '0xe72338645575223efA8c6063246e07D952F2514C', '0xD146a78303b3Dc78a1061c4DcCB3f3B0e6F8d391'))(
+      'Base → Stellar: refuses a spoke `to` that is %s, in the vault and in the popup',
+      (_name, to) => refusedBoth(() => baseDeposit(SDK_BASE_TO_STELLAR, 1_000_000n, to)),
+    );
+
+    it.each(wrongTo(STELLAR_HUB_WALLET, '0xB19704b8F84Ba567d36A643BD61fa0ed8A624417', sodaxHubWallet(30, relayXdr(USER)) as Hex))(
+      'Stellar → Base: refuses a spoke `to` that is %s, in the vault and in the popup',
+      (_name, to) => refusedBoth(() => stellarDeposit(SDK_STELLAR_TO_BASE, 10_000_000n, USDC_SAC, to)),
+    );
+
+    it('refuses the source chain’s wallet of the other direction (the two hub wallets aren’t interchangeable)', () => {
+      refusedBoth(() => baseDeposit(SDK_BASE_TO_STELLAR, 1_000_000n, STELLAR_HUB_WALLET));
+      refusedBoth(() => stellarDeposit(SDK_STELLAR_TO_BASE, 10_000_000n, USDC_SAC, BASE_HUB_WALLET));
+    });
+
+    it('accepts any casing of the own hub wallet: the same 20 bytes', () => {
+      expect(bridgeOk(baseDeposit(SDK_BASE_TO_STELLAR, 1_000_000n, BASE_HUB_WALLET.toLowerCase() as Hex)).bridge?.recipient).toBe(USER);
+    });
+
+    it('refuses every change to the 20 `to` bytes and to the last byte of its length word', () => {
+      const data = deposit(USDC_BASE as Hex, 1_000_000n, SDK_BASE_TO_STELLAR, BASE_HUB_WALLET);
+      const bytes = Buffer.from(data.slice(2), 'hex');
+      // 4 selector + 4 head words, then the `to` length word; the length's last byte is 163, the content 164..183.
+      expect(`0x${bytes.subarray(164, 184).toString('hex')}`).toBe(BASE_HUB_WALLET.toLowerCase());
+      for (let i = 163; i <= 183; i++) {
+        for (const mask of [0x01, 0x80, 0xff]) {
+          const mutated = Buffer.from(bytes);
+          mutated[i]! ^= mask;
+          const r = assess(evmTx({ to: ASSET_MANAGER, value: 0n, data: `0x${mutated.toString('hex')}` }));
+          expect(r.ok, `byte ${i} mask ${mask}`).toBe(false);
+        }
+      }
+    });
+
+    it('refuses a bridge whose spoke side wasn’t given to the check', () => {
+      expect(() => checkSodaxHubCalls(SDK_BASE_TO_STELLAR, BASE_HUB, 1_000_000n, { wallets: WALLETS })).toThrow();
+    });
+
+    it('binds the hub wallet to the signing address in the popup too (which holds that address alone)', () => {
+      expect(bridgeOk(baseDeposit(SDK_BASE_TO_STELLAR), 'shown').bridge?.recipient).toBe(USER);
+      const other = { ...baseDeposit(SDK_BASE_TO_STELLAR), address: OTHER_EVM };
+      const r = assess(other, 'shown');
+      expect(r.ok ? null : r.reason).toBe('mainnet_demo_unknown_call');
+    });
+
+    it('leaves a swap’s spoke `to` unbound, as D429 and R5 record', () => {
+      const swap = evmTx({ to: ASSET_MANAGER, value: 0n, data: deposit(USDC_BASE as Hex, 2_000_000n, hubCalls({ hubAsset: BASE_HUB, approve: 2_000_000n, intentAmount: 1_990_000n }), FRIEND as Hex) });
+      expect(ok(swap).bridge).toBeUndefined();
+    });
+  });
+
+  it('keeps the $9.99 cap: an over-cap bridge is refused as over the cap', () => {
+    // At the fixed $1.05: $9.99 is 9.514285 USDC.
+    expect(bridgeOk(baseDeposit(baseToStellar({ amount: 9_514_285n }), 9_514_285n)).usdMicros).toBe(9_990_000n);
+    expect(bridgeRefusal(baseDeposit(baseToStellar({ amount: 9_514_286n }), 9_514_286n))).toBe('mainnet_demo_over_cap');
+  });
+
+  it('leaves a two-call swap and a plain deposit exactly as they were (no recipients needed, no bridge)', () => {
+    const swap = evmTx({ to: ASSET_MANAGER, value: 0n, data: deposit(USDC_BASE as Hex, 2_000_000n, hubCalls({ hubAsset: BASE_HUB, approve: 2_000_000n, intentAmount: 1_990_000n })) });
+    const r = ok(swap);
+    expect(r.usdMicros).toBe(2_100_000n);
+    expect(r.bridge).toBeUndefined();
+    expect(ok(evmTx({ to: ASSET_MANAGER, value: 0n, data: deposit(USDC_BASE as Hex, 1_000_000n) })).bridge).toBeUndefined();
   });
 });

@@ -45,7 +45,7 @@ export interface OriginRow {
 }
 
 /** An app's detail: one batch of four indexed reads (the app, its origins, its open changes, its keys). */
-export async function getApp(db: HotDb, appId: string, orgId: string | null, now: number, filesOrigin?: string): Promise<AppDetail> {
+export async function getApp(db: HotDb, appId: string, orgId: string | null, now: number, filesOrigin?: string, opts: { mainnetDemo?: boolean } = {}): Promise<AppDetail> {
   const [app, origins, changes, keys] = await db.batch([
     q`SELECT ${raw(APP_COLUMNS)}, ${COUNTS(now)} FROM apps a JOIN scopes s ON s.scope_id = a.scope_id WHERE a.id = ${appId} AND ${orgFilter(orgId)}`,
     q`SELECT o.origin, o.active_from, o.change_id FROM app_origins o JOIN apps a ON a.id = o.app_id WHERE o.app_id = ${appId} AND ${orgFilter(orgId)} ORDER BY o.origin`,
@@ -55,7 +55,21 @@ export async function getApp(db: HotDb, appId: string, orgId: string | null, now
   ]);
   const row = app?.results[0] as (AppRow & { active_origins: number; pending_changes: number }) | undefined;
   if (!row) return refuse('not_found', 'No such app');
-  return detailView(row, origins!.results as unknown as OriginRow[], changes!.results as unknown as ChangeRow[], keys!.results as unknown as KeyRow[], now, filesOrigin);
+  const detail = await detailView(row, origins!.results as unknown as OriginRow[], changes!.results as unknown as ChangeRow[], keys!.results as unknown as KeyRow[], now, filesOrigin);
+  // Staff only (AdminRpc): a partner's view never carries the mainnet demo switch (and keeps its read budget).
+  return opts.mainnetDemo ? { ...detail, settings: { ...detail.settings, mainnetDemo: await storedMainnetDemo(db, appId) } } : detail;
+}
+
+/**
+ * The app's mainnet demo switch as D1 holds it (D428, migration 0013), shown read-only; false when the column isn't
+ * there yet (the migration not applied) or the read fails, so an app page never breaks on it.
+ */
+export async function storedMainnetDemo(db: HotDb, appId: string): Promise<boolean> {
+  try {
+    return (await db.first<{ mainnet_demo: number }>(q`SELECT mainnet_demo FROM apps WHERE id = ${appId}`))?.mainnet_demo === 1;
+  } catch {
+    return false;
+  }
 }
 
 export async function detailView(

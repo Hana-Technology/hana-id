@@ -9,7 +9,7 @@
 // error is logged (method, request id, actor kind, org: never an email, sub or token) and answered `internal`.
 //
 // Built in C7; `recordStaffAction` added in C12 (D327); `purgeAudit` in C13 (the admin's monthly retention job only, a
-// `system` actor, D360).
+// `system` actor, D360); `health` for the admin console's System status page (D425: staff only, read-only, no user data).
 import {
   ORGLESS_STAFF_ACTIONS,
   type Actor,
@@ -30,12 +30,18 @@ import {
   recordStaffActionInput,
   revokeInviteInput,
   setMemberInput,
+  staffHealthInput,
+  NOTICE_BACKLOG_LIMIT,
+  type ConsoleHealth,
+  type CronRunView,
 } from '@hana-id/console-core';
+import { deployedBuild } from '@hana-id/env/build-id';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { AUDIT_DETAIL_KEYS, type Writer, auditInsert, auditSince, entry, queryAudit } from './audit.ts';
 import { ownerGrantDelayMs } from './config.ts';
 import type { Env } from './env.ts';
 import { RpcRefusal } from './errors.ts';
+import { HOURLY_JOB } from './cron.ts';
 import { cancelOwnerGrant } from './grants.ts';
 import { ackMemberNotice, invitesOf, issueInvite, pendingMemberNotices, revokeInvite } from './invites.ts';
 import { ipPrefix } from './ip.ts';
@@ -207,5 +213,58 @@ export class StaffRpc extends WorkerEntrypoint<Env> {
       }
       return {};
     });
+  }
+
+  /**
+   * The admin console's System status page (D425): the build, a timed `SELECT 1` on CONSOLE_DB, the hourly cron's last
+   * run (`cron_runs`, migration 0003), the invite and owner-grant notices the admin cron hasn't sent (a count and the
+   * oldest time) and whether LOGOS answers a `head` of a key that never exists. Staff only, read-only, no user data.
+   */
+  health(c: unknown) {
+    return runStaff('staff.health', staffHealthInput, c, HANA, async (_i, w): Promise<ConsoleHealth> => {
+      const start = Date.now();
+      let dbOk = true;
+      try {
+        await this.db.prepare('SELECT 1 AS one').first();
+      } catch {
+        dbOk = false;
+      }
+      const db = { ok: dbOk, latencyMs: Date.now() - start };
+      const [cron, notices, logos] = await Promise.all([cronRun(this.db), noticeBacklog(this.db, w.now), logosProbe(this.env)]);
+      return { build: deployedBuild(this.env.HANA_BUILD), db, cron, notices, logos };
+    });
+  }
+}
+
+/** The hourly cron's row; null before its first recorded run; `missing` when migration 0003 isn't applied. */
+async function cronRun(db: D1Database): Promise<ConsoleHealth['cron']> {
+  try {
+    const r = await db.prepare('SELECT job, at_ms, outcome, failed_steps FROM cron_runs WHERE job = ?1').bind(HOURLY_JOB).first<{ job: string; at_ms: number; outcome: string; failed_steps: string | null }>();
+    if (!r) return null;
+    const view: CronRunView = { job: r.job, atMs: Number(r.at_ms), outcome: r.outcome === 'ok' ? 'ok' : 'error', detail: r.failed_steps ?? null };
+    return view;
+  } catch (err) {
+    return /no such table/iu.test(err instanceof Error ? err.message : String(err)) ? 'missing' : null;
+  }
+}
+
+async function noticeBacklog(db: D1Database, now: number): Promise<ConsoleHealth['notices']> {
+  try {
+    const notices = await pendingMemberNotices(db, now, NOTICE_BACKLOG_LIMIT + 1);
+    const times = notices.map((n) => n.grant?.createdAt ?? n.invite?.createdAt).filter((t): t is number => typeof t === 'number');
+    return { pending: Math.min(notices.length, NOTICE_BACKLOG_LIMIT), oldestAt: times.length ? Math.min(...times) : null, truncated: notices.length > NOTICE_BACKLOG_LIMIT };
+  } catch {
+    return null;
+  }
+}
+
+/** A `head` of a key the console never writes (a Class B read): `ok` when R2 answers, whatever the answer. */
+async function logosProbe(env: Env): Promise<ConsoleHealth['logos']> {
+  if (!env.LOGOS) return null;
+  try {
+    await env.LOGOS.head('health/never-written');
+    return 'ok';
+  } catch {
+    return 'error';
   }
 }

@@ -11,5 +11,6 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": [".", "../vitest.config.ts", "../vitest.scripts.config.ts", "../vite.config.ts"]
+  "include": [".", "../vitest.config.ts", "../vitest.scripts.config.ts", "../vite.config.ts"],
+  "exclude": ["test/preview.test.ts"]
 }

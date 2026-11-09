@@ -22,6 +22,7 @@ import { ackRoute, actionsRoute, alertsRoute, monitoringRoute, pendingUpgradesRo
 import { getPlaybookRoute, listPlaybooksRoute } from './playbooks.ts';
 import { retentionRoute } from './retention-routes.ts';
 import { securityView } from './security.ts';
+import { statusRoute } from './status.ts';
 import { usersFindRoute, usersGetRoute, usersSearchRoute } from './users.ts';
 import { supportLookupRoute } from './support.ts';
 import { type StaffRequest, staffCtx } from './rpc.ts';
@@ -135,7 +136,9 @@ async function directoryAudit(c: RouteCtx): Promise<{ rows: DirectoryAuditRow[];
 }
 
 const ROUTES: Route[] = [
-  { method: 'GET', pattern: '/api/me', handler: async (c) => json(200, { email: c.staff.actor.email, sub: c.staff.actor.id, env: c.env.ENV_NAME, consoleOrigin: c.env.CONSOLE_ORIGIN }) },
+  { method: 'GET', pattern: '/api/me', handler: async (c) => json(200, { email: c.staff.actor.email, sub: c.staff.actor.id, env: c.env.ENV_NAME, consoleOrigin: c.env.CONSOLE_ORIGIN, accessExp: c.staff.accessExp, ...renewField(c.env) }) },
+  // ---- the System status page (D425): read-only, cached 30 s in the isolate ----
+  { method: 'GET', pattern: '/api/status', handler: (c) => statusRoute(c.env, c.staff, c.request) },
 
   // ---- orgs ----
   {
@@ -224,6 +227,8 @@ const ROUTES: Route[] = [
   { method: 'POST', pattern: '/api/apps/:app/origins/remove', handler: (c) => answer('POST /api/apps/:app/origins/remove', c.staff, () => c.env.API.removeOrigins({ ...staffCtx(c.staff), appId: c.params.app, ...pick(c.body, 'orgId', 'remove', 'expectedVersion') })) },
   { method: 'POST', pattern: '/api/apps/:app/changes', handler: (c) => answer('POST /api/apps/:app/changes', c.staff, () => c.env.API.proposeChange({ ...staffCtx(c.staff), appId: c.params.app, ...pick(c.body, 'orgId', 'kind', 'policy', 'expectedVersion') })) },
   { method: 'POST', pattern: '/api/apps/:app/off', handler: (c) => answer('POST /api/apps/:app/off', c.staff, () => c.env.API.turnOff({ ...staffCtx(c.staff), appId: c.params.app, ...pick(c.body, 'orgId', 'what', 'expectedVersion') })) },
+  // The mainnet demo exception to D39 (D428): the API refuses it outside a dev testnet env and for a live app.
+  { method: 'POST', pattern: '/api/apps/:app/mainnet-demo', handler: (c) => answer('POST /api/apps/:app/mainnet-demo', c.staff, () => c.env.API.setMainnetDemo({ ...staffCtx(c.staff), appId: c.params.app, ...pick(c.body, 'orgId', 'on', 'expectedVersion') })) },
   { method: 'POST', pattern: '/api/apps/:app/keys/:key/revoke', handler: (c) => answer('POST /api/apps/:app/keys/:key/revoke', c.staff, () => c.env.API.revokeKey({ ...staffCtx(c.staff), appId: c.params.app, keyId: c.params.key, ...pick(c.body, 'orgId') })) },
 
   // ---- guarded changes ----
@@ -336,4 +341,22 @@ export async function handleApi(request: Request, env: Env, staff: StaffRequest)
     body = read.value as Record<string, unknown>;
   }
   return hit.route.handler({ request, env, staff, url, params: hit.params, body });
+}
+
+/**
+ * The SPA's Renew link (D424 amended): the Access team's login for this application, which issues a fresh token while
+ * the team session lasts and returns to `/signed-in` (a plain visit of the console doesn't: Access keeps an unexpired
+ * application token). Public values only (the team domain and the AUD are in every Access JWT). Omitted when either is
+ * malformed; the SPA then falls back to `/signed-in`.
+ */
+export function renewField(env: { ACCESS_TEAM_DOMAIN: string; ACCESS_AUD: string; ADMIN_ORIGIN: string }): { renewUrl?: string } {
+  const team = env.ACCESS_TEAM_DOMAIN ?? '';
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.cloudflareaccess\.com$/u.test(team) || !/^[0-9a-f]{64}$/u.test(env.ACCESS_AUD ?? '')) return {};
+  let host: string;
+  try {
+    host = new URL(env.ADMIN_ORIGIN).host;
+  } catch {
+    return {};
+  }
+  return { renewUrl: `https://${team}/cdn-cgi/access/login/${host}?kid=${env.ACCESS_AUD}&redirect_url=${encodeURIComponent('/signed-in')}` };
 }

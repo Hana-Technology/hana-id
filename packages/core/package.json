@@ -21,7 +21,10 @@
     "./wallet-record": "./src/wallet-record.ts",
     "./signers/stellar": "./src/signers/stellar.ts",
     "./decode": "./src/decode/index.ts",
-    "./policy": "./src/policy/index.ts"
+    "./policy": "./src/policy/index.ts",
+    "./mainnet-demo": "./src/mainnet-demo.ts",
+    "./demo-config": "./src/demo-config.ts",
+    "./support-id": "./src/support-id.ts"
   },
   "files": [
     "dist",
@@ -56,6 +59,18 @@
       "./policy": {
         "types": "./dist/policy/index.d.ts",
         "import": "./dist/policy/index.js"
+      },
+      "./mainnet-demo": {
+        "types": "./dist/mainnet-demo.d.ts",
+        "import": "./dist/mainnet-demo.js"
+      },
+      "./demo-config": {
+        "types": "./dist/demo-config.d.ts",
+        "import": "./dist/demo-config.js"
+      },
+      "./support-id": {
+        "types": "./dist/support-id.d.ts",
+        "import": "./dist/support-id.js"
       },
       "./package.json": "./package.json"
     },

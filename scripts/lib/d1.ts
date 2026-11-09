@@ -134,7 +134,7 @@ const D1_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 
 export const defaultIssuerD1Deps = (): IssuerD1Deps => ({
   wrangler: (argv) => runPnpm(emailIssuerDir, argv, PRIVATE_WRANGLER_ENV, true),
-  requireLocalConfig: (envName) => requireWranglerConfig(emailIssuerDir, `pnpm --filter @hana-id/email-issuer gen ${envName} --d1-id <uuid> --app-d1-id <uuid>`),
+  requireLocalConfig: (envName) => requireWranglerConfig(emailIssuerDir, `pnpm --filter @hana-id/email-issuer gen ${envName} --d1-id <uuid>`),
   fetch: async (url, init) => {
     const res = await fetch(url, { ...init, signal: AbortSignal.timeout(CF_TIMEOUT_MS) });
     const text = await res.text();

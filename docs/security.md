@@ -1,7 +1,8 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-06 for email sharing with partners (branch `feat/email-sharing`, not merged: `IDENTITY_SEAL_KEY` and `EMAIL_CONSENT_KEY` in the inventory and the compromise table, the consent rows in the API D1 row, "Email sharing" invariants (the address never in the vault or the partner page, the preview on the auth origin only, consent bound through the session), D411, D438–D443); 2026-11-05 for "Email keys"' delivery (branch `fix/sendgrid-suppression`: 202 is accepted, not delivered; alerts and blocking notices bypass SendGrid's suppression lists, login mail keeps them; admin and watchdog on their own subusers, D401 as amended); 2026-11-05 for the email keys (branch `feat/sandbox-dev-dashboard-blocks`: SendGrid for the admin Worker and the watchdog, their keys' rows and blast radius, "Email keys", the admin Worker's residual, D401); 2026-11-05 for the staff directory reads and the ledger setup (branch `fix/security-review-1105`: a search by sub or full address and every wallet-directory find need a ticket, the find audited first as `users.find`; no sub in the admin SPA's URLs; the lookup's audit lists its request IDs; Hyperdrive configs created through Cloudflare's API, the role password never a process argument; a failed reset's roles set NOLOGIN; D410, D412); 2026-11-05 for (j)'s dev envs on Custom Domains and the account move's secrets handling (branch `feat/account-migration`: `env-secrets` uploads from `.secrets/` through stdin and never invents a missing key, `d1-move`'s 0600 exports, `gen`'s account check, D404); 2026-11-05 for the build id on every Worker (branch `feat/deploy-check-all-workers`: the public `/.well-known/hana-build` on the console, console-auth and files origins, none on the admin or the watchdog, read through wrangler, D406); 2026-11-05 for the Cloudflare API token of `access-setup` (branch `feat/access-setup`: its two permissions, its blast radius, deleted after use; the admin's Access application and staff policies made by the script, sandbox* Google exact emails only and kept on the Zero Trust free tier (D408); D409); 2026-11-05 for the ledger role passwords and the Neon API key (branch `fix/usage-setup-neon-api-passwords`: Neon generates the passwords, the project-scoped key revoked after use, D403); 2026-11-05 for the close watch's signals (branch `fix/popup-signal-before-navigate`: the vault's ack, a null-source signal never taken, D400); 2026-11-05 for the Support ID lookup's screen (branch `feat/batch-c-15-screen`: the email join through `DirectoryRpc.get` audited as `support_lookup` under the lookup's ticket, one ticket rule for both audits, D399); 2026-11-05 for the admin Users screen's read path (branch `feat/batch-c-8b`: `DirectoryRpc`'s invariants, its compromise row, the admin Worker's Users invariants, the audit and the row budget; D388–D392); 2026-11-05 for the popup close watch's deadline (branch `fix/popup-early-close-deadline`: a forged `google` delays a close by at most 90 s, D398); 2026-11-05 for the outside probe's schedule (branch `chore/ci-cost`: the probe turned off on testnet, D387); 2026-11-05 for the Support ID and its lookup (branch `feat/batch-c-15`:
+known open issues. Last verified against code: 2026-11-09 for email sharing with partners (branch `feat/email-sharing-2`: brought up to date with `develop` @ a3de75e, not merged; D438–D443, migration 0014); 2026-11-06 for email sharing with partners (branch `feat/email-sharing`, not merged: `IDENTITY_SEAL_KEY` and `EMAIL_CONSENT_KEY` in the inventory and the compromise table, the consent rows in the API D1 row, "Email sharing" invariants (the address never in the vault or the partner page, the preview on the auth origin only, consent bound through the session), D411, D438–D443); 2026-11-06 for the watchdog's grace for a kid it hasn't seen (open issue (e)'s watchdog bullet; branch `fix/watchdog-new-key-grace`, D432); 2026-11-06 for the admin Worker's retention invariant (branch `feat/user-events-retention`: `user_events` 24 months by the database's clock, with its scope's directory, and erased by internal id and address, D433); 2026-11-06 for "Email issuer"'s first two invariants and the issuer Worker's compromise row (branch `feat/issuer-readonly-rpc`: the issuer binds no API D1 and reads apps through the API's read-only `IssuerRpc`, D434, replacing D251); 2026-11-06 for the NEAR RPC row of "Parties" (branch `feat/api-near-rpc-fallback`: the API's failover to `apiRpcFallbacks`, D435); 2026-11-06 for "The mainnet demo and key export (D428–D430)" and open issues (o)–(q) (branch `feat/mainnet-demo-key-export`: the demo's layers, its fail-closed valuation, the balance reads, the export's guard, auto-hide and `key_exported`); 2026-11-06 for the vault handshake bullet (branch `feat/partner-friction-fixes`: `no_answer`'s origin is the page's own, D427); 2026-11-06 for the auth pages' brand bullet (branch `feat/hana-brand`: Hana's fonts from the auth origin itself under the unchanged `font-src 'self'`, `font-display: optional`, the static Hana bar apart from the app's name, no font in the vault, D426); 2026-11-06 for the System status bullet of the admin Worker (branch `feat/admin-system-status`: read-only, its health RPCs authenticated as their entrypoints, no secret or user data in its answer, D425); 2026-11-06 for the session-expiry bullets of the console and admin Workers (branch `fix/session-expiry-ux`: `GET /api/me` answers only the session's or the Access token's end time, never a token; requests waiting for a new sign-in stay in the tab's memory, nothing in browser storage; the admin SPA's `redirect: 'manual'`; D424; no CSP, CSRF, cookie, session or Access change); 2026-11-06 for the console Worker's SPA bullet (branch `feat/console-ux-redesign`: no browser storage, the clipboard's public values, the dev-only preview harness, D421; no CSP, CSRF, session or step-up change); 2026-11-05 for "Email keys"' delivery (branch `fix/sendgrid-suppression`: 202 is accepted, not delivered; alerts and blocking notices bypass SendGrid's suppression lists, login mail keeps them; admin and watchdog on their own subusers, D401 as amended); 2026-11-05 for the email keys (branch `feat/sandbox-dev-dashboard-blocks`: SendGrid for the admin Worker and the watchdog, their keys' rows and blast radius, "Email keys", the admin Worker's residual, D401); 2026-11-05 for the staff directory reads and the ledger setup (branch `fix/security-review-1105`: a search by sub or full address and every wallet-directory find need a ticket, the find audited first as `users.find`; no sub in the admin SPA's URLs; the lookup's audit lists its request IDs; Hyperdrive configs created through Cloudflare's API, the role password never a process argument; a failed reset's roles set NOLOGIN; D410, D412); 2026-11-05 for (j)'s dev envs on Custom Domains and the account move's secrets handling (branch `feat/account-migration`: `env-secrets` uploads from `.secrets/` through stdin and never invents a missing key, `d1-move`'s 0600 exports, `gen`'s account check, D404); 2026-11-05 for the build id on every Worker (branch `feat/deploy-check-all-workers`: the public `/.well-known/hana-build` on the console, console-auth and files origins, none on the admin or the watchdog, read through wrangler, D406); 2026-11-05 for the Cloudflare API token of `access-setup` (branch `feat/access-setup`: its two permissions, its blast radius, deleted after use; the admin's Access application and staff policies made by the script, sandbox* Google exact emails only and kept on the Zero Trust free tier (D408); D409); 2026-11-05 for the ledger role passwords and the Neon API key (branch `fix/usage-setup-neon-api-passwords`: Neon generates the passwords, the project-scoped key revoked after use, D403); 2026-11-05 for the close watch's signals (branch `fix/popup-signal-before-navigate`: the vault's ack, a null-source signal never taken, D400); 2026-11-05 for the Support ID lookup's screen (branch `feat/batch-c-15-screen`: the email join through `DirectoryRpc.get` audited as `support_lookup` under the lookup's ticket, one ticket rule for both audits, D399); 2026-11-05 for the admin Users screen's read path (branch `feat/batch-c-8b`: `DirectoryRpc`'s invariants, its compromise row, the admin Worker's Users invariants, the audit and the row budget; D388–D392); 2026-11-05 for the popup close watch's deadline (branch `fix/popup-early-close-deadline`: a forged `google` delays a close by at most 90 s, D398); 2026-11-05 for the outside probe's schedule (branch `chore/ci-cost`: the probe turned off on testnet, D387); 2026-11-05 for the Support ID and its lookup (branch `feat/batch-c-15`:
+
 what a user shows, what the staff lookup reveals and to whom, its audit, D394–D397); 2026-11-05 for the build id (branch `feat/deploy-build-check`: a public
 commit id in `/v1/health`, `/v1/email/health`, the page origins' `/.well-known/hana-build` and the bundles, D384);
 2026-11-05 for the outside probe's schedule (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383; before it branch `chore/identity-probe-hourly`, hourly, D382); 2026-11-04 for retention and erasure (branch `feat/batch-c-13`: the
@@ -101,7 +102,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | Partner (app owner) | Its own app config and, in own-client mode, its Google client | Own-client mode: obtain tokens with any nonce for its client and derive its own users' keys in its scope (inherent: Hana can't see Google client settings). Set an auto-approve policy (delayed; users must accept it). Through its console (C10, `ConsoleRpc.listUsers` / `getUser`, D315, D346): its own scopes' users, their User IDs (the identity token's `sub`) and Support IDs, created and last seen, connected account kinds and wallet addresses | Anything in another scope. In shared mode: derive keys (no token with a nonce of its choosing). Read a user's internal id `hu_…`, sub, identity key or email (never selected for it; a search by sub or internal id refused), or another org's users (`not_found`, as no user) |
 | Partner page (incl. XSS, malicious dependency) | Nothing | Start a login (visible popup), read addresses, queue signature requests, drive an unlocked vault within its idle/absolute limits, get requests signed that match an accepted auto-approve policy; navigate, close or focus the approval popup it opened (D99, "Approval popup opened by the partner page") | Read keys, tokens, nonces; get any other signature without a guarded Approve in a Hana popup |
 | User's browser and device | Running Hana's pages; keeping the profile private | Malware or an extension in all frames: everything the user can do, including reading an exported key (on screen, or from the clipboard after Copy key, D268). A disk dump with a live share: unlock and get PRK | After logout, idle or absolute expiry or revoke: nothing (an open export window erases its key then too, and at most 5 min after deriving it, D111). A derive (the persisted session is used up) |
-| NEAR RPC (manifest `rpc`, and `rpcFallback` when set) | Liveness, honest views | Fail derives, report wrong counters or a wrong registry answer (a refused login), delay. For most reads the fallback is asked only when the primary fails, so a lying primary is not outvoted there. One provider alone could also name another identity's path (a forged "member of account R" view) and forge a CKD answer for it when it knows R's secret (R's owner), which the pairing check would pass: so every path that isn't the signed-in identity's own is read on `rpc` and `rpcFallback` separately and must agree, or the login (or export) is refused (D263) | Forge a CKD result for the user's own path (pairing check against the pinned key, which was read from ≥ 3 independent providers that all agreed at one final block, D100); steer a login to another identity's path unless both providers lie the same way |
+| NEAR RPC (manifest `rpc`, and `rpcFallback` and `apiRpcFallbacks` when set) | Liveness, honest views | Fail derives, report wrong counters or a wrong registry answer (a refused login), delay. For most reads the fallback is asked only when the primary fails, so a lying primary is not outvoted there. The API's views and transactions likewise reach `apiRpcFallbacks` (else `rpcFallback`) only when the endpoints before give no JSON-RPC answer (D435): each listed provider is trusted like `rpc` whenever the ones before it fail, and anyone able to make those fail (an outage, a block) chooses which listed provider answers, never an unlisted one. The API never puts an answer to a second provider, and never re-signs on a failed-over broadcast's error (the same signed bytes are sent again and polled by hash: one execution at most). One provider alone could also name another identity's path (a forged "member of account R" view) and forge a CKD answer for it when it knows R's secret (R's owner), which the pairing check would pass: so every path that isn't the signed-in identity's own is read on `rpc` and `rpcFallback` separately and must agree, or the login (or export) is refused (D263) | Forge a CKD result for the user's own path (pairing check against the pinned key, which was read from ≥ 3 independent providers that all agreed at one final block, D100); steer a login to another identity's path unless both providers lie the same way |
 | Email issuer (`apps/email-issuer`: its Worker, `K_sub`, its signing key) | Which email identity an address is (only it holds `K_sub`), sending codes, minting email tokens only after a code or for a Google-verified address | Everything its signing key gives (log into email-rooted wallets, D200). With its Worker: answer google-match wrongly. Case A, Google-hosted: mint an `auto_link` token joining a **new** Google user silently to an email wallet it controls, so the user's Google login opens the attacker's wallet; answer `none` for a user who has an email wallet, so their Google login opens a second wallet (D266, accepted: the vault can't check the match without the address) | Attach an email identity in a plain Google login (D139: case B needs this popup's own email step); reuse a link token for another session, join or epoch (D133); link without the contract's link counter seeing it (D200, the watchdog alerts on bursts) |
 | Anyone watching the chain or mempool | Nothing | Read used tokens (openid-only claims via the API), replay `create_session` with them (the vault derives with the next counter), replay a whole combined call (burns a `max_uses = 1` login: `session_consumed`; attacker pays gas) | Derive for themselves (needs the session key; the answer is encrypted to `a`) |
 | Partner backend (identity tokens) | Verifying identity tokens as `docs/integration.md` section 15 says (`aud`, `iss`, `typ`, ES256) | Hold its users' tokens (≤ 1 h each) and what they say: `sub`, `sid`, addresses; act as a user **at itself** with a stolen token until `exp` | Use a token at Hana or another partner (`aud`, no Hana API accepts one), reach a key, map its `sub`s to another partner's or to a Google account (keyed HMAC per scope) |
@@ -117,7 +118,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | The email issuer's D1 (a Cloudflare account member or token that can read it, or the Worker) | The user directory (D269): every recorded user's verified address, joined to their `sub`, so to their on-chain path, balance and history, and the apps they use (accepted by the user, D269) | Log in as anyone or mint a token (no key is in the D1) |
 | The admin Worker (code or its Cloudflare deploy rights), for the user directory (C8b) | Read the directory through `DirectoryRpc` only while a staff member is sending it requests (each call needs a live Access JWT of the admin application, ≤ 1 h, which the issuer verifies itself and records as the actor), up to that staff member's row budget (500 identities an hour, 2 000 a day); skip the `directory_budget` email | No write to the directory, the hints, suppressions or the audit (a service binding with three reads, no D1 binding); every read leaves an `email_admin_audit` row naming the staff email, written in the read's own D1 batch; no read without a JWT; the issuer's `directory_budget` log line stays |
 | The `access-setup` Cloudflare API token (D409; exists only while the admin's Access is set up) | Any Access application and policy of the API's Cloudflare account: loosen, bypass or delete the admin's (and the issuer's staff) application | A loosened policy alone lets nobody in: the admin Worker and the issuer verify the Access JWT themselves (`aud`, `iss`, a `sub`) and check the email on their own staff allowlist (D88), which the token can't change; no login method, team, Worker or secret edits. Worst case: staff locked out until `access-setup <env> --yes` runs again with a new token; `--check` shows the change |
-| The email issuer's Worker (code or secrets) | Its signing key's powers (D121, D200), and google-match's answers: join new Google users to email wallets it controls (case A, Google-hosted, silent), or answer `none` (a second wallet) (D266) | Never a case-B join without the popup's own email step (D139); every link bound to its session and the chain's state (D133); the link counter and the watchdog see link bursts (D200); custody: KMS and a second signer before mainnet (D121) |
+| The email issuer's Worker (code or secrets) | Its signing key's powers (D121, D200), and google-match's answers: join new Google users to email wallets it controls (case A, Google-hosted, silent), or answer `none` (a second wallet) (D266). Of the API, only IssuerRpc's three read-only lookups (an app's issuer view by key or id, whether a scope has an email app): no write and no other read of the API's D1 (D434) | Never a case-B join without the popup's own email step (D139); every link bound to its session and the chain's state (D133); the link counter and the watchdog see link bursts (D200); custody: KMS and a second signer before mainnet (D121); no API D1 binding (D434) |
 | Owner key (governance contract: the council DAO, 2 of 3) | Two council keys: issuer keys (delayed like the updater's), config, pause/unpause, upgrades and owner transfer (after `governance_delay_ms`, mainnet 72 h), surplus withdrawal | Every delayed action is public and cancellable by the owner; the watchdog alerts on each (`governance_change`). See `docs/governance-spec.md` and `docs/playbooks.md` `unexpected-owner-action` |
 | Signer account full-access key | Redeploy the contract: anything, including MPC requests for any path | No upgrade lock in batch A/A.2/B. Open issue (e), D33; fix specified in `docs/governance-spec.md` |
 | D1 | App origins (→ `frame-ancestors`, parent-origin checks; a bare write of an `app_origins` row with `active_from` set skips the guarded-change delay), app scope, settings incl. bare writes of `raw_sign`/policy without the pending delay, suspensions; `share_enc` rows. The API's hourly drift detection (`changes/drift.ts`) flags such writes of origins, policies and raw signing against `guarded_changes` and the 0006 baseline (only while no later `app_changes` row ended a baseline value) as `drift` security events; it can't catch an insider who also forges those rows, and doesn't cover keys, suspension bits or deletion (a bare write of `app_keys`, `suspended_by` or `deleted_at` goes unflagged; `app_changes` has no row for it) | `K_s` needs `VAULT_KEK`; a policy needs the user's consent to its `policyId`; raw requests still need approval |
@@ -678,7 +679,16 @@ restricted key with Mail Send only, held by its Worker and one `.secrets/<env>/`
   `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy: same-origin`, `X-Content-Type-Options: nosniff` and HSTS
   (2 years, subdomains); `/api/*` also `Cache-Control: no-store`. Only `/api/*` sets cookies (an asset's `Set-Cookie`
   is stripped), and only the console's `__Host-` ones. The SPA build has no inline script or style, nothing external,
-  and bundles no server code (a build test, D297).
+  and bundles no server code (a build test, D297). It keeps nothing in browser storage and injects no HTML (a source
+  check); copy buttons write only public values (App ID, publishable keys, ids, snippets) to the clipboard. The local
+  preview harness (`apps/console/preview`, D421) runs only in `vite serve` on 127.0.0.1, imitates none of the console's
+  checks, and nothing of it is in the build (a build test).
+- **A session that ends mid-task** (D424): `GET /api/me` answers the session's 12 h absolute end (`sessionExpiresAt`,
+  a time the member's own session row holds; no cookie, hash or id). A request answered 401 after the page had a
+  session waits in the tab's memory (never browser storage) until the member signs in again in another tab and
+  presses Try again, which sends the same request with the new session's cookie and the same CSRF headers; a move to
+  another page drops it. The SPA asks `/api/me` on its own only when the session has ended or its absolute end is
+  near (at most 5 minutes), so it never stands in for activity against the 2 h idle limit.
 - **CSRF on every non-GET request**, whatever the path: `Sec-Fetch-Site: same-origin`, `Origin` exactly
   `console.origin`, `x-hana-console: 1` and `content-type: application/json`, else `403 csrf`. The one exception is the
   logo upload's raw body, which must be exactly `application/octet-stream` on that path (D300): not a CORS-safelisted
@@ -772,7 +782,14 @@ restricted key with Mail Send only, held by its Worker and one `.secrets/<env>/`
   itself verifies the Access JWT from the header only (signature against the team's certs, never stale; `kid`, `iss`,
   `aud`, `exp`/`nbf`, `type = 'app'`, a non-empty `sub`, so no service token) and requires its lowercased email on
   `admin.staffEmails`. 401 for any token problem, 403 `not_staff`, 503 while the AUD tag is `UNSET` or the certs are
-  unreachable. A cookie or another header never counts.
+  unreachable. A cookie or another header never counts. `GET /api/me` answers the verified token's `exp` (seconds,
+  `accessExp`: when the sign-in ends, for the SPA's warning; D424), never the token or another claim beyond the
+  email and `sub` it already answered.
+- **An ended Access session is seen, not followed** (D424): the SPA sends every `/api/*` request with `redirect:
+  'manual'` (one `fetch`, a source check), so Access's redirect to its login page is an `opaqueredirect` the page
+  reports as an expired sign-in; the request waits in the tab's memory (nothing in browser storage) until Try again
+  sends it again, unchanged, after the staff member signed in in another tab (the same `CF_Authorization` cookie).
+  The Access flow, its session length and cookie settings are unchanged.
 - **The Access application is made from the manifest** (`scripts/access-setup.ts`, D409; tests
   `scripts/test/access-setup.test.ts`): one self-hosted application on `admin.origin`'s host, session 1 h, cookie
   HttpOnly + SameSite=Lax, Allow policies only, none with a service-token rule; `sandbox*`: exact `admin.staffEmails`
@@ -815,6 +832,18 @@ restricted key with Mail Send only, held by its Worker and one `.secrets/<env>/`
   only an opaque number, so no provider, sub or address reaches the URL, history, or the edge's and Access's request
   logs (a source test and DOM tests); it opens nothing on its own, shows Google's unverified claims with the CLI's
   warning, and has no export or select-all.
+- **The System status page is read-only and holds nothing back** (D425; tests `test/status.test.ts`,
+  `test-spa/status.test.ts`): `GET /api/status` behind the same two checks, GET only, `no-store`; it writes nothing,
+  acts on nothing and alerts nobody. Its three health RPCs are authenticated as their entrypoints' other methods
+  (`AdminRpc.systemStatus`, `StaffRpc.health`: `hana` actor only, a strict schema; `DirectoryRpc.health`: the staff
+  request's Access JWT, verified by the issuer before anything is read, no directory row, no audit row, no row budget)
+  and answer build ids, timings, counts and timestamps only, never an email, sub or name. The answer carries no secret
+  (a test greps for the watchdog token and the link and email keys): the admin's keys are named present or missing,
+  the relayer pools' keys are public keys, the watchdog's bearer stays server-side. Its outbound reads are the public
+  build endpoints `deploy-check` reads and NEAR's `block`, with a deadline, a read cap, no redirect followed and no
+  credential; what they answer is reduced to a status, a time and a well-formed build id. The SPA writes it as text,
+  and an issue's link becomes a link only when it is one of the console's own paths. The answer is shared between
+  staff for 30 s (it holds nothing per person).
 - **The feed's first run emails no history** (D344): a cursor with no row starts at the source's current position,
   silently; unnotified security events still go out.
 - **Security & monitoring (C14; D330–D338)** is a view: it never alerts and never acts on chain. The watchdog is
@@ -841,8 +870,10 @@ restricted key with Mail Send only, held by its Worker and one `.secrets/<env>/`
   admin role changes the ledger only through the owner's retention functions (it still can't update an event or
   delete an `app_users` row, a settlement or a partition itself); each function computes its D90 cutoff from the
   database's clock. The retention RPCs take the cron's `system` actor only and clamp `before` to their period in SQL
-  (60 months by the triggers' own clock; 30 days after an app's deletion), so a caller can't purge a younger row. The
-  audit purges keep what drift detection reads (D364). The erasure record (`ops.erasures`) holds a ticket, an operator
+  (60 months by the triggers' own clock; 24 months for `user_events`, D433; 30 days after an app's deletion), so a
+  caller can't purge a younger row. The audit purges keep what drift detection reads (D364). An erasure deletes the
+  user's `user_events` (key exports, mainnet demo signatures) by internal id and by each wallet address of theirs,
+  before their wallet rows, and re-counts them to zero (D433). The erasure record (`ops.erasures`) holds a ticket, an operator
   and counts, never a uid, a sub or an address, and is append-only for the owner too. An erasure reads the account
   from the chain (a failed read stops it) and never writes to the chain: wallets and paths are unchanged (D366).
 - Residual: a compromised admin Worker can send anything to anyone through SendGrid, ack notices without sending them,
@@ -858,8 +889,8 @@ restricted key with Mail Send only, held by its Worker and one `.secrets/<env>/`
 
 | Invariant | Where |
 |---|---|
-| **The issuer's `APP_DB` is a read-write binding of the API's D1** (Cloudflare has no read-only D1 binding): a compromised issuer Worker, or a bug in it, could write the API's tables (an app's origins, keys, settings). Held to reads by a source check (every use goes through `src/apps.ts`, SELECTs only); before mainnet replaced by a read-only RPC on the API (D251, `docs/mainnet-readiness.md`) | `apps/email-issuer/scripts/test/app-db-read-only.test.ts` |
-| The app gate reads the API's D1 by the API gate's model (D233): a key in `app_keys` not revoked or still in its grace, an undeleted app, active only with no suspension bit; the legacy `apps.publishable_key` is never read (source check `apps/api/scripts/test/hot-db-reads.test.ts`, no allowlist) | `src/apps.ts`; `test/codes.test.ts` |
+| **The issuer binds no D1 of the API's** (D434, replacing D251's read-write `APP_DB`): it reads apps only through the API Worker's read-only `IssuerRpc` entrypoint (service binding `API`), whose three methods (`appByKey`, `appById`, `scopeHasEmailApp`) prepare SELECTs only and answer an app's issuer view only (id, name, scope, active, email on, plan limits, its Google web client; no key, origin, setting, session or user data). A compromised issuer Worker can't write the API's tables, and can read only those answers; it takes no clock from the issuer (a key's grace runs on the API's time). Only the issuer binds `IssuerRpc`; inputs are strict (`bad_request`); a failed or malformed answer fails the request closed (`503 api_unavailable`, nothing minted or sent) | `apps/email-issuer/scripts/gen-wrangler.ts`, `apps/api/src/rpc/issuer.ts`, `apps/api/src/issuer-apps.ts`; `apps/email-issuer/scripts/test/api-read-only.test.ts`, `apps/api/scripts/test/issuer-rpc-source.test.ts`, `apps/api/test/rpc-issuer.test.ts`, `apps/admin/scripts/test/gen-wrangler.test.ts` (only the issuer binds IssuerRpc; only the API binds its D1) |
+| The app gate's lookups (IssuerRpc, run in the API) follow the API gate's model (D233): a key in `app_keys` not revoked or still in its grace, an undeleted app, active only with no suspension bit; the legacy `apps.publishable_key` is never read (source check `apps/api/scripts/test/hot-db-reads.test.ts`, no allowlist) | `apps/api/src/issuer-apps.ts`, `src/apps.ts` (the client); `apps/api/test/rpc-issuer.test.ts`, `test/codes.test.ts` |
 | Only the issuer computes `sub` (`@hana-id/email` `emailSub` over `normalizeEmail().email`, `+tag` kept, D159); mail goes to that normalized address, byte for byte | `src/handlers.ts` `handleStart`, `handleVerify`, `handleGoogleMatch` |
 | Every token's nonce is computed by the issuer from the commitment with the pinned signer, so a token serves only its purpose (never a register proof or another app's client proof); the commitment's scope must be the app's | `src/commitment.ts`, `src/layouts.ts` (checked against `email_fixture.json`) |
 | An `auto_link` token commits to the join read from the chain at minting (D133); it is minted only for Google-hosted case A with `link`, case B with a `linkTicket` bound to the same `sub` and this Google identity, or a case-A code challenge google-match prepared with Google's verified address (D195); never while `unrecorded_wallets` | `src/decide.ts` (the contract's `auto_link` rules), `handleGoogleMatch`, `handleVerify` |
@@ -880,7 +911,7 @@ restricted key with Mail Send only, held by its Worker and one `.secrets/<env>/`
 | Each purpose's mail says what the code does (sign in, add this email, allow another sign-in method, remove one, link Google), so a code phished for one action doesn't read as a sign-in (D199) | `src/mail.ts`; `test/review.test.ts` |
 | The issuer's token layouts are checked in the real contract: tokens minted by the issuer's code (session, auto_link case A and B, link_account) pass `hana-signer`'s unit tests | `scripts/gen-contract-fixture.ts`, `contracts/hana-signer/src/tests/email/issuer_tokens.rs` |
 
-### Email sharing (D411, D438–D443; branch `feat/email-sharing`, not merged)
+### Email sharing (D411, D438–D443; branch `feat/email-sharing-2`, not merged)
 
 | Invariant | Where |
 |---|---|
@@ -913,6 +944,15 @@ until they expire (≤ 1 h); another tab's cached token likewise.
   `/login/email`, `/approve`, `/export`) `img-src` also names the files origin, in place and in both policies (a test
   holds the header and the meta policy to the same directives); the page shows a logo only from that origin, with
   `alt=""` and `no-referrer`, and drops any other value (D305). No partner-hosted image ever (D74).
+- Auth pages' brand (D426): every page loads Hana's Montserrat (`packages/brand`, SIL OFL 1.1) from its own origin
+  only. The build writes the three faces it uses into `/assets/files/` with `OFL.txt` beside them; the auth Worker
+  serves them as any static asset (the binding's `font/woff2`, same-origin CORP, `nosniff`, the asset policy), and
+  the pages load them under the unchanged `font-src 'self'` (no font CDN, no `data:` font). `font-display: optional`:
+  a face that isn't there at first paint is skipped for that view, so no text re-flows under the user in the approval
+  and consent popups. Every page has the same static Hana bar above its content (the mark and wordmark as inline SVG:
+  no text, no URL, nothing that runs; a build test); the app's logo, name and origin stay inside the page in a
+  neutral box of their own, so Hana's chrome never names the app and the app can't take Hana's place. The vault
+  loads no font: its launcher has Hana's colours on the system font (a build test keeps `vault.js` free of fonts).
 
 ### Files Worker (logos; `apps/files`, batch C11; tests `apps/files/test`, `apps/files/scripts/test`)
 
@@ -962,7 +1002,8 @@ until they expire (≤ 1 h); another tab's cached token likewise.
   `frame-ancestors` alone, which every current browser enforces for every ancestor. Popups and the vault authenticate each other by `event.origin` and
   `event.source`. The vault's first message, `connected` (no data), goes only on the port of the hello it took, after
   every one of those checks; a hello it refuses, and its 403/503 page (framed nowhere, no script), get no answer at
-  all, so a page that frames it learns nothing from the handshake (D262). The SDK's one retry inserts the same frame
+  all, so a page that frames it learns nothing from the handshake (D262). The SDK's `no_answer` names only the page's
+  own `location.origin` (`data.origin`, D427), which the page already knows: the vault still says nothing. The SDK's one retry inserts the same frame
   (same name and `src`) after removing the first, closes the first's port and ignores its late events; a failed
 handshake removes the frame and closes its port, as `destroy()` does.
 - No message in any direction carries key bytes, S, PRK, a CKD response, a token or a session secret, except
@@ -1261,6 +1302,39 @@ it only as the fallback. So the partner page, and any script on it, holds a Wind
   A severed popup reaches no vault and shows an error; the SDK sees its handle closed and leaves the request to the
   launcher.
 
+## The mainnet demo and key export (D428–D430)
+
+Spec and self-review: `docs/mainnet-demo-and-key-export-spec.md`.
+
+**The mainnet demo (D428, D429): an exception to D39.** A `pk_test_` app whose `apps.mainnet_demo` Hana staff set may
+sign on Base (8453) and Stellar's public network, at most $9.99 per transaction, fee included. What protects what:
+
+| Threat | What stops it, or bounds it | Where |
+|---|---|---|
+| The demo reaches a production env | Four independent layers, all on the env's own facts: the vault's build constants (`devEnv`, `network`), the API (`isDevEnv(ENV_NAME)` and `NETWORK = testnet`) before it serves `mainnetDemo: true`, the writers (CLI and `AdminRpc.setMainnetDemo` refuse outside a dev testnet env), and a D1 trigger that refuses the switch for a live scope. The manifest schema accepts only testnet today | `vault/vault.ts` `demoBuild`, `src/mainnet-demo-setting.ts`, `changes/settings.ts`, `scripts/lib/admin-settings.ts`, migration 0013 |
+| A partner (or any script on its page) turns it on | No partner method or control; ConsoleRpc has none; a member actor is refused by AdminRpc; partners don't see the flag | `rpc/admin.ts`, `rpc/console.ts` |
+| A page drains the wallet | Every demo request goes through the approval popup (never auto-approved, whatever policy) with the red banner and its value; at most $9.99 each. There is no daily cap (the user's choice): a user who approves N requests can lose N × $9.99, up to the balance, so the popup warns when the wallet holds more than $10 | `vault/vault.ts` `sign`, `auth/approve-page.ts` |
+| Something moves more than it shows | Fail closed: only listed shapes are valued (plain sends, USDC transfers and approvals, Sodax deposits with exactly the expected hub calls, Stellar payments, account creation, a USDC trustline, Sodax's Soroban deposit with exactly its auth); every movement and the maximum fee are counted, rounded up; decoders are the approval page's canonical ones, so the vault values what the chain executes. An unknown call, token, operation, typed data or auth entry is refused | `packages/core/src/mainnet-demo.ts` |
+| Earlier funds in the user's Sodax hub wallet are spent by a crafted deposit | A deposit's hub calls must be exactly `approve(intents, g ≤ amount)` on the deposited asset's hub asset and `createIntent` with that input and an amount ≤ g | `checkSodaxHubCalls` |
+| The price table goes stale (the market rises above it) | Prices set well above the market; the table expires 45 days after review and every demo request is refused after that | `MAINNET_DEMO.validUntilMs` |
+| The vault reads a stale "on" | `mainnetDemo` is re-read when older than 10 s; a failed read refuses | `freshMainnetDemo` |
+| A lying balance | The balance is read by the popup (no key there) from Hana's pinned endpoints, never the partner's RPC; it only changes a warning, never what is signed. It tells Base's public RPC and Horizon the user's IP and address (public data; partners' pages already do this) | `auth/demo-balance.ts`, `/approve` CSP |
+| Fake usage reports | Each report is proven by a live session (its key's signature over the event, single use) and by the address's own wallet proof for that session and app, so no one can report for another user or address; the row names the session's user. That the signature happened is still the vault's word: rate-limited per app, labelled "reported by the vault", nothing acts on them | `src/mainnet-demo.ts` |
+| Hiding a key export from staff | Each user's events are capped per kind in the staff view, so no number of signature reports can push an export out; exports are written by the API itself | `src/directory/read.ts` `withEvents` |
+
+Not bounded by any of this: the testnet MPC itself (D39's reason). Whoever can make the testnet MPC derive a user's key
+(its operators, a compromise of it) can take everything at the address, cap or not. That is why the balance warning is
+loud, the demo stays in dev envs, and keys can be exported (below).
+
+**Key export (D40, D59, D111, D268, D430).** The key is derived only in a top-level window on the auth origin after a
+fresh sign-in of its own (Google `max_age=0` or an email code), shown behind a typed `EXPORT` and the approval popup's
+guard (D430), hidden again after 60 s, erased after 5 min or at the session's end, never stored, sent, logged or put in
+a URL (a source test checks the window's code for each), and never the CKD output or PRK (zeroed at derivation). No
+SDK method returns a key; the partner-facing protocol's `hana_export` answers `null` and the export messages carry
+public fields only (tested). The API records `key_exported` (user, app, chain, time) at the export login, server-side.
+Residual, accepted: a copied key leaves Hana's control (D268); screen capture and shoulder-surfing; a compromise of the
+auth origin's code is a compromise of every key exported there (as of the login pages).
+
 ## Auto-approve policies
 
 Code: `packages/core/src/policy/` (validator, matcher, `policyId`, usage); the vault enforces them
@@ -1376,9 +1450,9 @@ findings are tracked with their own fixes.
 
 Status: **fixed** (a), (b), (c), (d), (f), (n); **fixed on sandbox-dev** (e) (the governance contract and watchdog run there
 since 2026-10-30; mainnet ships with them once its delay, council and watchdog account are set up: D80, D81, D86);
-**accepted** (k), (m), and the residual risks named under (b)–(d) and
+**accepted** (k), (m), (p), and the residual risks named under (b)–(d) and
 "Auto-approve policies"; **fixed for the CLI** (i); **open** (g), (h), (j) (sandbox-dev only; production envs
-need D38's two domains), (l) (pre-mainnet: the identity token's KMS signer; the JWKS pin check is built as detection only, D210). The 2026-10-29 security sweep's items in the API, tooling and CI: "Security sweep
+need D38's two domains), (l) (pre-mainnet: the identity token's KMS signer; the JWKS pin check is built as detection only, D210), (o) and (q) (the mainnet demo's, D428). The 2026-10-29 security sweep's items in the API, tooling and CI: "Security sweep
 2026-10-29" below.
 
 **(a) Unlock and touch don't re-check the app's current settings. Fixed.** Unlock and touch now read the app's
@@ -1446,7 +1520,13 @@ plan (D33; built, and deployed on sandbox-dev 2026-10-30), specified in `docs/go
 - Watchdog (D82, D86): its own service, key and Cloudflare account. It cancels a pending key Google doesn't publish,
   deletes the updater key that proposed one (not when it is Google's own material from the last 24 h, a retirement race:
   D153), and pauses only when such a key is active on chain; everything else is
-  alert-only. The owner unpauses at once. Pause stops derivation and every token path, never governance. Built in
+  alert-only. An updater Add of a kid no fetch of the watchdog ever listed (Google's new key seen first by the API
+  cron's edge, or a forgery) waits until min(proposed + 6 h, executable − 18 min) with an `unseen_key_change` warning
+  before that cancel and deletion (D432): the cancel still lands 3·(W + T) before anyone may execute it, a forged key
+  can only leave the wait by being cancelled (only Google's JWKS listing the same material confirms it), and the
+  stolen updater key's extra time (mainnet: up to 1 h 42 min) buys more forged proposals, each cancelled by its own
+  deadline and all of them once one is judged forged, and removals, which page at once as before. No grace when the
+  watchdog can't act, for owner proposals, once a run finds the updater forging, or with a delay ≤ 18 min. The owner unpauses at once. Pause stops derivation and every token path, never governance. Built in
   `apps/watchdog`, deployed on sandbox-dev 2026-10-30. Pause stops derivation only for as long as it lasts:
   sessions a forged key opened before the pause would derive again after it (up to 24 h, any `max_uses`), so the
   runbook raises the owner's session floor (`set_sessions_valid_from_ms`) past the pause before unpausing, which
@@ -1575,6 +1655,24 @@ is public (`get_session`), so anyone could sign a statement with their own Stell
 session and path and get their address listed as the victim's wallet. The request now also needs the session key's
 signature over the whole body (D311, D313 amended; "Wallet directory" in the API's invariants). Not to be confused
 with (m), which needs the victim's own approval and only ever lists a row under the attacker's own user.
+
+**(o) The mainnet demo puts real funds behind testnet custody. Open, by design (D428; dev envs only).** A demo app's
+users hold real funds on Base and Stellar at addresses whose keys the testnet MPC derives; the per-transaction cap
+($9.99) and the popup bound what a page can take per request, not what the MPC's operators (or a compromise of the
+testnet MPC) can take, which is everything at the address. Mitigations: the balance warning above $10, the demo only
+in dev envs and only by staff, and key export. Remove the switch from every app when the Sodax demo ends.
+
+**(p) Mainnet demo usage events are the vault's word. Accepted** (D429, as fixed after the security review of 2026-11-06).
+`POST /v1/mainnet-demo/events` takes a report only with the session key's signature over it, the address's own wallet
+proof for that session and app, a live session on chain and a fresh single-use proof, and stores the session's user;
+so nobody can forge a report for another user or address. It still can't check that the signature itself happened:
+a user's own vault (or devtools on it) could report signatures that weren't made, for their own wallet only; the rows
+are rate-limited (120 per app per hour), labelled "reported by the vault" and acted on by nothing.
+
+**(q) The mainnet demo's price table can be wrong. Open (to confirm, D429).** The prices are set well above the
+market on 2026-11-06 and expire on 2026-12-21; if the market rose past them before then, the cap would let more than
+$9.99 through per transaction (by the ratio). Review them against a live source before each demo (`docs/operations.md`
+"Reviewing the prices").
 
 **(l) Identity token: testnet signing key. Open (pre-mainnet).** Build steps 1–4 sign with
 a Worker-secret P-256 key (`IDENTITY_SIGNING_KEY`): anyone who can read the API Worker's secrets once can forge any

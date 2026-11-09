@@ -114,6 +114,8 @@ export interface AppSpec {
   origins: string[];
   status?: 'active' | 'suspended';
   settings?: { persistence?: 'session' | 'none'; rawSign?: 'off' | 'approval'; autoApprovePolicy?: Body | null };
+  /** `apps.mainnet_demo` (migration 0013, D428): Hana staff's switch for the mainnet demo exception (a test app only). */
+  mainnetDemo?: boolean;
   /** A fixed key, for a page that bakes its key in at build time (the demo): the app is created on first use only. */
   publishableKey?: string;
   /**
@@ -164,6 +166,8 @@ export class MockApi {
     const env: ApiEnv = {
       DB: d1,
       ENV_NAME: serves.envName,
+      // As the manifest's `network` (gen-wrangler.ts): the mainnet demo (D428) exists only on testnet.
+      NETWORK: 'testnet',
       NEAR_RPC: opts.nearRpc ?? NEAR_RPC,
       SIGNER_ACCOUNT: E2E_ENV.signer,
       RELAYER_ACCOUNT: E2E_ENV.relayer,
@@ -211,6 +215,7 @@ export class MockApi {
       .run(appId, spec.name ?? 'E2E Partner', scopeId, pk, spec.status ?? 'active', s.persistence ?? 'session', s.rawSign ?? 'off', s.autoApprovePolicy ? JSON.stringify(s.autoApprovePolicy) : null);
     if (spec.status === 'suspended') this.d1.db.prepare('UPDATE apps SET suspended_by = 1 WHERE id = ?').run(appId);
     if (spec.loginMethods) this.d1.db.prepare('UPDATE apps SET login_methods = ? WHERE id = ?').run(spec.loginMethods, appId);
+    if (spec.mainnetDemo) this.d1.db.prepare('UPDATE apps SET mainnet_demo = 1 WHERE id = ?').run(appId);
     this.d1.db.prepare("INSERT INTO app_keys (id, app_id, key, created_by, created_at) VALUES (?, ?, ?, 'e2e', ?)").run(`key_${appId}`, appId, pk, now);
     const insert = this.d1.db.prepare('INSERT INTO app_origins (app_id, origin, active_from) VALUES (?, ?, 0)');
     for (const o of spec.origins) insert.run(appId, o);
@@ -293,6 +298,8 @@ export class MockApi {
     // CKD payload. Its `auto_link` nonce is the vault's to check (and apps/api's precheck, with its own tests).
     if (b.linkJwt !== undefined && !(typeof b.linkJwt === 'string' && b.linkJwt.startsWith('{'))) throw new HttpError(400, 'bad_request');
     if (b.linkImmediate !== undefined && (typeof b.linkImmediate !== 'boolean' || b.linkJwt === undefined)) throw new HttpError(400, 'bad_request');
+    // The export window's chain label (D430), as apps/api's toLogin checks it.
+    if (b.exportChain !== undefined && b.exportChain !== 'stellar' && b.exportChain !== 'evm') throw new HttpError(400, 'bad_request');
     // An email token (JWS JSON, `{"payload":…}`) or a Google one; the path is the contract's (the identity's own, or its
     // account root's, batch 7). The token's signature is the vault's to check here (and apps/api's own tests'), as for
     // Google.

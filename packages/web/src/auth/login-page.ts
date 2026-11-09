@@ -208,7 +208,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
       const url = googleRequest.url;
       // The app's logo (batch C11), when the preparer sent one on this build's files origin.
       const intro = () =>
-        d.h('p', {}, appLogo(d, env, msg.logoUrl), task ? 'Adding a sign-in method in ' : 'Signing in to ', d.h('strong', {}, msg.appName), ' at ', d.h('span', { class: 'origin' }, msg.parentOrigin));
+        d.h('p', { class: 'asker' }, appLogo(d, env, msg.logoUrl), task ? 'Adding a sign-in method in ' : 'Signing in to ', d.h('strong', {}, msg.appName), ' at ', d.h('span', { class: 'origin' }, msg.parentOrigin));
       // Email is offered only by the vault or the export window, only for an env with an email issuer.
       const methods: readonly LoginMethod[] = msg.methods && env.emailIssuerUrl ? msg.methods : ['google'];
       /** The email context: the email step's facts, and (batch 8b) the follow-up mode's, which a Google login needs too. */

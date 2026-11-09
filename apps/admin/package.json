@@ -8,7 +8,9 @@
     "gen": "tsx scripts/gen-wrangler.ts",
     "deploy": "tsx ../../packages/env/src/stamped-deploy.ts",
     "test": "vitest run && vitest run -c vitest.scripts.config.ts && vitest run -c vitest.ops.config.ts && vitest run -c vitest.spa.config.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts && tsc --noEmit -p test-ops && tsc --noEmit -p test-spa"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts && tsc --noEmit -p test-ops && tsc --noEmit -p test-spa",
+    "preview": "tsx test-spa/preview.ts",
+    "sync-brand": "tsx scripts/sync-brand.ts"
   },
   "dependencies": {
     "@hana-id/console-core": "workspace:*",
@@ -23,6 +25,7 @@
     "@cloudflare/vitest-plugin": "1.4.4",
     "@cloudflare/workers-types": "5.20261016.1",
     "@electric-sql/pglite": "0.5.11",
+    "@hana-id/brand": "workspace:*",
     "@types/node": "^22.0.0",
     "@types/pg": "8.23.1",
     "happy-dom": "21.0.3",

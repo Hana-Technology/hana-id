@@ -6,6 +6,7 @@ import { type App, PUBLISHABLE_KEY_RE, appSuspended, getAppByKey } from '../apps
 import type { Env } from '../env.ts';
 import { log } from '../log.ts';
 import { MAX_APP_ORIGINS, servedOrigins } from './origins.ts';
+import { mainnetDemoOn } from '../mainnet-demo-setting.ts';
 import { type AppSettings, effectiveSettings, getSettingsRow } from './settings.ts';
 
 export const VAULT_PAGE_PATH = '/vault';
@@ -23,7 +24,8 @@ export interface VaultConfig {
   appName: string;
   scopeId: string;
   origins: string[];
-  settings: AppSettings;
+  /** `mainnetDemo: true` only for an app with the demo on, in a dev testnet env (D428); absent otherwise. */
+  settings: AppSettings & { mainnetDemo?: true };
   publishableKey: string;
   serverTimeMs: number;
 }
@@ -110,6 +112,7 @@ export async function handleVaultPage(request: Request, env: Env, requestId: str
 
   let app: App | null;
   let settings: AppSettings;
+  let mainnetDemo = false;
   try {
     app = await getAppByKey(env.DB, key);
     if (!app) return errorPage(403, requestId, undefined, 'unknown_app', head);
@@ -117,6 +120,9 @@ export async function handleVaultPage(request: Request, env: Env, requestId: str
     const row = await getSettingsRow(env.DB, app.id);
     if (!row) return errorPage(403, requestId, app.id, 'unknown_app', head);
     settings = await effectiveSettings(row, app.id, Date.now());
+    // The mainnet demo (D428): the vault tells the SDK early; only when on (a vault bundle older than the field
+    // would refuse an unknown key, and only demo apps in dev envs ever get it). Off on any read failure.
+    mainnetDemo = await mainnetDemoOn(env, app);
   } catch {
     return errorPage(503, requestId, undefined, 'config_unavailable', head);
   }
@@ -133,7 +139,7 @@ export async function handleVaultPage(request: Request, env: Env, requestId: str
     appName: app.name,
     scopeId: app.scope_id,
     origins,
-    settings,
+    settings: mainnetDemo ? { ...settings, mainnetDemo: true } : settings,
     publishableKey: app.publishable_key,
     serverTimeMs: Date.now(),
   };

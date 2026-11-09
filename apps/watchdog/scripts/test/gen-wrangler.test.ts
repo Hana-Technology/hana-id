@@ -2,9 +2,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { KeyPair } from '@near-js/crypto';
-import { ENV_ALERT_LABELS, envAlertLabel, isDevEnv, loadEnv, type Manifest, PAGER_PROVIDERS, manifestSchema, WATCHDOG_INTERVAL_MS } from '@hana-id/env';
+import { ENV_ALERT_LABELS, envAlertLabel, isDevEnv, loadEnv, type Manifest, MIN_ISSUER_KEY_DELAY_MS, PAGER_PROVIDERS, manifestSchema, WATCHDOG_INTERVAL_MS } from '@hana-id/env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { RUN_INTERVAL_MS } from '../../src/checks.ts';
+import { NEW_KID_CANCEL_LEAD_MS, RUN_INTERVAL_MS } from '../../src/checks.ts';
 
 import { identityDiscoveryUrl, parseIdentityPins } from '../../src/identity.ts';
 import { parsePins } from '../../src/pins.ts';
@@ -57,6 +57,8 @@ describe('wranglerConfig', () => {
     // The interval the deploy-contract delay floor assumes (W in issuer_key_delay_ms ≥ 3·(W + T), @hana-id/env).
     expect(RUN_INTERVAL_MS).toBe(5 * 60_000);
     expect(WATCHDOG_INTERVAL_MS).toBe(RUN_INTERVAL_MS);
+    // D432: an unseen kid's grace ends at least the delay's security bound before the change is executable.
+    expect(NEW_KID_CANCEL_LEAD_MS).toBe(MIN_ISSUER_KEY_DELAY_MS);
   });
 
   it('puts no secret in the config: secrets are Worker secrets', () => {

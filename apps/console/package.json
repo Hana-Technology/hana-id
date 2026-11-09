@@ -8,9 +8,10 @@
     "gen": "tsx scripts/gen-wrangler.ts",
     "build": "vite build",
     "dev:web": "vite",
+    "preview:web": "vite -c preview/vite.config.ts",
     "deploy": "vite build && tsx ../../packages/env/src/stamped-deploy.ts",
     "test": "vitest run && vitest run -c vitest.scripts.config.ts && vitest run -c vitest.web.config.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts && tsc --noEmit -p web"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts && tsc --noEmit -p web && tsc --noEmit -p preview"
   },
   "dependencies": {
     "@hana-id/console-core": "workspace:*",
@@ -25,6 +26,7 @@
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.4.4",
     "@cloudflare/workers-types": "5.20261016.1",
+    "@hana-id/brand": "workspace:*",
     "@testing-library/dom": "10.4.2",
     "@testing-library/react": "16.3.3",
     "@types/node": "^22.0.0",

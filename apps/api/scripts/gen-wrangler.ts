@@ -27,7 +27,7 @@ import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { IDENTITY_SECRET_FILES, identitySealKeyId, type Manifest, accountIdFields, customDomainPlacement, emailIssuerUrl, hanaOwnOrigins, isLoopbackHost, loadEnv, p256Thumbprint, repoRoot } from '@hana-id/env';
+import { IDENTITY_SECRET_FILES, identitySealKeyId, type Manifest, accountIdFields, apiRpcFallbacksOf, customDomainPlacement, emailIssuerUrl, hanaOwnOrigins, isLoopbackHost, loadEnv, p256Thumbprint, repoRoot } from '@hana-id/env';
 import { IDENTITY_RATE_LIMITS } from '../src/identity/limits.ts';
 import { VAULT_RATE_LIMITS } from '../src/vault/limits.ts';
 import { workersDevHost, writePagesWranglerConfigs } from './pages-wrangler.ts';
@@ -124,6 +124,8 @@ export function wranglerConfig(m: Manifest, d1Id: string, opts: { usageHyperdriv
     vars: {
       NEAR_RPC: m.rpc,
       ...(m.rpcFallback ? { NEAR_RPC_FALLBACK: m.rpcFallback } : {}),
+      // The API's own failover list after NEAR_RPC (D435): apiRpcFallbacks, else rpcFallback; none, no var.
+      ...(apiRpcFallbacksOf(m).length ? { NEAR_RPC_FALLBACKS: JSON.stringify(apiRpcFallbacksOf(m)) } : {}),
       SIGNER_ACCOUNT: m.signer,
       RELAYER_ACCOUNT: m.relayer,
       ENV_NAME: m.name,

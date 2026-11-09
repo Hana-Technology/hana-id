@@ -25,7 +25,7 @@
 import { type WindowMessage, parseWindowMessage } from '@hana-id/core';
 import type { HanaEnv } from '../hana-env.ts';
 import type { AuthApi } from './api.ts';
-import { ApproveGuard, type GuardInput, guardInput } from './approve-guard.ts';
+import { ApproveGuard, type GuardInput, guardInputOf } from './approve-guard.ts';
 import { type Dom, dom, errorView } from './dom.ts';
 import { appLogo } from './logo.ts';
 import { type GestureCheck, type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed, isUserGesture } from './page-window.ts';
@@ -135,7 +135,7 @@ export function startSharePage(deps: SharePageDeps): SharePage {
   };
 
   const onGesture = (type: GuardInput['type']) => (e: Event) => {
-    if (isGesture(e)) guard.gesture(guardInput(type, e));
+    if (isGesture(e)) guard.gesture(guardInputOf(type, e));
   };
   const onVisibility = () => (visible() ? guard.focused() : guard.blurred());
   const listeners: [string, (e: Event) => void][] = [

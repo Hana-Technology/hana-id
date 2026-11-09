@@ -12,6 +12,11 @@ HANA_E2E_PORT_BASE=4510 corepack pnpm --filter @hana-id/e2e e2e   # another work
 corepack pnpm --filter @hana-id/e2e test          # unit tests of the stack's mocks (part of `pnpm -r test`)
 ```
 
+The mainnet demo (D428) and the export's guarded reveal (D430): `tests/mainnet-demo.spec.ts` (Horizon and Base's RPC
+routed, never the real network). With `HANA_SHOTS_DIR=<dir>` it also saves its screens there (Chromium only; a shown
+key is masked). Buttons behind the guard (Approve, the export's Continue and Show key) take `approve()` or
+`guardedClick()` (`tests/fixtures.ts`): wait 1 s, move the pointer, then click.
+
 An unfinished login (`tests/abandoned-login.spec.ts`; the follow-up screens in `tests/linking.spec.ts`, the demo's in
 `tests/demo.spec.ts`): the popup left on the method chooser, Google's page, the email address or code step, a link
 code screen or a banner, or closed (on the chooser: `login_cancelled` within seconds, D347, in real time). The tests install Playwright's clock (`page.clock`, for the whole context: the
@@ -77,7 +82,7 @@ apps/api's migrations.
 
 Email login (`tests/email.spec.ts`, build plan batch 8a) runs apps/email-issuer's own Worker in Node
 (`src/server/issuer.ts`) on its own origin, as on sandbox-dev (D230): its handlers, its `Challenge`, `RateLimiter` and
-`Outbox` objects on in-memory storage, its D1 migrations, and the API's D1 as `APP_DB`. Mail goes to the `outbox` stub
+`Outbox` objects on in-memory storage, its D1 migrations, and the API's real read-only `IssuerRpc` (on the API's D1) as its `API` binding (D434). Mail goes to the `outbox` stub
 (`local*` envs only), which the tests read through `GET /__e2e/outbox?to=<address>` (no CORS, refused with an
 `Origin`). The stack makes a throwaway RSA signing key and HMAC keys per run; the mocked chain lists the key as the
 active `email` key of signer `hana` and gives every scope its email client, so the vault's on-chain token check passes,

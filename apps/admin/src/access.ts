@@ -19,7 +19,11 @@ export interface StaffActor {
   email: string;
 }
 
-export type StaffCheck = { ok: true; actor: StaffActor } | { ok: false; code: Extract<AdminErrorCode, 'unauthenticated' | 'not_staff' | 'access_unavailable'>; reason: string };
+/**
+ * `exp`: the Access token's expiry (seconds since the epoch), when this sign-in ends. Only this number leaves the
+ * Worker (`GET /api/me` `accessExp`, for the SPA's "your sign-in ends in N min"); the token itself never does.
+ */
+export type StaffCheck = { ok: true; actor: StaffActor; exp: number } | { ok: false; code: Extract<AdminErrorCode, 'unauthenticated' | 'not_staff' | 'access_unavailable'>; reason: string };
 
 const AUD_RE = /^[0-9a-f]{64}$/u;
 
@@ -81,5 +85,5 @@ export async function checkStaff(request: Request, env: Env, requestId: string, 
     log({ event: 'access_refused', requestId, code: 'not_staff' }, 'warn');
     return { ok: false, code: 'not_staff', reason: 'not_staff' };
   }
-  return { ok: true, actor: { kind: 'hana', id: result.identity.sub, email } };
+  return { ok: true, actor: { kind: 'hana', id: result.identity.sub, email }, exp: result.identity.exp };
 }

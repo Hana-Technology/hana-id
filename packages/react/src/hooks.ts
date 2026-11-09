@@ -8,11 +8,12 @@
 //
 // `login` returns a promise that is already marked handled, so `onClick={login}` (where React drops the returned
 // promise) never turns a closed popup or a 4001 into an unhandled rejection: the failure is in `useHana().error`. A
-// caller that awaits or `.catch`es it still gets the rejection. `logout` and `exportKey` reject as usual: their
+// caller that awaits or `.catch`es it still gets the rejection. `login(options)` takes `hana.login()`'s options
+// (`{ method, emailHint }`); an event argument (`onClick={login}`) is not an option and is dropped. `logout` and `exportKey` reject as usual: their
 // failures are reported nowhere else, so handle them (`onClick={() => logout().catch(report)}`).
-import type { HanaAddresses, HanaClient, HanaEthereumProvider, HanaStellarSigner } from '@hana-id/web';
+import type { HanaAddresses, HanaClient, HanaEthereumProvider, HanaStellarSigner, LoginOptions } from '@hana-id/web';
 import { HanaError } from '@hana-id/web';
-import { useCallback, useContext, useMemo, useSyncExternalStore } from 'react';
+import { type SyntheticEvent, useCallback, useContext, useMemo, useSyncExternalStore } from 'react';
 import { HanaContext, type HanaContextValue } from './provider.tsx';
 import { INITIAL_STATE, type HanaState } from './store.ts';
 
@@ -21,9 +22,11 @@ export type HanaChain = 'stellar' | 'evm';
 export interface UseHanaResult extends HanaState {
   /**
    * Logs in (popup) and resolves with the addresses. Call it synchronously from an onClick; `onClick={login}` is fine.
-   * A failure also lands in `error`, so the returned promise may be ignored (it is marked handled).
+   * A failure also lands in `error`, so the returned promise may be ignored (it is marked handled). `options` are
+   * `hana.login()`'s (`{ method: 'google' | 'email', emailHint }`): `onClick={() => login({ method: 'email' })}`. An
+   * event passed by `onClick={login}` is ignored.
    */
-  login(): Promise<HanaAddresses>;
+  login(options?: LoginOptions | SyntheticEvent | Event): Promise<HanaAddresses>;
   logout(): Promise<void>;
   /** Starts a key export: the key is shown only in a Hana window, never returned to the page. */
   exportKey(chain: HanaChain): Promise<null>;
@@ -62,6 +65,15 @@ const notMounted = (): Promise<never> => Promise.reject(new HanaError(4900, 'Han
 
 const ignore = (): void => {};
 
+/** The login options in `arg`, or undefined for none: a DOM or React event (`onClick={login}`) is not options. */
+function loginOptionsOf(arg: unknown): LoginOptions | undefined {
+  if (arg === undefined || arg === null) return undefined;
+  if (typeof Event !== 'undefined' && arg instanceof Event) return undefined;
+  if (typeof arg === 'object' && 'nativeEvent' in arg) return undefined;
+  // Anything else goes to hana.login(), which refuses bad options with -32602 before any popup.
+  return arg as LoginOptions;
+}
+
 /** `p` itself, with a no-op handler attached so dropping it isn't an unhandled rejection (see the header). */
 function handled<T>(p: Promise<T>): Promise<T> {
   p.catch(ignore);
@@ -72,8 +84,14 @@ export function useHana(): UseHanaResult {
   const ctx = useHanaContext('useHana');
   const state = useHanaState(ctx);
   const { client } = ctx;
-  // Ignore arguments, so `onClick={login}` (which passes the click event) works.
-  const login = useCallback(() => handled(client ? client.login() : notMounted()), [client]);
+  // An event argument is dropped, so `onClick={login}` (which passes the click event) works.
+  const login = useCallback(
+    (options?: LoginOptions | SyntheticEvent | Event) => {
+      const o = loginOptionsOf(options);
+      return handled(client ? (o === undefined ? client.login() : client.login(o)) : notMounted());
+    },
+    [client],
+  );
   const logout = useCallback(() => (client ? client.logout() : notMounted()), [client]);
   const exportKey = useCallback((chain: HanaChain) => (client ? client.exportKey(chain) : notMounted()), [client]);
   return useMemo(() => ({ ...state, login, logout, exportKey, client }), [state, login, logout, exportKey, client]);

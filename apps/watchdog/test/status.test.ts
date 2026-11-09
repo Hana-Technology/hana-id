@@ -4,9 +4,10 @@ import { describe, expect, it } from 'vitest';
 import { CHECK_IDS } from '../src/checks.ts';
 import type { Env } from '../src/env.ts';
 import worker from '../src/index.ts';
-import { handleRequest, SILENT_AFTER_MS } from '../src/status.ts';
+import { BUILD_ID_RE as ENV_BUILD_ID_RE } from '@hana-id/env/build-id';
+import { BUILD_ID_RE, handleRequest, SILENT_AFTER_MS } from '../src/status.ts';
 import { Store } from '../src/store.ts';
-import { alertsOf, emailJwk, IDENTITY_ISS, identityKey, initialized, jwk, linkStats, linkWindow, MIN, pinsOf, RecordingNotifier } from './helpers.ts';
+import { alertsOf, emailJwk, IDENTITY_ISS, identityKey, initialized, jwk, linkStats, linkWindow, MIN, NO_GRACE, pinsOf, RecordingNotifier } from './helpers.ts';
 
 const TOKEN = 'status-token-for-tests-only-0123456789abcdef';
 const testEnv = (over: Partial<Env> = {}): Env => ({ ...(env as unknown as Env), WATCHDOG_STATUS_TOKEN: TOKEN, ...over });
@@ -86,6 +87,15 @@ describe('GET /status', () => {
     expect((body.alert_kinds as Record<string, { playbook: string }>).forged_active_key).toMatchObject({ severity: 'critical', playbook: 'forged-active-key' });
   });
 
+  it('serves its build id (D425): null unstamped or malformed, the format @hana-id/env checks', async () => {
+    const { body } = await call('/status');
+    expect(body.build).toBeNull();
+    expect((await call('/status', {}, Date.now(), testEnv({ HANA_BUILD: '0485faa1c2d3' }))).body.build).toBe('0485faa1c2d3');
+    expect((await call('/status', {}, Date.now(), testEnv({ HANA_BUILD: 'main; rm' }))).body.build).toBeNull();
+    expect(BUILD_ID_RE.source).toBe(ENV_BUILD_ID_RE.source);
+    expect(BUILD_ID_RE.flags).toBe(ENV_BUILD_ID_RE.flags);
+  });
+
   it('serves the last relayer reading with its thresholds, and the relayer alert kinds with their playbook', async () => {
     const w = await initialized();
     w.chain.setBalance(3);
@@ -137,7 +147,7 @@ describe('GET /status', () => {
 describe('GET /alerts and /actions', () => {
   it('pages the alert history newest first, with deliveries, and filters by severity', async () => {
     const w = await initialized();
-    w.chain.propose('Add', 'ghost');
+    w.chain.propose('Add', 'ghost', NO_GRACE);
     w.chain.config.sponsors = [];
     await w.run();
     const all = await call('/alerts?limit=2', {}, w.clock.t);
@@ -165,7 +175,7 @@ describe('POST /alerts/:id/ack', () => {
 
   it('records who acknowledged from the portal; stops re-sends, changes nothing else', async () => {
     const w = await initialized();
-    w.chain.propose('Add', 'ghost');
+    w.chain.propose('Add', 'ghost', NO_GRACE);
     await w.run();
     const [forged] = await alertsOf(w.store, 'forged_key_change');
     const before = await w.store.getAlert(forged!.id);
@@ -187,7 +197,7 @@ describe('POST /alerts/:id/ack', () => {
 
   it('validates the request', async () => {
     const w = await initialized();
-    w.chain.propose('Add', 'ghost');
+    w.chain.propose('Add', 'ghost', NO_GRACE);
     await w.run();
     const [forged] = await alertsOf(w.store, 'forged_key_change');
     expect((await ack(999999, { by: 'x' })).status).toBe(404);

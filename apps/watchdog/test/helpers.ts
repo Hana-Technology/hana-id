@@ -8,7 +8,7 @@ import type { Channel } from '../src/checks.ts';
 import { type IdentityResponse, p256Thumbprint } from '../src/identity.ts';
 import type { SignerPins } from '../src/pins.ts';
 import { type AccessKeyEntry, nearToYocto, type RelayerFunds, relayerFundsFrom, relayerThresholds } from '../src/relayer.ts';
-import { type RunDeps, type RunReport, runWatchdog } from '../src/run.ts';
+import { NEW_KID_CANCEL_LEAD_MS, RETIRED_ABSENT_SPAN_MS, RETIRED_MIN_KEY_AGE_MS, RETIRED_UNSEEN_MS, type RunDeps, type RunReport, runWatchdog } from '../src/run.ts';
 import { Store } from '../src/store.ts';
 
 export const SIGNER = 'signer.test.near';
@@ -42,6 +42,11 @@ export const UPDATER_KEYS = ['ed25519:7mEBxCsWzXSq3Rpy2RwEGWb7ux5YX4tdTnRvAYfGHu
 export const T0 = Date.UTC(2026, 9, 29, 12, 0);
 export const MIN = 60_000;
 export const HOUR = 60 * MIN;
+/**
+ * D432: proposal options for an issuer-key delay at its security bound, which leaves an updater Add of a kid the
+ * watchdog never saw no grace: judged forged at once, as before D432.
+ */
+export const NO_GRACE = { delay: NEW_KID_CANCEL_LEAD_MS } as const;
 
 const b64url = (bytes: Uint8Array): string => btoa(String.fromCharCode(...bytes)).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '');
 
@@ -540,6 +545,30 @@ export async function initialized(opts: Omit<WorldOpts, 'at'> & { before?: (w: W
   w.notifier.clear();
   w.writer.calls = [];
   return w;
+}
+
+/**
+ * D422: Google listed every kid of the world's JWKS for over RETIRED_MIN_KEY_AGE_MS, then only `keep` for over
+ * RETIRED_UNSEEN_MS: a kid dropped here is old and long unlisted, provably retired once fetches in a row over
+ * RETIRED_ABSENT_SPAN_MS miss it (`runsOverRetiredSpan`).
+ */
+export async function retiredLongAgo(w: World, keep: Jwk[]): Promise<void> {
+  w.clock.t += RETIRED_MIN_KEY_AGE_MS;
+  await w.run();
+  w.jwks.keys = keep;
+  w.clock.t += RETIRED_UNSEEN_MS;
+  w.notifier.clear();
+  w.writer.calls = [];
+}
+
+/** Runs every 15 min until the pending kids' absences span RETIRED_ABSENT_SPAN_MS (a run moves 5 min itself). */
+export async function runsOverRetiredSpan(w: World): Promise<void> {
+  const until = w.clock.t + RETIRED_ABSENT_SPAN_MS;
+  await w.run();
+  while (w.clock.t <= until) {
+    w.clock.t += 10 * MIN;
+    await w.run();
+  }
 }
 
 export async function alertsOf(store: Store, kind?: string) {

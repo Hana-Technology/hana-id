@@ -26,6 +26,7 @@ import {
   type LinkChange,
   type LoginMethod,
   type LoginResult,
+  type MainnetDemoState,
   type Persistence,
   type PortEvent,
   type PortEventMap,
@@ -100,6 +101,22 @@ export interface HanaEvents {
    * getIdentityToken() has the `email` claim, or not.
    */
   emailSharingChanged: ['granted' | 'declined'];
+  /**
+   * The mainnet demo (D428): the vault says this test app has Hana's demo exception on (its rules), or off (null). Sent
+   * only by a dev testnet build of the vault, for apps Hana staff switched on; `hana.mainnetDemo` holds the latest.
+   */
+  mainnetDemoChanged: [MainnetDemo | null];
+}
+
+/**
+ * Hana's mainnet demo exception for this app (D428; docs/integration.md "Test and live keys"): the mainnets a test app
+ * may sign on, the per-transaction cap and Hana's price table. The vault values each request itself, with its own
+ * reviewed prices (not your price source), and refuses one over the cap (4100 `mainnet_demo_over_cap`, `data.usd`,
+ * `data.capUsd`) or one it can't value (`mainnet_demo_unknown_call`, `mainnet_demo_unpriced`).
+ */
+export interface MainnetDemo extends MainnetDemoState {
+  /** The cap in dollars, `"9.99"`. */
+  txCapUsd: string;
 }
 
 export interface IdentityTokenOptions {
@@ -157,6 +174,8 @@ export class HanaClient extends Emitter<HanaEvents> {
   /** The handshake failed or the port died: status stays 'error'. */
   #vaultDown = false;
   #stopEip6963: (() => void) | null = null;
+  /** The vault's latest `mainnetDemo` announcement (D428), or null. */
+  #mainnetDemo: MainnetDemo | null = null;
   readonly #windows: ApprovalWindows;
 
   constructor(config: HanaConfig, deps: HanaClientDeps) {
@@ -186,6 +205,8 @@ export class HanaClient extends Emitter<HanaEvents> {
         prepareApproval: () => this.prepareApproval(),
         fetch: deps.fetch,
         testApp: isTestPublishableKey(config.publishableKey),
+        // The mainnet demo (D428): exactly the EVM mainnets the vault said this app may use, else none.
+        demoEvmChains: () => this.#mainnetDemo?.evmChains ?? [],
       },
       evm,
     );
@@ -222,6 +243,14 @@ export class HanaClient extends Emitter<HanaEvents> {
   /** True for a `pk_test_` key: test networks only, and plaintext http RPC URLs allowed (the adapters read it, D115). */
   get testApp(): boolean {
     return this.#testApp;
+  }
+
+  /**
+   * Hana's mainnet demo exception for this test app (D428), as the vault stated it, or null (not on, a production env,
+   * or before the vault connected). See MainnetDemo; `mainnetDemoChanged` tells you when it changes.
+   */
+  get mainnetDemo(): MainnetDemo | null {
+    return this.#mainnetDemo;
   }
 
   /** `{stellar, evm}` while logged in, else null. */
@@ -619,6 +648,16 @@ export class HanaClient extends Emitter<HanaEvents> {
       case 'emailSharingChanged':
         this.emit('emailSharingChanged', e.data.state);
         return;
+      case 'mainnetDemo': {
+        // Only a test app's vault may say so (a live app's mainnets need no exception).
+        if (!this.#testApp) return;
+        const d = e.data;
+        const next: MainnetDemo | null = d === null ? null : { ...d, evmChains: [...d.evmChains], txCapUsd: (Number(BigInt(d.txCapUsdMicros) / 10_000n) / 100).toFixed(2) };
+        if (JSON.stringify(next) === JSON.stringify(this.#mainnetDemo)) return;
+        this.#mainnetDemo = next;
+        this.emit('mainnetDemoChanged', next);
+        return;
+      }
     }
   }
 

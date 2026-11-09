@@ -74,13 +74,17 @@ describe('page Worker configs', () => {
   it('auth: AUTH_ORIGIN plus apiUrl and rpc for the CSP, and no service binding', () => {
     const config = pagesWranglerConfig(manifest, 'auth', COMPATIBILITY_DATE);
     // sandbox-dev sets rpcFallback, which joins the export page's connect-src.
-    expect(config.vars).toEqual({ AUTH_ORIGIN: manifest.authOrigin, API_URL: manifest.apiUrl, NEAR_RPC: manifest.rpc, NEAR_RPC_FALLBACK: manifest.rpcFallback });
+    // A dev env on testnet: /approve may read a mainnet demo wallet's balance (D429).
+    const demo = { MAINNET_DEMO_BALANCE: '1' };
+    expect(config.vars).toEqual({ AUTH_ORIGIN: manifest.authOrigin, API_URL: manifest.apiUrl, NEAR_RPC: manifest.rpc, NEAR_RPC_FALLBACK: manifest.rpcFallback, ...demo });
     expect(config).not.toHaveProperty('services');
     const { rpcFallback: _, ...noFallback } = manifest;
-    expect(pagesWranglerConfig(manifestSchema.parse(noFallback), 'auth', COMPATIBILITY_DATE).vars).toEqual({ AUTH_ORIGIN: manifest.authOrigin, API_URL: manifest.apiUrl, NEAR_RPC: manifest.rpc });
+    expect(pagesWranglerConfig(manifestSchema.parse(noFallback), 'auth', COMPATIBILITY_DATE).vars).toEqual({ AUTH_ORIGIN: manifest.authOrigin, API_URL: manifest.apiUrl, NEAR_RPC: manifest.rpc, ...demo });
     // rpcFallback joins the export page's connect-src when the manifest sets it.
     const fb = pagesWranglerConfig(variant({ rpcFallback: 'https://rpc.fallback.example' }), 'auth', COMPATIBILITY_DATE);
-    expect(fb.vars).toEqual({ AUTH_ORIGIN: manifest.authOrigin, API_URL: manifest.apiUrl, NEAR_RPC: manifest.rpc, NEAR_RPC_FALLBACK: 'https://rpc.fallback.example' });
+    expect(fb.vars).toEqual({ AUTH_ORIGIN: manifest.authOrigin, API_URL: manifest.apiUrl, NEAR_RPC: manifest.rpc, NEAR_RPC_FALLBACK: 'https://rpc.fallback.example', ...demo });
+    // Not on testnet (a future mainnet manifest; a production name can't use workers.dev hosts here): no balance reads.
+    expect(pagesWranglerConfig({ ...manifest, network: 'mainnet' } as unknown as Manifest, 'auth', COMPATIBILITY_DATE).vars).not.toHaveProperty('MAINNET_DEMO_BALANCE');
     // With the dashboard blocks (sandbox-dev's own, M4) the logo pages' img-src gets the files origin.
     const real = loadEnv('sandbox-dev');
     expect(pagesWranglerConfig(real, 'auth', COMPATIBILITY_DATE).vars).toMatchObject({ FILES_ORIGIN: real.files!.origin });

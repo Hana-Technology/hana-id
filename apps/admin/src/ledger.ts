@@ -9,7 +9,7 @@
 // the same code runs over `pg` in the Worker and over PGlite in test-ops/ (as usage_admin, on the real migrations).
 import { type LedgerSqlRow, type ReportSqlRow, type StatementSqlRow, type SupportLedgerReader, sqlSupportLedger } from '@hana-id/console-core';
 import pg from 'pg';
-import type { Query } from './ops.ts';
+import { type OpsStore, type Query, sqlOps } from './ops.ts';
 import { type RetentionStore, sqlRetention } from './retention-store.ts';
 
 const ms = (v: unknown): number => (v instanceof Date ? v.getTime() : new Date(String(v)).getTime());
@@ -138,6 +138,8 @@ export interface LedgerStore {
   insertStatement(s: StatementInsert): Promise<'ok' | 'exists'>;
   unnoticedStatements(limit: number): Promise<{ orgId: string; month: string; asOf: number; csvSha256: string; pdfSha256: string | null; issuedBy: string }[]>;
   markStatementNoticed(orgId: string, month: string): Promise<void>;
+  /** `ops.state` on this connection (the 15-minute cron's last run, the System status page's reads; D425). */
+  state: Pick<OpsStore, 'getState' | 'setState'>;
   /** The monthly retention job's runs, state and Neon functions (C13), over the same connection. */
   readonly retention: RetentionStore;
   /** The Support ID lookup's reads (C15): a uid's ok events, the request IDs' events (console-core support.ts). */
@@ -367,6 +369,7 @@ export function sqlLedger(query: Query, close: () => Promise<void> = async () =>
     },
     retention: sqlRetention(query),
     support: sqlSupportLedger(query),
+    state: sqlOps(query),
     close,
   };
 }

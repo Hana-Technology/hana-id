@@ -13,6 +13,8 @@
 //   full address, matched by its MAC among those shared rows only (D315: nothing else can be probed). The SELECT never names `u.user_id` (the internal id), `sub` or
 //   `identity_key` as an output column, so no bug in the mapping can hand one out; a page cursor is `lastSeenAt:u1_…`.
 import {
+  STAFF_USER_EVENTS_MAX,
+  type StaffUserEvent,
   type PartnerUser,
   type StaffIdentity,
   type StaffUser,
@@ -211,7 +213,45 @@ export async function adminListUsers(db: HotDb, i: { orgId?: string; scopeId?: s
 export async function adminGetUser(db: HotDb, id: { userId?: string | undefined; internalId?: string | undefined }, now: number): Promise<StaffUser> {
   const by = id.userId !== undefined ? q`u.token_sub = ${id.userId}` : id.internalId !== undefined ? q`u.user_id = ${id.internalId}` : refuse('bad_request', 'Give userId or internalId');
   const row = await db.first<StaffRow>(q`SELECT ${STAFF_COLUMNS} FROM end_users u LEFT JOIN scopes s ON s.scope_id = u.scope_id WHERE ${by}`);
-  return row ? staffUser(row, now) : refuse('not_found', 'No such user');
+  if (!row) return refuse('not_found', 'No such user');
+  const [user] = await withEvents(db, [staffUser(row, now)]);
+  return user!;
+}
+
+/**
+ * The users with their `events` (D428, D430): each user's own rows (by internal id), newest first, at most
+ * STAFF_USER_EVENTS_MAX **of each kind**, so no number of reported signatures can push a key export out of the staff
+ * view (the security review of 2026-11-06). One read for all of them (ROW_NUMBER per user and kind). A missing table
+ * (migration 0013 not applied) or a failed read leaves `events` empty, so the Users screen never breaks on it.
+ */
+export async function withEvents(db: HotDb, users: StaffUser[]): Promise<StaffUser[]> {
+  if (users.length === 0) return users;
+  const ids = users.map((u) => q`${u.internalId}`);
+  let rows: { kind: string; app_id: string; user_id: string; chain: string | null; network: string | null; address: string | null; usd_micros: number | null; at: number }[];
+  try {
+    rows = await db.all(
+      q`SELECT kind, app_id, user_id, chain, network, address, usd_micros, at FROM (
+          SELECT e.*, ROW_NUMBER() OVER (PARTITION BY e.user_id, e.kind ORDER BY e.at DESC, e.id DESC) AS rn
+            FROM user_events e WHERE e.user_id IN (${join(ids, ', ')})
+        ) WHERE rn <= ${STAFF_USER_EVENTS_MAX} ORDER BY at DESC`,
+    );
+  } catch {
+    return users.map((u) => ({ ...u, events: [] }));
+  }
+  return users.map((u) => {
+    const events: StaffUserEvent[] = rows
+      .filter((r) => r.user_id === u.internalId)
+      .map((r) => ({
+        kind: r.kind === 'key_exported' ? 'key_exported' : 'mainnet_signature',
+        appId: r.app_id,
+        chain: r.chain === 'stellar' || r.chain === 'evm' ? r.chain : null,
+        network: r.network,
+        address: r.address,
+        usdMicros: r.usd_micros,
+        at: r.at,
+      }));
+    return { ...u, events };
+  });
 }
 
 /**
@@ -223,7 +263,7 @@ export async function adminFindUsers(db: HotDb, i: { query: string; provider?: s
   const s: UserSearch | null = i.provider ? (i.query.trim() && !/\s/u.test(i.query.trim()) ? { kind: 'sub', sub: i.query.trim() } : null) : parseUserSearch(i.query, { staff: true });
   const clause = searchClause(s, i.provider ? { staff: true, provider: i.provider } : { staff: true });
   const rows = await db.all<StaffRow>(q`SELECT ${STAFF_COLUMNS} FROM end_users u LEFT JOIN scopes s ON s.scope_id = u.scope_id WHERE ${clause}${ORDER} LIMIT ${USER_FIND_MAX}`);
-  return { users: rows.map((r) => staffUser(r, now)) };
+  return { users: await withEvents(db, rows.map((r) => staffUser(r, now))) };
 }
 
 /**

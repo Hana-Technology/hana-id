@@ -1,11 +1,13 @@
 // Generates apps/email-issuer/wrangler.jsonc (gitignored: it carries real D1 ids) from the `emailIssuer` block of
 // envs/<env>.json. The tests use wrangler.vitest.jsonc, written by vitest.config.ts with testWranglerConfig().
 //
-//   pnpm --filter @hana-id/email-issuer gen <env> [--d1-id <uuid>] [--app-d1-id <uuid>] [--dev-vars]
+//   pnpm --filter @hana-id/email-issuer gen <env> [--d1-id <uuid>] [--dev-vars]
 //
-// --d1-id      the issuer's own D1 id (`wrangler d1 create <emailIssuer.cloudflare.d1Name>` prints it).
-// --app-d1-id  the API's D1 id (the issuer reads `apps` and `plans` there, never writes).
-//              Without them, ids already in wrangler.jsonc are kept only when that file names the same databases.
+// --d1-id      the issuer's own D1 id (`wrangler d1 create <emailIssuer.cloudflare.d1Name>` prints it). Without it,
+//              an id already in wrangler.jsonc is kept only when that file names the same database.
+//
+// The issuer has no binding to the API's D1: it reads apps through the API Worker's read-only `IssuerRpc` entrypoint
+// (service binding `API`, D434), so the old `--app-d1-id` is refused with a pointer here.
 // --dev-vars   also write apps/email-issuer/.dev.vars (0600, gitignored) from .secrets/<env>/ (scripts/email-issuer.ts
 //              init), for `wrangler dev`. Never prints a secret.
 //
@@ -35,7 +37,7 @@ export function issuerPlacement(url: string | undefined): Record<string, unknown
   return { workers_dev: false, preview_urls: false };
 }
 
-export function wranglerConfig(m: Manifest, d1Id: string, appD1Id: string): Record<string, unknown> {
+export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknown> {
   const t = m.emailIssuer;
   if (!t) throw new Error(`envs/${m.name}.json has no emailIssuer block (run scripts/email-issuer.ts ${m.name} init)`);
   if (!m.vaultOrigin || !m.authOrigin) throw new Error(`envs/${m.name}.json needs vaultOrigin and authOrigin (the issuer's CORS origins)`);
@@ -46,7 +48,7 @@ export function wranglerConfig(m: Manifest, d1Id: string, appD1Id: string): Reco
   return {
     $schema: 'node_modules/wrangler/config-schema.json',
     name: t.cloudflare.workerName,
-    // The env's account (it binds the API's D1, so it lives beside the API), D404.
+    // The env's account (a service binding reaches only a Worker on its own account: it lives beside the API), D404.
     ...accountIdFields(m.cloudflare.accountId, 'cloudflare.accountId'),
     main: 'src/index.ts',
     compatibility_date: COMPATIBILITY_DATE,
@@ -76,11 +78,11 @@ export function wranglerConfig(m: Manifest, d1Id: string, appD1Id: string): Reco
       // dashboard (`admin`) block there is no admin Worker to bind the entrypoint, and every call fails closed.
       ...(m.admin ? { ADMIN_ACCESS_TEAM_DOMAIN: m.admin.accessTeamDomain, ADMIN_ACCESS_AUD: m.admin.accessAud, ADMIN_STAFF_EMAILS: JSON.stringify(m.admin.staffEmails) } : {}),
     },
-    d1_databases: [
-      { binding: 'DB', database_name: t.cloudflare.d1Name, database_id: d1Id, migrations_dir: 'migrations' },
-      // The API's D1, read only (apps and plans); its migrations are the API's.
-      { binding: 'APP_DB', database_name: m.cloudflare.d1Name, database_id: appD1Id, migrations_dir: '../api/migrations' },
-    ],
+    // Its own D1 only: no binding to the API's (D434, replacing D251's read-write APP_DB).
+    d1_databases: [{ binding: 'DB', database_name: t.cloudflare.d1Name, database_id: d1Id, migrations_dir: 'migrations' }],
+    // The API's read-only app lookups (apps/api/src/rpc/issuer.ts): the issuer is the entrypoint's only caller, and
+    // the API must serve it before this Worker deploys (docs/operations.md "Email issuer").
+    services: [{ binding: 'API', service: m.cloudflare.workerName, entrypoint: 'IssuerRpc' }],
     durable_objects: {
       bindings: [
         { name: 'EMAIL_CHALLENGE', class_name: 'Challenge' },
@@ -126,7 +128,7 @@ export const TEST_MANIFEST = {
 
 export function testWranglerConfig(publicKeys: unknown[], activeKid: string): Record<string, unknown> {
   const m = { ...TEST_MANIFEST, emailIssuer: { ...TEST_MANIFEST.emailIssuer!, publicKeys, signer: { kind: 'worker-secret', activeKid }, dailySendBudget: 1000 } } as Manifest;
-  return wranglerConfig(m, LOCAL_D1_ID, LOCAL_D1_ID);
+  return wranglerConfig(m, LOCAL_D1_ID);
 }
 
 /** A D1 id in an existing wrangler.jsonc, only when it was generated for the same database (binding and name). */
@@ -138,15 +140,14 @@ export function existingD1Id(path: string, binding: string, d1Name: string): str
   return m && m[1] === d1Name && m[2] !== LOCAL_D1_ID ? m[2]! : null;
 }
 
-export function writeWranglerConfig(m: Manifest, ids: { d1?: string | undefined; appD1?: string | undefined }, dir: string = appDir): { path: string; d1Id: string; appD1Id: string } {
+export function writeWranglerConfig(m: Manifest, ids: { d1?: string | undefined }, dir: string = appDir): { path: string; d1Id: string } {
   if (!m.emailIssuer) throw new Error(`envs/${m.name}.json has no emailIssuer block`);
   const path = join(dir, 'wrangler.jsonc');
   const d1Id = ids.d1 ?? existingD1Id(path, 'DB', m.emailIssuer.cloudflare.d1Name) ?? LOCAL_D1_ID;
-  const appD1Id = ids.appD1 ?? existingD1Id(path, 'APP_DB', m.cloudflare.d1Name) ?? LOCAL_D1_ID;
-  const config = wranglerConfig(m, d1Id, appD1Id);
+  const config = wranglerConfig(m, d1Id);
   const header = `// Generated by apps/email-issuer/scripts/gen-wrangler.ts from envs/${m.name}.json: edit the manifest, not this file.\n`;
   writeFileSync(path, header + JSON.stringify(config, null, 2) + '\n');
-  return { path, d1Id, appD1Id };
+  return { path, d1Id };
 }
 
 const B64_32 = /^[A-Za-z0-9+/]{43}=$/u;
@@ -209,10 +210,13 @@ export function devVarsContent(m: Manifest, root: string = repoRoot): { content:
 }
 
 export function main(argv: string[], opts: { root?: string; dir?: string; loadManifest?: (name: string) => Manifest } = {}): void {
-  const flagsWithValue = new Set(['--d1-id', '--app-d1-id']);
+  if (argv.includes('--app-d1-id')) {
+    throw new Error('--app-d1-id is gone: the issuer reads apps through the API\'s IssuerRpc (service binding API, D434) and binds no API D1. Drop the flag.');
+  }
+  const flagsWithValue = new Set(['--d1-id']);
   const envName = argv.find((a, i) => !a.startsWith('--') && !flagsWithValue.has(argv[i - 1] ?? ''));
   if (!envName) {
-    console.error('usage: gen-wrangler <env> [--d1-id <uuid>] [--app-d1-id <uuid>] [--dev-vars]');
+    console.error('usage: gen-wrangler <env> [--d1-id <uuid>] [--dev-vars]');
     process.exit(2);
   }
   const flag = (name: string): string | undefined => {
@@ -223,9 +227,9 @@ export function main(argv: string[], opts: { root?: string; dir?: string; loadMa
     return v;
   };
   const manifest = (opts.loadManifest ?? loadEnv)(envName);
-  const { path, d1Id, appD1Id } = writeWranglerConfig(manifest, { d1: flag('--d1-id'), appD1: flag('--app-d1-id') }, opts.dir);
-  const placeholder = d1Id === LOCAL_D1_ID || appD1Id === LOCAL_D1_ID;
-  console.log(`wrote ${path} (env ${manifest.name}, worker ${manifest.emailIssuer?.cloudflare.workerName}${placeholder ? ', local D1 placeholder id(s)' : ''})`);
+  const { path, d1Id } = writeWranglerConfig(manifest, { d1: flag('--d1-id') }, opts.dir);
+  const placeholder = d1Id === LOCAL_D1_ID;
+  console.log(`wrote ${path} (env ${manifest.name}, worker ${manifest.emailIssuer?.cloudflare.workerName}, API ${manifest.cloudflare.workerName}:IssuerRpc${placeholder ? ', local D1 placeholder id' : ''})`);
   if (argv.includes('--dev-vars')) {
     const { content, names } = devVarsContent(manifest, opts.root);
     const devVars = join(opts.dir ?? appDir, '.dev.vars');

@@ -208,8 +208,8 @@ function position(o: Partial<PointerEvent>): Coords {
   return out;
 }
 
-/** The fields of a pointer or keyboard event the guard reads (approve-guard.ts). */
-export function guardInput(type: GuardInput['type'], e: Event): GuardInput {
+/** The fields of a pointer or keyboard event the guard reads (the approval popup's, the export window's and the email sharing sheet's). */
+export function guardInputOf(type: GuardInput['type'], e: Event): GuardInput {
   const o = e as Partial<PointerEvent & KeyboardEvent>;
   const num = (v: unknown) => (typeof v === 'number' ? v : undefined);
   const str = (v: unknown) => (typeof v === 'string' ? v : undefined);

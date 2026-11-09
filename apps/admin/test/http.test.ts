@@ -22,6 +22,20 @@ describe('the Access check on /api/*', () => {
     expect(await json(res)).toMatchObject({ email: STAFF_EMAIL, sub: STAFF_SUB, env: 'sandbox-test' });
   });
 
+  it('answers the Access token’s exp in GET /api/me (the SPA’s expiry warning), never the token itself', async () => {
+    const exp = Math.floor(Date.now() / 1000) + 1234;
+    const jwt = await staffJwt({ exp });
+    const res = await adminRequest('/api/me', { jwt });
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    expect(body.accessExp).toBe(exp);
+    expect(Object.keys(body).sort()).toEqual(['accessExp', 'consoleOrigin', 'email', 'env', 'renewUrl', 'sub']);
+    // Renew: the team's Access login for this application (public values), back to /signed-in.
+    expect(body.renewUrl).toMatch(/^https:\/\/[a-z0-9-]+\.cloudflareaccess\.com\/cdn-cgi\/access\/login\/[^/?]+\?kid=[0-9a-f]{64}&redirect_url=%2Fsigned-in$/u);
+    const text = JSON.stringify(body);
+    for (const part of jwt.split('.')) expect(text).not.toContain(part);
+  });
+
   it('refuses a missing, malformed or tampered token with 401', async () => {
     expect((await adminRequest('/api/me', { jwt: null })).status).toBe(401);
     const bad = await adminRequest('/api/me', { jwt: 'not.a.jwt' });
@@ -145,6 +159,7 @@ describe('response headers', () => {
   it('are on assets, JSON answers, refusals and errors; /api/* is no-store; nothing sets a cookie', async () => {
     const cases: [string, Response, boolean][] = [
       ['asset', await adminRequest('/app.css', { jwt: null }), false],
+      ['font', await adminRequest('/fonts/Montserrat-400.woff2', { jwt: null }), false],
       ['page', await adminRequest('/', { jwt: null }), false],
       ['json', await adminRequest('/api/me'), true],
       ['401', await adminRequest('/api/me', { jwt: null }), true],
@@ -156,6 +171,16 @@ describe('response headers', () => {
       expect(res.headers.get('set-cookie'), name).toBeNull();
       if (api) expect(res.headers.get('cache-control'), name).toBe('no-store');
     }
+  });
+
+  it('serves the brand fonts from its own assets as fonts (D426), with no Access sign-in needed, like the SPA', async () => {
+    const font = await adminRequest('/fonts/Montserrat-400.woff2', { jwt: null });
+    expect(font.status).toBe(200);
+    expect(font.headers.get('content-type')).toBe('font/woff2');
+    expect(new TextDecoder().decode(new Uint8Array(await font.arrayBuffer()).slice(0, 4))).toBe('wOF2');
+    const licence = await adminRequest('/fonts/OFL.txt', { jwt: null });
+    expect(licence.status).toBe(200);
+    expect(await licence.text()).toContain('SIL OPEN FONT LICENSE Version 1.1');
   });
 
   it('a thrown error is a 500 with the headers', async () => {

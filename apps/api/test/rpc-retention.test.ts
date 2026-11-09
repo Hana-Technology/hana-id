@@ -1,6 +1,7 @@
 // AdminRpc's retention methods (batch C13, D90; docs/batch-c-spec.md "Retention"): purgeAudit (app_changes and
 // guarded_changes after 60 months, the drift check's rows kept), deletedApps (30 days after deletion, paged) and
-// purgeDirectory (the wallet directory of a scope whose apps were all deleted 30 days ago). The admin Worker's monthly
+// purgeDirectory (the wallet directory of a scope whose apps were all deleted 30 days ago), purgeUserEvents (migration
+// 0013's key exports and mainnet demo signatures after 24 months, and those of a dead scope). The admin Worker's monthly
 // job is the only caller: a `system` actor; staff and members are refused. `before` is clamped to each period.
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
@@ -175,5 +176,87 @@ describe('AdminRpc.purgeDirectory (the wallet directory of a scope left without 
     for (const u of deadUsers) expect(await userExists(u)).toBe(0);
     for (const u of kept) expect(await userExists(u)).toBe(3);
     expect(((await adminRpc().purgeDirectory({ ...system(), before: t, limit: 2 })) as { users: number }).users).toBe(0);
+  });
+});
+
+describe('AdminRpc.purgeUserEvents (key exports and mainnet demo signatures: 24 months, readiness 7.17)', () => {
+  const internalId = (n: number) => `hu_${String(n).padStart(26, '0')}`;
+  const ADDR = '0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826';
+  /** One row of each kind for `user` at `at`. */
+  const events = async (app: { id: string; scope: string }, user: string, at: number): Promise<number[]> => {
+    const ids: number[] = [];
+    for (const kind of ['key_exported', 'mainnet_signature'] as const) {
+      const sig = kind === 'mainnet_signature';
+      const r = await db()
+        .prepare(
+          `INSERT INTO user_events (kind, app_id, scope_id, user_id, chain, network, address, usd_micros, request_id, at)
+           VALUES (?1, ?2, ?3, ?4, 'evm', ?5, ?6, ?7, ?8, ?9) RETURNING id`,
+        )
+        .bind(kind, app.id, app.scope, user, sig ? '8453' : null, sig ? ADDR : null, sig ? 1 : null, rid(), at)
+        .first<{ id: number }>();
+      ids.push(r!.id);
+    }
+    return ids;
+  };
+  const left = async (ids: number[]) => (await db().prepare(`SELECT COUNT(*) AS n FROM user_events WHERE id IN (${ids.map(Number).join(', ')})`).first<{ n: number }>())!.n;
+  const purge = (o: { before?: number; deletedBefore?: number; limit?: number } = {}) =>
+    adminRpc().purgeUserEvents({ ...system(), before: o.before ?? now(), deletedBefore: o.deletedBefore ?? now(), limit: o.limit ?? 500 }) as Promise<{ ok: boolean; expired: number; deadScopes: number }>;
+
+  it('only the admin Worker’s cron (a system actor); staff and members are forbidden; the input is exact', async () => {
+    for (const actor of [hana(), member()]) {
+      expect(await adminRpc().purgeUserEvents({ ...actor, before: now(), deletedBefore: now(), limit: 10 })).toMatchObject({ ok: false, code: 'forbidden' });
+    }
+    expect(await adminRpc().purgeUserEvents({ ...system(), before: now(), limit: 10 })).toMatchObject({ ok: false, code: 'bad_request' });
+    expect(await adminRpc().purgeUserEvents({ ...system(), before: now(), deletedBefore: now(), limit: 1001 })).toMatchObject({ ok: false, code: 'bad_request' });
+  });
+
+  it('deletes events older than 24 months, never a younger one even when `before` is now; in batches of `limit`', async () => {
+    const app = await orgApp();
+    const old = [...(await events(app, internalId(2001), now() - 26 * MONTH)), ...(await events(app, internalId(2002), now() - 24.5 * MONTH))];
+    const young = await events(app, internalId(2001), now() - 23 * MONTH);
+    expect(await purge({ limit: 3 })).toEqual({ ok: true, expired: 3, deadScopes: 0 });
+    expect(await purge()).toEqual({ ok: true, expired: 1, deadScopes: 0 });
+    expect([await left(old), await left(young)]).toEqual([0, 2]);
+    // A `before` further back than 24 months is honoured.
+    const older = await events(app, internalId(2003), now() - 40 * MONTH);
+    const kept = await events(app, internalId(2003), now() - 30 * MONTH);
+    await purge({ before: now() - 35 * MONTH });
+    expect([await left(older), await left(kept), await left(young)]).toEqual([0, 2, 2]);
+  });
+
+  it('deletes every event of a scope whose apps were all deleted 30 days ago, whatever its age; other scopes keep theirs', async () => {
+    const t = now();
+    const dead = await orgApp();
+    const deadToo = await appInScope(dead.scope, dead.org);
+    const recent = await orgApp();
+    const mixedLive = await orgApp();
+    const mixedGone = await appInScope(mixedLive.scope, mixedLive.org);
+    await deleteAppAt(dead.id, t - 90 * DAY);
+    await deleteAppAt(deadToo.id, t - 31 * DAY);
+    await deleteAppAt(recent.id, t - 10 * DAY);
+    await deleteAppAt(mixedGone.id, t - 90 * DAY);
+    const gone = [...(await events(dead, internalId(2101), t - DAY)), ...(await events(deadToo, internalId(2102), t - 2 * DAY))];
+    // An app deleted from a scope that still has a live app: its users are still the directory's, so their events stay.
+    const kept = [...(await events(recent, internalId(2103), t - DAY)), ...(await events(mixedGone, internalId(2104), t - DAY)), ...(await events(mixedLive, internalId(2104), t - DAY))];
+    expect(await purge({ limit: 3 })).toMatchObject({ ok: true, deadScopes: 3 });
+    expect(await purge({ limit: 3 })).toMatchObject({ ok: true, deadScopes: 1 });
+    expect([await left(gone), await left(kept)]).toEqual([0, kept.length]);
+    expect((await purge()).deadScopes).toBe(0);
+    // A `deletedBefore` further back is honoured: a scope dead 90 days isn't purged with a 120-day cutoff.
+    const later = await orgApp();
+    await deleteAppAt(later.id, t - 90 * DAY);
+    const notYet = await events(later, internalId(2105), t - DAY);
+    expect((await purge({ deletedBefore: t - 120 * DAY })).deadScopes).toBe(0);
+    expect(await left(notYet)).toBe(2);
+    expect((await purge()).deadScopes).toBe(2);
+  });
+
+  it('an env without migration 0013 has nothing to purge: zeros, not a failure', async () => {
+    await db().exec('ALTER TABLE user_events RENAME TO user_events_away');
+    try {
+      expect(await purge()).toEqual({ ok: true, expired: 0, deadScopes: 0 });
+    } finally {
+      await db().exec('ALTER TABLE user_events_away RENAME TO user_events');
+    }
   });
 });

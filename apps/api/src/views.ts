@@ -2,7 +2,7 @@
 import { hex } from './bytes.ts';
 import type { Env } from './env.ts';
 import { issuerKids } from './issuer-keys.ts';
-import { Rpc, VIEW_TIMEOUT_MS } from './near/rpc.ts';
+import { nearRpc, VIEW_TIMEOUT_MS } from './near/rpc.ts';
 
 export class TtlCache<V> {
   private readonly map = new Map<string, { value: V; until: number }>();
@@ -157,7 +157,7 @@ export async function getConfig(env: Env, opts: { fresh?: boolean } = {}): Promi
   if (configRead && !opts.fresh && Date.now() - configReadAt < CONFIG_READ_STALE_MS) return configRead;
   configReadAt = Date.now();
   const read = (async () => {
-    const raw = await new Rpc(env.NEAR_RPC).view<{ console_audiences?: unknown; shared_clients?: unknown; paused?: unknown; unrecorded_wallets?: unknown } | null>(env.SIGNER_ACCOUNT, 'get_config', {});
+    const raw = await nearRpc(env).view<{ console_audiences?: unknown; shared_clients?: unknown; paused?: unknown; unrecorded_wallets?: unknown } | null>(env.SIGNER_ACCOUNT, 'get_config', {});
     const value: ConfigView = {
       console_audiences: Array.isArray(raw?.console_audiences) ? raw.console_audiences.filter(isPair) : [],
       shared_clients: Array.isArray(raw?.shared_clients) ? raw.shared_clients.filter(isPair) : [],
@@ -192,7 +192,7 @@ async function readIssuerKids(env: Env, provider: string): Promise<ReadonlySet<s
   if (inFlight) return inFlight;
   const read = (async () => {
     // An issuer the contract doesn't know has no active key: every token of it would fail on chain.
-    const kids = new Set(issuerKids(await new Rpc(env.NEAR_RPC).view<unknown>(env.SIGNER_ACCOUNT, 'get_issuer', { provider })) ?? []);
+    const kids = new Set(issuerKids(await nearRpc(env).view<unknown>(env.SIGNER_ACCOUNT, 'get_issuer', { provider })) ?? []);
     issuerCache.set(provider, { kids, readAt: Date.now() });
     return kids;
   })();
@@ -235,7 +235,7 @@ export const isSharedOrPending = (config: ConfigView, provider: string, aud: str
 export async function getScope(env: Env, scopeId: string, opts: { fresh?: boolean } = {}): Promise<ScopeView | null> {
   const cached = opts.fresh ? undefined : scopeViewCache.get(scopeId);
   if (cached !== undefined) return cached;
-  const raw = await new Rpc(env.NEAR_RPC).view<Record<string, unknown> | null>(env.SIGNER_ACCOUNT, 'get_scope', { scope_id: scopeId });
+  const raw = await nearRpc(env).view<Record<string, unknown> | null>(env.SIGNER_ACCOUNT, 'get_scope', { scope_id: scopeId });
   let value: ScopeView | null = null;
   if (raw && typeof raw === 'object' && Array.isArray(raw.owners) && Array.isArray(raw.clients) && Array.isArray(raw.pending)) {
     value = {
@@ -264,7 +264,7 @@ export async function scopeForClient(env: Env, provider: string, aud: string): P
   const key = JSON.stringify([provider, aud]);
   const cached = scopeCache.get(key);
   if (cached !== undefined) return cached;
-  const scope = await new Rpc(env.NEAR_RPC).view<string | null>(env.SIGNER_ACCOUNT, 'scope_for_client', { provider, aud });
+  const scope = await nearRpc(env).view<string | null>(env.SIGNER_ACCOUNT, 'scope_for_client', { provider, aud });
   const value = typeof scope === 'string' ? scope : null;
   scopeCache.set(key, value, Date.now(), value === null ? NO_SCOPE_TTL_MS : undefined);
   return value;
@@ -287,7 +287,7 @@ export async function getSession(env: Env, sessionPublicKey: number[], opts: { f
   const key = hex(new Uint8Array(sessionPublicKey));
   const cached = sessionCache.get(key);
   if (cached && !opts.fresh) return { session: cached, cached: true };
-  const view = await new Rpc(env.NEAR_RPC).view<unknown>(env.SIGNER_ACCOUNT, 'get_session', { session_public_key: sessionPublicKey });
+  const view = await nearRpc(env).view<unknown>(env.SIGNER_ACCOUNT, 'get_session', { session_public_key: sessionPublicKey });
   if (!isSessionView(view)) {
     sessionCache.delete(key);
     return { session: null, cached: false };
@@ -314,7 +314,7 @@ const sameSession = (a: SessionView, b: SessionView): boolean => a.path === b.pa
 export async function sessionKeyInUse(env: Env, sessionPublicKey: number[], now: number): Promise<boolean> {
   const cached = sessionCache.get(hex(new Uint8Array(sessionPublicKey)));
   if (cached && cached.expires_at_ms > now) return true;
-  const inUse = await new Rpc(env.NEAR_RPC).view<boolean>(env.SIGNER_ACCOUNT, 'session_key_in_use', { session_public_key: sessionPublicKey });
+  const inUse = await nearRpc(env).view<boolean>(env.SIGNER_ACCOUNT, 'session_key_in_use', { session_public_key: sessionPublicKey });
   return inUse === true;
 }
 

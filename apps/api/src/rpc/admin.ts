@@ -6,8 +6,10 @@
 //
 // Built in batch C5; batch C14 adds the read-only `governance` (the `GET /v1/governance` snapshot) and `pendingUpgrades`
 // (the pending-upgrades page, D86); batch C13 the retention methods `purgeAudit`, `deletedApps` and `purgeDirectory` (the
-// admin Worker's monthly job only: a `system` actor, D360); batch C15 the Support ID lookup's hot-DB part,
-// `supportLookup` and `userShares` (staff only; the admin Worker audits before it calls and reads the ledger itself, D394).
+// admin Worker's monthly job only: a `system` actor, D360), with `purgeUserEvents` for migration 0013's events (readiness
+// 7.17); batch C15 the Support ID lookup's hot-DB part,
+// `supportLookup` and `userShares` (staff only; the admin Worker audits before it calls and reads the ledger itself, D394);
+// the System status page (D425) `systemStatus` (staff only, read-only, no user data).
 import {
   adminAppNamesInput,
   adminFindUsersInput,
@@ -36,6 +38,7 @@ import {
   pendingUpgradesView,
   purgeAuditInput,
   purgeDirectoryInput,
+  purgeUserEventsInput,
   relayerKeysInput,
   removeOriginsInput,
   revokeKeyInput,
@@ -44,8 +47,10 @@ import {
   setLogoInput,
   setSecurityContactsInput,
   supportLookupInput,
+  systemStatusInput,
   suspendOrgInput,
   turnOffInput,
+  setMainnetDemoInput,
   updateSettingsInput,
   userSharesInput,
 } from '@hana-id/console-core';
@@ -66,13 +71,15 @@ import { getApp, listApps, listChanges } from '../changes/apps.ts';
 import { createKey, revokeKey, rotateKey } from '../changes/keys.ts';
 import { ackNotice, cancelChange, expediteChange, pendingNotices } from '../changes/lifecycle.ts';
 import { addOrigins, removeOrigins } from '../changes/origins.ts';
-import { proposeSetting, setLogo, turnOff, updateSettings } from '../changes/settings.ts';
+import { proposeSetting, setLogo, setMainnetDemo, turnOff, updateSettings } from '../changes/settings.ts';
 import { deleteApp, setSuspensionBit, suspendOrg } from '../changes/suspension.ts';
 import { governanceSnapshot } from '../governance-status.ts';
+import { systemStatus } from '../system-status.ts';
 import { adminAppNames, adminFindUsers, adminGetUser, adminListUsers } from '../directory/read.ts';
 import { supportLookup, userShares } from '../directory/support.ts';
-import { deletedApps, purgeAudit, purgeDirectory } from '../changes/retention.ts';
+import { deletedApps, purgeAudit, purgeDirectory, purgeUserEvents } from '../changes/retention.ts';
 import { runRpc } from './common.ts';
+import { mainnetDemoEnv } from '../mainnet-demo-setting.ts';
 
 const HANA = ['hana'] as const;
 /** Methods the admin Worker's crons call (notices, the feed, the watcher). */
@@ -89,7 +96,7 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
   }
 
   getApp(c: unknown) {
-    return runRpc(this.env, 'admin.getApp', getAppInput, c, { actors: HANA_OR_SYSTEM }, async ({ input, db, w }) => ({ app: await getApp(db, input.appId, input.orgId, w.now, this.env.FILES_ORIGIN) }));
+    return runRpc(this.env, 'admin.getApp', getAppInput, c, { actors: HANA_OR_SYSTEM }, async ({ input, db, w }) => ({ app: await getApp(db, input.appId, input.orgId, w.now, this.env.FILES_ORIGIN, { mainnetDemo: mainnetDemoEnv(this.env) }) }));
   }
 
   listChanges(c: unknown) {
@@ -102,6 +109,11 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
 
   turnOff(c: unknown) {
     return runRpc(this.env, 'admin.turnOff', turnOffInput, c, { actors: HANA }, ({ input, db, w }) => turnOff(db, w, input));
+  }
+
+  /** The mainnet demo exception to D39 (D428): Hana staff only, a test app in a dev testnet env only. */
+  setMainnetDemo(c: unknown) {
+    return runRpc(this.env, 'admin.setMainnetDemo', setMainnetDemoInput, c, { actors: HANA }, ({ input, db, w }) => setMainnetDemo(db, this.env, w, input));
   }
 
   updateSettings(c: unknown) {
@@ -220,6 +232,15 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
     return runRpc(this.env, 'admin.pendingUpgrades', governanceInput, c, { actors: HANA }, async () => ({ pendingUpgrades: pendingUpgradesView(await governanceSnapshot(this.env)) }));
   }
 
+  /**
+   * The admin console's System status page (D425): the build, a timed hot-DB probe, the Google-key sync's last runs,
+   * the blocking-notice backlog, the pools' public keys and the governance snapshot, in one call. Staff only, read-only,
+   * no user data.
+   */
+  systemStatus(c: unknown) {
+    return runRpc(this.env, 'admin.systemStatus', systemStatusInput, c, { actors: HANA }, ({ db }) => systemStatus(this.env, db));
+  }
+
   // ---- retention (batch C13, D90): the admin Worker's monthly job only ----
 
   /** app_changes and guarded_changes rows older than min(before, 60 months ago), `limit` of each at most (D364). */
@@ -235,6 +256,11 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
   /** The wallet directory of scopes whose every app was deleted 30 days ago or more (D363). */
   purgeDirectory(c: unknown) {
     return runRpc(this.env, 'admin.purgeDirectory', purgeDirectoryInput, c, { actors: SYSTEM }, ({ input, db, w }) => purgeDirectory(db, input, w.now));
+  }
+
+  /** user_events past min(before, 24 months ago), and those of scopes left without apps (purgeDirectory's rule). */
+  purgeUserEvents(c: unknown) {
+    return runRpc(this.env, 'admin.purgeUserEvents', purgeUserEventsInput, c, { actors: SYSTEM }, ({ input, db, w }) => purgeUserEvents(db, input, w.now));
   }
 
   // ---- end users and their wallets (D310, D315, D346; staff only: the internal id, subs and identity keys included,

@@ -2,8 +2,23 @@
 // chain, a scripted JWKS and recording channels.
 import { describe, expect, it } from 'vitest';
 import type { KeyChange } from '../src/chain.ts';
-import { ABSENCE_RECHECK_MS, RETIRED_KEY_GRACE_MS, retiredAt } from '../src/run.ts';
-import { alertsOf, councilPolicy, HOUR, initialized, jwk, MIN, OWNER, SIGNER, T0, UPDATER_KEYS, WATCHDOG, world } from './helpers.ts';
+import {
+  ABSENCE_RECHECK_MS,
+  ABSENT_FETCHES_TO_ACT,
+  NEW_KID_CANCEL_LEAD_MS,
+  NEW_KID_GRACE_MS,
+  newKidDeadline,
+  REMOVAL_ABSENT_SPAN_MS,
+  REMOVAL_UNSEEN_MS,
+  RETIRED_ABSENT_SPAN_MS,
+  RETIRED_KEY_GRACE_MS,
+  RETIRED_MIN_KEY_AGE_MS,
+  RETIRED_UNSEEN_MS,
+  removalConfirmable,
+  retiredAddDue,
+  retiredAt,
+} from '../src/run.ts';
+import { alertsOf, councilPolicy, HOUR, initialized, jwk, MIN, NO_GRACE, OWNER, retiredLongAgo, runsOverRetiredSpan, SIGNER, T0, UPDATER_KEYS, WATCHDOG, world } from './helpers.ts';
 
 const channelsOf = (w: { notifier: { sent: { channel: string; msg: { kind: string } }[] } }, kind: string) =>
   w.notifier.sent.filter((s) => s.msg.kind === kind).map((s) => s.channel).sort();
@@ -88,7 +103,7 @@ describe('pending additions (step 3)', () => {
 
   it('cancels a kid absent from two fetches at least 60 s apart, in the same run', async () => {
     const w = await initialized();
-    const forged = w.chain.propose('Add', 'ghost');
+    const forged = w.chain.propose('Add', 'ghost', NO_GRACE);
     const fetchesBefore = w.jwks.fetches;
     await w.run();
     expect(w.sleeps).toEqual([ABSENCE_RECHECK_MS]);
@@ -110,7 +125,7 @@ describe('pending additions (step 3)', () => {
 
   it('waits for the next run when the second fetch fails, then cancels without another wait', async () => {
     const w = await initialized();
-    w.chain.propose('Add', 'ghost');
+    w.chain.propose('Add', 'ghost', NO_GRACE);
     w.jwks.queue = [[jwk('k1', 1)], 'fail'];
     await w.run();
     expect(w.writer.calls).toEqual([]);
@@ -168,7 +183,7 @@ describe('pending additions (step 3)', () => {
 
   it('re-reads the chain when the cancel finds the change gone: an executed forgery is a failed protection, and pauses', async () => {
     const w = await initialized();
-    const forged = w.chain.propose('Add', 'ghost', { key: jwk('ghost', 50) });
+    const forged = w.chain.propose('Add', 'ghost', { key: jwk('ghost', 50), ...NO_GRACE });
     // Someone executes the forged change between the watchdog's read and its cancel.
     w.writer.before = (method, args) => {
       if (method === 'cancel_issuer_key_change') w.chain.execute(args.id as number);
@@ -225,18 +240,55 @@ describe("a key Google just retired (D153)", () => {
     return { w, k2 };
   }
 
-  it("cancels the updater's Add of a kid Google published with the same material, keeps the updater keys, warns", async () => {
-    const { w, k2 } = await retiring();
+  it("cancels the updater's Add of a provably retired kid (D422: known > 7 days, unlisted > 6 h, missed by fetches over 30 min), keeps the updater keys, warns", async () => {
+    const k2 = jwk('k2', 2);
+    const w = await initialized({ jwks: [jwk('k1', 1), k2] });
+    await retiredLongAgo(w, [jwk('k1', 1)]);
+    const lastListed = w.clock.t - RETIRED_UNSEEN_MS - 5 * MIN;
     const c = w.chain.propose('Add', 'k2', { key: k2 });
+    // The first run (two fetches 60 s apart) and the ones before 30 min of absences only wait.
     await w.run();
+    expect(w.writer.calls).toEqual([]);
+    await runsOverRetiredSpan(w);
     expect(w.writer.methods()).toEqual(['cancel_issuer_key_change']);
     expect(w.writer.calls[0]?.args).toEqual({ id: c.id });
     expect(await alertsOf(w.store, 'forged_key_change')).toEqual([]);
     const [alert] = await alertsOf(w.store, 'retired_key_change');
     expect(alert?.severity).toBe('warning');
     expect(alert?.title).toContain('updater key kept');
-    expect(alert?.details).toMatchObject({ id: c.id, kid: 'k2', outcome: 'cancelled', last_seen_jwks_at: T0 });
+    expect(alert?.details).toMatchObject({ id: c.id, kid: 'k2', outcome: 'cancelled', last_seen_jwks_at: lastListed });
     expect(channelsOf(w, 'retired_key_change')).toEqual(['email', 'slack']);
+  });
+
+  it("doesn't cancel a new kid that flickers in Google's JWKS (seen 30 min ago, missing from both fetches), and confirms it once a fetch lists it (D422)", async () => {
+    const k2 = jwk('k2', 2);
+    const w = await initialized({ jwks: [jwk('k1', 1)] });
+    // Google's edges mid-rollout: one fetch lists k2, the next ones don't.
+    w.jwks.keys = [jwk('k1', 1), k2];
+    await w.run();
+    w.jwks.keys = [jwk('k1', 1)];
+    w.clock.t += 25 * MIN;
+    const c = w.chain.propose('Add', 'k2', { key: k2 });
+    for (let i = 0; i < 6; i++) await w.run();
+    expect(w.writer.calls).toEqual([]);
+    expect(await alertsOf(w.store, 'retired_key_change')).toEqual([]);
+    expect(await alertsOf(w.store, 'forged_key_change')).toEqual([]);
+    expect(w.chain.governance.updater_keys).toEqual(UPDATER_KEYS);
+    w.jwks.queue = [[jwk('k1', 1), k2]];
+    await w.run();
+    expect(w.writer.calls).toEqual([{ method: 'confirm_issuer_key_change', args: { id: c.id } }]);
+  });
+
+  it('retiredAddDue needs all three: unlisted ≥ 6 h, known ≥ 7 days, ≥ 3 absent fetches over ≥ 30 min', () => {
+    const now = T0 + 30 * 24 * HOUR;
+    const seen = { provider: 'google', kid: 'k2', n: 'n', e: 'AQAB', source: 'jwks' as const, first_seen_at: now - RETIRED_MIN_KEY_AGE_MS, last_seen_at: now - RETIRED_UNSEEN_MS };
+    const absence = { first: now - RETIRED_ABSENT_SPAN_MS, fetches: ABSENT_FETCHES_TO_ACT };
+    expect(retiredAddDue(seen, absence, now)).toBe(true);
+    expect(retiredAddDue({ ...seen, last_seen_at: now - RETIRED_UNSEEN_MS + 1 }, absence, now)).toBe(false);
+    expect(retiredAddDue({ ...seen, first_seen_at: now - RETIRED_MIN_KEY_AGE_MS + 1 }, absence, now)).toBe(false);
+    expect(retiredAddDue(seen, { ...absence, fetches: ABSENT_FETCHES_TO_ACT - 1 }, now)).toBe(false);
+    expect(retiredAddDue(seen, { ...absence, first: now - RETIRED_ABSENT_SPAN_MS + 1 }, now)).toBe(false);
+    expect(retiredAddDue(seen, undefined, now)).toBe(false);
   });
 
   it('treats the same kid with other key material as forged', async () => {
@@ -288,6 +340,201 @@ describe("a key Google just retired (D153)", () => {
     expect(retiredAt({ ...seen, n: null }, c, T0)).toBeNull();
     expect(retiredAt(seen, { ...c, n: null }, T0)).toBeNull();
     expect(retiredAt(undefined, c, T0)).toBeNull();
+  });
+});
+
+describe('a new kid the watchdog has not seen yet (D432)', () => {
+  const unseenAt = async (w: Awaited<ReturnType<typeof initialized>>) => alertsOf(w.store, 'unseen_key_change');
+  /** Runs (every 5 min) while the clock is before `until`; returns the writer calls made meanwhile. */
+  async function runUntil(w: Awaited<ReturnType<typeof initialized>>, until: number) {
+    while (w.clock.t < until) await w.run();
+    return w.writer.calls;
+  }
+
+  it('leaves the updater’s Add of a kid no fetch listed pending, warns once, and confirms it when a fetch lists it', async () => {
+    const k2 = jwk('k2', 2);
+    const w = await initialized();
+    // Google's rotation: the API cron's edge serves k2, the watchdog's fetches don't yet.
+    const c = w.chain.propose('Add', 'k2', { key: k2, at: w.clock.t });
+    const r = await w.run();
+    expect(w.sleeps).toEqual([ABSENCE_RECHECK_MS]);
+    for (let i = 0; i < 11; i++) await w.run();
+    expect(w.writer.calls).toEqual([]);
+    expect(w.chain.governance.updater_keys).toEqual(UPDATER_KEYS);
+    expect(await alertsOf(w.store, 'forged_key_change')).toEqual([]);
+    const warnings = await unseenAt(w);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.severity).toBe('warning');
+    expect(warnings[0]?.details).toMatchObject({ id: c.id, kid: 'k2', by: SIGNER, new_kid_deadline_ms: newKidDeadline(c), absent_fetches: 2 });
+    expect(channelsOf(w, 'unseen_key_change')).toEqual(['email', 'slack']);
+    expect(r.checks.find((x) => x.id === 'pending_key_changes')?.detail).toContain('judged forged at');
+    w.jwks.keys = [jwk('k1', 1), k2];
+    await w.run();
+    expect(w.writer.calls).toEqual([{ method: 'confirm_issuer_key_change', args: { id: c.id } }]);
+    expect(await alertsOf(w.store, 'forged_key_change')).toEqual([]);
+  });
+
+  it('cancels it as forged at its deadline (18 min before it is executable), deletes every updater key, and pages', async () => {
+    const w = await initialized();
+    const c = w.chain.propose('Add', 'forged', { key: jwk('forged', 77), at: w.clock.t });
+    const deadline = newKidDeadline(c);
+    expect(deadline).toBe(c.executable_at_ms - NEW_KID_CANCEL_LEAD_MS);
+    expect(await runUntil(w, deadline)).toEqual([]);
+    const at = w.clock.t;
+    await w.run();
+    expect(w.writer.calls).toEqual([
+      { method: 'cancel_issuer_key_change', args: { id: c.id } },
+      { method: 'delete_updater_key', args: { public_key: UPDATER_KEYS[0] } },
+      { method: 'delete_updater_key', args: { public_key: UPDATER_KEYS[1] } },
+    ]);
+    // Judged within one run of the deadline: at least two more runs before anyone may execute it.
+    expect(at - deadline).toBeLessThan(5 * MIN);
+    expect(c.executable_at_ms - at).toBeGreaterThan(2 * (5 * MIN + MIN));
+    const [alert] = await alertsOf(w.store, 'forged_key_change');
+    expect(alert?.severity).toBe('critical');
+    expect(alert?.details).toMatchObject({ id: c.id, reason: 'not_published', outcome: 'cancelled', updater_proposed: true, new_kid_deadline_ms: deadline });
+    expect(channelsOf(w, 'forged_key_change')).toEqual(['email', 'pager', 'slack']);
+    expect(await unseenAt(w)).toHaveLength(1);
+  });
+
+  it('newKidDeadline: 6 h after the proposal at most, never later than 18 min before it is executable', () => {
+    const c = { id: 1, provider: 'google', kid: 'k', op: 'Add', by: SIGNER, n: 'n', e: 'AQAB', proposed_at_ms: T0, executable_at_ms: T0 + 2 * HOUR } as KeyChange;
+    expect(NEW_KID_CANCEL_LEAD_MS).toBe(18 * MIN);
+    expect(NEW_KID_GRACE_MS).toBe(6 * HOUR);
+    // Mainnet's provisional 2 h delay: 1 h 42 min of grace.
+    expect(newKidDeadline(c)).toBe(T0 + 2 * HOUR - 18 * MIN);
+    // The contract's longest delay: the 6 h cap.
+    expect(newKidDeadline({ ...c, executable_at_ms: T0 + 7 * 24 * HOUR })).toBe(T0 + 6 * HOUR);
+    // At the security bound, and below it (sandbox-dev's 2 min): no grace, judged at once as before D432.
+    expect(newKidDeadline({ ...c, executable_at_ms: T0 + 18 * MIN })).toBe(T0);
+    expect(newKidDeadline({ ...c, executable_at_ms: T0 + 2 * MIN })).toBeLessThan(T0);
+  });
+
+  it('cancels at once, with no grace, on a delay at or below the security bound', async () => {
+    const w = await initialized();
+    const c = w.chain.propose('Add', 'forged', { key: jwk('forged', 77), at: w.clock.t, delay: 2 * MIN });
+    await w.run();
+    expect(w.writer.methods()).toEqual(['cancel_issuer_key_change', 'delete_updater_key', 'delete_updater_key']);
+    expect(await unseenAt(w)).toEqual([]);
+    expect((await alertsOf(w.store, 'forged_key_change'))[0]?.details).toMatchObject({ id: c.id, new_kid_deadline_ms: newKidDeadline(c) });
+  });
+
+  it('cancels at once when a fetch in the grace lists the kid with other key material', async () => {
+    const w = await initialized();
+    const c = w.chain.propose('Add', 'k2', { key: jwk('k2', 2), at: w.clock.t });
+    await w.run();
+    expect(w.writer.calls).toEqual([]);
+    w.jwks.keys = [jwk('k1', 1), jwk('k2', 66)];
+    await w.run();
+    expect(w.writer.methods()).toEqual(['cancel_issuer_key_change', 'delete_updater_key', 'delete_updater_key']);
+    expect((await alertsOf(w.store, 'forged_key_change'))[0]?.details).toMatchObject({ id: c.id, reason: 'other_key_material' });
+  });
+
+  it('ends the grace of every unseen Add in a run that finds the updater forging another change', async () => {
+    const w = await initialized();
+    const unseen = w.chain.propose('Add', 'k2', { key: jwk('k2', 2), at: w.clock.t });
+    await w.run();
+    expect(await unseenAt(w)).toHaveLength(1);
+    const forged = w.chain.propose('Add', 'k1x', { key: jwk('k1x', 66), at: w.clock.t });
+    w.jwks.keys = [jwk('k1', 1), jwk('k1x', 7)];
+    await w.run();
+    expect(w.writer.calls).toEqual([
+      { method: 'cancel_issuer_key_change', args: { id: forged.id } },
+      { method: 'delete_updater_key', args: { public_key: UPDATER_KEYS[0] } },
+      { method: 'delete_updater_key', args: { public_key: UPDATER_KEYS[1] } },
+      { method: 'cancel_issuer_key_change', args: { id: unseen.id } },
+    ]);
+    const alerts = await alertsOf(w.store, 'forged_key_change');
+    expect(alerts.find((a) => a.details.id === unseen.id)?.details).toMatchObject({ reason: 'not_published', grace_ended: 'updater_forged' });
+  });
+
+  it('gives no grace when the same run already found the updater forging (here: an email change from the updater)', async () => {
+    const w = await initialized();
+    w.chain.propose('Add', 'e1', { key: jwk('e1', 5), provider: 'email', at: w.clock.t });
+    const unseen = w.chain.propose('Add', 'k2', { key: jwk('k2', 2), at: w.clock.t });
+    await w.run();
+    expect(w.writer.calls.filter((x) => x.method === 'cancel_issuer_key_change').map((x) => x.args.id)).toContain(unseen.id);
+    expect(await unseenAt(w)).toEqual([]);
+  });
+
+  it("gives the owner's Add of an unseen kid no grace (cancelled at once, the updater keys kept)", async () => {
+    const w = await initialized();
+    w.chain.propose('Add', 'k2', { key: jwk('k2', 2), at: w.clock.t, by: OWNER });
+    await w.run();
+    expect(w.writer.methods()).toEqual(['cancel_issuer_key_change']);
+    expect(await unseenAt(w)).toEqual([]);
+  });
+
+  it("gives no grace when the watchdog can't act (people then need the whole delay to cancel)", async () => {
+    const w = await initialized({ writer: false });
+    w.chain.propose('Add', 'k2', { key: jwk('k2', 2), at: w.clock.t });
+    await w.run();
+    expect((await alertsOf(w.store, 'forged_key_change'))[0]?.details).toMatchObject({ reason: 'not_published', outcome: 'not_sent' });
+    expect(await unseenAt(w)).toEqual([]);
+  });
+
+  it("gives no grace when it can't read which kids it has seen (fail safe)", async () => {
+    const w = await initialized();
+    w.chain.propose('Add', 'k2', { key: jwk('k2', 2), at: w.clock.t });
+    const real = w.store.seenKids.bind(w.store);
+    let reads = 0;
+    w.store.seenKids = async (p) => {
+      if (reads++ === 0) throw new Error('D1 down');
+      return real(p);
+    };
+    await w.run();
+    expect(w.writer.methods()).toEqual(['cancel_issuer_key_change', 'delete_updater_key', 'delete_updater_key']);
+    expect(await unseenAt(w)).toEqual([]);
+  });
+
+  it("past the deadline, cancels on earlier fetches' absences when this run's JWKS fetch fails", async () => {
+    const w = await initialized();
+    const c = w.chain.propose('Add', 'forged', { key: jwk('forged', 77), at: w.clock.t });
+    expect(await runUntil(w, newKidDeadline(c))).toEqual([]);
+    w.jwks.queue = ['fail'];
+    await w.run();
+    expect(w.writer.methods()).toEqual(['cancel_issuer_key_change', 'delete_updater_key', 'delete_updater_key']);
+    const [alert] = await alertsOf(w.store, 'forged_key_change');
+    expect(alert?.details).toMatchObject({ id: c.id, reason: 'not_published', judged_without_fetch: true });
+    expect(alert?.details.absent_fetches as number).toBeGreaterThanOrEqual(2);
+  });
+
+  it('ends the grace without a fetch too, in a run that finds the updater forging (an email change from it)', async () => {
+    const w = await initialized();
+    const unseen = w.chain.propose('Add', 'k2', { key: jwk('k2', 2), at: w.clock.t });
+    await w.run();
+    await w.run();
+    expect(w.writer.calls).toEqual([]);
+    w.chain.propose('Add', 'e1', { key: jwk('e1', 5), provider: 'email', at: w.clock.t });
+    w.jwks.queue = ['fail'];
+    await w.run();
+    expect(w.writer.calls.filter((x) => x.method === 'cancel_issuer_key_change').map((x) => x.args.id)).toContain(unseen.id);
+    expect((await alertsOf(w.store, 'forged_key_change')).find((a) => a.details.id === unseen.id)?.details).toMatchObject({ judged_without_fetch: true, grace_ended: 'updater_forged' });
+  });
+
+  it('judges nothing without a fetch when no earlier fetch missed the kid, then cancels on the next good fetch', async () => {
+    const w = await initialized();
+    // Proposed 1 h 50 min ago while every fetch failed: past its deadline, no absence recorded.
+    const c = w.chain.propose('Add', 'forged', { key: jwk('forged', 77), at: w.clock.t - 110 * MIN });
+    w.jwks.queue = ['fail'];
+    await w.run();
+    expect(w.writer.calls).toEqual([]);
+    await w.run();
+    expect(w.writer.calls[0]).toEqual({ method: 'cancel_issuer_key_change', args: { id: c.id } });
+  });
+
+  it("never cancels at the deadline a kid one of its fetches listed (D422's rollout rule): it waits for the delay", async () => {
+    const k2 = jwk('k2', 2);
+    const w = await initialized();
+    // Cancels and pauses at once, but can't confirm yet: a listing then only records the kid as seen.
+    w.chain.governance.watchdogs = [{ account_id: WATCHDOG, confirm_from_ms: w.clock.t + 24 * HOUR }];
+    const c = w.chain.propose('Add', 'k2', { key: k2, at: w.clock.t });
+    await w.run();
+    w.jwks.queue = [[jwk('k1', 1), k2]];
+    await w.run();
+    expect(await runUntil(w, newKidDeadline(c) + 10 * MIN)).toEqual([]);
+    expect(await alertsOf(w.store, 'forged_key_change')).toEqual([]);
+    expect(w.chain.governance.updater_keys).toEqual(UPDATER_KEYS);
   });
 });
 
@@ -343,13 +590,47 @@ describe('pending removals (step 4)', () => {
     expect(channelsOf(w, 'published_key_removal')).toEqual(['email', 'pager', 'slack']);
   });
 
-  it('confirms a removal of a kid absent from two fetches', async () => {
+  it('confirms a removal early only once fetches in a row over 10 min miss the kid and none listed it for 24 h (D422)', async () => {
     const w = await initialized({ active: [jwk('k1', 1), jwk('k2', 2)] });
     w.jwks.keys = [jwk('k1', 1)];
+    w.clock.t += REMOVAL_UNSEEN_MS;
     const c = w.chain.propose('Remove', 'k2');
+    // Two fetches 60 s apart: absent, not yet enough.
+    await w.run();
+    expect(w.writer.calls).toEqual([]);
+    await w.run();
+    expect(w.writer.calls).toEqual([]);
     await w.run();
     expect(w.writer.calls).toEqual([{ method: 'confirm_issuer_key_change', args: { id: c.id } }]);
     expect(w.chain.active.has('k2')).toBe(false);
+  });
+
+  it('never confirms a removal of a kid Google listed within 24 h, however long it has been missing since; a fetch that lists it alerts critical (D422)', async () => {
+    const w = await initialized({ active: [jwk('k1', 1), jwk('k2', 2)] });
+    w.clock.t += 2 * HOUR;
+    await w.run(); // k2 listed at this run
+    w.jwks.keys = [jwk('k1', 1)];
+    w.chain.propose('Remove', 'k2');
+    for (let i = 0; i < 12; i++) await w.run();
+    expect(w.writer.calls).toEqual([]);
+    expect(w.chain.active.has('k2')).toBe(true);
+    expect(await alertsOf(w.store, 'published_key_removal')).toEqual([]);
+    w.jwks.queue = [[jwk('k1', 1), jwk('k2', 2)]];
+    await w.run();
+    expect(w.writer.calls).toEqual([]);
+    expect((await alertsOf(w.store, 'published_key_removal')).map((a) => a.severity)).toEqual(['critical']);
+  });
+
+  it('removalConfirmable needs ≥ 3 absent fetches over ≥ 10 min and no listing for 24 h', () => {
+    const now = T0 + 30 * 24 * HOUR;
+    const seen = { provider: 'google', kid: 'k2', n: 'n', e: 'AQAB', source: 'jwks' as const, first_seen_at: T0, last_seen_at: now - REMOVAL_UNSEEN_MS };
+    const absence = { first: now - REMOVAL_ABSENT_SPAN_MS, fetches: ABSENT_FETCHES_TO_ACT };
+    expect(removalConfirmable(seen, absence, now)).toBe(true);
+    expect(removalConfirmable(undefined, absence, now)).toBe(true);
+    expect(removalConfirmable({ ...seen, last_seen_at: now - REMOVAL_UNSEEN_MS + 1 }, absence, now)).toBe(false);
+    expect(removalConfirmable(seen, { ...absence, fetches: 2 }, now)).toBe(false);
+    expect(removalConfirmable(seen, { ...absence, first: now - REMOVAL_ABSENT_SPAN_MS + 1 }, now)).toBe(false);
+    expect(removalConfirmable(seen, undefined, now)).toBe(false);
   });
 });
 
@@ -416,9 +697,12 @@ describe('active keys (step 5)', () => {
     expect((await alertsOf(w.store, 'automatic_action')).map((a) => a.title)).toEqual([expect.stringContaining('delete_updater_key')]);
   });
 
-  it('only warns (Slack + email) on a kid Google dropped more than 3 h ago, and never pauses on it', async () => {
+  it('only warns (Slack + email) on a kid Google dropped more than 27 h ago (the cron removes after 24 h, D422), and never pauses on it', async () => {
     const w = await initialized({ active: [jwk('k1', 1), jwk('k2', 2)] });
     w.jwks.keys = [jwk('k1', 1)];
+    await w.run();
+    expect(await alertsOf(w.store, 'stale_active_key')).toEqual([]);
+    w.clock.t += 24 * HOUR;
     await w.run();
     expect(await alertsOf(w.store, 'stale_active_key')).toEqual([]);
     w.clock.t += 3 * HOUR;
@@ -486,7 +770,7 @@ describe('first run', () => {
 
   it('still cancels a forged pending key at the first run (cancel is DoS-only)', async () => {
     const w = world({ active: [jwk('k1', 1)] });
-    w.chain.propose('Add', 'ghost');
+    w.chain.propose('Add', 'ghost', NO_GRACE);
     await w.run();
     expect(w.writer.methods()[0]).toBe('cancel_issuer_key_change');
   });
@@ -667,6 +951,7 @@ describe('other alerts', () => {
 
   it('alerts critical without a usable key and still reports forgeries', async () => {
     const w = await initialized({ writer: false });
+    // At once, despite the 2 h delay: no new-kid grace when the watchdog can't act (D432).
     w.chain.propose('Add', 'ghost');
     await w.run();
     expect(await alertsOf(w.store, 'watchdog_key_missing')).toHaveLength(1);

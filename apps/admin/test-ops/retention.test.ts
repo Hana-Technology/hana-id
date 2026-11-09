@@ -4,7 +4,7 @@
 // idempotence, its failure email, and that it stays within the 15-minute run's call budget (D280).
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { TestDb } from '../../api/test-usage/db.ts';
-import { RETENTION_BATCH } from '@hana-id/console-core';
+import { RETENTION_BATCH, userEventsCutoff } from '@hana-id/console-core';
 import type { Env } from '../src/env.ts';
 import { outbound } from '../src/email/sender.ts';
 import { type LedgerStore, ledgerSource } from '../src/ledger.ts';
@@ -48,7 +48,7 @@ const env = { ENV_NAME: 'sandbox-test', CONSOLE_ORIGIN: 'https://console.test', 
 type Ans = { ok: false; code: string } | ({ ok: true } & Record<string, unknown>);
 
 /** AdminRpc and StaffRpc as the job calls them: answers set per test, every call recorded with its input. */
-function fakeRpcs(o: { deleted?: string[][]; full?: boolean; fail?: Partial<Record<'deletedApps' | 'purgeDirectory' | 'apiAudit' | 'consoleAudit', string>> } = {}) {
+function fakeRpcs(o: { deleted?: string[][]; full?: boolean; fail?: Partial<Record<'deletedApps' | 'purgeDirectory' | 'userEvents' | 'apiAudit' | 'consoleAudit', string>> } = {}) {
   const calls: { method: string; input: Record<string, unknown> }[] = [];
   const full = o.full ?? false;
   const pages = [...(o.deleted ?? [])];
@@ -68,6 +68,7 @@ function fakeRpcs(o: { deleted?: string[][]; full?: boolean; fail?: Partial<Reco
           return { appIds: page, ...(page.length ? { next: `1:${page[page.length - 1]}` } : {}), more: pages.length > 0 };
         }),
       purgeDirectory: (c: unknown) => answer('purgeDirectory', c as Record<string, unknown>, 'purgeDirectory', () => ({ scopes: 1, users: n(2), wallets: n(3), identities: n(2) })),
+      purgeUserEvents: (c: unknown) => answer('purgeUserEvents', c as Record<string, unknown>, 'userEvents', () => ({ expired: n(4), deadScopes: n(1) })),
       purgeAudit: (c: unknown) => answer('apiPurgeAudit', c as Record<string, unknown>, 'apiAudit', () => ({ appChanges: n(5), guardedChanges: n(1) })),
     },
     console: {
@@ -93,7 +94,7 @@ describe('when the monthly job runs', () => {
     expect(first).toMatchObject({ ran: true, status: 'ok', error: null });
     const [run] = await runsOf('2031-01');
     expect(run).toMatchObject({ status: 'ok', startedAt: t + 5 * MIN, finishedAt: t + 5 * MIN, error: null, alertedAt: null });
-    expect(run!.rows).toMatchObject({ directoryUsers: 2, directoryWallets: 3, appChangesDeleted: 5, guardedChangesDeleted: 1, auditLogDeleted: 7, ownerGrantsDeleted: 0, calls: 4 });
+    expect(run!.rows).toMatchObject({ directoryUsers: 2, directoryWallets: 3, userEventsExpired: 4, userEventsDeadScopes: 1, appChangesDeleted: 5, guardedChangesDeleted: 1, auditLogDeleted: 7, ownerGrantsDeleted: 0, calls: 5 });
     expect(run!.rows.due).toEqual({ statements: 0, rates: 0, rateOverrides: 0, oldestStatement: null });
 
     // Idempotent: every later run of the month does nothing and calls nothing.
@@ -106,7 +107,7 @@ describe('when the monthly job runs', () => {
     expect(await job(rpcs, due(2031, 2))).toMatchObject({ ran: true, status: 'ok' });
   });
 
-  it('passes the D90 cutoffs: 60 months for the audit purges, 30 days for deleted apps; a system actor', async () => {
+  it('passes the D90 cutoffs: 60 months for the audit purges, 24 months for user events, 30 days for deleted apps; a system actor', async () => {
     const t = due(2031, 3) + MIN;
     const rpcs = fakeRpcs();
     await job(rpcs, t);
@@ -115,6 +116,8 @@ describe('when the monthly job runs', () => {
     expect(byMethod.consolePurgeAudit).toMatchObject({ before: Date.UTC(2026, 2, 1, 1, 1), limit: RETENTION_BATCH });
     expect(byMethod.deletedApps).toMatchObject({ before: t - 30 * DAY });
     expect(byMethod.purgeDirectory).toMatchObject({ before: t - 30 * DAY });
+    expect(byMethod.purgeUserEvents).toMatchObject({ before: Date.UTC(2029, 2, 1, 1, 1), deletedBefore: t - 30 * DAY, limit: RETENTION_BATCH, actor: { kind: 'system' } });
+    expect(byMethod.purgeUserEvents!.before).toBe(userEventsCutoff(t));
   });
 
   it('purges the ledger’s app_users of the deleted apps it is given and keeps the cursor for next month', async () => {
@@ -131,6 +134,30 @@ describe('when the monthly job runs', () => {
     const next = fakeRpcs();
     await job(next, due(2031, 5));
     expect(next.calls.find((c) => c.method === 'deletedApps')!.input).toMatchObject({ after: '1:app_gone2' });
+  });
+});
+
+describe('the user events step (readiness 7.17)', () => {
+  it('continues in batches while a page is full, and a failure is recorded as its step while the others run', async () => {
+    const t = due(2031, 12);
+    const rpcs = fakeRpcs();
+    let pages = 0;
+    rpcs.api.purgeUserEvents = (c: unknown) => {
+      rpcs.calls.push({ method: 'purgeUserEvents', input: c as Record<string, unknown> });
+      pages++;
+      return Promise.resolve({ ok: true, expired: pages < 3 ? RETENTION_BATCH : 7, deadScopes: pages === 1 ? RETENTION_BATCH : 0 } as never);
+    };
+    const out = await job(rpcs, t);
+    expect(out).toMatchObject({ status: 'ok' });
+    expect(pages).toBe(3);
+    expect(out.rows).toMatchObject({ userEventsExpired: 2 * RETENTION_BATCH + 7, userEventsDeadScopes: RETENTION_BATCH });
+
+    const failing = fakeRpcs({ fail: { userEvents: 'internal' } });
+    const failed = await job(failing, due(2032, 2));
+    expect(failed).toMatchObject({ status: 'failed', error: 'user_events: internal' });
+    expect(failed.rows).toMatchObject({ directoryUsers: 2, appChangesDeleted: 5, auditLogDeleted: 7 });
+    // The month completes on the retry (so this failure is never emailed by the alert tests below).
+    expect(await job(fakeRpcs(), due(2032, 2) + RETRY_AFTER_FAILURE_MS)).toMatchObject({ status: 'ok' });
   });
 });
 
@@ -182,7 +209,8 @@ describe('a failure (spec "Email": direct retention_failed)', () => {
     expect(out).toMatchObject({ ran: true, status: 'failed', error: 'directory: internal' });
     // The other steps did their part.
     expect(out.rows).toMatchObject({ appChangesDeleted: 5, auditLogDeleted: 7 });
-    expect(failing.calls.map((c) => c.method)).toEqual(['deletedApps', 'purgeDirectory', 'apiPurgeAudit', 'consolePurgeAudit']);
+    expect(failing.calls.map((c) => c.method)).toEqual(['deletedApps', 'purgeDirectory', 'purgeUserEvents', 'apiPurgeAudit', 'consolePurgeAudit']);
+    expect(out.rows).toMatchObject({ userEventsExpired: 4 });
 
     const email = new FakeEmail();
     expect(await runRetentionAlerts(env, r, email, new Budget(), t)).toEqual({ sent: 1, failed: 0 });

@@ -3,7 +3,7 @@
 **Status: APPROVED (2026-10-30); build steps 1–4 (no email claim) merged (D170–D179) and deployed on sandbox-dev
 2026-11-02; step 8 built on `feat/identity-token-8` (D210–D214): the watchdog's JWKS pin check plus an outside probe,
 which detect a key served to everyone but not one cloaked from them (partner-side pinning prevents; D210); step 7's
-code (the KMS signer) merged (D215–D219), its AWS setup not done; steps 5–6 (the email claim) built on `feat/email-sharing` (2026-11-06, not merged; D411, D438–D443, `docs/email-sharing-spec.md`). Since D346 (2026-11-04, branch
+code (the KMS signer) merged (D215–D219), its AWS setup not done; steps 5–6 (the email claim) built on `feat/email-sharing-2` (not merged; merging next batch; D411, D438–D443, `docs/email-sharing-spec.md`). Since D346 (2026-11-04, branch
 `feat/user-id-identity-sub`) the `sub` is also the wallet directory's User ID and the Support ID's source.** The current state is in the reference docs (`api.md` "Identity token", `integration.md`
 section 15, `architecture.md`, `security.md`, `operations.md` "Identity token keys"). Specifies `docs/decisions.md` D120 (a short-lived JWT a partner's
 backend can verify, with an opt-in verified email per app). The user answered all 16
@@ -496,7 +496,7 @@ The emergency is cheap for users (nothing changes for them) and bounded for part
 ## Verified email: opt-in per app
 
 > **Superseded where they differ (2026-11-06):** D411 changed the consent design and `docs/email-sharing-spec.md` is
-> what was built (branch `feat/email-sharing`, not merged; D438–D443): a three-value `identity_email`, the sheet as its
+> what was built (branch `feat/email-sharing-2`, not merged; merging next batch; D438–D443): a three-value `identity_email`, the sheet as its
 > own page after the key's check or from `requestEmailSharing()`, `email_consents` with the shared copy, no
 > `/v1/identity/email-consent/lookup`. The sealed email below is kept as specified.
 

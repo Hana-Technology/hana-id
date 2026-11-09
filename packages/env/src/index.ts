@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type Manifest, manifestSchema } from './schema.ts';
 
-export { DO_LOCATION_HINTS, endpointUrlProblem, type Manifest, manifestSchema, MIN_CKD_SOURCES, PAGER_PROVIDERS } from './schema.ts';
+export { apiRpcFallbacksOf, DO_LOCATION_HINTS, endpointUrlProblem, MAX_API_RPC_FALLBACKS, type Manifest, manifestSchema, MIN_CKD_SOURCES, PAGER_PROVIDERS } from './schema.ts';
 export {
   appChangeDelayProblems,
   DASHBOARD_BLOCKS,

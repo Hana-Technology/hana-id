@@ -105,6 +105,27 @@ export function emailConsentPayload(i: { action: EmailConsentAction; parentOrigi
   return concatBytes(utf8(EMAIL_CONSENT_PAYLOAD), borshString(i.action), borshString(i.parentOrigin), sha256(utf8(i.sealedEmail ?? '')));
 }
 
+/**
+ * The mainnet demo's signature report (D428, the security review of 2026-11-06): what the session key signs inside
+ * identityMessage, binding the event to this session and to the wallet proof of the address that signed.
+ * "mainnet-demo-event" ‖ borsh(chain) ‖ borsh(network) ‖ borsh(kind) ‖ borsh(usdMicros) ‖ borsh(address) ‖
+ * borsh(Vec<u8> wallet proof signature).
+ */
+export const MAINNET_DEMO_EVENT_PAYLOAD = 'mainnet-demo-event';
+
+export function mainnetDemoEventPayload(e: { chain: string; network: string; kind: string; usdMicros: string; walletProof: WalletProof }): Bytes {
+  return concatBytes(
+    utf8(MAINNET_DEMO_EVENT_PAYLOAD),
+    borshString(e.chain),
+    borshString(e.network),
+    borshString(e.kind),
+    borshString(e.usdMicros),
+    borshString(e.walletProof.address),
+    u32le(e.walletProof.signature.length),
+    toBytes(e.walletProof.signature),
+  );
+}
+
 // ---- wallet proofs ----
 
 export interface WalletProof {

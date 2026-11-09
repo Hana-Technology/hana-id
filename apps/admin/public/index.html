@@ -3,16 +3,27 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
     <title>Hana ID admin</title>
     <link rel="stylesheet" href="/app.css" />
     <script src="/app.js" defer></script>
   </head>
   <body>
-    <header>
-      <strong>Hana ID admin</strong>
-      <nav id="nav"></nav>
-      <span id="who"></span>
-    </header>
-    <main id="app"><p>Loading…</p></main>
+    <a class="skip" href="#app">Skip to content</a>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <svg class="mark" viewBox="0 0 50 50" aria-hidden="true" focusable="false"><rect class="mark-bg" width="50" height="50" rx="12"/><path class="mark-fg" d="M13.7175 19.5813C18.4911 19.5813 22.3614 15.7111 22.3614 10.9375H36.287V27.4606H28.1016V19.6781C25.1482 24.528 19.811 27.7667 13.7175 27.7667V19.5813Z"/><path class="mark-fg" d="M36.287 30.9035H13.7175V39.0889H36.287V30.9035Z"/></svg>
+          <strong>Hana ID admin</strong>
+          <span id="env" class="env"></span>
+        </div>
+        <nav id="nav" aria-label="Main"></nav>
+        <div id="who"></div>
+      </aside>
+      <div class="page">
+        <div id="session" class="session"></div>
+        <main id="app" tabindex="-1"><p class="loading">Loading…</p></main>
+      </div>
+    </div>
   </body>
 </html>

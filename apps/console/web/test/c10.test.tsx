@@ -5,11 +5,11 @@
 // it's no longer pending); the AddClient PII warning; the email sharing setting (D411) through the settings action; the
 // Users tab only when the server has it on, an email only as shared ("Not shared" otherwise), each app's in a detail.
 import { validateAutoApprovePolicy } from '@hana-id/core/policy';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { policyJson } from '../../../../packages/core/test/policy-fixtures.ts';
-import { nav } from '../src/api.ts';
+import { nav, resetSession } from '../src/api.ts';
 import { App } from '../src/App.tsx';
 
 type Answer = { status?: number; body: unknown };
@@ -17,6 +17,7 @@ let routes: Record<string, Answer | ((init?: RequestInit) => Answer)>;
 let calls: { url: string; init?: RequestInit }[];
 
 beforeEach(() => {
+  resetSession();
   routes = {};
   calls = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -67,7 +68,7 @@ describe('a fresh sign-in, end to end in the SPA', () => {
     routes['/api/orgs/org_a/actions'] = { body: { id: 'act_1', kind: 'origin.add', decoded, expiresAt: Date.now() + 300_000 } };
     routes['/api/actions/act_1'] = { body: { id: 'act_1', kind: 'origin.add', status: 'pending', decoded, expiresAt: Date.now() + 300_000 } };
     routes['/api/actions/act_1/google'] = { body: { startUrl: 'https://console-auth.test/start?f=xyz' } };
-    at('/orgs/org_a/apps/app_1');
+    at('/orgs/org_a/apps/app_1/origins');
     fireEvent.change(await screen.findByPlaceholderText('https://app.example.com'), { target: { value: 'https://bücher.example' } });
     fireEvent.click(screen.getAllByRole('button', { name: 'Review and confirm with Google' })[0]!);
     await waitFor(() => expect(window.location.pathname).toBe('/actions/act_1'));
@@ -85,7 +86,7 @@ describe('a fresh sign-in, end to end in the SPA', () => {
     signedIn();
     vi.spyOn(nav, 'assign').mockImplementation(() => {});
     routes['/api/orgs/org_a/actions'] = { body: { id: 'act_5', kind: 'app.settings', decoded: {}, expiresAt: Date.now() + 300_000 } };
-    at('/orgs/org_a/apps/app_1');
+    at('/orgs/org_a/apps/app_1/sessions');
     const select = (await screen.findByLabelText(/^Email sharing/u)) as HTMLSelectElement;
     expect(select.value).toBe('off');
     expect([...select.options].map((o) => [o.value, o.textContent])).toEqual([
@@ -104,13 +105,15 @@ describe('a fresh sign-in, end to end in the SPA', () => {
   it('email sharing: the current value comes from settings.identityEmail; the review page names the change', async () => {
     signedIn();
     routes['/api/orgs/org_a/apps/app_1'] = { body: { app: { ...APP, settings: { ...APP.settings, identityEmail: 'on_request' } } } };
-    at('/orgs/org_a/apps/app_1');
+    at('/orgs/org_a/apps/app_1/sessions');
     expect(((await screen.findByLabelText(/^Email sharing/u)) as HTMLSelectElement).value).toBe('on_request');
     expect(screen.getByText('When the app asks')).toBeTruthy();
     cleanup();
-    routes['/api/actions/act_6'] = { body: { id: 'act_6', kind: 'app.settings', status: 'pending', decoded: { appId: 'app_1', appName: 'Wallet', changes: { identityEmail: 'off' } }, expiresAt: Date.now() + 300_000 } };
+    routes['/api/actions/act_6'] = { body: { id: 'act_6', kind: 'app.settings', status: 'pending', decoded: { appId: 'app_1', appName: 'Wallet', from: { identityEmail: 'on_request' }, changes: { identityEmail: 'off' } }, expiresAt: Date.now() + 300_000 } };
     at('/actions/act_6');
-    expect(await screen.findByText('Email sharing: off')).toBeTruthy();
+    expect(await screen.findByRole('cell', { name: 'Email sharing' })).toBeTruthy();
+    expect(screen.getByRole('cell', { name: 'off' })).toBeTruthy();
+    expect(screen.getByRole('cell', { name: 'when the app asks' })).toBeTruthy();
   });
 
   it('the outcome page: a refused confirmation says why, and no confirm button is left', async () => {
@@ -128,7 +131,7 @@ describe('a fresh sign-in, end to end in the SPA', () => {
     const policy = JSON.parse(JSON.stringify(v.policy)) as unknown;
     routes['/api/orgs/org_a/apps/app_1/policy/check'] = { body: { policyId: 'a'.repeat(64), label: 'Swaps on Example', policy } };
     routes['/api/orgs/org_a/actions'] = { body: { id: 'act_3', kind: 'policy.set', decoded: {}, expiresAt: Date.now() + 300_000 } };
-    at('/orgs/org_a/apps/app_1');
+    at('/orgs/org_a/apps/app_1/signing');
     fireEvent.change(await screen.findByLabelText(/Policy \(JSON/u), { target: { value: JSON.stringify(policyJson()) } });
     fireEvent.click(screen.getByRole('button', { name: 'Check and preview' }));
     expect(await screen.findByText('Allow automatic signing?')).toBeTruthy();
@@ -141,11 +144,15 @@ describe('a fresh sign-in, end to end in the SPA', () => {
 
   it('an invalid policy shows the validator’s problems and no preview', async () => {
     signedIn();
-    routes['/api/orgs/org_a/apps/app_1/policy/check'] = { status: 400, body: { error: { code: 'policy_invalid', message: 'label: required' } } };
-    at('/orgs/org_a/apps/app_1');
-    fireEvent.change(await screen.findByLabelText(/Policy \(JSON/u), { target: { value: '{"v":1}' } });
+    routes['/api/orgs/org_a/apps/app_1/policy/check'] = { status: 400, body: { error: { code: 'policy_invalid', message: 'label: required; v: must be 1' }, problems: ['label: required', 'v: must be 1'] } };
+    at('/orgs/org_a/apps/app_1/signing');
+    fireEvent.change(await screen.findByLabelText(/Policy \(JSON/u), { target: { value: '{"v":2}' } });
     fireEvent.click(screen.getByRole('button', { name: 'Check and preview' }));
-    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'label: required');
+    const alert = await screen.findByRole('alert');
+    // Plain words, each problem on its own line, and the code for support.
+    expect(alert.textContent).toContain('The policy has problems');
+    expect(within(alert).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['label: required', 'v: must be 1']);
+    expect(alert.textContent).toContain('policy_invalid');
     expect(screen.queryByText('Allow automatic signing?')).toBeNull();
   });
 });
@@ -154,7 +161,7 @@ describe('immediate writes', () => {
   it('a key revoke needs a second click, then posts with the CSRF header', async () => {
     signedIn();
     routes['/api/orgs/org_a/apps/app_1/keys/key_1/revoke'] = { body: {} };
-    at('/orgs/org_a/apps/app_1');
+    at('/orgs/org_a/apps/app_1/keys');
     fireEvent.click(await screen.findByRole('button', { name: 'Revoke' }));
     expect(calls.some((c) => c.url.endsWith('/revoke'))).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: /Revoke the last key/u }));
@@ -165,7 +172,7 @@ describe('immediate writes', () => {
   it('the logo goes as a raw octet-stream body at the settings version', async () => {
     signedIn();
     routes['/api/orgs/org_a/apps/app_1/logo?expectedVersion=5'] = { body: { logoUrl: 'https://files.test/logos/app_1/x.png', version: 6 } };
-    at('/orgs/org_a/apps/app_1');
+    at('/orgs/org_a/apps/app_1/branding');
     const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'logo.png', { type: 'image/png' });
     fireEvent.change(await screen.findByLabelText('Logo file'), { target: { files: [file] } });
     fireEvent.click(screen.getByRole('button', { name: 'Upload the logo' }));
@@ -176,9 +183,13 @@ describe('immediate writes', () => {
 
   it('a frozen org: only the kill switches are offered (revoke, suspend, remove an origin), no add, no create', async () => {
     signedIn('owner', 'frozen');
-    at('/orgs/org_a/apps/app_1');
-    await screen.findByText('pk_live_abc');
-    const names = screen.getAllByRole('button').map((b) => b.textContent);
+    const names: (string | null)[] = [];
+    for (const section of ['', '/origins', '/keys', '/sessions', '/signing', '/branding', '/suspend']) {
+      at(`/orgs/org_a/apps/app_1${section}`);
+      await screen.findAllByText('pk_live_abc');
+      names.push(...screen.getAllByRole('button').map((b) => b.textContent));
+      cleanup();
+    }
     expect(names).toEqual(expect.arrayContaining(['Revoke', 'Suspend the app', 'Remove']));
     for (const n of ['Create a key', 'Rotate', 'Review and confirm with Google', 'Check and preview', 'Save the name', 'Upload the logo']) expect(names, n).not.toContain(n);
   });

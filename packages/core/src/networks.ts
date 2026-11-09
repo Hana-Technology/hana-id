@@ -33,6 +33,12 @@ export const TEST_EVM_CHAINS: Readonly<Record<number, string>> = Object.freeze({
   1337: 'Local (Ganache, Geth dev)',
 });
 
+// The mainnet demo (D428): the mainnets a `pk_test_` app with Hana's demo on may sign for are Base (8453) and Stellar's
+// public network. The vault decides with the app's setting and the per-transaction cap (`@hana-id/core/mainnet-demo`);
+// the partner client lets Base through its own early check only while its vault says the demo is on (the
+// `mainnetDemo` port event), and the vault's answer is the one that counts. The constants live in demo-config.ts (no imports) for the API Worker.
+export { MAINNET_DEMO_BALANCE_ENDPOINTS, MAINNET_DEMO_BALANCE_ORIGINS, MAINNET_DEMO_EVM_CHAINS, MAINNET_DEMO_TX_CAP_USD_MICROS } from './demo-config.ts';
+
 export const isTestPublishableKey = (pk: string): boolean => pk.startsWith('pk_test_');
 
 /** Whether a test app may use this EVM chain (it is on the testnet allowlist). */

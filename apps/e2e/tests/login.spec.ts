@@ -178,7 +178,9 @@ test('a Google #error other than a cancel ends the login with google_error (a ca
   // Google answers its sign-in screen with a failure of its own (not the user's Cancel).
   const first = google.requests[0];
   if (!first?.ok) throw new Error('no Google request');
-  await popup.goto(`${AUTH_ORIGIN}/login/callback#error=server_error&state=${first.request.state}`);
+  // The callback relays the error and closes itself, possibly before its `load` (its stylesheet's fonts count toward
+  // load, D426): wait only for the navigation to commit, as the result below is what the test is about.
+  await popup.goto(`${AUTH_ORIGIN}/login/callback#error=server_error&state=${first.request.state}`, { waitUntil: 'commit' });
   expect(await errorOf(page, 'login')).toMatchObject({ code: 'google_error' });
   expect(await settled(page, 'login')).toMatchObject({ data: { error: 'server_error' } });
   expect(await status(page)).toBe('logged_out');

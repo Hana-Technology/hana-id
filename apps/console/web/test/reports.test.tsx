@@ -9,6 +9,7 @@ import { formatNear, formatUsd } from '@hana-id/console-core';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetSession } from '../src/api.ts';
 import { App } from '../src/App.tsx';
 import { countdown } from '../src/lib.tsx';
 import { usagePath } from '../src/pages/Usage.tsx';
@@ -19,6 +20,7 @@ let routes: Record<string, Answer | ((init?: RequestInit) => Answer)>;
 let calls: { url: string; init?: RequestInit }[];
 
 beforeEach(() => {
+  resetSession();
   routes = {};
   calls = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -52,7 +54,12 @@ function signedIn(role: 'owner' | 'viewer' = 'owner', status: 'active' | 'frozen
 /** No address of any person on the page but the signed-in member's own (the header). */
 const noPersonAddress = () => expect(document.body.textContent).not.toMatch(/@(?!partner\.example)/u);
 const hrefs = () => screen.getAllByRole('link').map((a) => a.getAttribute('href'));
-const writeButtons = () => screen.queryAllByRole('button').map((b) => b.textContent).filter((t) => t !== 'Sign out' && t !== 'Show' && t !== 'Try again' && t !== 'read the chain again');
+const writeButtons = () =>
+  screen
+    .queryAllByRole('button')
+    .filter((b) => !b.classList.contains('btn-copy'))
+    .map((b) => b.textContent)
+    .filter((t) => t !== 'Sign out' && t !== 'Show' && t !== 'Try again' && t !== 'read the chain again');
 
 const today = new Date().toISOString().slice(0, 10);
 const DEFAULT_USAGE = usagePath('org_a', { from: `${today.slice(0, 7)}-01`, to: today, by: 'day', apps: [] });
@@ -174,7 +181,9 @@ describe('usage', () => {
     signedIn();
     routes[DEFAULT_USAGE] = { status: 429, body: { error: { code: 'rate_limited', message: 'Too many requests; try again in a minute' } } };
     at('/orgs/org_a/usage');
-    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Too many requests; try again in a minute');
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Wait a minute, then try again');
+    expect(alert.textContent).toContain('rate_limited');
   });
 
   it('a frozen org still shows its usage, under the frozen note', async () => {
@@ -241,7 +250,7 @@ describe('statements', () => {
     cleanup();
     routes['/api/orgs/org_a/statements'] = { status: 500, body: { error: { code: 'internal', message: 'The usage service did not answer; try again shortly' } } };
     at('/orgs/org_a/statements');
-    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'The usage service did not answer; try again shortly');
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', expect.stringContaining('The usage service did not answer; try again shortly'));
   });
 
   const VIEW = {
@@ -388,7 +397,7 @@ describe('pending upgrades', () => {
     let n = 0;
     routes[URL_] = () => (n++ === 0 ? { status: 503, body: { error: { code: 'near_unavailable', message: 'The governance state could not be read; try again shortly' } } } : { body: { pendingUpgrades: BASE } });
     at('/orgs/org_a/upgrades');
-    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'The governance state could not be read; try again shortly');
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', expect.stringContaining('The governance state could not be read; try again shortly'));
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(await screen.findByText('Nothing is pending.')).toBeTruthy();
     await waitFor(() => expect(calls.filter((c) => c.url === URL_).length).toBe(2));

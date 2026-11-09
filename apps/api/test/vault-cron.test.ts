@@ -2,6 +2,7 @@ import { createExecutionContext, createScheduledController, waitOnExecutionConte
 import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import worker from '../src/index.ts';
+import { JWKS_FETCHES_PER_RUN } from '../src/issuer-keys.ts';
 import { SHARE_TOMBSTONE_MS, pruneShares, rewrapShares, vaultMaintenance } from '../src/vault/cron.ts';
 import { clearKekCache, loadKeks, parseKek, unwrapShareKey, wrapShareKey } from '../src/vault/kek.ts';
 import { NearMock } from './near-mock.ts';
@@ -96,7 +97,7 @@ describe('vault cron', () => {
     }
     // Not pruned, but every run fetched the JWKS and read the chain.
     expect(await storedShare(revoked.shareId)).not.toBeNull();
-    expect(jwks.jwksFetches).toBe(3);
+    expect(jwks.jwksFetches).toBe(3 * JWKS_FETCHES_PER_RUN);
     expect(jwks.viewCalls.filter((v) => v.method === 'get_key_changes')).toHaveLength(3);
   });
 

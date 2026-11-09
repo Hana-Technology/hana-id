@@ -14,7 +14,9 @@ type Pkg = { name: string; dir: string; deps: string[] };
 type Reads = Map<string, { code: Set<string>; test: Set<string> }>;
 type Selection = { all: true; reason: string } | { all: false; names: string[]; reason: string };
 type Cmd = { cmd: string; args: string[]; cwd: string; env: Record<string, string> };
-type Step = { id: string; title: string; phase: number; run: Cmd[]; skip: string | null };
+type Step = { id: string; title: string; phase: number; lane: string; run: Cmd[]; skip: string | null };
+type Result = { result: string; ms: number; start: number };
+type Run = { done: Promise<{ ok: boolean; ms: number; failed?: string; cwd?: string }>; stop: () => void };
 type Plan = { mode: string; selection: Selection; jobs: { rust: boolean; web: boolean }; steps: Step[] };
 type Mode = 'quick' | 'default' | 'full';
 interface VerifyModule {
@@ -32,7 +34,14 @@ interface VerifyModule {
   plan(o: { mode: Mode; files: string[] | null; pkgs: Pkg[]; reads: Reads; dirty?: boolean; cpus?: number }): Plan;
   parseArgs(argv: string[]): { mode: Mode; all: boolean; base: string; plan: boolean; json: boolean; files: string[] | null };
   summaryTable(rows: string[][]): string;
+  summaryRows(steps: Step[], results: Map<string, Result>, failed: object | null, wallMs: number): string[][];
+  lanes(steps: Step[], phase: number): [string, Step[]][];
+  schedule(
+    p: { steps: Step[] },
+    deps?: { run?: (s: Step, logPath: string) => Run; log?: (line: string) => void; logDir?: string },
+  ): Promise<{ results: Map<string, Result>; failed: { s: Step } | null; ms: number }>;
   fmt(ms: number): string;
+  SANDBOX_TEST_THREADS: number;
 }
 type Update = { localRef: string; localSha: string; remoteRef: string; remoteSha: string };
 type Decision = { action: 'skip' | 'refuse' | 'run'; message: string; args?: string[] };
@@ -225,7 +234,7 @@ describe('the plan', () => {
     expect(step(web, 'contract').skip).toBe('no Rust change');
 
     const rust = plan('default', ['contracts/hana-signer/src/lib.rs']);
-    expect(ran(rust)).toEqual(['install', 'secrets', 'typecheck', 'unit', 'docs', 'contract', 'sandbox']);
+    expect(ran(rust)).toEqual(['install', 'secrets', 'typecheck', 'contract', 'unit', 'docs', 'sandbox']);
     expect(step(rust, 'pack').skip).toBe('no web change');
 
     const both = plan('default', ['apps/api/src/gas.ts']);
@@ -246,15 +255,41 @@ describe('the plan', () => {
 
   it('--full: every package and job whatever changed, Playwright on all three browsers', () => {
     const p = plan('full', ['docs/operations.md']);
-    expect(ran(p)).toEqual(['install', 'secrets', 'typecheck', 'unit', 'docs', 'contract', 'sandbox', 'pack', 'e2e']);
+    expect(ran(p)).toEqual(['install', 'secrets', 'typecheck', 'contract', 'unit', 'docs', 'sandbox', 'pack', 'e2e']);
     expect(p.selection.all).toBe(true);
     expect(step(p, 'typecheck').run.map(line)).toEqual(['pnpm -r --workspace-concurrency=4 --reporter=append-only typecheck']);
     expect(step(p, 'e2e').run.map(line)).toEqual(['pnpm --filter @hana-id/e2e run e2e --forbid-only --project chromium --project firefox --project webkit']);
   });
 
-  it('cheapest first: phases run lockfile, then gitleaks + typecheck, unit + docs, contract, sandbox, pack, browsers', () => {
+  it('cheapest first: lockfile; gitleaks + typecheck + contract; unit + docs; sandbox beside pack then browsers (D423)', () => {
     const p = plan('full', null);
-    expect(Object.fromEntries(p.steps.map((s) => [s.id, s.phase]))).toEqual({ install: 0, secrets: 1, typecheck: 1, unit: 2, docs: 2, contract: 3, sandbox: 4, pack: 5, e2e: 6 });
+    expect(Object.fromEntries(p.steps.map((s) => [s.id, s.phase]))).toEqual({ install: 0, secrets: 1, typecheck: 1, contract: 1, unit: 2, docs: 2, sandbox: 3, pack: 3, e2e: 4 });
+    const laneIds = (ph: number) => V.lanes(p.steps, ph).map(([lane, steps]) => [lane, steps.map((s) => s.id)]);
+    expect(laneIds(1)).toEqual([['secrets', ['secrets']], ['typecheck', ['typecheck']], ['contract', ['contract']]]);
+    // The pack check and Playwright one after the other (both build @hana-id/web), beside the sandbox nodes.
+    expect(laneIds(3)).toEqual([['sandbox', ['sandbox']], ['web', ['pack']]]);
+    // Playwright alone, after the sandbox nodes are gone (Firefox timed out beside them, 2026-11-06).
+    expect(laneIds(4)).toEqual([['e2e', ['e2e']]]);
+    // The table lists the steps in the order they start.
+    expect(p.steps.map((s) => s.id)).toEqual(['install', 'secrets', 'typecheck', 'contract', 'unit', 'docs', 'sandbox', 'pack', 'e2e']);
+  });
+
+  it('the unit tests share their phase with the docs checks only, in every tier (D140: PGlite and workerd time out under load)', () => {
+    for (const p of [plan('full', null), plan('default', ['apps/api/src/gas.ts']), plan('quick', ['apps/api/src/gas.ts'])]) {
+      const unit = step(p, 'unit');
+      expect(p.steps.filter((s) => s.phase === unit.phase).map((s) => s.id).sort()).toEqual(['docs', 'unit']);
+    }
+  });
+
+  it('skipped steps leave their lane: a web-only change runs the pack check then Playwright alone in the last phase', () => {
+    const web = plan('default', ['packages/web/src/index.ts']);
+    expect(V.lanes(web.steps, 3).map(([lane, steps]) => [lane, steps.map((s) => s.id)])).toEqual([['web', ['pack']]]);
+    expect(V.lanes(web.steps, 4).map(([lane, steps]) => [lane, steps.map((s) => s.id)])).toEqual([['e2e', ['e2e']]]);
+    expect(V.lanes(plan('quick', null).steps, 3)).toEqual([]);
+  });
+
+  it(`sandbox e2e: ${V.SANDBOX_TEST_THREADS} tests at a time, each on its own sandbox node`, () => {
+    expect(step(plan('full', null), 'sandbox').run.map(line)).toEqual([`cargo test --locked -- --test-threads=${V.SANDBOX_TEST_THREADS}`]);
   });
 
   it('unit tests: the selected packages but the docs ones, 4 at a time, CI=true (vitest refuses a stray .only)', () => {
@@ -309,11 +344,11 @@ describe('.github/workflows/ci.yml: every job has its step, with the same comman
     expect(cmds('secrets')).toContain('gitleaks git --no-banner --redact --config .gitleaks.toml --exit-code 1 .');
     expect(yml).toContain('node scripts/secret-scan-selftest.mjs ./gitleaks');
     expect(cmds('secrets')).toContain('node scripts/secret-scan-selftest.mjs gitleaks');
-    for (const c of ['cargo test --locked', 'cargo near build non-reproducible-wasm', 'cargo test --locked -- --test-threads=1', 'pnpm run pack:check', 'pnpm -r typecheck', 'pnpm -r test', 'pnpm install --frozen-lockfile']) {
+    for (const c of ['cargo test --locked', 'cargo near build non-reproducible-wasm', `cargo test --locked -- --test-threads=${V.SANDBOX_TEST_THREADS}`, 'pnpm run pack:check', 'pnpm -r typecheck', 'pnpm -r test', 'pnpm install --frozen-lockfile']) {
       expect(yml, c).toContain(`run: ${c}`);
     }
     expect(cmds('contract')).toEqual(['cargo test --locked', 'cargo near build non-reproducible-wasm']);
-    expect(cmds('sandbox')).toEqual(['cargo test --locked -- --test-threads=1']);
+    expect(cmds('sandbox')).toEqual([`cargo test --locked -- --test-threads=${V.SANDBOX_TEST_THREADS}`]);
     expect(cmds('pack')).toEqual(['pnpm run pack:check']);
     expect(p.steps.find((s) => s.id === 'contract')!.run[0]!.cwd).toBe('contracts/hana-signer');
     expect(p.steps.find((s) => s.id === 'sandbox')!.run[0]!.cwd).toBe('contracts/integration-tests');
@@ -324,12 +359,90 @@ describe('the summary', () => {
   it('formats durations and lines up the table', () => {
     expect(V.fmt(1234)).toBe('1.2s');
     expect(V.fmt(125_000)).toBe('2m05s');
-    expect(V.summaryTable([['typecheck (all packages)', 'pass', '17.0s'], ['e2e', 'skip: no web change', '']]).split('\n')).toEqual([
-      'step                      result               duration',
-      '------------------------  -------------------  --------',
-      'typecheck (all packages)  pass                 17.0s',
+    expect(V.summaryTable([['typecheck (all packages)', 'pass', '+2.0s', '17.0s'], ['e2e', 'skip: no web change', '', '']]).split('\n')).toEqual([
+      'step                      result               start  duration',
+      '------------------------  -------------------  -----  --------',
+      'typecheck (all packages)  pass                 +2.0s  17.0s',
       'e2e                       skip: no web change',
     ]);
+  });
+
+  it("rows: each step's result, start and duration, steps not reached, the wall-clock total and the steps added up", () => {
+    const st = (id: string, skip: string | null = null): Step => ({ id, title: id, phase: 0, lane: id, run: [], skip });
+    const results = new Map<string, Result>([
+      ['a', { result: 'pass', ms: 60_000, start: 0 }],
+      ['b', { result: 'FAIL', ms: 30_000, start: 1_000 }],
+    ]);
+    expect(V.summaryRows([st('a'), st('b'), st('c'), st('d', 'no web change')], results, {}, 61_000)).toEqual([
+      ['a', 'pass', '+0.0s', '1m00s'],
+      ['b', 'FAIL', '+1.0s', '30.0s'],
+      ['c', 'not run', '', ''],
+      ['d', 'skip: no web change', '', ''],
+      ['total (wall clock)', 'FAIL', '', '1m01s'],
+      ['steps added up', '', '', '1m30s'],
+    ]);
+    expect(V.summaryRows([st('a')], new Map([['a', { result: 'pass', ms: 1_000, start: 0 }]]), null, 1_200).at(-2)).toEqual(['total (wall clock)', 'pass', '', '1.2s']);
+  });
+});
+
+describe('the run: phases in order, lanes side by side, a lane one step at a time, stopping at the first failure', () => {
+  const st = (id: string, phase: number, lane = id, skip: string | null = null): Step => ({ id, title: `step ${id}`, phase, lane, run: [], skip });
+  /** A stand-in for runStep: step `id` takes `ms[id]` ms (default 5) and fails when listed in `fail`; stop() ends it
+   * at once, failed, as a killed command does. Records the start, end and stop events in order. */
+  function fake(ms: Record<string, number>, fail: string[] = []) {
+    const events: string[] = [];
+    const run = (s: Step): Run => {
+      events.push(`start ${s.id}`);
+      let finish: (ok: boolean) => void = () => {};
+      const done = new Promise<{ ok: boolean; ms: number }>((res) => {
+        const t = setTimeout(() => finish(!fail.includes(s.id)), ms[s.id] ?? 5);
+        finish = (ok) => {
+          clearTimeout(t);
+          finish = () => {};
+          events.push(`end ${s.id}`);
+          res({ ok, ms: ms[s.id] ?? 5 });
+        };
+      });
+      return {
+        done,
+        stop: () => {
+          events.push(`stop ${s.id}`);
+          finish(false);
+        },
+      };
+    };
+    return { events, run };
+  }
+  const steps = [st('install', 0), st('unit', 1), st('docs', 1), st('sandbox', 2), st('pack', 2, 'web'), st('e2e', 2, 'web'), st('skipped', 2, 'web', 'not here')];
+  const quiet = { log: () => {}, logDir: tmpdir() };
+
+  it('runs the lanes of a phase side by side and a lane in order; the next phase waits for every lane', async () => {
+    const f = fake({ sandbox: 80, pack: 10, e2e: 10 });
+    const out = await V.schedule({ steps }, { ...quiet, run: f.run });
+    expect(out.failed).toBeNull();
+    expect(f.events).toEqual(['start install', 'end install', 'start unit', 'start docs', 'end unit', 'end docs', 'start sandbox', 'start pack', 'end pack', 'start e2e', 'end e2e', 'end sandbox']);
+    expect([...out.results.keys()].sort()).toEqual(['docs', 'e2e', 'install', 'pack', 'sandbox', 'unit']);
+    for (const r of out.results.values()) expect(r.result).toBe('pass');
+    expect(out.results.get('e2e')!.start).toBeGreaterThanOrEqual(out.results.get('pack')!.start + 10);
+  });
+
+  it('a failure stops the running siblings, starts nothing after it in their lanes, and runs no later phase', async () => {
+    const f = fake({ sandbox: 5, pack: 1_000 }, ['sandbox']);
+    const out = await V.schedule({ steps: [...steps, st('later', 3)] }, { ...quiet, run: f.run });
+    expect(out.failed?.s.id).toBe('sandbox');
+    expect(f.events.slice(-3)).toEqual(['end sandbox', 'stop pack', 'end pack']);
+    expect(out.results.get('sandbox')!.result).toBe('FAIL');
+    expect(out.results.get('pack')!.result).toBe('stopped');
+    expect(out.results.has('e2e')).toBe(false);
+    expect(out.results.has('later')).toBe(false);
+  });
+
+  it('a failure in an early phase starts nothing after it', async () => {
+    const f = fake({ docs: 1_000 }, ['unit']);
+    const out = await V.schedule({ steps }, { ...quiet, run: f.run });
+    expect(out.failed?.s.id).toBe('unit');
+    expect(f.events.filter((e) => e.startsWith('start'))).toEqual(['start install', 'start unit', 'start docs']);
+    expect(out.results.get('docs')!.result).toBe('stopped');
   });
 });
 

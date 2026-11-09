@@ -16,6 +16,9 @@ const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  // The brand's fonts and their licence (D426), as Cloudflare's assets binding types them.
+  '.woff2': 'font/woff2',
+  '.txt': 'text/plain; charset=utf-8',
 };
 
 /** A Workers static-assets binding over one directory: 200 with the file, or 404. */
@@ -58,6 +61,8 @@ export function vaultHost(api: ApiModules, d1: D1Shim, pages: PagesEnv = E2E_PAG
   const apiEnv = {
     DB: d1,
     ENV_NAME: pages.envName,
+    // The manifest's network: the vault page inlines the mainnet demo (D428) only on testnet.
+    NETWORK: 'testnet',
     API_URL: pages.apiUrl,
     NEAR_RPC: pages.nearRpc,
     ...(pages.nearRpcFallback ? { NEAR_RPC_FALLBACK: pages.nearRpcFallback } : {}),
@@ -80,6 +85,8 @@ export function authHost(api: ApiModules, pages: PagesEnv = E2E_PAGES): Handler 
     NEAR_RPC: pages.nearRpc,
     ...(pages.nearRpcFallback ? { NEAR_RPC_FALLBACK: pages.nearRpcFallback } : {}),
     ...(pages.emailIssuerUrl ? { EMAIL_ISSUER_URL: pages.emailIssuerUrl } : {}),
+    // As scripts/pages-wrangler.ts sets it: the e2e env is a dev env on testnet.
+    MAINNET_DEMO_BALANCE: '1',
     ASSETS: assetsFetcher(join(PAGES_DIR, pages.envName, 'auth')),
   };
   return (request) => api.handleAuthHost(request, env);

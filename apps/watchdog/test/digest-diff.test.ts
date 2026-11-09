@@ -5,7 +5,7 @@ import { diffChain, stable, type StoredSnapshot } from '../src/diff.ts';
 import { maybeSendDigest } from '../src/digest.ts';
 import { Store } from '../src/store.ts';
 import { iso } from '../src/time.ts';
-import { baseConfig, baseGovernance, councilPolicy, HOUR, initialized, MIN, OWNER, RecordingNotifier, T0 } from './helpers.ts';
+import { baseConfig, baseGovernance, councilPolicy, HOUR, initialized, MIN, NO_GRACE, OWNER, RecordingNotifier, T0 } from './helpers.ts';
 
 const DAO_CODE = 'DAOcode1111111111111111111111111111111111111';
 const snap = (over: { config?: Partial<ChainSnapshot['config']>; governance?: Partial<ChainSnapshot['governance']>; owner?: ChainSnapshot['owner'] } = {}): ChainSnapshot => ({
@@ -88,7 +88,7 @@ describe('diffChain', () => {
 describe('daily digest', () => {
   it('is sent once a day after the digest hour, with the alerts and actions since the last one', async () => {
     const w = await initialized();
-    w.chain.propose('Add', 'ghost');
+    w.chain.propose('Add', 'ghost', NO_GRACE);
     await w.run();
     const n = new RecordingNotifier();
     const store = new Store(env.DB);

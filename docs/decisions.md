@@ -1,7 +1,8 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D411 built and D438–D443 (branch `feat/email-sharing`, decided while building, to confirm; not merged: it merges after the user's first round of M4 testing, D411 point 9 as amended 2026-11-06) on 2026-11-06, with D411's row of "Superseded or amended" updated and a new row; D419 (branch `feat/env-alert-label`, asked for by the user, implementation choices to confirm) on 2026-11-06; D418 (branch `fix/hyperdrive-account-id-hint`, decided by the user, C16 after the pilot) on 2026-11-06; D417 (branch `docs/personal-account-free-tier`, decided by the user) on 2026-11-06; D416 (branch `feat/console-remove-audience`, decided while building, to confirm) on 2026-11-06, extending D238; D415 (branch `docs/auto-deploy-intent`, decided by the user, intent only, not built) on 2026-11-06; D414 (branch `feat/m4-personal-account`, decided by the user) on 2026-11-05, amending D404, with a row of "Superseded or amended"; D401 amended (branch `fix/sendgrid-suppression`: alerts and blocking notices bypass SendGrid's suppression lists, a security review fix) on 2026-11-05; D401 (branch `feat/sandbox-dev-dashboard-blocks`, asked for by the user: SendGrid for every Hana email; the isolate memo to confirm) and D402 (same branch, agreed by the user: sandbox-dev's 1-day statement lock) on 2026-11-05, amending D87, D279, D308 and settling D194's open point, with rows of "Superseded or amended"; D413 (branch `feat/local-verify`, asked for by the user, confirmed by the user) on 2026-11-05, amending D387, with a row of "Superseded or amended"; D410 and D412 (branch `fix/security-review-1105`: a security review's fixes, to confirm) on 2026-11-05, amending D224, D391, D392, D396, D399 and D403, with two rows of "Superseded or amended"; D411 (branch `docs/email-sharing-decisions`, decided by the user, not built) on 2026-11-05, amending D127's email questions, with a row of "Superseded or amended"; D404 (branch `feat/account-migration`: testnet's move to company accounts decided by the user, the custom-domain placements, `cloudflare.accountId`, `env-secrets`, `d1-move`, `issuer:iss` and the runbook to confirm) on 2026-11-05, amending D230, with a row of "Superseded or amended"; D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
+Last verified against code: 2026-10-28 (commit 58edee9); D411 and D438–D443 (brought up to date with `develop` @ a3de75e on `feat/email-sharing-2`, 2026-11-09: the branch's decisions renumbered D438–D443 from D420–D425, migration 0014; D411 point 9 amended again: the user approved merging it in the next batch; D438–D443 still to confirm) on 2026-11-09; D411 built and D438–D443 (branch `feat/email-sharing`, decided while building, to confirm; not merged) on 2026-11-06, with D411's row of "Superseded or amended" updated and a new row; D432 (branch `fix/watchdog-new-key-grace`, asked for by the user as D422's follow-up, the design to confirm, amending D153 and D422's watchdog rule, with a row of "Superseded or amended") on 2026-11-06; D433 (branch `feat/user-events-retention`, decided while building, to confirm) on 2026-11-06, amending D430 and D361, with a row of "Superseded or amended"; D434 (branch `feat/issuer-readonly-rpc`, readiness row 7.1d: the issuer's read-only `IssuerRpc`, decided while building, to confirm) on 2026-11-06, superseding D251, with a row of "Superseded or amended"; D435 (branch `feat/api-near-rpc-fallback`, asked for by the user, the mechanics to confirm) on 2026-11-06, amending D261, with a row of "Superseded or amended"; D425 (branch `feat/admin-system-status`, asked for by the user, the checks and thresholds to confirm with the screenshots, extending D420) on 2026-11-06; D424 (branch `fix/session-expiry-ux`, asked for by the user, design choices to confirm, extending D420 and D421) on 2026-11-06; D423 (branch `chore/verify-parallel`, asked for by the user, amending D413, with a row of "Superseded or amended") on 2026-11-06; D422 (branch `fix/google-key-hysteresis`, proposed by the assistant and approved by the user, amending D153 and the JWKS cron's removal grace, with a row of "Superseded or amended") on 2026-11-06; D421 (branch `feat/console-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D420 (branch `feat/admin-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D419 (branch `feat/env-alert-label`, asked for by the user, implementation choices to confirm) on 2026-11-06; D418 (branch `fix/hyperdrive-account-id-hint`, decided by the user, C16 after the pilot) on 2026-11-06; D417 (branch `docs/personal-account-free-tier`, decided by the user) on 2026-11-06; D416 (branch `feat/console-remove-audience`, decided while building, to confirm) on 2026-11-06, extending D238; D415 (branch `docs/auto-deploy-intent`, decided by the user, intent only, not built) on 2026-11-06; D414 (branch `feat/m4-personal-account`, decided by the user) on 2026-11-05, amending D404, with a row of "Superseded or amended"; D401 amended (branch `fix/sendgrid-suppression`: alerts and blocking notices bypass SendGrid's suppression lists, a security review fix) on 2026-11-05; D401 (branch `feat/sandbox-dev-dashboard-blocks`, asked for by the user: SendGrid for every Hana email; the isolate memo to confirm) and D402 (same branch, agreed by the user: sandbox-dev's 1-day statement lock) on 2026-11-05, amending D87, D279, D308 and settling D194's open point, with rows of "Superseded or amended"; D413 (branch `feat/local-verify`, asked for by the user, confirmed by the user) on 2026-11-05, amending D387, with a row of "Superseded or amended"; D410 and D412 (branch `fix/security-review-1105`: a security review's fixes, to confirm) on 2026-11-05, amending D224, D391, D392, D396, D399 and D403, with two rows of "Superseded or amended"; D411 (branch `docs/email-sharing-decisions`, decided by the user, not built) on 2026-11-05, amending D127's email questions, with a row of "Superseded or amended"; D404 (branch `feat/account-migration`: testnet's move to company accounts decided by the user, the custom-domain placements, `cloudflare.accountId`, `env-secrets`, `d1-move`, `issuer:iss` and the runbook to confirm) on 2026-11-05, amending D230, with a row of "Superseded or amended"; D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
+
 user, implementation choices to confirm) on 2026-11-05; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
 flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
@@ -442,6 +443,7 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
   address), and testnet-derived addresses differ from production ones.
 - Rejected: allowing mainnet with warnings and small amounts.
 - Open: the mainnet launch date (not set).
+- Amended 2026-11-06 by D428 (decided by the user): the mainnet demo exception for the Sodax demo.
 
 ### D40. Leaving Hana: per-chain key export and Hana Home, no seed phrase
 - Date 2026-10-28 · Status: confirmed by the user; Hana Home to build before mainnet · Source: `docs/batch-b-spec.md`
@@ -3798,7 +3800,7 @@ five are **to confirm** by the user. None changes an address: no path, derivatio
   app-wide caps.
 
 ### D251. The issuer's APP_DB is a read-write D1 binding: kept for now, held to reads by a source test
-- Date 2026-11-02 · Status: to confirm · Source: the deploy review of batch 6 (M4)
+- Date 2026-11-02 · Status: to confirm; **superseded by D434** (2026-11-06, branch `feat/issuer-readonly-rpc`: the read-only RPC built, `APP_DB` and its source test removed) · Source: the deploy review of batch 6 (M4)
 - Decision: Cloudflare has no read-only D1 binding, so the issuer's `APP_DB` (the API's D1) could write the API's tables
   if its code did. For now its code is held to reads by a source test (`apps/email-issuer/scripts/test/app-db-read-only.test.ts`:
   every use goes through `src/apps.ts`, whose statements are SELECTs), the risk is in `docs/security.md`, and
@@ -7220,8 +7222,9 @@ branch.
 
 ### D411. Partners see a user's email only after the user shares it with that app; a three-value app setting decides when Hana asks
 - Date 2026-11-05 · Status: **decided by the user** ("all as recommended", 2026-11-05); **built on
-  `feat/email-sharing` (2026-11-06), not merged** (point 9 as amended); the details D411 left open are D438–D443, to
-  confirm; the build note is `docs/email-sharing-spec.md` · Amends D127 (Q6, Q7: the identity token spec's "Verified email: opt-in per app") ·
+  `feat/email-sharing` (2026-11-06), brought up to date with `develop` on `feat/email-sharing-2` (2026-11-09), not
+  merged: the user approved merging it in the next batch** (point 9 as amended); the details D411 left open are
+  D438–D443, decided while building, to confirm; the build note is `docs/email-sharing-spec.md` · Amends D127 (Q6, Q7: the identity token spec's "Verified email: opt-in per app") ·
   Source: the proposal of 2026-11-05 (Privy, Dynamic, Magic, Web3Auth and Turnkey compared: wallets the developer owns
   show emails with no consent step; Magic's cross-app Universal Wallet asked per app, as Hana Home's wallets put Hana)
 - Decisions (1–9 of the proposal, each as recommended):
@@ -7250,6 +7253,9 @@ branch.
      **Amended 2026-11-06 (the user):** built now, on its own branch (`feat/email-sharing`), but not merged into
      `develop` until after the user's first round of testing the M4 dashboards on sandbox-dev; it merges then. Until it
      merges, sandbox-dev's partners still see no email.
+     **Amended 2026-11-09 (the user):** it merges in the next batch, from `feat/email-sharing-2` (the branch brought up
+     to date with `develop`: its decisions renumbered D438–D443, its migration 0014). Not deployed by the merge: the
+     deploy needs migration 0014 and the email keys on the env (`docs/operations.md` "Turning email sharing on").
 - What the partner gets once shared: `email` with `email_verified: true` in identity tokens (`emailStatus:
   'included'`), and an **Email** column on the console's Users screen ("Not shared" otherwise).
 - Privacy: off by default; specific, informed consent (the sheet names the app and shows the address); withdrawing as
@@ -7546,10 +7552,721 @@ branch.
 - Rejected: a label from a free-text manifest field (a production manifest could carry one by mistake); only staff
   mail labelled (a staging partner would read test notices as real).
 
-## Email sharing with partners, built (branch `feat/email-sharing`), 2026-11-06
+### D420. The admin console never offers an action that can't work; errors in plain words; confirmations in the page
+- Date 2026-11-06 · Status: **asked for by the user** ("the admin console UI/UX don't look very good … straightforward /
+  no nonsense / least confusing and most user friendly", after an invite into `org_legacy` answered `forbidden:
+  org_legacy has no members`); the design choices decided while building, to confirm with the screenshots · Built on
+  `feat/admin-ux-redesign` (`apps/admin/public/`, tests `apps/admin/test-spa/ux.test.ts`) · Number note: first
+  written as D419; renumbered D420 at the merge of `origin/develop`, which took D419 (`feat/env-alert-label`)
+- Decision: the staff SPA follows the rules in `apps/admin/README.md` "UI principles": (1) an action the API would
+  refuse isn't offered: Legacy apps (`org_legacy`) shows no members, invites, owner grants, freeze or app form, says
+  why in one line and offers "Invite a new partner" and, per scope, "Move to an organisation" (the same `POST
+  /api/scopes/:scope/assign {orgId}`; it works when each Google-account (`Owner::Oidc`) owner of the scope on chain is
+  an owner of the target organisation, a scope owned only by a NEAR account moving freely; else `scope_conflict`,
+  said in those words); an organisation without a security contact gets no "Create an app"; a statement with
+  blockers can't be issued; (2) every API error is mapped from its code to a title and what to do next,
+  the server's own message under it and the code small for support; (3) a destructive or guarded action is confirmed
+  in the page (a strip with what will happen, the action's own label and Cancel, Escape cancels), never a browser
+  dialog; (4) the nav is grouped by task (Partners, Support, Security, Money, System), each page has one header with
+  at most one primary action, and internal ids are shown small under names, never as the headline.
+- Unchanged: every route, request body, CSRF header and the Access flow; what is audited; the Users detail at
+  `/users/open` from memory and the Support ID lookup out of the URL and storage; nothing new in `localStorage`; the
+  CSP and the text-only DOM (source checks in `scripts/test/gen-wrangler.test.ts`).
+- Why: two staff run onboarding and support from this console; a raw `forbidden: …` or a browser dialog without
+  context costs them a guess, and the old org page offered an invite form on an org that has no members.
+- Alternatives: (a) keep the forms and improve the error text only: staff still try what can't work. Not done. (b) A
+  client-side copy of the API's rules for every action: duplicated rules drift. Only the refusals the screen can know
+  from data it already has (org_legacy, no security contact, statement blockers) are mirrored; everything else is
+  left to the server and its error mapped.
+
+## The partner console's redesign (branch `feat/console-ux-redesign`), 2026-11-06
+
+### D421. The partner console SPA: a sidebar, an app's settings as sections, plain-language errors, no control that can't work
+- Date 2026-11-06 · Status: asked for by the user ("the best possible UI/UX … straightforward, least confusing"),
+  design choices decided while building, **to confirm** (screenshots for review) · Built on `feat/console-ux-redesign`
+  (`apps/console/web/src`, `apps/console/preview`, `apps/console/README.md`) · Number note: D421 (taken as D420 on its branch; renumbered at merge, the admin redesign holding D420) was taken with D419
+  the highest on `origin/develop`; the admin console's redesign runs in parallel and may take the same number, so the
+  later merge renumbers
+- Decision: (1) A sidebar frame (the org, a switcher with several, Apps, Members, Users, Usage, Statements, Pending
+  upgrades, Audit, sign out), the information architecture of Privy's and Dynamic's dashboards in Hana's words. (2) An
+  app's page is a header (name, Live/Test, status, the copyable App ID and newest publishable key) over sections as
+  nested routes (`/orgs/:org/apps/:app` stays the overview; `/origins`, `/keys`, `/sessions`, `/signing`, `/branding`,
+  `/suspend`); the overview has the changes waiting, a getting-started checklist (the partner guide's steps, ticking
+  what the console sees) and a settings summary. (3) Every API error in plain words for its code with what to do
+  (`web/src/messages.ts`), the server's detail when it adds something, the code and HTTP status small. (4) Where the
+  console would refuse (a viewer, a frozen org, 5 active keys, the last owner, a disabled member, 10 open invites,
+  session values out of range, a logo of the wrong type or size, a pending policy, raw signing on a test app), one line
+  says why instead of the control. (5) Guarded changes show requested → announced → in effect with times and Cancel on
+  the section they belong to; the fresh sign-in page says when the change takes effect, which Google account to
+  choose, the 5 minutes, and goes back to the section it came from (one org). (6) In-page confirms say what the action
+  does (Escape backs out). (7) Fragment tokens are read once even under React's development double effect (the
+  invite and cancel pages lost the token in `vite` dev). (8) A dev-only preview (`apps/console/preview`: `vite serve`,
+  127.0.0.1, fake answers per scenario, never built) for design review.
+- Unchanged: every route and request body, CSRF, cookies and sessions, the step-up flows, the CSP and headers, the
+  dependencies (no new package, font or CDN); nothing in browser storage (the source check stays: no UI prefs either).
+- Why: the old SPA was one long page per app with raw codes as errors (`version_conflict`), controls that vanished or
+  failed without a reason, and no first steps for a new org.
+- Not done, recommended: the guide has no hosted URL, so the checklist names sections instead of linking; the
+  statement notes carry decision numbers (console-core's `statementView`, the same text the PDF prints).
+
+## Google key rollout hysteresis (branch `fix/google-key-hysteresis`), 2026-11-06
+
+### D422. A Google key is added on any sighting and removed only after a day of absence: the rollout hysteresis
+- Date 2026-11-06 · Status: **proposed by the assistant, approved by the user 2026-11-06** · Built: `apps/api/src/
+  issuer-keys.ts` (`JWKS_FETCHES_PER_RUN`, `REMOVE_AFTER_MISSING_MS`, `KEEP_AFTER_LAST_TOKEN_MS`, `recentTokenKids`),
+  `apps/api/src/key-observations.ts` (`last_token_ms`, `TOKEN_SIGHTING_EVERY_MS`), API migration
+  `0012_issuer_key_last_token.sql`; `apps/watchdog/src/run.ts` (`retiredAddDue`, `removalConfirmable`, their constants,
+  `STALE_ACTIVE_KID_MS` 27 h), watchdog migration `0002_absence_fetches.sql`; the playbooks `retired-key-change`,
+  `key-sync-stalled`, `updater-key-stolen`; docs/mainnet-readiness.md row 7.16 · Amends D153 (when an updater Add of
+  a kid Google listed within 24 h is "retired"), the JWKS cron's removal grace (55 min, `docs/governance-spec.md`
+  "Rotation and logins" step 4) and the watchdog's early confirmation of a Remove (two fetches 60 s apart) · Number
+  note: first written as D420, renumbered D422 at merge (the admin and partner console redesigns took D420 and
+  D421 first); API migration 0012 is this branch's, so the unmerged D411 branch (`feat/email-sharing`, its own 0012)
+  renumbers on merge
+- Context: sandbox-dev, 2026-11-03..05: Google's JWKS listed the new kid `9e7b714e…` on some fetches and not others for
+  about two days (its frontends answer from different caches, each up to ~6 h old). The API cron added a kid on first
+  sighting and proposed its removal after 55 min of misses (about 4 fetches); the watchdog treated two misses 60 s
+  apart as "not published": it cancelled the cron's Adds as retired (D153) and confirmed its Removes, even 6 min after
+  flagging that Google still published the key (#34). The kid was added and removed 4 times and 7 more Adds were
+  cancelled; ~20 alerts. No login was affected (no token had used the kid yet). On mainnet the same loop would leave
+  a key Google already signs with off chain for the 60-min re-propose hold + 15 min + the issuer-key delay
+  (≥ 18 min, provisionally 2 h): 1.5–3.5 h of failed Google logins signed with it.
+- Decision (seeing a kid is strong evidence, one miss is weak; a key left on chain a day longer is harmless, one
+  removed early breaks logins):
+  - **API cron:** 3 JWKS fetches a run; a kid any of them lists is published (Adds as before, on first sighting); a
+    kid is missing only on a run whose 3 fetches all succeeded and none listed it; a removal is proposed after 24 h
+    missing from every such run (a run that lists it restarts the 24 h; an incomplete run neither starts, resets nor
+    completes it) and never, nor executed, for a kid that signed a verified token in the last 24 h (`last_token_ms`,
+    written at most every 10 min per isolate); a matured Remove is executed only by a complete run.
+  - **Watchdog:** an updater Add of a kid it saw with the same material within 24 h (D153's window) is cancelled as
+    retired only when the kid was first seen over 7 days ago, last listed over 6 h ago, and missed by at least 3
+    fetches in a row over at least 30 min; otherwise it stays pending (a rollout: confirmed once a fetch lists it, or
+    executed by the API cron if its own fetches list it). A Remove is confirmed early only after at least 3 fetches in a
+    row over at least 10 min missed the kid and none of its fetches listed it for 24 h; else it waits out the delay. A
+    removal of a kid the current fetch lists stays a critical `published_key_removal` (alert only). `stale_active_key`
+    warns after 27 h (the cron's 24 h + 3 h), not 3 h. Everything forged stays forged (D82, D153): a kid never seen,
+    other key material, a kid last seen over 24 h ago, owner proposals.
+  - Thresholds are named constants, the same on every env (no override).
+- Why: during a rollout absence is noise and presence is signal; the contract still checks the key material, so a
+  kid kept longer costs nothing, and Google stops signing with a key before it stops publishing it.
+- Trade-offs: a key Google truly retired stays on chain up to ~1 day longer (plus the delay). A brand-new kid the API
+  sees before the watchdog ever does is still judged forged by the watchdog if two of its fetches 60 s apart miss it
+  (cancel + updater keys deleted, D82): unchanged here, a follow-up (readiness row 7.16), built as D432.
+- Rejected: only lengthening the 55 min (the watchdog's two-fetch rule would still undo Adds); caching Google's JWKS
+  on our side (hides rotations); letting env manifests tune the thresholds (mainnet must not go below them).
+
+### D423. `pnpm verify` runs independent steps side by side, and the sandbox e2e 8 tests at a time
+- Date 2026-11-06 · Status: **asked for by the user 2026-11-06** ("`--full` ≈ 7 min without any flakiness, the
+  default tier no slower") · Built: `scripts/verify.mjs` (lanes in a phase, `schedule`, `SANDBOX_TEST_THREADS`, the
+  summary's start column, wall-clock total and steps added up), `scripts/test/verify.test.ts`; the CI `e2e` job's
+  `--test-threads=8`; `contracts/integration-tests/tests/e2e.rs` (`access_keys_are_limited` split into the eight
+  `access_keys_*` tests, `sandbox_starts_set_no_env_vars`), `contracts/integration-tests/.cargo/config.toml`;
+  docs/operations.md "CI and git" · Amends D413 (phases one step at a time except gitleaks beside the typecheck and
+  the docs checks beside the unit tests) and the sandbox job's `--test-threads=1` (no record said why) · Number note:
+  D423 was the next free number on `origin/develop` (D422 the highest); the unmerged `feat/email-sharing` holds
+  D420–D425 locally and renumbers at its merge
+- Context: `--full` took 21–22 min on the dev Mac, ~18.5 of them the sandbox e2e run one test at a time with the CPU
+  mostly idle (sandbox startup and block waits). Measured on this branch's base: the suite one at a time 1096 s
+  (e2e 674 s, email 126 s, governance 295 s), and one test, `access_keys_are_limited`, ~530 s of it: ~250
+  transactions, most of them rejected by an access key, which near-workspaces retries 4 times each (~2.4 s per
+  rejection).
+- Decision:
+  - **Lanes.** A phase's lanes run side by side, a lane's steps one after another; phases still run in order:
+    (0) lockfile; (1) gitleaks | typecheck | contract; (2) unit tests | docs checks; (3) sandbox e2e | pack check →
+    Playwright. The contract moved beside the typecheck (from cold it builds on every core for minutes: never
+    beside the unit tests, D140); the unit tests' phase holds only the docs checks, in every tier (a test checks it).
+    The pack check and Playwright share a lane (pack's `build:lib` rewrites `packages/web/src/envs.generated.ts` and
+    the SDK's `dist/` while the stack's build bundles `@hana-id/web`). The sandbox nodes take ephemeral ports from
+    the OS with near-sandbox's lock files; the Playwright stack keeps its fixed `HANA_E2E_PORT_BASE` … +50.
+  - **Failure.** The first failure stops the running steps ("stopped"), nothing else starts ("not run"), its log's
+    tail is printed. The table adds each step's start offset, the wall-clock total and the steps added up.
+  - **Sandbox e2e at `--test-threads=8`**, in verify and CI. Every test already had its own sandbox (own ports,
+    temp home dir and accounts); the wasm builds are per-binary `OnceLock`s into separate target dirs; the
+    near-sandbox binary is installed by its build script (lock file and atomic rename), so nothing downloads during
+    the run. One shared-state hazard was fixed: near-workspaces and near-sandbox `set_var("NEAR_SANDBOX_LOG")` at
+    each sandbox start, a `setenv` while other test threads may read the environment from C (undefined behaviour
+    on glibc); `contracts/integration-tests/.cargo/config.toml` sets `NEAR_ENABLE_SANDBOX_LOG` (and the same log
+    filter) so they don't, and `sandbox_starts_set_no_env_vars` fails if it isn't set. The binaries still run one
+    after another (one `cargo test`, as in CI).
+  - **`access_keys_are_limited` split** into eight tests, one per key and check, each on its own sandbox, with
+    every assertion kept (the updater key's calls now spend its 1 NEAR allowance in two tests rather than one: no
+    test asserted the cumulative spend). The longest sandbox test is now ~140 s.
+- Measured (dev Mac, 16 cores, idle, warm caches): the suite at 4 threads 443 s, at 8 threads 299 s, then five runs
+  in a row at 8 with no failure: 310, 303, 300, 303, 306 s (e2e 131–142 s, email 32–35 s, governance 133–136 s;
+  8 nodes, ~3.2 GB, 1-min load ≤ 8.6). Both long binaries are now bound by their longest test, so more threads
+  barely help. `pnpm verify --full` twice on the branch: 6m18s and 5m53s (from 21–22 min), the sandbox e2e 5m05s and
+  4m59s beside Playwright's 1m43s.
+- Trade-offs: 8 nodes need ~3.3 GB and load a small machine; CI's 4-vCPU runner is untested at 8 (CI is off,
+  D387): on its first run there, watch for sandbox start or RPC timeouts and lower the number rather than retry.
+  Playwright now runs beside 8 sandbox nodes.
+- Rejected: retries (they hide flakes); running the three test binaries at once (another ~2.5 min off, but three
+  processes would build the same wasm into the same target dirs and race on `target/near/*.wasm`, `target/v2-src`
+  and the Sputnik download: it needs a cross-process lock in the harness first); unit tests beside anything heavy
+  (D140); faster sandbox blocks (changes the timing the delay tests rely on).
+- Amended 2026-11-06: Playwright moved to a phase of its own after the sandbox e2e. Beside the 8 sandbox nodes,
+  Firefox's `linking.spec.ts:234` (case B, link pending) timed out at 13.2 s in a `--full` run (it passes in 4–5 s alone,
+  3/3); the risk was named above. `--full` gains about 1.7 min (Playwright no longer overlaps the sandbox suite).
+## Session expiry in both consoles (branch `fix/session-expiry-ux`), 2026-11-06
+
+### D424. A console session that ends is said as such: the request waits, nothing typed is lost, Try again sends it
+- Date 2026-11-06 · Status: **asked for by the user 2026-11-06** ("sessions can expire quietly, this UX is
+  terrible", after "Send invite" on sandbox-dev's admin answered "Can't reach the admin console … Error code network":
+  the 1 h Access session (D409) had ended and the fetch's redirect to `<team>.cloudflareaccess.com` was blocked by
+  CORS); the design choices decided while building, to confirm with the screenshots · Built: `apps/admin/public/`
+  (`send`/`api`, `session`, `renderSession`, `/signed-in`), `apps/admin/src/access.ts` (`exp` on the staff check),
+  `routes.ts` (`GET /api/me` `accessExp`), `test-spa/session.test.ts`, `test-spa/preview.ts`
+  (`PREVIEW_SESSION_MIN`); `apps/console/web/src/api.ts` (`request`, `session`, `sessionStore`),
+  `web/src/session.tsx` (`SessionBanner`), `pages/Action.tsx`, `apps/console/src/sessions.ts` and `bff.ts`
+  (`GET /api/me` `sessionExpiresAt`), console-core `meAnswer`, `web/test/session.test.tsx`, the preview's
+  `session-ending` and `session-ended` · Extends D420 and D421 (their UI principles) · Number note: D424 was the next
+  free number on `origin/develop` (D423 the highest); `feat/email-sharing` holds D420–D425 locally and renumbers at
+  its merge
+- Decision:
+  1. **Detected, not guessed.** Admin: every `/api/*` fetch is sent with `redirect: 'manual'`; an `opaqueredirect`
+     (status 0), any 3xx, or the Worker's 401 `unauthenticated` is an expired sign-in, distinct from a rejected fetch
+     (`network`, wording unchanged). 403 `not_staff` and `csrf` stay errors (another account, another problem).
+     Partner console (its own cookie, no redirect): a 401 after this tab has had a session is a session that ended
+     (2 h idle, 12 h absolute, revoked); a 401 before that (a fresh visit) still goes to `/signin`.
+  2. **The request waits; nothing is lost or claimed.** It isn't failed: its page, the typed values and the busy
+     button stay, and a banner at the top (`role=alert`): "Your sign-in has expired" / "Your session has ended",
+     **Sign in again** (a link to a new tab: the admin's `/signed-in`, which Access signs in to reach and which says
+     to go back; the console's `/signin`; the cookie is the tab's too) and **Try again** (every waiting request sent
+     again with the same method, path, headers and body bytes; if still signed out, the banner says so). Back on the
+     tab (focus, visibility) after signing in elsewhere, the sign-in is checked and the banner becomes "You're signed
+     in again" until Try again sends what waited: nothing is sent without the click. A success re-renders as usual;
+     the banner goes. Moving to another page drops what waited there (never sent later); a reload loses it, as before.
+  3. **Warned before.** The admin's `GET /api/me` answers the verified Access token's `exp` (`accessExp`, seconds);
+     the console's answers the session's absolute end (`sessionExpiresAt`, ms). 5 minutes before, an amber banner
+     (`role=status`): "ends in N min" with Renew / Sign in again (the same new tab; back on the tab the end is read
+     again). At the end the server is asked once (the reader's clock may be off), so the ended banner shows before
+     the next click. The console's 2 h idle end isn't warned of: each request moves it, and a check to find it would
+     itself be activity. The fresh sign-in page says when the session ends inside the confirmation's 5 minutes
+     (a confirmation counts only with the session that started it: `session_ended`).
+  4. **Memory only.** Waiting requests (an invite's email among them) live in the tab's JavaScript; nothing goes to
+     `localStorage`, `sessionStorage`, IndexedDB or a cookie (source checks in both apps). No token is answered: only
+     the end time.
+- Found, not changed: Cloudflare Access mints a new application token only once the old session has ended (an
+  unexpired `CF_Authorization` cookie is simply accepted), so the admin's Renew before `exp` usually changes nothing;
+  the banner then says so ("Access kept your current sign-in: it still ends at …") and the expired path keeps the
+  work. Untested on Cloudflare (no deploy on this branch): whether opening the team's login URL
+  (`https://<team>/cdn-cgi/access/login/<host>?kid=<aud>&redirect_url=/`) in the new tab would mint a fresh token
+  while the global session lasts; worth a try on sandbox-dev before changing Renew to it.
+- Why: a silent expiry read as a network failure sent staff to check their connection, then reload and lose the form.
+- Rejected: following the redirect in a hidden iframe or popup to re-sign in silently (Access's login page refuses
+  framing, and `frame-ancestors 'none'` is ours too); retrying on its own once the sign-in is back (a write must be
+  the user's click); keeping a form draft in `sessionStorage` across a reload (it holds emails: the no-storage rule);
+  sending the whole window to sign-in (loses what was typed).
+- Amended 2026-11-06 (tested by the user on sandbox-dev): opening the team's login URL for the application while the
+  token is still valid **does** mint a fresh one (the banner's end moved). Renew now opens `GET /api/me` `renewUrl`
+  (`https://<team>/cdn-cgi/access/login/<host>?kid=<aud>&redirect_url=%2Fsigned-in`, built by the Worker from the
+  team domain and AUD, public values); "Sign in again" after the end keeps `/signed-in` (Access asks there). The SPA
+  accepts only an `https://<x>.cloudflareaccess.com/cdn-cgi/access/login/` URL and falls back to `/signed-in`.
+
+### D425. The admin console opens on a System status page: one verdict, the issues with what they affect, a tile per component
+- Date 2026-11-06 · Status: **asked for by the user 2026-11-06** ("add some pages so there's a 'birds eye view' of the
+  whole system, basically I can look at the page and feel confident that 'all systems operational' and 'no issues'.
+  The page should also give warnings if issues found … an overview dashboard of our whole system and to check if all
+  parts of system is up or down"); the checks, thresholds and wording decided while building, to confirm with the
+  screenshots · Built: `apps/admin/src/status.ts`, `status-probes.ts`, `routes.ts` (`GET /api/status`),
+  `ledger-cron.ts` (`ledger_cron.last_run`), `scripts/gen-wrangler.ts` (the new vars, `accountCrons`), `public/`
+  (`statusPage`, the Overview nav), `test/status.test.ts`, `test-spa/status.test.ts`, `test-spa/preview-status.ts`;
+  `apps/api/src/system-status.ts` (`AdminRpc.systemStatus`); `apps/console/src/staff-rpc.ts` (`StaffRpc.health`),
+  `cron.ts`, migration 0003 (`cron_runs`); `apps/email-issuer/src/directory-rpc.ts` (`DirectoryRpc.health`);
+  `apps/watchdog/src/status.ts` (`build`); console-core `health.ts` · Extends D420 (its UI principles), D380 (the call
+  budget), D406 (the build ids), D417 (free tiers) · Number note: D425 was the next free number on `origin/develop`
+  (D424 the highest); renumber at the merge if another branch took it
+- Decision:
+  1. **The landing page.** `/` (nav **Overview → Status**, first) is the System status page; Organisations moved to
+     `/orgs` only. A verdict banner, "All systems operational" (green) only when every check answered and passed, else
+     "N issues" (amber, or red with a critical one), when it was checked and how many checks passed; the issues,
+     critical first, each with what it affects in plain words, since when (the source's own time when it has one,
+     else "first seen" by the isolate), the component, what to do, and the screen or playbook; then one tile per
+     component in seven groups, and what isn't measured yet with how to check it meanwhile.
+  2. **Unknown is never green.** Five tile states: OK, Warning, Critical, Unknown (grey, dashed) and Not measured
+     (outlined). A check that should have answered and didn't is Unknown and always behind an issue: its own, or the
+     single failure that hid it (a watchdog that can't be read is one critical issue, not six), so the verdict can't
+     be green while anything is unknown. Not measured (nothing can see it yet, or the piece isn't in this env) is not
+     an issue.
+  3. **Reuse, don't re-derive.** The contract tile is Security & monitoring's own `findingsOf` (governance part, same
+     severities); the watchdog's checks, alerts, heartbeat, channels and relayer reading come from its `/status`; the
+     build comparison is `deploy-check`'s, from the same public endpoints. Three new read-only methods answer each
+     Worker's own state in one call: `AdminRpc.systemStatus` (build, hot-D1 probe, the Google-key sync's runs, the
+     notice backlog, the pool keys, the governance snapshot), `StaffRpc.health` (build, D1 probe, hourly cron run, the
+     member-notice backlog, LOGOS) and `DirectoryRpc.health` (build, D1 probe), each authenticated as its entrypoint's
+     other methods and answering no user data. The watchdog's `/status` gains `build`.
+  4. **What runs record their last run.** The console's hourly cron writes `cron_runs` (migration 0003) and the admin's
+     15-minute cron `ops.state` `ledger_cron.last_run` (a query on its open connection: no call of D380's 40); the API's
+     15-minute run was already recorded (`issuer_key_sync_runs`). A cron is amber after 2 intervals + 5 min and red
+     after 6; the watchdog keeps its own silence rule (2 intervals, red).
+  5. **Within the Free plan.** A cold read makes 19 outbound calls (20 with the Access certs fetch of a cold isolate)
+     and 3 Worker invocations, every source in parallel with a 5 s deadline; the answer is kept 30 s in the isolate and
+     concurrent misses share one read, so refreshes cost nothing. No cron does more work. Free-tier usage that needs
+     Cloudflare's GraphQL or SendGrid's stats is shown as Not measured (no new token without the user, D417), listed in
+     `docs/mainnet-readiness.md` 5.12; the account's cron triggers are counted from the manifest by `gen` (5 of 5 on
+     sandbox-dev is green, "full").
+- Thresholds chosen (to confirm): a Worker slower than 2 s amber, no answer in 5 s red; a D1 query over 1 s amber;
+  NEAR's final block 2–10 min old amber, over 10 min red (the fallback only ever amber); blocking notices waiting over
+  15 min amber, over 1 h red; the relayer at the watchdog's own warn and critical lines, a reading older than 30 min
+  amber; settlement's oldest event over 2 h amber; a cron run using 38 or more of its 40 calls amber.
+- Why: until now "is everything fine?" meant opening Security & monitoring, Feed and notices, the Cloudflare dashboard
+  and `deploy-check` in turn; a stale bundle (2026-11-05) or a silent cron was found only by its symptoms.
+- Rejected: probing from the admin's cron and showing the last result (its 40-call budget, D380, and staler answers);
+  an API token for Cloudflare's GraphQL now (a new secret on the personal account: the user's call, D417); counting
+  Not measured as an issue (the page would never be green); the watchdog doing the probes (it's on its own account to
+  stay independent, D86, and alerts, where this page only shows); auto-refresh (a page that redraws while read; Check
+  again reads on demand).
+
+## Hana's brand on Hana ID's own pages (branch `feat/hana-brand`), 2026-11-06
+
+### D426. Hana ID's pages wear Hana's brand: one token set, Hana's own OFL Montserrat self-hosted, the mark inline
+- Date 2026-11-06 · Status: **asked for by the user 2026-11-06** ("style both admin and partner portal to use Hana
+  fonts, styling and color schemes … look at hanawallet.io website as well as hana-app and hana-extension repos for
+  inspiration"; extended the same day to the approval popups and everything user-facing); the palette, type and
+  shapes chosen while building, to confirm with the before/after gallery · Built: `packages/brand` (new),
+  `apps/admin/public` (`app.css`, `index.html`, `fonts/`), `apps/admin/scripts/sync-brand.ts`, `apps/console/web`
+  (`styles.css`, `ui.tsx`), `apps/console/vite.config.ts`, `packages/web/src/auth` (the sign-in, approval and export
+  pages), `packages/web/src/vault/launcher.ts`, `packages/web/scripts/build-auth-pages.ts` · Extends D420 and D421 (their
+  information architecture, copy and tests unchanged) · Number note: D426 was the next free number on `origin/develop`
+  (D425 the highest); `feat/email-sharing` holds unmerged numbers: renumber at the merge if another branch took it
+- Decision:
+  1. **One token set.** `packages/brand/tokens.css`: CSS variables only (`--hana-*`), light by default and dark with
+     `prefers-color-scheme` (no toggle, nothing stored), taken from hana-app's and hana-extension's `designTokens.ts`
+     and hanawallet.io's stylesheet: Hana ink `#16073a` on a lilac-white `#faf9fe`, Hana indigo `#3308a8` as the one
+     accent (light purple `#bba8f6` in dark), the gradient `#6256e9 → #d772d3` as decoration only, never behind text.
+     State colours (ok, warn, danger) are deliberately not purples. Every text and focus pair is checked for WCAG AA
+     in both themes (`packages/brand/test`), and the state hues are checked to stay out of the purple range.
+  2. **Fonts: Hana's own Montserrat, self-hosted.** Montserrat v8.000 (400, 500, 600, 700) and Montserrat Alternates
+     v7.200 (700), the files Hana's extension ships, under the SIL Open Font License 1.1 (no Reserved Font Name),
+     subset to Latin WOFF2 (16.8–17.4 KB each) with `fonts/OFL.txt` beside them; a test reads each file's own name
+     table for the licence. Each page loads them from its own origin (`font-src 'self'`, unchanged everywhere): the
+     admin from `public/fonts` (copied by `sync-brand`, the SPA has no build), the console and the auth pages from
+     their bundles' `/assets`. The consoles use `font-display: swap`; the security popups `optional`, so a late font
+     never moves a button under the pointer. Hana's apps also use Proxima Nova and PP Agrandir: commercial licences
+     that don't cover web embedding by Hana ID, so they are not shipped (Montserrat is what hanawallet.io uses anyway).
+  3. **The mark inline, not an image.** The Hana mark (hana-extension `hana.svg`) is drawn as inline SVG from
+     `MARK_PATHS` with its colours from the page's CSS: no image request, nothing new in any `img-src`.
+  4. **Who is asking stays clear.** Every auth page (sign-in chooser, email step, callback, approval and consent,
+     export) gets a static Hana bar above the page: the mark and wordmark as inline SVG, with no text, no URL and
+     nothing that runs. The app's logo, name and origin stay inside the page in a neutral box (`.asker`, the approval's
+     `header.app`), so Hana's chrome never names the app and a partner can't look like Hana. The auth pages load only
+     Montserrat 400 and 600 and Montserrat Alternates 700 (49.9 KiB, once per origin, cached across the five pages)
+     from `/assets/files/` with `OFL.txt` beside them. The approve guard, every message flow, COOP and popup behaviour
+     (D347, D398, D400), the meta and header CSPs and all security copy are unchanged. The vault (D38) loads no font:
+     its launcher takes Hana's ink and gradient on the system font (`vault.js` +~90 B). The hosted demo's CSP gains
+     `font-src 'self'` (its only CSP change) and its fonts are served immutable; the issuer's code email uses Hana ink
+     and indigo inline with a Montserrat/Arial stack.
+  5. **Each console keeps a cue of its own.** The staff admin's nav is Hana ink in both themes (the partner console's
+     is light), with the env badge solid amber on it, so staff never mistake one console or env for another.
+- Why: Hana ID is Hana's product; its pages looked like a generic tool (system fonts, petrol blue, an invented flower
+  mark) rather than Hana's wallet and site.
+- Rejected: Proxima Nova or PP Agrandir (licences); a font CDN (CSP and privacy: every page loads only its own origin);
+  a build step for the admin SPA (D420: no build; a copy with a drift test instead); a theme toggle (it would need
+  storage, which the SPAs don't use); the gradient as a page or button background (contrast, and it competes with
+  state colours); fonts in the vault (one more request and file in the isolated origin for a 16 px label); `swap` on
+  the auth pages (a late swap moves Approve and Reject while the user reads them).
+- Test note: the callback page's fonts count toward its `load`, and it closes itself before `load` on a Google
+  `#error`, so `apps/e2e/tests/login.spec.ts`'s one `goto` there waits for `commit` (no assertion changed).
+
+## Partner integration friction fixes (branch `feat/partner-friction-fixes`), 2026-11-06
+
+### D427. Partner-integration friction fixes: a verifier that refuses to start, a fast `no_answer` naming the origin, the portal in the guide
+- Date 2026-11-06 · Status: approved by the user 2026-11-06 (friction fixes) · Source: a "new partner" dry run that
+  built a sample partner app from the partner guide, the four SDK READMEs and the public sandbox-dev endpoints
+  (its friction log, items 1–6, 8–12 and 14; items 7, 15 and 16 deferred by the user) · Built:
+  `examples/identity-verify/src/verify.ts` (and the guide's copy), `packages/web/src/client/vault-connection.ts`,
+  `packages/react/src/hooks.ts`, `packages/core/src/support-id.ts` (subpath `@hana-id/core/support-id`),
+  `packages/console-core/src/users.ts`, `packages/sodax/src/evm.ts`, `packages/core/src/verified-contracts.ts` (the
+  cited `@sodax/types` version), `docs/integration.md`, the four SDK READMEs, `packages/core/test/integration-doc.test.ts`
+  · Amends D262 (the answer deadline of a loaded frame) · Number note: D427 was the next free number on
+  `origin/develop` (D426 the highest); renumber at the merge if another branch took it
+- Decision:
+  1. **The guide's verifier refuses to start without its settings.** `HANA_APP_ID`, `HANA_IDENTITY_ISSUER` and
+     `HANA_IDENTITY_PINS` are read once at load; an unset or blank one throws with its name, as do an app id that
+     isn't `app_…` (a publishable key pasted by mistake), a non-`https` issuer (loopback excepted, for local tests)
+     and pins that aren't 43-character thumbprints. Why: with `audience: undefined`, jose skips the audience check
+     and a valid Hana token minted for any other app verifies (confirmed by the dry run with jose 6.2.13), while the
+     comment next to it said the check was mandatory. Pinning is required the same way: `jwks-only` is the explicit
+     opt-out, so a forgotten variable can't silently drop it either (the old code read unset as "no pins"). The guide
+     lists sandbox-dev's issuer and its two thumbprints (the active key and the standby: the watchdog's
+     `pinnedIdentityKeys`), and a test keeps them equal to the manifest; rule 1 adds "refuse to start when the app id
+     or issuer is missing".
+  2. **`no_answer` is fast and names the origin.** The vault answers the hello with `connected` in the same task it
+     arrives in, and the frame's `load` waits for the vault's script, so a loaded frame silent for 1.5 s
+     (`POST_LOAD_ANSWER_MS`) was refused (frame-ancestors, the vault's own origin check, or an error page). The SDK now
+     gives a loaded frame 1.5 s after its `load`, instead of the rest of 5 s from its insertion; the one retry stays
+     (a transient 503 page). A wrong origin fails in about 3 s instead of about 10 s, and `no_answer`'s message and
+     `data.origin` name the page's `location.origin`, with "scheme, host and port must match" and the dev-server port
+     case. A frame still loading keeps 5 s plus 5 s, and `ready` 20 s after `connected`, as D262 set them.
+  3. **No distinct `origin_not_allowed` reason.** The SDK can't tell an origin refusal from an unknown or suspended
+     key: the browser's frame-ancestors block happens in the vault frame's context (no event in the page), and D262
+     rejected the vault saying why it refused (it would tell any framing page whether a key or an origin is valid).
+     The origin the SDK names is the page's own, which the page already knows, so nothing new is disclosed. No new
+     code crosses the port, so D393's `sdkAtLeast` gating doesn't apply.
+  4. **The partner portal in the guide.** Section 1 becomes "Your app and the partner portal": what Hana still does
+     during the pilot (creates the org and apps, sets the security contacts, turns email login on), where the
+     publishable key, the app id and the identity issuer with its pins come from, signing in by invite, the app page's
+     tabs, allowed origins as guarded changes (announced to the security contacts, then 60 s on sandbox-dev or 24 h;
+     loopback on a test app and any origin before a first login at once once announced; cancel from the page or the
+     email; removal immediate), members, reports and a frozen org. "Send Hana" and "the dashboard in batch C" are gone
+     from sections 6, 7 and 9 (the Signing tab, Login & sessions, the scope page's own-client steps).
+  5. **Partner-facing text points at nothing a partner can't open.** No repo paths, decision numbers, batch or
+     build-plan names or admin CLI commands in `docs/integration.md` or the four SDK READMEs; a test bans them. The
+     guide's "Last verified" header is one short line (its history is in git and here).
+  6. **Smaller fixes.** `useHana().login(options)` passes `hana.login()`'s options and drops an event argument
+     (`onClick={login}` still works). `supportIdFromSub` (the one implementation; console-core re-exports it as
+     `supportIdOf` and moved its Crockford code to core) is exported from `@hana-id/core` and the leaf subpath
+     `@hana-id/core/support-id`, with the exact format and a test vector in the guide. `@hana-id/sodax` is typed and
+     tested against `@sodax/types` 2.2.0 (peer `^2.2.0`, what `@sodax/sdk` 2.2.0 pins), and honours 2.2.0's
+     `expectedChainId` (another chain is `4902` `expected_chain_mismatch` before any popup); the verified-contracts
+     list cites 2.2.0, whose addresses its test confirms unchanged. The guide states that `eth_signTransaction` fills
+     a missing nonce, gas and fees as `eth_sendTransaction` does but neither queues nor broadcasts, that Sodax has no
+     testnet (quotes and intent building work read-only; signing waits for live keys; Hana's own sandbox mainnet demo
+     exception is Hana-internal only), and that "NEAR testnet" is Hana's chain, not the user's wallet chain.
+  7. **No version bump.** `docs/operations.md` "Releasing the SDK packages" bumps the four packages' version at a
+     release, not per change; the guide marks the new behaviour "SDK releases after 0.2.0".
+- No change to any key or path derivation.
+- Rejected: exporting a ready-made verifier package now (a fourth published surface to version; the guide's code is
+  tested and the startup checks close the hole); a test-app-only `data.hint` from the vault for loopback parents
+  (D262's reason holds for test apps too, and the SDK's message covers the case without the vault); dropping the
+  frame retry (it covers a transient 503 vault page); a shorter answer deadline for frames still loading (a slow
+  network is not a refusal).
+## Mainnet demo and key export (branch `feat/mainnet-demo-key-export`), 2026-11-06
+
+Spec: `docs/mainnet-demo-and-key-export-spec.md` (with its security self-review). Number note: D428–D431 were the next
+free numbers on `origin/develop` (D427 the highest: D426 the Hana brand, D427 the partner friction fixes; first built as D426–D429 and renumbered when develop was merged in); renumber at the merge if another branch took them.
+
+### D428. The mainnet demo: an exception to D39 for the Sodax demo, a per-transaction cap under $10, Base and Stellar only
+- Date 2026-11-06 · Status: **decided by the user 2026-11-06** ("exception for the Sodax demo, also we should limit
+  funds to <$10. warnings are good"; then "per-transaction cap only; balance above $10 warns, doesn't block"; then
+  "the Sodax demo will swap between Base (8453, cheap gas) and Stellar pubnet only") · Built: `packages/core/src/
+  mainnet-demo.ts`, `demo-config.ts`, `networks.ts`; `packages/web/src/vault/signing.ts`, `vault.ts`
+  (`freshMainnetDemo`, `subjectOf`, `reportDemoSignature`), `client/ethereum.ts`, `auth/approve-page.ts`,
+  `auth/demo-balance.ts`, `auth/pages.ts`; `apps/api/migrations/0013_mainnet_demo_events.sql`, `src/mainnet-demo.ts`,
+  `src/mainnet-demo-setting.ts`, `src/handlers.ts` (`GET /v1/app` `mainnetDemo`), `src/changes/settings.ts`
+  (`setMainnetDemo`), `src/pages/host.ts`; `scripts/lib/admin-settings.ts` (`--mainnet-demo`); `apps/admin`
+  (the switch, the events table) · Amends D39
+- Decision:
+  1. **What it allows.** A `pk_test_` app whose `apps.mainnet_demo` Hana staff switched on may sign on Base (8453)
+     and Stellar's public network, and no other mainnet (Sonic isn't needed: the user signs only on the spoke chain,
+     Sodax's relayer runs the hub's call; `needsRelay` in `@sodax/sdk` 2.2.0). Everything else of D39 stays.
+  2. **Only Hana staff, only in a dev testnet env.** `admin <env> app:settings <app> --mainnet-demo on|off` and the
+     admin console's app page (`AdminRpc.setMainnetDemo`), both refused unless the manifest is a dev env (`isDevEnv`)
+     on testnet and the app is a test app; a D1 trigger refuses it for a live scope. The API serves `mainnetDemo: true`
+     only in such an env for a test scope; the vault honours it only when its own build is a dev testnet build. No
+     partner method or control; partners don't see it (ConsoleRpc's view leaves it out), only its `app_changes` row.
+  3. **A per-transaction cap, fail closed.** At most $9.99 per transaction, its maximum fee included, valued by a
+     reviewed price table (D429); a request whose movements Hana can't value (an unknown call, token, operation or
+     Soroban call; typed data; auth entries) is refused. No daily cap (the user: repeated swap tests are needed).
+  4. **Warnings.** Every demo approval shows the red banner "Real funds, test custody: these funds may be lost", the
+     value and the cap, and the wallet's balance; above $10: "This wallet holds about $N: keep test funds under $10 —
+     move the rest out" (a warning, never a block); unreadable: "Balance unknown". A refusal is said to the page (4100
+     with the reason) and in Hana's launcher.
+  5. **Never auto-approved**, whatever policy the app has. Each signature is reported to the API (no key, signature
+     or bytes) as a `mainnet_signature` event staff see.
+- Why: Sodax has no testnet, and the partner demo needs real swaps; testnet MPC keys can be lost or stolen (D39's
+  reason), so the exposure is bounded per transaction, said loudly, and confined to dev envs and staff.
+- Rejected: a per-user daily cap kept in the vault (the user, 2026-11-06: repeated tests); allowing every mainnet;
+  letting partners set it; trusting the partner's RPC for the balance.
+
+### D429. The mainnet demo's mechanics: the price table, what can be valued, the freshness and the reads
+- Date 2026-11-06 · Status: **to confirm** (implementation choices while building D428) · Built: as D428
+- Decision:
+  1. **Prices** (`MAINNET_DEMO`, reviewed 2026-11-06): ETH $8,000, USDC $1.05 and EURC $1.35 on Base and on Stellar, XLM $1.00, all
+     deliberately above the market (a live price couldn't be confirmed; a higher price makes the cap stricter and the
+     balance warning earlier). The table is valid 45 days (until 2026-12-21): after that every demo request is refused
+     (`mainnet_demo_prices_stale`) until someone reviews it and rebuilds. Values are rounded up.
+  2. **Identifiers**: USDC `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` (Base) and
+     `USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN` (Stellar), EURC
+     `0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42` (Base) and `EURC:GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2`
+     (Stellar), from Circle's USDC and EURC contract addresses pages (the tokens the sample's Sodax swap lists); the
+     Stellar asset contracts checked against `Asset.contractId(pubnet)` in a test; Sodax's asset managers,
+     intents contract and hub assets from `@sodax/sdk` 2.2.0's packaged config, pinned in a test.
+  3. **What is valued**: the maximum fee always; EVM plain sends, USDC `transfer`/`transferFrom`/`approve` (an
+     approval valued as what it lets the spender take), and Sodax's spoke `transfer(address,bytes,uint256,bytes)` with
+     its `data` either empty or exactly `[approve(intents, g ≤ amount), createIntent(inputToken = the hub asset,
+     inputAmount ≤ g)]`, so the relayed hub calls can spend at most the deposit; Stellar payments and account creation
+     in XLM or USDC, a USDC `changeTrust`, and Sodax's Stellar `transfer(from, token, amount, to, data)` from the signing
+     account with auth entries for exactly that call and the token's own transfer (USDC and EURC as well as XLM and
+     ETH). Everything else is refused.
+  4. **Freshness**: the vault re-reads `GET /v1/app` when its `mainnetDemo` answer is older than 10 s (as raw
+     signing); a failed re-read refuses (`mainnet_demo_unconfirmed`). The early refusal check (D112) leaves a demo
+     build's mainnet request to `sign()`, so a stale "off" never refuses a request the API would allow.
+  5. **On and off are immediate** (an `app_changes` row and a `settings_version` bump each), not a guarded change:
+     staff only, dev envs only, test apps only.
+  6. **The balance** is read by the approval popup (not the vault, which holds PRK) from Hana's pinned public
+     endpoints (`https://mainnet.base.org`, `https://horizon.stellar.org`), listed in `/approve`'s CSP only in a dev
+     testnet build; each read has a 4 s limit.
+  7. **The partner client learns it from the vault** (the sample's FRICTION 18, 19, 21): the vault page inlines
+     `mainnetDemo: true` for such an app (only then, so an older vault bundle never sees the key), and the vault
+     sends the SDK a `mainnetDemo` port event with the rules (`evmChains`, the Stellar passphrase, the cap in USD
+     micros, the price table's review and expiry) after the hello, before `ready`, and again when `GET /v1/app`
+     changes it (`null` after "on"; never from a production build). The SDK's EVM provider opens its early D39 check
+     for exactly those chains (the event's validator accepts only Base), `hana.mainnetDemo` holds the rules and
+     `mainnetDemoChanged` says when they change. The vault still decides every request. Older SDKs drop the unknown
+     event (no D393 version gate needed). A cap refusal is its own reason, `mainnet_demo_over_cap`, with `data.usd`
+     and `data.capUsd`. The Stellar passphrase is per call (the Sodax provider's wins; the approval shows the
+     network); `hana.stellar.getNetwork()` still reports `createHana`'s.
+  8. **Usage events** are the vault's report, bound to the session (amended after the security review of 2026-11-06, two
+     MEDIUM findings): the session key signs the event over the identity message with the session's wallet proof of
+     the address; the API checks both, the session on chain and a single-use marker, and stores the session's user
+     (never a bare address). Rate-limited to 120 per app per hour, labelled "reported by the vault". The staff view
+     caps each kind per user on its own, so reports can't push a key export out of view.
+- Why: each is the narrowest rule that lets the sample's swap (Base ETH → Stellar XLM) and its reverse work while
+  failing closed on anything else.
+- Open: whether the prices should come from a live source with a sanity band (more moving parts in the vault).
+
+### D430. Key export additions: auto-hide after 60 s, the guarded click, plain warnings, a `key_exported` event
+- Date 2026-11-06 · Status: the feature **decided by the user 2026-11-06** ("an option to let the user export their
+  private key just in case anything goes wrong i.e. testnet MPC issues etc that causes fund lost cause derivation was
+  no longer possible"); the mechanics **to confirm** · Built: `packages/web/src/auth/export-page.ts`
+  (`EXPORT_SHOW_MS`, `EXPORT_WARNING`, the guard), `auth/approve-guard.ts` (`guardInputOf`), `apps/api/src/login.ts`
+  (`exportChain`), `src/mainnet-demo.ts` (`recordKeyExport`), `src/directory/read.ts` (`withEvents`), the admin
+  console's events table · Extends D40, D41, D59, D111, D268
+- Decision:
+  1. Export already existed (D40, D59, D111, D258, D268): the launcher inside the vault frame opens a top-level window
+     on the auth origin that signs in again (Google `max_age=0`, or an email code), derives one chain key itself and
+     shows it behind a typed confirmation. No SDK method returns a key; no message carries one.
+  2. **Auto-hide**: a shown key hides again 60 s after Show (besides blur, a hidden tab and pagehide); the 5-minute
+     erase (D111) is unchanged.
+  3. **The guarded click**: Continue, Show key and Copy key are behind the approval popup's guard (1 s after the
+     screen and the window's focus, an arming move or Tab, a click that starts after it, D113's keyboard dwell).
+  4. **Warnings**: "Anyone with this key controls your funds … Hana can't recover it … Never paste it into a
+     website", on the first and the confirm screens.
+  5. **`key_exported`**: recorded by the API when the export window's `/v1/login` succeeds (server-side, so no page can
+     skip it), with the user's internal id, the app, the chain (`exportChain`, the window's label; null from an older
+     window) and the time; no key, token or path. Staff see it on the Users detail and the Support ID lookup.
+- Not done: an "account view" in Hana's own UI (Hana has none; the launcher is the entry, D59; a Hana account page is
+  Hana Home's, D40).
+
+### D431. Key export on non-testnet manifests: D41 stands until a decision before mainnet
+- Date 2026-11-06 · Status: **to confirm** · Source: the 2026-11-06 brief asked to leave export off for non-testnet
+  manifests and decide production behaviour before mainnet
+- Decision: no gate was added. D41 (confirmed by the user) already says export is mandatory and partners can't
+  disable it, and the manifest schema accepts only `network: testnet`, so no non-testnet manifest can exist today.
+  Whether D41 stands for mainnet, or a Privy-style partner switch is wanted, is `docs/mainnet-readiness.md` 1.18.
+- Why: a gate would contradict a confirmed decision and be dead code today.
+
+## Watchdog grace for a Google kid it hasn't seen yet (branch `fix/watchdog-new-key-grace`), 2026-11-06
+
+### D432. An updater Add of a Google kid the watchdog has never seen waits until 18 min before it is executable
+- Date 2026-11-06 · Status: **asked for by the user (D422's follow-up, `docs/mainnet-readiness.md` 7.16); the design
+  proposed by the assistant, confirmed by the user 2026-11-09** · Built: `apps/watchdog/src/run.ts` (`NEW_KID_GRACE_MS`, the re-exported
+  `NEW_KID_CANCEL_LEAD_MS`, `newKidDeadline`, `unseenPending`, `newKidsDueWithoutFetch`, `Run.updaterForged`),
+  `apps/watchdog/src/checks.ts` (`NEW_KID_CANCEL_LEAD_MS`, alert kind `unseen_key_change`), the playbook
+  `unseen-key-change`; no migration (the deadline comes from the change's own `proposed_at_ms` and
+  `executable_at_ms`, the evidence from `seen_kids` and `absences`) · Amends D153 and D422 ("a kid never seen" stays forged) for Adds by the updater
+- Context: D422 left one false positive. Around a rotation the API cron (3 fetches a run, any listing counts) can see
+  Google's new kid from an edge that already serves it before any fetch of the watchdog does. The watchdog then has no
+  `seen_kids` row for it, so two of its fetches 60 s apart that miss it made the Add `not_published`: cancelled, every
+  updater key deleted, a critical page. Google's key sync then stops until the council installs a fresh updater key,
+  and logins signed with the new key get `503 issuer_key_pending` meanwhile.
+- Decision:
+  - An Add **by the updater** of a Google kid no fetch of this watchdog has ever listed (no `seen_kids` row), missing
+    from two fetches ≥ 60 s apart, stays pending until its **deadline = min(proposed + 6 h, executable − 18 min)**
+    (`NEW_KID_GRACE_MS`, `NEW_KID_CANCEL_LEAD_MS`; mainnet's provisional 2 h delay gives 1 h 42 min). Meanwhile one
+    `unseen_key_change` warning (Slack, email) names the deadline; a fetch that lists the kid with the same material
+    confirms it (D86); one that lists other material makes it forged at once; a listing the watchdog can't confirm yet
+    (no confirm power) records the kid as seen, and D422's rollout rule takes over (never cancelled, waits the delay).
+  - At the deadline, still never listed: `forged_key_change` as before (cancel, delete every updater key, page), with
+    `details.new_kid_deadline_ms`.
+  - No grace, judged at once as before, when: the owner proposed it (it never deletes updater keys; the council can
+    propose again); the watchdog can't act (no key, not a watchdog, wrong network: people then need the whole delay
+    to get a council cancel through); `seen_kids` can't be read (fail safe, as D153); the run already found the updater
+    forging (an updater change judged forged, or a forged active key), and such a run also ends the grace of every
+    unseen Add already waiting (`details.grace_ended: updater_forged`); a delay of 18 min or less (the deadline is at or
+    before the proposal: sandbox-dev's 2 min keeps the old rule).
+  - A run whose Google fetch fails still judges an unseen updater Add past its deadline (or any, once the run found the
+    updater forging) on what earlier fetches recorded: no `seen_kids` row and at least 2 recorded absent fetches →
+    forged (`details.judged_without_fetch`). With no recorded absence it judges nothing, as before.
+  - Named constants, the same on every env (no override). `NEW_KID_CANCEL_LEAD_MS` is 3·(W + T), the issuer-key
+    delay's security bound `MIN_ISSUER_KEY_DELAY_MS` (D80); a test keeps them equal.
+- Security trade-off (what a stolen updater key gains from the grace):
+  - Never an accepted forged key. The only ways out of the grace are a cancel or a watchdog fetch of Google's JWKS
+    (direct, no cache, TLS) listing the kid with the same `n`/`e`, which only Google can cause; Google's own material
+    is useless without Google's private key (D153's argument). Waiting buys the attacker nothing on the key itself.
+  - The cancel still lands before anyone may execute the change with D80's margin intact: the deadline is 3·(W + T)
+    before `executable_at_ms`, the same three runs (two may be missed) the delay floor guarantees after a proposal,
+    and a JWKS outage in those runs doesn't stop the verdict (stored evidence).
+  - What it does gain: the updater key stays usable up to the grace longer (mainnet: up to 1 h 42 min instead of about
+    5 min). With it the attacker can (a) propose more forged Adds: each waits the same way and is cancelled by its own
+    deadline, and all of them as soon as one is judged forged; pending Adds count towards the issuer's key limit, so
+    they can hold a genuine Add back for that long (DoS only); (b) propose removals of Google's live keys:
+    `published_key_removal` pages critical at once and the owner cancels, unchanged (the key can do that without any
+    Add); (c) execute changes already due, unchanged; (d) spend up to its 1 NEAR gas allowance per key. No path to
+    derivation or to any user's key.
+  - The page comes later (at the deadline, not the first run), so people have less time to step in if the watchdog's
+    own cancel then fails: at least about 13 min (the deadline's run to the executable time) instead of about 2 h; the
+    watchdog retries the cancel every run and pages `protective_action_failed`. The `unseen_key_change` warning at the
+    start is the earlier signal, and its playbook says how to check Google's JWKS and have the council cancel early.
+  - Residual false positive: a genuine new key that none of the watchdog's fetches (one every 5 min, about 20 over
+    mainnet's grace) lists before the deadline is still cancelled and the updater keys deleted. A longer issuer-key
+    delay gives a longer grace (up to 6 h).
+- Why: D422's reasoning. Around a rotation absence is weak evidence and presence strong; the contract's delay is what
+  protects users, and the grace spends only the part of it the watchdog doesn't need to cancel in time.
+- Rejected: trusting the API cron's sighting (the updater is exactly what an attacker holds); a fixed grace not tied to
+  `executable_at_ms` (it could let a forged key reach its executable time on a short delay); cancelling at once but
+  keeping the updater keys (a stolen key would keep proposing, and the genuine key is still cancelled); applying it to
+  owner proposals; more fetches per run or Google's other key endpoints during the grace (more evidence for more code:
+  reconsider if the residual shows up).
+- Not done: sandbox-dev (2 min delay) can't exercise the grace; seeing it there needs an `issuerKeyDelayMs` above
+  18 min (a user decision: D80's fast drills).
+## `user_events` in retention and erasure (branch `feat/user-events-retention`), 2026-11-06
+
+Readiness row 7.17: migration 0013's `user_events` (D428, D430) were outside C13's purge (D360–D369) and `uid-erase`
+(D361).
+
+### D433. `user_events`: 24 months, no longer than the scope's directory, and erased with the user by internal id and address
+- Date 2026-11-06 · Status: decided while building, confirmed by the user 2026-11-09 (the 24 months goes to the accountant with D90's
+  periods, `docs/mainnet-readiness.md` 9.3) · Built on `feat/user-events-retention`: console-core
+  `USER_EVENTS_KEEP_MONTHS`, `purgeUserEventsInput`; `apps/api/src/changes/retention.ts` `purgeUserEvents`,
+  `AdminRpc.purgeUserEvents`; `apps/admin/src/retention.ts` (the `user_events` step), `public/app.js`;
+  `scripts/lib/uid-erase.ts`; tests `apps/api/test/rpc-retention.test.ts`, `apps/api/test/mainnet-demo.test.ts`,
+  `apps/admin/test-ops/retention.test.ts`, `budget.test.ts`, `apps/admin/test/retention.test.ts`,
+  `apps/admin/test-spa/{support,ux}.test.ts`, `scripts/test/uid-erase.test.ts`, `packages/console-core/test/retention.test.ts`
+  · Source: readiness 7.17, D90, D360, D361, D363, D366, D430
+- Decision:
+  - **24 months from the event** (`at`), then deleted. A `key_exported` row names the account's internal id and a
+    `mainnet_signature` row the wallet address too: per-user records for support ("was my key exported?", "what did my
+    demo wallet sign?"), the same kind of personal data as a raw usage event with its uid, which D90 keeps 24 months.
+    Not 5 years: D90's audit period is for what staff, partners and Hana's systems did (`audit_log`, `app_changes`),
+    kept for the ATO, while these rows are what happened to one user's key and bill nothing (export is free, the
+    mainnet demo is staff only and unbilled), so APP 11 asks for them to go once no longer needed; a dispute over an
+    export or a demo signature comes well inside 24 months. Deleted, not de-identified: a row without its user or
+    address has no use, and the schema requires both.
+  - **No longer than the scope's wallet directory** (D363): whatever their age, the rows of a scope with an app deleted
+    30 days ago or more and none live or deleted since go with its directory. The staff views reach them only through a
+    directory user, so they'd be orphans. An app deleted from a scope that still has a live app keeps its rows (the
+    users are still the directory's).
+  - **In the monthly job**: `AdminRpc.purgeUserEvents({before, deletedBefore, limit})`, a `system` actor only, each
+    cutoff clamped in SQL (`unixepoch('now', '-24 months')`; `now − 30 days`), up to `limit` of each rule per call, in
+    batches of 500 while a page is full, after the directory step; one call of the run's 12. An env whose D1 lacks 0013
+    answers zeros (nothing to purge), so the job doesn't fail every month until the migration is applied.
+  - **In an erasure** (`uid-erase`, D361): the user's rows by the account's internal ids in the scope, and every row
+    carrying one of their wallet addresses in any scope (the directory's wallets and the addresses of their own events):
+    an address is derived per scope and user, so another row carrying it came from the same key (exported or reused)
+    and is this person's data too. Counted in the plan (addresses never printed), deleted first in the wallet
+    directory's request (the addresses come from the wallets), re-counted to zero, recorded as `userEvents` in
+    `ops.erasures`. A D1 without 0013 is skipped and said so. An erasure made before this left the rows: run it again
+    (the user's own rows go by internal id; another user's row carrying only an address from the deleted wallets ages
+    out in 24 months).
+  - **The staff views** read `user_events` at query time, so a purged row just disappears; the Users detail and the
+    Support ID lookup say the 24 months, and an empty list reads "in the last 24 months", not "never".
+  - Nothing here touches derivation (D366): no address-freeze call-out.
+- Why: the table holds personal data Hana must be able to delete on request and must not keep longer than needed.
+- Rejected: 5 years as the audit logs (these aren't records of Hana's or a partner's actions); keeping them while the
+  user exists (a user active for years would accumulate every export forever); erasing by internal id only (a
+  signature row of a reused key elsewhere would keep the address); a migration for an `at` index (the table is small:
+  key exports are rare and the demo staff only; the oldest rows come first in `id` order, so a batch stops early).
+### D434. The email issuer reads apps through the API's read-only IssuerRpc, not a D1 binding
+- Date 2026-11-06 · Status: decided while building, confirmed by the user 2026-11-09 · Built: branch `feat/issuer-readonly-rpc` (not merged,
+  not deployed): `apps/api/src/rpc/issuer.ts`, `apps/api/src/issuer-apps.ts`, `packages/console-core/src/issuer-apps.ts`,
+  `apps/email-issuer/src/apps.ts`, `apps/email-issuer/scripts/gen-wrangler.ts` · Source: the task brief for
+  `docs/mainnet-readiness.md` 7.1d; replaces D251's interim source check
+- Decision: the API Worker exports a third `WorkerEntrypoint`, `IssuerRpc`, with exactly the issuer's three reads:
+  `appByKey({pk})`, `appById({appId})` and `scopeHasEmailApp({scopeId})`. Each validates a strict console-core schema
+  (`bad_request`), runs the SELECTs the issuer used to run over `APP_DB` (moved unchanged in meaning: the gate's model,
+  the pre-0010 fallback) and answers `{ok: true, app}` / `{ok: true, hasEmailApp}` or `{ok: false, code}`; nothing
+  throws out. The issuer's generated config binds its own D1 only and `API` → `{cloudflare.workerName}` at entrypoint
+  `IssuerRpc`; `APP_DB` and `gen --app-d1-id` are gone (the flag is refused with a pointer). The issuer checks every
+  answer's shape and fails a request closed on anything but a well-formed `ok` answer: `503 api_unavailable`, nothing
+  minted or mailed. Details:
+  - No caller clock: a key's rotation grace is judged on the API's `Date.now()` (the issuer used to pass its own).
+  - No actor, budget or breaker (unlike ConsoleRpc / AdminRpc): the issuer's own per-IP, mailbox and per-app limits
+    run before its lookups, as they did over `APP_DB`; each call is one or two SELECTs. Only refusals and errors are
+    logged (method, code), so the API doesn't gain a line per email request.
+  - `appId` accepts any stored id (`[A-Za-z0-9_-]{1,96}`), not only `app_<base58>`: it is the API's own id that the
+    challenge recorded, older and test rows carry `_`, and it is only ever bound.
+  - The answer is the app's issuer view only (id, name, scope, active, email on, plan limits, its Google web client),
+    so a compromised issuer also loses read access to the rest of the API's D1 (keys, origins, sessions, the wallet
+    directory), not just write access.
+  - Tests: the API's unit tests of the entrypoint (the gate's model, strict inputs, `internal`, before 0010, exactly
+    three public methods); source checks on both sides (the API's readers SELECT only and touch only `DB`; the issuer
+    names no `APP_DB`, has one D1 binding and calls only the three methods; every generated issuer config, committed
+    manifests included, binds the API at `IssuerRpc` only and none of its D1); the issuer's whole suite now runs
+    against the real API Worker bundled as an auxiliary Worker (as the admin suite does), seeding the API's D1 through
+    a test-only `API_TEST_DB`; the e2e stack runs the real `IssuerRpc` class on its node:sqlite D1.
+  - Deploy order: the API (with `IssuerRpc`) before the issuer, on every env (`docs/operations.md` "Deploy order: the
+    API before the issuer"). An issuer deployed first answers `503 api_unavailable` until the API ships it; rolling the
+    API back past this commit needs the issuer rolled back with it.
+- Why: Cloudflare has no read-only D1 binding (D251); a service binding to a named entrypoint gives the issuer exactly
+  the reads it needs and nothing else, and keeps the lookups' SQL beside the gate it mirrors. The manifest stays the
+  source of names (`cloudflare.workerName`), as for the admin's `AdminRpc`.
+- Alternatives: (a) keep D251's source check: it stops accidental writes, not a compromised Worker. Not recommended.
+  (b) A copy of the app rows in the issuer's D1, synced by the API: two sources of truth and a sync lag on suspension
+  (D251 rejected it). Not recommended. (c) Calling the API's public `GET /v1/app` over HTTPS: it answers by origin rule
+  and carries more than the issuer needs, with no by-id or by-scope read. Not recommended. (d) Reusing ConsoleRpc /
+  AdminRpc methods with a `system` actor: write methods on the same binding. Rejected.
+- Note: the name `IssuerRpc` was once proposed for an issuer-side entrypoint (D276's `IssuerRpc.uid`), which D346 and
+  D394 dropped before it was built; this one is the API's.
+## The API's NEAR RPC fallback (branch `feat/api-near-rpc-fallback`), 2026-11-06
+
+### D435. The API fails over to an ordered list of NEAR RPCs, never for an answer; a failed-over broadcast is polled
+- Date 2026-11-06 · Status: asked for by the user (readiness row 7.13: an ordered list from the manifest; failover on
+  network errors, 5xx, 429 and timeouts, never on a valid JSON-RPC answer; think through broadcasts); the mechanics
+  **confirmed by the user 2026-11-09** · Built: `apps/api/src/near/rpc.ts` (`Rpc`, `nearRpc`, `rpcEndpoints`, `RpcHealth`),
+  `packages/env/src/schema.ts` (`apiRpcFallbacks`, `apiRpcFallbacksOf`), `apps/api/scripts/gen-wrangler.ts`
+  (`NEAR_RPC_FALLBACKS`), `envs/sandbox-dev.json`; tests `apps/api/test/near-rpc.test.ts`, `test/cron.test.ts`,
+  `scripts/test/rpc-endpoints.test.ts` · Amends D261 (transactions and the relayer's access-key and block reads waited
+  as long as the node did) · Extends D65
+- Findings: every API call to NEAR went to `NEAR_RPC` alone (`new Rpc(env.NEAR_RPC)` at 15 call sites), so a provider
+  outage stopped every login, derive, link and owner action, while the vault, the export window and the watchdog
+  already fell back to `rpcFallback` (`packages/web/src/near-call.ts`, `apps/watchdog/src/near.ts`). The watchdog's
+  pattern (try each URL while the error is transient; a node's own error answer is final) is the closest; its rules
+  were taken over, not its code (the API's client also tells transactions apart, below). `send_tx` is idempotent by
+  hash on chain, but the API's callers read the node's error: on `InvalidNonce` or `Expired` the relayer
+  (`relayer-key.ts`) and the keys-updater (`issuer-keys.ts`) sign a **new** transaction with a fresh nonce. A broadcast
+  that the first endpoint forwarded before failing, sent again to a second node, gets `InvalidNonce` there (its nonce
+  is used), and re-signing on that would execute the call twice (a second session, CKD request or key change).
+- Decision:
+  1. **The list**: the manifest's optional `apiRpcFallbacks` (1–3 https URLs, http only for a loopback host in
+     `local*`; distinct; never `rpc`), asked in order after `rpc`; unset, `rpcFallback` alone. `gen` writes it as
+     `NEAR_RPC_FALLBACKS` (a JSON array), only when non-empty. Only the API reads it: the pages, the watchdog and the
+     admin keep `rpc` and `rpcFallback` (D263's two independent providers are unchanged). sandbox-dev:
+     `https://rpc.testnet.near.org` (its `rpcFallback`), then `https://near-testnet.drpc.org` (both testnet, both
+     already among `ckdNetworkKeySource`'s providers).
+  2. **When a call moves on**: only when an endpoint gives no JSON-RPC answer: a network error, its timeout, HTTP 5xx or
+     429 (whatever the body), a body that isn't a JSON-RPC response (not JSON, or neither `result` nor `error`: a
+     proxy's 408/504, a captive page), or `NO_SYNCED_BLOCKS` / `NOT_SYNCED_YET` (the node says it can't answer at all;
+     the watchdog treats them the same). Every other answer is final, a JSON-RPC error included (an unknown account, a
+     contract panic, `InvalidNonce`, `Expired`, `TIMEOUT_ERROR`, `UNKNOWN_TRANSACTION`): no answer is put to another
+     provider to get a different one. The same request body goes to the next endpoint.
+  3. **Timeouts per endpoint**: every read (views, access keys, `block`) 8 s (D261's view bound, now also the relayer's
+     chain reads, which run inside its nonce lock); `send_tx` and `tx` 20 s, above the node's own ~10 s wait (whose
+     `TIMEOUT_ERROR` is an answer: the caller polls). Worst case per call: the timeouts of every endpoint in turn.
+  4. **Order**: within one `Rpc` (made per request, relay or cron run by `nearRpc(env)`) calls stay on the endpoint
+     that answered last, so a transaction's broadcast, its status polls and the relayer's "superseded" nonce check
+     read one node unless it fails. Per isolate, an endpoint that failed is asked after the others for 30 s
+     (`RPC_DOWN_MS`), so an outage of `rpc` costs one timeout per isolate per 30 s, not one per call; when all are
+     down they are asked in the configured order.
+  5. **Broadcasts**: `send_tx` fails over like a read and sends the same signed bytes (one hash, one nonce: included at
+     most once). After a failover, any error from a later endpoint is reported as an unknown outcome (an `RpcError`
+     with no body and no node text), so `invalidNonce`, `isExpired` and `isDefiniteRejection` never match and the
+     callers poll the hash (`waitForOutcome`), as they already do after a dropped connection; a result is returned (it
+     is the same transaction's). Without a failover the node's rejection stays definite, as before.
+  6. **Logs**: each failover logs `near_rpc_failover` (warn: `method`, `code` the reason, `rpcEndpoint` and
+     `nextRpcEndpoint` indexes, 0 being `rpc`), never a URL (a provider's URL can carry an API key).
+- Why: the API is the only part that stopped on one provider's outage; reads and polls by hash are safe on any node,
+  and the broadcast rule keeps "at most one execution" without giving up failover for the one call that most needs it.
+- Trade-offs: (a) a broadcast that failed over and then got a genuine `InvalidNonce` or `Expired` (a stale nonce or
+  block hash, not the first broadcast) is polled instead of retried at once: an `InvalidNonce` resolves through the
+  relayer's existing "superseded" check (about 4 s, then one resend with a fresh nonce), an `Expired` waits out the
+  60 s and answers `504 timeout` (the keys-updater, which has no superseded check, waits out the 60 s on either and
+  its next cron run tries again); both need a failover first, so only during an outage. (b) Every listed provider is trusted
+  like `rpc` for the API's views whenever the ones before it fail (security.md "Parties"); someone who can make the
+  earlier ones fail picks which listed provider answers, never an unlisted one. (c) The not-synced errors count as no
+  answer although they are JSON-RPC errors; a lagging but synced node's answer (an account not found yet) is final.
+- Alternatives: (a) Broadcasts to the first endpoint only, with polls failing over: a dead `rpc` would then fail every
+  relay (the transaction never reaches a node). Not done. (b) Broadcasting to every endpoint at once: more load and
+  log noise for the same at-most-once result. Not done. (c) Reusing `rpcFallback` alone: the user asked for an ordered
+  list; it stays the default when `apiRpcFallbacks` is unset. (d) Asking a second provider when an answer looks wrong
+  (a view error): that is the "different answer" this rule forbids. Not done.
+- Not done: the admin console's System status probes only `rpc` and `rpcFallback`, not `apiRpcFallbacks`; e2e's API
+  runs with `NEAR_RPC` alone.
+## Email sharing with partners, built (branch `feat/email-sharing`, up to date on `feat/email-sharing-2`), 2026-11-06, 2026-11-09
 
 D411's details that it left open, decided while building `docs/email-sharing-spec.md` (the build note). All **to
-confirm** by the user. Number note: written as D419–D424 with D418 the highest on `origin/develop`; renumbered D420–D425 when
+confirm** by the user (none is confirmed; the user approved merging the build in the next batch, D411 point 9 as amended
+2026-11-09). Number note: written as D419–D424 with D418 the highest on `origin/develop`; renumbered D420–D425 when
 `feat/env-alert-label` merged D419 first; renumbered again to D438–D443 (same order) on `feat/email-sharing-2`, when
 `develop`'s own decisions had taken those numbers: text outside this branch's work that says D420–D425 means develop's
 decisions, not these.
@@ -7638,6 +8355,15 @@ decisions, not these.
 
 | Was | Now | Source |
 |---|---|---|
+| D153, D422: an updater Add of a Google kid the watchdog never saw listed is forged once two fetches 60 s apart miss it (cancel, every updater key deleted) | It waits until min(proposed + 6 h, executable − 18 min) with an `unseen_key_change` warning, confirmed if a fetch lists it; forged at the deadline, at once when the watchdog can't act, the owner proposed it, the run found the updater forging, or the delay is ≤ 18 min (D432) | `apps/watchdog/src/run.ts` `newKidDeadline` |
+| `user_events` outside C13's purge and `uid-erase`, an erasure request deleting its rows by hand (D430, readiness 7.17) | 24 months and no longer than the scope's directory, in the monthly job (`AdminRpc.purgeUserEvents`); `uid-erase` deletes them by internal id and by each wallet address (D433) | `apps/api/src/changes/retention.ts`, `scripts/lib/uid-erase.ts` |
+| The issuer's `APP_DB`, a read-write D1 binding of the API's D1, held to reads by a source test until a read-only RPC replaces it (D251) | No API D1 binding: the API's `IssuerRpc` entrypoint (service binding `API`) with the three reads; `gen --app-d1-id` gone; the API deploys before the issuer (D434) | `apps/api/src/rpc/issuer.ts`, `apps/email-issuer/scripts/gen-wrangler.ts`; docs/operations.md "Deploy order: the API before the issuer" |
+| D261: transactions (`send_tx`, `tx`) and the relayer's access-key and block reads wait as long as the node does; the API reads only `NEAR_RPC` | Every read gives an endpoint 8 s, `send_tx` and `tx` 20 s; the API fails over to `apiRpcFallbacks` (else `rpcFallback`) when an endpoint gives no JSON-RPC answer, never for an answer; a failed-over broadcast is polled by hash, never re-signed (D435) | `apps/api/src/near/rpc.ts`; docs/api.md "RPC view timeout and failover" |
+| D262: each vault frame has 5 s from its insertion to answer, a loaded one included; a wrong origin fails `no_answer` after about 10 s with a generic message | A loaded frame has 1.5 s after its `load`; `no_answer` in about 3 s, its message and `data.origin` naming the page's origin (D427) | `docs/integration.md` section 3 |
+| D39: a `pk_test_` app never signs for a mainnet; the partner client refuses a test app's switch to any chain outside the testnet list | A test app Hana staff switched to the mainnet demo, in a dev testnet env, signs on Base and Stellar's public network up to $9.99 per transaction through the popup (D428, D429); the client lets a test app through on Base, the vault decides | `packages/core/src/mainnet-demo.ts`, `packages/web/src/vault/signing.ts` |
+| D111, D268: a shown key stays shown until Hide, blur, a hidden tab or pagehide; Continue and Show act on any real click | A shown key also hides 60 s after Show; Continue, Show key and Copy key are behind the approval popup's guard (D430) | `packages/web/src/auth/export-page.ts` |
+| D413: verify's phases ran one step at a time except gitleaks beside the typecheck and the docs checks beside the unit tests; the sandbox e2e one test at a time (`--test-threads=1`, also CI's) | Lanes side by side in four phases (sandbox e2e beside the pack check then Playwright; the contract beside the typecheck; the unit tests still alone but for the docs checks); the sandbox e2e 8 tests at a time, in verify and CI | D423 |
+| D153 (an updater Add of a kid Google listed with the same material within 24 h is retired: cancelled), the JWKS cron's 55-min removal grace, the watchdog's Remove confirmed on two fetches 60 s apart | Retired only when known > 7 days, unlisted > 6 h and missed by 3+ fetches over 30+ min (else left pending); removal after 24 h missing from every fetch of 3 a run, never with a token in the last 24 h; a Remove confirmed early only after 3+ fetches over 10+ min and no listing for 24 h; `stale_active_key` after 27 h (D422) | `apps/api/src/issuer-keys.ts`, `apps/watchdog/src/run.ts`, migrations API 0012 and watchdog 0002 |
 | D387: the checks run locally before a merge, from a list of commands in docs/operations.md | `pnpm verify` (CI's checks for the change, D383's rules) before every merge into `develop`, `--full` before a deploy; an optional pre-push hook runs `--quick` on pushes to `develop` and `main` (D413) | `scripts/verify.mjs`, `scripts/verify-hook.mjs`, `.githooks/pre-push`; docs/operations.md "CI and git" |
 | D127 Q6/Q7: email sharing asked once per app at first login, for apps with the email claim on | A three-value app setting (`off` default / `on_request` / `at_login`), per app × account, a stored copy for the dashboard, re-ask for a second linked address, search only over shared addresses (D411); built as D438–D443 | branch `feat/email-sharing` (not merged); `docs/email-sharing-spec.md` |
 | docs/identity-token-spec.md's email design: the consent asked in the login popup before the relay (`/v1/identity/email-consent/lookup`), one `identity_email_consents` row per app and `sub` with no address, `identity_email` `'off'`/`'on'`, Hana Home's revoke | The sealed address kept with the session; the sheet as its own page after the key's check (`at_login`) or from `requestEmailSharing()`; `email_consents` per app × account × address MAC with the shared copy; the approval popup's and the sheet's Stop sharing (D438–D443) | branch `feat/email-sharing` (not merged) |

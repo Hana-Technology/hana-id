@@ -16,12 +16,25 @@ import {
   extractPrk,
   identityKeyHex,
   newAppKey,
+  parsePortReply,
   parseWindowMessage,
   sessionNonce,
 } from '@hana-id/core';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthApi } from '../../src/auth/api.ts';
-import { EXPORT_CHECK_MS, EXPORT_CLIPBOARD_CLEAR_MS, EXPORT_CONFIRMATION, EXPORT_COPY_UNAVAILABLE, EXPORT_END_TEXT, EXPORT_KEY_LIFETIME_MS, startExportPage } from '../../src/auth/export-page.ts';
+import {
+  EXPORT_CHECK_MS,
+  EXPORT_CLIPBOARD_CLEAR_MS,
+  EXPORT_CONFIRMATION,
+  EXPORT_COPY_UNAVAILABLE,
+  EXPORT_END_TEXT,
+  EXPORT_KEY_LIFETIME_MS,
+  EXPORT_SHOW_MS,
+  EXPORT_WARNING,
+  startExportPage,
+} from '../../src/auth/export-page.ts';
 import type { NearReader } from '../../src/auth/near-rpc.ts';
 import { simulateMpc } from '../../../core/test/helpers.ts';
 import { CLIENT_ID, ENV, EVIL, FakeWindow, NET, PARTNER, PK, type RemoteWindow, type TokenSigner, asWindow, emailIssuerSigner, flush, pageText, remoteWindow, resetDom, tokenSigner } from './helpers.ts';
@@ -149,7 +162,10 @@ function run(
     isGesture: () => gesture,
     clipboard,
     hasFocus: () => focus,
+    // The guard's clock (D430): 2 s on per read, so its 1 s waits are always over; the arming gesture is still needed.
+    guardNow: () => (guardTime += 2000),
   });
+  current = win;
   const context = {
     v: 1,
     t: 'hana:export-context',
@@ -200,7 +216,20 @@ function run(
 }
 
 const button = (label: RegExp) => [...document.querySelectorAll('button')].find((b) => label.test(b.textContent ?? '')) ?? null;
-const click = (b: Element | null) => b?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+/** The guard's clock and the window of the run in progress (the guarded buttons need a moving pointer first, D430). */
+let guardTime = 0;
+let current: { dispatch(type: string, event?: Record<string, unknown>): void } | null = null;
+let pointerX = 0;
+/** A user's click: the pointer moves (arming the guard), then presses and clicks on the button. */
+const click = (b: Element | null) => {
+  if (!b) return;
+  pointerX += 7;
+  current?.dispatch('pointermove', { pointerType: 'mouse', movementX: 3, movementY: 1, clientX: pointerX, clientY: 10 });
+  current?.dispatch('pointerdown', { pointerType: 'mouse', clientX: pointerX, clientY: 10 });
+  b.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+};
+/** A click with no pointer movement before it (a press carried over from another window, or a coached Enter). */
+const stillClick = (b: Element | null) => b?.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
 
 /** The reveal step's controls (D268). */
 function revealControls(): { toggle: HTMLButtonElement; copy: HTMLButtonElement; secret: HTMLElement; status: HTMLElement } {
@@ -375,6 +404,73 @@ describe('/export resolves the path through get_identity (batch 7) and takes an 
   });
 });
 
+describe('/export: what the user is told and what the API hears (D430)', () => {
+  it('warns plainly on the first and the confirm screen: funds, no recovery, never into a website', async () => {
+    expect(EXPORT_WARNING).toContain('Anyone with this key controls your funds');
+    expect(EXPORT_WARNING).toContain('Hana can’t recover it');
+    expect(EXPORT_WARNING).toContain('Never paste it into a website');
+    const r = run();
+    await vi.waitFor(() => expect(r.page.state).toBe('ready'));
+    expect(pageText()).toContain(EXPORT_WARNING);
+    await signIn(r);
+    await r.deliver();
+    expect(await r.page.settled).toBe('confirm');
+    expect(pageText()).toContain(EXPORT_WARNING);
+  });
+
+  it('names the chain in its login body (exportChain), and nothing else is added', async () => {
+    for (const chain of ['stellar', 'evm'] as const) {
+      const r = run({ chain, address: addressFor(chain) });
+      await signIn(r);
+      await r.deliver();
+      expect(await r.page.settled).toBe('confirm');
+      expect(Object.keys(r.loginBodies[0] as object).sort()).toEqual(['expiresAtMs', 'exportChain', 'jwt', 'keyIndex', 'maxUses', 'pk1', 'pk2', 'salt', 'sessionPublicKey', 'signature']);
+      expect((r.loginBodies[0] as { exportChain: string }).exportChain).toBe(chain);
+      resetDom();
+    }
+  });
+});
+
+describe('/export: the key never leaves this window (source check, D430)', () => {
+  // The page's own source (vitest runs from packages/web; this file's URL isn't a file: one under happy-dom).
+  const source = readFileSync(join(process.cwd(), 'src', 'auth', 'export-page.ts'), 'utf8')
+    // Comments say what the code must not do; only the code counts here.
+    .replace(/\/\*[\s\S]*?\*\//gu, '')
+    .replace(/^\s*\/\/.*$/gmu, '');
+
+  it('stores nothing, logs nothing, and never touches the URL or the network directly', () => {
+    for (const banned of [/localStorage/u, /sessionStorage/u, /indexedDB/u, /document\.cookie/u, /\bconsole\./u, /\bfetch\(/u, /XMLHttpRequest/u, /sendBeacon/u, /location\.(?:href|hash|search|assign|replace)/u, /history\.(?:pushState|replaceState)/u, /WebSocket/u]) {
+      expect(source, String(banned)).not.toMatch(banned);
+    }
+  });
+
+  it('posts only its hello and the child’s auth-params, and the key string goes only to the screen and the clipboard', () => {
+    // Each postMessage call's message: everything up to its target origin argument (`, env.…Origin)`).
+    const posts = [...source.matchAll(/\.postMessage\(([\s\S]*?), env\.(?:authOrigin|vaultOrigin)\)/gu)].map((m) => m[1]!.trim());
+    expect(posts).toEqual(['pending.params', "{ v: 1, t: 'hana:export-hello' }"]);
+    // exportString(…) is the key's text: shown (textContent), copied (writeText) or checked against the address.
+    const uses = [...source.matchAll(/^.*exportString\(.*$/gmu)].map((m) => m[0].trim());
+    expect(uses.filter((l) => !l.startsWith('const exportString'))).toEqual([
+      'address = addressOfExport(ctx.chain, exportString(ctx.chain, chainKey));',
+      'out.textContent = exportString(ctx.chain, key);',
+      'write = c.writeText(exportString(ctx.chain, key));',
+    ]);
+    // The login body (to the API) is built from the session's public values and the Google token, never the key.
+    const body = /const body: LoginBody = \{([\s\S]*?)\};/u.exec(source)?.[1] ?? '';
+    expect(body).not.toMatch(/\bkey\b|chainKey|prk|exportString/u);
+  });
+
+  it('no message to or from the partner page can carry a key: hana_export answers null, and the export messages carry public fields only', () => {
+    expect(parsePortReply({ v: 1, id: 'r1', result: null }, 'hana_export')).not.toBeNull();
+    for (const r of [{ key: 'S…' }, 'S…', [1, 2], {}]) expect(parsePortReply({ v: 1, id: 'r1', result: r }, 'hana_export'), JSON.stringify(r)).toBeNull();
+    const context = { v: 1, t: 'hana:export-context', pk: PK, appName: 'A', parentOrigin: PARTNER, scopeId: SCOPE, signer: ENV.signer, keyIndex: 0, chain: 'stellar', address: addressFor('stellar') };
+    expect(parseWindowMessage(context, ['hana:export-context'])).not.toBeNull();
+    for (const extra of ['key', 'secret', 'seed', 'privateKey', 'prk']) expect(parseWindowMessage({ ...context, [extra]: 'x' }, ['hana:export-context']), extra).toBeNull();
+    expect(parseWindowMessage({ v: 1, t: 'hana:export-end', key: 'x' }, ['hana:export-end'])).toBeNull();
+    expect(parseWindowMessage({ v: 1, t: 'hana:export-hello', key: 'x' }, ['hana:export-hello'])).toBeNull();
+  });
+});
+
 describe('/export', () => {
   it('says hello to the vault and checks its context against GET /v1/app', async () => {
     const r = run();
@@ -418,6 +514,11 @@ describe('/export', () => {
     expect(cont.disabled).toBe(true);
     input.value = EXPORT_CONFIRMATION;
     input.dispatchEvent(new Event('input'));
+    // Typed, but the guard (D430) waits for the pointer to move in this window first.
+    expect(cont.disabled).toBe(true);
+    stillClick(cont);
+    expect(r.page.state).toBe('confirm');
+    r.win.dispatch('pointermove', { pointerType: 'mouse', movementX: 2, movementY: 0, clientX: 1, clientY: 1 });
     expect(cont.disabled).toBe(false);
     click(cont);
     expect(r.page.state).toBe('reveal');
@@ -781,7 +882,7 @@ describe('/export', () => {
       await toReveal();
       expect(pageText()).toContain('A copied key stays in your clipboard until you copy something else');
       expect(pageText()).toContain('the copy is yours to look after');
-      expect(pageText()).toContain('The key is erased when it closes, 5 minutes after you signed in, or when your session in the app ends.');
+      expect(pageText()).toContain('A shown key hides again after 60 seconds. Close this window when you are done: the key is erased when it closes, 5 minutes after you signed in, or when your session in the app ends.');
     });
 
     it('window blur, a hidden tab and pagehide hide a shown key; the tab coming back doesn’t show it again', async () => {
@@ -792,6 +893,10 @@ describe('/export', () => {
       expect(secret.textContent).toBe('••••••••');
       expect(secret.hasAttribute('data-shown')).toBe(false);
       expect(toggle.textContent).toBe('Show key');
+      // Showing it again needs the window back in focus, then the guard re-armed (D430).
+      click(toggle);
+      expect(secret.textContent).toBe('••••••••');
+      r.win.dispatch('focus');
 
       click(toggle);
       expect(secret.textContent).toMatch(STELLAR_KEY);
@@ -800,6 +905,7 @@ describe('/export', () => {
       setVisibility('visible');
       expect(secret.textContent).toBe('••••••••');
       expect(r.page.state).toBe('reveal');
+      r.win.dispatch('focus');
 
       // One click shows it again (the toggle went back to "Show key").
       click(toggle);
@@ -807,6 +913,60 @@ describe('/export', () => {
       r.win.dispatch('pagehide');
       expect(secret.textContent).toBe('••••••••');
       expect(r.page.state).toBe('closed');
+    });
+
+    it('hides a shown key again 60 s after Show (D430); Show shows it again, until the 5 min erase', async () => {
+      expect(EXPORT_SHOW_MS).toBe(60_000);
+      const { r, toggle, secret } = await toReveal();
+      click(toggle);
+      expect(secret.textContent).toMatch(STELLAR_KEY);
+      vi.advanceTimersByTime(EXPORT_SHOW_MS - 1);
+      expect(secret.textContent).toMatch(STELLAR_KEY);
+      vi.advanceTimersByTime(1);
+      expect(secret.textContent).toBe('••••••••');
+      expect(secret.hasAttribute('data-shown')).toBe(false);
+      expect(toggle.textContent).toBe('Show key');
+      expect(r.page.state).toBe('reveal');
+      // Hide and show again restarts the 60 s.
+      click(toggle);
+      vi.advanceTimersByTime(30_000);
+      click(toggle);
+      click(toggle);
+      vi.advanceTimersByTime(EXPORT_SHOW_MS - 1);
+      expect(secret.textContent).toMatch(STELLAR_KEY);
+      vi.advanceTimersByTime(1);
+      expect(secret.textContent).toBe('••••••••');
+    });
+
+    it('Continue, Show key and Copy key act only once the guard is armed: a click with no pointer movement first does nothing (D430)', async () => {
+      const r = run();
+      await signIn(r);
+      await r.deliver();
+      expect(await r.page.settled).toBe('confirm');
+      const input = document.querySelector('input') as HTMLInputElement;
+      input.value = EXPORT_CONFIRMATION;
+      input.dispatchEvent(new Event('input'));
+      const cont = button(/Continue/u) as HTMLButtonElement;
+      expect(cont.disabled).toBe(true);
+      stillClick(cont);
+      expect(r.page.state).toBe('confirm');
+      // A keyboard user: Tab arms it (Enter never does), and Enter on Continue then acts after its focus dwell.
+      r.win.dispatch('keydown', { key: 'Enter', repeat: false });
+      expect(cont.disabled).toBe(true);
+      r.win.dispatch('keydown', { key: 'Tab', repeat: false });
+      expect(cont.disabled).toBe(false);
+      click(cont);
+      expect(r.page.state).toBe('reveal');
+      const { toggle, copy, secret } = revealControls();
+      // The reveal screen starts over: the click that confirmed (or a second one) can't land on Show or Copy.
+      expect(toggle.disabled).toBe(true);
+      expect(copy.disabled).toBe(true);
+      stillClick(toggle);
+      stillClick(copy);
+      expect(secret.textContent).toBe('••••••••');
+      expect(r.clipboardWrites).toEqual([]);
+      click(toggle);
+      expect(secret.textContent).toMatch(STELLAR_KEY);
     });
 
     it('synthetic (non-gesture) clicks neither show the key nor copy it', async () => {

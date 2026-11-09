@@ -86,6 +86,8 @@ export const webBuild = 'corepack pnpm --filter @hana-id/web build';
 export const pagesDeploy = 'corepack pnpm --filter @hana-id/api run deploy:pages';
 export const apiTailErrors = 'corepack pnpm --dir apps/api exec wrangler tail <cloudflare.workerName> --status error';
 export const apiTail = 'corepack pnpm --dir apps/api exec wrangler tail <cloudflare.workerName> --format pretty';
+/** The API's RPC failovers (D435): `near_rpc_failover` lines name the endpoint indexes and the reason, never a URL. */
+export const apiTailRpcFailover = 'corepack pnpm --dir apps/api exec wrangler tail <cloudflare.workerName> --search near_rpc_failover';
 export const d1Migrate = 'corepack pnpm --dir apps/api exec wrangler d1 migrations apply <cloudflare.d1Name> --remote';
 
 /** D1 Time Travel (`docs/operations.md` "Restoring a D1 database (Time Travel)"): the API's `DB`. */

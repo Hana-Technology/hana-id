@@ -11,7 +11,7 @@ import { type Ctx, done, lap, limiter, newCtx, reject } from '../handlers.ts';
 import { type Headers_, corsHeaders, readJson } from '../http.ts';
 import { log } from '../log.ts';
 import { ipSubject } from '../ip.ts';
-import { Rpc } from '../near/rpc.ts';
+import { nearRpc } from '../near/rpc.ts';
 import type { Limit } from '../rate-limiter.ts';
 import { type SessionView, isSessionView } from '../views.ts';
 import { type Keks, SHARE_KEY_BYTES, kekFor, loadKeks, unwrapShareKey, wrapShareKey } from './kek.ts';
@@ -226,7 +226,7 @@ async function spentSession(env: Env, sessionPk: Uint8Array, scopeId: string): P
     let session: SessionView | null = null;
     try {
       // Straight from the node, bypassing the session cache and the use counts this isolate merges into it.
-      const view = await new Rpc(env.NEAR_RPC).view<unknown>(env.SIGNER_ACCOUNT, 'get_session', { session_public_key: [...sessionPk] });
+      const view = await nearRpc(env).view<unknown>(env.SIGNER_ACCOUNT, 'get_session', { session_public_key: [...sessionPk] });
       session = isSessionView(view) ? view : null;
       last = session ? 'not_spent' : 'missing';
     } catch {

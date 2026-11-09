@@ -1,7 +1,7 @@
 # Recovery playbooks
 
 Generated from `packages/playbooks` (D126) by `corepack pnpm --filter @hana-id/playbooks gen-docs`: edit the package,
-not this file (a test fails when it is stale). Last verified against code: 2026-11-05 (branch `feat/deploy-check-all-workers`: the watchdog deploys through `run deploy`, stamped with the build id, D406); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/coop-canary`: the `google-enforces-coop` incident, D386); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`).
+not this file (a test fails when it is stale). Last verified against code: 2026-11-06 (branch `feat/api-near-rpc-fallback`: `near-rpc-outage` with the API-side RPC failover, `apiRpcFallbacks`, D435); 2026-11-06 (branch `fix/watchdog-new-key-grace`: `unseen-key-change`, and `forged-key-change` with the new-kid grace, D432); 2026-11-06 (branch `fix/google-key-hysteresis`: `retired-key-change`, `key-sync-stalled` and `updater-key-stolen` with the rollout hysteresis, D422); 2026-11-05 (branch `feat/deploy-check-all-workers`: the watchdog deploys through `run deploy`, stamped with the build id, D406); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/coop-canary`: the `google-enforces-coop` incident, D386); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`).
 
 One step-by-step guide for every watchdog alert kind and for every incident the watchdog does not raise. The admin
 portal's "Security & monitoring" view renders the same playbooks (`docs/batch-c-spec.md`), and every watchdog
@@ -32,6 +32,7 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [The watchdog is partly blind or mute](#watchdog-degraded) | warning | `rpc_failing`, `jwks_failing`, `heartbeat_failing`, `channel_not_configured` |
 | [Google key sync stalled](#key-sync-stalled) | warning | `unexecuted_key_change`, `stale_active_key` |
 | [Retired Google key proposed and cancelled](#retired-key-change) | warning | `retired_key_change` |
+| [New Google key the watchdog has not seen yet](#unseen-key-change) | warning | `unseen_key_change` |
 | [Active keys checked by kid only](#active-key-material-unavailable) | warning | `active_key_material_unavailable` |
 | [Shared clients, sponsors or public registration changed](#config-change) | warning | `config_change` |
 | [The watchdog's confirmation of a Google key failed](#confirm-failed) | warning | `confirm_failed` |
@@ -152,7 +153,7 @@ A key Google doesn't publish, or an email key that isn't pinned, is active on ch
 
 `forged-key-change` · critical · alert kinds: `forged_key_change`
 
-A pending issuer key Google doesn't publish (or with other key material), an email key that isn't pinned for its signer, or a non-Google key the updater proposed: the watchdog cancelled it and, when the updater proposed it, deleted every updater key. A key Google published with the same material in the last 24 h is a [retired-key-change](#retired-key-change) instead (D153).
+A pending issuer key Google doesn't publish (or with other key material), an email key that isn't pinned for its signer, or a non-Google key the updater proposed: the watchdog cancelled it and, when the updater proposed it, deleted every updater key. A key Google published with the same material in the last 24 h is a [retired-key-change](#retired-key-change) instead (D153); an updater Add of a kid the watchdog never saw listed waits until its deadline first, as an [unseen-key-change](#unseen-key-change) (D432): `details.new_kid_deadline_ms` says it was judged then.
 
 **Signals**
 
@@ -243,7 +244,7 @@ Someone proposed removing an issuer kid Google still publishes. The watchdog onl
 **Impact**
 
 - If it executes, logins with tokens signed by that kid fail until the updater re-proposes it and it waits out the issuer-key delay. It can never remove the last key.
-- A removal the updater (the signer account) proposed means `KEYS_UPDATER_KEY` is stolen (the API cron only proposes removals of kids missing from Google's JWKS for ≥ 55 min).
+- A removal the updater (the signer account) proposed means `KEYS_UPDATER_KEY` is stolen (the API cron only proposes removals of kids missing from every fetch of Google's JWKS for ≥ 24 h that signed no token in the last 24 h, D422).
 
 **Steps**
 
@@ -605,7 +606,7 @@ Chain reads or Google's JWKS fetch failed 3 runs in a row, the dead-man's switch
 
 `key-sync-stalled` · warning · alert kinds: `unexecuted_key_change`, `stale_active_key`
 
-A matured key change nobody executed for over 1 h, or an active kid Google dropped more than 3 h ago that nobody proposed to remove.
+A matured key change nobody executed for over 1 h, or an active kid Google dropped more than 27 h ago that nobody proposed to remove (the cron removes after 24 h missing, D422).
 
 **Signals**
 
@@ -632,7 +633,7 @@ A matured key change nobody executed for over 1 h, or an active kid Google dropp
    corepack pnpm --filter @hana-id/scripts run post-google-keys <env> --execute
    ```
 
-3. **Propose the stale removal** (who: the API cron). The cron proposes removing a kid missing for ≥ 55 min (never the last key); a founder can run the same sync at once.
+3. **Propose the stale removal** (who: the API cron). The cron proposes removing a kid missing from every fetch for ≥ 24 h (never one that signed a token in the last 24 h, never the last key; D422); a founder can run the same sync at once.
 
    ```sh
    corepack pnpm --filter @hana-id/scripts run post-google-keys <env>
@@ -650,7 +651,7 @@ A matured key change nobody executed for over 1 h, or an active kid Google dropp
 
 `retired-key-change` · warning · alert kinds: `retired_key_change`
 
-The updater proposed a key Google stopped publishing but did publish, with the same key material, within the last 24 h: the API cron's fetch raced Google's retirement of the kid (D153). The watchdog cancelled it and kept the updater keys.
+The updater proposed a key Google stopped publishing but did publish, with the same key material, within the last 24 h, and it is provably retired: known for over 7 days, unlisted for over 6 h, missed by 3+ fetches in a row over 30+ min (D153, D422). The API cron's fetch raced Google's retirement of the kid. The watchdog cancelled it and kept the updater keys. A kid that doesn't meet all three (a new key mid-rollout) is left pending, not cancelled.
 
 **Signals**
 
@@ -663,7 +664,7 @@ The updater proposed a key Google stopped publishing but did publish, with the s
 
 **Steps**
 
-1. **Check it was a retirement** (who: a founder). Google's JWKS no longer lists the kid, and `details.n` matches what the watchdog recorded for it (`/status` `seen_kids`). Repeats for the same kid more than an hour apart, or any `forged_key_change`, are not a race: see [forged-key-change](#forged-key-change).
+1. **Check it was a retirement** (who: a founder). Google's JWKS no longer lists the kid, and `details.n` matches what the watchdog recorded for it (`/status` `seen_kids`). Repeats for the same kid more than an hour apart, or any `forged_key_change`, are not a race: see [forged-key-change](#forged-key-change). Before D422 a new key mid-rollout could land here repeatedly (sandbox-dev, 2026-11-04/05): that no longer happens.
 
    ```sh
    curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)" 'https://<workerName>.<subdomain>.workers.dev/alerts?severity=critical'
@@ -674,7 +675,54 @@ The updater proposed a key Google stopped publishing but did publish, with the s
 
 - `keyChanges` no longer lists the change; `issuers` matches Google's JWKS.
 
-**Refs:** [`docs/operations.md#watchdog-alerts-runbook`](operations.md#watchdog-alerts-runbook), D153 (`docs/decisions.md`) · **See also:** [forged-key-change](#forged-key-change), [key-sync-stalled](#key-sync-stalled)
+**Refs:** [`docs/operations.md#watchdog-alerts-runbook`](operations.md#watchdog-alerts-runbook), D153 (`docs/decisions.md`) · **See also:** [forged-key-change](#forged-key-change), [key-sync-stalled](#key-sync-stalled), [unseen-key-change](#unseen-key-change)
+
+<a id="unseen-key-change"></a>
+
+### New Google key the watchdog has not seen yet
+
+`unseen-key-change` · warning · alert kinds: `unseen_key_change`
+
+The updater proposed a Google kid that no fetch of the watchdog has ever listed (D432). Usually Google's new key mid-rollout: the API cron's fetch reached an edge that already serves it. The watchdog leaves it pending until its deadline (6 h after the proposal at most, and at least 18 min before it is executable): confirmed as soon as one of its fetches lists it with the same material, otherwise cancelled as forged and the updater keys deleted.
+
+**Signals**
+
+- Warning `unseen_key_change` (Slack, email): "New Google key <kid> proposed by the updater (change <id>) isn't in Google's JWKS as the watchdog fetches it: cancelled as forged, and the updater keys deleted, at <time> unless a fetch lists it".
+- `details.new_kid_deadline_ms` is the deadline; `details.n`/`details.e` the proposed key material; `details.absent_since` and `details.absent_fetches` the watchdog's misses so far.
+- It ends one of two ways: info `key_change_confirmed` (a fetch listed the kid with the same material), or critical `forged_key_change` with `details.new_kid_deadline_ms` (the deadline passed, or the same run found the updater forging another change: `grace_ended: updater_forged`).
+
+**Impact**
+
+- None while it waits: the key isn't active, and the contract only accepts it after its delay. If it is Google's, logins signed with it get `503 issuer_key_pending` until it is confirmed or executed (as for any new Google key).
+- If it is a forgery, the updater key is stolen and keeps working until the deadline (it can propose more keys, which wait the same way, and removals, which page `published-key-removal`).
+
+**Steps**
+
+1. **Check whether Google publishes it** (who: a founder). Fetch Google's JWKS (https://www.googleapis.com/oauth2/v3/certs) a few times, from more than one network if you can: during a rotation its edges serve different key sets. If one of them lists the kid with `n` and `e` equal to `details.n`/`details.e`, it is Google's key: nothing to do, the watchdog confirms it once its own fetch lists it (or the API cron executes it after the delay).
+
+   ```sh
+   curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)" https://<workerName>.<subdomain>.workers.dev/status
+   curl -s <apiUrl>/v1/governance | jq '{paused, keyChanges, issuers, updater}'
+   ```
+
+2. **Not listed anywhere, or listed with other material** (who: a founder). Treat it as forged now rather than waiting for the deadline: go to [forged-key-change](#forged-key-change) and [updater-key-stolen](#updater-key-stolen). Other key material for the same kid is forged for certain (the watchdog cancels it at its next fetch that lists the kid). Not listed anywhere 1 h after the proposal is very unlikely for a real rotation.
+
+3. **Cancel early if it is forged** (who: council (2 of 3)). The owner cancels the change and deletes every updater key before the deadline when a founder judged it forged (the watchdog does both at the deadline, and at once if it sees the updater forge anything else). Never cancel it on a hunch alone: the updater keys of a real rotation are then gone too.
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run admin <env> owner:call cancel_issuer_key_change --args '{"id":<id>}' --yes
+   corepack pnpm --filter @hana-id/scripts run admin <env> owner:call delete_updater_key --args '{"public_key":"<ed25519:…>"}' --yes
+   ```
+
+**Verify**
+
+- `keyChanges` no longer lists the change: it was confirmed (`issuers` lists the kid and Google's JWKS has it) or cancelled (`forged_key_change`).
+
+**Follow-ups**
+
+- Repeated warnings that end in a confirmation mean the watchdog's fetches lag the API cron's edges: note the lag (proposal to confirmation) for the issuer-key delay's review (D432).
+
+**Refs:** [`docs/operations.md#watchdog-alerts-runbook`](operations.md#watchdog-alerts-runbook), D432 (`docs/decisions.md`) · **See also:** [forged-key-change](#forged-key-change), [updater-key-stolen](#updater-key-stolen), [retired-key-change](#retired-key-change)
 
 <a id="active-key-material-unavailable"></a>
 
@@ -2010,27 +2058,31 @@ A page of the login popup's trip (Google's sign-in pages, or Hana's callback) se
 
 `near-rpc-outage` · warning
 
-The manifest's `rpc` provider is down or wrong. The API reads only `rpc`; the vault, the export window and the watchdog fall back to `rpcFallback`.
+The manifest's `rpc` provider is down or wrong. The API fails over to its `apiRpcFallbacks` in order (or `rpcFallback` when unset, D435); the vault, the export window and the watchdog fall back to `rpcFallback`.
 
 **Signals**
 
-- `502 near_unavailable` on API endpoints; `rpc_failing` from the watchdog (both its RPCs failed 3 runs).
+- `near_rpc_failover` warnings in the API's logs (the endpoint index passed over and why: `network`, `timeout`, `http_5xx`, `http_429`, `not_jsonrpc`, `not_synced`).
+- `502 near_unavailable` on API endpoints once every API endpoint fails; `rpc_failing` from the watchdog (both its RPCs failed 3 runs).
 
 **Impact**
 
-- Logins, derives and owner actions through the API fail while `rpc` is down. Users with an unlocked or persisted vault keep signing (no chain call needed for the key). Logins of a linked identity (a member's path, through its account root) also need `rpcFallback` to answer: the vault confirms that path on both providers and refuses when either is down (D263).
-- A lying RPC can fail derives or refuse logins. It can't forge a CKD result for a user's own path (pinned key, pairing check), but it could forge one for a path whose secret it knows if the vault took its word that the user is a member of that account: the vault and the export window therefore confirm every member path on `rpc` and `rpcFallback` separately (D263). Keep the two on independent providers (the manifest schema refuses one registrable domain for both).
+- While only `rpc` is down the API keeps working through its fallbacks: each isolate pays one failed attempt (up to 8 s for a read, 20 s for a transaction when the node hangs) and then asks the fallbacks first for 30 s, so logins are slower, not broken. A fallback answers only when the endpoints before it gave no JSON-RPC answer; a node's answer, an error answer included, is never retried elsewhere.
+- Logins, derives and owner actions through the API fail only when every API endpoint is down. Users with an unlocked or persisted vault keep signing (no chain call needed for the key). Logins of a linked identity (a member's path, through its account root) also need `rpcFallback` to answer: the vault confirms that path on both providers and refuses when either is down (D263).
+- A broadcast that fails over sends the same signed transaction again (one hash, one nonce: it executes at most once). The API then polls its hash instead of trusting the second node's InvalidNonce or Expired, so a relay whose transaction never reached any node can wait out its 60 s and answer `504 timeout`; the user retries.
+- A lying RPC can fail derives or refuse logins. It can't forge a CKD result for a user's own path (pinned key, pairing check), but it could forge one for a path whose secret it knows if the vault took its word that the user is a member of that account: the vault and the export window therefore confirm every member path on `rpc` and `rpcFallback` separately (D263). Keep the two on independent providers (the manifest schema refuses one registrable domain for both). Every `apiRpcFallbacks` provider is trusted like `rpc` for the API's views whenever the ones before it fail.
 
 **Steps**
 
-1. **Confirm it is the provider** (who: a founder). Check the provider's status and another provider.
+1. **Confirm it is the provider** (who: a founder). Check the provider's status and another provider. The API's failover lines say which endpoint (0 is `rpc`, then `apiRpcFallbacks` in order) failed and how.
 
    ```sh
    curl -s https://<worker-url>/v1/health
+   corepack pnpm --dir apps/api exec wrangler tail <cloudflare.workerName> --search near_rpc_failover
    corepack pnpm --dir apps/api exec wrangler tail <cloudflare.workerName> --status error
    ```
 
-2. **Switch the API to another provider** (who: a founder). Change `rpc` (and keep `rpcFallback` a different provider) in `envs/<env>.json` (code-owner review; https; testnet only: every script and the watchdog refuse another `chain_id`). The value is built into the vault and auth bundles and their CSP: regenerate, rebuild and redeploy the API and both page Workers, and the watchdog.
+2. **If every API endpoint fails, or the outage lasts** (who: a founder). Change `rpc` (and keep `rpcFallback` a different provider), or reorder or replace `apiRpcFallbacks` (1–3 https URLs, none of them `rpc`), in `envs/<env>.json` (code-owner review; testnet only: every script and the watchdog refuse another `chain_id`). An `apiRpcFallbacks` change is the API's alone: `gen` and redeploy the API. `rpc` and `rpcFallback` are built into the vault and auth bundles and their CSP: regenerate, rebuild and redeploy the API and both page Workers, and the watchdog.
 
    ```sh
    corepack pnpm --filter @hana-id/api run gen <env>
@@ -2043,13 +2095,13 @@ The manifest's `rpc` provider is down or wrong. The API reads only `rpc`; the va
 
 **Verify**
 
-- `GET /v1/health` and a smoke login work; the watchdog's `rpc_failing` resolves.
+- `GET /v1/health` and a smoke login work; `near_rpc_failover` lines stop (or name only the endpoint you replaced); the watchdog's `rpc_failing` resolves.
 
 **Follow-ups**
 
-- Not built yet: an API-side RPC fallback (the API reads only `NEAR_RPC`).
+- If the primary stays bad, make a healthy fallback `rpc` rather than living on failover: every isolate still tries `rpc` again every 30 s.
 
-**Refs:** [`docs/operations.md#accounts-and-services-per-environment`](operations.md#accounts-and-services-per-environment), [`docs/security.md#parties`](security.md#parties), D65 (`docs/decisions.md`) · **See also:** [watchdog-degraded](#watchdog-degraded)
+**Refs:** [`docs/operations.md#accounts-and-services-per-environment`](operations.md#accounts-and-services-per-environment), [`docs/architecture.md#components`](architecture.md#components), [`docs/security.md#parties`](security.md#parties), D65 (`docs/decisions.md`), D435 (`docs/decisions.md`) · **See also:** [watchdog-degraded](#watchdog-degraded)
 
 <a id="mpc-ckd-outage"></a>
 

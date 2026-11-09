@@ -41,6 +41,9 @@ importers:
       '@electric-sql/pglite':
         specifier: 0.5.11
         version: 0.5.11
+      '@hana-id/brand':
+        specifier: workspace:*
+        version: link:../../packages/brand
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.5
@@ -163,6 +166,9 @@ importers:
       '@cloudflare/workers-types':
         specifier: 5.20261016.1
         version: 5.20261016.1
+      '@hana-id/brand':
+        specifier: workspace:*
+        version: link:../../packages/brand
       '@testing-library/dom':
         specifier: 10.4.2
         version: 10.4.2
@@ -231,6 +237,9 @@ importers:
         specifier: workspace:*
         version: link:../../packages/web
     devDependencies:
+      '@hana-id/brand':
+        specifier: workspace:*
+        version: link:../../packages/brand
       '@hana-id/env':
         specifier: workspace:*
         version: link:../../packages/env
@@ -490,8 +499,23 @@ importers:
         specifier: 4.1.12
         version: 4.1.12(@types/node@22.20.5)(happy-dom@21.0.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(vite@7.3.7(@types/node@22.20.5)(tsx@4.23.15))
 
+  packages/brand:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.5
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.12
+        version: 4.1.12(@types/node@22.20.5)(happy-dom@21.0.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(vite@7.3.7(@types/node@22.20.5)(tsx@4.23.15))
+
   packages/console-core:
     dependencies:
+      '@hana-id/core':
+        specifier: workspace:*
+        version: link:../core
       '@hana-id/env':
         specifier: workspace:*
         version: link:../env
@@ -499,9 +523,6 @@ importers:
         specifier: ^3.24.0
         version: 3.25.76
     devDependencies:
-      '@hana-id/core':
-        specifier: workspace:*
-        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.5
@@ -734,8 +755,8 @@ importers:
         version: link:../web
     devDependencies:
       '@sodax/types':
-        specifier: 2.1.0
-        version: 2.1.0
+        specifier: 2.2.0
+        version: 2.2.0
       '@stellar/stellar-base':
         specifier: 15.0.0
         version: 15.0.0
@@ -758,6 +779,9 @@ importers:
         specifier: workspace:^
         version: link:../core
     devDependencies:
+      '@hana-id/brand':
+        specifier: workspace:*
+        version: link:../brand
       '@hana-id/env':
         specifier: workspace:*
         version: link:../env
@@ -1825,8 +1849,8 @@ packages:
     resolution: {integrity: sha512-P1Cz1dWaFfR4IR+U13mqqiGsLFf1KbayybWwdd2vfctdV6hDpUkgCY0nKOLLTMSoRd/jJNjtbqzf13K8DCCXQw==}
     engines: {node: '>=18'}
 
-  '@sodax/types@2.1.0':
-    resolution: {integrity: sha512-5fK0RTcRGzc/iK1ZeqIEE9n/CkB2Q8ecRYgY7aeBICe30X+GApkviSjsEtMETLW3Lx9EUSFJChCsVLjB2d5dWQ==}
+  '@sodax/types@2.2.0':
+    resolution: {integrity: sha512-+z3SN8NfE66VR4ESDlvcqc6deNTjvo+KVkxT9+q3p4/0S2awOfiiq5CmDNIKC90d6j4knJSd5v9NHdbE/2K0pg==}
     engines: {node: '>=22.12.0'}
 
   '@solana-program/compute-budget@0.8.0':
@@ -6295,7 +6319,7 @@ snapshots:
 
   '@sindresorhus/is@7.2.0': {}
 
-  '@sodax/types@2.1.0': {}
+  '@sodax/types@2.2.0': {}
 
   '@solana-program/compute-budget@0.8.0(@solana/kit@2.3.0(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.3)(ws@8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))':
     dependencies:

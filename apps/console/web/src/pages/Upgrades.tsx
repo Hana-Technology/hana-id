@@ -6,7 +6,8 @@
 // pause state. Everything here is contract-wide and public on chain; nothing is any org's or any user's. Any member,
 // frozen orgs included (a read).
 import type { PendingUpgradesView } from '@hana-id/console-core';
-import { ErrorNote, countdown, duration, useApi, useNow, useOrg, when } from '../lib.tsx';
+import { countdown, duration, useApi, useNow, useOrg, when } from '../lib.tsx';
+import { Callout, CopyButton, ErrorNote, Loading, PageHeader, Panel } from '../ui.tsx';
 import { near } from '../units.ts';
 
 const DELAY_LABEL: Record<PendingUpgradesView['delayDecreases'][number]['delay'], string> = {
@@ -25,29 +26,31 @@ function When({ atMs, due, now, verb }: { atMs: number; due: boolean; now: numbe
 }
 
 function Command({ text }: { text: string }) {
-  return <pre className="command mono">{text}</pre>;
+  return (
+    <div className="snippet">
+      <pre className="mono">{text}</pre>
+      <CopyButton value={text} label="command" />
+    </div>
+  );
 }
 
 export function Upgrades() {
   const { org } = useOrg();
   const r = useApi<{ pendingUpgrades: PendingUpgradesView }>(`/api/orgs/${org}/governance/pending-upgrades`);
   const now = useNow(30_000);
-  const head = <h2>Pending upgrades</h2>;
+  const head = <PageHeader title="Pending upgrades" description="Changes Hana has queued on the Hana ID contract that every app depends on. Each one waits a public delay first, so you and your users can react before it applies." />;
   if (r.error)
     return (
       <>
         {head}
-        <ErrorNote error={r.error} />
-        <button type="button" onClick={r.reload}>
-          Try again
-        </button>
+        <ErrorNote error={r.error} onRetry={r.reload} />
       </>
     );
   if (!r.data)
     return (
       <>
         {head}
-        <p className="muted">Loading…</p>
+        <Loading label="Reading the chain…" />
       </>
     );
   const p = r.data.pendingUpgrades;
@@ -57,21 +60,26 @@ export function Upgrades() {
       <p className="muted">
         What the owner of the Hana ID contract <span className="mono">{p.signer}</span> ({p.env}) has queued, read from the chain {when(p.readAtMs)}. Each change waits the governance delay ({duration(p.governanceDelayMs)}
         ) before it can take effect, so you and your users can react, for example by exporting keys. Countdowns run on your clock;{' '}
-        <button type="button" className="link" onClick={r.reload}>
+        <button type="button" className="btn-link" onClick={r.reload}>
           read the chain again
         </button>
         .
       </p>
       {p.paused && (
-        <p className="note note-error" role="alert">
+        <p className="callout callout-error" role="alert">
           The contract is paused: logins, new sessions and key derivation are stopped until Hana unpauses it.
         </p>
       )}
-      {!p.anyPending && <p className="note">Nothing is pending.</p>}
+      {!p.anyPending && (
+        <Callout tone="ok">
+          <p className="callout-title">Nothing is pending.</p>
+          <p>No upgrade, owner transfer, withdrawal or shorter delay is queued. Anything Hana queues shows here for the whole delay before it can apply.</p>
+        </Callout>
+      )}
       {p.upgrade && (
-        <section className="section">
+        <Panel>
           <h2>Contract upgrade</h2>
-          <dl className="settings">
+          <dl className="facts">
             <dt>New code hash</dt>
             <dd className="mono">{p.upgrade.codeHash}</dd>
             <dt>Proposed</dt>
@@ -97,17 +105,17 @@ export function Upgrades() {
               )}
             </>
           ) : (
-            <p className="note note-warn" role="alert">
+            <p className="callout callout-warn" role="alert">
               <strong>Not a published release.</strong> No source commit or reproducible-build command is on record for this code hash. Treat the upgrade as unexplained until Hana publishes it, and ask Hana before it takes
               effect.
             </p>
           )}
-        </section>
+        </Panel>
       )}
       {p.ownerTransfer && (
-        <section className="section">
+        <Panel>
           <h2>Owner transfer</h2>
-          <dl className="settings">
+          <dl className="facts">
             <dt>New owner</dt>
             <dd className="mono">{p.ownerTransfer.owner}</dd>
             <dt>Takes effect</dt>
@@ -115,12 +123,12 @@ export function Upgrades() {
               <When atMs={p.ownerTransfer.acceptableAtMs} due={p.ownerTransfer.due} now={now} verb="be accepted" />
             </dd>
           </dl>
-        </section>
+        </Panel>
       )}
       {p.withdrawal && (
-        <section className="section">
+        <Panel>
           <h2>Withdrawal from the contract</h2>
-          <dl className="settings">
+          <dl className="facts">
             <dt>Receiver</dt>
             <dd className="mono">{p.withdrawal.receiver}</dd>
             <dt>Amount</dt>
@@ -132,12 +140,12 @@ export function Upgrades() {
               <When atMs={p.withdrawal.executableAtMs} due={p.withdrawal.due} now={now} verb="be executed" />
             </dd>
           </dl>
-        </section>
+        </Panel>
       )}
       {p.delayDecreases.length > 0 && (
-        <section className="section">
+        <Panel>
           <h2>Shorter delays</h2>
-          <table>
+          <table className="table">
             <thead>
               <tr>
                 <th>Delay</th>
@@ -159,13 +167,13 @@ export function Upgrades() {
               ))}
             </tbody>
           </table>
-        </section>
+        </Panel>
       )}
       {p.consoleAudienceAdditions.length > 0 && (
-        <section className="section">
+        <Panel>
           <h2>New console sign-in clients</h2>
           <p className="muted">Once in force, Google tokens for these clients can authorise on-chain owner actions.</p>
-          <table>
+          <table className="table">
             <thead>
               <tr>
                 <th>Provider</th>
@@ -185,7 +193,7 @@ export function Upgrades() {
               ))}
             </tbody>
           </table>
-        </section>
+        </Panel>
       )}
     </>
   );

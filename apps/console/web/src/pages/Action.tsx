@@ -1,12 +1,14 @@
 // A fresh sign-in's page (`/actions/:id`, docs/batch-c-spec.md "Fresh sign-in"): the action exactly as the server built
-// it (the decoded view: what will be applied), a "Confirm with Google" button while it is pending, and its outcome
-// after the callback sends the browser back here. The confirmation is a Google sign-in whose nonce commits to this one
-// action, so it can't be used for anything else.
-import { Link } from 'react-router-dom';
-import { useParams } from 'react-router-dom';
+// it (the decoded view: what will be applied), when it takes effect, what the fresh sign-in is and which account to use,
+// a "Confirm with Google" button while it is pending, and its outcome after the callback sends the browser back here.
+// The confirmation is a Google sign-in whose nonce commits to this one action, so it can't be used for anything else.
+import type { MeAnswer } from '@hana-id/console-core';
+import { Link, useParams } from 'react-router-dom';
 import { confirmWithGoogle } from '../api.ts';
-import { ErrorNote, OriginText, Section, WriteNote, duration, useApi, useWrite, when } from '../lib.tsx';
-import { identityEmailLabel } from './Apps.tsx';
+import { duration, relative, useApi, useNow, useWrite, when } from '../lib.tsx';
+import { explain } from '../messages.ts';
+import { Callout, ErrorNote, IconLock, Loading, OriginText, PageHeader, Panel, WriteNote } from '../ui.tsx';
+import { identityEmailLabel } from './app/Sessions.tsx';
 import { ConsentPreview } from './Consent.tsx';
 
 interface ActionAnswer {
@@ -31,6 +33,8 @@ const TITLES: Record<string, string> = {
   'org.policy': 'Require a Google Workspace domain',
 };
 
+const GUARDED = new Set(['origin.add', 'policy.set', 'raw_sign.on']);
+
 type O = { origin: string; display: string; idn: boolean };
 const str = (v: unknown): string => (typeof v === 'string' ? v : JSON.stringify(v));
 
@@ -53,6 +57,15 @@ function OwnerChange({ change }: { change: Record<string, unknown> }) {
   return <p className="mono">{JSON.stringify(change)}</p>;
 }
 
+function settingText(k: string, v: unknown): string {
+  if (k === 'persistence') return v === 'session' ? 'kept across reloads' : 'none';
+  if (k === 'sessionTtlMs' || k === 'idleTtlMs') return duration(Number(v));
+  if (k === 'googleWebClientId') return v === null || v === undefined ? 'Hana’s shared client' : str(v);
+  if (k === 'identityEmail') return identityEmailLabel(v).toLowerCase();
+  return str(v);
+}
+const SETTING_LABEL: Record<string, string> = { persistence: 'Session persistence', sessionTtlMs: 'Session length', idleTtlMs: 'Idle timeout', googleWebClientId: 'Google web client', identityEmail: 'Email sharing' };
+
 export function Decoded({ kind, d }: { kind: string; d: Record<string, unknown> }) {
   switch (kind) {
     case 'origin.add': {
@@ -63,7 +76,7 @@ export function Decoded({ kind, d }: { kind: string; d: Record<string, unknown> 
           <p>
             App <strong>{str(d.appName)}</strong>. The new origins are announced to your security contacts and become active after the delay; any owner can cancel them until then.
           </p>
-          <ul>
+          <ul className="decoded-list">
             {add.map((o) => (
               <li key={o.origin}>
                 Add <OriginText {...o} />
@@ -75,7 +88,7 @@ export function Decoded({ kind, d }: { kind: string; d: Record<string, unknown> 
               </li>
             ))}
           </ul>
-          {add.some((o) => o.idn) && <p className="note note-warn">An origin above uses an internationalised (punycode) name: check the ASCII form is the domain you own.</p>}
+          {add.some((o) => o.idn) && <Callout tone="warn">An origin above uses an internationalised (punycode) name: check the ASCII form is the domain you own.</Callout>}
         </>
       );
     }
@@ -90,9 +103,9 @@ export function Decoded({ kind, d }: { kind: string; d: Record<string, unknown> 
       );
     case 'raw_sign.on':
       return (
-        <p className="note note-warn">
+        <Callout tone="warn">
           App <strong>{str(d.appName)}</strong>: users will be asked to approve raw signatures (messages Hana can’t decode). Announced, then active after the delay.
-        </p>
+        </Callout>
       );
     case 'app.resume':
       return (
@@ -102,22 +115,41 @@ export function Decoded({ kind, d }: { kind: string; d: Record<string, unknown> 
       );
     case 'app.settings': {
       const c = (d.changes as Record<string, unknown>) ?? {};
+      const from = (d.from as Record<string, unknown> | undefined) ?? {};
       return (
-        <ul>
-          {'persistence' in c && <li>Session persistence: {c.persistence === 'session' ? 'kept across reloads' : 'none'}</li>}
-          {'sessionTtlMs' in c && <li>Session length: {duration(Number(c.sessionTtlMs))}</li>}
-          {'idleTtlMs' in c && <li>Idle timeout: {duration(Number(c.idleTtlMs))}</li>}
-          {'googleWebClientId' in c && <li>Google web client: {c.googleWebClientId === null ? 'Hana’s shared client' : str(c.googleWebClientId)}</li>}
-          {'identityEmail' in c && <li>Email sharing: {identityEmailLabel(c.identityEmail).toLowerCase()}</li>}
-        </ul>
+        <>
+          <p>
+            App <strong>{str(d.appName)}</strong>:
+          </p>
+          <table className="table table-compact">
+            <thead>
+              <tr>
+                <th scope="col">Setting</th>
+                <th scope="col">Now</th>
+                <th scope="col">Becomes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.keys(SETTING_LABEL)
+                .filter((k) => k in c)
+                .map((k) => (
+                  <tr key={k}>
+                    <td>{SETTING_LABEL[k]}</td>
+                    <td className="muted">{k in from ? settingText(k, from[k]) : '—'}</td>
+                    <td className="strong">{settingText(k, c[k])}</td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </>
       );
     }
     case 'owner_action':
       return (
         <>
           <p>
-            Scope <span className="mono">{str(d.scopeId)}</span> (action nonce {str(d.actionNonce)}), method <span className="mono">{str(d.method)}</span>. Relayed to the hana-signer contract by Hana; the
-            confirmation token becomes public on chain (it carries no email address).
+            Scope <span className="mono">{str(d.scopeId)}</span>, method <span className="mono">{str(d.method)}</span>. Hana relays it to the hana-signer contract; the confirmation token becomes public on chain (it carries no
+            email address).
           </p>
           {d.change !== undefined && d.method === 'propose_change' && <OwnerChange change={d.change as Record<string, unknown>} />}
           {d.method === 'cancel_change' && (
@@ -126,8 +158,8 @@ export function Decoded({ kind, d }: { kind: string; d: Record<string, unknown> 
               <OwnerChange change={d.change as Record<string, unknown>} />
             </>
           )}
-          {d.method === 'remove_client' && <p className="note note-warn">Remove the Google client {str(d.aud)} from the scope, at once.</p>}
-          {d.method === 'disable_shared_login' && <p className="note note-warn">Turn shared login off, at once: users of Hana’s shared clients can’t sign in to this scope any more.</p>}
+          {d.method === 'remove_client' && <Callout tone="warn">Remove the Google client {str(d.aud)} from the scope, at once.</Callout>}
+          {d.method === 'disable_shared_login' && <Callout tone="warn">Turn shared login off, at once: users of Hana’s shared clients can’t sign in to this scope any more.</Callout>}
         </>
       );
     case 'member.invite':
@@ -156,6 +188,16 @@ export function Decoded({ kind, d }: { kind: string; d: Record<string, unknown> 
   }
 }
 
+/** When the change takes effect once confirmed, in one line. */
+function takesEffect(kind: string, d: Record<string, unknown>): string {
+  if (GUARDED.has(kind))
+    return 'Not at once. After you confirm, it is announced by email to your organisation’s security contacts and takes effect after the security delay (24 hours on production deployments). Any owner can cancel it until then, from the app’s page or the email.';
+  if (kind === 'member.invite') return 'The invite email goes out after every owner and your security contacts have been told. The link works once, for that address only.';
+  if (kind === 'member.role' && d.role === 'owner') return 'They become an owner after 24 hours as a viewer; any owner can cancel that meanwhile.';
+  if (kind === 'owner_action') return d.immediate === true ? 'At once, when the contract runs it.' : 'After the contract’s timelock. Any on-chain owner can cancel it meanwhile; once it unlocks, anyone can execute it from the scope’s page.';
+  return 'At once, when you confirm.';
+}
+
 const OUTCOME_TEXT: Record<string, string> = {
   sub_mismatch: 'You confirmed with another Google account than the one signed in to the console. Nothing was changed.',
   session_ended: 'Your console session ended before the confirmation. Nothing was changed: sign in and start again.',
@@ -165,44 +207,104 @@ const OUTCOME_TEXT: Record<string, string> = {
   version_conflict: 'The app changed meanwhile. Nothing was changed: start again from the app’s page.',
 };
 
-export function ActionPage() {
+const APP_TAB: Record<string, string> = { 'origin.add': 'origins', 'policy.set': 'signing', 'raw_sign.on': 'signing', 'app.settings': 'sessions', 'app.resume': 'suspend' };
+
+/** Where "back" goes: the page the change came from, when the member has one organisation (else the org list). */
+function backTo(a: ActionAnswer, me: MeAnswer | undefined): { to: string; label: string } {
+  const only = me?.memberships.length === 1 ? me.memberships[0]!.orgId : undefined;
+  if (!only) return { to: '/', label: 'Back to the console' };
+  const d = a.decoded;
+  if (typeof d.appId === 'string' && /^[A-Za-z0-9_]{1,128}$/u.test(d.appId)) return { to: `/orgs/${only}/apps/${d.appId}/${APP_TAB[a.kind] ?? ''}`.replace(/\/$/u, ''), label: `Back to ${typeof d.appName === 'string' ? d.appName : 'the app'}` };
+  if (a.kind.startsWith('member.') || a.kind === 'org.policy') return { to: `/orgs/${only}/members`, label: 'Back to members' };
+  if (a.kind === 'owner_action' && typeof d.scopeId === 'string' && /^[A-Za-z0-9_.-]{1,128}$/u.test(d.scopeId)) return { to: `/orgs/${only}/scopes/${d.scopeId}`, label: 'Back to the scope' };
+  return { to: `/orgs/${only}`, label: 'Back to the console' };
+}
+
+export function ActionPage({ me }: { me?: MeAnswer | undefined }) {
   const { id } = useParams();
   const r = useApi<ActionAnswer>(`/api/actions/${id}`);
   const w = useWrite();
-  if (r.error) return <main><ErrorNote error={r.error} /></main>;
-  if (!r.data) return <main><p className="muted">Loading…</p></main>;
+  const now = useNow(1_000);
+  if (r.error)
+    return (
+      <>
+        <PageHeader title="Confirm a change" back={{ to: '/', label: 'Back to the console' }} />
+        <ErrorNote error={r.error} />
+      </>
+    );
+  if (!r.data) return <Loading />;
   const a = r.data;
+  const back = backTo(a, me);
+  const lapsed = a.status === 'pending' && a.expiresAt <= now;
+  // The confirmation works only while the session that started it lives: one that ends inside the 5 minutes is said.
+  const sessionEnd = me?.sessionExpiresAt;
+  const sessionFirst = a.status === 'pending' && !lapsed && sessionEnd !== undefined && sessionEnd > now && sessionEnd < a.expiresAt;
+  const failedCode = a.outcome?.code ?? 'internal';
   return (
-    <main>
-      <h1>{TITLES[a.kind] ?? a.kind}</h1>
-      <Section title="What will be applied">
+    <div className="action">
+      <PageHeader title={TITLES[a.kind] ?? a.kind} back={back} description={a.status === 'pending' ? 'Check the change, then confirm it’s you with Google. Nothing happens until you do.' : undefined} />
+      <Panel title="What will be applied">
         <Decoded kind={a.kind} d={a.decoded} />
-      </Section>
+      </Panel>
       {a.status === 'pending' && (
         <>
-          <p className="muted">Confirm with a fresh Google sign-in (your console account). The confirmation is good for this change only, until {when(a.expiresAt)}.</p>
-          <button type="button" className="primary" disabled={w.busy} onClick={() => void w.run(() => confirmWithGoogle(a.id))}>
-            Confirm with Google
-          </button>
-          <WriteNote error={w.error} />
+          <Panel title="When it takes effect">
+            <p>{takesEffect(a.kind, a.decoded)}</p>
+          </Panel>
+          <Panel className="confirm-panel" title="Confirm it’s you">
+            <p>
+              Changes like this need a fresh Google sign-in, so a console session on its own can’t make them. You go to Google, choose {me ? <strong>{me.user.email}</strong> : 'the account you use for the console'}, and come straight back here with
+              the result.
+            </p>
+            {lapsed ? (
+              <Callout tone="warn">This confirmation expired. Nothing was changed: go back and start the change again.</Callout>
+            ) : (
+              <>
+                <p className="muted">Confirm with a fresh Google sign-in (your console account). The confirmation is good for this change only, until {when(a.expiresAt)} ({relative(a.expiresAt, now)}).</p>
+                {sessionFirst && (
+                  <Callout tone="warn" title={`Your console session ends ${relative(sessionEnd, now)}, before this confirmation’s time is up`}>
+                    <p>Confirm before then: a confirmation counts only with the session that started it. If the session ends first, nothing is changed; sign in again and start the change again.</p>
+                  </Callout>
+                )}
+                <div className="form-actions">
+                  <button type="button" className="btn btn-primary btn-large" disabled={w.busy} onClick={() => void w.run(() => confirmWithGoogle(a.id))}>
+                    <IconLock /> Confirm with Google
+                  </button>
+                  <Link to={back.to} className="btn btn-quiet">
+                    Not now
+                  </Link>
+                </div>
+              </>
+            )}
+            <WriteNote error={w.error} />
+          </Panel>
         </>
       )}
-      {a.status === 'expired' && <p className="note note-warn">This confirmation expired. Nothing was changed: start again.</p>}
+      {a.status === 'expired' && <Callout tone="warn">This confirmation expired. Nothing was changed: start again.</Callout>}
       {a.status === 'ok' && (
-        <p className="note" role="status">
+        <p className="callout callout-ok" role="status">
           Done.{a.outcome?.nearTx ? ` NEAR transaction ${a.outcome.nearTx}.` : ''}
           {a.outcome?.noChange === true ? ' It was already so: nothing changed.' : ''}
+          {GUARDED.has(a.kind) && a.outcome?.noChange !== true ? ' It is now announced and takes effect after the security delay; you can follow it, or cancel it, on the app’s page.' : ''}
         </p>
       )}
       {a.status === 'failed' && (
-        <p className="note note-error" role="alert">
-          {OUTCOME_TEXT[a.outcome?.code ?? ''] ?? `Refused (${a.outcome?.code ?? 'internal'}).`} {a.outcome?.message && !OUTCOME_TEXT[a.outcome.code ?? ''] ? a.outcome.message : ''}
-          {a.outcome?.code === 'rate_limited' && a.kind === 'owner_action' ? ' If this is urgent, send Hana security the action from this page.' : ''}
+        <div className="callout callout-error" role="alert">
+          <p className="callout-title">
+            {OUTCOME_TEXT[failedCode] ?? `${explain(failedCode, a.outcome?.message ?? '').text} Nothing was changed.`}
+            {a.outcome?.message && !OUTCOME_TEXT[failedCode] && explain(failedCode, a.outcome.message).detail ? ` ${a.outcome.message}` : ''}
+            {a.outcome?.code === 'rate_limited' && a.kind === 'owner_action' ? ' If this is urgent, send Hana security the action from this page.' : ''}
+          </p>
+          <p className="support-code">
+            Error code <code>{failedCode}</code> · action <code>{a.id}</code>
+          </p>
+        </div>
+      )}
+      {a.status !== 'pending' && (
+        <p>
+          <Link to={back.to}>{back.label}</Link>
         </p>
       )}
-      <p>
-        <Link to="/">Back to the console</Link>
-      </p>
-    </main>
+    </div>
   );
 }

@@ -4,8 +4,8 @@ import { createExecutionContext, createScheduledController, waitOnExecutionConte
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import worker, { isHourlyRun } from '../src/index.ts';
-import { GOOGLE_JWKS_URL, type Jwk, syncIssuerKeys } from '../src/issuer-keys.ts';
-import { cacheMaxAgeS, clearNotedTokenKids, keyObserver, recordJwksObservation, recordTokenKid } from '../src/key-observations.ts';
+import { GOOGLE_JWKS_URL, JWKS_FETCHES_PER_RUN, type Jwk, syncIssuerKeys } from '../src/issuer-keys.ts';
+import { TOKEN_SIGHTING_EVERY_MS, cacheMaxAgeS, clearNotedTokenKids, keyObserver, recordJwksObservation, recordTokenKid } from '../src/key-observations.ts';
 import { appHeaders, call, chain, google, seedApp, sessionBody, uid } from './helpers.ts';
 import { appKey, hanaHeaders, loginBody, withCombinedCall } from './login-helpers.ts';
 import { NearMock, rsaSigner } from './near-mock.ts';
@@ -121,6 +121,27 @@ describe('first token per kid', () => {
     expect((await rows()).early).toEqual(seen(T + 900_000, T + 900_000, 60, { first_token_ms: T }));
   });
 
+  it('keeps the latest token time in last_token_ms, whatever order the writes arrive in (D422)', async () => {
+    await recordTokenKid(env.DB, 'google', 'a', T + 5000);
+    await recordTokenKid(env.DB, 'google', 'a', T + 9000);
+    await recordTokenKid(env.DB, 'google', 'a', T + 3000);
+    expect(await env.DB.prepare("SELECT first_token_ms, last_token_ms FROM issuer_key_observations WHERE kid = 'a'").first()).toEqual({ first_token_ms: T + 3000, last_token_ms: T + 9000 });
+  });
+
+  it('writes a kid again once TOKEN_SIGHTING_EVERY_MS has passed in the same isolate (last_token_ms stays current)', async () => {
+    let writes = 0;
+    const counted = { ...env, DB: { prepare: (sql: string) => (writes++, env.DB.prepare(sql)) } as unknown as D1Database };
+    const ctx = createExecutionContext();
+    const observer = keyObserver(counted, ctx)!;
+    observer.token('google', 'k1', T);
+    observer.token('google', 'k1', T + TOKEN_SIGHTING_EVERY_MS - 1);
+    observer.token('google', 'k1', T + TOKEN_SIGHTING_EVERY_MS);
+    await waitOnExecutionContext(ctx);
+    expect(writes).toBe(2);
+    expect(await env.DB.prepare("SELECT first_token_ms, last_token_ms FROM issuer_key_observations WHERE kid = 'k1'").first()).toEqual({ first_token_ms: T, last_token_ms: T + TOKEN_SIGHTING_EVERY_MS });
+    clearNotedTokenKids();
+  });
+
   it('writes a kid at most once per isolate, after the response (waitUntil), and nothing without an execution context', async () => {
     let writes = 0;
     const counted = { ...env, DB: { prepare: (sql: string) => (writes++, env.DB.prepare(sql)) } as unknown as D1Database };
@@ -154,7 +175,8 @@ describe('cron', () => {
     const ctx = createExecutionContext();
     await worker.scheduled(createScheduledController({ cron: '*/15 * * * *', scheduledTime: T + 15 * 60_000 }), { ...env, KEYS_UPDATER_KEY: undefined }, ctx);
     await waitOnExecutionContext(ctx);
-    expect(near.jwksFetches).toBe(1);
+    // JWKS_FETCHES_PER_RUN fetches a run (D422).
+    expect(near.jwksFetches).toBe(JWKS_FETCHES_PER_RUN);
     expect(near.rpcMethods).toEqual([]);
     const r = await rows();
     expect(Object.keys(r).sort()).toEqual(['q1', 'q2']);
@@ -182,7 +204,7 @@ describe('cron', () => {
     near.install();
     expect(await syncIssuerKeys(env, 'google', GOOGLE_JWKS_URL, T)).toEqual({ proposed: [], removalsProposed: [], executed: [], failed: [], cancelled: [], notes: [] });
     expect(await syncIssuerKeys({ ...env, KEYS_UPDATER_KEY: undefined }, 'google', GOOGLE_JWKS_URL, T + 60_000)).toMatchObject({ skipped: 'no_keys_updater_key' });
-    expect(near.jwksFetches).toBe(2);
+    expect(near.jwksFetches).toBe(2 * JWKS_FETCHES_PER_RUN);
     expect(await rows()).toEqual({ h1: seen(T, T + 60_000, 21000) });
   });
 });

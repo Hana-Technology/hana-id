@@ -1,7 +1,8 @@
 // One watchdog run (every 5 min): docs/governance-spec.md "Watchdog service" steps 1–8, with the actions exactly as
 // D82 allows them. On its own the watchdog only:
-//   - cancels a pending issuer key Google doesn't publish (absent from two fetches ≥ 60 s apart) or publishes with
-//     other key material, and then deletes every updater key if the updater (the signer account) proposed it;
+//   - cancels a pending issuer key Google doesn't publish (absent from two fetches ≥ 60 s apart; an updater Add of a kid
+//     this watchdog never saw listed only at its deadline, D432) or publishes with other key material, and then deletes
+//     every updater key if the updater (the signer account) proposed it;
 //   - cancels any pending change the updater proposed for a provider other than Google (the updater only serves
 //     Google, so its key is stolen), and deletes every updater key;
 //   - pauses the contract, and only when a key Google doesn't publish is ACTIVE on chain (never at its first run),
@@ -19,7 +20,7 @@ import { GOOGLE_PROVIDER, type Jwk, rsaThumbprint, sameRsaKey } from '@hana-id/j
 import { type DeliveryReport, deliverAlerts } from './alerts.ts';
 import type { ChainReader, ChainSnapshot, ChainWriter, KeyChange, WatchdogMethod } from './chain.ts';
 import type { Notifier } from './channels.ts';
-import { ALERT_KINDS, type AlertKind, CHANNELS, CHECK_IDS, type CheckId } from './checks.ts';
+import { ALERT_KINDS, type AlertKind, CHANNELS, CHECK_IDS, type CheckId, NEW_KID_CANCEL_LEAD_MS } from './checks.ts';
 import { maybeSendDigest } from './digest.ts';
 import { diffChain, linkThresholdsOf, type StoredSnapshot } from './diff.ts';
 import {
@@ -40,17 +41,46 @@ import { EMAIL_KEY_WHY, EMAIL_PROVIDER, type EmailKeyReason, emailKeyVerdict, pi
 import { formatNear, level, RELAYER_POOLS, type RelayerFunds, type RelayerThresholds, type Threshold } from './relayer.ts';
 import { ident, printable } from './sanitize.ts';
 import { iso } from './time.ts';
-import type { CheckResult, SeenKid, Store } from './store.ts';
+import type { Absence, CheckResult, SeenKid, Store } from './store.ts';
 
 /** A kid with a pending change counts as not published once absent from two fetches at least this far apart. */
 export const ABSENCE_RECHECK_MS = 60_000;
 /**
  * A pending Add of a kid Google doesn't publish now, but did publish with the same key material within this window,
- * is a race with Google's key retirement (the API cron's fetch still listed it), not a forgery (D153).
+ * is not a forgery (D153): either Google retired it (the API cron's fetch still listed it) or Google is rolling it out
+ * and this fetch came from an edge that doesn't list it yet (D422).
  */
 export const RETIRED_KEY_GRACE_MS = 24 * 60 * 60_000;
-/** An active kid Google stopped publishing longer ago than this is stale (warning). */
-export const STALE_ACTIVE_KID_MS = 3 * 60 * 60_000;
+/**
+ * Rollout hysteresis (D422): Google's edges serve different key sets for a day or two around a rotation, so absence
+ * is weak evidence. Acting on it (cancelling an Add as retired, confirming a Remove early) takes at least this many
+ * successful fetches in a row that missed the kid,
+ */
+export const ABSENT_FETCHES_TO_ACT = 3;
+/** spread over at least this long for a retired Add's cancel, */
+export const RETIRED_ABSENT_SPAN_MS = 30 * 60_000;
+/** with Google's last listing of the kid at least this long ago, */
+export const RETIRED_UNSEEN_MS = 6 * 60 * 60_000;
+/** and the kid known for at least this long (a key still rolling out is never "retired"). */
+export const RETIRED_MIN_KEY_AGE_MS = 7 * 24 * 60 * 60_000;
+/** A Remove is confirmed early only after absent fetches spread over at least this long, */
+export const REMOVAL_ABSENT_SPAN_MS = 10 * 60_000;
+/** and no fetch listing the kid for at least this long (otherwise it waits out the contract's delay). */
+export const REMOVAL_UNSEEN_MS = 24 * 60 * 60_000;
+/**
+ * An active kid Google stopped publishing longer ago than this is stale (warning): the API cron proposes its removal
+ * only after 24 h missing from every fetch (D422), so stale means the removal is over 3 h late (was 3 h, before D422).
+ */
+export const STALE_ACTIVE_KID_MS = 27 * 60 * 60_000;
+/**
+ * New-kid grace (D432): during a rotation the API cron can see Google's new kid from an edge that serves it before any
+ * fetch of this watchdog does. An updater Add of a kid the watchdog has never seen Google list is therefore judged
+ * forged only at its deadline (`newKidDeadline`): this long after the proposal at most (Google's edges serve key sets
+ * up to ~6 h old),
+ */
+export const NEW_KID_GRACE_MS = 6 * 60 * 60_000;
+/** and never later than NEW_KID_CANCEL_LEAD_MS (checks.ts: 3·(W + T), 18 min) before anyone may execute it. */
+export { NEW_KID_CANCEL_LEAD_MS };
 /** A change executable for longer than this that nobody executed (warning). */
 export const UNEXECUTED_AFTER_MS = 60 * 60_000;
 /** RPC or JWKS failures in a row before a warning. */
@@ -211,6 +241,8 @@ class Run {
   readonly raisedKeys = new Set<string>();
   readonly actions: ActionSummary[] = [];
   readonly alerts: { id: number; kind: AlertKind; key: string }[] = [];
+  /** This run judged a change of the updater forged, or a key active that shouldn't be: no new-kid grace holds (D432). */
+  updaterForged = false;
 
   constructor(
     readonly d: RunDeps,
@@ -431,22 +463,30 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
         await run.condition('unverifiable_key_change', `unverifiable_key_change:${c.id}`, `Pending ${ident(c.op)} of ${ident(c.provider)} key ${ident(c.kid)}: no JWKS known for ${ident(c.provider)} (alert only)`, changeDetails(c));
       }
       let jwksNow: Map<string, Jwk> = firstJwks;
-      const absent = await trackAbsences(store, pending, jwksNow, google.at);
+      let tracked = await trackAbsences(store, pending, jwksNow, google.at);
+      const absent = tracked.absent;
       if (pending.some((c) => !jwksNow.has(c.kid) && !absent.has(c.kid))) {
         // A pending kid is missing from this fetch: look again after 60 s before calling it unpublished.
         await d.sleep(ABSENCE_RECHECK_MS);
         if ((await fetchGoogle()) && google.jwks) {
           jwksNow = google.jwks;
-          for (const kid of await trackAbsences(store, pending, jwksNow, google.at)) absent.add(kid);
+          tracked = await trackAbsences(store, pending, jwksNow, google.at);
+          for (const kid of tracked.absent) absent.add(kid);
           for (const kid of [...absent]) if (jwksNow.has(kid)) absent.delete(kid);
         }
       }
+      const runs = tracked.runs;
 
-      // Read for D153 only. A failed read must not hold back a cancel: without it every unpublished Add is forged.
+      // Read for D153 and D422. A failed read must not hold back a cancel (without it every unpublished Add is
+      // forged), and holds back every early removal (it can't tell how recently Google listed the kid).
+      let seenRead = true;
       const seen = await store.seenKids(GOOGLE_PROVIDER).catch(() => {
         log({ event: 'seen_kids_read_failed', runId }, 'error');
+        seenRead = false;
         return new Map<string, SeenKid>();
       });
+      // Updater Adds of never-seen kids left pending in their grace this run (D432).
+      const graced: KeyChange[] = [];
       for (const c of pending) {
         const jwk = jwksNow.get(c.kid);
         if (c.op === 'Add') {
@@ -461,26 +501,49 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
           }
           const lastSeen = reason === 'not_published' && c.by === cfg.signer ? retiredAt(seen.get(c.kid), c, d.now()) : null;
           if (lastSeen !== null) {
-            await retiredPending(run, c, lastSeen, canAct, settled);
+            if (retiredAddDue(seen.get(c.kid)!, runs.get(c.kid), d.now())) await retiredPending(run, c, lastSeen, canAct, settled);
+            // Known to Google within a day and not yet provably retired: a rollout seen through an edge that doesn't
+            // list it. Left pending: confirmed once a fetch lists it, executed by the API if its own fetches do (D422).
+            else run.check('pending_key_changes', 'ok', `${ident(c.kid)} missing from this fetch but listed by Google at ${iso(lastSeen)}: waiting (rollout, D422)`);
             continue;
           }
-          await forgedPending(run, s, c, reason, jwk ?? null, canAct, settled, deleted, self);
+          // D432: a kid no fetch of this watchdog ever listed, proposed by the updater: Google's new key seen first by
+          // the API cron's edge, or a forgery. Waits until its deadline, unless the watchdog can't act (people then
+          // need the whole delay to cancel), it can't read what it has seen (fail safe), or this run already found
+          // the updater forging.
+          const newKid = reason === 'not_published' && c.by === cfg.signer && canAct && seenRead && !seen.has(c.kid);
+          if (newKid && !run.updaterForged && d.now() < newKidDeadline(c)) {
+            graced.push(c);
+            await unseenPending(run, c, runs.get(c.kid));
+            continue;
+          }
+          await forgedPending(run, s, c, reason, jwk ?? null, canAct, settled, deleted, self, newKid ? { new_kid_deadline_ms: newKidDeadline(c) } : {});
         } else if (jwk) {
           await run.condition('published_key_removal', `published_key_removal:${c.id}`, `Pending removal of ${ident(c.kid)}, which Google still publishes (alert only: the owner decides)`, changeDetails(c));
         } else if (absent.has(c.kid) && canConfirm) {
-          await confirm(run, c, settled);
+          if (seenRead && removalConfirmable(seen.get(c.kid), runs.get(c.kid), d.now())) await confirm(run, c, settled);
+          else run.check('pending_key_changes', 'ok', `${ident(c.kid)} absent, not yet long enough to confirm its removal early (D422)`);
         }
       }
 
       // ---- step 5: active keys ----
       run.evaluate('forged_active_key', 'stale_active_key', 'active_key_material_unavailable');
       await checkActiveKeys(run, s, jwksNow, firstRun, canAct, self, deleted);
+      // Once this run found the updater forging (or a forged key active), its other unseen Adds get no more time.
+      if (run.updaterForged) {
+        for (const c of graced) {
+          if (!settled.has(c.id)) await forgedPending(run, s, c, 'not_published', null, canAct, settled, deleted, self, { new_kid_deadline_ms: newKidDeadline(c), grace_ended: 'updater_forged' });
+        }
+      }
       if (firstRun) {
         await run.event('first_run', 'first_run', 'First run: the current JWKS is recorded as known', { kids: [...jwksNow.keys()], active: s.issuer?.kids ?? [] });
         await store.setMeta(META.initializedAt, d.now());
       }
       run.evaluate('protective_action_failed');
     } else {
+      // D432: an unseen Add past its deadline is judged on what earlier fetches recorded, so a JWKS outage in its last
+      // runs can't let it reach its executable time.
+      if (snap) await newKidsDueWithoutFetch(run, snap, canAct, settled, deleted, self);
       for (const id of ['pending_key_changes', 'active_keys'] as const) {
         // The email half may have been judged already (it needs no Google JWKS): keep its outcome.
         const judged = run.checks.get(id);
@@ -639,21 +702,103 @@ function changeDetails(c: KeyChange): Record<string, unknown> {
 }
 
 /**
- * Records this fetch's absences of pending kids (the first absence per kid is kept), clears kids that are listed or
- * no longer pending, and returns the kids absent now and also at a fetch at least ABSENCE_RECHECK_MS earlier.
+ * Records this fetch's absences of pending kids (the first absence per kid is kept, every absent fetch counted),
+ * clears kids that are listed or no longer pending, and returns the kids absent now and also at a fetch at least
+ * ABSENCE_RECHECK_MS earlier, with each absent kid's run of absences including this fetch (D422).
  */
-async function trackAbsences(store: Store, pending: KeyChange[], jwks: Map<string, Jwk>, fetchAt: number): Promise<Set<string>> {
+async function trackAbsences(store: Store, pending: KeyChange[], jwks: Map<string, Jwk>, fetchAt: number): Promise<{ absent: Set<string>; runs: Map<string, Absence> }> {
   const pendingKids = new Set(pending.map((c) => c.kid));
   const known = await store.absences(GOOGLE_PROVIDER);
   for (const kid of known.keys()) if (!pendingKids.has(kid) || jwks.has(kid)) await store.clearAbsent(GOOGLE_PROVIDER, kid);
   const absent = new Set<string>();
+  const runs = new Map<string, Absence>();
   for (const kid of pendingKids) {
     if (jwks.has(kid)) continue;
-    const first = known.get(kid);
-    if (first === undefined) await store.recordAbsent(GOOGLE_PROVIDER, kid, fetchAt);
-    else if (fetchAt - first >= ABSENCE_RECHECK_MS) absent.add(kid);
+    const prior = known.get(kid);
+    await store.recordAbsent(GOOGLE_PROVIDER, kid, fetchAt);
+    runs.set(kid, prior ? { first: prior.first, fetches: prior.fetches + 1 } : { first: fetchAt, fetches: 1 });
+    if (prior && fetchAt - prior.first >= ABSENCE_RECHECK_MS) absent.add(kid);
   }
-  return absent;
+  return { absent, runs };
+}
+
+/**
+ * D422: whether an updater Add of a kid Google listed with this material within RETIRED_KEY_GRACE_MS (`retiredAt`)
+ * is provably retired: Google's last listing is at least RETIRED_UNSEEN_MS old, the kid was first seen at least
+ * RETIRED_MIN_KEY_AGE_MS ago, and ABSENT_FETCHES_TO_ACT fetches in a row over RETIRED_ABSENT_SPAN_MS missed it.
+ */
+export function retiredAddDue(s: SeenKid, absence: Absence | undefined, now: number): boolean {
+  if (s.last_seen_at === null || now - s.last_seen_at < RETIRED_UNSEEN_MS) return false;
+  if (now - s.first_seen_at < RETIRED_MIN_KEY_AGE_MS) return false;
+  return !!absence && absence.fetches >= ABSENT_FETCHES_TO_ACT && now - absence.first >= RETIRED_ABSENT_SPAN_MS;
+}
+
+/**
+ * D422: whether a pending Remove may be confirmed early: ABSENT_FETCHES_TO_ACT fetches in a row over
+ * REMOVAL_ABSENT_SPAN_MS missed the kid, and no fetch of the watchdog's listed it for REMOVAL_UNSEEN_MS. Otherwise the
+ * change waits out the contract's delay (the API executes it only if its own fetches miss the kid and no token was
+ * signed with it for a day).
+ */
+export function removalConfirmable(s: SeenKid | undefined, absence: Absence | undefined, now: number): boolean {
+  if (!absence || absence.fetches < ABSENT_FETCHES_TO_ACT || now - absence.first < REMOVAL_ABSENT_SPAN_MS) return false;
+  return !s || s.last_seen_at === null || now - s.last_seen_at >= REMOVAL_UNSEEN_MS;
+}
+
+/**
+ * D432: when an updater Add of a kid this watchdog never saw Google list stops waiting and is judged forged:
+ * NEW_KID_GRACE_MS after its proposal, but no later than NEW_KID_CANCEL_LEAD_MS before its executable time (at or
+ * before the proposal when the delay is that short: no grace).
+ */
+export function newKidDeadline(c: KeyChange): number {
+  return Math.min(c.proposed_at_ms + NEW_KID_GRACE_MS, c.executable_at_ms - NEW_KID_CANCEL_LEAD_MS);
+}
+
+/**
+ * D432: an updater Add of a kid no fetch has listed, before its deadline. Left pending (confirmed once a fetch lists it
+ * with the same material, cancelled as forged at the deadline otherwise), with one warning so people know a possible
+ * forgery is waiting.
+ */
+async function unseenPending(run: Run, c: KeyChange, absence: Absence | undefined): Promise<void> {
+  const deadline = newKidDeadline(c);
+  run.check('pending_key_changes', 'ok', `${ident(c.kid)} never listed by Google's JWKS as fetched here: judged forged at ${iso(deadline)} unless a fetch lists it (D432)`);
+  await run.event(
+    'unseen_key_change',
+    `unseen_key_change:${c.id}`,
+    `New Google key ${ident(c.kid)} proposed by the updater (change ${c.id}) isn't in Google's JWKS as the watchdog fetches it: cancelled as forged, and the updater keys deleted, at ${iso(deadline)} unless a fetch lists it`,
+    { ...changeDetails(c), new_kid_deadline_ms: deadline, absent_since: absence?.first ?? null, absent_fetches: absence?.fetches ?? null },
+  );
+}
+
+/**
+ * D432, in a run whose JWKS fetch failed: an updater Add past its deadline (or any, once this run found the updater
+ * forging) whose kid no fetch ever listed, and at least two earlier fetches missed, is forged. A failed read of the
+ * watchdog's records judges nothing (no evidence either way; the next run with a fetch judges it).
+ */
+async function newKidsDueWithoutFetch(run: Run, s: ChainSnapshot, canAct: boolean, settled: Set<number>, deleted: Set<string>, self: SelfChanges): Promise<void> {
+  const { store, config } = run.d;
+  const now = run.d.now();
+  const due = s.keyChanges.filter((c) => c.provider === GOOGLE_PROVIDER && c.op === 'Add' && c.by === config.signer && (run.updaterForged || now >= newKidDeadline(c)));
+  if (due.length === 0) return;
+  let seen: Map<string, SeenKid>;
+  let absences: Map<string, Absence>;
+  try {
+    seen = await store.seenKids(GOOGLE_PROVIDER);
+    absences = await store.absences(GOOGLE_PROVIDER);
+  } catch {
+    log({ event: 'seen_kids_read_failed', runId: run.id }, 'error');
+    return;
+  }
+  for (const c of due) {
+    const absence = absences.get(c.kid);
+    if (seen.has(c.kid) || !absence || absence.fetches < 2) continue;
+    await forgedPending(run, s, c, 'not_published', null, canAct, settled, deleted, self, {
+      new_kid_deadline_ms: newKidDeadline(c),
+      ...(now < newKidDeadline(c) ? { grace_ended: 'updater_forged' } : {}),
+      judged_without_fetch: true,
+      absent_since: absence.first,
+      absent_fetches: absence.fetches,
+    });
+  }
 }
 
 async function confirm(run: Run, c: KeyChange, settled: Set<number>): Promise<void> {
@@ -759,6 +904,7 @@ async function forgedPending(
   extra: Record<string, unknown> = {},
 ): Promise<void> {
   const signer = run.d.config.signer;
+  if (c.by === signer) run.updaterForged = true;
   const actions: ActionSummary[] = [];
   let outcome: CancelOutcome = 'not_sent';
   if (canAct) {
@@ -895,6 +1041,7 @@ async function forgedActive(
   deleted: Set<string>,
   extra: Record<string, unknown>,
 ): Promise<void> {
+  run.updaterForged = true;
   let action: ActionSummary | null = null;
   if (canAct && !s.config.paused && !self.paused) {
     action = await run.act('pause', {}, `active ${provider === GOOGLE_PROVIDER ? '' : `${ident(provider)} `}key ${ident(kid)}: ${reason}`);

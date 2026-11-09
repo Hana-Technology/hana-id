@@ -15,9 +15,19 @@
 //   --plan         print what would run and exit; with --json as JSON; with --files <path>... (only with --plan, the
 //                  rest of the arguments) for that list of changed files instead of the diff
 //
-// Each step's output goes to a log in the system temp dir; a failing step's tail is printed and its siblings stopped.
-// Unit tests run at pnpm's default of 4 packages at a time and never beside another heavy step: the PGlite suites
-// start a WASM Postgres per test file (30 s / 60 s timeouts, D140) and time out on a loaded machine.
+// Phases run one after another; a phase's lanes run side by side, a lane's steps one after another (D423):
+//
+//   0  lockfile
+//   1  gitleaks | typecheck | contract (cargo test + wasm)
+//   2  unit tests | docs checks                          (alone: see below)
+//   3  sandbox e2e | SDK pack check                      (Rust nodes beside a short build)
+//   4  Playwright                                        (alone: browsers beside 8 sandbox nodes made Firefox's
+//                                                         timing-sensitive specs time out, 2026-11-06)
+//
+// Each step's output goes to a log in the system temp dir; a failing step's tail is printed, its running siblings are
+// stopped and nothing after it starts. Unit tests run at pnpm's default of 4 packages at a time and never beside
+// another heavy step: the PGlite suites start a WASM Postgres per test file (30 s / 60 s timeouts, D140) and time out
+// on a loaded machine.
 // No dependencies beyond Node's standard library.
 import { spawn, spawnSync } from 'node:child_process';
 import { appendFileSync, closeSync, existsSync, mkdtempSync, openSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -252,8 +262,12 @@ export function changedFiles(base, cwd = ROOT) {
 const GITLEAKS = ['--no-banner', '--redact', '--config', '.gitleaks.toml', '--exit-code', '1'];
 export const BROWSERS = ['chromium', 'firefox', 'webkit'];
 
+/** Sandbox tests run this many at a time, each with its own sandbox node (D423; CI's e2e job runs the same). */
+export const SANDBOX_TEST_THREADS = 8;
+
 /**
- * The steps of a run, in phases: a phase's steps run side by side, phases one after another, cheapest first.
+ * The steps of a run, in phases, cheapest first: phases one after another; in a phase, lanes side by side and a
+ * lane's steps in plan order (a step's lane defaults to its id: a lane of its own).
  *
  * @param {{ mode: 'quick' | 'default' | 'full', files: string[] | null, pkgs: object[],
  *   reads: Map<string, { code: Set<string>, test: Set<string> }>, dirty?: boolean, cpus?: number }} o
@@ -266,7 +280,7 @@ export function plan({ mode, files, pkgs, reads, dirty = false, cpus = available
   const notQuick = mode === 'quick' ? 'not in --quick' : null;
   const browsers = mode === 'full' ? BROWSERS : ['chromium'];
 
-  const step = (id, title, phase, run, skip = null) => ({ id, title, phase, run, skip });
+  const step = (id, title, phase, run, skip = null, lane = id) => ({ id, title, phase, lane, run, skip });
   const cmd = (c, args, cwd = '.', env = {}) => ({ cmd: c, args, cwd, env });
   const recursive = (script, s, concurrency, env = {}) =>
     cmd('pnpm', ['-r', ...(s.all ? [] : s.names.flatMap((n) => ['--filter', n])), `--workspace-concurrency=${concurrency}`, '--reporter=append-only', script], '.', env);
@@ -282,19 +296,25 @@ export function plan({ mode, files, pkgs, reads, dirty = false, cpus = available
     step('install', 'lockfile (pnpm install --frozen-lockfile)', 0, [cmd('pnpm', ['install', '--frozen-lockfile', '--prefer-offline'])]),
     step('secrets', `gitleaks (history${dirty ? ', uncommitted' : ''}, rule self-test)`, 1, secrets),
     step('typecheck', `typecheck (${count(sel)})`, 1, [recursive('typecheck', sel, Math.max(4, Math.floor(cpus / 2)))], empty(sel)),
-    // CI=true as in CI: vitest then fails on a stray `.only`. pnpm's default 4 at a time, for the PGlite suites.
+    // Beside the typecheck, not the unit tests: from cold its cargo builds use every core for minutes (D140).
+    step('contract', 'contract (cargo test + wasm)', 1, [
+      cmd('cargo', ['test', '--locked'], 'contracts/hana-signer'),
+      cmd('cargo', ['near', 'build', 'non-reproducible-wasm'], 'contracts/hana-signer'),
+    ], notQuick ?? (jobs.rust ? null : 'no Rust change')),
+    // CI=true as in CI: vitest then fails on a stray `.only`. pnpm's default 4 at a time, for the PGlite suites; a
+    // phase of their own with the light docs checks.
     step('unit', `unit tests (${count(unit)})`, 2, [recursive('test', unit, 4, { CI: 'true' })], empty(unit)),
     step('docs', 'docs checks (playbooks, integration guide)', 2, [
       cmd('pnpm', [...DOCS_PACKAGES.flatMap((n) => ['--filter', n]), '--reporter=append-only', 'test'], '.', { CI: 'true' }),
       ...DOCS_FILES.map((d) => cmd('pnpm', ['--filter', d.pkg, 'exec', 'vitest', 'run', d.file], '.', { CI: 'true' })),
     ]),
-    step('contract', 'contract (cargo test + wasm)', 3, [
-      cmd('cargo', ['test', '--locked'], 'contracts/hana-signer'),
-      cmd('cargo', ['near', 'build', 'non-reproducible-wasm'], 'contracts/hana-signer'),
-    ], notQuick ?? (jobs.rust ? null : 'no Rust change')),
-    step('sandbox', 'sandbox e2e (near-workspaces)', 4, [cmd('cargo', ['test', '--locked', '--', '--test-threads=1'], 'contracts/integration-tests')], notQuick ?? (jobs.rust ? null : 'no Rust change')),
-    step('pack', 'SDK pack check', 5, [cmd('pnpm', ['run', 'pack:check'])], notQuick ?? (jobs.web ? null : 'no web change')),
-    step('e2e', `Playwright (${browsers.join(', ')})`, 6, [cmd('pnpm', ['--filter', '@hana-id/e2e', 'run', 'e2e', '--forbid-only', ...browsers.flatMap((b) => ['--project', b])])], notQuick ?? (jobs.web ? null : 'no web change')),
+    // The sandbox nodes take ephemeral ports (near-sandbox asks the OS for free ones); the Playwright stack its fixed
+    // HANA_E2E_PORT_BASE … +50 (4410 by default), below the ephemeral range. The pack check and Playwright share a
+    // lane, one after the other as before: pack's `build:lib` rewrites packages/web/src/envs.generated.ts and the SDK's
+    // dist/ while the stack's build bundles @hana-id/web's pages.
+    step('sandbox', 'sandbox e2e (near-workspaces)', 3, [cmd('cargo', ['test', '--locked', '--', `--test-threads=${SANDBOX_TEST_THREADS}`], 'contracts/integration-tests')], notQuick ?? (jobs.rust ? null : 'no Rust change')),
+    step('pack', 'SDK pack check', 3, [cmd('pnpm', ['run', 'pack:check'])], notQuick ?? (jobs.web ? null : 'no web change'), 'web'),
+    step('e2e', `Playwright (${browsers.join(', ')})`, 4, [cmd('pnpm', ['--filter', '@hana-id/e2e', 'run', 'e2e', '--forbid-only', ...browsers.flatMap((b) => ['--project', b])])], notQuick ?? (jobs.web ? null : 'no web change')),
   ];
   return { mode, selection: sel, jobs, steps };
 }
@@ -353,71 +373,105 @@ function runStep(s, logPath) {
   return { done, stop };
 }
 
-/** @param {string[][]} rows [step, result, duration] */
+/** A phase's lanes, of its steps that run (not skipped), in plan order: [lane, steps][]. */
+export function lanes(steps, phase) {
+  const out = new Map();
+  for (const s of steps) if (s.phase === phase && !s.skip) out.set(s.lane, [...(out.get(s.lane) ?? []), s]);
+  return [...out];
+}
+
+/** @param {string[][]} rows [step, result, start, duration] */
 export function summaryTable(rows) {
-  const head = ['step', 'result', 'duration'];
-  const w = [0, 1, 2].map((i) => Math.max(head[i].length, ...rows.map((r) => r[i].length)));
+  const head = ['step', 'result', 'start', 'duration'];
+  const w = head.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i].length)));
   const line = (r) => r.map((c, i) => c.padEnd(w[i])).join('  ').trimEnd();
   return [line(head), line(w.map((n) => '-'.repeat(n))), ...rows.map(line)].join('\n');
 }
 
-async function execute(p) {
-  const logDir = mkdtempSync(join(tmpdir(), 'hana-verify-'));
+/** The summary's rows: each step with its result, its start (from the run's start) and its duration; then the
+ * wall-clock total and the steps' durations added up (what the run took one step at a time). */
+export function summaryRows(steps, results, failed, wallMs) {
+  const rows = steps.map((s) => {
+    if (s.skip) return [s.title, `skip: ${s.skip}`, '', ''];
+    const r = results.get(s.id);
+    return [s.title, r?.result ?? 'not run', r ? `+${fmt(r.start)}` : '', r ? fmt(r.ms) : ''];
+  });
+  const summed = [...results.values()].reduce((n, r) => n + r.ms, 0);
+  rows.push(['total (wall clock)', failed ? 'FAIL' : 'pass', '', fmt(wallMs)], ['steps added up', '', '', fmt(summed)]);
+  return rows;
+}
+
+/**
+ * Runs the plan: phases in order; a phase's lanes side by side, a lane's steps one after another. At the first
+ * failure the running steps are stopped (result "stopped") and nothing else starts ("not run" in the table).
+ *
+ * @param {{ steps: object[] }} p
+ * @param {{ run?: (s: object, logPath: string) => { done: Promise<object>, stop: () => void },
+ *   log?: (line: string) => void, logDir?: string }} [deps] stand-ins for the tests
+ * @returns {Promise<{ results: Map<string, { result: string, ms: number, start: number }>, failed: object | null,
+ *   ms: number, logDir: string }>}
+ */
+export async function schedule(p, { run = runStep, log = console.log, logDir } = {}) {
+  const dir = logDir ?? mkdtempSync(join(tmpdir(), 'hana-verify-'));
   const results = new Map();
   const running = new Map();
   let failed = null;
+  const t0 = Date.now();
   const onSignal = () => {
     for (const r of running.values()) r.stop();
     process.exit(130);
   };
   process.on('SIGINT', onSignal);
   process.on('SIGTERM', onSignal);
-  const t0 = Date.now();
   const heartbeat = setInterval(() => {
-    if (running.size) console.log(`  …      still running: ${[...running.keys()].join(', ')} (${fmt(Date.now() - t0)} in)`);
+    if (running.size) log(`  …      still running: ${[...running.keys()].join(', ')} (${fmt(Date.now() - t0)} in)`);
   }, 60_000);
 
-  for (const ph of [...new Set(p.steps.map((s) => s.phase))].sort((a, b) => a - b)) {
-    const todo = p.steps.filter((s) => s.phase === ph && !s.skip);
-    if (failed) continue;
-    await Promise.all(
-      todo.map(async (s) => {
-        const log = join(logDir, `${s.id}.log`);
-        console.log(`  start  ${s.title}`);
-        const r = runStep(s, log);
-        running.set(s.id, r);
-        const out = await r.done;
-        running.delete(s.id);
-        if (out.ok) {
-          results.set(s.id, { result: 'pass', ms: out.ms });
-          console.log(`  pass   ${s.title} (${fmt(out.ms)})`);
-        } else if (failed) {
-          results.set(s.id, { result: 'stopped', ms: out.ms });
-        } else {
-          failed = { s, log, out };
-          results.set(s.id, { result: 'FAIL', ms: out.ms });
-          console.log(`  FAIL   ${s.title} (${fmt(out.ms)})`);
-          for (const [id, other] of running) if (id !== s.id) other.stop();
-        }
-      }),
-    );
+  const runLane = async (steps) => {
+    for (const s of steps) {
+      if (failed) return;
+      const logPath = join(dir, `${s.id}.log`);
+      const start = Date.now() - t0;
+      log(`  start  ${s.title}`);
+      const r = run(s, logPath);
+      running.set(s.id, r);
+      const out = await r.done;
+      running.delete(s.id);
+      if (out.ok) {
+        results.set(s.id, { result: 'pass', ms: out.ms, start });
+        log(`  pass   ${s.title} (${fmt(out.ms)})`);
+      } else if (failed) {
+        results.set(s.id, { result: 'stopped', ms: out.ms, start });
+        log(`  stop   ${s.title} (${fmt(out.ms)}: ${failed.s.title} failed)`);
+      } else {
+        failed = { s, log: logPath, out };
+        results.set(s.id, { result: 'FAIL', ms: out.ms, start });
+        log(`  FAIL   ${s.title} (${fmt(out.ms)})`);
+        for (const [id, other] of running) if (id !== s.id) other.stop();
+      }
+    }
+  };
+  try {
+    for (const ph of [...new Set(p.steps.map((s) => s.phase))].sort((a, b) => a - b)) {
+      if (failed) break;
+      await Promise.all(lanes(p.steps, ph).map(([, steps]) => runLane(steps)));
+    }
+  } finally {
+    clearInterval(heartbeat);
+    process.off('SIGINT', onSignal);
+    process.off('SIGTERM', onSignal);
   }
-  clearInterval(heartbeat);
-  process.off('SIGINT', onSignal);
-  process.off('SIGTERM', onSignal);
+  return { results, failed, ms: Date.now() - t0, logDir: dir };
+}
 
+async function execute(p) {
+  const { results, failed, ms, logDir } = await schedule(p);
   if (failed) {
     console.log(`\n--- ${failed.s.title}: \`${failed.out.failed}\`${failed.out.cwd === '.' ? '' : ` (in ${failed.out.cwd})`} failed. Last lines of ${failed.log}:\n`);
     console.log(tail(failed.log, 60));
     console.log('---');
   }
-  const rows = p.steps.map((s) => {
-    if (s.skip) return [s.title, `skip: ${s.skip}`, ''];
-    const r = results.get(s.id);
-    return [s.title, r?.result ?? 'not run', r ? fmt(r.ms) : ''];
-  });
-  rows.push(['total', failed ? 'FAIL' : 'pass', fmt(Date.now() - t0)]);
-  console.log(`\n${summaryTable(rows)}\n\nLogs: ${logDir}`);
+  console.log(`\n${summaryTable(summaryRows(p.steps, results, failed, ms))}\n\nLogs: ${logDir}`);
   return failed ? 1 : 0;
 }
 
@@ -489,7 +543,7 @@ async function main() {
   console.log(`  jobs:     Rust ${p.jobs.rust ? 'affected' : 'not affected'}, web ${p.jobs.web ? 'affected' : 'not affected'}\n`);
   if (o.plan) {
     for (const s of p.steps) {
-      console.log(`${s.skip ? 'skip   ' : `phase ${s.phase}`}  ${s.title}${s.skip ? ` (${s.skip})` : ''}`);
+      console.log(`${s.skip ? 'skip   ' : `phase ${s.phase}`}  ${s.title}${s.skip ? ` (${s.skip})` : s.lane === s.id ? '' : ` (lane ${s.lane}: one step after another)`}`);
       if (!s.skip) for (const c of s.run) console.log(`         ${c.cwd === '.' ? '' : `(cd ${c.cwd}) `}${Object.entries(c.env).map(([k, v]) => `${k}=${v} `).join('')}${c.cmd} ${c.args.join(' ')}`);
     }
     return;

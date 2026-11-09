@@ -3,6 +3,12 @@
 import type { Jwk } from '@hana-id/jwks';
 import { ALERT_KINDS, type AlertKind, type Channel, type CheckId, type Severity } from './checks.ts';
 
+/** A pending kid's run of absences: the first fetch that missed it, and how many successful fetches have since (D422). */
+export interface Absence {
+  first: number;
+  fetches: number;
+}
+
 export interface SeenKid {
   provider: string;
   kid: string;
@@ -138,13 +144,18 @@ export class Store {
       .run();
   }
 
-  async absences(provider: string): Promise<Map<string, number>> {
-    const rows = await this.db.prepare('SELECT kid, first_absent_at FROM absences WHERE provider = ?1').bind(provider).all<{ kid: string; first_absent_at: number }>();
-    return new Map(rows.results.map((r) => [r.kid, r.first_absent_at]));
+  /** Each pending kid's first absence and how many successful fetches in a row have missed it since (D422). */
+  async absences(provider: string): Promise<Map<string, Absence>> {
+    const rows = await this.db.prepare('SELECT kid, first_absent_at, absent_fetches FROM absences WHERE provider = ?1').bind(provider).all<{ kid: string; first_absent_at: number; absent_fetches: number }>();
+    return new Map(rows.results.map((r) => [r.kid, { first: r.first_absent_at, fetches: r.absent_fetches }]));
   }
 
+  /** One more fetch that missed `kid`: the first one records `at`, later ones count (migration 0002). */
   async recordAbsent(provider: string, kid: string, at: number): Promise<void> {
-    await this.db.prepare('INSERT OR IGNORE INTO absences (provider, kid, first_absent_at) VALUES (?1, ?2, ?3)').bind(provider, kid, at).run();
+    await this.db
+      .prepare('INSERT INTO absences (provider, kid, first_absent_at, absent_fetches) VALUES (?1, ?2, ?3, 1) ON CONFLICT (provider, kid) DO UPDATE SET absent_fetches = absent_fetches + 1')
+      .bind(provider, kid, at)
+      .run();
   }
 
   async clearAbsent(provider: string, kid: string): Promise<void> {

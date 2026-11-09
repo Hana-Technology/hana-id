@@ -5,11 +5,13 @@
 //   deletedApps     the apps deleted 30 days ago or more (the ledger's app_users purge, usage.purge_app_users)
 //   purgeDirectory  the wallet directory (migration 0011) of every scope whose apps were all deleted 30 days ago or more,
 //                   and the email consents (migration 0014, D411) of every app deleted 30 days ago or more
+//   purgeUserEvents user_events (migration 0013: key exports, mainnet demo signatures) older than 24 months, and those
+//                   of a scope left without apps (purgeDirectory's rule)
 //
 // Each clamps the caller's `before` to its own period in SQL (`unixepoch('now', …)`: the same clock as the
 // app_changes trigger), so even a compromised admin Worker can't purge rows D90 still keeps. Nothing here reads or
 // changes what derivation depends on: paths and identities are on chain; these rows are indexes and history.
-import { DELETED_APP_GRACE_MS, type ApiPurgeAuditResult, type DeletedAppsResult, type PurgeDirectoryResult } from '@hana-id/console-core';
+import { DELETED_APP_GRACE_MS, type ApiPurgeAuditResult, type DeletedAppsResult, type PurgeDirectoryResult, type PurgeUserEventsResult } from '@hana-id/console-core';
 import type { HotDb } from './db.ts';
 import { DRIFT_LEDGER_KINDS } from './drift.ts';
 import { type Q, q, raw } from './sql.ts';
@@ -106,4 +108,36 @@ export async function purgeDirectory(db: HotDb, i: { before: number; limit: numb
     identities: identities!.meta.changes ?? 0,
     emailConsents: emailConsents!.meta.changes ?? 0,
   };
+}
+
+/** min(before, 24 months ago) for user events (console-core USER_EVENTS_KEEP_MONTHS), on the triggers' clock. */
+const userEventsCutoff = (before: number): Q => q`MIN(${before}, unixepoch('now', '-24 months') * 1000)`;
+
+/** The scopes left without apps at `cutoff`, as purgeDirectory decides them. */
+const deadScopes = (cutoff: number): Q => q`SELECT DISTINCT d.scope_id FROM apps d WHERE d.deleted_at IS NOT NULL AND ${deadScope(raw('d.scope_id'), cutoff)}`;
+
+/** D1's error for a table that isn't there (migration 0013 not applied in this env). */
+const noUserEventsTable = (err: unknown): boolean => /no such table: user_events\b/u.test(String((err as { message?: unknown } | null)?.message ?? ''));
+
+/**
+ * user_events (migration 0013, D430): a key export names the account's internal id and a mainnet demo signature the
+ * wallet address too, so both are personal data with a period of their own (readiness 7.17): rows older than
+ * min(before, 24 months ago), and, whatever their age, the rows of a scope purgeDirectory empties (min(deletedBefore,
+ * 30 days ago); the Users screen and the Support ID lookup only reach them through a directory user). Up to `limit` of
+ * each, oldest first. An env without 0013 has nothing to purge: zeros, not a failure, so the monthly job doesn't fail
+ * every month until the migration is applied.
+ */
+export async function purgeUserEvents(db: HotDb, i: { before: number; deletedBefore: number; limit: number }, now: number): Promise<PurgeUserEventsResult> {
+  const cutoff = userEventsCutoff(i.before);
+  const dead = deletedCutoff(i.deletedBefore, now);
+  try {
+    const [expired, scopes] = await db.batch([
+      q`DELETE FROM user_events WHERE id IN (SELECT e.id FROM user_events e WHERE e.at < ${cutoff} ORDER BY e.id LIMIT ${i.limit})`,
+      q`DELETE FROM user_events WHERE id IN (SELECT e.id FROM user_events e WHERE e.scope_id IN (${deadScopes(dead)}) ORDER BY e.id LIMIT ${i.limit})`,
+    ]);
+    return { expired: expired!.meta.changes ?? 0, deadScopes: scopes!.meta.changes ?? 0 };
+  } catch (err) {
+    if (noUserEventsTable(err)) return { expired: 0, deadScopes: 0 };
+    throw err;
+  }
 }

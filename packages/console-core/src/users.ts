@@ -18,6 +18,7 @@
 // the API's own copy, never the issuer's directory). Staff get all three ids and the identities with their subs
 // (`StaffUser`); the email comes from the issuer's directory through D275's DirectoryRpc, keyed by `directoryKey` (the
 // join point; this package and the API never read the issuer).
+import { CROCKFORD_ALPHABET, IDENTITY_SUB_RE, crockford32, decodeIdentitySub, supportCodeFromSub, supportIdFromSub } from '@hana-id/core/support-id';
 import { z } from 'zod';
 import { ctx } from './types.ts';
 import { orgIdInput, scopeIdInput } from './rpc.ts';
@@ -25,37 +26,17 @@ import { orgIdInput, scopeIdInput } from './rpc.ts';
 /** The User ID's prefix: core identity.ts `IDENTITY_SUB_PREFIX` (a test pins them equal). */
 export const USER_ID_PREFIX = 'u1_';
 export const INTERNAL_ID_PREFIX = 'hu_';
-export const SUPPORT_ID_PREFIX = 'HANA-';
-const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
-const B64URL = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+// The Crockford encoding and the User ID -> Support ID step are @hana-id/core's (support-id.ts): the one
+// implementation, which the SDK also gives partners as `supportIdFromSub`.
+export { SUPPORT_ID_BYTES, SUPPORT_ID_PREFIX, crockford32, formatSupportId } from '@hana-id/core/support-id';
 /**
  * A User ID: "u1_" and the canonical base64url of 16 bytes (22 characters; the last one's 4 low bits are zero, so it
  * is A, Q, g or w). Case-sensitive.
  */
-export const USER_ID_RE = /^u1_[A-Za-z0-9_-]{21}[AQgw]$/u;
+export const USER_ID_RE = IDENTITY_SUB_RE;
 export const INTERNAL_ID_RE = /^hu_[0-9a-hjkmnp-tv-z]{26}$/u;
 /** The stored form of a Support ID (8 Crockford characters, uppercase, no prefix or dash). */
 export const SUPPORT_CODE_RE = /^[0-9A-HJKMNP-TV-Z]{8}$/u;
-/** The leading bytes of the User ID's 16 that the Support ID encodes: 40 bits, exactly 8 Crockford characters. */
-export const SUPPORT_ID_BYTES = 5;
-
-/** Crockford base32 (uppercase), most significant bit first, the last group zero-padded. */
-export function crockford32(bytes: Uint8Array): string {
-  let out = '';
-  let acc = 0;
-  let bits = 0;
-  for (const b of bytes) {
-    acc = (acc << 8) | b;
-    bits += 8;
-    while (bits >= 5) {
-      out += CROCKFORD[(acc >>> (bits - 5)) & 31];
-      bits -= 5;
-    }
-    acc &= (1 << bits) - 1;
-  }
-  if (bits > 0) out += CROCKFORD[(acc << (5 - bits)) & 31];
-  return out;
-}
 
 /** The internal id of a 16-byte uid. */
 export function internalIdOf(uidBytes: Uint8Array): string {
@@ -74,7 +55,7 @@ export function uidOfInternalId(internalId: string): Uint8Array | null {
   let bits = 0;
   let n = 0;
   for (const ch of internalId.slice(INTERNAL_ID_PREFIX.length).toUpperCase()) {
-    acc = (acc << 5) | CROCKFORD.indexOf(ch);
+    acc = (acc << 5) | CROCKFORD_ALPHABET.indexOf(ch);
     bits += 5;
     if (bits >= 8) {
       out[n++] = (acc >>> (bits - 8)) & 0xff;
@@ -86,30 +67,13 @@ export function uidOfInternalId(internalId: string): Uint8Array | null {
 }
 
 /** The 16 bytes a User ID encodes (its base64url decoded); a TypeError for anything that isn't a User ID. */
-export function userIdBytes(userId: string): Uint8Array {
-  if (typeof userId !== 'string' || !USER_ID_RE.test(userId)) throw new TypeError('Not a user id');
-  const out = new Uint8Array(16);
-  let acc = 0;
-  let bits = 0;
-  let n = 0;
-  for (const c of userId.slice(USER_ID_PREFIX.length)) {
-    acc = ((acc << 6) | B64URL.indexOf(c)) & 0xfff;
-    bits += 6;
-    if (bits >= 8) {
-      bits -= 8;
-      out[n++] = (acc >>> bits) & 0xff;
-    }
-  }
-  return out;
-}
+export const userIdBytes = decodeIdentitySub;
 
 /** The stored Support code of a User ID: the Crockford base32 of its first 5 bytes. */
-export const supportCodeOf = (userId: string): string => crockford32(userIdBytes(userId).subarray(0, SUPPORT_ID_BYTES));
+export const supportCodeOf = supportCodeFromSub;
 
-/** `HANA-XXXX-XXXX` as shown to people. */
-export const formatSupportId = (code: string): string => `${SUPPORT_ID_PREFIX}${code.slice(0, 4)}-${code.slice(4, 8)}`;
-/** The Support ID of a User ID (`u1_…`). */
-export const supportIdOf = (userId: string): string => formatSupportId(supportCodeOf(userId));
+/** The Support ID of a User ID (`u1_...`). */
+export const supportIdOf = supportIdFromSub;
 
 /**
  * A Support ID as a person types it: optional `HANA-`, dashes and spaces anywhere, any case, Crockford's look-alikes
@@ -267,6 +231,30 @@ export interface StaffUser {
   lastSeenAt: number;
   identities: StaffIdentity[];
   wallets: StaffWallet[];
+  /**
+   * What happened to the user's keys (D428, D430; `user_events`, newest first, at most STAFF_USER_EVENTS_MAX of each
+   * kind, so signatures can't push exports out): key exports (the API's own record) and mainnet demo signatures (the
+   * vault's report, bound to the user's session). Set on a detail or a search answer (AdminRpc.getUser, findUsers,
+   * supportLookup); never in a list or a partner's view.
+   */
+  events?: StaffUserEvent[];
+}
+
+/** The most `events` of each kind a staff user answer carries. */
+export const STAFF_USER_EVENTS_MAX = 20;
+
+export interface StaffUserEvent {
+  kind: 'key_exported' | 'mainnet_signature';
+  appId: string;
+  /** Which chain's key was exported, or null (an older export window); the signature's chain. */
+  chain: WalletChain | null;
+  /** A mainnet signature's network: the EVM chain ID or `pubnet`. */
+  network: string | null;
+  /** A mainnet signature's wallet. */
+  address: string | null;
+  /** A mainnet signature's value as the vault assessed it, USD micros. */
+  usdMicros: number | null;
+  at: number;
 }
 
 /** One address a user shared with one of the org's apps (D411), in a user's detail. */

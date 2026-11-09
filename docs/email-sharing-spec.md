@@ -1,7 +1,8 @@
 # Email sharing with partners: build note (D411)
 
-**Status: built on `feat/email-sharing` (2026-11-06), not merged.** It merges into `develop` after the user's first
-round of M4 dashboard testing on sandbox-dev (D411 point 9 as amended 2026-11-06). Decided by the user as D411
+**Status: built on `feat/email-sharing` (2026-11-06), brought up to date with `develop` on `feat/email-sharing-2`
+(2026-11-09: decisions D438–D443, migration 0014, the issuer's `IssuerRpc`, the console redesign), not merged.** The
+user approved merging it into `develop` in the next batch (D411 point 9 as amended 2026-11-09). Decided by the user as D411
 ("all as recommended", 2026-11-05); the details below that D411 left open were decided while building and are **to
 confirm**: D438–D443. This note is a spec (history once merged): the current state is in `docs/api.md`
 ("Email sharing"), `docs/architecture.md` ("Email sharing with partners"), `docs/integration.md` section 15,

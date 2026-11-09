@@ -7,10 +7,14 @@ Approve in a Hana popup, unless it falls under an auto-approve policy you set an
 
 > **Testnet pilot.** Keys come from the NEAR testnet MPC and are disposable until Hana's address freeze. A test app
 > (`pk_test_…`) signs for test networks only. Don't keep real funds in pilot wallets.
+>
+> NEAR is Hana's own chain (it derives the keys and records the logins): your users get Stellar and EVM wallets, and
+> your app never talks to NEAR.
 
 ## Install
 
-The packages aren't on a registry yet. Hana sends you the tarballs; install them together:
+The packages aren't on a registry yet. Hana sends you the tarballs with their SHA-256 checksums: check them, then
+install them together (`@hana-id/core` too, from its tarball, never from a registry):
 
 ```sh
 npm install ./hana-id-core-0.3.0.tgz ./hana-id-web-0.3.0.tgz
@@ -21,10 +25,21 @@ ESM only, with TypeScript declarations. Use a bundler (Vite, webpack, esbuild, N
 
 ## Before you start
 
-Hana registers your app and gives you a **publishable key** (`pk_test_…`, public: ship it in your page). Send Hana
-the app name users will see, every origin your app runs on (exact origins such as `https://app.example.com`, at most
-20; `http://localhost:<port>` works for test keys), and whether you use Hana's shared Google client (the default, no
-setup on your side) or your own.
+During the pilot Hana creates your app (send Hana the app name users will see, your first origins, whether you use
+Hana's shared Google client or your own, and who manages it). You then manage it in Hana's **partner portal**
+(sandbox-dev: `https://hana-id-console-sandbox-dev.tingtc.workers.dev`), where you sign in with Google from your
+invite email. On your app's page:
+
+- the header shows the **Publishable key** (`pk_test_…`, public: ship it in your page) and the **App ID** (`app_…`,
+  for your backend's identity-token check), each with a Copy button;
+- **Origins** lists the exact origins (scheme, host and port, no path; at most 20) your page may run on. An added
+  origin takes effect after it is announced to your security contacts and a delay (60 s on sandbox-dev, 24 h in
+  production; `http://localhost:<port>` on a test app as soon as it is announced), and you can cancel it until then;
+  removing one is immediate;
+- **Keys**, **Login & sessions**, **Signing**, **Branding** and **Suspend** hold the rest; **Members** invites your
+  team.
+
+Hana's partner guide describes every screen.
 
 ## Use
 
@@ -56,9 +71,9 @@ Create one client per page and keep it; `hana.destroy()` removes it.
 package, so no configuration can point the client at another vault. `HANA_ENVIRONMENTS` lists the names this build
 knows. This release ships:
 
-| `environment` | Network | Vault origin | Auth origin |
+| `environment` | Hana runs on | Vault origin | Auth origin |
 |---|---|---|---|
-| `sandbox-dev` | NEAR testnet | `https://hana-id-vault-sandbox-dev.tingtc.workers.dev` | `https://hana-id-auth-sandbox-dev.tingtc.workers.dev` |
+| `sandbox-dev` | NEAR testnet (Hana's side only: your users' wallets are Stellar and EVM) | `https://hana-id-vault-sandbox-dev.tingtc.workers.dev` | `https://hana-id-auth-sandbox-dev.tingtc.workers.dev` |
 
 ### Signing
 
@@ -125,7 +140,7 @@ sharing on the same sheet or in the approval window; new tokens then have no ema
 
 | Requirement | If not |
 |---|---|
-| Run on one of your app's origins, exactly | `vault_unavailable` |
+| Run on one of your app's origins, exactly (pin your dev server's port: Vite `server: { strictPort: true }`) | `vault_unavailable` (`no_answer`, naming the page's origin) |
 | Allow the vault origin in CSP `frame-src` | `vault_unavailable` |
 | Allow your own EVM / Stellar RPCs in CSP `connect-src` | your RPC calls fail |
 | Call `login()` and `eth_requestAccounts` from a click | one extra click (Hana's fallback button) |
@@ -148,10 +163,11 @@ Methods reject with `HanaError { code, message, data? }`; the EIP-1193 provider 
 codes (the Hana code in `data.code`). An error from Hana's API carries its request ID (`error.requestId`,
 `data.requestId`): send it to Hana with the user's Support ID (`hana.supportId`) when you report a problem. The common ones: `4001` the user rejected or closed the popup; `4100` not
 logged in or not allowed (`data.reason`); `4900` the vault is gone; `4902` chain not in `evm.chains`;
-`vault_unavailable`, `popup_blocked`, `login_timeout`, `rate_limited`.
+`vault_unavailable` (`data.reason`; `no_answer` when the page's origin isn't one of your app's origins), `popup_blocked`,
+`login_timeout`, `rate_limited`.
 
 ## More
 
-Hana's partner guide (`docs/integration.md` in the private Hana ID repository; ask Hana for a copy) covers events,
-sessions, key export, auto-approve policies, your own Google client and every error code. React bindings:
+Hana's partner guide (ask Hana for the current copy) covers the partner portal, events, sessions, key export,
+auto-approve policies, your own Google client, the identity token's verification and every error code. React bindings:
 `@hana-id/react`. Sodax wallet providers: `@hana-id/sodax`.

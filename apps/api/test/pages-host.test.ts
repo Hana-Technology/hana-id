@@ -129,6 +129,13 @@ describe('auth origin Worker', () => {
     }
   });
 
+  it('the approval popup reaches the mainnet demo’s two balance endpoints only in a dev testnet env (D429)', async () => {
+    expect(csp(await call(authWorker, authEnv({ MAINNET_DEMO_BALANCE: '1' }), `${AUTH}/approve`))).toBe(`${BASE}; frame-ancestors 'none'; connect-src https://mainnet.base.org https://horizon.stellar.org`);
+    expect(csp(await call(authWorker, authEnv(), `${AUTH}/approve`))).toBe(`${BASE}; frame-ancestors 'none'`);
+    // No other page gets them.
+    for (const path of ['/login', '/login/callback', '/export']) expect(csp(await call(authWorker, authEnv({ MAINNET_DEMO_BALANCE: '1' }), `${AUTH}${path}`)), path).not.toContain('mainnet.base.org');
+  });
+
   it('the email step reaches the issuer’s origin and the API, nothing else (batch 8a)', async () => {
     const res = await call(authWorker, authEnv({ EMAIL_ISSUER_URL: 'https://issuer.test/' }), `${AUTH}/login/email`);
     expect(res.status).toBe(200);
@@ -236,6 +243,28 @@ describe('auth origin Worker', () => {
     const again = await call(authWorker, env, `${AUTH}/login.js`, { headers: { 'if-none-match': '"/login.js"' } });
     expect(again.status).toBe(304);
     expect((await call(authWorker, env, `${AUTH}/style.css`)).headers.get('content-type')).toBe('text/css');
+  });
+
+  it('D426: serves the brand’s fonts and their licence like any asset: the binding’s type, same-origin CORP, nosniff', async () => {
+    const env = authEnv({
+      ASSETS: assets({
+        '/assets/files/Montserrat-400-ABCD1234.woff2': { body: 'wOF2', type: 'font/woff2' },
+        '/assets/files/OFL.txt': { body: 'SIL OPEN FONT LICENSE Version 1.1', type: 'text/plain' },
+      }),
+    });
+    for (const [path, type] of [
+      ['/assets/files/Montserrat-400-ABCD1234.woff2', 'font/woff2'],
+      ['/assets/files/OFL.txt', 'text/plain'],
+    ] as const) {
+      const res = await call(authWorker, env, `${AUTH}${path}`);
+      expect(res.status, path).toBe(200);
+      expect(res.headers.get('content-type'), path).toBe(type);
+      // Same-origin CORP: only the auth origin's own pages can load them (font-src 'self'); no CORS header is needed.
+      expect(res.headers.get('cross-origin-resource-policy'), path).toBe('same-origin');
+      expect(res.headers.get('access-control-allow-origin'), path).toBeNull();
+      expect(res.headers.get('x-content-type-options'), path).toBe('nosniff');
+      expect(csp(res), path).toBe(ASSET_CSP);
+    }
   });
 
   it('every asset carries a policy that runs, loads and frames nothing (an SVG opened as a document included)', async () => {

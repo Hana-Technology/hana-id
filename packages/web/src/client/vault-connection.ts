@@ -6,7 +6,8 @@
 // 2. On its first `load`, create a MessageChannel and post `{v:1, t:"hana:hello", sdk}` to the frame with
 //    targetOrigin = vaultOrigin, transferring port2. From then on everything goes over port1.
 // 3. Wait for the vault's answer: `connected` (it took the hello and is starting) or `ready`, within ANSWER_TIMEOUT_MS
-//    of the frame's insertion; then `ready` within READY_AFTER_CONNECT_MS of `connected` (the vault's unlock waits on
+//    of the frame's insertion, and within POST_LOAD_ANSWER_MS of its `load` once it has loaded (the vault takes the
+//    hello in the same task it arrives in, so a loaded frame that is silent for that long was refused); then `ready` within READY_AFTER_CONNECT_MS of `connected` (the vault's unlock waits on
 //    the Hana API). At the deadline one task is drained first (an answer already queued still counts). A frame still
 //    loading gets one more ANSWER_TIMEOUT_MS, then fails `frame_timeout`; a frame that loaded but didn't answer is
 //    replaced once (FRAME_ATTEMPTS, same name and src). Then, or when `ready` is late, `vault_unavailable` with
@@ -38,6 +39,13 @@ import { randomHex } from './random.ts';
 
 /** A frame's vault must answer (`connected`, or `ready` from a vault that predates it) this long after insertion. */
 export const ANSWER_TIMEOUT_MS = 5000;
+/**
+ * Once the frame has loaded (its script has run: `load` waits for it), its vault must answer the hello within this. The
+ * vault says `connected` synchronously on the hello, so a working vault answers in milliseconds; a frame refused by
+ * `frame-ancestors`, the vault's own origin check or an error page loads and stays silent. This keeps a wrong origin
+ * from costing two full ANSWER_TIMEOUT_MS deadlines (about 10 s) before the partner learns of it.
+ */
+export const POST_LOAD_ANSWER_MS = 1500;
 /** After `connected`, `ready` must arrive within this. */
 export const READY_AFTER_CONNECT_MS = 20_000;
 /** Frames tried before `vault_unavailable`: one automatic retry of a frame that didn't answer. */
@@ -48,11 +56,20 @@ export const VAULT_UNAVAILABLE_MESSAGES = {
   csp_frame_src: "This page's Content-Security-Policy blocks the Hana vault frame (frame-src must allow the vault origin)",
   frame_timeout: "The Hana vault page didn't load in time (check the network)",
   no_answer:
-    "The Hana vault frame loaded but the vault didn't answer: the page's origin (or a page framing it) may not be one of the app's origins, or the publishable key is unknown or suspended",
+    "The Hana vault frame loaded but the vault didn't answer: this page's origin (or a page framing it) is probably not exactly one of the app's allowed origins (scheme, host and port must match), or the publishable key is unknown or suspended",
   ready_timeout: "The Hana vault answered but didn't finish starting in time (the Hana API was slow or unreachable)",
   frame_replaced: 'The Hana vault frame was navigated away before it was ready',
 } as const;
 export type VaultUnavailableReason = keyof typeof VAULT_UNAVAILABLE_MESSAGES;
+
+/**
+ * `no_answer`'s message, naming the page's origin: the vault refuses an origin it doesn't list without saying why (by
+ * design: a framing page learns nothing about a key or an origin), so the SDK says which origin was checked. A dev
+ * server that moved to another port when its own was busy is the usual case.
+ */
+export function noAnswerMessage(origin: string): string {
+  return `The Hana vault didn't answer this page (${origin}). Check that ${origin} is exactly one of your app's allowed origins (scheme, host and port: a dev server that moved to another port is another origin) and that every page framing it is too; otherwise the publishable key is unknown or the app is suspended`;
+}
 export const LAUNCHER_WIDTH_PX = 320;
 export const LAUNCHER_HEIGHT_PX = 72;
 
@@ -182,9 +199,9 @@ export class VaultConnection {
    * The current frame's answer deadline. At it, one task is drained (setTimeout 0) before deciding, so a `connected`
    * or `ready` already queued on the port still lands.
    */
-  #armAnswer(): void {
+  #armAnswer(ms: number = ANSWER_TIMEOUT_MS): void {
     const frame = this.#frame;
-    this.#arm(ANSWER_TIMEOUT_MS, () => {
+    this.#arm(ms, () => {
       this.#readyTimer = setTimeout(() => {
         if (frame === this.#frame) this.#noAnswer();
       }, 0);
@@ -205,6 +222,8 @@ export class VaultConnection {
       return;
     }
     this.#loadAt = this.#now();
+    // Loaded: the vault's script has run, so its answer to the hello is due within moments (POST_LOAD_ANSWER_MS).
+    if (!this.#connected && !this.#readyDone) this.#armAnswer(POST_LOAD_ANSWER_MS);
     const target = frame.contentWindow;
     // No window to talk to: as good as no answer (the deadline decides, and may retry).
     if (!target) return;
@@ -272,9 +291,25 @@ export class VaultConnection {
     clearTimeout(this.#readyTimer);
     // A failed handshake leaves nothing behind (as destroy() does): no frame, no port.
     if (reason) this.#dropFrame();
-    this.#rejectReady(
-      reason ? hanaError('vault_unavailable', VAULT_UNAVAILABLE_MESSAGES[reason], { reason, attempts: this.#attempts }) : hanaError('vault_unavailable'),
-    );
+    if (!reason) {
+      this.#rejectReady(hanaError('vault_unavailable'));
+      return;
+    }
+    if (reason === 'no_answer') {
+      const origin = this.#pageOrigin();
+      this.#rejectReady(hanaError('vault_unavailable', noAnswerMessage(origin), { reason, attempts: this.#attempts, origin }));
+      return;
+    }
+    this.#rejectReady(hanaError('vault_unavailable', VAULT_UNAVAILABLE_MESSAGES[reason], { reason, attempts: this.#attempts }));
+  }
+
+  /** This page's origin as the vault saw it (`null` for an opaque one). */
+  #pageOrigin(): string {
+    try {
+      return this.#o.win.location.origin;
+    } catch {
+      return 'null';
+    }
   }
 
   #onPortMessage(data: unknown): void {

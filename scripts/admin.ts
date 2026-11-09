@@ -77,6 +77,7 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
                [--idle-ttl <15m..session TTL>] [--raw-sign off|approval] [--google-web-client <client id>|default]
                [--auto-approve <policy.json>|off] [--identity-email off|on_request|at_login]
                (no setting flags: show the settings)
+               [--mainnet-demo on|off]   (alone; a test app in a dev env on testnet only: D428)
   scope:register [--client <google client id> …] [--allow-shared] (--owner-near <account> | --owner-google <sub>) […]
                  [--member <council member>] [--approve-with <council member>] [--yes]
   scope:add-email-client --scope <scope id> [--yes]
@@ -146,7 +147,9 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
   Durations: 12h, 23h50m, 15m, 3600000ms. --google-web-client must be one of the scope's Google clients on chain
   (default: the first one). --identity-email (D411): when Hana asks users to share their email with the app: off
   (never, the default), on_request (when the app calls requestEmailSharing()), at_login (at their first login); it
-  needs migration 0014 on the hot D1.`;
+  needs migration 0014 on the hot D1. --mainnet-demo on lets a pk_test_ app sign on Base and Stellar's public network, up to
+  $9.99 per transaction through the approval popup (the D39 exception for the Sodax demo, D428); immediate, and refused
+  unless the manifest is a dev env (local*, sandbox*) on testnet and the app is a test app. Needs migration 0013.`;
 
 const COMMANDS = [
   'app:create',
@@ -239,7 +242,7 @@ async function scopeExists(m: Manifest, scopeId: string): Promise<boolean> {
 
 async function main(): Promise<void> {
   const args = parseCli(process.argv.slice(2), {
-    strings: ['name', 'scope', 'plan', 'app', 'org', 'environment', 'persistence', 'session-ttl', 'idle-ttl', 'raw-sign', 'google-web-client', 'auto-approve', 'identity-email', 'args', 'gas', 'member', 'approve-with', 'limit', 'remove', 'add', 'd1-name', 'provider', 'search', 'email', 'sub', 'address', 'user', 'days'],
+    strings: ['name', 'scope', 'plan', 'app', 'org', 'environment', 'persistence', 'session-ttl', 'idle-ttl', 'raw-sign', 'google-web-client', 'auto-approve', 'identity-email', 'mainnet-demo', 'args', 'gas', 'member', 'approve-with', 'limit', 'remove', 'add', 'd1-name', 'provider', 'search', 'email', 'sub', 'address', 'user', 'days'],
     multiple: ['origin', 'client', 'owner-near', 'owner-google', 'request-id'],
     booleans: ['remote', 'yes', 'allow-shared', 'json', 'reject', 'help'],
   });

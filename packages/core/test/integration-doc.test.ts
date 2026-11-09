@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { functionSelector } from '../src/decode/abi.ts';
 import { MAX_PER_DAY_COUNT, MIN_CONSENT_MS, POLICY_LABEL_MAX, policyId, validateAutoApprovePolicy } from '../src/policy/index.ts';
+import { supportIdFromSub } from '../src/support-id.ts';
 import { readText } from './helpers.ts';
 
 const guide = readText('../../../docs/integration.md');
@@ -37,6 +38,64 @@ describe('docs/integration.md', () => {
     expect(guide).toContain('1 min up to your session limit');
     expect(guide).toContain(`1 to ${MAX_PER_DAY_COUNT}`);
     expect(guide).toContain(`≤ ${POLICY_LABEL_MAX} characters`);
+  });
+
+  it("lists sandbox-dev's partner portal, identity issuer and identity key pins as the manifest sets them", () => {
+    const m = JSON.parse(readText('../../../envs/sandbox-dev.json')) as {
+      console: { origin: string };
+      identityToken: { iss: string };
+      watchdog: { pinnedIdentityKeys: string[] };
+    };
+    expect(guide).toContain(`(sandbox-dev: \`${m.console.origin}\`)`);
+    expect(guide).toContain(`| \`HANA_IDENTITY_ISSUER\` | \`${m.identityToken.iss}\` |`);
+    expect(guide).toContain(`| \`HANA_IDENTITY_PINS\` | \`${m.watchdog.pinnedIdentityKeys.join(',')}\``);
+    expect(readText('../../web/README.md')).toContain(`(sandbox-dev: \`${m.console.origin}\`)`);
+  });
+
+  it("the Support ID vector it gives is supportIdFromSub's", () => {
+    expect(guide).toContain("supportIdFromSub('u1_ASNFZ4mrze8BI0VniavN7w'); // 'HANA-04HM-ASW9'");
+    expect(supportIdFromSub('u1_ASNFZ4mrze8BI0VniavN7w')).toBe('HANA-04HM-ASW9');
+    expect(readText('../README.md')).toContain("supportIdFromSub('u1_ASNFZ4mrze8BI0VniavN7w'); // 'HANA-04HM-ASW9'");
+  });
+
+  it("the Sodax install lines name the @sodax/types version the adapter is typed and tested against", () => {
+    const sodax = JSON.parse(readText('../../sodax/package.json')) as { devDependencies: Record<string, string>; peerDependencies: Record<string, string> };
+    const v = sodax.devDependencies['@sodax/types']!;
+    expect(sodax.peerDependencies['@sodax/types']).toBe(`^${v}`);
+    for (const doc of [guide, readText('../../sodax/README.md')]) {
+      const installs = [...doc.matchAll(/@sodax\/types@(\d+\.\d+\.\d+)/gu)].map((x) => x[1]);
+      expect(installs.length).toBeGreaterThan(0);
+      expect(new Set(installs)).toEqual(new Set([v]));
+    }
+  });
+
+  // Partners get the guide and the four READMEs, not this repository: no path into it, no decision number, no batch
+  // or build-plan name, no admin CLI command.
+  it.each([
+    ['docs/integration.md', guide],
+    ['packages/core/README.md', readText('../README.md')],
+    ['packages/web/README.md', readText('../../web/README.md')],
+    ['packages/react/README.md', readText('../../react/README.md')],
+    ['packages/sodax/README.md', readText('../../sodax/README.md')],
+  ])('%s points at nothing a partner cannot open', (_name, text) => {
+    const internal = [
+      /\bD\d{2,3}\b/u,
+      /(?<![\w@/.-])(docs|apps|examples|scripts|contracts|envs|legacy)\/[\w.-]/u,
+      /\bpackages\/\w/u,
+      /\.secrets\b/u,
+      /\bbatch [A-C]?\d|\bbatch [A-C]\b|\bbuild plan\b/iu,
+      /\badmin app:|--google-web-client|--auto-approve\b/u,
+      /\bprivate Hana ID repository\b/u,
+      /\bsend Hana the tarballs\b|self-serve dashboard/iu,
+    ];
+    for (const re of internal) expect(text.match(re)?.[0] ?? null, String(re)).toBeNull();
+  });
+
+  it('starts with the content: one short Last verified line, not a changelog', () => {
+    const lines = guide.split('\n').filter((l) => l.startsWith('Last verified'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.length).toBeLessThan(200);
+    expect(guide.indexOf('Last verified')).toBeLessThan(guide.indexOf('## How it works'));
   });
 
   it("lists sandbox-dev's Hana origins as the manifest sets them", () => {

@@ -33,6 +33,7 @@ import {
   ErrorCode,
   type Jwk,
   isTestPublishableKey,
+  mainnetOfRequest,
   type LoginResult,
   NEVER_AUTO_APPROVED_KINDS,
   type PortEventMap,
@@ -68,8 +69,8 @@ import { deriveAddresses } from '@hana-id/core/derivation';
 import { type AutoApproveResult, matchAutoApprovePolicy, recordAutoApproveUse } from '@hana-id/core/policy';
 import type { HanaEnv } from '../hana-env.ts';
 import { VaultApi } from './api.ts';
-import { type CachedIdentity, cacheUsable, copyProofs, makeWalletProofs, mintBody, tokenIatMs } from './identity.ts';
 import { SHARE_LAUNCHER_HELLO_MS, type ConsentSigner, type SheetOutcome, ShareSheet, consentProof } from './email-share.ts';
+import { type CachedIdentity, cacheUsable, copyProofs, demoEventBody, makeWalletProofs, mintBody, tokenIatMs } from './identity.ts';
 import { reportWallets, signWalletRecords } from './wallet-record.ts';
 import { type ApprovalOutcome, Approvals } from './approvals.ts';
 import { autoApproveStatus, consentActive, consentEnd, newConsent, withUsage } from './auto-approve.ts';
@@ -97,7 +98,8 @@ import {
   sealPrk,
 } from './record.ts';
 import { type Channel, Clock, type Locks, type Timers, type WindowMessageEvent, type WindowRef, randomHex128, realTimers, sleep } from './runtime.ts';
-import { type SignRequest, approvalSubject, signRequest } from './signing.ts';
+import { MAINNET_DEMO_REFUSALS, type SignRequest, approvalSubject, demoRefusalFlash, signRequest } from './signing.ts';
+import { assessMainnetDemo, mainnetDemoState } from '@hana-id/core/mainnet-demo';
 
 /** performance.now where there is one (browsers, workers), else Date.now. */
 const defaultPerfNow = (): number => (typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now());
@@ -328,6 +330,8 @@ export const EXPORT_START_MS = 5 * 60_000;
 export const EXPORT_MAX_MS = 15 * 60_000;
 /** "Signed by Hana under {label}" shows this long. */
 export const AUTO_APPROVED_FLASH_MS = 3_000;
+/** How long the launcher says why the mainnet demo refused a request (D428). */
+export const DEMO_REFUSAL_FLASH_MS = 6_000;
 /** While logged in with a policy in force, GET /v1/app is re-read this often (keeps hana_autoApproveStatus current). */
 export const POLICY_REFRESH_MS = 60_000;
 /**
@@ -364,6 +368,12 @@ export class Vault {
   private rawSign: RawSign;
   /** Server-corrected time of the last GET /v1/app (or page render) that confirmed `rawSign`. */
   private rawSignCheckedAt: number;
+  /**
+   * The mainnet demo (D428): whether the last GET /v1/app said `mainnetDemo: true`, and when (server-corrected). Read
+   * only for a mainnet request of a test app in a dev testnet build; unknown until then.
+   */
+  private mainnetDemo = false;
+  private mainnetDemoCheckedAt = Number.NEGATIVE_INFINITY;
   private readonly testApp: boolean;
   private readonly launcher: Launcher;
   private readonly lockName: string;
@@ -439,6 +449,9 @@ export class Vault {
     this.policyCheckedAt = o.config.serverTimeMs;
     this.rawSign = o.config.settings.rawSign;
     this.rawSignCheckedAt = o.config.serverTimeMs;
+    // The page's own render counts as a reading (as for rawSign); GET /v1/app re-confirms it before any mainnet request.
+    this.mainnetDemo = o.config.settings.mainnetDemo === true;
+    this.mainnetDemoCheckedAt = o.config.serverTimeMs;
     this.testApp = isTestPublishableKey(o.config.publishableKey);
     this.launcher = new Launcher(o.launcherView, (ui) => this.emit('ui', ui), this.timers);
     this.lockName = `hana-vault-unlock:${o.config.appId}`;
@@ -536,6 +549,8 @@ export class Vault {
     port.onmessage = (m) => void this.onPortMessage(m.data);
     // Before storage and the unlock: the SDK's answer deadline only covers the frame's load and this hello.
     this.emit('connected', null);
+    // The mainnet demo's state (D428), before `ready`, so the SDK's provider knows it before a page switches chains.
+    this.announceMainnetDemo();
     this.started = this.start();
   }
 
@@ -627,6 +642,9 @@ export class Vault {
         this.logoUrl = logoUrlOn(this.env.filesOrigin, app.logoUrl, this.config.appId);
         this.applyServedPolicy(app, at);
         this.applyServedRawSign(app, at);
+        this.mainnetDemo = app.mainnetDemo === true;
+        this.mainnetDemoCheckedAt = Math.max(this.mainnetDemoCheckedAt, at);
+        this.announceMainnetDemo();
         return app;
       });
       this.appConfigPromise = p;
@@ -675,6 +693,53 @@ export class Vault {
       throw new VaultError('api_unavailable', 'Could not confirm that raw signing is on for this app', { reason: 'raw_sign_unconfirmed' });
     }
     return 'approval';
+  }
+
+  /**
+   * Whether this build may sign under the mainnet demo at all (D428): a dev env on testnet, from the build's own
+   * constants. A production build never reads the app's setting.
+   */
+  private get demoBuild(): boolean {
+    return this.testApp && this.env.devEnv && this.env.network === 'testnet';
+  }
+
+  /**
+   * The mainnet demo rule for a request the D39 check would refuse: on only when GET /v1/app confirmed it within
+   * POLICY_FRESH_MS (re-read first when older). A re-read that fails refuses the request (fail closed), as raw signing.
+   */
+  private async freshMainnetDemo(): Promise<{ nowMs: number } | null> {
+    if (!this.demoBuild) return null;
+    if (this.clock.now() - this.mainnetDemoCheckedAt >= POLICY_FRESH_MS) await this.refreshPolicy().catch(() => undefined);
+    if (this.clock.now() - this.mainnetDemoCheckedAt >= POLICY_FRESH_MS) {
+      throw new VaultError('api_unavailable', 'Could not confirm that the mainnet demo is on for this app', { reason: 'mainnet_demo_unconfirmed' });
+    }
+    return this.mainnetDemo ? { nowMs: this.clock.now() } : null;
+  }
+
+  /** What the SDK was last told about the mainnet demo: it assumes off until told, so "off" is sent only after "on". */
+  private announcedDemo = false;
+
+  /**
+   * Tells the SDK whether this app has the mainnet demo on, with its rules (the `mainnetDemo` port event, D428), when
+   * it changes: once after the hello, then whenever GET /v1/app changes it. A dev testnet build only: a production
+   * build never sends it. The SDK's EVM provider opens its early check for exactly these chains; this vault still
+   * decides every request.
+   */
+  private announceMainnetDemo(): void {
+    if (!this.demoBuild || !this.port) return;
+    const on = this.mainnetDemo;
+    if (this.announcedDemo === on) return;
+    this.announcedDemo = on;
+    this.emit('mainnetDemo', on ? mainnetDemoState() : null);
+  }
+
+  /** Whether `request` names a mainnet (D39); false for a request that doesn't parse (approvalSubject refuses it). */
+  private static namesMainnet(request: SignRequest): boolean {
+    try {
+      return mainnetOfRequest(request) !== null;
+    } catch {
+      return false;
+    }
   }
 
   /** A fresh GET /v1/app (one at a time). */
@@ -1371,7 +1436,10 @@ export class Vault {
     const addresses = this.addresses();
     if (!addresses) return;
     if (isSignMethod(r.method)) {
-      approvalSubject(r as SignRequest, addresses, { rawSign: 'approval', testApp: this.testApp, reservedEvmDigests: this.reservedEvmDigests(addresses.evm) });
+      // In a build that may sign under the mainnet demo (D428), a mainnet request's network check waits for sign(),
+      // which reads whether the app has the demo on (fresh) before deciding; every other check runs here.
+      const deferMainnet = this.demoBuild && Vault.namesMainnet(r as SignRequest);
+      approvalSubject(r as SignRequest, addresses, { rawSign: 'approval', testApp: this.testApp && !deferMainnet, reservedEvmDigests: this.reservedEvmDigests(addresses.evm) });
       return;
     }
     if (r.method === 'hana_export' && this.exportJob) throw new VaultError('busy', 'An export is already running');
@@ -1380,6 +1448,17 @@ export class Vault {
       const share = s ? s.share : null;
       const stale = s === null || (share !== null && !s.persist && (share.createdAt === null || this.clock.now() - share.createdAt >= FRESH_LOGIN_MS));
       if (stale) throw new VaultError(ErrorCode.unauthorized, 'Only within 5 minutes of a fresh sign-in', { reason: 'share_not_fresh' });
+    }
+  }
+
+  /** approvalSubject, with a mainnet demo refusal also said in Hana's own UI (the launcher), not only to the page. */
+  private subjectOf(request: SignRequest, addresses: Parameters<typeof approvalSubject>[1], rules: Parameters<typeof approvalSubject>[2]): ReturnType<typeof approvalSubject> {
+    try {
+      return approvalSubject(request, addresses, rules);
+    } catch (e) {
+      const reason = e instanceof VaultError ? e.data?.reason : undefined;
+      if (typeof reason === 'string' && MAINNET_DEMO_REFUSALS.has(reason)) this.launcher.flash(demoRefusalFlash(reason), DEMO_REFUSAL_FLASH_MS);
+      throw e;
     }
   }
 
@@ -2222,8 +2301,13 @@ export class Vault {
     // A test app's raw request is refused outright (approvalSubject), with no API read.
     const rawSign: RawSign = request.method === 'hana_signRaw' && !this.testApp ? await this.freshRawSign() : 'off';
     if (this.live() !== s) throw disconnected();
-    const subject = approvalSubject(request, s.addresses, { rawSign, testApp: this.testApp, reservedEvmDigests: this.reservedEvmDigests(s.addresses.evm) });
-    const policy = NEVER_AUTO_APPROVED_KINDS.has(subject.kind) ? null : await this.freshPolicy();
+    // A test app's mainnet request (D39) is signed only under the mainnet demo (D428), confirmed fresh.
+    const demo = this.testApp && Vault.namesMainnet(request);
+    const mainnetDemo = demo ? await this.freshMainnetDemo() : null;
+    if (this.live() !== s) throw disconnected();
+    const subject = this.subjectOf(request, s.addresses, { rawSign, testApp: this.testApp, mainnetDemo, reservedEvmDigests: this.reservedEvmDigests(s.addresses.evm) });
+    // A mainnet demo request always gets the approval popup and its banner: never auto-approved.
+    const policy = demo || NEVER_AUTO_APPROVED_KINDS.has(subject.kind) ? null : await this.freshPolicy();
     if (this.live() !== s) throw disconnected();
     let note: { label: string; active: boolean; reason?: string } | undefined;
     if (policy) {
@@ -2251,7 +2335,31 @@ export class Vault {
     if (this.live() !== s) throw disconnected();
     const result = signRequest(s.prk, request, subject);
     this.maybeTouch();
+    if (demo) this.reportDemoSignature(s, subject);
     return result;
+  }
+
+  /**
+   * The mainnet demo's usage event (D428): what was signed, on which network, for how much, from which address; never
+   * a key, a signature or the transaction's bytes. Best effort: a failure never touches the signature.
+   */
+  private reportDemoSignature(s: Session, subject: ReturnType<typeof approvalSubject>): void {
+    const assessed = assessMainnetDemo(subject, this.clock.now());
+    const api = this.api;
+    // The session's proof of the signing address (the identity token's): without one there is nothing to report with.
+    const proof = subject.chain === 'stellar' || subject.chain === 'evm' ? s.walletProofs?.[subject.chain] : undefined;
+    if (!assessed.ok || !api || !proof || proof.address !== subject.address) return;
+    const network = assessed.network.chain === 'evm' ? String(assessed.network.chainId) : assessed.network.network;
+    void demoEventBody(s.keyPair.privateKey, {
+      signer: this.env.signer,
+      appId: this.config.appId,
+      sessionPublicKey: Uint8Array.from(s.sessionPk),
+      issuedAtMs: this.clock.now(),
+      event: { chain: subject.chain, network, kind: subject.kind, usdMicros: assessed.usdMicros.toString() },
+      proof,
+    })
+      .then((body) => api.mainnetDemoEvent(body))
+      .catch(() => undefined);
   }
 
   /**

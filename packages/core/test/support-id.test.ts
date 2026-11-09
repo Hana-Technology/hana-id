@@ -5,7 +5,19 @@ import { describe, expect, it } from 'vitest';
 import { isLoginResponse } from '../src/api-types.ts';
 import { newRequestId, parsePortEvent, parsePortReply, parseWindowMessage } from '../src/protocol.ts';
 import { STELLAR_TESTNET_PASSPHRASE } from '../src/verified-contracts.ts';
-import { SUPPORT_ID_RE, SUPPORT_ID_SDK_MIN, isSupportId, sdkAtLeast, supportIdFrom } from '../src/support-id.ts';
+import {
+  CROCKFORD_ALPHABET,
+  SUPPORT_ID_RE,
+  SUPPORT_ID_SDK_MIN,
+  crockford32,
+  formatSupportId,
+  decodeIdentitySub,
+  isSupportId,
+  sdkAtLeast,
+  supportCodeFromSub,
+  supportIdFrom,
+  supportIdFromSub,
+} from '../src/support-id.ts';
 import { VERSION } from '../src/index.ts';
 
 const CODE = 'HANA-2750-G5HM';
@@ -93,5 +105,37 @@ describe('the protocol shapes', () => {
     expect(ok).not.toBeNull();
     expect(parseWindowMessage({ ...m, supportId: CODE }, ['hana:approve-request'])).not.toBeNull();
     for (const bad of BAD) expect(parseWindowMessage({ ...m, supportId: bad }, ['hana:approve-request']), String(bad)).toBeNull();
+  });
+});
+
+describe('supportIdFromSub (exported to partners; console-core re-exports it)', () => {
+  const VECTOR_SUB = 'u1_ASNFZ4mrze8BI0VniavN7w'; // the 16 bytes 0123456789abcdef0123456789abcdef
+
+  it("the guide's vector: HANA-04HM-ASW9", () => {
+    // 01 23 45 67 89 -> 00000 00100 10001 10100 01010 11001 11100 01001 -> 0 4 H M A S W 9 (MSB first, uppercase).
+    expect(supportIdFromSub(VECTOR_SUB)).toBe('HANA-04HM-ASW9');
+    expect(supportCodeFromSub(VECTOR_SUB)).toBe('04HMASW9');
+    expect(Array.from(decodeIdentitySub(VECTOR_SUB), (b) => b.toString(16).padStart(2, '0')).join('')).toBe('0123456789abcdef0123456789abcdef');
+  });
+
+  it('only the first 5 bytes count; the result is always a well-formed Support ID', () => {
+    expect(supportIdFromSub('u1_AAAAAAAAAAAAAAAAAAAAAA')).toBe('HANA-0000-0000');
+    expect(supportIdFromSub(`u1_${'_'.repeat(21)}w`)).toBe('HANA-ZZZZ-ZZZZ');
+    expect(supportIdFromSub(`u1_ASNFZ4mr${'_'.repeat(13)}w`)).toBe('HANA-04HM-ASW9');
+    for (const sub of ['u1_8pQm3yR0tZ1vW5xA7cB2dA', 'u1_Jf2kL9mN0pQ3rS6tU8vW1Q']) expect(isSupportId(supportIdFromSub(sub)), sub).toBe(true);
+    expect(formatSupportId('04HMASW9')).toBe('HANA-04HM-ASW9');
+    expect(crockford32(Uint8Array.of(0xff))).toBe('ZW');
+    expect(CROCKFORD_ALPHABET).toBe('0123456789ABCDEFGHJKMNPQRSTVWXYZ');
+  });
+
+  it('refuses anything that is not a sub (prefix, length, a non-canonical last character, padding)', () => {
+    for (const bad of ['', 'u1_', `U${VECTOR_SUB.slice(1)}`, `u2${VECTOR_SUB.slice(2)}`, `${VECTOR_SUB.slice(0, -1)}x`, VECTOR_SUB.slice(0, -1), `${VECTOR_SUB}=`, 'HANA-04HM-ASW9', 42 as unknown as string]) {
+      expect(() => supportIdFromSub(bad), String(bad)).toThrow(TypeError);
+    }
+  });
+
+  it('is exported from the package entry', async () => {
+    const core = await import('../src/index.ts');
+    expect(core.supportIdFromSub(VECTOR_SUB)).toBe('HANA-04HM-ASW9');
   });
 });

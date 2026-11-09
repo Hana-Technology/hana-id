@@ -30,6 +30,8 @@ import {
   type EmailConsentStateResponse,
   isEmailConsentStateResponse,
   type WalletRecordBody,
+  type MainnetDemoEventBody,
+  MAINNET_DEMO_EVENTS_ENDPOINT,
   base64UrlEncode,
   isIdentityTokenResponse,
   isWalletRecordResponse,
@@ -212,6 +214,14 @@ export class VaultApi {
   async recordWallets(body: WalletRecordBody, signal?: AbortSignal): Promise<void> {
     const { res, body: answer } = await this.request('/v1/wallets/record', { method: 'POST', headers: this.headers(true), body: JSON.stringify(body), ...(signal ? { signal } : {}) });
     if (!isWalletRecordResponse(answer)) throw new ApiError(res.status, 'bad_response', 'Unexpected /v1/wallets/record response', null, str(answer.requestId));
+  }
+
+  /**
+   * POST /v1/mainnet-demo/events (D428): one mainnet demo signature, reported after it is made. No key, signature or
+   * transaction bytes. Throws ApiError or a network error (the caller drops both).
+   */
+  async mainnetDemoEvent(body: MainnetDemoEventBody): Promise<void> {
+    await this.request(MAINNET_DEMO_EVENTS_ENDPOINT, { method: 'POST', headers: this.headers(true), body: JSON.stringify(body) });
   }
 
   /** POST /v1/identity/token: a partner identity token for the session that signed `body` (identity.ts). */

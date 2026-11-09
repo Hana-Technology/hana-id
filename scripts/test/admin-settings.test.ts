@@ -11,7 +11,7 @@ import { policyId } from '@hana-id/core/policy';
 import { loadEnv } from '@hana-id/env';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { type AppCmdDeps, appChangesAnnounce } from '../lib/admin-apps.ts';
-import { openChangesSql, type ChangeRow } from '../lib/admin-sql.ts';
+import { openChangesSql, type ChangeRow, writeCommand } from '../lib/admin-sql.ts';
 import {
   type AppSettingsDeps,
   appSettings,
@@ -31,6 +31,8 @@ import {
   parseSettingsArgs,
   POLICY_FILE_MAX_BYTES,
   policyInForce,
+  MAINNET_DEMO_WARNING,
+  planMainnetDemo,
   RAW_SIGN_WARNING,
   rawSignInForce,
   readPolicyFile,
@@ -130,7 +132,7 @@ beforeEach(() => {
     ids: testIds(),
     run: async (argv, m = sandbox) => {
       const args = parseCli(argv, {
-        strings: ['app', 'persistence', 'session-ttl', 'idle-ttl', 'raw-sign', 'google-web-client', 'auto-approve', 'identity-email'],
+        strings: ['app', 'persistence', 'session-ttl', 'idle-ttl', 'raw-sign', 'google-web-client', 'auto-approve', 'identity-email', 'mainnet-demo'],
         booleans: ['remote'],
       });
       const deps: AppSettingsDeps = {
@@ -328,6 +330,48 @@ describe('app:settings --identity-email (D411)', () => {
 
   it('the column check reads 1 once migration 0014 is applied', () => {
     expect(d1Of(h.db)(IDENTITY_EMAIL_COLUMN_SQL)).toEqual([{ n: 1 }]);
+  });
+});
+
+describe('app:settings --mainnet-demo (D428)', () => {
+  const demo = (id = APP) => Number((h.db.prepare('SELECT mainnet_demo AS m FROM apps WHERE id = ?').get(id) as { m: number }).m);
+
+  it('on and off for a test app in a dev testnet env: immediate, a version bump and an app_changes row each, with the warning', async () => {
+    await h.run(['--mainnet-demo', 'on']);
+    expect(demo()).toBe(1);
+    expect(h.out).toContain(MAINNET_DEMO_WARNING);
+    expect(output()).toContain('mainnet demo: off → on (immediate');
+    expect(row(h.db).settings_version).toBe(1);
+    await h.run(['--mainnet-demo', 'on']);
+    expect(output()).toContain('mainnet demo: already on');
+    await h.run(['--mainnet-demo', 'off']);
+    expect(demo()).toBe(0);
+    expect(ledger(h.db).map((r) => r.kind)).toEqual(['mainnet_demo.on', 'mainnet_demo.off']);
+    expect(ledger(h.db)[0]).toMatchObject({ actor_kind: 'hana', actor_id: 'cli:tester' });
+    // Shown with the other settings.
+    h.out.length = 0;
+    await h.run([]);
+    expect(output()).toContain('mainnet demo: off');
+  });
+
+  it('is refused for a live app, in a production env, on another network, with other flags, or with a bad value', async () => {
+    await expect(h.run([LIVE, '--mainnet-demo', 'on'])).rejects.toThrow('for test apps (pk_test_) only');
+    await expect(h.run(['--mainnet-demo', 'on'], { ...sandbox, name: 'testnet' })).rejects.toThrow('exists only in a dev env (local*, sandbox*) on testnet');
+    await expect(h.run(['--mainnet-demo', 'on'], { ...sandbox, network: 'mainnet' } as unknown as typeof sandbox)).rejects.toThrow('exists only in a dev env');
+    await expect(h.run(['--mainnet-demo', 'on', '--persistence', 'none'])).rejects.toThrow('--mainnet-demo goes alone');
+    await expect(h.run(['--mainnet-demo', 'yes'])).rejects.toThrow("--mainnet-demo must be 'on' or 'off'");
+    expect(demo()).toBe(0);
+    expect(demo(LIVE)).toBe(0);
+    expect(ledger(h.db)).toEqual([]);
+  });
+
+  it('writes only over the row it read: a concurrent change makes it write nothing', () => {
+    const r = row(h.db);
+    const plan = planMainnetDemo(sandbox, r, false, true, { now: NOW, requestId: 'cli_race' });
+    set({ settings_version: r.settings_version + 1 });
+    const result = d1Of(h.db)(writeCommand(plan.write!));
+    expect(Number(result[result.length - 1]?.committed ?? 0)).toBe(0);
+    expect(demo()).toBe(0);
   });
 });
 

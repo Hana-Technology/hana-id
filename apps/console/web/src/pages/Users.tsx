@@ -6,7 +6,8 @@
 // Shown only when the server has the screen on (`/api/me` features).
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { ErrorNote, Section, useApi, when } from '../lib.tsx';
+import { useApi, when } from '../lib.tsx';
+import { CopyButton, Empty, ErrorNote, Loading, PageHeader, Panel } from '../ui.tsx';
 
 interface PartnerUser {
   userId: string;
@@ -44,13 +45,20 @@ function Wallets({ u }: { u: PartnerUser }) {
 function UserDetail({ org, userId, onClose }: { org: string; userId: string; onClose: () => void }) {
   const r = useApi<{ user: PartnerUser }>(`/api/orgs/${org}/users/${encodeURIComponent(userId)}`);
   return (
-    <Section title="User">
-      {r.error && <ErrorNote error={r.error} />}
-      {!r.data && !r.error && <p className="muted">Loading…</p>}
+    <Panel
+      title="User"
+      actions={
+        <button type="button" className="btn btn-quiet btn-small" onClick={onClose}>
+          Close
+        </button>
+      }
+    >
+      {r.error && <ErrorNote error={r.error} onRetry={r.reload} />}
+      {!r.data && !r.error && <Loading />}
       {r.data && (
-        <dl className="settings">
+        <dl className="facts">
           <dt>User ID</dt>
-          <dd className="mono">{r.data.user.userId}</dd>
+          <dd className="mono small">{r.data.user.userId}</dd>
           <dt>Support ID</dt>
           <dd className="mono">{r.data.user.supportId}</dd>
           <dt>Accounts</dt>
@@ -70,7 +78,7 @@ function UserDetail({ org, userId, onClose }: { org: string; userId: string; onC
             ) : (
               (r.data.user.emails ?? []).map((e) => (
                 <div key={`${e.appId}:${e.email}`}>
-                  <span className="mono">{e.email}</span>{' '}
+                  <span className="mono small">{e.email}</span>{' '}
                   <span className="muted small">
                     Shared with {e.appName} on {day(e.sharedAt)}
                   </span>
@@ -80,10 +88,7 @@ function UserDetail({ org, userId, onClose }: { org: string; userId: string; onC
           </dd>
         </dl>
       )}
-      <button type="button" className="link" onClick={onClose}>
-        Close
-      </button>
-    </Section>
+    </Panel>
   );
 }
 
@@ -100,29 +105,48 @@ export function Users() {
   const r = useApi<{ users: PartnerUser[]; next?: string }>(`/api/orgs/${org}/users${qs ? `?${qs}` : ''}`);
   return (
     <>
+      <PageHeader title="Users" description="The people who have signed in to your apps. Each has a User ID (the identity token’s sub, the id your backend stores) and a short Support ID to quote to Hana. An email address appears only once the user shares it with one of your apps." />
       <form
-        className="inline-form"
+        className="form form-inline filters"
         onSubmit={(e) => {
           e.preventDefault();
           setCursor(undefined);
           setQuery(search.trim());
         }}
       >
-        <label>
-          Find by wallet address, User ID, Support ID or full email address <input value={search} onChange={(e) => setSearch(e.target.value)} />
+        <label className="field field-grow">
+          <span className="field-label">Find by wallet address, User ID, Support ID or full email address</span>
+          <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="0x…, G…, u1_…, HANA-… or an email address" />
         </label>
-        <button type="submit">Search</button>
+        <button type="submit" className="btn">
+          Search
+        </button>
+        {query && (
+          <button
+            type="button"
+            className="btn btn-quiet"
+            onClick={() => {
+              setSearch('');
+              setQuery('');
+              setCursor(undefined);
+            }}
+          >
+            Clear
+          </button>
+        )}
       </form>
       <p className="muted small">An email address matches exactly, and only among the addresses users shared with your apps.</p>
       {open && org && <UserDetail key={open} org={org} userId={open} onClose={() => setOpen(undefined)} />}
-      {r.error && <ErrorNote error={r.error} />}
-      {!r.data && !r.error && <p className="muted">Loading…</p>}
+      {r.error && <ErrorNote error={r.error} onRetry={r.reload} />}
+      {!r.data && !r.error && <Loading />}
       {r.data && (
         <>
           {r.data.users.length === 0 ? (
-            <p className="muted">No users{query ? ' match' : ' yet'}.</p>
+            <Empty title={query ? 'No users match' : 'No users yet'}>
+              <p>{query ? 'Check the address or ID, or clear the search.' : 'Users appear here after they first sign in to one of your apps.'}</p>
+            </Empty>
           ) : (
-            <table>
+            <table className="table">
               <thead>
                 <tr>
                   <th>User ID</th>
@@ -137,13 +161,16 @@ export function Users() {
               <tbody>
                 {r.data.users.map((u) => (
                   <tr key={u.userId}>
-                    <td className="mono">
-                      <button type="button" className="link mono" aria-label={`Open ${u.userId}`} onClick={() => setOpen(u.userId)}>
+                    <td>
+                      <button type="button" className="btn-link mono small" aria-label={`Open ${u.userId}`} onClick={() => setOpen(u.userId)}>
                         {u.userId}
-                      </button>
+                      </button>{' '}
+                      <CopyButton value={u.userId} label="User ID" />
                     </td>
-                    <td className="mono">{u.supportId}</td>
-                    <td>{u.email === null ? <span className="muted">{NOT_SHARED}</span> : <span className="mono">{u.email}</span>}</td>
+                    <td>
+                      <span className="mono">{u.supportId}</span>
+                    </td>
+                    <td>{u.email ? <span className="mono small">{u.email}</span> : <span className="muted">{NOT_SHARED}</span>}</td>
                     <td>{accountsText(u)}</td>
                     <td>
                       <Wallets u={u} />
@@ -156,7 +183,7 @@ export function Users() {
             </table>
           )}
           {r.data.next && (
-            <button type="button" onClick={() => setCursor(r.data!.next)}>
+            <button type="button" className="btn" onClick={() => setCursor(r.data!.next)}>
               Next page
             </button>
           )}

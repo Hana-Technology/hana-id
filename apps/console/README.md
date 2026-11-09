@@ -1,0 +1,110 @@
+# Partner console (`apps/console`)
+
+The partner console: one Worker (`hana-id-console-<env>`) on `console.origin` that serves the partner SPA and its
+`/api/*` backend, with partner sign-in through console-auth. Routes, sessions, CSRF, fresh sign-in and the write paths
+are in `docs/api.md` ("Console Worker"); the security properties in `docs/security.md` ("Console Worker").
+
+Last verified: 2026-11-06 (branch `feat/hana-brand`: Hana's brand, its tokens, fonts and mark, "Brand" below, D426);
+2026-11-06 (branch `fix/session-expiry-ux`: the session's end mid-task, the banner, the warning before
+the 12 h end, `GET /api/me` `sessionExpiresAt`, the preview's two session scenarios, D424); 2026-11-06 (branch
+`feat/console-ux-redesign`: the SPA's layout, error display and the local preview, D421).
+
+## Layout
+
+| Path | What |
+|---|---|
+| `src/` | The Worker: host dispatch, headers and CSRF, sign-in, sessions, fresh sign-in (`actions.ts`), the read and write routes, StaffRpc, the hourly cron |
+| `web/` | The SPA (React 18, React Router 6, Vite), built to `dist/` and served as the Worker's assets |
+| `web/src/pages/` | One file per page; `pages/app/` holds an app's sections (overview, origins, keys, login and sessions, signing, branding, suspend) |
+| `web/src/ui.tsx` | The UI kit: errors and notes, panels, badges, copy buttons, the in-page confirm, the fresh sign-in hint, the guarded-change timeline |
+| `web/src/messages.ts` | Every API error code in plain language, with what to do next |
+| `web/src/lib.tsx` | The data, write and fresh-sign-in hooks, the fragment-token reader, formatting |
+| `web/src/api.ts`, `web/src/session.tsx` | The requests (CSRF header, the wait for a new sign-in) and the session banner above every signed-in page |
+| `preview/` | The local preview harness (dev only, below) |
+| `test/`, `web/test/`, `scripts/test/` | Worker tests (workerd), SPA tests (happy-dom), build, source and harness checks (Node) |
+
+## The SPA's rules
+
+- **CSP** `script-src 'self'; style-src 'self'; font-src 'self'`: no inline script or style anywhere, no `style` prop,
+  no external URL; the only font files are Hana's own, bundled from `packages/brand` ("Brand" below); every style is a
+  class in `web/src/styles.css` (light, and dark through `prefers-color-scheme`).
+- **No HTML injection, no browser storage, same origin only**: checked over `web/src` by `scripts/test/spa-build.test.ts`.
+- **Requests**: every write is `postJson`/`postBytes` (`web/src/api.ts`) with the CSRF header; a change marked
+  "fresh sign-in" is built by `POST /api/orgs/:org/actions` and confirmed on `/actions/:id`.
+- **Errors**: shown with `ErrorNote` (plain text for the code, the server's detail when it adds something, the code and
+  HTTP status small). A new error code gets its line in `web/src/messages.ts`.
+- **No control that can't work**: where the console would refuse (a viewer, a frozen org, a limit), the page shows one
+  line saying why (`Why`) instead of the control. Destructive immediate writes use `ConfirmButton` (a second click in
+  the page, never a browser dialog).
+- **When the session ends mid-task** (2 h idle, 12 h absolute, or revoked: `docs/security.md` "Console Worker"; D424).
+  A request answered 401 after this page has had a session isn't an error under the button and doesn't jump to
+  `/signin`: it waits, the page and what was typed stay, and a banner at the top (`role=alert`) says "Your session has
+  ended" with **Sign in again** (`/signin` in a new tab: the sign-in there sets the session cookie this tab uses too)
+  and **Try again** (sends exactly the waiting request again; still signed out, it says so). Back on this tab after
+  signing in elsewhere, the session is checked and the banner turns to "You're signed in again" until Try again sends
+  what waited; nothing is sent without it, and nothing is said to have worked before the server answers. Moving to
+  another page drops what waited on the old one (never sent later). It lives in the tab's memory only: no browser
+  storage, so a reload or a closed tab loses unsent input, as before. A visitor who never had a session in this tab
+  still goes to `/signin`; a real network failure keeps "The console couldn't be reached".
+- **The warning before the 12 h end**: `GET /api/me` answers `sessionExpiresAt`; 5 minutes before it the banner says
+  "Your session ends in N min" with Sign in again (a new session in the new tab; back here the new end is read and the
+  warning goes), and at the end the server is asked once (the reader's clock may be off), so the ended banner shows
+  before the next click. The 2 h idle end isn't warned of: each request moves it, and a check to find it would itself
+  count as activity. The fresh sign-in page says when the session ends inside the confirmation's 5 minutes (the
+  confirmation counts only with the session that started it, `session_ended`).
+
+## Brand
+
+The SPA wears Hana's brand (D426) from `packages/brand`, the set the staff admin console and the sign-in and approval
+pages share: `web/src/styles.css` starts with `@import '@hana-id/brand/fonts.css'` and `'@hana-id/brand/tokens.css'`
+and maps its own variables (`--ink`, `--accent`, `--ok`…) onto the `--hana-*` tokens.
+
+- **Colours** (light / dark): ink `#16073a` / `#f1edfc`, page `#faf9fe` / `#0d0229`, cards `#ffffff` and `#f4f2f9` /
+  `#170b36` and `#1f133f`, lines `#e6e0f7` / `#2c1b57`; the one accent Hana indigo `#3308a8` (dark: light purple
+  `#bba8f6` with ink on it); focus `#6256e9` / `#c9a3f0`, as a two-ring outline; the gradient `#6256e9 → #7e5deb →
+  #d772d3` only as the thin rule under the brand. State keeps its own non-purple colours (green, amber, red), so a
+  state never reads as an accent; every text pair is WCAG AA in both schemes (`packages/brand` test).
+- **Type**: Montserrat (400–700) for text, Montserrat Alternates (700) for page titles and the brand; tabular figures
+  for numbers; ids and keys in the system monospace stack.
+- **Shape**: pill buttons, badges and nav items (as hanawallet.io's), 16 px cards with a purple-tinted shadow.
+- **Mark**: the Hana mark (`MARK_PATHS` from `@hana-id/brand`, Hana's own `hana.svg`) drawn inline in the sidebar and on
+  the sign-in card; a partner app without a logo gets a neutral initial tile, never Hana's colours.
+- **Sources**: Hana's apps' design tokens (`hana-app` `src/utils/designTokens.ts`, `hana-extension`
+  `src/common/utils/designTokens.ts`) and hanawallet.io's stylesheet (`--lf-ink`, `--lf-line`, `--lf-accent-from/-to`,
+  the `hana-*-purple` colours).
+- **Fonts**: Montserrat Version 8.000 and Montserrat Alternates Version 7.200, the files Hana's extension ships, under
+  the SIL Open Font License 1.1, subset to Latin as WOFF2 (about 17 KB each). Vite bundles them as
+  `/assets/<name>-<hash>.woff2` (never a `data:` URL: `assetsInlineLimit: 0`) and `vite.config.ts` emits the licence
+  beside them as `/assets/OFL.txt`; `scripts/test/spa-build.test.ts` checks each built font is the brand package's file
+  byte for byte, the licence is there and the stylesheet loads nothing else. Hana's apps also use Proxima Nova and PP
+  Agrandir: both are commercial and not shipped here.
+
+## Commands
+
+```sh
+corepack pnpm --filter @hana-id/console test        # Worker, build/source/harness and SPA tests
+corepack pnpm --filter @hana-id/console typecheck
+corepack pnpm --filter @hana-id/console build       # vite build → dist/
+```
+
+## Local preview
+
+A picture of the SPA for design review and screenshots, with no Worker, D1, session or Google. Dev only: the Vite
+plugin in `preview/plugin.ts` runs only in `vite serve`, listens on 127.0.0.1, and nothing of it is built into `dist/`
+(a build test). It answers `/api/*` with the fake data of `preview/fixtures.ts` (invented names, keys and hashes,
+checked against console-core's schemas); writes answer success, or a typical refusal in the `errors` scenario, and
+change nothing. It imitates none of the console's security checks.
+
+```sh
+corepack pnpm --filter @hana-id/console preview:web   # http://127.0.0.1:5178
+```
+
+Pick a scenario, then a page: `http://127.0.0.1:5178/__preview/<scenario>?to=<path>`. Scenarios: `owner` (the
+default), `viewer`, `frozen`, `multi` (two organisations), `new-org` (no apps), `signed-out`, `errors`,
+`session-ending` (4 min before the session's 12 h end: the warning) and `session-ended` (reads work, every write
+answers 401: the "Your session has ended" banner; switch to `owner` in another tab, then Try again). The org is
+`org_7Hq2Lm9Xc4`; its apps `app_Lm4Pq9Zs2v` (live, with changes waiting), `app_Ts6Ry1Hn8b` (test), `app_Rw2Bt7Kd5c`
+(new, no origins), `app_Lg5Yn3Wq8d` (suspended). The fresh sign-in page's states: `/actions/act_demo_origin`,
+`act_demo_policy`, `act_demo_settings`, `act_demo_invite`, `act_demo_owner`, `act_demo_ok`, `act_demo_failed`,
+`act_demo_expired`. "Confirm with Google" in the preview marks the action done and comes straight back (no Google).
+The invite and cancel pages: `/invite#t=<43 characters>`, `/cancel/gc_Ch4kq81Ns#t=<43 characters>`.

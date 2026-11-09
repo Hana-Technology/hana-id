@@ -148,7 +148,7 @@ describe('across Workers (config snapshots)', () => {
     ['auth page', pagesWranglerConfig(m, 'auth', '2026-10-01') as Config],
     ['watchdog', watchdogConfig(m, LOCAL_D1_ID) as Config],
     // The issuer's outbox sender (its test manifest's) is for local* envs only.
-    ['email issuer', issuerConfig({ ...m, name: 'local-test' }, LOCAL_D1_ID, LOCAL_D1_ID) as Config],
+    ['email issuer', issuerConfig({ ...m, name: 'local-test' }, LOCAL_D1_ID) as Config],
     ['console', wranglerConfig(m, LOCAL_D1_ID) as Config],
     ['console-auth', consoleAuthConfig(m) as Config],
     ['files', filesConfig(m) as Config],

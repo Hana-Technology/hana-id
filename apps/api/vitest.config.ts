@@ -74,7 +74,7 @@ export default defineConfig(async () => {
           // Empty databases for the migration tests: 0003's (apply 0001–0002, seed rows, then 0003), and 0006's (a fresh
           // database in order; a sandbox-dev-shaped one at 0001–0005 + 0008, then 0006; one whose scope mixes test and
           // live keys, which 0006 must refuse).
-          d1Databases: { DB: 'hana-id-test', MIGRATION_DB: 'migration-db', FRESH_DB: 'fresh-db', SNAPSHOT_DB: 'snapshot-db', MIX_DB: 'mix-db', PRE_0010_DB: 'pre-0010-db' },
+          d1Databases: { DB: 'hana-id-test', MIGRATION_DB: 'migration-db', FRESH_DB: 'fresh-db', SNAPSHOT_DB: 'snapshot-db', MIX_DB: 'mix-db', PRE_0010_DB: 'pre-0010-db', PRE_0010_ISSUER_DB: 'pre-0010-issuer-db' },
         },
       }),
     ],

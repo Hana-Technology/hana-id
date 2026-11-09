@@ -8,7 +8,7 @@
 //
 // The API answers with the app's issuer view only (no origin, key, setting or user data), by the API gate's model
 // (apps/api/src/issuer-apps.ts). Inputs are strict: an unknown field is `bad_request`.
-import { z } from 'zod';
+import { z } from '@hana-id/env/zod';
 
 /** A publishable key as the issuer accepts one (`pk_test_` / `pk_live_` + base58). */
 export const issuerPkInput = z.string().regex(/^pk_(?:test|live)_[1-9A-HJ-NP-Za-km-z]{16,64}$/u);

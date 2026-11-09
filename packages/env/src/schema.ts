@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { urlString, z } from './zod.ts';
 import { adminSchema, consoleSchema, dashboardRules, delayMs, emailSchema, filesSchema, usageSchema } from './dashboard.ts';
 import { CLOUDFLARE_ACCOUNT_ID_RE } from './cloudflare.ts';
 import { emailIssuerRules, emailIssuerSchema } from './email-issuer.ts';
@@ -233,7 +233,7 @@ export const manifestSchema = z
       .strict()
       .optional(),
     /** NEAR RPC: https outside `local*` envs (there, http only for a loopback host). */
-    rpc: z.string().url(),
+    rpc: urlString(),
     /**
      * Second NEAR RPC (https, not `rpc` itself), from an independent provider (another registrable domain outside
      * `local*` envs). The vault and the export window read from it when `rpc` errors or times out (get_session
@@ -241,7 +241,7 @@ export const manifestSchema = z
      * separately, any path that isn't the signed-in identity's own (an account member's, D263). Required with
      * `emailIssuer` outside `local*` envs (linking makes members). It joins `rpc` in those pages' CSP `connect-src`.
      */
-    rpcFallback: z.string().url().optional(),
+    rpcFallback: urlString().optional(),
     /**
      * The API's own NEAR RPC fallbacks (D435), asked in this order after `rpc` when an endpoint gives no JSON-RPC
      * answer (a network error, a timeout, HTTP 5xx or 429, a body that isn't JSON-RPC, a node with no synced block);
@@ -250,9 +250,9 @@ export const manifestSchema = z
      * (apiRpcFallbacksOf). Each one is trusted like `rpc` for the API's views whenever the earlier ones fail. Only the
      * API reads it (`NEAR_RPC_FALLBACKS`): the pages, the watchdog and the admin Worker keep `rpc` and `rpcFallback`.
      */
-    apiRpcFallbacks: z.array(z.string().url()).min(1).max(MAX_API_RPC_FALLBACKS).optional(),
+    apiRpcFallbacks: z.array(urlString()).min(1).max(MAX_API_RPC_FALLBACKS).optional(),
     /** The API's base URL: https outside `local*` envs (there, http only for a loopback host). */
-    apiUrl: z.string().url(),
+    apiUrl: urlString(),
     /**
      * Origin of the key vault page (`GET /vault`, a hidden iframe in partner pages). Optional until every deployed env
      * has it; requires `authOrigin`. Rules (both origins): see origins.ts `hanaOriginProblem`, and the two must be

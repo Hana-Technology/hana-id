@@ -2,7 +2,7 @@
 // the issuer URL, the signer and the public keys the JWKS serves. The JWKS is generated from `publicKeys` alone, so
 // what the API publishes never depends on D1 or on a secret. Public keys only: a private member (`d`) is refused.
 import { createHash } from 'node:crypto';
-import { z } from 'zod';
+import { z } from './zod.ts';
 
 /** RFC 7638 thumbprint of a P-256 public JWK: b64url(sha256('{"crv","kty","x","y"}')) (as @hana-id/core jwkThumbprint). */
 export function p256Thumbprint(jwk: { crv: string; kty: string; x: string; y: string }): string {

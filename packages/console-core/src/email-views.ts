@@ -1,7 +1,7 @@
 // The email login views of the consoles (build plan batch 9, spec "Admin portal hooks", D444–D450): what the API's
 // `AdminRpc.linkStats`, the issuer's `DirectoryRpc.issuerStats` and `ConsoleIssuerRpc`, and the admin and partner BFFs
 // agree on. Counts per app and day only, never an address, a sub, a token or a key.
-import { z } from 'zod';
+import { z } from '@hana-id/env/zod';
 import { staffCall } from './directory.ts';
 import { appIdInput, orgIdInput, scopeIdInput } from './rpc.ts';
 import { ctx, requestId } from './types.ts';

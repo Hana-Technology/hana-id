@@ -53,7 +53,7 @@ import { grantsOf, membersOf } from './views.ts';
 type Answer<T extends object> = ({ ok: true } & T) | RpcFail;
 
 interface Schema<I> {
-  safeParse(v: unknown): { success: true; data: I } | { success: false; error: { issues: { path: (string | number)[]; message: string }[] } };
+  safeParse(v: unknown): { success: true; data: I } | { success: false; error: { issues: { path: PropertyKey[]; message: string }[] } };
 }
 
 const HANA = ['hana'] as const;

@@ -22,7 +22,7 @@
 //
 // Never in any of these answers: a uid's bytes, an email address (the admin Worker's route joins the issuer's directory
 // itself through DirectoryRpc, D399: apps/admin/src/support.ts), a share id, a session key or a counter.
-import { z } from 'zod';
+import { z } from '@hana-id/env/zod';
 import { SUPPORT_TICKET_RE } from './directory.ts';
 import { ctx, requestId } from './types.ts';
 import type { AppChange } from './types.ts';

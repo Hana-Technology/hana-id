@@ -84,6 +84,38 @@ describe('the exit list against the pins', () => {
     expect(r.checks.find((c) => c.id === 'exit_clients')).toMatchObject({ outcome: 'error' });
     expect(w.writer.methods()).toEqual([]);
   });
+
+  it('unreadable pins still page an in-force client as unpinned, without pausing', async () => {
+    const w = await initialized({ exitPins: null });
+    w.deps.config.exitPins = { pins: null, problems: ['EXIT_PINS is malformed: every exit client is treated as unpinned'] };
+    w.chain.config.exit_clients = [EXIT];
+    w.chain.config.pending_exit_clients = [];
+    await w.run();
+    const [a] = await alertsOf(w.store, 'exit_client_unpinned');
+    expect(a).toMatchObject({ severity: 'critical', key: `exit_client_unpinned:in_force:${EXIT[0]}:${EXIT[1]}`, details: { client: EXIT, state: 'in_force' } });
+    expect(a?.title).toContain('not paused: EXIT_PINS is unreadable');
+    expect(w.writer.methods()).toEqual([]);
+    expect(w.chain.config.paused).toBe(false);
+  });
+
+  it('an in-force alert already open stays open when the pins become unreadable, and nothing more is paused', async () => {
+    const w = await initialized({ exitPins: [EMAIL] });
+    w.chain.config.exit_clients = [EXIT];
+    w.chain.config.pending_exit_clients = [];
+    await w.run();
+    expect(w.writer.methods()).toEqual(['pause']);
+    const key = `exit_client_unpinned:in_force:${EXIT[0]}:${EXIT[1]}`;
+    const before = await w.store.openAlert(key);
+    expect(before).not.toBeNull();
+    // The council has unpaused; the var is broken by a bad deploy before the client is dealt with.
+    w.chain.config.paused = false;
+    w.deps.config.exitPins = { pins: null, problems: ['EXIT_PINS is malformed: every exit client is treated as unpinned'] };
+    await w.run();
+    const after = await w.store.openAlert(key);
+    expect(after?.id).toBe(before?.id);
+    expect(w.writer.methods()).toEqual(['pause']);
+    expect(w.chain.config.paused).toBe(false);
+  });
 });
 
 describe('the hourly exit counter (alert only, never refuses)', () => {
@@ -116,5 +148,72 @@ describe('the hourly exit counter (alert only, never refuses)', () => {
     await w.run();
     expect(await alertsOf(w.store, 'exit_volume_high')).toHaveLength(1);
     expect(MIN).toBeGreaterThan(0);
+  });
+
+  const volumeWatchdog = async (exitAlertPerHour?: number) => {
+    const w = await initialized({ exitPins: [EXIT], ...(exitAlertPerHour === undefined ? {} : { exitAlertPerHour }) });
+    w.chain.config.exit_clients = [EXIT];
+    w.chain.config.pending_exit_clients = [];
+    return w;
+  };
+  const openVolumeKeys = async (w: Awaited<ReturnType<typeof volumeWatchdog>>) => (await w.store.openAlerts()).filter((a) => a.kind === 'exit_volume_high').map((a) => a.key);
+
+  it('a burst split across an hour boundary pages: 19 then 19, under the level alone, at 1.5x together', async () => {
+    const w = await volumeWatchdog();
+    w.chain.config.exit_window = window(T0, 19, 19);
+    await w.run();
+    expect(await openVolumeKeys(w)).toEqual([`exit_volume_high:combined:${T0}`]);
+    const [a] = await alertsOf(w.store, 'exit_volume_high');
+    expect(a).toMatchObject({ severity: 'critical', details: { current: 19, previous: 19, combined: 38, combined_level: 30, threshold: 20 } });
+    expect(w.writer.calls).toEqual([]);
+  });
+
+  it('the combined level is 1.5x the hourly level, rounded up, and just under it stays quiet', async () => {
+    const w = await volumeWatchdog();
+    w.chain.config.exit_window = window(T0, 15, 14);
+    await w.run();
+    expect(await openVolumeKeys(w)).toEqual([]);
+    w.chain.config.exit_window = window(T0, 15, 15);
+    await w.run();
+    expect(await openVolumeKeys(w)).toEqual([`exit_volume_high:combined:${T0}`]);
+  });
+
+  it('an odd level rounds up: 5 per hour needs 8 across the two', async () => {
+    const w = await volumeWatchdog(5);
+    w.chain.config.exit_window = window(T0, 4, 3);
+    await w.run();
+    expect(await openVolumeKeys(w)).toEqual([]);
+    w.chain.config.exit_window = window(T0, 4, 4);
+    await w.run();
+    expect(await openVolumeKeys(w)).toEqual([`exit_volume_high:combined:${T0}`]);
+  });
+
+  it('a single hour that reached the level pages once, not a second time as combined', async () => {
+    const w = await volumeWatchdog();
+    w.chain.config.exit_window = window(T0, 30, 0);
+    await w.run();
+    expect(await openVolumeKeys(w)).toEqual([`exit_volume_high:${T0}`]);
+    w.chain.config.exit_window = window(T0, 25, 12);
+    await w.run();
+    expect(await openVolumeKeys(w)).toEqual([`exit_volume_high:${T0}`]);
+  });
+
+  it('the combined alert resolves once the burst has left both windows', async () => {
+    const w = await volumeWatchdog();
+    w.chain.config.exit_window = window(T0, 19, 19);
+    await w.run();
+    expect(await openVolumeKeys(w)).toHaveLength(1);
+    w.chain.config.exit_window = window(T0 + HOUR, 0, 19);
+    await w.run();
+    expect(await w.store.openAlert(`exit_volume_high:combined:${T0}`)).toBeNull();
+  });
+
+  it('a slow harvest paced under the level is not caught: the known limit of the alarm', async () => {
+    const w = await volumeWatchdog();
+    for (let h = 0; h < 12; h++) {
+      w.chain.config.exit_window = window(T0 + h * HOUR, 14, 14);
+      await w.run();
+    }
+    expect(await alertsOf(w.store, 'exit_volume_high')).toEqual([]);
   });
 });

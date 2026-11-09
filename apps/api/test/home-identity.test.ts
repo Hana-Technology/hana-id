@@ -111,8 +111,9 @@ describe('Home identity: what it accepts', () => {
     expect(g.body).toHaveLength(0);
   });
 
-  it('a valid email token with the issuer’s Home audience (H10’s route; needs the email issuer’s keys)', async () => {
+  it('a valid email token with the issuer’s Home audience on the exit list (H10’s route; needs the email issuer’s keys)', async () => {
     withEmail(near, []);
+    near.exit = [['email', HOME_EMAIL_AUDIENCE]];
     const key = homeKey();
     const expiresAtMs = Date.now() + 15 * 60_000;
     const salt = new Uint8Array(32).fill(5);
@@ -156,6 +157,67 @@ describe('Home identity: what it accepts', () => {
     const id = await newIdentity({ aud: EXIT });
     const r = await refusal(await gate(makeRequest(id.headerFor(1))));
     expect([r.status, r.code]).toEqual([401, 'not_a_home_client']);
+  });
+
+  describe('the email Home audience follows the on-chain exit list', () => {
+    const emailIdentity = async () => {
+      const key = homeKey();
+      const expiresAtMs = Date.now() + 15 * 60_000;
+      const salt = crypto.getRandomValues(new Uint8Array(32));
+      const nonce = homeNonce({ signer: env.SIGNER_ACCOUNT, homePublicKey: key.pub, expiresAtMs, salt });
+      const jwt = await emailToken({ aud: HOME_EMAIL_AUDIENCE, sub: 'e1.abc', nonce });
+      return newIdentity({ jwt, key, expiresAtMs, salt });
+    };
+    const EMAIL_EXIT: [string, string] = ['email', HOME_EMAIL_AUDIENCE];
+
+    beforeEach(() => {
+      withEmail(near, []);
+    });
+
+    it('an old contract (no exit list, the v3 window) refuses it: 401, fail closed', async () => {
+      near.exit = null;
+      const r = await refusal(await gate(makeRequest((await emailIdentity()).headerFor(1)), emailEnv()));
+      expect([r.status, r.code]).toEqual([401, 'not_a_home_client']);
+    });
+
+    it('an emergency removal stops it: an empty list, or a list with only other clients', async () => {
+      near.exit = [];
+      const r = await refusal(await gate(makeRequest((await emailIdentity()).headerFor(1)), emailEnv()));
+      expect([r.status, r.code]).toEqual([401, 'not_a_home_client']);
+      clearViewCaches();
+      near.exit = [EXIT];
+      const r2 = await refusal(await gate(makeRequest((await emailIdentity()).headerFor(1)), emailEnv()));
+      expect([r2.status, r2.code]).toEqual([401, 'not_a_home_client']);
+    });
+
+    it('a pending entry refuses until it matures', async () => {
+      near.exit = [];
+      near.pendingExit = [{ provider: 'email', aud: HOME_EMAIL_AUDIENCE, effective_at_ms: Date.now() + 86_400_000 }];
+      expect((await refusal(await gate(makeRequest((await emailIdentity()).headerFor(1)), emailEnv()))).code).toBe('not_a_home_client');
+      clearViewCaches();
+      near.pendingExit = [{ provider: 'email', aud: HOME_EMAIL_AUDIENCE, effective_at_ms: Date.now() - 1 }];
+      const g = await gate(makeRequest((await emailIdentity()).headerFor(1)), emailEnv());
+      expect(g.ok).toBe(true);
+      if (g.ok) expect(g.identity.route).toBe('email');
+    });
+
+    it('a removal lingers for up to the 60 s config cache, as for Google, then refuses', async () => {
+      near.exit = [EMAIL_EXIT];
+      expect((await gate(makeRequest((await emailIdentity()).headerFor(1)), emailEnv())).ok).toBe(true);
+      near.exit = [];
+      expect((await gate(makeRequest((await emailIdentity()).headerFor(1)), emailEnv())).ok).toBe(true);
+      clearViewCaches();
+      expect((await refusal(await gate(makeRequest((await emailIdentity()).headerFor(1)), emailEnv()))).code).toBe('not_a_home_client');
+    });
+
+    it('a NEAR failure is 502, not a refusal or a pass: the list can’t be read', async () => {
+      near.exit = [EMAIL_EXIT];
+      near.views.get_config = () => {
+        throw new Error('rpc down');
+      };
+      const r = await refusal(await gate(makeRequest((await emailIdentity()).headerFor(1)), emailEnv()));
+      expect([r.status, r.code]).toEqual([502, 'near_unavailable']);
+    });
   });
 
   it('a POST’s body comes back with the identity, and is signed over', async () => {
@@ -451,9 +513,12 @@ describe('homeAudienceRoute', () => {
   const config: ConfigView = { console_audiences: [], shared_clients: [['google', SHARED]], pending_shared_clients: [], exit_clients: [], pending_exit_clients: [], paused: false, links_open: true };
   const now = 1_000;
 
-  it('a shared Google client, the email Home audience, and nothing else', () => {
+  it('a shared Google client, the email Home audience on the exit list, and nothing else', () => {
     expect(homeAudienceRoute(config, 'google', SHARED, now)).toBe('shared');
-    expect(homeAudienceRoute(null, 'email', HOME_EMAIL_AUDIENCE, now)).toBe('email');
+    expect(homeAudienceRoute({ ...config, exit_clients: [['email', HOME_EMAIL_AUDIENCE]] }, 'email', HOME_EMAIL_AUDIENCE, now)).toBe('email');
+    // Not on the list, or no list at all (an old contract, the chain unread): refused.
+    expect(homeAudienceRoute(config, 'email', HOME_EMAIL_AUDIENCE, now)).toBeNull();
+    expect(homeAudienceRoute(null, 'email', HOME_EMAIL_AUDIENCE, now)).toBeNull();
     expect(homeAudienceRoute(config, 'google', 'other', now)).toBeNull();
     expect(homeAudienceRoute(null, 'google', SHARED, now)).toBeNull();
     expect(homeAudienceRoute(config, 'email', 'email:s1', now)).toBeNull();
@@ -472,8 +537,10 @@ describe('homeAudienceRoute', () => {
     // A shared client stays shared, an exit client isn't one; scope clients are in neither list.
     expect(homeAudienceRoute(exitConfig, 'google', SHARED, now)).toBe('shared');
     expect(homeAudienceRoute(config, 'google', EXIT, now)).toBeNull();
-    // A provider's exit entry never lets another provider through: the email route is by audience alone.
+    // A provider's exit entry never lets another provider through, and only the Home audience is an email route.
     expect(homeAudienceRoute({ ...exitConfig, exit_clients: [['email', HOME_EMAIL_AUDIENCE]] }, 'email', HOME_EMAIL_AUDIENCE, now)).toBe('email');
+    expect(homeAudienceRoute({ ...exitConfig, exit_clients: [['google', HOME_EMAIL_AUDIENCE]] }, 'email', HOME_EMAIL_AUDIENCE, now)).toBeNull();
+    expect(homeAudienceRoute({ ...exitConfig, exit_clients: [['email', 'other-aud']] }, 'email', 'other-aud', now)).toBeNull();
   });
 });
 

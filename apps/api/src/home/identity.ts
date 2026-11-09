@@ -5,8 +5,8 @@
 //
 // The API checks, in the spec's order: `Origin === AUTH_ORIGIN`; the per-IP limit; the token (signature, `iss`, `exp`
 // with 60 s skew, the claim allow-list, login-token.ts); `aud` is a shared or exit Google client in force or the email issuer's
-// Home audience, never a scope client (a partner-held client could mint a Home token for its users and read or revoke
-// their consents in every app, since `sub` is global); nonce = `homeNonce`; `now < expiresAtMs ≤ now + 20 min`; the Home
+// Home audience while it is on the chain's exit list, never a scope client (a partner-held client could mint a Home token
+// for its users and read or revoke their consents in every app, since `sub` is global); nonce = `homeNonce`; `now < expiresAtMs ≤ now + 20 min`; the Home
 // key's signature; the per-Home-key limit; then `(sha256(hk_pub), counter)` is marked single use until `expiresAtMs` in
 // the RateLimiter object's `mark:` store. A failed check spends nothing that a later check would use.
 //
@@ -48,13 +48,16 @@ export type HomeRoute = 'shared' | 'email' | 'exit';
 /**
  * Which route a token's audience makes it a Home identity through, or null: an exit Google client in force (D468,
  * only where a scope's normal route is gone, D490) or a shared Google client in force (retired and still-pending ones
- * refused), or the email issuer's Home audience. Never a scope client: the contract keeps exit, shared and scope
- * clients disjoint (`exit.rs` `set_exit_clients`, registry.rs `assert_client_available`, lib.rs `set_shared_clients`),
- * and a retired shared or exit client can never be claimed by a scope. A partner login never reaches this: `checkClientScope`
- * stays closed to exit clients. An old contract reads as no exit client, so its clients are refused (fail closed).
+ * refused), or the email issuer's Home audience while `("email", HOME_EMAIL_AUDIENCE)` is on the exit list in force (the
+ * council's emergency removal stops email Home as it stops Google's exit, D483). Never a scope client: the contract keeps
+ * exit, shared and scope clients disjoint (`exit.rs` `set_exit_clients`, registry.rs `assert_client_available`, lib.rs
+ * `set_shared_clients`), and a retired shared or exit client can never be claimed by a scope. A partner login never reaches
+ * this: `checkClientScope` stays closed to exit clients. No config, an old contract (no list), or an empty list reads as no
+ * exit client, so those clients and the email audience are refused (fail closed): "never listed" and "removed in an
+ * emergency" look the same here, and refusing is right for both.
  */
 export function homeAudienceRoute(config: ConfigView | null, provider: string, aud: string, now: number): HomeRoute | null {
-  if (provider === EMAIL_PROVIDER) return aud === HOME_EMAIL_AUDIENCE ? 'email' : null;
+  if (provider === EMAIL_PROVIDER) return aud === HOME_EMAIL_AUDIENCE && config && isExitClient(config, provider, aud, now) ? 'email' : null;
   if (provider === GOOGLE_PROVIDER && config) {
     if (isExitClient(config, provider, aud, now)) return 'exit';
     if (isSharedClient(config, provider, aud, now)) return 'shared';
@@ -119,14 +122,13 @@ export async function homeGate(request: Request, env: Env, ctx: Ctx, opts: HomeG
   }
   const token = verified.token;
 
-  // 5. aud: a shared or exit Google client in force or the issuer's Home audience. Only a Google token needs the chain's list.
-  let config: ConfigView | null = null;
-  if (token.provider === GOOGLE_PROVIDER) {
-    try {
-      config = await getConfig(env);
-    } catch {
-      return fail(502, 'near_unavailable', 'Could not read the Home clients');
-    }
+  // 5. aud: a shared or exit Google client in force, or the issuer's Home audience while the exit list has it (the cached
+  // `get_config`, so a client removed in an emergency can pass for up to 60 s more on an isolate, as for Google).
+  let config: ConfigView;
+  try {
+    config = await getConfig(env);
+  } catch {
+    return fail(502, 'near_unavailable', 'Could not read the Home clients');
   }
   const route = homeAudienceRoute(config, token.provider, token.aud, now);
   if (!route) return fail(401, 'not_a_home_client', 'The token is not for a client Hana Home accepts');

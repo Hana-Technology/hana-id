@@ -203,7 +203,8 @@ The design is `docs/hana-home-h6-design.md`; its decisions are D480–D489.
 
 ### H10: email users
 
-- **Scope.** An issuer Home route with the audience `hana-home`, on no scope and on the exit list (D485); the `/login/email`
+- **Scope.** An issuer Home route with the audience `hana-home`, on no scope and on the exit list (D485; `homeAudienceRoute`
+  refuses it unless `("email", "hana-home")` is in force there, D494, so the entry must have waited its delay first); the `/login/email`
   mode; gating on the chain's registration, not an active app (D434, D463); `mint()` hardcodes `email:${scopeId}`
   (`apps/email-issuer/src/handlers.ts`), so the exit's token needs its own case.
 - **Files.** `apps/email-issuer/src/handlers.ts`, `apps/api/src/email-token.ts`, `packages/web/src/auth/email-page.ts`.

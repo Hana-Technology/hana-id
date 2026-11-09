@@ -206,7 +206,7 @@ export interface Chain extends NearMock {
   /** get_config().pending_shared_clients. */
   pendingShared: unknown[];
   /** Exit Google client ids in force; null: a pre-v4 contract (no such fields in get_config). */
-  exit: string[] | null;
+  exit: (string | [string, string])[] | null;
   /** get_config().pending_exit_clients (contract v4). */
   pendingExit: unknown[];
   /** Scopes with allow_shared. */
@@ -256,7 +256,7 @@ export function chain(clients: Record<string, string> = {}, opts: { shared?: str
     console_audiences: [],
     shared_clients: near.shared.map((aud) => ['google', aud]),
     pending_shared_clients: near.pendingShared,
-    ...(near.exit ? { exit_clients: near.exit.map((aud) => ['google', aud]), pending_exit_clients: near.pendingExit } : {}),
+    ...(near.exit ? { exit_clients: near.exit.map((e) => (typeof e === 'string' ? ['google', e] : e)), pending_exit_clients: near.pendingExit } : {}),
     change_delay_ms: 0,
     public_registration: false,
     paused: near.paused,

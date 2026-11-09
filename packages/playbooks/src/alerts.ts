@@ -1013,11 +1013,12 @@ const exitClientUnpinned: Playbook = {
   severity: 'critical',
   status: 'live',
   summary:
-    "An exit client (D468) reaches every scope, even those with shared login off, so the watchdog holds the list the council is meant to have set (`watchdog.pinnedExitClients`). A client on chain that isn't pinned pages critical: pending, it can be removed for free; in force, the watchdog pauses the contract. `exit_volume_high` is the hourly counter (D487) past its alarm level: exits never stop by themselves. `exit_client_missing` is a pin with nothing on chain (a warning).",
+    "An exit client (D468) reaches every scope, even those with shared login off, so the watchdog holds the list the council is meant to have set (`watchdog.pinnedExitClients`). A client on chain that isn't pinned pages critical: pending, it can be removed for free; in force, the watchdog pauses the contract (unless the pins are unreadable: it still pages, and doesn't pause). `exit_volume_high` is the hourly counter (D487) past its alarm level, one hour alone or the current and previous hours together at 1.5 times it: exits never stop by themselves. `exit_client_missing` is a pin with nothing on chain (a warning).",
   signals: [
     'Critical `exit_client_unpinned:pending:<provider>:<aud>`: a `set_exit_clients` proposal, or an upgrade, left a client on `pending_exit_clients` that the manifest doesn\'t pin. It is not in force yet (`governance_delay_ms`, 72 h on mainnet).',
-    'Critical `exit_client_unpinned:in_force:<provider>:<aud>`: that client is in force; the title says `paused`, `already paused` or `the watchdog could not act`. Check id `exit_clients`.',
+    'Critical `exit_client_unpinned:in_force:<provider>:<aud>`: that client is in force; the title says `paused`, `already paused`, `pause failed`, `the watchdog could not act` or `not paused: EXIT_PINS is unreadable` (with `pins_invalid:exit`: every in-force client then pages as unpinned, and an alert already open stays open; fix the var, see watchdog-cannot-act). Check id `exit_clients`.',
     'Critical `exit_volume_high:<hour>`: the contract counted that many `exit_session_opened` this hour (`get_config().exit_window`). It refuses nothing.',
+    'Critical `exit_volume_high:combined:<hour>`: neither hour alone reached the level, but the current and previous hours together reached 1.5 times it (rounded up): a burst split across an hour boundary. With the default level of 20 that is 30 across the two hours.',
     'Warning `exit_client_missing:<provider>:<aud>`: a pinned client on neither list. Right after an emergency removal (D483) this is expected until the pin is taken out.',
     'A `governance_change` alert for the `exit_clients` or `pending_exit_clients` field follows any change to the lists.',
   ],
@@ -1025,6 +1026,8 @@ const exitClientUnpinned: Playbook = {
     "An unpinned exit client in force can open sessions in every registered scope for any user whose token it can get, including users of partners who turned off shared login (D468, D485). It can't mint a token by itself: it is a Google client id or the email issuer's Home audience, so the danger is whoever controls that client's redirect or the issuer key.",
     'A pause stops every login and derive (all apps), so a wrong pin costs a real outage: pin before the council runs `set_exit_clients`.',
     "`exit_volume_high` on its own may be a partner shutting down (users rushing out through Home) or a compromised Home page harvesting keys: the alert can't tell them apart, the steps below do.",
+    "The counter is public to inflate: anyone with a Google account can open exit sessions on their own identity, each one counted, whether or not anything is wrong. That can page every hour (the alert is noise until proven otherwise) or keep the windows high so a real burst hides in them: don't read a quiet or a loud counter as proof either way, and read the `exit_session_opened` events (scope and identity key per session) before acting.",
+    "The alarm doesn't catch a slow harvest paced under it: with the default level of 20, 14 sessions an hour never reach 20 in an hour or 30 across two, and that is over 300 a day with no page. It catches bursts; the events are the record for anything slower.",
   ],
   steps: [
     {
@@ -1051,11 +1054,11 @@ const exitClientUnpinned: Playbook = {
     {
       title: 'Only if the alarm level is wrong for real traffic: change the threshold',
       who: 'a founder',
-      detail: 'A rescue rush needs nothing (nothing was refused). If ordinary traffic keeps crossing the level, raise `watchdog.exitAlertPerHour` in the manifest and redeploy the watchdog.',
+      detail: 'A rescue rush needs nothing (nothing was refused). If ordinary traffic, or someone inflating the counter on their own identity, keeps crossing the level, raise `watchdog.exitAlertPerHour` in the manifest and redeploy the watchdog (the combined level moves with it, at 1.5 times). 20 is provisional: raise it once real traffic is known.',
     },
   ],
   verify: ['`get_config().exit_clients` and `pending_exit_clients` match `watchdog.pinnedExitClients`; the next run closes `exit_client_unpinned` and `exit_client_missing`.', '`exit_volume_high` resolves after its hour leaves both windows.'],
-  followUps: ['Tune the provisional alarm level (`DEFAULT_EXIT_ALERT_PER_HOUR`, D493) from sandbox-dev and staging traffic before mainnet.'],
+  followUps: ['Tune the provisional alarm level (`DEFAULT_EXIT_ALERT_PER_HOUR`, D493) from sandbox-dev and staging traffic before mainnet, and raise it once real traffic is known.'],
   refs: ['docs/hana-home-h6-design.md', 'docs/operations.md#hana-home-exit-client', 'D468', 'D483', 'D487', 'D493'],
   related: ['governance-change', 'unexpected-owner-action', 'forged-active-key', 'link-volume'],
 };

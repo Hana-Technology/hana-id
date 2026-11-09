@@ -22,6 +22,7 @@ import type { LedgerStore } from './ledger.ts';
 import { ledgerSource } from './ledger.ts';
 import { errorName, log } from './log.ts';
 import { Budget, RUN_BUDGET, meteredEnv } from './mail.ts';
+import { runLinkJumpAlert } from './link-alerts.ts';
 import { nearReader } from './near.ts';
 import { runNonceCheck } from './nonce-check.ts';
 import { coingecko, runRates } from './rates.ts';
@@ -145,6 +146,8 @@ export async function everyFifteenMinutes(env: Env, now = Date.now()): Promise<F
     const alerts = await track('alerts', () => runAlerts(env, store, sender, budget, now));
     const retentionAlerts = await track('retention_alerts', () => runRetentionAlerts(env, store.retention, sender, budget, now));
     const notices = await track('statement_notices', () => runStatementNotices(menv, store, sender, budget));
+    // The link-rate alert (D448): one RPC and at most one email, only when both fit (a clean stop otherwise).
+    await track('link_jump', () => runLinkJumpAlert(menv, store.state, sender, budget, now));
     if (daily) daily.rates = await track('rates', () => runRates({ store, fetchRate: coingecko(env.COINGECKO_API_KEY), budget, now }));
     const settlement = relayer && keys ? await track('settlement', () => runSettlement({ store, near, poolKeys: new Set(keys), relayerAccount: relayer, signerAccount: env.SIGNER_ACCOUNT, budget, now })) : null;
     const summary = { daily, retention, alerts, retentionAlerts, notices, settlement, budgetLeft: budget.remaining, calls: { ...budget.used } };

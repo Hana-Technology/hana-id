@@ -2,12 +2,28 @@
 // and Google's JWKS, served from the `upstream` table of a D1 the tests share (FAKE_UPSTREAM), so a test sets what the
 // chain and Google say and the real API verifies step-up and owner tokens against it end to end. Nothing else is
 // answered (502): no test reaches a real network.
+import { WorkerEntrypoint } from 'cloudflare:workers';
+
 const RPC_ORIGIN = 'https://rpc.test.invalid';
 const GOOGLE_JWKS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
 
 async function stored(env, key) {
   const row = await env.FAKE_UPSTREAM.prepare('SELECT json FROM upstream WHERE key = ?').bind(key).first();
   return row ? row.json : null;
+}
+
+// The issuer's ConsoleIssuerRpc (build plan batch 9, D447) as the console Worker's ISSUER binding: answers from the
+// same table (`issuer:clientProof`, `issuer:deliverability`), or by default a syntactically valid answer.
+export class ConsoleIssuerRpc extends WorkerEntrypoint {
+  async clientProof(input) {
+    const stored_ = await stored(this.env, 'issuer:clientProof');
+    if (stored_ !== null) return JSON.parse(stored_);
+    return { ok: true, token: JSON.stringify({ payload: 'p', signatures: [{ protected: 'h', signature: 's' }] }), client: ['email', `email:${input.scopeId}`] };
+  }
+  async deliverability(input) {
+    const stored_ = await stored(this.env, `issuer:deliverability:${input.appId}`);
+    return stored_ !== null ? JSON.parse(stored_) : { ok: true, days: [] };
+  }
 }
 
 export default {

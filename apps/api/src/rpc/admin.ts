@@ -46,6 +46,8 @@ import {
   securityEventsInput,
   setLogoInput,
   setSecurityContactsInput,
+  EMAIL_STATS_DAYS_DEFAULT,
+  linkStatsInput,
   supportLookupInput,
   systemStatusInput,
   suspendOrgInput,
@@ -77,6 +79,7 @@ import { governanceSnapshot } from '../governance-status.ts';
 import { systemStatus } from '../system-status.ts';
 import { adminAppNames, adminFindUsers, adminGetUser, adminListUsers } from '../directory/read.ts';
 import { supportLookup, userShares } from '../directory/support.ts';
+import { linkStats } from '../link-usage.ts';
 import { deletedApps, purgeAudit, purgeDirectory, purgeUserEvents } from '../changes/retention.ts';
 import { runRpc } from './common.ts';
 import { mainnetDemoEnv } from '../mainnet-demo-setting.ts';
@@ -284,6 +287,13 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
   /** The Users screen's app labels (C8b): names, orgs, scopes and environments of up to 50 app ids, deleted ones too. */
   appNames(c: unknown) {
     return runRpc(this.env, 'admin.appNames', adminAppNamesInput, c, { actors: HANA }, async ({ input, db }) => ({ apps: await adminAppNames(db, input.appIds) }));
+  }
+
+  // ---- the links view (build plan batch 9, D445) ----
+
+  /** Link counts per app and day, for the newest `days` (14 by default): counts only, no user data. */
+  linkStats(c: unknown) {
+    return runRpc(this.env, 'admin.linkStats', linkStatsInput, c, { actors: HANA_OR_SYSTEM }, async ({ input, w }) => ({ rows: await linkStats(this.env.DB, input.days ?? EMAIL_STATS_DAYS_DEFAULT, input.appId, w.now) }));
   }
 
   // ---- the Support ID lookup (batch C15; D96, D144, D276 as amended by D346, D394): staff only, read only ----

@@ -29,6 +29,7 @@ import {
   b64url,
   canonicalize,
   clientProofNonce,
+  emailClientAudOf,
   hex,
   inviteEmail,
   newId,
@@ -99,6 +100,8 @@ const params = {
       googleWebClientId: z.string().min(1).max(255).nullable().optional(),
       /** D411: when Hana asks users to share their email with the app. */
       identityEmail: z.enum(['off', 'on_request', 'at_login']).optional(),
+      /** Batch 9 (D444): turn email login on for this app (`google,email`). Turning it off is `/off`, immediate. */
+      loginMethods: z.enum(['google', 'google,email']).optional(),
     })
     .strict(),
   owner_action: z
@@ -109,6 +112,8 @@ const params = {
       change: z
         .discriminatedUnion('kind', [
           z.object({ kind: z.literal('AddClient'), aud: z.string().min(1).max(255), clientProof: z.string().min(1).max(7168), piiWarningAccepted: z.literal(true) }).strict(),
+          // Batch 9 (D447): the scope's email client; the console asks the issuer for the proof, none is pasted.
+          z.object({ kind: z.literal('AddEmailClient') }).strict(),
           z.object({ kind: z.literal('SetAllowShared') }).strict(),
           z.object({ kind: z.literal('SetOwners') }).strict(),
         ])
@@ -286,8 +291,9 @@ async function build(env: Env, c: OrgCaller, ctx: RpcCtx, kind: StepUpKind, raw:
     case 'app.settings': {
       const app = await appOf(env, ctx, c.orgId, p.appId as string);
       const changes: Record<string, unknown> = {};
-      for (const k of ['persistence', 'sessionTtlMs', 'idleTtlMs', 'googleWebClientId', 'identityEmail'] as const) if (p[k] !== undefined) changes[k] = p[k];
+      for (const k of ['persistence', 'sessionTtlMs', 'idleTtlMs', 'googleWebClientId', 'identityEmail', 'loginMethods'] as const) if (p[k] !== undefined) changes[k] = p[k];
       if (Object.keys(changes).length === 0) no('bad_request', 'Nothing to change');
+      if (changes.loginMethods === 'google,email' && !env.ISSUER) no('bad_request', 'Email login isn’t offered in this environment');
       const ttl = (changes.sessionTtlMs as number | undefined) ?? app.settings.sessionTtlMs;
       const idle = (changes.idleTtlMs as number | undefined) ?? app.settings.idleTtlMs;
       if (ttl < SESSION_TTL_MIN_MS || ttl > SESSION_TTL_MAX_MS) no('bad_request', 'The session length must be between 1 h and 23 h 50 min');
@@ -339,6 +345,23 @@ async function buildOwnerAction(env: Env, c: OrgCaller, ctx: RpcCtx, p: z.infer<
         }
         args.change = { AddClient: { provider: 'google', aud: ch.aud } };
         args.client_proof = ch.clientProof;
+      } else if (ch.kind === 'AddEmailClient') {
+        const aud = emailClientAudOf(p.scopeId);
+        if (!env.ISSUER) no('bad_request', 'Email login isn’t offered in this environment');
+        if (scope.clients.some(([pr, a]) => pr === 'email' && a === aud)) no('conflict', 'This scope already has its email client');
+        const waiting = scope.pending.find((x) => {
+          const add = (x.change as { AddClient?: { provider?: unknown; aud?: unknown } }).AddClient;
+          return add?.provider === 'email' && add.aud === aud;
+        });
+        if (waiting) no('conflict', 'Adding the email client is already pending on chain');
+        const answer = await env.ISSUER!.clientProof({ requestId: ctx.requestId, actorId: c.session.userId, orgId: c.orgId, scopeId: p.scopeId, actionNonce: scope.action_nonce });
+        if (!answer.ok) {
+          if (answer.code === 'email_not_enabled') no('conflict', 'Turn email login on for an app of this scope first');
+          if (answer.code === 'rate_limited') no('rate_limited', 'Too many email client proofs today for this scope: try again tomorrow');
+          no('near_unavailable', 'Hana’s email issuer could not make the client proof: try again');
+        }
+        args.change = { AddClient: { provider: 'email', aud } };
+        args.client_proof = (answer as { token: string }).token;
       } else if (ch.kind === 'SetAllowShared') {
         if (scope.allow_shared) no('conflict', 'Shared login is already on for this scope');
         args.change = { SetAllowShared: { allow: true } };
@@ -363,11 +386,13 @@ async function buildOwnerAction(env: Env, c: OrgCaller, ctx: RpcCtx, p: z.infer<
     }
     case 'remove_client': {
       const aud = p.aud ?? no('bad_request', 'remove_client needs aud');
-      if (!scope.clients.some(([pr, a]) => pr === 'google' && a === aud)) no('not_found', 'That client isn’t one of the scope’s');
+      // The scope's email client is removed the same way (spec: "removal immediate through remove_client"; D447).
+      const provider = aud === emailClientAudOf(p.scopeId) ? 'email' : 'google';
+      if (!scope.clients.some(([pr, a]) => pr === provider && a === aud)) no('not_found', 'That client isn’t one of the scope’s');
       if (scope.clients.length <= 1 && !scope.allow_shared) no('conflict', 'The last client can’t be removed while shared login is off');
-      args.provider = 'google';
+      args.provider = provider;
       args.aud = aud;
-      decoded = { method: p.method, provider: 'google', aud, immediate: true };
+      decoded = { method: p.method, provider, aud, immediate: true };
       break;
     }
     case 'disable_shared_login': {

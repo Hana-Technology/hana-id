@@ -74,6 +74,8 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
       ...(t.dailySendBudget ? { DAILY_SEND_BUDGET: String(t.dailySendBudget) } : {}),
       ...(t.access ? { ACCESS_TEAM_DOMAIN: t.access.teamDomain, ACCESS_AUD: t.access.aud, ACCESS_STAFF_EMAILS: JSON.stringify(t.access.staffEmails) } : {}),
       ...(t.sendgridWebhookPublicKey ? { SENDGRID_WEBHOOK_PUBLIC_KEY: t.sendgridWebhookPublicKey } : {}),
+      // The issuer's alert mails (D446): the security alias of the dashboard's `email` block.
+      ...(m.email ? { SECURITY_ALIAS: m.email.securityAlias } : {}),
       // DirectoryRpc's own staff check (D275): the admin console's Access application and staff list. Without a
       // dashboard (`admin`) block there is no admin Worker to bind the entrypoint, and every call fails closed.
       ...(m.admin ? { ADMIN_ACCESS_TEAM_DOMAIN: m.admin.accessTeamDomain, ADMIN_ACCESS_AUD: m.admin.accessAud, ADMIN_STAFF_EMAILS: JSON.stringify(m.admin.staffEmails) } : {}),

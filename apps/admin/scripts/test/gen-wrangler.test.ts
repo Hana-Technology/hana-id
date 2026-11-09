@@ -261,10 +261,11 @@ describe('across Workers (config snapshots)', () => {
     expect(apiD1).toEqual(['api']);
   });
 
-  it('only the admin binds DirectoryRpc or the issuer at all; only the issuer binds its own D1 (partners never see it)', () => {
+  it('only the admin binds DirectoryRpc; the console binds only the issuer’s ConsoleIssuerRpc (D447); only the issuer binds its own D1 (partners never see it)', () => {
     const issuer = m.emailIssuer!.cloudflare;
     const bindsIssuer = configs.filter(([, c]) => (c.services ?? []).some((s) => s.service === issuer.workerName || s.entrypoint === 'DirectoryRpc')).map(([n]) => n);
-    expect(bindsIssuer).toEqual(['admin']);
+    expect(bindsIssuer.sort()).toEqual(['admin', 'console']);
+    expect(configs.find(([n]) => n === 'console')![1].services!.filter((s) => s.service === issuer.workerName).map((s) => s.entrypoint)).toEqual(['ConsoleIssuerRpc']);
     expect(configs.find(([n]) => n === 'admin')![1].services!.find((s) => s.binding === 'ISSUER')!.entrypoint).toBe('DirectoryRpc');
     const issuerD1 = configs.filter(([, c]) => (c.d1_databases ?? []).some((d) => d.database_name === issuer.d1Name)).map(([n]) => n);
     expect(issuerD1).toEqual(['email issuer']);
@@ -310,7 +311,9 @@ describe('source checks', () => {
 
   it('the directory (ISSUER) is read only by the Users routes, the Support ID lookup and the audit view: never by a cron, the feed or a notice (C8b, D399); the System status page calls its health method only (D425)', () => {
     const readers = sources.filter(({ text }) => /\.ISSUER\b/u.test(text)).map(({ f }) => f.replace(srcDir, '')).sort();
-    expect(readers).toEqual(['routes.ts', 'status.ts', 'support.ts', 'users.ts']);
+    expect(readers).toEqual(['email-views.ts', 'routes.ts', 'status.ts', 'support.ts', 'users.ts']);
+    // The Email issuer page (batch 9, D448) calls only its counts method.
+    expect([...sources.find(({ f }) => f.endsWith('/email-views.ts'))!.text.matchAll(/issuer\.(\w+)\(/gu)].map((m) => m[1])).toEqual(['issuerStats']);
     const status = sources.find(({ f }) => f.endsWith('/status.ts'))!.text;
     expect([...status.matchAll(/ISSUER!?\.(\w+)\(/gu)].map((m) => m[1])).toEqual(['health']);
     // The only email it causes is the security alias's directory_budget.

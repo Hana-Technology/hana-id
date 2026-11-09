@@ -20,3 +20,4 @@ export * from './support.ts';
 export * from './types.ts';
 export * from './usage-event.ts';
 export * from './users.ts';
+export * from './email-views.ts';

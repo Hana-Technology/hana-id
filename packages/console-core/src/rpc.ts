@@ -49,7 +49,7 @@ const app = { orgId: orgIdInput, appId: appIdInput };
 export const listAppsInput = ctx.extend(org).strict();
 export const getAppInput = ctx.extend(app).strict();
 export const removeOriginsInput = ctx.extend({ ...app, remove: origins, expectedVersion: version }).strict();
-export const turnOffInput = ctx.extend({ ...app, what: z.enum(['policy', 'raw_sign']), expectedVersion: version }).strict();
+export const turnOffInput = ctx.extend({ ...app, what: z.enum(['policy', 'raw_sign', 'email']), expectedVersion: version }).strict();
 /** AdminRpc.setMainnetDemo (D428): Hana staff only; ConsoleRpc has no such method. */
 export const setMainnetDemoInput = ctx.extend({ ...app, on: z.boolean(), expectedVersion: version }).strict();
 export const updateSettingsInput = ctx
@@ -63,6 +63,8 @@ export const updateSettingsInput = ctx
     name: appName.optional(),
     /** D411: when Hana asks users to share their email with the app (immediate, like the other settings). */
     identityEmail: z.enum(['off', 'on_request', 'at_login']).optional(),
+    /** Batch 9: the app's sign-in methods (`apps.login_methods`); email is turned off by turnOff (immediate, a kill switch). */
+    loginMethods: z.enum(['google', 'google,email']).optional(),
   })
   .strict();
 export const setLogoInput = ctx.extend({ ...app, logoKey: z.string().regex(LOGO_KEY_RE).nullable(), expectedVersion: version }).strict();

@@ -32,6 +32,7 @@ function ownerText(o: Owner): string {
 }
 
 function changeText(c: Record<string, unknown>): string {
+  if (c.kind === 'AddClient' && c.provider === 'email') return `Add Hana’s email client ${String(c.aud)}`;
   if (c.kind === 'AddClient') return `Add client ${String(c.aud)}`;
   if (c.kind === 'SetAllowShared') return 'Turn shared login on';
   if (c.kind === 'SetOwners') return `Set owners: ${((c.owners as Owner[]) ?? []).map(ownerText).join('; ')}`;

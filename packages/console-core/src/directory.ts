@@ -12,6 +12,7 @@
 // directory value (tests in apps/email-issuer/scripts/test/directory-rpc-source.test.ts and apps/admin's config tests).
 import { z } from 'zod';
 import { requestId } from './types.ts';
+import type { IssuerStats } from './email-views.ts';
 
 export const DIRECTORY_PROVIDERS = ['email', 'google'] as const;
 export type DirectoryProvider = (typeof DIRECTORY_PROVIDERS)[number];
@@ -173,6 +174,8 @@ export interface DirectoryRpcClient {
   auditSince(c: unknown): DirectoryAnswer<{ rows: DirectoryAuditRow[] }>;
   /** The System status page's probe (D425): the issuer's build and its D1, no user data, no audit row. */
   health(c: unknown): DirectoryAnswer<{ build: string | null; db: { ok: boolean; latencyMs: number } }>;
+  /** The admin's Email issuer page (batch 9, D446): counts only (no personal data, no audit row, no row budget). */
+  issuerStats(c: unknown): DirectoryAnswer<IssuerStats>;
 }
 
 /** A full address (an exact, indexed match) as opposed to a part of one (a substring scan). */

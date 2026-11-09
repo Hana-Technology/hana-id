@@ -796,6 +796,7 @@ const NAV_GROUPS = [
       { path: '/audit', label: 'Audit log' },
     ],
   },
+  { title: 'Email login', items: [{ path: '/email/issuer', label: 'Email issuer' }, { path: '/email/links', label: 'Account links' }] },
   { title: 'Money', items: [{ path: '/reports', label: 'Reports' }, { path: '/statements', label: 'Statements' }, { path: '/rates', label: 'Rates' }] },
   { title: 'System', items: [{ path: '/retention', label: 'Retention' }] },
 ];
@@ -2322,6 +2323,140 @@ async function retentionPage(main) {
   );
 }
 
+// ---- email login (build plan batch 9, D446, D448) ----
+
+const STATS_DAYS = [7, 14, 31];
+
+/** A row whose cells from `numFrom` on are numbers (right-aligned, as the column's header). */
+const numTr = (numFrom, ...cells) => h('tr', {}, cells.map((c, i) => h('td', i >= numFrom ? { class: 'num' } : {}, c)));
+
+/** The window links of the email pages (`?days=`): plain links, the page reads the query. */
+function daysLinks(base, days) {
+  return h('p', { class: 'hint' }, 'Show the last ', STATS_DAYS.flatMap((d, i) => [i ? ' · ' : '', d === days ? h('strong', {}, `${d} days`) : h('a', { href: `${base}?days=${d}`, 'data-link': true }, `${d} days`)]));
+}
+
+const statsDays = () => {
+  const n = Number(new URLSearchParams(location.search).get('days'));
+  return STATS_DAYS.includes(n) ? n : 14;
+};
+
+/** Numbers of one day and app, by metric, from the issuer's counters. */
+function pivotMetrics(metrics) {
+  const rows = new Map();
+  for (const m of metrics) {
+    const key = `${m.day}\n${m.appId ?? ''}`;
+    if (!rows.has(key)) rows.set(key, { day: m.day, appId: m.appId, sent: 0, bounced: 0, complained: 0, refused: 0, alerts: 0 });
+    const r = rows.get(key);
+    if (m.metric === 'sent' || m.metric === 'bounced' || m.metric === 'complained') r[m.metric] += m.count;
+    else if (m.metric.startsWith('refused:')) r.refused += m.count;
+    else if (m.metric.startsWith('alert:')) r.alerts += m.count;
+  }
+  return [...rows.values()].sort((a, b) => (a.day === b.day ? String(a.appId).localeCompare(String(b.appId)) : a.day < b.day ? 1 : -1));
+}
+
+const appCell = (d, appId) => (appId === null || appId === undefined ? h('span', { class: 'muted' }, 'No app') : h('span', { title: appId }, d.appNames[appId] || mono(appId)));
+const ratePct = (a, b) => (b > 0 ? `${((a / b) * 100).toFixed(1)}%` : '—');
+
+const ALERT_EVENTS = {
+  send_budget_exhausted: 'Send budget used up',
+  email_budget: 'Send budget 50% or 80%',
+  email_owner_pool: 'Owner pool 50% or 80%',
+  email_domain_cap: 'Recipient domain cap',
+  mailbox_guess_limit: 'Codes being guessed',
+};
+const alertLabel = (metric) => {
+  const [, event, ...code] = metric.split(':');
+  return `${ALERT_EVENTS[event] ?? event}${code.length ? ` (${code.join(':')})` : ''}`;
+};
+
+async function emailIssuerPage(main) {
+  const days = statsDays();
+  const d = await api('GET', `/api/email/issuer?days=${days}`);
+  main.append(pageHead('Email issuer', { subtitle: 'Tokens, mail and refusals from Hana’s email issuer, per app and UTC day. Counts only: no address or sub is ever shown here.' }));
+  main.append(daysLinks('/email/issuer', d.days));
+  if (d.stats.unavailable) main.append(note('warn', 'Counters unavailable', d.stats.unavailable));
+  else {
+    if (d.stats.truncated) main.append(note('warn', 'The list was cut', 'More rows than one page can read: narrow the window.'));
+    const days_ = pivotMetrics(d.stats.metrics);
+    const alerts = d.stats.metrics.filter((m) => m.metric.startsWith('alert:'));
+    main.append(
+      panel(
+        'Alerts',
+        { hint: 'Each kind emails the security alias at most once a UTC day. These count every occurrence.' },
+        table(
+          ['Day (UTC)', 'What', 'App', { text: 'Count', num: true }],
+          alerts.map((m) => numTr(3, mono(m.day), alertLabel(m.metric), appCell(d, m.appId), String(m.count))),
+          { empty: 'No alerts in this window.' },
+        ),
+      ),
+      panel(
+        'Tokens issued',
+        { hint: 'Per day, app and purpose: session logins, link flows and client proofs.' },
+        table(['Day (UTC)', 'App', 'Purpose', { text: 'Tokens', num: true }], d.stats.issuance.map((r) => numTr(3, mono(r.day), appCell(d, r.appId), r.purpose, String(r.count))), { empty: 'No tokens issued in this window.' }),
+      ),
+      panel(
+        'Mail per app and day',
+        { hint: 'Accepted by the mail provider, and bounces and spam complaints it reports back. Rates over the same row’s sent mail.' },
+        table(
+          ['Day (UTC)', 'App', { text: 'Sent', num: true }, { text: 'Bounced', num: true }, { text: 'Complaints', num: true }, { text: 'Bounce', num: true }, { text: 'Complaint', num: true }],
+          days_.filter((r) => r.sent || r.bounced || r.complained).map((r) => numTr(2, mono(r.day), appCell(d, r.appId), String(r.sent), String(r.bounced), String(r.complained), ratePct(r.bounced, r.sent), ratePct(r.complained, r.sent))),
+          { empty: 'No mail in this window.' },
+        ),
+      ),
+      panel(
+        'Refusals by limit',
+        { hint: 'start and verify refusals, by the limit that refused (ip:start:10m, mailbox:…, app:start:1d). Each counted up to 1,000 a day per app.' },
+        table(
+          ['Day (UTC)', 'App', 'Limit', { text: 'Refused', num: true }],
+          d.stats.metrics.filter((m) => m.metric.startsWith('refused:')).map((m) => numTr(3, mono(m.day), appCell(d, m.appId), mono(m.metric.slice('refused:'.length)), String(m.count))),
+          { empty: 'No refusals in this window.' },
+        ),
+      ),
+    );
+  }
+  main.append(
+    d.policy.unavailable
+      ? panel('Signer policy', {}, note('warn', 'Not available', d.policy.unavailable))
+      : panel(
+          'Signer policy',
+          { hint: 'The email issuer’s signers and keys on chain against the watchdog’s pins. The key id is the JWK thumbprint.' },
+          facts([
+            ['Signatures required', String(d.policy.required)],
+            ['Signers', d.policy.signers.join(', ') || '—'],
+            ['iss', d.policy.iss.length ? d.policy.iss.map((i) => mono(i)) : '—'],
+            ['Against the pins', d.policy.pinsConfigured ? (d.policy.matchesPins ? badge('Matches', 'ok') : badge('Differs: check the watchdog', 'bad')) : badge('No pins configured', 'warning')],
+          ]),
+          table(['Key (thumbprint)', 'Signer', 'On chain', 'Pinned'], d.policy.keys.map((k) => tr(mono(k.kid), k.signer, k.onChain ? badge('Active', 'ok') : badge('Not on chain', 'warning'), k.pinned ? badge('Pinned', 'ok') : badge('Not pinned', 'bad'))), { empty: 'No keys.' }),
+        ),
+    panel('AWS KMS', {}, h('p', { class: 'hint' }, d.kms.signerKind === 'aws-kms' ? 'This env signs with AWS KMS.' : `This env signs with a Worker secret (${d.kms.signerKind}). ${d.kms.note}`)),
+  );
+}
+
+async function emailLinksPage(main) {
+  const days = statsDays();
+  const d = await api('GET', `/api/email/links?days=${days}`);
+  main.append(pageHead('Account links', { subtitle: 'Sign-in-method links per app and UTC day: proposed (pending), linked at once, activated, cancelled and unlinked, and how many of the links were automatic or explicit. Counts only.' }));
+  main.append(daysLinks('/email/links', d.days));
+  const jumped = d.jumps.filter((j) => j.jumped);
+  if (jumped.length) main.append(note('warn', 'Link rate jump', ...jumped.flatMap((j) => [`${j.appName}: ${j.today} links today, ${j.median} on a usual day (the 7-day median). `])));
+  main.append(
+    panel(
+      'Today',
+      { hint: 'Apps with links today, against their 7-day median. Staff can’t create or cancel a link: both need the user’s own proof.' },
+      table(['App', { text: 'Links today', num: true }, { text: '7-day median', num: true }, { text: 'Rate', num: true }], d.jumps.map((j) => numTr(1, j.appName, String(j.today), String(j.median), j.jumped ? badge('Jumped', 'bad') : badge('Normal', 'ok'))), { empty: 'No links today.' }),
+    ),
+    panel(
+      `The last ${d.days} days`,
+      {},
+      table(
+        ['Day (UTC)', 'App', 'Organisation', { text: 'Proposed', num: true }, { text: 'Linked at once', num: true }, { text: 'Activated', num: true }, { text: 'Cancelled', num: true }, { text: 'Unlinked', num: true }, { text: 'Automatic', num: true }, { text: 'Explicit', num: true }],
+        d.rows.map((r) => numTr(3, mono(r.day), h('span', { title: r.appId }, r.appName), mono(r.orgId), String(r.proposed), String(r.linked), String(r.activated), String(r.cancelled), String(r.unlinked), String(r.auto), String(r.explicit))),
+        { empty: 'No links in this window.' },
+      ),
+    ),
+  );
+}
+
 // ---- users (C8b, D275): the issuer's directory, the wallet directory, the chain ----
 
 // The search and the last support reference live in memory only: never in the URL, history or storage (no address,
@@ -2909,6 +3044,8 @@ async function render() {
     else if (path === '/statements') await statementsPage(main);
     else if (path === '/rates') await ratesPage(main);
     else if (path === '/retention') await retentionPage(main);
+    else if (path === '/email/issuer') await emailIssuerPage(main);
+    else if (path === '/email/links') await emailLinksPage(main);
     else if (path === '/users') await usersPage(main);
     else if (path === '/support') await supportPage(main);
     else if (path === USER_OPEN_PATH) await userPage(main);

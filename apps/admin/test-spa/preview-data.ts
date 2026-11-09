@@ -444,3 +444,61 @@ export const supportLookup = (askedIds: number) => ({
     { provider: 'email', sub: 'e1.k3m9q2', found: true, email: 'farah.aziz@lumenpay.example', emailVerified: true, hosted: null, unverifiedClaim: false, firstSeenMs: ago(11 * DAY), lastSeenMs: ago(DAY) },
   ],
 });
+
+
+// ---- email login (build plan batch 9): the Email issuer and Account links pages ----
+
+const dayAgo = (n: number): string => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+
+export function emailIssuer(days: number) {
+  const apps = ['app_01jdzlumen01', 'app_01jdzsora001'];
+  const issuance = [0, 1, 2, 3, 4].flatMap((n) => [
+    { day: dayAgo(n), appId: apps[0]!, purpose: 'session', count: 180 - n * 11 },
+    { day: dayAgo(n), appId: apps[1]!, purpose: 'session', count: 74 - n * 4 },
+    { day: dayAgo(n), appId: apps[0]!, purpose: 'link_new', count: 6 - n },
+  ]);
+  issuance.push({ day: dayAgo(2), appId: null as unknown as string, purpose: 'client_proof', count: 2 });
+  const metrics = [0, 1, 2, 3, 4].flatMap((n) => [
+    { day: dayAgo(n), appId: apps[0]!, metric: 'sent', count: 186 - n * 9 },
+    { day: dayAgo(n), appId: apps[0]!, metric: 'bounced', count: n === 1 ? 5 : 1 },
+    { day: dayAgo(n), appId: apps[1]!, metric: 'sent', count: 70 - n * 3 },
+    { day: dayAgo(n), appId: null as unknown as string, metric: 'refused:ip:start:10m', count: 12 + n },
+    { day: dayAgo(n), appId: apps[0]!, metric: 'refused:app:start:1d', count: n === 3 ? 41 : 0 },
+  ]);
+  metrics.push({ day: dayAgo(1), appId: apps[1]!, metric: 'complained', count: 2 });
+  metrics.push({ day: dayAgo(0), appId: null as unknown as string, metric: 'alert:email_budget:global_50', count: 1 });
+  metrics.push({ day: dayAgo(1), appId: apps[0]!, metric: 'alert:send_budget_exhausted:app', count: 3 });
+  metrics.push({ day: dayAgo(2), appId: null as unknown as string, metric: 'alert:mailbox_guess_limit:backstop', count: 2 });
+  return {
+    days,
+    appNames: { [apps[0]!]: 'Lumen Pay', [apps[1]!]: 'Sora Wallet' },
+    stats: { days, truncated: false, issuance, metrics: metrics.filter((m) => m.count > 0) },
+    policy: {
+      required: 1,
+      signers: ['hana'],
+      iss: ['https://hana-id-email-issuer-sandbox.preview.invalid/v1/email'],
+      pinsConfigured: true,
+      matchesPins: true,
+      keys: [
+        { kid: 'g7cQ0QKkU1rVwwX2W1Jd7uL9HjM4bQmH5GmQj1RzY2w', signer: 'hana', onChain: true, pinned: true },
+        { kid: 'b2mZ3kTpW8vN6yLqF1sDjHa4QcXuE0iOaR9lVnPgT7o', signer: 'hana', onChain: true, pinned: true },
+      ],
+    },
+    kms: { signerKind: 'worker-secret' as const, note: 'The CloudTrail reconciliation, the AWS key age and the Sign volume and budget alarms apply once the issuer signs with AWS KMS (build plan batch 10).' },
+  };
+}
+
+export function emailLinks(days: number) {
+  const app = { appId: 'app_01jdzlumen01', appName: 'Lumen Pay', orgId: 'org_01jdzlumenx', environment: 'live' as const };
+  const rows = [0, 1, 2, 3, 4, 5, 6, 7].map((n) => ({ ...app, day: dayAgo(n), proposed: n === 0 ? 64 : 3 + (n % 3), linked: n === 0 ? 12 : 1, activated: 2 + (n % 2), cancelled: n === 2 ? 1 : 0, unlinked: n === 5 ? 2 : 0, auto: n === 0 ? 60 : 3, explicit: n === 0 ? 16 : 1 }));
+  rows.push({ ...app, appId: 'app_01jdzsora001', appName: 'Sora Wallet', orgId: 'org_01jdzsorax', day: dayAgo(0), proposed: 1, linked: 0, activated: 0, cancelled: 0, unlinked: 0, auto: 1, explicit: 0 });
+  return {
+    days,
+    today: dayAgo(0),
+    rows,
+    jumps: [
+      { appId: 'app_01jdzlumen01', appName: 'Lumen Pay', today: 76, median: 4, jumped: true },
+      { appId: 'app_01jdzsora001', appName: 'Sora Wallet', today: 1, median: 0, jumped: false },
+    ],
+  };
+}

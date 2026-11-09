@@ -45,6 +45,8 @@ export interface SendGridMail {
    * filters). For alerts and blocking notices only, never the issuer's user mail.
    */
   bypassSuppressions?: boolean;
+  /** SendGrid custom arguments (no address, ever): returned on the event webhook (the issuer: `hana_app`, D446). */
+  customArgs?: Record<string, string>;
 }
 
 /** The mail settings of a message that bypasses suppressions (SendGrid v3 `mail_settings`). */
@@ -67,7 +69,7 @@ export function parseFrom(from: string): { email: string; name?: string } {
 
 export function sendgridBody(from: string, m: SendGridMail): Record<string, unknown> {
   return {
-    personalizations: m.to.map((email) => ({ to: [{ email }] })),
+    personalizations: m.to.map((email) => ({ to: [{ email }], ...(m.customArgs ? { custom_args: m.customArgs } : {}) })),
     from: parseFrom(from),
     subject: m.subject,
     content: [{ type: 'text/plain', value: m.text }, ...(m.html === undefined ? [] : [{ type: 'text/html', value: m.html }])],

@@ -19,6 +19,7 @@ import type { RelayInstance, RelayResult } from './relayer-key.ts';
 import { relay } from './relayer-pool.ts';
 import { ckdPayload, createProofPayload, revokePayload, sessionNonce, verifySessionSignature } from './session-crypto.ts';
 import { countEmailUsage } from './email-usage.ts';
+import { countLinkUsage } from './link-usage.ts';
 import { sessionSupportId } from './directory/store.ts';
 import { type LoginTokenResult, verifyLoginToken } from './login-token.ts';
 import { signerPanic } from './panics.ts';
@@ -501,6 +502,7 @@ async function appEndpoint(request: Request, env: Env, endpoint: AppEndpoint, ct
     notePath(ctx, result.result.path);
     // An email session per app and day (D1 `email_usage`, copied hourly to the ledger, D233).
     if (token.email) await countEmailUsage(env, app.id, 'email_sessions', ctx, exec);
+    await countLinkUsage(env, app.id, result.linkTally, ctx, exec);
     // The user's Support ID (C15, D276 as amended by D346), from the new session's own path (the chain's answer: its
     // account root's, for a member), the same code the wallet directory stores for that user.
     const root = identityRoot(result.result.path, app.scope_id);
@@ -576,6 +578,8 @@ async function appEndpoint(request: Request, env: Env, endpoint: AppEndpoint, ct
     if (endpoint === '/v1/derive' && result.ok) recordSessionUse(call.sessionPublicKey, call.counter, check.session);
     else forgetSession(call.sessionPublicKey);
     if (!result.ok) return relayFailure(ctx, env, result, panicKey);
+    // A derive or a revoke can activate a pending link (the contract's `settle`, D445): counted like a login's.
+    await countLinkUsage(env, app.id, result.linkTally, ctx, exec);
     if (endpoint === '/v1/derive') {
       const r = result.result as { big_y?: unknown; big_c?: unknown } | null;
       if (!r || typeof r.big_y !== 'string' || typeof r.big_c !== 'string') return done(ctx, 502, { error: 'The contract returned no key', code: 'bad_contract_result', nearTx: result.nearTx });

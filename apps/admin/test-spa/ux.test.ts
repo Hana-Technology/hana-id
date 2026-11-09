@@ -282,6 +282,7 @@ describe('navigation', () => {
       ['Partners', ['Organisations']],
       ['Support', ['Users', 'Support ID lookup']],
       ['Security', ['Security & monitoring', 'Feed and notices', 'Pending upgrades', 'Playbooks', 'Audit log']],
+      ['Email login', ['Email issuer', 'Account links']],
       ['Money', ['Reports', 'Statements', 'Rates']],
       ['System', ['Retention']],
     ]);

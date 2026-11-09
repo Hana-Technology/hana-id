@@ -96,6 +96,7 @@ export async function detailView(
       rawSign: rawSignInForce(row, now),
       policy: policy && { policyId: policy.id, label: policy.label, json: JSON.parse(policy.json) as unknown },
       identityEmail: row.identity_email === 'on_request' || row.identity_email === 'at_login' ? row.identity_email : 'off',
+      loginMethods: row.login_methods === 'email' || row.login_methods === 'google,email' ? row.login_methods : 'google',
     },
     changes: changes.map(changeView),
     keys: keys.map(keyView),

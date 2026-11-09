@@ -90,7 +90,12 @@ export function wranglerConfig(m: Manifest, d1Id: string, opts: { assetsDir?: st
     },
     d1_databases: [{ binding: 'CONSOLE_DB', database_name: c.d1Name, database_id: d1Id, migrations_dir: 'migrations' }],
     // The API's ConsoleRpc entrypoint: the console is its only caller (the admin Worker binds AdminRpc).
-    services: [{ binding: 'API', service: m.cloudflare.workerName, entrypoint: 'ConsoleRpc' }],
+    services: [
+      { binding: 'API', service: m.cloudflare.workerName, entrypoint: 'ConsoleRpc' },
+      // The Email login page (build plan batch 9, D447): the client proof and an app's deliverability. The console is
+      // this entrypoint's only caller; an env without an email issuer has none.
+      ...(m.emailIssuer ? [{ binding: 'ISSUER', service: m.emailIssuer.cloudflare.workerName, entrypoint: 'ConsoleIssuerRpc' }] : []),
+    ],
     // LOGOS: the console writes logos (C11) and deletes replaced ones; STATEMENTS: read only by code (a source check).
     r2_buckets: [
       { binding: 'LOGOS', bucket_name: f.logosBucket },

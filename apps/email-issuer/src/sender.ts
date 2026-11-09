@@ -9,7 +9,9 @@ export interface MailMessage {
   text: string;
   html: string;
   /** For the provider's own categorisation and the outbox stub; never the content. */
-  kind: 'code' | 'link_notice' | 'unlock' | 'confirm';
+  kind: 'code' | 'link_notice' | 'unlock' | 'confirm' | 'alert';
+  /** The app the mail is for (never the recipient): carried through the provider's events so bounces count per app (D446). */
+  appId?: string;
 }
 
 export type SendResult = { ok: true } | { ok: false; reason: 'rejected' | 'unavailable' | 'misconfigured'; providerStatus?: number };

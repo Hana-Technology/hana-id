@@ -64,7 +64,7 @@ export function purposeText(purpose: Purpose, appText: string): { subject: strin
   }
 }
 
-export function codeMail(input: { to: string; code: string; appName: string; authOrigin: string; purpose: Purpose }): MailMessage {
+export function codeMail(input: { to: string; code: string; appName: string; authOrigin: string; purpose: Purpose; appId?: string }): MailMessage {
   const app = displayAppName(input.appName);
   const appText = app ? `“${app}”` : 'an app';
   const host = hostOf(input.authOrigin);
@@ -85,11 +85,12 @@ export function codeMail(input: { to: string; code: string; appName: string; aut
       escapeHtml(t.ignore),
     ]),
     kind: 'code',
+    ...(input.appId ? { appId: input.appId } : {}),
   };
 }
 
 /** The notice of a link that joins this email identity (spec "Notices"): the only link is to authOrigin. */
-export function linkNoticeMail(input: { to: string; appName: string; authOrigin: string; pending: boolean }): MailMessage {
+export function linkNoticeMail(input: { to: string; appName: string; authOrigin: string; pending: boolean; appId?: string }): MailMessage {
   const app = displayAppName(input.appName);
   const appText = app ? `“${app}”` : 'an app';
   const cancel = `${input.authOrigin.replace(/\/+$/u, '')}/link/cancel`;
@@ -103,6 +104,7 @@ export function linkNoticeMail(input: { to: string; appName: string; authOrigin:
     text: [what, '', notYou, ''].join('\n'),
     html: html([escapeHtml(what), `Not you? <a href="${escapeHtml(cancel)}">${escapeHtml(cancel)}</a>`]),
     kind: 'link_notice',
+    ...(input.appId ? { appId: input.appId } : {}),
   };
 }
 

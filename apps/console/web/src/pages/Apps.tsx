@@ -115,6 +115,7 @@ const SECTIONS = [
   ['origins', 'Origins'],
   ['keys', 'Keys'],
   ['sessions', 'Login & sessions'],
+  ['email', 'Email login'],
   ['signing', 'Signing'],
   ['branding', 'Branding'],
   ['suspend', 'Suspend'],

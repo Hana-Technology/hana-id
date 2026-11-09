@@ -2,6 +2,7 @@
 // the exact shapes the console's `/api/*` routes answer (scripts/test/preview.test.ts checks them against
 // console-core's schemas). Dev only: nothing here is built into dist/ or deployed. Every name, address, key and hash is
 // invented; none is a real account, key or person.
+import type { AppEmailAnswer } from '@hana-id/console-core';
 import type { AppDetail, AppSummary, AuditAnswer, MeAnswer, MembersAnswer, OrgAnswer, PendingUpgradesView, StatementMeta, StatementView, UsageRow } from '@hana-id/console-core';
 import { canonicalJson, policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import { policyJson } from '../../../packages/core/test/policy-fixtures.ts';
@@ -368,4 +369,19 @@ export function audit(now: number): AuditAnswer {
     ],
     next: '208.979',
   };
+}
+
+/** The Email login page's answer in each state (`?state=off|waiting|ready|on|nochain`; a screenshot script opens each). */
+export function emailStatus(a: { id: string; scopeId: string; settings: { loginMethods?: string | undefined } }, now: number, state: string): AppEmailAnswer {
+  const days = [0, 1, 2, 3, 4, 5, 6].map((d) => ({ day: new Date(now - d * 86_400_000).toISOString().slice(0, 10), sent: 180 - d * 17, bounced: d === 2 ? 4 : 1, complained: d === 4 ? 1 : 0, refused: d === 1 ? 12 : 2 }));
+  const deliverability: AppEmailAnswer['deliverability'] = state === 'empty' ? { days: [] } : state === 'nochain' ? { unavailable: true } : { days };
+  const scope: AppEmailAnswer['scope'] =
+    state === 'nochain' ? { unavailable: true }
+    : state === 'on' ? { clientOnChain: true, pending: null, youAreOnChainOwner: true }
+    : state === 'waiting' ? { clientOnChain: false, pending: { changeId: 12, unlockAt: now + 3 * 3_600_000, executable: false }, youAreOnChainOwner: true }
+    : state === 'ready' ? { clientOnChain: false, pending: { changeId: 12, unlockAt: now - 600_000, executable: true }, youAreOnChainOwner: true }
+    : state === 'stuck' ? { clientOnChain: false, pending: null, youAreOnChainOwner: true }
+    : state === 'stuck-other' ? { clientOnChain: false, pending: null, youAreOnChainOwner: false }
+    : { clientOnChain: state === 'off-with-client', pending: null, youAreOnChainOwner: state !== 'not-owner' };
+  return { emailOn: state === 'on' || state === 'waiting' || state === 'ready' || state === 'stuck' || state === 'stuck-other' || state === 'nochain', scopeId: a.scopeId, scope, otherAppsEmailOn: state === 'waiting' ? 1 : 0, available: state !== 'unavailable', deliverability };
 }

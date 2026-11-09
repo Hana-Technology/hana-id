@@ -24,7 +24,22 @@ export class SendGridSender implements EmailSender {
   ) {}
 
   async send(m: MailMessage): Promise<SendResult> {
-    const r = await sendgridSend(this.apiKey, this.from, { to: [m.to], subject: m.subject, text: m.text, html: m.html, category: issuerCategory(m.kind) }, this.fetcher);
+    const r = await sendgridSend(
+      this.apiKey,
+      this.from,
+      {
+        to: [m.to],
+        subject: m.subject,
+        text: m.text,
+        html: m.html,
+        category: issuerCategory(m.kind),
+        // The app id (never the recipient) comes back on the event webhook, so bounces and complaints count per app (D446).
+        ...(m.appId ? { customArgs: { hana_app: m.appId } } : {}),
+        // An alert to Hana's own alias must not be dropped by a suppression list (D401); login mail never bypasses it.
+        ...(m.kind === 'alert' ? { bypassSuppressions: true } : {}),
+      },
+      this.fetcher,
+    );
     // Accepted: SendGrid queued it (its X-Message-Id identifies the message in its activity feed; not kept here).
     if (r.ok) return { ok: true };
     return r.status === undefined ? { ok: false, reason: r.reason } : { ok: false, reason: r.reason, providerStatus: r.status };

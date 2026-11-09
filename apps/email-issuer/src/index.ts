@@ -10,6 +10,7 @@ import { route } from './handlers.ts';
 
 export type { Env } from './env.ts';
 export { Challenge } from './challenge.ts';
+export { ConsoleIssuerRpc } from './console-rpc.ts';
 export { DirectoryRpc } from './directory-rpc.ts';
 export { Outbox } from './outbox.ts';
 export { RateLimiter } from './rate-limiter.ts';

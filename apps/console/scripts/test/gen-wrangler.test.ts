@@ -237,8 +237,11 @@ describe('source checks', () => {
     expect(code(google)).not.toMatch(/env\./u);
   });
 
-  it('nothing in the console reads the email issuer or its user directory (D269: partners never see end-user addresses)', () => {
-    for (const { f, text } of sources) expect(text, f).not.toMatch(/user_emails|user_email_apps|DirectoryRpc|ISSUER|email-issuer|emailIssuer/u);
+  it('the console reads the email issuer only for client proofs and counts (ConsoleIssuerRpc, D447), and never the user directory (D269: partners never see end-user addresses)', () => {
+    for (const { f, text } of sources) {
+      expect(text, f).not.toMatch(/user_emails|user_email_apps|DirectoryRpc|email-issuer|emailIssuer/u);
+      for (const m of text.matchAll(/ISSUER!?\??\.(\w+)\(/gu)) expect(['clientProof', 'deliverability'], `${f}: ${m[0]}`).toContain(m[1]);
+    }
     const c = JSON.stringify(testWranglerConfig());
     expect(c).not.toMatch(/issuer/iu);
   });

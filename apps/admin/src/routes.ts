@@ -25,6 +25,7 @@ import { securityView } from './security.ts';
 import { statusRoute } from './status.ts';
 import { usersFindRoute, usersGetRoute, usersSearchRoute } from './users.ts';
 import { supportLookupRoute } from './support.ts';
+import { issuerViewRoute, linksViewRoute } from './email-views.ts';
 import { type StaffRequest, staffCtx } from './rpc.ts';
 
 export interface RouteCtx {
@@ -283,6 +284,8 @@ const ROUTES: Route[] = [
   { method: 'PUT', pattern: '/api/rates/:day', handler: rateOverrideRoute },
   // ---- retention (C13): the monthly job's runs, read only ----
   { method: 'GET', pattern: '/api/retention', handler: retentionRoute },
+  { method: 'GET', pattern: '/api/email/issuer', handler: issuerViewRoute },
+  { method: 'GET', pattern: '/api/email/links', handler: linksViewRoute },
   // ---- the Users screen (C8b, D275): POST, so no address, sub or code is in a URL ----
   { method: 'POST', pattern: '/api/users/search', handler: usersSearchRoute },
   { method: 'POST', pattern: '/api/users/find', handler: usersFindRoute },

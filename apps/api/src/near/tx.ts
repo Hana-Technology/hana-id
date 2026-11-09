@@ -2,6 +2,7 @@
 import { KeyPair, type KeyPairString } from '@near-js/crypto';
 import { actionCreators, createTransaction, encodeTransaction, Signature, SignedTransaction } from '@near-js/transactions';
 import { baseDecode, baseEncode } from '@near-js/utils';
+import { type LinkTally, linkTallyOf } from '../link-usage.ts';
 import { type FinalOutcome, type Rpc, decodeSuccessValue, isTransient, isUnknownTx } from './rpc.ts';
 
 /** 300 Tgas, as the legacy relayer (derive_key waits on the MPC through a yield/resume). */
@@ -130,7 +131,7 @@ export function burntGas(outcome: Partial<FinalOutcome>): GasSum | null {
  * (ok, failure, or a value that isn't JSON) also carries what it burnt, when the RPC reported it (burntGas).
  */
 export type Outcome =
-  | { ok: true; value: unknown; gas?: GasSum | null }
+  | { ok: true; value: unknown; gas?: GasSum | null; linkTally?: LinkTally | null }
   | { ok: false; kind: 'failure'; error: string; executor: string | null; gas?: GasSum | null }
   | { ok: false; kind: 'rpc' | 'timeout' | 'dropped'; error: string; gas?: GasSum | null };
 
@@ -140,6 +141,8 @@ const DROP_CHECKS = 2;
 
 export interface WaitOptions {
   timeoutMs?: number;
+  /** The signer contract: its receipts' NEP-297 `identity_link*` log lines are tallied (counts only, D445). */
+  linkEventsFrom?: string;
   /**
    * Asked while the node reports the tx as unknown: true when it can no longer be included (the access key's nonce
    * has already reached the tx's nonce through other txs). Two answers in a row, DROP_CHECK_MS apart, end the wait
@@ -154,7 +157,7 @@ export interface WaitOptions {
  * the nonce critical section.
  */
 export async function waitForOutcome(rpc: Rpc, txHash: string, senderId: string, initial?: Partial<FinalOutcome> | null, opts: WaitOptions | number = {}): Promise<Outcome> {
-  const { timeoutMs = OUTCOME_TIMEOUT_MS, superseded } = typeof opts === 'number' ? { timeoutMs: opts } : opts;
+  const { timeoutMs = OUTCOME_TIMEOUT_MS, superseded, linkEventsFrom } = typeof opts === 'number' ? { timeoutMs: opts } : opts;
   let outcome: Partial<FinalOutcome> | null = initial ?? null;
   const deadline = Date.now() + timeoutMs;
   let first = true;
@@ -185,7 +188,7 @@ export async function waitForOutcome(rpc: Rpc, txHash: string, senderId: string,
   const failure = failureText(outcome);
   if (failure) return { ok: false, kind: 'failure', error: failure, executor: failedExecutor(outcome), gas };
   try {
-    return { ok: true, value: decodeSuccessValue(statusObject(outcome.status)?.SuccessValue), gas };
+    return { ok: true, value: decodeSuccessValue(statusObject(outcome.status)?.SuccessValue), gas, ...(linkEventsFrom ? { linkTally: linkTallyOf(outcome.receipts_outcome ?? [], linkEventsFrom) } : {}) };
   } catch {
     return { ok: false, kind: 'rpc', error: 'The contract returned a value that is not JSON', gas };
   }

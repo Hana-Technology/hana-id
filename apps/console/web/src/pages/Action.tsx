@@ -39,6 +39,7 @@ type O = { origin: string; display: string; idn: boolean };
 const str = (v: unknown): string => (typeof v === 'string' ? v : JSON.stringify(v));
 
 function OwnerChange({ change }: { change: Record<string, unknown> }) {
+  if (change.kind === 'AddClient' && change.provider === 'email') return <p>Add Hana’s email client <span className="mono">{str(change.aud)}</span> to the scope (timelocked): users of this scope can then sign in with email.</p>;
   if (change.kind === 'AddClient') return <p>Add the Google client <span className="mono">{str(change.aud)}</span> to the scope (timelocked).</p>;
   if (change.kind === 'SetAllowShared') return <p>Turn on shared login: users may sign in through Hana’s shared Google clients (timelocked).</p>;
   if (change.kind === 'SetOwners') {
@@ -62,9 +63,10 @@ function settingText(k: string, v: unknown): string {
   if (k === 'sessionTtlMs' || k === 'idleTtlMs') return duration(Number(v));
   if (k === 'googleWebClientId') return v === null || v === undefined ? 'Hana’s shared client' : str(v);
   if (k === 'identityEmail') return identityEmailLabel(v).toLowerCase();
+  if (k === 'loginMethods') return v === 'google,email' ? 'on (Google and email)' : 'off (Google only)';
   return str(v);
 }
-const SETTING_LABEL: Record<string, string> = { persistence: 'Session persistence', sessionTtlMs: 'Session length', idleTtlMs: 'Idle timeout', googleWebClientId: 'Google web client', identityEmail: 'Email sharing' };
+const SETTING_LABEL: Record<string, string> = { loginMethods: 'Email login', persistence: 'Session persistence', sessionTtlMs: 'Session length', idleTtlMs: 'Idle timeout', googleWebClientId: 'Google web client', identityEmail: 'Email sharing' };
 
 export function Decoded({ kind, d }: { kind: string; d: Record<string, unknown> }) {
   switch (kind) {
@@ -158,7 +160,7 @@ export function Decoded({ kind, d }: { kind: string; d: Record<string, unknown> 
               <OwnerChange change={d.change as Record<string, unknown>} />
             </>
           )}
-          {d.method === 'remove_client' && <Callout tone="warn">Remove the Google client {str(d.aud)} from the scope, at once.</Callout>}
+          {d.method === 'remove_client' && <Callout tone="warn">{d.provider === 'email' ? 'Remove Hana’s email client from the scope, at once: users of this scope stop being able to sign in with email.' : `Remove the Google client ${str(d.aud)} from the scope, at once.`}</Callout>}
           {d.method === 'disable_shared_login' && <Callout tone="warn">Turn shared login off, at once: users of Hana’s shared clients can’t sign in to this scope any more.</Callout>}
         </>
       );

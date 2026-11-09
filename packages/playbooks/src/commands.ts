@@ -83,6 +83,9 @@ export const uploadRelayerKeys =
 export const uploadOwnerRelayerKeys =
   'node -e \'process.stdout.write(JSON.stringify(require("./.secrets/<env>/owner-relayer-keys.json")))\' | corepack pnpm --dir apps/api exec wrangler secret put OWNER_RELAYER_KEYS';
 
+export const uploadHomeRelayerKeys =
+  'node -e \'process.stdout.write(JSON.stringify(require("./.secrets/<env>/home-relayer-keys.json")))\' | corepack pnpm --dir apps/api exec wrangler secret put HOME_RELAYER_KEYS';
+
 export const apiGen = 'corepack pnpm --filter @hana-id/api run gen <env>';
 export const apiDeploy = 'corepack pnpm --filter @hana-id/api run deploy';
 export const webBuild = 'corepack pnpm --filter @hana-id/web build';

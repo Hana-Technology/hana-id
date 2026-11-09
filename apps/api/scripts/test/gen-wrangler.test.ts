@@ -207,6 +207,15 @@ describe('wrangler.jsonc', () => {
     expect((wranglerConfig(withFallback, LOCAL_D1_ID) as { vars: Record<string, string> }).vars.NEAR_RPC_FALLBACK).toBe('https://rpc.fallback.example');
   });
 
+  it('writes HOME_DERIVES_PER_DAY only when the manifest sets it, 0 included', () => {
+    const vars = (m: unknown) => (wranglerConfig(manifestSchema.parse(m), LOCAL_D1_ID) as { vars: Record<string, string> }).vars;
+    expect(vars(manifest).HOME_DERIVES_PER_DAY).toBeUndefined();
+    expect(vars({ ...manifest, homeDerivesPerDay: 0 }).HOME_DERIVES_PER_DAY).toBe('0');
+    expect(vars({ ...manifest, homeDerivesPerDay: 42 }).HOME_DERIVES_PER_DAY).toBe('42');
+    expect(() => vars({ ...manifest, homeDerivesPerDay: -1 })).toThrow();
+    expect(() => vars({ ...manifest, homeDerivesPerDay: 1.5 })).toThrow();
+  });
+
   it('writes the API’s failover list as NEAR_RPC_FALLBACKS: apiRpcFallbacks in order, else rpcFallback, else nothing (D435)', () => {
     const vars = (m: unknown) => (wranglerConfig(manifestSchema.parse(m), LOCAL_D1_ID) as { vars: Record<string, string> }).vars;
     const { apiRpcFallbacks: _a, rpcFallback: _f, ...neither } = manifest;

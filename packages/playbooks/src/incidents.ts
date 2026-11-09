@@ -62,10 +62,10 @@ const relayerKeyStolen: Playbook = {
   kind: 'incident',
   severity: 'warning',
   status: 'live',
-  summary: "A function-call key of the relayer account (`RELAYER_KEYS` or `OWNER_RELAYER_KEYS`) leaked: it can burn its allowance, nothing more.",
+  summary: "A function-call key of the relayer account (`RELAYER_KEYS`, `OWNER_RELAYER_KEYS` or `HOME_RELAYER_KEYS`) leaked: it can burn its allowance, nothing more.",
   signals: [
     'A watchdog `relayer_allowance_*` or `relayer_balance_*` alert without matching logins (allowance or balance dropping faster than the request logs explain); `relay_retry` `invalid_nonce` warnings (another sender used a pool key).',
-    'The API Worker secrets or `.secrets/<env>/relayer-keys.json` / `owner-relayer-keys.json` were exposed.',
+    'The API Worker secrets or `.secrets/<env>/relayer-keys.json` / `owner-relayer-keys.json` / `home-relayer-keys.json` were exposed.',
   ],
   impact: [
     "Session pool: burn ≤ its allowance (2 NEAR default) and relay session methods, which still need a token or a session signature. DoS only: it can't derive anyone's key.",
@@ -81,7 +81,7 @@ const relayerKeyStolen: Playbook = {
     {
       title: 'Remove it from the secrets file',
       who: 'a founder',
-      detail: "Edit `.secrets/<env>/relayer-keys.json` (or `owner-relayer-keys.json`), or move the file aside for a whole new pool (then delete every old key on chain too: left there they keep their allowance).",
+      detail: "Edit `.secrets/<env>/relayer-keys.json` (or `owner-relayer-keys.json`, `home-relayer-keys.json`), or move the file aside for a whole new pool (then delete every old key on chain too: left there they keep their allowance).",
     },
     {
       title: 'Add replacements',
@@ -93,7 +93,7 @@ const relayerKeyStolen: Playbook = {
       title: 'Upload the pool again',
       who: 'a founder',
       detail: "A replaced key at an index makes its Durable Object ignore the old reservation and read the nonce from chain once (one `relay_retry` `invalid_nonce` per re-added key is expected).",
-      commands: [c.uploadRelayerKeys, c.uploadOwnerRelayerKeys],
+      commands: [c.uploadRelayerKeys, c.uploadOwnerRelayerKeys, c.uploadHomeRelayerKeys],
     },
   ],
   verify: ['`deploy-contract <env>` dry run: no blockers, no missing keys.', 'A smoke login relays without errors.'],

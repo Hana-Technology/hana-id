@@ -977,15 +977,17 @@ The relayer account's available balance, or a pool key's remaining allowance, is
    corepack pnpm --filter @hana-id/scripts run deploy-contract <env> --yes
    node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/relayer-keys.json")))' | corepack pnpm --dir apps/api exec wrangler secret put RELAYER_KEYS
    node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/owner-relayer-keys.json")))' | corepack pnpm --dir apps/api exec wrangler secret put OWNER_RELAYER_KEYS
+   node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/home-relayer-keys.json")))' | corepack pnpm --dir apps/api exec wrangler secret put HOME_RELAYER_KEYS
    ```
 
-4. **No key in a pool: add the pool again** (who: a founder). `deploy-contract` adds every key of `.secrets/<env>/relayer-keys.json` / `owner-relayer-keys.json` that isn't on chain. Only the relayer account's full-access key can delete keys: if nobody here did, treat that key as compromised (follow [api-or-cloudflare-compromised](#api-or-cloudflare-compromised)).
+4. **No key in a pool: add the pool again** (who: a founder). `deploy-contract` adds every key of `.secrets/<env>/relayer-keys.json` / `owner-relayer-keys.json` / `home-relayer-keys.json` that isn't on chain. Only the relayer account's full-access key can delete keys: if nobody here did, treat that key as compromised (follow [api-or-cloudflare-compromised](#api-or-cloudflare-compromised)).
 
    ```sh
    corepack pnpm --filter @hana-id/scripts run deploy-contract <env>
    corepack pnpm --filter @hana-id/scripts run deploy-contract <env> --yes
    node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/relayer-keys.json")))' | corepack pnpm --dir apps/api exec wrangler secret put RELAYER_KEYS
    node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/owner-relayer-keys.json")))' | corepack pnpm --dir apps/api exec wrangler secret put OWNER_RELAYER_KEYS
+   node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/home-relayer-keys.json")))' | corepack pnpm --dir apps/api exec wrangler secret put HOME_RELAYER_KEYS
    ```
 
 5. **Thresholds that no longer fit** (who: a founder). After raising the allowances (or for a busier env), set `watchdog.relayerFunds` in `envs/<env>.json` (NEAR; `balance`, `sessionAllowance`, `ownerAllowance`, each `{warn, critical}` with critical below warn), then regenerate the watchdog's config and redeploy it.
@@ -1507,12 +1509,12 @@ The keys-updater key (an API Worker secret, a function-call key on the signer) l
 
 `relayer-key-stolen` · warning
 
-A function-call key of the relayer account (`RELAYER_KEYS` or `OWNER_RELAYER_KEYS`) leaked: it can burn its allowance, nothing more.
+A function-call key of the relayer account (`RELAYER_KEYS`, `OWNER_RELAYER_KEYS` or `HOME_RELAYER_KEYS`) leaked: it can burn its allowance, nothing more.
 
 **Signals**
 
 - A watchdog `relayer_allowance_*` or `relayer_balance_*` alert without matching logins (allowance or balance dropping faster than the request logs explain); `relay_retry` `invalid_nonce` warnings (another sender used a pool key).
-- The API Worker secrets or `.secrets/<env>/relayer-keys.json` / `owner-relayer-keys.json` were exposed.
+- The API Worker secrets or `.secrets/<env>/relayer-keys.json` / `owner-relayer-keys.json` / `home-relayer-keys.json` were exposed.
 
 **Impact**
 
@@ -1527,7 +1529,7 @@ A function-call key of the relayer account (`RELAYER_KEYS` or `OWNER_RELAYER_KEY
    near account delete-keys <relayer> public-keys <ed25519:…> network-config testnet sign-with-legacy-keychain send
    ```
 
-2. **Remove it from the secrets file** (who: a founder). Edit `.secrets/<env>/relayer-keys.json` (or `owner-relayer-keys.json`), or move the file aside for a whole new pool (then delete every old key on chain too: left there they keep their allowance).
+2. **Remove it from the secrets file** (who: a founder). Edit `.secrets/<env>/relayer-keys.json` (or `owner-relayer-keys.json`, `home-relayer-keys.json`), or move the file aside for a whole new pool (then delete every old key on chain too: left there they keep their allowance).
 
 3. **Add replacements** (who: a founder). `deploy-contract` generates and adds the missing keys (saved to the file before they go on chain). Pass the same allowance flags as before if you raised them.
 
@@ -1541,6 +1543,7 @@ A function-call key of the relayer account (`RELAYER_KEYS` or `OWNER_RELAYER_KEY
    ```sh
    node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/relayer-keys.json")))' | corepack pnpm --dir apps/api exec wrangler secret put RELAYER_KEYS
    node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/owner-relayer-keys.json")))' | corepack pnpm --dir apps/api exec wrangler secret put OWNER_RELAYER_KEYS
+   node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/home-relayer-keys.json")))' | corepack pnpm --dir apps/api exec wrangler secret put HOME_RELAYER_KEYS
    ```
 
 **Verify**

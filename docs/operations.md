@@ -472,7 +472,7 @@ issuer keys and code changes behind public delays and makes the owner a 2-of-3 S
 | Replace a council member | `admin <env> council:replace-member --remove <old> --add <new> [--member <m>] [--approve-with <m>] [--yes]` |
 | Governance state and findings | `admin <env> governance:status [--json]` |
 | Hana Home derive: the Home relayer key | `deploy-contract <env> --yes` adds it (`--home-relayer-keys N`, default 1; `--home-relayer-allowance NEAR`, default 2), writes `.secrets/<env>/home-relayer-keys.json` (0600); upload `HOME_RELAYER_KEYS` with `wrangler secret put HOME_RELAYER_KEYS` (see "Hana Home derive: deploy") |
-| Hana Home: daily derive ceiling | optional var `HOME_DERIVES_PER_DAY` (positive integer; default 500); read `home_usage` in D1 to see the day's count |
+| Hana Home: daily derive ceiling | manifest `homeDerivesPerDay` (integer of 0 or more; default 500; `0` turns Home derives off), written as the var `HOME_DERIVES_PER_DAY` by `gen`; read `home_usage` in D1 to see the day's count |
 | Hana Home: record a Hana-held Google client (Enterprise onboarding) | `admin <env> home:client:add --scope <id> --client <google client id> [--remote] [--yes]` (the chain must list the client in the scope; D1 only, `hana_held_clients`; dry run without `--yes`) |
 | Hana Home: a scope's quieter listing | `admin <env> home:listing --scope <id> (--quiet\|--normal) [--remote] [--yes]` (D1 `scopes.home_quiet`; dry run without `--yes`) |
 | Upgrade (propose, then execute once due), hand the contract to the DAO | `deploy-contract <env> --upgrade` · `--transfer-owner [--approve-with <m>]` |

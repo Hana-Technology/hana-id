@@ -285,6 +285,8 @@ export const manifestSchema = z
      * "Manifest"). It replaces batch B's raw-sign/policy delay rule for the API and the CLI (from batch C3).
      */
     appChangeDelayMs: delayMs,
+    /** Hana Home derives per UTC day across the env; 0 turns them off. Absent: the API's default (500). */
+    homeDerivesPerDay: z.number().int().min(0).max(9_999_999).optional(),
     /**
      * Batch C's dashboard (docs/batch-c-spec.md "Manifest"): set together with `files`, `admin`, `usage`, `email` and
      * `ownerGrantDelayMs`, or none of them (`dashboard.ts`). Without them the env runs the API only.

@@ -992,7 +992,7 @@ Every JWT-accepting path (`/v1/login`, `/v1/sessions`, `/v1/owner-actions` owner
 `verifyIdToken`, which refuses a token whose header `typ` is `hana-identity+jwt` or whose `iss` is `IDENTITY_ISS`
 before anything else: `400 bad_token`. (It would fail anyway: those paths take RS256 Google tokens only.)
 
-### Hana Home (`src/home/`; H1, H2, H3, D473, D474, D500–D503, D520–D526; not deployed, not linked)
+### Hana Home (`src/home/`; H1, H2, H3, D473, D474, D500–D503, D520–D529; not deployed, not linked)
 
 CORS: `homePreflight` and every response echo `AUTH_ORIGIN` only, and allow `x-hana-home`. `docs/hana-home-spec.md` is the
 design; what exists today: `GET /v1/home/config`, the identity verifier `homeGate` (`src/home/identity.ts`) and
@@ -1010,16 +1010,18 @@ hold; beside each other: the client is admitted for the scope (an exit client in
 standing (409 `link_pending`; a standing the chain didn't confirm is 502 `near_unavailable`, D522); the session key's
 signature (401 `invalid_signature`); the app key's shape (400 `invalid_app_key`); then every limit (429 `rate_limited`:
 3/hour per wallet (`scope`, `sha256(path)`), 10/hour and 20/UTC day per `(provider, sub)`; 429 `home_busy` with
-`Retry-After` at the env's daily ceiling, `HOME_DERIVES_PER_DAY`, default 500; a limiter or D1 failure refuses, 503
+`Retry-After` at the env's daily ceiling, manifest `homeDerivesPerDay` (var `HOME_DERIVES_PER_DAY`), default 500, 0 turns Home derives off; a limiter or D1 failure refuses, 503
 `rate_limiter_unavailable`). A request refused by any of these relays nothing and spends no limit. Then
 `create_session_and_derive` through the `home` relayer pool. Answers as `/v1/login`: `200 {result: {big_y, big_c}, session:
 {scope_id, expires_at_ms, max_uses, used: 1}, nearTx, supportId?}`; a failure as `loginFailure` (`session_exists`,
 `ckd_failed`, `contract_rejected`, …); `relayer_unconfigured` (503) without a Home key. A relay that certainly never ran gives
-back the limits it took.
+back the limits it took; `ckd_failed` gives back the wallet's hour only (D528).
 
 It isn't a login of any app: it marks no app as launched (`first_login_at`, `first_session_at`, session markers untouched),
 spends no app's quota and writes no usage event (billing is H11). After the answer: `key_exported` for the account's user
-(`chain` null, `app_id` NULL, D520) and the directory row (D500), both best effort.
+(`chain` null, `app_id` NULL, D520) and, only for a confirmed linked member or an identity the directory already holds as
+`active`, the directory row (D500, D527), both best effort. `supportId` comes back only in that case. A derive by anyone
+else writes no row: it doesn't make them `mine` in `GET /v1/home/apps`.
 
 Nothing here derives a key outside that route.
 

@@ -140,6 +140,8 @@ export function wranglerConfig(m: Manifest, d1Id: string, opts: { usageHyperdriv
       // Batch C (docs/batch-c-spec.md "Bindings"): the guarded-change delay, the network for the production origin
       // rules, and every Hana origin, which no app may list as its own. Read from batch C3 on.
       APP_CHANGE_DELAY_MS: String(m.appChangeDelayMs),
+      // Hana Home's daily ceiling, only when the manifest sets one (0 is a real value: no derive at all).
+      ...(m.homeDerivesPerDay !== undefined ? { HOME_DERIVES_PER_DAY: String(m.homeDerivesPerDay) } : {}),
       NETWORK: m.network,
       REFUSED_ORIGINS: JSON.stringify(hanaOwnOrigins(m)),
       // The logo origin for `GET /v1/app`'s logoUrl (batch C11); only with the dashboard blocks.

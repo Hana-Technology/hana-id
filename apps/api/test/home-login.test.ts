@@ -8,6 +8,7 @@ import { KeyPair, type KeyPairString } from '@near-js/crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HOME_DERIVES_PER_DAY_DEFAULT, HOME_DERIVES_PER_PATH_HOUR, HOME_DERIVES_PER_USER_DAY, HOME_DERIVES_PER_USER_HOUR, HOME_LOGIN_ENDPOINT, HOME_LOGIN_PER_IP_HOUR, HOME_SESSION_MAX_MS, checkHomeClientScope, countHomeDerive, homeDerivesPerDay, toHomeLogin } from '../src/home/login.ts';
 import { clearViewCaches } from '../src/views.ts';
+import { syncAfterLogin } from '../src/directory/sync.ts';
 import { clearLinkViewCaches } from '../src/link-views.ts';
 import { sha256Hex } from '../src/owner-actions.ts';
 import { parseRelayerKeys, POOL_METHODS, POOL_SECRET, poolAllows, relayerKeyName } from '../src/relayer-config.ts';
@@ -25,6 +26,8 @@ const homeKeys = parseRelayerKeys(env.HOME_RELAYER_KEYS, 'HOME_RELAYER_KEYS').ma
 
 interface Identity {
   sign: (body: string, counter?: number) => string;
+  /** A header for GET `path` (the app list), with a fresh counter. */
+  get: (path: string) => string;
 }
 
 let counter = 0;
@@ -38,6 +41,11 @@ async function newIdentity(o: { sub?: string; aud?: string; jwt?: (nonce: string
   const nonce = homeNonce({ signer: env.SIGNER_ACCOUNT, homePublicKey: pub, expiresAtMs, salt });
   const jwt = o.jwt ? await o.jwt(nonce) : await google.sign({ iss: GOOGLE_ISS, aud: o.aud ?? SHARED, sub: o.sub ?? SUB, nonce, exp: Math.floor(Date.now() / 1000) + 3600 });
   return {
+    get: (path) => {
+      const c = ++counter;
+      const sig = kp.sign(homeMessage({ signer: env.SIGNER_ACCOUNT, counter: c, method: 'GET', path, body: new Uint8Array(0) })).signature;
+      return encodeHomeIdentity({ jwt, key: pub, expiresAtMs, salt, counter: c, sig: Uint8Array.from(sig) });
+    },
     sign: (body, c = ++counter) => {
       const sig = kp.sign(homeMessage({ signer: env.SIGNER_ACCOUNT, counter: c, method: 'POST', path: HOME_LOGIN_ENDPOINT, body: new TextEncoder().encode(body) })).signature;
       return encodeHomeIdentity({ jwt, key: pub, expiresAtMs, salt, counter: c, sig: Uint8Array.from(sig) });
@@ -209,24 +217,71 @@ describe('POST /v1/home/login: what it opens', () => {
     expect(relays().length).toBe(before);
   });
 
-  it('records key_exported with chain null, app_id NULL, the directory row, and leaves apps unlaunched (D462, D520)', async () => {
+  it('a stranger’s derive records key_exported (chain null, app_id NULL) but no directory row, no Support ID, and leaves apps unlaunched (D462, D520, D527)', async () => {
     const app = await seedApp({ scope, firstLogin: null, firstSession: null });
     const r = await derive(await body(scope, SHARED));
     expect(r.status).toBe(200);
-    expect((await json(r)).supportId).toMatch(/^HANA-/u);
+    expect((await json(r)).supportId).toBeUndefined();
     const ev = await events(scope);
     expect(ev).toHaveLength(1);
     expect(ev[0]).toMatchObject({ kind: 'key_exported', app_id: null, chain: null });
     expect(ev[0]!.user_id).toMatch(/^hu_/u);
-    // The directory row, as /v1/login writes it (D500).
-    const rows = (await env.DB.prepare('SELECT provider, sub, role, status FROM end_user_identities WHERE scope_id = ?1').bind(scope).all<Record<string, unknown>>()).results;
-    expect(rows).toEqual([expect.objectContaining({ provider: 'google', sub: SUB, role: 'root', status: 'active' })]);
+    // No identity row, and no end_users row a partner's console could join.
+    expect((await env.DB.prepare('SELECT COUNT(*) AS n FROM end_user_identities WHERE scope_id = ?1').bind(scope).first<{ n: number }>())!.n).toBe(0);
+    expect((await env.DB.prepare('SELECT COUNT(*) AS n FROM end_users WHERE scope_id = ?1').bind(scope).first<{ n: number }>())!.n).toBe(0);
     // Nothing marked the app or the scope as launched, and no session marker.
     const a = await env.DB.prepare('SELECT first_login_at FROM apps WHERE id = ?1').bind(app.id).first<{ first_login_at: number | null }>();
     expect(a!.first_login_at).toBeNull();
     const s = await env.DB.prepare('SELECT first_session_at FROM scopes WHERE scope_id = ?1').bind(scope).first<{ first_session_at: number | null }>();
     expect(s!.first_session_at).toBeNull();
     expect((await env.DB.prepare('SELECT COUNT(*) AS n FROM session_markers WHERE app_id = ?1').bind(app.id).first<{ n: number }>())!.n).toBe(0);
+  });
+
+  const appList = async (identity: Identity, scopeId: string) => {
+    const path = `/v1/home/apps?scopeId=${scopeId}`;
+    const r = await call(path, { headers: { origin: AUTH, 'x-hana-home': identity.get(path) } });
+    expect(r.status).toBe(200);
+    return ((await json(r)).scopes as { scopeId: string; mine: boolean; apps: unknown[] }[]).filter((x) => x.scopeId === scopeId);
+  };
+
+  it('a stranger who derives in an unlaunched scope sees no `mine` and none of its apps (D462, D527)', async () => {
+    await seedApp({ scope, firstLogin: null });
+    const home = await newIdentity();
+    expect((await derive(await body(scope, SHARED), home)).status).toBe(200);
+    expect(await appList(home, scope)).toEqual([]);
+  });
+
+  it('an identity the directory already holds as active keeps its row fresh and gets its Support ID', async () => {
+    await seedApp({ scope });
+    await syncAfterLogin(env, scope, { provider: 'google', sub: SUB }, null, { pending: false, path: `${scope}#google#${SUB}#0`, confirmed: true }, { requestId: 'seed', endpoint: 'test' });
+    const before = (await env.DB.prepare('SELECT last_seen_at FROM end_users WHERE scope_id = ?1').bind(scope).first<{ last_seen_at: number }>())!.last_seen_at;
+    await env.DB.prepare('UPDATE end_users SET last_seen_at = created_at WHERE scope_id = ?1').bind(scope).run();
+    const r = await derive(await body(scope, SHARED));
+    expect((await json(r)).supportId).toMatch(/^HANA-/u);
+    expect((await env.DB.prepare('SELECT last_seen_at FROM end_users WHERE scope_id = ?1').bind(scope).first<{ last_seen_at: number }>())!.last_seen_at).toBeGreaterThanOrEqual(before);
+  });
+
+  it('an identity whose row is unlinked or cancelled isn’t brought back by a derive', async () => {
+    await seedApp({ scope });
+    await syncAfterLogin(env, scope, { provider: 'google', sub: SUB }, null, { pending: false, path: `${scope}#google#${SUB}#0`, confirmed: true }, { requestId: 'seed', endpoint: 'test' });
+    await env.DB.prepare("UPDATE end_user_identities SET status = 'cancelled', role = 'member' WHERE scope_id = ?1").bind(scope).run();
+    const r = await derive(await body(scope, SHARED));
+    expect((await json(r)).supportId).toBeUndefined();
+    expect((await env.DB.prepare('SELECT status FROM end_user_identities WHERE scope_id = ?1').bind(scope).first<{ status: string }>())!.status).toBe('cancelled');
+  });
+
+  it('a linked member of a shut-down app turns `mine` after a derive (D500)', async () => {
+    const e = withEmail(near, [scope]);
+    const root = { provider: 'email', sub: `e1.${uid()}` };
+    e.identities.set(`google#${SUB}`, { status: 'member', opened: false, root });
+    e.accounts.set(`email#${root.sub}`, { root, members: [{ provider: 'google', sub: SUB, active: true }], epoch: 1 });
+    await seedApp({ scope, status: 'suspended', suspendedBy: 1 });
+    const home = await newIdentity();
+    expect((await appList(home, scope)).filter((x) => x.mine)).toEqual([]);
+    expect((await derive(await body(scope, SHARED), home, { env: emailEnv() })).status).toBe(200);
+    const [row] = await appList(home, scope);
+    expect(row).toMatchObject({ mine: true });
+    expect(row!.apps).toHaveLength(1);
   });
 
   it('never logs the token, the sub or the path', async () => {
@@ -259,6 +314,40 @@ describe('POST /v1/home/login: what it opens', () => {
     expect(noKey.status).toBe(503);
     expect((await json(noKey)).code).toBe('relayer_unconfigured');
     expect(await usage()).toBe(1);
+  });
+});
+
+describe('POST /v1/home/login: what a relay that didn’t release a key spends', () => {
+  it('ckd_failed gives the wallet window back and keeps the per-user and daily counts (D528)', async () => {
+    withCombinedCall(near, { ckd: 'fail' });
+    for (let i = 0; i < HOME_DERIVES_PER_PATH_HOUR + 1; i++) {
+      const r = await derive(await body(scope, SHARED));
+      expect(r.status).toBe(422);
+      expect((await json(r)).code).toBe('ckd_failed');
+    }
+    expect(await usage()).toBe(HOME_DERIVES_PER_PATH_HOUR + 1);
+    const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`home-user:${await sha256Hex(`google#${SUB}`)}`));
+    // The hour's window holds the four failures: a fifth hit fits a max of 5 only once.
+    expect((await stub.hit([{ name: 'home:user:hour', windowMs: 3_600_000, max: HOME_DERIVES_PER_PATH_HOUR + 2 }])).ok).toBe(true);
+    expect((await stub.hit([{ name: 'home:user:hour', windowMs: 3_600_000, max: HOME_DERIVES_PER_PATH_HOUR + 2 }])).ok).toBe(false);
+  });
+
+  it('a copy the relayer already relayed answers session_exists and gives back what it took', async () => {
+    const b = await body(scope, SHARED);
+    expect((await derive(b)).status).toBe(200);
+    expect(await usage()).toBe(1);
+    // A second isolate that didn't see the session yet: the views say free, the relayer object knows the claim.
+    near.sessions.delete(JSON.stringify(b.sessionPublicKey));
+    fresh();
+    const sent = near.sent.length;
+    const r = await derive(b);
+    expect(r.status).toBe(409);
+    expect((await json(r)).code).toBe('session_exists');
+    expect(near.sent.length).toBe(sent);
+    expect(await usage()).toBe(1);
+    // Two more derives fit the wallet's three: the copy spent none of it.
+    expect((await derive(await body(scope, SHARED))).status).toBe(200);
+    expect((await derive(await body(scope, SHARED))).status).toBe(200);
   });
 });
 
@@ -459,6 +548,41 @@ describe('POST /v1/home/login: the limits, all before the relay', () => {
     // The user's windows were given back: per-user hour count is 0 again, so a fresh window accepts `max`.
     const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`home-user:${await sha256Hex(`google#${sub}`)}`));
     expect((await stub.hit([{ name: 'home:user:hour', windowMs: 3_600_000, max: 1 }])).ok).toBe(true);
+  });
+
+  it('a ceiling of 0 is a kill switch: nothing relayed, nothing counted', async () => {
+    expect(homeDerivesPerDay({ HOME_DERIVES_PER_DAY: '0' })).toBe(0);
+    const before = near.sent.length;
+    const r = await derive(await body(scope, SHARED), undefined, { env: { HOME_DERIVES_PER_DAY: '0' } });
+    expect(r.status).toBe(429);
+    expect((await json(r)).code).toBe('home_busy');
+    expect(near.sent.length).toBe(before);
+    expect(await usage()).toBe(0);
+    expect(await countHomeDerive(env, '2026-11-12', 0)).toBeNull();
+    expect(await env.DB.prepare("SELECT derives FROM home_usage WHERE day = '2026-11-12'").first()).toBeNull();
+  });
+
+  it('parallel requests can’t pass a wallet’s window', async () => {
+    const bodies = await Promise.all(Array.from({ length: 8 }, () => body(scope, SHARED)));
+    const before = relays().length;
+    const statuses = (await Promise.all(bodies.map((b) => derive(b)))).map((r) => r.status).sort();
+    expect(statuses).toEqual([200, 200, 200, 429, 429, 429, 429, 429]);
+    expect(relays().length).toBe(before + HOME_DERIVES_PER_PATH_HOUR);
+    expect(await usage()).toBe(HOME_DERIVES_PER_PATH_HOUR);
+  });
+
+  it('parallel requests can’t pass the daily ceiling, and the refused ones spend nothing', async () => {
+    const max = 2;
+    const scopes = Array.from({ length: 6 }, (_, i) => `p${i}${uid()}`.toLowerCase().replace(/[^a-z0-9]/gu, '').slice(0, 60));
+    for (const s of scopes) near.allowShared.add(s);
+    fresh();
+    const subs = scopes.map(() => `sub-${uid()}`);
+    const bodies = await Promise.all(scopes.map((s, i) => body(s, SHARED, { sub: subs[i]! })));
+    const before = relays().length;
+    const results = await Promise.all(bodies.map((b, i) => derive(b, undefined, { sub: subs[i]!, env: { HOME_DERIVES_PER_DAY: String(max) } })));
+    expect(results.map((r) => r.status).sort()).toEqual([200, 200, 429, 429, 429, 429]);
+    expect(relays().length).toBe(before + max);
+    expect(await usage()).toBe(max);
   });
 
   it('the default ceiling, a bad override, and the atomic count', async () => {

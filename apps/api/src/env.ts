@@ -44,7 +44,7 @@ export interface Env {
   OWNER_RELAYER_KEYS?: string;
   /** Secret: Home pool. JSON array of `ed25519:...` secret keys, one by default, used by POST /v1/home/login only. Without it that endpoint answers 503. */
   HOME_RELAYER_KEYS?: string;
-  /** Optional var: Home derives allowed per UTC day across the env (a positive integer). Default 500 (home/login.ts). */
+  /** Optional var (manifest `homeDerivesPerDay`): Home derives allowed per UTC day across the env, 0 for none. Default 500 (home/login.ts). */
   HOME_DERIVES_PER_DAY?: string;
   /**
    * Optional var: the allowance (decimal yoctoNEAR) the owner-pool keys were added with, when deploy-contract ran with

@@ -878,13 +878,13 @@ admitted only while `("email", "hana-home")` is in force on the exit list (D494)
 Nothing here derives a key: that's H3. Layouts live in `packages/core/src/home.ts` (`@hana-id/core/home`), shared by the
 page and the API, with Node vectors in `packages/core/test/vectors/home-v1.json`.
 
-**Home's derive (H3, `POST /v1/home/login`, D520–D526; `docs/api.md`).** A Home identity opens a wallet in any registered
+**Home's derive (H3, `POST /v1/home/login`, D520–D529; `docs/api.md`).** A Home identity opens a wallet in any registered
 scope with no app gate, relayed from a dedicated pool (`home`, the `HOME_RELAYER_KEYS` secret, one key by default, method
 `create_session_and_derive` only, objects `home-relayer-key-<i>` in the same Durable Object namespace), so a Home flood can only spend that pool. The
 per-wallet, per-user and daily limits are checked last, right before the relay, so a refused request spends nothing. The path
 comes from the chain-resolved root as for any login: no path, key rule or derivation changes. Home derives one use, key
-index 0, within 20 minutes. The derive writes `key_exported` (no app: `user_events.app_id` NULL, D520) and the directory row
-(D500), and counts in `home_usage` (one row per UTC day). It marks no app as launched and counts in no app's usage.
+index 0, within 20 minutes. The derive writes `key_exported` (no app: `user_events.app_id` NULL, D520) and, only for a linked
+member or an identity the directory already has, the directory row (D500, D527), and counts in `home_usage` (one row per UTC day). It marks no app as launched and counts in no app's usage.
 
 **The app list (H2, `GET /v1/home/apps`, D462, D466, D500–D503; `docs/api.md`).** Home's listing needs no chain
 transaction. `scopes.first_session_at`, with `apps.first_login_at` per app (written once at an app's first successful login; strangers see only apps with it, D462), gives every scope that has had a login (it survives the wallet directory's purge, so a

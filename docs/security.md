@@ -999,7 +999,7 @@ identity into a free-tier row-read burn.
   (`registry.rs` `assert_client_shape`) makes `("email", "hana-home")` no scope's client at registration, propose or execute,
   even with a valid proof, and before the exit list is set. H10 still computes the nonce itself (a defence in depth).
 
-### Hana Home's derive (H3, D520–D526; `POST /v1/home/login`)
+### Hana Home's derive (H3, D520–D529; `POST /v1/home/login`)
 
 A derive with no app gate. What stands in for the app gate is the user's own proof: a fresh Home identity and a session
 token for the same `(provider, sub)`, whose nonce commits to this session in this scope.
@@ -1011,12 +1011,23 @@ token for the same `(provider, sub)`, whose nonce commits to this session in thi
 | Exit sessions respect D486 before the relay: one use, ≤ 20 minutes (inside the contract's 30/3), `link_jwt` refused; the API keeps these on every Home session, not just exit ones | `toHomeLogin` |
 | Every limit is counted before anything is relayed: per IP hour (before parsing), per wallet (`sha256(path)`, a member shares its root's bucket), per user (hashed `provider#sub`, hour and UTC day), per env per day (`home_usage`, atomic). A limiter or D1 failure refuses | `home-login.test.ts` "the limits" |
 | A standing the chain didn't confirm fails closed (502), unlike a partner login: the per-wallet limit needs the real path (D522) | `home/login.ts` |
-| Limits can't be widened by the request: `key_index` is fixed to 0 (a nonzero index would be another path), one use and a 20-minute cap (D524), no link fields | `toHomeLogin` |
+| Limits can't be widened by the request: `key_index` is fixed to 0 (a nonzero index would be another path), one derive and a 20-minute cap (D524), no link fields | `toHomeLogin` |
+| A derive alone makes nobody one of a scope's users: without a confirmed link or an `active` directory row it writes no row, so no `mine`, no unlaunched apps and no row in the partner's user list (D462, D527) | `home-login.test.ts` "a stranger who derives" |
+| `ckd_failed` gives back only the wallet's hour (D528); parallel requests can't pass the wallet window or the daily ceiling | `home-login.test.ts` "parallel requests" |
 | A Home derive marks no app as launched, spends no app's quota, writes no usage event | `home-login.test.ts` "leaves apps unlaunched" |
+| `homeDerivesPerDay: 0` stops every Home derive without a code change (D529) | `home-login.test.ts` "kill switch" |
 | The Home pool's one method and small allowance bound a leaked key or a flood; `deploy-contract` and the watchdog know the pool | `relayer-config.ts`, `scripts/lib/keys.ts`, `apps/watchdog/src/relayer.ts` |
 | Nothing logs a token, `sub`, path or path hash; limiter names are hashes | `home-login.test.ts` "never logs" |
 
-Residual (H3, not closed): the daily ceiling is shared, so about 25 Google accounts at their own 20/day can use up a day's
+Residual (H3, not closed): "one use" limits derives only. A used Home session stays live on chain for up to 20 minutes, and
+the holder of its key can still call what asks only for a live session of an active app in that scope: `POST /v1/identity/token`,
+`/v1/wallets/record`, the email-sharing calls, `/v1/mainnet-demo/events`, 'none'-mode `/v1/vault/consents` and
+`POST /v1/vault/shares`, each with the app's publishable key, an allowed parent origin and the session key's signature (not for a
+suspended or deleted app). It can't derive again. A used-up session looks exactly like a partner's after its login, so it
+can't be told apart without a marker read on every partner call (D524 as corrected); the key lives only in the Home page's
+memory, whose holder already has the user's key.
+
+The daily ceiling is shared, so about 25 Google accounts at their own 20/day can use up a day's
 Home derives for everyone until the next UTC day (a rescue route, bounded spend, D98's budget; the per-user day limit and
 Google's own limits are the only brake). A linked account is counted per identity for the per-user windows (the per-wallet
 window is shared). The API can't verify the Home page's `max_age=0` freshness: as for the export window, it is the page's

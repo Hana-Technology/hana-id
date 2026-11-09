@@ -1,6 +1,7 @@
-// POST /v1/home/login (docs/hana-home-spec.md "API changes", D463, H3): Hana Home's derive. A Home identity opens a
-// wallet the user already has, in any registered scope, with no app gate: a suspended or deleted app, or one with no
-// allowed origin left, doesn't stop it (Home is keyed by scope, D461). One `create_session_and_derive`, relayed from the
+// POST /v1/home/login (docs/hana-home-spec.md "API changes", D463, H3): Hana Home's derive. A Home identity derives its
+// own key in any registered scope, with no app gate: a suspended or deleted app, or one with no allowed origin left,
+// doesn't stop it (Home is keyed by scope, D461). The chain can't say whether the user ever had a wallet there, so a
+// stranger can derive in a scope too (only their own key): that alone makes nobody one of the scope's users (D527). One `create_session_and_derive`, relayed from the
 // Home pool, and nothing else changes on chain.
 //
 // What stands in for the app gate is the user: the request carries a fresh Home identity (homeGate: `Origin === AUTH_ORIGIN`,
@@ -18,12 +19,13 @@
 //
 // The derive is not a login of any app: it marks no app as launched (D462: no `first_login_at`, no `first_session_at`, no
 // session marker) and counts in no app's quota or usage. It records `key_exported` for the account, with `app_id` NULL
-// (D520), and writes the member's directory row (D500), both after the response.
+// (D520) and, only for an identity the directory already holds as active or a confirmed linked member, refreshes its
+// directory row (D500, D527), both after the response.
 //
 // SECURITY: nothing here logs a token, a `sub`, a path or a path hash. A limiter name is a hash, never a `sub`.
 import { appKeyPairs, appKeyProblem } from '../bls.ts';
 import { hex, sha256 } from '../bytes.ts';
-import { sessionSupportId } from '../directory/store.ts';
+import { identityKeyHex, sessionSupportId } from '../directory/store.ts';
 import { inBackground, syncAfterLogin } from '../directory/sync.ts';
 import type { Env } from '../env.ts';
 import { type OwnerActionWindow, NOT_EXECUTED, chainGate, chainGateResponse, checkClientScope, done, hitAll, lap, lapRelay, limiter, loginTokenRefusal, newCtx, reject, settle } from '../handlers.ts';
@@ -86,10 +88,10 @@ export function toHomeLogin(body: unknown, now: number = Date.now()): Checked<Ho
   return { ...call, scopeId };
 }
 
-/** The daily ceiling: the var HOME_DERIVES_PER_DAY when it is a positive integer, else the default. */
+/** The daily ceiling: the var HOME_DERIVES_PER_DAY when it is an integer of 0 or more (0 is a kill switch: no derive at all, D529), else the default. */
 export function homeDerivesPerDay(env: Pick<Env, 'HOME_DERIVES_PER_DAY'>): number {
   const v = env.HOME_DERIVES_PER_DAY;
-  return v !== undefined && /^[1-9]\d{0,6}$/u.test(v) ? Number(v) : HOME_DERIVES_PER_DAY_DEFAULT;
+  return v !== undefined && /^(0|[1-9]\d{0,6})$/u.test(v) ? Number(v) : HOME_DERIVES_PER_DAY_DEFAULT;
 }
 
 const utcDay = (now: number): string => new Date(now).toISOString().slice(0, 10);
@@ -100,6 +102,8 @@ const secondsToNextUtcDay = (now: number): number => Math.max(1, Math.ceil((Math
  * as it was). Throws when D1 can't be written: the caller refuses, since an uncounted derive is one the budget can't see.
  */
 export async function countHomeDerive(env: Pick<Env, 'DB'>, day: string, max: number): Promise<number | null> {
+  // The statement below always inserts a day's first row, so a ceiling of 0 has to refuse before it.
+  if (max <= 0) return null;
   const row = await env.DB.prepare('INSERT INTO home_usage (day, derives) VALUES (?1, 1) ON CONFLICT (day) DO UPDATE SET derives = derives + 1 WHERE derives < ?2 RETURNING derives')
     .bind(day, max)
     .first<{ derives: number }>();
@@ -183,6 +187,7 @@ export async function handleHomeLogin(request: Request, env: Env, requestId: str
     // nothing and the per-wallet and per-user windows can't be spent by a request that couldn't have been relayed.
     const hitAt = Date.now();
     const windows = await homeWindows(scopeId, standing.path, { provider: token.provider, sub: token.sub });
+    const walletWindow = windows[0] as OwnerActionWindow;
     try {
       const refused = await hitAll(env, windows, requestId, HOME_LOGIN_ENDPOINT, hitAt);
       if (refused) return reject(ctx, 429, 'rate_limited', `Rate limit exceeded (${refused.window.label} per ${refused.limit.endsWith('day') ? 'day' : 'hour'})`, { 'retry-after': String(refused.retryAfterS) });
@@ -214,18 +219,24 @@ export async function handleHomeLogin(request: Request, env: Env, requestId: str
       if (result.code === ALREADY_RELAYED || NOT_EXECUTED.has(result.code)) await inBackground(exec, () => Promise.all([takeBack(), giveBackDerive(env, day)]));
       if (result.code === ALREADY_RELAYED) return reject(ctx, 409, 'session_exists', 'This session key is already in use');
       const failure = loginFailure(env, result);
+      // The MPC failed after the session was committed and the one-use session is spent: no key came back, and the user
+      // must sign in again to retry, so it shouldn't cost a wallet's 3 an hour. The per-user and daily counts stay (D528).
+      if (failure.body.code === 'ckd_failed') await inBackground(exec, async () => limiter(env, walletWindow.subject).unhit(walletWindow.limits, hitAt));
       if (typeof failure.body.code === 'string' && typeof failure.body.error === 'string') rememberPanic(panicKey, { status: failure.status, code: failure.body.code, error: failure.body.error });
       return done(ctx, failure.status, failure.body);
     }
     const r = result.result as { big_y?: unknown; big_c?: unknown } | null;
     if (!r || typeof r.big_y !== 'string' || typeof r.big_c !== 'string') return done(ctx, 502, { error: 'The contract returned no key', code: 'bad_contract_result', nearTx: result.nearTx });
 
-    // Both after the answer: the member's directory row (D500: it is what turns a linked member `mine` in Home's list)
-    // and the account's key_exported event (chain null: one derive opens both chains, D98 item 6; app_id null, D520).
+    // After the answer: the account's key_exported event (chain null: one derive opens both chains, D98 item 6; app_id
+    // null, D520) and, for a user the directory or the chain already knows here (D527), its directory row (D500: it is
+    // what turns a linked member `mine` in Home's list). A stranger gets no row, so no `mine` and no unlaunched apps.
     const root = standing.member?.root ?? { provider: token.provider, sub: token.sub };
-    await inBackground(exec, () => syncAfterLogin(env, scopeId, { provider: token.provider, sub: token.sub }, null, standing, { requestId, endpoint: ctx.endpoint }));
+    const known = standing.member !== undefined || (await holdsActiveRow(env, scopeId, token));
+    if (known) await inBackground(exec, () => syncAfterLogin(env, scopeId, { provider: token.provider, sub: token.sub }, null, standing, { requestId, endpoint: ctx.endpoint }));
     await inBackground(exec, () => recordKeyExport(env, { appId: null, scopeId, root, chain: null, requestId }));
-    const supportId = await sessionSupportId(env, scopeId, root);
+    // A code staff can't look up is worse than none (D395): none without a directory row.
+    const supportId = known ? await sessionSupportId(env, scopeId, root) : undefined;
     return done(ctx, 200, {
       result: { big_y: r.big_y, big_c: r.big_c },
       session: { scope_id: scopeId, expires_at_ms: req.expiresAtMs, max_uses: req.maxUses, used: 1 },
@@ -251,6 +262,15 @@ async function homeWindows(scopeId: string, path: string, user: { provider: stri
       ],
     },
   ];
+}
+
+/** Whether the directory holds this identity as active in the scope (D527). False when D1 can't answer: nothing is written then. */
+async function holdsActiveRow(env: Pick<Env, 'DB'>, scopeId: string, identity: { provider: string; sub: string }): Promise<boolean> {
+  try {
+    return (await env.DB.prepare("SELECT 1 AS ok FROM end_user_identities WHERE scope_id = ?1 AND identity_key = ?2 AND status = 'active'").bind(scopeId, await identityKeyHex(scopeId, identity)).first()) !== null;
+  } catch {
+    return false;
+  }
 }
 
 /** Gives the day's budget back after a relay that never ran. Never throws: a failed give-back leaves the count high. */

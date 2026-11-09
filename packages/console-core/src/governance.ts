@@ -8,7 +8,7 @@
 // The code hash is on chain; its source commit, reproducible-build command and the diff to the release before it are
 // not. They come from CONTRACT_RELEASES below: a hash that isn't listed there is shown as "not a published release"
 // (D333).
-import { z } from 'zod';
+import { z } from '@hana-id/env/zod';
 import { orgIdInput } from './rpc.ts';
 import { ctx } from './types.ts';
 

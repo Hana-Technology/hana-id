@@ -19,7 +19,7 @@
 // (`StaffUser`); the email comes from the issuer's directory through D275's DirectoryRpc, keyed by `directoryKey` (the
 // join point; this package and the API never read the issuer).
 import { CROCKFORD_ALPHABET, IDENTITY_SUB_RE, crockford32, decodeIdentitySub, supportCodeFromSub, supportIdFromSub } from '@hana-id/core/support-id';
-import { z } from 'zod';
+import { z } from '@hana-id/env/zod';
 import { ctx } from './types.ts';
 import { orgIdInput, scopeIdInput } from './rpc.ts';
 

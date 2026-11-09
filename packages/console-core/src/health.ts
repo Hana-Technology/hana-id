@@ -3,7 +3,7 @@
 // answer the admin Worker. Each is authenticated as its entrypoint's other methods are (a `hana` actor for AdminRpc and
 // StaffRpc; the staff request's Access JWT, verified by the issuer, for DirectoryRpc) and answers no user data: build
 // ids, timings, counts and timestamps only. Nothing here is a secret.
-import { z } from 'zod';
+import { z } from '@hana-id/env/zod';
 import { staffCall } from './directory.ts';
 import { ctx } from './types.ts';
 

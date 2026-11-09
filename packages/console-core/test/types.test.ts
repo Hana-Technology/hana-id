@@ -77,6 +77,9 @@ describe('views', () => {
     expect(appDetail.parse(detail)).toEqual(detail);
     expect(appDetail.safeParse({ ...detail, publishableKey: 'pk_test_x' }).success).toBe(false);
     expect(appDetail.safeParse({ ...detail, suspendedBy: 8 }).success).toBe(false);
+    // D470: an unknown-typed key may be absent, as under zod 3 (zod 4 requires it unless `.optional()`).
+    const policy = { policyId: 'a'.repeat(64), label: 'L' };
+    expect(appDetail.safeParse({ ...detail, settings: { ...detail.settings, policy } }).success).toBe(true);
   });
 
   it('days are real UTC calendar dates', () => {

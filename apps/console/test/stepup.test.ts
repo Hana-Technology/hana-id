@@ -143,6 +143,38 @@ describe('policy.set: validated in the console, the consent preview data, propos
   });
 });
 
+describe('bad action bodies answer zod 3\u2019s words (D470)', () => {
+  const errorOf = (r: { body: unknown }) => (r.body as { error: { code: string; message: string } }).error;
+
+  it('a missing params is the kind\u2019s own refusal, not a body refusal; missing fields say Required', async () => {
+    const { m, app } = await ownerWithApp();
+    const r = await postAs(m, `/api/orgs/${m.org}/actions`, { kind: 'origin.add' });
+    expect(r.status).toBe(400);
+    expect(errorOf(r)).toMatchObject({ code: 'bad_request', message: 'Bad params for origin.add: params: Required' });
+    const add = await postAs(m, `/api/orgs/${m.org}/actions`, { kind: 'origin.add', params: { appId: app.id } });
+    expect(errorOf(add)).toMatchObject({ code: 'bad_request', message: 'Bad params for origin.add: add: Required' });
+  });
+
+  it('a policy.set with no policy key reaches the policy check, as it did', async () => {
+    const { m, app } = await ownerWithApp();
+    const r = await postAs(m, `/api/orgs/${m.org}/actions`, { kind: 'policy.set', params: { appId: app.id } });
+    expect(r.status).toBe(400);
+    expect(errorOf(r).code).toBe('policy_invalid');
+  });
+
+  it('wrong values and unknown keys read as before, one issue per field', async () => {
+    const { m, app } = await ownerWithApp();
+    const enumBad = await postAs(m, `/api/orgs/${m.org}/actions`, { kind: 'app.settings', params: { appId: app.id, persistence: 'x' } });
+    expect(errorOf(enumBad)).toMatchObject({ code: 'bad_request', message: "Bad params for app.settings: persistence: Invalid enum value. Expected 'session' | 'none', received 'x'" });
+    const extra = await postAs(m, `/api/orgs/${m.org}/actions`, { kind: 'raw_sign.on', params: { appId: app.id, zz: 1 } });
+    expect(errorOf(extra)).toMatchObject({ code: 'bad_request', message: "Bad params for raw_sign.on: params: Unrecognized key(s) in object: 'zz'" });
+    const wrongType = await postAs(m, `/api/orgs/${m.org}/actions`, { kind: 'app.settings', params: { appId: app.id, googleWebClientId: [] } });
+    expect(errorOf(wrongType).message).toBe('Bad params for app.settings: googleWebClientId: Expected string, received array');
+    const float = await postAs(m, `/api/orgs/${m.org}/actions`, { kind: 'app.settings', params: { appId: app.id, sessionTtlMs: 1.5 } });
+    expect(errorOf(float).message).toBe('Bad params for app.settings: sessionTtlMs: Expected integer, received float');
+  });
+});
+
 describe('refusals (spec "Fresh sign-in")', () => {
   it('a sub mismatch (another Google account confirms): the action fails and nothing is applied', async () => {
     const { m, app } = await ownerWithApp();

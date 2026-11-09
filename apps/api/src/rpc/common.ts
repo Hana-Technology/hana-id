@@ -33,7 +33,7 @@ export interface Call<I> {
 
 /** A console-core input schema (zod), seen only through `safeParse`, so the API needs no zod import of its own. */
 export interface InputSchema<I> {
-  safeParse(v: unknown): { success: true; data: I } | { success: false; error: { issues: { path: (string | number)[]; message: string }[] } };
+  safeParse(v: unknown): { success: true; data: I } | { success: false; error: { issues: { path: PropertyKey[]; message: string }[] } };
 }
 
 /** Outcomes after which a call is settled (breaker slot and reserve tokens back): it found nothing it could destroy. */

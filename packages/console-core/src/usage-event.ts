@@ -1,7 +1,7 @@
 // UsageEvent v1 (docs/batch-c-spec.md "Usage capture"): what the API sends to `usage.record_event` after each
 // post-gate request. Never a sub, JWT, email, IP, session key or share id. The Neon function validates the same shape
 // (apps/api/migrations-usage); a test sends every event this schema accepts, and the ones it refuses, through both.
-import { z } from 'zod';
+import { z } from '@hana-id/env/zod';
 import { requestId } from './types.ts';
 
 /** `link`, `link_cancel`, `link_unlink`: the API's link relays (email login batch 6; migrations-usage 0005). */

@@ -3,7 +3,7 @@
 // mapping of the Neon functions' rows (`usage.org_report`, `usage.org_ledger`, `usage.org_statements`) to the RPC views,
 // and the stored shape of a statement's totals with the one rendering the on-screen statement and the PDF both use
 // (D92: the CSV, the PDF and the on-screen statement show the same totals and the CSV's sha256).
-import { z } from 'zod';
+import { z } from '@hana-id/env/zod';
 import { appIdInput, orgIdInput } from './rpc.ts';
 import { ctx, day, month, ms, type UsageRow } from './types.ts';
 

@@ -73,6 +73,9 @@ const alertRow = (r: RawAlert): AlertRow => ({ ...r, details: JSON.parse(r.detai
 const actionRow = (r: RawAction): ActionRow => ({ ...r, args: JSON.parse(r.args) as Record<string, unknown>, ok: r.ok === 1 });
 const runRow = (r: RawRun): RunRow => ({ ...r, first_run: r.first_run === 1, checks: JSON.parse(r.checks) as CheckResult[] });
 
+/** The meta row of the test page's cooldown (D449): `{at}`, the last send. Nothing else reads it. */
+export const TEST_PAGE_META = 'test_page';
+
 /** Runs older than this are pruned (alerts, actions and deliveries are history and kept). */
 export const RUN_RETENTION_MS = 30 * 24 * 60 * 60_000;
 
@@ -107,6 +110,21 @@ export class Store {
 
   async releaseLock(runId: number): Promise<void> {
     await this.db.prepare(`DELETE FROM meta WHERE key = 'run_lock' AND json_extract(value, '$.runId') = ?1`).bind(runId).run();
+  }
+
+  /**
+   * Claims the test page's send (D449) unless one was sent within `cooldownMs`. One statement, so two requests can't
+   * both take it. Only this `meta` row: never an alert, a delivery or anything a run reads.
+   */
+  async claimTestPage(now: number, cooldownMs: number): Promise<boolean> {
+    const res = await this.db
+      .prepare(
+        `INSERT INTO meta (key, value) VALUES (?3, ?1) ON CONFLICT (key) DO UPDATE SET value = excluded.value
+         WHERE json_extract(meta.value, '$.at') <= ?2`,
+      )
+      .bind(JSON.stringify({ at: now }), now - cooldownMs, TEST_PAGE_META)
+      .run();
+    return (res.meta.changes ?? 0) > 0;
   }
 
   // ---- kids ----

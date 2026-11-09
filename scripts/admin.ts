@@ -52,6 +52,7 @@ import { tryView } from './lib/contract.ts';
 import { apiPrivateD1Execute, d1Execute, issuerD1Execute } from './lib/d1.ts';
 import { type UserCmdDeps, userFindCommand, userList } from './lib/admin-users.ts';
 import { retentionIssuer } from './lib/admin-retention.ts';
+import { statusTokenFromSecrets, watchdogTestPage } from './lib/admin-test-page.ts';
 import { type SupportLedgerConn, supportLookupCommand } from './lib/admin-support.ts';
 import { secretsDir } from './lib/secrets.ts';
 import { ROLE_FILES, readRoleUrl } from './lib/usage-setup.ts';
@@ -124,6 +125,10 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
                approve (or with --reject, reject) a council proposal (dev envs: key from .secrets)
   owner:proposals [--limit 20] [--json]           the council's recent proposals, decoded
   governance:status [--json]                       contract governance state, signer keys, council, findings
+  watchdog:test-page [--yes]
+               a clearly labelled test critical page, sent by the deployed watchdog on every critical channel (D449):
+               the channels it would use without --yes; with it, one send, each channel's result reported, and no
+               alert opened (no ack, no re-send). At most one per 5 min. Reads .secrets/<env>/watchdog-secrets.json
   council:replace-member --remove <old member> --add <new member> [--member <m>] [--approve-with <m>] [--yes]
                replace a council member: a RemoveMemberFromRole and an AddMemberToRole proposal on the council DAO
                (2 of 3 kept); --approve-with (dev envs on testnet only) approves both in the same command; elsewhere
@@ -134,7 +139,8 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
              apps/email-issuer/.wrangler/state, and the API's for the wallet directory)
   --d1-name <name>  act on a rehearsal database (name containing "rehearsal") instead of the env's
   --yes      scope:register, scope:add-email-client, owner:call, issuer:iss, console:remove-audience, owner:vote, council:replace-member: send the transaction (without it, only
-             print it); app:origins:park, app:origins:unpark, retention:issuer: write (without it, only list)
+             print it); app:origins:park, app:origins:unpark, retention:issuer: write (without it, only list);
+             watchdog:test-page: send the page (without it, only show the channels)
   --allow-shared  scope:register only: the app may log in through Hana's shared Google client; with it, --client is
                   optional (an app with no Google client of its own)
 
@@ -176,6 +182,7 @@ const COMMANDS = [
   'user:find',
   'retention:issuer',
   'support:lookup',
+  'watchdog:test-page',
 ] as const;
 type Command = (typeof COMMANDS)[number];
 
@@ -359,6 +366,9 @@ async function main(): Promise<void> {
       return;
     case 'council:replace-member':
       await councilReplaceMemberCmd(m, args, ownerDeps(m));
+      return;
+    case 'watchdog:test-page':
+      await watchdogTestPage(m, args.flag('yes'), { fetch, token: () => statusTokenFromSecrets(m.name), log: (line) => console.log(line) });
       return;
     case 'user:list':
     case 'user:find':

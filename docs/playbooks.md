@@ -1,7 +1,7 @@
 # Recovery playbooks
 
 Generated from `packages/playbooks` (D126) by `corepack pnpm --filter @hana-id/playbooks gen-docs`: edit the package,
-not this file (a test fails when it is stale). Last verified against code: 2026-11-06 (branch `feat/api-near-rpc-fallback`: `near-rpc-outage` with the API-side RPC failover, `apiRpcFallbacks`, D435); 2026-11-06 (branch `fix/watchdog-new-key-grace`: `unseen-key-change`, and `forged-key-change` with the new-kid grace, D432); 2026-11-06 (branch `fix/google-key-hysteresis`: `retired-key-change`, `key-sync-stalled` and `updater-key-stolen` with the rollout hysteresis, D422); 2026-11-05 (branch `feat/deploy-check-all-workers`: the watchdog deploys through `run deploy`, stamped with the build id, D406); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/coop-canary`: the `google-enforces-coop` incident, D386); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`).
+not this file (a test fails when it is stale). Last verified against code: 2026-11-09 (branch `feat/test-page-command`: `watchdog-first-run` with the test page, `watchdog-compromised` with what the status token can do, D449, D450); 2026-11-06 (branch `feat/api-near-rpc-fallback`: `near-rpc-outage` with the API-side RPC failover, `apiRpcFallbacks`, D435); 2026-11-06 (branch `fix/watchdog-new-key-grace`: `unseen-key-change`, and `forged-key-change` with the new-kid grace, D432); 2026-11-06 (branch `fix/google-key-hysteresis`: `retired-key-change`, `key-sync-stalled` and `updater-key-stolen` with the rollout hysteresis, D422); 2026-11-05 (branch `feat/deploy-check-all-workers`: the watchdog deploys through `run deploy`, stamped with the build id, D406); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/coop-canary`: the `google-enforces-coop` incident, D386); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`).
 
 One step-by-step guide for every watchdog alert kind and for every incident the watchdog does not raise. The admin
 portal's "Security & monitoring" view renders the same playbooks (`docs/batch-c-spec.md`), and every watchdog
@@ -913,10 +913,12 @@ The first run with an empty D1 recorded Google's current JWKS as known.
 
 **Steps**
 
-1. **After a deploy: finish the setup checks** (who: a founder). `last_run.outcome: "ok"`, `heartbeat.ok`, every channel `configured`. Acknowledge the first-run critical alerts after checking them ([unknown-active-key-first-run](#unknown-active-key-first-run)). A test critical page to both founders: not built yet as a command; the forced-rotation drill does it for real.
+1. **After a deploy: finish the setup checks** (who: a founder). `last_run.outcome: "ok"`, `heartbeat.ok`, every channel `configured`. Acknowledge the first-run critical alerts after checking them ([unknown-active-key-first-run](#unknown-active-key-first-run)). Then send a test critical page (D449): `watchdog:test-page` shows the channels the deployed watchdog would use, `--yes` sends one labelled TEST and "no action needed" through the real path, reports each channel and opens no alert; both founders confirm it arrived on the phone, in Slack and by email (operations "Test page"). It needs the watchdog deployed with D449.
 
    ```sh
    curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)" https://<workerName>.<subdomain>.workers.dev/status
+   corepack pnpm --filter @hana-id/scripts run admin <env> watchdog:test-page
+   corepack pnpm --filter @hana-id/scripts run admin <env> watchdog:test-page --yes
    ```
 
 2. **Not after a deploy: investigate** (who: a founder). Its D1 was emptied or replaced: follow [watchdog-compromised](#watchdog-compromised). A restore of its D1 to a minute before (Time Travel, 30 days; operations "The watchdog's D1") brings its history back; until then this first run's baseline stands.
@@ -1742,7 +1744,7 @@ Someone holds the watchdog's key, its status token or its Cloudflare account. It
 **Impact**
 
 - `WATCHDOG_KEY`: cancel every key change (Google's next key never activates: logins with it fail), pause, delete updater keys, confirm early only a change someone already proposed. It can't post a key; forging needs the updater key or the owner as well.
-- `WATCHDOG_STATUS_TOKEN`: read the status and ack alerts, which stops only re-sends of alerts already paged (never a first alert or a check).
+- `WATCHDOG_STATUS_TOKEN`: read the status and ack alerts, which stops only re-sends of alerts already paged (never a first alert or a check), and send a test page labelled TEST, at most one per 5 min (D449).
 - The account: the key, the token, its SendGrid, Slack and paging credentials, and its D1 (its history: an emptied D1 means a first run that never pauses).
 
 **Steps**

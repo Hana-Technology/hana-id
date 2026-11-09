@@ -295,7 +295,7 @@ const watchdogCompromised: Playbook = {
   ],
   impact: [
     "`WATCHDOG_KEY`: cancel every key change (Google's next key never activates: logins with it fail), pause, delete updater keys, confirm early only a change someone already proposed. It can't post a key; forging needs the updater key or the owner as well.",
-    '`WATCHDOG_STATUS_TOKEN`: read the status and ack alerts, which stops only re-sends of alerts already paged (never a first alert or a check).',
+    '`WATCHDOG_STATUS_TOKEN`: read the status and ack alerts, which stops only re-sends of alerts already paged (never a first alert or a check), and send a test page labelled TEST, at most one per 5 min (D449).',
     'The account: the key, the token, its SendGrid, Slack and paging credentials, and its D1 (its history: an emptied D1 means a first run that never pauses).',
   ],
   steps: [

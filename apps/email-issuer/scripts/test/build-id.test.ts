@@ -16,7 +16,7 @@ describe('build id (D384)', () => {
   });
 
   it('gen never writes HANA_BUILD (only a deploy stamps it)', () => {
-    const config = wranglerConfig(loadEnv('sandbox-dev'), '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002');
+    const config = wranglerConfig(loadEnv('sandbox-dev'), '00000000-0000-4000-8000-000000000001');
     expect(Object.keys(config.vars as Record<string, string>)).not.toContain(BUILD_VAR);
   });
 });

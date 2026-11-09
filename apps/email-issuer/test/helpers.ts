@@ -282,18 +282,18 @@ export async function seedApp(h: Harness, opts: { methods?: string; status?: str
   const scope = `s${uid().replace(/[^a-z0-9]/gu, '')}`.slice(0, 40);
   const name = opts.name ?? 'Test Wallet';
   // The API's migration 0006: an app's scope row exists in its org, with the environment its key names.
-  await env.APP_DB.prepare("INSERT OR IGNORE INTO scopes (scope_id, org_id, environment, created_at, assigned_at) VALUES (?1, 'org_legacy', 'test', 0, 0)").bind(scope).run();
-  await env.APP_DB.prepare('INSERT INTO apps (id, name, scope_id, publishable_key, status, plan, login_methods) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)')
+  await env.API_TEST_DB.prepare("INSERT OR IGNORE INTO scopes (scope_id, org_id, environment, created_at, assigned_at) VALUES (?1, 'org_legacy', 'test', 0, 0)").bind(scope).run();
+  await env.API_TEST_DB.prepare('INSERT INTO apps (id, name, scope_id, publishable_key, status, plan, login_methods) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)')
     .bind(id, name, scope, pk, opts.status ?? 'active', opts.plan ?? 'free', opts.methods ?? 'google,email')
     .run();
   // The gate's model (0006): the issuer finds the app by its key in app_keys, never by the legacy column.
-  await env.APP_DB.prepare("INSERT INTO app_keys (id, app_id, key, created_by, created_at) VALUES (?1, ?2, ?3, 'test', 0)").bind(`key_${id}`, id, pk).run();
+  await env.API_TEST_DB.prepare("INSERT INTO app_keys (id, app_id, key, created_by, created_at) VALUES (?1, ?2, ?3, 'test', 0)").bind(`key_${id}`, id, pk).run();
   h.chain.addScope(scope, opts.scope);
   return { id, pk, scope, name };
 }
 
 export async function seedPlan(id: string, perMinute: number, perDay: number): Promise<void> {
-  await env.APP_DB.prepare('INSERT OR REPLACE INTO plans (id, per_minute, per_day, per_ip_minute) VALUES (?1, ?2, ?3, 20)').bind(id, perMinute, perDay).run();
+  await env.API_TEST_DB.prepare('INSERT OR REPLACE INTO plans (id, per_minute, per_day, per_ip_minute) VALUES (?1, ?2, ?3, 20)').bind(id, perMinute, perDay).run();
 }
 
 export function sessionCommitment(scopeId: string, now = Date.now()): SessionCommitment & { json: Record<string, unknown> } {

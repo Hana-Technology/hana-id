@@ -5,6 +5,7 @@ export * from './directory.ts';
 export * from './governance.ts';
 export * from './health.ts';
 export * from './ids.ts';
+export * from './issuer-apps.ts';
 export * from './jcs.ts';
 export * from './layouts.ts';
 export * from './names.ts';

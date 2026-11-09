@@ -8,8 +8,11 @@ declare global {
       TEST_API_MIGRATIONS: D1Migration[];
       /** The standby key's private JWK: published, never on the Worker; tests use it as a second signer. */
       TEST_STANDBY_KEY: string;
-      /** The API's D1 before its login_methods migration (batch 6). */
-      APP_DB_OLD: D1Database;
+      /**
+       * The API's D1, which the auxiliary API Worker's IssuerRpc reads (vitest.config.ts): the tests seed and change
+       * apps through it. Test-only: the issuer Worker itself binds no API D1 (D434).
+       */
+      API_TEST_DB: D1Database;
     }
   }
 }

@@ -1,6 +1,7 @@
 // The email issuer Worker's bindings. Vars come from envs/<env>.json `emailIssuer` through scripts/gen-wrangler.ts;
 // secrets are set by the operator (`scripts/email-issuer.ts <env> put`, or `wrangler secret put SENDGRID_API_KEY`)
 // and are never logged, printed or returned.
+import type { IssuerRpcClient } from '@hana-id/console-core';
 import type { Challenge } from './challenge.ts';
 import type { Outbox } from './outbox.ts';
 import type { RateLimiter } from './rate-limiter.ts';
@@ -9,10 +10,11 @@ export interface Env {
   /** The issuer's own D1: email_issuance, email_hints, email_suppressions, email_admin_audit, user_emails, user_email_apps (D269). */
   DB: D1Database;
   /**
-   * The API's D1, read only (apps, plans): `pk` → app, scope, status, plan and `login_methods`. The issuer never
-   * writes to it.
+   * The API Worker's read-only `IssuerRpc` entrypoint (D434): `pk` or app id → the app's issuer view (scope, status,
+   * plan limits, email on), and whether a scope has an email app. The issuer has no binding to the API's D1. Optional
+   * in the type only: gen always binds it, and a missing one fails every lookup closed (`503 api_unavailable`).
    */
-  APP_DB: D1Database;
+  API?: IssuerRpcClient;
   EMAIL_CHALLENGE: DurableObjectNamespace<Challenge>;
   RATE_LIMITER: DurableObjectNamespace<RateLimiter>;
   /** `local*` envs only (gen refuses it elsewhere): the outbox stub's store, read by tests through this binding. */

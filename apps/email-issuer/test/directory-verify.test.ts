@@ -117,9 +117,9 @@ describe('email logins write the user directory (D269)', () => {
     // The app turned email off between start and verify: 403, nothing minted or recorded.
     const b = `off${uid()}@example.com`;
     const id2 = await startCode(h, app, b);
-    await env.APP_DB.prepare("UPDATE apps SET login_methods = 'google' WHERE id = ?1").bind(app.id).run();
+    await env.API_TEST_DB.prepare("UPDATE apps SET login_methods = 'google' WHERE id = ?1").bind(app.id).run();
     expect((await h.call('/v1/email/verify', { challengeId: id2, code: h.sender.codeFor(b) })).status).toBe(403);
-    await env.APP_DB.prepare("UPDATE apps SET login_methods = 'google,email' WHERE id = ?1").bind(app.id).run();
+    await env.API_TEST_DB.prepare("UPDATE apps SET login_methods = 'google,email' WHERE id = ?1").bind(app.id).run();
     // A link while the chain has unrecorded pre-v3 wallets: 409 links_unavailable.
     const c = `unrec${uid()}@example.com`;
     const id3 = await startCode(h, app, c, 'link_new', linkNewCommitment(app));

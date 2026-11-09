@@ -42,30 +42,30 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 describe('wranglerConfig', () => {
   it('a workers.dev URL only when emailIssuer.url names one; a zone-routed issuer has none (review L5)', () => {
     const own = 'https://hana-id-email-issuer-sandbox-dev.tingtc.workers.dev';
-    expect((wranglerConfig(manifest({ url: own, iss: `${own}/v1/email` }), LOCAL_D1_ID, LOCAL_D1_ID) as { workers_dev: boolean }).workers_dev).toBe(true);
-    expect((wranglerConfig(manifest(), LOCAL_D1_ID, LOCAL_D1_ID) as { workers_dev: boolean }).workers_dev).toBe(false);
-    expect((wranglerConfig(manifest({ url: 'https://email.hana.example' }), LOCAL_D1_ID, LOCAL_D1_ID) as { workers_dev: boolean }).workers_dev).toBe(false);
-    expect(wranglerConfig(manifest(), LOCAL_D1_ID, LOCAL_D1_ID)).not.toHaveProperty('routes');
+    expect((wranglerConfig(manifest({ url: own, iss: `${own}/v1/email` }), LOCAL_D1_ID) as { workers_dev: boolean }).workers_dev).toBe(true);
+    expect((wranglerConfig(manifest(), LOCAL_D1_ID) as { workers_dev: boolean }).workers_dev).toBe(false);
+    expect((wranglerConfig(manifest({ url: 'https://email.hana.example' }), LOCAL_D1_ID) as { workers_dev: boolean }).workers_dev).toBe(false);
+    expect(wranglerConfig(manifest(), LOCAL_D1_ID)).not.toHaveProperty('routes');
   });
 
   it('an emailIssuer.url on another host is a Custom Domain, on the manifest account (D404)', () => {
     vi.stubEnv('CLOUDFLARE_ACCOUNT_ID', '');
     const m = customDomainManifest();
-    expect(wranglerConfig(m, LOCAL_D1_ID, LOCAL_D1_ID)).toMatchObject({
+    expect(wranglerConfig(m, LOCAL_D1_ID)).toMatchObject({
       account_id: CUSTOM_DOMAIN.accountId,
       workers_dev: false,
       preview_urls: false,
       routes: [{ pattern: 'email.id-dev.hanawallet.io', custom_domain: true }],
       vars: { EMAIL_ISS: `${CUSTOM_DOMAIN.emailIssuerUrl}/v1/email` },
     });
-    expect(wranglerConfig(manifest(), LOCAL_D1_ID, LOCAL_D1_ID)).not.toHaveProperty('account_id');
+    expect(wranglerConfig(manifest(), LOCAL_D1_ID)).not.toHaveProperty('account_id');
     vi.stubEnv('CLOUDFLARE_ACCOUNT_ID', 'ffffffffffffffffffffffffffffffff');
-    expect(() => wranglerConfig(m, LOCAL_D1_ID, LOCAL_D1_ID)).toThrow(/CLOUDFLARE_ACCOUNT_ID is f+/u);
+    expect(() => wranglerConfig(m, LOCAL_D1_ID)).toThrow(/CLOUDFLARE_ACCOUNT_ID is f+/u);
     vi.unstubAllEnvs();
   });
 
-  it('writes the issuer’s Worker, both D1s, the Durable Objects and the public vars (no secret)', () => {
-    const c = wranglerConfig(manifest({ dailySendBudget: 500 }), 'a'.repeat(8) + '-0000-4000-8000-000000000001', LOCAL_D1_ID) as Record<string, any>;
+  it('writes the issuer’s Worker, its D1, the API’s IssuerRpc, the Durable Objects and the public vars (no secret)', () => {
+    const c = wranglerConfig(manifest({ dailySendBudget: 500 }), 'a'.repeat(8) + '-0000-4000-8000-000000000001') as Record<string, any>;
     expect(c.name).toBe('hana-id-email-issuer-sandbox-dev');
     expect(c.main).toBe('src/index.ts');
     expect(c.placement).toEqual({ region: 'aws:ap-east-1' });
@@ -83,58 +83,61 @@ describe('wranglerConfig', () => {
     });
     expect(JSON.parse(c.vars.EMAIL_PUBLIC_KEYS)).toEqual([primary.pub, standby.pub]);
     expect(JSON.stringify(c)).not.toContain(primary.jwk.d);
-    expect(c.d1_databases.map((d: { binding: string; database_name: string }) => [d.binding, d.database_name])).toEqual([
-      ['DB', 'hana-id-email-issuer-sandbox-dev'],
-      ['APP_DB', base.cloudflare.d1Name],
-    ]);
+    // Its own D1 only: the API's is reached through IssuerRpc, never bound (D434).
+    expect(c.d1_databases.map((d: { binding: string; database_name: string }) => [d.binding, d.database_name])).toEqual([['DB', 'hana-id-email-issuer-sandbox-dev']]);
+    expect(JSON.stringify(c)).not.toContain('APP_DB');
+    expect(JSON.stringify(c.d1_databases)).not.toContain(base.cloudflare.d1Name);
+    expect(c.services).toEqual([{ binding: 'API', service: base.cloudflare.workerName, entrypoint: 'IssuerRpc' }]);
     expect(c.durable_objects.bindings.map((b: { name: string }) => b.name)).toEqual(['EMAIL_CHALLENGE', 'RATE_LIMITER']);
   });
 
   it('DirectoryRpc’s staff check: the admin application’s Access vars only with a dashboard block; no service binding of its own (D275)', () => {
     // An env without a dashboard (sandbox-dev's manifest has one since M4: dropped here).
-    const none = wranglerConfig({ ...manifest(), admin: undefined } as Manifest, LOCAL_D1_ID, LOCAL_D1_ID) as Record<string, any>;
+    const none = wranglerConfig({ ...manifest(), admin: undefined } as Manifest, LOCAL_D1_ID) as Record<string, any>;
     expect(Object.keys(none.vars).filter((k) => k.startsWith('ADMIN_'))).toEqual([]);
     // sandbox-dev's own block passes its AUD through as is (access-setup wrote it, D409).
-    const sandbox = wranglerConfig(manifest(), LOCAL_D1_ID, LOCAL_D1_ID) as Record<string, any>;
+    const sandbox = wranglerConfig(manifest(), LOCAL_D1_ID) as Record<string, any>;
     expect(sandbox.vars).toMatchObject({ ADMIN_ACCESS_AUD: base.admin!.accessAud, ADMIN_STAFF_EMAILS: JSON.stringify(base.admin!.staffEmails) });
     // A placeholder AUD passes through too: the issuer's staffConfig refuses `UNSET`, so every staff call fails closed
     // until the Access application exists (test/directory-rpc.test.ts, "fails closed").
-    const unset = wranglerConfig({ ...manifest(), admin: { ...base.admin!, accessAud: 'UNSET' } } as Manifest, LOCAL_D1_ID, LOCAL_D1_ID) as Record<string, any>;
+    const unset = wranglerConfig({ ...manifest(), admin: { ...base.admin!, accessAud: 'UNSET' } } as Manifest, LOCAL_D1_ID) as Record<string, any>;
     expect(unset.vars).toMatchObject({ ADMIN_ACCESS_AUD: 'UNSET' });
     const admin = { workerName: 'hana-id-admin-sandbox-dev', origin: 'https://admin.example.test', accessTeamDomain: 'hana.cloudflareaccess.com', accessAud: 'e'.repeat(64), staffEmails: ['a@hana.example', 'b@hana.example'] };
-    const c = wranglerConfig(manifest({}, { admin }), LOCAL_D1_ID, LOCAL_D1_ID) as Record<string, any>;
+    const c = wranglerConfig(manifest({}, { admin }), LOCAL_D1_ID) as Record<string, any>;
     expect(c.vars).toMatchObject({ ADMIN_ACCESS_TEAM_DOMAIN: 'hana.cloudflareaccess.com', ADMIN_ACCESS_AUD: 'e'.repeat(64), ADMIN_STAFF_EMAILS: '["a@hana.example","b@hana.example"]' });
-    // The issuer binds nothing new: the admin Worker binds it (the entrypoint has no route here).
-    expect(c.services).toBeUndefined();
+    // The issuer binds nothing for DirectoryRpc (the admin Worker binds it; the entrypoint has no route here): its one
+    // service binding is the API's IssuerRpc (D434).
+    expect(c.services).toEqual([{ binding: 'API', service: base.cloudflare.workerName, entrypoint: 'IssuerRpc' }]);
     expect(c.routes).toBeUndefined();
   });
 
   it('the outbox binding only in local* envs (and the test config)', () => {
-    expect(() => wranglerConfig(manifest({ sender: 'outbox' }), LOCAL_D1_ID, LOCAL_D1_ID)).toThrow('local* envs only');
-    const local = wranglerConfig(manifest({ sender: 'outbox' }, { name: 'local-dev' }), LOCAL_D1_ID, LOCAL_D1_ID) as Record<string, any>;
+    expect(() => wranglerConfig(manifest({ sender: 'outbox' }), LOCAL_D1_ID)).toThrow('local* envs only');
+    const local = wranglerConfig(manifest({ sender: 'outbox' }, { name: 'local-dev' }), LOCAL_D1_ID) as Record<string, any>;
     expect(local.durable_objects.bindings.map((b: { name: string }) => b.name)).toContain('OUTBOX');
     const t = testWranglerConfig([primary.pub], primary.pub.kid) as Record<string, any>;
     expect(t.vars.EMAIL_SENDER).toBe('outbox');
   });
 
   it('refuses a Worker-secret signer outside testnet, the aws-kms signer (not wired), a missing block or origin', () => {
-    expect(() => wranglerConfig({ ...manifest(), network: 'mainnet' } as unknown as Manifest, LOCAL_D1_ID, LOCAL_D1_ID)).toThrow('testnet only');
+    expect(() => wranglerConfig({ ...manifest(), network: 'mainnet' } as unknown as Manifest, LOCAL_D1_ID)).toThrow('testnet only');
     const kms = { kind: 'aws-kms', awsRegion: 'ap-east-1', keys: { primary: { kid: primary.pub.kid, arn: 'x' }, standby: { kid: standby.pub.kid, arn: 'y' } } };
-    expect(() => wranglerConfig(manifest({ signer: kms }), LOCAL_D1_ID, LOCAL_D1_ID)).toThrow('not wired yet');
+    expect(() => wranglerConfig(manifest({ signer: kms }), LOCAL_D1_ID)).toThrow('not wired yet');
     const { emailIssuer: _committed, ...noIssuer } = base;
-    expect(() => wranglerConfig(noIssuer as Manifest, LOCAL_D1_ID, LOCAL_D1_ID)).toThrow('no emailIssuer');
-    expect(() => wranglerConfig({ ...manifest(), authOrigin: undefined } as Manifest, LOCAL_D1_ID, LOCAL_D1_ID)).toThrow('vaultOrigin and authOrigin');
+    expect(() => wranglerConfig(noIssuer as Manifest, LOCAL_D1_ID)).toThrow('no emailIssuer');
+    expect(() => wranglerConfig({ ...manifest(), authOrigin: undefined } as Manifest, LOCAL_D1_ID)).toThrow('vaultOrigin and authOrigin');
   });
 
-  it('keeps D1 ids from an existing file only for the same databases', () => {
+  it('keeps the D1 id from an existing file only for the same database', () => {
     const id = '11111111-2222-4333-8444-555555555555';
-    const app = '66666666-7777-4888-8999-000000000000';
-    writeWranglerConfig(manifest(), { d1: id, appD1: app }, dir);
+    writeWranglerConfig(manifest(), { d1: id }, dir);
     expect(existingD1Id(join(dir, 'wrangler.jsonc'), 'DB', 'hana-id-email-issuer-sandbox-dev')).toBe(id);
-    expect(existingD1Id(join(dir, 'wrangler.jsonc'), 'APP_DB', base.cloudflare.d1Name)).toBe(app);
     expect(existingD1Id(join(dir, 'wrangler.jsonc'), 'DB', 'another-db')).toBeNull();
-    const again = writeWranglerConfig(manifest(), {}, dir);
-    expect([again.d1Id, again.appD1Id]).toEqual([id, app]);
+    expect(writeWranglerConfig(manifest(), {}, dir).d1Id).toBe(id);
+  });
+
+  it('refuses the old --app-d1-id (the issuer binds no API D1, D434)', () => {
+    expect(() => main(['sandbox-dev', '--d1-id', '11111111-2222-4333-8444-555555555555', '--app-d1-id', '66666666-7777-4888-8999-000000000000'], { dir, loadManifest: () => manifest() })).toThrow(/--app-d1-id is gone.*IssuerRpc/u);
   });
 });
 

@@ -9,8 +9,8 @@ proofs, unlock, unsuppress) behind Cloudflare Access. It is reached at `{emailIs
 URL on a `workers.dev` env (sandbox-dev), the API's URL through a zone route in production; never through the API
 Worker, so an address or a code never passes through it. `gen` turns on `workers_dev` only for a `workers.dev` `url`;
 a `url` on another host (a dev env on custom domains) becomes the issuer's own Custom Domain (D404).
-Its `APP_DB` binding is the API's D1, read-write as every D1 binding is; a source check holds the code to SELECTs until
-a read-only RPC on the API replaces it (D251).
+It binds no D1 of the API's: it reads apps through the API Worker's read-only `IssuerRpc` entrypoint (service binding
+`API`, D434; it replaced the read-write `APP_DB` of D251), so the API must serve `IssuerRpc` before this Worker deploys.
 **Not deployed**; no app enables email yet (the sandbox-dev steps: `docs/operations.md` "Email login on sandbox-dev").
 
 Reference: endpoints, limits, Durable Objects, D1 and logs in `docs/api.md` "Email issuer"; setup and runbook in
@@ -40,8 +40,8 @@ partners never see it. Logs still never carry an address.
 | `EMAIL_RL_KEY` (K_rl) | limiter keys: the mailbox (the address without its `+tag`) and the recipient domain |
 | `SENDGRID_API_KEY` | Mail Send only, this Worker's alone (D194) |
 
-It reads hana-signer views over the manifest's RPC and the API's D1 (`app_keys`, `apps`, `plans`) read only, finding an
-app as the API's gate does (a key in `app_keys` not revoked or in its grace, an undeleted app, active only with
+It reads hana-signer views over the manifest's RPC and the API's apps through `IssuerRpc` (`src/apps.ts`; the API runs
+the lookups in `apps/api/src/issuer-apps.ts`), finding an app as the API's gate does (a key in `app_keys` not revoked or in its grace, an undeleted app, active only with
 `suspended_by = 0`; `apps.login_methods` for email, D233); it never reads the legacy `apps.publishable_key`, writes
 nothing on chain and holds no chain key.
 
@@ -73,7 +73,7 @@ nothing on chain and holds no chain key.
 corepack pnpm --filter @hana-id/email-issuer test        # Worker tests (miniflare) and the gen tests
 corepack pnpm --filter @hana-id/email-issuer typecheck
 corepack pnpm --filter @hana-id/scripts email-issuer <env> init --from "Hana <login@…>" --budget <n> [--yes]   # keys + manifest, uploads nothing
-corepack pnpm --filter @hana-id/email-issuer gen <env> [--d1-id <uuid>] [--app-d1-id <uuid>] [--dev-vars]
+corepack pnpm --filter @hana-id/email-issuer gen <env> [--d1-id <uuid>] [--dev-vars]     # binds the API's IssuerRpc; no API D1
 corepack pnpm --filter @hana-id/scripts email-issuer <env> put [--standby] [--yes]    # the user uploads the secrets
 corepack pnpm --filter @hana-id/email-issuer run deploy                               # stamped with the build id (never a raw wrangler deploy)
 corepack pnpm --filter @hana-id/scripts run deploy-check <env> --d1                   # the issuer on the API's and the pages' commit (D384)
@@ -81,7 +81,9 @@ corepack pnpm --filter @hana-id/email-issuer exec tsx scripts/gen-contract-fixtu
 corepack pnpm --filter @hana-id/email-issuer dev
 ```
 
-The tests reach no network: Google, NEAR, SendGrid and KMS are fakes (Google's real client code runs against a fake
+The tests reach no network: Google, NEAR, SendGrid and KMS are fakes; the `API` binding reaches the real API Worker
+(bundled by `vitest.config.ts` with wrangler's dry run) and its `IssuerRpc`, on a D1 the tests seed as `API_TEST_DB`
+(`test/apps-client.test.ts`, and `scripts/test/api-read-only.test.ts` for the binding rules, D434) (Google's real client code runs against a fake
 fetch); the RSA keys and HMAC keys are throwaway values made per run. `test/privacy.test.ts` greps every log line of
 every flow for the address, the code, the `sub`, the tokens and the secrets (google-record and the directory's failure
 line included), and checks that a verified address is in `user_emails` and no other table;
@@ -90,7 +92,7 @@ google-match's directory write, `test/directory.test.ts` the upserts in both arr
 DirectoryRpc (the staff check, the searches, the ticket rule, the audit's atomicity and `detail`, the row budget, no
 address in a log line).
 
-Last verified: 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy` is the shared wrapper, D406); 2026-11-05 (branch `feat/batch-c-15-screen`: `DirectoryRpc.get`'s `purpose`, D399); 2026-11-05 (branch
+Last verified: 2026-11-06 (branch `feat/issuer-readonly-rpc`: the `API` → `IssuerRpc` binding instead of `APP_DB`, `gen` without `--app-d1-id`, the tests' auxiliary API Worker, D434); 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy` is the shared wrapper, D406); 2026-11-05 (branch `feat/batch-c-15-screen`: `DirectoryRpc.get`'s `purpose`, D399); 2026-11-05 (branch
 `feat/batch-c-8b`: `DirectoryRpc`, migration 0003, the `ADMIN_*` vars, D388–D392);
 2026-11-05 (branch `feat/deploy-build-check`: `GET /v1/email/health`, `scripts/deploy.ts`, D384);
 2026-11-04 (branch `fix/dev-email-limits`: dev envs' limit set, D340, `test/dev-limits.test.ts`; every

@@ -1,5 +1,5 @@
 // DirectoryRpc's source rules (D275, confirmed 2026-11-05; spec "Users and Support ID" → "Data path", "What partners
-// never see"), the pattern of D251's APP_DB check:
+// never see"), the pattern of D251's APP_DB check (now scripts/test/api-read-only.test.ts, D434):
 //   - src/directory-rpc.ts runs SELECTs on user_emails, user_email_apps and email_admin_audit and one INSERT into
 //     email_admin_audit, nothing else; it touches the DB and RATE_LIMITER bindings, its Access vars and EMAIL_RL_KEY
 //     (the audit's keyed hash) only, and imports neither the signer, the keys, the challenge nor the mail modules (nor
@@ -59,10 +59,10 @@ describe('src/directory-rpc.ts (DirectoryRpc) reads only, and only the directory
     for (const m of text.matchAll(/\.prepare\(\s*(`[^`]*`|'[^']*')/gu)) expect(m[1]!.slice(1).trimStart(), m[0]).toMatch(/^(SELECT\b|\$\{AUDIT_INSERT\})/u);
   });
 
-  it('touches DB, RATE_LIMITER, its Access vars, ENV_NAME, EMAIL_RL_KEY and HANA_BUILD (health, D425) only: never APP_DB or another secret', () => {
+  it('touches DB, RATE_LIMITER, its Access vars, ENV_NAME, EMAIL_RL_KEY and HANA_BUILD (health, D425) only: never the API (IssuerRpc), APP_DB or another secret', () => {
     const used = new Set([...text.matchAll(/\benv\??\.([A-Z][A-Z0-9_]*)/gu)].map((m) => m[1]!));
     for (const name of used) expect(['DB', 'RATE_LIMITER', 'ENV_NAME', 'EMAIL_RL_KEY', 'HANA_BUILD', 'ADMIN_ACCESS_TEAM_DOMAIN', 'ADMIN_ACCESS_AUD', 'ADMIN_STAFF_EMAILS'], name).toContain(name);
-    for (const name of ['APP_DB', 'ISSUER_SIGNING_KEY', 'EMAIL_SUB_KEY', 'EMAIL_CODE_KEY', 'SENDGRID_API_KEY', 'EMAIL_CHALLENGE', 'OUTBOX']) expect(text, name).not.toContain(name);
+    for (const name of ['APP_DB', 'IssuerRpc', 'ISSUER_SIGNING_KEY', 'EMAIL_SUB_KEY', 'EMAIL_CODE_KEY', 'SENDGRID_API_KEY', 'EMAIL_CHALLENGE', 'OUTBOX']) expect(text, name).not.toContain(name);
   });
 
   it('its log lines carry no address, sub, ticket, staff email or token', () => {

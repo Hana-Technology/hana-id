@@ -1,6 +1,6 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
-Last verified against code: 2026-11-06 (branch `feat/user-events-retention`: `AdminRpc.purgeUserEvents`, the admin's monthly job's `user_events` step, `user_events`' 24-month retention and erasure, readiness 7.17, D433); 2026-11-06 (branch `feat/mainnet-demo-key-export`: `GET /v1/app`'s `mainnetDemo`, `POST /v1/mainnet-demo/events`, `POST /v1/login`'s `exportChain` and the `key_exported` event, migration 0013 (`apps.mainnet_demo`, `user_events`), `AdminRpc.setMainnetDemo`, the staff app view's `settings.mainnetDemo`, `StaffUser.events`, the admin's `POST /api/apps/:app/mainnet-demo`, the auth Worker's `MAINNET_DEMO_BALANCE` and `/approve`'s dev-env `connect-src`; D428–D430); 2026-11-06 (branch `feat/admin-system-status`: the admin's `GET /api/status`, `AdminRpc.systemStatus`, `StaffRpc.health`, `DirectoryRpc.health`, the console's `cron_runs` (migration 0003), the admin's `ledger_cron.last_run` and its new vars, D425); 2026-11-06 (branch `fix/admin-renew-team-login`: the admin's `GET /api/me` `renewUrl`, D424 amended); 2026-11-06 (branch `fix/session-expiry-ux`: the admin's `GET /api/me` `accessExp`, the console's `GET /api/me` `sessionExpiresAt`, D424; no route or request changed); 2026-11-06 (branch `fix/google-key-hysteresis`: "Cron" step 3: three JWKS fetches a run, removal after 24 h missing from every fetch, never a kid with a token in the last 24 h, migration 0012, D422); 2026-11-06 (branch `feat/console-ux-redesign`: the console SPA's pages and error display, D421; no route or request changed); 2026-11-06 (branch `feat/env-alert-label`: the admin Worker's `ENV_LABEL` var, D419); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: the admin Worker's "Email" through SendGrid, accepted on `202`, no idempotency key, the per-isolate memo; D401); 2026-11-05 (branch `fix/security-review-1105`: the admin's `POST /api/users/search` ticket for a sub or full address, `POST /api/users/find` `{query, ticket}` audited first as `users.find`, `support.lookup`'s `requestIdList`, `recordStaffAction`'s two org-less actions, D410); 2026-11-05 (branch `feat/deploy-check-all-workers`: the build id on every Worker, D406: `GET /.well-known/hana-build` on the console, console-auth and files Workers, the console SPA's `<meta name="hana-build">`, none on the admin (read through wrangler); the shared deploy wrapper); 2026-11-05 (branch `feat/sdk-error-request-id`: "Conventions": an error's `requestId` passed on to the SDK as `data.requestId`, D405); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup's screen: the email join in `POST /api/support/lookup` (`emails`, `emailsNote`, `unverifiedWarning`), its ticket in the issuer's rule, `DirectoryRpc.get`'s `purpose` (`support_lookup`), D399); 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
+Last verified against code: 2026-11-06 (branch `feat/user-events-retention`: `AdminRpc.purgeUserEvents`, the admin's monthly job's `user_events` step, `user_events`' 24-month retention and erasure, readiness 7.17, D433); 2026-11-06 (branch `feat/issuer-readonly-rpc`: the API's `IssuerRpc` entrypoint, the issuer's `API` binding instead of `APP_DB`, `503 api_unavailable`, D434); 2026-11-06 (branch `feat/mainnet-demo-key-export`: `GET /v1/app`'s `mainnetDemo`, `POST /v1/mainnet-demo/events`, `POST /v1/login`'s `exportChain` and the `key_exported` event, migration 0013 (`apps.mainnet_demo`, `user_events`), `AdminRpc.setMainnetDemo`, the staff app view's `settings.mainnetDemo`, `StaffUser.events`, the admin's `POST /api/apps/:app/mainnet-demo`, the auth Worker's `MAINNET_DEMO_BALANCE` and `/approve`'s dev-env `connect-src`; D428–D430); 2026-11-06 (branch `feat/admin-system-status`: the admin's `GET /api/status`, `AdminRpc.systemStatus`, `StaffRpc.health`, `DirectoryRpc.health`, the console's `cron_runs` (migration 0003), the admin's `ledger_cron.last_run` and its new vars, D425); 2026-11-06 (branch `fix/admin-renew-team-login`: the admin's `GET /api/me` `renewUrl`, D424 amended); 2026-11-06 (branch `fix/session-expiry-ux`: the admin's `GET /api/me` `accessExp`, the console's `GET /api/me` `sessionExpiresAt`, D424; no route or request changed); 2026-11-06 (branch `fix/google-key-hysteresis`: "Cron" step 3: three JWKS fetches a run, removal after 24 h missing from every fetch, never a kid with a token in the last 24 h, migration 0012, D422); 2026-11-06 (branch `feat/console-ux-redesign`: the console SPA's pages and error display, D421; no route or request changed); 2026-11-06 (branch `feat/env-alert-label`: the admin Worker's `ENV_LABEL` var, D419); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: the admin Worker's "Email" through SendGrid, accepted on `202`, no idempotency key, the per-isolate memo; D401); 2026-11-05 (branch `fix/security-review-1105`: the admin's `POST /api/users/search` ticket for a sub or full address, `POST /api/users/find` `{query, ticket}` audited first as `users.find`, `support.lookup`'s `requestIdList`, `recordStaffAction`'s two org-less actions, D410); 2026-11-05 (branch `feat/deploy-check-all-workers`: the build id on every Worker, D406: `GET /.well-known/hana-build` on the console, console-auth and files Workers, the console SPA's `<meta name="hana-build">`, none on the admin (read through wrangler); the shared deploy wrapper); 2026-11-05 (branch `feat/sdk-error-request-id`: "Conventions": an error's `requestId` passed on to the SDK as `data.requestId`, D405); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup's screen: the email join in `POST /api/support/lookup` (`emails`, `emailsNote`, `unverifiedWarning`), its ticket in the issuer's rule, `DirectoryRpc.get`'s `purpose` (`support_lookup`), D399); 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
 answers, D395; `AdminRpc.supportLookup` / `userShares`; the admin Worker's `POST /api/support/lookup`; the
 `support.lookup` staff action; D394–D396); 2026-11-05 (branch `feat/deploy-build-check`: the build id, D384: `GET /v1/health`'s
 `build`, the page Workers' `GET /.well-known/hana-build`, the issuer's `GET /v1/email/health`, the `HANA_BUILD` var
@@ -1216,6 +1216,27 @@ accept a revoked, rotating or deleted app's key.
 - **Statement cap.** A call is held to two reads and one batch of at most eight statements (`changes/db.ts`; going
   over is a bug, answered `internal`).
 
+### `IssuerRpc` (entrypoint, no route; the email issuer only; D434)
+
+`IssuerRpc` (`src/rpc/issuer.ts`, readers in `src/issuer-apps.ts`) is a third `WorkerEntrypoint` of the API Worker,
+bound only by the email issuer (service binding `API`, `apps/email-issuer/scripts/gen-wrangler.ts`). It replaced the
+issuer's read-write `APP_DB` binding of this D1 (D251, readiness row 7.1d): the issuer binds no API D1. It has no
+actor, budget or breaker (the issuer's own per-IP and per-app limits run first, as they did over `APP_DB`), and only
+three methods, each one strict object in (`@hana-id/console-core` `issuer-apps.ts`) and one or two SELECTs:
+
+| Method | Input | Answer |
+|---|---|---|
+| `appByKey` | `{pk}` (`pk_test_` / `pk_live_` + base58) | `{ok: true, app: IssuerApp \| null}`: by the gate's model (an `app_keys` row not revoked or in its rotation grace on the API's clock, an undeleted app); `null` for an unknown, revoked or deleted app's key |
+| `appById` | `{appId}` (`[A-Za-z0-9_-]{1,96}`) | `{ok: true, app: IssuerApp \| null}`: an undeleted app |
+| `scopeHasEmailApp` | `{scopeId}` (`[a-z0-9]{1,64}`) | `{ok: true, hasEmailApp}`: an active, undeleted app of the scope with email on (at most 50 apps read) |
+
+`IssuerApp` is `{id, name, scopeId, active, emailOn, perMinute, perDay, googleWebClientId}`: `active` needs no
+suspension bit, the legacy `status` active and (by key) the key's prefix naming the scope's environment; `emailOn`
+needs `login_methods` to list `email` (false for every app before migration 0010). A bad input is
+`{ok: false, code: "bad_request"}`, a D1 error `{ok: false, code: "internal"}`; only those are logged (`event: "rpc"`,
+`method: "issuer.<name>"`, never the key, app or scope). The issuer fails the request closed on any non-`ok` answer
+(`503 api_unavailable`, below).
+
 ## Relayer pools and gas (`src/relayer-config.ts`, `src/gas.ts`)
 
 | Pool | Secret | Durable Object names | Methods | Used by |
@@ -2073,7 +2094,7 @@ to this Worker; its iss is `{url}/v1/email`. Requests never pass through the API
 is under that `url`. Its browser caller is the login popup's `/login/email` (`packages/web/src/auth/email-api.ts`,
 batch 8a: `start` with purpose `session`, the session commitment and this device's ticket for the address, then
 `resend` and `verify`; it never calls `google-match` yet). **Not deployed**; no app's `login_methods` includes email yet, so nothing calls it. It reads the chain (views only) and
-the API's D1 (read only); it writes nothing on chain.
+the API's apps through `IssuerRpc` (above; no API D1 binding, D434); it writes nothing on chain.
 
 ### Conventions
 
@@ -2083,9 +2104,10 @@ the API's D1 (read only); it writes nothing on chain.
   `access-control-expose-headers: retry-after`, so the vault and the auth page can read it. No cookies, no credentials (D70). Bodies ≤ 8 KB, exactly the listed
   fields (else `400 bad_request`); only `start` carries an address. Every response `Cache-Control: no-store`.
 - Errors are `{error, code, data?}`. Thrown failures: `503 signer_unavailable` (no, a malformed or a non-active
-  ISSUER_SIGNING_KEY, a self-check failure), `503 issuer_unavailable` (a missing HMAC key), `502 near_unavailable`,
+  ISSUER_SIGNING_KEY, a self-check failure), `503 issuer_unavailable` (a missing HMAC key), `503 api_unavailable` (an app lookup the API's `IssuerRpc`
+  didn't answer: no binding, the API not serving it yet, a refusal or a malformed answer; D434), `502 near_unavailable`,
   `502 google_unavailable`, `500 internal`. `429` carries `retry-after`.
-- **The app gate** (`start`, `google-match`): `pk` → the API's D1 app by the gate's model (D233): an `app_keys` row
+- **The app gate** (`start`, `google-match`): `pk` → the API's app through `IssuerRpc.appByKey`, by the gate's model (D233): an `app_keys` row
   not revoked or still in its rotation grace, of an app not deleted (`401 invalid_key`); active only with
   `suspended_by = 0` and `status = 'active'` (`403 app_suspended`); `login_methods` lists `email`
   (`403 email_not_enabled`; the API's migration 0010, absent = email off); `apps.publishable_key` is never read; and the scope holds the client `("email", "email:" + scope_id)` on chain (cached 60
@@ -2370,7 +2392,8 @@ by Hana staff with `admin user:list` / `user:find` and, through `DirectoryRpc` b
 (no route serves it). The
 verified address is stored readably there and only there: no log line, other table or Durable Object holds it
 (a live challenge's copy is encrypted, D197). SendGrid also keeps addresses: its suppression lists keep an address until it
-is removed there, whatever the activity retention below. `APP_DB` is the API's D1, read only (`apps`, `plans`).
+is removed there, whatever the activity retention below. The issuer has no binding to the API's D1 (D434): its one
+service binding, `API`, is the API Worker's `IssuerRpc` entrypoint.
 
 Vars (from `emailIssuer`, `scripts/gen-wrangler.ts`): `ENV_NAME`, `NEAR_RPC`, `NEAR_RPC_FALLBACK`, `SIGNER_ACCOUNT`,
 `EMAIL_ISS`, `EMAIL_PUBLIC_KEYS`, `EMAIL_ACTIVE_KID`, `EMAIL_SIGNER_KIND`, `EMAIL_SENDER`, `MAIL_FROM`, `AUTH_ORIGIN`,

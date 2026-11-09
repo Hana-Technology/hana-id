@@ -9,6 +9,7 @@ import { MAINNET_DEMO_EVENTS_ENDPOINT, handleMainnetDemoEvent } from './mainnet-
 import { guardedChangesMaintenance } from './guarded/cron.ts';
 import { HOME_APPS_ENDPOINT, handleHomeApps } from './home/apps.ts';
 import { HOME_CONFIG_ENDPOINT, handleHomeConfig } from './home/config.ts';
+import { HOME_LOGIN_ENDPOINT, handleHomeLogin } from './home/login.ts';
 import { homePreflight } from './home/identity.ts';
 import { syncIssuerKeys } from './issuer-keys.ts';
 import { identityMaintenance } from './identity/maintenance.ts';
@@ -176,6 +177,12 @@ export default {
         if (request.method === 'OPTIONS') return homePreflight(request, env);
         if (request.method === 'GET') return await handleHomeApps(request, env, requestId);
         return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'GET, OPTIONS' });
+      }
+      if (pathname === HOME_LOGIN_ENDPOINT) {
+        // Hana Home's derive (H3): a Home identity, no app gate, relayed through the Home pool.
+        if (request.method === 'OPTIONS') return homePreflight(request, env);
+        if (request.method === 'POST') return await handleHomeLogin(request, env, requestId, ctx);
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
       }
       if (IDENTITY_PUBLIC_ENDPOINTS.includes(pathname)) {
         if (request.method === 'GET' || request.method === 'HEAD') return handleIdentityPublic(request, env, pathname, requestId);

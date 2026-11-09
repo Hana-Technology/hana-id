@@ -642,10 +642,12 @@ function userEventsBlock(u) {
         tr(
           time(e.at),
           e.kind === 'key_exported' ? h('span', { class: 'badge warning' }, 'Key exported') : h('span', { class: 'badge' }, 'Mainnet demo signature (reported by the vault)'),
-          h('code', {}, e.appId),
-          e.chain ? chainLabel(e.chain) : 'unknown (older export window)',
+          e.appId === null ? h('span', { class: 'sub' }, 'Hana Home') : h('code', {}, e.appId),
+          e.chain ? chainLabel(e.chain) : e.appId === null ? 'both chains (Hana Home)' : 'unknown (older export window)',
           e.kind === 'key_exported'
-            ? 'The export window signed in again and derived the key; the user may have shown or copied it.'
+            ? e.appId === null
+              ? 'Hana Home signed in again and derived the key (one sign-in opens both chains); the user may have shown or copied it.'
+              : 'The export window signed in again and derived the key; the user may have shown or copied it.'
             : h('span', {}, `${e.network === 'pubnet' ? 'Stellar public network' : `EVM chain ${e.network}`}, about ${usdMicros(e.usdMicros || 0)} from `, h('code', {}, e.address), h('span', { class: 'sub' }, ' reported by the vault')),
         ),
       ),

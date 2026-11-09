@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { bootVault } from '../../src/vault/boot.ts';
 import { readInlinedConfig } from '../../src/vault/config.ts';
 import { domLauncherView } from '../../src/vault/launcher.ts';
+import { dom } from '../../src/auth/dom.ts';
+import { renderConsent } from '../../src/auth/render-consent.ts';
 import { ENV, makeConfig } from './harness.ts';
 
 function setConfig(text: string, type = 'application/json', tag = 'script'): void {
@@ -104,6 +106,14 @@ describe('the launcher button', () => {
     expect(onClick).not.toHaveBeenCalled();
     view.hide();
     expect(button.style.display).toBe('none');
+  });
+
+  it('the consent screen renders the partner-set policy label as text, never markup', () => {
+    const label = '<img src=x onerror=alert(1)>';
+    const policy = { v: 1, label, maxConsentMs: 3_600_000, limits: { perDayCount: 1 } };
+    const el = renderConsent(dom(document), { policy: policy as never, appName: 'Partner', parentOrigin: 'https://partner.test', expiresAtMs: 1, nowMs: 0 });
+    expect(el.querySelector('img')).toBeNull();
+    expect(el.textContent).toContain(label);
   });
 
   it('a flash (no action) is disabled', () => {

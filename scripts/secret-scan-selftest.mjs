@@ -52,14 +52,29 @@ const rsaPrivateJwk = () =>
 const publicJwk = () => JSON.stringify({ kty: 'EC', crv: 'P-256', x: randomBytes(32).toString('base64url'), y: randomBytes(32).toString('base64url'), kid: randomBytes(32).toString('base64url'), use: 'sig', alg: 'ES256' });
 /** A fake Neon API key (`napi_` + 64 letters and digits; only the shape matters). */
 const neonApiKey = () => `napi_${base58(randomBytes(48)).slice(0, 64)}`;
+/**
+ * A random 64-hex token the generic rule must catch. The rule (rightly) skips a value under its 3.5-bit entropy floor or
+ * containing one of its stop words (`feed`, `dead`, ...): about 0.3% of random hex does, which made this case flaky. So a
+ * value is redrawn until it has no run of three hex letters and at least 3.6 bits a character. Only the fake is chosen; the rule is unchanged.
+ */
+function hexToken() {
+  for (;;) {
+    const v = randomBytes(32).toString('hex');
+    const counts = {};
+    for (const c of v) counts[c] = (counts[c] ?? 0) + 1;
+    const bits = -Object.values(counts).reduce((sum, n) => sum + (n / v.length) * Math.log2(n / v.length), 0);
+    if (!/[a-f]{3}/u.test(v) && bits >= 3.6) return v;
+  }
+}
 const keyFile = (account) => `${JSON.stringify({ account_id: account, public_key: publicKey(), private_key: secretKey() }, null, 2)}\n`;
 
 /** Each case: files to write, and the rule ids gitleaks must report for them (at least these). */
 const CASES = [
   { name: 'ed25519 secret key as a TS constant', files: { 'src/config.ts': `export const RELAYER = "${secretKey()}";\n` }, expect: ['near-ed25519-secret-key'] },
   { name: 'relayer pool keys pasted into an innocent file', files: { 'backup/pool.json': `${JSON.stringify([secretKey(), secretKey()], null, 2)}\n` }, expect: ['near-ed25519-secret-key'] },
-  { name: 'a 64-hex token beside accessAud in a manifest (only the AUD line is waived)', files: { 'envs/aud.json': `{\n  "admin": {\n    "accessAud": "${randomBytes(32).toString('hex')}",\n    "apiToken": "${randomBytes(32).toString('hex')}"\n  }\n}\n` }, expect: ['generic-api-key'] },
+  { name: 'a 64-hex token beside accessAud in a manifest (only the AUD line is waived)', files: { 'envs/aud.json': `{\n  "admin": {\n    "accessAud": "${randomBytes(32).toString('hex')}",\n    "apiToken": "${hexToken()}"\n  }\n}\n` }, expect: ['generic-api-key'] },
   { name: 'relayer-keys.json outside .secrets', files: { 'notes/relayer-keys.json': `${JSON.stringify([secretKey()], null, 2)}\n` }, expect: ['hana-secret-file', 'near-ed25519-secret-key'] },
+  { name: 'home-relayer-keys.json', files: { 'home-relayer-keys.json': `${JSON.stringify([secretKey()])}\n` }, expect: ['hana-secret-file', 'near-ed25519-secret-key'] },
   { name: 'owner-relayer-keys.json', files: { 'owner-relayer-keys.json': `${JSON.stringify([secretKey()])}\n` }, expect: ['hana-secret-file', 'near-ed25519-secret-key'] },
   { name: 'keys-updater.json', files: { 'keys-updater.json': keyFile('hana-id-signer-dev1.testnet') }, expect: ['hana-secret-file', 'near-ed25519-secret-key'] },
   {

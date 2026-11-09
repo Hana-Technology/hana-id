@@ -2,7 +2,7 @@
 // generate.
 
 /**
- * Two pools of function-call keys on RELAYER_ACCOUNT (receiver SIGNER_ACCOUNT), each with its own Durable Objects:
+ * Three pools of function-call keys on RELAYER_ACCOUNT (receiver SIGNER_ACCOUNT), each with its own Durable Objects:
  * - `session` (RELAYER_KEYS): logins and the email-login link methods (/v1/link*, email login build plan batch 6).
  *   Batch B moves the session methods through three states (docs/batch-b-spec.md, "Relayer allowlists"); this is state
  *   1, from the contract upgrade that adds create_session_and_derive. State 2 (ship gate passes, smoke on /v1/login)
@@ -11,6 +11,8 @@
  *   name them and nothing can call them).
  * - `owner` (OWNER_RELAYER_KEYS, small allowance): /v1/owner-actions. Abuse of that endpoint can only drain this pool,
  *   never stop logins.
+ * - `home` (HOME_RELAYER_KEYS, small allowance, one key by default): POST /v1/home/login only, so a Home flood can only
+ *   drain this pool, never stop logins or owner actions. Its one method means a leaked key opens nothing else.
  * The allowlists match the access keys' `method_names` (scripts/deploy-contract.ts); the Durable Object refuses
  * anything else even if a key would allow it. Each list holds only what an endpoint relays (D456), so a leaked key can
  * spend its allowance on nothing else.
@@ -18,6 +20,7 @@
 export const POOL_METHODS = {
   session: ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'link_identity', 'cancel_link', 'unlink_identity'],
   owner: ['propose_change', 'cancel_change', 'remove_client', 'disable_shared_login', 'execute_change'],
+  home: ['create_session_and_derive'],
 } as const;
 
 /**
@@ -83,7 +86,7 @@ export const GOVERNANCE_METHODS = [
 
 export type Pool = keyof typeof POOL_METHODS;
 export type RelayMethod = (typeof POOL_METHODS)[Pool][number];
-export const POOLS: readonly Pool[] = ['session', 'owner'];
+export const POOLS: readonly Pool[] = ['session', 'owner', 'home'];
 
 /**
  * Each owner-pool key's allowance when deploy-contract adds it (its `--owner-relayer-allowance` default, 0.5 NEAR;
@@ -93,15 +96,15 @@ export const POOLS: readonly Pool[] = ['session', 'owner'];
 export const OWNER_POOL_ALLOWANCE_YOCTO = 5n * 10n ** 23n;
 
 /** Secret holding each pool's keys. */
-export const POOL_SECRET: Readonly<Record<Pool, 'RELAYER_KEYS' | 'OWNER_RELAYER_KEYS'>> = { session: 'RELAYER_KEYS', owner: 'OWNER_RELAYER_KEYS' };
+export const POOL_SECRET: Readonly<Record<Pool, 'RELAYER_KEYS' | 'OWNER_RELAYER_KEYS' | 'HOME_RELAYER_KEYS'>> = { session: 'RELAYER_KEYS', owner: 'OWNER_RELAYER_KEYS', home: 'HOME_RELAYER_KEYS' };
 
 /** Durable Object name of a pool's key (session keys keep their batch A names). */
-export const relayerKeyName = (pool: Pool, index: number): string => (pool === 'session' ? `relayer-key-${index}` : `owner-relayer-key-${index}`);
+export const relayerKeyName = (pool: Pool, index: number): string => (pool === 'session' ? `relayer-key-${index}` : `${pool}-relayer-key-${index}`);
 
 /** The code of a copy of a request its relayer key object already relayed (RelayerKey `claims`, D455). */
 export const ALREADY_RELAYED = 'already_relayed';
 
-export const isPool = (v: unknown): v is Pool => v === 'session' || v === 'owner';
+export const isPool = (v: unknown): v is Pool => v === 'session' || v === 'owner' || v === 'home';
 
 export function poolAllows(pool: Pool, method: string): method is RelayMethod {
   return (POOL_METHODS[pool] as readonly string[]).includes(method);

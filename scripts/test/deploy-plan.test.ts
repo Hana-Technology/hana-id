@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { loadEnv } from '@hana-id/env';
 import { reportsCreateProof } from '../lib/deploy-run.ts';
-import { OWNER_RELAYER_METHODS, SESSION_RELAYER_METHODS, sharedClientsOf } from '../lib/contract.ts';
+import { HOME_RELAYER_METHODS, OWNER_RELAYER_METHODS, SESSION_RELAYER_METHODS, sharedClientsOf } from '../lib/contract.ts';
 import { type GovernanceView, UPDATER_METHODS } from '../lib/contract.ts';
 import { buildDeployPlan, checkFunctionKey, creationPlan, type DeployObserved, type DeployOptions, type DeployStep, describeStep, CLOCK_MARGIN_MS, ownerCallOf, QUARANTINE_MARGIN_MS, SINK_WAIT_MAX_MS, signerFullAccessAllowed, sinkWaitMs } from '../lib/deploy-plan.ts';
 import { type AccessKeyListEntry, EMPTY_CODE_HASH, nearToYocto } from '../lib/near.ts';
-import { DEFAULT_OWNER_ALLOWANCE_NEAR } from '../lib/deploy-run.ts';
+import { DEFAULT_HOME_ALLOWANCE_NEAR, DEFAULT_OWNER_ALLOWANCE_NEAR } from '../lib/deploy-run.ts';
 import { OWNER_POOL_ALLOWANCE_YOCTO, POOL_METHODS as API_POOL_METHODS } from '../../apps/api/src/relayer-config.ts';
 import { councilPolicy } from '../lib/sputnik.ts';
 import { ACCOUNT_OWNER } from './sim-fixtures.ts';
@@ -27,6 +27,7 @@ const PROD_DELAYS = { issuerKeyDelayMs: 7_200_000, governanceDelayMs: 259_200_00
 /** Batch B allowlist state 1 (docs/batch-b-spec.md, "Relayer allowlists"). */
 const SESSION = ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'link_identity', 'cancel_link', 'unlink_identity'];
 const OWNER = ['propose_change', 'cancel_change', 'remove_client', 'disable_shared_login', 'execute_change'];
+const HOME = ['create_session_and_derive'];
 /** The governance contract's updater key methods (its UPDATER_METHODS) and the v1 key's. */
 const UPDATER = ['set_issuer_key', 'propose_issuer_key_removal', 'execute_issuer_key_change'];
 const V1_UPDATER = ['set_issuer_key', 'remove_issuer_key'];
@@ -86,7 +87,7 @@ function fresh(over: Partial<DeployObserved> = {}): DeployObserved {
     governance: null,
     relayerAccessKeys: [],
     signerAccessKeys: [full('ed25519:S')],
-    poolKeysInFile: { session: [], owner: [] },
+    poolKeysInFile: { session: [], owner: [], home: [] },
     updaterKeyInFile: null,
     googleIssuer: null,
     globalScope: null,
@@ -106,9 +107,9 @@ function deployed(over: Partial<DeployObserved> = {}): DeployObserved {
     accounts: { signer: deployedSigner, relayer: fresh().accounts.relayer, owner: fresh().accounts.owner },
     config: configOk,
     governance: govOk,
-    relayerAccessKeys: [full('ed25519:R'), fc('ed25519:s1', m.signer, SESSION), fc('ed25519:s2', m.signer, SESSION), fc('ed25519:s3', m.signer, SESSION), fc('ed25519:o1', m.signer, OWNER)],
+    relayerAccessKeys: [full('ed25519:R'), fc('ed25519:s1', m.signer, SESSION), fc('ed25519:s2', m.signer, SESSION), fc('ed25519:s3', m.signer, SESSION), fc('ed25519:o1', m.signer, OWNER), fc('ed25519:h1', m.signer, HOME)],
     signerAccessKeys: [full('ed25519:S'), fc('ed25519:U', m.signer, UPDATER)],
-    poolKeysInFile: { session: ['ed25519:s1', 'ed25519:s2', 'ed25519:s3'], owner: ['ed25519:o1'] },
+    poolKeysInFile: { session: ['ed25519:s1', 'ed25519:s2', 'ed25519:s3'], owner: ['ed25519:o1'], home: ['ed25519:h1'] },
     updaterKeyInFile: 'ed25519:U',
     googleIssuer: { iss_values: ['accounts.google.com', 'https://accounts.google.com'], kids: [] },
     globalScope: { id: 'global' },
@@ -123,7 +124,7 @@ function deployedV1(over: Partial<DeployObserved> = {}): DeployObserved {
 }
 
 const opts: DeployOptions = {
-  pools: { session: { count: 3, allowanceYocto: 2n * NEAR }, owner: { count: 1, allowanceYocto: NEAR / 2n } },
+  pools: { session: { count: 3, allowanceYocto: 2n * NEAR }, owner: { count: 1, allowanceYocto: NEAR / 2n }, home: { count: 1, allowanceYocto: 2n * NEAR } },
   upgrade: false,
   skipBuild: false,
   transferOwner: false,
@@ -131,13 +132,13 @@ const opts: DeployOptions = {
   sputnikCodeHash: SPUTNIK_HASH,
 };
 
-const pool = (steps: DeployStep[], p: 'session' | 'owner') => steps.find((s) => s.kind === 'relayer-keys' && s.pool === p);
+const pool = (steps: DeployStep[], p: 'session' | 'owner' | 'home') => steps.find((s) => s.kind === 'relayer-keys' && s.pool === p);
 
 describe('buildDeployPlan', () => {
   it('plans a full fresh deploy in order', () => {
     const p = buildDeployPlan(m, fresh(), opts);
     expect(p.blockers).toEqual([]);
-    expect(p.steps.map((s) => s.kind)).toEqual(['build', 'deploy', 'relayer-keys', 'relayer-keys', 'add-updater-key', 'set-issuer', 'set-sponsors', 'set-shared-clients', 'register-global']);
+    expect(p.steps.map((s) => s.kind)).toEqual(['build', 'deploy', 'relayer-keys', 'relayer-keys', 'relayer-keys', 'add-updater-key', 'set-issuer', 'set-sponsors', 'set-shared-clients', 'register-global']);
     expect(p.steps[1]).toEqual({
       kind: 'deploy',
       init: {
@@ -154,11 +155,12 @@ describe('buildDeployPlan', () => {
     expect(p.steps[2]).toEqual({ kind: 'relayer-keys', pool: 'session', generate: 3, reuse: [], replace: [], methods: SESSION, allowanceYocto: 2n * NEAR });
     expect(p.steps[3]).toEqual({ kind: 'relayer-keys', pool: 'owner', generate: 1, reuse: [], replace: [], methods: OWNER, allowanceYocto: NEAR / 2n });
     // The updater key is installed by the contract (add_updater_key, owner), never added by hand.
-    expect(p.steps[4]).toEqual({ kind: 'add-updater-key', reuse: null });
-    expect(p.steps[5]).toEqual({ kind: 'set-issuer', provider: 'google', iss_values: ['https://accounts.google.com', 'accounts.google.com'] });
-    expect(p.steps[6]).toEqual({ kind: 'set-sponsors', sponsors: [m.relayer] });
-    expect(p.steps[7]).toEqual({ kind: 'set-shared-clients', clients: [['google', SHARED]], added: [['google', SHARED]], removed: [] });
-    expect(p.steps[8]).toEqual({ kind: 'register-global', owners: [{ Near: { account_id: m.owner } }], clients: [['google', 'hana.apps.googleusercontent.com']], allowShared: false });
+    expect(p.steps[4]).toEqual({ kind: 'relayer-keys', pool: 'home', generate: 1, reuse: [], replace: [], methods: HOME, allowanceYocto: 2n * NEAR });
+    expect(p.steps[5]).toEqual({ kind: 'add-updater-key', reuse: null });
+    expect(p.steps[6]).toEqual({ kind: 'set-issuer', provider: 'google', iss_values: ['https://accounts.google.com', 'accounts.google.com'] });
+    expect(p.steps[7]).toEqual({ kind: 'set-sponsors', sponsors: [m.relayer] });
+    expect(p.steps[8]).toEqual({ kind: 'set-shared-clients', clients: [['google', SHARED]], added: [['google', SHARED]], removed: [] });
+    expect(p.steps[9]).toEqual({ kind: 'register-global', owners: [{ Near: { account_id: m.owner } }], clients: [['google', 'hana.apps.googleusercontent.com']], allowShared: false });
   });
 
   it('pool method lists are exactly the spec lists, and disjoint', () => {
@@ -170,12 +172,14 @@ describe('buildDeployPlan', () => {
   it('the API relays exactly the methods the deployed access keys allow, per pool', () => {
     expect([...API_POOL_METHODS.session].sort()).toEqual([...SESSION_RELAYER_METHODS].sort());
     expect([...API_POOL_METHODS.owner].sort()).toEqual([...OWNER_RELAYER_METHODS].sort());
+    expect([...API_POOL_METHODS.home].sort()).toEqual([...HOME_RELAYER_METHODS].sort());
   });
 
   it('uses each pool its own count and allowance', () => {
-    const p = buildDeployPlan(m, fresh(), { ...opts, pools: { session: { count: 5, allowanceYocto: 3n * NEAR }, owner: { count: 2, allowanceYocto: NEAR / 10n } } });
+    const p = buildDeployPlan(m, fresh(), { ...opts, pools: { session: { count: 5, allowanceYocto: 3n * NEAR }, owner: { count: 2, allowanceYocto: NEAR / 10n }, home: { count: 1, allowanceYocto: NEAR } } });
     expect(pool(p.steps, 'session')).toMatchObject({ generate: 5, allowanceYocto: 3n * NEAR });
     expect(pool(p.steps, 'owner')).toMatchObject({ generate: 2, allowanceYocto: NEAR / 10n });
+    expect(pool(p.steps, 'home')).toMatchObject({ generate: 1, allowanceYocto: NEAR });
   });
 
   // Steps hold public keys only; that no secret reaches the output is checked end to end in deploy-run.test.ts.
@@ -187,6 +191,8 @@ describe('buildDeployPlan', () => {
     expect(text).toContain(`generate 3 new key(s) into .secrets/${m.name}/relayer-keys.json`);
     expect(text).toContain(`generate 1 new key(s) into .secrets/${m.name}/owner-relayer-keys.json`);
     expect(text).toContain(`methods ${OWNER.join(', ')}`);
+    expect(text).toContain(`generate 1 new key(s) into .secrets/${m.name}/home-relayer-keys.json`);
+    expect(text).toContain(`methods ${HOME.join(', ')}`);
     expect(text).toContain(`set_shared_clients({"clients":[["google","${SHARED}"]]}) [signed by ${m.owner}] (adds google/${SHARED} after the ${m.changeDelayMs} ms timelock)`);
     expect(text).toContain('"scope_id":"global","allow_shared":false');
     expect(text).toContain(`add_updater_key({"public_key":"<new key in keys-updater.json>"}) [signed by ${m.owner}]`);
@@ -214,16 +220,17 @@ describe('buildDeployPlan', () => {
       deployed({
         relayerAccessKeys: [fc('ed25519:s1', m.signer, SESSION)],
         signerAccessKeys: [],
-        poolKeysInFile: { session: ['ed25519:s1', 'ed25519:s2'], owner: ['ed25519:o1'] },
+        poolKeysInFile: { session: ['ed25519:s1', 'ed25519:s2'], owner: ['ed25519:o1'], home: [] },
       }),
       { ...opts, pools: { ...opts.pools, session: { count: 4, allowanceYocto: 2n * NEAR } } },
     );
     expect(p.blockers).toEqual([]);
-    expect(p.steps.map((s) => s.kind)).toEqual(['relayer-keys', 'relayer-keys', 'add-updater-key']);
+    expect(p.steps.map((s) => s.kind)).toEqual(['relayer-keys', 'relayer-keys', 'relayer-keys', 'add-updater-key']);
     expect(pool(p.steps, 'session')).toMatchObject({ reuse: ['ed25519:s2'], generate: 2 });
     expect(pool(p.steps, 'owner')).toMatchObject({ reuse: ['ed25519:o1'], generate: 0 });
+    expect(pool(p.steps, 'home')).toMatchObject({ reuse: [], generate: 1 });
     // The saved key isn't on chain: re-added (with a warning to rotate it if it may be compromised).
-    expect(p.steps[2]).toEqual({ kind: 'add-updater-key', reuse: 'ed25519:U' });
+    expect(p.steps[3]).toEqual({ kind: 'add-updater-key', reuse: 'ed25519:U' });
     expect(p.warnings.join()).toContain('move the file aside first');
   });
 
@@ -240,7 +247,7 @@ describe('buildDeployPlan', () => {
             full('ed25519:o2'),
             full('ed25519:9'),
           ],
-          poolKeysInFile: { session: ['ed25519:s1', 'ed25519:s2', 'ed25519:s3', 'ed25519:s4'], owner: ['ed25519:o1', 'ed25519:o2'] },
+          poolKeysInFile: { session: ['ed25519:s1', 'ed25519:s2', 'ed25519:s3', 'ed25519:s4'], owner: ['ed25519:o1', 'ed25519:o2'], home: [] },
         }),
         opts,
       );
@@ -269,14 +276,14 @@ describe('buildDeployPlan', () => {
 
     it('an allowlist change (batch 6) swaps the session keys in place: one plan, no delete commands to run first', () => {
       const batchB = SESSION.filter((x) => !['link_identity', 'cancel_link', 'unlink_identity'].includes(x));
-      const p = buildDeployPlan(m, deployed({ relayerAccessKeys: [fc('ed25519:s1', m.signer, batchB), fc('ed25519:s2', m.signer, batchB)], poolKeysInFile: { session: ['ed25519:s1', 'ed25519:s2'], owner: [] } }), opts);
+      const p = buildDeployPlan(m, deployed({ relayerAccessKeys: [fc('ed25519:s1', m.signer, batchB), fc('ed25519:s2', m.signer, batchB)], poolKeysInFile: { session: ['ed25519:s1', 'ed25519:s2'], owner: [], home: [] } }), opts);
       expect(p.blockers).toEqual([]);
       expect(p.warnings.join('\n')).toContain(`ed25519:s1 on ${m.relayer} has methods ${batchB.join(', ')}; expected ${SESSION.join(', ')}: replaced`);
       expect(pool(p.steps, 'session')).toMatchObject({ reuse: [], replace: ['ed25519:s1', 'ed25519:s2'], methods: SESSION });
     });
 
     it('blocks a key listed in both pool files', () => {
-      const p = buildDeployPlan(m, deployed({ poolKeysInFile: { session: ['ed25519:s1', 'ed25519:s2', 'ed25519:s3'], owner: ['ed25519:o1', 'ed25519:s1'] } }), opts);
+      const p = buildDeployPlan(m, deployed({ poolKeysInFile: { session: ['ed25519:s1', 'ed25519:s2', 'ed25519:s3'], owner: ['ed25519:o1', 'ed25519:s1'], home: [] } }), opts);
       expect(p.blockers.join()).toContain('ed25519:s1 is in both');
     });
 
@@ -817,6 +824,10 @@ describe('buildDeployPlan', () => {
   it('sets console audiences when the manifest has them', () => {
     const p = buildDeployPlan({ ...m, consoleAudiences: [['google', 'console.apps.googleusercontent.com']] }, fresh(), opts);
     expect(p.steps).toContainEqual({ kind: 'set-console-audiences', audiences: [['google', 'console.apps.googleusercontent.com']] });
+  });
+
+  it('the Home pool’s default allowance is 5 NEAR (D542)', () => {
+    expect(DEFAULT_HOME_ALLOWANCE_NEAR).toBe('5');
   });
 
   it('the owner pool’s default allowance is the base of the API’s owner_allowance_low check', () => {

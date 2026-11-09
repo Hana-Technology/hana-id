@@ -414,6 +414,7 @@ describe('RelayerKey Durable Object', () => {
     expect(POOL_METHODS).toEqual({
       session: ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'link_identity', 'cancel_link', 'unlink_identity'],
       owner: ['propose_change', 'cancel_change', 'remove_client', 'disable_shared_login', 'execute_change'],
+      home: ['create_session_and_derive'],
     });
     // Every governance and updater method of the governance batch too (docs/governance-spec.md "The API's keys").
     const never = [...GOVERNANCE_METHODS, ...UPDATER_METHODS, 'set_owner', 'sign', '__proto__'];
@@ -422,6 +423,9 @@ describe('RelayerKey Durable Object', () => {
     }
     for (const method of [...never, ...POOL_METHODS.session]) {
       expect((await freshKeyStub().relay('owner', 0, { method, args: {} })) as RelayResult, `owner ${method}`).toMatchObject({ ok: false, code: 'method_not_allowed' });
+    }
+    for (const method of [...never, 'derive_key', 'revoke_session', 'create_session', ...POOL_METHODS.owner]) {
+      expect((await freshKeyStub().relay('home', 0, { method, args: {} })) as RelayResult, `home ${method}`).toMatchObject({ ok: false, code: 'method_not_allowed' });
     }
     expect((await freshKeyStub().relay('admin' as Pool, 0, revokeCall(1))) as RelayResult).toMatchObject({ ok: false, code: 'method_not_allowed' });
     expect(near.sent).toHaveLength(0);

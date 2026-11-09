@@ -1,5 +1,6 @@
 // deploy-contract.ts <env> [--yes] [--relayer-keys N] [--relayer-allowance NEAR] [--owner-relayer-keys N]
-//                              [--owner-relayer-allowance NEAR] [--upgrade] [--wasm path] [--skip-build]
+//                              [--owner-relayer-allowance NEAR] [--home-relayer-keys N] [--home-relayer-allowance NEAR]
+//                              [--upgrade] [--wasm path] [--skip-build]
 //                              [--transfer-owner] [--member <m>] [--approve-with <m>]
 // deploy-contract.ts <env> --creation-plan [--wasm path] [--updater-public-key pk] [--creation-public-key pk]
 //

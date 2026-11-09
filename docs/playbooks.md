@@ -49,6 +49,7 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [Hana's identity JWKS publishes a key the watchdog didn't pin, or can't be judged](#identity-jwks-forged) | critical | `identity_key_unpinned`, `identity_private_key_published`, `identity_discovery_mismatch`, `identity_jwks_unreadable` |
 | [A pinned identity key isn't in Hana's identity JWKS](#identity-jwks-degraded) | warning | `identity_key_missing` |
 | [An issuer key on chain has an identity key's kid](#identity-key-on-chain) | critical | `identity_key_on_chain` |
+| [Hana Home's daily derive budget reached 80%](#home-budget-high) | warning | — |
 | [`KEYS_UPDATER_KEY` stolen (API secrets leaked)](#updater-key-stolen) | critical | — |
 | [A relayer key stolen (session pool or owner pool)](#relayer-key-stolen) | warning | — |
 | [`VAULT_KEK` leaked (and routine rotation)](#vault-kek-leaked) | critical | — |
@@ -977,15 +978,17 @@ The relayer account's available balance, or a pool key's remaining allowance, is
    corepack pnpm --filter @hana-id/scripts run deploy-contract <env> --yes
    node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/relayer-keys.json")))' | corepack pnpm --dir apps/api exec wrangler secret put RELAYER_KEYS
    node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/owner-relayer-keys.json")))' | corepack pnpm --dir apps/api exec wrangler secret put OWNER_RELAYER_KEYS
+   node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/home-relayer-keys.json")))' | corepack pnpm --dir apps/api exec wrangler secret put HOME_RELAYER_KEYS
    ```
 
-4. **No key in a pool: add the pool again** (who: a founder). `deploy-contract` adds every key of `.secrets/<env>/relayer-keys.json` / `owner-relayer-keys.json` that isn't on chain. Only the relayer account's full-access key can delete keys: if nobody here did, treat that key as compromised (follow [api-or-cloudflare-compromised](#api-or-cloudflare-compromised)).
+4. **No key in a pool: add the pool again** (who: a founder). `deploy-contract` adds every key of `.secrets/<env>/relayer-keys.json` / `owner-relayer-keys.json` / `home-relayer-keys.json` that isn't on chain. Only the relayer account's full-access key can delete keys: if nobody here did, treat that key as compromised (follow [api-or-cloudflare-compromised](#api-or-cloudflare-compromised)).
 
    ```sh
    corepack pnpm --filter @hana-id/scripts run deploy-contract <env>
    corepack pnpm --filter @hana-id/scripts run deploy-contract <env> --yes
    node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/relayer-keys.json")))' | corepack pnpm --dir apps/api exec wrangler secret put RELAYER_KEYS
    node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/owner-relayer-keys.json")))' | corepack pnpm --dir apps/api exec wrangler secret put OWNER_RELAYER_KEYS
+   node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/home-relayer-keys.json")))' | corepack pnpm --dir apps/api exec wrangler secret put HOME_RELAYER_KEYS
    ```
 
 5. **Thresholds that no longer fit** (who: a founder). After raising the allowances (or for a busier env), set `watchdog.relayerFunds` in `envs/<env>.json` (NEAR; `balance`, `sessionAllowance`, `ownerAllowance`, each `{warn, critical}` with critical below warn), then regenerate the watchdog's config and redeploy it.
@@ -1442,6 +1445,38 @@ An active Google or email issuer key, or a pending key addition of any provider,
 
 ## Incident playbooks
 
+<a id="home-budget-high"></a>
+
+### Hana Home's daily derive budget reached 80%
+
+`home-budget-high` · warning
+
+A `home_budget_high` security event: a day's Hana Home derives reached 80% of `homeDerivesPerDay` (default 500).
+
+**Signals**
+
+- A `home_budget_high` row in the admin's Security & monitoring, emailed by the feed (one a day; counts only).
+
+**Impact**
+
+- At the ceiling Hana Home derives answer `429 home_busy` until the next UTC day. Partner logins and owner actions are on other pools and unaffected. Where links aren't open, identities not otherwise known can use only 20% of it.
+
+**Steps**
+
+1. **Tell real use from abuse** (who: a founder). Read the day's `home_usage` row in the API's D1: `derives` and `unrecorded` (derives held to the 20% share). Compare with the partner shutdowns you know of.
+
+2. **Raise or stop it** (who: a founder). Real demand: raise `homeDerivesPerDay` in the manifest, regenerate and redeploy the API, and check the Home key's allowance. Abuse or a compromise: set it to `0`, which stops every Home derive until it is raised again.
+
+**Verify**
+
+- The next day's `home_usage` row stays under the ceiling, or Hana Home derives answer again after the ceiling was raised.
+
+**Follow-ups**
+
+- If real demand keeps reaching it, raise the Home key's allowance with the ceiling.
+
+**Refs:** [`docs/operations.md#hana-home-derive-deploy`](operations.md#hana-home-derive-deploy), D541 (`docs/decisions.md`) · **See also:** [relayer-key-stolen](#relayer-key-stolen)
+
 <a id="updater-key-stolen"></a>
 
 ### `KEYS_UPDATER_KEY` stolen (API secrets leaked)
@@ -1507,12 +1542,12 @@ The keys-updater key (an API Worker secret, a function-call key on the signer) l
 
 `relayer-key-stolen` · warning
 
-A function-call key of the relayer account (`RELAYER_KEYS` or `OWNER_RELAYER_KEYS`) leaked: it can burn its allowance, nothing more.
+A function-call key of the relayer account (`RELAYER_KEYS`, `OWNER_RELAYER_KEYS` or `HOME_RELAYER_KEYS`) leaked: it can burn its allowance, nothing more.
 
 **Signals**
 
 - A watchdog `relayer_allowance_*` or `relayer_balance_*` alert without matching logins (allowance or balance dropping faster than the request logs explain); `relay_retry` `invalid_nonce` warnings (another sender used a pool key).
-- The API Worker secrets or `.secrets/<env>/relayer-keys.json` / `owner-relayer-keys.json` were exposed.
+- The API Worker secrets or `.secrets/<env>/relayer-keys.json` / `owner-relayer-keys.json` / `home-relayer-keys.json` were exposed.
 
 **Impact**
 
@@ -1527,7 +1562,7 @@ A function-call key of the relayer account (`RELAYER_KEYS` or `OWNER_RELAYER_KEY
    near account delete-keys <relayer> public-keys <ed25519:…> network-config testnet sign-with-legacy-keychain send
    ```
 
-2. **Remove it from the secrets file** (who: a founder). Edit `.secrets/<env>/relayer-keys.json` (or `owner-relayer-keys.json`), or move the file aside for a whole new pool (then delete every old key on chain too: left there they keep their allowance).
+2. **Remove it from the secrets file** (who: a founder). Edit `.secrets/<env>/relayer-keys.json` (or `owner-relayer-keys.json`, `home-relayer-keys.json`), or move the file aside for a whole new pool (then delete every old key on chain too: left there they keep their allowance).
 
 3. **Add replacements** (who: a founder). `deploy-contract` generates and adds the missing keys (saved to the file before they go on chain). Pass the same allowance flags as before if you raised them.
 
@@ -1541,6 +1576,7 @@ A function-call key of the relayer account (`RELAYER_KEYS` or `OWNER_RELAYER_KEY
    ```sh
    node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/relayer-keys.json")))' | corepack pnpm --dir apps/api exec wrangler secret put RELAYER_KEYS
    node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/owner-relayer-keys.json")))' | corepack pnpm --dir apps/api exec wrangler secret put OWNER_RELAYER_KEYS
+   node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/home-relayer-keys.json")))' | corepack pnpm --dir apps/api exec wrangler secret put HOME_RELAYER_KEYS
    ```
 
 **Verify**

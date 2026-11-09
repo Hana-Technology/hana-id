@@ -1,5 +1,5 @@
 // One Durable Object per relayer access key (name from relayerKeyName(pool, index): `relayer-key-<i>` for the
-// session pool, `owner-relayer-key-<i>` for the owner pool). It owns that key's nonce: nonces are handed out strictly
+// session pool, `owner-relayer-key-<i>` for the owner pool, `home-relayer-key-<i>` for the Home pool). It owns that key's nonce: nonces are handed out strictly
 // in order inside a small critical section (nonce → sign → dispatch send_tx), and the outcome is awaited outside it,
 // so many transactions per key can be in flight at once. Nonces are reserved in blocks (NONCE_RESERVATION), so most
 // relays write nothing to storage and their broadcast never waits for a storage write.

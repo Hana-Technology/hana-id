@@ -98,7 +98,7 @@ export const SAFETY_GLOBAL_DAY = 1000;
 export const TOKEN_EXP_SKEW_MS = 60_000;
 const MINUTE = 60_000;
 /** Relay failures after which the transaction certainly did not execute (see relayer-key.ts / relayer-pool.ts). */
-const NOT_EXECUTED: ReadonlySet<string> = new Set(['method_not_allowed', 'relayer_unconfigured', 'near_unavailable', 'near_rejected', 'relayer_busy']);
+export const NOT_EXECUTED: ReadonlySet<string> = new Set(['method_not_allowed', 'relayer_unconfigured', 'near_unavailable', 'near_rejected', 'relayer_busy']);
 const DAY = 24 * 60 * MINUTE;
 /**
  * Retry-After of a token refused because its signing key is still in the contract's issuer-key delay
@@ -766,8 +766,7 @@ export interface CapRefusal {
  * a refused request uses up no window. Returns the refusal, or null when every window accepted. Throws when a limiter
  * can't be reached (the caller refuses: fail closed); a failed take-back is logged and leaves that count in place.
  */
-export async function hitAll(env: Env, windows: readonly OwnerActionWindow[], requestId?: string): Promise<CapRefusal | null> {
-  const now = Date.now();
+export async function hitAll(env: Env, windows: readonly OwnerActionWindow[], requestId?: string, endpoint: string = '/v1/owner-actions', now: number = Date.now()): Promise<CapRefusal | null> {
   const accepted: OwnerActionWindow[] = [];
   for (const w of windows) {
     const hit = await limiter(env, w.subject).hit(w.limits, now);
@@ -776,7 +775,7 @@ export async function hitAll(env: Env, windows: readonly OwnerActionWindow[], re
         try {
           await limiter(env, a.subject).unhit(a.limits, now);
         } catch {
-          log({ event: 'rate_limit_unhit_failed', requestId, endpoint: '/v1/owner-actions' }, 'warn');
+          log({ event: 'rate_limit_unhit_failed', requestId, endpoint }, 'warn');
         }
       }
       return { window: w, limit: hit.limit, retryAfterS: hit.retryAfterS, at: now };

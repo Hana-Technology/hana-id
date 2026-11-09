@@ -13,6 +13,8 @@ declare global {
       PRE_0010_DB: D1Database;
       /** IssuerRpc's reads on a D1 before migration 0010 (rpc-issuer.test.ts). */
       PRE_0010_ISSUER_DB: D1Database;
+      /** Migration 0018's rebuild of user_events (home-login.test.ts). */
+      PRE_0018_DB: D1Database;
     }
   }
 }

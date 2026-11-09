@@ -45,6 +45,7 @@ import { readPin, readPolicyTemplate, type SputnikPolicy } from './sputnik.ts';
 
 export const DEPLOY_USAGE = `Usage: deploy-contract.ts <env> [--yes] [--relayer-keys 3] [--relayer-allowance 2]
                           [--owner-relayer-keys 1] [--owner-relayer-allowance 0.5]
+                          [--home-relayer-keys 1] [--home-relayer-allowance 5]
                           [--upgrade] [--wasm <file>] [--skip-build]
                           [--transfer-owner] [--member <council member>] [--approve-with <council member>]
                           [--known-owner <account,…>]
@@ -54,6 +55,8 @@ export const DEPLOY_USAGE = `Usage: deploy-contract.ts <env> [--yes] [--relayer-
   --relayer-allowance         gas allowance per session-pool key, in NEAR (default 2)
   --owner-relayer-keys N      owner-pool keys on the relayer (OWNER_RELAYER_KEYS: /v1/owner-actions) (default 1)
   --owner-relayer-allowance   gas allowance per owner-pool key, in NEAR (default 0.5)
+  --home-relayer-keys N       Home-pool keys on the relayer (HOME_RELAYER_KEYS: /v1/home/login) (default 1)
+  --home-relayer-allowance    gas allowance per Home-pool key, in NEAR (default 5)
   --upgrade                   change the code of an initialised contract: propose_upgrade(hash) by the owner, and
                               execute_upgrade once governance_delay_ms passed (a v1 contract is refused)
   --wasm <file>               deploy this wasm instead of building
@@ -71,6 +74,8 @@ export const DRY_RUN_LINE = 'Dry run: nothing changed. Re-run with --yes to appl
  * (apps/api/src/relayer-config.ts OWNER_POOL_ALLOWANCE_YOCTO; a test keeps the two equal).
  */
 export const DEFAULT_OWNER_ALLOWANCE_NEAR = '0.5';
+/** Each Home-pool key's allowance by default (D542: one key with 5 NEAR, about the 500-a-day ceiling at 100 Tgas prepaid). */
+export const DEFAULT_HOME_ALLOWANCE_NEAR = '5';
 
 const CONTRACT_DIR = join(repoRoot, 'contracts', 'hana-signer');
 const WASM_CANDIDATES = [join(CONTRACT_DIR, 'target', 'near', 'hana_signer.wasm'), join(CONTRACT_DIR, 'target', 'wasm32-unknown-unknown', 'release', 'hana_signer.wasm')];
@@ -237,6 +242,7 @@ async function observe(c: Ctx, wasmPath: string | null): Promise<{ observed: Dep
       poolKeysInFile: {
         session: readPoolKeys(m.name, 'session', c.secretsRoot).map((k) => k.getPublicKey().toString()),
         owner: readPoolKeys(m.name, 'owner', c.secretsRoot).map((k) => k.getPublicKey().toString()),
+        home: readPoolKeys(m.name, 'home', c.secretsRoot).map((k) => k.getPublicKey().toString()),
       },
       updaterKeyInFile: updater?.publicKey ?? null,
       googleIssuer,
@@ -416,7 +422,7 @@ export async function deployMain(argv: readonly string[], deps: DeployDeps = def
   const { log } = deps;
   const args = parseCli(argv, {
     booleans: ['yes', 'upgrade', 'skip-build', 'transfer-owner', 'creation-plan', 'help'],
-    strings: ['relayer-keys', 'relayer-allowance', 'owner-relayer-keys', 'owner-relayer-allowance', 'wasm', 'member', 'approve-with', 'updater-public-key', 'creation-public-key', 'known-owner'],
+    strings: ['relayer-keys', 'relayer-allowance', 'owner-relayer-keys', 'owner-relayer-allowance', 'home-relayer-keys', 'home-relayer-allowance', 'wasm', 'member', 'approve-with', 'updater-public-key', 'creation-public-key', 'known-owner'],
   });
   if (args.flag('help')) {
     log(DEPLOY_USAGE);
@@ -474,6 +480,7 @@ export async function deployMain(argv: readonly string[], deps: DeployDeps = def
     pools: {
       session: { count: args.int('relayer-keys', 3, { min: 1, max: 20 }), allowanceYocto: allowance('relayer-allowance', '2') },
       owner: { count: args.int('owner-relayer-keys', 1, { min: 1, max: 5 }), allowanceYocto: allowance('owner-relayer-allowance', DEFAULT_OWNER_ALLOWANCE_NEAR) },
+      home: { count: args.int('home-relayer-keys', 1, { min: 1, max: 5 }), allowanceYocto: allowance('home-relayer-allowance', DEFAULT_HOME_ALLOWANCE_NEAR) },
     },
     upgrade: args.flag('upgrade'),
     skipBuild: args.flag('skip-build') || !!wasmArg,
@@ -525,7 +532,7 @@ export async function deployMain(argv: readonly string[], deps: DeployDeps = def
   log(`\nDone. Secrets (if any were generated) are in .secrets/${m.name}/ (0600). Next:
   pnpm --filter @hana-id/scripts run post-google-keys ${m.name}     # Google signing keys → contract (proposed, then confirmed or executed)
   pnpm --filter @hana-id/scripts run fetch-ckd-key ${m.name}        # pin the MPC CKD key in envs/${m.name}.json
-  then generate the API config and upload RELAYER_KEYS (${poolFileName('session')}), OWNER_RELAYER_KEYS (${poolFileName('owner')})
+  then generate the API config and upload RELAYER_KEYS (${poolFileName('session')}), OWNER_RELAYER_KEYS (${poolFileName('owner')}), HOME_RELAYER_KEYS (${poolFileName('home')})
   and KEYS_UPDATER_KEY (keys-updater.json) (see README.md).`);
   return 0;
 }

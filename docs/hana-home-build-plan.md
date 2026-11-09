@@ -1,6 +1,6 @@
 # Hana Home build plan (batches)
 
-**Status (2026-11-09): H0 (this plan, the spec's rewrite, D460–D466, the readiness rows) on branch `docs/hana-home-h0`; H1 built on branch `feat/hana-home-h1`, its security review's fixes on `feat/hana-home-h1-2` (not merged, not deployed; see its result line below); H2 built on branch `feat/hana-home-h2` and H4 built on branch `feat/hana-home-h4`, merged on `feat/hana-home-h2-h4` with their security reviews' fixes (not merged, not deployed; see their result lines); H3, H5, H7–H12 not started; H6 built on branch `feat/hana-home-h6` (not merged, not deployed; see its result line); H6's design and D480–D489 on branch `docs/hana-home-h6-design` (not merged).** Splits `docs/hana-home-spec.md` (D40, D45, D98, D461–D466, D468, D480–D489) into reviewable
+**Status (2026-11-09): H0, H1, H2, H4 and H6 merged and live on sandbox-dev (contract v4, exit clients in force); H3 and H5 built with their security reviews' fixes, merged on branch `merge/h3-h5` (not merged into `develop`, not deployed); H7–H12 not started. Older "not merged, not deployed" notes in the result lines below are history.** Splits `docs/hana-home-spec.md` (D40, D45, D98, D461–D466, D468, D480–D489) into reviewable
 batches. The spec stays the source of truth for *what* to build; this file says *in which order*, *what each batch
 ships* and *what users see after it*. Like a spec it is history once the work merges: the current state lives in the
 reference docs (`docs/README.md`).
@@ -69,7 +69,7 @@ The spec's body was rewritten in H0 to agree with these ten points. They're kept
 | H0 | Spec rewrite, this plan, D460–D466, readiness | — | S | — |
 | H1 | Core layouts; Home identity verifier, `/v1/home/config` | — | M | — |
 | H2 | `GET /v1/home/apps` | H1 | M | — |
-| H3 | `POST /v1/home/login`, Home pool, `key_exported` | H1 | M | create and fund the Home key (2 NEAR) |
+| H3 | `POST /v1/home/login`, Home pool, `key_exported` | H1 | M | create and fund the Home key (5 NEAR, D542) |
 | H4 | `vault_consents`, device label, consent endpoints, status read | H1 | M | — |
 | H5 | Vault: register first, fail closed, status read, revoke paths | H4 live | M | — |
 | H6 | Contract: the exit client (D468, D480–D488), `migrate` to state version 4, the upgrade (built: `feat/hana-home-h6`, not merged, not deployed) | — | L | create the exit Google client (same Cloud project as the shared client); the council runs the upgrade and `set_exit_clients` |
@@ -124,6 +124,8 @@ additions conflict in `apps/api/src/index.ts`, so expect small merges. About 30 
 - **Carried from H2's review (D500).** A matured link counts in Home's list only once the directory has `active`, so `POST /v1/home/login` must write the member's row as `/v1/login` does (`syncAfterLogin`); without it, a member of a shut-down app never turns `mine`.
 - **Migration / deploy.** D1 `home_usage`, and `user_events` if open item 4 relaxes it; key, API.
 - **User-visible.** Nothing.
+- **Result (2026-11-09, `feat/hana-home-h3`, not merged, not deployed).** `apps/api/src/home/login.ts` (`POST /v1/home/login`), the `home` relayer pool (`relayer-config.ts`, `relayer-pool.ts`, `HOME_RELAYER_KEYS`; `deploy-contract` `--home-relayer-keys`/`--home-relayer-allowance`; `gen`, the secret inventory; the watchdog's pool list and thresholds), migration 0018 (`home_usage`, `user_events.app_id` nullable for `key_exported`), `key_exported` with `chain` and `app_id` null, the directory write (D500), `docs/api.md`, `security.md`, `architecture.md`, `operations.md`. D520–D529 confirmed and D540–D545 decided by the user, 2026-11-09 and 2026-11-10. Open item 4 closed by D520. Limits are counted last, right before the relay (D521, a deviation from the spec's order, confirmed). No contract, path, key rule or derivation change. Deliberately left to later batches: the Home pool in the usage ledger and the nonce check, the statement line (H11).
+- **Security review (2026-11-09, on `feat/hana-home-h3`).** No critical or high; no path to another user's key. Fixed: a derive no longer makes a stranger one of a scope's users (D527); `ckd_failed` gives back the wallet's hour (D528); `homeDerivesPerDay`, 0 being a kill switch (D529); D524 corrected (a used session stays live for the app-gated routes); parallel-request tests. The user's decisions on its open points: a 20% sub-ceiling for identities with no directory row (D540), a `home_budget_high` alert at 80% (D541), a 5 NEAR Home key (D542), and exit tokens stay admitted wherever the contract accepts them (D525). From the re-review: a derive is refused when there is nothing to rescue (D544), and throwaway accounts with one partner login are an accepted one-day outage risk (D545).
 
 ### H4: consents on the server
 
@@ -145,6 +147,7 @@ additions conflict in `apps/api/src/index.ts`, so expect small merges. About 30 
 - **Migration / deploy.** The vault, after H4 is live.
 - **User-visible.** Auto-approve can't be turned on while the API can't record it (D98 item 13). Nothing else.
 - **Carried from H4's review (D510, D513).** Never give a `consent_id` to the partner page. Tell `409 bad_counter` from `409 consent_exists` (a stale counter retries with the expected value; a repeated id does not). `hana_revokeAutoApprove` sends no server revoke when there is no local consent. Render the partner-set policy `label` as text only. Retry `503 session_not_visible` a few times with its `retry-after`, then fail closed like any failed register; `429 too_many_consents` fails closed with no retry.
+- **Result (2026-11-09, `feat/hana-home-h5`, not merged, not deployed).** Vault only: registers on Allow (`POST /v1/vault/consents`, the id sealed with the consent) before storing, fails closed (`hana_requestAutoApprove` answers `api_unavailable` with `data.granted: false`; a covered request goes to the popup); auto-signs only with an `'active'` answer asked within 10 s (the existing `GET /v1/app` read carries `x-hana-consent`); `'revoked'`/`'unknown'` clear the consent; a failed or empty read holds it with no auto-sign. `hana_revokeAutoApprove` and "Stop auto-approving" clear locally first, then revoke on the API, only for a consent held (also a dormant tab's, without unlocking). Consents stored before H5 are dropped at their first read and the user is asked again. D530–D539 (confirmed by the user 2026-11-09). Tests: `packages/web/test/vault/consents.test.ts`, `legacy-consent.test.ts`. No migration. Deploy: the API (`bad_expiry`'s `maxExpiresAtMs`), then the vault, after H4 is live (H4 is live on sandbox-dev); open tabs keep the old vault until they reload. The vault doesn't send `deviceLabel` yet: left out, not H5's scope. **Security review (2026-11-09):** no auto-sign path without a live consent; fixed: daily limits under parallel requests with no record (D536), a 410 on register ends the session (D537), an unconfirmed consent isn't reported granted (D538), the policy re-checked under the lock, no seal or tamper verdict after the session ended, the status aged on a monotonic timer too (D532), the capped end from the API (D535). An auto-signature doesn't refresh the share's idle timer (D539).
 
 ### H6: the contract
 
@@ -207,6 +210,7 @@ The design is `docs/hana-home-h6-design.md`; its decisions are D480–D489.
 - **Migration / deploy.** Needs 0014 and the email keys on the env; API, pages.
 - **User-visible.** Only by typing the URL.
 - **Carried from H4's review.** Render the partner-set policy `label` as text only, here as in H5.
+- **Carried from H5's review (D534).** Derive a consent's "active" from its share's liveness, as `consentStatus` does: after a `'session'`-mode logout or new login the row's `revoked_at` stays NULL.
 
 ### H10: email users
 
@@ -233,6 +237,7 @@ The design is `docs/hana-home-h6-design.md`; its decisions are D480–D489.
 - **Files.** `apps/api/src/usage/event.ts`; Neon 0008 widens the `app_id` check; the statement renderer.
 - **Tests.** Report and statement totals; an active app's line; Hana's org after exit.
 - **Migration / deploy.** Neon 0008 as 0005 was; API.
+- **Before mainnet (D526, readiness 7.4a).** The Home keys join `AdminRpc.relayerKeys`, the admin status tiles and the daily nonce check, with the ledger rows that explain their nonces.
 - **User-visible.** The statement line, once usage capture is on.
 
 ### H12: closing
@@ -285,7 +290,7 @@ Run by hand on an env before H7's first deploy to it and before each later Home 
 | 1 | The production domain for `/home` (readiness 4.1, 4.2) | founder | production only |
 | 2 | **Closed 2026-11-09.** Neither is needed: D460's Google-client requirement is dropped (D480) and D464's owner seat is dropped (D481), because the exit client (D468) covers users | — | — |
 | 3 | **Closed 2026-11-09 (D480).** `disable_shared_login` stays and keeps working unchanged: there is no delay to bypass | — | — |
-| 4 | `user_events.app_id` is NOT NULL and a Home derive is per scope: record the scope's app, or relax the column | Claude build | H3 |
+| 4 | **Closed 2026-11-09 (D520, H3).** `user_events.app_id` is relaxed for `key_exported`; a Home derive names no app | — | — |
 | 5 | Billing of a suspended app: Hana pays for now (D461's note); to discuss with colleagues before finalising | founder, colleagues | H11 |
 | 6 | **Closed 2026-11-09 (D481).** Hana holds no owner seat, so there is no `SetOwners` to watch for | — | — |
 | 7 | Partner terms (readiness 9.9), the privacy notice line (9.10), telling Enterprise partners they can't exclude Home (9.12), legal's review of 9.6 (D489) | legal/founder | mainnet |

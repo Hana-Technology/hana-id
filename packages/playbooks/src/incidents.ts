@@ -56,16 +56,35 @@ const updaterKeyStolen: Playbook = {
   related: ['forged-key-change', 'api-or-cloudflare-compromised'],
 };
 
+const homeBudgetHigh: Playbook = {
+  id: 'home-budget-high',
+  title: "Hana Home's daily derive budget reached 80%",
+  kind: 'incident',
+  severity: 'warning',
+  status: 'live',
+  summary: "A `home_budget_high` security event: a day's Hana Home derives reached 80% of `homeDerivesPerDay` (default 500).",
+  signals: ['A `home_budget_high` row in the admin\'s Security & monitoring, emailed by the feed (one a day; counts only).'],
+  impact: ["At the ceiling Hana Home derives answer `429 home_busy` until the next UTC day. Partner logins and owner actions are on other pools and unaffected. Where links aren't open, identities not otherwise known can use only 20% of it."],
+  steps: [
+    { title: 'Tell real use from abuse', who: 'a founder', detail: 'Read the day\'s `home_usage` row in the API\'s D1: `derives` and `unrecorded` (derives held to the 20% share). Compare with the partner shutdowns you know of.' },
+    { title: 'Raise or stop it', who: 'a founder', detail: 'Real demand: raise `homeDerivesPerDay` in the manifest, regenerate and redeploy the API, and check the Home key\'s allowance. Abuse or a compromise: set it to `0`, which stops every Home derive until it is raised again.' },
+  ],
+  verify: ['The next day\'s `home_usage` row stays under the ceiling, or Hana Home derives answer again after the ceiling was raised.'],
+  followUps: ['If real demand keeps reaching it, raise the Home key\'s allowance with the ceiling.'],
+  refs: ['docs/operations.md#hana-home-derive-deploy', 'D541'],
+  related: ['relayer-key-stolen'],
+};
+
 const relayerKeyStolen: Playbook = {
   id: 'relayer-key-stolen',
   title: 'A relayer key stolen (session pool or owner pool)',
   kind: 'incident',
   severity: 'warning',
   status: 'live',
-  summary: "A function-call key of the relayer account (`RELAYER_KEYS` or `OWNER_RELAYER_KEYS`) leaked: it can burn its allowance, nothing more.",
+  summary: "A function-call key of the relayer account (`RELAYER_KEYS`, `OWNER_RELAYER_KEYS` or `HOME_RELAYER_KEYS`) leaked: it can burn its allowance, nothing more.",
   signals: [
     'A watchdog `relayer_allowance_*` or `relayer_balance_*` alert without matching logins (allowance or balance dropping faster than the request logs explain); `relay_retry` `invalid_nonce` warnings (another sender used a pool key).',
-    'The API Worker secrets or `.secrets/<env>/relayer-keys.json` / `owner-relayer-keys.json` were exposed.',
+    'The API Worker secrets or `.secrets/<env>/relayer-keys.json` / `owner-relayer-keys.json` / `home-relayer-keys.json` were exposed.',
   ],
   impact: [
     "Session pool: burn ≤ its allowance (2 NEAR default) and relay session methods, which still need a token or a session signature. DoS only: it can't derive anyone's key.",
@@ -81,7 +100,7 @@ const relayerKeyStolen: Playbook = {
     {
       title: 'Remove it from the secrets file',
       who: 'a founder',
-      detail: "Edit `.secrets/<env>/relayer-keys.json` (or `owner-relayer-keys.json`), or move the file aside for a whole new pool (then delete every old key on chain too: left there they keep their allowance).",
+      detail: "Edit `.secrets/<env>/relayer-keys.json` (or `owner-relayer-keys.json`, `home-relayer-keys.json`), or move the file aside for a whole new pool (then delete every old key on chain too: left there they keep their allowance).",
     },
     {
       title: 'Add replacements',
@@ -93,7 +112,7 @@ const relayerKeyStolen: Playbook = {
       title: 'Upload the pool again',
       who: 'a founder',
       detail: "A replaced key at an index makes its Durable Object ignore the old reservation and read the nonce from chain once (one `relay_retry` `invalid_nonce` per re-added key is expected).",
-      commands: [c.uploadRelayerKeys, c.uploadOwnerRelayerKeys],
+      commands: [c.uploadRelayerKeys, c.uploadOwnerRelayerKeys, c.uploadHomeRelayerKeys],
     },
   ],
   verify: ['`deploy-contract <env>` dry run: no blockers, no missing keys.', 'A smoke login relays without errors.'],
@@ -907,6 +926,7 @@ const identityKmsSigner: Playbook = {
 };
 
 export const INCIDENT_PLAYBOOKS: readonly Playbook[] = [
+  homeBudgetHigh,
   updaterKeyStolen,
   relayerKeyStolen,
   vaultKekLeaked,

@@ -672,8 +672,8 @@ describe('GET /v1/home/config', () => {
     expect((await call(HOME_CONFIG_ENDPOINT, { method: 'POST', rawBody: '{}', headers: { origin: AUTH } })).status).toBe(405);
   });
 
-  it('no route that could derive a key exists: no other /v1/home path answers', async () => {
-    for (const p of ['/v1/home/login', '/v1/home/devices']) {
+  it('no Home route other than config, apps and login exists: no other /v1/home path answers', async () => {
+    for (const p of ['/v1/home/devices']) {
       expect((await call(p, { method: 'POST', rawBody: '{}', headers: { origin: AUTH } })).status).toBe(404);
     }
   });

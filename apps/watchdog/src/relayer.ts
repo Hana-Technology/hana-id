@@ -1,6 +1,7 @@
 // Relayer funds (read-only): the relayer account's spendable balance and the remaining allowance of each of its
 // function-call keys on the signer, by pool (docs/operations.md "Relayer keys (either pool)"). The API relays every
-// login (session pool, `RELAYER_KEYS`) and owner action (owner pool, `OWNER_RELAYER_KEYS`) from these keys: a key whose
+// login (session pool, `RELAYER_KEYS`), owner action (owner pool, `OWNER_RELAYER_KEYS`) and Home derive (Home pool,
+// `HOME_RELAYER_KEYS`) from these keys: a key whose
 // allowance is used up, or an account whose balance can't pay the gas, makes those relays fail (`502 near_rejected`).
 // The watchdog only alerts; it never tops anything up (it holds no key on the relayer account).
 // No Worker types here: scripts/gen-wrangler.ts imports the defaults.
@@ -9,20 +10,23 @@ export const YOCTO_PER_NEAR = 10n ** 24n;
 /** NEAR's storage price: 10^19 yoctoNEAR per byte (the part of `amount` that storage locks and gas can't use). */
 export const STORAGE_YOCTO_PER_BYTE = 10n ** 19n;
 
-export type RelayerPool = 'session' | 'owner';
-export const RELAYER_POOLS: readonly RelayerPool[] = ['session', 'owner'];
+export type RelayerPool = 'session' | 'owner' | 'home';
+export const RELAYER_POOLS: readonly RelayerPool[] = ['session', 'owner', 'home'];
 
 /**
  * Which pool a function-call key for the signer belongs to, by its method list (the API's `POOL_METHODS`,
  * apps/api/src/relayer-config.ts). By marker methods rather than the exact list, so the session pool's planned
  * allowlist changes (batch B states 2 and 3 drop `create_session` or `create_session_and_derive`) keep it classified:
- * `derive_key` is in every session-pool state, `propose_change` in the owner pool. A test checks both pools' lists.
+ * `derive_key` is in every session-pool state, `propose_change` in the owner pool, and a Home key has exactly
+ * `create_session_and_derive`. A test checks every pool's list.
  */
 export function poolOf(methods: readonly string[]): RelayerPool | null {
   const session = methods.includes('derive_key');
   const owner = methods.includes('propose_change');
-  if (session === owner) return null; // neither, or a key that mixes both (not one the deploy script makes)
-  return session ? 'session' : 'owner';
+  if (session && owner) return null; // a key that mixes both (not one the deploy script makes)
+  if (session) return 'session';
+  if (owner) return 'owner';
+  return methods.length === 1 && methods[0] === 'create_session_and_derive' ? 'home' : null;
 }
 
 export interface Threshold {
@@ -39,6 +43,8 @@ export interface RelayerThresholds {
   session: Threshold;
   /** Each owner-pool key's remaining allowance (default allowance 0.5 NEAR). */
   owner: Threshold;
+  /** Each Home-pool key's remaining allowance (default allowance 5 NEAR). */
+  home: Threshold;
 }
 
 /** The manifest's `watchdog.relayerFunds` shape (NEAR, not yocto): what `gen` writes into `RELAYER_FUNDS`. */
@@ -46,16 +52,19 @@ export interface RelayerFundsSetting {
   balance?: { warn: number; critical: number };
   sessionAllowance?: { warn: number; critical: number };
   ownerAllowance?: { warn: number; critical: number };
+  homeAllowance?: { warn: number; critical: number };
 }
 
 /**
  * Defaults, in NEAR. Balance: 5 / 1 (at ~0.004 NEAR of gas per login on testnet, 1 NEAR is ~250 logins). Session key:
- * 0.5 / 0.1 of its 2 NEAR allowance (3 × 2 NEAR covered ~1,500 logins). Owner key: 0.1 / 0.02 of its 0.5 NEAR.
+ * 0.5 / 0.1 of its 2 NEAR allowance (3 × 2 NEAR covered ~1,500 logins). Owner key: 0.1 / 0.02 of its 0.5 NEAR. Home key: 1 / 0.2
+ * of its 5 NEAR (about 500 derives at 100 Tgas prepaid each, D542).
  */
 export const DEFAULT_RELAYER_FUNDS = {
   balance: { warn: 5, critical: 1 },
   sessionAllowance: { warn: 0.5, critical: 0.1 },
   ownerAllowance: { warn: 0.1, critical: 0.02 },
+  homeAllowance: { warn: 1, critical: 0.2 },
 } as const satisfies Required<RelayerFundsSetting>;
 
 /** Largest threshold accepted (NEAR): a guard against a typo in yocto. */
@@ -109,7 +118,7 @@ export function relayerThresholds(json: string | undefined): { thresholds: Relay
     problems.push(`RELAYER_FUNDS.${key} is invalid (warn and critical in NEAR, critical < warn): using the default`);
     return pair(DEFAULT_RELAYER_FUNDS[key]);
   };
-  return { thresholds: { balance: pick('balance'), session: pick('sessionAllowance'), owner: pick('ownerAllowance') }, problems };
+  return { thresholds: { balance: pick('balance'), session: pick('sessionAllowance'), owner: pick('ownerAllowance'), home: pick('homeAllowance') }, problems };
 }
 
 /** `view_access_key_list` entry, as the RPC returns it. */

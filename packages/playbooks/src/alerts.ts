@@ -815,13 +815,13 @@ const relayerOutOfFunds: Playbook = {
       title: 'Low allowance: replace the key',
       who: 'a founder',
       detail: "Same as a leaked key: delete it on chain, remove it from its `.secrets` file, re-run `deploy-contract` (pass larger `--relayer-allowance` / `--owner-relayer-allowance` if needed, and the same flags on every later re-run), upload the pool. Delete the used-up key: left there it keeps its last allowance and its alert stays open.",
-      commands: [c.deleteRelayerKey, c.deployContractPlan, c.deployContract, c.uploadRelayerKeys, c.uploadOwnerRelayerKeys],
+      commands: [c.deleteRelayerKey, c.deployContractPlan, c.deployContract, c.uploadRelayerKeys, c.uploadOwnerRelayerKeys, c.uploadHomeRelayerKeys],
     },
     {
       title: 'No key in a pool: add the pool again',
       who: 'a founder',
-      detail: "`deploy-contract` adds every key of `.secrets/<env>/relayer-keys.json` / `owner-relayer-keys.json` that isn't on chain. Only the relayer account's full-access key can delete keys: if nobody here did, treat that key as compromised (follow api-or-cloudflare-compromised).",
-      commands: [c.deployContractPlan, c.deployContract, c.uploadRelayerKeys, c.uploadOwnerRelayerKeys],
+      detail: "`deploy-contract` adds every key of `.secrets/<env>/relayer-keys.json` / `owner-relayer-keys.json` / `home-relayer-keys.json` that isn't on chain. Only the relayer account's full-access key can delete keys: if nobody here did, treat that key as compromised (follow api-or-cloudflare-compromised).",
+      commands: [c.deployContractPlan, c.deployContract, c.uploadRelayerKeys, c.uploadOwnerRelayerKeys, c.uploadHomeRelayerKeys],
     },
     {
       title: 'Thresholds that no longer fit',

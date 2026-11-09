@@ -76,12 +76,12 @@ export function generateKey(): KeyPair {
 
 // --- .secrets/<env>/ key files ---
 
-/** The relayer's two function-call key pools: `session` (RELAYER_KEYS) and `owner` (OWNER_RELAYER_KEYS). */
-export type KeyPool = 'session' | 'owner';
-export const KEY_POOLS: readonly KeyPool[] = ['session', 'owner'];
+/** The relayer's function-call key pools: `session` (RELAYER_KEYS), `owner` (OWNER_RELAYER_KEYS) and `home` (HOME_RELAYER_KEYS). */
+export type KeyPool = 'session' | 'owner' | 'home';
+export const KEY_POOLS: readonly KeyPool[] = ['session', 'owner', 'home'];
 
 export function poolFileName(pool: KeyPool): string {
-  return pool === 'session' ? SECRET_FILES.relayerKeys : SECRET_FILES.ownerRelayerKeys;
+  return { session: SECRET_FILES.relayerKeys, owner: SECRET_FILES.ownerRelayerKeys, home: SECRET_FILES.homeRelayerKeys }[pool];
 }
 
 export function poolKeysFile(env: string, pool: KeyPool, root?: string): string {

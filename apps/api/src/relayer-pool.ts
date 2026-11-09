@@ -9,11 +9,11 @@ import type { RelayResult } from './relayer-key.ts';
 
 export { relayerKeyName };
 
-const parsed: Record<Pool, { from: string | undefined; count: number }> = { session: { from: undefined, count: 0 }, owner: { from: undefined, count: 0 } };
+const parsed: Record<Pool, { from: string | undefined; count: number }> = { session: { from: undefined, count: 0 }, owner: { from: undefined, count: 0 }, home: { from: undefined, count: 0 } };
 /** Round-robin cursor per pool, random start so isolates don't all begin on key 0. */
-const cursors: Record<Pool, number> = { session: Math.floor(Math.random() * 1_000_000), owner: Math.floor(Math.random() * 1_000_000) };
+const cursors: Record<Pool, number> = { session: Math.floor(Math.random() * 1_000_000), owner: Math.floor(Math.random() * 1_000_000), home: Math.floor(Math.random() * 1_000_000) };
 
-export function relayerKeyCount(env: Pick<Env, 'RELAYER_KEYS' | 'OWNER_RELAYER_KEYS'>, pool: Pool = 'session'): number {
+export function relayerKeyCount(env: Pick<Env, 'RELAYER_KEYS' | 'OWNER_RELAYER_KEYS' | 'HOME_RELAYER_KEYS'>, pool: Pool = 'session'): number {
   const name = POOL_SECRET[pool];
   const raw = env[name];
   const p = parsed[pool];

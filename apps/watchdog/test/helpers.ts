@@ -19,6 +19,8 @@ export const SESSION_METHODS = ['create_session', 'create_session_and_derive', '
 export const OWNER_POOL_METHODS = ['propose_change', 'cancel_change', 'remove_client', 'disable_shared_login', 'execute_change'];
 export const SESSION_KEYS = ['ed25519:3PXtH5yGjK4qrKpZuS4ZBc6fMSu1yBU4ZPR3XDjBmVvH', 'ed25519:5rKxnZ3ZQ9cYgHPzcDk7Ln3AokBdtpLwrqX1Bc4hiVj8', 'ed25519:8AxjGhhmV6rTwQhSCRRmzz6sU2dFqDswnRbXYoC2b7rk'];
 export const OWNER_POOL_KEY = 'ed25519:9mE3bS7YWXaKXg8tjLfV1JpCcRhDmBzQkYsNuHv2TfGa';
+export const HOME_POOL_METHODS = ['create_session_and_derive'];
+export const HOME_POOL_KEY = 'ed25519:7hQw2Nf8YtVbKcR4mXs9PzLd3GjAeT6uWnC1oSiEyBkM';
 export const NEAR = 10n ** 24n;
 
 /** A function-call key of the relayer for the signer, as view_access_key_list returns it. */
@@ -34,6 +36,7 @@ export function healthyRelayer(): { view: { amount: string; locked: string; stor
       { public_key: 'ed25519:FuLLaccessKey1111111111111111111111111111111', access_key: { nonce: 1, permission: 'FullAccess' } },
       ...SESSION_KEYS.map((k) => relayerKey(k, SESSION_METHODS, 2)),
       relayerKey(OWNER_POOL_KEY, OWNER_POOL_METHODS, 0.5),
+      relayerKey(HOME_POOL_KEY, HOME_POOL_METHODS, 2),
     ],
   };
 }

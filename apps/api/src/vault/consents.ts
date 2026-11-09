@@ -144,7 +144,9 @@ async function registerRequest(env: Env, ctx: Ctx, app: App, parentOrigin: strin
   if (!policy) return notInForce(ctx);
   const { policyId } = await import('@hana-id/core/policy');
   if (policyId(policy, { sessionTtlMs: settings.sessionTtlMs }) !== hex(b.policyId)) return notInForce(ctx);
-  if (b.expiresAtMs <= now || b.expiresAtMs > cap) return reject(ctx, 400, 'bad_expiry', 'The consent must end after now and no later than the session');
+  if (b.expiresAtMs <= now) return reject(ctx, 400, 'bad_expiry', 'The consent must end after now and no later than the session');
+  // A vault that doesn't know the cap (the app lowered its session TTL since the tab loaded) learns it here, for its next Allow.
+  if (b.expiresAtMs > cap) return done(ctx, 400, { error: 'The consent must end after now and no later than the session', code: 'bad_expiry', maxExpiresAtMs: cap });
 
   if (await consentExists(env.DB, b.consentId)) return exists(ctx);
   if ((await consentRowsForKey(env.DB, pathHash, b.sessionPk)) >= CONSENT_MAX_PER_SESSION_KEY) return reject(ctx, 429, 'too_many_consents', 'This session has registered too many consents');

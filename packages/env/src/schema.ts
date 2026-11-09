@@ -122,11 +122,11 @@ const watchdogSchema = z.object({
   /**
    * Thresholds (NEAR) of the relayer funds check (`relayer` account balance, each pool key's remaining allowance);
    * each pair optional. Defaults (apps/watchdog/src/relayer.ts): balance 5 / 1, session-pool key 0.5 / 0.1 (of its 2 NEAR
-   * allowance), owner-pool key 0.1 / 0.02 (of 0.5 NEAR). Raise the allowance pairs if deploy-contract ran with a
-   * larger `--relayer-allowance` / `--owner-relayer-allowance`.
+   * allowance), owner-pool key 0.1 / 0.02 (of 0.5 NEAR), Home-pool key 1 / 0.2 (of 5 NEAR). Raise the allowance pairs
+   * if deploy-contract ran with a larger `--relayer-allowance` / `--owner-relayer-allowance` / `--home-relayer-allowance`.
    */
   relayerFunds: z
-    .object({ balance: nearThresholds.optional(), sessionAllowance: nearThresholds.optional(), ownerAllowance: nearThresholds.optional() })
+    .object({ balance: nearThresholds.optional(), sessionAllowance: nearThresholds.optional(), ownerAllowance: nearThresholds.optional(), homeAllowance: nearThresholds.optional() })
     .strict()
     .optional(),
   /**
@@ -285,6 +285,8 @@ export const manifestSchema = z
      * "Manifest"). It replaces batch B's raw-sign/policy delay rule for the API and the CLI (from batch C3).
      */
     appChangeDelayMs: delayMs,
+    /** Hana Home derives per UTC day across the env; 0 turns them off. Absent: the API's default (500). */
+    homeDerivesPerDay: z.number().int().min(0).max(9_999_999).optional(),
     /**
      * Batch C's dashboard (docs/batch-c-spec.md "Manifest"): set together with `files`, `admin`, `usage`, `email` and
      * `ownerGrantDelayMs`, or none of them (`dashboard.ts`). Without them the env runs the API only.

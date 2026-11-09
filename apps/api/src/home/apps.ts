@@ -154,7 +154,8 @@ function listingQuery(query: Exclude<HomeQuery, { kind: 'first' }> | null, env: 
   const launched = raw('EXISTS (SELECT 1 FROM apps x WHERE x.scope_id = s.scope_id AND x.first_login_at IS NOT NULL)');
   // Scope ids are sequential, so a quiet scope isn't found by one (D502): its link names an app id, which can't be walked.
   if (query?.kind === 'scope') return q`${select} AND s.scope_id = ${query.scopeId} AND (${isMine} OR (s.first_session_at IS NOT NULL AND s.home_quiet = 0 AND ${launched}))`;
-  // A link to an app with no login answers nothing to a stranger, as the list would: nobody can have a wallet there yet.
+  // A link to an app with no login answers nothing to a stranger, as the list would. (A stranger can derive a key in any
+  // registered scope through Home, D527, but that writes no directory row, so it doesn't make them one of its users.)
   if (query?.kind === 'app') return q`${select} AND s.scope_id = (SELECT scope_id FROM apps WHERE id = ${query.appId}) AND (${isMine} OR (s.first_session_at IS NOT NULL AND EXISTS (SELECT 1 FROM apps x WHERE x.id = ${query.appId} AND x.first_login_at IS NOT NULL)))`;
   if (query?.kind === 'search') {
     // A listed scope by any part of an app's name; a quiet one only by an app's whole name, so a search can't enumerate them.

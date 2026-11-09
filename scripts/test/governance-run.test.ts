@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { loadEnv, type Manifest } from '@hana-id/env';
 import { KeyPair } from '@near-js/crypto';
-import { OWNER_RELAYER_METHODS, SESSION_RELAYER_METHODS } from '../lib/contract.ts';
+import { HOME_RELAYER_METHODS, OWNER_RELAYER_METHODS, SESSION_RELAYER_METHODS } from '../lib/contract.ts';
 import { writeCouncilKey } from '../lib/council.ts';
 import { CLOCK_MARGIN_MS, QUARANTINE_MARGIN_MS, SINK_WAIT_MAX_MS } from '../lib/deploy-plan.ts';
 import { DRY_RUN_LINE, deployMain } from '../lib/deploy-run.ts';
@@ -67,11 +67,14 @@ beforeEach(() => {
   // Relayer pools already in place.
   const session = Array.from({ length: 3 }, () => KeyPair.fromRandom('ed25519'));
   const owner = [KeyPair.fromRandom('ed25519')];
+  const home = [KeyPair.fromRandom('ed25519')];
   writePoolKeys(base.name, 'session', session, roots.secretsRoot);
   writePoolKeys(base.name, 'owner', owner, roots.secretsRoot);
+  writePoolKeys(base.name, 'home', home, roots.secretsRoot);
   for (const k of session) chain.accounts.get(base.relayer)!.keys.push(fcEntry(k, base.signer, [...SESSION_RELAYER_METHODS], (2n * 10n ** 24n).toString()));
   for (const k of owner) chain.accounts.get(base.relayer)!.keys.push(fcEntry(k, base.signer, [...OWNER_RELAYER_METHODS], (10n ** 23n).toString()));
-  secrets.push(...session, ...owner);
+  for (const k of home) chain.accounts.get(base.relayer)!.keys.push(fcEntry(k, base.signer, [...HOME_RELAYER_METHODS], (10n ** 24n).toString()));
+  secrets.push(...session, ...owner, ...home);
   chain.issuer = { iss_values: ['https://accounts.google.com', 'accounts.google.com'], kids: [] };
   // Hana's Google clients in "global"; the console audiences already in their sink scope (D238).
   chain.globalScope = { id: 'global', owners: [{ Near: { account_id: base.owner } }], clients: base.googleClientIds.map((aud) => ['google', aud]), allow_shared: false };

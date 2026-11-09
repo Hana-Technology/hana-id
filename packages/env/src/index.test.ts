@@ -126,6 +126,17 @@ describe('manifestSchema: apiRpcFallbacks (D435)', () => {
 /** The kids sandbox-dev's identity JWKS publishes. */
 const identityKids = (): string[] => (raw().identityToken as { publicKeys: { kid: string }[] }).publicKeys.map((k) => k.kid);
 
+describe('manifestSchema: homeDerivesPerDay', () => {
+  const base = raw();
+  it('takes an integer of 0 or more, and is optional', () => {
+    expect(manifestSchema.safeParse(base).success).toBe(true);
+    expect(manifestSchema.safeParse({ ...base, homeDerivesPerDay: 0 }).success).toBe(true);
+    expect(manifestSchema.safeParse({ ...base, homeDerivesPerDay: 500 }).success).toBe(true);
+    expect(manifestSchema.safeParse({ ...base, homeDerivesPerDay: -1 }).success).toBe(false);
+    expect(manifestSchema.safeParse({ ...base, homeDerivesPerDay: 1.5 }).success).toBe(false);
+  });
+});
+
 describe('manifestSchema: watchdog', () => {
   const watchdog = (over: Record<string, unknown> = {}) => ({
     account: 'watchdog.example.testnet',

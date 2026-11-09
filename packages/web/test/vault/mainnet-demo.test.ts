@@ -131,7 +131,7 @@ describe('the mainnet demo in the vault', () => {
     it('to another wallet: refused before any popup (the vault compares it with the session’s own address, encoded)', async () => {
       const s = await session();
       const reply = await s.t.request('eth_signTransaction', { tx: bridge(OTHER, s.evm) });
-      expect(reply.error).toMatchObject({ code: 4100, data: { reason: 'mainnet_demo_unknown_call', chain: 'evm', chainId: 8453 } });
+      expect(reply.error).toMatchObject({ code: 4100, data: { reason: 'mainnet_demo_wrong_destination', chain: 'evm', chainId: 8453 } });
       await sleepReal(20);
       expect(approvePopups(s.t)).toHaveLength(0);
       expect(demoEvents(s.t)).toHaveLength(0);
@@ -140,7 +140,7 @@ describe('the mainnet demo in the vault', () => {
     it('with another hub wallet as the spoke `to`: refused before any popup, though the recipient is the user’s own (D476)', async () => {
       const s = await session();
       const reply = await s.t.request('eth_signTransaction', { tx: bridge(s.stellar, s.evm, `0x${'22'.repeat(20)}`) });
-      expect(reply.error).toMatchObject({ code: 4100, data: { reason: 'mainnet_demo_unknown_call', chain: 'evm', chainId: 8453 } });
+      expect(reply.error).toMatchObject({ code: 4100, data: { reason: 'mainnet_demo_wrong_destination', chain: 'evm', chainId: 8453 } });
       await sleepReal(20);
       expect(approvePopups(s.t)).toHaveLength(0);
       expect(demoEvents(s.t)).toHaveLength(0);
@@ -148,15 +148,17 @@ describe('the mainnet demo in the vault', () => {
   });
 
   describe('a Sodax swap or plain deposit (D492)', () => {
-    const swap = (signer: string, hubWallet?: string) => send({ to: SODAX_ASSET_MANAGER_BASE, value: '0x0', data: sodaxSwapDeposit(signer, hubWallet) });
-    const empty = (signer: string, hubWallet?: string) => send({ to: SODAX_ASSET_MANAGER_BASE, value: '0x0', data: sodaxEmptyDeposit(signer, hubWallet) });
+    type S = { evm: string; stellar: string };
+    const swap = (s: S, hubWallet?: string) => send({ to: SODAX_ASSET_MANAGER_BASE, value: '0x0', data: sodaxSwapDeposit(s.stellar, s.evm, { to: hubWallet }) });
+    const empty = (s: S, hubWallet?: string) => send({ to: SODAX_ASSET_MANAGER_BASE, value: '0x0', data: sodaxEmptyDeposit(s.evm, hubWallet) });
+    const WRONG_FLASH = 'Refused: this sends funds to a wallet that isn’t yours (mainnet demo)';
 
     it.each([
       ['a swap', swap],
       ['an empty-data deposit', empty],
     ] as const)('%s to the signing address’s own hub wallet: through the popup', async (_name, make) => {
       const s = await session();
-      const reply = s.t.request('eth_signTransaction', { tx: make(s.evm) });
+      const reply = s.t.request('eth_signTransaction', { tx: make(s) });
       await waitLauncher(s.t, 'Review in Hana');
       const popup = openApproval(s.t);
       answer(s.t, popup, await popup.next('hana:approve-request'), true);
@@ -168,8 +170,22 @@ describe('the mainnet demo in the vault', () => {
       ['an empty-data deposit', empty],
     ] as const)('%s to another hub wallet: refused before any popup', async (_name, make) => {
       const s = await session();
-      const reply = await s.t.request('eth_signTransaction', { tx: make(s.evm, `0x${'22'.repeat(20)}`) });
-      expect(reply.error).toMatchObject({ code: 4100, data: { reason: 'mainnet_demo_unknown_call', chain: 'evm', chainId: 8453 } });
+      const reply = await s.t.request('eth_signTransaction', { tx: make(s, `0x${'22'.repeat(20)}`) });
+      expect(reply.error).toMatchObject({ code: 4100, data: { reason: 'mainnet_demo_wrong_destination', chain: 'evm', chainId: 8453 } });
+      expect(s.t.launcher.history).toContain(WRONG_FLASH);
+      await sleepReal(20);
+      expect(approvePopups(s.t)).toHaveLength(0);
+      expect(demoEvents(s.t)).toHaveLength(0);
+    });
+
+    it.each([
+      ['to another wallet', (s: S) => sodaxSwapDeposit(OTHER, s.evm)],
+      ['created for another hub wallet', (s: S) => sodaxSwapDeposit(s.stellar, s.evm, { creator: `0x${'22'.repeat(20)}` })],
+    ] as const)('a swap %s: refused before any popup, with the right flash', async (_name, data) => {
+      const s = await session();
+      const reply = await s.t.request('eth_signTransaction', { tx: send({ to: SODAX_ASSET_MANAGER_BASE, value: '0x0', data: data(s) }) });
+      expect(reply.error).toMatchObject({ code: 4100, data: { reason: 'mainnet_demo_wrong_destination', chain: 'evm', chainId: 8453 } });
+      expect(s.t.launcher.history).toContain(WRONG_FLASH);
       await sleepReal(20);
       expect(approvePopups(s.t)).toHaveLength(0);
       expect(demoEvents(s.t)).toHaveLength(0);

@@ -152,13 +152,23 @@ export interface DemoBridge {
 }
 
 /**
- * Who a bridge may deliver to. `wallets`: the user's own addresses, which the bridge's recipient must be (the
+ * Who a bridge or a swap may deliver to. `wallets`: the user's own addresses, which the recipient must be (the
  * vault always passes these, and they are compared in the encoded form the hub receives). `'shown'`: only the popup,
  * which holds the signing chain's address alone and shows the recipient; the vault has already checked it.
- * Omitted: a bridge is refused. Whichever is given, every Sodax deposit's spoke `to` must be the signing address's own
- * hub wallet (checked offline from the signing address, in both the vault and the popup).
+ * Omitted: a bridge or a swap is refused. Whichever is given, every Sodax deposit's spoke `to` must be the signing
+ * address's own hub wallet (checked offline from the signing address, in both the vault and the popup).
  */
 export type DemoBridgeRecipients = { readonly wallets: { readonly evm: string; readonly stellar: string } } | 'shown';
+
+/** A checked Sodax swap, for the approval popup to say where its output goes. */
+export interface DemoSwap {
+  readonly toChain: DemoBridgeAsset['chainName'];
+  /** On the destination chain: StrKey G… or EIP-55 0x…. */
+  readonly recipient: string;
+}
+
+/** What a deposit's hub calls do beyond spending the deposit: a bridge or a swap, each with its checked recipient. */
+export type DemoRoute = { readonly bridge: DemoBridge } | { readonly swap: DemoSwap };
 
 /** One thing a request can move out, valued. */
 export interface DemoMovement {
@@ -169,10 +179,10 @@ export interface DemoMovement {
   readonly usdMicros: UsdMicros;
 }
 
-export type DemoRefusalReason = 'mainnet_not_allowed' | 'mainnet_demo_unknown_call' | 'mainnet_demo_unpriced' | 'mainnet_demo_over_cap' | 'mainnet_demo_prices_stale';
+export type DemoRefusalReason = 'mainnet_not_allowed' | 'mainnet_demo_unknown_call' | 'mainnet_demo_unpriced' | 'mainnet_demo_wrong_destination' | 'mainnet_demo_over_cap' | 'mainnet_demo_prices_stale';
 
 export type DemoAssessment =
-  | { readonly ok: true; readonly network: DemoNetwork; readonly usdMicros: UsdMicros; readonly capUsdMicros: UsdMicros; readonly movements: readonly DemoMovement[]; readonly bridge?: DemoBridge }
+  | { readonly ok: true; readonly network: DemoNetwork; readonly usdMicros: UsdMicros; readonly capUsdMicros: UsdMicros; readonly movements: readonly DemoMovement[]; readonly bridge?: DemoBridge; readonly swap?: DemoSwap }
   | { readonly ok: false; readonly reason: DemoRefusalReason; readonly message: string; readonly network: DemoNetwork | null; readonly usdMicros?: UsdMicros };
 
 /**
@@ -229,6 +239,9 @@ class Refusal extends Error {
 const unknownCall = (why: string): never => {
   throw new Refusal('mainnet_demo_unknown_call', `Hana can’t tell how much this moves (${why}), so the mainnet demo won’t sign it`);
 };
+const wrongDestination = (why: string): never => {
+  throw new Refusal('mainnet_demo_wrong_destination', `This sends funds somewhere other than your own wallet (${why}), so the mainnet demo won’t sign it`);
+};
 const unpriced = (what: string): never => {
   throw new Refusal('mainnet_demo_unpriced', `Hana has no price for ${what}, so the mainnet demo won’t sign it`);
 };
@@ -264,12 +277,12 @@ function decodeOr(fnAbi: ReturnType<typeof fn>, data: Uint8Array, what: string):
  * A Sodax deposit's spoke side and `data` (relayed to the hub and run by the user's hub wallet). The spoke `to` is
  * always exactly the signing address's own hub wallet, whatever the `data`; a call without `spoke` is refused. The
  * `data` is empty; or exactly `[approve(intents, g) on hubAsset, createIntent(intent) on intents]` with g ≤ amount,
- * the intent's input the hub asset and its input amount ≤ g; or exactly the four calls of a USDC ⇄ USDC bridge
- * (checkBridgeCalls). So the funds reach the signer's own hub wallet and the hub calls can spend at most the deposited
- * amount of the deposited asset. Returns the bridge it found, else null. The output of a swap (the intent's
- * destination) is not checked here.
+ * the intent's input the hub asset and its input amount ≤ g, and the intent itself the user's own (checkSwapIntent);
+ * or exactly the four calls of a USDC ⇄ USDC bridge (checkBridgeCalls). So the funds reach the signer's own hub wallet,
+ * the hub calls can spend at most the deposited amount of the deposited asset, and what comes out is delivered to the
+ * user's own wallet. Returns the bridge or swap it found, else null.
  */
-export function checkSodaxHubCalls(dataHex: string, hubAsset: string | undefined, amount: bigint, recipients?: DemoBridgeRecipients, spoke?: DemoSpokeDeposit): DemoBridge | null {
+export function checkSodaxHubCalls(dataHex: string, hubAsset: string | undefined, amount: bigint, recipients?: DemoBridgeRecipients, spoke?: DemoSpokeDeposit): DemoRoute | null {
   if (!spoke) return unknownCall('a Sodax deposit whose hub wallet can’t be checked');
   checkSpokeHubWallet(spoke);
   const data = from0xHex(dataHex.startsWith('0x') ? dataHex : `0x${dataHex}`);
@@ -283,7 +296,7 @@ export function checkSodaxHubCalls(dataHex: string, hubAsset: string | undefined
   }
   const list = calls[0];
   if (!list || list.kind !== 'array') return unknownCall('Sodax hub calls of an unexpected shape');
-  if (list.items.length === 4) return checkBridgeCalls(list.items, hubAsset, amount, recipients);
+  if (list.items.length === 4) return { bridge: checkBridgeCalls(list.items, hubAsset, amount, recipients) };
   if (list.items.length !== 2) return unknownCall('Sodax hub calls of an unexpected shape');
   const [approveCall, intentCall] = list.items.map((c) => (c.kind === 'tuple' ? c.items : unknownCall('a malformed hub call')));
   if (!eq(addressOf(approveCall![0]), hubAsset) || uintOf(approveCall![1]) !== 0n) unknownCall('a hub call on another contract');
@@ -297,7 +310,36 @@ export function checkSodaxHubCalls(dataHex: string, hubAsset: string | undefined
   if (!intent || intent.kind !== 'tuple') return unknownCall('a malformed intent');
   if (!eq(addressOf(intent.items[2]), hubAsset)) unknownCall('an intent spending another asset');
   if (uintOf(intent.items[4]) > gross) unknownCall('an intent above its approval');
-  return null;
+  return { swap: checkSwapIntent(intent.items, spoke, recipients) };
+}
+
+/** The hub assets of the assets the demo lists on one chain: what a swap's output may be. */
+function demoHubAssets(chain: DemoBridgeAsset['chain']): string[] {
+  const listed: DemoAsset[] = chain === 'evm' ? Object.values(MAINNET_DEMO.evm).flatMap((c) => [c.native, ...Object.values(c.tokens)]) : [MAINNET_DEMO.stellar.native, ...Object.values(MAINNET_DEMO.stellar.assets)];
+  return listed.flatMap((a) => (a.sodaxHubAsset ? [a.sodaxHubAsset] : []));
+}
+
+/**
+ * A swap's intent, as `constructCreateIntentData` encodes it with no partner fee and no delivery hook: created by the
+ * signing address's own hub wallet, from the signing address on the deposit's chain, for a listed asset on a demo chain,
+ * delivered to the user's own wallet there, with no named solver and no intent data. The intent's id, minimum output,
+ * deadline and partial-fill flag are the swap's terms and aren't checked here.
+ */
+function checkSwapIntent(items: readonly AbiValue[], spoke: DemoSpokeDeposit, recipients: DemoBridgeRecipients | undefined): DemoSwap {
+  if (!recipients) return unknownCall('a swap whose recipient can’t be checked');
+  const sides = MAINNET_DEMO.sodaxBridge.usdc;
+  const src = sides.find((a) => a.chain === spoke.chain) as DemoBridgeAsset;
+  if (!eq(addressOf(items[1]), sodaxHubWalletOf(spoke.chain, spoke.signer))) wrongDestination('a swap created for another hub wallet');
+  if (uintOf(items[8]) !== BigInt(src.relayChainId)) wrongDestination('a swap that names another source chain');
+  if (!eq(bytesOf(items[10]), `0x${toHex(encodedSodaxAddress(spoke.chain, spoke.signer))}`)) wrongDestination('a swap that names another source address');
+  const dstChain = uintOf(items[9]);
+  const dst = sides.find((a) => BigInt(a.relayChainId) === dstChain);
+  if (!dst) return wrongDestination('a swap to a chain the demo doesn’t list');
+  const recipient = ownRecipient(bytesOf(items[11]), dst, recipients);
+  if (!demoHubAssets(dst.chain).some((h) => eq(h, addressOf(items[3])))) unknownCall('a swap into an asset the demo doesn’t list');
+  if (!eq(addressOf(items[12]), ZERO_ADDRESS)) unknownCall('a swap only a named solver can fill');
+  if (from0xHex(bytesOf(items[13])).length !== 0) unknownCall('a swap carrying a fee or delivery data');
+  return { toChain: dst.chainName, recipient };
 }
 
 /** One hub call of the bridge: on exactly `target`, with no value, its calldata decoded as exactly `what`. */
@@ -343,7 +385,7 @@ function checkBridgeCalls(items: readonly AbiValue[], hubAsset: string, amount: 
   if (delivered * 10n ** BigInt(18 - dst.decimals) !== withdrawn) unknownCall('a bridge delivering a different amount');
   if (from0xHex(bytesOf(transfer[3])).length !== 0) unknownCall('a bridge transfer carrying data');
 
-  return { symbol: 'USDC', amount: decimalAmount(amount, src.decimals), fromChain: src.chainName, toChain: dst.chainName, recipient: bridgeRecipient(bytesOf(transfer[1]), dst, recipients) };
+  return { symbol: 'USDC', amount: decimalAmount(amount, src.decimals), fromChain: src.chainName, toChain: dst.chainName, recipient: ownRecipient(bytesOf(transfer[1]), dst, recipients) };
 }
 
 /** The first 12 bytes of an SCV_ADDRESS holding an ed25519 account: type 18, account, public key. */
@@ -378,32 +420,37 @@ export function sodaxHubWallet(relayChainId: number, user: Uint8Array): string {
   return checksumEvmAddress(keccak_256(concatBytes(Uint8Array.of(0xd6, 0x94), proxy, Uint8Array.of(0x01))).subarray(12));
 }
 
+/** `address` as Sodax's `encodeAddress` gives it for a demo chain: 20 bytes on Base, SCV_ADDRESS XDR on Stellar. */
+function encodedSodaxAddress(chain: DemoBridgeAsset['chain'], address: string): Uint8Array {
+  if (chain === 'stellar') return concatBytes(from0xHex(STELLAR_RECIPIENT_PREFIX), decodeStrKey(STRKEY_VERSION.ed25519PublicKey, address));
+  const user = from0xHex(address);
+  if (user.length !== 20) throw new Error('EVM address must be 20 bytes');
+  return user;
+}
+
 /** The hub wallet of `address` on a demo chain, with the address encoded as Sodax's `encodeAddress` does. */
 export function sodaxHubWalletOf(chain: DemoBridgeAsset['chain'], address: string): string {
   const side = MAINNET_DEMO.sodaxBridge.usdc.find((a) => a.chain === chain) as DemoBridgeAsset;
-  if (chain === 'stellar') return sodaxHubWallet(side.relayChainId, concatBytes(from0xHex(STELLAR_RECIPIENT_PREFIX), decodeStrKey(STRKEY_VERSION.ed25519PublicKey, address)));
-  const user = from0xHex(address);
-  if (user.length !== 20) throw new Error('EVM address must be 20 bytes');
-  return sodaxHubWallet(side.relayChainId, user);
+  return sodaxHubWallet(side.relayChainId, encodedSodaxAddress(chain, address));
 }
 
 /** A deposit's spoke `to` must be exactly the signing address's own hub wallet: the funds are delivered there first. */
 function checkSpokeHubWallet(spoke: DemoSpokeDeposit): void {
   const to = from0xHex(spoke.to.startsWith('0x') ? spoke.to : `0x${spoke.to}`);
-  if (to.length !== 20) unknownCall('a Sodax deposit to a hub wallet of the wrong length');
-  if (!eq(`0x${toHex(to)}`, sodaxHubWalletOf(spoke.chain, spoke.signer))) unknownCall('a Sodax deposit to a hub wallet that isn’t yours');
+  if (to.length !== 20) wrongDestination('a Sodax deposit to a hub wallet of the wrong length');
+  if (!eq(`0x${toHex(to)}`, sodaxHubWalletOf(spoke.chain, spoke.signer))) wrongDestination('a Sodax deposit to a hub wallet that isn’t yours');
 }
 
-/** The destination-chain address a bridge's `recipient` bytes canonically encode, bound to the user's own wallet. */
-function bridgeRecipient(hex: string, dst: DemoBridgeAsset, recipients: DemoBridgeRecipients): string {
+/** The destination-chain address a bridge's or swap's recipient bytes canonically encode, bound to the user's own wallet. */
+function ownRecipient(hex: string, dst: DemoBridgeAsset, recipients: DemoBridgeRecipients): string {
   if (dst.chain === 'evm') {
     const bytes = from0xHex(hex);
-    if (bytes.length !== 20) return unknownCall('a bridge recipient of the wrong length');
-    if (recipients !== 'shown' && !eq(hex, recipients.wallets.evm)) unknownCall('a bridge to a wallet that isn’t yours');
+    if (bytes.length !== 20) return wrongDestination('a recipient of the wrong length');
+    if (recipients !== 'shown' && !eq(hex, recipients.wallets.evm)) wrongDestination('a recipient that isn’t yours');
     return checksumEvmAddress(bytes);
   }
-  if (from0xHex(hex).length !== 44 || !hex.startsWith(STELLAR_RECIPIENT_PREFIX)) return unknownCall('a bridge recipient of the wrong form');
-  if (recipients !== 'shown' && hex !== `${STELLAR_RECIPIENT_PREFIX}${toHex(decodeStrKey(STRKEY_VERSION.ed25519PublicKey, recipients.wallets.stellar))}`) unknownCall('a bridge to a wallet that isn’t yours');
+  if (from0xHex(hex).length !== 44 || !hex.startsWith(STELLAR_RECIPIENT_PREFIX)) return wrongDestination('a recipient of the wrong form');
+  if (recipients !== 'shown' && hex !== `${STELLAR_RECIPIENT_PREFIX}${toHex(decodeStrKey(STRKEY_VERSION.ed25519PublicKey, recipients.wallets.stellar))}`) wrongDestination('a recipient that isn’t yours');
   return encodeStrKey(STRKEY_VERSION.ed25519PublicKey, from0xHex(`0x${hex.slice(STELLAR_RECIPIENT_PREFIX.length)}`));
 }
 
@@ -416,20 +463,20 @@ function decimalAmount(amount: bigint, decimals: number): string {
 
 // ---- EVM ----
 
-/** What an assessment knows about a bridge: who may receive one, and the one it found. */
+/** What an assessment knows about a bridge or swap: who may receive one, and the one it found. */
 interface BridgeContext {
   readonly recipients: DemoBridgeRecipients | undefined;
   /** The request's signing address, which every Sodax deposit's hub wallet must derive from. */
   readonly signer: string;
-  found: DemoBridge | null;
+  found: DemoRoute | null;
 }
 
-/** Checks a deposit's hub calls; at most one bridge per request, so the popup can describe all of it. */
+/** Checks a deposit's hub calls; at most one bridge or swap per request, so the popup can describe all of it. */
 function checkHubCalls(ctx: BridgeContext, chain: DemoSpokeDeposit['chain'], dataHex: string, hubAsset: string | undefined, amount: bigint, spokeTo: string): void {
-  const bridge = checkSodaxHubCalls(dataHex, hubAsset, amount, ctx.recipients, { chain, to: spokeTo, signer: ctx.signer });
-  if (!bridge) return;
-  if (ctx.found) unknownCall('more than one bridge in a request');
-  ctx.found = bridge;
+  const route = checkSodaxHubCalls(dataHex, hubAsset, amount, ctx.recipients, { chain, to: spokeTo, signer: ctx.signer });
+  if (!route) return;
+  if (ctx.found) unknownCall('more than one bridge or swap in a request');
+  ctx.found = route;
 }
 
 function assessEvm(tx: DecodedEvmTx, chain: DemoEvmChain, value: Valuer, ctx: BridgeContext): DemoMovement[] {
@@ -600,7 +647,7 @@ export function demoNetworkOf(decoded: DecodedApproval): DemoNetwork | null {
  * fixed table). `nowMs` is the server-corrected time, against which a fixed price's validity is checked: a request
  * valued with any expired fixed price is refused (`mainnet_demo_prices_stale`), one valued only with live prices is
  * not. Never throws: anything that doesn't decode is refused. `prices` is a book parseMainnetDemoPrices accepted.
- * `recipients` is who a Sodax bridge may deliver to (DemoBridgeRecipients); without it a bridge is refused.
+ * `recipients` is who a Sodax bridge or swap may deliver to (DemoBridgeRecipients); without it both are refused.
  */
 export function assessMainnetDemo(subject: ApprovalSubject, nowMs: number, prices: MainnetDemoPriceBook = fixedMainnetDemoPrices(), recipients?: DemoBridgeRecipients): DemoAssessment {
   let decoded: DecodedApproval;
@@ -647,5 +694,5 @@ export function assessMainnetDemo(subject: ApprovalSubject, nowMs: number, price
       message: `Hana’s mainnet demo signs at most ${formatUsd(cap)} per transaction; this one can move about ${formatUsd(usdMicros)}`,
     };
   }
-  return { ok: true, network, usdMicros, capUsdMicros: cap, movements, ...(ctx.found ? { bridge: ctx.found } : {}) };
+  return { ok: true, network, usdMicros, capUsdMicros: cap, movements, ...ctx.found };
 }

@@ -3,7 +3,7 @@
 // the way @sodax/sdk 2.2.0 builds them (EvmSpokeService.deposit, EvmSolverService.constructCreateIntentData,
 // StellarSpokeService.buildDepositCall), with viem and @stellar/stellar-base.
 import { Address, Asset, Networks, Operation, xdr } from '@stellar/stellar-base';
-import { type Hex, encodeAbiParameters, encodeFunctionData, parseAbi, parseAbiParameters, serializeTransaction } from 'viem';
+import { type Hex, decodeAbiParameters, decodeFunctionData, encodeAbiParameters, encodeFunctionData, parseAbi, parseAbiParameters, serializeTransaction } from 'viem';
 import { describe, expect, it } from 'vitest';
 import type { ApprovalSubject } from '../src/approval.ts';
 import { MAINNET_DEMO, MAINNET_DEMO_BALANCE_ORIGINS, assessMainnetDemo, checkSodaxHubCalls, fixedMainnetDemoPrices, formatUsd, mainnetDemoState, sodaxHubWallet, sodaxHubWalletOf, usdOf } from '../src/mainnet-demo.ts';
@@ -41,9 +41,32 @@ const intents = parseAbi([
 // deposit's spoke `to` must be the signing address's own hub wallet (D492).
 const BASE_HUB_WALLET = '0xF05e4fB1A3917A7Fd722749047c2f6795Fa1368B' as Hex; // EVM_USER, relay 30
 const STELLAR_HUB_WALLET = '0x00504aAc4AfF32F24E4dD77b6b81d6aF2d936B6E' as Hex; // USER, relay 27
+const WALLETS = { evm: EVM_USER, stellar: USER };
+/** The user's Stellar account as the hub receives it: SCV_ADDRESS XDR, exactly what the SDK's encodeAddress gives. */
+const recipientOf = (g: string) => `0x${new Address(g).toScVal().toXDR('hex')}` as Hex;
+const BASE_USDC_HUB = BASE.tokens[USDC_BASE]!.sodaxHubAsset as Hex;
+const STELLAR_USDC_HUB = MAINNET_DEMO.stellar.assets['USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN']!.sodaxHubAsset as Hex;
 
 /** Sodax's hub calls, as constructCreateIntentData encodes them. */
-function hubCalls(o: { hubAsset?: Hex; approve?: bigint; spender?: Hex; intentToken?: Hex; intentAmount?: bigint; extra?: boolean; approveTarget?: Hex } = {}): Hex {
+interface SwapOptions {
+  hubAsset?: Hex;
+  approve?: bigint;
+  spender?: Hex;
+  intentToken?: Hex;
+  intentAmount?: bigint;
+  extra?: boolean;
+  approveTarget?: Hex;
+  intentId?: bigint;
+  creator?: Hex;
+  outputToken?: Hex;
+  srcChain?: bigint;
+  dstChain?: bigint;
+  srcAddress?: Hex;
+  dstAddress?: Hex;
+  solver?: Hex;
+  data?: Hex;
+}
+function hubCalls(o: SwapOptions = {}): Hex {
   const hubAsset = o.hubAsset ?? ETH_HUB;
   const approve = encodeFunctionData({ abi: erc20, functionName: 'approve', args: [o.spender ?? INTENTS, o.approve ?? 1000n] });
   const intent = encodeFunctionData({
@@ -51,20 +74,20 @@ function hubCalls(o: { hubAsset?: Hex; approve?: bigint; spender?: Hex; intentTo
     functionName: 'createIntent',
     args: [
       {
-        intentId: 7n,
-        creator: BASE_HUB_WALLET,
+        intentId: o.intentId ?? 7n,
+        creator: o.creator ?? BASE_HUB_WALLET,
         inputToken: o.intentToken ?? hubAsset,
-        outputToken: '0x2222222222222222222222222222222222222222',
+        outputToken: o.outputToken ?? STELLAR_USDC_HUB,
         inputAmount: o.intentAmount ?? 1000n,
-        minOutputAmount: 1n,
-        deadline: 1n,
+        minOutputAmount: 900_000n,
+        deadline: 1_900_000_000n,
         allowPartialFill: false,
-        srcChain: 1n,
-        dstChain: 2n,
-        srcAddress: '0x01',
-        dstAddress: '0x02',
-        solver: '0x0000000000000000000000000000000000000000',
-        data: '0x',
+        srcChain: o.srcChain ?? 30n,
+        dstChain: o.dstChain ?? 27n,
+        srcAddress: o.srcAddress ?? (EVM_USER.toLowerCase() as Hex),
+        dstAddress: o.dstAddress ?? recipientOf(USER),
+        solver: o.solver ?? '0x0000000000000000000000000000000000000000',
+        data: o.data ?? '0x',
       },
     ],
   });
@@ -76,16 +99,20 @@ function hubCalls(o: { hubAsset?: Hex; approve?: bigint; spender?: Hex; intentTo
   return encodeAbiParameters(parseAbiParameters('(address,uint256,bytes)[]'), [calls]);
 }
 
+/** The same hub calls for a swap from Stellar to Base. */
+const stellarHubCalls = (o: SwapOptions = {}): Hex =>
+  hubCalls({ creator: STELLAR_HUB_WALLET, srcChain: 27n, dstChain: 30n, srcAddress: recipientOf(USER), dstAddress: EVM_USER.toLowerCase() as Hex, outputToken: BASE_USDC_HUB, ...o });
+
 const deposit = (token: Hex, amount: bigint, data: Hex = '0x', to: Hex = BASE_HUB_WALLET) => encodeFunctionData({ abi: spoke, functionName: 'transfer', args: [token, to, amount, data] });
 const ZERO = '0x0000000000000000000000000000000000000000' as Hex;
 
 const ok = (s: ApprovalSubject, now = NOW) => {
-  const r = assessMainnetDemo(s, now);
+  const r = assessMainnetDemo(s, now, fixedMainnetDemoPrices(), { wallets: WALLETS });
   if (!r.ok) throw new Error(`refused: ${r.reason} ${r.message}`);
   return r;
 };
 const refused = (s: ApprovalSubject, now = NOW) => {
-  const r = assessMainnetDemo(s, now);
+  const r = assessMainnetDemo(s, now, fixedMainnetDemoPrices(), { wallets: WALLETS });
   if (r.ok) throw new Error('allowed');
   return r;
 };
@@ -302,7 +329,7 @@ describe('Stellar’s public network', () => {
     );
 
   it('signs a Sodax deposit of XLM with its own authorization', () => {
-    const data = hubCalls({ hubAsset: xlmHub, approve: 50_000_000n, intentAmount: 50_000_000n });
+    const data = stellarHubCalls({ hubAsset: xlmHub, approve: 50_000_000n, intentAmount: 50_000_000n });
     const args = depositArgs(50_000_000n, data);
     const r = ok(am('transfer', args, [sodaxAuth(args)]));
     // 5 XLM + the 0.0105 XLM fee (0.01 inclusion fee + the 5,000-stroop Soroban resource fee).
@@ -311,7 +338,7 @@ describe('Stellar’s public network', () => {
   });
 
   it('refuses a Sodax deposit with a wrong or missing authorization, from another account, or over the cap', () => {
-    const data = hubCalls({ hubAsset: xlmHub, approve: 50_000_000n, intentAmount: 50_000_000n });
+    const data = stellarHubCalls({ hubAsset: xlmHub, approve: 50_000_000n, intentAmount: 50_000_000n });
     const args = depositArgs(50_000_000n, data);
     expect(refused(am('transfer', args, [])).reason).toBe('mainnet_demo_unknown_call');
     expect(refused(am('transfer', args, [sodaxAuth(args, { amount: 60_000_000n })])).reason).toBe('mainnet_demo_unknown_call');
@@ -324,7 +351,7 @@ describe('Stellar’s public network', () => {
     const big = depositArgs(200_000_000n, '0x');
     expect(refused(am('transfer', big, [sodaxAuth(big, { amount: 200_000_000n })])).reason).toBe('mainnet_demo_over_cap');
     // Hub calls spending more than the deposit.
-    const greedy = depositArgs(50_000_000n, hubCalls({ hubAsset: xlmHub, approve: 60_000_000n, intentAmount: 50_000_000n }));
+    const greedy = depositArgs(50_000_000n, stellarHubCalls({ hubAsset: xlmHub, approve: 60_000_000n, intentAmount: 50_000_000n }));
     expect(refused(am('transfer', greedy, [sodaxAuth(greedy)])).reason).toBe('mainnet_demo_unknown_call');
     // Another function of the asset manager, and another contract.
     expect(refused(am('withdraw', args, [sodaxAuth(args)])).reason).toBe('mainnet_demo_unknown_call');
@@ -348,9 +375,6 @@ describe('the Sodax USDC ⇄ USDC bridge between Base and Stellar (D476)', () =>
   const STELLAR_HUB = MAINNET_DEMO.stellar.assets[STELLAR_USDC]!.sodaxHubAsset as Hex;
   const EURC_BASE_ADDR = '0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42' as Hex;
   const EURC_HUB = BASE.tokens[EURC_BASE_ADDR]!.sodaxHubAsset as Hex;
-  const WALLETS = { evm: EVM_USER, stellar: USER };
-  /** The user's Stellar account as the hub receives it: SCV_ADDRESS XDR, exactly what the SDK's encodeAddress gives. */
-  const recipientOf = (g: string) => `0x${new Address(g).toScVal().toXDR('hex')}` as Hex;
   const STELLAR_RECIPIENT = recipientOf(USER);
   const BASE_RECIPIENT = EVM_USER.toLowerCase() as Hex;
 
@@ -464,9 +488,9 @@ describe('the Sodax USDC ⇄ USDC bridge between Base and Stellar (D476)', () =>
       const r = assess(baseDeposit(baseToStellar({ recipient })), 'shown');
       return r.ok ? null : r.reason;
     };
-    expect(shownRefused(`0x000000120000000100000000${'ab'.repeat(32)}`)).toBe('mainnet_demo_unknown_call');
-    expect(shownRefused(`0x00000011${'00'.repeat(8)}${'ab'.repeat(32)}`)).toBe('mainnet_demo_unknown_call');
-    expect(shownRefused(BASE_RECIPIENT)).toBe('mainnet_demo_unknown_call');
+    expect(shownRefused(`0x000000120000000100000000${'ab'.repeat(32)}`)).toBe('mainnet_demo_wrong_destination');
+    expect(shownRefused(`0x00000011${'00'.repeat(8)}${'ab'.repeat(32)}`)).toBe('mainnet_demo_wrong_destination');
+    expect(shownRefused(BASE_RECIPIENT)).toBe('mainnet_demo_wrong_destination');
   });
 
   const setCall = (i: number, c: (call: HubCall) => HubCall) => (calls: HubCall[]) => calls.map((x, n) => (n === i ? c(x) : x));
@@ -539,9 +563,9 @@ describe('the Sodax USDC ⇄ USDC bridge between Base and Stellar (D476)', () =>
       // Another account.
       recipientOf(OTHER),
     ];
-    for (const recipient of wrong) expect(bridgeRefusal(baseDeposit(baseToStellar({ recipient }))), recipient).toBe('mainnet_demo_unknown_call');
+    for (const recipient of wrong) expect(bridgeRefusal(baseDeposit(baseToStellar({ recipient }))), recipient).toBe('mainnet_demo_wrong_destination');
     const wrongEvm: Hex[] = [STELLAR_RECIPIENT, `0x${'ab'.repeat(19)}`, `0x${'ab'.repeat(21)}`, FRIEND.toLowerCase() as Hex];
-    for (const recipient of wrongEvm) expect(bridgeRefusal(stellarDeposit(stellarToBase({ recipient }))), recipient).toBe('mainnet_demo_unknown_call');
+    for (const recipient of wrongEvm) expect(bridgeRefusal(stellarDeposit(stellarToBase({ recipient }))), recipient).toBe('mainnet_demo_wrong_destination');
   });
 
   describe('the spoke `to` is the signing address’s own hub wallet (D476, D492)', () => {
@@ -577,7 +601,7 @@ describe('the Sodax USDC ⇄ USDC bridge between Base and Stellar (D476)', () =>
     const refusedBoth = (make: () => ApprovalSubject) => {
       for (const recipients of [{ wallets: WALLETS }, 'shown'] as const) {
         const r = assess(make(), recipients);
-        expect(r.ok ? null : r.reason, String(recipients)).toBe('mainnet_demo_unknown_call');
+        expect(r.ok ? null : r.reason, String(recipients)).toBe('mainnet_demo_wrong_destination');
       }
     };
 
@@ -623,7 +647,7 @@ describe('the Sodax USDC ⇄ USDC bridge between Base and Stellar (D476)', () =>
       expect(bridgeOk(baseDeposit(SDK_BASE_TO_STELLAR), 'shown').bridge?.recipient).toBe(USER);
       const other = { ...baseDeposit(SDK_BASE_TO_STELLAR), address: OTHER_EVM };
       const r = assess(other, 'shown');
-      expect(r.ok ? null : r.reason).toBe('mainnet_demo_unknown_call');
+      expect(r.ok ? null : r.reason).toBe('mainnet_demo_wrong_destination');
     });
 
     describe('on every deposit, not only a bridge (D492)', () => {
@@ -651,9 +675,20 @@ describe('the Sodax USDC ⇄ USDC bridge between Base and Stellar (D476)', () =>
         ['an empty-data ETH deposit on Base', baseNative],
         ['an empty-data XLM deposit on Stellar', stellarNative],
       ] as const)('signs %s to the signing address’s own hub wallet: vault, popup and no wallets given', (_name, make) => {
-        for (const r of [assess(make()), assess(make(), 'shown'), assessMainnetDemo(make(), NOW)]) {
+        for (const r of [assess(make()), assess(make(), 'shown')]) {
           expect(r.ok, r.ok ? '' : r.message).toBe(true);
           expect(r.ok && r.bridge).toBeFalsy();
+        }
+      });
+
+      it('needs the wallets for a swap, not for an empty-data deposit, which has no recipient', () => {
+        for (const make of [baseSwap, stellarSwap]) {
+          const r = assessMainnetDemo(make(), NOW);
+          expect(r.ok ? null : r.reason).toBe('mainnet_demo_unknown_call');
+        }
+        for (const make of [baseEmpty, stellarEmpty, baseNative, stellarNative]) {
+          const r = assessMainnetDemo(make(), NOW);
+          expect(r.ok ? r.swap : 'refused').toBeUndefined();
         }
       });
 
@@ -677,7 +712,7 @@ describe('the Sodax USDC ⇄ USDC bridge between Base and Stellar (D476)', () =>
       it('refuses a wrong `to` with no wallets given, so no caller can skip the check', () => {
         for (const s of [baseSwap(FRIEND as Hex), baseEmpty(FRIEND as Hex), stellarSwap(FRIEND as Hex), stellarEmpty(FRIEND as Hex)]) {
           const r = assessMainnetDemo(s, NOW);
-          expect(r.ok ? null : r.reason).toBe('mainnet_demo_unknown_call');
+          expect(r.ok ? null : r.reason).toBe('mainnet_demo_wrong_destination');
         }
       });
 
@@ -720,14 +755,114 @@ describe('the Sodax USDC ⇄ USDC bridge between Base and Stellar (D476)', () =>
 
       it('binds a swap’s hub wallet to the signing address in the popup too', () => {
         const r = assess({ ...baseSwap(), address: OTHER_EVM }, 'shown');
-        expect(r.ok ? null : r.reason).toBe('mainnet_demo_unknown_call');
+        expect(r.ok ? null : r.reason).toBe('mainnet_demo_wrong_destination');
         const s = assess({ ...stellarSwap(), address: OTHER }, 'shown');
+        // Stellar's deposit names its `from`, which must be the signer: refused there, before the hub wallet.
         expect(s.ok ? null : s.reason).toBe('mainnet_demo_unknown_call');
       });
 
       it('refuses a swap or an empty deposit whose spoke side wasn’t given to the check', () => {
         expect(() => checkSodaxHubCalls('0x', BASE_HUB, 1_000_000n, { wallets: WALLETS })).toThrow();
         expect(() => checkSodaxHubCalls(SDK_SWAP_BASE_TO_STELLAR, BASE_HUB, 1_000_000n, { wallets: WALLETS })).toThrow();
+      });
+
+      describe('a swap’s intent is the user’s own (D492)', () => {
+        const intentIdOf = (hubData: Hex): bigint => {
+          const [calls] = decodeAbiParameters(parseAbiParameters('(address,uint256,bytes)[]'), hubData) as unknown as [[Hex, bigint, Hex][]];
+          return (decodeFunctionData({ abi: intents, data: calls[1]![2] }).args[0] as { intentId: bigint }).intentId;
+        };
+        const FEE: SwapOptions = { hubAsset: BASE_HUB, approve: 1_000_000n, intentAmount: 1_000_000n };
+        const STELLAR: SwapOptions = { hubAsset: STELLAR_HUB, approve: 10_000_000n, intentAmount: 10_000_000n };
+        const baseIntent = (o: SwapOptions = {}) => baseDeposit(hubCalls({ ...FEE, ...o }), 1_000_000n);
+        const stellarIntent = (o: SwapOptions = {}) => stellarDeposit(stellarHubCalls({ ...STELLAR, ...o }), 10_000_000n, USDC_SAC);
+        const reasons = (make: () => ApprovalSubject) => {
+          const v = assess(make());
+          const p = assess(make(), 'shown');
+          return [v.ok ? 'ok' : v.reason, p.ok ? 'ok' : p.reason];
+        };
+        const WRONG = ['mainnet_demo_wrong_destination', 'mainnet_demo_wrong_destination'];
+        const UNKNOWN = ['mainnet_demo_unknown_call', 'mainnet_demo_unknown_call'];
+        const OTHER_STELLAR_XDR = recipientOf(OTHER);
+        const EVM_HEX = EVM_USER.toLowerCase() as Hex;
+        const FRIEND_HEX = FRIEND.toLowerCase() as Hex;
+
+        it('builds the same bytes as the SDK’s swaps, so the mutations below start from them', () => {
+          expect(hubCalls({ ...FEE, intentId: intentIdOf(SDK_SWAP_BASE_TO_STELLAR) })).toBe(SDK_SWAP_BASE_TO_STELLAR);
+          expect(stellarHubCalls({ ...STELLAR, intentId: intentIdOf(SDK_SWAP_STELLAR_TO_BASE) })).toBe(SDK_SWAP_STELLAR_TO_BASE);
+        });
+
+        it('names the recipient on the destination chain, from the bytes, in both directions and modes', () => {
+          for (const r of [assess(baseSwap()), assess(baseSwap(), 'shown')]) expect(r.ok && r.swap).toEqual({ toChain: 'Stellar', recipient: USER });
+          for (const r of [assess(stellarSwap()), assess(stellarSwap(), 'shown')]) expect(r.ok && r.swap).toEqual({ toChain: 'Base', recipient: EVM_USER });
+        });
+
+        it.each([
+          ['creator: an attacker', { creator: FRIEND as Hex }, WRONG],
+          ['creator: another user’s hub wallet', { creator: OTHER_BASE_WALLET }, WRONG],
+          ['creator: the wallet on the other chain', { creator: STELLAR_HUB_WALLET }, WRONG],
+          ['srcChain: Stellar', { srcChain: 27n }, WRONG],
+          ['srcChain: Sonic', { srcChain: 146n }, WRONG],
+          ['srcAddress: an attacker', { srcAddress: FRIEND_HEX }, WRONG],
+          ['srcAddress: the user’s Stellar encoding', { srcAddress: recipientOf(USER) }, WRONG],
+          ['srcAddress: empty', { srcAddress: '0x' as Hex }, WRONG],
+          ['dstChain: Sonic', { dstChain: 146n }, WRONG],
+          ['dstChain: Base, with a Stellar address', { dstChain: 30n }, WRONG],
+          ['dstChain: Stellar, with an EVM address', { dstAddress: EVM_HEX }, WRONG],
+          ['dstAddress: empty', { dstAddress: '0x' as Hex }, WRONG],
+          ['dstAddress: a contract ScAddress', { dstAddress: `0x000000120000000100000000${'ab'.repeat(32)}` as Hex }, WRONG],
+          ['dstAddress: another account', { dstAddress: OTHER_STELLAR_XDR }, ['mainnet_demo_wrong_destination', 'ok']],
+          ['outputToken: unlisted', { outputToken: '0x3333333333333333333333333333333333333333' as Hex }, UNKNOWN],
+          ['outputToken: listed on the other chain only', { outputToken: BASE_USDC_HUB }, UNKNOWN],
+          ['solver: a named solver', { solver: FRIEND as Hex }, UNKNOWN],
+          ['data: a fee envelope', { data: `0x01${'11'.repeat(64)}` as Hex }, UNKNOWN],
+          ['data: one byte', { data: '0x01' as Hex }, UNKNOWN],
+        ] as const)('Base → Stellar: %s', (_name, over, expected) => {
+          expect(reasons(() => baseIntent())).toEqual(['ok', 'ok']);
+          expect(reasons(() => baseIntent(over as SwapOptions))).toEqual(expected);
+        });
+
+        it.each([
+          ['creator: an attacker', { creator: FRIEND as Hex }, WRONG],
+          ['creator: another user’s hub wallet', { creator: OTHER_STELLAR_WALLET }, WRONG],
+          ['creator: the wallet on the other chain', { creator: BASE_HUB_WALLET }, WRONG],
+          ['srcChain: Base', { srcChain: 30n }, WRONG],
+          ['srcChain: Sonic', { srcChain: 146n }, WRONG],
+          ['srcAddress: another account', { srcAddress: OTHER_STELLAR_XDR }, WRONG],
+          ['srcAddress: an EVM encoding', { srcAddress: EVM_HEX }, WRONG],
+          ['srcAddress: empty', { srcAddress: '0x' as Hex }, WRONG],
+          ['dstChain: Sonic', { dstChain: 146n }, WRONG],
+          ['dstChain: Stellar, with an EVM address', { dstChain: 27n }, WRONG],
+          ['dstChain: Base, with a Stellar address', { dstAddress: recipientOf(USER) }, WRONG],
+          ['dstAddress: empty', { dstAddress: '0x' as Hex }, WRONG],
+          ['dstAddress: 19 bytes', { dstAddress: EVM_HEX.slice(0, 40) as Hex }, WRONG],
+          ['dstAddress: left-padded to 32 bytes', { dstAddress: `0x${'00'.repeat(12)}${EVM_HEX.slice(2)}` as Hex }, WRONG],
+          ['dstAddress: another wallet', { dstAddress: FRIEND_HEX }, ['mainnet_demo_wrong_destination', 'ok']],
+          ['outputToken: unlisted', { outputToken: '0x3333333333333333333333333333333333333333' as Hex }, UNKNOWN],
+          ['outputToken: listed on the other chain only', { outputToken: STELLAR_USDC_HUB }, UNKNOWN],
+          ['solver: a named solver', { solver: FRIEND as Hex }, UNKNOWN],
+          ['data: a fee envelope', { data: `0x01${'11'.repeat(64)}` as Hex }, UNKNOWN],
+          ['data: one byte', { data: '0x01' as Hex }, UNKNOWN],
+        ] as const)('Stellar → Base: %s', (_name, over, expected) => {
+          expect(reasons(() => stellarIntent())).toEqual(['ok', 'ok']);
+          expect(reasons(() => stellarIntent(over as SwapOptions))).toEqual(expected);
+        });
+
+        it('shows the popup the recipient the bytes name; the vault has refused any other before it opens', () => {
+          const r = assess(baseIntent({ dstAddress: OTHER_STELLAR_XDR }), 'shown');
+          expect(r.ok && r.swap).toEqual({ toChain: 'Stellar', recipient: OTHER });
+        });
+
+        it('allows the user’s own wallet on the source chain (a swap within one chain)', () => {
+          const r = assess(baseIntent({ dstChain: 30n, dstAddress: EVM_HEX, outputToken: BASE.native.sodaxHubAsset as Hex }));
+          expect(r.ok && r.swap).toEqual({ toChain: 'Base', recipient: EVM_USER });
+        });
+
+        it('accepts every listed output asset on the destination chain', () => {
+          const stellarOutputs = [MAINNET_DEMO.stellar.native, ...Object.values(MAINNET_DEMO.stellar.assets)].map((a) => a.sodaxHubAsset as Hex);
+          for (const outputToken of stellarOutputs) expect(reasons(() => baseIntent({ outputToken }))).toEqual(['ok', 'ok']);
+          const baseOutputs = [BASE.native, ...Object.values(BASE.tokens)].map((a) => a.sodaxHubAsset as Hex);
+          for (const outputToken of baseOutputs) expect(reasons(() => stellarIntent({ outputToken }))).toEqual(['ok', 'ok']);
+        });
       });
     });
   });
@@ -738,11 +873,12 @@ describe('the Sodax USDC ⇄ USDC bridge between Base and Stellar (D476)', () =>
     expect(bridgeRefusal(baseDeposit(baseToStellar({ amount: 9_514_286n }), 9_514_286n))).toBe('mainnet_demo_over_cap');
   });
 
-  it('leaves a two-call swap and a plain deposit exactly as they were (no recipients needed, no bridge)', () => {
+  it('values a two-call swap and a plain deposit as deposits, describing no bridge', () => {
     const swap = evmTx({ to: ASSET_MANAGER, value: 0n, data: deposit(USDC_BASE as Hex, 2_000_000n, hubCalls({ hubAsset: BASE_HUB, approve: 2_000_000n, intentAmount: 1_990_000n })) });
     const r = ok(swap);
     expect(r.usdMicros).toBe(2_100_000n);
     expect(r.bridge).toBeUndefined();
+    expect(r.swap).toEqual({ toChain: 'Stellar', recipient: USER });
     expect(ok(evmTx({ to: ASSET_MANAGER, value: 0n, data: deposit(USDC_BASE as Hex, 1_000_000n) })).bridge).toBeUndefined();
   });
 });

@@ -1517,24 +1517,40 @@ describe('/approve: the mainnet demo banner (D428, D429)', () => {
     expect(pageText()).not.toContain('This request can move about');
   });
 
-  it.each([
-    ['a swap', sodaxSwapDeposit],
-    ['an empty-data deposit', sodaxEmptyDeposit],
-  ] as const)('values %s only when its spoke `to` is the signing address’s own hub wallet (D492)', (_name, make) => {
+  const sodaxRequest = (data: string) => send(baseRequest({ bytes: evmTxSigningPayload(parseEvmTxRequest({ ...BASE_TX, to: SODAX_ASSET_MANAGER_BASE, value: '0x0', data })) }));
+  const OTHER_HUB_WALLET = `0x${'22'.repeat(20)}`;
+
+  it('names a swap’s recipient from its own decoding of the bytes (D492)', () => {
     startDemo(async () => rpcAnswer('0x0'));
-    send(baseRequest({ bytes: evmTxSigningPayload(parseEvmTxRequest({ ...BASE_TX, to: SODAX_ASSET_MANAGER_BASE, value: '0x0', data: make(EVM) })) }));
+    sodaxRequest(sodaxSwapDeposit(OTHER, EVM));
+    expect(document.querySelector('.demo-swap')?.textContent).toBe(`Swap on Sodax. Recipient on Stellar: ${OTHER}`);
     expect(pageText()).toContain('This request can move about');
     expect(document.querySelector('.demo-bridge')).toBeNull();
   });
 
   it.each([
-    ['a swap', sodaxSwapDeposit],
-    ['an empty-data deposit', sodaxEmptyDeposit],
-  ] as const)('shows no value for %s to another hub wallet (D492)', (_name, make) => {
+    ['its spoke `to` isn’t the signing address’s own hub wallet', { to: OTHER_HUB_WALLET }],
+    ['it was created for another hub wallet', { creator: OTHER_HUB_WALLET }],
+  ] as const)('names no recipient and no value when %s (D492)', (_name, over) => {
     startDemo(async () => rpcAnswer('0x0'));
-    send(baseRequest({ bytes: evmTxSigningPayload(parseEvmTxRequest({ ...BASE_TX, to: SODAX_ASSET_MANAGER_BASE, value: '0x0', data: make(EVM, `0x${'22'.repeat(20)}`) })) }));
+    sodaxRequest(sodaxSwapDeposit(OTHER, EVM, over));
+    expect(document.querySelector('.demo-swap')).toBeNull();
+    expect(pageText()).not.toContain('Recipient on');
     expect(pageText()).not.toContain('This request can move about');
+  });
+
+  it('values a plain deposit to the signing address’s own hub wallet, and names no recipient (D492)', () => {
+    startDemo(async () => rpcAnswer('0x0'));
+    sodaxRequest(sodaxEmptyDeposit(EVM));
+    expect(pageText()).toContain('This request can move about');
+    expect(document.querySelector('.demo-swap')).toBeNull();
     expect(document.querySelector('.demo-bridge')).toBeNull();
+  });
+
+  it('shows no value for a plain deposit to another hub wallet (D492)', () => {
+    startDemo(async () => rpcAnswer('0x0'));
+    sodaxRequest(sodaxEmptyDeposit(EVM, OTHER_HUB_WALLET));
+    expect(pageText()).not.toContain('This request can move about');
   });
 
   it('shows no bridge line for a plain send', () => {

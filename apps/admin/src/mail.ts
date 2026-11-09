@@ -224,6 +224,8 @@ export const BYPASS_PURPOSES: ReadonlySet<string> = new Set([
   // The link-rate alert (batch 9, D448).
   'link_jump',
   'change_pending',
+  // An app's login methods changed (D444 as amended): in force already, so this mail is the only warning.
+  'login_methods_changed',
   'invite_notice',
   'owner_grant',
   'watch_pending',

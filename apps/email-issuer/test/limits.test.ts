@@ -195,6 +195,25 @@ describe('wrong codes: per requester, with a mailbox-wide backstop', () => {
 
   const guessWrong = async (h: Harness, id: unknown, code: string, ip: string) => (await h.call('/v1/email/verify', { challengeId: id, code: wrongFor(code) }, { ip })).status;
 
+  it('each mailbox that trips the backstop gets its own alert mail, with no address in it (D446 as amended)', async () => {
+    const h = await harness({ env: { ...env, SECURITY_ALIAS: 'security@hana.example', ENV_NAME: `t-${uid()}` } });
+    h.clock.now = morning;
+    const app = await seedApp(h);
+    const targets = [addr('gl'), addr('gm')];
+    for (const target of targets) {
+      for (let i = 0; i < 4; i++) {
+        const ip = freshIp();
+        const s = await start(h, app, target, ip);
+        expect(s.status).toBe(202);
+        for (let k = 0; k < 5; k++) await guessWrong(h, s.body.challengeId, h.sender.codeFor(target), ip);
+      }
+    }
+    await h.call('/v1/email/health', undefined, { method: 'GET', origin: null });
+    const mails = h.sender.sent.filter((m) => m.kind === 'alert');
+    expect(mails).toHaveLength(2);
+    for (const m of mails) for (const target of targets) expect(`${m.subject}${m.text}${m.html}`).not.toContain(target);
+  });
+
   it('many requesters: the backstop stops everyone at 18 failed checks but owner-slot requesters, and nothing passes 25', async () => {
     const h = await harness();
     h.clock.now = morning;

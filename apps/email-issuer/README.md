@@ -48,8 +48,10 @@ nothing on chain and holds no chain key.
 
 ## Counters and the console (build plan batch 9, D446, D447)
 
-`email_daily` (migration 0004): sent, bounced, complained, refused and alert counts per app and day, `src/daily.ts`. `ConsoleIssuerRpc`
-(`src/console-rpc.ts`, bound only by the console Worker): an email client proof for an owner action and one app's deliverability.
+`email_daily` (migration 0004): sent, bounced, complained, refused and alert counts per app and day, `src/daily.ts`. The webhook's counts
+go in its one D1 batch with `email_webhook_events` (migration 0005, the events' dedupe keys), so a redelivery adds nothing. `ConsoleIssuerRpc`
+(`src/console-rpc.ts`, bound only by the console Worker): an email client proof for an owner action and one app's deliverability; its
+methods and tables are pinned by `scripts/test/console-issuer-rpc-source.test.ts`.
 
 ## Layout
 
@@ -99,7 +101,7 @@ google-match's directory write, `test/directory.test.ts` the upserts in both arr
 DirectoryRpc (the staff check, the searches, the ticket rule, the audit's atomicity and `detail`, the row budget, no
 address in a log line).
 
-Last verified: 2026-11-09 (branch `feat/email-login-9`, not merged: the counters and `ConsoleIssuerRpc`, D446, D447); 2026-11-09 (branch `feat/email-sharing-2`: `IDENTITY_SEAL_KEY`, `sealedEmail`, D438, brought up to date with `develop`); 2026-11-06 (branch `feat/issuer-readonly-rpc`: the `API` → `IssuerRpc` binding instead of `APP_DB`, `gen` without `--app-d1-id`, the tests' auxiliary API Worker, D434); 2026-11-06 (branch `feat/email-sharing`: `IDENTITY_SEAL_KEY`, `sealedEmail`, D438); 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy` is the shared wrapper, D406); 2026-11-05 (branch `feat/batch-c-15-screen`: `DirectoryRpc.get`'s `purpose`, D399); 2026-11-05 (branch
+Last verified: 2026-11-09 (branch `fix/batch-9-review`, not merged: the webhook dedupe, the source check, D446 amended); 2026-11-09 (branch `feat/email-login-9`, not merged: the counters and `ConsoleIssuerRpc`, D446, D447); 2026-11-09 (branch `feat/email-sharing-2`: `IDENTITY_SEAL_KEY`, `sealedEmail`, D438, brought up to date with `develop`); 2026-11-06 (branch `feat/issuer-readonly-rpc`: the `API` → `IssuerRpc` binding instead of `APP_DB`, `gen` without `--app-d1-id`, the tests' auxiliary API Worker, D434); 2026-11-06 (branch `feat/email-sharing`: `IDENTITY_SEAL_KEY`, `sealedEmail`, D438); 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy` is the shared wrapper, D406); 2026-11-05 (branch `feat/batch-c-15-screen`: `DirectoryRpc.get`'s `purpose`, D399); 2026-11-05 (branch
 `feat/batch-c-8b`: `DirectoryRpc`, migration 0003, the `ADMIN_*` vars, D388–D392);
 2026-11-05 (branch `feat/deploy-build-check`: `GET /v1/email/health`, `scripts/deploy.ts`, D384);
 2026-11-04 (branch `fix/dev-email-limits`: dev envs' limit set, D340, `test/dev-limits.test.ts`; every

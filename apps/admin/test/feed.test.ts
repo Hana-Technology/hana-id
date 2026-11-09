@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { everyFiveMinutes } from '../src/cron.ts';
 import { FEED_CURSORS, FEED_INIT_PAGE, FEED_INIT_PAGES, feedAudit, feedChanges, feedSecurityEvents, initKey, runFeed } from '../src/feed.ts';
 import { Budget, RUN_BUDGET } from '../src/mail.ts';
-import { ALIAS, FakeEmail, adminRequest, downBinding, envWith, memoryOps, newOpsData, overrideBinding, seedConsoleOrg, seedHotApp, stubNetwork, uid, useFakeEmail, useMemoryOps } from './helpers.ts';
+import { staffCtx } from '../src/rpc.ts';
+import { ALIAS, CONSOLE, FakeEmail, adminRequest, downBinding, envWith, hotVersion, linkIn, memoryOps, newOpsData, overrideBinding, seedConsoleOrg, seedHotApp, stubNetwork, uid, useFakeEmail, useMemoryOps } from './helpers.ts';
 
 beforeEach(async () => {
   await stubNetwork();
@@ -24,6 +25,88 @@ async function drain(e: typeof env, data = newOpsData(), fake = new FakeEmail())
   }
   return { data, fake };
 }
+
+describe('the login-methods notice (D444 as amended)', () => {
+  const staff = () => staffCtx({ actor: { kind: 'hana', id: 'access-sub-1', email: 'staff@hana.example' }, requestId: `req_staff_${uid().toLowerCase()}aaaa`, clientIp: '198.51.100.9' });
+  // A staff method the admin's own code doesn't type (only its routes reach it through the generic proxy).
+  const api = env.API as unknown as { updateSettings(c: unknown): Promise<{ ok: boolean }> };
+  const setLogin = async (app: { id: string; org: string }, loginMethods: 'google' | 'google,email', more: Record<string, unknown> = {}) => {
+    const r = await api.updateSettings({ ...staff(), orgId: app.org, appId: app.id, expectedVersion: (await hotVersion(app.id)).settings, loginMethods, ...more });
+    expect(r, JSON.stringify(r)).toMatchObject({ ok: true });
+  };
+
+  it('turned on: its own mail to the alias and the contacts says what, which app and how to undo; no digest line as well', async () => {
+    const { data } = await drain(env);
+    const app = await seedHotApp();
+    await setLogin(app, 'google,email');
+    const { fake } = await drain(env, data);
+    const mine = fake.about(app.id);
+    expect(mine.map((m) => m.to).sort()).toEqual([ALIAS, app.contact].sort());
+    for (const m of mine) {
+      expect(m.subject).toContain(`Email login turned on for Test ${app.id}`);
+      expect(m.text).toContain(`Email login was turned on for Test ${app.id} (${app.id})`);
+      expect(m.text).toContain('google,email');
+      expect(m.text).toContain('already in force');
+      expect(m.text).toContain('turn it off now');
+      expect(linkIn(m.text, `/orgs/${app.org}/apps/${app.id}/email`)).toBeTruthy();
+      const hrefs = [...m.html.matchAll(/href="([^"]*)"/gu)].map((x) => x[1]!);
+      expect(hrefs).toEqual([`${CONSOLE}/orgs/${app.org}/apps/${app.id}/email`]);
+    }
+    expect(fake.to(app.contact)).toHaveLength(1);
+    expect(fake.to(app.contact)[0]!.subject).not.toContain('app change');
+  });
+
+  it('turned off says so; a change with another field also keeps its digest line', async () => {
+    const { data } = await drain(env);
+    const app = await seedHotApp();
+    await setLogin(app, 'google,email', { persistence: 'none' });
+    await setLogin(app, 'google');
+    const { fake } = await drain(env, data);
+    const mine = fake.to(app.contact);
+    expect(mine.map((m) => m.subject).filter((s) => s.includes('Email login turned'))).toEqual([expect.stringContaining('turned on'), expect.stringContaining('turned off')]);
+    expect(mine.filter((m) => m.subject.includes('app change'))).toHaveLength(1);
+    expect(mine.find((m) => m.subject.includes('app change'))!.text).toContain('persistence');
+  });
+
+  it('a failed send holds the cursor and the retry reaches only who missed it; the name is optional; a short budget waits', async () => {
+    const { data } = await drain(env);
+    const app = await seedHotApp();
+    await setLogin(app, 'google,email');
+    const cursor = data.state.get(FEED_CURSORS.changes)!.value;
+    // The API can't name the app: the notice goes out with the id.
+    const noName = envWith({ API: overrideBinding(env.API, { getApp: () => Promise.reject(new Error('down')) }) });
+    const fake = new FakeEmail();
+    fake.failFor.add(app.contact);
+    await feedChanges(noName, memoryOps(data), fake, big());
+    expect(data.state.get(FEED_CURSORS.changes)!.value).toBe(cursor);
+    expect(fake.attempts.find((m) => m.to === ALIAS && m.text.includes(app.id))!.subject).toContain(`turned on for ${app.id}`);
+    fake.failFor.clear();
+    await feedChanges(noName, memoryOps(data), fake, big());
+    expect(fake.attempts.filter((m) => m.to === ALIAS && m.text.includes(app.id))).toHaveLength(1);
+    expect(fake.to(app.contact)).toHaveLength(1);
+    expect(Number(data.state.get(FEED_CURSORS.changes)!.value)).toBeGreaterThan(Number(cursor));
+
+    const later = await seedHotApp();
+    await setLogin(later, 'google,email');
+    const held = data.state.get(FEED_CURSORS.changes)!.value;
+    const f2 = new FakeEmail();
+    await feedChanges(env, memoryOps(data), f2, new Budget(3, 2));
+    expect(f2.about(later.id)).toEqual([]);
+    expect(data.state.get(FEED_CURSORS.changes)!.value).toBe(held);
+    await feedChanges(env, memoryOps(data), f2, big());
+    expect(f2.about(later.id).map((m) => m.to).sort()).toEqual([ALIAS, later.contact].sort());
+  });
+
+  it('another settings change is not a notice', async () => {
+    const { data } = await drain(env);
+    const app = await seedHotApp();
+    const r = await api.updateSettings({ ...staff(), orgId: app.org, appId: app.id, expectedVersion: (await hotVersion(app.id)).settings, persistence: 'none' });
+    expect(r).toMatchObject({ ok: true });
+    const { fake } = await drain(env, data);
+    expect(fake.to(app.contact).filter((m) => m.subject.includes('Email login'))).toEqual([]);
+    expect(fake.to(app.contact)).toHaveLength(1);
+  });
+});
 
 describe('app_changes', () => {
   it('emails each row once to the org’s contacts; skips proposals and announcements; the cursor is in ops.state', async () => {

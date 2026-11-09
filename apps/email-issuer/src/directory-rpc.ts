@@ -16,9 +16,9 @@
 // team domain, `@hana-id/oidc`), and its email on the admin's staff list. That email is the actor. Every `search` and
 // `get` writes its audit row in the same D1 batch as the read (a failed audit write returns no rows), and takes its
 // rows from the staff member's row budget (DIRECTORY_ROW_LIMITS) first. A source test
-// (scripts/test/directory-rpc-source.test.ts) holds this module to SELECTs on user_emails, user_email_apps and
-// email_admin_audit, one INSERT into email_admin_audit, the DB and RATE_LIMITER bindings and EMAIL_RL_KEY only, and no
-// import of the signer, keys, challenge or mail modules.
+// (scripts/test/directory-rpc-source.test.ts) holds this module to SELECTs on user_emails, user_email_apps,
+// email_admin_audit, email_issuance and email_daily, INSERTs only into email_admin_audit, the DB and RATE_LIMITER
+// bindings and EMAIL_RL_KEY only, and no import of the signer, keys, challenge or mail modules.
 //
 // Nothing here logs an address, a sub, a ticket, a staff email or the JWT.
 import { WorkerEntrypoint } from 'cloudflare:workers';

@@ -1,7 +1,7 @@
 // DirectoryRpc's source rules (D275, confirmed 2026-11-05; spec "Users and Support ID" → "Data path", "What partners
 // never see"), the pattern of D251's APP_DB check (now scripts/test/api-read-only.test.ts, D434):
-//   - src/directory-rpc.ts runs SELECTs on user_emails, user_email_apps and email_admin_audit and one INSERT into
-//     email_admin_audit, nothing else; it touches the DB and RATE_LIMITER bindings, its Access vars and EMAIL_RL_KEY
+//   - src/directory-rpc.ts runs SELECTs on user_emails, user_email_apps, email_admin_audit, email_issuance and
+//     email_daily and INSERTs into email_admin_audit, nothing else; it touches the DB and RATE_LIMITER bindings, its Access vars and EMAIL_RL_KEY
 //     (the audit's keyed hash) only, and imports neither the signer, the keys, the challenge nor the mail modules (nor
 //     anything that does);
 //   - the issuer's public router never reaches it (no route);
@@ -109,7 +109,7 @@ describe('issuer migration 0003 (the audit rebuilt for the directory reads)', ()
   };
 
   it('keeps every row and id, continues the id sequence, and checks the new actions and the ticket rule', () => {
-    expect(migrations).toEqual(['0001_init.sql', '0002_user_emails.sql', '0003_directory_audit.sql', '0004_email_daily.sql']);
+    expect(migrations).toEqual(['0001_init.sql', '0002_user_emails.sql', '0003_directory_audit.sql', '0004_email_daily.sql', '0005_email_webhook_events.sql']);
     const db = new DatabaseSync(':memory:');
     apply(db, migrations.slice(0, 2));
     db.prepare("INSERT INTO email_admin_audit (at_ms, staff, action, ticket, scope_id, action_nonce, jti) VALUES (1, 'a@hana.example', 'client_proof', 'T-1', 's1', 3, 'jti-1')").run();

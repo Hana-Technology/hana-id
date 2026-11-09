@@ -149,7 +149,7 @@ describe('sending to many', () => {
   });
 
   it('alerts and blocking notices bypass the suppression lists; invitations, statements and the audit digest keep them (D401 as amended)', async () => {
-    for (const p of ['change_pending:c1', 'invite_notice:i1', 'owner_grant:g1', 'watch_pending:s:1', 'watch_changed:s:x', 'feed:security_events:1,2', 'feed:app_changes:org_1:1-2', 'nonce_unexplained:x', 'rejection_rate:x', 'settlement_mismatch:x', 'retention_failed:x', 'retention_overdue:2026-10', 'retention_skipped:2026-10', 'directory_budget:sandbox:a@hana.example:1h:1'])
+    for (const p of ['change_pending:c1', 'login_methods_changed:1', 'invite_notice:i1', 'owner_grant:g1', 'watch_pending:s:1', 'watch_changed:s:x', 'feed:security_events:1,2', 'feed:app_changes:org_1:1-2', 'nonce_unexplained:x', 'rejection_rate:x', 'settlement_mismatch:x', 'retention_failed:x', 'retention_overdue:2026-10', 'retention_skipped:2026-10', 'directory_budget:sandbox:a@hana.example:1h:1'])
       expect(bypassesSuppressions(p), p).toBe(true);
     for (const p of ['invite_link:i1', 'statement_issued:org_1:2026-10:abc', 'feed:audit_log:org_1:1-2']) expect(bypassesSuppressions(p), p).toBe(false);
     // An unknown kind fails towards delivery.

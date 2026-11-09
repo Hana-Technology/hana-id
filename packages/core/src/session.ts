@@ -18,13 +18,13 @@ export const SESSION_KEYGEN_ATTEMPTS = 4;
 /**
  * A fresh non-extractable Ed25519 session key.
  *
- * D381: WebKit's Linux ports (WebKitGTK and WPE: GNOME Web, embedded WPE browsers, Playwright's Linux WebKit) reject
+ * WebKit's Linux ports (WebKitGTK and WPE: GNOME Web, embedded WPE browsers, Playwright's Linux WebKit) reject
  * about 1 in 128 Ed25519 generateKey calls with an OperationError: the keys whose private seed or public key starts
- * with a zero byte (D385's audit: none of the keys it returns has either, and it refuses a PKCS#8 import of a seed
+ * with a zero byte (by audit: none of the keys it returns has either, and it refuses a PKCS#8 import of a seed
  * that starts with one). Each attempt is a fresh random key, so an OperationError is retried, up to
  * SESSION_KEYGEN_ATTEMPTS in all (four failures in a row there: about 4 in 10^9). Any other error (Ed25519 unsupported,
  * say) is passed on at once. Safari on Apple platforms, Chromium and Firefox never failed in testing. Callers report a
- * failure as `derive_failed` with sessionKeyFailure's reason (D385), never as a network error.
+ * failure as `derive_failed` with sessionKeyFailure's reason, never as a network error.
  */
 export async function newSessionKey(): Promise<SessionKey> {
   for (let attempt = 1; ; attempt++) {
@@ -47,7 +47,7 @@ const errorName = (e: unknown): string | undefined => {
 };
 const isOperationError = (e: unknown): boolean => errorName(e) === 'OperationError';
 
-/** Why newSessionKey failed (D385), as the login's `derive_failed` `data.reason`. */
+/** Why newSessionKey failed, as the login's `derive_failed` `data.reason`. */
 export type SessionKeyFailureReason = 'webcrypto_unsupported' | 'webcrypto_failed';
 
 export interface SessionKeyFailure {
@@ -57,10 +57,10 @@ export interface SessionKeyFailure {
 }
 
 /**
- * Classifies what newSessionKey threw (D385). `webcrypto_unsupported`: the browser has no Ed25519 in WebCrypto
+ * Classifies what newSessionKey threw. `webcrypto_unsupported`: the browser has no Ed25519 in WebCrypto
  * (`NotSupportedError`: Chrome and Edge before 137, Firefox before 129, Safari before 17), or no WebCrypto at all
  * (`crypto.subtle` is missing outside a secure context: a TypeError). `webcrypto_failed`: anything else, which
- * includes D381's OperationError after SESSION_KEYGEN_ATTEMPTS refusals; trying again can help there, not with the
+ * includes the OperationError described above, after SESSION_KEYGEN_ATTEMPTS refusals; trying again can help there, not with the
  * first.
  */
 export function sessionKeyFailure(e: unknown): SessionKeyFailure {
@@ -84,13 +84,13 @@ export const signSessionMessage = (privateKey: CryptoKey, counter: number, paylo
 export const signDerive = (privateKey: CryptoKey, counter: number, pk1: string, pk2: string): Promise<Bytes> => signSessionMessage(privateKey, counter, ckdPayload(pk1, pk2));
 
 /**
- * A linked login's counter-1 signature (D133): over the linked CKD payload, which binds the link token and its mode,
+ * A linked login's counter-1 signature: over the linked CKD payload, which binds the link token and its mode,
  * so nobody but the session key holder can add, swap, change or strip the link.
  */
 export const signDeriveLinked = (privateKey: CryptoKey, pk1: string, pk2: string, linkJwt: string, immediate: boolean): Promise<Bytes> =>
   signSessionMessage(privateKey, 1, linkedCkdPayload(pk1, pk2, linkJwt, immediate));
 
-/** create_session's `signature` (D137): the proof of possession over createProofPayload, counter 0. */
+/** create_session's `signature`: the proof of possession over createProofPayload, counter 0. */
 export const signCreate = (privateKey: CryptoKey, session: SessionNonceInput): Promise<Bytes> => signSessionMessage(privateKey, 0, createProofPayload(session));
 
 /** The revoke_session signature. */

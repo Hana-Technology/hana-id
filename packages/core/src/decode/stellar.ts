@@ -289,7 +289,7 @@ export function stellarFlagNames(bits: number, names: FlagNames): string[] {
 }
 
 /**
- * How an operation changes who controls an account (docs/decisions.md D110): a signer added, re-weighted or removed,
+ * How an operation changes who controls an account: a signer added, re-weighted or removed,
  * a signing threshold or the master key's weight changed, or the account merged away. The approval popup shows each
  * with a danger-level warning, and no auto-approve policy can cover them (policy/match.ts 'account_control').
  */

@@ -2,7 +2,7 @@
  * One env's build constants for the Hana pages (vault, login, callback, approve, export), generated into
  * envs.generated.ts by scripts/gen-envs.ts from envs/<name>.json. The pages are built per env with these values and
  * never read them at runtime: `signer`, `relayer` and `ckdNetworkKey` are pinned, and any inlined, API-supplied or
- * opener-supplied value that differs stops the flow (docs/batch-b-spec.md, Decisions). Public values only.
+ * opener-supplied value that differs stops the flow. Public values only.
  */
 export interface HanaEnv {
   readonly name: string;
@@ -27,14 +27,14 @@ export interface HanaEnv {
   /** `isDevEnv(name)` from @hana-id/env (`local*`/`sandbox*`): dev-only privileges such as same-site Hana origins. */
   readonly devEnv: boolean;
   /**
-   * Email login (manifest `emailIssuer`, D230): the issuer's origin, which `/login/email` calls (its CSP `connect-src`),
+   * Email login (manifest `emailIssuer`): the issuer's origin, which `/login/email` calls (its CSP `connect-src`),
    * and the email tokens' pinned `iss`, which the vault checks. Both or neither; without them the vault offers Google
    * only, whatever the app's `loginMethods` say.
    */
   readonly emailIssuerUrl?: string;
   readonly emailIss?: string;
   /**
-   * Batch C11: manifest `files.origin`, where app logos live (core logo.ts). The auth pages that show the app's name
+   * Manifest `files.origin`, where app logos live (core logo.ts). The auth pages that show the app's name
    * show its logo only from here, and their CSP `img-src` adds this origin (src/auth/pages.ts). Unset in an env without
    * the dashboard blocks: no logo, and `img-src` stays 'self' data:.
    */

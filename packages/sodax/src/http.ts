@@ -13,7 +13,7 @@ export const invalid = (message: string): HanaError => new HanaError(RpcCode.inv
 export const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * `value` as a service URL string, or a TypeError naming `name`, by createHana's rule (D115): http(s), and https unless
+ * `value` as a service URL string, or a TypeError naming `name`, by createHana's rule: http(s), and https unless
  * on loopback for a live app. The app is live unless `hana.testApp` says it's a `pk_test_` one, so a client object
  * that doesn't say gets the strict rule.
  */

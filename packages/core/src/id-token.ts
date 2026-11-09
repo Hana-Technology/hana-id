@@ -11,7 +11,7 @@ export const GOOGLE_JWKS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
 
 /**
  * The only claims a token may carry (fixed by the 2026-10-28 spike: `scope=openid` gives exactly
- * {aud, azp, exp, iat, iss, jti, nbf, nonce, sub}; `auth_time` appears with `max_age`). `at_hash` (D342): Google adds
+ * {aud, azp, exp, iat, iss, jti, nbf, nonce, sub}; `auth_time` appears with `max_age`). `at_hash`: Google adds
  * it to an ID token issued with an access token (the console's code flow; an implicit `id_token token` answer), a
  * truncated SHA-256 of that short-lived access token, nothing about the person.
  */
@@ -36,7 +36,7 @@ export interface Jwk {
 const B64URL = /^[A-Za-z0-9_-]+$/u;
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-/** RS256 signing keys only, from a JWKS document (as apps/api/src/issuer-keys.ts usableJwks). */
+/** RS256 signing keys only, from a JWKS document. */
 export function usableJwks(body: unknown): Jwk[] {
   const keys = isObj(body) ? body.keys : undefined;
   if (!Array.isArray(keys)) return [];

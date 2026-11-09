@@ -20,6 +20,7 @@ import { type FollowProve, isFollowProve } from './relay.ts';
 import { type EvmTxRequest, evmTxSigningPayload, parseEvmTxRequest } from './signers/evm.ts';
 import { isTimings } from './timings.ts';
 import { MAINNET_DEMO_EVM_CHAINS, MAINNET_DEMO_STELLAR_PASSPHRASE } from './demo-config.ts';
+import { type MainnetDemoPriceBook, parseMainnetDemoPrices } from './mainnet-demo-prices.ts';
 
 export const PROTOCOL_VERSION = 1;
 /** Cap for sign requests (port). */
@@ -50,7 +51,7 @@ export const ErrorCode = {
   chainNotConfigured: 4902,
 } as const;
 
-/** String codes (docs/batch-b-spec.md "Envelope" error table). */
+/** String codes. */
 export const STRING_ERROR_CODES = [
   'vault_unavailable',
   'popup_blocked',
@@ -82,20 +83,20 @@ export const STRING_ERROR_CODES = [
    * env without an email issuer). Email login, build plan batch 8a.
    */
   'login_method_unavailable',
-  /** hana_login (email): the user gave up after a wrong code (the popup handles wrong codes itself, D245). */
+  /** hana_login (email): the user gave up after a wrong code (the popup handles wrong codes itself). */
   'code_invalid',
-  /** hana_login (email): the user gave up after the code expired, was used or ran out of attempts (D245). */
+  /** hana_login (email): the user gave up after the code expired, was used or ran out of attempts. */
   'challenge_expired',
-  /** hana_login: this sign-in method is a pending member of an account (the API's `409 link_pending`, D232). */
+  /** hana_login: this sign-in method is a pending member of an account (the API's `409 link_pending`). */
   'link_pending',
   /**
    * hana_login, hana_linkAccount: the sign-in methods can't be linked (`data.reason`: `already_linked`,
    * `has_wallet`, `account_full`, `provider_taken`, `unlinked`, `both_wallets`, `link_mismatch`, `links_unavailable`,
-   * `same_identity`); build plan batch 8b.
+   * `same_identity`).
    */
   'link_refused',
   /**
-   * hana_requestEmailSharing (D411): Hana can't ask now (`data.reason`: `off`, the app's `identity_email` setting;
+   * hana_requestEmailSharing: Hana can't ask now (`data.reason`: `off`, the app's `identity_email` setting;
    * `no_address`, the session has no address Hana can read, e.g. the issuer was unreachable at login; `unavailable`,
    * the API or its keys).
    */
@@ -232,10 +233,10 @@ export const PORT_METHODS = [
   'hana_identityToken',
   /** The wallet's sign-in methods (build plan batch 7, spec "SDK": `hana.account()`). */
   'hana_account',
-  /** Add a sign-in method to the wallet (`hana.linkAccount({method})`, from a click; build plan batch 8b). */
+  /** Add a sign-in method to the wallet (`hana.linkAccount({method})`, from a click). */
   'hana_linkAccount',
   /**
-   * D411: show the email sharing sheet (`hana.requestEmailSharing()`, from a click: the SDK opens `/share-email` first,
+   * Show the email sharing sheet (`hana.requestEmailSharing()`, from a click: the SDK opens `/share-email` first,
    * `popupBlocked: true` when it couldn't, and the vault's launcher opens it).
    */
   'hana_requestEmailSharing',
@@ -259,7 +260,7 @@ export const isSignMethod = (m: unknown): m is SignMethod => (SIGN_METHODS as re
 
 /**
  * Methods that may show the approval popup: the sign methods and the consent screen. Only these may carry
- * `popupOpened` (the partner page opened the approval popup in the user's click for this request, D99).
+ * `popupOpened` (the partner page opened the approval popup in the user's click for this request).
  */
 export const APPROVAL_POPUP_METHODS = [...SIGN_METHODS, 'hana_requestAutoApprove'] as const satisfies readonly PortMethod[];
 export type ApprovalPopupMethod = (typeof APPROVAL_POPUP_METHODS)[number];
@@ -299,7 +300,7 @@ export interface PortParamsMap {
 /**
  * `popupOpened: true` (only on APPROVAL_POPUP_METHODS): the SDK opened `{authOrigin}/approve?from=partner&v=…` in the
  * user's click for this request, so the vault waits briefly for that popup's hello before it shows its launcher, and
- * tells the popup to close if the request ends without an approval screen (docs/batch-b-spec.md "Approval flow").
+ * tells the popup to close if the request ends without an approval screen.
  */
 export type PortRequest = { [M in PortMethod]: { v: 1; id: string; method: M; params: PortParamsMap[M]; popupOpened?: true } }[PortMethod];
 
@@ -432,7 +433,7 @@ export interface StatusResult {
   expiresAtMs?: number;
   persistence: Persistence;
   /**
-   * Batch C15: the logged-in user's Support ID (`HANA-XXXX-XXXX`, support-id.ts), the code to give Hana with request
+   * The logged-in user's Support ID (`HANA-XXXX-XXXX`, support-id.ts), the code to give Hana with request
    * IDs when escalating. Only while logged in, only when the API sent one with the session, and only to an SDK of
    * SUPPORT_ID_SDK_MIN or later (the vault reads the hello's `sdk`).
    */
@@ -443,11 +444,11 @@ export interface LoginResult {
   addresses: PortAddresses;
   expiresAtMs: number;
   persistence: Persistence;
-  /** Batch C15: the user's Support ID, as in StatusResult. */
+  /** The user's Support ID, as in StatusResult. */
   supportId?: string;
   /** Informational (`storage_unavailable`: persistence fell back to 'none'). */
   warning?: 'storage_unavailable';
-  /** pk_test_ apps only: per-stage ms, no secrets (for apps/smoke; timings.ts, LOGIN_TIMING_STAGES). */
+  /** pk_test_ apps only: per-stage ms, no secrets (timings.ts, LOGIN_TIMING_STAGES). */
   timings?: Record<string, number>;
 }
 
@@ -523,17 +524,17 @@ export interface PortResultMap {
   hana_identityToken: IdentityTokenState;
   hana_account: AccountResult;
   hana_linkAccount: LinkChange;
-  /** D411: where sharing stands after the sheet: shared, not shared ("Not now", or stopped), or the window closed. */
+  /** Where sharing stands after the sheet: shared, not shared ("Not now", or stopped), or the window closed. */
   hana_requestEmailSharing: { state: EmailSharingResult };
 }
 
 /**
- * D411: the first SDK version that knows `hana_requestEmailSharing` and the `emailSharingChanged` event. The vault sends
- * the event only to an SDK whose `hana:hello` names this version or later (core support-id.ts `sdkAtLeast`, D393).
+ * The first SDK version that knows `hana_requestEmailSharing` and the `emailSharingChanged` event. The vault sends
+ * the event only to an SDK whose `hana:hello` names this version or later.
  */
 export const EMAIL_SHARING_SDK_MIN = '0.3.0';
 
-/** hana_requestEmailSharing's answer (D411): `dismissed` = the sheet was closed, nothing recorded. */
+/** hana_requestEmailSharing's answer: `dismissed` = the sheet was closed, nothing recorded. */
 export type EmailSharingResult = 'granted' | 'declined' | 'dismissed';
 
 /** A compact ES256 JWS as the API mints it (core identity.ts isIdentityTokenResponse's shape), at most ~4 KiB. */
@@ -620,7 +621,7 @@ export interface MainnetDemoState {
   stellarNetworkPassphrase: string;
   /** The per-transaction cap, fee included, USD micros in decimal ("9990000" = $9.99). */
   txCapUsdMicros: string;
-  /** When Hana's price table was reviewed (YYYY-MM-DD), and until when it is used (ms): the vault's own prices decide. */
+  /** When Hana's fixed price table was reviewed (YYYY-MM-DD), and until when it may be used (ms). */
   pricesReviewedAt: string;
   pricesValidUntilMs: number;
 }
@@ -654,7 +655,7 @@ export function parsePortReply<M extends PortMethod>(data: unknown, method: M): 
 
 /**
  * `key_pending`: the token is signed with a Google key that isn't active on chain yet (the API's `503
- * issuer_key_pending`, D80): the vault waits the API's `retryAfterS` (at most 30 s) and tries once more, then reports
+ * issuer_key_pending`): the vault waits the API's `retryAfterS` (at most 30 s) and tries once more, then reports
  * `chain` again. An SDK that predates it drops the event (the stage list is validated).
  */
 export const LOGIN_STAGES = ['popup_connected', 'google', 'email_code', 'token', 'linking', 'chain', 'key_pending', 'done'] as const;
@@ -669,12 +670,18 @@ export interface PortEventMap {
   /** `timings`: pk_test_ apps only, the vault's boot and unlock stages (timings.ts, UNLOCK_TIMING_STAGES). */
   ready: StatusResult & { warning?: 'storage_unavailable'; timings?: Record<string, number> };
   /**
-   * The mainnet demo (D428): the vault of an app Hana staff switched to it says so, with its rules (sent by a dev
+   * The mainnet demo: the vault of an app Hana staff switched to it says so, with its rules (sent by a dev
    * testnet build only, after the hello and whenever GET /v1/app changes it; null once off). The SDK's EVM provider
-   * then lets exactly `evmChains` through its early D39 check; the vault still decides every request. An SDK that
+   * then lets exactly `evmChains` through its early test-networks check; the vault still decides every request. An SDK that
    * predates it drops it.
    */
   mainnetDemo: MainnetDemoState | null;
+  /**
+   * The prices the vault values requests with: sent before `mainnetDemo` when the demo turns on, and whenever they
+   * change. A separate event so that an SDK that predates it keeps the `mainnetDemo` event it can read, and simply
+   * drops this one.
+   */
+  mainnetDemoPrices: MainnetDemoPriceBook;
   accountsChanged: { addresses: PortAddresses | null };
   disconnect: { code: number };
   sessionExpired: null;
@@ -682,13 +689,13 @@ export interface PortEventMap {
   ui: { launcher: 'show' | 'hide'; label: string };
   /**
    * Whether the vault has an approval popup open (one its launcher opened, or one the partner page opened that it
-   * adopted). The SDK then reuses it instead of opening another in the next click (D99).
+   * adopted). The SDK then reuses it instead of opening another in the next click.
    */
   approvalWindow: { open: boolean };
   autoApproved: { kind: SignMethod; chain: 'stellar' | 'evm'; contract: string; function: string };
   /**
    * The session's persistence changed after it was reported: today only to 'none', when the share and record made
-   * after a login (D79) could not be made, so the next page load needs a full login.
+   * after a login could not be made, so the next page load needs a full login.
    */
   persistenceChanged: { persistence: Persistence };
   /**
@@ -698,11 +705,11 @@ export interface PortEventMap {
   identityTokenChanged: IdentityTokenState;
   /**
    * A sign-in method of the logged-in wallet was added (pending or active), became active, or was removed (spec
-   * "Notices"): partners show pending ones with a way to cancel (docs/integration.md). Build plan batches 7 and 8b.
+   * "Notices"): partners show pending ones with a way to cancel.
    */
   linkChanged: LinkChange;
   /**
-   * D411: the user shared their email with the app or stopped sharing it, on this device (the sheet, the approval
+   * The user shared their email with the app or stopped sharing it, on this device (the sheet, the approval
    * popup's account line). The vault dropped its cached identity token: the next getIdentityToken() has the email or
    * not. Sent only to an SDK of EMAIL_SHARING_SDK_MIN or later.
    */
@@ -715,6 +722,7 @@ export type PortEvent = { [E in PortEventName]: { v: 1; event: E; data: PortEven
 const EVENTS: { [E in PortEventName]: (d: unknown) => boolean } = {
   connected: (d) => d === null,
   mainnetDemo: (d) => d === null || isMainnetDemoState(d),
+  mainnetDemoPrices: (d) => parseMainnetDemoPrices(d, null) !== null,
   ready: (d) =>
     isPlainObject(d) && (d.warning === undefined || d.warning === 'storage_unavailable') && (d.timings === undefined || isTimings(d.timings)) && isStatusResult(d, ['warning', 'timings']),
   accountsChanged: (d) => isPlainObject(d) && exactKeys(d, ['addresses']) && (d.addresses === null || isPortAddresses(d.addresses)),
@@ -773,22 +781,22 @@ export interface WindowMessageMap {
     relayId: string;
     relayKey: Uint8Array;
     /**
-     * Email login (build plan batch 8a): the methods the popup offers, present only when email is among them (a
-     * Google-only app's message is exactly batch B's); `method` skips the chooser; `emailHint` prefills the address.
+     * Email login: the methods the popup offers, present only when email is among them (a
+     * Google-only app's message is exactly the one older pages take); `method` skips the chooser; `emailHint` prefills the address.
      */
     methods?: LoginMethod[];
     method?: LoginMethod;
     emailHint?: string;
     /**
-     * Linking (build plan batch 8b): the follow-up channel's key (core links.ts `followSlot`), sent only in a login
+     * Linking: the follow-up channel's key (core links.ts `followSlot`), sent only in a login
      * that offers email (or a link task): after Google's answer the popup waits for the vault's follow-up notices
      * (google-match's screens, link banners) and answers them through the relay, end-to-end encrypted under relayKey.
      */
     followKey?: Uint8Array;
     /**
-     * token_first (D270): a login of an app without email login, in an env with an email issuer. The popup asks Google
+     * token_first: a login of an app without email login, in an env with an email issuer. The popup asks Google
      * for the email in the login's own request and relays the access token in follow-up slot 1, for the issuer's user
-     * directory only (D269): no google-match, no follow-up notices; the popup closes once the ID token is relayed.
+     * directory only: no google-match, no follow-up notices; the popup closes once the ID token is relayed.
      * Only with `followKey`, never with `methods` or `task`.
      */
     emailRecord?: true;
@@ -798,27 +806,27 @@ export interface WindowMessageMap {
      */
     task?: { kind: 'link'; provider: LoginMethod; prove: FollowProve };
     /**
-     * Batch C11: the app's logo (logo.ts), shown beside its name; present only when the app has one on the files origin
+     * The app's logo (logo.ts), shown beside its name; present only when the app has one on the files origin
      * the vault's build pins, so an app without a logo sends exactly the message older pages take.
      */
     logoUrl?: string;
     /**
-     * D411, an app whose `identity_email` is `at_login`: the popup doesn't close at the end of the sign-in; it goes to
+     * An app whose `identity_email` is `at_login`: the popup doesn't close at the end of the sign-in; it goes to
      * `/share-email?from=login`, where the vault shows the email sharing sheet if this user hasn't answered it yet.
      */
     emailShare?: true;
   };
   /**
    * Login popup → vault: the popup is about to navigate to Google (`google`, from any Hana page, every time), it is
-   * back from Google on Hana's callback with its opener (`back`, D347), the code was sent (`email_code`, from
-   * `/login/email`), or the popup relayed its answer and is closing itself (`relayed`, D347). A signal only: it carries nothing, and the vault takes it only from the window its pending login answered.
+   * back from Google on Hana's callback with its opener (`back`), the code was sent (`email_code`, from
+   * `/login/email`), or the popup relayed its answer and is closing itself (`relayed`). A signal only: it carries nothing, and the vault takes it only from the window its pending login answered.
    * In a login that offered email `google` and `email_code` are also the partner's `loginProgress`; `google` and
-   * `back` and `relayed` tell the vault's watch on the popup's window (D347) a navigation or a self-close from a
+   * `back` and `relayed` tell the vault's watch on the popup's window a navigation or a self-close from a
    * user's close.
    */
   'hana:auth-progress': { stage: 'google' | 'email_code' | 'relayed' | 'back' };
   /**
-   * Vault → login popup (D400): the vault took the popup's `hana:auth-progress` of that stage (from the popup it
+   * Vault → login popup: the vault took the popup's `hana:auth-progress` of that stage (from the popup it
    * answered). A page that signals and then navigates or closes waits for it, up to the web package's
    * SIGNAL_ACK_WAIT_MS, so Chromium's null `event.source` on a message posted just before a navigation can't drop the
    * signal. Carries nothing but the stage; the popup takes it only from vaultOrigin and a window it signalled.
@@ -841,28 +849,34 @@ export interface WindowMessageMap {
      * (the popup then offers "Stop auto-approving"), and why this request wasn't auto-approved (a matcher reason).
      */
     autoApprove?: AutoApproveNote;
-    /** A pk_test_ app: the popup says that Hana signs only for test networks for it (docs/decisions.md D39). */
+    /** A pk_test_ app: the popup says that Hana signs only for test networks for it. */
     testApp?: true;
     /**
-     * Batch C11: the app's logo (logo.ts), shown beside its name; present only when the app has one on the files origin
+     * The app's logo (logo.ts), shown beside its name; present only when the app has one on the files origin
      * the vault's build pins, so an app without a logo sends exactly the message older pages take.
      */
     logoUrl?: string;
     /**
-     * Batch C15: the session's Support ID (`HANA-XXXX-XXXX`), shown on the account line; present only when the
+     * The session's Support ID (`HANA-XXXX-XXXX`), shown on the account line; present only when the
      * session has one, so a session without it sends exactly the message older pages take.
      */
     supportId?: string;
     /**
-     * D411, D442: the session's address is shared with this app: the account line offers "Stop sharing"
+     * The session's address is shared with this app: the account line offers "Stop sharing"
      * (`hana:email-revoke`). Present only then, so other requests send exactly the message older pages take.
      */
     emailShared?: true;
+    /**
+     * The mainnet demo's price book: present only on a demo request, so every other request sends the message
+     * older pages take. The popup checks it itself with parseMainnetDemoPrices and shows the fixed table's value when
+     * it refuses it; the vault has already decided the request with the same book.
+     */
+    demoPrices?: unknown;
   };
   'hana:approve-result': { id: string; approved: boolean; digest: Uint8Array };
   'hana:approve-bye': Record<string, never>;
   /**
-   * Vault → approval popup: close now, without answering (D99). Sent when the request a partner-opened popup was
+   * Vault → approval popup: close now, without answering. Sent when the request a partner-opened popup was
    * opened for ended without an approval screen (auto-approved under the accepted policy, or refused), when the vault
    * already has a popup in use, and when the vault drops its popup (logout, a stale window).
    */
@@ -879,21 +893,21 @@ export interface WindowMessageMap {
     address: string;
     /**
      * The vault session's end (server-corrected ms): the export window erases the key and ends no later than this
-     * (D111). Optional so an older vault bundle's context still parses.
+     *. Optional so an older vault bundle's context still parses.
      */
     sessionExpiresAtMs?: number;
     /**
-     * Batch C11: the app's logo (logo.ts), shown beside its name; present only when the app has one on the files origin
+     * The app's logo (logo.ts), shown beside its name; present only when the app has one on the files origin
      * the vault's build pins, so an app without a logo sends exactly the message older pages take.
      */
     logoUrl?: string;
   };
   /**
    * Vault → export window: the session ended (logout, revoke, expiry, a newer login) or the vault's export job did;
-   * the window erases the key and ends the export (D111).
+   * the window erases the key and ends the export.
    */
   'hana:export-end': Record<string, never>;
-  /** Vault → approval popup: the consent screen for the app's auto-approve policy (docs/batch-b-spec.md "Consent"). */
+  /** Vault → approval popup: the consent screen for the app's auto-approve policy. */
   'hana:consent-request': {
     id: string;
     appName: string;
@@ -908,7 +922,7 @@ export interface WindowMessageMap {
     /** A pk_test_ app (as in hana:approve-request). */
     testApp?: true;
     /**
-     * Batch C11: the app's logo (logo.ts), shown beside its name; present only when the app has one on the files origin
+     * The app's logo (logo.ts), shown beside its name; present only when the app has one on the files origin
      * the vault's build pins, so an app without a logo sends exactly the message older pages take.
      */
     logoUrl?: string;
@@ -918,7 +932,7 @@ export interface WindowMessageMap {
   /** Approval popup → vault: "Stop auto-approving". */
   'hana:auto-approve-stop': Record<string, never>;
   /**
-   * D411: the email sharing sheet (`/share-email`) → vault, from the login popup at the end of an `at_login` sign-in
+   * The email sharing sheet (`/share-email`) → vault, from the login popup at the end of an `at_login` sign-in
    * or from the window `requestEmailSharing()` opened. The vault answers only a window it expects.
    */
   'hana:email-share-hello': Record<string, never>;
@@ -931,7 +945,7 @@ export interface WindowMessageMap {
     pk: string;
     appName: string;
     parentOrigin: string;
-    /** The app signs users in with its own Google client: the sheet says Google may give it the address anyway (D42). */
+    /** The app signs users in with its own Google client: the sheet says Google may give it the address anyway. */
     ownGoogleClient: boolean;
     state: 'not_asked' | 'declined' | 'granted';
     sealedEmail: string;
@@ -948,7 +962,7 @@ export interface WindowMessageMap {
   /** Vault → the sheet: the answer was recorded (`state`) or couldn't be (`failed`); the sheet closes. */
   'hana:email-share-done': { state: 'granted' | 'declined' | 'failed' };
   /**
-   * D411, D442: the approval popup's account line → vault: "Stop sharing" (the request carried `emailShared`). The
+   * The approval popup's account line → vault: "Stop sharing" (the request carried `emailShared`). The
    * vault revokes every address of this app and account, then answers `hana:email-revoked`.
    */
   'hana:email-revoke': Record<string, never>;
@@ -1041,7 +1055,8 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:auth-progress-ack': (m) => exactKeys(m, ['v', 't', 'stage']) && (m.stage === 'email_code' || m.stage === 'google' || m.stage === 'relayed' || m.stage === 'back'),
   'hana:approve-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:approve-request': (m) => {
-    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove', 'testApp', 'logoUrl', 'supportId', 'emailShared'])) return false;
+    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove', 'testApp', 'logoUrl', 'supportId', 'emailShared', 'demoPrices'])) return false;
+    if (m.demoPrices !== undefined && !isPlainObject(m.demoPrices)) return false;
     if (m.logoUrl !== undefined && !isLogoUrl(m.logoUrl)) return false;
     if (m.emailShared !== undefined && m.emailShared !== true) return false;
     if (m.supportId !== undefined && !isSupportId(m.supportId)) return false;

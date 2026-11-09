@@ -157,6 +157,11 @@ A `pk_test_…` app signs only for test networks: any Stellar network but the pu
 Holesky, Hoodi, local 31337/1337). Anything a mainnet would accept is refused with `4100`
 (`data.reason: 'mainnet_not_allowed'`) before any popup. Raw signing is never available to test apps.
 
+Hana's own sandbox mainnet demo (not available to partner apps) shows on the client as `hana.mainnetDemo` (its rules
+and the prices it values with, `null` when off or not known yet) and `hana.mainnetDemoKnown` (true once `hana.ready`
+resolved, so a null then means off); `mainnetDemoChanged` tells you when either changes. See the partner guide's
+section 12.
+
 ## Errors
 
 Methods reject with `HanaError { code, message, data? }`; the EIP-1193 provider uses `ProviderRpcError` with numeric

@@ -170,7 +170,7 @@ export function withOther(timings: Readonly<Record<string, number>>, stages: rea
   return out;
 }
 
-/** The API's `timings` on a pk_test_ app's response: its own total and per-phase ms (docs/api.md, "Timings"). */
+/** The API's `timings` on a pk_test_ app's response: its own total and per-phase ms. */
 export interface ServerTimings {
   totalMs: number;
   phases: Record<string, number>;

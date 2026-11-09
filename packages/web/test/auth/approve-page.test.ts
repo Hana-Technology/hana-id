@@ -1246,6 +1246,60 @@ describe('/approve: the mainnet demo banner (D428, D429)', () => {
     expect(calls).toEqual([`https://horizon.stellar.org/accounts/${USER}`]);
   });
 
+  describe('with the vault’s prices (D436)', () => {
+    const LIVE_PRICES = {
+      atMs: DEMO_NOW,
+      assets: {
+        ETH: { usdMicros: '2251798500', source: 'live' },
+        XLM: { usdMicros: '155400', source: 'live' },
+        USDC: { usdMicros: '1048950', source: 'live' },
+        EURC: { usdMicros: '1165500', source: 'live' },
+      },
+    };
+    // 0.0005 ETH, 3 USDC, no EURC: the same wallet as above, at the market.
+    const balances = async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(init.body as string) as { method: string; params: [{ to?: string }] };
+      if (body.method === 'eth_getBalance') return rpcAnswer('0x1c6bf52634000');
+      return rpcAnswer(body.params[0].to === '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' ? '0x2dc6c0' : '0x0');
+    };
+
+    it('shows the request’s value and the balance at those prices', async () => {
+      startDemo(balances);
+      send(baseRequest({ demoPrices: LIVE_PRICES }));
+      // 0.001 ETH at $2,251.7985, plus the 100,000 wei fee: $2.2517985…
+      expect(pageText()).toContain('This request can move about $2.26, fee included. Hana’s limit is $9.99 per transaction.');
+      await settle();
+      expect(pageText()).toContain('This wallet holds about $4.28.');
+    });
+
+    it('warns about the balance at those prices, not the table’s', async () => {
+      startDemo(async (_url, init) => {
+        const body = JSON.parse(init.body as string) as { method: string };
+        return rpcAnswer(body.method === 'eth_getBalance' ? '0x6a94d74f430000' : '0x0'); // 0.03 ETH: $67.55 at the market, $240 at the table
+      });
+      send(baseRequest({ demoPrices: LIVE_PRICES }));
+      await settle();
+      expect(document.querySelector('.demo-balance')?.textContent).toBe('This wallet holds about $67.56: keep test funds under $10.00 — move the rest out.');
+    });
+
+    it.each([
+      ['a book outside the band', { ...LIVE_PRICES, assets: { ...LIVE_PRICES.assets, ETH: { usdMicros: '900000000', source: 'live' } } }],
+      ['an old book that is malformed', { ...LIVE_PRICES, atMs: 'soon' }],
+    ])('falls back to the fixed table for %s: the highest value it could show', async (_name, book) => {
+      startDemo(balances);
+      send(baseRequest({ demoPrices: book }));
+      expect(pageText()).toContain('This request can move about $8.01');
+      await settle();
+      expect(pageText()).toContain('This wallet holds about $7.15.');
+    });
+
+    it('takes a book older than the vault’s limit: the vault checks the age, this page’s clock may be off', () => {
+      startDemo(balances);
+      send(baseRequest({ demoPrices: { ...LIVE_PRICES, atMs: DEMO_NOW - 3_600_000 } }));
+      expect(pageText()).toContain('This request can move about $2.26');
+    });
+  });
+
   it('shows no banner (and reads nothing) for a test network or a live app', async () => {
     startDemo(async () => rpcAnswer('0x0'));
     send(evmRequest({ testApp: true }));

@@ -62,13 +62,13 @@ export interface EthereumHost {
   /** hana.login(): opens the popup synchronously. */
   login(): Promise<{ evm: string }>;
   request<M extends PortMethod>(method: M, params?: PortParamsMap[M]): Promise<PortResultMap[M]>;
-  /** hana.prepareApproval(): opens the approval popup now, for a request sent after an await (D99). */
+  /** hana.prepareApproval(): opens the approval popup now, for a request sent after an await. */
   prepareApproval?(): ApprovalTicket;
   fetch: FetchLike;
-  /** A pk_test_ app: only the testnet chains of @hana-id/core TEST_EVM_CHAINS can be switched to or sent on (D39). */
+  /** A pk_test_ app: only the testnet chains of @hana-id/core TEST_EVM_CHAINS can be switched to or sent on. */
   testApp?: boolean;
   /**
-   * The mainnet demo (D428): the EVM mainnets this test app's vault said it may use (its `mainnetDemo` event), let
+   * The mainnet demo: the EVM mainnets this test app's vault said it may use (its `mainnetDemo` event), let
    * through the early check too; the vault still decides each request.
    */
   demoEvmChains?: () => readonly number[];
@@ -120,7 +120,7 @@ export const READ_ONLY_METHODS: ReadonlySet<string> = new Set([
 
 /**
  * Validates `evm` config: positive unique chain IDs, RPC URLs by the service-URL rule (http(s); https for a live app
- * unless on loopback, D115), a listed default. Throws TypeError.
+ * unless on loopback), a listed default. Throws TypeError.
  */
 export function validateEvmConfig(evm: EvmConfig, live = true): EvmConfig {
   if (typeof evm !== 'object' || evm === null || !Array.isArray(evm.chains) || evm.chains.length === 0) throw new TypeError('evm.chains must be a non-empty array');
@@ -270,8 +270,8 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
   }
 
   /**
-   * A test app's keys come from the testnet MPC: a chain outside the testnet list is refused (D39), unless the app's
-   * vault said the mainnet demo lets it use that chain (D428); the vault still decides every request.
+   * A test app's keys come from the testnet MPC: a chain outside the testnet list is refused, unless the app's
+   * vault said the mainnet demo lets it use that chain; the vault still decides every request.
    */
   #testnetOnly(id: number, chainId: string = chainHex(id)): void {
     if (this.#host.testApp && !isTestEvmChain(id) && !(this.#host.demoEvmChains?.() ?? []).includes(id)) throw err(ErrorCode.unauthorized, TEST_APP_NETWORK_RULE, { reason: 'mainnet_not_allowed', chainId });

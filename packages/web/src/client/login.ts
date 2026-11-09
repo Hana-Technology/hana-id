@@ -24,7 +24,7 @@ export const POPUP_CONNECT_TIMEOUT_MS = 15_000;
 export const LOGIN_POPUP_FEATURES = 'popup,width=480,height=640';
 
 /**
- * `hana.login(options)` (build plan batch 8a): `method` opens that sign-in method directly instead of the popup's
+ * `hana.login(options)`: `method` opens that sign-in method directly instead of the popup's
  * chooser (an app with only Google never shows one); `emailHint` prefills the email field. A method the app doesn't
  * offer rejects with `login_method_unavailable`.
  */

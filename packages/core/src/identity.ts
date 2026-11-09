@@ -43,7 +43,7 @@ export const IDENTITY_SID_PREFIX = 's1_';
 export const IDENTITY_SUB_KEY_BYTES = 32;
 export const IDENTITY_NONCE_BYTES = 16;
 export const IDENTITY_JTI_BYTES = 16;
-/** A token lives at most this long (D120's ceiling, Privy's access-token default). */
+/** A token lives at most this long (the access-token default of comparable wallet services). */
 export const IDENTITY_TOKEN_MAX_LIFETIME_S = 3600;
 /** Less than this left before the session ends: no token (`410 session_ending`). */
 export const IDENTITY_MIN_LIFETIME_S = 30;
@@ -93,7 +93,7 @@ export function identityTokenPayload(i: { parentOrigin: string; walletProofsHash
 }
 
 /**
- * What an email consent proof is for (D411): read the state, record a decision, revoke every address, or let the auth
+ * What an email consent proof is for: read the state, record a decision, revoke every address, or let the auth
  * popup read the sealed address for the sheet (`preview`).
  */
 export const EMAIL_CONSENT_ACTIONS = ['state', 'granted', 'declined', 'revoke', 'preview'] as const;
@@ -106,7 +106,7 @@ export function emailConsentPayload(i: { action: EmailConsentAction; parentOrigi
 }
 
 /**
- * The mainnet demo's signature report (D428, the security review of 2026-11-06): what the session key signs inside
+ * The mainnet demo's signature report: what the session key signs inside
  * identityMessage, binding the event to this session and to the wallet proof of the address that signed.
  * "mainnet-demo-event" ‖ borsh(chain) ‖ borsh(network) ‖ borsh(kind) ‖ borsh(usdMicros) ‖ borsh(address) ‖
  * borsh(Vec<u8> wallet proof signature).
@@ -406,14 +406,14 @@ export const identityJwksEntry = (jwk: P256PublicJwk): { kty: 'EC'; crv: 'P-256'
 // ---- POST /v1/identity/token (the vault's request and the API's answer) ----
 
 /**
- * `emailStatus` in a mint answer (D411, D441): `off` (the app's setting), `not_asked` / `declined` (the session's sealed
+ * `emailStatus` in a mint answer: `off` (the app's setting), `not_asked` / `declined` (the session's sealed
  * address has no consent / was declined), `missing` (no sealed address and nothing shared), `invalid` (a sealed address
  * the API can't open, and nothing shared), `included` (the token carries `email`).
  */
 export const IDENTITY_EMAIL_STATUSES = ['off', 'not_asked', 'declined', 'missing', 'invalid', 'included'] as const;
 export type IdentityEmailStatus = (typeof IDENTITY_EMAIL_STATUSES)[number];
 
-/** The mint request body: bytes as JSON number arrays; `sealedEmail` when the session has one (D438). */
+/** The mint request body: bytes as JSON number arrays; `sealedEmail` when the session has one. */
 export interface IdentityTokenBody {
   sessionPublicKey: number[];
   issuedAtMs: number;

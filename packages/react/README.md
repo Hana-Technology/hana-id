@@ -18,7 +18,7 @@ declarations.
 ## Use
 
 ```tsx
-import { HanaProvider, useEmailSharing, useHana, useIdentityToken, useWallet } from '@hana-id/react';
+import { HanaProvider, useEmailSharing, useHana, useIdentityToken, useMainnetDemo, useWallet } from '@hana-id/react';
 
 const config = {
   publishableKey: 'pk_test_…', // your app's page in Hana's partner portal (header: Publishable key)
@@ -50,6 +50,7 @@ const { address, signer } = useWallet('stellar'); // signer is hana.stellar
 const { address, provider } = useWallet('evm');   // provider is hana.ethereum (EIP-1193)
 const { identityToken, refresh, error } = useIdentityToken(); // a JWT for your backend, kept fresh while visible
 const { request, state, error } = useEmailSharing();          // <button onClick={request}>: Hana's email sharing sheet (0.3.0)
+const { demo, known } = useMainnetDemo();                     // Hana's sandbox mainnet demo: off, not known yet, or on
 ```
 
 - `HanaProvider` creates one client, also under strict mode, and destroys it on unmount. It reads `config` once; to
@@ -64,6 +65,9 @@ const { request, state, error } = useEmailSharing();          // <button onClick
   and `exportKey()` reject as usual: handle them.
 - `useHana().client` is the underlying `HanaClient`, for what the hooks don't wrap (events, auto-approve,
   `revokeOtherDevices`).
+- `useMainnetDemo()` returns `{ demo, known }` for Hana's own sandbox mainnet demo (not available to partner apps):
+  `demo` is `hana.mainnetDemo` (its rules and the prices it values with, `demo.prices.assets.ETH.usd` …) or null, and
+  `known` is false until the client is ready, so `known && !demo` means off and `!known` means not known yet.
 - Server rendering (Next.js): the modules are `'use client'` and the client is created in an effect, so a server
   render shows the initial state (`status: 'unlocking'`, no addresses, `signer`/`provider` null) and never touches
   `window`.

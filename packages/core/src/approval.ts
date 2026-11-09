@@ -37,7 +37,7 @@ export type ApprovalKind = (typeof APPROVAL_KINDS)[number];
 
 export type ApprovalChain = 'stellar' | 'evm';
 
-/** Kinds no auto-approve policy can ever cover (docs/batch-b-spec.md "What a policy can never cover"). */
+/** Kinds no auto-approve policy can ever cover. */
 export const NEVER_AUTO_APPROVED_KINDS: ReadonlySet<ApprovalKind> = new Set([
   'raw',
   'personal_sign',
@@ -186,7 +186,7 @@ export function digestsEqual(a: Uint8Array, b: Uint8Array): boolean {
   return diff === 0;
 }
 
-/** The raw-signing warning the approval popup shows (docs/batch-b-spec.md "Approval flow", step 4). */
+/** The raw-signing warning the approval popup shows. */
 export const rawSigningWarning = (chainName: string, appName: string): string =>
   `Raw signing can authorize any transaction, authorization or message on ${chainName}. Hana can't tell what this is. ` +
   `Only approve if you trust ${appName} completely.`;

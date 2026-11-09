@@ -41,7 +41,7 @@ import { type GestureCheck, type PageWindow, VAULT_FRAME_NAME, childFrame, fromP
 import { renderApproval } from './render-approval.ts';
 import { renderConsent } from './render-consent.ts';
 import { type BalanceFetch, readDemoBalance } from './demo-balance.ts';
-import { type DemoNetwork, MAINNET_DEMO, assessMainnetDemo, demoNetworkOf, formatUsd } from '@hana-id/core/mainnet-demo';
+import { type DemoNetwork, MAINNET_DEMO, assessMainnetDemo, demoNetworkOf, fixedMainnetDemoPrices, formatUsd, parseMainnetDemoPrices } from '@hana-id/core/mainnet-demo';
 
 /** How long the popup waits for a follow-up request after an answer before it closes. */
 export const KEEP_OPEN_MS = 15_000;
@@ -313,18 +313,20 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   }
 
   /**
-   * The mainnet demo's red banner (D428): the request's value, from this popup's own decoding (never a number the vault
-   * sends), Hana's per-transaction limit, and the wallet's balance once read. A warning, never a block: the vault has
-   * already refused anything over the limit.
+   * The mainnet demo's red banner (D428, D436): the request's value, from this popup's own decoding (never a number the
+   * vault sends) at the vault's price book, once it passes the same checks here (the fixed table otherwise, the highest
+   * value it could show), Hana's per-transaction limit, and the wallet's balance once read. A warning, never a block:
+   * the vault has already refused anything over the limit.
    */
-  function demoBanner(input: ApprovalDigestInput, network: DemoNetwork, id: string): HTMLElement {
+  function demoBanner(input: ApprovalDigestInput, network: DemoNetwork, id: string, demoPrices: unknown): HTMLElement {
     const cap = formatUsd(MAINNET_DEMO.txCapUsdMicros);
-    const assessed = assessMainnetDemo(input, now());
+    const prices = parseMainnetDemoPrices(demoPrices, null) ?? fixedMainnetDemoPrices();
+    const assessed = assessMainnetDemo(input, now(), prices);
     const value = assessed.ok
       ? `This request can move about ${formatUsd(assessed.usdMicros)}, fee included. Hana’s limit is ${cap} per transaction.`
       : `Hana’s limit is ${cap} per transaction.`;
     const balance = d.h('p', { class: 'muted demo-balance', attrs: { role: 'status' } }, 'Reading this wallet’s balance…');
-    void readDemoBalance(network, input.address, balanceFetch).then((b) => {
+    void readDemoBalance(network, input.address, balanceFetch, prices).then((b) => {
       if (current?.kind !== 'request' || current.msg.id !== id) return;
       if (b.kind === 'unknown') {
         balance.textContent = 'Balance unknown.';
@@ -384,7 +386,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         d.h('p', { class: 'account' }, `Your ${msg.chain === 'stellar' ? 'Stellar' : 'EVM'} account `, d.h('code', { class: 'mono' }, msg.address)),
         msg.supportId ? supportIdLine(msg.supportId) : null,
         msg.emailShared ? emailSharedLine(msg.appName) : null,
-        demo ? demoBanner(input, demo, msg.id) : msg.testApp ? d.h('p', { class: 'note test-app' }, TEST_APP_NOTE) : null,
+        demo ? demoBanner(input, demo, msg.id, msg.demoPrices) : msg.testApp ? d.h('p', { class: 'note test-app' }, TEST_APP_NOTE) : null,
         auto?.reason ? d.h('p', { class: 'note' }, `Not signed automatically under “${auto.label}”: ${autoApproveReasonText(auto.reason)}.`) : null,
         decoded
           ? renderApproval(d, decoded, msg.appName)

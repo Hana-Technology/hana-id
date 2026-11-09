@@ -105,6 +105,21 @@ export function sourceMapProblems(pkgName: string, file: string, map: unknown): 
   return problems;
 }
 
+/**
+ * Internal references a partner can't follow, in the comments of a shipped type declaration (partners read them as
+ * editor tooltips): a decision number, a repo doc, a batch or build plan.
+ */
+const INTERNAL_REFERENCE = /\bD\d{2,3}\b|\bdocs\/[a-zA-Z]|[Bb]atch [A-C]\d{0,2}\b|batch-[a-c]|[Bb]uild plan|\b[a-z0-9-]+\.md\b|\bapps\/[a-z]|\bpackages\/[a-z]/u;
+
+/** Problems in a `.d.ts`: a comment line that carries an internal reference (the lines themselves are named). */
+export function typeCommentProblems(pkgName: string, file: string, text: string): string[] {
+  if (!file.endsWith('.d.ts')) return [];
+  return text
+    .split('\n')
+    .filter((line) => /^\s*(\*|\/\*\*|\/\/)/u.test(line) && INTERNAL_REFERENCE.test(line))
+    .map((line) => `${pkgName}: ${file} has an internal reference in a comment: ${line.trim().slice(0, 100)}`);
+}
+
 /** Problems in a text file's contents: a local absolute path (the checkout, the home directory) baked in. */
 export function localPathProblems(pkgName: string, file: string, text: string, localPaths: readonly string[]): string[] {
   return localPaths.filter((lp) => lp.length > 1 && text.includes(lp)).map((lp) => `${pkgName}: ${file} contains the local path ${lp}`);

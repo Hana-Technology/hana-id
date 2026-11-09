@@ -22,7 +22,7 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadEnv } from '@hana-id/env';
-import { SDK_PACKAGES, fileListProblems, localPathProblems, manifestProblems, sourceMapProblems } from './lib/pack-check.ts';
+import { SDK_PACKAGES, fileListProblems, localPathProblems, manifestProblems, sourceMapProblems, typeCommentProblems } from './lib/pack-check.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..');
@@ -94,6 +94,7 @@ try {
       const text = readFileSync(join(root, f), 'utf8');
       unpacked += Buffer.byteLength(text);
       problems.push(...localPathProblems(pkg.name, f, text, localPaths));
+      problems.push(...typeCommentProblems(pkg.name, f, text));
       if (f.endsWith('.map')) problems.push(...sourceMapProblems(pkg.name, f, JSON.parse(text)));
     }
     tarballs[pkg.name] = tarball;

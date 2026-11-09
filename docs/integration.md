@@ -893,15 +893,43 @@ Sepolia (421614), OP Sepolia (11155420), Sonic testnet (14601), Sonic Blaze test
 exception: one Hana test app may sign on Base (8453) and Stellar's public network, at most $9.99 per transaction (fee
 included), every request through Hana's window with a red "Real funds, test custody" banner, the request's value and
 the wallet's balance. Partner apps can't get it, and in production it doesn't exist. What the SDK shows of it (SDK
-releases after 0.2.0), so a page built on it knows where it stands:
+0.2.1; the `prices` field and `mainnetDemoKnown` need a current vault), so a page built on it knows where it stands:
 
-- `hana.mainnetDemo`: `null` for every partner app; for the demo app `{evmChains: [8453], stellarNetworkPassphrase,
-  txCapUsd: '9.99', txCapUsdMicros, pricesReviewedAt, pricesValidUntilMs}`, from the vault (`mainnetDemoChanged` when
-  it changes). Only then does `hana.ethereum` let Base through.
-- Hana values each request with its own, deliberately high prices (not the page's price source): ETH, XLM, USDC and
-  EURC. A refusal is `4100` before any window: `mainnet_demo_over_cap` (`data.usd`, `data.capUsd`),
-  `mainnet_demo_unknown_call`, `mainnet_demo_unpriced`, `mainnet_demo_prices_stale`; any other mainnet stays
-  `mainnet_not_allowed`.
+- `hana.mainnetDemo`: `null` when off or not known yet; for the demo app `{evmChains: [8453],
+  stellarNetworkPassphrase, txCapUsd: '9.99', txCapUsdMicros, pricesReviewedAt, pricesValidUntilMs, prices}`, from the
+  vault (`mainnetDemoChanged` when it changes, the prices included). Only then does `hana.ethereum` let Base through.
+- **Off or not known yet:** `hana.mainnetDemoKnown` is false until `hana.ready` resolves, then true: from then a null
+  `mainnetDemo` means the demo is off for this app. A page that reads it at first render must wait for `ready`
+  (the vault announces the demo before `ready`, so the state is final at that moment). In React, `useMainnetDemo()`
+  returns `{ demo, known }`.
+- **Prices:** `hana.mainnetDemo.prices` is `{ source, atMs, assets: { ETH, XLM, USDC, EURC } }`, each asset `{ usd:
+  '2251.7985', usdMicros: '2251798500', source }`. `source` (`live` or `fixed`) is per asset, and the top-level one is
+  `live` only when all four are. Live prices are CoinGecko's market price plus 5%, rounded up, within a floor and a
+  ceiling per asset; `fixed` is Hana's reviewed table, used per asset when no live price is available. `atMs` is the
+  oldest live price's time, or null when none is live. `prices` is null with a vault older than this SDK. Value what
+  you're about to send, plus the transaction's maximum fee in the native asset, at these prices and compare with
+  `txCapUsd` to know before the click what the vault will accept: they are the same numbers the vault uses.
+- A refusal is `4100` before any window: `mainnet_demo_over_cap`, `mainnet_demo_unknown_call`,
+  `mainnet_demo_unpriced`, `mainnet_demo_prices_stale` (only once the fixed prices a request depends on are past their
+  date); any other mainnet stays `mainnet_not_allowed`. `data.usd` and `data.capUsd` are strings such as `"$12.40"`,
+  always rounded up to the cent; compare numbers with `usdMicros`, not these. If Hana can't confirm the demo is
+  still on, the request fails with `api_unavailable` and `data.reason: 'mainnet_demo_unconfirmed'` (try again).
+- What the demo can value (everything else is `mainnet_demo_unknown_call`, or `mainnet_demo_unpriced` for an
+  unlisted asset):
+
+  | Network | Request | Counted toward the $9.99 |
+  |---|---|---|
+  | Base | any transaction | its maximum fee (`gas × maxFeePerGas`), in ETH |
+  | Base | plain send (`to`, no calldata) | the `value` in ETH |
+  | Base | ERC-20 `transfer`, `transferFrom` or `approve` of USDC or EURC | the amount (an approval counts as what it lets the spender take: an unlimited approval is refused) |
+  | Base | Sodax asset-manager deposit, native or USDC/EURC, with Sodax's own hub calls | the deposited amount |
+  | Stellar public network | any transaction | its fee, in XLM |
+  | Stellar public network | `payment` of XLM, Circle USDC or EURC; `createAccount` | the amount |
+  | Stellar public network | `changeTrust` for a listed asset | nothing (it moves no funds) |
+  | Stellar public network | Sodax asset-manager `transfer` deposit | the deposited amount |
+
+  Refused: contract creation, any other contract or calldata, typed data (including `Permit`), Stellar auth entries,
+  fee-bumps, path payments and any other operation. The fee always counts, so aim a little under the cap.
 - Stellar's network is per call: the passphrase passed to `hana.stellar.signTransaction` (the Sodax Stellar provider's)
   wins, the approval window shows it, and `hana.stellar.getNetwork()` still reports `createHana`'s.
 
@@ -956,7 +984,7 @@ window, not returned.
 | `config_mismatch` | Hana's pages disagree about the signer, scope or client, or the scope doesn't match the on-chain registry (`data.reason: 'scope_mismatch'`) | report it to Hana; never retry around it |
 | `ckd_failed`, `derive_failed`, `pairing_failed`, `address_mismatch` | The key couldn't be produced (`derive_failed` with `data.reason: 'link_restart'`: a linking login was interrupted and its session revoked; `'webcrypto_unsupported'`: the browser has no Ed25519 in WebCrypto, so Hana can't make the sign-in's session key: Chrome and Edge before 137, Firefox before 129, Safari before 17; `'webcrypto_failed'`: the browser refused to make the key, `data.error` the platform error's name; both in a login, `linkAccount()` and the export window's sign-in) | the user logs in again; with `webcrypto_unsupported`, ask them to update the browser or use another |
 | `session_consumed` | Someone replayed the login transaction first | the vault offers "Continue signing in" |
-| `rate_limited`, `app_suspended`, `origin_not_allowed`, `api_unavailable` | From Hana's API (`rate_limited` also after 3 key exports of one account in an hour), or NEAR's RPC couldn't be read. `api_unavailable` with `data.reason`: `email_match_unavailable` (Hana's email service didn't answer for a new Google user), `path_unconfirmed` (a linked sign-in method's wallet couldn't be confirmed on both of Hana's NEAR providers), `path_disputed` (they disagree: report it) | back off, or contact Hana |
+| `rate_limited`, `app_suspended`, `origin_not_allowed`, `api_unavailable` | From Hana's API (`rate_limited` also after 3 key exports of one account in an hour), or NEAR's RPC couldn't be read. `api_unavailable` with `data.reason`: `mainnet_demo_unconfirmed` (Hana's sandbox mainnet demo couldn't be confirmed on, section 12), `email_match_unavailable` (Hana's email service didn't answer for a new Google user), `path_unconfirmed` (a linked sign-in method's wallet couldn't be confirmed on both of Hana's NEAR providers), `path_disputed` (they disagree: report it) | back off, or contact Hana |
 | `storage_unavailable` | The Hana popup couldn't store what its next step needs (blocked or full browser storage) | ask the user to allow site data, or try another browser |
 | `busy` | An export is already running | wait |
 | `identity_unavailable` | `getIdentityToken()`: Hana's API or signer is unavailable, or this browser couldn't keep the session (`data.reason: 'no_share'`) | retry later |

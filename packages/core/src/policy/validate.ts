@@ -49,7 +49,7 @@ const MAX_U256 = (1n << 256n) - 1n;
 export interface PolicyValidationOptions {
   /** The app's session_ttl_ms: maxConsentMs may not exceed it. Defaults to MAX_SESSION_TTL_MS. */
   readonly sessionTtlMs?: number;
-  /** The decoders this bundle ships. Defaults to PROTOCOL_DECODERS (empty in batch B). */
+  /** The decoders this bundle ships. Defaults to PROTOCOL_DECODERS (empty for now). */
   readonly decoders?: ProtocolDecoderRegistry;
 }
 
@@ -234,7 +234,7 @@ function stellarAddress(c: Checker, v: unknown, path: string, allowContract: boo
 }
 
 /**
- * Keys a Stellar section may not have because no policy can cover classic operations other than changeTrust (D110):
+ * Keys a Stellar section may not have because no policy can cover classic operations other than changeTrust:
  * named here so the refusal says why, on top of the generic unknown-key refusal. The account-control operations
  * (setOptions signer, threshold and master-weight changes, accountMerge) are also refused by the matcher whatever the
  * policy says.

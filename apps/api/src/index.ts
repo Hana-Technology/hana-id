@@ -107,7 +107,7 @@ export default {
       }
       if (pathname === APP_CONFIG_ENDPOINT) {
         if (request.method === 'OPTIONS') return await appPreflight(request, env);
-        if (request.method === 'GET') return await handleAppConfig(request, env, requestId);
+        if (request.method === 'GET') return await handleAppConfig(request, env, requestId, ctx);
         return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'GET, OPTIONS' });
       }
       if (APP_ENDPOINTS.includes(pathname)) {

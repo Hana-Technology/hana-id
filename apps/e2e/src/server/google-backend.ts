@@ -111,6 +111,8 @@ export class GoogleBackend {
         if (r) return r;
         return json(404, { error: 'not_found' });
       }
+      // The mainnet demo's live prices: never the real CoinGecko from a test. Refused, so the API serves the fixed table.
+      if (url.startsWith('https://pro-api.coingecko.com/') || url.startsWith('https://api.coingecko.com/')) return json(503, { error: 'not_in_tests' });
       return real(input, init);
     }) as typeof fetch;
   }

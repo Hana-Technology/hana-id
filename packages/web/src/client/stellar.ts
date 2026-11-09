@@ -37,7 +37,7 @@ export interface StellarHost {
   request<M extends PortMethod>(method: M, params?: PortParamsMap[M]): Promise<PortResultMap[M]>;
 }
 
-/** Validates `stellar` config; Horizon and Soroban RPC URLs by the service-URL rule (https for a live app, D115). */
+/** Validates `stellar` config; Horizon and Soroban RPC URLs by the service-URL rule (https for a live app). */
 export function validateStellarConfig(s: StellarConfig, live = true): StellarConfig {
   if (typeof s !== 'object' || s === null || typeof s.networkPassphrase !== 'string' || s.networkPassphrase.length === 0 || s.networkPassphrase.length > 256) {
     throw new TypeError('stellar.networkPassphrase must be a non-empty string');

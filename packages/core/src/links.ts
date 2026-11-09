@@ -99,7 +99,7 @@ export function sessionHashOf(i: SessionNonceInput): Bytes {
   }
 }
 
-/** The linked CKD payload the session key signs (counter 1) in a login that carries `link_jwt` (D133). */
+/** The linked CKD payload the session key signs (counter 1) in a login that carries `link_jwt`. */
 export const linkedCkdPayload = (pk1: string, pk2: string, linkJwt: string, immediate: boolean): Bytes =>
   concatBytes(utf8(CKD_LINK_PREFIX), sha256(utf8(linkJwt)), Uint8Array.of(immediate ? 1 : 0), utf8(`${pk1}:${pk2}`));
 
@@ -115,7 +115,7 @@ export interface IdentityView {
   /** Its identity key, hex. */
   key: string;
   status: 'own' | 'member' | 'pending';
-  /** Its own path was derived once: it "has a wallet" (D130). */
+  /** Its own path was derived once: it "has a wallet". */
   opened: boolean;
   /** The account root, for `member` and `pending`. */
   root: IdentityRef | null;
@@ -184,7 +184,7 @@ export function parseAccountView(raw: unknown): AccountView | null {
 export const PATH_PROVIDERS: readonly string[] = Object.freeze(['google', 'email']);
 
 /**
- * The path identity of a session of `self` (D119, contract `open_session`), `pending` (no session opens), or
+ * The path identity of a session of `self` (the contract's `open_session`), `pending` (no session opens), or
  * `unsupported`: an active member whose account root is of a provider this code has no path for (refused, never
  * guessed).
  */
@@ -198,7 +198,7 @@ export type PathIdentity =
  * computed here (else ViewShapeError). This is one provider's word: a `linked` answer names another identity's path,
  * and a lying RPC that knows that path's secret can forge a CKD answer for it that passes the pairing check (the check
  * proves the key is the MPC's for the path asked about, not that the path is right). The caller must confirm a
- * `linked` path on two independent providers before deriving it (packages/web path-check.ts, D263); only the own
+ * `linked` path on two independent providers before deriving it; only the own
  * path (`linked: false`) is safe on one provider's word, because only the MPC can answer for it.
  */
 export function pathIdentity(scopeId: string, self: IdentityRef, view: IdentityView): PathIdentity {

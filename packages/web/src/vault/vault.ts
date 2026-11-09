@@ -99,7 +99,7 @@ import {
 } from './record.ts';
 import { type Channel, Clock, type Locks, type Timers, type WindowMessageEvent, type WindowRef, randomHex128, realTimers, sleep } from './runtime.ts';
 import { MAINNET_DEMO_REFUSALS, type SignRequest, approvalSubject, demoRefusalFlash, signRequest } from './signing.ts';
-import { assessMainnetDemo, mainnetDemoState } from '@hana-id/core/mainnet-demo';
+import { type MainnetDemoPriceBook, assessMainnetDemo, fixedMainnetDemoPrices, mainnetDemoState, parseMainnetDemoPrices } from '@hana-id/core/mainnet-demo';
 
 /** performance.now where there is one (browsers, workers), else Date.now. */
 const defaultPerfNow = (): number => (typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now());
@@ -340,6 +340,10 @@ export const POLICY_REFRESH_MS = 60_000;
  * one read, so GET /v1/app stays far below its per-IP limit.
  */
 export const POLICY_FRESH_MS = 10_000;
+/** While the mainnet demo is on: how often GET /v1/app is re-read so the page sees live prices as they change. */
+export const DEMO_PRICE_REFRESH_MS = 5 * 60_000;
+/** The same while only the fixed table could be had: a live price may be available shortly. */
+export const DEMO_PRICE_RETRY_MS = 60_000;
 const SEEN_IDS_MAX = 4096;
 const JWKS_REFETCH_MS = 60_000;
 export const LOGIN_FEATURES = 'popup,width=480,height=640';
@@ -374,6 +378,12 @@ export class Vault {
    */
   private mainnetDemo = false;
   private mainnetDemoCheckedAt = Number.NEGATIVE_INFINITY;
+  /** The prices a demo request is valued with (D436): the latest API answer the vault accepted, else the fixed table. */
+  private mainnetDemoPrices: MainnetDemoPriceBook = fixedMainnetDemoPrices();
+  /** The prices the SDK was last told about (JSON), so an unchanged book isn't re-sent. */
+  private announcedDemoPrices: string | null = null;
+  /** While the demo is on: re-reads GET /v1/app so the page sees prices as they change. */
+  private demoPriceTimer: unknown = null;
   private readonly testApp: boolean;
   private readonly launcher: Launcher;
   private readonly lockName: string;
@@ -582,7 +592,9 @@ export class Vault {
     this.emit('ready', { ...status, ...(warning ? { warning } : {}), ...(timings ? { timings } : {}) });
     // The Google client (read from chain by the API) and the policy in force, in the background: never on the unlock
     // path.
-    void this.appConfig().catch(() => undefined);
+    void this.appConfig()
+      .catch(() => undefined)
+      .then(() => this.scheduleDemoPriceRefresh());
     this.schedulePolicyRefresh();
   }
 
@@ -644,7 +656,10 @@ export class Vault {
         this.applyServedRawSign(app, at);
         this.mainnetDemo = app.mainnetDemo === true;
         this.mainnetDemoCheckedAt = Math.max(this.mainnetDemoCheckedAt, at);
+        // The vault's own check, whatever the API sent: anything it refuses (or a missing value) means the fixed table.
+        this.mainnetDemoPrices = parseMainnetDemoPrices(app.mainnetDemoPrices, this.clock.now()) ?? fixedMainnetDemoPrices();
         this.announceMainnetDemo();
+        this.scheduleDemoPriceRefresh();
         return app;
       });
       this.appConfigPromise = p;
@@ -707,13 +722,13 @@ export class Vault {
    * The mainnet demo rule for a request the D39 check would refuse: on only when GET /v1/app confirmed it within
    * POLICY_FRESH_MS (re-read first when older). A re-read that fails refuses the request (fail closed), as raw signing.
    */
-  private async freshMainnetDemo(): Promise<{ nowMs: number } | null> {
+  private async freshMainnetDemo(): Promise<{ nowMs: number; prices: MainnetDemoPriceBook } | null> {
     if (!this.demoBuild) return null;
     if (this.clock.now() - this.mainnetDemoCheckedAt >= POLICY_FRESH_MS) await this.refreshPolicy().catch(() => undefined);
     if (this.clock.now() - this.mainnetDemoCheckedAt >= POLICY_FRESH_MS) {
       throw new VaultError('api_unavailable', 'Could not confirm that the mainnet demo is on for this app', { reason: 'mainnet_demo_unconfirmed' });
     }
-    return this.mainnetDemo ? { nowMs: this.clock.now() } : null;
+    return this.mainnetDemo ? { nowMs: this.clock.now(), prices: this.mainnetDemoPrices } : null;
   }
 
   /** What the SDK was last told about the mainnet demo: it assumes off until told, so "off" is sent only after "on". */
@@ -728,9 +743,33 @@ export class Vault {
   private announceMainnetDemo(): void {
     if (!this.demoBuild || !this.port) return;
     const on = this.mainnetDemo;
-    if (this.announcedDemo === on) return;
-    this.announcedDemo = on;
-    this.emit('mainnetDemo', on ? mainnetDemoState() : null);
+    // The prices first, so an SDK that reads them has them when it learns the demo is on (D436).
+    if (on) {
+      const book = JSON.stringify(this.mainnetDemoPrices);
+      if (book !== this.announcedDemoPrices) {
+        this.announcedDemoPrices = book;
+        this.emit('mainnetDemoPrices', this.mainnetDemoPrices);
+      }
+    } else this.announcedDemoPrices = null;
+    if (this.announcedDemo !== on) {
+      this.announcedDemo = on;
+      this.emit('mainnetDemo', on ? mainnetDemoState() : null);
+    }
+  }
+
+  /**
+   * While the demo is on (a dev testnet build only), re-reads GET /v1/app so `hana.mainnetDemo.prices` follows the
+   * market: every price refresh on the API, or every minute while only the fixed table could be had.
+   */
+  private scheduleDemoPriceRefresh(): void {
+    if (!this.demoBuild || !this.mainnetDemo || this.demoPriceTimer !== null) return;
+    const ms = this.mainnetDemoPrices.atMs === null ? DEMO_PRICE_RETRY_MS : DEMO_PRICE_REFRESH_MS;
+    this.demoPriceTimer = this.timers.setTimeout(() => {
+      this.demoPriceTimer = null;
+      void this.refreshPolicy()
+        .catch(() => undefined)
+        .then(() => this.scheduleDemoPriceRefresh());
+    }, ms);
   }
 
   /** Whether `request` names a mainnet (D39); false for a request that doesn't parse (approvalSubject refuses it). */
@@ -2329,13 +2368,13 @@ export class Vault {
       note = { label: policy.policy.label, active: auto.kind === 'miss' };
       if (auto.kind === 'miss') note.reason = auto.reason;
     }
-    const outcome = await this.approvals!.requestApproval(subject, note);
+    const outcome = await this.approvals!.requestApproval(subject, note, mainnetDemo?.prices);
     if (outcome === 'cancelled' || this.live() !== s) throw disconnected();
     if (outcome !== 'approved') throw userRejected();
     if (this.live() !== s) throw disconnected();
     const result = signRequest(s.prk, request, subject);
     this.maybeTouch();
-    if (demo) this.reportDemoSignature(s, subject);
+    if (demo && mainnetDemo) this.reportDemoSignature(s, subject, mainnetDemo.prices);
     return result;
   }
 
@@ -2343,8 +2382,8 @@ export class Vault {
    * The mainnet demo's usage event (D428): what was signed, on which network, for how much, from which address; never
    * a key, a signature or the transaction's bytes. Best effort: a failure never touches the signature.
    */
-  private reportDemoSignature(s: Session, subject: ReturnType<typeof approvalSubject>): void {
-    const assessed = assessMainnetDemo(subject, this.clock.now());
+  private reportDemoSignature(s: Session, subject: ReturnType<typeof approvalSubject>, prices: MainnetDemoPriceBook): void {
+    const assessed = assessMainnetDemo(subject, this.clock.now(), prices);
     const api = this.api;
     // The session's proof of the signing address (the identity token's): without one there is nothing to report with.
     const proof = subject.chain === 'stellar' || subject.chain === 'evm' ? s.walletProofs?.[subject.chain] : undefined;

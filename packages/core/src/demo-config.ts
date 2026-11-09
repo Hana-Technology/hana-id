@@ -12,7 +12,7 @@ export const MAINNET_DEMO_EVM_CHAINS: readonly number[] = Object.freeze([8453]);
 export const MAINNET_DEMO_TX_CAP_USD_MICROS = 9_990_000n;
 
 /**
- * Where the approval popup reads a mainnet demo wallet's balance (D429): public endpoints Hana pins, never the
+ * Where the approval popup reads a mainnet demo wallet's balance: public endpoints Hana pins, never the
  * partner's RPC (which could say anything). Listed in `/approve`'s CSP `connect-src` in dev-env builds only.
  */
 export const MAINNET_DEMO_BALANCE_ENDPOINTS = Object.freeze({

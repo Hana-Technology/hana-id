@@ -1,9 +1,10 @@
-// The mainnet demo's balance line in the approval popup (D428, D429): how much the wallet holds on the request's
-// network, in USD at the reviewed (deliberately high) prices, native asset plus the priced tokens. Read from the
+// The mainnet demo's balance line in the approval popup (D428, D429, D436): how much the wallet holds on the request's
+// network, in USD at the prices in force (the book the popup validated, which the vault valued the request with),
+// native asset plus the priced tokens. Read from the
 // public endpoints Hana pins (core networks.ts MAINNET_DEMO_BALANCE_ENDPOINTS), never the partner's RPC; only public
 // data goes out (the address), nothing comes back that the popup acts on except to show a number. Anything that fails,
 // times out or doesn't parse is "unknown": the popup then says so rather than guessing. It never blocks a request.
-import { type DemoNetwork, MAINNET_DEMO, type UsdMicros, usdOf } from '@hana-id/core/mainnet-demo';
+import { type DemoNetwork, MAINNET_DEMO, type MainnetDemoPriceBook, type UsdMicros, fixedMainnetDemoPrices, pricedDemoAsset, usdOf } from '@hana-id/core/mainnet-demo';
 
 export type DemoBalance = { readonly kind: 'known'; readonly usdMicros: UsdMicros } | { readonly kind: 'unknown' };
 
@@ -53,7 +54,7 @@ function stroops(amount: unknown): bigint | null {
   return BigInt(m[1]!) * 10_000_000n + BigInt((m[2] ?? '').padEnd(7, '0'));
 }
 
-async function evmBalance(fetchFn: BalanceFetch, chainId: number, address: string, signal: AbortSignal): Promise<UsdMicros> {
+async function evmBalance(fetchFn: BalanceFetch, chainId: number, address: string, prices: MainnetDemoPriceBook, signal: AbortSignal): Promise<UsdMicros> {
   const chain = MAINNET_DEMO.evm[chainId];
   if (!chain) throw new Error('chain');
   const word = address.slice(2).toLowerCase().padStart(64, '0');
@@ -61,10 +62,10 @@ async function evmBalance(fetchFn: BalanceFetch, chainId: number, address: strin
     rpc(fetchFn, chain.balanceRpc, 'eth_getBalance', [address, 'latest'], signal),
     ...Object.keys(chain.tokens).map((token) => rpc(fetchFn, chain.balanceRpc, 'eth_call', [{ to: token, data: `${BALANCE_OF}${word}` }, 'latest'], signal)),
   ]);
-  return Object.values(chain.tokens).reduce((sum, t, i) => sum + usdOf(tokens[i]!, t), usdOf(native!, chain.native));
+  return Object.values(chain.tokens).reduce((sum, t, i) => sum + usdOf(tokens[i]!, pricedDemoAsset(t, prices)), usdOf(native!, pricedDemoAsset(chain.native, prices)));
 }
 
-async function stellarBalance(fetchFn: BalanceFetch, account: string, signal: AbortSignal): Promise<UsdMicros> {
+async function stellarBalance(fetchFn: BalanceFetch, account: string, prices: MainnetDemoPriceBook, signal: AbortSignal): Promise<UsdMicros> {
   const s = MAINNET_DEMO.stellar;
   const res = await fetchFn(`${s.horizon}/accounts/${account}`, { method: 'GET', credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store', signal });
   // An account that doesn't exist yet holds nothing.
@@ -76,25 +77,25 @@ async function stellarBalance(fetchFn: BalanceFetch, account: string, signal: Ab
   for (const b of body.balances as Record<string, unknown>[]) {
     const amount = stroops(b?.balance);
     if (amount === null) throw new Error('horizon');
-    if (b.asset_type === 'native') sum += usdOf(amount, s.native);
+    if (b.asset_type === 'native') sum += usdOf(amount, pricedDemoAsset(s.native, prices));
     else if (typeof b.asset_code === 'string' && typeof b.asset_issuer === 'string') {
       const priced = s.assets[`${b.asset_code}:${b.asset_issuer}`];
       // Assets Hana has no price for aren't counted (the line says "priced assets").
-      if (priced) sum += usdOf(amount, priced);
+      if (priced) sum += usdOf(amount, pricedDemoAsset(priced, prices));
     }
   }
   return sum;
 }
 
 /** The wallet's priced balance on `network`, or unknown. Never throws. */
-export async function readDemoBalance(network: DemoNetwork, address: string, fetchFn: BalanceFetch, timeoutMs = DEMO_BALANCE_TIMEOUT_MS): Promise<DemoBalance> {
+export async function readDemoBalance(network: DemoNetwork, address: string, fetchFn: BalanceFetch, prices: MainnetDemoPriceBook = fixedMainnetDemoPrices(), timeoutMs = DEMO_BALANCE_TIMEOUT_MS): Promise<DemoBalance> {
   try {
     if (network.chain === 'evm') {
       if (!EVM_ADDRESS.test(address)) return UNKNOWN;
-      return { kind: 'known', usdMicros: await withTimeout(timeoutMs, (signal) => evmBalance(fetchFn, network.chainId, address, signal)) };
+      return { kind: 'known', usdMicros: await withTimeout(timeoutMs, (signal) => evmBalance(fetchFn, network.chainId, address, prices, signal)) };
     }
     if (!STELLAR_ACCOUNT.test(address)) return UNKNOWN;
-    return { kind: 'known', usdMicros: await withTimeout(timeoutMs, (signal) => stellarBalance(fetchFn, address, signal)) };
+    return { kind: 'known', usdMicros: await withTimeout(timeoutMs, (signal) => stellarBalance(fetchFn, address, prices, signal)) };
   } catch {
     return UNKNOWN;
   }

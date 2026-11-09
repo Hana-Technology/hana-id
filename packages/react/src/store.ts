@@ -7,7 +7,7 @@ import type { HanaAddresses, HanaClient, HanaError, HanaStatus } from '@hana-id/
 
 export type HanaPersistence = NonNullable<HanaClient['persistence']>;
 
-/** What `useHana()` reports about the client (docs/batch-b-spec.md, React). Public values only, no key material. */
+/** What `useHana()` reports about the client. Public values only, no key material. */
 export interface HanaState {
   readonly status: HanaStatus;
   /** `{stellar, evm}` while logged in, else null. */
@@ -16,7 +16,7 @@ export interface HanaState {
   readonly persistence: HanaPersistence | null;
   /** The last failure (vault_unavailable, a failed login, a lost vault); cleared by a successful login. */
   readonly error: HanaError | null;
-  /** The logged-in user's Support ID (`HANA-XXXX-XXXX`, batch C15), or null (HanaClient.supportId). */
+  /** The logged-in user's Support ID (`HANA-XXXX-XXXX`), or null (HanaClient.supportId). */
   readonly supportId: string | null;
 }
 

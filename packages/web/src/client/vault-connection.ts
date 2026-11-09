@@ -103,7 +103,7 @@ export interface HandshakeMarks {
   readyAt: number;
 }
 
-/** Envelope fields beside the params: `popupOpened` when the SDK opened the approval popup for the request (D99). */
+/** Envelope fields beside the params: `popupOpened` when the SDK opened the approval popup for the request. */
 export interface RequestExtra {
   popupOpened?: boolean;
 }

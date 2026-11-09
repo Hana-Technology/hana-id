@@ -11,7 +11,7 @@ export type { HanaEnv } from './hana-env.ts';
 export { HANA_ENVIRONMENTS, createHana } from './create-hana.ts';
 // HanaClient is a type only (sweep PART-5, D114): its constructor takes Hana origins, so the only way to build one is
 // createHana, which resolves them from the build's pinned envs.
-export type { HanaClient, MainnetDemo } from './client/client.ts';
+export type { HanaClient, MainnetDemo, MainnetDemoPrice, MainnetDemoPrices } from './client/client.ts';
 export {
   type HanaAddresses,
   type HanaConfig,

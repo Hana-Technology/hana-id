@@ -108,6 +108,12 @@ and the contract read the same values.
 
 ### Prices and caps (reviewed config, to confirm: D429)
 
+> **Amended by D436 (2026-11-09, built on `feat/mainnet-demo-live-prices`, not merged):** the vault now values each
+> request with live CoinGecko prices from the API (`mainnetDemoPrices` in `GET /v1/app`, live × 1.05 clamped to a band
+> per asset), and this table is what stands in, per asset, and the band's ceiling. Its expiry still refuses a request
+> that depends on a fixed price past 2026-12-21. Live prices are in `docs/api.md`; the band and worst case in
+> `docs/security.md`; the rest of this section still holds for the fixed table.
+
 `packages/core/src/mainnet-demo.ts` `MAINNET_DEMO`, reviewed 2026-11-06, valid until 2026-12-21. Prices are
 deliberately **above** the market (a live price couldn't be confirmed on 2026-11-06; ETH was about $3,050 a year
 earlier): a higher price makes the cap stricter and the balance warning earlier, so both errors are on the safe side.

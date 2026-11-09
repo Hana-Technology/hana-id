@@ -133,7 +133,7 @@ export function walletRecordStatement(ctx: WalletRecordContext, chain: WalletRec
   );
 }
 
-/** The 32-byte digest the EVM key signs (and the raw EVM digest the vault refuses for its own session, D179). */
+/** The 32-byte digest the EVM key signs (and the raw EVM digest the vault refuses for its own session). */
 export const walletRecordEvmDigest = (ctx: WalletRecordContext, address: string): Bytes => sha256(walletRecordStatement(ctx, 'evm', address));
 
 /**

@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { SDK_PACKAGES, fileListProblems, localPathProblems, manifestProblems, sourceMapProblems } from '../lib/pack-check.ts';
+import { SDK_PACKAGES, fileListProblems, localPathProblems, manifestProblems, sourceMapProblems, typeCommentProblems } from '../lib/pack-check.ts';
 import { buildPackage, outDirOf, rewriteDtsSpecifiers } from '../lib/sdk-build.ts';
 import { checkVersion, setSdkVersion, withPackageVersion, withVersionConstant } from '../lib/sdk-version.ts';
 
@@ -223,6 +223,24 @@ describe('localPathProblems', () => {
     ]);
     expect(localPathProblems('@hana-id/core', 'dist/a.js', 'export const a = 1;', paths)).toEqual([]);
     expect(localPathProblems('@hana-id/core', 'dist/a.js', 'a/b', ['/'])).toEqual([]);
+  });
+});
+
+describe('typeCommentProblems', () => {
+  const dts = (body: string) => typeCommentProblems('@hana-id/web', 'dist/a.d.ts', body);
+
+  it('finds a decision number, a repo doc, a batch or a build plan in a declaration comment', () => {
+    expect(dts('/** The cap (D428). */\nexport declare const a: 1;')).toEqual(['@hana-id/web: dist/a.d.ts has an internal reference in a comment: /** The cap (D428). */']);
+    expect(dts('/**\n * See docs/integration.md "Support".\n */')).toHaveLength(1);
+    expect(dts('    /** Batch C15: the Support ID. */')).toHaveLength(1);
+    expect(dts(' * build plan batch 8b')).toHaveLength(1);
+    expect(dts(' * as apps/api does it')).toHaveLength(1);
+  });
+
+  it('leaves code, ordinary words and other files alone', () => {
+    expect(dts('export declare const D428: number;')).toEqual([]);
+    expect(dts('/** A Deposit of 100 units, with HD wallets. */')).toEqual([]);
+    expect(typeCommentProblems('@hana-id/web', 'dist/a.js', '/** D428 */')).toEqual([]);
   });
 });
 

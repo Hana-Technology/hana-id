@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-11-09 (branch `feat/mainnet-demo-usdc-bridge-2`, not merged: D476 after its security review: the spoke `to` bound to the signing address's own hub wallet, the corrected popup and recovery claims, the `tokenInfo` read); 2026-11-09 (branch `feat/mainnet-demo-usdc-bridge`, not merged: D476, asked for by the user 2026-11-09, amending D429 point 3, with a row of "Superseded or amended"); 2026-11-09 (branch `feat/hana-home-h1-2`, not merged: H1's security review, D475 new, D473 and D474 amended); 2026-11-09 (branch `feat/hana-home-h1`, not merged: D473, D474); 2026-11-09 (branch `fix/approval-waiting-screen`, not merged: D471, asked for by the user, the consent wording and the Close now guard to confirm); 2026-11-09 (branch `docs/hana-home-h0`, not merged: D460–D466, D411's status; no code changed); 2026-11-09 (branch `fix/batch-9-review`, not merged: D444 and D446 amended); 2026-11-09 (branch `feat/email-login-9`, not merged: D444–D448); 2026-10-28 (commit 58edee9); 2026-10-28 (commit 58edee9); D449 and D450 (branch `feat/test-page-command`, decided while building, to confirm) on 2026-11-09; 2026-11-09 (branch `chore/zod-4`, not merged: D470); 2026-11-09 (branch `docs/hana-home-h0`, not merged: D460–D466, D411's status; no code changed); 2026-11-09 (branch `feat/email-login-9`, not merged: D444–D448); 2026-10-28 (commit 58edee9); 2026-10-28 (commit 58edee9); D451–D457 (branch `fix/before-mainnet-sweep`, decided while building, to confirm, with a row of "Superseded or amended") on 2026-11-09; 2026-11-09: D438–D443 confirmed by the user, D442 amended; 2026-11-09: 184 readings settled in the user's bulk decision review (17 after reading the review's note, 163 in bulk on its recommendation, 4 retired as replaced), each status says which; D437, D431's confirmation and D435's System status note (branch `chore/status-access-followups`, with rows of "Superseded or amended") on 2026-11-09; D432 (branch `fix/watchdog-new-key-grace`, asked for by the user as D422's follow-up, the design to confirm, amending D153 and D422's watchdog rule, with a row of "Superseded or amended") on 2026-11-06; D433 (branch `feat/user-events-retention`, decided while building, to confirm) on 2026-11-06, amending D430 and D361, with a row of "Superseded or amended"; D434 (branch `feat/issuer-readonly-rpc`, readiness row 7.1d: the issuer's read-only `IssuerRpc`, decided while building, to confirm) on 2026-11-06, superseding D251, with a row of "Superseded or amended"; D435 (branch `feat/api-near-rpc-fallback`, asked for by the user, the mechanics to confirm) on 2026-11-06, amending D261, with a row of "Superseded or amended"; D425 (branch `feat/admin-system-status`, asked for by the user, the checks and thresholds to confirm with the screenshots, extending D420) on 2026-11-06; D424 (branch `fix/session-expiry-ux`, asked for by the user, design choices to confirm, extending D420 and D421) on 2026-11-06; D423 (branch `chore/verify-parallel`, asked for by the user, amending D413, with a row of "Superseded or amended") on 2026-11-06; D422 (branch `fix/google-key-hysteresis`, proposed by the assistant and approved by the user, amending D153 and the JWKS cron's removal grace, with a row of "Superseded or amended") on 2026-11-06; D421 (branch `feat/console-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D420 (branch `feat/admin-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D419 (branch `feat/env-alert-label`, asked for by the user, implementation choices to confirm) on 2026-11-06; D418 (branch `fix/hyperdrive-account-id-hint`, decided by the user, C16 after the pilot) on 2026-11-06; D417 (branch `docs/personal-account-free-tier`, decided by the user) on 2026-11-06; D416 (branch `feat/console-remove-audience`, decided while building, to confirm) on 2026-11-06, extending D238; D415 (branch `docs/auto-deploy-intent`, decided by the user, intent only, not built) on 2026-11-06; D414 (branch `feat/m4-personal-account`, decided by the user) on 2026-11-05, amending D404, with a row of "Superseded or amended"; D401 amended (branch `fix/sendgrid-suppression`: alerts and blocking notices bypass SendGrid's suppression lists, a security review fix) on 2026-11-05; D401 (branch `feat/sandbox-dev-dashboard-blocks`, asked for by the user: SendGrid for every Hana email; the isolate memo to confirm) and D402 (same branch, agreed by the user: sandbox-dev's 1-day statement lock) on 2026-11-05, amending D87, D279, D308 and settling D194's open point, with rows of "Superseded or amended"; D413 (branch `feat/local-verify`, asked for by the user, confirmed by the user) on 2026-11-05, amending D387, with a row of "Superseded or amended"; D410 and D412 (branch `fix/security-review-1105`: a security review's fixes, to confirm) on 2026-11-05, amending D224, D391, D392, D396, D399 and D403, with two rows of "Superseded or amended"; D411 (branch `docs/email-sharing-decisions`, decided by the user, not built) on 2026-11-05, amending D127's email questions, with a row of "Superseded or amended"; D404 (branch `feat/account-migration`: testnet's move to company accounts decided by the user, the custom-domain placements, `cloudflare.accountId`, `env-secrets`, `d1-move`, `issuer:iss` and the runbook to confirm) on 2026-11-05, amending D230, with a row of "Superseded or amended"; D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
+Last verified against code: 2026-11-09 (branch `feat/mainnet-demo-usdc-bridge-2`, not merged: D476 after its security review: the spoke `to` bound to the signing address's own hub wallet, the corrected popup and recovery claims, the `tokenInfo` read); 2026-11-09 (branch `feat/mainnet-demo-usdc-bridge`, not merged: D476, asked for by the user 2026-11-09, amending D429 point 3, with a row of "Superseded or amended"); 2026-11-09 (branch `docs/hana-home-h6-design`, not merged: D480–D489 new, the rows for D460, D464 and D468, statuses confirmed by the user for D436, D445, D446, D448–D457, D470, D471, D473–D475; no code changed); 2026-11-09 (branch `feat/hana-home-h1-2`, not merged: H1's security review, D475 new, D473 and D474 amended); 2026-11-09 (branch `feat/hana-home-h1`, not merged: D473, D474); 2026-11-09 (branch `fix/approval-waiting-screen`, not merged: D471, asked for by the user, the consent wording and the Close now guard to confirm); 2026-11-09 (branch `docs/hana-home-h0`, not merged: D460–D466, D411's status; no code changed); 2026-11-09 (branch `fix/batch-9-review`, not merged: D444 and D446 amended); 2026-11-09 (branch `feat/email-login-9`, not merged: D444–D448); 2026-10-28 (commit 58edee9); 2026-10-28 (commit 58edee9); D449 and D450 (branch `feat/test-page-command`, decided while building, to confirm) on 2026-11-09; 2026-11-09 (branch `chore/zod-4`, not merged: D470); 2026-11-09 (branch `docs/hana-home-h0`, not merged: D460–D466, D411's status; no code changed); 2026-11-09 (branch `feat/email-login-9`, not merged: D444–D448); 2026-10-28 (commit 58edee9); 2026-10-28 (commit 58edee9); D451–D457 (branch `fix/before-mainnet-sweep`, decided while building, to confirm, with a row of "Superseded or amended") on 2026-11-09; 2026-11-09: D438–D443 confirmed by the user, D442 amended; 2026-11-09: 184 readings settled in the user's bulk decision review (17 after reading the review's note, 163 in bulk on its recommendation, 4 retired as replaced), each status says which; D437, D431's confirmation and D435's System status note (branch `chore/status-access-followups`, with rows of "Superseded or amended") on 2026-11-09; D432 (branch `fix/watchdog-new-key-grace`, asked for by the user as D422's follow-up, the design to confirm, amending D153 and D422's watchdog rule, with a row of "Superseded or amended") on 2026-11-06; D433 (branch `feat/user-events-retention`, decided while building, to confirm) on 2026-11-06, amending D430 and D361, with a row of "Superseded or amended"; D434 (branch `feat/issuer-readonly-rpc`, readiness row 7.1d: the issuer's read-only `IssuerRpc`, decided while building, to confirm) on 2026-11-06, superseding D251, with a row of "Superseded or amended"; D435 (branch `feat/api-near-rpc-fallback`, asked for by the user, the mechanics to confirm) on 2026-11-06, amending D261, with a row of "Superseded or amended"; D425 (branch `feat/admin-system-status`, asked for by the user, the checks and thresholds to confirm with the screenshots, extending D420) on 2026-11-06; D424 (branch `fix/session-expiry-ux`, asked for by the user, design choices to confirm, extending D420 and D421) on 2026-11-06; D423 (branch `chore/verify-parallel`, asked for by the user, amending D413, with a row of "Superseded or amended") on 2026-11-06; D422 (branch `fix/google-key-hysteresis`, proposed by the assistant and approved by the user, amending D153 and the JWKS cron's removal grace, with a row of "Superseded or amended") on 2026-11-06; D421 (branch `feat/console-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D420 (branch `feat/admin-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D419 (branch `feat/env-alert-label`, asked for by the user, implementation choices to confirm) on 2026-11-06; D418 (branch `fix/hyperdrive-account-id-hint`, decided by the user, C16 after the pilot) on 2026-11-06; D417 (branch `docs/personal-account-free-tier`, decided by the user) on 2026-11-06; D416 (branch `feat/console-remove-audience`, decided while building, to confirm) on 2026-11-06, extending D238; D415 (branch `docs/auto-deploy-intent`, decided by the user, intent only, not built) on 2026-11-06; D414 (branch `feat/m4-personal-account`, decided by the user) on 2026-11-05, amending D404, with a row of "Superseded or amended"; D401 amended (branch `fix/sendgrid-suppression`: alerts and blocking notices bypass SendGrid's suppression lists, a security review fix) on 2026-11-05; D401 (branch `feat/sandbox-dev-dashboard-blocks`, asked for by the user: SendGrid for every Hana email; the isolate memo to confirm) and D402 (same branch, agreed by the user: sandbox-dev's 1-day statement lock) on 2026-11-05, amending D87, D279, D308 and settling D194's open point, with rows of "Superseded or amended"; D413 (branch `feat/local-verify`, asked for by the user, confirmed by the user) on 2026-11-05, amending D387, with a row of "Superseded or amended"; D410 and D412 (branch `fix/security-review-1105`: a security review's fixes, to confirm) on 2026-11-05, amending D224, D391, D392, D396, D399 and D403, with two rows of "Superseded or amended"; D411 (branch `docs/email-sharing-decisions`, decided by the user, not built) on 2026-11-05, amending D127's email questions, with a row of "Superseded or amended"; D404 (branch `feat/account-migration`: testnet's move to company accounts decided by the user, the custom-domain placements, `cloudflare.accountId`, `env-secrets`, `d1-move`, `issuer:iss` and the runbook to confirm) on 2026-11-05, amending D230, with a row of "Superseded or amended"; D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
 Last verified against code: 2026-10-28 (commit 58edee9); D411 and D438–D443 (brought up to date with `develop` @ a3de75e on `feat/email-sharing-2`, 2026-11-09: the branch's decisions renumbered D438–D443 from D420–D425, migration 0014; D411 point 9 amended again: the user approved merging it in the next batch; D438–D443 still to confirm) on 2026-11-09; D411 built and D438–D443 (branch `feat/email-sharing`, decided while building, to confirm; not merged) on 2026-11-06, with D411's row of "Superseded or amended" updated and a new row; D432 (branch `fix/watchdog-new-key-grace`, asked for by the user as D422's follow-up, the design to confirm, amending D153 and D422's watchdog rule, with a row of "Superseded or amended") on 2026-11-06; D433 (branch `feat/user-events-retention`, decided while building, to confirm) on 2026-11-06, amending D430 and D361, with a row of "Superseded or amended"; D434 (branch `feat/issuer-readonly-rpc`, readiness row 7.1d: the issuer's read-only `IssuerRpc`, decided while building, to confirm) on 2026-11-06, superseding D251, with a row of "Superseded or amended"; D435 (branch `feat/api-near-rpc-fallback`, asked for by the user, the mechanics to confirm) on 2026-11-06, amending D261, with a row of "Superseded or amended"; D425 (branch `feat/admin-system-status`, asked for by the user, the checks and thresholds to confirm with the screenshots, extending D420) on 2026-11-06; D424 (branch `fix/session-expiry-ux`, asked for by the user, design choices to confirm, extending D420 and D421) on 2026-11-06; D423 (branch `chore/verify-parallel`, asked for by the user, amending D413, with a row of "Superseded or amended") on 2026-11-06; D422 (branch `fix/google-key-hysteresis`, proposed by the assistant and approved by the user, amending D153 and the JWKS cron's removal grace, with a row of "Superseded or amended") on 2026-11-06; D421 (branch `feat/console-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D420 (branch `feat/admin-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D419 (branch `feat/env-alert-label`, asked for by the user, implementation choices to confirm) on 2026-11-06; D418 (branch `fix/hyperdrive-account-id-hint`, decided by the user, C16 after the pilot) on 2026-11-06; D417 (branch `docs/personal-account-free-tier`, decided by the user) on 2026-11-06; D416 (branch `feat/console-remove-audience`, decided while building, to confirm) on 2026-11-06, extending D238; D415 (branch `docs/auto-deploy-intent`, decided by the user, intent only, not built) on 2026-11-06; D414 (branch `feat/m4-personal-account`, decided by the user) on 2026-11-05, amending D404, with a row of "Superseded or amended"; D401 amended (branch `fix/sendgrid-suppression`: alerts and blocking notices bypass SendGrid's suppression lists, a security review fix) on 2026-11-05; D401 (branch `feat/sandbox-dev-dashboard-blocks`, asked for by the user: SendGrid for every Hana email; the isolate memo to confirm) and D402 (same branch, agreed by the user: sandbox-dev's 1-day statement lock) on 2026-11-05, amending D87, D279, D308 and settling D194's open point, with rows of "Superseded or amended"; D413 (branch `feat/local-verify`, asked for by the user, confirmed by the user) on 2026-11-05, amending D387, with a row of "Superseded or amended"; D410 and D412 (branch `fix/security-review-1105`: a security review's fixes, to confirm) on 2026-11-05, amending D224, D391, D392, D396, D399 and D403, with two rows of "Superseded or amended"; D411 (branch `docs/email-sharing-decisions`, decided by the user, not built) on 2026-11-05, amending D127's email questions, with a row of "Superseded or amended"; D404 (branch `feat/account-migration`: testnet's move to company accounts decided by the user, the custom-domain placements, `cloudflare.accountId`, `env-secrets`, `d1-move`, `issuer:iss` and the runbook to confirm) on 2026-11-05, amending D230, with a row of "Superseded or amended"; D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
 
 Last verified against code: 2026-10-28 (commit 58edee9); D436 (branch `feat/mainnet-demo-live-prices`, asked for by the user 2026-11-09, the mechanics to confirm, amending D429's price table, with a row of "Superseded or amended") on 2026-11-09; D432 (branch `fix/watchdog-new-key-grace`, asked for by the user as D422's follow-up, the design to confirm, amending D153 and D422's watchdog rule, with a row of "Superseded or amended") on 2026-11-06; D433 (branch `feat/user-events-retention`, decided while building, to confirm) on 2026-11-06, amending D430 and D361, with a row of "Superseded or amended"; D434 (branch `feat/issuer-readonly-rpc`, readiness row 7.1d: the issuer's read-only `IssuerRpc`, decided while building, to confirm) on 2026-11-06, superseding D251, with a row of "Superseded or amended"; D435 (branch `feat/api-near-rpc-fallback`, asked for by the user, the mechanics to confirm) on 2026-11-06, amending D261, with a row of "Superseded or amended"; D425 (branch `feat/admin-system-status`, asked for by the user, the checks and thresholds to confirm with the screenshots, extending D420) on 2026-11-06; D424 (branch `fix/session-expiry-ux`, asked for by the user, design choices to confirm, extending D420 and D421) on 2026-11-06; D423 (branch `chore/verify-parallel`, asked for by the user, amending D413, with a row of "Superseded or amended") on 2026-11-06; D422 (branch `fix/google-key-hysteresis`, proposed by the assistant and approved by the user, amending D153 and the JWKS cron's removal grace, with a row of "Superseded or amended") on 2026-11-06; D421 (branch `feat/console-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D420 (branch `feat/admin-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D419 (branch `feat/env-alert-label`, asked for by the user, implementation choices to confirm) on 2026-11-06; D418 (branch `fix/hyperdrive-account-id-hint`, decided by the user, C16 after the pilot) on 2026-11-06; D417 (branch `docs/personal-account-free-tier`, decided by the user) on 2026-11-06; D416 (branch `feat/console-remove-audience`, decided while building, to confirm) on 2026-11-06, extending D238; D415 (branch `docs/auto-deploy-intent`, decided by the user, intent only, not built) on 2026-11-06; D414 (branch `feat/m4-personal-account`, decided by the user) on 2026-11-05, amending D404, with a row of "Superseded or amended"; D401 amended (branch `fix/sendgrid-suppression`: alerts and blocking notices bypass SendGrid's suppression lists, a security review fix) on 2026-11-05; D401 (branch `feat/sandbox-dev-dashboard-blocks`, asked for by the user: SendGrid for every Hana email; the isolate memo to confirm) and D402 (same branch, agreed by the user: sandbox-dev's 1-day statement lock) on 2026-11-05, amending D87, D279, D308 and settling D194's open point, with rows of "Superseded or amended"; D413 (branch `feat/local-verify`, asked for by the user, confirmed by the user) on 2026-11-05, amending D387, with a row of "Superseded or amended"; D410 and D412 (branch `fix/security-review-1105`: a security review's fixes, to confirm) on 2026-11-05, amending D224, D391, D392, D396, D399 and D403, with two rows of "Superseded or amended"; D411 (branch `docs/email-sharing-decisions`, decided by the user, not built) on 2026-11-05, amending D127's email questions, with a row of "Superseded or amended"; D404 (branch `feat/account-migration`: testnet's move to company accounts decided by the user, the custom-domain placements, `cloudflare.accountId`, `env-secrets`, `d1-move`, `issuer:iss` and the runbook to confirm) on 2026-11-05, amending D230, with a row of "Superseded or amended"; D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
@@ -8401,7 +8401,7 @@ decisions, not these.
   nothing (never mandatory, D411 point 7).
 
 ### D436. The mainnet demo values with CoinGecko's live prices, in a band ending at the fixed table
-- Date 2026-11-09 · Status: **asked for by the user 2026-11-09**; the mechanics below are to confirm · Built:
+- Date 2026-11-09 · Status: **asked for by the user 2026-11-09**; the mechanics below confirmed by the user 2026-11-09 · Built:
   `feat/mainnet-demo-live-prices`, not merged, not deployed · Amends D429's price table. Closes the sample's FRICTION 23–28.
 - The problem: with D429's fixed table (ETH $8,000, XLM $1.00, USDC $1.05, EURC $1.35) the $9.99 cap really allowed
   about $2.68 of ETH or $1.48 of XLM at the market of 2026-11-09, and the page couldn't see the prices, so its own
@@ -8496,7 +8496,7 @@ decisions, not these.
   accepted sends. So it is at-least-once and after the fact. `src/feed.ts`, `email/messages.ts` `loginMethodsChanged`.
 
 ### D445. Link counts per app and day come from the contract's own events, seen as each relayed transaction settles
-- Date 2026-11-09 · Status: decided while building, to confirm · Built on `feat/email-login-9`: `apps/api/src/link-usage.ts`,
+- Date 2026-11-09 · Status: decided while building, confirmed by the user 2026-11-09 · Built on `feat/email-login-9`: `apps/api/src/link-usage.ts`,
   `near/tx.ts` (`linkEventsFrom`), `relayer-key.ts`, `login.ts`, `handlers.ts`, `links.ts`; migration 0015 `link_usage`;
   `AdminRpc.linkStats`
 - Decision: `link_usage` (app, UTC day) counts `identity_link_proposed`, `identity_linked`, `identity_link_activated`,
@@ -8510,7 +8510,7 @@ decisions, not these.
 - Rejected: an indexer over the contract's logs (a new cron, D417); counting at the request (activation isn't visible there).
 
 ### D446. Issuer counters per app and day (`email_daily`); five alert kinds counted and emailed from the issuer, at most once a day
-- Date 2026-11-09 · Status: decided while building, to confirm (its provisional limits kept by the user 2026-11-09, to tune on real traffic) (the numbers below) · Built on `feat/email-login-9`:
+- Date 2026-11-09 · Status: decided while building, confirmed by the user 2026-11-09 (its provisional limits stay provisional, to tune on real traffic) (the numbers below) · Built on `feat/email-login-9`:
   `apps/email-issuer/src/daily.ts`, `handlers.ts`, `sendgrid.ts`, `webhook.ts`, `directory-rpc.ts` (`issuerStats`), migration 0004;
   `@hana-id/sendgrid` `customArgs`; `scripts/lib/admin-retention.ts`
 - Decision: `email_daily (day, app_id, metric, count)` holds `sent`, `bounced`, `complained`, `refused:<limit>` and
@@ -8554,7 +8554,7 @@ decisions, not these.
 - Rejected: keeping staff-only proofs (a manual step per partner); a public mint route.
 
 ### D448. The admin's Email issuer and Account links pages; the link-rate alert in the 15-minute cron
-- Date 2026-11-09 · Status: decided while building, to confirm (the screens approved and its provisional limits kept by the user 2026-11-09, to tune on real traffic) (5× median, floor 10, provisional, the spec's numbers plus a floor) ·
+- Date 2026-11-09 · Status: decided while building, confirmed by the user 2026-11-09 (the screens approved; its provisional limits stay provisional, to tune on real traffic) (5× median, floor 10, provisional, the spec's numbers plus a floor) ·
   Built on `feat/email-login-9`: `apps/admin/src/email-views.ts`, `link-alerts.ts`, `link-jumps.ts`, `near.ts`, `public/app.js`, gen
   vars `EMAIL_SIGNER_KIND`, `EMAIL_PINNED_KEYS`
 - Decision: `GET /api/email/issuer` joins the issuer's counters, app names, the chain's signer policy and the watchdog's pins,
@@ -8571,7 +8571,7 @@ Settled by the user on the review of the Hana Home spec against `develop` (`docs
 path, a key or derivation.
 
 ### D460. Turning off shared login waits the scope's delay and needs a remaining Google client
-- Date 2026-11-09 · Status: **decided by the user 2026-11-09** · Not built (batch H6) · Amends the contract's immediate
+- Date 2026-11-09 · Status: **decided by the user 2026-11-09**; **reversed by the user the same day (D480)**, so this entry is history · Not built (batch H6) · Amends the contract's immediate
   `disable_shared_login`; carries out D98's item 4 and extends it · Source: `docs/mainnet-readiness.md` 1.14
 - Decision: an owner turns shared login off through the existing `SetAllowShared {allow:false}`, so it waits the scope's
   `change_delay_ms`, and only while a Google client remains in the scope (an email client doesn't count). The change is
@@ -8620,7 +8620,7 @@ path, a key or derivation.
 - Why (a): otherwise those wallets have no exit once the app dies, against D41 and D431.
 
 ### D464. Enterprise exit: Hana is a scope owner from onboarding
-- Date 2026-11-09 · Status: **decided by the user 2026-11-09** · Applied at Enterprise onboarding · Amends D98's item 3, which
+- Date 2026-11-09 · Status: **decided by the user 2026-11-09**; **dropped by the user the same day (D481)**, so this entry and its note on the council are history · Applied at Enterprise onboarding · Amends D98's item 3, which
   named only a contract right
 - Decision: Hana is an on-chain owner of every Enterprise scope from onboarding, and the contract says why: so users have an
   exit even if the company disappears. Hana can then propose `SetAllowShared {allow:true}` at exit.
@@ -8663,7 +8663,7 @@ path, a key or derivation.
 ## The test critical page (branch `feat/test-page-command`), 2026-11-09
 
 ### D449. The test critical page is sent by the deployed watchdog, behind its existing status token
-- Date 2026-11-09 · Status: decided while building, to confirm · Built: `apps/watchdog/src/test-page.ts`,
+- Date 2026-11-09 · Status: decided while building, confirmed by the user 2026-11-09 · Built: `apps/watchdog/src/test-page.ts`,
   `apps/watchdog/src/status.ts` (`GET`/`POST /test-page`), `scripts/lib/admin-test-page.ts` (`admin <env>
   watchdog:test-page [--yes]`); readiness 5.4 · Asked for by the user (readiness 5.4: a command that proves paging end to end)
 - Context: the page must prove the path a real critical alert takes. The admin CLI is where such a command lives, but
@@ -8686,7 +8686,7 @@ path, a key or derivation.
   the command says the route is missing.
 
 ### D450. The test page is not an alert: no row, no dedupe, one send per 5 min, every channel reported as answered
-- Date 2026-11-09 · Status: decided while building, to confirm · Built: `apps/watchdog/src/test-page.ts`,
+- Date 2026-11-09 · Status: decided while building, confirmed by the user 2026-11-09 · Built: `apps/watchdog/src/test-page.ts`,
   `apps/watchdog/src/store.ts` (`claimTestPage`, `TEST_PAGE_META`) · Asked for by the user (it must not create an open
   alert or affect the dedupe)
 - Decision:
@@ -8706,7 +8706,7 @@ path, a key or derivation.
   re-sends until someone acts, all of which this must not do. No cooldown: one bad loop rings phones without limit.
 
 ### D468. A permanent exit client: the contract always accepts Hana Home's client, whatever a partner does
-- Date 2026-11-09 · Status: **decided by the user 2026-11-09**; the mechanics are designed in batch H6 and reviewed there
+- Date 2026-11-09 · Status: **decided by the user 2026-11-09**; the mechanics are designed in batch H6 and reviewed there (`docs/hana-home-h6-design.md`, D480–D488; amended by D482 and D483 for who changes the list and how fast, D487 for the event)
 - Context: access to a user's key depends on a client list the partner controls. D460's delay doesn't protect a user who
   isn't watching, because Hana doesn't contact users (D96), and after a delayed turn-off `remove_client` can still remove
   the last Google client at once. The user asked for a way for users to keep access to their funds whatever the partner does.
@@ -8720,9 +8720,9 @@ path, a key or derivation.
   sign-in, and the key exists only in their browser. Enterprises must be told (readiness 9.12); the external audit covers it.
 - Rejected: a delay and a Home notice only (only helps users who look in time); pressing users to export or link a backup
   at signup (no guarantee); partner terms only (a legal remedy after the loss).
-- Open for H6: whether D460's "needs a remaining Google client" and D464's owner seat are still needed once this exists.
+- Open for H6: whether D460's "needs a remaining Google client" and D464's owner seat are still needed once this exists. Settled 2026-11-09: neither is (D480, D481).
 ### D470. zod 3 → 4.6.7, with zod 3's error texts and `.url()` kept in one module
-- Date 2026-11-09 · Status: decided while building, to confirm · Built on `chore/zod-4` (`packages/env/src/zod.ts`,
+- Date 2026-11-09 · Status: decided while building, confirmed by the user 2026-11-09 · Built on `chore/zod-4` (`packages/env/src/zod.ts`,
   `packages/env/package.json`, `packages/console-core/package.json`, `apps/console/package.json`)
 - Decision: `zod` `^4.6.6` (resolves to 4.6.7) in `packages/env`, `packages/console-core` and `apps/console`: the high-severity
   memory-exhaustion advisory GHSA-mrhx-c7xc-m3w5 is fixed only in 4.6.6. Every schema imports `z` from `@hana-id/env/zod`
@@ -8747,10 +8747,10 @@ path, a key or derivation.
 
 ## The sweep's before-mainnet items and open issues (g), (h) (branch `fix/before-mainnet-sweep`), 2026-11-09
 
-Readiness rows 6.4 and 6.6. All decided while building, to confirm. Nothing here changes the contract or any derivation.
+Readiness rows 6.4 and 6.6. All decided while building, confirmed by the user 2026-11-09. Nothing here changes the contract or any derivation.
 
 ### D451. The first dependency audit: patch what a patch fixes, triage the rest with a review date, zod 3 → 4 left open
-- Date 2026-11-09 · Status: decided while building, to confirm · Built on `fix/before-mainnet-sweep`
+- Date 2026-11-09 · Status: decided while building, confirmed by the user 2026-11-09 · Built on `fix/before-mainnet-sweep`
   (`apps/console/package.json`, `scripts/dep-audit-allow.json`)
 - Decision: `react-router-dom` 6.30.1 → 6.30.6 (three open-redirect advisories; patch releases). The other 19 findings (15 advisories)
   are triaged until 2026-12-31 with the reason each can't be reached: elliptic (no fixed release; shimmed in the
@@ -8764,7 +8764,7 @@ Readiness rows 6.4 and 6.6. All decided while building, to confirm. Nothing here
   permanent ignore list: nothing would make anyone look again.
 
 ### D452. The npm token lives in a main-only GitHub environment; the job holding it runs none of the repo's code
-- Date 2026-11-09 · Status: decided while building, to confirm · Built on `fix/before-mainnet-sweep`
+- Date 2026-11-09 · Status: decided while building, confirmed by the user 2026-11-09 · Built on `fix/before-mainnet-sweep`
   (`.github/workflows/publish-sdk.yml`, `scripts/publish-gate.mjs`) · Security sweep OPER-4
 - Decision: three jobs. `gate` (no environment) fails on a repository or organisation `NPM_TOKEN` and on an
   `npm-publish` environment not limited to exactly `main`, and skips while the environment doesn't exist. `build` runs
@@ -8778,14 +8778,14 @@ Readiness rows 6.4 and 6.6. All decided while building, to confirm. Nothing here
   npm generates provenance only from public repositories).
 
 ### D453. CI installs the near-sandbox binary with a checksum; Playwright's browsers stay version-pinned only
-- Date 2026-11-09 · Status: decided while building, to confirm · Built on `fix/before-mainnet-sweep`
+- Date 2026-11-09 · Status: decided while building, confirmed by the user 2026-11-09 · Built on `fix/before-mainnet-sweep`
   (`.github/workflows/ci.yml`) · Security sweep OPER-8
 - Decision: the `e2e` job downloads near-sandbox 2.13.4 (what the locked crate 0.3.16 names) with a pinned SHA-256 and
   sets `NEAR_SANDBOX_BIN_PATH`. A test ties the crate version to `Cargo.lock`, so a bump re-pins. Playwright's browsers
   have no hash to pin; they are fixed by the exact Playwright version. The sweep rated this CI integrity only.
 
 ### D454. Dependency advisories: a script with a dated allow list, in CI and `pnpm verify --full`
-- Date 2026-11-09 · Status: decided while building, to confirm · Built on `fix/before-mainnet-sweep`
+- Date 2026-11-09 · Status: decided while building, confirmed by the user 2026-11-09 · Built on `fix/before-mainnet-sweep`
   (`scripts/dep-audit.mjs`, `.github/workflows/ci.yml` job `audit`, `scripts/verify.mjs`) · Security sweep OPER-9
 - Decision: `pnpm audit --prod` and `cargo audit` on all three lockfiles; anything not triaged, triaged for another
   place or past its `reviewBy` fails. In `--full` only (before deploys), not `--quick` or the default tier: it needs
@@ -8793,7 +8793,7 @@ Readiness rows 6.4 and 6.6. All decided while building, to confirm. Nothing here
   with a checksum, like cargo-near. Dependabot alerts are a repository setting for the founder (off on 2026-11-09).
 
 ### D455. One relay per signed request across isolates, in the relayer key objects
-- Date 2026-11-09 · Status: decided while building, to confirm · Built on `fix/before-mainnet-sweep`
+- Date 2026-11-09 · Status: decided while building, confirmed by the user 2026-11-09 · Built on `fix/before-mainnet-sweep`
   (`apps/api/src/relayer-pool.ts` `claimKeyIndex`, `relayer-key.ts` `claims`) · Closes security.md (g)
 - Decision: a session-signed request (derive, revoke, login, create session) goes through the relayer key its session
   key selects, with a claim of session key, session expiry and counter. The object holds a copy while the original is
@@ -8830,7 +8830,7 @@ Readiness rows 6.4 and 6.6. All decided while building, to confirm. Nothing here
   learns a session's key only after opening it; a session's own uses stay on one key (at most `MAX_USES`).
 
 ### D456. Each relayer pool holds only what an endpoint relays
-- Date 2026-11-09 · Status: decided while building, to confirm · Built on `fix/before-mainnet-sweep`
+- Date 2026-11-09 · Status: decided while building, confirmed by the user 2026-11-09 · Built on `fix/before-mainnet-sweep`
   (`apps/api/src/relayer-config.ts`, `gas.ts`, `scripts/lib/contract.ts`, the sandbox tests) · Closes security.md (h)
 - Decision: `prune_sessions` leaves the session pool; `register_scope` and `apply_pending_config` leave the owner pool,
   with their gas entries and `register_scope`'s per-proof gas. `prune_sessions` and `apply_pending_config` can be called
@@ -8851,7 +8851,7 @@ Readiness rows 6.4 and 6.6. All decided while building, to confirm. Nothing here
   pass this check, at the cost of allowance the watchdog watches (`docs/security.md`, the nonce check).
 
 ### D457. `deploy-contract` names unknown full-access keys and takes only reproducible builds outside dev envs
-- Date 2026-11-09 · Status: decided while building, to confirm · Built on `fix/before-mainnet-sweep`
+- Date 2026-11-09 · Status: decided while building, confirmed by the user 2026-11-09 · Built on `fix/before-mainnet-sweep`
   (`scripts/lib/deploy-plan.ts`, `deploy-run.ts`) · Security sweep OPER-7
 - Decision: a full-access key other than the local keychain key on the relayer, an owner account or a dev env's signer,
   and any on the council DAO: a warning in dev envs, a blocker elsewhere (no local key to compare: a warning). Outside
@@ -8867,7 +8867,7 @@ Readiness rows 6.4 and 6.6. All decided while building, to confirm. Nothing here
 
 ### D471. After an answer the approval popup says what the answer did, and counts down its real time left
 - Date 2026-11-09 · Status: asked for by the user (the screen and its request wording), the consent wording and the
-  Close now guard to confirm · Built on `fix/approval-waiting-screen` (`packages/web/src/auth/approve-page.ts`
+  Close now guard confirmed by the user 2026-11-09 · Built on `fix/approval-waiting-screen` (`packages/web/src/auth/approve-page.ts`
   `answeredView`, `idleClose`; `auth.css`) · Number note: the next free number above D470 on `origin/develop`; renumber
   at the merge if another branch took it
 - Decision: the screen that said "Done / Waiting for the next request from {app}…" for the popup's 15 s reuse
@@ -8896,7 +8896,7 @@ Readiness rows 6.4 and 6.6. All decided while building, to confirm. Nothing here
 ## Hana Home H1: the identity (branch `feat/hana-home-h1`), 2026-11-09
 
 ### D473. Hana Home's identity verifier: what is signed, and how refusals answer
-- Date 2026-11-09 · Status: decided while building, to confirm · Built: `packages/core/src/home.ts`,
+- Date 2026-11-09 · Status: decided while building, confirmed by the user 2026-11-09 · Built: `packages/core/src/home.ts`,
   `apps/api/src/home/identity.ts`, `apps/api/src/log.ts`, `apps/api/src/http.ts` `readBody`,
   `apps/api/src/login-token.ts` (`appId` absent only with `anyLoginMethod: true`) · Implements `docs/hana-home-spec.md`
   "Identity without a user database" (D98, D463) · Reviewed 2026-11-09 by batch H1's independent security review: no
@@ -8923,7 +8923,7 @@ Readiness rows 6.4 and 6.6. All decided while building, to confirm. Nothing here
 - Address impact: none. No path, tuple or key rule changes.
 
 ### D474. The email issuer's Home audience is `hana-home`; one function decides which clients make a Home identity
-- Date 2026-11-09 · Status: decided while building, to confirm · Built: `HOME_EMAIL_AUDIENCE`
+- Date 2026-11-09 · Status: decided while building, confirmed by the user 2026-11-09 · Built: `HOME_EMAIL_AUDIENCE`
   (`packages/core/src/home.ts`), `homeAudienceRoute` (`apps/api/src/home/identity.ts`) · For D463 and D468
 - Decision: the audience of a Home identity's email token is the constant `hana-home`, meant to be on no scope. It isn't
   `email:`-prefixed, and the issuer's client-proof route mints only for `email:{scope}`. That alone is **not yet a
@@ -8939,10 +8939,10 @@ Readiness rows 6.4 and 6.6. All decided while building, to confirm. Nothing here
 - Options: an env-specific audience (no gain over `iss`); registering a real on-chain client for Home (it could then be
   claimed or removed through the registry, which spec item 14 avoids).
 - Open for H6: whether Home signs in through the exit client instead of the first shared client, which would add a field to
-  `/v1/home/config` (`sharedGoogleClientId` stays).
+  `/v1/home/config` (`sharedGoogleClientId` stays). Settled 2026-11-09: Home signs in through a dedicated exit client (D484).
 
 ### D475. A limiter call's row reads don't depend on how many single-use markers the object holds
-- Date 2026-11-09 · Status: decided while building, to confirm · Built: `apps/api/src/rate-limiter.ts` (`reserve`,
+- Date 2026-11-09 · Status: decided while building, confirmed by the user 2026-11-09 · Built: `apps/api/src/rate-limiter.ts` (`reserve`,
   `scheduleMarkerSweep`, `prune`), `apps/api/test/rate-limiter-marks.test.ts` · H1's independent security review (low,
   cost) · Address impact: none
 - Decision: `reserve` no longer sweeps expired markers on each call; the object's alarm deletes them. `prune` lists only
@@ -8986,12 +8986,118 @@ Readiness rows 6.4 and 6.6. All decided while building, to confirm. Nothing here
   - The exact bytes and pins come from packaged `@sodax/sdk` 2.2.0 and offline encoders; nothing was run against Sodax's API (blocked), and the only live reads are the factory's and sodaUSDC's above (`eth_call`, `eth_getCode`, `eth_getStorageAt`), through Sonic's public RPC.
   - **The factory is upgradeable**: a UUPS proxy (`upgradeToAndCall`, owner-only, two-step ownership) over implementation `0x0b45be992010f95d428c03cc67751827ed65cf9a` on 2026-11-09. The offline formula is what that implementation computes, so an upgrade that changes it makes the SDK's `to` stop matching and every bridge is refused until the formula is reviewed and rebuilt (fail closed; a stuck bridge can't result, since nothing is signed). The check proves the address, not the wallet's code: what the hub wallet does with funds remains trust in Sodax's contracts. To read again before enabling, with the fees: the implementation slot and the five vectors.
 - Why this and not: (a) `≤` instead of `=` (it would let a call spend less and strand or reroute value): not done. (b) The popup binding the recipient: it would need a new field in `hana:approve-request`, which older popups reject; the vault is the authority and already refuses, and the popup shows what the bytes say. Not done. (c) A new `bridge` movement kind: the value and cap are unchanged, so it would add nothing to the vault's decision; the popup's description is carried beside the movements instead. Not done.
+## Hana Home H6: the exit client's design (branch `docs/hana-home-h6-design`), 2026-11-09
+
+Decided by the user on the review of H6's design (`docs/hana-home-h6-design.md`, which holds the code references and the
+tests). Not built. None changes a path, a key or derivation: `aud` never enters the path, `ik`, `settle` or
+`path_identity`, so every wallet keeps its address.
+
+### D480. Turning off shared login stays immediate and needs no remaining Google client (D460 dropped)
+- Date 2026-11-09 · Status: **decided by the user 2026-11-09** · Reverses the user's D460 and D98's item 4 · Source:
+  `docs/hana-home-h6-design.md` section 3
+- Decision: D460 is dropped. `disable_shared_login` keeps working unchanged (neither removed nor a stub), turning shared
+  login off stays immediate, and it needs no remaining Google client. `remove_client` of the last Google client keeps
+  today's rule.
+- Options: (a) keep D460 (the scope's delay, a remaining Google client); (b) drop it.
+- Why (b): the exit client (D468) covers users, so the delay no longer protects anyone, and a delayed turn-off would break
+  an existing defence: owners answer a new shared client by turning shared login off first, and a delay of the same length
+  can't land first.
+- Falls away: the delayed turn-off, Home's notice of a pending turn-off, the caller changes (`validate.ts`,
+  `SAFETY_METHODS`, the console) and the partner notice.
+
+### D481. Hana holds no owner seat on partner scopes (D464's seat dropped)
+- Date 2026-11-09 · Status: **decided by the user 2026-11-09** · Drops D464; D98's item 3 no longer needs a right to enable
+  shared login at exit · Source: `docs/hana-home-h6-design.md` section 3
+- Decision: D464's Hana owner seat is dropped. Hana has no owner rights over partner scopes. D464's note that the Hana
+  council would hold the seat stays only as history.
+- Options: (a) keep the seat; (b) drop it.
+- Why (b): the seat's only purpose was proposing `SetAllowShared` at exit, which the exit client now makes unnecessary.
+  Keeping it would leave Hana with `SetOwners` and `AddClient` proposal rights over partner scopes for no gain.
+- Consequences: the build plan's open item 6 closes; readiness 9.11 closes, because there is nothing to word.
+
+### D482. A new exit client waits the upgrade delay
+- Date 2026-11-09 · Status: **decided by the user 2026-11-09** · Not built (batch H6) · Source: `docs/hana-home-h6-design.md`
+  section 1
+- Decision: a new exit client comes into force only after `governance_delay_ms` (72 h on mainnet), through
+  `set_exit_clients`.
+- Options: (a) the scope delay (`change_delay_ms`, at most 7 days); (b) the upgrade delay.
+- Why (b): an exit client reaches every scope, including those that refused shared login. That is close to the power of an
+  upgrade, so it gets the upgrade's delay.
+
+### D483. An exit client can be removed at once by the council and is then retired forever
+- Date 2026-11-09 · Status: **decided by the user 2026-11-09** · Not built (batch H6) · Amends D468's "under a timelock",
+  for removals only · Source: `docs/hana-home-h6-design.md` section 1
+- Decision: the council can remove an exit client immediately. A removed client is retired forever (an `#exit` marker, as
+  `RETIRED_SHARED`), so it can never be claimed again.
+- Options: (a) immediate; (b) under the timelock, as D468's wording had it.
+- Why (a): it is the only way to stop a compromised Home without pausing every partner, and a removal can't steal
+  anything.
+
+### D484. The exit uses a new, dedicated Google client, in the same Google Cloud project as the shared client
+- Date 2026-11-09 · Status: **decided by the user 2026-11-09** (the reason below is the user's correction of the design's) ·
+  Not built (batch H6) · Settles D474's open point for H6 · Source: `docs/hana-home-h6-design.md` section 1
+- Decision: the exit uses a new, dedicated Google client in the same Google Cloud project as the shared client. Its only
+  redirect can be Home's page.
+- Options: (a) a new, dedicated client; (b) reuse the shared client.
+- Why (a), precisely: a dedicated client adds no security boundary on Google's side and doesn't defend against a
+  compromised Hana page. It exists so the contract can tell an exit from a normal login, by `aud`: partners' turning off
+  shared login keeps meaning something, and the session limits (D486), the alert counter (D487) and the emergency removal
+  (D483) apply to exits only.
+- Condition: that Google's `sub` is the same across clients is Google's behaviour, not this code's. It must be confirmed
+  live with the real client before use (one spike with two accounts is the only evidence so far, `docs/context.md`).
+
+### D485. The email exit reaches scopes that dropped their email client
+- Date 2026-11-09 · Status: **decided by the user 2026-11-09** · Not built (batches H6, H10) · As D468 · Source:
+  `docs/hana-home-h6-design.md` sections 1, 4
+- Decision: the email exit (`("email", "hana-home")`) reaches every registered scope, as D468 says, including scopes that
+  dropped their email client. A stolen email signing key therefore reaches further than it does today, and that is
+  accepted. A second signer for the email issuer is a priority (readiness 2.5a).
+- Options: (a) reach those scopes; (b) a Google-only exit.
+- Why (a): a user who signed in with email can hold funds in a scope whose owner later drops the email client, and D468
+  promises those users an exit too. The defence against a stolen key is its custody and a second signer (D121).
+
+### D486. Exit sessions: at most 30 minutes and 3 uses on chain; `link_jwt` refused
+- Date 2026-11-09 · Status: **decided by the user 2026-11-09** · Not built (batch H6) · Source:
+  `docs/hana-home-h6-design.md` section 2
+- Decision: the contract limits an exit session to 30 minutes and 3 uses, and refuses `link_jwt` on it.
+- Options: (a) these limits; (b) none.
+- Why (a): they stop exit becoming a general login route, and 2 or more uses are needed to retry an MPC failure. They don't
+  stop a compromised page.
+
+### D487. An hourly on-chain exit counter that alerts and never refuses; one event per session
+- Date 2026-11-09 · Status: **decided by the user 2026-11-09** · Not built (batch H6) · Reads D468's "each use" as each
+  session · Source: `docs/hana-home-h6-design.md` section 2
+- Decision: `get_config` exposes an hourly exit total for the watchdog. It alerts and never refuses. The contract emits one
+  event per exit session, carrying no `sub`.
+- Options: (a) an on-chain counter; (b) partners' indexers only.
+- Why (a): the watchdog reads views, not logs. It never refuses, as D200 reasoned, because a refusing cap could be burned
+  to lock users out of their rescue route. One event per session, because later derives in it release the same key. No new
+  RPC or cron (D380, D417).
+
+### D488. No waiting period before an exit releases a key
+- Date 2026-11-09 · Status: **decided by the user 2026-11-09** · Source: `docs/hana-home-h6-design.md` section 4
+- Decision: an exit releases the key with no waiting period.
+- Options: (a) a delay on exit derives; (b) none.
+- Why (b): a delay would cover only scopes with shared login off, needs a marker on every session and a two-visit Home flow,
+  and would slow the rescue exactly when it's needed. The only real gain, time for a mass-harvest alarm, comes mostly from
+  the counter (D487), without touching real users.
+
+### D489. Enterprise partners are told plainly they can't exclude Hana Home; legal reviews "keep clients 2 years"
+- Date 2026-11-09 · Status: **decided by the user 2026-11-09** · Source: `docs/hana-home-h6-design.md` section 7;
+  `docs/mainnet-readiness.md` 9.6, 9.12
+- Decision: Enterprise partners are told plainly that they can't exclude Hana Home (readiness 9.12). Legal reviews 9.6's
+  "keep clients 2 years" wording, now that the exit client carries the exit.
+- Options: say it plainly; soften or omit it.
+- Why: it changes what a partner who opts out of shared login is promised, so they must be told.
 
 ## Superseded or amended
 
 | Was | Now | Source |
 |---|---|---|
 | D429 point 3: a Sodax deposit's `data` is empty or exactly a swap's two hub calls | Also exactly the four hub calls of a USDC ⇄ USDC bridge between Base and Stellar, with exact amounts, delivered to the user's own wallet on the other chain (D476) | `packages/core/src/mainnet-demo.ts` |
+| D460: turning off shared login waits the scope's delay and needs a remaining Google client (carrying out D98 item 4) | Dropped: it stays immediate with no remaining Google client needed; `disable_shared_login` works unchanged; `remove_client` of the last Google client keeps today's rule (D480) | `docs/hana-home-h6-design.md` section 3 |
+| D464: Hana is an on-chain owner of every Enterprise scope from onboarding (and D98 item 3's right to enable shared login at exit) | Dropped: no owner rights over partner scopes; the council note in D464 is history only (D481) | `docs/hana-home-h6-design.md` section 3 |
+| D468: the exit client list changed only by the council under a timelock; each use emits an event | Additions wait `governance_delay_ms` (D482); removals are immediate and retired forever (D483); one event per session and an hourly alert-only counter (D487) | `docs/hana-home-h6-design.md` sections 1, 2 |
 | D40: Hana Home covers apps on Hana's shared Google login | Email-only users too, at launch, through an issuer Home route gated on the scope's email client on chain (D463) | `docs/hana-home-spec.md`; batch H10 |
 | D55: a revoked share ends an open tab only at its next unlock, touch or idle, and can auto-sign until then | Auto-signing stops within about 10 s, in the vault's existing 10-second read; other requests as before (D465) | `docs/hana-home-spec.md`; batches H4, H5 |
 | D98 item 1: Home's discovery is the directory only, no new user index | The list from `scopes.first_session_at`, the wallet directory (D310) as a "your apps" overlay, disclosed in the privacy notice (D462, D466) | `docs/hana-home-spec.md`; batch H2 |

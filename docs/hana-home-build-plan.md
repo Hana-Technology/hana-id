@@ -1,6 +1,6 @@
 # Hana Home build plan (batches)
 
-**Status (2026-11-09): H0 (this plan, the spec's rewrite, D460–D466, the readiness rows) on branch `docs/hana-home-h0`; H1 built on branch `feat/hana-home-h1`, its security review's fixes on `feat/hana-home-h1-2` (not merged, not deployed; see its result line below); H2–H12 not started.** Splits `docs/hana-home-spec.md` (D40, D45, D98, D460–D466) into reviewable
+**Status (2026-11-09): H0 (this plan, the spec's rewrite, D460–D466, the readiness rows) on branch `docs/hana-home-h0`; H1 built on branch `feat/hana-home-h1`, its security review's fixes on `feat/hana-home-h1-2` (not merged, not deployed; see its result line below); H2–H12 not started; H6's design and D480–D489 on branch `docs/hana-home-h6-design` (not merged).** Splits `docs/hana-home-spec.md` (D40, D45, D98, D461–D466, D468, D480–D489) into reviewable
 batches. The spec stays the source of truth for *what* to build; this file says *in which order*, *what each batch
 ships* and *what users see after it*. Like a spec it is history once the work merges: the current state lives in the
 reference docs (`docs/README.md`).
@@ -34,7 +34,7 @@ The spec's body was rewritten in H0 to agree with these ten points. They're kept
 1. **Google-only.** `scope#google#sub#0` misses linked accounts: a member opens its root's path
    (`apps/api/src/session-standing.ts`). Email-only users got no Home. Now D463 and H10.
 2. **Coverage row 1.** "Can't disable without its own client" is false once email is on, because `email:{scope}` counts
-   in `scope.clients`. Such a scope could cut shared Google at once, stranding unlinked Google users. Now D460 and H6.
+   in `scope.clients`. Such a scope could cut shared Google at once, stranding unlinked Google users. Now the exit client (D468, D480) and H6.
 3. **Export (D430).** The old body lacked the 60 s auto-hide, the guard, the warnings and `key_exported`. Home's one login
    opens both chains, so it records at the derive with `chain` null. `user_events.app_id` is NOT NULL, so H3 must pick
    the scope's app or relax it (open item 4).
@@ -72,7 +72,7 @@ The spec's body was rewritten in H0 to agree with these ten points. They're kept
 | H3 | `POST /v1/home/login`, Home pool, `key_exported` | H1 | M | create and fund the Home key (2 NEAR) |
 | H4 | `vault_consents`, device label, consent endpoints, status read | H1 | M | — |
 | H5 | Vault: register first, fail closed, status read, revoke paths | H4 live | M | — |
-| H6 | Contract: delayed turn-off, the permanent exit client (D468), callers | — | L | owners run the timelocked upgrade |
+| H6 | Contract: the exit client (D468, D480–D488), `migrate` to state version 4, the upgrade | — | L | create the exit Google client (same Cloud project as the shared client); the council runs the upgrade and `set_exit_clients` |
 | H7 | `/home` page: sign-in, Your apps, addresses, expiry | H1, H2 | L | — |
 | H8 | Export in Home | H3, H7 | M | — |
 | H9 | Devices, consent, share and email-share revoke | H5, H7 | M | — |
@@ -80,7 +80,7 @@ The spec's body was rewritten in H0 to agree with these ten points. They're kept
 | H11 | Billing: the statement line | H3 | S | apply Neon 0008 |
 | H12 | Playwright, testnet run, reference docs, link `/home` | all | M | run and sign off |
 
-**Parallel:** H0 beside H1. After H1: H2, H3, and H4 then H5. H6 any time. After H7: H8, H9, H10. H11 after H3. Route
+**Parallel:** H0 beside H1. After H1: H2, H3, and H4 then H5. H6 any time; its upgrade and `set_exit_clients` go before H10's route can mint tokens. After H7: H8, H9, H10. H11 after H3. Route
 additions conflict in `apps/api/src/index.ts`, so expect small merges. About 30 agent-days, roughly 4 weeks in parallel.
 
 **First batch after H0: H1.** It needs no open decision, and everything else rests on it.
@@ -106,9 +106,9 @@ additions conflict in `apps/api/src/index.ts`, so expect small merges. About 30 
 ### H2: the app list
 
 - **Scope.** `GET /v1/home/apps`: the list from `scopes.first_session_at`, the "your apps" overlay from the wallet
-  directory (D462, D466), coverage, a pending turn-off from `get_scope` (D460), addresses, Support ID, the quieter
+  directory (D462, D466), coverage, addresses, Support ID, the quieter
   listing, `hana_held_clients`, `admin home:client:add`.
-- **Tests.** Each coverage row; suspended, deleted and purged scopes; a member resolving to its root; a pending turn-off.
+- **Tests.** Each coverage row; suspended, deleted and purged scopes; a member resolving to its root.
 - **Migration / deploy.** D1 (`hana_held_clients`, the listing flag); API.
 - **User-visible.** Nothing (no page yet).
 
@@ -142,19 +142,37 @@ additions conflict in `apps/api/src/index.ts`, so expect small merges. About 30 
 
 ### H6: the contract
 
-- **Scope.** `SetAllowShared {allow:false}` accepted by `propose_change`, needing shared login on and a remaining Google
-  client, re-checked at `execute_change`; `disable_shared_login` no longer turns it off at once (open item 3). Callers:
-  `apps/api/src/owner-actions.ts`, `validate.ts`, `gas.ts`, `relayer-config.ts`, `SAFETY_METHODS` in `handlers.ts`; the
-  console's `actions.ts`, `Action.tsx`, `Scope.tsx`; console-core; `scripts/lib/contract.ts`; the admin's mail text.
-- **Files.** `contracts/hana-signer/src/registry.rs`, `tests.rs`; `docs/contract-interface.md`, `api.md`, `security.md`.
-- **Tests.** cargo, fixtures, golden paths; the old test that refuses `allow:false` flips; a turn-off with only an email
-  client is refused; the Google client removed while the change waits fails the execute.
-- **Migration / deploy.** No `migrate` and no state change. The timelocked upgrade, then the API, then the console. Land
-  before the audit (readiness 6.1).
+The design is `docs/hana-home-h6-design.md`; its decisions are D480–D489.
+
+- **Scope.** D468's exit client. Appended state `exit_clients`, `pending_exit_clients`, `exit_window`; `set_exit_clients`
+  (owner only, at most 4 entries; a new client waits `governance_delay_ms`, D482; a removal is immediate and retired
+  forever, D483); `get_config` gains both lists and the hourly total. `exit_scope()`, called only from `open_session` before
+  `session_scope`, which stays unchanged. Client sets kept disjoint (`assert_client_available`, `set_exit_clients`,
+  `set_shared_clients`, `set_console_audiences`). A self-issued provider's client must be exactly `email:{scope_id}`, which
+  also refuses `("email", "hana-home")` as a scope client. Exit sessions at most 30 minutes and 3 uses, `link_jwt` refused
+  (D486). One `exit_session_opened` event per session, no `sub`, and the hourly alert-only counter (D487). The watchdog's
+  critical diff gains both lists and a pinned expected value. `homeAudienceRoute`, `/v1/home/config` and `/v1/home/login` admit
+  the exit client; `checkClientScope` stays closed to it for partner logins.
+- **Not in this batch (D480).** The delayed turn-off, the caller changes (`validate.ts`, `SAFETY_METHODS`, the console) and the
+  partner notice are gone: `disable_shared_login` keeps working unchanged.
+- **Files.** `contracts/hana-signer/src/lib.rs`, `sessions.rs`, `registry.rs`, `migrate.rs`, `tests.rs` and
+  `integration-tests/`; `apps/watchdog/src/diff.ts`; `apps/api/src/home/identity.ts`, `handlers.ts`; `docs/contract-interface.md`,
+  `api.md`, `security.md`.
+- **Tests.** The design's section 6: exit on a scope with `allow_shared` false, for Google and email; the refusals; disjointness;
+  the golden paths through own client, shared client and exit, with a member reaching the root's path; v3 to v4 keeping every
+  field, and the DAO upgrade in near-workspaces; the real Google account through the shared and exit clients, comparing the
+  address (D484).
+- **Size.** L (4–5 days), as this plan had it: the delayed turn-off and its caller changes are gone, and the state, `migrate`,
+  the disjointness checks and the upgrade test take their place.
+- **Migration / deploy.** **`migrate` is needed: state version 4** (D468 adds state). Copy the exact v3 struct, append the new
+  fields empty; after this a rollback to v3 is impossible. Order on sandbox-dev: (1) confirm `state_version == 3` and
+  `scope_for_client("email", "hana-home")` is null; (2) deploy the watchdog with the new diff; (3) DAO `propose_upgrade`, wait,
+  `execute_upgrade`, by `deploy-contract --upgrade`, then check `state_version == 4`; (4) the council runs `set_exit_clients`
+  (2-of-3); (5) the API, the issuer's H10 route, the pages. Step 4 goes before anything can mint `hana-home` tokens. Confirm
+  the same Google `sub` live before the exit client is used (D484). Land before the audit (readiness 6.1).
 - **Condition (H1's review).** If this lands before H10, take H10's condition here: the contract refuses a client proof
-  for `("email", "hana-home")`.
-- **User-visible.** A partner's turn-off of shared login now waits the scope's delay. Partners need telling before it
-  ships on any env they use.
+  for `("email", "hana-home")`, as the audience-shape rule above does.
+- **User-visible.** Nothing until H12. Partners keep their instant turn-off.
 
 ### H7: the page
 
@@ -184,17 +202,20 @@ additions conflict in `apps/api/src/index.ts`, so expect small merges. About 30 
 
 ### H10: email users
 
-- **Scope.** An issuer Home route with an `aud` not on chain; the `/login/email` mode; gating on the chain's registration,
-  not an active app (D434, D463).
+- **Scope.** An issuer Home route with the audience `hana-home`, on no scope and on the exit list (D485); the `/login/email`
+  mode; gating on the chain's registration, not an active app (D434, D463); `mint()` hardcodes `email:${scopeId}`
+  (`apps/email-issuer/src/handlers.ts`), so the exit's token needs its own case.
 - **Files.** `apps/email-issuer/src/handlers.ts`, `apps/api/src/email-token.ts`, `packages/web/src/auth/email-page.ts`.
-- **Tests.** A Home token can't open a session; a suspended scope works; the mailbox limits still apply.
+- **Tests.** A Home identity token can't open a session, an exit token opens one for its own user (D485); the route takes no
+  free-form nonce; the same `sub` as a normal login; a suspended scope works; the mailbox limits still apply.
 - **Migration / deploy.** Issuer, API, pages (the API before the issuer).
 - **User-visible.** Only by typing the URL.
 - **Condition (H1's review; H6 or H10, whichever lands first).** If the route signs a caller-supplied nonce, an owner can
   get a `hana-home` token carrying `client_proof_nonce` for their own mailbox and register `("email", "hana-home")` on
   their scope (`registry.rs`, `AddClient`). Refuse that client: in the contract's `propose_change`, or in the issuer by
   computing the `homeNonce` from the key, expiry and salt instead of signing what it's given. Test it. Until then D474's
-  "on no scope" isn't a guarantee.
+  "on no scope" isn't a guarantee. H6's design does both (`docs/hana-home-h6-design.md` section 2): the exit list and the
+  contract's audience-shape rule, and the issuer computing the nonce from typed inputs.
 
 ### H11: billing
 
@@ -222,43 +243,57 @@ Run by hand on an env before H7's first deploy to it and before each later Home 
   "Chain of trust for a shared-client login", the redirect URI row in `docs/operations.md`), and it has no JavaScript
   origins. Home's Google route relies on it: another redirect URI on that client could receive a user's token with a nonce
   for its own Home key, which is a Home identity. No code can see a Google client's settings, so this stays manual.
+- The exit client (D484) is in the same Google Cloud project as the shared client, and its only redirect is Home's page. Check
+  it before `set_exit_clients` puts it on the list.
 
 ## Decided on 2026-11-09
 
 | Decision | Choice | Batch |
 |---|---|---|
-| D460 (row 1.14) | Turning off shared login waits the scope's delay via `SetAllowShared {allow:false}` and needs a remaining Google client; Home shows a pending turn-off | H6, H2 |
+| D460 (row 1.14) | Reversed the same day by D480: turning off shared login stays immediate | — |
 | D461 (row 1.15) | Statement line while the app is active, Hana pays after it's gone | H11 |
 | D462 (row 1.16) | The list from `scopes.first_session_at`, the wallet directory as a "your apps" overlay | H2 |
 | D463 | Email-only users get Home at launch | H10 |
-| D464 | Enterprise: Hana a scope owner from onboarding, with contract wording | onboarding |
+| D464 | Dropped the same day by D481: no owner rights over partner scopes | — |
 | D465 | A revoked share stops auto-signing within about 10 s, in the vault's existing read | H4, H5 |
 | D466 | Home may use the wallet directory, disclosed in the privacy notice | H2 |
+| D468 | A permanent exit client, whatever a partner does | H6 |
+| D480 | D460 dropped: turning off shared login stays immediate, needs no remaining Google client; `disable_shared_login` unchanged | H6 |
+| D481 | D464's owner seat dropped | onboarding |
+| D482 | A new exit client waits the upgrade delay (`governance_delay_ms`) | H6 |
+| D483 | The council can remove an exit client at once; it is then retired forever | H6 |
+| D484 | A new, dedicated Google client for the exit, in the shared client's Cloud project; `sub` confirmed live before use | H6 |
+| D485 | The email exit reaches scopes that dropped their email client; a second signer is a priority | H6, H10 |
+| D486 | Exit sessions at most 30 minutes and 3 uses; `link_jwt` refused | H6 |
+| D487 | An hourly exit counter that alerts and never refuses; one event per session | H6 |
+| D488 | No waiting period before an exit releases a key | H6 |
+| D489 | Enterprise partners told they can't exclude Hana Home (9.12); legal reviews 9.6 | legal |
 
 ## Still open
 
 | # | Item | Owner | Blocks |
 |---|---|---|---|
 | 1 | The production domain for `/home` (readiness 4.1, 4.2) | founder | production only |
-| 2 | Settled by D468 (the permanent exit client). H6 decides whether D460's Google-client requirement and D464's owner seat are still needed | founder, with H6's design | H6 |
-| 3 | `disable_shared_login`: remove the method, or keep it as a stub that panics (it can't keep working: it would bypass the delay) | Claude build | H6 |
+| 2 | **Closed 2026-11-09.** Neither is needed: D460's Google-client requirement is dropped (D480) and D464's owner seat is dropped (D481), because the exit client (D468) covers users | — | — |
+| 3 | **Closed 2026-11-09 (D480).** `disable_shared_login` stays and keeps working unchanged: there is no delay to bypass | — | — |
 | 4 | `user_events.app_id` is NOT NULL and a Home derive is per scope: record the scope's app, or relax the column | Claude build | H3 |
 | 5 | Billing of a suspended app: Hana pays for now (D461's note); to discuss with colleagues before finalising | founder, colleagues | H11 |
-| 6 | Hana's Enterprise owner role is held by the Hana council (D464's note). How Hana watches for a `SetOwners` that removes it, if the seat stays after D468 | founder | first Enterprise partner |
-| 7 | Partner terms (readiness 9.9), the privacy notice line (9.10), the Enterprise onboarding wording (9.11) | legal/founder | mainnet |
+| 6 | **Closed 2026-11-09 (D481).** Hana holds no owner seat, so there is no `SetOwners` to watch for | — | — |
+| 7 | Partner terms (readiness 9.9), the privacy notice line (9.10), telling Enterprise partners they can't exclude Home (9.12), legal's review of 9.6 (D489) | legal/founder | mainnet |
 
 ## Contract and derivation
 
-Only H6 touches the contract. It changes the registry, not paths or keys: **no address impact**, and no batch changes
-derivation. Limits of D460: the delay is at most 7 days and Hana never contacts users (D96), so Home must show the
-pending turn-off. A partner also loses its instant cut if Hana's login is compromised; Hana's pause remains.
+Only H6 touches the contract. It adds the exit list, its limits and `migrate` (state version 4), and changes no path or key:
+**no address impact** (`aud` never enters the path), and no batch changes derivation. The exit is permanent only within limits:
+a pause stops it, the council can remove it at once (D483), and it depends on Google keeping the client alive. Partners keep their
+instant turn-off of shared login (D480).
 
 ## Independent security review
 
 - H1: identity (done 2026-11-09: no critical, high or medium; see H1's review line).
 - H3: a derive without an app gate.
 - H4–H5: auto-sign.
-- H6: the contract.
+- H6: the contract (the list for the auditor is in `docs/hana-home-h6-design.md` section 6).
 - H7: partner strings on the callback origin.
 - H8: keys in memory.
 - H9: cross-user revoke.

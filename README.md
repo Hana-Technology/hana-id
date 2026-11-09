@@ -362,6 +362,8 @@ throwaway names. The signer account is part of every user's derived key, so chan
      | pnpm --dir apps/api exec wrangler secret put RELAYER_KEYS
    node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/owner-relayer-keys.json")))' \
      | pnpm --dir apps/api exec wrangler secret put OWNER_RELAYER_KEYS
+   node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/home-relayer-keys.json")))' \
+     | pnpm --dir apps/api exec wrangler secret put HOME_RELAYER_KEYS
    node -e 'process.stdout.write(require("./.secrets/<env>/keys-updater.json").private_key)' \
      | pnpm --dir apps/api exec wrangler secret put KEYS_UPDATER_KEY
    pnpm --filter @hana-id/api run deploy

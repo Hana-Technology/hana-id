@@ -36,6 +36,32 @@ describe('diffChain', () => {
     expect(diffChain(stored(prev), cur, T0 + MIN, none)).toMatchObject({ warning: [], matured: [{ field: 'shared_clients' }] });
   });
 
+  it('treats an exit client maturing as scheduled as info, and a change of the exit lists as critical (D468)', () => {
+    const prev = snap({ config: { exit_clients: [], pending_exit_clients: [{ provider: 'google', aud: 'exit', effective_at_ms: T0 }] } });
+    const cur = snap({ config: { exit_clients: [['google', 'exit']], pending_exit_clients: [] } });
+    expect(diffChain(stored(prev), cur, T0 + MIN, none)).toMatchObject({ critical: [], matured: [{ field: 'exit_clients' }] });
+    // A pending addition appearing, an in-force removal and a matured-without-its-pending change are critical.
+    const fresh = snap({ config: { exit_clients: [], pending_exit_clients: [] } });
+    const proposed = snap({ config: { exit_clients: [], pending_exit_clients: [{ provider: 'google', aud: 'evil', effective_at_ms: T0 + HOUR }] } });
+    expect(diffChain(stored(fresh), proposed, T0, none).critical.map((c) => c.field)).toEqual(['pending_exit_clients']);
+    const inForce = snap({ config: { exit_clients: [['google', 'exit']], pending_exit_clients: [] } });
+    const removed = snap({ config: { exit_clients: [], pending_exit_clients: [] } });
+    expect(diffChain(stored(inForce), removed, T0, none).critical.map((c) => c.field)).toEqual(['exit_clients']);
+  });
+
+  it('reads a pre-v4 contract or snapshot as no exit fields: no alert, that run is the baseline', () => {
+    const v3 = snap();
+    const v4 = snap({ config: { exit_clients: [['google', 'exit']], pending_exit_clients: [] } });
+    expect(diffChain(stored(v3), v3, T0, none)).toEqual({ critical: [], warning: [], matured: [] });
+    // A snapshot from before the watchdog knew the fields: its first v4 read is the baseline.
+    expect(diffChain(stored(v3), v4, T0, none).critical.map((c) => c.field)).not.toContain('exit_clients');
+    expect(diffChain(stored(v4), v4, T0, none)).toEqual({ critical: [], warning: [], matured: [] });
+    // A first run on a pre-v4 contract is quiet; a first run on v4 alerts an exit client still pending.
+    expect(diffChain(null, v3, T0, none).critical).toEqual([]);
+    const pendingFirst = snap({ config: { exit_clients: [], pending_exit_clients: [{ provider: 'google', aud: 'exit', effective_at_ms: T0 + HOUR }] } });
+    expect(diffChain(null, pendingFirst, T0, none).critical.map((c) => c.field)).toEqual(['pending_exit_clients']);
+  });
+
   it('alerts on an addition that appears without having been pending', () => {
     const cur = snap({ config: { console_audiences: [['google', 'console.apps'], ['google', 'evil.apps']] } });
     expect(diffChain(stored(snap()), cur, T0, none).critical.map((c) => c.field)).toEqual(['console_audiences']);

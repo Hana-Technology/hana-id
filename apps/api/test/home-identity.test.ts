@@ -7,6 +7,7 @@ import { KeyPair } from '@near-js/crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { hex } from '../src/bytes.ts';
 import { HOME_CONFIG_ENDPOINT, HOME_CONFIG_PER_IP_MINUTE } from '../src/home/config.ts';
+import { checkClientScope } from '../src/handlers.ts';
 import { homeGate, homeAudienceRoute, type HomeGate } from '../src/home/identity.ts';
 import { newCtx } from '../src/handlers.ts';
 import { log } from '../src/log.ts';
@@ -18,6 +19,7 @@ import { GOOGLE_ISS, appHeaders, call, chain, google, newSessionKey, seedApp, se
 
 const AUTH = env.AUTH_ORIGIN!;
 const SHARED = 'shared-client.apps.googleusercontent.com';
+const EXIT = 'hana-exit.apps.googleusercontent.com';
 const SUB = '110248495921238986420';
 const PATH = '/v1/home/apps';
 
@@ -109,8 +111,9 @@ describe('Home identity: what it accepts', () => {
     expect(g.body).toHaveLength(0);
   });
 
-  it('a valid email token with the issuer’s Home audience (H10’s route; needs the email issuer’s keys)', async () => {
+  it('a valid email token with the issuer’s Home audience on the exit list (H10’s route; needs the email issuer’s keys)', async () => {
     withEmail(near, []);
+    near.exit = [['email', HOME_EMAIL_AUDIENCE]];
     const key = homeKey();
     const expiresAtMs = Date.now() + 15 * 60_000;
     const salt = new Uint8Array(32).fill(5);
@@ -127,6 +130,94 @@ describe('Home identity: what it accepts', () => {
     near.pendingShared = [{ provider: 'google', aud: SHARED, effective_at_ms: Date.now() - 1 }];
     const id = await newIdentity();
     expect((await gate(makeRequest(id.headerFor(1)))).ok).toBe(true);
+  });
+
+  it('a valid Google token from an exit client in force: route exit (D468)', async () => {
+    near.exit = [EXIT];
+    const id = await newIdentity({ aud: EXIT });
+    const g = await gate(makeRequest(id.headerFor(1)));
+    expect(g.ok).toBe(true);
+    if (g.ok) expect(g.identity).toMatchObject({ provider: 'google', sub: SUB, route: 'exit' });
+  });
+
+  it('an exit client still in its delay, or a matured pending one', async () => {
+    near.exit = [];
+    near.pendingExit = [{ provider: 'google', aud: EXIT, effective_at_ms: Date.now() + 86_400_000 }];
+    const id = await newIdentity({ aud: EXIT });
+    expect((await refusal(await gate(makeRequest(id.headerFor(1))))).code).toBe('not_a_home_client');
+    clearViewCaches();
+    near.pendingExit = [{ provider: 'google', aud: EXIT, effective_at_ms: Date.now() - 1 }];
+    const g = await gate(makeRequest(id.headerFor(2)));
+    expect(g.ok).toBe(true);
+    if (g.ok) expect(g.identity.route).toBe('exit');
+  });
+
+  it('an old contract (no exit list in get_config) refuses the exit client: fail closed', async () => {
+    near.exit = null;
+    const id = await newIdentity({ aud: EXIT });
+    const r = await refusal(await gate(makeRequest(id.headerFor(1))));
+    expect([r.status, r.code]).toEqual([401, 'not_a_home_client']);
+  });
+
+  describe('the email Home audience follows the on-chain exit list', () => {
+    const emailIdentity = async () => {
+      const key = homeKey();
+      const expiresAtMs = Date.now() + 15 * 60_000;
+      const salt = crypto.getRandomValues(new Uint8Array(32));
+      const nonce = homeNonce({ signer: env.SIGNER_ACCOUNT, homePublicKey: key.pub, expiresAtMs, salt });
+      const jwt = await emailToken({ aud: HOME_EMAIL_AUDIENCE, sub: 'e1.abc', nonce });
+      return newIdentity({ jwt, key, expiresAtMs, salt });
+    };
+    const EMAIL_EXIT: [string, string] = ['email', HOME_EMAIL_AUDIENCE];
+
+    beforeEach(() => {
+      withEmail(near, []);
+    });
+
+    it('an old contract (no exit list, the v3 window) refuses it: 401, fail closed', async () => {
+      near.exit = null;
+      const r = await refusal(await gate(makeRequest((await emailIdentity()).headerFor(1)), emailEnv()));
+      expect([r.status, r.code]).toEqual([401, 'not_a_home_client']);
+    });
+
+    it('an emergency removal stops it: an empty list, or a list with only other clients', async () => {
+      near.exit = [];
+      const r = await refusal(await gate(makeRequest((await emailIdentity()).headerFor(1)), emailEnv()));
+      expect([r.status, r.code]).toEqual([401, 'not_a_home_client']);
+      clearViewCaches();
+      near.exit = [EXIT];
+      const r2 = await refusal(await gate(makeRequest((await emailIdentity()).headerFor(1)), emailEnv()));
+      expect([r2.status, r2.code]).toEqual([401, 'not_a_home_client']);
+    });
+
+    it('a pending entry refuses until it matures', async () => {
+      near.exit = [];
+      near.pendingExit = [{ provider: 'email', aud: HOME_EMAIL_AUDIENCE, effective_at_ms: Date.now() + 86_400_000 }];
+      expect((await refusal(await gate(makeRequest((await emailIdentity()).headerFor(1)), emailEnv()))).code).toBe('not_a_home_client');
+      clearViewCaches();
+      near.pendingExit = [{ provider: 'email', aud: HOME_EMAIL_AUDIENCE, effective_at_ms: Date.now() - 1 }];
+      const g = await gate(makeRequest((await emailIdentity()).headerFor(1)), emailEnv());
+      expect(g.ok).toBe(true);
+      if (g.ok) expect(g.identity.route).toBe('email');
+    });
+
+    it('a removal lingers for up to the 60 s config cache, as for Google, then refuses', async () => {
+      near.exit = [EMAIL_EXIT];
+      expect((await gate(makeRequest((await emailIdentity()).headerFor(1)), emailEnv())).ok).toBe(true);
+      near.exit = [];
+      expect((await gate(makeRequest((await emailIdentity()).headerFor(1)), emailEnv())).ok).toBe(true);
+      clearViewCaches();
+      expect((await refusal(await gate(makeRequest((await emailIdentity()).headerFor(1)), emailEnv()))).code).toBe('not_a_home_client');
+    });
+
+    it('a NEAR failure is 502, not a refusal or a pass: the list can’t be read', async () => {
+      near.exit = [EMAIL_EXIT];
+      near.views.get_config = () => {
+        throw new Error('rpc down');
+      };
+      const r = await refusal(await gate(makeRequest((await emailIdentity()).headerFor(1)), emailEnv()));
+      expect([r.status, r.code]).toEqual([502, 'near_unavailable']);
+    });
   });
 
   it('a POST’s body comes back with the identity, and is signed over', async () => {
@@ -419,12 +510,15 @@ describe('Home identity: every refusal in the spec’s list', () => {
 });
 
 describe('homeAudienceRoute', () => {
-  const config: ConfigView = { console_audiences: [], shared_clients: [['google', SHARED]], pending_shared_clients: [], paused: false, links_open: true };
+  const config: ConfigView = { console_audiences: [], shared_clients: [['google', SHARED]], pending_shared_clients: [], exit_clients: [], pending_exit_clients: [], paused: false, links_open: true };
   const now = 1_000;
 
-  it('a shared Google client, the email Home audience, and nothing else', () => {
+  it('a shared Google client, the email Home audience on the exit list, and nothing else', () => {
     expect(homeAudienceRoute(config, 'google', SHARED, now)).toBe('shared');
-    expect(homeAudienceRoute(null, 'email', HOME_EMAIL_AUDIENCE, now)).toBe('email');
+    expect(homeAudienceRoute({ ...config, exit_clients: [['email', HOME_EMAIL_AUDIENCE]] }, 'email', HOME_EMAIL_AUDIENCE, now)).toBe('email');
+    // Not on the list, or no list at all (an old contract, the chain unread): refused.
+    expect(homeAudienceRoute(config, 'email', HOME_EMAIL_AUDIENCE, now)).toBeNull();
+    expect(homeAudienceRoute(null, 'email', HOME_EMAIL_AUDIENCE, now)).toBeNull();
     expect(homeAudienceRoute(config, 'google', 'other', now)).toBeNull();
     expect(homeAudienceRoute(null, 'google', SHARED, now)).toBeNull();
     expect(homeAudienceRoute(config, 'email', 'email:s1', now)).toBeNull();
@@ -433,6 +527,28 @@ describe('homeAudienceRoute', () => {
 
   it('an email token can’t ride the shared Google list, whatever it says', () => {
     expect(homeAudienceRoute({ ...config, shared_clients: [['email', 'x']] }, 'email', 'x', now)).toBeNull();
+  });
+
+  it('the exit route: an exit Google client in force, pending entries by their time, other providers never', () => {
+    const exitConfig: ConfigView = { ...config, exit_clients: [['google', EXIT]], pending_exit_clients: [{ client: ['google', 'pending-exit'], effective_at_ms: now + 1 }, { client: ['google', 'matured-exit'], effective_at_ms: now }] };
+    expect(homeAudienceRoute(exitConfig, 'google', EXIT, now)).toBe('exit');
+    expect(homeAudienceRoute(exitConfig, 'google', 'matured-exit', now)).toBe('exit');
+    expect(homeAudienceRoute(exitConfig, 'google', 'pending-exit', now)).toBeNull();
+    // A shared client stays shared, an exit client isn't one; scope clients are in neither list.
+    expect(homeAudienceRoute(exitConfig, 'google', SHARED, now)).toBe('shared');
+    expect(homeAudienceRoute(config, 'google', EXIT, now)).toBeNull();
+    // A provider's exit entry never lets another provider through, and only the Home audience is an email route.
+    expect(homeAudienceRoute({ ...exitConfig, exit_clients: [['email', HOME_EMAIL_AUDIENCE]] }, 'email', HOME_EMAIL_AUDIENCE, now)).toBe('email');
+    expect(homeAudienceRoute({ ...exitConfig, exit_clients: [['google', HOME_EMAIL_AUDIENCE]] }, 'email', HOME_EMAIL_AUDIENCE, now)).toBeNull();
+    expect(homeAudienceRoute({ ...exitConfig, exit_clients: [['email', 'other-aud']] }, 'email', 'other-aud', now)).toBeNull();
+  });
+});
+
+describe('checkClientScope stays closed to exit clients for partner logins', () => {
+  it('an exit client in force is unregistered_client for a partner login, in any scope', async () => {
+    near.exit = [EXIT];
+    near.allowShared.add('s1');
+    expect(await checkClientScope(env, 'google', EXIT, 's1', Date.now())).toEqual({ status: 403, code: 'unregistered_client', error: 'Token is for an unregistered app' });
   });
 });
 
@@ -485,6 +601,22 @@ describe('GET /v1/home/config', () => {
     expect(typeof b.serverTimeMs).toBe('number');
     expect(b.serverTimeMs as number).toBeGreaterThanOrEqual(before);
     expect(typeof b.requestId).toBe('string');
+  });
+
+  it('names the exit Google client in force, and null against an old contract (fail closed)', async () => {
+    near.exit = [EXIT];
+    expect(((await (await get(AUTH)).json()) as Record<string, unknown>).exitGoogleClientId).toBe(EXIT);
+    clearViewCaches();
+    near.exit = [];
+    near.pendingExit = [{ provider: 'google', aud: EXIT, effective_at_ms: Date.now() - 1 }];
+    expect(((await (await get(AUTH)).json()) as Record<string, unknown>).exitGoogleClientId).toBe(EXIT);
+    clearViewCaches();
+    near.pendingExit = [{ provider: 'google', aud: EXIT, effective_at_ms: Date.now() + 86_400_000 }];
+    expect(((await (await get(AUTH)).json()) as Record<string, unknown>).exitGoogleClientId).toBeNull();
+    clearViewCaches();
+    near.exit = null;
+    const b = (await (await get(AUTH)).json()) as Record<string, unknown>;
+    expect(b).toMatchObject({ exitGoogleClientId: null, sharedGoogleClientId: SHARED });
   });
 
   it('a matured pending client counts, a future one doesn’t, and none is null (an email user can still sign in)', async () => {

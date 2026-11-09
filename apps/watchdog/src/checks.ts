@@ -16,6 +16,7 @@ export const CHECKS = {
   active_keys: "Each active key: Google's against every key Google has published, the email issuer's against the pins; pause on a key that is neither",
   signer_policy: 'get_issuer("email") and get_self_issued("email") against the pinned signer policy (signers, required, overlap): pause on a weaker policy, warning while pins and chain move through a planned change',
   links: 'get_link_stats() (D200): a link alarm threshold reached in the current or previous hour, per scope or in all (the links went through: the contract only counts), and the current hour past half the total threshold',
+  exit_clients: 'get_config()\'s exit_clients and pending_exit_clients against the pinned expected list (watchdog.pinnedExitClients, D468, D493; pending unpinned is critical, in force unpinned pauses) and the hourly exit counter (exit_window, D487) against EXIT_ALERT_PER_HOUR, per hour and at 1.5 times it for the current and previous hours together; the exit lists\' own changes are in governance_diff',
   identity_on_chain:
     "No issuer key on chain (Google's and the email issuer's active keys, any pending addition) has an identity token key's thumbprint as its kid (the pins, and the keys Hana published at the last identity_jwks read): the contract must never trust an identity key (alert only)",
   governance_diff: "get_config().unrecorded_wallets outside a dev env (D139); config and governance against the last run: upgrades, owner, withdrawals, watchdogs, updater keys, delays, audiences, pause and unpause, the session floor, unrecorded_wallets, the owner DAO's code and policy, the owner's immediate issuer actions (Google and email), the link alarm thresholds and a pending raise (D200)",
@@ -61,7 +62,22 @@ export const ALERT_KINDS = {
     severity: 'critical',
     check: 'config',
     description:
-      "EMAIL_PINS (the manifest's watchdog.pinnedIssuerKeys.email) is unreadable: every email key is treated as unpinned (fail closed), so legitimate keys are cancelled or paused on; or IDENTITY_PINS (watchdog.pinnedIdentityKeys) is unreadable: every published identity key is treated as unpinned (`pins_invalid:identity`); or IDENTITY_PINS is set without IDENTITY_ISS, so the identity JWKS check can't run (`pins_invalid:identity_no_iss`)",
+      "EMAIL_PINS (the manifest's watchdog.pinnedIssuerKeys.email) is unreadable: every email key is treated as unpinned (fail closed), so legitimate keys are cancelled or paused on; or IDENTITY_PINS (watchdog.pinnedIdentityKeys) is unreadable: every published identity key is treated as unpinned (`pins_invalid:identity`); or IDENTITY_PINS is set without IDENTITY_ISS, so the identity JWKS check can't run (`pins_invalid:identity_no_iss`); or EXIT_PINS (watchdog.pinnedExitClients) is unreadable: every exit client reads as unpinned, and the watchdog doesn't pause on it (`pins_invalid:exit`)",
+  },
+  exit_client_unpinned: {
+    severity: 'critical',
+    check: 'exit_clients',
+    description: "An exit client on chain isn't in watchdog.pinnedExitClients (D468, D493): pending and in force alike are critical, and an unpinned client in force pauses the contract, except that unreadable pins page without pausing (no pins: every on-chain exit client is unpinned). An exit client reaches every scope",
+  },
+  exit_client_missing: {
+    severity: 'warning',
+    check: 'exit_clients',
+    description: 'A client in watchdog.pinnedExitClients is on neither exit list: not yet proposed, or retired by an emergency removal (D483) and the pin not yet taken out (alert only)',
+  },
+  exit_volume_high: {
+    severity: 'critical',
+    check: 'exit_clients',
+    description: "The contract's hourly exit counter (exit_window, D487) reached EXIT_ALERT_PER_HOUR in the current or previous hour, or 1.5 times it across the two together (a burst split across an hour boundary): a shutting-down partner, a compromised Home harvesting keys, or anyone inflating the counter on their own Google identity. It only alerts: exits are never refused, and a slow harvest paced under the level isn't caught",
   },
   link_threshold_reached: {
     severity: 'critical',

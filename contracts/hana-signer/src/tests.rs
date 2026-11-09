@@ -1156,7 +1156,8 @@ fn config_view() {
             "change_delay_ms":DELAY_MS,"pending_change_delay":null,"public_registration":false,
             "issuer_key_delay_ms":KEY_DELAY_MS,"pending_issuer_key_delay":null,
             "governance_delay_ms":GOV_DELAY_MS,"pending_governance_delay":null,
-            "paused":false,"unpaused_at_ms":0,"changes_unlock_floor_ms":0,"sessions_valid_from_ms":0,"unrecorded_wallets":false
+            "paused":false,"unpaused_at_ms":0,"changes_unlock_floor_ms":0,"sessions_valid_from_ms":0,"unrecorded_wallets":false,
+            "exit_clients":[],"pending_exit_clients":[],"exit_window":{"window_start_ms":NOW_MS,"current":0,"previous":0}
         })
     );
 }
@@ -1169,6 +1170,7 @@ fn owner_only_calls() -> Vec<(&'static str, Box<dyn Fn(&mut HanaSigner)>)> {
         ("set_change_delay_ms", Box::new(|c| c.set_change_delay_ms(0))),
         ("enable_public_registration", Box::new(|c| c.enable_public_registration())),
         ("set_shared_clients", Box::new(|c| c.set_shared_clients(vec![]))),
+        ("set_exit_clients", Box::new(|c| c.set_exit_clients(vec![]))),
         ("set_issuer", Box::new(|c| c.set_issuer("evil".into(), vec!["https://evil.example".into()]))),
         ("mark_self_issued", Box::new(|c| c.mark_self_issued("google".into()))),
         ("accept_unrecorded_wallets", Box::new(|c| c.accept_unrecorded_wallets())),
@@ -1276,7 +1278,7 @@ fn admin_registration_emits_an_event() {
     c.admin_register_scope(vec![near_owner(ADMIN)], vec![google(C)], None, false);
     assert_eq!(
         events(),
-        vec![serde_json::json!({"standard":"hana-id","version":"1.2.0","event":"scope_registered","data":[{"scope_id":"s3","owners":[{"Near":{"account_id":ADMIN}}],"clients":[["google",C]],"allow_shared":false,"by":ADMIN,"admin":true}]})]
+        vec![serde_json::json!({"standard":"hana-id","version":"1.3.0","event":"scope_registered","data":[{"scope_id":"s3","owners":[{"Near":{"account_id":ADMIN}}],"clients":[["google",C]],"allow_shared":false,"by":ADMIN,"admin":true}]})]
     );
 }
 
@@ -1736,7 +1738,7 @@ fn owners_remove_clients_immediately() {
     c.remove_client("s1".into(), OwnerAuth::Near, "google".into(), A2.into());
     assert_eq!(
         events()[0],
-        serde_json::json!({"standard":"hana-id","version":"1.2.0","event":"client_removed","data":[{"scope_id":"s1","provider":"google","aud":A2,"free_at_ms":NOW_MS + DELAY_MS,"by":{"Near":{"account_id":ALICE}}}]})
+        serde_json::json!({"standard":"hana-id","version":"1.3.0","event":"client_removed","data":[{"scope_id":"s1","provider":"google","aud":A2,"free_at_ms":NOW_MS + DELAY_MS,"by":{"Near":{"account_id":ALICE}}}]})
     );
     assert_eq!(c.scope_for_client("google".into(), A2.into()), None);
     assert_eq!(c.get_scope("s1".into()).unwrap().clients, vec![google(A)]);
@@ -2160,7 +2162,7 @@ fn shared_client_additions_are_delayed() {
     c.set_shared_clients(vec![google(SHARED)]);
     assert_eq!(
         events()[0],
-        serde_json::json!({"standard":"hana-id","version":"1.2.0","event":"shared_clients_set","data":[{"shared_clients":[],"pending_shared_clients":[{"provider":"google","aud":SHARED,"effective_at_ms":NOW_MS + DELAY_MS}]}]})
+        serde_json::json!({"standard":"hana-id","version":"1.3.0","event":"shared_clients_set","data":[{"shared_clients":[],"pending_shared_clients":[{"provider":"google","aud":SHARED,"effective_at_ms":NOW_MS + DELAY_MS}]}]})
     );
     let cfg = c.get_config();
     assert!(cfg.shared_clients.is_empty());
@@ -2381,7 +2383,7 @@ fn disabling_shared_login_is_immediate() {
     c.disable_shared_login("s1".into(), OwnerAuth::Near);
     assert_eq!(
         events()[1],
-        serde_json::json!({"standard":"hana-id","version":"1.2.0","event":"shared_login_disabled","data":[{"scope_id":"s1","by":{"Near":{"account_id":ALICE}}}]})
+        serde_json::json!({"standard":"hana-id","version":"1.3.0","event":"shared_login_disabled","data":[{"scope_id":"s1","by":{"Near":{"account_id":ALICE}}}]})
     );
     let s1 = c.get_scope("s1".into()).unwrap();
     assert!(!s1.allow_shared);
@@ -2631,7 +2633,7 @@ fn a_dropped_pending_shared_client_is_retired_too() {
 
 /// One NEP-297 event line as the contract logs it.
 fn ev(event: &str, data: Value) -> Value {
-    serde_json::json!({"standard":"hana-id","version":"1.2.0","event":event,"data":[data]})
+    serde_json::json!({"standard":"hana-id","version":"1.3.0","event":event,"data":[data]})
 }
 
 /// Like ctx, with `input` as the call's raw input and no deposit.
@@ -4045,7 +4047,7 @@ fn governance_view() {
     assert_eq!(
         serde_json::to_value(c.get_governance()).unwrap(),
         serde_json::json!({
-            "state_version":3,
+            "state_version":4,
             "watchdogs":[{"account_id":WATCHDOG,"confirm_from_ms":NOW_MS}],
             "keys_slow_until_ms":0,
             "updater_keys":[],
@@ -4066,9 +4068,9 @@ fn unhex(s: &str) -> Vec<u8> {
 
 #[test]
 fn migrations_refuse_a_state_they_do_not_migrate_from() {
-    // migrate on a state that is neither the v2 nor the v3 layout: here a v3 state cut short by one byte (corrupt).
-    // A v1 state, which has no migration any more, is refused the same way (tests/email.rs
-    // migrate_refuses_every_state_it_does_not_migrate_from: a state shorter than the v2 layout).
+    // migrate on a state that is neither the v3 nor the v4 layout: here a v4 state cut short by one byte (corrupt).
+    // A v2 state, which has no migration any more, is refused the same way (tests/email.rs
+    // migrate_refuses_every_state_it_does_not_migrate_from: a state shorter than the v3 layout).
     let c = setup();
     let bytes = near_sdk::borsh::to_vec(&c).unwrap();
     env::storage_write(b"STATE", &bytes[..bytes.len() - 1]);
@@ -4076,15 +4078,15 @@ fn migrations_refuse_a_state_they_do_not_migrate_from() {
     // On no state at all.
     ctx_with_storage(ME, NOW_MS, Default::default());
     expect_panic("Unexpected state version", || drop(HanaSigner::migrate()));
-    // migrate on a v3 layout that claims another version.
+    // migrate on a v4 layout that claims another version.
     let mut c = setup();
-    c.state_version = 4;
+    c.state_version = 3;
     env::state_write(&c);
     expect_panic("Unexpected state version", || drop(HanaSigner::migrate()));
 }
 
 #[test]
-fn migrate_keeps_a_v3_state_as_it_is() {
+fn migrate_keeps_a_v4_state_as_it_is() {
     let mut c = setup();
     ctx(ADMIN, NOW_MS);
     c.add_watchdog(acc(WATCHDOG2));
@@ -4095,7 +4097,7 @@ fn migrate_keeps_a_v3_state_as_it_is() {
     drop(c);
     ctx(ME, NOW_MS);
     let migrated = HanaSigner::migrate();
-    assert_eq!(events(), vec![ev("state_migrated", serde_json::json!({"from_version":3,"to_version":3}))]);
+    assert_eq!(events(), vec![ev("state_migrated", serde_json::json!({"from_version":4,"to_version":4}))]);
     assert_eq!((migrated.get_config(), migrated.get_governance(), migrated.get_key_changes()), (config, governance, changes));
     assert_eq!(migrated.get_key_changes()[0].id, key);
 }

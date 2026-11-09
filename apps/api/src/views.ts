@@ -88,6 +88,10 @@ export interface ConfigView {
   pending_shared_clients: PendingSharedClient[];
   /** The contract is paused (governance batch): token paths, derive_key and the executors panic `Paused`. */
   paused: boolean;
+  /** Hana Home's exit clients in force when read (contract v4, D468; empty on an older contract: fail closed). */
+  exit_clients: [string, string][];
+  /** Exit-client additions not in force when read; one counts once `effective_at_ms` has passed (the view may be cached). */
+  pending_exit_clients: PendingSharedClient[];
   /**
    * Links can be made (contract v3, `unrecorded_wallets` false; D135). False on a contract before v3 (no such field)
    * and while the owner hasn't accepted the wallets opened before v3: every link panics then.
@@ -129,7 +133,15 @@ const isPair = (v: unknown): v is [string, string] => Array.isArray(v) && v.leng
  * Malformed entries are ignored (fail closed: an unreadable addition is not treated as shared).
  */
 export function parsePendingShared(raw: unknown): PendingSharedClient[] {
-  const list = (raw as { pending_shared_clients?: unknown } | null)?.pending_shared_clients;
+  return parsePendingClients((raw as { pending_shared_clients?: unknown } | null)?.pending_shared_clients);
+}
+
+/** `get_config().pending_exit_clients` (contract v4): absent on an older contract, so no pending exit client (fail closed). */
+export function parsePendingExit(raw: unknown): PendingSharedClient[] {
+  return parsePendingClients((raw as { pending_exit_clients?: unknown } | null)?.pending_exit_clients);
+}
+
+function parsePendingClients(list: unknown): PendingSharedClient[] {
   if (!Array.isArray(list)) return [];
   return list.flatMap((e: unknown) => {
     const o = e as { provider?: unknown; aud?: unknown; effective_at_ms?: unknown } | null;
@@ -162,6 +174,9 @@ export async function getConfig(env: Env, opts: { fresh?: boolean } = {}): Promi
       console_audiences: Array.isArray(raw?.console_audiences) ? raw.console_audiences.filter(isPair) : [],
       shared_clients: Array.isArray(raw?.shared_clients) ? raw.shared_clients.filter(isPair) : [],
       pending_shared_clients: parsePendingShared(raw),
+      // Only what the contract lists: an older contract has no such field and no exit client in force (fail closed).
+      exit_clients: Array.isArray((raw as { exit_clients?: unknown } | null)?.exit_clients) ? ((raw as { exit_clients: unknown[] }).exit_clients).filter(isPair) : [],
+      pending_exit_clients: parsePendingExit(raw),
       // Only an explicit true pauses (a v1 contract has no such field and is never paused).
       paused: raw?.paused === true,
       // Only an explicit false opens links (a pre-v3 contract has no such field: fail closed).
@@ -223,6 +238,19 @@ export function effectiveSharedClients(config: ConfigView, now: number = Date.no
   }
   return out;
 }
+
+/** Exit clients in force at `now`: the listed ones plus pending additions that matured since the (cached) read. */
+export function effectiveExitClients(config: ConfigView, now: number = Date.now()): [string, string][] {
+  const out = [...config.exit_clients];
+  for (const p of config.pending_exit_clients) {
+    if (p.effective_at_ms <= now && !out.some(([a, b]) => a === p.client[0] && b === p.client[1])) out.push(p.client);
+  }
+  return out;
+}
+
+/** An exit client in force (D468). Partner logins never reach this: `checkClientScope` stays closed to it. */
+export const isExitClient = (config: ConfigView, provider: string, aud: string, now: number = Date.now()): boolean =>
+  effectiveExitClients(config, now).some(([p, a]) => p === provider && a === aud);
 
 export const isSharedClient = (config: ConfigView, provider: string, aud: string, now: number = Date.now()): boolean =>
   effectiveSharedClients(config, now).some(([p, a]) => p === provider && a === aud);

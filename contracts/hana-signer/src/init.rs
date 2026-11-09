@@ -83,6 +83,9 @@ impl HanaSigner {
             opened: LookupSet::new(StorageKey::Opened),
             unrecorded_wallets: false,
             link_counter: crate::link_counter::LinkCounter::new(),
+            exit_clients: vec![],
+            pending_exit_clients: vec![],
+            exit_window: crate::exit::ExitWindow::default(),
         };
         for public_key in updater_keys {
             this.install_updater_key(public_key).detach();

@@ -12,7 +12,8 @@ use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{env, ext_contract, near, Gas, NearToken, Promise, PromiseOrValue};
 use schemars::JsonSchema;
 
-use crate::{oidc, HanaSigner, HanaSignerExt};
+use crate::exit::{MAX_EXIT_SESSION_MS, MAX_EXIT_USES};
+use crate::{events, oidc, HanaSigner, HanaSignerExt};
 
 /// What the NEAR MPC charges per CKD request.
 const MPC_FEE: NearToken = NearToken::from_yoctonear(1);
@@ -356,6 +357,18 @@ impl HanaSigner {
             .request_app_private_key(CkdRequestArgs { derivation_path: path, app_public_key: CkdAppPublicKey::AppPublicKeyPV { pk1, pk2 }, domain_id: self.ckd_domain_id })
     }
 
+    /// `Some(scope_id)` when `(provider, aud)` is an exit client in force now and the scope exists (its `clients` and
+    /// `allow_shared` don't matter, D468); `None` when it isn't an exit client (then `session_scope` decides). Private
+    /// and called only from `open_session`: an exit token must never pass the link methods or owner auth.
+    fn exit_scope(&self, provider: &str, aud: &str, scope_id: &str) -> Option<String> {
+        let client = (provider.to_string(), aud.to_string());
+        if !self.exit_clients_at(env::block_timestamp_ms()).contains(&client) {
+            return None;
+        }
+        let scope = self.scopes.get(scope_id).unwrap_or_else(|| env::panic_str("No such scope"));
+        Some(scope.id.clone())
+    }
+
     /// `create_session`, with an optional automatic link `(link_jwt, link_immediate)` made before the path is chosen.
     fn open_session(
         &mut self,
@@ -380,7 +393,16 @@ impl HanaSigner {
         }
 
         let token = self.verify_token(&jwt);
-        let scope_id = self.session_scope(&token.provider, &token.aud, &scope_id);
+        // An exit client (D468) reaches any existing scope, whatever its clients and allow_shared say. Decided here only:
+        // `session_scope`, which every link method and owner action shares, stays closed to exit tokens.
+        let exit = self.exit_scope(&token.provider, &token.aud, &scope_id);
+        let is_exit = exit.is_some();
+        let scope_id = exit.unwrap_or_else(|| self.session_scope(&token.provider, &token.aud, &scope_id));
+        if is_exit {
+            assert!(link.is_none(), "An exit session can't carry a link");
+            assert!(expires_at_ms <= now.saturating_add(MAX_EXIT_SESSION_MS), "Exit session expiry must be within 30 minutes");
+            assert!(max_uses <= MAX_EXIT_USES, "Exit session max_uses must be 1-3");
+        }
         let signer = env::current_account_id();
         let preimage = session_nonce_preimage(&SessionCommitment {
             signer: signer.as_str(),
@@ -401,6 +423,22 @@ impl HanaSigner {
             root = self.auto_link(&scope_id, x, root, &token, &link_jwt, immediate, &env::sha256_array(&preimage), now).path_root;
         }
         let (path_provider, path_sub) = self.path_identity(&root, (&token.provider, &token.sub));
+
+        if is_exit {
+            // One per session (D487). The identity key only, as `links.rs` requires: never a `sub`.
+            self.count_exit(now);
+            events::emit(
+                "exit_session_opened",
+                near_sdk::serde_json::json!({
+                    "scope_id": scope_id,
+                    "provider": token.provider,
+                    "aud": token.aud,
+                    "identity_key": crate::links::hex(&x),
+                    "expires_at_ms": expires_at_ms,
+                    "max_uses": max_uses,
+                }),
+            );
+        }
 
         let stored = StoredSession {
             path: format!("{}#{}#{}#{}", scope_id, path_provider, path_sub, key_index),

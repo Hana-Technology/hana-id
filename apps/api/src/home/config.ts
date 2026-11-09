@@ -1,10 +1,11 @@
 // GET /v1/home/config (docs/hana-home-spec.md "API changes"): what the /home page needs before a sign-in: the server
-// clock, the signer account the nonce commits to, and the Google client to sign in with. `AUTH_ORIGIN` only; no
+// clock, the signer account the nonce commits to, and the Google clients to sign in with (the shared client, and the exit
+// client Home falls back to where a scope's normal route is gone, D490). `AUTH_ORIGIN` only; no
 // identity (it can't have one yet), no secret in the answer. The D1 and chain state of apps is H2's.
 import { GOOGLE_PROVIDER } from '@hana-id/jwks';
 import type { Env } from '../env.ts';
 import { done, ipKey, limiter, newCtx, reject } from '../handlers.ts';
-import { effectiveSharedClients, getConfig } from '../views.ts';
+import { effectiveExitClients, effectiveSharedClients, getConfig } from '../views.ts';
 import { homeCors, isHomeOrigin } from './identity.ts';
 
 export const HOME_CONFIG_ENDPOINT = '/v1/home/config';
@@ -23,11 +24,15 @@ export async function handleHomeConfig(request: Request, env: Env, requestId: st
     return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
   }
   let shared: [string, string] | undefined;
+  let exit: [string, string] | undefined;
   try {
-    shared = effectiveSharedClients(await getConfig(env), now).find(([provider]) => provider === GOOGLE_PROVIDER);
+    const config = await getConfig(env);
+    shared = effectiveSharedClients(config, now).find(([provider]) => provider === GOOGLE_PROVIDER);
+    // An old contract has no exit clients: null, and Home has no exit route (fail closed).
+    exit = effectiveExitClients(config, now).find(([provider]) => provider === GOOGLE_PROVIDER);
   } catch {
     return reject(ctx, 502, 'near_unavailable', 'Could not read the shared clients');
   }
-  // The first shared Google client in force, as GET /v1/app's shared route picks it; null when none (an email user still signs in, H10).
-  return done(ctx, 200, { serverTimeMs: now, signer: env.SIGNER_ACCOUNT, sharedGoogleClientId: shared ? shared[1] : null });
+  // The first shared and exit Google clients in force, as GET /v1/app's shared route picks one; null when none (an email user still signs in, H10).
+  return done(ctx, 200, { serverTimeMs: now, signer: env.SIGNER_ACCOUNT, sharedGoogleClientId: shared ? shared[1] : null, exitGoogleClientId: exit ? exit[1] : null });
 }

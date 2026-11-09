@@ -18,6 +18,9 @@
 //!   sessions in any scope with `allow_shared`, the scope being the one the session nonce commits to. A client is
 //!   never both shared and a scope client. Adding a shared client is delayed by `change_delay_ms`.
 //! - Every nonce commits to `env::current_account_id()`, so tokens can't be replayed across deployments.
+//! - Exit clients (`exit.rs`, D468): Hana Home's own login clients; their tokens open sessions in any registered scope,
+//!   whatever its `clients` and `allow_shared` say, with short limits and an alert-only counter. Adding one waits
+//!   `governance_delay_ms`; removing one is immediate and retires it for good.
 //! - Governance (`governance.rs`, `issuers.rs`, `docs/governance-spec.md`): an issuer key enters the active set only
 //!   after `issuer_key_delay_ms` or a watchdog's confirmation; upgrades, owner transfers and surplus withdrawals wait
 //!   `governance_delay_ms`; the owner or a watchdog can pause every token path, and only the owner unpauses.
@@ -25,6 +28,7 @@
 //! The exact JSON interface and byte layouts are in `docs/contract-interface.md`.
 
 mod events;
+mod exit;
 mod governance;
 mod init;
 mod issuers;
@@ -44,6 +48,7 @@ pub use governance::{
     GovernanceView, PendingOwner, PendingUpgrade, PendingUpgradeView, PendingWithdrawal, Watchdog, MAX_GOVERNANCE_DELAY_MS, MAX_ISSUER_KEY_DELAY_MS,
     MAX_UPDATER_ALLOWANCE, MAX_UPDATER_KEYS, MAX_WATCHDOGS, MIGRATE_GAS, SIGNER_RESERVE, STATE_VERSION, UPDATER_METHODS,
 };
+pub use exit::{ExitWindow, MAX_EXIT_CLIENTS, MAX_EXIT_SESSION_MS, MAX_EXIT_USES};
 pub use issuers::{Issuer, IssuerKeyView, IssuerView, KeyChangeView, KeyOp, PendingKeyChange, RsaKey, MAX_PENDING_KEY_CHANGES};
 pub use links::{Account, AccountView, IdentityRef, IdentityView, Member, MemberRecord, MemberView, MAX_MEMBERS, MAX_UNLINKED};
 pub use registry::{Change, Owner, OwnerAuth, PendingChange, RemovedClient, Scope};
@@ -138,11 +143,19 @@ pub struct ConfigView {
     /// Links are refused until the owner accepts the wallets opened before v3 (`accept_unrecorded_wallets`; only after a
     /// migration from pre-v3 state).
     pub unrecorded_wallets: bool,
+    /// Exit clients in force now (matured pending additions included). Their tokens open sessions in any registered
+    /// scope (D468, `exit.rs`).
+    pub exit_clients: Vec<(String, String)>,
+    /// Exit clients not yet in force.
+    pub pending_exit_clients: Vec<PendingSharedClient>,
+    /// Exit sessions opened this UTC hour and the hour before it (alert only, never refuses, D487).
+    pub exit_window: ExitWindow,
 }
 
-/// Contract state, layout version 3 (`state_version`). The fields before `state_version` are the v1 layout, then the
-/// v2 fields (governance), then the v3 fields (email login), each unchanged by the next (`migrate.rs` keeps copies of
-/// v1 and v2 for the migrations). The next layout change ships a `migrate` that reads a copy of this exact struct.
+/// Contract state, layout version 4 (`state_version`). The fields before `state_version` are the v1 layout, then the
+/// v2 fields (governance), then the v3 fields (email login), then the v4 fields (the exit client), each unchanged by
+/// the next (`migrate.rs` keeps a copy of v3 for the migration). The next layout change ships a `migrate` that reads a
+/// copy of this exact struct.
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
 pub struct HanaSigner {
@@ -242,6 +255,15 @@ pub struct HanaSigner {
     pub(crate) unrecorded_wallets: bool,
     /// New links counted per UTC hour, per scope and in total, with alarm thresholds (D200; never refuses).
     pub(crate) link_counter: link_counter::LinkCounter,
+
+    // ---- v4 (the exit client, docs/hana-home-h6-design.md) ----
+    /// (provider, aud) of Hana Home's exit clients in force. Read through `exit_clients_at`, which also counts matured
+    /// `pending_exit_clients`.
+    pub(crate) exit_clients: Vec<(String, String)>,
+    /// Exit-client additions waiting for `governance_delay_ms`.
+    pub(crate) pending_exit_clients: Vec<PendingSharedClient>,
+    /// Exit sessions opened per UTC hour: an alert-only counter (D487), never refuses.
+    pub(crate) exit_window: ExitWindow,
 }
 
 #[near]
@@ -257,7 +279,7 @@ impl HanaSigner {
     /// Replaces the console audiences (≤ 10). Audiences dropped from the list stop authorising OIDC owner actions at
     /// once; new ones count only after `change_delay_ms` (the delay in force now): a console audience's tokens act
     /// for OIDC owners, so a new one gets the same public window as a new shared client. Pending ones already in the
-    /// list keep their `effective_at_ms`.
+    /// list keep their `effective_at_ms`. An exit client (in force, pending or retired) can never be a console audience.
     pub fn set_console_audiences(&mut self, audiences: Vec<(String, String)>) {
         self.assert_owner();
         assert!(audiences.len() <= MAX_CONSOLE_AUDIENCES, "Too many console audiences");
@@ -265,6 +287,8 @@ impl HanaSigner {
             assert_provider(provider);
             assert_aud(aud);
             assert!(!audiences[..i].contains(&audiences[i]), "Duplicate console audience");
+            assert!(!self.is_exit_or_pending(&audiences[i]), "Client is an exit client");
+            assert!(self.removed_clients.get(&audiences[i]).is_none_or(|r| r.scope_id != registry::RETIRED_EXIT), "Client was an exit client and is retired");
         }
         let now = env::block_timestamp_ms();
         self.apply_matured_config(now);
@@ -316,6 +340,7 @@ impl HanaSigner {
     /// shared client Hana adds. A client can never be both shared and registered to a scope, and a client that a
     /// scope has a pending `AddClient` for (or that is quarantined after a `remove_client`) can't be made shared.
     /// A client dropped from the shared list is retired: it may return to the shared list but never join a scope.
+    /// An exit client (in force, pending or retired) can never be a shared client.
     pub fn set_shared_clients(&mut self, clients: Vec<(String, String)>) {
         self.assert_owner();
         assert!(clients.len() <= MAX_SHARED_CLIENTS, "Too many shared clients");
@@ -326,6 +351,7 @@ impl HanaSigner {
             assert_aud(&client.1);
             assert!(self.has_issuer(&client.0), "Unknown issuer");
             assert!(!clients[..i].contains(client), "Duplicate shared client");
+            assert!(!self.is_exit_or_pending(client), "Client is an exit client");
             assert!(!self.client_index.contains_key(client), "Client is already registered");
             // A retired shared client may come back to the shared list (it was Hana's); anything else quarantined may not.
             if self.removed_clients.get(client).is_none_or(|r| r.scope_id != registry::RETIRED_SHARED) {
@@ -400,6 +426,9 @@ impl HanaSigner {
             changes_unlock_floor_ms: self.changes_unlock_floor_ms,
             sessions_valid_from_ms: self.sessions_valid_from_ms,
             unrecorded_wallets: self.unrecorded_wallets,
+            exit_clients: self.exit_clients_at(now),
+            pending_exit_clients: self.pending_exit_clients.iter().filter(|p| now < p.effective_at_ms).cloned().collect(),
+            exit_window: self.exit_window.at(now),
         }
     }
 }
@@ -441,11 +470,23 @@ impl HanaSigner {
         self.shared_clients.contains(client) || self.pending_shared_clients.iter().any(|p| p.provider == client.0 && p.aud == client.1)
     }
 
-    /// Moves matured pending shared clients and console audiences into their lists and applies scheduled delay
+    /// Exit clients in force at `now`, in the same order rules as `shared_clients_at`.
+    pub(crate) fn exit_clients_at(&self, now: u64) -> Vec<(String, String)> {
+        in_force_at(&self.exit_clients, &self.pending_exit_clients, now)
+    }
+
+    /// Whether `client` is an exit client, in force or pending. Such a client can't be a scope client, a shared client or
+    /// a console audience: a pending exit client reserves it at once (`set_exit_clients`).
+    pub(crate) fn is_exit_or_pending(&self, client: &(String, String)) -> bool {
+        self.exit_clients.contains(client) || self.pending_exit_clients.iter().any(|p| p.provider == client.0 && p.aud == client.1)
+    }
+
+    /// Moves matured pending shared clients, console audiences and exit clients into their lists and applies scheduled delay
     /// decreases whose time has come. Changes nothing anyone can observe through views or checks.
     pub(crate) fn apply_matured_config(&mut self, now: u64) {
         fold_matured(&mut self.shared_clients, &mut self.pending_shared_clients, now);
         fold_matured(&mut self.console_audiences, &mut self.pending_console_audiences, now);
+        fold_matured(&mut self.exit_clients, &mut self.pending_exit_clients, now);
         for (value, pending) in [
             (&mut self.change_delay_ms, &mut self.pending_change_delay),
             (&mut self.issuer_key_delay_ms, &mut self.pending_issuer_key_delay),

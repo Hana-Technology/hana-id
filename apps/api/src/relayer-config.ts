@@ -70,6 +70,7 @@ export const GOVERNANCE_METHODS = [
   'set_issuer',
   'set_console_audiences',
   'set_shared_clients',
+  'set_exit_clients',
   'set_sponsors',
   'set_change_delay_ms',
   'enable_public_registration',

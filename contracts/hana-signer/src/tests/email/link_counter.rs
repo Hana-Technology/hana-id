@@ -244,14 +244,15 @@ fn raising_a_link_threshold_waits_the_governance_delay_lowering_applies_at_once(
 }
 
 #[test]
-fn migrate_starts_the_link_counter_empty_with_the_default_thresholds() {
-    ctx_with_storage(ME, NOW_MS, v2_storage());
+fn migrate_keeps_the_link_counter_as_the_v3_code_left_it() {
+    // The v3 fixture's counter: one link, thresholds lowered to 7/70 with a pending raise to 9/70.
+    ctx_with_storage(ME, NOW_MS, v3_storage());
     let c = HanaSigner::migrate();
     let stats = link_stats(&c);
     assert_eq!(
         (stats["thresholds"].clone(), stats["pending_thresholds"].clone(), stats["links_total"].clone(), stats["previous"].clone()),
-        (json!({"per_scope_per_hour": 50, "total_per_hour": 500}), Value::Null, json!(0), Value::Null)
+        (json!({"per_scope_per_hour": 7, "total_per_hour": 70}), json!({"per_scope_per_hour": 9, "total_per_hour": 70, "effective_at_ms": NOW_MS + GOV_DELAY_MS}), json!(1), Value::Null)
     );
-    assert_eq!(stats["current"], json!({"window_start_ms": window_start(NOW_MS), "total": 0, "total_threshold_reached": false, "flagged_scopes": []}));
-    assert_eq!((c.link_counter.gc_head, c.link_counter.gc_tail), (0, 0));
+    assert_eq!(stats["current"], json!({"window_start_ms": window_start(NOW_MS), "total": 1, "total_threshold_reached": false, "flagged_scopes": []}));
+    assert_eq!(c.link_counter.gc_tail, 1);
 }

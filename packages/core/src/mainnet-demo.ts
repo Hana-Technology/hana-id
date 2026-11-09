@@ -165,6 +165,10 @@ export interface DemoSwap {
   readonly toChain: DemoBridgeAsset['chainName'];
   /** On the destination chain: StrKey G… or EIP-55 0x…. */
   readonly recipient: string;
+  /** The intent's minimum output as a decimal number ("1.234"), for the popup to show. Never checked against a value. */
+  readonly minimumOutput: string;
+  /** The symbol `minimumOutput` is in. */
+  readonly outputSymbol: string;
 }
 
 /** What a deposit's hub calls do beyond spending the deposit: a bridge or a swap, each with its checked recipient. */
@@ -313,17 +317,22 @@ export function checkSodaxHubCalls(dataHex: string, hubAsset: string | undefined
   return { swap: checkSwapIntent(intent.items, spoke, recipients) };
 }
 
-/** The hub assets of the assets the demo lists on one chain: what a swap's output may be. */
-function demoHubAssets(chain: DemoBridgeAsset['chain']): string[] {
+/**
+ * The asset the demo lists on `chain` whose Sodax hub asset is `hubAsset`, if any: what a swap's output may be. Its
+ * `decimals` are also the units of an intent's minimum output, which Sodax's SDK passes through unscaled from a quote in
+ * the destination token's smallest unit. A hub asset's own `decimals()` on Sonic answers 0, so it can't be used for this.
+ */
+function demoOutputAsset(chain: DemoBridgeAsset['chain'], hubAsset: string): DemoAsset | undefined {
   const listed: DemoAsset[] = chain === 'evm' ? Object.values(MAINNET_DEMO.evm).flatMap((c) => [c.native, ...Object.values(c.tokens)]) : [MAINNET_DEMO.stellar.native, ...Object.values(MAINNET_DEMO.stellar.assets)];
-  return listed.flatMap((a) => (a.sodaxHubAsset ? [a.sodaxHubAsset] : []));
+  return listed.find((a) => a.sodaxHubAsset !== undefined && eq(a.sodaxHubAsset, hubAsset));
 }
 
 /**
  * A swap's intent, as `constructCreateIntentData` encodes it with no partner fee and no delivery hook: created by the
  * signing address's own hub wallet, from the signing address on the deposit's chain, for a listed asset on a demo chain,
- * delivered to the user's own wallet there, with no named solver and no intent data. The intent's id, minimum output,
- * deadline and partial-fill flag are the swap's terms and aren't checked here.
+ * delivered to the user's own wallet there, with no named solver and no intent data, not partly fillable (so the shown
+ * minimum is a total), and with a deadline that exists and is at most an hour away (the demo can't sign a cancel, so an
+ * intent must expire). The intent's id and minimum output aren't checked; the minimum output is returned to be shown.
  */
 function checkSwapIntent(items: readonly AbiValue[], spoke: DemoSpokeDeposit, recipients: DemoBridgeRecipients | undefined): DemoSwap {
   if (!recipients) return unknownCall('a swap whose recipient can’t be checked');
@@ -336,10 +345,15 @@ function checkSwapIntent(items: readonly AbiValue[], spoke: DemoSpokeDeposit, re
   const dst = sides.find((a) => BigInt(a.relayChainId) === dstChain);
   if (!dst) return wrongDestination('a swap to a chain the demo doesn’t list');
   const recipient = ownRecipient(bytesOf(items[11]), dst, recipients);
-  if (!demoHubAssets(dst.chain).some((h) => eq(h, addressOf(items[3])))) unknownCall('a swap into an asset the demo doesn’t list');
+  const output = demoOutputAsset(dst.chain, addressOf(items[3]));
+  if (!output) return unknownCall('a swap into an asset the demo doesn’t list');
   if (!eq(addressOf(items[12]), ZERO_ADDRESS)) unknownCall('a swap only a named solver can fill');
   if (from0xHex(bytesOf(items[13])).length !== 0) unknownCall('a swap carrying a fee or delivery data');
-  return { toChain: dst.chainName, recipient };
+  const partial = items[7];
+  if (!partial || partial.kind !== 'bool' || partial.value) unknownCall('a swap that can be partly filled');
+  const deadline = uintOf(items[6]);
+  if (deadline === 0n || deadline > BigInt(Math.floor(spoke.nowMs / 1000) + SWAP_DEADLINE_LIMIT_SECONDS)) unknownCall('a swap with no deadline, or one more than an hour away');
+  return { toChain: dst.chainName, recipient, minimumOutput: decimalAmount(uintOf(items[5]), output.decimals), outputSymbol: output.symbol };
 }
 
 /** One hub call of the bridge: on exactly `target`, with no value, its calldata decoded as exactly `what`. */
@@ -391,7 +405,7 @@ function checkBridgeCalls(items: readonly AbiValue[], hubAsset: string, amount: 
 /** The first 12 bytes of an SCV_ADDRESS holding an ed25519 account: type 18, account, public key. */
 const STELLAR_RECIPIENT_PREFIX = '0x000000120000000000000000';
 
-/** A Sodax deposit's spoke side, for the hub wallet check: its chain, its `to` and the address signing it. */
+/** A Sodax deposit's spoke side, for the hub wallet and intent checks: its chain, its `to`, its signer and the time. */
 export interface DemoSpokeDeposit {
   /** The chain the deposit is made on: which relay id and address encoding the hub wallet derives from. */
   readonly chain: DemoBridgeAsset['chain'];
@@ -399,7 +413,12 @@ export interface DemoSpokeDeposit {
   readonly to: string;
   /** The signing address on the source chain. */
   readonly signer: string;
+  /** The server-corrected time, which a swap's deadline is compared with. */
+  readonly nowMs: number;
 }
+
+/** How far ahead a swap's deadline may be, in seconds: Sodax's SDK defaults to 5 minutes and Hana's sample uses 10. */
+const SWAP_DEADLINE_LIMIT_SECONDS = 3_600;
 
 /** The init-code hash of the CREATE3 proxy the factory deploys through (`67363d3d37363d34f03d5260086018f3`). */
 const CREATE3_PROXY_INITCODE_HASH = '0x21c35dbe1b344a2488cf3321d6ce542f8e9f305544ff09e4993a62319a497c1f';
@@ -468,12 +487,14 @@ interface BridgeContext {
   readonly recipients: DemoBridgeRecipients | undefined;
   /** The request's signing address, which every Sodax deposit's hub wallet must derive from. */
   readonly signer: string;
+  /** The server-corrected time. */
+  readonly nowMs: number;
   found: DemoRoute | null;
 }
 
 /** Checks a deposit's hub calls; at most one bridge or swap per request, so the popup can describe all of it. */
 function checkHubCalls(ctx: BridgeContext, chain: DemoSpokeDeposit['chain'], dataHex: string, hubAsset: string | undefined, amount: bigint, spokeTo: string): void {
-  const route = checkSodaxHubCalls(dataHex, hubAsset, amount, ctx.recipients, { chain, to: spokeTo, signer: ctx.signer });
+  const route = checkSodaxHubCalls(dataHex, hubAsset, amount, ctx.recipients, { chain, to: spokeTo, signer: ctx.signer, nowMs: ctx.nowMs });
   if (!route) return;
   if (ctx.found) unknownCall('more than one bridge or swap in a request');
   ctx.found = route;
@@ -668,7 +689,7 @@ export function assessMainnetDemo(subject: ApprovalSubject, nowMs: number, price
   // With the whole table in use nothing is asked of the request first, as before live prices.
   if (expired && MAINNET_DEMO_ASSETS.every((a) => prices.assets[a].source === 'fixed')) return stale;
   const value: Valuer = (amount, asset) => usdOf(amount, pricedDemoAsset(asset, prices));
-  const ctx: BridgeContext = { recipients, signer: subject.address, found: null };
+  const ctx: BridgeContext = { recipients, signer: subject.address, nowMs, found: null };
   let movements: DemoMovement[];
   try {
     if (decoded.kind === 'evm_tx') movements = assessEvm(decoded.tx, MAINNET_DEMO.evm[decoded.chainId] as DemoEvmChain, value, ctx);

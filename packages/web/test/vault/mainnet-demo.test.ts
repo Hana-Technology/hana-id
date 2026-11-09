@@ -192,6 +192,15 @@ describe('the mainnet demo in the vault', () => {
     });
   });
 
+  it('a Sodax swap with no deadline: refused before any popup, as a call Hana can’t value (D492)', async () => {
+    const s = await session();
+    const reply = await s.t.request('eth_signTransaction', { tx: send({ to: SODAX_ASSET_MANAGER_BASE, value: '0x0', data: sodaxSwapDeposit(s.stellar, s.evm, { deadline: 0n }) }) });
+    expect(reply.error).toMatchObject({ code: 4100, data: { reason: 'mainnet_demo_unknown_call', chain: 'evm', chainId: 8453 } });
+    await sleepReal(20);
+    expect(approvePopups(s.t)).toHaveLength(0);
+    expect(demoEvents(s.t)).toHaveLength(0);
+  });
+
   it('on: a USDC transfer under the cap is allowed; other mainnets and typed data stay refused', async () => {
     const s = await session();
     const usdc = s.t.request('eth_signTransaction', { tx: send({ to: USDC_BASE, value: '0x0', data: usdcTransfer(EVM_VAULT, 5_000_000n) }) });

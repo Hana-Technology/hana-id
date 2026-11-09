@@ -928,7 +928,7 @@ the wallet's balance. Partner apps can't get it, and in production it doesn't ex
   | Base | any transaction | its maximum fee (`gas × maxFeePerGas`), in ETH |
   | Base | plain send (`to`, no calldata) | the `value` in ETH |
   | Base | ERC-20 `transfer`, `transferFrom` or `approve` of USDC or EURC | the amount (an approval counts as what it lets the spender take: an unlimited approval is refused) |
-  | Base | Sodax asset-manager deposit, native or USDC/EURC, with Sodax's own hub calls (a swap's, delivered to the user's own wallet on the destination chain, into ETH, USDC or EURC on Base or XLM, USDC or EURC on Stellar, with no partner fee, delivery hook or named solver), no hub calls, or Sodax's USDC ⇄ USDC bridge to Stellar (to the user's own Stellar wallet). Every deposit must go to the signing address's own Sodax hub wallet, which the Sodax SDK does for you | the deposited amount |
+  | Base | Sodax asset-manager deposit, native or USDC/EURC, with Sodax's own hub calls (a swap's, delivered to the user's own wallet on the destination chain, into ETH, USDC or EURC on Base or XLM, USDC or EURC on Stellar, with no partner fee, delivery hook or named solver, not partly fillable, and with a deadline at most an hour away, so no limit orders), no hub calls, or Sodax's USDC ⇄ USDC bridge to Stellar (to the user's own Stellar wallet). Every deposit must go to the signing address's own Sodax hub wallet, which the Sodax SDK does for you | the deposited amount |
   | Stellar public network | any transaction | its fee, in XLM |
   | Stellar public network | `payment` of XLM, Circle USDC or EURC; `createAccount` | the amount |
   | Stellar public network | `changeTrust` for a listed asset | nothing (it moves no funds) |

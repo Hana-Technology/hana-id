@@ -355,6 +355,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
       d.h('p', { class: 'danger' }, value),
       assessed.ok && assessed.bridge ? bridgeLine(assessed.bridge) : null,
       assessed.ok && assessed.swap ? swapLine(assessed.swap) : null,
+      assessed.ok && assessed.swap ? d.h('p', { class: 'demo-swap-minimum' }, `Minimum you receive: ${assessed.swap.minimumOutput} ${assessed.swap.outputSymbol}`) : null,
       d.h('p', { class: 'muted' }, MAINNET_DEMO_WHY),
       balance,
     );

@@ -209,7 +209,7 @@ describe('POST /v1/sessions: ID token verification', () => {
     expect(near.sent).toHaveLength(2);
   });
 
-  it('a copy another isolate would relay is refused by the session’s relayer object: 409 session_exists, one transaction (D454)', async () => {
+  it('a copy another isolate would relay is refused by the session’s relayer object: 409 session_exists, one transaction (D455)', async () => {
     const { app, aud, near, post } = await setup();
     const b = await sessionBody(app.scope, aud);
     expect((await post(b)).status).toBe(200);

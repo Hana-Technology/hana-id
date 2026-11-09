@@ -125,9 +125,9 @@ export interface DeployOptions {
   upgrade: boolean;
   /** Skip the wasm build and use the existing file (its hash is then known when planning). */
   skipBuild: boolean;
-  /** The wasm was named with --wasm (not whatever is in target/). Outside dev envs a new code hash needs it (D456). */
+  /** The wasm was named with --wasm (not whatever is in target/). Outside dev envs a new code hash needs it (D457). */
   wasmGiven?: boolean;
-  /** Code hashes published in CONTRACT_RELEASES (packages/console-core): outside dev envs a --wasm file must be one (D456's note). */
+  /** Code hashes published in CONTRACT_RELEASES (packages/console-core): outside dev envs a --wasm file must be one (D457's note). */
   publishedCodeHashes?: readonly string[];
   /** Owner transfer to the council DAO: propose_owner(DAO), then (once due) the DAO's accept_owner. */
   transferOwner: boolean;
@@ -488,7 +488,7 @@ export function buildDeployPlan(m: Manifest, o: DeployObserved, opts: DeployOpti
     const reuse = status.filter(([, st]) => st.kind === 'absent').map(([k]) => k);
     const bad = status.flatMap(([k, st]) => (st.kind === 'mismatch' ? [[k, st.reason] as const] : []));
     // A key on the relayer with another permission (a previous signer, an older method list, any-method, too large an
-    // allowance) can't be edited: it is swapped in this step's one transaction (DeleteKey, AddKey, D455's note), so no
+    // allowance) can't be edited: it is swapped in this step's one transaction (DeleteKey, AddKey, D456's note), so no
     // key is missing in between. A full-access key is never deleted for you: that one stays a blocker.
     const isFull = (k: string) => o.relayerAccessKeys.find((e) => e.public_key === k)?.access_key.permission === 'FullAccess';
     const replace = bad.filter(([k]) => !isFull(k)).map(([k]) => k);
@@ -530,7 +530,7 @@ export function buildDeployPlan(m: Manifest, o: DeployObserved, opts: DeployOpti
     }
   }
 
-  // --- full-access keys nobody here knows of (security sweep OPER-7, D456) ---
+  // --- full-access keys nobody here knows of (security sweep OPER-7, D457) ---
   const strayFull = (role: Role, keys: readonly AccessKeyListEntry[]): void => {
     const full = keys.filter((k) => k.access_key.permission === 'FullAccess').map((k) => k.public_key);
     const cred = o.credentials[role];
@@ -714,7 +714,7 @@ export function buildDeployPlan(m: Manifest, o: DeployObserved, opts: DeployOpti
     steps.push({ kind: 'register-global', owners: [{ Near: { account_id: m.owner } }], clients, allowShared: false });
   }
 
-  // Outside dev envs new code comes only from a file named with --wasm whose hash was published first (D86, D456): never
+  // Outside dev envs new code comes only from a file named with --wasm whose hash was published first (D86, D457): never
   // this script's non-reproducible build, nor whatever is in target/. Executing a proposed upgrade needs neither: its
   // hash is checked. "Published" means listed in CONTRACT_RELEASES: this can't prove the file was built reproducibly.
   const proposing = steps.some((s) => s.kind === 'propose-upgrade' || s.kind === 'deploy');

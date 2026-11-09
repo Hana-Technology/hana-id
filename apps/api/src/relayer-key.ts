@@ -136,7 +136,7 @@ export class RelayerKey extends DurableObject<Env> {
   private served = 0;
   private inflight = 0;
   /**
-   * Requests signed once (D454, security.md (g)). Every copy of one lands here, from any isolate (relayer-pool.ts
+   * Requests signed once (D455, security.md (g)). Every copy of one lands here, from any isolate (relayer-pool.ts
    * claimKeyIndex; a copy that failed here moves on to the next key, the same one for every copy): held while the
    * original is in flight, then refused once it succeeded (a copy would only fail on chain, at ~2.2 Tgas), and relayed
    * when it failed (it may still succeed). An isolate's own holds and pre-checks come first (session-use.ts); this

@@ -514,7 +514,7 @@ describe('buildDeployPlan', () => {
     });
   });
 
-  describe('full-access keys nobody knows of (OPER-7, D456)', () => {
+  describe('full-access keys nobody knows of (OPER-7, D457)', () => {
     const staging = { ...m, ...PROD_DELAYS, name: 'staging', allowSignerFullAccessKey: undefined };
     const extra = (o: Partial<DeployObserved> = {}) => deployed({ relayerAccessKeys: [...deployed().relayerAccessKeys, full('ed25519:X')], ...o });
 
@@ -555,7 +555,7 @@ describe('buildDeployPlan', () => {
     });
   });
 
-  describe('new code outside dev envs comes only from a published build named with --wasm (OPER-7, D86, D456)', () => {
+  describe('new code outside dev envs comes only from a published build named with --wasm (OPER-7, D86, D457)', () => {
     const staging = { ...m, ...PROD_DELAYS, name: 'staging', allowSignerFullAccessKey: undefined };
     const noFull = { signerAccessKeys: [fc('ed25519:U', m.signer, UPDATER)] };
     const refused = 'takes new code only from a published build';

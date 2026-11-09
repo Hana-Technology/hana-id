@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The `gate` job of .github/workflows/publish-sdk.yml (security sweep OPER-4, D451): whether this run may build and
+// The `gate` job of .github/workflows/publish-sdk.yml (security sweep OPER-4, D452): whether this run may build and
 // publish. It runs in no GitHub environment, so `secrets.NPM_TOKEN` here can only be a repository or organisation
 // secret, which every branch's workflow could read: that fails the run. The token belongs to the `npm-publish`
 // environment, whose deployment-branch policy (main only) GitHub enforces before the publish job gets it, however the

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// `pnpm deps:audit`: known-vulnerability check of the dependencies (security sweep OPER-9, D453): `pnpm audit --prod`
+// `pnpm deps:audit`: known-vulnerability check of the dependencies (security sweep OPER-9, D454): `pnpm audit --prod`
 // over the workspace and `cargo audit` over each Cargo.lock. Fails on any advisory not triaged in
 // scripts/dep-audit-allow.json, or triaged with a passed `reviewBy`, so an exception is looked at again rather than
 // kept for good. Runs in the CI job `audit` and in `pnpm verify --full`; needs the network, and cargo-audit

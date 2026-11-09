@@ -226,7 +226,7 @@ describe('POST /v1/login', () => {
     expect(near.sent).toHaveLength(1);
   });
 
-  it('a copy another isolate would relay is refused by the session’s relayer object: 409 session_exists, one transaction (D454)', async () => {
+  it('a copy another isolate would relay is refused by the session’s relayer object: 409 session_exists, one transaction (D455)', async () => {
     const { app, aud, near } = await setup();
     const req = await loginBody(app.scope, aud);
     expect((await login(app, req)).status).toBe(200);

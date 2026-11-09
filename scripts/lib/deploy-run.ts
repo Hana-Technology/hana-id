@@ -316,7 +316,7 @@ async function execute(c: Ctx, step: DeployStep, creds: Partial<Record<Role, Loa
       if (fresh.length) writePoolKeys(m.name, step.pool, [...existing, ...fresh], c.secretsRoot);
       const toAdd = [...existing.filter((k) => step.reuse.includes(k.getPublicKey().toString()) || step.replace.includes(k.getPublicKey().toString())), ...fresh];
       const access = actionCreators.functionCallAccessKey(m.signer, step.methods, step.allowanceYocto);
-      // One transaction: a replaced key is deleted and added back with the right permission atomically (D455's note), so
+      // One transaction: a replaced key is deleted and added back with the right permission atomically (D456's note), so
       // the pool never has a gap, and a failed transaction changes nothing.
       await send(m.relayer, [...step.replace.map((pk) => actionCreators.deleteKey(PublicKey.fromString(pk))), ...toAdd.map((k) => actionCreators.addKey(k.getPublicKey(), access))]);
       for (const pk of step.replace) log(`    replaced ${pk} (nonce restarts on chain: one relay_retry per replaced key is expected)`);

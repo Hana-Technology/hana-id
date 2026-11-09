@@ -440,7 +440,7 @@ describe('POST /v1/derive and /v1/sessions/revoke', () => {
     expect(usage(app.id)).toEqual(['session ok', 'derive ok', 'derive ok', 'revoke ok']);
   });
 
-  it('a session whose key lost its allowance (D454): derive and revoke go through the next key', async () => {
+  it('a session whose key lost its allowance (D455): derive and revoke go through the next key', async () => {
     const { app, near, spk } = await withSession();
     const count = relayerKeyCount(env);
     const first = await claimKeyIndex('session', env.RELAYER_KEYS, spk, count);

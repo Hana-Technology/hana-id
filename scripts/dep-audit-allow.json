@@ -17,7 +17,7 @@
   "GHSA-mrhx-c7xc-m3w5": {
     "where": ["npm"],
     "reviewBy": "2026-12-31",
-    "reason": "zod 3.25.76 (apps/console, packages/console-core, packages/env), fixed only in 4.6.6, a major upgrade (D450). packages/env validates operator manifests; the console Worker reads bodies through a size cap (apps/console/src/http.ts payload_too_large). Worst case: one isolate restarts."
+    "reason": "zod 3.25.76 (apps/console, packages/console-core, packages/env), fixed only in 4.6.6, a major upgrade (D451). packages/env validates operator manifests; the console Worker reads bodies through a size cap (apps/console/src/http.ts payload_too_large). Worst case: one isolate restarts."
   },
   "RUSTSEC-2026-0009": {
     "where": ["contracts/hana-signer/Cargo.lock", "contracts/mock-mpc/Cargo.lock"],

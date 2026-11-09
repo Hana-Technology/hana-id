@@ -361,7 +361,7 @@ Durable Object: the session pool (`RELAYER_KEYS`, objects `relayer-key-<index>`)
 (`OWNER_RELAYER_KEYS`, objects `owner-relayer-key-<index>`). Abuse of `/v1/owner-actions` can only drain the owner
 pool, never stop logins. `relayer-pool.ts` picks a key of the pool round-robin (a session-signed request: the key an
 HMAC of its session key selects, so every copy meets at one object and a client can't choose it, and the next key once
-if it did not execute on that one, D454) and calls its `RelayerKey` Durable Object; an object serves one pool and key
+if it did not execute on that one, D455) and calls its `RelayerKey` Durable Object; an object serves one pool and key
 only.
 Inside the object a promise-chain mutex covers only *next nonce → sign → reserve → dispatch `send_tx`*; the outcome
 (`send_tx` / `tx` with `wait_until: EXECUTED_OPTIMISTIC`, `tx` polled every 400 ms for up to 60 s) is awaited outside

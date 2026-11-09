@@ -71,7 +71,7 @@ const inFlight = new Map<string, Promise<void>>();
  * the first to finish rather than being relayed beside it, since at most one of them can succeed; it is then judged
  * on the first one's outcome (counted in the session cache after a successful derive, or the session read again
  * after a failure). Other counters don't wait. Copies arriving in other isolates meet at the session's relayer key
- * object instead, which relays one (RelayerKey `claims`, D454).
+ * object instead, which relays one (RelayerKey `claims`, D455).
  */
 export async function claimCounter(sessionPublicKey: number[], counter: number): Promise<() => void> {
   const key = `${hex(new Uint8Array(sessionPublicKey))}:${counter}`;

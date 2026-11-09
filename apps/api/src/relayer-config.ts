@@ -12,7 +12,7 @@
  * - `owner` (OWNER_RELAYER_KEYS, small allowance): /v1/owner-actions. Abuse of that endpoint can only drain this pool,
  *   never stop logins.
  * The allowlists match the access keys' `method_names` (scripts/deploy-contract.ts); the Durable Object refuses
- * anything else even if a key would allow it. Each list holds only what an endpoint relays (D455), so a leaked key can
+ * anything else even if a key would allow it. Each list holds only what an endpoint relays (D456), so a leaked key can
  * spend its allowance on nothing else.
  */
 export const POOL_METHODS = {
@@ -21,7 +21,7 @@ export const POOL_METHODS = {
 } as const;
 
 /**
- * Open methods of hana-signer no endpoint relays (D455): anyone may call them from an account of their own, so a pool
+ * Open methods of hana-signer no endpoint relays (D456): anyone may call them from an account of their own, so a pool
  * key needs none of them. `prune_sessions` and `apply_pending_config` are maintenance; `register_scope` needs public
  * registration, which is off (Hana registers scopes with `admin_register_scope`). Listed so the allowlist tests prove it.
  */
@@ -97,7 +97,7 @@ export const POOL_SECRET: Readonly<Record<Pool, 'RELAYER_KEYS' | 'OWNER_RELAYER_
 /** Durable Object name of a pool's key (session keys keep their batch A names). */
 export const relayerKeyName = (pool: Pool, index: number): string => (pool === 'session' ? `relayer-key-${index}` : `owner-relayer-key-${index}`);
 
-/** The code of a copy of a request its relayer key object already relayed (RelayerKey `claims`, D454). */
+/** The code of a copy of a request its relayer key object already relayed (RelayerKey `claims`, D455). */
 export const ALREADY_RELAYED = 'already_relayed';
 
 export const isPool = (v: unknown): v is Pool => v === 'session' || v === 'owner';

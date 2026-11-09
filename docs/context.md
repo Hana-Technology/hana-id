@@ -76,7 +76,7 @@ with a key share the API holds (`POST /v1/vault/unlock`): no chain call. Partner
   security notes in `docs/contract-interface.md`).
 - **Two relayer key pools.** Session pool (`RELAYER_KEYS`: create_session, derive_key, revoke_session;
   batch B adds create_session_and_derive and later drops one of the two create methods, see "Relayer allowlists" in
-  `docs/batch-b-spec.md`) and owner pool (`OWNER_RELAYER_KEYS`, small allowance: owner actions; since D455 neither pool holds a method no endpoint relays), separate keys and Durable Objects, so abuse of `/v1/owner-actions` can't stop logins.
+  `docs/batch-b-spec.md`) and owner pool (`OWNER_RELAYER_KEYS`, small allowance: owner actions; since D456 neither pool holds a method no endpoint relays), separate keys and Durable Objects, so abuse of `/v1/owner-actions` can't stop logins.
   deploy-contract treats a key with the wrong receiver, methods, an empty method list or an unlimited/too-large
   allowance as a blocker. Gas is per method (`apps/api/src/gas.ts`, to measure on testnet).
 - **Layouts.** Every nonce commits to the signer account id (`env::current_account_id()`), so tokens can't be
@@ -368,7 +368,7 @@ Every run, one-transaction and two-transaction, gave the same Stellar and EVM ad
   contract's counter and `max_uses` rules (`apps/api/src/session-use.ts`) and refuses such derives and revokes
   off-chain (`409 counter_used` / `session_exhausted` / `counter_out_of_range`), confirming on a fresh `get_session`
   before refusing on a cached view; a request that might succeed (counter ahead of `used + 1`) is still relayed.
-  Same-counter copies racing in different isolates stop at the session's relayer object since D454.
+  Same-counter copies racing in different isolates stop at the session's relayer object since D455.
 - Attached gas defaults (`apps/api/src/gas.ts`: create_session 50, derive_key 60, revoke 20) have ample headroom;
   left unchanged.
 

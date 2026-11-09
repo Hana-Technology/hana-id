@@ -32,7 +32,7 @@ export function pickKeyIndex(count: number, pool: Pool = 'session'): number {
 }
 
 /**
- * What makes a session-signed request one of a kind (D454): the session's key, its `expiresAtMs` (a key may open a new
+ * What makes a session-signed request one of a kind (D455): the session's key, its `expiresAtMs` (a key may open a new
  * session after one expires, and its counters start again) and the counter (0 for create_session, 1 for a login).
  */
 export interface RelayClaim {
@@ -43,7 +43,7 @@ export interface RelayClaim {
 
 export const claimId = (c: RelayClaim): string => `${hex(new Uint8Array(c.sessionPublicKey))}:${c.expiresAtMs}:${c.counter}`;
 
-/** Domain separation for the routing HMAC: nothing else computes an HMAC under the pool secret (D454's note). */
+/** Domain separation for the routing HMAC: nothing else computes an HMAC under the pool secret (D455's note). */
 const CLAIM_ROUTE_LABEL = 'hana-id-relayer-route-v1';
 const routeKeys: Partial<Record<Pool, { from: string; key: Promise<CryptoKey> }>> = {};
 
@@ -58,7 +58,7 @@ function routeKey(pool: Pool, secret: string): Promise<CryptoKey> {
 
 /**
  * The key a session's requests go through: HMAC-SHA256 under the pool's secret (`env[POOL_SECRET[pool]]`, the value
- * every isolate of a deploy shares) of the session key, modulo the pool, D454. Every copy of a request reaches the same
+ * every isolate of a deploy shares) of the session key, modulo the pool, D455. Every copy of a request reaches the same
  * object from any isolate, and that object relays one of them (RelayerKey `claims`). A client generates its session key
  * but can't compute this: it can't pick a key's index by choosing session keys offline, only find out which key a
  * session landed on (the signer of its transaction) after opening one. A session's own uses stay on its key, at most
@@ -75,7 +75,7 @@ export async function claimKeyIndex(pool: Pool, secret: string, sessionPublicKey
 type PoolRelayResult = RelayResult & { keyIndex?: number };
 
 /**
- * Outcomes of a claimed relay that move to the next key (D454's note). All but `relayer_unavailable` are "this transaction never ran":
+ * Outcomes of a claimed relay that move to the next key (D455's note). All but `relayer_unavailable` are "this transaction never ran":
  * nothing left the object (`near_unavailable`), the node refused it (`near_rejected`) or a later nonce of the key
  * replaced it (`relayer_busy`). `relayer_unavailable` also covers the object's call throwing part way through, when a
  * transaction may have left it; resending is still safe because the contract takes a session's request once
@@ -92,7 +92,7 @@ function notExecutedOnKey(r: PoolRelayResult): boolean {
 /**
  * Relays `call` through a key of `pool`. Methods outside the pool's allowlist are refused here and in the object. With
  * a `claim`, the key is the session's (claimKeyIndex), a copy already relayed answers `already_relayed`, and an outcome
- * that didn't execute is tried once more on the next key with the same claim (D454's note): the next index depends only
+ * that didn't execute is tried once more on the next key with the same claim (D455's note): the next index depends only
  * on the first, so copies still meet at one object, and without this a session pinned to a bad key could neither derive
  * nor revoke. A relay without a claim has no failover: the client's resend picks another key round-robin.
  */

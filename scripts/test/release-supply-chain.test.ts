@@ -1,5 +1,5 @@
-// The supply-chain checks of the sweep's "before mainnet" items: the publish workflow's shape and gate (OPER-4, D451),
-// the sandbox binary's pin (OPER-8, D452) and the dependency advisory check (OPER-9, D453). CI is off (D387), so these
+// The supply-chain checks of the sweep's "before mainnet" items: the publish workflow's shape and gate (OPER-4, D452),
+// the sandbox binary's pin (OPER-8, D453) and the dependency advisory check (OPER-9, D454). CI is off (D387), so these
 // are what keeps the workflow files right until it returns.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';

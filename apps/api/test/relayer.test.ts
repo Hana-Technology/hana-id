@@ -427,7 +427,7 @@ describe('RelayerKey Durable Object', () => {
     expect(near.sent).toHaveLength(0);
   });
 
-  it('no pool holds a method no endpoint relays (D455)', async () => {
+  it('no pool holds a method no endpoint relays (D456)', async () => {
     const near = new NearMock();
     near.install();
     expect(NOT_RELAYED_METHODS).toEqual(['prune_sessions', 'apply_pending_config', 'register_scope']);
@@ -633,7 +633,7 @@ describe('gas', () => {
   });
 });
 
-describe('one relay per signed request, across isolates (D454, security.md (g))', () => {
+describe('one relay per signed request, across isolates (D455, security.md (g))', () => {
   const claim = () => `claim-${uid()}`;
   const derive = { method: 'derive_key', args: {} };
   const relayed = (r: unknown) => expect(r).toMatchObject({ ok: true });
@@ -757,7 +757,7 @@ describe('one relay per signed request, across isolates (D454, security.md (g))'
   });
 });
 
-describe('a claimed relay fails over to the next key once (D454)', () => {
+describe('a claimed relay fails over to the next key once (D455)', () => {
   const sessionPublicKey = Array(32).fill(0).map((_, i) => (i * 13 + 1) % 256);
   const claim = { sessionPublicKey, expiresAtMs: 1000, counter: 2 };
   const derive = { method: 'derive_key', args: {} };

@@ -161,7 +161,7 @@ fn evil_issuer_key(env: &Env) -> Value {
 // about 9 minutes, half the suite run one test at a time.
 
 /// The session pool opens sessions, the owner pool reaches owner-pool methods, neither runs the other's or the open
-/// maintenance methods no endpoint relays (D455), the two allowlists don't overlap, and neither key reaches another
+/// maintenance methods no endpoint relays (D456), the two allowlists don't overlap, and neither key reaches another
 /// receiver.
 #[tokio::test]
 async fn access_keys_each_pool_runs_only_its_own_methods() -> Result<()> {
@@ -198,7 +198,7 @@ async fn access_keys_each_pool_runs_only_its_own_methods() -> Result<()> {
     Ok(())
 }
 
-/// `deploy-contract` swaps a relayer key whose permission is wrong in one transaction (D455's note): DeleteKey and AddKey
+/// `deploy-contract` swaps a relayer key whose permission is wrong in one transaction (D456's note): DeleteKey and AddKey
 /// of the same public key apply in order, so the key is never missing, it comes back with the new permission and works
 /// at once, and its nonce restarts at a multiple of 10^6, which the admin's nonce check reads as a new baseline.
 #[tokio::test]
@@ -433,7 +433,7 @@ fn session_allowlist_is_in_a_planned_state_everywhere() -> Result<()> {
         v
     };
     let owned = |m: &[&str]| sorted(m.iter().map(|s| s.to_string()).collect());
-    // The three states, as the spec lists them less prune_sessions (D455): each keeps derive_key and revoke_session
+    // The three states, as the spec lists them less prune_sessions (D456): each keeps derive_key and revoke_session
     // (and, since email login batch 6, the link methods); state 2 drops create_session, state 3 create_session_and_derive.
     let [s1, s2, s3] = SESSION_ALLOWLIST_STATES;
     let mut first = vec!["create_session", "create_session_and_derive", "derive_key", "revoke_session"];
@@ -548,7 +548,7 @@ async fn public_registration_and_timelocked_changes() -> Result<()> {
     assert_eq!(scope["allow_shared"], json!(false));
 
     // A shared-only scope needs no proof (scope ids are contract-assigned, nothing to squat). From the relayer account,
-    // a sponsor (no pool key holds register_scope, D455).
+    // a sponsor (no pool key holds register_scope, D456).
     let shared_only: String = env
         .relayer
         .call(signer, "register_scope")

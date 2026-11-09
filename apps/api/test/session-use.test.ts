@@ -111,7 +111,7 @@ describe('POST /v1/derive and /v1/sessions/revoke: counter and use-limit pre-che
     expect(sentCounters(near)).toEqual([1, 2, 3]);
   });
 
-  it('a copy another isolate would relay is refused by the session’s relayer object: 409 counter_used, one transaction (D454)', async () => {
+  it('a copy another isolate would relay is refused by the session’s relayer object: 409 counter_used, one transaction (D455)', async () => {
     const { near, derive, spk } = await setup();
     expect((await derive(1)).status).toBe(200);
     // Another isolate: nothing cached there, and the chain view it reads is behind the original's transaction.
@@ -290,7 +290,7 @@ describe('POST /v1/derive and /v1/sessions/revoke: counter and use-limit pre-che
     at(t0 + 9_000);
     await expectRejected(await derive(1), 409, 'counter_used', 2);
     // ...but does not restart the entry's TTL: after it, the chain's answer is used. The relayer object still remembers
-    // the transaction it saw succeed (D454)...
+    // the transaction it saw succeed (D455)...
     at(t0 + 10_500);
     await expectRejected(await derive(1), 409, 'counter_used', 2);
     expect(sentCounters(near)).toEqual([1]);

@@ -58,7 +58,7 @@ describe('the nonce cross-check', () => {
     expect((await store.lastNonceCheck(PK_A))!.ledgerRelayedSinceLast).toBe(1);
   });
 
-  it('a re-added key’s nonce (a whole multiple of 10^6, no row) is a new baseline, not an alert; the next day is idle (D455’s note)', async () => {
+  it('a re-added key’s nonce (a whole multiple of 10^6, no row) is a new baseline, not an alert; the next day is idle (D456’s note)', async () => {
     const near = new FakeNear();
     const reAdded = 'ed25519:readded';
     near.nonces.set(reAdded, 212_345_000_000n);

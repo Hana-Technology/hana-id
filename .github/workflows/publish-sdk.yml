@@ -3,7 +3,7 @@ name: Publish SDK packages
 # Publishes @hana-id/core, web, react and sodax (docs/operations.md "Releasing the SDK packages"). Manual dispatch
 # only, from main. Inert until all of these hold:
 #   - the npm-publish environment exists, limited to the branch main, and holds the NPM_TOKEN secret (never a
-#     repository or organisation secret: the gate fails the run on one; security sweep OPER-4, D451);
+#     repository or organisation secret: the gate fails the run on one; security sweep OPER-4, D452);
 #   - the four packages no longer say `"private": true` (npm refuses to publish a private package);
 #   - the registry, access and licence decisions in docs/operations.md are made.
 # Dry run is the default. Provenance (npm --provenance, signed through this workflow's OIDC token) needs a public

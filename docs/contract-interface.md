@@ -1,6 +1,6 @@
 # hana-signer contract interface (batch A, A.2, B, governance and email login)
 
-Last verified against code: 2026-11-09 (branch `fix/before-mainnet-sweep`: the API's gas list without the methods it no longer relays, D455; the contract is unchanged); 2026-11-04 (branch `fix/sessions-allow-list`: "No claim allow-list on chain", the API's allow-list on every relayed token, D271, D274); 2026-11-02 (branch `feat/email-login-6`: the API's gas values in the conventions and in "Gas
+Last verified against code: 2026-11-09 (branch `fix/before-mainnet-sweep`: the API's gas list without the methods it no longer relays, D456; the contract is unchanged); 2026-11-04 (branch `fix/sessions-allow-list`: "No claim allow-list on chain", the API's allow-list on every relayed token, D271, D274); 2026-11-02 (branch `feat/email-login-6`: the API's gas values in the conventions and in "Gas
 of the email login calls", D155); 2026-11-02 (branch `feat/batch-c-6`: the security note on unregistered clients names the
 console sink scope; the owner-action nonce is now also recomputed by the API's precheck, against the contract's
 `test_fixture.json`); 2026-11-02 (branch `docs/consistency-pass`: the conventions' gas note points at the

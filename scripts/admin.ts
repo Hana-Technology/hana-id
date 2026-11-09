@@ -45,6 +45,7 @@ import { appSettings, defaultAppSettingsDeps, settingsAppArg } from './lib/admin
 import { CliError, parseCli, run } from './lib/cli.ts';
 import { scopeRegister } from './lib/admin-scope.ts';
 import { scopeAddEmailClient } from './lib/admin-email-client.ts';
+import { homeClientAdd, homeListing } from './lib/admin-home.ts';
 import { consoleRemoveAudienceCmd } from './lib/admin-console-sink.ts';
 import { governanceStatusCmd, issuerIssCmd, ownerCallCmd, ownerProposalsCmd, ownerVoteCmd } from './lib/admin-owner.ts';
 import { councilReplaceMemberCmd } from './lib/council-members.ts';
@@ -88,6 +89,12 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
                (waited here up to 10 min) execute_change, and get_scope is checked. Elsewhere the proof comes from the
                issuer's staff route behind Cloudflare Access
   issuer-keys:lead-times   per Google kid: first seen in the JWKS, first token, lead time, lifetime in the JWKS
+  home:client:add --scope <scope id> --client <google client id> [--yes]
+               records that Hana holds this Google client for the scope (Enterprise onboarding), which Hana Home's
+               coverage reads; the chain must list the client in the scope. Dry run without --yes
+  home:listing --scope <scope id> (--quiet | --normal) [--yes]
+               a scope's quieter listing in Hana Home (D98): it then appears only for a search of its full app name, by
+               its link, or for its own users; never removed. Dry run without --yes
   user:list [--app <app id>] [--provider email|google] [--search <part of the address> | -] [--limit 50] [--json]
                the user directory (D269, the email issuer's D1, read only), newest first by last seen: each user's
                address, provider, sub, verified, first and last seen, and per app its scope and on-chain path
@@ -183,6 +190,8 @@ const COMMANDS = [
   'retention:issuer',
   'support:lookup',
   'watchdog:test-page',
+  'home:client:add',
+  'home:listing',
 ] as const;
 type Command = (typeof COMMANDS)[number];
 
@@ -251,7 +260,7 @@ async function main(): Promise<void> {
   const args = parseCli(process.argv.slice(2), {
     strings: ['name', 'scope', 'plan', 'app', 'org', 'environment', 'persistence', 'session-ttl', 'idle-ttl', 'raw-sign', 'google-web-client', 'auto-approve', 'identity-email', 'mainnet-demo', 'args', 'gas', 'member', 'approve-with', 'limit', 'remove', 'add', 'd1-name', 'provider', 'search', 'email', 'sub', 'address', 'user', 'days'],
     multiple: ['origin', 'client', 'owner-near', 'owner-google', 'request-id'],
-    booleans: ['remote', 'yes', 'allow-shared', 'json', 'reject', 'help'],
+    booleans: ['remote', 'yes', 'allow-shared', 'json', 'reject', 'help', 'quiet', 'normal'],
   });
   if (args.flag('help')) return void console.log(USAGE);
   const [envName, command, ...rest] = args.positionals;
@@ -369,6 +378,12 @@ async function main(): Promise<void> {
       return;
     case 'watchdog:test-page':
       await watchdogTestPage(m, args.flag('yes'), { fetch, token: () => statusTokenFromSecrets(m.name), log: (line) => console.log(line) });
+      return;
+    case 'home:client:add':
+      await homeClientAdd(m, args, where, { d1: (statement) => d1Execute(m, statement, { remote }), rpc: new NearRpc(m.rpc), now: () => Date.now(), log: (line) => console.log(line) });
+      return;
+    case 'home:listing':
+      homeListing(m, args, where, { d1: (statement) => d1Execute(m, statement, { remote }), log: (line) => console.log(line) });
       return;
     case 'user:list':
     case 'user:find':

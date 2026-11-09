@@ -673,7 +673,7 @@ describe('GET /v1/home/config', () => {
   });
 
   it('no route that could derive a key exists: no other /v1/home path answers', async () => {
-    for (const p of ['/v1/home/login', '/v1/home/apps', '/v1/home/devices']) {
+    for (const p of ['/v1/home/login', '/v1/home/devices']) {
       expect((await call(p, { method: 'POST', rawBody: '{}', headers: { origin: AUTH } })).status).toBe(404);
     }
   });

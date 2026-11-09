@@ -282,9 +282,27 @@ export async function getScope(env: Env, scopeId: string, opts: { fresh?: boolea
   return value;
 }
 
+/**
+ * Hana Home's copy of `get_scope` for its app list (docs/hana-home-spec.md "API changes"): ≤ 60 s, "no such scope" ≤ 10 s,
+ * and dropped with the scope's other views after an owner action in this isolate. Display only: the login route and the
+ * contract check for themselves.
+ */
+const homeScopeCache = new TtlCache<ScopeView | null>(60_000);
+
+/** The cached entry, or undefined when none (null: the chain had no such scope). Costs no read. */
+export const cachedHomeScope = (scopeId: string): ScopeView | null | undefined => homeScopeCache.get(scopeId);
+
+/** `get_scope`, remembered for Home's list. Throws when the view can't be read. */
+export async function readHomeScope(env: Env, scopeId: string): Promise<ScopeView | null> {
+  const value = await getScope(env, scopeId);
+  homeScopeCache.set(scopeId, value, Date.now(), value === null ? NO_SCOPE_TTL_MS : undefined);
+  return value;
+}
+
 /** After an owner action for `scopeId`: its view, its clients and every cached "no scope" may have changed. */
 export function forgetScope(scopeId: string): void {
   scopeViewCache.delete(scopeId);
+  homeScopeCache.delete(scopeId);
   scopeCache.deleteWhere((s) => s === null || s === scopeId);
 }
 
@@ -386,6 +404,7 @@ export function clearViewCaches(): void {
   sessionCache.clear();
   configCache.clear();
   scopeViewCache.clear();
+  homeScopeCache.clear();
   issuerCache.clear();
   issuerReads.clear();
   configRead = null;

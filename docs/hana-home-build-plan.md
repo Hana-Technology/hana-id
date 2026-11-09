@@ -1,6 +1,6 @@
 # Hana Home build plan (batches)
 
-**Status (2026-11-09): H0 (this plan, the spec's rewrite, D460–D466, the readiness rows) on branch `docs/hana-home-h0`; H1 built on branch `feat/hana-home-h1`, its security review's fixes on `feat/hana-home-h1-2` (not merged, not deployed; see its result line below); H2–H12 not started; H6 built on branch `feat/hana-home-h6` (not merged, not deployed; see its result line); H6's design and D480–D489 on branch `docs/hana-home-h6-design` (not merged).** Splits `docs/hana-home-spec.md` (D40, D45, D98, D461–D466, D468, D480–D489) into reviewable
+**Status (2026-11-09): H0 (this plan, the spec's rewrite, D460–D466, the readiness rows) on branch `docs/hana-home-h0`; H1 built on branch `feat/hana-home-h1`, its security review's fixes on `feat/hana-home-h1-2` (not merged, not deployed; see its result line below); H2 built on branch `feat/hana-home-h2` (not merged, not deployed; see its result line); H3–H5, H7–H12 not started; H6 built on branch `feat/hana-home-h6` (not merged, not deployed; see its result line); H6's design and D480–D489 on branch `docs/hana-home-h6-design` (not merged).** Splits `docs/hana-home-spec.md` (D40, D45, D98, D461–D466, D468, D480–D489) into reviewable
 batches. The spec stays the source of truth for *what* to build; this file says *in which order*, *what each batch
 ships* and *what users see after it*. Like a spec it is history once the work merges: the current state lives in the
 reference docs (`docs/README.md`).
@@ -111,6 +111,7 @@ additions conflict in `apps/api/src/index.ts`, so expect small merges. About 30 
 - **Tests.** Each coverage row; suspended, deleted and purged scopes; a member resolving to its root.
 - **Migration / deploy.** D1 (`hana_held_clients`, the listing flag); API.
 - **User-visible.** Nothing (no page yet).
+- **Result (2026-11-09, `feat/hana-home-h2`, not merged, not deployed).** `apps/api/src/home/apps.ts` (`GET /v1/home/apps`), `coverage.ts`, migration 0016 (`hana_held_clients`, `scopes.home_quiet`), `scripts/lib/admin-home.ts` (`admin home:client:add`, `admin home:listing`), a 60 s per-isolate `get_scope` cache for Home's list in `views.ts`; `docs/api.md`, `security.md`, `architecture.md`, `operations.md`. D500–D503, to confirm. No key is derived; no contract or derivation change. Deviations from the spec: no `sharedLoginEndsAtMs` (D480) or `liveDevices` (H9), `exit` and `unknown` coverage values (D501).
 
 ### H3: Home derives
 

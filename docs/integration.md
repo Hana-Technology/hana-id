@@ -914,8 +914,10 @@ the wallet's balance. Partner apps can't get it, and in production it doesn't ex
   you're about to send, plus the transaction's maximum fee in the native asset, at these prices and compare with
   `txCapUsd` to know before the click what the vault will accept: they are the same numbers the vault uses.
 - A refusal is `4100` before any window: `mainnet_demo_over_cap`, `mainnet_demo_unknown_call`,
-  `mainnet_demo_unpriced`, `mainnet_demo_prices_stale` (only once the fixed prices a request depends on are past their
-  date); any other mainnet stays `mainnet_not_allowed`. `data.usd` and `data.capUsd` are strings such as `"$12.40"`,
+  `mainnet_demo_unpriced`, `mainnet_demo_wrong_destination` (a Sodax deposit, bridge or swap that would send funds
+  anywhere but the user's own wallets: another hub wallet, recipient or destination chain),
+  `mainnet_demo_prices_stale` (only once the fixed prices a request depends on are past their date); any other mainnet
+  stays `mainnet_not_allowed`. `data.usd` and `data.capUsd` are strings such as `"$12.40"`,
   always rounded up to the cent; compare numbers with `usdMicros`, not these. If Hana can't confirm the demo is
   still on, the request fails with `api_unavailable` and `data.reason: 'mainnet_demo_unconfirmed'` (try again).
 - What the demo can value (everything else is `mainnet_demo_unknown_call`, or `mainnet_demo_unpriced` for an
@@ -926,11 +928,11 @@ the wallet's balance. Partner apps can't get it, and in production it doesn't ex
   | Base | any transaction | its maximum fee (`gas × maxFeePerGas`), in ETH |
   | Base | plain send (`to`, no calldata) | the `value` in ETH |
   | Base | ERC-20 `transfer`, `transferFrom` or `approve` of USDC or EURC | the amount (an approval counts as what it lets the spender take: an unlimited approval is refused) |
-  | Base | Sodax asset-manager deposit, native or USDC/EURC, with Sodax's own hub calls (a swap's), or Sodax's USDC ⇄ USDC bridge to Stellar (only through the signing address's own hub wallet, to the user's own Stellar wallet) | the deposited amount |
+  | Base | Sodax asset-manager deposit, native or USDC/EURC, with Sodax's own hub calls (a swap's, delivered to the user's own wallet on the destination chain, into ETH, USDC or EURC on Base or XLM, USDC or EURC on Stellar, with no partner fee, delivery hook or named solver, not partly fillable, and with a deadline at most an hour away, so no limit orders), no hub calls, or Sodax's USDC ⇄ USDC bridge to Stellar (to the user's own Stellar wallet). Every deposit must go to the signing address's own Sodax hub wallet, which the Sodax SDK does for you | the deposited amount |
   | Stellar public network | any transaction | its fee, in XLM |
   | Stellar public network | `payment` of XLM, Circle USDC or EURC; `createAccount` | the amount |
   | Stellar public network | `changeTrust` for a listed asset | nothing (it moves no funds) |
-  | Stellar public network | Sodax asset-manager `transfer` deposit (a swap's, or Sodax's USDC ⇄ USDC bridge to Base, only through the signing account's own hub wallet, to the user's own EVM wallet) | the deposited amount |
+  | Stellar public network | Sodax asset-manager `transfer` deposit (a swap's, on the same terms as on Base, no hub calls, or Sodax's USDC ⇄ USDC bridge to Base, to the user's own EVM wallet). Every deposit must go to the signing account's own Sodax hub wallet, which the Sodax SDK does for you | the deposited amount |
 
   Refused: contract creation, any other contract or calldata, typed data (including `Permit`), Stellar auth entries,
   fee-bumps, path payments and any other operation. The fee always counts, so aim a little under the cap.

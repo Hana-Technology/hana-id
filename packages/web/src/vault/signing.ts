@@ -129,7 +129,7 @@ export function approvalSubject(request: SignRequest, addresses: RecordAddresses
     const mainnet = mainnetOfRequest(request);
     if (mainnet) {
       if (!rules.mainnetDemo) throw new VaultError(ErrorCode.unauthorized, TEST_APP_NETWORK_RULE, { reason: 'mainnet_not_allowed', ...mainnet });
-      // Both of the session's addresses: a Sodax bridge must deliver to this user's own wallet on the other chain (D476).
+      // Both of the session's addresses: a Sodax bridge or swap must deliver to this user's own wallet on the other chain.
       const assessed = assessMainnetDemo(subject, rules.mainnetDemo.nowMs, rules.mainnetDemo.prices, { wallets: addresses });
       if (!assessed.ok) throw demoRefusal(assessed, mainnet);
     }
@@ -148,7 +148,7 @@ function demoRefusal(a: Extract<DemoAssessment, { ok: false }>, mainnet: NonNull
 }
 
 /** The reasons a mainnet demo refusal carries (`mainnet_not_allowed` stays D39's). */
-export const MAINNET_DEMO_REFUSALS: ReadonlySet<string> = new Set(['mainnet_demo_unknown_call', 'mainnet_demo_unpriced', 'mainnet_demo_over_cap', 'mainnet_demo_prices_stale']);
+export const MAINNET_DEMO_REFUSALS: ReadonlySet<string> = new Set(['mainnet_demo_unknown_call', 'mainnet_demo_unpriced', 'mainnet_demo_wrong_destination', 'mainnet_demo_over_cap', 'mainnet_demo_prices_stale']);
 
 /** What the launcher flashes when the vault refuses a mainnet demo request (in Hana's own UI, at most 80 characters). */
 export function demoRefusalFlash(reason: string): string {
@@ -159,6 +159,8 @@ export function demoRefusalFlash(reason: string): string {
       return 'Refused: Hana has no price for an asset this moves (mainnet demo)';
     case 'mainnet_demo_prices_stale':
       return 'Refused: Hana’s mainnet demo prices need a review';
+    case 'mainnet_demo_wrong_destination':
+      return 'Refused: this sends funds to a wallet that isn’t yours (mainnet demo)';
     default:
       return 'Refused: Hana can’t tell how much this mainnet request moves';
   }

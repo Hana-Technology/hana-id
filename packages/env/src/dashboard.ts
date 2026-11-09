@@ -69,6 +69,11 @@ export const adminSchema = z
     accessAud: z.string().regex(/^(?:[0-9a-f]{64}|UNSET)$/u, 'accessAud is the 64-hex-character AUD tag (or UNSET)'),
     /** The admin Worker's own allowlist behind the Access policy (D88): lowercased, non-empty. */
     staffEmails: z.array(lowerEmail).min(1).max(50),
+    /**
+     * The Access session (application and policy): whole hours, `1h` to `8h`, default `1h` (D437). Anything but `1h`
+     * is refused outside a dev env on testnet (`accessSessionDurationProblem`): production is always 1 h (D409).
+     */
+    accessSessionDuration: z.string().regex(/^[1-8]h$/u, 'admin.accessSessionDuration is a whole number of hours from 1h to 8h').optional(),
   })
   .strict();
 
@@ -228,4 +233,22 @@ export function dashboardRules(m: DashboardFields, ctx: z.RefinementCtx): void {
     [['usage', 'adminHyperdrive'], u.adminHyperdrive],
   ]);
   if (new Set(a.staffEmails).size !== a.staffEmails.length) issue(['admin', 'staffEmails'], 'Duplicate staff email');
+  const sessionProblem = accessSessionDurationProblem(m);
+  if (sessionProblem) issue(['admin', 'accessSessionDuration'], sessionProblem);
+}
+
+/** The admin console's Cloudflare Access session when the manifest sets none, and the only value a production env may have (D409, D437). */
+export const DEFAULT_ACCESS_SESSION_DURATION = '1h';
+
+/** The admin's Access session length: the manifest's `admin.accessSessionDuration`, default 1 h (D437). */
+export const accessSessionDurationOf = (admin: { accessSessionDuration?: string | undefined }): string => admin.accessSessionDuration ?? DEFAULT_ACCESS_SESSION_DURATION;
+
+/**
+ * Why this env's `admin.accessSessionDuration` isn't allowed, or null (D437): any other value than 1 h only in a dev env
+ * (`local*`/`sandbox*`) on testnet. Also checked by `access-setup` itself, which writes the value to Cloudflare.
+ */
+export function accessSessionDurationProblem(m: { name: string; network: string; admin?: { accessSessionDuration?: string | undefined } | undefined }): string | null {
+  const v = accessSessionDurationOf(m.admin ?? {});
+  if (v === DEFAULT_ACCESS_SESSION_DURATION || (isDevEnv(m.name) && m.network === 'testnet')) return null;
+  return `admin.accessSessionDuration ${v} is refused on ${m.name}: an Access session other than ${DEFAULT_ACCESS_SESSION_DURATION} is only for a dev env (local*, sandbox*) on testnet (D437)`;
 }

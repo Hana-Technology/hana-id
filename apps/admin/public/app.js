@@ -1876,6 +1876,12 @@ function tileItem(t, checkedAt) {
     { class: `tile ${s.cls}` },
     h('div', { class: 'tile-head' }, h('span', { class: `state-chip ${s.cls}` }, s.label), h('h3', {}, t.name)),
     h('p', { class: 'tile-detail' }, t.detail),
+    Array.isArray(t.lines) && t.lines.length
+      ? h('ul', { class: 'tile-lines' }, t.lines.map((l) => {
+          const ls = tileState(l.state);
+          return h('li', {}, h('span', { class: `state-chip ${ls.cls}` }, ls.label), h('span', { class: 'tile-line-label' }, l.label), h('span', {}, l.detail));
+        }))
+      : '',
     h('p', { class: 'tile-meta' }, liveAgo(checkedAt, 'checked '), t.link ? h('span', {}, ' · ', pathLink(t.link)) : ''),
   );
 }

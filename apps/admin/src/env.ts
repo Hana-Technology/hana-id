@@ -161,10 +161,12 @@ export interface Env {
   NEAR_RPC: string;
   /**
    * The System status page (D425; all public, written by `gen` from the manifest; each absent one's tile is "not
-   * configured"): the manifest's `rpcFallback` (probed beside NEAR_RPC), `apiUrl`, `vaultOrigin`, `authOrigin`, the
+   * configured"): the manifest's `rpcFallback` and `apiRpcFallbacksOf` (NEAR_RPC_FALLBACKS, a JSON array: the API's
+   * backups, D435; both probed beside NEAR_RPC, none shown on the page), `apiUrl`, `vaultOrigin`, `authOrigin`, the
    * email issuer's URL and `console.authOrigin`, whose public build reads the page makes (as `deploy-check` does).
    */
   NEAR_RPC_FALLBACK?: string;
+  NEAR_RPC_FALLBACKS?: string;
   API_URL?: string;
   VAULT_ORIGIN?: string;
   AUTH_ORIGIN?: string;

@@ -47,7 +47,7 @@ describe('the verdict', () => {
     expect(v.className).toBe('verdict ok');
     expect(v.getAttribute('role')).toBe('status');
     expect(v.querySelector('h2')!.textContent).toBe('All systems operational');
-    expect(v.textContent).toMatch(/Checked \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC · \d+ s ago · 36 of 36 checks passed/u);
+    expect(v.textContent).toMatch(/Checked \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC · \d+ s ago · 35 of 35 checks passed/u);
     expect(s.text()).not.toContain('Issues');
     for (const t of tiles(s)) expect(['OK', 'Not measured'], t.name!).toContain(t.chip);
     expect(s.text()).toContain('Not measured yet');
@@ -114,6 +114,24 @@ describe('unknown is never green', () => {
     await closeWindow();
     const t = await open(a);
     expect(t.main().querySelector('.tile')!.className).toBe('tile unknown');
+  });
+});
+
+describe('NEAR RPC tile', () => {
+  it('one line per endpoint, each with its state; the critical scenario says every endpoint is down', async () => {
+    const s = await open(answers.critical);
+    const tile = [...s.main().querySelectorAll('.tile')].find((t) => t.querySelector('h3')!.textContent === 'NEAR RPC')!;
+    expect(tile.querySelector('.state-chip')!.textContent).toBe('Critical');
+    const rows = [...tile.querySelectorAll('.tile-lines li')].map((li) => [...li.querySelectorAll('span')].map((x) => x.textContent));
+    expect(rows.map((r) => r.slice(0, 2))).toEqual([['Critical', 'Primary'], ['Critical', 'Backup 1'], ['Critical', 'Backup 2']]);
+    expect(rows[0]![2]).toMatch(/^Down: it /u);
+  });
+
+  it('a tile without lines renders none (every other tile)', async () => {
+    const s = await open(answers.green);
+    const lists = [...s.main().querySelectorAll('.tile-lines')];
+    expect(lists).toHaveLength(1);
+    expect(lists[0]!.closest('.tile')!.querySelector('h3')!.textContent).toBe('NEAR RPC');
   });
 });
 

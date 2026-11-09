@@ -20,9 +20,9 @@ const [A, B, C] = council.members as [string, string, string];
 const D = 'hana-id-council-d-dev1.testnet';
 const dao = council.dao;
 /** The same council on a non-dev env: members sign with their own keys, no --approve-with. (Without the dev-only
- * workers.dev origins, which a non-dev manifest refuses on one site.) */
+ * workers.dev origins and the dev-only longer admin session, which a non-dev manifest refuses, D437.) */
 const { vaultOrigin: _v, authOrigin: _a, ...noOrigins } = base;
-const staging: Manifest = { ...noOrigins, name: 'staging' };
+const staging: Manifest = { ...noOrigins, name: 'staging', admin: { ...noOrigins.admin!, accessSessionDuration: undefined } };
 
 let roots: ReturnType<typeof tempRoots>;
 let chain: SimChain;

@@ -205,8 +205,8 @@ describe('sandbox (Google, exact emails)', () => {
     expect(writes()).toEqual([]);
     expect(all()).toContain(`team domain   ${TEAM}`);
     expect(all()).toContain(`Google (${GOOGLE})`);
-    expect(all()).toContain('policy "Hana staff (sandbox-dev)" (Allow, 2 exact email(s), Google only, 1h): create');
-    expect(all()).toContain(`application "Hana ID admin (sandbox-dev)" on ${SANDBOX_HOST} (self-hosted, 1h, no service tokens): create`);
+    expect(all()).toContain('policy "Hana staff (sandbox-dev)" (Allow, 2 exact email(s), Google only, session 1h): create');
+    expect(all()).toContain(`application "Hana ID admin (sandbox-dev)" on ${SANDBOX_HOST} (self-hosted, session 1h, no service tokens): create`);
     expect(out.at(-1)).toBe(DRY_RUN_LINE);
     expectNoSecrets();
   });
@@ -337,6 +337,35 @@ describe('--check', () => {
     expect(all()).toContain(`Drift: admin.accessTeamDomain is other.cloudflareaccess.com; the team domain is ${TEAM}`);
     expect(all()).toContain(`Drift: admin.accessAud is another AUD; the application's AUD tag is ${aud}`);
     expect(writes().filter((r) => r.method !== 'GET')).toHaveLength(2); // only the first --yes
+  });
+
+  it('admin.accessSessionDuration goes on the policy and the application, shows in the plan, and a re-run keeps it; a hand-set other value is drift (D437)', async () => {
+    manifest = sandbox({ accessSessionDuration: '8h' });
+    await run([]);
+    expect(all()).toContain('policy "Hana staff (sandbox-dev)" (Allow, 2 exact email(s), Google only, session 8h): create');
+    expect(all()).toContain(`application "Hana ID admin (sandbox-dev)" on ${SANDBOX_HOST} (self-hosted, session 8h, no service tokens): create`);
+    out = [];
+    await run(['--yes']);
+    expect(writes().map((r) => r.body!.session_duration)).toEqual(['8h', '8h']);
+    const aud = ([...cf.apps.values()][0] as { aud: string }).aud;
+    manifest = sandbox({ accessSessionDuration: '8h', accessAud: aud });
+    const written = writes().length;
+    out = [];
+    await run(['--check']);
+    expect(all()).toContain('No drift');
+    expect(writes()).toHaveLength(written);
+    // Back on the default: the longer session is drift, not silently kept.
+    manifest = sandbox({ accessAud: aud });
+    out = [];
+    await expect(run(['--check'])).rejects.toThrow('2 difference(s)');
+    expect(all()).toContain('session 8h → 1h');
+  });
+
+  it('refuses a longer session outside a dev env on testnet, before any request, even with a manifest the schema didn’t see (D437)', async () => {
+    tokenFile('staging');
+    manifest = staging({ accessSessionDuration: '8h' });
+    await expect(run([])).rejects.toThrow('admin.accessSessionDuration 8h is refused on staging');
+    expect(requests).toEqual([]);
   });
 
   it('refuses --check with --yes or --write-manifest', async () => {

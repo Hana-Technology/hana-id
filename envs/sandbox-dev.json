@@ -119,7 +119,8 @@
     "origin": "https://hana-id-admin-sandbox-dev.tingtc.workers.dev",
     "accessTeamDomain": "bitter-hill-fe6f.cloudflareaccess.com",
     "accessAud": "d9adcde619f581fabd9a89079b3ee3239fa577df4a9ba05866d69bdb231e7634",
-    "staffEmails": ["hello@ting.rocks", "mark@hanawallet.io"]
+    "staffEmails": ["hello@ting.rocks", "mark@hanawallet.io"],
+    "accessSessionDuration": "8h"
   },
   "usage": {
     "neonRegion": "aws-ap-southeast-2",

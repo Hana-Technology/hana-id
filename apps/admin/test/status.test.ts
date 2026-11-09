@@ -12,12 +12,14 @@ import { LEDGER_LAST_RUN } from '../src/ledger-cron.ts';
 import { type LedgerStore, ledgerSource } from '../src/ledger.ts';
 import { probeTiming } from '../src/status-probes.ts';
 import { STATUS_CACHE_MS, type StatusAnswer, type Tile, buildStatus, resetStatusCache, statusRoute } from '../src/status.ts';
+import { MAX_NEAR_BACKUPS, nearEndpoints } from '../src/status-probes.ts';
 import { ADMIN, CERTS_URL, RPC, STAFF_EMAIL, STAFF_SUB, WATCHDOG, WATCHDOG_TOKEN, accessSigner, adminRequest, envWith, json, overrideBinding, staffJwt } from './helpers.ts';
 import { resetAccessVerifier } from '../src/access.ts';
 
 const BUILD = '0485faa1c2d3';
 const OTHER = '9f8e7d6c5b4a';
 const FALLBACK = 'https://rpc-fallback.test.invalid';
+const BACKUP = 'https://rpc-backup.test.invalid';
 const PK_S = 'ed25519:6E8sCci9badyRkXb3JoRpBj5p8C6Tw41ELDZoiihKEtp';
 const PK_O = 'ed25519:3eNPkjVtn4cHy2BUUgnK3E2q4pCs3LMC5eEFrBsPpnnr';
 const E24 = '000000000000000000000000';
@@ -36,7 +38,7 @@ interface World {
   builds: Record<string, string | null>;
   /** Per URL: an answer instead of the healthy one. */
   http: Map<string, () => Response | Promise<Response>>;
-  near: { primary: number | 'down'; fallback: number | 'down' };
+  near: { primary: number | 'down'; fallback: number | 'down'; backup: number | 'down' };
   ledger: { ok: boolean; five: unknown; fifteen: unknown; partitions: number; settlement: { pending: number; oldestAt: number | null } } | 'down';
   over: Partial<typeof env>;
 }
@@ -137,7 +139,7 @@ function healthyWorld(): World {
     issuer: issuerAnswer(),
     builds: Object.fromEntries(Object.keys(BUILD_URLS).map((k) => [k, BUILD])),
     http: new Map(),
-    near: { primary: NOW - 1000, fallback: NOW - 1000 },
+    near: { primary: NOW - 1000, fallback: NOW - 1000, backup: NOW - 1000 },
     ledger: { ok: true, five: fiveRun(), fifteen: fifteenRun(), partitions: 11, settlement: { pending: 0, oldestAt: null } },
     over: {},
   };
@@ -165,8 +167,8 @@ async function stubWorld(): Promise<void> {
       return typeof world.watchdog === 'function' ? world.watchdog() : Response.json(world.watchdog);
     }
     for (const [id, u] of Object.entries(BUILD_URLS)) if (url === u) return buildResponse(id, world.builds[id] ?? null);
-    if (url === RPC || url === FALLBACK) {
-      const at = url === RPC ? world.near.primary : world.near.fallback;
+    if (url === RPC || url === FALLBACK || url === BACKUP) {
+      const at = url === RPC ? world.near.primary : url === FALLBACK ? world.near.fallback : world.near.backup;
       return at === 'down' ? new Response('bad gateway', { status: 502 }) : nearBlock(at);
     }
     throw new Error(`Unexpected fetch to ${url}`);
@@ -194,6 +196,7 @@ function worldEnv(): typeof env {
   return envWith({
     HANA_BUILD: BUILD,
     NEAR_RPC_FALLBACK: FALLBACK,
+    NEAR_RPC_FALLBACKS: JSON.stringify([FALLBACK, BACKUP]),
     USAGE_DB: { connectionString: 'postgresql://stub' } as unknown as Hyperdrive,
     API: overrideBinding(env.API, { systemStatus: () => answerOf(world.api) }),
     CONSOLE: overrideBinding(env.CONSOLE, { health: () => answerOf(world.console) }),
@@ -519,18 +522,105 @@ describe('External services', () => {
     expect(issuesOf(a, 'google-jwks')[0]).toMatchObject({ affects: 'Google login', playbook: { id: 'google-jwks-outage' } });
   });
 
-  it('NEAR primary down is red, fallback down amber, a block 5 min old amber and 20 min red', async () => {
-    world.near = { primary: 'down', fallback: 'down' };
-    let a = await read();
-    invariants(a);
-    expect([tile(a, 'near-primary').state, tile(a, 'near-fallback').state]).toEqual(['critical', 'warning']);
-    world.near = { primary: NOW - 5 * MIN, fallback: NOW - 20 * MIN };
-    a = await read();
-    expect([tile(a, 'near-primary').state, tile(a, 'near-fallback').state]).toEqual(['warning', 'warning']);
-    world.near = { primary: NOW - 20 * MIN, fallback: NOW - 1000 };
-    expect(tile(await read(), 'near-primary').state).toBe('critical');
-    world.over = { NEAR_RPC_FALLBACK: undefined };
-    expect(tile(await read(), 'near-fallback').state).toBe('not_measured');
+  describe('NEAR RPC: every endpoint the API can use, one tile (D435)', () => {
+    const lines = (a: StatusAnswer) => tile(a, 'near-rpc').lines!.map((l) => [l.label, l.state]);
+
+    it('one line per endpoint, in the API’s order, all green; no URL in the answer', async () => {
+      const a = await read();
+      invariants(a);
+      expect(tile(a, 'near-rpc')).toMatchObject({ name: 'NEAR RPC', state: 'ok', detail: '3 of 3 endpoints up' });
+      expect(lines(a)).toEqual([['Primary', 'ok'], ['Backup 1', 'ok'], ['Backup 2', 'ok']]);
+      const text = JSON.stringify(a);
+      for (const url of [RPC, FALLBACK, BACKUP]) expect(text).not.toContain(url);
+    });
+
+    it('a backup down while the primary answers is a warning, not an outage', async () => {
+      world.near = { ...world.near, backup: 'down' };
+      const a = await read();
+      invariants(a);
+      expect(tile(a, 'near-rpc').state).toBe('warning');
+      expect(lines(a)).toEqual([['Primary', 'ok'], ['Backup 1', 'ok'], ['Backup 2', 'warning']]);
+      expect(issuesOf(a, 'near-rpc')).toEqual([expect.objectContaining({ severity: 'warning', title: 'NEAR RPC: Backup 2 is down: it answered an error', playbook: expect.objectContaining({ id: 'near-rpc-outage' }) })]);
+      expect(a.verdict.state).toBe('warning');
+    });
+
+    it('the primary down while a backup serves is a warning that says who serves; the tile too', async () => {
+      world.near = { ...world.near, primary: 'down' };
+      const a = await read();
+      invariants(a);
+      expect(tile(a, 'near-rpc')).toMatchObject({ state: 'warning', detail: '2 of 3 endpoints up · the API is using Backup 1' });
+      expect(issuesOf(a, 'near-rpc')).toEqual([expect.objectContaining({ severity: 'warning', title: 'NEAR RPC: Primary is down: it answered an error; the API is using Backup 1' })]);
+      expect(a.verdict.state).toBe('warning');
+    });
+
+    it('every endpoint the API can use down is one critical issue, not one each', async () => {
+      world.near = { primary: 'down', fallback: 'down', backup: 'down' };
+      const a = await read();
+      invariants(a);
+      expect(tile(a, 'near-rpc')).toMatchObject({ state: 'critical', detail: 'None of the API’s 3 endpoints answers' });
+      expect(lines(a)).toEqual([['Primary', 'critical'], ['Backup 1', 'critical'], ['Backup 2', 'critical']]);
+      expect(issuesOf(a, 'near-rpc')).toEqual([expect.objectContaining({ severity: 'critical', title: 'NEAR RPC is down: none of the API’s 3 endpoints answers' })]);
+      expect(a.verdict.state).toBe('critical');
+    });
+
+    it('the vault’s two endpoints down is an outage even with another of the API’s backups up (the vault and watchdog have only those two)', async () => {
+      world.near = { ...world.near, primary: 'down', fallback: 'down' };
+      const a = await read();
+      invariants(a);
+      expect(tile(a, 'near-rpc').state).toBe('critical');
+      expect(issuesOf(a, 'near-rpc').map((i) => [i.severity, i.title])).toEqual([
+        ['critical', 'NEAR RPC: Primary is down: it answered an error; the vault and the watchdog have no endpoint left'],
+        ['warning', 'NEAR RPC: Backup 1 is down: it answered an error'],
+      ]);
+    });
+
+    it('a stuck endpoint is red only when the API is on it: an answer isn’t failed over', async () => {
+      world.near = { primary: NOW - 20 * MIN, fallback: NOW - 1000, backup: NOW - 1000 };
+      let a = await read();
+      expect(issuesOf(a, 'near-rpc')).toEqual([expect.objectContaining({ severity: 'critical', title: 'NEAR RPC: Primary is 20 min behind' })]);
+      world.near = { primary: 'down', fallback: NOW - 20 * MIN, backup: NOW - 1000 };
+      a = await read();
+      expect(issuesOf(a, 'near-rpc').map((i) => [i.severity, i.title])).toEqual([
+        ['critical', 'NEAR RPC: Backup 1 is 20 min behind'],
+        ['warning', 'NEAR RPC: Primary is down: it answered an error; the API is using Backup 1'],
+      ]);
+      world.near = { primary: NOW - 1000, fallback: NOW - 20 * MIN, backup: NOW - 5 * MIN };
+      a = await read();
+      expect(tile(a, 'near-rpc').state).toBe('warning');
+      expect(lines(a)).toEqual([['Primary', 'ok'], ['Backup 1', 'warning'], ['Backup 2', 'warning']]);
+    });
+
+    it('no backup in the manifest: the primary alone, its line and a Not measured line; down is an outage', async () => {
+      world.over = { NEAR_RPC_FALLBACK: undefined, NEAR_RPC_FALLBACKS: undefined };
+      let a = await read();
+      expect(lines(a)).toEqual([['Primary', 'ok'], ['Backup', 'not_measured']]);
+      expect(tile(a, 'near-rpc').state).toBe('ok');
+      world.near = { ...world.near, primary: 'down' };
+      a = await read();
+      expect(tile(a, 'near-rpc').state).toBe('critical');
+      expect(issuesOf(a, 'near-rpc')[0]).toMatchObject({ title: 'NEAR RPC is down: the API’s only endpoint doesn’t answer' });
+    });
+
+    it('rpcFallback outside the API’s list stays probed, as the vault’s; without the new var the API list is rpcFallback alone', async () => {
+      world.over = { NEAR_RPC_FALLBACKS: JSON.stringify([BACKUP]) };
+      let a = await read();
+      expect(lines(a)).toEqual([['Primary', 'ok'], ['Backup 1', 'ok'], ['Vault’s fallback', 'ok']]);
+      world.near = { ...world.near, fallback: 'down' };
+      a = await read();
+      expect(issuesOf(a, 'near-rpc')).toEqual([expect.objectContaining({ severity: 'warning', title: 'NEAR RPC: Vault’s fallback is down: it answered an error' })]);
+      world.over = { NEAR_RPC_FALLBACKS: undefined };
+      world.near = { ...world.near, fallback: NOW - 1000 };
+      expect(lines(await read())).toEqual([['Primary', 'ok'], ['Backup 1', 'ok']]);
+    });
+
+    it('the endpoint list ignores junk, duplicates and the primary, and keeps at most the manifest’s number of backups', () => {
+      const list = (fallbacks: string | undefined, fallback?: string) => nearEndpoints({ NEAR_RPC: RPC, ...(fallback ? { NEAR_RPC_FALLBACK: fallback } : {}), ...(fallbacks !== undefined ? { NEAR_RPC_FALLBACKS: fallbacks } : {}) }).map((e) => e.label);
+      expect(list('not json', FALLBACK)).toEqual(['Primary', 'Backup 1']);
+      expect(list(JSON.stringify([RPC, BACKUP, BACKUP, 42, 'ftp://x']))).toEqual(['Primary', 'Backup 1']);
+      const many = ['https://a.invalid', 'https://b.invalid', 'https://c.invalid', 'https://d.invalid'];
+      expect(list(JSON.stringify(many))).toEqual(['Primary', 'Backup 1', 'Backup 2', 'Backup 3']);
+      expect(MAX_NEAR_BACKUPS).toBe(3);
+    });
   });
 
   it('blocking notices waiting 20 min are amber, 2 h red since the oldest; a failed send amber', async () => {
@@ -582,13 +672,22 @@ describe('since: first seen by this isolate when the source has no time', () => 
 });
 
 describe('the subrequest budget and the cache (Workers Free: 50 a request)', () => {
-  it('a cold load makes 19 outbound calls, counted the same inside and out; a warm one none, for 30 s', async () => {
+  it('the most endpoints the manifest allows (the primary, 3 backups and a separate rpcFallback) stay under 50 with the certs fetch', async () => {
+    world.over = { NEAR_RPC_FALLBACKS: JSON.stringify([BACKUP, 'https://b.test.invalid', 'https://c.test.invalid']) };
+    for (const u of ['https://b.test.invalid', 'https://c.test.invalid']) world.http.set(u, () => nearBlock(NOW - 1000));
+    const a = await read();
+    expect(a.calls.byKind.fetch).toBe(10 + 5); // the build reads and the NEAR reads
+    expect(a.calls.total).toBe(22);
+    expect(a.calls.total + 1).toBeLessThanOrEqual(25);
+  });
+
+  it('a cold load makes 20 outbound calls (sandbox-dev’s three NEAR endpoints), counted the same inside and out; a warm one none, for 30 s', async () => {
     const req = new Request(`${ADMIN}/api/status`, { headers: { 'cf-access-jwt-assertion': await staffJwt() } });
     const res = await statusRoute(worldEnv(), staff, req, NOW);
     const a = await json<StatusAnswer & { cached: boolean }>(res);
     const outside = counts.fetch + counts.rpc + counts.hyperdrive + counts.r2;
-    expect({ ...counts }).toEqual({ fetch: 13, rpc: 3, hyperdrive: 1, r2: 2 });
-    expect(a.calls).toEqual({ total: 19, byKind: { watchdog: 1, rpc: 3, fetch: 12, hyperdrive: 1, r2: 2 } });
+    expect({ ...counts }).toEqual({ fetch: 14, rpc: 3, hyperdrive: 1, r2: 2 });
+    expect(a.calls).toEqual({ total: 20, byKind: { watchdog: 1, rpc: 3, fetch: 13, hyperdrive: 1, r2: 2 } });
     expect(outside).toBe(a.calls.total);
     // With the Access certs fetch of a cold isolate (before the route), far under 50; and 3 Worker invocations of 32.
     expect(a.calls.total + 1).toBeLessThanOrEqual(25);
@@ -608,7 +707,7 @@ describe('the subrequest budget and the cache (Workers Free: 50 a request)', () 
     const [a, b, c] = await Promise.all([statusRoute(worldEnv(), staff, req, NOW), statusRoute(worldEnv(), staff, req, NOW), statusRoute(worldEnv(), staff, req, NOW)]);
     expect([a.status, b.status, c.status]).toEqual([200, 200, 200]);
     expect(counts.rpc).toBe(3);
-    expect(counts.fetch).toBe(13);
+    expect(counts.fetch).toBe(14);
   });
 });
 

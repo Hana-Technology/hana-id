@@ -5,8 +5,11 @@ import { type Manifest, manifestSchema } from './schema.ts';
 
 export { apiRpcFallbacksOf, DO_LOCATION_HINTS, endpointUrlProblem, MAX_API_RPC_FALLBACKS, type Manifest, manifestSchema, MIN_CKD_SOURCES, PAGER_PROVIDERS } from './schema.ts';
 export {
+  accessSessionDurationOf,
+  accessSessionDurationProblem,
   appChangeDelayProblems,
   DASHBOARD_BLOCKS,
+  DEFAULT_ACCESS_SESSION_DURATION,
   emailFromProblem,
   hanaOwnOrigins,
   MAX_APP_CHANGE_DELAY_MS,

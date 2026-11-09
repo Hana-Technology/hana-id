@@ -20,7 +20,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type Manifest, accountIdFields, emailIssuerUrl, envAlertLabel, isDevEnv, isLoopbackHost, loadEnv } from '@hana-id/env';
+import { type Manifest, accountIdFields, apiRpcFallbacksOf, emailIssuerUrl, envAlertLabel, isDevEnv, isLoopbackHost, loadEnv } from '@hana-id/env';
 import { workersDevHost } from '../../api/scripts/pages-wrangler.ts';
 import { TEST_MANIFEST as CONSOLE_TEST_MANIFEST } from '../../console/scripts/gen-wrangler.ts';
 import { CRONS, FIVE_MINUTES } from '../src/crons.ts';
@@ -114,6 +114,8 @@ export function wranglerConfig(m: Manifest, opts: { adminHyperdriveId?: string |
       // The System status page (D425): the public endpoints it reads (deploy-check's), the RPC fallback, the account's
       // cron triggers. All public; an absent piece's var is absent too (its tile says "not configured").
       ...(m.rpcFallback ? { NEAR_RPC_FALLBACK: m.rpcFallback } : {}),
+      // The API's own backups (D435), as its `gen` writes them: the page probes every endpoint the API can use.
+      ...(apiRpcFallbacksOf(m).length ? { NEAR_RPC_FALLBACKS: JSON.stringify(apiRpcFallbacksOf(m)) } : {}),
       API_URL: m.apiUrl.replace(/\/+$/u, ''),
       ...(m.vaultOrigin ? { VAULT_ORIGIN: m.vaultOrigin } : {}),
       ...(m.authOrigin ? { AUTH_ORIGIN: m.authOrigin } : {}),

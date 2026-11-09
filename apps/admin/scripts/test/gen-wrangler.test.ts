@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { FONT_FILES, MARK_PATHS } from '@hana-id/brand';
 import { contrast, hexVars, woff2Names } from '@hana-id/brand/check';
 import { SUPPORT_TICKET_RE } from '@hana-id/console-core';
-import { ENV_ALERT_LABELS, envAlertLabel, loadEnv, type Manifest, manifestSchema } from '@hana-id/env';
+import { ENV_ALERT_LABELS, envAlertLabel, loadEnv, MAX_API_RPC_FALLBACKS, type Manifest, manifestSchema } from '@hana-id/env';
 import { BUILD_VAR } from '@hana-id/env/build-id';
 import { describe, expect, it } from 'vitest';
 import { wranglerConfig as apiConfig } from '../../../api/scripts/gen-wrangler.ts';
@@ -22,6 +22,7 @@ import { wranglerConfig as filesConfig } from '../../../files/scripts/gen-wrangl
 import { wranglerConfig as issuerConfig, TEST_MANIFEST as ISSUER_MANIFEST } from '../../../email-issuer/scripts/gen-wrangler.ts';
 import { wranglerConfig as watchdogConfig, TEST_MANIFEST as WATCHDOG_MANIFEST } from '../../../watchdog/scripts/gen-wrangler.ts';
 import { MAIL_LABELS } from '../../src/labels.ts';
+import { MAX_NEAR_BACKUPS } from '../../src/status-probes.ts';
 import { adminCsp } from '../../src/headers.ts';
 import { BRAND_END, BRAND_FONT_FILES, BRAND_START, brandBlock } from '../sync-brand.ts';
 import { CRON, LOCAL_ADMIN_CONNECTION_STRING, TEST_ADMIN_HYPERDRIVE_ID, accountCrons, TEST_MANIFEST, TEST_WATCHDOG_URL, existingAdminHyperdriveId, main, testWranglerConfig, wranglerConfig } from '../gen-wrangler.ts';
@@ -180,6 +181,15 @@ describe('the admin config', () => {
       console.log = log;
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('writes the API’s NEAR RPC list for the System status page, only when non-empty (D435), at the manifest’s limit', () => {
+    const vars = (m: Manifest) => (wranglerConfig(m) as { vars: Record<string, string> }).vars;
+    const urls = ['https://a.invalid', 'https://b.invalid'];
+    expect(JSON.parse(vars({ ...TEST_MANIFEST, rpcFallback: 'https://fb.invalid', apiRpcFallbacks: urls }).NEAR_RPC_FALLBACKS!)).toEqual(urls);
+    expect(JSON.parse(vars({ ...TEST_MANIFEST, rpcFallback: 'https://fb.invalid', apiRpcFallbacks: undefined }).NEAR_RPC_FALLBACKS!)).toEqual(['https://fb.invalid']);
+    expect(vars({ ...TEST_MANIFEST, rpcFallback: undefined, apiRpcFallbacks: undefined }).NEAR_RPC_FALLBACKS).toBeUndefined();
+    expect(MAX_NEAR_BACKUPS).toBe(MAX_API_RPC_FALLBACKS);
   });
 
   it('binds the email issuer’s DirectoryRpc as ISSUER when the env has an issuer, and nothing without one (C8b, D275)', () => {

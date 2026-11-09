@@ -792,6 +792,10 @@ stops auto-approve from Hana on another device, an open tab stops auto-signing w
 appears for the next matching request. Requests go to the popup the same way while Hana's API can't be reached; your
 page needs no code for this.
 
+Auto-signed requests don't extend the session's idle limit: only a signature the user approved in a Hana popup does. A
+session that only auto-signs ends at your app's idle limit, and the user has to sign in again. If your app can run for
+longer than that on auto-approve alone, plan for that sign-in.
+
 ## 10. React
 
 `@hana-id/react`:

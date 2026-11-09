@@ -115,11 +115,11 @@ describe('the mainnet demo in the vault', () => {
   });
 
   describe('a Sodax USDC bridge (D476)', () => {
-    const bridge = (recipient: string) => send({ to: SODAX_ASSET_MANAGER_BASE, value: '0x0', data: sodaxBridgeDeposit(recipient) });
+    const bridge = (recipient: string, signer: string, hubWallet?: string) => send({ to: SODAX_ASSET_MANAGER_BASE, value: '0x0', data: sodaxBridgeDeposit(recipient, signer, hubWallet) });
 
     it('to the user’s own Stellar wallet: through the popup, reported at the deposit’s value', async () => {
       const s = await session();
-      const reply = s.t.request('eth_signTransaction', { tx: bridge(s.stellar) });
+      const reply = s.t.request('eth_signTransaction', { tx: bridge(s.stellar, s.evm) });
       await waitLauncher(s.t, 'Review in Hana');
       const popup = openApproval(s.t);
       answer(s.t, popup, await popup.next('hana:approve-request'), true);
@@ -130,7 +130,16 @@ describe('the mainnet demo in the vault', () => {
 
     it('to another wallet: refused before any popup (the vault compares it with the session’s own address, encoded)', async () => {
       const s = await session();
-      const reply = await s.t.request('eth_signTransaction', { tx: bridge(OTHER) });
+      const reply = await s.t.request('eth_signTransaction', { tx: bridge(OTHER, s.evm) });
+      expect(reply.error).toMatchObject({ code: 4100, data: { reason: 'mainnet_demo_unknown_call', chain: 'evm', chainId: 8453 } });
+      await sleepReal(20);
+      expect(approvePopups(s.t)).toHaveLength(0);
+      expect(demoEvents(s.t)).toHaveLength(0);
+    });
+
+    it('with another hub wallet as the spoke `to`: refused before any popup, though the recipient is the user’s own (D476)', async () => {
+      const s = await session();
+      const reply = await s.t.request('eth_signTransaction', { tx: bridge(s.stellar, s.evm, `0x${'22'.repeat(20)}`) });
       expect(reply.error).toMatchObject({ code: 4100, data: { reason: 'mainnet_demo_unknown_call', chain: 'evm', chainId: 8453 } });
       await sleepReal(20);
       expect(approvePopups(s.t)).toHaveLength(0);

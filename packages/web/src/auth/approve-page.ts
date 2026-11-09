@@ -328,8 +328,9 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   function demoBanner(input: ApprovalDigestInput, network: DemoNetwork, id: string, demoPrices: unknown): HTMLElement {
     const cap = formatUsd(MAINNET_DEMO.txCapUsdMicros);
     const prices = parseMainnetDemoPrices(demoPrices, null) ?? fixedMainnetDemoPrices();
-    // `shown`: this page holds the signing chain's address only, so it shows a bridge's recipient; the vault has bound
-    // it to the user's own wallet before this popup opened (D476).
+    // `shown`: this page holds the signing chain's address only, so it shows a bridge's recipient (the vault has bound
+    // it to the user's own wallet before this popup opened), and the assessment still checks the deposit's hub wallet
+    // against that address itself, so the bridge line appears only once the hub wallet is verified (D476).
     const assessed = assessMainnetDemo(input, now(), prices, 'shown');
     const value = assessed.ok
       ? `This request can move about ${formatUsd(assessed.usdMicros)}, fee included. Hana’s limit is ${cap} per transaction.`

@@ -1503,10 +1503,18 @@ describe('/approve: the mainnet demo banner (D428, D429)', () => {
 
   it('says what a Sodax bridge does: the amount, 1:1, the destination and the recipient the bytes name (D476)', async () => {
     startDemo(async () => rpcAnswer('0x0'));
-    send(baseRequest({ bytes: evmTxSigningPayload(parseEvmTxRequest({ ...BASE_TX, to: SODAX_ASSET_MANAGER_BASE, value: '0x0', data: sodaxBridgeDeposit(OTHER) })) }));
+    send(baseRequest({ bytes: evmTxSigningPayload(parseEvmTxRequest({ ...BASE_TX, to: SODAX_ASSET_MANAGER_BASE, value: '0x0', data: sodaxBridgeDeposit(OTHER, EVM) })) }));
     expect(document.querySelector('.demo-bridge')?.textContent).toBe(`Bridge 1 USDC from Base to Stellar, 1:1. Recipient on Stellar: ${OTHER}`);
     expect(pageText()).toContain('This request can move about');
     expect(pageText()).not.toContain('Hana can’t read this request');
+  });
+
+  it('names no recipient when the spoke `to` isn’t the signing address’s own hub wallet (D476)', () => {
+    startDemo(async () => rpcAnswer('0x0'));
+    send(baseRequest({ bytes: evmTxSigningPayload(parseEvmTxRequest({ ...BASE_TX, to: SODAX_ASSET_MANAGER_BASE, value: '0x0', data: sodaxBridgeDeposit(OTHER, EVM, `0x${'22'.repeat(20)}`) })) }));
+    expect(document.querySelector('.demo-bridge')).toBeNull();
+    expect(pageText()).not.toContain('Recipient on');
+    expect(pageText()).not.toContain('This request can move about');
   });
 
   it('shows no bridge line for a plain send', () => {

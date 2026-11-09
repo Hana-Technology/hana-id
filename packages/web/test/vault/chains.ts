@@ -3,6 +3,7 @@
 import { Account, Address, Asset, Keypair, Networks, Operation, StrKey, TransactionBuilder, hash, nativeToScVal, xdr } from '@stellar/stellar-base';
 import { base64Decode, eip191Hash, evmTxSigningHash, from0xHex, hashTypedData, normalizeTypedData, parseEvmTxRequest, recoverEvmAddress, toHex } from '@hana-id/core';
 import { decodeRlp, functionSelector } from '@hana-id/core/decode';
+import { sodaxHubWalletOf } from '@hana-id/core/mainnet-demo';
 import { sep53MessageHash, verifyStellarSignature } from '@hana-id/core/signers/stellar';
 
 export const PASSPHRASE: string = Networks.TESTNET;
@@ -95,12 +96,15 @@ const SDK_BRIDGE_RECIPIENT = 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3
 const abiWord = (n: bigint): string => n.toString(16).padStart(64, '0');
 const abiBytes = (hex: string): string => abiWord(BigInt(hex.length / 2)) + hex.padEnd(Math.ceil(hex.length / 64) * 64, '0');
 
-/** A Sodax USDC deposit on Base carrying the SDK's bridge calls, delivering 1 USDC to the Stellar account `recipient`. */
-export function sodaxBridgeDeposit(recipient: string): string {
+/**
+ * A Sodax USDC deposit on Base carrying the SDK's bridge calls, delivering 1 USDC to the Stellar account `recipient`,
+ * from `signer`'s own hub wallet unless `hubWallet` (20 bytes) names another (D476).
+ */
+export function sodaxBridgeDeposit(recipient: string, signer: string, hubWallet?: string): string {
   const key = Buffer.from(StrKey.decodeEd25519PublicKey(recipient)).toString('hex');
   const calls = SDK_BRIDGE_CALLS.slice(2).replace(Buffer.from(StrKey.decodeEd25519PublicKey(SDK_BRIDGE_RECIPIENT)).toString('hex'), key);
-  const hubWallet = '11'.repeat(20);
-  return `${functionSelector('transfer(address,bytes,uint256,bytes)')}${USDC_ON_BASE.padStart(64, '0')}${abiWord(0x80n)}${abiWord(1_000_000n)}${abiWord(0xc0n)}${abiBytes(hubWallet)}${abiBytes(calls)}`;
+  const to = (hubWallet ?? sodaxHubWalletOf('evm', signer)).slice(2).toLowerCase();
+  return `${functionSelector('transfer(address,bytes,uint256,bytes)')}${USDC_ON_BASE.padStart(64, '0')}${abiWord(0x80n)}${abiWord(1_000_000n)}${abiWord(0xc0n)}${abiBytes(to)}${abiBytes(calls)}`;
 }
 
 /** The address that signed a raw EIP-1559 transaction. */

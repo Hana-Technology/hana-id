@@ -926,11 +926,11 @@ the wallet's balance. Partner apps can't get it, and in production it doesn't ex
   | Base | any transaction | its maximum fee (`gas × maxFeePerGas`), in ETH |
   | Base | plain send (`to`, no calldata) | the `value` in ETH |
   | Base | ERC-20 `transfer`, `transferFrom` or `approve` of USDC or EURC | the amount (an approval counts as what it lets the spender take: an unlimited approval is refused) |
-  | Base | Sodax asset-manager deposit, native or USDC/EURC, with Sodax's own hub calls | the deposited amount |
+  | Base | Sodax asset-manager deposit, native or USDC/EURC, with Sodax's own hub calls (a swap's), or Sodax's USDC ⇄ USDC bridge to Stellar (only to the user's own Stellar wallet) | the deposited amount |
   | Stellar public network | any transaction | its fee, in XLM |
   | Stellar public network | `payment` of XLM, Circle USDC or EURC; `createAccount` | the amount |
   | Stellar public network | `changeTrust` for a listed asset | nothing (it moves no funds) |
-  | Stellar public network | Sodax asset-manager `transfer` deposit | the deposited amount |
+  | Stellar public network | Sodax asset-manager `transfer` deposit (a swap's, or Sodax's USDC ⇄ USDC bridge to Base, only to the user's own EVM wallet) | the deposited amount |
 
   Refused: contract creation, any other contract or calldata, typed data (including `Permit`), Stellar auth entries,
   fee-bumps, path payments and any other operation. The fee always counts, so aim a little under the cap.

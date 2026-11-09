@@ -34,6 +34,7 @@ import { formatEndTime, lingeringSignaturesNote } from '../../src/auth/render-co
 import { policyJson } from '../../../core/test/policy-fixtures.ts';
 import { PASSPHRASE, USER, paymentOp, txBytes } from '../../../core/test/stellar-fixtures.ts';
 import { ENV, EVIL, FakeWindow, PARTNER, type RemoteWindow, asWindow, pageText, remoteWindow, resetDom } from './helpers.ts';
+import { OTHER, SODAX_ASSET_MANAGER_BASE, sodaxBridgeDeposit } from '../vault/chains.ts';
 
 const EVM = '0x2c7536E3605D9C16a7a3D7b1898e529396a65c23';
 const TX = { chainId: '0xaa36a7', nonce: '0x1', gas: '0x5208', maxFeePerGas: '0x2', maxPriorityFeePerGas: '0x1', to: EVM, value: '0xde0b6b3a7640000', data: '0x' };
@@ -1499,6 +1500,20 @@ describe('/approve: the mainnet demo banner (D428, D429)', () => {
     for (let i = 0; i < 5; i++) await Promise.resolve();
     await vi.advanceTimersByTimeAsync(0);
   };
+
+  it('says what a Sodax bridge does: the amount, 1:1, the destination and the recipient the bytes name (D475)', async () => {
+    startDemo(async () => rpcAnswer('0x0'));
+    send(baseRequest({ bytes: evmTxSigningPayload(parseEvmTxRequest({ ...BASE_TX, to: SODAX_ASSET_MANAGER_BASE, value: '0x0', data: sodaxBridgeDeposit(OTHER) })) }));
+    expect(document.querySelector('.demo-bridge')?.textContent).toBe(`Bridge 1 USDC from Base to Stellar, 1:1. Recipient on Stellar: ${OTHER}`);
+    expect(pageText()).toContain('This request can move about');
+    expect(pageText()).not.toContain('Hana can’t read this request');
+  });
+
+  it('shows no bridge line for a plain send', () => {
+    startDemo(async () => rpcAnswer('0x0'));
+    send(baseRequest());
+    expect(document.querySelector('.demo-bridge')).toBeNull();
+  });
 
   it('shows the red banner with the value and the cap, then the balance, read only from Hana’s pinned Base endpoint', async () => {
     // 0.0005 ETH, 3 USDC and no EURC: $4 + $3.15.

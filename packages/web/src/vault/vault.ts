@@ -2383,7 +2383,7 @@ export class Vault {
    * a key, a signature or the transaction's bytes. Best effort: a failure never touches the signature.
    */
   private reportDemoSignature(s: Session, subject: ReturnType<typeof approvalSubject>, prices: MainnetDemoPriceBook): void {
-    const assessed = assessMainnetDemo(subject, this.clock.now(), prices);
+    const assessed = assessMainnetDemo(subject, this.clock.now(), prices, { wallets: s.addresses });
     const api = this.api;
     // The session's proof of the signing address (the identity token's): without one there is nothing to report with.
     const proof = subject.chain === 'stellar' || subject.chain === 'evm' ? s.walletProofs?.[subject.chain] : undefined;

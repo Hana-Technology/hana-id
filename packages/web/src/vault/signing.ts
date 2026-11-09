@@ -129,7 +129,8 @@ export function approvalSubject(request: SignRequest, addresses: RecordAddresses
     const mainnet = mainnetOfRequest(request);
     if (mainnet) {
       if (!rules.mainnetDemo) throw new VaultError(ErrorCode.unauthorized, TEST_APP_NETWORK_RULE, { reason: 'mainnet_not_allowed', ...mainnet });
-      const assessed = assessMainnetDemo(subject, rules.mainnetDemo.nowMs, rules.mainnetDemo.prices);
+      // Both of the session's addresses: a Sodax bridge must deliver to this user's own wallet on the other chain (D475).
+      const assessed = assessMainnetDemo(subject, rules.mainnetDemo.nowMs, rules.mainnetDemo.prices, { wallets: addresses });
       if (!assessed.ok) throw demoRefusal(assessed, mainnet);
     }
   }

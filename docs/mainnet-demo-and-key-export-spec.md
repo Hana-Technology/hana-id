@@ -7,6 +7,8 @@ so a user can always take their keys out if the testnet MPC fails. Decisions: D4
 is a batch spec: once the branch merges it is history, and the reference docs (`architecture.md`, `security.md`,
 `api.md`, `integration.md`, `operations.md`, `mainnet-readiness.md`) are the current state.
 
+**Amended by D475 (branch `feat/mainnet-demo-usdc-bridge`, 2026-11-09):** the valuation also accepts Sodax's USDC ⇄ USDC bridge between Base and Stellar; marked where it changes the rules below.
+
 ## Contents
 
 - [Address impact (read first)](#address-impact-read-first)
@@ -88,6 +90,7 @@ entry for the public network (it authorizes a Soroban call Hana can't value). Me
 | no calldata, `to` set | the `value` (a plain send) |
 | `to` = USDC `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`, `transfer(address,uint256)`, `transferFrom(address,address,uint256)` or `approve(address,uint256)` | the amount in USDC (an approval is valued as what it lets the spender take; an unlimited approval is far over the cap) |
 | `to` = the Sodax asset manager, `transfer(address,bytes,uint256,bytes)`, token native with `value == amount`, or token USDC | the amount; `data` empty, or exactly `[approve(intents, g) on the token's hub asset, createIntent(intent) on the intents contract]` with `g ≤ amount`, `intent.inputToken` the hub asset and `intent.inputAmount ≤ g` |
+| the same `transfer`, token USDC, `data` exactly the four calls of a USDC ⇄ USDC bridge (D475) | the amount; the calls must be `[approve(sodaUSDC, amount) on srcHub, deposit(srcHub, amount) on sodaUSDC, withdraw(dstHub, amount × 10^(18−srcDec)) on sodaUSDC, transfer(dstHub, recipient, delivered, 0x) on the hub asset manager]`, exact equalities, every `value` 0, delivered exactly the conversion to dstDec (no dust), srcHub and dstHub the pinned USDC pair, the recipient the user's own wallet on the other chain |
 | contract creation (`to` empty), any other selector, any other contract, ERC-20 calls on another token, a native deposit with `value ≠ amount`, a Sodax `data` of another shape | refused |
 
 The hub-call rule bounds what the relayed calls can take from the user's hub wallet on Sonic to the deposited amount
@@ -286,7 +289,7 @@ place the demo exists); "fixed" means changed in this branch.
 | R2 | The early refusal check (D112) assumed the demo on, so an app without it would have got demo reasons ("over the cap") and a stale cached "off" would have refused a request the API allows, with no re-read | medium | **fixed**: in a demo build the mainnet part waits for `sign()`, which reads the setting fresh; consequence accepted: such a request may wake a dormant session before it is refused (dev envs only) |
 | R3 | `personal_sign` and `stellar_signMessage` stay allowed for a demo app (they name no network, D35). Most token-moving signatures are EIP-712 (refused on Base), but some protocols accept EIP-191 messages as orders; such a message is not valued or capped | medium | **open, to confirm** (D429): the popup shows the message in full; the option is to refuse messages for a demo app, which would break SIWE-style logins |
 | R4 | A signature approved while the demo was on is made even if staff turn it off while the popup is open (the setting is read before the popup, as for raw signing) | low | accepted: at most the one request on screen, still under the cap |
-| R5 | A deposit's recipient (the hub wallet in `to`) and the intent's destination aren't checked: a page can send the deposit to anyone | low | accepted by design: the cap bounds what leaves the wallet, whoever receives it; the hub calls are bounded to the deposit (`checkSodaxHubCalls`) |
+| R5 | A deposit's recipient (the hub wallet in `to`) and the intent's destination aren't checked: a page can send the deposit to anyone. **A bridge's recipient is checked** (D475): it must be the user's own wallet on the other chain | low | accepted by design: the cap bounds what leaves the wallet, whoever receives it; the hub calls are bounded to the deposit (`checkSodaxHubCalls`) |
 | R6 | The price table can go stale or be wrong (a live price couldn't be confirmed on 2026-11-06) | medium | mitigated: prices ≈2–3× the market where it was last known, rounded up, a 45-day expiry that refuses everything after; open: review before each demo (security.md (q)) |
 | R7 | Usage events are the vault's word that a signature happened | low | accepted (security.md (p)): bound to a live session and the address's own proof (R18), single use, ≤ 120 per app per hour, labelled "reported by the vault", nothing acts on them |
 | R18 | (the security review of 2026-11-06, MEDIUM) The report endpoint checked only the app: anyone with an app's key and an allowed parent origin could forge `mainnet_signature` rows for any address | medium | **fixed**: the session key's signature over the event, the wallet proof of the address by its own key for that session and app (another user's address can't be named), the session live on chain in the app's scope, a single-use marker; the row stores the session's user. Tests: forged, wrong key, altered event, no session, replay, stale, another session's or app's wallet proof |

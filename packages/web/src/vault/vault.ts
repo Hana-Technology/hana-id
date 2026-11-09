@@ -236,7 +236,7 @@ interface Session {
    */
   supportId: string | null;
   /**
-   * D420: the issuer's sealed address of the identity that signed in, for this session (the vault can't open it; the
+   * D438: the issuer's sealed address of the identity that signed in, for this session (the vault can't open it; the
    * API puts it in identity tokens once the user shared it, D411), or null.
    */
   sealedEmail: string | null;
@@ -1127,7 +1127,7 @@ export class Vault {
     if (persistence === 'session') s.persist = this.startPersist(s, success, revoked);
     // The wallet directory (D310, D317): the active path's addresses, in the background, never awaited.
     this.recordWallets(s);
-    // D420: token_first's google-record answers the sealed address after the login: the session (and its record) get
+    // D438: token_first's google-record answers the sealed address after the login: the session (and its record) get
     // it when it comes. An `at_login` app waits for it below, before the sheet.
     if (!s.sealedEmail && success.sealedEmailLater) void success.sealedEmailLater.then((blob) => this.attachSealedEmail(s, blob));
     // D411: an `at_login` app asks once per user and app, before the wallet opens. Never fails the login.
@@ -1895,7 +1895,7 @@ export class Vault {
     });
   }
 
-  // ---- email sharing (D411, D420–D425; email-share.ts) ----
+  // ---- email sharing (D411, D438–D443; email-share.ts) ----
 
   /** The live or dormant session's consent signer and its sealed address. */
   private consentTarget(): { signer: ConsentSigner; held: { sealedEmail: string | null; emailState: Session['emailState'] }; sessionPk: Uint8Array } | null {
@@ -1925,7 +1925,7 @@ export class Vault {
     }
   }
 
-  /** The API's setting and state for the session's address (null sealedEmail: the account's, D423). */
+  /** The API's setting and state for the session's address (null sealedEmail: the account's, D441). */
   private consentState(signer: ConsentSigner, sealedEmail: string | null) {
     return this.consentCall(signer, 'state', sealedEmail, (proof) => this.api!.emailConsentState({ ...proof, ...(sealedEmail ? { sealedEmail } : {}) }));
   }
@@ -1948,7 +1948,7 @@ export class Vault {
     return state;
   }
 
-  /** The approval popup's "Stop sharing" (D424): every address of this app and account. */
+  /** The approval popup's "Stop sharing" (D442): every address of this app and account. */
   private async revokeEmailSharing(): Promise<boolean> {
     const t = this.consentTarget();
     if (!t) return false;
@@ -1960,7 +1960,7 @@ export class Vault {
     }
   }
 
-  /** D420: a sealed address that arrived after the login (google-record): kept with the session and in its record. */
+  /** D438: a sealed address that arrived after the login (google-record): kept with the session and in its record. */
   private attachSealedEmail(s: Session, blob: string | null): void {
     if (!blob || this.session !== s || s.sealedEmail) return;
     s.sealedEmail = blob;

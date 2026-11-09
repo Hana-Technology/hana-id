@@ -1,4 +1,4 @@
-// The vault's side of email sharing with partners (D411, D420–D425; docs/email-sharing-spec.md): the consent calls'
+// The vault's side of email sharing with partners (D411, D438–D443; docs/email-sharing-spec.md): the consent calls'
 // session proofs, and the sheet (`/share-email` on the auth origin) the vault drives through postMessage.
 //
 //   /share-email ──hana:email-share-hello──▶ vault       (only from the window the vault expects)

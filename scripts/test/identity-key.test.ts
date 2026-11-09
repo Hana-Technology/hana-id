@@ -427,7 +427,7 @@ describe('manifest blocks', () => {
   });
 });
 
-describe('identity-key email-keys (D420, D421)', () => {
+describe('identity-key email-keys (D438, D439)', () => {
   let issuerPuts: { worker: string; name: string; value: string }[];
   /** A random source that never repeats (the shared one is deterministic: both keys would be the same bytes). */
   let counter: number;

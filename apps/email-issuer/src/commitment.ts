@@ -42,7 +42,7 @@ export interface ParsedCommitment {
   scopeId: string;
   /** The token's nonce, computed here (null for auto_link: it depends on the chain state at minting). */
   nonce: string;
-  /** The parsed session commitment (purpose `session` only, else null): its key and expiry seal the address (D420). */
+  /** The parsed session commitment (purpose `session` only, else null): its key and expiry seal the address (D438). */
   session: SessionCommitment | null;
 }
 

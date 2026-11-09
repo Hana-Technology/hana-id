@@ -331,7 +331,7 @@ describe('/login/email', () => {
     expect(readEmailContext(s.win.sessionStorage, s.relayId, NOW)).toBeNull();
   });
 
-  it('D420: verify’s sealed address rides beside the email token in the relay', async () => {
+  it('D438: verify’s sealed address rides beside the email token in the relay', async () => {
     const s = emailSetup({ hint: 'ada@example.com' });
     const sealedEmail = `se1.${'A'.repeat(60)}`;
     s.f.issuer.verify.mockImplementation(async () => ({ kind: 'token', idToken: TOKEN, deviceTicket: TICKET, sealedEmail }));

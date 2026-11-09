@@ -1,6 +1,6 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's, the console's and the admin's)
 
-Last verified against code: 2026-11-06 (branch `feat/email-sharing`, not merged: email sharing with partners, D411, D420–D425: migration 0012 (`apps.identity_email`, `email_consents`), `GET /v1/app`'s `identityEmail`, "Email sharing" (the four consent endpoints), the mint's `email` claim and `emailStatus`, `/share-email`'s page policy, `ConsoleRpc`'s `email`/`emails` and email search, `updateSettings`' `identityEmail`, `purgeDirectory`'s `emailConsents`, the issuer's `sealedEmail` answers and `IDENTITY_SEAL_KEY`, the API's `IDENTITY_SEAL_KEY`, `IDENTITY_SEAL_KEY_PREVIOUS` and `EMAIL_CONSENT_KEY`); 2026-11-06 (branch `feat/env-alert-label`: the admin Worker's `ENV_LABEL` var, D419); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: the admin Worker's "Email" through SendGrid, accepted on `202`, no idempotency key, the per-isolate memo; D401); 2026-11-05 (branch `fix/security-review-1105`: the admin's `POST /api/users/search` ticket for a sub or full address, `POST /api/users/find` `{query, ticket}` audited first as `users.find`, `support.lookup`'s `requestIdList`, `recordStaffAction`'s two org-less actions, D410); 2026-11-05 (branch `feat/deploy-check-all-workers`: the build id on every Worker, D406: `GET /.well-known/hana-build` on the console, console-auth and files Workers, the console SPA's `<meta name="hana-build">`, none on the admin (read through wrangler); the shared deploy wrapper); 2026-11-05 (branch `feat/sdk-error-request-id`: "Conventions": an error's `requestId` passed on to the SDK as `data.requestId`, D405); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup's screen: the email join in `POST /api/support/lookup` (`emails`, `emailsNote`, `unverifiedWarning`), its ticket in the issuer's rule, `DirectoryRpc.get`'s `purpose` (`support_lookup`), D399); 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
+Last verified against code: 2026-11-06 (branch `feat/email-sharing`, not merged: email sharing with partners, D411, D438–D443: migration 0012 (`apps.identity_email`, `email_consents`), `GET /v1/app`'s `identityEmail`, "Email sharing" (the four consent endpoints), the mint's `email` claim and `emailStatus`, `/share-email`'s page policy, `ConsoleRpc`'s `email`/`emails` and email search, `updateSettings`' `identityEmail`, `purgeDirectory`'s `emailConsents`, the issuer's `sealedEmail` answers and `IDENTITY_SEAL_KEY`, the API's `IDENTITY_SEAL_KEY`, `IDENTITY_SEAL_KEY_PREVIOUS` and `EMAIL_CONSENT_KEY`); 2026-11-06 (branch `feat/env-alert-label`: the admin Worker's `ENV_LABEL` var, D419); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: the admin Worker's "Email" through SendGrid, accepted on `202`, no idempotency key, the per-isolate memo; D401); 2026-11-05 (branch `fix/security-review-1105`: the admin's `POST /api/users/search` ticket for a sub or full address, `POST /api/users/find` `{query, ticket}` audited first as `users.find`, `support.lookup`'s `requestIdList`, `recordStaffAction`'s two org-less actions, D410); 2026-11-05 (branch `feat/deploy-check-all-workers`: the build id on every Worker, D406: `GET /.well-known/hana-build` on the console, console-auth and files Workers, the console SPA's `<meta name="hana-build">`, none on the admin (read through wrangler); the shared deploy wrapper); 2026-11-05 (branch `feat/sdk-error-request-id`: "Conventions": an error's `requestId` passed on to the SDK as `data.requestId`, D405); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup's screen: the email join in `POST /api/support/lookup` (`emails`, `emailsNote`, `unverifiedWarning`), its ticket in the issuer's rule, `DirectoryRpc.get`'s `purpose` (`support_lookup`), D399); 2026-11-05 (branch `feat/batch-c-15`: `supportId` in the `/v1/sessions` and `/v1/login`
 answers, D395; `AdminRpc.supportLookup` / `userShares`; the admin Worker's `POST /api/support/lookup`; the
 `support.lookup` staff action; D394–D396); 2026-11-05 (branch `feat/deploy-build-check`: the build id, D384: `GET /v1/health`'s
 `build`, the page Workers' `GET /.well-known/hana-build`, the issuer's `GET /v1/email/health`, the `HANA_BUILD` var
@@ -653,7 +653,7 @@ One thin Worker per Hana origin in every env (D66; `workers.dev` in dev envs, a 
 | vault | `/vault` | forwarded to the API Worker (service binding `API`), unchanged but for a `Set-Cookie` header, which is dropped; `503` page with no config if it is unreachable |
 | auth | `/login/callback` | `login/callback.html` with `frame-ancestors 'none'; connect-src <API_URL> [https://oauth2.googleapis.com]` (Google's tokeninfo only when `EMAIL_ISSUER_URL` is set and valid: under `'token_first'` the callback reads the access token's `sub` there, D270; the built page's `<meta>` policy lists the same, `packages/web/src/auth/pages.ts`) |
 | auth | `/login`, `/approve` | `<path>.html` with `frame-ancestors 'none'` (neither fetches anything; the login popup makes no API call, D77) |
-| auth | `/share-email` | `share-email.html` with `frame-ancestors 'none'; connect-src <API_URL>` (D411, D424: the email sharing sheet reads the sealed address from `/v1/identity/email-consent/preview`, nothing else) |
+| auth | `/share-email` | `share-email.html` with `frame-ancestors 'none'; connect-src <API_URL>` (D411, D442: the email sharing sheet reads the sealed address from `/v1/identity/email-consent/preview`, nothing else) |
 | auth | logo pages: `/login`, `/login/email`, `/approve`, `/export`, `/share-email` | with `FILES_ORIGIN` set (the manifest's `files.origin`, C11, D306), the base policy's `img-src 'self' data:` becomes `img-src 'self' data: <FILES_ORIGIN origin>` (in place, one `img-src`); the build's `<meta>` policy does the same from `HanaEnv.filesOrigin`. `/login/callback` never. A `FILES_ORIGIN` that isn't an origin is left out and logged (`files_origin_misconfigured`), the page still served |
 | auth | `/login/email` | `login/email.html` with `frame-ancestors 'none'; connect-src [<EMAIL_ISSUER_URL origin>] <API_URL>` (the email step, batch 8a: the issuer's `start`, `resend`, `verify` and the relay write; the auth Worker's `EMAIL_ISSUER_URL` is set by `gen` from `emailIssuer`, and a malformed one is a `503` page) |
 | auth | `/export` | `export.html` with `frame-ancestors 'none'; connect-src <API_URL> <NEAR_RPC> [<NEAR_RPC_FALLBACK>] https://www.googleapis.com` |
@@ -767,7 +767,7 @@ link relay (`get_account` of the account root, fresh). Failures log `directory_s
 
 ### Identity token · I
 
-The partner identity token (`docs/identity-token-spec.md`, D120, D127; the `email` claim since D411, D420–D425,
+The partner identity token (`docs/identity-token-spec.md`, D120, D127; the `email` claim since D411, D438–D443,
 `docs/email-sharing-spec.md`): an ES256 JWT the vault mints for its app and the partner's backend verifies against the JWKS below, without calling Hana.
 `src/identity/`. No Hana API accepts the token (below, "Refusals elsewhere").
 
@@ -780,7 +780,7 @@ exactly:
 { "sessionPublicKey": [32], "issuedAtMs": 0, "nonce": [16], "signature": [64],
   "walletProofs": { "stellar": { "address": "G…", "signature": [64] },
                     "evm": { "address": "0x…", "signature": [65] } },
-  "sealedEmail": "optional, ≤ 1024 characters: the issuer's sealed address for this session (D420), covered by the signature" }
+  "sealedEmail": "optional, ≤ 1024 characters: the issuer's sealed address for this session (D438), covered by the signature" }
 ```
 
 `signature`: Ed25519 by the session key over `"hana-id-identity-v1:" ‖ borsh(SIGNER_ACCOUNT) ‖ borsh(appId) ‖
@@ -816,7 +816,7 @@ deletes expired markers) → per account root (`429 rate_limited`) → the quota
 per isolate) → sign and self-verify (`503
 identity_signer_unavailable`) → `200 {identityToken, expiresAtMs, emailStatus}`.
 
-The email (D423, `src/identity/email.ts` `mintEmail`, never an error), after the quota windows: the app's
+The email (D441, `src/identity/email.ts` `mintEmail`, never an error), after the quota windows: the app's
 `identity_email` `off` → `emailStatus: "off"`; else a `sealedEmail` that opens (`IDENTITY_SEAL_KEY`, or
 `IDENTITY_SEAL_KEY_PREVIOUS`, for this app, session key and before its expiry) → the consent row of its address's MAC
 decides: `included` (the token gets `email`, the sealed address, and `email_verified: true`), `declined`, `not_asked`;
@@ -845,7 +845,7 @@ and the absolute cap)`, rounded down), `jti` (16 random bytes, b64url), `wallets
 {chain: "evm", address}]`, as proven), `login_methods` (the root's provider, `["google"]` today: account linking comes
 with email login), then `email` and `email_verified: true` only when `emailStatus` is `included` (above).
 
-### Email sharing (`src/identity/email.ts`; D411, D420–D425) · I
+### Email sharing (`src/identity/email.ts`; D411, D438–D443) · I
 
 The user's consent to share their address with the app, per app × account (the identity token's `sub`) × address
 (`docs/email-sharing-spec.md`). Each body is the mint's session proof (`sessionPublicKey`, `issuedAtMs`, `nonce`,
@@ -1112,7 +1112,7 @@ crons). Any other actor is `forbidden`. The console's member is trusted
 | `pendingUpgrades` (C14) | `{orgId}` → `{pendingUpgrades}`: the pending-upgrades page's view (D86, D333; `@hana-id/console-core` `pendingUpgradesView`) of the `GET /v1/governance` snapshot (the same isolate cache): `{signer, env, readAtMs, paused, governanceDelayMs, upgrade: {codeHash, proposedAtMs, executableAtMs, due, release: {version, commit, buildCommand, previousCommit, diffCommand} \| null} \| null, ownerTransfer, withdrawal, delayDecreases: [{delay, currentMs, valueMs, effectiveAtMs}], consoleAudienceAdditions, anyPending}`. `release` from the registry `CONTRACT_RELEASES` (null: not a published release). Contract-wide and public on chain, nothing filtered by org and nothing staff-only (no access keys, watchdogs, key changes or cron state); charged to the org's budget (cost 2: the snapshot's D1 batch); `near_unavailable` when a view fails or has an unknown shape |
 | `ownerAction` (C6) | `{orgId, body}`: an on-chain owner action relayed through the owner pool exactly as `POST /v1/owner-actions` relays it (the same per-IP limiter fed `clientIp`, precheck, token reservation, caps, usage event, endpoint `ConsoleRpc.ownerAction` in the request log). Console rules on top (D237): the scope must be in `scopes` with the org (`not_found`, before any chain read); the owner token's optional claims are checked strictly (`forbidden`). The claim allow-list holds here as on the endpoint, for the owner token and an `AddClient` proof alike (D274, D277: `token_has_pii`, an RpcCode `forbidden` whose message names the claim; both are public once relayed). A refusal before the relay is an RpcCode (the precheck's code first in `error`: `unknown_change: …`): `owner_nonce_mismatch`, `invalid_client_proof`, `token_used`, `not_owner`, `rate_limited`, `not_found` (scope, change, client), `conflict` (locked, last client, shared login state, a registered or shared client), `forbidden` (token), `near_unavailable` (NEAR or Google's keys), `bad_request`. Once relayed: `{ok: true, status, result?, nearTx?, code?, error?}`, the relay's own answer, a contract panic included (`status: 422`, `code: contract_rejected`). The safety methods may spend the kill-switch reserve |
 
-| `listUsers`, `getUser` (W) | The wallet directory for the org's own scopes only (`scopes.org_id`, D315, D346): `{users: PartnerUser[], nextCursor}` newest first by last seen (`scopeId`, `search` = a wallet address, a User ID `u1_…` (exact case), a Support ID or a full email address (D411, D421: matched exactly, trimmed and lowercased, by `EMAIL_CONSENT_KEY`'s MAC among the `granted` consents of the org's live apps only; a prefix or partial address is `bad_request`), `cursor` = `lastSeenAt:u1_…` from the last page, `limit` ≤ 100), `getUser({orgId, userId: 'u1_…'})` → `{user}`. A `PartnerUser` is `{userId, supportId, scopeId, createdAt, lastSeenAt, accounts: [{kind, status: 'active' \| 'pending'}], wallets: [{chain, address, firstSeenAt, lastUsedAt}], email}` (`email`: the address most recently shared with one of the org's live apps in the user's scope, or `null`; `getUser` adds `emails: [{appId, appName, email, sharedAt}]`, D411): `userId` is the identity token's `sub` (the value the partner's backend stores), `supportId` its short form `HANA-XXXX-XXXX`; never the internal id `hu_…`, a sub, an identity key, or an address the user didn't share. A sub or an internal id as `search` is `bad_request` (and `getUser` with one); another org's user is `not_found`. Cost 1 each |
+| `listUsers`, `getUser` (W) | The wallet directory for the org's own scopes only (`scopes.org_id`, D315, D346): `{users: PartnerUser[], nextCursor}` newest first by last seen (`scopeId`, `search` = a wallet address, a User ID `u1_…` (exact case), a Support ID or a full email address (D411, D439: matched exactly, trimmed and lowercased, by `EMAIL_CONSENT_KEY`'s MAC among the `granted` consents of the org's live apps only; a prefix or partial address is `bad_request`), `cursor` = `lastSeenAt:u1_…` from the last page, `limit` ≤ 100), `getUser({orgId, userId: 'u1_…'})` → `{user}`. A `PartnerUser` is `{userId, supportId, scopeId, createdAt, lastSeenAt, accounts: [{kind, status: 'active' \| 'pending'}], wallets: [{chain, address, firstSeenAt, lastUsedAt}], email}` (`email`: the address most recently shared with one of the org's live apps in the user's scope, or `null`; `getUser` adds `emails: [{appId, appName, email, sharedAt}]`, D411): `userId` is the identity token's `sub` (the value the partner's backend stores), `supportId` its short form `HANA-XXXX-XXXX`; never the internal id `hu_…`, a sub, an identity key, or an address the user didn't share. A sub or an internal id as `search` is `bad_request` (and `getUser` with one); another org's user is `not_found`. Cost 1 each |
 | `usage` (C12) | `{orgId, from, to, by: 'day' \| 'month', appIds?}` → `{rows: UsageRow[]}`: `usage.org_report` over the writer's `USAGE_DB` (Neon only: no hot-DB statement, no hot-DB cost). Refused before Neon: more than 400 days, `from` after `to`, more than 100 apps (`bad_request`); per member 60 a minute and 1 200 an hour on the `RateLimiter` (`console-report:<user id>`, `rate_limited`); no `USAGE_DB` or a Neon failure is `internal`. C12's optional fields: `linkActions`, `identityTokens`, `relayedRejectedBurntYocto`, `relayedRejectedUsdMicros`, `afterStatement` (D324) |
 | `statements` (C12) | `{orgId}` → `{statements}`: `usage.org_statements` (newest first, ≤ 120): `StatementMeta` plus the stored `totals` (checked against console-core `statementTotals`; a mismatch is `internal`) and the files' `csvKey` / `pdfKey` (server-side reads only) |
 | `ledger` (C12) | `{orgId, month, asOf?, after?}` → `{rows: LedgerRow[], next?, asOf}`: one page of 1 000 of `usage.org_ledger`, events with `received_at ≤ asOf` (default: now, answered so the caller pins every page to it), keyset `next` = `<request_id>,<at ms>` |
@@ -1425,8 +1425,8 @@ Vars are generated from `envs/<env>.json` by `apps/api/scripts/gen-wrangler.ts` 
 | `IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY` (I) | secret, testnet and `local*` only | `.secrets/<env>/identity-signing-key.json`, `identity-signing-key-standby.json`, from `scripts/identity-key.ts init` | P-256 private JWKs; no key with the active kid → `503 identity_signer_unavailable` |
 | `IDENTITY_AWS_ACCESS_KEY_ID`, `IDENTITY_AWS_SECRET_ACCESS_KEY` (I) | secret, `aws-kms` only | `.secrets/<env>/identity-aws-access-key.json` (`aws iam create-access-key` for `identityToken.signer.credentials.iamUser`), from `identity-key kms-put-aws-key` (one `wrangler secret bulk`) | a long-term `AKIA…` key of the IAM user whose only permission is `kms:Sign` on the active key (D219); never logged; missing → `503 identity_signer_unavailable` |
 | `IDENTITY_SUB_KEY` (I) | secret | `.secrets/<env>/identity-sub-key`, from `identity-key init` | base64 of 32 bytes; the `sub`/`sid` HMAC key; never rotated |
-| `IDENTITY_SEAL_KEY`, `IDENTITY_SEAL_KEY_PREVIOUS` (I) | secret | `.secrets/<env>/identity-seal-key`, from `identity-key <env> email-keys` (the issuer has the same value) | `<id>:<base64 of 32 bytes>`: opens the issuer's sealed addresses (D420); the previous one only during a rotation. Without it no consent endpoint works and tokens carry no email |
-| `EMAIL_CONSENT_KEY` (I) | secret | `.secrets/<env>/email-consent-key`, from `identity-key <env> email-keys` | base64 of 32 bytes: the consent rows' address MAC (D421), API only; never rotated (a new one asks every user again) |
+| `IDENTITY_SEAL_KEY`, `IDENTITY_SEAL_KEY_PREVIOUS` (I) | secret | `.secrets/<env>/identity-seal-key`, from `identity-key <env> email-keys` (the issuer has the same value) | `<id>:<base64 of 32 bytes>`: opens the issuer's sealed addresses (D438); the previous one only during a rotation. Without it no consent endpoint works and tokens carry no email |
+| `EMAIL_CONSENT_KEY` (I) | secret | `.secrets/<env>/email-consent-key`, from `identity-key <env> email-keys` | base64 of 32 bytes: the consent rows' address MAC (D439), API only; never rotated (a new one asks every user again) |
 | `USER_ID_KEY` (C4) | secret, optional | `.secrets/<env>/user-id-key`, from `usage-setup <env> user-id-key` | base64 of 32 bytes; the uid key. Absent or malformed → events without uid (`usage_uid_unavailable`); never logged |
 | `DB` | D1 | `cloudflare.d1Name`, id from `--d1-id` | `migrations_dir: migrations` |
 | `USAGE_DB` (C4) | Hyperdrive, optional | `gen --usage-hyperdrive-id <id>` (kept on regeneration for the same Worker and D1 database; `off` drops it; `localConnectionString` an unroutable placeholder for `wrangler dev`) | the ledger writer's config (role `usage_writer`, caching disabled). Absent → capture off, every endpoint as before |
@@ -2111,7 +2111,7 @@ answer and never changing it; errors and `409`s record nothing.
   non-Google-hosted address only if it did so within 180 days, D199) has the wallet in this scope and the email identity has none. The email login then gets no `idToken`, so
   it can't open a second wallet; the popup continues with Google. `linkTicket` (32 random bytes, single use, 10 min,
   bound to the app, this address's `sub` and the hinted Google identities) only when the contract would accept the join.
-- `sealedEmail` (D420): only on a `session` purpose's `idToken` answer, with `IDENTITY_SEAL_KEY` set: the normalized
+- `sealedEmail` (D438): only on a `session` purpose's `idToken` answer, with `IDENTITY_SEAL_KEY` set: the normalized
   login address sealed for the app and the session key and expiry of the challenge's commitment (`start` keeps them in
   the challenge record as `seal`; a challenge made before the deploy has none and gets no blob). The popup relays it
   beside the email token; only the API opens it. Never on case B, the link purposes or `auto_link`.
@@ -2124,7 +2124,7 @@ answer and never changing it; errors and `409`s record nothing.
 ### `POST /v1/email/google-match` · E
 
 `{pk, accessToken, googleIdToken, commitment, link, linkTicket?}` (commitment = the session nonce fields) → `200
-{decision, googleHosted, linkable, emailToken?, linkImmediate?, challenge?, sealedEmail?}`. `sealedEmail` (D420): with
+{decision, googleHosted, linkable, emailToken?, linkImmediate?, challenge?, sealedEmail?}`. `sealedEmail` (D438): with
 `IDENTITY_SEAL_KEY` set and a Google-verified address that normalizes, whatever the decision: userinfo's address,
 lowercased, sealed (`@hana-id/email` sealed.ts, src `google`) for the app and the commitment's session key and expiry; a
 sealing failure is logged `seal_failed` and only drops the field.
@@ -2160,7 +2160,7 @@ sealing failure is logged `seal_failed` and only drops the field.
 ### `POST /v1/email/google-record` · E
 
 `{pk, accessToken, googleIdToken, commitment}` → `200 {accepted: true, sealedEmail?}` (D270; `sealedEmail` as
-google-match's, D420). Under `GOOGLE_EMAIL_FLOW =
+google-match's, D438). Under `GOOGLE_EMAIL_FLOW =
 'token_first'` (`packages/web/src/auth/google.ts`; in force since 2026-11-04) a Google login of an app without email login
 asks Google for the email too, and the vault sends the access token here, in the background, only for the user
 directory (D269).
@@ -2333,7 +2333,7 @@ Vars (from `emailIssuer`, `scripts/gen-wrangler.ts`): `ENV_NAME`, `NEAR_RPC`, `N
 `VAULT_ORIGIN`, `DAILY_SEND_BUDGET`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `ACCESS_STAFF_EMAILS`,
 `SENDGRID_WEBHOOK_PUBLIC_KEY`; with a dashboard (`admin` block, C8b) `ADMIN_ACCESS_TEAM_DOMAIN`, `ADMIN_ACCESS_AUD`,
 `ADMIN_STAFF_EMAILS` (the admin console's Access application, for DirectoryRpc's own check). Secrets: `ISSUER_SIGNING_KEY`, `EMAIL_SUB_KEY`, `EMAIL_CODE_KEY`, `EMAIL_RL_KEY`,
-`SENDGRID_API_KEY`, and `IDENTITY_SEAL_KEY` (optional, D420: the API's value; without it no answer carries `sealedEmail`)
+`SENDGRID_API_KEY`, and `IDENTITY_SEAL_KEY` (optional, D438: the API's value; without it no answer carries `sealedEmail`)
 (`docs/security.md` "Key and secret inventory"). Placement `aws:ap-east-1`; no invocation logs.
 
 SendGrid keeps each message's recipient and events in its Email Activity (3 days on the plans without the paid Email

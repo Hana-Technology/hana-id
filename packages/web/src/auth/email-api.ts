@@ -27,7 +27,7 @@ export interface Challenge {
 
 export type Verified =
   /**
-   * The address's email token (JWS JSON) and this device's ticket for it; `sealedEmail` (D420), a `session` token's
+   * The address's email token (JWS JSON) and this device's ticket for it; `sealedEmail` (D438), a `session` token's
    * sealed address for the API, relayed beside the token (opaque here), when the issuer sent one.
    */
   | { kind: 'token'; idToken: string; deviceTicket: string | null; sealedEmail?: string }

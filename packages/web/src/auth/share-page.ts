@@ -1,4 +1,4 @@
-// `GET {authOrigin}/share-email` (D411, D420–D424; docs/email-sharing-spec.md "Screens"): the email sharing sheet. It
+// `GET {authOrigin}/share-email` (D411, D438–D442; docs/email-sharing-spec.md "Screens"): the email sharing sheet. It
 // talks only to the app's vault on vaultOrigin, shows the app's name and the exact address the app would get, and
 // answers with the user's choice; the vault records it.
 //

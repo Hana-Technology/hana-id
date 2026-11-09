@@ -34,7 +34,7 @@ const GOOGLE_ERROR = /^[a-z_]{1,64}$/u;
  *   `sub`), and the user chose "Link and continue" before going to Google (D139);
  * - `as`: what a token answering the vault's follow-up is (`link`: case A's `auto_link` token after the code step;
  *   `session`: an email login's token; `proof`: a link method's proof).
- * - `sealedEmail` (D420): beside an email login's token, the issuer's `verify` answer's sealed address (opaque to the
+ * - `sealedEmail` (D438): beside an email login's token, the issuer's `verify` answer's sealed address (opaque to the
  *   popup's relay and the vault; only the API opens it).
  */
 export type RelayPayload = RelayTokenPayload | (({ accessToken: string } | { error: string; claim?: string }) & { timings?: Record<string, number> });

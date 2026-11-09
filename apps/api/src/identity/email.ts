@@ -1,4 +1,4 @@
-// Email sharing with partners (D411, D420–D423; docs/email-sharing-spec.md, docs/api.md "Email sharing"): the app
+// Email sharing with partners (D411, D438–D441; docs/email-sharing-spec.md, docs/api.md "Email sharing"): the app
 // setting `identity_email`, the consent rows (migration 0012 `email_consents`), the endpoints the vault and the auth
 // popup call, and the address a mint puts in the identity token.
 //
@@ -11,8 +11,8 @@
 // origin and the sealed address), single use, then the share ('session' mode) and the on-chain session exactly as a
 // mint checks them; the account is the session's path's root, and its consent key the identity token's `sub`.
 //
-// The address arrives only sealed by the email issuer (@hana-id/email sealedEmail, IDENTITY_SEAL_KEY, D420), bound to
-// this app and session. A consent row keys it by EMAIL_CONSENT_KEY's MAC (one row per app × account × address, D421);
+// The address arrives only sealed by the email issuer (@hana-id/email sealedEmail, IDENTITY_SEAL_KEY, D438), bound to
+// this app and session. A consent row keys it by EMAIL_CONSENT_KEY's MAC (one row per app × account × address, D439);
 // the address itself is kept only in a `granted` row (the copy the partner console reads, D411 point 4).
 //
 // SECURITY: an address is personal data. Nothing here logs an address, a sealed blob, a MAC, a `sub` or a body; the
@@ -54,7 +54,7 @@ export const EMAIL_CONSENT_ENDPOINTS = {
 export type EmailConsentEndpoint = (typeof EMAIL_CONSENT_ENDPOINTS)[keyof typeof EMAIL_CONSENT_ENDPOINTS];
 export const isEmailConsentEndpoint = (p: string): p is EmailConsentEndpoint => (Object.values(EMAIL_CONSENT_ENDPOINTS) as string[]).includes(p);
 
-/** The MAC's domain label (D421). */
+/** The MAC's domain label (D439). */
 export const EMAIL_CONSENT_MAC_LABEL = 'hana-id/email-consent/v1';
 const MAX_BODY = 4096;
 const MAX_SEALED = 1024;
@@ -81,7 +81,7 @@ export async function appIdentityEmail(db: D1Database, appId: string): Promise<I
 // ---- keys ----
 
 export interface EmailKeys {
-  /** EMAIL_CONSENT_KEY as an HMAC key (D421). */
+  /** EMAIL_CONSENT_KEY as an HMAC key (D439). */
   mac: CryptoKey;
   /** IDENTITY_SEAL_KEY, then IDENTITY_SEAL_KEY_PREVIOUS when set (a rotation's 24 h overlap). */
   seal: SealKey[];
@@ -185,7 +185,7 @@ async function revokeAll(db: D1Database, appId: string, userSub: string, now: nu
   return r.meta.changes ?? 0;
 }
 
-// ---- the mint's email (D423) ----
+// ---- the mint's email (D441) ----
 
 export interface MintEmail {
   status: IdentityEmailStatus;

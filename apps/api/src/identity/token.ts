@@ -3,7 +3,7 @@
 // (the vault gate). No step writes a share, moves a counter or slides `idle_until`: a mint is never activity (D55, D112),
 // so a background tab refreshing tokens can't keep a session alive.
 //
-// The `email` claim (D411, D423; identity/email.ts mintEmail): the address the user shared with this app, when the app's
+// The `email` claim (D411, D441; identity/email.ts mintEmail): the address the user shared with this app, when the app's
 // `identity_email` isn't 'off' (`emailStatus` says why a token has none). A `sealedEmail` in the body is covered by the
 // session proof and opened only for that.
 //

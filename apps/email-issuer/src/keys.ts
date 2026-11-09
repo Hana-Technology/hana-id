@@ -65,7 +65,7 @@ export async function importKeys(env: { EMAIL_SUB_KEY?: string | undefined; EMAI
   }
 }
 
-// ---- the sealed email's key (D420) ----
+// ---- the sealed email's key (D438) ----
 
 const sealKeyCache = new Map<string, Promise<SealKey | null>>();
 

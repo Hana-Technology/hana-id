@@ -1,4 +1,4 @@
-// The sealed email (src/sealed.ts, D420): the AAD against @hana-id/core's pinned vector, an independent node:crypto
+// The sealed email (src/sealed.ts, D438): the AAD against @hana-id/core's pinned vector, an independent node:crypto
 // open of what sealEmail writes, and every refusal openSealedEmail must make.
 import { createDecipheriv, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';

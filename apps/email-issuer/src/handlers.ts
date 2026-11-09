@@ -86,7 +86,7 @@ const ok = (ctx: Ctx, status: number, body: unknown, fields: Record<string, stri
 };
 
 /**
- * `{sealedEmail}` for an answer (D420, docs/email-sharing-spec.md "Where the address comes from"): the verified address
+ * `{sealedEmail}` for an answer (D438, docs/email-sharing-spec.md "Where the address comes from"): the verified address
  * sealed under IDENTITY_SEAL_KEY for this app and session, until the session's expiry; `{}` when the env has no seal
  * key or the address can't be sealed (logged as a code). Never fails the answer; the address and the blob are never
  * logged.
@@ -587,7 +587,7 @@ export async function handleVerify(request: Request, ctx: Ctx): Promise<Response
       return recorded(ok(ctx, 200, { googleWallet: true, deviceTicket: owner, ...(linkTicket ? { linkTicket, sub } : {}) }, { appId: app.id, purpose: rec.purpose, decision: 'case_b' }));
     }
     const { token: idToken } = await mint(ctx, app, rec.scopeId, sub, rec.nonce!, 'session');
-    // The login address, sealed for the session the challenge was started for (D420); none for a record from before.
+    // The login address, sealed for the session the challenge was started for (D438); none for a record from before.
     const sealed = rec.seal ? await sealedFor(ctx, app.id, { sessionPublicKey: Uint8Array.from(rec.seal.sessionPublicKey), expiresAtMs: rec.seal.expiresAtMs }, email, 'email') : {};
     return recorded(ok(ctx, 200, { idToken, googleWallet: false, deviceTicket: owner, ...sealed }, { appId: app.id, purpose: rec.purpose }));
   }
@@ -746,7 +746,7 @@ export async function handleGoogleMatch(request: Request, ctx: Ctx): Promise<Res
   }
   let linkable = j.linkable;
   if (linkable && (j.decision === 'case_a' || j.decision === 'case_b') && (await deps.chain.unrecordedWallets())) linkable = false;
-  // Every answer from here carries the sealed address (D420), whatever the decision and the app's setting.
+  // Every answer from here carries the sealed address (D438), whatever the decision and the app's setting.
   const base = { decision: j.decision, googleHosted, linkable, ...(await sealedGoogle(ctx, checked.value)) };
   const sessionHash = sha256(sessionPreimage(deps.env.SIGNER_ACCOUNT, sc));
   const sessionIk = identityKey(app.scopeId, 'google', googleSub);
@@ -824,7 +824,7 @@ async function activeApp(ctx: Ctx, pk: unknown): Promise<{ ok: true; app: Issuer
  * its access token here only to record the address in the user directory. The same authentication and checks as
  * google-match (checkGoogleSignIn: the ID token, its nonce over the session commitment, tokeninfo, userinfo) and the
  * same CORS (the vault's origin); its own per-IP limit (IP_RECORD_LIMITS). It answers `{accepted: true}`, with no
- * match data (no decision, no hint, no token; only `sealedEmail` for a Google-verified address, D420), then records
+ * match data (no decision, no hint, no token; only `sealedEmail` for a Google-verified address, D438), then records
  * after the answer. Nothing is matched, minted, mailed or written besides the directory; the access token is never
  * revoked or stored (D265).
  */

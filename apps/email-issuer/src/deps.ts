@@ -22,7 +22,7 @@ export interface Deps {
   signers: () => Promise<IssuerSigner[]>;
   publicKeys: () => Promise<PublicJwk[]>;
   keys: () => Promise<IssuerKeys>;
-  /** IDENTITY_SEAL_KEY (D420), or null when the env has none (or a malformed one): then no answer carries `sealedEmail`. */
+  /** IDENTITY_SEAL_KEY (D438), or null when the env has none (or a malformed one): then no answer carries `sealedEmail`. */
   sealKey: () => Promise<SealKey | null>;
   access: AccessVerifier | null;
   waitUntil: (p: Promise<unknown>) => void;

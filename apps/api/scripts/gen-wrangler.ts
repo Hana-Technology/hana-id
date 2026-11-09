@@ -236,7 +236,7 @@ export interface IdentityDevSecrets {
   /** The key that signs now (`identity-signing-key.json`). The standby stays offline, never in .dev.vars (D177). */
   signingKey?: unknown;
   subKey?: string;
-  /** Email sharing (D420, D421): IDENTITY_SEAL_KEY (`identity-seal-key`) and EMAIL_CONSENT_KEY (`email-consent-key`). */
+  /** Email sharing (D438, D439): IDENTITY_SEAL_KEY (`identity-seal-key`) and EMAIL_CONSENT_KEY (`email-consent-key`). */
   sealKey?: string;
   consentKey?: string;
 }
@@ -256,7 +256,7 @@ function identityKeyLine(name: 'IDENTITY_SIGNING_KEY', file: string, jwk: unknow
 
 /**
  * The identity token's .dev.vars lines: the key that signs now and the sub key, and email sharing's seal and consent
- * keys when their files exist (D420, D421). The signing key must be the manifest's
+ * keys when their files exist (D438, D439). The signing key must be the manifest's
  * active key (`identityToken.signer.activeKid`, in `publicKeys`): a key the JWKS doesn't publish would sign tokens no
  * partner can verify. The standby is never written: it stays off the Worker until a switch (D177).
  */

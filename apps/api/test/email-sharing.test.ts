@@ -1,4 +1,4 @@
-// Email sharing with partners (D411, D420–D423; docs/email-sharing-spec.md): the app setting, the consent endpoints,
+// Email sharing with partners (D411, D438–D441; docs/email-sharing-spec.md): the app setting, the consent endpoints,
 // the identity token's `email` claim, ConsoleRpc's Email column and search, updateSettings and retention.
 import { identitySub } from '@hana-id/core/identity';
 import { internalIdOf, supportCodeOf } from '@hana-id/console-core';
@@ -26,7 +26,7 @@ const AUTH = 'https://auth.test';
 type Body = Record<string, unknown>;
 const json = async (res: Response): Promise<Body> => (await res.json()) as Body;
 
-/** What the issuer would hand the vault for this session (D420): the address sealed for the app and session key. */
+/** What the issuer would hand the vault for this session (D438): the address sealed for the app and session key. */
 async function sealed(app: { id: string }, spk: number[], email: string, o: { notAfterMs?: number; key?: string } = {}): Promise<string> {
   const key = (await parseSealKey(o.key ?? env.IDENTITY_SEAL_KEY))!;
   return sealEmail(key, { appId: app.id, sessionPublicKey: Uint8Array.from(spk), notAfterMs: o.notAfterMs ?? Date.now() + 3_600_000, email, src: 'google' });
@@ -164,7 +164,7 @@ describe('the consent endpoints', () => {
     expect(await claimsOf(app, spk)).toMatchObject({ status: 'missing' });
   });
 
-  it('a consent covers only its address (D411 point 5); a session without a readable seal gets the latest shared one (D423)', async () => {
+  it('a consent covers only its address (D411 point 5); a session without a readable seal gets the latest shared one (D441)', async () => {
     const { app, near, spk, sub } = await setup('at_login');
     const gmail = await sealed(app, spk, 'ada@gmail.com');
     expect((await consent(app, spk, EMAIL_CONSENT_ENDPOINTS.decide, { sealedEmail: gmail, decision: 'granted' })).status).toBe(200);

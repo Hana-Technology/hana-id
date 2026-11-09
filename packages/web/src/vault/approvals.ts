@@ -19,7 +19,7 @@
 //   hana:consent-result  → {id, allowed, digest} for the consent screen on show (consentDigest)
 //   hana:approve-bye     → the popup closes itself after 15 s idle
 //   hana:auto-approve-stop → "Stop auto-approving"
-//   hana:email-revoke      → "Stop sharing" on the account line (D411, D424), answered hana:email-revoked
+//   hana:email-revoke      → "Stop sharing" on the account line (D411, D442), answered hana:email-revoked
 // Reject, a popup closed while a request is on show, or a request older than 5 min resolves 'rejected' (4001).
 // A request is refused at once (4100) when MAX_PENDING_APPROVALS are already waiting or on show, or when the message
 // the popup would get fails the popup's own validator (parseWindowMessage), which would otherwise drop it silently and
@@ -109,7 +109,7 @@ export interface ApprovalDeps {
    */
   supportId?: () => string | null;
   /**
-   * D411, D424: whether the session's address is shared with this app (the vault's last known state), read for each
+   * D411, D442: whether the session's address is shared with this app (the vault's last known state), read for each
    * request: the account line then offers "Stop sharing". Absent or false: the message is exactly the older one.
    */
   emailShared?: () => boolean;

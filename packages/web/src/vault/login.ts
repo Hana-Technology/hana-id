@@ -315,7 +315,7 @@ export interface LoginSuccess {
    */
   supportId: string | null;
   /**
-   * D420: the address of the identity that signed in, sealed by the email issuer for the API and this session (from
+   * D438: the address of the identity that signed in, sealed by the email issuer for the API and this session (from
    * google-match, or the popup's email step), or null; `sealedEmailLater` when it comes from token_first's background
    * google-record instead (resolves null on any failure).
    */
@@ -965,7 +965,7 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
       // Step 7: who signed in (never the API's word), then (email on, a Google token) google-match and its case.
       let who = await verify.first(relayed.payload, nonce);
       let link: LinkPlan | null = null;
-      // D420: an email login's own sealed address rides beside its token; a Google one comes from google-match below,
+      // D438: an email login's own sealed address rides beside its token; a Google one comes from google-match below,
       // or from token_first's google-record after the login.
       let sealedEmail: string | null = who.ref.provider === EMAIL_PROVIDER ? (relayed.payload.sealedEmail ?? null) : null;
       if (who.ref.provider === 'google' && emailOn && this.follow) {
@@ -1150,7 +1150,7 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
       return { who: await verify.email(a.idToken, sessionNonceValue), link: null, sealedEmail: a.sealedEmail ?? null };
     }
     if (!match) throw fail('api_unavailable', 'Hana could not check this Google account against email sign-ins; try again', { reason: 'email_match_unavailable' });
-    // D420: google-match's sealed address is the Google identity's: it goes with a session that identity opens.
+    // D438: google-match's sealed address is the Google identity's: it goes with a session that identity opens.
     const sealed = match.sealedEmail;
 
     if (match.decision === 'case_a') {
@@ -1242,7 +1242,7 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
       const a = await readSlot(ctx.api, ctx.timers, keys.relayKey, id, readKey, ctl.signal, () => (ctl.signal.aborted ? fail('login_timeout', 'The record took too long') : null));
       if (!('accessToken' in a) || 'idToken' in a) return null;
       const r = await issuer.googleRecord({ pk: ctx.config.publishableKey, accessToken: a.accessToken, googleIdToken: google.token, commitment }, ctl.signal);
-      // D420: its sealed address goes with the session (the vault attaches it when it arrives).
+      // D438: its sealed address goes with the session (the vault attaches it when it arrives).
       return r.sealedEmail;
     };
     const sealed = run()

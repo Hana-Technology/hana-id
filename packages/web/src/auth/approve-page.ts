@@ -20,7 +20,7 @@
 // digest), so the vault never waits on an id the user can no longer answer; the new one needs its own guarded Approve.
 // The same id sent again (the vault re-sending what is on show) is rendered again, which also resets the guard.
 //
-// D411, D424: a request with `emailShared` shows "Email shared with {App} · Stop sharing" on the account line (the
+// D411, D442: a request with `emailShared` shows "Email shared with {App} · Stop sharing" on the account line (the
 // popup's account view, until Hana Home): the click posts `hana:email-revoke`, and the vault's `hana:email-revoked`
 // says whether it worked. It changes nothing about the request on screen.
 import {
@@ -97,7 +97,7 @@ export const AUTO_APPROVE_REASON_TEXT: Readonly<Record<AutoApproveReason, string
  */
 /** Beside the Support ID on the request screen (batch C15). */
 export const SUPPORT_ID_HINT = 'Give this code to the app’s support if they ask; it doesn’t show your account or email.';
-/** The account line's email sharing note (D424). */
+/** The account line's email sharing note (D442). */
 export const EMAIL_SHARED_TEXT = {
   line: (app: string) => `Your email is shared with ${app}.`,
   stopped: (app: string) => `Stopped. ${app} no longer gets your email from Hana; it may keep the address it already received, so ask ${app} to delete it.`,
@@ -259,7 +259,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     return d.h('p', { class: 'support-id muted' }, 'Support ID ', d.h('code', { class: 'mono' }, supportId), ` ${SUPPORT_ID_HINT}`);
   }
 
-  /** The account line's "Stop sharing" (D411, D424): one revoke at a time; the vault's answer updates the line. */
+  /** The account line's "Stop sharing" (D411, D442): one revoke at a time; the vault's answer updates the line. */
   let emailBox: HTMLElement | null = null;
   function emailSharedLine(app: string): HTMLElement {
     const box = d.h('p', { class: 'email-shared muted', attrs: { id: 'email-shared' } }, EMAIL_SHARED_TEXT.line(app), ' ');

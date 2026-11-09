@@ -76,7 +76,7 @@ export interface Env {
   /** Secret: the `sub`/`sid` HMAC key, base64 of 32 bytes. Never rotated (a new key changes every user's `sub`). */
   IDENTITY_SUB_KEY?: string;
   /**
-   * Email sharing with partners (D411, D420, D421; identity/email.ts; scripts/identity-key.ts `email-keys`). Secrets:
+   * Email sharing with partners (D411, D438, D439; identity/email.ts; scripts/identity-key.ts `email-keys`). Secrets:
    * IDENTITY_SEAL_KEY (`<id>:<base64 of 32 bytes>`, shared with the email issuer, which seals the verified address for
    * the API), IDENTITY_SEAL_KEY_PREVIOUS during a rotation only (still opened), and EMAIL_CONSENT_KEY (base64 of 32
    * bytes, API only: the consent rows' address MAC). Without them the consent endpoints answer 503

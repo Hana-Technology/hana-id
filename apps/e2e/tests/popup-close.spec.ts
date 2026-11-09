@@ -6,7 +6,7 @@
 import type { Page, TestInfo } from '@playwright/test';
 import { GOOGLE_AUTH_URL } from '../src/google-stub.ts';
 import { ISSUER_URL } from '../src/stack.ts';
-import { EARLY_CLOSE_DEADLINE_MS, LOGIN_ENDPOINT, LOGIN_PENDING_MS, clickAction, clickClosing, clickMayClose, closeOf, errorOf, expect, newApp, okValue, openPartner, peek, runAction, status, test, waitPersisted } from './fixtures.ts';
+import { EARLY_CLOSE_DEADLINE_MS, LOGIN_ENDPOINT, LOGIN_PENDING_MS, clickAction, clickClosing, clickMayClose, clickUntilTaken, closeOf, errorOf, expect, newApp, okValue, openPartner, peek, runAction, status, test, waitPersisted } from './fixtures.ts';
 
 const rand = (): string => crypto.randomUUID().replace(/-/gu, '').slice(0, 10);
 const newSub = (): string => `1${Array.from(crypto.getRandomValues(new Uint8Array(20)), (b) => String(b % 10)).join('')}`;
@@ -26,7 +26,7 @@ async function sendCode(popup: Page, to: string): Promise<number> {
   await expect(popup.locator('#email-address')).toBeVisible();
   await popup.fill('#email-address', to);
   const before = await codeCount(to);
-  await popup.click('#email-send');
+  await clickUntilTaken(popup, '#email-send');
   await expect(popup.locator('#email-code')).toBeVisible();
   return before;
 }

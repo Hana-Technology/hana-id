@@ -15,7 +15,10 @@ corepack pnpm --filter @hana-id/e2e test          # unit tests of the stack's mo
 The mainnet demo (D428) and the export's guarded reveal (D430): `tests/mainnet-demo.spec.ts` (Horizon and Base's RPC
 routed, never the real network). With `HANA_SHOTS_DIR=<dir>` it also saves its screens there (Chromium only; a shown
 key is masked). Buttons behind the guard (Approve, the export's Continue and Show key) take `approve()` or
-`guardedClick()` (`tests/fixtures.ts`): wait 1 s, move the pointer, then click.
+`guardedClick()` (`tests/fixtures.ts`): wait 1 s, move the pointer, then click. The first click on a freshly loaded
+popup's first screen (the email step's Send code) takes `clickUntilTaken()`: under load Firefox can lose the press of
+a click sent to a new popup (`mouseup` with no `mousedown`, so no click), though Playwright's checks pass. It clicks again
+only while that same element is still in the page, so a click the page took is never repeated.
 
 An unfinished login (`tests/abandoned-login.spec.ts`; the follow-up screens in `tests/linking.spec.ts`, the demo's in
 `tests/demo.spec.ts`): the popup left on the method chooser, Google's page, the email address or code step, a link

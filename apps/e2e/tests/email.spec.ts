@@ -5,7 +5,7 @@
 import type { Page, TestInfo } from '@playwright/test';
 import { GoogleStub, stackGoogleKey } from '../src/google-stub.ts';
 import { API_URL, ISSUER_URL } from '../src/stack.ts';
-import { LOGIN_ENDPOINT, chooseAccount, clickAction, clickClosing, expect, login, newApp, okValue, openPartner, routeStubs, status, test, waitPersisted } from './fixtures.ts';
+import { LOGIN_ENDPOINT, chooseAccount, clickAction, clickClosing, clickUntilTaken, expect, login, newApp, okValue, openPartner, routeStubs, status, test, waitPersisted } from './fixtures.ts';
 
 /** A fresh address per test and browser (the issuer's per-address limits are real here). */
 const address = (info: TestInfo, tag: string): string => `e2e-${tag}-${info.project.name}-${crypto.randomUUID().slice(0, 8)}@mail-e2e.example.com`;
@@ -31,7 +31,7 @@ async function emailStep(popup: Page, to: string, opts: { prefilled?: boolean } 
   if (opts.prefilled) await expect(popup.locator('#email-address')).toHaveValue(to);
   else await popup.fill('#email-address', to);
   const before = await mailCount(to);
-  await popup.click('#email-send');
+  await clickUntilTaken(popup, '#email-send');
   await expect(popup.locator('#email-code')).toBeVisible();
   await expect(popup.locator('#email-code')).toHaveAttribute('autocomplete', 'one-time-code');
   const code = await codeFor(to, before);
@@ -102,7 +102,7 @@ test('a wrong code says so and the right one still works', async ({ page }, info
   const popup = await popupP;
   await popup.waitForURL(/\/login\/email#/u);
   await popup.fill('#email-address', to);
-  await popup.click('#email-send');
+  await clickUntilTaken(popup, '#email-send');
   const code = await codeFor(to);
   await popup.fill('#email-code', code === '000000' ? '111111' : '000000');
   await popup.click('#email-verify');

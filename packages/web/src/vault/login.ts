@@ -697,7 +697,14 @@ abstract class PopupTask<T> {
     if (stage === 'google') this.leftForGoogleAt = this.ctx.perfNow();
     // Back on Hana's callback with its opener: no browsing context switch happened on this trip to Google.
     if (stage === 'back') this.leftForGoogleAt = Number.NEGATIVE_INFINITY;
-    if (stage === 'relayed') this.selfClosing = true;
+    if (stage === 'relayed') {
+      this.selfClosing = true;
+      // D495: a busy vault can read `closed` before it gets this message, posted before the window closed. The window
+      // said it relayed its answer: the close wasn't the user's, so the grace already running must not end the login.
+      this.popupGone = false;
+      if (this.closeTimer !== null) this.ctx.timers.clearTimeout(this.closeTimer);
+      this.closeTimer = null;
+    }
   }
 
   /** Whether `e` comes from the popup this task answered, on authOrigin. */

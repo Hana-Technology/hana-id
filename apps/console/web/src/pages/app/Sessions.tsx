@@ -1,6 +1,7 @@
-// An app's login and session settings (persistence, session length, idle timeout, the Google web client): the values
-// in force and, for an owner, the form that sends only the changed ones through a fresh sign-in (`app.settings`). The
-// form checks the limits the console checks (1 h to 23 h 50 min; idle 15 min up to the session length) before sending.
+// An app's login and session settings (persistence, session length, idle timeout, the Google web client, email sharing,
+// D411): the values in force and, for an owner, the form that sends only the changed ones through a fresh sign-in
+// (`app.settings`). The form checks the limits the console checks (1 h to 23 h 50 min; idle 15 min up to the session
+// length) before sending.
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { duration, useStepUp } from '../../lib.tsx';
@@ -13,15 +14,29 @@ const TTL_MIN = H;
 const TTL_MAX = 23 * H + 50 * MIN;
 const IDLE_MIN = 15 * MIN;
 
+type IdentityEmail = 'off' | 'on_request' | 'at_login';
+
+/** D411's `identity_email`: when Hana asks users to share their email with the app (the select's options, in order). */
+export const IDENTITY_EMAIL: readonly (readonly [IdentityEmail, string, string])[] = [
+  ['off', 'Off', 'Off: never asked (default)'],
+  ['on_request', 'When the app asks', 'When the app asks: requestEmailSharing()'],
+  ['at_login', 'At first login', 'At first login'],
+];
+
+export const identityEmailLabel = (v: unknown): string => IDENTITY_EMAIL.find(([k]) => k === v)?.[1] ?? 'Off';
+
 export function Sessions() {
   const ctl = useApp();
   const { app, owner, frozen, org } = ctl;
   const s = app.settings;
+  // An API before migration 0014's build omits the setting: it is off there.
+  const shareNow: IdentityEmail = s.identityEmail ?? 'off';
   const step = useStepUp(org);
   const [persistence, setPersistence] = useState(s.persistence);
   const [hours, setHours] = useState(String(s.sessionTtlMs / H));
   const [idle, setIdle] = useState(String(s.idleTtlMs / MIN));
   const [client, setClient] = useState(s.googleWebClientId ?? '');
+  const [share, setShare] = useState<IdentityEmail>(shareNow);
   const ttl = Math.round(Number(hours) * H);
   const idl = Math.round(Number(idle) * MIN);
   const ttlBad = !Number.isFinite(ttl) || hours.trim() === '' || ttl < TTL_MIN || ttl > TTL_MAX;
@@ -33,6 +48,7 @@ export function Sessions() {
     if (idl !== s.idleTtlMs) out.idleTtlMs = idl;
     const c = client.trim() || null;
     if (c !== s.googleWebClientId) out.googleWebClientId = c;
+    if (share !== shareNow) out.identityEmail = share;
     return out;
   };
   const changed = Object.keys(params()).length > 1;
@@ -48,6 +64,8 @@ export function Sessions() {
           <dd>{duration(s.idleTtlMs)}</dd>
           <dt>Google web client</dt>
           <dd className="mono small">{s.googleWebClientId ?? 'Hana’s shared client'}</dd>
+          <dt>Email sharing</dt>
+          <dd>{identityEmailLabel(shareNow)}</dd>
         </dl>
         <p className="muted small">
           The Google clients and on-chain owners of this app’s scope are on <Link to={`/orgs/${org}/scopes/${app.scopeId}`}>the scope’s page</Link>.
@@ -88,6 +106,17 @@ export function Sessions() {
               <span className="field-label">Google web client (empty: Hana’s shared client)</span>
               <input value={client} onChange={(e) => setClient(e.target.value)} placeholder="Hana’s shared client" className="mono" />
               <span className="field-hint">Only needed when your scope has several Google web clients: pick the one this app signs in with (partner guide, section 6).</span>
+            </label>
+            <label className="field field-wide">
+              <span className="field-label">Email sharing</span>
+              <select value={share} onChange={(e) => setShare(e.target.value as IdentityEmail)}>
+                {IDENTITY_EMAIL.map(([k, , help]) => (
+                  <option key={k} value={k}>
+                    {help}
+                  </option>
+                ))}
+              </select>
+              <span className="field-hint">Users see their email address and choose Share email or Not now; you see it only once they share it, and they can stop sharing at any time.</span>
             </label>
             <div className="form-actions field-wide">
               <button type="submit" className="btn btn-primary" disabled={step.busy || !changed || ttlBad || idleBad}>

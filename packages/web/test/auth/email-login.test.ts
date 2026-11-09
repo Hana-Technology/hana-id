@@ -331,6 +331,18 @@ describe('/login/email', () => {
     expect(readEmailContext(s.win.sessionStorage, s.relayId, NOW)).toBeNull();
   });
 
+  it('D438: verify’s sealed address rides beside the email token in the relay', async () => {
+    const s = emailSetup({ hint: 'ada@example.com' });
+    const sealedEmail = `se1.${'A'.repeat(60)}`;
+    s.f.issuer.verify.mockImplementation(async () => ({ kind: 'token', idToken: TOKEN, deviceTicket: TICKET, sealedEmail }));
+    await toCode(s);
+    typeInto('email-code', '123456');
+    submit('email-verify');
+    await vi.waitFor(() => expect(s.page.stage).toBe('done'));
+    const [, value] = s.f.api.writeRelay.mock.calls[0] as [string, RelayCiphertext];
+    expect(await decryptRelayPayload(s.relayKey, s.relayId, value)).toEqual({ idToken: TOKEN, sealedEmail });
+  });
+
   it('address → start → code → verify → relays the email token under the relay key and closes', async () => {
     const s = emailSetup({ hint: 'ada@example.com' });
     expect(s.page.stage).toBe('address');

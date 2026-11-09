@@ -274,6 +274,8 @@ export class FakeBackend {
   emailPolicy: { provider: string; signers: { id: string; kids: string[] }[]; required: number; overlap_until_ms: null } | null = null;
   /** The identity tokens' lifetime this fake API mints with (seconds); the real one caps it at the session's end. */
   identityTtlS = 3600;
+  /** D411: the mint's `emailStatus` (the vault keeps it as the session's consent state). */
+  identityEmailStatus = 'off';
   /**
    * Accounts and links, as contract v3 keeps them (batches 7 and 8b): identities whose own path was derived (`opened`),
    * and accounts by root identity key, each with its members.
@@ -598,14 +600,14 @@ export class FakeBackend {
    * and a mint number `n`; the vault only reads `iat`.
    */
   private async identityToken(call: ApiCall): Promise<Response> {
-    const b = call.body as { sessionPublicKey: number[]; issuedAtMs: number; nonce: number[]; signature: number[]; walletProofs: Record<'stellar' | 'evm', { address: string; signature: number[] }> };
+    const b = call.body as { sessionPublicKey: number[]; issuedAtMs: number; nonce: number[]; signature: number[]; walletProofs: Record<'stellar' | 'evm', { address: string; signature: number[] }>; sealedEmail?: string };
     const pk = Uint8Array.from(b.sessionPublicKey);
     const proofs = {
       stellar: { address: b.walletProofs.stellar.address, signature: Uint8Array.from(b.walletProofs.stellar.signature) },
       evm: { address: b.walletProofs.evm.address, signature: Uint8Array.from(b.walletProofs.evm.signature) },
     };
     if (Math.abs(this.serverNow() - b.issuedAtMs) > 60_000) return apiError(400, 'stale_proof', { serverTimeMs: this.serverNow() });
-    const payload = identityTokenPayload({ parentOrigin: call.headers['x-hana-parent-origin'] ?? '', walletProofsHash: walletProofsHash(proofs) });
+    const payload = identityTokenPayload({ parentOrigin: call.headers['x-hana-parent-origin'] ?? '', walletProofsHash: walletProofsHash(proofs), sealedEmail: b.sealedEmail ?? null });
     const msg = identityMessage({ signer: ENV.signer, appId: APP_ID, sessionPublicKey: pk, issuedAtMs: b.issuedAtMs, nonce: Uint8Array.from(b.nonce), payload });
     if (!(await verifyEd25519(pk, Uint8Array.from(b.signature), msg))) return apiError(401, 'invalid_signature');
     const share = [...this.shares.values()].find((s) => toHex(s.sessionPk) === toHex(pk));
@@ -619,7 +621,7 @@ export class FakeBackend {
     this.mintSeq += 1;
     const part = (o: unknown) => base64UrlEncode(utf8(JSON.stringify(o)));
     const identityToken = `${part({ alg: 'ES256', kid: 'k'.repeat(43), typ: 'hana-identity+jwt' })}.${part({ iat, exp, n: this.mintSeq, wallets: [proofs.stellar.address, proofs.evm.address] })}.${'A'.repeat(86)}`;
-    return json(200, { identityToken, expiresAtMs: exp * 1000, emailStatus: 'off', requestId: 'rq' });
+    return json(200, { identityToken, expiresAtMs: exp * 1000, emailStatus: this.identityEmailStatus, requestId: 'rq' });
   }
 
   private async createShare(call: ApiCall): Promise<Response> {

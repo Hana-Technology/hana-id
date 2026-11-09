@@ -1,7 +1,8 @@
 // The partner Users screen's data (D310, D346; docs/batch-c-spec.md "What partners never see"): whatever the API's
-// ConsoleRpc answers, the console's answer is rebuilt field by field from an allowlist, so no email address, Google
-// `sub`, identity key, directory key or internal `hu_…` id can reach a partner, by data shape, not just by what the UI
-// renders. Off behind USERS_SCREEN until the wallet directory's reads land (D357).
+// ConsoleRpc answers, the console's answer is rebuilt field by field from an allowlist, so no unshared email address,
+// Google `sub`, identity key, directory key or internal `hu_…` id can reach a partner, by data shape, not just by what
+// the UI renders; a shared address (D411) only in `email` and a detail's `emails`, each of the expected form. Off behind
+// USERS_SCREEN until the wallet directory's reads land (D357).
 import { newId } from '@hana-id/console-core';
 import { describe, expect, it } from 'vitest';
 import type { Env } from '../src/env.ts';
@@ -27,7 +28,7 @@ const leaky = () => ({
     { chain: 'stellar', address: G, firstSeenAt: 1, lastUsedAt: 2, keyIndex: 0, sharedWith: 3 },
     { chain: 'evm', address: EVM, firstSeenAt: 1, lastUsedAt: 2 },
   ],
-  email: 'person@gmail.com',
+  email: null as string | null,
   identities: [{ provider: 'google', sub: '110248495921238986420', directoryKey: { provider: 'google', sub: '110248495921238986420' } }],
   internalId: 'hu_0123456789abcdefghjkmnpqrs',
 });
@@ -51,6 +52,7 @@ describe('partnerUserView: the allowlist', () => {
         { chain: 'stellar', address: G, firstSeenAt: 1, lastUsedAt: 2 },
         { chain: 'evm', address: EVM, firstSeenAt: 1, lastUsedAt: 2 },
       ],
+      email: null,
     };
     expect(v).toEqual(expected);
     const text = JSON.stringify(v);
@@ -68,10 +70,52 @@ describe('partnerUserView: the allowlist', () => {
       { wallets: [{ chain: 'stellar', address: 'person@gmail.com', firstSeenAt: 1, lastUsedAt: 1 }] },
       { wallets: [{ chain: 'evm', address: G, firstSeenAt: 1, lastUsedAt: 1 }] },
       { wallets: 'x' },
+      { email: undefined }, // always present: null when not shared
     ]) {
       expect(partnerUserView({ ...leaky(), ...edit }), JSON.stringify(edit)).toBeNull();
     }
     expect(partnerUserView(null)).toBeNull();
+  });
+
+  it('a shared address (D411) passes in `email`; the accounts’ own addresses and subs still never do', () => {
+    const v = partnerUserView({ ...leaky(), email: 'ada@partner-user.example' })!;
+    expect(v.email).toBe('ada@partner-user.example');
+    expect('emails' in v).toBe(false); // a list row has no per-app list
+    const text = JSON.stringify(v);
+    for (const s of ['person@example.com', 'person@gmail.com', '110248495921238986420', 'hu_', 'identityKey', 'directoryKey']) expect(text, s).not.toContain(s);
+  });
+
+  it('a malformed `email` drops the row: not a string, no `@` or two, too short or long, whitespace, bidi or control characters', () => {
+    for (const email of [42, {}, ['a@b.c'], '', 'a@', '@b', 'ab', 'nobody', 'a@b@c', 'a b@c.d', 'a@b.c\n', `a@${'b'.repeat(253)}`, 'a\u202e@b.c', 'a\u200b@b.c', 'a\u0000@b.c']) {
+      expect(partnerUserView({ ...leaky(), email }), JSON.stringify(email)).toBeNull();
+    }
+    expect(partnerUserView({ ...leaky(), email: `a@${'b'.repeat(252)}` })!.email).toHaveLength(254);
+  });
+
+  it('a detail’s `emails` is rebuilt field by field: app id, app name, address, time; other keys dropped', () => {
+    const share = { appId: 'app_one1', appName: 'Partner Wallet', email: 'ada@partner-user.example', sharedAt: 1_800_000_200_000 };
+    const v = partnerUserView({ ...leaky(), email: share.email, emails: [{ ...share, userSub: USER, emailMac: 'ab'.repeat(32), scopeId: 's1a2', state: 'granted' }] })!;
+    expect(v.emails).toEqual([share]);
+    expect(Object.keys(v.emails![0]!).sort()).toEqual(['appId', 'appName', 'email', 'sharedAt']);
+    expect(partnerUserView({ ...leaky(), emails: [] })!.emails).toEqual([]);
+    for (const edit of [
+      { appId: 'org_one1' },
+      { appId: 'app_' },
+      { appId: 'app_a-b' },
+      { appName: '' },
+      { appName: '   ' },
+      { appName: 'x'.repeat(65) },
+      { appName: 'Evil\u202eApp' },
+      { appName: 7 },
+      { email: 'not-an-address' },
+      { email: null },
+      { sharedAt: -1 },
+      { sharedAt: '1800000200000' },
+    ]) {
+      expect(partnerUserView({ ...leaky(), emails: [{ ...share, ...edit }] }), JSON.stringify(edit)).toBeNull();
+    }
+    expect(partnerUserView({ ...leaky(), emails: 'ada@partner-user.example' })).toBeNull();
+    expect(partnerUserView({ ...leaky(), emails: [null] })).toBeNull();
   });
 
   it('shows an account kind it doesn’t know as "other", never its raw text', () => {
@@ -89,7 +133,8 @@ function fakeEnv(on: boolean, calls: unknown[] = []): Pick<Env, 'USERS_SCREEN' |
     },
     getUser: async (c) => {
       calls.push(c);
-      return { ok: true, user: leaky() as never };
+      const shared = 'ada@partner-user.example';
+      return { ok: true, user: { ...leaky(), email: shared, emails: [{ appId: 'app_one1', appName: 'Partner Wallet', email: shared, sharedAt: 5, emailMac: 'ab'.repeat(32) }] } as never };
     },
   };
   return { USERS_SCREEN: on ? '1' : undefined, API: client as unknown as Env['API'] };
@@ -111,7 +156,8 @@ describe('the routes', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { users: PartnerUserOut[]; next?: string };
     expect(body.users).toHaveLength(1);
-    expect(Object.keys(body.users[0]!).sort()).toEqual(['accounts', 'createdAt', 'lastSeenAt', 'scopeId', 'supportId', 'userId', 'wallets']);
+    expect(Object.keys(body.users[0]!).sort()).toEqual(['accounts', 'createdAt', 'email', 'lastSeenAt', 'scopeId', 'supportId', 'userId', 'wallets']);
+    expect(body.users[0]!.email).toBeNull();
     expect(body.next).toBe(`1800000100000:${USER}`);
     for (const s of PII) expect(JSON.stringify(body), s).not.toContain(s);
     expect(calls[0]).toMatchObject({ orgId: 'org_users1', search: 'GAAA', limit: 50 });
@@ -120,7 +166,11 @@ describe('the routes', () => {
   it('one user by its User ID; a malformed id is 404 before any call; a bad cursor 400', async () => {
     const calls: unknown[] = [];
     const one = await usersRoute(fakeEnv(true, calls), new URL('https://console.test/x'), info, ctx(), USER);
-    expect(((await one.json()) as { user: PartnerUserOut }).user.userId).toBe(USER);
+    const user = ((await one.json()) as { user: PartnerUserOut }).user;
+    expect(user.userId).toBe(USER);
+    // The detail carries the shared address and its per-app list, rebuilt (no MAC, no account-level address).
+    expect([user.email, user.emails]).toEqual(['ada@partner-user.example', [{ appId: 'app_one1', appName: 'Partner Wallet', email: 'ada@partner-user.example', sharedAt: 5 }]]);
+    expect(JSON.stringify(user)).not.toContain('person@');
     expect((await usersRoute(fakeEnv(true, calls), new URL('https://console.test/x'), info, ctx(), 'hu_0123456789abcdefghjkmnpqrs')).status).toBe(404);
     expect(calls).toHaveLength(1);
     expect((await usersRoute(fakeEnv(true), new URL('https://console.test/x?cursor=%27--'), info, ctx(), undefined)).status).toBe(400);

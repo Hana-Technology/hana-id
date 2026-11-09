@@ -87,7 +87,9 @@
         <p class="muted small">A short-lived JWT your backend can verify against Hana’s published keys (no call to Hana): who the user is in this app, their wallets and their session. No popup.</p>
         <div class="row">
           <button id="identity-token" type="button">Get identity token</button>
+          <button id="email-share" type="button">Share email…</button>
         </div>
+        <p class="muted small">Share email opens Hana’s sheet (when the app asks for email sharing): once shared, the token carries <code>email</code> and <code>email_verified</code>.</p>
         <div id="identity-result" hidden>
           <p class="muted small" id="identity-expiry"></p>
           <pre id="identity-claims"></pre>

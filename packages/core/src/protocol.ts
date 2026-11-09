@@ -94,6 +94,12 @@ export const STRING_ERROR_CODES = [
    * `same_identity`); build plan batch 8b.
    */
   'link_refused',
+  /**
+   * hana_requestEmailSharing (D411): Hana can't ask now (`data.reason`: `off`, the app's `identity_email` setting;
+   * `no_address`, the session has no address Hana can read, e.g. the issuer was unreachable at login; `unavailable`,
+   * the API or its keys).
+   */
+  'email_sharing_unavailable',
 ] as const;
 
 export type StringErrorCode = (typeof STRING_ERROR_CODES)[number];
@@ -228,6 +234,11 @@ export const PORT_METHODS = [
   'hana_account',
   /** Add a sign-in method to the wallet (`hana.linkAccount({method})`, from a click; build plan batch 8b). */
   'hana_linkAccount',
+  /**
+   * D411: show the email sharing sheet (`hana.requestEmailSharing()`, from a click: the SDK opens `/share-email` first,
+   * `popupBlocked: true` when it couldn't, and the vault's launcher opens it).
+   */
+  'hana_requestEmailSharing',
 ] as const;
 
 export type PortMethod = (typeof PORT_METHODS)[number];
@@ -282,6 +293,7 @@ export interface PortParamsMap {
   hana_account: undefined;
   /** `popupBlocked: true` when window.open returned null (the vault's launcher opens the popup instead). */
   hana_linkAccount: { method: LoginMethod; popupBlocked?: boolean };
+  hana_requestEmailSharing: { popupBlocked?: boolean } | undefined;
 }
 
 /**
@@ -368,6 +380,10 @@ const PARAMS: { [M in PortMethod]: (p: unknown) => PortParamsMap[M] | null } = {
     return null;
   },
   hana_account: (p) => (noParams(p) ? undefined : null),
+  hana_requestEmailSharing: (p) => {
+    if (noParams(p)) return undefined;
+    return isPlainObject(p) && exactKeys(p, [], ['popupBlocked']) && (p.popupBlocked === undefined || typeof p.popupBlocked === 'boolean') ? (p as { popupBlocked?: boolean }) : null;
+  },
   hana_linkAccount: (p) =>
     isPlainObject(p) && exactKeys(p, ['method'], ['popupBlocked']) && isLoginMethod(p.method) && (p.popupBlocked === undefined || typeof p.popupBlocked === 'boolean')
       ? (p as { method: LoginMethod; popupBlocked?: boolean })
@@ -507,7 +523,18 @@ export interface PortResultMap {
   hana_identityToken: IdentityTokenState;
   hana_account: AccountResult;
   hana_linkAccount: LinkChange;
+  /** D411: where sharing stands after the sheet: shared, not shared ("Not now", or stopped), or the window closed. */
+  hana_requestEmailSharing: { state: EmailSharingResult };
 }
+
+/**
+ * D411: the first SDK version that knows `hana_requestEmailSharing` and the `emailSharingChanged` event. The vault sends
+ * the event only to an SDK whose `hana:hello` names this version or later (core support-id.ts `sdkAtLeast`, D393).
+ */
+export const EMAIL_SHARING_SDK_MIN = '0.3.0';
+
+/** hana_requestEmailSharing's answer (D411): `dismissed` = the sheet was closed, nothing recorded. */
+export type EmailSharingResult = 'granted' | 'declined' | 'dismissed';
 
 /** A compact ES256 JWS as the API mints it (core identity.ts isIdentityTokenResponse's shape), at most ~4 KiB. */
 const isIdentityJwt = (v: unknown): v is string => typeof v === 'string' && v.length <= 4096 && /^[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{86}$/u.test(v);
@@ -576,6 +603,7 @@ const RESULTS: { [M in PortMethod]: (r: unknown) => boolean } = {
   hana_identityToken: isIdentityTokenState,
   hana_account: (r) => isPlainObject(r) && exactKeys(r, ['methods']) && Array.isArray(r.methods) && r.methods.length >= 1 && r.methods.length <= 4 && r.methods.every(isAccountMethod),
   hana_linkAccount: (r) => isLinkChange(r) && r.status !== 'removed',
+  hana_requestEmailSharing: (r) => isPlainObject(r) && exactKeys(r, ['state']) && (r.state === 'granted' || r.state === 'declined' || r.state === 'dismissed'),
 };
 
 export type PortReply<M extends PortMethod = PortMethod> = { v: 1; id: string; result: PortResultMap[M] } | { v: 1; id: string; error: ProtocolError };
@@ -673,6 +701,12 @@ export interface PortEventMap {
    * "Notices"): partners show pending ones with a way to cancel (docs/integration.md). Build plan batches 7 and 8b.
    */
   linkChanged: LinkChange;
+  /**
+   * D411: the user shared their email with the app or stopped sharing it, on this device (the sheet, the approval
+   * popup's account line). The vault dropped its cached identity token: the next getIdentityToken() has the email or
+   * not. Sent only to an SDK of EMAIL_SHARING_SDK_MIN or later.
+   */
+  emailSharingChanged: { state: 'granted' | 'declined' };
 }
 
 export type PortEventName = keyof PortEventMap;
@@ -694,6 +728,7 @@ const EVENTS: { [E in PortEventName]: (d: unknown) => boolean } = {
   persistenceChanged: (d) => isPlainObject(d) && exactKeys(d, ['persistence']) && isPersistence(d.persistence),
   identityTokenChanged: isIdentityTokenState,
   linkChanged: isLinkChange,
+  emailSharingChanged: (d) => isPlainObject(d) && exactKeys(d, ['state']) && (d.state === 'granted' || d.state === 'declined'),
 };
 
 /** Validates a vault → SDK event, or null. */
@@ -767,6 +802,11 @@ export interface WindowMessageMap {
      * the vault's build pins, so an app without a logo sends exactly the message older pages take.
      */
     logoUrl?: string;
+    /**
+     * D411, an app whose `identity_email` is `at_login`: the popup doesn't close at the end of the sign-in; it goes to
+     * `/share-email?from=login`, where the vault shows the email sharing sheet if this user hasn't answered it yet.
+     */
+    emailShare?: true;
   };
   /**
    * Login popup → vault: the popup is about to navigate to Google (`google`, from any Hana page, every time), it is
@@ -813,6 +853,11 @@ export interface WindowMessageMap {
      * session has one, so a session without it sends exactly the message older pages take.
      */
     supportId?: string;
+    /**
+     * D411, D442: the session's address is shared with this app: the account line offers "Stop sharing"
+     * (`hana:email-revoke`). Present only then, so other requests send exactly the message older pages take.
+     */
+    emailShared?: true;
   };
   'hana:approve-result': { id: string; approved: boolean; digest: Uint8Array };
   'hana:approve-bye': Record<string, never>;
@@ -872,6 +917,42 @@ export interface WindowMessageMap {
   'hana:consent-result': { id: string; allowed: boolean; digest: Uint8Array };
   /** Approval popup → vault: "Stop auto-approving". */
   'hana:auto-approve-stop': Record<string, never>;
+  /**
+   * D411: the email sharing sheet (`/share-email`) → vault, from the login popup at the end of an `at_login` sign-in
+   * or from the window `requestEmailSharing()` opened. The vault answers only a window it expects.
+   */
+  'hana:email-share-hello': Record<string, never>;
+  /**
+   * Vault → the sheet: what to ask. `state` is the session's for its address (`granted`: the sheet offers "Stop
+   * sharing"). The address isn't here: the sheet reads it from the API (`POST /v1/identity/email-consent/preview`) with
+   * `sealedEmail` and `proof`, a single-use session proof the vault made for that, so the vault never sees it.
+   */
+  'hana:email-share-request': {
+    pk: string;
+    appName: string;
+    parentOrigin: string;
+    /** The app signs users in with its own Google client: the sheet says Google may give it the address anyway (D42). */
+    ownGoogleClient: boolean;
+    state: 'not_asked' | 'declined' | 'granted';
+    sealedEmail: string;
+    proof: { sessionPublicKey: Uint8Array; issuedAtMs: number; nonce: Uint8Array; signature: Uint8Array };
+    logoUrl?: string;
+  };
+  /** Vault → the sheet: nothing to ask (already answered, sharing off, no address): the window closes. */
+  'hana:email-share-close': Record<string, never>;
+  /**
+   * The sheet → vault: the user's answer. `granted` (Share email), `declined` (Not now), `revoke` (Stop sharing, on an
+   * already shared address), `keep` (Done, on an already shared address).
+   */
+  'hana:email-share-answer': { answer: 'granted' | 'declined' | 'revoke' | 'keep' };
+  /** Vault → the sheet: the answer was recorded (`state`) or couldn't be (`failed`); the sheet closes. */
+  'hana:email-share-done': { state: 'granted' | 'declined' | 'failed' };
+  /**
+   * D411, D442: the approval popup's account line → vault: "Stop sharing" (the request carried `emailShared`). The
+   * vault revokes every address of this app and account, then answers `hana:email-revoked`.
+   */
+  'hana:email-revoke': Record<string, never>;
+  'hana:email-revoked': { ok: boolean };
 }
 
 /** hana:approve-request's note on the app's auto-approve policy. */
@@ -923,8 +1004,9 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:hello': (m) => exactKeys(m, ['v', 't', 'sdk']) && typeof m.sdk === 'string' && /^[0-9A-Za-z.+-]{1,32}$/u.test(m.sdk),
   'hana:auth-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:auth-params': (m) =>
-    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'clientId', 'mode', 'sessionPublicKey', 'expiresAtMs', 'salt', 'keyIndex', 'maxUses', 'nonce', 'relayId', 'relayKey'], ['methods', 'method', 'emailHint', 'followKey', 'task', 'emailRecord', 'logoUrl']) &&
+    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'clientId', 'mode', 'sessionPublicKey', 'expiresAtMs', 'salt', 'keyIndex', 'maxUses', 'nonce', 'relayId', 'relayKey'], ['methods', 'method', 'emailHint', 'followKey', 'task', 'emailRecord', 'logoUrl', 'emailShare']) &&
     (m.logoUrl === undefined || isLogoUrl(m.logoUrl)) &&
+    (m.emailShare === undefined || (m.emailShare === true && m.task === undefined)) &&
     (m.followKey === undefined || (isBytes(m.followKey, 32, 32) && (Array.isArray(m.methods) || m.task !== undefined || m.emailRecord === true))) &&
     (m.emailRecord === undefined || (m.emailRecord === true && m.followKey !== undefined && m.methods === undefined && m.task === undefined)) &&
     (m.task === undefined ||
@@ -959,8 +1041,9 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:auth-progress-ack': (m) => exactKeys(m, ['v', 't', 'stage']) && (m.stage === 'email_code' || m.stage === 'google' || m.stage === 'relayed' || m.stage === 'back'),
   'hana:approve-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:approve-request': (m) => {
-    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove', 'testApp', 'logoUrl', 'supportId'])) return false;
+    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove', 'testApp', 'logoUrl', 'supportId', 'emailShared'])) return false;
     if (m.logoUrl !== undefined && !isLogoUrl(m.logoUrl)) return false;
+    if (m.emailShared !== undefined && m.emailShared !== true) return false;
     if (m.supportId !== undefined && !isSupportId(m.supportId)) return false;
     if (m.autoApprove !== undefined && !isAutoApproveNote(m.autoApprove)) return false;
     if (m.testApp !== undefined && m.testApp !== true) return false;
@@ -1007,6 +1090,28 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
     isInt(m.position, 1, m.queued as number),
   'hana:consent-result': (m) => exactKeys(m, ['v', 't', 'id', 'allowed', 'digest']) && isRequestId(m.id) && typeof m.allowed === 'boolean' && isBytes(m.digest, 32, 32),
   'hana:auto-approve-stop': (m) => exactKeys(m, ['v', 't']),
+  'hana:email-share-hello': (m) => exactKeys(m, ['v', 't']),
+  'hana:email-share-request': (m) =>
+    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'ownGoogleClient', 'state', 'sealedEmail', 'proof'], ['logoUrl']) &&
+    isPublishableKey(m.pk) &&
+    isAppName(m.appName) &&
+    isOrigin(m.parentOrigin) &&
+    typeof m.ownGoogleClient === 'boolean' &&
+    (m.state === 'not_asked' || m.state === 'declined' || m.state === 'granted') &&
+    isStr(m.sealedEmail, 5, 1024) &&
+    (m.sealedEmail as string).startsWith('se1.') &&
+    isPlainObject(m.proof) &&
+    exactKeys(m.proof, ['sessionPublicKey', 'issuedAtMs', 'nonce', 'signature']) &&
+    isBytes(m.proof.sessionPublicKey, 32, 32) &&
+    isMs(m.proof.issuedAtMs) &&
+    isBytes(m.proof.nonce, 16, 16) &&
+    isBytes(m.proof.signature, 64, 64) &&
+    (m.logoUrl === undefined || isLogoUrl(m.logoUrl)),
+  'hana:email-share-close': (m) => exactKeys(m, ['v', 't']),
+  'hana:email-share-answer': (m) => exactKeys(m, ['v', 't', 'answer']) && (m.answer === 'granted' || m.answer === 'declined' || m.answer === 'revoke' || m.answer === 'keep'),
+  'hana:email-share-done': (m) => exactKeys(m, ['v', 't', 'state']) && (m.state === 'granted' || m.state === 'declined' || m.state === 'failed'),
+  'hana:email-revoke': (m) => exactKeys(m, ['v', 't']),
+  'hana:email-revoked': (m) => exactKeys(m, ['v', 't', 'ok']) && typeof m.ok === 'boolean',
 };
 
 function isAutoApproveNote(v: unknown): v is AutoApproveNote {

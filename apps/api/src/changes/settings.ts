@@ -1,7 +1,8 @@
 // Settings writes (docs/batch-c-spec.md "Other app settings, name and logo", "Policy and raw-signing input rules"),
 // each a compare-and-swap on `settings_version` that bumps it:
 // - updateSettings: persistence, session and idle TTLs (batch B's ranges), the Google web client (one of the scope's
-//   on-chain Google clients, read uncached), the name; immediate;
+//   on-chain Google clients, read uncached), the name, `identity_email` (D411: turning it on shares nothing until a
+//   user agrees, off stops every email at once); immediate;
 // - setLogo: the `logo_key` pointer only (the console uploads and re-encodes, batch C11); immediate;
 // - turnOff: the policy removed or raw signing off, immediate, any pending value dropped and the guarded changes
 //   ended or cancelled (a kill switch: no step-up, not counted by the breaker);
@@ -37,6 +38,7 @@ export interface SettingsInput {
   idleTtlMs?: number;
   googleWebClientId?: string | null;
   name?: string;
+  identityEmail?: 'off' | 'on_request' | 'at_login';
 }
 
 export async function updateSettings(db: HotDb, env: Env, w: Writer, i: SettingsInput): Promise<{ version: number }> {
@@ -72,6 +74,11 @@ export async function updateSettings(db: HotDb, env: Env, w: Writer, i: Settings
     }
     set.push(q`google_web_client_id = ${i.googleWebClientId}`);
     changed.googleWebClientId = i.googleWebClientId;
+  }
+  if (i.identityEmail !== undefined && i.identityEmail !== a.identity_email) {
+    if (i.identityEmail !== 'off' && i.identityEmail !== 'on_request' && i.identityEmail !== 'at_login') refuse('bad_request', 'identityEmail must be off, on_request or at_login');
+    set.push(q`identity_email = ${i.identityEmail}`);
+    changed.identityEmail = i.identityEmail;
   }
   if (i.name !== undefined) {
     const name = appName(i.name);

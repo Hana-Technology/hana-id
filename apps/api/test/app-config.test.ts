@@ -34,6 +34,7 @@ describe('GET /v1/app (batch B)', () => {
       rawSign: 'off',
       mainnetDemo: false,
       logoUrl: null,
+      identityEmail: 'off',
       // A pk_test_ app's response carries the API's own time and phases (docs/api.md "Timings").
       timings: { totalMs: expect.any(Number), phases: { app: expect.any(Number), limits: expect.any(Number), settings: expect.any(Number), chain: expect.any(Number) } },
       requestId: expect.any(String),

@@ -18,7 +18,7 @@ const accepted = async (sql: string, ...binds: unknown[]): Promise<boolean> =>
 beforeAll(async () => {
   // Rows written before 0003 (as a deployed env has them), then 0003 (and later migrations) on top.
   const migrations = env.TEST_MIGRATIONS;
-  expect(migrations.map((m) => m.name)).toEqual(['0001_init.sql', '0002_issuer_key_missing.sql', '0003_vault.sql', '0004_issuer_key_observations.sql', '0005_issuer_key_sync.sql', '0006_dashboard_expand.sql', '0008_identity_token.sql', '0009_session_markers.sql', '0010_login_methods.sql', '0011_wallet_directory.sql', '0012_issuer_key_last_token.sql', '0013_mainnet_demo_events.sql']);
+  expect(migrations.map((m) => m.name)).toEqual(['0001_init.sql', '0002_issuer_key_missing.sql', '0003_vault.sql', '0004_issuer_key_observations.sql', '0005_issuer_key_sync.sql', '0006_dashboard_expand.sql', '0008_identity_token.sql', '0009_session_markers.sql', '0010_login_methods.sql', '0011_wallet_directory.sql', '0012_issuer_key_last_token.sql', '0013_mainnet_demo_events.sql', '0014_email_sharing.sql']);
   await applyD1Migrations(db, migrations.slice(0, 2));
   await db.prepare("INSERT INTO apps (id, name, scope_id, publishable_key) VALUES ('old', 'Old', 's1', 'pk_test_old')").run();
   await db.prepare("INSERT INTO usage (app_id, day, sessions, derives) VALUES ('old', '2026-10-01', 3, 4)").run();

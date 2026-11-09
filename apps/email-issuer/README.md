@@ -39,6 +39,7 @@ partners never see it. Logs still never carry an address.
 | `EMAIL_CODE_KEY` (K_code) | code MACs in the challenge objects; K_device, derived from it, signs owner device tickets |
 | `EMAIL_RL_KEY` (K_rl) | limiter keys: the mailbox (the address without its `+tag`) and the recipient domain |
 | `SENDGRID_API_KEY` | Mail Send only, this Worker's alone (D194) |
+| `IDENTITY_SEAL_KEY` | the sealed email's key (D438, `<id>:<base64 of 32 bytes>`, the API's same value; `scripts/identity-key.ts <env> email-keys`): every 200 of `google-match` and `google-record` for a Google-verified address, and a `verify` that mints a `session` token, carry `sealedEmail` (the address sealed for the app, the session key and its expiry, `@hana-id/email` `sealEmail`). Optional: without it (or malformed, logged once as `bad_seal_key`) no answer carries one |
 
 It reads hana-signer views over the manifest's RPC and the API's apps through `IssuerRpc` (`src/apps.ts`; the API runs
 the lookups in `apps/api/src/issuer-apps.ts`), finding an app as the API's gate does (a key in `app_keys` not revoked or in its grace, an undeleted app, active only with
@@ -87,12 +88,13 @@ The tests reach no network: Google, NEAR, SendGrid and KMS are fakes; the `API` 
 fetch); the RSA keys and HMAC keys are throwaway values made per run. `test/privacy.test.ts` greps every log line of
 every flow for the address, the code, the `sub`, the tokens and the secrets (google-record and the directory's failure
 line included), and checks that a verified address is in `user_emails` and no other table;
+`test/sealed-email.test.ts` the sealed email (which answers carry it, what it opens to, never logged),
 `test/directory-verify.test.ts` covers which `verify` answers record, `test/google-record.test.ts` google-record and
 google-match's directory write, `test/directory.test.ts` the upserts in both arrival orders, `test/directory-rpc.test.ts`
 DirectoryRpc (the staff check, the searches, the ticket rule, the audit's atomicity and `detail`, the row budget, no
 address in a log line).
 
-Last verified: 2026-11-06 (branch `feat/issuer-readonly-rpc`: the `API` → `IssuerRpc` binding instead of `APP_DB`, `gen` without `--app-d1-id`, the tests' auxiliary API Worker, D434); 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy` is the shared wrapper, D406); 2026-11-05 (branch `feat/batch-c-15-screen`: `DirectoryRpc.get`'s `purpose`, D399); 2026-11-05 (branch
+Last verified: 2026-11-09 (branch `feat/email-sharing-2`: `IDENTITY_SEAL_KEY`, `sealedEmail`, D438, brought up to date with `develop`); 2026-11-06 (branch `feat/issuer-readonly-rpc`: the `API` → `IssuerRpc` binding instead of `APP_DB`, `gen` without `--app-d1-id`, the tests' auxiliary API Worker, D434); 2026-11-06 (branch `feat/email-sharing`: `IDENTITY_SEAL_KEY`, `sealedEmail`, D438); 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy` is the shared wrapper, D406); 2026-11-05 (branch `feat/batch-c-15-screen`: `DirectoryRpc.get`'s `purpose`, D399); 2026-11-05 (branch
 `feat/batch-c-8b`: `DirectoryRpc`, migration 0003, the `ADMIN_*` vars, D388–D392);
 2026-11-05 (branch `feat/deploy-build-check`: `GET /v1/email/health`, `scripts/deploy.ts`, D384);
 2026-11-04 (branch `fix/dev-email-limits`: dev envs' limit set, D340, `test/dev-limits.test.ts`; every

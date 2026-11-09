@@ -17,7 +17,7 @@
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { EMAIL_ISSUER_SECRET_FILES, type Manifest, accountIdFields, customDomainPlacement, isLocalEnv, loadEnv, repoRoot, rsaJwkThumbprint } from '@hana-id/env';
+import { EMAIL_ISSUER_SECRET_FILES, IDENTITY_SECRET_FILES, identitySealKeyId, type Manifest, accountIdFields, customDomainPlacement, isLocalEnv, loadEnv, repoRoot, rsaJwkThumbprint } from '@hana-id/env';
 import { assertPrivate, secretsDir } from '../../../scripts/lib/secrets.ts';
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -155,7 +155,8 @@ const SENDGRID_KEY = /^SG\.[A-Za-z0-9_-]{16,100}\.[A-Za-z0-9_-]{16,100}$/u;
 
 /**
  * .dev.vars lines from .secrets/<env>/: the active signing key (its thumbprint must be the manifest's active kid; the
- * standby is never written), the three HMAC keys, and the SendGrid key when its file exists. Values single-quoted
+ * standby is never written), the three HMAC keys, the SendGrid key and the sealed email's IDENTITY_SEAL_KEY (D438,
+ * `identity-seal-key`, the API's same value) when their files exist. Values single-quoted
  * (taken literally by wrangler's dotenv). Never printed.
  */
 export function devVarsContent(m: Manifest, root: string = repoRoot): { content: string; names: string[] } {
@@ -197,6 +198,13 @@ export function devVarsContent(m: Manifest, root: string = repoRoot): { content:
   if (sg !== null) {
     if (!SENDGRID_KEY.test(sg)) throw new Error(`${EMAIL_ISSUER_SECRET_FILES.sendgridKey} is not a SendGrid API key`);
     add('SENDGRID_API_KEY', sg);
+  }
+  const sealFile = join(dir, IDENTITY_SECRET_FILES.sealKey);
+  if (existsSync(sealFile)) {
+    assertPrivate(sealFile);
+    const seal = readFileSync(sealFile, 'utf8').trim();
+    if (identitySealKeyId(seal) === null) throw new Error(`${IDENTITY_SECRET_FILES.sealKey} is not <id>:<base64 of 32 bytes>`);
+    add('IDENTITY_SEAL_KEY', seal);
   }
   return { content: lines.length ? `${lines.join('\n')}\n` : '', names };
 }

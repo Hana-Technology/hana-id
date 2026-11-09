@@ -97,6 +97,8 @@ const params = {
       sessionTtlMs: z.number().int().optional(),
       idleTtlMs: z.number().int().optional(),
       googleWebClientId: z.string().min(1).max(255).nullable().optional(),
+      /** D411: when Hana asks users to share their email with the app. */
+      identityEmail: z.enum(['off', 'on_request', 'at_login']).optional(),
     })
     .strict(),
   owner_action: z
@@ -284,7 +286,7 @@ async function build(env: Env, c: OrgCaller, ctx: RpcCtx, kind: StepUpKind, raw:
     case 'app.settings': {
       const app = await appOf(env, ctx, c.orgId, p.appId as string);
       const changes: Record<string, unknown> = {};
-      for (const k of ['persistence', 'sessionTtlMs', 'idleTtlMs', 'googleWebClientId'] as const) if (p[k] !== undefined) changes[k] = p[k];
+      for (const k of ['persistence', 'sessionTtlMs', 'idleTtlMs', 'googleWebClientId', 'identityEmail'] as const) if (p[k] !== undefined) changes[k] = p[k];
       if (Object.keys(changes).length === 0) no('bad_request', 'Nothing to change');
       const ttl = (changes.sessionTtlMs as number | undefined) ?? app.settings.sessionTtlMs;
       const idle = (changes.idleTtlMs as number | undefined) ?? app.settings.idleTtlMs;

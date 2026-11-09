@@ -150,4 +150,22 @@ export const IDENTITY_SECRET_FILES = {
    * above don't exist for a KMS signer (its private keys never leave KMS).
    */
   awsAccessKey: 'identity-aws-access-key.json',
+  /**
+   * The sealed email's key (D438, docs/email-sharing-spec.md): IDENTITY_SEAL_KEY on the API and the email issuer,
+   * `<id>:<base64 of 32 bytes>` (`identitySealKeyId`). Written and uploaded by `identity-key <env> email-keys`.
+   */
+  sealKey: 'identity-seal-key',
+  /** The email consents' MAC key (D439): EMAIL_CONSENT_KEY on the API, base64 of 32 bytes. Written with the seal key. */
+  emailConsentKey: 'email-consent-key',
 } as const;
+
+/** IDENTITY_SEAL_KEY's form, as @hana-id/email `parseSealKey` reads it: `<id>:<base64 of 32 bytes>`, id 1..2^32-1. */
+const IDENTITY_SEAL_KEY_RE = /^([1-9]\d{0,9}):([A-Za-z0-9+/]{43}=)$/u;
+
+/** The key id of an IDENTITY_SEAL_KEY value, or null when it isn't one (the value never reaches an error). */
+export function identitySealKeyId(value: string): number | null {
+  const m = IDENTITY_SEAL_KEY_RE.exec(value);
+  if (!m) return null;
+  const id = Number(m[1]);
+  return id <= 0xffffffff && Buffer.from(m[2]!, 'base64').length === 32 ? id : null;
+}

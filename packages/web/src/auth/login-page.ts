@@ -26,6 +26,7 @@ import { GOOGLE_EMAIL_FLOW, type GoogleEmailFlow, loginGoogleRequest } from './g
 import { addLoginTimings, storeLoginEntry } from './login-storage.ts';
 import { appLogo } from './logo.ts';
 import { type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed } from './page-window.ts';
+import { markEmailShare } from './share-handoff.ts';
 import { vaultSignals } from './vault-signal.ts';
 
 export type OpenerMode = 'partner' | 'vault' | 'export';
@@ -202,6 +203,8 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
         msg.relayKey.fill(0);
         msg.followKey?.fill(0);
       }
+      // D411: an `at_login` app's sign-in ends on the email sharing sheet instead of closing (share-handoff.ts).
+      if (mode !== 'export' && !task && msg.emailShare === true) markEmailShare(win.sessionStorage, msg.relayId, now());
       const url = googleRequest.url;
       // The app's logo (batch C11), when the preparer sent one on this build's files origin.
       const intro = () =>

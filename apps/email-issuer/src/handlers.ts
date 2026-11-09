@@ -7,7 +7,7 @@
 // quota or the global budget is touched (D198).
 import { base64UrlDecode, base64UrlEncode, sha256, toHex, utf8 } from './bytes.ts';
 import { BUILD_ID_RE } from '@hana-id/env/build-id';
-import { emailSub, isDisposableDomain, isGoogleHosted, normalizeEmail } from '@hana-id/email';
+import { emailSub, isDisposableDomain, isGoogleHosted, normalizeEmail, sealEmail, type SealedEmailSource } from '@hana-id/email';
 import { ApiUnavailable, type IssuerApp, appById, appByKey, isPublishableKey, scopeHasEmailApp } from './apps.ts';
 import type { ChallengeRecord, TicketRecord } from './challenge.ts';
 import { type ChallengeId, decryptEmail, encryptEmail, newChallengeId, parseChallengeId } from './challenge-id.ts';
@@ -84,6 +84,27 @@ const ok = (ctx: Ctx, status: number, body: unknown, fields: Record<string, stri
   log({ event: 'request', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'ok', status, ...fields });
   return respond(ctx, json(status, body));
 };
+
+/**
+ * `{sealedEmail}` for an answer (D438, docs/email-sharing-spec.md "Where the address comes from"): the verified address
+ * sealed under IDENTITY_SEAL_KEY for this app and session, until the session's expiry; `{}` when the env has no seal
+ * key or the address can't be sealed (logged as a code). Never fails the answer; the address and the blob are never
+ * logged.
+ */
+async function sealedFor(ctx: Ctx, appId: string, session: { sessionPublicKey: Uint8Array; expiresAtMs: number }, email: string, src: SealedEmailSource): Promise<{ sealedEmail?: string }> {
+  const key = await ctx.deps.sealKey();
+  if (!key) return {};
+  try {
+    return { sealedEmail: await sealEmail(key, { appId, sessionPublicKey: session.sessionPublicKey, notAfterMs: session.expiresAtMs, email, src }) };
+  } catch {
+    log({ event: 'seal_failed', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'error', code: 'seal_failed', appId }, 'error');
+    return {};
+  }
+}
+
+/** A Google sign-in's `{sealedEmail}`: userinfo's address lowercased (as the user directory keeps it), when Google verified it. */
+const sealedGoogle = (ctx: Ctx, s: { app: IssuerApp; commitment: SessionCommitment; info: UserInfo }): Promise<{ sealedEmail?: string }> =>
+  s.info.emailVerified && normalizeEmail(s.info.email).ok ? sealedFor(ctx, s.app.id, s.commitment, s.info.email.toLowerCase(), 'google') : Promise.resolve({});
 
 const limiter = (deps: Deps, subject: string) => deps.env.RATE_LIMITER.get(deps.env.RATE_LIMITER.idFromName(`${deps.env.ENV_NAME}:${subject}`));
 const challengeStub = (deps: Deps, name: string) => deps.env.EMAIL_CHALLENGE.get(deps.env.EMAIL_CHALLENGE.idFromName(name));
@@ -354,6 +375,7 @@ export async function handleStart(request: Request, ctx: Ctx): Promise<Response>
     purpose: c.value.purpose,
     nonce: c.value.nonce,
     autoLink: null,
+    seal: c.value.session ? { sessionPublicKey: [...c.value.session.sessionPublicKey], expiresAtMs: c.value.session.expiresAtMs } : null,
     silent: suppressed,
     emailEnc: suppressed ? '' : await encryptEmail(id, r.email),
     mailboxKey: mbx,
@@ -565,7 +587,9 @@ export async function handleVerify(request: Request, ctx: Ctx): Promise<Response
       return recorded(ok(ctx, 200, { googleWallet: true, deviceTicket: owner, ...(linkTicket ? { linkTicket, sub } : {}) }, { appId: app.id, purpose: rec.purpose, decision: 'case_b' }));
     }
     const { token: idToken } = await mint(ctx, app, rec.scopeId, sub, rec.nonce!, 'session');
-    return recorded(ok(ctx, 200, { idToken, googleWallet: false, deviceTicket: owner }, { appId: app.id, purpose: rec.purpose }));
+    // The login address, sealed for the session the challenge was started for (D438); none for a record from before.
+    const sealed = rec.seal ? await sealedFor(ctx, app.id, { sessionPublicKey: Uint8Array.from(rec.seal.sessionPublicKey), expiresAtMs: rec.seal.expiresAtMs }, email, 'email') : {};
+    return recorded(ok(ctx, 200, { idToken, googleWallet: false, deviceTicket: owner, ...sealed }, { appId: app.id, purpose: rec.purpose }));
   }
 
   if (await deps.chain.unrecordedWallets()) return fail(ctx, 409, 'links_unavailable', 'Links wait until the owner accepts the wallets opened before v3');
@@ -722,7 +746,8 @@ export async function handleGoogleMatch(request: Request, ctx: Ctx): Promise<Res
   }
   let linkable = j.linkable;
   if (linkable && (j.decision === 'case_a' || j.decision === 'case_b') && (await deps.chain.unrecordedWallets())) linkable = false;
-  const base = { decision: j.decision, googleHosted, linkable };
+  // Every answer from here carries the sealed address (D438), whatever the decision and the app's setting.
+  const base = { decision: j.decision, googleHosted, linkable, ...(await sealedGoogle(ctx, checked.value)) };
   const sessionHash = sha256(sessionPreimage(deps.env.SIGNER_ACCOUNT, sc));
   const sessionIk = identityKey(app.scopeId, 'google', googleSub);
 
@@ -749,6 +774,7 @@ export async function handleGoogleMatch(request: Request, ctx: Ctx): Promise<Res
       purpose: 'auto_link',
       nonce: null,
       autoLink: { googleSub, sessionHash: base64UrlEncode(sessionHash) },
+      seal: null,
       silent: false,
       emailEnc: await encryptEmail(cid, r.email),
       mailboxKey: mbx,
@@ -798,8 +824,9 @@ async function activeApp(ctx: Ctx, pk: unknown): Promise<{ ok: true; app: Issuer
  * its access token here only to record the address in the user directory. The same authentication and checks as
  * google-match (checkGoogleSignIn: the ID token, its nonce over the session commitment, tokeninfo, userinfo) and the
  * same CORS (the vault's origin); its own per-IP limit (IP_RECORD_LIMITS). It answers `{accepted: true}`, with no
- * match data (no decision, no hint, no token), then records after the answer. Nothing is matched, minted, mailed or
- * written besides the directory; the access token is never revoked or stored (D265).
+ * match data (no decision, no hint, no token; only `sealedEmail` for a Google-verified address, D438), then records
+ * after the answer. Nothing is matched, minted, mailed or written besides the directory; the access token is never
+ * revoked or stored (D265).
  */
 export async function handleGoogleRecord(request: Request, ctx: Ctx): Promise<Response> {
   const parsed = await readJson(request, MAX_BODY);
@@ -811,7 +838,7 @@ export async function handleGoogleRecord(request: Request, ctx: Ctx): Promise<Re
   const checked = await checkGoogleSignIn(ctx, request, b, accessToken, IP_RECORD_LIMITS, activeApp);
   if (!checked.ok) return checked.response;
   recordGoogleSignIn(ctx, checked.value);
-  return ok(ctx, 200, { accepted: true }, { appId: checked.value.app.id });
+  return ok(ctx, 200, { accepted: true, ...(await sealedGoogle(ctx, checked.value)) }, { appId: checked.value.app.id });
 }
 
 // ---- staff (admin/*) ----

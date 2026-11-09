@@ -145,7 +145,8 @@ export async function usersFindRoute(c: RouteCtx): Promise<Response> {
   const { query, ticket } = c.body;
   // A sub is the directory search's (`sub` filter, ticketed there); here only the forms that name one wallet-directory user.
   const s = typeof query === 'string' ? parseUserSearch(query, { staff: true }) : null;
-  if (!s || s.kind === 'sub') return errorResponse('bad_request', 'query: a wallet address (G… or 0x…), User ID (u1_…), internal id (hu_…) or Support ID (HANA-XXXX-XXXX); search a sub in the directory');
+  // `email` is a partner's search only (D411); parseUserSearch never gives it to staff.
+  if (!s || s.kind === 'sub' || s.kind === 'email') return errorResponse('bad_request', 'query: a wallet address (G… or 0x…), User ID (u1_…), internal id (hu_…) or Support ID (HANA-XXXX-XXXX); search a sub in the directory');
   if (typeof ticket !== 'string' || !TICKET_RE.test(ticket)) return errorResponse('bad_request', 'A support reference (ticket: 1–64 letters, digits or ._#:-) is required to find a user');
   const target = s.kind === 'address' ? s.address : s.kind === 'userId' ? s.userId : s.kind === 'internalId' ? s.internalId : formatSupportId(s.code);
   const ctx = staffCtx(c.staff);

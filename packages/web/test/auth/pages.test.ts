@@ -13,7 +13,7 @@ import { FONT_FILES } from '@hana-id/brand';
 import { ASSET_DIR, type BuiltEnv, FILES_DIR, FONT_LICENCE, HANA_BAR, ORIGIN_DIR, buildAuthPages, pageHtml, selectEnvs } from '../../scripts/build-auth-pages.ts';
 import { hanaEnv } from '../../scripts/gen-envs.ts';
 import { GOOGLE_TOKENINFO_ORIGIN, GOOGLE_TOKENINFO_URL } from '../../src/auth/google.ts';
-import { AUTH_PAGES, LOGO_PAGES, authPageCsp, authPageMetaCsp, imgSources } from '../../src/auth/pages.ts';
+import { AUTH_PAGES, LOGO_PAGES, authPageCsp, authPageMetaCsp, connectSources, imgSources } from '../../src/auth/pages.ts';
 import type { HanaEnv } from '../../src/hana-env.ts';
 
 const sandboxEnv = hanaEnv(loadEnv('sandbox-dev')) as HanaEnv;
@@ -93,7 +93,7 @@ describe('auth page policies', () => {
   it('batch C11: the pages that show the app’s name add the files origin to img-src in place; the callback doesn’t', () => {
     const files = { ...sandbox, filesOrigin: 'https://files.example' };
     const IMG = "img-src 'self' data: https://files.example";
-    expect(LOGO_PAGES).toEqual(['login', 'email', 'approve', 'export']);
+    expect(LOGO_PAGES).toEqual(['login', 'email', 'approve', 'export', 'share']);
     for (const p of AUTH_PAGES) {
       const policy = authPageMetaCsp(files, p.name);
       // One img-src only: a browser ignores a repeated directive.
@@ -110,14 +110,17 @@ describe('auth page policies', () => {
     for (const p of AUTH_PAGES) expect(authPageMetaCsp(noFiles, p.name), p.name).toContain("img-src 'self' data:;");
   });
 
-  it('serves the five pages at the spec’s paths', () => {
+  it('serves the six pages at the spec’s paths (D411 adds /share-email)', () => {
     expect(AUTH_PAGES.map((p) => [p.path, p.file])).toEqual([
       ['/login', 'login.html'],
       ['/login/email', 'login/email.html'],
       ['/login/callback', 'login/callback.html'],
       ['/approve', 'approve.html'],
       ['/export', 'export.html'],
+      ['/share-email', 'share-email.html'],
     ]);
+    // D411: the sheet reads the address from the API, nothing else.
+    expect(connectSources(sandbox, 'share')).toEqual([new URL(sandbox.apiUrl).origin]);
   });
 
   it('page HTML escapes what it writes into attributes', () => {
@@ -288,7 +291,7 @@ describe('per-env build', () => {
     for (const page of AUTH_PAGES) expect(existsSync(join(built.dir, `${page.path.slice(1)}.html`))).toBe(true);
     // Nothing is written next to the origin roots, so the vault root (<env>/vault) holds only the vault's files.
     expect(readdirSync(join(out, 'sandbox-dev'))).toEqual(['auth']);
-    expect(readdirSync(built.dir).sort()).toEqual([ASSET_DIR, 'approve.html', 'export.html', 'login', 'login.html'].sort());
+    expect(readdirSync(built.dir).sort()).toEqual([ASSET_DIR, 'approve.html', 'export.html', 'login', 'login.html', 'share-email.html'].sort());
     expect(readdirSync(join(built.dir, 'login')).sort()).toEqual(['callback.html', 'email.html']);
   });
 

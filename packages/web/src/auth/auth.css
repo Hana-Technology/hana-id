@@ -8,6 +8,16 @@
 @import '@hana-id/brand/tokens.css';
 @import './fonts.css';
 
+/* The email sharing sheet: the address the app would get, the one thing the user must read (D411). */
+.address {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--hana-radius);
+  padding: 10px 12px;
+  margin: 10px 0;
+  overflow-wrap: anywhere;
+}
+
 :root {
   color-scheme: light dark;
   --bg: var(--hana-bg);

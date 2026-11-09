@@ -8,6 +8,7 @@ import { confirmWithGoogle } from '../api.ts';
 import { duration, relative, useApi, useNow, useWrite, when } from '../lib.tsx';
 import { explain } from '../messages.ts';
 import { Callout, ErrorNote, IconLock, Loading, OriginText, PageHeader, Panel, WriteNote } from '../ui.tsx';
+import { identityEmailLabel } from './app/Sessions.tsx';
 import { ConsentPreview } from './Consent.tsx';
 
 interface ActionAnswer {
@@ -60,9 +61,10 @@ function settingText(k: string, v: unknown): string {
   if (k === 'persistence') return v === 'session' ? 'kept across reloads' : 'none';
   if (k === 'sessionTtlMs' || k === 'idleTtlMs') return duration(Number(v));
   if (k === 'googleWebClientId') return v === null || v === undefined ? 'Hana’s shared client' : str(v);
+  if (k === 'identityEmail') return identityEmailLabel(v).toLowerCase();
   return str(v);
 }
-const SETTING_LABEL: Record<string, string> = { persistence: 'Session persistence', sessionTtlMs: 'Session length', idleTtlMs: 'Idle timeout', googleWebClientId: 'Google web client' };
+const SETTING_LABEL: Record<string, string> = { persistence: 'Session persistence', sessionTtlMs: 'Session length', idleTtlMs: 'Idle timeout', googleWebClientId: 'Google web client', identityEmail: 'Email sharing' };
 
 export function Decoded({ kind, d }: { kind: string; d: Record<string, unknown> }) {
   switch (kind) {

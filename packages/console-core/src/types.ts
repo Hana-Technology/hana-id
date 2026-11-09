@@ -217,6 +217,8 @@ export const appDetail = appSummary
         googleWebClientId: z.string().nullable(),
         rawSign: z.enum(['off', 'approval']),
         policy: z.object({ policyId: z.string().regex(/^[0-9a-f]{64}$/u), label: z.string(), json: z.unknown() }).strict().nullable(),
+        /** D411: `identity_email` (an API before migration 0014's build omits it). */
+        identityEmail: z.enum(['off', 'on_request', 'at_login']).optional(),
         /**
          * Hana's mainnet demo exception (D428): in the staff view (AdminRpc.getApp) only, where staff set it; a partner's
          * view (ConsoleRpc.getApp) leaves it out.

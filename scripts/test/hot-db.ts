@@ -9,9 +9,13 @@ import { repoRoot } from '@hana-id/env';
 
 export const MIGRATIONS_DIR = join(repoRoot, 'apps', 'api', 'migrations');
 
-export function newHotDb(): DatabaseSync {
+/** `before`: only the migrations whose file name sorts before it (`'0014'`: a database still at 0013). */
+export function newHotDb(opts: { before?: string } = {}): DatabaseSync {
   const db = new DatabaseSync(':memory:');
-  for (const f of readdirSync(MIGRATIONS_DIR).filter((n) => n.endsWith('.sql')).sort()) db.exec(readFileSync(join(MIGRATIONS_DIR, f), 'utf8'));
+  const files = readdirSync(MIGRATIONS_DIR)
+    .filter((n) => n.endsWith('.sql') && (opts.before === undefined || n < opts.before))
+    .sort();
+  for (const f of files) db.exec(readFileSync(join(MIGRATIONS_DIR, f), 'utf8'));
   return db;
 }
 

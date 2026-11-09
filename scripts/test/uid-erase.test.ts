@@ -1,25 +1,29 @@
 // uid-erase (lib/uid-erase.ts; batch C13, D361) and admin retention:issuer (lib/admin-retention.ts, D365) against the
 // real migrations of all three stores: the usage ledger on PGlite as usage_admin (apps/api/migrations-usage), the
-// API's D1 (node:sqlite, apps/api/migrations: the wallet directory of 0011) and the issuer's D1 (node:sqlite,
-// apps/email-issuer/migrations). The chain is a fake view of get_identity / get_account. An erasure covers the account
-// (root and members) in one scope across the three stores, leaves other users and other scopes alone, is dry run by
-// default, re-countable to zero, recorded in ops.erasures without whom, and never touches what derivation reads. The
-// wallet directory's D1 also holds user_events (0013): erased by the users' internal ids and their wallet addresses.
+// API's D1 (node:sqlite, apps/api/migrations: the wallet directory of 0011, the email consents of 0014) and the issuer's
+// D1 (node:sqlite, apps/email-issuer/migrations). The chain is a fake view of get_identity / get_account. An erasure
+// covers the account (root and members) in one scope across the three stores, leaves other users and other scopes
+// alone, is dry run by default, re-countable to zero, recorded in ops.erasures without whom, and never touches what
+// derivation reads. The wallet directory's D1 also holds user_events (0013): erased by the users' internal ids and
+// their wallet addresses.
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { PGlite, PGliteInterface } from '@electric-sql/pglite';
 import { internalIdOf, uid } from '@hana-id/console-core';
+import { identitySub } from '@hana-id/core/identity';
 import { type Manifest, loadEnv, repoRoot } from '@hana-id/env';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { retentionIssuer } from '../lib/admin-retention.ts';
 import { supportDirectory, supportLedger } from '../lib/admin-support.ts';
 import { parseCli } from '../lib/cli.ts';
-import { type LedgerConn, type UidEraseDeps, checkTicket, uidErase } from '../lib/uid-erase.ts';
+import { CONSENT_TABLE_SQL, type LedgerConn, type UidEraseDeps, checkTicket, uidErase } from '../lib/uid-erase.ts';
 import { newHotDb } from './hot-db.ts';
 import { PGLITE, PGLITE_HOOK_MS, migratedLedger } from './pglite.ts';
 
 const KEY = new Uint8Array(32).fill(9);
+/** IDENTITY_SUB_KEY: the email consents' User IDs (D411). */
+const SUB_KEY = new Uint8Array(32).fill(7);
 const SCOPE = 's7';
 const GOOGLE = { provider: 'google', sub: '110000000000000000001' };
 const EMAIL = { provider: 'email', sub: 'e1.alice' };
@@ -60,6 +64,10 @@ const asAdmin = (db: PGliteInterface): LedgerConn => ({
 
 const uidHex = async (i: { provider: string; sub: string }) => Buffer.from(await uid(KEY, { scopeId: SCOPE, ...i })).toString('hex');
 const userOf = async (i: { provider: string; sub: string }) => internalIdOf(await uid(KEY, { scopeId: SCOPE, ...i }));
+/** The identity token's `sub` (the User ID) of an account root in a scope. */
+const userSub = (i: { provider: string; sub: string }, scope = SCOPE) => identitySub(SUB_KEY, scope, i);
+/** The wallet directory's `token_sub` of the n-th seeded user (any well-formed User ID, as seed() writes it). */
+const tokenSub = (n: number) => `u1_${String(n).padStart(21, 'A')}A`;
 
 let api: DatabaseSync;
 let issuer: DatabaseSync;
@@ -87,6 +95,7 @@ function deps(over: Partial<UidEraseDeps> = {}): UidEraseDeps {
     loadManifest: () => M,
     view,
     userIdKey: () => new Uint8Array(KEY),
+    identitySubKey: () => new Uint8Array(SUB_KEY),
     ledger: async () => asAdmin(ledger),
     apiD1: (_m, s) => d1(api)(s),
     issuerD1: (_m, s) => d1(issuer)(s),
@@ -97,7 +106,8 @@ function deps(over: Partial<UidEraseDeps> = {}): UidEraseDeps {
   };
 }
 
-async function seed(): Promise<void> {
+/** `consents: false` for an API D1 before migration 0014; `ledger: false` to seed only the two D1s. */
+async function seed(opts: { consents?: boolean; ledger?: boolean } = {}): Promise<void> {
   const root = await userOf(GOOGLE);
   const emailOwn = await userOf(EMAIL); // the email identity's own account, from before it was linked
   const other = await userOf(OTHER);
@@ -107,6 +117,20 @@ async function seed(): Promise<void> {
   const w = api.prepare("INSERT INTO end_user_wallets (user_id, chain, address, key_index, first_seen_at, last_used_at) VALUES (?, 'stellar', ?, 0, 1, 2)");
   const i = api.prepare("INSERT INTO end_user_identities (scope_id, identity_key, user_id, provider, sub, role, status, first_seen_at, observed_at) VALUES (?, ?, ?, ?, ?, ?, 'active', 1, 2)");
   for (const [id, scope] of [[root, SCOPE], [emailOwn, SCOPE], [other, SCOPE], [`hu_${'1'.repeat(26)}`, 's8']] as const) u.run(id, id.slice(3, 11).toUpperCase(), scope);
+  // Email consents (D411), keyed by the User ID: Alice's account's (granted with the copy, and declined) and her
+  // email identity's own from before the link; one by the root row's token_sub only (the belt-and-braces match); then
+  // what stays: Olivia's, and Alice's in s8 (another scope's User ID, and a row of s8 under the s7 one).
+  if (opts.consents !== false) {
+    const c = api.prepare('INSERT INTO email_consents (app_id, user_sub, email_mac, state, email, scope_id, decided_at) VALUES (?, ?, ?, ?, ?, ?, 5)');
+    const mac = (b: number) => new Uint8Array(32).fill(b);
+    c.run('app_a', userSub(GOOGLE), mac(1), 'granted', 'alice@gmail.com', SCOPE);
+    c.run('app_a2', userSub(GOOGLE), mac(1), 'declined', null, SCOPE);
+    c.run('app_a', userSub(EMAIL), mac(2), 'granted', 'alice@example.com', SCOPE);
+    c.run('app_a3', tokenSub(1), mac(1), 'granted', 'alice@gmail.com', SCOPE);
+    c.run('app_a', userSub(OTHER), mac(3), 'granted', 'olivia@example.com', SCOPE);
+    c.run('app_b', userSub(GOOGLE, 's8'), mac(1), 'granted', 'alice@gmail.com', 's8');
+    c.run('app_b2', userSub(GOOGLE), mac(1), 'granted', 'alice@gmail.com', 's8');
+  }
   w.run(root, ALICE_A);
   w.run(root, ALICE_B);
   w.run(emailOwn, `G${'C'.repeat(55)}`);
@@ -143,6 +167,7 @@ async function seed(): Promise<void> {
   a.run(EMAIL.provider, EMAIL.sub, 'app_a', SCOPE);
   a.run(OTHER.provider, OTHER.sub, 'app_a', SCOPE);
 
+  if (opts.ledger === false) return;
   n = 0;
   for (const [who, app] of [[GOOGLE, 'app_a'], [GOOGLE, 'app_a2'], [EMAIL, 'app_a'], [OTHER, 'app_a']] as const) {
     const h = await uidHex(who);
@@ -192,6 +217,12 @@ describe('uid-erase: the plan (dry run)', PGLITE, () => {
     expect(plan.uids).toEqual([await uidHex(GOOGLE), await uidHex(EMAIL)]);
     expect(plan.ledger).toEqual({ events: 3, appUsers: 3 });
     expect(plan.directory).toEqual({ users: 2, wallets: 3, identities: 2 });
+    // The account's consents of s7: its User ID's two, the email identity's own, and the one by the root row's token_sub.
+    expect(plan.consents).toBe(4);
+    expect(plan.userSubs.sort()).toEqual([userSub(GOOGLE), userSub(EMAIL), tokenSub(1), tokenSub(2)].sort());
+    expect(lines.join('\n')).toMatch(/consents {2}4 email consent row\(s\) of the scope deleted/u);
+    // No consent key in the output: the computed User IDs never appear (only the directory rows' own, as before).
+    for (const s of [userSub(GOOGLE), userSub(EMAIL)]) expect(lines.join('\n')).not.toContain(s);
     // user_events: Alice's 3 and her email identity's export by internal id, and the 2 other rows carrying her addresses.
     expect(plan.events).toBe(6);
     expect(plan.addresses).toEqual([ALICE_A, ALICE_B, `G${'C'.repeat(55)}`, ALICE_E]);
@@ -207,6 +238,7 @@ describe('uid-erase: the plan (dry run)', PGLITE, () => {
     expect(lines.join('\n')).not.toMatch(/@|alice@|olivia/u);
     for (const a of plan.addresses) expect(lines.join('\n')).not.toContain(a);
     expect(one(api, 'SELECT COUNT(*) AS n FROM end_users')).toBe(4);
+    expect(one(api, 'SELECT COUNT(*) AS n FROM email_consents')).toBe(7);
     expect((await ledgerCount(GOOGLE)).e).toBe(2);
   });
 });
@@ -214,7 +246,7 @@ describe('uid-erase: the plan (dry run)', PGLITE, () => {
 describe('uid-erase --yes: across the three stores', PGLITE, () => {
   it('erases the account’s rows in the ledger, the wallet directory and the issuer, records it, and leaves everyone else alone', async () => {
     const out = await uidErase([...ARGV, '--yes'], deps());
-    expect(out!.erased).toEqual({ ledgerEvents: 3, ledgerAppUsers: 3, directoryWallets: 3, directoryIdentities: 2, directoryUsers: 2, userEvents: 6, issuerApps: 2, issuerEmails: 1 });
+    expect(out!.erased).toEqual({ ledgerEvents: 3, ledgerAppUsers: 3, directoryWallets: 3, directoryIdentities: 2, emailConsents: 4, directoryUsers: 2, userEvents: 6, issuerApps: 2, issuerEmails: 1 });
     // user_events: Alice's rows by internal id and every row carrying one of her addresses; Olivia's and the s8 user's
     // export stay.
     const events = (api.prepare('SELECT user_id, scope_id, address FROM user_events ORDER BY id').all() as { user_id: string; scope_id: string; address: string | null }[]).map((x) => [x.user_id, x.scope_id, x.address]);
@@ -234,6 +266,10 @@ describe('uid-erase --yes: across the three stores', PGLITE, () => {
     expect(one(api, 'SELECT COUNT(*) AS n FROM end_users')).toBe(2);
     expect(one(api, 'SELECT COUNT(*) AS n FROM end_user_wallets')).toBe(1);
     expect(one(api, "SELECT COUNT(*) AS n FROM end_user_identities WHERE scope_id = 's8'")).toBe(1);
+    // Email consents: the account's of s7 are gone with their copies; Olivia's and every s8 row stay.
+    expect((api.prepare('SELECT app_id, scope_id FROM email_consents ORDER BY app_id').all() as { app_id: string; scope_id: string }[]).map((r) => `${r.app_id}:${r.scope_id}`)).toEqual(['app_a:s7', 'app_b:s8', 'app_b2:s8']);
+    expect(one(api, 'SELECT COUNT(*) AS n FROM email_consents WHERE user_sub = ?', userSub(OTHER))).toBe(1);
+    expect(one(api, "SELECT COUNT(*) AS n FROM email_consents WHERE email LIKE 'alice@%' AND scope_id = ?", SCOPE)).toBe(0);
     // Issuer: s7's app rows of both identities; the email address row; the Google row stays for s8.
     expect(one(issuer, 'SELECT COUNT(*) AS n FROM user_email_apps WHERE scope_id = ? AND provider IN (?, ?) AND sub IN (?, ?)', SCOPE, GOOGLE.provider, EMAIL.provider, GOOGLE.sub, EMAIL.sub)).toBe(0);
     expect(one(issuer, 'SELECT COUNT(*) AS n FROM user_emails WHERE provider = ? AND sub = ?', EMAIL.provider, EMAIL.sub)).toBe(0);
@@ -276,19 +312,19 @@ describe('uid-erase --yes: across the three stores', PGLITE, () => {
   it('is re-runnable: a second run finds nothing and still answers', async () => {
     await uidErase([...ARGV, '--yes'], deps());
     const again = await uidErase([...ARGV, '--yes'], deps());
-    expect(again!.erased).toEqual({ ledgerEvents: 0, ledgerAppUsers: 0, directoryWallets: 0, directoryIdentities: 0, directoryUsers: 0, userEvents: 0, issuerApps: 0, issuerEmails: 0 });
+    expect(again!.erased).toEqual({ ledgerEvents: 0, ledgerAppUsers: 0, directoryWallets: 0, directoryIdentities: 0, emailConsents: 0, directoryUsers: 0, userEvents: 0, issuerApps: 0, issuerEmails: 0 });
   });
 
   it('works from the root identity too, with the sub on stdin', async () => {
     const out = await uidErase(['sandbox-dev', '--scope', SCOPE, '--provider', GOOGLE.provider, '--sub', '-', '--ticket', 'SUP-124', '--yes'], deps({ readLine: async () => GOOGLE.sub }));
     expect(out!.plan.account.named.status).toBe('own');
-    expect(out!.erased).toMatchObject({ ledgerEvents: 3, directoryUsers: 2, issuerApps: 2 });
+    expect(out!.erased).toMatchObject({ ledgerEvents: 3, directoryUsers: 2, issuerApps: 2, emailConsents: 4 });
   });
 
   it('an env without an issuer erases the ledger and the wallet directory; --no-ledger skips the ledger and records nothing', async () => {
     const noIssuer = { ...M, emailIssuer: undefined } as Manifest;
     const out = await uidErase([...ARGV, '--yes', '--no-ledger'], deps({ loadManifest: () => noIssuer, issuerD1: async () => Promise.reject(new Error('no issuer')) }));
-    expect(out!.erased).toEqual({ directoryWallets: 3, directoryIdentities: 2, directoryUsers: 2, userEvents: 6 });
+    expect(out!.erased).toEqual({ directoryWallets: 3, directoryIdentities: 2, emailConsents: 4, directoryUsers: 2, userEvents: 6 });
     expect((await ledgerCount(GOOGLE)).e).toBe(2);
     expect((await ledger.query('SELECT 1 FROM ops.erasures')).rows).toEqual([]);
     expect(lines.join('\n')).toMatch(/record the ticket and these counts in the support log by hand/u);
@@ -311,7 +347,7 @@ describe('uid-erase and user_events (readiness 7.17)', PGLITE, () => {
     api.exec('DROP TABLE user_events');
     const out = await uidErase([...ARGV, '--yes'], deps());
     expect(out!.plan.events).toBeNull();
-    expect(out!.erased).toEqual({ ledgerEvents: 3, ledgerAppUsers: 3, directoryWallets: 3, directoryIdentities: 2, directoryUsers: 2, issuerApps: 2, issuerEmails: 1 });
+    expect(out!.erased).toEqual({ ledgerEvents: 3, ledgerAppUsers: 3, directoryWallets: 3, directoryIdentities: 2, emailConsents: 4, directoryUsers: 2, issuerApps: 2, issuerEmails: 1 });
     expect(lines.join('\n')).toMatch(/events {4}none \(the API's D1 has no user_events: migration 0013 not applied\)/u);
   });
 });
@@ -334,10 +370,36 @@ describe('uid-erase refusals', PGLITE, () => {
     expect((await ledgerCount(GOOGLE)).e).toBe(2);
   });
 
-  it('zeroes its copy of USER_ID_KEY after computing the uids', async () => {
+  it('zeroes its copy of USER_ID_KEY after computing the uids, and of IDENTITY_SUB_KEY after the User IDs', async () => {
     const copy = new Uint8Array(KEY);
-    await uidErase(ARGV, deps({ userIdKey: () => copy }));
+    const subCopy = new Uint8Array(SUB_KEY);
+    await uidErase(ARGV, deps({ userIdKey: () => copy, identitySubKey: () => subCopy }));
     expect([...copy].every((b) => b === 0)).toBe(true);
+    expect([...subCopy].every((b) => b === 0)).toBe(true);
+  });
+
+  it('without IDENTITY_SUB_KEY (no .secrets/<env>/identity-sub-key) it stops before anything changes, dry run or not', async () => {
+    const missing = () => {
+      throw new Error('No .secrets/sandbox-dev/identity-sub-key: the User IDs the email consents are keyed by can’t be computed');
+    };
+    await expect(uidErase([...ARGV, '--yes'], deps({ identitySubKey: missing }))).rejects.toThrow(/identity-sub-key/u);
+    await expect(uidErase(ARGV, deps({ identitySubKey: missing }))).rejects.toThrow(/identity-sub-key/u);
+    expect(one(api, 'SELECT COUNT(*) AS n FROM end_users')).toBe(4);
+    expect(one(api, 'SELECT COUNT(*) AS n FROM email_consents')).toBe(7);
+    expect((await ledgerCount(GOOGLE)).e).toBe(2);
+    expect(one(issuer, 'SELECT COUNT(*) AS n FROM user_emails')).toBe(3);
+  });
+
+  it('an API D1 before migration 0014 (no email_consents): the plan says so and the rest is erased', async () => {
+    api = newHotDb({ before: '0014' });
+    issuer = issuerDb();
+    await seed({ consents: false, ledger: false });
+    expect(await d1(api)(CONSENT_TABLE_SQL)).toEqual([{ n: 0 }]);
+    const out = await uidErase([...ARGV, '--yes'], deps());
+    expect(out!.plan.consents).toBeNull();
+    expect(lines.join('\n')).toMatch(/consents {2}none: the API's D1 has no email_consents table \(migration 0014 not applied\)/u);
+    expect(out!.erased).not.toHaveProperty('emailConsents');
+    expect(out!.erased).toMatchObject({ directoryUsers: 2, issuerApps: 2 });
   });
 });
 

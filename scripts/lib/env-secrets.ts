@@ -8,7 +8,8 @@
 // Without --yes it only lists: each secret, its source file, and whether the file is there, private (0600) and
 // well-formed. A missing file is listed, never invented: a key that only exists on the old Worker is gone, and its
 // generator (deploy-contract, vault-kek, identity-key, email-issuer, usage-setup, watchdog secrets) is the way to
-// make a new one, with what that changes (the runbook says which can be replaced and which never). With --yes it
+// make a new one, with what that changes (the runbook says which can be replaced and which never). Email sharing's
+// IDENTITY_SEAL_KEY (API and issuer) and EMAIL_CONSENT_KEY (API) are optional: listed, and set when their files exist. With --yes it
 // refuses while a required secret of the selected Workers is missing or malformed, then sets each one with
 // `wrangler secret put <NAME> --name <worker>` from the Worker's app directory (its generated config names the
 // account), the value on stdin. Nothing here prints a value.
@@ -18,7 +19,7 @@ import { join } from 'node:path';
 import { EMAIL_ISSUER_SECRET_FILES, IDENTITY_SECRET_FILES, type Manifest, accountIdFields, loadEnv, p256Thumbprint, repoRoot } from '@hana-id/env';
 import { CliError, parseCli } from './cli.ts';
 import { SENDGRID_RE, isRsaPrivateJwk, publicEntry as rsaPublicEntry, readKey32 } from './email-issuer.ts';
-import { readKeyFile as readP256KeyFile, readSubKeyFile } from './identity-key.ts';
+import { readKeyFile as readP256KeyFile, readSealKeyFile, readSubKeyFile } from './identity-key.ts';
 import { SECRET_FILES, assertPrivate, parseSecretJson, secretsDir } from './secrets.ts';
 import { KEK_FILES, readKekFile } from './vault-kek.ts';
 import { USER_ID_KEY_FILE } from './usage-setup.ts';
@@ -190,6 +191,9 @@ export function secretInventory(m: Manifest, root: string = repoRoot, only?: Wor
         out.push({ worker: 'api', name, source: 'not kept on disk', required: true, status: 'missing', note: `create a new access key for the signer's IAM user and run \`identity-key ${m.name} kms-put-aws-key --yes\`` });
       }
     }
+    // Email sharing's keys (D438, D439; `identity-key <env> email-keys`): optional, set when their files exist.
+    out.push(item('api', 'IDENTITY_SEAL_KEY', shown(IDENTITY_SECRET_FILES.sealKey), false, f(IDENTITY_SECRET_FILES.sealKey), () => readSealKeyFile(f(IDENTITY_SECRET_FILES.sealKey)), "email sharing: the issuer's copy is the same value"));
+    out.push(item('api', 'EMAIL_CONSENT_KEY', shown(IDENTITY_SECRET_FILES.emailConsentKey), false, f(IDENTITY_SECRET_FILES.emailConsentKey), () => readSubKeyFile(f(IDENTITY_SECRET_FILES.emailConsentKey)), 'email sharing: keep it, a new key forgets every consent'));
     out.push(item('api', 'USER_ID_KEY', shown(USER_ID_KEY_FILE), m.usage !== undefined, f(USER_ID_KEY_FILE), () => readText(f(USER_ID_KEY_FILE), B64_32_RE, 'base64 of 32 bytes'), 'never replaced: a new key makes every user a new user'));
   }
 
@@ -228,6 +232,7 @@ export function secretInventory(m: Manifest, root: string = repoRoot, only?: Wor
     const values = hmacItems.filter((i) => i.status === 'ok').map((i) => i.value);
     if (values.length === 3 && new Set(values).size !== 3) for (const i of hmacItems) Object.assign(i, { status: 'invalid', note: 'K_sub, K_code and K_rl must differ', value: undefined });
     out.push(...hmacItems);
+    out.push(item('issuer', 'IDENTITY_SEAL_KEY', shown(IDENTITY_SECRET_FILES.sealKey), false, f(IDENTITY_SECRET_FILES.sealKey), () => readSealKeyFile(f(IDENTITY_SECRET_FILES.sealKey)), "email sharing (D438): the API's same value"));
     out.push(item('issuer', 'SENDGRID_API_KEY', shown(F.sendgridKey), t.sender === 'sendgrid', f(F.sendgridKey), () => readText(f(F.sendgridKey), SENDGRID_RE, 'a SendGrid API key (SG.<id>.<secret>)'), 'Mail Send only (D194)'));
   }
 

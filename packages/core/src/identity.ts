@@ -7,6 +7,9 @@
 //   ‖ u64le(issued_at_ms) ‖ nonce(16) ‖ sha256(payload); payload = "identity-token" ‖ borsh(parent_origin)
 //   ‖ wallet_proofs_hash(32) ‖ sha256(sealed_email or ""). Its prefix differs from the contract's
 //   "hana-id-session-v1:" and the share actions' "hana-id-vault-v1:", so the signature serves no other purpose.
+// - Email consent proof (D411, docs/email-sharing-spec.md): the same message, payload = "email-consent" ‖ borsh(action)
+//   ‖ borsh(parent_origin) ‖ sha256(sealed_email or ""), action ∈ EMAIL_CONSENT_ACTIONS; a payload of one action never
+//   equals another's or a mint's (each starts with its own label and the action is length-prefixed).
 // - Wallet proof: "hana-id/identity-wallet/v1" ‖ 0x00 ‖ borsh(signer) ‖ borsh(app_id) ‖ session_pk(32)
 //   ‖ borsh(chain) ‖ borsh(address); Stellar: Ed25519 over it; EVM: secp256k1 r‖s‖v over sha256(it). Neither can be a
 //   chain transaction (those cover a 32-byte hash or a keccak of RLP) nor a SEP-53 / EIP-191 message.
@@ -24,6 +27,7 @@ import { recoverEvmAddress, signEvmDigest } from './signers/evm.ts';
 
 export const IDENTITY_MESSAGE_DOMAIN = 'hana-id-identity-v1:';
 export const IDENTITY_TOKEN_PAYLOAD = 'identity-token';
+export const EMAIL_CONSENT_PAYLOAD = 'email-consent';
 export const IDENTITY_WALLET_DOMAIN = 'hana-id/identity-wallet/v1';
 export const IDENTITY_WALLET_PROOFS_DOMAIN = 'hana-id/identity-wallet-proofs/v1';
 export const IDENTITY_SUB_LABEL = 'hana-id/idt-sub/v1';
@@ -86,6 +90,19 @@ export function identityMessage(i: IdentityMessageInput): Bytes {
 export function identityTokenPayload(i: { parentOrigin: string; walletProofsHash: Uint8Array; sealedEmail?: string | null }): Bytes {
   if (i.walletProofsHash.length !== 32) throw new Error('walletProofsHash must be 32 bytes');
   return concatBytes(utf8(IDENTITY_TOKEN_PAYLOAD), borshString(i.parentOrigin), toBytes(i.walletProofsHash), sha256(utf8(i.sealedEmail ?? '')));
+}
+
+/**
+ * What an email consent proof is for (D411): read the state, record a decision, revoke every address, or let the auth
+ * popup read the sealed address for the sheet (`preview`).
+ */
+export const EMAIL_CONSENT_ACTIONS = ['state', 'granted', 'declined', 'revoke', 'preview'] as const;
+export type EmailConsentAction = (typeof EMAIL_CONSENT_ACTIONS)[number];
+export const isEmailConsentAction = (v: unknown): v is EmailConsentAction => (EMAIL_CONSENT_ACTIONS as readonly unknown[]).includes(v);
+
+export function emailConsentPayload(i: { action: EmailConsentAction; parentOrigin: string; sealedEmail?: string | null }): Bytes {
+  if (!isEmailConsentAction(i.action)) throw new Error('Unknown email consent action');
+  return concatBytes(utf8(EMAIL_CONSENT_PAYLOAD), borshString(i.action), borshString(i.parentOrigin), sha256(utf8(i.sealedEmail ?? '')));
 }
 
 /**
@@ -388,11 +405,15 @@ export const identityJwksEntry = (jwk: P256PublicJwk): { kty: 'EC'; crv: 'P-256'
 
 // ---- POST /v1/identity/token (the vault's request and the API's answer) ----
 
-/** `emailStatus` in a mint answer. Until the email claim ships (build steps 5–6) it is always 'off'. */
+/**
+ * `emailStatus` in a mint answer (D411, D441): `off` (the app's setting), `not_asked` / `declined` (the session's sealed
+ * address has no consent / was declined), `missing` (no sealed address and nothing shared), `invalid` (a sealed address
+ * the API can't open, and nothing shared), `included` (the token carries `email`).
+ */
 export const IDENTITY_EMAIL_STATUSES = ['off', 'not_asked', 'declined', 'missing', 'invalid', 'included'] as const;
 export type IdentityEmailStatus = (typeof IDENTITY_EMAIL_STATUSES)[number];
 
-/** The mint request body: bytes as JSON number arrays; `sealedEmail` only with the email claim (step 6). */
+/** The mint request body: bytes as JSON number arrays; `sealedEmail` when the session has one (D438). */
 export interface IdentityTokenBody {
   sessionPublicKey: number[];
   issuedAtMs: number;
@@ -420,3 +441,34 @@ export const isIdentityTokenResponse = (v: unknown): v is IdentityTokenResponse 
   Number.isSafeInteger((v as IdentityTokenResponse).expiresAtMs) &&
   (v as IdentityTokenResponse).expiresAtMs > 0 &&
   (IDENTITY_EMAIL_STATUSES as readonly unknown[]).includes((v as IdentityTokenResponse).emailStatus);
+
+// ---- email consent (D411, docs/email-sharing-spec.md) ----
+
+/** The app setting `identity_email`: when Hana asks the user to share their address with the app. */
+export const IDENTITY_EMAIL_SETTINGS = ['off', 'on_request', 'at_login'] as const;
+export type IdentityEmailSetting = (typeof IDENTITY_EMAIL_SETTINGS)[number];
+export const isIdentityEmailSetting = (v: unknown): v is IdentityEmailSetting => (IDENTITY_EMAIL_SETTINGS as readonly unknown[]).includes(v);
+
+/** A consent state for the session's address (`unavailable`: the session has no address the API can read). */
+export const EMAIL_CONSENT_STATES = ['granted', 'declined', 'not_asked', 'unavailable'] as const;
+export type EmailConsentState = (typeof EMAIL_CONSENT_STATES)[number];
+
+/** A consent call's session proof fields (bytes as JSON number arrays), the mint's minus the wallet proofs. */
+export interface EmailConsentProof {
+  sessionPublicKey: number[];
+  issuedAtMs: number;
+  nonce: number[];
+  signature: number[];
+}
+
+/** `POST /v1/identity/email-consent/state` → this. */
+export interface EmailConsentStateResponse {
+  setting: IdentityEmailSetting;
+  state: EmailConsentState;
+}
+
+export const isEmailConsentStateResponse = (v: unknown): v is EmailConsentStateResponse =>
+  typeof v === 'object' &&
+  v !== null &&
+  isIdentityEmailSetting((v as EmailConsentStateResponse).setting) &&
+  (EMAIL_CONSENT_STATES as readonly unknown[]).includes((v as EmailConsentStateResponse).state);

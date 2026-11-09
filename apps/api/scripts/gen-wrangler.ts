@@ -27,7 +27,7 @@ import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { IDENTITY_SECRET_FILES, type Manifest, accountIdFields, apiRpcFallbacksOf, customDomainPlacement, emailIssuerUrl, hanaOwnOrigins, isLoopbackHost, loadEnv, p256Thumbprint, repoRoot } from '@hana-id/env';
+import { IDENTITY_SECRET_FILES, identitySealKeyId, type Manifest, accountIdFields, apiRpcFallbacksOf, customDomainPlacement, emailIssuerUrl, hanaOwnOrigins, isLoopbackHost, loadEnv, p256Thumbprint, repoRoot } from '@hana-id/env';
 import { IDENTITY_RATE_LIMITS } from '../src/identity/limits.ts';
 import { VAULT_RATE_LIMITS } from '../src/vault/limits.ts';
 import { workersDevHost, writePagesWranglerConfigs } from './pages-wrangler.ts';
@@ -238,6 +238,9 @@ export interface IdentityDevSecrets {
   /** The key that signs now (`identity-signing-key.json`). The standby stays offline, never in .dev.vars (D177). */
   signingKey?: unknown;
   subKey?: string;
+  /** Email sharing (D438, D439): IDENTITY_SEAL_KEY (`identity-seal-key`) and EMAIL_CONSENT_KEY (`email-consent-key`). */
+  sealKey?: string;
+  consentKey?: string;
 }
 
 const COORD_RE = /^[A-Za-z0-9_-]{43}$/u;
@@ -254,7 +257,8 @@ function identityKeyLine(name: 'IDENTITY_SIGNING_KEY', file: string, jwk: unknow
 }
 
 /**
- * The identity token's .dev.vars lines: the key that signs now and the sub key. The signing key must be the manifest's
+ * The identity token's .dev.vars lines: the key that signs now and the sub key, and email sharing's seal and consent
+ * keys when their files exist (D438, D439). The signing key must be the manifest's
  * active key (`identityToken.signer.activeKid`, in `publicKeys`): a key the JWKS doesn't publish would sign tokens no
  * partner can verify. The standby is never written: it stays off the Worker until a switch (D177).
  */
@@ -274,6 +278,16 @@ export function identityDevVarsLines(m: Pick<Manifest, 'name' | 'identityToken'>
     const v = secrets.subKey.trim();
     if (!SUB_KEY_RE.test(v) || Buffer.from(v, 'base64').length !== 32) throw new Error(`${IDENTITY_SECRET_FILES.subKey} must be base64 of 32 bytes`);
     lines.push(`IDENTITY_SUB_KEY='${v}'`);
+  }
+  if (secrets.sealKey !== undefined) {
+    const v = secrets.sealKey.trim();
+    if (identitySealKeyId(v) === null) throw new Error(`${IDENTITY_SECRET_FILES.sealKey} must be <id>:<base64 of 32 bytes>`);
+    lines.push(`IDENTITY_SEAL_KEY='${v}'`);
+  }
+  if (secrets.consentKey !== undefined) {
+    const v = secrets.consentKey.trim();
+    if (!SUB_KEY_RE.test(v) || Buffer.from(v, 'base64').length !== 32) throw new Error(`${IDENTITY_SECRET_FILES.emailConsentKey} must be base64 of 32 bytes`);
+    lines.push(`EMAIL_CONSENT_KEY='${v}'`);
   }
   return lines;
 }
@@ -329,6 +343,8 @@ export function writeDevVars(envName: string, root: string = repoRoot, dir: stri
   const identity = identityDevVarsLines(manifest ?? { name: envName, identityToken: undefined }, {
     signingKey: readSecretJsonIfExists(join(secrets, IDENTITY_SECRET_FILES.signingKey)),
     subKey: readSecretTextIfExists(join(secrets, IDENTITY_SECRET_FILES.subKey)),
+    sealKey: readSecretTextIfExists(join(secrets, IDENTITY_SECRET_FILES.sealKey)),
+    consentKey: readSecretTextIfExists(join(secrets, IDENTITY_SECRET_FILES.emailConsentKey)),
   });
   const content = devVarsContent({ relayerKeys, ownerRelayerKeys, keysUpdaterKey, identity });
   const path = join(dir, '.dev.vars');

@@ -268,3 +268,51 @@ describe('env-secrets --yes', () => {
     expect(() => run(['--worker', 'console'])).toThrow(/has no console Worker/u);
   });
 });
+
+describe('env-secrets: email sharing keys (D438, D439)', () => {
+  it('optional: listed as not set without their files, nothing blocked, nothing uploaded for them', () => {
+    seedAll();
+    run([]);
+    const text = out.join('\n');
+    expect(text).toContain(`IDENTITY_SEAL_KEY <- .secrets/${m.name}/identity-seal-key: not set (optional)`);
+    expect(text).toContain(`EMAIL_CONSENT_KEY <- .secrets/${m.name}/email-consent-key: not set (optional)`);
+    expect(secretInventory(m, root, 'issuer').find((i) => i.name === 'IDENTITY_SEAL_KEY')).toMatchObject({ required: false, status: 'missing' });
+    expect(text).not.toContain('required secret(s) missing');
+    run(['--worker', 'api', '--yes'], { CLOUDFLARE_ACCOUNT_ID: ACCOUNT });
+    expect(spawned.map((s) => s.argv[4])).not.toContain('IDENTITY_SEAL_KEY');
+    expect(spawned.map((s) => s.argv[4])).not.toContain('EMAIL_CONSENT_KEY');
+  });
+
+  it('with their files: the API gets both, the issuer the seal key only, each on its own Worker, values on stdin only', () => {
+    seedAll();
+    const seal = `1:${b64()}`;
+    const consent = b64();
+    secret('identity-seal-key', `${seal}\n`);
+    secret('email-consent-key', `${consent}\n`);
+    run(['--worker', 'api', '--yes'], { CLOUDFLARE_ACCOUNT_ID: ACCOUNT });
+    const api = spawned.filter((s) => ['IDENTITY_SEAL_KEY', 'EMAIL_CONSENT_KEY'].includes(s.argv[4]!));
+    expect(api.map((s) => [s.argv[4], s.argv[6], s.cwd.slice(root.length + 1), s.input])).toEqual([
+      ['IDENTITY_SEAL_KEY', m.cloudflare.workerName, 'apps/api', seal],
+      ['EMAIL_CONSENT_KEY', m.cloudflare.workerName, 'apps/api', consent],
+    ]);
+    spawned = [];
+    run(['--worker', 'issuer', '--yes']);
+    const issuer = spawned.filter((s) => ['IDENTITY_SEAL_KEY', 'EMAIL_CONSENT_KEY'].includes(s.argv[4]!));
+    expect(issuer.map((s) => [s.argv[4], s.argv[6], s.cwd.slice(root.length + 1), s.input])).toEqual([['IDENTITY_SEAL_KEY', m.emailIssuer!.cloudflare.workerName, 'apps/email-issuer', seal]]);
+    for (const s of spawned) expect(s.argv.join(' ')).not.toContain(s.input);
+    expectNoValuePrinted();
+  });
+
+  it('a malformed or readable file is listed INVALID (never uploaded), its value never printed', () => {
+    seedAll();
+    secret('identity-seal-key', `0:${b64()}`);
+    secret('email-consent-key', b64(), 0o644);
+    run([]);
+    const text = out.join('\n');
+    expect(text).toMatch(/IDENTITY_SEAL_KEY <- .*identity-seal-key: INVALID \(.*is not an IDENTITY_SEAL_KEY value/u);
+    expect(text).toMatch(/EMAIL_CONSENT_KEY <- .*email-consent-key: INVALID \(.*must be 0600/u);
+    run(['--worker', 'api', '--yes'], { CLOUDFLARE_ACCOUNT_ID: ACCOUNT });
+    expect(spawned.map((s) => s.argv[4])).not.toContain('IDENTITY_SEAL_KEY');
+    expectNoValuePrinted();
+  });
+});

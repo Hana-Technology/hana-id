@@ -14,7 +14,7 @@ popup, unless it falls under an auto-approve policy you set and the user accepte
 > on NEAR; that is what "NEAR testnet" means wherever an environment's network is named. Your users get a Stellar and
 > an EVM wallet. The SDK has no NEAR account or NEAR signer, and your app never talks to NEAR.
 
-Last verified against code: 2026-11-06, SDK 0.2.0. "SDK releases after 0.2.0" marks what is in Hana's next tarballs.
+Last verified against code: 2026-11-09, SDK 0.3.0. "SDK releases after 0.2.0" marks what arrived after 0.2.0 (all of it is in 0.3.0).
 
 ## How it works
 
@@ -139,13 +139,13 @@ release with their SHA-256 checksums: check them (`shasum -a 256 *.tgz`), then i
 or yarn. Install every package you use, `@hana-id/core` included, from its tarball, never from a registry:
 
 ```sh
-npm install ./hana-id-core-0.2.0.tgz ./hana-id-web-0.2.0.tgz              # always
-npm install ./hana-id-react-0.2.0.tgz                                      # React apps
-npm install ./hana-id-sodax-0.2.0.tgz @sodax/types@2.2.0                   # Sodax adapters
+npm install ./hana-id-core-0.3.0.tgz ./hana-id-web-0.3.0.tgz              # always
+npm install ./hana-id-react-0.3.0.tgz                                      # React apps
+npm install ./hana-id-sodax-0.3.0.tgz @sodax/types@2.2.0                   # Sodax adapters
 ```
 
 Commit the tarballs to your repository (or a private artifact store) and depend on them by path
-(`"@hana-id/web": "file:vendor/hana-id-web-0.2.0.tgz"`), so every install gets the same bytes.
+(`"@hana-id/web": "file:vendor/hana-id-web-0.3.0.tgz"`), so every install gets the same bytes.
 
 | Package | What | Peer dependencies (tested) |
 |---|---|---|
@@ -1032,7 +1032,43 @@ past the Hana session:
 | `iat`, `exp`, `jti` | seconds; `exp` ≤ `iat` + 3600 and never past the session's end; `jti` is random |
 | `wallets` | `[{chain: 'stellar', address: 'G…'}, {chain: 'evm', address: '0x…'}]`, a real JSON array; the holder of this Hana session proved control of each address's key (a signature bound to this session and app) |
 | `login_methods` | the account's login providers, sorted (`["google"]` today) |
-| `email`, `email_verified` | not issued yet: an opt-in verified email per app comes with email login (the claim pair then appears only for users who agreed to share it with you) |
+| `email`, `email_verified` | only for a user who shared their address with your app on Hana's sheet ("Email sharing" below): the verified address and `true`. Absent otherwise. Key users on `sub`, not on the address (it can change, and a user can stop sharing) |
+
+### Email sharing
+
+You see a user's email only after they share it with your app, on Hana's sheet: your app's name and the exact address,
+**Share email** / **Not now**. Nothing is mandatory: "Not now" always continues. Your app's **email sharing** setting
+(in the partner portal, on the app's **Login & sessions** page) decides when Hana asks:
+
+| Setting | Hana asks |
+|---|---|
+| Off (default) | never; tokens never carry an email |
+| When the app asks (`on_request`) | only when you call `hana.requestEmailSharing()` (e.g. from your own "Use my email" button) |
+| At first login (`at_login`) | once per user and app, at their first login, in the sign-in window before `login()` resolves; and from `requestEmailSharing()` |
+
+```ts
+// In a click handler, synchronously (it opens Hana's window, like login()).
+const state = await hana.requestEmailSharing(); // 'granted' | 'declined' | 'dismissed' (the window was closed)
+const token = await hana.getIdentityToken(); // with `email` when granted
+```
+
+- Once shared, every new identity token carries `email` and `email_verified: true`; `emailStatus` on Hana's side says
+  why a token has none. The **Users** screen of the partner portal shows the address (an Email column, "Not shared"
+  otherwise) and finds a user by the full address, only among addresses shared with your org's apps.
+- The consent is per app and per account (a linked account has one), for one address: a user who later signs in with
+  another address (a linked email) is asked again for that one.
+- **Stopping.** The user can stop sharing on the sheet (`requestEmailSharing()` when it is already shared shows "Stop
+  sharing") or from the approval window's account line. New tokens and your console then lose the address at once;
+  tokens you already received keep it until they expire (≤ 1 h), and the address you stored is yours to delete (your
+  terms with Hana require deleting it on request).
+- `hana.on('emailSharingChanged', (state) => …)` fires (`'granted'` or `'declined'`) when the user changes it on this
+  device; call `getIdentityToken()` again. Errors: `email_sharing_unavailable` (`data.reason`: `off` when your setting
+  is off, `no_address` when Hana has no address for this session: ask the user to sign in again, `unavailable`), 4100
+  when logged out, `busy` during a sign-in. React: `const { request, state, error } = useEmailSharing();` with
+  `<button onClick={request}>`.
+- An app on its **own Google client** can read the address from Google whatever the user chooses here; the sheet
+  says so.
+- SDK 0.3.0 or later (the event and the hook; older SDKs never get the event).
 
 What `wallets` proves, and what it doesn't: the session's holder controls each key. It is **not** proof that the
 address is the Hana-derived wallet of that `sub`: a user who tampers with their own vault can attach another key they

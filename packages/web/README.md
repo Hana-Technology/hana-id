@@ -17,7 +17,7 @@ The packages aren't on a registry yet. Hana sends you the tarballs with their SH
 install them together (`@hana-id/core` too, from its tarball, never from a registry):
 
 ```sh
-npm install ./hana-id-core-0.2.0.tgz ./hana-id-web-0.2.0.tgz
+npm install ./hana-id-core-0.3.0.tgz ./hana-id-web-0.3.0.tgz
 ```
 
 ESM only, with TypeScript declarations. Use a bundler (Vite, webpack, esbuild, Next.js) or TypeScript with
@@ -121,6 +121,20 @@ Your backend verifies it against Hana's JWKS (`{iss}/jwks.json`) with any JOSE l
 this is (`sid`) and which wallets they hold (`wallets`, each proven by its key). Lifetime ≤ 1 h; the SDK caches it
 across tabs and refreshes it 5 min before `exp` (`{ maxAgeMs }` for a fresher one). Hana's partner guide has the
 verification code.
+
+### Email sharing (0.3.0)
+
+```ts
+// In a click handler, synchronously (it opens Hana's window, like login()).
+const state = await hana.requestEmailSharing(); // 'granted' | 'declined' | 'dismissed'
+hana.on('emailSharingChanged', (s) => { /* 'granted' or 'declined': get a new identity token */ });
+```
+
+You see a user's email only after they share it with your app on Hana's sheet (your app's name and their exact
+address). Your app's email sharing setting says when Hana asks: off (default), only from `requestEmailSharing()`, or
+once at the first login. Once shared, identity tokens carry `email` and `email_verified: true`. The user can stop
+sharing on the same sheet or in the approval window; new tokens then have no email. Rejects with
+`email_sharing_unavailable` (`data.reason`: `off`, `no_address`, `unavailable`).
 
 ## Your page must
 

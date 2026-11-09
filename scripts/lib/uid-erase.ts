@@ -8,6 +8,9 @@
 //                                identities, through D1's REST API as the operator (lib/d1.ts apiPrivateD1Execute);
 //                                and the user's `user_events` (migration 0013: key exports, mainnet demo signatures),
 //                                by those internal ids and by every wallet address of theirs (readiness 7.17)
+//   the email consents           the API's D1 (migration 0014, D411): the account's email_consents rows of the scope,
+//                                with the copy of any address the user shared with an app (keyed by the User ID, the
+//                                identity token's `sub`; none when the table isn't there yet)
 //   the issuer's user directory  the email issuer's D1 (D269): the identities' user_email_apps rows of the scope, and
 //                                each identity's user_emails row once it has no app row left (D276's `user:erase`)
 //
@@ -15,7 +18,9 @@
 // root and the account's members. Every uid that can carry the user's ledger rows is erased: the root's (the account's
 // internal id, D312, D346) and each identity's own (from before it was linked), for every identity whose sub is known (the one
 // named, the root, and the members the wallet directory has a sub for). The uid is recomputed with USER_ID_KEY from
-// `.secrets/<env>/user-id-key`, never printed.
+// `.secrets/<env>/user-id-key`, never printed. The consents are keyed by the User ID (`u1_…`, core identitySub with
+// IDENTITY_SUB_KEY from `.secrets/<env>/identity-sub-key`, never printed): the root's and each known identity's own (a
+// member had its own before it was linked), plus the User ID of every wallet-directory row being erased.
 //
 // Nothing that derivation depends on is touched: the identities, accounts and paths are on chain, so the user's wallets
 // are exactly as before, and their next login through Hana writes new rows (a new erasure request covers those).
@@ -23,8 +28,9 @@
 // Dry run by default: the plan with the counts per store, and the other scopes where the identity is seen (an erasure
 // is per scope: run again for each). `--yes` erases, re-counts (all zero, or it fails) and records the erasure in
 // ops.erasures (ticket, operator, scope, counts; never a uid, a sub or an address). Re-runnable: every step is
-// idempotent. No address is ever printed; the sub is the operator's own input.
-import { formatSupportId, internalIdOf, scopeIdInput, uid as uidOf, uidOfInternalId } from '@hana-id/console-core';
+// idempotent. No address is ever printed, nor a consent's User ID; the sub is the operator's own input.
+import { USER_ID_RE, formatSupportId, internalIdOf, scopeIdInput, uid as uidOf, uidOfInternalId } from '@hana-id/console-core';
+import { identitySub } from '@hana-id/core/identity';
 import type { Manifest } from '@hana-id/env';
 import { type Args, CliError, parseCli } from './cli.ts';
 import { sql } from './sql.ts';
@@ -32,8 +38,9 @@ import { sql } from './sql.ts';
 export const UID_ERASE_USAGE = `Usage: uid-erase.ts <env> --scope <scope id> --provider <provider> --sub <sub | -> --ticket <ref> [--remote] [--no-ledger] [--yes]
   An end user's erasure request for one scope (D90, D361): the usage ledger's uids (usage.erase_uid, as usage_admin
   over .secrets/<env>/neon-usage-admin.url), the wallet directory's rows and the user's key export and mainnet demo
-  events (the API's D1) and the issuer directory's rows (the email issuer's D1). The account (root and members) is
-  read from the chain. Without --yes, prints the plan with the counts and changes nothing.
+  events (the API's D1), the issuer directory's rows (the email issuer's D1), and the account's email consents with
+  any address it shared with an app (the API's D1, D411; needs .secrets/<env>/identity-sub-key). The account (root
+  and members) is read from the chain. Without --yes, prints the plan with the counts and changes nothing.
   --sub -       read the sub from stdin (kept out of the shell history)
   --ticket      the support reference of the request (no email address in it); recorded in ops.erasures
   --remote      the deployed D1 databases (default: local, as admin.ts)
@@ -50,6 +57,11 @@ export interface UidEraseDeps {
   view(m: Manifest, method: 'get_identity' | 'get_account', args: Record<string, string>): Promise<unknown>;
   /** USER_ID_KEY, the 32 bytes of `.secrets/<env>/user-id-key` (0600). */
   userIdKey(env: string): Uint8Array;
+  /**
+   * IDENTITY_SUB_KEY, the 32 bytes of `.secrets/<env>/identity-sub-key` (0600): the email consents' User IDs. Throws
+   * (before anything changes) when the file is missing or malformed.
+   */
+  identitySubKey(env: string): Uint8Array;
   /** The usage_admin connection from `.secrets/<env>/neon-usage-admin.url`; null when the file doesn't exist. */
   ledger(env: string): Promise<LedgerConn | null>;
   /** One statement on the API's D1, privately (lib/d1.ts apiPrivateD1Execute). */
@@ -86,6 +98,10 @@ export interface Plan {
   internalIds: string[];
   /** The wallet directory's rows among them: the User ID partners see and its Support ID (for the operator to check). */
   users: { internalId: string; userId: string; supportId: string }[];
+  /** The User IDs (`u1_…`) the account's email consents are keyed by: never printed. */
+  userSubs: string[];
+  /** Whether the API's D1 has migration 0014's email_consents. */
+  consentTable: boolean;
   /**
    * Every wallet address of those users (the directory's wallets and their own events'), for their `user_events` rows
    * by address. Never printed or recorded.
@@ -93,11 +109,16 @@ export interface Plan {
   addresses: string[];
   ledger: { events: number; appUsers: number } | null;
   directory: { users: number; wallets: number; identities: number };
+  /** The account's email_consents rows of the scope (null: no table). */
+  consents: number | null;
   /** The `user_events` rows by those internal ids or addresses; null when the env's D1 has no such table (0013). */
   events: number | null;
   issuer: { apps: number; emails: number } | null;
   otherScopes: string[];
 }
+
+/** 1 when the API's D1 has migration 0014's email_consents table. */
+export const CONSENT_TABLE_SQL = "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'email_consents'";
 
 const PROVIDER_RE = /^[a-z][a-z0-9_-]{0,31}$/u;
 const KEY_RE = /^[0-9a-f]{64}$/u;
@@ -168,6 +189,13 @@ const walletWhere = (c: Ctx, p: Pick<Plan, 'internalIds' | 'account' | 'addresse
   events: `(user_id IN (${list(p.internalIds)})${p.addresses.length ? ` OR address IN (${list(p.addresses)})` : ''})`,
 });
 
+/**
+ * The account's consent rows of the scope: by the User IDs computed, and (belt and braces) by the User ID of every
+ * wallet-directory row being erased, read in the statement itself. Deleted before those rows.
+ */
+const consentWhere = (c: Ctx, p: Pick<Plan, 'userSubs' | 'internalIds'>): string =>
+  `scope_id = ${sql`${c.scopeId}`} AND (user_sub IN (${list(p.userSubs)}) OR user_sub IN (SELECT token_sub FROM end_users WHERE user_id IN (${list(p.internalIds)})))`;
+
 /** Whether the API's D1 has `user_events` (migration 0013 is applied by hand, docs/operations.md "Migrations"). */
 async function hasUserEvents(c: Ctx): Promise<boolean> {
   const [r] = await c.deps.apiD1(c.m, "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'user_events'", c.remote);
@@ -185,7 +213,9 @@ async function userAddresses(c: Ctx, internalIds: readonly string[], events: boo
   return [...new Set(rows.map((r) => String(r.address)))].sort();
 }
 
-async function counts(c: Ctx, p: Pick<Plan, 'uids' | 'internalIds' | 'account' | 'identities' | 'addresses'> & { eventsTable: boolean }): Promise<Pick<Plan, 'ledger' | 'directory' | 'issuer' | 'events'>> {
+type CountsOf = Pick<Plan, 'uids' | 'internalIds' | 'account' | 'identities' | 'userSubs' | 'consentTable' | 'addresses'> & { eventsTable: boolean };
+
+async function counts(c: Ctx, p: CountsOf): Promise<Pick<Plan, 'ledger' | 'directory' | 'consents' | 'issuer' | 'events'>> {
   let ledger: Plan['ledger'] = null;
   if (c.ledger) {
     const [r] = await c.ledger.query<{ events: string; app_users: string }>(
@@ -202,6 +232,7 @@ async function counts(c: Ctx, p: Pick<Plan, 'uids' | 'internalIds' | 'account' |
     c.remote,
   );
   const directory = { users: num(d?.users), wallets: num(d?.wallets), identities: num(d?.identities) };
+  const consents = p.consentTable ? num((await c.deps.apiD1(c.m, `SELECT COUNT(*) AS n FROM email_consents WHERE ${consentWhere(c, p)}`, c.remote))[0]?.n) : null;
   const events = p.eventsTable ? num((await c.deps.apiD1(c.m, `SELECT COUNT(*) AS n FROM user_events WHERE ${w.events}`, c.remote))[0]?.n) : null;
   let issuer: Plan['issuer'] = null;
   if (c.m.emailIssuer) {
@@ -213,7 +244,7 @@ async function counts(c: Ctx, p: Pick<Plan, 'uids' | 'internalIds' | 'account' |
     );
     issuer = { apps: num(i?.apps), emails: num(i?.emails) };
   }
-  return { ledger, directory, issuer, events };
+  return { ledger, directory, consents, issuer, events };
 }
 
 /** The other scopes the account's identities are seen in (by either directory): each needs its own run. */
@@ -250,9 +281,21 @@ export async function planErasure(c: Ctx, named: Identity): Promise<Plan> {
     userId: String(r.token_sub),
     supportId: formatSupportId(String(r.support_code)),
   }));
+  // The email consents' keys (D411): the User ID of each known identity (the root's is the account's), and of each
+  // wallet-directory row. IDENTITY_SUB_KEY is read even when there is no consent table yet: a missing key fails here,
+  // before anything changes.
+  const subKey = c.deps.identitySubKey(c.m.name);
+  const userSubs = new Set<string>();
+  try {
+    for (const i of identities) userSubs.add(identitySub(subKey, c.scopeId, i));
+  } finally {
+    subKey.fill(0);
+  }
+  for (const u of users) if (USER_ID_RE.test(u.userId)) userSubs.add(u.userId);
+  const consentTable = num((await c.deps.apiD1(c.m, CONSENT_TABLE_SQL, c.remote))[0]?.n) > 0;
   const eventsTable = await hasUserEvents(c);
   const addresses = await userAddresses(c, internalIds, eventsTable);
-  const base = { scopeId: c.scopeId, account, identities, uids, internalIds, users, addresses };
+  const base = { scopeId: c.scopeId, account, identities, uids, internalIds, users, userSubs: [...userSubs], consentTable, addresses };
   return { ...base, ...(await counts(c, { ...base, eventsTable })), otherScopes: await otherScopes(c, identities) };
 }
 
@@ -268,6 +311,9 @@ export function formatPlan(p: Plan, where: string): string[] {
       .join(', ')}`,
     p.ledger ? `  ledger    ${p.ledger.events} event(s) lose their uid, ${p.ledger.appUsers} app_users row(s) deleted` : '  ledger    skipped (--no-ledger)',
     `  wallets   ${p.directory.users} user row(s), ${p.directory.wallets} wallet row(s), ${p.directory.identities} identity row(s) deleted (the API's D1)`,
+    p.consents === null
+      ? "  consents  none: the API's D1 has no email_consents table (migration 0014 not applied)"
+      : `  consents  ${p.consents} email consent row(s) of the scope deleted, with any address shared with an app (the API's D1, D411)`,
     p.events === null
       ? '  events    none (the API\'s D1 has no user_events: migration 0013 not applied)'
       : `  events    ${p.events} key export / mainnet demo signature row(s) deleted, by these users and their ${p.addresses.length} wallet address(es) (the API's D1)`,
@@ -301,6 +347,8 @@ async function erase(c: Ctx, p: Plan): Promise<Record<string, number>> {
       ...(p.events !== null ? [`DELETE FROM user_events WHERE ${w.events} RETURNING 'v' AS t`] : []),
       `DELETE FROM end_user_wallets WHERE ${w.users} RETURNING 'w' AS t`,
       `DELETE FROM end_user_identities WHERE ${w.identities} RETURNING 'i' AS t`,
+      // Before end_users: the consents' belt-and-braces match reads its token_sub.
+      ...(p.consentTable ? [`DELETE FROM email_consents WHERE ${consentWhere(c, p)} RETURNING 'c' AS t`] : []),
       `DELETE FROM end_users WHERE ${w.users} RETURNING 'u' AS t`,
     ].join(';\n'),
     c.remote,
@@ -308,6 +356,7 @@ async function erase(c: Ctx, p: Plan): Promise<Record<string, number>> {
   out.directoryWallets = dir.filter((r) => r.t === 'w').length;
   out.directoryIdentities = dir.filter((r) => r.t === 'i').length;
   out.directoryUsers = dir.filter((r) => r.t === 'u').length;
+  if (p.consentTable) out.emailConsents = dir.filter((r) => r.t === 'c').length;
   if (p.events !== null) out.userEvents = dir.filter((r) => r.t === 'v').length;
   if (c.m.emailIssuer) {
     const iss = await c.deps.issuerD1(
@@ -358,7 +407,7 @@ export async function uidErase(argv: readonly string[], deps: UidEraseDeps): Pro
     }
     const erased = await erase(c, plan);
     const after = await counts(c, { ...plan, eventsTable: plan.events !== null });
-    const left = [after.ledger?.events, after.ledger?.appUsers, after.directory.users, after.directory.wallets, after.directory.identities, after.events, after.issuer?.apps, after.issuer?.emails].reduce<number>((a, b) => a + (b ?? 0), 0);
+    const left = [after.ledger?.events, after.ledger?.appUsers, after.directory.users, after.directory.wallets, after.directory.identities, after.consents, after.events, after.issuer?.apps, after.issuer?.emails].reduce<number>((a, b) => a + (b ?? 0), 0);
     if (left > 0) throw new Error(`Rows remain after the erasure (${left}); nothing was recorded. Run it again: every step is idempotent.`);
     if (c.ledger) {
       await c.ledger.query('INSERT INTO ops.erasures (ticket, operator, scope_id, rows) VALUES ($1, $2, $3, $4::jsonb)', [ticket, deps.operator.slice(0, 128), scope.data, JSON.stringify(erased)]);

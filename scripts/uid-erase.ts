@@ -3,16 +3,17 @@
 // An end user's erasure request for one scope (D90; batch C13, D361) across the usage ledger, the wallet directory
 // (with the user's user_events, D433) and the issuer's user directory; see lib/uid-erase.ts and docs/operations.md
 // "Retention". The ledger is reached as usage_admin over .secrets/<env>/neon-usage-admin.url (written by `usage-setup
-// <env> roles`), USER_ID_KEY is read from .secrets/<env>/user-id-key: neither is ever printed, and a driver error has
-// the URL and password removed.
+// <env> roles`), USER_ID_KEY is read from .secrets/<env>/user-id-key and IDENTITY_SUB_KEY (the email consents' User IDs,
+// D411) from .secrets/<env>/identity-sub-key: none is ever printed, and a driver error has the URL and password removed.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
-import { loadEnv } from '@hana-id/env';
+import { IDENTITY_SECRET_FILES, loadEnv } from '@hana-id/env';
 import pg from 'pg';
 import { cliActor } from './lib/admin-apps.ts';
 import { run } from './lib/cli.ts';
 import { apiPrivateD1Execute, issuerD1Execute } from './lib/d1.ts';
+import { readSubKeyFile } from './lib/identity-key.ts';
 import { NearRpc } from './lib/near.ts';
 import { assertPrivate, secretsDir } from './lib/secrets.ts';
 import { ROLE_FILES, USER_ID_KEY_FILE, readRoleUrl } from './lib/usage-setup.ts';
@@ -31,6 +32,14 @@ run(async () => {
       const key = Buffer.from(value, 'base64');
       if (!/^[A-Za-z0-9+/]{43}=$/u.test(value) || key.length !== 32) throw new Error(`.secrets/${env}/${USER_ID_KEY_FILE} is not base64 of 32 bytes`);
       return new Uint8Array(key);
+    },
+    identitySubKey(env) {
+      const name = IDENTITY_SECRET_FILES.subKey;
+      const file = join(secretsDir(env), name);
+      if (!existsSync(file)) {
+        throw new Error(`No .secrets/${env}/${name}: the User IDs the email consents are keyed by can't be computed, so nothing was changed (identity-key.ts ${env} init writes it; docs/operations.md "Identity token keys")`);
+      }
+      return new Uint8Array(Buffer.from(readSubKeyFile(file), 'base64'));
     },
     async ledger(env) {
       const file = join(secretsDir(env), ROLE_FILES.usage_admin);

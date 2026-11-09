@@ -1,5 +1,6 @@
 // Request handlers: app endpoints (publishable key + origin), owner actions (OIDC proof in args), health.
 import { identityRoot } from '@hana-id/core/identity';
+import { appIdentityEmail } from './identity/email.ts';
 import { JwksUnavailableError } from '@hana-id/oidc';
 import { type App, HOT_DB_SCHEMA, PUBLISHABLE_KEY_RE, appSuspended, getAppByKey, markSession, startFirstSession } from './apps.ts';
 import { appKeyPairs, appKeyProblem } from './bls.ts';
@@ -341,7 +342,7 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
     });
   const settingsRead = timed(
     'settings',
-    Promise.all([getSettingsRow(env.DB, app.id).then((row) => (row ? effectiveSettings(row, app.id, Date.now()) : null)), appLoginMethods(env.DB, app.id), mainnetDemoOn(env, app)]),
+    Promise.all([getSettingsRow(env.DB, app.id).then((row) => (row ? effectiveSettings(row, app.id, Date.now()) : null)), appLoginMethods(env.DB, app.id), appIdentityEmail(env.DB, app.id), mainnetDemoOn(env, app)]),
   );
   const web = app.google_web_client_id;
   const chainRead = timed(
@@ -354,7 +355,7 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
   );
   const [settingsDone, chainDone] = await Promise.all([settingsRead, chainRead]);
   if (!settingsDone.ok) return reject(ctx, 503, 'config_unavailable', 'App config is unavailable, try again');
-  const [settings, methods, mainnetDemo] = settingsDone.value;
+  const [settings, methods, identityEmail, mainnetDemo] = settingsDone.value;
   const autoApprovePolicy: AppSettings['autoApprovePolicy'] = settings?.autoApprovePolicy ?? null;
   const rawSign: AppSettings['rawSign'] = settings?.rawSign ?? 'off';
   // A Google-only app keeps batch B's answers and errors exactly.
@@ -394,6 +395,8 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
       // Batch C11: the app's logo on the files origin (`<FILES_ORIGIN>/<logo_key>`), or null (no logo, or no files
       // origin in this env). The auth pages show it beside the name; older clients ignore the field.
       logoUrl: logoUrl(env.FILES_ORIGIN, app.logo_key) ?? null,
+      // D411: when the vault asks the user to share their address with the app (identity/email.ts).
+      identityEmail,
     });
   } catch {
     return reject(ctx, 502, 'near_unavailable', 'Could not read the app registry');

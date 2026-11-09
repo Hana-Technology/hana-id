@@ -19,6 +19,10 @@
 // one on screen is rejected first (approve-result approved: false, or consent-result allowed: false, with its own
 // digest), so the vault never waits on an id the user can no longer answer; the new one needs its own guarded Approve.
 // The same id sent again (the vault re-sending what is on show) is rendered again, which also resets the guard.
+//
+// D411, D442: a request with `emailShared` shows "Email shared with {App} · Stop sharing" on the account line (the
+// popup's account view, until Hana Home): the click posts `hana:email-revoke`, and the vault's `hana:email-revoked`
+// says whether it worked. It changes nothing about the request on screen.
 import {
   type ApprovalDigestInput,
   DecodeError,
@@ -95,6 +99,12 @@ export const AUTO_APPROVE_REASON_TEXT: Readonly<Record<AutoApproveReason, string
  */
 /** Beside the Support ID on the request screen (batch C15). */
 export const SUPPORT_ID_HINT = 'Give this code to the app’s support if they ask; it doesn’t show your account or email.';
+/** The account line's email sharing note (D442). */
+export const EMAIL_SHARED_TEXT = {
+  line: (app: string) => `Your email is shared with ${app}.`,
+  stopped: (app: string) => `Stopped. ${app} no longer gets your email from Hana; it may keep the address it already received, so ask ${app} to delete it.`,
+  failed: 'Hana couldn’t stop sharing. Try again.',
+};
 /** The mainnet demo's banner headline (D428): every approval of a request for Base or Stellar's public network. */
 export const MAINNET_DEMO_BANNER = 'Real funds, test custody: these funds may be lost';
 /** Under the headline: why (the keys come from the testnet MPC). */
@@ -201,8 +211,12 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   function onMessage(event: Event): void {
     const e = event as MessageEvent;
     if (stopped || !fromVault(e)) return;
-    const msg = parseWindowMessage(e.data, ['hana:approve-request', 'hana:consent-request', 'hana:approve-close']);
+    const msg = parseWindowMessage(e.data, ['hana:approve-request', 'hana:consent-request', 'hana:approve-close', 'hana:email-revoked']);
     if (!msg) return;
+    if (msg.t === 'hana:email-revoked') {
+      onEmailRevoked(msg.ok);
+      return;
+    }
     if (msg.t === 'hana:approve-close') {
       // The vault ended what this window was for (auto-approved, refused, another window in use, logout). It already
       // settled anything on screen, so nothing is answered.
@@ -253,6 +267,37 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   /** The user's Support ID (batch C15), as the vault sent it: the code an app's support may ask for. Text only. */
   function supportIdLine(supportId: string): HTMLElement {
     return d.h('p', { class: 'support-id muted' }, 'Support ID ', d.h('code', { class: 'mono' }, supportId), ` ${SUPPORT_ID_HINT}`);
+  }
+
+  /** The account line's "Stop sharing" (D411, D442): one revoke at a time; the vault's answer updates the line. */
+  let emailBox: HTMLElement | null = null;
+  function emailSharedLine(app: string): HTMLElement {
+    const box = d.h('p', { class: 'email-shared muted', attrs: { id: 'email-shared' } }, EMAIL_SHARED_TEXT.line(app), ' ');
+    const btn = d.h('button', { class: 'link', attrs: { type: 'button', id: 'email-stop' } }, 'Stop sharing');
+    btn.addEventListener('click', (e) => {
+      if (!isGesture(e) || btn.disabled) return;
+      btn.disabled = true;
+      post({ t: 'hana:email-revoke' });
+    });
+    box.append(btn);
+    box.dataset.app = app;
+    emailBox = box;
+    return box;
+  }
+
+  function onEmailRevoked(ok: boolean): void {
+    const box = emailBox;
+    if (!box) return;
+    const app = box.dataset.app ?? 'The app';
+    if (ok) {
+      box.replaceChildren(EMAIL_SHARED_TEXT.stopped(app));
+      emailBox = null;
+      return;
+    }
+    const btn = box.querySelector('button');
+    if (btn) btn.disabled = false;
+    box.setAttribute('data-failed', '1');
+    box.firstChild?.replaceWith(`${EMAIL_SHARED_TEXT.failed} `);
   }
 
   function stopAutoApproveButton(label: string): HTMLElement {
@@ -338,6 +383,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         header(msg, `Request ${msg.position} of ${msg.queued}`),
         d.h('p', { class: 'account' }, `Your ${msg.chain === 'stellar' ? 'Stellar' : 'EVM'} account `, d.h('code', { class: 'mono' }, msg.address)),
         msg.supportId ? supportIdLine(msg.supportId) : null,
+        msg.emailShared ? emailSharedLine(msg.appName) : null,
         demo ? demoBanner(input, demo, msg.id) : msg.testApp ? d.h('p', { class: 'note test-app' }, TEST_APP_NOTE) : null,
         auto?.reason ? d.h('p', { class: 'note' }, `Not signed automatically under “${auto.label}”: ${autoApproveReasonText(auto.reason)}.`) : null,
         decoded

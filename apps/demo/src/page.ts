@@ -28,6 +28,7 @@ export type DemoClient = Pick<
   | 'exportKey'
   | 'revokeOtherDevices'
   | 'getIdentityToken'
+  | 'requestEmailSharing'
   | 'on'
   | 'stellar'
   | 'ethereum'
@@ -232,7 +233,7 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     renderAddresses(loggedIn ? c.addresses : null);
     show('identity', loggedIn);
     if (!loggedIn) renderIdentity(null);
-    for (const id of ['logout', 'revoke', 'sign-personal', 'sign-stellar', 'sign-evm-tx', 'export-stellar', 'export-evm', 'identity-token']) disable(id, pending || !loggedIn);
+    for (const id of ['logout', 'revoke', 'sign-personal', 'sign-stellar', 'sign-evm-tx', 'export-stellar', 'export-evm', 'identity-token', 'email-share']) disable(id, pending || !loggedIn);
   }
 
   /** The decoded token (display only) and the verify snippet, or nothing. */
@@ -438,6 +439,15 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
   );
   el('identity-token').addEventListener('click', () =>
     run('identity', async () => {
+      renderIdentity(await c.getIdentityToken());
+    }),
+  );
+  // D411: Hana's email sharing sheet (the app's `identity_email` must be on_request or at_login); synchronous in the
+  // click, as login: `run` calls the task at once, and requestEmailSharing opens its popup before any await.
+  el('email-share').addEventListener('click', () =>
+    run('identity', async () => {
+      const state = await c.requestEmailSharing();
+      notice(state === 'granted' ? 'Email shared: the next identity token carries it.' : state === 'declined' ? 'Email not shared.' : 'The sheet was closed; nothing changed.');
       renderIdentity(await c.getIdentityToken());
     }),
   );

@@ -348,10 +348,13 @@ describe('0006 on a sandbox-dev-shaped database (0001–0005 and 0008 applied, t
   });
 
   // Last in this block: it applies the later files on the same database.
-  it('then the later files apply in name order (0009 batch C4, 0010 email login, 0011 the wallet directory, 0012 the last token sighting, 0013 the mainnet demo and user events), every app Google-only', async () => {
+  it('then the later files apply in name order (0009 batch C4, 0010 email login, 0011 the wallet directory, 0012 the last token sighting, 0013 the mainnet demo and user events, 0014 email sharing), every app Google-only and sharing no email', async () => {
     await applyD1Migrations(db, ALL);
     const { results } = await db.prepare('SELECT name FROM d1_migrations ORDER BY id').all<{ name: string }>();
-    expect(results.map((r) => r.name).slice(-6)).toEqual(['0006_dashboard_expand.sql', '0009_session_markers.sql', '0010_login_methods.sql', '0011_wallet_directory.sql', '0012_issuer_key_last_token.sql', '0013_mainnet_demo_events.sql']);
+    expect(results.map((r) => r.name).slice(-7)).toEqual(['0006_dashboard_expand.sql', '0009_session_markers.sql', '0010_login_methods.sql', '0011_wallet_directory.sql', '0012_issuer_key_last_token.sql', '0013_mainnet_demo_events.sql', '0014_email_sharing.sql']);
+    const sharing = await db.prepare('SELECT DISTINCT identity_email FROM apps').all<{ identity_email: string }>();
+    expect(sharing.results.map((r) => r.identity_email)).toEqual(['off']);
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM email_consents').first()).toEqual({ n: 0 });
     expect(await db.prepare('SELECT COUNT(*) AS n FROM end_users').first()).toEqual({ n: 0 });
     const methods = await db.prepare('SELECT DISTINCT login_methods FROM apps').all<{ login_methods: string }>();
     expect(methods.results.map((r) => r.login_methods)).toEqual(['google']);
@@ -385,7 +388,7 @@ describe('0006 on an empty database, in order', () => {
     accepted(db, 'INSERT INTO apps (id, name, scope_id, org_id, publishable_key) VALUES (?1, ?1, ?2, ?3, ?4)', id, scopeId, org, key);
 
   beforeAll(async () => {
-    expect(ALL.map((m) => m.name)).toEqual(['0001_init.sql', '0002_issuer_key_missing.sql', '0003_vault.sql', '0004_issuer_key_observations.sql', '0005_issuer_key_sync.sql', '0006_dashboard_expand.sql', '0008_identity_token.sql', '0009_session_markers.sql', '0010_login_methods.sql', '0011_wallet_directory.sql', '0012_issuer_key_last_token.sql', '0013_mainnet_demo_events.sql']);
+    expect(ALL.map((m) => m.name)).toEqual(['0001_init.sql', '0002_issuer_key_missing.sql', '0003_vault.sql', '0004_issuer_key_observations.sql', '0005_issuer_key_sync.sql', '0006_dashboard_expand.sql', '0008_identity_token.sql', '0009_session_markers.sql', '0010_login_methods.sql', '0011_wallet_directory.sql', '0012_issuer_key_last_token.sql', '0013_mainnet_demo_events.sql', '0014_email_sharing.sql']);
     await applyD1Migrations(db, ALL);
     await scope('sa', 'test');
     await scope('sl', 'live');

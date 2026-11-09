@@ -11,6 +11,7 @@ import { syncIssuerKeys } from './issuer-keys.ts';
 import { identityMaintenance } from './identity/maintenance.ts';
 import { IDENTITY_PUBLIC_ENDPOINTS, handleIdentityPublic } from './identity/public.ts';
 import { IDENTITY_TOKEN_ENDPOINT, handleIdentityToken } from './identity/token.ts';
+import { EMAIL_CONSENT_ENDPOINTS, authPreflight, handleEmailConsent, isEmailConsentEndpoint } from './identity/email.ts';
 import { log } from './log.ts';
 import { checkOwnerPoolAllowance } from './owner-pool.ts';
 import { LOGIN_ENDPOINT, handleLogin } from './login.ts';
@@ -134,6 +135,12 @@ export default {
         // Vault only, like /v1/vault/* (same preflight: Origin must be VAULT_ORIGIN).
         if (request.method === 'OPTIONS') return vaultPreflight(request, env);
         if (request.method === 'POST') return await handleIdentityToken(request, env, requestId, ctx);
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
+      }
+      if (isEmailConsentEndpoint(pathname)) {
+        // D411: the vault's consent calls (vault only, like the mint) and the auth popup's preview (AUTH_ORIGIN only).
+        if (request.method === 'OPTIONS') return pathname === EMAIL_CONSENT_ENDPOINTS.preview ? authPreflight(request, env) : vaultPreflight(request, env);
+        if (request.method === 'POST') return await handleEmailConsent(request, env, pathname, requestId);
         return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
       }
       if (pathname === WALLET_RECORD_ENDPOINT) {

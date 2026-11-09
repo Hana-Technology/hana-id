@@ -42,6 +42,8 @@ export interface ParsedCommitment {
   scopeId: string;
   /** The token's nonce, computed here (null for auto_link: it depends on the chain state at minting). */
   nonce: string;
+  /** The parsed session commitment (purpose `session` only, else null): its key and expiry seal the address (D438). */
+  session: SessionCommitment | null;
 }
 
 /**
@@ -55,19 +57,19 @@ export function commitmentNonce(signer: string, purpose: unknown, commitment: un
   if (p === 'session') {
     const c = parseSessionCommitment(commitment, now);
     if (!c.ok) return c;
-    return { ok: true, value: { purpose: p, scopeId: c.value.scopeId, nonce: sessionNonceOf(signer, c.value) } };
+    return { ok: true, value: { purpose: p, scopeId: c.value.scopeId, nonce: sessionNonceOf(signer, c.value), session: c.value } };
   }
   if (!isObj(commitment)) return bad('commitment must be an object');
   const c = commitment;
   if (p === 'link_new') {
     if (!onlyKeys(c, ['scopeId', 'rootIk', 'epoch', 'salt'])) return bad('commitment must be {scopeId, rootIk, epoch, salt}');
     if (!isScopeId(c.scopeId) || !isIk(c.rootIk) || !isU64(c.epoch) || !isBytes(c.salt, 16, 64)) return bad('Malformed link_new commitment');
-    return { ok: true, value: { purpose: p, scopeId: c.scopeId, nonce: nonceOf(linkNewPreimage(signer, c.scopeId, fromHex(c.rootIk), EMAIL_PROVIDER, c.epoch, Uint8Array.from(c.salt))) } };
+    return { ok: true, value: { purpose: p, scopeId: c.scopeId, nonce: nonceOf(linkNewPreimage(signer, c.scopeId, fromHex(c.rootIk), EMAIL_PROVIDER, c.epoch, Uint8Array.from(c.salt))), session: null } };
   }
   if (p === 'link_account') {
     if (!onlyKeys(c, ['scopeId', 'rootIk', 'newIk', 'epoch', 'salt'])) return bad('commitment must be {scopeId, rootIk, newIk, epoch, salt}');
     if (!isScopeId(c.scopeId) || !isIk(c.rootIk) || !isIk(c.newIk) || !isU64(c.epoch) || !isBytes(c.salt, 16, 64)) return bad('Malformed link_account commitment');
-    return { ok: true, value: { purpose: p, scopeId: c.scopeId, nonce: nonceOf(linkAccountPreimage(signer, c.scopeId, fromHex(c.rootIk), fromHex(c.newIk), c.epoch, Uint8Array.from(c.salt))) } };
+    return { ok: true, value: { purpose: p, scopeId: c.scopeId, nonce: nonceOf(linkAccountPreimage(signer, c.scopeId, fromHex(c.rootIk), fromHex(c.newIk), c.epoch, Uint8Array.from(c.salt))), session: null } };
   }
   // link_change
   if (!onlyKeys(c, ['scopeId', 'action', 'rootIk', 'memberIk', 'epoch', 'salt'])) return bad('commitment must be {scopeId, action, rootIk, memberIk, epoch, salt}');
@@ -76,6 +78,6 @@ export function commitmentNonce(signer: string, purpose: unknown, commitment: un
   }
   return {
     ok: true,
-    value: { purpose: p, scopeId: c.scopeId, nonce: nonceOf(linkChangePreimage(signer, c.scopeId, c.action, fromHex(c.rootIk), fromHex(c.memberIk), c.epoch, Uint8Array.from(c.salt))) },
+    value: { purpose: p, scopeId: c.scopeId, nonce: nonceOf(linkChangePreimage(signer, c.scopeId, c.action, fromHex(c.rootIk), fromHex(c.memberIk), c.epoch, Uint8Array.from(c.salt))), session: null },
   };
 }

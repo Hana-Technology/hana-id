@@ -314,6 +314,20 @@ export interface LoginSuccess {
    * transaction), or a path that moved after the API's read (its code would be another account's).
    */
   supportId: string | null;
+  /**
+   * D438: the address of the identity that signed in, sealed by the email issuer for the API and this session (from
+   * google-match, or the popup's email step), or null; `sealedEmailLater` when it comes from token_first's background
+   * google-record instead (resolves null on any failure).
+   */
+  sealedEmail: string | null;
+  sealedEmailLater: Promise<string | null> | null;
+  /**
+   * D411: the app's `identity_email` is `at_login` and the popup was told to end on `/share-email` (`emailShare` in
+   * auth-params): the vault may show the sheet there before it answers the login. `popup` is the login popup's window
+   * (the hello's source; the same window after its navigations), or null.
+   */
+  emailShare: boolean;
+  popup: WindowRef | null;
 }
 
 /**
@@ -541,6 +555,8 @@ abstract class PopupTask<T> {
   protected emailOffered = false;
   /** token_first's record-only login (an app without email login, D270): the token may say `access: 'follow'`. */
   protected recordOffered = false;
+  /** D411: the app asks for email sharing at login: the popup was told to end on `/share-email`. */
+  protected emailShareOffered = false;
   /** token_first's background google-record, once started (tests wait for it); it never rejects. */
   recorded: Promise<void> | null = null;
   /** The popup's progress stages already reported (each once). */
@@ -844,6 +860,7 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
     // without email login sends it to the issuer's directory only (google-record), never to google-match.
     const recordOn = !emailOn && (ctx.googleEmailFlow ?? GOOGLE_EMAIL_FLOW) === 'token_first' && !!(env.emailIssuerUrl && ctx.issuer);
     this.recordOffered = recordOn;
+    this.emailShareOffered = app.identityEmail === 'at_login' && !!(env.emailIssuerUrl && ctx.issuer);
     mark('app');
     const appRtt = ctx.appRtt?.(app);
     if (appRtt !== undefined) timings.appRtt = Math.max(0, appRtt);
@@ -902,6 +919,9 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
             }
           : {}),
         ...(recordOn ? { followKey: Uint8Array.from(followKey as Uint8Array), emailRecord: true as const } : {}),
+        // D411: an `at_login` app's popup ends on the email sharing sheet instead of closing (only where Hana can read
+        // the address: an env with an email issuer).
+        ...(this.emailShareOffered ? { emailShare: true as const } : {}),
       };
       if (followKey && emailOn) this.follow = new FollowChannel(ctx.api, ctx.timers, Uint8Array.from(relayKey), Uint8Array.from(followKey));
       mark('keygen');
@@ -945,10 +965,14 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
       // Step 7: who signed in (never the API's word), then (email on, a Google token) google-match and its case.
       let who = await verify.first(relayed.payload, nonce);
       let link: LinkPlan | null = null;
+      // D438: an email login's own sealed address rides beside its token; a Google one comes from google-match below,
+      // or from token_first's google-record after the login.
+      let sealedEmail: string | null = who.ref.provider === EMAIL_PROVIDER ? (relayed.payload.sealedEmail ?? null) : null;
       if (who.ref.provider === 'google' && emailOn && this.follow) {
         const decided = await this.matchGoogle(who, relayed.payload, commitment, verify, nonce);
         who = decided.who;
         link = decided.link;
+        sealedEmail = decided.sealedEmail;
       }
       mark('verify');
 
@@ -1033,10 +1057,26 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
         // token_first in an app without email login: the access token is in slot 1, for the directory only (D269).
         // Only once /v1/login has opened the session and the key passed its check, so a refused, failed or cancelled
         // login is never recorded as a login to this app; in the background, never awaited by the login.
-        if (recordOn && followKey && who.ref.provider === 'google' && relayed.payload.access === 'follow') this.recordGoogle(who, commitment, relayKey, followKey);
+        const sealedEmailLater = recordOn && followKey && who.ref.provider === 'google' && relayed.payload.access === 'follow' ? this.recordGoogle(who, commitment, relayKey, followKey) : null;
         this.afterword(who, path, linked);
         const supportId = pathMoved ? null : chain.supportId;
-        return { prk, addresses, path, expiresAtMs, maxUses, sessionKey, timings, markedAt: lap, identity: { provider: who.ref.provider, sub: who.ref.sub }, linked, supportId };
+        return {
+          prk,
+          addresses,
+          path,
+          expiresAtMs,
+          maxUses,
+          sessionKey,
+          timings,
+          markedAt: lap,
+          identity: { provider: who.ref.provider, sub: who.ref.sub },
+          linked,
+          supportId,
+          sealedEmail,
+          sealedEmailLater,
+          emailShare: this.emailShareOffered,
+          popup: (this.helloSource as WindowRef | null) ?? null,
+        };
       } catch (e) {
         prk.fill(0);
         throw e;
@@ -1057,7 +1097,7 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
     commitment: { scopeId: string; sessionPublicKey: number[]; expiresAtMs: number; keyIndex: number; maxUses: number; salt: number[] },
     verify: TokenCheck,
     sessionNonceValue: string,
-  ): Promise<{ who: Who; link: LinkPlan | null }> {
+  ): Promise<{ who: Who; link: LinkPlan | null; sealedEmail: string | null }> {
     const follow = this.follow as FollowChannel;
     let accessToken: string | null = first.accessToken ?? null;
     /** Slot 1's (or a consent answer's) Google error instead of an access token. */
@@ -1083,7 +1123,7 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
       // No answer: only an identity that can't be case A logs in (it has a wallet, or is in an account), D255.
       const g = await this.identityOf(google.ref);
       const known = g.status !== 'own' || g.opened || (await this.accountHasMembers(google.ref));
-      if (known) return { who: google, link: null };
+      if (known) return { who: google, link: null, sealedEmail: null };
       if (problem === 'unavailable') throw fail('api_unavailable', 'Hana could not check this Google account against email sign-ins; try again', { reason: 'email_match_unavailable' });
       const reason = problem === 'declined' ? 'email_consent_declined' : 'google_account_mismatch';
       // `round` screens shown so far: `round - 1`; this would be screen `round`.
@@ -1106,16 +1146,18 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
         throw err.code === 'login_cancelled' ? fail('login_cancelled', 'The sign-in was cancelled', { reason }) : err;
       }
       if (!isRelayToken(a) || a.as !== 'session' || !isJsonFormToken(a.idToken)) throw fail('token_invalid', 'The sign-in answer was refused');
-      // "Sign in with email instead": an email login (Google's token is dropped unused).
-      return { who: await verify.email(a.idToken, sessionNonceValue), link: null };
+      // "Sign in with email instead": an email login (Google's token is dropped unused), with its own sealed address.
+      return { who: await verify.email(a.idToken, sessionNonceValue), link: null, sealedEmail: a.sealedEmail ?? null };
     }
     if (!match) throw fail('api_unavailable', 'Hana could not check this Google account against email sign-ins; try again', { reason: 'email_match_unavailable' });
+    // D438: google-match's sealed address is the Google identity's: it goes with a session that identity opens.
+    const sealed = match.sealedEmail;
 
     if (match.decision === 'case_a') {
       if (match.emailToken) {
         // Only the Google-hosted silent rule mints at google-match (D119, D139); anything else is the issuer's error.
         if (!match.googleHosted || match.linkImmediate !== true) throw fail('token_invalid', 'The email issuer’s link token was refused', { reason: 'link_mismatch' });
-        return { who: google, link: { token: match.emailToken, immediate: true, join: 1 } };
+        return { who: google, link: { token: match.emailToken, immediate: true, join: 1 }, sealedEmail: sealed };
       }
       // Not hosted (a code first), or a case A that can't link: the popup's screen, then its answer.
       const notice: FollowNotice = match.challenge && match.linkable ? { t: 'link_code', ...match.challenge } : { t: 'use_email', reason: match.linkable ? 'unavailable' : 'provider_taken' };
@@ -1126,11 +1168,11 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
       if (!isRelayToken(answer) || !isJsonFormToken(answer.idToken)) throw fail('token_invalid', 'The sign-in answer was refused');
       if (answer.as === 'link' && notice.t === 'link_code') {
         // The code step's own `auto_link` token (case A after this popup's code, D139): judged and verified below.
-        return { who: google, link: { token: answer.idToken, immediate: true, join: 1 } };
+        return { who: google, link: { token: answer.idToken, immediate: true, join: 1 }, sealedEmail: sealed };
       }
       if (answer.as !== 'session') throw fail('token_invalid', 'The sign-in answer was refused');
       // "Sign in with email": an email login to the wallet that address opens; Google's token is dropped unused.
-      return { who: await verify.email(answer.idToken, sessionNonceValue), link: null };
+      return { who: await verify.email(answer.idToken, sessionNonceValue), link: null, sealedEmail: answer.sealedEmail ?? null };
     }
 
     if (match.decision === 'case_b' && match.emailToken) {
@@ -1139,10 +1181,10 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
       if (!proof || match.linkImmediate === null || peekEmailTokenSub(match.emailToken) !== proof.emailSub) {
         throw fail('token_invalid', 'The email issuer’s link token was refused', { reason: 'link_mismatch' });
       }
-      return { who: google, link: { token: match.emailToken, immediate: match.linkImmediate, join: 2 } };
+      return { who: google, link: { token: match.emailToken, immediate: match.linkImmediate, join: 2 }, sealedEmail: sealed };
     }
     // C, linked, pending, unlinked, both wallets, a plain Google login in case B: no link, the login's own path.
-    return { who: google, link: null };
+    return { who: google, link: null, sealedEmail: sealed };
   }
 
   /**
@@ -1189,24 +1231,28 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
    * written at the user's next login (the directory's rows are upserts). No retry: it would only hold the access
    * token longer for a row the next login writes anyway.
    */
-  private recordGoogle(google: Who, commitment: MatchRequest['commitment'], relayKey: Uint8Array, followKey: Uint8Array): void {
+  private recordGoogle(google: Who, commitment: MatchRequest['commitment'], relayKey: Uint8Array, followKey: Uint8Array): Promise<string | null> {
     const { ctx } = this;
     const issuer = ctx.issuer as IssuerApi;
     const keys = { relayKey: Uint8Array.from(relayKey), followKey: Uint8Array.from(followKey) };
     const ctl = new AbortController();
     const timer = ctx.timers.setTimeout(() => ctl.abort(), RECORD_TIMEOUT_MS);
-    const run = async (): Promise<void> => {
+    const run = async (): Promise<string | null> => {
       const { id, readKey } = followSlot(keys.followKey, 1);
       const a = await readSlot(ctx.api, ctx.timers, keys.relayKey, id, readKey, ctl.signal, () => (ctl.signal.aborted ? fail('login_timeout', 'The record took too long') : null));
-      if (!('accessToken' in a) || 'idToken' in a) return;
-      await issuer.googleRecord({ pk: ctx.config.publishableKey, accessToken: a.accessToken, googleIdToken: google.token, commitment }, ctl.signal);
+      if (!('accessToken' in a) || 'idToken' in a) return null;
+      const r = await issuer.googleRecord({ pk: ctx.config.publishableKey, accessToken: a.accessToken, googleIdToken: google.token, commitment }, ctl.signal);
+      // D438: its sealed address goes with the session (the vault attaches it when it arrives).
+      return r.sealedEmail;
     };
-    this.recorded = run()
-      .catch(() => undefined)
+    const sealed = run()
+      .catch(() => null)
       .finally(() => {
         ctx.timers.clearTimeout(timer);
         zero(keys.relayKey, keys.followKey);
       });
+    this.recorded = sealed.then(() => undefined);
+    return sealed;
   }
 
   /**

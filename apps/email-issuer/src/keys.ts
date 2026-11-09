@@ -8,7 +8,8 @@
 // - K_rl keys the rate limits (spec "Rate limits and abuse": a separate key, so limiter state never holds an on-chain
 //   id). Rotating it only resets limit windows.
 import { base64Decode, base64UrlDecode, base64UrlEncode, bytesEqual, concatBytes, sha256, toHex, u64le, utf8 } from './bytes.ts';
-import { importSubKey } from '@hana-id/email';
+import { importSubKey, parseSealKey, type SealKey } from '@hana-id/email';
+import { log } from './log.ts';
 
 export class KeysUnavailable extends Error {}
 
@@ -62,6 +63,31 @@ export async function importKeys(env: { EMAIL_SUB_KEY?: string | undefined; EMAI
     code.fill(0);
     rl.fill(0);
   }
+}
+
+// ---- the sealed email's key (D438) ----
+
+const sealKeyCache = new Map<string, Promise<SealKey | null>>();
+
+/**
+ * IDENTITY_SEAL_KEY as an AES-GCM key, imported once per isolate and value; null when it is not set (the env doesn't
+ * share emails) or malformed (logged once, as a code: never the value). Never throws: a missing key only means no
+ * answer carries `sealedEmail`.
+ */
+export function importSealKey(value: string | undefined): Promise<SealKey | null> {
+  if (!value) return Promise.resolve(null);
+  let p = sealKeyCache.get(value);
+  if (!p) {
+    p = parseSealKey(value)
+      .catch(() => null)
+      .then((k) => {
+        if (!k) log({ event: 'seal_key_unavailable', outcome: 'error', code: 'bad_seal_key' }, 'error');
+        return k;
+      });
+    sealKeyCache.clear();
+    sealKeyCache.set(value, p);
+  }
+  return p;
 }
 
 /**

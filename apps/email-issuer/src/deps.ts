@@ -5,7 +5,8 @@ import { AccessVerifier, accessConfig } from './access.ts';
 import { type Chain, NearChain } from './chain.ts';
 import type { Env } from './env.ts';
 import { Google } from './google.ts';
-import { type IssuerKeys, importKeys } from './keys.ts';
+import type { SealKey } from '@hana-id/email';
+import { type IssuerKeys, importKeys, importSealKey } from './keys.ts';
 import { OutboxSender } from './outbox.ts';
 import type { EmailSender } from './sender.ts';
 import { SendGridSender } from './sendgrid.ts';
@@ -21,6 +22,8 @@ export interface Deps {
   signers: () => Promise<IssuerSigner[]>;
   publicKeys: () => Promise<PublicJwk[]>;
   keys: () => Promise<IssuerKeys>;
+  /** IDENTITY_SEAL_KEY (D438), or null when the env has none (or a malformed one): then no answer carries `sealedEmail`. */
+  sealKey: () => Promise<SealKey | null>;
   access: AccessVerifier | null;
   waitUntil: (p: Promise<unknown>) => void;
 }
@@ -36,7 +39,7 @@ const memo = <T>(f: () => Promise<T>): (() => Promise<T>) => {
   };
 };
 
-let cached: { fingerprint: string; deps: Omit<Deps, 'waitUntil'> } | null = null;
+let cached: { fingerprint: string; deps: Omit<Deps, 'waitUntil' | 'sealKey'> } | null = null;
 
 /** The sender an env names: SendGrid, or the outbox stub where the binding exists (local* envs only, gen-enforced). */
 export function senderFor(env: Env, fetcher: typeof fetch = globalFetch): EmailSender {
@@ -68,5 +71,6 @@ export function depsFromEnv(env: Env, waitUntil: (p: Promise<unknown>) => void):
       },
     };
   }
-  return { ...cached.deps, env, sender: senderFor(env), waitUntil };
+  // The seal key is read from this request's bindings (importSealKey caches it per value).
+  return { ...cached.deps, env, sender: senderFor(env), sealKey: () => importSealKey(env.IDENTITY_SEAL_KEY), waitUntil };
 }

@@ -11,6 +11,9 @@
 //                                       holds which kid (public data); a switch uploads into the slot the active key
 //                                       isn't in, so the Worker always has a key with the active kid
 //   identity-sub-key                    32 random bytes (base64): the `sub`/`sid` HMAC key, never rotated
+//   identity-seal-key                   IDENTITY_SEAL_KEY (D438): `<id>:<base64 of 32 bytes>`, the sealed email's key,
+//                                       on the API and the email issuer
+//   email-consent-key                   EMAIL_CONSENT_KEY (D439): 32 random bytes (base64), the consents' MAC key (API)
 //
 //   init [--local]                  generate active, standby and sub key; files; the manifest's `identityToken`; upload
 //                                   the active key and the sub key (never the standby). --local: no upload
@@ -21,6 +24,12 @@
 //   retire --key previous|standby   remove that key from the manifest's `publicKeys`, delete its Worker secret if it
 //                                   is in a slot, and set its file aside (`identity-signing-key-retired-<kid>.json`)
 //   show                            the published kids, their roles and slots (public values only)
+//   email-keys [--local]            email sharing's keys (D438, D439): write identity-seal-key and email-consent-key
+//                                   (each only if missing: an existing file is reused, never replaced), then set
+//                                   IDENTITY_SEAL_KEY and EMAIL_CONSENT_KEY on the API Worker and IDENTITY_SEAL_KEY on
+//                                   the email issuer Worker (skipped when the manifest has no emailIssuer). --local: no
+//                                   upload
+//   email-keys put                  set those three secrets again from the files
 //
 // Every command that changes something prints its plan and changes nothing without --yes; each manifest change needs
 // `gen` and a deploy to take effect, which the command says. When the manifest has a `watchdog` block, every key the
@@ -32,7 +41,7 @@ import { spawnSync } from 'node:child_process';
 import { generateKeyPairSync, randomBytes as nodeRandomBytes } from 'node:crypto';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { IDENTITY_SECRET_FILES, type Manifest, identityIssuerFor, loadEnv, manifestPath, manifestSchema, p256Thumbprint, repoRoot } from '@hana-id/env';
+import { IDENTITY_SECRET_FILES, type Manifest, identityIssuerFor, identitySealKeyId, loadEnv, manifestPath, manifestSchema, p256Thumbprint, repoRoot } from '@hana-id/env';
 import { CliError, parseCli } from './cli.ts';
 import { type AwsSecret, KMS_COMMANDS, KMS_STRING_FLAGS, type KmsCommand, identityKms } from './identity-kms.ts';
 import { assertPrivate, parseSecretJson, secretsDir, writeSecretJson } from './secrets.ts';
@@ -47,6 +56,12 @@ export const IDENTITY_KEY_USAGE = `Usage: identity-key.ts <env> <command> [--yes
   switch --to next|standby       upload that key into the free slot and make it the active key (manifest)
   retire --key previous|standby  unpublish that key, delete its Worker secret if it has one, set its file aside
   show                           the published kids, their roles and slots (public values only)
+  email-keys [--local]           email sharing's keys (D438, D439): write .secrets/<env>/identity-seal-key
+                                 (IDENTITY_SEAL_KEY, 1:<32 bytes>) and email-consent-key (EMAIL_CONSENT_KEY, 32 bytes),
+                                 0600, each only if missing (an existing file is reused), then set both on the API
+                                 Worker and IDENTITY_SEAL_KEY on the email issuer Worker (if the env has one).
+                                 --local: no upload
+  email-keys put                 set those secrets again from the files
   --yes                          do it (without it, only print the plan)
 
 After init, next, switch and retire: commit envs/<env>.json, run gen and deploy the API. With a watchdog block, init
@@ -69,7 +84,9 @@ AWS KMS signer (staging and mainnet; D215, docs/operations.md "Identity token ke
   never print a credential.`;
 
 export type SigningSlot = 'IDENTITY_SIGNING_KEY' | 'IDENTITY_SIGNING_KEY_STANDBY';
-export type IdentitySecret = SigningSlot | 'IDENTITY_SUB_KEY';
+/** Email sharing's API secrets (D438, D439); IDENTITY_SEAL_KEY also goes to the email issuer. */
+export type EmailKeySecret = 'IDENTITY_SEAL_KEY' | 'EMAIL_CONSENT_KEY';
+export type IdentitySecret = SigningSlot | 'IDENTITY_SUB_KEY' | EmailKeySecret;
 export const SIGNING_SLOTS: readonly SigningSlot[] = ['IDENTITY_SIGNING_KEY', 'IDENTITY_SIGNING_KEY_STANDBY'];
 
 export interface P256PrivateJwk {
@@ -82,6 +99,8 @@ export interface P256PrivateJwk {
 
 export interface IdentityKeyDeps {
   putSecret: (m: Manifest, name: IdentitySecret, value: string) => void;
+  /** Sets a secret on the email issuer Worker (`emailIssuer.cloudflare.workerName`), the value on wrangler's stdin. */
+  putIssuerSecret?: (m: Manifest, name: 'IDENTITY_SEAL_KEY', value: string) => void;
   /** Sets several secrets in one request (`wrangler secret bulk`, stdin): the AWS key pair changes atomically. */
   putSecretsBulk?: (m: Manifest, values: Record<AwsSecret, string>) => void;
   deleteSecret: (m: Manifest, name: SigningSlot) => void;
@@ -96,12 +115,19 @@ export interface IdentityKeyDeps {
 }
 
 const apiDir = join(repoRoot, 'apps', 'api');
+const issuerDir = join(repoRoot, 'apps', 'email-issuer');
 
 export function wranglerSecretArgv(m: Manifest, name: IdentitySecret): string[] {
   return ['exec', 'wrangler', 'secret', 'put', name, '--name', m.cloudflare.workerName];
 }
 
 /** `wrangler secret bulk` with no file reads the JSON object from stdin: the values never touch the disk again. */
+/** `wrangler secret put` on the email issuer Worker (run from apps/email-issuer). */
+export function wranglerIssuerSecretArgv(m: Manifest, name: 'IDENTITY_SEAL_KEY'): string[] {
+  if (!m.emailIssuer) throw new Error(`envs/${m.name}.json has no emailIssuer`);
+  return ['exec', 'wrangler', 'secret', 'put', name, '--name', m.emailIssuer.cloudflare.workerName];
+}
+
 export function wranglerSecretBulkArgv(m: Manifest): string[] {
   return ['exec', 'wrangler', 'secret', 'bulk', '--name', m.cloudflare.workerName];
 }
@@ -117,13 +143,14 @@ export function newP256(): P256PrivateJwk {
 }
 
 export function defaultIdentityKeyDeps(): IdentityKeyDeps {
-  const wrangler = (argv: string[], input?: string) => {
-    const res = spawnSync('pnpm', argv, { cwd: apiDir, input: input ?? 'y\n', stdio: ['pipe', 'inherit', 'inherit'] });
+  const wrangler = (argv: string[], input?: string, cwd: string = apiDir) => {
+    const res = spawnSync('pnpm', argv, { cwd, input: input ?? 'y\n', stdio: ['pipe', 'inherit', 'inherit'] });
     if (res.error) throw res.error;
     if (res.status !== 0) throw new Error(`wrangler ${argv.slice(2, 4).join(' ')} ${argv[4] ?? ''} failed (exit ${res.status})`);
   };
   return {
     putSecret: (m, name, value) => wrangler(wranglerSecretArgv(m, name), value),
+    putIssuerSecret: (m, name, value) => wrangler(wranglerIssuerSecretArgv(m, name), value, issuerDir),
     putSecretsBulk: (m, values) => wrangler(wranglerSecretBulkArgv(m), JSON.stringify(values)),
     deleteSecret: (m, name) => wrangler(wranglerSecretDeleteArgv(m, name)),
     newP256,
@@ -150,6 +177,21 @@ export function newSubKey(randomBytes: (n: number) => Uint8Array): string {
   const value = Buffer.from(raw).toString('base64');
   raw.fill(0);
   return value;
+}
+
+/** A new IDENTITY_SEAL_KEY value: key id 1 and 32 random bytes (`1:<base64>`). */
+export function newSealKey(randomBytes: (n: number) => Uint8Array): string {
+  const value = `1:${newSubKey(randomBytes)}`;
+  if (identitySealKeyId(value) !== 1) throw new Error('newSealKey made a malformed key');
+  return value;
+}
+
+/** An IDENTITY_SEAL_KEY file (0600 checked; the error names the file, never its contents). */
+export function readSealKeyFile(file: string): string {
+  assertPrivate(file);
+  const v = readFileSync(file, 'utf8').trim();
+  if (identitySealKeyId(v) === null) throw new Error(`${file} is not an IDENTITY_SEAL_KEY value (<id>:<base64 of 32 bytes>)`);
+  return v;
 }
 
 export function readKeyFile(file: string): P256PrivateJwk {
@@ -287,15 +329,17 @@ export function identityKey(argv: readonly string[], deps: IdentityKeyDeps): voi
   const args = parseCli(argv, { booleans: ['yes', 'help', 'local'], strings: [...KMS_STRING_FLAGS] });
   if (args.flag('help')) return void deps.log(IDENTITY_KEY_USAGE);
   const [envName, command, ...rest] = args.positionals;
-  if (!envName || !command) throw new CliError('Expected <env> <init | put | next | switch | retire | show | kms-…>');
-  if (rest.length) throw new CliError(`Unexpected argument ${rest.join(' ')}`);
+  if (!envName || !command) throw new CliError('Expected <env> <init | put | next | switch | retire | show | email-keys | kms-…>');
+  // `email-keys put` is the one command with a second word.
+  const emailKeysPut = command === 'email-keys' && rest.length === 1 && rest[0] === 'put';
+  if (rest.length && !emailKeysPut) throw new CliError(`Unexpected argument ${rest.join(' ')}`);
   // The AWS KMS signer's commands (identity-kms.ts): any network, no private key files.
   if ((KMS_COMMANDS as readonly string[]).includes(command)) return identityKms((deps.loadManifest ?? loadEnv)(envName), command as KmsCommand, args, deps);
-  if (!['init', 'put', 'next', 'switch', 'retire', 'show'].includes(command)) throw new CliError(`Unknown command ${command}`);
+  if (!['init', 'put', 'next', 'switch', 'retire', 'show', 'email-keys'].includes(command)) throw new CliError(`Unknown command ${command}`);
   for (const flag of ['active', 'standby', 'iam-user', 'role'] as const) {
     if (args.str(flag) !== undefined) throw new CliError(`--${flag} goes with the kms-* commands only`);
   }
-  if (args.flag('local') && command !== 'init') throw new CliError('--local goes with init only');
+  if (args.flag('local') && command !== 'init' && (command !== 'email-keys' || emailKeysPut)) throw new CliError('--local goes with init and email-keys only');
   if (args.str('to') !== undefined && command !== 'switch') throw new CliError('--to goes with switch only');
   if (args.str('key') !== undefined && command !== 'retire') throw new CliError('--key goes with retire only');
   const m = (deps.loadManifest ?? loadEnv)(envName);
@@ -339,6 +383,8 @@ export function identityKey(argv: readonly string[], deps: IdentityKeyDeps): voi
   const unpinAfter = watched
     ? `Commit envs/${m.name}.json, then gen and deploy the API FIRST, then gen and deploy the watchdog (docs/operations.md "Identity token keys"): the other order pages identity_key_unpinned until the API deploy.`
     : redeploy;
+
+  if (command === 'email-keys') return emailKeys(m, dir, emailKeysPut, args.flag('local'), apply, deps);
 
   if (command === 'show') {
     const t = m.identityToken;
@@ -489,4 +535,55 @@ export function identityKey(argv: readonly string[], deps: IdentityKeyDeps): voi
   }
   renameSync(file(role), retiredFile);
   deps.log(`Kid ${kid} is unpublished${watched ? ' and unpinned' : ''}. ${unpinAfter} Partners using the JWKS URL reject its tokens within 10 minutes of the deploy.`);
+}
+
+/**
+ * `email-keys [put]` (D438, D439, docs/operations.md "Email sharing keys"): IDENTITY_SEAL_KEY (the sealed email, on the
+ * API and the email issuer) and EMAIL_CONSENT_KEY (the consents' MAC, on the API). Without `put`, each file is written
+ * only when it is missing (an existing one is checked and reused, never replaced: the seal key's value is needed for a
+ * rotation, and a new consent key forgets every consent); `put` only uploads them. The API is set first, so a blob the
+ * issuer seals with the new key always finds it there. No value is printed.
+ */
+function emailKeys(m: Manifest, dir: string, putOnly: boolean, local: boolean, apply: boolean, deps: IdentityKeyDeps): void {
+  const sealFile = join(dir, IDENTITY_SECRET_FILES.sealKey);
+  const consentFile = join(dir, IDENTITY_SECRET_FILES.emailConsentKey);
+  const shownSeal = `.secrets/${m.name}/${IDENTITY_SECRET_FILES.sealKey}`;
+  const shownConsent = `.secrets/${m.name}/${IDENTITY_SECRET_FILES.emailConsentKey}`;
+  const worker = m.cloudflare.workerName;
+  const issuer = m.emailIssuer?.cloudflare.workerName;
+  // Existing files are checked first (0600, their form): a malformed one stops the command and is never replaced.
+  const existingSeal = existsSync(sealFile) ? readSealKeyFile(sealFile) : null;
+  const existingConsent = existsSync(consentFile) ? readSubKeyFile(consentFile) : null;
+  if (putOnly) {
+    const missing = [existingSeal ? null : shownSeal, existingConsent ? null : shownConsent].filter((x): x is string => x !== null);
+    if (missing.length) throw new Error(`${missing.join(' and ')} ${missing.length > 1 ? "don't" : "doesn't"} exist: run \`identity-key ${m.name} email-keys --yes\` first`);
+  }
+  const files = putOnly
+    ? `from ${shownSeal} and ${shownConsent}`
+    : `${existingSeal ? `reuse ${shownSeal}` : `write ${shownSeal} (IDENTITY_SEAL_KEY, key id 1, 32 random bytes)`}, ${existingConsent ? `reuse ${shownConsent}` : `write ${shownConsent} (EMAIL_CONSENT_KEY, 32 random bytes)`}${existingSeal && existingConsent ? '' : ' (0600)'}`;
+  const upload = local
+    ? 'upload nothing (--local)'
+    : `set IDENTITY_SEAL_KEY and EMAIL_CONSENT_KEY on the API Worker ${worker}, then ${issuer ? `IDENTITY_SEAL_KEY on the email issuer Worker ${issuer}` : `no issuer (envs/${m.name}.json has no emailIssuer)`}`;
+  deps.log(`Plan (env ${m.name}): ${files}; ${upload}.`);
+  if (!apply) return void deps.log(DRY_RUN_LINE);
+
+  const seal = existingSeal ?? newSealKey(deps.randomBytes);
+  const consent = existingConsent ?? newSubKey(deps.randomBytes);
+  // Two keys for two purposes: the same 32 bytes in both would be a broken random source or a copied file.
+  if (seal.slice(seal.indexOf(':') + 1) === consent) throw new Error(`${shownSeal} and ${shownConsent} hold the same 32 bytes: they must differ`);
+  const written = [existingSeal ? null : shownSeal, existingConsent ? null : shownConsent].filter((x): x is string => x !== null);
+  // On disk before any Worker: the files are the only copies Cloudflare won't give back.
+  if (!existingSeal) writeNewSecretFile(sealFile, `${seal}\n`);
+  if (!existingConsent) writeNewSecretFile(consentFile, `${consent}\n`);
+  if (written.length) deps.log(`Wrote ${written.join(' and ')} (0600, values not shown). Keep them: a seal key rotation needs the current value, and a new consent key forgets every consent.`);
+  if (local) return void deps.log(`Not set on any Worker (--local). \`identity-key ${m.name} email-keys put --yes\` sets them; \`gen ${m.name} --dev-vars\` (the API's and the issuer's) writes them for wrangler dev.`);
+  const keyId = identitySealKeyId(seal);
+  deps.putSecret(m, 'IDENTITY_SEAL_KEY', seal);
+  deps.log(`Set IDENTITY_SEAL_KEY (key id ${keyId}) on Worker ${worker}.`);
+  deps.putSecret(m, 'EMAIL_CONSENT_KEY', consent);
+  deps.log(`Set EMAIL_CONSENT_KEY (32 bytes) on Worker ${worker}.`);
+  if (!issuer) return void deps.log(`envs/${m.name}.json has no emailIssuer: no issuer Worker to set. Once it exists, run \`identity-key ${m.name} email-keys put --yes\`.`);
+  if (!deps.putIssuerSecret) throw new Error('No way to set a secret on the email issuer Worker (putIssuerSecret)');
+  deps.putIssuerSecret(m, 'IDENTITY_SEAL_KEY', seal);
+  deps.log(`Set IDENTITY_SEAL_KEY (key id ${keyId}) on the email issuer Worker ${issuer}.`);
 }

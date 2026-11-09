@@ -11,9 +11,13 @@
 // A 429 or 503 is MatchBusy (with the `retry-after`, when sent; the issuer's CORS exposes it): the login retries it
 // (G-M3). The request gives up after MATCH_TIMEOUT_MS (G-L5), or when the login's own signal aborts.
 //
+// D438: both answers may carry `sealedEmail`, the verified address sealed for the API (the vault keeps it with the
+// session for the identity token and the email sharing sheet; it can't open it). A malformed one is dropped (no address),
+// never a reason to refuse the answer.
+//
 // SECURITY: the body carries Google's ID and access tokens; the answer may carry an email token. Nothing here logs a
 // body or puts one in an error; the address never reaches the vault (the issuer reads it from Google and drops it).
-import { ApiError, parseApiResponse } from '@hana-id/core';
+import { ApiError, isSealedEmailText, parseApiResponse } from '@hana-id/core';
 
 type Fetch = typeof fetch;
 
@@ -30,6 +34,8 @@ export interface GoogleMatch {
   linkImmediate: boolean | null;
   /** Case A, not Google-hosted: the code challenge google-match prepared (its first code goes out with `resend`). */
   challenge: { challengeId: string; expiresAtMs: number; to: string } | null;
+  /** D438: the Google address sealed for the API and this session, or null (unverified, or an issuer without the key). */
+  sealedEmail: string | null;
 }
 
 export interface MatchRequest {
@@ -86,7 +92,15 @@ export function parseGoogleMatch(body: Record<string, unknown>): GoogleMatch {
     }
     c = { challengeId: challenge.challengeId, expiresAtMs: challenge.expiresAtMs as number, to: challenge.to };
   }
-  return { decision: decision as MatchDecision, googleHosted, linkable, emailToken: (emailToken as string | undefined) ?? null, linkImmediate: (linkImmediate as boolean | undefined) ?? null, challenge: c };
+  return {
+    decision: decision as MatchDecision,
+    googleHosted,
+    linkable,
+    emailToken: (emailToken as string | undefined) ?? null,
+    linkImmediate: (linkImmediate as boolean | undefined) ?? null,
+    challenge: c,
+    sealedEmail: isSealedEmailText(body.sealedEmail) ? body.sealedEmail : null,
+  };
 }
 
 /** google-record's body: google-match's, without `link` and `linkTicket`. */
@@ -99,10 +113,11 @@ export interface IssuerApi {
   /** `signal` (the login's) ends the request early, beside MATCH_TIMEOUT_MS. */
   googleMatch(r: MatchRequest, signal?: AbortSignal): Promise<GoogleMatch>;
   /**
-   * token_first's record (D269, D270): resolves when the issuer took it (`{accepted: true}`); throws on anything else
-   * (an ApiError, MatchBusy on 429 or 503, a network error or timeout). Callers treat every failure as "not recorded".
+   * token_first's record (D269, D270): resolves when the issuer took it (`{accepted: true}`), with its sealed address
+   * (D438) or null; throws on anything else (an ApiError, MatchBusy on 429 or 503, a network error or timeout). Callers
+   * treat every failure as "not recorded".
    */
-  googleRecord(r: RecordRequest, signal?: AbortSignal): Promise<void>;
+  googleRecord(r: RecordRequest, signal?: AbortSignal): Promise<{ sealedEmail: string | null }>;
 }
 
 export function issuerApi(issuerUrl: string, fetchFn: Fetch = (...args) => fetch(...args)): IssuerApi {
@@ -143,6 +158,7 @@ export function issuerApi(issuerUrl: string, fetchFn: Fetch = (...args) => fetch
       }
       const body = await parseApiResponse(res);
       if (body.accepted !== true) throw bad();
+      return { sealedEmail: isSealedEmailText(body.sealedEmail) ? body.sealedEmail : null };
     },
   };
 }

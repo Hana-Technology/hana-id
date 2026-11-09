@@ -173,4 +173,31 @@ describe('.dev.vars', () => {
     put('email-issuer-signing-key.json', JSON.stringify(primary.jwk));
     expect(() => devVarsContent(manifest(), root)).toThrow('0600');
   });
+
+  it('adds the sealed email’s IDENTITY_SEAL_KEY when identity-seal-key exists (D438): checked, 0600, never printed', () => {
+    const root = dir;
+    const s = join(root, '.secrets', 'sandbox-dev');
+    mkdirSync(s, { recursive: true, mode: 0o700 });
+    const put = (f: string, v: string, mode = 0o600) => {
+      writeFileSync(join(s, f), v);
+      chmodSync(join(s, f), mode);
+    };
+    for (const f of ['email-sub-key', 'email-code-key', 'email-rl-key']) put(f, `${randomBytes(32).toString('base64')}\n`);
+    expect(devVarsContent(manifest(), root).names).not.toContain('IDENTITY_SEAL_KEY');
+    const seal = `3:${randomBytes(32).toString('base64')}`;
+    put('identity-seal-key', `${seal}\n`);
+    const { content, names } = devVarsContent(manifest(), root);
+    expect(names).toEqual(['EMAIL_SUB_KEY', 'EMAIL_CODE_KEY', 'EMAIL_RL_KEY', 'IDENTITY_SEAL_KEY']);
+    expect(content).toContain(`IDENTITY_SEAL_KEY='${seal}'\n`);
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((l: string) => void logs.push(l));
+    main(['sandbox-dev', '--dev-vars'], { root, dir, loadManifest: () => manifest() });
+    spy.mockRestore();
+    expect(logs.join('\n')).toContain('IDENTITY_SEAL_KEY');
+    expect(logs.join('\n')).not.toContain(seal.slice(2));
+    put('identity-seal-key', `${randomBytes(32).toString('base64')}\n`);
+    expect(() => devVarsContent(manifest(), root)).toThrow('identity-seal-key is not <id>:<base64 of 32 bytes>');
+    put('identity-seal-key', `${seal}\n`, 0o644);
+    expect(() => devVarsContent(manifest(), root)).toThrow('0600');
+  });
 });

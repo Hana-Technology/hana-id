@@ -433,5 +433,9 @@ describe('admin retention:issuer (the issuer’s part of the monthly job)', PGLI
     await run(['--yes']);
     expect(one(issuer, "SELECT COUNT(*) AS n FROM email_daily WHERE day = '2020-01-01'")).toBe(0);
     expect(one(issuer, "SELECT COUNT(*) AS n FROM email_daily WHERE app_id = 'app_old'")).toBe(1);
+    // The webhook's dedupe keys past a week go too; recent ones stay (D446 as amended).
+    issuer.prepare('INSERT INTO email_webhook_events (event_key, at_ms) VALUES (?, ?), (?, ?)').run('a'.repeat(64), now - 8 * DAY, 'b'.repeat(64), now - DAY);
+    await run(['--yes']);
+    expect((issuer.prepare('SELECT event_key FROM email_webhook_events').all() as { event_key: string }[]).map((r) => r.event_key)).toEqual(['b'.repeat(64)]);
   });
 });

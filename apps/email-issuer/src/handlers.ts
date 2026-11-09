@@ -18,7 +18,7 @@ import { type Judgement, type Side, judge } from './decide.ts';
 import type { Deps } from './deps.ts';
 import { recordUserEmailLater } from './directory.ts';
 import { isExemptDomain, registrableDomain } from './domain.ts';
-import { countDaily, countRefusal, raiseAlert } from './daily.ts';
+import { countDaily, countRefusal, dayOf, raiseAlert, webhookCountStatements } from './daily.ts';
 import { dailySendBudget } from './env.ts';
 import { GoogleUnavailable, type UserInfo } from './google.ts';
 import { corsHeaders, error, isObj, json, onlyKeys, readJson } from './http.ts';
@@ -247,7 +247,7 @@ async function reserveDomain(ctx: Ctx, key: string, request: Request, now: numbe
   if (!d.ok) return { ok: false, r: null };
   if (d.filled) {
     log({ event: 'email_domain_cap', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'rejected', subject: key.slice(0, 12) }, 'warn');
-    raiseAlert(ctx.deps, ctx.requestId, 'email_domain_cap', '', null);
+    raiseAlert(ctx.deps, ctx.requestId, 'email_domain_cap', '', null, key.slice(0, 12));
   }
   return { ok: true, r: d.reservation };
 }
@@ -538,7 +538,7 @@ export async function handleVerify(request: Request, ctx: Ctx): Promise<Response
   // mailboxes. Until the UTC day ends it answers "try again later" (D198).
   if (guess.tripped) {
     log({ event: 'mailbox_guess_limit', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'error', code: guess.tripped, subject: live.mailboxKey.slice(0, 12) }, 'error');
-    raiseAlert(deps, ctx.requestId, 'mailbox_guess_limit', guess.tripped, null);
+    raiseAlert(deps, ctx.requestId, 'mailbox_guess_limit', guess.tripped, null, live.mailboxKey.slice(0, 12));
   }
   const keys = await deps.keys();
   const v = await stub.verify(await codeMac(keys, cid.id, b.code), now);
@@ -1091,20 +1091,26 @@ export async function handleSendgridWebhook(request: Request, ctx: Ctx): Promise
   }
   const list = await suppressionsOf(await deps.keys(), events);
   if (!list) return fail(ctx, 400, 'bad_request', 'Body must be an array of at most 1000 events');
+  // One D1 batch, so one query of the invocation's limit (D446 as amended) and all or nothing: the suppressions, the
+  // counts and the events' dedupe keys land together. A failure answers 500 with nothing written, SendGrid retries, and
+  // an event already counted finds its key and adds nothing. The complaint rate is read in the same batch.
   const now = deps.now();
   if (list.length > 0) {
-    await deps.env.DB.batch(
-      list.map((s) =>
-        deps.env.DB.prepare(
+    const db = deps.env.DB;
+    const complaints = list.some((s) => s.reason === 'complaint');
+    const results = await db.batch([
+      ...list.map((s) =>
+        db.prepare(
           "INSERT INTO email_suppressions (email_key, reason, at_ms) VALUES (?1, ?2, ?3) ON CONFLICT (email_key) DO UPDATE SET reason = CASE WHEN excluded.reason = 'complaint' THEN 'complaint' ELSE email_suppressions.reason END, at_ms = excluded.at_ms",
         ).bind(s.emailKey, s.reason, now),
       ),
-    );
-  }
-  for (const s of list) countDaily(deps, s.appId, s.reason === 'complaint' ? 'complained' : 'bounced');
-  if (list.some((s) => s.reason === 'complaint')) {
-    const n = await deps.env.DB.prepare("SELECT COUNT(*) AS n FROM email_suppressions WHERE reason = 'complaint' AND at_ms > ?1").bind(now - 86_400_000).first<number>('n');
-    if ((n ?? 0) > COMPLAINT_ALERT_PER_DAY) log({ event: 'email_complaint_rate', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'error', code: 'complaints_24h', count: n ?? 0 }, 'error');
+      ...webhookCountStatements(db, dayOf(now), now, list),
+      ...(complaints ? [db.prepare("SELECT COUNT(*) AS n FROM email_suppressions WHERE reason = 'complaint' AND at_ms > ?1").bind(now - 86_400_000)] : []),
+    ]);
+    if (complaints) {
+      const n = (results[results.length - 1]!.results[0] as { n?: number } | undefined)?.n ?? 0;
+      if (n > COMPLAINT_ALERT_PER_DAY) log({ event: 'email_complaint_rate', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'error', code: 'complaints_24h', count: n }, 'error');
+    }
   }
   return ok(ctx, 200, { stored: list.length }, { count: list.length });
 }

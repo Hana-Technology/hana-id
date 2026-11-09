@@ -6,7 +6,7 @@ import { createExecutionContext } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { env } from 'cloudflare:workers';
 import { SendGridSender } from '../src/sendgrid.ts';
-import { ALERT_MAILS_PER_DAY, REFUSAL_COUNT_CAP, alertMail, countDaily, countRefusal, dayOf, raiseAlert } from '../src/daily.ts';
+import { ALERT_MAILS_PER_KIND_PER_DAY, REFUSAL_COUNT_CAP, alertMail, countDaily, countRefusal, dayOf, raiseAlert } from '../src/daily.ts';
 import { ConsoleIssuerRpc } from '../src/console-rpc.ts';
 import { DirectoryRpc, resetDirectoryAccess } from '../src/directory-rpc.ts';
 import { mintPartnerClientProof, PARTNER_PROOF_STAFF } from '../src/handlers.ts';
@@ -87,6 +87,101 @@ describe('the daily counters (D446)', () => {
   });
 });
 
+describe('the webhook’s counts (D446 as amended)', () => {
+  const toDer = (p1363: Uint8Array): Uint8Array => {
+    const int = (b: Uint8Array) => {
+      let i = 0;
+      while (i < b.length - 1 && b[i] === 0) i++;
+      const v = b.subarray(i);
+      return v[0]! & 0x80 ? Uint8Array.of(0x02, v.length + 1, 0, ...v) : Uint8Array.of(0x02, v.length, ...v);
+    };
+    const r = int(p1363.subarray(0, 32));
+    const s = int(p1363.subarray(32));
+    return Uint8Array.of(0x30, r.length + s.length, ...r, ...s);
+  };
+
+  /** A harness whose DB counts every D1 call; `failNextBatch` makes the next batch fail before it reaches D1. */
+  async function webhookHarness() {
+    const pair = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify'])) as CryptoKeyPair;
+    const spki = base64Encode(new Uint8Array((await crypto.subtle.exportKey('spki', pair.publicKey)) as ArrayBuffer));
+    const d1 = { batches: [] as number[], failNextBatch: false };
+    const DB = new Proxy(env.DB, {
+      get(t, p) {
+        if (p === 'batch') {
+          return async (stmts: D1PreparedStatement[]) => {
+            if (d1.failNextBatch) {
+              d1.failNextBatch = false;
+              throw new Error('D1 is down');
+            }
+            d1.batches.push(stmts.length);
+            return t.batch(stmts);
+          };
+        }
+        const v = Reflect.get(t, p) as unknown;
+        return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(t) : v;
+      },
+    });
+    const h = await harness({ env: { ...env, DB, SENDGRID_WEBHOOK_PUBLIC_KEY: spki, ENV_NAME: `t-${uid()}` } });
+    const deliver = async (events: unknown[]) => {
+      const body = JSON.stringify(events);
+      const ts = String(Math.floor(h.clock.now / 1000));
+      const sig = base64Encode(toDer(new Uint8Array(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, pair.privateKey, utf8(ts + body)))));
+      return h.call('/v1/email/webhooks/sendgrid', events, { origin: null, headers: { 'x-twilio-email-event-webhook-signature': sig, 'x-twilio-email-event-webhook-timestamp': ts } });
+    };
+    return { h, d1, deliver };
+  }
+
+  const bounce = (app: string, n: number) => ({ event: 'bounce', type: 'bounce', email: `b${n}-${app.toLowerCase()}@example.com`, category: ['hana-id-code'], hana_app: app, sg_event_id: `ev-${app}-${n}`, timestamp: 1700000000 });
+
+  it('a batch of 1000 events is one D1 batch, counted per app and metric', async () => {
+    const { d1, deliver } = await webhookHarness();
+    const [a, b] = [`app_${uid()}`, `app_${uid()}`];
+    const events = [
+      ...Array.from({ length: 600 }, (_, i) => bounce(a, i)),
+      ...Array.from({ length: 399 }, (_, i) => bounce(b, i)),
+      { event: 'spamreport', email: `c${uid().toLowerCase()}@example.com`, category: ['hana-id-code'], hana_app: a, sg_event_id: `ev-c-${uid()}` },
+    ];
+    const r = await deliver(events);
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ stored: 1000 });
+    // One batch: 1000 suppressions, three counts, one for the keys, one for the complaint rate.
+    expect(d1.batches).toEqual([1005]);
+    expect(await metric(a, 'bounced')).toBe(600);
+    expect(await metric(b, 'bounced')).toBe(399);
+    expect(await metric(a, 'complained')).toBe(1);
+  });
+
+  it('a redelivered batch adds nothing, by sg_event_id or, without one, by the event’s own fields', async () => {
+    const { deliver } = await webhookHarness();
+    const app = `app_${uid()}`;
+    const noId = { event: 'bounce', type: 'bounce', email: `n${uid().toLowerCase()}@example.com`, category: ['hana-id-code'], hana_app: app, timestamp: 1700000001, sg_message_id: 'm1' };
+    const events = [bounce(app, 1), bounce(app, 2), noId];
+    expect((await deliver(events)).status).toBe(200);
+    expect(await metric(app, 'bounced')).toBe(3);
+    expect((await deliver(events)).status).toBe(200);
+    expect(await metric(app, 'bounced')).toBe(3);
+    // A later batch with one old event and one new one counts only the new one.
+    expect((await deliver([bounce(app, 2), bounce(app, 3)])).status).toBe(200);
+    expect(await metric(app, 'bounced')).toBe(4);
+    const keys = await env.DB.prepare('SELECT event_key FROM email_webhook_events').all<{ event_key: string }>();
+    expect(keys.results).toHaveLength(4);
+    for (const k of keys.results) expect(k.event_key).toMatch(/^[0-9a-f]{64}$/u);
+  });
+
+  it('a failed write answers 500 and writes nothing, so the retry counts each event once', async () => {
+    const { d1, deliver } = await webhookHarness();
+    const app = `app_${uid()}`;
+    const events = [bounce(app, 1), { event: 'spamreport', email: `c${uid().toLowerCase()}@example.com`, category: ['hana-id-code'], hana_app: app, sg_event_id: `ev-c-${uid()}` }];
+    d1.failNextBatch = true;
+    expect((await deliver(events)).status).toBe(500);
+    expect(await metric(app, 'bounced')).toBe(0);
+    expect((await env.DB.prepare('SELECT COUNT(*) AS n FROM email_webhook_events').first<number>('n')) ?? 0).toBe(0);
+    expect((await deliver(events)).status).toBe(200);
+    expect(await metric(app, 'bounced')).toBe(1);
+    expect(await metric(app, 'complained')).toBe(1);
+  });
+});
+
 describe('alert mails (D446)', () => {
   const withAlias = async (): Promise<Harness> => harness({ env: { ...env, SECURITY_ALIAS: 'security@hana.example', ENV_NAME: `t-${uid()}` } });
   const settle = async (h: Harness) => h.call('/v1/email/health', undefined, { method: 'GET', origin: null });
@@ -108,17 +203,44 @@ describe('alert mails (D446)', () => {
     expect(alertMail('mailbox_guess_limit', 'backstop', null, 'test', 'a@hana.example').text).not.toMatch(/address|sub\b|token/iu);
   });
 
-  it('the day’s alert mails stop at the ceiling; without an alias nothing is mailed but it is still counted', async () => {
+  it('another subject gets its own mail that day; the subject is in neither the mail nor the metric', async () => {
     const h = await withAlias();
-    for (let i = 0; i < ALERT_MAILS_PER_DAY + 3; i++) raiseAlert(h.deps, 'req', 'email_budget', `code${i}`, null);
+    const app = `app_${uid()}`;
+    raiseAlert(h.deps, 'req', 'mailbox_guess_limit', 'backstop', app, 'aaaaaaaaaaaa');
+    raiseAlert(h.deps, 'req', 'mailbox_guess_limit', 'backstop', app, 'aaaaaaaaaaaa');
+    raiseAlert(h.deps, 'req', 'mailbox_guess_limit', 'backstop', app, 'bbbbbbbbbbbb');
     await settle(h);
-    expect(h.sender.sent.filter((m) => m.kind === 'alert').length).toBe(ALERT_MAILS_PER_DAY);
+    const mails = h.sender.sent.filter((m) => m.kind === 'alert');
+    expect(mails).toHaveLength(2);
+    for (const m of mails) expect(`${m.subject}${m.text}${m.html}`).not.toMatch(/aaaaaaaaaaaa|bbbbbbbbbbbb/u);
+    expect(await metric(app, 'alert:mailbox_guess_limit:backstop')).toBe(3);
+    const names = await env.DB.prepare('SELECT metric FROM email_daily WHERE app_id = ?1').bind(app).all<{ metric: string }>();
+    expect(names.results.map((r) => r.metric)).toEqual(['alert:mailbox_guess_limit:backstop']);
+  });
+
+  it('each kind stops at its own cap and can’t use up another’s; without an alias nothing is mailed but it is still counted', async () => {
+    const h = await withAlias();
+    for (let i = 0; i < ALERT_MAILS_PER_KIND_PER_DAY + 3; i++) raiseAlert(h.deps, 'req', 'mailbox_guess_limit', 'backstop', null, `subject${i}`);
+    await settle(h);
+    expect(h.sender.sent.filter((m) => m.kind === 'alert').length).toBe(ALERT_MAILS_PER_KIND_PER_DAY);
+    raiseAlert(h.deps, 'req', 'email_domain_cap', '', null, 'domainprefix');
+    await settle(h);
+    expect(h.sender.sent.filter((m) => m.kind === 'alert').length).toBe(ALERT_MAILS_PER_KIND_PER_DAY + 1);
 
     const quiet = await harness();
     raiseAlert(quiet.deps, 'req', 'email_domain_cap', '', null);
     await settle(quiet);
     expect(quiet.sender.sent.filter((m) => m.kind === 'alert')).toEqual([]);
     expect(await metric('', 'alert:email_domain_cap')).toBeGreaterThan(0);
+  });
+
+  it('an alert’s count stops at the cap, like a refusal’s', async () => {
+    const h = await withAlias();
+    const app = `app_${uid()}`;
+    await env.DB.prepare('INSERT INTO email_daily (day, app_id, metric, count) VALUES (?1, ?2, ?3, ?4)').bind(dayOf(h.clock.now), app, 'alert:email_budget:app_50', REFUSAL_COUNT_CAP).run();
+    raiseAlert(h.deps, 'req', 'email_budget', 'app_50', app);
+    await settle(h);
+    expect(await metric(app, 'alert:email_budget:app_50')).toBe(REFUSAL_COUNT_CAP);
   });
 
   it('a refused alert mail is logged, never thrown', async () => {

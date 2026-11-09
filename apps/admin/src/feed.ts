@@ -25,11 +25,16 @@
 // the notices' own audit rows (`invite.notified`, `owner_grant.notified`) and the console's record of a link cancel
 // (`change.link_cancel`; the API's `change.cancelled` is emailed). Sign-in rows (`auth.*`, `session.*`, from C9) are
 // for the hourly bulk refusal digest of C9, not this feed. Everything else is emailed, so a new kind is never silent.
+//
+// A `settings.changed` row that changes `loginMethods` also gets a mail of its own (D444 as amended), to the alias and
+// the org's contacts as a guarded change's notice, because the change is in force at once and a digest line doesn't say
+// what it means or how to undo it. It uses this walk's cursor, budget and retries; a row that changes nothing else is
+// then left out of the digest.
 import type { AppChange, AuditRow, SecurityEvent } from '@hana-id/console-core';
 import type { Env } from './env.ts';
 import { mailLabel } from './env.ts';
-import { auditDigest, changesDigest, type MailContext, securityDigest } from './email/messages.ts';
-import type { Rendered } from './email/render.ts';
+import { auditDigest, changesDigest, loginMethodsChanged, type MailContext, securityDigest } from './email/messages.ts';
+import { consoleLink, type Rendered } from './email/render.ts';
 import type { EmailSender } from './email/sender.ts';
 import { errorName, log } from './log.ts';
 import { type Budget, meteredEnv, recipients, sendToAll } from './mail.ts';
@@ -198,6 +203,17 @@ async function sendGroup(env: Env, sender: EmailSender, budget: Budget, contacts
 
 const mail = (env: Env): MailContext => ({ env: env.ENV_NAME, consoleOrigin: env.CONSOLE_ORIGIN, label: mailLabel(env) });
 
+/** A row that gets the login-methods notice (D444 as amended). */
+export const changesLoginMethods = (r: AppChange): boolean => r.kind === 'settings.changed' && typeof r.detail.loginMethods === 'string';
+const onlyLoginMethods = (r: AppChange): boolean => changesLoginMethods(r) && Object.keys(r.detail).length === 1;
+
+/** The notice's app name, one RPC of the run's budget; undefined when unreadable (the notice then names the app by id). */
+async function appNameOf(env: Env, r: AppChange): Promise<string | undefined> {
+  if (!r.appId) return undefined;
+  const d = await env.API.getApp({ ...systemCtx(), orgId: r.orgId, appId: r.appId }).catch(() => null);
+  return d?.ok && typeof d.app.name === 'string' ? d.app.name : undefined;
+}
+
 export function feedChanges(rawEnv: Env, ops: OpsStore, sender: EmailSender, budget: Budget): Promise<FeedStepResult> {
   const env = meteredEnv(rawEnv, budget);
   const contacts = new Contacts(env);
@@ -211,12 +227,22 @@ export function feedChanges(rawEnv: Env, ops: OpsStore, sender: EmailSender, bud
     },
     emailedChange,
     (r) => r.orgId,
-    (g) => {
+    async (g) => {
+      for (const r of g.rows.filter(changesLoginMethods)) {
+        if (!budget.fits(1, 1)) return 'budget';
+        const appName = await appNameOf(env, r);
+        const path = r.appId ? `/orgs/${encodeURIComponent(r.orgId)}/apps/${encodeURIComponent(r.appId)}/email` : '/';
+        const notice = loginMethodsChanged(mail(env), r, { ...(appName ? { appName } : {}), undoUrl: consoleLink(env.CONSOLE_ORIGIN, path) });
+        const outcome = await sendGroup(env, sender, budget, contacts, g.orgId, [], notice, `login_methods_changed:${r.seq}`, true);
+        if (outcome !== 'sent') return outcome;
+      }
+      const rows = g.rows.filter((r) => !onlyLoginMethods(r));
+      if (rows.length === 0) return 'sent';
       // A contacts change goes to the old contacts as well as the new ones (spec "Email").
-      const extra = g.rows.flatMap((r) => (r.kind === 'org.security_contacts' ? [...((r.detail.old as string[] | undefined) ?? []), ...((r.detail.new as string[] | undefined) ?? [])] : [])).filter((e) => typeof e === 'string');
-      const first = g.rows[0]!.seq;
-      const last = g.rows[g.rows.length - 1]!.seq;
-      return sendGroup(env, sender, budget, contacts, g.orgId, extra, changesDigest(mail(env), g.orgId ?? 'no organisation', g.rows), `feed:app_changes:${g.orgId}:${first}-${last}`, false);
+      const extra = rows.flatMap((r) => (r.kind === 'org.security_contacts' ? [...((r.detail.old as string[] | undefined) ?? []), ...((r.detail.new as string[] | undefined) ?? [])] : [])).filter((e) => typeof e === 'string');
+      const first = rows[0]!.seq;
+      const last = rows[rows.length - 1]!.seq;
+      return sendGroup(env, sender, budget, contacts, g.orgId, extra, changesDigest(mail(env), g.orgId ?? 'no organisation', rows), `feed:app_changes:${g.orgId}:${first}-${last}`, false);
     },
     budget,
   );

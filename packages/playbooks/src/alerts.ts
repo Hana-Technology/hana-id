@@ -765,8 +765,8 @@ const watchdogFirstRun: Playbook = {
     {
       title: 'After a deploy: finish the setup checks',
       who: 'a founder',
-      detail: "`last_run.outcome: \"ok\"`, `heartbeat.ok`, every channel `configured`. Acknowledge the first-run critical alerts after checking them (unknown-active-key-first-run). A test critical page to both founders: not built yet as a command; the forced-rotation drill does it for real.",
-      commands: [c.watchdogStatus],
+      detail: "`last_run.outcome: \"ok\"`, `heartbeat.ok`, every channel `configured`. Acknowledge the first-run critical alerts after checking them (unknown-active-key-first-run). Then send a test critical page (D449): `watchdog:test-page` shows the channels the deployed watchdog would use, `--yes` sends one labelled TEST and \"no action needed\" through the real path, reports each channel and opens no alert; both founders confirm it arrived on the phone, in Slack and by email (operations \"Test page\"). It needs the watchdog deployed with D449.",
+      commands: [c.watchdogStatus, c.watchdogTestPagePlan, c.watchdogTestPage],
     },
     {
       title: 'Not after a deploy: investigate',

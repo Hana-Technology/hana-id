@@ -7,7 +7,8 @@
 //   - `deliverability`: an app's sent, bounced and complained mails and its refusals per day (counts only).
 //
 // Neither names an address, a sub, or an org's other data: `deliverability` answers for exactly the one app id it is
-// given, which the console takes only after `ConsoleRpc.getApp` confirmed that app belongs to the caller's org.
+// given, which the console takes only after `ConsoleRpc.getApp` confirmed that app belongs to the caller's org. A source
+// test (scripts/test/console-issuer-rpc-source.test.ts) pins these two methods and `email_daily` as the only table.
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { type DeliverabilityDay, type PartnerClientProof, type PartnerDeliverability, partnerClientProofInput, partnerDeliverabilityInput } from '@hana-id/console-core';
 import { depsFromEnv } from './deps.ts';

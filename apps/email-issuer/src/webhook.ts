@@ -4,7 +4,7 @@
 // `emailIssuer.sendgridWebhookPublicKey`). Only events of the issuer's own mail (its categories) count; hard bounces
 // and spam reports are stored as `email_key` (HMAC under K_sup of the exact normalized address, `+tag` included: a
 // bounce on `victim+x@` must not suppress `victim@`, D199); the address itself is dropped at once and never logged.
-import { base64Decode } from './bytes.ts';
+import { base64Decode, sha256, toHex, utf8 } from './bytes.ts';
 import { normalizeEmail } from '@hana-id/email';
 import { readCapped } from './http.ts';
 import { type IssuerKeys, suppressionKey } from './keys.ts';
@@ -74,7 +74,17 @@ export async function verifyWebhook(publicKeyB64: string, timestamp: string, bod
   }
 }
 
-export type Suppression = { emailKey: string; reason: 'bounce' | 'complaint'; appId: string | null };
+export type Suppression = { emailKey: string; reason: 'bounce' | 'complaint'; appId: string | null; eventKey: string };
+
+/**
+ * What a redelivery of this event is recognised by (`email_webhook_events`, D446 as amended): SendGrid's `sg_event_id`,
+ * which its docs give for this purpose. An event without one falls back to its own fields, which a redelivery repeats.
+ * Hashed, so the stored key has one length and says nothing.
+ */
+function eventKeyOf(ev: Record<string, unknown>, reason: string, emailKey: string): string {
+  const id = typeof ev.sg_event_id === 'string' && ev.sg_event_id ? `id:${ev.sg_event_id}` : `fields:${reason}:${emailKey}:${String(ev.timestamp)}:${String(ev.sg_message_id)}`;
+  return toHex(sha256(utf8(id)));
+}
 
 /** The categories the issuer's own mails carry (sendgrid.ts): events of any other mail are ignored (M3). */
 export const ISSUER_CATEGORIES: ReadonlySet<string> = new Set(['hana-id-code', 'hana-id-link_notice', 'hana-id-unlock', 'hana-id-confirm']);
@@ -96,7 +106,7 @@ export async function suppressionsOf(keys: IssuerKeys, events: unknown): Promise
     if (!r.ok) continue;
     const k = await suppressionKey(keys, r.email);
     const appId = typeof ev.hana_app === 'string' && /^app_[A-Za-z0-9]{1,64}$/u.test(ev.hana_app) ? ev.hana_app : null;
-    if (!out.has(k) || reason === 'complaint') out.set(k, { emailKey: k, reason, appId });
+    if (!out.has(k) || reason === 'complaint') out.set(k, { emailKey: k, reason, appId, eventKey: eventKeyOf(ev, reason, k) });
   }
   return [...out.values()];
 }

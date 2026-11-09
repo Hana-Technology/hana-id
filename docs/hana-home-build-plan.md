@@ -70,7 +70,7 @@ The spec's body was rewritten in H0 to agree with these ten points. They're kept
 | H3 | `POST /v1/home/login`, Home pool, `key_exported` | H1 | M | create and fund the Home key (2 NEAR) |
 | H4 | `vault_consents`, device label, consent endpoints, status read | H1 | M | — |
 | H5 | Vault: register first, fail closed, status read, revoke paths | H4 live | M | — |
-| H6 | Contract: delayed turn-off, callers | — | M | owners run the timelocked upgrade |
+| H6 | Contract: delayed turn-off, the permanent exit client (D468), callers | — | L | owners run the timelocked upgrade |
 | H7 | `/home` page: sign-in, Your apps, addresses, expiry | H1, H2 | L | — |
 | H8 | Export in Home | H3, H7 | M | — |
 | H9 | Devices, consent, share and email-share revoke | H5, H7 | M | — |
@@ -218,11 +218,11 @@ additions conflict in `apps/api/src/index.ts`, so expect small merges. About 30 
 | # | Item | Owner | Blocks |
 |---|---|---|---|
 | 1 | The production domain for `/home` (readiness 4.1, 4.2) | founder | production only |
-| 2 | **`remove_client` after a turn-off.** Its rule is `clients.len() > 1 \|\| allow_shared`, and an email client counts. An owner can complete a delayed turn-off, then remove the last Google client at once, stranding unlinked Google users: the outcome D460's check prevents, reached in the other order. Extending the check to `remove_client` would fit in H6, but it wasn't part of D460 | founder | H6 |
+| 2 | Settled by D468 (the permanent exit client). H6 decides whether D460's Google-client requirement and D464's owner seat are still needed | founder, with H6's design | H6 |
 | 3 | `disable_shared_login`: remove the method, or keep it as a stub that panics (it can't keep working: it would bypass the delay) | Claude build | H6 |
 | 4 | `user_events.app_id` is NOT NULL and a Home derive is per scope: record the scope's app, or relax the column | Claude build | H3 |
-| 5 | Billing: is a suspended app "active"? The spec reads no (Hana pays), since D461 says only "active" and "gone" | founder | H11 |
-| 6 | Which on-chain identity holds Hana's Enterprise owner role, and how Hana watches for a `SetOwners` that removes it | founder | first Enterprise partner |
+| 5 | Billing of a suspended app: Hana pays for now (D461's note); to discuss with colleagues before finalising | founder, colleagues | H11 |
+| 6 | Hana's Enterprise owner role is held by the Hana council (D464's note). How Hana watches for a `SetOwners` that removes it, if the seat stays after D468 | founder | first Enterprise partner |
 | 7 | Partner terms (readiness 9.9), the privacy notice line (9.10), the Enterprise onboarding wording (9.11) | legal/founder | mainnet |
 
 ## Contract and derivation

@@ -5,8 +5,10 @@
 //   GET  /alerts?cursor&limit&severity   alert history, newest first, with deliveries
 //   GET  /actions?cursor&limit actions log, newest first (transaction hashes)
 //   POST /alerts/:id/ack {by}  records who acknowledged (via "portal"); stops only the 15-minute re-sends
-// Every request needs `Authorization: Bearer <WATCHDOG_STATUS_TOKEN>` (the admin Worker holds the other copy). Nothing
-// here can change a check, stop a first delivery or call the chain.
+//   GET  /test-page            what a test critical page would do (channels configured; sends nothing; D449)
+//   POST /test-page            sends one labelled test page on every critical channel, at most one per cooldown
+// Every request needs `Authorization: Bearer <WATCHDOG_STATUS_TOKEN>` (the admin Worker holds the other copy, and never
+// calls /test-page). Nothing here can change a check, stop a first delivery or call the chain.
 import { ALERT_KINDS_WITH_PLAYBOOKS, CHANNELS, CHECKS, RESEND_MS, RUN_INTERVAL_MS, type Severity } from './checks.ts';
 import type { Notifier } from './channels.ts';
 import type { LinkStatsView } from './chain.ts';
@@ -15,7 +17,8 @@ import { log } from './log.ts';
 import { identityDiscoveryUrl, identityJwksUrl, parseIdentityPins } from './identity.ts';
 import { parsePins } from './pins.ts';
 import { type EmailPolicyStatus, type HeartbeatState, type IdentityDiscoveryStatus, type IdentityJwksStatus, META, type RelayerFundsStatus } from './run.ts';
-import type { AlertRow, Store } from './store.ts';
+import { type AlertRow, type Store, TEST_PAGE_META } from './store.ts';
+import { sendTestPage, TEST_PAGE_COOLDOWN_MS, testPagePlan } from './test-page.ts';
 
 /** The portal warns when the last run is older than two intervals (spec "Monitoring in the admin portal"). */
 export const SILENT_AFTER_MS = 2 * RUN_INTERVAL_MS;
@@ -83,7 +86,7 @@ export interface StatusDeps {
 export async function handleRequest(request: Request, d: StatusDeps): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
-  const route = path === '/status' ? 'status' : path === '/alerts' ? 'alerts' : path === '/actions' ? 'actions' : /^\/alerts\/\d{1,12}\/ack$/u.test(path) ? 'ack' : null;
+  const route = path === '/status' ? 'status' : path === '/alerts' ? 'alerts' : path === '/actions' ? 'actions' : path === '/test-page' ? 'test-page' : /^\/alerts\/\d{1,12}\/ack$/u.test(path) ? 'ack' : null;
   if (!route) return error(404, 'not_found', 'Not found');
   if (!d.env.WATCHDOG_STATUS_TOKEN || d.env.WATCHDOG_STATUS_TOKEN.length < MIN_TOKEN_LENGTH) return error(503, 'not_configured', 'The status token is not configured');
   if (!(await authorized(request, d.env.WATCHDOG_STATUS_TOKEN))) {
@@ -91,9 +94,10 @@ export async function handleRequest(request: Request, d: StatusDeps): Promise<Re
     return error(401, 'unauthorized', 'Missing or wrong bearer token');
   }
   const method = request.method;
-  if (route === 'ack' ? method !== 'POST' : method !== 'GET') return error(405, 'method_not_allowed', 'Method not allowed');
+  if (route === 'ack' ? method !== 'POST' : route === 'test-page' ? method !== 'GET' && method !== 'POST' : method !== 'GET') return error(405, 'method_not_allowed', 'Method not allowed');
 
   if (route === 'status') return json(200, await status(d));
+  if (route === 'test-page') return testPage(d, method === 'POST');
   if (route === 'alerts') {
     const p = cursorParams(url);
     const sev = url.searchParams.get('severity');
@@ -130,6 +134,21 @@ export async function handleRequest(request: Request, d: StatusDeps): Promise<Re
   log({ event: 'alert_acked', alertId: id, channel: 'portal' });
   const acked = await d.store.getAlert(id);
   return json(200, { alert: acked && alertView(acked) });
+}
+
+/** GET: the plan, nothing sent. POST: claims the cooldown, then one send; each channel reported as its provider answered (D449). */
+async function testPage(d: StatusDeps, send: boolean): Promise<Response> {
+  const now = d.now();
+  const lastAt = async () => (await d.store.getMeta<{ at: number }>(TEST_PAGE_META))?.at ?? null;
+  if (!send) return json(200, { dry_run: true, ...testPagePlan(d.env, d.notifier, now, await lastAt()) });
+  if (!(await d.store.claimTestPage(now, TEST_PAGE_COOLDOWN_MS))) {
+    const at = await lastAt();
+    log({ event: 'test_page', outcome: 'rejected', code: 'cooldown' }, 'warn');
+    return json(429, { error: 'A test page was sent too recently', code: 'test_page_cooldown', retry_after_ms: at === null ? TEST_PAGE_COOLDOWN_MS : Math.max(0, at + TEST_PAGE_COOLDOWN_MS - now) });
+  }
+  const results = await sendTestPage(d.env, d.notifier, now);
+  for (const r of results) log({ event: 'test_page', channel: r.channel, outcome: r.ok ? 'ok' : 'error', ...(r.error ? { code: r.error.slice(0, 60) } : {}) }, r.ok ? 'info' : 'warn');
+  return json(200, { sent: true, ok: results.every((r) => r.ok), at: now, results });
 }
 
 async function identityStatus(d: StatusDeps) {

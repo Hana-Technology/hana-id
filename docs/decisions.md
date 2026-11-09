@@ -8649,6 +8649,10 @@ From `docs/batch-c-users-support-id` (2026-11-04): D275 (the admin console's Use
 made consistent with D269) confirmed by the user on 2026-11-05 as amended by D346 and built in C15 (D393–D397). Both
 below.
 
+- Note, 2026-11-09 (independent security review: no critical, high or medium finding): CoinGecko calls are bounded per
+  isolate, not globally (one refresh per isolate per 5 min, per 60 s while failing), so traffic reaching many isolates
+  spends more of the key's quota; exhaustion only falls back to the keyless source and then the fixed table. Accepted
+  for the sandbox demo; a global slot from `RATE_LIMITER` is the fix if a shared key's quota ever suffers.
 ### D275. The admin console's Users screen reads the user directory through a read-only, self-auditing RPC on the issuer
 - Date 2026-11-04 · Status: **confirmed by the user** (2026-11-05, with the amendments below) · Source: D269 ("the
   admin console's Users page later (batch C)") · Written: `docs/batch-c-spec.md` "Users and Support ID" (data path,

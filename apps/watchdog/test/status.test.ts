@@ -104,7 +104,7 @@ describe('GET /status', () => {
     const funds = body.relayer_funds as { account: string; available: string; keys: { pool: string }[]; thresholds: { balance: { warn: string; critical: string } } };
     expect(funds.account).toBe('relayer.test.near');
     expect(funds.available).toBe((3n * 10n ** 24n).toString());
-    expect(funds.keys.map((k) => k.pool).sort()).toEqual(['owner', 'session', 'session', 'session']);
+    expect(funds.keys.map((k) => k.pool).sort()).toEqual(['home', 'owner', 'session', 'session', 'session']);
     expect(funds.thresholds.balance).toEqual({ warn: (5n * 10n ** 24n).toString(), critical: (10n ** 24n).toString() });
     expect((body.open_alerts as { kind: string }[]).map((a) => a.kind)).toContain('relayer_balance_low');
     const kinds = body.alert_kinds as Record<string, { severity: string; playbook: string }>;

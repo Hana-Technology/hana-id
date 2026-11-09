@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { alertText } from '../src/alerts.ts';
 import { formatNear, level, nearToYocto, relayerFundsFrom, relayerThresholds } from '../src/relayer.ts';
-import { alertsOf, initialized, NEAR, OWNER_POOL_KEY, OWNER_POOL_METHODS, RELAYER, relayerKey, SESSION_KEYS, SESSION_METHODS, SIGNER } from './helpers.ts';
+import { alertsOf, HOME_POOL_KEY, initialized, NEAR, OWNER_POOL_KEY, OWNER_POOL_METHODS, RELAYER, relayerKey, SESSION_KEYS, SESSION_METHODS, SIGNER } from './helpers.ts';
 
 const open = async (w: Awaited<ReturnType<typeof initialized>>, kind: string) => (await alertsOf(w.store, kind)).filter((a) => a.resolved_at === null);
 const channelsOf = (w: Awaited<ReturnType<typeof initialized>>, kind: string) => w.notifier.sent.filter((s) => s.msg.kind === kind).map((s) => s.channel).sort();
@@ -29,6 +29,7 @@ describe('relayer.ts', () => {
       balance: { warn: 5n * NEAR, critical: NEAR },
       session: { warn: nearToYocto(0.5), critical: nearToYocto(0.1) },
       owner: { warn: nearToYocto(0.1), critical: nearToYocto(0.02) },
+      home: { warn: nearToYocto(0.5), critical: nearToYocto(0.1) },
     });
     const o = relayerThresholds(JSON.stringify({ balance: { warn: 20, critical: 3 } }));
     expect(o.thresholds.balance).toEqual({ warn: 20n * NEAR, critical: 3n * NEAR });
@@ -71,11 +72,29 @@ describe('relayer_funds check', () => {
     expect(r.alerts).toEqual([]);
     const check = r.checks.find((c) => c.id === 'relayer_funds');
     expect(check).toMatchObject({ outcome: 'ok' });
-    expect(check?.detail).toContain('49.99 NEAR available; pool keys: 3 session, 1 owner');
+    expect(check?.detail).toContain('49.99 NEAR available; pool keys: 3 session, 1 owner, 1 home');
     const meta = await w.store.getMeta<{ account: string; keys: unknown[]; thresholds: { balance: { warn: string } } }>('relayer_funds');
     expect(meta?.account).toBe(RELAYER);
-    expect(meta?.keys).toHaveLength(4);
+    expect(meta?.keys).toHaveLength(5);
     expect(meta?.thresholds.balance.warn).toBe((5n * NEAR).toString());
+  });
+
+  it('watches the Home pool: no key pages, and a low allowance warns against its own thresholds', async () => {
+    const w = await initialized();
+    const home = w.chain.relayer.keys.find((k) => k.public_key === HOME_POOL_KEY)!;
+    w.chain.relayer.keys = w.chain.relayer.keys.filter((k) => k.public_key !== HOME_POOL_KEY);
+    await w.run();
+    const [empty] = await open(w, 'relayer_pool_empty');
+    expect(empty).toMatchObject({ severity: 'critical', key: 'relayer_pool_empty:home', details: { pool: 'home', receiver: SIGNER } });
+    expect(empty?.title).toContain('every Home derive relay fails');
+
+    const permission = home.access_key.permission as { FunctionCall: { allowance: string | null } };
+    permission.FunctionCall.allowance = nearToYocto(0.3).toString();
+    w.chain.relayer.keys.push(home);
+    await w.run();
+    expect(await open(w, 'relayer_pool_empty')).toEqual([]);
+    const [low] = await open(w, 'relayer_allowance_low');
+    expect(low).toMatchObject({ details: { pool: 'home', public_key: HOME_POOL_KEY } });
   });
 
   it('warns below the warning balance, escalates to critical, and resolves once refilled; never sends a transaction', async () => {
@@ -143,7 +162,7 @@ describe('relayer_funds check', () => {
 
     w.chain.relayer = { view: null, keys: [] };
     await w.run();
-    expect((await open(w, 'relayer_pool_empty')).map((a) => a.details.pool).sort()).toEqual(['owner', 'session']);
+    expect((await open(w, 'relayer_pool_empty')).map((a) => a.details.pool).sort()).toEqual(['home', 'owner', 'session']);
     const [gone] = await open(w, 'relayer_balance_critical');
     expect(gone?.title).toBe(`Relayer account ${RELAYER} does not exist: every relay fails`);
   });

@@ -390,7 +390,21 @@ describe('POST /v1/home/login: the limits, all before the relay', () => {
     expect(near.sent.length).toBe(before);
   });
 
-  it('per wallet: three an hour for one path, across the member and root (the path is the root’s)', async () => {
+  it('per wallet: two members of one account share their root’s three an hour', async () => {
+    const e = withEmail(near, [scope]);
+    const root = { provider: 'email', sub: `e1.${uid()}` };
+    const other = `sub-${uid()}`;
+    for (const sub of [SUB, other]) e.identities.set(`google#${sub}`, { status: 'member', opened: false, root });
+    fresh();
+    for (const sub of [SUB, other, SUB]) expect((await derive(await body(scope, SHARED, { sub }), undefined, { sub })).status).toBe(200);
+    const before = relays().length;
+    const r = await derive(await body(scope, SHARED, { sub: other }), undefined, { sub: other });
+    expect(r.status).toBe(429);
+    expect((await json(r)).error).toMatch(/per wallet/u);
+    expect(relays().length).toBe(before);
+  });
+
+  it('per wallet: three an hour for one path', async () => {
     for (let i = 0; i < HOME_DERIVES_PER_PATH_HOUR; i++) expect((await derive(await body(scope, SHARED))).status).toBe(200);
     const before = relays().length;
     const r = await derive(await body(scope, SHARED));

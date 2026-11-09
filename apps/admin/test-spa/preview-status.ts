@@ -6,8 +6,8 @@
 //   green          every check passes: "All systems operational"
 //   warnings       a few amber issues: the relayer's balance under its warn line, a watchdog alert channel off, blocking
 //                  notices waiting 22 minutes, the console's cron record table missing
-//   critical       an outage: the API Worker answering 503 (its status call failing too), NEAR's primary RPC down, an
-//                  unacknowledged critical watchdog alert
+//   critical       an outage: the API Worker answering 503 (its status call failing too), every NEAR RPC endpoint down,
+//                  an unacknowledged critical watchdog alert
 //   mixed-build    a half-done deploy: the page Workers and their bundles on the previous build
 //   watchdog-down  the watchdog unreachable: one red issue, what it reports unknown
 import { CRON_LAST_RUN } from '../src/cron.ts';
@@ -30,6 +30,7 @@ const WATCHDOG = 'https://hana-id-watchdog-preview.preview.invalid';
 const TOKEN = 'preview-only-watchdog-status-token-not-a-secret';
 const RPC = 'https://rpc.preview.invalid';
 const RPC_FALLBACK = 'https://rpc-fallback.preview.invalid';
+const RPC_BACKUP = 'https://rpc-backup.preview.invalid';
 const ORIGINS = { api: 'https://api.preview.invalid', vault: 'https://vault.preview.invalid', auth: 'https://auth.preview.invalid', issuer: 'https://email.preview.invalid', console: 'https://console.preview.invalid', consoleAuth: 'https://console-auth.preview.invalid', files: 'https://files.preview.invalid' };
 const CHECK_IDS = ['config', 'jwks_fetch', 'chain_read', 'watchdog_role', 'pending_key_changes', 'active_keys', 'signer_policy', 'links', 'identity_on_chain', 'governance_diff', 'unexecuted_changes', 'relayer_funds', 'alert_delivery', 'digest', 'heartbeat', 'email_jwks', 'identity_jwks'];
 
@@ -39,7 +40,7 @@ interface World {
   watchdog: Record<string, unknown> | null;
   api: Record<string, unknown> | null;
   console: Record<string, unknown>;
-  near: { primary: number | 'down'; fallback: number | 'down' };
+  near: { primary: number | 'down'; fallback: number | 'down'; backup: number | 'down' };
   five: Record<string, unknown>;
   fifteen: Record<string, unknown>;
 }
@@ -112,7 +113,7 @@ function world(now: number, s: Scenario): World {
       },
     },
     console: { ok: true, build: BUILD, db: { ok: true, latencyMs: 3 }, cron: { job: 'hourly', atMs: now - 34 * MIN, outcome: 'ok', detail: null }, notices: { pending: 0, oldestAt: null, truncated: false }, logos: 'ok' },
-    near: { primary: now - 1_200, fallback: now - 1_500 },
+    near: { primary: now - 1_200, fallback: now - 1_500, backup: now - 1_800 },
     five: { at: now - 3 * MIN, notices: { acked: 1, failed: 0 }, feed: true, watcher: true, budgetLeft: 31, calls: { ops: 1, notices: 4, feed: 2, watcher: 2 } },
     fifteen: { at: now - 9 * MIN, budgetLeft: 36, calls: { ledger: 1, relayer_keys: 1, settlement: 2 }, failed: [] },
   };
@@ -127,7 +128,7 @@ function world(now: number, s: Scenario): World {
   if (s === 'critical') {
     w.http.set(`${ORIGINS.api}/v1/health`, () => new Response('error code: 1101', { status: 503 }));
     w.api = null;
-    w.near.primary = 'down';
+    w.near = { primary: 'down', fallback: 'down', backup: 'down' };
     wd.open_alerts = [
       { id: 14, kind: 'forged_key_change', severity: 'critical', title: '[SANDBOX] Pending Google key change #31 doesn’t match Google’s published key', details: {}, created_at: now - 18 * MIN, resolved_at: null, acked_at: null, resends_until_ack: true, channels: ['pager', 'slack', 'email'], deliveries: [] },
     ];
@@ -168,8 +169,8 @@ function fakeFetch(w: World): typeof fetch {
     if (special) return special();
     if (url === `${WATCHDOG}/status`) return w.watchdog ? Response.json(w.watchdog) : new Response('upstream connect error', { status: 502 });
     for (const [id, u] of Object.entries(URLS)) if (url === u) return buildResponse(id, w.builds[id] ?? null);
-    if (url === RPC || url === RPC_FALLBACK) {
-      const at = url === RPC ? w.near.primary : w.near.fallback;
+    if (url === RPC || url === RPC_FALLBACK || url === RPC_BACKUP) {
+      const at = url === RPC ? w.near.primary : url === RPC_FALLBACK ? w.near.fallback : w.near.backup;
       if (at === 'down') return new Response('bad gateway', { status: 502 });
       return Response.json({ jsonrpc: '2.0', id: 'hana-status', result: { header: { height: 276_481_337, timestamp_nanosec: String(BigInt(at) * 1_000_000n) }, chunks: [] } });
     }
@@ -190,6 +191,7 @@ function fakeEnv(w: World): Env {
     HANA_BUILD: BUILD,
     NEAR_RPC: RPC,
     NEAR_RPC_FALLBACK: RPC_FALLBACK,
+    NEAR_RPC_FALLBACKS: JSON.stringify([RPC_FALLBACK, RPC_BACKUP]),
     API_URL: ORIGINS.api,
     VAULT_ORIGIN: ORIGINS.vault,
     AUTH_ORIGIN: ORIGINS.auth,

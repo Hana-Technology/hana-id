@@ -24,7 +24,7 @@ function manifest(overrides: Record<string, unknown>): Manifest {
   return manifestSchema.parse(m);
 }
 
-const prod = manifest({ name: 'prod', vaultOrigin: 'https://vault.hana.example', authOrigin: 'https://auth.hana-login.example' });
+const prod = manifest({ name: 'prod', vaultOrigin: 'https://vault.hana.example', authOrigin: 'https://auth.hana-login.example', admin: { ...sandbox.admin!, accessSessionDuration: undefined } });
 const noOrigins = manifest({ name: 'sandbox-old', vaultOrigin: undefined, authOrigin: undefined });
 
 /** Writes the module for `manifests` to a temp file and imports it. */

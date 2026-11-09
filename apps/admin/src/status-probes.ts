@@ -1,7 +1,7 @@
 // The System status page's outbound reads (D425; apps/admin/README.md "System status"), each counted: the public build
 // reads `deploy-check` makes (scripts/lib/deploy-check.ts: `GET /v1/health`, `/.well-known/hana-build`, the first line
 // of `/vault.js`, the `<meta name="hana-build">` of `/login` and the console SPA, `GET /v1/email/health`) and one NEAR
-// RPC `block` per endpoint. Every read has a deadline that covers the body, reads at most a small prefix of it, follows
+// RPC `block` per endpoint (`nearEndpoints`). Every read has a deadline that covers the body, reads at most a small prefix of it, follows
 // no redirect, sends no credential and passes nothing of an answer on but its status, its timing and a well-formed
 // build id (or block height and time). A read never throws.
 import { BUILD_PATH, ISSUER_HEALTH_PATH, parseBuildId, parseBuildMeta, parseVaultBanner } from '@hana-id/env/build-id';
@@ -142,6 +142,47 @@ export interface NearRead {
   /** The final block's timestamp (ms). */
   blockAtMs: number | null;
   failure: ProbeFailure | null;
+}
+
+/** At most this many of the API's backups are probed: the manifest's limit (`MAX_API_RPC_FALLBACKS`, D435). */
+export const MAX_NEAR_BACKUPS = 3;
+
+/** One NEAR RPC endpoint the System status page probes. The label is what the page shows; the URL never leaves. */
+export interface NearEndpoint {
+  url: string;
+  /** The API asks it, in this order (D435). */
+  api: boolean;
+  /** The vault and the watchdog ask it (`rpc`, `rpcFallback`). */
+  pages: boolean;
+  label: string;
+}
+
+/** The API's backups from NEAR_RPC_FALLBACKS (`gen`: a JSON array), or null when the var is absent or unusable. */
+function apiBackups(raw: string | undefined): string[] | null {
+  if (!raw) return null;
+  let list: unknown;
+  try {
+    list = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  return Array.isArray(list) ? list.filter((u): u is string => typeof u === 'string' && /^https?:\/\//iu.test(u)) : null;
+}
+
+/**
+ * Every endpoint to probe, primary first: NEAR_RPC, the API's backups in its order (NEAR_RPC_FALLBACKS, `gen` writes
+ * `apiRpcFallbacksOf`; without the var, NEAR_RPC_FALLBACK alone, as the API falls back to `rpcFallback`), then
+ * `rpcFallback` when the API's list doesn't include it: the vault and the watchdog still use it (D435), so it stays
+ * probed. At most 5 reads; one read per distinct URL.
+ */
+export function nearEndpoints(env: { NEAR_RPC: string; NEAR_RPC_FALLBACK?: string | undefined; NEAR_RPC_FALLBACKS?: string | undefined }): NearEndpoint[] {
+  const out: NearEndpoint[] = [{ url: env.NEAR_RPC, api: true, pages: true, label: 'Primary' }];
+  const backups = [...new Set(apiBackups(env.NEAR_RPC_FALLBACKS) ?? (env.NEAR_RPC_FALLBACK ? [env.NEAR_RPC_FALLBACK] : []))].filter((u) => u !== env.NEAR_RPC).slice(0, MAX_NEAR_BACKUPS);
+  backups.forEach((url, i) => out.push({ url, api: true, pages: url === env.NEAR_RPC_FALLBACK, label: `Backup ${i + 1}` }));
+  if (env.NEAR_RPC_FALLBACK && env.NEAR_RPC_FALLBACK !== env.NEAR_RPC && !backups.includes(env.NEAR_RPC_FALLBACK)) {
+    out.push({ url: env.NEAR_RPC_FALLBACK, api: false, pages: true, label: 'Vault’s fallback' });
+  }
+  return out;
 }
 
 /** One `block` at `finality: final`: is the endpoint up, and how far behind is it? */

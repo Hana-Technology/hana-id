@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { appChangeDelayProblems, DASHBOARD_BLOCKS, emailFromProblem, hanaOwnOrigins, loadEnv, manifestPath, manifestSchema } from './index.ts';
+import { accessSessionDurationOf, accessSessionDurationProblem, appChangeDelayProblems, DASHBOARD_BLOCKS, DEFAULT_ACCESS_SESSION_DURATION, emailFromProblem, hanaOwnOrigins, loadEnv, manifestPath, manifestSchema } from './index.ts';
 
 type Raw = Record<string, unknown>;
 // Without identityToken: these tests move apiUrl, and the identity issuer must follow it (tested in identity.test.ts).
@@ -152,6 +152,34 @@ describe('dashboard blocks', () => {
     expect(messages(withDashboard((d) => (block(d, 'admin').staffEmails = [])))).not.toEqual([]);
     expect(messages(withDashboard((d) => (block(d, 'admin').staffEmails = ['Staff@example.com'])))).not.toEqual([]);
     expect(messages(withDashboard((d) => (block(d, 'admin').staffEmails = ['a@example.com', 'a@example.com']))).join('\n')).toContain('Duplicate staff email');
+  });
+
+  it('admin.accessSessionDuration: whole hours 1h to 8h, default 1h, above 1h only in a dev env on testnet (D437)', () => {
+    const withSession = (v: string, name?: string) => withDashboard((d) => {
+      block(d, 'admin').accessSessionDuration = v;
+      if (name) d.name = name;
+    });
+    for (const ok of ['1h', '2h', '8h']) expect(messages(withSession(ok)), ok).toEqual([]);
+    for (const bad of ['0h', '9h', '12h', '24h', '30m', '1h30m', '8', '', 'h', '08h']) expect(messages(withSession(bad)).join('\n'), bad).toContain('admin.accessSessionDuration is a whole number of hours');
+    expect(accessSessionDurationOf({})).toBe('1h');
+    expect(DEFAULT_ACCESS_SESSION_DURATION).toBe('1h');
+    expect(accessSessionDurationOf({ accessSessionDuration: '4h' })).toBe('4h');
+    // Production-named envs: 1h only; anything else refused, whatever the field says.
+    for (const env of ['staging', 'mainnet', 'testnet']) {
+      const out = messages(withSession('8h', env)).join('\n');
+      expect(out, env).toContain('admin.accessSessionDuration 8h is refused on');
+      expect(out, env).toContain('D437');
+    }
+    expect(accessSessionDurationProblem({ name: 'staging', network: 'testnet', admin: { accessSessionDuration: '1h' } })).toBeNull();
+    expect(accessSessionDurationProblem({ name: 'staging', network: 'testnet', admin: {} })).toBeNull();
+    expect(accessSessionDurationProblem({ name: 'local-x', network: 'testnet', admin: { accessSessionDuration: '8h' } })).toBeNull();
+    expect(accessSessionDurationProblem({ name: 'sandbox-dev', network: 'testnet', admin: { accessSessionDuration: '8h' } })).toBeNull();
+    // A dev name doesn't help off testnet (the network enum refuses it today; this rule outlives that).
+    expect(accessSessionDurationProblem({ name: 'sandbox-x', network: 'mainnet', admin: { accessSessionDuration: '8h' } })).toContain('refused');
+  });
+
+  it('sandbox-dev’s manifest sets its admin session to 8h (D437)', () => {
+    expect(loadEnv('sandbox-dev').admin!.accessSessionDuration).toBe('8h');
   });
 
   it('Access fields have their shapes', () => {

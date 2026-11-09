@@ -454,6 +454,9 @@ details.raw > summary { font-size: 0.82rem; color: var(--accent); }
 .tile-head { display: flex; flex-direction: column; align-items: flex-start; gap: 0.3rem; }
 .tile h3 { margin: 0; font-size: 0.93rem; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
 .tile-detail { margin: 0; font-size: 0.84rem; color: var(--ink-2); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.tile-lines { list-style: none; margin: 0.15rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.84rem; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.tile-lines li { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; overflow-wrap: anywhere; }
+.tile-line-label { font-weight: 600; }
 .tile-meta { margin: auto 0 0; padding-top: 0.15rem; font-size: 0.76rem; color: var(--muted); }
 .state-chip { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.02rem 0.5rem; border-radius: var(--pill); font-size: 0.74rem; font-weight: 700; line-height: 1.5; border: 1px solid transparent; white-space: nowrap; }
 .state-chip::before { content: ''; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: currentColor; }

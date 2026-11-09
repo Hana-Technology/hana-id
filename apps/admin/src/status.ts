@@ -5,8 +5,9 @@
 // issue (unless the failure that hid it is one already). Read-only: nothing here writes, acts or alerts.
 //
 // Budget (Workers Free: 50 subrequests, 10 ms CPU): one cold read makes at most 1 watchdog call, 3 RPCs, 10 public
-// build reads, 2 NEAR reads, 1 Hyperdrive connection and 2 R2 reads (19, counted in `calls`); the Access check before
-// the route adds its certs fetch on a cold isolate. The answer is kept in the isolate for STATUS_CACHE_MS and
+// build reads, one NEAR read per endpoint (`nearEndpoints`: 3 on sandbox-dev, at most 5), 1 Hyperdrive connection and
+// 2 R2 reads (20 on sandbox-dev, at most 22, counted in `calls`); the Access check before the route adds its certs
+// fetch on a cold isolate. The answer is kept in the isolate for STATUS_CACHE_MS and
 // concurrent misses share one read, so refreshes and other tabs cost nothing within that window. Nothing is added to
 // any cron.
 import { ACCESS_JWT_HEADER } from '@hana-id/oidc';
@@ -24,7 +25,7 @@ import { type WatchdogStatusView, findingsOf, statusView } from './monitoring.ts
 import { arr, num, obj, plainString, str } from './plain.ts';
 import { type StaffRequest, staffCtx } from './rpc.ts';
 import { MIN_PARTITIONS_AHEAD } from './security.ts';
-import { type BuildRead, CallCount, type NearRead, SLOW_MS, buildTargets, readBuild, readNear } from './status-probes.ts';
+import { type BuildRead, CallCount, type NearEndpoint, type NearRead, SLOW_MS, buildTargets, nearEndpoints, readBuild, readNear } from './status-probes.ts';
 import { callWatchdog, watchdogConfigured } from './watchdog.ts';
 
 /** How long one read serves every request of the isolate. */
@@ -74,6 +75,14 @@ export interface Tile {
   latencyMs: number | null;
   build: string | null;
   link: Link | null;
+  /** One line per part of the component when it has several: the NEAR RPC tile's endpoints. Never a URL. */
+  lines?: TileLine[];
+}
+
+export interface TileLine {
+  label: string;
+  state: TileState;
+  detail: string;
 }
 
 export interface Issue {
@@ -142,6 +151,7 @@ interface TileInput {
   build?: string | null;
   link?: Link | null;
   notMeasured?: boolean;
+  lines?: TileLine[];
 }
 
 const RANK: Record<TileState, number> = { critical: 4, warning: 3, unknown: 2, ok: 1, not_measured: 0 };
@@ -157,7 +167,7 @@ class Report {
   add(t: TileInput, problems: Problem[] = []): void {
     let state: TileState = t.notMeasured ? 'not_measured' : 'ok';
     for (const p of problems) if (RANK[p.severity] > RANK[state]) state = p.severity;
-    this.tiles.push({ id: t.id, group: t.group, name: t.name, state, detail: t.detail, affects: t.affects, latencyMs: t.latencyMs ?? null, build: t.build ?? null, link: t.link ?? null });
+    this.tiles.push({ id: t.id, group: t.group, name: t.name, state, detail: t.detail, affects: t.affects, latencyMs: t.latencyMs ?? null, build: t.build ?? null, link: t.link ?? null, ...(t.lines ? { lines: t.lines } : {}) });
     for (const p of problems) {
       if (p.issue === false) continue;
       const pb = p.playbook ? getPlaybook(p.playbook) : undefined;
@@ -271,8 +281,7 @@ interface Sources {
   console: Settled<ConsoleHealth>;
   issuer: Settled<{ build: string | null; db: { ok: boolean; latencyMs: number } }> | null;
   builds: Map<string, BuildRead>;
-  near: NearRead;
-  nearFallback: NearRead | null;
+  near: { endpoint: NearEndpoint; read: NearRead }[];
   ledger: LedgerPart;
   statements: 'ok' | 'error' | null;
   exports: 'ok' | 'error' | null;
@@ -291,19 +300,18 @@ async function gatherSources(env: Env, staff: StaffRequest, accessJwt: string, n
     const build = raw === undefined ? undefined : typeof raw === 'string' && BUILD_ID_RE.test(raw) ? raw : null;
     return { configured, ok: true, view: statusView(a.body, now, env.NEAR_NETWORK), build };
   })();
-  const [w, api, con, issuer, builds, near, nearFallback, ledger, statements, exportsBucket] = await Promise.all([
+  const [w, api, con, issuer, builds, near, ledger, statements, exportsBucket] = await Promise.all([
     watchdog,
     rpc<ApiSystemStatus>('GET /api/status api', staff, calls, () => env.API.systemStatus(ctx)),
     rpc<ConsoleHealth>('GET /api/status console', staff, calls, () => env.CONSOLE.health(ctx)),
     env.ISSUER ? rpc<{ build: string | null; db: { ok: boolean; latencyMs: number } }>('GET /api/status issuer', staff, calls, () => env.ISSUER!.health({ requestId: staff.requestId, accessJwt })) : Promise.resolve(null),
     Promise.all(targets.map(async (t) => [t.id, await readBuild(t, calls)] as const)).then((e) => new Map(e)),
-    readNear(env.NEAR_RPC, calls),
-    env.NEAR_RPC_FALLBACK ? readNear(env.NEAR_RPC_FALLBACK, calls) : Promise.resolve(null),
+    Promise.all(nearEndpoints(env).map(async (endpoint) => ({ endpoint, read: await readNear(endpoint.url, calls) }))),
     ledgerPart(env, staff, calls),
     bucketPart(env.STATEMENTS, calls),
     bucketPart(env.EXPORTS, calls),
   ]);
-  return { watchdog: w, api, console: con, issuer, builds, near, nearFallback, ledger, statements, exports: exportsBucket };
+  return { watchdog: w, api, console: con, issuer, builds, near, ledger, statements, exports: exportsBucket };
 }
 
 // ---- the checks ----
@@ -656,6 +664,56 @@ function jobTiles(r: Report, s: Sources): void {
   }
 }
 
+/**
+ * The NEAR RPC tile (D425, D435's note): one line per endpoint, in the API's order, and a verdict from what the
+ * failover actually does. The API moves on only when an endpoint gives no answer, so the one serving it is the first
+ * that answers: it's an outage when none answers, or when that one is stuck (a stale answer isn't failed over). The
+ * vault and the watchdog have only `rpc` and `rpcFallback`, so losing both is an outage too, even with another of the
+ * API's backups up. Anything else (a backup down, the primary down while a backup serves) is a warning. Labels only,
+ * never a URL: a provider's URL can carry an API key.
+ */
+function nearTile(r: Report, s: Sources): void {
+  const base: TileInput = { id: 'near-rpc', group: 'external', name: 'NEAR RPC', affects: 'Every login and relay (the API fails over between these endpoints, in order), the vault’s and the watchdog’s chain reads, and this console’s chain reads', detail: '' };
+  const serving = s.near.find((e) => e.endpoint.api && e.read.ok);
+  const pagesUp = s.near.some((e) => e.endpoint.pages && e.read.ok);
+  const apiCount = s.near.filter((e) => e.endpoint.api).length;
+  const problems: Problem[] = [];
+  const lines: TileLine[] = [];
+  const worst = (from: Problem[], floor: TileState): TileState => from.reduce<TileState>((a, p) => (RANK[p.severity] > RANK[a] ? p.severity : a), floor);
+  if (!serving) {
+    problems.push({ severity: 'critical', title: apiCount === 1 ? 'NEAR RPC is down: the API’s only endpoint doesn’t answer' : `NEAR RPC is down: none of the API’s ${apiCount} endpoints answers`, action: 'Follow the playbook (switching an RPC is a manifest change and a deploy).', playbook: 'near-rpc-outage', key: 'all-down' });
+  }
+  for (const [i, { endpoint, read }] of s.near.entries()) {
+    const own: Problem[] = [];
+    const name = `NEAR RPC: ${endpoint.label}`;
+    if (!read.ok) {
+      const what = read.failure === 'http_error' ? 'answered an error' : FAILURE_WORDS[read.failure ?? 'unreachable'];
+      if (!serving && endpoint.api) {
+        // Said once, by the outage above.
+        lines.push({ label: endpoint.label, state: 'critical', detail: `Down: it ${what}` });
+        continue;
+      }
+      const primary = i === 0;
+      const blind = primary && !pagesUp;
+      const consequence = blind ? '; the vault and the watchdog have no endpoint left' : primary && serving ? `; the API is using ${serving.endpoint.label}` : '';
+      const waits = primary && serving ? ' This console’s on-chain watcher reads only the primary, so it waits meanwhile.' : '';
+      own.push({ severity: blind ? 'critical' : 'warning', title: `${name} is down: it ${what}${consequence}`, action: `The API fails over on its own.${waits} Follow the playbook if it lasts (switching an RPC is a manifest change and a deploy).`, playbook: 'near-rpc-outage', key: `down:${i}` });
+      lines.push({ label: endpoint.label, state: worst(own, 'warning'), detail: `Down: it ${what}` });
+    } else {
+      const lag = read.blockAtMs === null ? null : r.now - read.blockAtMs;
+      if (lag !== null && lag > NEAR_STUCK_MS) own.push({ severity: endpoint === serving?.endpoint ? 'critical' : 'warning', title: `${name} is ${ago(lag)} behind`, action: 'Follow the playbook.', playbook: 'near-rpc-outage', key: `behind:${i}` });
+      else if (lag !== null && lag > NEAR_BEHIND_MS) own.push({ severity: 'warning', title: `${name} is ${ago(lag)} behind`, action: 'Watch it; past 10 minutes follow the playbook.', playbook: 'near-rpc-outage', key: `behind:${i}` });
+      if (read.latencyMs > SLOW_MS) own.push({ severity: 'warning', title: `${name} is slow: ${ms(read.latencyMs)}`, action: 'Usually passes; logins get slower meanwhile.', key: `slow:${i}` });
+      lines.push({ label: endpoint.label, state: worst(own, 'ok'), detail: `Up · ${ms(read.latencyMs)} · block ${read.height}${lag !== null ? `, ${ago(Math.max(0, lag))} old` : ''}` });
+    }
+    problems.push(...own);
+  }
+  if (s.near.length === 1) lines.push({ label: 'Backup', state: 'not_measured', detail: 'No fallback in the manifest' });
+  const up = s.near.filter((e) => e.read.ok).length;
+  const detail = !serving ? `None of the API’s ${apiCount} endpoints answers` : `${up} of ${s.near.length} endpoints up${serving === s.near[0] ? '' : ` · the API is using ${serving.endpoint.label}`}`;
+  r.add({ ...base, detail, latencyMs: serving?.read.latencyMs ?? null, lines }, problems);
+}
+
 function externalTiles(r: Report, env: Env, s: Sources): void {
   // Google's JWKS: the API's own fetch (from the governance snapshot), and the watchdog's check.
   const gBase: TileInput = { id: 'google-jwks', group: 'external', name: 'Google signing keys (JWKS)', affects: 'Google login', detail: '', link: L.monitoring };
@@ -672,23 +730,7 @@ function externalTiles(r: Report, env: Env, s: Sources): void {
     r.add({ ...gBase, detail: Array.isArray(kids) ? `${kids.length} key${kids.length === 1 ? '' : 's'} published · ${active} active on chain` : 'Not fetched' }, problems);
   }
 
-  // NEAR RPC.
-  const near = (id: string, name: string, affects: string, read: NearRead | null, primary: boolean) => {
-    const base: TileInput = { id, group: 'external', name, affects, detail: '' };
-    if (!read) return r.add({ ...base, detail: 'No fallback in the manifest', notMeasured: true });
-    if (!read.ok) {
-      const what = read.failure === 'http_error' ? 'answered an error' : FAILURE_WORDS[read.failure ?? 'unreachable'];
-      return r.add({ ...base, detail: `Down: it ${what}`, latencyMs: read.latencyMs }, [{ severity: primary ? 'critical' : 'warning', title: `NEAR RPC ${primary ? '(primary)' : '(fallback)'} is down: it ${what}`, action: 'Follow the playbook (switching the RPC is a manifest change and a deploy).', playbook: 'near-rpc-outage', key: 'down' }]);
-    }
-    const lag = read.blockAtMs === null ? null : r.now - read.blockAtMs;
-    const problems: Problem[] = [];
-    if (lag !== null && lag > NEAR_STUCK_MS) problems.push({ severity: primary ? 'critical' : 'warning', title: `NEAR RPC ${primary ? '(primary)' : '(fallback)'} is ${ago(lag)} behind`, action: 'Follow the playbook.', playbook: 'near-rpc-outage', key: 'behind' });
-    else if (lag !== null && lag > NEAR_BEHIND_MS) problems.push({ severity: 'warning', title: `NEAR RPC ${primary ? '(primary)' : '(fallback)'} is ${ago(lag)} behind`, action: 'Watch it; past 10 minutes follow the playbook.', playbook: 'near-rpc-outage', key: 'behind' });
-    if (read.latencyMs > SLOW_MS) problems.push({ severity: 'warning', title: `NEAR RPC ${primary ? '(primary)' : '(fallback)'} is slow: ${ms(read.latencyMs)}`, action: 'Usually passes; logins get slower meanwhile.', key: 'slow' });
-    r.add({ ...base, detail: `Up · ${ms(read.latencyMs)} · block ${read.height}${lag !== null ? `, ${ago(Math.max(0, lag))} old` : ''}`, latencyMs: read.latencyMs }, problems);
-  };
-  near('near-primary', 'NEAR RPC (primary)', 'Every login and relay (the API reads and sends through it), and this console’s chain reads', s.near, true);
-  near('near-fallback', 'NEAR RPC (fallback)', 'The vault’s fallback when the primary fails', s.nearFallback, false);
+  nearTile(r, s);
 
   // Email: this Worker's key, the blocking notices waiting, the last run's failed sends.
   const eBase: TileInput = { id: 'email', group: 'external', name: 'Email (SendGrid)', affects: 'Blocking notices (changes, invites and owner grants wait for them), statements and staff alerts by email', detail: '', link: L.feed };

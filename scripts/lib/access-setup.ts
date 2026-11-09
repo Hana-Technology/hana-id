@@ -13,8 +13,8 @@
 // only reads, so "Access: Apps and Policies Read" is enough for it.
 //
 // What it sets: a self-hosted application on admin.origin's host (also on workers.dev: a hostname application covers
-// everything the admin Worker serves there, since its config has `preview_urls: false` and no routes; D409), session
-// 1 h, the cookie HttpOnly and SameSite=Lax (the admin Worker's CSRF check assumes Lax), not in the App Launcher, and
+// everything the admin Worker serves there, since its config has `preview_urls: false` and no routes; D409), the
+// session `admin.accessSessionDuration` (default 1 h; more only in a dev env on testnet, D437), the cookie HttpOnly and SameSite=Lax (the admin Worker's CSRF check assumes Lax), not in the App Launcher, and
 // reusable Allow policies, none with a service-token rule:
 //   sandbox*      "Hana staff (<env>)": include each admin.staffEmails address (exact), require the Google login
 //                 method; allowed IdPs = Google only, auto-redirect to Google. Inside Zero Trust's free tier (D408):
@@ -29,7 +29,7 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
-import { type Manifest, loadEnv, manifestPath } from '@hana-id/env';
+import { type Manifest, accessSessionDurationOf, accessSessionDurationProblem, loadEnv, manifestPath } from '@hana-id/env';
 import { ACCOUNT_ID_RE, CLOUDFLARE_ACCESS_TOKEN_FILE, CloudflareApi, type CloudflareApiDeps, readCloudflareToken, resolveAccount } from './cloudflare-api.ts';
 import { CliError, parseCli } from './cli.ts';
 import { setAdminAccess } from './manifest-edit.ts';
@@ -41,7 +41,8 @@ export const ACCESS_SETUP_USAGE = `Usage: access-setup.ts <env> [--yes | --check
   Creates or updates the admin console's Cloudflare Access application on admin.origin and its staff policies
   from envs/<env>.json (admin.staffEmails), with the API token in .secrets/<env>/cloudflare-access-token (0600).
   sandbox* envs: Google, exact emails only, at most 50 (Zero Trust's free tier, D408). Other envs: the GitHub team hana-admins plus the exact-email Google
-  fallback (D88). Session 1 h, no service tokens. The Zero Trust team and its login methods are made in the
+  fallback (D88). Session admin.accessSessionDuration (default 1h; above 1h only in a dev env on testnet, D437), no
+  service tokens. The Zero Trust team and its login methods are made in the
   dashboard first (docs/operations.md "Admin Worker" step 1).
   --yes             apply (without it, print the plan only)
   --check           compare Cloudflare with the manifest; exit 1 on any difference; changes nothing
@@ -57,7 +58,6 @@ export const ACCESS_PERMISSIONS = {
   appsRead: 'Access: Apps and Policies Read',
   org: 'Access: Organizations, Identity Providers, and Groups Read',
 } as const;
-export const SESSION_DURATION = '1h';
 /** D88: the production policy's GitHub team. */
 export const GITHUB_ORG = 'Hana-Technology';
 export const GITHUB_TEAM = 'hana-admins';
@@ -141,13 +141,15 @@ export function desiredAccess(env: string, admin: NonNullable<Manifest['admin']>
   if (variant === 'production' && !idps.github) throw new Error('A production Access policy needs the GitHub login method');
   const host = adminHost(admin.origin);
   const names = policyNames(env);
+  // Default 1h; the manifest refuses more outside a dev env on testnet (D437), and accessSetup checks again before asking Cloudflare.
+  const session = accessSessionDurationOf(admin);
   const emailPolicy: DesiredPolicy = {
     name: names.email,
     decision: 'allow',
     include: [...new Set(admin.staffEmails)].map((email) => ({ email: { email } })),
     require: [{ login_method: { id: idps.google } }],
     exclude: [],
-    session_duration: SESSION_DURATION,
+    session_duration: session,
   };
   const policies: DesiredPolicy[] =
     variant === 'sandbox' ? [emailPolicy]
@@ -158,7 +160,7 @@ export function desiredAccess(env: string, admin: NonNullable<Manifest['admin']>
           include: [{ 'github-organization': { identity_provider_id: idps.github, name: GITHUB_ORG, team: GITHUB_TEAM } }],
           require: [],
           exclude: [],
-          session_duration: SESSION_DURATION,
+          session_duration: session,
         },
         emailPolicy,
       ];
@@ -170,7 +172,7 @@ export function desiredAccess(env: string, admin: NonNullable<Manifest['admin']>
       type: 'self_hosted',
       domain: host,
       destinations: [{ type: 'public', uri: host }],
-      session_duration: SESSION_DURATION,
+      session_duration: session,
       allowed_idps: allowed,
       // Cloudflare skips the IdP picker only with exactly one IdP.
       auto_redirect_to_identity: allowed.length === 1,
@@ -398,6 +400,8 @@ export async function accessSetup(argv: readonly string[], deps: AccessSetupDeps
   if (m.network !== 'testnet') throw new Error(`envs/${m.name}.json is not a testnet env`);
   const admin = m.admin;
   if (!admin) throw new Error(`envs/${m.name}.json has no admin block (docs/batch-c-build-plan.md setup step 12)`);
+  const sessionProblem = accessSessionDurationProblem(m);
+  if (sessionProblem) throw new Error(`Refusing: ${sessionProblem}`);
   const host = adminHost(admin.origin);
   const variant = accessVariant(m.name);
   const log = deps.log;
@@ -453,9 +457,9 @@ export async function accessSetup(argv: readonly string[], deps: AccessSetupDeps
   log(`  login methods ${[github && `GitHub (${github.id})`, `Google (${google.id})`].filter(Boolean).join(', ')}`);
   for (const p of policyPlans) {
     const what = p.want.name === policyNames(m.name).email ? `${admin.staffEmails.length} exact email(s), Google only` : `GitHub team ${GITHUB_ORG}/${GITHUB_TEAM}`;
-    log(`  policy ${JSON.stringify(p.want.name)} (Allow, ${what}, ${SESSION_DURATION}): ${!p.live ? 'create' : p.diffs.length ? `update (${p.diffs.join('; ')})` : `matches (${p.live.id})`}`);
+    log(`  policy ${JSON.stringify(p.want.name)} (Allow, ${what}, session ${p.want.session_duration}): ${!p.live ? 'create' : p.diffs.length ? `update (${p.diffs.join('; ')})` : `matches (${p.live.id})`}`);
   }
-  log(`  application ${JSON.stringify(want.app.name)} on ${host} (self-hosted, ${SESSION_DURATION}, no service tokens): ${!liveApp ? 'create' : appDiffList.length ? `update (${appDiffList.join('; ')})` : `matches (${liveApp.id})`}`);
+  log(`  application ${JSON.stringify(want.app.name)} on ${host} (self-hosted, session ${want.app.session_duration}, no service tokens): ${!liveApp ? 'create' : appDiffList.length ? `update (${appDiffList.join('; ')})` : `matches (${liveApp.id})`}`);
 
   if (check) {
     const drift = [

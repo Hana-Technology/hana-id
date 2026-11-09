@@ -45,7 +45,9 @@ Batch C fields (`docs/batch-c-spec.md` "Manifest", `packages/env/src/dashboard.t
   - `console`: `{workerName, d1Name, origin, authWorkerName, authOrigin}` (the partner console and its script-free
     Google sign-in origin; the console client's only redirect URI is `authOrigin + "/callback"`).
   - `files`: `{workerName, origin, logosBucket, statementsBucket, exportsBucket}` (logos origin and the R2 buckets).
-  - `admin`: `{workerName, origin, accessTeamDomain, accessAud, staffEmails}`: `accessTeamDomain` is
+  - `admin`: `{workerName, origin, accessTeamDomain, accessAud, staffEmails, accessSessionDuration?}`:
+    `accessSessionDuration` is the Access session in whole hours, `1h` to `8h`, default `1h`, and anything but `1h` is
+    refused outside a dev env on testnet (D437; sandbox-dev sets `8h`); `accessTeamDomain` is
     `<team>.cloudflareaccess.com`, `accessAud` the Access application's 64-hex AUD tag (or `UNSET`), `staffEmails`
     the admin Worker's own lowercased allowlist behind the Access policy (D88), and the exact emails that policy
     includes: `access-setup <env>` creates the application and policies from this block, prints the team domain and

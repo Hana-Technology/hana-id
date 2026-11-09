@@ -90,16 +90,17 @@ its own; when a source fails, the tiles it feeds are Unknown and the failure is 
 | | R2: statements, exports, logos | a `get` of a key nothing writes (Class B; the console's `StaffRpc.health` reads LOGOS) | the read threw | — |
 | Scheduled jobs | API every 15 min (Google key sync), admin every 5 min, admin every 15 min, console hourly, watchdog every 5 min | the run each records: `issuer_key_sync_runs`, `ops.state` `cron.last_run` and `ledger_cron.last_run` (new, D425), the console's `cron_runs` (console migration 0003, D425), the watchdog's `last_run` and silence rule | later than 2 intervals + 5 min; the last run `skipped`/`error` or a step failed; the console's table missing (migration 0003 not applied); no run recorded (Unknown) | later than 6 intervals (30 min for the 5-minute admin cron, 90 min for the 15-minute ones, 6 h hourly); the watchdog silent (no run in 2 intervals) |
 | External services | Google signing keys (JWKS) | the API's own fetch (`issuers[].jwksKids` in the snapshot) and the watchdog's `jwks_fetch` check | the watchdog's check failed | the API can't fetch them |
-| | NEAR RPC primary, fallback | one `block` (`finality: final`) on the manifest's `rpc` and `rpcFallback` | slower than 2 s; the final block 2–10 min old; the fallback down or stuck | the primary down, or its block over 10 min old |
+| | NEAR RPC (one tile, one line per endpoint: Primary, Backup 1…, labels only, no URL) | one `block` (`finality: final`) on every endpoint the API can use (`rpc`, `apiRpcFallbacks`, else `rpcFallback`), and on `rpcFallback` when that list doesn't include it (line "Vault's fallback") | an endpoint slower than 2 s or 2–10 min behind; a backup down or stuck; the primary down while a backup serves | none of the API's endpoints answers; the one serving the API over 10 min behind (an answer isn't failed over, D435); `rpc` and `rpcFallback` both down (the vault and the watchdog have only those) |
 | | Email (SendGrid) | the blocking notices waiting (`systemStatus`, `StaffRpc.health`), the last 5-minute run's failed sends, `EMAIL_API_KEY` | a send not accepted; the oldest notice waiting over 15 min | over 1 h; no key (said once, on this Worker's tile) |
 | Free-tier headroom (D417) | Cron triggers on this account | `ACCOUNT_CRONS` (`gen` counts the manifest's cron Workers on the API's account) against the Free plan's 5 | not counted (an older config: Unknown) | over 5 (at 5 it is green: "full: nothing else with a cron may be added") |
 | | Admin crons' call budget | each last run's `calls` against its 40 (D380) | 38 or more | — |
 | | Requests, D1, Hyperdrive, R2 and SendGrid against free limits | — | Not measured: Cloudflare's GraphQL Analytics needs an API token this Worker doesn't hold, SendGrid's stats a key beyond Mail Send (`docs/mainnet-readiness.md` 5.12) | |
 
-**Budget per page load** (Workers Free: 50 subrequests, 10 ms CPU): a cold read makes **19** outbound calls (1 watchdog
-`/status`; 3 RPCs: `AdminRpc.systemStatus`, `StaffRpc.health`, `DirectoryRpc.health`; 10 public build reads; 2 NEAR
-RPC; 1 Hyperdrive connection; 2 R2 reads), plus the Access check's certs fetch on a cold isolate (cached ≤ 10 min):
-**20** at most, and 3 of the 32 Worker invocations a request may make. The answer is kept in the isolate for **30 s**
+**Budget per page load** (Workers Free: 50 subrequests, 10 ms CPU): a cold read makes **20** outbound calls on
+sandbox-dev, at most **22** with the most endpoints the manifest allows (1 watchdog `/status`; 3 RPCs:
+`AdminRpc.systemStatus`, `StaffRpc.health`, `DirectoryRpc.health`; 10 public build reads; one NEAR `block` per
+endpoint, 3 on sandbox-dev and at most 5; 1 Hyperdrive connection; 2 R2 reads), plus the Access check's certs fetch on
+a cold isolate (cached ≤ 10 min): **23** at most, and 3 of the 32 Worker invocations a request may make. The answer is kept in the isolate for **30 s**
 and concurrent misses share one read, so a refresh, a second tab or the other staff member costs **0** calls within that
 window (the page says when it shows a kept read). `test/status.test.ts` counts a cold and a warm load from outside (the
 stubs) and inside (the answer's `calls`). The admin's crons gain no call: the 15-minute run writes its record on its
@@ -116,7 +117,7 @@ the console's own paths.
 **Preview scenarios** (`corepack pnpm --filter @hana-id/admin preview`; `test-spa/preview-status.ts`): the real
 `buildStatus` over fake sources, `PREVIEW_STATUS=<scenario>` at start or `/preview/status/<scenario>` to switch:
 `green`, `warnings` (the relayer under its warn line, a watchdog channel off, notices waiting 22 min, the console's
-migration 0003 missing), `critical` (the API answering 503, NEAR's primary down, an unacknowledged critical alert),
+migration 0003 missing), `critical` (the API answering 503, every NEAR RPC endpoint down, an unacknowledged critical alert),
 `mixed-build` (the page Workers and bundles on the previous build), `watchdog-down`.
 
 ## UI principles
@@ -152,7 +153,8 @@ screen (D420; tests `test-spa/ux.test.ts`).
   script or style, no external font or file (the brand fonts are this Worker's own assets, D426); the Users detail and
   the Support ID lookup stay in memory; nothing in `localStorage`.
 - **Sign-in expiry is said, never a network error** (D424; tests `test-spa/session.test.ts`). The Access session lasts
-  1 h (D409) and ends silently: Access then answers every `/api/*` request with a redirect to its login page on the
+  1 h (D409; up to 8 h in a dev env on testnet, `admin.accessSessionDuration`, D437: sandbox-dev is 8 h; the banner reads
+  the token's own `exp`, so nothing here assumes a length) and ends silently: Access then answers every `/api/*` request with a redirect to its login page on the
   team's origin, which a followed `fetch` reports as a network error (CORS). Every request is sent with `redirect:
   'manual'` (one `fetch` in `public/app.js`, a source check): that redirect, or the Worker's own 401 `unauthenticated`,
   is the expired sign-in. The request waits, the page and every typed value stay, and the banner at the top
@@ -277,7 +279,7 @@ lookup screen and the Users screen's ways into it (`support.test.ts`), the UI pr
 the sign-in's end: the Access redirect, Try again, the warning (`session.test.ts`), and the System status page over each
 preview scenario's real answer (`status.test.ts`); the status route's checks, call count and cache are `test/status.test.ts`.
 
-Last verified: 2026-11-06 (branch `feat/user-events-retention`: the Users detail and Support ID lookup's events kept 24 months and their empty state, the Retention screen's user events rows, D433); 2026-11-06 (branch `feat/hana-brand`: "Brand", the SPA in Hana's brand, `public/fonts`, `sync-brand`, the amended source check, D426); 2026-11-06 (branch `feat/admin-system-status`: the System status page, its checks, budget and preview scenarios, D425); 2026-11-06 (branch `fix/session-expiry-ux`: the sign-in's end said as such, Try again, the warning
+Last verified: 2026-11-09 (branch `chore/status-access-followups`: System status's NEAR RPC tile, one line per endpoint the API can use, the calls per load and the preview's `critical`, D435's note; the Access session's length, D437); 2026-11-06 (branch `feat/user-events-retention`: the Users detail and Support ID lookup's events kept 24 months and their empty state, the Retention screen's user events rows, D433); 2026-11-06 (branch `feat/hana-brand`: "Brand", the SPA in Hana's brand, `public/fonts`, `sync-brand`, the amended source check, D426); 2026-11-06 (branch `feat/admin-system-status`: the System status page, its checks, budget and preview scenarios, D425); 2026-11-06 (branch `fix/session-expiry-ux`: the sign-in's end said as such, Try again, the warning
 before `exp`, `GET /api/me` `accessExp`, `/signed-in`, the preview's `PREVIEW_SESSION_MIN`, `session.test.ts`, D424);
 2026-11-06 (branch `feat/admin-ux-redesign`: the grouped nav and screens, "UI principles", the local preview, `ux.test.ts`, D420); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: email through SendGrid, D401); 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy`, stamped with the build id, read by `deploy-check` from the deployed version, D406); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup screen, `src/support.ts`'s email join,
 the SPA tests, D399); 2026-11-05 (branch `feat/batch-c-8b`: written with the Users screen, D388–D392).

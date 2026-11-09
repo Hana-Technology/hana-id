@@ -224,8 +224,9 @@ or logged.
 
 On for every app in testnet envs, as it is today. For production, D41 (confirmed by the user) already says export is
 mandatory and partners can't switch it off; the manifest schema accepts only `testnet`, so no non-testnet manifest
-can exist yet and no gate was added. Whether D41 stands for mainnet (or a Privy-style partner switch is wanted) is
-row 1.18 of `docs/mainnet-readiness.md` (D431).
+can exist yet and no gate was added. Decided 2026-11-09: D41 stands for mainnet, export stays mandatory and there is
+no Privy-style partner switch, since it's a user's only exit if Hana fails (D431 confirmed; `docs/mainnet-readiness.md`
+row 1.18 done).
 
 ### Not added
 
@@ -302,7 +303,7 @@ which this branch doesn't replace.
 
 1. Confirm D429 (prices, the 45-day expiry, the valued shapes, immediate on/off, the balance endpoints) and D430's
    mechanics; decide R3 (messages for a demo app).
-2. D431 / `mainnet-readiness.md` 1.18: does D41 (export mandatory, no partner switch) stand for mainnet?
+2. Done 2026-11-09: D41 (export mandatory, no partner switch) stands for mainnet (D431 confirmed, `mainnet-readiness.md` 1.18).
 3. Apply migration 0013 on sandbox-dev, deploy (`docs/operations.md` "Mainnet demo and key export events"), then turn
    the demo on for the Sodax demo app only, and off when the demo ends.
 4. Review the price table against a live source before the demo, and before 2026-12-21.

@@ -1501,7 +1501,7 @@ describe('/approve: the mainnet demo banner (D428, D429)', () => {
     await vi.advanceTimersByTimeAsync(0);
   };
 
-  it('says what a Sodax bridge does: the amount, 1:1, the destination and the recipient the bytes name (D475)', async () => {
+  it('says what a Sodax bridge does: the amount, 1:1, the destination and the recipient the bytes name (D476)', async () => {
     startDemo(async () => rpcAnswer('0x0'));
     send(baseRequest({ bytes: evmTxSigningPayload(parseEvmTxRequest({ ...BASE_TX, to: SODAX_ASSET_MANAGER_BASE, value: '0x0', data: sodaxBridgeDeposit(OTHER) })) }));
     expect(document.querySelector('.demo-bridge')?.textContent).toBe(`Bridge 1 USDC from Base to Stellar, 1:1. Recipient on Stellar: ${OTHER}`);

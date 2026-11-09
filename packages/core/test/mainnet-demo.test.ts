@@ -337,7 +337,7 @@ describe('Stellar’s public network', () => {
   });
 });
 
-describe('the Sodax USDC ⇄ USDC bridge between Base and Stellar (D475)', () => {
+describe('the Sodax USDC ⇄ USDC bridge between Base and Stellar (D476)', () => {
   const VAULT = '0xAbbb91c0617090F0028BDC27597Cd0D038F3A833' as Hex;
   const HUB_AM = '0x60c5681bD1DB4e50735c4cA3386005A4BA4937C0' as Hex;
   const BASE_HUB = BASE.tokens[USDC_BASE]!.sodaxHubAsset as Hex;

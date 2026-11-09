@@ -114,7 +114,7 @@ describe('the mainnet demo in the vault', () => {
     expect(demoEvents(s.t)).toHaveLength(0);
   });
 
-  describe('a Sodax USDC bridge (D475)', () => {
+  describe('a Sodax USDC bridge (D476)', () => {
     const bridge = (recipient: string) => send({ to: SODAX_ASSET_MANAGER_BASE, value: '0x0', data: sodaxBridgeDeposit(recipient) });
 
     it('to the user’s own Stellar wallet: through the popup, reported at the deposit’s value', async () => {

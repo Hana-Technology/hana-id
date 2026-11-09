@@ -75,7 +75,7 @@ export const MAINNET_DEMO = Object.freeze({
   /** Sodax's intents contract on the hub (Sonic). */
   sodaxIntents: '0x6382D6ccD780758C5e8A6123c33ee8F4472F96ef',
   /**
-   * Sodax's USDC ⇄ USDC bridge between Base and Stellar (D475), from @sodax/sdk 2.2.0's packaged config, pinned by
+   * Sodax's USDC ⇄ USDC bridge between Base and Stellar (D476), from @sodax/sdk 2.2.0's packaged config, pinned by
    * test/mainnet-demo.test.ts: the sodaUSDC vault, the hub asset manager, and the two USDC hub assets with their
    * spoke decimals. A bridge of anything else is refused, and a Sodax redeploy of any of these fails closed.
    */
@@ -147,7 +147,7 @@ export interface DemoBridge {
 }
 
 /**
- * Who a bridge may deliver to (D475). `wallets`: the user's own addresses, which the bridge's recipient must be (the
+ * Who a bridge may deliver to (D476). `wallets`: the user's own addresses, which the bridge's recipient must be (the
  * vault always passes these, and they are compared in the encoded form the hub receives). `'shown'`: only the popup,
  * which holds the signing chain's address alone and shows the recipient; the vault has already checked it.
  * Omitted: a bridge is refused.
@@ -257,7 +257,7 @@ function decodeOr(fnAbi: ReturnType<typeof fn>, data: Uint8Array, what: string):
 /**
  * A Sodax deposit's `data` (relayed to the hub and run by the user's hub wallet): empty; or exactly
  * `[approve(intents, g) on hubAsset, createIntent(intent) on intents]` with g ≤ amount, the intent's input the hub
- * asset and its input amount ≤ g; or exactly the four calls of a USDC ⇄ USDC bridge (checkBridgeCalls, D475). So the
+ * asset and its input amount ≤ g; or exactly the four calls of a USDC ⇄ USDC bridge (checkBridgeCalls, D476). So the
  * hub calls can spend at most the deposited amount of the deposited asset. Returns the bridge it found, else null.
  */
 export function checkSodaxHubCalls(dataHex: string, hubAsset: string | undefined, amount: bigint, recipients?: DemoBridgeRecipients): DemoBridge | null {

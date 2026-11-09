@@ -329,7 +329,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     const cap = formatUsd(MAINNET_DEMO.txCapUsdMicros);
     const prices = parseMainnetDemoPrices(demoPrices, null) ?? fixedMainnetDemoPrices();
     // `shown`: this page holds the signing chain's address only, so it shows a bridge's recipient; the vault has bound
-    // it to the user's own wallet before this popup opened (D475).
+    // it to the user's own wallet before this popup opened (D476).
     const assessed = assessMainnetDemo(input, now(), prices, 'shown');
     const value = assessed.ok
       ? `This request can move about ${formatUsd(assessed.usdMicros)}, fee included. Hana’s limit is ${cap} per transaction.`
@@ -358,7 +358,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     );
   }
 
-  /** What a Sodax bridge does (D475): the same amount arrives, on the other chain, at this recipient. */
+  /** What a Sodax bridge does (D476): the same amount arrives, on the other chain, at this recipient. */
   function bridgeLine(b: DemoBridge): HTMLElement {
     return d.h('p', { class: 'demo-bridge' }, `Bridge ${b.amount} ${b.symbol} from ${b.fromChain} to ${b.toChain}, 1:1. Recipient on ${b.toChain}: `, d.h('code', { class: 'mono' }, b.recipient));
   }

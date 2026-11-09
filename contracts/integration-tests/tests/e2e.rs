@@ -198,6 +198,36 @@ async fn access_keys_each_pool_runs_only_its_own_methods() -> Result<()> {
     Ok(())
 }
 
+/// `deploy-contract` swaps a relayer key whose permission is wrong in one transaction (D455's note): DeleteKey and AddKey
+/// of the same public key apply in order, so the key is never missing, it comes back with the new permission and works
+/// at once, and its nonce restarts at a multiple of 10^6, which the admin's nonce check reads as a new baseline.
+#[tokio::test]
+async fn access_keys_a_relayer_key_is_swapped_in_one_transaction() -> Result<()> {
+    let env = Env::setup().await?;
+    let signer = env.signer.id();
+    let pk = env.relayer_fc.secret_key().public_key();
+
+    // Narrowed: derive_key is gone, the rest of the session pool's list stays.
+    let narrowed: Vec<&str> = SESSION_RELAYER_METHODS.iter().copied().filter(|m| *m != "derive_key").collect();
+    env.relayer
+        .batch(env.relayer.id())
+        .delete_key(pk.clone())
+        .add_key(pk.clone(), near_workspaces::types::AccessKey::function_call_access(signer, &narrowed, Some(NearToken::from_near(1))))
+        .transact()
+        .await?
+        .into_result()?;
+    assert_function_call_key(&env.worker, env.relayer.id(), &pk, signer, &narrowed).await?;
+    let nonce = env.worker.view_access_key(env.relayer.id(), &pk).await?.nonce;
+    assert_eq!(nonce % 1_000_000, 0, "a re-added key starts at a whole multiple of 10^6, got {nonce}");
+
+    // The swapped key is live straight away, and the permission really changed.
+    let (s, jwt) = env.new_session(APP_A, USER_SUB, &env.scope_a, 0, 600_000).await?;
+    env.create_session(&env.relayer_fc, &s, &jwt).await?.into_result()?;
+    let text = expect_failure(tx(env.relayer_fc.call(signer, "derive_key").args_json(json!({})).gas(PROBE_GAS).transact().await), "");
+    assert!(text.contains("MethodNameMismatch"), "derive_key after the swap: expected an access-key rejection, got {text}");
+    Ok(())
+}
+
 /// Neither pool reaches admin or issuer methods: the access key rejects the transaction before it runs.
 #[tokio::test]
 async fn access_keys_neither_pool_reaches_admin_methods() -> Result<()> {

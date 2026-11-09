@@ -8528,6 +8528,27 @@ Readiness rows 6.4 and 6.6. All decided while building, to confirm. Nothing here
 - Alternatives: (a) a Durable Object per session: an extra object call on every derive, for a cost of ~2.2 Tgas per
   copy. Not recommended. (b) the rate-limiter object's `reserve`, as `/v1/link*` does: an extra call and a storage
   write per relay. (c) D1: writes on the login path.
+- Note (2026-11-09, independent review of `fix/before-mainnet-sweep`): two changes on `fix/before-mainnet-sweep-2`.
+  **Failover.** A pure function of the session key meant a session on a bad key (out of allowance, deleted in a rotation,
+  object unavailable) had no second chance: the vault's resend hit the same key. Now `relay()` retries a claimed relay
+  once at `(keyIndex + 1) % count` with the same claim, for `near_rejected`, `near_unavailable`, `relayer_busy` and
+  `relayer_unavailable` with no `nearTx`. Copies still meet, at the next object, because the next index depends only on
+  the first. All but the last are "this transaction never ran": `near_rejected` is a definite rejection (a failed-over
+  broadcast isn't; it's polled by hash, D435), `relayer_busy` a dropped or nonce-refused one, `near_unavailable` an RPC
+  failure before sending. A thrown object
+  call may have sent, but then the contract's check (session_key_in_use, or the counter) refuses the second transaction,
+  at ~2.2 Tgas; if it isn't refused, the second is the first to land. When a first attempt that may have sent is followed
+  by a definite failure, the client gets the first answer, so it polls instead of resending. A pool of one key doesn't
+  fail over; revocation works through a bad key like any claimed relay. Cost: one extra object call on a failing relay.
+  Limit: a copy reaching a recovered key after the original moved on is relayed again and fails on chain (the old cost).
+  **Routing.** The first four bytes of a client-generated key let a client steer sessions to one index by grinding keys
+  offline against a visible pool size. The index is now HMAC-SHA256 of the session key under the pool's secret
+  (`RELAYER_KEYS`, the JSON value every isolate of a deploy has), with the label `hana-id-relayer-route-v1:<pool>`
+  (`claimKeyIndex`), modulo the pool. Reusing that secret is sound here because it is API-only and always present
+  (the optional `IDENTITY_SUB_KEY`/`USER_ID_KEY`/`VAULT_KEK` are not); HMAC-SHA256 under a distinct label doesn't relate
+  to Ed25519's SHA-512 use of the seeds, and only the index mod N (a few bits) is observable. An upload of a changed
+  `RELAYER_KEYS` reshuffles sessions between objects for a moment, like a change in the number of keys. A client now
+  learns a session's key only after opening it; a session's own uses stay on one key (at most `MAX_USES`).
 
 ### D455. Each relayer pool holds only what an endpoint relays
 - Date 2026-11-09 · Status: decided while building, to confirm · Built on `fix/before-mainnet-sweep`
@@ -8540,6 +8561,15 @@ Readiness rows 6.4 and 6.6. All decided while building, to confirm. Nothing here
   vault's fallback; a mainnet env gets the narrow keys from its first deploy at no cost.
 - Cost: on sandbox-dev, once: the relayer keys are deleted and re-added, a short outage of logins there
   (`docs/operations.md` "Narrowing the relayer keys"). Batch B's state 2 and 3 are still open and are not decided here.
+- Note (2026-11-09, independent review of `fix/before-mainnet-sweep`; `fix/before-mainnet-sweep-2`): the outage is gone.
+  `deploy-contract`'s `relayer-keys` step now swaps each wrong-permission key in place: one transaction per pool on the
+  relayer account, `DeleteKey` then `AddKey` of the same public key, so no key is ever missing and a failed transaction
+  changes nothing (near-sandbox test `access_keys_a_relayer_key_is_swapped_in_one_transaction`). A full-access key in a
+  pool file stays a blocker: the plan never deletes one. The narrowing runbook is now a single `deploy-contract --yes`.
+  A swapped or re-added key restarts at a nonce on a whole multiple of 10^6 (NEAR's AddKey), so the admin's nonce check
+  now takes such a nonce with no ledger row as a new baseline (`rebaselined`), explained and not `nonce_unexplained`: the
+  review's false alert. Residual: a holder of a leaked key could deliberately aim one last transaction at such a nonce to
+  pass this check, at the cost of allowance the watchdog watches (`docs/security.md`, the nonce check).
 
 ### D456. `deploy-contract` names unknown full-access keys and takes only reproducible builds outside dev envs
 - Date 2026-11-09 · Status: decided while building, to confirm · Built on `fix/before-mainnet-sweep`
@@ -8550,6 +8580,11 @@ Readiness rows 6.4 and 6.6. All decided while building, to confirm. Nothing here
   executing an already proposed hash is allowed. A first deploy compares the code hash on chain with the wasm it sent.
 - Why: a forgotten full-access key or a swapped wasm replaces the contract, and with it every user's keys. Warnings in
   dev envs, because sandbox-dev may legitimately hold extra keys.
+- Note (2026-11-09, independent review of `fix/before-mainnet-sweep`; `fix/before-mainnet-sweep-2`): "takes only
+  reproducible builds" overstated what the check was: it only tested that `--wasm` was passed. Outside dev envs a
+  `propose-upgrade` or `deploy` step now also needs the wasm's code hash in `CONTRACT_RELEASES` (`packages/console-core`):
+  named by file, published first. It can't prove the file was built reproducibly (that is the release process, D86), so
+  the blocker now says "a published build".
 
 ## Superseded or amended
 

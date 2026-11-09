@@ -5,6 +5,11 @@
 // - N unchanged since the key's last check: idle, explained;
 // - a relayed row with relayer_nonce = N: explained;
 // - a key's first check when the ledger has never seen it: the baseline, explained (its earlier use predates the ledger);
+// - a nonce on a whole multiple of 10^6 with no relayed row: the key was re-added on chain, and NEAR starts a new key at
+//   (block height - 1) x 10^6 (AddKey, ACCESS_KEY_NONCE_RANGE_MULTIPLIER): a new baseline, explained and counted as
+//   `rebaselined` in the run's summary; it is not a relay by anyone. Only such a nonce is passed, so anything else stays
+//   unexplained. A key's holder could deliberately pick such a nonce for one transaction, which is why it is counted
+//   and documented (docs/security.md, the check), not silent. A key is re-added on purpose only by `deploy-contract`.
 // - otherwise `nonce_unexplained`: a usage write was lost, or something other than the API signed with a relayer key.
 //
 // Each check is one `ops.nonce_checks` row, with the ledger's relayed rows since the last check (shown, not alerted:
@@ -27,10 +32,15 @@ export interface NonceSummary {
   checked: number;
   unexplained: number;
   skipped: number;
+  /** Keys whose nonce was a new key's (a whole multiple of 10^6, no relayed row): see above. */
+  rebaselined: number;
 }
 
+/** NEAR starts a new access key's nonce at a multiple of this (see above). */
+export const NEW_KEY_NONCE_STEP = 1_000_000n;
+
 export async function runNonceCheck(d: NonceDeps): Promise<NonceSummary> {
-  const sum: NonceSummary = { checked: 0, unexplained: 0, skipped: 0 };
+  const sum: NonceSummary = { checked: 0, unexplained: 0, skipped: 0, rebaselined: 0 };
   for (const pk of d.keys) {
     if (!d.budget.take()) {
       sum.skipped++;
@@ -52,7 +62,10 @@ export async function runNonceCheck(d: NonceDeps): Promise<NonceSummary> {
     let explained: boolean;
     if (prev && prev.chainNonce === n) explained = true;
     else if (await d.store.relayedWithNonce(pk, n)) explained = true;
-    else explained = !prev && !(await d.store.hasRelayedRows(pk));
+    else if (n % NEW_KEY_NONCE_STEP === 0n) {
+      explained = true;
+      sum.rebaselined++;
+    } else explained = !prev && !(await d.store.hasRelayedRows(pk));
     const since = await d.store.relayedSince(pk, prev?.checkedAt ?? null, d.now);
     await d.store.recordNonceCheck({ relayerPk: pk, checkedAt: d.now, chainNonce: n, explained, ledgerRelayedSinceLast: since });
     sum.checked++;

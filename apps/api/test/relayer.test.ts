@@ -725,7 +725,7 @@ describe('one relay per signed request, across isolates (D454, security.md (g))'
     const c = { sessionPublicKey, expiresAtMs: 1000, counter: 2 };
     const first = await relay(env, 'session', derive, 'a', c);
     relayed(first);
-    expect(first.keyIndex).toBe(claimKeyIndex(sessionPublicKey, count));
+    expect(first.keyIndex).toBe(await claimKeyIndex('session', env.RELAYER_KEYS, sessionPublicKey, count));
     // The round-robin cursor moves between the two; the claim's key doesn't.
     pickKeyIndex(count);
     refused(await relay(env, 'session', derive, 'b', c));
@@ -735,13 +735,156 @@ describe('one relay per signed request, across isolates (D454, security.md (g))'
     expect(near.sent).toHaveLength(2);
   });
 
-  it('spreads sessions over the keys and names a claim by key, expiry and counter', () => {
-    const seen = new Set(Array.from({ length: 64 }, (_, i) => claimKeyIndex([i, 255 - i, i * 3 % 256, i * 5 % 256], 3)));
+  it('spreads sessions over the keys and names a claim by key, expiry and counter', async () => {
+    const seen = new Set(await Promise.all(Array.from({ length: 64 }, (_, i) => claimKeyIndex('session', 'secret', [i, 255 - i, (i * 3) % 256, (i * 5) % 256], 3))));
     expect(seen).toEqual(new Set([0, 1, 2]));
-    expect(claimKeyIndex([0, 0, 0, 7], 4)).toBe(3);
-    expect(claimKeyIndex([255, 255, 255, 255], 1)).toBe(0);
-    expect(() => claimKeyIndex([1], 0)).toThrow();
+    expect(await claimKeyIndex('session', 'secret', [255, 255, 255, 255], 1)).toBe(0);
+    await expect(claimKeyIndex('session', 'secret', [1], 0)).rejects.toThrow();
     expect(claimId({ sessionPublicKey: [1, 255], expiresAtMs: 5, counter: 2 })).toBe('01ff:5:2');
+  });
+
+  it('routes by a keyed hash: the pool secret and the session key decide the index, never the key’s first bytes', async () => {
+    const spk = Array(32).fill(0).map((_, i) => (i * 11 + 5) % 256);
+    const again = await claimKeyIndex('session', 'one', spk, 1009);
+    expect(await claimKeyIndex('session', 'one', spk, 1009)).toBe(again); // stable for one secret, whichever isolate asks
+    const others = await Promise.all(['two', 'three', 'four', 'five'].map((secret) => claimKeyIndex('session', secret, spk, 1009)));
+    expect(others.some((i) => i !== again)).toBe(true);
+    // The pool is part of the label, so one secret can't tie a session pool's order to another pool's.
+    expect(await claimKeyIndex('owner', 'one', spk, 1009)).not.toBe(again);
+    // With the same first four bytes, the old unkeyed rule always chose the same index.
+    const seen = new Set(await Promise.all(Array.from({ length: 32 }, (_, i) => claimKeyIndex('session', 'one', [1, 2, 3, 4, i], 8))));
+    expect(seen.size).toBeGreaterThan(1);
+  });
+});
+
+describe('a claimed relay fails over to the next key once (D454)', () => {
+  const sessionPublicKey = Array(32).fill(0).map((_, i) => (i * 13 + 1) % 256);
+  const claim = { sessionPublicKey, expiresAtMs: 1000, counter: 2 };
+  const derive = { method: 'derive_key', args: {} };
+  const ok: RelayResult = { ok: true, result: { big_y: 'y', big_c: 'c' }, nearTx: 'tx-b', relayerPk: 'pk-b', relayerNonce: '7' };
+  const failed = (code: string, status: number, extra: Record<string, unknown> = {}): RelayResult => ({ ok: false, status, code, error: code, ...extra });
+
+  /** `relay()` against a scripted pool: each key index's object answers or throws from `script` (default `ok`). */
+  function scripted(script: Record<number, () => RelayResult>, keysJson: string = env.RELAYER_KEYS) {
+    const calls: { index: number; claim?: string }[] = [];
+    const ns = {
+      idFromName: (name: string) => name,
+      get: (name: string) => ({
+        relay: (_pool: Pool, index: number, _call: unknown, _requestId?: string, c?: string) => {
+          expect(name).toBe(relayerKeyName('session', index));
+          calls.push({ index, claim: c });
+          return Promise.resolve().then(() => (script[index] ?? (() => ok))());
+        },
+      }),
+    };
+    return { calls, e: { ...env, RELAYER_KEYS: keysJson, RELAYER_KEY: ns as unknown as typeof env.RELAYER_KEY } };
+  }
+
+  const primaryIndex = () => claimKeyIndex('session', env.RELAYER_KEYS, sessionPublicKey, relayerKeyCount(env));
+
+  for (const [name, bad] of [
+    ['near_rejected', failed('near_rejected', 502, { nearTx: 'tx-a' })],
+    ['near_unavailable', failed('near_unavailable', 502)],
+    ['relayer_busy', failed('relayer_busy', 503, { nearTx: 'tx-a' })],
+    ['relayer_unavailable (no transaction)', failed('relayer_unavailable', 503)],
+  ] as const) {
+    it(`${name}: tried once more on the next index with the same claim, and that answer returned`, async () => {
+      const first = await primaryIndex();
+      const count = relayerKeyCount(env);
+      const { calls, e } = scripted({ [first]: () => bad });
+      const out = await relay(e, 'session', derive, 'r', claim);
+      expect(out).toMatchObject({ ok: true, nearTx: 'tx-b', keyIndex: (first + 1) % count });
+      expect(calls.map((c) => c.index)).toEqual([first, (first + 1) % count]);
+      expect(calls[0]!.claim).toBe(claimId(claim));
+      expect(calls[1]!.claim).toBe(claimId(claim));
+    });
+  }
+
+  it('a thrown object call (the object reset or was unavailable) is covered too', async () => {
+    const first = await primaryIndex();
+    const { calls, e } = scripted({
+      [first]: () => {
+        throw new Error('Durable Object reset');
+      },
+    });
+    const out = await relay(e, 'session', derive, 'r', claim);
+    expect(out).toMatchObject({ ok: true });
+    expect(calls).toHaveLength(2);
+  });
+
+  it('every copy sees the same next key: a retried copy is refused by the object it fails over to', async () => {
+    const first = await primaryIndex();
+    const count = relayerKeyCount(env);
+    const { calls, e } = scripted({ [first]: () => failed('near_rejected', 502, { nearTx: 'tx-a' }), [(first + 1) % count]: () => failed(ALREADY_RELAYED, 409) });
+    const out = await relay(e, 'session', derive, 'r2', claim);
+    expect(out).toMatchObject({ ok: false, code: ALREADY_RELAYED, keyIndex: (first + 1) % count });
+    expect(calls.map((c) => c.index)).toEqual([first, (first + 1) % count]);
+  });
+
+  for (const [name, final] of [
+    ['contract_rejected (it ran and panicked)', failed('contract_rejected', 422, { nearTx: 'tx-a' })],
+    ['timeout (it may still land)', failed('timeout', 504, { nearTx: 'tx-a' })],
+    ['near_error (it landed or may have)', failed('near_error', 502, { nearTx: 'tx-a' })],
+    ['already_relayed (a copy already went through)', failed(ALREADY_RELAYED, 409)],
+    ['relayer_unavailable with a nearTx (a named transaction)', failed('relayer_unavailable', 503, { nearTx: 'tx-a' })],
+  ] as const) {
+    it(`${name}: not retried, one object called`, async () => {
+      const first = await primaryIndex();
+      const { calls, e } = scripted({ [first]: () => final });
+      const out = await relay(e, 'session', derive, 'r', claim);
+      expect(out).toMatchObject({ ok: false, code: final.ok ? '' : final.code });
+      expect(calls.map((c) => c.index)).toEqual([first]);
+    });
+  }
+
+  it('fails over once only; two definite failures answer with the second', async () => {
+    const first = await primaryIndex();
+    const count = relayerKeyCount(env);
+    const { calls, e } = scripted({ [first]: () => failed('near_rejected', 502, { nearTx: 'tx-a' }), [(first + 1) % count]: () => failed('near_unavailable', 502) });
+    const out = await relay(e, 'session', derive, 'r', claim);
+    expect(out).toMatchObject({ ok: false, code: 'near_unavailable', keyIndex: (first + 1) % count });
+    expect(calls).toHaveLength(2);
+  });
+
+  it('a first call that may have left the object stays the answer over a second that did not execute', async () => {
+    const first = await primaryIndex();
+    const count = relayerKeyCount(env);
+    const { calls, e } = scripted({
+      [first]: () => {
+        throw new Error('reset');
+      },
+      [(first + 1) % count]: () => failed('near_rejected', 502, { nearTx: 'tx-b' }),
+    });
+    const out = await relay(e, 'session', derive, 'r', claim);
+    // The vault polls or re-syncs on this code; near_rejected (NOT_EXECUTED) would tell it the request surely didn't run.
+    expect(out).toMatchObject({ ok: false, code: 'relayer_unavailable', keyIndex: first });
+    expect(calls).toHaveLength(2);
+  });
+
+  it('a pool of one key has nowhere to fail over to', async () => {
+    const one = JSON.stringify([keys[0]]);
+    const { calls, e } = scripted({ 0: () => failed('near_rejected', 502, { nearTx: 'tx-a' }) }, one);
+    expect(await relay(e, 'session', derive, 'r', claim)).toMatchObject({ ok: false, code: 'near_rejected' });
+    expect(calls).toHaveLength(1);
+  });
+
+  it('a relay without a claim is not failed over (a resend picks another key round-robin)', async () => {
+    const { calls, e } = scripted({ 0: () => failed('near_rejected', 502), 1: () => failed('near_rejected', 502), 2: () => failed('near_rejected', 502) });
+    expect(await relay(e, 'session', derive, 'r')).toMatchObject({ ok: false, code: 'near_rejected' });
+    expect(calls).toHaveLength(1);
+  });
+
+  it('through the real objects: a key that lost its allowance, a claimed derive lands on the next key', async () => {
+    const near = new NearMock();
+    near.install();
+    const first = await primaryIndex();
+    const count = relayerKeyCount(env);
+    const badKey = publicKeyOf(first);
+    const rejected = { error: { name: 'HANDLER_ERROR', cause: { name: 'INVALID_TRANSACTION', info: { InvalidAccessKeyError: 'NotEnoughAllowance' } }, data: { TxExecutionError: { InvalidTxError: 'NotEnoughAllowance' } }, message: 'InvalidTxError' } };
+    near.onSendTx = (tx) => (tx.publicKey === badKey ? rejected : undefined);
+    const out = await relay(env, 'session', derive, 'r', { ...claim, sessionPublicKey });
+    expect(out).toMatchObject({ ok: true, keyIndex: (first + 1) % count });
+    expect(near.sent.map((t) => t.publicKey)).toEqual([publicKeyOf((first + 1) % count)]);
   });
 });
 

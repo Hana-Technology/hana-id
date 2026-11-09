@@ -244,8 +244,10 @@ describe('deploy-contract never prints secrets', () => {
   });
 });
 
-describe('deploy-contract with relayer keys left from a previous signer', () => {
-  it('blocks instead of sending an AddKey that would fail with AddKeyAlreadyExists', async () => {
+describe('deploy-contract replaces a relayer key whose permission is wrong', () => {
+  const sessionMethods = 'create_session, create_session_and_derive, derive_key, revoke_session, link_identity, cancel_link, unlink_identity';
+
+  it('swaps it in one transaction (DeleteKey then AddKey), with the keys from the file', async () => {
     const old = KeyPair.fromRandom('ed25519');
     writeRelayerKeys(m.name, [old], secretsRoot);
     const extraKeys = {
@@ -256,44 +258,40 @@ describe('deploy-contract with relayer keys left from a previous signer', () => 
         },
       ],
     };
-    const r = await deploy([m.name, '--yes'], { config: initialised, codeHash: 'abc', extraKeys });
-    expect(r.code).toBe(1);
-    expect(r.out).toContain('Cannot deploy');
-    expect(r.out).toContain(`${old.getPublicKey().toString()} is a function-call key for old-signer.testnet (ANY method), not for ${m.signer}`);
+    const r = await deploy([m.name, '--yes', '--relayer-keys', '1', '--owner-relayer-keys', '1'], { config: initialised, codeHash: 'abc', extraKeys });
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(`${old.getPublicKey().toString()} on ${m.relayer} is a function-call key for old-signer.testnet (ANY method), not for ${m.signer}: replaced`);
+    expect(r.out).toContain('replace 1 key(s) (DeleteKey and AddKey in one transaction, no gap)');
+    expect(r.out).toContain(`replaced ${old.getPublicKey().toString()}`);
     expect(r.out).not.toContain(old.toString());
-    expect(r.sent).toEqual([]);
-  });
-});
-
-describe('deploy-contract compares on-chain key permissions', () => {
-  it('blocks a batch A relayer key (single pool with owner methods) instead of passing it as in place', async () => {
-    const old = KeyPair.fromRandom('ed25519');
-    writeRelayerKeys(m.name, [old], secretsRoot);
-    const batchA = ['create_session', 'derive_key', 'revoke_session', 'prune_sessions', 'register_scope', 'propose_change', 'cancel_change', 'remove_client', 'execute_change'];
-    const extraKeys = {
-      [m.relayer]: [{ public_key: old.getPublicKey().toString(), access_key: { nonce: 5, permission: { FunctionCall: { allowance: null, receiver_id: m.signer, method_names: batchA } } } }],
-    };
-    const r = await deploy([m.name, '--yes'], { config: initialised, codeHash: 'abc', extraKeys });
-    expect(r.code).toBe(1);
-    expect(r.out).toContain('with the wrong permission for the session pool');
-    expect(r.out).toContain(`has methods ${batchA.join(', ')}`);
-    expect(r.out).not.toContain(old.toString());
-    expect(r.sent).toEqual([]);
+    const swap = r.sent.find((t) => t.receiver === m.relayer && t.actions.some((a) => a.enum === 'deleteKey'));
+    expect(swap?.actions.map((a) => a.enum)).toEqual(['deleteKey', 'addKey']);
+    expect(swap?.actions[0]?.deleteKey?.publicKey.toString()).toBe(old.getPublicKey().toString());
+    expect(swap?.actions[1]?.addKey?.publicKey.toString()).toBe(old.getPublicKey().toString());
+    expect(swap?.actions[1]?.addKey?.accessKey.permission.functionCall?.methodNames.join(', ')).toBe(sessionMethods);
   });
 
-  it('blocks a session key with an earlier allowlist (A.2, no create_session_and_derive) and says how to rotate it', async () => {
-    // Access-key permissions can't be edited: each allowlist change (docs/batch-b-spec.md "Relayer allowlists") is a
-    // delete and re-add of every session-pool key.
+  it('replaces a key from an earlier allowlist in place, and states the new list', async () => {
     const old = KeyPair.fromRandom('ed25519');
     writeRelayerKeys(m.name, [old], secretsRoot);
     const a2 = ['create_session', 'derive_key', 'revoke_session', 'prune_sessions'];
     const extraKeys = {
       [m.relayer]: [{ public_key: old.getPublicKey().toString(), access_key: { nonce: 5, permission: { FunctionCall: { allowance: String(NEAR), receiver_id: m.signer, method_names: a2 } } } }],
     };
+    const r = await deploy([m.name, '--yes', '--relayer-keys', '1', '--owner-relayer-keys', '1'], { config: initialised, codeHash: 'abc', extraKeys });
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(`has methods ${a2.join(', ')}; expected ${sessionMethods}`);
+    expect(r.out).not.toContain(old.toString());
+    expect(r.sent.filter((t) => t.receiver === m.relayer).some((t) => t.actions.map((a) => a.enum).join() === 'deleteKey,addKey')).toBe(true);
+  });
+
+  it('still refuses a full-access key in a pool file: nothing is sent', async () => {
+    const old = KeyPair.fromRandom('ed25519');
+    writeRelayerKeys(m.name, [old], secretsRoot);
+    const extraKeys = { [m.relayer]: [{ public_key: old.getPublicKey().toString(), access_key: { nonce: 5, permission: 'FullAccess' as const } }] };
     const r = await deploy([m.name, '--yes'], { config: initialised, codeHash: 'abc', extraKeys });
     expect(r.code).toBe(1);
     expect(r.out).toContain('with the wrong permission for the session pool');
-    expect(r.out).toContain(`has methods ${a2.join(', ')}; expected create_session, create_session_and_derive, derive_key, revoke_session, link_identity, cancel_link, unlink_identity`);
     expect(r.out).toContain(`near account delete-keys ${m.relayer} public-keys ${old.getPublicKey().toString()}`);
     expect(r.out).not.toContain(old.toString());
     expect(r.sent).toEqual([]);

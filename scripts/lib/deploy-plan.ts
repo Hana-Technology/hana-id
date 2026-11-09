@@ -127,6 +127,8 @@ export interface DeployOptions {
   skipBuild: boolean;
   /** The wasm was named with --wasm (not whatever is in target/). Outside dev envs a new code hash needs it (D456). */
   wasmGiven?: boolean;
+  /** Code hashes published in CONTRACT_RELEASES (packages/console-core): outside dev envs a --wasm file must be one (D456's note). */
+  publishedCodeHashes?: readonly string[];
   /** Owner transfer to the council DAO: propose_owner(DAO), then (once due) the DAO's accept_owner. */
   transferOwner: boolean;
   /** Council options for owner steps (--member, --approve-with). */
@@ -151,7 +153,7 @@ export interface NewArgs {
 export type DeployStep =
   | { kind: 'build' }
   | { kind: 'deploy'; init: NewArgs }
-  | { kind: 'relayer-keys'; pool: KeyPool; reuse: string[]; generate: number; methods: string[]; allowanceYocto: bigint }
+  | { kind: 'relayer-keys'; pool: KeyPool; reuse: string[]; replace: string[]; generate: number; methods: string[]; allowanceYocto: bigint }
   /** add_updater_key: the key in keys-updater.json (`reuse`), or a new one generated into it. */
   | { kind: 'add-updater-key'; reuse: string | null }
   /** Deletes a signer key the contract didn't install (the v1 updater key): with the signer's full-access key, or the owner's delete_updater_key. */
@@ -485,23 +487,28 @@ export function buildDeployPlan(m: Manifest, o: DeployObserved, opts: DeployOpti
     const live = status.filter(([, st]) => st.kind === 'ok').map(([k]) => k);
     const reuse = status.filter(([, st]) => st.kind === 'absent').map(([k]) => k);
     const bad = status.flatMap(([k, st]) => (st.kind === 'mismatch' ? [[k, st.reason] as const] : []));
-    // A key already on the relayer with another permission (a previous signer, the batch A single-pool method list,
-    // any-method) can't be re-added (AddKeyAlreadyExists) and must not be used as it is: stop and say how to fix it.
-    if (bad.length) {
+    // A key on the relayer with another permission (a previous signer, an older method list, any-method, too large an
+    // allowance) can't be edited: it is swapped in this step's one transaction (DeleteKey, AddKey, D455's note), so no
+    // key is missing in between. A full-access key is never deleted for you: that one stays a blocker.
+    const isFull = (k: string) => o.relayerAccessKeys.find((e) => e.public_key === k)?.access_key.permission === 'FullAccess';
+    const replace = bad.filter(([k]) => !isFull(k)).map(([k]) => k);
+    const stuck = bad.filter(([k]) => isFull(k));
+    if (stuck.length) {
       blockers.push(
-        `${file} holds ${bad.length} key(s) that are on ${m.relayer} with the wrong permission for the ${pool} pool ` +
+        `${file} holds ${stuck.length} key(s) that are on ${m.relayer} with the wrong permission for the ${pool} pool ` +
           `(receiver ${m.signer}, methods ${methods.join(', ')}, allowance at most ${formatNear(opts.pools[pool].allowanceYocto)}):\n` +
-          bad.map(([k, why]) => `      ${k} ${why}`).join('\n') +
+          stuck.map(([k, why]) => `      ${k} ${why}`).join('\n') +
           `\n    Delete them from ${m.relayer} and re-run, which re-adds them with the right permission:\n` +
-          bad.map(([k]) => `      ${deleteKeyCmd(m.relayer, k)}`).join('\n') +
+          stuck.map(([k]) => `      ${deleteKeyCmd(m.relayer, k)}`).join('\n') +
           `\n    Delete them even if you instead move ${file} aside (new keys are generated; re-upload the API secret): ` +
           `left on chain, the old keys keep their permission and allowance.`,
       );
     }
     const generate = Math.max(0, opts.pools[pool].count - fileKeys.length);
-    if (reuse.length || generate) {
-      steps.push({ kind: 'relayer-keys', pool, reuse, generate, methods: [...methods], allowanceYocto: opts.pools[pool].allowanceYocto });
-    } else if (!bad.length) {
+    if (reuse.length || replace.length || generate) {
+      steps.push({ kind: 'relayer-keys', pool, reuse, replace, generate, methods: [...methods], allowanceYocto: opts.pools[pool].allowanceYocto });
+      for (const [k, why] of bad.filter(([key]) => !isFull(key))) warnings.push(`${k} on ${m.relayer} ${why}: replaced in the ${pool}-pool key step (one transaction, no gap).`);
+    } else if (!stuck.length) {
       done.push(`${live.length} ${pool}-pool relayer key(s) in place.`);
     }
   }
@@ -707,10 +714,14 @@ export function buildDeployPlan(m: Manifest, o: DeployObserved, opts: DeployOpti
     steps.push({ kind: 'register-global', owners: [{ Near: { account_id: m.owner } }], clients, allowShared: false });
   }
 
-  // Outside dev envs new code comes only from a reproducible build named with --wasm (D86, D456): never this script's
-  // non-reproducible build, nor whatever is in target/. Executing a proposed upgrade needs neither: its hash is checked.
-  if (!isDevEnv(m.name) && (steps.some((s) => s.kind === 'build') || (steps.some((s) => s.kind === 'propose-upgrade') && !opts.wasmGiven))) {
-    blockers.push(`${m.name} takes only a reproducible build: cd contracts/hana-signer && cargo near build reproducible-wasm, publish its hash, then pass --wasm <that file> (D86).`);
+  // Outside dev envs new code comes only from a file named with --wasm whose hash was published first (D86, D456): never
+  // this script's non-reproducible build, nor whatever is in target/. Executing a proposed upgrade needs neither: its
+  // hash is checked. "Published" means listed in CONTRACT_RELEASES: this can't prove the file was built reproducibly.
+  const proposing = steps.some((s) => s.kind === 'propose-upgrade' || s.kind === 'deploy');
+  if (!isDevEnv(m.name) && (steps.some((s) => s.kind === 'build') || (proposing && !opts.wasmGiven))) {
+    blockers.push(`${m.name} takes new code only from a published build: cd contracts/hana-signer && cargo near build reproducible-wasm, add its code hash to CONTRACT_RELEASES (D86), then pass --wasm <that file>.`);
+  } else if (!isDevEnv(m.name) && proposing && !(opts.publishedCodeHashes ?? []).includes(o.wasmCodeHash ?? '')) {
+    blockers.push(`${m.name} takes new code only from a published build: code hash ${o.wasmCodeHash ?? '(unknown)'} of --wasm is not in CONTRACT_RELEASES (packages/console-core/src/governance.ts). Add the release first (D86).`);
   }
 
   // The owner transfer goes last: everything else is configured by the current owner first.
@@ -761,9 +772,10 @@ export function describeStep(m: Manifest, s: DeployStep, ownerTx: OwnerTxOptions
       return `Deploy wasm to ${m.signer} and call new(${JSON.stringify(s.init)}) [signed by ${m.signer}].`;
     case 'relayer-keys':
       return (
-        `Add ${s.reuse.length + s.generate} ${s.pool}-pool function-call key(s) to ${m.relayer} (receiver ${m.signer}, allowance ${near(s.allowanceYocto)} each, methods ${s.methods.join(', ')})` +
+        `Add ${s.reuse.length + s.replace.length + s.generate} ${s.pool}-pool function-call key(s) to ${m.relayer} (receiver ${m.signer}, allowance ${near(s.allowanceYocto)} each, methods ${s.methods.join(', ')})` +
         `${s.generate ? `; generate ${s.generate} new key(s) into .secrets/${m.name}/${poolFileName(s.pool)}` : ''}` +
-        `${s.reuse.length ? `; re-add ${s.reuse.length} key(s) already in .secrets` : ''} [signed by ${m.relayer}].`
+        `${s.reuse.length ? `; re-add ${s.reuse.length} key(s) already in .secrets` : ''}` +
+        `${s.replace.length ? `; replace ${s.replace.length} key(s) (DeleteKey and AddKey in one transaction, no gap)` : ''} [signed by ${m.relayer}].`
       );
     case 'add-updater-key':
       return `Install the keys-updater key (${UPDATER_METHODS.join(', ')}, 1 NEAR)${s.reuse ? ' from .secrets' : `, generated into .secrets/${m.name}/keys-updater.json`}: ${describeOwnerCall(m, owner!, ownerTx)}.`;

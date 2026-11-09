@@ -151,8 +151,8 @@ describe('buildDeployPlan', () => {
         updater_keys: [],
       },
     });
-    expect(p.steps[2]).toEqual({ kind: 'relayer-keys', pool: 'session', generate: 3, reuse: [], methods: SESSION, allowanceYocto: 2n * NEAR });
-    expect(p.steps[3]).toEqual({ kind: 'relayer-keys', pool: 'owner', generate: 1, reuse: [], methods: OWNER, allowanceYocto: NEAR / 2n });
+    expect(p.steps[2]).toEqual({ kind: 'relayer-keys', pool: 'session', generate: 3, reuse: [], replace: [], methods: SESSION, allowanceYocto: 2n * NEAR });
+    expect(p.steps[3]).toEqual({ kind: 'relayer-keys', pool: 'owner', generate: 1, reuse: [], replace: [], methods: OWNER, allowanceYocto: NEAR / 2n });
     // The updater key is installed by the contract (add_updater_key, owner), never added by hand.
     expect(p.steps[4]).toEqual({ kind: 'add-updater-key', reuse: null });
     expect(p.steps[5]).toEqual({ kind: 'set-issuer', provider: 'google', iss_values: ['https://accounts.google.com', 'accounts.google.com'] });
@@ -228,7 +228,7 @@ describe('buildDeployPlan', () => {
   });
 
   describe('access key permissions', () => {
-    it('blocks on file keys with the wrong receiver, wrong methods, ANY method, or full access', () => {
+    it('swaps wrong-permission file keys in the key step (wrong receiver, methods, ANY method); a full-access key stays a blocker', () => {
       const p = buildDeployPlan(
         m,
         deployed({
@@ -245,30 +245,34 @@ describe('buildDeployPlan', () => {
         opts,
       );
       const text = p.blockers.join('\n');
-      expect(text).toContain(`relayer-keys.json holds 2 key(s) that are on ${m.relayer} with the wrong permission for the session pool`);
-      expect(text).toContain(`ed25519:s2 is a function-call key for old-signer.testnet (methods ${SESSION.join(', ')}), not for ${m.signer}`);
-      expect(text).toContain(`ed25519:s3 has methods ${BATCH_A.join(', ')}; expected ${SESSION.join(', ')}`);
-      expect(text).toContain(`owner-relayer-keys.json holds 2 key(s)`);
-      expect(text).toContain(`ed25519:o1 may call ANY method on ${m.signer} (empty method list)`);
+      expect(text).toContain('owner-relayer-keys.json holds 1 key(s)');
       expect(text).toContain('ed25519:o2 is a full-access key');
+      expect(text).toContain(`near account delete-keys ${m.relayer} public-keys ed25519:o2 `);
       expect(text).not.toContain('ed25519:9'); // not in a file: not ours to mention
-      expect(text).toContain(`near account delete-keys ${m.relayer}`);
-      expect(text).not.toContain('ed25519:s1 ');
-      // Only the genuinely absent key would be re-added; no pool counts as "in place".
-      expect(pool(p.steps, 'session')).toMatchObject({ reuse: ['ed25519:s4'], generate: 0 });
-      expect(p.done.join()).not.toContain('owner-pool relayer key(s) in place');
+      expect(text).not.toContain('ed25519:s2');
+      expect(text).not.toContain('ed25519:s3');
+      const swapped = p.warnings.join('\n');
+      expect(swapped).toContain(`ed25519:s2 on ${m.relayer} is a function-call key for old-signer.testnet (methods ${SESSION.join(', ')}), not for ${m.signer}: replaced`);
+      expect(swapped).toContain(`ed25519:s3 on ${m.relayer} has methods ${BATCH_A.join(', ')}; expected ${SESSION.join(', ')}: replaced`);
+      expect(swapped).toContain(`ed25519:o1 on ${m.relayer} may call ANY method on ${m.signer} (empty method list): replaced`);
+      // The absent key is re-added beside the two swapped ones; the owner pool swaps o1 and blocks on o2.
+      expect(pool(p.steps, 'session')).toMatchObject({ reuse: ['ed25519:s4'], replace: ['ed25519:s2', 'ed25519:s3'], generate: 0 });
+      expect(pool(p.steps, 'owner')).toMatchObject({ reuse: [], replace: ['ed25519:o1'], generate: 0 });
+      expect(p.done.join()).not.toContain('pool relayer key(s) in place');
     });
 
-    it('email login batch 6: session keys with the batch B list (no link methods) are a blocker: delete, then re-run to re-add them', () => {
+    it('the key step names the swap, and says it costs no gap', () => {
+      const text = describeStep(m, { kind: 'relayer-keys', pool: 'session', reuse: [], replace: ['ed25519:a', 'ed25519:b'], generate: 1, methods: SESSION, allowanceYocto: 2n * NEAR });
+      expect(text).toContain('Add 3 session-pool');
+      expect(text).toContain('replace 2 key(s) (DeleteKey and AddKey in one transaction, no gap)');
+    });
+
+    it('an allowlist change (batch 6) swaps the session keys in place: one plan, no delete commands to run first', () => {
       const batchB = SESSION.filter((x) => !['link_identity', 'cancel_link', 'unlink_identity'].includes(x));
       const p = buildDeployPlan(m, deployed({ relayerAccessKeys: [fc('ed25519:s1', m.signer, batchB), fc('ed25519:s2', m.signer, batchB)], poolKeysInFile: { session: ['ed25519:s1', 'ed25519:s2'], owner: [] } }), opts);
-      const text = p.blockers.join('\n');
-      expect(text).toContain('with the wrong permission for the session pool');
-      expect(text).toContain(`has methods ${batchB.join(', ')}; expected ${SESSION.join(', ')}`);
-      expect(text).toContain(`near account delete-keys ${m.relayer} public-keys ed25519:s1`);
-      // Deleted, they are re-added from the file with the new list.
-      const after = buildDeployPlan(m, deployed({ relayerAccessKeys: [], poolKeysInFile: { session: ['ed25519:s1', 'ed25519:s2'], owner: [] } }), opts);
-      expect(pool(after.steps, 'session')).toMatchObject({ reuse: ['ed25519:s1', 'ed25519:s2'], methods: SESSION });
+      expect(p.blockers).toEqual([]);
+      expect(p.warnings.join('\n')).toContain(`ed25519:s1 on ${m.relayer} has methods ${batchB.join(', ')}; expected ${SESSION.join(', ')}: replaced`);
+      expect(pool(p.steps, 'session')).toMatchObject({ reuse: [], replace: ['ed25519:s1', 'ed25519:s2'], methods: SESSION });
     });
 
     it('blocks a key listed in both pool files', () => {
@@ -353,12 +357,12 @@ describe('buildDeployPlan', () => {
         }),
         opts,
       );
-      const text = p.blockers.join('\n');
-      expect(text).toContain('owner-relayer-keys.json holds 1 key(s)');
-      expect(text).toContain('ed25519:o1 has an unlimited allowance');
-      expect(text).toContain('relayer-keys.json holds 1 key(s)');
-      expect(text).toContain('ed25519:s3 has an allowance of');
-      expect(text).toContain(`near account delete-keys ${m.relayer} public-keys ed25519:o1 `);
+      expect(p.blockers).toEqual([]);
+      const text = p.warnings.join('\n');
+      expect(text).toContain('ed25519:o1 on ' + m.relayer + ' has an unlimited allowance');
+      expect(text).toContain('ed25519:s3 on ' + m.relayer + ' has an allowance of');
+      expect(pool(p.steps, 'session')).toMatchObject({ replace: ['ed25519:s3'] });
+      expect(pool(p.steps, 'owner')).toMatchObject({ replace: ['ed25519:o1'] });
       expect(p.done.join()).not.toContain('owner-pool relayer key(s) in place');
       expect(p.done.join()).not.toContain('session-pool relayer key(s) in place');
     });
@@ -381,7 +385,7 @@ describe('buildDeployPlan', () => {
     });
 
     it('the move-aside advice says to delete the old keys too', () => {
-      const p = buildDeployPlan(m, deployed({ relayerAccessKeys: [full('ed25519:R'), fc('ed25519:s1', m.signer, BATCH_A), fc('ed25519:s2', m.signer, SESSION), fc('ed25519:s3', m.signer, SESSION), fc('ed25519:o1', m.signer, OWNER)] }), opts);
+      const p = buildDeployPlan(m, deployed({ relayerAccessKeys: [full('ed25519:R'), full('ed25519:s1'), fc('ed25519:s2', m.signer, SESSION), fc('ed25519:s3', m.signer, SESSION), fc('ed25519:o1', m.signer, OWNER)] }), opts);
       const text = p.blockers.join('\n');
       expect(text).toContain(`near account delete-keys ${m.relayer} public-keys ed25519:s1 `);
       expect(text).toContain('Delete them even if you instead move');
@@ -551,10 +555,10 @@ describe('buildDeployPlan', () => {
     });
   });
 
-  describe('new code outside dev envs comes only from a reproducible build (OPER-7, D86, D456)', () => {
+  describe('new code outside dev envs comes only from a published build named with --wasm (OPER-7, D86, D456)', () => {
     const staging = { ...m, ...PROD_DELAYS, name: 'staging', allowSignerFullAccessKey: undefined };
     const noFull = { signerAccessKeys: [fc('ed25519:U', m.signer, UPDATER)] };
-    const refused = 'takes only a reproducible build';
+    const refused = 'takes new code only from a published build';
 
     it('refuses an upgrade that would build here, or take whatever is in target/', () => {
       expect(buildDeployPlan(staging, deployed(noFull), { ...opts, upgrade: true, skipBuild: false }).blockers.join('\n')).toContain(refused);
@@ -563,9 +567,13 @@ describe('buildDeployPlan', () => {
       expect(lastBuild.blockers.join('\n')).toContain(refused);
     });
 
-    it('takes a build named with --wasm, and executes a proposed hash without one', () => {
-      const named = buildDeployPlan(staging, deployed({ ...noFull, wasmCodeHash: 'new', wasmBytes: 1000 }), { ...opts, upgrade: true, skipBuild: true, wasmGiven: true });
+    it('takes a build named with --wasm only when its hash is in CONTRACT_RELEASES, and executes a proposed hash without one', () => {
+      const pinned = { ...opts, upgrade: true, skipBuild: true, wasmGiven: true };
+      const unpublished = buildDeployPlan(staging, deployed({ ...noFull, wasmCodeHash: 'new', wasmBytes: 1000 }), { ...pinned, publishedCodeHashes: ['other'] });
+      expect(unpublished.blockers.join('\n')).toContain('code hash new of --wasm is not in CONTRACT_RELEASES');
+      const named = buildDeployPlan(staging, deployed({ ...noFull, wasmCodeHash: 'new', wasmBytes: 1000 }), { ...pinned, publishedCodeHashes: ['new'] });
       expect(named.blockers.join('\n')).not.toContain(refused);
+      expect(named.steps.map((s) => s.kind)).toContain('propose-upgrade');
       const gov = { ...govOk, pending_upgrade: { code_hash: 'new', proposed_at_ms: 0, executable_at_ms: NOW - CLOCK_MARGIN_MS - 1 } };
       const execute = buildDeployPlan(staging, deployed({ ...noFull, governance: gov, wasmCodeHash: 'new', wasmBytes: 1000 }), { ...opts, upgrade: true, skipBuild: true });
       expect(execute.steps.map((s) => s.kind)).toContain('execute-upgrade');

@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { CONTRACT_RELEASES } from '@hana-id/console-core';
 import { type Manifest, loadEnv, manifestPath, repoRoot } from '@hana-id/env';
 import { type KeyPair, PublicKey } from '@near-js/crypto';
 import { actionCreators } from '@near-js/transactions';
@@ -313,10 +314,13 @@ async function execute(c: Ctx, step: DeployStep, creds: Partial<Record<Role, Loa
       const fresh: KeyPair[] = Array.from({ length: step.generate }, () => generateKey());
       // Save before adding on chain, so a key that lands on chain is never lost.
       if (fresh.length) writePoolKeys(m.name, step.pool, [...existing, ...fresh], c.secretsRoot);
-      const toAdd = [...existing.filter((k) => step.reuse.includes(k.getPublicKey().toString())), ...fresh];
+      const toAdd = [...existing.filter((k) => step.reuse.includes(k.getPublicKey().toString()) || step.replace.includes(k.getPublicKey().toString())), ...fresh];
       const access = actionCreators.functionCallAccessKey(m.signer, step.methods, step.allowanceYocto);
-      await send(m.relayer, toAdd.map((k) => actionCreators.addKey(k.getPublicKey(), access)));
-      for (const k of toAdd) log(`    added ${k.getPublicKey().toString()}`);
+      // One transaction: a replaced key is deleted and added back with the right permission atomically (D455's note), so
+      // the pool never has a gap, and a failed transaction changes nothing.
+      await send(m.relayer, [...step.replace.map((pk) => actionCreators.deleteKey(PublicKey.fromString(pk))), ...toAdd.map((k) => actionCreators.addKey(k.getPublicKey(), access))]);
+      for (const pk of step.replace) log(`    replaced ${pk} (nonce restarts on chain: one relay_retry per replaced key is expected)`);
+      for (const k of toAdd.filter((key) => !step.replace.includes(key.getPublicKey().toString()))) log(`    added ${k.getPublicKey().toString()}`);
       return 'done';
     }
     case 'add-updater-key': {
@@ -474,6 +478,7 @@ export async function deployMain(argv: readonly string[], deps: DeployDeps = def
     upgrade: args.flag('upgrade'),
     skipBuild: args.flag('skip-build') || !!wasmArg,
     wasmGiven: !!wasmArg,
+    publishedCodeHashes: CONTRACT_RELEASES.map((r) => r.codeHash),
     transferOwner: args.flag('transfer-owner'),
     ownerTx,
     sputnikCodeHash: deps.sputnikCodeHash ?? readPin().code_hash,

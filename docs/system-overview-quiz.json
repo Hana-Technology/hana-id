@@ -100,12 +100,12 @@
     "question": "What is the honest state of Hana Home for real users today?",
     "options": [
       "Live and linked from every partner app",
-      "Server side and exit client live on testnet; the page is merged but not linked anywhere, and no real Home login has run",
+      "Live on testnet and tried once by one Google account, including a real export; nothing links to it, so users reach it only by typing its address",
       "Designed only; nothing is built",
       "Live on mainnet for Sodax users"
     ],
     "answer": 1,
-    "explanation": "Batches H1 to H6 (the identity, app list, derive, consents and the exit client) are live on sandbox-dev. The page and Home export were merged into develop on 10 November, while the docs still record them as undeployed. Devices (H9) and email sign-in for Home (H10) sit on unmerged branches, and the page stays unlinked until the last batch."
+    "explanation": "Batches H1 to H8 and H11 (the server side, the exit client, the Home page, export from Home and Home billing) were deployed to sandbox-dev on 10 November. That day the founder signed in with Google, saw the same addresses as in the partner app, and did one real export that matched the app's own export. An email user's Home sign-in and the exit route haven't been tried live: H9 and H10 are built and reviewed but still being merged, and H12, which links Home from the consent and approval screens, hasn't started."
   },
   {
     "topic": "What Hana can do",
@@ -141,7 +141,7 @@
       "Only SendGrid"
     ],
     "answer": 1,
-    "explanation": "The on-chain signer policy requires one signature, from a key held as a Worker secret on testnet. Whoever can make that key sign can mint a token for any email user. Installing a new email key is governed and pinned by the watchdog, but use of the real key isn't bounded on chain; AWS KMS and a second co-signer are planned, not live."
+    "explanation": "The on-chain signer policy requires one signature, from a key held as a Worker secret on testnet. Whoever can make that key sign can mint a token for any email user. Installing a new email key is governed and pinned by the watchdog, but use of the real key isn't bounded on chain. AWS KMS and a second co-signer are planned, not live; the co-signer's first build batches are parked while partner testing on testnet comes first."
   },
   {
     "topic": "Governance",
@@ -285,7 +285,7 @@
       "Gas only"
     ],
     "answer": 1,
-    "explanation": "The vault refuses any demo request valued over $9.99, before any popup. There is no balance cap, only a warning above $10. The keys come from the testnet MPC, so everything at the address is behind testnet custody; the demo is staff-only and doesn't exist in production."
+    "explanation": "The vault refuses any demo request valued over $9.99, before any popup. There is no balance cap, only a warning above $10. The keys come from the testnet MPC, so everything at the address is behind testnet custody. The demo is dev-only and doesn't exist in production, but its site is public, though unlisted, so anyone with the address can reach it."
   },
   {
     "topic": "Maturity",

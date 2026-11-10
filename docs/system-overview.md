@@ -5,8 +5,9 @@ questions honestly. It states every gap plainly. Decide later what to share outs
 
 Last verified: 2026-11-10 against `origin/develop` @ 5bbd2a60 (branch `docs/system-overview`: new doc, written from the
 reference docs and checked against the code where they were vague; no code changed). Where the docs lag the code or git,
-this file says so. Sandbox-dev's live state is as `docs/operations.md` "What sandbox-dev runs" records it; nothing here
-was checked against the live system.
+this file says so. Sandbox-dev's live state is as `docs/operations.md` "What sandbox-dev runs" records it, corrected on
+2026-11-10 by the person who ran that day's deploy and tests (Hana Home, the email co-signer, alerting, the Google
+consent screen, partner onboarding, the demo site, priorities). Nothing else here was checked against the live system.
 
 How to read it: section 1 is the one-page version. Sections 2 and 3 explain the moving parts. Section 4 is the security
 case, including what Hana itself can do. Section 5 is the question bank. Section 6 is where things stand. Section 7 is
@@ -205,9 +206,17 @@ The guarantee rests on the **exit client**: a Hana-held Google client that the c
 sandbox-dev) accepts for **every** scope, whatever the partner does. Exit sessions are capped on chain at 30 minutes and
 3 uses, and can't link accounts. The watchdog alarms on bursts of exit sessions.
 
-Honest state: Home's server side and the exit client are live on sandbox-dev. The Home page and Home export were merged
-into `develop` on 10 November but the repo's docs don't yet record them as deployed. No Home page is linked anywhere,
-and no real Home login has run. Home export doesn't yet cover apps reachable only through the exit client or by email.
+Honest state: Home batches H1–H8 and H11 (the server side, the exit client, the Home page, export from Home and Home
+billing) are live on sandbox-dev, deployed on 10 November from `develop` at 5bbd2a60, every Worker on that commit. That
+day the founder signed in to Home with Google, saw the same wallet addresses as in the partner app, and did one real
+key export from Home on testnet; the exported key matched the one the app's own export gives, and an export reached
+from a link was refused as designed. That is one account, through Google and Hana's shared login only: an email user's
+Home sign-in and the exit route have not been tried live. H9 (devices and stopping auto-approve, device sessions and
+email sharing from Home) and H10 (email users in Home, and Home through the exit client) are built and independently
+security-reviewed with fixes in; they are being merged, not yet deployed. Until H10 ships, Home export doesn't cover
+apps reachable only through the exit client or by email. H12 (linking Home from the consent and approval screens, and
+real testnet runs of the remaining cases) is not started. Until then nothing links to Home: it is reachable only by
+typing its address.
 
 Sources: `docs/architecture.md` "Flows", "Key persistence across reloads", "Signing", "Key export", "Hana Home identity";
 `docs/context.md` timings; `docs/hana-home-spec.md`; `docs/hana-home-build-plan.md`; D36, D41, D43, D59, D99, D111, D430,
@@ -344,7 +353,9 @@ SendGrid, RPC providers) are trusted for specific things listed below.
 - **If down:** email logins stop; Google logins of apps with email may fail where they need its linking answer.
 - **If compromised:** **one signer today.** Whoever can read the issuer's secrets can mint a token for any email user
   and open their wallet, without the user. Before mainnet: the key moves to AWS KMS (code built, not wired), and a second,
-  independent co-signer is designed (two build batches on branches, not merged).
+  independent co-signer is designed with its decisions confirmed. Its first two batches (the contract's governed policy
+  change and the co-signer's core) are built on branches and parked, by the founder's choice on 10 November, to put
+  partner testing on testnet first; they are not merged and not security-reviewed. Email login still has one signer.
 
 ### The identity token (for partners' backends)
 
@@ -366,8 +377,9 @@ SendGrid, RPC providers) are trusted for specific things listed below.
 - **Why:** the updater key lives in the API's secrets; the watchdog bounds what a thief can do with it.
 - **Holds:** its own NEAR key that can only cancel, confirm, pause and delete updater keys (denial of service at worst).
 - **Honest state:** on sandbox-dev it runs on the **same** Cloudflare account as the API (so a compromise of that
-  account could silence it). Email alerts arrive. The phone pager is a free stand-in (ntfy.sh) that failed from the
-  Worker in the 10 November test; Slack isn't set up. **Paging is not proven.**
+  account could silence it). In the 10 November test of the alert path, the email alert arrived within
+  seconds; the phone pager, a free stand-in (ntfy.sh), failed from the Worker; Slack isn't set up. **Paging is not
+  proven.**
 
 ### The council DAO and governance delays
 
@@ -384,6 +396,9 @@ SendGrid, RPC providers) are trusted for specific things listed below.
   settings, members) need a fresh "Confirm with Google", are announced by email to the partner's security contacts, and
   take effect after a delay (24 hours on a production network, 60 s on sandbox-dev); anyone notified can cancel. Holds
   members' Google ids and emails and a 5-year audit log. No passkeys yet (required before a second partner joins).
+- **Onboarding a partner:** a partner's scope is registered on chain by a council action that staff prepare in the
+  admin portal and run from the command line. Partners can't self-onboard yet; fixes were built on 10 November and are
+  being merged.
 - **Admin portal:** Hana staff, behind Cloudflare Access with an exact staff email list. Shows users (including email
   addresses, with an audit row per read and per-staff reading limits), security monitoring, playbooks and system
   status.
@@ -393,7 +408,8 @@ SendGrid, RPC providers) are trusted for specific things listed below.
 - **Does:** records one usage event per API request (Neon Postgres, AWS Sydney), settles each relayed transaction's
   real gas from the chain, and produces monthly statements (CSV, PDF).
 - **Holds:** pseudonymous user ids (an HMAC per scope), never a Google id, email, IP or path.
-- **Honest state:** Stripe and self-serve billing are on hold; Sodax is billed by service contract. On the free tier,
+- **Honest state:** usage capture is on on sandbox-dev. Stripe and self-serve billing are on hold; Sodax is billed by
+  service contract. On the free tier,
   settlement can keep up with only about 3,600 relayed transactions a day.
 
 ### Hana Home
@@ -488,7 +504,7 @@ is fine for testnet, but it means no claim about bounded Hana power applies to s
 | Hana's API or Cloudflare account | Keys of every user who loads the vault meanwhile; every server secret; D1 tampering | Governance bounds the updater key; the watchdog (own account in production); CSP | Deploy history; watchdog alerts; drift detection on D1 | Page trust root unbounded; watchdog on the same account on sandbox-dev |
 | Vault or auth pages (domain, DNS) | Same as above for users who load them | Two registrable domains in production (process isolation) | Unexpected content or certificates | Production domains not chosen |
 | Email issuer key | Every email user's wallet, and accounts linked to an email identity; through the exit client, also scopes that dropped email | Installing a new key is governed and pinned by the watchdog; use of the real key is not bounded at 1 of 1 | Link and exit volume alarms (bursts only) | AWS KMS and the second signer |
-| Relayer keys | Burn their allowance; logins stop | Methods and allowances fixed on chain | Watchdog funds alerts; daily nonce check (needs usage capture on) | Mainnet relayer and funding |
+| Relayer keys | Burn their allowance; logins stop | Methods and allowances fixed on chain | Watchdog funds alerts; daily nonce check (needs usage capture, which is on on sandbox-dev) | Mainnet relayer and funding |
 | Updater key | Propose a fake Google key | Public delay (2 h planned; 2 min on sandbox-dev); the watchdog cancels and deletes the key; pauses if one goes active | Critical alert | Mainnet delay length to decide from measured Google rotations |
 | One council member | Propose and vote once; nothing executes | 2 of 3 needed; member replacement command | Watchdog governance alerts | Ledgers, mainnet DAO, backup key location |
 | The whole council (2 of 3) | After 72 h: any upgrade (so anything), owner transfer; at once: pause, unpause, remove keys and watchdogs | Delays are public and alerted to both founders; users can export meanwhile; no independent guardian can cancel | Watchdog critical alerts | Public notice to partners on an upgrade not built |
@@ -519,11 +535,12 @@ anything. After a forged key, the runbook retires older sessions before unpausin
 
 - **Key export** is always available and partners can't remove it. It is the user's exit to any Stellar or EVM wallet.
 - **Hana Home** lets users reach every app's wallet from one Hana page, even after a partner shuts down or switches off
-  Hana's shared login, through the exit client. Not yet live for users (section 2.7).
+  Hana's shared login, through the exit client. It runs on sandbox-dev, but nothing links to it yet, so users can't
+  find it, and the exit route hasn't been tried live (section 2.7).
 - **If a partner shuts down:** its users' wallets still exist on their chains. Through Home and the exit client, Hana
   can still open them. A suspended or deleted app doesn't stop Home: Home works by scope. Exception: until Home's export
-  covers the exit and email routes (built on an unmerged branch), some users of a partner that removed every route
-  could see their wallet but not move it from Home.
+  covers the exit and email routes (H10: built and reviewed, being merged, not deployed), some users of a partner that
+  removed every route could see their wallet but not move it from Home.
 - **If Hana shuts down:** funds stay on Stellar and EVM chains, untouched. But logging in needs Hana's pages (Google
   only returns tokens to Hana's registered page), Hana's relayer (or someone paying NEAR gas directly), the contract
   (whose Google keys are kept current by Hana's cron or the council), and NEAR's MPC network. A standalone, open-source
@@ -558,12 +575,14 @@ anything. After a forged key, the runbook retires older sessions before unpausin
 ### 4g. Known limits and accepted risks
 
 - **Page-serving trust root:** a malicious Hana page update can steal keys of users who load it. Open, unbounded.
-- **Email login is 1-of-1:** the email service alone can open any email wallet. KMS and a co-signer before mainnet.
+- **Email login is 1-of-1:** the email service alone can open any email wallet. KMS and a co-signer before mainnet; the
+  co-signer's first batches are parked while partner testing comes first.
 - **The mainnet demo:** one Hana test app may sign real transactions on Base and Stellar's public network, up to $9.99
   each, fee included, using **keys derived on testnet**. The cap limits what a page can take per request, not what the
   testnet MPC's operators (or anyone who compromises it) can take: everything at the address. There is no balance
-  cap, only a warning above $10. It is staff-only and dev-only, and doesn't exist in production. The price table has
-  an expiry and must be reviewed before each demo. Sandbox-dev wallets are discarded at the address freeze.
+  cap, only a warning above $10. It is dev-only and doesn't exist in production. It runs on a public but unlisted demo
+  site of the Sodax sample on testnet, with a permanent warning, so anyone who has the address can reach it. The price
+  table has an expiry and must be reviewed before each demo. Sandbox-dev wallets are discarded at the address freeze.
 - **Auto-approve residuals:** a contract function the rules can't see into (for example a `withdraw(to, …)` under a
   permissive address rule) can still pass; only partner-listed contracts are ever auto-approved, and the consent screen
   warns.
@@ -641,6 +660,9 @@ day or two during a rotation; the sync waits 24 h before removing a key.
 *Say:* "Today, the email service's signing key. We're moving it to AWS KMS and adding an independent co-signer, so one
 compromise isn't enough."
 *Detail:* Also the user's mailbox (whoever reads the code), SendGrid in transit, and a Workspace admin for their domain.
+The co-signer is designed; its first two build batches are parked on branches, unmerged and unreviewed, while partner
+testing on testnet comes first.
+*Don't claim:* that a co-signer protects email users today.
 
 **8. Can a partner rug its users?**
 *Say:* "On Hana's default shared Google client, no: a partner can't derive its users' keys, and every signature goes
@@ -693,7 +715,10 @@ while we run. A recovery tool that works without us is planned."
 
 **17. What happens if a partner shuts down?**
 *Say:* "Hana Home lets users reach their wallet from Hana's own page and move it, whatever the partner does."
-*Don't claim:* it's live for users. It isn't linked anywhere yet.
+*Detail:* Home runs on sandbox-dev (testnet). One account has tried it live, through Google and the shared login,
+including one real key export. Nothing links to it until H12, so users reach it only by typing its address. Email
+users' Home sign-in and the exit route are built (H10, being merged) but not deployed or tried live.
+*Don't claim:* it's live for users, or that it has been proven for email users or through the exit client.
 
 **18. Why NEAR, when users never touch NEAR?**
 *Say:* "NEAR's MPC network offers confidential key derivation, and a NEAR contract can check the login itself. Users only
@@ -705,7 +730,9 @@ see Stellar and EVM."
 **20. Can Google cut you off?**
 *Say:* "Our Google login needs a verified consent screen; that verification is a mainnet item. A change in Google's
 sign-in window policy could break the popup; we test for it before every release."
-*Detail:* Today Google's consent screen is in Testing mode: only listed test users can sign in.
+*Detail:* Today the consent screen for Hana's shared Google login is in Testing mode (External), with a lifetime cap of
+100 accounts: only listed test accounts can sign in with Google. That limits partner testing until it is published,
+which is planned with the move to company accounts. Email login is unaffected.
 
 ### Business and regulation-adjacent
 
@@ -735,14 +762,16 @@ to be derived, and that Hana stores none."
 ### Maturity
 
 **26. Why testnet keys with real funds in the demo?**
-*Say:* "It's a staff-only demo of a real Sodax swap. Each transaction is capped at $9.99, fee included. The keys come
-from the testnet MPC, which is weaker, so we treat those funds as at risk."
+*Say:* "It's a demo of a real Sodax swap, on an unlisted testnet site with a permanent warning. Each transaction is
+capped at $9.99, fee included. The keys come from the testnet MPC, which is weaker, so we treat those funds as at risk."
+*Detail:* The site is public but unlisted: anyone with its address can reach it.
 *Don't claim:* this is how production works; the cap doesn't limit the balance.
 
 **27. How long to mainnet, and what's left?**
 *Say:* "No date is set. About 50 of 132 readiness items are done or built. The long poles: company accounts and
 domains, mainnet support in our tooling, the address freeze, AWS key custody, Hana Home, paging, the external audit,
-a staging rehearsal."
+a staging rehearsal. Right now our priority is partners testing end to end on testnet; mainnet preparation is at least
+two to three months away."
 *Don't claim:* a date or a percentage "complete".
 
 **28. Is it production-ready? How is it tested?**
@@ -752,6 +781,8 @@ locally before merging."
 
 **29. Has your alerting been proven?**
 *Say:* "Email alerts yes; phone paging no. Choosing a production pager is on the list."
+*Detail:* In the 10 November test the email alert arrived within seconds; the phone pager (ntfy.sh) failed from the
+Worker; Slack is not set up.
 
 ### Scale and cost
 
@@ -798,14 +829,22 @@ D41, D42, D84, D121, D387.
 watchdog (forged-key and pause drills run 30 October); Google login, one-transaction login, persistence, approvals,
 auto-approve with server-recorded consents; email login and automatic linking; email sharing with partners; the
 identity token (Worker-secret key); the partner console and admin portal; the usage ledger with capture on; the mainnet
-demo; Hana Home's server side (H1–H6) with the exit client.
+demo, on a public but unlisted Sodax sample site with a permanent warning; Hana Home H1–H8 and H11 (server side, exit
+client, the Home page, export from Home, Home billing), deployed on 10 November from `develop` at 5bbd2a60 with every
+Worker on that commit.
 
-**Merged but not recorded as deployed:** the Hana Home page (H7), export from Home (H8) and Home billing (H11), merged
-into `develop` on 10 November. The repo's docs still list them as unmerged and undeployed; check before calling them
-live.
+**Tried live on 10 November:** the founder signed in to Hana Home with Google, saw the same wallet addresses as in the
+partner app, and did one real key export from Home on testnet. The exported key matched the app's own export; an export
+reached from a link was refused as designed. That is one account, through Google and the shared login only. An email
+user's Home sign-in and the exit route have not been tried live.
 
-**Built on branches, not merged:** Hana Home H9 (devices and sign-out) and H10 (email sign-in for Home, exit-client
-export), with their reviews; the email co-signer's design and two build batches.
+**Built and reviewed, being merged, not deployed:** Hana Home H9 (devices and stopping auto-approve, device sessions
+and email sharing from Home) and H10 (email users in Home, and Home through the exit client), each independently
+security-reviewed with fixes in; the fixes that let partners self-onboard (built 10 November).
+
+**Built on branches and parked:** the email co-signer's first two batches (the contract's governed policy change, the
+co-signer's core). Its design and decisions are confirmed. The founder parked it on 10 November to put partner testing
+first; it is not merged and not security-reviewed, so email login still has one signer.
 
 **Built, waiting for production setup:** AWS KMS signers for the email issuer and identity token (code only, tested
 against a fake); the mainnet creation plan for the contract (no full-access key ever); delays and pins for mainnet.
@@ -813,7 +852,11 @@ against a fake); the mainnet creation plan for the contract (no full-access key 
 **Not built:** company accounts and domains; mainnet support in the manifest and scripts (testnet-only today); the
 address freeze; a production pager and Slack; the outside identity probe (switched off; to be rebuilt outside GitHub); the external
 audit; a staging environment and rehearsal; user key rotation; partner-member passkeys; public upgrade notices to
-partners; Hana Home H12 (linking it for users); a standalone recovery tool; CI (switched off).
+partners; Hana Home H12 (linking Home from the consent and approval screens, and real testnet runs of the remaining
+cases; not started); a standalone recovery tool; CI (switched off).
+
+**Priority as of 10 November:** partners being able to test end to end on testnet comes first. Mainnet preparation is
+at least two to three months away.
 
 **Decisions open (23):** among them the mainnet launch date, the issuer-key delay, the paging app, where the backup
 council key is held, whether `VAULT_KEK` moves to KMS, the SDK's registry and licence, a cap on partners' Home bills,
@@ -832,12 +875,17 @@ retention periods, production domains and the Hana Cloudflare account.
 9. Batch C (console, admin, billing) and email login on production accounts.
 
 **Before partners test on testnet** (no doc defines this; these are the items in the docs that would bite a partner
-pilot): Google's consent screen is in Testing mode, so each tester must be added as a test user; the SDK ships as
-tarballs, not on npm; sandbox-dev runs on a personal account on free tiers (5 of 5 cron triggers used, an email budget
-of 200 a day); the console's Google sign-in spike hasn't been run; email sharing hasn't been tried by a person; Home is
-not linked for users; paging isn't proven; and partners must not rely on identity tokens for anything of value.
+pilot): the consent screen for Hana's shared Google login is in Testing mode (External) with a lifetime cap of 100
+accounts, so only listed test accounts can sign in with Google until it is published (planned with the move to company
+accounts; email login is unaffected); partners can't self-onboard yet: a partner's scope is registered on chain by a
+council action prepared in the admin portal and run from the command line (fixes built 10 November, being merged); the
+SDK ships as tarballs, not on npm; sandbox-dev runs on a personal account on free tiers (5 of 5 cron triggers used, an
+email budget of 200 a day); the console's Google sign-in spike hasn't been run; email sharing hasn't been tried by a
+person; Home is reachable only by typing its address; paging isn't proven; and partners must not rely on identity
+tokens for anything of value.
 
 Sources: `docs/mainnet-readiness.md` (summary, top 9 blockers, every group); `docs/operations.md` "What sandbox-dev runs";
+confirmation on 2026-11-10 by the person who ran that day's deploy and tests;
 `docs/hana-home-build-plan.md` status; `docs/architecture.md` "Status of each part"; git history of `origin/develop`
 (PRs #23, #24); D387, D404, D414, D417.
 

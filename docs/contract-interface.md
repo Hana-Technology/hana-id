@@ -1,6 +1,6 @@
 # hana-signer contract interface (batch A, A.2, B, governance and email login)
 
-Last verified against code: 2026-11-09 (branch `feat/hana-home-h6`, not merged, not deployed: H6: state v4, the exit client, the audience-shape rule, event version 1.3.0, gas); 2026-11-09 (branch `feat/hana-home-h6`, not merged, not deployed: H6, the exit client: state version 4, `exit_clients`, `pending_exit_clients`, `exit_window`, `set_exit_clients`, `exit_session_opened`, the audience-shape rule, the gas of an exit login, D468, D480–D494); 2026-11-09 (branch `fix/before-mainnet-sweep`: the API's gas list without the methods it no longer relays, D456; the contract is unchanged); 2026-11-04 (branch `fix/sessions-allow-list`: "No claim allow-list on chain", the API's allow-list on every relayed token, D271, D274); 2026-11-02 (branch `feat/email-login-6`: the API's gas values in the conventions and in "Gas
+Last verified against code: 2026-11-10 (branch `docs/tidy-deployed-1110`: the intro and the v3 and v4 "Changed in" sections say what sandbox-dev runs: v4, code hash `3tPsYzYPi9UqZ3QsoxGiaukSSDx8w2Krs1VS5ygAUyhh`; the "not merged, not deployed" notes in the older clauses are history); 2026-11-09 (branch `feat/hana-home-h6`, not merged, not deployed: H6: state v4, the exit client, the audience-shape rule, event version 1.3.0, gas); 2026-11-09 (branch `feat/hana-home-h6`, not merged, not deployed: H6, the exit client: state version 4, `exit_clients`, `pending_exit_clients`, `exit_window`, `set_exit_clients`, `exit_session_opened`, the audience-shape rule, the gas of an exit login, D468, D480–D494); 2026-11-09 (branch `fix/before-mainnet-sweep`: the API's gas list without the methods it no longer relays, D456; the contract is unchanged); 2026-11-04 (branch `fix/sessions-allow-list`: "No claim allow-list on chain", the API's allow-list on every relayed token, D271, D274); 2026-11-02 (branch `feat/email-login-6`: the API's gas values in the conventions and in "Gas
 of the email login calls", D155); 2026-11-02 (branch `feat/batch-c-6`: the security note on unregistered clients names the
 console sink scope; the owner-action nonce is now also recomputed by the API's precheck, against the contract's
 `test_fixture.json`); 2026-11-02 (branch `docs/consistency-pass`: the conventions' gas note points at the
@@ -21,7 +21,10 @@ address changes** (see [Changed in the governance batch](#changed-in-the-governa
 self-issued issuers with a signer policy and JWS JSON tokens, accounts of linked sign-in methods, and migrates state
 to layout v3 in place; no existing byte layout, path or derivation changed, and an identity in no account opens
 exactly the path it opened before, so **no address changes** (see [Changed in the email login
-batch](#changed-in-the-email-login-batch-v3)). Not deployed yet.
+batch](#changed-in-the-email-login-batch-v3)). The exit client batch (H6, D468, D480–D494) adds Hana Home's permanent
+exit clients and migrates state to layout v4 in place, again with **no address changes** (see [Changed in the exit client
+batch](#changed-in-the-exit-client-batch-v4-h6)). sandbox-dev (testnet) runs v4 since 2026-11-09, code hash
+`3tPsYzYPi9UqZ3QsoxGiaukSSDx8w2Krs1VS5ygAUyhh`, with the Google and email exit clients in force; nothing is on mainnet.
 
 Conventions:
 
@@ -1541,7 +1544,8 @@ proposals, with the findings to show (`docs/operations.md` "Governance status fo
 
 ## Changed in the exit client batch (v4, H6)
 
-Layout v4, migrated **in place** by `migrate` (`execute_upgrade`), not deployed. **No existing byte layout, nonce, signed
+Layout v4, migrated **in place** by `migrate` (`execute_upgrade`); on sandbox-dev since 2026-11-09 (code hash
+`3tPsYzYPi9UqZ3QsoxGiaukSSDx8w2Krs1VS5ygAUyhh`). **No existing byte layout, nonce, signed
 message, CKD request or path changed**: `aud` never enters a path, `ik`, `settle` or `path_identity`. Golden tests in
 `src/tests/email.rs` (`golden_paths_are_the_same_through_own_client_shared_client_and_exit`) open the same user through a
 scope's own client, a shared client and the exit client, for Google, email and a linked member, and get identical strings;
@@ -1558,7 +1562,7 @@ the v3 fixture's sessions keep their stored paths. In detail:
 
 ## Changed in the email login batch (v3)
 
-Layout v3, migrated **in place** by `migrate` (`execute_upgrade`), not deployed yet. **No existing byte layout,
+Layout v3, migrated **in place** by `migrate` (`execute_upgrade`); sandbox-dev ran it from 2026-11-03 until v4. **No existing byte layout,
 nonce, signed message, CKD request or path changed**: an identity in no account opens exactly the v2 path
 `{scope_id}#{provider}#{sub}#{key_index}` (golden tests in `src/tests/email.rs`: the fixture's Google user opens
 `s1#google#1098765432#0`, `s2#…#0`, `s1#…#1`, `s3#…#0` through a shared client, and the MPC receives exactly that path;

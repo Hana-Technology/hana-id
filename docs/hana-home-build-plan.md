@@ -1,6 +1,6 @@
 # Hana Home build plan (batches)
 
-**Status (2026-11-09): H0, H1, H2, H4 and H6 merged and live on sandbox-dev (contract v4, exit clients in force); H3 and H5 built with their security reviews' fixes, merged on branch `merge/h3-h5` (not merged into `develop`, not deployed); H7–H12 not started. Older "not merged, not deployed" notes in the result lines below are history.** Splits `docs/hana-home-spec.md` (D40, D45, D98, D461–D466, D468, D480–D489) into reviewable
+**Status (2026-11-10): H0–H6 merged into `develop` and live on sandbox-dev at 9b0ae580 (contract v4, exit clients in force; H3's `POST /v1/home/login` with the `home` relayer pool, migration 0018; H5 in the vault); no real Home login has run yet (no page until H7); H7–H12 not started. Older "not merged, not deployed" notes in the result lines below are history.** Splits `docs/hana-home-spec.md` (D40, D45, D98, D461–D466, D468, D480–D489) into reviewable
 batches. The spec stays the source of truth for *what* to build; this file says *in which order*, *what each batch
 ships* and *what users see after it*. Like a spec it is history once the work merges: the current state lives in the
 reference docs (`docs/README.md`).

@@ -9484,7 +9484,7 @@ as written so the batch can be reviewed as a whole; D586's suspended-app rule an
 
 ### D593. A statement's totals stay version 1: `homeLogins` and the `home` row are optional additions
 - Date 2026-11-10 · Status: proposed, awaiting the user's confirmation · Built: `packages/console-core/src/reports.ts` (`statementTotalRow`, `statementView`)
-- Decision: `usage.statements.totals` keeps `v: 1`. `homeLogins` is optional on a row and on the sum, and `kind` gains `home`, so statements already stored parse and render unchanged.
+- Decision: `usage.statements.totals` keeps `v: 1`. `homeLogins` is optional on a row and on the sum, and `kind` gains `home`, so statements already stored parse and render unchanged. A new statement stores `homeLogins` only when it has a Home line, so one without is byte for byte the old shape and an API from before this batch still reads it; one with a Home line needs the new API (deploy the API before the admin Worker).
 - Why not `v: 2`: nothing about an existing field changed, and a second version would need both renderers kept for 7 years of locked files.
 
 ### D594. The Home pool's first-day ledger gap is accepted: derives made before capture is on are never billed

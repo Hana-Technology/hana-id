@@ -125,7 +125,7 @@ describe('usageMigrate (the command)', PGLITE, () => {
     expect(dry.lines.join('\n')).toMatch(/pending on sandbox-dev: 0001_ledger\.sql, 0002_identity_tokens\.sql, 0003_writer_partitions\.sql, 0004_email_counts\.sql, 0005_link_events\.sql/u);
     expect((await dry.db.query("SELECT to_regclass('usage.events') AS r")).rows[0]).toEqual({ r: null });
     const real = await run(['sandbox-dev', '--yes'], { db: dry.db });
-    expect(real.result).toEqual(['0001_ledger.sql', '0002_identity_tokens.sql', '0003_writer_partitions.sql', '0004_email_counts.sql', '0005_link_events.sql', '0006_reports.sql', '0007_retention.sql']);
+    expect(real.result).toEqual(['0001_ledger.sql', '0002_identity_tokens.sql', '0003_writer_partitions.sql', '0004_email_counts.sql', '0005_link_events.sql', '0006_reports.sql', '0007_retention.sql', '0008_home_logins.sql']);
     expect((await run(['sandbox-dev'], { db: dry.db })).lines.join('\n')).toMatch(/up to date/u);
   });
 

@@ -411,5 +411,10 @@ describe('Hana Home logins on a statement (D461, D585–D588)', () => {
     expect(view.tableColumns).toEqual(['Logins', 'Derives', 'Owner actions', 'MAU', 'New users', 'Tgas', 'NEAR', 'USD', 'Unsettled']);
     expect(view.summary.map(([k]) => k)).not.toContain('Hana Home logins');
     expect(view.notes.join(' ')).not.toMatch(/Hana Home/u);
+    // And its stored totals carry no Home field at all: the shape a reader from before this change expects.
+    const withApp = buildStatement({ orgId: 'org_plain', orgName: 'Plain', month: FEB, asOf: AT, network: 'mainnet', apps: new Map(), dayRows: [], monthRows: await store.report('org_acme', '2025-01-01', '2025-01-31', 'month', null, null) });
+    expect(withApp.totals.rows.length).toBeGreaterThan(0);
+    expect(JSON.stringify(withApp.totals)).not.toContain('homeLogins');
+    expect(JSON.stringify(withApp.totals)).not.toContain('"home"');
   });
 });

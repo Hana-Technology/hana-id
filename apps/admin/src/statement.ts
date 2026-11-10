@@ -116,6 +116,9 @@ export function buildStatement(i: StatementInputs): { csv: string; totals: State
     ...ordered(months).map((r) => csvLine(cells(r, 'total', true))),
   ];
 
+  // The Home count is stored only on a statement that has a Home line, so one without is the shape it always was (a
+  // reader from before Hana Home's billing still parses it).
+  const hasHome = months.some((r) => reportRowKind(r) === 'home');
   const rows: StatementTotalRow[] = ordered(months).map((r) => ({
     kind: reportRowKind(r),
     scopeId: r.scope_id,
@@ -128,7 +131,7 @@ export function buildStatement(i: StatementInputs): { csv: string; totals: State
     ownerActions: n(r.owner_actions),
     linkActions: n(r.link_actions),
     identityTokens: n(r.identity_tokens),
-    homeLogins: n(r.home_logins),
+    ...(hasHome ? { homeLogins: n(r.home_logins) } : {}),
     ...(r.app_id !== null ? { mau: n(r.active_users) } : {}),
     newUsers: n(r.new_users),
     failures: failuresOf(r.failures),
@@ -166,7 +169,7 @@ export function buildStatement(i: StatementInputs): { csv: string; totals: State
       ownerActions: sumN((r) => r.owner_actions),
       linkActions: sumN((r) => r.link_actions),
       identityTokens: sumN((r) => r.identity_tokens),
-      homeLogins: sumN((r) => r.home_logins ?? 0),
+      ...(hasHome ? { homeLogins: sumN((r) => r.home_logins ?? 0) } : {}),
       newUsers: sumN((r) => r.new_users),
       tgas: formatTgas(gas),
       relayedRejectedTgas: formatTgas(rejGas),

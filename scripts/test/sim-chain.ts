@@ -5,7 +5,7 @@
 import type { Action } from '@near-js/transactions';
 import { GOVERNANCE_DEFAULT } from './sim-fixtures.ts';
 import type { GovernanceView, KeyChangeView } from '../lib/contract.ts';
-import { type AccessKeyListEntry, type AccountView, codeHashOf, type TxSigner } from '../lib/near.ts';
+import { type AccessKeyListEntry, type AccountView, codeHashOf, type ReceiptLogs, type TxSigner } from '../lib/near.ts';
 import { type DaoProposal, type SputnikPolicy, votesNeeded } from '../lib/sputnik.ts';
 
 export interface SentTx {
@@ -132,10 +132,12 @@ export class SimChain {
     }
   }
 
-  /** The logs of the transaction being applied (an executed call's NEP-297 events, as the contract logs them). */
-  private txLogs: string[] = [];
+  /** The receipt logs of the transaction being applied (an executed call's NEP-297 events, by executor). */
+  private txLogs: ReceiptLogs[] = [];
+  /** Receipts every later transaction also logs (a test's foreign contract emitting look-alike events). */
+  extraReceiptLogs: ReceiptLogs[] = [];
 
-  private send(signer: TxSigner, receiver: string, actions: Action[]): { hash: string; value: unknown; logs: string[] } {
+  private send(signer: TxSigner, receiver: string, actions: Action[]): { hash: string; value: unknown; receiptLogs: ReceiptLogs[] } {
     const from = this.accounts.get(signer.accountId);
     const pk = signer.keyPair.getPublicKey().toString();
     if (!from || !from.keys.some((k) => k.public_key === pk)) throw new Error(`Key ${pk} is not an access key of ${signer.accountId}`);
@@ -151,7 +153,7 @@ export class SimChain {
       this.restore(snapshot);
       throw new Error(`Transaction ${hash} failed: ${(err as Error).message}`);
     }
-    return { hash, value, logs: this.txLogs };
+    return { hash, value, receiptLogs: [...this.extraReceiptLogs, ...this.txLogs] };
   }
 
   private snapshot() {
@@ -380,7 +382,7 @@ export class SimChain {
         else this.scopes[id] = scope;
         for (const [p, a] of clients) delete this.removedClients[`${p}/${a}`];
         const data = { scope_id: id, owners: scope.owners, clients, allow_shared: scope.allow_shared, by: predecessor, admin: true };
-        this.txLogs.push(`EVENT_JSON:${JSON.stringify({ standard: 'hana-id', version: '1.3.0', event: 'scope_registered', data: [data] })}`);
+        this.txLogs.push({ executor: this.signer, logs: [`EVENT_JSON:${JSON.stringify({ standard: 'hana-id', version: '1.3.0', event: 'scope_registered', data: [data] })}`] });
         return id;
       }
       case 'remove_client': {

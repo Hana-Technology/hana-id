@@ -1056,12 +1056,10 @@ function appsPanel(o, d) {
   );
 }
 
-// ---- registering a scope (D651): the page prepares, one command runs it ----
+// ---- registering a scope (D651, D656–D658): the page prepares, one command runs it ----
 
-/** A Google `sub` as it may appear in the command (digits in practice; never anything a shell would read). */
-const SUB_RE = /^[A-Za-z0-9_-]{1,255}$/u;
-/** A Google web client id (the console's own check). */
-const GOOGLE_CLIENT_RE = /^[0-9]{1,32}-[0-9a-z]{1,64}\.apps\.googleusercontent\.com$/u;
+/** A Google `sub`: digits (up to 255). Nothing else is offered as an owner or put in a command. */
+const SUB_RE = /^[0-9]{1,255}$/u;
 /** The contract's owner limit (`A scope needs 1 to 5 owners`). */
 const MAX_SCOPE_OWNERS = 5;
 const isDevEnvName = (name) => /^(local|sandbox)/u.test(name || '');
@@ -1088,50 +1086,61 @@ function scopeOwnerCandidates(d) {
 }
 
 /**
- * The exact `admin <env> scope:register` command for the choices, and what is wrong with them. `cfg` is GET /api/me's
- * `scopeRegistration` (the manifest's owner and council); the checks are the contract's and createApp's.
+ * The exact `admin <env> scope:register` commands for the choices (a dry run, then the one that sends), and what is
+ * wrong with them. `cfg` is GET /api/me's `scopeRegistration` (the manifest's owner and council); the checks are the
+ * contract's and createApp's. A new scope always logs in through Hana's shared client (`--allow-shared`): the
+ * partner's own client is added later with its client proof (D656), never as an unproven `--client` here.
  */
 function scopeRegisterPlan(cfg, env, d, choice) {
   const problems = [];
   const warnings = [];
-  const client = (choice.client || '').trim();
   if (!cfg) problems.push('This admin console can’t prepare the command: its Worker has no SCOPE_REGISTRATION setting. Run its `gen` for this env and deploy it again.');
   if (!/^[a-z0-9-]{1,40}$/u.test(env || '')) problems.push('This admin console doesn’t know its env name.');
-  if (choice.subs.length === 0) problems.push('Choose at least one owner: a scope needs one to five on-chain owners.');
-  if (choice.subs.length > MAX_SCOPE_OWNERS) problems.push(`A scope has at most ${MAX_SCOPE_OWNERS} owners on chain: choose ${MAX_SCOPE_OWNERS} or fewer (the others can be added later only by replacing owners).`);
-  if (!choice.shared && !client) problems.push('Choose how users sign in: Hana’s shared Google login, the partner’s own Google client, or both.');
-  if (client && !GOOGLE_CLIENT_RE.test(client)) problems.push(`\`${client.slice(0, 120)}\` isn’t a Google web client id (like \`123456789012-abc123.apps.googleusercontent.com\`).`);
-  else if (client && cfg && cfg.sharedClientIds.includes(client)) problems.push('That is Hana’s shared Google client: tick “Hana’s shared Google login” instead of entering it.');
+  if (choice.subs.length === 0) problems.push('Tick at least one owner: a scope needs one to five on-chain owners.');
+  if (choice.subs.length > MAX_SCOPE_OWNERS) problems.push(`A scope has at most ${MAX_SCOPE_OWNERS} owners on chain: tick ${MAX_SCOPE_OWNERS} or fewer.`);
+  if (choice.subs.some((s) => !SUB_RE.test(s))) problems.push('An owner’s Google account isn’t a Google account id (digits).');
+  const councilProposes = cfg && cfg.ownerKind === 'sputnik' && !cfg.devCouncilKeys;
+  if (councilProposes && !cfg.councilMembers.includes(choice.member)) problems.push('Choose the council member who runs it (your own council account).');
   const sharedReady = cfg && cfg.sharedClientIds.some((id) => !/UNSET/u.test(id));
-  if (choice.shared && cfg && !sharedReady) warnings.push('This env has no shared Google client yet, so shared login won’t work until one is set and deploy-contract has run set_shared_clients.');
+  if (cfg && !sharedReady) warnings.push('This env has no shared Google client yet, so logins won’t work until one is set and deploy-contract has run set_shared_clients.');
   if (d.flags.noSecurityContacts) warnings.push('This organisation has no security contact: registering doesn’t need one, but “Create an app” does. Add one under Security contacts first.');
-  if (problems.length) return { problems, warnings, command: null };
-  const parts = ['pnpm --filter @hana-id/scripts run admin', env, 'scope:register'];
-  if (choice.shared) parts.push('--allow-shared');
-  if (client) parts.push('--client', client);
+  if (problems.length) return { problems, warnings, dryRun: null, send: null };
+  const parts = ['pnpm --filter @hana-id/scripts run admin', env, 'scope:register', '--allow-shared'];
   for (const sub of choice.subs) parts.push('--owner-google', sub);
   let signs;
   let prints;
   if (cfg.ownerKind === 'sputnik' && cfg.devCouncilKeys) {
     parts.push('--member', cfg.councilMembers[0], '--approve-with', cfg.councilMembers[1]);
-    signs = `Run it from the repo root on the machine that holds \`.secrets/${env}/council/\`: it proposes \`admin_register_scope\` to the council DAO and casts both votes (${cfg.councilMembers[0]} and ${cfg.councilMembers[1]}), so the scope is registered when it ends.`;
+    signs = `Run them from the repo root on the machine that holds \`.secrets/${env}/council/\`. The second proposes \`admin_register_scope\` to the council DAO and casts both votes (${cfg.councilMembers[0]} and ${cfg.councilMembers[1]}), so the scope is registered when it ends.`;
     prints = '`Registered scope: s…` and the next step: copy that scope id.';
-  } else if (cfg.ownerKind === 'sputnik') {
-    parts.push('--member', '<your council account>');
-    signs = `Run it as one council member (${cfg.councilMembers.join(', ')}): it proposes \`admin_register_scope\` to the council DAO. It prints what each other member signs; the scope is registered when the second approval lands.`;
+  } else if (councilProposes) {
+    parts.push('--member', choice.member);
+    signs = `Run them as ${choice.member}: the second proposes \`admin_register_scope\` to the council DAO and prints what each other member signs; the scope is registered when the second approval lands.`;
     prints = '`Proposed #…` and the vote each member signs. The vote that passes it shows the new scope id in its `scope_registered` event: ask that member for it.';
   } else {
-    signs = `Run it from the repo root: ${cfg.owner}, the contract owner, signs \`admin_register_scope\` with its key from \`~/.near-credentials\`.`;
+    signs = `Run them from the repo root: ${cfg.owner}, the contract owner, signs \`admin_register_scope\` with its key from \`~/.near-credentials\`.`;
     prints = '`Registered scope: s…` and the next step: copy that scope id.';
   }
-  parts.push('--yes');
-  return { problems, warnings, command: parts.join(' '), signs, prints };
+  const dryRun = parts.join(' ');
+  return { problems, warnings, dryRun, send: `${dryRun} --yes`, signs, prints };
+}
+
+/**
+ * Before a command is copied: the organisation's members read again, so an owner removed, demoted or disabled since
+ * the page was read can't reach the chain. Null when every ticked account is still a usable owner, else why not.
+ */
+async function ownersStillCurrent(orgId, subs) {
+  const fresh = await api('GET', `/api/orgs/${encodeURIComponent(orgId)}`);
+  const now = new Set(scopeOwnerCandidates(fresh).owners.map((m) => m.sub));
+  const gone = subs.filter((s) => !now.has(s));
+  return gone.length ? `Not copied: ${gone.length === 1 ? 'an owner you ticked is' : `${gone.length} owners you ticked are`} no longer an owner of this organisation (removed, made a viewer or disabled since this page was read). Reload the page and choose again.` : null;
 }
 
 function scopePanel(o, d) {
   const cfg = me && me.scopeRegistration ? me.scopeRegistration : null;
   const env = me ? me.env : '';
   const { owners, later } = scopeOwnerCandidates(d);
+  const readAt = Date.now();
   const hint = 'A scope holds this partner’s users’ wallets on chain; its owners are the Google accounts that may change it later (clients, owners, shared login). Registering one is a council action: this panel prepares the exact command and sends nothing.';
   const laterList = later.length
     ? h('div', {}, h('h3', {}, 'Not included'), h('ul', { class: 'not-included' }, later.map((x) => h('li', {}, x.email, h('span', { class: 'sub' }, x.why)))))
@@ -1145,35 +1154,40 @@ function scopePanel(o, d) {
     );
   }
   const out = h('div', { class: 'scope-plan', 'aria-live': 'polite' });
-  const ownerBoxes = owners.map((m, i) => ({ m, input: h('input', { type: 'checkbox', name: 'scopeOwner', value: m.userId, checked: i < MAX_SCOPE_OWNERS }) }));
-  const shared = h('input', { type: 'checkbox', name: 'allowShared', checked: true });
-  const clientId = nextId('f-client');
-  const client = h('input', { type: 'text', name: 'client', id: clientId, autocomplete: 'off', placeholder: '123456789012-abc123.apps.googleusercontent.com', 'aria-describedby': `${clientId}-help` });
+  // Nobody is ticked by default: on-chain ownership outlives the organisation (D657), so each one is a choice.
+  const ownerBoxes = owners.map((m) => ({ m, input: h('input', { type: 'checkbox', name: 'scopeOwner', value: m.userId }) }));
+  const councilProposes = cfg && cfg.ownerKind === 'sputnik' && !cfg.devCouncilKeys;
+  const memberRadios = councilProposes ? cfg.councilMembers.map((a) => h('input', { type: 'radio', name: 'scopeMember', value: a })) : [];
   const update = () => {
-    const plan = scopeRegisterPlan(cfg, env, d, { subs: ownerBoxes.filter((b) => b.input.checked).map((b) => b.m.sub), shared: shared.checked, client: client.value });
+    const subs = ownerBoxes.filter((b) => b.input.checked).map((b) => b.m.sub);
+    const member = (memberRadios.find((r) => r.checked) || { value: '' }).value;
+    const plan = scopeRegisterPlan(cfg, env, d, { subs, member });
     const parts = [];
     for (const w of plan.warnings) parts.push(note('warn', '', w));
     if (plan.problems.length) parts.push(note('warn', 'Not ready yet', ...plan.problems));
     else {
+      const check = () => ownersStillCurrent(o.id, subs);
       parts.push(
-        h('h3', {}, 'The command'),
+        h('h3', {}, 'The commands'),
         h('p', { class: 'hint' }, richText(plan.signs)),
-        commandBlock(plan.command),
-        h('p', { class: 'hint' }, richText(`It shows the call first (without \`--yes\` it would only print it), then ${plan.prints}`)),
+        h('p', { class: 'step-label' }, '1. Check what it will send (prints the call, sends nothing):'),
+        commandBlock(plan.dryRun, { beforeCopy: check, label: 'Copy the dry run' }),
+        h('p', { class: 'step-label' }, richText('2. Send it (the same command with `--yes`):')),
+        commandBlock(plan.send, { beforeCopy: check, label: 'Copy the command that sends' }),
+        h('p', { class: 'hint' }, richText(`Owners as read at ${time(readAt)}; each Copy reads them again. The second prints ${plan.prints}`)),
         h('h3', {}, 'Then'),
         h(
           'ol',
           { class: 'steps' },
           h('li', {}, `${d.flags.noSecurityContacts ? 'Add a security contact (below), then use' : 'Use'} “Create an app” under Apps with the scope id the command printed. Its first app makes the scope a test or a live scope for good, so a live app later gets a scope of its own.`),
-          h('li', {}, 'Give the partner the app id and the publishable key. An on-chain owner adds their origins and signing policy in their console.'),
+          h('li', {}, 'Give the partner the app id and the publishable key. An on-chain owner adds their origins and signing policy in their console, and their own Google client from its scope page if they want one.'),
         ),
       );
     }
     out.replaceChildren(...parts);
   };
   for (const b of ownerBoxes) b.input.addEventListener('change', update);
-  shared.addEventListener('change', update);
-  client.addEventListener('input', update);
+  for (const r of memberRadios) r.addEventListener('change', update);
   const form = h(
     'div',
     { class: 'scope-form' },
@@ -1183,6 +1197,7 @@ function scopePanel(o, d) {
       { class: 'choices' },
       h('legend', {}, 'On-chain owners'),
       h('p', { class: 'hint' }, `This organisation’s owners who have accepted their invite. Each one ticked becomes an on-chain owner: they can add origins, set signing policies and change the scope from their console. At most ${MAX_SCOPE_OWNERS}.`),
+      note('warn', '', 'An on-chain owner stays one after leaving this organisation or being disabled here: removing them takes an on-chain owner’s “set the on-chain owners” proposal and the scope’s timelock. Tick only people who should hold that.'),
       ownerBoxes.map((b) => h('label', { class: 'check' }, b.input, h('span', {}, b.m.email, h('span', { class: 'sub' }, 'Google account ', h('code', {}, b.m.sub))))),
     ),
     laterList,
@@ -1190,15 +1205,18 @@ function scopePanel(o, d) {
       'fieldset',
       { class: 'choices' },
       h('legend', {}, 'How users sign in'),
-      h('label', { class: 'check' }, shared, h('span', {}, 'Hana’s shared Google login', h('span', { class: 'sub' }, richText('Works at once; Google’s consent screen shows Hana. Adds `--allow-shared`.')))),
-      h(
-        'label',
-        { class: 'field wide', for: clientId },
-        h('span', { class: 'label' }, 'The partner’s own Google client id', h('span', { class: 'req' }, ' (optional)')),
-        client,
-        h('span', { class: 'help', id: `${clientId}-help` }, 'Only if the partner sent one and wants their own name on Google’s consent screen. It must not belong to another scope. Leave it empty to add it later from the partner’s console.'),
-      ),
+      h('p', {}, 'Through Hana’s shared Google login (', h('code', {}, '--allow-shared'), '): it works at once, and Google’s consent screen shows Hana.'),
+      h('p', { class: 'hint' }, 'A partner who wants their own Google client adds it from their console’s scope page once the scope exists: that takes a sign-in with their client, which proves they control it, and the contract’s timelock. They can then turn shared login off there. Hana never registers a client id a partner sends, since nothing would prove it is theirs.'),
     ),
+    councilProposes
+      ? h(
+          'fieldset',
+          { class: 'choices' },
+          h('legend', {}, 'Who runs it'),
+          h('p', { class: 'hint' }, 'The council member whose key signs the proposal (yours). The others approve with their own keys.'),
+          memberRadios.map((r) => h('label', { class: 'check' }, r, h('code', {}, r.value))),
+        )
+      : '',
     out,
   );
   update();
@@ -1748,8 +1766,11 @@ function richText(s) {
     .map((part, i) => (i % 2 ? h('code', {}, part) : part));
 }
 
-/** A command in a copyable block, verbatim (placeholders such as <env> stay as they are). */
-function commandBlock(cmd) {
+/**
+ * A command in a copyable block, verbatim (placeholders such as <env> stay as they are). `opts.beforeCopy`: an async
+ * check run at each Copy; a message from it is shown and nothing is copied. `opts.label`: the button's accessible name.
+ */
+function commandBlock(cmd, opts = {}) {
   const status = h('span', { class: 'muted', role: 'status' });
   return h(
     'div',
@@ -1760,7 +1781,19 @@ function commandBlock(cmd) {
       {
         type: 'button',
         class: 'small',
+        'aria-label': opts.label,
         onclick: async () => {
+          status.textContent = '';
+          try {
+            const refused = opts.beforeCopy ? await opts.beforeCopy() : null;
+            if (refused) {
+              status.textContent = refused;
+              return;
+            }
+          } catch {
+            status.textContent = 'Not copied: the members couldn’t be read again. Try again.';
+            return;
+          }
           try {
             await navigator.clipboard.writeText(cmd);
             status.textContent = 'Copied';

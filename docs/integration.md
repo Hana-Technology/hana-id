@@ -52,20 +52,23 @@ During the pilot Hana creates your organisation and your apps, and you manage th
   contact**: an address that gets the announcement of every change to your apps' origins and signing settings;
 - the app name your users will see ("Signing in to {name} at {origin}"), and the origins your app runs on to start with
   (more can be added in the portal; [Allowed origins](#allowed-origins));
-- whether you use Hana's shared Google client or your own ([section 6](#6-google-client-shared-or-your-own)). For your
-  own, send its client ID with the rest: it is registered with your scope when Hana sets it up. Added later, it takes
-  the portal's client-proof steps and the contract's timelock.
+- nothing about Google clients: your scope starts on Hana's shared Google client. If you want your own
+  ([section 6](#6-google-client-shared-or-your-own)), an on-chain owner adds it in the portal once the scope exists,
+  with a sign-in on your client that proves it is yours; Hana never registers a client ID you send.
 
 **In this order:**
 
 1. Hana invites your first owner. They open the invite email and **Sign in with Google to accept** (below). This comes
    first: Hana can set up your scope only once your owners have accepted, because their Google accounts become the
    scope's **on-chain owners** ([below](#on-chain-owners)).
-2. Hana registers your scope on Hana's contract with those owners and your login choice, then creates your test app
-   in it.
+2. Hana registers your scope on Hana's contract with the owners you name (shared login), then creates your test app
+   in it. An on-chain owner stays one even after leaving your organisation in the portal: removing them takes another
+   on-chain owner's proposal and the contract's timelock ([below](#on-chain-owners)), so name only people who should
+   hold that.
 3. You receive the app's **publishable key** and **app id** (also in the portal, below) and the SDK's tarballs with
    their checksums ([section 2](#2-install)).
-4. An on-chain owner adds any further origins and, if you want one, an auto-approve policy in the portal.
+4. An on-chain owner adds any further origins and, if you want them, an auto-approve policy and your own Google client
+   in the portal.
 
 What you get, and where to find it again:
 
@@ -504,9 +507,9 @@ clients and on-chain owners"), whose **Add your own Google client** steps take a
 download, host on one of the client's origins and sign in on once, whose token becomes public on chain (use a team
 account). The addition is timelocked by Hana's contract. Return the client to the settings above (remove the helper's
 redirect URI and origin) once the change is proposed. Only an on-chain owner can propose it
-([section 1](#on-chain-owners)). Sending Hana the client ID instead works only before your scope is set up, when Hana
-registers it with the scope ([section 1](#1-your-app-and-the-partner-portal)). The token's audience then picks your
-scope. If your scope also holds iOS or Android clients, which can't run Hana's web flow, set the web one as the
+([section 1](#on-chain-owners)), and this is the only way to add one: Hana doesn't register a client ID you send,
+because nothing would prove it is yours. Once your own client is in, an on-chain owner can turn Hana's shared login off
+on the same page. The token's audience then picks your scope. If your scope also holds iOS or Android clients, which can't run Hana's web flow, set the web one as the
 app's **Google web client** on **Login & sessions**. A scope with a client of its own always signs in through it.
 
 Hana can't see your Google client's settings. Any JavaScript origin, extra redirect URI or native app on your client

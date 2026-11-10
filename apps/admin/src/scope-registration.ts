@@ -2,7 +2,7 @@
 // var, checked, for the organisation page's "Register a scope" panel, which writes the exact `admin <env>
 // scope:register` command from them. Public values only; nothing here signs or sends anything.
 
-/** The "Register a scope" panel's view of the manifest (D651): who signs `admin_register_scope` here. Public values. */
+/** The "Register a scope" panel's view of the manifest (D651): who signs the scope registration here. Public values. */
 export interface ScopeRegistrationConfig {
   ownerKind: 'account' | 'sputnik';
   owner: string;

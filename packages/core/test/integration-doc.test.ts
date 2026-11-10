@@ -101,7 +101,9 @@ describe('docs/integration.md', () => {
     expect(guide).toMatch(/An on-chain owner of your scope \(\[section 1\]\(#on-chain-owners\)\) writes the policy/u);
     expect(guide).toContain('An on-chain owner of your scope turns it on');
     expect(guide).not.toMatch(/Or send Hana the client ID\./u);
-    expect(guide).toContain('works only before your scope is set up');
+    expect(guide).not.toMatch(/send its client ID|Sending Hana the client ID/u);
+    expect(guide).toContain('Hana never registers a client ID you send');
+    expect(s1).toContain('An on-chain owner stays one even after leaving your organisation');
   });
 
   it('starts with the content: one short Last verified line, not a changelog', () => {

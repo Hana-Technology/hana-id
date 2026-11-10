@@ -8,6 +8,7 @@ import { KeyPair } from '@near-js/crypto';
 import { ownerVoteCmd } from '../lib/admin-owner.ts';
 import { registeredScopeId, scopeRegister } from '../lib/admin-scope.ts';
 import { parseCli } from '../lib/cli.ts';
+import { sendOwnerCall } from '../lib/owner-tx.ts';
 import { writeCouncilKey } from '../lib/council.ts';
 import { councilPolicy, readPin } from '../lib/sputnik.ts';
 import { SimChain } from './sim-chain.ts';
@@ -85,16 +86,47 @@ describe('scope:register through the council', () => {
 describe('registeredScopeId', () => {
   const owners = [{ Oidc: { provider: 'google', sub: SUB_1 } }];
   const event = (data: unknown, extra: Record<string, unknown> = {}) => `EVENT_JSON:${JSON.stringify({ standard: 'hana-id', version: '1.3.0', event: 'scope_registered', data: [data], ...extra })}`;
+  const at = (executor: string, ...logs: string[]) => ({ executor, logs });
 
-  it('reads the scope id of the scope_registered event, for exactly these owners when given', () => {
-    expect(registeredScopeId(['Some log', event({ scope_id: 's7', owners })], owners)).toBe('s7');
-    expect(registeredScopeId([event({ scope_id: 's7', owners })])).toBe('s7');
-    expect(registeredScopeId([event({ scope_id: 's7', owners: [{ Oidc: { provider: 'google', sub: SUB_2 } }] })], owners)).toBeNull();
+  it('reads the scope id of the scope_registered event the signer logged, for exactly these owners', () => {
+    expect(registeredScopeId([at(m.signer, 'Some log', event({ scope_id: 's7', owners }))], m.signer, owners)).toBe('s7');
+    expect(registeredScopeId([at(m.signer, event({ scope_id: 's7', owners: [{ Oidc: { provider: 'google', sub: SUB_2 } }] }))], m.signer, owners)).toBeNull();
   });
 
-  it('ignores other events, other standards, malformed lines and ids', () => {
-    expect(registeredScopeId([])).toBeNull();
-    expect(registeredScopeId(['EVENT_JSON:{not json', event({ scope_id: 's1', owners }, { event: 'change_proposed' }), event({ scope_id: 's1', owners }, { standard: 'nep171' })])).toBeNull();
-    expect(registeredScopeId([event({ scope_id: 'S 1; rm', owners }), event({ owners })])).toBeNull();
+  it('ignores the same line from any other contract, other events, other standards, malformed lines and ids', () => {
+    expect(registeredScopeId([], m.signer, owners)).toBeNull();
+    expect(registeredScopeId([at('evil.testnet', event({ scope_id: 's9', owners })), at(council.dao, event({ scope_id: 's9', owners }))], m.signer, owners)).toBeNull();
+    expect(registeredScopeId([at(m.signer, 'EVENT_JSON:{not json', event({ scope_id: 's1', owners }, { event: 'change_proposed' }), event({ scope_id: 's1', owners }, { standard: 'nep171' }))], m.signer, owners)).toBeNull();
+    expect(registeredScopeId([at(m.signer, event({ scope_id: 'S 1; x', owners }), event({ owners }))], m.signer, owners)).toBeNull();
+  });
+});
+
+describe('a foreign contract logging a look-alike event', () => {
+  const lookAlike = (id: string, subs: string[]) => ({ executor: 'evil.testnet', logs: [`EVENT_JSON:${JSON.stringify({ standard: 'hana-id', version: '1.3.0', event: 'scope_registered', data: [{ scope_id: id, owners: subs.map((sub) => ({ Oidc: { provider: 'google', sub } })) }] })}`] });
+  const ownerDeps = () => ({ rpc: { ...chain.rpc(), accessKeys: async () => [], account: async () => null }, log: (l: string) => out.push(l), home: roots.home, secretsRoot: roots.secretsRoot, now: () => chain.now });
+
+  it('scope:register prints only the signer\'s own event', async () => {
+    chain.extraReceiptLogs = [lookAlike('sfake', [SUB_1])];
+    await scopeRegister(m, cli(['--allow-shared', '--owner-google', SUB_1, '--member', A, '--approve-with', B, '--yes']), deps());
+    const id = Object.keys(chain.scopes)[0]!;
+    expect(text()).toContain(`Registered scope: ${id} (proposal #0)`);
+    expect(text()).not.toContain('sfake');
+  });
+
+  it('owner:vote prints nothing for a proposal that isn\'t the signer\'s admin_register_scope, and only the real id for one that is', async () => {
+    chain.extraReceiptLogs = [lookAlike('sfake', [SUB_2])];
+    // Another owner call (set_sponsors) passed by owner:vote: the look-alike line is never read as a scope.
+    await sendOwnerCall(m, { method: 'set_sponsors', args: { sponsors: [] } }, { member: A }, { rpc: chain.rpc(), log: () => {}, home: roots.home, secretsRoot: roots.secretsRoot });
+    await ownerVoteCmd(m, '0', cli(['--member', A, '--yes']), ownerDeps());
+    await ownerVoteCmd(m, '0', cli(['--member', B, '--yes']), ownerDeps());
+    expect(text()).toContain('#0 approved and executed.');
+    expect(text()).not.toContain('Registered scope');
+    out = [];
+    await scopeRegister(m, cli(['--allow-shared', '--owner-google', SUB_2, '--member', A, '--yes']), deps());
+    await ownerVoteCmd(m, '1', cli(['--member', A, '--yes']), ownerDeps());
+    await ownerVoteCmd(m, '1', cli(['--member', B, '--yes']), ownerDeps());
+    const id = Object.keys(chain.scopes)[0]!;
+    expect(text()).toContain(`Registered scope: ${id}`);
+    expect(text()).not.toContain('sfake');
   });
 });

@@ -7,17 +7,18 @@
 import type { Manifest } from '@hana-id/env';
 import { clientsFromArgs, ownersFromArgs } from './admin-args.ts';
 import type { Args } from './cli.ts';
-import { NearRpc, TGAS } from './near.ts';
+import { NearRpc, type ReceiptLogs, TGAS } from './near.ts';
 import { describeOwnerCall, sendOwnerCall } from './owner-tx.ts';
 
 export const SCOPE_DRY_RUN_LINE = 'Dry run: re-run with --yes to send.';
 
 /**
- * The scope id of the `scope_registered` event in a transaction's logs (NEP-297 `EVENT_JSON:` lines, standard
- * `hana-id`), or null when there is none. With `owners`, only an event for exactly those owners counts.
+ * The scope id of the `scope_registered` event a transaction's receipts logged (NEP-297 `EVENT_JSON:` lines, standard
+ * `hana-id`), or null when there is none. Only receipts executed by `signer` count (any contract the call touched could
+ * log a look-alike line), and only an event for exactly `owners`.
  */
-export function registeredScopeId(logs: readonly string[], owners?: readonly unknown[]): string | null {
-  for (const line of logs) {
+export function registeredScopeId(receipts: readonly ReceiptLogs[], signer: string, owners: readonly unknown[]): string | null {
+  for (const line of receipts.filter((r) => r.executor === signer).flatMap((r) => r.logs)) {
     if (!line.startsWith('EVENT_JSON:')) continue;
     let e: { standard?: unknown; event?: unknown; data?: unknown };
     try {
@@ -28,7 +29,7 @@ export function registeredScopeId(logs: readonly string[], owners?: readonly unk
     if (e.standard !== 'hana-id' || e.event !== 'scope_registered' || !Array.isArray(e.data)) continue;
     const d = e.data[0] as { scope_id?: unknown; owners?: unknown } | undefined;
     if (typeof d?.scope_id !== 'string' || !/^[a-z0-9]{1,64}$/u.test(d.scope_id)) continue;
-    if (owners && JSON.stringify(d.owners) !== JSON.stringify(owners)) continue;
+    if (JSON.stringify(d.owners) !== JSON.stringify(owners)) continue;
     return d.scope_id;
   }
   return null;
@@ -77,7 +78,7 @@ export async function scopeRegister(m: Manifest, args: Args, deps: ScopeRegister
     log(`Registered scope: ${id}`);
     if (typeof r.value === 'string') log(nextStepLine(m, r.value));
   } else if (r.kind === 'approved') {
-    const id = registeredScopeId(r.logs ?? [], owners);
+    const id = registeredScopeId(r.logs ?? [], m.signer, owners);
     if (id) {
       log(`Registered scope: ${id} (proposal #${r.proposalId})`);
       log(nextStepLine(m, id));

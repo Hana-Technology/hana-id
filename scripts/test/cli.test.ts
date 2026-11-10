@@ -43,6 +43,8 @@ describe('scope:register arguments', () => {
     expect(() => ownersFromArgs([], [])).toThrow('1..5 owners');
     expect(() => ownersFromArgs(['Bad Account'], [])).toThrow('Invalid NEAR account');
     expect(() => ownersFromArgs([], ['a#b'])).toThrow('Invalid Google sub');
+    // A Google sub is digits: anything else (a shell word, an email-style id) is refused.
+    for (const bad of ['abc', '123 4', '12;3', '', '1'.repeat(256)]) expect(() => ownersFromArgs([], [bad]), bad).toThrow(bad === '' ? /owners|Invalid Google sub/u : 'Invalid Google sub');
     expect(() => ownersFromArgs(['a1.testnet', 'a2.testnet', 'a3.testnet', 'a4.testnet', 'a5.testnet', 'a6.testnet'], [])).toThrow('1..5 owners');
   });
 

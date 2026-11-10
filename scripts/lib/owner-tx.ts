@@ -16,7 +16,7 @@ import { CliError } from './cli.ts';
 import { OWNER_METHODS, type OwnerMethod, SCOPE_OWNER_CALLS, type ScopeOwnerCall } from './contract.ts';
 import { councilKeysOnDisk, loadMemberKey } from './council.ts';
 import { loadLegacyCredential } from './keys.ts';
-import { explorerTx, type NearRpc, TGAS } from './near.ts';
+import { explorerTx, type NearRpc, type ReceiptLogs, TGAS } from './near.ts';
 import {
   ADD_PROPOSAL_GAS,
   approvers,
@@ -61,8 +61,8 @@ export type OwnerRoute = { kind: 'account'; account: string } | { kind: 'sputnik
 
 export type OwnerTxResult =
   | { kind: 'executed'; hash: string; value: unknown }
-  /** `logs`: the logs of the vote that executed the call (its events, e.g. `scope_registered`), when it logged any. */
-  | { kind: 'approved'; proposalId: number; logs?: string[] }
+  /** `logs`: the receipt logs of the vote that executed the call (its events, e.g. `scope_registered`), when any logged. */
+  | { kind: 'approved'; proposalId: number; logs?: ReceiptLogs[] }
   | { kind: 'proposed'; proposalId: number; approvals: string[]; needed: number };
 
 export function isOwnerMethod(method: string): method is OwnerMethod {
@@ -174,14 +174,14 @@ export async function findOpenProposal(
  * One vote by `member` on proposal `id` (key per `loadMemberKey`): the proposal's status afterwards, and the vote
  * transaction's logs (the executed call's events when this vote passed it).
  */
-export async function castVoteTx(m: Manifest, dao: string, id: number, member: string, action: VoteAction, deps: OwnerTxDeps): Promise<{ status: string; logs: string[] }> {
+export async function castVoteTx(m: Manifest, dao: string, id: number, member: string, action: VoteAction, deps: OwnerTxDeps): Promise<{ status: string; logs: ReceiptLogs[] }> {
   const key = loadMemberKey(m, member, deps);
-  const { hash, logs } = await deps.rpc.sendTx({ accountId: key.accountId, keyPair: key.keyPair }, dao, [
+  const { hash, receiptLogs } = await deps.rpc.sendTx({ accountId: key.accountId, keyPair: key.keyPair }, dao, [
     actionCreators.functionCall('act_proposal', { id, action, memo: null }, VOTE_GAS, 0n),
   ]);
   deps.log(`    ${member} ${action === 'VoteApprove' ? 'approved' : 'rejected'} #${id}: ${explorerTx(hash)}`);
   const p = await deps.rpc.view<DaoProposal>(dao, 'get_proposal', { id });
-  return { status: p.status, logs: logs ?? [] };
+  return { status: p.status, logs: receiptLogs ?? [] };
 }
 
 /** One vote by `member` on proposal `id` (key per `loadMemberKey`); returns the proposal's status afterwards. */
@@ -234,7 +234,7 @@ export async function sendOwnerCall(m: Manifest, call: OwnerCall, opts: OwnerTxO
 
   if (opts.approveWith) {
     let status = proposal.status;
-    let logs: string[] = [];
+    let logs: ReceiptLogs[] = [];
     for (const voter of [member, opts.approveWith]) {
       if (approvers(proposal).includes(voter)) continue;
       ({ status, logs } = await castVoteTx(m, dao, id, voter, 'VoteApprove', deps));
@@ -242,7 +242,7 @@ export async function sendOwnerCall(m: Manifest, call: OwnerCall, opts: OwnerTxO
     }
     if (status === 'Approved') {
       log(`    #${id} approved and executed: ${callText(call)}`);
-      return { kind: 'approved', proposalId: id, ...(logs.length ? { logs } : {}) };
+      return { kind: 'approved', proposalId: id, ...(logs.some((r) => r.logs.length) ? { logs } : {}) };
     }
     if (status === 'Failed') throw new Error(`Proposal #${id} was approved but the call ${call.method} on ${m.signer} failed (the contract refused it); see the vote transaction`);
     throw new Error(`Proposal #${id} is ${status} after both approvals (expected Approved)`);

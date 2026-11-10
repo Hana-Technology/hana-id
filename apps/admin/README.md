@@ -29,14 +29,16 @@ The left nav groups the screens by task (D420):
 
 **Register a scope for this organisation (D651).** A partner's apps need a scope on chain whose Google owners are
 owners of the organisation, and registering one is a council action, so the panel prepares it and sends nothing. It
-lists the organisation's owners who have accepted (each with their Google account, the `sub` the contract stores) as
-checkboxes, the first five ticked (the contract's 1–5), and everyone who can't be one yet with why (an owner invite not
-accepted, an owner in the grant period, a disabled owner); then "Hana's shared Google login" (ticked) and the
-partner's own Google client id (optional). It checks the choices as the contract and "Create an app" would and shows
-the exact `scope:register` command for the env (`GET /api/me` `scopeRegistration`, from the `SCOPE_REGISTRATION` var):
-both council votes in one run on a dev env on testnet (`--member`/`--approve-with`), one member's proposal elsewhere,
-the owner's key for an account owner; with what to run it on, what it prints (`Registered scope: s…`) and the next
-steps ("Create an app" with that id; the partner's on-chain owner adds origins). No owner yet: "Waiting for the
+lists the organisation's owners who have accepted (each with their Google account, the digits-only `sub` the
+contract stores) as checkboxes, none ticked (an on-chain owner stays one after leaving the organisation, and the panel
+says so, D657; at most 5), and everyone who can't be one yet with why (an owner invite not accepted, an owner in the
+grant period, a disabled owner). A new scope always gets Hana's shared login: there is no client-id field, and the
+partner adds their own client with its proof from their console (D656). It checks the choices as the contract and
+"Create an app" would and shows two commands for the env, the dry run and the one with `--yes` (`GET /api/me`
+`scopeRegistration`, from the `SCOPE_REGISTRATION` var): both council votes in one run on a dev env on testnet
+(`--member`/`--approve-with`), the member chosen by radio button elsewhere, the owner's key for an account owner; each
+Copy re-reads the members and refuses if a ticked owner left meanwhile (D658); with what it prints (`Registered scope:
+s…`) and the next steps ("Create an app" with that id; the partner's on-chain owner adds origins). No owner yet: "Waiting for the
 partner" and no form. An organisation that already has an app keeps it behind "Prepare a scope:register command". The
 `sub` is shown to staff and in the command only, never in a URL or a log. The organisation's registered scopes are not
 offered in "Create an app" (no view lists them: D655). Tests: `test-spa/scope-register.test.ts`. The full onboarding

@@ -178,6 +178,8 @@ export interface VaultHost {
   visibility?(): 'visible' | 'hidden';
   /** Subscribes to the vault document's `visibilitychange` events. */
   onVisibilityChange?(listener: () => void): void;
+  /** Subscribes to the vault window's `pageshow` events of a page restored from the back/forward cache (`persisted`). */
+  onPageRestore?(listener: () => void): void;
 }
 
 /** What the vault reads from its own PerformanceNavigationTiming: all on the vault document's clock. */
@@ -410,6 +412,13 @@ export const SHARE_NO_ANSWER_REUSE_MS = 5_000;
 /** A tab with no activity (`noteStatusActivity`) for this long is idle: its background read slows to STATUS_IDLE_READ_MS. */
 export const STATUS_IDLE_AFTER_MS = 5 * 60_000;
 export const STATUS_IDLE_READ_MS = 5 * 60_000;
+/**
+ * GET /v1/app and POST /v1/vault/share-status are given up (aborted) after this long, so a fetch that never settles
+ * can't hold the one check in flight, and with it every later check and the background timer, for good.
+ */
+export const STATUS_READ_TIMEOUT_MS = 15_000;
+/** After the API showed it lacks POST /v1/vault/share-status, the light read is tried again this much later. */
+export const SHARE_STATUS_REPROBE_MS = 30 * 60_000;
 /** The pre-signature re-read is waited for this long at most; a slower one counts as no answer (the grace applies). */
 export const SHARE_WAIT_MS = 8_000;
 /**
@@ -460,11 +469,14 @@ export class Vault {
   private statusTimerIdle = false;
   /** The page's or the user's last activity this vault saw (`noteStatusActivity`), server-corrected and on perfNow. */
   private statusActive: { at: number; perf: number };
-  /** The share check in flight (one at a time), and when the last one got no answer (SHARE_NO_ANSWER_REUSE_MS). */
-  private shareCheck: Promise<boolean> | null = null;
+  /**
+   * The share check in flight (one at a time per share: `key` is the live session's Share or the Dormant), and when the
+   * last one got no answer (SHARE_NO_ANSWER_REUSE_MS).
+   */
+  private shareCheck: { key: object; p: Promise<boolean> } | null = null;
   private shareNoAnswer: { at: number; perf: number } | null = null;
-  /** The API answered 404 `not_found` for POST /v1/vault/share-status (an API older than it): GET /v1/app only. */
-  private shareStatusMissing = false;
+  /** When the API last showed it has no POST /v1/vault/share-status (an API older than it, D693): GET /v1/app only. */
+  private shareStatusSkipped: { at: number; perf: number } | null = null;
   /** The raw-signing setting in force: the inlined one until GET /v1/app says 'off' (then 'off' until a reload). */
   private rawSign: RawSign;
   /** Server-corrected time of the last GET /v1/app (or page render) that confirmed `rawSign`. */
@@ -585,6 +597,8 @@ export class Vault {
     this.bundleCkdKeyHash = ckdKeyHash(o.env.ckdNetworkKey);
     o.host.onMessage((e) => this.onWindowMessage(e));
     o.host.onVisibilityChange?.(() => this.onVisibilityChange());
+    // A back/forward-cache restore: its timers were frozen, so it is checked as a tab shown again (D681).
+    o.host.onPageRestore?.(() => this.onVisibilityChange());
     this.constructedAt = this.perfNow();
   }
 
@@ -763,6 +777,22 @@ export class Vault {
     return this.live()?.addresses ?? this.liveDormant()?.addresses ?? null;
   }
 
+  /**
+   * `run` with a signal aborted after `ms` on this vault's timers; it rejects at that deadline (a network-style failure,
+   * not an ApiError) even if the fetch ignores the signal.
+   */
+  private withTimeout<T>(ms: number, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const ctl = new AbortController();
+    let timer: unknown = null;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = this.timers.setTimeout(() => {
+        ctl.abort();
+        reject(new Error('timeout'));
+      }, ms);
+    });
+    return Promise.race([run(ctl.signal), deadline]).finally(() => this.timers.clearTimeout(timer));
+  }
+
   /** GET /v1/app, cached on success. Every fresh answer also re-checks the policy and raw signing in force. */
   private appConfig(): Promise<AppConfig> {
     if (!this.appConfigPromise) {
@@ -774,7 +804,7 @@ export class Vault {
       // The session's share, likewise: a 'revoked' answer ends that session alone (Hana Home's "Sign out this device").
       const asked = this.session;
       const shareId = asked?.share?.shareId ?? null;
-      const p = this.api!.app(consentId ? base64UrlEncode(fromHex(consentId)) : undefined, shareId ? base64UrlEncode(shareId) : undefined).then((app) => {
+      const p = this.withTimeout(STATUS_READ_TIMEOUT_MS, (signal) => this.api!.app(consentId ? base64UrlEncode(fromHex(consentId)) : undefined, shareId ? base64UrlEncode(shareId) : undefined, signal)).then((app) => {
         this.appRtts.set(app, this.perfNow() - sent);
         // Any answer does the background read's job (and ends its backoff).
         this.noteStatusMark(at, sent);
@@ -898,23 +928,32 @@ export class Vault {
    * 5xx or a network error is no answer, never `'revoked'`.
    */
   private checkShare(h: ShareHolder, appFirst = false): Promise<boolean> {
-    this.shareCheck ??= (async () => {
+    // One check at a time per share: a check for another session's share (a new login meanwhile) never joins it.
+    const key = h.kind === 'live' ? h.share : h.d;
+    const running = this.shareCheck;
+    if (running && running.key === key) return running.p;
+    // Assigned below and read in its own `finally` (clears only this check).
+    let p!: Promise<boolean>;
+    p = (async () => {
       const at = this.clock.now();
       const perf = this.perfNow();
       const answered = (): boolean => !this.holderCurrent(h) || (this.holderLive(h).liveAt ?? Number.NEGATIVE_INFINITY) >= at;
+      let lightUnreachable = false;
       const viaApp = async (): Promise<boolean> => {
         if (h.kind !== 'live') return false;
         await this.refreshPolicy().catch(() => undefined);
         return answered();
       };
       const viaLight = async (): Promise<boolean> => {
-        if (this.shareStatusMissing) return false;
+        if (this.lightSkipped()) return false;
         let status: 'live' | 'revoked';
         try {
-          status = await this.api!.shareStatus(this.holderShareId(h));
+          status = await this.withTimeout(STATUS_READ_TIMEOUT_MS, (signal) => this.api!.shareStatus(this.holderShareId(h), signal));
         } catch (e) {
-          // An API older than the endpoint: GET /v1/app from now on (never `revoked`).
-          if (e instanceof ApiError && e.status === 404 && e.code === 'not_found') this.shareStatusMissing = true;
+          // An API older than the endpoint answers a readable 404 (same origin, tests) or, in a browser, fails the
+          // preflight (no CORS headers on an unknown route). Either way: no answer, never `revoked`.
+          if (e instanceof ApiError && e.status === 404 && e.code === 'not_found') this.skipLight(at, perf);
+          else if (!(e instanceof ApiError)) lightUnreachable = true;
           return false;
         }
         this.noteStatusMark(at, perf);
@@ -925,14 +964,35 @@ export class Vault {
         return true;
       };
       try {
-        const ok = appFirst ? (await viaApp()) || (await viaLight()) : (await viaLight()) || (await viaApp());
+        let ok: boolean;
+        if (appFirst) ok = (await viaApp()) || (await viaLight());
+        else {
+          ok = await viaLight();
+          if (!ok) {
+            ok = await viaApp();
+            // The light read failed as a network error while GET /v1/app answered: an API without the endpoint, seen
+            // through a failed preflight. GET /v1/app alone for a while, then the light read is tried again (D693).
+            if (ok && lightUnreachable) this.skipLight(at, perf);
+          }
+        }
         this.shareNoAnswer = ok ? null : { at, perf };
         return ok;
       } finally {
-        this.shareCheck = null;
+        if (this.shareCheck?.p === p) this.shareCheck = null;
       }
     })();
-    return this.shareCheck;
+    this.shareCheck = { key, p };
+    return p;
+  }
+
+  /** The light read is skipped for SHARE_STATUS_REPROBE_MS after the API showed it doesn't have it (D693). */
+  private lightSkipped(): boolean {
+    const s = this.shareStatusSkipped;
+    return s !== null && Math.max(this.clock.now() - s.at, this.perfNow() - s.perf) < SHARE_STATUS_REPROBE_MS;
+  }
+
+  private skipLight(at: number, perf: number): void {
+    this.shareStatusSkipped = { at, perf };
   }
 
   /**
@@ -1708,9 +1768,14 @@ export class Vault {
         payload: vaultPayload.createShare(parentOrigin),
       });
       let created: Awaited<ReturnType<VaultApi['createShare']>> | null = null;
+      // The send time of the create that answered: the API's first word that the share is live.
+      let sentAt = this.clock.now();
+      let sentPerf = this.perfNow();
       for (let attempt = 0; created === null; attempt++) {
         if (job.cancelled) return;
         try {
+          sentAt = this.clock.now();
+          sentPerf = this.perfNow();
           created = await this.api!.createShare(success.sessionKey.publicKey, signature, this.o.deviceLabel ?? null);
         } catch (e) {
           if (attempt >= 1 || job.cancelled) throw new PersistFailure(`share:${e instanceof ApiError ? e.code.slice(0, 64) : 'network'}`);
@@ -1719,8 +1784,7 @@ export class Vault {
       }
       const ks = Uint8Array.from(created.ks);
       created.ks.fill(0);
-      // Its create is the API's first word that it is live.
-      share = { shareId: Uint8Array.from(created.shareId), counter: 0, createdAt: this.clock.now(), absExpiresAtMs: created.absExpiresAtMs, liveAt: this.clock.now(), livePerf: this.perfNow() };
+      share = { shareId: Uint8Array.from(created.shareId), counter: 0, createdAt: this.clock.now(), absExpiresAtMs: created.absExpiresAtMs, liveAt: sentAt, livePerf: sentPerf };
       const made = share;
       const binding = {
         signer: this.env.signer,
@@ -2121,6 +2185,7 @@ export class Vault {
       for (let attempt = 0; ; attempt++) {
         try {
           const sent = this.perfNow();
+          const sentAt = this.clock.now();
           const res = await this.callShare(r.sessionKeyPair, r.shareId, counter, 'unlock');
           if (t) {
             // Signing (~0.1 ms) and the round trip of the attempt that answered, next to the API's own time for it.
@@ -2134,7 +2199,7 @@ export class Vault {
           // The counter is written before the lock is released.
           await store.put(this.recordId, r);
           t?.mark('counter');
-          return { record: r, ks, absExpiresAtMs: res.absExpiresAtMs };
+          return { record: r, ks, absExpiresAtMs: res.absExpiresAtMs, liveAt: sentAt, livePerf: sent };
         } catch (e) {
           if (!(e instanceof ApiError)) return null;
           const expected = badCounterExpected(e);
@@ -2151,7 +2216,7 @@ export class Vault {
       }
     });
     if (!unlocked) return;
-    const { record, ks, absExpiresAtMs } = unlocked;
+    const { record, ks, absExpiresAtMs, liveAt, livePerf } = unlocked;
     let prk: Bytes;
     try {
       prk = await openPrk(ks, record);
@@ -2186,8 +2251,8 @@ export class Vault {
       sessionPk: record.sessionPk,
       keyPair: record.sessionKeyPair,
       persistence: 'session',
-      // The unlock that just answered says it is live.
-      share: { shareId: record.shareId, counter: record.counter, createdAt: null, absExpiresAtMs, liveAt: this.clock.now(), livePerf: this.perfNow() },
+      // The unlock that answered says it is live, as of when it was sent.
+      share: { shareId: record.shareId, counter: record.counter, createdAt: null, absExpiresAtMs, liveAt, livePerf },
       persist: null,
       consent: null,
       walletProofs,

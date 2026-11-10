@@ -34,6 +34,7 @@ export function bootVault(win: Window, env: HanaEnv, scriptStart?: number): Vaul
     // A frame's visibilityState follows its tab's: the share check pauses while the tab is hidden.
     visibility: () => (win.document.visibilityState === 'hidden' ? 'hidden' : 'visible'),
     onVisibilityChange: (listener) => win.document.addEventListener('visibilitychange', listener),
+    onPageRestore: (listener) => win.addEventListener('pageshow', (e: PageTransitionEvent) => e.persisted && listener()),
   };
   return new Vault({
     env,

@@ -40,6 +40,11 @@ export const vaultIpKey = (envName: string, appId: string, ipSubject: string): s
 /** Key of the per-share window: env, app and the share id in hex (a share is only ever looked up within its app). */
 export const vaultShareKey = (envName: string, appId: string, shareIdHex: string): string => `${envName}:vault-share:${appId}:${shareIdHex}`;
 
-/** Keys of the share-status windows (D690): as the vault's, with their own prefixes. */
-export const statusIpKey = (envName: string, appId: string, ipSubject: string): string => `${envName}:vault-status-ip:${appId}:${ipSubject}`;
+/**
+ * Keys of the share-status windows (D690). The per-IP one names no app: one ceiling per IP subject across every app, so
+ * many apps' publishable keys can't multiply what one IP may read. Trade-off: a neighbour behind the same IP (a NAT),
+ * counted in the same Cloudflare location, can use it up, as with the unlock's per-IP window; its refusal is no answer
+ * to the vault, never a sign-out.
+ */
+export const statusIpKey = (envName: string, ipSubject: string): string => `${envName}:vault-status-ip:${ipSubject}`;
 export const statusShareKey = (envName: string, appId: string, shareIdHex: string): string => `${envName}:vault-status-share:${appId}:${shareIdHex}`;

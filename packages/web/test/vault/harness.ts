@@ -668,15 +668,20 @@ export class FakeBackend {
     return json(201, { shareId: Array.from(shareId), ks: Array.from(ks), absExpiresAtMs: session.expires_at_ms, idleUntilMs: this.serverNow() + 2 * HOUR, ...this.timingsField(), requestId: 'rq' });
   }
 
-  /** Whether the fake API has POST /v1/vault/share-status (false: an API older than it, which answers 404 `not_found`). */
-  shareStatusEndpoint = true;
+  /**
+   * Whether the fake API has POST /v1/vault/share-status. `'old'`: an API older than it, as a browser sees it (the
+   * unknown route's answer has no CORS headers, so the preflight fails and fetch rejects with a TypeError);
+   * `'old-readable'`: the same API's `404 not_found`, readable (same origin).
+   */
+  shareStatusEndpoint: true | 'old' | 'old-readable' = true;
 
   /**
    * POST /v1/vault/share-status (D690), as the API answers it: `{share}` for the share named, no chain call. `shareAnswer`
    * applies as on GET /v1/app; its `'omit'` (the D1 read failed) is the endpoint's 503.
    */
   private shareStatusCall(call: ApiCall): Response {
-    if (!this.shareStatusEndpoint) return apiError(404, 'not_found');
+    if (this.shareStatusEndpoint === 'old') throw new TypeError('Failed to fetch');
+    if (this.shareStatusEndpoint === 'old-readable') return apiError(404, 'not_found');
     const b = call.body as { shareId?: unknown };
     if (!b || !Array.isArray(b.shareId) || b.shareId.length !== 16 || Object.keys(b).length !== 1) return apiError(400, 'bad_request');
     const hex = toHex(Uint8Array.from(b.shareId as number[]));
@@ -948,6 +953,8 @@ export interface Tab {
   waitUntil(check: () => boolean, what: string): Promise<void>;
   /** The tab is hidden or shown (document.visibilityState), with its `visibilitychange` event. */
   setVisibility(state: 'visible' | 'hidden'): void;
+  /** A back/forward-cache restore: `pageshow` with `persisted` (no visibilitychange). */
+  pageRestore(): void;
   close(): void;
 }
 
@@ -981,6 +988,7 @@ export function openTab(browser: Browser, o: TabOptions = {}): Tab {
   const listeners: ((e: WindowMessageEvent) => void)[] = [];
   let visibility: 'visible' | 'hidden' = o.hidden ? 'hidden' : 'visible';
   const visibilityListeners: (() => void)[] = [];
+  const restoreListeners: (() => void)[] = [];
   const config = o.config ?? makeConfig();
   // The page a tab loads inlines what the API serves at that moment.
   browser.backend.autoApprovePolicy = config.settings.autoApprovePolicy;
@@ -999,7 +1007,7 @@ export function openTab(browser: Browser, o: TabOptions = {}): Tab {
         return w;
       },
       navigationTiming: () => o.navigation ?? null,
-      ...(o.noVisibility ? {} : { visibility: () => visibility, onVisibilityChange: (l: () => void) => visibilityListeners.push(l) }),
+      ...(o.noVisibility ? {} : { visibility: () => visibility, onVisibilityChange: (l: () => void) => visibilityListeners.push(l), onPageRestore: (l: () => void) => restoreListeners.push(l) }),
     },
     openStore: browser.openStore,
     locks: browser.locks,
@@ -1071,6 +1079,9 @@ export function openTab(browser: Browser, o: TabOptions = {}): Tab {
     setVisibility: (state) => {
       visibility = state;
       for (const l of visibilityListeners) l();
+    },
+    pageRestore: () => {
+      for (const l of restoreListeners) l();
     },
     close: () => {
       port1.close();

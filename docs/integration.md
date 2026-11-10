@@ -143,7 +143,8 @@ and so are `http://localhost:5173` and `http://127.0.0.1:5173`). At most 20 per 
   port) on a test app in a sandbox environment, and any origin while nobody has yet signed in to your app's scope.
 - **Cancel** a waiting addition from **Origins waiting to take effect** (or the Overview), or with the cancel link in
   the announcement email (no sign-in needed). Cancelling is immediate, and Hana and your owners keep a record of it.
-- **Remove** takes effect at once and signs out the users who signed in on that origin.
+- **Remove** takes effect at once and signs out the users who signed in on that origin; a tab of theirs already open
+  there can't sign after a minute or two and then shows signed out.
 - Live apps must use `https://` and can't use loopback origins. Wildcard hosts, IP addresses (other than loopback for
   test apps) and Hana's own origins are refused.
 

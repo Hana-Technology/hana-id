@@ -15,6 +15,7 @@ import { clearKekCache } from '../src/vault/kek.ts';
 import { NO_SHARE_ID } from '../src/vault/message.ts';
 import { clearViewCaches } from '../src/views.ts';
 import { SHARE_STATUS_ENDPOINT } from '../src/vault/share-status.ts';
+import { forgetCachedApps } from '../src/app-cache.ts';
 import { GOOGLE_ISS, ORIGIN, type Chain, type SeededApp, call, chain, google, seedApp, uid } from './helpers.ts';
 import { emailEnv, emailToken, ikSync, withEmail } from './email-helpers.ts';
 import { HOUR, VAULT, act, autoApprovePolicy, pathFor, pathHash, setSettings, setShare, signVault, spentSession, storedShare, vaultHeaders } from './vault-helpers.ts';
@@ -786,6 +787,47 @@ describe('GET /v1/app’s share field (H9: an open tab learns it was signed out)
     expect((await statusRead(app, d.shareId, { env: { VAULT_STATUS_IP_LIMIT: down } })).res.status).toBe(503);
     // Its own windows: the vault's per-IP and per-share windows (unlock, touch) don't count it.
     expect((await statusRead(app, d.shareId, { env: { VAULT_IP_LIMIT: no, VAULT_SHARE_LIMIT: no } })).body.share).toBe('live');
+  });
+
+  it('share-status: one per-IP ceiling across apps, asked before any app lookup', async () => {
+    const a = await seedApp();
+    const b = await seedApp();
+    const me = await home();
+    const da = await device(a, me.sub);
+    const db = await device(b, me.sub);
+    const keys: string[] = [];
+    const recording = { limit: async ({ key }: { key: string }) => (keys.push(key), { success: true }) } as unknown as RateLimit;
+    const headers = { 'cf-connecting-ip': '203.0.113.9' };
+    for (const [app, d] of [[a, da], [b, db]] as const) {
+      const res = await call(SHARE_STATUS_ENDPOINT, { headers: { 'x-hana-key': app.key, origin: VAULT, 'x-hana-parent-origin': ORIGIN, ...headers }, body: { shareId: d.shareId }, env: { VAULT_STATUS_IP_LIMIT: recording } });
+      expect(res.status).toBe(200);
+    }
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toBe(keys[1]);
+    expect(keys[0]).not.toContain(a.id);
+    // Refused by the ceiling: no D1 read at all, even for a made-up key; the vault can read the refusal (CORS).
+    const counted = countingDb(env.DB);
+    const no = { limit: async () => ({ success: false }) } as unknown as RateLimit;
+    const res = await call(SHARE_STATUS_ENDPOINT, { headers: { 'x-hana-key': `pk_live_${'9'.repeat(24)}`, origin: VAULT, ...headers }, body: { shareId: da.shareId }, env: { VAULT_STATUS_IP_LIMIT: no, DB: counted.db } });
+    expect(res.status).toBe(429);
+    expect(res.headers.get('access-control-allow-origin')).toBe(VAULT);
+    expect(counted.statements).toHaveLength(0);
+  });
+
+  it('share-status: a share whose own origin the app no longer allows reads revoked, whatever parent the caller names', async () => {
+    const app = await seedApp();
+    const me = await home();
+    const d = await device(app, me.sub);
+    // The caller's parent header changes nothing: the answer is about the share's recorded origin.
+    expect((await statusRead(app, d.shareId)).body.share).toBe('live');
+    const other = await call(SHARE_STATUS_ENDPOINT, { headers: { 'x-hana-key': app.key, origin: VAULT, 'x-hana-parent-origin': 'https://not-allowed.example' }, body: { shareId: d.shareId } });
+    expect(((await other.json()) as { share: string }).share).toBe('live');
+    // The partner removes the origin: the open tab's next read says revoked (its gate no longer refuses it with a 403).
+    await env.DB.prepare('DELETE FROM app_origins WHERE app_id = ?1 AND origin = ?2').bind(app.id, ORIGIN).run();
+    forgetCachedApps();
+    const after = await statusRead(app, d.shareId);
+    expect(after.res.status).toBe(200);
+    expect(after.body.share).toBe('revoked');
   });
 
   it('share-status: no chain call (answers while NEAR is down), one D1 statement and 2 rows once the app is cached, and it moves nothing', async () => {

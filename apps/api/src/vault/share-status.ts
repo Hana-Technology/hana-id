@@ -1,8 +1,11 @@
 // POST /v1/vault/share-status (D690): the vault's light check that its share is still live, so a sign-out from Hana
 // Home reaches a tab already open (D680) without GET /v1/app's chain reads, settings rows or per-IP config window.
 //
-// - Vault only (`Origin: VAULT_ORIGIN`, an allowed `x-hana-parent-origin`), through the vault gate's app check, whose app
-//   comes from the isolate's cache (D78): a warm request reads one D1 statement, the share's row joined to its app.
+// - The per-IP ceiling first (one per IP subject across apps, before any D1 read), then the vault gate's app check
+//   (`Origin: VAULT_ORIGIN`; the app from the isolate's cache, D78), then the per-share window, then one D1 statement,
+//   the share's row joined to its app. The caller's `x-hana-parent-origin` isn't checked: the answer is about the share's
+//   own recorded origin (`revoked` once the app no longer allows it), so a tab on a removed origin is ended (D690), and the
+//   header can't make it say anything about another origin.
 // - Named by the share id alone: 128 random bits only the vault, the API and the account's own Hana Home ever hold, for a
 //   one-bit answer about that share. No session proof: a signature check on every read would cost CPU on every check and
 //   prove nothing more (a proof without a counter replays; one with a counter is a write).
@@ -18,7 +21,7 @@ import { readJson } from '../http.ts';
 import { ipSubject } from '../ip.ts';
 import { log } from '../log.ts';
 import { shareStatus } from './consent-store.ts';
-import { vaultApp } from './endpoints.ts';
+import { vaultApp, vaultCors } from './endpoints.ts';
 import { VAULT_LIMIT_PERIOD_S, statusIpKey, statusShareKey } from './limits.ts';
 import { SHARE_ID_BYTES } from './message.ts';
 import { parentOriginAllowed } from './origins.ts';
@@ -40,15 +43,17 @@ function toShareId(body: unknown): Uint8Array | null {
 
 export async function handleShareStatus(request: Request, env: Env, requestId: string): Promise<Response> {
   const ctx = newCtx(env, requestId, SHARE_STATUS_ENDPOINT, request);
-  const gate = await vaultApp(request, env, ctx);
-  if (!gate.ok) return gate.response;
-  const { app } = gate;
+  vaultCors(request, env, ctx);
+  // Before the app lookup: this ceiling also bounds the D1 reads one IP can cause with made-up keys.
   try {
-    const ip = await env.VAULT_STATUS_IP_LIMIT.limit({ key: statusIpKey(env.ENV_NAME, app.id, ipSubject(request.headers.get('cf-connecting-ip'))) });
+    const ip = await env.VAULT_STATUS_IP_LIMIT.limit({ key: statusIpKey(env.ENV_NAME, ipSubject(request.headers.get('cf-connecting-ip'))) });
     if (!ip.success) return limited(ctx, 'per IP');
   } catch {
     return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
   }
+  const gate = await vaultApp(request, env, ctx, { parent: 'any' });
+  if (!gate.ok) return gate.response;
+  const { app } = gate;
   const parsed = await readJson(request, MAX_BODY);
   if (!parsed.ok) return reject(ctx, parsed.status, 'bad_request', parsed.error);
   const shareId = toShareId(parsed.body);

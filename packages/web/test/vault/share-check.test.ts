@@ -14,6 +14,7 @@ import {
   SHARE_GRACE_MS,
   SHARE_NO_ANSWER_REUSE_MS,
   SHARE_WAIT_MS,
+  STATUS_READ_TIMEOUT_MS,
   STATUS_IDLE_AFTER_MS,
   STATUS_IDLE_READ_MS,
   STATUS_READ_BACKOFF_MAX_MS,
@@ -387,7 +388,7 @@ describe('it only ever ends a session, never extends one', () => {
     await eventually(() => internals(t).session === null, 'ended once the API answers revoked');
   });
 
-  it('a slow read: one at a time, no pile-up, and the session stays until it answers', async () => {
+  it('a slow read: one at a time, never stacked, and the session stays until it answers', async () => {
     const t = await signedIn();
     let release!: () => void;
     const held = new Promise<void>((r) => (release = r));
@@ -396,13 +397,41 @@ describe('it only ever ends a session, never extends one', () => {
       return undefined;
     });
     const before = lightReads(t).length;
-    await minutes(t, 6, { active: true });
+    t.browser.timers.advance(STATUS_READ_MS);
+    await eventually(() => lightReads(t).length === before + 1, 'the read sent');
+    // Within its 15 s: being shown again, or a page request, joins it rather than sending another.
+    t.browser.timers.advance(5_000);
+    t.setVisibility('hidden');
+    t.setVisibility('visible');
+    await t.request('hana_status');
+    await settle();
     expect(lightReads(t).length).toBe(before + 1);
     expect(await statusOf(t)).toBe('logged_in');
     signOutFromHome(t);
     release();
     t.browser.backend.overrides.delete('/v1/vault/share-status');
     await eventually(() => internals(t).session === null, 'the session ended');
+  });
+
+  it('a new session never joins the previous session’s check in flight: its own share is asked about', async () => {
+    const t = await signedIn();
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let hold = true;
+    t.browser.backend.overrides.set('/v1/vault/share-status', async () => {
+      if (hold) await held;
+      return undefined;
+    });
+    t.browser.timers.advance(STATUS_READ_MS);
+    await eventually(() => lightReads(t).length > 0, 'the first read sent');
+    await login(t, g, { sub: '220000000000000000001' });
+    hold = false;
+    const second = Array.from(shareOf(t).shareId);
+    t.setVisibility('hidden');
+    t.browser.timers.now += SHARE_FRESH_MS;
+    expect((await approvedMessage(t)).error).toBeUndefined();
+    expect(lightReads(t).some((c) => JSON.stringify((c.body as { shareId: number[] }).shareId) === JSON.stringify(second))).toBe(true);
+    release();
   });
 
   it('an answer about an earlier session’s share never touches the next one (an account switch)', async () => {
@@ -429,6 +458,44 @@ describe('it only ever ends a session, never extends one', () => {
   });
 });
 
+describe('when the API last said live', () => {
+  it('an unlock counts from when it was sent, not when it answered (a slow unlock leaves less of the minute)', async () => {
+    const browser = new Browser();
+    await signedIn({ browser });
+    // The reload's unlock takes two minutes to answer, and no share read answers afterwards (the page's first GET
+    // /v1/app would otherwise confirm the share at once).
+    browser.backend.overrides.set('/v1/vault/unlock', () => {
+      browser.timers.now += 2 * 60_000;
+      return undefined;
+    });
+    browser.backend.shareAnswer = () => 'omit';
+    const t = await signedIn({ browser, tab: { hidden: true } });
+    browser.backend.overrides.delete('/v1/vault/unlock');
+    expect(await statusOf(t)).toBe('logged_in');
+    const before = checks(t).length;
+    // Two minutes since it was sent: past the fresh minute, so a check (no answer), and within the grace, so it signs.
+    expect((await approvedMessage(t)).error).toBeUndefined();
+    expect(checks(t).length).toBeGreaterThan(before);
+    // A minute later the unlock's send time is past the 3-minute grace: refused (the answer's time would still be in it).
+    t.browser.timers.now += 60_000 + SHARE_NO_ANSWER_REUSE_MS;
+    expect((await t.request('stellar_signMessage', { message: 'later' })).error).toMatchObject({ data: { reason: 'share_unconfirmed' } });
+  });
+
+  it('a share create counts from when it was sent', async () => {
+    const browser = new Browser();
+    browser.backend.serverNow = () => browser.timers.now;
+    browser.backend.overrides.set('/v1/vault/shares', () => {
+      browser.timers.now += 2 * 60_000;
+      return undefined;
+    });
+    const t = await signedIn({ browser, tab: { hidden: true } });
+    browser.backend.overrides.delete('/v1/vault/shares');
+    const before = checks(t).length;
+    expect((await approvedMessage(t)).error).toBeUndefined();
+    expect(checks(t).length).toBe(before + 1);
+  });
+});
+
 describe('a hidden tab', () => {
   it('reads nothing while hidden; shown again, it checks at once and ends if signed out meanwhile', async () => {
     const t = await signedIn();
@@ -451,6 +518,14 @@ describe('a hidden tab', () => {
     t.browser.timers.now += 20 * 60_000;
     signOutFromHome(t);
     t.setVisibility('visible');
+    await eventually(() => internals(t).session === null, 'ended at once');
+  });
+
+  it('a back/forward-cache restore (pageshow, persisted) with no visibilitychange checks at once too', async () => {
+    const t = await signedIn();
+    t.browser.timers.now += 20 * 60_000;
+    signOutFromHome(t);
+    t.pageRestore();
     await eventually(() => internals(t).session === null, 'ended at once');
   });
 
@@ -592,32 +667,85 @@ describe('before an approval-popup signature', () => {
     expect(t.browser.backend.calls.slice(before).filter((c) => c.path === '/v1/vault/share-status')).toHaveLength(2);
   });
 
-  it('an API older than the light read (404 not_found): GET /v1/app answers instead, and a 404 is never a sign-out', async () => {
+  it.each([
+    ['as a browser sees it (a failed preflight)', 'old'],
+    ['a readable 404 not_found', 'old-readable'],
+  ] as const)('an API older than the light read, %s: GET /v1/app answers instead, it is never a sign-out, and it sticks for a while', async (_name, mode) => {
     const t = await signedIn();
-    t.browser.backend.shareStatusEndpoint = false;
+    t.browser.backend.shareStatusEndpoint = mode;
     t.setVisibility('hidden');
     t.browser.timers.now += SHARE_FRESH_MS;
     expect((await approvedMessage(t)).error).toBeUndefined();
     expect(await statusOf(t)).toBe('logged_in');
-    // From then on GET /v1/app alone (no more light reads), which still ends a signed-out tab.
-    t.setVisibility('visible');
     const light = lightReads(t).length;
+    // From then on GET /v1/app alone (no OPTIONS-and-fail per check), which still ends a signed-out tab.
+    t.setVisibility('visible');
+    await minutes(t, 3, { active: true });
+    expect(lightReads(t).length).toBe(light);
+    // Half an hour on, the light read is tried again; once the API has it, it is used again.
+    t.browser.backend.shareStatusEndpoint = true;
+    await minutes(t, 30, { active: true });
+    expect(lightReads(t).length).toBeGreaterThan(light);
+    const now = lightReads(t).length;
+    await minutes(t, 2, { active: true });
+    expect(lightReads(t).length).toBe(now + 2);
     signOutFromHome(t);
     await minutes(t, 1, { active: true });
-    await eventually(() => internals(t).session === null, 'ended by GET /v1/app');
-    expect(lightReads(t).length).toBe(light);
+    await eventually(() => internals(t).session === null, 'ended');
   });
 
-  it('a read that hangs is waited for 8 s at most, then counts as no answer', async () => {
+  it('a light read that fails as a network error while GET /v1/app fails too (offline) doesn’t stick', async () => {
+    const t = await signedIn();
+    t.browser.backend.shareStatusEndpoint = 'old';
+    t.browser.backend.overrides.set('/v1/app', () => apiError(503, 'config_unavailable'));
+    await minutes(t, 1, { active: true });
+    t.browser.backend.shareStatusEndpoint = true;
+    t.browser.backend.overrides.delete('/v1/app');
+    const light = lightReads(t).length;
+    await minutes(t, 3, { active: true });
+    expect(lightReads(t).length).toBeGreaterThan(light);
+  });
+
+  it('a read that hangs is waited for 8 s at most, given up after 15 s, and the checks recover when the API is back', async () => {
     const t = await signedIn();
     t.setVisibility('hidden');
-    t.browser.backend.overrides.set('/v1/vault/share-status', () => new Promise<Response | undefined>(() => undefined));
+    const never = () => new Promise<Response | undefined>(() => undefined);
+    t.browser.backend.overrides.set('/v1/vault/share-status', never);
+    t.browser.backend.overrides.set('/v1/app', never);
     t.browser.timers.now += SHARE_GRACE_MS;
     const before = lightReads(t).length;
     const reply = t.request('stellar_signMessage', { message: 'hung' });
     await eventually(() => lightReads(t).length === before + 1, 'the read sent');
     t.browser.timers.advance(SHARE_WAIT_MS);
     expect((await reply).error).toMatchObject({ code: 'api_unavailable', data: { reason: 'share_unconfirmed' } });
+    // The stalled light read and then its GET /v1/app fallback are each given up at 15 s: the check settles.
+    t.browser.timers.advance(STATUS_READ_TIMEOUT_MS);
+    await settle();
+    await eventually(() => appReads(t).length > 0 && t.browser.backend.calls.at(-1)!.path === '/v1/app', 'the fallback sent');
+    t.browser.timers.advance(STATUS_READ_TIMEOUT_MS);
+    await settle();
+    // The API is back: the next check is a new request (not the dead one), it answers, and signing works, no reload.
+    endOutage(t);
+    t.browser.timers.now += SHARE_NO_ANSWER_REUSE_MS;
+    const n = lightReads(t).length;
+    expect((await approvedMessage(t, 'after the outage')).error).toBeUndefined();
+    expect(lightReads(t).length).toBe(n + 1);
+  });
+
+  it('the background timer survives a stalled read too: re-armed after the timeout, it ends a signed-out tab', async () => {
+    const t = await signedIn();
+    const never = () => new Promise<Response | undefined>(() => undefined);
+    t.browser.backend.overrides.set('/v1/vault/share-status', never);
+    t.browser.backend.overrides.set('/v1/app', never);
+    await minutes(t, 1, { active: true });
+    t.browser.timers.advance(STATUS_READ_TIMEOUT_MS);
+    await settle();
+    t.browser.timers.advance(STATUS_READ_TIMEOUT_MS);
+    await settle();
+    endOutage(t);
+    signOutFromHome(t);
+    await minutes(t, 4, { active: true });
+    await eventually(() => internals(t).session === null, 'ended by a later check');
   });
 
   it('the grace is aged on both clocks: a device clock set back doesn’t stretch it, nor does a monotonic clock stopped by sleep', async () => {

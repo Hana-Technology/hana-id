@@ -18,7 +18,10 @@
 //                                         session: its message is `hana:home-params`, whose nonce commits to the Home
 //                                         key (core home.ts `homeNonce`), and only Google is offered. This mode takes
 //                                         no `hana:auth-params`, and no other mode takes `hana:home-params`: only a
-//                                         same-origin opener at `/home` can supply a Home nonce.
+//                                         same-origin opener at `/home` can supply a Home nonce. To open one app's
+//                                         wallet Hana Home sends `hana:home-derive-params` instead: a session of one
+//                                         use and key index 0 in one scope, whose nonce this window recomputes, and
+//                                         Google is asked to sign the user in again (`max_age=0`).
 //
 // SECURITY: auth-params carries relayKey, the one session secret that crosses postMessage. It is accepted only from
 // the authenticated sender, kept only in sessionStorage, and the in-memory copy is zeroed.
@@ -133,10 +136,12 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
     if (parsed.mode === 'home') {
       // Hana Home's sign-in: its own message, from the same-origin opener at /home, and nothing else.
       const home = parseWindowMessage(e.data, ['hana:home-params']);
-      if (!home || !fromPreparer(e, 'home')) return;
+      const derive = home ? null : parseWindowMessage(e.data, ['hana:home-derive-params']);
+      if ((!home && !derive) || !fromPreparer(e, 'home')) return;
       accepted = true;
       stop();
-      checkHome(home);
+      if (home) checkHome(home);
+      else if (derive) checkHomeDerive(derive);
       return;
     }
     const msg = parseWindowMessage(e.data, ['hana:auth-params']);
@@ -175,6 +180,37 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
       }
       const url = googleAuthUrl({ clientId: msg.clientId, authOrigin: env.authOrigin, nonce, state: msg.relayId, forceReauth: false });
       d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Signing in to Hana Home'), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
+      state = { stage: 'redirecting', mode: 'home', url };
+      finish(state);
+      win.location.assign(url);
+    } catch (err) {
+      const e = err instanceof PageError ? err : new PageError('config_mismatch', 'The sign-in request could not be checked.');
+      fail(e.code, 'Sign-in stopped', e.message);
+    } finally {
+      msg.relayKey.fill(0);
+    }
+  }
+
+  /**
+   * Hana Home opening one app's wallet (`home` mode, `hana:home-derive-params`): the nonce must be the session nonce of
+   * the message's own scope, session key, end and salt, for exactly one use and key index 0 on the pinned SIGNER. Those
+   * two are fixed here, not read from the message, so Hana Home can't be made to ask for any other session. Google
+   * only, with `max_age=0`: the user signs in again before a key can be shown. No app is named and nothing of a
+   * partner's is on this screen.
+   */
+  function checkHomeDerive(msg: WindowMessage<'hana:home-derive-params'>): void {
+    state = { stage: 'checking', mode: 'home' };
+    try {
+      if (msg.signer !== env.signer) throw new PageError('config_mismatch', 'Hana Home named another signer.');
+      const nonce = sessionNonce({ signer: env.signer, scopeId: msg.scopeId, sessionPublicKey: msg.sessionPublicKey, expiresAtMs: msg.expiresAtMs, keyIndex: 0, maxUses: 1, salt: msg.salt });
+      if (nonce !== msg.nonce) throw new PageError('config_mismatch', 'The sign-in request’s nonce does not commit to its session.');
+      try {
+        storeLoginEntry(win.sessionStorage, msg.relayId, msg.relayKey, now());
+      } catch {
+        throw new PageError('storage_unavailable', 'This browser blocked the storage the sign-in needs.');
+      }
+      const url = googleAuthUrl({ clientId: msg.clientId, authOrigin: env.authOrigin, nonce, state: msg.relayId, forceReauth: true });
+      d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Confirm it’s you'), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
       state = { stage: 'redirecting', mode: 'home', url };
       finish(state);
       win.location.assign(url);

@@ -1,6 +1,8 @@
 // `GET {authOrigin}/home`: Hana Home. One Hana page where a user signs in with Google and sees the apps they use with
-// Hana, whether Hana can still open their wallet in each, their addresses there and their Support ID. It derives no key
-// and sends no chain transaction: everything shown comes from `GET /v1/home/apps`. Exporting a key, the devices list and
+// Hana, whether Hana can still open their wallet in each, their addresses there and their Support ID. Looking derives
+// no key and sends no chain transaction: the lists come from `GET /v1/home/apps`. On an app's page, a collapsed section
+// lets the user open that wallet and take its private key to another wallet app (home-export.ts): it does nothing until
+// the user expands it and signs in again, and nothing in the page's address can open or start it. The devices list and
 // email sign-in are later additions with their own seams here (the `home-app-extras` element, `SIGN_IN_METHODS`).
 //
 // Sign-in: a click opens a child `/login?mode=home` (as the export window opens its own), which takes
@@ -27,7 +29,11 @@ import { ServerClock } from './clock.ts';
 import { type Child, type Dom, dom } from './dom.ts';
 import { sessionKeyText } from './errors.ts';
 import { googleKeys } from './google-keys.ts';
-import { HOME_APP_ID, HOME_SEARCH_MAX, HOME_SEARCH_MIN, type HomeApi, type HomeApp, type HomeAppsPage, type HomeAppsQuery, type HomeConfig, type HomeCoverage, type HomeIdentity, type HomeScope, newHomeIdentity } from './home-api.ts';
+import { HOME_APP_ID, HOME_SEARCH_MAX, HOME_SEARCH_MIN, type HomeAddress, type HomeApi, type HomeApp, type HomeAppsPage, type HomeAppsQuery, type HomeConfig, type HomeCoverage, type HomeIdentity, type HomeScope, newHomeIdentity } from './home-api.ts';
+import { type HomeExport, type HomeExportState, homeExportRoute, startHomeExport } from './home-export.ts';
+import { type HomeProblem, homeProblem } from './home-problems.ts';
+import { type ExportClipboard, browserClipboard as exportClipboard, screenGuard } from './key-reveal.ts';
+import type { NearReader } from './near-rpc.ts';
 import { appLogo } from './logo.ts';
 import { type GestureCheck, type PageWindow, isFramed, isUserGesture, randomName } from './page-window.ts';
 
@@ -64,6 +70,12 @@ export interface HomePageDeps {
   isGesture?: GestureCheck;
   /** The Clipboard API's write (default: `navigator.clipboard` when the browser has one; null: none). */
   clipboard?: HomeClipboard | null;
+  /** The NEAR reads of opening a wallet (home-export.ts): the app's registration, the path, a lost outcome. */
+  near: NearReader;
+  /** Whether this window has focus (default: `document.hasFocus()`): the guard and the clipboard blank need it. */
+  hasFocus?: () => boolean;
+  /** The guard's clock (default: Date.now; tests inject one): Continue, Show key and Copy key wait for it. */
+  guardNow?: () => number;
 }
 
 export type HomeStage =
@@ -100,6 +112,8 @@ export interface HomePage {
   readonly awaitingChild: boolean;
   /** How many Home API requests the page has sent. */
   readonly requests: number;
+  /** The "Move this wallet" section of the app page that is open (home-export.ts). */
+  readonly moving: { readonly state: HomeExportState; readonly chain: 'stellar' | 'evm' | null; readonly errorCode: string | null; readonly childName: string | null; readonly awaitingChild: boolean; readonly holdsSecret: boolean };
   /** Resolves once nothing the page started is still running (tests). */
   idle(): Promise<void>;
 }
@@ -141,55 +155,24 @@ const COVERAGE_WORDS: Readonly<Record<'mine' | 'other', Readonly<Record<Coverage
   },
 });
 
-/** How a coverage reads to a user: the badge, and the question and sentence on the app's page. */
-export const coverageText = (coverage: HomeCoverage, mine: boolean): CoverageText => COVERAGE_WORDS[mine ? 'mine' : 'other'][COVERAGE_KIND[coverage]];
-
-export interface HomeProblem {
-  code: string;
-  text: string;
-  requestId: string | null;
-  /** The sign-in itself was refused: the page asks for a new one instead of showing this. */
-  signInAgain: boolean;
-}
-
-const UNREACHABLE = 'Hana Home is not reachable right now. Nothing on screen was lost. Try again in a moment.';
-
-/** The sentence for an API refusal's code. Codes of calls a later version of the page makes are here too, so every Home refusal reads the same. */
-const PROBLEM_TEXT: Readonly<Record<string, string>> = Object.freeze({
-  rate_limited: 'Too many requests. Wait a minute and try again.',
-  home_busy: 'Hana Home has reached its limit for today. Try again tomorrow.',
-  home_no_wallet: 'There is no wallet for this sign-in in that app.',
-  home_account_mismatch: 'Sign in as the same account you used in Hana Home.',
-  not_covered: 'Hana can’t open this wallet from here. If the app still runs, use the app itself.',
-  link_pending: 'A sign-in method is still being added to this wallet. Try again once that has finished.',
-  unknown_scope: 'Hana doesn’t know that app.',
-  counter_reused: 'That request was already sent. Try again.',
-  bad_request: 'Hana Home couldn’t read that request. Try again.',
-  origin_not_allowed: 'Hana Home can’t be used from this address.',
-  bad_response: 'Hana Home got an answer it couldn’t read. Try again in a moment.',
-  home_directory_unavailable: UNREACHABLE,
-  rate_limiter_unavailable: UNREACHABLE,
-  near_unavailable: UNREACHABLE,
-  api_unavailable: UNREACHABLE,
+/** What the sentence adds for the user's own wallet when this page can move it out. */
+const MOVE_WORDS: Readonly<Partial<Record<CoverageKind, string>>> = Object.freeze({
+  yes: ' You can also move it to another wallet app, further down this page.',
+  maybe: ' To stop depending on it, you can move the wallet to another wallet app, further down this page.',
 });
 
-/** A code as the page may show it: the API's lowercase snake case only, so an odd answer can't put text there. */
-const shownCode = (code: string): string => (/^[a-z][a-z0-9_]{0,63}$/u.test(code) ? code : 'error');
-const shownRequestId = (id: string | null): string | null => (id !== null && /^[A-Za-z0-9_-]{1,64}$/u.test(id) ? id : null);
-
-/** What the page says for a failed Home API call. Never the API's own message: only a code picks the sentence. */
-export function homeProblem(err: unknown): HomeProblem {
-  if (!(err instanceof ApiError)) return { code: 'api_unavailable', text: UNREACHABLE, requestId: null, signInAgain: false };
-  const code = shownCode(err.code);
-  const requestId = shownRequestId(err.requestId);
-  // Every credential refusal is a 401: the sign-in has ended, whatever the code.
-  if (err.status === 401) return { code, text: 'Your sign-in to Hana Home has ended. Sign in again to go on.', requestId, signInAgain: true };
-  const known = Object.hasOwn(PROBLEM_TEXT, code) ? PROBLEM_TEXT[code] : undefined;
-  if (known !== undefined) return { code, text: known, requestId, signInAgain: false };
-  if (err.status === 429) return { code, text: PROBLEM_TEXT.rate_limited as string, requestId, signInAgain: false };
-  if (err.status >= 500) return { code, text: UNREACHABLE, requestId, signInAgain: false };
-  return { code, text: 'Something went wrong. Try again.', requestId, signInAgain: false };
+/**
+ * How a coverage reads to a user: the badge, and the question and sentence on the app's page. `canMove`: the page
+ * offers "Move this wallet to another wallet app" for this app, so the sentence may say so; it never does otherwise.
+ */
+export function coverageText(coverage: HomeCoverage, mine: boolean, canMove = false): CoverageText {
+  const kind = COVERAGE_KIND[coverage];
+  const words = COVERAGE_WORDS[mine ? 'mine' : 'other'][kind];
+  const more = mine && canMove ? MOVE_WORDS[kind] : undefined;
+  return more ? { ...words, detail: `${words.detail}${more}` } : words;
 }
+
+export { type HomeProblem, homeProblem } from './home-problems.ts';
 
 const STATUS_TEXT: Readonly<Record<HomeApp['status'], string | null>> = Object.freeze({ active: null, suspended: 'Paused', deleted: 'Closed' });
 
@@ -272,6 +255,9 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   let childName: string | null = null;
   let signInError: HomeProblem | null = null;
 
+  /** Addresses of wallets opened in this page, by listing: shown where Hana had none on record. Memory only. */
+  const opened = new Map<string, HomeAddress[]>();
+
   let warnTimer: ReturnType<typeof setTimeout> | undefined;
   let endTimer: ReturnType<typeof setTimeout> | undefined;
   let copiedTimer: ReturnType<typeof setTimeout> | undefined;
@@ -293,6 +279,36 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       });
   };
   const idle = (): Promise<void> => (running === 0 ? Promise.resolve() : new Promise<void>((resolve) => idleWaiters.push(resolve)));
+
+  // ---- moving a wallet out (home-export.ts) ----
+  const hasFocus = deps.hasFocus ?? (() => win.document.hasFocus());
+  const moving: HomeExport = startHomeExport({
+    win,
+    env,
+    d,
+    api,
+    relay: deps.relay,
+    near: deps.near,
+    jwks,
+    clock,
+    sleep,
+    isGesture,
+    guard: screenGuard({ win, isGesture, hasFocus, ...(deps.guardNow ? { now: deps.guardNow } : {}) }),
+    clipboard: (): ExportClipboard | null => (deps.clipboard === undefined ? exportClipboard() : deps.clipboard),
+    hasFocus,
+    session: () => {
+      checkSession();
+      return identity && identity.usable && account ? { identity, account } : null;
+    },
+    config: () => config,
+    signingIn: () => signingIn,
+    onSignedOut: () => endSession(),
+    onAddresses: (scopeId, addresses) => {
+      opened.set(scopeId, addresses);
+      renderContent();
+    },
+    track,
+  });
 
   // ---- small view parts ----
   const byId = (id: string): HTMLElement | null => win.document.getElementById(id);
@@ -527,6 +543,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   }
 
   function closeApp(): void {
+    // Leaving an app's page locks its wallet: nothing of it stays in the page.
+    moving.leave();
     openScope = null;
     problem = null;
     renderContent();
@@ -577,6 +595,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
    */
   function beginSignIn(): void {
     if (signingIn || !config?.sharedGoogleClientId || stage === 'loading' || stage === 'stopped' || stage === 'unavailable') return;
+    // One sign-in child at a time: a per-app sign-in that hasn't finished gives way to this one.
+    moving.yieldChild();
     signingIn = true;
     signInError = null;
     childName = randomName('hana-home-login-');
@@ -672,6 +692,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   /** The only messages the page takes: its own child's hello, answered once with this sign-in's parameters. */
   function onMessage(event: Event): void {
     const e = event as MessageEvent;
+    if (moving.onMessage(e)) return;
     const p = pending;
     if (!p || p.helloAccepted || child === null || e.source !== child || e.origin !== env.authOrigin) return;
     if (!parseWindowMessage(e.data, ['hana:auth-hello'])) return;
@@ -773,6 +794,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   }
 
   function clearScreen(): void {
+    moving.leave();
+    opened.clear();
     mine = [];
     listed = [];
     nextCursor = null;
@@ -1044,9 +1067,13 @@ export function startHomePage(deps: HomePageDeps): HomePage {
 
   /** One listing's page: its apps, whether Hana can open the wallet, the addresses on record and the Support ID. */
   function appPage(scope: HomeScope): Child[] {
-    const cover = coverageText(scope.coverage, scope.mine);
+    // The app the page's link named, when Hana knows no wallet of the user's in it: the page never offers to open it.
+    const fromLink = linked?.scopeId === scope.scopeId;
+    const cover = coverageText(scope.coverage, scope.mine, typeof homeExportRoute(scope, config, fromLink) !== 'string');
     const stellar = STELLAR_ACCOUNT_URL[env.network];
-    const addressRows = scope.addresses.map((a) => {
+    // Addresses on record, or, where Hana has none, those of the wallet the user opened here in this page.
+    const fromWallet = scope.addresses.length === 0 ? (opened.get(scope.scopeId) ?? []) : [];
+    const addressRows = (scope.addresses.length > 0 ? scope.addresses : fromWallet).map((a) => {
       const name = a.chain === 'stellar' ? 'Stellar address' : 'EVM address';
       return d.h(
         'div',
@@ -1074,7 +1101,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       scope.coverage === 'unknown' && busy !== 'check' ? d.h('div', { class: 'actions start' }, button('Check now', () => track(checkScope(scope)), { id: 'home-check' })) : null,
       d.h('h3', {}, 'Your addresses'),
       addressRows.length > 0
-        ? d.h('div', { class: 'home-addresses' }, ...addressRows)
+        ? d.h('div', { class: 'home-addresses' }, fromWallet.length > 0 ? d.h('p', { class: 'muted', attrs: { id: 'home-opened-note' } }, 'From the wallet you opened on this page. Hana had no address on record for you here.') : null, ...addressRows)
         : d.h('p', { class: 'muted', attrs: { id: 'home-no-address' } }, scope.mine ? 'Hana has no address on record for you in this app yet.' : 'Hana has no wallet on record for this Google account in this app.'),
       scope.supportId
         ? d.h(
@@ -1087,7 +1114,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
         : null,
       d.h('p', { class: 'copy-status', attrs: { id: 'home-copied', role: 'status' } }, copied),
       // Where the per-app tools go: moving the wallet out, and the devices signed in to it.
-      d.h('div', { attrs: { id: 'home-app-extras' } }),
+      d.h('div', { attrs: { id: 'home-app-extras' } }, moving.view(scope, fromLink)),
     ];
   }
 
@@ -1154,6 +1181,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     get requests() {
       return requests;
     },
+    moving,
     idle,
   };
 }

@@ -30,10 +30,8 @@ import {
   type LoginMethod,
   isJsonFormToken,
   isRelayToken,
-  parseIdentityView,
   parseIssuerKeysView,
   parseSelfIssuedView,
-  pathIdentity,
   verifyEmailIdToken,
   EXPORT_MAX_AUTH_AGE_MS,
   type Jwk,
@@ -48,7 +46,6 @@ import {
   ckdAppId,
   decryptCkd,
   decryptRelayPayload,
-  evmPrivateKeyHex,
   extractPrk,
   jsonBytes,
   logoUrlOn,
@@ -61,41 +58,29 @@ import {
   relayIdFor,
   sessionNonce,
   signDerive,
-  stellarSecretSeed,
   verifyGoogleIdToken,
 } from '@hana-id/core';
 import type { HanaEnv } from '../hana-env.ts';
 import type { AuthApi } from './api.ts';
-import { ApproveGuard, type GuardInput, guardInputOf } from './approve-guard.ts';
 import { ChainLoginError, loginOnChain } from './chain-login.ts';
 import { ServerClock } from './clock.ts';
 import { type Dom, dom, errorView } from './dom.ts';
 import { PageError, apiErrorCode, errorMessage, sessionKeyText } from './errors.ts';
 import { appLogo } from './logo.ts';
 import type { NearReader } from './near-rpc.ts';
-import { PathCheckError, confirmPath } from '../path-check.ts';
+import { exportPath } from './export-path.ts';
 import { googleKeys } from './google-keys.ts';
+import { EXPORT_CLIPBOARD_NOTE, EXPORT_CONFIRMATION, EXPORT_WARNING, type ExportClipboard, type KeyReveal, browserClipboard, exportString, keyReveal, screenGuard } from './key-reveal.ts';
 import { type GestureCheck, type PageWindow, isFramed, isUserGesture, randomName } from './page-window.ts';
 
 /** The export session's lifetime: it is used once, within minutes. */
 export const EXPORT_SESSION_TTL_MS = 15 * 60_000;
 /** How long the window waits for Google's answer in the relay. */
 export const EXPORT_LOGIN_LIMIT_MS = 5 * 60_000;
-/** What the user types to confirm. */
-export const EXPORT_CONFIRMATION = 'EXPORT';
 /** How long the derived key stays in this window (user decision 2026-10-29, D111); never past the session's end. */
 export const EXPORT_KEY_LIFETIME_MS = 5 * 60_000;
-/** How long after the last copy the window tries to blank the clipboard (D268). */
-export const EXPORT_CLIPBOARD_CLEAR_MS = 60_000;
-/** How long a shown key stays on screen before it hides again (D430); Show key shows it again. */
-export const EXPORT_SHOW_MS = 60_000;
-/** The first screen's warning (D430): what the key is, in plain words. */
-export const EXPORT_WARNING =
-  'Anyone with this key controls your funds at this address, in every app and wallet. Hana can’t recover it for you or undo what someone does with it. Never paste it into a website, and never share it with anyone, including Hana.';
-/** How long "Copy key" says "Copied". */
-export const EXPORT_COPIED_MS = 2_000;
-/** Shown when the Clipboard API is missing or refuses the write (D268). */
-export const EXPORT_COPY_UNAVAILABLE = 'Copy isn’t available here: show the key and copy it by hand.';
+// The reveal's own constants and its clipboard type live with the reveal (key-reveal.ts), which Hana Home shares.
+export { EXPORT_CLIPBOARD_CLEAR_MS, EXPORT_CONFIRMATION, EXPORT_COPIED_MS, EXPORT_COPY_UNAVAILABLE, EXPORT_SHOW_MS, EXPORT_WARNING, type ExportClipboard } from './key-reveal.ts';
 /** How often the window checks its deadlines and that the vault frame is still there. */
 export const EXPORT_CHECK_MS = 1_000;
 const RELAY_WAIT_S = 25;
@@ -130,21 +115,6 @@ export interface ExportPageDeps {
   guardNow?: () => number;
 }
 
-/** The one Clipboard API call the export window makes (D268): it writes, it never reads. */
-export interface ExportClipboard {
-  writeText(text: string): Promise<void>;
-}
-
-/** `navigator.clipboard` when this browser has the Clipboard API's write here (a secure context), else null. */
-function browserClipboard(): ExportClipboard | null {
-  try {
-    const c = (globalThis as { navigator?: { clipboard?: Partial<ExportClipboard> } }).navigator?.clipboard;
-    return c && typeof c.writeText === 'function' ? (c as ExportClipboard) : null;
-  } catch {
-    return null;
-  }
-}
-
 export type ExportPageState = 'connecting' | 'ready' | 'signing_in' | 'confirm' | 'reveal' | 'ended' | 'error' | 'closed';
 
 export interface ExportPage {
@@ -160,9 +130,6 @@ export interface ExportPage {
   readonly settled: Promise<ExportPageState>;
 }
 
-/** The export string of a chain private key (StrKey S… or 0x + 64 hex). */
-const exportString = (chain: 'stellar' | 'evm', key: Uint8Array): string => (chain === 'stellar' ? stellarSecretSeed(key) : evmPrivateKeyHex(key));
-
 export function startExportPage(deps: ExportPageDeps): ExportPage {
   const { win, env, api, near } = deps;
   const clock = new ServerClock(deps.deviceNow);
@@ -173,36 +140,8 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
   const hasFocus = deps.hasFocus ?? (() => win.document.hasFocus());
   const d: Dom = dom(win.document);
   const opener = win.opener;
-  // The buttons that reveal or copy the key, armed by the approval popup's guard (D430); each may add a condition of
-  // its own (Continue: the typed confirmation).
-  let guarded: { el: HTMLButtonElement; ready: () => boolean }[] = [];
-  const visibleNow = () => win.document.visibilityState !== 'hidden';
-  const focusedNow = () => {
-    try {
-      return hasFocus();
-    } catch {
-      return false;
-    }
-  };
-  const guardNow = deps.guardNow ?? (() => Date.now());
-  const guard = new ApproveGuard(guardNow, visibleNow() && focusedNow() ? guardNow() : null, () => syncGuarded());
-  function syncGuarded(): void {
-    const armed = guard.armed();
-    for (const g of guarded) g.el.disabled = !(armed && g.ready());
-  }
-  /** Puts `el` behind the guard on this screen: disabled until armed, its keyboard dwell tracked (D113). */
-  function guardButton(el: HTMLButtonElement, ready: () => boolean = () => true): void {
-    guarded.push({ el, ready });
-    el.addEventListener('focus', () => guard.primaryFocused());
-    el.addEventListener('blur', () => guard.primaryBlurred());
-    el.disabled = true;
-  }
-  /** A new screen: forget the old buttons; the guard starts over (1 s, then an arming gesture). */
-  function newScreen(): void {
-    guarded = [];
-  }
-  /** Whether a click on a guarded button acts: a real gesture, the guard armed, the click started after it. */
-  const guardedClick = (e: Event): boolean => isGesture(e) && guard.mayActivate((e as MouseEvent).detail === 0);
+  // The buttons that reveal or copy the key sit behind the approval popup's guard (D430, key-reveal.ts).
+  const guard = screenGuard({ win, isGesture, hasFocus, ...(deps.guardNow ? { now: deps.guardNow } : {}) });
 
   let state: ExportPageState = 'connecting';
   let errorCode: string | null = null;
@@ -226,12 +165,8 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
   let keyTimer: ReturnType<typeof setTimeout> | null = null;
   let checker: ReturnType<typeof setInterval> | null = null;
   let endReason: ExportEndReason | null = null;
-  /** Blanks the revealed key on screen (set while the reveal step shows). */
-  let blank: (() => void) | null = null;
-  /** A copy of the key went to the clipboard and the page hasn't blanked it since (D268). */
-  let copied = false;
-  /** The pending clipboard blank, EXPORT_CLIPBOARD_CLEAR_MS after the last copy. */
-  let clipboardTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The reveal step's box and buttons (key-reveal.ts), while they show. */
+  let reveal: KeyReveal | null = null;
   let settle: (s: ExportPageState) => void = () => {};
   const settled = new Promise<ExportPageState>((r) => {
     settle = r;
@@ -272,39 +207,11 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
   }
 
   /**
-   * The path the export derives (batch 7): `get_identity` on this window's own RPC names the identity or its root. A
-   * root's path is confirmed on both providers first (D263): a lying RPC that knows a path's secret could otherwise
-   * show its own wallet's key here as the user's. (The key is shown only if it is the vault session's address, which
+   * The path the export derives (batch 7; export-path.ts, shared with Hana Home): the identity's own, or its account
+   * root's once both providers confirm it (D263). (The key is shown only if it is the vault session's address, which
    * the vault resolved the same way.)
    */
-  async function pathFor(scopeId: string, who: { provider: 'google' | 'email'; sub: string }, keyIndex: number): Promise<string> {
-    let view;
-    try {
-      view = parseIdentityView(await near.view(env.signer, 'get_identity', { scope_id: scopeId, provider: who.provider, sub: who.sub }));
-    } catch {
-      throw new PageError('api_unavailable', 'Your sign-in method could not be read on NEAR. Try again.');
-    }
-    let p;
-    try {
-      p = pathIdentity(scopeId, who, view);
-    } catch {
-      throw new PageError('api_unavailable', 'Your sign-in method could not be read on NEAR. Try again.');
-    }
-    if (p.kind === 'pending') throw new PageError('link_pending', 'This sign-in method’s link to the wallet is still pending. Sign in with the wallet’s own method.');
-    if (p.kind === 'unsupported') throw new PageError('login_method_unavailable', 'This wallet’s sign-in method isn’t supported here.');
-    if (p.linked) {
-      try {
-        await confirmPath({ scopeId, via: who, viaView: view, path: p.identity, views: near.independent(env.signer) });
-      } catch (e) {
-        if (!(e instanceof PathCheckError)) throw e;
-        throw new PageError(
-          'api_unavailable',
-          e.reason === 'path_disputed' ? 'NEAR providers disagree about the wallet this sign-in opens. Nothing was exported; try again later.' : 'The wallet this sign-in opens could not be confirmed on NEAR. Try again.',
-        );
-      }
-    }
-    return `${scopeId}#${p.identity.provider}#${p.identity.sub}#${keyIndex}`;
-  }
+  const pathFor = async (scopeId: string, who: { provider: 'google' | 'email'; sub: string }, keyIndex: number): Promise<string> => (await exportPath({ near, signer: env.signer, scopeId, who, keyIndex })).path;
 
   const stopTimers = () => {
     if (keyTimer !== null) clearTimeout(keyTimer);
@@ -312,35 +219,6 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
     keyTimer = null;
     checker = null;
   };
-
-  /**
-   * Best effort (D268): writes an empty string over a key this window copied, only while the window has focus (every
-   * browser refuses a clipboard write without it; Firefox and Safari also want a user gesture, so there it fails
-   * quietly). It never reads the clipboard, so it can't tell whether the user has copied something else since.
-   */
-  function clearClipboard(): void {
-    if (clipboardTimer !== null) clearTimeout(clipboardTimer);
-    clipboardTimer = null;
-    const c = clipboard();
-    if (!copied || !c) return;
-    let focused: boolean;
-    try {
-      focused = hasFocus();
-    } catch {
-      focused = false;
-    }
-    if (!focused) return;
-    try {
-      c.writeText('').then(
-        () => {
-          copied = false;
-        },
-        () => {},
-      );
-    } catch {
-      // Refused at once: nothing more to do.
-    }
-  }
 
   const wipe = () => {
     key?.fill(0);
@@ -370,10 +248,10 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
   function end(reason: ExportEndReason): void {
     if (finished()) return;
     wipe();
-    blank?.();
-    blank = null;
+    // Off the screen for good, and a copied key blanked where the browser allows it (D268).
+    reveal?.end();
+    reveal = null;
     stopTimers();
-    clearClipboard();
     try {
       child?.close();
     } catch {
@@ -753,11 +631,11 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
     state = 'confirm';
     const input = d.h('input', { attrs: { type: 'text', autocomplete: 'off', spellcheck: 'false', 'aria-label': `Type ${EXPORT_CONFIRMATION}` } });
     const go = d.h('button', { class: 'primary', attrs: { type: 'button' } }, 'Continue');
-    newScreen();
-    guardButton(go, () => input.value === EXPORT_CONFIRMATION);
-    input.addEventListener('input', syncGuarded);
+    guard.newScreen();
+    guard.button(go, () => input.value === EXPORT_CONFIRMATION);
+    input.addEventListener('input', guard.sync);
     go.addEventListener('click', (e) => {
-      if (input.value === EXPORT_CONFIRMATION && key && guardedClick(e) && !check()) showReveal();
+      if (input.value === EXPORT_CONFIRMATION && key && guard.click(e) && !check()) showReveal();
     });
     d.show(
       d.h(
@@ -771,131 +649,31 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
       ),
     );
     guard.rendered();
-    syncGuarded();
     settle(state);
   }
 
   function showReveal(): void {
     const ctx = context as WindowMessage<'hana:export-context'>;
     state = 'reveal';
-    // No aria-live (AUTH-6): a screen reader reads the key only when the user moves to it, never on its own; and
-    // translate="no", so a page translator never sends it anywhere (AUTH-4). Selectable only while shown (D268).
-    const out = d.h('code', { class: 'secret mono', attrs: { translate: 'no' } }, '••••••••');
-    const toggle = d.h('button', { class: 'primary', attrs: { type: 'button', 'aria-pressed': 'false' } }, 'Show key');
-    const copy = d.h('button', { attrs: { type: 'button' } }, 'Copy key');
-    // The copy's outcome when it failed; never the key.
-    const status = d.h('p', { class: 'copy-status', attrs: { role: 'status' } });
-    let shown = false;
-    let copiedLabel: ReturnType<typeof setTimeout> | null = null;
-    /** Hides a shown key again EXPORT_SHOW_MS after Show (D430). */
-    let showTimer: ReturnType<typeof setTimeout> | null = null;
-    newScreen();
-    // Show needs the guard; Hide never does (the toggle is ready while the key is shown).
-    guardButton(toggle);
-    guardButton(copy);
-    const hide = () => {
-      if (showTimer !== null) clearTimeout(showTimer);
-      showTimer = null;
-      shown = false;
-      out.textContent = '••••••••';
-      out.removeAttribute('data-shown');
-      toggle.textContent = 'Show key';
-      toggle.setAttribute('aria-pressed', 'false');
-    };
-    blank = () => {
-      hide();
-      if (copiedLabel !== null) clearTimeout(copiedLabel);
-      copiedLabel = null;
-    };
-    const show = () => {
-      if (!key || check()) return;
-      shown = true;
-      out.textContent = exportString(ctx.chain, key);
-      out.setAttribute('data-shown', '');
-      toggle.textContent = 'Hide key';
-      toggle.setAttribute('aria-pressed', 'true');
-      if (showTimer !== null) clearTimeout(showTimer);
-      showTimer = setTimeout(hide, EXPORT_SHOW_MS);
-    };
-    // Enter and Space on a focused button fire its click, so one handler serves mouse, touch and keyboard.
-    toggle.addEventListener('click', (e) => {
-      if (!isGesture(e)) return;
-      if (shown) hide();
-      else if (guardedClick(e)) show();
-    });
-    const copyUnavailable = () => {
-      if (state === 'reveal') status.textContent = EXPORT_COPY_UNAVAILABLE;
-    };
-    const onCopied = () => {
-      copied = true;
-      // Erased while the write was pending: blank what just landed, if the browser lets us.
-      if (state !== 'reveal') {
-        clearClipboard();
-        return;
-      }
-      status.textContent = '';
-      copy.textContent = 'Copied';
-      if (copiedLabel !== null) clearTimeout(copiedLabel);
-      copiedLabel = setTimeout(() => {
-        copiedLabel = null;
-        copy.textContent = 'Copy key';
-      }, EXPORT_COPIED_MS);
-      if (clipboardTimer !== null) clearTimeout(clipboardTimer);
-      clipboardTimer = setTimeout(clearClipboard, EXPORT_CLIPBOARD_CLEAR_MS);
-    };
-    copy.addEventListener('click', (e) => {
-      if (!key || !guardedClick(e) || check()) return;
-      const c = clipboard();
-      if (!c) {
-        copyUnavailable();
-        return;
-      }
-      // Inside the click, before any await, so the browser counts the user's gesture. No execCommand('copy')
-      // fallback (D268): it would put the key in a hidden, selected text field.
-      let write: Promise<void>;
-      try {
-        write = c.writeText(exportString(ctx.chain, key));
-      } catch {
-        copyUnavailable();
-        return;
-      }
-      write.then(onCopied, copyUnavailable);
-    });
-    win.addEventListener('blur', hide);
-    win.document.addEventListener('visibilitychange', () => {
-      if (win.document.visibilityState === 'hidden') hide();
-    });
+    guard.newScreen();
+    // The box, Show key / Hide key and Copy key (key-reveal.ts): the string is made from the key at each Show or Copy.
+    const r = keyReveal({ d, win, guard, isGesture, clipboard, hasFocus, ready: () => key !== null && !check(), secret: () => (key ? exportString(ctx.chain, key) : null) });
+    reveal = r;
     d.show(
       d.h(
         'section',
         { class: 'panel export' },
         d.h('h1', {}, `Your ${CHAIN_NAMES[ctx.chain]} key`),
         d.h('p', { class: 'account' }, 'For ', d.h('code', { class: 'mono' }, ctx.address)),
-        out,
-        d.h('div', { class: 'actions reveal' }, toggle, copy),
-        status,
+        r.out,
+        r.actions,
+        r.status,
         d.h('p', { class: 'muted' }, 'A shown key hides again after 60 seconds. Close this window when you are done: the key is erased when it closes, 5 minutes after you signed in, or when your session in the app ends.'),
-        d.h(
-          'p',
-          { class: 'muted' },
-          'A copied key stays in your clipboard until you copy something else, and other apps or your clipboard history may read it there: paste it only into the wallet you are moving to. We try to clear it after 60 seconds if this window is still open, but not every browser allows that, so the copy is yours to look after.',
-        ),
+        d.h('p', { class: 'muted' }, EXPORT_CLIPBOARD_NOTE),
       ),
     );
     guard.rendered();
-    syncGuarded();
   }
-
-  // The guard's inputs (approve-page.ts listens to the same): focus, visibility and arming gestures in this window.
-  const onGuardGesture = (type: GuardInput['type']) => (e: Event) => {
-    if (isGesture(e)) guard.gesture(guardInputOf(type, e));
-  };
-  win.addEventListener('pointermove', onGuardGesture('pointermove'));
-  win.addEventListener('pointerdown', onGuardGesture('pointerdown'));
-  win.addEventListener('keydown', onGuardGesture('keydown'));
-  win.addEventListener('focus', () => guard.focused());
-  win.addEventListener('blur', () => guard.blurred());
-  win.document.addEventListener('visibilitychange', () => (visibleNow() ? guard.focused() : guard.blurred()));
 
   // A tab coming back from the background checks at once (its interval may have been throttled while hidden).
   win.document.addEventListener('visibilitychange', () => {
@@ -904,10 +682,9 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
 
   win.addEventListener('pagehide', () => {
     stopTimers();
-    // Best effort: a closing page may not get to finish the write.
-    clearClipboard();
-    blank?.();
-    blank = null;
+    // Best effort: a closing page may not get to finish the clipboard write.
+    reveal?.end();
+    reveal = null;
     wipe();
     try {
       child?.close();

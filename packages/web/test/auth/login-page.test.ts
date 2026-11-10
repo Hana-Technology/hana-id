@@ -436,6 +436,103 @@ describe('/login?mode=home', () => {
     expect((params.relayKey as Uint8Array).every((b) => b === 0)).toBe(true);
   });
 
+  // Hana Home opening one app's wallet (H8): a session of one use and key index 0, and Google asked to sign in again.
+  function deriveParams(over: Record<string, unknown> = {}, nonceOver: { keyIndex?: number; maxUses?: number; scopeId?: string } = {}) {
+    const sessionPublicKey = crypto.getRandomValues(new Uint8Array(32));
+    const salt = crypto.getRandomValues(new Uint8Array(32));
+    const expiresAtMs = 1_800_000_900_000;
+    return {
+      v: 1,
+      t: 'hana:home-derive-params',
+      signer: ENV.signer,
+      clientId: CLIENT_ID,
+      scopeId: SCOPE,
+      sessionPublicKey,
+      expiresAtMs,
+      salt,
+      nonce: sessionNonce({ signer: ENV.signer, scopeId: nonceOver.scopeId ?? SCOPE, sessionPublicKey, expiresAtMs, keyIndex: nonceOver.keyIndex ?? 0, maxUses: nonceOver.maxUses ?? 1, salt }),
+      relayId: relayIdFor(crypto.getRandomValues(new Uint8Array(32))),
+      relayKey: crypto.getRandomValues(new Uint8Array(32)),
+      ...over,
+    };
+  }
+
+  it('takes Hana Home’s per-app message and goes to Google with the session nonce and max_age=0', async () => {
+    const s = home();
+    const params = deriveParams();
+    s.win.message(params, ENV.authOrigin, s.opener);
+    expect((await s.page.done).stage).toBe('redirecting');
+    expect(fetchSpy).not.toHaveBeenCalled();
+    const url = new URL(s.win.location.assigned[0] as string);
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      client_id: CLIENT_ID,
+      redirect_uri: `${ENV.authOrigin}/login/callback`,
+      response_type: 'id_token',
+      response_mode: 'fragment',
+      scope: 'openid',
+      nonce: params.nonce,
+      state: params.relayId,
+      prompt: 'select_account',
+      max_age: '0',
+    });
+    // No account id rides in the address, and the entry is a plain login's.
+    expect(url.searchParams.has('login_hint')).toBe(false);
+    const entry = JSON.parse(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + params.relayId) as string) as Record<string, unknown>;
+    expect(Object.keys(entry).sort()).toEqual(['createdAt', 'relayKey', 'v']);
+    expect(s.win.sessionStorage.length).toBe(1);
+    expect(params.relayKey.every((b) => b === 0)).toBe(true);
+    expect(pageText()).toContain('Confirm it’s you');
+  });
+
+  it.each([
+    ['another signer', () => deriveParams({ signer: 'evil-signer.testnet' })],
+    ['a nonce that commits to nothing', () => deriveParams({ nonce: 'x'.repeat(43) })],
+    ['a nonce for another scope', () => deriveParams({}, { scopeId: 's2' })],
+    ['a nonce for another key index', () => deriveParams({}, { keyIndex: 1 })],
+    ['a nonce for more than one use', () => deriveParams({}, { maxUses: 2 })],
+    ['a nonce for another end', () => deriveParams({ expiresAtMs: 1_800_000_900_001 })],
+    [
+      'a Home nonce',
+      () => {
+        const p = deriveParams();
+        return { ...p, nonce: homeNonce({ signer: ENV.signer, homePublicKey: p.sessionPublicKey, expiresAtMs: p.expiresAtMs, salt: p.salt }) };
+      },
+    ],
+  ])('stops the per-app sign-in (config_mismatch) on %s: nothing stored, no Google request', async (_, make) => {
+    const s = home();
+    const params = make();
+    s.win.message(params, ENV.authOrigin, s.opener);
+    expect(await s.page.done).toEqual({ stage: 'error', code: 'config_mismatch' });
+    expect(s.win.location.assigned).toEqual([]);
+    expect(s.win.sessionStorage.length).toBe(0);
+    expect((params.relayKey as Uint8Array).every((b) => b === 0)).toBe(true);
+  });
+
+  it('takes the per-app message only from /home: not from another page, origin or window, and not in another mode', async () => {
+    for (const pathname of ['/export', '/', '/home/x', '/login']) {
+      const s = home(pathname);
+      s.win.message(deriveParams(), ENV.authOrigin, s.opener);
+      await flush();
+      expect(s.page.state.stage, pathname).toBe('connecting');
+      expect(s.win.location.assigned).toEqual([]);
+    }
+    const s = home();
+    s.win.message(deriveParams(), ENV.vaultOrigin, s.opener);
+    s.win.message(deriveParams(), EVIL, s.opener);
+    s.win.message(deriveParams(), ENV.authOrigin, remoteWindow({ location: { pathname: '/home' } }));
+    await flush();
+    expect(s.page.state.stage).toBe('connecting');
+    for (const mode of ['partner', 'vault', 'export'] as const) {
+      const o = setup(mode);
+      const { source, origin } = preparer(o, mode);
+      o.win.message(deriveParams(), origin, source);
+      await flush();
+      expect(o.page.state.stage, mode).toBe('connecting');
+      expect(o.win.sessionStorage.length).toBe(0);
+      expect(o.win.location.assigned).toEqual([]);
+    }
+  });
+
   it('accepts only the first valid message, and times out with Home’s own words', async () => {
     const s = home();
     s.win.message(homeParams(), ENV.authOrigin, s.opener);

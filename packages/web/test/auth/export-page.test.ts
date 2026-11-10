@@ -433,15 +433,21 @@ describe('/export: what the user is told and what the API hears (D430)', () => {
 
 describe('/export: the key never leaves this window (source check, D430)', () => {
   // The page's own source (vitest runs from packages/web; this file's URL isn't a file: one under happy-dom).
-  const source = readFileSync(join(process.cwd(), 'src', 'auth', 'export-page.ts'), 'utf8')
-    // Comments say what the code must not do; only the code counts here.
-    .replace(/\/\*[\s\S]*?\*\//gu, '')
-    .replace(/^\s*\/\/.*$/gmu, '');
+  const codeOf = (file: string): string =>
+    readFileSync(join(process.cwd(), 'src', 'auth', file), 'utf8')
+      // Comments say what the code must not do; only the code counts here.
+      .replace(/\/\*[\s\S]*?\*\//gu, '')
+      .replace(/^\s*\/\/.*$/gmu, '');
+  const source = codeOf('export-page.ts');
+  /** The reveal the window shares with Hana Home: where the key's text reaches the screen and the clipboard. */
+  const reveal = codeOf('key-reveal.ts');
 
   it('stores nothing, logs nothing, and never touches the URL or the network directly', () => {
     for (const banned of [/localStorage/u, /sessionStorage/u, /indexedDB/u, /document\.cookie/u, /\bconsole\./u, /\bfetch\(/u, /XMLHttpRequest/u, /sendBeacon/u, /location\.(?:href|hash|search|assign|replace)/u, /history\.(?:pushState|replaceState)/u, /WebSocket/u]) {
       expect(source, String(banned)).not.toMatch(banned);
+      expect(reveal, `key-reveal.ts ${String(banned)}`).not.toMatch(banned);
     }
+    expect(reveal).not.toMatch(/postMessage/u);
   });
 
   it('posts only its hello and the child’s auth-params, and the key string goes only to the screen and the clipboard', () => {
@@ -450,10 +456,16 @@ describe('/export: the key never leaves this window (source check, D430)', () =>
     expect(posts).toEqual(['pending.params', "{ v: 1, t: 'hana:export-hello' }"]);
     // exportString(…) is the key's text: shown (textContent), copied (writeText) or checked against the address.
     const uses = [...source.matchAll(/^.*exportString\(.*$/gmu)].map((m) => m[0].trim());
-    expect(uses.filter((l) => !l.startsWith('const exportString'))).toEqual([
+    expect(uses.filter((l) => !l.startsWith('import '))).toEqual([
       'address = addressOfExport(ctx.chain, exportString(ctx.chain, chainKey));',
-      'out.textContent = exportString(ctx.chain, key);',
-      'write = c.writeText(exportString(ctx.chain, key));',
+      'const r = keyReveal({ d, win, guard, isGesture, clipboard, hasFocus, ready: () => key !== null && !check(), secret: () => (key ? exportString(ctx.chain, key) : null) });',
+    ]);
+    // In the shared reveal the string is asked for twice (Show, Copy) and goes to one text node or the clipboard's write.
+    expect([...reveal.matchAll(/^.*deps\.secret\(\).*$/gmu)].map((m) => m[0].trim())).toEqual(['const text = deps.secret();', 'const text = deps.secret();']);
+    expect([...reveal.matchAll(/^.*\btext\b.*$/gmu)].map((m) => m[0].trim()).filter((l) => !l.startsWith('const text = ') && !l.startsWith('if (text === null)'))).toEqual([
+      'writeText(text: string): Promise<void>;',
+      'out.textContent = text;',
+      'write = c.writeText(text);',
     ]);
     // The login body (to the API) is built from the session's public values and the Google token, never the key.
     const body = /const body: LoginBody = \{([\s\S]*?)\};/u.exec(source)?.[1] ?? '';

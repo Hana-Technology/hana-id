@@ -315,6 +315,19 @@ const VALID_WINDOW: Record<WindowMessageType, Record<string, unknown>> = {
     relayId: AUTH_PARAMS.relayId,
     relayKey: new Uint8Array(32),
   },
+  'hana:home-derive-params': {
+    v: 1,
+    t: 'hana:home-derive-params',
+    signer: 'hana-signer.testnet',
+    clientId: 'shared.apps.googleusercontent.com',
+    scopeId: 's1',
+    sessionPublicKey: new Uint8Array(32),
+    expiresAtMs: 1_800_000_000_000,
+    salt: new Uint8Array(32),
+    nonce: 'A'.repeat(43),
+    relayId: AUTH_PARAMS.relayId,
+    relayKey: new Uint8Array(32),
+  },
   'hana:auth-progress': { v: 1, t: 'hana:auth-progress', stage: 'email_code' },
   'hana:auth-progress-ack': { v: 1, t: 'hana:auth-progress-ack', stage: 'google' },
   'hana:approve-hello': { v: 1, t: 'hana:approve-hello' },
@@ -416,6 +429,21 @@ describe('window messages', () => {
     ['an app name', { appName: 'Partner' }],
   ])('home-params refuses %s', (_, change) => {
     expect(parseWindowMessage({ ...VALID_WINDOW['hana:home-params'], ...change }, ['hana:home-params'])).toBeNull();
+  });
+
+  // Hana Home's per-app sign-in: one scope and one session key, nothing an app or a link could ride on.
+  it.each([
+    ['a 31-byte session key', { sessionPublicKey: new Uint8Array(31) }],
+    ['a 3-byte salt', { salt: new Uint8Array(3) }],
+    ['a bad scope', { scopeId: 'S 1' }],
+    ['a short nonce', { nonce: 'n'.repeat(42) }],
+    ['a key index', { keyIndex: 1 }],
+    ['a use count', { maxUses: 3 }],
+    ['an app name', { appName: 'Partner' }],
+    ['a login hint', { loginHint: '123' }],
+    ['a Home key', { homePublicKey: new Uint8Array(32) }],
+  ])('home-derive-params refuses %s', (_, change) => {
+    expect(parseWindowMessage({ ...VALID_WINDOW['hana:home-derive-params'], ...change }, ['hana:home-derive-params'])).toBeNull();
   });
 
   // Email login (batch 8a): the offered methods ride only when email is among them; a Google-only message is batch B's.

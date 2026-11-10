@@ -21,6 +21,7 @@ import {
   homeRequestPath,
   isDisplaySafeLine,
   isEvmAddress,
+  isLoginResponse,
   isNearAccountId,
   isOrigin,
   isScopeId,
@@ -29,6 +30,7 @@ import {
   parseApiResponse,
   randomBytes,
 } from '@hana-id/core';
+import type { LoginBody, LoginResponse } from '@hana-id/core';
 import type { Fetch } from './api.ts';
 
 /** `GET /v1/home/config`: what the page needs before a sign-in. */
@@ -270,7 +272,15 @@ export interface HomeApi {
   config(): Promise<HomeConfig>;
   /** `GET /v1/home/apps`, signed by `identity`. One request, never repeated here. */
   apps(identity: HomeIdentity, query: HomeAppsQuery): Promise<HomeAppsPage>;
+  /**
+   * `POST /v1/home/login`, signed by `identity`: one `create_session_and_derive` for the session in `body`, in
+   * `scopeId`. The body carries the per-app sign-in's token; it goes only to the API and is never logged.
+   */
+  login(identity: HomeIdentity, body: HomeLoginBody): Promise<LoginResponse>;
 }
+
+/** `/v1/login`'s body without what a Home derive can't carry (a link, an export label), plus the scope. */
+export type HomeLoginBody = Omit<LoginBody, 'linkJwt' | 'linkImmediate' | 'exportChain'> & { scopeId: string };
 
 const NO_BODY = new Uint8Array(0);
 
@@ -285,6 +295,15 @@ export function homeApi(apiUrl: string, fetchFn: Fetch = (...args) => fetch(...a
       const url = new URL(`${base}/v1/home/apps${homeAppsSearch(query)}`);
       const header = await identity.header('GET', url, NO_BODY);
       return parseHomeApps(await parseApiResponse(await fetchFn(url.toString(), init({ headers: { accept: 'application/json', [HOME_IDENTITY_HEADER]: header } }))));
+    },
+    async login(identity, body) {
+      const url = new URL(`${base}/v1/home/login`);
+      // The key signs these exact bytes, so the same bytes are sent.
+      const bytes = new TextEncoder().encode(JSON.stringify(body));
+      const header = await identity.header('POST', url, bytes);
+      const out = await parseApiResponse(await fetchFn(url.toString(), init({ method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json', [HOME_IDENTITY_HEADER]: header }, body: bytes })));
+      if (!isLoginResponse(out)) throw bad('/v1/home/login');
+      return out;
     },
   };
 }

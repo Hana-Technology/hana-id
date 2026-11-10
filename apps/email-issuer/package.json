@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p scripts"
   },
   "dependencies": {
+    "@hana-id/brand": "workspace:*",
     "@hana-id/console-core": "workspace:*",
     "@hana-id/core": "workspace:*",
     "@hana-id/email": "workspace:*",

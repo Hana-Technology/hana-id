@@ -390,7 +390,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     });
     input.value = address;
     const send = d.h('button', { class: 'primary', attrs: { type: 'submit', id: 'email-send' } }, 'Send code');
-    const form = d.h('form', { attrs: { novalidate: '' } }, d.h('label', { attrs: { for: 'email-address' } }, 'Email address', input), message(problem, 'email-notice', retry), d.h('div', { class: 'actions' }, cancelButton(), send));
+    const form = d.h('form', { class: 'email-form', attrs: { novalidate: '' } }, d.h('label', { attrs: { for: 'email-address' } }, 'Email address', input), message(problem, 'email-notice', retry), d.h('div', { class: 'actions' }, cancelButton(), send));
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       address = input.value.trim();
@@ -448,7 +448,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     };
     const form = d.h(
       'form',
-      { attrs: { novalidate: '' } },
+      { class: 'email-form', attrs: { novalidate: '' } },
       d.h('p', {}, 'We sent a 6-digit code to ', d.h('strong', {}, to), '. Type it here, in this Hana window only.'),
       d.h('label', { attrs: { for: 'email-code' } }, 'Code', input),
       message(problem, 'email-notice', retry === 'verify' ? submitCode : retry === 'resend' ? () => void resendCode() : undefined),

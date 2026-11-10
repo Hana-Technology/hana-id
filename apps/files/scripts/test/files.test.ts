@@ -33,7 +33,7 @@ describe('the files config', () => {
       workers_dev: false,
       preview_urls: false,
       routes: [{ pattern: 'files.test', custom_domain: true }],
-      observability: { enabled: true },
+      observability: { enabled: true, logs: { invocation_logs: false } },
       vars: { FILES_ORIGIN: 'https://files.test' },
       r2_buckets: [{ binding: 'LOGOS', bucket_name: 'hana-id-logos-test' }],
     });

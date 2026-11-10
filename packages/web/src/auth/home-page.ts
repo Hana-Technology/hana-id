@@ -31,7 +31,7 @@ import { ApiError, HOME_EMAIL_AUDIENCE, type Jwk, RELAY_KEY_BYTES, type RelayRea
 import type { HanaEnv } from '../hana-env.ts';
 import type { AuthApi } from './api.ts';
 import { ServerClock } from './clock.ts';
-import { type Child, type Dom, dom } from './dom.ts';
+import { type Child, type Dom, addressText, dom, maskedAddress } from './dom.ts';
 import { sessionKeyText } from './errors.ts';
 import { googleKeys } from './google-keys.ts';
 import { HOME_APP_ID, HOME_SEARCH_MAX, HOME_SEARCH_MIN, type HomeAddress, type HomeApi, type HomeApp, type HomeAppsPage, type HomeAppsQuery, type HomeConfig, type HomeCoverage, type HomeIdentity, type HomeScope, newHomeIdentity } from './home-api.ts';
@@ -408,6 +408,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     identity = null;
     if (session === 'none') return;
     session = 'ended';
+    byId('home-who')?.replaceWith(whoText());
     renderBanner();
   }
 
@@ -756,7 +757,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     signInError = null;
     const renew = stage === 'signed_in';
     const fixed = renew && account?.provider === 'email' ? emailAddress : null;
-    const box = d.h('div', { class: 'home-email', attrs: { id: 'home-email' } });
+    const box = d.h('div', { class: 'home-email-step', attrs: { id: 'home-email' } });
     emailBox = box;
     emailStep = homeEmailStep({
       d,
@@ -913,6 +914,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     scheduleSession(next);
     if (same) {
       problem = null;
+      // The same account: only the header's address can differ (the same mailbox, typed in another case).
+      byId('home-who')?.replaceWith(whoText());
       renderBanner();
       renderNotice();
       checkSession();
@@ -1000,6 +1003,19 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     );
   }
 
+  /**
+   * Who is signed in, in the header: an email account by the address it signed in with (the page's own memory of it,
+   * `emailAddress`), a Google account by its method only (Home's Google sign-in asks for `openid` alone: the page never
+   * learns the address).
+   */
+  function whoText(): HTMLElement {
+    const el = d.h('span', { class: 'muted', attrs: { id: 'home-who' } });
+    // Once the sign-in has ended the address is masked on screen; the page still holds it for "Sign in again".
+    if (account?.provider === 'email' && emailAddress) el.append('Signed in as ', addressText(d, session === 'ended' ? maskedAddress(emailAddress) : emailAddress, 'strong', 'home-who-address'));
+    else el.append(account?.provider === 'email' ? 'Signed in with email' : 'Signed in with Google');
+    return el;
+  }
+
   /** The signed-in page's frame: built once per sign-in, so a banner or a notice never rebuilds what the user is reading. */
   function renderShell(): void {
     d.show(
@@ -1010,7 +1026,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
           'header',
           { class: 'home-head' },
           d.h('h1', { attrs: { id: 'home-title', tabindex: '-1' } }, 'Hana Home'),
-          d.h('p', { class: 'home-who' }, d.h('span', { class: 'muted', attrs: { id: 'home-who' } }, account?.provider === 'email' ? 'Signed in with email' : 'Signed in with Google'), button('Sign out', signOut, { id: 'home-sign-out' })),
+          d.h('p', { class: account?.provider === 'email' && emailAddress ? 'home-who home-who-email' : 'home-who' }, whoText(), button('Sign out', signOut, { id: 'home-sign-out' })),
         ),
         d.h('div', { attrs: { id: 'home-banner', 'aria-live': 'polite' } }),
         d.h('div', { attrs: { id: 'home-notice' } }),

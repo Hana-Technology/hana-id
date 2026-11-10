@@ -53,6 +53,35 @@ export function originText(d: Dom, origin: string, tag: 'span' | 'p' = 'span'): 
   return el;
 }
 
+/**
+ * An email address as text that wraps at its own break points, the same rule as `originText`: a line may break before
+ * `@` and before each `.` (`<wbr>`), and inside a part only when that part alone is wider than the line (auth.css
+ * `.mail-address`). Its text content is the address exactly; every part is a text node, so nothing in it can become
+ * markup.
+ */
+export function addressText(d: Dom, address: string, tag: 'span' | 'strong' = 'span', id?: string): HTMLElement {
+  const el = d.h(tag, { class: 'mail-address', ...(id ? { attrs: { id } } : {}) });
+  address.split(/(?=[@.])/u).forEach((part, i) => {
+    if (i > 0) el.append(d.h('wbr'));
+    el.append(d.doc.createTextNode(part));
+  });
+  return el;
+}
+
+/**
+ * An email address with its mailbox name hidden, for a screen whose sign-in has ended: the first character of the
+ * local part, `•••`, then `@` and the domain in full ("a•••@example.com"). A first character that isn't a letter, digit,
+ * mark, punctuation or symbol (a control, format or bidi character, a space) is hidden too; so is everything when the
+ * address has no `@`. The first character is a whole code point, never half a surrogate pair.
+ */
+export function maskedAddress(address: string): string {
+  const at = address.lastIndexOf('@');
+  if (at < 0) return '•••';
+  const first = Array.from(address.slice(0, at))[0] ?? '';
+  const shown = /^[\p{L}\p{N}\p{M}\p{P}\p{S}]$/u.test(first) ? first : '';
+  return `${shown}•••@${address.slice(at + 1)}`;
+}
+
 /** A titled error panel; `code` is the protocol error code, shown small for support. */
 export function errorView(d: Dom, title: string, message: string, code?: string): HTMLElement {
   return d.h(

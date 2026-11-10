@@ -13,6 +13,7 @@
     "sync-brand": "tsx scripts/sync-brand.ts"
   },
   "dependencies": {
+    "@hana-id/brand": "workspace:*",
     "@hana-id/console-core": "workspace:*",
     "@hana-id/env": "workspace:*",
     "@hana-id/oidc": "workspace:*",
@@ -25,7 +26,6 @@
     "@cloudflare/vitest-plugin": "1.4.4",
     "@cloudflare/workers-types": "5.20261016.1",
     "@electric-sql/pglite": "0.5.11",
-    "@hana-id/brand": "workspace:*",
     "@types/node": "^22.0.0",
     "@types/pg": "8.23.1",
     "happy-dom": "21.0.3",

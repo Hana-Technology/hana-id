@@ -183,6 +183,8 @@ export function homeEmailStep(deps: HomeEmailStepDeps): HomeEmailStep {
   /** Raised by each request and by `end`: an answer to an older one is dropped. */
   let turn = 0;
 
+  // The screens' rhythm comes from the container (auth.css `.email-step`, `.email-form`), not from each element's margins.
+  root.classList.add('email-step');
   const id = (name: string) => `${ids}-${name}`;
   const show = (...children: (HTMLElement | null)[]): void => {
     root.replaceChildren();
@@ -237,7 +239,7 @@ export function homeEmailStep(deps: HomeEmailStepDeps): HomeEmailStep {
     const input = d.h('input', { attrs: { type: 'email', id: id('address'), name: 'email', autocomplete: 'email', inputmode: 'email', autocapitalize: 'none', spellcheck: 'false', required: '', maxlength: '254' } });
     input.value = address;
     const go = button('Send code', 'send', () => {}, 'primary', 'submit');
-    const form = d.h('form', { attrs: { novalidate: '' } }, d.h('label', { attrs: { for: id('address') } }, 'Email address', input), message(problem, retry), d.h('div', { class: 'actions start' }, go, cancel()));
+    const form = d.h('form', { class: 'email-form', attrs: { novalidate: '' } }, d.h('label', { attrs: { for: id('address') } }, 'Email address', input), message(problem, retry), d.h('div', { class: 'actions start' }, go, cancel()));
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       // A submit from the keyboard or the button, never one a script made.
@@ -262,7 +264,7 @@ export function homeEmailStep(deps: HomeEmailStepDeps): HomeEmailStep {
     };
     const form = d.h(
       'form',
-      { attrs: { novalidate: '' } },
+      { class: 'email-form', attrs: { novalidate: '' } },
       d.h('p', {}, 'We sent a 6-digit code to ', d.h('strong', { attrs: { id: id('to') } }, address), '. Type it here, on this Hana page only.'),
       d.h('label', { attrs: { for: id('code') } }, 'Code', input),
       message(problem, retry === 'verify' ? submit : retry === 'resend' ? () => void resendCode() : undefined),

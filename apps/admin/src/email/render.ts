@@ -1,6 +1,9 @@
-// Plain text plus simple HTML for every email (docs/batch-c-spec.md "Email"): no remote image, no script, no style
-// sheet, links only to `console.origin`, never an approve link. Partner-controlled text (app and org names, origins,
-// policy labels) is escaped for HTML and stripped of control characters; a subject is one line.
+// Plain text plus HTML for every email (docs/batch-c-spec.md "Email"): no remote image, no script, links only to
+// `console.origin`, never an approve link. The HTML is plain semantic markup, or, for a mail that passes `design`
+// (the partner invite), Hana's designed layout (@hana-id/brand/email) built from the same blocks, with the same text
+// part. Partner-controlled text (app and org names, origins, policy labels) is escaped for HTML and stripped of
+// control characters; a subject is one line.
+import { MAIL_INVISIBLE_SOURCE, type MailBlock, mailHtml, mailLogoUrl } from '@hana-id/brand/email';
 
 export type Block =
   | { kind: 'p'; text: string }
@@ -10,24 +13,26 @@ export type Block =
   | { kind: 'pre'; text: string }
   | { kind: 'link'; label: string; url: string };
 
+/** A mail drawn with the designed layout: its heading (the subject without the env and Hana prefixes) and its preview line. */
+export interface Design {
+  heading: string;
+  preheader: string;
+  /** The env's files origin, for the hosted logo (D685); absent, the text wordmark. */
+  filesOrigin?: string;
+}
+
 export interface Rendered {
   subject: string;
   text: string;
   html: string;
 }
 
-/** A character class of code point ranges (built from numbers, so the source holds no invisible character). */
-const charClass = (ranges: [number, number][]): string => ranges.map(([a, b]) => (a === b ? `\\u{${a.toString(16)}}` : `\\u{${a.toString(16)}}-\\u{${b.toString(16)}}`)).join('');
-
-/** C0 controls but tab and line feed, DEL, C1, the Unicode line and paragraph separators and the bidi controls. */
-const INVISIBLE: [number, number][] = [
-  [0x00, 0x08],
-  [0x0b, 0x1f],
-  [0x7f, 0x9f],
-  [0x2028, 0x202e],
-  [0x2066, 0x2069],
-];
-const CONTROL = new RegExp(`[${charClass(INVISIBLE)}]`, 'gu');
+/**
+ * What mail text may not hold: the display-safety rule (`@hana-id/core` `isDisplaySafeLine`, by Unicode property) as
+ * the mail layout applies it: controls but tab and line feed, format characters (bidi, zero-width, soft hyphen, tag
+ * characters, …), private use, line and paragraph separators, and the invisible fillers.
+ */
+const CONTROL = new RegExp(MAIL_INVISIBLE_SOURCE, 'gu');
 
 /** One line of display text: no control characters or line breaks, collapsed spaces, at most `max` characters. */
 export function oneLine(s: string, max = 200): string {
@@ -52,43 +57,51 @@ export function consoleLink(consoleOrigin: string, path: string): string {
  * `label` (D419): a non-production env's label (`[SANDBOX]`, `[STAGING]`, …), first in the subject and the body's
  * first line, on staff and partner mail alike, so test mail never reads as production; empty on production.
  */
-export function render(env: string, subject: string, blocks: Block[], consoleOrigin: string, label = ''): Rendered {
+export function render(env: string, subject: string, blocks: Block[], consoleOrigin: string, label = '', design?: Design): Rendered {
   const text: string[] = [];
   const html: string[] = [];
   const tag = oneLine(label, 20);
-  if (tag) {
-    const notice = `${tag} Not production: this email is from Hana ID ${oneLine(env, 60)} (testnet), for testing.`;
+  const notice = tag ? `${tag} Not production: this email is from Hana ID ${oneLine(env, 60)} (testnet), for testing.` : '';
+  if (notice) {
     text.push(notice);
     html.push(`<p><strong>${escapeHtml(notice)}</strong></p>`);
   }
+  const designed: MailBlock[] = design ? [{ kind: 'heading', text: oneLine(design.heading, 200) }] : [];
   for (const b of blocks) {
     switch (b.kind) {
       case 'p':
         text.push(clean(b.text));
         html.push(`<p>${escapeHtml(clean(b.text))}</p>`);
+        // Written so clients don't link a name that looks like a host (D687).
+        designed.push({ kind: 'p', text: [{ unlinked: clean(b.text) }] });
         break;
       case 'warn':
         text.push(`WARNING: ${clean(b.text)}`);
         html.push(`<p><strong>Warning:</strong> ${escapeHtml(clean(b.text))}</p>`);
+        designed.push({ kind: 'callout', tone: 'warn', text: [{ strong: 'Warning: ' }, clean(b.text)] });
         break;
       case 'kv': {
         const width = Math.max(...b.rows.map(([k]) => k.length));
         text.push(b.rows.map(([k, v]) => `${`${k}:`.padEnd(width + 2)}${oneLine(v, 500)}`).join('\n'));
         html.push(`<table>${b.rows.map(([k, v]) => `<tr><td><strong>${escapeHtml(k)}</strong></td><td>${escapeHtml(oneLine(v, 500))}</td></tr>`).join('')}</table>`);
+        designed.push({ kind: 'kv', rows: b.rows.map(([k, v]) => [k, oneLine(v, 500)] as const) });
         break;
       }
       case 'list':
         text.push(b.items.map((i) => `- ${oneLine(i, 500)}`).join('\n'));
         html.push(`<ul>${b.items.map((i) => `<li>${escapeHtml(oneLine(i, 500))}</li>`).join('')}</ul>`);
+        designed.push({ kind: 'list', items: b.items.map((i) => oneLine(i, 500)) });
         break;
       case 'pre':
         text.push(clean(b.text));
         html.push(`<pre>${escapeHtml(clean(b.text))}</pre>`);
+        designed.push({ kind: 'pre', text: clean(b.text) });
         break;
       case 'link': {
         if (new URL(b.url).origin !== consoleOrigin) throw new Error('A link must stay on the console origin');
         text.push(`${clean(b.label)}:\n${b.url}`);
         html.push(`<p><a href="${escapeHtml(b.url)}">${escapeHtml(clean(b.label))}</a></p>`);
+        designed.push({ kind: 'button', label: clean(b.label), url: b.url });
         break;
       }
     }
@@ -99,7 +112,9 @@ export function render(env: string, subject: string, blocks: Block[], consoleOri
   return {
     subject: oneLine(`${tag ? `${tag} ` : ''}[Hana ID ${env}] ${subject}`, 200),
     text: `${text.join('\n\n')}\n`,
-    html: `<!doctype html><html><body>${html.join('\n')}</body></html>`,
+    html: design
+      ? mailHtml({ title: oneLine(design.heading, 200), preheader: oneLine(design.preheader, 200), blocks: designed, footer, ...(notice ? { envNotice: notice } : {}), ...(design.filesOrigin ? { logoUrl: mailLogoUrl(design.filesOrigin)! } : {}) })
+      : `<!doctype html><html><body>${html.join('\n')}</body></html>`,
   };
 }
 

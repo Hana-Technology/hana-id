@@ -17,7 +17,7 @@
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { EMAIL_ISSUER_SECRET_FILES, IDENTITY_SECRET_FILES, identitySealKeyId, type Manifest, accountIdFields, customDomainPlacement, isLocalEnv, loadEnv, repoRoot, rsaJwkThumbprint } from '@hana-id/env';
+import { EMAIL_ISSUER_SECRET_FILES, IDENTITY_SECRET_FILES, identitySealKeyId, type Manifest, accountIdFields, customDomainPlacement, envAlertLabel, isLocalEnv, loadEnv, repoRoot, rsaJwkThumbprint } from '@hana-id/env';
 import { assertPrivate, secretsDir } from '../../../scripts/lib/secrets.ts';
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -60,6 +60,11 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
     ...issuerPlacement(t.url),
     vars: {
       ENV_NAME: m.name,
+      // The env label the HTML part of user mail opens with (D419, D670); none on any network but testnet.
+      NEAR_NETWORK: m.network,
+      ...(envAlertLabel(m) ? { ENV_LABEL: envAlertLabel(m) } : {}),
+      // The designed mails' logo comes from the files Worker (D685); without a files block, the text wordmark.
+      ...(m.files ? { FILES_ORIGIN: m.files.origin } : {}),
       NEAR_RPC: m.rpc,
       ...(m.rpcFallback ? { NEAR_RPC_FALLBACK: m.rpcFallback } : {}),
       SIGNER_ACCOUNT: m.signer,

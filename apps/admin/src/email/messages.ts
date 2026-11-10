@@ -10,6 +10,8 @@ export interface MailContext {
   consoleOrigin: string;
   /** A non-production env's label (`[SANDBOX]`, D419), first in every subject; absent or empty on production. */
   label?: string;
+  /** The env's files origin: the designed mails' logo is served there (D685); absent, the text wordmark. */
+  filesOrigin?: string;
 }
 
 const KIND_LABEL: Record<string, string> = { origin_add: 'a new allowed origin', policy_set: 'an auto-approve policy', raw_sign_on: 'raw signing (with approval)' };
@@ -74,17 +76,30 @@ const byLabel = (kind: string, id: string): string => (kind === 'hana' ? `Hana s
 
 /** `member_invite`, to the invitee: the link (its token in the fragment, so it never reaches a server log). */
 export function inviteLink(c: MailContext, invite: InviteView, o: { orgName?: string; inviteUrl: string }): Rendered {
+  const subject = `You're invited to ${oneLine(invite.newOrgName ?? o.orgName ?? 'an organisation', 60)} on Hana ID`;
+  const org = orgLabel(invite, o.orgName);
+  // Who invited, by role only (D672): the invitee learns no staff address or member id.
+  const by = invite.createdByKind === 'hana' ? 'Hana staff' : 'an owner of the organisation';
+  // What accepting does (docs/integration.md "Members"): an owner invited to an existing organisation is a viewer
+  // until its owner grant matures; a new organisation's first owner is its owner at once.
+  const does = invite.newOrgName
+    ? 'Accepting creates the organisation in the console, with you as its first owner. Owners change apps, keys and members.'
+    : invite.role === 'owner'
+      ? 'Accepting adds you to the organisation. Owners change apps, keys and members; if it already has an owner, you are a viewer (who sees everything and changes nothing) until a waiting period ends, and its owners are told and can cancel it.'
+      : 'Accepting adds you to the organisation as a viewer: viewers see its apps and settings and change nothing.';
   return render(
     c.env,
-    `You're invited to ${oneLine(invite.newOrgName ?? o.orgName ?? 'an organisation', 60)} on Hana ID`,
+    subject,
     [
-      { kind: 'p', text: `You have been invited to join ${orgLabel(invite, o.orgName)} in the Hana ID partner console as ${invite.role === 'owner' ? 'an owner' : 'a viewer'}.` },
+      { kind: 'p', text: `You have been invited to join ${org} in the Hana ID partner console as ${invite.role === 'owner' ? 'an owner' : 'a viewer'}, by ${by}.` },
+      { kind: 'p', text: does },
       { kind: 'p', text: `Sign in with the Google account of this address. The invitation expires on ${isoTime(invite.expiresAt)}.` },
       { kind: 'link', label: 'Accept the invitation', url: o.inviteUrl },
-      { kind: 'p', text: 'If you were not expecting this, ignore this email.' },
+      { kind: 'p', text: 'The link works once, for this address only. If you were not expecting this, ignore this email.' },
     ],
     c.consoleOrigin,
     c.label,
+    { heading: subject, ...(c.filesOrigin ? { filesOrigin: c.filesOrigin } : {}), preheader: `Join ${oneLine(invite.newOrgName ?? o.orgName ?? 'an organisation', 60)} in the Hana ID partner console. The invitation expires on ${isoTime(invite.expiresAt)}.` },
   );
 }
 

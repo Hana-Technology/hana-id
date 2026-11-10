@@ -53,7 +53,7 @@ import {
   type Limits,
 } from './limits.ts';
 import { log } from './log.ts';
-import { codeMail, confirmMail, linkNoticeMail, unlockMail } from './mail.ts';
+import { codeMail, confirmMail, linkNoticeMail, mailLook, unlockMail } from './mail.ts';
 import type { BudgetKind, Limit, OwnerClaim, OwnerRef, Reservation } from './rate-limiter.ts';
 import { SignerUnavailable, verifyRs256 } from './signer.ts';
 import { readWebhookBody, SIGNATURE_HEADER, suppressionsOf, TIMESTAMP_HEADER, verifyWebhook, webhookHeadersOk } from './webhook.ts';
@@ -296,7 +296,7 @@ async function domainSubject(deps: Deps, domain: string): Promise<string> {
 async function deliver(ctx: Ctx, rec: ChallengeRecord, to: string, code: string, undo: () => Promise<void>): Promise<void> {
   const { deps } = ctx;
   try {
-    const res = await deps.sender.send(codeMail({ to, code, appName: rec.appName, authOrigin: deps.env.AUTH_ORIGIN, purpose: rec.purpose, appId: rec.appId }));
+    const res = await deps.sender.send(codeMail({ to, code, appName: rec.appName, authOrigin: deps.env.AUTH_ORIGIN, purpose: rec.purpose, appId: rec.appId, look: mailLook(deps.env) }));
     if (!res.ok) {
       await undo();
       log({ event: 'code_mail', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'error', code: res.reason, appId: rec.appId, ...(res.providerStatus ? { providerStatus: res.providerStatus } : {}) }, 'error');
@@ -319,7 +319,7 @@ async function notify(ctx: Ctx, to: string, appName: string, pending: boolean, a
     if (await isSuppressed(deps, await suppressionKey(await deps.keys(), to))) return;
     const budget = await reserveBudget(ctx, appId, share, 'user');
     if (!budget) return;
-    const res = await deps.sender.send(linkNoticeMail({ to, appName, authOrigin: deps.env.AUTH_ORIGIN, pending, appId }));
+    const res = await deps.sender.send(linkNoticeMail({ to, appName, authOrigin: deps.env.AUTH_ORIGIN, pending, appId, look: mailLook(deps.env) }));
     if (!res.ok) await limiter(deps, 'global').refund(budget);
     log({ event: 'link_notice', requestId: ctx.requestId, outcome: res.ok ? 'ok' : 'error', appId, ...(res.ok ? {} : { code: res.reason }) }, res.ok ? 'info' : 'error');
     if (res.ok) countDaily(deps, appId, 'sent');
@@ -1243,7 +1243,7 @@ export async function handleUnlock(request: Request, ctx: Ctx): Promise<Response
   if (await isSuppressed(deps, await suppressionKey(keys, r.email))) return ok(ctx, 200, { mailed: false, reason: 'suppressed' }, { code: 'suppressed' });
   const token = `${UNLOCK_TOKEN_PREFIX}${randomId(32)}`;
   await box.issueGrant(base64UrlEncode(sha256(utf8(token))), deps.now());
-  const mailed = await mailOwner(ctx, unlockMail({ to: r.email, token, authOrigin: deps.env.AUTH_ORIGIN }));
+  const mailed = await mailOwner(ctx, unlockMail({ to: r.email, token, authOrigin: deps.env.AUTH_ORIGIN, look: mailLook(deps.env) }));
   log({ event: 'mailbox_unlocked', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: mailed ? 'ok' : 'error', subject: mbx.slice(0, 12) }, 'warn');
   return ok(ctx, 200, { mailed }, { code: mailed ? 'mailed' : 'not_mailed' });
 }
@@ -1268,7 +1268,7 @@ export async function handleUnsuppress(request: Request, ctx: Ctx): Promise<Resp
   if (!row) return ok(ctx, 200, { mailed: false, reason: 'not_suppressed' }, { code: 'not_suppressed' });
   const token = `${CONFIRM_TOKEN_PREFIX}${randomId(32)}`;
   if (!(await challengeStub(deps, confirmName(token)).putConfirm({ action: 'unsuppress', emailKey: key, expiresAtMs: deps.now() + CONFIRM_TTL_MS }))) return fail(ctx, 500, 'internal', 'Could not store the confirmation');
-  const mailed = await mailOwner(ctx, confirmMail({ to: r.email, token, authOrigin: deps.env.AUTH_ORIGIN }));
+  const mailed = await mailOwner(ctx, confirmMail({ to: r.email, token, authOrigin: deps.env.AUTH_ORIGIN, look: mailLook(deps.env) }));
   return ok(ctx, 200, { mailed }, { code: mailed ? 'mailed' : 'not_mailed' });
 }
 

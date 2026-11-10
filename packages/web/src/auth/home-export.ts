@@ -82,9 +82,12 @@ const RELAY_WAIT_S = 25;
 const CHILD_WATCH_MS = 500;
 const CHAIN_NAMES = { stellar: 'Stellar', evm: 'EVM' } as const;
 export const HOME_EXPORT_TITLE = 'Move this wallet to another wallet app';
+/** What the collapsed section says under its heading, and its button: the same shape as "Devices and auto-approve". */
+export const HOME_EXPORT_ABOUT = 'Hana Home can show you the private key of your wallet in this app, so that you can import it into another wallet app.';
+export const HOME_EXPORT_OPEN = 'Show how to move it';
 
 export type HomeExportState =
-  /** Collapsed: one button. Where it always starts, whatever the page's address says. */
+  /** Collapsed: the heading, one sentence and one button. Where it always starts, whatever the page's address says. */
   | 'closed'
   /** Expanded: what this does, the warning, and the button that starts the sign-in (or why it can't be offered). */
   | 'intro'
@@ -483,7 +486,7 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
     const api = deps.email;
     const address = live?.account.provider === 'email' ? live.account.address : undefined;
     if (!live || !api || !address) return refuse(plainProblem('home_signed_out'));
-    const box = d.h('div', { class: 'home-email', attrs: { id: 'home-export-email' } });
+    const box = d.h('div', { class: 'home-email-step', attrs: { id: 'home-export-email' } });
     emailBox = box;
     emailStep = homeEmailStep({
       d,
@@ -763,8 +766,9 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
     if (!s) return show();
     switch (state) {
       case 'closed':
-        // Collapsed, and labelled for what it is: never the first thing on the page, never hidden.
-        return show(button(HOME_EXPORT_TITLE, 'home-export-open', expand, 'home-export-toggle'));
+        // Collapsed: its heading, one sentence and one button, like the devices section above it. Never the first thing
+        // on the page, never hidden, and nothing but this button's click opens it.
+        return show(title(HOME_EXPORT_TITLE), d.h('p', { attrs: { id: 'home-export-about' } }, HOME_EXPORT_ABOUT), d.h('div', { class: 'actions start' }, button(HOME_EXPORT_OPEN, 'home-export-open', expand)));
       case 'intro': {
         const route = routeFor(s);
         const close = button('Close', 'home-export-close', collapse);
@@ -917,6 +921,12 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
     problem = null;
     state = 'closed';
     render();
+    // Focus goes back to the button that opens it (the Close button just pressed is gone).
+    try {
+      (root.querySelector('#home-export-open') as HTMLElement | null)?.focus();
+    } catch {
+      // Focus is a convenience.
+    }
   }
   function cancel(): void {
     if (state !== 'signing_in') return;

@@ -7,14 +7,22 @@
   "exports": {
     ".": "./src/index.ts",
     "./check": "./src/check.ts",
+    "./email": "./src/email.ts",
     "./tokens.css": "./tokens.css",
     "./fonts.css": "./fonts.css",
     "./fonts/*": "./fonts/*",
-    "./logo/*": "./logo/*"
+    "./logo/*": "./logo/*",
+    "./mail-logo": "./src/mail-logo.ts"
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "mail-logo": "tsx scripts/mail-logo.ts"
   },
-  "devDependencies": { "@types/node": "^22.0.0", "typescript": "^5.7.0", "vitest": "4.1.12" }
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "4.23.15",
+    "typescript": "^5.7.0",
+    "vitest": "4.1.12"
+  }
 }

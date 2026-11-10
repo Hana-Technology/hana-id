@@ -21,6 +21,19 @@ export interface Env {
   OUTBOX?: DurableObjectNamespace<Outbox>;
 
   ENV_NAME: string;
+  /**
+   * The env's label (`[SANDBOX]`, `[STAGING]`, `[LOCAL]`, `[TESTNET]`; D419), written by `gen` from the manifest
+   * (`@hana-id/env` `envAlertLabel`). The HTML part of every user mail opens with it (`mail.ts` `mailEnvNotice`), and
+   * only when `NEAR_NETWORK` is `testnet`. Absent (production, or a Worker deployed before it existed): no banner.
+   */
+  ENV_LABEL?: string;
+  /** The manifest's `network` (`testnet` or `mainnet`), written by `gen`. */
+  NEAR_NETWORK?: string;
+  /**
+   * The env's files origin (manifest `files.origin`), written by `gen`: the designed mails' logo is
+   * `{FILES_ORIGIN}{MAIL_LOGO_PATH}` (D685). Absent: the text wordmark.
+   */
+  FILES_ORIGIN?: string;
   NEAR_RPC: string;
   NEAR_RPC_FALLBACK?: string;
   /** The hana-signer account: every nonce commits to it (`borsh(signer)`). */

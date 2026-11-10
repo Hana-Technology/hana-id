@@ -335,7 +335,8 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
     if (state !== 'intro' || !scope) return;
     const route = homeExportRoute(scope, deps.config(), fromLink);
     if (typeof route === 'string') return;
-    if (deps.signingIn()) return;
+    // Hana Home's own sign-in child is open: one child at a time, and that one comes first.
+    if (deps.signingIn()) return refuse(plainProblem('home_signing_in'));
     if (!deps.session()) return refuse(plainProblem('home_signed_out'));
     run += 1;
     const mine = run;

@@ -665,6 +665,21 @@ describe('refusals read as Hana’s own sentences', () => {
     expect(h.logins()).toEqual([]);
   });
 
+  it('while Hana Home’s own sign-in window is open, a per-app sign-in waits for it: no second window', async () => {
+    const h = start();
+    await h.toApp();
+    advance(13 * 60_000 + 1);
+    h.win.openResult = remoteWindow({ location: { pathname: '/login', search: '?mode=home' } as never });
+    h.click('home-sign-in-again');
+    expect(h.page.renewing).toBe(true);
+    const windows = h.win.opened.length;
+    h.click('home-export-open');
+    h.click('home-export-start');
+    expect(h.page.moving.errorCode).toBe('home_signing_in');
+    expect(h.win.opened).toHaveLength(windows);
+    expect(h.page.renewing).toBe(true);
+  });
+
   it('a blocked pop-up says so', async () => {
     const h = start();
     await h.toApp();

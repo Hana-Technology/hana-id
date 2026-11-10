@@ -53,6 +53,7 @@ const PROBLEM_TEXT: Readonly<Record<string, string>> = Object.freeze({
   login_cancelled: 'The sign-in window closed before it finished. Try again.',
   login_timeout: 'The sign-in took too long. Try again.',
   popup_blocked: 'Your browser blocked the sign-in window. Allow pop-ups for this page and try again.',
+  home_signing_in: 'Finish signing in to Hana Home in the other window first, then try again.',
   home_signed_out: 'Your sign-in to Hana Home has ended. Sign in to Hana Home again, then try once more.',
   path_disputed: 'NEAR providers disagree about which wallet this sign-in opens, so Hana Home opened nothing. Try again later.',
   path_unconfirmed: 'Hana Home couldn’t confirm on NEAR which wallet this sign-in opens, so it opened nothing. Try again in a moment.',

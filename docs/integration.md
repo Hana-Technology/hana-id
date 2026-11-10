@@ -14,7 +14,7 @@ popup, unless it falls under an auto-approve policy you set and the user accepte
 > on NEAR; that is what "NEAR testnet" means wherever an environment's network is named. Your users get a Stellar and
 > an EVM wallet. The SDK has no NEAR account or NEAR signer, and your app never talks to NEAR.
 
-Last verified against code: 2026-11-10 (onboarding: what Hana needs and in what order, on-chain owners), SDK 0.3.0. "SDK releases after 0.2.0" marks what arrived after 0.2.0 (all of it is in 0.3.0).
+Last verified against code: 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: "App names", the rule on names that look like a web address or contain "Hana", D686); 2026-11-10 (onboarding: what Hana needs and in what order, on-chain owners), SDK 0.3.0. "SDK releases after 0.2.0" marks what arrived after 0.2.0 (all of it is in 0.3.0).
 
 ## How it works
 
@@ -51,6 +51,19 @@ During the pilot Hana creates your organisation and your apps, and you manage th
 - the Google address of each person who will manage it as an **owner** (up to 5), and at least one **security
   contact**: an address that gets the announcement of every change to your apps' origins and signing settings;
 - the app name your users will see ("Signing in to {name} at {origin}"), and the origins your app runs on to start with
+
+**App names.** The name is shown in Hana's popups and sign-in emails next to Hana's own words, so a few names are
+refused (when an app is created or renamed, by Hana staff or on **Branding**):
+
+- anything that looks like a web address: a name containing `://`, a word starting with `www.`, or a dot between a
+  letter or digit and a letter (`example.com`, "Sign in at app.example"). "Dr. Wallet" and "v2.0" are fine;
+- a word starting with "Hana", in any case or spelling: accents, full-width letters, look-alike letters from other
+  alphabets (a Cyrillic "Н" for H, for example), or letters split by spaces or dots ("H a n a"). "Hana" inside a word
+  ("Johana") is fine;
+- as before, control, bidi, zero-width and other invisible characters, and names over 64 characters.
+
+An app whose name was set before this rule keeps working, but its sign-in emails say "an app" instead of the name
+until it is renamed.
   (more can be added in the portal; [Allowed origins](#allowed-origins));
 - nothing about Google clients: your scope starts on Hana's shared Google client. If you want your own
   ([section 6](#6-google-client-shared-or-your-own)), an on-chain owner adds it in the portal once the scope exists,
@@ -122,7 +135,7 @@ changes are waiting. An app's page shows the **App ID** and the **Publishable ke
 | **Keys** | **Create a key** (at most 5 active), **Rotate** (you get a new key now; the old one keeps working 24 hours), **Revoke** (at once; a page already open notices within 30 s) |
 | **Login & sessions** | persistence, the session and idle limits and the Google web client ([section 7](#7-app-settings)), confirmed with Google and in force at once; a link to your scope's page ("Google clients and on-chain owners") for your own Google client ([section 6](#6-google-client-shared-or-your-own)) |
 | **Signing** | the auto-approve policy ([section 9](#9-auto-approve-policies)) and raw signing ([Raw signing](#raw-signing)) |
-| **Branding** | the name users see in Hana's popups (up to 64 characters), and your logo: PNG, JPEG or WebP, at most 512 KiB, 128 to 2048 px a side, nearly square, not animated; Hana re-encodes it to a 256 × 256 PNG and shows it next to the name in its popups |
+| **Branding** | the name users see in Hana's popups and sign-in emails (up to 64 characters; see "App names" below), and your logo: PNG, JPEG or WebP, at most 512 KiB, 128 to 2048 px a side, nearly square, not animated; Hana re-encodes it to a 256 × 256 PNG and shows it next to the name in its popups |
 | **Suspend** | **Suspend the app** stops logins at once; **Resume** (confirmed with Google). A suspension by Hana only Hana can lift |
 
 **Email login**: an owner turns it on from the app's **Email login** page in two steps, each confirmed with Google: first for the

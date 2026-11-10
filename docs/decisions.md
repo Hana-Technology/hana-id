@@ -9925,6 +9925,7 @@ below.
 - Why: the spec says viewing needs no chain transaction; a derive marks an identity `opened` on chain for good (D544) and spends the daily ceiling, so it shouldn't happen just to look.
 - Seams left: the app page's `home-app-extras` element (export in H8, devices in H9), `SIGN_IN_METHODS` (email in H10), and the page's sentences for the derive's refusals (`home_no_wallet`, `home_busy`, `home_account_mismatch`, `link_pending`), already written and tested.
 - Address impact: none. No path, key rule or derivation is read or changed.
+- Note, 2026-11-10 (H10, proposed): the open point is settled by D618: with no shared client in force Home signs in through the exit client and `/home/callback`.
 
 ### D551. `/home`'s policy lists the API and Google's JWKS only; the NEAR RPC joins with the derive
 - Date 2026-11-10 · Status: built on `feat/hana-home-h7`; **confirmed by the user 2026-11-10** · Built: `apps/api/src/pages/host.ts` (`authPageDirectives`, `AUTH_PAGE_PATHS`, `AUTH_LOGO_PATHS`), `packages/web/src/auth/pages.ts`
@@ -10025,6 +10026,7 @@ Built on `feat/hana-home-h8` (on top of H7), not merged, not deployed. Every dec
 - Why H10: it is a new page on the auth origin, the only one that receives exit tokens, with a new redirect URI and a deploy-checklist item; it deserves its own security review rather than a place inside "keys in memory". H10 already builds the email exit and changes the same child. Nothing links to `/home` before H12.
 - Cost (to weigh): on an env with an exit client in force, coverage reports `exit` for every app whose normal route is gone, and for partner-held clients too (D490's order), so those wallets can't be moved out from Home until `/home/callback` exists. If H10 slips, do it as a small batch of its own before H12. D550's "no shared client in force means sign-in is unavailable" stays open until then.
 - Address impact: none (`aud` never enters the path).
+- Note, 2026-11-10 (H10, proposed): built as proposed: `/home/callback` and the exit client for coverage `exit`, email codes for coverage `email` (D618, D624, D626).
 
 ### D579. Hana Home derives the vault's path: the identity's own, or its account root's only after both NEAR providers agree
 - Date 2026-11-10 · Status: built on `feat/hana-home-h8`; **confirmed by the user 2026-11-10** (the wording of the two refusals) · Built: `packages/web/src/auth/export-path.ts` (`exportPath`, shared with `export-page.ts`), `home-export.ts` · Implements D263 for Home

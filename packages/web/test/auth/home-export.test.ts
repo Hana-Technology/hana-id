@@ -361,13 +361,15 @@ function start(o: Opts = {}): H {
       expect(page.openScope).toBe(SCOPE);
     },
     async openByEmail() {
+      // Read through a function: the state changes under the awaits below.
+      const refused = (): boolean => (page.moving.state as string) === 'refused';
       h.click('home-export-open');
       h.click('home-export-start');
-      await until(() => document.getElementById('home-export-email-send') !== null || page.moving.state === 'refused', 'the code screen');
-      if (page.moving.state === 'refused') return;
+      await until(() => document.getElementById('home-export-email-send') !== null || refused(), 'the code screen');
+      if (refused()) return;
       h.click('home-export-email-send');
-      await until(() => document.getElementById('home-export-email-code') !== null || page.moving.state === 'refused', 'the code to be sent');
-      if (page.moving.state === 'refused') return;
+      await until(() => document.getElementById('home-export-email-code') !== null || refused(), 'the code to be sent');
+      if (refused()) return;
       (el('home-export-email-code') as HTMLInputElement).value = '654321';
       h.submit('home-export-email-code');
       await until(() => page.moving.state === 'unlocked' || page.moving.state === 'refused', 'the wallet to open or be refused');

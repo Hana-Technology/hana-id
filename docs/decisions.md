@@ -10093,3 +10093,69 @@ Built on `feat/hana-home-h8` (on top of H7), not merged, not deployed. Every dec
 - Date 2026-11-10 · Status: built on `feat/hana-home-h8`; **confirmed by the user 2026-11-10** · Built: `home-export.ts`, `login-page.ts` (`checkHomeDerive`) · From H8's review (L4) · Amends D584; the mechanism is unchanged
 - Decision: the page no longer says "To be sure it's you" or "Confirm it's you". It says "First you choose your Google account again; it must be the account you used for Hana Home. Google may not ask for your password again.", and the step's heading is "Choose your Google account again".
 - Why: Google sends no `auth_time` even with `max_age=0`, and with `prompt=select_account` the step can be one click. Whoever can use the user's Google session on the device can open every app's wallet from Home, where the export window reached one app's. `docs/security.md` states it. A real re-authentication is not available from Google's implicit flow today; whether Home needs another factor before mainnet is for the production-readiness check.
+
+
+## Hana Home H10: email users, and signing in through the exit client (branch `feat/hana-home-h10`), 2026-11-10
+
+Built on `feat/hana-home-h10`, not merged, not deployed. Every decision here is **proposed, awaiting the user's confirmation**. None changes a path, a key rule or derivation: an email user's Home path is `{scope}#email#{sub}#0` or its account root's, exactly as in the vault, and `aud` never enters a path.
+
+### D616. The issuer's Home route computes every nonce from typed inputs, and its gate is the chain's alone
+- Date 2026-11-10 · Status: built on `feat/hana-home-h10`; **proposed, awaiting the user's confirmation** · Built: `apps/email-issuer/src/handlers.ts` (`handleHomeStart`, `homeAudience`, `homeVerified`, `mint`'s `TokenAudience`), `commitment.ts` (`homeCommitmentNonce`), `chain.ts` (`homeEmailExit`) · Meets H1's review condition (the plan's H10), D463, D474, D485, D490, D494
+- Decision: `POST /v1/email/home/start` takes `{email, kind, commitment}` and nothing else (no publishable key, no nonce). `kind: 'identity'` commits to the Home key, its end (at most 20 minutes away) and salt, and the issuer computes `homeNonce`; `kind: 'derive'` commits to a session of one use, key index 0, ending within 20 minutes, and the issuer computes its session nonce. The shared `resend` and `verify` carry the challenge on. `mint()` takes a typed audience of exactly two forms, `email:{scope}` or `hana-home`, never one from a request. The gate reads only the chain (no app, no `IssuerRpc` read, D434): the identity needs `("email", "hana-home")` in force on the exit list; a derive gets `email:{scope}` while the scope holds its email client (the normal route, D490), else `hana-home` while the email exit is in force (D485), else `409 not_covered`. The audience is read again at `verify`.
+- Why: a route that signed a caller's nonce would let an owner get a `hana-home` token carrying `client_proof_nonce` for their own mailbox and register the client on their scope; the Home and session nonces' domains differ from the client proof's, so no such token can exist (the contract's audience-shape rule refuses the client as well). A Home identity token can never open a session for the same reason (its domain differs from the session nonce's). Gating on the chain keeps a suspended or deleted app's users their route.
+- Address impact: none. The token's `sub` is the address's own `HMAC(K_sub, address)`, the same as any email login's (a test holds it equal).
+
+### D617. Hana Home's email codes draw on a share of their own: 10% of the daily send budget
+- Date 2026-11-10 · Status: built; **proposed, awaiting the user's confirmation** · Built: `limits.ts` `HOME_BUDGET_SHARE`, `handleHomeStart`
+- Decision: every Home code mail goes through the mailbox, domain and IP limits as any login's, then the general pool within a share counted under `hana-home`: the flat share of an app with no usable plan (`BUDGET_APP_SHARE`, 10% of `dailySendBudget`). There is no partner quota (there is no partner).
+- Options: (a) this; (b) no share of its own (Home could use up the general pool every app shares); (c) a larger share (Home is the rescue route; to revisit with real traffic).
+- Why (a): Home can't empty any app's share, and no app can empty Home's.
+
+### D618. Hana Home signs in through the shared client while one is in force, else through the exit client; an app's wallet through the exit client only where its coverage is `exit`
+- Date 2026-11-10 · Status: built; **proposed, awaiting the user's confirmation** · Built: `home-page.ts` (`homeGoogleRoute`), `home-export.ts` (`homeExportRoute`, `checkRoute`), core `hana:home-params` and `hana:home-derive-params` (`exit: true`), `login-page.ts` (`exitEntry`) · Settles D550's open point and D578's proposal; applies D490 and D491
+- Decision: Home's own sign-in uses the first shared Google client in force and, only when there is none, the exit client (`exitGoogleClientId`), whose answer comes back through `/home/callback`. "Sign-in isn't available" now means neither Google client is in force and email sign-in is off. To open an app's wallet, a Google account uses the exit client only where the API reports coverage `exit` naming the exit client Home's settings name, and only after the page reads it in force on NEAR (listed, or pending and due); otherwise the move isn't offered ("Hana can't open this wallet from here").
+- Why: the exit counter (D487) stays a signal of real exits; everyday sign-ins stay on the ordinary route.
+- Address impact: none.
+
+### D619. Hana Home neither keeps nor sends a device ticket for email
+- Date 2026-11-10 · Status: built; **proposed, awaiting the user's confirmation** · Built: `handleHomeStart` (no owner claim), `homeVerified` (no ticket issued)
+- Decision: the Home route takes no device ticket or unlock grant, and its `verify` issues none.
+- Why: Home keeps nothing in storage (D553), and a ticket issued and thrown away would push one of the user's devices' tickets out of the mailbox's five.
+- Cost (to weigh): during a code drain on the mailbox (someone using up its windows), the user can't sign in to Home by email until the windows reset; the login popup's owner path doesn't help Home. Option not built: read (never write) the auth origin's stored ticket for that address.
+
+### D620. Home's code mails name Hana Home and the action, never an app
+- Date 2026-11-10 · Status: built; **proposed, awaiting the user's confirmation** · Built: `mail.ts` (`purposeText` for `home` and `home_session`)
+- Decision: "Your sign-in code for Hana Home" ("sign in to Hana Home"), and "Your code to open a wallet in Hana Home" ("open one of your wallets in Hana Home, where its private key can be shown to move it to another wallet app", and "Never give this code to anyone: it opens your wallet"). No app is named.
+- Why: the issuer reads no app for Home (D616), and a name the page sent would let anyone put words in a Hana mail. The design's "name the action and the app" is met for the action only.
+
+### D621. A Home code writes no user-directory row and seals no address
+- Date 2026-11-10 · Status: built; **proposed, awaiting the user's confirmation** · Built: `homeVerified`
+- Decision: `verify` of a Home challenge answers `{idToken}` only: no `sealedEmail`, no case B, no `user_emails` row. The issuance row and the daily counts name `hana-home`.
+- Why: a Home sign-in is no app's login; the directory rows are per app (D269) and email sharing is per app (D438).
+
+### D622. Email sign-in runs on `/home` itself, not in a `/login/email` child; `/home`'s policy gains the issuer
+- Date 2026-11-10 · Status: built; **proposed, awaiting the user's confirmation** · Built: `home-email.ts`, `home-page.ts`, `pages.ts`, `apps/api/src/pages/host.ts` · Deviates from the plan's "the `/login/email` mode for Home"; amends D551 and D583
+- Decision: the address and code screens are part of `/home` (and of its "Move this wallet" section); the page calls the issuer directly. `/home`'s `connect-src` is the export window's list plus the issuer's origin, in an env with one.
+- Why: a child window and the login relay exist for Google, which must answer a redirect URI; Hana Home is already on the auth origin, so a `/login/email` child would add a window, a message channel and a relay slot for nothing. The address and code still go to the issuer only (D230).
+- Options: the `/login/email` mode the plan named (more moving parts, the same security, Home's CSP unchanged).
+
+### D623. An email account's address stays in Home's memory for its sign-in; later codes go to it without asking again
+- Date 2026-11-10 · Status: built; **proposed, awaiting the user's confirmation** · Built: `home-page.ts` (`emailAddress`), `home-export.ts` (`startEmailCode`)
+- Decision: after an email sign-in the page keeps the address (memory only, dropped on sign-out or another account); "Sign in again" and the per-app code send to it with one button and no field. "Use a different email" is offered only on the first sign-in.
+- Why: the per-app code must come from the same mailbox (the API also requires the same `sub`); asking again would only add a way to get it wrong.
+
+### D624. What `/home/callback` accepts
+- Date 2026-11-10 · Status: built; **proposed, awaiting the user's confirmation** · Built: `home-callback-page.ts`, `callback-page.ts`, `login-storage.ts` (`exit`), `google.ts` (`HOME_CALLBACK_PATH`) · For D491
+- Decision: the page clears the fragment first; relays only for a `state` whose entry the Home child stored for the exit client (with the client and the nonce), only an ID token whose unverified `aud` and `nonce` are those (anything else is relayed as `invalid_response`, a claim outside the allow-list as `token_has_pii`), Google's errors as they are; it refuses a framed window and one whose opener is another site's or another Hana page (a missing opener is accepted: Google's pages may cut it). `/login/callback` refuses an exit entry. Its policy is `connect-src {apiUrl}` and no logo.
+
+### D625. `GET /v1/home/config` says whether email sign-in is open
+- Date 2026-11-10 · Status: built; **proposed, awaiting the user's confirmation** · Built: `apps/api/src/home/config.ts`
+- Decision: `emailSignIn` is true only with an email issuer in the env and `("email", "hana-home")` in force on the exit list (the rule `homeGate` applies). The page offers "Continue with email" only then; an older API reads as off.
+
+### D626. H8's "can't move this wallet yet" is gone
+- Date 2026-11-10 · Status: built; **proposed, awaiting the user's confirmation** · Built: `home-export.ts` (`HOME_EXPORT_OFF_TEXT`, `homeExportRoute`) · Amends D578, D584
+- Decision: coverage `exit` opens through the exit client (a Google account) or a code (an email account); coverage `email` through a code. Where neither applies the section says "Hana can't open this wallet from here. If the app still runs, use the app itself." For an email account the section's button reads "Continue with a code", its step "Get a code to open this wallet".
+
+### D627. Wording of the sign-in for two methods
+- Date 2026-11-10 · Status: built; **proposed, awaiting the user's confirmation** · Built: `home-page.ts`, `home-email.ts`
+- Decision: "Continue with Google" and "Continue with email"; "Sign in with the Google account or the email you use in those apps"; "Signed in with email"; sentences that named "this Google account" name "this email address" for an email account. The code screens reuse the login popup's sentences ("Check your email", "Too many attempts. Try again later.", "That code is wrong. N tries left.", …) with "Type it here, on this Hana page only".

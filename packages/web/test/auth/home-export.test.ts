@@ -33,7 +33,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mpcNetwork, readJson, simulateMpc } from '../../../core/test/helpers.ts';
 import { homeApi } from '../../src/auth/home-api.ts';
 import type { HomeEmailApi, HomeIdentityCommitment, HomeSessionCommitment } from '../../src/auth/home-email.ts';
-import { HOME_EXPORT_END_TEXT, HOME_EXPORT_OFF_TEXT, HOME_EXPORT_SESSION_TTL_MS, HOME_EXPORT_TITLE, HOME_PRK_LIFETIME_MS, homeExportRoute } from '../../src/auth/home-export.ts';
+import { HOME_EXPORT_ABOUT, HOME_EXPORT_END_TEXT, HOME_EXPORT_OFF_TEXT, HOME_EXPORT_OPEN, HOME_EXPORT_SESSION_TTL_MS, HOME_EXPORT_TITLE, HOME_PRK_LIFETIME_MS, homeExportRoute } from '../../src/auth/home-export.ts';
 import { type HomePage, coverageText, startHomePage } from '../../src/auth/home-page.ts';
 import { EXPORT_CLIPBOARD_CLEAR_MS, EXPORT_CONFIRMATION, EXPORT_SHOW_MS, EXPORT_WARNING } from '../../src/auth/key-reveal.ts';
 import type { NearReader } from '../../src/auth/near-rpc.ts';
@@ -74,6 +74,15 @@ const tick = (): Promise<void> => new Promise((r) => setImmediate(r));
  * a busy machine (verify runs four packages at once) can take more than a few hundred ticks. `Date` isn't faked here.
  */
 const UNTIL_MS = 10_000;
+/** The section collapsed: its heading, its sentence and the one button that opens it, nothing else. */
+function expectCollapsed(): void {
+  const root = document.getElementById('home-export')!;
+  expect(root.querySelector('#home-export-title')?.textContent).toBe(HOME_EXPORT_TITLE);
+  expect(root.querySelector('#home-export-about')?.textContent).toBe(HOME_EXPORT_ABOUT);
+  expect([...root.querySelectorAll('button')].map((b) => [b.id, b.textContent])).toEqual([['home-export-open', HOME_EXPORT_OPEN]]);
+  expect(root.textContent).toBe(`${HOME_EXPORT_TITLE}${HOME_EXPORT_ABOUT}${HOME_EXPORT_OPEN}`);
+}
+
 async function until(cond: () => boolean, what: string): Promise<void> {
   const deadline = Date.now() + UNTIL_MS;
   while (Date.now() < deadline) {
@@ -579,7 +588,7 @@ describe('nothing starts from the page’s address', () => {
     expect(document.getElementById('home-back')).not.toBeNull();
     expect(g.page.openScope).toBe(SCOPE);
     expect(g.page.moving.state).toBe('closed');
-    expect(document.getElementById('home-export')?.textContent).toBe(HOME_EXPORT_TITLE);
+    expectCollapsed();
     expect(document.getElementById('home-export-start')).toBeNull();
     expect(pageText()).not.toContain(EXPORT_WARNING);
     expect(g.win.opened).toHaveLength(1);
@@ -969,13 +978,29 @@ describe('the secret’s life', () => {
     expect(h.page.moving.state).toBe(state);
   });
 
+  it('collapsed, the section has the devices section’s shape; Close collapses it and gives focus back to its button', async () => {
+    const h = start();
+    await h.toApp();
+    expectCollapsed();
+    const root = document.getElementById('home-export')!;
+    expect(root.getAttribute('aria-labelledby')).toBe('home-export-title');
+    expect(root.querySelector('#home-export-open')?.className).toBe('');
+    expect(document.getElementById('home-export-start')).toBeNull();
+    h.click('home-export-open');
+    expect(document.activeElement?.id).toBe('home-export-title');
+    expect(document.getElementById('home-export-start')).not.toBeNull();
+    h.click('home-export-close');
+    expectCollapsed();
+    expect(document.activeElement?.id).toBe('home-export-open');
+  });
+
   it('coming back to the app’s page starts collapsed again, with nothing kept', async () => {
     const h = start();
     await h.unlock();
     h.click('home-back');
     (document.querySelector('.home-open') as HTMLElement).click();
     expect(h.page.moving.state).toBe('closed');
-    expect(document.getElementById('home-export')?.textContent).toBe(HOME_EXPORT_TITLE);
+    expectCollapsed();
   });
 
   it('an answer that arrives after the user left opens nothing', async () => {
@@ -1230,7 +1255,7 @@ describe('H10: email users (D463)', () => {
     expect(h.win.opened).toEqual([]);
     expect(issuer.starts).toHaveLength(1);
     expect(issuer.starts[0]).toMatchObject({ email: 'User@Example.com', kind: 'identity' });
-    expect(document.getElementById('home-who')?.textContent).toBe('Signed in with email');
+    expect(document.getElementById('home-who')?.textContent).toBe('Signed in as User@Example.com');
     // The listing request carries the email token as the Home identity.
     const apps = h.fetches.find((f) => f.url.pathname === '/v1/home/apps')!;
     const header = decodeHomeIdentity(apps.header as string)!;
@@ -1241,6 +1266,68 @@ describe('H10: email users (D463)', () => {
     // Memory only.
     expect(window.localStorage.length).toBe(0);
     expect(window.sessionStorage.length).toBe(0);
+  });
+
+  it('the header names the address signed in with: as text, in memory only, gone on sign-out and replaced on another account', async () => {
+    const issuer = emailIssuer();
+    const h = start({ email: issuer });
+    await h.toAppByEmail('ada.lovelace@mail.example.com');
+    const who = () => document.getElementById('home-who');
+    expect(who()?.textContent).toBe('Signed in as ada.lovelace@mail.example.com');
+    // The address wraps at its own break points: before `@` and each `.`, its text the address exactly.
+    const addr = document.getElementById('home-who-address')!;
+    expect(addr.tagName).toBe('STRONG');
+    expect(addr.querySelectorAll('wbr')).toHaveLength(4);
+    expect(addr.textContent).toBe('ada.lovelace@mail.example.com');
+    expect(window.localStorage.length + window.sessionStorage.length).toBe(0);
+    expect(window.location.href).not.toContain('lovelace');
+    // Sign out: the header and the address are gone.
+    h.click('home-sign-out');
+    expect(h.page.stage).toBe('signed_out');
+    expect(who()).toBeNull();
+    expect(pageText()).not.toContain('lovelace');
+    // Another account: only its own address.
+    issuer.sub = `e1.${'B'.repeat(43)}`;
+    await h.toAppByEmail('grace@example.org');
+    expect(who()?.textContent).toBe('Signed in as grace@example.org');
+    expect(pageText()).not.toContain('lovelace');
+  });
+
+  it('a hostile-looking address renders as text: no markup, no link, bidi isolated', async () => {
+    const issuer = emailIssuer();
+    const h = start({ email: issuer });
+    const hostile = '<img/src=x/onerror=alert(1)>"\u202emoc.live@x"<a/href=javascript:1>@example.com';
+    await h.toAppByEmail(hostile);
+    const addr = document.getElementById('home-who-address')!;
+    expect(addr.textContent).toBe(hostile);
+    expect(addr.querySelectorAll('*:not(wbr)')).toHaveLength(0);
+    expect(document.querySelector('.home-head img, .home-head a')).toBeNull();
+    // auth.css isolates `.mail-address` (bidi), so the override can't reorder the text around it.
+    expect(addr.className).toBe('mail-address');
+  });
+
+  it('a Google account keeps “Signed in with Google”: the page has no address for it', async () => {
+    const h = start({ email: emailIssuer() });
+    await h.toApp();
+    expect(document.getElementById('home-who')?.textContent).toBe('Signed in with Google');
+    expect(document.getElementById('home-who-address')).toBeNull();
+  });
+
+  it('the code screen’s parts sit in one form whose gaps set the rhythm: field, buttons, then the links line', async () => {
+    const issuer = emailIssuer();
+    const h = start({ email: issuer });
+    await h.page.idle();
+    h.click('home-sign-in-email');
+    const step = document.getElementById('home-email')!;
+    expect(step.classList.contains('email-step')).toBe(true);
+    expect(step.classList.contains('home-email-step')).toBe(true);
+    expect(document.getElementById('home-email-address')!.closest('form')?.classList.contains('email-form')).toBe(true);
+    (document.getElementById('home-email-address') as HTMLInputElement).value = 'user@example.com';
+    h.submit('home-email-address');
+    await until(() => document.getElementById('home-email-code') !== null, 'the code screen');
+    const form = document.getElementById('home-email-code')!.closest('form')!;
+    expect(form.classList.contains('email-form')).toBe(true);
+    expect([...form.children].map((c) => `${c.tagName.toLowerCase()}${c.className ? `.${c.className.replace(/ /gu, '.')}` : ''}`)).toEqual(['p', 'label', 'div.actions.start', 'p.muted.links']);
   });
 
   it.each([

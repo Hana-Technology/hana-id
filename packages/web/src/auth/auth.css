@@ -542,6 +542,37 @@ p.links {
   padding: 5px 14px;
 }
 
+/* "Signed in as <address>": a line of its own under the title, the address wrapping at its own break points (dom.ts
+   addressText) so a long one takes more lines, never the page's width; Sign out stays at the line's end. */
+.home-who {
+  min-width: 0;
+}
+
+.home-who.home-who-email {
+  flex: 1 1 100%;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.home-who > span {
+  min-width: 0;
+}
+
+.home-who-email > button {
+  flex: none;
+}
+
+.home-who .mail-address {
+  color: var(--text);
+}
+
+/* An email address as text (dom.ts addressText); not the sharing sheet's `p.address` block. */
+.mail-address {
+  unicode-bidi: isolate;
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+
 /* Headings that take focus when the view changes (so a screen reader starts there) show no ring for it. */
 .home [tabindex='-1']:focus {
   outline: none;
@@ -775,13 +806,6 @@ button.home-copy {
   display: none;
 }
 
-/* Collapsed: a quiet disclosure, the full width of the page, never the first thing a user sees. */
-button.home-export-toggle {
-  width: 100%;
-  text-align: left;
-  justify-content: flex-start;
-}
-
 .home-export h3 {
   margin-top: 0;
 }
@@ -912,6 +936,32 @@ button.home-export-toggle {
   flex-wrap: wrap;
 }
 
+/* An email code's screens (home-email.ts: Hana Home's sign-in, and a per-app code when moving a wallet), in a card. */
+.home-email-step {
+  border: 1px solid var(--line);
+  border-radius: var(--hana-radius);
+  padding: 16px;
+  margin-bottom: 10px;
+}
+
+/* The address the code goes to can be one long word; a button's label never breaks inside a word. */
+.home-email-step strong {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 420px) {
+  .home-email-step {
+    padding: 14px 12px;
+  }
+}
+
+.home-banner .home-email-step {
+  flex: 1 1 100%;
+  margin: 0;
+  background: var(--panel);
+  color: var(--text);
+}
+
 .home-email {
   border: 1px solid var(--line);
   border-radius: var(--hana-radius);
@@ -990,3 +1040,38 @@ button.stop:hover:not(:disabled) {
     margin-bottom: 4px;
   }
 }
+
+/* ---- An email code's screens: the login popup's email step (email-page.ts) and Hana Home's (home-email.ts) ----
+   One rhythm, set by the containers' gaps rather than by each element's margins: the heading, the text and the form
+   12px apart; inside the form, the field, a notice, the buttons and the "Resend code · Use a different email" line 16px
+   apart. */
+.email-step {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+form.email-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.email-step > *,
+form.email-form > *,
+form.email-form > .actions,
+form.email-form > p.links,
+.email-step > .actions {
+  margin: 0;
+}
+
+/* Under left-aligned buttons (Hana Home), the links line starts where they do. */
+form.email-form > .actions.start + p.links {
+  text-align: left;
+}
+
+/* On a narrow screen the buttons go onto two lines rather than squeezing their labels. */
+.email-step .actions {
+  flex-wrap: wrap;
+}
+

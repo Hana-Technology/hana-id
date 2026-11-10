@@ -96,7 +96,13 @@ export const ABORTED_READS_CAP = 100;
 const WARP_MAX_MS = 5_000;
 
 export class TestTimers implements Timers {
+  /** The device clock (Date.now). Assigning it moves only this clock: a device clock set forward or back. */
   now = START_MS;
+  /**
+   * A monotonic clock (performance.now) for tabs opened with `fakePerf`; `advance` moves it with `now`. Assigning it
+   * moves only it; leaving it while `now` moves is a device that slept (a monotonic timer that stopped).
+   */
+  perf = 1_000;
   private seq = 0;
   private readonly manual = new Map<number, { at: number; fn: () => void }>();
   private readonly real = new Map<number, ReturnType<typeof setTimeout>>();
@@ -126,6 +132,7 @@ export class TestTimers implements Timers {
   /** Moves the clock and fires every long timer now due, in order. */
   advance(ms: number): void {
     this.now += ms;
+    this.perf += ms;
     for (;;) {
       const due = [...this.manual.entries()].filter(([, t]) => t.at <= this.now).sort((a, b) => a[1].at - b[1].at)[0];
       if (!due) return;
@@ -279,6 +286,8 @@ export class FakeBackend {
    * field out (a D1 failure, D511); any other value is sent as is (a value of an unknown shape).
    */
   consentAnswer: ((idHex: string) => unknown) | null = null;
+  /** The same for `share` (the vault's `x-hana-share`): `'omit'` leaves it out (the API's D1 read failed). */
+  shareAnswer: ((idHex: string) => unknown) | null = null;
   /** The API's own timings to answer /v1/login, /v1/vault/shares and /v1/vault/unlock with (a pk_test_ API), or none. */
   serverTimings: { totalMs: number; phases: Record<string, number> } | null = null;
   /** The relay read's `heldMs`, or none (an older API). */
@@ -604,6 +613,7 @@ export class FakeBackend {
     }
     if (call.path === '/v1/vault/consents' || call.path === '/v1/vault/consents/revoke') return this.consentCall(call, call.path === '/v1/vault/consents');
     if (call.path === '/v1/vault/shares') return this.createShare(call);
+    if (call.path === '/v1/vault/share-status') return this.shareStatusCall(call);
     if (call.path.startsWith('/v1/vault/')) return this.shareAction(call, call.path.slice('/v1/vault/'.length));
     void url;
     return apiError(404, 'not_found');
@@ -658,10 +668,38 @@ export class FakeBackend {
     return json(201, { shareId: Array.from(shareId), ks: Array.from(ks), absExpiresAtMs: session.expires_at_ms, idleUntilMs: this.serverNow() + 2 * HOUR, ...this.timingsField(), requestId: 'rq' });
   }
 
+  /**
+   * Whether the fake API has POST /v1/vault/share-status. `'old'`: an API older than it, as a browser sees it (the
+   * unknown route's answer has no CORS headers, so the preflight fails and fetch rejects with a TypeError);
+   * `'old-readable'`: the same API's `404 not_found`, readable (same origin).
+   */
+  shareStatusEndpoint: true | 'old' | 'old-readable' = true;
+
+  /**
+   * POST /v1/vault/share-status (D690), as the API answers it: `{share}` for the share named, no chain call. `shareAnswer`
+   * applies as on GET /v1/app; its `'omit'` (the D1 read failed) is the endpoint's 503.
+   */
+  private shareStatusCall(call: ApiCall): Response {
+    if (this.shareStatusEndpoint === 'old') throw new TypeError('Failed to fetch');
+    if (this.shareStatusEndpoint === 'old-readable') return apiError(404, 'not_found');
+    const b = call.body as { shareId?: unknown };
+    if (!b || !Array.isArray(b.shareId) || b.shareId.length !== 16 || Object.keys(b).length !== 1) return apiError(400, 'bad_request');
+    const hex = toHex(Uint8Array.from(b.shareId as number[]));
+    const answered = this.shareAnswer?.(hex);
+    if (answered === 'omit') return apiError(503, 'share_status_unavailable');
+    if (answered !== undefined) return json(200, { share: answered, serverTimeMs: this.serverNow(), requestId: 'rq' });
+    const share = this.shares.get(hex);
+    return json(200, { share: !share || share.revoked ? 'revoked' : 'live', serverTimeMs: this.serverNow(), requestId: 'rq' });
+  }
+
   /** `share` on GET /v1/app, for the vault's `x-hana-share` header (H9): 'revoked' for a revoked or unknown share. */
   private shareField(header: string | undefined): { share?: unknown } {
     if (header === undefined) return {};
-    const share = this.shares.get(toHex(base64UrlDecode(header)));
+    const hex = toHex(base64UrlDecode(header));
+    const answered = this.shareAnswer?.(hex);
+    if (answered === 'omit') return {};
+    if (answered !== undefined) return { share: answered };
+    const share = this.shares.get(hex);
     return { share: !share || share.revoked ? 'revoked' : 'live' };
   }
 
@@ -913,6 +951,10 @@ export interface Tab {
   waitEvent(event: PortEventName, n?: number): Promise<unknown>;
   /** Waits until `check` is true, re-checking on every port message (and every 20 ms), for up to 4 s of real time. */
   waitUntil(check: () => boolean, what: string): Promise<void>;
+  /** The tab is hidden or shown (document.visibilityState), with its `visibilitychange` event. */
+  setVisibility(state: 'visible' | 'hidden'): void;
+  /** A back/forward-cache restore: `pageshow` with `persisted` (no visibilitychange). */
+  pageRestore(): void;
   close(): void;
 }
 
@@ -931,6 +973,12 @@ export interface TabOptions {
   navigation?: NavigationMarks;
   /** The SDK version the tab's hello names (default '0.0.0': an SDK before every versioned field, e.g. supportId). */
   sdk?: string;
+  /** The tab starts hidden (document.visibilityState; `Tab.setVisibility` changes it). */
+  hidden?: boolean;
+  /** A host without visibility (an older host, or a browser without the Page Visibility API): counts as shown. */
+  noVisibility?: boolean;
+  /** The vault's monotonic clock is `browser.timers.perf` (default: the real performance.now). */
+  fakePerf?: boolean;
 }
 
 export function openTab(browser: Browser, o: TabOptions = {}): Tab {
@@ -938,6 +986,9 @@ export function openTab(browser: Browser, o: TabOptions = {}): Tab {
   const launcher = new FakeLauncherView();
   const opened: FakeWindow[] = [];
   const listeners: ((e: WindowMessageEvent) => void)[] = [];
+  let visibility: 'visible' | 'hidden' = o.hidden ? 'hidden' : 'visible';
+  const visibilityListeners: (() => void)[] = [];
+  const restoreListeners: (() => void)[] = [];
   const config = o.config ?? makeConfig();
   // The page a tab loads inlines what the API serves at that moment.
   browser.backend.autoApprovePolicy = config.settings.autoApprovePolicy;
@@ -956,6 +1007,7 @@ export function openTab(browser: Browser, o: TabOptions = {}): Tab {
         return w;
       },
       navigationTiming: () => o.navigation ?? null,
+      ...(o.noVisibility ? {} : { visibility: () => visibility, onVisibilityChange: (l: () => void) => visibilityListeners.push(l), onPageRestore: (l: () => void) => restoreListeners.push(l) }),
     },
     openStore: browser.openStore,
     locks: browser.locks,
@@ -964,6 +1016,7 @@ export function openTab(browser: Browser, o: TabOptions = {}): Tab {
     fetch: browser.backend.fetch,
     timers: browser.timers,
     deviceNow: () => browser.timers.now,
+    ...(o.fakePerf ? { perfNow: () => browser.timers.perf } : {}),
     jwks: async (kid) => (o.googleJwk && o.googleJwk.kid === kid ? o.googleJwk : null),
     ...(o.loginFlow ? { loginFlow: o.loginFlow } : {}),
     ...o.options,
@@ -1022,6 +1075,13 @@ export function openTab(browser: Browser, o: TabOptions = {}): Tab {
     waitEvent: async (event, n = 0) => (await waitFor(() => events.filter((e) => e.event === event)[n], `event ${event}`)).data,
     waitUntil: async (check, what) => {
       await waitFor(() => (check() ? true : undefined), what);
+    },
+    setVisibility: (state) => {
+      visibility = state;
+      for (const l of visibilityListeners) l();
+    },
+    pageRestore: () => {
+      for (const l of restoreListeners) l();
     },
     close: () => {
       port1.close();

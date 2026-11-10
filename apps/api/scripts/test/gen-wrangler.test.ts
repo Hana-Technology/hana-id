@@ -7,7 +7,7 @@ import { loadEnv, manifestSchema, repoRoot } from '@hana-id/env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseRelayerKeys } from '../../src/relayer-config.ts';
 import { IDENTITY_PER_ROOT_MINUTE, IDENTITY_PER_SESSION_MINUTE } from '../../src/identity/limits.ts';
-import { SHARE_PER_MINUTE, VAULT_PER_IP_MINUTE } from '../../src/vault/limits.ts';
+import { SHARE_PER_MINUTE, STATUS_PER_IP_MINUTE, STATUS_PER_SHARE_MINUTE, VAULT_PER_IP_MINUTE } from '../../src/vault/limits.ts';
 import { createHash, generateKeyPairSync, randomBytes } from 'node:crypto';
 import { IDENTITY_SECRET_FILES, identityIssuerFor, p256Thumbprint, type Manifest } from '@hana-id/env';
 import { CUSTOM_DOMAIN, customDomainManifest } from '../../../../packages/env/src/custom-domain.fixture.ts';
@@ -255,10 +255,13 @@ describe('wrangler.jsonc', () => {
     expect(config.ratelimits).toEqual([
       { name: 'VAULT_IP_LIMIT', namespace_id: '95001', simple: { limit: 60, period: 60 } },
       { name: 'VAULT_SHARE_LIMIT', namespace_id: '95002', simple: { limit: 10, period: 60 } },
+      // POST /v1/vault/share-status's own windows (D690).
+      { name: 'VAULT_STATUS_IP_LIMIT', namespace_id: '95005', simple: { limit: 600, period: 60 } },
+      { name: 'VAULT_STATUS_SHARE_LIMIT', namespace_id: '95006', simple: { limit: 30, period: 60 } },
       { name: 'IDENTITY_SESSION_LIMIT', namespace_id: '95003', simple: { limit: 10, period: 60 } },
       { name: 'IDENTITY_ROOT_LIMIT', namespace_id: '95004', simple: { limit: 30, period: 60 } },
     ]);
-    expect(config.ratelimits.map((r) => r.simple.limit)).toEqual([VAULT_PER_IP_MINUTE, SHARE_PER_MINUTE, IDENTITY_PER_SESSION_MINUTE, IDENTITY_PER_ROOT_MINUTE]);
+    expect(config.ratelimits.map((r) => r.simple.limit)).toEqual([VAULT_PER_IP_MINUTE, SHARE_PER_MINUTE, STATUS_PER_IP_MINUTE, STATUS_PER_SHARE_MINUTE, IDENTITY_PER_SESSION_MINUTE, IDENTITY_PER_ROOT_MINUTE]);
     expect(new Set(config.ratelimits.map((r) => r.namespace_id)).size).toBe(config.ratelimits.length);
     for (const r of config.ratelimits) {
       // Cloudflare's rules: a positive integer namespace id (a string), a period of 10 or 60 s.

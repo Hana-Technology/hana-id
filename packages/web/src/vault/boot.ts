@@ -31,6 +31,10 @@ export function bootVault(win: Window, env: HanaEnv, scriptStart?: number): Vaul
       const nav = win.performance?.getEntriesByType?.('navigation')[0] as PerformanceNavigationTiming | undefined;
       return nav ? { responseEnd: nav.responseEnd, loadEventEnd: nav.loadEventEnd } : null;
     },
+    // A frame's visibilityState follows its tab's: the share check pauses while the tab is hidden.
+    visibility: () => (win.document.visibilityState === 'hidden' ? 'hidden' : 'visible'),
+    onVisibilityChange: (listener) => win.document.addEventListener('visibilitychange', listener),
+    onPageRestore: (listener) => win.addEventListener('pageshow', (e: PageTransitionEvent) => e.persisted && listener()),
   };
   return new Vault({
     env,

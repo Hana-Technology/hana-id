@@ -124,15 +124,27 @@ export class VaultApi {
    * GET /v1/app: the scope, signer and Google client (read from chain by the API), plus serverTimeMs. `consentHeader`
    * (base64url of the consent id) also asks for that consent's status; the API honours it only from the vault's origin.
    */
-  async app(consentHeader?: string, shareHeader?: string): Promise<AppConfig> {
+  async app(consentHeader?: string, shareHeader?: string, signal?: AbortSignal): Promise<AppConfig> {
     const headers = this.headers(false);
     if (consentHeader) headers['x-hana-consent'] = consentHeader;
     // The session's share id (base64url): the API answers whether it was taken away, so an open tab ends (H9).
     if (shareHeader) headers['x-hana-share'] = shareHeader;
-    const { res, body } = await this.request('/v1/app', { method: 'GET', headers });
+    const { res, body } = await this.request('/v1/app', { method: 'GET', headers, ...(signal ? { signal } : {}) });
     if (!isAppConfig(body)) throw new ApiError(res.status, 'bad_response', 'Unexpected /v1/app response', null, str(body.requestId));
     if (body.serverTimeMs !== undefined) this.o.onServerTime?.(body.serverTimeMs);
     return body;
+  }
+
+  /**
+   * POST /v1/vault/share-status: whether the share is still live (a sign-out from Hana Home, D680). Only `live` and
+   * `revoked` are answers; anything else (a refusal, a 429 or 5xx, another shape) throws, and the caller counts it as
+   * no answer, never as revoked.
+   */
+  async shareStatus(shareId: Uint8Array, signal?: AbortSignal): Promise<'live' | 'revoked'> {
+    const { res, body } = await this.request('/v1/vault/share-status', { method: 'POST', headers: this.headers(true), body: JSON.stringify({ shareId: Array.from(shareId) }), ...(signal ? { signal } : {}) });
+    if (body.share !== 'live' && body.share !== 'revoked') throw new ApiError(res.status, 'bad_response', 'Unexpected /v1/vault/share-status response', null, str(body.requestId));
+    if (typeof body.serverTimeMs === 'number') this.o.onServerTime?.(body.serverTimeMs);
+    return body.share;
   }
 
   /** POST /v1/login (create_session_and_derive). */

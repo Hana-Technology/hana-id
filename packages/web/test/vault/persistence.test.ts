@@ -62,7 +62,8 @@ async function put(browser: Browser, record: Record<string, unknown>, key = KEY)
 }
 
 /** A browser whose first tab logged in ('session' mode); returns the addresses. */
-async function loggedIn(browser = new Browser(), o: Parameters<typeof readyTab>[1] = {}): Promise<{ browser: Browser; first: Tab; addresses: { stellar: string; evm: string } }> {
+const loggedIn = loggedInAt;
+async function loggedInAt(browser = new Browser(), o: Parameters<typeof readyTab>[1] = {}): Promise<{ browser: Browser; first: Tab; addresses: { stellar: string; evm: string } }> {
   const first = await tab(browser, o);
   const { reply } = await login(first, g);
   return { browser, first, addresses: (reply.result as { addresses: { stellar: string; evm: string } }).addresses };
@@ -633,6 +634,8 @@ describe('tabs', () => {
     await login(b, g, { sub: '220000000000000000001' });
     await until(() => browser.backend.shares.get(toHex(staleShare))!.revoked, 'the stale share revoked');
     expect(await statusOf(a)).toBe('logged_in');
+    // Its status reads still say live (as one sent just before the revoke would), so the touch is what learns it.
+    browser.backend.shareAnswer = () => 'live';
     browser.timers.advance(TOUCH_EVERY_MS);
     await approvedSign(a);
     expect(await a.waitEvent('disconnect')).toEqual({ code: 4900 });
@@ -696,6 +699,11 @@ describe('expiry', () => {
 
 describe('in-memory idle limit (Q28)', () => {
   const IDLE = 2 * HOUR;
+  /** The API's clock moves with the test's (each GET /v1/app re-anchors the vault's clock on it). */
+  async function loggedIn(browser = new Browser(), o: Parameters<typeof readyTab>[1] = {}): ReturnType<typeof loggedInAt> {
+    browser.backend.serverNow = () => browser.timers.now;
+    return loggedInAt(browser, o);
+  }
   const unlocks = (b: Browser) => b.backend.count('/v1/vault/unlock');
 
   async function signMessage(t: Tab, message: string): Promise<string> {

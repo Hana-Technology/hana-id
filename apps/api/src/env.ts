@@ -155,6 +155,9 @@ export interface Env {
   /** Rate Limiting bindings (vault/limits.ts, D95): the vault's per-IP and per-share flood limits, counted per location. */
   VAULT_IP_LIMIT: RateLimit;
   VAULT_SHARE_LIMIT: RateLimit;
+  /** POST /v1/vault/share-status's per-IP ceiling and per-share window (vault/limits.ts, D690). */
+  VAULT_STATUS_IP_LIMIT: RateLimit;
+  VAULT_STATUS_SHARE_LIMIT: RateLimit;
   /** POST /v1/identity/token's per-session-key flood limit (identity/limits.ts). */
   IDENTITY_SESSION_LIMIT: RateLimit;
   /** POST /v1/identity/token's per-account-root flood limit (identity/limits.ts, D176). */
